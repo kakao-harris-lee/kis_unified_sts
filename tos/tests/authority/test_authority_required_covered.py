@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 from tos.authority import (
+    ArtifactIntegrityError,
     ArtifactStatus,
     AuthorityEpochTransitionRecord,
     AuthorityTransitionReason,
@@ -119,4 +120,20 @@ def test_epoch_transition_strictly_increasing_is_issuable() -> None:
         ),
     )
     assert record.status is ArtifactStatus.ISSUED
-    assert record.new_epoch > record.old_epoch
+    assert record.issued_new_epoch > record.issued_old_epoch
+
+
+def test_issued_epoch_accessors_raise_on_a_draft_transition() -> None:
+    """``issued_old_epoch``/``issued_new_epoch`` are reachable, not dead code: a DRAFT
+    transition (a normal, validator-accepted state, §3.2) legitimately carries both
+    epochs ``None`` — the required-covered guard (and the strictly-increasing check)
+    only fire at ISSUED, not at DRAFT. These accessors express the ISSUED-only
+    contract at the type level and must themselves fail closed here."""
+    draft = AuthorityEpochTransitionRecord()
+    assert draft.status is ArtifactStatus.DRAFT
+    assert draft.old_epoch is None
+    assert draft.new_epoch is None
+    with pytest.raises(ArtifactIntegrityError):
+        _ = draft.issued_old_epoch
+    with pytest.raises(ArtifactIntegrityError):
+        _ = draft.issued_new_epoch
