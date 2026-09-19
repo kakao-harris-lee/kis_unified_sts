@@ -237,6 +237,7 @@ def _run_child(target) -> dict:  # type: ignore[no-untyped-def]
     result = queue.get(timeout=60)
     proc.join(timeout=60)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
+    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
     return result
 
 

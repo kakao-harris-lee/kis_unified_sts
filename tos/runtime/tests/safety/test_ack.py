@@ -67,7 +67,11 @@ def _payload_for_kind(evidence_store: SqliteEvidenceStore, kind: str) -> dict:
         (kind,),
     ).fetchone()
     assert row is not None
-    return json.loads(row[0])["payload"]
+    payload = json.loads(row[0])["payload"]
+    assert isinstance(
+        payload, dict
+    ), f"stored payload for kind {kind!r} is {type(payload).__name__}"
+    return payload
 
 
 # ============================================================================

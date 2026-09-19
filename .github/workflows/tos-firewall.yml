@@ -206,6 +206,18 @@ jobs:
       # `index`, `operator`, `union-attr` — fixed by adding real None-checks/type
       # narrowing at each call site, never by loosening a type or an assertion.
       #
+      # Stage 2 (same plan, §3.2) added a fourteenth code: `no-any-return` — 55 hits
+      # (37 kernel + 18 runtime; `mypy --version` must read 2.3.1, the CI pin), fixed
+      # by assigning the Any-typed expression to a variable and adding a real
+      # `assert isinstance(...)` before the return, never a `cast`. Two recurring
+      # shapes: 37 of the 55 were the same `mp.Queue.get()` result in the
+      # `*_import_closure.py` helpers (one instance per package, not deduplicated —
+      # see the registry-with-unpinned-satellite note above; this stage left the
+      # duplication in place on purpose, scoped to the error-code fix only), and 9
+      # were `connection.execute(...).fetchone()[0]` SQLite count helpers (against
+      # `SqliteEvidenceStore.connection`), which also gained a `row is not None`
+      # check the bare `[0]` indexing had been skipping silently.
+      #
       # `unused-ignore` was named in PR #742 as the next code to enable, on the
       # strength of 53 hits under FULL checking. That is wrong while any code is
       # deferred, and the correction is the useful part of this note: measured back
@@ -234,14 +246,14 @@ jobs:
           mypy tos/tests --ignore-missing-imports
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
           --disable-error-code=attr-defined --disable-error-code=return-value
-          --disable-error-code=no-any-return --disable-error-code=unused-ignore
+          --disable-error-code=unused-ignore
 
       - name: mypy (tos runtime tests)
         run: >-
           mypy tos/runtime/tests --ignore-missing-imports
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
           --disable-error-code=attr-defined --disable-error-code=return-value
-          --disable-error-code=no-any-return --disable-error-code=unused-ignore
+          --disable-error-code=unused-ignore
 
       - name: tos size budget
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.

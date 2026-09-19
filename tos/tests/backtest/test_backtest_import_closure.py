@@ -345,6 +345,7 @@ def _run_child(target) -> dict:  # noqa: ANN001 - a multiprocessing target calla
     result = queue.get(timeout=120)
     proc.join(timeout=120)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
+    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
     return result
 
 
