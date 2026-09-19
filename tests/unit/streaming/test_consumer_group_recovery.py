@@ -23,6 +23,7 @@ import pytest
 from shared.streaming.stage import (
     ConsumerGroupEnsure,
     recover_missing_consumer_group,
+    sweep_vanished_consumer_groups,
 )
 
 _STREAM = "signal.final.futures.shadow"
@@ -148,3 +149,95 @@ async def test_bytes_stream_name_is_decoded_into_the_event(caplog) -> None:
     assert _events(caplog, "consumer_group_recovered") == [
         f"event=consumer_group_recovered stream={_STREAM} consumer_group={_GROUP}"
     ]
+
+
+# --------------------------------------------------------------------------- #
+# sweep_vanished_consumer_groups: the three-way rule, now in one place
+# --------------------------------------------------------------------------- #
+
+
+class _SweepRedis:
+    """XGROUP CREATE double answering per stream: created / existed / failed."""
+
+    def __init__(self, states: dict[str, str]) -> None:
+        self.states = states
+        self.created: list[tuple[str, str]] = []
+
+    async def xgroup_create(self, stream, group, *, id="0", mkstream=False):
+        self.created.append((stream, group))
+        state = self.states[stream]
+        if state == "existed":
+            raise RuntimeError("BUSYGROUP Consumer Group name already exists")
+        if state == "failed":
+            raise RuntimeError("NOPERM this user has no permissions to run 'xgroup'")
+
+
+@pytest.mark.asyncio
+async def test_sweep_says_retry_when_a_group_was_actually_recreated() -> None:
+    """One genuine recreate is what earns the immediate retry."""
+    redis = _SweepRedis({"s:a": "created", "s:b": "existed"})
+
+    assert await sweep_vanished_consumer_groups(redis, ["s:a", "s:b"], _GROUP) is True
+    assert redis.created == [("s:a", _GROUP), ("s:b", _GROUP)]  # swept all of them
+
+
+@pytest.mark.asyncio
+async def test_sweep_refuses_retry_when_every_group_was_already_present() -> None:
+    """Nothing recovered ⇒ the read error had another cause ⇒ do not spin.
+
+    This is the case a truthiness test gets wrong: every outcome here is
+    ``EXISTED``, a non-empty and therefore truthy string, so ``all(outcomes)``
+    would answer True and hand back the hot loop #741 removed.
+    """
+    redis = _SweepRedis({"s:a": "existed", "s:b": "existed"})
+
+    assert await sweep_vanished_consumer_groups(redis, ["s:a", "s:b"], _GROUP) is False
+    assert all([ConsumerGroupEnsure.EXISTED, ConsumerGroupEnsure.EXISTED])
+
+
+@pytest.mark.asyncio
+async def test_sweep_refuses_retry_when_any_recreate_failed() -> None:
+    """A failure anywhere loses the fast path for the whole read.
+
+    The streams are read together, so retrying at once would just fail on the
+    one that could not be recreated. ``any(created)`` alone gets this wrong.
+    """
+    redis = _SweepRedis({"s:a": "created", "s:b": "failed"})
+
+    assert await sweep_vanished_consumer_groups(redis, ["s:a", "s:b"], _GROUP) is False
+
+
+@pytest.mark.asyncio
+async def test_sweep_refuses_retry_when_every_recreate_failed() -> None:
+    redis = _SweepRedis({"s:a": "failed", "s:b": "failed"})
+
+    assert await sweep_vanished_consumer_groups(redis, ["s:a", "s:b"], _GROUP) is False
+
+
+@pytest.mark.asyncio
+async def test_single_stream_caller_passes_a_one_element_iterable() -> None:
+    """``StreamStage`` reads one stream; the rule collapses but does not change."""
+    assert (
+        await sweep_vanished_consumer_groups(
+            _SweepRedis({"s:in": "created"}), ("s:in",), _GROUP
+        )
+        is True
+    )
+    assert (
+        await sweep_vanished_consumer_groups(
+            _SweepRedis({"s:in": "existed"}), ("s:in",), _GROUP
+        )
+        is False
+    )
+    assert (
+        await sweep_vanished_consumer_groups(
+            _SweepRedis({"s:in": "failed"}), ("s:in",), _GROUP
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_sweep_of_no_streams_never_claims_a_recovery() -> None:
+    """Vacuously nothing was created, so there is no reason to skip the backoff."""
+    assert await sweep_vanished_consumer_groups(_SweepRedis({}), [], _GROUP) is False
