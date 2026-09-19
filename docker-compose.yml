@@ -290,6 +290,9 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
+      # Without this the daemon's LOG_LEVEL support is unreachable in the
+      # container: no env_file is mounted, so only keys listed here exist.
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       STOCK_MONITOR_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
@@ -458,6 +461,9 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
+      # Without this the daemon's LOG_LEVEL support is unreachable in the
+      # container: no env_file is mounted, so only keys listed here exist.
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       FUTURES_MONITOR_DAEMON: "${FUTURES_PIPELINE_MODE:-shadow}"
       # See futures-market-ingest: must match trader-futures' contract.
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
