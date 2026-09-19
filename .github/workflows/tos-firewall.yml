@@ -218,6 +218,69 @@ jobs:
       # `SqliteEvidenceStore.connection`), which also gained a `row is not None`
       # check the bare `[0]` indexing had been skipping silently.
       #
+      # Stage 2b (same plan, §5) added a fifteenth code: `return-value` — 116 hits
+      # (105 kernel + 11 runtime). 108 of those (94 `DigestBoundArtifact.issue()` +
+      # 14 `IdDerivedArtifact.issue()` call sites) were one root cause: both
+      # `@classmethod issue()` methods in `tos/src/tos/canonical/_base.py` declared
+      # their return type as the base class instead of `Self`, so every subclass
+      # override (`Proposal.issue()`, `AuthoredStrategy.issue()`, ...) looked like it
+      # returned the base type to callers. Fixed by declaring both `-> Self`
+      # (`requires-python >= 3.11`, no `typing_extensions` needed); this also made 7
+      # `# type: ignore[return-value]` comments genuinely dead (confirmed by running
+      # the kernel gate with each removed and checking no error reappears at that
+      # line), removed alongside. The remaining 8 were judged individually, never by
+      # widening an ignore's label to also cover `return-value`:
+      # `tos/tests/afg/test_afg_{void_canaries,truthy_sentinel}.py` returned
+      # `ActionFlowDecision.result` (`ActionFlowResult | None`) from a helper typed
+      # to return `ActionFlowResult`; `result` is also in `_REQUIRED_COVERED`, so any
+      # decision built via `.issue()` (the only path these helpers use) already fails
+      # construction if `result` is `None` — a redundant `assert is not None` at the
+      # call site would be dead code (the `assert row is not None` lesson from the
+      # `no-any-return` stage), so the fix instead added a real
+      # `ActionFlowDecision.issued_result` property to
+      # `tos/src/tos/afg/records.py` that performs that one narrowing at its actual
+      # invariant boundary. Five `tos/runtime/tests/**/conftest.py` (+
+      # `calendar/test_owner.py`) `FixedKeyProvider` doubles were missing
+      # `KeyProvider.key_for()` — a real Protocol-conformance gap, not a mislabeled
+      # ignore, fixed by adding `key_for` to match the idiom already used by the
+      # sibling doubles in `riskstate/conftest.py` / `venue/conftest.py`. The last,
+      # `compose/test_rcl_tip_generation_provider.py`, returned `AppendReceipt.seq`
+      # (`int | None`); unlike the `ActionFlowDecision` case, nothing validates
+      # `AppendReceipt` at construction, so `assert receipt.seq is not None` is a
+      # live, reachable check (and the same pattern the kernel itself uses at e.g.
+      # `tos_runtime/nontrade/latch.py:139` and `tos_runtime/engine/driver.py:642`).
+      #
+      # The `Self` fix also surfaced two errors NOT counted in the 116 (both were
+      # previously masked by `attr-defined`, which stays deferred): a genuinely
+      # redundant `cast(ApprovalSetConsumptionRecord, ...)` in
+      # `tos/tests/hag/test_hag_void_canaries.py` — a sibling `.issue()` call two
+      # lines below it was never cast, proving the cast only existed to paper over
+      # the base-type return — deleted along with the then-unused `cast` import; and
+      # 3 `operator` errors (an enabled code) in
+      # `tos/tests/authority/test_authority_required_covered.py`, where
+      # `record.new_epoch > record.old_epoch` had type-checked against `Any` (via
+      # `attr-defined`) before `Self` let mypy resolve the real `int | None` fields.
+      # Both epochs are `_REQUIRED_COVERED` AND re-checked by a dedicated
+      # `_epoch_strictly_increasing` model validator, so — same reasoning as
+      # `ActionFlowDecision.issued_result` — an inline `assert is not None` would be
+      # dead; fixed with `AuthorityEpochTransitionRecord.issued_old_epoch` /
+      # `.issued_new_epoch` properties in `tos/src/tos/authority/records.py`. Both
+      # kernel properties raise `ArtifactIntegrityError` on the `None` branch rather
+      # than asserting — verified NOT dead by constructing an ISSUED-status instance
+      # via `model_construct()` (which bypasses the validator; this repo already
+      # treats that as a real threat model, e.g. `tos/tests/test_required_covered.py`
+      # module docstring) and confirming the raise actually fires.
+      #
+      # A full-tree, zero-disable mypy sweep after the `Self` fix (looking for any
+      # OTHER now-dead ignore this ratchet's own scope wouldn't otherwise catch)
+      # found 6 more genuinely-dead `# type: ignore[return-value]` comments on
+      # direct `Cls.issue(...)` calls, same root cause as the kernel's 7:
+      # `tos/tests/marketfeed/_marketfeed_fixtures.py:150,178`,
+      # `tos/tests/dsl/test_dsl_context_value.py:75,152`, and
+      # `tos/runtime/tests/marketfeed/_store_fixtures.py:100,128` — removed. The
+      # same sweep for a now-redundant `cast(...)` around an `.issue()` call found
+      # none beyond the one already listed above.
+      #
       # `unused-ignore` was named in PR #742 as the next code to enable, on the
       # strength of 53 hits under FULL checking. That is wrong while any code is
       # deferred, and the correction is the useful part of this note: measured back
@@ -245,14 +308,14 @@ jobs:
         run: >-
           mypy tos/tests --ignore-missing-imports
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
-          --disable-error-code=attr-defined --disable-error-code=return-value
+          --disable-error-code=attr-defined
           --disable-error-code=unused-ignore
 
       - name: mypy (tos runtime tests)
         run: >-
           mypy tos/runtime/tests --ignore-missing-imports
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
-          --disable-error-code=attr-defined --disable-error-code=return-value
+          --disable-error-code=attr-defined
           --disable-error-code=unused-ignore
 
       - name: tos size budget
