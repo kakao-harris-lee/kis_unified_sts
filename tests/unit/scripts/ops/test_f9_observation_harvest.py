@@ -918,13 +918,19 @@ def test_two_banners_and_one_processed_line_are_not_a_consumed_session(
     ``4/4 consumed (COMPLETE)``, exit 0, ``counters.qualified: true``, with
     ``last_observed_kst`` seven hours before the close and nothing scoring it.
 
-    It is reachable: ``services/futures_monitor/daemon.py`` creates
-    ``_consume_loop`` as a task and only awaits it in ``finally``. If it raises,
-    the task dies unretrieved, ``_stop`` is never set, and ``_status_loop``
-    keeps the process up — the project's own "asyncio task exceptions SILENT"
-    trap. A ``docker restart`` near the close (which preserves the log, unlike a
-    recreate) then closes the span over the dead stretch. The real
-    ``futures-monitor.155535.log`` holds exactly such a banner.
+    The orphan-task route to it is **closed** as of PR #776: both monitor
+    daemons run one loop on ``shared/streaming/stage.py``, so the consume loop
+    can no longer die while the process stays up — it used to create
+    ``_consume_loop`` as a task and await it only in ``finally``, which on a
+    raise left the task dead and unretrieved (the project's own "asyncio task
+    exceptions SILENT" trap) while ``_status_loop`` kept the container alive.
+
+    This test keeps its subject, because the *shape* it pins never depended on
+    that one route: a wedged handler (the same ``msg_id`` redelivered, nothing
+    acked) and a genuinely silent upstream both still reach one proof bracketed
+    by two banners. A ``docker restart`` near the close (which preserves the
+    log, unlike a recreate) still closes the span over the dead stretch, and the
+    real ``futures-monitor.155535.log`` holds exactly such a banner.
     """
     write_log(
         day_dir,
@@ -2218,3 +2224,77 @@ def test_report_root_override_keeps_the_configured_root_untouched(
     assert not list(
         (configured / DAY.isoformat()).glob("observation-completeness.*.json")
     )
+
+
+# ---------------------------------------------------------------------------
+# The poison-fill overcount: reported, not hidden (PR #776)
+# ---------------------------------------------------------------------------
+
+
+def dropped(minutes: int, stream: str, msg_id: str) -> str:
+    """One ``stream_message_dropped`` as the migrated monitor writes it."""
+    return (
+        f"{at(minutes)} ERROR services.futures_monitor.daemon "
+        f"event=stream_message_dropped stream={stream} "
+        f"consumer_group=futures_monitor worker_id=futures_monitor-abc-1 "
+        f"msg_id={msg_id} reason=handler_exception signal_id=s-poison"
+    )
+
+
+def test_a_dropped_fill_is_counted_as_a_fill_and_the_row_says_so(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """A fill whose handler raised still inflates ``fills``; ``dropped`` discloses it.
+
+    ``services/futures_monitor/daemon.py``'s ``handle_message`` catches a raising
+    handler, logs ``stream_message_dropped``, and returns ``True`` so the
+    framework ACKs — deliberately, to keep drop-and-continue. The stage then
+    emits ``stream_message_processed ack=true`` for the same ``msg_id``, and the
+    ``fills`` pattern counts it.
+
+    Correcting the count needs msg_id correlation the harvester does not do
+    (issue #767, design step 3). Until then the row must at least *say* a drop
+    happened: an overcounted fill is otherwise indistinguishable from a
+    correctly consumed one, so Gate 1 reporting 3 fills against a ledger showing
+    2 trades gives the reconciler no reason to suspect the counter.
+    """
+    healthy_producer(day_dir, candidates=3)
+    write_log(day_dir, "futures-risk-filter", consumed_through("futures-risk-filter"))
+    write_log(day_dir, "futures-order-router", consumed_through("futures-order-router"))
+    stream, _group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        consumed_through("futures-monitor")
+        + [
+            # the poison fill: acked (so counted as a fill) and disclosed
+            processed(60, stream, "futures_monitor", "poison-1"),
+            dropped(60, stream, "poison-1"),
+        ],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+
+    fills = len(session_minutes()) + 1
+    assert result.counters["fills"] == fills
+    assert result.counters["dropped"] == 1
+    # the row carries the correction term next to the number it corrects
+    assert f"-> {fills} -> 1" in row
+
+
+def test_a_quiet_healthy_day_reports_zero_dropped(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The counter must stay silent when nothing was dropped.
+
+    Guards the obvious failure of a disclosure counter: one that always fires
+    is read as noise and stops being read at all.
+    """
+    healthy_producer(day_dir, candidates=3)
+    live_consumers(day_dir)
+
+    result = observe(config)
+
+    assert result.counters["dropped"] == 0
+    assert result.verdict == mod.VERDICT_COMPLETE

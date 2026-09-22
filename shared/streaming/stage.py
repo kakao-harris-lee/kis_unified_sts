@@ -10,6 +10,15 @@ ACK behavior. Subclasses implement ``handle_message`` (return ``True`` ⇒ the
 framework XACKs; ``False`` ⇒ leave the message pending for retry) and may
 override the optional hooks ``on_startup`` / ``pre_iteration_gate`` /
 ``post_poll`` / ``on_shutdown``.
+
+Both loops emit a periodic ``stream_consumer_alive`` heartbeat so that a stage
+with no traffic still proves it is running — see :class:`_LivenessHeartbeat`.
+That evidence is emitted when a poll *returns*, so ``xread_block_ms`` must be
+positive: Redis' ``BLOCK 0`` blocks indefinitely, and an idle stage would then
+never come back to say anything. Both constructors refuse a non-positive value
+(:func:`_validate_poll_block`) — ``services/order_router`` also refuses it at
+its config field, but that guards one of the seven call sites, and the
+invariant belongs where every caller lands.
 """
 
 from __future__ import annotations
@@ -18,10 +27,13 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from enum import StrEnum
-from typing import Any, final
+from typing import Any, ClassVar, final
 
+from pydantic import Field
+
+from shared.config.base import ServiceConfigBase
 from shared.streaming.audit import (
     RateLimitedLog,
     decode_stream_id,
@@ -30,6 +42,190 @@ from shared.streaming.audit import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Mirror of ``config/f9_observation.yaml::observation_max_gap_seconds`` (1800):
+#: the largest gap that harvester tolerates between two proofs before it renders
+#: a service ``stale_observation``.
+#:
+#: It lives in code rather than being read from that YAML because a live
+#: consumer must not fail to start over an ops harvest config, and because a
+#: bound config can raise is not a bound. ``tests/unit/streaming/
+#: test_stream_stage_heartbeat.py`` reads both real sources and fails if this
+#: copy ever drifts above the harvester's.
+#:
+#: **This is the gap bound, not the interval ceiling** — see
+#: :func:`max_heartbeat_interval_seconds`.
+OBSERVATION_MAX_GAP_SECONDS = 1800.0
+
+#: How much a measured gap can exceed the real one, in seconds.
+#:
+#: ``scripts/ops/f9_observation_harvest.py:769`` parses log timestamps with
+#: ``"%Y-%m-%d %H:%M:%S"`` — sub-second parts are dropped — so two lines 1800.4s
+#: apart can be stamped 1800 and 1801 and measure as 1801. One second of
+#: truncation error is therefore part of the derivation, not padding. (Its
+#: comparison at ``:916`` is ``> max_gap_seconds``, so a measured gap of exactly
+#: the bound passes, which is why the ceiling below is inclusive.)
+TIMESTAMP_RESOLUTION_SECONDS = 1.0
+
+
+def max_heartbeat_interval_seconds(poll_block_seconds: float) -> float:
+    """Largest interval whose worst-case *measured gap* still clears the bound.
+
+    The harvester measures the gap between two emitted lines, not the configured
+    interval, and those are not the same number:
+
+    - a heartbeat becomes due *during* a poll and is emitted only when the next
+      poll returns, so an idle loop adds a full ``xread_block_ms`` wait, and
+    - the measurement itself can round up by :data:`TIMESTAMP_RESOLUTION_SECONDS`.
+
+    An interval of 1799 with the shipped 2s block produces gaps measuring ~1801
+    — over the bound, and ``stale_observation`` on a healthy day, which is the
+    exact false verdict this heartbeat exists to delete.
+
+    **Why the block is the only wait worth subtracting.** A busy loop also
+    spends handler time before the next poll returns, and arithmetically that
+    can exceed the bound (ten handlers at 0.5s add 5s: 1797 + 2 + 5 = 1804).
+    It cannot move the *verdict*, because a loop busy enough for handler time
+    to matter is emitting ``stream_message_processed`` per message — the
+    harvester's proof of consumption — right after each handler returns, so the
+    long interval is filled with proofs throughout. A long gap requires no
+    traffic, and a loop with no traffic spends its time in exactly one place:
+    the block this subtracts.
+    """
+    return (
+        OBSERVATION_MAX_GAP_SECONDS - poll_block_seconds - TIMESTAMP_RESOLUTION_SECONDS
+    )
+
+
+class StreamStageConfig(ServiceConfigBase):
+    """Consume-loop knobs, from ``config/streaming.yaml`` section ``consumer_stage``.
+
+    Same shape as :class:`shared.streaming.approval_gate.ApprovalGateConfig` in
+    this package: a ``ServiceConfigBase`` with a file, a section and an env
+    prefix, so an operator changes behaviour by editing YAML or setting
+    ``CONSUMER_STAGE_*`` — never by editing Python (CLAUDE.md:
+    configuration-driven only).
+
+    The stage constructors keep ``heartbeat_interval_seconds`` as a parameter,
+    so a service that wants its own value still injects one; this supplies the
+    default when it does not.
+    """
+
+    _default_config_file: ClassVar[str] = "streaming.yaml"
+    _default_section: ClassVar[str] = "consumer_stage"
+    _env_prefix: ClassVar[str] = "CONSUMER_STAGE_"
+
+    # `lt` is the coarse bound: a config cannot know a stage's xread_block_ms,
+    # so the exact per-stage ceiling (gap bound minus that block) is enforced
+    # where the value lands, in _LivenessHeartbeat.__init__. This catches the
+    # obviously-wrong value at the boundary; that catches the subtly-wrong one.
+    heartbeat_interval_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        lt=OBSERVATION_MAX_GAP_SECONDS,
+        description=(
+            "Seconds between stream_consumer_alive heartbeats. The observed gap "
+            "is this plus one poll block, and must clear "
+            "config/f9_observation.yaml::observation_max_gap_seconds."
+        ),
+    )
+
+    @classmethod
+    def load(cls) -> StreamStageConfig:
+        """Load the section, falling back to field defaults with a WARNING.
+
+        Deliberately not ``from_yaml()`` bare: this knob only governs an
+        observability line, and refusing to start a live consumer because an
+        ops file is missing or holds a bad value would be a worse failure than
+        the one it guards. The WARNING carries the traceback, so a typo is
+        named rather than swallowed.
+        """
+        try:
+            return cls.from_yaml(apply_env_overrides=True)
+        except Exception:
+            logger.warning(
+                format_audit_kv(
+                    event="stream_stage_config_load_failed",
+                    config_file=cls._default_config_file,
+                    section=cls._default_section,
+                ),
+                exc_info=True,
+            )
+            return cls()
+
+
+def _resolve_heartbeat_interval(
+    explicit_seconds: float | None,
+    *,
+    poll_block_seconds: float,
+    consumer_group: str,
+) -> float:
+    """Pick the interval a stage will use, clamping an *ops* value if needed.
+
+    Two sources, two failure kinds, two answers:
+
+    - **Explicitly passed** (a service supplying its own value in code): left
+      exactly as given, so ``_LivenessHeartbeat`` raises on an out-of-range one.
+      That is a programming error, and it should stop a test, not a session.
+    - **From YAML or env**: clamped to the ceiling with a WARNING, never raised.
+      This knob governs one observability line, so killing a live consumer over
+      it would be a worse failure than the one the bound guards — the same
+      reason :meth:`StreamStageConfig.load` degrades instead of raising. The
+      bound added to close the 1799 hole must not reintroduce, through the
+      operator lever it ships with, the crash that policy exists to prevent.
+
+    A poll block so large that no positive interval fits (>= ~1799s) is left to
+    raise, and — this is the part worth stating — it is left to raise *without*
+    a clamp line. There is no honest value to clamp to there: the ceiling is
+    zero or negative, so the line would advertise applying an interval that
+    cannot be applied and is not even positive. A log that lies on a path nobody
+    takes is still a log that lies, which is the whole premise of this file. The
+    wrong knob in that case is the block, and the exception says so.
+    """
+    if explicit_seconds is not None:
+        return explicit_seconds
+
+    configured = StreamStageConfig.load().heartbeat_interval_seconds
+    ceiling = max_heartbeat_interval_seconds(poll_block_seconds)
+    if configured <= ceiling or ceiling <= 0:
+        return configured
+
+    logger.warning(
+        format_audit_kv(
+            event="heartbeat_interval_clamped",
+            consumer_group=consumer_group,
+            configured_seconds=configured,
+            clamped_seconds=ceiling,
+            poll_block_seconds=poll_block_seconds,
+            observation_max_gap_seconds=OBSERVATION_MAX_GAP_SECONDS,
+        )
+    )
+    return ceiling
+
+
+def _validate_poll_block(xread_block_ms: int) -> None:
+    """Refuse a poll block that would silence the heartbeat forever.
+
+    Redis' ``BLOCK 0`` waits indefinitely, so a stage configured that way parks
+    in XREADGROUP and never reaches :meth:`_LivenessHeartbeat.record_poll` on a
+    quiet stream — the process would look exactly like the dead consumer the
+    heartbeat exists to distinguish, and it would look that way *while healthy*.
+    A negative value is not a Redis argument at all.
+
+    Enforced in both constructors rather than only at
+    ``services/order_router/config.py``'s ``gt=0`` field, because that field
+    covers one caller: ``shared/scoring/config.py`` carries a bare ``int``
+    settable from ``NEWS_SCORING_*``, three services pass a literal, and the two
+    monitor daemons pass their own module constant. Every one of them lands
+    here.
+    """
+    if xread_block_ms <= 0:
+        raise ValueError(
+            "xread_block_ms must be positive: Redis' BLOCK 0 blocks forever, so "
+            "an idle stage would never return to emit stream_consumer_alive — "
+            f"the liveness evidence this loop exists to produce; got "
+            f"{xread_block_ms}"
+        )
 
 
 def _duration_ms(started_at: float) -> int:
@@ -287,6 +483,137 @@ def _log_ack_failed_message(
     )
 
 
+class _LivenessHeartbeat:
+    """Periodic proof that a consume loop is still turning.
+
+    The idle path of a consumer — read, no messages, ``continue`` — emitted
+    nothing at any log level, so "healthy but no traffic" and "the consume task
+    died hours ago" were the same log: empty. That is how both monitor daemons
+    went two days blind (2026-09-17/18) with ``RestartCount=0``, and it is why
+    a quiet session harvests as ``PARTIAL`` today. ``LOG_LEVEL=DEBUG`` does not
+    help — the gap is in the code path, not the level — so this is INFO:
+    evidence, not diagnostics.
+
+    ``polls`` and ``messages`` are both carried because they answer different
+    questions. ``polls>0 messages=0`` is "alive, watching, no traffic"; no line
+    at all is the alarm, since a loop that is not turning cannot emit one.
+    ``polls`` counts *completed* reads only — a failing read never reaches here
+    and has its own rate-limited error line, so a heartbeat never launders one.
+
+    **Every count here is about delivery, not about progress.** ``messages``
+    and ``seconds_since_delivery`` are recorded when Redis hands this worker
+    entries, before ``handle_message`` runs, so a handler that keeps returning
+    ``False`` — the supported "transient failure, leave it pending" contract —
+    still counts as delivery and still resets the delivery clock. A handler
+    stuck that way has the *same* ``msg_id`` redelivered by XAUTOCLAIM every
+    ``pending_retry_idle_ms``, and each redelivery counts again, so a wedged
+    consumer can sit at ``messages=1 seconds_since_delivery=0`` indefinitely
+    with nothing acked. That is deliberate for a *liveness* signal: the loop
+    did turn and Redis did answer, which is exactly the claim being made.
+    Whether the work succeeded is a different claim with its own evidence
+    (``stream_message_processed`` per message, ``stream_message_failed`` on
+    error, and the pending-entry list a stuck handler grows). A heartbeat must
+    not be read as "this consumer is making progress" — and an alert must not
+    be keyed on ``seconds_since_delivery`` staying low, which is precisely what
+    that wedged loop looks like; it says only "this consumer is still there".
+
+    Deliberately not built on :class:`RateLimitedLog`. That primitive reports
+    an exception with its traceback, counts what it suppressed, and treats
+    ``reset()`` as "the guarded operation recovered". A heartbeat has no
+    exception to report, and the number of heartbeats it skipped is not news —
+    the poll and message counts already describe the interval. What is left of
+    that primitive once those are dropped is a "last emitted at" timestamp,
+    which is exactly what this holds.
+    """
+
+    def __init__(
+        self,
+        *,
+        consumer_group: str,
+        worker_id: str,
+        streams: Iterable[str | bytes],
+        interval_seconds: float,
+        poll_block_seconds: float,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        # Checked here, not at the config boundary, because this is where every
+        # supplier lands: the YAML default, an env override, and a service that
+        # passes its own value at the call site. A bound that only guarded the
+        # shipped default would miss the case that actually breaks the harvest —
+        # one service configured past it while the default stays innocent.
+        #
+        # `poll_block_seconds` has no default on purpose: the ceiling depends on
+        # it, and a caller that forgot to say how long its poll blocks would get
+        # a ceiling that is too loose by exactly the amount it forgot.
+        if poll_block_seconds < 0:
+            raise ValueError("poll_block_seconds must not be negative")
+        ceiling = max_heartbeat_interval_seconds(poll_block_seconds)
+        if not 0 < interval_seconds <= ceiling:
+            raise ValueError(
+                f"heartbeat_interval_seconds must be >0 and <={ceiling} "
+                f"(observation_max_gap {OBSERVATION_MAX_GAP_SECONDS} minus the "
+                f"{poll_block_seconds}s poll block and "
+                f"{TIMESTAMP_RESOLUTION_SECONDS}s of timestamp truncation, "
+                "because what is scored is the measured gap, not the interval); "
+                f"got {interval_seconds}"
+            )
+        self.consumer_group = consumer_group
+        self.worker_id = worker_id
+        self.streams = ",".join(decode_stream_id(stream) for stream in streams)
+        self.interval_seconds = interval_seconds
+        self._clock = clock or time.monotonic
+        self._interval_started_at: float | None = None
+        self._polls = 0
+        self._messages = 0
+        self._last_delivery_at: float | None = None
+
+    def record_poll(self, message_count: int) -> None:
+        """Count one completed poll, emitting the heartbeat when one is due.
+
+        ``message_count`` is what the poll *delivered*, counted before the
+        handler runs — see the class docstring on delivery versus progress.
+
+        The first call opens the interval instead of emitting: a heartbeat
+        reports what happened over ``interval_seconds``, and the loop has not
+        run that long yet. Every later call is free — an integer add and one
+        clock read — so it is safe on the block-free path where a busy stage
+        polls thousands of times a second.
+        """
+        now = self._clock()
+        self._polls += 1
+        self._messages += message_count
+        if message_count:
+            self._last_delivery_at = now
+
+        if self._interval_started_at is None:
+            self._interval_started_at = now
+            return
+        if now - self._interval_started_at < self.interval_seconds:
+            return
+
+        logger.info(
+            format_audit_kv(
+                event="stream_consumer_alive",
+                streams=self.streams,
+                consumer_group=self.consumer_group,
+                worker_id=self.worker_id,
+                polls=self._polls,
+                messages=self._messages,
+                # Absent until this worker has been *delivered* something: "0
+                # seconds since a message that never arrived" would be a lie,
+                # and the bare `messages=0` already says the interval was quiet.
+                seconds_since_delivery=(
+                    None
+                    if self._last_delivery_at is None
+                    else int(now - self._last_delivery_at)
+                ),
+            )
+        )
+        self._interval_started_at = now
+        self._polls = 0
+        self._messages = 0
+
+
 class StreamStage(ABC):
     """Abstract base for a Redis consumer-group daemon stage."""
 
@@ -301,7 +628,10 @@ class StreamStage(ABC):
         batch_size: int,
         xreadgroup_error_sleep_seconds: float = 0.5,
         pending_retry_idle_ms: int = 60_000,
+        heartbeat_interval_seconds: float | None = None,
+        heartbeat_clock: Callable[[], float] | None = None,
     ) -> None:
+        _validate_poll_block(xread_block_ms)
         self.redis = redis
         self.input_stream = input_stream
         self.consumer_group = consumer_group
@@ -314,6 +644,20 @@ class StreamStage(ABC):
         self._pending_claim_disabled = pending_retry_idle_ms < 0
         self._xautoclaim_error_log = RateLimitedLog()
         self._xreadgroup_error_log = RateLimitedLog()
+        self._heartbeat = _LivenessHeartbeat(
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            streams=(input_stream,),
+            interval_seconds=_resolve_heartbeat_interval(
+                heartbeat_interval_seconds,
+                poll_block_seconds=xread_block_ms / 1000,
+                consumer_group=consumer_group,
+            ),
+            # The heartbeat becomes due during a poll and is emitted when the
+            # next one returns, so the block is part of every measured gap.
+            poll_block_seconds=xread_block_ms / 1000,
+            clock=heartbeat_clock,
+        )
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -493,6 +837,11 @@ class StreamStage(ABC):
 
                 claimed = await self._claim_pending_messages()
                 if claimed:
+                    # Emitted from the loop, never from ``post_poll``: that hook
+                    # is overridden by subclasses (services/news_scorer), and an
+                    # override that forgets ``super()`` would silently delete the
+                    # only evidence this stage is alive.
+                    self._heartbeat.record_poll(len(claimed))
                     await self.post_poll(len(claimed))
                     await self._process_messages(claimed, claimed=True)
                     continue
@@ -527,6 +876,10 @@ class StreamStage(ABC):
                 self._xreadgroup_error_log.reset()
 
                 count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
+                # Before ``post_poll`` and above the idle ``continue``: the idle
+                # poll is the case with no other evidence at all, and it is the
+                # one this line exists for.
+                self._heartbeat.record_poll(count)
                 await self.post_poll(count)
 
                 if not messages:
@@ -556,9 +909,12 @@ class MultiStreamStage(ABC):
         batch_size: int,
         xreadgroup_error_sleep_seconds: float = 0.5,
         pending_retry_idle_ms: int = 60_000,
+        heartbeat_interval_seconds: float | None = None,
+        heartbeat_clock: Callable[[], float] | None = None,
     ) -> None:
         if not input_streams:
             raise ValueError("input_streams must not be empty")
+        _validate_poll_block(xread_block_ms)
         self.redis = redis
         self.input_streams = list(input_streams)
         self.consumer_group = consumer_group
@@ -573,6 +929,23 @@ class MultiStreamStage(ABC):
         self._pending_claim_disabled = pending_retry_idle_ms < 0
         self._xautoclaim_error_log = RateLimitedLog()
         self._xreadgroup_error_log = RateLimitedLog()
+        self._heartbeat = _LivenessHeartbeat(
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            # Every input stream is named: one XREADGROUP covers them all, so a
+            # heartbeat that quoted only the first would understate what this
+            # worker is proving it still reads.
+            streams=self.input_streams,
+            interval_seconds=_resolve_heartbeat_interval(
+                heartbeat_interval_seconds,
+                poll_block_seconds=xread_block_ms / 1000,
+                consumer_group=consumer_group,
+            ),
+            # The heartbeat becomes due during a poll and is emitted when the
+            # next one returns, so the block is part of every measured gap.
+            poll_block_seconds=xread_block_ms / 1000,
+            clock=heartbeat_clock,
+        )
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -743,6 +1116,9 @@ class MultiStreamStage(ABC):
                     count = sum(
                         len(messages) for _stream, messages in claimed_by_stream
                     )
+                    # From the loop, not ``post_poll`` — see the same call in
+                    # ``StreamStage.run``.
+                    self._heartbeat.record_poll(count)
                     await self.post_poll(count)
                     for stream, messages in claimed_by_stream:
                         await self._process_messages(stream, messages, claimed=True)
@@ -779,6 +1155,7 @@ class MultiStreamStage(ABC):
                 self._xreadgroup_error_log.reset()
 
                 count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
+                self._heartbeat.record_poll(count)
                 await self.post_poll(count)
 
                 if not messages:
