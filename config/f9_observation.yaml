@@ -34,9 +34,12 @@ f9_observation:
   # written: a harvest whose coverage brackets the session says "we watched",
   # never "it was working". Without this bound one surviving
   # `stream_message_processed` plus a startup and a shutdown banner — three
-  # lines — rendered a whole session `consumed (COMPLETE)`, which is reachable
-  # by `services/futures_monitor/daemon.py`'s `_consume_loop` dying as an
-  # unretrieved task while `_status_loop` keeps the process up.
+  # lines — rendered a whole session `consumed (COMPLETE)`. That was reachable
+  # while `services/futures_monitor/daemon.py` ran its consume loop as an
+  # unretrieved task whose death left `_status_loop` holding the process up;
+  # both monitors now run one loop on `shared/streaming/stage.py`, so the
+  # consume loop cannot die without ending the process. The bound stays: a
+  # wedged handler and a silent upstream still reach the same silence.
   #
   # 1800s is a policy knob, not a measurement: long enough that a normal lull in
   # sparse shadow traffic does not trip it, short enough that a wedged consumer
@@ -55,7 +58,20 @@ f9_observation:
   # surface, and it stops being noise once the idle branch emits a heartbeat.
   observation_max_gap_seconds: 1800
   # Counters printed in the observation-log row's third column, in order.
-  row_counters: ["candidates", "final", "fills"]
+  #
+  # The first three are the pipeline funnel and narrow monotonically:
+  # candidates -> final -> fills. `dropped` is NOT a fourth funnel stage — it is
+  # a correction term on `fills`, listed here rather than left in the JSON
+  # sidecar because the reconciliation it exists for ("Gate 1 says 3 fills, the
+  # ledger shows 2") happens while reading this row. See the `dropped` counter
+  # under futures-monitor for what it does and does not bound.
+  #
+  # Adding it also makes a dropped message count toward `has_evidence`
+  # (f9_observation_harvest.py: `any(self.counters.values())`), which only
+  # matters on a day both holiday sources call closed. That is correct: a
+  # dropped message means traffic arrived, so the day was not dead — the exact
+  # case the NO_SESSION override exists for.
+  row_counters: ["candidates", "final", "fills", "dropped"]
 
   services:
     - name: futures-decision-engine
@@ -165,6 +181,32 @@ f9_observation:
       container: futures-monitor
       role: consumer
       harvest_mode: since
+      # INSTRUMENTATION BOUNDARY, 2026-09-23 (PR #776). This daemon moved from a
+      # hand-rolled consume loop onto shared/streaming/stage.py's
+      # MultiStreamStage, and what it emits changed with it. `reports/f9-gate1/`
+      # is the durable record — Redis streams carry a 24h TTL — so a session
+      # re-scoring an old day is reading logs written by a different daemon.
+      # Three facts, in the order they will bite:
+      #
+      # 1. `fills: 0` ON EVERY PRE-DEPLOY DAY IS A STRUCTURAL ZERO, NOT A
+      #    MEASUREMENT. The counter below reads a line the old loop never
+      #    emitted, so the number had no emitter behind it. Do not quote a
+      #    pre-deploy day as "0 shadow fills observed"; it is a null result. A
+      #    zero looks like data, which is why this one misleads.
+      # 2. Pre-deploy day directories hold ZERO `stream_message_processed`
+      #    lines, and the `observed` pattern below is unchanged, so re-scoring
+      #    an old day returns the identical verdict it returned before — there
+      #    is no inflation hazard. The hazard is interpretive: that verdict
+      #    reads as a daemon health problem when it was an instrumentation gap.
+      # 3. BLIND DETECTION IS CONTINUOUS ACROSS THE BOUNDARY and needs no
+      #    caveat: pre-deploy days carry `event=monitor_stream_read_error`,
+      #    post-deploy days `xreadgroup error; sleeping`, and the shared
+      #    `&stream_consumer_blind` anchor lists both.
+      #
+      # THE BOUNDARY IS THE DEPLOY DATE, NOT THE MERGE DATE — the day the
+      # container was recreated on the new image. `reports/f9-gate1/<KST date>/`
+      # is date-keyed, so that single date is the whole discriminator.
+      # deploy_date: TBD  # <- fill in when paper is redeployed; do not guess
       observed:
         - 'event=stream_message_processed .*\bconsumer_group=futures_monitor\b'
       blind: *stream_consumer_blind
@@ -172,8 +214,46 @@ f9_observation:
         # Every shadow fill reaches the ledger through this consumer, so the
         # fill count and the monitor's proof-of-consumption are the same line.
         # That is why a blind monitor cannot report "0 fills" as a measurement.
+        #
+        # TWO KNOWN DEFECTS IN THIS COUNT, both owned by step 3 of
+        # docs/plans/2026-09-19-stream-consumer-liveness-and-monitor-dedup-design.md,
+        # and both to be closed with issue #767 (same family: the count reads
+        # one line and ignores what the next one says about it).
+        #
+        # 1. STRUCTURAL ZERO BEFORE PR #776 IS DEPLOYED. The hand-rolled loop
+        #    never emitted `stream_message_processed` at all, so every date
+        #    directory harvested before the deploy carries `fills: 0` with no
+        #    emitter behind it. That is not "no shadow fills observed"; it is
+        #    "nothing could have been counted". The boundary is the DEPLOY date
+        #    (the day the container was recreated on the new image), not the
+        #    merge date, because the report tree is keyed by KST date.
+        #
+        # 2. OVER-COUNT AFTER IT IS. services/futures_monitor/daemon.py's
+        #    handle_message catches a raising handler, logs
+        #    `stream_message_dropped`, and returns True so the framework ACKs —
+        #    deliberately, to preserve drop-and-continue. The stage then emits
+        #    `stream_message_processed ack=true` for that same msg_id, and this
+        #    pattern counts it. A fill that was never processed therefore
+        #    inflates a number Gate 1 reports as a measurement. The evidence to
+        #    correct it is in the same harvest (an ERROR-level
+        #    `stream_message_dropped` carrying the same msg_id and stream), but
+        #    subtracting it needs msg_id correlation the harvester does not do
+        #    yet — which is exactly the feature #767 needs. Do not "fix" this by
+        #    changing the catch: re-raising would make the daemon die on the
+        #    first malformed record, trading one bad count for total blindness.
+        #
+        #    Until then `dropped` below REPORTS the overcount instead of letting
+        #    it hide inside `fills`. It is an upper bound on the correction, not
+        #    the correction: it counts drops on both input streams, so a dropped
+        #    *signal* inflates it without having inflated `fills`. That is the
+        #    safe direction — it can only make a reconciler look, never stop
+        #    them looking. Without it, an overcounted fill is indistinguishable
+        #    from a correctly consumed one: Gate 1 reports 3 fills, the ledger
+        #    shows 2 trades, and nothing in the row suggests the counter.
         fills:
           pattern: 'event=stream_message_processed stream=order\.fill\.futures\.shadow\b'
+        dropped:
+          pattern: 'event=stream_message_dropped\b'
 
     - name: trader-futures
       container: trader-futures
