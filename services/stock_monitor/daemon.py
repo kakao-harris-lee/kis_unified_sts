@@ -5,16 +5,20 @@ state (positions/trades/signals/status) via TradingStatePublisher, plus
 important-only alerts. Pairs entry<->exit fills (by code) for closed trades,
 correlates final signals (by signal_id) for strategy/name, marks positions to
 market, and recovers open state from the daemon positions hash on startup.
+
+The transport — XGROUP CREATE, XREADGROUP, vanished-group recovery, XACK and
+the liveness heartbeat — is :class:`shared.streaming.stage.MultiStreamStage`,
+not code in this file. What remains here is the stock domain: fill/signal
+routing, entry<->exit pairing, fee-rate PnL, and the dashboard aggregates.
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime, time
+from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,25 +32,31 @@ from services.stock_monitor.serializers import (
     parse_final_signal,
 )
 from shared.streaming.audit import (
-    RateLimitedLog,
     decode_stream_id,
     extract_audit_fields,
     format_audit_kv,
 )
-from shared.streaming.stage import (
-    ConsumerGroupEnsure,
-    is_vanished_stream_read_error,
-    recover_missing_consumer_group,
-)
+from shared.streaming.stage import MultiStreamStage
 from shared.utils.calc import calc_realized_pnl
 
 logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
 _CONSUME_ERROR_SLEEP_SECONDS = 0.5
+#: Same literals the hand-rolled loop passed to XREADGROUP before the migration.
+_XREAD_BLOCK_MS = 2000
+_BATCH_SIZE = 50
+#: Pending-entry reclaim (XAUTOCLAIM) stays off, which is what this daemon did
+#: before the migration and what it must keep doing. A monitor's handlers are
+#: not idempotent in the way redelivery needs: a redelivered entry fill fires
+#: ``alert_sink.on_entry`` a second time and resets the high/low watermarks to
+#: the entry price, discarding the progress the position has made. Turning
+#: reclaim on is a deliberate behaviour change with its own evidence, not a
+#: side effect of moving onto the shared stage.
+_PENDING_RETRY_DISABLED_MS = -1
 
 
-class StockMonitorDaemon:
+class StockMonitorDaemon(MultiStreamStage):
     """Bridge daemon: daemon streams -> dashboard keys + alerts."""
 
     def __init__(
@@ -68,16 +78,24 @@ class StockMonitorDaemon:
         health_stale_seconds: float = 600.0,
         health_cooldown_seconds: float = 1800.0,
         digest_time_kst: str = "15:40",
+        status_clock: Callable[[], float] | None = None,
     ) -> None:
-        self.redis = redis
+        super().__init__(
+            redis=redis,
+            input_streams=[fill_stream, signal_stream],
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            xread_block_ms=_XREAD_BLOCK_MS,
+            batch_size=_BATCH_SIZE,
+            xreadgroup_error_sleep_seconds=_CONSUME_ERROR_SLEEP_SECONDS,
+            pending_retry_idle_ms=_PENDING_RETRY_DISABLED_MS,
+        )
         self.feed = feed
         self.publisher = publisher
         self.alert_sink = alert_sink
         self.positions_key = positions_key
         self.fill_stream = fill_stream
         self.signal_stream = signal_stream
-        self.consumer_group = consumer_group
-        self.worker_id = worker_id
         self.fee_rate = fee_rate
         self.status_interval = status_interval
         self.signal_meta_max = signal_meta_max
@@ -87,11 +105,13 @@ class StockMonitorDaemon:
         self.digest_time_kst = digest_time_kst
         self._open: dict[str, dict[str, Any]] = {}
         self._signal_meta: OrderedDict[str, dict[str, Any]] = OrderedDict()
-        self._stop = asyncio.Event()
         self._last_health_alert_ts: float = 0.0
         self._digest_emitted_date: str = ""
         self._digest_reset_date: str = ""
-        self._xreadgroup_error_log = RateLimitedLog()
+        # Monotonic, and separate from ``now_fn``: this paces a cadence, while
+        # ``now_fn`` answers "what KST time is it" for the digest/health windows.
+        self._status_clock = status_clock or monotonic
+        self._last_status_at: float | None = None
 
     # -- handlers --------------------------------------------------------- #
 
@@ -358,153 +378,99 @@ class StockMonitorDaemon:
                     )
                     self._last_health_alert_ts = now_ts
 
-    # -- loops ------------------------------------------------------------ #
+    # -- MultiStreamStage hooks ------------------------------------------- #
 
-    async def run(self) -> None:
-        """Run the daemon: start feed, ensure groups, recover, then loop.
+    async def on_startup(self) -> None:
+        """Start the tick feed and rebuild open positions from the hash.
 
-        Creates the consumer groups (idempotent), recovers open positions, and
-        runs the consume + status loops until ``stop()`` is signalled, then
-        cancels both loops and stops the feed.
+        Runs *before* the stage ensures the consumer groups, where the previous
+        hand-rolled ``run()`` recovered after creating them. The order does not
+        matter: both create with ``id="0", mkstream=True``, so the group reads
+        the stream from the beginning either way, and recovery only touches the
+        positions hash and the dashboard keys.
         """
         await self.feed.start()
-        for stream in (self.fill_stream, self.signal_stream):
-            with contextlib.suppress(Exception):
-                await self.redis.xgroup_create(
-                    stream, self.consumer_group, id="0", mkstream=True
-                )
         await self.recover_open_positions()
-        consumer = asyncio.create_task(self._consume_loop())
-        status = asyncio.create_task(self._status_loop())
-        try:
-            await self._stop.wait()
-        finally:
-            consumer.cancel()
-            status.cancel()
-            for t in (consumer, status):
-                with contextlib.suppress(asyncio.CancelledError):
-                    await t
-            await self.feed.stop()
 
-    async def stop(self) -> None:
-        """Signal the run/consume/status loops to exit (idempotent)."""
-        self._stop.set()
+    async def pre_iteration_gate(self) -> bool:
+        """Run the status/MTM cadence, then always continue the loop.
 
-    async def _consume_loop(self) -> None:
-        """Read fill+signal streams via the consumer group and dispatch + ACK.
+        **This hook carries cadence work on purpose, and its name says gate.**
+        The daemon used to run the status tick as a second task, and that is
+        precisely how it could go blind: a consume task that died left
+        ``_status_loop`` publishing fresh status keys from a process that was
+        no longer reading anything (``RestartCount=0``, ``state: running``).
+        One loop makes death visible — if this returns, nothing publishes.
 
-        Blocks up to 2s per ``xreadgroup``; routes by stream name to
-        ``handle_fill`` / ``handle_signal``; handler exceptions are logged and
-        the message is still ACKed (poison-pill drop). Read errors back off 0.5s,
-        except a vanished stream (NOGROUP/UNBLOCKED), which recreates both groups
-        and retries immediately — but only when a recreate actually happened and
-        none failed; otherwise it takes the same error log + backoff.
+        Of the stage's hooks only this one runs on *every* iteration. The stage
+        takes a ``continue`` past ``post_poll`` whenever a read fails, so status
+        publishing hung off ``post_poll`` would stop during exactly the Redis
+        trouble an operator most wants status for. Today's ``_status_loop``
+        keeps ticking through read errors, and this keeps that property.
+
+        The contract is that ``False`` makes ``run()`` return, so this returns
+        ``True`` unconditionally and swallows what the cadence raises — the same
+        "status loop error; continuing" the second task logged.
+
+        Cadence is unchanged in intent and coarser in practice: an idle
+        iteration ends with a ``xread_block_ms`` (2s) poll, so a 5s interval
+        fires every ~6s rather than every 5s. The consumers of these keys are
+        the dashboard and a 600s staleness alert; neither can tell.
         """
-        while not self._stop.is_set():
-            try:
-                messages = await self.redis.xreadgroup(
-                    groupname=self.consumer_group,
-                    consumername=self.worker_id,
-                    streams={self.fill_stream: ">", self.signal_stream: ">"},
-                    count=50,
-                    block=2000,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if is_vanished_stream_read_error(exc):
-                    # Either stream can expire, and both are read in one
-                    # XREADGROUP, so the read fails as a unit and recovery has
-                    # to restore both (mkstream recreates the vanished key).
-                    # Skip the backoff only when a recreate actually happened
-                    # and none failed. Every other shape — a failed recreate,
-                    # or every group already present, which means the read
-                    # error was not a vanished group after all — falls through
-                    # to the error log + backoff below, so neither can become a
-                    # silent hot loop. Compare with ``is``: the outcomes are
-                    # truthy strings, so ``all(...)`` would always pass.
-                    outcomes = [
-                        await recover_missing_consumer_group(
-                            self.redis, stream, self.consumer_group
-                        )
-                        for stream in (self.fill_stream, self.signal_stream)
-                    ]
-                    created = any(o is ConsumerGroupEnsure.CREATED for o in outcomes)
-                    failed = any(o is ConsumerGroupEnsure.FAILED for o in outcomes)
-                    if created and not failed:
-                        await asyncio.sleep(0)
-                        continue
-                self._xreadgroup_error_log.exception(
-                    logger,
-                    format_audit_kv(
-                        event="monitor_stream_read_error",
-                        streams=f"{self.fill_stream},{self.signal_stream}",
-                        consumer_group=self.consumer_group,
-                        worker_id=self.worker_id,
-                        sleep_seconds=_CONSUME_ERROR_SLEEP_SECONDS,
-                    ),
-                )
-                await asyncio.sleep(_CONSUME_ERROR_SLEEP_SECONDS)
-                continue
-            self._xreadgroup_error_log.reset()
-            if not messages:
-                continue
-            for stream, msgs in messages:
-                name = decode_stream_id(stream)
-                for msg_id, data in msgs:
-                    handler_failed = False
-                    try:
-                        if name == self.fill_stream:
-                            await self.handle_fill(data)
-                        elif name == self.signal_stream:
-                            await self.handle_signal(data)
-                        else:
-                            logger.warning("unexpected stream %s", name)
-                    except Exception:
-                        handler_failed = True
-                        try:
-                            await self.redis.xack(name, self.consumer_group, msg_id)
-                        except Exception:
-                            logger.error(
-                                format_audit_kv(
-                                    event="stream_message_ack_failed",
-                                    stream=name,
-                                    consumer_group=self.consumer_group,
-                                    worker_id=self.worker_id,
-                                    msg_id=decode_stream_id(msg_id),
-                                    reason="handler_exception",
-                                    **extract_audit_fields(data),
-                                ),
-                                exc_info=True,
-                            )
-                            raise
-                        logger.exception(
-                            format_audit_kv(
-                                event="stream_message_dropped",
-                                stream=name,
-                                consumer_group=self.consumer_group,
-                                worker_id=self.worker_id,
-                                msg_id=decode_stream_id(msg_id),
-                                ack=True,
-                                reason="handler_exception",
-                                **extract_audit_fields(data),
-                            )
-                        )
-                    if not handler_failed:
-                        await self.redis.xack(name, self.consumer_group, msg_id)
-
-    async def _status_loop(self) -> None:
-        """Periodically mark to market + publish status every ``status_interval``.
-
-        Calls ``publish_status_and_mtm`` then ``_check_health_and_digest`` each
-        tick (errors logged, loop continues) and sleeps interruptibly until the
-        next tick or ``stop()``.
-        """
-        while not self._stop.is_set():
+        now = self._status_clock()
+        if self._last_status_at is None or (
+            now - self._last_status_at >= self.status_interval
+        ):
+            self._last_status_at = now
             try:
                 await self.publish_status_and_mtm()
                 await self._check_health_and_digest()
             except Exception:
                 logger.exception("status loop error; continuing")
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), timeout=self.status_interval)
+        return True
+
+    async def handle_message(
+        self,
+        stream: str | bytes,
+        msg_id: bytes,
+        fields: dict[bytes, bytes],
+    ) -> bool:
+        """Route one record to its handler; drop a poison message rather than die.
+
+        ``MultiStreamStage._process_messages`` re-raises whatever
+        ``handle_message`` throws, which ends ``run()`` — right for a stage
+        whose messages are orders, wrong for an observation daemon, where
+        losing every later record costs more than dropping one malformed one.
+        So the catch lives here and the framework is told to ACK (``True``),
+        which is the behaviour this daemon shipped with.
+
+        The dropped record is reported with the same ``stream_message_dropped``
+        event and traceback as before. It no longer asserts ``ack=true``: the
+        ACK happens after this returns, and the framework's own line for the
+        same ``msg_id`` — ``stream_message_processed ack=true``, or
+        ``stream_message_ack_failed`` — is the record of whether it landed.
+        """
+        name = decode_stream_id(stream)
+        try:
+            if name == self.fill_stream:
+                await self.handle_fill(fields)
+            elif name == self.signal_stream:
+                await self.handle_signal(fields)
+            else:
+                logger.warning("unexpected stream %s", name)
+        except Exception:
+            logger.exception(
+                format_audit_kv(
+                    event="stream_message_dropped",
+                    stream=name,
+                    consumer_group=self.consumer_group,
+                    worker_id=self.worker_id,
+                    msg_id=decode_stream_id(msg_id),
+                    reason="handler_exception",
+                    **extract_audit_fields(fields),
+                )
+            )
+        return True
+
+    async def on_shutdown(self) -> None:
+        await self.feed.stop()

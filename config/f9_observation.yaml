@@ -34,9 +34,12 @@ f9_observation:
   # written: a harvest whose coverage brackets the session says "we watched",
   # never "it was working". Without this bound one surviving
   # `stream_message_processed` plus a startup and a shutdown banner — three
-  # lines — rendered a whole session `consumed (COMPLETE)`, which is reachable
-  # by `services/futures_monitor/daemon.py`'s `_consume_loop` dying as an
-  # unretrieved task while `_status_loop` keeps the process up.
+  # lines — rendered a whole session `consumed (COMPLETE)`. That was reachable
+  # while `services/futures_monitor/daemon.py` ran its consume loop as an
+  # unretrieved task whose death left `_status_loop` holding the process up;
+  # both monitors now run one loop on `shared/streaming/stage.py`, so the
+  # consume loop cannot die without ending the process. The bound stays: a
+  # wedged handler and a silent upstream still reach the same silence.
   #
   # 1800s is a policy knob, not a measurement: long enough that a normal lull in
   # sparse shadow traffic does not trip it, short enough that a wedged consumer
