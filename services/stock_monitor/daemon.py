@@ -259,10 +259,15 @@ class StockMonitorDaemon(MultiStreamStage):
     async def publish_status_and_mtm(self) -> None:
         """Mark each open position to market and publish a daemon status row.
 
-        Iterates a snapshot of ``_open`` (concurrent fills from the consume loop
-        may mutate it across the ``get_current_price`` await), updates the
+        Iterates a snapshot of ``_open`` rather than the live dict, updates the
         running high/low watermarks, republishes each position with current
         price / unrealized PnL, then publishes an aggregate status dict.
+
+        That snapshot used to be load-bearing: the status task ran concurrently
+        with the consume loop, so a fill could mutate ``_open`` across the
+        ``get_current_price`` await. One loop now does both, so it is defensive
+        — it costs a shallow copy, and it is the guarantee a future second task
+        would need.
 
         The status row carries ``state="running"`` plus nested ``positions`` /
         ``strategies`` aggregates so the dashboard renders the decoupled stock
