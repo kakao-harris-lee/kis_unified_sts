@@ -435,12 +435,18 @@ artifacts, or written operator approval.
   close must each stay at or under `observation_max_gap_seconds`
   (`config/f9_observation.yaml`, 1800s; a gap of exactly 1800s passes); a
   service that fails it reads `consumed, no proof of consumption HH:MM-HH:MM`
-  and is never `consumed`. This is reachable, not hypothetical:
-  `services/futures_monitor/daemon.py` creates `_consume_loop` as a task and
-  awaits it only in `finally`, so if it raises, the task dies unretrieved while
-  `_status_loop` keeps the process up, and a `docker restart` near the close
-  (which preserves the log, unlike a recreate) closes the span over the dead
-  stretch.
+  and is never `consumed`.
+
+  The orphan-task route to that state is **closed** as of PR #776: both monitor
+  daemons run one loop on `shared/streaming/stage.py`, so the consume loop can
+  no longer die while the process stays up — it used to create `_consume_loop`
+  as a task and await it only in `finally`, so a raise there left the task dead
+  and unretrieved while `_status_loop` kept the container alive. **Do not spend
+  a cutover window hunting that orphan task; it cannot exist.** The bound still
+  earns its place: a wedged handler (redelivered the same `msg_id`, acking
+  nothing) and a genuinely silent upstream both reach the same silence, and a
+  `docker restart` near the close (which preserves the log, unlike a recreate)
+  still closes the span over a dead stretch.
 
   **The bound applies only to a traffic-driven proof.** A consumer's proof,
   `stream_message_processed`, is emitted once per message
