@@ -771,6 +771,19 @@ async def test_xack_failure_ends_run_instead_of_dying_as_an_orphan_task(
     nothing — ``RestartCount=0``, invisible to every health check. There is one
     loop now, so the exception leaves ``run()``, reaches ``main()``, and the
     container restart policy makes it visible.
+
+    **Promptness is the assertion, not the exception.** ``ConnectionError``
+    alone does not distinguish the fix from the defect: against pre-migration
+    code ``run()`` parks on ``_stop.wait()`` while the orphaned consume task
+    holds the error, a ``wait_for`` timeout cancels ``run()``, and the
+    ``finally``'s ``await t`` re-raises the *same* ``ConnectionError`` —
+    ``suppress(CancelledError)`` does not catch it. So a bare
+    ``pytest.raises(ConnectionError)`` is satisfied at teardown, two seconds
+    late, **by the very orphan-task behaviour this test claims is gone**
+    (measured: 2.00s pre-migration, 0.01s post). Waiting a bounded 0.5s and
+    asserting the task is already ``done`` is what separates "the loop ended"
+    from "teardown noticed" — 4x the post-migration time, 4x under the
+    pre-migration path.
     """
     daemon, _redis, _reader = wired
     redis = _OneMessageRedis(
@@ -791,8 +804,12 @@ async def test_xack_failure_ends_run_instead_of_dying_as_an_orphan_task(
     daemon.handle_signal = fail_handler
     caplog.set_level(logging.ERROR)
 
+    task = asyncio.create_task(daemon.run())
+    done, _pending = await asyncio.wait({task}, timeout=0.5)
+
+    assert done, "run() must end with the loop, not at teardown"
     with pytest.raises(ConnectionError):
-        await asyncio.wait_for(daemon.run(), timeout=2.0)
+        task.result()
 
     ack_log = next(
         m for m in _messages(caplog) if "event=stream_message_ack_failed" in m
