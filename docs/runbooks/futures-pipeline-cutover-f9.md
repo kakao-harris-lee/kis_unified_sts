@@ -435,12 +435,46 @@ artifacts, or written operator approval.
   close must each stay at or under `observation_max_gap_seconds`
   (`config/f9_observation.yaml`, 1800s; a gap of exactly 1800s passes); a
   service that fails it reads `consumed, no proof of consumption HH:MM-HH:MM`
-  and is never `consumed`. This is reachable, not hypothetical:
-  `services/futures_monitor/daemon.py` creates `_consume_loop` as a task and
-  awaits it only in `finally`, so if it raises, the task dies unretrieved while
-  `_status_loop` keeps the process up, and a `docker restart` near the close
-  (which preserves the log, unlike a recreate) closes the span over the dead
-  stretch.
+  and is never `consumed`.
+
+  **Instrumentation boundary, PR #776 — read this before re-scoring an old
+  day.** `futures-monitor` moved from a hand-rolled consume loop onto
+  `shared/streaming/stage.py`, and what it emits changed with it.
+  `reports/f9-gate1/` is the durable record (Redis streams expire after 24h), so
+  a session re-scoring a past date is reading logs written by a different
+  daemon. **The boundary is the deploy date — the day the container was
+  recreated on the new image — not the merge date**; the report tree is keyed by
+  KST date, so that single date is the whole discriminator.
+
+  - **`fills: 0` on every pre-deploy day is a structural zero, not a
+    measurement.** The counter reads `stream_message_processed`, which the old
+    loop never emitted. Never quote a pre-deploy day as "0 shadow fills
+    observed" — it is a null result. A zero looks like data, which is why this
+    one misleads.
+  - Pre-deploy day directories hold **zero** `stream_message_processed` lines
+    and the `observed` pattern is unchanged, so re-scoring an old day returns
+    the verdict it returned before — no inflation hazard. The hazard is
+    interpretive: that verdict reads as a daemon health problem when it was an
+    instrumentation gap.
+  - **Blind detection is continuous across the boundary** and needs no caveat:
+    pre-deploy days carry `event=monitor_stream_read_error`, post-deploy days
+    `xreadgroup error; sleeping`, and the shared blind anchor lists both.
+
+  Post-deploy, the row's counts cell gains a fourth number, `dropped`. It is not
+  a funnel stage — it discloses that a fill whose handler raised was ACKed and
+  therefore counted in `fills` (correcting the count needs msg_id correlation
+  the harvester does not do yet; issue #767).
+
+  The orphan-task route to that state is **closed** as of PR #776: both monitor
+  daemons run one loop on `shared/streaming/stage.py`, so the consume loop can
+  no longer die while the process stays up — it used to create `_consume_loop`
+  as a task and await it only in `finally`, so a raise there left the task dead
+  and unretrieved while `_status_loop` kept the container alive. **Do not spend
+  a cutover window hunting that orphan task; it cannot exist.** The bound still
+  earns its place: a wedged handler (redelivered the same `msg_id`, acking
+  nothing) and a genuinely silent upstream both reach the same silence, and a
+  `docker restart` near the close (which preserves the log, unlike a recreate)
+  still closes the span over a dead stretch.
 
   **The bound applies only to a traffic-driven proof.** A consumer's proof,
   `stream_message_processed`, is emitted once per message

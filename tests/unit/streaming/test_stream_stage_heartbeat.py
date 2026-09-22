@@ -696,3 +696,23 @@ def test_configured_interval_stays_under_the_observation_gap_bound():
     assert max_gap >= OBSERVATION_MAX_GAP_SECONDS
     assert shipped + shipped_block + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
     assert shipped <= max_heartbeat_interval_seconds(shipped_block)
+
+
+@pytest.mark.parametrize("block_ms", [0, -1])
+@pytest.mark.parametrize("build", [_stage, _multi_stage])
+def test_a_non_positive_poll_block_is_refused_by_both_stages(build, block_ms):
+    """``BLOCK 0`` waits forever, so an idle stage would never say it is alive.
+
+    The evidence is emitted when a poll *returns*. A stage told to block
+    indefinitely parks in XREADGROUP on a quiet stream and produces exactly the
+    empty log this heartbeat exists to distinguish from a dead consumer — while
+    healthy, which is worse than the failure it imitates.
+
+    ``services/order_router/config.py`` already refuses ``0`` at its field, but
+    that covers one of the seven call sites: ``shared/scoring/config.py`` holds
+    a bare ``int`` settable from ``NEWS_SCORING_*``, three services pass a
+    literal, and the two monitor daemons pass their own module constant. The
+    invariant belongs where every one of them lands.
+    """
+    with pytest.raises(ValueError, match="xread_block_ms must be positive"):
+        build(FakeRedis(), _Clock(), xread_block_ms=block_ms)

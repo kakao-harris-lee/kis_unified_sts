@@ -15,9 +15,10 @@ Both loops emit a periodic ``stream_consumer_alive`` heartbeat so that a stage
 with no traffic still proves it is running — see :class:`_LivenessHeartbeat`.
 That evidence is emitted when a poll *returns*, so ``xread_block_ms`` must be
 positive: Redis' ``BLOCK 0`` blocks indefinitely, and an idle stage would then
-never come back to say anything. Of the five services only
-``services/order_router`` reads that value from config, and its field refuses
-``0`` for this reason; the other four pass a literal 2000.
+never come back to say anything. Both constructors refuse a non-positive value
+(:func:`_validate_poll_block`) — ``services/order_router`` also refuses it at
+its config field, but that guards one of the seven call sites, and the
+invariant belongs where every caller lands.
 """
 
 from __future__ import annotations
@@ -200,6 +201,31 @@ def _resolve_heartbeat_interval(
         )
     )
     return ceiling
+
+
+def _validate_poll_block(xread_block_ms: int) -> None:
+    """Refuse a poll block that would silence the heartbeat forever.
+
+    Redis' ``BLOCK 0`` waits indefinitely, so a stage configured that way parks
+    in XREADGROUP and never reaches :meth:`_LivenessHeartbeat.record_poll` on a
+    quiet stream — the process would look exactly like the dead consumer the
+    heartbeat exists to distinguish, and it would look that way *while healthy*.
+    A negative value is not a Redis argument at all.
+
+    Enforced in both constructors rather than only at
+    ``services/order_router/config.py``'s ``gt=0`` field, because that field
+    covers one caller: ``shared/scoring/config.py`` carries a bare ``int``
+    settable from ``NEWS_SCORING_*``, three services pass a literal, and the two
+    monitor daemons pass their own module constant. Every one of them lands
+    here.
+    """
+    if xread_block_ms <= 0:
+        raise ValueError(
+            "xread_block_ms must be positive: Redis' BLOCK 0 blocks forever, so "
+            "an idle stage would never return to emit stream_consumer_alive — "
+            f"the liveness evidence this loop exists to produce; got "
+            f"{xread_block_ms}"
+        )
 
 
 def _duration_ms(started_at: float) -> int:
@@ -605,6 +631,7 @@ class StreamStage(ABC):
         heartbeat_interval_seconds: float | None = None,
         heartbeat_clock: Callable[[], float] | None = None,
     ) -> None:
+        _validate_poll_block(xread_block_ms)
         self.redis = redis
         self.input_stream = input_stream
         self.consumer_group = consumer_group
@@ -887,6 +914,7 @@ class MultiStreamStage(ABC):
     ) -> None:
         if not input_streams:
             raise ValueError("input_streams must not be empty")
+        _validate_poll_block(xread_block_ms)
         self.redis = redis
         self.input_streams = list(input_streams)
         self.consumer_group = consumer_group
