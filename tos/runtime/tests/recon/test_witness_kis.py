@@ -15,7 +15,11 @@ from decimal import Decimal
 import pytest
 from tos_runtime.recon import witness_kis
 from tos_runtime.recon.ports import WitnessOrderState, WitnessScope, WitnessUnavailable
-from tos_runtime.recon.witness_kis import KisStockBrokerWitness
+from tos_runtime.recon.witness_kis import (
+    KisStockBrokerWitness,
+    KisWitnessTokenSession,
+    KstDateSource,
+)
 from tos_runtime.recon.witness_kis_client import KisWitnessHttpClient
 from tos_runtime.recon.witness_kis_config import FuturesAssetRefused, KisWitnessConfig
 
@@ -54,8 +58,8 @@ def _witness(
     server: FakeKisGetServer,
     *,
     max_pages: int = 10,
-    token_session: object | None = None,
-    date_source: object | None = None,
+    token_session: KisWitnessTokenSession | None = None,
+    date_source: KstDateSource | None = None,
 ) -> KisStockBrokerWitness:
     config = _config(server, max_pages=max_pages)
     client = KisWitnessHttpClient(

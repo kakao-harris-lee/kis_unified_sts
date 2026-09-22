@@ -183,6 +183,11 @@ def _one_possibly_live_attempt(
         kind="EVENT_HANDLING_STARTED",
         record_class="EVENT_HANDLING_STARTED",
     )
+    # A successful evidence append() never returns a None seq/key_generation
+    # (EvidenceAppendReceipt's own docstring: "a failed or partial append
+    # never returns this type").
+    assert marker.seq is not None
+    assert marker.key_generation is not None
     inbox.mark_handling_started(
         receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
     )

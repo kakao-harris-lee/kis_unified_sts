@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from tos.engine.records import event_identity
+from tos.evidence import EvidenceAppendReceipt
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.recovery.legacy_receipts import legacy_receipts_in_window
@@ -12,6 +13,20 @@ from tos_runtime.recovery.legacy_receipts import legacy_receipts_in_window
 from .conftest import SCHEME, fx
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
+
+
+def _mark_consumed(
+    inbox: SqliteEventInbox, seq: int, consumed: EvidenceAppendReceipt
+) -> None:
+    """``inbox.mark_consumed(...)``, narrowing ``consumed``'s ``seq``/
+    ``key_generation`` — a successful evidence ``append()`` never returns either
+    as ``None`` (``EvidenceAppendReceipt``'s own docstring: "a failed or partial
+    append never returns this type")."""
+    assert consumed.seq is not None
+    assert consumed.key_generation is not None
+    inbox.mark_consumed(
+        seq, evidence_seq=consumed.seq, generation=consumed.key_generation
+    )
 
 
 def _admit_and_consume(
@@ -30,9 +45,7 @@ def _admit_and_consume(
     consumed = evidence_store.append(
         payload, kind="EVENT_CONSUMED", record_class="EVENT_CONSUMED"
     )
-    inbox.mark_consumed(
-        receipt.seq, evidence_seq=consumed.seq, generation=consumed.key_generation
-    )
+    _mark_consumed(inbox, receipt.seq, consumed)
     return event_id
 
 
@@ -153,9 +166,7 @@ def test_string_flow_fingerprint_is_legacy(
         kind="EVENT_CONSUMED",
         record_class="EVENT_CONSUMED",
     )
-    inbox.mark_consumed(
-        receipt.seq, evidence_seq=consumed.seq, generation=consumed.key_generation
-    )
+    _mark_consumed(inbox, receipt.seq, consumed)
     facts = legacy_receipts_in_window(
         inbox, evidence_store, scheme=SCHEME, window_events=None
     )

@@ -255,6 +255,7 @@ def test_two_reservations_with_different_scopes_do_not_collide(
         expected_seq=-1,
     )
     assert isinstance(first, AppendReceipt)
+    assert first.seq is not None  # a successful append never returns a None seq
 
     second = log.apply_reservation_transition(
         CapacityReservationTransition(

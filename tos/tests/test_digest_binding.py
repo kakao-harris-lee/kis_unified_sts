@@ -41,6 +41,7 @@ def test_capsule_id_derived_from_digest(issuer: str) -> None:
 def test_snapshot_id_derived_from_digest(issuer: str) -> None:
     """An issued snapshot's id is exactly ``derive_id(prefix, digest)`` (§4.1)."""
     snap = issue_snapshot(issuer_principal_id=issuer)
+    assert snap.canonical_digest is not None
     assert snap.snapshot_id == derive_id("cis", snap.canonical_digest)
     assert snap.canonical_digest == SCHEME.compute_digest(snap.covered_content())
 

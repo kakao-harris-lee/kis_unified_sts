@@ -35,6 +35,15 @@ from .conftest import FakeEvidenceAppendPort, FakeMonotonicClock
 #: reservation-lifecycle transition).
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
+
+def _seq(receipt: AppendReceipt) -> int:
+    """``receipt.seq``, asserted present — a successful ``append_cas`` never
+    returns a ``None`` seq. This file's fault-contract tests immediately
+    reuse one commit's tip as the next commit's ``expected_seq``."""
+    assert receipt.seq is not None
+    return receipt.seq
+
+
 # ============================================================================
 # ① stale epoch writer
 # ============================================================================
@@ -96,7 +105,7 @@ def test_fault_2_duplicate_command_id_same_bytes_is_idempotent_refusal(
     first = log.append_cas(entry, expected_seq=-1, writer_epoch=epoch)
     assert isinstance(first, AppendReceipt)
 
-    second = log.append_cas(entry, expected_seq=first.seq, writer_epoch=epoch)
+    second = log.append_cas(entry, expected_seq=_seq(first), writer_epoch=epoch)
     assert isinstance(second, AppendRefusal)
     assert second.reason == AppendRefusalReason.DUPLICATE_COMMAND_ID
 
@@ -117,7 +126,7 @@ def test_fault_2_duplicate_command_id_different_bytes_is_contained_conflict(
         kind=CommandType.COMMIT_RESERVATION,
     )
     second = log.append_cas(
-        conflicting_entry, expected_seq=first.seq, writer_epoch=epoch
+        conflicting_entry, expected_seq=_seq(first), writer_epoch=epoch
     )
     assert isinstance(second, AppendRefusal)
     assert second.reason == AppendRefusalReason.COMMAND_BYTES_MISMATCH
@@ -146,7 +155,7 @@ def test_null_digest_duplicate_command_is_classified_as_duplicate_not_partial_co
     first = log.append_cas(entry, expected_seq=-1, writer_epoch=epoch)
     assert isinstance(first, AppendReceipt)
 
-    second = log.append_cas(entry, expected_seq=first.seq, writer_epoch=epoch)
+    second = log.append_cas(entry, expected_seq=_seq(first), writer_epoch=epoch)
 
     assert isinstance(second, AppendRefusal)
     assert second.reason == AppendRefusalReason.DUPLICATE_COMMAND_ID
@@ -168,7 +177,7 @@ def test_null_digest_then_non_null_digest_is_command_bytes_mismatch(
         kind=CommandType.COMMIT_RESERVATION,
     )
     second = log.append_cas(
-        conflicting_entry, expected_seq=first.seq, writer_epoch=epoch
+        conflicting_entry, expected_seq=_seq(first), writer_epoch=epoch
     )
 
     assert isinstance(second, AppendRefusal)
@@ -191,7 +200,7 @@ def test_non_null_digest_then_null_digest_is_command_bytes_mismatch(
         command_id="cmd-1", command_digest=None, kind=CommandType.COMMIT_RESERVATION
     )
     second = log.append_cas(
-        conflicting_entry, expected_seq=first.seq, writer_epoch=epoch
+        conflicting_entry, expected_seq=_seq(first), writer_epoch=epoch
     )
 
     assert isinstance(second, AppendRefusal)
@@ -542,7 +551,7 @@ def test_fault_6_regressing_monotonic_source_does_not_affect_seq_order(
             kind=CommandType.COMMIT_RESERVATION,
         )
         receipt_b = instance.append_cas(
-            entry_b, expected_seq=receipt_a.seq, writer_epoch=epoch_2
+            entry_b, expected_seq=_seq(receipt_a), writer_epoch=epoch_2
         )
         assert isinstance(receipt_b, AppendReceipt)
         assert receipt_a.seq is not None

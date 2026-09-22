@@ -11,11 +11,14 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from tos.engine.vocabulary import CommitmentStep
 from tos.evidence import EvidenceAppendReceipt
 from tos.rcl import AppendReceipt, CommandType, CommitEntry
 from tos.workload import RuntimeIdentity
 from tos_runtime.compose._wiring import _rcl_tip_generation_provider
 from tos_runtime.rcl.log import SqliteCommitLog, StaleEpochRead
+
+from . import _fixtures as fx
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -55,7 +58,7 @@ def test_empty_log_yields_zero(tmp_path: Path) -> None:
         identity = RuntimeIdentity(cell_id="test-cell", process_nonce="n1")
         writer_epoch = log.acquire_epoch(identity)
         provider = _rcl_tip_generation_provider(log, writer_epoch)
-        assert provider(None) == 0
+        assert provider(fx.stage_request()) == 0
     finally:
         log.close()
 
@@ -76,12 +79,12 @@ def test_committed_entries_advance_and_reflect_the_real_tip(tmp_path: Path) -> N
 
         seq = _append_one(log, writer_epoch=writer_epoch, expected_seq=-1)
         seq = _append_one(log, writer_epoch=writer_epoch, expected_seq=seq)
-        assert provider(None) == seq
+        assert provider(fx.stage_request()) == seq
         assert seq != 0
 
         next_seq = _append_one(log, writer_epoch=writer_epoch, expected_seq=seq)
         assert next_seq != seq
-        assert provider(None) == next_seq
+        assert provider(fx.stage_request()) == next_seq
     finally:
         log.close()
 
@@ -100,7 +103,33 @@ def test_second_handle_acquiring_epoch_raises_stale_epoch_read(tmp_path: Path) -
 
         provider = _rcl_tip_generation_provider(first, stale_epoch)
         with pytest.raises(StaleEpochRead):
-            provider(None)
+            provider(fx.stage_request())
     finally:
         first.close()
         second.close()
+
+
+def test_provider_ignores_the_request_entirely(tmp_path: Path) -> None:
+    """(mypy stage 3 §1.2) The returned callable's own signature is
+    ``Callable[[StageRequest], int]`` but its body never reads ``_request``
+    (``_wiring.py``'s ``_provider`` names the parameter with a leading
+    underscore for exactly this reason) — the generation comes only from the
+    RCL log's own tip. Two structurally different ``StageRequest`` instances
+    (different ``step``) must yield the identical result for the same log
+    state, proving no field of the request participates in the answer."""
+    log = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=_FakeEvidencePort())
+    try:
+        identity = RuntimeIdentity(cell_id="test-cell", process_nonce="n1")
+        writer_epoch = log.acquire_epoch(identity)
+        provider = _rcl_tip_generation_provider(log, writer_epoch)
+
+        seq = _append_one(log, writer_epoch=writer_epoch, expected_seq=-1)
+
+        first_request = fx.stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
+        second_request = fx.stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
+        assert first_request.step != second_request.step
+
+        assert provider(first_request) == seq
+        assert provider(second_request) == seq
+    finally:
+        log.close()

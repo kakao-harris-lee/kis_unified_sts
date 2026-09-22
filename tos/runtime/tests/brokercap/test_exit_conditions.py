@@ -70,6 +70,16 @@ _EXAMPLE_PATH = (
 _RUNTIME_SRC = Path(__file__).resolve().parents[2] / "src" / "tos_runtime"
 
 
+def _instance_path(config: BrokerScopesConfig) -> Path:
+    """``config.instance_path``, asserted present — every call site below
+    builds its config via ``_load_example`` (this module's own helper),
+    which always sets ``instance_path`` explicitly (absent is a real,
+    reachable case for other configs — never for one built here)."""
+    path = config.instance_path
+    assert path is not None
+    return path
+
+
 def _load_example(tmp_path: Path, **overrides: str | bool) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = overrides.pop("active_scope", "SYNTHETIC_FUTURES_ORDER")
@@ -463,7 +473,9 @@ class TestEC5HonestyNotAPass:
             tmp_path, active_scope="MOCK_STOCK_ORDER", mock_evidence_ok=True
         )
         scope = next(s for s in config.scopes if s.name == "MOCK_STOCK_ORDER")
-        instance = load_instance_document(config.instance_path, environment="MOCK_VTS")
+        instance = load_instance_document(
+            _instance_path(config), environment="MOCK_VTS"
+        )
         derived = derive_item6_item12(scope, config, instance)
         nature = transport_nature(scope)
         assert nature.reaches_broker is True
@@ -584,7 +596,9 @@ class TestMutationEvidenceMC:
             tmp_path, active_scope="MOCK_STOCK_ORDER", mock_evidence_ok=True
         )
         scope = next(s for s in config.scopes if s.name == "MOCK_STOCK_ORDER")
-        instance = load_instance_document(config.instance_path, environment="MOCK_VTS")
+        instance = load_instance_document(
+            _instance_path(config), environment="MOCK_VTS"
+        )
 
         shipped = derive_item6_item12(scope, config, instance)
         assert shipped.account_instrument_action_allowed is False  # honest, PROHIBITED

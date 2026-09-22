@@ -11,6 +11,7 @@ from decimal import Decimal
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.spg import (
+    HardSafetyEnvelope,
     ValidationReason,
     envelope_bounded,
     envelope_expansion_enlarges_nothing,
@@ -115,7 +116,7 @@ def test_envelope_bounded_bool_matches_dominance() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _two_dimension_envelope() -> object:
+def _two_dimension_envelope() -> HardSafetyEnvelope:
     """A mandatory-2-dimension envelope (qty + notional)."""
     return issue_envelope(
         governed_dimensions=(

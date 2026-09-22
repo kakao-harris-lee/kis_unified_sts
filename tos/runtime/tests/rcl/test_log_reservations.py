@@ -27,6 +27,15 @@ from tos_runtime.rcl.log import (
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
+def _seq(receipt: AppendReceipt) -> int:
+    """``receipt.seq``, asserted present — a successful
+    ``apply_reservation_transition`` never returns a ``None`` seq. This
+    file's tests immediately reuse one transition's tip as the next
+    transition's ``expected_seq``."""
+    assert receipt.seq is not None
+    return receipt.seq
+
+
 def test_legal_transition_under_strong_cause_commits_and_updates_projection(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
@@ -166,7 +175,7 @@ def test_release_with_finality_witness_true_is_admitted(
         command_type=CommandType.RELEASE_RESERVATION,
         command_id="cmd-1",
         command_digest="dig-1",
-        expected_seq=setup.seq,
+        expected_seq=_seq(setup),
         finality_witness=True,
     )
     assert isinstance(result, AppendReceipt)
@@ -218,7 +227,7 @@ def test_stale_from_state_claim_after_release_is_refused(
         command_type=CommandType.RELEASE_RESERVATION,
         command_id="cmd-1",
         command_digest="dig-1",
-        expected_seq=to_potentially_live.seq,
+        expected_seq=_seq(to_potentially_live),
         finality_witness=True,
     )
     assert isinstance(released, AppendReceipt)
@@ -240,7 +249,7 @@ def test_stale_from_state_claim_after_release_is_refused(
         command_type=CommandType.COMMIT_RESERVATION,
         command_id="cmd-2",
         command_digest="dig-2",
-        expected_seq=released.seq,
+        expected_seq=_seq(released),
     )
 
     assert isinstance(re_arm_attempt, AppendRefusal)
@@ -286,7 +295,7 @@ def test_honest_from_state_after_prior_transition_still_commits(
         command_type=CommandType.MARK_SEND_STARTED,
         command_id="cmd-2",
         command_digest="dig-2",
-        expected_seq=first.seq,
+        expected_seq=_seq(first),
     )
     assert isinstance(second, AppendReceipt)
     rows = {rid: state for rid, state, _seq, _scope in log.reservation_rows()}

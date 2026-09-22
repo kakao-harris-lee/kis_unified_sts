@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 from tos.engine.records import event_identity
+from tos.evidence import EvidenceAppendReceipt
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.recovery.possibly_live import (
@@ -17,6 +18,35 @@ from tos_runtime.recovery.possibly_live import (
 from .conftest import SCHEME, fx
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
+
+
+def _mark_handling_started(
+    inbox: SqliteEventInbox, seq: int, marker: EvidenceAppendReceipt
+) -> tuple[int, int]:
+    """Records ``inbox.mark_handling_started(...)`` and returns ``marker``'s
+    narrowed ``(seq, key_generation)`` for callers that also assert against a
+    :class:`~tos_runtime.recovery.possibly_live.PossiblyLiveAttempt`'s own
+    non-Optional fields — a successful evidence ``append()`` never returns
+    either as ``None`` (``EvidenceAppendReceipt``'s own docstring: "a failed
+    or partial append never returns this type")."""
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+    inbox.mark_handling_started(
+        seq, evidence_seq=marker.seq, generation=marker.key_generation
+    )
+    return marker.seq, marker.key_generation
+
+
+def _mark_consumed(
+    inbox: SqliteEventInbox, seq: int, consumed: EvidenceAppendReceipt
+) -> None:
+    """``inbox.mark_consumed(...)``, narrowing ``consumed``'s ``seq``/
+    ``key_generation`` the same way as :func:`_mark_handling_started`."""
+    assert consumed.seq is not None
+    assert consumed.key_generation is not None
+    inbox.mark_consumed(
+        seq, evidence_seq=consumed.seq, generation=consumed.key_generation
+    )
 
 
 def test_empty_inbox_yields_no_possibly_live_attempts(inbox: SqliteEventInbox) -> None:
@@ -46,15 +76,11 @@ def test_consumed_event_is_not_possibly_live(
         kind="EVENT_HANDLING_STARTED",
         record_class="EVENT_HANDLING_STARTED",
     )
-    inbox.mark_handling_started(
-        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
-    )
+    _mark_handling_started(inbox, receipt.seq, marker)
     consumed = evidence_store.append(
         {"event_id": event_id}, kind="EVENT_CONSUMED", record_class="EVENT_CONSUMED"
     )
-    inbox.mark_consumed(
-        receipt.seq, evidence_seq=consumed.seq, generation=consumed.key_generation
-    )
+    _mark_consumed(inbox, receipt.seq, consumed)
     assert reconstruct_possibly_live_attempts(inbox, scheme=SCHEME) == ()
 
 
@@ -72,9 +98,7 @@ def test_handling_started_without_consumed_is_possibly_live(
         kind="EVENT_HANDLING_STARTED",
         record_class="EVENT_HANDLING_STARTED",
     )
-    inbox.mark_handling_started(
-        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
-    )
+    evidence_seq, generation = _mark_handling_started(inbox, receipt.seq, marker)
 
     attempts = reconstruct_possibly_live_attempts(inbox, scheme=SCHEME)
 
@@ -82,8 +106,8 @@ def test_handling_started_without_consumed_is_possibly_live(
         PossiblyLiveAttempt(
             event_id=event_id,
             inbox_seq=receipt.seq,
-            handling_started_evidence_seq=marker.seq,
-            handling_started_generation=marker.key_generation,
+            handling_started_evidence_seq=evidence_seq,
+            handling_started_generation=generation,
         ),
     )
 
@@ -103,9 +127,7 @@ def test_multiple_possibly_live_attempts_are_all_returned_conservatively(
             kind="EVENT_HANDLING_STARTED",
             record_class="EVENT_HANDLING_STARTED",
         )
-        inbox.mark_handling_started(
-            receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
-        )
+        _mark_handling_started(inbox, receipt.seq, marker)
         event_ids.append(event_id)
 
     attempts = reconstruct_possibly_live_attempts(inbox, scheme=SCHEME)

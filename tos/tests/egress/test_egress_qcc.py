@@ -12,6 +12,8 @@ EV-L1-complete claim forbidden. Over-realization boundary: cryptographic / conse
 
 from __future__ import annotations
 
+from typing import cast
+
 from hypothesis import given
 from tos.egress import (
     QuorumCommitCertificate,
@@ -202,7 +204,9 @@ def test_lone_none_role_signer_is_insufficient() -> None:
     A ``None`` role is not positive proof of QUORUM_MEMBER; ADR §11.2:351 "One leader signature ...
     is insufficient" is realized by requiring a positively-confirmed member for a lone signer.
     """
-    none_role = clean_signer(signer_identity="n", signer_role=None)
+    # Deliberately illegal per the (non-Optional) signature — this test's whole
+    # point is a lone signer genuinely lacking a role.
+    none_role = clean_signer(signer_identity="n", signer_role=cast(SignerRole, None))
     assert quorum_threshold_structurally_met((none_role,), 1) is False
 
 

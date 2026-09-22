@@ -1368,8 +1368,12 @@ class TestComposeE2E:
         pipeline = results[0].pipeline
         assert pipeline is not None and pipeline.proposal is not None
         proposal_digest = pipeline.proposal.canonical_digest
+        assert (
+            proposal_digest is not None
+        )  # an ISSUED proposal always has a concrete digest
         construction = runtime.construction_stage.construction
         assert construction is not None and construction.intent is not None
+        assert construction.intent.canonical_digest is not None  # ISSUED, same as above
         derived_quantity = construction.derivation.quantity
         assert (
             derived_quantity is not None

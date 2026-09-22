@@ -17,6 +17,8 @@ OQ3). Regime tag: exact-scope-combined predicate substrate only; EV-L1-complete 
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 import tos.sir as s
 from hypothesis import given
@@ -193,7 +195,9 @@ def test_surplus_member_denies() -> None:
 def test_member_without_an_id_denies() -> None:
     """(§5.5) A member with no incident identity cannot be part of a canonical union."""
     anonymous = clean_active_set(
-        members=(clean_member(incident_id=None), clean_members()[1]),
+        # Deliberately illegal per the (non-Optional) signature — this test's whole
+        # point is a member genuinely lacking an incident identity.
+        members=(clean_member(incident_id=cast(str, None)), clean_members()[1]),
     )
     assert (
         s.active_set_is_canonical_union(anonymous, CLEAN_APPLICABLE_INCIDENTS) is False
