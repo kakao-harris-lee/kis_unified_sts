@@ -739,12 +739,16 @@ class ServiceObservation:
     #: different questions: "we did not look" versus "we looked and it proved
     #: nothing".
     unobserved: tuple[tuple[datetime, datetime], ...]
-    #: Stretches with no proof of consumption that the heartbeat DOES vouch for:
-    #: nothing arrived and the loop was demonstrably turning. Kept as its own
-    #: field rather than dropped once it stops changing the status, because a
-    #: reader auditing an ``idle_alive`` service needs to see which hours were
-    #: idle — "consumed nothing" and "was never asked to" are the two readings
-    #: this whole file exists to keep apart.
+    #: Stretches with no proof of consumption that the heartbeat DOES vouch
+    #: for: nothing arrived and the loop was demonstrably turning.
+    #:
+    #: Consumed by the JSON sidecar (``idle_session_kst``) and by
+    #: :func:`describe_service`'s ``idle_alive`` clause. **Not by the row an
+    #: operator reads**, because :func:`render_consumers_cell` filters
+    #: ``idle_alive`` out — an idle-alive service is a success, and the cell
+    #: carries that in its tally. Said explicitly because the earlier wording
+    #: claimed a reader "needs to see which hours were idle" without saying
+    #: which reader, and the answer is: whoever opens the sidecar.
     idle_windows: tuple[tuple[datetime, datetime], ...]
     #: Heartbeat lines inside the session.
     liveness_count: int
@@ -755,8 +759,16 @@ class ServiceObservation:
     #: it means the second is the failure mode this whole file is about.
     liveness_scored: bool
     #: Deliveries that demonstrably made no progress: ``ack=false`` lines plus
-    #: proofs struck by a ``retracted_by`` line naming the same ``msg_id``.
+    #: proofs struck by a ``retracted_by`` line naming the same message.
     no_progress_count: int
+    #: How many DISTINCT messages those deliveries were about. The pair is what
+    #: separates the two cases the count alone conflates: ``85 of 1`` is one
+    #: record pinned in the PEL all session and never getting through, while
+    #: ``85 of 85`` is a consumer refusing each message once and moving on. The
+    #: first is a defect, the second can be ordinary back-pressure, and a row
+    #: that renders them alike is the sort of collapse this file exists to
+    #: prevent.
+    no_progress_messages: int
     #: A harvest file that came back at its ``--tail`` cap: lines older than
     #: its first are gone, so coverage is unknown before ``coverage[0][0]``.
     coverage_truncated: bool
@@ -1343,6 +1355,7 @@ def scan_service(
     blind: list[datetime] = []
     liveness: list[datetime] = []
     stalled = 0
+    refused_messages: set[tuple[str, str]] = set()
     for moment, line in live_lines:
         if any(pattern.search(line) for pattern in spec.liveness):
             liveness.append(moment)
@@ -1352,6 +1365,9 @@ def scan_service(
             observed.append(moment)
         elif any(pattern.search(line) for pattern in spec.stalled):
             stalled += 1
+            key = _message_key(line, message_key_pattern)
+            if key is not None:
+                refused_messages.add(key)
 
     # The freshness bound now TRIGGERS the liveness question instead of
     # answering it: every stretch it flags is offered to the heartbeat, and only
@@ -1425,6 +1441,9 @@ def scan_service(
         liveness_count=len(liveness),
         liveness_scored=bool(spec.liveness),
         no_progress_count=no_progress,
+        # `struck` is counted as one message each: a retraction names exactly
+        # one, and the set above only sees the `stalled` lines.
+        no_progress_messages=len(refused_messages) + struck,
         coverage_truncated=truncated,
         counters={
             counter.name: _count(counter, live_lines) for counter in spec.counters
@@ -1642,14 +1661,26 @@ def _consumption_word(service: ServiceObservation) -> str:
 def _no_progress_text(service: ServiceObservation) -> str:
     """The refused deliveries, as a clause, for rows that are not about them.
 
-    ``no_progress`` is a status only when NOTHING completed. A service that
-    consumed some messages and kept refusing others is ``consumed``, and the
-    refusals would otherwise live only in the sidecar — which is where the
-    original defect kept everything it could not say out loud.
+    ``no_progress`` is a status only when NOTHING completed. A consumer with 85
+    good ACKs beside 85 redeliveries of one pinned ``msg_id`` is ``consumed``,
+    correctly — and rendered ``4/4 consumed (COMPLETE)`` with the 85 reaching
+    only the sidecar, which is where the original defect kept everything it
+    could not say out loud.
+
+    The DISTINCT message count travels with it, because that is what separates
+    the two readings: ``85 deliveries of 1 message`` is a record pinned in the
+    PEL all session, while ``85 deliveries of 85 messages`` is a consumer
+    refusing each once and moving on. Only the first is a defect, and no
+    threshold is needed to tell them apart — the numbers do it.
     """
     if not service.no_progress_count or service.status == STATUS_NO_PROGRESS:
         return ""
-    return f", {service.no_progress_count} deliveries made no progress"
+    messages = service.no_progress_messages
+    plural = "" if messages == 1 else "s"
+    return (
+        f", {service.no_progress_count} deliveries of {messages} message"
+        f"{plural} made no progress"
+    )
 
 
 def describe_service(service: ServiceObservation) -> str:
@@ -1714,9 +1745,11 @@ def describe_service(service: ServiceObservation) -> str:
         # silence either, and both facts belong in the row. They do not
         # contradict — the deliveries say records arrived, `liveness` is a claim
         # the daemon has to make and this one made none.
+        messages = service.no_progress_messages
+        plural = "" if messages == 1 else "s"
         return (
-            f"{service.name} NO PROGRESS ({service.no_progress_count} deliveries, "
-            f"none completed){stale}{gap}"
+            f"{service.name} NO PROGRESS ({service.no_progress_count} deliveries "
+            f"of {messages} message{plural}, none completed){stale}{gap}"
         )
     if service.status == STATUS_NO_EVIDENCE:
         return f"{service.name} NO EVIDENCE (silent where harvested){gap}"
@@ -1724,8 +1757,17 @@ def describe_service(service: ServiceObservation) -> str:
         # `render_consumers_cell` filters this out — an idle-alive service is a
         # success, and the cell's tally is where it is counted. The branch is
         # here so that any OTHER caller gets the truth rather than the
-        # fallthrough below.
-        return f"{service.name} idle (alive, {service.liveness_count} heartbeats){gap}"
+        # fallthrough below, and it is the one rendering path `idle_windows`
+        # has: the stretches are named, not just the beat count, because "alive
+        # for 316 beats" does not say WHICH hours were quiet.
+        windows = _window_text(service.idle_windows[:_STALE_WINDOWS_SPELLED_OUT])
+        extra = len(service.idle_windows) - _STALE_WINDOWS_SPELLED_OUT
+        more = f" +{extra} more" if extra > 0 else ""
+        idle = f", idle {windows}{more}" if service.idle_windows else ""
+        return (
+            f"{service.name} idle (alive, {service.liveness_count} heartbeats)"
+            f"{idle}{gap}"
+        )
     # The fallthrough, reached by STATUS_CONSUMED and by any status added later.
     # It derives the verb too, so a new status cannot inherit a false one.
     return f"{service.name} {_consumption_word(service)}{refused}"
@@ -1751,6 +1793,20 @@ def render_consumers_cell(result: DayObservation) -> str:
     tally = f"{len(consumed)}/{len(scored)} consumed"
     if idle:
         tally += f", {len(idle)}/{len(scored)} alive (idle)"
+
+    # Refusals on a service whose STATUS is fine. 85 good ACKs beside 85
+    # redeliveries of one pinned msg_id is `consumed` — correctly, it really did
+    # consume — and rendered `4/4 consumed (COMPLETE)` with the 85 reaching only
+    # the sidecar. A count nobody sees is the failure this file keeps meeting,
+    # so it rides in the cell with the tally rather than waiting in the problems
+    # list it can never join.
+    refusals = "; ".join(
+        f"{service.name}: {_no_progress_text(service).removeprefix(', ')}"
+        for service in scored
+        if service.status in STATUSES_OBSERVED_OK and service.no_progress_count
+    )
+    if refusals:
+        tally += f" [{refusals}]"
 
     no_session = (
         ""
@@ -1896,6 +1952,7 @@ def build_sidecar(result: DayObservation, row: str) -> dict[str, Any]:
                 "liveness_count": service.liveness_count,
                 "liveness_scored": service.liveness_scored,
                 "no_progress_count": service.no_progress_count,
+                "no_progress_messages": service.no_progress_messages,
                 "covers_session": service.covers_session,
                 "observation_is_fresh": service.observation_is_fresh,
                 # False means `unobserved` above is context, not a verdict input

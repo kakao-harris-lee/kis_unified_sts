@@ -467,13 +467,41 @@ artifacts, or written operator approval.
   and `config/decision_engine.yaml::liveness.log_interval_seconds`; a test reads
   all three real files and fails if they drift.
 
+  **180s is also the EMITTER-side ceiling, and that is a change.**
+  `shared/streaming/stage.py` used to derive its ceiling from
+  `observation_max_gap_seconds` (1800) because that was the only bound the
+  harvester had. It is not the bound heartbeats are scored against any more, so
+  `heartbeat_interval_seconds: 300` satisfied every guard-rail the code and the
+  config comments stated while making every healthy quiet day read
+  `stale_observation`. The mirror in that module is now
+  `LIVENESS_MAX_GAP_SECONDS = 180`, the per-stage ceiling is `180 − block − 1`
+  (177 at the shipped 2s block), and the pydantic field refuses anything at or
+  above 180 outright. **Which bound governs the heartbeat: the liveness one,
+  and only it.** 1800 still governs the gap between proofs of *consumption*,
+  and no longer appears in `stage.py` at all — a second number there that looks
+  like a bound and governs nothing is how the hole opened.
+
   **What the bound no longer catches, so nothing rests on it by accident:** a
   wedged handler. `MultiStreamStage` logs `stream_message_processed … ack=false`
   on every redelivery of a message the handler refuses, so a consumer making
   zero net progress used to renew its own freshness forever. Every `observed`
   pattern now requires `ack=true`, and a `stalled` group beside it catches the
-  refusals, so that consumer reads **`no_progress`** — never `idle (alive)`,
-  because idle means nothing arrived.
+  refusals.
+
+  A consumer that completed **nothing at all** therefore reads **`no_progress`**
+  — never `idle (alive)`, because idle means nothing arrived. A consumer that
+  completed *some* messages while refusing others is `consumed`, correctly: it
+  really did consume. That case is the common one and it is not a status, so
+  the refusals ride in the consumers cell beside the tally instead:
+
+  ```
+  4/4 consumed [futures-monitor: 85 deliveries of 1 message made no progress] (COMPLETE)
+  ```
+
+  **Read the two numbers together.** `85 deliveries of 1 message` is one record
+  pinned in the PEL all session and never getting through — a defect. `85
+  deliveries of 85 messages` is a consumer refusing each once and moving on,
+  which is ordinary back-pressure. No threshold decides which; the pair does.
 
   **The row keeps the two facts apart**: `2/4 consumed, 2/4 alive (idle)`, not
   `4/4 consumed`. Both are successful observations and they are not the same

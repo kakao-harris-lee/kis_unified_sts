@@ -2682,7 +2682,11 @@ def test_a_wedged_redelivery_loop_is_not_idle_and_is_not_consumed(
     assert monitor.no_progress_count == 85
     assert monitor.status == mod.STATUS_NO_PROGRESS
     assert result.verdict == mod.VERDICT_PARTIAL
-    assert "futures-monitor NO PROGRESS (85 deliveries, none completed)" in row
+    assert monitor.no_progress_messages == 1, "one message, pinned all session"
+    assert (
+        "futures-monitor NO PROGRESS (85 deliveries of 1 message, none completed)"
+        in row
+    )
     # The two genuinely idle consumers are counted as idle; the wedged one is
     # not, and the row keeps the three facts apart.
     assert "1/4 consumed, 2/4 alive (idle)" in row
@@ -3176,8 +3180,8 @@ def test_a_wedged_consumer_without_a_heartbeat_still_reports_its_deliveries(
     assert monitor.no_progress_count == 84
     assert monitor.status == mod.STATUS_NO_PROGRESS
     assert (
-        "futures-monitor NO PROGRESS (84 deliveries, none completed), no proof "
-        "of consumption or liveness 08:45-15:45" in row
+        "futures-monitor NO PROGRESS (84 deliveries of 1 message, none "
+        "completed), no proof of consumption or liveness 08:45-15:45" in row
     )
     assert "futures-monitor consumed" not in row
     assert result.verdict == mod.VERDICT_PARTIAL
@@ -3210,8 +3214,14 @@ def test_refusals_beside_real_progress_are_named_rather_than_left_in_the_sidecar
 
     assert monitor.status == mod.STATUS_CONSUMED
     assert monitor.no_progress_count == 6
+    assert monitor.no_progress_messages == 1
     assert mod.describe_service(monitor) == (
-        "futures-monitor consumed, 6 deliveries made no progress"
+        "futures-monitor consumed, 6 deliveries of 1 message made no progress"
+    )
+    # And it reaches the ROW, not only `describe_service`: `consumed` is
+    # filtered out of the problems list, so this is the only path it has.
+    assert "futures-monitor: 6 deliveries of 1 message made no progress" in row_of(
+        config, result
     )
 
 
@@ -3263,3 +3273,102 @@ def test_a_dropped_signal_does_not_void_a_fill_that_shares_its_entry_id(
     )
     assert monitor.no_progress_count == 0
     assert monitor.status == mod.STATUS_CONSUMED
+
+
+def test_a_message_pinned_all_session_is_named_on_an_otherwise_complete_day(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """85 good ACKs beside 85 redeliveries of one pinned id: `COMPLETE`, and said.
+
+    The service really did consume, so ``consumed`` is the right status and
+    ``COMPLETE`` the right verdict — the observation surface saw everything
+    there was to see. What was wrong was that the 85 refusals reached only the
+    sidecar, because ``render_consumers_cell`` filters a consuming service out
+    of its problems list and there was no other path.
+
+    The DISTINCT count is what makes the clause worth reading: ``85 deliveries
+    of 1 message`` is a record pinned in the PEL all session; ``85 of 85`` would
+    be a consumer refusing each once and moving on. No threshold decides which
+    — the two numbers do.
+    """
+    healthy_producer(day_dir, candidates=3)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, consumed_through(service))
+    stream, group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        consumed_through("futures-monitor")
+        + [redelivered(minute, stream, group, "pinned-1") for minute in range(0, 421)],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.status == mod.STATUS_CONSUMED
+    assert result.verdict == mod.VERDICT_COMPLETE, "the surface saw everything"
+    assert monitor.no_progress_count == 421
+    assert monitor.no_progress_messages == 1
+    assert (
+        "4/4 consumed [futures-monitor: 421 deliveries of 1 message made no "
+        "progress] (COMPLETE)" in row
+    )
+
+
+def test_many_messages_each_refused_once_read_differently_from_one_pinned(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The pair has to distinguish the two, or it is just a count with a suffix.
+
+    Ordinary back-pressure — each message refused once and retried — is not the
+    same fact as one record wedged in the PEL, and a row that renders them alike
+    would have to be read with the sidecar open, which is the situation this
+    clause exists to end.
+    """
+    healthy_producer(day_dir, candidates=3)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, consumed_through(service))
+    stream, group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        consumed_through("futures-monitor")
+        + [redelivered(m, stream, group, f"once-{m}") for m in range(0, 421)],
+    )
+
+    monitor = next(s for s in observe(config).services if s.name == "futures-monitor")
+
+    assert monitor.no_progress_count == 421
+    assert monitor.no_progress_messages == 421
+    assert "421 deliveries of 421 messages made no progress" in mod.describe_service(
+        monitor
+    )
+
+
+def test_an_idle_service_names_the_hours_it_was_idle(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """``idle_windows`` must have a rendering path, not only a sidecar key.
+
+    Its docstring said a reader "needs to see which hours were idle" while no
+    caller rendered it. ``render_consumers_cell`` still filters ``idle_alive``
+    out — an idle-alive service is a success and the tally is where it counts —
+    so ``describe_service`` is that path, and "alive for 421 beats" is not the
+    same statement as which hours were quiet.
+    """
+    for service in SCORED:
+        write_log(day_dir, service, alive_through(service))
+
+    monitor = next(s for s in observe(config).services if s.name == "futures-monitor")
+
+    assert monitor.status == mod.STATUS_IDLE_ALIVE
+    assert monitor.idle_windows == (
+        (
+            datetime(2026, 9, 18, 8, 45, tzinfo=mod.KST),
+            datetime(2026, 9, 18, 15, 45, tzinfo=mod.KST),
+        ),
+    )
+    assert mod.describe_service(monitor) == (
+        "futures-monitor idle (alive, 421 heartbeats), idle 08:45-15:45"
+    )
