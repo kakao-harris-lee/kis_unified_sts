@@ -43,28 +43,51 @@ from shared.streaming.audit import (
 
 logger = logging.getLogger(__name__)
 
-#: Mirror of ``config/f9_observation.yaml::observation_max_gap_seconds`` (1800):
-#: the largest gap that harvester tolerates between two proofs before it renders
-#: a service ``stale_observation``.
+#: Mirror of ``config/f9_observation.yaml``'s **liveness** bound —
+#: ``liveness_expected_interval_seconds * (1 + liveness_missed_beats_allowed)``,
+#: 60 × 3 = 180: the largest gap that harvester tolerates between two
+#: HEARTBEATS before the stretch around them stops counting as proof of life.
+#:
+#: **This replaced a mirror of ``observation_max_gap_seconds`` (1800), and the
+#: swap is the point.** That bound governs a different measurement — the gap
+#: between two proofs of *consumption* — and while it was the only one the
+#: harvester had, it was also what the heartbeat had to clear. Since the
+#: harvester grew a separate ``liveness`` pattern group it scores heartbeats at
+#: 180s, and the emitter-side ceiling kept deriving from 1800. The gap between
+#: those two numbers was a live hole: ``heartbeat_interval_seconds: 300``
+#: satisfied every guard-rail the code and the config comments stated, and made
+#: every healthy quiet day read ``stale_observation`` — the exact false verdict
+#: this heartbeat exists to delete.
+#:
+#: So: **the liveness bound governs the heartbeat, and nothing else does.** The
+#: staleness bound is not mirrored here at all any more, because a second
+#: number in this file that looks like a bound but governs nothing is how the
+#: hole opened.
 #:
 #: It lives in code rather than being read from that YAML because a live
 #: consumer must not fail to start over an ops harvest config, and because a
 #: bound config can raise is not a bound. ``tests/unit/streaming/
 #: test_stream_stage_heartbeat.py`` reads both real sources and fails if this
-#: copy ever drifts above the harvester's.
+#: copy ever drifts from the harvester's.
 #:
 #: **This is the gap bound, not the interval ceiling** — see
 #: :func:`max_heartbeat_interval_seconds`.
-OBSERVATION_MAX_GAP_SECONDS = 1800.0
+LIVENESS_MAX_GAP_SECONDS = 180.0
 
 #: How much a measured gap can exceed the real one, in seconds.
 #:
-#: ``scripts/ops/f9_observation_harvest.py:769`` parses log timestamps with
-#: ``"%Y-%m-%d %H:%M:%S"`` — sub-second parts are dropped — so two lines 1800.4s
-#: apart can be stamped 1800 and 1801 and measure as 1801. One second of
-#: truncation error is therefore part of the derivation, not padding. (Its
-#: comparison at ``:916`` is ``> max_gap_seconds``, so a measured gap of exactly
-#: the bound passes, which is why the ceiling below is inclusive.)
+#: ``scripts/ops/f9_observation_harvest.py``'s ``_parse_line`` reads log
+#: timestamps with ``"%Y-%m-%d %H:%M:%S"`` — sub-second parts are dropped — so
+#: two lines 180.4s apart can be stamped 180 and 181 and measure as 181. One
+#: second of truncation error is therefore part of the derivation, not padding.
+#: (``_stale_windows`` compares with ``> max_gap_seconds``, so a measured gap of
+#: exactly the bound passes, which is why the ceiling below is inclusive.)
+#:
+#: Cited by function name rather than by line number on purpose: the previous
+#: spelling named ``:769`` and ``:916``, and the commit that added the liveness
+#: scoring moved both without touching this file. A citation into another
+#: module that rots on every edit there is worse than no citation, because it
+#: reads as checked.
 TIMESTAMP_RESOLUTION_SECONDS = 1.0
 
 
@@ -78,23 +101,22 @@ def max_heartbeat_interval_seconds(poll_block_seconds: float) -> float:
       poll returns, so an idle loop adds a full ``xread_block_ms`` wait, and
     - the measurement itself can round up by :data:`TIMESTAMP_RESOLUTION_SECONDS`.
 
-    An interval of 1799 with the shipped 2s block produces gaps measuring ~1801
-    — over the bound, and ``stale_observation`` on a healthy day, which is the
+    An interval of 179 with the shipped 2s block produces gaps measuring ~181 —
+    over the bound, and ``stale_observation`` on a healthy day, which is the
     exact false verdict this heartbeat exists to delete.
 
     **Why the block is the only wait worth subtracting.** A busy loop also
     spends handler time before the next poll returns, and arithmetically that
-    can exceed the bound (ten handlers at 0.5s add 5s: 1797 + 2 + 5 = 1804).
+    can exceed the bound (ten handlers at 0.5s add 5s: 177 + 2 + 5 = 184).
     It cannot move the *verdict*, because a loop busy enough for handler time
     to matter is emitting ``stream_message_processed`` per message — the
-    harvester's proof of consumption — right after each handler returns, so the
-    long interval is filled with proofs throughout. A long gap requires no
+    harvester's proof of consumption — right after each handler returns, so
+    that stretch is never one the harvester asks the heartbeat about: it only
+    asks about stretches with no consumption in them. A long gap requires no
     traffic, and a loop with no traffic spends its time in exactly one place:
     the block this subtracts.
     """
-    return (
-        OBSERVATION_MAX_GAP_SECONDS - poll_block_seconds - TIMESTAMP_RESOLUTION_SECONDS
-    )
+    return LIVENESS_MAX_GAP_SECONDS - poll_block_seconds - TIMESTAMP_RESOLUTION_SECONDS
 
 
 class StreamStageConfig(ServiceConfigBase):
@@ -122,11 +144,14 @@ class StreamStageConfig(ServiceConfigBase):
     heartbeat_interval_seconds: float = Field(
         default=60.0,
         gt=0,
-        lt=OBSERVATION_MAX_GAP_SECONDS,
+        lt=LIVENESS_MAX_GAP_SECONDS,
         description=(
             "Seconds between stream_consumer_alive heartbeats. The observed gap "
-            "is this plus one poll block, and must clear "
-            "config/f9_observation.yaml::observation_max_gap_seconds."
+            "is this plus one poll block, and must clear the harvester's "
+            "LIVENESS bound — config/f9_observation.yaml::"
+            "liveness_expected_interval_seconds * (1 + "
+            "liveness_missed_beats_allowed) — NOT observation_max_gap_seconds, "
+            "which bounds proofs of consumption and no longer governs this."
         ),
     )
 
@@ -197,7 +222,7 @@ def _resolve_heartbeat_interval(
             configured_seconds=configured,
             clamped_seconds=ceiling,
             poll_block_seconds=poll_block_seconds,
-            observation_max_gap_seconds=OBSERVATION_MAX_GAP_SECONDS,
+            liveness_max_gap_seconds=LIVENESS_MAX_GAP_SECONDS,
         )
     )
     return ceiling
@@ -551,7 +576,7 @@ class _LivenessHeartbeat:
         if not 0 < interval_seconds <= ceiling:
             raise ValueError(
                 f"heartbeat_interval_seconds must be >0 and <={ceiling} "
-                f"(observation_max_gap {OBSERVATION_MAX_GAP_SECONDS} minus the "
+                f"(liveness_max_gap {LIVENESS_MAX_GAP_SECONDS} minus the "
                 f"{poll_block_seconds}s poll block and "
                 f"{TIMESTAMP_RESOLUTION_SECONDS}s of timestamp truncation, "
                 "because what is scored is the measured gap, not the interval); "

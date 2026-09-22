@@ -49,13 +49,23 @@ setup_eval:
 # harvest (reports/f9-gate1), a HEALTHY producer emitted 21 in-session lines
 # across seven hours, including one 4h44m stretch emitting nothing.
 liveness:
-  # MUST stay below config/f9_observation.yaml::f9_observation.
-  # observation_max_gap_seconds (1800). Above it, a healthy producer would read
-  # `stale_observation` the moment that file stops exempting this service from
-  # freshness scoring by name (design §4 row 3). The relationship is asserted
-  # against both real files by
-  # tests/unit/decision_engine/test_liveness_heartbeat.py, so the two cannot
-  # drift apart silently.
+  # MUST EQUAL config/f9_observation.yaml::f9_observation.
+  # liveness_expected_interval_seconds (60) — the harvester predicts how many
+  # heartbeats a stretch should hold from THAT value, so a different number
+  # here makes the density wrong in whichever direction it differs: lower and a
+  # healthy producer reads `stale_observation`, higher and a dead stretch reads
+  # alive.
+  #
+  # It used to say "below observation_max_gap_seconds (1800)", which was the
+  # right bound while the harvester exempted this service from freshness
+  # scoring by name and had no liveness group. It has one now and the exemption
+  # is lifted (design §4 row 3), so 1800 governs a different measurement — the
+  # gap between two proofs of CONSUMPTION — and no longer constrains this knob.
+  # The harvester's own liveness bound is 60 × (1 + 2 missed beats) = 180s.
+  #
+  # Both relationships are asserted against the real files:
+  # tests/unit/decision_engine/test_liveness_heartbeat.py and
+  # tests/unit/scripts/ops/test_f9_observation_harvest.py.
   #
   # Cost at 60s: a 6.5h (23,400s) session emits at most 390 lines. That is the
   # dominant term in this container's log volume (the real 2026-09-18 producer
