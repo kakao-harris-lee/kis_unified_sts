@@ -38,16 +38,29 @@ consumer_stage:
   # 유휴 경로는 원래 어떤 레벨에서도 아무것도 남기지 않아서 "건강하지만 트래픽이
   # 없다" 와 "소비 루프가 죽었다" 가 로그상 동일했다(2026-09-17~18 이틀 실명).
   #
-  # ⚠ 상한: config/f9_observation.yaml::observation_max_gap_seconds (1800).
-  # 그 값은 증명과 증명 사이 최대 허용 간격이고, 수집기가 재는 것은 «설정한 간격»이
-  # 아니라 «실제로 찍힌 두 줄 사이»다. 하트비트는 폴링 중에 만기가 되고 «다음
-  # 폴링이 반환될 때» 나오므로 측정 간격 = 이 값 + xread_block_ms(현재 2초)
-  # + 타임스탬프 초단위 절삭 오차 1초. 따라서 실효 상한은 1800 - 2 - 1 = 1797 이고,
-  # 코드가 그렇게 «유도»해서 강제한다
-  # (shared/streaming/stage.py::max_heartbeat_interval_seconds). 넘기면 건강한
-  # 조용한 날이 stale_observation 으로 떨어진다 — 이 하트비트가 없애려던 오판을
-  # 하트비트가 만들어내는 꼴이다. 관계는
-  # tests/unit/streaming/test_stream_stage_heartbeat.py 가 네 실제 출처
+  # ⚠ 상한은 **liveness 한계**다, staleness 한계가 아니라.
+  # config/f9_observation.yaml::liveness_expected_interval_seconds
+  #   * (1 + liveness_missed_beats_allowed) = 60 × 3 = **180초**.
+  #
+  # 2026-09-23 이전에는 이 주석이 observation_max_gap_seconds(1800) 를 상한으로
+  # 적었고 코드도 거기서 유도했다. 수집기가 하트비트를 «별도의 liveness 패턴군»
+  # 으로 채점하기 시작하면서 그 숫자는 다른 측정(소비 증명 사이의 간격)의 것이
+  # 됐는데 발화 측 상한만 1800 에 남아 있었다 — 즉
+  # `heartbeat_interval_seconds: 300` 이 코드·주석이 명시한 모든 가드를 통과하면서
+  # 건강한 날 전부를 stale_observation 으로 떨어뜨릴 수 있었다. 상한을 옮겼다.
+  #
+  # ⚠ 그리고 이 값은 수집기의 liveness_expected_interval_seconds 와 **같아야**
+  # 한다. 수집기는 그 설정값으로 «몇 줄이 나와야 하는가» 를 예측하므로, 여기만
+  # 바꾸면 밀도가 어긋난다. 두 파일의 동일성은
+  # tests/unit/scripts/ops/test_f9_observation_harvest.py 가 실제 파일에서 읽어
+  # 단언한다.
+  #
+  # 수집기가 재는 것은 «설정한 간격»이 아니라 «실제로 찍힌 두 줄 사이»다.
+  # 하트비트는 폴링 중에 만기가 되고 «다음 폴링이 반환될 때» 나오므로
+  # 측정 간격 = 이 값 + xread_block_ms(현재 2초) + 타임스탬프 초단위 절삭 오차
+  # 1초. 따라서 실효 상한은 180 - 2 - 1 = 177 이고, 코드가 그렇게 «유도»해서
+  # 강제한다 (shared/streaming/stage.py::max_heartbeat_interval_seconds).
+  # 관계는 tests/unit/streaming/test_stream_stage_heartbeat.py 가 네 실제 출처
   # (수집기 YAML·코드 사본·이 값·execution.yaml 의 블록)에서 읽어 고정한다.
   #
   # 상한을 넘겨도 데몬은 죽지 않는다: WARNING(event=heartbeat_interval_clamped)
