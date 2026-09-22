@@ -526,21 +526,21 @@ HAG-EV-003,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-004,PACKAGE,tos/src/tos/hag/predicates.py,PRESENT,tos/src/tos/hag/predicates.py:419
 HAG-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-HAG-EV-004,TEST,tests/hag/test_hag_predicates.py::test_lifecycle_table_verbatim_aligned_with_adr_18,PRESENT,tos/tests/hag/test_hag_predicates.py:58
-HAG-EV-004,TEST,tests/hag/test_hag_predicates.py::test_lifecycle_transition_only_quorum_to_consumed,PRESENT,tos/tests/hag/test_hag_predicates.py:58
-HAG-EV-004,TEST,tests/hag/test_hag_predicates.py::test_stale_replayed_rejected_terminal_and_replay,PRESENT,tos/tests/hag/test_hag_predicates.py:58
+HAG-EV-004,TEST,tests/hag/test_hag_predicates.py::test_lifecycle_table_verbatim_aligned_with_adr_18,PRESENT,tos/tests/hag/test_hag_predicates.py:59
+HAG-EV-004,TEST,tests/hag/test_hag_predicates.py::test_lifecycle_transition_only_quorum_to_consumed,PRESENT,tos/tests/hag/test_hag_predicates.py:59
+HAG-EV-004,TEST,tests/hag/test_hag_predicates.py::test_stale_replayed_rejected_terminal_and_replay,PRESENT,tos/tests/hag/test_hag_predicates.py:59
 HAG-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-006,PACKAGE,tos/src/tos/hag/predicates.py,PRESENT,tos/src/tos/hag/predicates.py:518
 HAG-EV-006,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-HAG-EV-006,TEST,tests/hag/test_hag_predicates.py::test_break_glass_only_restrictive_classes,PRESENT,tos/tests/hag/test_hag_predicates.py:168
+HAG-EV-006,TEST,tests/hag/test_hag_predicates.py::test_break_glass_only_restrictive_classes,PRESENT,tos/tests/hag/test_hag_predicates.py:169
 HAG-EV-006,TEST,tests/hag/test_seam_spg.py::test_hag_does_not_reauthor_spg_action_token,PRESENT,tos/tests/hag/test_seam_spg.py:13
 HAG-EV-006,TEST,tests/hag/test_seam_spg.py::test_hag_owns_an_eight_class_direction_confinement,PRESENT,tos/tests/hag/test_seam_spg.py:13
 HAG-EV-006,TEST,tests/hag/test_seam_spg.py::test_spg_owns_a_two_token_action_confinement,PRESENT,tos/tests/hag/test_seam_spg.py:13
 HAG-EV-006,TEST,tests/hag/test_seam_spg.py::test_the_two_axes_are_distinct_vocabularies,PRESENT,tos/tests/hag/test_seam_spg.py:13
 HAG-EV-007,PACKAGE,tos/src/tos/hag/predicates.py,PRESENT,tos/src/tos/hag/predicates.py:547
 HAG-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-HAG-EV-007,TEST,tests/hag/test_hag_predicates.py::test_human_protective_request_needs_all_three_verdicts,PRESENT,tos/tests/hag/test_hag_predicates.py:193
+HAG-EV-007,TEST,tests/hag/test_hag_predicates.py::test_human_protective_request_needs_all_three_verdicts,PRESENT,tos/tests/hag/test_hag_predicates.py:194
 HAG-EV-008,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-009,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -553,13 +553,13 @@ HAG-EV-010,TEST,tests/hag/test_seam_liveauth.py::test_liveauth_dual_control_atte
 HAG-EV-010,TEST,tests/hag/test_seam_liveauth.py::test_liveauth_string_inequality_cannot_catch_same_person_but_hag_collapse_can,PRESENT,tos/tests/hag/test_seam_liveauth.py:14
 HAG-EV-011,PACKAGE,tos/src/tos/hag/predicates.py,PRESENT,tos/src/tos/hag/predicates.py:655
 HAG-EV-011,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-HAG-EV-011,TEST,tests/hag/test_hag_predicates.py::test_approval_expiry_preserves_economic_effect_unconditionally,PRESENT,tos/tests/hag/test_hag_predicates.py:243
-HAG-EV-011,TEST,tests/hag/test_hag_predicates.py::test_no_automatic_rearm_under_any_recovery,PRESENT,tos/tests/hag/test_hag_predicates.py:243
+HAG-EV-011,TEST,tests/hag/test_hag_predicates.py::test_approval_expiry_preserves_economic_effect_unconditionally,PRESENT,tos/tests/hag/test_hag_predicates.py:244
+HAG-EV-011,TEST,tests/hag/test_hag_predicates.py::test_no_automatic_rearm_under_any_recovery,PRESENT,tos/tests/hag/test_hag_predicates.py:244
 HAG-EV-012,PACKAGE,tos/src/tos/hag/predicates.py,PRESENT,tos/src/tos/hag/predicates.py:704
 HAG-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-HAG-EV-012,TEST,tests/hag/test_hag_predicates.py::test_evidence_is_not_authority_all_false_effect,PRESENT,tos/tests/hag/test_hag_predicates.py:269
-HAG-EV-012,TEST,tests/hag/test_hag_predicates.py::test_model_construct_bypass_is_caught_by_defence_in_depth,PRESENT,tos/tests/hag/test_hag_predicates.py:269
-HAG-EV-012,TEST,tests/hag/test_hag_predicates.py::test_replay_reconstructs_unless_critical_conflict,PRESENT,tos/tests/hag/test_hag_predicates.py:269
+HAG-EV-012,TEST,tests/hag/test_hag_predicates.py::test_evidence_is_not_authority_all_false_effect,PRESENT,tos/tests/hag/test_hag_predicates.py:270
+HAG-EV-012,TEST,tests/hag/test_hag_predicates.py::test_model_construct_bypass_is_caught_by_defence_in_depth,PRESENT,tos/tests/hag/test_hag_predicates.py:270
+HAG-EV-012,TEST,tests/hag/test_hag_predicates.py::test_replay_reconstructs_unless_critical_conflict,PRESENT,tos/tests/hag/test_hag_predicates.py:270
 HAG-EV-012,TEST,tests/hag/test_seam_evidence.py::test_envelope_source_carries_effective_principal_id,PRESENT,tos/tests/hag/test_seam_evidence.py:18
 HAG-EV-012,TEST,tests/hag/test_seam_evidence.py::test_envelope_subjects_carries_approval_set_id,PRESENT,tos/tests/hag/test_seam_evidence.py:18
 HAG-EV-012,TEST,tests/hag/test_seam_evidence.py::test_hag_does_not_import_evidence,PRESENT,tos/tests/hag/test_seam_evidence.py:18
@@ -730,7 +730,7 @@ CII-EV-006,TEST,tests/test_snapshot_validity.py::test_undetermined_scope_treated
 CII-EV-006,TEST,tests/test_snapshot_validity.py::test_unresolved_common_mode_gate,PRESENT,tos/tests/test_snapshot_validity.py:168
 CII-EV-007,PACKAGE,tos/src/tos/capsule/capsule.py,PRESENT,tos/src/tos/capsule/capsule.py:177
 CII-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-CII-EV-007,TEST,tests/test_digest_binding.py::test_covered_change_changes_digest_and_id,PRESENT,tos/tests/test_digest_binding.py:63
+CII-EV-007,TEST,tests/test_digest_binding.py::test_covered_change_changes_digest_and_id,PRESENT,tos/tests/test_digest_binding.py:64
 CII-EV-008,PACKAGE,tos/src/tos/capsule/predicates.py,PRESENT,tos/src/tos/capsule/predicates.py:22
 CII-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 CII-EV-008,TEST,tests/test_correction.py::test_closure_is_transitively_closed,PRESENT,tos/tests/test_correction.py:1

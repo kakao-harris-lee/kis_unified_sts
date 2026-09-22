@@ -29,6 +29,7 @@ Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
 from __future__ import annotations
 
 import inspect
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -205,7 +206,9 @@ def test_an_absent_as_of_or_provenance_pointer_is_unconstructable() -> None:
         ContextValue(
             field_key="close",
             value=1,
-            as_of=None,
+            # Deliberately illegal per the (non-Optional) signature — this test's
+            # whole point is an absent as_of pointer.
+            as_of=cast(int, None),
             payload_digest="p",
             observation_ref="r",
         )

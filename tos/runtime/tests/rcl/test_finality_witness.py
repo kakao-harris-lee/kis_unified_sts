@@ -49,7 +49,11 @@ def _producer() -> SyntheticFinalityProducer:
 
 def _commit_to_potentially_live(
     log: SqliteCommitLog, epoch: int, *, reservation_id: str
-) -> AppendReceipt:
+) -> int:
+    """Commits the setup transition; returns the new tip ``seq`` (a
+    successful ``apply_reservation_transition`` never returns a ``None``
+    seq — every call site below only ever needs this resolved ``expected_seq``
+    for its own next transition, never the receipt object itself)."""
     receipt = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=reservation_id,
@@ -65,7 +69,8 @@ def _commit_to_potentially_live(
         expected_seq=-1,
     )
     assert isinstance(receipt, AppendReceipt)
-    return receipt
+    assert receipt.seq is not None
+    return receipt.seq
 
 
 def test_finality_witness_for_present_and_absent() -> None:
@@ -110,7 +115,7 @@ def test_full_fill_proof_admits_release(
         transition,
         command_id="cmd-release-1",
         command_digest="dig-release-1",
-        expected_seq=setup.seq,
+        expected_seq=setup,
         proof=proof_result.proof,
     )
     assert isinstance(result, AppendReceipt)
@@ -161,7 +166,7 @@ def test_no_proof_refuses_release(
             transition,
             command_id=f"cmd-release-{kind.value}",
             command_digest="dig-release",
-            expected_seq=setup.seq,
+            expected_seq=setup,
             proof=None,
         )
     assert excinfo.value.reason == ReservationRefusalReason.FINALITY_WITNESS_REQUIRED
@@ -199,7 +204,7 @@ def test_mutation_cancel_to_released_without_proof_is_refused(
         command_type=CommandType.RELEASE_RESERVATION,
         command_id="cmd-forged",
         command_digest="dig-forged",
-        expected_seq=setup.seq,
+        expected_seq=setup,
         finality_witness=True,
     )
     assert isinstance(forged, AppendReceipt)

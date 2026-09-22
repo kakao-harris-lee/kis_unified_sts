@@ -60,7 +60,7 @@ def _outstanding(
 
 def _live_ledger(
     *, max_unresolved_send_per_scope: int = 1
-) -> tuple[ProvisionalReservationLedger, object]:
+) -> tuple[ProvisionalReservationLedger, InstrumentKey]:
     """A ledger with one scope projected all the way to ``POTENTIALLY_LIVE`` — the state every
     ordinary flow reaches right before an egress result lands."""
     ledger = ProvisionalReservationLedger(

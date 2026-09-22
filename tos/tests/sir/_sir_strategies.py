@@ -180,7 +180,7 @@ def clean_shutdown_procedure(**overrides: object) -> ControlledShutdownProcedure
 
 def clean_member(
     *,
-    incident_id: str = "inc-open",
+    incident_id: str | None = "inc-open",
     lifecycle_state: IncidentLifecycleState | None = IncidentLifecycleState.SUSPECTED,
     **overrides: object,
 ) -> ActiveSetMember:

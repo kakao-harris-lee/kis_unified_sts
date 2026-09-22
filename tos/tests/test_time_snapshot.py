@@ -17,6 +17,23 @@ from tos.time import HealthState, TimeHealthSnapshot, snapshot_consumer_binding_
 from ._time_strategies import issue_time_snapshot
 
 
+def _snapshot_id(snap: TimeHealthSnapshot) -> str:
+    """``snap.snapshot_id``, asserted present — every fixture below issues via
+    ``issue_time_snapshot()``, which always assigns one (the field is ``| None``
+    only for a genuinely unassigned snapshot, never one this module issues)."""
+    value = snap.snapshot_id
+    assert value is not None
+    return value
+
+
+def _digest(snap: TimeHealthSnapshot) -> str:
+    """``snap.canonical_digest``, asserted present — an ISSUED artifact always has a
+    concrete ``canonical_digest`` (§2.1)."""
+    value = snap.canonical_digest
+    assert value is not None
+    return value
+
+
 def test_issued_snapshot_binds_its_digest() -> None:
     """An issued snapshot self-verifies its canonical digest (REUSE §2.1)."""
     snap = issue_time_snapshot()
@@ -87,7 +104,7 @@ def test_consumer_binding_ok_on_exact_match() -> None:
     assert snapshot_consumer_binding_ok(
         snap,
         expected_snapshot_id="ths-9",
-        expected_canonical_digest=snap.canonical_digest,
+        expected_canonical_digest=_digest(snap),
         expected_generation=5,
         expected_verification_profile_version="vp-0",
         expected_safety_profile_version="sp-0",
@@ -100,8 +117,8 @@ def test_wrong_generation_rejected(expected_gen: int, actual_gen: int) -> None:
     snap = issue_time_snapshot(generation=actual_gen)
     ok = snapshot_consumer_binding_ok(
         snap,
-        expected_snapshot_id=snap.snapshot_id,
-        expected_canonical_digest=snap.canonical_digest,
+        expected_snapshot_id=_snapshot_id(snap),
+        expected_canonical_digest=_digest(snap),
         expected_generation=expected_gen,
     )
     assert ok is (expected_gen == actual_gen)
@@ -113,8 +130,8 @@ def test_null_generation_fails_closed_against_concrete_expectation() -> None:
     assert (
         snapshot_consumer_binding_ok(
             snap,
-            expected_snapshot_id=snap.snapshot_id,
-            expected_canonical_digest=snap.canonical_digest,
+            expected_snapshot_id=_snapshot_id(snap),
+            expected_canonical_digest=_digest(snap),
             expected_generation=7,
         )
         is False
@@ -127,11 +144,11 @@ def test_wrong_digest_or_id_rejected() -> None:
     assert not snapshot_consumer_binding_ok(
         snap,
         expected_snapshot_id="other",
-        expected_canonical_digest=snap.canonical_digest,
+        expected_canonical_digest=_digest(snap),
     )
     assert not snapshot_consumer_binding_ok(
         snap,
-        expected_snapshot_id=snap.snapshot_id,
+        expected_snapshot_id=_snapshot_id(snap),
         expected_canonical_digest="not-the-digest",
     )
 
@@ -141,13 +158,13 @@ def test_wrong_config_version_rejected() -> None:
     snap = issue_time_snapshot()
     assert not snapshot_consumer_binding_ok(
         snap,
-        expected_snapshot_id=snap.snapshot_id,
-        expected_canonical_digest=snap.canonical_digest,
+        expected_snapshot_id=_snapshot_id(snap),
+        expected_canonical_digest=_digest(snap),
         expected_verification_profile_version="wrong",
     )
     assert not snapshot_consumer_binding_ok(
         snap,
-        expected_snapshot_id=snap.snapshot_id,
-        expected_canonical_digest=snap.canonical_digest,
+        expected_snapshot_id=_snapshot_id(snap),
+        expected_canonical_digest=_digest(snap),
         expected_safety_profile_version="wrong",
     )

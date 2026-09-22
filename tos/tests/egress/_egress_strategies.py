@@ -82,7 +82,7 @@ _CLEAN_EGRESS_COORDS = {
 def clean_signer(
     *,
     signer_identity: str,
-    signer_role: SignerRole = SignerRole.QUORUM_MEMBER,
+    signer_role: SignerRole | None = SignerRole.QUORUM_MEMBER,
     eligible_verified: bool | None = True,
     signature_verified: bool | None = True,
 ) -> SignerCoordinate:

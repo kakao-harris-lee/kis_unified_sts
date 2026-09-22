@@ -202,6 +202,8 @@ def test_lone_none_role_signer_is_insufficient() -> None:
     A ``None`` role is not positive proof of QUORUM_MEMBER; ADR §11.2:351 "One leader signature ...
     is insufficient" is realized by requiring a positively-confirmed member for a lone signer.
     """
+    # `signer_role` is genuinely `SignerRole | None` on the real domain field
+    # (`SignerCoordinate.signer_role`, egress/state.py) — no cast needed.
     none_role = clean_signer(signer_identity="n", signer_role=None)
     assert quorum_threshold_structurally_met((none_role,), 1) is False
 

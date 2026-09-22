@@ -5,7 +5,7 @@ sibling order-transport config)."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from tos_runtime.recon.witness_kis_config import (
@@ -127,7 +127,11 @@ def test_instance_real_rest_base_none_is_refused(tmp_path: Path) -> None:
     path = _write(tmp_path)
     with pytest.raises(KisWitnessConfigError, match="REAL rest_base must be known"):
         load_kis_witness_config(
-            path, instance_mock_rest_base=MOCK_BASE, instance_real_rest_base=None
+            path,
+            instance_mock_rest_base=MOCK_BASE,
+            # Deliberately illegal per the (REQUIRED, non-Optional) signature — this
+            # test's whole point is proving the fail-closed refusal fires.
+            instance_real_rest_base=cast(str, None),
         )
 
 

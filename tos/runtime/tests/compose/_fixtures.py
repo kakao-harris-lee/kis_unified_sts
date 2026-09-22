@@ -38,15 +38,18 @@ from tos.dsl import (
     ContextValue,
     ContextValueView,
     Decision,
+    DecisionContextCapsuleRef,
     DecisionKind,
     DecisionPolicy,
     EvaluationConfig,
     Operand,
+    Proposer,
     Rule,
     TargetKind,
     TargetSpec,
+    build_proposal,
 )
-from tos.egressgw import AdmittedPriceObservation
+from tos.egressgw import AdmittedPriceObservation, SizingBound
 from tos.egressgw.vocabulary import LotRoundingPolicy
 from tos.engine import (
     CAPSULE_CONTEXT_SOURCE,
@@ -55,8 +58,8 @@ from tos.engine import (
     InstrumentKey,
     StrategyRegistry,
 )
-from tos.engine.records import DecisionTickPayload, TimeAdmissionInputs
-from tos.engine.vocabulary import EventKind
+from tos.engine.records import DecisionTickPayload, StageRequest, TimeAdmissionInputs
+from tos.engine.vocabulary import CommitmentStep, EventKind
 from tos.ioc import QuantityUnitKind
 from tos.ordering import OrderingEvent
 from tos.rcl import CapacityComponent, CapacityVector
@@ -104,6 +107,38 @@ PRICE_FIELD_KEY = "close"
 
 def instrument_key() -> InstrumentKey:
     return InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
+
+
+def stage_request(
+    *, step: CommitmentStep = CommitmentStep.AGGREGATE_RISK_DECISION
+) -> StageRequest:
+    """A minimal, valid :class:`~tos.engine.records.StageRequest` for callers that need a
+    real request object but not a particular one (mypy stage 3 §1.2 — a bare ``None`` used to
+    stand in for "the callee doesn't read the request", which is a lie to the type system: the
+    callee's own parameter is typed ``StageRequest``, not ``StageRequest | None``). Contract
+    tests that specifically prove a callee ignores this argument use two structurally
+    different instances of this fixture (e.g. differing ``step``), never a literal ``None``.
+    """
+    proposal = build_proposal(
+        scheme=SCHEME,
+        proposer=Proposer(strategy_id="strat-fixture", strategy_version="v1"),
+        account=ACCOUNT,
+        instrument=INSTRUMENT,
+        direction="LONG",
+        position_effect="OPEN",
+        quantity_basis="RISK",
+        rationale="fixture stage request — mypy stage 3 §1.2",
+        decision_context_capsule=DecisionContextCapsuleRef(
+            capsule_id="cap-fixture", canonical_digest="capdig-fixture"
+        ),
+        dsl_version="dsl-0",
+        config_version="cfg-0",
+    )
+    return StageRequest(
+        step=step,
+        instrument_key=instrument_key(),
+        proposal=proposal,
+    )
 
 
 def _value_ref(field_key: str) -> Operand:
@@ -349,9 +384,7 @@ def crossing_event(*, seq: int = 1, close: int = CROSSING_CLOSE) -> EngineEvent:
     return EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=payload)
 
 
-def sizing_bound(**overrides: object) -> object:
-    from tos.egressgw import SizingBound
-
+def sizing_bound(**overrides: object) -> SizingBound:
     base: dict[str, object] = {
         "risk_budget": RISK_BUDGET,
         "per_unit_risk": PER_UNIT_RISK,

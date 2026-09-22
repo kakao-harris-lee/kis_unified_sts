@@ -182,6 +182,7 @@ def test_issue_permit_refuses_a_second_claim_of_the_same_nonce(
     )
     first = afg_governor.issue_permit(permit, expected_seq=-1)
     assert isinstance(first.log_result, AppendReceipt)
+    assert first.log_result.seq is not None  # a successful append never returns None
     second = afg_governor.issue_permit(permit, expected_seq=first.log_result.seq)
     assert isinstance(second.log_result, AppendRefusal)
     assert second.log_result.reason is AppendRefusalReason.DUPLICATE_COMMAND_ID
@@ -207,6 +208,7 @@ def test_issue_permit_refuses_the_same_claim_even_after_a_simulated_restart(
     )
     first = afg_governor.issue_permit(permit, expected_seq=-1)
     assert isinstance(first.log_result, AppendReceipt)
+    assert first.log_result.seq is not None  # a successful append never returns None
     log.close()
 
     reopened_log = SqliteCommitLog(log_path, evidence_port=evidence_port)

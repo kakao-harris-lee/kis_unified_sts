@@ -193,6 +193,8 @@ def test_surplus_member_denies() -> None:
 def test_member_without_an_id_denies() -> None:
     """(§5.5) A member with no incident identity cannot be part of a canonical union."""
     anonymous = clean_active_set(
+        # `incident_id` is genuinely `str | None` on the real domain field
+        # (`ActiveSetMember.incident_id`, sir/state.py) — no cast needed.
         members=(clean_member(incident_id=None), clean_members()[1]),
     )
     assert (

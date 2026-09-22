@@ -537,6 +537,9 @@ def test_happy_path_registers_bindings_and_the_rule_actually_fires(
     assert dispatch.resolution is DispatchResolution.DISPATCHED
     registered = dispatch.entries[0]
     assert registered.config.bindings == {"lower_band_threshold": 500}
+    assert (
+        registered.strategy.policy is not None
+    )  # a registered strategy is REQUIRED_COVERED
 
     # The rule fires: close(100) < config.lower_band_threshold(500).
     env = {

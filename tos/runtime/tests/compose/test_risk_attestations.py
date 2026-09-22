@@ -150,7 +150,7 @@ def test_aggregate_wrapper_defers_to_attestation_when_caller_has_no_opinion() ->
         ),
         _all_true_risk_attestations(),
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.all_fields_attributed is True
     assert result.numerically_safe is True
@@ -174,7 +174,7 @@ def test_aggregate_wrapper_defers_to_attestation_when_numerically_safe_is_none()
         ),
         _all_true_risk_attestations(),
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.numerically_safe is True
     assert result.valuation_ok is True
@@ -193,7 +193,7 @@ def test_aggregate_wrapper_none_never_masks_an_attested_restrictive_false() -> N
         ),
         _all_false_risk_attestations(),
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.numerically_safe is False
     assert result.valuation_ok is False
@@ -212,7 +212,7 @@ def test_aggregate_wrapper_never_overrides_the_callers_own_restrictive_claim() -
         ),
         _all_true_risk_attestations(),
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.all_fields_attributed is False
     assert result.numerically_safe is False
@@ -233,7 +233,7 @@ def test_aggregate_wrapper_attestation_downgrades_callers_naive_true() -> None:
         ),
         _all_false_risk_attestations(),
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.all_fields_attributed is False
     assert result.numerically_safe is False
@@ -251,7 +251,7 @@ def test_aggregate_wrapper_passes_through_none() -> None:
         flow_commitment_exclusive=True,
     )
     wrapped = wrap_aggregate_risk_inputs_provider(lambda _request: None, attestations)
-    assert wrapped(None) is None
+    assert wrapped(fx.stage_request()) is None
 
 
 # ============================================================================
@@ -301,7 +301,7 @@ def test_action_flow_wrapper_defers_to_attestation_when_caller_has_no_opinion() 
         _all_true_risk_attestations(),
         current_generation_provider=lambda _request: 5,
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.limit_source_is_injected_envelope is True
     assert result.economic_commitment_exclusive is True
@@ -322,7 +322,7 @@ def test_action_flow_wrapper_never_overrides_the_callers_own_restrictive_claim()
         _all_true_risk_attestations(),
         current_generation_provider=lambda _request: 5,
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.limit_source_is_injected_envelope is False
     assert result.economic_commitment_exclusive is False
@@ -339,7 +339,7 @@ def test_action_flow_wrapper_attestation_downgrades_callers_naive_true() -> None
         _all_false_risk_attestations(),
         current_generation_provider=lambda _request: 5,
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.limit_source_is_injected_envelope is False
     assert result.economic_commitment_exclusive is False
@@ -357,7 +357,7 @@ def test_action_flow_wrapper_derives_generation_current_false_on_mismatch() -> N
         _all_true_risk_attestations(),
         current_generation_provider=lambda _request: 9,
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.generation_current is False  # 5 != 9, generation_fenced fails
 
@@ -373,7 +373,7 @@ def test_action_flow_wrapper_derives_generation_current_true_on_match() -> None:
         _all_true_risk_attestations(),
         current_generation_provider=lambda _request: 5,
     )
-    result = wrapped(None)
+    result = wrapped(fx.stage_request())
     assert result is not None
     assert result.generation_current is True  # 5 == 5, generation_fenced holds
 
@@ -391,7 +391,7 @@ def test_action_flow_wrapper_maps_stale_epoch_read_to_none() -> None:
         _all_true_risk_attestations(),
         current_generation_provider=_raise,
     )
-    assert wrapped(None) is None
+    assert wrapped(fx.stage_request()) is None
 
 
 def test_action_flow_wrapper_passes_through_none() -> None:
@@ -400,4 +400,4 @@ def test_action_flow_wrapper_passes_through_none() -> None:
         _all_true_risk_attestations(),
         current_generation_provider=lambda _request: 1,
     )
-    assert wrapped(None) is None
+    assert wrapped(fx.stage_request()) is None

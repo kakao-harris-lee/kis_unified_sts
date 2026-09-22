@@ -50,6 +50,17 @@ def clean_revision(
     return CurrentnessRevision(revision_id=revision_id, commit_index=commit_index)
 
 
+def dimension_key(dimension: CurrentnessDimension) -> DimensionKey:
+    """``dimension.dimension_key``, asserted present — every dimension built by
+    :func:`clean_dimension`/:func:`clean_dimensions` below sets it explicitly (the field is
+    ``| None`` only for a genuinely absent/removed coordinate, never for one this module's own
+    builders produce). Callers reuse a clean dimension's own key to build a mutated sibling.
+    """
+    key = dimension.dimension_key
+    assert key is not None
+    return key
+
+
 def clean_dimension(
     *,
     dimension_key: DimensionKey,

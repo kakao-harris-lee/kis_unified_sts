@@ -75,6 +75,7 @@ def test_none_inputs_block_but_clean_inputs_pass() -> None:
     """(∅ both-ways) None request / attestation / consumption / assignment fail closed; clean ones pass."""
     # approval binding
     request = clean_request()
+    assert request.canonical_digest is not None
     att = clean_attestation(
         attestation_id="a1",
         principal_id="alice",
