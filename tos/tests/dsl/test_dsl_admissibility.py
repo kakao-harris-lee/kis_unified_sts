@@ -34,10 +34,13 @@ DCE-EV → property map:
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given, settings
 from pydantic import ValidationError
+from tos.canonical import CanonicalizationScheme
 from tos.dsl import (
     ADMISSIBLE_KINDS,
     AMBIENT_SYMBOLS,
@@ -360,9 +363,22 @@ def test_binding_a_strategy_identity_is_recorded_verbatim() -> None:
     assert rec.strategy_digest == "digest-abc"
 
 
+class _CandidateKwargs(TypedDict):
+    """1:1 with :func:`analyze_candidate`'s signature minus ``result_id`` (plan §1.1
+    A-fn) — a ``**kwargs`` splat is checked key-by-key and type-by-type, not swallowed
+    by an untyped ``dict`` literal."""
+
+    candidate: CandidateProgram
+    scheme: CanonicalizationScheme
+    enforcement_mechanism_version: str
+    dsl_version: str
+    strategy_id: str | None
+    strategy_digest: str | None
+
+
 def test_same_strategy_identity_twice_yields_the_same_digest() -> None:
     """Re-checking the same (candidate, strategy) pair is idempotent at the digest level."""
-    kwargs = {
+    kwargs: _CandidateKwargs = {
         "candidate": admissible_program(),
         "scheme": SCHEME,
         "enforcement_mechanism_version": ENFORCEMENT_VERSION,

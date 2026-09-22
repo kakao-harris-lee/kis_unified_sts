@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 from decimal import Decimal
+from typing import TypedDict, Unpack
 
 from tos.authority import (
     AuthorityState,
@@ -31,6 +32,7 @@ from tos.protective import (
     protective_capacity_exhausted,
     protective_classification_present,
 )
+from tos.time import TimeContinuityIdentity
 
 from ..authority._authority_strategies import anchor, issue_lease, valid_lease_kwargs
 from ._protective_strategies import (
@@ -40,9 +42,50 @@ from ._protective_strategies import (
 )
 
 
-def _invalidation_kwargs(**overrides: object) -> dict[str, object]:
+class _InvalidationKwargs(TypedDict):
+    """1:1 with :func:`degraded_lease_invalidated`'s keyword-only signature (plan §1.1
+    A-fn) — a ``**_invalidation_kwargs(...)`` splat is checked key-by-key and
+    type-by-type, not swallowed by a ``**dict[str, object]`` splat."""
+
+    continuity_now: TimeContinuityIdentity
+    suspension_ms: int | None
+    max_suspension_ms: int | None
+    issued_lifetime: int | None
+    elapsed_monotonic: int | None
+    source_transport_uncertainty: int | None
+    max_drift_error: int | None
+    suspension_uncertainty: int | None
+    safety_margin: int | None
+    protective_capacity_exhausted: bool | None
+    hard_envelope_incompatible: bool | None
+    broker_profile_revoked: bool | None
+    dominating_state: AuthorityState
+
+
+class _InvalidationKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_InvalidationKwargs`, all optional — the override-kwargs
+    shape for :func:`_invalidation_kwargs`."""
+
+    continuity_now: TimeContinuityIdentity
+    suspension_ms: int | None
+    max_suspension_ms: int | None
+    issued_lifetime: int | None
+    elapsed_monotonic: int | None
+    source_transport_uncertainty: int | None
+    max_drift_error: int | None
+    suspension_uncertainty: int | None
+    safety_margin: int | None
+    protective_capacity_exhausted: bool | None
+    hard_envelope_incompatible: bool | None
+    broker_profile_revoked: bool | None
+    dominating_state: AuthorityState
+
+
+def _invalidation_kwargs(
+    **overrides: Unpack[_InvalidationKwargsPartial],
+) -> _InvalidationKwargs:
     """Kwargs for ``degraded_lease_invalidated`` describing an otherwise still-valid lease."""
-    base: dict[str, object] = {
+    base: _InvalidationKwargs = {
         "continuity_now": anchor(),
         "suspension_ms": 0,
         "max_suspension_ms": 2000,

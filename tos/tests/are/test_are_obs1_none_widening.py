@@ -11,7 +11,19 @@ Regime tag: authoring evidence only; closes no ARE-EV item (design #13 §5).
 
 from __future__ import annotations
 
-from tos.are import RiskDecisionResult, adverse_increment, risk_decision
+from typing import TypedDict, Unpack
+
+from tos.are import (
+    AdverseIncrementResult,
+    AdverseScenarioSet,
+    AggregateRiskDecision,
+    AggregateRiskPolicy,
+    AggregateRiskStateSnapshot,
+    RiskDecisionResult,
+    adverse_increment,
+    risk_decision,
+)
+from tos.canonical import CanonicalizationScheme
 
 from ._are_strategies import (
     COVERAGE_FLOOR,
@@ -23,12 +35,53 @@ from ._are_strategies import (
 )
 
 
-def _decide(**overrides):
+class _DecisionKwargs(TypedDict):
+    """1:1 with :func:`risk_decision`'s signature (plan §1.1 A-fn) — a
+    ``**_decide(...)`` splat is checked key-by-key and type-by-type, not swallowed by a
+    ``**dict[str, object]`` splat."""
+
+    projection: AdverseIncrementResult
+    snapshot: AggregateRiskStateSnapshot | None
+    applicable_risk_scopes: tuple[str, ...]
+    snapshot_complete: bool
+    numerically_safe: RiskDecisionResult | bool | None
+    valuation_ok: bool | None
+    envelope_not_enlarged: bool
+    decision_id: str
+    decision_generation: int
+    scheme: CanonicalizationScheme
+    policy: AggregateRiskPolicy | None
+    scenario_set: AdverseScenarioSet | None
+    effect_digest: str | None
+    grant_identity: str | None
+
+
+class _DecisionKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_DecisionKwargs`, all optional — the override-kwargs shape
+    for :func:`_decide`."""
+
+    projection: AdverseIncrementResult
+    snapshot: AggregateRiskStateSnapshot | None
+    applicable_risk_scopes: tuple[str, ...]
+    snapshot_complete: bool
+    numerically_safe: RiskDecisionResult | bool | None
+    valuation_ok: bool | None
+    envelope_not_enlarged: bool
+    decision_id: str
+    decision_generation: int
+    scheme: CanonicalizationScheme
+    policy: AggregateRiskPolicy | None
+    scenario_set: AdverseScenarioSet | None
+    effect_digest: str | None
+    grant_identity: str | None
+
+
+def _decide(**overrides: Unpack[_DecisionKwargsPartial]) -> AggregateRiskDecision:
     """Issue a decision with all gates passing unless overridden (mirrors test_are_decision._decide)."""
     projection = adverse_increment(
         floor_cells(), issue_scenario_set(), required_scenario_kinds=COVERAGE_FLOOR
     )
-    base = {
+    base: _DecisionKwargs = {
         "projection": projection,
         "snapshot": issue_snapshot(),
         "applicable_risk_scopes": ("acct-1",),
