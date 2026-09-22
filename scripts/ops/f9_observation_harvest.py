@@ -109,11 +109,17 @@ Some lines only mean what a *different* line about the same ``msg_id`` allows
 them to mean, so two of them are read together (issue #767). A proof requires
 ``ack=true``: ``ack=false`` leaves the message pending and Redis redelivers the
 same id, so a consumer making zero net progress used to renew its own freshness
-forever. And a ``stream_message_dropped`` voids every line carrying its
-``msg_id``, because ``services/futures_monitor/daemon.py`` deliberately ACKs a
+forever. And a ``stream_message_dropped`` voids every line about the same
+message, because ``services/futures_monitor/daemon.py`` deliberately ACKs a
 poison record to keep going — leaving a ``stream_message_processed … ack=true``
 that describes an ACK, not a fill. A consumer whose deliveries all fail this
 way is ``no_progress``, never ``idle_alive``: idle means nothing arrived.
+
+"The same message" is ``(stream, msg_id)``, not ``msg_id``. A Redis entry id is
+unique per stream and not per server — the ``<ms>-<seq>`` counter lives on the
+stream key — so two streams taking an entry in the same millisecond get
+identical ids, and ``futures-monitor`` consumes two. Keyed on the id alone, a
+dropped signal would strike a real fill.
 
 Durable vs point-in-time
 ------------------------
@@ -426,9 +432,11 @@ class ObservationConfig:
     liveness_expected_interval_seconds: int
     #: How many consecutive beats may go missing before the silence is scored.
     liveness_missed_beats_allowed: int
-    #: How a message is named in ``shared/streaming/stage.py``'s audit lines,
-    #: with a ``msg_id`` group. Drives :attr:`ServiceSpec.retracted_by`.
-    msg_id_pattern: re.Pattern[str]
+    #: How a message is IDENTIFIED in ``shared/streaming/stage.py``'s audit
+    #: lines: a ``stream`` group and a ``msg_id`` group, because a Redis entry
+    #: id is unique per stream and not per server. Drives
+    #: :attr:`ServiceSpec.retracted_by`.
+    message_key_pattern: re.Pattern[str]
     row_counters: tuple[str, ...]
     services: tuple[ServiceSpec, ...]
     point_in_time: Mapping[str, Any]
@@ -534,7 +542,7 @@ def load_observation_config(
             root["liveness_expected_interval_seconds"]
         ),
         liveness_missed_beats_allowed=int(root["liveness_missed_beats_allowed"]),
-        msg_id_pattern=re.compile(str(root["msg_id_pattern"])),
+        message_key_pattern=re.compile(str(root["message_key_pattern"])),
         row_counters=tuple(str(name) for name in root["row_counters"]),
         services=tuple(services),
         point_in_time=dict(root.get("point_in_time", {}) or {}),
@@ -1139,25 +1147,49 @@ def _merge_windows(
     return tuple((start, end) for start, end in windows)
 
 
-def _retracted_message_ids(
+def _message_key(
+    line: str, message_key_pattern: re.Pattern[str]
+) -> tuple[str, str] | None:
+    """Which message *line* is about: ``(stream, msg_id)``, or None.
+
+    **The stream half is load-bearing.** A Redis entry id is unique per stream,
+    not per server: the ``<ms>-<seq>`` sequence counter lives on the stream key,
+    so two streams taking an entry in the same millisecond get byte-identical
+    ids. Measured on a throwaway ``redis:7-alpine`` (2026-09-23): 200 XADDs
+    alternating between two keys produced 200 identical ids — a 200/200
+    collision, not a rare race.
+
+    ``futures-monitor`` consumes two streams, so keying on ``msg_id`` alone
+    would let a dropped *signal* void a legitimate *fill*. That strikes real
+    evidence, and under-counting is the direction that looks safe while being
+    wrong, which is why it gets a named function instead of an inline regex.
+    """
+    match = message_key_pattern.search(line)
+    if match is None:
+        return None
+    groups = match.groupdict()
+    return (groups.get("stream") or "", groups["msg_id"])
+
+
+def _retracted_messages(
     spec: ServiceSpec,
-    msg_id_pattern: re.Pattern[str],
+    message_key_pattern: re.Pattern[str],
     lines: Sequence[tuple[datetime, str]],
-) -> frozenset[str]:
-    """Message ids some line declares void, whatever any other line says.
+) -> frozenset[tuple[str, str]]:
+    """Messages some line declares void, whatever any other line says.
 
     The correlation issue #767 asked for, in one place because both halves it
     names are one mechanism. ``services/futures_monitor/daemon.py`` catches a
     raising handler, logs ``stream_message_dropped``, and returns True so the
     framework ACKs — deliberately, to preserve drop-and-continue. The stage then
-    logs ``stream_message_processed … ack=true`` for that same ``msg_id`` a
-    moment later. Read alone, that second line says a fill was consumed; read
-    together with the first, it says an ACK happened and nothing else did.
+    logs ``stream_message_processed … ack=true`` for that same message a moment
+    later. Read alone, that second line says a fill was consumed; read together
+    with the first, it says an ACK happened and nothing else did.
 
-    Striking by id rather than by position is what makes the order of the two
-    lines irrelevant, which matters: the drop is logged inside the handler and
-    the ACK after it returns today, but that is an implementation detail of the
-    daemon, not a contract the harvester should depend on.
+    Striking by identity rather than by position is what makes the order of the
+    two lines irrelevant, which matters: the drop is logged inside the handler
+    and the ACK after it returns today, but that is an implementation detail of
+    the daemon, not a contract the harvester should depend on.
     """
     if not spec.retracted_by:
         return frozenset()
@@ -1165,15 +1197,15 @@ def _retracted_message_ids(
     for _, line in lines:
         if not any(pattern.search(line) for pattern in spec.retracted_by):
             continue
-        match = msg_id_pattern.search(line)
-        if match is not None:
-            retracted.add(match.group("msg_id"))
+        key = _message_key(line, message_key_pattern)
+        if key is not None:
+            retracted.add(key)
     return frozenset(retracted)
 
 
 def _strike_retracted(
     spec: ServiceSpec,
-    msg_id_pattern: re.Pattern[str],
+    message_key_pattern: re.Pattern[str],
     lines: Sequence[tuple[datetime, str]],
 ) -> tuple[list[tuple[datetime, str]], int]:
     """Drop every line a retraction voids, and say how many that was.
@@ -1183,13 +1215,13 @@ def _strike_retracted(
     disagreement is the bug, not the arithmetic.
 
     **The retraction lines themselves survive.** A ``stream_message_dropped``
-    carries the ``msg_id`` it is voiding, so striking by id alone would strike
+    names the message it is voiding, so striking by identity alone would strike
     the declaration together with what it declares — and the ``dropped``
     counter, whose whole job is to say a poison record arrived, would read 0 on
     exactly the days it exists for. A line making a claim is evidence for that
     claim; only the lines it contradicts lose their meaning.
     """
-    retracted = _retracted_message_ids(spec, msg_id_pattern, lines)
+    retracted = _retracted_messages(spec, message_key_pattern, lines)
     if not retracted:
         return list(lines), 0
     live: list[tuple[datetime, str]] = []
@@ -1198,8 +1230,7 @@ def _strike_retracted(
         if any(pattern.search(line) for pattern in spec.retracted_by):
             live.append((moment, line))
             continue
-        match = msg_id_pattern.search(line)
-        if match is not None and match.group("msg_id") in retracted:
+        if _message_key(line, message_key_pattern) in retracted:
             struck += 1
             continue
         live.append((moment, line))
@@ -1250,7 +1281,7 @@ def scan_service(
     blind_run_merge_seconds: int,
     observation_max_gap_seconds: int,
     liveness_max_gap_seconds: int,
-    msg_id_pattern: re.Pattern[str],
+    message_key_pattern: re.Pattern[str],
     harvest_since: time_cls,
     failure_markers: Sequence[Path] = (),
 ) -> ServiceObservation:
@@ -1306,7 +1337,7 @@ def scan_service(
         if session_open <= moment <= session_close
     ]
 
-    live_lines, struck = _strike_retracted(spec, msg_id_pattern, lines)
+    live_lines, struck = _strike_retracted(spec, message_key_pattern, lines)
 
     observed: list[datetime] = []
     blind: list[datetime] = []
@@ -1354,14 +1385,22 @@ def scan_service(
         status = STATUS_NO_EVIDENCE
     elif uncovered:
         status = STATUS_PARTIAL_COVERAGE
-    elif unobserved and spec.freshness_scored:
-        status = STATUS_STALE_OBSERVATION
     elif not observed and no_progress:
         # Alive, watching, and getting nowhere: messages arrived and none of
         # them completed. Deliberately not `idle_alive` — idle means nothing
         # arrived, and a wedged consumer inheriting the idle verdict is exactly
         # how the closed defect would come back.
+        #
+        # ABOVE `stale_observation`, which it used to sit under. A wedged
+        # consumer on a pre-heartbeat image has no heartbeat to vouch for its
+        # silence, so the stale branch caught it first and the delivery count
+        # — the one fact that explains the day — never reached the row. Silence
+        # is the symptom here and the refused deliveries are the cause, so the
+        # status names the cause; `describe_service` still prints the unproven
+        # window beside it, because both are true.
         status = STATUS_NO_PROGRESS
+    elif unobserved and spec.freshness_scored:
+        status = STATUS_STALE_OBSERVATION
     elif not observed:
         status = STATUS_IDLE_ALIVE
     else:
@@ -1488,7 +1527,7 @@ def observe_day(
             blind_run_merge_seconds=config.blind_run_merge_seconds,
             observation_max_gap_seconds=config.observation_max_gap_seconds,
             liveness_max_gap_seconds=config.liveness_max_gap_seconds,
-            msg_id_pattern=config.msg_id_pattern,
+            message_key_pattern=config.message_key_pattern,
             harvest_since=config.harvest_since,
             failure_markers=service_failure_markers(directory, spec.name),
         )
@@ -1581,6 +1620,38 @@ def describe_liveness(service: ServiceObservation) -> str:
     )
 
 
+def _consumption_word(service: ServiceObservation) -> str:
+    """ "consumed", but only when something really was.
+
+    The word used to be a literal in three branches and it used to be safe
+    there, because ``scan_service`` tested ``not observed -> no_evidence``
+    ABOVE ``partial_coverage`` and ``stale_observation`` — so reaching either
+    of them implied ``observed_count > 0``. The liveness work weakened that
+    guard (a service that heartbeats but consumes nothing must get past it to
+    be scored at all), and the prose did not follow: a container recreated at
+    11:00 that emitted 286 heartbeats and zero evaluations rendered
+    ``futures-decision-engine consumed, harvest does not span the session``.
+
+    That is a *worse* form of the defect this module opens with — the earlier
+    one let a count imply consumption, this one printed the word — so the verb
+    is derived from the count rather than assumed alongside it.
+    """
+    return "consumed" if service.observed_count else "consumed nothing"
+
+
+def _no_progress_text(service: ServiceObservation) -> str:
+    """The refused deliveries, as a clause, for rows that are not about them.
+
+    ``no_progress`` is a status only when NOTHING completed. A service that
+    consumed some messages and kept refusing others is ``consumed``, and the
+    refusals would otherwise live only in the sidecar — which is where the
+    original defect kept everything it could not say out loud.
+    """
+    if not service.no_progress_count or service.status == STATUS_NO_PROGRESS:
+        return ""
+    return f", {service.no_progress_count} deliveries made no progress"
+
+
 def describe_service(service: ServiceObservation) -> str:
     """One clause naming what a non-consuming service did, and when.
 
@@ -1593,6 +1664,14 @@ def describe_service(service: ServiceObservation) -> str:
     fact unproven for the next six and three quarter hours, and that lived only
     in the sidecar. It is suppressed only when it would repeat the blind window
     verbatim, which is the fully-blind case where it adds nothing.
+
+    **No branch here states a fact it has not read.** Every clause is derived
+    from a field — the verb from ``observed_count``
+    (:func:`_consumption_word`), the refusals from ``no_progress_count``, the
+    windows from the interval lists — rather than implied by the status having
+    been reached. Statuses are reordered as the scoring changes, and the round
+    that added liveness proved the point: two branches kept a literal
+    ``consumed`` that a status-ladder change had quietly made false.
     """
     if service.evidence != EVIDENCE_LINES:
         reason = EVIDENCE_REASONS[service.evidence]
@@ -1602,6 +1681,7 @@ def describe_service(service: ServiceObservation) -> str:
         f" (no evidence {_window_text(service.uncovered)})" if service.uncovered else ""
     )
     stale = _stale_text(service)
+    refused = _no_progress_text(service)
     if service.status in (STATUS_BLIND, STATUS_PARTIALLY_BLIND):
         blind_text = _window_text(service.blind_windows)
         word = "BLIND" if service.status == STATUS_BLIND else "blind"
@@ -1617,21 +1697,26 @@ def describe_service(service: ServiceObservation) -> str:
             " (head truncated by the --tail cap)" if service.coverage_truncated else ""
         )
         return (
-            f"{service.name} consumed, harvest does not span the session"
-            f"{cause}{stale}{gap}"
+            f"{service.name} {_consumption_word(service)}, harvest does not span "
+            f"the session{cause}{refused}{stale}{gap}"
         )
     if service.status == STATUS_STALE_OBSERVATION:
         # The harvest spans the session; what it holds does not. Named as the
         # silence it is, not as the coverage hole it is not.
-        return f"{service.name} consumed{stale}{gap}"
+        return f"{service.name} {_consumption_word(service)}{refused}{stale}{gap}"
     if service.status == STATUS_NO_PROGRESS:
         # Never "silent where harvested" and never "idle": the log is full of
         # this service. Messages arrived, the loop kept turning, and not one of
         # them got through — which the ack-less proof pattern used to render as
         # a healthy consumer renewing its freshness on every redelivery.
+        #
+        # `stale` rides along: on a pre-heartbeat image nothing vouches for the
+        # silence either, and both facts belong in the row. They do not
+        # contradict — the deliveries say records arrived, `liveness` is a claim
+        # the daemon has to make and this one made none.
         return (
             f"{service.name} NO PROGRESS ({service.no_progress_count} deliveries, "
-            f"none completed){gap}"
+            f"none completed){stale}{gap}"
         )
     if service.status == STATUS_NO_EVIDENCE:
         return f"{service.name} NO EVIDENCE (silent where harvested){gap}"
@@ -1639,10 +1724,11 @@ def describe_service(service: ServiceObservation) -> str:
         # `render_consumers_cell` filters this out — an idle-alive service is a
         # success, and the cell's tally is where it is counted. The branch is
         # here so that any OTHER caller gets the truth rather than the
-        # fallthrough below, which would put the word "consumed" next to a
-        # service that consumed nothing.
+        # fallthrough below.
         return f"{service.name} idle (alive, {service.liveness_count} heartbeats){gap}"
-    return f"{service.name} consumed"
+    # The fallthrough, reached by STATUS_CONSUMED and by any status added later.
+    # It derives the verb too, so a new status cannot inherit a false one.
+    return f"{service.name} {_consumption_word(service)}{refused}"
 
 
 def render_consumers_cell(result: DayObservation) -> str:

@@ -115,7 +115,25 @@ f9_observation:
   # How a message is named in every `shared/streaming/stage.py` audit line, so
   # one line about a message can change what another line about the SAME
   # message meant. See `retracted_by` under futures-monitor.
-  msg_id_pattern: '\bmsg_id=(?P<msg_id>\S+)'
+  #
+  # BOTH GROUPS ARE REQUIRED, and `stream` is not decoration: **a Redis entry id
+  # is unique per stream, not per server.** The `<ms>-<seq>` sequence counter
+  # lives on the stream key, so two streams that take an entry in the same
+  # millisecond get byte-identical ids. Measured 2026-09-23 on a throwaway
+  # redis:7-alpine — 200 XADDs alternating between two keys produced 200
+  # identical ids, a 200/200 collision rate, not a rare race.
+  #
+  # `futures-monitor` consumes two streams (`order.fill.futures.shadow` and
+  # `signal.final.futures.shadow`), so keying retraction on `msg_id` alone would
+  # let a dropped *signal* void a legitimate *fill* — striking real evidence,
+  # which under-counts silently and in the direction that looks safe.
+  #
+  # Every line this matters for carries `stream=` before `msg_id=`
+  # (`_log_processed_message` in shared/streaming/stage.py and the
+  # `stream_message_dropped` in both monitor daemons always pass it), and the
+  # heartbeat's plural `streams=` cannot be mistaken for it — `\bstream=`
+  # requires the `=` right after `stream`.
+  message_key_pattern: '\bstream=(?P<stream>\S+) .*\bmsg_id=(?P<msg_id>\S+)'
   # Counters printed in the observation-log row's third column, in order.
   #
   # The first three are the pipeline funnel and narrow monotonically:

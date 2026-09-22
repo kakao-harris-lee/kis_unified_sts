@@ -3063,3 +3063,203 @@ def test_a_weekend_of_heartbeats_is_not_evidence_that_a_session_happened(
         == 0
     ), "a weekend must not raise a standing alarm"
     capsys.readouterr()
+
+
+# ---------------------------------------------------------------------------
+# 8. Review round: the prose must not outlive the guard that made it true
+# ---------------------------------------------------------------------------
+
+
+def test_a_stale_service_that_consumed_nothing_is_not_called_consumed(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The row may not print "consumed" for a service with zero proofs.
+
+    ``origin/main`` tested ``not observed -> no_evidence`` ABOVE
+    ``partial_coverage`` and ``stale_observation``, so reaching either implied
+    ``observed_count > 0`` and the literal ``consumed`` in those branches was
+    safe. The liveness work had to weaken that guard — a service that
+    heartbeats and consumes nothing must get past it to be scored at all — and
+    the prose did not follow.
+
+    This is a *stronger* form of the defect the module docstring opens with:
+    the earlier one let a count imply consumption, this one printed the word.
+    """
+    healthy_producer(day_dir)
+    for service in ("futures-order-router", "futures-monitor"):
+        write_log(day_dir, service, alive_through(service))
+    # Alive until 14:00, then nothing. Never consumed a single message.
+    write_log(
+        day_dir,
+        "futures-risk-filter",
+        [heartbeat(minute, "futures-risk-filter") for minute in range(0, 316)]
+        + [banner("futures risk filter", "15:50:00")],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    risk_filter = next(s for s in result.services if s.name == "futures-risk-filter")
+
+    assert risk_filter.status == mod.STATUS_STALE_OBSERVATION
+    assert risk_filter.observed_count == 0
+    assert risk_filter.liveness_count == 316
+    assert (
+        "futures-risk-filter consumed nothing, no proof of consumption or "
+        "liveness 14:00-15:45" in row
+    )
+    assert "futures-risk-filter consumed," not in row
+
+
+def test_a_recreated_container_that_consumed_nothing_is_not_called_consumed(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The same false word on the other branch, from the case that will happen.
+
+    The first post-deploy day where a container is recreated mid-morning: the
+    harvest holds only post-recreate lines, all of them heartbeats. The row
+    asserted ``futures-decision-engine consumed, harvest does not span the
+    session`` for a daemon that emitted 286 heartbeats and zero evaluations.
+    """
+    write_log(
+        day_dir,
+        "futures-decision-engine",
+        [heartbeat(minute, "futures-decision-engine") for minute in range(135, 421)],
+        cover=False,
+    )
+    for service in CONSUMERS:
+        write_log(day_dir, service, alive_through(service))
+
+    result = observe(config)
+    row = row_of(config, result)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.status == mod.STATUS_PARTIAL_COVERAGE
+    assert producer.observed_count == 0
+    assert producer.liveness_count == 286
+    assert (
+        "futures-decision-engine consumed nothing, harvest does not span the "
+        "session" in row
+    )
+    assert "futures-decision-engine consumed," not in row
+
+
+def test_a_wedged_consumer_without_a_heartbeat_still_reports_its_deliveries(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """``no_progress`` must outrank ``stale_observation``, not hide under it.
+
+    A wedged consumer on a pre-heartbeat image has nothing to vouch for its
+    silence, so the stale branch caught it first and the row read ``consumed, no
+    proof of consumption or liveness 08:45-15:45`` — claiming consumption and
+    denying proof of it in one sentence, while ``(84 deliveries, none
+    completed)``, the one fact that explains the day, reached only the sidecar.
+
+    Both facts ship now. They do not contradict: the deliveries say records
+    arrived, and ``liveness`` is a claim the daemon has to make, which this one
+    never made.
+    """
+    healthy_producer(day_dir, candidates=3)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    stream, group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        [redelivered(minute, stream, group, "stuck-1") for minute in range(0, 420, 5)],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.liveness_count == 0, "a pre-heartbeat image, by construction"
+    assert monitor.no_progress_count == 84
+    assert monitor.status == mod.STATUS_NO_PROGRESS
+    assert (
+        "futures-monitor NO PROGRESS (84 deliveries, none completed), no proof "
+        "of consumption or liveness 08:45-15:45" in row
+    )
+    assert "futures-monitor consumed" not in row
+    assert result.verdict == mod.VERDICT_PARTIAL
+
+
+def test_refusals_beside_real_progress_are_named_rather_than_left_in_the_sidecar(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """``no_progress`` is a STATUS only when nothing completed; it is always a FACT.
+
+    A consumer that acked some messages and kept refusing others is
+    ``consumed`` — correctly — and the refusals would otherwise live only in the
+    JSON, which is where the original defect kept everything it could not say
+    out loud.
+    """
+    healthy_producer(day_dir, candidates=3)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    stream, group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        [heartbeat(minute, "futures-monitor") for minute in range(0, 180)]
+        + [redelivered(minute, stream, group, "stuck-1") for minute in range(0, 30, 5)]
+        + consumed_through("futures-monitor"),
+    )
+
+    result = observe(config)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.status == mod.STATUS_CONSUMED
+    assert monitor.no_progress_count == 6
+    assert mod.describe_service(monitor) == (
+        "futures-monitor consumed, 6 deliveries made no progress"
+    )
+
+
+def test_a_dropped_signal_does_not_void_a_fill_that_shares_its_entry_id(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Retraction is keyed on ``(stream, msg_id)``, because an id is per stream.
+
+    A Redis entry id is ``<ms>-<seq>`` and the sequence counter lives on the
+    STREAM KEY, so two streams taking an entry in the same millisecond get
+    byte-identical ids. Measured 2026-09-23 on a throwaway ``redis:7-alpine``:
+    200 XADDs alternating between two keys produced 200 identical ids — a
+    200/200 collision, not a rare race.
+
+    ``futures-monitor`` consumes both ``order.fill.futures.shadow`` and
+    ``signal.final.futures.shadow``, so keying on ``msg_id`` alone lets a
+    dropped signal strike a legitimate fill. That is silent UNDER-counting,
+    which looks like the safe direction and is why it needs a test rather than
+    an argument.
+    """
+    shared_id = "1790097638949-0"
+    fills, signals = (
+        "order.fill.futures.shadow",
+        "signal.final.futures.shadow",
+    )
+    healthy_producer(day_dir, candidates=3)
+    write_log(day_dir, "futures-risk-filter", consumed_through("futures-risk-filter"))
+    write_log(day_dir, "futures-order-router", consumed_through("futures-order-router"))
+    clean = consumed_through("futures-monitor")
+    write_log(
+        day_dir,
+        "futures-monitor",
+        clean
+        + [
+            # A poison SIGNAL, dropped — and a good FILL that happens to carry
+            # the same entry id because it landed in the same millisecond.
+            dropped(60, signals, shared_id),
+            processed(60, fills, "futures_monitor", shared_id),
+        ],
+    )
+
+    result = observe(config)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert result.counters["dropped"] == 1, "the signal really was dropped"
+    assert result.counters["fills"] == len(clean) + 1, (
+        "the fill shares an id with the dropped signal and must survive: "
+        "entry ids are unique per stream, not per server"
+    )
+    assert monitor.no_progress_count == 0
+    assert monitor.status == mod.STATUS_CONSUMED

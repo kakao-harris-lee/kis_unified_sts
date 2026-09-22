@@ -519,8 +519,14 @@ artifacts, or written operator approval.
   Post-deploy, the row's counts cell gains a fourth number, `dropped`. It is
   not a funnel stage and, since issue #767 landed, not a correction term
   either: `fills` is already corrected. A `stream_message_dropped` names a
-  `msg_id`, and every line carrying that id — the `ack=true` the framework logs
-  a moment later included — is struck from the proofs and from the counters.
+  `msg_id`, and every line about that same message — the `ack=true` the
+  framework logs a moment later included — is struck from the proofs and from
+  the counters. **"The same message" is `(stream, msg_id)`, not `msg_id`:** a
+  Redis entry id is unique per stream, not per server (the `<ms>-<seq>` counter
+  lives on the stream key), and `futures-monitor` consumes two streams.
+  Measured 2026-09-23 on a throwaway `redis:7-alpine`, 200 XADDs alternating
+  between two keys produced 200 identical ids, so keyed on the id alone a
+  dropped signal would silently strike a real fill.
   `dropped` is now its own measurement: how many poison records arrived, which
   says the producers are emitting something this monitor cannot parse. It counts
   drops on **both** input streams, so it is not the arithmetic difference
