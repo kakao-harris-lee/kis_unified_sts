@@ -175,6 +175,33 @@ f9_observation:
         # Every shadow fill reaches the ledger through this consumer, so the
         # fill count and the monitor's proof-of-consumption are the same line.
         # That is why a blind monitor cannot report "0 fills" as a measurement.
+        #
+        # TWO KNOWN DEFECTS IN THIS COUNT, both owned by step 3 of
+        # docs/plans/2026-09-19-stream-consumer-liveness-and-monitor-dedup-design.md,
+        # and both to be closed with issue #767 (same family: the count reads
+        # one line and ignores what the next one says about it).
+        #
+        # 1. STRUCTURAL ZERO BEFORE PR #776 IS DEPLOYED. The hand-rolled loop
+        #    never emitted `stream_message_processed` at all, so every date
+        #    directory harvested before the deploy carries `fills: 0` with no
+        #    emitter behind it. That is not "no shadow fills observed"; it is
+        #    "nothing could have been counted". The boundary is the DEPLOY date
+        #    (the day the container was recreated on the new image), not the
+        #    merge date, because the report tree is keyed by KST date.
+        #
+        # 2. OVER-COUNT AFTER IT IS. services/futures_monitor/daemon.py's
+        #    handle_message catches a raising handler, logs
+        #    `stream_message_dropped`, and returns True so the framework ACKs —
+        #    deliberately, to preserve drop-and-continue. The stage then emits
+        #    `stream_message_processed ack=true` for that same msg_id, and this
+        #    pattern counts it. A fill that was never processed therefore
+        #    inflates a number Gate 1 reports as a measurement. The evidence to
+        #    correct it is in the same harvest (an ERROR-level
+        #    `stream_message_dropped` carrying the same msg_id and stream), but
+        #    subtracting it needs msg_id correlation the harvester does not do
+        #    yet — which is exactly the feature #767 needs. Do not "fix" this by
+        #    changing the catch: re-raising would make the daemon die on the
+        #    first malformed record, trading one bad count for total blindness.
         fills:
           pattern: 'event=stream_message_processed stream=order\.fill\.futures\.shadow\b'
 
