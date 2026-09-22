@@ -2387,7 +2387,18 @@ def test_a_non_trading_day_never_creates_the_tree_it_was_pointed_at(
 def test_report_root_override_keeps_the_configured_root_untouched(
     tmp_path: Path,
 ) -> None:
-    """``--report-root`` redirects harvest AND sidecar away from reports/f9-gate1."""
+    """``--report-root`` redirects harvest AND sidecar away from reports/f9-gate1.
+
+    The configured root is compared BEFORE and AFTER rather than asserted empty.
+    Asserting empty passed only on a host that had never harvested 2026-09-18 —
+    on the deploy host, where ``reports/f9-gate1/2026-09-18/`` is the durable
+    record of a real session and holds four sidecars, this test failed on
+    ``main`` with no change to blame. A test of "did this run write there" must
+    ask about this run.
+    """
+    configured_day = mod.load_observation_config().report_root / DAY.isoformat()
+    before = set(configured_day.glob("observation-completeness.*.json"))
+
     day_dir = tmp_path / DAY.isoformat()
     day_dir.mkdir(parents=True)
     healthy_producer(day_dir, candidates=0)
@@ -2407,11 +2418,8 @@ def test_report_root_override_keeps_the_configured_root_untouched(
     )
     sidecars = list(day_dir.glob("observation-completeness.*.json"))
     assert len(sidecars) == 1
-    configured = mod.load_observation_config().report_root
-    assert configured.resolve() != tmp_path.resolve()
-    assert not list(
-        (configured / DAY.isoformat()).glob("observation-completeness.*.json")
-    )
+    assert configured_day.parent.resolve() != tmp_path.resolve()
+    assert set(configured_day.glob("observation-completeness.*.json")) == before
 
 
 # ---------------------------------------------------------------------------
