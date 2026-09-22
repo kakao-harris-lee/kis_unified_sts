@@ -29,7 +29,7 @@
 | 초판 정규식이 **피호출자가 없는 형상**(`Argument N has incompatible type ...`, positional 호출에 mypy 가 callee 를 안 붙임)을 못 읽음 | 저자 | **27건** 미파싱 → 고친 뒤 773/773 |
 | 더블을 **이름 패턴**(`_Stub*`/`_Fake*`/`_Mutable*`)으로 판정 — 상위 계획의 26건 | 저자 | **「실제 타입에 등장하는 이름이 테스트 트리에 `class` 로 정의돼 있는가」** 로 바꾸니 87. `_Request`·`_FixedKeyProvider`·`_TrustedTimeService`·`_NullEvidence` 가 빠져 있었다. 상위 계획의 「더블 3%」는 **분류기 결함이지 데이터 성질이 아니었다** |
 | 그 `class` 정의 grep 이 **`^class` 로 줄 시작에 앵커**돼 있어 함수 안에 들여쓰기로 정의된 더블을 놓침 | **review-775 HIGH** | `tos/runtime/tests/recovery/test_reconciliation.py:285` 의 `    class _FakeRclReader:` 등 **3건**이 Z 로 오분류. `^\s*class` 로 넓히니 D **87 → 90**, Z **44 → 41** |
-| 같은 grep 이 산문의 `class of bug` 도 잡아 허구 식별자 `of` 가 클래스 집합에 섞임 | **review-775 MEDIUM** | 이번 773 건엔 영향 0(실제 타입에 `of` 토큰 없음). 패턴 끝에 `\s*[:(]` 를 붙여 닫음 — `of` 없음. 집합 크기는 **불변식이 아니라 관측치**다(저자 실행 206 · 재심의 깨끗한 체크아웃 204 · `sed` 방언에 따라 207) — 부록 A 는 크기를 단언하지 않고 출력만 한다 |
+| 같은 grep 이 산문의 `class of bug` 도 잡아 허구 식별자 `of` 가 클래스 집합에 섞임 | **review-775 MEDIUM** | 이번 773 건엔 영향 0(실제 타입에 `of` 토큰 없음). 패턴 끝에 `\s*[:(]` 를 붙여 닫음 — `of` 없음. 집합 크기는 **불변식이 아니라 관측치**다 — **부록 A 를 그대로 돌리면 204**(2차·3차 재심 모두). 저자의 206 은 메인 체크아웃의 초판 스크립트, 207 은 부록 A 에 없는 별도 확인 명령(`sed -E 's/^\s*class //'` — BSD sed 는 `\s` 를 리터럴 `s` 로 읽어 들여쓰기 줄의 치환이 실패한다)에서 나온 값이고 둘 다 저장소에 없다. 부록 A 는 크기를 단언하지 않고 출력만 한다 |
 | 부록 A 전사에서 **따옴표 제거 줄이 빠짐** — 문서의 코드를 그대로 돌리면 773 중 686 이 Z 로 떨어진다 | **review-775 HIGH** | 저자 스크립트엔 있었고 **문서에 옮길 때 빠졌다.** 부록 A 에 복원 |
 
 파서와 규칙은 부록 A 에 있다. 누구든 같은 명령으로 같은 수치를 얻어야 하고, 얻지 못하면 이
@@ -387,8 +387,9 @@ PR 마다 번호·main SHA·실측 전후를 덧붙인다. 원 계획 문언은 
 | MEDIUM 1 | 같은 grep 이 산문 `class of bug` 를 잡아 `of` 가 클래스 집합에 섞임 | 패턴 끝에 `\s*[:(]` — `of` 없음 확인 |
 
 **재심(review-775b) 이 HIGH 1 조치 안에서 새 결함을 잡았다** — 조치로 심은 `assert len(TEST_CLASSES)
-== 206` 이 깨끗한 체크아웃에서는 **204** 라 `AssertionError` 로 죽는다(저자 환경의 206 은
-`__pycache__`/방언 등 환경 의존). 집합 크기는 불변식이 아니라서 단언을 빼고 출력만 남겼다. 같이
+== 206` 이 깨끗한 체크아웃에서는 **204** 라 `AssertionError` 로 죽는다(저자의 206 은 부록 A 가
+아닌 초판 스크립트의 관측치 — 3차 재심이 「부록 A 를 그대로 돌리면 항상 204」를 재확인했다).
+집합 크기는 불변식이 아니라서 단언을 빼고 출력만 남겼다. 같이
 잡힌 MEDIUM: INDEX 행의 `Protocol(23)/구체 서비스(51)` 이 D=87 시절 값 그대로였다 → 25/52 로 정정.
 **조치가 새 결함을 심는 부류**(상위 §7.2 「지적이 매번 조치 안에서 나왔다」)가 이 문서에서도 반복됐다.
 | MEDIUM 2 | §1.4 `_outstanding` + `ProvisionalReservationLedger.*` 18 — 실제 19(`mark_potentially_live` 1 누락) | 19 로 정정, 메서드별 내역 명기 |
@@ -437,7 +438,7 @@ _defs = subprocess.run(
     capture_output=True, text=True,
 ).stdout.split("\n")
 TEST_CLASSES = {re.sub(r"\s*[:(]$", "", x.strip().split(None, 1)[1]) for x in _defs if x.strip()}
-assert "of" not in TEST_CLASSES          # 크기는 단언하지 않는다 — 환경 의존 관측치(204~207, §7.0)
+assert "of" not in TEST_CLASSES          # 크기는 단언하지 않는다 — 이 코드 그대로면 204 (§0.1 · §7.0)
 print("TEST_CLASSES", len(TEST_CLASSES))
 
 def has_none(t):  # `None` 이 유니온의 항으로 있는가 — 리터럴 완전일치가 아니다 (상위 §7.6 ⑭)
