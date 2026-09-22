@@ -360,6 +360,15 @@ artifacts, or written operator approval.
   at the boundary: `docker logs` without `--tail`, with `--since`, or with a
   `--tail` large enough to cross it stop at 2026-09-09 23:30. `--tail 900` and
   smaller return the current day. Recreating the container clears it.
+  The cap is `harvest_tail` in `config/f9_observation.yaml` and was **raised to
+  1800 on 2026-09-23**, when the liveness heartbeat roughly doubled this
+  service's off-hours line rate: counted backwards through the real timestamps
+  of `reports/f9-gate1/2026-09-22/futures-decision-engine.233452.log`, 900 lines
+  would have reached back only 7.5h, so a 23:34 harvest would have started after
+  the 15:45 close. 1800 reaches 18.3h and stays under three quarters of a day's
+  lines, so it cannot cross a boundary left by a previous day's reboot. The
+  derivation is in the config comment; do not raise it further without redoing
+  it.
 - **Harvest the session's logs before anything recreates a container.** The
   verdict lines are the only record of a shadow rejection, and they live only in
   each container's json-file log, which rotates at 10m × 3
@@ -374,7 +383,7 @@ artifacts, or written operator approval.
   ```
 
   The script harvests every service named in `config/f9_observation.yaml`
-  (`--since 08:00 KST`, and `--tail 900` for the decision-engine per the caveat
+  (`--since 08:00 KST`, and `--tail 1800` for the decision-engine per the caveat
   above), then emits the observation-log row and a JSON sidecar. Exit status is
   `0` when the day's observation is `COMPLETE`, on a `NO_SESSION` day (a weekend
   or a KRX holiday — there was no session to observe, so a per-session cron must
@@ -433,9 +442,44 @@ artifacts, or written operator approval.
   `4/4 consumed (COMPLETE)` with the counts bare. So the gap from the open to
   the first proof, between consecutive proofs, and from the last proof to the
   close must each stay at or under `observation_max_gap_seconds`
-  (`config/f9_observation.yaml`, 1800s; a gap of exactly 1800s passes); a
-  service that fails it reads `consumed, no proof of consumption HH:MM-HH:MM`
-  and is never `consumed`.
+  (`config/f9_observation.yaml`, 1800s; a gap of exactly 1800s passes).
+
+  **Since 2026-09-23 that bound TRIGGERS a question instead of answering one.**
+  It used to be a *proxy* for liveness: with no direct evidence, "still proving
+  it consumed" was the only stand-in for "still running". Every service now
+  emits a heartbeat — `event=stream_consumer_alive` from
+  `shared/streaming/stage.py` (#765/#776) and `event=decision_engine_alive` from
+  the decision engine's evaluation loop (#766), both every 60s — so each
+  over-the-bound stretch is offered to the `liveness` pattern group:
+
+  - the heartbeat vouches for it → the service is **`idle (alive)`**, a
+    *successful* observation of an empty stream, and COMPLETE-eligible;
+  - it cannot → **`stale_observation`**, exactly as before, and the row says
+    `no proof of consumption or liveness HH:MM-HH:MM`.
+
+  Liveness is scored by **density, not presence**: a stage in a read-failure
+  loop emits *zero* heartbeats (200 failed reads across 6.7 intervals), so
+  absence is the whole signal and "the pattern appears somewhere" would let one
+  line certify seven silent hours. The rule is that no stretch goes longer than
+  `liveness_expected_interval_seconds * (1 + liveness_missed_beats_allowed)`
+  (60 × 3 = 180s) without one. `liveness_expected_interval_seconds` **must
+  equal** `config/streaming.yaml::consumer_stage.heartbeat_interval_seconds`
+  and `config/decision_engine.yaml::liveness.log_interval_seconds`; a test reads
+  all three real files and fails if they drift.
+
+  **What the bound no longer catches, so nothing rests on it by accident:** a
+  wedged handler. `MultiStreamStage` logs `stream_message_processed … ack=false`
+  on every redelivery of a message the handler refuses, so a consumer making
+  zero net progress used to renew its own freshness forever. Every `observed`
+  pattern now requires `ack=true`, and a `stalled` group beside it catches the
+  refusals, so that consumer reads **`no_progress`** — never `idle (alive)`,
+  because idle means nothing arrived.
+
+  **The row keeps the two facts apart**: `2/4 consumed, 2/4 alive (idle)`, not
+  `4/4 consumed`. Both are successful observations and they are not the same
+  observation. The second clause is omitted when nothing is idle, so a fully
+  consuming day still reads `4/4 consumed (COMPLETE)` like every earlier row in
+  the table.
 
   **Instrumentation boundary, PR #776 — read this before re-scoring an old
   day.** `futures-monitor` moved from a hand-rolled consume loop onto
@@ -451,19 +495,28 @@ artifacts, or written operator approval.
     loop never emitted. Never quote a pre-deploy day as "0 shadow fills
     observed" — it is a null result. A zero looks like data, which is why this
     one misleads.
-  - Pre-deploy day directories hold **zero** `stream_message_processed` lines
-    and the `observed` pattern is unchanged, so re-scoring an old day returns
-    the verdict it returned before — no inflation hazard. The hazard is
-    interpretive: that verdict reads as a daemon health problem when it was an
-    instrumentation gap.
+  - Pre-deploy day directories hold **zero** `stream_message_processed` lines,
+    so re-scoring an old day cannot inflate anything: the `observed` pattern
+    got *stricter* (it now requires `ack=true`) and an empty set stays empty.
+    The hazard is interpretive: that verdict reads as a daemon health problem
+    when it was an instrumentation gap. Pre-deploy days also hold zero
+    heartbeats, so their producer, which used to be exempt from freshness
+    scoring, now reads `stale_observation` where it once read
+    `LIVENESS_UNVERIFIED`. Same evidence, and the stronger of the two true
+    statements about it — but do not read it as a daemon that died.
   - **Blind detection is continuous across the boundary** and needs no caveat:
     pre-deploy days carry `event=monitor_stream_read_error`, post-deploy days
     `xreadgroup error; sleeping`, and the shared blind anchor lists both.
 
-  Post-deploy, the row's counts cell gains a fourth number, `dropped`. It is not
-  a funnel stage — it discloses that a fill whose handler raised was ACKed and
-  therefore counted in `fills` (correcting the count needs msg_id correlation
-  the harvester does not do yet; issue #767).
+  Post-deploy, the row's counts cell gains a fourth number, `dropped`. It is
+  not a funnel stage and, since issue #767 landed, not a correction term
+  either: `fills` is already corrected. A `stream_message_dropped` names a
+  `msg_id`, and every line carrying that id — the `ack=true` the framework logs
+  a moment later included — is struck from the proofs and from the counters.
+  `dropped` is now its own measurement: how many poison records arrived, which
+  says the producers are emitting something this monitor cannot parse. It counts
+  drops on **both** input streams, so it is not the arithmetic difference
+  between a raw and a corrected fill count.
 
   The orphan-task route to that state is **closed** as of PR #776: both monitor
   daemons run one loop on `shared/streaming/stage.py`, so the consume loop can
@@ -476,58 +529,45 @@ artifacts, or written operator approval.
   `docker restart` near the close (which preserves the log, unlike a recreate)
   still closes the span over a dead stretch.
 
-  **The bound applies only to a traffic-driven proof.** A consumer's proof,
-  `stream_message_processed`, is emitted once per message
+  **The freshness exemption is gone, and what replaced it.** A consumer's
+  proof, `stream_message_processed`, is emitted once per message
   (`shared/streaming/stage.py`), so given traffic its silence is a real claim
   about the consumer. The **producer's** proof is the setup-evaluation INFO,
   and `shared/strategy/entry/setup_eval_publisher.py` emits it once per *state
-  change* — an unchanged verdict logs nothing however many cycles run — so its
-  silence says nothing about liveness at any timescale. On the two real
-  harvests the producer's worst in-session gap was 11235s (09-11) and 17050s
-  (09-18), and widening the proof set to `observed + blind` moved it by zero on
-  both days. `futures-decision-engine` therefore carries
-  `freshness_scored: false` in `config/f9_observation.yaml`, where the reason
-  is recorded next to it; it is still scored on coverage, blindness, and the
-  zero-proof rule. Note that the idle-branch heartbeat named below is a fix for
-  **consumers only** — `services/decision_engine` does not go through
-  `shared/streaming/stage.py` at all, so the producer needs its own liveness
-  emission.
+  change* — an unchanged verdict logs nothing however many cycles run. On the
+  two real harvests the producer's worst in-session gap was 11235s (09-11) and
+  17050s (09-18), and widening the proof set to `observed + blind` moved it by
+  zero on both days, so there was no honest bound to set and
+  `futures-decision-engine` carried `freshness_scored: false` by name. PR #766
+  gave it `event=decision_engine_alive`, written from the evaluation loop's
+  `finally` on **every** exit path of a cycle and throttled by nothing but the
+  interval, so silence does now mean the loop stopped. The exemption was lifted
+  with the premise it rested on; the producer is scored like everything else.
 
-  **Exempt from scoring is not exempt from disclosure.** A day on which every
-  service consumed and covered the session, but an exempt one went silent past
-  the bound, reads `LIVENESS_UNVERIFIED` rather than `COMPLETE`: the row names
-  the stretch and quotes the configured reason
-  (`4/4 consumed (LIVENESS_UNVERIFIED): futures-decision-engine liveness
-  unverified 08:46-15:45 (proof is logged once per setup-eval state change …)`)
-  and the counts ship `UNQUALIFIED`. Without it the exemption walked the
-  original defect back in through the one service the bound cannot cover — a
-  producer with one 08:46 evaluation and nothing for the next six hours
-  fifty-nine minutes rendered `4/4 consumed (COMPLETE)`, exit 0, counts bare,
-  with no caveat anywhere in the row. The qualifier is keyed on
-  `freshness_scored: false` **and** `observation_is_fresh: false`, never on a
-  service name or role, so a second exempt service inherits it automatically; a
-  fresh exempt service carries nothing. `LIVENESS_UNVERIFIED` **exits 0** — a
-  dead throttled emitter and a healthy one leave identical records, and both
-  real harvests show the healthy case (worst in-session gaps 11235s and
-  17050s), so exiting 1 would alarm every trading day. The row is loud; the
-  exit status is not.
+  **No shipped service is exempt today**, so `LIVENESS_UNVERIFIED` is
+  unreachable from `config/f9_observation.yaml`. It is kept, tested, and
+  documented here because the predicate is keyed on `freshness_scored: false`
+  **and** `observation_is_fresh: false` — never on a service name or role — so
+  the day a throttled-proof service is configured it inherits the disclosure
+  rather than the hole. If you ever see it: the row names the stretch and quotes
+  the configured reason, the counts ship `UNQUALIFIED`, and the **exit status
+  stays 0**, because a dead throttled emitter and a healthy one leave identical
+  records and exiting 1 would alarm every trading day. The row is loud; the exit
+  status is not.
 
-  There is deliberately **no "nothing was due" exemption**: a silent consumer
-  reads `no evidence`, so a genuinely quiet day reads `1/4 consumed, 3 no
-  evidence (PARTIAL)`. The constraint is a **code path, not a log level**. The
-  healthy idle loop emits nothing at any level — `xreadgroup` returns no
-  messages, `post_poll(count)`, `asyncio.sleep(0)`, `continue`, with no logging
-  on that path (`shared/streaming/stage.py`) — and
+  **A quiet day now reads `COMPLETE` — on evidence, not on an exemption.** It
+  used to read `1/4 consumed, 3 no evidence (PARTIAL)`, and that was honest
+  while the constraint was a **code path, not a log level**: the healthy idle
+  loop emitted nothing at any level (`xreadgroup` returns no messages,
+  `post_poll(count)`, `asyncio.sleep(0)`, `continue`), and
   `consumer_group_already_present`, the one line that might have stood in, fires
-  only from `recover_missing_consumer_group`, i.e. only after a read has already
-  failed. So `LOG_LEVEL=DEBUG` would produce no idle-liveness evidence at all,
-  even though both monitor daemons do read `LOG_LEVEL` since PR #749
-  (`services/risk_filter/main.py` and `services/order_router/main.py` still
-  hardcode INFO, which is beside this point). **A heartbeat in the idle branch
-  is the only fix**, and once one exists a quiet day can legitimately read
-  `COMPLETE` again. Until then a healthy idle consumer and one that died at the
-  open leave identical records, and calling that `COMPLETE` is the INERT-GATE
-  CAVEAT below committed against the observation surface itself.
+  only after a read has *already* failed. `LOG_LEVEL=DEBUG` would have added
+  nothing. The heartbeat is the emission that closed it, and a service proven
+  alive across a silence reads `idle (alive)`.
+
+  What did **not** change: a service that says nothing at all is still
+  `no_evidence`, and a day holding one is still PARTIAL. Liveness is a claim a
+  daemon has to *make*; the absence of the claim is not the claim.
 
   **`NO_SESSION` qualifies a verdict; it never replaces one.** Both holiday
   sources describe themselves as provisional (`shared/calendar.py`:
@@ -547,6 +587,15 @@ artifacts, or written operator approval.
   and both are `blind` patterns. Counting those made every Saturday render
   `**BUT THE HARVEST HOLDS EVIDENCE** … BLIND 08:45-15:45` and exit `1` — the
   standing alarm this exit-status rule exists to prevent.
+
+  **`idle (alive)` is deliberately not substantive either**, for the same
+  reason. The daemons heartbeat every 60s on Saturdays too — nothing in that
+  loop knows about the calendar — so counting liveness as evidence a session
+  happened would resurrect that standing weekend alarm in a new costume.
+  Liveness says the surface was watching, which changes no fact about whether
+  there was anything to watch. It does count for `COMPLETE` on a day the
+  calendar calls open; the two questions are scored from different sets on
+  purpose.
 
   Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
   before a mid-session redeploy and again at the close keeps both halves of the

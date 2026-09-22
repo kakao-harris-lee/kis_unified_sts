@@ -10,9 +10,11 @@ proof-of-work line, the setup-evaluation INFO, and
 cycle. An unchanged verdict therefore logs nothing however many cycles run, and
 silence carries no information at any timescale. Measured on the 2026-09-18
 harvest, a HEALTHY producer emitted 21 in-session lines across seven hours with
-one 4h44m stretch emitting nothing, which is why
-``config/f9_observation.yaml`` exempts the service from freshness scoring by
-name today.
+one 4h44m stretch emitting nothing, which is why ``config/f9_observation.yaml``
+used to exempt the service from freshness scoring by name. This line is what
+removed the premise for that exemption, and design step 3 lifted it: the
+producer is scored like every other service now, on a ``liveness`` group that
+reads ``event=decision_engine_alive``.
 
 Every test here drives the loop for an exact number of cycles by binding the
 stop to the context provider — the loop re-checks ``_stop`` at the top of each

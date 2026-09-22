@@ -135,6 +135,52 @@ def processed(minutes: int, stream: str, group: str, msg_id: str) -> str:
     )
 
 
+#: Verbatim ``stream_consumer_alive`` / ``decision_engine_alive`` lines captured
+#: from the live ``kis_paper-*`` containers on 2026-09-23, minutes after the
+#: deploy that first emitted them. 26 consecutive lines per service, ~60.4s
+#: apart — the cadence ``liveness_expected_interval_seconds`` is calibrated
+#: against, and one of the three distinct shapes (producer, single-stream
+#: consumer, multi-stream consumer with its quoted ``streams=`` field).
+REAL_LIVENESS = {
+    service: Path(__file__).parent
+    / "fixtures"
+    / f"real-2026-09-23-{service}.liveness.log"
+    for service in SCORED
+}
+
+
+def heartbeat(minutes: int, service: str) -> str:
+    """One real heartbeat line, re-stamped *minutes* after the open.
+
+    The TEXT is production output, read from the vendored capture rather than
+    typed here. That matters more than it looks: a hand-written heartbeat
+    fixture matches the config pattern because the same person wrote both, and
+    the first thing it stops catching is the emitter changing its field order.
+
+    Only the timestamp is replaced. A real capture is 26 minutes long and a
+    session is seven hours, so the cadence has to be generated even though the
+    line does not — which is the one synthetic thing about these fixtures, and
+    it is stated rather than hidden.
+    """
+    source = REAL_LIVENESS[service].read_text(encoding="utf-8").splitlines()[0]
+    return at(minutes) + source[len("2026-09-23 00:00:00,000") :]
+
+
+def alive_through(service: str, *, every_minutes: int = 1) -> list[str]:
+    """Heartbeats across the whole session, at the shipped cadence."""
+    return [
+        heartbeat(minute, service)
+        for minute in range(0, SESSION_MINUTES + 1, every_minutes)
+    ]
+
+
+def redelivered(minutes: int, stream: str, group: str, msg_id: str) -> str:
+    """A delivery the handler REFUSED: left pending, and redelivered as-is."""
+    return processed(minutes, stream, group, msg_id).replace(
+        "ack=true claimed=false", "ack=false claimed=true"
+    )
+
+
 def read_error(minutes: int, group: str) -> str:
     return (
         f"{at(minutes)} ERROR services.futures_monitor.daemon "
@@ -722,7 +768,10 @@ def test_a_since_log_starting_after_the_open_is_still_caught_as_unproven(
     assert monitor.status == mod.STATUS_STALE_OBSERVATION
     assert monitor.observed_count == 2
     assert result.verdict == mod.VERDICT_PARTIAL
-    assert "futures-monitor consumed, no proof of consumption 08:45-15:25" in row
+    assert (
+        "futures-monitor consumed, no proof of consumption or liveness 08:45-15:25"
+        in row
+    )
     assert "UNQUALIFIED" in row
 
 
@@ -856,7 +905,8 @@ def test_uncovered_tail_is_named_rather_than_ending_the_window(
     # of the head rule. What must NOT happen is the row reading as if blindness
     # ended at 11:33, and it does not: the unproven stretch is named beside it.
     assert (
-        "futures-monitor BLIND 08:45-11:33, no proof of consumption 08:45-15:45" in row
+        "futures-monitor BLIND 08:45-11:33, no proof of consumption or liveness 08:45-15:45"
+        in row
     )
 
 
@@ -886,7 +936,7 @@ def test_single_observation_window_renders_open_ended(
     assert "no evidence" not in row
     # Blindness dated at 09:47 must not read as an early hiccup on a service
     # that never proved itself at all.
-    assert "no proof of consumption 08:45-15:45" in row
+    assert "no proof of consumption or liveness 08:45-15:45" in row
 
 
 # ---------------------------------------------------------------------------
@@ -960,19 +1010,24 @@ def test_two_banners_and_one_processed_line_are_not_a_consumed_session(
     monitor = next(s for s in result.services if s.name == "futures-monitor")
 
     assert result.verdict == mod.VERDICT_PARTIAL
-    assert statuses(result) == {
-        # The producer's proof is state-change throttled, so its silence is not
-        # scored — see the producer-freshness test below.
-        "futures-decision-engine": mod.STATUS_CONSUMED,
-        **dict.fromkeys(CONSUMERS, mod.STATUS_STALE_OBSERVATION),
-    }
+    # The producer joins the consumers now. Its state-change-throttled proof is
+    # still throttled, but the exemption that used to excuse it was lifted when
+    # `decision_engine_alive` gave it a per-cycle claim to make — and this
+    # fixture makes none, which is the honest reading of a file that holds no
+    # heartbeat at all.
+    assert statuses(result) == dict.fromkeys(SCORED, mod.STATUS_STALE_OBSERVATION)
     # The harvest DID span the session — that is exactly why coverage alone
     # could never have caught this.
     assert monitor.covers_session is True
     assert monitor.observation_is_fresh is False
     assert monitor.observed_count == 1
-    assert "1/4 consumed" in row
-    assert "futures-monitor consumed, no proof of consumption 08:46-15:45" in row
+    assert monitor.liveness_count == 0, "no heartbeat to vouch for the silence"
+    assert "0/4 consumed" in row
+    assert "alive (idle)" not in row
+    assert (
+        "futures-monitor consumed, no proof of consumption or liveness 08:46-15:45"
+        in row
+    )
     assert "UNQUALIFIED" in row
     assert (
         mod.build_sidecar(result, row)["counters"]["qualified"] is False
@@ -1245,7 +1300,7 @@ def place_real(
     (day_dir / f"{service}.155535.log").write_text(text, encoding="utf-8")
 
 
-def test_the_real_producer_log_reads_consumed_because_its_proof_is_throttled(
+def test_the_real_producer_log_is_this_sparse_and_now_carries_no_heartbeat(
     config: mod.ObservationConfig, day_dir: Path
 ) -> None:
     """HIGH 1, from the file itself: a healthy producer is this sparse.
@@ -1253,12 +1308,17 @@ def test_the_real_producer_log_reads_consumed_because_its_proof_is_throttled(
     21 timestamped lines across seven hours, 10 of them proofs, with a 17050s
     stretch (09:45:53-14:30:03) emitting nothing — because
     ``shared/strategy/entry/setup_eval_publisher.py`` logs once per *state
-    change*, not per cycle. Scored for freshness this reads
-    ``stale_observation`` on a producer that was working; widening the proof
-    set to ``observed + blind`` moves the worst gap by zero (the blind set is
-    sparser), so there was no pattern to promote and no honest bound to set.
-    ``freshness_scored: false`` in the config says so, by name and with the
-    reason.
+    change*, not per cycle. Widening the proof set to ``observed + blind`` moves
+    the worst gap by zero (the blind set is sparser), so there was no pattern to
+    promote and no honest bound to set, and the service was exempted by name.
+
+    **This file is PRE-HEARTBEAT**, harvested 2026-09-18 and vendored verbatim.
+    PR #766 shipped ``decision_engine_alive`` on 2026-09-23, which is why the
+    exemption could be lifted — but no earlier file can carry the line, so the
+    17050s stretch has nothing to vouch for it and reads unproven. That is the
+    correct reading of this evidence and not a regression: the instrumentation
+    boundary is the DEPLOY date, and re-scoring a day before it measures the
+    absence of an emitter, not the absence of a daemon.
 
     2026-09-11 looks denser only because 374 of its 422 in-session lines are the
     per-cycle ``prev_close: no daily bar data`` WARNING that PR #668 removed.
@@ -1269,9 +1329,10 @@ def test_the_real_producer_log_reads_consumed_because_its_proof_is_throttled(
     result = observe(config)
     producer = next(s for s in result.services if s.name == "futures-decision-engine")
 
-    assert producer.freshness_scored is False
+    assert producer.freshness_scored is True, "the exemption was lifted by PR #766"
+    assert producer.liveness_scored is True, "the config asks this service"
+    assert producer.liveness_count == 0, "and a pre-heartbeat file cannot answer"
     assert producer.observed_count == 10
-    # Measured and recorded — just not scored.
     assert producer.observation_is_fresh is False
     assert max(
         (end - start).total_seconds() for start, end in producer.unobserved
@@ -1280,26 +1341,73 @@ def test_the_real_producer_log_reads_consumed_because_its_proof_is_throttled(
     assert result.verdict == mod.VERDICT_PARTIAL
 
 
-def test_a_real_producer_log_without_its_blind_tail_is_consumed_but_discloses(
-    config: mod.ObservationConfig, day_dir: Path
-) -> None:
-    """The exemption in isolation: strip the 15:38+ blindness and the SERVICE is
-    ``consumed`` — while the DAY still refuses to read ``COMPLETE``.
+def real_producer_without_its_blind_tail() -> list[str]:
+    """The real 2026-09-18 producer log with its 15:38+ blindness stripped.
 
-    Both halves matter. Under a freshness bound this file reads
-    ``stale_observation`` and every trading day reads PARTIAL, which is the
-    failure the last round traded for the one before it. Without the disclosure
-    it reads ``COMPLETE`` with a real 17050s hole in it, which is the failure
-    the round before that. The service keeps its status; the day says what it
-    could not verify.
+    Leaves the one fact under test — a 17050s stretch with no proof in it — and
+    nothing else, so a status of ``blind`` cannot stand in for the verdict the
+    freshness rule is supposed to produce.
     """
-    lines = [
+    return [
         line
         for line in REAL_PRODUCER.read_text(encoding="utf-8").splitlines()
         if line and line < "2026-09-18 15:38"
     ]
+
+
+def test_a_real_producer_log_with_a_17050s_hole_and_no_heartbeat_is_stale(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The BEFORE half of the change, on real evidence.
+
+    Under the exemption this day read ``4/4 consumed (LIVENESS_UNVERIFIED)``:
+    the service kept its status and the day disclosed what it could not verify,
+    because a throttled proof's silence said nothing either way. With the
+    exemption lifted and no heartbeat in a pre-2026-09-23 file to answer for the
+    silence, the same bytes read ``stale_observation`` — which is a stronger and
+    still-true statement about this evidence: nothing in it proves the daemon
+    was alive across those four hours forty-four minutes.
+    """
     (day_dir / "futures-decision-engine.155535.log").write_text(
-        "\n".join(lines) + "\n", encoding="utf-8"
+        "\n".join(real_producer_without_its_blind_tail()) + "\n", encoding="utf-8"
+    )
+    live_consumers(day_dir)
+
+    result = observe(config)
+    row = row_of(config, result)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.status == mod.STATUS_STALE_OBSERVATION
+    assert producer.liveness_count == 0
+    assert producer.observation_is_fresh is False
+    assert producer.liveness_unverified is False, "not exempt, so not undisclosed"
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert "3/4 consumed" in row
+    assert "no proof of consumption or liveness 09:45-14:30" in row
+    assert "UNQUALIFIED" in row
+
+
+def test_the_same_real_hole_reads_complete_once_the_heartbeat_fills_it(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The AFTER half, on the same real bytes plus the real new line.
+
+    Byte-identical producer evidence, with production ``decision_engine_alive``
+    lines interleaved at the cadence the live containers emit them. The 17050s
+    stretch is still there and still holds no *evaluation* — the setup-eval INFO
+    is throttled and always will be — but the daemon now says, once a minute,
+    that its loop turned. That is the whole change: the day stops being
+    unverifiable and becomes a measurement.
+    """
+    (day_dir / "futures-decision-engine.155535.log").write_text(
+        "\n".join(
+            sorted(
+                real_producer_without_its_blind_tail()
+                + alive_through("futures-decision-engine")
+            )
+        )
+        + "\n",
+        encoding="utf-8",
     )
     live_consumers(day_dir)
 
@@ -1308,12 +1416,11 @@ def test_a_real_producer_log_without_its_blind_tail_is_consumed_but_discloses(
     producer = next(s for s in result.services if s.name == "futures-decision-engine")
 
     assert producer.status == mod.STATUS_CONSUMED
-    assert producer.observation_is_fresh is False
-    assert producer.liveness_unverified is True
-    assert result.verdict == mod.VERDICT_LIVENESS_UNVERIFIED
-    assert "4/4 consumed (LIVENESS_UNVERIFIED)" in row
-    assert "futures-decision-engine liveness unverified 09:45-14:30" in row
-    assert "UNQUALIFIED" in row
+    assert producer.liveness_count == SESSION_MINUTES + 1
+    assert producer.observation_is_fresh is True
+    assert result.verdict == mod.VERDICT_COMPLETE
+    assert "4/4 consumed (COMPLETE)" in row
+    assert "UNQUALIFIED" not in row
 
 
 def test_the_real_risk_filter_log_no_longer_reads_as_a_coverage_hole(
@@ -1335,7 +1442,8 @@ def test_the_real_risk_filter_log_no_longer_reads_as_a_coverage_hole(
     assert risk_filter.covers_session is True
     assert risk_filter.status == mod.STATUS_BLIND
     assert (
-        "futures-risk-filter BLIND <=09:47, no proof of consumption 08:45-15:45" in row
+        "futures-risk-filter BLIND <=09:47, no proof of consumption or liveness 08:45-15:45"
+        in row
     )
 
 
@@ -1433,6 +1541,16 @@ def test_a_non_trading_day_that_really_consumed_still_keeps_its_verdict(
 
 # ---------------------------------------------------------------------------
 # 6d-bis. Exempt from scoring is not exempt from disclosure
+#
+# NO SHIPPED SERVICE IS EXEMPT ANY MORE. `futures-decision-engine` was the only
+# one, and PR #766 gave it a per-cycle `decision_engine_alive` line, which is
+# the premise its exemption rested on — silence that could not be told from a
+# dead daemon. The exemption was lifted with the premise.
+#
+# The machinery stays, keyed on the two facts and never on a service name, so a
+# future service whose proof is throttled inherits the disclosure the day it is
+# configured. These tests are what keeps it working in the meantime, so they
+# BUILD an exempt service instead of asserting that one exists.
 # ---------------------------------------------------------------------------
 
 #: The reviewer's reproduction, verbatim. A pre-open line covering the tail-mode
@@ -1443,9 +1561,52 @@ DEAD_PRODUCER = [
     "no signal this cycle: gap_too_small",
 ]
 
+#: What the producer's lifted exemption used to say, kept verbatim so the
+#: disclosure these tests check is the one an operator really read.
+EXEMPT_REASON = (
+    "proof is logged once per setup-eval state change, not per cycle, so "
+    "silence cannot be told from a dead daemon"
+)
+
+
+def exempt_producer_config_file(tmp_path: Path) -> Path:
+    """The shipped config with the producer's freshness exemption put back.
+
+    Derived from the real file rather than hand-written, so every pattern under
+    test stays the production one; only the two exemption keys differ, and the
+    ``liveness`` group goes with them (a service that can prove itself alive has
+    no use for an exemption, and leaving it would make these fixtures pass for
+    the wrong reason).
+    """
+    document = yaml.safe_load(mod.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    producer = next(
+        entry
+        for entry in document["f9_observation"]["services"]
+        if entry["name"] == "futures-decision-engine"
+    )
+    producer["freshness_scored"] = False
+    producer["freshness_unscored_reason"] = EXEMPT_REASON
+    producer.pop("liveness", None)
+    path = tmp_path / "f9_observation.exempt.yaml"
+    path.write_text(
+        yaml.safe_dump(document, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return path
+
+
+@pytest.fixture
+def exempt_config(
+    config: mod.ObservationConfig, tmp_path: Path
+) -> mod.ObservationConfig:
+    """``config``, but with a freshness-exempt producer."""
+    return replace(
+        mod.load_observation_config(exempt_producer_config_file(tmp_path)),
+        report_root=config.report_root,
+    )
+
 
 def test_a_dead_exempt_producer_cannot_render_as_a_complete_day(
-    config: mod.ObservationConfig, day_dir: Path
+    exempt_config: mod.ObservationConfig, day_dir: Path
 ) -> None:
     """The round-3 blocker, walked back in through the freshness exemption.
 
@@ -1466,8 +1627,8 @@ def test_a_dead_exempt_producer_cannot_render_as_a_complete_day(
     )
     live_consumers(day_dir)
 
-    result = observe(config)
-    row = row_of(config, result)
+    result = observe(exempt_config)
+    row = row_of(exempt_config, result)
     producer = next(s for s in result.services if s.name == "futures-decision-engine")
 
     # Every service still *consumed* — no status can carry what is wrong here.
@@ -1487,7 +1648,7 @@ def test_a_dead_exempt_producer_cannot_render_as_a_complete_day(
 
 
 def test_a_fresh_exempt_producer_carries_no_disclosure(
-    config: mod.ObservationConfig, day_dir: Path
+    exempt_config: mod.ObservationConfig, day_dir: Path
 ) -> None:
     """The qualifier is keyed on BOTH facts, so a fresh exempt service is clean.
 
@@ -1497,8 +1658,8 @@ def test_a_fresh_exempt_producer_carries_no_disclosure(
     healthy_producer(day_dir)
     live_consumers(day_dir)
 
-    result = observe(config)
-    row = row_of(config, result)
+    result = observe(exempt_config)
+    row = row_of(exempt_config, result)
     producer = next(s for s in result.services if s.name == "futures-decision-engine")
 
     assert producer.freshness_scored is False
@@ -1510,7 +1671,7 @@ def test_a_fresh_exempt_producer_carries_no_disclosure(
 
 
 def test_an_exempt_service_that_is_blind_says_so_once(
-    config: mod.ObservationConfig, day_dir: Path
+    exempt_config: mod.ObservationConfig, day_dir: Path
 ) -> None:
     """Blindness outranks the disclosure; the two texts never collide.
 
@@ -1529,8 +1690,8 @@ def test_an_exempt_service_that_is_blind_says_so_once(
     )
     live_consumers(day_dir)
 
-    result = observe(config)
-    row = row_of(config, result)
+    result = observe(exempt_config)
+    row = row_of(exempt_config, result)
     producer = next(s for s in result.services if s.name == "futures-decision-engine")
 
     assert producer.status == mod.STATUS_PARTIALLY_BLIND
@@ -1538,10 +1699,12 @@ def test_an_exempt_service_that_is_blind_says_so_once(
     assert row.count("futures-decision-engine") == 1
     assert "futures-decision-engine blind <=09:45" in row
     assert "liveness unverified" not in row
-    assert "no proof of consumption" not in row
+    assert "no proof of consumption or liveness" not in row
 
 
-def test_an_exemption_must_state_its_reason(config: mod.ObservationConfig) -> None:
+def test_an_exemption_must_state_its_reason(
+    config: mod.ObservationConfig, tmp_path: Path
+) -> None:
     """A disclosure with a blank where its reason goes is not a disclosure.
 
     Same guard-rail as ``harvest_tail``: the value the row quotes comes from
@@ -1560,10 +1723,22 @@ def test_an_exemption_must_state_its_reason(config: mod.ObservationConfig) -> No
             counters=(),
             freshness_scored=False,
         )
-    # The production config supplies one.
-    producer = next(s for s in config.services if s.name == "futures-decision-engine")
-    assert producer.freshness_scored is False
-    assert producer.freshness_unscored_reason.strip()
+    # NO shipped service is exempt any more, and that is the assertion — not an
+    # absence someone has to notice. `VERDICT_LIVENESS_UNVERIFIED` is therefore
+    # unreachable from `config/f9_observation.yaml`, which is why the fixture
+    # above has to build an exempt service for the disclosure tests to have a
+    # subject at all.
+    assert [s.name for s in config.services if not s.freshness_scored] == []
+    # And a config that DOES exempt one still supplies the reason the row quotes.
+    spec = next(
+        s
+        for s in mod.load_observation_config(
+            exempt_producer_config_file(tmp_path)
+        ).services
+        if s.name == "futures-decision-engine"
+    )
+    assert spec.freshness_scored is False
+    assert spec.freshness_unscored_reason.strip()
 
 
 def test_the_cli_exits_zero_on_an_unverified_liveness_day(
@@ -1575,6 +1750,10 @@ def test_the_cli_exits_zero_on_an_unverified_liveness_day(
     why the bound was dropped — and both real harvests show the healthy case at
     11235s and 17050s. Exiting 1 would alarm on every trading day, which is the
     standing-alarm harm the ``NO_SESSION`` exit rule exists to prevent.
+
+    Driven through ``--config`` because no shipped service is exempt any more:
+    this is the whole path — argument parsing, config load, verdict, row, exit
+    status — for the day a throttled-proof service is configured again.
     """
     day_dir = tmp_path / DAY.isoformat()
     day_dir.mkdir(parents=True)
@@ -1589,6 +1768,8 @@ def test_the_cli_exits_zero_on_an_unverified_liveness_day(
             DAY.isoformat(),
             "--no-harvest",
             "--no-point-in-time",
+            "--config",
+            str(exempt_producer_config_file(tmp_path)),
             "--report-root",
             str(tmp_path),
         ]
@@ -1642,7 +1823,10 @@ def test_a_blind_row_names_the_stretch_it_was_never_proven_over(
     monitor = next(s for s in result.services if s.name == "futures-monitor")
 
     assert monitor.status == mod.STATUS_PARTIALLY_BLIND
-    assert "futures-monitor blind <=09:00, no proof of consumption 08:46-15:45" in row
+    assert (
+        "futures-monitor blind <=09:00, no proof of consumption or liveness 08:46-15:45"
+        in row
+    )
 
 
 def test_many_unproven_stretches_are_counted_rather_than_merged_away(
@@ -1677,11 +1861,12 @@ def test_many_unproven_stretches_are_counted_rather_than_merged_away(
     spelled_out = mod._STALE_WINDOWS_SPELLED_OUT
     assert len(monitor.unobserved) > spelled_out
     assert (
-        "no proof of consumption 08:45-09:16, 09:16-09:47, 09:47-10:18 +10 more" in row
+        "no proof of consumption or liveness 08:45-09:16, 09:16-09:47, 09:47-10:18 +10 more"
+        in row
     )
     assert f"+{len(monitor.unobserved) - spelled_out} more" in row
     # Never the collapsed whole-session window a merge would have produced.
-    assert "no proof of consumption 08:45-15:45" not in row
+    assert "no proof of consumption or liveness 08:45-15:45" not in row
 
 
 def test_stale_windows_are_sorted_and_clamped_rather_than_trusted(
@@ -1928,10 +2113,13 @@ def test_harvest_writes_timestamped_files_and_never_overwrites(
         written["futures-monitor"].path.read_text(encoding="utf-8").endswith("hello\n")
     )
     assert [c for c in calls if "--tail" in c], "decision-engine needs --tail"
-    # The --tail caveat: decision-engine is harvested with --tail 900, the rest
-    # with --since the configured KST clock time.
+    # The --tail caveat: decision-engine is harvested with --tail, the rest with
+    # --since the configured KST clock time. The cap itself comes from config —
+    # asserting a literal here would just re-pin the number the config comment
+    # derives, and it moved once already (900 -> 1800, when the heartbeat
+    # doubled the producer's off-hours line rate).
     tail_call = next(c for c in calls if "--tail" in c)
-    assert tail_call[tail_call.index("--tail") + 1] == "900"
+    assert tail_call[tail_call.index("--tail") + 1] == str(decision_engine_tail(config))
     assert tail_call[-1] == "kis_paper-futures-decision-engine"
     since_call = next(c for c in calls if "--since" in c)
     assert since_call[since_call.index("--since") + 1].startswith("2026-09-18T08:00")
@@ -2227,7 +2415,8 @@ def test_report_root_override_keeps_the_configured_root_untouched(
 
 
 # ---------------------------------------------------------------------------
-# The poison-fill overcount: reported, not hidden (PR #776)
+# The poison-fill overcount: corrected by msg_id correlation (issue #767),
+# having been merely reported by the `dropped` counter since PR #776
 # ---------------------------------------------------------------------------
 
 
@@ -2241,33 +2430,38 @@ def dropped(minutes: int, stream: str, msg_id: str) -> str:
     )
 
 
-def test_a_dropped_fill_is_counted_as_a_fill_and_the_row_says_so(
+def test_a_dropped_fill_is_struck_from_the_fill_count(
     config: mod.ObservationConfig, day_dir: Path
 ) -> None:
-    """A fill whose handler raised still inflates ``fills``; ``dropped`` discloses it.
+    """A fill whose handler raised is NOT a fill, and the count now says so.
 
     ``services/futures_monitor/daemon.py``'s ``handle_message`` catches a raising
     handler, logs ``stream_message_dropped``, and returns ``True`` so the
     framework ACKs — deliberately, to keep drop-and-continue. The stage then
-    emits ``stream_message_processed ack=true`` for the same ``msg_id``, and the
-    ``fills`` pattern counts it.
+    emits ``stream_message_processed ack=true`` for the same ``msg_id``. Read
+    alone that second line says a fill was consumed; read with the first it says
+    an ACK happened and nothing else did.
 
-    Correcting the count needs msg_id correlation the harvester does not do
-    (issue #767, design step 3). Until then the row must at least *say* a drop
-    happened: an overcounted fill is otherwise indistinguishable from a
-    correctly consumed one, so Gate 1 reporting 3 fills against a ledger showing
-    2 trades gives the reconciler no reason to suspect the counter.
+    Until issue #767 the harvester read it alone and counted it, so Gate 1
+    reported 3 fills against a ledger showing 2 trades with nothing in the row
+    to suggest the counter. The ``retracted_by`` group is that correlation: the
+    drop names a ``msg_id``, and every line carrying it is struck.
+
+    The poison fill is placed AFTER the drop in the file and the assertion does
+    not depend on it: striking is by id, so the daemon logging the drop inside
+    the handler and the ACK after it returns is an implementation detail rather
+    than something the harvester leans on.
     """
     healthy_producer(day_dir, candidates=3)
     write_log(day_dir, "futures-risk-filter", consumed_through("futures-risk-filter"))
     write_log(day_dir, "futures-order-router", consumed_through("futures-order-router"))
     stream, _group = CONSUMER_STREAMS["futures-monitor"]
+    clean = consumed_through("futures-monitor")
     write_log(
         day_dir,
         "futures-monitor",
-        consumed_through("futures-monitor")
+        clean
         + [
-            # the poison fill: acked (so counted as a fill) and disclosed
             processed(60, stream, "futures_monitor", "poison-1"),
             dropped(60, stream, "poison-1"),
         ],
@@ -2276,11 +2470,46 @@ def test_a_dropped_fill_is_counted_as_a_fill_and_the_row_says_so(
     result = observe(config)
     row = row_of(config, result)
 
-    fills = len(session_minutes()) + 1
-    assert result.counters["fills"] == fills
+    # Exactly the clean fills — the poison one is gone, not merely annotated.
+    assert result.counters["fills"] == len(clean)
+    # And `dropped` still says a poison record arrived, which is its own fact:
+    # producers are emitting something this monitor cannot parse.
     assert result.counters["dropped"] == 1
-    # the row carries the correction term next to the number it corrects
-    assert f"-> {fills} -> 1" in row
+    assert f"-> {len(clean)} -> 1" in row
+    # The correction is not "subtract dropped from fills": that would be wrong
+    # in the other direction, since `dropped` counts both input streams.
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+    assert monitor.no_progress_count == 1
+    assert monitor.status == mod.STATUS_CONSUMED, "the clean fills still count"
+
+
+def test_a_drop_logged_after_its_own_ack_line_is_still_struck(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Order-independence, stated as a test rather than trusted.
+
+    ``_retracted_message_ids`` collects ids over the whole session before any
+    line is classified, so a drop cannot be "too late" to void a proof. Written
+    because the alternative — strike only what follows — reads as the obvious
+    implementation and would silently fail the day the daemon logs its catch
+    after the framework's ACK.
+    """
+    healthy_producer(day_dir, candidates=3)
+    write_log(day_dir, "futures-risk-filter", consumed_through("futures-risk-filter"))
+    write_log(day_dir, "futures-order-router", consumed_through("futures-order-router"))
+    stream, _group = CONSUMER_STREAMS["futures-monitor"]
+    clean = consumed_through("futures-monitor")
+    write_log(
+        day_dir,
+        "futures-monitor",
+        clean
+        + [
+            dropped(59, stream, "poison-1"),
+            processed(60, stream, "futures_monitor", "poison-1"),
+        ],
+    )
+
+    assert observe(config).counters["fills"] == len(clean)
 
 
 def test_a_quiet_healthy_day_reports_zero_dropped(
@@ -2298,3 +2527,475 @@ def test_a_quiet_healthy_day_reports_zero_dropped(
 
     assert result.counters["dropped"] == 0
     assert result.verdict == mod.VERDICT_COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# 7. Liveness — proof the loop turned, scored apart from proof it consumed
+#
+# The two-directional check this arc keeps re-learning: a quiet day must now
+# read COMPLETE, AND every way a surface can fail must still read PARTIAL. A
+# tool that always says PARTIAL is as useless as one that always says COMPLETE,
+# and each of these tests is one half of that pair.
+# ---------------------------------------------------------------------------
+
+
+def test_a_quiet_session_whose_surface_proved_it_was_watching_is_complete(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The headline: nothing arrived, everything was watching, day COMPLETE.
+
+    Before the heartbeat this was the one shape the script could not score. A
+    healthy idle consumer and one that died at the open left byte-identical
+    records — the idle branch logged nothing at any level — so a quiet day was
+    honestly PARTIAL, and a genuinely quiet market was indistinguishable from a
+    dead pipeline. Now each service says once a minute that its loop turned, and
+    "nothing arrived, and we know the consumers were there to see it" is a
+    measurement.
+    """
+    for service in SCORED:
+        write_log(day_dir, service, alive_through(service))
+
+    result = observe(config)
+    row = row_of(config, result)
+
+    assert statuses(result) == dict.fromkeys(SCORED, mod.STATUS_IDLE_ALIVE)
+    assert result.verdict == mod.VERDICT_COMPLETE
+    assert "0/4 consumed, 4/4 alive (idle)" in row
+    assert "UNQUALIFIED" not in row
+    assert mod.build_sidecar(result, row)["counters"]["qualified"] is True
+
+
+def test_the_row_keeps_consumption_and_liveness_separately_legible(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Two consumed, two idle-but-alive: the cell says both, not "4/4 consumed".
+
+    Both are successful observations and they are not the same observation. A
+    single tally covering both would be a fresh conflation of exactly the kind
+    the ``observed``/``liveness`` split exists to prevent — and it would live in
+    the one place an operator actually reads, the row, while the sidecar quietly
+    held the truth.
+    """
+    healthy_producer(day_dir)
+    write_log(day_dir, "futures-risk-filter", consumed_through("futures-risk-filter"))
+    for service in ("futures-order-router", "futures-monitor"):
+        write_log(day_dir, service, alive_through(service))
+
+    result = observe(config)
+    row = row_of(config, result)
+
+    assert statuses(result) == {
+        "futures-decision-engine": mod.STATUS_CONSUMED,
+        "futures-risk-filter": mod.STATUS_CONSUMED,
+        "futures-order-router": mod.STATUS_IDLE_ALIVE,
+        "futures-monitor": mod.STATUS_IDLE_ALIVE,
+    }
+    assert result.verdict == mod.VERDICT_COMPLETE
+    assert "2/4 consumed, 2/4 alive (idle)" in row
+
+
+def test_a_fully_consuming_day_still_reads_the_way_earlier_rows_do(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The idle clause is omitted when there is nothing idle.
+
+    The runbook's observation-log table holds rows written before any of this,
+    and a reader comparing down the column should not have to decide whether
+    ``4/4 consumed`` and ``4/4 consumed, 0/4 alive (idle)`` mean the same thing.
+    """
+    healthy_producer(day_dir, candidates=2)
+    live_consumers(day_dir)
+
+    row = row_of(config, observe(config))
+
+    assert "4/4 consumed (COMPLETE)" in row
+    assert "alive (idle)" not in row
+
+
+def test_one_dead_consumer_still_fails_a_day_the_rest_of_which_was_alive(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Direction two, case 1: a consumer dead all session.
+
+    It emits nothing — not a proof, not a heartbeat — so there is nothing to
+    vouch for it and ``idle_alive`` is out of reach. The three services around
+    it being demonstrably fine is precisely the situation in which a lenient
+    rule would wave this one through.
+    """
+    healthy_producer(day_dir)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    write_log(day_dir, "futures-monitor", [])
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.status == mod.STATUS_NO_EVIDENCE
+    assert monitor.liveness_count == 0
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert "futures-monitor NO EVIDENCE" in row
+
+
+def test_a_wedged_redelivery_loop_is_not_idle_and_is_not_consumed(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Direction two, case 2: the same ``msg_id`` forever, nothing acked.
+
+    This is the shape issue #767 names, and it is the one a naive liveness rule
+    makes WORSE. The consumer is alive: it polls, it heartbeats, it is delivered
+    messages. It just never finishes one — ``handle_message`` returns False, the
+    framework leaves the record pending, Redis redelivers it, and the cycle
+    repeats. With ``observed`` matching the event alone it renewed its own
+    freshness on every redelivery and read ``consumed``; with liveness folded in
+    and no ``ack=`` requirement it would now read ``idle_alive`` and the day
+    would read COMPLETE. It must read neither.
+    """
+    healthy_producer(day_dir, candidates=3)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    stream, group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        alive_through("futures-monitor")
+        # One message, delivered again and again, never acked.
+        + [
+            redelivered(minute, stream, group, "stuck-1") for minute in range(0, 421, 5)
+        ],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.observed_count == 0
+    assert monitor.liveness_count == SESSION_MINUTES + 1, "it really was alive"
+    assert monitor.no_progress_count == 85
+    assert monitor.status == mod.STATUS_NO_PROGRESS
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert "futures-monitor NO PROGRESS (85 deliveries, none completed)" in row
+    # The two genuinely idle consumers are counted as idle; the wedged one is
+    # not, and the row keeps the three facts apart.
+    assert "1/4 consumed, 2/4 alive (idle)" in row
+    assert "futures-monitor idle" not in row
+    assert "UNQUALIFIED" in row
+
+
+def test_a_blind_stretch_outranks_the_heartbeat_beside_it(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Direction two, case 3: a blind stretch.
+
+    The 2026-09-17 signature is a daemon that is *up and polling* while its
+    consumer group is gone, so the heartbeat and the read errors arrive
+    together. Liveness answers "was the loop turning?" and here the answer is
+    yes — which is exactly why it must not be allowed to answer "was it seeing
+    anything?", where the answer is no.
+    """
+    healthy_producer(day_dir)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    write_log(
+        day_dir,
+        "futures-monitor",
+        alive_through("futures-monitor")
+        + [read_error(minute, "futures_monitor") for minute in range(0, 421)],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.liveness_count == SESSION_MINUTES + 1
+    assert monitor.status == mod.STATUS_BLIND
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert "futures-monitor BLIND 08:45-15:45" in row
+
+
+def test_a_harvest_that_does_not_span_the_session_is_not_saved_by_liveness(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Direction two, case 4: the harvest does not reach the open.
+
+    Built on the ``--tail``-harvested producer because that is where the hole is
+    real: tail truncation is by line COUNT, so there is no floor to anchor at
+    and a late head cannot be told from a quiet start. (A ``--since`` consumer
+    whose file begins late is a different situation — the floor WAS asked for,
+    so the missing hours are quiet rather than unwatched, and the leading
+    unproven window catches a mid-morning recreate instead. See
+    ``FileEvidence.span``.)
+
+    A heartbeat cannot repair it. Every one of these lines is honest about the
+    instant it was written and says nothing about the hours before the first,
+    which is the rule every other line in this file obeys — so the cap eating
+    the morning stays a coverage hole and never becomes ``idle_alive``.
+    """
+    tail = decision_engine_tail(config)
+    late = list(range(405, SESSION_MINUTES + 1))
+    write_log(
+        day_dir,
+        "futures-decision-engine",
+        # A chatty last quarter-hour that filled the cap, heartbeats among it.
+        [
+            setup_eval(405 + index // 60, "setup_d_vwap_reversion", f"z={index}")
+            for index in range(tail)
+        ]
+        + [heartbeat(minute, "futures-decision-engine") for minute in late],
+        cover=False,
+    )
+    for service in CONSUMERS:
+        write_log(day_dir, service, alive_through(service))
+
+    result = observe(config)
+    row = row_of(config, result)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.liveness_count == len(late), "it really did heartbeat"
+    assert producer.coverage_truncated is True
+    assert producer.covers_session is False
+    assert producer.status == mod.STATUS_PARTIAL_COVERAGE
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert "harvest does not span the session" in row
+
+
+def test_a_consumer_that_stops_heartbeating_midway_is_stale(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Direction two, case 5: alive all morning, then nothing.
+
+    The harvest spans the session — a ``docker restart`` near the close leaves a
+    banner that closes the span — and the heartbeats stop at 11:45. Liveness
+    answers for the morning and cannot answer for the afternoon, so only the
+    afternoon is unproven. The window is named rather than the whole session,
+    because "dead from 11:45" and "dead from the open" are different facts.
+    """
+    healthy_producer(day_dir)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    write_log(
+        day_dir,
+        "futures-monitor",
+        [heartbeat(minute, "futures-monitor") for minute in range(0, 181)]
+        + [banner("futures monitor", "15:50:00")],
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.covers_session is True
+    assert monitor.status == mod.STATUS_STALE_OBSERVATION
+    assert [
+        (start.strftime("%H:%M"), end.strftime("%H:%M"))
+        for start, end in monitor.unobserved
+    ] == [("11:45", "15:45")]
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert "no proof of consumption or liveness 11:45-15:45" in row
+
+
+def test_one_heartbeat_in_a_silent_session_does_not_certify_it(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Density, not presence — the rule this whole design turns on.
+
+    Replace the density check with "the pattern appears somewhere in the window"
+    and THIS fixture passes: one line at 12:15 and seven hours of nothing around
+    it would read ``idle_alive`` and the day would read COMPLETE. The signal a
+    dead loop gives is the line's ABSENCE, and a rule built on presence cannot
+    see an absence — which is why the emitting side was measured first: a stage
+    in a read-failure loop spun 200 failed reads across 6.7 heartbeat intervals
+    and emitted zero heartbeats.
+    """
+    healthy_producer(day_dir)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    write_log(
+        day_dir,
+        "futures-monitor",
+        [heartbeat(210, "futures-monitor"), banner("futures monitor", "15:50:00")],
+    )
+
+    result = observe(config)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.liveness_count == 1, "the pattern DOES match, once"
+    assert monitor.status == mod.STATUS_STALE_OBSERVATION
+    assert result.verdict == mod.VERDICT_PARTIAL
+
+
+def test_the_heartbeat_may_miss_the_configured_number_of_beats(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The tolerance is a threshold, not a demand for a perfect metronome.
+
+    A container under GC, or a poll that returned late, drops a beat; the
+    observed cadence is the interval plus one poll block to begin with. Both
+    edges are pinned from config so retuning either knob surfaces here instead
+    of silently turning healthy days stale or dead ones alive.
+    """
+    allowed = config.liveness_max_gap_seconds // 60
+    healthy_producer(day_dir)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    write_log(
+        day_dir,
+        "futures-monitor",
+        alive_through("futures-monitor", every_minutes=allowed),
+    )
+
+    assert statuses(observe(config))["futures-monitor"] == mod.STATUS_IDLE_ALIVE
+
+    # Overwritten, not added: coverage is a union of FILES, so a second harvest
+    # beside the first would merge the two cadences and test nothing.
+    write_log(
+        day_dir,
+        "futures-monitor",
+        alive_through("futures-monitor", every_minutes=allowed + 1),
+    )
+
+    assert statuses(observe(config))["futures-monitor"] == mod.STATUS_STALE_OBSERVATION
+
+
+def test_a_wedged_consumer_cannot_be_rescued_by_a_later_ack_of_another_message(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """``ack=true`` is per line, so recovery is visible and wedging is not hidden.
+
+    The complement of the retraction rule: a message struck by a drop stays
+    struck, but a handler that refuses a message and later succeeds on a
+    different one has genuinely made progress, and the proof for that second
+    message stands. Without this the ack rule would be a blunt "any refusal
+    poisons the service", which fails the other way.
+    """
+    healthy_producer(day_dir, candidates=2)
+    for service in ("futures-risk-filter", "futures-order-router"):
+        write_log(day_dir, service, alive_through(service))
+    stream, group = CONSUMER_STREAMS["futures-monitor"]
+    write_log(
+        day_dir,
+        "futures-monitor",
+        alive_through("futures-monitor")
+        + [redelivered(minute, stream, group, "stuck-1") for minute in range(0, 60, 5)]
+        + consumed_through("futures-monitor"),
+    )
+
+    monitor = next(s for s in observe(config).services if s.name == "futures-monitor")
+
+    assert monitor.no_progress_count == 12
+    assert monitor.observed_count == len(session_minutes())
+    assert monitor.status == mod.STATUS_CONSUMED
+
+
+def test_the_sidecar_carries_the_idle_windows_beside_the_unproven_ones(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """An auditor reading the JSON must see which hours were idle-and-watched.
+
+    ``unobserved`` and ``idle_session_kst`` are the two answers to the same
+    question — what happened during the silence — and the whole point is that
+    they are different. Collapsed into one field, an ``idle_alive`` service
+    would be indistinguishable in the record from a service nobody checked.
+    """
+    for service in SCORED:
+        write_log(day_dir, service, alive_through(service))
+
+    result = observe(config)
+    sidecar = mod.build_sidecar(result, row_of(config, result))
+    monitor = next(s for s in sidecar["services"] if s["name"] == "futures-monitor")
+
+    assert monitor["status"] == mod.STATUS_IDLE_ALIVE
+    assert monitor["unobserved_session_kst"] == []
+    assert monitor["idle_session_kst"] == [
+        ["2026-09-18T08:45:00+09:00", "2026-09-18T15:45:00+09:00"]
+    ]
+    assert monitor["liveness_count"] == SESSION_MINUTES + 1
+    assert monitor["liveness_scored"] is True
+    assert monitor["no_progress_count"] == 0
+
+
+def test_the_harvester_and_the_emitters_agree_on_the_heartbeat_interval() -> None:
+    """Three real config files, one cadence. They have to know about each other.
+
+    Too LOW here and a healthy day reads stale, because the harvester expects
+    more lines than the daemons emit. Too HIGH and a dead stretch reads alive,
+    because it expects fewer. Either way the failure is silent and lands on the
+    verdict, so the drift is caught at the files rather than in production.
+
+    ``config/streaming.yaml`` governs the three consumers through
+    ``shared/streaming/stage.py``; ``config/decision_engine.yaml`` governs the
+    producer, which does not go through that module at all.
+    """
+    harvester = mod.load_observation_config().liveness_expected_interval_seconds
+    repo_root = Path(mod.__file__).resolve().parents[2]
+
+    streaming = yaml.safe_load(
+        (repo_root / "config" / "streaming.yaml").read_text(encoding="utf-8")
+    )["consumer_stage"]["heartbeat_interval_seconds"]
+    decision_engine = yaml.safe_load(
+        (repo_root / "config" / "decision_engine.yaml").read_text(encoding="utf-8")
+    )["liveness"]["log_interval_seconds"]
+
+    assert harvester == streaming, (
+        f"config/streaming.yaml heartbeats every {streaming}s but "
+        f"f9_observation.yaml scores against {harvester}s"
+    )
+    assert harvester == decision_engine, (
+        f"config/decision_engine.yaml heartbeats every {decision_engine}s but "
+        f"f9_observation.yaml scores against {harvester}s"
+    )
+
+
+def test_the_liveness_bound_stays_well_inside_the_observation_gap_bound() -> None:
+    """The trigger has to be looser than the answer it triggers.
+
+    ``observation_max_gap_seconds`` is what asks the liveness question;
+    ``liveness_max_gap_seconds`` is how that question is answered. Invert them
+    and every stretch long enough to be asked about is automatically too long to
+    answer, which would make the heartbeat unable to certify anything.
+    """
+    config = mod.load_observation_config()
+
+    assert config.liveness_max_gap_seconds < config.observation_max_gap_seconds
+    assert (
+        config.liveness_max_gap_seconds
+        == config.liveness_expected_interval_seconds
+        * (1 + config.liveness_missed_beats_allowed)
+    )
+
+
+def test_the_vendored_heartbeat_fixtures_are_the_lines_production_emits(
+    config: mod.ObservationConfig,
+) -> None:
+    """The fixtures are captures, and this is what keeps them captures.
+
+    Every liveness test above is driven from these four files. If one were ever
+    edited into a shape the daemons do not emit, the tests would keep passing
+    and the config patterns would keep matching — against a line that exists
+    nowhere but here.
+    """
+    for service in SCORED:
+        spec = next(s for s in config.services if s.name == service)
+        lines = REAL_LIVENESS[service].read_text(encoding="utf-8").splitlines()
+
+        assert len(lines) >= 20, f"{service}: too short to show a cadence"
+        for line in lines:
+            assert any(pattern.search(line) for pattern in spec.liveness), (
+                f"{service}: captured line matches no configured liveness "
+                f"pattern: {line}"
+            )
+            assert not any(pattern.search(line) for pattern in spec.blind)
+            assert not any(pattern.search(line) for pattern in spec.observed)
+            assert not any(pattern.search(line) for pattern in spec.stalled)
+
+        moments = [mod._parse_line(line) for line in lines]
+        gaps = [
+            (b - a).total_seconds()
+            for a, b in zip(moments, moments[1:])
+            if a is not None and b is not None
+        ]
+        assert max(gaps) <= config.liveness_max_gap_seconds, (
+            "the captured cadence must clear the bound the harvester scores "
+            f"against: worst real gap {max(gaps)}s vs "
+            f"{config.liveness_max_gap_seconds}s"
+        )

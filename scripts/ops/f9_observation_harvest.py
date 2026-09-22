@@ -50,29 +50,70 @@ proof-of-consumption was one line half an hour after the open, followed by
 silence to the close, read ``consumed (COMPLETE)`` on the strength of two
 banners. So a second, separate bound is measured: the gap from the open to the
 first proof, between consecutive proofs, and from the last proof to the close
-must each stay at or under ``observation_max_gap_seconds``. A consumer whose
-last proof is hours before the close is ``stale_observation``, never
-``consumed``.
+must each stay at or under ``observation_max_gap_seconds``.
 
-The bound is only meaningful for a **traffic-driven** proof. A consumer's proof
-is ``stream_message_processed``, emitted once per message
-(``shared/streaming/stage.py``), so silence between two proofs is a real claim
-about the consumer whenever there is traffic. The producer's proof is the
-setup-evaluation INFO, emitted once per *state change*
-(``shared/strategy/entry/setup_eval_publisher.py``), so its silence carries no
-information about liveness at any timescale and no bound over it can. Services
-whose proof is not traffic-driven therefore set ``freshness_scored: false`` in
-``config/f9_observation.yaml``, where the reason is recorded next to them; they
-are still scored on coverage, blindness, and the zero-proof rule.
+Liveness — the separate claim
+-----------------------------
+``observed`` asks "did it CONSUME?". ``liveness`` asks "was it WATCHING?".
+Those are different claims about different evidence and they are scored apart,
+because merging them renders a consumer that polled 390 times and handled
+nothing as ``consumed`` — the defect the ``observed``/``blind`` split closed,
+returning through a new door.
 
-**Exempt from scoring is not exempt from disclosure.** A day on which every
-service consumed, but an exempt one went silent past the bound, is not a
-measurement and its row must not be able to pass for one: it reads
-``LIVENESS_UNVERIFIED``, names the stretch and quotes the reason, and its
+Until PRs #765/#766/#776 there was no second claim to make. The idle loop
+emitted nothing at any level, so a healthy quiet consumer and one that died at
+the open left byte-identical records and a quiet day honestly read PARTIAL.
+Now every stage poll feeds a ``stream_consumer_alive`` heartbeat and the
+decision engine logs ``decision_engine_alive`` once per interval from a
+``finally`` covering every exit path of a cycle.
+
+So ``observation_max_gap_seconds`` changed job. It is no longer a **proxy** for
+liveness — it is the **trigger** that makes the harvester demand a positive
+liveness answer for a stretch of silence. A stretch the heartbeat vouches for
+is ``idle_alive``, a *successful* observation of an empty stream; a stretch it
+cannot is ``stale_observation``, exactly as before. A service configured with
+no ``liveness`` patterns has nothing to offer and keeps the old behaviour.
+
+Liveness is scored by **density, not by presence**: absence is the entire
+signal — a stage in a read-failure loop emits *zero* heartbeats, and no regex
+matches a line never written — so "the pattern appears somewhere" would let one
+line certify seven silent hours. What is required is the number of lines the
+configured cadence predicts, spread across the window. No field is parsed:
+``polls=0`` is unrepresentable, because ``_LivenessHeartbeat.record_poll``
+increments before the due-check, so a matched line already means the loop
+turned.
+
+Freshness exemptions
+--------------------
+``freshness_scored: false`` marks a service whose proof is not traffic-driven,
+so that silence between two proofs says nothing about it. The producer used to
+be one: its proof is the setup-evaluation INFO, emitted once per *state change*
+(``shared/strategy/entry/setup_eval_publisher.py``). ``decision_engine_alive``
+removed that premise, the exemption was lifted with it, and **no shipped
+service sets the flag today.**
+
+The machinery stays, keyed on the two facts rather than on a service name, so a
+future throttled-proof service inherits the disclosure the day it is
+configured — because **exempt from scoring is not exempt from disclosure**. A
+day on which every service consumed but an exempt one went silent past the
+bound is not a measurement and its row must not be able to pass for one: it
+reads ``LIVENESS_UNVERIFIED``, names the stretch and quotes the reason, and its
 counters ship qualified. Left out, the exemption walked the original defect
-back in through the one service the bound cannot cover — one 08:46 evaluation
-and six hours fifty-nine minutes of nothing rendered ``4/4 consumed
+back in through the one service the bound could not cover — one 08:46
+evaluation and six hours fifty-nine minutes of nothing rendered ``4/4 consumed
 (COMPLETE)``, exit 0, counts bare.
+
+Correlated lines
+----------------
+Some lines only mean what a *different* line about the same ``msg_id`` allows
+them to mean, so two of them are read together (issue #767). A proof requires
+``ack=true``: ``ack=false`` leaves the message pending and Redis redelivers the
+same id, so a consumer making zero net progress used to renew its own freshness
+forever. And a ``stream_message_dropped`` voids every line carrying its
+``msg_id``, because ``services/futures_monitor/daemon.py`` deliberately ACKs a
+poison record to keep going — leaving a ``stream_message_processed … ack=true``
+that describes an ACK, not a fill. A consumer whose deliveries all fail this
+way is ``no_progress``, never ``idle_alive``: idle means nothing arrived.
 
 Durable vs point-in-time
 ------------------------
@@ -147,6 +188,21 @@ VERDICT_NO_SESSION = "NO_SESSION"
 #: alarm on every trading day, which is the standing-alarm harm this script
 #: exists to prevent. So the row says it loudly and the exit status stays quiet,
 #: and the counts are never bare.
+#:
+#: **UNREACHABLE FROM THE SHIPPED CONFIG since 2026-09-23.** The only service
+#: that ever set ``freshness_scored: false`` was ``futures-decision-engine``,
+#: and PR #766's ``decision_engine_alive`` removed the premise for it, so the
+#: exemption was lifted and nothing sets the flag. Nothing else reaches this
+#: verdict — ``resolve_day`` gates it on ``liveness_unverified``, which is
+#: ``not freshness_scored and not observation_is_fresh``, and
+#: ``freshness_scored`` is True unless config says otherwise.
+#:
+#: Kept rather than deleted, and this is a judgement rather than an oversight:
+#: the predicate is keyed on the two facts and never on a name, so the day a
+#: service with a throttled proof is configured, its disclosure already exists
+#: and is already tested. Deleting it would mean the next such service ships
+#: with the same hole the 2026-09 round found, and re-deriving the reasoning
+#: costs far more than the branch does.
 VERDICT_LIVENESS_UNVERIFIED = "LIVENESS_UNVERIFIED"
 
 #: Verdicts a per-session cron may treat as "nothing to escalate".
@@ -164,20 +220,51 @@ STATUS_BLIND = "blind"
 #: uncovered part is unknown rather than quiet. Never COMPLETE.
 STATUS_PARTIAL_COVERAGE = "partial_coverage"
 #: Observed, never blind, and the harvest spans the session — but a stretch of
-#: it holds no proof of consumption at all. Coverage says we watched; it cannot
-#: say the service was working. Never COMPLETE.
+#: it holds no proof of consumption AND no proof of liveness either. Coverage
+#: says we watched; it cannot say the service was working, and nothing else
+#: does. Never COMPLETE.
 STATUS_STALE_OBSERVATION = "stale_observation"
+#: Consumed nothing, and proved throughout that it was watching anyway. A
+#: *successful* observation of an empty stream, not a failure: "nothing arrived,
+#: and we know the consumer was there to see it" is a measurement, where before
+#: the heartbeat it was indistinguishable from a dead daemon. COMPLETE-eligible.
+STATUS_IDLE_ALIVE = "idle_alive"
+#: Messages were delivered and none of them completed — ``ack=false`` on every
+#: redelivery, or a handler that raised on every record. Alive, watching, and
+#: getting nowhere. Deliberately NOT ``idle_alive``: idle means nothing arrived.
+#: Never COMPLETE.
+STATUS_NO_PROGRESS = "no_progress"
 STATUS_NO_EVIDENCE = "no_evidence"
 
 #: Statuses that imply the observation surface actually worked at some point —
 #: it consumed, however partially. ``blind`` and ``no_evidence`` are absent on
 #: purpose: they are what a *dead* surface and a *closed market* both look like.
+#:
+#: ``idle_alive`` is absent too, and that is the load-bearing omission. This set
+#: answers "did anything HAPPEN?" for ``DayObservation.has_evidence``, which
+#: overrides the calendar on a day both holiday sources call closed. The
+#: daemons prove liveness every weekend — the loop has no trading-day gate — so
+#: counting liveness here would make every Saturday read
+#: ``**BUT THE HARVEST HOLDS EVIDENCE**`` and exit 1: the standing alarm
+#: ``VERDICT_NO_SESSION`` exists to prevent. Liveness says the surface was
+#: watching, which changes no fact about whether a session happened.
 STATUSES_SURFACE_WORKED = (
     STATUS_CONSUMED,
     STATUS_PARTIALLY_BLIND,
     STATUS_PARTIAL_COVERAGE,
     STATUS_STALE_OBSERVATION,
 )
+
+#: What the observation surface doing its job looks like: it either consumed, or
+#: proved it was watching while nothing arrived. These and only these are
+#: COMPLETE-eligible.
+STATUSES_OBSERVED_OK = (STATUS_CONSUMED, STATUS_IDLE_ALIVE)
+
+#: What ``NOT_OBSERVED`` is the absence of. Wider than ``STATUSES_SURFACE_WORKED``
+#: because it answers a different question — "did we learn anything about this
+#: surface?" — and a proven-alive idle consumer taught us something. Narrower
+#: than "any status", because ``blind`` and ``no_evidence`` taught us nothing.
+STATUSES_OBSERVATION_LANDED = STATUSES_SURFACE_WORKED + (STATUS_IDLE_ALIVE,)
 
 #: What the harvest itself yielded for a service. Only ``EVIDENCE_LINES`` is
 #: ever eligible for a benign status: a missing, empty, unparseable or failed
@@ -256,6 +343,24 @@ class ServiceSpec:
     observed: tuple[re.Pattern[str], ...]
     blind: tuple[re.Pattern[str], ...]
     counters: tuple[CounterSpec, ...]
+    #: Proof the service's loop TURNED, kept strictly apart from ``observed``,
+    #: which is proof it CONSUMED. Two different claims: a consumer that polled
+    #: 390 times and handled nothing is a successful observation of an empty
+    #: stream, and merging the two groups would render it ``consumed``.
+    #:
+    #: Empty for a service with no heartbeat, and everything below degrades to
+    #: the pre-heartbeat behaviour when it is — silence then has nothing to
+    #: vouch for it, exactly as before.
+    liveness: tuple[re.Pattern[str], ...] = ()
+    #: Delivered and NOT completed (``ack=false``). Not scored on its own; it is
+    #: what tells "alive and nothing arrived" from "alive, things arrived, and
+    #: none of them got anywhere". Both are silent in ``observed``.
+    stalled: tuple[re.Pattern[str], ...] = ()
+    #: Lines that VOID every other line carrying the same ``msg_id``. One line
+    #: about a message changing what another line about it meant is the whole
+    #: mechanism of issue #767, and it closes both halves: a proof struck out of
+    #: ``observed`` and a dropped record struck out of ``fills``.
+    retracted_by: tuple[re.Pattern[str], ...] = ()
     #: Whether ``observation_max_gap_seconds`` is scored against this service's
     #: proofs. False for a service whose proof is emitted on state change rather
     #: than per message: silence then says nothing about liveness, so a bound
@@ -310,12 +415,37 @@ class ObservationConfig:
     container_prefix: str
     harvest_since: time_cls
     blind_run_merge_seconds: int
-    #: Longest silence between two proofs of consumption that still counts as
-    #: liveness. See the module docstring's "Observation freshness".
+    #: Longest silence between two proofs of *consumption* before the harvester
+    #: demands a positive liveness answer for that stretch. See the module
+    #: docstring's "Observation freshness".
     observation_max_gap_seconds: int
+    #: The cadence the emitters are configured to heartbeat at. Must equal
+    #: ``config/streaming.yaml::consumer_stage.heartbeat_interval_seconds`` and
+    #: ``config/decision_engine.yaml::liveness.log_interval_seconds``; a test
+    #: reads all three real files and fails if they drift.
+    liveness_expected_interval_seconds: int
+    #: How many consecutive beats may go missing before the silence is scored.
+    liveness_missed_beats_allowed: int
+    #: How a message is named in ``shared/streaming/stage.py``'s audit lines,
+    #: with a ``msg_id`` group. Drives :attr:`ServiceSpec.retracted_by`.
+    msg_id_pattern: re.Pattern[str]
     row_counters: tuple[str, ...]
     services: tuple[ServiceSpec, ...]
     point_in_time: Mapping[str, Any]
+
+    @property
+    def liveness_max_gap_seconds(self) -> int:
+        """Longest stretch a heartbeat may leave unspoken before it is scored.
+
+        Derived, never a third knob: the interval the emitters are configured
+        at, times the beats allowed to go missing plus the one that is due. A
+        separate number here could sit below the emitters' cadence and fail
+        every healthy day, which is the false verdict the heartbeat exists to
+        delete.
+        """
+        return self.liveness_expected_interval_seconds * (
+            1 + self.liveness_missed_beats_allowed
+        )
 
 
 def _compile_all(patterns: Iterable[str]) -> tuple[re.Pattern[str], ...]:
@@ -382,6 +512,9 @@ def load_observation_config(
                 observed=_compile_all(entry.get("observed", ())),
                 blind=_compile_all(entry.get("blind", ())),
                 counters=_parse_counters(entry.get("counters", {}) or {}),
+                liveness=_compile_all(entry.get("liveness", ())),
+                stalled=_compile_all(entry.get("stalled", ())),
+                retracted_by=_compile_all(entry.get("retracted_by", ())),
                 freshness_scored=bool(entry.get("freshness_scored", True)),
                 freshness_unscored_reason=str(
                     entry.get("freshness_unscored_reason", "")
@@ -397,6 +530,11 @@ def load_observation_config(
         harvest_since=time_cls(hour, minute),
         blind_run_merge_seconds=int(root["blind_run_merge_seconds"]),
         observation_max_gap_seconds=int(root["observation_max_gap_seconds"]),
+        liveness_expected_interval_seconds=int(
+            root["liveness_expected_interval_seconds"]
+        ),
+        liveness_missed_beats_allowed=int(root["liveness_missed_beats_allowed"]),
+        msg_id_pattern=re.compile(str(root["msg_id_pattern"])),
         row_counters=tuple(str(name) for name in root["row_counters"]),
         services=tuple(services),
         point_in_time=dict(root.get("point_in_time", {}) or {}),
@@ -588,10 +726,29 @@ class ServiceObservation:
     coverage: tuple[tuple[datetime, datetime], ...]
     uncovered: tuple[tuple[datetime, datetime], ...]
     #: Stretches of the session the harvest *did* reach that hold no proof of
-    #: consumption within ``observation_max_gap_seconds``. Kept apart from
-    #: ``uncovered`` because they answer different questions: "we did not look"
-    #: versus "we looked and it proved nothing".
+    #: consumption within ``observation_max_gap_seconds`` **and** no heartbeat
+    #: to vouch for them. Kept apart from ``uncovered`` because they answer
+    #: different questions: "we did not look" versus "we looked and it proved
+    #: nothing".
     unobserved: tuple[tuple[datetime, datetime], ...]
+    #: Stretches with no proof of consumption that the heartbeat DOES vouch for:
+    #: nothing arrived and the loop was demonstrably turning. Kept as its own
+    #: field rather than dropped once it stops changing the status, because a
+    #: reader auditing an ``idle_alive`` service needs to see which hours were
+    #: idle — "consumed nothing" and "was never asked to" are the two readings
+    #: this whole file exists to keep apart.
+    idle_windows: tuple[tuple[datetime, datetime], ...]
+    #: Heartbeat lines inside the session.
+    liveness_count: int
+    #: Whether this service has a ``liveness`` pattern group at all. Kept apart
+    #: from ``liveness_count == 0``, which those two cases would otherwise
+    #: collapse into one: "we asked and it never answered" is a defect, "we
+    #: never asked" is a configuration fact, and a row that says the first when
+    #: it means the second is the failure mode this whole file is about.
+    liveness_scored: bool
+    #: Deliveries that demonstrably made no progress: ``ack=false`` lines plus
+    #: proofs struck by a ``retracted_by`` line naming the same ``msg_id``.
+    no_progress_count: int
     #: A harvest file that came back at its ``--tail`` cap: lines older than
     #: its first are gone, so coverage is unknown before ``coverage[0][0]``.
     coverage_truncated: bool
@@ -611,8 +768,10 @@ class ServiceObservation:
 
     @property
     def observation_is_fresh(self) -> bool:
-        """No stretch of the session went unproven for longer than the bound.
+        """No stretch of the session went unaccounted for.
 
+        "Accounted for" is proof of consumption within the bound, or — for a
+        service that emits a heartbeat — proof it was alive across the silence.
         Informational, not a verdict input, when ``freshness_scored`` is False.
         """
         return not self.unobserved
@@ -919,6 +1078,34 @@ def _stale_windows(
     return tuple(gaps)
 
 
+def _liveness_shortfall(
+    liveness: Sequence[datetime],
+    window: tuple[datetime, datetime],
+    max_gap_seconds: int,
+) -> tuple[tuple[datetime, datetime], ...]:
+    """The parts of *window* the heartbeat does not vouch for.
+
+    **Density, not presence.** A heartbeat every ``interval`` seconds predicts a
+    known number of lines across a stretch, and the rule is that the predicted
+    number really is there and really is spread out — implemented as "no
+    sub-stretch longer than *max_gap_seconds* without one", which is the same
+    claim localized. "The pattern appears somewhere in the window" would be
+    satisfied by a single line and would certify the seven silent hours around
+    it, which is the shape of every defect this file has had.
+
+    The rule has to be about absence because absence is the whole signal: during
+    the 2026-09-17 read-failure loop the stage spun 200 failed reads across 6.7
+    heartbeat intervals and emitted **zero** heartbeats, and no regex matches a
+    line that was never written.
+
+    Counting a bare match is nevertheless safe, so no field is parsed: ``polls``
+    cannot be 0, because ``_LivenessHeartbeat.record_poll``
+    (``shared/streaming/stage.py``) increments it before the due-check. Every
+    emitted line therefore stands for at least one completed poll.
+    """
+    return _stale_windows(liveness, window[0], window[1], max_gap_seconds)
+
+
 def _dedupe_lines(
     evidence: Iterable[FileEvidence],
 ) -> list[tuple[datetime, str]]:
@@ -950,6 +1137,73 @@ def _merge_windows(
         else:
             windows.append([moment, moment])
     return tuple((start, end) for start, end in windows)
+
+
+def _retracted_message_ids(
+    spec: ServiceSpec,
+    msg_id_pattern: re.Pattern[str],
+    lines: Sequence[tuple[datetime, str]],
+) -> frozenset[str]:
+    """Message ids some line declares void, whatever any other line says.
+
+    The correlation issue #767 asked for, in one place because both halves it
+    names are one mechanism. ``services/futures_monitor/daemon.py`` catches a
+    raising handler, logs ``stream_message_dropped``, and returns True so the
+    framework ACKs — deliberately, to preserve drop-and-continue. The stage then
+    logs ``stream_message_processed … ack=true`` for that same ``msg_id`` a
+    moment later. Read alone, that second line says a fill was consumed; read
+    together with the first, it says an ACK happened and nothing else did.
+
+    Striking by id rather than by position is what makes the order of the two
+    lines irrelevant, which matters: the drop is logged inside the handler and
+    the ACK after it returns today, but that is an implementation detail of the
+    daemon, not a contract the harvester should depend on.
+    """
+    if not spec.retracted_by:
+        return frozenset()
+    retracted = set()
+    for _, line in lines:
+        if not any(pattern.search(line) for pattern in spec.retracted_by):
+            continue
+        match = msg_id_pattern.search(line)
+        if match is not None:
+            retracted.add(match.group("msg_id"))
+    return frozenset(retracted)
+
+
+def _strike_retracted(
+    spec: ServiceSpec,
+    msg_id_pattern: re.Pattern[str],
+    lines: Sequence[tuple[datetime, str]],
+) -> tuple[list[tuple[datetime, str]], int]:
+    """Drop every line a retraction voids, and say how many that was.
+
+    Done once, before anything is classified, so no two measurements can read
+    the same line and reach opposite conclusions about the same message — that
+    disagreement is the bug, not the arithmetic.
+
+    **The retraction lines themselves survive.** A ``stream_message_dropped``
+    carries the ``msg_id`` it is voiding, so striking by id alone would strike
+    the declaration together with what it declares — and the ``dropped``
+    counter, whose whole job is to say a poison record arrived, would read 0 on
+    exactly the days it exists for. A line making a claim is evidence for that
+    claim; only the lines it contradicts lose their meaning.
+    """
+    retracted = _retracted_message_ids(spec, msg_id_pattern, lines)
+    if not retracted:
+        return list(lines), 0
+    live: list[tuple[datetime, str]] = []
+    struck = 0
+    for moment, line in lines:
+        if any(pattern.search(line) for pattern in spec.retracted_by):
+            live.append((moment, line))
+            continue
+        match = msg_id_pattern.search(line)
+        if match is not None and match.group("msg_id") in retracted:
+            struck += 1
+            continue
+        live.append((moment, line))
+    return live, struck
 
 
 def _count(spec: CounterSpec, lines: Sequence[tuple[datetime, str]]) -> int:
@@ -995,6 +1249,8 @@ def scan_service(
     session_close: datetime,
     blind_run_merge_seconds: int,
     observation_max_gap_seconds: int,
+    liveness_max_gap_seconds: int,
+    msg_id_pattern: re.Pattern[str],
     harvest_since: time_cls,
     failure_markers: Sequence[Path] = (),
 ) -> ServiceObservation:
@@ -1004,20 +1260,26 @@ def scan_service(
     rejected for ``no_market_context`` is the daemon saying it had no input,
     not a completed evaluation.
 
-    Three things are measured, never merged:
+    Four things are measured, never merged:
 
     * **what the service did** inside the session window;
     * **how much of the session the harvest reaches** — a file that starts
       after the open (rotation, or a container recreated mid-day) cannot
       testify to the hours before its first line, and rotation drops the
       OLDEST lines, so it preferentially destroys early-session blindness;
-    * **how fresh the proof stayed** — coverage is granted by any timestamped
-      line, a startup banner included, so it answers "did we look?" and cannot
-      also answer "was it working?".
+    * **how fresh the proof of CONSUMPTION stayed** — coverage is granted by any
+      timestamped line, a startup banner included, so it answers "did we look?"
+      and cannot also answer "was it working?";
+    * **whether the loop was TURNING across the silences** — the heartbeat, and
+      the only one of the four that can tell an empty stream from a dead
+      consumer. It is scored separately from consumption on purpose: folded
+      into ``observed`` it would render a consumer that polled 390 times and
+      handled nothing as ``consumed``.
 
     One surviving ``stream_message_processed`` therefore never proves the
     service consumed *for the session*: not beyond what the files cover, and
-    not beyond the freshness bound either side of it.
+    not beyond the freshness bound either side of it — and, since the proof now
+    requires ``ack=true``, not on the strength of a message it kept refusing.
     """
     covers_from = (
         datetime.combine(session_open.date(), harvest_since, tzinfo=KST)
@@ -1044,17 +1306,39 @@ def scan_service(
         if session_open <= moment <= session_close
     ]
 
+    live_lines, struck = _strike_retracted(spec, msg_id_pattern, lines)
+
     observed: list[datetime] = []
     blind: list[datetime] = []
-    for moment, line in lines:
-        if any(pattern.search(line) for pattern in spec.blind):
+    liveness: list[datetime] = []
+    stalled = 0
+    for moment, line in live_lines:
+        if any(pattern.search(line) for pattern in spec.liveness):
+            liveness.append(moment)
+        elif any(pattern.search(line) for pattern in spec.blind):
             blind.append(moment)
         elif any(pattern.search(line) for pattern in spec.observed):
             observed.append(moment)
+        elif any(pattern.search(line) for pattern in spec.stalled):
+            stalled += 1
 
-    unobserved = _stale_windows(
+    # The freshness bound now TRIGGERS the liveness question instead of
+    # answering it: every stretch it flags is offered to the heartbeat, and only
+    # what the heartbeat cannot vouch for survives as unproven. A service with no
+    # `liveness` patterns has nothing to offer, so `_liveness_shortfall` returns
+    # the whole window and the pre-heartbeat behaviour is unchanged for it.
+    unaccounted = _stale_windows(
         observed, session_open, session_close, observation_max_gap_seconds
     )
+    unobserved: list[tuple[datetime, datetime]] = []
+    idle_windows: list[tuple[datetime, datetime]] = []
+    for window in unaccounted:
+        shortfall = _liveness_shortfall(liveness, window, liveness_max_gap_seconds)
+        unobserved.extend(shortfall)
+        if not shortfall:
+            idle_windows.append(window)
+
+    no_progress = stalled + struck
 
     if state != EVIDENCE_LINES:
         # Nothing was read, so nothing about this service was observed. Named
@@ -1064,12 +1348,22 @@ def scan_service(
         status = STATUS_PARTIALLY_BLIND
     elif blind:
         status = STATUS_BLIND
-    elif not observed:
+    elif not observed and not liveness and not no_progress:
+        # Silent in every group. The pre-heartbeat case, and still the right
+        # answer for it: a service that says nothing at all proves nothing.
         status = STATUS_NO_EVIDENCE
     elif uncovered:
         status = STATUS_PARTIAL_COVERAGE
     elif unobserved and spec.freshness_scored:
         status = STATUS_STALE_OBSERVATION
+    elif not observed and no_progress:
+        # Alive, watching, and getting nowhere: messages arrived and none of
+        # them completed. Deliberately not `idle_alive` — idle means nothing
+        # arrived, and a wedged consumer inheriting the idle verdict is exactly
+        # how the closed defect would come back.
+        status = STATUS_NO_PROGRESS
+    elif not observed:
+        status = STATUS_IDLE_ALIVE
     else:
         status = STATUS_CONSUMED
 
@@ -1087,9 +1381,15 @@ def scan_service(
         blind_windows=_merge_windows(blind, blind_run_merge_seconds),
         coverage=coverage,
         uncovered=uncovered,
-        unobserved=unobserved,
+        unobserved=tuple(unobserved),
+        idle_windows=tuple(idle_windows),
+        liveness_count=len(liveness),
+        liveness_scored=bool(spec.liveness),
+        no_progress_count=no_progress,
         coverage_truncated=truncated,
-        counters={counter.name: _count(counter, lines) for counter in spec.counters},
+        counters={
+            counter.name: _count(counter, live_lines) for counter in spec.counters
+        },
         files=tuple(str(path) for path in (*files, *failure_markers)),
     )
 
@@ -1110,25 +1410,38 @@ def resolve_day(
     dead all day), and a consumer with no harvest file at all took the same
     exemption and rendered "4/4 observing" on zero bytes.
 
-    Tightening the predicate is not enough, because the evidence it would need
-    does not exist — and the constraint is a **code path**, not a log level.
-    The healthy idle loop emits nothing at any level: ``xreadgroup`` returns no
-    messages, ``post_poll(count)``, ``asyncio.sleep(0)``, ``continue``, with no
-    logging on that path (``shared/streaming/stage.py``). The one line that
-    might have stood in — ``consumer_group_already_present`` — fires only from
-    ``recover_missing_consumer_group``, i.e. only after a read has *already*
-    failed, so it is not idle evidence either. ``LOG_LEVEL=DEBUG`` would
-    therefore add no idle-liveness evidence at all (both monitor daemons do read
-    ``LOG_LEVEL`` since PR #749; ``services/risk_filter/main.py`` and
-    ``services/order_router/main.py`` still hardcode INFO, which is beside the
-    point here). **A heartbeat in the idle branch is the only fix**, and once one
-    exists a quiet day can legitimately read COMPLETE again.
+    Tightening the predicate was never going to be enough, because the evidence
+    it needed did not exist. The healthy idle loop emitted nothing at any level:
+    ``xreadgroup`` returns no messages, ``post_poll(count)``,
+    ``asyncio.sleep(0)``, ``continue``, with no logging on that path. A healthy
+    idle consumer and one that died at the open left byte-identical records, so
+    the runbook's INERT-GATE CAVEAT applied to the observation surface itself —
+    a quiet day is *exactly what you would observe* if the chain cannot fire —
+    and a quiet day honestly read PARTIAL.
 
-    Until then a healthy idle consumer and one that died at the open leave
-    byte-identical records, and the runbook's own INERT-GATE CAVEAT applies to
-    the observation surface itself: a quiet day is *exactly what you would
-    observe* if the chain cannot fire. A silent consumer is therefore
-    ``no_evidence``, and a quiet day reads PARTIAL.
+    **Both halves of that are now false, and they stopped being true one after
+    the other.** PRs #765/#766/#776 added the emissions: every stage poll,
+    idle ones included, feeds ``_LivenessHeartbeat``
+    (``shared/streaming/stage.py``), and the decision engine's evaluation loop
+    logs ``decision_engine_alive`` from a ``finally`` that covers every exit
+    path of a cycle. That killed the premise. This function's rule — silence is
+    silence, whatever caused it — kept the conclusion alive for one more step,
+    because nothing read the new lines. ``config/f9_observation.yaml``'s
+    ``liveness`` group and :func:`scan_service` now do, and a stretch the
+    heartbeat vouches for is ``idle_alive``: a *successful* observation of an
+    empty stream. So a quiet day reads COMPLETE again, on evidence rather than
+    on an exemption.
+
+    What did NOT change, because it never rested on the heartbeat: a service
+    that says nothing at all is still ``no_evidence``, and a day holding one is
+    still PARTIAL. Liveness is a claim a daemon has to *make*; absence of the
+    claim is not the claim.
+
+    And one thing got stricter rather than looser. ``observed`` now requires
+    ``ack=true``, so a consumer redelivered the same ``msg_id`` forever — alive,
+    polling, heartbeating, and making zero net progress — reads
+    ``no_progress``, not ``idle_alive``. Idle means nothing arrived; that is the
+    one reading a wedged consumer must never be able to borrow.
     """
     counters: dict[str, int] = {}
     for service in services:
@@ -1137,10 +1450,10 @@ def resolve_day(
 
     resolved = tuple(services)
     scored = _scored(resolved)
-    observed_anywhere = any(s.status in STATUSES_SURFACE_WORKED for s in scored)
+    observed_anywhere = any(s.status in STATUSES_OBSERVATION_LANDED for s in scored)
     if not scored or not observed_anywhere:
         verdict = VERDICT_NOT_OBSERVED
-    elif not all(s.status == STATUS_CONSUMED for s in scored):
+    elif not all(s.status in STATUSES_OBSERVED_OK for s in scored):
         verdict = VERDICT_PARTIAL
     elif any(s.liveness_unverified for s in scored):
         # Everything consumed and covered the session, but a service exempt from
@@ -1174,6 +1487,8 @@ def observe_day(
             session_close=session_close,
             blind_run_merge_seconds=config.blind_run_merge_seconds,
             observation_max_gap_seconds=config.observation_max_gap_seconds,
+            liveness_max_gap_seconds=config.liveness_max_gap_seconds,
+            msg_id_pattern=config.msg_id_pattern,
             harvest_since=config.harvest_since,
             failure_markers=service_failure_markers(directory, spec.name),
         )
@@ -1232,13 +1547,21 @@ _STALE_WINDOWS_SPELLED_OUT = 3
 
 
 def _stale_text(service: ServiceObservation) -> str:
-    """The unproven stretches, as a clause, or empty when there is nothing to add."""
+    """The unaccounted stretches, as a clause, or empty when there is none.
+
+    "No proof of consumption **or liveness**" since the heartbeat landed, and
+    the longer wording is the point: a stretch that reaches this clause is one
+    the heartbeat was asked about and could not answer for, which is a stronger
+    statement than the one the old wording made. A stretch it *did* answer for
+    never gets here — it is idle, and idle is rendered as a success.
+    """
     if not service.unobserved or not service.freshness_scored:
         return ""
     shown = _window_text(service.unobserved[:_STALE_WINDOWS_SPELLED_OUT])
     extra = len(service.unobserved) - _STALE_WINDOWS_SPELLED_OUT
     more = f" +{extra} more" if extra > 0 else ""
-    return f", no proof of consumption {shown}{more}"
+    proof = "consumption or liveness" if service.liveness_scored else "consumption"
+    return f", no proof of {proof} {shown}{more}"
 
 
 def describe_liveness(service: ServiceObservation) -> str:
@@ -1301,8 +1624,24 @@ def describe_service(service: ServiceObservation) -> str:
         # The harvest spans the session; what it holds does not. Named as the
         # silence it is, not as the coverage hole it is not.
         return f"{service.name} consumed{stale}{gap}"
+    if service.status == STATUS_NO_PROGRESS:
+        # Never "silent where harvested" and never "idle": the log is full of
+        # this service. Messages arrived, the loop kept turning, and not one of
+        # them got through — which the ack-less proof pattern used to render as
+        # a healthy consumer renewing its freshness on every redelivery.
+        return (
+            f"{service.name} NO PROGRESS ({service.no_progress_count} deliveries, "
+            f"none completed){gap}"
+        )
     if service.status == STATUS_NO_EVIDENCE:
         return f"{service.name} NO EVIDENCE (silent where harvested){gap}"
+    if service.status == STATUS_IDLE_ALIVE:
+        # `render_consumers_cell` filters this out — an idle-alive service is a
+        # success, and the cell's tally is where it is counted. The branch is
+        # here so that any OTHER caller gets the truth rather than the
+        # fallthrough below, which would put the word "consumed" next to a
+        # service that consumed nothing.
+        return f"{service.name} idle (alive, {service.liveness_count} heartbeats){gap}"
     return f"{service.name} consumed"
 
 
@@ -1314,7 +1653,18 @@ def render_consumers_cell(result: DayObservation) -> str:
     """
     scored = _scored(result.services)
     consumed = [s for s in scored if s.status == STATUS_CONSUMED]
+    idle = [s for s in scored if s.status == STATUS_IDLE_ALIVE]
+    # Consumption and liveness stay separately legible in the cell a human
+    # reads, not only in the sidecar. "4/4 consumed" on a day where two
+    # consumed and two were idle-but-alive would be a new conflation of exactly
+    # the kind the `observed`/`liveness` split exists to prevent — both are
+    # successful observations, and they are not the same observation. The
+    # second clause is omitted when there is nothing idle, so the rows of a
+    # fully-consuming day still read the way every earlier row in the runbook's
+    # table does.
     tally = f"{len(consumed)}/{len(scored)} consumed"
+    if idle:
+        tally += f", {len(idle)}/{len(scored)} alive (idle)"
 
     no_session = (
         ""
@@ -1340,7 +1690,7 @@ def render_consumers_cell(result: DayObservation) -> str:
         return f"{no_session}{tally} ({VERDICT_LIVENESS_UNVERIFIED}): {unverified}"
 
     problems = "; ".join(
-        describe_service(s) for s in scored if s.status != STATUS_CONSUMED
+        describe_service(s) for s in scored if s.status not in STATUSES_OBSERVED_OK
     )
     marker = (
         "**NOT OBSERVED**"
@@ -1449,6 +1799,17 @@ def build_sidecar(result: DayObservation, row: str) -> dict[str, Any]:
                     [start.isoformat(), end.isoformat()]
                     for start, end in service.unobserved
                 ],
+                # Stretches with no consumption that the heartbeat vouched for.
+                # Beside `unobserved`, never merged into it: the two are the
+                # answers to the same question — what happened during the
+                # silence — and the whole point is that they are different.
+                "idle_session_kst": [
+                    [start.isoformat(), end.isoformat()]
+                    for start, end in service.idle_windows
+                ],
+                "liveness_count": service.liveness_count,
+                "liveness_scored": service.liveness_scored,
+                "no_progress_count": service.no_progress_count,
                 "covers_session": service.covers_session,
                 "observation_is_fresh": service.observation_is_fresh,
                 # False means `unobserved` above is context, not a verdict input
