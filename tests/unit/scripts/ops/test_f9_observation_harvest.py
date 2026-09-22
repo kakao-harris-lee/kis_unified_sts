@@ -2999,3 +2999,59 @@ def test_the_vendored_heartbeat_fixtures_are_the_lines_production_emits(
             f"against: worst real gap {max(gaps)}s vs "
             f"{config.liveness_max_gap_seconds}s"
         )
+
+
+def test_a_weekend_of_heartbeats_is_not_evidence_that_a_session_happened(
+    config: mod.ObservationConfig, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``idle_alive`` must stay OUT of ``STATUSES_SURFACE_WORKED``.
+
+    That set answers "did anything HAPPEN?" and is what overrides the calendar
+    on a day both holiday sources call closed. The daemons heartbeat every 60s
+    on Saturdays too — nothing in the consume loop knows about the calendar — so
+    counting liveness there would make every weekend render
+    ``**BUT THE HARVEST HOLDS EVIDENCE**`` and exit 1: the standing alarm
+    ``VERDICT_NO_SESSION`` exists to prevent, arriving in a new costume.
+
+    Liveness says the surface was watching, which changes no fact about whether
+    there was anything to watch. The distinction cost one line of code and is
+    invisible in every other test, which is why it gets its own.
+    """
+    saturday = date(2026, 9, 19)
+    day_dir = tmp_path / saturday.isoformat()
+    day_dir.mkdir(parents=True)
+    for service in SCORED:
+        (day_dir / f"{service}.155535.log").write_text(
+            "\n".join(alive_through(service)).replace(
+                DAY.isoformat(), saturday.isoformat()
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    result = mod.observe_day(replace(config, report_root=tmp_path), saturday)
+    row = mod.render_row(result, config.row_counters)
+
+    # The surface really was alive and really did observe nothing.
+    assert statuses(result) == dict.fromkeys(SCORED, mod.STATUS_IDLE_ALIVE)
+    assert result.verdict == mod.VERDICT_COMPLETE
+    # And none of that is evidence a session happened.
+    assert result.has_evidence is False
+    assert result.reported_verdict == mod.VERDICT_NO_SESSION
+    assert "BUT THE HARVEST HOLDS EVIDENCE" not in row
+    assert "n/a - no session" in row
+
+    assert (
+        mod.main(
+            [
+                "--date",
+                saturday.isoformat(),
+                "--no-harvest",
+                "--no-point-in-time",
+                "--report-root",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    ), "a weekend must not raise a standing alarm"
+    capsys.readouterr()
