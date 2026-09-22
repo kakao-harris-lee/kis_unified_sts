@@ -293,7 +293,7 @@ f9_observation:
       container: futures-monitor
       role: consumer
       harvest_mode: since
-      # INSTRUMENTATION BOUNDARY, 2026-09-23 (PR #776). This daemon moved from a
+      # INSTRUMENTATION BOUNDARY: 2026-09-23 (PR #776). This daemon moved from a
       # hand-rolled consume loop onto shared/streaming/stage.py's
       # MultiStreamStage, and what it emits changed with it. `reports/f9-gate1/`
       # is the durable record — Redis streams carry a 24h TTL — so a session
@@ -317,8 +317,21 @@ f9_observation:
       #
       # THE BOUNDARY IS THE DEPLOY DATE, NOT THE MERGE DATE — the day the
       # container was recreated on the new image. `reports/f9-gate1/<KST date>/`
-      # is date-keyed, so that single date is the whole discriminator.
-      # deploy_date: TBD  # <- fill in when paper is redeployed; do not guess
+      # is date-keyed, so that single date is the whole discriminator. Here the
+      # two dates coincide, which is a coincidence and not a rule: #776 merged
+      # and deployed in the same KST day.
+      #
+      # deploy_date: 2026-09-23 — `kis_paper-futures-monitor` was recreated at
+      # 2026-09-23 00:58:14 KST, and emitted `event=stream_consumer_alive` one
+      # heartbeat interval later at 00:59:19. So `reports/f9-gate1/2026-09-23/`
+      # onward measures this consumer's consumption; every earlier date
+      # directory carries the structural zero of fact 1 above.
+      #
+      # Kept as a comment rather than a key on purpose: nothing in
+      # scripts/ops/f9_observation_harvest.py reads it (`load_observation_config`
+      # takes named fields and ignores the rest), so a real key here would look
+      # load-bearing while changing nothing — which is the exact failure mode
+      # this whole block exists to warn about.
       observed:
         - 'event=stream_message_processed .*\bconsumer_group=futures_monitor\b.*\back=true\b'
       stalled:

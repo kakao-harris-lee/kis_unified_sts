@@ -490,6 +490,14 @@ artifacts, or written operator approval.
   recreated on the new image — not the merge date**; the report tree is keyed by
   KST date, so that single date is the whole discriminator.
 
+  **Boundary: `2026-09-23`.** `kis_paper-futures-monitor` was recreated at
+  2026-09-23 00:58:14 KST and emitted `event=stream_consumer_alive` one
+  heartbeat interval later at 00:59:19. `reports/f9-gate1/2026-09-23/` onward
+  measures this consumer; every earlier date directory does not. (#776 merged
+  and deployed within the same KST day, so the two dates coincide here — a
+  coincidence, not a rule.) The same date and provenance are recorded next to
+  the `futures-monitor` entry in `config/f9_observation.yaml`.
+
   - **`fills: 0` on every pre-deploy day is a structural zero, not a
     measurement.** The counter reads `stream_message_processed`, which the old
     loop never emitted. Never quote a pre-deploy day as "0 shadow fills
