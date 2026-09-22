@@ -15,7 +15,8 @@ first run is RED on the import (module not found) — expected per plan §3.6.
 from __future__ import annotations
 
 import inspect
-from typing import get_type_hints
+from collections.abc import Mapping
+from typing import TypedDict, Unpack, get_type_hints
 
 import hypothesis.strategies as st
 import pydantic
@@ -114,7 +115,7 @@ def _base_kwargs(**overrides: object) -> dict[str, object]:
 
 def test_capability_tuple_all_five_axes_required() -> None:
     """Every axis is required — a valid combination constructs cleanly."""
-    tup = CapabilityTuple(**_base_kwargs())
+    tup = CapabilityTuple.model_validate(_base_kwargs())
     assert tup.environment is BrokerEnvironment.SYNTHETIC
 
 
@@ -131,12 +132,12 @@ def test_capability_tuple_all_five_axes_required() -> None:
 def test_capability_tuple_rejects_none_axis(axis: str) -> None:
     """None is disallowed on every one of the 5 axes (plan §3 decision 3 — 'None 불허')."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(**_base_kwargs(**{axis: None}))
+        CapabilityTuple.model_validate(_base_kwargs(**{axis: None}))
 
 
 def test_capability_tuple_is_frozen() -> None:
     """A CapabilityTuple is immutable (FrozenModel discipline)."""
-    tup = CapabilityTuple(**_base_kwargs())
+    tup = CapabilityTuple.model_validate(_base_kwargs())
     with pytest.raises(pydantic.ValidationError):
         tup.environment = BrokerEnvironment.BROKER_PRODUCTION
 
@@ -149,8 +150,8 @@ def test_capability_tuple_extra_field_forbidden() -> None:
 
 def test_capability_tuple_hashable_for_whitelist_membership() -> None:
     """CapabilityTuple must be hashable — the whitelist is a frozenset (decision 4)."""
-    a = CapabilityTuple(**_base_kwargs())
-    b = CapabilityTuple(**_base_kwargs())
+    a = CapabilityTuple.model_validate(_base_kwargs())
+    b = CapabilityTuple.model_validate(_base_kwargs())
     assert a == b
     assert {a, b} == {a}
 
@@ -169,8 +170,8 @@ def test_order_mutating_rejects_economic_effect_none(
     """ORDER_SEND/CANCEL_REPLACE cannot coexist with EconomicEffect.NONE — except the v1.1
     SYNTHETIC x SYNTHETIC_ORDER exemption (covered separately below/row 1b)."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 operation_class=operation_class,
                 economic_effect=EconomicEffect.NONE,
                 authorization_class=AuthorizationClass.MOCK_ORDER,
@@ -187,8 +188,8 @@ def test_non_authorizing_read_rejects_order_mutating_operation(
 ) -> None:
     """NON_AUTHORIZING_READ cannot coexist with ORDER_SEND/CANCEL_REPLACE."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 operation_class=operation_class,
                 economic_effect=EconomicEffect.BROKER_RESOURCE_ONLY,
                 authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
@@ -206,8 +207,8 @@ def test_synthetic_environment_rejects_real_or_mock_order(
 ) -> None:
     """SYNTHETIC environment cannot coexist with REAL_ORDER/MOCK_ORDER."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 environment=BrokerEnvironment.SYNTHETIC,
                 authorization_class=authorization_class,
             )
@@ -231,8 +232,8 @@ def test_broker_production_order_mutating_futures_rejected_by_validated_construc
     ``model_copy(update=...)`` skip this validator, so the closed whitelist is what still
     denies a bypass-constructed tuple)."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 environment=BrokerEnvironment.BROKER_PRODUCTION,
                 operation_class=operation_class,
                 economic_effect=EconomicEffect.POSITION_OR_CASH,
@@ -253,8 +254,8 @@ def test_synthetic_order_rejects_non_synthetic_environment(
     a synthetic (non-authoritative) fill is only meaningful inside the SYNTHETIC
     environment."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 environment=environment,
                 operation_class=OperationClass.ORDER_SEND,
                 economic_effect=EconomicEffect.BROKER_RESOURCE_ONLY,
@@ -269,8 +270,8 @@ def test_synthetic_order_send_none_mock_order_still_rejected() -> None:
     (SYNTHETIC environment cannot coexist with REAL_ORDER/MOCK_ORDER) still independently
     fires for MOCK_ORDER."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 environment=BrokerEnvironment.SYNTHETIC,
                 operation_class=OperationClass.ORDER_SEND,
                 economic_effect=EconomicEffect.NONE,
@@ -285,8 +286,8 @@ def test_synthetic_order_send_none_non_authorizing_read_still_rejected() -> None
     (NON_AUTHORIZING_READ cannot coexist with ORDER_SEND/CANCEL_REPLACE) still independently
     fires."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(
-            **_base_kwargs(
+        CapabilityTuple.model_validate(
+            _base_kwargs(
                 environment=BrokerEnvironment.SYNTHETIC,
                 operation_class=OperationClass.ORDER_SEND,
                 economic_effect=EconomicEffect.NONE,
@@ -600,9 +601,30 @@ def test_derived_rules_agree_with_routing_admissibility_bidirectionally(
 # ---------------------------------------------------------------------------
 
 
-def _binding_kwargs(**overrides: object) -> dict[str, object]:
-    base: dict[str, object] = {
-        "capability_tuple": CapabilityTuple(**_base_kwargs()),
+class _BindingKwargs(TypedDict):
+    """1:1 with :func:`endpoint_binding_from_profile_ok`'s signature (plan §1.1 A-fn) — a
+    ``**_binding_kwargs(...)`` call site is checked key-by-key and type-by-type, not
+    swallowed by a ``**dict[str, object]`` splat."""
+
+    capability_tuple: CapabilityTuple
+    profile_key: ProfileKey | None
+    environment_binding: Mapping[BrokerEnvironment, str]
+    asset_binding: Mapping[AssetScope, str]
+
+
+class _BindingKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_BindingKwargs`, all optional — the override-kwargs shape for
+    :func:`_binding_kwargs` (plan §1.1 A-fn item 2)."""
+
+    capability_tuple: CapabilityTuple
+    profile_key: ProfileKey | None
+    environment_binding: Mapping[BrokerEnvironment, str]
+    asset_binding: Mapping[AssetScope, str]
+
+
+def _binding_kwargs(**overrides: Unpack[_BindingKwargsPartial]) -> _BindingKwargs:
+    base: _BindingKwargs = {
+        "capability_tuple": CapabilityTuple.model_validate(_base_kwargs()),
         "profile_key": ProfileKey(
             environment="synthetic-env", instrument_class="stock"
         ),
@@ -740,7 +762,7 @@ def test_probe_manifest_requires_every_descriptive_field(missing: str) -> None:
     }
     del kwargs[missing]
     with pytest.raises(pydantic.ValidationError):
-        ProbeManifest(**kwargs)
+        ProbeManifest.model_validate(kwargs)
 
 
 def test_probe_manifest_is_frozen() -> None:
