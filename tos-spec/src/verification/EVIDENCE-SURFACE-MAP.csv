@@ -858,7 +858,7 @@ IOC-EV-003,TEST,tests/ioc/test_ioc_determinism.py::test_missing_axis_denies_no_f
 IOC-EV-003,TEST,tests/ioc/test_ioc_determinism.py::test_none_magnitude_is_unknown,PRESENT,tos/tests/ioc/test_ioc_determinism.py:1
 IOC-EV-003,TEST,tests/ioc/test_ioc_determinism.py::test_unknown_units_are_unknown,PRESENT,tos/tests/ioc/test_ioc_determinism.py:1
 IOC-EV-003,TEST,tests/ioc/test_ioc_determinism.py::test_value_outside_envelope_denies,PRESENT,tos/tests/ioc/test_ioc_determinism.py:1
-IOC-EV-004,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IOC-EV-004,PACKAGE,tos/src/tos/ioc/predicates.py,PRESENT,tos/src/tos/ioc/predicates.py:423
 IOC-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-005,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -913,7 +913,7 @@ ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_undescr
 ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_unknown_higher_limit_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
 ARE-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ARE-EV-006,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ARE-EV-006,PACKAGE,tos/src/tos/are/predicates.py,PRESENT,tos/src/tos/are/predicates.py:484
 ARE-EV-006,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-007,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -1139,12 +1139,12 @@ IAP-EV-007,TEST,tests/iap/test_iap_closure.py::test_uncertain_edge_is_expanded,P
 IAP-EV-007,TEST,tests/iap/test_iap_closure.py::test_uncertain_only_widens_never_narrows,PRESENT,tos/tests/iap/test_iap_closure.py:1
 IAP-EV-008,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IAP-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IAP-EV-009,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IAP-EV-009,PACKAGE,tos/src/tos/iap/predicates.py,PRESENT,tos/src/tos/iap/predicates.py:421
 IAP-EV-009,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IAP-EV-009,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IAP-EV-010,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IAP-EV-010,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IAP-EV-011,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IAP-EV-011,PACKAGE,tos/src/tos/iap/state.py,PRESENT,tos/src/tos/iap/state.py:7
 IAP-EV-011,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IAP-EV-011,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IAP-EV-012,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
