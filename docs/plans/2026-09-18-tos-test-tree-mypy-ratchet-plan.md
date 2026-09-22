@@ -640,8 +640,9 @@ nodeid)와 그 줄의 대응은 **검사하지 않는다.** 실측: `test_spg_re
 > **3단계 계획은 별도 문서다 (2026-09-22):**
 > `docs/plans/2026-09-22-tos-test-tree-mypy-ratchet-stage3-plan.md`. 그 문서가 분류기를
 > 먼저 검증해 **위 문단의 「더블 26건, 3%」를 다시 정정했다** — 이름 패턴이 아니라 「테스트
-> 트리에 `class` 로 정의된 타입」으로 세면 **87건(11%)** 이다. 「지배적인 것은 `**` 언패킹」은
-> 그대로 참이다(443, 57%).
+> 트리에 `class` 로 정의된 타입」으로 세면 **90건(12%)** 이다(그 문서의 fact-check 가 저자
+> 판정 87 을 한 번 더 정정했다 — §7.0). 「지배적인 것은 `**` 언패킹」은 그대로 참이다
+> (443, 57%).
 
 집중도도 그대로다: `tos/tests/brokercap/test_brokercap_routing.py` **한 파일이 96건**
 (12%). 다음은 `_sir_strategies.py` 39 · `test_engine_finality_release.py` 35 ·
