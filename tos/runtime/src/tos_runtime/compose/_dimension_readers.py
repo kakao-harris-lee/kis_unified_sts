@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
-from tos.are import RiskDecisionResult
+from tos.are import AggregateRiskDecision, RiskDecisionResult
 from tos.authority import currentness_admissible
 from tos.brokercap import environment_binding_ok
 from tos.cur import (
@@ -28,7 +29,7 @@ from tos.cur import (
     DimensionKey,
     policy_covers_mandated_dimensions,
 )
-from tos.egressgw import OrderConstructionStage
+from tos.egressgw import CandidateConstruction
 from tos.engine.vocabulary import StageOutcome
 from tos.ioc import ConformanceResult
 from tos.sbr import ReadinessVerdict
@@ -38,7 +39,7 @@ from tos_runtime.brokercap.scopes import BrokerScope, transport_nature
 from tos_runtime.compose._safety_wiring import _SafetyMesh
 from tos_runtime.compose.context import RecordingAggregateRiskService, VerdictRecorder
 from tos_runtime.currentness.vector import DimensionReport
-from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
+from tos_runtime.posttrade.release_consumer import ReleaseConflictReader
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 
@@ -382,8 +383,17 @@ def _environment_scope_dimension_reader_for(
     return _reader
 
 
+class _AggregateRiskDecisionReader(Protocol):
+    """The narrow read surface :func:`_aggregate_risk_dimension_reader_for` needs off a
+    :class:`~tos_runtime.compose.context.RecordingAggregateRiskService` (mypy stage 3 §1.3
+    rule 3 port introduction) — only :attr:`last_decision`, never :meth:`decide` or any other
+    member of the real service."""
+
+    last_decision: AggregateRiskDecision | None
+
+
 def _aggregate_risk_dimension_reader_for(
-    risk_service: RecordingAggregateRiskService,
+    risk_service: _AggregateRiskDecisionReader,
 ) -> Callable[[], DimensionReport | None]:
     """The AGGREGATE_RISK currentness dimension (Phase 5 W3.2, plan §2 decision 4 —
     dimension-owner replacement 1/6 of this wave's six).
@@ -427,6 +437,15 @@ def _aggregate_risk_dimension_reader_for(
     return _reader
 
 
+class _ConstructionStageReader(Protocol):
+    """The narrow read surface :func:`_construction_dimension_reader_for` needs off a
+    :class:`~tos.egressgw.OrderConstructionStage` (mypy stage 3 §1.3 rule 3 port
+    introduction) — only :attr:`construction`, never :meth:`__call__` or any other member of
+    the real stage."""
+
+    construction: CandidateConstruction | None
+
+
 @dataclass
 class _ConstructionDimensionState:
     """A late-bound cell for the CONSTRUCTION dimension reader (below).
@@ -439,7 +458,7 @@ class _ConstructionDimensionState:
     already documents.
     """
 
-    construction_stage: OrderConstructionStage | None = None
+    construction_stage: _ConstructionStageReader | None = None
 
 
 def _construction_dimension_reader_for(
@@ -652,7 +671,7 @@ class _PostTradeDimensionState:
     assumed-eventual.
     """
 
-    consumer: FinalityReleaseConsumer | None = None
+    consumer: ReleaseConflictReader | None = None
 
 
 def _post_trade_dimension_reader_for(
