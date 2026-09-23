@@ -251,7 +251,7 @@ class RuntimeCoordinatorPreconditions:
         instance_document: InstanceDocument | None = None,
         safety_mesh: Sequence[SafetyMeshService] = (),
         mesh_evidence_recorder: Callable[[Mapping[str, Any]], None] | None = None,
-        mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
+        mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot | None] | None = None,
     ) -> None:
         """Wire the preconditions object over its injected ports.
 
@@ -300,6 +300,13 @@ class RuntimeCoordinatorPreconditions:
                 same-tick consumer runs (synthetic transport included). ``None`` (the
                 default) falls back to calling ``.clear()`` on each of
                 :attr:`_safety_mesh` directly, unchanged from before this disposition.
+                The callable itself may ALSO return ``None`` on a given call (a no-op
+                or broken refresher, or a genuine gap) — that is NOT the same as the
+                mechanism being unwired: :meth:`live_scope_authorized`'s own docstring
+                ("W3.1 independent review MEDIUM-8, latent — M17") treats it as an
+                unestablished clearance (held), never a silent fallback to a direct
+                ``.clear()`` call (mypy stage 3 §1.5 — the parameter's own return type
+                was narrower than this already-documented and already-tested case).
         """
         self._epoch_service = epoch_service
         self._live_authorization_state = live_authorization_state
