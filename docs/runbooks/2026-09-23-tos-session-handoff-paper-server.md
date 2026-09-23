@@ -100,6 +100,19 @@ P-CA `--event-class` 7종(#770) · 근월물 코드는 **실행 당일** `get_fr
 | P-8 · P-15→N-15 · P-BAL · P-CA · P-EXT | 모의(MOCK) 5 |
 | N-16 · N-18 | 실전 GET-only 2 |
 
+**⚠ 서버에서 확인한 실상(2026-09-23 · 위 표는 로컬 저작 시점의 목록이고 t3 캠페인 README 가 정본).** 일곱 중
+다섯은 이미 측정됐다 — `docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/README.md`:
+
+| 상태 | 프로브 | 근거 |
+|---|---|---|
+| 측정 완료(09-10~11) | N-16 · N-18 · P-15 · N-15(n=1) · P-BAL(모의 주식 2페이지 25행) | t3 README 「2026-09-10 야간」·「2026-09-11」 표 |
+| 예약됨 | P-CA 2차 — SK하이닉스 `000660` 현금배당, **2026-09-30 00:20 KST 호스트 cron**(`~/.config/kis-probes/run-p-ca-20260930.sh`, 예전 계좌 `54e7f8a5d841` 가드 · 17:05 텔레그램 결과 보고 cron) | 1차(09-17 SK텔레콤)는 rate-limit CENSORED · 참조 TR 은 SUPPORTED |
+| **차단** | **P-8 ×5 · P-EXT ×5** | 09-15 모의투자 재신청 후 새 계좌가 앱키에 **미연결** — 09-16 P-8 `인증 시점의 계좌번호와 요청 계좌번호가 일치하지 않습니다`, **09-23 재확인** P-BAL 새 주식 계좌 `OPSQ2000 INVALID_CHECK_ACNO` 변화 없음 · P-5b 새 선물 계좌 조회 `rt_cd=2`. 운영자가 KIS Developers 에서 연결 반영을 확인한 뒤에만 실행일을 잡는다 |
+
+즉 서버에서 남은 실행은 **P-8 ×5 → P-EXT ×5**(순서 강제, 선물 정규장 08:45–15:45, P-EXT 는 운영자 MTS 동석) 둘뿐이며
+둘 다 브로커 측 계좌 연결이 선행이다. 프로브 러너 확인 절차(§1)는 09-23 에 전건 통과했다(체크아웃 clean ·
+`enabled: false` · `futures:live:suspended` 미설정 · 모의 선물 앱키 공유 컨테이너 0 · 근월물 `A05610`).
+
 닫히는 것: `+Broker` 증거 **71행**, 프로파일 null 키 **10 중 6**(나머지 4 는 프로브 단독으로 값이 서지 않는다
 — `non_trade_*` 2 는 N-19+P-CA+Bounds-Approver 연언, `protection_gap/overlap` 2 는 별도 측정 설계).
 **P-R5/P-R5-PRE(실전 주문)는 정책상 영구 금지** — 실행 목록에 없고 넣지 않는다.
@@ -148,8 +161,8 @@ P-CA `--event-class` 7종(#770) · 근월물 코드는 **실행 당일** `get_fr
 
 | # | 항목 | 어디에 |
 |---|---|---|
-| 1 | 모의투자 프로브 7건을 누가·언제 실행하는가 | §4.2 |
-| 2 | `unused-ignore` 8건 — (a) 지우고 켠다 / (b) 종결 선언 | §4.1 |
+| 1 | ~~모의투자 프로브 7건~~ → **P-8 ×5 · P-EXT ×5 만 남음.** 선행 = KIS Developers 에서 모의 계좌(주식 `ee1bdb5f1ca2` · 선물 `46c39c54d3bb`)의 앱키 연결 반영 확인(09-23 재확인 시 미반영). 반영되면 실행일(선물 정규장) + P-EXT MTS 동석 시각 | §4.2 |
+| 2 | `unused-ignore` 8건 — (a) 지우고 켠다 / (b) 종결 선언 / (c) 애노테이션 후 (a) — **계획 `docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-plan.md`(PR #788), 권고 (a)** | §4.1 |
 | 3 | 값 제안표 채택 | `2026-09-18-tos-config-value-proposal.md` |
 | 4 | A-5 부팅 대상 | `2026-09-18-tos-config-adoption-and-carryover-plan.md` §6 ④ |
 | 5 | F-3 별도 KIS 앱 등록 | 같은 문서 §7.6 ③ |
