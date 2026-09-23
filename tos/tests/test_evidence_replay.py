@@ -9,6 +9,8 @@ and result-authority flags are forced false.
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -23,48 +25,77 @@ from tos.evidence.replay import ReplayBaseline, ReplayIsolation, ReplayResult
 
 from ._evidence_strategies import issue_replay
 
-_ALL_GOOD = {
-    "baseline_supported": True,
-    "input_complete": True,
-    "schema_compatible": True,
-    "nondeterminism_bounded": True,
-    "expected_state_digest": "s",
-    "actual_state_digest": "s",
-}
+
+class _ReplayKwargs(TypedDict):
+    """1:1 with :func:`compute_replay_result`'s signature (plan §1.1 A-fn) — a
+    ``**_replay_kwargs(...)`` splat is checked key-by-key and type-by-type, not swallowed
+    by a ``**dict[str, object]`` splat."""
+
+    baseline_supported: bool
+    input_complete: bool
+    schema_compatible: bool
+    nondeterminism_bounded: bool
+    expected_state_digest: str | None
+    actual_state_digest: str | None
+
+
+class _ReplayKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_ReplayKwargs`, all optional — the override-kwargs shape for
+    :func:`_replay_kwargs`."""
+
+    baseline_supported: bool
+    input_complete: bool
+    schema_compatible: bool
+    nondeterminism_bounded: bool
+    expected_state_digest: str | None
+    actual_state_digest: str | None
+
+
+def _replay_kwargs(**overrides: Unpack[_ReplayKwargsPartial]) -> _ReplayKwargs:
+    base: _ReplayKwargs = {
+        "baseline_supported": True,
+        "input_complete": True,
+        "schema_compatible": True,
+        "nondeterminism_bounded": True,
+        "expected_state_digest": "s",
+        "actual_state_digest": "s",
+    }
+    base.update(overrides)
+    return base
 
 
 def test_all_good_is_match() -> None:
     """When everything holds and digests agree, the result is MATCH."""
-    assert compute_replay_result(**_ALL_GOOD) is ReplayResultState.MATCH
+    assert compute_replay_result(**_replay_kwargs()) is ReplayResultState.MATCH
 
 
 def test_unsupported_baseline_never_match() -> None:
     """An unsupported baseline yields UNSUPPORTED_BASELINE, never MATCH (§6.2)."""
-    result = compute_replay_result(**{**_ALL_GOOD, "baseline_supported": False})
+    result = compute_replay_result(**_replay_kwargs(baseline_supported=False))
     assert result is ReplayResultState.UNSUPPORTED_BASELINE
 
 
 def test_missing_input_never_match() -> None:
     """A missing/corrupt input yields CORRUPT_INPUT, never MATCH (§6.1)."""
-    result = compute_replay_result(**{**_ALL_GOOD, "input_complete": False})
+    result = compute_replay_result(**_replay_kwargs(input_complete=False))
     assert result is ReplayResultState.CORRUPT_INPUT
 
 
 def test_digest_mismatch_diverges() -> None:
     """A safety-relevant digest mismatch yields DIVERGED (§6.1)."""
-    result = compute_replay_result(**{**_ALL_GOOD, "actual_state_digest": "other"})
+    result = compute_replay_result(**_replay_kwargs(actual_state_digest="other"))
     assert result is ReplayResultState.DIVERGED
 
 
 def test_unbounded_nondeterminism_never_match() -> None:
     """Unbounded nondeterminism can never be MATCH, even if digests agree (§2.5 D)."""
-    result = compute_replay_result(**{**_ALL_GOOD, "nondeterminism_bounded": False})
+    result = compute_replay_result(**_replay_kwargs(nondeterminism_bounded=False))
     assert result is not ReplayResultState.MATCH
 
 
 def test_schema_incompatibility_never_match() -> None:
     """Schema incompatibility can never be MATCH (§6.1)."""
-    result = compute_replay_result(**{**_ALL_GOOD, "schema_compatible": False})
+    result = compute_replay_result(**_replay_kwargs(schema_compatible=False))
     assert result is not ReplayResultState.MATCH
 
 
@@ -99,7 +130,7 @@ def test_match_iff_everything_holds(
 
 def test_not_run_when_no_actual_digest() -> None:
     """No actual state digest (not run to completion) is INCONCLUSIVE, not MATCH."""
-    result = compute_replay_result(**{**_ALL_GOOD, "actual_state_digest": None})
+    result = compute_replay_result(**_replay_kwargs(actual_state_digest=None))
     assert result is ReplayResultState.INCONCLUSIVE
 
 

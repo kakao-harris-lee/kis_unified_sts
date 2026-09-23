@@ -610,7 +610,7 @@ ERI-EV-007,TEST,tests/test_evidence_replay.py::test_unsupported_baseline_never_m
 ERI-EV-008,PACKAGE,tos/src/tos/evidence/predicates.py,PRESENT,tos/src/tos/evidence/predicates.py:24
 ERI-EV-008,PACKAGE,tos/src/tos/evidence/replay.py,PRESENT,tos/src/tos/evidence/replay.py:248
 ERI-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ERI-EV-008,TEST,tests/test_evidence_replay.py::test_current_rule_reevaluation_is_distinct_named_result,PRESENT,tos/tests/test_evidence_replay.py:164
+ERI-EV-008,TEST,tests/test_evidence_replay.py::test_current_rule_reevaluation_is_distinct_named_result,PRESENT,tos/tests/test_evidence_replay.py:195
 ERI-EV-009,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ERI-EV-009,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ERI-EV-010,PACKAGE,tos/src/tos/evidence/predicates.py,PRESENT,tos/src/tos/evidence/predicates.py:21
@@ -1770,17 +1770,17 @@ PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_physically
 PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_prioritized_best_effort_unavailable_never_reserved,PRESENT,tos/tests/protective/test_protective_enumeration.py:99
 PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_unassigned_resolves_unavailable,PRESENT,tos/tests/protective/test_protective_enumeration.py:99
 DCE-EV-001,PACKAGE,tos/src/tos/dsl/vocabulary.py,PRESENT,VER-002-001 §5
-DCE-EV-001,TEST,tests/dsl/test_dsl_admissibility.py::test_non_member_decision_kind_is_unconstructable,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:88
+DCE-EV-001,TEST,tests/dsl/test_dsl_admissibility.py::test_non_member_decision_kind_is_unconstructable,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:91
 DCE-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCE-EV-002,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCE-EV-003,PACKAGE,tos/src/tos/dsl/admissibility.py,PRESENT,ADR-DEV-001 §6
-DCE-EV-003,TEST,tests/dsl/test_dsl_admissibility.py::test_ambient_symbol_reference_is_inadmissible,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:133
+DCE-EV-003,TEST,tests/dsl/test_dsl_admissibility.py::test_ambient_symbol_reference_is_inadmissible,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:136
 DCE-EV-004,PACKAGE,tos/src/tos/dsl/candidate.py,PRESENT,tos/src/tos/dsl/candidate.py:8
-DCE-EV-004,TEST,tests/dsl/test_dsl_admissibility.py::test_escape_kind_is_inadmissible,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:169
+DCE-EV-004,TEST,tests/dsl/test_dsl_admissibility.py::test_escape_kind_is_inadmissible,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:172
 DCE-EV-005,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCE-EV-005,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCE-EV-006,PACKAGE,tos/src/tos/dsl/admissibility.py,PRESENT,ADR-DEV-001 §8
-DCE-EV-006,TEST,tests/dsl/test_dsl_admissibility.py::test_novel_unknown_kind_fails_closed,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:206
+DCE-EV-006,TEST,tests/dsl/test_dsl_admissibility.py::test_novel_unknown_kind_fails_closed,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:209
 DCE-EV-007,PACKAGE,tos/src/tos/dsl/bounds.py,PRESENT,VER-002-001 §5
 DCE-EV-007,TEST,tests/dsl/test_dsl_bounds.py::test_bounded_evaluation_completes_or_degrades_to_no_action,PRESENT,tos/tests/dsl/test_dsl_bounds.py:54
 ARI-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5

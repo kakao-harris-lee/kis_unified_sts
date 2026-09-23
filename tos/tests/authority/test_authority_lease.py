@@ -11,6 +11,8 @@ substrate.
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack
+
 from tos.authority import (
     AuthorityState,
     LeaseReassignmentInputs,
@@ -19,7 +21,7 @@ from tos.authority import (
     lease_scope_exclusive,
     overlapping_reassignment_forbidden,
 )
-from tos.time import HealthState
+from tos.time import HealthState, TimeContinuityIdentity
 
 from ._authority_strategies import anchor, issue_lease, valid_lease_kwargs
 
@@ -208,9 +210,50 @@ def test_monotonic_exceeded_invalidates_even_if_wall_looks_valid() -> None:
 # ---- §6.4 invalidating events ---------------------------------------------
 
 
-def _invalidation_kwargs(**overrides: object) -> dict[str, object]:
+class _InvalidationKwargs(TypedDict):
+    """1:1 with :func:`degraded_lease_invalidated`'s keyword-only signature (plan §1.1
+    A-fn) — a ``**_invalidation_kwargs(...)`` splat is checked key-by-key and
+    type-by-type, not swallowed by a ``**dict[str, object]`` splat."""
+
+    continuity_now: TimeContinuityIdentity
+    suspension_ms: int | None
+    max_suspension_ms: int | None
+    issued_lifetime: int | None
+    elapsed_monotonic: int | None
+    source_transport_uncertainty: int | None
+    max_drift_error: int | None
+    suspension_uncertainty: int | None
+    safety_margin: int | None
+    protective_capacity_exhausted: bool | None
+    hard_envelope_incompatible: bool | None
+    broker_profile_revoked: bool | None
+    dominating_state: AuthorityState
+
+
+class _InvalidationKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_InvalidationKwargs`, all optional — the override-kwargs
+    shape for :func:`_invalidation_kwargs`."""
+
+    continuity_now: TimeContinuityIdentity
+    suspension_ms: int | None
+    max_suspension_ms: int | None
+    issued_lifetime: int | None
+    elapsed_monotonic: int | None
+    source_transport_uncertainty: int | None
+    max_drift_error: int | None
+    suspension_uncertainty: int | None
+    safety_margin: int | None
+    protective_capacity_exhausted: bool | None
+    hard_envelope_incompatible: bool | None
+    broker_profile_revoked: bool | None
+    dominating_state: AuthorityState
+
+
+def _invalidation_kwargs(
+    **overrides: Unpack[_InvalidationKwargsPartial],
+) -> _InvalidationKwargs:
     """Kwargs for ``degraded_lease_invalidated`` describing a still-valid lease."""
-    base: dict[str, object] = {
+    base: _InvalidationKwargs = {
         "continuity_now": anchor(),
         "suspension_ms": 0,
         "max_suspension_ms": 2000,
@@ -280,13 +323,25 @@ def test_lost_exclusive_owner_proof_invalidates() -> None:
 def test_injected_event_flags_invalidate_on_true_or_none() -> None:
     """(canary) capacity-exhausted / envelope-incompat / profile-revoked True OR None => invalidated."""
     lease = issue_lease()
-    for field in (
-        "protective_capacity_exhausted",
-        "hard_envelope_incompatible",
-        "broker_profile_revoked",
-    ):
-        for bad in (True, None):
-            kwargs = _invalidation_kwargs(**{field: bad})
+    for bad in (True, None):
+        # Dynamic ``{field: bad}`` splats don't type-check against ``Unpack[TypedDict]``
+        # (the key isn't a literal) — each field gets its own explicit-keyword call
+        # instead (plan §1.1 A-fn item 2: "그래도 안 되면 그 헬퍼만 명시 키워드").
+        cases: tuple[tuple[str, _InvalidationKwargs], ...] = (
+            (
+                "protective_capacity_exhausted",
+                _invalidation_kwargs(protective_capacity_exhausted=bad),
+            ),
+            (
+                "hard_envelope_incompatible",
+                _invalidation_kwargs(hard_envelope_incompatible=bad),
+            ),
+            (
+                "broker_profile_revoked",
+                _invalidation_kwargs(broker_profile_revoked=bad),
+            ),
+        )
+        for field, kwargs in cases:
             assert (
                 degraded_lease_invalidated(lease, [lease], **kwargs) is True
             ), f"{field}={bad} did not invalidate (fail-closed)"

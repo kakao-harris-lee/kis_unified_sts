@@ -8,11 +8,38 @@ worsen aggregate risk. PR-EV-011 / X-EV-006 substrate — closes nothing.
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack
+
 from tos.protective import ProtectiveOwnership, cancellation_admissible
 
 
-def _safety_kwargs(**overrides: object) -> dict[str, object]:
-    base: dict[str, object] = {
+class _SafetyKwargs(TypedDict):
+    """1:1 with :func:`cancellation_admissible`'s keyword-only signature (plan §1.1
+    A-fn) — a ``**_safety_kwargs(...)`` splat is checked key-by-key and type-by-type, not
+    swallowed by a ``**dict[str, object]`` splat."""
+
+    protection_no_longer_required: bool | None
+    within_hard_envelope: bool | None
+    equivalent_replacement_live: bool | None
+    continued_existence_worsens_aggregate: bool | None
+    controller_authorizes_removal: bool | None
+    cancellation_worsens_aggregate: bool | None
+
+
+class _SafetyKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_SafetyKwargs`, all optional — the override-kwargs shape
+    for :func:`_safety_kwargs`."""
+
+    protection_no_longer_required: bool | None
+    within_hard_envelope: bool | None
+    equivalent_replacement_live: bool | None
+    continued_existence_worsens_aggregate: bool | None
+    controller_authorizes_removal: bool | None
+    cancellation_worsens_aggregate: bool | None
+
+
+def _safety_kwargs(**overrides: Unpack[_SafetyKwargsPartial]) -> _SafetyKwargs:
+    base: _SafetyKwargs = {
         "protection_no_longer_required": None,
         "within_hard_envelope": None,
         "equivalent_replacement_live": None,
