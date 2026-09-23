@@ -32,13 +32,25 @@ operator 2026-09-18 and confirmed as-proposed 2026-09-23) supplied values for:
 
 **Adopted is not the same as loadable.** Every one of the 18 carries the
 proposal §0 sentence in its own header — *this is a first-boot profile, not
-an operational safety posture* — and five of them deliberately keep a
-named-TBD leaf the proposal's §6 "확인 불가 · 미확정" list refused to invent
-(`currentness.yaml::required_dimensions`, `finality.yaml::value_date` /
-`source_revision` / `proof_recipe_id`, `monitor_coverage.yaml::bounds` three
-values, `safety_activation.yaml::members`). Those loaders therefore still
-refuse, by design; `tos/runtime/tests/compose/test_deploy_approved_values.py`
-pins each refusal **by key name**, so filling one later is a deliberate act.
+an operational safety posture* — and **two** of them still keep a named-TBD
+leaf the proposal's §6 "확인 불가 · 미확정" list refused to invent:
+
+| file | leaf(s) still named-TBD | why |
+| --- | --- | --- |
+| `finality.yaml` | `value_date` · `source_revision` · `proof_recipe_id` | §6 1·2항 — no recommended value exists (the two that have a prior recommendation are grade **M**, "개발 측 값 제안 없음"; the third, `value_date`, has a grade-B recommendation whose basis is the KRX **stock** settlement date, which does not fit this deployment's `SYNTHETIC_FUTURES_ORDER` scope) |
+| `safety_activation.yaml` | `members` | §3 [D] — derived from `print-policy-digests`, which refuses on the 2026-09-16 policies' operator-fill `scope.accounts` |
+
+Two more that the first cut of this list counted as named-TBD were **filled
+on 2026-09-23** under the operator's "추천 값이 있으면 활용" answer, from the
+earlier value table `docs/plans/2026-09-12-tos-operator-value-proposals.md`:
+`currentness.yaml::required_dimensions` (§2, the 21-member mandated floor)
+and `monitor_coverage.yaml::bounds` (§4, 60000 / `[TRUSTED]` / 100, grade C).
+
+Those two loaders therefore still refuse, by design;
+`tos/runtime/tests/compose/test_deploy_approved_values.py` pins each refusal
+**by key name**, so filling one later is a deliberate act — and
+`tos/runtime/tests/compose/_loader_probe.py` (runnable directly) prints the
+whole PASS/REFUSE partition, which that same test pins by name.
 
 Still NOT adopted, and still blocking a `run` boot: `construction.yaml`
 (the value proposal names it in scope but tabulates no value for any of its

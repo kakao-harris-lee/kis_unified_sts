@@ -413,10 +413,13 @@ nonlive_broker_consuming.admitted = false` · `release::admission_result = ADMIT
 | `safety_deviations.yaml` · `safety_incidents.yaml` | §4.3 |
 | `monitor_coverage.yaml` | §4.3 · §6 5항(미확정) |
 
-**제안표 §6 의 미확정 리프는 채우지 않았다.** `currentness::required_dimensions` ·
-`finality::value_date`/`source_revision`/`proof_recipe_id` ·
-`monitor_coverage::bounds` 3값 — 전부 named-TBD `null` 로 두었고, **그 로더들은 지금도 거부한다.**
-제안표 §6 말미가 「부팅이 이것들 때문에 막히면 그것이 A-5 의 결과물이다」라고 미리 적은 그대로다.
+**제안표 §6 의 미확정 리프는 1차에서 채우지 않았다.** `currentness::required_dimensions` ·
+`finality::value_date`/`source_revision`/`proof_recipe_id` · `monitor_coverage::bounds` 3값 —
+전부 named-TBD `null` 로 두었고 그 로더들이 거부했다. 제안표 §6 말미가 「부팅이 이것들 때문에
+막히면 그것이 A-5 의 결과물이다」라고 미리 적은 그대로다.
+> **2차 갱신(아래 §7.8.2)**: 운영자 답변 2·3 으로 `currentness::required_dimensions` 와
+> `monitor_coverage::bounds` 3값은 **채워졌다**(추천 출처 = 2026-09-12 값 제안표). `finality` 3값은
+> 그대로 `null` 이다.
 
 `finality::proof_recipe_id` 는 A-2 에서 **재측정**했다: ADR-002-030 §29 는 절 제목 자체가
 "Open Implementation Questions" 이고 Q3 은 「Which finality recipes distinguish …?」라는 **열린
@@ -491,13 +494,17 @@ EXIT=1
 (`compose/_construction_config.py:167`, 부재 검사는 `:104-105`) · 키 = 파일 자체.
 
 `run` 은 1단계에서 멈추므로 **그 뒤 어디까지 막히는지는 순차 부팅으로 알 수 없다.** 그래서
-**로더 전수 프로브**를 따로 돌려 잔여 차단을 전부 이름으로 측정했다(25건 중 15 PASS):
+**로더 전수 프로브**를 따로 돌려 잔여 차단을 전부 이름으로 측정했다(1차: 25건 중 **15 PASS** ·
+2차 갱신 후 **17 PASS**). 그 프로브는 review-794 MEDIUM-4 지적에 따라
+`tos/runtime/tests/compose/_loader_probe.py` 로 **커밋**됐고(직접 실행 가능),
+`test_deploy_approved_values.py::test_loader_probe_partition_is_as_recorded` 가 분할을
+**이름으로** 고정한다 — 이 수치가 다시 재현 불가가 되지 않는다:
 
 | 남은 차단 | 부류 | 값의 소관 |
 |---|---|---|
-| `currentness.yaml::required_dimensions` | 제안표 §6 6항 | **설계 판단** — floor 복사는 항진명제 |
+| ~~`currentness.yaml::required_dimensions`~~ | §6 6항 | **2차에서 해소** — 운영자 「그대로 사용」 |
 | `finality.yaml::value_date`(그리고 `source_revision`·`proof_recipe_id`) | §6 1·2항 | 상위 승인 부재 |
-| `monitor_coverage.yaml::bounds` 3값 | §6 5항 | 상위 원천 미확인 |
+| ~~`monitor_coverage.yaml::bounds` 3값~~ | §6 5항 | **2차에서 해소** — 2026-09-12 §4 추천값 |
 | `safety_activation.yaml::members` | §3 [D] | **A-3 이 막혀 도출 불가** |
 | `venue_constraint_policy::scope.accounts` · `order_construction_policy::scope.accounts` · `aggregate_risk_policy::instrument_scope` · `action_flow_policy::account_scope` | 2026-09-16 채택분의 잔여 TBD | **운영자 좌표**(제안표 범위 밖) |
 | `construction.yaml` | 미채택 | 위 A-4 |
@@ -519,7 +526,7 @@ HTTP 폴러라 외부 호출이고, 이번 대상이 아니다. 즉 로컬 틱 �
 없으므로 **대조할 `quantity_basis` 자체가 없다.** 「부팅 성공 ≠ 주문 성공」은 이번에 검증할 수
 있는 단계에 이르지 못했다 — 부팅부터 막혀 있다.
 
-#### 테스트 · 게이트
+#### 7.8.1 테스트 · 게이트 (1차)
 
 - 신규 `tos/runtime/tests/compose/test_deploy_approved_values.py` — 세 부류의 핀:
   ① 13개 로더가 **실제 배포 파일**을 로드 ② 승인값 1개를 `null` 로 되돌리는 **뮤테이션 13건이
@@ -529,3 +536,99 @@ HTTP 폴러라 외부 호출이고, 이번 대상이 아니다. 즉 로컬 틱 �
 - 기존 `test_deploy_config.py` 무회귀.
 - 실행 뮤테이션 1건 직접 확인: `active_scope` → `MOCK_STOCK_ORDER` 로 바꾸니 핀 2건 **red**,
   원복 후 `diff` 로 청결 확인(§7.4 1행의 「원복 안 됨」 재발 방지).
+
+#### 7.8.2 2차 (2026-09-23) — review-794 조치 + 운영자 답변 4건
+
+PR #794 리뷰 판정 **HIGH 3 · MEDIUM 4 · LOW 3**(머지 불가)과 운영자 답변 4건을 같은 라운드에서
+처분했다. 리뷰가 확인한 것(값 추적 전건 일치 · 안전 태세 결함 0 · 비밀/계좌번호 0 · digest 바이트
+일치 · A-5 축자 재현 · 헤더 `file:line` 48/48 정확)은 **다시 받지 않았다.**
+
+##### B1 — 좌표 주입 수단 서베이: **없다. 만들지 않았다.**
+
+운영자 답변 1 은 「이 장비가 운영 장비. 여기 있는 `.env` 와 `.env.mock` 환경 파일을 그대로 활용」
+이다. 즉 좌표(`construction.yaml::account`/`instrument` · 2026-09-16 채택분 4종의
+`scope.accounts`/`scope.instruments`/`account_scope`/`instrument_scope`)는 **런타임에 이 호스트의
+env 에서 와야 하고 커밋돼서는 안 된다.** 지시대로 **먼저 서베이**했다:
+
+| 실측 | 결과 |
+|---|---|
+| `grep -rn "os.environ\|getenv" tos/runtime/src` | **프로덕션 사용 0건.** 히트 20건은 전부 모듈 독스트링이 스스로 「no `os.environ`」이라고 적은 문장이다 |
+| `tools/tos_firewall_check.py` **TOS-FW-C** | `os.environ`/`os.getenv` 는 **AST 게이트가 금지**한다 — `from os import environ/getenv`(:515-526)와 속성 접근 `os.environ`(:539-551) 둘 다. 이 검사는 **스코프 무관**으로 `tos/` 전체에 걸린다(스코프 분기는 import 허용목록에만 적용 — `scope_for_tos_path`:360) |
+| `grep -rn "expandvars\|\${" tos/runtime/src` · `dotenv`/`.env`/`env-file` | **0건.** 로더가 수행하는 유일한 치환은 `{environment_label}` 하나다(`broker_scopes` principal · `egress_coordinates.active_principal`) — 그것도 **CLI 인자**에서 온다 |
+| `compose/root.py:180` | 「environment_label: Boot-argument environment label (**never `os.environ`** — D1.1)」 |
+| 커스터디(호스트 로컬 · 비커밋) | `FileCustody` 는 `custody_root` + 매니페스트 + scope 파일로 **자격증명**을 읽는다. 그러나 **계좌번호는 의도적으로 커스터디 대상이 아니다**(review F2): `transport/kis_mock/adapter.py:37-41`·`codec.py:43-46`·`custody.manifest.example.yaml` 이 셋 다 「KIS account number is NOT a custody credential … it is the sealed outbound `account` coordinate」라고 적고, `PROVISIONED_SCOPES` 에 `kis_mock.account` 가 **없다** |
+
+이 서베이 직후 main 에 착지한 **C-2 자격증명 소유권 결정**
+(`docs/plans/2026-09-23-tos-kis-credential-ownership-decision-c2.md`, PR #792, 선택지 (C) 채택)이
+같은 경계를 독립적으로 확인한다 — 그 문서가 다루는 custody 대상은 **앱키/시크릿**이고, 계좌
+좌표는 여전히 그 모델 밖이다(`PROVISIONED_SCOPES` 에 계좌 scope 없음). 즉 B1 의 빈칸은 C-2 가
+메우는 빈칸이 아니다.
+
+**결론: 기존 수단이 없다.** 지시대로 **만들지 않고 멈췄다.** 설계 선택지는 아래와 같고, 설계는
+세션 모델이 쓴다.
+
+| 선택지 | 건드리는 파일 | 방화벽 함의 |
+|---|---|---|
+| **(가) 호스트 로컬 config-dir** — `--config-dir` 는 이미 CLI 인자다. 운영자가 좌표 포함 사본을 저장소 밖(예: `/etc/tos/paper/`)에 두고 그것을 가리킨다 | **코드 0줄.** 문서/런북만 | 없음 |
+| | | ⚠ 대가: 부분 오버레이 수단이 없어 **파일 전체를 복제**해야 하고, 커밋된 핀이 실제 부팅하는 파일을 더 이상 기술하지 않는다 |
+| **(나) 좌표 오버레이 파일** — `--config-dir` 안의 gitignore 된 한 파일(예: `deployment_coordinates.yaml`)에서 좌표만 읽어 해당 로더들에 주입 | `compose/_construction_config.py` · `venue/_venue_policy_loader.py` · `_order_construction_policy_loader.py` · `riskstate/_*_policy_loader.py` · `.gitignore` · example 신설 | **없음**(파일 읽기) — TOS-FW-C 와 무관 |
+| | | ⚠ 대가: 「정책 문서의 scope 는 그 문서 안에 있다」는 현 모델이 깨진다. digest 대상 범위(`canonical_digest`/`members`)와의 관계를 먼저 정해야 한다 |
+| **(다) 커스터디 스코프 확장** — `account` 를 `FileCustody` scope 로 승격(`custody_root` 는 이미 호스트 로컬·비커밋) | `custody/file_custody.py`(`PROVISIONED_SCOPES`) · 로더들 · 매니페스트 example · 런북 | **없음**(파일 읽기) |
+| | | ⚠ 대가: **review F2 결정을 뒤집는다**(「계좌번호는 자격증명이 아니라 봉인된 outbound 좌표」). 그 결정을 바꾸는 것은 설계 PR 이지 구현이 아니다 |
+
+**(라) `os.environ` 직접 읽기는 선택지가 아니다** — TOS-FW-C 가 AST 로 거부한다. `.env` 를
+읽으려면 그 규칙 자체를 개정해야 하고, 그것은 경계 설계 변경이다.
+
+**이 라운드에서 실 계좌번호는 커밋 파일·테스트·커밋 메시지 어디에도 쓰지 않았다.**
+`.env.mock` 에 `KIS_FUTURES_ACCOUNT_NO` 키가 **존재한다는 사실만** 확인했다(키 이름만 grep,
+값 미출력).
+
+##### B2 · B3 — 채운 것과 채우지 않은 것
+
+제안표 §7.2 표 참조. 요약: **채움 2건**(`currentness::required_dimensions` = 커널 floor 21키 ·
+`monitor_coverage::bounds` = 60000/`["TRUSTED"]`/100, 둘 다 출처
+`docs/plans/2026-09-12-tos-operator-value-proposals.md` §2·§4, 등급 C) · **추천값 없음 3건**
+(`finality::proof_recipe_id`·`source_revision` 은 등급 M, `value_date` 는 추천값이 **있으나**
+근거가 KRX **주식** 결제일이라 `SYNTHETIC_FUTURES_ORDER` 스코프와 어긋나 적용하지 않았다) ·
+**미채택 2건**(`strategies/` · `marketfeed`+`critical_input_policy` — 양 표 모두 행이 없고,
+좌표는 B1 에 걸린다).
+
+> **제안표 §6 5항의 「상위 원천 미확인」은 이 재조사로 반증됐다** — 2026-09-12 값 제안표 §4 가
+> 그 세 값을 정확히 제안하고 있었다. 「없다」고 적기 전에 더 이른 표를 찾지 않은 것이 1차의 누락이다.
+
+##### A-3 · A-5 재실행 — 결과 불변
+
+```
+$ ... print-policy-digests --config-dir config/tos_runtime/paper
+print-policy-digests: refused — config/tos_runtime/paper/venue_constraint_policy.yaml:
+scope.accounts is still 'TBD'/empty (named-TBD) — fill the deployment coordinate before activation
+(exit 1)
+
+$ ... run --config-dir config/tos_runtime/paper --data-dir <fresh> --custody-root <fresh> \
+      --environment-label non-live-test
+run: refused — construction config file not found: config/tos_runtime/paper/construction.yaml
+EXIT=1
+```
+
+둘 다 **B1 이 막은 그 좌표** 때문이다. 2차가 채운 값들은 거부 지점을 앞당기지도 미루지도 않았다 —
+프로브 분할만 **15→17 PASS** 로 움직였고, 남은 8건은 전부 위 표의 이름 있는 차단이다.
+
+##### 핀 강화 — 부류로 닫았다
+
+review-794 HIGH-1/HIGH-2 는 「⚠ 값과 [A] 전사 bound 가 **값으로** 안 박혀 있다」였다. 리뷰어가
+스크래치 사본에서 17종을 다른 값으로 바꿔도 스위트가 **전건 GREEN** 임을 실측했다 — 프로젝트
+메모리의 「가드가 자기가 막는다고 말한 것을 허용한다」와 같은 모양이고 실패 모드가 침묵이다.
+
+인스턴스(10건 추가)가 아니라 **부류**로 닫았다:
+
+- 18종 **156 리프 전수**가 `_VALUE_PINS`(149) 또는 **사유가 붙은** `_UNPINNED_BY_DESIGN`(7 —
+  `broker_scopes` 본문, byte-identity 핀이 값 핀보다 강하게 덮는다) 중 하나에 속해야 한다.
+  둘 다 아니면 `test_every_adopted_leaf_is_pinned_or_explicitly_unpinned` 가 실패한다.
+- 역방향 드리프트(없어진 리프를 가리키는 핀)도 실패한다.
+- **게이트 자신이 죽은 검사가 아님**을 시험한다(스크래치 사본에 리프를 하나 더해 게이트가
+  그것을 이름으로 보고하는지).
+- `test_a_value_pin_actually_fires` 가 **실제 값 11종**을 「구조적으로 유효하지만 승인되지 않은」
+  값으로 바꿔 핀이 살아 있음을 증명한다 — HIGH-1 의 `replay_window_events` `1000000`→`1`
+  (여전히 양의 정수라 로더는 통과) 포함.
+- 뮤테이션은 **텍스트 치환**으로 바꿨다. `yaml.safe_dump` 왕복은 헤더 주석을 날려 **출처 시험이
+  먼저 터지는** 공허한 RED 를 만든다(review-794 방법론 주의).
