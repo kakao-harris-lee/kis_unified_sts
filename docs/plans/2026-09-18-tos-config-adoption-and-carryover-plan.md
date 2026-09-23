@@ -363,6 +363,16 @@ stderr 를 가리지 마라**(zsh 변수 단어분할 실패가 `2>/dev/null` �
 3. **F-3 별도 KIS 앱 등록** — 이 웨이브 범위 밖. 미착수.
 4. **A-5 부팅 대상** — 이 웨이브 범위 밖. 미착수.
 
+**2026-09-23 운영자 처분** (위 2·3·4 의 대기 상태를 닫는다 — 위 문장은 09-18 시점 서술로 남긴다):
+
+- **② 값 제안표 — 제안값 그대로 채택.** `⚠` 4행 포함(`active_scope = SYNTHETIC_FUTURES_ORDER` ·
+  `nonlive_broker_consuming.admitted = false` · `admission_result = ADMIT` + `restriction_present: false` ·
+  `risk_attestations` 6개 `true`). 기각된 대안: `risk_attestations` 를 `false` 로 두는 더 좁은 태세.
+- **③ F-3 — C-2 결정 후 판단.** C-2(F-2 토큰 소유권 결정 문서)가 아직 없다. 세션 모델이 C-2 를 먼저 쓰고,
+  그 결정이 자격증명 분리를 요구할 때만 운영자가 별도 앱을 등록한다.
+- **④ A-5 — 로컬 헤르메틱 데이터 디렉터리까지.** 이 계획의 전제 그대로. 모의 서버 핸드오버는 스코프 전환과
+  `admitted = true` 별도 승인, C-2 가 선행이라 별도 계획으로 남긴다.
+
 ### 7.7 남은 것
 
 - **mypy 래칫 1~3단계** — #744 문서가 순서를 정했다. 1단계(113건 + 죽은 억제 53건) 착수 중.
