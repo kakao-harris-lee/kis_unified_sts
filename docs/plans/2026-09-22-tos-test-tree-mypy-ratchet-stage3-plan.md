@@ -402,6 +402,114 @@ PR 마다 번호·main SHA·실측 전후를 덧붙인다. 원 계획 문언은 
 **저자가 「분류기를 검증했다」고 쓴 절에서 분류기 결함 2건이 더 나왔다.** 2단계 §7.6 ⑭와 같은
 부류이고, 같은 문서 안에서 반복됐다. 검증 주장은 검증을 면제하지 않는다.
 
+### 7.1 3단계 착지 — PR 6개 + 게이트 (2026-09-23)
+
+**`arg-type` 773 → 0 · 두 테스트 트리에서 코드 활성화.** 계획 저작(#775, 2026-09-22) 다음 날 착지.
+운영자 처분 ①~④ 전부 추천안(#781).
+
+| PR | 부류 | 닫은 행 | main | 리뷰 |
+|---|---|---:|---|---|
+| #778 (3-a) | E `object` 63 + B 옵셔널 95 | 158 | `362b047b` | HIGH 2 → 조치 → 재심 approve |
+| #782 (3-b) | brokercap 한 파일 — A-pyd 65 + A-fn 28 + 3 (**본**) | 96 | `782920f3` | 0건 |
+| #783 (3-c) | A-fn 109 + A-issue 4 | 113 | `d58b7d7a` | HIGH 1 → 조치 → 재심 approve |
+| #784 (3-d) | A-pyd/A-rt/헬퍼 234 + 부수 2 | 236 | `d1c56cf3` | LOW 2 → 3-e 이월 |
+| #786 (3-e) | D 90 + C′ 22 + Z 39 + E/B 15 − 부수 · 런타임 포트 12종 | 166 | `7aba8a0d` | 0건 |
+| #785 (커널 위생, 운영자 ④) | C′ 잔여 4 = 커널 결함 2종 | 4 | `70ca43a1` | LOW 1 |
+| 게이트 켜기 | `tos-firewall.yml` 두 스텝에서 `--disable-error-code=arg-type` 제거 | — | (이 PR) | — |
+
+합 158+96+113+236+166+4 = **773**. 저작 시점 §2 의 근사(173/96/131/216/157)와 견주면 3-c 가 −18,
+3-d 가 +20 — **A-issue 22건 중 18건이 3-d 파일에 있었기 때문**(§2 「한 파일은 한 PR」 규칙이 3-d 로
+보냈다). 순서는 계획대로 3-a → 3-b → (3-c ∥ 3-d) → 3-e.
+
+**게이트 활성화 시점 실측** (main `7aba8a0d`, mypy 2.3.1):
+
+| 측정 | 커널 | 런타임 |
+|---|---:|---:|
+| `arg-type` (새 CI 플래그: `no-untyped-def`·`unused-ignore` 만 유예) | **0** (579 files) | **0** (221 files) |
+| `unused-ignore` — 옛 플래그(`arg-type` 유예) | 116 | 71 |
+| `unused-ignore` — 새 플래그(`arg-type` 활성) | **5** | **3** |
+| zero-disable 잔여 | `no-untyped-def` 250 · `unused-ignore` 0 | `no-untyped-def` 366 · `unused-ignore` 0 |
+| 소스 스텝 `mypy src` / `mypy tos/runtime/src` | 0 (264) | 0 (185) |
+
+`unused-ignore` 187 → **8** 은 상위 계획 §2 가 예고한 그대로다 — 179건은 「`arg-type` 이 꺼져 있어서만
+unused」였고 켜자 「사용 중」이 됐다. **남은 8건은 zero-disable 에선 0** 이다. 즉 여덟은 전부
+`# type: ignore[no-untyped-def]` 류로, CI 가 `no-untyped-def` 를 영구 유예(상위 §6 ①)하는 한 CI 관점에선
+영원히 unused 다. **마지막 단계(`unused-ignore`)의 결정은 이 8건을 지울지(CI 기준) 둘지(로컬
+zero-disable 기준)이며, 별도 소형 계획 하나면 된다.**
+
+**처방이 실제로 한 일** (§1 과 대조):
+
+- A-pyd: 빌더 마지막 줄 `Model(**kwargs)` → `Model.model_validate(kwargs)`. 검증 보존 뮤테이션
+  (`model_copy` 로 바꾸면 불법 override 테스트가 `DID NOT RAISE`)을 3-b·3-d 저자와 리뷰어가 각각 재현.
+- A-fn/A-rt: 파일별 TypedDict(`total=True`) + `Partial`(`total=False`) + `Unpack` 빌더. **「1:1」의 뜻이
+  리뷰에서 굳었다 — 디폴트 있는 키워드 파라미터까지 전부**(#783 HIGH: `risk_decision` 의
+  `effective_limit` 누락). TypedDict 값 타입 드리프트도 mypy 가 잡는다(3-b 리뷰어 뮤테이션).
+- A-issue: `scheme` 은 이미 명시적이었고 걸린 건 `**overrides: object` 로 흘러드는 `status` 뿐 — §1.1
+  의 서술이 절반만 맞았다. `status=ArtifactStatus.ISSUED` 명시로 22건.
+- `model_construct`: 값 dict 를 `dict[str, Any]` 로 — 표본 1건에서 확정, 20건 동일.
+- B: `receipt.seq` 류는 헬퍼에서 한 번 좁힘 · `None → StageRequest` 23건은 실 `StageRequest` 픽스처 +
+  「안 읽는다」 증명 테스트 1건(런타임 2619 → 2620).
+- D: Protocol 대상은 더블 수리 · `StageRequest` 는 실물 · 구체 서비스는 **런타임 포트 12종**
+  (`TimeSnapshotReader` · `TimeHealthReader` · `FreshnessTimeReader`+2 · `FinalityProducerPort` ·
+  `FinalityConsumerPort`+`ReleaseOutcomeLike` · `ReleaseConflictReader` · `FinalityConsumerTimeReader` ·
+  `_SessionContextReader` · `_AggregateRiskDecisionReader` · `_ConstructionStageReader`×2 ·
+  `AtomicCommitLogPort`) 또는 서브클래스(`VenueConstraintService` · `SqliteEvidenceStore`). 커널 클래스
+  `OrderConstructionStage` 는 리더 포트로 감쌌다(커널 미접촉).
+- C′: 22건 테스트 측, **4건은 커널 결함**(§7.2) → #785.
+- Z: `_driver` 는 §1.5 의 `Mapping` 이 아니라 `dict` — `build_core` 가 정확히 `dict[...] | None` 을 요구해
+  `Mapping` 이면 그 전달에서 다시 막힌다. `str → Enum` 4건 중 `StaleEpochRead(reason=...)` 에 `str` 을
+  넘기던 것은 **실제 버그**였다.
+- `cast`: 최종 잔존 **7**(3-a 2 · 3-d 2 · 3-e 3), 전부 `pytest.raises` 안. 새 `# type: ignore` **0**.
+  Protocol·커널 시그니처 확장 **0**.
+
+### 7.2 커널 결함 2종 (운영자 ④ → #785)
+
+| 결함 | 메커니즘 | 수정 |
+|---|---|---|
+| `tos/src/tos/engine/core.py:117` `TransportNatureLike.reaches_broker` | Protocol 이 settable 속성으로 선언했는데 **자기 참조 구현** `NonBrokerTransportNature`(`backtest/driver.py:198`)가 `frozen` dataclass — 구조적으로 만족 불가. mypy 문구: `expected settable variable, got read-only attribute` | 읽기전용 `@property`(하우스 스타일 `backtest/fills.py` 와 동일) |
+| `tos/src/tos/nontrade/predicates.py:559` `nontrade_authority_effect_all_false(effect)` | 파라미터가 서브클래스 `NonTradeAuthorityEffect \| None` 인데 본문은 `model_fields`/`getattr` 만 써서 베이스 `AllFalseNonTradeAuthority` 도 처리(§5.4 vacuous guard 테스트가 그 경로) | 공통 조상 `AllFalseNonTradeAuthority \| None` 으로 |
+
+둘 다 동작 불변(전 소비자 grep · 유일 실 호출부 공변 · 뮤테이션으로 4행 재발 확인). **같은 부류가 3-e
+포트 저작 중 세 번 더 나왔다** — `_ContinuityIdentityLike.tts_generation` 을 더블 편의값 `int` 로
+선언했다가 실 필드 `int | None` 과 충돌(§7.3). 「Protocol 의 평범한 속성 선언은 frozen 구현을 거부한다」
+가 이번 단계의 반복 부류다.
+
+### 7.3 CI 사각지대 — 테스트 트리 mypy 는 import 된 소스 본문을 안 본다
+
+3-e 저자 레인이 도입한 포트 3개가 **자기 소스 본문과 불일치**했는데(`FinalityReleaseConsumer.time_service`
+를 `health_state` 만으로 좁혔으나 `_reconcile()` 이 `current_snapshot()` 도 호출 · `_transport_wiring.py`
+의 `runtime_identity=` kwarg 가 `EvidenceAppendPort` 에 없음 · 위 `tts_generation`), 테스트 트리 명령
+(`mypy tos/runtime/tests`)은 셋 다 green 이었다. mypy 는 명시 대상 파일의 본문만 보고하고 import 된
+의존성은 시그니처만 쓴다. 셋 다 **CI 의 별도 소스 스텝** `mypy tos/runtime/src` 에서 드러났고(리뷰어가
+포트 멤버 제거 뮤테이션으로 정확히 그 스텝에서 4건 RED 재현), 그래서 소스 스텝과 테스트 스텝은 **둘 다**
+있어야 한다. 워크플로 주석에 못박았다.
+
+### 7.4 이번 단계에서 틀린 것
+
+| # | 무엇 | 누가 잡았나 | 근거 |
+|---|---|---|---|
+| 1 | 3-a PR 본문 「cast 4건 전부 `pytest.raises` 안」 — **2건은 밖**, 실물 필드는 이미 Optional, 근본은 헬퍼 파라미터가 좁은 것 | review-778 (HIGH 2) | 【PR】#778 |
+| 2 | 3-c `_DecisionKwargs` 「`risk_decision` 과 1:1」 — 디폴트 파라미터 `effective_limit` 누락 | review-783 (HIGH) | 【PR】#783 |
+| 3 | review-783 1차가 `ActiveSetMember.incident_id` 위치를 `records.py:240` 으로 인용 — 실제 `state.py:148`(다른 클래스) | 조치 레인 · 재심 확인 | 【PR】#778 |
+| 4 | 3-e 포트 3개가 자기 소스 본문과 불일치(§7.3) | **저자 자신**(소스 스텝 재실행) | 【PR】#786 |
+| 5 | 계획 §1.1 ① 「불법 입력엔 cast 가 필요하다」 — brokercap·3-c 엔 불법 입력이 **없었다**(cast 0) | 3-b·3-c 저자 | 【PR】#782 #783 |
+| 6 | 계획 §1.5 `Mapping` 처방 — `build_core` 가 `dict` 를 요구해 성립 안 함 | 3-e 저자 | 【PR】#786 |
+| 7 | 계획 §1.1 A-issue 「`scheme`·`status` 가 dict 안에 섞임」 — `scheme` 은 명시적이었고 `status` 만 | 3-c·3-d 저자 | 【PR】#783 #784 |
+| 8 | 계획 §2 3-c/3-d 건수 — A-issue 18건이 3-d 파일에 있어 −18/+20 | 3-c 저자 | 【PR】#783 |
+| 9 | 리뷰 레인이 풀스위트 도는 동안 같은 워크트리에서 뮤테이션 → `code_digest` 가 바뀌어 1077건 가짜 실패 | 리뷰어 자신 | 【PR】#785 |
+| 10 | 워크트리 두 곳에서 풀스위트 동시 실행 → 디스크 경합으로 15~24건 가짜 실패 | 3-e·#785 저자 | 【PR】#786 #785 |
+
+9·10 은 코드가 아니라 **측정 절차**의 오류다 — 풀스위트는 한 번에 하나, 도는 동안 그 워크트리를 건드리지
+않는다(`code_digest` 가 소스 트리를 실측 해시한다).
+
+### 7.5 남은 것
+
+- **마지막 단계 `unused-ignore`** — 새 플래그에서 8건(커널 5 · 런타임 3), zero-disable 에선 0. 결정은 §7.1.
+- `no-untyped-def` 616 — 상위 §6 ① 그대로 하지 않는다.
+- ParamSpec 스파이(#784 LOW 1) — 3-e 가 실제로 써 보고 **채택 안 함**(조건부 스파이라 통일 불가 ·
+  팩토리가 절감분보다 큼 · 패키지가 셋이라 공유 위치 없음).
+- 테스트 헬퍼 중복(`clean_request` 3벌 등)과 `_ConstructionStageReader` 2벌 — §6 대로 이 단계 밖.
+
 ## 부록 A — 분류기 (재현용)
 
 측정 명령 (repo 루트, 루트 venv, mypy 2.3.1):
