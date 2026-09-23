@@ -34,10 +34,21 @@ Three further kinds of pin live here:
 1. **Loads** — the real file, through its real loader, from the repo path an operator deploys.
 2. **Named-TBD mutation goes RED** — the same file with exactly ONE approved leaf flipped back
    to ``null`` must refuse with that loader's own typed error, naming the leaf.
-3. **Still-undetermined leaves refuse, by name** — the proposal's §6 "확인 불가 · 미확정" list
-   that survived the 2026-09-23 operator answers (``finality.yaml::value_date`` /
-   ``source_revision`` / ``proof_recipe_id``, ``safety_activation.yaml::members``). Each one's
-   refusal is pinned WITH THE KEY NAME, so filling it later is a deliberate act.
+3. **Still-undetermined leaves refuse, by name** — what survived the 2026-09-23 operator
+   answers AND the W-A / A-5 round (``finality.yaml::source_revision``,
+   ``safety_activation.yaml::members``). Each one's refusal is pinned WITH THE KEY NAME, so
+   filling it later is a deliberate act. ``finality.yaml``'s ``value_date``/``proof_recipe_id``
+   left this list on 2026-09-23 (operator decision 3 / operator choice (가), design
+   ``docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md``) and are now
+   value-pinned instead.
+4. **Boot-proof fixture files** (W-A / A-5, operator choice (가)) — ``construction.yaml``,
+   ``strategies/bootproof_band.strategy.yaml``, ``marketfeed.yaml``,
+   ``critical_input_policy.yaml``. These are NOT approved values: each carries the fixture
+   header sentence instead of the proposal §0 sentence, every leaf is pinned in
+   :data:`_FIXTURE_VALUE_PINS` (same completeness gate as the 18), and every coordinate slot
+   they leave unrendered is pinned BY ITS OWN LOADER'S REFUSAL — the render script
+   (``scripts/tos/render_paper_config.py``) fills those off-repo, so a placeholder form the
+   loader happens NOT to refuse would boot a phantom coordinate silently.
 
 **Mutation methodology — text substitution, never a ``yaml.safe_dump`` round-trip.** A round
 trip drops every header comment, which makes the *provenance* tests fire and turns the suite
@@ -267,9 +278,16 @@ _VALUE_PINS: dict[str, Any] = {
     # --- finality.yaml ---------------------------------------------------
     "finality.yaml::currency": "KRW",
     "finality.yaml::release_proof_wait_ms": 60000,
-    "finality.yaml::value_date": None,
+    # Operator decision 3 (2026-09-23, design 2026-09-23 머리 결정 3): T+1, 선물 일일정산.
+    # NOT the 2026-09-12 §5 `T+2` recommendation, whose stated basis is the KRX **stock**
+    # settlement date while this deployment's scope is SYNTHETIC_FUTURES_ORDER.
+    "finality.yaml::value_date": "T+1",
+    # Still render-time only (design §2 step 5): a commit cannot contain its own SHA.
     "finality.yaml::source_revision": None,
-    "finality.yaml::proof_recipe_id": None,
+    # 부팅 증명 픽스처 — 승인된 recipe 아님 (operator choice (가), 2026-09-23). ADR-002-030
+    # §29 Q3 remains an OPEN question naming no approved identifier; this opaque token asserts
+    # the absence, it does not claim an approval.
+    "finality.yaml::proof_recipe_id": "tos-paper-proof-recipe-bootproof-g1",
     # --- safety_envelope.yaml --------------------------------------------
     "safety_envelope.yaml::envelope.envelope_id": "tos-paper-envelope-g1",
     "safety_envelope.yaml::envelope.envelope_generation": 1,
@@ -834,14 +852,15 @@ def test_named_tbd_mutation_of_one_approved_value_refuses(
 #: record (§7.8) quotes this partition; pinning it BY NAME is what keeps the record and the
 #: loaders from drifting apart. Each entry is a real, named blocker — not a tolerated failure.
 _EXPECTED_REFUSALS: dict[str, str] = {
-    "finality.yaml": "제안표 §6 1·2항 — value_date/source_revision/proof_recipe_id 추천값 없음",
-    "safety_activation.yaml::members": "제안표 §3 [D] — print-policy-digests 가 막혀 도출 불가",
-    "venue_constraint_policy.yaml": "2026-09-16 채택분의 운영자-기입 scope.accounts",
-    "order_construction_policy.yaml": "2026-09-16 채택분의 운영자-기입 scope.accounts",
-    "aggregate_risk_policy.yaml": "2026-09-16 채택분의 운영자-기입 instrument_scope",
-    "action_flow_policy.yaml": "2026-09-16 채택분의 운영자-기입 account_scope",
-    "construction.yaml": "미채택 — 제안표가 7개 리프에 값을 주지 않는다(A-4)",
-    "strategies/": "제안표 §6 7항 — 전략 DSL 은 부팅용 임의값 금지",
+    "finality.yaml": "source_revision 은 렌더 산출물(배포 SHA) — 커밋 파일은 자기 SHA 를 담을 수 없다",
+    "safety_activation.yaml::members": "[D] print-policy-digests 산출물 — 좌표가 digest 에 들어가 커밋 불가",
+    "venue_constraint_policy.yaml": "운영자 좌표 scope.accounts — 렌더가 저장소 밖에서 채운다",
+    "order_construction_policy.yaml": "운영자 좌표 scope.accounts — 렌더가 저장소 밖에서 채운다",
+    "aggregate_risk_policy.yaml": "운영자 좌표 instrument_scope — 렌더가 저장소 밖에서 채운다",
+    "action_flow_policy.yaml": "운영자 좌표 account_scope — 렌더가 저장소 밖에서 채운다",
+    "construction.yaml": "부팅 증명 픽스처 · 좌표 account/instrument 는 렌더가 채운다",
+    "strategies/": "부팅 증명 픽스처 · 좌표 target.account/instrument 는 렌더가 채운다",
+    "marketfeed.yaml": "부팅 증명 픽스처 · 좌표 instruments/account/journal_path 는 렌더가 채운다",
 }
 
 
@@ -857,7 +876,7 @@ def test_loader_probe_partition_is_as_recorded() -> None:
         outcomes
     )
     passed = sum(1 for outcome in outcomes if outcome.passed)
-    assert (passed, len(outcomes)) == (17, 25), format_table(outcomes)
+    assert (passed, len(outcomes)) == (18, 27), format_table(outcomes)
 
 
 # ============================================================================
@@ -1136,26 +1155,27 @@ def test_healthy_time_states_is_the_narrowest_honest_declaration() -> None:
 # ============================================================================
 
 
-@pytest.mark.parametrize("key", ["value_date", "source_revision", "proof_recipe_id"])
+@pytest.mark.parametrize("key", ["source_revision"])
 def test_finality_undetermined_keys_are_still_null(key: str) -> None:
-    """Proposal §6 items 1-2, re-searched under the 2026-09-23 "추천 값이 있으면 활용"
-    answer and still unfilled — each for its own measured reason (the file header carries
-    them):
+    """What is STILL unfilled after the 2026-09-23 operator answers.
 
-    * ``proof_recipe_id`` — ADR-002-030 §29 is titled "Open Implementation Questions" and its
-      Q3 names no approved identifier at all; the 2026-09-12 table grades it **M** ("개발 측
-      값 제안 없음"). Not merely unfound: it does not yet exist.
-    * ``source_revision`` — grade **M** (the deploy git SHA, which the commit writing this file
-      cannot know).
-    * ``value_date`` — a recommendation EXISTS (2026-09-12 §5, ``T+2``, grade B) but its stated
-      basis is the KRX **stock** settlement date while this deployment's adopted scope is
-      ``SYNTHETIC_FUTURES_ORDER``. Applying it would be a wrong value wearing a citation.
+    * ``source_revision`` — grade **M** (the deploy git SHA). Unchanged, and unchangeable
+      here: the commit that writes this file cannot contain its own SHA. Design 2026-09-23
+      §2 step 5 makes it a RENDER-time value — ``scripts/tos/render_paper_config.py`` writes
+      the source checkout's ``git rev-parse HEAD`` into the rendered copy, off-repo.
+
+    The other two left this list on 2026-09-23 and are value-pinned in ``_VALUE_PINS``
+    instead: ``value_date`` by operator decision 3 (``T+1``), ``proof_recipe_id`` by operator
+    choice (가) as a boot-proof fixture token that asserts the ABSENCE of an approved recipe.
     """
     assert _mapping("finality.yaml")[key] is None
 
 
 def test_finality_refuses_while_those_keys_are_undetermined() -> None:
-    with pytest.raises(FinalityConfigError, match="value_date"):
+    """The refusal key moved from ``value_date`` to ``source_revision`` when the former was
+    filled (the loader checks in declaration order, ``posttrade/config.py:139-142``) — pinned
+    by name so a future fill cannot pass as "it already loaded"."""
+    with pytest.raises(FinalityConfigError, match="source_revision"):
         load_finality_config(_DEPLOY_DIR / "finality.yaml")
 
 
@@ -1203,7 +1223,12 @@ def _critical_input_field_keys(config_dir: Path) -> frozenset[str]:
         config_dir / CRITICAL_INPUT_POLICY_CONFIG_NAME,
         scheme=_critical_input_scheme(),
     )
-    return frozenset(str(key) for key in loaded.fields)
+    # ``loaded.fields`` is a tuple of CriticalInputFieldPolicy records, not a mapping —
+    # ``fields_by_key`` is the ``field_key -> spec`` index (``marketfeed/policy.py:126-130``).
+    # The first cut of this helper iterated ``fields`` as if it were keyed, which was latent
+    # while NEITHER file was deployed (branch 2 returned early) and only surfaced when
+    # ``critical_input_policy.yaml`` landed — a dead pin that looked live.
+    return frozenset(loaded.fields_by_key)
 
 
 def test_construction_price_field_keys_match_the_deployed_critical_input_policy() -> (
@@ -1219,6 +1244,14 @@ def test_construction_price_field_keys_match_the_deployed_critical_input_policy(
       the missing ``construction.yaml`` (pinned below), so no construction ever prices.
 
     A half-adopted pair (one without the other) is the failure this refuses outright.
+
+    **Branch 1 reads the mapping, not the loader** (W-A / A-5): ``construction.yaml`` is now
+    deployed as a boot-proof fixture whose ``account``/``instrument`` coordinates are
+    deliberately left named-TBD for the render script, so ``load_construction_config`` refuses
+    it as committed (pinned by
+    :func:`test_construction_yaml_is_a_bootproof_fixture_whose_coordinates_refuse_unrendered`).
+    The correlation this test exists for is between two file CONTENTS and does not need the
+    loaded object.
     """
     construction_path = _DEPLOY_DIR / CONSTRUCTION_CONFIG_NAME
     policy_path = _DEPLOY_DIR / CRITICAL_INPUT_POLICY_CONFIG_NAME
@@ -1237,22 +1270,271 @@ def test_construction_price_field_keys_match_the_deployed_critical_input_policy(
         "construction.yaml and critical_input_policy.yaml must be adopted TOGETHER — "
         "the construction loader cannot cross-check the policy file itself"
     )
-    construction = load_construction_config(construction_path)
+    construction = _mapping(CONSTRUCTION_CONFIG_NAME)
     declared = _critical_input_field_keys(_DEPLOY_DIR)
-    assert construction.price_field_key in declared
-    assert construction.shape_price_field_key in declared
+    assert construction["price_field_key"] in declared
+    assert construction["shape_price_field_key"] in declared
 
 
-def test_construction_yaml_is_not_adopted_and_run_refuses_on_it() -> None:
-    """A-5's measured refusal, pinned. ``construction.yaml`` has no approved instance: the
-    value proposal names it in scope (§0) but tabulates no value for any of its seven leaves,
-    and its ``account``/``instrument`` must equal the venue/OCP policies' ``scope.accounts``/
-    ``scope.instruments`` — which those files' own headers mark operator-fill and "never
-    committed here". Inventing them would put a fabricated account coordinate into a
-    committed deployment file.
+# ============================================================================
+# W-A / A-5 — the boot-proof fixture files (operator choice (가), 2026-09-23)
+# ============================================================================
+#
+# These four are NOT approved values and are deliberately kept OUT of
+# ``_ADOPTED_BY_THIS_WAVE`` / ``_VALUE_PINS``: the value proposal tabulates no row for any of
+# them (upper plan §7.8 A-4/A-5 records that for ``construction.yaml``, ``strategies/`` and
+# the ``marketfeed.yaml`` + ``critical_input_policy.yaml`` pair alike). They exist because the
+# operator chose (가) — a fixed, minimal configuration whose only claim is that ``run`` boots
+# and consumes a tick — and every one of them carries the fixture header sentence saying so.
+#
+# They still get the SAME two mechanical guarantees the 18 get, because "it is only a fixture"
+# is exactly how a value drifts unnoticed:
+#   1. a completeness gate — every leaf pinned, no silent additions;
+#   2. every coordinate slot's UNRENDERED state pinned BY ITS OWN LOADER'S REFUSAL. That
+#      second one is the important half: the placeholder token differs per loader (the
+#      marketfeed loader refuses ``null`` but NOT the string ``"TBD"``), so a fixture that
+#      used the wrong placeholder would boot a phantom coordinate in silence.
 
-    When an operator adopts it, this test goes RED and must be replaced by the correlation
-    pin above — that is the point."""
-    assert not (_DEPLOY_DIR / CONSTRUCTION_CONFIG_NAME).is_file()
-    with pytest.raises(ConstructionConfigError, match="not found"):
+#: The fixture header sentence every one of these files must carry verbatim.
+_FIXTURE_SENTENCE = "부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23"
+
+#: The design that authorized them.
+_FIXTURE_PROVENANCE = "2026-09-23-tos-paper-coordinates-and-first-boot-design.md"
+
+_BOOTPROOF_FIXTURE_FILES: tuple[str, ...] = (
+    "construction.yaml",
+    "marketfeed.yaml",
+    "critical_input_policy.yaml",
+    "strategies/bootproof_band.strategy.yaml",
+)
+
+#: The named-TBD placeholder each fixture leaves for ``scripts/tos/render_paper_config.py``.
+#: ``None`` means the literal YAML ``null``; a string means that exact token.
+_UNRENDERED_PLACEHOLDERS: dict[str, Any] = {
+    "construction.yaml::account": "TBD",
+    "construction.yaml::instrument": "TBD",
+    "marketfeed.yaml::instruments": None,
+    "marketfeed.yaml::account": None,
+    "marketfeed.yaml::journal_path": None,
+}
+
+_FIXTURE_VALUE_PINS: dict[str, Any] = {
+    # --- construction.yaml -------------------------------------------------
+    "construction.yaml::account": "TBD",
+    "construction.yaml::instrument": "TBD",
+    # LONG arm of order_construction_policy.yaml's own action_class_shape (NEW_LONG↔BUY/OPEN).
+    "construction.yaml::action_class": "NEW_LONG",
+    "construction.yaml::outbound_side": "BUY",
+    # The one KRX index-futures class calendar.yaml declares sessions for.
+    "construction.yaml::instrument_class": "krx-index-futures",
+    # Must name a field critical_input_policy.yaml declares (cross-checked above).
+    "construction.yaml::price_field_key": "close",
+    "construction.yaml::shape_price_field_key": "close",
+    # --- marketfeed.yaml ---------------------------------------------------
+    "marketfeed.yaml::instruments": None,
+    "marketfeed.yaml::account": None,
+    "marketfeed.yaml::journal_path": None,
+    "marketfeed.yaml::instrument_class": "krx-index-futures",
+    "marketfeed.yaml::direction": "LONG",
+    "marketfeed.yaml::quantity_basis": "RISK",
+    "marketfeed.yaml::unit": "CONTRACTS",
+    # journal, never kis_quote: kis_quote is an HTTP poller (an external call).
+    "marketfeed.yaml::intake_kind": "journal",
+    "marketfeed.yaml::poll_interval_ms": 1000,
+    "marketfeed.yaml::snapshot_age_bound": 20,
+    "marketfeed.yaml::interval_width": 10,
+    # --- critical_input_policy.yaml ---------------------------------------
+    "critical_input_policy.yaml::policy_id": "tos-paper-critical-input-bootproof-g1",
+    "critical_input_policy.yaml::policy_version": "1.0.0",
+    "critical_input_policy.yaml::policy_generation": 1,
+    "critical_input_policy.yaml::issuer_principal_id": (
+        "tos-paper-critical-input-issuer-bootproof-g1"
+    ),
+    "critical_input_policy.yaml::environment": "non-live-test",
+    "critical_input_policy.yaml::decision_class": "entry",
+    "critical_input_policy.yaml::intended_use": "entry-decision",
+    # One entry per field the boot-proof strategy reads. `max_age_ms` is a FRESHNESS bound —
+    # the proposal gives no row for it, so this is the fixture value, not an approved limit.
+    "critical_input_policy.yaml::fields": [
+        {
+            "field_key": field_key,
+            "unit": "KRW",
+            "scale": "minor",
+            "multiplier": "1",
+            "sign": "POSITIVE",
+            "max_age_ms": 600000,
+        }
+        for field_key in ("close", "lower_band", "upper_band")
+    ],
+    # --- strategies/bootproof_band.strategy.yaml --------------------------
+    "strategies/bootproof_band.strategy.yaml::dsl_version": "tos-paper-bootproof-dsl-g1",
+    "strategies/bootproof_band.strategy.yaml::config_binding_version": (
+        "tos-paper-bootproof-cfg-g1"
+    ),
+    "strategies/bootproof_band.strategy.yaml::policy.rules": [
+        {
+            "all_of": [
+                {
+                    "left": {"ref": ["capsule", "resolved_values", "close"]},
+                    "op": "LT",
+                    "right": {"ref": ["capsule", "resolved_values", "lower_band"]},
+                }
+            ],
+            "decision": {
+                "kind": "ACTION",
+                "rationale": "부팅 증명 픽스처 — close 가 lower_band 아래. 거래 근거 아님.",
+                "target": {
+                    "kind": "ACTION",
+                    "account": "TBD",
+                    "instrument": "TBD",
+                    "direction": "LONG",
+                    "position_effect": "OPEN",
+                    "quantity_basis": "RISK",
+                    "edge_or_confidence": "bootproof-fixture",
+                    "rationale": "부팅 증명 픽스처 — 거래 전략 아님.",
+                },
+            },
+        }
+    ],
+    "strategies/bootproof_band.strategy.yaml::policy.default.kind": "NO_ACTION",
+    "strategies/bootproof_band.strategy.yaml::policy.default.rationale": (
+        "부팅 증명 픽스처 — 밴드 안. 제안 없음."
+    ),
+}
+
+
+def _fixture_leaf_refs() -> dict[str, Any]:
+    found: dict[str, Any] = {}
+    for name in _BOOTPROOF_FIXTURE_FILES:
+        raw = yaml.safe_load((_DEPLOY_DIR / name).read_text(encoding="utf-8"))
+        for path, value in _leaves(raw):
+            found[f"{name}::{path}"] = value
+    return found
+
+
+@pytest.mark.parametrize("name", _BOOTPROOF_FIXTURE_FILES)
+def test_bootproof_fixture_says_what_it_is(name: str) -> None:
+    """Each fixture file must say, in its own header, that it is a boot proof and not a
+    trading strategy, and name the design that authorized it. The same discipline
+    ``config/tos_runtime/README.md`` imposes on approved values — a reader must see it where
+    the value is, not only in a plan."""
+    text = (_DEPLOY_DIR / name).read_text(encoding="utf-8")
+    assert _FIXTURE_SENTENCE in text, name
+    assert _FIXTURE_PROVENANCE in text, name
+
+
+def test_every_bootproof_fixture_leaf_is_pinned() -> None:
+    """Completeness gate — the same one the 18 approved files get. A leaf added to a fixture
+    later cannot go unpinned just because "it is only a fixture"."""
+    unaccounted = sorted(
+        ref for ref in _fixture_leaf_refs() if ref not in _FIXTURE_VALUE_PINS
+    )
+    assert not unaccounted, f"unpinned boot-proof fixture leaves: {unaccounted}"
+
+
+def test_no_bootproof_pin_names_a_leaf_that_no_longer_exists() -> None:
+    present = _fixture_leaf_refs()
+    stale = sorted(ref for ref in _FIXTURE_VALUE_PINS if ref not in present)
+    assert not stale, f"_FIXTURE_VALUE_PINS names leaves that no longer exist: {stale}"
+
+
+@pytest.mark.parametrize("ref", sorted(_FIXTURE_VALUE_PINS))
+def test_bootproof_fixture_value_is_unchanged(ref: str) -> None:
+    name, dotted = ref.split("::", 1)
+    raw = yaml.safe_load((_DEPLOY_DIR / name).read_text(encoding="utf-8"))
+    assert _resolve_dotted(raw, dotted) == _FIXTURE_VALUE_PINS[ref]
+
+
+@pytest.mark.parametrize("ref", sorted(_UNRENDERED_PLACEHOLDERS))
+def test_unrendered_coordinate_slot_carries_the_placeholder_its_loader_refuses(
+    ref: str,
+) -> None:
+    """The placeholder FORM is per-loader, and picking the wrong one is silent.
+
+    ``tos_runtime/compose/_marketfeed_wiring.py``'s ``_require_str`` (:194-204) refuses
+    ``null``/empty but NOT the literal string ``"TBD"`` — measured. So ``marketfeed.yaml``'s
+    coordinate slots must be ``null``, while ``construction.yaml``'s may be ``"TBD"``
+    (``compose/_construction_config.py`` refuses both). This pins which is which; the
+    companion test below proves each one actually refuses."""
+    name, dotted = ref.split("::", 1)
+    raw = yaml.safe_load((_DEPLOY_DIR / name).read_text(encoding="utf-8"))
+    assert _resolve_dotted(raw, dotted) == _UNRENDERED_PLACEHOLDERS[ref]
+
+
+def test_unrendered_fixtures_refuse_through_their_own_loaders_naming_the_key() -> None:
+    """The committed (unrendered) fixtures must REFUSE, each naming its own coordinate key.
+
+    This is the guard that makes "I forgot to render" loud instead of silent. It is asserted
+    per loader rather than through the probe table so the KEY NAME is checked, not merely the
+    fact that something refused."""
+    with pytest.raises(ConstructionConfigError, match="account"):
         load_construction_config(_DEPLOY_DIR / CONSTRUCTION_CONFIG_NAME)
+
+    from tos_runtime.compose._marketfeed_wiring import (
+        MarketFeedConfigError,
+        load_marketfeed_config,
+    )
+
+    with pytest.raises(MarketFeedConfigError, match="instruments"):
+        load_marketfeed_config(_DEPLOY_DIR / "marketfeed.yaml")
+
+    from tos_runtime.strategy.loader import StrategyLoadError, load_strategies
+
+    def _never(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("the named-TBD walk precedes parse/admit")
+
+    with pytest.raises(StrategyLoadError, match="target.account"):
+        load_strategies(_DEPLOY_DIR / "strategies", parse=_never, admit=_never)
+
+
+def test_critical_input_policy_loads_as_committed() -> None:
+    """The one fixture with no coordinate slot — it carries neither account nor instrument, so
+    the render script never touches it and it must load straight from the repo."""
+    field_keys = _critical_input_field_keys(_DEPLOY_DIR)
+    assert field_keys == frozenset({"close", "lower_band", "upper_band"})
+
+
+def test_bootproof_strategy_quantity_basis_equals_the_ocp_admitted_set() -> None:
+    """OCP sizing proposal §4 ②'s own condition, now checkable: the deployed strategy file's
+    ``quantity_basis`` is what ``admitted_quantity_bases`` admits, and nothing else
+    (``tos/src/tos/egressgw/construction.py:396`` denies a basis outside the set)."""
+    strategy = _mapping("strategies/bootproof_band.strategy.yaml")
+    basis = strategy["policy"]["rules"][0]["decision"]["target"]["quantity_basis"]
+    ocp = _mapping("order_construction_policy.yaml")
+    admitted = ocp["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"]
+    assert admitted == [basis]
+
+
+def test_bootproof_direction_is_consistent_across_every_file_that_carries_one() -> None:
+    """The committed direction is LONG in every slot that carries one. The SHORT variant is a
+    render flag (``--direction SHORT``), never a second committed copy — so an asymmetry here
+    means one slot was edited and the others were not."""
+    ocp = _mapping("order_construction_policy.yaml")
+    axes = ocp["_runtime"]["construction"]["axes"]
+    direction_axes = [entry for entry in axes if entry["axis"] == "DIRECTION"]
+    assert len(direction_axes) == 1
+    assert direction_axes[0]["value"] == "LONG"
+
+    construction = _mapping(CONSTRUCTION_CONFIG_NAME)
+    shape = ocp["_runtime"]["construction"]["action_class_shape"]
+    action_class = construction["action_class"]
+    assert action_class == "NEW_LONG"
+    assert shape[action_class]["LONG"]["side"] == construction["outbound_side"]
+
+    strategy = _mapping("strategies/bootproof_band.strategy.yaml")
+    target = strategy["policy"]["rules"][0]["decision"]["target"]
+    assert target["direction"] == "LONG"
+    assert target["position_effect"] == shape[action_class]["LONG"]["position_effect"]
+    assert _mapping("marketfeed.yaml")["direction"] == "LONG"
+
+
+def test_ocp_scope_still_authorizes_both_directions() -> None:
+    """⚠ The non-negotiable long/short symmetry rule, as a mechanical pin: committing ONE
+    direction on the composition axis must not narrow the policy's own authorized action
+    classes. If a future edit drops NEW_SHORT from ``scope.action_classes`` (or from the
+    ``action_class_shape`` mirror), that IS the quiet asymmetry CLAUDE.md forbids."""
+    ocp = _mapping("order_construction_policy.yaml")
+    assert set(ocp["scope"]["action_classes"]) == {"NEW_LONG", "NEW_SHORT", "CLOSE"}
+    shape = ocp["_runtime"]["construction"]["action_class_shape"]
+    assert set(shape) == {"NEW_LONG", "NEW_SHORT", "CLOSE"}
+    assert set(shape["CLOSE"]) == {"LONG", "SHORT"}

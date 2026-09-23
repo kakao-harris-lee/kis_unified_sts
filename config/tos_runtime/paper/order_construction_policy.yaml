@@ -55,14 +55,17 @@
 # is a further NEW policy generation, not an in-place edit.
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): scope.accounts,
-# scope.instruments (same values as venue_constraint_policy.yaml),
-# _runtime.construction.sizing.admitted_quantity_bases (deliberately left
-# ["TBD"] below — sizing proposal §4 ②, this document does not boot until
-# it is filled), _runtime.construction.axes' DIRECTION entry (deliberately
-# left "TBD" below — review round 2026-09-16, PR #719: no operator decision
-# has bound this static, proposal-path-less composition to one trading
-# direction yet), then `tos-runtime print-policy-digests --config-dir <dir>`
+# scope.instruments (same values as venue_constraint_policy.yaml), then
+# `tos-runtime print-policy-digests --config-dir <dir>`
 # → safety_activation.yaml `members:` (kind ORDER_CONSTRUCTION_POLICY).
+# Both remaining coordinates are filled by scripts/tos/render_paper_config.py in an
+# OFF-REPO render directory — never committed here (design 2026-09-23 §2).
+#
+# SETTLED 2026-09-23 (W-A / A-5, operator choice (가) — see each leaf's own comment
+# below): `_runtime.construction.sizing.admitted_quantity_bases` (["RISK"]) and
+# `_runtime.construction.axes`' DIRECTION entry ("LONG"). Both were operator-fill
+# gates this header previously listed; filling them is the pre-activation act, not a
+# content revision, so policy_generation stays 3.
 # =============================================================================
 
 artifact_type: ORDER_CONSTRUCTION_POLICY
@@ -171,11 +174,17 @@ _runtime:
       # notional source exists; the binding constraint is max_quantity: 1, not a fabricated
       # notional cap (proposal §2 max_notional row).
       max_notional: null
-      # OPERATOR-FILL (deliberately unfilled, proposal §4 ②): this document does not boot
-      # until the deployed strategy file's own quantity_basis is settled. An empty/"TBD"
-      # admitted set authorizes nothing — the same operator-fill gate scope.accounts/
-      # scope.instruments are already in, not a new kind of incompleteness.
-      admitted_quantity_bases: ["TBD"]
+      # OPERATOR-FILL, SETTLED 2026-09-23 (W-A / A-5 — 부팅 증명 픽스처 · 거래 전략 아님 ·
+      # 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23; design
+      # docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §3).
+      # Proposal §4 ② made this wait for "the deployed strategy file's own quantity_basis";
+      # that file now exists — config/tos_runtime/paper/strategies/bootproof_band.strategy.yaml
+      # declares `quantity_basis: "RISK"`, so this admitted set is that token and nothing else
+      # (tos/src/tos/egressgw/construction.py:396 refuses a basis outside this set). Filling an
+      # OPERATOR-FILL leaf is the documented pre-activation act this file's own header
+      # prescribes, not a content revision — no policy_generation bump (same treatment as
+      # scope.accounts/scope.instruments, which the render script fills off-repo).
+      admitted_quantity_bases: ["RISK"]
     axes:
       # ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from scope.environments/
       # scope.order_types/scope.accounts/scope.instruments above (never restated here).
@@ -189,11 +198,21 @@ _runtime:
       # LONG-only or SHORT-only yet, and scope.action_classes already authorizes BOTH
       # (NEW_LONG/NEW_SHORT/CLOSE both directions) — picking one silently here would narrow that
       # without sign-off, exactly the kind of quiet asymmetry CLAUDE.md's non-negotiable forbids.
-      # Left "TBD" so the loader refuses until an operator actually decides (same discipline as
-      # scope.accounts/scope.instruments/admitted_quantity_bases above); this becomes a real
-      # per-attempt lookup once the strategy proposal path lands (construction_rules.py).
+      # OPERATOR-FILL, SETTLED 2026-09-23 (W-A / A-5 — 부팅 증명 픽스처 · 거래 전략 아님 ·
+      # 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23; design
+      # docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §3).
+      # ⚠ This value does NOT narrow the deployment to LONG-only trading. scope.action_classes
+      # above still authorizes BOTH directions, and the committed value is one direction ONLY
+      # because the current (proposal-path-less) design can express exactly one per composition
+      # (this file's own comment above; construction_rules.py's ActionClassShape docstring).
+      # The operator's choice (가) makes that a BOOT PROOF, not a trading posture, and requires
+      # the SAME fixture to be booted SHORT as well — scripts/tos/render_paper_config.py
+      # --direction SHORT rewrites this axis together with construction.yaml's
+      # action_class/outbound_side and the strategy file's direction. A second, SHORT copy is
+      # deliberately NOT committed. Long/short symmetry is resolved for real when the strategy
+      # proposal path lands and direction becomes a per-attempt lookup key.
       - axis: "DIRECTION"
-        value: "TBD"
+        value: "LONG"
     action_class_shape:
       # Machine-readable form of direction_side_and_position_effect_rules above
       # ("long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE").
