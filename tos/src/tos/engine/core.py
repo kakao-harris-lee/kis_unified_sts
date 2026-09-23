@@ -133,7 +133,9 @@ class TransportNatureLike(Protocol):
     at all (design #31 §0.3 closure discipline extended to a typing-only seam).
     """
 
-    reaches_broker: bool | None
+    @property
+    def reaches_broker(self) -> bool | None:
+        """Whether this transport is broker-reaching (``None`` ⇒ unestablished)."""
 
 
 @runtime_checkable
