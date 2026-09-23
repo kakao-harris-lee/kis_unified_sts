@@ -46,7 +46,8 @@ earlier value table `docs/plans/2026-09-12-tos-operator-value-proposals.md`:
 `currentness.yaml::required_dimensions` (§2, the 21-member mandated floor)
 and `monitor_coverage.yaml::bounds` (§4, 60000 / `[TRUSTED]` / 100, grade C).
 
-Those two loaders therefore still refuse, by design;
+Those two now load cleanly. The two files in the table above
+(`finality.yaml`, `safety_activation.yaml`) still refuse, by design;
 `tos/runtime/tests/compose/test_deploy_approved_values.py` pins each refusal
 **by key name**, so filling one later is a deliberate act — and
 `tos/runtime/tests/compose/_loader_probe.py` (runnable directly) prints the

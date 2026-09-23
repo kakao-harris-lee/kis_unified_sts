@@ -224,7 +224,7 @@ tos-paper-<무엇>-g<세대>      예: tos-paper-envelope-g1 · tos-paper-profil
    | `strategies/` 10 리프 | **없음** | 2026-09-12·2026-09-18 양 표 · example 주석 전수 | 미채택 |
    | `marketfeed.yaml` + `critical_input_policy.yaml` | **없음** | 두 표 모두 이 두 파일의 행이 없다(2026-09-12 는 틱 원천 웨이브 이전 문서) · 특히 `fields[].max_age_ms` 는 신선도 한도 = 안전 값 | 미채택 · 좌표는 답변 1 에 걸림 |
 
-4. **PR 본문 이탈 1~4 — 운영자 확인(2026-09-23).** 아래 §7.4 가 그 4건을 포함한 **전수 목록**이다.
+4. **PR 본문 이탈 1~4 — 운영자 확인(2026-09-23).** 아래 §7.3 이 그 4건을 포함한 **전수 목록**이다.
 
 ### 7.3 이 표가 행으로 다루지 않은 채워진 리프 — **전수 41건** (review-794 HIGH-3)
 
@@ -256,7 +256,7 @@ review-794 는 PR 본문이 이탈을 **4건**으로 열거한 것을 지적했�
 
 | 리프 | 값 | 출처 |
 |---|---|---|
-| `safety_envelope::envelope.envelope_version.{version,effective_date,approver_identity}` · `safety_profile::profile.profile_version.{…}` (6) | `"1"` · `"2026-09-23"` · `"operator (System Owner) …"` | 2026-09-12 §4 가 `v1`/effective/approver 를 제안(등급 C). **만료일은 채우지 않았다** — 그 표의 `expiration 2027-03-15`(6개월 재검증)는 이번 답변 범위 밖 |
+| `safety_envelope::envelope.envelope_version.{version,effective_date,approver_identity}` · `safety_profile::profile.profile_version.{…}` (6) | `"1"` · `"2026-09-23"` · `"operator (System Owner) …"` | 2026-09-12 §4 가 `v1`/effective/approver 를 제안(등급 C). **표기 차이**: 원천은 `v1`, 채운 값은 `"1"`(§4.3 식별자 규칙의 세대 번호 표기에 맞춤 — 로더는 불투명 문자열로 받는다). **만료일은 채우지 않았다** — 그 표의 `expiration 2027-03-15`(6개월 재검증)는 이번 답변 범위 밖 |
 | `currentness_dimensions::*.restrictive_floor` (3) | `0` | 제안표 행 없음 — 「차원별 추가 하한을 선언하지 않는다」가 사실이고 0 이 그 표기다(파일 헤더) |
 | `safety_incidents::incidents.active_set.safety_cell` (1) | `"tos-paper-cell-g1"` | 2026-09-12 §4 는 `paper-cell-1` 제안 · 이름만 제안표 §4.3 최신 규칙으로 |
 | `safety_profile::profile.{scope,permitted_behaviors,fallback_rules}` · `safety_activation::activation.{scope,restrictive_generation_effects}` · `safety_incidents::incidents.{active_set.shared_dependencies,applicable_incident_ids}` (7) | `[]` | §4.3 의 「빈 것이 사실이다」를 **이름이 나열되지 않은 목록에도** 적용한 확장분 |

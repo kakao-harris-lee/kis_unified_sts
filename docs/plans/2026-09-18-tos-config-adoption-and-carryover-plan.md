@@ -552,7 +552,7 @@ env 에서 와야 하고 커밋돼서는 안 된다.** 지시대로 **먼저 서
 
 | 실측 | 결과 |
 |---|---|
-| `grep -rn "os.environ\|getenv" tos/runtime/src` | **프로덕션 사용 0건.** 히트 20건은 전부 모듈 독스트링이 스스로 「no `os.environ`」이라고 적은 문장이다 |
+| `grep -rn "os.environ\|getenv" tos/runtime/src` | **프로덕션 사용 0건.** 히트 32건(`grep -rn … | wc -l`, 2026-09-23 재측정 — 초고의 「20건」은 재현되지 않았다)은 전부 독스트링·주석이 스스로 「no `os.environ`」이라고 적은 문장이고, `tokenize` 로 걸러 코드 토큰 0 을 리뷰가 확인했다 |
 | `tools/tos_firewall_check.py` **TOS-FW-C** | `os.environ`/`os.getenv` 는 **AST 게이트가 금지**한다 — `from os import environ/getenv`(:515-526)와 속성 접근 `os.environ`(:539-551) 둘 다. 이 검사는 **스코프 무관**으로 `tos/` 전체에 걸린다(스코프 분기는 import 허용목록에만 적용 — `scope_for_tos_path`:360) |
 | `grep -rn "expandvars\|\${" tos/runtime/src` · `dotenv`/`.env`/`env-file` | **0건.** 로더가 수행하는 유일한 치환은 `{environment_label}` 하나다(`broker_scopes` principal · `egress_coordinates.active_principal`) — 그것도 **CLI 인자**에서 온다 |
 | `compose/root.py:180` | 「environment_label: Boot-argument environment label (**never `os.environ`** — D1.1)」 |

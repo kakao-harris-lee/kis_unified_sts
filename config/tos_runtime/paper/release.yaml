@@ -33,6 +33,9 @@
 #     roots = `default_package_roots()` = 두 패키지 디렉터리; 테스트 트리·YAML 은
 #     포함되지 않는다). 따라서 체크아웃 위치와 무관하고 **커밋 내용에만** 묶인다 —
 #     `tos/src/**.py` 또는 `tos/runtime/src/**.py` 가 한 바이트라도 바뀌면 갱신해야 한다.
+#     ⚠ 갱신은 **두 곳을 함께**: 이 파일의 값과
+#     `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS` 의 같은 키.
+#     (값 핀은 부팅 실패 여부와 무관하게 커밋된 두 문자열만 비교한다.)
 #   * `expected_dependency_set_digest` 는 **이 프로세스가 실제로 실행된
 #     인터프리터의 설치 분포 집합** + python/sqlite 좌표다. 위 값은 저장소 루트
 #     `.venv`(레거시 스택 포함, python 3.12.12 / sqlite 3.45.1)에서 측정됐다.
