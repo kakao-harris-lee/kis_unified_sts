@@ -48,7 +48,7 @@ def _checklist(*, item12: bool | None) -> RearmChecklist:
     fields["recovery_coordinator_evidence_complete"] = item12
     fields["limit_enlarger_principal"] = "principal-A"
     fields["armer_principal"] = "principal-B"
-    return RearmChecklist(**fields)
+    return RearmChecklist.model_validate(fields)
 
 
 def test_item_12_is_the_sbr_produced_prerequisite() -> None:
@@ -86,7 +86,7 @@ def test_readiness_is_not_rearm_item_12_true_alone_is_insufficient() -> None:
     fields["fresh_live_authorization_issued"] = None
     fields["limit_enlarger_principal"] = "A"
     fields["armer_principal"] = "B"
-    assert rearm_gate(RearmChecklist(**fields)).armable is False
+    assert rearm_gate(RearmChecklist.model_validate(fields)).armable is False
 
 
 def test_recovery_generation_reference_coordinate_seam() -> None:

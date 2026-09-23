@@ -81,7 +81,7 @@ def _proof(**overrides: object) -> FinalityProofRef:
         "resolution_generation": 1,
     }
     base.update(overrides)
-    return FinalityProofRef(**base)
+    return FinalityProofRef.model_validate(base)
 
 
 # ===========================================================================

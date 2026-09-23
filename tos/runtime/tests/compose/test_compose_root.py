@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -327,11 +328,13 @@ def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -
     def _egress_result(kind: EgressResultKind, **magnitudes: Decimal) -> EngineEvent:
         return EngineEvent(
             kind=EventKind.EGRESS_RESULT,
-            egress_result=EgressResultPayload(
-                instrument_key=fx.instrument_key(),
-                attempt_id=attempt_id,
-                kind=kind,
-                **magnitudes,
+            egress_result=EgressResultPayload.model_validate(
+                {
+                    "instrument_key": fx.instrument_key(),
+                    "attempt_id": attempt_id,
+                    "kind": kind,
+                    **magnitudes,
+                }
             ),
         )
 
@@ -1182,11 +1185,13 @@ class TestRecomposeReplay:
         ) -> EngineEvent:
             return EngineEvent(
                 kind=EventKind.EGRESS_RESULT,
-                egress_result=EgressResultPayload(
-                    instrument_key=fx.instrument_key(),
-                    attempt_id=attempt_id,
-                    kind=kind,
-                    **magnitudes,
+                egress_result=EgressResultPayload.model_validate(
+                    {
+                        "instrument_key": fx.instrument_key(),
+                        "attempt_id": attempt_id,
+                        "kind": kind,
+                        **magnitudes,
+                    }
                 ),
             )
 
@@ -1778,7 +1783,10 @@ class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
         calls: list[object] = []
         real_build_safety_mesh = wiring_module.build_safety_mesh
 
-        def _spy_build_safety_mesh(*args: object, **kwargs: object) -> object:
+        # `Any`, not `object`: this spy stands in for `build_safety_mesh`'s own signature and
+        # must forward every call unchanged — narrowing it would require duplicating that
+        # signature here just to satisfy the splat below (plan §1.1 A-rt boundary use of `Any`).
+        def _spy_build_safety_mesh(*args: Any, **kwargs: Any) -> object:
             calls.append(kwargs.get("software_deployment_ok"))
             return real_build_safety_mesh(*args, **kwargs)
 

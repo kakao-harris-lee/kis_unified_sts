@@ -6,6 +6,7 @@ import os
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import pytest
 import yaml
@@ -123,8 +124,53 @@ def writer_epoch(log: SqliteCommitLog, identity: RuntimeIdentity) -> int:
     return log.acquire_epoch(identity)
 
 
-def _time_config(**overrides: object) -> TrustworthyTimeConfig:
-    base: dict[str, object] = {
+class _TimeConfigKwargs(TypedDict):
+    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
+    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
+    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+
+    max_time_source_precision_ms: int
+    max_time_transport_and_queue_uncertainty_ms: int
+    max_time_conservative_freshness_age_ms: int
+    max_future_timestamp_tolerance_ms: int
+    max_process_suspension_ms: int
+    max_time_source_disagreement_ms: int
+    min_time_independent_reference_count: int
+    max_clock_domain_conversion_uncertainty_ms: int
+    max_send_result_wait_ms: int
+    max_critical_input_consumer_receipt_age_ms: int
+    max_time_source_sequence_gap_ms: int
+    tz_db_version: str
+    trading_calendar_version: str
+    verification_profile_version: str
+    safety_profile_version: str
+
+
+class _TimeConfigKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape
+    for :func:`_time_config`."""
+
+    max_time_source_precision_ms: int
+    max_time_transport_and_queue_uncertainty_ms: int
+    max_time_conservative_freshness_age_ms: int
+    max_future_timestamp_tolerance_ms: int
+    max_process_suspension_ms: int
+    max_time_source_disagreement_ms: int
+    min_time_independent_reference_count: int
+    max_clock_domain_conversion_uncertainty_ms: int
+    max_send_result_wait_ms: int
+    max_critical_input_consumer_receipt_age_ms: int
+    max_time_source_sequence_gap_ms: int
+    tz_db_version: str
+    trading_calendar_version: str
+    verification_profile_version: str
+    safety_profile_version: str
+
+
+def _time_config(
+    **overrides: Unpack[_TimeConfigKwargsPartial],
+) -> TrustworthyTimeConfig:
+    base: _TimeConfigKwargs = {
         "max_time_source_precision_ms": 5,
         "max_time_transport_and_queue_uncertainty_ms": 10,
         "max_time_conservative_freshness_age_ms": 1000,

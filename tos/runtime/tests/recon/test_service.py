@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 from decimal import Decimal
+from typing import TypedDict, Unpack
 
 import pytest
 from tos.rcl import CapacityState
@@ -93,8 +94,42 @@ def fresh() -> FreshnessMarker:
     )
 
 
-def _matched_receipt(**overrides) -> EgressReceiptObservation:
-    fields = {
+class _ReceiptKwargs(TypedDict):
+    """1:1 with :class:`EgressReceiptObservation`'s dataclass fields (plan §1.1 A-rt) — a
+    runtime ``@dataclass``, not a pydantic model, so ``**fields``/``**overrides`` are checked
+    key-by-key and type-by-type instead of swallowed by a ``**dict[str, object]`` splat.
+    """
+
+    attempt_id: str | None
+    account: str | None
+    instrument: str | None
+    egress_result_kind: str | None
+    broker_execution_id: str | None
+    filled_quantity: Decimal | None
+    remaining_quantity: Decimal | None
+    finality_proof_recorded: bool
+    source_ref: str
+
+
+class _ReceiptKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_ReceiptKwargs`, all optional — the override-kwargs shape for
+    :func:`_matched_receipt`."""
+
+    attempt_id: str | None
+    account: str | None
+    instrument: str | None
+    egress_result_kind: str | None
+    broker_execution_id: str | None
+    filled_quantity: Decimal | None
+    remaining_quantity: Decimal | None
+    finality_proof_recorded: bool
+    source_ref: str
+
+
+def _matched_receipt(
+    **overrides: Unpack[_ReceiptKwargsPartial],
+) -> EgressReceiptObservation:
+    fields: _ReceiptKwargs = {
         "attempt_id": "a1",
         "account": "acct-1",
         "instrument": "005930",
@@ -109,8 +144,31 @@ def _matched_receipt(**overrides) -> EgressReceiptObservation:
     return EgressReceiptObservation(**fields)
 
 
-def _matched_witness_order(**overrides) -> WitnessOrder:
-    fields = {
+class _WitnessOrderKwargs(TypedDict):
+    """1:1 with :class:`WitnessOrder`'s dataclass fields (plan §1.1 A-rt)."""
+
+    attempt_id: str | None
+    broker_execution_id: str | None
+    quantity: Decimal | None
+    remaining: Decimal | None
+    state: WitnessOrderState
+
+
+class _WitnessOrderKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_WitnessOrderKwargs`, all optional — the override-kwargs shape
+    for :func:`_matched_witness_order`."""
+
+    attempt_id: str | None
+    broker_execution_id: str | None
+    quantity: Decimal | None
+    remaining: Decimal | None
+    state: WitnessOrderState
+
+
+def _matched_witness_order(
+    **overrides: Unpack[_WitnessOrderKwargsPartial],
+) -> WitnessOrder:
+    fields: _WitnessOrderKwargs = {
         "attempt_id": "a1",
         "broker_execution_id": "exec-1",
         "quantity": Decimal("10"),

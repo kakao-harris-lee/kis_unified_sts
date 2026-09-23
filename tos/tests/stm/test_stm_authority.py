@@ -10,6 +10,8 @@ Regime tag: predicate substrate only; closes **no** STM-EV; EV-L1-complete claim
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from tos.stm import (
     ALL_FALSE_AUTHORITY_VERBS,
@@ -57,7 +59,8 @@ def test_any_true_flag_is_unconstructable(flag: str) -> None:
 @pytest.mark.parametrize("flag", _FLAGS)
 def test_the_predicate_catches_a_model_construct_bypass(flag: str) -> None:
     """(second layer, design #30 §2.3) ``model_construct`` skips validators — the predicate does not."""
-    forged = AllFalseMonitoringAuthority.model_construct(**{flag: True})
+    forged_values: dict[str, Any] = {flag: True}
+    forged = AllFalseMonitoringAuthority.model_construct(**forged_values)
     assert getattr(forged, flag) is True
     assert all_false_monitoring_authority(forged) is False
 
@@ -101,7 +104,8 @@ def test_economic_effect_is_read_as_an_authority_shape_not_an_expiry_flag() -> N
     """(§19 line 431; the #26 WDR v1.2 lesson) The two vehicle flags are what is asserted false."""
     assert economic_effect_outlives_monitor_state(AllFalseMonitoringAuthority()) is True
     for flag in ("creates_capacity", "establishes_broker_finality"):
-        forged = AllFalseMonitoringAuthority.model_construct(**{flag: True})
+        forged_values: dict[str, Any] = {flag: True}
+        forged = AllFalseMonitoringAuthority.model_construct(**forged_values)
         assert economic_effect_outlives_monitor_state(forged) is False
     assert economic_effect_outlives_monitor_state(None) is False
 

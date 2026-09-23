@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 import tos.sci as sci
@@ -155,7 +156,8 @@ def test_predicate_denies_an_absent_block() -> None:
 @pytest.mark.parametrize("flag", sorted(AllFalseSupplyChainAuthority.model_fields))
 def test_predicate_catches_a_model_construct_bypass(flag: str) -> None:
     """(§2.3 two-layer) A validator-skipping ``model_construct`` block is caught by the predicate."""
-    smuggled = AllFalseSupplyChainAuthority.model_construct(**{flag: True})
+    smuggled_values: dict[str, Any] = {flag: True}
+    smuggled = AllFalseSupplyChainAuthority.model_construct(**smuggled_values)
     assert sci.supply_chain_artifact_not_authority(smuggled) is False
 
 

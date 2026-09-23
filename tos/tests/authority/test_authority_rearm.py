@@ -18,7 +18,7 @@ def armable_checklist(**overrides: object) -> RearmChecklist:
     base["limit_enlarger_principal"] = "principal-A"
     base["armer_principal"] = "principal-B"
     base.update(overrides)
-    return RearmChecklist(**base)
+    return RearmChecklist.model_validate(base)
 
 
 def test_all_prerequisites_and_distinct_principals_is_armable() -> None:

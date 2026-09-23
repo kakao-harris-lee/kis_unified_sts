@@ -4,9 +4,9 @@ token lifecycle, dry-run, and negative-greps (plan §4 슬라이스 T1)."""
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict, Unpack
 
 import pytest
 from tos.brokeradapter import Transport
@@ -52,8 +52,47 @@ def server() -> Iterator[FakeKisServer]:
         srv.stop()
 
 
-def _config(server: FakeKisServer, **overrides: Any) -> KisMockTransportConfig:
-    base = {
+class _KisMockConfigKwargs(TypedDict):
+    """1:1 with :class:`KisMockTransportConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
+    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
+    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+
+    mode: Literal["dry_run", "live"]
+    endpoint_rest_base: str
+    order_path: str
+    token_path: str
+    tr_id_buy: str
+    tr_id_sell: str
+    field_map: Mapping[str, str]
+    static_body_fields: Mapping[str, str]
+    min_send_interval_ms: int
+    token_reissue_min_interval_s: int
+    request_timeout_s: float
+    allow_plaintext_for_tests: bool
+
+
+class _KisMockConfigKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_KisMockConfigKwargs`, all optional — the override-kwargs shape
+    for :func:`_config`."""
+
+    mode: Literal["dry_run", "live"]
+    endpoint_rest_base: str
+    order_path: str
+    token_path: str
+    tr_id_buy: str
+    tr_id_sell: str
+    field_map: Mapping[str, str]
+    static_body_fields: Mapping[str, str]
+    min_send_interval_ms: int
+    token_reissue_min_interval_s: int
+    request_timeout_s: float
+    allow_plaintext_for_tests: bool
+
+
+def _config(
+    server: FakeKisServer, **overrides: Unpack[_KisMockConfigKwargsPartial]
+) -> KisMockTransportConfig:
+    base: _KisMockConfigKwargs = {
         "mode": "live",
         "endpoint_rest_base": server.rest_base,
         "order_path": ORDER_PATH,

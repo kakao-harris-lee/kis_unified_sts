@@ -10,6 +10,8 @@ Regime tag: all-false authority substrate; EV-L1-complete claim forbidden.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import tos.wdr as w
 from hypothesis import given
@@ -58,7 +60,8 @@ def test_none_block_denies() -> None:
 @pytest.mark.parametrize("flag", _FLAGS)
 def test_model_construct_bypass_recaught_by_predicate(flag: str) -> None:
     """(§2.3 defence in depth) A model_construct'd True flag is re-caught by the predicate ⇒ False."""
-    smuggled = w.AllFalseDeviationAuthority.model_construct(**{flag: True})
+    smuggled_values: dict[str, Any] = {flag: True}
+    smuggled = w.AllFalseDeviationAuthority.model_construct(**smuggled_values)
     assert w.all_false_deviation_authority(smuggled) is False
 
 

@@ -5,7 +5,9 @@ plan §2 decision 7).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tos_runtime.operator.export import ProjectionExporter
@@ -29,9 +31,17 @@ _GROUP_NAMES = (
 )
 
 
+def _reader_for(name: str) -> Callable[[], Any]:
+    """A zero-arg reader closing over ``name`` by value (a fresh call frame per loop
+    iteration), not by the late-binding reference a default-arg lambda would need to fake —
+    and one mypy can actually type as :data:`~tos_runtime.operator.projection.ReadCallable`
+    (``Callable[[], Any]``), unlike a default-arg lambda (plan §1.1 A-rt)."""
+    return lambda: {"populated": name}
+
+
 def _projection() -> OperatorProjection:
-    readers = {
-        f"read_{name}": (lambda n=name: {"populated": n}) for name in _GROUP_NAMES
+    readers: dict[str, Callable[[], Any]] = {
+        f"read_{name}": _reader_for(name) for name in _GROUP_NAMES
     }
     return OperatorProjection(
         read_unresolved_stm_alert_candidate_seqs=lambda: (),

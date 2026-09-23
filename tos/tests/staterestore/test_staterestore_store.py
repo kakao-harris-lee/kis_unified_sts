@@ -40,7 +40,7 @@ def _composite(**overrides) -> CompositeState:
         "capacity_state": CapacityState.POTENTIALLY_LIVE,
     }
     kwargs.update(overrides)
-    return CompositeState(**kwargs)
+    return CompositeState.model_validate(kwargs)
 
 
 # --------------------------------------------------------------------------

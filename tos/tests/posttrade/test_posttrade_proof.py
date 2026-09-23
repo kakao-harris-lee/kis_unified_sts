@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import inspect
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -401,7 +402,8 @@ def test_a_forged_consequence_flag_is_rejected_by_the_re_check(
     Every declared flag must be the singleton ``False``, so a truthy non-``bool`` smuggled
     past the schema is caught here.
     """
-    forged_block = AllFalsePostTradeConsequence.model_construct(**{flag: forged})
+    forged_values: dict[str, Any] = {flag: forged}
+    forged_block = AllFalsePostTradeConsequence.model_construct(**forged_values)
     assert post_trade_consequence_all_false(forged_block) is False
 
 
@@ -417,7 +419,8 @@ def test_a_falsy_non_bool_consequence_flag_is_also_rejected(
     ``not getattr(...)`` or ``== False`` gate would have waved ``0`` through. This closes the
     falsy half of the forgery axis; the truthy half is covered above.
     """
-    forged_block = AllFalsePostTradeConsequence.model_construct(**{flag: falsy})
+    falsy_values: dict[str, Any] = {flag: falsy}
+    forged_block = AllFalsePostTradeConsequence.model_construct(**falsy_values)
     assert post_trade_consequence_all_false(forged_block) is False
 
 

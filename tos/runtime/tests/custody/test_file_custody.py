@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from tos_runtime.custody.file_custody import PROVISIONED_SCOPES, FileCustody
@@ -16,6 +18,7 @@ from tos_runtime.custody.ports import (
     CustodyManifestError,
     CustodyScopeNotProvisioned,
 )
+from tos_runtime.evidence.ports import EvidenceAppendPort
 
 from .conftest import FakeEvidenceDouble, write_manifest, write_scope_file
 
@@ -52,6 +55,19 @@ _DEFAULT_SCOPES = {
 }
 
 
+class _FileCustodyKwargs(TypedDict, total=False):
+    """1:1 with :class:`FileCustody`'s ``__init__`` keyword parameters (plan §1.1 A-rt) — a
+    ``**kwargs`` call site is checked key-by-key and type-by-type, not swallowed by a
+    ``**dict[str, object]`` splat."""
+
+    root_dir: Path
+    environment_label: str | None
+    expected_owner_uid: int
+    evidence: EvidenceAppendPort
+    getuid: Callable[[], int]
+    secret_field_names: frozenset[str]
+
+
 def _make_custody(
     custody_root: Path,
     evidence_double: FakeEvidenceDouble,
@@ -66,7 +82,7 @@ def _make_custody(
         environment_label=environment_label,
         scopes=scopes if scopes is not None else _DEFAULT_SCOPES,
     )
-    kwargs: dict[str, object] = {
+    kwargs: _FileCustodyKwargs = {
         "root_dir": custody_root,
         "environment_label": environment_label,
         "expected_owner_uid": expected_owner_uid,

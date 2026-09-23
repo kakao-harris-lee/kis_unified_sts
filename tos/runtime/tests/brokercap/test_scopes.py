@@ -735,7 +735,7 @@ def _scope(
             environment=BrokerEnvironment.BROKER_PRODUCTION,
             operation_class=OperationClass.MARKET_DATA_READ,
         )
-    tup = CapabilityTuple(**tup_kwargs)
+    tup = CapabilityTuple.model_validate(tup_kwargs)
     return BrokerScope(
         name="TEST_SCOPE",
         capability_tuples=(tup,),

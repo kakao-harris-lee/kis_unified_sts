@@ -108,7 +108,7 @@ def clean_claim(**overrides: object) -> IsolationClaim:
         "residual_risk": "shared broker resource remains a common mode; owner: profile",
     }
     kwargs.update(overrides)
-    return IsolationClaim(**kwargs)
+    return IsolationClaim.model_validate(kwargs)
 
 
 def clean_cell(**overrides: object) -> SafetyCellScope:
@@ -117,7 +117,7 @@ def clean_cell(**overrides: object) -> SafetyCellScope:
         field: f"cell-{field}" for field in SafetyCellScope.model_fields
     }
     kwargs.update(overrides)
-    return SafetyCellScope(**kwargs)
+    return SafetyCellScope.model_validate(kwargs)
 
 
 def clean_entry(**overrides: object) -> FailureDomainAllocationEntry:
@@ -143,7 +143,7 @@ def clean_entry(**overrides: object) -> FailureDomainAllocationEntry:
         "isolation_kind": IsolationKind.LOGICAL,
     }
     kwargs.update(overrides)
-    return FailureDomainAllocationEntry(**kwargs)
+    return FailureDomainAllocationEntry.model_validate(kwargs)
 
 
 #: A strategy over claims that are complete except for exactly one voided field.

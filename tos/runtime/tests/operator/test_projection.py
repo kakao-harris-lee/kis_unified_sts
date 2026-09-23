@@ -4,6 +4,7 @@ W4 plan §2 decision 7; JSON schema plan §2.7).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -51,7 +52,9 @@ def _all_none_projection(
 ) -> OperatorProjection:
     """A projection where every group reader legitimately returns ``None`` — the "nothing has a
     source yet" baseline (module docstring's OBS-INV-003 discipline)."""
-    readers = {f"read_{name}": (lambda: None) for name in _GROUP_KEYS}
+    readers: dict[str, Callable[[], Any]] = {
+        f"read_{name}": (lambda: None) for name in _GROUP_KEYS
+    }
     return OperatorProjection(
         read_unresolved_stm_alert_candidate_seqs=candidate_seqs,
         read_resolved_stm_alert_seqs=resolved_seqs,
@@ -168,7 +171,9 @@ def test_a_raising_group_reader_yields_none_for_its_own_field_only() -> None:
     def _boom() -> None:
         raise RuntimeError("no source wired yet")
 
-    readers = {f"read_{name}": (lambda: None) for name in _GROUP_KEYS}
+    readers: dict[str, Callable[[], Any]] = {
+        f"read_{name}": (lambda: None) for name in _GROUP_KEYS
+    }
     readers["read_driver"] = _boom
     projection = OperatorProjection(
         read_unresolved_stm_alert_candidate_seqs=lambda: (),
@@ -186,7 +191,9 @@ def test_a_raising_reader_increments_export_failures_and_sets_last_error() -> No
     def _boom() -> None:
         raise ValueError("boom")
 
-    readers = {f"read_{name}": (lambda: None) for name in _GROUP_KEYS}
+    readers: dict[str, Callable[[], Any]] = {
+        f"read_{name}": (lambda: None) for name in _GROUP_KEYS
+    }
     readers["read_evidence"] = _boom
     projection = OperatorProjection(
         read_unresolved_stm_alert_candidate_seqs=lambda: (),
@@ -203,7 +210,9 @@ def test_multiple_raising_readers_are_all_counted() -> None:
     def _boom() -> None:
         raise ValueError("boom")
 
-    readers = {f"read_{name}": (lambda: None) for name in _GROUP_KEYS}
+    readers: dict[str, Callable[[], Any]] = {
+        f"read_{name}": (lambda: None) for name in _GROUP_KEYS
+    }
     readers["read_evidence"] = _boom
     readers["read_rcl"] = _boom
     projection = OperatorProjection(

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import itertools
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -178,7 +179,8 @@ def test_an_unknown_magnitude_makes_conservation_unprovable(field: str) -> None:
 @pytest.mark.parametrize("field", ["free_magnitude", "available_magnitude"])
 def test_a_negative_magnitude_is_a_sign_error(field: str) -> None:
     """(gross axis) A collateral magnitude carries no sign."""
-    signed = clean_allocation("UNIT-1", **{field: Decimal("-1.00")})
+    signed_override: dict[str, Any] = {field: Decimal("-1.00")}
+    signed = clean_allocation("UNIT-1", **signed_override)
     assert collateral_no_double_use([signed]) is False
 
 

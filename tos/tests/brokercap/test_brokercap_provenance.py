@@ -142,7 +142,7 @@ def test_capability_provenance_requires_every_identity_field(missing: str) -> No
     }
     del kwargs[missing]
     with pytest.raises(pydantic.ValidationError):
-        CapabilityProvenance(**kwargs)
+        CapabilityProvenance.model_validate(kwargs)
 
 
 def test_capability_provenance_is_frozen() -> None:

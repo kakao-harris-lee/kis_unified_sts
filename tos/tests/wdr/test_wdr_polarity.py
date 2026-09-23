@@ -21,6 +21,7 @@ from ._wdr_strategies import (
     TRIBOOL,
     clean_decision,
     clean_request,
+    clean_request_with_scope_drift_flag,
     clean_unknown_request,
 )
 
@@ -65,7 +66,9 @@ def test_scope_drift_negative_polarity_none_denies(
     field: str, flag: bool | None
 ) -> None:
     """(§4.3 negative) Each scope-drift flag admits only on explicit False; None / True ⇒ deny."""
-    req = clean_request(**{field: flag}, non_waivable_classification=None)
+    req = clean_request_with_scope_drift_flag(
+        field, flag, non_waivable_classification=None
+    )
     result = w.scope_exact_and_complete(req, w.MANDATED_SCOPE_FLOOR)
     assert result is (flag is False)
 

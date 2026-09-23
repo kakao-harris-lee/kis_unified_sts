@@ -25,6 +25,7 @@ from __future__ import annotations
 import stat
 from decimal import Decimal
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -282,7 +283,7 @@ def engine_configuration(**overrides: object) -> EngineConfiguration:
         "enforcement_mechanism_version": "compose-e2e",
     }
     base.update(overrides)
-    return EngineConfiguration(**base)
+    return EngineConfiguration.model_validate(base)
 
 
 def _time_admission_inputs() -> TimeAdmissionInputs:
@@ -396,7 +397,7 @@ def sizing_bound(**overrides: object) -> SizingBound:
         "admitted_quantity_bases": frozenset({"RISK"}),
     }
     base.update(overrides)
-    return SizingBound(**base)
+    return SizingBound.model_validate(base)
 
 
 def admitted_price(**overrides: object) -> AdmittedPriceObservation:
@@ -406,7 +407,7 @@ def admitted_price(**overrides: object) -> AdmittedPriceObservation:
         "snapshot_digest": "snap-compose-digest-1",
     }
     base.update(overrides)
-    return AdmittedPriceObservation(**base)
+    return AdmittedPriceObservation.model_validate(base)
 
 
 def order_shape(**overrides: object) -> OrderShapeFields:
@@ -427,10 +428,42 @@ def order_shape(**overrides: object) -> OrderShapeFields:
         "silently_rounded": False,
     }
     base.update(overrides)
-    return OrderShapeFields(**base)
+    return OrderShapeFields.model_validate(base)
 
 
-def construction_config(**overrides: object) -> ConstructionConfig:
+class _ConstructionConfigKwargs(TypedDict):
+    """1:1 with :class:`ConstructionConfig`'s dataclass fields (plan §1.1 A-rt) — a
+    ``ConstructionConfig`` is a runtime ``@dataclass``, not a pydantic model, so it has no
+    ``model_validate``; a TypedDict lets ``**base``/``**overrides`` be checked key-by-key and
+    type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+
+    account: str
+    instrument: str
+    price: AdmittedPriceObservation | None
+    action_class: ActionClass
+    instrument_class: str
+    outbound_side: str
+    price_field_key: str | None
+    shape_price_field_key: str | None
+
+
+class _ConstructionConfigKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_ConstructionConfigKwargs`, all optional — the override-kwargs
+    shape for :func:`construction_config`."""
+
+    account: str
+    instrument: str
+    price: AdmittedPriceObservation | None
+    action_class: ActionClass
+    instrument_class: str
+    outbound_side: str
+    price_field_key: str | None
+    shape_price_field_key: str | None
+
+
+def construction_config(
+    **overrides: Unpack[_ConstructionConfigKwargsPartial],
+) -> ConstructionConfig:
     """TOS venue constraint service wave (plan §2 decision 5): the former
     ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
     ``venue_constraint`` fields are gone — those facts now come exclusively from the governed
@@ -441,7 +474,7 @@ def construction_config(**overrides: object) -> ConstructionConfig:
     ``envelope``/``order_shape`` are gone too ((a′) wave lane D, ``ConstructionConfig`` no
     longer carries either field — both are now sourced from the loaded OCP's
     ``construction_rules``/the derivation, never an injected literal)."""
-    base: dict[str, object] = {
+    base: _ConstructionConfigKwargs = {
         "account": ACCOUNT,
         "instrument": INSTRUMENT,
         "price": admitted_price(),
