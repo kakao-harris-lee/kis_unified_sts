@@ -24,7 +24,7 @@ KIS 인증 자격증명을 읽는 곳이 지금 **세 모듈**(주문 전송·�
 | L1 | `tos/runtime/src/tos_runtime/transport/kis_mock/token.py:207-208` | 토큰 발급 — custody 에서 키·시크릿 로드 | `with` 블록 = `issue_token` 호출 1회 |
 | L2 | `tos/runtime/src/tos_runtime/transport/kis_mock/adapter.py:379-380` | 주문 전송 — 같은 두 scope 로드 | `with` 블록 = `post_order` 1회 |
 | L3 | `tos/runtime/src/tos_runtime/transport/kis_quote/adapter.py:383-384` | 시세 조회 — 같은 두 scope 로드 | `with` 블록 = `get_quote` 1회 |
-| L4 | `tos/runtime/src/tos_runtime/transport/kis_mock/client.py:203` · `:254` · `:300` | `bytes → str` 디코드해 HTTP 헤더에 넣음 | 헤더 dict = 요청 1회 |
+| L4 | `tos/runtime/src/tos_runtime/transport/kis_mock/client.py:202-203` · `:253-254` · `:299-300` | `appkey`·`appsecret` 를 `bytes → str` 디코드해 HTTP 헤더에 넣음(각 두 줄) | 헤더 dict = 요청 1회 |
 | L5 | `tos/runtime/src/tos_runtime/recon/witness_kis.py:349-351` | 증인 — `app_key_header()`/`app_secret_header()` 가 **`str` 을 반환**해야 함 | 반환된 `str` 은 **호출자가 버릴 때까지**(불변 객체라 영점화 불가) |
 
 L4 는 어느 선택지에서도 남는다 — KIS 는 **모든** 인증 호출에 `appkey`/`appsecret` 헤더를 요구하고(`client.py:238` 주석),
@@ -35,8 +35,10 @@ HTTP 헤더는 `str` 이다. 상위 F-2 가 이미 적은 제약이다: **평문
 
 - `adapter.py:210` — `KisMockTransport.__init__` 이 자기 `KisTokenLifecycle` 을 만든다.
 - `kis_quote/adapter.py:284` — `KisQuoteObservationIntake.__init__` 도 자기 것을 만든다.
-- 두 곳 모두 scope `kis_mock.app_key`/`kis_mock.app_secret` — 상수도 **두 벌**이다
-  (`compose/_transport_wiring.py:102-103` · `kis_quote/adapter.py:174-175`).
+- 두 곳 모두 scope `kis_mock.app_key`/`kis_mock.app_secret` — 문자열 정의는 **세 곳**이다
+  (`compose/_transport_wiring.py:102-103` · `kis_quote/adapter.py:174-175` · custody 프로비저닝 허용 목록
+  `custody/file_custody.py:110-111` `PROVISIONED_SCOPES`). 셋째는 custody 가 어떤 scope 를 허용하는지의 선언이라
+  어느 선택지에서도 남는다.
 
 두 인스턴스는 서로의 발급 시각을 모른다. 브로커 규칙은 **앱키당 토큰 재발급 1분당 1회**
 (`docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2176-2182`, 공식 문서 인용)이고, 실측으로
@@ -62,7 +64,8 @@ HTTP 헤더는 `str` 이다. 상위 F-2 가 이미 적은 제약이다: **평문
 - **평문 반환** = 평문 키·시크릿을 **함수 반환값으로** 모듈 경계 밖에 내보내는 메서드 수(L5 형 — `with` 로 수명이
   묶이지 않는 것).
 - **수명주기/앱키** = 한 배포에서 같은 앱키에 대해 동시에 존재할 수 있는 `KisTokenLifecycle` 인스턴스 최대 수.
-- **scope 상수 사본** = `"kis_mock.app_key"` 문자열 정의 수.
+- **scope 상수 사본** = `tos_runtime` 안의 `"kis_mock.app_key"`(또는 앱을 나누면 그 앱의 scope) 문자열 정의 수.
+  custody 허용 목록(`file_custody.py:110-111`) 한 벌은 모든 행에 포함한다.
 
 ### (A) 얇은 어댑터 — 증인 Protocol 그대로, 어댑터가 수명주기 + custody 를 감싼다
 
@@ -82,7 +85,13 @@ HTTP 헤더는 `str` 이다. 상위 F-2 가 이미 적은 제약이다: **평문
 
 ### (C) 자격증명 하나당 소유자 하나 — `KisCredentialSession` · **권고**
 
-새 클래스 하나(`tos_runtime/transport/kis_mock/token.py` 에 두거나 옆 모듈 — 위치는 구현 PR 이 크기 예산으로 정한다):
+새 클래스 하나. **위치는 방화벽이 정한다**: 증인 모듈은 R1 에서 `tos_runtime.recon` 형제 모듈만 import 할 수
+있다(`witness_kis.py:62-68` — `tos_runtime.transport.kis_mock` import 불가). 그래서 둘로 나눈다.
+
+- **구체 클래스** `KisCredentialSession` 은 수명주기 옆(`tos_runtime/transport/kis_mock/token.py` 또는 그 옆 모듈)에 둔다.
+- **증인 쪽 Protocol**(`request_credentials()` 하나)은 `tos_runtime/recon/witness_kis.py` 에 남긴다 — 지금
+  `KisWitnessTokenSession` 자리. 구체 클래스가 이 Protocol 을 **구조적으로** 만족하고, 둘을 잇는 것은 compose
+  루트뿐이다. 증인 → transport import 간선은 생기지 않는다(구현 PR 의 방화벽 검사가 이를 확인한다).
 
 ```python
 class KisCredentialSession:
@@ -100,7 +109,7 @@ class KisCredentialSession:
 - 세 소비자는 custody 를 더 이상 쥐지 않는다 — `custody.load(<KIS scope>)` 는 이 클래스(와 그 안의 수명주기)만.
 - 증인 Protocol 은 `KisWitnessTokenSession` 의 세 메서드 대신 `request_credentials()` 하나로 바뀐다. 증인은
   여전히 custody 를 쥐지 않는다(설계 의도 유지) — 다만 **평문을 반환값으로 받는 대신 `with` 안에서 받는다**.
-- scope 상수는 compose 한 곳.
+- scope 상수는 compose 한 곳(+ custody 허용 목록 `file_custody.py:110-111`, 이것은 남는다).
 
 ### (D) 소비자별로 앱을 나눈다 — F-3 을 선행으로
 
@@ -118,18 +127,32 @@ class KisCredentialSession:
 
 | 선택지 | 로드 지점 | 평문 반환 | 수명주기/앱키 | scope 상수 사본 | 새 외부 의존 |
 |---|---:|---:|---:|---:|---|
-| 지금(main, 증인 미배선) | 3 | 0 | **2** | 2 | — |
-| (A) 얇은 어댑터 | 4 | **2**(`app_key_header`·`app_secret_header`) | **3** | 2~3 | — |
-| (B) 소비자별 custody | 4 | 0 | **3** | 2~3 | — |
-| **(C) 단일 소유자** | **1** | **0** | **1** | **1** | — |
-| (D) 앱 분리 + (C) | 1 | 0 | 1(앱키당) | 2(앱당 1) | KIS 앱 등록 · custody scope 2개 |
-| (D) 앱 분리 + (A) | 2 | 2 | 1~2(앱키당) | 2~3 | KIS 앱 등록 · custody scope 2개 |
+| 지금(main, 증인 미배선) | 3 | 0 | **2** | 3 | — |
+| (A) 얇은 어댑터 | 4 | **2**(`app_key_header`·`app_secret_header`) | **3** | 3~4 | — |
+| (B) 소비자별 custody | 4 | 0 | **3** | 3~4 | — |
+| **(C) 단일 소유자** | **1** | **0** | **1** | **2** | — |
+| (D) 앱 분리 + (C) | 1 | 0 | 1(앱키당) | 4(앱당 2) | KIS 앱 등록 · custody scope 2개 |
+| (D) 앱 분리 + (A) | 4 | 2 | 2(읽기 앱키) | 5 | KIS 앱 등록 · custody scope 2개 |
 
-평문이 HTTP 헤더 `str` 로 실체화되는 L4(`client.py` 3줄 + 증인 헤더 1줄)는 모든 행에서 같다 — 표에서 뺐다.
+도출(행마다):
+
+- **지금**: 로드 = `token.py` · `kis_mock/adapter.py` · `kis_quote/adapter.py`. 수명주기 = 두 어댑터가 각자 생성.
+  scope 사본 = `_transport_wiring.py` · `kis_quote/adapter.py` · `file_custody.py`.
+- **(A)**: 지금 + 증인 어댑터 1 모듈(로드 +1 · 수명주기 +1 · 평문 반환 2). 어댑터가 compose 상수를 재사용하면 scope 3,
+  자기 상수를 두면 4.
+- **(B)**: 지금 + 증인 자신이 로드(+1), 증인 수명주기 +1, 평문 반환 0. scope 는 (A) 와 같은 이유로 3~4.
+- **(C)**: 로드 = `KisCredentialSession` 1 모듈(그 안의 수명주기 포함). 수명주기 = compose 가 앱키당 1개.
+  scope 사본 = compose 1 + `file_custody.py` 1.
+- **(D)+(C)**: 앱마다 (C) — 로드 모듈은 여전히 1(같은 클래스), scope 는 앱당 compose 1 + custody 1.
+- **(D)+(A)**: 주문 앱 = 주문 전송(로드·수명주기 1). 읽기 앱 = 시세 인테이크 + 증인 어댑터(로드 2 · 수명주기 2).
+  토큰 발급 로드 `token.py` 포함 로드 모듈 4. scope = 주문 앱(compose 1 + custody 1) + 읽기 앱(시세 어댑터 1 +
+  증인 어댑터용 compose 1 + custody 1) = 5.
+
+평문이 HTTP 헤더 `str` 로 실체화되는 L4(`client.py` 세 곳 × 두 줄 + 증인 헤더 두 줄)는 모든 행에서 같다 — 표에서 뺐다.
 
 ## 4. 결정 — (C)
 
-1. **(C) 를 채택한다.** 로드 지점 3 → 1, 수명주기/앱키 2 → 1, 평문 반환 0 유지, scope 상수 2 → 1. (A) 는 상위
+1. **(C) 를 채택한다.** 로드 지점 3 → 1, 수명주기/앱키 2 → 1, 평문 반환 0 유지, scope 상수 3 → 2(custody 허용 목록은 남는다). (A) 는 상위
    F-2 가 이미 기각했고 표가 그 근거를 수로 확인한다. (B) 는 평문 반환을 없애지만 1.2 의 충돌을 키운다.
 2. **구현 PR 의 모양**(별도 PR, 이 문서 머지 뒤):
    - `KisCredentialSession` 신설 + `KisMockTransport`·`KisQuoteObservationIntake` 가 **자기 수명주기를 만들지 않고
@@ -151,7 +174,7 @@ class KisCredentialSession:
   UNKNOWN`). 근거 없이 등록하면 격리가 있다고 **믿게 되는** 것이 오히려 위험하다.
 - 따라서 운영자 결정 ③ 의 「C-2 결정 후 판단」에 대한 이 문서의 답은 **「지금은 필요 없음」**이다. 다시 볼 조건:
   (i) KIS 가 앱 단위 권한 제한을 제공한다는 근거가 생기거나, (ii) 읽기 경로의 호출량이 앱키당 속도 한도
-  (`hard_limits` 미확립, 관측 구간 [1.0, 2.0) rps — 프로파일 `:2556-2558`)를 주문 경로와 나눠 써야 할 만큼 커질 때.
+  (`hard_limits: {}` 미확립, 관측 구간 [1.0, 2.0) rps — 프로파일 `:1808-1810` · `:1840-1842`)를 주문 경로와 나눠 써야 할 만큼 커질 때.
 
 ## 6. 운영자 확인
 
