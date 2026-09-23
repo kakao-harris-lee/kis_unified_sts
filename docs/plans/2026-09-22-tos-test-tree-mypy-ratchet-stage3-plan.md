@@ -449,7 +449,9 @@ zero-disable 기준)이며, 별도 소형 계획 하나면 된다.**
 - `model_construct`: 값 dict 를 `dict[str, Any]` 로 — 표본 1건에서 확정, 20건 동일.
 - B: `receipt.seq` 류는 헬퍼에서 한 번 좁힘 · `None → StageRequest` 23건은 실 `StageRequest` 픽스처 +
   「안 읽는다」 증명 테스트 1건(런타임 2619 → 2620).
-- D: Protocol 대상은 더블 수리 · `StageRequest` 는 실물 · 구체 서비스는 **런타임 포트 12종**
+- D: Protocol 대상은 더블 수리 · `StageRequest` 는 실물 · 구체 서비스는 **런타임 포트 12종**(이름 기준 —
+  `git diff d1c56cf3 7aba8a0d -- tos/runtime/src | grep '^+class .*Protocol'` 로는 정의 **14개**:
+  `FreshnessTimeReader` 의 보조 2 를 한 항목으로, `_ConstructionStageReader` 2파일 중복 정의를 ×2 로 셌다)
   (`TimeSnapshotReader` · `TimeHealthReader` · `FreshnessTimeReader`+2 · `FinalityProducerPort` ·
   `FinalityConsumerPort`+`ReleaseOutcomeLike` · `ReleaseConflictReader` · `FinalityConsumerTimeReader` ·
   `_SessionContextReader` · `_AggregateRiskDecisionReader` · `_ConstructionStageReader`×2 ·
@@ -490,14 +492,15 @@ zero-disable 기준)이며, 별도 소형 계획 하나면 된다.**
 |---|---|---|---|
 | 1 | 3-a PR 본문 「cast 4건 전부 `pytest.raises` 안」 — **2건은 밖**, 실물 필드는 이미 Optional, 근본은 헬퍼 파라미터가 좁은 것 | review-778 (HIGH 2) | 【PR】#778 |
 | 2 | 3-c `_DecisionKwargs` 「`risk_decision` 과 1:1」 — 디폴트 파라미터 `effective_limit` 누락 | review-783 (HIGH) | 【PR】#783 |
-| 3 | review-783 1차가 `ActiveSetMember.incident_id` 위치를 `records.py:240` 으로 인용 — 실제 `state.py:148`(다른 클래스) | 조치 레인 · 재심 확인 | 【PR】#778 |
+| 3 | **review-778** 1차가 `ActiveSetMember.incident_id` 위치를 `records.py:240` 으로 인용 — 실제 `state.py:148`(`records.py:240` 은 다른 클래스 `SafetyIncidentRecord`) | 조치 레인이 지목 · review-778 재심이 「1차 오답」으로 확정 | 【PR】#778 |
 | 4 | 3-e 포트 3개가 자기 소스 본문과 불일치(§7.3) | **저자 자신**(소스 스텝 재실행) | 【PR】#786 |
 | 5 | 계획 §1.1 ① 「불법 입력엔 cast 가 필요하다」 — brokercap·3-c 엔 불법 입력이 **없었다**(cast 0) | 3-b·3-c 저자 | 【PR】#782 #783 |
 | 6 | 계획 §1.5 `Mapping` 처방 — `build_core` 가 `dict` 를 요구해 성립 안 함 | 3-e 저자 | 【PR】#786 |
 | 7 | 계획 §1.1 A-issue 「`scheme`·`status` 가 dict 안에 섞임」 — `scheme` 은 명시적이었고 `status` 만 | 3-c·3-d 저자 | 【PR】#783 #784 |
 | 8 | 계획 §2 3-c/3-d 건수 — A-issue 18건이 3-d 파일에 있어 −18/+20 | 3-c 저자 | 【PR】#783 |
 | 9 | 리뷰 레인이 풀스위트 도는 동안 같은 워크트리에서 뮤테이션 → `code_digest` 가 바뀌어 1077건 가짜 실패 | 리뷰어 자신 | 【PR】#785 |
-| 10 | 워크트리 두 곳에서 풀스위트 동시 실행 → 디스크 경합으로 15~24건 가짜 실패 | 3-e·#785 저자 | 【PR】#786 #785 |
+| 10 | 워크트리 두 곳에서 풀스위트 동시 실행 → 디스크 경합으로 가짜 실패 — **24건**(#786 본문, `kfix` 워크트리와 경합) · #785 쪽은 `test_drill.py` 계열 15건이라고 저자 레인이 오케스트레이터에 보고했으나 **PR 본문엔 건수 미기록** | 3-e·#785 저자 | 【PR】#786 · #785(건수는 세션 보고) |
+| 11 | 이 착지 기록 초판의 3행이 「review-783 1차」로 귀속 — 실제 review-778(같은 PR 안의 재심이 정정) · 10행의 15건 출처 미명시 | review-787 (MEDIUM · LOW) | 【PR】#787 |
 
 9·10 은 코드가 아니라 **측정 절차**의 오류다 — 풀스위트는 한 번에 하나, 도는 동안 그 워크트리를 건드리지
 않는다(`code_digest` 가 소스 트리를 실측 해시한다).
