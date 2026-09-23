@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Protocol
 
 from tos.canonical import CanonicalizationScheme, derive_id
 from tos.engine.records import EgressResultPayload
@@ -66,6 +67,7 @@ __all__ = [
     "FULL_FILL_PROOF_ID_PREFIX",
     "NON_EXECUTION_OBLIGATION_ID_PREFIX",
     "NON_EXECUTION_PROOF_ID_PREFIX",
+    "FinalityProducerPort",
     "SyntheticFinalityResult",
     "SyntheticFinalityProducer",
 ]
@@ -133,6 +135,18 @@ class SyntheticFinalityResult:
 
     record: EconomicObligationRecord
     proof: PostTradeFinalityProof
+
+
+class FinalityProducerPort(Protocol):
+    """The narrow read surface :func:`~tos_runtime.engine.finality_projection.project_finality`
+    needs off a :class:`SyntheticFinalityProducer` (mypy stage 3 §1.3 rule 3 port
+    introduction) — only :meth:`~SyntheticFinalityProducer.produce`, never
+    :meth:`~SyntheticFinalityProducer.produce_non_execution` or the producer's own
+    config/scheme state."""
+
+    def produce(self, payload: EgressResultPayload) -> SyntheticFinalityResult | None:
+        """See :meth:`SyntheticFinalityProducer.produce`'s own docstring."""
+        ...
 
 
 @dataclass(frozen=True)
