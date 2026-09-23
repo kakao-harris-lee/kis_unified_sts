@@ -1,0 +1,42 @@
+# =============================================================================
+# safety_deviations.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/safety_deviations.example.yaml
+# 로더: tos_runtime.safety.deviation.DeviationService (model_validate →
+#       tos.wdr.ActiveDeviationSet)
+# 호출부: compose/_safety_wiring.py:524 (무조건)
+# =============================================================================
+#
+# 제안표 §4.3 — `members`(deviations) · `applicable_decision_ids` 는 **빈 목록이
+# 사실이다**: 이 배포에는 아직 발생한 이탈이 없다. 빈 리스트 `[]` 는 유효한
+# NOMINAL 상태이고 `null` 과 다르다(`tos.wdr.combined_set_no_permissive_union`
+# 의 「explicit empty」 허용) — 있는 척도, 모르는 척도 하지 않는다.
+#
+# `combined_within_envelope` 는 **운영자 확약**이다: 커널의
+# `ActiveDeviationSet.combined_within_envelope` 는 원래 주입되는 spg 판정(§13 3항)
+# 인데 이 레인에 아직 실배선이 없다(deviation.py 모듈 독스트링). 이탈 집합이
+# 비어 있으므로 「결합 이탈이 봉투 안에 있다」는 **공허하게 참**이다 — 그것이
+# 이 `true` 의 근거이고, 이탈이 하나라도 등재되는 순간 다시 받아야 한다.
+# =============================================================================
+
+deviations:
+  active_set:
+    # 제안표 §4.3 식별자 규칙: `tos-paper-<무엇>-g<세대>`, 세대는 1.
+    active_set_id: "tos-paper-deviation-set-g1"
+    active_set_generation: 1
+    deviation_generation: 1
+    # 제안표 §4.3: `is_complete` 계열은 이 프로파일이 실제로 완결이므로 true.
+    is_complete: true
+    # 위 헤더 주석 — 이탈 0건이므로 공허하게 참.
+    combined_within_envelope: true
+  applicable_decision_ids: []
+  members: []

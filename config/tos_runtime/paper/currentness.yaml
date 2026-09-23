@@ -1,0 +1,41 @@
+# =============================================================================
+# currentness.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §2.3 · §6 6항
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/currentness.example.yaml
+# 로더: tos_runtime.currentness.config.load_currentness_config
+#       (currentness/config.py:80)
+# 호출부: compose/_currentness_wiring.py:205 (무조건)
+# =============================================================================
+
+# [A] ⚠ 제안표 §2.3 — VER-002 L301-302 `value_ms: 500`.
+#
+# ⚠ **이것이 제안표에서 가장 약한 [A] 다.** 그 VER-002 항목은
+# `RECHECK: APPROVE after the fenced egress journal and broker transport are
+# implemented` 이고 `rationale: "MEASURE"` 다 — **아직 측정되지 않은 값**이다.
+# `applicable_scope: non-live-test` 이고 **이 배포가 정확히 non-live-test 다.**
+# 그 범위에서 전사하되, 이 값은 「승인된 측정값」이 아니라
+# **「측정 대기 중인 잠정값」**으로 기록한다. 펜스된 egress 저널 + 브로커
+# 트랜스포트가 구현되면 실측으로 대체한다.
+B_capability_claim_to_send: 500
+
+# [미확정] 제안표 §6 6항 — **채우지 않는다.**
+#
+#   "21개 MANDATED_DIMENSION_FLOOR 를 그대로 복사하면
+#    `policy_covers_mandated_dimensions` 가 **항진명제**가 된다(과거 버그,
+#    example 주석에 기록). floor 이상이어야 하되 **의미 있게 독립적으로 편집
+#    가능한 선언**이어야 한다 — 설계 판단이 필요."
+#
+# 제안표 §6 말미: 「6·7 은 값을 정하기 전에 판단이 더 필요하다. **부팅이
+# 이것들 때문에 막히면 그것이 A-5 의 결과물이다.**」 — 그대로 둔다. 로더는
+# 이 null 을 named-TBD 로 거부하며(currentness/config.py), 그 거부가 이 웨이브의
+# 정직한 산출물이다. 값을 지어내 통과시키지 않는다.
+required_dimensions: null

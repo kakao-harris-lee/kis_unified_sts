@@ -1,0 +1,77 @@
+# =============================================================================
+# monitor_coverage.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.3 · §6 5항
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/monitor_coverage.example.yaml
+# 로더: tos_runtime.safety.monitoring.MonitoringService (→ tos.stm.MonitorCoverageManifest)
+# 호출부: compose/_safety_wiring.py:531 (무조건)
+# =============================================================================
+#
+# `items` 는 **정확히 세 의무**여야 한다 — 이 서비스의 자기관측 코드가 평가할 줄
+# 아는 것이 그 셋뿐이다(example 주석): evidence-tip-currency · time-service-health ·
+# inbox-backlog.
+#
+# 항목별 `*_present` 플래그는 **운영자 선언**이다. 서비스의 alert/evidence/
+# restrictive-response/currentness 경로는 실제로 존재하지만(그 경로가 곧
+# STM_ALERT 발행 · clear() · dimension_report() 다), 플래그 자체는 config 선언이라
+# 미래에 의무가 추가돼도 조용히 「예」로 기본값이 잡히지 않는다 — 그래서 여기서
+# 명시적으로 `true` 라고 적는다(제안표 §4.3 의 양의 확약 부류).
+# =============================================================================
+
+coverage:
+  manifest:
+    # 제안표 §4.3 식별자 규칙: `tos-paper-<무엇>-g<세대>`, 세대는 1.
+    coverage_manifest_id: "tos-paper-coverage-manifest-g1"
+    coverage_generation: 1
+    # 「불투명한 운영자 승인 참조 토큰 — 로컬에서 계산되지 않는다」(example 주석:
+    # 이 서비스는 .issue() 를 호출하지 않는다). 제안표 §4.3 식별자 규칙을 쓴다.
+    coverage_manifest_digest: "tos-paper-coverage-manifest-digest-g1"
+    policy_digest: "tos-paper-coverage-policy-digest-g1"
+    is_complete: true
+  items:
+    evidence-tip-currency:
+      restrictive_response_present: true
+      alert_path_present: true
+      evidence_path_present: true
+      currentness_rule_present: true
+      closure_1_to_12_complete: true
+      criticality: "CRITICAL"
+    time-service-health:
+      restrictive_response_present: true
+      alert_path_present: true
+      evidence_path_present: true
+      currentness_rule_present: true
+      closure_1_to_12_complete: true
+      criticality: "CRITICAL"
+    inbox-backlog:
+      restrictive_response_present: true
+      alert_path_present: true
+      evidence_path_present: true
+      currentness_rule_present: true
+      closure_1_to_12_complete: true
+      criticality: "CRITICAL"
+  # ==========================================================================
+  # [미확정] 제안표 §6 5항 — **채우지 않는다.**
+  #
+  #   "`monitor_coverage.yaml::bounds` 3값(`max_evidence_tip_stall_ms` ·
+  #    `healthy_time_states` · `max_inbox_unconsumed`) — **상위 원천 미확인**"
+  #
+  # 제안표 §6 말미: 「6·7 은 값을 정하기 전에 판단이 더 필요하다. **부팅이
+  # 이것들 때문에 막히면 그것이 A-5 의 결과물이다.**」
+  #
+  # 이 셋은 **감시 임계값**이다 — 틀리면 실명(失明)하거나 거짓 경보를 낸다.
+  # VER-002 에 대응 키가 없고(grep), 실측 기준선도 없다. 지어내지 않는다.
+  # 로더는 이 null 들을 named-TBD 로 거부하며, 그 거부가 정직한 산출물이다.
+  # ==========================================================================
+  bounds:
+    max_evidence_tip_stall_ms: null
+    healthy_time_states: null
+    max_inbox_unconsumed: null

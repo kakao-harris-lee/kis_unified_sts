@@ -1,0 +1,78 @@
+# =============================================================================
+# release.yaml — TOS paper 배포 승인값 (W-A / A-2 · A-3)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.1 · §3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/release.example.yaml
+# 로더: tos_runtime.release.config.load_release_config (release/config.py:164)
+# 호출부: compose/_wiring.py:1029 (`_boot_services`, 무조건, Stage A probe)
+# =============================================================================
+#
+# [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
+#
+#   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
+#   expected_code_digest: 0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260
+#   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
+#   python_version: 3.12.12
+#   sqlite_version: 3.45.1
+#
+#   실행(2026-09-23, main c1c9bffa 기준 워크트리):
+#     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
+#       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
+#
+# **두 값의 유효 범위가 서로 다르다 — 갱신 규율도 다르다.**
+#   * `expected_code_digest` 는 설치된 `tos`/`tos_runtime` **패키지 트리의
+#     `*.py` 내용**만 접는다(`operations/dependency_admission.py:60-89`,
+#     roots = `default_package_roots()` = 두 패키지 디렉터리; 테스트 트리·YAML 은
+#     포함되지 않는다). 따라서 체크아웃 위치와 무관하고 **커밋 내용에만** 묶인다 —
+#     `tos/src/**.py` 또는 `tos/runtime/src/**.py` 가 한 바이트라도 바뀌면 갱신해야 한다.
+#   * `expected_dependency_set_digest` 는 **이 프로세스가 실제로 실행된
+#     인터프리터의 설치 분포 집합** + python/sqlite 좌표다. 위 값은 저장소 루트
+#     `.venv`(레거시 스택 포함, python 3.12.12 / sqlite 3.45.1)에서 측정됐다.
+#     `tos/.venv`(hermetic uv 환경)나 다른 호스트에서 구동하면 **반드시 다르다** —
+#     example 주석의 경고 그대로 「never copy it from another environment's
+#     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
+# =============================================================================
+
+expected_code_digest: "0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260"
+expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
+
+# ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
+# 로컬 부팅을 위해 허용으로 두되, **`restriction_present: false`** 와 짝이어야 한다.
+#
+# 제안표의 **정정(fact-check)** 을 그대로 옮긴다: 초고는 `ADMITTED` 라고 적었는데
+# **그런 멤버는 없다** — `tos.sci.AdmissionResult`(tos/src/tos/sci/vocabulary.py:100)
+# 는 `ADMIT`/`DENY`/`UNKNOWN` 뿐이고 `release/config.py:130-137`
+# (`_resolve_admission_result` → L132 `_ADMISSION_RESULT_BY_NAME.get(value)`)이
+# **정확히** 대조한다. 그대로 썼으면 **부팅이 거부**됐다.
+admission_result: "ADMIT"
+
+# ⚠ 제안표는 `admission_result`/`restriction_present` **두 행만** 명시한다.
+# `restriction_state_resolved` 에는 전용 행이 없으나, 제안표가 채택한 「로컬
+# 부팅을 위해 허용(ADMIT) + restriction_present: false」 태세가 실제로 허용이
+# 되려면 **이 값이 true 여야 한다** — SCI-INV-014 상 미해소 조회는
+# `restriction_present` 가 무엇이든 **보수적으로 거부**하므로 false 를 두면
+# 채택된 ADMIT 이 무효가 된다(example 주석 L40-42). 즉 이것은 새 판단이 아니라
+# 채택된 태세의 **귀결**이다. Phase 2 에 실제 제한 레지스트리 스캐너는 없고
+# 이 스냅숏은 운영자 서명 정적 값이다.
+restriction_state_resolved: true
+
+# ⚠ [O] 제안표 §4.1 — `admission_result: ADMIT` 과 **짝**이어야 하는 값.
+# 음의 극성이다(present 이거나 unknown 이면 거부). 이 릴리스 범위에 적용되는
+# 활성 `tos.sci.ReleaseRestriction` 이 **없다**는 운영자 서명 진술이다.
+restriction_present: false
+
+# `restriction_present` 가 false 이므로 이 블록은 읽히지 않는다
+# (release/config.py:141-145 — `_resolve_restriction` 은 present 가 false 면
+#  L144-145 에서 즉시 None 을 반환한다).
+restriction:
+  restriction_id: null
+  restriction_generation: null
+  trigger_class: null

@@ -1,0 +1,42 @@
+# =============================================================================
+# safety_incidents.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/safety_incidents.example.yaml
+# 로더: tos_runtime.safety.incident.IncidentService (→ tos.sir.ActiveSafetyIncidentSet)
+# 호출부: compose/_safety_wiring.py:527 (무조건)
+# =============================================================================
+#
+# 제안표 §4.3 — `members` · `applicable_incident_ids` · `shared_dependencies` 는
+# **빈 목록이 사실이다**: 이 배포에는 아직 열린/의심 사고가 없다. 빈 리스트는
+# 유효한 nominal 상태이고 `null` 은 거부다(plan §2 결정 2 「명시적 빈 리스트 허용」).
+#
+# `applicable_incident_ids` 를 `members` 와 **따로** 선언하는 것은 의도된 설계다:
+# 둘이 어긋나면(여기 있는 id 에 member 가 없거나, 그 반대) **진짜 설정 드리프트**로
+# 잡히고, 자기 자신을 대조하는 공허한 검사가 되지 않는다(example 주석).
+#
+# `is_complete`/`is_current` 는 **양의 극성 운영자 확약**이다(ADR-002-027 §5.5
+# L126 · §10 L311). 제안표 §4.3: 「`is_complete`/`is_current` 계열은 이 프로파일이
+# 실제로 완결이므로 `true`」 — 사고 0건이 이 배포의 실제 상태다.
+# =============================================================================
+
+incidents:
+  active_set:
+    # 제안표 §4.3 식별자 규칙: `tos-paper-<무엇>-g<세대>`, 세대는 1.
+    active_set_id: "tos-paper-incident-set-g1"
+    active_set_generation: 1
+    incident_generation: 1
+    safety_cell: "tos-paper-cell-g1"
+    shared_dependencies: []
+    is_complete: true
+    is_current: true
+  applicable_incident_ids: []
+  members: []

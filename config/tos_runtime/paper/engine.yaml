@@ -1,0 +1,29 @@
+# =============================================================================
+# engine.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §2.2 · §4.2
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/engine.example.yaml
+# 로더: tos_runtime.compose._engine_config.load_engine_config (compose/_engine_config.py:64)
+# 호출부: compose/_finalize_wiring.py:78 (무조건)
+# =============================================================================
+
+# [O] 제안표 §4.2 — VER-002 에 키가 **없다**(`EngineConfiguration` 독스트링
+# 자신이 「key absent from VERIFICATION-PROFILE-002 — provisional」). **벽시계
+# 인터럽트가 아니라 정적 작업 수 비교**라 과대 설정의 위험이 낮다. 2026-09-08
+# 부터 열려 있던 운영자 결정 항목이다.
+dsl_evaluation_budget_steps: 1000
+
+# [A] 제안표 §2.2 — VER-002 L1010 `MAX_unresolved_send_per_scope: 1`
+# (「at most one unresolved send per scope」, APPROVED 2026-07-29 operator
+# (Bounds-Approver), review_date 2027-01-29). engine.example.yaml 주석이 이
+# 참조점을 명시적으로 가리킨다. 엔진은 이 값에 대해 **제한적으로만** 투영하며
+# 여유를 만들어내지 않는다(RFC-002 §9.1:558).
+max_unresolved_send_per_scope: 1

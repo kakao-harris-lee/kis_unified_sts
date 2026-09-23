@@ -1,0 +1,60 @@
+# =============================================================================
+# egress_coordinates.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §0(범위) · §4.3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/egress_coordinates.example.yaml
+# 로더: tos_runtime.compose._egress_coordinates.load_egress_coordinates
+#       (compose/_egress_coordinates.py:145)
+# 호출부: compose/_wiring.py:943 (무조건)
+# =============================================================================
+#
+# **값의 출처 — 제안표에 전용 행이 없다. 지어낸 값이 아니라 전사다.**
+# 제안표(§0)의 대상은 19종 파일이고 이 파일도 거기 포함되지만, 표 §1~§4 어디에도
+# 이 아홉 리프의 행이 없다. 그러나 값의 원천은 **저장소 자신의 코드**에 기록돼
+# 있다: `compose/_egress_coordinates.py` 모듈 독스트링이
+# 「`_build_context_resolver` 가 **여덟 개의 맨 파이썬 리터럴**로 EgressCoordinateSet
+# 을 만들었다」며 그 리터럴을 이름과 값까지 그대로 나열하고, 아홉 번째
+# `capsule_terminus_fields` 도 「현재 `["account", "instrument"]`, 이 compose 루트의
+# 이전 리터럴 dict 와 **정확히 일치**」라고 적는다. 이 파일은 그 리터럴을
+# CLAUDE.md 「설정 기반」 규칙대로 밖으로 옮긴 자리이며, 아래 값은 **그 전사**다.
+# 새 판단이 아니다 — 판단이 필요해지는 순간은 SYNTHETIC 이 아닌 전송을 켤 때다.
+#
+# ⚠ `capsule_terminus_fields` 는 **스탠드인**이다: 이 compose 루트에는 캡슐 체인이
+# 없고(design #34 / EGRESS-EV-003 "+Security" 미착지), `capsule_egress_request_digest`
+# 는 그 종단의 임시 대역이다. 여기서 고르는 것은 **필드 이름 선택**뿐이고 digest
+# 자체는 여전히 매 시도마다 실제로 파생된다. 로더가 부팅 시점에 각 이름이
+# `ConstructionConfig` 에 실제로 존재하는지 검사하므로, 오타/개명은 첫 시도가
+# 아니라 부팅에서 막힌다.
+# =============================================================================
+
+# SYNTHETIC 전송의 엔드포인트 — 브로커에 닿지 않는다.
+endpoint:
+  value: "synthetic://paper/order"
+action:
+  value: "NEW_ORDER"
+method:
+  value: "SUBMIT"
+route_identity:
+  value: "synthetic-route"
+# 자격증명/브로커 세션 세대: SYNTHETIC 경로에는 실 자격증명도 브로커 세션도
+# 없다 — 0 이 그 사실의 표기다(이전 리터럴 그대로).
+credential_generation:
+  value: 0
+broker_session_generation:
+  value: 0
+# egress 세대: 첫 세대(제안표 §4.3 「`*_generation` 계열은 전부 1」과 정합).
+egress_generation:
+  value: 1
+# `{environment_label}` 은 이 로더가 수행하는 **유일한** 치환이다(모듈 독스트링).
+active_principal:
+  value: "egressgw-{environment_label}"
+capsule_terminus_fields:
+  value: ["account", "instrument"]

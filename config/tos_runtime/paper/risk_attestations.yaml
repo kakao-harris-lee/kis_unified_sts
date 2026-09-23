@@ -1,0 +1,50 @@
+# =============================================================================
+# risk_attestations.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.1
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/risk_attestations.example.yaml
+# 로더: tos_runtime.compose._risk_attestations.load_risk_attestations
+#       (compose/_risk_attestations.py:161)
+# 호출부: compose/_currentness_wiring.py:278 (무조건)
+# =============================================================================
+#
+# ⚠ **제안표 §4.1 의 ⚠ 행 — 여기는 운영자가 눈으로 볼 자리다.**
+#
+# 이것은 **측정이 아니라 운영자 확약**이다(Phase 2 에 실측 인프라가 없어 명시적
+# 스탠드인). 제안표가 기록한 두 가지 fact-check 를 그대로 옮긴다:
+#
+#   1. 「`false` 면 부팅이 막힌다」는 **틀렸다** — `_require_bool` 은 `null`/비-bool
+#      만 거부하고 `False` 는 **유효한 값으로 로드에 성공**한다. `False` 는
+#      `_restrictive_merge` 를 거쳐 **개별 step 6/7 결정을 거부**하는 방식으로
+#      작동한다(부팅 실패가 아니라 그 결정이 거부됨).
+#   2. 「6개 성질이 실제로 성립한다」도 **코드로 뒷받침되지 않는다** —
+#      `all_fields_attributed`/`economic_commitment_exclusive`/
+#      `flow_commitment_exclusive` 는 코드 독스트링 자신이 「Phase 2 에 추적
+#      인프라가 없다」고 명시한 성질이라 **참/거짓을 코드로 판정할 수 없다.**
+#      **순수 운영자 판단이다.**
+#
+# 따라서 아래 여섯 `true` 의 근거는 「코드가 성립을 보장한다」가 **아니라**
+# 「이 배포는 SYNTHETIC 합성 경로라 위반 경로가 없다고 판단한다」이다.
+# MOCK/실 브로커 경로를 켜는 순간 이 판단은 **다시 받아야 한다.**
+# =============================================================================
+
+numerically_safe:
+  attested: true
+valuation_ok:
+  attested: true
+all_fields_attributed:
+  attested: true
+limit_source_is_injected_envelope:
+  attested: true
+economic_commitment_exclusive:
+  attested: true
+flow_commitment_exclusive:
+  attested: true

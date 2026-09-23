@@ -1,0 +1,36 @@
+# =============================================================================
+# coordinator_preconditions.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §1 · §4.1
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/coordinator_preconditions.example.yaml
+# 로더: tos_runtime.compose._preconditions.load_coordinator_preconditions_config
+#       (compose/_preconditions.py:124)
+# 호출부: compose/_finalize_wiring.py:152 (무조건)
+# =============================================================================
+
+# [S] ⚠ 제안표 §1 — 로더가 받는 값이 **하나뿐**이다:
+# compose/_preconditions.py:94 의 `_SUPPORTED_LIVE_AUTHORIZATION_STATES =
+# {"NOT_AUTHORIZED"}`. 다른 값은 로더가 거부한다. tos-spec/src/AUTHORITY-STATUS.csv
+# 의 `restricted_live` 행도 이 값뿐이다.
+#
+# ⚠ **이 값은 「실거래 절대 금지」가 코드로 서는 자리다.** 미래에
+# `_SUPPORTED_...` 집합이 넓어지는 변경이 있을 때 이 값이 잘못 바뀌면 유일한
+# 게이트가 무너진다. 값 자체는 선택지가 없지만 **감시 대상**으로 둔다.
+# (CLAUDE.md 비협상 규칙: 실전 선물 계좌는 절대 미펀딩 · 실주문 경로는
+#  정책상 영구 차단.)
+live_authorization_state: "NOT_AUTHORIZED"
+
+# [O] ⚠ 제안표 §4.1 — `broker_scopes.yaml::active_scope` 가 SYNTHETIC 이면
+# **이 자세는 아예 평가되지 않는다**(게이트 ②가 먼저 통과시킨다 —
+# compose/_preconditions.py 모듈 독스트링). `true` 로 둘 이유가 없고 `false` 가
+# **더 좁은** 태세다. MOCK 전송을 켤 때 별도 승인으로 바꾼다.
+nonlive_broker_consuming:
+  admitted: false
