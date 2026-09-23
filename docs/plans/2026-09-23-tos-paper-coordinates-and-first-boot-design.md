@@ -55,9 +55,19 @@
    - `finality.yaml::proof_recipe_id` = 추천값이 없다(ADR-002-030 §29 Q3 미결 · 09-12 §5 등급 M). 운영자 선택 (가)의 **부팅 증명 픽스처
      규율**로 불투명 토큰 `tos-paper-proof-recipe-bootproof-g1` 을 **커밋 파일에** 넣고 헤더에 「부팅 증명 픽스처 — 승인된 recipe 아님」.
    - `finality.yaml::value_date` = `T+1` 을 **커밋 파일에** 직접 기입(운영자 결정 3 — 좌표가 아니라 정책).
-6. **`safety_activation.yaml::members` 도출**(review-795 HIGH-2): 좌표 치환 뒤 렌더 디렉터리에 대고
-   `print-policy-digests --config-dir <출력>` 를 실행하고, 그 출력 4-튜플을 렌더된 `safety_activation.yaml::members` 에 기입한다
-   (손으로 적지 않는다 — 채택 계획 §2 결정 3). 좌표가 digest 에 들어가므로 이 값은 **호스트마다 다르고 커밋될 수 없다** — 렌더 산출물이다.
+6. **`safety_activation.yaml::members` 도출**(review-795 HIGH-2 · 2차 HIGH-신1): 좌표 치환 뒤 렌더 디렉터리에 대고
+   `print-policy-digests --config-dir <출력>` 를 실행한다. 출력은 **정책 종류마다 한 줄**이고(`compose/cli.py:671-703` — 이 배포는
+   `VENUE_CONSTRAINT_POLICY` · `ORDER_CONSTRUCTION_POLICY` · `AGGREGATE_RISK_POLICY` · `ACTION_FLOW_POLICY` **네 종류**가 모두 있다),
+   `members` 는 그 줄마다 **항목 하나, 필드 여섯 개**를 요구한다(`venue/activation.py:22-31` · `tos/src/tos/spg/records.py::BundleMemberRef`):
+   `kind` · `member_id` · `generation` · `digest` 는 출력에서 옮기고, **`resolved: true` · `immutable: true` 는 출력에 없으므로 상수로
+   기입**한다(09-16 정책 파일 헤더가 적은 절차 그대로 — 예: `venue_constraint_policy.yaml:36-37` 「resolved: true, immutable: true」).
+   종료 검사: 기입 뒤 `load_activation_members` 가 네 항목을 모두 활성으로 읽고, 네 정책 로더의 digest 대조가 통과해야 한다 —
+   항목이 셋이거나 필드가 빠지면 렌더 스크립트가 **거부**한다(핀). 손으로 적지 않는다(채택 계획 §2 결정 3). 좌표가 digest 에
+   들어가므로 이 값은 **호스트마다 다르고 커밋될 수 없다** — 렌더 산출물이다.
+   **호출 방식**(2차 MEDIUM-신3): `scripts/` 는 `tos` 를 import 할 수 없다(비대칭 import 방화벽 — `tos/` 밖은 `tos` 금지).
+   그래서 `print-policy-digests` 는 **서브프로세스**로 부른다 — 부팅 명령과 같은 `python -c 'import sys;from tos_runtime.compose.cli
+   import main;sys.exit(main(sys.argv[1:]))'` 관례, `PYTHONPATH=tos/src:tos/runtime/src`. 방화벽 AST 검사는 문자열 인자를 import 로
+   보지 않는다.
 7. 출력 디렉터리에 `RENDERED.json`(원본 커밋 SHA · 치환한 칸 목록 · 계좌 지문 · 종목 · `print-policy-digests` 출력 · 생성 시각 KST) 기록.
 8. `--check` 모드: 출력 디렉터리와 원본을 비교해 **규칙이 지목한 칸 외 차이 0** 이면 0, 아니면 1.
 
@@ -70,7 +80,7 @@
 | 계좌 원천이 모의 파일 | `--env-file .env` 또는 `.env.real` 지정 → 거부. CLI 는 파일 이름이 정확히 `.env.mock` 인 경로만 받는다 — **테스트용 우회 플래그는 두지 않는다**(review-795 MEDIUM-4). 테스트는 CLI 가 아니라 내부 함수 `render(source, out, *, account, instrument, revision)` 을 직접 부르고, 그 함수는 env 파일을 읽지 않는다. 핀: `main(["--env-file", "<tmp>/.env"])` → 종료코드 2 |
 | 계좌 형식 | 하이픈을 뺀 숫자가 10자리가 아니면 거부(`.env.mock` 선물 계좌는 하이픈 포함 형태 — 원형 그대로 치환하지 않고 로더가 받는 형태로 정규화, 구현 PR 이 로더 입력 형식을 실측해 정한다) |
 | 출력이 저장소 밖 | 출력 경로가 저장소 작업트리 안이면 거부 |
-| 렌더가 저장소에 아무것도 남기지 않는다 | (review-795 HIGH-3 — 이전 문구가 인용한 「저장소 전체 비밀값 grep 가드」는 **존재하지 않았다**.) 테스트가 저장소 사본(임시 디렉터리 `git clone`) 안에서 스크립트를 실제 CLI 로 실행한 뒤 `git status --porcelain --ignored` 가 **실행 전과 같음**을 단정한다. 출력 경로 검사를 지우거나 출력을 저장소 안 경로로 바꾸는 뮤테이션 → 새 파일이 생겨 RED. 테스트의 계좌는 가짜 값 `9999999999` 뿐 |
+| 렌더가 저장소에 아무것도 남기지 않는다 | (review-795 HIGH-3 — 이전 문구가 인용한 「저장소 전체 비밀값 grep 가드」는 **존재하지 않았다**.) 테스트가 저장소 사본(임시 디렉터리 `git clone`) 안에서 스크립트를 실제 CLI 로 실행한 뒤 `git status --porcelain --ignored` 가 **실행 전과 같음**을 단정한다. 바이트코드 오탐을 막기 위해 스크립트와 그 서브프로세스를 모두 `PYTHONDONTWRITEBYTECODE=1`(+ `python -B`)로 실행한다(2차 MEDIUM-신2 — `__pycache__/` 는 gitignore 대상이라 `--ignored` 에 잡힌다). 출력 경로 검사를 지우거나 출력을 저장소 안 경로로 바꾸는 뮤테이션 → 새 파일이 생겨 RED. 테스트의 계좌는 가짜 값 `9999999999` 뿐 |
 
 **부팅 명령**(런북에 기록):
 
