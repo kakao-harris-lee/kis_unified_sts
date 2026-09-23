@@ -16,7 +16,33 @@
 # 호출부: compose/_safety_wiring.py:516 (`build_safety_mesh`, 무조건)
 # =============================================================================
 #
-# ⚠ **`governed_dimensions` 가 비어 있다는 것의 의미.**
+# =============================================================================
+# [2026-09-23 운영자 승인 — W-A / A-5] `governed_dimensions` 1건 채택
+# =============================================================================
+# **운영자 결정 2026-09-23: Hard Safety Envelope 가
+# `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` 을 `envelope_max = 1`(계약)로 지배한다.**
+# 이것은 **승인된 안전 값**이지 부팅 증명 픽스처가 아니다 — 아래 「빈 것이 사실이다」
+# 블록은 2026-09-23 승인 **이전** 상태의 기록으로 남긴다.
+#
+# 승인 근거(요구가 이미 문서에 적혀 있었다):
+#   * `aggregate_risk_policy.yaml:74` `compatibility_requirements` —
+#     「HSE must govern INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL with envelope_max ≥ 1」
+#   * 그 정책 자신의 이미 승인된 유효 한도 = 1
+#     (`aggregate_risk_policy.yaml:111` `_runtime.effective_limits`), 그리고 OCP 사이징의
+#     `max_quantity: 1`(`order_construction_policy.yaml` `_runtime.construction.sizing`) —
+#     즉 1 은 새 판단이 아니라 이 배포가 이미 승인한 「정확히 한 계약」이다.
+#   * 이 값이 없으면 compose 가 부팅 전에 거부한다(`compose/_riskstate_wiring.py:101-107`
+#     `RiskPolicyScopeMismatch`).
+#
+# ⚠ **봉투에 차원을 선언하면 프로파일도 같은 차원을 선언해야 한다.**
+# `tos.spg.predicates.profile_within_envelope`(`spg/predicates.py:266-296`)는 (a) 지배
+# 차원이 0개인 봉투를 **무권한**으로 보고 어떤 프로파일도 지배하지 못하게 하며(:274-277),
+# (b) 봉투가 선언한 차원을 프로파일이 **누락**하면 거부한다(:278-283). 그래서
+# `safety_profile.yaml` 에 같은 차원의 `profile_value` 를 함께 기입했다 — 그 값은 위와
+# 같은 이미 승인된 유효 한도 1 이다. (부수 사실: **2026-09-23 이전의 「둘 다 빈」 상태는
+# 이 술어를 통과할 수 없었다** — :274-277 이 빈 봉투를 명시적으로 거부한다.)
+#
+# ⚠ **`governed_dimensions` 가 비어 있다는 것의 의미** (2026-09-23 승인 이전 기록).
 # 제안표 §4.3: 「`governed_dimensions` · `permitted_scope` · `prohibited_fallbacks`
 # … — **아직 지배할 차원도, 기록된 승인도, 발생한 이탈·사고도 없다. 빈 것이
 # 사실이다.** 있는 척 채우지 않는다.」 이 봉투가 지배하는 차원이 0개라는 것은
@@ -49,8 +75,31 @@ envelope:
     expiration_or_revalidation_date: null
     superseded_version_link: null
     change_classification: null
-  # 제안표 §4.3 — 빈 것이 사실이다.
-  governed_dimensions: []
+  # 운영자 승인 2026-09-23 (위 블록). 필드 의미: tos/src/tos/spg/records.py:87-115
+  # `GovernedDimensionLimit` — 봉투 쪽은 `envelope_max` 를 싣고 `profile_value` 는 비운다.
+  governed_dimensions:
+    # dimension: ARE 의 `_runtime.dimension_ids` 가 쓰는 **합성 id 철자** 그대로
+    # (aggregate_risk_policy.yaml:107-110). `compose/_riskstate_wiring.py:101-107` 가
+    # 이 철자로 대조한다 — `_model_view.governed_dimensions` 의 무접두 철자가 아니다.
+    - dimension: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
+      # 운영자 결정 2026-09-23 — 1 계약.
+      envelope_max: "1"
+      # aggregate_risk_policy.yaml:100 `_runtime.unit`.
+      unit: "CONTRACTS"
+      # 이하 4개는 크기와 분리해 보존해야 하는 별개 안전 필드다(records.py:87-104 —
+      # 절대 하나의 토큰으로 합치지 않는다). 형태는 이 저장소의 유일한 작동 예제
+      # (tos/runtime/tests/compose/conftest.py `_governed_dimension_entry`)를 따른다.
+      multiplier: "1"
+      sign: "POSITIVE"
+      # CONTRACTS 는 정수 계약 수다(venue_constraint_policy.yaml lot_size/min_quantity 1).
+      precision: "0"
+      rounding: "NEAREST"
+      # ⚠ **INCLUSIVE 여야 한다.** `aggregate_risk_policy.yaml:74` 의 요구가
+      # 「envelope_max **≥ 1**」이고 이 배포가 거래하는 유일한 수량이 1 계약이다.
+      # `_exceeds_envelope_maximum`(spg/predicates.py, 술어 독스트링 :229-232)는
+      # EXCLUSIVE 경계에서 `value == max` 를 거부하므로, EXCLUSIVE 로 두면 이 봉투는
+      # **아무 것도 허용하지 않는다**.
+      boundary: "INCLUSIVE"
   permitted_scope: []
   prohibited_fallbacks: []
   residual_risk_ceiling: null

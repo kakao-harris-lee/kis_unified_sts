@@ -150,7 +150,51 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 `fields[].max_age_ms` 는 이 저장소에서 실제로 틱을 발행시킨 유일한 실측 조합
 (`tos/runtime/tests/compose/test_marketfeed_wiring.py:40-45`)을 그 자리의 근거 문장과 함께 인용했다.
 
-### 남은 거부 3건 (실측, 2026-09-23)
+### 2차 (2026-09-24) — review-797 조치 · 운영자 결정 2건 반영
+
+리뷰 판정 HIGH 2 · MEDIUM 3 · LOW 6 을 전건 처분했고, **운영자 결정 2건이 아래 거부 ②③을
+닫았다.** 상세는 상위 계획 §7.8.4.
+
+- **HIGH-1 (거짓 주장 정정).** 1차가 네 곳에 적은 「marketfeed 로더는 문자열 `"TBD"` 를
+  거부하지 않는다(실측)」는 **거짓이었다** — 실제로 로드하지 않고 메시지 문자열만 훑은
+  결과였다. `_marketfeed_wiring._require_str` 는 `reject_named_tbd` 를 부르고(:200-202),
+  `_require_instruments` 도 항목마다 부른다(:228-232). `d2a36d22` 가 이미 닫은 부류다.
+  **재측정** 후 네 곳을 정정하고, 좌표 칸 placeholder 를 **전 파일 `"TBD"` 로 통일**했다
+  (파일마다 형태가 갈릴 근거가 애초에 없었다).
+- **HIGH-2 · MEDIUM-1 (라벨).** **운영자 결정: 부팅 라벨은 `paper`.**
+  `critical_input_policy.yaml::environment` 를 같은 토큰으로 맞추고, 런북이 라벨을
+  「고르지 않는다」고 쓰면서 `LABEL=paper` 를 박고 있던 모순을 없앴다. `paper` 가
+  `_LIVE_ENVIRONMENT_LABELS` 소속이라는 것과 그 구체적 귀결(`restore-drill` 거부)을
+  런북에 적었다.
+- **MEDIUM-2 (실패한 렌더의 잔여물).** 렌더를 **원자적**으로 바꿨다 — 형제 스테이징
+  디렉터리에서 조립하고 성공 시에만 옮긴다. 어떤 실패든 스테이징을 지우므로 **계좌가
+  채워진 디렉터리가 남지 않고**, 그래서 재실행도 막히지 않는다.
+- **MEDIUM-3 (결함 ① 범위).** 리뷰의 「부류다」는 맞고, 예시는 틀렸다. **재측정**:
+  `_COVERED_FIELDS` 보유 모델 **120** 중 집합 보유 **19**, 그중 **6 은 이미
+  `covered_content()` 를 오버라이드해 정렬한다**(`tos/src/tos/cur/records.py:44-49` 가
+  이유를 그대로 적는다 — 설계 #23 §3.1). 실제 영향은 **13**이고,
+  리뷰가 든 `CurrentnessPolicy.required_dimensions` 는 **그 6에 속해 영향 없다**(해시 시드
+  6개로 digest 불변 실측). 타입 스캔만으로는 과대 보고된다 — **수정 패턴은 커널에 이미
+  있다.** 부류 전체를 이름으로 고정하는 테스트를 추가했다.
+- **LOW 6건** 전부 조치(인용 오귀속 `test_run_e2e.py:58` · `records.py:425` ·
+  지문의 가역성 명시 · 인라인 주석 처리 + 테스트 · 아래 「신설」 문구 정정 ·
+  DIRECTION 이 정본 covered content 밖이라는 한계 명시).
+
+**LOW-5 정정**: 위 §4 1항의 「`tests/unit/scripts/` **신설**」은 사실이 아니다 —
+`origin/main` 에 이미 그 디렉터리와 10개 이상의 테스트 파일이 있다. 이 PR 은 그 안에
+파일 하나를 **추가**했다.
+
+### 거부 ②③ — **운영자 결정·승인으로 해소 (2026-09-23)**
+
+- **② 부팅 라벨 = `paper`**(운영자 결정). 채택된 정책 문서들이 이미 선언한 값이다.
+- **③ HSE 가 `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` 을 `envelope_max = 1`(계약)로
+  지배**(운영자 승인). 요구는 `aggregate_risk_policy.yaml:74` 에 이미 있었고, 1 은 그
+  정책의 이미 승인된 유효 한도(`:111`)다. 봉투에 차원을 선언하면 프로파일도 같은 차원을
+  선언해야 하므로(`spg/predicates.py:278-283`) `safety_profile.yaml` 에
+  `profile_value: "1"` 을 함께 기입했다 — 부수 실측: **1차의 「둘 다 빈」 상태는 그 술어를
+  통과할 수 없었다**(`:274-277` 이 빈 봉투를 무권한으로 거부한다).
+
+### 남은 거부 (실측, 2026-09-24) — **①만 남았다**
 
 1. ⛔ **`VenueConstraintPolicy.canonical_digest` 가 프로세스마다 다르다.** `_COVERED_FIELDS`
    (`tos/src/tos/venue/records.py:406-416`)의 frozenset 필드들(`:424`, `:165-168`)이
@@ -162,17 +206,14 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
    활성화 재확인 — 부팅과 동형)가 이것을 즉시 거부한다. 기존 테스트는 전부 한 프로세스
    안에서 계산·검증해 드러나지 않았다. **정본 직렬화 변경은 이 설계의 범위 밖**이라 고치지
    않고 지목한다.
-2. `venue_constraint_policy.yaml:55` `environments: ["paper"]` ≠ §2 부팅 명령의
-   `--environment-label non-live-test` (`VenuePolicyScopeMismatch`). 어느 라벨로 부팅할지는
-   운영자 결정 — `paper` 는 `cli.py:215` `_LIVE_ENVIRONMENT_LABELS` 에 속한다.
-3. `safety_envelope.yaml::governed_dimensions: []` ≠ `aggregate_risk_policy.yaml:74` 이 요구하는
-   `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` (`RiskPolicyScopeMismatch`). 그 파일 헤더가 이미
-   「별도 안전 승인 사안」이라 적는다 — **안전 한도이므로 채우지 않았다.**
+2. ~~`scope.environments` vs 부팅 라벨~~ → **해소**(운영자 결정: `paper`).
+3. ~~`safety_envelope.yaml::governed_dimensions: []`~~ → **해소**(운영자 승인:
+   `envelope_max = 1` 계약).
 
 ### LONG·SHORT 양방향 증거 (§3 (가) 가 요구한 것)
 
-세 거부를 **진단 목적으로만**(해시 시드 고정 · 라벨 `paper` · 스크래치 사본에 봉투 차원 1건
-추가 — 커밋 파일은 그대로) 통과시키면, LONG·SHORT **두 구성 모두**:
+2차(2026-09-24) 기준으로 ②③은 커밋 파일이 닫았고, 남은 ①만 **진단 목적으로**(해시 시드
+고정) 통과시키면 LONG·SHORT **두 구성 모두**:
 
 - `run` 이 거부 없이 부팅해 `run_forever` 에 들어가고, SIGTERM 에 `run: stopped (signal received).`
   **종료코드 0** 으로 정지한다.

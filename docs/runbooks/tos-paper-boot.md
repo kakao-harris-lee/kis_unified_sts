@@ -4,14 +4,16 @@
 - 설계: `docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md`
   (운영자 결정 1·3 · 운영자 선택 (가), 2026-09-23) · 상위 계획
   `docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` §7.8.
-- 실측 시점: 2026-09-23, main `b5bb5eb5` 기준 브랜치 `feat/tos-paper-render-and-first-boot`.
+- 실측 시점: 2026-09-23 (1차) · **2026-09-24 재측정/정정 (review-797 조치)**, main
+  `b5bb5eb5` 기준 브랜치 `feat/tos-paper-render-and-first-boot`.
 
 > ## ⛔ 이 런북은 아직 **끝까지 가지 못한다**
 >
-> 아래 §5 가 실측 차단 3건을 이름으로 적는다. **①은 이 절차 자체를 무효화하는 결함이고,
-> ②③은 값/승인 문제다.** §2~§4 의 명령은 정확하고 재현 가능하지만, ① 때문에 §3 의
-> 렌더는 **정상적으로 거부된다.** 그 거부를 우회하는 방법을 이 런북은 제공하지 않는다 —
-> 그것이 정직한 상태다.
+> §5 가 실측 상태를 이름으로 적는다. **②③은 운영자 결정·승인으로 2026-09-23 해소됐다.**
+> 남은 것은 **①(정본 digest 가 프로세스마다 다르다)** — 이 절차 자체를 무효화하는 커널
+> 결함이고, 그래서 §2 의 렌더는 **정상적으로 거부된다.** 그 거부를 우회하는 방법을 이
+> 런북은 제공하지 않는다 — 그것이 정직한 상태다. ①이 닫히면 `run` 은 부팅한다(실측).
+> 그 뒤에도 **틱은 ④(캘린더 만기 공백) 때문에 대부분의 날짜에 소비되지 않는다.**
 
 ## 0. 이 배포가 무엇이고 무엇이 아닌가
 
@@ -75,9 +77,19 @@ cd /home/deploy/project/kis_unified_sts
 - 종목은 실행 당일 `shared.instruments.futures.get_front_month_code(product="mini")` 로
   뽑는다(만기마다 바뀌므로 파일에 고정하지 않는다). `--instrument` 로 고정 가능.
 - 계좌번호는 **어디에도 출력되지 않는다.** 로그와 `RENDERED.json` 에는
-  `account_fingerprint`(`tools/broker_probes/common.py` 와 같은 salt-free SHA-256 상위 12자)만.
+  `account_fingerprint`(`tools/broker_probes/common.py:220-225` 와 같은 값)만.
+  ⚠ 그 지문은 **상관자이지 마스킹이 아니다** — 무염 SHA-256 을 12 hex 로 자른 값이고
+  입력 공간이 10자리 숫자(10^10)라 역산된다. 저장소 밖 0700 디렉터리 안에만 두고,
+  **유출된 지문은 유출된 계좌번호로 취급한다.**
 - 저널(`bootproof_journal.jsonl`)은 **렌더 시점에 생성**되고 관측 시각이 그때로 고정된다.
   → **부팅 직전에 렌더한다.** 오래된 렌더로 부팅하면 신선도 한도를 넘겨 값이 UNKNOWN 이 된다.
+
+**실패한 렌더는 아무것도 남기지 않는다**(review-797 MEDIUM-2). 렌더는 형제 스테이징
+디렉터리(`.<name>.partial-<pid>`)에서 조립하고 **성공했을 때만** `--out` 자리로 옮긴다.
+어떤 실패든(①의 거부 포함 · `Ctrl-C` 포함) 스테이징을 지우므로 **계좌 좌표가 채워진
+디렉터리가 뒤에 남지 않는다.** 그래서 재실행도 막히지 않는다.
+혹시 이전 판으로 만든 반쪽 산출물이 남아 있다면(비어 있지 않은데 `RENDERED.json` 이 없는
+디렉터리) 렌더가 거부하면서 지울 경로를 알려 준다 — `rm -rf <그 경로>` 후 재실행한다.
 
 렌더 결과 확인(좌표 칸 외 차이 0):
 
@@ -146,16 +158,33 @@ members[0]: digest '<B>' != '<A>'
 | 지점 | 사실 |
 |---|---|
 | `tos/src/tos/venue/records.py:406-416` | `VenueConstraintPolicy._COVERED_FIELDS` 에 `required_constraint_classes`·`shape_constraints` 포함 |
-| `tos/src/tos/venue/records.py:424` · `:165-168` | 그 둘이 `frozenset[ConstraintClass]` · `allowed_order_types`/`allowed_tifs`/`allowed_sides`/`allowed_position_effects` (전부 frozenset) |
+| `tos/src/tos/venue/records.py:425` · `:165-168` | 그 둘이 `frozenset[ConstraintClass]` · `allowed_order_types`/`allowed_tifs`/`allowed_sides`/`allowed_position_effects` (전부 frozenset). (`:424` 는 그 필드가 아니라 바로 위 `#:` 주석 줄이다 — review-797 LOW-2 정정) |
 | `tos/src/tos/canonical/_base.py:187` | `covered_content()` = `model_dump(mode="json", …)` → frozenset 이 **집합 순회 순서 그대로의 리스트**가 된다 |
 | `tos/src/tos/canonical/canonicalization.py:148-149,174-176` | `_encode` 는 시퀀스를 **순서 유의미**로 취급한다("sequence order is preserved (vectors are order-significant)") |
 | `tos/src/tos/venue/vocabulary.py:169` | `ConstraintClass` 는 `StrEnum` → 순회 순서가 프로세스별 문자열 해시 시드를 따른다 |
 
 즉 **「`print-policy-digests` 를 돌려 digest 를 `members` 에 옮겨 적는다」는 문서화된 운영자
-절차가 이 한 종류에서는 성립하지 않는다.** 나머지 네 종류(OCP/ARE/AFG/CIP)는 covered
-필드에 집합이 없어 안정적이다. 기존 테스트가 전부 **한 프로세스 안에서** 계산·검증해서
+절차가 성립하지 않는다.** 기존 테스트가 전부 **한 프로세스 안에서** 계산·검증해서
 드러나지 않았다(`tests/compose/test_deploy_policies.py::_install_real_policies` 주석:
 "the `print-policy-digests` step, done **in-process**").
+
+**범위 — 이것은 한 모델의 문제가 아니라 부류다**(2026-09-24 실측, review-797 MEDIUM-3):
+
+| 수 | 무엇 |
+|---|---|
+| **120** | `_COVERED_FIELDS` 를 가진 정본 모델 전체 |
+| **19** | covered content 에 `set`/`frozenset` 을 가진 모델(중첩 포함) |
+| **6** | 그중 **이미 정렬한다** — `covered_content()` 를 오버라이드한다. `tos/src/tos/cur/records.py:44-49` 가 이유를 그대로 적는다: 「`model_dump(mode="json")` 가 frozenset 을 **순서 없는** 리스트로 만들고 정본화기는 시퀀스 순서를 보존하므로 `covered_content` 가 각 집합 필드를 **정렬**해 프로세스 간 결정적이 되게 한다」(설계 #23 §3.1). `cur`/`wdr`/`sir`/`rlp` 계열 |
+| **13** | 정렬하지 않는다 = digest 가 프로세스 의존. `brokercap.BrokerCapabilityProfile` · `hag` 4종 · `liveauth` 2종 · `sbr` 3종 · `posttrade.StatementCoverageManifest` · `venue.OrderAdmissibilityDecision` · **`venue.VenueConstraintPolicy`** |
+
+이 배포가 오늘 digest 를 계산하는 13종은 `VenueConstraintPolicy` 하나뿐이다. 찍히는 나머지
+네 종류(OCP/ARE/AFG/CIP)는 covered 필드에 집합이 **아예 없어** 안정적이다 — 그것은 찍히는
+다섯 종류에 대한 진술이지 커널 전체에 대한 진술이 아니다.
+
+⚠ **고치는 사람을 위한 주의**: `CurrentnessPolicy.required_dimensions` 는 타입만 보면
+영향권처럼 보이고 이 배포도 그 값을 채택했지만(`currentness.yaml`, PR #794), **정렬하는
+6종에 속한다** — 해시 시드 6개로 digest 불변을 실측했다. 타입 스캔만으로는 과대 보고된다.
+**수정 패턴은 커널에 이미 있다**(위 `cur` 오버라이드).
 
 **처분: 이 아크의 설계 범위 밖이다.** 정본 직렬화의 의미를 바꾸는 것은 구현이 아니라
 설계 PR 이다. `tests/unit/scripts/test_render_paper_config.py::
@@ -164,23 +193,45 @@ test_venue_policy_canonical_digest_is_not_reproducible_across_processes` 가 이
 RED 가 되고, 그때 같은 파일의 `pinned_hash_seed` 픽스처를 지우는 것이 수용 기준이다.
 `PYTHONHASHSEED` 를 맞춰 통과시키는 것은 **진단이지 절차가 아니다.**
 
-### ② `scope.environments: ["paper"]` vs `--environment-label non-live-test`
+### ② ✅ 부팅 라벨 — **해소됨 (운영자 결정 2026-09-23: `paper`)**
+
+1차 판에서는 이것이 거부였다:
 
 ```text
 run: refused — compose_paper_runtime raised VenuePolicyScopeMismatch:
 venue policy scope.environment 'paper' != this compose root's environment_label 'non-live-test'
 ```
 
-- 파일: `config/tos_runtime/paper/venue_constraint_policy.yaml:55` (`environments: ["paper"]`)
-  · 대조: `tos_runtime/compose/_venue_wiring.py` `_cross_check_scope`.
-- 설계 §2 의 부팅 예시가 쓰는 라벨은 `non-live-test` 인데, 채택된 정책 문서가 선언한
-  환경은 `paper` 다. 위 §1·§3 이 `LABEL=paper` 를 쓰는 이유다.
-- ⚠ 다만 `paper` 는 `tos_runtime/compose/cli.py:215` 의 `_LIVE_ENVIRONMENT_LABELS`
-  (`{"paper","restricted-live","production"}`)에 들어 있다 — `restore-drill` 은 그 라벨을
-  거부한다(`cli.py:816`). `run` 에는 그 검사가 걸려 있지 않지만, **어느 라벨로 부팅할지는
-  운영자 결정 사항**이다. 이 런북은 둘 중 하나를 고르지 않고 불일치를 지목한다.
+**운영자가 `paper` 로 결정했다(2026-09-23).** 그래서 §1·§3 이 `LABEL=paper` 를 쓰고,
+`critical_input_policy.yaml::environment` 도 같은 토큰으로 맞췄다. 이 런북은 이제 라벨을
+**고른다** — 1차 판의 「이 런북은 둘 중 하나를 고르지 않는다」는 문장은 같은 문서가 이미
+`LABEL=paper` 를 박고 있었으므로 그 자리에서 거짓이었다(review-797 MEDIUM-1).
 
-### ③ `safety_envelope.yaml::governed_dimensions: []`
+왜 `paper` 인가: 채택된 정책 문서들이 이미 그 환경을 선언한다 —
+`venue_constraint_policy.yaml:55` · `order_construction_policy.yaml:88`
+`environments: ["paper"]`, 그리고 compose 가 부팅 시점에 대조한다
+(`tos_runtime/compose/_venue_wiring.py` `_cross_check_scope`).
+
+⚠ **이 라벨이 무엇을 바꾸는지 알고 쓸 것.** `paper` 는
+`tos_runtime/compose/cli.py:215` 의 `_LIVE_ENVIRONMENT_LABELS`
+(`{"paper","restricted-live","production"}`) 소속이다. 구체적 귀결:
+
+- `restore-drill` 은 이 라벨로 **실행을 거부한다**(`cli.py:816` — 「drills only ever run
+  under a non-live label」). 복구 드릴을 돌리려면 비라이브 라벨의 별도 배포가 필요하다.
+- `run` 자체에는 그 검사가 없다. 그리고 이 배포의 실제 스코프는 여전히
+  `SYNTHETIC_FUTURES_ORDER`(브로커 미도달)라 **라벨이 라이브 분류라는 것과 실제로
+  주문이 나간다는 것은 다른 얘기다** — 라벨은 문서 스코프 일치용이고, 주문 도달 여부는
+  `broker_scopes.yaml::active_scope` 가 정한다.
+- 커스터디 매니페스트의 `environment_label` 도 같은 값이어야 한다(§1).
+
+⚠ **로더는 `critical_input_policy.yaml::environment` 를 부팅 라벨과 대조하지 않는다**
+(실측). 그 토큰은 발행되는 모든 스냅샷·캡슐의 covered content 로 들어가므로
+(`marketfeed/snapshot.py:283`), 둘이 갈리면 **증거가 조용히 틀린 라벨을 단다.** 지금은
+둘 다 `paper` 이고, 라벨을 바꾸려면 **두 곳을 같이** 바꿔야 한다.
+
+### ③ ✅ Hard Safety Envelope 지배 차원 — **해소됨 (운영자 승인 2026-09-23)**
+
+1차 판에서는 이것이 거부였다:
 
 ```text
 run: refused — compose_paper_runtime raised RiskPolicyScopeMismatch: aggregate risk policy
@@ -189,12 +240,17 @@ Envelope's own governed_dimensions [] does not declare — every ARE-governed di
 have a real envelope ceiling
 ```
 
-- 파일: `config/tos_runtime/paper/safety_envelope.yaml` (`governed_dimensions: []`) ·
-  요구: `config/tos_runtime/paper/aggregate_risk_policy.yaml:74`
-  ("HSE must govern INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL with envelope_max ≥ 1").
-- **의도된 상태다.** 그 봉투 파일 자신의 헤더가 「그 차원의 구체적 한도는 제안표에 행이
-  없다(승인 대상이 아니라 **별도 안전 승인 사안**) … 그래서 그 경로는 보수적으로 막힌다」
-  라고 적는다. 안전 한도이므로 **이 아크에서 채우지 않는다.**
+**운영자가 승인했다(2026-09-23): HSE 가 `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` 을
+`envelope_max = 1`(계약)로 지배한다.** 요구 자체는 이미 문서에 있었다 —
+`aggregate_risk_policy.yaml:74` 「HSE must govern … with envelope_max ≥ 1」 — 그리고 1 은
+그 정책의 이미 승인된 유효 한도(`:111`)이자 OCP 사이징의 `max_quantity: 1` 이다.
+
+`config/tos_runtime/paper/safety_envelope.yaml` 에 차원을,
+`safety_profile.yaml` 에 같은 차원의 `profile_value: "1"` 을 함께 기입했다 — 프로파일이
+봉투의 선언 차원을 **누락하면** `profile_within_envelope` 가 거부하고
+(`spg/predicates.py:278-283`), **빈 봉투 자체**도 무권한으로 거부된다(`:274-277`). 즉
+1차 판의 「둘 다 비었다」 상태는 정합이 아니라 어느 쪽으로도 통과 불가였다. 경계는
+`INCLUSIVE` 여야 한다 — EXCLUSIVE 면 `value == max` 가 거부돼 1 계약이 통과하지 못한다.
 
 ### ④ 틱은 세션/만기 게이트에 막힌다 (값 문제 아님)
 
@@ -229,6 +285,19 @@ print(rt.session_facts.session_context("krx-index-futures"))
 print(rt.marketfeed.tick_once().outcome.value)
 PY
 ```
+
+### ⑤ 활성화 기록은 **방향을 결속하지 않는다** (알려진 한계)
+
+LONG 렌더와 SHORT 렌더는 `print-policy-digests` 가 찍는 5종 digest 가 **전부 바이트
+동일**하다 — `_runtime.construction.axes` 의 `DIRECTION` 과 `admitted_quantity_bases` 는
+OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 digest 를 `policy_id`/
+`policy_generation`/`policy_version` 에만 결속한다).
+
+귀결: `safety_activation.yaml::members` 활성화는 「이 배포가 어느 방향으로 구성됐는지」를
+**증명하지 않는다.** 이 배포에서 방향 일관성을 지키는 것은 (a) 렌더가 네 슬롯을 함께
+바꾸는 것과 (b) `tos/runtime/tests/compose/test_deploy_approved_values.py` 의 방향 일관성
+핀이지, digest 가 아니다. (review-797 LOW-6 · 이 PR 이 만든 문제가 아니라 `_runtime` 블록
+규약의 선행 성질이다.)
 
 ## 6. 정리
 

@@ -298,7 +298,23 @@ _VALUE_PINS: dict[str, Any] = {
     "safety_envelope.yaml::envelope.envelope_version.expiration_or_revalidation_date": None,
     "safety_envelope.yaml::envelope.envelope_version.superseded_version_link": None,
     "safety_envelope.yaml::envelope.envelope_version.change_classification": None,
-    "safety_envelope.yaml::envelope.governed_dimensions": [],
+    # Operator approval 2026-09-23 (W-A / A-5): the Hard Safety Envelope governs the ONE
+    # dimension the aggregate risk policy governs, at the bound that policy's own
+    # compatibility_requirements (:74) had been asking for — ``envelope_max >= 1``, and 1 is
+    # that policy's already-approved effective limit (:111). INCLUSIVE because an EXCLUSIVE
+    # boundary rejects ``value == max``, i.e. would authorize nothing at 1 contract.
+    "safety_envelope.yaml::envelope.governed_dimensions": [
+        {
+            "dimension": "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            "envelope_max": "1",
+            "unit": "CONTRACTS",
+            "multiplier": "1",
+            "sign": "POSITIVE",
+            "precision": "0",
+            "rounding": "NEAREST",
+            "boundary": "INCLUSIVE",
+        }
+    ],
     "safety_envelope.yaml::envelope.permitted_scope": [],
     "safety_envelope.yaml::envelope.prohibited_fallbacks": [],
     "safety_envelope.yaml::envelope.residual_risk_ceiling": None,
@@ -315,7 +331,23 @@ _VALUE_PINS: dict[str, Any] = {
     "safety_profile.yaml::profile.profile_version.change_classification": None,
     "safety_profile.yaml::profile.target_envelope_id": "tos-paper-envelope-g1",
     "safety_profile.yaml::profile.target_envelope_generation": 1,
-    "safety_profile.yaml::profile.governed_dimensions": [],
+    # The profile MUST declare every envelope-declared dimension — ``profile_within_envelope``
+    # (``spg/predicates.py:278-283``) refuses a profile that omits one, and ``:274-277``
+    # refuses an empty envelope outright, so the pre-2026-09-23 "both empty" pair could not
+    # pass that predicate either. ``profile_value`` is the exact operating value = the same
+    # approved effective limit.
+    "safety_profile.yaml::profile.governed_dimensions": [
+        {
+            "dimension": "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            "profile_value": "1",
+            "unit": "CONTRACTS",
+            "multiplier": "1",
+            "sign": "POSITIVE",
+            "precision": "0",
+            "rounding": "NEAREST",
+            "boundary": "INCLUSIVE",
+        }
+    ],
     "safety_profile.yaml::profile.scope": [],
     "safety_profile.yaml::profile.permitted_behaviors": [],
     "safety_profile.yaml::profile.fallback_rules": [],
@@ -1085,10 +1117,12 @@ def test_identifiers_follow_the_proposal_naming_rule(name: str, dotted: str) -> 
 @pytest.mark.parametrize(
     ("name", "dotted"),
     [
-        ("safety_envelope.yaml", "envelope.governed_dimensions"),
+        # ``envelope.governed_dimensions`` / ``profile.governed_dimensions`` left this list on
+        # 2026-09-23: the operator approved ONE governed dimension, so "빈 것이 사실이다" is no
+        # longer the fact about them. They are value-pinned in ``_VALUE_PINS`` instead, and
+        # ``test_envelope_and_profile_govern_the_are_dimension`` pins the pair's coherence.
         ("safety_envelope.yaml", "envelope.permitted_scope"),
         ("safety_envelope.yaml", "envelope.prohibited_fallbacks"),
-        ("safety_profile.yaml", "profile.governed_dimensions"),
         ("safety_activation.yaml", "activation.approval_ids"),
         ("safety_activation.yaml", "activation.compatibility_attestation_refs"),
         ("safety_deviations.yaml", "deviations.applicable_decision_ids"),
@@ -1291,9 +1325,16 @@ def test_construction_price_field_keys_match_the_deployed_critical_input_policy(
 # is exactly how a value drifts unnoticed:
 #   1. a completeness gate — every leaf pinned, no silent additions;
 #   2. every coordinate slot's UNRENDERED state pinned BY ITS OWN LOADER'S REFUSAL. That
-#      second one is the important half: the placeholder token differs per loader (the
-#      marketfeed loader refuses ``null`` but NOT the string ``"TBD"``), so a fixture that
-#      used the wrong placeholder would boot a phantom coordinate in silence.
+#      second one is the important half: a fixture whose placeholder its loader happened NOT
+#      to refuse would boot a phantom coordinate in silence, and no other test would notice.
+#
+# ⚠ Correction (2026-09-24, review-797 HIGH-1): this comment used to assert that "the
+# placeholder token differs per loader (the marketfeed loader refuses ``null`` but NOT the
+# string ``"TBD"``)". That was FALSE — read off a message string, never measured.
+# ``_marketfeed_wiring._require_str`` calls ``reject_named_tbd`` (:200-202) and
+# ``_require_instruments`` does the same per entry (:228-232), both since ``d2a36d22``. Every
+# coordinate slot in every fixture file now uses the same ``"TBD"`` token, and the pin below
+# is what keeps "its own loader refuses it" a measured fact rather than a belief.
 
 #: The fixture header sentence every one of these files must carry verbatim.
 _FIXTURE_SENTENCE = "부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23"
@@ -1313,9 +1354,11 @@ _BOOTPROOF_FIXTURE_FILES: tuple[str, ...] = (
 _UNRENDERED_PLACEHOLDERS: dict[str, Any] = {
     "construction.yaml::account": "TBD",
     "construction.yaml::instrument": "TBD",
-    "marketfeed.yaml::instruments": None,
-    "marketfeed.yaml::account": None,
-    "marketfeed.yaml::journal_path": None,
+    # A list of one "TBD": the list SHAPE is kept so a multi-symbol misconfiguration stays
+    # expressible (and therefore refusable) — marketfeed.example.yaml's own reasoning.
+    "marketfeed.yaml::instruments": ["TBD"],
+    "marketfeed.yaml::account": "TBD",
+    "marketfeed.yaml::journal_path": "TBD",
 }
 
 _FIXTURE_VALUE_PINS: dict[str, Any] = {
@@ -1331,9 +1374,9 @@ _FIXTURE_VALUE_PINS: dict[str, Any] = {
     "construction.yaml::price_field_key": "close",
     "construction.yaml::shape_price_field_key": "close",
     # --- marketfeed.yaml ---------------------------------------------------
-    "marketfeed.yaml::instruments": None,
-    "marketfeed.yaml::account": None,
-    "marketfeed.yaml::journal_path": None,
+    "marketfeed.yaml::instruments": ["TBD"],
+    "marketfeed.yaml::account": "TBD",
+    "marketfeed.yaml::journal_path": "TBD",
     "marketfeed.yaml::instrument_class": "krx-index-futures",
     "marketfeed.yaml::direction": "LONG",
     "marketfeed.yaml::quantity_basis": "RISK",
@@ -1350,7 +1393,11 @@ _FIXTURE_VALUE_PINS: dict[str, Any] = {
     "critical_input_policy.yaml::issuer_principal_id": (
         "tos-paper-critical-input-issuer-bootproof-g1"
     ),
-    "critical_input_policy.yaml::environment": "non-live-test",
+    # Operator decision 2026-09-23: this deployment's boot label is `paper`, the token the
+    # venue/OCP policies already declare. The loader does NOT cross-check it against
+    # --environment-label (measured), and it rides into every issued snapshot's covered
+    # content (marketfeed/snapshot.py:283) — so a drift here silently mislabels the evidence.
+    "critical_input_policy.yaml::environment": "paper",
     "critical_input_policy.yaml::decision_class": "entry",
     "critical_input_policy.yaml::intended_use": "entry-decision",
     # One entry per field the boot-proof strategy reads. `max_age_ms` is a FRESHNESS bound —
@@ -1449,13 +1496,18 @@ def test_bootproof_fixture_value_is_unchanged(ref: str) -> None:
 def test_unrendered_coordinate_slot_carries_the_placeholder_its_loader_refuses(
     ref: str,
 ) -> None:
-    """The placeholder FORM is per-loader, and picking the wrong one is silent.
+    """Every coordinate slot carries the SAME named-TBD token, and its loader refuses it.
 
-    ``tos_runtime/compose/_marketfeed_wiring.py``'s ``_require_str`` (:194-204) refuses
-    ``null``/empty but NOT the literal string ``"TBD"`` — measured. So ``marketfeed.yaml``'s
-    coordinate slots must be ``null``, while ``construction.yaml``'s may be ``"TBD"``
-    (``compose/_construction_config.py`` refuses both). This pins which is which; the
-    companion test below proves each one actually refuses."""
+    Measured 2026-09-24 (review-797 HIGH-1 correction): ``marketfeed.yaml``'s three slots and
+    ``construction.yaml``'s two all refuse ``null``, ``""`` and the string ``"TBD"`` —
+    ``compose/_marketfeed_wiring.py``'s ``_require_str`` calls ``reject_named_tbd`` (:200-202)
+    and ``_require_instruments`` does so per entry (:228-232), both since ``d2a36d22``;
+    ``compose/_construction_config.py`` refuses both forms by its own ``_TBD_STR`` check.
+
+    An earlier version of this docstring claimed the marketfeed loader did NOT refuse
+    ``"TBD"``, and used that to justify a per-file placeholder split. It was wrong, so there
+    is no split: this pins the ONE token, and the companion test below proves each slot
+    actually refuses it."""
     name, dotted = ref.split("::", 1)
     raw = yaml.safe_load((_DEPLOY_DIR / name).read_text(encoding="utf-8"))
     assert _resolve_dotted(raw, dotted) == _UNRENDERED_PLACEHOLDERS[ref]
@@ -1538,3 +1590,74 @@ def test_ocp_scope_still_authorizes_both_directions() -> None:
     shape = ocp["_runtime"]["construction"]["action_class_shape"]
     assert set(shape) == {"NEW_LONG", "NEW_SHORT", "CLOSE"}
     assert set(shape["CLOSE"]) == {"LONG", "SHORT"}
+
+
+# ============================================================================
+# Operator safety approval 2026-09-23 — the Hard Safety Envelope's governed dimension
+# ============================================================================
+
+
+def test_envelope_and_profile_govern_the_are_dimension() -> None:
+    """The three files must agree, or the boot refuses (and used to).
+
+    ``compose/_riskstate_wiring.py:101-107`` refuses when an ARE-governed dimension id is not
+    declared by the Hard Safety Envelope. The id compared is the ARE's own
+    ``_runtime.dimension_ids`` COMPOSED spelling, never the unprefixed
+    ``_model_view.governed_dimensions`` one — a drift between the two spellings passes step 5
+    while the capacity lookup finds nothing, which is the exact phantom a withdrawn fixture
+    value already was.
+    """
+    are = _mapping("aggregate_risk_policy.yaml")
+    dimension_ids = set(are["_runtime"]["dimension_ids"])
+    envelope_dims = {
+        entry["dimension"]
+        for entry in _mapping("safety_envelope.yaml")["envelope"]["governed_dimensions"]
+    }
+    profile_dims = {
+        entry["dimension"]
+        for entry in _mapping("safety_profile.yaml")["profile"]["governed_dimensions"]
+    }
+
+    assert dimension_ids <= envelope_dims, (
+        "every ARE-governed dimension needs a real envelope ceiling "
+        f"(ARE {sorted(dimension_ids)} vs envelope {sorted(envelope_dims)})"
+    )
+    # profile_within_envelope's "omit" limb: the profile may not drop an envelope dimension.
+    assert envelope_dims == profile_dims
+
+
+def test_envelope_maximum_admits_the_deployments_own_effective_limit() -> None:
+    """``envelope_max`` must actually admit what this deployment sizes to.
+
+    The ARE's approved effective limit and the OCP's ``max_quantity`` are both 1 contract, and
+    ``aggregate_risk_policy.yaml``'s own compatibility requirement asks for
+    ``envelope_max >= 1``. With an EXCLUSIVE boundary the kernel rejects ``value == max``
+    (``profile_within_envelope``'s ``_exceeds_envelope_maximum`` arm), so an EXCLUSIVE 1 would
+    authorize nothing at all — a ceiling that reads as "1" while admitting zero.
+    """
+    from decimal import Decimal
+
+    are = _mapping("aggregate_risk_policy.yaml")
+    dimension_id = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
+    effective_limit = Decimal(str(are["_runtime"]["effective_limits"][dimension_id]))
+
+    (entry,) = _mapping("safety_envelope.yaml")["envelope"]["governed_dimensions"]
+    (profile_entry,) = _mapping("safety_profile.yaml")["profile"]["governed_dimensions"]
+
+    assert Decimal(entry["envelope_max"]) >= effective_limit
+    assert entry["boundary"] == "INCLUSIVE"
+    assert Decimal(profile_entry["profile_value"]) <= Decimal(entry["envelope_max"])
+    # The unit must not drift between the artifacts or the comparison is meaningless.
+    assert entry["unit"] == profile_entry["unit"] == are["_runtime"]["unit"]
+
+
+def test_the_requirement_that_asked_for_this_value_is_still_in_the_are_policy() -> None:
+    """The envelope value is only justified while the ARE keeps asking for it.
+
+    If that compatibility requirement is ever removed or re-worded, this goes RED so the
+    envelope ceiling is re-justified rather than silently orphaned."""
+    requirements = _mapping("aggregate_risk_policy.yaml")["compatibility_requirements"]
+    assert any(
+        "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL" in line and "envelope_max" in line
+        for line in requirements
+    ), requirements

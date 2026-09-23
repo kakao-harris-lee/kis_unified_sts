@@ -226,7 +226,7 @@ def test_guard_every_rule_anchor_occurs_exactly_once_in_the_committed_source() -
             "venue_constraint_policy.yaml::scope.accounts",
         ),
         ("construction.yaml", 'account: "TBD"', "construction.yaml::account"),
-        ("marketfeed.yaml", "account: null", "marketfeed.yaml::account"),
+        ("marketfeed.yaml", 'account: "TBD"', "marketfeed.yaml::account"),
     ],
 )
 def test_guard_a_missing_anchor_refuses(
@@ -562,3 +562,252 @@ def test_venue_policy_canonical_digest_is_not_reproducible_across_processes(
     )
     # Same seed twice: stable, so the instability is the seed and nothing else.
     assert _digest(_SEED_A) == _digest(_SEED_A)
+
+
+# ---------------------------------------------------------------------------
+# A failed render leaves nothing behind (review-797 MEDIUM-2)
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_render_leaves_no_output_directory_and_no_account_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_hash_seed: None
+) -> None:
+    """A failure AFTER the coordinates are substituted must not leave an account-bearing
+    directory behind.
+
+    This is not hypothetical: it is what every operator on this host hits today, because the
+    activation read-back refuses on the canonical-digest defect. The first cut left a fully
+    coordinate-filled directory with no ``RENDERED.json``, which then permanently self-refused
+    ("not empty and carries no RENDERED.json") — so the operator had to ``rm -rf`` a directory
+    holding their account number just to retry.
+
+    The failure is injected at the read-back, the exact stage that fails for real.
+    """
+    out = tmp_path / "out"
+
+    def _boom(*_args: object, **_kwargs: object) -> str:
+        raise rpc.RenderError("injected failure at the activation read-back")
+
+    monkeypatch.setattr(rpc, "_verify_activation", _boom)
+
+    with pytest.raises(rpc.RenderError, match="injected failure"):
+        _render(out)
+
+    assert not out.exists(), "the failed render left its output directory behind"
+    leftovers = sorted(p.name for p in tmp_path.iterdir())
+    assert leftovers == [], f"staging leftovers under the output parent: {leftovers}"
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert _FAKE_ACCOUNT not in path.read_text(
+                encoding="utf-8", errors="ignore"
+            ), f"account bytes survived a failed render in {path}"
+
+
+def test_a_successful_render_is_only_visible_once_complete(
+    tmp_path: Path, pinned_hash_seed: None
+) -> None:
+    """The moved-into-place directory always carries ``RENDERED.json``, so it can never be the
+    "non-empty, no RENDERED.json" shape the overwrite guard permanently refuses — which is
+    what makes a second render of the same target work."""
+    out = tmp_path / "out"
+    _render(out)
+    assert (out / rpc.RENDERED_NAME).is_file()
+
+    # Rendering again over a previous successful render is allowed, and leaves no staging.
+    _render(out)
+    assert (out / rpc.RENDERED_NAME).is_file()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
+
+
+def test_env_file_parsing_strips_an_inline_comment_on_an_unquoted_value(
+    tmp_path: Path,
+) -> None:
+    """review-797 LOW-4. ``normalize_account`` deletes every non-digit, so a trailing
+    ``# opened 2026`` would contribute ITS digits to the account — silently producing a
+    different, well-formed-looking 10-digit number. A quoted value keeps any ``#`` inside the
+    quotes, which is the other half of this."""
+    env_path = tmp_path / ".env.mock"
+    env_path.write_text(
+        f"KIS_FUTURES_ACCOUNT_NO={_FAKE_ACCOUNT}  # opened 2026, product 03\n",
+        encoding="utf-8",
+    )
+    assert rpc.parse_account_from_env_file(env_path) == _FAKE_ACCOUNT
+
+    quoted = tmp_path / "quoted" / ".env.mock"
+    quoted.parent.mkdir()
+    quoted.write_text(
+        f"KIS_FUTURES_ACCOUNT_NO='{_FAKE_ACCOUNT_HYPHENATED}'  # note\n",
+        encoding="utf-8",
+    )
+    assert rpc.parse_account_from_env_file(quoted) == _FAKE_ACCOUNT_HYPHENATED
+
+
+def test_an_inline_comment_would_otherwise_have_corrupted_the_account() -> None:
+    """The guard above is only worth having if the failure it prevents is real.
+
+    Two shapes, and the SILENT one is why this matters:
+
+    * a comment whose digits push the total past ten refuses — loudly, but with a digit count
+      that makes no sense to whoever reads it;
+    * a comment whose digits land the total exactly ON ten is **accepted**, yielding a
+      well-formed, completely different account. An 8-digit CANO plus a `# 03` product-code
+      note — a very plausible way to write that file — is exactly that case.
+    """
+    # Refuses, but for a reason the reader cannot connect to the comment.
+    with pytest.raises(rpc.RenderError, match="got 12"):
+        rpc.normalize_account(f"{_FAKE_ACCOUNT}  # 03")
+
+    # The silent one: 8 digits + a 2-digit comment == a valid-looking, wrong account.
+    cano_only = _FAKE_ACCOUNT[:8]
+    corrupted = rpc.normalize_account(f"{cano_only}  # 03")
+    assert corrupted == f"{cano_only}03"
+    assert corrupted != _FAKE_ACCOUNT
+
+
+# ---------------------------------------------------------------------------
+# The measured defect is a CLASS of models (review-797 MEDIUM-3)
+# ---------------------------------------------------------------------------
+
+
+_SET_COVERED_SCAN = """
+import importlib, json, pkgutil, typing
+import tos
+from tos.canonical._base import DigestBoundArtifact
+
+for mod in pkgutil.walk_packages(tos.__path__, prefix="tos."):
+    try:
+        importlib.import_module(mod.name)
+    except Exception:
+        pass
+
+
+def subclasses(cls):
+    for sub in cls.__subclasses__():
+        yield sub
+        yield from subclasses(sub)
+
+
+def has_set(annotation, seen):
+    origin = typing.get_origin(annotation)
+    if origin in (set, frozenset):
+        return True
+    args = typing.get_args(annotation)
+    if args:
+        return any(has_set(a, seen) for a in args)
+    if hasattr(annotation, "model_fields") and annotation not in seen:
+        seen = seen | {annotation}
+        return any(has_set(f.annotation, seen) for f in annotation.model_fields.values())
+    return False
+
+
+base_impl = DigestBoundArtifact.covered_content
+total, sorts, unsorted_ = 0, [], []
+for cls in set(subclasses(DigestBoundArtifact)):
+    covered = getattr(cls, "_COVERED_FIELDS", None)
+    if not covered:
+        continue
+    total += 1
+    if not any(
+        (f := cls.model_fields.get(n)) and has_set(f.annotation, frozenset())
+        for n in covered
+    ):
+        continue
+    (sorts if cls.covered_content is not base_impl else unsorted_).append(cls.__name__)
+print(json.dumps({"total": total, "sorts": sorted(sorts), "unsorted": sorted(unsorted_)}))
+"""
+
+
+def _scan_set_covered_models() -> dict:
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", _SET_COVERED_SCAN],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", "/tmp"),
+            "PYTHONPATH": str(_REPO_ROOT / "tos" / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+def test_set_covered_digest_instability_is_a_class_of_models_not_one_instance() -> None:
+    """**The defect's SCOPE, pinned (measured 2026-09-24, review-797 MEDIUM-3).**
+
+    ``covered_content()``'s ``model_dump(mode="json", …)`` emits a set in set-iteration order
+    and the canonicalizer treats a sequence as order-significant, so ANY canonical model with
+    a set in covered content digests differently per process — unless it overrides
+    ``covered_content()`` to sort, which some families already do for exactly this reason
+    (``tos/src/tos/cur/records.py:44-49``, design #23 §3.1).
+
+    Pinning only ``VenueConstraintPolicy`` would let a fix to that one class turn the
+    companion test GREEN and read as "fixed" while twelve other models stayed broken. This
+    pins the partition BY NAME.
+
+    Note what this also records: **``CurrentnessPolicy`` is NOT affected** even though its
+    ``required_dimensions`` is a frozenset and this deployment adopts it — it is in the
+    sorting group. A type-only scan over-reports; the override is what decides.
+    """
+    scan = _scan_set_covered_models()
+
+    assert scan["total"] == 120, scan
+    assert set(scan["sorts"]) == {
+        "CurrentnessPolicy",
+        "RestrictiveFenceRecord",
+        "SafetyDeviationPolicy",
+        "SafetyIncidentPolicy",
+        "TrialEvidencePackage",
+        "TrialPolicy",
+    }, scan
+    assert set(scan["unsorted"]) == {
+        "BrokerCapabilityProfile",
+        "HumanApprovalRequest",
+        "HumanAuthorityPolicy",
+        "HumanDelegationRecord",
+        "HumanHaltCommand",
+        "LiveAuthorization",
+        "OrderAdmissibilityDecision",
+        "ReArmApprovalRecord",
+        "RecoveryInventoryCut",
+        "RecoveryObligation",
+        "RecoveryReadinessDecision",
+        "StatementCoverageManifest",
+        "VenueConstraintPolicy",
+    }, scan
+    # The one this deployment actually digests today.
+    assert "VenueConstraintPolicy" in scan["unsorted"]
+
+
+def test_currentness_policy_digest_is_stable_because_it_sorts(tmp_path: Path) -> None:
+    """The measured counter-example to a type-only scan: the DEPLOYED ``currentness.yaml``
+    builds a ``CurrentnessPolicy`` whose digest is IDENTICAL across hash seeds, because that
+    class sorts its set covered field. Cited so the fix for the 13 does not re-derive it.
+    """
+    script = (
+        "import sys;from pathlib import Path;"
+        "from tos_runtime.compose._currentness_wiring import _build_currentness_policy;"
+        "print(_build_currentness_policy(Path(sys.argv[1])).canonical_digest)"
+    )
+
+    def _digest(seed: str) -> str:
+        completed = subprocess.run(
+            [sys.executable, "-B", "-c", script, str(_SOURCE)],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "PYTHONPATH": (
+                    f"{_REPO_ROOT / 'tos' / 'src'}:"
+                    f"{_REPO_ROOT / 'tos' / 'runtime' / 'src'}"
+                ),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONHASHSEED": seed,
+            },
+        )
+        return completed.stdout.strip()
+
+    assert _digest(_SEED_A) == _digest(_SEED_B)

@@ -21,16 +21,24 @@
 #         스케줄러를 만든다. 없으면 `composed.marketfeed is None` 이고 `run` 이
 #         거부한다(compose/_run_dispatch.py:121-130).
 #
-# ⚠ **placeholder 형태 주의.** 이 로더의 `_require_str`(_marketfeed_wiring.py:194-204)는
-# `null`/빈 문자열만 거부하고 문자열 `"TBD"` 는 **거부하지 않는다**(실측). 그래서 이
-# 파일의 좌표 칸은 다른 파일들과 달리 반드시 `null` 로 남긴다 — `"TBD"` 로 두면
-# 렌더를 건너뛴 배포가 조용히 부팅한다.
+# placeholder 형태 — **재측정 2026-09-24(review-797 HIGH-1 정정)**:
+#   이 로더는 좌표 칸 세 개(`instruments`·`account`·`journal_path`)에 대해
+#   `null`·빈 문자열·문자열 `"TBD"` 를 **전부** 거부한다. `_require_str`
+#   (_marketfeed_wiring.py:194-204)가 타입 검사 뒤 `reject_named_tbd(...)`(:200-202)를
+#   부르고, `_require_instruments` 도 항목마다 같은 호출을 한다(:228-232). 그 기계적
+#   차단은 `d2a36d22`(「close the named-TBD bypass class mechanically, not by list」,
+#   W-A A-0 round 2 · origin/main 의 조상)가 넣었다.
+#   ⚠ 이 파일의 1차 판(PR #797)은 「`"TBD"` 는 거부하지 않는다(실측)」이라고 적었다.
+#   **거짓이었다** — 실제로 로드하지 않고 메시지 문자열만 훑은 결과였다. 그래서 좌표
+#   칸은 이제 다른 픽스처 파일과 **같은** `"TBD"` 관례를 쓴다(형태가 파일마다 갈리지
+#   않는다).
 # =============================================================================
 
 # --- instrument scope --------------------------------------------------
 # [좌표] 렌더가 근월물 하나로 채운다. TickScheduler 는 단일 종목 스코프라
 # 정확히 하나여야 한다(marketfeed/scheduler.py:212-226 `_require_single_instrument`).
-instruments: null
+# 리스트 모양은 유지한다 — 「여러 종목」이 표현 가능해야 거부도 가능하다(example 헤더).
+instruments: ["TBD"]
 
 # 세션 게이트가 읽는 캘린더 클래스 — construction.yaml 과 같은 값이어야 하고,
 # config/tos_runtime/paper/calendar.yaml:36 이 선언하는 클래스여야 한다.
@@ -38,7 +46,7 @@ instrument_class: "krx-index-futures"
 
 # --- capsule scope -------------------------------------------------------
 # [좌표] 렌더가 채운다(construction.yaml `account` 와 같은 값).
-account: null
+account: "TBD"
 
 # 발행되는 모든 캡슐이 싣는 SafetyCriticalFacts(tos.capsule.capsule.SafetyCriticalFacts).
 #   * direction — order_construction_policy.yaml:195-196 의 DIRECTION 축과 같은 값.
@@ -58,13 +66,16 @@ intake_kind: "journal"
 # [좌표 아님 · 호스트 사실] 렌더가 만든 부팅 증명 저널의 **절대 경로**로 채운다.
 # 저널 자체는 커밋되지 않는다(렌더 산출물) — 관측 시각이 렌더 시점에 고정되므로
 # 런북은 **부팅 직전 렌더**를 강제한다.
-journal_path: null
+journal_path: "TBD"
 
 # --- pacing ----------------------------------------------------------------
-# TICKED 패스 사이의 최소 실시간 간격(ms). 1000 =
-# tos/runtime/tests/compose/test_marketfeed_wiring.py:46 이 「production-shaped
-# default」라고 적은 값(같은 파일 test_run_e2e.py:60-66 은 다중 틱 테스트를 위해
-# 일부러 20ms 로 줄이며 그 이유를 적는다 — 운영 형태가 아니다).
+# TICKED 패스 사이의 최소 실시간 간격(ms). 값 1000 은
+# tos/runtime/tests/compose/test_marketfeed_wiring.py:46 (`_POLL_INTERVAL_MS = 1_000`).
+# 그 값을 「production-shaped default」라고 부르는 문장은 **다른 파일**에 있다 —
+# tos/runtime/tests/compose/test_run_e2e.py:58 (「Small on purpose (unlike
+# test_marketfeed_wiring.py's 1000ms production-shaped default)」). 같은 파일 :60-66 이
+# 다중 틱 테스트를 위해 일부러 20ms 로 줄이며 그 이유를 적는다 — 운영 형태가 아니다.
+# (1차 판은 인용 부호 붙은 문구의 출처를 :46 으로 잘못 적었다 — review-797 LOW-1.)
 poll_interval_ms: 1000
 
 # --- time-projection frame parameters -------------------------------------

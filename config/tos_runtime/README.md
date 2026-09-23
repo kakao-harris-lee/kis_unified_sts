@@ -80,12 +80,24 @@ and the SHORT arm is produced by `scripts/tos/render_paper_config.py
 the front-month contract code stay named-TBD in every file that carries them,
 and `scripts/tos/render_paper_config.py` byte-copies this directory into an
 **off-repo** directory and fills only those slots (design §2; runbook
-`docs/runbooks/tos-paper-boot.md`). ⚠ The placeholder FORM differs per loader:
-`compose/_marketfeed_wiring.py`'s `_require_str` refuses `null` but **not** the
-string `"TBD"` (measured), so `marketfeed.yaml`'s coordinate slots are `null`
-while `construction.yaml`'s are `"TBD"`. `tos/runtime/tests/compose/
-test_deploy_approved_values.py` pins each unrendered slot by its own loader's
-refusal, key name included.
+`docs/runbooks/tos-paper-boot.md`). Every coordinate slot uses the SAME
+named-TBD token `"TBD"`, and every one of them is refused by its own loader —
+`tos/runtime/tests/compose/test_deploy_approved_values.py` pins each unrendered
+slot by that refusal, key name included.
+
+> **Correction (2026-09-24, review-797 HIGH-1).** The first cut of this
+> paragraph claimed "the placeholder FORM differs per loader:
+> `compose/_marketfeed_wiring.py`'s `_require_str` refuses `null` but **not**
+> the string `"TBD"` (measured)". **That was false** — it was read off a
+> message string, never measured by loading a file. `_require_str`
+> (`_marketfeed_wiring.py:194-204`) calls `reject_named_tbd` at `:200-202`, and
+> `_require_instruments` does the same per entry at `:228-232`; re-measured,
+> all three marketfeed coordinate slots refuse `null`, `""` **and** `"TBD"`.
+> That mechanical block landed in `d2a36d22` ("close the named-TBD bypass class
+> mechanically, not by list", W-A A-0 round 2), an ancestor of `main`. Anyone
+> who read the old sentence would have concluded that a named-TBD bypass was
+> still open in that loader, or that leaving one open elsewhere was acceptable.
+> `marketfeed.yaml`'s slots are now `"TBD"` like every other fixture file.
 
 Also filled 2026-09-23: `finality.yaml::value_date` (`T+1`, operator decision 3
 — 선물 일일정산, **not** the 2026-09-12 `T+2` whose basis is the KRX *stock*
@@ -98,17 +110,33 @@ waiting for) and its `DIRECTION` axis (`LONG`). `finality.yaml::source_revision`
 stays `null`: it is the deploy SHA, which a commit cannot contain, so the
 render writes it.
 
-**What still blocks a `run` boot (measured 2026-09-23, named in
-`docs/runbooks/tos-paper-boot.md` §5):** ① `VenueConstraintPolicy
-.canonical_digest` is **not reproducible across processes** (a frozenset in
-`_COVERED_FIELDS` serializes in set-iteration order), which makes the
-documented "run `print-policy-digests`, copy the digests into
-`safety_activation.yaml::members`" procedure unusable for that one kind;
-② the venue/OCP `scope.environments: ["paper"]` does not equal the design's
-`--environment-label non-live-test`; ③ `safety_envelope.yaml
-::governed_dimensions` is `[]` while the aggregate risk policy governs
-`INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` — deliberately, per that file's own
-header (a separate safety approval, not a value this directory may invent).
+**Operator decisions of 2026-09-23 closed two of the three blockers** the
+first cut recorded. The boot label is **`paper`** (the value the venue/OCP
+policies already declare; `critical_input_policy.yaml::environment` now matches
+it), and the Hard Safety Envelope governs
+`INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` with **`envelope_max = 1` contract**
+— the bound `aggregate_risk_policy.yaml:74` had been asking for all along, equal
+to that policy's own approved effective limit. `safety_envelope.yaml` and
+`safety_profile.yaml` carry it as an **approved safety value**, not a fixture
+(the profile must declare it too: `spg/predicates.py:278-283` refuses a profile
+that omits an envelope-declared dimension, and `:274-277` refuses an empty
+envelope outright — so the previous "both empty" state could not pass either).
+
+**What still blocks a `run` boot (measured 2026-09-24, named in
+`docs/runbooks/tos-paper-boot.md` §5):** a canonical digest is **not
+reproducible across processes** whenever a covered field is a set —
+`covered_content()`'s `model_dump(mode="json", …)` emits set-iteration order and
+the canonicalizer treats a sequence as order-significant. Measured over the
+kernel: **120** models declare `_COVERED_FIELDS`, **19** carry a set in covered
+content, **6 of those already sort** via a `covered_content()` override (the
+`cur`/`wdr`/`sir`/`rlp` families — `tos/src/tos/cur/records.py:44-49` states the
+reason verbatim), and **13 do not**. `VenueConstraintPolicy` is the only one of
+the 13 this deployment digests today, which is why it is the one that breaks the
+"run `print-policy-digests`, copy the digests into
+`safety_activation.yaml::members`" procedure visibly. ⚠ `CurrentnessPolicy
+.required_dimensions` (adopted here since PR #794) *looks* affected by type but
+is in the sorting six — measured stable; a static type scan over-reports, the
+override is what decides.
 
 This directory is consumed today by the compose e2e test suite
 (`tos/runtime/tests/compose/test_deploy_config.py`,

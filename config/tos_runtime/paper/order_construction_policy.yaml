@@ -211,6 +211,16 @@ _runtime:
       # action_class/outbound_side and the strategy file's direction. A second, SHORT copy is
       # deliberately NOT committed. Long/short symmetry is resolved for real when the strategy
       # proposal path lands and direction becomes a per-attempt lookup key.
+      #
+      # ⚠ KNOWN LIMITATION (measured 2026-09-24, review-797 LOW-6): this value is NOT part of
+      # this document's canonical covered content. DR-0002 §2.3 binds `canonical_digest` to
+      # policy_id/policy_generation/policy_version only, so a LONG render and a SHORT render
+      # produce BYTE-IDENTICAL digests for all five printed policy kinds — and therefore
+      # `safety_activation.yaml::members` activation does NOT prove which direction this
+      # deployment was composed for. The same holds for `admitted_quantity_bases` above.
+      # What actually keeps them consistent here is the render rewriting the four direction
+      # slots together plus the direction-consistency pins in
+      # tos/runtime/tests/compose/test_deploy_approved_values.py — never the digest.
       - axis: "DIRECTION"
         value: "LONG"
     action_class_shape:

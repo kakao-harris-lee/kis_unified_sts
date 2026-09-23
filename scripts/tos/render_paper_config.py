@@ -34,10 +34,22 @@ Secrets discipline
 ------------------
 The account number is read from a file literally named ``.env.mock`` and is NEVER printed,
 logged, or written to ``RENDERED.json`` — only its ``account_fingerprint``
-(``tools/broker_probes/common.py``, the same salt-free SHA-256 correlator every broker probe
-artifact carries). ``.env`` / ``.env.real`` are REFUSED as a coordinate source: that file's
-futures account is the REAL account, and this repo's non-negotiable rule is that the real
-futures account is never funded and never on an order path.
+(``tools/broker_probes/common.py:220-225``, the same correlator every broker probe artifact
+carries).
+
+⚠ **That fingerprint is a correlator, not a masking primitive** (review-797 LOW-3). It is an
+UNSALTED SHA-256 truncated to 12 hex chars over a 10-digit input, so the input space is 10^10
+and the value is trivially reversible by brute force. It is used here for the same reason the
+probe harness uses it — so two artifacts about the same account can be tied together without
+writing the number — and it is deliberately kept out of the repository: it appears only on
+stdout and in ``RENDERED.json`` inside the 0700 off-repo output directory. Treat a leaked
+fingerprint as a leaked account number. (The probe harness does record it in committed
+evidence artifacts; that precedent is about correlating measurements, not about the value
+being safe to publish.)
+
+``.env`` / ``.env.real`` are REFUSED as a coordinate source: that file's futures account is
+the REAL account, and this repo's non-negotiable rule is that the real futures account is
+never funded and never on an order path.
 """
 
 from __future__ import annotations
@@ -328,13 +340,13 @@ def _coordinate_rules(
         Rule(
             "marketfeed.yaml",
             "marketfeed.yaml::instruments",
-            "instruments: null",
+            'instruments: ["TBD"]',
             f'instruments: ["{instrument}"]',
         ),
         Rule(
             "marketfeed.yaml",
             "marketfeed.yaml::account",
-            "account: null",
+            'account: "TBD"',
             f'account: "{account}"',
         ),
         Rule(
@@ -346,7 +358,7 @@ def _coordinate_rules(
         Rule(
             "marketfeed.yaml",
             "marketfeed.yaml::journal_path",
-            "journal_path: null",
+            'journal_path: "TBD"',
             f'journal_path: "{journal_path}"',
         ),
         Rule(
@@ -405,8 +417,26 @@ def parse_account_from_env_file(env_path: Path) -> str:
         if key.strip() != ACCOUNT_ENV_KEY:
             continue
         value = raw.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
+        # Inline comments (review-797 LOW-4). Without this, a trailing `# opened 2026`
+        # reaches :func:`normalize_account`, which deletes every non-digit — so the comment's
+        # digits silently JOIN the account number. When the total still lands on ten digits
+        # that is an accepted, well-formed, WRONG account; otherwise it is a refusal whose
+        # digit count makes no sense to the reader.
+        #
+        # A quoted value is taken up to its closing quote, so a `#` INSIDE the quotes is part
+        # of the value and only what follows the quote is a comment. An unquoted value is cut
+        # at the first `#`.
+        if value[:1] in {"'", '"'}:
+            quote = value[0]
+            closing = value.find(quote, 1)
+            if closing != -1:
+                value = value[1:closing]
+            else:
+                raise RenderError(
+                    f"{env_path}: {ACCOUNT_ENV_KEY} has an unterminated {quote} quote"
+                )
+        else:
+            value = value.split("#", 1)[0].strip()
         if not value:
             raise RenderError(
                 f"{env_path}: {ACCOUNT_ENV_KEY} is present but empty — the deployment "
@@ -580,25 +610,63 @@ def _policy_digest_lines(config_dir: Path) -> tuple[tuple[str, str, int, str], .
     digest)`` per printed line (design §2 step 6; the printer is
     ``compose/cli.py::_dispatch_print_policy_digests`` + ``compose/_cli_ops.py:91-145``).
 
-    ⚠ **NOT REPRODUCIBLE across processes for VENUE_CONSTRAINT_POLICY (measured 2026-09-23).**
-    ``VenueConstraintPolicy._COVERED_FIELDS`` (``tos/src/tos/venue/records.py:406-416``)
-    includes ``required_constraint_classes: frozenset[ConstraintClass]`` (``:424``) and
-    ``shape_constraints``, whose ``allowed_order_types``/``allowed_tifs``/``allowed_sides``/
-    ``allowed_position_effects`` are frozensets too (``:165-168``).
-    ``covered_content()`` is ``model_dump(mode="json", …)``
-    (``tos/src/tos/canonical/_base.py:187``), which renders a frozenset as a LIST in
-    set-iteration order, and ``_encode`` treats a sequence as ORDER-SIGNIFICANT
-    ("sequence order is preserved (vectors are order-significant)",
-    ``tos/src/tos/canonical/canonicalization.py:148-149,174-176``). ``ConstraintClass`` is a
-    ``StrEnum`` (``tos/src/tos/venue/vocabulary.py:169``), so its iteration order follows
-    Python's per-process string hash seed: the same file digests differently in every process.
+    ⚠ **NOT REPRODUCIBLE across processes whenever a covered field is a set** (measured
+    2026-09-23, scope widened 2026-09-24 per review-797 MEDIUM-3).
 
-    The other four printed kinds are stable — their covered fields carry no set.
+    ``covered_content()`` is ``model_dump(mode="json", …)``
+    (``tos/src/tos/canonical/_base.py:187``), which renders a ``set``/``frozenset`` as a LIST
+    in set-iteration order, and ``_encode`` treats a sequence as ORDER-SIGNIFICANT
+    ("sequence order is preserved (vectors are order-significant)",
+    ``tos/src/tos/canonical/canonicalization.py:148-149,174-176``). Set iteration order
+    follows Python's per-process string hash seed, so any canonical model with a set in its
+    covered content digests differently in every process.
+
+    **This is a CLASS of models, not one instance.** Measured 2026-09-24 over every
+    ``DigestBoundArtifact`` subclass that declares ``_COVERED_FIELDS`` (the scan is pinned by
+    ``tests/unit/scripts/test_render_paper_config.py``):
+
+    * **120** canonical models carry ``_COVERED_FIELDS``;
+    * **19** of them have a ``set``/``frozenset`` in covered content (directly or through a
+      nested model);
+    * **6 of those 19 already sort** — they override ``covered_content()`` for exactly this
+      reason. ``tos/src/tos/cur/records.py:44-49`` states it outright: "because
+      ``model_dump(mode="json")`` serializes a ``frozenset`` to an **unordered** list and the
+      canonicalizer preserves sequence order, ``covered_content`` **sorts** each set field so
+      the digest is deterministic across processes" (design #23 §3.1). The six are the
+      ``cur`` / ``wdr`` / ``sir`` / ``rlp`` families;
+    * **13 do not**, and their digests are therefore process-dependent —
+      ``brokercap.BrokerCapabilityProfile``, four ``hag`` records,
+      ``liveauth.LiveAuthorization``/``ReArmApprovalRecord``, three ``sbr`` records,
+      ``posttrade.StatementCoverageManifest``, ``venue.OrderAdmissibilityDecision`` and
+      ``venue.VenueConstraintPolicy``.
+
+    ``VenueConstraintPolicy`` is the only one of the 13 this deployment digests today —
+    ``required_constraint_classes: frozenset[ConstraintClass]``
+    (``tos/src/tos/venue/records.py:425``) plus ``shape_constraints``'s four ``allowed_*``
+    frozensets (``:165-168``), with ``ConstraintClass`` a ``StrEnum``
+    (``tos/src/tos/venue/vocabulary.py:169``).
+
+    ⚠ Note for whoever writes the fix: ``CurrentnessPolicy.required_dimensions`` LOOKS
+    affected by type and this deployment does adopt it (``currentness.yaml``, PR #794), but it
+    is in the sorting six — measured stable across six hash seeds. A static type scan alone
+    over-reports; the override is what decides.
+
+    The other four PRINTED kinds (OCP / AGGREGATE_RISK / ACTION_FLOW / CRITICAL_INPUT) are
+    stable — their covered fields carry no set at all. That is a statement about the five
+    printed kinds, never about the kernel as a whole.
 
     Consequence: the documented operator procedure (run ``print-policy-digests``, copy the
-    digests into ``safety_activation.yaml::members``) cannot work for this one kind, because it
-    is a CROSS-PROCESS transcription. :func:`_verify_activation` therefore re-derives in a
+    digests into ``safety_activation.yaml::members``) cannot work for an affected kind, because
+    it is a CROSS-PROCESS transcription. :func:`_verify_activation` therefore re-derives in a
     fresh process and refuses here rather than letting the boot fail later.
+
+    ⚠ **Separately: the activation record does not bind DIRECTION** (review-797 LOW-6).
+    ``_runtime.construction.axes``' ``DIRECTION`` and ``admitted_quantity_bases`` sit OUTSIDE
+    the OCP's canonical covered content (DR-0002 §2.3 binds the digest to
+    ``policy_id``/``policy_generation``/``policy_version`` only), so a LONG render and a SHORT
+    render produce BYTE-IDENTICAL digests for all five kinds. The symmetry argument for this
+    deployment rests on the render rewriting four slots together and on the tests pinning
+    that — **the digests do not prove it.**
     """
     completed = _run_runtime_cli(
         ["print-policy-digests", "--config-dir", str(config_dir)]
@@ -909,44 +977,63 @@ def render(
             raise RenderError(
                 f"output directory refused: {out} is not empty and carries no "
                 f"{RENDERED_NAME} — refusing to overwrite a directory this script did not "
-                "render"
+                f"render. If it IS a leftover you recognize, remove it first: rm -rf {out}"
             )
-        shutil.rmtree(out)
-    shutil.copytree(source, out)
-    out.chmod(0o700)
 
-    now = (
-        datetime.now(tz=_KST)
-        if now_ms is None
-        else datetime.fromtimestamp(now_ms / 1000, tz=_KST)
-    )
-    effective_now_ms = int(now.timestamp() * 1000)
-    journal_path = out / JOURNAL_NAME
-    journal_as_of_ms = _write_journal(
-        journal_path, instrument=instrument, now_ms=effective_now_ms
-    )
+    # Build in a sibling staging directory and move into place only on success
+    # (review-797 MEDIUM-2). A failure AFTER the coordinates are substituted — which is what
+    # every operator on this host hits today, because the activation read-back refuses on the
+    # canonical-digest defect — must not leave an account-bearing directory behind. It would
+    # also self-refuse on the next run (no RENDERED.json), so the operator would have to
+    # `rm -rf` a directory holding their account number to make progress.
+    staging = out.parent / f".{out.name}.partial-{os.getpid()}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-    rules = _coordinate_rules(
-        account=account,
-        instrument=instrument,
-        revision=revision,
-        direction=direction,
-        journal_path=journal_path,
-    )
-    _apply_rules(out, rules)
+    try:
+        shutil.copytree(source, staging)
+        staging.chmod(0o700)
 
-    digests = _policy_digest_lines(out)
-    rendered_at = now.isoformat()
-    members = _members_rule(_members_block(digests, rendered_at=rendered_at))
-    _apply_rules(out, (members,))
-    activation_check = _verify_activation(out, digests)
-
-    rendered_keys = tuple(rule.key for rule in rules) + (members.key,)
-    if set(rendered_keys) != set(COORDINATE_RULE_KEYS):
-        raise RenderError(
-            "rendered key set does not match COORDINATE_RULE_KEYS — "
-            f"{sorted(set(rendered_keys) ^ set(COORDINATE_RULE_KEYS))!r}"
+        now = (
+            datetime.now(tz=_KST)
+            if now_ms is None
+            else datetime.fromtimestamp(now_ms / 1000, tz=_KST)
         )
+        effective_now_ms = int(now.timestamp() * 1000)
+        # The journal FILE is written into staging, but the path baked into marketfeed.yaml
+        # is the FINAL one — the rendered config must be correct after the move, not during.
+        journal_path = out / JOURNAL_NAME
+        journal_as_of_ms = _write_journal(
+            staging / JOURNAL_NAME, instrument=instrument, now_ms=effective_now_ms
+        )
+
+        rules = _coordinate_rules(
+            account=account,
+            instrument=instrument,
+            revision=revision,
+            direction=direction,
+            journal_path=journal_path,
+        )
+        _apply_rules(staging, rules)
+
+        digests = _policy_digest_lines(staging)
+        rendered_at = now.isoformat()
+        members = _members_rule(_members_block(digests, rendered_at=rendered_at))
+        _apply_rules(staging, (members,))
+        activation_check = _verify_activation(staging, digests)
+
+        rendered_keys = tuple(rule.key for rule in rules) + (members.key,)
+        if set(rendered_keys) != set(COORDINATE_RULE_KEYS):
+            raise RenderError(
+                "rendered key set does not match COORDINATE_RULE_KEYS — "
+                f"{sorted(set(rendered_keys) ^ set(COORDINATE_RULE_KEYS))!r}"
+            )
+    except BaseException:
+        # Every failure path, including KeyboardInterrupt: the staging tree holds the account
+        # coordinate, so it never outlives the failure.
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     fingerprint = account_fingerprint(account)
     result = RenderResult(
         out=out,
@@ -962,7 +1049,7 @@ def render(
         journal_as_of_ms=journal_as_of_ms,
         rendered_at_kst=rendered_at,
     )
-    (out / RENDERED_NAME).write_text(
+    (staging / RENDERED_NAME).write_text(
         json.dumps(
             {
                 "rendered_at_kst": rendered_at,
@@ -996,6 +1083,12 @@ def render(
         + "\n",
         encoding="utf-8",
     )
+    # Only now does anything appear at `out`. `RENDERED.json` is written last inside staging,
+    # so the moved directory can never be the "non-empty, no RENDERED.json" shape that the
+    # guard above permanently refuses.
+    if out.exists():
+        shutil.rmtree(out)
+    shutil.move(str(staging), str(out))
     return result
 
 
