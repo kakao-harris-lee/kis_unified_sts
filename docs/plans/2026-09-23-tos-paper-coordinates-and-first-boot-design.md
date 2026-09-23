@@ -98,6 +98,8 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 - (나) 전략 제안 경로(시도별 방향 조회)를 먼저 구현하고 부팅한다. 대칭 문제를 설계로 푼다. 커널·런타임 변경 — 별도 계획 필요.
 - (다) A-5 를 「좌표 주입까지」로 닫고 첫 부팅 구성은 전략 아크로 넘긴다. `run` 은 계속 부팅하지 않는다.
 
+**운영자 선택(2026-09-23): (가) 부팅 증명 픽스처.** 대칭을 좁히지 않았다는 증거로 LONG·SHORT 두 구성 모두 부팅시킨다.
+
 ## 4. 구현 PR (결정 뒤) 모양
 
 1. `scripts/tos/render_paper_config.py` + 단위 테스트(`tests/unit/scripts/` 신설 — 레거시 `test` 워크플로 게이트, 가짜 env 파일) · `--check`.
