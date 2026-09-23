@@ -19,7 +19,7 @@ reserved ``"TBD"`` placeholder is excluded from required-field text.
 from __future__ import annotations
 
 import hypothesis.strategies as st
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactStatus, get_scheme
 from tos.cur import (
     MANDATED_DIMENSION_FLOOR,
     CurrentnessDimension,
@@ -100,11 +100,13 @@ def clean_policy(
     policy_id: str = "pol-1",
     policy_generation: int = 1,
     required_dimensions: frozenset[DimensionKey] = MANDATED_DIMENSION_FLOOR,
+    status: ArtifactStatus = ArtifactStatus.ISSUED,
     **overrides: object,
 ) -> CurrentnessPolicy:
     """A digest-verified policy that declares at least the mandated floor (genuinely complete)."""
     return CurrentnessPolicy.issue(
         scheme=SCHEME,
+        status=status,
         policy_id=policy_id,
         policy_generation=policy_generation,
         required_dimensions=required_dimensions,
@@ -120,6 +122,7 @@ def clean_vector(
     policy_id: str = "pol-1",
     policy_generation: int = 1,
     vector_digest: str = "vd",
+    status: ArtifactStatus = ArtifactStatus.ISSUED,
     **overrides: object,
 ) -> SafetyCurrentnessVector:
     """A digest-verified, genuinely complete Safety Currentness Vector (id ⊥ digest, all-false)."""
@@ -127,6 +130,7 @@ def clean_vector(
     dims = dimensions if dimensions is not None else clean_dimensions(revision=rev)
     return SafetyCurrentnessVector.issue(
         scheme=SCHEME,
+        status=status,
         vector_id=vector_id,
         currentness_revision=rev,
         vector_digest=vector_digest,
@@ -164,6 +168,7 @@ def clean_proof(
     coordinates: EgressProofCoordinateSet | None = None,
     bound_generations: tuple[int, ...] = (5,),
     restrictive_floors: tuple[int, ...] = (1,),
+    status: ArtifactStatus = ArtifactStatus.ISSUED,
     **overrides: object,
 ) -> EgressCurrentnessProof:
     """A digest-verified, genuinely admissible Egress Currentness Proof (§12).
@@ -175,6 +180,7 @@ def clean_proof(
     coords = coordinates if coordinates is not None else clean_coordinates()
     return EgressCurrentnessProof.issue(
         scheme=SCHEME,
+        status=status,
         proof_id=proof_id,
         nonce=nonce,
         vector_id="vec-1",
@@ -202,11 +208,13 @@ def clean_fence(
     predecessor_floor: int | None = 3,
     advanced_floor: int | None = 7,
     terminal_denial: bool | None = False,
+    status: ArtifactStatus = ArtifactStatus.ISSUED,
     **overrides: object,
 ) -> RestrictiveFenceRecord:
     """A digest-verified monotonic Restrictive Fence Record (advanced > predecessor)."""
     return RestrictiveFenceRecord.issue(
         scheme=SCHEME,
+        status=status,
         fence_id=fence_id,
         owner_identity=owner_identity,
         affected_scope=affected_scope,

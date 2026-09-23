@@ -8,6 +8,8 @@ transmitted on stale admissibility); no valid lease => PROHIBITED; an unknown pa
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack
+
 from tos.protective import (
     Admissibility,
     ProtectiveActionKind,
@@ -20,8 +22,31 @@ _ADD_ONLY = ProtectiveActionKind.OVERLAP_FIRST_ADD_ONLY
 _CANCEL_FIRST = ProtectiveActionKind.CANCEL_FIRST_OR_REMOVAL
 
 
-def _admissible_kwargs(**overrides: object) -> dict[str, object]:
-    base: dict[str, object] = {
+class _AdmissibleKwargs(TypedDict):
+    """1:1 with :func:`partition_lease_admissible`'s keyword-only signature (plan §1.1
+    A-fn) — a ``**_admissible_kwargs(...)`` splat is checked key-by-key and type-by-type,
+    not swallowed by a ``**dict[str, object]`` splat."""
+
+    within_pre_proven_scope: bool | None
+    staleness_ok: bool | None
+    lease_valid_for_new_transmission: bool | None
+    partition_new_commitment_denied: bool | None
+
+
+class _AdmissibleKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_AdmissibleKwargs`, all optional — the override-kwargs
+    shape for :func:`_admissible_kwargs`."""
+
+    within_pre_proven_scope: bool | None
+    staleness_ok: bool | None
+    lease_valid_for_new_transmission: bool | None
+    partition_new_commitment_denied: bool | None
+
+
+def _admissible_kwargs(
+    **overrides: Unpack[_AdmissibleKwargsPartial],
+) -> _AdmissibleKwargs:
+    base: _AdmissibleKwargs = {
         "within_pre_proven_scope": True,
         "staleness_ok": True,
         "lease_valid_for_new_transmission": True,
