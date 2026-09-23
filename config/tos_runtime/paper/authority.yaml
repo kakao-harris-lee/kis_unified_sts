@@ -21,9 +21,19 @@
 # witness 로 봉쇄를 주장하게 된다.
 containment_bound_ms: 1000
 
-# [D]/[O] 제안표 §3(4행) + §4.3 — "현재 활성 TradingApprovalPolicy 의
-# `policy_generation` 을 그대로". 이 배포에는 선행 세대가 없으므로 제안표 §4.3
-# 의 「`*_generation` 계열은 전부 1(첫 세대)」이 그 값이다. IntentRegistry
+# ⚠ **[D] 지시를 이름 규칙으로 대체한 자리다 (review-794 MEDIUM-3 — 운영자가 볼 자리).**
+# 제안표 §3 4행은 이 키를 **[D] 도출**로 두고 「현재 활성 `TradingApprovalPolicy` 의
+# `policy_generation` 을 그대로」를 지시하며, 선행 조건은 「그 정책이 먼저 존재해야
+# 함」이다. **이 배포 디렉터리에 그 정책 파일이 없으므로 도출 원천이 없다.**
+# 「명령으로 얻는다, 손으로 짓지 않는다」가 붙은 값이 규칙으로 치환된 것이므로 명시한다.
+#
+# 다만 **지어낸 값은 아니다** — 두 독립 원천이 같은 1 을 가리킨다:
+#   (a) docs/plans/2026-09-12-tos-operator-value-proposals.md §2
+#       `authority.trading_approval_policy_generation` 행 = **1** · 등급 C ·
+#       근거 「현재 로드되는 `TradingApprovalPolicy.policy_generation` 과 일치해야 함
+#       (승인 파일 세대 1)」.
+#   (b) 제안표 §4.3 「`*_generation` 계열은 전부 1(첫 세대)」.
+# IntentRegistry
 # .decision_current 는 결정의 자기 세대와 이 값의 **동등 비교만** 한다
 # (tos_runtime.authority.iap) — 승인 파일(custody_root/approvals/)이 다른 세대를
 # 들고 오면 그 결정은 current 가 아니게 되며, 그것이 의도된 fail-closed 다.

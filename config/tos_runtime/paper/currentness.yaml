@@ -27,15 +27,53 @@
 # 트랜스포트가 구현되면 실측으로 대체한다.
 B_capability_claim_to_send: 500
 
-# [미확정] 제안표 §6 6항 — **채우지 않는다.**
+# ==========================================================================
+# 운영자 결정 2026-09-23: **「그대로 사용」** — 제안표 §6 6항이 「설계 판단 필요」로
+# 남겨 둔 이 키를 **커널 `MANDATED_DIMENSION_FLOOR` 21키 전부를 명시 나열**하는
+# 형태로 채운다.
 #
-#   "21개 MANDATED_DIMENSION_FLOOR 를 그대로 복사하면
+# 추천값의 출처(지어낸 값이 아니다):
+#   docs/plans/2026-09-12-tos-operator-value-proposals.md §2 `currentness.
+#   required_dimensions` 행 — 「커널 `MANDATED_DIMENSION_FLOOR` 의 21 키 전부를
+#   명시 나열(`tos/src/tos/cur/vocabulary.py` · `DimensionKey` 22 중 조건부
+#   `RESTRICTED_LIVE_TRIAL` 제외 · 적용 시 `python -c "from tos.cur.vocabulary
+#   import MANDATED_DIMENSION_FLOOR as F; print(sorted(k.value for k in F))"`
+#   출력을 그대로 옮긴다)」 · 등급 C.
+#   아래 21줄은 그 명령의 출력을 그대로 옮긴 것이다(2026-09-23 실행).
+#   currentness.example.yaml 주석도 같은 형태를 기술한다 — 「a policy may require
+#   more, never fewer」.
+#
+# ⚠ **제안표 §6 6항의 경고는 유효하며 여기 그대로 이월한다**:
+#   「21개 MANDATED_DIMENSION_FLOOR 를 그대로 복사하면
 #    `policy_covers_mandated_dimensions` 가 **항진명제**가 된다(과거 버그,
 #    example 주석에 기록). floor 이상이어야 하되 **의미 있게 독립적으로 편집
-#    가능한 선언**이어야 한다 — 설계 판단이 필요."
-#
-# 제안표 §6 말미: 「6·7 은 값을 정하기 전에 판단이 더 필요하다. **부팅이
-# 이것들 때문에 막히면 그것이 A-5 의 결과물이다.**」 — 그대로 둔다. 로더는
-# 이 null 을 named-TBD 로 거부하며(currentness/config.py), 그 거부가 이 웨이브의
-# 정직한 산출물이다. 값을 지어내 통과시키지 않는다.
-required_dimensions: null
+#    가능한 선언**이어야 한다 — 설계 판단이 필요.」
+#   즉 이 목록이 floor 와 같은 한, 그 술어가 참이라는 사실은 **이 배포가 실제로
+#   모든 차원을 지배한다는 증거가 아니다.** 이것이 운영자 선언이라는 점이
+#   유일한 의미이고(커널에서 재파생하면 그 의미마저 사라진다 — W3.1 MEDIUM-3),
+#   한 줄을 지우면 `policy_covers_mandated_dimensions` 가 **정직하게 거짓**이
+#   되어 부팅이 거부된다. 의미 있는 독립 선언(= floor 를 넘는 차원 추가)은
+#   여전히 열린 설계 판단이다.
+# ==========================================================================
+required_dimensions:
+  - ACTION_FLOW
+  - AGGREGATE_RISK
+  - COMMIT_LOG
+  - CONSTRAINT
+  - CONSTRUCTION
+  - CONTEXT
+  - CRITICAL_INPUT
+  - CURRENTNESS_POLICY
+  - DECISION_PROOF_INTENT
+  - DEVIATION
+  - EGRESS_IDENTITY
+  - ENVIRONMENT_SCOPE
+  - INCIDENT
+  - MONITORING
+  - POST_TRADE
+  - RECOVERY
+  - RELEASE
+  - SAFETY_AUTHORITY
+  - SAFETY_ENVELOPE_PROFILE
+  - TRADING_APPROVAL
+  - TRUSTWORTHY_TIME
