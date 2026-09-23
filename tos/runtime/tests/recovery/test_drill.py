@@ -12,6 +12,7 @@ crash-window technique — never a real OS-level crash), then rebuilds the runti
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 from tos.engine import NullEvidenceSink
@@ -569,10 +570,16 @@ def _restore_drill_helpers(tmp_path, config_dir, custody_root):
 
     box: dict[str, ComposedRuntime] = {}
 
-    def _compose_callable(data_dir, environment_label):
+    def _compose_callable(data_dir: Path, environment_label: str) -> ComposedRuntime:
         del environment_label  # `_compose` always composes under "non-live-test"; restore_drill
         # itself already refused any live label before ever calling this.
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        # `_compose` (test_compose_root.py) has no return annotation of its own — the
+        # explicit annotation here is what makes THIS closure's own declared return type
+        # (checked structurally against `ComposeForDrill.__call__` at the
+        # `restore_drill(compose=...)` call site below) real rather than `Any`-typed.
+        runtime: ComposedRuntime = _compose(
+            tmp_path, config_dir, data_dir, custody_root
+        )
         box["runtime"] = runtime
         return runtime
 

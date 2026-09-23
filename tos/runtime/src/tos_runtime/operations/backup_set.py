@@ -583,18 +583,42 @@ def restore_set(
 
 
 class _RecoveryVerdictLike(Protocol):
-    readiness_verdict: ReadinessVerdict
+    """The narrow read surface :class:`_ComposedForDrill` needs off whatever ``recovery``
+    a real compose result carries — only :attr:`readiness_verdict`, never any other member.
+
+    Declared as a read-only property (not a plain attribute) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models) — including the
+    real :class:`~tos_runtime.recovery.barrier.RecoveryVerdict`, which is
+    ``@dataclass(frozen=True)`` — satisfy this Protocol structurally
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
+    """
+
+    @property
+    def readiness_verdict(self) -> ReadinessVerdict: ...
 
 
 class _ComposedForDrill(Protocol):
     """The exact surface :func:`restore_drill` uses off whatever ``compose`` returns — verified
     directly against ``tos_runtime.compose._types.ComposedRuntime``'s own real attributes, never
-    imported from it (see this module's own docstring on why)."""
+    imported from it (see this module's own docstring on why).
 
-    evidence_store: SqliteEvidenceStore
-    inbox: SqliteEventInbox
-    emergency_log: EmergencyAppendLog
-    recovery: _RecoveryVerdictLike | None
+    Declared as read-only properties (not plain attributes) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models) satisfy this
+    Protocol structurally, not just today's mutable ``ComposedRuntime``
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
+    """
+
+    @property
+    def evidence_store(self) -> SqliteEvidenceStore: ...
+
+    @property
+    def inbox(self) -> SqliteEventInbox: ...
+
+    @property
+    def emergency_log(self) -> EmergencyAppendLog: ...
+
+    @property
+    def recovery(self) -> _RecoveryVerdictLike | None: ...
 
 
 class ComposeForDrill(Protocol):
