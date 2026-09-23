@@ -18,6 +18,7 @@ import pytest
 from tos.evidence import EvidenceAppendReceipt
 from tos.time import HealthState, TimeHealthSnapshot, snapshot_consumer_binding_ok
 from tos.workload import RuntimeIdentity
+from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.time import service as service_module
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.generation import GenerationCounter
@@ -218,7 +219,7 @@ def _build(
     monotonic: FakeMonotonicSource,
     config: TrustworthyTimeConfig | None = None,
     references: list[ReferenceSourceReader] | None = None,
-    evidence: object | None = None,
+    evidence: EvidenceAppendPort | None = None,
 ) -> tuple[TrustworthyTimeService, InMemoryEvidenceDouble]:
     evidence_double = evidence if evidence is not None else InMemoryEvidenceDouble()
     service = TrustworthyTimeService(
@@ -462,7 +463,7 @@ def test_two_same_clock_readers_never_reach_trusted_with_min_two_required() -> N
     (the real LocalSystemClockReader case) must collapse to 1 independent
     reference, never satisfying a profile requiring 2."""
     monotonic = FakeMonotonicSource(1000)
-    same_group_readers = [
+    same_group_readers: list[ReferenceSourceReader] = [
         FakeReferenceReader(common_mode_group="LOCAL_SYSTEM_CLOCK"),
         FakeReferenceReader(common_mode_group="LOCAL_SYSTEM_CLOCK"),
     ]
@@ -489,7 +490,7 @@ def test_two_distinct_group_readers_with_no_comparison_never_reach_trusted() -> 
     UNKNOWN, not silently asserted as 0/agreeing, so TRUSTED still must not
     be reached."""
     monotonic = FakeMonotonicSource(1000)
-    distinct_group_readers = [
+    distinct_group_readers: list[ReferenceSourceReader] = [
         FakeReferenceReader(common_mode_group="SOURCE_A"),
         FakeReferenceReader(common_mode_group="SOURCE_B"),
     ]

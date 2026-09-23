@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 from tos.egressgw.records import GatewayEvidenceRecord
+from tos.engine.records import InstrumentKey
 from tos.engine.vocabulary import CommitmentStep
 from tos.rcl import (
     AppendReceipt,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     ReservationScope,
     TransitionCause,
@@ -43,6 +45,10 @@ class _FixedKeyProvider:
 
     def generations(self) -> tuple[int, ...]:
         return (1,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return b"test-fixed-key-bytes"
 
 
 def _store(tmp_path: Path) -> SqliteEvidenceStore:
@@ -93,6 +99,9 @@ def _commit_reservation(
         raise AssertionError(
             f"_commit_reservation only supports POTENTIALLY_LIVE/RELEASED, got {state!r}"
         )
+    # A successful append (AppendReceipt, never AppendRefusal) always carries a real seq —
+    # the log's own construction site (`log.py:999`) never leaves it None.
+    assert setup.seq is not None
     result = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=reservation_id,
@@ -133,16 +142,18 @@ class _FixedStateProjection:
     def all_reservations(self) -> dict[str, CapacityState]:
         return {self._reservation_id: self._state}
 
-    def instrument_state(self, _key: object) -> CapacityState | None:
+    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
         return None
 
-    def instrument_last_seq(self, _key: object) -> int | None:
+    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
         return None
 
-    def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+    def reservation_committed_vector(
+        self, _reservation_id: str
+    ) -> CapacityVector | None:
         return None
 
-    def instrument_committed_vector(self, _key: object) -> object | None:
+    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 
@@ -416,16 +427,18 @@ class _MutableStateProjection:
     def all_reservations(self) -> dict[str, CapacityState]:
         return {self._reservation_id: self.state}
 
-    def instrument_state(self, _key: object) -> CapacityState | None:
+    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
         return None
 
-    def instrument_last_seq(self, _key: object) -> int | None:
+    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
         return None
 
-    def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+    def reservation_committed_vector(
+        self, _reservation_id: str
+    ) -> CapacityVector | None:
         return None
 
-    def instrument_committed_vector(self, _key: object) -> object | None:
+    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 

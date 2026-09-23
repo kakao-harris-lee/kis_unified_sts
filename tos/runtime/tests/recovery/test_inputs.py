@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from tos.engine.records import event_identity
@@ -36,7 +37,7 @@ class _NeverStartedTimeService:
     :mod:`tos_runtime.recovery.reconciliation`'s own fail-closed freshness path is exercised
     exactly as it would be against a real one."""
 
-    def current_snapshot(self):
+    def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("never started (test double)")
 
 

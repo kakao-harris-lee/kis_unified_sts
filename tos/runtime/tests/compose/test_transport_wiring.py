@@ -13,12 +13,15 @@ from __future__ import annotations
 import ast
 import dataclasses
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 import yaml
 from tos.egressgw.records import GatewayEvidenceRecord
 from tos.engine.vocabulary import CommitmentStep
+from tos.evidence import EvidenceAppendReceipt
+from tos.workload import RuntimeIdentity
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig, load_broker_scopes
 from tos_runtime.compose._request_digest import CapsuleStandInDigest, KisWireCodecDigest
@@ -34,6 +37,8 @@ from tos_runtime.compose._transport_wiring import (
     resolve_transport_boot,
 )
 from tos_runtime.custody.file_custody import FileCustody
+from tos_runtime.custody.ports import CredentialHandle
+from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.transport.kis_mock.adapter import KisMockTransport
 
 from ..transport.kis_mock import _seal_fixtures as seal_fx
@@ -390,8 +395,11 @@ def test_refuse_custody_principal_mismatch_checks_both_scopes_independently(
 
 
 class _NullEvidence:
-    def append(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002
-        return None  # a no-op evidence double — args are intentionally unused
+    def append(
+        self, payload: Mapping[str, object], *, kind: str, record_class: str
+    ) -> EvidenceAppendReceipt:  # noqa: ARG002
+        del payload, kind, record_class  # a no-op evidence double
+        return EvidenceAppendReceipt()
 
 
 # ===========================================================================
@@ -534,7 +542,7 @@ def test_build_transport_synthetic_builds_a_synthetic_paper_transport() -> None:
         monotonic=_NullMonotonic(),
         seal_lookup=SealRegistry(),
         evidence_store=_NullEvidenceStore(),
-        runtime_identity=None,
+        runtime_identity=RuntimeIdentity(),
     )
     assert isinstance(transport, SyntheticPaperTransport)
 
@@ -554,7 +562,7 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
         monotonic=_NullMonotonic(),
         seal_lookup=SealRegistry(),
         evidence_store=_NullEvidenceStore(),
-        runtime_identity=None,
+        runtime_identity=RuntimeIdentity(),
     )
     assert isinstance(transport, KisMockTransport)
     # Independent review MEDIUM-2: pin the exact custody scope names build_transport wires the
@@ -566,7 +574,7 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
 
 
 class _NullCustody:
-    def load(self, scope: str) -> object:  # noqa: ARG002 - never invoked in this test
+    def load(self, scope: str) -> CredentialHandle:  # noqa: ARG002 - never invoked
         raise AssertionError("not invoked by build_transport itself")
 
 
@@ -575,9 +583,15 @@ class _NullMonotonic:
         return 0
 
 
-class _NullEvidenceStore:
-    def append(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002
-        return None  # a no-op evidence-store double — args are intentionally unused
+class _NullEvidenceStore(SqliteEvidenceStore):
+    """Never invoked in these two tests — ``build_transport`` only ever builds the
+    ``_evidence_recorder`` closure over it, never calls it (mypy stage 3 §1.3 rule 3: the
+    real ``SqliteEvidenceStore.append`` signature ``_evidence_recorder`` forwards to has a
+    wider surface than ``EvidenceAppendPort`` — ``runtime_identity`` — so the double
+    subclasses the concrete class rather than getting its own port)."""
+
+    def __init__(self) -> None:  # real __init__ deliberately skipped — never invoked
+        pass
 
 
 # ===========================================================================

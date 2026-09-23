@@ -56,6 +56,10 @@ class _FixedKeyProvider:
     def generations(self) -> tuple[int, ...]:
         return (self._key_generation,)
 
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return self._key
+
 
 def _write_custody_manifest(path: Path, *, environment_label: str) -> None:
     path.write_text(f'environment_label: "{environment_label}"\nscopes: {{}}\n')

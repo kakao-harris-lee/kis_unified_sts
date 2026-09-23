@@ -60,6 +60,10 @@ class _FixedKeyProvider:
     def generations(self) -> tuple[int, ...]:
         return (1,)
 
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return b"test-fixed-key-bytes-resolve"
+
 
 @pytest.fixture()
 def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:

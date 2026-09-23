@@ -38,12 +38,14 @@ from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NoReturn
 
 import pytest
-from tos.engine.records import event_identity
+from tos.engine.records import InstrumentKey, event_identity
 from tos.rcl import (
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     ReservationScope,
     TransitionCause,
@@ -105,7 +107,7 @@ class _NeverStartedTimeService:
     """Reused from ``test_inputs.py``'s own convention: raises the SAME
     ``TimeServiceNotStarted`` a genuinely never-started real service raises."""
 
-    def current_snapshot(self):
+    def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("never started (test double)")
 
 
@@ -297,16 +299,20 @@ def test_a2_an_independent_witness_double_clears_the_same_attempt() -> None:
         def all_reservations(self) -> dict[str, CapacityState]:
             return {}
 
-        def instrument_state(self, _key: object) -> CapacityState | None:
+        def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
             return None
 
-        def instrument_last_seq(self, _key: object) -> int | None:
+        def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
             return None
 
-        def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+        def reservation_committed_vector(
+            self, _reservation_id: str
+        ) -> CapacityVector | None:
             return None
 
-        def instrument_committed_vector(self, _key: object) -> object | None:
+        def instrument_committed_vector(
+            self, _key: InstrumentKey
+        ) -> CapacityVector | None:
             return None
 
     class _FakeEvidenceReader:
