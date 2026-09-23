@@ -68,9 +68,20 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 #: [09-03, 09-10, 09-17, 09-24]; the second is 2026-09-10.
 _EXPIRY_DATE_ISO = "2026-09-10"
 
-#: 2026-09-11 10:00 KST (Friday, the day AFTER expiry) — `today > expiry_date` unconditionally,
-#: so `maturity_at(...).expired is True` regardless of the session window's own end time.
-_AFTER_EXPIRY_UNIX_MS = 1_789_088_400_000
+#: 2026-09-10 19:00 KST — the expiry day itself, AFTER its last regular (non-crossing)
+#: session window has ended (09:00-15:45), so `maturity_at(...).expired is True`
+#: (plan §2 decision 1), and inside the night window below, so the UNDERLYING session phase
+#: is still the admitting `CONTINUOUS` token. Both halves matter: scenario (a) needs a
+#: genuinely-expired instant, and the M5 mutation below needs the un-folded phase at that
+#: SAME instant to admit, so that removing the maturity fold visibly restores the send.
+#:
+#: This used to be 2026-09-11 10:00 (the day after expiry), which relied on `maturity_at`
+#: reporting the whole instrument CLASS expired for the rest of the rule month — the
+#: over-conservative class-level reading the 2026-09-13 wiring plan §7 carried forward as a
+#: defect ("클래스 단위 만기(월말까지 EXPIRED)는 계약월 단위 모델로 후속") and this branch
+#: fixes: past a rule month's expiry, `maturity_at` now rolls to the next rule month, so the
+#: day after expiry is NOT expired and cannot drive this scenario any more.
+_AFTER_EXPIRY_UNIX_MS = 1_789_034_400_000
 
 #: 2026-09-09 10:00 KST (Wednesday, the day BEFORE expiry, inside the regular 09:00-15:45
 #: window) — `today < expiry_date`, so `expired is False` and the regular phase admits.
@@ -83,6 +94,14 @@ def _write_futures_calendar(
     """Override the shared conftest.py calendar with a REALISTIC narrow window (09:00-15:45
     weekdays) PLUS a real quarterly futures-expiry rule for ``fx.INSTRUMENT_CLASS`` — the shared
     fixture's own ``futures_expiry: {}`` carries no rule at all, so it cannot exercise rollover.
+
+    The second window (18:00->05:00, crossing midnight) is what makes
+    :data:`_AFTER_EXPIRY_UNIX_MS` expressible at all: ``maturity_at`` flips ``expired`` at the
+    end of the last **non-crossing** window, so an instant that is both past expiry AND inside
+    an open, admitting session can only sit in a crossing window. It carries the same
+    ``CONTINUOUS`` token as the day window (``fx.SESSION_PHASE``, the only phase the venue
+    policy admits) so the M5 mutation below still reaches transport. Hours mirror the real KRX
+    futures night session the W5 survey recorded.
     """
     (config_dir / "calendar.yaml").write_text(
         yaml.safe_dump(
@@ -98,7 +117,14 @@ def _write_futures_calendar(
                             "end": "15:45",
                             "days": ["MON", "TUE", "WED", "THU", "FRI"],
                             "crosses_midnight": False,
-                        }
+                        },
+                        {
+                            "phase": "CONTINUOUS",
+                            "start": "18:00",
+                            "end": "05:00",
+                            "days": ["MON", "TUE", "WED", "THU", "FRI"],
+                            "crosses_midnight": True,
+                        },
                     ]
                 },
                 "closed_phase": "CLOSED",
@@ -259,6 +285,9 @@ def _latest_session_facts_observed_payload(runtime) -> dict:
 def test_past_expiry_instant_is_expired_phase_inadmissible_and_sends_nothing(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
+    """The instant is past expiry AND inside an open session window (see
+    :data:`_AFTER_EXPIRY_UNIX_MS`) — so the zero sends below can only come from the maturity
+    fold, never from the session being closed anyway."""
     _write_futures_calendar(config_dir)
     _write_nontrade_config(config_dir)
     runtime = _compose(

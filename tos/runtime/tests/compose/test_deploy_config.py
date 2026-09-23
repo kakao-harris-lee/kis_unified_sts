@@ -23,7 +23,7 @@ longer active AT exactly 16:00.
 from __future__ import annotations
 
 import zoneinfo
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -214,6 +214,61 @@ def test_futures_expiry_day_after_close_is_expired_stock_is_not(
     )
     assert runtime.session_facts.phase_for_step3("krx-stock") != "EXPIRED"
     assert runtime.session_facts.phase_for_step3("krx-stock") == "CLOSED"
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+@pytest.mark.parametrize(
+    ("month", "day"),
+    [
+        (9, 11),  # the day after the September expiry
+        (9, 28),  # late in the same rule month
+        (9, 30),  # the last day of the same rule month
+        (10, 1),  # the first day of the next (non-rule) month
+        (12, 11),  # the day after the December expiry -- rolls across the year
+    ],
+)
+def test_real_calendar_after_expiry_is_regular_phase_not_expired(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    month: int,
+    day: int,
+) -> None:
+    """The deployed file, at the instants the defect actually broke: a
+    ``futures_expiry`` rule names an instrument CLASS, and the class does not
+    stop trading when one contract month matures -- the next contract does.
+
+    ``maturity_at`` used to judge every instant after a rule month's expiry
+    against that ELAPSED date, so ``krx-index-futures`` reported ``EXPIRED``
+    for the whole rest of the month (2026-09-11..09-30, 12-11..12-31, ...) and
+    ``decide_tick`` skipped every tick with ``SKIPPED_SESSION_CLOSED``. Each
+    instant below is a 10:00 KST weekday inside the configured 08:45-15:45
+    window, so the correct phase is the ordinary ``CONTINUOUS`` token.
+
+    The 2026-09-13 runtime-operations wiring plan recorded this as a
+    limitation to carry forward, never as intent (§7 "클래스 단위 만기(월말까지
+    EXPIRED)는 계약월 단위 모델로 후속"); its sibling
+    ``test_futures_expiry_day_after_close_is_expired_stock_is_not`` pins the
+    expiry-day behaviour this fix deliberately leaves unchanged.
+    """
+    _install_real_calendar(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_kst_unix_ms(2026, month, day, 10, 0)),
+    )
+    _reach_trusted(runtime)
+    facts = runtime.session_facts.observe("krx-index-futures")
+    assert runtime.session_facts.phase_for_step3("krx-index-futures") == "CONTINUOUS"
+    assert facts.maturity_fact.expired is False
+    # the reported expiry is the NEXT one the rule produces, never an elapsed date
+    assert facts.maturity_fact.expiry_date is not None
+    assert facts.maturity_fact.expiry_date > date(2026, month, day)
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()

@@ -205,6 +205,22 @@ def maturity_at(
     (non-crossing) session window ends that day (plan §2 decision 1); if no
     such window exists for the class, the whole expiry day counts as not yet
     expired (there is no other fact to judge the moment from).
+
+    ``expiry_date`` is always the NEXT expiry the rule produces, never one
+    already in the past: once a rule month's expiry date has passed, this
+    rolls to the next rule month (:func:`_next_rule_month`) and judges the
+    instant against THAT date. A ``futures_expiry`` rule describes an
+    instrument CLASS, which does not stop trading when one contract month
+    matures — the next contract does. Judging a post-expiry instant against
+    the elapsed date instead reported the whole class ``expired`` from the
+    day after expiry to month end (2026-09-11..09-30, 12-11..12-31, …),
+    which the 2026-09-13 runtime-operations wiring plan recorded as a
+    limitation to carry forward, never as intent: §7 "클래스 단위 만기
+    (월말까지 EXPIRED)는 계약월 단위 모델로 후속" and its lesson "클래스
+    단위 규칙(만기)은 정체성(계약월) 없이 쓰면 과잉 보수가 된다".
+    Contract-month IDENTITY is still absent here (the rule names a class, not
+    a contract); this only stops the class from being reported matured while
+    its next contract trades.
     """
     rule: ExpiryRule | None = cfg.futures_expiry.get(instrument_class)
     if rule is None:
@@ -212,18 +228,26 @@ def maturity_at(
     tz = zoneinfo.ZoneInfo(cfg.tz_id)
     instant_local = _to_local(instant_unix_ms, tz)
     today = instant_local.date()
-    if today.month in rule.months:
-        expiry_date = _nth_weekday_of_month(
-            today.year, today.month, rule.weekday, rule.ordinal
-        )
+    this_month_expiry = (
+        _nth_weekday_of_month(today.year, today.month, rule.weekday, rule.ordinal)
+        if today.month in rule.months
+        else None
+    )
+    if this_month_expiry is not None and today <= this_month_expiry:
+        expiry_date = this_month_expiry
     else:
+        # Either this month carries no expiry at all, or this month's expiry
+        # has already passed. Either way the contract that trades NOW matures
+        # in the next rule month — see the docstring: a class-level rule
+        # judged against an elapsed date reports the class matured while its
+        # next contract is still trading.
         year, month = _next_rule_month(today.year, today.month, rule.months)
         expiry_date = _nth_weekday_of_month(year, month, rule.weekday, rule.ordinal)
-    if today > expiry_date:
-        expired: bool | None = True
-    elif today < expiry_date:
-        expired = False
+    if today < expiry_date:
+        expired: bool | None = False
     else:
+        # ``today == expiry_date``: the roll above makes an expiry date in the
+        # past unreachable, so this is the expiry day itself.
         windows = cfg.sessions.get(instrument_class, ())
         last_end = _last_regular_window_end(expiry_date, windows, tz)
         expired = False if last_end is None else instant_local >= last_end
