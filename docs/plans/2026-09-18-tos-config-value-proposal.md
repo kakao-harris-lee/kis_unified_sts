@@ -175,3 +175,122 @@ tos-paper-<무엇>-g<세대>      예: tos-paper-envelope-g1 · tos-paper-profil
    **부팅용으로 아무거나 넣으면 안 된다.** A-2 에서 별도로 다룬다
 
 **6·7 은 값을 정하기 전에 판단이 더 필요하다.** 부팅이 이것들 때문에 막히면 그것이 A-5 의 결과물이다.
+
+---
+
+## 7. 채택 기록
+
+**2026-09-23 · 운영자 「제안된 그대로 채택」**(⚠ 행 4건 포함). 착지 상세는 상위 계획
+`docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` **§7.8**.
+**2026-09-23 2차(review-794 조치 + 운영자 답변 4건)** 내용을 §7.3~§7.5 로 덧붙인다.
+
+### 7.1 1차 채택 (2026-09-23)
+
+- **채택 18종** — `config/tos_runtime/paper/` 신설. 각 파일 헤더에 승인 출처와 **§0 문장**을 박았다.
+  `construction.yaml` 은 **채택하지 않았다**: 이 표가 §0 에서 대상에 넣었으나 7개 리프 어디에도 값을
+  주지 않고, `account`/`instrument` 는 venue/OCP 의 「never committed here」 운영자 좌표와 같아야 한다.
+- **§6 1항 재측정**: ADR-002-030 §29 는 절 제목이 "Open Implementation Questions" 이고 Q3 은 열린
+  질문이다 — 승인된 `proof_recipe_id` 는 **찾지 못한 게 아니라 아직 존재하지 않는다.**
+- **§6 3항 확정**: envelope/profile/bundle digest 를 계산하는 서브커맨드는 **없다**
+  (`print-policy-digests` 는 governed **policy** 5종만 출력). 커널이 세 필드를 `X | None` 로 선언해
+  `null` 이 로드된다 — 「거부가 빠진 것」이 아니라 **「도출이 없는 것」**이다.
+- **§6 4항 해소**: `admission_result` 의 정확한 enum 멤버는 `ADMIT` 이다(§4.1 의 fact-check 가 옳았다).
+  실부팅으로 확인: `release.yaml` 이 그 값으로 로드된다.
+- **§3 2행(members) 보류** — `print-policy-digests` 가 **2026-09-16 채택분**의 잔여 TBD
+  (`venue_constraint_policy::scope.accounts`)에서 거부했다. 이 표의 대상 범위가
+  「아직 없는 19종 + construction」이라 그 값의 행이 없으므로 지어내지 않고 `members: null` 로 남겼다.
+
+### 7.2 운영자 답변 (2026-09-23, 2차)
+
+1. **좌표는 커밋하지 않는다** — 「이 장비가 운영 장비. 여기 있는 `.env` 와 `.env.mock` 환경 파일을
+   그대로 활용」. 즉 `construction.yaml::account`/`instrument` 와 2026-09-16 채택분 4종의
+   `scope.accounts`/`scope.instruments`/`account_scope`/`instrument_scope` 는 **런타임에 이 호스트의
+   env 파일에서 와야 하고, 커밋되어서는 안 된다.** → **기존 주입 수단 서베이 결과 그런 수단이 없다**
+   (상위 계획 §7.8 「B1 서베이」). **새로 만들지 않고 설계 선택지만 보고**했다 — 이 표에는 값이 들어가지 않는다.
+2. **`currentness.yaml::required_dimensions` — 「그대로 사용」.** §6 6항이 설계 판단으로 남긴 것을
+   커널 `MANDATED_DIMENSION_FLOOR` 21키 전부로 채웠다. 추천 출처
+   `docs/plans/2026-09-12-tos-operator-value-proposals.md` §2(등급 C). **항진명제 경고는 파일 헤더에
+   그대로 이월**했다 — 이 목록이 floor 와 같은 한 `policy_covers_mandated_dimensions` 가 참인 것은
+   증거가 아니다.
+3. **「확정할 부분 추천 값이 있으면 활용」** — §6 미확정 5건을 저장소 전수 재조사했다.
+
+   | §6 항목 | 추천값 | 출처 | 처분 |
+   |---|---|---|---|
+   | `monitor_coverage::bounds` 3값 | `60000` · `["TRUSTED"]` · `100` | 2026-09-12 §4(등급 C, 「서버 실측 후 하향」) | **채움** — 런타임 자기관측 임계값이라 자산군 무관 |
+   | `currentness::required_dimensions` | 커널 floor 21키 | 2026-09-12 §2(등급 C) | **채움**(답변 2) |
+   | `finality::proof_recipe_id` | **없음** | ADR-002-030 §29 = 열린 질문 · 2026-09-12 §5 = 등급 M(「개발 측 값 제안 없음」) | `null` 유지 |
+   | `finality::source_revision` | **없음**(등급 M) | 2026-09-12 §5 — 「배포 git SHA」는 산출 *방법*이고, 이 파일을 담는 커밋의 SHA 는 쓰는 시점에 존재하지 않는다(자기참조) | `null` 유지 |
+   | `finality::value_date` | ⚠ **있으나 범위 불일치** | 2026-09-12 §5 `T+2`(등급 B) — 근거가 「KRX **주식** 결제일」인데 이 배포의 스코프는 `SYNTHETIC_FUTURES_ORDER` | `null` 유지 — 넣으면 **틀린 값에 인용을 입히는 것** · 운영자 한 줄 확인 대기 |
+   | `strategies/` 10 리프 | **없음** | 2026-09-12·2026-09-18 양 표 · example 주석 전수 | 미채택 |
+   | `marketfeed.yaml` + `critical_input_policy.yaml` | **없음** | 두 표 모두 이 두 파일의 행이 없다(2026-09-12 는 틱 원천 웨이브 이전 문서) · 특히 `fields[].max_age_ms` 는 신선도 한도 = 안전 값 | 미채택 · 좌표는 답변 1 에 걸림 |
+
+4. **PR 본문 이탈 1~4 — 운영자 확인(2026-09-23).** 아래 §7.3 이 그 4건을 포함한 **전수 목록**이다.
+5. **(3차 답변, 2026-09-23) 이탈 ⑤ 와 (ㄱ) 양의 안전 주장 19건 — 운영자 확인.** 확인 표면은 §7.3 의 이탈 ①~⑤(18 리프)와
+   (ㄱ) 19건이다. (ㄴ) 5건·(ㄷ) 17건은 출처 표만 있고 **개별 운영자 확인은 받지 않았다**(가장 낮은 위험군 — 불투명 토큰·버전 메타·
+   빈 목록). `value_date` 는 이후 설계 PR #795 에서 운영자가 `T+1` 로 정했다(구현 PR 에서 기입).
+
+### 7.3 이 표가 행으로 다루지 않은 채워진 리프 — **전수 41건** (review-794 HIGH-3)
+
+review-794 는 PR 본문이 이탈을 **4건**으로 열거한 것을 지적했다: 「운영자는 저 19건의 양의 안전
+주장을 보지 못한 채 서명하게 된다」. 분류기로 18종 156 리프를 전수 분류해 재현했다 —
+**제안표 §1/§2/§3/§4.1/§4.2 행 43 · §4.3 이 이름을 댄 규칙 36 · `broker_scopes` example 본문 7 ·
+나머지 70**, 그 70 중 **채워진 것(명시적 `[]` 포함)이 정확히 41**(나머지 12 는 `null`,
+17 은 아래 (ㄹ)(ㅁ)(ㅂ) = PR 이 이미 이탈로 공시한 것). 성격별 전수:
+
+**(ㄱ) 양의 안전 주장 19건** — 틀리면 감시가 스스로 「건강하다」고 말한다.
+
+| 리프 | 값 | 출처 |
+|---|---|---|
+| `monitor_coverage::coverage.items.{evidence-tip-currency,time-service-health,inbox-backlog}.{restrictive_response_present,alert_path_present,evidence_path_present,currentness_rule_present,closure_1_to_12_complete}` (3×5=15) | `true` | **2026-09-12 §4** 「coverage manifest」 행(등급 C/M · 「세 항목 모두 실 감지기가 있음(W3.1 stm)」) |
+| `monitor_coverage::coverage.items.*.criticality` (3) | `"CRITICAL"` | 동 |
+| `safety_deviations::deviations.active_set.combined_within_envelope` (1) | `true` | 2026-09-12 §4 「deviations active_set」 행 · 이탈 0 건이라 **공허하게 참** |
+
+**(ㄴ) `*_digest` 이름인데 계산값이 아닌 이름 토큰 5건** (review-794 LOW-2)
+
+`currentness_dimensions::{CONTEXT,CRITICAL_INPUT,EGRESS_IDENTITY}.bound_digest` ·
+`monitor_coverage::coverage.manifest.{coverage_manifest_digest,policy_digest}`.
+**§0.2 위반이 아니다**: §0.2 의 대상은 *정책 문서의* `canonical_digest` 계열이고(그 검사기가 `"TBD"`
+를 항상 통과시키는 것이 이유), 이 다섯은 **계산 원천이 아예 없는 불투명 참조 토큰**이며 로더가 `null`
+을 거부하므로 「비워 둔다」가 선택지가 아니다. 18종에 `canonical_digest` 실값은 **0건**이다.
+2026-09-12 §4 는 여기에 「실 digest(운영자 산출 · `sha256sum`)」를 등급 M 으로 제안했다 — 그 산출이
+생기면 대체할 자리다. 각 파일 헤더에 §0.2 와의 관계를 명시했다.
+
+**(ㄷ) 버전 메타 6건 · `restrictive_floor` 3건 · `safety_cell` 1건 · §4.3 이 이름을 대지 않은 빈 목록 7건**
+
+| 리프 | 값 | 출처 |
+|---|---|---|
+| `safety_envelope::envelope.envelope_version.{version,effective_date,approver_identity}` · `safety_profile::profile.profile_version.{…}` (6) | `"1"` · `"2026-09-23"` · `"operator (System Owner) …"` | 2026-09-12 §4 가 `v1`/effective/approver 를 제안(등급 C). **표기 차이**: 원천은 `v1`, 채운 값은 `"1"`(§4.3 식별자 규칙의 세대 번호 표기에 맞춤 — 로더는 불투명 문자열로 받는다). **만료일은 채우지 않았다** — 그 표의 `expiration 2027-03-15`(6개월 재검증)는 이번 답변 범위 밖 |
+| `currentness_dimensions::*.restrictive_floor` (3) | `0` | 제안표 행 없음 — 「차원별 추가 하한을 선언하지 않는다」가 사실이고 0 이 그 표기다(파일 헤더) |
+| `safety_incidents::incidents.active_set.safety_cell` (1) | `"tos-paper-cell-g1"` | 2026-09-12 §4 는 `paper-cell-1` 제안 · 이름만 제안표 §4.3 최신 규칙으로 |
+| `safety_profile::profile.{scope,permitted_behaviors,fallback_rules}` · `safety_activation::activation.{scope,restrictive_generation_effects}` · `safety_incidents::incidents.{active_set.shared_dependencies,applicable_incident_ids}` (7) | `[]` | §4.3 의 「빈 것이 사실이다」를 **이름이 나열되지 않은 목록에도** 적용한 확장분 |
+
+**(ㄹ)(ㅁ)(ㅂ) PR 이 이탈로 공시한 18건**(①~④ 17 리프는 위 「나머지 70」 안 · ⑤ 1 리프는 제안표 §3 행이 있으므로 「행 43」 안 —
+그래서 41 에는 들어가지 않는다) — 운영자 확인(2026-09-23, 답변 4 · 3차 답변):
+
+| # | 리프 | 출처 |
+|---|---|---|
+| 이탈 ① | `release::restriction_state_resolved` = `true` (1) | §4.1 이 채택한 「ADMIT + `restriction_present: false`」 태세의 **귀결** — SCI-INV-014 상 미해소 조회는 무엇이든 보수적으로 거부하므로 `false` 면 채택된 ADMIT 이 무효가 된다 |
+| 이탈 ② | `currentness_dimensions::*.positively_established` = `true` (3) | §4.3 의 양의 확약 부류를 확장 적용 · 근거는 「합성 경로라 위반 경로가 없다는 판단」 · 런타임이 `owner_identity="operator-attestation-pending-phase-5"` 를 스스로 찍어 구조적으로 드러낸다 |
+| 이탈 ③ | `egress_coordinates::*` 9값 | 코드가 외부화하기 **전에** 갖고 있던 리터럴의 전사 — `compose/_egress_coordinates.py` 모듈 독스트링이 아홉을 이름과 값으로 나열한다(review-794 가 축자 대조 확인) |
+| 이탈 ④ | `time::{tz_db_version,trading_calendar_version,verification_profile_version,safety_profile_version}` (4) | 호스트 tzdata 실측 · `calendar.yaml` 강제 일치 · VER-002 자기 식별 전사 · §4.3 식별자 |
+| **이탈 ⑤ (신규 · review-794 MEDIUM-3)** | `authority::trading_approval_policy_generation` = `1` | §3 4행이 **[D] 도출**로 두고 「현재 활성 `TradingApprovalPolicy` 의 `policy_generation` 을 그대로」를 지시했으나 **배포 디렉터리에 그 정책 파일이 없어 도출 원천이 없다.** 「명령으로 얻는다, 손으로 짓지 않는다」가 붙은 값을 규칙으로 치환한 자리다. 독립 두 원천이 같은 1 을 가리킨다(2026-09-12 §2 등급 C · 제안표 §4.3) |
+
+**다음 개정에서 (ㄱ)~(ㄷ)과 이탈 ①~⑤ 를 이 표의 행으로 흡수할 것.**
+
+### 7.4 review-794 조치
+
+| 지적 | 조치 |
+|---|---|
+| HIGH-1 `replay_window_events` 값 미핀(`1000000`→`1` GREEN) | 값 등식 핀 + 「핀이 실제로 발화하는가」 시험에 그 뮤테이션 자체를 넣었다 |
+| HIGH-2 [A] 전사 bound 전건 값 미핀(17종 GREEN) | **부류로 닫았다** — 18종 156 리프 전부가 `_VALUE_PINS`(149) 또는 사유가 붙은 `_UNPINNED_BY_DESIGN`(broker_scopes 본문 7, byte-identity 핀이 더 강하게 덮는다) 중 하나에 속해야 하고, 둘 다 아니면 실패하는 전수 시험을 넣었다. 역방향 드리프트(없어진 리프를 가리키는 핀)와 **게이트 자신의 죽은 검사 여부**도 시험한다. 모듈 독스트링의 과대 주장을 실제 범위로 정정했다 |
+| HIGH-3 이탈 목록 불완전(실측 41) | 위 §7.3 전수 |
+| MEDIUM-1 README `five`→`four` | 재측정 결과 이제 **`two`**(B3 로 `currentness`·`monitor_coverage` 가 채워졌다) |
+| MEDIUM-2 §7 이 이탈 ② 누락 | §7.3 (ㄹ)(ㅁ)(ㅂ) 표에 ①~⑤ 전건 등재 |
+| MEDIUM-3 `authority` [D]→§4.3 치환 미공시 | 이탈 ⑤ 로 등재 + 파일 헤더에 ⚠ 명시 |
+| MEDIUM-4 「25중 15」 재현 불가 | `tos/runtime/tests/compose/_loader_probe.py` 를 **커밋**했다(직접 실행 가능) · 테스트가 분할을 **이름으로** 고정한다. 현재 **17 PASS / 25** |
+| LOW-1 `monitor_coverage:26` §4.3 과대 인용 | 실제 출처(2026-09-12 §4)로 정정 |
+| LOW-2 `*_digest` 이름 5건 | §0.2 와의 관계를 두 파일 헤더에 명시 + §7.3 (ㄴ) |
+| LOW-3 `safety_activation` 은 절반만 로드 | 프로브가 `safety_activation.yaml::members` 를 **별도 행**으로 세므로 집계가 이 파일을 온전히 로드되는 것처럼 보이지 않는다 |
+
+- **뮤테이션 방법론** — review-794 의 지적대로 `yaml.safe_dump` 왕복을 버리고 **텍스트 치환**으로
+  바꿨다(왕복은 헤더 주석을 날려 출처 시험이 먼저 터지는 공허한 RED 를 만든다).

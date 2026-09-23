@@ -10,13 +10,62 @@ Every file here carries a header comment naming its approval provenance
 here without that citation; an un-cited value belongs in an `.example.yaml`
 until it is actually approved.
 
-Everything else the runtime needs to boot (`time.yaml`, `authority.yaml`,
-`risk.yaml`, safety-mesh policy documents, `release.yaml`, …) stays an
-`.example.yaml` under `tos/runtime/config/` until the operator approves its
-own value the same way `calendar.yaml` was approved here.
+**The `file:line` citations in those headers are a measurement, not a
+guarantee.** Every one in the 18 files adopted 2026-09-23 was re-measured
+against main `4d6bffc9` at adoption time (the 2026-09-17 inventory's own
+numbers had already drifted by 2-18 lines for six loaders). They drift again
+whenever the runtime source moves; read the function name next to the number,
+and re-measure rather than trusting a stale line.
+
+**Adopted here as of W-A / A-2 (2026-09-23) — 24 files.** The original 6
+(`calendar.yaml`, `risk.yaml`, `aggregate_risk_policy.yaml`,
+`action_flow_policy.yaml`, `venue_constraint_policy.yaml`,
+`order_construction_policy.yaml`) plus the 18 the value proposal
+(`docs/plans/2026-09-18-tos-config-value-proposal.md`, approved by the
+operator 2026-09-18 and confirmed as-proposed 2026-09-23) supplied values for:
+
+| adopted | files |
+| --- | --- |
+| 2026-09-12 | `calendar.yaml` |
+| 2026-09-16 | `risk.yaml` · `aggregate_risk_policy.yaml` · `action_flow_policy.yaml` · `venue_constraint_policy.yaml` · `order_construction_policy.yaml` |
+| 2026-09-23 (W-A / A-2) | `time.yaml` · `authority.yaml` · `release.yaml` · `currentness.yaml` · `currentness_dimensions.yaml` · `risk_attestations.yaml` · `egress_coordinates.yaml` · `broker_scopes.yaml` · `engine.yaml` · `engine_driver.yaml` · `coordinator_preconditions.yaml` · `finality.yaml` · `safety_envelope.yaml` · `safety_profile.yaml` · `safety_activation.yaml` · `safety_deviations.yaml` · `safety_incidents.yaml` · `monitor_coverage.yaml` |
+
+**Adopted is not the same as loadable.** Every one of the 18 carries the
+proposal §0 sentence in its own header — *this is a first-boot profile, not
+an operational safety posture* — and **two** of them still keep a named-TBD
+leaf the proposal's §6 "확인 불가 · 미확정" list refused to invent:
+
+| file | leaf(s) still named-TBD | why |
+| --- | --- | --- |
+| `finality.yaml` | `value_date` · `source_revision` · `proof_recipe_id` | §6 1·2항 — no recommended value exists (the two that have a prior recommendation are grade **M**, "개발 측 값 제안 없음"; the third, `value_date`, has a grade-B recommendation whose basis is the KRX **stock** settlement date, which does not fit this deployment's `SYNTHETIC_FUTURES_ORDER` scope) |
+| `safety_activation.yaml` | `members` | §3 [D] — derived from `print-policy-digests`, which refuses on the 2026-09-16 policies' operator-fill `scope.accounts` |
+
+Two more that the first cut of this list counted as named-TBD were **filled
+on 2026-09-23** under the operator's "추천 값이 있으면 활용" answer, from the
+earlier value table `docs/plans/2026-09-12-tos-operator-value-proposals.md`:
+`currentness.yaml::required_dimensions` (§2, the 21-member mandated floor)
+and `monitor_coverage.yaml::bounds` (§4, 60000 / `[TRUSTED]` / 100, grade C).
+
+Those two now load cleanly. The two files in the table above
+(`finality.yaml`, `safety_activation.yaml`) still refuse, by design;
+`tos/runtime/tests/compose/test_deploy_approved_values.py` pins each refusal
+**by key name**, so filling one later is a deliberate act — and
+`tos/runtime/tests/compose/_loader_probe.py` (runnable directly) prints the
+whole PASS/REFUSE partition, which that same test pins by name.
+
+Still NOT adopted, and still blocking a `run` boot: `construction.yaml`
+(the value proposal names it in scope but tabulates no value for any of its
+seven leaves, and its `account`/`instrument` must equal the venue/OCP
+policies' `scope.accounts`/`scope.instruments`, which those files' own
+headers mark operator-fill and "never committed here"), the `strategies/`
+directory (proposal §6 item 7 — a strategy DSL leaf has trading meaning and
+may not be filled "just to boot"), and the optional-together
+`marketfeed.yaml` + `critical_input_policy.yaml` tick-source pair.
 
 This directory is consumed today by the compose e2e test suite
-(`tos/runtime/tests/compose/test_deploy_config.py`) **and, as of the TOS
+(`tos/runtime/tests/compose/test_deploy_config.py`,
+`test_deploy_policies.py`, `test_deploy_risk_policies.py`,
+`test_deploy_approved_values.py`) **and, as of the TOS
 `run` 구동 아크 wave (main `ae3c967c`), by the CLI's `run` entrypoint itself.**
 `run` now actually composes and drives: `cli.py`'s `main()` dispatches to
 `_run_dispatch.dispatch_run` (`compose/cli.py:801-802`), which loads
@@ -30,7 +79,11 @@ composing still needs every approved value this directory exists to hold.
 **W1 lane D inventory (2026-09-17,
 `docs/plans/2026-09-17-tos-deployment-instance-inventory.md`, measured
 against main `ae3c967c`)** measured the full gap between "6 files approved
-here" and "`run` actually boots a deployment": `compose_paper_runtime` reads
+here" and "`run` actually boots a deployment". **Its counts are fixed at that
+measurement point and are NOT rewritten by the 2026-09-23 adoption above** —
+read "6 approved / 24 example-only / 19 boot-blocking" as the 2026-09-17
+state, then apply the adoption table at the top of this file:
+`compose_paper_runtime` reads
 exactly 30 fixed config-dir file names (plus the `strategies/` directory),
 of which these 6 are approved and 24 exist only as
 `tos/runtime/config/*.example.yaml`. Of those 24 unapproved names, 19

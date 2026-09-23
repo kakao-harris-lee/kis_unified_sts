@@ -1,0 +1,48 @@
+# =============================================================================
+# safety_profile.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/safety_profile.example.yaml
+# 로더: tos_runtime.safety.profile.SafetyProfileService (model_validate →
+#       tos.spg.RuntimeSafetyProfile)
+# 호출부: compose/_safety_wiring.py:516 (`build_safety_mesh`, 무조건)
+# =============================================================================
+#
+# `target_envelope_id`/`target_envelope_generation` 은 이 프로파일이 동작하는
+# 봉투 세대를 **정확히** 고정한다 — config/tos_runtime/paper/safety_envelope.yaml
+# 의 `envelope.envelope_id`/`envelope_generation` 과 같은 값이어야 한다.
+#
+# `governed_dimensions` 는 봉투의 지배 차원의 **부분집합**이어야 하고 각 최대치
+# 이하여야 한다. 봉투가 0개를 선언하므로 여기도 0개가 유일하게 정합한 값이다
+# (제안표 §4.3: 「빈 것이 사실이다」).
+# =============================================================================
+
+profile:
+  # 제안표 §4.3 식별자 규칙: `tos-paper-<무엇>-g<세대>`, 세대는 1.
+  # time.yaml 의 `safety_profile_version` 이 이 토큰을 가리킨다.
+  profile_id: "tos-paper-profile-g1"
+  profile_generation: 1
+  profile_version:
+    version: "1"
+    effective_date: "2026-09-23"
+    evidence_package_version: null
+    approver_identity: "operator (System Owner) — 2026-09-18 승인 · 2026-09-23 채택"
+    expiration_or_revalidation_date: null
+    superseded_version_link: null
+    change_classification: null
+  target_envelope_id: "tos-paper-envelope-g1"
+  target_envelope_generation: 1
+  # 제안표 §4.3 — 빈 것이 사실이다(봉투가 지배하는 차원이 0개다).
+  governed_dimensions: []
+  scope: []
+  permitted_behaviors: []
+  fallback_rules: []
+  evidence_package_ref: null
