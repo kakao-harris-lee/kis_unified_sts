@@ -158,6 +158,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Protocol
 
 from tos.canonical import CanonicalizationScheme
 from tos.engine.records import EgressResultPayload, InstrumentKey
@@ -203,18 +204,23 @@ from tos_runtime.recon.service import (
 # possibly-diverging construction. Module-private because this consumer is its only cross-lane
 # reuse site so far.
 from tos_runtime.recovery.reconciliation import (  # noqa: SLF001
+    FreshnessTimeReader,
     _build_freshness_marker,
 )
-from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.service import TimeHealthReader
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "CAPACITY_RELEASE_HELD_KIND",
     "CAPACITY_RELEASE_INTENT_KIND",
     "RELEASE_PROOF_OVERDUE_KIND",
+    "FinalityConsumerPort",
+    "FinalityConsumerTimeReader",
     "FinalityReleaseConsumer",
+    "ReleaseConflictReader",
     "ReleaseHoldReason",
     "ReleaseOutcome",
+    "ReleaseOutcomeLike",
 ]
 
 #: The obligation-record evidence kind this consumer appends for a freshly-produced
@@ -279,6 +285,29 @@ class ReleaseHoldReason(StrEnum):
     RCL_TRANSITION_REFUSED = "RCL_TRANSITION_REFUSED"
 
 
+class ReleaseOutcomeLike(Protocol):
+    """The read surface :func:`~tos_runtime.engine.finality_projection._project_release` needs
+    off whatever :meth:`FinalityReleaseConsumer.consume` (or a test double standing in for it)
+    returns (mypy stage 3 §1.3 rule 3 port introduction) — exactly the fields that caller reads
+    off the outcome, never the outcome TYPE itself, so a hand-built stand-in with the same
+    fields (no inheritance) satisfies it structurally. Declared as read-only properties (not
+    plain mutable attributes) because both real implementations
+    (:class:`ReleaseOutcome`/the test double) are frozen — a plain Protocol attribute demands a
+    SETTABLE variable and a frozen dataclass's field is read-only, so the mutable form would
+    reject exactly the frozen values this Protocol exists to accept."""
+
+    @property
+    def released(self) -> bool: ...
+    @property
+    def attempt_id(self) -> str: ...
+    @property
+    def proof_digest(self) -> str | None: ...
+    @property
+    def evidence_seq(self) -> int | None: ...
+    @property
+    def resolution_generation(self) -> int | None: ...
+
+
 @dataclass(frozen=True)
 class ReleaseOutcome:
     """What :meth:`FinalityReleaseConsumer.consume` actually did for one attempt (kernel round #3
@@ -312,6 +341,39 @@ class ReleaseOutcome:
     resolution_generation: int | None = None
 
 
+class FinalityConsumerPort(Protocol):
+    """The narrow read surface :func:`~tos_runtime.engine.finality_projection._project_release`
+    needs off a :class:`FinalityReleaseConsumer` (mypy stage 3 §1.3 rule 3 port introduction) —
+    only :meth:`consume`, never the class's own construction-time gates/state."""
+
+    def consume(self, payload: EgressResultPayload) -> ReleaseOutcomeLike:
+        """Consume one genuinely-applied ``EGRESS_RESULT`` payload; see
+        :meth:`FinalityReleaseConsumer.consume`'s own docstring for the gate sequence.
+        """
+        ...
+
+
+class ReleaseConflictReader(Protocol):
+    """The narrow read surface :mod:`tos_runtime.compose._dimension_readers`'s POST_TRADE
+    dimension reader needs off a :class:`FinalityReleaseConsumer` (mypy stage 3 §1.3 rule 3 port
+    introduction) — only :meth:`latest_release_is_conflict_free`, never :meth:`consume` or any
+    construction-time state."""
+
+    def latest_release_is_conflict_free(self) -> bool:
+        """See :meth:`FinalityReleaseConsumer.latest_release_is_conflict_free`'s own docstring."""
+        ...
+
+
+class FinalityConsumerTimeReader(TimeHealthReader, FreshnessTimeReader, Protocol):
+    """The combined read surface :class:`FinalityReleaseConsumer` needs off the runtime's time
+    service (mypy stage 3 §1.3 rule 3 port introduction) — :attr:`~TimeHealthReader.health_state`
+    (``_check_obligation_expiry``'s own gate) AND :meth:`~FreshnessTimeReader.current_snapshot`
+    (forwarded to :func:`~tos_runtime.recovery.reconciliation._build_freshness_marker` inside
+    :meth:`FinalityReleaseConsumer._reconcile`) — never the wider
+    :class:`~tos_runtime.time.service.TrustworthyTimeService`'s ``start``/``evaluate``/
+    ``wall_clock_now``."""
+
+
 @dataclass(frozen=True)
 class FinalityReleaseConsumer:
     """Bind this consumer to every collaborator :meth:`consume` needs (module docstring).
@@ -327,12 +389,14 @@ class FinalityReleaseConsumer:
             .ReconciliationService` (module docstring: built via the SAME factory
             :mod:`tos_runtime.recovery.reconciliation` uses for W1).
         time_service: This runtime's own :class:`~tos_runtime.time.service.TrustworthyTimeService`
-            — freshness for every :meth:`~tos_runtime.recon.service.ReconciliationService
-            .reconcile` call is derived FRESH from this on every :meth:`consume` call (never a
-            marker captured once at wiring time, since :meth:`consume` runs on every applied
-            result for the life of the process). Also gates :meth:`_check_obligation_expiry`
-            (module docstring's H2 fix): the health check runs ONLY while
-            ``time_service.health_state is HealthState.TRUSTED``.
+            (typed as the narrower :class:`FinalityConsumerTimeReader` — mypy stage 3 §1.3 rule 3
+            — since this consumer only ever reads two of its members) — freshness for every
+            :meth:`~tos_runtime.recon.service.ReconciliationService.reconcile` call is derived
+            FRESH from this on every :meth:`consume` call (never a marker captured once at wiring
+            time, since :meth:`consume` runs on every applied result for the life of the
+            process). Also gates :meth:`_check_obligation_expiry` (module docstring's H2 fix):
+            the health check runs ONLY while ``time_service.health_state is
+            HealthState.TRUSTED``.
         finality_producer: A :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer`
             used ONLY for :meth:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer
             .produce_non_execution` here (the driver's own instance already produced any
@@ -353,7 +417,7 @@ class FinalityReleaseConsumer:
     evidence_store: SqliteEvidenceStore
     inbox: SqliteEventInbox
     recon_service: ReconciliationService
-    time_service: TrustworthyTimeService
+    time_service: FinalityConsumerTimeReader
     finality_producer: SyntheticFinalityProducer
     scheme: CanonicalizationScheme
     monotonic_source: MonotonicSource
