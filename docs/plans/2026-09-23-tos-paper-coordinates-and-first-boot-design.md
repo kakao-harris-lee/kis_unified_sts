@@ -25,7 +25,7 @@
 | `order_construction_policy.yaml` | `scope.accounts` · `scope.instruments` | 같음 | 같음 |
 | `aggregate_risk_policy.yaml` | `account_scope` · `instrument_scope` | 같음 | 같음 |
 | `action_flow_policy.yaml` | `account_scope` | 같음 | 같음 |
-| `construction.yaml` | `account` · `instrument` | 같음 | 같음 |
+| `construction.yaml` **(PR #794 에 없음 — 구현 PR 이 §3 픽스처로 신설)** | `account` · `instrument` | 같음 | 같음 |
 | `strategies/*.yaml` | 조건의 `account` · `instrument` | 같음 | 같음(§3 에서 전략 파일이 정해진 뒤) |
 
 - **계좌는 모의 선물 계좌**다. 채택 스코프가 `SYNTHETIC_FUTURES_ORDER`(브로커 미도달)라 합성 경로에서 계좌번호는 **좌표
@@ -46,10 +46,20 @@
    만). `os.environ` 을 오염시키지 않도록 파일을 직접 파싱한다.
 3. 근월물 계산(`--instrument` 로 수동 지정 가능).
 4. §1 표의 **named-TBD 좌표 칸만** 치환한다. 치환은 **텍스트 단위**(YAML 재직렬화 금지 — 헤더 주석과 출처가 날아간다, review-794
-   방법론 지적). 각 칸은 파일마다 **정확히 한 번** 매칭돼야 하고 아니면 거부한다.
-5. `finality.yaml::value_date` 는 좌표가 아니므로 **스크립트가 채우지 않는다** — 커밋된 파일에 `T+1` 로 직접 기입(운영자 결정 3).
-6. 출력 디렉터리에 `RENDERED.json`(원본 커밋 SHA · 치환한 칸 목록 · 계좌 지문 · 종목 · 생성 시각 KST) 기록.
-7. `--check` 모드: 출력 디렉터리와 원본을 비교해 **좌표 칸 외 차이 0** 이면 0, 아니면 1.
+   방법론 지적). 규칙은 파일마다 **키로 앵커된 정확한 원문 줄**(예: `scope:` 블록 안의 `  accounts: ["TBD"]`)이고, 각 규칙은
+   **정확히 한 번** 매칭돼야 하며 아니면 거부한다. 파일 안의 다른 `TBD`(예: `order_construction_policy.yaml` 의 `canonical_digest`·
+   `activation_record_id` 등 7곳)는 규칙이 아니므로 건드리지 않는다.
+5. **호스트 사실로 도출되는 두 칸도 같은 방식으로 채운다**(review-795 HIGH-1):
+   - `finality.yaml::source_revision` = 원본 체크아웃의 `git rev-parse HEAD`(2026-09-12 값 제안 §5 가 적은 산출 *방법* 「배포 git SHA」.
+     커밋 파일에 넣으면 자기참조라 렌더 시점에만 채울 수 있다).
+   - `finality.yaml::proof_recipe_id` = 추천값이 없다(ADR-002-030 §29 Q3 미결 · 09-12 §5 등급 M). 운영자 선택 (가)의 **부팅 증명 픽스처
+     규율**로 불투명 토큰 `tos-paper-proof-recipe-bootproof-g1` 을 **커밋 파일에** 넣고 헤더에 「부팅 증명 픽스처 — 승인된 recipe 아님」.
+   - `finality.yaml::value_date` = `T+1` 을 **커밋 파일에** 직접 기입(운영자 결정 3 — 좌표가 아니라 정책).
+6. **`safety_activation.yaml::members` 도출**(review-795 HIGH-2): 좌표 치환 뒤 렌더 디렉터리에 대고
+   `print-policy-digests --config-dir <출력>` 를 실행하고, 그 출력 4-튜플을 렌더된 `safety_activation.yaml::members` 에 기입한다
+   (손으로 적지 않는다 — 채택 계획 §2 결정 3). 좌표가 digest 에 들어가므로 이 값은 **호스트마다 다르고 커밋될 수 없다** — 렌더 산출물이다.
+7. 출력 디렉터리에 `RENDERED.json`(원본 커밋 SHA · 치환한 칸 목록 · 계좌 지문 · 종목 · `print-policy-digests` 출력 · 생성 시각 KST) 기록.
+8. `--check` 모드: 출력 디렉터리와 원본을 비교해 **규칙이 지목한 칸 외 차이 0** 이면 0, 아니면 1.
 
 **가드 — 「이것이 실패하는 구체적 입력」**:
 
@@ -57,10 +67,10 @@
 |---|---|
 | 좌표 칸만 바뀐다 | 원본에 없는 키를 바꾸는 치환 규칙을 추가 → `--check` 와 단위 테스트 RED |
 | 칸마다 정확히 1회 매칭 | 원본 파일에 `accounts: ["TBD"]` 가 두 번 있거나 없음 → 스크립트 거부 |
-| 계좌 원천이 모의 파일 | `--env-file .env` 또는 `.env.real` 지정 → 거부(파일 이름 허용 목록 `.env.mock` + 테스트용 `--allow-env-file`) |
+| 계좌 원천이 모의 파일 | `--env-file .env` 또는 `.env.real` 지정 → 거부. CLI 는 파일 이름이 정확히 `.env.mock` 인 경로만 받는다 — **테스트용 우회 플래그는 두지 않는다**(review-795 MEDIUM-4). 테스트는 CLI 가 아니라 내부 함수 `render(source, out, *, account, instrument, revision)` 을 직접 부르고, 그 함수는 env 파일을 읽지 않는다. 핀: `main(["--env-file", "<tmp>/.env"])` → 종료코드 2 |
 | 계좌 형식 | 하이픈을 뺀 숫자가 10자리가 아니면 거부(`.env.mock` 선물 계좌는 하이픈 포함 형태 — 원형 그대로 치환하지 않고 로더가 받는 형태로 정규화, 구현 PR 이 로더 입력 형식을 실측해 정한다) |
 | 출력이 저장소 밖 | 출력 경로가 저장소 작업트리 안이면 거부 |
-| 계좌번호가 커밋되지 않는다 | 테스트는 가짜 env 파일(`9999999999`)만 쓴다 · 저장소 전체 grep 가드는 기존 비밀값 대조로 |
+| 렌더가 저장소에 아무것도 남기지 않는다 | (review-795 HIGH-3 — 이전 문구가 인용한 「저장소 전체 비밀값 grep 가드」는 **존재하지 않았다**.) 테스트가 저장소 사본(임시 디렉터리 `git clone`) 안에서 스크립트를 실제 CLI 로 실행한 뒤 `git status --porcelain --ignored` 가 **실행 전과 같음**을 단정한다. 출력 경로 검사를 지우거나 출력을 저장소 안 경로로 바꾸는 뮤테이션 → 새 파일이 생겨 RED. 테스트의 계좌는 가짜 값 `9999999999` 뿐 |
 
 **부팅 명령**(런북에 기록):
 
@@ -103,7 +113,9 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 ## 4. 구현 PR (결정 뒤) 모양
 
 1. `scripts/tos/render_paper_config.py` + 단위 테스트(`tests/unit/scripts/` 신설 — 레거시 `test` 워크플로 게이트, 가짜 env 파일) · `--check`.
-2. `finality.yaml::value_date: "T+1"` + 핀 갱신(PR #794 의 `_VALUE_PINS`).
+2. 커밋 파일: `finality.yaml::value_date: "T+1"` · `proof_recipe_id: "tos-paper-proof-recipe-bootproof-g1"`(픽스처 헤더) + 핀 갱신
+   (PR #794 의 `_VALUE_PINS`). `source_revision`(렌더 시 git SHA)과 `safety_activation.yaml::members`(렌더 시 `print-policy-digests`)는
+   렌더 산출물이라 커밋 파일에서는 named-TBD 를 유지한다 — §2 5·6항.
 3. §3 이 (가)면: 부팅 증명 전략 파일·construction·OCP 두 칸을 **부팅 증명 픽스처 헤더**와 함께 커밋, LONG/SHORT 두 번 부팅 증거.
 4. 런북 `docs/runbooks/tos-paper-boot.md` — 생성 → 부팅 → 정지 → 확인.
 5. 종료조건: 호스트에서 `run` 이 **거부 없이 틱을 관측**(저널 틱 원천 채택이 필요하면 그것도 이 PR — `marketfeed.yaml` +
