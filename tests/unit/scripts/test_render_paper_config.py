@@ -425,6 +425,19 @@ def test_guard_render_leaves_the_repository_byte_identical(
         check=True,
         capture_output=True,
     )
+    # ⚠ A clone carries COMMITTED content only. Without this check the test would silently
+    # exercise the committed script while the author edited an uncommitted one — passing for
+    # a version nobody ran. (Measured: the mutation harness used to land this arc reported a
+    # false GREEN for exactly this reason.) CI always has it committed, so this only ever
+    # fires locally, which is precisely where it is needed.
+    cloned_script = clone / "scripts" / "tos" / "render_paper_config.py"
+    assert (
+        cloned_script.read_bytes()
+        == (_REPO_ROOT / "scripts" / "tos" / "render_paper_config.py").read_bytes()
+    ), (
+        "render_paper_config.py has uncommitted changes — this test would exercise the "
+        "COMMITTED version and prove nothing about the edited one. Commit first."
+    )
     # `.env.mock` is never committed; the CLI needs one with that exact basename.
     (clone / ".env.mock").write_text(
         f"KIS_FUTURES_ACCOUNT_NO='{_FAKE_ACCOUNT_HYPHENATED}'\n", encoding="utf-8"
