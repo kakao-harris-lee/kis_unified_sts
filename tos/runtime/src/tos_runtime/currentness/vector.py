@@ -104,7 +104,7 @@ from tos.cur import (
 from tos.rcl.commitlog import CommitLog, LogView, WriterEpoch
 from tos.time import HealthState, TimeHealthSnapshot, state_permits_new_normal_risk
 
-from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
+from tos_runtime.time.service import TimeServiceNotStarted, TimeSnapshotReader
 
 __all__ = [
     "CurrentnessAssembler",
@@ -215,7 +215,7 @@ class CurrentnessAssembler:
     def __init__(
         self,
         log: CommitLog,
-        time_service: TrustworthyTimeService,
+        time_service: TimeSnapshotReader,
         *,
         writer_epoch: WriterEpoch,
         policy: CurrentnessPolicy,
