@@ -228,7 +228,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     )
 
 
-def _run_child(target) -> dict:  # type: ignore[no-untyped-def]
+def _run_child(target) -> dict:
     """Spawn ``target`` in a clean interpreter and return its reported result dict."""
     ctx = mp.get_context("spawn")
     queue: mp.Queue = ctx.Queue()

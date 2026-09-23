@@ -114,10 +114,50 @@ CI 명령(새 플래그 = `--ignore-missing-imports --disable-error-code=no-unty
 
 ## 7. 운영자 확인
 
-| # | 항목 | 추천 |
-|---|---|---|
-| ① | (a) 지우고 켠다 / (b) 유예 2종 종결 / (c) 애노테이션 후 (a) | **(a)** |
+| # | 항목 | 추천 | 실제 선택 |
+|---|---|---|---|
+| ① | (a) 지우고 켠다 / (b) 유예 2종 종결 / (c) 애노테이션 후 (a) | **(a)** | **(a)** — 운영자 확정 2026-09-23 |
 
 ## 8. 착지 기록
 
-(비어 있음 — 착지 시 PR 번호 · main SHA · §5 표 실측값 · 뮤테이션 ①② RED 재현 여부를 덧붙인다.)
+### 8.1 착지 — PR #788 (2026-09-23, base main `cba90764`)
+
+§4 그대로: 여덟 줄 주석 삭제, `tos-firewall.yml` 두 테스트 트리 스텝에서
+`--disable-error-code=unused-ignore` 제거 + 스텝 주석 갱신. §5 실측(재검증, `rm -rf
+.mypy_cache` 후):
+
+| 검사 | 기대 | 실측 |
+|---|---|---|
+| 커널 테스트 트리 | `Success … 579 source files` | `Success: no issues found in 579 source files` |
+| 런타임 테스트 트리 | `Success … 221 source files` | `Success: no issues found in 221 source files` |
+| 소스 스텝 둘 | 0 / 264 · 0 / 185 | 0 / 264 · 0 / 185 |
+| zero-disable `no-untyped-def` | 255 · 369(관측, 불변식 아님) | **255 · 369** |
+| zero-disable `unused-ignore` | 0 · 0 | **0 · 0** |
+
+뮤테이션(§5) 전부 재현:
+
+| 뮤테이션 | 기대 | 결과 |
+|---|---|---|
+| ① 죽은 억제(`test_sci_records.py` 끝에 `_m: int = 1  # type: ignore[assignment]`) | RED `[unused-ignore]` 1건 | **RED 1건 재현** → 되돌린 뒤 0 확인 |
+| ② 우회 패턴 복원(`_cycle_children.py:16`) | RED `[unused-ignore]` 1건 | **RED 1건 재현** → 되돌린 뒤 0 확인 |
+| 대조군(`_m: int = "x"  # type: ignore[assignment]`) | 조용(0) | **조용 — Success, 0건** → 되돌림 |
+
+해당 4 파일 pytest 전건 pass: 커널(`test_sci_import_closure.py` + `test_sci_records.py` +
+`tos/tests/marketfeed`) **341 passed**, 런타임(`test_riskstate_wiring.py`) **29
+passed**, 실패/에러 0.
+
+거버넌스: firewall PASS · lint-imports 3 kept/0 broken · contract PASS + self-test
+PASS(뮤테이션 145종 전부 판별) · completion GREEN(`planned_unassigned_pairs=749`) ·
+spec PASS(`profile_keys=164, profile_null_keys=16`) · size budget PASS(0 violations,
+39 등록 예외).
+
+한 가지 파생 변경: 주석이 없어지며 `test_riskstate_wiring.py` 의 `_seeding_observe`
+정의 두 곳이 한 줄로 줄어들 수 있는 폭이 되어 `black` 이 재포맷을 요구했다(서명
+줄바꿈만 제거, 코드 의미 불변) — 적용 후 `black --check`/`ruff check` 모두 통과.
+
+환경 노트(§7.7 ⑤ 재확인): 루트 venv 에 `tos`/`tos-runtime` editable 설치가 없어 소스
+스텝이 처음엔 `tos_runtime` 호출이 커널 타입을 `Any` 로 봐 26건 허위 `no-any-return`
+을 냈다. CI 와 동일하게 `pip install -e ./tos[test]` · `pip install -e ./tos/runtime
+--no-deps` 로 설치해 재현했고, 측정 종료 후 두 패키지를 `pip uninstall` 로 제거해
+공유 루트 venv 를 원상 복구했다(`numpy`/`hypothesis` 버전도 설치 중 잠시 바뀌었다가
+`==2.4.2`/`==6.151.9` 로 복원 확인).

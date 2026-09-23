@@ -439,13 +439,17 @@ jobs:
       #   SOURCE step above does. That is why all four mypy steps in this job
       #   stay independent rather than collapsing a source check into the
       #   matching test-tree one.
-      #   Deliberately left deferred: `no-untyped-def` (parent plan §6 (1), an
-      #   operator decision out of this stage's scope) and `unused-ignore`
-      #   (measured, not yet enabled: 8 hits under this stage's new flags, 5
-      #   kernel + 3 runtime, down from 187 measured under the old
-      #   arg-type-still-deferred flags on the same tree — enabled only after
-      #   this stage lands, per parent plan §3.4, because its "unused" count
-      #   depends on which other codes are still off).
+      #   Deliberately left deferred: `no-untyped-def` only (parent plan §6 (1),
+      #   an operator decision out of this stage's scope; `check_untyped_defs =
+      #   true` already checks these bodies, so annotating them gains little
+      #   detection power). `unused-ignore` was measured at 8 hits under this
+      #   stage's new flags (5 kernel + 3 runtime, down from 187 under the old
+      #   arg-type-still-deferred flags on the same tree) and enabled by
+      #   docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-
+      #   plan.md: all eight were dead `# type: ignore[no-untyped-def]` comments
+      #   suppressing a code this job already disables, so the comments were
+      #   deleted rather than the flag kept — CI's `warn_unused_ignores = true`
+      #   declaration (`pyproject.toml`) now matches what the gate enforces.
       #
       # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
       # invocation aborts with `Duplicate module named "tests"` and checks almost
@@ -454,13 +458,11 @@ jobs:
         run: >-
           mypy tos/tests --ignore-missing-imports
           --disable-error-code=no-untyped-def
-          --disable-error-code=unused-ignore
 
       - name: mypy (tos runtime tests)
         run: >-
           mypy tos/runtime/tests --ignore-missing-imports
           --disable-error-code=no-untyped-def
-          --disable-error-code=unused-ignore
 
       - name: tos size budget
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.

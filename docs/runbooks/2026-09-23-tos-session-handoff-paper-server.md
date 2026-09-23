@@ -92,6 +92,9 @@ test_install_run_stop_signal_handlers_flips_stop_on_sigint_and_restores` · `tes
 (PR #788). 선택지는 (a)·(b) 에 **(c) 여덟 함수 애노테이션 후 (a)** 가 더해져 셋이고, 권고는 (a) 다. 위 문단의 「둘 중 하나」는
 저작 시점 서술로 남긴다.
 
+**2026-09-23 착지:** 운영자가 (a) 를 확정했고 PR #788 로 구현됨 — 여덟 줄 주석 삭제 · CI `unused-ignore` 활성화.
+실측·뮤테이션 재현은 해당 계획 §8.1.
+
 ### 4.2 모의투자 서버 프로브 7건 — **서버에서만 가능**
 
 `docs/runbooks/2026-09-10-p02-probe-handover-paper-server.md` 를 그대로 따른다(§1 실행 전 확인 → §2 실행
@@ -169,7 +172,7 @@ P-CA `--event-class` 7종(#770) · 근월물 코드는 **실행 당일** `get_fr
 | # | 항목 | 어디에 |
 |---|---|---|
 | 1 | ~~모의투자 프로브 7건~~ → **P-8 ×5 · P-EXT ×5 만 남음.** 선행 = KIS Developers 에서 모의 계좌(주식 `ee1bdb5f1ca2` · 선물 `46c39c54d3bb`)의 앱키 연결 반영 확인(09-23 재확인 시 미반영). 반영되면 실행일(선물 정규장) + P-EXT MTS 동석 시각 | §4.2 |
-| 2 | `unused-ignore` 8건 — (a) 지우고 켠다 / (b) 종결 선언 / (c) 애노테이션 후 (a) — **계획 `docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-plan.md`(PR #788), 권고 (a)** | §4.1 |
+| 2 | ~~`unused-ignore` 8건 결정~~ → **운영자가 (a) 확정, PR #788 로 착지(2026-09-23)** — 계획 `docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-plan.md` §8.1 | §4.1 |
 | 3 | 값 제안표 채택 | `2026-09-18-tos-config-value-proposal.md` |
 | 4 | A-5 부팅 대상 | `2026-09-18-tos-config-adoption-and-carryover-plan.md` §6 ④ |
 | 5 | F-3 별도 KIS 앱 등록 | 같은 문서 §7.6 ③ |
