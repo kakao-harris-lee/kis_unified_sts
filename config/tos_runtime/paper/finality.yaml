@@ -11,7 +11,7 @@
 #   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
 #
 # 원본 템플릿: tos/runtime/config/finality.example.yaml
-# 로더: tos_runtime.posttrade.config.load_finality_config (posttrade/config.py:121)
+# 로더: tos_runtime.posttrade.config.load_finality_config (posttrade/config.py:126)
 # 호출부: compose/_finalize_wiring.py:155 · compose/_release_wiring.py:103 (둘 다 무조건)
 # =============================================================================
 

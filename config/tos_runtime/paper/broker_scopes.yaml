@@ -15,8 +15,8 @@
 #   유일한 named-TBD 필드인 `active_scope` **한 줄뿐**이다(아래 표시).
 #   `instance_path` 의 `../../../` 깊이는 두 디렉터리(`tos/runtime/config/` ·
 #   `config/tos_runtime/paper/`)가 저장소 루트로부터 같은 깊이라 그대로 유효하다.
-# 로더: tos_runtime.brokercap.scopes.load_broker_scopes (brokercap/scopes.py:747)
-# 호출부: compose/_wiring.py:947 (무조건)
+# 로더: tos_runtime.brokercap.scopes.load_broker_scopes (brokercap/scopes.py:765)
+# 호출부: compose/_wiring.py:962 (무조건)
 #
 # ⚠ **제안표 §4.1 의 ⚠ 행 — 여기는 운영자가 눈으로 볼 자리다.**
 #   `active_scope: SYNTHETIC_FUTURES_ORDER`

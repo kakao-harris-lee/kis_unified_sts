@@ -13,7 +13,7 @@
 # 원본 템플릿: tos/runtime/config/safety_envelope.example.yaml
 # 로더: tos_runtime.safety.profile.SafetyProfileService (model_validate →
 #       tos.spg.HardSafetyEnvelope)
-# 호출부: compose/_safety_wiring.py:517 (`build_safety_mesh`, 무조건)
+# 호출부: compose/_safety_wiring.py:516 (`build_safety_mesh`, 무조건)
 # =============================================================================
 #
 # ⚠ **`governed_dimensions` 가 비어 있다는 것의 의미.**

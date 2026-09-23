@@ -469,7 +469,7 @@ def test_all_six_risk_attestations_are_operator_asserted() -> None:
 
 
 def test_time_trading_calendar_version_matches_the_deployed_calendar() -> None:
-    """``calendar/owner.py:172-179`` refuses to boot (``SessionCalendarMismatch``) when the
+    """``calendar/owner.py:170-179`` refuses to boot (``SessionCalendarMismatch``) when the
     two versions are both known and disagree — the ONE cross-file equality in this set that
     the runtime itself enforces."""
     assert (

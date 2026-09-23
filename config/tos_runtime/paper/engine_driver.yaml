@@ -13,12 +13,12 @@
 # 원본 템플릿: tos/runtime/config/engine_driver.example.yaml
 # 로더: tos_runtime.compose._engine_wiring.load_engine_driver_config
 #       (compose/_engine_wiring.py:159)
-# 호출부: compose/_finalize_wiring.py:109 · compose/_recovery_wiring.py:127 (둘 다 무조건)
+# 호출부: compose/_finalize_wiring.py:108 · compose/_recovery_wiring.py:126 (둘 다 무조건)
 # =============================================================================
 
 # [O] ⚠ 제안표 §4.2 — example 이 **명시적으로 경고**한다: 창이 전체 인박스보다
 # 작으면 **거짓 divergence** 를 보고할 수 있다(원장 컨텍스트 소실). 「전체를
 # 덮으라」가 문서의 권고다. 로더가 **양의 정수만** 받으므로
-# (compose/_engine_wiring.py:142-156 — 0·음수는 「조용히 꺼진 창」이라며 별도
+# (compose/_engine_wiring.py:142-156 의 `_require_positive_int`, 호출 :186 — 0·음수는 「조용히 꺼진 창」이라며 별도
 # 거부) 「0 = 전체」를 쓸 수 없고, 첫 부팅 인박스를 충분히 덮는 큰 정수를 둔다.
 replay_window_events: 1000000

@@ -11,8 +11,8 @@
 #   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
 #
 # 원본 템플릿: tos/runtime/config/release.example.yaml
-# 로더: tos_runtime.release.config.load_release_config (release/config.py:164)
-# 호출부: compose/_wiring.py:1029 (`_boot_services`, 무조건, Stage A probe)
+# 로더: tos_runtime.release.config.load_release_config (release/config.py:172)
+# 호출부: compose/_wiring.py:1045 (`_boot_services`, 무조건, Stage A probe)
 # =============================================================================
 #
 # [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).

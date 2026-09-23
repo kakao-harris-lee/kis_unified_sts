@@ -12,20 +12,20 @@
 #
 # 원본 템플릿: tos/runtime/config/currentness_dimensions.example.yaml
 # 로더: tos_runtime.compose._pending_dimensions.load_pending_currentness_dimensions
-#       (compose/_pending_dimensions.py:196)
-# 호출부: compose/_currentness_wiring.py:275 (무조건)
+#       (compose/_pending_dimensions.py:198)
+# 호출부: compose/_currentness_wiring.py:274 (무조건)
 # =============================================================================
 #
 # **블록은 정확히 `PENDING_DIMENSION_KEYS` 만이어야 한다.** 원래 17개였고 Phase 5
 # W3-a1/a2/b/W3.1/W3.2 가 14개에 실제 dimension-owner reader 를 붙였다. 남은 3개가
 # 아래다. 리더가 붙은 키를 여기 남겨두면 로더가 **stale** 로 거부한다
-# (`_READER_OWNED_DIMENSION_KEYS`, compose/_pending_dimensions.py:238-247).
+# (`_READER_OWNED_DIMENSION_KEYS`, compose/_pending_dimensions.py:238-246).
 #
 # **값의 성격 — 제안표 §4.1 `risk_attestations.yaml` 행과 같은 부류다.**
 # 이것은 측정이 아니라 **운영자 확약**이고, 런타임이 스스로 각 차원에
 # `owner_identity = "operator-attestation-pending-phase-5"` 를 찍어
 # 「진짜 런타임 오너가 낸 판정이 아님」을 구조적으로 드러낸다
-# (compose/_pending_dimensions.py:157). `positively_established: true` 의 근거는
+# (compose/_pending_dimensions.py:155). `positively_established: true` 의 근거는
 # 「코드가 성립을 보장한다」가 아니라 「이 배포는 SYNTHETIC 합성 경로라 위반
 # 경로가 없다고 판단한다」이다 — 제안표 §4.3 의 「실제로 성립하므로 true」
 # 부류를 그 범위에서만 적용한다. MOCK/실 브로커 경로를 켜면 다시 받아야 한다.

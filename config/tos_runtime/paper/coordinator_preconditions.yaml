@@ -13,7 +13,7 @@
 # 원본 템플릿: tos/runtime/config/coordinator_preconditions.example.yaml
 # 로더: tos_runtime.compose._preconditions.load_coordinator_preconditions_config
 #       (compose/_preconditions.py:124)
-# 호출부: compose/_finalize_wiring.py:152 (무조건)
+# 호출부: compose/_finalize_wiring.py:151 (무조건)
 # =============================================================================
 
 # [S] ⚠ 제안표 §1 — 로더가 받는 값이 **하나뿐**이다:

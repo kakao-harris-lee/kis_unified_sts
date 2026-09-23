@@ -13,10 +13,10 @@
 # 원본 템플릿: tos/runtime/config/safety_activation.example.yaml
 # 로더 (두 개가 같은 파일의 **다른** 최상위 키를 읽는다):
 #   * `activation:` + `not_expired:` — tos_runtime.safety.profile.SafetyProfileService
-#     (compose/_safety_wiring.py:519, 무조건)
+#     (compose/_safety_wiring.py:516, 무조건)
 #   * `members:` — tos_runtime.venue.activation.load_activation_members
 #     (venue/activation.py:68; compose/_riskstate_wiring.py:235 ·
-#      compose/_venue_wiring.py:261, 둘 다 무조건)
+#      compose/_venue_wiring.py:262, 둘 다 무조건)
 # =============================================================================
 
 activation:

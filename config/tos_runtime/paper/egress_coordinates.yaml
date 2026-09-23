@@ -12,8 +12,8 @@
 #
 # 원본 템플릿: tos/runtime/config/egress_coordinates.example.yaml
 # 로더: tos_runtime.compose._egress_coordinates.load_egress_coordinates
-#       (compose/_egress_coordinates.py:145)
-# 호출부: compose/_wiring.py:943 (무조건)
+#       (compose/_egress_coordinates.py:152)
+# 호출부: compose/_wiring.py:958 (무조건)
 # =============================================================================
 #
 # **값의 출처 — 제안표에 전용 행이 없다. 지어낸 값이 아니라 전사다.**

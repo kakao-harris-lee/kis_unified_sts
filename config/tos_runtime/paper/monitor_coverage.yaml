@@ -12,7 +12,7 @@
 #
 # 원본 템플릿: tos/runtime/config/monitor_coverage.example.yaml
 # 로더: tos_runtime.safety.monitoring.MonitoringService (→ tos.stm.MonitorCoverageManifest)
-# 호출부: compose/_safety_wiring.py:531 (무조건)
+# 호출부: compose/_safety_wiring.py:530 (무조건)
 # =============================================================================
 #
 # `items` 는 **정확히 세 의무**여야 한다 — 이 서비스의 자기관측 코드가 평가할 줄

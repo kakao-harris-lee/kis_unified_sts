@@ -12,7 +12,7 @@
 #
 # 원본 템플릿: tos/runtime/config/authority.example.yaml
 # 로더: tos_runtime.authority.epoch.load_authority_config (authority/epoch.py:211)
-# 호출부: compose/_wiring.py:424 (무조건)
+# 호출부: compose/_wiring.py:427 (무조건)
 # =============================================================================
 
 # [O] 제안표 §4.2 — VER-002 에 이 경계를 이름 붙인 키가 **없다**(example 주석이

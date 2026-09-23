@@ -13,7 +13,7 @@
 # 원본 템플릿: tos/runtime/config/safety_deviations.example.yaml
 # 로더: tos_runtime.safety.deviation.DeviationService (model_validate →
 #       tos.wdr.ActiveDeviationSet)
-# 호출부: compose/_safety_wiring.py:524 (무조건)
+# 호출부: compose/_safety_wiring.py:523 (무조건)
 # =============================================================================
 #
 # 제안표 §4.3 — `members`(deviations) · `applicable_decision_ids` 는 **빈 목록이

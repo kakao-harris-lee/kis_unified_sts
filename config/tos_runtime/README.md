@@ -10,6 +10,13 @@ Every file here carries a header comment naming its approval provenance
 here without that citation; an un-cited value belongs in an `.example.yaml`
 until it is actually approved.
 
+**The `file:line` citations in those headers are a measurement, not a
+guarantee.** Every one in the 18 files adopted 2026-09-23 was re-measured
+against main `4d6bffc9` at adoption time (the 2026-09-17 inventory's own
+numbers had already drifted by 2-18 lines for six loaders). They drift again
+whenever the runtime source moves; read the function name next to the number,
+and re-measure rather than trusting a stale line.
+
 **Adopted here as of W-A / A-2 (2026-09-23) — 24 files.** The original 6
 (`calendar.yaml`, `risk.yaml`, `aggregate_risk_policy.yaml`,
 `action_flow_policy.yaml`, `venue_constraint_policy.yaml`,

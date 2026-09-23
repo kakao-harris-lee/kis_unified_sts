@@ -13,7 +13,7 @@
 # 원본 템플릿: tos/runtime/config/risk_attestations.example.yaml
 # 로더: tos_runtime.compose._risk_attestations.load_risk_attestations
 #       (compose/_risk_attestations.py:161)
-# 호출부: compose/_currentness_wiring.py:278 (무조건)
+# 호출부: compose/_currentness_wiring.py:277 (무조건)
 # =============================================================================
 #
 # ⚠ **제안표 §4.1 의 ⚠ 행 — 여기는 운영자가 눈으로 볼 자리다.**

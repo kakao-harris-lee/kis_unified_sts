@@ -12,7 +12,7 @@
 #
 # 원본 템플릿: tos/runtime/config/safety_incidents.example.yaml
 # 로더: tos_runtime.safety.incident.IncidentService (→ tos.sir.ActiveSafetyIncidentSet)
-# 호출부: compose/_safety_wiring.py:527 (무조건)
+# 호출부: compose/_safety_wiring.py:526 (무조건)
 # =============================================================================
 #
 # 제안표 §4.3 — `members` · `applicable_incident_ids` · `shared_dependencies` 는
