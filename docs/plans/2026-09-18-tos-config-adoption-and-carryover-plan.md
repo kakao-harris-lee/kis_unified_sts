@@ -379,3 +379,153 @@ stderr 를 가리지 마라**(zsh 변수 단어분할 실패가 `2>/dev/null` �
 - ~~**값 제안표 채택** — §6 ② 운영자 결정 대기.~~ → **2026-09-23 채택 확정**(§7.6 「2026-09-23 운영자 처분」). 실파일 기입(A-2~A-5)은 별도 PR.
 - **`docs/plans/` 미등재 29건** — INDEX 가 `## Active` 기반 큐레이션이라 곧 드리프트는 아니나,
   각 건의 활성/아카이브 판단은 하지 않았다.
+
+### 7.8 W-A A-2~A-5 착지 (2026-09-23)
+
+운영자 결정 2026-09-23: **(1) 제안표를 제안된 그대로 채택**한다(⚠ 행 4건 포함 —
+`broker_scopes::active_scope = SYNTHETIC_FUTURES_ORDER` · `coordinator_preconditions::
+nonlive_broker_consuming.admitted = false` · `release::admission_result = ADMIT` +
+`restriction_present: false` · `risk_attestations` 6개 `attested: true`).
+**(2) A-5 부팅 대상은 로컬 헤르메틱 데이터 디렉터리까지**(§6 4항 처분 — 모의 서버·외부 호출 없음).
+
+#### A-2 — 18종 채택
+
+`config/tos_runtime/paper/` 에 18개 파일 신설. 파일마다 (a) 승인 출처
+(「operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 · 제안표 §n」)와 (b) **제안표 §0
+문장**(「이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다」)을 주석으로 박았다. 제안표 §0 이
+「채택되는 각 파일에 이 문장을 주석으로 박는다」고 구속한 그대로다.
+
+| 파일 | 제안표 절 |
+|---|---|
+| `time.yaml` | §2.1 [A] 9값 · §4.2 [O] 2값 · §4.3 |
+| `authority.yaml` | §4.2 · §3(4행) · §4.3 |
+| `release.yaml` | §4.1 ⚠ · §3(1행) [D] |
+| `currentness.yaml` | §2.3 [A] · §6 6항(미확정) |
+| `currentness_dimensions.yaml` | §4.3 |
+| `risk_attestations.yaml` | §4.1 ⚠ |
+| `egress_coordinates.yaml` | §0(범위) · §4.3 |
+| `broker_scopes.yaml` | §4.1 ⚠ |
+| `engine.yaml` | §2.2 [A] · §4.2 [O] |
+| `engine_driver.yaml` | §4.2 ⚠ |
+| `coordinator_preconditions.yaml` | §1 [S] ⚠ · §4.1 ⚠ |
+| `finality.yaml` | §4.2 · §6 1·2항(미확정) |
+| `safety_envelope.yaml` · `safety_profile.yaml` · `safety_activation.yaml` | §4.3 · §3(2·3행) |
+| `safety_deviations.yaml` · `safety_incidents.yaml` | §4.3 |
+| `monitor_coverage.yaml` | §4.3 · §6 5항(미확정) |
+
+**제안표 §6 의 미확정 리프는 채우지 않았다.** `currentness::required_dimensions` ·
+`finality::value_date`/`source_revision`/`proof_recipe_id` ·
+`monitor_coverage::bounds` 3값 — 전부 named-TBD `null` 로 두었고, **그 로더들은 지금도 거부한다.**
+제안표 §6 말미가 「부팅이 이것들 때문에 막히면 그것이 A-5 의 결과물이다」라고 미리 적은 그대로다.
+
+`finality::proof_recipe_id` 는 A-2 에서 **재측정**했다: ADR-002-030 §29 는 절 제목 자체가
+"Open Implementation Questions" 이고 Q3 은 「Which finality recipes distinguish …?」라는 **열린
+질문**이다. 승인된 식별자를 **하나도 명명하지 않는다.** 즉 찾지 못한 게 아니라 **아직 존재하지 않는다.**
+
+#### A-3 — [D] 도출
+
+**`print-digests` (성공).** 인자 없음. `release.yaml` 두 digest 에 전사.
+
+```
+$ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
+    -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
+expected_code_digest: 0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260
+expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
+python_version: 3.12.12
+sqlite_version: 3.45.1
+```
+
+**`print-policy-digests --config-dir config/tos_runtime/paper` (거부).**
+
+```
+$ ... print-policy-digests --config-dir config/tos_runtime/paper
+print-policy-digests: refused — config/tos_runtime/paper/venue_constraint_policy.yaml:
+scope.accounts is still 'TBD'/empty (named-TBD) — fill the deployment coordinate before activation
+(exit 1)
+```
+
+원인은 이 웨이브가 채택한 파일이 아니라 **2026-09-16 에 이미 채택된 4종의 운영자-기입 잔여 TBD** 다.
+그 파일들 자신의 헤더가 「`scope.accounts` — the paper account number (**never committed here**)」라고
+적고 있고, 제안표의 대상 범위는 「`paper/` 에 **아직 없는** 19종 + `construction.yaml`」이라 이
+값들의 행이 **없다.** 따라서 `safety_activation.yaml::members` 도 도출할 수 없어 `null` 로 남겼다 —
+`[]` 로 바꾸면 「아무것도 활성화되지 않았다」는 **다른 사실**을 주장하게 된다(example 주석의 금지 사항).
+
+**§3 3행(「도출 절차 미확인」) 확정.** `envelope_digest`/`profile_digest`/`bundle_digest` 를
+계산하는 서브커맨드는 **없다** — `print-policy-digests` 는 governed **policy** 문서 5종의
+`policy_id`/`policy_generation`/`canonical_digest` 만 출력한다(`compose/cli.py:671`
+`_dispatch_print_policy_digests` + `_cli_ops.py:91-145`). 커널 `ActivationRecord` 는 세 필드를
+모두 `X | None` 로 선언하므로 **`null` 이 로드된다**(실측). 즉 이것은 「거부가 빠진 것」이 아니라
+**「도출이 없는 것」**이다.
+
+#### A-4 — `construction.yaml`: **채택하지 않았다**
+
+제안표는 §0 에서 이 파일을 대상에 포함하지만 **7개 리프 어느 것에도 값을 주지 않는다**(§5.4 는
+`price_field_key` 상관만 논한다). 그리고 `account`/`instrument` 는 venue/OCP 정책의
+`scope.accounts`/`scope.instruments` 와 같아야 하는데, 그 값이 바로 위 A-3 을 막은
+**「never committed here」 운영자 좌표**다. 지어내면 **조작된 계좌 좌표를 커밋된 배포 파일에 넣는
+것**이 되므로 짓지 않았다.
+
+제안표 §5.4 의 **두 갈래를 모두** 테스트로 고정했다
+(`tos/runtime/tests/compose/test_deploy_approved_values.py::
+test_construction_price_field_keys_match_the_deployed_critical_input_policy`):
+둘 다 배포되면 `price_field_key`/`shape_price_field_key` 가 배포된 `critical_input_policy.yaml` 의
+`fields[].field_key` 안에 있어야 하고, 둘 다 없으면 그것이 두 번째 갈래다 — **한쪽만 있는 상태는
+즉시 red**. `skip` 이 아니라 assert 로 썼다(skip 은 정작 필요할 때 죽은 핀이 된다).
+
+#### A-5 — 부팅 (로컬 헤르메틱)
+
+```
+$ rm -rf <scratchpad>/wa-boot && mkdir -p <scratchpad>/wa-boot/{data,custody}
+$ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
+    -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
+    run --config-dir config/tos_runtime/paper \
+        --data-dir <scratchpad>/wa-boot/data \
+        --custody-root <scratchpad>/wa-boot/custody \
+        --environment-label non-live-test
+run: refused — construction config file not found: config/tos_runtime/paper/construction.yaml
+EXIT=1
+```
+
+**거부 지점**: `compose/_run_dispatch.py:94-99`(`dispatch_run` 1단계) · 로더
+`tos_runtime.compose._construction_config.load_construction_config`
+(`compose/_construction_config.py:167`, 부재 검사는 `:104-105`) · 키 = 파일 자체.
+
+`run` 은 1단계에서 멈추므로 **그 뒤 어디까지 막히는지는 순차 부팅으로 알 수 없다.** 그래서
+**로더 전수 프로브**를 따로 돌려 잔여 차단을 전부 이름으로 측정했다(25건 중 15 PASS):
+
+| 남은 차단 | 부류 | 값의 소관 |
+|---|---|---|
+| `currentness.yaml::required_dimensions` | 제안표 §6 6항 | **설계 판단** — floor 복사는 항진명제 |
+| `finality.yaml::value_date`(그리고 `source_revision`·`proof_recipe_id`) | §6 1·2항 | 상위 승인 부재 |
+| `monitor_coverage.yaml::bounds` 3값 | §6 5항 | 상위 원천 미확인 |
+| `safety_activation.yaml::members` | §3 [D] | **A-3 이 막혀 도출 불가** |
+| `venue_constraint_policy::scope.accounts` · `order_construction_policy::scope.accounts` · `aggregate_risk_policy::instrument_scope` · `action_flow_policy::account_scope` | 2026-09-16 채택분의 잔여 TBD | **운영자 좌표**(제안표 범위 밖) |
+| `construction.yaml` | 미채택 | 위 A-4 |
+| `strategies/` | §6 7항 | 전략 DSL — 「부팅용으로 아무거나」 금지 |
+
+**틱 원천 — §2 결정 3 의 그 거부에는 도달조차 하지 못했다.** `run` 이
+`composed.marketfeed is None` 으로 거부하는 지점(`_run_dispatch.py:121-130`)은 1단계 뒤에 있다.
+다만 **로컬 헤르메틱 틱 원천이 존재하는지**는 측정했다: **존재한다.**
+`marketfeed.yaml::intake_kind: journal` 이 그것이고, 구현
+(`tos_runtime/marketfeed/journal.py::JsonLinesObservationJournal`)은 `json`+`pathlib` 만 쓰며
+**소켓을 열지 않고 시계도 읽지 않는다**(모듈 독스트링 + import 전수). 나머지 한 값 `kis_quote` 는
+HTTP 폴러라 외부 호출이고, 이번 대상이 아니다. 즉 로컬 틱 원천을 켜는 데 필요한 것은
+**`marketfeed.yaml` + `critical_input_policy.yaml` 채택 + 저널 파일** 뿐인데, 그 둘은 인벤토리
+27/28 행(「compose 레벨 옵션 · `run` 레벨 사실상 필수」)이고 **제안표가 값을 주지 않는다**
+(특히 `critical_input_policy::fields[].max_age_ms` 는 신선도 한도 — 안전 값이다). 그래서 채택하지
+않았다.
+
+**제안표 §5 주의 사항 확인**: `admitted_quantity_bases`(OCP)는 `["TBD"]` 그대로이고 전략 파일도
+없으므로 **대조할 `quantity_basis` 자체가 없다.** 「부팅 성공 ≠ 주문 성공」은 이번에 검증할 수
+있는 단계에 이르지 못했다 — 부팅부터 막혀 있다.
+
+#### 테스트 · 게이트
+
+- 신규 `tos/runtime/tests/compose/test_deploy_approved_values.py` — 세 부류의 핀:
+  ① 13개 로더가 **실제 배포 파일**을 로드 ② 승인값 1개를 `null` 로 되돌리는 **뮤테이션 13건이
+  타입드 예외 + 키 이름까지** 요구(키 이름 매칭이 없으면 무관한 거부가 「가드가 작동했다」로 통과한다)
+  ③ §6 미확정 리프는 **키 이름과 함께** 거부가 핀돼 있어 나중에 채우는 것이 반드시 의도적 행위가 된다.
+  추가로 ⚠ 값 5건·교차 파일 정합 4건·§4.3 식별자/세대/빈목록 규칙을 고정.
+- 기존 `test_deploy_config.py` 무회귀.
+- 실행 뮤테이션 1건 직접 확인: `active_scope` → `MOCK_STOCK_ORDER` 로 바꾸니 핀 2건 **red**,
+  원복 후 `diff` 로 청결 확인(§7.4 1행의 「원복 안 됨」 재발 방지).

@@ -175,3 +175,36 @@ tos-paper-<무엇>-g<세대>      예: tos-paper-envelope-g1 · tos-paper-profil
    **부팅용으로 아무거나 넣으면 안 된다.** A-2 에서 별도로 다룬다
 
 **6·7 은 값을 정하기 전에 판단이 더 필요하다.** 부팅이 이것들 때문에 막히면 그것이 A-5 의 결과물이다.
+
+---
+
+## 7. 채택 기록
+
+**2026-09-23 · 운영자 「제안된 그대로 채택」**(⚠ 행 4건 포함). 착지 상세는 상위 계획
+`docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` **§7.8**.
+
+- **채택 18종** — `config/tos_runtime/paper/` 신설. 각 파일 헤더에 승인 출처와 **§0 문장**을 박았다.
+  `construction.yaml` 은 **채택하지 않았다**: 이 표가 §0 에서 대상에 넣었으나 7개 리프 어디에도 값을
+  주지 않고, `account`/`instrument` 는 venue/OCP 의 「never committed here」 운영자 좌표와 같아야 한다.
+- **§6 미확정 리프는 그대로 `null`** — 1·2(finality 3값) · 5(monitor_coverage bounds 3값) ·
+  6(currentness `required_dimensions`) · 7(strategies). **그 로더들은 지금도 거부하며, 그것이 A-5 의
+  산출물이다**(§6 말미의 예고대로).
+- **§6 1항 재측정**: ADR-002-030 §29 는 절 제목이 "Open Implementation Questions" 이고 Q3 은 열린
+  질문이다 — 승인된 `proof_recipe_id` 는 **찾지 못한 게 아니라 아직 존재하지 않는다.**
+- **§6 3항 확정**: envelope/profile/bundle digest 를 계산하는 서브커맨드는 **없다**
+  (`print-policy-digests` 는 governed **policy** 5종만 출력). 커널이 세 필드를 `X | None` 로 선언해
+  `null` 이 로드된다 — 「거부가 빠진 것」이 아니라 **「도출이 없는 것」**이다.
+- **§6 4항 해소**: `admission_result` 의 정확한 enum 멤버는 `ADMIT` 이다(§4.1 의 fact-check 가 옳았다).
+  실부팅으로 확인: `release.yaml` 이 그 값으로 로드된다.
+- **§3 2행(members) 보류** — `print-policy-digests` 가 **2026-09-16 채택분**의 잔여 TBD
+  (`venue_constraint_policy::scope.accounts`)에서 거부했다. 이 표의 대상 범위가
+  「아직 없는 19종 + construction」이라 그 값의 행이 없으므로 지어내지 않고 `members: null` 로 남겼다.
+- **이 표가 다루지 않은 것으로 드러난 리프** — 저작 중 발견해 각 파일 헤더에 출처를 따로 적었다:
+  `time.yaml` 의 비-bound 4개 문자열(tzdb 실측 · calendar 강제 일치 · VER-002 자기 식별 전사 · §4.3 식별자) ·
+  `egress_coordinates.yaml` 9개(코드가 외부화하기 **전에** 갖고 있던 리터럴의 전사 —
+  `compose/_egress_coordinates.py` 모듈 독스트링이 이름과 값을 그대로 나열한다) ·
+  `release.yaml::restriction_state_resolved`(§4.1 이 채택한 「ADMIT + restriction_present:false」
+  태세가 실제로 허용이 되기 위한 **귀결** — SCI-INV-014 상 미해소 조회는 무엇이든 보수적으로 거부한다).
+  **다음 개정에서 이 표에 행으로 흡수할 것.**
+- **핀** — `tos/runtime/tests/compose/test_deploy_approved_values.py` 가 18종 전부의 로드·뮤테이션·
+  미확정 거부·⚠ 값·§4.3 규칙을 고정한다.
