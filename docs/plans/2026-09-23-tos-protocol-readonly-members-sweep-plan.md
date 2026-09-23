@@ -116,7 +116,7 @@ completion · spec · size) 관례대로. 리뷰는 sonnet 레인(저자와 다�
 
 ## 5. 착지 기록
 
-### 5.1 착지 — PR TBD (2026-09-23, base main `3d2ae6d3`)
+### 5.1 착지 — PR #790 (2026-09-23, base main `3d2ae6d3`)
 
 §2 그대로: 7 개 Protocol(커널 2 · 런타임 5)의 평범한 멤버 10개를 읽기전용 `@property` 로 전환 + 각
 Protocol 독스트링에 이 계획을 인용하는 한 줄 추가. `_compose_callable`(`tos/runtime/tests/recovery

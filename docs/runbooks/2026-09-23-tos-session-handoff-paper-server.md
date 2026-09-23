@@ -148,7 +148,7 @@ P-CA `--event-class` 7종(#770) · 근월물 코드는 **실행 당일** `get_fr
   값어치가 있다(계획 §7.2).
 
   **2026-09-23 착지:** 스윕 완료 — `docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md`
-  (PR TBD). Protocol 전수(75종/42파일) 중 평범한 멤버 7종/10개 전부 읽기전용 `@property` 로 전환, 그중
+  (PR #790). Protocol 전수(75종/42파일) 중 평범한 멤버 7종/10개 전부 읽기전용 `@property` 로 전환, 그중
   2종은 실 구현이 frozen dataclass 라 구조적으로 이미 깨져 있던 결함(소비부 0 이라 CI 는 조용했음). 핀
   테스트 2파일 + 뮤테이션 ①②③ 전건 재현 + 커널 9542·런타임 2628 pytest 전건 pass.
 
