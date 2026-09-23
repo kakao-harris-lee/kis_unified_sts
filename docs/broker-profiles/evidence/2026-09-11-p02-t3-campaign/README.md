@@ -84,6 +84,19 @@
 
 이후 남은 것: **P-CA 재시도**(2차 대상 에스피지 058610 10-22, 또는 SK텔레콤 재실행 시 폴링 전 rate-limit 여유 확보), **P-EXT ×5**·**P-8 ×5**(모의 선물 주문 권한 복구 후, 운영자 MTS 동석).
 
+### 2026-09-23 (수) — 계좌 연결 재확인 (GET/조회 전용 · 주문 0)
+
+정규장 내(13:06~13:10 KST), `repo_commit` `c2b9761f`(main, PR #787), 워크트리 clean, `futures_live.enabled=false`, `futures:live:suspended` 미설정, 실행 컨테이너 중 모의 선물 앱키 공유 **0**(컨테이너 env 지문 대조 재수행), mini 근월물 `A05610`(`get_front_month_code(product="mini")`). 모의 호스트 `openapivts` 가 이날 느렸다 — 세션 셸의 `curl -w time_total` 3회가 5.2~8.5 s, 실전 호스트 0.1 s(**세션 관측, 아티팩트 없음** — 아티팩트 안의 근거는 `P-BAL-…040808Z` 의 `elapsed_ms: 6365.8` 과 1회차의 20 s ReadTimeout 이다). 목적은 09-15 재신청 계좌의 앱키 연결이 반영됐는지 보는 것이지 페이지네이션 측정이 아니다.
+
+| 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
+|---|---|---|---|---|---|
+| 13:06:30 | P-BAL(모의 주식) | `P-BAL-20260923T040630Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / [] | `ReadTimeout`(read 20 s, `openapivts`) — 브로커 무응답, 계좌 판정 불가. §3 중단 규칙(rate-limit)과 다른 종류라 1회 재시도 |
+| 13:08:08 | P-BAL(모의 주식) | `P-BAL-20260923T040808Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | 새 계좌 `ee1bdb5f1ca2` → `rt_cd=2 OPSQ2000 INPUT INVALID_CHECK_ACNO` — **09-15·09-16 과 변화 없음** |
+| 13:09:18 | P-5b(모의 선물 · 미체결 조회) | `P-5b-20260923T040918Z.json` | live / **MEASURED(스탬프 오류)** / MOCK_VTS | [] / 1 | 새 선물 계좌 `46c39c54d3bb` → page 0 **`rt_cd=2`** 행 0. ⚠ **아티팩트의 `MEASURED` 스탬프와 `continuation_supported: false` · `page_size_observed: 0` · `pages_walked: 1` 은 브로커가 거부한 호출에서 나온 값이라 인용 불가** — 프로브가 `rt_cd≠0` 를 오류로 기록하지 않고(`probes_order.py` 에 `rt_cd≠0 → run.error` 경로 없음, `common.py:617-621` 이 빈 errors 를 MEASURED 로 읽음) `msg_cd`/`msg1` 도 남기지 않아(P-BAL 은 둘 다 기록) 거부 문구 **미확정**. 주식 쪽과 같은 원인(앱키↔새 계좌 미연결)과 정합적이나 측정은 아니다 |
+| 13:10:10 | P-5b 재실행(stdout 전량 캡처) | `P-5b-20260923T041010Z.json` | 동일 | 동일 | stdout 에도 브로커 문구 없음 — 갭은 아티팩트가 아니라 프로브 코드(`probes_order.py::probe_p5b`) |
+
+**해석(측정 아님):** 재사용/초기화 신청(09-15 21:1x) 후 8일이 지났지만 앱키는 여전히 예전 계좌에 묶여 있다. **P-8 ×5·P-EXT ×5 차단 유지.** 운영자가 KIS Developers 에서 연결 상태를 확인하기 전까지 같은 GET 을 반복하는 것은 정보가 없다. 후속 후보(비차단): P-5b 가 `rt_cd≠0` 를 `errors` 에 넣고 `msg_cd`/`msg1` 을 기록하도록 — 「거부를 MEASURED 로 적는」 모양은 #732 가 P-CA 에서 고친 것과 같은 부류다.
+
 ## 수동 개입 기록
 
 - 2026-09-10: 없음(실전 GET 2건은 무인 실행, HTS/MTS 미사용).
