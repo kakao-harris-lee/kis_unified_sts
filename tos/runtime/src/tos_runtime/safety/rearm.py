@@ -110,7 +110,8 @@ from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.custody.ports import CustodyLoadRefused
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.safety.latch import NewRiskHaltReader
+from tos_runtime.time.service import TimeSnapshotReader, TrustworthyTimeService
 
 __all__ = [
     "NewRiskHaltDoorDecision",
@@ -491,8 +492,8 @@ class ReArmWorkflow:
         self,
         approvals_dir: Path,
         evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        time_service: TrustworthyTimeService,
+        inbox: NewRiskHaltReader,
+        time_service: TimeSnapshotReader,
         *,
         environment_label: str,
         expected_owner_uid: int,
