@@ -20,7 +20,7 @@ The reserved ``"TBD"`` placeholder is excluded from required-field text.
 from __future__ import annotations
 
 import hypothesis.strategies as st
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactStatus, get_scheme
 from tos.egress import (
     ActiveEgressPrincipalSet,
     CommitProofCoordinates,
@@ -122,6 +122,7 @@ def clean_qcc(
     signers = signer_coordinates if signer_coordinates is not None else clean_signers()
     return QuorumCommitCertificate.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         qcc_id=qcc_id,
         signer_coordinates=signers,
         **content,
@@ -132,7 +133,7 @@ def clean_current_coordinates(**overrides: object) -> CommitProofCoordinates:
     """The injected current committed coordinates matching :func:`clean_qcc` field-for-field."""
     values = dict(_CLEAN_COORDS)
     values.update(overrides)
-    return CommitProofCoordinates(**values)
+    return CommitProofCoordinates.model_validate(values)
 
 
 def clean_request(
@@ -147,6 +148,7 @@ def clean_request(
     content.update(overrides)
     return EgressRequestRecord.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         request_id=request_id,
         canonical_command_digest=canonical_command_digest,
         request_bytes_digest=request_bytes_digest,
@@ -158,7 +160,7 @@ def clean_authorized_coordinates(**overrides: object) -> EgressCoordinateSet:
     """The injected authorized egress coordinates matching :func:`clean_request` field-for-field."""
     values = dict(_CLEAN_EGRESS_COORDS)
     values.update(overrides)
-    return EgressCoordinateSet(**values)
+    return EgressCoordinateSet.model_validate(values)
 
 
 def clean_active_set(

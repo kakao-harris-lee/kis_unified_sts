@@ -10,6 +10,8 @@ Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hypothesis import given
 from pydantic import ValidationError
@@ -290,7 +292,8 @@ def test_every_declared_authority_flag_is_covered_by_the_predicate() -> None:
     declared = list(ActionFlowGovernorEffect.model_fields)
     assert declared, "the governor effect must declare at least one authority flag"
     for field in declared:
-        forged = ActionFlowGovernorEffect.model_construct(**{field: True})
+        values: dict[str, Any] = {field: True}
+        forged = ActionFlowGovernorEffect.model_construct(**values)
         assert (
             governor_grants_no_authority(forged) is False
         ), f"{field}=True must not be reported as granting no authority"
@@ -306,7 +309,8 @@ def test_forged_truthy_non_bool_authority_flag_is_rejected() -> None:
     """
     for field in ActionFlowGovernorEffect.model_fields:
         for forged_value in FORGED_AUTHORITY_VALUES:
-            forged = ActionFlowGovernorEffect.model_construct(**{field: forged_value})
+            values: dict[str, Any] = {field: forged_value}
+            forged = ActionFlowGovernorEffect.model_construct(**values)
             assert governor_grants_no_authority(forged) is False, (
                 f"{field}={forged_value!r} is a forged truthy authority claim and must "
                 "not be reported as granting no authority"

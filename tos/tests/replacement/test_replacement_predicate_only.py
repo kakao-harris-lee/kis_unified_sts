@@ -16,6 +16,8 @@ The two paths hunt opposite fail-open shapes:
 
 from __future__ import annotations
 
+from typing import Any
+
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.replacement import (
@@ -105,19 +107,21 @@ def test_a_truthy_non_bool_condition_is_not_proof(
     ``is True``, never truthiness. Otherwise an ACK payload, a ``1``, or a non-empty list
     dropped into any one of the eight slots would license a Protection Gap.
     """
-    forged_conditions = CancelFirstConditions.model_construct(
-        **(dict.fromkeys(CANCEL_FIRST_ADMISSION_CONDITIONS, True) | {condition: forged})
-    )
+    forged_values: dict[str, Any] = dict.fromkeys(
+        CANCEL_FIRST_ADMISSION_CONDITIONS, True
+    ) | {condition: forged}
+    forged_conditions = CancelFirstConditions.model_construct(**forged_values)
     assert condition not in forged_conditions.positively_proven()
     assert (
         cancel_first_admission_gate(forged_conditions, leg_admissibility=True) is False
     )
     # Causal isolation: the same construct with a genuine ``True`` in that slot passes.
+    all_true_values: dict[str, Any] = dict.fromkeys(
+        CANCEL_FIRST_ADMISSION_CONDITIONS, True
+    )
     assert (
         cancel_first_admission_gate(
-            CancelFirstConditions.model_construct(
-                **dict.fromkeys(CANCEL_FIRST_ADMISSION_CONDITIONS, True)
-            ),
+            CancelFirstConditions.model_construct(**all_true_values),
             leg_admissibility=True,
         )
         is True

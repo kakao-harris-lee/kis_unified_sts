@@ -660,7 +660,9 @@ class TestF9SingleInstanceLoadPerBoot:
         calls: list[int] = []
         original = derive_module.load_instance_document
 
-        def _counting(*args: object, **kwargs: object) -> object:
+        # `Any`, not `object`: this spy stands in for `load_instance_document`'s own signature
+        # and must forward every call unchanged (plan §1.1 A-rt boundary use of `Any`).
+        def _counting(*args: Any, **kwargs: Any) -> object:
             calls.append(1)
             return original(*args, **kwargs)
 

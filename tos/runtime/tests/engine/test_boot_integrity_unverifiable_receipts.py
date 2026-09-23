@@ -18,6 +18,7 @@ shipped one.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -51,7 +52,11 @@ def _driver(
     transmit: object = None,
     preconditions: object = None,
 ) -> EngineDriver:
-    kwargs = {} if preconditions is None else {"preconditions": preconditions}
+    # `build_core`'s own `preconditions` parameter is `Any` (fixture boundary) — matching
+    # that here, not a blanket widening (plan §1.1 A-rt).
+    kwargs: dict[str, Any] = (
+        {} if preconditions is None else {"preconditions": preconditions}
+    )
     return EngineDriver(
         core=fx.build_core(
             stages=fx.admitting_stages(),

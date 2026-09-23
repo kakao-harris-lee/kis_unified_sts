@@ -415,8 +415,8 @@ SPG-EV-001,TEST,tests/spg/test_spg_dominance.py::test_undeclared_dimension_is_re
 SPG-EV-001,TEST,tests/spg/test_spg_dominance.py::test_within_envelope_positive_side,PRESENT,tos/tests/spg/test_spg_dominance.py:1
 SPG-EV-002,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-002,PACKAGE,tos/src/tos/spg/predicates.py,PRESENT,tos/src/tos/spg/predicates.py:429
-SPG-EV-002,TEST,tests/spg/test_spg_l2_fault.py::test_spg_11_omitted_mandatory_dimension_cannot_pass_vacuously,PRESENT,tos/tests/spg/test_spg_l2_fault.py:520
-SPG-EV-002,TEST,tests/spg/test_spg_l2_fault.py::test_spg_14_vector_dimension_set_identity_mismatch,PRESENT,tos/tests/spg/test_spg_l2_fault.py:550
+SPG-EV-002,TEST,tests/spg/test_spg_l2_fault.py::test_spg_11_omitted_mandatory_dimension_cannot_pass_vacuously,PRESENT,tos/tests/spg/test_spg_l2_fault.py:522
+SPG-EV-002,TEST,tests/spg/test_spg_l2_fault.py::test_spg_14_vector_dimension_set_identity_mismatch,PRESENT,tos/tests/spg/test_spg_l2_fault.py:552
 SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[ActivationRecord],PRESENT,tos/tests/spg/test_spg_records.py:203
 SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[ConsumerCompatibilityManifest],PRESENT,tos/tests/spg/test_spg_records.py:203
 SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[HardSafetyEnvelope],PRESENT,tos/tests/spg/test_spg_records.py:203
@@ -424,8 +424,8 @@ SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_ci
 SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[SafetyConfigurationBundle],PRESENT,tos/tests/spg/test_spg_records.py:203
 SPG-EV-003,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-003,PACKAGE,tos/src/tos/spg/records.py,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:1320
-SPG-EV-003,TEST,tests/spg/test_spg_l2_fault.py::test_catalog_is_the_design_section_4_table,PRESENT,tos/tests/spg/test_spg_l2_fault.py:217
-SPG-EV-003,TEST,tests/spg/test_spg_l2_fault.py::test_spg_11_omitted_mandatory_dimension_cannot_pass_vacuously,PRESENT,tos/tests/spg/test_spg_l2_fault.py:519
+SPG-EV-003,TEST,tests/spg/test_spg_l2_fault.py::test_catalog_is_the_design_section_4_table,PRESENT,tos/tests/spg/test_spg_l2_fault.py:218
+SPG-EV-003,TEST,tests/spg/test_spg_l2_fault.py::test_spg_11_omitted_mandatory_dimension_cannot_pass_vacuously,PRESENT,tos/tests/spg/test_spg_l2_fault.py:521
 SPG-EV-003,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[ActivationRecord],PRESENT,tos/tests/spg/test_spg_records.py:202
 SPG-EV-003,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[ConsumerCompatibilityManifest],PRESENT,tos/tests/spg/test_spg_records.py:202
 SPG-EV-003,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[HardSafetyEnvelope],PRESENT,tos/tests/spg/test_spg_records.py:202

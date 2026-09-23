@@ -12,6 +12,8 @@ claim forbidden.
 
 from __future__ import annotations
 
+from typing import Any
+
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given
@@ -65,7 +67,8 @@ def test_any_true_flag_is_unconstructable(flag: str) -> None:
 @given(flag=st.sampled_from(_FLAG_NAMES))
 def test_predicate_recaught_model_construct_bypass(flag: str) -> None:
     """(§2.3 defence in depth) A model_construct permissive block is re-caught by the predicate."""
-    permissive = AllFalseTrialAuthority.model_construct(**{flag: True})
+    permissive_values: dict[str, Any] = {flag: True}
+    permissive = AllFalseTrialAuthority.model_construct(**permissive_values)
     assert all_false_trial_authority(permissive) is False
 
 

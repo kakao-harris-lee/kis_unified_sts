@@ -18,6 +18,8 @@ Regime tag: orchestration authoring evidence only; closes no EV.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 import tos.engine as engine
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactIntegrityError
@@ -301,7 +303,8 @@ def test_an_ill_formed_injected_configuration_is_refused(kwargs) -> None:
     }
     base.update(kwargs)
     with pytest.raises(Exception, match="must be"):
-        EngineConfiguration(**base)
+        # illegal input under test: `kwargs` deliberately carries an out-of-bound value.
+        EngineConfiguration(**cast("dict[str, Any]", base))
 
 
 def test_no_numeric_bound_is_hardcoded_in_the_sources() -> None:

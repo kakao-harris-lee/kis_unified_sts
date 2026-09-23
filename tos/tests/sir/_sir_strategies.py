@@ -29,7 +29,7 @@ real sir bounds are Verification-Profile injected and all null in Phase 1 (desig
 from __future__ import annotations
 
 import hypothesis.strategies as st
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactStatus, get_scheme
 from tos.sir import (
     CLOSURE_CONTRACT_ITEM_POLARITY,
     SHUTDOWN_PROHIBITIONS,
@@ -91,7 +91,7 @@ def clean_signal(**overrides: object) -> SafetySignal:
         "scope_establishable": True,
     }
     kwargs.update(overrides)
-    return SafetySignal(**kwargs)
+    return SafetySignal.model_validate(kwargs)
 
 
 def clean_classification(**overrides: object) -> IncidentClassificationInput:
@@ -103,7 +103,7 @@ def clean_classification(**overrides: object) -> IncidentClassificationInput:
         "unestablished": False,
     }
     kwargs.update(overrides)
-    return IncidentClassificationInput(**kwargs)
+    return IncidentClassificationInput.model_validate(kwargs)
 
 
 def clean_scope(**overrides: object) -> IncidentScope:
@@ -117,7 +117,7 @@ def clean_scope(**overrides: object) -> IncidentScope:
         "wildcard_or_narrowed": False,
     }
     kwargs.update(overrides)
-    return IncidentScope(**kwargs)
+    return IncidentScope.model_validate(kwargs)
 
 
 def clean_dependency_closure(**overrides: object) -> IncidentDependencyClosure:
@@ -132,7 +132,7 @@ def clean_dependency_closure(**overrides: object) -> IncidentDependencyClosure:
         "dependency_closure_complete": True,
     }
     kwargs.update(overrides)
-    return IncidentDependencyClosure(**kwargs)
+    return IncidentDependencyClosure.model_validate(kwargs)
 
 
 def clean_obligation(**overrides: object) -> OngoingSafetyObligation:
@@ -144,7 +144,7 @@ def clean_obligation(**overrides: object) -> OngoingSafetyObligation:
         "transferred_with_owner_and_evidence": True,
     }
     kwargs.update(overrides)
-    return OngoingSafetyObligation(**kwargs)
+    return OngoingSafetyObligation.model_validate(kwargs)
 
 
 def clean_action(**overrides: object) -> ContainmentAction:
@@ -159,7 +159,7 @@ def clean_action(**overrides: object) -> ContainmentAction:
         "assumed_executable": False,
     }
     kwargs.update(overrides)
-    return ContainmentAction(**kwargs)
+    return ContainmentAction.model_validate(kwargs)
 
 
 def clean_shutdown_procedure(**overrides: object) -> ControlledShutdownProcedure:
@@ -175,7 +175,7 @@ def clean_shutdown_procedure(**overrides: object) -> ControlledShutdownProcedure
         "prohibited": SHUTDOWN_PROHIBITIONS,
     }
     kwargs.update(overrides)
-    return ControlledShutdownProcedure(**kwargs)
+    return ControlledShutdownProcedure.model_validate(kwargs)
 
 
 def clean_member(
@@ -194,7 +194,7 @@ def clean_member(
         "resolved": True,
     }
     kwargs.update(overrides)
-    return ActiveSetMember(**kwargs)
+    return ActiveSetMember.model_validate(kwargs)
 
 
 def clean_members() -> tuple[ActiveSetMember, ...]:
@@ -236,7 +236,9 @@ def clean_active_set(**overrides: object) -> ActiveSafetyIncidentSet:
         "state": IncidentLifecycleState.CONTAINING,
     }
     kwargs.update(overrides)
-    return ActiveSafetyIncidentSet.issue(scheme=SCHEME, **kwargs)
+    return ActiveSafetyIncidentSet.issue(
+        scheme=SCHEME, status=ArtifactStatus.ISSUED, **kwargs
+    )
 
 
 def empty_active_set(**overrides: object) -> ActiveSafetyIncidentSet:
@@ -276,7 +278,9 @@ def clean_record(**overrides: object) -> SafetyIncidentRecord:
         "severity_label_narrows_scope": False,
     }
     kwargs.update(overrides)
-    return SafetyIncidentRecord.issue(scheme=SCHEME, **kwargs)
+    return SafetyIncidentRecord.issue(
+        scheme=SCHEME, status=ArtifactStatus.ISSUED, **kwargs
+    )
 
 
 def clean_policy(**overrides: object) -> SafetyIncidentPolicy:
@@ -297,7 +301,9 @@ def clean_policy(**overrides: object) -> SafetyIncidentPolicy:
         "failure_behavior": ("fail-closed",),
     }
     kwargs.update(overrides)
-    return SafetyIncidentPolicy.issue(scheme=SCHEME, **kwargs)
+    return SafetyIncidentPolicy.issue(
+        scheme=SCHEME, status=ArtifactStatus.ISSUED, **kwargs
+    )
 
 
 def clean_plan(**overrides: object) -> IncidentContainmentPlan:
@@ -336,7 +342,9 @@ def clean_plan(**overrides: object) -> IncidentContainmentPlan:
         "exposure_reported_safely_closed": False,
     }
     kwargs.update(overrides)
-    return IncidentContainmentPlan.issue(scheme=SCHEME, **kwargs)
+    return IncidentContainmentPlan.issue(
+        scheme=SCHEME, status=ArtifactStatus.ISSUED, **kwargs
+    )
 
 
 def clean_handoff(**overrides: object) -> IncidentRecoveryHandoffPackage:
@@ -352,7 +360,9 @@ def clean_handoff(**overrides: object) -> IncidentRecoveryHandoffPackage:
         "accepted_by_recovery_session": True,
     }
     kwargs.update(overrides)
-    return IncidentRecoveryHandoffPackage.issue(scheme=SCHEME, **kwargs)
+    return IncidentRecoveryHandoffPackage.issue(
+        scheme=SCHEME, status=ArtifactStatus.ISSUED, **kwargs
+    )
 
 
 def clean_contract_items() -> tuple[bool | None, ...]:
@@ -376,7 +386,9 @@ def clean_closure_decision(**overrides: object) -> IncidentClosureDecision:
         "consumed_by_live_authority": False,
     }
     kwargs.update(overrides)
-    return IncidentClosureDecision.issue(scheme=SCHEME, **kwargs)
+    return IncidentClosureDecision.issue(
+        scheme=SCHEME, status=ArtifactStatus.ISSUED, **kwargs
+    )
 
 
 def clean_communication_ladder(**overrides: object) -> CommunicationHonestyLadder:
@@ -388,7 +400,7 @@ def clean_communication_ladder(**overrides: object) -> CommunicationHonestyLadde
         "treated_as_enforcement_ack": False,
     }
     kwargs.update(overrides)
-    return CommunicationHonestyLadder(**kwargs)
+    return CommunicationHonestyLadder.model_validate(kwargs)
 
 
 def clean_analysis_claim(**overrides: object) -> AnalysisClaim:
@@ -399,7 +411,7 @@ def clean_analysis_claim(**overrides: object) -> AnalysisClaim:
         "authorizes_past_effect": False,
     }
     kwargs.update(overrides)
-    return AnalysisClaim(**kwargs)
+    return AnalysisClaim.model_validate(kwargs)
 
 
 def clean_independence_ladder(**overrides: object) -> ClosureIndependenceLadder:
@@ -416,7 +428,7 @@ def clean_independence_ladder(**overrides: object) -> ClosureIndependenceLadder:
         "single_operator_variant_supplies_second": False,
     }
     kwargs.update(overrides)
-    return ClosureIndependenceLadder(**kwargs)
+    return ClosureIndependenceLadder.model_validate(kwargs)
 
 
 def clean_unknown_state(**overrides: object) -> IncidentUnknownState:
@@ -425,7 +437,7 @@ def clean_unknown_state(**overrides: object) -> IncidentUnknownState:
         IncidentUnknownState.UNKNOWN_FIELDS, False
     )
     kwargs.update(overrides)
-    return IncidentUnknownState(**kwargs)
+    return IncidentUnknownState.model_validate(kwargs)
 
 
 def clean_broker_tokens(**overrides: object) -> BrokerFinalityTokens:
@@ -440,7 +452,7 @@ def clean_broker_tokens(**overrides: object) -> BrokerFinalityTokens:
         "final_quantity_proof_present": False,
     }
     kwargs.update(overrides)
-    return BrokerFinalityTokens(**kwargs)
+    return BrokerFinalityTokens.model_validate(kwargs)
 
 
 def clean_revival_inputs(**overrides: object) -> RecoveryRevivalInputs:
@@ -449,7 +461,7 @@ def clean_revival_inputs(**overrides: object) -> RecoveryRevivalInputs:
         RecoveryRevivalInputs.REVIVAL_FIELDS, False
     )
     kwargs.update(overrides)
-    return RecoveryRevivalInputs(**kwargs)
+    return RecoveryRevivalInputs.model_validate(kwargs)
 
 
 def clean_external_activity(**overrides: object) -> ExternalActivityClaim:
@@ -463,4 +475,4 @@ def clean_external_activity(**overrides: object) -> ExternalActivityClaim:
         "expands_reconciliation_and_closure": True,
     }
     kwargs.update(overrides)
-    return ExternalActivityClaim(**kwargs)
+    return ExternalActivityClaim.model_validate(kwargs)

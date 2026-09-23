@@ -626,6 +626,24 @@ def test_load_order_construction_policy_named_tbd_policy_version_refused(
         load_order_construction_policy(path, scheme=SCHEME)
 
 
+def _ocp_yaml_with_identity_field(field: str, value: str) -> str:
+    """Set exactly one of :func:`ocp_yaml`'s three identity fields by (dynamic) name.
+
+    A caller-side ``ocp_yaml(**{field: value})`` with a non-literal ``field: str`` cannot
+    type-check against :func:`ocp_yaml`'s heterogeneously-typed parameters (plan §1.1 A-rt
+    fallback — "그 헬퍼만 명시 키워드"): ``policy_generation``/``model_view_policy_generation``
+    are ``int``-typed, so ``dict[str, str]`` is incompatible with them even though the actual
+    key is always one of these three ``str`` fields. Dispatch by literal branch keeps each
+    call to :func:`ocp_yaml` precisely, individually typed."""
+    if field == "signer_identity":
+        return ocp_yaml(signer_identity=value)
+    if field == "approval_identity":
+        return ocp_yaml(approval_identity=value)
+    if field == "evidence_package_ref":
+        return ocp_yaml(evidence_package_ref=value)
+    raise ValueError(f"not an identity field: {field!r}")
+
+
 @pytest.mark.parametrize(
     "field", ["signer_identity", "approval_identity", "evidence_package_ref"]
 )
@@ -640,7 +658,7 @@ def test_load_order_construction_policy_named_tbd_identity_field_refused(
     into a field this loader was letting through unchecked before this fix, which would
     have sealed ``"TBD"`` into the ``canonical_digest`` as if it were a real identity.
     """
-    text = ocp_yaml(**{field: '"TBD"'})
+    text = _ocp_yaml_with_identity_field(field, '"TBD"')
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="named-TBD|template placeholder"):
         load_order_construction_policy(path, scheme=SCHEME)
@@ -672,7 +690,7 @@ def test_load_order_construction_policy_non_string_identity_value_refused(
     """(review finding ⑤, round #4) ``optional_str``'s "not isinstance(value, str)"
     branch was untested for all three identity fields — a YAML integer (never quoted
     into a string) must refuse rather than being coerced or silently accepted."""
-    text = ocp_yaml(**{field: "12345"})
+    text = _ocp_yaml_with_identity_field(field, "12345")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="must be a string or null"):
         load_order_construction_policy(path, scheme=SCHEME)
