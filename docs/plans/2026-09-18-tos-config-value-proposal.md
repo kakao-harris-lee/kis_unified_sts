@@ -225,6 +225,9 @@ tos-paper-<무엇>-g<세대>      예: tos-paper-envelope-g1 · tos-paper-profil
    | `marketfeed.yaml` + `critical_input_policy.yaml` | **없음** | 두 표 모두 이 두 파일의 행이 없다(2026-09-12 는 틱 원천 웨이브 이전 문서) · 특히 `fields[].max_age_ms` 는 신선도 한도 = 안전 값 | 미채택 · 좌표는 답변 1 에 걸림 |
 
 4. **PR 본문 이탈 1~4 — 운영자 확인(2026-09-23).** 아래 §7.3 이 그 4건을 포함한 **전수 목록**이다.
+5. **(3차 답변, 2026-09-23) 이탈 ⑤ 와 (ㄱ) 양의 안전 주장 19건 — 운영자 확인.** 확인 표면은 §7.3 의 이탈 ①~⑤(18 리프)와
+   (ㄱ) 19건이다. (ㄴ) 5건·(ㄷ) 17건은 출처 표만 있고 **개별 운영자 확인은 받지 않았다**(가장 낮은 위험군 — 불투명 토큰·버전 메타·
+   빈 목록). `value_date` 는 이후 설계 PR #795 에서 운영자가 `T+1` 로 정했다(구현 PR 에서 기입).
 
 ### 7.3 이 표가 행으로 다루지 않은 채워진 리프 — **전수 41건** (review-794 HIGH-3)
 
@@ -261,7 +264,8 @@ review-794 는 PR 본문이 이탈을 **4건**으로 열거한 것을 지적했�
 | `safety_incidents::incidents.active_set.safety_cell` (1) | `"tos-paper-cell-g1"` | 2026-09-12 §4 는 `paper-cell-1` 제안 · 이름만 제안표 §4.3 최신 규칙으로 |
 | `safety_profile::profile.{scope,permitted_behaviors,fallback_rules}` · `safety_activation::activation.{scope,restrictive_generation_effects}` · `safety_incidents::incidents.{active_set.shared_dependencies,applicable_incident_ids}` (7) | `[]` | §4.3 의 「빈 것이 사실이다」를 **이름이 나열되지 않은 목록에도** 적용한 확장분 |
 
-**(ㄹ)(ㅁ)(ㅂ) PR 이 이미 이탈로 공시한 17건** — 운영자 확인(2026-09-23, 답변 4):
+**(ㄹ)(ㅁ)(ㅂ) PR 이 이탈로 공시한 18건**(①~④ 17 리프는 위 「나머지 70」 안 · ⑤ 1 리프는 제안표 §3 행이 있으므로 「행 43」 안 —
+그래서 41 에는 들어가지 않는다) — 운영자 확인(2026-09-23, 답변 4 · 3차 답변):
 
 | # | 리프 | 출처 |
 |---|---|---|
