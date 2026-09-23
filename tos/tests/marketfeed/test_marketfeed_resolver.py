@@ -49,8 +49,8 @@ def _resolver(
         del snapshot_id, canonical_digest
         return snapshot
 
-    def source(resolved: CriticalInputSnapshot, *, instrument_key: InstrumentKey):
-        del resolved, instrument_key
+    def source(snapshot: CriticalInputSnapshot, *, instrument_key: InstrumentKey):
+        del snapshot, instrument_key
         return candidates
 
     return MarketFeedContextResolver(

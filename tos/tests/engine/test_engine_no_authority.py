@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -111,7 +112,10 @@ def test_an_engine_record_cannot_be_built_with_authority() -> None:
             step=CommitmentStep.ATOMIC_COMMIT,
             outcome=StageOutcome.ADMIT,
             authority_class=StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL,
-            authority={"mutates_risk_capacity_ledger": True},
+            # Deliberately illegal per the (non-dict) signature — fail-closed proof.
+            authority=cast(
+                AllFalseCoordinatorAuthority, {"mutates_risk_capacity_ledger": True}
+            ),
         )
 
 

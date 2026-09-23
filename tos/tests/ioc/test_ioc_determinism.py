@@ -45,7 +45,7 @@ _AXIS_VALUE = st.text(
     generation=st.integers(min_value=1, max_value=1000),
 )
 def test_compile_is_digest_deterministic(
-    values: dict[ConformanceAxis, str], generation: int
+    values: dict[ConformanceAxis, str | None], generation: int
 ) -> None:
     """(§4.2 property) The same complete inputs compile to the same canonical digest."""
     intent = issue_intent(values)

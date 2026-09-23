@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -449,7 +450,9 @@ def test_capacity_reservation_transition_committed_vector_defaults_to_none() -> 
 
 def test_capacity_reservation_transition_carries_committed_vector() -> None:
     vector = CapacityVector(
-        components=(CapacityComponent(dimension_id="INSTRUMENT::DELTA", magnitude=3),)
+        components=(
+            CapacityComponent(dimension_id="INSTRUMENT::DELTA", magnitude=Decimal(3)),
+        )
     )
     transition = CapacityReservationTransition(
         reservation_id="res-1",

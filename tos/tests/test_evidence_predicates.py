@@ -8,6 +8,8 @@ and the EIP / receipt binding + substitution-rejection predicates.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -80,7 +82,12 @@ def test_child_before_parent_is_incomplete() -> None:
 def test_unknown_edge_type_is_fail_closed() -> None:
     """An unregistered edge type is unconstructable (fail-closed, §2.5 A)."""
     with pytest.raises(ValueError):
-        CausalLink(edge_type="NOT_A_REAL_EDGE", target_id="x", target_digest="d")
+        # Deliberately illegal per the (non-str) signature — fail-closed proof.
+        CausalLink(
+            edge_type=cast(EdgeType, "NOT_A_REAL_EDGE"),
+            target_id="x",
+            target_digest="d",
+        )
 
 
 def test_timestamp_only_link_is_forbidden() -> None:
