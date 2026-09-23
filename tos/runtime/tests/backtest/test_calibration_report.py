@@ -27,7 +27,7 @@ import pytest
 import yaml
 from tos.backtest.calibration import CalibrationVerdict, DeviationBudget
 from tos.backtest.records import LocalFillRecord
-from tos.backtest.vocabulary import QuantityProvenance, SettlementStatus
+from tos.backtest.vocabulary import FillSide, QuantityProvenance, SettlementStatus
 from tos.engine.records import EngineEvidenceRecord, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind, EvidenceKind
 from tos_runtime.backtest.calibration_report import (
@@ -53,6 +53,10 @@ class _FixedKeyProvider:
 
     def generations(self) -> tuple[int, ...]:
         return (1,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return b"test-fixed-key-bytes"
 
 
 @pytest.fixture
@@ -102,7 +106,7 @@ def _backtest_fill(attempt_id: str, *, filled: Decimal | None) -> LocalFillRecor
         result_kind=(
             EgressResultKind.FULL_FILL if is_positive_fill else EgressResultKind.REJECT
         ),
-        side="BUY",
+        side=FillSide.BUY,
         quantity_provenance=QuantityProvenance.SCENARIO_PARAMETER,
         filled_quantity=filled,
         remaining_quantity=Decimal(0) if filled is not None else None,

@@ -55,9 +55,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Protocol
 
 from tos.canonical import CanonicalizationScheme
-from tos.egressgw import OrderConstructionStage, VenueConstraintStage
+from tos.egressgw import CandidateConstruction, VenueConstraintStage
 from tos.engine import StageRequest, StageVerdict
 from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
 from tos.spg import BundleMemberKind, BundleMemberRef
@@ -515,6 +516,18 @@ def _observed_silently_rounded() -> bool:
     return False
 
 
+class _ConstructionStageReader(Protocol):
+    """The narrow read surface :class:`VenueServiceStage` needs off a
+    :class:`~tos.egressgw.OrderConstructionStage` (mypy stage 3 §1.3 rule 3 port
+    introduction) — only :attr:`construction`, never :meth:`__call__` or any other member of
+    the real stage (mirrors :mod:`tos_runtime.compose._dimension_readers`'s own
+    ``_ConstructionStageReader`` for the SAME real attribute, defined separately here per
+    this codebase's own "one method, not the whole service" per-module Protocol convention —
+    see ``tos_runtime.calendar.ports._WallClockNowSource``)."""
+
+    construction: CandidateConstruction | None
+
+
 class VenueServiceStage:
     """Step 3, folded against a live :class:`~tos_runtime.venue.VenueConstraintService`
     (module docstring — replaces ``compose/_venue_phase.py::VenuePhaseStage``).
@@ -548,7 +561,7 @@ class VenueServiceStage:
     def __init__(
         self,
         service: VenueConstraintService,
-        construction_stage: OrderConstructionStage,
+        construction_stage: _ConstructionStageReader,
         action_class: ActionClass,
         shape_price_field_key: str | None,
         *,

@@ -298,7 +298,12 @@ def test_coordinator_realized_steps_are_not_injectable(sealed_step) -> None:
         validate_stage_map(stages)
 
 
-@pytest.mark.parametrize("send_step", sorted(SEND_BOUNDARY_STEPS, key=step_number))
+_SORTED_SEND_BOUNDARY_STEPS: list[CommitmentStep] = sorted(
+    SEND_BOUNDARY_STEPS, key=step_number
+)
+
+
+@pytest.mark.parametrize("send_step", _SORTED_SEND_BOUNDARY_STEPS)
 def test_send_boundary_steps_are_not_hostable(send_step) -> None:
     """(§4.5 item-7) Steps 15-19 are constitutionally D-E4's; the sequencer refuses to host them."""
     stages = admitting_stages()

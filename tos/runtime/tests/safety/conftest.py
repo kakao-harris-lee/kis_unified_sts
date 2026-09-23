@@ -17,11 +17,12 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 import yaml
 from tos.time import HealthState
+from tos_runtime.time.service import TimeServiceNotStarted
 
 # ---------------------------------------------------------------------------
 # tos_runtime.safety.profile — SafetyProfileService fixtures
@@ -271,6 +272,9 @@ class FakeTimeService:
     .safety.rearm.ReArmWorkflow` never actually consults it (hag reads no clock),
     so this double need not reproduce the real FSM (mirrors ``tos/runtime/tests
     /authority/conftest.py``'s own ``FakeTimeService`` rationale)."""
+
+    def current_snapshot(self) -> NoReturn:
+        raise TimeServiceNotStarted("unused by ReArmWorkflow — hag reads no clock")
 
 
 def write_rearm_roster_file(

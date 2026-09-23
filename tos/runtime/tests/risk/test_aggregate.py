@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -165,7 +166,9 @@ def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
     ``tos/runtime/tests/risk`` / ``compose`` / ``rcl`` / ``riskstate`` / ``safety`` all
     green (round #4 review, code-reviewer's own mutation)."""
     committed_vector = CapacityVector(
-        components=(CapacityComponent(dimension_id="notional", magnitude="250"),)
+        components=(
+            CapacityComponent(dimension_id="notional", magnitude=Decimal("250")),
+        )
     )
     transition = CapacityReservationTransition(
         reservation_id="res-are-1",

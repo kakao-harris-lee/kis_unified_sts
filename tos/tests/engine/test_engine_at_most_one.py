@@ -26,6 +26,7 @@ Regime tag: orchestration authoring evidence only; closes no EV.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -262,8 +263,8 @@ def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothin
                 instrument_key=key,
                 attempt_id=first.flow.attempt.attempt_id,
                 kind=EgressResultKind.FULL_FILL,
-                filled_quantity=7,
-                remaining_quantity=0,
+                filled_quantity=Decimal(7),
+                remaining_quantity=Decimal(0),
                 reference=ordering(2),
             ),
         )
@@ -352,8 +353,8 @@ def test_every_stage_request_carries_the_two_observations_restrictively() -> Non
                 instrument_key=key,
                 attempt_id=first.flow.attempt.attempt_id,
                 kind=EgressResultKind.FULL_FILL,
-                filled_quantity=7,
-                remaining_quantity=0,
+                filled_quantity=Decimal(7),
+                remaining_quantity=Decimal(0),
                 reference=ordering(2),
             ),
         )
@@ -383,8 +384,8 @@ def test_every_stage_request_carries_the_two_observations_restrictively() -> Non
                 instrument_key=key,
                 attempt_id=started.flow.attempt.attempt_id,
                 kind=EgressResultKind.FULL_FILL,
-                filled_quantity=7,
-                remaining_quantity=0,
+                filled_quantity=Decimal(7),
+                remaining_quantity=Decimal(0),
                 reference=ordering(2),
             ),
         )

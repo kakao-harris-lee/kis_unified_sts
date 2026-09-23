@@ -63,6 +63,7 @@ from tos_runtime.posttrade.release_consumer import (
     CAPACITY_RELEASE_HELD_KIND,
     CAPACITY_RELEASE_INTENT_KIND,
     RELEASE_PROOF_OVERDUE_KIND,
+    FinalityConsumerTimeReader,
     FinalityReleaseConsumer,
     ReleaseHoldReason,
 )
@@ -71,6 +72,7 @@ from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import (
+    BrokerWitness,
     WitnessOrder,
     WitnessOrderState,
     WitnessScope,
@@ -344,10 +346,10 @@ def _consumer(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
-    witness: object,
+    witness: BrokerWitness,
     monotonic_source: FakeMonotonicSource,
     release_proof_wait_ms: int = 60_000,
-    time_service: object | None = None,
+    time_service: FinalityConsumerTimeReader | None = None,
 ) -> FinalityReleaseConsumer:
     recon_service = ReconciliationService(
         rcl_reader=SqliteReservationProjectionReader(rcl_log),
@@ -584,6 +586,11 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
     assert outstanding is not None
     assert outstanding.capacity_state is CapacityState.POSITION_CONSUMED
 
+    # ReleaseOutcome's own docstring: proof_digest/evidence_seq/resolution_generation are
+    # None unless released is True — already asserted above.
+    assert outcome.proof_digest is not None
+    assert outcome.evidence_seq is not None
+    assert outcome.resolution_generation is not None
     ref = FinalityProofRef(
         attempt_id=outcome.attempt_id,
         proof_digest=outcome.proof_digest,

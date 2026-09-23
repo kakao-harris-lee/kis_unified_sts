@@ -90,11 +90,12 @@ value — it never calls ``time``/``datetime`` directly.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from tos.engine import TimeAdmissionInputs
 from tos.marketfeed import TimeCoordinateProjection
-from tos.time import UncertaintyInterval
+from tos.time import SessionContext, UncertaintyInterval
 
-from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 
@@ -137,6 +138,18 @@ class TimeProjectionConfigError(Exception):
     """
 
 
+class _SessionContextReader(Protocol):
+    """Structural shape :class:`RuntimeTimeProjection` needs from a session-facts owner — matches
+    :meth:`~tos_runtime.calendar.owner.SessionFactsOwner.session_context` without importing
+    ``tos_runtime.calendar.owner`` (mypy stage 3 §1.3 rule 3 port introduction, mirroring
+    ``tos_runtime.calendar.ports._WallClockNowSource``'s own "one method, not the whole
+    service" discipline): only :meth:`session_context` is ever read, never
+    :meth:`~tos_runtime.calendar.owner.SessionFactsOwner.session_facts_current` or any other
+    member of the real owner."""
+
+    def session_context(self, instrument_class: str) -> SessionContext | None: ...
+
+
 class RuntimeTimeProjection:
     """The runtime ``(*, as_of: int | None) -> TimeAdmissionInputs`` projection (plan §2 decision 6).
 
@@ -166,7 +179,7 @@ class RuntimeTimeProjection:
         *,
         config: TrustworthyTimeConfig,
         time_service: TrustworthyTimeService,
-        session_owner: SessionFactsOwner,
+        session_owner: _SessionContextReader,
         instrument_class: str,
         snapshot_age_bound: int,
         interval_width: int,

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.are import RiskScopeKind
+from tos.rcl import AppendRefusalReason
 from tos_runtime.compose._risk_attestations import (
     RiskAttestationConfigError,
     RiskAttestations,
@@ -380,7 +381,7 @@ def test_action_flow_wrapper_derives_generation_current_true_on_match() -> None:
 
 def test_action_flow_wrapper_maps_stale_epoch_read_to_none() -> None:
     def _raise(_request: object) -> int:
-        raise StaleEpochRead("stale for test")
+        raise StaleEpochRead(AppendRefusalReason.STALE_EPOCH)
 
     wrapped = wrap_action_flow_inputs_provider(
         lambda _request: _action_flow_inputs_with(

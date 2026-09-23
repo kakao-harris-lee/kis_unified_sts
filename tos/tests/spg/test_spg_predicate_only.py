@@ -155,7 +155,9 @@ def test_unresolved_or_mutable_member_fails() -> None:
         ),
     ) + members[1:]
     bundle = issue_bundle(members=corrupted)
-    required = frozenset({members[0].kind})
+    first_kind = members[0].kind
+    assert first_kind is not None  # all_members() always sets a concrete kind
+    required = frozenset({first_kind})
     assert bundle_complete(bundle, required) is False
 
 

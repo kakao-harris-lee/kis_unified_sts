@@ -109,6 +109,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Protocol
 
 from tos.engine.records import InstrumentKey
 from tos.recon import FreshnessMarker
@@ -124,12 +125,61 @@ from tos_runtime.recon.ports import WitnessScope
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
 from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 from tos_runtime.recovery.possibly_live import PossiblyLiveAttempt
-from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
+from tos_runtime.time.service import TimeServiceNotStarted
+
+
+class _ContinuityIdentityLike(Protocol):
+    """The one :class:`~tos.time.TimeContinuityIdentity` field
+    :func:`_build_freshness_marker` reads (mypy stage 3 §1.3 rule 3 port introduction).
+    ``int | None`` — matches the real field exactly (``tos/src/tos/time/elements.py``); the
+    caller (:class:`~tos.recon.FreshnessMarker`'s own ``time_generation``/
+    ``anchored_generation`` fields) is itself ``int | None``, so ``None`` here is a real,
+    handled value, not an absence this Protocol papers over. Declared as a read-only property
+    (not a plain attribute) because the real :class:`~tos.time.TimeContinuityIdentity` is a
+    pydantic ``FrozenModel`` — a plain Protocol attribute is checked invariantly and the real
+    CI step (``mypy tos/runtime/src``, which checks production wiring call sites the test-tree
+    steps never exercise with a REAL ``TrustworthyTimeService``) caught this: a plain attribute
+    here rejected the real ``TimeContinuityIdentity`` even after the type matched exactly.
+    """
+
+    @property
+    def tts_generation(self) -> int | None: ...
+
+
+class _FreshnessSnapshotLike(Protocol):
+    """The read surface :func:`_build_freshness_marker` needs off whatever
+    :meth:`FreshnessTimeReader.current_snapshot` returns — a small slice of the real
+    :class:`~tos.time.TimeHealthSnapshot`, never the whole artifact. Read-only properties for
+    the same frozen-vs-invariant-attribute reason as :class:`_ContinuityIdentityLike`.
+    """
+
+    @property
+    def health_state(self) -> HealthState: ...
+    @property
+    def time_continuity_identity(self) -> _ContinuityIdentityLike: ...
+
+
+class FreshnessTimeReader(Protocol):
+    """The narrow read surface :func:`_build_freshness_marker` (and therefore
+    :func:`reconcile_possibly_live_attempts`) needs off the runtime's time service (mypy stage 3
+    §1.3 rule 3 port introduction) — only :meth:`current_snapshot`, and only two of its
+    snapshot's own fields (``health_state`` / ``time_continuity_identity.tts_generation``),
+    never :meth:`~tos_runtime.time.service.TrustworthyTimeService.start`/``evaluate``/
+    ``wall_clock_now`` or the snapshot's other fields (``wall_clock_observation``,
+    ``suspension_status``, …) other consumers of the wider
+    :class:`~tos_runtime.time.service.TimeSnapshotReader` port need."""
+
+    def current_snapshot(self) -> _FreshnessSnapshotLike:
+        """See :meth:`~tos_runtime.time.service.TrustworthyTimeService.current_snapshot`'s own
+        docstring."""
+        ...
+
 
 __all__ = [
     "NO_ATTEMPT_ID",
     "RECONCILED_MATCHED",
     "RECON_UNAVAILABLE",
+    "FreshnessTimeReader",
     "ReconciliationOutcome",
     "reconcile_possibly_live_attempts",
     "send_handed_off_attempt_id",
@@ -184,7 +234,7 @@ def send_handed_off_attempt_id(
     return None
 
 
-def _build_freshness_marker(time_service: TrustworthyTimeService) -> FreshnessMarker:
+def _build_freshness_marker(time_service: FreshnessTimeReader) -> FreshnessMarker:
     """A real (never-``None``-by-default) :class:`~tos.recon.FreshnessMarker` derived from this
     runtime's own time service (module docstring's "Freshness, honestly")."""
     try:
@@ -273,7 +323,7 @@ def reconcile_possibly_live_attempts(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
-    time_service: TrustworthyTimeService,
+    time_service: FreshnessTimeReader,
     account: str,
     instrument: str,
 ) -> dict[str, ReconciliationOutcome]:

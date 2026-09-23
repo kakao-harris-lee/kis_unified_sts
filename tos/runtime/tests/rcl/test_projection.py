@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from tos.engine.records import InstrumentKey
 from tos.rcl import (
     AppendReceipt,
@@ -77,7 +79,7 @@ def test_projection_reflects_committed_transition(
 # ============================================================================
 
 _NON_EMPTY_VECTOR = CapacityVector(
-    components=(CapacityComponent(dimension_id="notional", magnitude="100"),)
+    components=(CapacityComponent(dimension_id="notional", magnitude=Decimal("100")),)
 )
 
 

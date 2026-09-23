@@ -49,7 +49,7 @@ def _admit_and_consume(
     return event_id
 
 
-_FINGERPRINT = {
+_FINGERPRINT: dict[str, object] = {
     "handed_off": True,
     "halt_step": None,
     "halt_reason": None,

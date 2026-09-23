@@ -132,7 +132,7 @@ from tos_runtime._named_tbd import is_named_tbd_placeholder
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog, StaleEpochRead
 from tos_runtime.time.config import TrustworthyTimeConfig
-from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
+from tos_runtime.time.service import TimeServiceNotStarted, TimeSnapshotReader
 
 __all__ = [
     "ConsumeResult",
@@ -425,7 +425,7 @@ class LoadedApproval:
 def load_operator_approval_with_receipt(
     path: Path,
     *,
-    time: TrustworthyTimeService,
+    time: TimeSnapshotReader,
     time_config: TrustworthyTimeConfig,
     expected_owner_uid: int,
     environment_label: str | None,
@@ -564,7 +564,7 @@ class IntentRegistry:
         writer_epoch: int,
         trading_approval_policy_generation: int,
         canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
-        time: TrustworthyTimeService | None = None,
+        time: TimeSnapshotReader | None = None,
         time_config: TrustworthyTimeConfig | None = None,
     ) -> None:
         """Compose the registry over its injected ports.

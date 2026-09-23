@@ -61,11 +61,11 @@ from tos_runtime.recovery.possibly_live import (
     reconstruct_possibly_live_attempts,
 )
 from tos_runtime.recovery.reconciliation import (
+    FreshnessTimeReader,
     ReconciliationOutcome,
     reconcile_possibly_live_attempts,
     send_handed_off_attempt_id,
 )
-from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = ["OpenReservation", "RecoveryInputs", "assemble_recovery_inputs"]
 
@@ -273,7 +273,7 @@ def assemble_recovery_inputs(
     window_events: int | None,
     custody_root: Path,
     composite_state_store_path: Path,
-    time_service: TrustworthyTimeService,
+    time_service: FreshnessTimeReader,
     account: str,
     instrument: str,
 ) -> RecoveryInputs:

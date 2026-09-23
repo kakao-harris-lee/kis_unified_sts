@@ -24,7 +24,9 @@ and evidence port duck-typed doubles.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 import yaml
@@ -33,6 +35,7 @@ from tos.dsl import Proposal
 from tos.dsl.proposal import DecisionContextCapsuleRef, Proposer
 from tos.engine.records import InstrumentKey, StageRequest
 from tos.engine.vocabulary import CommitmentStep
+from tos.evidence import EvidenceAppendReceipt
 from tos_runtime.compose._wiring import _decision_provider
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TimeServiceNotStarted
@@ -46,7 +49,7 @@ class _NeverStartedTimeService:
     before any receipt work starts (module docstring's own "checks run
     before the file is opened" discipline, shared with ``FileCustody``)."""
 
-    def current_snapshot(self) -> None:
+    def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("unused by this test")
 
 
@@ -59,9 +62,10 @@ class _RecordingEvidencePort:
         self.calls: list[tuple[dict[str, object], str, str]] = []
 
     def append(
-        self, payload: dict[str, object], *, kind: str, record_class: str
-    ) -> None:
+        self, payload: Mapping[str, object], *, kind: str, record_class: str
+    ) -> EvidenceAppendReceipt:
         self.calls.append((dict(payload), kind, record_class))
+        return EvidenceAppendReceipt()
 
 
 def _time_config() -> TrustworthyTimeConfig:

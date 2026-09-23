@@ -55,15 +55,24 @@ _DEFAULT_SCOPES = {
 }
 
 
-class _FileCustodyKwargs(TypedDict, total=False):
-    """1:1 with :class:`FileCustody`'s ``__init__`` keyword parameters (plan §1.1 A-rt) — a
-    ``**kwargs`` call site is checked key-by-key and type-by-type, not swallowed by a
-    ``**dict[str, object]`` splat."""
+class _FileCustodyKwargs(TypedDict):
+    """1:1 with :class:`FileCustody`'s ``__init__`` REQUIRED keyword parameters (plan §1.1
+    A-rt; #784 LOW carry-over — mypy stage 3 §1.3 3-e) — ``total=True`` so a ``**kwargs`` call
+    site is checked key-by-key and type-by-type, and a missing required key is caught,
+    matching every other ``_*Kwargs``/``_*KwargsPartial`` pair in this test tree
+    (``tos/runtime/tests/time/test_service.py``'s ``_TimeConfigKwargs`` etc.)."""
 
     root_dir: Path
     environment_label: str | None
     expected_owner_uid: int
     evidence: EvidenceAppendPort
+
+
+class _FileCustodyKwargsPartial(TypedDict, total=False):
+    """The two DEFAULTED :class:`FileCustody` keyword parameters — ``total=False`` since
+    :func:`_make_custody` only sets ``getuid`` conditionally, never ``secret_field_names``.
+    """
+
     getuid: Callable[[], int]
     secret_field_names: frozenset[str]
 
@@ -82,15 +91,16 @@ def _make_custody(
         environment_label=environment_label,
         scopes=scopes if scopes is not None else _DEFAULT_SCOPES,
     )
-    kwargs: _FileCustodyKwargs = {
+    base: _FileCustodyKwargs = {
         "root_dir": custody_root,
         "environment_label": environment_label,
         "expected_owner_uid": expected_owner_uid,
         "evidence": evidence_double,
     }
+    overrides: _FileCustodyKwargsPartial = {}
     if getuid is not None:
-        kwargs["getuid"] = getuid
-    return FileCustody(**kwargs)
+        overrides["getuid"] = getuid
+    return FileCustody(**base, **overrides)
 
 
 # ============================================================================

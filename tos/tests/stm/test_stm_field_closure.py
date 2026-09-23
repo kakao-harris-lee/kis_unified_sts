@@ -370,7 +370,9 @@ def _model_classes_reachable_from(annotation: object) -> set[type[BaseModel]]:
     return found
 
 
-def _candidate_classes(function: ast.FunctionDef) -> set[type[BaseModel]]:
+def _candidate_classes(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[type[BaseModel]]:
     """The stm models a predicate can legitimately read, from its own parameter annotations.
 
     A predicate reads fields of the models it is *given*, plus the models those reach through their own

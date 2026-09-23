@@ -16,7 +16,14 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION
-from tos.dsl import ContextValue, ContextValueView, ScalarValue
+from tos.dsl import (
+    ContextValue,
+    ContextValueView,
+    DecisionContextCapsuleRef,
+    Proposer,
+    ScalarValue,
+    build_proposal,
+)
 from tos.egressgw import (
     DERIVED_AXES,
     AllFalseConstructionCoordinatorAuthority,
@@ -40,6 +47,7 @@ from tos.engine import (
     CommitmentStep,
     StageOutcome,
 )
+from tos.engine.records import StageRequest
 from tos.ioc import AxisBinding, ConformanceAxis, ConformanceResult, QuantityUnitKind
 from tos.venue import ActionClass, OrderAdmissibilityResult
 
@@ -51,6 +59,7 @@ from ._egressgw_fixtures import (
     SESSION_PHASE,
     admitted_price,
     construction,
+    instrument_key,
     non_derived_axes,
     proposed_envelope,
     sizing_bound,
@@ -633,40 +642,45 @@ def _construction_stage(**overrides) -> OrderConstructionStage:
     )
 
 
-class _Proposal:
-    """A minimal stand-in carrying only what the step-2 stage reads off a Proposal."""
-
-    quantity_basis = "RISK"
-    proposal_id = "prop-1"
-    canonical_digest = "prop-digest-1"
-
-
-class _Request:
-    """A minimal ``StageRequest`` stand-in.
-
-    The stage reads ``step`` / ``proposal`` plus the two observations design #35 threads onto
-    every request: the tick's resolved value surface (§4.2) and the projection's held-position
-    magnitude (§5.2). Both default to ``None`` here — a value-free, position-free request — which
-    is precisely the shape these construction tests exercise.
+def _stage_request(
+    step: CommitmentStep,
+    *,
+    value_view: ContextValueView | None = None,
+) -> StageRequest:
+    """A minimal, real :class:`~tos.engine.records.StageRequest` (mypy stage 3 §1.3 rule 2 —
+    the request the stage actually reads, not a stand-in with an untyped ``proposal``
+    attribute). The stage reads ``step`` / ``proposal`` plus the one observation these
+    construction tests exercise: the tick's resolved value surface (design #35 §4.2).
+    ``held_position_magnitude`` stays at its real default (``None`` — nothing outstanding),
+    matching every call site below, none of which sets it.
     """
-
-    def __init__(
-        self,
-        step: CommitmentStep,
-        *,
-        value_view: object | None = None,
-        held_position_magnitude: object | None = None,
-    ) -> None:
-        self.step = step
-        self.proposal = _Proposal()
-        self.value_view = value_view
-        self.held_position_magnitude = held_position_magnitude
+    proposal = build_proposal(
+        scheme=SCHEME,
+        proposer=Proposer(strategy_id="strat-fixture", strategy_version="v1"),
+        account=instrument_key().account,
+        instrument=instrument_key().instrument,
+        direction="LONG",
+        position_effect="OPEN",
+        quantity_basis="RISK",
+        rationale="fixture stage request — egressgw construction suite",
+        decision_context_capsule=DecisionContextCapsuleRef(
+            capsule_id="cap-fixture", canonical_digest="capdig-fixture"
+        ),
+        dsl_version="dsl-0",
+        config_version="cfg-0",
+    )
+    return StageRequest(
+        step=step,
+        instrument_key=instrument_key(),
+        proposal=proposal,
+        value_view=value_view,
+    )
 
 
 def test_the_step2_stage_admits_a_conformant_candidate() -> None:
     """(§3.2 step 2) The thin new adapter admits only a CONFORMANT, non-widened candidate."""
     stage = _construction_stage()
-    verdict = stage(_Request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
+    verdict = stage(_stage_request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
     assert verdict.outcome is StageOutcome.ADMIT
     assert stage.construction is not None and stage.construction.command is not None
 
@@ -674,16 +688,16 @@ def test_the_step2_stage_admits_a_conformant_candidate() -> None:
 def test_the_step2_stage_denies_when_the_derivation_denies() -> None:
     """(§3.2) A denied derivation never becomes an admitted step."""
     stage = _construction_stage(price=admitted_price(value=None))
-    verdict = stage(_Request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
+    verdict = stage(_stage_request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
     assert verdict.outcome is StageOutcome.DENY
 
 
 def test_the_step5_stage_reuses_the_step2_derivation() -> None:
     """(§3.2 step 5) One derivation feeds both steps — no second chance at a different answer."""
     stage2 = _construction_stage()
-    stage2(_Request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
+    stage2(_stage_request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
     stage5 = EconomicEffectStage(construction_stage=stage2)
-    verdict = stage5(_Request(CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
+    verdict = stage5(_stage_request(CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
     assert verdict.outcome is StageOutcome.ADMIT
     assert stage5.envelope is not None
 
@@ -691,14 +705,14 @@ def test_the_step5_stage_reuses_the_step2_derivation() -> None:
 def test_the_step5_stage_is_unknown_when_no_construction_ran() -> None:
     """(fail-closed) Nothing to derive an effect from is UNKNOWN, never an empty pass."""
     stage5 = EconomicEffectStage(construction_stage=_construction_stage())
-    verdict = stage5(_Request(CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
+    verdict = stage5(_stage_request(CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
     assert verdict.outcome is StageOutcome.UNKNOWN
 
 
 def test_the_step11_stage_issues_a_proof_that_fences_the_exact_command() -> None:
     """(ADR-002-020 §6.2/§15:414) The proof must bind the exact command digest."""
     stage2 = _construction_stage()
-    stage2(_Request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
+    stage2(_stage_request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
     stage11 = ConformanceProofStage(
         construction_stage=stage2,
         scheme=SCHEME,
@@ -706,7 +720,7 @@ def test_the_step11_stage_issues_a_proof_that_fences_the_exact_command() -> None
         proof_generation=1,
         required_authority_scope=("scope-1",),
     )
-    verdict = stage11(_Request(CommitmentStep.ORDER_CONFORMANCE_PROOF))
+    verdict = stage11(_stage_request(CommitmentStep.ORDER_CONFORMANCE_PROOF))
     assert verdict.outcome is StageOutcome.ADMIT
     assert stage11.proof is not None
     assert stage2.construction is not None and stage2.construction.command is not None
@@ -724,7 +738,7 @@ def test_the_step3_stage_denies_a_protective_only_venue_result() -> None:
         constraints=venue_shape_constraints(),
         decision=venue_decision(OrderAdmissibilityResult.RESTRICTED_PROTECTIVE_ONLY),
     )
-    verdict = stage(_Request(CommitmentStep.VENUE_ADMISSIBILITY_DECISION))
+    verdict = stage(_stage_request(CommitmentStep.VENUE_ADMISSIBILITY_DECISION))
     assert verdict.outcome is StageOutcome.DENY
 
 
@@ -903,7 +917,7 @@ def test_the_step3_stage_prefers_the_value_surface_price() -> None:
     stage = _venue_stage(shape_price_field_key="close")
 
     stage(
-        _Request(
+        _stage_request(
             CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
             value_view=_single_value_view(4_499_000),
         )
@@ -929,7 +943,7 @@ def test_the_step3_stage_falls_back_to_the_injected_shape_without_a_field_key() 
 
     ungoverned = _venue_stage(shape=injected)
     ungoverned(
-        _Request(
+        _stage_request(
             CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
             value_view=_single_value_view(4_499_000),
         )
@@ -937,7 +951,7 @@ def test_the_step3_stage_falls_back_to_the_injected_shape_without_a_field_key() 
     assert ungoverned.resolved_shape is injected
 
     value_free = _venue_stage(shape=injected, shape_price_field_key="close")
-    value_free(_Request(CommitmentStep.VENUE_ADMISSIBILITY_DECISION))
+    value_free(_stage_request(CommitmentStep.VENUE_ADMISSIBILITY_DECISION))
     assert value_free.resolved_shape is injected
 
 
@@ -950,7 +964,7 @@ def test_the_step3_stage_is_fail_closed_when_the_shape_price_is_unprojectable() 
     """
     non_integer = _venue_stage(shape_price_field_key="close")
     verdict = non_integer(
-        _Request(
+        _stage_request(
             CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
             value_view=_single_value_view("4499000"),
         )
@@ -961,7 +975,7 @@ def test_the_step3_stage_is_fail_closed_when_the_shape_price_is_unprojectable() 
 
     not_carried = _venue_stage(shape_price_field_key="a-field-this-view-does-not-carry")
     verdict = not_carried(
-        _Request(
+        _stage_request(
             CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
             value_view=_single_value_view(4_499_000),
         )

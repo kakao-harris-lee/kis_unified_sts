@@ -126,7 +126,11 @@ from tos_runtime.strategy.resolve import (
 )
 from tos_runtime.time.config import TrustworthyTimeConfig, load_time_config
 from tos_runtime.time.generation import seed_from
-from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
+from tos_runtime.time.service import (
+    TimeServiceNotStarted,
+    TimeSnapshotReader,
+    TrustworthyTimeService,
+)
 from tos_runtime.time.sources import (
     LocalSystemClockReader,
     MonotonicSource,
@@ -156,7 +160,7 @@ _BROKER_SCOPES_CONFIG_NAME = "broker_scopes.yaml"
 _APPROVALS_DIRNAME = "approvals"
 
 
-def _time_permits_new_risk(time_service: TrustworthyTimeService) -> Callable[[], bool]:
+def _time_permits_new_risk(time_service: TimeSnapshotReader) -> Callable[[], bool]:
     """Re-review addendum B (2026-09-08): the catch below is narrowed to
     ``TimeServiceNotStarted`` only — the ONE exception
     ``TrustworthyTimeService.current_snapshot`` raises before ``start()``
@@ -221,7 +225,7 @@ def _decision_provider(
     custody_root: Path,
     environment_label: str,
     uid: int,
-    time_service: TrustworthyTimeService,
+    time_service: TimeSnapshotReader,
     time_config: TrustworthyTimeConfig,
     evidence: EvidenceAppendPort,
 ) -> Callable[[StageRequest], LoadedApproval | None]:

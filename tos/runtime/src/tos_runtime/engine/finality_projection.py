@@ -38,7 +38,7 @@ from tos.engine.vocabulary import EventKind, ResultDisposition
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.posttrade.finality import SyntheticFinalityProducer
+from tos_runtime.posttrade.finality import FinalityProducerPort
 from tos_runtime.rcl.finality_witness import finality_witness_for
 
 if TYPE_CHECKING:
@@ -46,14 +46,16 @@ if TYPE_CHECKING:
     # cycle -- `release_consumer` imports `tos_runtime.engine.inbox`, which triggers
     # `tos_runtime/engine/__init__.py`, which imports `driver`, which imports THIS module,
     # which would (at runtime) import `release_consumer` right back, mid-initialization. This
-    # module only ever uses `FinalityReleaseConsumer` as a type annotation
+    # module only ever uses `FinalityConsumerPort` as a type annotation
     # (`project_finality`'s own `release_consumer` parameter) -- both this module and
     # `tos_runtime.posttrade.release_consumer` already carry `from __future__ import
     # annotations`, so the annotation is never evaluated at runtime and this import is safe to
     # defer to type-checking time only. See `engine/driver.py`'s own matching fix (the other
     # half of the SAME cycle) and `tests/posttrade/test_release_consumer.py`'s fresh-subprocess
-    # import test, which pins the cycle closed.
-    from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
+    # import test, which pins the cycle closed. (mypy stage 3 §1.3 rule 3: narrowed from the
+    # concrete `FinalityReleaseConsumer` to the `FinalityConsumerPort` it actually calls
+    # `.consume()` through — a test double no longer needs to BE a `FinalityReleaseConsumer`.)
+    from tos_runtime.posttrade.release_consumer import FinalityConsumerPort
 
 __all__ = [
     "ECONOMIC_OBLIGATION_KIND",
@@ -87,8 +89,8 @@ def project_finality(
     *,
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
-    finality_producer: SyntheticFinalityProducer,
-    release_consumer: FinalityReleaseConsumer | None,
+    finality_producer: FinalityProducerPort,
+    release_consumer: FinalityConsumerPort | None,
     ledger: ProvisionalReservationLedger,
 ) -> None:
     """For a genuinely-applied ``FULL_FILL``, produce a SYNTHETIC post-trade finality proof, then
@@ -162,7 +164,7 @@ def _project_release(
     payload: EgressResultPayload,
     *,
     evidence_store: SqliteEvidenceStore,
-    release_consumer: FinalityReleaseConsumer | None,
+    release_consumer: FinalityConsumerPort | None,
     ledger: ProvisionalReservationLedger,
 ) -> None:
     """The release-trigger call site (TOS Phase 5 W2-R; kernel round #3 §2 decision 5 W2-K),

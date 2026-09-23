@@ -64,6 +64,8 @@ from tos_runtime.compose._dimension_readers import (
 from tos_runtime.compose.context import VerdictRecorder
 from tos_runtime.recovery.barrier import RecoveryVerdict
 
+from . import _fixtures as fx
+
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
@@ -211,7 +213,7 @@ def test_trading_approval_reader_reports_true_after_an_admit_verdict() -> None:
     state = _TradingApprovalDimensionState()
     reader = _trading_approval_dimension_reader_for(state)
     recorder = VerdictRecorder(lambda _request: _stage_verdict(StageOutcome.ADMIT))
-    recorder(None)  # populate .last_verdict
+    recorder(fx.stage_request())  # populate .last_verdict
     state.step4_recorder = recorder
     report = reader()
     assert report is not None
@@ -222,7 +224,7 @@ def test_trading_approval_reader_reports_false_after_a_deny_verdict() -> None:
     state = _TradingApprovalDimensionState()
     reader = _trading_approval_dimension_reader_for(state)
     recorder = VerdictRecorder(lambda _request: _stage_verdict(StageOutcome.DENY))
-    recorder(None)
+    recorder(fx.stage_request())
     state.step4_recorder = recorder
     report = reader()
     assert report is not None
@@ -563,7 +565,7 @@ def test_constraint_reader_is_none_when_the_recorder_has_no_verdict_yet() -> Non
 
 def test_constraint_reader_reports_true_after_an_admit_verdict() -> None:
     recorder = VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.ADMIT))
-    recorder(None)
+    recorder(fx.stage_request())
     state = _ConstraintDimensionState(venue_recorder=recorder)
     reader = _constraint_dimension_reader_for(state)
     report = reader()
@@ -574,7 +576,7 @@ def test_constraint_reader_reports_true_after_an_admit_verdict() -> None:
 
 def test_constraint_reader_reports_false_after_a_deny_verdict() -> None:
     recorder = VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.DENY))
-    recorder(None)
+    recorder(fx.stage_request())
     state = _ConstraintDimensionState(venue_recorder=recorder)
     reader = _constraint_dimension_reader_for(state)
     report = reader()
@@ -609,7 +611,7 @@ def test_decision_proof_intent_reader_reports_true_after_an_admit_verdict() -> N
     recorder = VerdictRecorder(
         lambda _r: _bind_verification_verdict(StageOutcome.ADMIT)
     )
-    recorder(None)
+    recorder(fx.stage_request())
     state = _DecisionProofIntentDimensionState(step13_recorder=recorder)
     reader = _decision_proof_intent_dimension_reader_for(state)
     report = reader()
@@ -620,7 +622,7 @@ def test_decision_proof_intent_reader_reports_true_after_an_admit_verdict() -> N
 
 def test_decision_proof_intent_reader_reports_false_after_a_deny_verdict() -> None:
     recorder = VerdictRecorder(lambda _r: _bind_verification_verdict(StageOutcome.DENY))
-    recorder(None)
+    recorder(fx.stage_request())
     state = _DecisionProofIntentDimensionState(step13_recorder=recorder)
     reader = _decision_proof_intent_dimension_reader_for(state)
     report = reader()

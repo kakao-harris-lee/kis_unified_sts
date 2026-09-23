@@ -54,7 +54,8 @@ real :class:`~tos_runtime.recon.service.ReconciliationService`, against a real
 from __future__ import annotations
 
 import pytest
-from tos.rcl import CapacityState
+from tos.engine.records import InstrumentKey
+from tos.rcl import CapacityState, CapacityVector
 from tos.recon import FieldConfidenceClass, FreshnessMarker, SafetyRelevantField
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import ReservationProjectionReader, WitnessScope
@@ -90,16 +91,18 @@ class _MinimalRclReader:
     def all_reservations(self) -> dict[str, CapacityState]:
         return dict(self._states)
 
-    def instrument_state(self, _key: object) -> CapacityState | None:
+    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
         return None
 
-    def instrument_last_seq(self, _key: object) -> int | None:
+    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
         return None
 
-    def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+    def reservation_committed_vector(
+        self, _reservation_id: str
+    ) -> CapacityVector | None:
         return None
 
-    def instrument_committed_vector(self, _key: object) -> object | None:
+    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 

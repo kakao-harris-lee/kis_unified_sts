@@ -11,7 +11,11 @@ from typing import Any
 import pytest
 import yaml
 from tos_runtime.safety.ports import SafetyMeshService
-from tos_runtime.safety.profile import SafetyProfileConfigError, SafetyProfileService
+from tos_runtime.safety.profile import (
+    SafetyProfileConfigError,
+    SafetyProfileService,
+    TimeHealthSource,
+)
 
 from tos import spg as spg_module
 
@@ -25,7 +29,7 @@ from .conftest import (
 
 
 def _service(
-    paths: tuple[Path, Path, Path], time_source: object | None
+    paths: tuple[Path, Path, Path], time_source: TimeHealthSource | None
 ) -> SafetyProfileService:
     envelope_path, profile_path, activation_path = paths
     return SafetyProfileService(
