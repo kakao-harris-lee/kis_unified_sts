@@ -387,9 +387,16 @@ class _AggregateRiskDecisionReader(Protocol):
     """The narrow read surface :func:`_aggregate_risk_dimension_reader_for` needs off a
     :class:`~tos_runtime.compose.context.RecordingAggregateRiskService` (mypy stage 3 §1.3
     rule 3 port introduction) — only :attr:`last_decision`, never :meth:`decide` or any other
-    member of the real service."""
+    member of the real service.
 
-    last_decision: AggregateRiskDecision | None
+    Declared as a read-only property (not a plain attribute) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models)
+    satisfy this Protocol structurally, not just today's mutable service
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
+    """
+
+    @property
+    def last_decision(self) -> AggregateRiskDecision | None: ...
 
 
 def _aggregate_risk_dimension_reader_for(
@@ -441,9 +448,16 @@ class _ConstructionStageReader(Protocol):
     """The narrow read surface :func:`_construction_dimension_reader_for` needs off a
     :class:`~tos.egressgw.OrderConstructionStage` (mypy stage 3 §1.3 rule 3 port
     introduction) — only :attr:`construction`, never :meth:`__call__` or any other member of
-    the real stage."""
+    the real stage.
 
-    construction: CandidateConstruction | None
+    Declared as a read-only property (not a plain attribute) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models)
+    satisfy this Protocol structurally, not just today's mutable stage
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
+    """
+
+    @property
+    def construction(self) -> CandidateConstruction | None: ...
 
 
 @dataclass

@@ -523,9 +523,16 @@ class _ConstructionStageReader(Protocol):
     the real stage (mirrors :mod:`tos_runtime.compose._dimension_readers`'s own
     ``_ConstructionStageReader`` for the SAME real attribute, defined separately here per
     this codebase's own "one method, not the whole service" per-module Protocol convention —
-    see ``tos_runtime.calendar.ports._WallClockNowSource``)."""
+    see ``tos_runtime.calendar.ports._WallClockNowSource``).
 
-    construction: CandidateConstruction | None
+    Declared as a read-only property (not a plain attribute) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models)
+    satisfy this Protocol structurally, not just today's mutable stage
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
+    """
+
+    @property
+    def construction(self) -> CandidateConstruction | None: ...
 
 
 class VenueServiceStage:
