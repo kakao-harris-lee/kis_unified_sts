@@ -212,6 +212,7 @@ docs/                architecture, plans, runbooks, operations docs
 | [u17-prevention-control.md](docs/runbooks/u17-prevention-control.md) | U-17 예방 통제 — 아티팩트 countersign · main 착지 · 룰셋 필수 체크. **D0-A 착수 차단의 실제 해제 조건** |
 | [kis-capability-probes.md](docs/runbooks/kis-capability-probes.md) | KIS broker capability probes (P0-2 / T2) — measurement only, approval is human |
 | [2026-09-10-p02-probe-handover-paper-server.md](docs/runbooks/2026-09-10-p02-probe-handover-paper-server.md) | P0-2 probe handover to the paper server; `kis-capability-probes.md` is authoritative on conflict |
+| [2026-09-23-tos-session-handoff-paper-server.md](docs/runbooks/2026-09-23-tos-session-handoff-paper-server.md) | tos 세션 핸드오프(2026-09-23) — mypy 래칫 3단계 완료 후 서버에서 이어갈 큐: `unused-ignore` 8건 결정 · 프로브 7건 · 운영자 결정 3건 · `run` 실부팅 아크; 측정 명령과 함정 요약 |
 
 ### Data, market structure, indicators
 
