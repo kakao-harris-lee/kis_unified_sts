@@ -123,12 +123,14 @@
 운영자가 19:13 KST 에 `.env.mock` 의 **앱키·시크릿을 새 계좌용으로 교체**했다(계좌 번호는 그대로). 새 주식 앱키 지문
 `537989e9e63e`, 새 선물 앱키 지문 `39a004459922`(예전 `7763f26aac49` · `f546a47adc88`). 실행 컨테이너 중 새 키 공유 **0**.
 예전 키로 발급된 프로브 토큰 캐시는 `results/.token_cache/{stock,futures}/.kis_token_mock.oldkey-20260923-1915` 로 옮겼다.
-`repo_commit` `c1c9bffa`.
+`repo_commit` **`d6d77caa`**(아티팩트 4건의 기록값) — ⚠ main 커밋이 아니다. 실행 당시 공유 체크아웃이 문서 전용 브랜치
+`docs/tos-c2-kis-credential-ownership`(main `c1c9bffa` 위 문서 커밋 2개)에 있었다. `git diff c1c9bffa d6d77caa` 는
+`docs/plans/` 두 파일뿐이라 프로브·`shared/`·`tos/` 코드는 main `c1c9bffa` 와 같다. 앞으로 프로브는 분리 워크트리에서 돌린다.
 
 | 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
 |---|---|---|---|---|---|
 | 19:17:26 | P-BAL(모의 주식, 새 계좌) | `P-BAL-20260923T101726Z.json` | live / MEASURED / MOCK_VTS | [] / 1 | **새 키 + 새 계좌 `ee1bdb5f1ca2` 정상** — `termination_cause: BROKER_END_OF_SET`, 페이지 행 수 `[0]`(보유 0 — skip 1 은 「페이지네이션할 행 없음」). 거부 없음 |
-| 19:17:48 | P-5b(모의 선물 · 미체결 조회, 새 계좌) | `P-5b-20260923T101748Z.json` | live / MEASURED / MOCK_VTS | [] / — | **새 선물 계좌 `46c39c54d3bb` → `observations[0].rt_cd = "0"`**, 행 0(미체결 없음). 13:09 의 `rt_cd = "2"` 에서 바뀜. ⚠ P-5b 는 거부를 errors 에 넣지 않으므로(위 13:09 행) 판정 근거는 스탬프가 아니라 `rt_cd` 다 |
+| 19:17:48 | P-5b(모의 선물 · 미체결 조회, 새 계좌) | `P-5b-20260923T101748Z.json` | live / MEASURED / MOCK_VTS | [] / 1 | **새 선물 계좌 `46c39c54d3bb` → `observations[0].rt_cd = "0"`**, 행 0(미체결 없음). 13:09 의 `rt_cd = "2"` 에서 바뀜. ⚠ P-5b 는 거부를 errors 에 넣지 않으므로(위 13:09 행) 판정 근거는 스탬프가 아니라 `rt_cd` 다 |
 | 19:18:19 | P-BAL(예전 주식 계좌, **새 키**) | `P-BAL-20260923T101819Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | 예전 계좌 `54e7f8a5d841` 은 새 키로 `OPSQ2000 INVALID_CHECK_ACNO` — 새 키는 새 계좌에만 묶여 있다 |
 | 19:18:38 | P-BAL(예전 주식 계좌, **예전 키**) | `P-BAL-20260923T101838Z.json` | live / MEASURED / MOCK_VTS | [] / [] | 09-15 백업의 자격증명 한 벌(키·시크릿·계좌) + 전용 토큰 캐시로 정상 `[20, 5]` — 예전 앱은 아직 살아 있다 |
 
