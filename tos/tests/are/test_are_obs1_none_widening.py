@@ -24,6 +24,7 @@ from tos.are import (
     risk_decision,
 )
 from tos.canonical import CanonicalizationScheme
+from tos.rcl import CapacityVector
 
 from ._are_strategies import (
     COVERAGE_FLOOR,
@@ -52,6 +53,7 @@ class _DecisionKwargs(TypedDict):
     scheme: CanonicalizationScheme
     policy: AggregateRiskPolicy | None
     scenario_set: AdverseScenarioSet | None
+    effective_limit: CapacityVector | None
     effect_digest: str | None
     grant_identity: str | None
 
@@ -72,6 +74,7 @@ class _DecisionKwargsPartial(TypedDict, total=False):
     scheme: CanonicalizationScheme
     policy: AggregateRiskPolicy | None
     scenario_set: AdverseScenarioSet | None
+    effective_limit: CapacityVector | None
     effect_digest: str | None
     grant_identity: str | None
 
@@ -94,6 +97,7 @@ def _decide(**overrides: Unpack[_DecisionKwargsPartial]) -> AggregateRiskDecisio
         "scheme": SCHEME,
         "policy": issue_policy(),
         "scenario_set": issue_scenario_set(),
+        "effective_limit": None,  # kernel default (risk_decision.effective_limit) — no behavior change
         "effect_digest": "eff-1",
         "grant_identity": "grant-1",
     }
