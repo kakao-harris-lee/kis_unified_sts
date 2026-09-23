@@ -1259,7 +1259,7 @@ class TestComposeE2E:
         captured_action_flow_inputs = []
         original_action_flow_inputs_for = runtime.risk_state.action_flow_inputs_for
 
-        def _spy(request):  # type: ignore[no-untyped-def]
+        def _spy(request):
             result = original_action_flow_inputs_for(request)
             if result is not None:
                 captured_action_flow_inputs.append(result)
@@ -1475,9 +1475,7 @@ class TestComposeE2E:
         original_observe = reader.observe
         seeded = {"done": False}
 
-        def _seeding_observe(  # type: ignore[no-untyped-def]
-            *, root_event_id, attempt_id, root_event_seq=None
-        ):
+        def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
             if not seeded["done"]:
                 seeded["done"] = True
                 _seed_send_sealed(
@@ -1558,9 +1556,7 @@ class TestComposeE2E:
         original_observe = reader.observe
         seeded = {"done": False}
 
-        def _seeding_observe(  # type: ignore[no-untyped-def]
-            *, root_event_id, attempt_id, root_event_seq=None
-        ):
+        def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
             if not seeded["done"]:
                 seeded["done"] = True
                 content_event_id = reader._resolve_root_content_event_id(root_event_seq)

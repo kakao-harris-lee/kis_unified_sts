@@ -44,7 +44,7 @@ _ARTIFACTS = (
 )
 
 
-def _issue(builder, **overrides):  # type: ignore[no-untyped-def]
+def _issue(builder, **overrides):
     """Issue a clean artifact through the provisional canonicalizer."""
     draft = builder(**overrides)
     content = {

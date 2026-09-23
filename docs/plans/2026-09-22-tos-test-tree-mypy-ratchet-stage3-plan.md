@@ -508,6 +508,9 @@ zero-disable 기준)이며, 별도 소형 계획 하나면 된다.**
 ### 7.5 남은 것
 
 - **마지막 단계 `unused-ignore`** — 새 플래그에서 8건(커널 5 · 런타임 3), zero-disable 에선 0. 결정은 §7.1.
+  **착지: PR #788 (2026-09-23)** — 여덟 자리 전부 죽은 `no-untyped-def` 억제로 확인되어 삭제, CI 플래그
+  제거로 `unused-ignore` 활성화. 실측·뮤테이션은
+  `docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-plan.md` §8.1.
 - `no-untyped-def` 616 — 상위 §6 ① 그대로 하지 않는다.
 - ParamSpec 스파이(#784 LOW 1) — 3-e 가 실제로 써 보고 **채택 안 함**(조건부 스파이라 통일 불가 ·
   팩토리가 절감분보다 큼 · 패키지가 셋이라 공유 위치 없음).

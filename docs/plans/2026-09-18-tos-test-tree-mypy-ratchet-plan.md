@@ -760,3 +760,12 @@ rm -rf .mypy_cache
 
 **3단계(`arg-type` 773)가 이 방법론 위에 선다.** 이 문언이 틀린 채로 남았다면 3단계의
 「게이트가 실제로 red 를 내는가」 증명이 **거짓 green** 을 낼 수 있었다.
+
+### 7.8 마지막 단계 착지 — PR #788 (2026-09-23)
+
+3단계(§7.5) 뒤 새 CI 플래그에서 남은 `unused-ignore` 8건(커널 5·런타임 3)을
+`docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-plan.md` 로
+처분: 전부 죽은 `# type: ignore[no-untyped-def]` 로 확인되어 삭제하고, CI 의
+`--disable-error-code=unused-ignore` 를 제거해 `unused-ignore` 를 켰다. CI 유예는
+이제 §6 ① 의 **`no-untyped-def` 1종만** 남는다. 실측·뮤테이션 재현 전건은 해당
+계획 §8.1 참조.
