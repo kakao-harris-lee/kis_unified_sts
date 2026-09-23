@@ -819,14 +819,25 @@ class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
 
     @staticmethod
     def _stage(shape) -> VenueServiceStage:
+        from tos.egressgw import CandidateConstruction
         from tos.venue import ActionClass
         from tos_runtime.compose._venue_wiring import VenueServiceStage
+        from tos_runtime.venue import VenueConstraintService
 
-        class _StubService:
-            shape_constraints = None
+        class _StubService(VenueConstraintService):
+            """Only ``VenueServiceStage._sourced_shape`` — never ``__call__`` — is exercised
+            here, so this double never runs the real ``__init__`` and never sets (or needs)
+            ``shape_constraints``/``policy``/etc (mypy stage 3 §1.3 rule 3: the callee's wide
+            ``VenueConstraintService`` surface means the double subclasses the concrete class
+            rather than getting its own port)."""
+
+            def __init__(
+                self,
+            ) -> None:  # real __init__ deliberately skipped — unused fields
+                pass
 
         class _StubConstructionStage:
-            construction = None
+            construction: CandidateConstruction | None = None
 
         return VenueServiceStage(
             _StubService(),
@@ -877,14 +888,25 @@ class TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity:
 
     @staticmethod
     def _stage(shape) -> VenueServiceStage:
+        from tos.egressgw import CandidateConstruction
         from tos.venue import ActionClass
         from tos_runtime.compose._venue_wiring import VenueServiceStage
+        from tos_runtime.venue import VenueConstraintService
 
-        class _StubService:
-            shape_constraints = None
+        class _StubService(VenueConstraintService):
+            """Only ``VenueServiceStage._sourced_shape`` — never ``__call__`` — is exercised
+            here, so this double never runs the real ``__init__`` and never sets (or needs)
+            ``shape_constraints``/``policy``/etc (mypy stage 3 §1.3 rule 3: the callee's wide
+            ``VenueConstraintService`` surface means the double subclasses the concrete class
+            rather than getting its own port)."""
+
+            def __init__(
+                self,
+            ) -> None:  # real __init__ deliberately skipped — unused fields
+                pass
 
         class _StubConstructionStage:
-            construction = None
+            construction: CandidateConstruction | None = None
 
         return VenueServiceStage(
             _StubService(),

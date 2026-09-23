@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TypedDict, Unpack
 
 import yaml
+from tos.are import ProjectedCell
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.capsule import DecisionContextCapsule, PolicyRef
 from tos.capsule.capsule import CapsuleScope, SafetyCriticalFacts, SnapshotRef
@@ -488,13 +489,12 @@ def construction_config(
     return ConstructionConfig(**base)
 
 
-def adverse_scenario_cells() -> tuple[object, ...]:
+def adverse_scenario_cells() -> tuple[ProjectedCell, ...]:
     """A single fully-determinate, within-headroom
     :class:`~tos.are.ProjectedCell` — enough for ``adverse_increment`` to
     reach ``GRANT`` at the projection level."""
     from tos.are import (
         AdverseScenarioKind,
-        ProjectedCell,
         RiskDimensionKind,
         RiskScopeKind,
     )

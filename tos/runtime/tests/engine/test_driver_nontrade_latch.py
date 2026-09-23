@@ -73,7 +73,7 @@ def _admissible_event(*, seq: int) -> EngineEvent:
         cash_in_lieu=Decimal("0"),
     )
     envelope = TransitionEnvelope(
-        present_legs=_LEGS,
+        present_legs=tuple(_LEGS),
         pre_event_exposure=Decimal("2000"),
         post_event_credible_exposure=Decimal("2000"),
     )

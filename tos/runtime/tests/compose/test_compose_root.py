@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
 from tos_runtime.strategy.bindings import STRATEGY_BINDINGS_FILE_NAME
 from tos_runtime.strategy.resolve import StrategyRegistryResolutionRefused
+from tos_runtime.time.sources import MonotonicSource
 
 from . import _fixtures as fx
 from .conftest import write_approval_file
@@ -134,10 +136,10 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         queries=1,
         queue_depth=1,
         in_flight=1,
-        elapsed_monotonic=1,
+        elapsed_monotonic=Decimal(1),
         duplicate_redelivery_expansion=0,
         failover_reconnect_replay_expansion=0,
-        amplification_per_cause=1,
+        amplification_per_cause=Decimal(1),
         duplicate_event_created_new_allowance=False,
         envelope_reset_on_duplicate=False,
         concurrent_consumers_share_one_envelope=True,
@@ -183,7 +185,7 @@ def _compose(
     data_dir: Path,
     custody_root: Path,
     *,
-    monotonic_source: object | None = None,
+    monotonic_source: MonotonicSource | None = None,
     transport_kind: TransportKind = TransportKind.SYNTHETIC,
     wall_clock: WallClockReference | None = None,
 ):

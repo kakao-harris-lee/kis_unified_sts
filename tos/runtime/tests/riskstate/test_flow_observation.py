@@ -189,7 +189,7 @@ def test_count_duplicate_dispositions_empty_scan_is_zero() -> None:
 
 
 def test_count_duplicate_dispositions_counts_only_cause_attempts() -> None:
-    payloads = [
+    payloads: list[dict[str, object]] = [
         {"result_disposition": "DUPLICATE", "attempt_id": "in-cause"},
         {"result_disposition": "DUPLICATE", "attempt_id": "outside-cause"},
     ]
@@ -197,7 +197,7 @@ def test_count_duplicate_dispositions_counts_only_cause_attempts() -> None:
 
 
 def test_count_duplicate_dispositions_ignores_non_duplicate_disposition() -> None:
-    payloads = [
+    payloads: list[dict[str, object]] = [
         {"result_disposition": "ORPHAN_NO_RESERVATION", "attempt_id": "a1"},
         {"result_disposition": "MISMATCHED_ATTEMPT", "attempt_id": "a1"},
     ]
@@ -209,7 +209,7 @@ def test_count_recovery_markers_empty_scan_is_zero() -> None:
 
 
 def test_count_recovery_markers_ignores_unrelated_event_id() -> None:
-    payloads = [{"event_id": "unrelated"}]
+    payloads: list[dict[str, object]] = [{"event_id": "unrelated"}]
     assert count_recovery_markers(payloads, root_event_ids=frozenset({"root-1"})) == 0
 
 
@@ -218,7 +218,7 @@ def test_count_recovery_markers_counts_each_recovery_kind() -> None:
     keyed to a matching ``event_id`` — the helper itself is kind-agnostic (the caller reads
     both kinds into one combined list), so this pins that neither kind is silently dropped.
     """
-    payloads = [{"event_id": "root-1"}, {"event_id": "root-1"}]
+    payloads: list[dict[str, object]] = [{"event_id": "root-1"}, {"event_id": "root-1"}]
     assert count_recovery_markers(payloads, root_event_ids=frozenset({"root-1"})) == 2
 
 

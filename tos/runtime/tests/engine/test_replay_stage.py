@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.engine import Stage
 from tos.engine.records import StageRequest, StageVerdict, event_identity
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos_runtime.engine.driver import EngineDriver
@@ -67,7 +68,7 @@ def _driver(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
     *,
-    stages: dict[CommitmentStep, object],
+    stages: dict[CommitmentStep, Stage],
     transmit: object = None,
 ) -> EngineDriver:
     return EngineDriver(

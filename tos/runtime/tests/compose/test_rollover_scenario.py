@@ -203,9 +203,7 @@ def _admissible_corporate_action() -> NonTradeObservation:
         cash_in_lieu=Decimal("0"),
     )
     envelope = TransitionEnvelope(
-        present_legs=frozenset(
-            {CredibleTransitionLegKind.PRE_EVENT_POSITION_AND_ORDER}
-        ),
+        present_legs=(CredibleTransitionLegKind.PRE_EVENT_POSITION_AND_ORDER,),
         pre_event_exposure=Decimal("2000"),
         post_event_credible_exposure=Decimal("2000"),
     )

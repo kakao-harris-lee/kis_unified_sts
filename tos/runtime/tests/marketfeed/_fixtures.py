@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, CanonicalizationScheme, get_scheme
+from tos.dsl import ScalarValue
 from tos_runtime.marketfeed.policy import (
     LoadedCriticalInputPolicy,
     load_critical_input_policy,
@@ -118,7 +119,7 @@ def observation(
     raw_event_id: str = "raw-1",
     instrument: str = INSTRUMENT,
     as_of_ms: int = BAR_ONE_AS_OF,
-    fields: tuple[tuple[str, object], ...] = (
+    fields: tuple[tuple[str, ScalarValue], ...] = (
         ("close", CLOSE_BAR_ONE),
         ("session", "REGULAR"),
     ),
