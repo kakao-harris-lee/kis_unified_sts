@@ -730,7 +730,9 @@ def _scan_set_covered_models() -> dict:
             "PYTHONDONTWRITEBYTECODE": "1",
         },
     )
-    return json.loads(completed.stdout.strip().splitlines()[-1])
+    scan = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert isinstance(scan, dict), completed.stdout
+    return scan
 
 
 def test_set_covered_digest_instability_is_a_class_of_models_not_one_instance() -> None:
