@@ -323,11 +323,17 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1134
+  measured: 1138
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-23 mypy 3단계 3-e 재등재 1134→1138(+4)**: §1.3 rule 3 포트 도입 —
+    `_time_permits_new_risk`/`_decision_provider` 의 `time_service` 파라미터를
+    concrete `TrustworthyTimeService` 에서 새 Protocol 포트 `TimeSnapshotReader`
+    (`tos_runtime/time/service.py`)로 좁힘. import 를 단일 줄에서 3-멤버 괄호
+    블록으로 바꾼 것이 +4 전부(함수 시그니처 자체는 타입명만 바뀌어 순증 0).
+    코드 동작 변화 0 · 커널 diff 0.
     **2026-09-17 리뷰 후속 재등재 1132→1134(+2)**: 합성 지점 주석에
     `docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md` §7.1 "정직 등재"
     로의 역참조 한 줄을 추가(팀리드 지시 — 코드 곁 등재와 계획 §7.1 이 서로를 찾을 수
