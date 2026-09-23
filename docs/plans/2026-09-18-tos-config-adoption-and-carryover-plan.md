@@ -632,3 +632,71 @@ review-794 HIGH-1/HIGH-2 는 「⚠ 값과 [A] 전사 bound 가 **값으로** �
   (여전히 양의 정수라 로더는 통과) 포함.
 - 뮤테이션은 **텍스트 치환**으로 바꿨다. `yaml.safe_dump` 왕복은 헤더 주석을 날려 **출처 시험이
   먼저 터지는** 공허한 RED 를 만든다(review-794 방법론 주의).
+
+#### 7.8.3 3차 (2026-09-23) — 좌표 렌더 + 첫 부팅 시도 (A-5 본체)
+
+설계 `docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md`(운영자 결정 1·3 ·
+운영자 선택 (가))의 구현. 브랜치 `feat/tos-paper-render-and-first-boot`, main `b5bb5eb5` 기준.
+런북 `docs/runbooks/tos-paper-boot.md`.
+
+##### 착지물
+
+| 항목 | 결과 |
+|---|---|
+| 렌더 스크립트 | `scripts/tos/render_paper_config.py` — 커밋된 `config/tos_runtime/paper` 를 저장소 밖으로 **바이트 복사**한 뒤 좌표 칸만 치환. tos 코드·방화벽 변경 **0**. `scripts/` 는 `tos`/`tos_runtime` 을 import 할 수 없으므로(TOS-FW-R) `print-policy-digests` 와 활성화 재확인은 **서브프로세스** |
+| 단위 테스트 | `tests/unit/scripts/test_render_paper_config.py` — 28건. §2 가드 표 **전 행**에 실패하는 입력 테스트. 임시 `git clone` 안에서 실제 CLI 를 돌려 `git status --porcelain --ignored` 불변 단정(`PYTHONDONTWRITEBYTECODE=1` + `python -B`) 포함 |
+| 부팅 증명 픽스처 | `construction.yaml` · `strategies/bootproof_band.strategy.yaml` · `marketfeed.yaml` · `critical_input_policy.yaml`. 파일마다 픽스처 헤더 문장. 값마다 file:line |
+| 커밋 값 | `finality::value_date="T+1"` · `proof_recipe_id`(픽스처 토큰) · OCP `admitted_quantity_bases=["RISK"]` · `axes[DIRECTION]="LONG"` |
+| 핀 갱신 | `_VALUE_PINS`(finality 2값) · 거부 핀(거부 키가 `value_date`→`source_revision` 으로 이동) · `_loader_probe` 프로브 2종 추가 → **18 PASS / 27**(이전 17/25) · 픽스처 4종 전 리프 핀 + 미렌더 좌표 칸을 **각자 로더의 거부로** 핀 |
+
+##### 계좌 형식 — 실측 결론
+
+**어떤 tos 로더도 계좌 형식을 검사하지 않는다.** 전부 「비어 있지 않고 `"TBD"` 가 아닌 문자열」
+만 요구한다(`venue/_policy_primitives.py::require_singleton_list_str` ·
+`riskstate/_action_flow_policy_loader.py:471-490` · `_aggregate_risk_policy_loader` ·
+`compose/_construction_config.py::_require_str`). 강제되는 것은 **파일 간 동일성**뿐이다
+(`compose/_venue_wiring.py:139-142` · `compose/_riskstate_wiring.py:86-89`).
+따라서 하이픈 문제는 렌더가 **한 번** 정하고 모든 칸에 같은 문자열을 넣는다 —
+**숫자만, 10자리 전부**(`shared/kis/client.py::_normalize_account` 「digits-only 10-char format」 ·
+`tools/broker_probes/common.py` 의 `cano=[:8]`/`acnt_prdt_cd=[8:10]` 와 같은 형태). 뒤 두 자리는
+상품코드라 그것을 버리면 「선물 계좌」라는 식별이 사라진다.
+⚠ 미결로 남긴 지점: (아직 운영자 미승인인) KIS mock transport 제안표는 이 좌표를 **CANO 한 필드**
+에 매핑하고 `ACNT_PRDT_CD` 를 별도 상수로 둔다(`docs/runbooks/tos-kis-mock-transport.md:97,101`).
+그 매핑이 그대로 채택되면 좌표는 8자리 CANO 가 된다. SYNTHETIC 스코프에서는 브로커에 도달하지
+않으므로 재렌더로 되돌릴 수 있다 — 조용히 선점하지 않고 명시해 둔다.
+
+##### A-5 결과 — **부팅 미완 · 남은 거부 3건을 이름으로 지목**
+
+1. ⛔ **`VenueConstraintPolicy.canonical_digest` 가 프로세스마다 다르다.**
+   `_COVERED_FIELDS`(`tos/src/tos/venue/records.py:406-416`) 안의 frozenset 필드
+   (`required_constraint_classes` `:424`, `shape_constraints` 의 `allowed_*` `:165-168`)가
+   `covered_content()`(`tos/src/tos/canonical/_base.py:187`)의 `model_dump(mode="json")` 에서
+   **집합 순회 순서 그대로의 리스트**가 되고, `_encode`(`canonicalization.py:148-149,174-176`)는
+   시퀀스를 **순서 유의미**로 취급한다. `ConstraintClass` 는 `StrEnum`(`vocabulary.py:169`).
+   → **§2 6항이 규정한 「`print-policy-digests` 출력을 `members` 에 전사한다」는 절차가 이
+   한 종류에서 성립하지 않는다.** 나머지 4종(OCP/ARE/AFG/CIP)은 covered 필드에 집합이 없어 안정.
+   기존 테스트가 전부 **한 프로세스 안에서** 계산·검증해 드러나지 않았다
+   (`test_deploy_policies.py::_install_real_policies` 주석: "done **in-process**").
+   렌더의 종료 검사를 **새 프로세스에서 정책을 재로드해 재확인**하도록 쓴 덕분에 즉시 잡혔다.
+   정본 직렬화 변경은 설계 PR 사안이라 **고치지 않고 지목**하고,
+   `test_venue_policy_canonical_digest_is_not_reproducible_across_processes` 로 결정적으로 고정했다.
+2. `venue_constraint_policy.yaml:55` `environments: ["paper"]` ≠ 설계 §2 부팅 명령의
+   `--environment-label non-live-test` → `VenuePolicyScopeMismatch`. `paper` 는
+   `cli.py:215` `_LIVE_ENVIRONMENT_LABELS` 소속이라 라벨 선택은 운영자 결정.
+3. `safety_envelope.yaml::governed_dimensions: []` ≠ `aggregate_risk_policy.yaml:74` 요구
+   → `RiskPolicyScopeMismatch`. 그 파일 헤더가 「별도 안전 승인 사안」이라 적는다 — 안전 한도라
+   채우지 않았다.
+
+##### 양방향 증거 (§3 (가))
+
+세 거부를 **진단으로만** 통과시킨 상태(해시 시드 고정 · 라벨 `paper` · 스크래치 사본에만 봉투
+차원 1건 추가; 커밋 파일 불변)에서 LONG·SHORT **두 구성 모두** 동일하게:
+
+- `run` 이 거부 없이 부팅 → `run_forever` → SIGTERM → `run: stopped (signal received).` **exit 0**
+- 틱은 `SKIPPED_SESSION_CLOSED`(`phase='EXPIRED'`) — 값이 아니라 **캘린더**다
+  (`calendar.yaml:36-40`: 08:45–15:45 KST + 9월 만기 이후 클래스 전체 EXPIRED, 클래스 단위 규칙)
+- 같은 산출물을 만기 이전 장중 시각으로 구동 → `TICKED`, `marketfeed.sqlite3`
+  `snapshots: 1 / preimages: 1`, 값 뷰 = 렌더 저널의 세 필드 그대로
+
+**실 계좌번호는 커밋 파일·테스트·커밋 메시지·PR 어디에도 쓰지 않았다**(로그는 지문만;
+기계 검사로 diff/커밋메시지/작업트리 전수 확인).

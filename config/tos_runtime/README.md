@@ -40,6 +40,14 @@ leaf the proposal's §6 "확인 불가 · 미확정" list refused to invent:
 | `finality.yaml` | `value_date` · `source_revision` · `proof_recipe_id` | §6 1·2항 — no recommended value exists (the two that have a prior recommendation are grade **M**, "개발 측 값 제안 없음"; the third, `value_date`, has a grade-B recommendation whose basis is the KRX **stock** settlement date, which does not fit this deployment's `SYNTHETIC_FUTURES_ORDER` scope) |
 | `safety_activation.yaml` | `members` | §3 [D] — derived from `print-policy-digests`, which refuses on the 2026-09-16 policies' operator-fill `scope.accounts` |
 
+> **2026-09-23 update (W-A / A-5).** `finality.yaml`'s row shrank to
+> `source_revision` alone (the other two were filled — see the boot-proof
+> fixture paragraph below). `safety_activation.yaml::members` stays `null`
+> here for a second, stronger reason than the one above: the deployment
+> coordinates go INTO each `canonical_digest`, so the derived value is
+> host-specific and cannot be committed at all. The render script derives it
+> into the off-repo copy.
+
 Two more that the first cut of this list counted as named-TBD were **filled
 on 2026-09-23** under the operator's "추천 값이 있으면 활용" answer, from the
 earlier value table `docs/plans/2026-09-12-tos-operator-value-proposals.md`:
@@ -53,14 +61,54 @@ Those two now load cleanly. The two files in the table above
 `tos/runtime/tests/compose/_loader_probe.py` (runnable directly) prints the
 whole PASS/REFUSE partition, which that same test pins by name.
 
-Still NOT adopted, and still blocking a `run` boot: `construction.yaml`
-(the value proposal names it in scope but tabulates no value for any of its
-seven leaves, and its `account`/`instrument` must equal the venue/OCP
-policies' `scope.accounts`/`scope.instruments`, which those files' own
-headers mark operator-fill and "never committed here"), the `strategies/`
-directory (proposal §6 item 7 — a strategy DSL leaf has trading meaning and
-may not be filled "just to boot"), and the optional-together
-`marketfeed.yaml` + `critical_input_policy.yaml` tick-source pair.
+**Boot-proof fixtures adopted 2026-09-23 (W-A / A-5, operator choice (가)** —
+`docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md` §3**).**
+The four names this paragraph used to list as "still NOT adopted" now exist
+here — `construction.yaml`, `strategies/bootproof_band.strategy.yaml`,
+`marketfeed.yaml`, `critical_input_policy.yaml` — but they are **not approved
+values**. Each carries, instead of the proposal §0 sentence, the fixture
+sentence 「부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 ·
+운영자 선택 (가) 2026-09-23」. The value proposal tabulates no row for any of
+them; they exist only to prove `run` boots and consumes a tick under the
+`SYNTHETIC_FUTURES_ORDER` scope (no broker reach, zero real orders), and the
+committed direction is LONG **only** because the current design can express
+one direction per composition — `scope.action_classes` still authorizes both,
+and the SHORT arm is produced by `scripts/tos/render_paper_config.py
+--direction SHORT`, never by a second committed copy.
+
+**Deployment coordinates are still never committed here.** The account and
+the front-month contract code stay named-TBD in every file that carries them,
+and `scripts/tos/render_paper_config.py` byte-copies this directory into an
+**off-repo** directory and fills only those slots (design §2; runbook
+`docs/runbooks/tos-paper-boot.md`). ⚠ The placeholder FORM differs per loader:
+`compose/_marketfeed_wiring.py`'s `_require_str` refuses `null` but **not** the
+string `"TBD"` (measured), so `marketfeed.yaml`'s coordinate slots are `null`
+while `construction.yaml`'s are `"TBD"`. `tos/runtime/tests/compose/
+test_deploy_approved_values.py` pins each unrendered slot by its own loader's
+refusal, key name included.
+
+Also filled 2026-09-23: `finality.yaml::value_date` (`T+1`, operator decision 3
+— 선물 일일정산, **not** the 2026-09-12 `T+2` whose basis is the KRX *stock*
+settlement date) and `finality.yaml::proof_recipe_id` (an opaque boot-proof
+token that asserts the ABSENCE of an approved recipe — ADR-002-030 §29 Q3 is
+still an open question naming none), plus
+`order_construction_policy.yaml`'s `admitted_quantity_bases` (`["RISK"]`, the
+deployed strategy file's own basis — the condition sizing proposal §4 ② was
+waiting for) and its `DIRECTION` axis (`LONG`). `finality.yaml::source_revision`
+stays `null`: it is the deploy SHA, which a commit cannot contain, so the
+render writes it.
+
+**What still blocks a `run` boot (measured 2026-09-23, named in
+`docs/runbooks/tos-paper-boot.md` §5):** ① `VenueConstraintPolicy
+.canonical_digest` is **not reproducible across processes** (a frozenset in
+`_COVERED_FIELDS` serializes in set-iteration order), which makes the
+documented "run `print-policy-digests`, copy the digests into
+`safety_activation.yaml::members`" procedure unusable for that one kind;
+② the venue/OCP `scope.environments: ["paper"]` does not equal the design's
+`--environment-label non-live-test`; ③ `safety_envelope.yaml
+::governed_dimensions` is `[]` while the aggregate risk policy governs
+`INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` — deliberately, per that file's own
+header (a separate safety approval, not a value this directory may invent).
 
 This directory is consumed today by the compose e2e test suite
 (`tos/runtime/tests/compose/test_deploy_config.py`,

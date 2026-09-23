@@ -67,7 +67,9 @@ def pinned_hash_seed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PYTHONHASHSEED", _SEED_A)
 
 
-def _render(out: Path, *, direction: str = "LONG", source: Path = _SOURCE):
+def _render(
+    out: Path, *, direction: str = "LONG", source: Path = _SOURCE
+) -> rpc.RenderResult:
     return rpc.render(
         source,
         out,

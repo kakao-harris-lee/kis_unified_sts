@@ -133,4 +133,51 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 
 ## 5. 착지 기록
 
-(비어 있음)
+**구현 PR 브랜치 `feat/tos-paper-render-and-first-boot`(main `b5bb5eb5` 기준), 2026-09-23.**
+상세 기록은 상위 계획 §7.8.3. 런북은 `docs/runbooks/tos-paper-boot.md`.
+
+| §4 항목 | 착지 |
+|---|---|
+| 1. 렌더 스크립트 + 단위 테스트 | `scripts/tos/render_paper_config.py` · `tests/unit/scripts/test_render_paper_config.py`(28 tests, §2 가드 표 전 행 실패-입력 테스트 포함) · `--check` |
+| 2. 커밋 파일 값 + 핀 갱신 | `finality.yaml::value_date="T+1"` · `proof_recipe_id`(픽스처 토큰) · `source_revision` 은 렌더 산출물로 유지 · `_VALUE_PINS`/거부 핀/`_loader_probe` 분할(18 PASS / 27) 갱신 |
+| 3. (가) 부팅 증명 픽스처 | `construction.yaml` · `strategies/bootproof_band.strategy.yaml` · OCP 두 칸(`["RISK"]`/`LONG`) · LONG·SHORT **양쪽 렌더·부팅 증거 확보**(아래) |
+| 4. 런북 | `docs/runbooks/tos-paper-boot.md` |
+| 5. 종료조건 | **미충족 — 남은 거부 3건을 이름으로 지목**(아래 · 런북 §5) |
+
+**틱 원천은 이 PR 에서 채택했다**(§4 5항의 조건부 항목): `marketfeed.yaml`(`intake_kind: journal`)
++ `critical_input_policy.yaml` 을 §3 과 같은 부팅 증명 픽스처 규율로, 저널은 **렌더 시점 생성**
+(네트워크 0). 값 출처는 파일마다 file:line 으로 적었다 — 추천값이 없는
+`fields[].max_age_ms` 는 이 저장소에서 실제로 틱을 발행시킨 유일한 실측 조합
+(`tos/runtime/tests/compose/test_marketfeed_wiring.py:40-45`)을 그 자리의 근거 문장과 함께 인용했다.
+
+### 남은 거부 3건 (실측, 2026-09-23)
+
+1. ⛔ **`VenueConstraintPolicy.canonical_digest` 가 프로세스마다 다르다.** `_COVERED_FIELDS`
+   (`tos/src/tos/venue/records.py:406-416`)의 frozenset 필드들(`:424`, `:165-168`)이
+   `covered_content()`(`tos/src/tos/canonical/_base.py:187`)의 `model_dump(mode="json")` 에서
+   **집합 순회 순서 리스트**가 되고, `_encode`(`canonicalization.py:148-149,174-176`)는 시퀀스를
+   순서 유의미로 취급한다. `ConstraintClass` 가 `StrEnum`(`vocabulary.py:169`)이라 순서가
+   프로세스 해시 시드를 따른다. **그래서 §2 6항이 규정한 「출력을 `members` 에 전사한다」가
+   이 한 종류에서 성립하지 않는다.** 렌더 스크립트의 종료 검사(새 프로세스에서 정책 재로드 후
+   활성화 재확인 — 부팅과 동형)가 이것을 즉시 거부한다. 기존 테스트는 전부 한 프로세스
+   안에서 계산·검증해 드러나지 않았다. **정본 직렬화 변경은 이 설계의 범위 밖**이라 고치지
+   않고 지목한다.
+2. `venue_constraint_policy.yaml:55` `environments: ["paper"]` ≠ §2 부팅 명령의
+   `--environment-label non-live-test` (`VenuePolicyScopeMismatch`). 어느 라벨로 부팅할지는
+   운영자 결정 — `paper` 는 `cli.py:215` `_LIVE_ENVIRONMENT_LABELS` 에 속한다.
+3. `safety_envelope.yaml::governed_dimensions: []` ≠ `aggregate_risk_policy.yaml:74` 이 요구하는
+   `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` (`RiskPolicyScopeMismatch`). 그 파일 헤더가 이미
+   「별도 안전 승인 사안」이라 적는다 — **안전 한도이므로 채우지 않았다.**
+
+### LONG·SHORT 양방향 증거 (§3 (가) 가 요구한 것)
+
+세 거부를 **진단 목적으로만**(해시 시드 고정 · 라벨 `paper` · 스크래치 사본에 봉투 차원 1건
+추가 — 커밋 파일은 그대로) 통과시키면, LONG·SHORT **두 구성 모두**:
+
+- `run` 이 거부 없이 부팅해 `run_forever` 에 들어가고, SIGTERM 에 `run: stopped (signal received).`
+  **종료코드 0** 으로 정지한다.
+- 다만 틱은 소비되지 않는다 — `SKIPPED_SESSION_CLOSED`, `phase='EXPIRED'`. 값 문제가 아니라
+  캘린더다(`calendar.yaml:36-40` — 08:45–15:45 KST, 그리고 9월 만기 이후 클래스 전체 EXPIRED).
+- 같은 렌더 산출물을 만기 이전 장중 시각으로 구동하면 `TICKED` 되고
+  `marketfeed.sqlite3` 에 `snapshots: 1 / preimages: 1` 이 남는다. 값 뷰는 렌더가 만든 저널의
+  세 필드 그대로다. **LONG·SHORT 결과가 동일하다 — 대칭을 좁히지 않았다는 증거.**
