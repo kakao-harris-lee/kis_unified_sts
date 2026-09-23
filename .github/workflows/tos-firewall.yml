@@ -399,19 +399,67 @@ jobs:
       # `test_parity_and_resubmit.py:229` — none of these five pre-existing ones
       # were touched by this PR.
       #
+      # Stage 3 (2026-09-23, docs/plans/2026-09-22-tos-test-tree-mypy-ratchet-
+      # stage3-plan.md) enabled `arg-type`: 773 errors (499 kernel + 274
+      # runtime) at plan time (main `29f39fe6`), closed across six PRs, each a
+      # root-cause fix, never a per-line suppression:
+      #   - #778 (`362b047b`, buckets E + B, 158): producer helpers annotated
+      #     with their real return type instead of `object`; genuinely Optional
+      #     values narrowed at the call site or via a non-Optional accessor on
+      #     the producer, same discipline as stage 2's `issued_result`.
+      #   - #782 (`782920f3`, bucket A, `test_brokercap_routing.py` alone, 96):
+      #     the file the later A-shaped PRs pattern off of.
+      #   - #783 (`d58b7d7a`, buckets A-fn + A-issue, 113): `dict` kwargs
+      #     splats into keyword-only kernel predicates replaced by a test-side
+      #     `TypedDict` matching the signature 1:1; `issue(**content)` calls
+      #     pulled `scheme`/`status` out of the dict into explicit keywords.
+      #   - #784 (`d1c56cf3`, buckets A-pyd + A-rt, 236): pydantic-model
+      #     builders switched from dict-splat construction to
+      #     `Model.model_validate({**base, **overrides})` (still validates, so
+      #     an illegal override still raises) plus the same TypedDict treatment
+      #     for runtime dataclass/class builders.
+      #   - #786 (`7aba8a0d`, buckets D + C-prime + Z + residual E/B, 166, plus
+      #     12 new runtime Protocol ports): test doubles fixed to satisfy their
+      #     Protocol or concrete base (missing members added, or the double
+      #     subclassed where the callee uses a wide surface); where a narrow
+      #     surface was all a caller needed, a Protocol port was introduced in
+      #     `tos_runtime` instead — one time service had accreted five
+      #     different double shapes, which a port narrows rather than widens.
+      #   - #785 (`70ca43a1`, kernel type hygiene): two defects this surfaced
+      #     (a `_FileCustodyKwargs` TypedDict needed a required/optional split)
+      #     fixed the same way, not suppressed.
+      #   Rule enforced across all six: a call site exercising an illegal input
+      #   keeps its `pytest.raises` and gets a `cast(...)` at the illegal
+      #   value, never a `# type: ignore`; no Protocol member and no
+      #   kernel/runtime signature was widened just to make a double or a
+      #   builder fit.
+      #   CI blind spot found while landing #786: the two TEST-tree steps below
+      #   do not surface body errors inside `tos_runtime/src` reached via
+      #   import from a runtime test — only the separate `mypy (tos runtime)`
+      #   SOURCE step above does. That is why all four mypy steps in this job
+      #   stay independent rather than collapsing a source check into the
+      #   matching test-tree one.
+      #   Deliberately left deferred: `no-untyped-def` (parent plan §6 (1), an
+      #   operator decision out of this stage's scope) and `unused-ignore`
+      #   (measured, not yet enabled: 8 hits under this stage's new flags, 5
+      #   kernel + 3 runtime, down from 187 measured under the old
+      #   arg-type-still-deferred flags on the same tree — enabled only after
+      #   this stage lands, per parent plan §3.4, because its "unused" count
+      #   depends on which other codes are still off).
+      #
       # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
       # invocation aborts with `Duplicate module named "tests"` and checks almost
       # nothing.
       - name: mypy (tos kernel tests)
         run: >-
           mypy tos/tests --ignore-missing-imports
-          --disable-error-code=arg-type --disable-error-code=no-untyped-def
+          --disable-error-code=no-untyped-def
           --disable-error-code=unused-ignore
 
       - name: mypy (tos runtime tests)
         run: >-
           mypy tos/runtime/tests --ignore-missing-imports
-          --disable-error-code=arg-type --disable-error-code=no-untyped-def
+          --disable-error-code=no-untyped-def
           --disable-error-code=unused-ignore
 
       - name: tos size budget
