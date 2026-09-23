@@ -33,6 +33,7 @@ revival of the old one).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Protocol
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.time import (
@@ -61,7 +62,9 @@ from tos_runtime.time.sources import MonotonicSource, ReferenceSourceReader
 
 __all__ = [
     "RecoveryGenerationNotAdvanced",
+    "TimeHealthReader",
     "TimeServiceNotStarted",
+    "TimeSnapshotReader",
     "TrustworthyTimeService",
 ]
 
@@ -90,6 +93,41 @@ class RecoveryGenerationNotAdvanced(RuntimeError):
     ``True`` for any input — it cannot detect a violation, only describe one.
     This exception is the real, falsifiable guard at the one place a
     violation would actually matter."""
+
+
+class TimeSnapshotReader(Protocol):
+    """The narrow read surface most :class:`TrustworthyTimeService` consumers actually need —
+    the FSM's current health snapshot only (mypy stage 3 §1.3 rule 3 port introduction).
+
+    Introduced because five independently-named test doubles
+    (``FakeTimeService`` / ``_TrustedTimeService`` / ``_NeverStartedTimeService`` /
+    ``_NotStartedTimeService`` / ``_BrokenTimeService``) each stood in for the FULL service
+    while implementing only :meth:`current_snapshot` — the signal that every one of these
+    consumers never touches :meth:`TrustworthyTimeService.start`,
+    :meth:`~TrustworthyTimeService.evaluate`, :meth:`~TrustworthyTimeService.wall_clock_now`,
+    or :attr:`~TrustworthyTimeService.last_transition_reason`. Narrowing the parameter type to
+    this Protocol lets each test inject its own double directly, structurally, instead of every
+    test needing to drive the full real FSM to get a typed value in.
+    """
+
+    def current_snapshot(self) -> TimeHealthSnapshot:
+        """Return the current :class:`~tos.time.TimeHealthSnapshot` (raises
+        :class:`TimeServiceNotStarted`, or an implementation's own equivalent, before the first
+        successful ``start()``/``evaluate()``)."""
+        ...
+
+
+class TimeHealthReader(Protocol):
+    """The narrower read surface :class:`~tos_runtime.posttrade.release_consumer
+    .FinalityReleaseConsumer` needs (mypy stage 3 §1.3 rule 3 port introduction) — only the
+    current :class:`~tos.time.HealthState`, read directly as a property
+    (``_check_obligation_expiry`` reads ``health_state`` itself, never through
+    :meth:`TimeSnapshotReader.current_snapshot`)."""
+
+    @property
+    def health_state(self) -> HealthState:
+        """The service's current :class:`~tos.time.HealthState`."""
+        ...
 
 
 class TrustworthyTimeService:
