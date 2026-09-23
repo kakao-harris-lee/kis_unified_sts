@@ -1,0 +1,84 @@
+{
+  "artifact_id": "P-5b-20260923T101748Z",
+  "probe_id": "P-5b",
+  "title": "OPEN_ORDER_QUERY — continuation-key pagination behaviour",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-09-23T10:17:48.016103+00:00",
+  "finished_at_utc": "2026-09-23T10:18:04.175295+00:00",
+  "duration_s": 16.159,
+  "repo_commit": "d6d77caa",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-5b",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05610",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "2026-09-23 19:1x futures-side linkage re-check after operator rotated mock app key/secret (futures key fp 39a004459922); query-only, no order; new mock futures account 46c39c54d3bb",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "46c39c54d3bb"
+  },
+  "measurements": {
+    "pages_walked": 1,
+    "page_size_observed": 0,
+    "continuation_supported": false,
+    "completeness_note": "If total rows across pages exceeds page 1, the runtime's single-page read (executor.py:562-563, 575-579) is structurally incomplete and open_order_query.completeness must NOT be declared complete."
+  },
+  "observations": [
+    {
+      "page": 0,
+      "rows": 0,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": false,
+      "first_odno": "",
+      "last_odno": ""
+    }
+  ],
+  "skips": [
+    {
+      "what": "pagination determination",
+      "reason": "no rows in the query window — inconclusive, not 'single page'. Re-run after P-5 has generated history."
+    }
+  ],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency"
+    ],
+    "instance_fields": [
+      "capabilities.open_order_query.completeness",
+      "capabilities.open_order_query.pagination"
+    ],
+    "capability_dimension": "OPEN_ORDER_QUERY"
+  }
+}
