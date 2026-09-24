@@ -18,12 +18,19 @@
 # [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
 #
 #   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
-#   expected_code_digest: 0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260
+#   expected_code_digest: 8bc76e443ca844620b99e0d7766e1b6ca55ae48518dc120a84ce7b3dbbc478d9
 #   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
 #   python_version: 3.12.12
 #   sqlite_version: 3.45.1
 #
-#   실행(2026-09-23, main c1c9bffa 기준 워크트리):
+#   재측정(2026-09-24, 브랜치 fix/tos-calendar-expiry-roll · PR #799): 이 브랜치가
+#   `tos/runtime/src/tos_runtime/calendar/{phase,config}.py` 를 수정했으므로
+#   `expected_code_digest` 가 바뀐다(아래 갱신 규율). 이전 값
+#   0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260 는 2026-09-23 / main c1c9bffa 측정치.
+#   `expected_dependency_set_digest` 는 **변하지 않았다** — 같은 루트 `.venv`
+#   에서 측정했고 설치 분포 집합·python/sqlite 좌표가 동일하다(명령 출력으로 확인).
+#
+#   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
 #
@@ -44,7 +51,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260"
+expected_code_digest: "8bc76e443ca844620b99e0d7766e1b6ca55ae48518dc120a84ce7b3dbbc478d9"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
