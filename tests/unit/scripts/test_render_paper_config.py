@@ -757,24 +757,53 @@ def test_an_inline_comment_would_otherwise_have_corrupted_the_account() -> None:
     assert corrupted != _FAKE_ACCOUNT
 
 
-def test_currentness_policy_digest_is_stable_across_hash_seeds(tmp_path: Path) -> None:
-    """The DEPLOYED ``currentness.yaml`` digests identically in two differently-seeded
-    processes — the render-layer witness for the canonical set ordering restored on
-    2026-09-24 (``docs/plans/2026-09-24-tos-canonical-set-order-plan.md``).
-
-    The whole class of models is measured over six seeds by
-    ``tests/tools/test_tos_canonical_set_order.py``; this one stays here because it runs
-    the *deployment's own* YAML through the *runtime's own* wiring, which that pin does not.
-    """
-    script = (
+#: One-liners that print a governed policy's ``canonical_digest``, each through the
+#: runtime's OWN loader/wiring rather than a re-implementation. Keyed by the YAML the
+#: digest is taken over.
+_SEED_WITNESS_SCRIPTS: dict[str, str] = {
+    # The model that actually blocked this deployment: review-797 measured
+    # VenueConstraintPolicy as the only one of the then-13 unsorted models the paper
+    # render digests, and the R0 render refused because of it (review-802 LOW-4).
+    "venue_constraint_policy.yaml": (
+        "import sys;from pathlib import Path;"
+        "from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme;"
+        "from tos_runtime.venue import"
+        " VENUE_POLICY_CONFIG_NAME, load_venue_constraint_policy;"
+        "print(load_venue_constraint_policy("
+        "Path(sys.argv[1]) / VENUE_POLICY_CONFIG_NAME,"
+        " scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)).policy.canonical_digest)"
+    ),
+    # Kept alongside it: cheap, and it lost its own per-model sorter in the same
+    # change, so it witnesses the hook from the other direction.
+    "currentness.yaml": (
         "import sys;from pathlib import Path;"
         "from tos_runtime.compose._currentness_wiring import _build_currentness_policy;"
         "print(_build_currentness_policy(Path(sys.argv[1])).canonical_digest)"
-    )
+    ),
+}
+
+
+@pytest.mark.parametrize("policy_file", sorted(_SEED_WITNESS_SCRIPTS))
+def test_policy_digest_is_stable_across_hash_seeds(
+    tmp_path: Path, policy_file: str
+) -> None:
+    """A DEPLOYED policy digests identically in two differently-seeded processes —
+    the render-layer witness for the canonical set ordering restored on 2026-09-24
+    (``docs/plans/2026-09-24-tos-canonical-set-order-plan.md``).
+
+    The whole class of models is measured over six seeds by
+    ``tests/tools/test_tos_canonical_set_order.py``; this one stays here because it runs
+    a *rendered deployment's own* YAML through the *runtime's own* wiring, which that pin
+    does not. It runs against a render rather than ``_SOURCE`` because the deployment
+    coordinates in ``venue_constraint_policy.yaml`` are named-TBD until rendered, and the
+    loader refuses a TBD scope before it ever computes a digest.
+    """
+    out = tmp_path / "out"
+    _render(out)
 
     def _digest(seed: str) -> str:
         completed = subprocess.run(
-            [sys.executable, "-B", "-c", script, str(_SOURCE)],
+            [sys.executable, "-B", "-c", _SEED_WITNESS_SCRIPTS[policy_file], str(out)],
             capture_output=True,
             text=True,
             check=True,
@@ -791,4 +820,7 @@ def test_currentness_policy_digest_is_stable_across_hash_seeds(tmp_path: Path) -
         )
         return completed.stdout.strip()
 
-    assert _digest("0") == _digest("3")
+    first, second = _digest("0"), _digest("3")
+    assert (
+        first and first == second
+    ), f"{policy_file} digests differently under two hash seeds: {first} != {second}"
