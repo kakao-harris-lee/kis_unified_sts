@@ -38,6 +38,7 @@ import signal
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -274,10 +275,15 @@ def test_run_forever_ticks_a_second_real_observation_after_the_pacing_interval(
 _TICK_WAIT_TIMEOUT_S = 10.0
 
 
-def read_only_latest_as_of(db_path: Path, *, instrument: str) -> int | None:
+def read_only_latest_as_of(
+    db_path: Path,
+    *,
+    instrument: str,
+    on_state: Callable[[str], None] | None = None,
+) -> int | None:
     """The newest durable ``as_of_ms`` for ``instrument`` in the snapshot-store file at
-    ``db_path`` — read WITHOUT ever writing a byte to it. ``None`` when the file, the table, or
-    a matching row is not there (yet).
+    ``db_path`` — read WITHOUT ever writing durable content to it. ``None`` when the file, the
+    table, or a matching row is not there (yet).
 
     **Why this may not simply construct a** :class:`~tos_runtime.marketfeed.store
     .SqliteSnapshotStore` **(the defect this helper exists to close; review-797, one observed CI
@@ -294,9 +300,14 @@ def read_only_latest_as_of(db_path: Path, *, instrument: str) -> int | None:
     halves of this deterministically.
 
     ``mode=ro`` (a URI connection, ``uri=True``) is what makes it structurally read-only rather
-    than read-only by convention: sqlite itself refuses every write on such a connection, so no
-    future edit to this helper can quietly reintroduce the genesis write. It reads a WAL database
-    another live connection owns exactly as ``SqliteSnapshotStore`` itself would.
+    than read-only by convention: sqlite itself refuses every CONTENT write on such a connection
+    — no table, no row, no ``user_version`` — so no future edit to this helper can quietly
+    reintroduce the genesis write. It is not "touches nothing": reading a WAL database still
+    updates that database's ``-shm`` read marks, as ANY reader must, ``SqliteSnapshotStore
+    .latest_as_of`` included. That is exactly the line ``test_store_probe_isolation
+    ._CONTENT_FILE_SUFFIXES`` draws when it asserts byte-equality over the database and its
+    ``-wal`` and deliberately not over the ``-shm``. It reads a WAL database another live
+    connection owns exactly as ``SqliteSnapshotStore`` itself would.
 
     The URI is built with :meth:`pathlib.Path.as_uri`, never ``f"file:{db_path}?mode=ro"``: that
     naive form breaks on any path containing a URI-special character, and it breaks SILENTLY —
@@ -313,24 +324,37 @@ def read_only_latest_as_of(db_path: Path, *, instrument: str) -> int | None:
     Args:
         db_path: The snapshot store's sqlite file (``data_dir / MARKETFEED_FILE_NAME``).
         instrument: The ``snapshots.instrument`` value to bound the query by.
+        on_state: Optional observer, called with a one-line description of HOW this call ended
+            — which of the "not there (yet)" states it hit, or that it really read a value. A
+            polling caller keeps the last one so its own timeout message can say whether the
+            probe ever even opened the file: "the runtime never created the store" and "the
+            store was there and the row never arrived" are different failures, and a bare
+            "no tick observed" conflates them.
 
     Returns:
         The stored ``MAX(as_of_ms)`` for ``instrument``, or ``None`` when the file does not
         exist yet, exists but carries no ``snapshots`` table yet (the store is mid-construction),
         or carries no row for ``instrument``.
     """
+
+    def _state(description: str) -> None:
+        if on_state is not None:
+            on_state(description)
+
     if not db_path.exists():
+        _state("the store file does not exist yet")
         return None
     try:
         conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
         # The file existed for the `exists()` check but is not openable as a database yet.
+        _state(f"the store file exists but sqlite could not open it: {exc}")
         return None
     try:
         row = conn.execute(
             "SELECT MAX(as_of_ms) FROM snapshots WHERE instrument = ?", (instrument,)
         ).fetchone()
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
         # Every "the composing runtime has not finished creating this file" state, of which
         # there is more than one class and they are NOT all `OperationalError`: "no such table:
         # snapshots" (DDL not committed yet) IS an ``OperationalError``, but a half-written
@@ -340,12 +364,16 @@ def read_only_latest_as_of(db_path: Path, *, instrument: str) -> int | None:
         # escaping exception prints a traceback and kills the poller rather than failing a
         # test. ``sqlite3.Error`` is the whole family, and returning ``None`` is honest for all
         # of it: "no tick observed yet". Nothing is silently passed over — a file that never
-        # becomes readable ends as a failed ``assert _observed_tick()`` naming the timeout.
+        # becomes readable ends as a failed ``assert _observed_tick()`` naming the timeout AND,
+        # via ``on_state``, the last thing sqlite actually said about the file.
+        _state(f"the store file opened but could not be queried: {exc}")
         return None
     finally:
         conn.close()
     if row is None or row[0] is None:
+        _state(f"the store file opened and queried cleanly; no {instrument!r} row yet")
         return None
+    _state(f"read a durable as_of for {instrument!r}")
     return int(row[0])
 
 
@@ -385,10 +413,10 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
     store file the final assertion reads (``read_only_latest_as_of`` — a second connection from
     a second thread, which never crosses a ``sqlite3`` thread-affinity rule because the store
     only ever touches its own connection from its own thread, and which cannot disturb the
-    composing runtime because ``mode=ro`` makes sqlite itself refuse every write; see that
+    composing runtime because ``mode=ro`` makes sqlite refuse every CONTENT write on it — the
+    ``-shm`` read marks any reader updates are the one thing that still moves; see that
     helper's docstring for the genesis race a store-CONSTRUCTING probe caused here) and sends
-    ``SIGINT`` only once it observes the real tick
-    has already landed, OR — bounded by :data:`_TICK_WAIT_TIMEOUT_S` — gives up waiting and
+    ``SIGINT`` only once it observes the real tick has already landed, OR — bounded by :data:`_TICK_WAIT_TIMEOUT_S` — gives up waiting and
     sends ``SIGINT`` anyway so a genuinely stuck ``run_forever`` still gets unstuck rather than
     hanging the process forever; see :func:`_send_sigint_once_ticked_or_deadline`'s own
     docstring for the exact state machine and why each branch is safe. **If a future person is
@@ -416,12 +444,24 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
     marketfeed_db_path = data_dir / MARKETFEED_FILE_NAME
     main_done = threading.Event()
 
+    # The last thing the probe managed to do with the file, for the timeout message below: a
+    # test that only says "no tick observed" cannot distinguish "compose never created the
+    # store" from "the store was there and the row never arrived".
+    last_probe_state = ["the probe never ran"]
+
+    def _record_probe_state(description: str) -> None:
+        last_probe_state[0] = description
+
     def _observed_tick() -> bool:
         # READ-ONLY, by sqlite's own enforcement — never `SqliteSnapshotStore(...)`, whose
         # constructor writes the schema-ledger genesis row and races compose's own. See
         # `read_only_latest_as_of`'s docstring for the full mechanism.
         return (
-            read_only_latest_as_of(marketfeed_db_path, instrument=fx.INSTRUMENT)
+            read_only_latest_as_of(
+                marketfeed_db_path,
+                instrument=fx.INSTRUMENT,
+                on_state=_record_probe_state,
+            )
             == as_of_ms
         )
 
@@ -497,7 +537,8 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
     assert _observed_tick(), (
         f"no tick observed within {_TICK_WAIT_TIMEOUT_S}s of `cli.main(['run', ...])` "
         "returning — either compose never wired the tick source, or the sender's deadline "
-        "SIGINT fired before a real tick could land (see _send_sigint_once_ticked_or_deadline)"
+        "SIGINT fired before a real tick could land (see _send_sigint_once_ticked_or_deadline). "
+        f"Last probe of {marketfeed_db_path}: {last_probe_state[0]}"
     )
 
 

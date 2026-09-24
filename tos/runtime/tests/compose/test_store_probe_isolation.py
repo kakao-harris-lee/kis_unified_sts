@@ -29,14 +29,19 @@ by timing luck. Every test names a mutation it turns red:
 * :func:`test_the_read_only_probe_cannot_disturb_a_store_mid_genesis` pins the FIX — the real
   helper ``test_run_e2e.read_only_latest_as_of``, run inside that same window, leaves the file
   byte-identical, lets the paused construction finish, and leaves exactly ONE genesis ledger row.
-  Restoring the old store-constructing probe in that helper turns this test red on two
-  independent assertions (byte diff, then the ``IntegrityError`` itself).
+  Restoring the old store-constructing probe in that helper turns this test red — on the byte
+  diff, which is the assertion that fires first; the ``IntegrityError`` assertion behind it
+  detects the same mutation independently (see that test's own docstring for the measurement).
 
-The remaining three pin the probe's own contract, which is what makes it a usable substitute for
+The remaining four pin the probe's own contract, which is what makes it a usable substitute for
 the store — a probe that never wrote because it never read anything would satisfy the two above:
 
 * :func:`test_the_read_only_probe_reports_a_committed_tick_without_writing` — it really does read
   a committed row, through a second connection, while the writer is still open.
+* :func:`test_the_read_only_probe_answers_exactly_what_the_store_answers` — its SQL MEANS what
+  ``SqliteSnapshotStore.latest_as_of`` means, checked against the live store over rows inserted
+  out of ``as_of_ms`` order and across two instruments. Keying the probe on insertion order
+  (``ORDER BY rowid DESC LIMIT 1``) or dropping its ``WHERE instrument = ?`` turns this red.
 * :func:`test_the_read_only_probe_is_total_over_every_half_created_file_state` — every
   mid-creation state answers ``None`` instead of raising into the sender thread. Narrowing the
   helper's ``except sqlite3.Error`` back to ``OperationalError`` turns this red.
@@ -64,6 +69,15 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 #: Every blocking handshake below is bounded — a broken patch must fail the test, never wedge the
 #: suite (the same discipline ``test_run_e2e.py``'s own sender thread follows).
+#:
+#: The bound alone does not buy that claim, which is why every helper thread here is also
+#: ``daemon=True`` (review-800 LOW-3). A bounded ``join`` lets the MAIN thread stop waiting and
+#: fail the assert, but a non-daemon worker that outlived it would still block interpreter exit
+#: at the end of the pytest session — a hang, after a green-looking failure, with no traceback
+#: pointing here. Today every wait in these helpers is itself bounded (``Barrier(timeout=...)``,
+#: ``Event.wait(timeout=...)``) so they do terminate; ``daemon=True`` is what keeps "never wedge
+#: the suite" true if a future edit adds a wait that is not. Same flag, same reason, as
+#: ``test_run_e2e.py``'s sender thread.
 _HANDSHAKE_TIMEOUT_S = 10.0
 
 #: The shape of :func:`~tos_runtime.operations.schema_ledger.file_is_fresh`, which both tests
@@ -74,6 +88,11 @@ _FreshPredicate = Callable[[sqlite3.Connection], bool]
 #: already prove "does not raise"; a burst also proves the file is unchanged by REPEATED probing,
 #: which is what the real sender thread does (one call per 5ms until it sees a tick).
 _PROBE_BURST = 50
+
+#: A second ``snapshots.instrument`` value, so the equivalence test can prove the probe's
+#: ``WHERE instrument = ?`` actually bounds the query. Any string distinct from
+#: ``fx.INSTRUMENT`` works — this column is free text the store never interprets.
+_OTHER_INSTRUMENT = "NQ"
 
 
 #: The files that carry durable database CONTENT in WAL mode: the database itself and its
@@ -108,7 +127,9 @@ def _file_state(db_path: Path) -> dict[str, bytes | None]:
     }
 
 
-def _insert_snapshot_row(store: SqliteSnapshotStore, *, as_of_ms: int) -> None:
+def _insert_snapshot_row(
+    store: SqliteSnapshotStore, *, as_of_ms: int, instrument: str = fx.INSTRUMENT
+) -> None:
     """Commit one ``snapshots`` row through ``store``'s own live connection.
 
     Writes the columns directly rather than going through :meth:`SqliteSnapshotStore.put`
@@ -123,7 +144,7 @@ def _insert_snapshot_row(store: SqliteSnapshotStore, *, as_of_ms: int) -> None:
         "INSERT INTO snapshots "
         "(snapshot_id, canonical_digest, instrument, as_of_ms, snapshot_json) "
         "VALUES (?, ?, ?, ?, ?)",
-        (f"snap-{as_of_ms}", "digest-1", fx.INSTRUMENT, as_of_ms, "{}"),
+        (f"snap-{instrument}-{as_of_ms}", "digest-1", instrument, as_of_ms, "{}"),
     )
     store._conn.execute("COMMIT")
 
@@ -200,7 +221,9 @@ def test_two_concurrent_store_constructions_on_a_fresh_file_lose_the_genesis_rac
             outcomes[name] = exc
 
     names = ("first", "second")
-    threads = [threading.Thread(target=_construct, args=(name,)) for name in names]
+    threads = [
+        threading.Thread(target=_construct, args=(name,), daemon=True) for name in names
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -238,16 +261,23 @@ def test_the_read_only_probe_cannot_disturb_a_store_mid_genesis(
     Three independent assertions, each of which a restored store-constructing probe fails:
 
     1. the probe never raises and reports ``None`` (no ``snapshots`` table exists yet);
-    2. the database file and its sidecars are byte-identical across the burst — the probe wrote
-       nothing at all, not merely "nothing that mattered";
+    2. the database file and its ``-wal`` are byte-identical across the burst
+       (:data:`_CONTENT_FILE_SUFFIXES`) — the probe wrote no durable content, not merely
+       "nothing that mattered";
     3. the paused construction finishes without an ``IntegrityError`` and the finished file
        carries exactly ONE ``CREATED`` ledger row at the store's own schema version.
 
     The patch is one-shot deliberately, so that this test still has teeth under the mutation it
-    exists to catch: with the old probe restored, the probe's own construction is NOT paused, it
-    performs the genesis write itself, and assertions 2 and 3 both go red (byte diff, then
-    ``IntegrityError`` from the released construction) instead of deadlocking against a second
-    pause.
+    exists to catch: with the old probe restored, the probe's own construction is NOT paused
+    (it is the second call), so it performs the genesis write itself instead of deadlocking
+    against a second pause.
+
+    **What actually fails under that mutation, measured:** assertion 2 is the one that fires —
+    ``the read-only probe changed durable bytes on disk (-wal) — it is not read-only`` — because
+    pytest stops at the first failing assert and 2 precedes 3. Assertion 3 independently holds
+    the defect and was confirmed by neutralising 2 and re-running: it then reports
+    ``IntegrityError: UNIQUE constraint failed: schema_ledger.version``, the literal CI error.
+    Two independent detectors, one visible at a time — not two failures in one run.
     """
     db_path = tmp_path / MARKETFEED_FILE_NAME
     reached_genesis = threading.Event()
@@ -275,7 +305,7 @@ def test_the_read_only_probe_cannot_disturb_a_store_mid_genesis(
         except BaseException as exc:  # noqa: BLE001 - reported by the asserts below
             construction_error.append(exc)
 
-    worker = threading.Thread(target=_construct)
+    worker = threading.Thread(target=_construct, daemon=True)
     worker.start()
     try:
         paused = reached_genesis.wait(timeout=_HANDSHAKE_TIMEOUT_S)
@@ -358,6 +388,60 @@ def test_the_read_only_probe_reports_a_committed_tick_without_writing(
     )
 
 
+def test_the_read_only_probe_answers_exactly_what_the_store_answers(
+    tmp_path: Path,
+) -> None:
+    """The probe's SQL must mean what :meth:`SqliteSnapshotStore.latest_as_of` means — checked
+    against the REAL store, not asserted in prose (review-800 MEDIUM-1).
+
+    The earlier positive test used ONE row, which cannot tell "newest by ``as_of_ms``" apart
+    from "last inserted" or "any row at all". This one is built so those readings disagree:
+
+    * five rows, inserted OUT of ``as_of_ms`` order;
+    * the newest row for ``fx.INSTRUMENT`` (``…007_000``) is inserted in the MIDDLE, so a probe
+      keyed on insertion order (``ORDER BY rowid DESC LIMIT 1``) returns ``…003_000`` instead;
+    * the newest row in the whole table (``…009_000``) belongs to the OTHER instrument, so a
+      probe that dropped ``WHERE instrument = ?`` returns that instead.
+
+    Both readings are therefore red, and the equivalence is asserted against
+    ``store.latest_as_of(...)`` itself — the production method, called live — rather than
+    against a second copy of the SQL. Production code stays untouched: sharing a query constant
+    with :mod:`tos_runtime.marketfeed.store` would make the store export a detail for a test's
+    benefit, and would also make the two agree BY CONSTRUCTION, which is the one thing this
+    test must not do.
+    """
+    db_path = tmp_path / MARKETFEED_FILE_NAME
+    store = SqliteSnapshotStore(db_path)
+    try:
+        # Row 2 is the newest in the whole table but belongs to the OTHER instrument; row 3
+        # is the newest for fx.INSTRUMENT yet sits in the MIDDLE of the insertion order; row 5
+        # is inserted last and is NOT the newest. Each of those breaks a different wrong query.
+        for as_of_ms, instrument in (
+            (1_700_000_005_000, fx.INSTRUMENT),
+            (1_700_000_009_000, _OTHER_INSTRUMENT),
+            (1_700_000_007_000, fx.INSTRUMENT),
+            (1_700_000_001_000, _OTHER_INSTRUMENT),
+            (1_700_000_003_000, fx.INSTRUMENT),
+        ):
+            _insert_snapshot_row(store, instrument=instrument, as_of_ms=as_of_ms)
+
+        for instrument in (fx.INSTRUMENT, _OTHER_INSTRUMENT, "never-stored"):
+            assert read_only_latest_as_of(db_path, instrument=instrument) == (
+                store.latest_as_of(instrument=instrument)
+            ), f"probe and store disagree for {instrument!r}"
+
+        # Spelled out too, so a simultaneous regression in BOTH readings could not pass by
+        # agreeing with each other.
+        assert store.latest_as_of(instrument=fx.INSTRUMENT) == 1_700_000_007_000
+        probed = read_only_latest_as_of(db_path, instrument=fx.INSTRUMENT)
+        assert probed == 1_700_000_007_000
+        other = read_only_latest_as_of(db_path, instrument=_OTHER_INSTRUMENT)
+        assert other == 1_700_000_009_000
+        assert read_only_latest_as_of(db_path, instrument="never-stored") is None
+    finally:
+        store.close()
+
+
 def test_the_read_only_probe_is_total_over_every_half_created_file_state(
     tmp_path: Path,
 ) -> None:
@@ -388,6 +472,7 @@ def test_the_read_only_probe_is_total_over_every_half_created_file_state(
     wal_no_tables = tmp_path / "wal_only.sqlite3"
     _precreate_wal_file(wal_no_tables)
 
+    reported: dict[str, list[str]] = {}
     for state_name, path in (
         ("missing file", tmp_path / "never_created.sqlite3"),
         ("zero-byte file", empty),
@@ -395,9 +480,21 @@ def test_the_read_only_probe_is_total_over_every_half_created_file_state(
         ("not a database", not_a_database),
         ("WAL set, no tables yet", wal_no_tables),
     ):
+        seen: list[str] = []
         assert (
-            read_only_latest_as_of(path, instrument=fx.INSTRUMENT) is None
+            read_only_latest_as_of(path, instrument=fx.INSTRUMENT, on_state=seen.append)
+            is None
         ), f"the probe must answer None (never raise) for: {state_name}"
+        assert len(seen) == 1, f"one state report expected for {state_name}: {seen}"
+        reported[state_name] = seen
+
+    # LOW-4's actual requirement: a caller that times out must be able to tell "the runtime
+    # never created the store" from "the store was there and the row never arrived". Those two
+    # are the endpoints of the list above, so it is THEIR reports that have to differ — not all
+    # five, since a truncated header and a garbage file both legitimately report the same
+    # "file is not a database".
+    assert "does not exist" in reported["missing file"][0]
+    assert "opened" in reported["WAL set, no tables yet"][0]
 
 
 def test_the_read_only_probe_handles_a_uri_special_character_in_the_path(
