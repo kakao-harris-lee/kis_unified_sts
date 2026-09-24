@@ -40,7 +40,31 @@ Known silent-miss cases (all zero in today's kernel, each pinned by a test in
   inside a covered tree — it has no hook of its own;
 * a container filtered by an index-level ``include`` / ``exclude`` — the walk
   refuses to pair a container whose dumped length differs from the original's,
-  rather than risk sorting an order-significant sequence.
+  rather than risk sorting an order-significant sequence;
+* **a set nested directly inside a set** — the set branch of
+  :func:`_with_sorted_sets` sorts the dumped list and stops, because a set has
+  no order to zip the dumped elements back against, so it cannot recurse into
+  them. The inner sets stay in iteration order and the outer ``sorted()`` then
+  orders seed-dependent values. Measured on this branch, 2026-09-24::
+
+      class SetOfSets(FrozenModel):
+          outer: frozenset[frozenset[str]] = frozenset()
+
+      SetOfSets(outer=frozenset({frozenset(("b", "aa", "c", "dd", "zzz", "B")),
+                                 frozenset(("q", "rr", "sss", "t", "uu", "v"))})
+                ).model_dump(mode="json")
+      # PYTHONHASHSEED=0 -> {'outer': [['q','sss','t','uu','v','rr'],
+      #                                ['zzz','b','B','c','aa','dd']]}
+      # PYTHONHASHSEED=1 -> {'outer': [['aa','zzz','B','b','dd','c'],
+      #                                ['sss','t','rr','v','uu','q']]}
+
+  Banned outright rather than handled, by
+  ``test_no_set_is_nested_inside_a_set`` in
+  ``tos/runtime/tests/canonical/test_canonical_json_closure.py``;
+* a set field whose serialized value is **not a list** — the set branch returns
+  a non-``list`` ``dumped`` unchanged (``:_with_sorted_sets``), so a field
+  serializer rendering a set as a string or a mapping is left unsorted. Zero
+  field serializers exist under ``tos/`` today.
 
 Pure module: ``pydantic`` + stdlib only (design §0.3). It imports no ``tos``
 module, so ``tos.canonical._base`` can depend on it without a cycle.
@@ -158,7 +182,9 @@ def _with_sorted_sets(original: Any, dumped: Any) -> Any:
         dumped: The serialized counterpart of ``original``.
 
     Returns:
-        ``dumped`` with every originally-set node replaced by a sorted list.
+        ``dumped`` with every originally-set node replaced by a sorted list. A
+        set whose ``dumped`` counterpart is not a ``list`` is returned as-is —
+        the module docstring's fourth silent-miss case.
 
     Raises:
         TypeError: When a set's elements are not mutually comparable. There is
@@ -167,6 +193,8 @@ def _with_sorted_sets(original: Any, dumped: Any) -> Any:
             this module exists to remove.
     """
     if isinstance(original, (set, frozenset)):
+        # No recursion into the elements: a set has no order to pair them by.
+        # A set nested in a set is banned instead (module docstring).
         return sorted(dumped) if isinstance(dumped, list) else dumped
     if isinstance(original, BaseModel):
         # The nested model's own hook (if any) already ordered its sets.
@@ -175,14 +203,17 @@ def _with_sorted_sets(original: Any, dumped: Any) -> Any:
         if not isinstance(dumped, dict) or len(dumped) != len(original):
             return dumped
         return {
-            key: _with_sorted_sets(inner, value)
-            for (key, value), inner in zip(dumped.items(), original.values())
+            key: _with_sorted_sets(original_child, dumped_child)
+            for (key, dumped_child), original_child in zip(
+                dumped.items(), original.values()
+            )
         }
     if isinstance(original, (list, tuple)):
         if not isinstance(dumped, list) or len(dumped) != len(original):
             return dumped
         return [
-            _with_sorted_sets(inner, value) for inner, value in zip(original, dumped)
+            _with_sorted_sets(original_child, dumped_child)
+            for original_child, dumped_child in zip(original, dumped)
         ]
     return dumped
 
@@ -221,6 +252,8 @@ def _dump_with_sorted_sets(
 #: in shape to what ``@model_serializer(mode="wrap")`` with a ``dict[str, Any]``
 #: return annotation produces; spelled as a literal so this module needs no
 #: ``pydantic_core`` import (the tos AST firewall allows ``pydantic`` only).
+#: Used as a TEMPLATE, never installed directly — see
+#: :meth:`CanonicalJsonMixin.__get_pydantic_core_schema__`.
 _SORTED_SET_SERIALIZATION: dict[str, Any] = {
     "type": "function-wrap",
     "function": _dump_with_sorted_sets,
@@ -299,5 +332,10 @@ class CanonicalJsonMixin:
                 "(tos.canonical._canonical_json)"
             )
         source.__canonical_set_fields__ = set_fields
-        schema["serialization"] = _SORTED_SET_SERIALIZATION
+        # A per-class copy, not the module-level template: pydantic is free to
+        # annotate a core-schema node in place, and a shared node would spread
+        # that annotation to every other set-bearing class at once. Idempotency
+        # does not depend on object identity — :func:`_is_this_hook` recognises
+        # the attachment by the FUNCTION it carries, which the copy preserves.
+        schema["serialization"] = dict(_SORTED_SET_SERIALIZATION)
         return schema
