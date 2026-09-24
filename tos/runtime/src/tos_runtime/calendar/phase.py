@@ -151,6 +151,13 @@ def session_phase_at(
 def _nth_weekday_of_month(
     year: int, month: int, weekday: int, ordinal: int
 ) -> datetime.date:
+    """The ``ordinal``-th ``weekday`` of ``(year, month)``.
+
+    ``matches[ordinal - 1]`` cannot raise ``IndexError`` for a loaded config:
+    every month contains at least four of each weekday, and
+    :func:`tos_runtime.calendar.config._parse_expiry_rule` refuses an
+    ``ordinal`` outside 1..4 (review-799 LOW-1).
+    """
     cal = calendar.Calendar()
     matches = [
         day
@@ -202,9 +209,26 @@ def maturity_at(
     means ``cfg.futures_expiry`` has no rule for this class at all — never
     guessed. When a rule exists but its instant is exactly the expiry date,
     ``expired`` flips to ``True`` only after that class's last regular
-    (non-crossing) session window ends that day (plan §2 decision 1); if no
-    such window exists for the class, the whole expiry day counts as not yet
-    expired (there is no other fact to judge the moment from).
+    (non-crossing) session window ends that day (plan §2 decision 1).
+
+    A class with NO regular window has no instant at which that flip can be
+    judged, so it would never report ``expired=True`` **at any instant** —
+    not merely "not yet expired on the expiry day". That shape is refused at
+    load by
+    :func:`tos_runtime.calendar.config._check_expiry_rules_have_regular_windows`,
+    so it is unreachable through :func:`~tos_runtime.calendar.config.load_calendar_config`;
+    the ``last_end is None`` floor below remains only for a
+    :class:`~tos_runtime.calendar.config.CalendarConfig` built directly in
+    code, and reports not-expired rather than guessing a moment.
+
+    An expiry date that falls on a holiday is NOT shifted: the date is pure
+    calendar arithmetic (:func:`_nth_weekday_of_month`), and neither the roll
+    below nor the expiry-day flip consults ``cfg.holidays``. No source in this
+    repo states how KRX moves an expiry off a holiday, so nothing is invented
+    here; ``expiry_date`` has no consumer today (measured: nothing in
+    ``tos/src`` or ``tos/runtime/src`` reads it), and on such a day the flip
+    would still occur at the absent session's configured end time. Revisit
+    when a consumer lands.
 
     ``expiry_date`` is always the NEXT expiry the rule produces, never one
     already in the past: once a rule month's expiry date has passed, this

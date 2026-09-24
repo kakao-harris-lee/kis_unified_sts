@@ -52,8 +52,10 @@ __all__ = [
 class CalendarConfigError(RuntimeError):
     """Raised when the calendar config is missing, malformed, carries an
     unfilled (named-TBD) required field, an unresolvable ``tz_id``, an
-    invalid date/time/day token, or overlapping session windows — fail-closed
-    at load, never a silent default."""
+    invalid date/time/day token, overlapping session windows, or a
+    ``futures_expiry`` rule for an instrument class with no regular
+    (non-crossing) session window — fail-closed at load, never a silent
+    default."""
 
 
 #: Day-of-week vocabulary this loader accepts in ``days``/``weekday`` fields
@@ -96,7 +98,10 @@ class SessionWindow:
 class ExpiryRule:
     """A futures-expiry rule for one instrument class: the expiry date in a
     rule month is the ``ordinal``-th occurrence of ``weekday`` in that month
-    (e.g. weekday=THU, ordinal=2 -> "second Thursday")."""
+    (e.g. weekday=THU, ordinal=2 -> "second Thursday").
+
+    ``ordinal`` is 1..4 (loader-enforced): every month has at least four of
+    each weekday, a fifth is not guaranteed."""
 
     weekday: int
     ordinal: int
@@ -275,19 +280,60 @@ def _parse_sessions(raw: Any, path: Path) -> Mapping[str, tuple[SessionWindow, .
     return sessions
 
 
+def _check_expiry_rules_have_regular_windows(
+    sessions: Mapping[str, tuple[SessionWindow, ...]],
+    futures_expiry: Mapping[str, ExpiryRule],
+    path: Path,
+) -> None:
+    """Refuse a ``futures_expiry`` rule for an instrument class that has no
+    regular (non-crossing) session window.
+
+    :func:`tos_runtime.calendar.phase.maturity_at` flips ``expired`` at the
+    end of that class's last non-crossing window on the expiry day, and
+    reports the NEXT rule month's expiry at every other instant. A class with
+    no non-crossing window therefore has no instant at which the flip can be
+    judged, so its rule would never produce ``expired=True`` — the
+    ``expired_phase`` token it declares would be unreachable, silently. A
+    declared rule that can never fire is a named-TBD-shaped gap, so it is
+    refused here rather than honoured as an always-open calendar.
+
+    (A class absent from ``sessions`` entirely is the same case: no windows at
+    all means no non-crossing window.)
+    """
+    for instrument_class in sorted(futures_expiry):
+        windows = sessions.get(instrument_class, ())
+        if not any(not window.crosses_midnight for window in windows):
+            raise CalendarConfigError(
+                f"{path}: futures_expiry[{instrument_class!r}] declares an "
+                "expiry rule but that instrument class has no regular "
+                "(crosses_midnight=false) session window — refusing: the "
+                "rule could never report the class expired, so its "
+                "'expired_phase' token would be silently unreachable"
+            )
+
+
 def _parse_expiry_rule(raw: Any, ctx: str, path: Path) -> ExpiryRule:
     if not isinstance(raw, dict):
         raise CalendarConfigError(f"{path}: {ctx} must be a mapping")
     weekday_token = raw.get("weekday")
     weekday = _parse_day_token(weekday_token, ctx, path)
     ordinal = raw.get("ordinal")
+    # 1..4, not 1..5: every month has at least four of each weekday but not
+    # always a fifth, so `ordinal: 5` produces a rule that resolves in some
+    # months and raises IndexError in others (review-799 LOW-1 — reachable
+    # since maturity_at rolls into the NEXT rule month, which may be a month
+    # with only four). KRX's own rule is the second weekday (ordinal 2), and
+    # no approved source in this repo asks for a fifth-weekday expiry;
+    # widening this back is a config-design decision, not a loader tweak.
     if (
         not isinstance(ordinal, int)
         or isinstance(ordinal, bool)
-        or not (1 <= ordinal <= 5)
+        or not (1 <= ordinal <= 4)
     ):
         raise CalendarConfigError(
-            f"{path}: {ctx} 'ordinal' must be an int in 1..5, got {ordinal!r}"
+            f"{path}: {ctx} 'ordinal' must be an int in 1..4, got {ordinal!r} "
+            "— refusing: a month is not guaranteed a fifth occurrence of a "
+            "weekday, so an ordinal of 5 cannot be resolved in every rule month"
         )
     raw_months = raw.get("months")
     if not isinstance(raw_months, list) or not raw_months:
@@ -408,6 +454,7 @@ def load_calendar_config(path: Path) -> CalendarConfig:
             f"{path}: calendar config missing required key 'futures_expiry'"
         )
     futures_expiry = _parse_futures_expiry(raw["futures_expiry"], path)
+    _check_expiry_rules_have_regular_windows(sessions, futures_expiry, path)
 
     return CalendarConfig(
         calendar_version=calendar_version,

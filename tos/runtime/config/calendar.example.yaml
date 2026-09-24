@@ -58,7 +58,12 @@ closed_phase: null
 
 # instrument_class -> futures expiry rule:
 #   - weekday: a day token (e.g. "THU")
-#   - ordinal: 1..5 (e.g. 2 = "the second <weekday> of the rule month")
+#   - ordinal: 1..4 (e.g. 2 = "the second <weekday> of the rule month");
+#     5 is refused — a month is not guaranteed a fifth occurrence of a weekday
+#   - the instrument class MUST also have at least one regular
+#     (crosses_midnight: false) session window above, or the rule is refused:
+#     maturity_at flips `expired` at that window's end on the expiry day, so a
+#     class without one could never report expired at all
 #   - months: explicit non-empty list of 1..12 (the months this rule applies to)
 #   - expired_phase: the opaque phase token session_phase_at's caller (a
 #     later lane's effective_phase_at) reports once maturity_at judges the

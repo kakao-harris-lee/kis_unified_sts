@@ -6,6 +6,7 @@ no ambient env.
 
 from __future__ import annotations
 
+import calendar
 import datetime
 
 import pytest
@@ -297,6 +298,184 @@ def test_nightly_crossing_window_every_weekday_does_not_self_overlap(
     into the following day's early morning — this must load without an
     overlap refusal against its own morning segment."""
     assert any(w.phase == "NIGHT" for w in fixture_calendar.sessions[FUTURES_CLASS])
+
+
+# --- ordinal is 1..4 ---------------------------------------------------------
+
+
+def _calendar_with_ordinal(ordinal: object) -> str:
+    """A minimal calendar whose futures class has a regular window (so only
+    the ordinal is under test) and one expiry rule carrying ``ordinal``."""
+    return (
+        'calendar_version: "ordinal-v1"\n'
+        'tz_id: "Asia/Seoul"\n'
+        'closed_phase: "CLOSED"\n'
+        "holidays: []\n"
+        "sessions:\n"
+        "  futures:\n"
+        '    - phase: "CONTINUOUS"\n'
+        '      start: "08:45"\n'
+        '      end: "15:45"\n'
+        "      days: [MON, TUE, WED, THU, FRI]\n"
+        "      crosses_midnight: false\n"
+        "futures_expiry:\n"
+        "  futures:\n"
+        '    weekday: "THU"\n'
+        f"    ordinal: {ordinal}\n"
+        "    months: [1, 2]\n"
+        '    expired_phase: "EXPIRED"\n'
+    )
+
+
+@pytest.mark.parametrize("ordinal", [1, 2, 3, 4])
+def test_ordinal_one_through_four_is_accepted(tmp_path, ordinal: int) -> None:
+    """Every month has at least four of each weekday, so 1..4 always resolves."""
+    path = write_fixture_calendar(tmp_path, text=_calendar_with_ordinal(ordinal))
+    cfg = load_calendar_config(path)
+    assert cfg.futures_expiry["futures"].ordinal == ordinal
+
+
+@pytest.mark.parametrize("ordinal", [0, 5, 6, -1])
+def test_ordinal_outside_one_through_four_refuses(tmp_path, ordinal: int) -> None:
+    """``ordinal: 5`` used to load and then raise ``IndexError`` deep inside
+    ``maturity_at`` whenever the rule resolved into a month with only four of
+    that weekday — reachable because the roll moves into the NEXT rule month
+    (review-799 LOW-1). A config that cannot be evaluated is refused at load,
+    not at judgement time."""
+    path = write_fixture_calendar(tmp_path, text=_calendar_with_ordinal(ordinal))
+    with pytest.raises(CalendarConfigError, match="ordinal"):
+        load_calendar_config(path)
+
+
+def test_every_month_has_four_of_each_weekday_but_not_always_five() -> None:
+    """The fact the 1..4 bound rests on, computed rather than asserted from a
+    comment: across 2026-2030 every (month, weekday) has >= 4 occurrences, and
+    at least one has exactly 4 (so 5 is genuinely not guaranteed)."""
+    counts = []
+    for year in range(2026, 2031):
+        for month in range(1, 13):
+            for weekday in range(7):
+                days = [
+                    day
+                    for day in calendar.Calendar().itermonthdates(year, month)
+                    if day.month == month and day.weekday() == weekday
+                ]
+                counts.append(len(days))
+    assert min(counts) == 4
+    assert max(counts) == 5
+
+
+# --- futures_expiry needs a regular window to ever fire ----------------------
+
+_NIGHT_ONLY_FUTURES = (
+    'calendar_version: "expiry-reach-v1"\n'
+    'tz_id: "Asia/Seoul"\n'
+    'closed_phase: "CLOSED"\n'
+    "holidays: []\n"
+    "sessions:\n"
+    "  futures:\n"
+    '    - phase: "NIGHT"\n'
+    '      start: "18:00"\n'
+    '      end: "05:00"\n'
+    "      days: [MON, TUE, WED, THU, FRI]\n"
+    "      crosses_midnight: true\n"
+    "futures_expiry:\n"
+    "  futures:\n"
+    '    weekday: "THU"\n'
+    "    ordinal: 2\n"
+    "    months: [3, 6, 9, 12]\n"
+    '    expired_phase: "EXPIRED"\n'
+)
+
+_NO_WINDOWS_FUTURES = (
+    'calendar_version: "expiry-reach-v1"\n'
+    'tz_id: "Asia/Seoul"\n'
+    'closed_phase: "CLOSED"\n'
+    "holidays: []\n"
+    "sessions:\n"
+    "  futures: []\n"
+    "futures_expiry:\n"
+    "  futures:\n"
+    '    weekday: "THU"\n'
+    "    ordinal: 2\n"
+    "    months: [3, 6, 9, 12]\n"
+    '    expired_phase: "EXPIRED"\n'
+)
+
+_CLASS_ABSENT_FROM_SESSIONS = (
+    'calendar_version: "expiry-reach-v1"\n'
+    'tz_id: "Asia/Seoul"\n'
+    'closed_phase: "CLOSED"\n'
+    "holidays: []\n"
+    "sessions: {}\n"
+    "futures_expiry:\n"
+    "  futures:\n"
+    '    weekday: "THU"\n'
+    "    ordinal: 2\n"
+    "    months: [3, 6, 9, 12]\n"
+    '    expired_phase: "EXPIRED"\n'
+)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(_NIGHT_ONLY_FUTURES, id="night-only"),
+        pytest.param(_NO_WINDOWS_FUTURES, id="no-windows"),
+        pytest.param(_CLASS_ABSENT_FROM_SESSIONS, id="class-absent-from-sessions"),
+    ],
+)
+def test_expiry_rule_without_regular_window_refuses(tmp_path, text: str) -> None:
+    """``maturity_at`` flips ``expired`` at the end of the class's last
+    regular (non-crossing) window on the expiry day. A class with no such
+    window has no instant at which that flip can be judged, so the rule could
+    never report the class expired and its ``expired_phase`` token would be
+    silently unreachable. Refuse at load instead (review-799 MEDIUM-1).
+
+    All three shapes are the same case: a night-only window list, an
+    explicitly empty one, and the class missing from ``sessions`` entirely.
+    """
+    path = write_fixture_calendar(tmp_path, text=text)
+    with pytest.raises(CalendarConfigError, match="no regular"):
+        load_calendar_config(path)
+
+
+def test_expiry_rule_with_regular_window_alongside_night_window_is_accepted(
+    tmp_path,
+) -> None:
+    """The refusal above must be about the ABSENCE of a regular window, not
+    about the presence of a crossing one — the fixture calendar's own futures
+    class carries both, and every deployed shape is expected to."""
+    text = _NIGHT_ONLY_FUTURES.replace(
+        "  futures:\n" '    - phase: "NIGHT"\n',
+        "  futures:\n"
+        '    - phase: "CONTINUOUS"\n'
+        '      start: "08:45"\n'
+        '      end: "15:45"\n'
+        "      days: [MON, TUE, WED, THU, FRI]\n"
+        "      crosses_midnight: false\n"
+        '    - phase: "NIGHT"\n',
+    )
+    cfg = load_calendar_config(write_fixture_calendar(tmp_path, text=text))
+    assert "futures" in cfg.futures_expiry
+    assert any(not w.crosses_midnight for w in cfg.sessions["futures"])
+
+
+def test_no_expiry_rule_means_no_regular_window_requirement(tmp_path) -> None:
+    """A class with only a night window and NO expiry rule stays legal — the
+    check is scoped to classes that actually declare a rule."""
+    text = _NIGHT_ONLY_FUTURES.replace(
+        "futures_expiry:\n"
+        "  futures:\n"
+        '    weekday: "THU"\n'
+        "    ordinal: 2\n"
+        "    months: [3, 6, 9, 12]\n"
+        '    expired_phase: "EXPIRED"\n',
+        "futures_expiry: {}\n",
+    )
+    cfg = load_calendar_config(write_fixture_calendar(tmp_path, text=text))
+    assert cfg.futures_expiry == {}
+    assert all(w.crosses_midnight for w in cfg.sessions["futures"])
 
 
 def test_digest_stable_for_identical_content(tmp_path) -> None:
