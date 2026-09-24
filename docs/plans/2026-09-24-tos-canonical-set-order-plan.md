@@ -190,19 +190,31 @@
 
 | 측정 | main `153c8fd0` | 이 브랜치 |
 |---|---|---|
-| 집합 **없는** `FrozenModel` / 같은 모양 순수 `BaseModel` (python) | — | **1.07x** |
-| 집합 **없는** `FrozenModel` / 같은 모양 순수 `BaseModel` (json) | — | **0.92x** |
-| 집합 **있는** `FrozenModel` / 같은 모양 순수 `BaseModel` (python·json) | — | 2.15x · 2.95x |
+| 집합 **없는** `FrozenModel` / 같은 모양 순수 `BaseModel` (python·json) | — | 아래 표 |
+| 집합 **있는** `FrozenModel` / 같은 모양 순수 `BaseModel` (python·json) | — | 아래 표 |
 | `EngineEvent.model_dump()` | 65.6 | 89.5 |
 | `EngineEvent.model_dump(mode="json")` | 61.1 | 102.2 |
 | `EngineEvent.model_dump_json()` | 49.6 | 97.7 |
 | `VenueConstraintPolicy.covered_content()` | 7.3 | 33.2 |
 | `VenueConstraintPolicy` 검증+digest 전체 | 99.5 | 130.7 |
 
-종료조건 충족: **집합 없는 클래스의 비용은 도입 전과 같다**(비율 0.92~1.07, 측정 잡음
-범위). 비용은 집합을 가진 클래스에만 붙는다. `EngineEvent` 의 파이썬 모드가 느려진 것은
-그 이벤트가 집합을 가진 `CorporateActionPayload` 를 중첩하기 때문이고, 그 중첩 모델이
-훅을 단 결과다(훅은 파이썬 모드에서 즉시 반환하지만 콜백 자체는 탄다).
+**비율 재측정 (review-802 M-1).** 처음 적은 0.92~1.07 은 **단발 관측**이었고, 실제
+분산을 과소 진술한 것이 맞다. 같은 호스트에서 60회 반복한 실측:
+
+| 측정기 | control(순수 대 동일한 순수) | 집합 **없는** `FrozenModel` | 집합 **있는** `FrozenModel` |
+|---|---|---|---|
+| 기존 (각 변을 끝까지 재고 최소값끼리 나눔, best-of-5 × 2000) · python | 0.683–1.625 | 0.511–1.903 | — |
+| 〃 · json | 0.415–2.620 | 0.251–2.854 | — |
+| 현재 (쌍측정 · 라운드별 비율의 median, 21 × 500) · python | 0.925–1.073 | 0.895–1.097 | 1.683–2.030 |
+| 〃 · json | 0.910–1.070 | 0.923–1.061 | 2.403–2.683 |
+
+**control 은 훅이 양쪽에 없어 참값이 1.00 인데도 기존 측정기에서는 0.42~2.62 로 퍼졌고
+1.6 을 60회 중 1~2회 넘었다** — 즉 옛 경계는 훅이 아니라 스케줄러를 재고 있었다. 새
+측정기에서 세 열이 서로 겹치지 않으므로, 종료조건 「집합 없는 클래스의 비용은 도입 전과
+같다」는 이제 실제로 측정된다. 비용은 집합을 가진 클래스에만 붙는다. `EngineEvent` 의
+파이썬 모드가 느려진 것은 그 이벤트가 집합을 가진 `CorporateActionPayload` 를 중첩하기
+때문이고, 그 중첩 모델이 훅을 단 결과다(훅은 파이썬 모드에서 즉시 반환하지만 콜백 자체는
+탄다).
 
 ### 7.4 삭제한 정렬 수단과 동결 인용
 
@@ -226,6 +238,11 @@
 | 별칭 금지 | 〃 + 폐쇄 테스트 | 집합 필드에 `alias` 추가 → **RED** |
 | 트리 폐쇄(집합 보유 pydantic 모델 전부 `FrozenModel` 하위 · 하한 59/41/19 · 전 모듈 명시 import) | `tos/runtime/tests/canonical/test_canonical_json_closure.py` | 집합 가진 `BaseModel` 추가 → **RED** |
 | 비교 불가 원소 거부(`frozenset[str | None]`) · 파이썬 모드 불변(liveauth 2종은 명시 기대 변화) · 줄 고정 무회귀 | `tos/tests/canonical/...` + 기존 L2 가드 | — |
+| **집합 안의 집합 금지**(review-802 M-2) | `tos/runtime/tests/canonical/test_canonical_json_closure.py` | `frozenset[frozenset[str]]` 필드 추가 → **RED** (`_MutationSetInSet: ['outer']`) |
+| **stdlib dataclass / NamedTuple / TypedDict 금지**(〃) | 〃 | 세 가지 각각 필드 추가 → **RED 3/3** |
+| **조건부 부착 구조 단정 + 잡음 바닥 상대 비용 경계**(review-802 M-1) | `tos/tests/canonical/test_canonical_json_set_order.py` | 무조건 부착 → 구조 단정 **RED**, 구조 단정을 무력화해도 비용 단정 **RED**(1.69x·2.04x 대 1.35x 경계, 잡음 바닥 1.00x) |
+| **명시 import 목록이 스스로 도달하는지**(review-802 L-3) | `tos/runtime/tests/canonical/test_canonical_json_closure.py` | 목록 밖 새 서브패키지를 conftest 에서만 import → 첫 단정 **RED**(`sys.modules` 단정은 green — 강도 차이를 그대로 보여 줌) |
+| **훅 스키마 노드의 클래스별 사본 · 유니온 재진입 멱등**(review-802 L-5) | `tos/tests/canonical/test_canonical_json_set_order.py` | 두 클래스의 `serialization` 노드가 서로 다른 객체이면서 같은 함수를 들고, 유니온 홀더 정의가 `TypeError` 없이 통과 |
 
 기준선: main `153c8fd0` 에서 같은 워커를 시드 6개로 돌리면 digest 맵이 **6종 전부
 상이**. 이 브랜치에서는 **1종**.
@@ -280,3 +297,25 @@ sqlite_version: 3.45.1
 editable 설치돼 있지 않고 venv 는 읽기 전용이다. CI 의 `tos-firewall` 잡이 설치 후
 실행한다. 레이어 ①(AST 게이트)은 통과했고, 이 PR 은 import 를 한 줄만 늘린다
 (`tos.canonical._base` → `tos.canonical._canonical_json`, 둘 다 커널 내부).
+
+### 7.9 기존 영속 상태는 이월하지 않는다
+
+이 커밋 **이전**에 쓰인 durable 상태는 이월 대상이 아니다 — paper DB 는 빈 상태에서
+시작한다. 구체적으로 `tos_runtime/engine/inbox.py:400,481` 이 durable inbox 행을
+`EngineEvent.model_validate(...)` 로 재수화하는데, 이전 프로세스가 쓴 행을 지금 다시
+접으면 다른 `event_identity()` 가 나온다. **회귀는 아니다**: 그 id 는 이 PR 이전에도
+프로세스마다 달랐다(그게 이 계획이 닫는 결함이다). 다만 첫 부팅 아크가 곧 상태를 쓰기
+시작하므로, 「이 커밋 전 상태 + 이 커밋 후 코드」 조합은 만들지 않는다는 것을 여기에
+적어 둔다. (review-802 LOW-7)
+
+### 7.10 review-802 조치
+
+| 지적 | 조치 |
+|---|---|
+| M-1 비용 비율 CI flaky (`ratio < 1.6`, 로컬 25회 중 1회 실패, 최대 1.747) | 게이트를 **구조 단정**으로(집합 없는 클래스의 `__pydantic_core_schema__["serialization"] is None`), 비용은 **쌍측정 + 라운드별 비율의 median**(21×500) 으로 바꾸고 **잡음 바닥 상대 경계**(`1.35 × max(1.0, control)`) 로 재진술. control=순수 `BaseModel` 대 동일한 두 번째 순수 `BaseModel`. 60회 반복 실패 0 |
+| M-2 집합 안의 집합이 문서에도 핀에도 없음 | 모듈 docstring 의 silent-miss 목록에 **실측 2시드 출력과 함께** 추가 · 폐쇄 테스트에 금지 핀 `test_no_set_is_nested_inside_a_set` · 같은 자리에 `test_no_model_field_tree_holds_a_stdlib_aggregate`(dataclass/NamedTuple/TypedDict). 4종 전부 뮤테이션 RED 확인 |
+| L-3 `test_every_module_is_imported` 가 `sys.modules` 를 봄 | **명시 목록이 스스로 도달하는 집합**(각 모듈의 속성 그래프를 따라감)과 먼저 비교하고 `sys.modules` 는 두 번째 단정으로. 두 배포 루트를 시드로 넣으면 가드가 비어 버린다는 것을 뮤테이션으로 확인해 루트는 제외. 그 과정에서 `tos_runtime.evidence.backup`(동명 함수 re-export 에 가려진 모듈)을 실제로 찾아냄 |
+| L-4 렌더 증인이 원래 안 깨지던 모델을 고름 | `venue_constraint_policy.yaml` 추가(파라미터화). 소스는 named-TBD 라 **렌더 산출물**에 대해 돌린다 |
+| L-5 모듈 레벨 가변 dict 공유 | `dict(_SORTED_SET_SERIALIZATION)` per-class 사본 + 공유 금지 핀 + 유니온 재진입 멱등 핀 |
+| L-6 `_with_sorted_sets` 분기 지역변수 명명 역전 | `original_child`/`dumped_child` 로 통일 |
+| L-7 기존 영속 상태 한 줄 | §7.9 |
