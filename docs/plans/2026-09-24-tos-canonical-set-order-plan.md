@@ -158,4 +158,125 @@
 
 ## 7. 착지 기록
 
-(비어 있음)
+**착지 2026-09-24 · 브랜치 `fix/tos-canonical-set-order` · 기준 main `153c8fd0`(#797 포함).**
+
+### 7.1 무엇이 들어갔나
+
+| 커밋 | 내용 |
+|---|---|
+| `fix(tos)` | 새 모듈 `tos/src/tos/canonical/_canonical_json.py` (`CanonicalJsonMixin`) · `_base.py` 는 import 한 줄 추가 + 모듈 docstring 한 줄 삭제 + `:73` 한 줄 |
+| `refactor(tos)` | 모델별 정렬 8종 삭제(`cur` 2 · `wdr` 1+헬퍼 · `sir` 1+헬퍼 · `rlp` 2+헬퍼 · `liveauth` field_serializer) · 산문 인용 5곳 재유도 |
+| `test(tos)` | `tos/tests/canonical/{_set_order_builders,_set_order_worker,test_canonical_json_set_order}.py` · `tos/runtime/tests/canonical/test_canonical_json_closure.py` · `tests/tools/test_tos_canonical_set_order.py` |
+| `fix(scripts)` | #797 결함 핀 3종 + `pinned_hash_seed` 픽스처 + `_subprocess_env()` 의 `PYTHONHASHSEED` 통과 삭제 |
+| `docs` | 이 절 · `docs/plans/INDEX.md` 1행 · `docs/runbooks/tos-paper-boot.md` §5 ① 해소 |
+| `chore(tos)` | `expected_code_digest` 재도출(마지막 커밋, §2.5) |
+
+### 7.2 조건부 부착 — 어떻게 구현했나
+
+`@model_serializer(mode="wrap")` 데코레이터는 클래스 정의 시점에 무조건 붙으므로 쓰지
+않았다. 대신 믹스인이 **`__get_pydantic_core_schema__`** 를 정의해, `handler(source)` 가
+만든 코어 스키마를 훑어 **그 클래스 자신의 필드 스키마에 `set`/`frozenset` 노드가 있을
+때만**(중첩 `model`/`dataclass`/`definition-ref` 는 건너뛴다 — 중첩 모델은 각자의 훅을
+탄다) `schema["serialization"]` 에 래핑 직렬화기를 얹는다. 집합 필드 이름은 그때
+`__canonical_set_fields__` 로 미리 계산한다. 집합이 없는 클래스는 스키마가 손대지지
+않으므로 pydantic-core 네이티브 직렬화기를 그대로 쓴다.
+
+부수 효과 하나: 같은 클래스가 유니온 멤버로 두 번 스키마 생성에 들어오면 pydantic 이
+**캐시된 스키마**를 돌려주므로, 훅은 자기 자신의 앞선 부착을 알아보고 멱등하게 넘어간다
+(`_is_this_hook`). 다른 `@model_serializer` 가 이미 있는 집합 보유 클래스는 `TypeError`
+로 **요란하게** 거부한다 — 조용히 덮어쓰면 정렬이나 그 직렬화기 중 하나가 사라진다.
+
+### 7.3 비용 실측 (µs/op · best-of-5 × 2000회 · 같은 호스트)
+
+| 측정 | main `153c8fd0` | 이 브랜치 |
+|---|---|---|
+| 집합 **없는** `FrozenModel` / 같은 모양 순수 `BaseModel` (python) | — | **1.07x** |
+| 집합 **없는** `FrozenModel` / 같은 모양 순수 `BaseModel` (json) | — | **0.92x** |
+| 집합 **있는** `FrozenModel` / 같은 모양 순수 `BaseModel` (python·json) | — | 2.15x · 2.95x |
+| `EngineEvent.model_dump()` | 65.6 | 89.5 |
+| `EngineEvent.model_dump(mode="json")` | 61.1 | 102.2 |
+| `EngineEvent.model_dump_json()` | 49.6 | 97.7 |
+| `VenueConstraintPolicy.covered_content()` | 7.3 | 33.2 |
+| `VenueConstraintPolicy` 검증+digest 전체 | 99.5 | 130.7 |
+
+종료조건 충족: **집합 없는 클래스의 비용은 도입 전과 같다**(비율 0.92~1.07, 측정 잡음
+범위). 비용은 집합을 가진 클래스에만 붙는다. `EngineEvent` 의 파이썬 모드가 느려진 것은
+그 이벤트가 집합을 가진 `CorporateActionPayload` 를 중첩하기 때문이고, 그 중첩 모델이
+훅을 단 결과다(훅은 파이썬 모드에서 즉시 반환하지만 콜백 자체는 탄다).
+
+### 7.4 삭제한 정렬 수단과 동결 인용
+
+8종 전부 삭제했다 — 계획 §2.3 의 「동결 파일 인용이 밀리면 남긴다」 조건은 **발동하지
+않았다**. `tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv` 가 이 파일들을 인용하는
+줄은 `cur/records.py:15`·`rlp/records.py:14`·`wdr/records.py:15`(모듈 docstring)뿐이고
+삭제 시작 줄(`cur:120`·`rlp:102`·`wdr:107`)보다 위라 밀리지 않는다. `sir/records.py`·
+`liveauth/state.py` 를 인용하는 동결 파일은 없다.
+
+`tos/` 안의 산문 인용 5곳(`cur`·`wdr`·`sir`·`rlp`·`stm` 모듈 docstring 의
+「`covered_content` 가 정렬한다」)은 내용으로 재유도했다 — 이제 공용 훅을 가리킨다.
+
+### 7.5 핀과 뮤테이션
+
+| 핀 | 어디 | 뮤테이션 → 결과 |
+|---|---|---|
+| 프로세스 간 결정성(19종 + `event_identity` + 런타임 `driver.py` 형태), 시드 6개 서브프로세스 | `tests/tools/test_tos_canonical_set_order.py` | 훅 제거 → **RED, 21키 전부** |
+| 음성 대조군(모델을 거치지 않은 raw frozenset 순서)이 시드마다 **달라야** 한다 | 〃 | (시드가 안 닿으면 나머지가 공허해지는 것을 막는 가드) |
+| 비트 호환 골든 8종(길이 섞인 원소 + `ObligationResult` 계열 str-Enum) | `tos/tests/canonical/test_canonical_json_set_order.py` | 정렬 키를 길이 우선 토큰으로 → **RED, 8종 전부** |
+| 조건부 부착 · 비용 비율 | 〃 | 무조건 부착 → **RED**(집합 없는 모델 1.96x · 부착 핀도 RED) |
+| 별칭 금지 | 〃 + 폐쇄 테스트 | 집합 필드에 `alias` 추가 → **RED** |
+| 트리 폐쇄(집합 보유 pydantic 모델 전부 `FrozenModel` 하위 · 하한 59/41/19 · 전 모듈 명시 import) | `tos/runtime/tests/canonical/test_canonical_json_closure.py` | 집합 가진 `BaseModel` 추가 → **RED** |
+| 비교 불가 원소 거부(`frozenset[str | None]`) · 파이썬 모드 불변(liveauth 2종은 명시 기대 변화) · 줄 고정 무회귀 | `tos/tests/canonical/...` + 기존 L2 가드 | — |
+
+기준선: main `153c8fd0` 에서 같은 워커를 시드 6개로 돌리면 digest 맵이 **6종 전부
+상이**. 이 브랜치에서는 **1종**.
+
+### 7.6 종료조건 — 시드 고정 없는 런북 완주 (이 호스트, 2026-09-24)
+
+`PYTHONHASHSEED` 미설정, 산출물은 저장소 밖 임시 디렉터리, 실 `.env.mock` 사용.
+
+```text
+LONG  render → activation: ACTIVATED 5 (re-derived in a fresh process)   # R0 통과
+LONG  --check → matches config/tos_runtime/paper
+LONG  run --environment-label paper → (SIGTERM) run: stopped (signal received).  exit=0
+SHORT render → activation: ACTIVATED 5 (re-derived in a fresh process)
+SHORT run → (SIGTERM) run: stopped (signal received).  exit=0
+세션 시계 주입 2026-09-28T10:00:00+09:00 (unix_ms=1790557200000):
+  phase='CONTINUOUS' is_open=True trading_calendar_version='krx-2026.09.1'
+  TICK OUTCOME: TICKED   (LONG·SHORT 양쪽 · marketfeed.sqlite3 snapshots=1)
+```
+
+갱신 전 `expected_code_digest` 로 부팅하면 Stage A 가 `ReleaseAdmissionRefused` 로
+거부한다 — 이 재측정에서 실제로 한 번 겪었고(가드가 산다는 증거), 갱신 후 통과했다.
+
+### 7.7 `expected_code_digest` 재도출 (§2.5)
+
+```text
+$ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
+    -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
+expected_code_digest: 1600de4c387817cd0b6a54590139d8279e22d23f1d242fee69520debaa9cb110
+expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
+python_version: 3.12.12
+sqlite_version: 3.45.1
+```
+
+이전 값 `b9eda9bd…d33571`(main `153c8fd0`). `config/tos_runtime/paper/release.yaml`
+(값 + 헤더 주석)과 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`
+를 같은 커밋에서 갱신했다. `expected_dependency_set_digest` 는 변하지 않았다(같은 루트
+`.venv`).
+
+### 7.8 검증
+
+| 검사 | 결과 |
+|---|---|
+| `pytest tos/tests` | PASS (9500+ · exit 0) |
+| `pytest tos/runtime/tests` | PASS (exit 0) |
+| `pytest tests/unit/scripts` (병렬·serial 2패스) | PASS — **`pinned_hash_seed` 없이** |
+| `pytest tests/tools/test_tos_*.py tests/tos_l3` | PASS |
+| `black --check` (tos-firewall 스텝과 동일 범위) · `ruff check` | PASS |
+| mypy 4종(`tos/src`·`tos/runtime/src`·`tos/tests`·`tos/runtime/tests`, CI 플래그) | PASS |
+| `tools/tos_firewall_check.py` · `tos_contract_check[--self-test]` · `tos_completion_status --check` · `tos_spec_status --check` · `tos_size_budget --check` | PASS |
+
+`lint-imports`(레이어 ②)는 이 워크트리에서 실행 불가 — `tos_runtime` 이 공용 venv 에
+editable 설치돼 있지 않고 venv 는 읽기 전용이다. CI 의 `tos-firewall` 잡이 설치 후
+실행한다. 레이어 ①(AST 게이트)은 통과했고, 이 PR 은 import 를 한 줄만 늘린다
+(`tos.canonical._base` → `tos.canonical._canonical_json`, 둘 다 커널 내부).

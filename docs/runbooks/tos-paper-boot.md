@@ -5,17 +5,20 @@
   (운영자 결정 1·3 · 운영자 선택 (가), 2026-09-23) · 상위 계획
   `docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` §7.8.
 - 실측 시점: 2026-09-23 (1차) · 2026-09-24 재측정/정정(review-797 조치) ·
-  **2026-09-24 main `5d618f1c` 병합 후 재측정**(#799 캘린더 만기 롤 반영),
-  브랜치 `feat/tos-paper-render-and-first-boot`.
+  2026-09-24 main `5d618f1c` 병합 후 재측정(#799 캘린더 만기 롤 반영),
+  브랜치 `feat/tos-paper-render-and-first-boot` · **2026-09-24 시드 고정 없이 전 구간
+  재측정**(정본 집합 순서 복원, 브랜치 `fix/tos-canonical-set-order`).
 
-> ## ⛔ 이 런북은 아직 **끝까지 가지 못한다**
+> ## ✅ 이 런북은 이제 끝까지 간다 (2026-09-24, 시드 고정 없이 실측)
 >
-> §5 가 실측 상태를 이름으로 적는다. **②③은 운영자 결정·승인으로 2026-09-23 해소됐다.**
-> 남은 것은 **①(정본 digest 가 프로세스마다 다르다)** — 이 절차 자체를 무효화하는 커널
-> 결함이고, 그래서 §2 의 렌더는 **정상적으로 거부된다.** 그 거부를 우회하는 방법을 이
-> 런북은 제공하지 않는다 — 그것이 정직한 상태다. ①이 닫히면 `run` 은 부팅한다(실측).
-> 그 뒤 **틱은 개장일 장중이면 소비된다** — 4차까지 막고 있던 만기 공백은 #799 로
-> 해소됐고(§5 ④), 남은 것은 휴장일·장 밖이라는 평범한 달력 사실뿐이다.
+> §5 가 실측 상태를 이름으로 적는다. **①②③ 전부 닫혔다.** ①(정본 digest 가 프로세스마다
+> 다르다)은 커널 수정으로 해소됐다 —
+> `docs/plans/2026-09-24-tos-canonical-set-order-plan.md`, 브랜치
+> `fix/tos-canonical-set-order`. **`PYTHONHASHSEED` 를 맞추지 않은 채** §2 의 렌더가
+> 통과하고(`activation: ACTIVATED 5 (re-derived in a fresh process)`), §3 의 `run` 이
+> 부팅해 SIGTERM 에 종료코드 0 으로 멎는다 — LONG·SHORT 양쪽.
+> 남은 것은 **틱이 개장일 장중에만 소비된다**는 평범한 달력 사실뿐이다(§5 ④).
+> 만기 공백은 #799 로 해소됐다.
 
 ## 0. 이 배포가 무엇이고 무엇이 아닌가
 
@@ -149,13 +152,13 @@ sqlite3 "$DATA/evidence.sqlite3"   'SELECT COUNT(*) FROM entries;'
 
 `snapshots` 가 0 이면 틱이 소비되지 않은 것이다. 이유는 §5 ④ 를 본다.
 
-## 5. 실측 차단 — 2026-09-23 현재 (이름으로)
+## 5. 실측 차단의 이력 — 2026-09-24 현재 (이름으로)
 
-### ① ⛔ `VenueConstraintPolicy.canonical_digest` 가 프로세스마다 다르다 (절차 자체의 결함)
+### ① ✅ 정본 digest 가 프로세스마다 달랐다 — **해소됨 (2026-09-24)**
 
-렌더는 `print-policy-digests` 출력을 `safety_activation.yaml::members` 에 전사한 뒤,
-**새 프로세스에서** 정책을 다시 로드해 그 digest 로 활성화를 재확인한다(부팅이 하는 일과
-동형). 그 재확인이 거부한다:
+1차 판에서는 이것이 절차 자체의 결함이었다. 렌더는 `print-policy-digests` 출력을
+`safety_activation.yaml::members` 에 전사한 뒤 **새 프로세스에서** 정책을 다시 로드해 그
+digest 로 활성화를 재확인하는데, 그 재확인이 거부했다:
 
 ```text
 render_paper_config: refused — activation read-back refused — the rendered members block
@@ -166,45 +169,53 @@ member_id='vcp-paper-krx-index-futures' generation=1 digest='<A>':
 members[0]: digest '<B>' != '<A>'
 ```
 
-원인(실측):
+원인은 한 모델이 아니라 **부류**였다 — `covered_content()` 가 `model_dump(mode="json")`
+이라 `frozenset` 이 **집합 순회 순서 그대로의 리스트**가 되고, 정본 인코더는 시퀀스를
+순서 유의미로 해시한다. 문자열 집합의 순회 순서는 프로세스별 해시 시드를 따르므로,
+covered content 에 집합을 가진 정본 모델 **19종**의 digest 가 프로세스마다 달랐다
+(그중 8종만 모델별 `sorted()` 로 막고 있었다).
 
-| 지점 | 사실 |
-|---|---|
-| `tos/src/tos/venue/records.py:406-416` | `VenueConstraintPolicy._COVERED_FIELDS` 에 `required_constraint_classes`·`shape_constraints` 포함 |
-| `tos/src/tos/venue/records.py:425` · `:165-168` | 그 둘이 `frozenset[ConstraintClass]` · `allowed_order_types`/`allowed_tifs`/`allowed_sides`/`allowed_position_effects` (전부 frozenset). (`:424` 는 그 필드가 아니라 바로 위 `#:` 주석 줄이다 — review-797 LOW-2 정정) |
-| `tos/src/tos/canonical/_base.py:187` | `covered_content()` = `model_dump(mode="json", …)` → frozenset 이 **집합 순회 순서 그대로의 리스트**가 된다 |
-| `tos/src/tos/canonical/canonicalization.py:148-149,174-176` | `_encode` 는 시퀀스를 **순서 유의미**로 취급한다("sequence order is preserved (vectors are order-significant)") |
-| `tos/src/tos/venue/vocabulary.py:169` | `ConstraintClass` 는 `StrEnum` → 순회 순서가 프로세스별 문자열 해시 시드를 따른다 |
+**처분(2026-09-24): `FrozenModel` 에 JSON 모드 직렬화 훅 하나**
+(`tos/src/tos/canonical/_canonical_json.py`;
+`docs/plans/2026-09-24-tos-canonical-set-order-plan.md`). 모든 집합이 `sorted()` 순으로
+나가므로 `covered_content()`·`event_identity()`·런타임 `compute_digest(model_dump(...))`
+가 호출 형태와 무관하게 닫힌다. 이미 정렬하던 8종의 digest 는 **비트 단위로 동일**하고,
+모델별 정렬 수단 8개는 삭제됐다.
 
-즉 **「`print-policy-digests` 를 돌려 digest 를 `members` 에 옮겨 적는다」는 문서화된 운영자
-절차가 성립하지 않는다.** 기존 테스트가 전부 **한 프로세스 안에서** 계산·검증해서
-드러나지 않았다(`tests/compose/test_deploy_policies.py::_install_real_policies` 주석:
-"the `print-policy-digests` step, done **in-process**").
+실측(2026-09-24, 이 호스트, **`PYTHONHASHSEED` 미설정**, 브랜치
+`fix/tos-canonical-set-order`, 산출물은 저장소 밖 임시 디렉터리):
 
-**범위 — 이것은 한 모델의 문제가 아니라 부류다**(2026-09-24 실측, review-797 MEDIUM-3):
+```text
+$ scripts/tos/render_paper_config.py --out <scratch>/config-long \
+      --env-file .env.mock --direction LONG
+  activation:      ACTIVATED 5 (re-derived in a fresh process)
+$ scripts/tos/render_paper_config.py --check --out <scratch>/config-long
+  render_paper_config --check: ... matches config/tos_runtime/paper
+$ ... cli run --config-dir <scratch>/config-long --data-dir <scratch>/data-long \
+        --custody-root <scratch>/custody --environment-label paper
+  (SIGTERM) run: stopped (signal received).      # 종료코드 0
+```
 
-| 수 | 무엇 |
-|---|---|
-| **120** | `_COVERED_FIELDS` 를 가진 정본 모델 전체 |
-| **19** | covered content 에 `set`/`frozenset` 을 가진 모델(중첩 포함) |
-| **6** | 그중 **이미 정렬한다** — `covered_content()` 를 오버라이드한다. `tos/src/tos/cur/records.py:44-49` 가 이유를 그대로 적는다: 「`model_dump(mode="json")` 가 frozenset 을 **순서 없는** 리스트로 만들고 정본화기는 시퀀스 순서를 보존하므로 `covered_content` 가 각 집합 필드를 **정렬**해 프로세스 간 결정적이 되게 한다」(설계 #23 §3.1). `cur`/`wdr`/`sir`/`rlp` 계열 |
-| **13** | 정렬하지 않는다 = digest 가 프로세스 의존. `brokercap.BrokerCapabilityProfile` · `hag` 4종 · `liveauth` 2종 · `sbr` 3종 · `posttrade.StatementCoverageManifest` · `venue.OrderAdmissibilityDecision` · **`venue.VenueConstraintPolicy`** |
+SHORT 렌더·부팅도 같다(`--direction SHORT`, 종료코드 0). 세션 시계를 다음 개장일로
+주입하면(아래 ④ 의 진단) `TICK OUTCOME: TICKED` 이고 `marketfeed.sqlite3` 의
+`snapshots` 가 1 이다 — LONG·SHORT 양쪽:
 
-이 배포가 오늘 digest 를 계산하는 13종은 `VenueConstraintPolicy` 하나뿐이다. 찍히는 나머지
-네 종류(OCP/ARE/AFG/CIP)는 covered 필드에 집합이 **아예 없어** 안정적이다 — 그것은 찍히는
-다섯 종류에 대한 진술이지 커널 전체에 대한 진술이 아니다.
+```text
+injected session clock: 2026-09-28T10:00:00+09:00 (unix_ms=1790557200000)
+session_context: tz_id='Asia/Seoul' tz_db_version='2026c'
+  trading_calendar_version='krx-2026.09.1' phase='CONTINUOUS' is_open=True
+  tz_version_conflict=False boundary_value=1790577900000
+TICK OUTCOME: TICKED
+```
 
-⚠ **고치는 사람을 위한 주의**: `CurrentnessPolicy.required_dimensions` 는 타입만 보면
-영향권처럼 보이고 이 배포도 그 값을 채택했지만(`currentness.yaml`, PR #794), **정렬하는
-6종에 속한다** — 해시 시드 6개로 digest 불변을 실측했다. 타입 스캔만으로는 과대 보고된다.
-**수정 패턴은 커널에 이미 있다**(위 `cur` 오버라이드).
+⚠ **`PYTHONHASHSEED` 를 맞춰 통과시키는 것은 진단이지 절차가 아니었다** — 그래서
+렌더의 `_subprocess_env()` 는 그 변수를 더 이상 통과시키지 않고, 결함을 고정하던
+`tests/unit/scripts/test_render_paper_config.py` 의 테스트·픽스처도 지웠다. 회귀는
+`tests/tools/test_tos_canonical_set_order.py` 가 시드 6개 서브프로세스로 막는다.
 
-**처분: 이 아크의 설계 범위 밖이다.** 정본 직렬화의 의미를 바꾸는 것은 구현이 아니라
-설계 PR 이다. `tests/unit/scripts/test_render_paper_config.py::
-test_venue_policy_canonical_digest_is_not_reproducible_across_processes` 가 이 사실을
-**결정적으로** 고정한다(해시 시드 두 값이 서로 다른 digest 를 낸다). 고쳐지면 그 테스트가
-RED 가 되고, 그때 같은 파일의 `pinned_hash_seed` 픽스처를 지우는 것이 수용 기준이다.
-`PYTHONHASHSEED` 를 맞춰 통과시키는 것은 **진단이지 절차가 아니다.**
+⚠ **커널 소스를 바꿨으므로 `expected_code_digest` 도 함께 갱신됐다**
+(`config/tos_runtime/paper/release.yaml` + `_VALUE_PINS`). 갱신 전에 부팅하면 Stage A 가
+`ReleaseAdmissionRefused` 로 거부한다 — 이 재측정에서 실제로 한 번 겪었고, 갱신 후 통과했다.
 
 ### ② ✅ 부팅 라벨 — **해소됨 (운영자 결정 2026-09-23: `paper`)**
 
@@ -267,8 +278,8 @@ have a real envelope ceiling
 
 ### ④ 틱은 **세션 게이트**에 막힌다 — 만기 공백은 해소됨(#799)
 
-①을 진단 목적으로 통과시키면 `run` 은 **부팅하고 `run_forever` 에 들어가 SIGTERM 에
-정상 종료(코드 0)** 한다. 틱이 소비되는지는 그 시점의 **세션**이 정한다:
+`run` 은 **부팅하고 `run_forever` 에 들어가 SIGTERM 에 정상 종료(코드 0)** 한다
+(① 해소 이후 실측). 틱이 소비되는지는 그 시점의 **세션**이 정한다:
 
 ```text
 session_context: ... trading_calendar_version='krx-2026.09.1' phase='CLOSED' is_open=False ...

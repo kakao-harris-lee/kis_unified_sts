@@ -919,6 +919,11 @@ expected_code_digest: b9eda9bd69cb24cb694ea44f75f8f44bbef701c3991eb9e6feaee34763
 `config/tos_runtime/paper/release.yaml:57` 과 `_VALUE_PINS`
 (`release.yaml::expected_code_digest`) 둘 다 정확히 이 값을 싣는다.
 
+> **후속(2026-09-24):** 이 값은 `fix/tos-canonical-set-order`(정본 집합 순서 복원)가
+> `tos/src` 를 바꾸면서 `1600de4c387817cd0b6a54590139d8279e22d23f1d242fee69520debaa9cb110`
+> 으로 재도출됐다. 위 기록은 그 시점의 실측이다 —
+> `docs/plans/2026-09-24-tos-canonical-set-order-plan.md` §7.7.
+
 ##### 로더 프로브 분할 — **변경 없음 (18 PASS / 27)**
 
 main 의 변경은 캘린더 로더/월물 규칙과 버전 문자열이고, 프로브가 세는 것은 **좌표 미렌더
