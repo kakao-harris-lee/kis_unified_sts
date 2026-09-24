@@ -19,7 +19,7 @@
 | `MIN_time_independent_reference_count` | **1** | C | Phase 2 는 참조 원천 종류가 하나뿐 — 2 이상이면 TRUSTED 에 영구 미도달(정직) · 둘째 원천(예: NTP 독립 리더) 착지 시 2 로 상향 |
 | `MAX_send_result_wait_ms` | **6000** | C | VER-002 좌표 없음(신규) · 전송 `request_timeout_s=5.0` + 여유 1000ms — 전송 타임아웃보다 짧으면 결과를 기다리지 않고 TIMEOUT 처리해 예약이 불필요하게 점유됨 · 0/음수는 로더가 거부 · **서버 실측(P-13 류) 후 하향** |
 | `tz_db_version` | **배포 호스트의 tzdata 버전 문자열**(예 `2025b`) | M | `/usr/share/zoneinfo/+VERSION` 또는 컨테이너 tzdata 패키지 버전 · 캘린더 owner 가 이 값과 관측치를 대조(관측 원천 부재 시 conflict=False 공시) |
-| `trading_calendar_version` | **`krx-2026.09`** | A(§11 결정 11) | `calendar.yaml` 의 `calendar_version` 과 바이트 일치 필수(불일치 = 부팅 거부) |
+| `trading_calendar_version` | **`krx-2026.09`** ⚠︎개정됨 | A(§11 결정 11) | `calendar.yaml` 의 `calendar_version` 과 바이트 일치 필수(불일치 = 부팅 거부) · ⚠︎ 이 값은 2026-09-24 에 개정됐다 — **§7 의 개정 주석 참조**(현행값은 실파일이 정본). 왼쪽 값은 2026-09-12 채택 시점 기록이다 |
 | `verification_profile_version` | **`VER-002`** 의 현재 문서 버전 문자열(spec `VERIFICATION-PROFILE-002.yaml` 헤더의 version 값) | M | spec 에서 복사 · 라벨일 뿐 판정 입력 아님 |
 | `safety_profile_version` | **`prof-paper-1@v1`**(§4 profile_id@version) | C | 안전 메시 프로필 문서와 동일 식별자 |
 
