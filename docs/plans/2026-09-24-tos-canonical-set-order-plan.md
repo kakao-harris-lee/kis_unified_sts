@@ -270,16 +270,20 @@ SHORT run → (SIGTERM) run: stopped (signal received).  exit=0
 ```text
 $ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
     -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
-expected_code_digest: 1600de4c387817cd0b6a54590139d8279e22d23f1d242fee69520debaa9cb110
+expected_code_digest: b96213f5e64beff7b69af3146fa403d48c517b0c4f68f6531e4519a291564662
 expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
 python_version: 3.12.12
 sqlite_version: 3.45.1
 ```
 
-이전 값 `b9eda9bd…d33571`(main `153c8fd0`). `config/tos_runtime/paper/release.yaml`
-(값 + 헤더 주석)과 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`
-를 같은 커밋에서 갱신했다. `expected_dependency_set_digest` 는 변하지 않았다(같은 루트
-`.venv`).
+이 브랜치에서 두 번 도출했다: 3차 `1600de4c…9cb110`(커널 훅 착지 시점, 이전 값은
+`b9eda9bd…d33571` = main `153c8fd0`), **4차 `b96213f5…564662`**(review-802 조치가
+`_canonical_json.py` 를 또 바꿔서). 매번
+`config/tos_runtime/paper/release.yaml`(값 + 헤더 주석 이력)과
+`tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS` 를 같은 커밋에서
+갱신했다. `expected_dependency_set_digest` 는 네 번 모두 변하지 않았다(같은 루트
+`.venv`). 이 절 뒤의 문서 전용 커밋은 접기 대상(`tos/src`·`tos/runtime/src` 의 `*.py`)
+밖이라 값을 움직이지 않는다 — 문서 커밋 뒤 명령을 다시 돌려 동일함을 확인했다.
 
 ### 7.8 검증
 
