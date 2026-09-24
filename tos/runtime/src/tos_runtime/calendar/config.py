@@ -285,30 +285,63 @@ def _check_expiry_rules_have_regular_windows(
     futures_expiry: Mapping[str, ExpiryRule],
     path: Path,
 ) -> None:
-    """Refuse a ``futures_expiry`` rule for an instrument class that has no
-    regular (non-crossing) session window.
+    """Refuse a ``futures_expiry`` rule whose instrument class has no regular
+    (non-crossing) session window **that runs on the rule's own weekday**.
 
     :func:`tos_runtime.calendar.phase.maturity_at` flips ``expired`` at the
-    end of that class's last non-crossing window on the expiry day, and
-    reports the NEXT rule month's expiry at every other instant. A class with
-    no non-crossing window therefore has no instant at which the flip can be
-    judged, so its rule would never produce ``expired=True`` — the
-    ``expired_phase`` token it declares would be unreachable, silently. A
-    declared rule that can never fire is a named-TBD-shaped gap, so it is
-    refused here rather than honoured as an always-open calendar.
+    end of that class's last regular window on the expiry day, and reports
+    the NEXT rule month's expiry at every other instant. The set of windows
+    it can flip on is exactly what
+    :func:`tos_runtime.calendar.phase._last_regular_window_end` selects:
+
+        not window.crosses_midnight and day.weekday() in window.days
+
+    and ``day`` there is always the expiry date, whose weekday is
+    ``rule.weekday`` by construction (:func:`~tos_runtime.calendar.phase._nth_weekday_of_month`
+    only ever returns a date with that weekday). So the predicate below —
+    ``not window.crosses_midnight and rule.weekday in window.days`` — is that
+    same selection evaluated at config-load time, in the same weekday
+    representation (``_DAY_INDEX``: Monday=0..Sunday=6, matching
+    ``datetime.date.weekday()``), and a class with no such window has no
+    instant at which the flip can be judged: its rule would never produce
+    ``expired=True`` and the ``expired_phase`` token it declares would be
+    unreachable, silently. A declared rule that can never fire is a
+    named-TBD-shaped gap, so it is refused here rather than honoured as an
+    always-open calendar.
+
+    **Both halves of the predicate matter** (review-799 round 2): checking
+    only "some non-crossing window exists" accepted a class whose regular
+    window runs ``days: [MON]`` under a ``weekday: THU`` rule — every expiry
+    date is a Thursday, no window covers it, and the class never expired
+    (measured: 0 expired instants across 2026).
 
     (A class absent from ``sessions`` entirely is the same case: no windows at
-    all means no non-crossing window.)
+    all means no qualifying window.)
     """
     for instrument_class in sorted(futures_expiry):
+        rule = futures_expiry[instrument_class]
         windows = sessions.get(instrument_class, ())
-        if not any(not window.crosses_midnight for window in windows):
+        if not any(
+            not window.crosses_midnight and rule.weekday in window.days
+            for window in windows
+        ):
+            weekday_name = _DAY_NAMES[rule.weekday]
+            shapes = (
+                ", ".join(
+                    f"{window.phase!r} {window.start}-{window.end} "
+                    f"days={sorted(_DAY_NAMES[day] for day in window.days)} "
+                    f"crosses_midnight={window.crosses_midnight}"
+                    for window in windows
+                )
+                or "<no session windows at all>"
+            )
             raise CalendarConfigError(
                 f"{path}: futures_expiry[{instrument_class!r}] declares an "
-                "expiry rule but that instrument class has no regular "
-                "(crosses_midnight=false) session window — refusing: the "
-                "rule could never report the class expired, so its "
-                "'expired_phase' token would be silently unreachable"
+                f"expiry rule on {weekday_name} but that instrument class has "
+                "no regular (crosses_midnight=false) session window running on "
+                f"{weekday_name} — refusing: the rule could never report the "
+                "class expired, so its 'expired_phase' token would be silently "
+                f"unreachable. Its windows are: {shapes}"
             )
 
 

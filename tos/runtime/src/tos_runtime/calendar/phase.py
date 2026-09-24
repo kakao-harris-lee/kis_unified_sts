@@ -188,7 +188,12 @@ def _last_regular_window_end(
 ) -> datetime.datetime | None:
     """The end-of-day instant of the LATEST non-crossing window whose start
     day is ``day``'s weekday, or ``None`` if the instrument class has no such
-    window (e.g. no session config at all for that class)."""
+    window (e.g. no session config at all for that class).
+
+    For a class carrying a ``futures_expiry`` rule this never returns ``None``
+    on that rule's expiry date: the loader's
+    ``_check_expiry_rules_have_regular_windows`` refuses a config unless some
+    window satisfies this exact filter for the rule's weekday."""
     ends = [
         window.end
         for window in windows
@@ -211,15 +216,26 @@ def maturity_at(
     ``expired`` flips to ``True`` only after that class's last regular
     (non-crossing) session window ends that day (plan §2 decision 1).
 
-    A class with NO regular window has no instant at which that flip can be
-    judged, so it would never report ``expired=True`` **at any instant** —
-    not merely "not yet expired on the expiry day". That shape is refused at
-    load by
+    A class with no regular window running on the rule's own weekday has no
+    instant at which that flip can be judged, so it would never report
+    ``expired=True`` **at any instant** — not merely "not yet expired on the
+    expiry day". That shape is refused at load by
     :func:`tos_runtime.calendar.config._check_expiry_rules_have_regular_windows`,
-    so it is unreachable through :func:`~tos_runtime.calendar.config.load_calendar_config`;
-    the ``last_end is None`` floor below remains only for a
-    :class:`~tos_runtime.calendar.config.CalendarConfig` built directly in
-    code, and reports not-expired rather than guessing a moment.
+    whose predicate is deliberately the same selection
+    :func:`_last_regular_window_end` makes below (non-crossing AND covering
+    the weekday), evaluated against ``rule.weekday`` — which is the expiry
+    date's weekday by construction. Both halves are required: a guard testing
+    only "some non-crossing window exists" still admitted a ``days: [MON]``
+    window under a ``weekday: THU`` rule, which never expires (review-799
+    round 2, measured).
+
+    Because the loader checks exactly that predicate, ``last_end is None``
+    below is unreachable for any calendar obtained from
+    :func:`~tos_runtime.calendar.config.load_calendar_config`. It is kept as a
+    defensive floor for a :class:`~tos_runtime.calendar.config.CalendarConfig`
+    constructed directly in code (the dataclass is public and tests build one
+    without the loader), and reports not-expired rather than guessing a
+    moment.
 
     An expiry date that falls on a holiday is NOT shifted: the date is pure
     calendar arithmetic (:func:`_nth_weekday_of_month`), and neither the roll

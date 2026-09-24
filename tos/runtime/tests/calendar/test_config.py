@@ -461,6 +461,74 @@ def test_expiry_rule_with_regular_window_alongside_night_window_is_accepted(
     assert any(not w.crosses_midnight for w in cfg.sessions["futures"])
 
 
+def _calendar_with_window_days(days: str) -> str:
+    """A futures class whose ONE regular window runs on ``days``, under a
+    ``weekday: THU`` expiry rule."""
+    return (
+        'calendar_version: "weekday-reach-v1"\n'
+        'tz_id: "Asia/Seoul"\n'
+        'closed_phase: "CLOSED"\n'
+        "holidays: []\n"
+        "sessions:\n"
+        "  futures:\n"
+        '    - phase: "CONTINUOUS"\n'
+        '      start: "08:45"\n'
+        '      end: "15:45"\n'
+        f"      days: {days}\n"
+        "      crosses_midnight: false\n"
+        "futures_expiry:\n"
+        "  futures:\n"
+        '    weekday: "THU"\n'
+        "    ordinal: 2\n"
+        "    months: [3, 6, 9, 12]\n"
+        '    expired_phase: "EXPIRED"\n'
+    )
+
+
+def test_regular_window_not_running_on_the_rule_weekday_refuses(tmp_path) -> None:
+    """review-799 round 2: having *a* non-crossing window is not enough — it
+    must run on the rule's own weekday.
+
+    ``_last_regular_window_end`` filters on ``not crosses_midnight AND
+    day.weekday() in window.days``, and ``day`` is always the expiry date,
+    which is a Thursday for a ``weekday: THU`` rule. A regular window that
+    runs only on Mondays therefore matches no expiry date, and the class never
+    expires: the reviewer measured 0 expired instants across all of 2026 with
+    exactly this config, which the first cut of this guard ACCEPTED.
+    """
+    path = write_fixture_calendar(tmp_path, text=_calendar_with_window_days("[MON]"))
+    with pytest.raises(CalendarConfigError) as excinfo:
+        load_calendar_config(path)
+    message = str(excinfo.value)
+    # the refusal has to say which class, which weekday, and what it did see
+    assert "futures" in message
+    assert "THU" in message
+    assert "MON" in message
+
+
+def test_regular_window_covering_the_rule_weekday_is_accepted(tmp_path) -> None:
+    """The mirror of the refusal above: the same rule with a MON..FRI window
+    (which does cover Thursday) loads — the guard is about the weekday not
+    being covered, never about naming a narrow day set."""
+    text = _calendar_with_window_days("[MON, TUE, WED, THU, FRI]")
+    cfg = load_calendar_config(write_fixture_calendar(tmp_path, text=text))
+    rule = cfg.futures_expiry["futures"]
+    assert rule.weekday == 3  # THU, Monday=0
+    assert any(
+        not window.crosses_midnight and rule.weekday in window.days
+        for window in cfg.sessions["futures"]
+    )
+
+
+def test_thursday_only_regular_window_is_enough_for_a_thursday_rule(tmp_path) -> None:
+    """A single-day window is fine as long as it IS the rule's weekday — the
+    guard asks about coverage of that one weekday, not about breadth."""
+    cfg = load_calendar_config(
+        write_fixture_calendar(tmp_path, text=_calendar_with_window_days("[THU]"))
+    )
+    assert cfg.futures_expiry["futures"].weekday == 3
+
+
 def test_no_expiry_rule_means_no_regular_window_requirement(tmp_path) -> None:
     """A class with only a night window and NO expiry rule stays legal — the
     check is scoped to classes that actually declare a rule."""
