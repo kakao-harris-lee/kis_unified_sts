@@ -151,6 +151,13 @@ def session_phase_at(
 def _nth_weekday_of_month(
     year: int, month: int, weekday: int, ordinal: int
 ) -> datetime.date:
+    """The ``ordinal``-th ``weekday`` of ``(year, month)``.
+
+    ``matches[ordinal - 1]`` cannot raise ``IndexError`` for a loaded config:
+    every month contains at least four of each weekday, and
+    :func:`tos_runtime.calendar.config._parse_expiry_rule` refuses an
+    ``ordinal`` outside 1..4 (review-799 LOW-1).
+    """
     cal = calendar.Calendar()
     matches = [
         day
@@ -181,7 +188,12 @@ def _last_regular_window_end(
 ) -> datetime.datetime | None:
     """The end-of-day instant of the LATEST non-crossing window whose start
     day is ``day``'s weekday, or ``None`` if the instrument class has no such
-    window (e.g. no session config at all for that class)."""
+    window (e.g. no session config at all for that class).
+
+    For a class carrying a ``futures_expiry`` rule this never returns ``None``
+    on that rule's expiry date: the loader's
+    ``_check_expiry_rules_have_regular_windows`` refuses a config unless some
+    window satisfies this exact filter for the rule's weekday."""
     ends = [
         window.end
         for window in windows
@@ -202,9 +214,53 @@ def maturity_at(
     means ``cfg.futures_expiry`` has no rule for this class at all — never
     guessed. When a rule exists but its instant is exactly the expiry date,
     ``expired`` flips to ``True`` only after that class's last regular
-    (non-crossing) session window ends that day (plan §2 decision 1); if no
-    such window exists for the class, the whole expiry day counts as not yet
-    expired (there is no other fact to judge the moment from).
+    (non-crossing) session window ends that day (plan §2 decision 1).
+
+    A class with no regular window running on the rule's own weekday has no
+    instant at which that flip can be judged, so it would never report
+    ``expired=True`` **at any instant** — not merely "not yet expired on the
+    expiry day". That shape is refused at load by
+    :func:`tos_runtime.calendar.config._check_expiry_rules_have_regular_windows`,
+    whose predicate is deliberately the same selection
+    :func:`_last_regular_window_end` makes below (non-crossing AND covering
+    the weekday), evaluated against ``rule.weekday`` — which is the expiry
+    date's weekday by construction. Both halves are required: a guard testing
+    only "some non-crossing window exists" still admitted a ``days: [MON]``
+    window under a ``weekday: THU`` rule, which never expires (review-799
+    round 2, measured).
+
+    Because the loader checks exactly that predicate, ``last_end is None``
+    below is unreachable for any calendar obtained from
+    :func:`~tos_runtime.calendar.config.load_calendar_config`. It is kept as a
+    defensive floor for a :class:`~tos_runtime.calendar.config.CalendarConfig`
+    constructed directly in code (the dataclass is public and tests build one
+    without the loader), and reports not-expired rather than guessing a
+    moment.
+
+    An expiry date that falls on a holiday is NOT shifted: the date is pure
+    calendar arithmetic (:func:`_nth_weekday_of_month`), and neither the roll
+    below nor the expiry-day flip consults ``cfg.holidays``. No source in this
+    repo states how KRX moves an expiry off a holiday, so nothing is invented
+    here; ``expiry_date`` has no consumer today (measured: nothing in
+    ``tos/src`` or ``tos/runtime/src`` reads it), and on such a day the flip
+    would still occur at the absent session's configured end time. Revisit
+    when a consumer lands.
+
+    ``expiry_date`` is always the NEXT expiry the rule produces, never one
+    already in the past: once a rule month's expiry date has passed, this
+    rolls to the next rule month (:func:`_next_rule_month`) and judges the
+    instant against THAT date. A ``futures_expiry`` rule describes an
+    instrument CLASS, which does not stop trading when one contract month
+    matures — the next contract does. Judging a post-expiry instant against
+    the elapsed date instead reported the whole class ``expired`` from the
+    day after expiry to month end (2026-09-11..09-30, 12-11..12-31, …),
+    which the 2026-09-13 runtime-operations wiring plan recorded as a
+    limitation to carry forward, never as intent: §7 "클래스 단위 만기
+    (월말까지 EXPIRED)는 계약월 단위 모델로 후속" and its lesson "클래스
+    단위 규칙(만기)은 정체성(계약월) 없이 쓰면 과잉 보수가 된다".
+    Contract-month IDENTITY is still absent here (the rule names a class, not
+    a contract); this only stops the class from being reported matured while
+    its next contract trades.
     """
     rule: ExpiryRule | None = cfg.futures_expiry.get(instrument_class)
     if rule is None:
@@ -212,18 +268,26 @@ def maturity_at(
     tz = zoneinfo.ZoneInfo(cfg.tz_id)
     instant_local = _to_local(instant_unix_ms, tz)
     today = instant_local.date()
-    if today.month in rule.months:
-        expiry_date = _nth_weekday_of_month(
-            today.year, today.month, rule.weekday, rule.ordinal
-        )
+    this_month_expiry = (
+        _nth_weekday_of_month(today.year, today.month, rule.weekday, rule.ordinal)
+        if today.month in rule.months
+        else None
+    )
+    if this_month_expiry is not None and today <= this_month_expiry:
+        expiry_date = this_month_expiry
     else:
+        # Either this month carries no expiry at all, or this month's expiry
+        # has already passed. Either way the contract that trades NOW matures
+        # in the next rule month — see the docstring: a class-level rule
+        # judged against an elapsed date reports the class matured while its
+        # next contract is still trading.
         year, month = _next_rule_month(today.year, today.month, rule.months)
         expiry_date = _nth_weekday_of_month(year, month, rule.weekday, rule.ordinal)
-    if today > expiry_date:
-        expired: bool | None = True
-    elif today < expiry_date:
-        expired = False
+    if today < expiry_date:
+        expired: bool | None = False
     else:
+        # ``today == expiry_date``: the roll above makes an expiry date in the
+        # past unreachable, so this is the expiry day itself.
         windows = cfg.sessions.get(instrument_class, ())
         last_end = _last_regular_window_end(expiry_date, windows, tz)
         expired = False if last_end is None else instant_local >= last_end

@@ -184,14 +184,14 @@ _VALUE_PINS: dict[str, Any] = {
     "time.yaml::MIN_time_independent_reference_count": 1,
     "time.yaml::MAX_send_result_wait_ms": 2000,
     "time.yaml::tz_db_version": "2026c",
-    "time.yaml::trading_calendar_version": "krx-2026.09",
+    "time.yaml::trading_calendar_version": "krx-2026.09.1",
     "time.yaml::verification_profile_version": "VERIFICATION-PROFILE-002-v2.1",
     "time.yaml::safety_profile_version": "tos-paper-profile-g1",
     # --- authority.yaml --------------------------------------------------
     "authority.yaml::containment_bound_ms": 1000,
     "authority.yaml::trading_approval_policy_generation": 1,
     # --- release.yaml ----------------------------------------------------
-    "release.yaml::expected_code_digest": "0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260",
+    "release.yaml::expected_code_digest": "b9eda9bd69cb24cb694ea44f75f8f44bbef701c3991eb9e6feaee34763d33571",
     "release.yaml::expected_dependency_set_digest": "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b",
     "release.yaml::admission_result": "ADMIT",
     "release.yaml::restriction_state_resolved": True,
