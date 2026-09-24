@@ -23,7 +23,7 @@ longer active AT exactly 16:00.
 from __future__ import annotations
 
 import zoneinfo
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -47,7 +47,7 @@ _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 #: This deploy file's ``calendar_version`` (must equal the ``config_dir``'s
 #: ``time.yaml`` ``trading_calendar_version`` or the owner refuses to boot
 #: with ``SessionCalendarMismatch`` -- plan §2 decision 3, mutation M4).
-_CALENDAR_VERSION = "krx-2026.09"
+_CALENDAR_VERSION = "krx-2026.09.1"
 
 
 def _kst_unix_ms(year: int, month: int, day: int, hour: int, minute: int) -> int:
@@ -95,7 +95,11 @@ def test_real_calendar_file_carries_its_approval_provenance() -> None:
     unapproved one (README.md's own rule)."""
     text = _REAL_CALENDAR_PATH.read_text(encoding="utf-8")
     assert "§11 결정 11" in text
-    assert "krx-2026.09" in text
+    # the EXACT deployed version, not a prefix: a bare "krx-2026.09" substring
+    # check also matched "krx-2026.09.1", so it pinned nothing once the version
+    # was bumped (operator revision 2026-09-24).
+    assert f'calendar_version: "{_CALENDAR_VERSION}"' in text
+    assert "운영자 2026-09-24" in text
 
 
 def test_regular_session_instant_is_continuous_for_both_classes(
@@ -217,6 +221,146 @@ def test_futures_expiry_day_after_close_is_expired_stock_is_not(
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+@pytest.mark.parametrize(
+    ("month", "day", "next_expiry"),
+    [
+        # Since the 2026-09-24 operator revision every month is a rule month
+        # (the deployed product is the KOSPI200 mini, which lists monthly), so
+        # the roll target is the NEXT month's second Thursday, not the next
+        # quarter's.
+        (9, 11, date(2026, 10, 8)),  # the day after the September expiry
+        (9, 28, date(2026, 10, 8)),  # late in the same rule month
+        (9, 30, date(2026, 10, 8)),  # the last day of the same rule month
+        (10, 1, date(2026, 10, 8)),  # the first day of the next rule month
+        (12, 11, date(2027, 1, 14)),  # after the December expiry -- crosses the year
+    ],
+)
+def test_real_calendar_after_expiry_is_regular_phase_not_expired(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    month: int,
+    day: int,
+    next_expiry: date,
+) -> None:
+    """The deployed file, at the instants the defect actually broke: a
+    ``futures_expiry`` rule names an instrument CLASS, and the class does not
+    stop trading when one contract month matures -- the next contract does.
+
+    ``maturity_at`` used to judge every instant after a rule month's expiry
+    against that ELAPSED date, so ``krx-index-futures`` reported ``EXPIRED``
+    for the whole rest of the month (2026-09-11..09-30, 12-11..12-31, ...) and
+    ``decide_tick`` skipped every tick with ``SKIPPED_SESSION_CLOSED``. Each
+    instant below is a 10:00 KST weekday inside the configured 08:45-15:45
+    window, so the correct phase is the ordinary ``CONTINUOUS`` token.
+
+    The 2026-09-13 runtime-operations wiring plan recorded this as a
+    limitation to carry forward, never as intent (§7 "클래스 단위 만기(월말까지
+    EXPIRED)는 계약월 단위 모델로 후속"); its sibling
+    ``test_futures_expiry_day_after_close_is_expired_stock_is_not`` pins the
+    expiry-day behaviour this fix deliberately leaves unchanged.
+    """
+    _install_real_calendar(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_kst_unix_ms(2026, month, day, 10, 0)),
+    )
+    _reach_trusted(runtime)
+    facts = runtime.session_facts.observe("krx-index-futures")
+    assert runtime.session_facts.phase_for_step3("krx-index-futures") == "CONTINUOUS"
+    assert facts.maturity_fact.expired is False
+    # the reported expiry is the NEXT one the rule produces, never an elapsed date
+    assert facts.maturity_fact.expiry_date == next_expiry
+    assert facts.maturity_fact.expiry_date > date(2026, month, day)
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_real_calendar_mini_october_expiry_day_before_and_after_close(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """2026-10-08 is the second Thursday of October and the expiry of the mini
+    front contract ``A05610`` -- a date the pre-revision quarterly
+    ``months: [3,6,9,12]`` did not treat as an expiry at all (October was not a
+    rule month, so the class stayed ``CONTINUOUS`` all day and ``EXPIRED``
+    never fired on a real expiry).
+
+    With monthly months it behaves exactly like any other expiry day: not yet
+    matured inside the 08:45-15:45 window, matured after it closes.
+    """
+    _install_real_calendar(config_dir)
+    for hour, expect_expired, expect_phase in (
+        (15, False, "CONTINUOUS"),
+        (16, True, "EXPIRED"),
+    ):
+        runtime = _compose(
+            tmp_path / f"h{hour}",
+            config_dir,
+            data_dir,
+            custody_root,
+            wall_clock=FixedWallClockReference(_kst_unix_ms(2026, 10, 8, hour, 0)),
+        )
+        _reach_trusted(runtime)
+        facts = runtime.session_facts.observe("krx-index-futures")
+        assert facts.maturity_fact.expired is expect_expired, hour
+        assert facts.maturity_fact.expiry_date == date(2026, 10, 8), hour
+        assert (
+            runtime.session_facts.phase_for_step3("krx-index-futures") == expect_phase
+        ), hour
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
+def test_real_calendar_day_after_mini_october_expiry_rolls_to_november(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """The day after the October expiry rolls to 2026-11-12 (November's second
+    Thursday), not to the next quarter.
+
+    2026-10-09 is also a listed holiday (한글날), so the phase is
+    ``closed_phase`` rather than ``CONTINUOUS`` -- asserted explicitly here
+    because "not EXPIRED" is the claim, and a holiday CLOSED is the honest
+    reason it is not open, not a second expiry effect.
+    """
+    _install_real_calendar(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_kst_unix_ms(2026, 10, 9, 10, 0)),
+    )
+    _reach_trusted(runtime)
+    facts = runtime.session_facts.observe("krx-index-futures")
+    assert facts.maturity_fact.expired is False
+    assert facts.maturity_fact.expiry_date == date(2026, 11, 12)
+    assert runtime.session_facts.phase_for_step3("krx-index-futures") == "CLOSED"
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_real_calendar_declares_every_month_a_rule_month(
+    config_dir: Path,
+) -> None:
+    """The deployed value itself (operator revision 2026-09-24): the mini lists
+    monthly, so every month is a rule month. Pinned by VALUE, not only through
+    behaviour, so narrowing it back to quarterly is a deliberate edit that
+    fails here first."""
+    text = _REAL_CALENDAR_PATH.read_text(encoding="utf-8")
+    rule = yaml.safe_load(text)["futures_expiry"]["krx-index-futures"]
+    assert sorted(rule["months"]) == list(range(1, 13))
+    assert rule["weekday"] == "THU"
+    assert rule["ordinal"] == 2
+    assert rule["expired_phase"] == "EXPIRED"
 
 
 def test_real_calendar_with_null_tz_id_refuses_to_boot(

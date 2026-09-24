@@ -56,7 +56,12 @@ tz_db_version: "2026c"
 # **강제 일치**: config/tos_runtime/paper/calendar.yaml 의 `calendar_version`
 # 과 달라지면 SessionCalendarMismatch 로 부팅이 거부된다
 # (calendar/owner.py:170-179 — 둘 다 알려져 있고 다르면 raise).
-trading_calendar_version: "krx-2026.09"
+#
+# 개정(운영자 2026-09-24): "krx-2026.09" → "krx-2026.09.1". 캘린더 내용이
+# 바뀌었기 때문이다(`calendar.yaml` 의 `futures_expiry.months` 분기 → 매월 ·
+# 상세는 그 파일 상단 주석). 이 값 자체에 대한 판단이 아니라 위 강제 일치의
+# **귀결**이다 — 캘린더 버전이 오르면 이 값도 같은 커밋에서 같이 오른다.
+trading_calendar_version: "krx-2026.09.1"
 
 # 전사: VERIFICATION-PROFILE-002.yaml 자신의 `profile_id`(L142) + `version`(L143).
 verification_profile_version: "VERIFICATION-PROFILE-002-v2.1"

@@ -234,11 +234,75 @@ def test_expired_true_exactly_at_last_window_end_on_expiry_day(
     assert fact.expired is True
 
 
-def test_expired_true_day_after_expiry(fixture_calendar) -> None:
+def test_expired_false_day_after_expiry_rolls_to_next_rule_month(
+    fixture_calendar,
+) -> None:
+    """The day after a rule month's expiry, the CLASS is not matured — the next
+    contract trades — so ``expired`` is ``False`` and ``expiry_date`` is the NEXT
+    rule month's date, never the elapsed one.
+
+    This test previously asserted ``expired is True`` here, pinning the
+    class-level over-conservatism the 2026-09-13 runtime-operations wiring plan
+    §7 recorded as a defect to carry forward ("클래스 단위 만기(월말까지
+    EXPIRED)는 계약월 단위 모델로 후속"), not as intent.
+    """
     expiry = _second_thursday(2026, 3)
     instant = _kst_ms(expiry.year, expiry.month, expiry.day + 1, 0, 0, 0)
     fact = maturity_at(instant, FUTURES_CLASS, fixture_calendar)
-    assert fact.expired is True
+    assert fact.expired is False
+    assert fact.expiry_date == _second_thursday(2026, 6)
+
+
+@pytest.mark.parametrize(
+    ("day", "hour"),
+    [
+        (11, 10),  # the day after expiry, mid-session
+        (28, 10),  # late in the same rule month
+        (30, 10),  # the last day of the same rule month
+    ],
+)
+def test_expired_false_every_day_after_expiry_in_a_rule_month(
+    fixture_calendar, day: int, hour: int
+) -> None:
+    """The reported defect, at its reported dates: 2026-09-10 is the second
+    Thursday of a rule month, and EVERY later instant inside September used to
+    report the whole instrument class ``expired`` (so ``effective_phase_at``
+    reported ``EXPIRED`` and a tick driver skipped every tick from 09-11 to
+    09-30). Each of these must now report the December contract instead."""
+    expiry = _second_thursday(2026, 9)
+    assert expiry == datetime.date(2026, 9, 10)  # the plan's cited date, re-derived
+    fact = maturity_at(_kst_ms(2026, 9, day, hour, 0), FUTURES_CLASS, fixture_calendar)
+    assert fact.expired is False
+    assert fact.expiry_date == _second_thursday(2026, 12)
+
+
+def test_expiry_day_before_and_after_last_session_end_is_unchanged(
+    fixture_calendar,
+) -> None:
+    """The expiry-day boundary itself is NOT changed by the roll: on 2026-09-10
+    the class is not yet matured at 15:00 (inside the 08:45-15:45 regular
+    window) and is matured at 16:00 (after it), with ``expiry_date`` staying on
+    that day in both cases — it only rolls once the day has passed."""
+    before = maturity_at(_kst_ms(2026, 9, 10, 15, 0), FUTURES_CLASS, fixture_calendar)
+    after = maturity_at(_kst_ms(2026, 9, 10, 16, 0), FUTURES_CLASS, fixture_calendar)
+    assert before.expired is False
+    assert after.expired is True
+    assert before.expiry_date == after.expiry_date == datetime.date(2026, 9, 10)
+
+
+def test_expiry_roll_crosses_the_year_boundary(fixture_calendar) -> None:
+    """December is the last rule month in [3, 6, 9, 12], so the day after its
+    expiry must roll to MARCH OF THE NEXT YEAR — not wrap back to March 2026,
+    and not report the class expired for the rest of December."""
+    december_expiry = _second_thursday(2026, 12)
+    assert december_expiry == datetime.date(2026, 12, 10)
+    for day in (11, 31):
+        fact = maturity_at(
+            _kst_ms(2026, 12, day, 10, 0), FUTURES_CLASS, fixture_calendar
+        )
+        assert fact.expired is False, day
+        assert fact.expiry_date == _second_thursday(2027, 3), day
+        assert fact.expiry_date.year == 2027, day
 
 
 def test_maturity_rule_absent_returns_none_triple(fixture_calendar) -> None:
@@ -260,23 +324,52 @@ def test_maturity_unknown_instrument_class(fixture_calendar) -> None:
 # --- effective_phase_at ------------------------------------------------------
 
 
-def test_effective_phase_at_returns_expired_phase_after_expiry(
+def test_effective_phase_at_returns_expired_phase_after_last_session_on_expiry_day(
     fixture_calendar,
 ) -> None:
-    expiry = _second_thursday(2026, 3)
-    day_after = expiry + datetime.timedelta(days=1)
-    instant = _kst_ms(day_after.year, day_after.month, day_after.day, 10, 0)
+    """The fold still substitutes ``expired_phase`` — but only while the class
+    really is matured, which (after the roll fix) is the expiry day after its
+    last regular window ends.
 
-    # sanity: the underlying session phase would otherwise be an open regular
-    # session (day_after must be a weekday session day, not itself expired).
+    23:30 on the expiry day keeps this test's original strength: the fixture's
+    NIGHT window (23:00->05:00) is open then, so the underlying phase is an
+    OPEN session and the ``EXPIRED`` token can only come from the maturity
+    fold. ``maturity_at`` judges the expiry-day flip on the last
+    **non-crossing** window (15:45), which 23:30 is past.
+    """
+    expiry = _second_thursday(2026, 3)
+    instant = _kst_ms(expiry.year, expiry.month, expiry.day, 23, 30)
+
     underlying = session_phase_at(instant, FUTURES_CLASS, fixture_calendar)
-    assert underlying.phase == "CONTINUOUS"
+    assert underlying.phase == "NIGHT"
     assert underlying.is_open is True
+    assert maturity_at(instant, FUTURES_CLASS, fixture_calendar).expired is True
 
     effective = effective_phase_at(instant, FUTURES_CLASS, fixture_calendar)
     assert effective.phase == "EXPIRED"
     assert effective.is_open is False
     assert effective.boundary_unix_ms == underlying.boundary_unix_ms
+
+
+def test_effective_phase_at_day_after_expiry_is_not_expired_phase(
+    fixture_calendar,
+) -> None:
+    """The defect as the tick driver saw it: on the day after expiry the fold
+    used to replace an open ``CONTINUOUS`` session with ``EXPIRED``, which the
+    kernel's ``session_phase_admits`` refuses for every action — every tick from
+    the day after expiry to month end was skipped. The fold must now be a
+    no-op there."""
+    expiry = _second_thursday(2026, 3)
+    day_after = expiry + datetime.timedelta(days=1)
+    instant = _kst_ms(day_after.year, day_after.month, day_after.day, 10, 0)
+
+    underlying = session_phase_at(instant, FUTURES_CLASS, fixture_calendar)
+    assert underlying.phase == "CONTINUOUS"
+    assert underlying.is_open is True
+
+    effective = effective_phase_at(instant, FUTURES_CLASS, fixture_calendar)
+    assert effective.phase != "EXPIRED"
+    assert effective == underlying
 
 
 def test_effective_phase_at_matches_session_phase_before_expiry(
