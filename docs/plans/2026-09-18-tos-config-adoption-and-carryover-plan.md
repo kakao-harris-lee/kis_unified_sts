@@ -891,3 +891,76 @@ including KeyboardInterrupt」) · 런북(운영자가 읽는 문서) · 전칭 
 R0(런북 그대로) = 결함 ① 로 정상 거부 · **잔여물 0** · R1(진단 시드) = `ACTIVATED 5` ·
 `--check` exit 0 · **B 부팅 성공 → `run: stopped (signal received).` EXIT=0** ·
 틱 = `SKIPPED_SESSION_CLOSED`(캘린더). 4차와 동일하다.
+
+
+#### 7.8.6 6차 (2026-09-24) — main `5d618f1c` 병합 + 캘린더 수정(#799) 이후 재측정
+
+PR #798(문서)·#799(캘린더 만기 롤) 머지로 main 이 `b5bb5eb5` → **`5d618f1c`** 로 움직여
+브랜치에 병합했다.
+
+##### 충돌 1건 — `docs/plans/INDEX.md`, 양쪽 의도 보존
+
+main 은 새 계획 행(`2026-09-24-tos-canonical-set-order-plan.md`)을 추가하면서 이 설계의
+행을 **옛 상태**("결정 확정 — 구현 미착수")로 들고 있었고, 우리 쪽은 같은 행을 착지 기록으로
+갱신했다. **main 의 새 행 + 우리의 갱신된 행**을 둘 다 남겼다. 그 외 12개 파일은 자동 병합
+(`test_deploy_approved_values.py` 포함 — main 의 캘린더/버전/digest 핀과 우리 픽스처·봉투·
+프로파일·finality·marketfeed·CIP 핀이 서로 다른 줄이라 충돌 없음).
+
+##### 코드 digest — main 과 **동일해야** 하고, 동일하다
+
+이 브랜치는 `tos/src`·`tos/runtime/src` 의 `*.py` 를 **한 줄도 바꾸지 않는다**(바꾸는 것은
+`config/`·`scripts/`·`tests/`·`docs/`뿐). 따라서 병합 뒤 `print-digests` 는 main 이 #799 에서
+기록한 값과 같아야 한다 — 실측:
+
+```
+expected_code_digest: b9eda9bd69cb24cb694ea44f75f8f44bbef701c3991eb9e6feaee34763d33571
+```
+
+`config/tos_runtime/paper/release.yaml:57` 과 `_VALUE_PINS`
+(`release.yaml::expected_code_digest`) 둘 다 정확히 이 값을 싣는다.
+
+##### 로더 프로브 분할 — **변경 없음 (18 PASS / 27)**
+
+main 의 변경은 캘린더 로더/월물 규칙과 버전 문자열이고, 프로브가 세는 것은 **좌표 미렌더
+거부**다. `calendar.yaml` 은 병합 전후 모두 PASS 이므로 분할이 움직이지 않았다 — 핀을
+건드릴 이유가 없다(움직였다면 그것이 바로 갱신 사유였을 것이다).
+
+##### 캘린더 — #799 의 효과를 이 배포의 파일로 재측정
+
+`calendar.yaml` `futures_expiry.krx-index-futures.months` 가 분기 `[3,6,9,12]` → **매월
+`[1..12]`**, `calendar_version` 은 `krx-2026.09` → **`krx-2026.09.1`**(`time.yaml::
+trading_calendar_version` 과 일치). 같은 파일로 실측(10:00 KST):
+
+| 날짜 | expiry_date | expired | phase |
+|---|---|---|---|
+| 2026-09-11 | 2026-10-08 | False | **CONTINUOUS** |
+| 2026-09-24 (오늘) | 2026-10-08 | False | **CLOSED** |
+| 2026-09-28 | 2026-10-08 | False | **CONTINUOUS** |
+| 2026-09-30 | 2026-10-08 | False | **CONTINUOUS** |
+| 2026-10-01 | 2026-10-08 | False | **CONTINUOUS** |
+
+4차 §7.8.4 가 기록한 「9월 만기(09-10) 이후 분기 내내 EXPIRED」는 **해소됐다.**
+
+⚠ **다만 오늘(2026-09-24)은 틱을 소비할 수 없다 — 값 문제도 만기 문제도 아니고
+`calendar.yaml:42` 의 휴장일(추석 연휴)이다.** 그래서 오늘은 08:45–15:45 창 자체가 없고,
+실 시계 부팅의 phase 는 (EXPIRED 가 아니라) **CLOSED** 로 나온다. 다음 개장은
+`boundary_value` 가 가리키는 **2026-09-28 08:45 KST**(09-25 추석 · 09-26 토 · 09-27 일).
+
+##### 재부팅 (병합 후 · 실 `.env.mock` · 라벨 `paper` · LONG·SHORT 동일)
+
+| 단계 | 결과 |
+|---|---|
+| R0 렌더(런북 그대로) | **거부 — 결함 ①**(커널 수정 전까지 예상된 상태) · **잔여물 0** |
+| R1 렌더(진단 시드) | `ACTIVATED 5` · `--check` exit 0 |
+| B 부팅 | **성공** → `run: stopped (signal received).` **EXIT=0** |
+| T 틱(실 시계, 15:0x KST) | `phase='CLOSED' is_open=False` → `SKIPPED_SESSION_CLOSED` — **휴장일** |
+| T 틱(주입 시계 2026-09-28 10:00 = 다음 개장) | **`TICKED`** · `value_view` = 렌더 저널의 세 필드 · `marketfeed.sqlite3` **snapshots: 1 / preimages: 1** |
+
+즉 **틱을 막던 만기 공백은 #799 로 사라졌고**, 남은 것은 휴장일이라는 평범한 달력 사실뿐이다.
+
+##### 스위트 (병합 후)
+
+`tos/runtime/tests` **2978 passed**(우리 2947 + main 의 캘린더 테스트 31) ·
+`tos/tests` **9542** · `tests/unit/scripts` **557** · 로더 프로브 **18/27** ·
+거버넌스 6종 전부 PASS · mypy(`tos/tests` 581 · `tos/runtime/tests` 224 ·
+`tos/runtime/src` 185 · 신규 2) 전부 Success · ruff/black clean.

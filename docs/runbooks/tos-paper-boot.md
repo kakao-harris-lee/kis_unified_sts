@@ -4,8 +4,9 @@
 - 설계: `docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md`
   (운영자 결정 1·3 · 운영자 선택 (가), 2026-09-23) · 상위 계획
   `docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` §7.8.
-- 실측 시점: 2026-09-23 (1차) · **2026-09-24 재측정/정정 (review-797 조치)**, main
-  `b5bb5eb5` 기준 브랜치 `feat/tos-paper-render-and-first-boot`.
+- 실측 시점: 2026-09-23 (1차) · 2026-09-24 재측정/정정(review-797 조치) ·
+  **2026-09-24 main `5d618f1c` 병합 후 재측정**(#799 캘린더 만기 롤 반영),
+  브랜치 `feat/tos-paper-render-and-first-boot`.
 
 > ## ⛔ 이 런북은 아직 **끝까지 가지 못한다**
 >
@@ -13,7 +14,8 @@
 > 남은 것은 **①(정본 digest 가 프로세스마다 다르다)** — 이 절차 자체를 무효화하는 커널
 > 결함이고, 그래서 §2 의 렌더는 **정상적으로 거부된다.** 그 거부를 우회하는 방법을 이
 > 런북은 제공하지 않는다 — 그것이 정직한 상태다. ①이 닫히면 `run` 은 부팅한다(실측).
-> 그 뒤에도 **틱은 ④(캘린더 만기 공백) 때문에 대부분의 날짜에 소비되지 않는다.**
+> 그 뒤 **틱은 개장일 장중이면 소비된다** — 4차까지 막고 있던 만기 공백은 #799 로
+> 해소됐고(§5 ④), 남은 것은 휴장일·장 밖이라는 평범한 달력 사실뿐이다.
 
 ## 0. 이 배포가 무엇이고 무엇이 아닌가
 
@@ -263,24 +265,31 @@ have a real envelope ceiling
 1차 판의 「둘 다 비었다」 상태는 정합이 아니라 어느 쪽으로도 통과 불가였다. 경계는
 `INCLUSIVE` 여야 한다 — EXCLUSIVE 면 `value == max` 가 거부돼 1 계약이 통과하지 못한다.
 
-### ④ 틱은 세션/만기 게이트에 막힌다 (값 문제 아님)
+### ④ 틱은 **세션 게이트**에 막힌다 — 만기 공백은 해소됨(#799)
 
-①②③을 진단 목적으로 통과시키면 `run` 은 **부팅하고 `run_forever` 에 들어가 SIGTERM 에
-정상 종료(코드 0)** 한다. 그래도 틱은 소비되지 않는다:
+①을 진단 목적으로 통과시키면 `run` 은 **부팅하고 `run_forever` 에 들어가 SIGTERM 에
+정상 종료(코드 0)** 한다. 틱이 소비되는지는 그 시점의 **세션**이 정한다:
 
 ```text
-session_context: ... phase='EXPIRED' is_open=False ...
+session_context: ... trading_calendar_version='krx-2026.09.1' phase='CLOSED' is_open=False ...
 TICK OUTCOME: SKIPPED_SESSION_CLOSED
 ```
 
 - `decide_tick` 1순위 게이트(`marketfeed/scheduler.py` — 세션이 닫혀 있으면
   `SKIPPED_SESSION_CLOSED`).
-- `config/tos_runtime/paper/calendar.yaml:36-40` — `krx-index-futures` 는
-  CONTINUOUS **08:45–15:45 KST MON–FRI**, 그리고 `futures_expiry` 가 **3/6/9/12월 둘째 목요일
-  이후 클래스 전체를 `EXPIRED`** 로 만든다(클래스 단위 규칙 — `venue_constraint_policy.yaml:71`
-  이 "class-level, plan §5 이월" 이라고 적는다).
-- 2026-09-23 은 9월 만기(09-10) 이후라 **시각과 무관하게 EXPIRED** 다. 같은 렌더 산출물을
-  만기 이전 장중 시각으로 구동하면 `TICKED` 되고 스냅샷이 남는다(아래 확인 절차).
+- `config/tos_runtime/paper/calendar.yaml` — `krx-index-futures` 는 CONTINUOUS
+  **08:45–15:45 KST MON–FRI**, 휴장일 목록은 같은 파일의 `holidays:`.
+- ✅ **만기 공백은 해소됐다(운영자 2026-09-24 · PR #799).** `futures_expiry`
+  `months` 가 분기 `[3,6,9,12]` → **매월 `[1..12]`** 로 바뀌면서(mini 는 월물),
+  「둘째 목요일 이후 분기 내내 `EXPIRED`」가 사라졌다. `calendar_version` 은
+  `krx-2026.09.1` 이고 `time.yaml::trading_calendar_version` 과 같아야 한다.
+  실측(10:00 KST, 이 배포 파일 그대로): 2026-09-11 · 09-28 · 09-30 · 10-01 **전부
+  CONTINUOUS**(이전 규칙에서는 전부 EXPIRED 였다).
+- ⚠ **그래도 휴장일에는 창 자체가 없다.** 예: 2026-09-24 는 추석 연휴
+  (`calendar.yaml` `holidays:`)라 phase 가 **`CLOSED`** 이고, 그날은 시각과 무관하게
+  틱이 소비되지 않는다. `boundary_value` 가 다음 개장 시각을 가리킨다.
+- 개장일 장중에 렌더·부팅하면 `TICKED` 되고 `marketfeed.sqlite3` 에 스냅샷이 남는다.
+  장 밖에서 확인하려면 아래 진단으로 개장 시각을 주입한다.
 
 세션 게이트만 따로 확인하려면 `run` 이 아니라 합성 루트를 직접 부른다(진단):
 
@@ -296,6 +305,12 @@ print(rt.session_facts.session_context("krx-index-futures"))
 print(rt.marketfeed.tick_once().outcome.value)
 PY
 ```
+
+개장 시각을 주입해 확인하려면 위 `compose_paper_runtime(...)` 에
+`wall_clock=FixedWallClockReference(<개장 시각의 unix ms>)` 를 넘긴다
+(`tos_runtime.calendar.ports.FixedWallClockReference` · `compose/root.py` 의 `wall_clock`
+인자). **주입되는 것은 세션 판정용 시계 하나뿐**이고, 신선도 검사가 쓰는 시계는 실
+시스템 시계 그대로다 — 그래서 저널은 여전히 **부팅 직전에 렌더**해야 한다.
 
 ### ⑤ 활성화 기록은 **방향을 결속하지 않는다** (알려진 한계)
 
