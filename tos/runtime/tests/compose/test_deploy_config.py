@@ -47,7 +47,7 @@ _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 #: This deploy file's ``calendar_version`` (must equal the ``config_dir``'s
 #: ``time.yaml`` ``trading_calendar_version`` or the owner refuses to boot
 #: with ``SessionCalendarMismatch`` -- plan §2 decision 3, mutation M4).
-_CALENDAR_VERSION = "krx-2026.09"
+_CALENDAR_VERSION = "krx-2026.09.1"
 
 
 def _kst_unix_ms(year: int, month: int, day: int, hour: int, minute: int) -> int:
@@ -95,7 +95,11 @@ def test_real_calendar_file_carries_its_approval_provenance() -> None:
     unapproved one (README.md's own rule)."""
     text = _REAL_CALENDAR_PATH.read_text(encoding="utf-8")
     assert "§11 결정 11" in text
-    assert "krx-2026.09" in text
+    # the EXACT deployed version, not a prefix: a bare "krx-2026.09" substring
+    # check also matched "krx-2026.09.1", so it pinned nothing once the version
+    # was bumped (operator revision 2026-09-24).
+    assert f'calendar_version: "{_CALENDAR_VERSION}"' in text
+    assert "운영자 2026-09-24" in text
 
 
 def test_regular_session_instant_is_continuous_for_both_classes(

@@ -134,7 +134,7 @@ sessions:
 futures_expiry:
   krx-index-futures: {weekday: THU, ordinal: 2, months: [3,6,9,12], expired_phase: EXPIRED}
 ```
-- **개정(운영자 2026-09-24)**: 위 블록은 2026-09-12 채택 시점의 기록이다. `futures_expiry.krx-index-futures.months` 는 그 뒤 `[3,6,9,12]`(분기) → `[1..12]`(매월)로 개정됐다 — 배포 상품이 KOSPI200 **mini**(월물)이기 때문이며, 승인 당시 항목에도 「(미니 월물)」이 병기돼 있었다(W5 계획 §6 ②, `docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md:67`). 실파일 `config/tos_runtime/paper/calendar.yaml` 상단 주석이 정본. 나머지 값(둘째 목요일 · `ordinal: 2` · `expired_phase` · 휴장일 19건 · 세션 창)은 불변.
+- **개정(운영자 2026-09-24)**: 위 블록은 2026-09-12 채택 시점의 기록이다. `futures_expiry.krx-index-futures.months` 는 그 뒤 `[3,6,9,12]`(분기) → `[1..12]`(매월)로 개정됐다 — 배포 상품이 KOSPI200 **mini**(월물)이기 때문이며, 승인 당시 항목에도 「(미니 월물)」이 병기돼 있었다(W5 계획 §6 ②, `docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md:67`). 실파일 `config/tos_runtime/paper/calendar.yaml` 상단 주석이 정본. 나머지 값(둘째 목요일 · `ordinal: 2` · `expired_phase` · 휴장일 19건 · 세션 창)은 불변. **내용이 바뀌었으므로 버전도 함께 개정**(운영자 2026-09-24): `calendar.yaml::calendar_version` 과 §1 표의 `time.yaml::trading_calendar_version` 이 둘 다 `krx-2026.09` → `krx-2026.09.1`(두 값은 바이트 일치 필수 — 불일치 = `SessionCalendarMismatch` 부팅 거부). 위 블록과 §1 표 행은 2026-09-12 채택 시점 기록이므로 그대로 둔다.
 - 휴장일 19건은 `config/market_schedule.yaml:88-106` 과 1:1 대조 완료(2026-09-12). 주말에 걸린 공휴일도 정본대로 포함(캘린더는 요일 창으로 이미 닫힘 · 무해). 정본에 없는 지방선거일·연말휴장은 운영자가 정본 파일에 먼저 추가한 뒤 여기 반영. `PRE_OPEN` 은 step 3 admitting 집합 밖(주문 불가 · 정보용).
 
 ## 8. 디스크 파일(§11 결정 16 · 운영자 수동)

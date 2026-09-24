@@ -184,7 +184,7 @@ _VALUE_PINS: dict[str, Any] = {
     "time.yaml::MIN_time_independent_reference_count": 1,
     "time.yaml::MAX_send_result_wait_ms": 2000,
     "time.yaml::tz_db_version": "2026c",
-    "time.yaml::trading_calendar_version": "krx-2026.09",
+    "time.yaml::trading_calendar_version": "krx-2026.09.1",
     "time.yaml::verification_profile_version": "VERIFICATION-PROFILE-002-v2.1",
     "time.yaml::safety_profile_version": "tos-paper-profile-g1",
     # --- authority.yaml --------------------------------------------------

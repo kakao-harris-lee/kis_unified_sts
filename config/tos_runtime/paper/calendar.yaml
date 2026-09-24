@@ -12,11 +12,18 @@
 # 「만기 둘째 목요일 [3,6,9,12](미니 월물)」. weekday/ordinal/expired_phase 는
 # 불변(둘째 목요일 · EXPIRED).
 #
+# 버전 개정(운영자 2026-09-24): 위 months 개정으로 **캘린더 내용이 바뀌었으므로**
+# `calendar_version` 을 "krx-2026.09" → "krx-2026.09.1" 로 올린다. 이 값은
+# `config/tos_runtime/paper/time.yaml` 의 `trading_calendar_version` 과
+# **바이트 일치**해야 한다 — 다르면 `SessionCalendarMismatch` 로 부팅 거부
+# (calendar/owner.py `SessionFactsOwner.__init__`). 두 파일은 항상 같은
+# 커밋에서 함께 움직인다.
+#
 # 재대조(2026-09-13, g4): config/market_schedule.yaml:88-106 의 2026년 항목
 # 19건을 날짜 단위로 재확인 — 정본과 완전 일치(추가/누락 없음). 정본에 없는
 # 지방선거일(2026-06-03)·KRX 연말 휴장(2026-12-31)은 여기에도 포함하지
 # 않는다(제안표 §7 "운영자 검토 후보" — 정본 파일에 먼저 추가된 뒤에야 반영).
-calendar_version: "krx-2026.09"
+calendar_version: "krx-2026.09.1"
 tz_id: "Asia/Seoul"
 closed_phase: "CLOSED"
 holidays:            # config/market_schedule.yaml:88-106 의 2026 항목 19건을 그대로 옮김(정본) · shared/calendar.py 표는 정정 대상
