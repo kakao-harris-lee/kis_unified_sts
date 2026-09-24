@@ -1,7 +1,7 @@
 """Representative instances for the canonical set-ordering pins (plan §3).
 
 Every pin in ``test_canonical_json_set_order.py`` (single process) and in
-``tests/tos_l3/test_tos_canonical_set_order.py`` (many processes, many
+``tests/tools/test_tos_canonical_set_order.py`` (many processes, many
 ``PYTHONHASHSEED`` values) measures the *same* instances, built here.
 
 Two properties the builders must have, both of them review findings:

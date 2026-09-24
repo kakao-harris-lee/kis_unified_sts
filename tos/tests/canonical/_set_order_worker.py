@@ -1,6 +1,6 @@
 """Print every canonical set-ordering digest as JSON, for one process.
 
-Driven by ``tests/tos_l3/test_tos_canonical_set_order.py``, which runs this
+Driven by ``tests/tools/test_tos_canonical_set_order.py``, which runs this
 module once per ``PYTHONHASHSEED`` value and compares the outputs. It lives
 inside ``tos/`` because only files under ``tos/`` may ``import tos``
 (``tools/tos_firewall_check.py`` rule (e)/TOS-FW-R), and it lives under

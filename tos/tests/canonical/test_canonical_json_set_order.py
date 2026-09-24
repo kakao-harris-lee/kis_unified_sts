@@ -1,7 +1,7 @@
 """Canonical JSON set ordering — the single-process pins (plan §3).
 
 The cross-process pins (five ``PYTHONHASHSEED`` values, real subprocesses) live in
-``tests/tos_l3/test_tos_canonical_set_order.py``: ``subprocess`` is firewall-
+``tests/tools/test_tos_canonical_set_order.py``: ``subprocess`` is firewall-
 forbidden under ``tos/`` (``tools/tos_firewall_check.py`` TOS-FW-B), so the seed
 sweep has to be driven from outside the kernel. Everything that does **not** need
 a second process is pinned here.
