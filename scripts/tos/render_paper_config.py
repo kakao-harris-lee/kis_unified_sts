@@ -576,20 +576,18 @@ def _subprocess_env() -> dict[str, str]:
     tree — a rendered run must leave the repository byte-identical, and ``__pycache__`` is
     gitignored, so ``git status --porcelain --ignored`` would otherwise show it.
 
-    ``PYTHONHASHSEED`` is passed through when the CALLER set it, and only then. It exists in
-    this allowlist because of a measured defect, not as a feature: see this module's
-    ``NOT REPRODUCIBLE`` note on :func:`_policy_digest_lines`.
+    ``PYTHONHASHSEED`` is deliberately NOT in this allowlist. It was passed through between
+    2026-09-23 and 2026-09-24 to work around the canonical set-ordering defect; with that
+    defect fixed (``docs/plans/2026-09-24-tos-canonical-set-order-plan.md``) a digest no
+    longer depends on the seed, and re-introducing the pass-through would hide a regression
+    rather than surface it.
     """
-    env = {
+    return {
         "PATH": "/usr/bin:/bin",
         "PYTHONPATH": _SUBPROCESS_PYTHONPATH,
         "PYTHONDONTWRITEBYTECODE": "1",
         "HOME": str(Path.home()),
     }
-    seed = os.environ.get("PYTHONHASHSEED")
-    if seed:
-        env["PYTHONHASHSEED"] = seed
-    return env
 
 
 def _run_runtime_cli(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -611,55 +609,25 @@ def _policy_digest_lines(config_dir: Path) -> tuple[tuple[str, str, int, str], .
     digest)`` per printed line (design §2 step 6; the printer is
     ``compose/cli.py::_dispatch_print_policy_digests`` + ``compose/_cli_ops.py:91-145``).
 
-    ⚠ **NOT REPRODUCIBLE across processes whenever a covered field is a set** (measured
-    2026-09-23, scope widened 2026-09-24 per review-797 MEDIUM-3).
+    Reproducible across processes since 2026-09-24. It was not before: ``covered_content()``
+    is ``model_dump(mode="json", …)`` (``tos/src/tos/canonical/_base.py:187``), which renders a
+    ``set``/``frozenset`` as a LIST in set-iteration order, and ``_encode`` treats a sequence
+    as ORDER-SIGNIFICANT ("sequence order is preserved (vectors are order-significant)",
+    ``tos/src/tos/canonical/canonicalization.py``). Set iteration order follows Python's
+    per-process string hash seed, so any canonical model with a set in its covered content
+    digested differently in every process — and the documented operator procedure (run
+    ``print-policy-digests``, copy the digests into ``safety_activation.yaml::members``, boot)
+    is a CROSS-PROCESS transcription, so it could not work for such a kind.
 
-    ``covered_content()`` is ``model_dump(mode="json", …)``
-    (``tos/src/tos/canonical/_base.py:187``), which renders a ``set``/``frozenset`` as a LIST
-    in set-iteration order, and ``_encode`` treats a sequence as ORDER-SIGNIFICANT
-    ("sequence order is preserved (vectors are order-significant)",
-    ``tos/src/tos/canonical/canonicalization.py:148-149,174-176``). Set iteration order
-    follows Python's per-process string hash seed, so any canonical model with a set in its
-    covered content digests differently in every process.
-
-    **This is a CLASS of models, not one instance.** Measured 2026-09-24 over every
-    ``DigestBoundArtifact`` subclass that declares ``_COVERED_FIELDS`` (the scan is pinned by
-    ``tests/unit/scripts/test_render_paper_config.py``):
-
-    * **120** canonical models carry ``_COVERED_FIELDS``;
-    * **19** of them have a ``set``/``frozenset`` in covered content (directly or through a
-      nested model);
-    * **6 of those 19 already sort** — they override ``covered_content()`` for exactly this
-      reason. ``tos/src/tos/cur/records.py:44-49`` states it outright: "because
-      ``model_dump(mode="json")`` serializes a ``frozenset`` to an **unordered** list and the
-      canonicalizer preserves sequence order, ``covered_content`` **sorts** each set field so
-      the digest is deterministic across processes" (design #23 §3.1). The six are the
-      ``cur`` / ``wdr`` / ``sir`` / ``rlp`` families;
-    * **13 do not**, and their digests are therefore process-dependent —
-      ``brokercap.BrokerCapabilityProfile``, four ``hag`` records,
-      ``liveauth.LiveAuthorization``/``ReArmApprovalRecord``, three ``sbr`` records,
-      ``posttrade.StatementCoverageManifest``, ``venue.OrderAdmissibilityDecision`` and
-      ``venue.VenueConstraintPolicy``.
-
-    ``VenueConstraintPolicy`` is the only one of the 13 this deployment digests today —
-    ``required_constraint_classes: frozenset[ConstraintClass]``
-    (``tos/src/tos/venue/records.py:425``) plus ``shape_constraints``'s four ``allowed_*``
-    frozensets (``:165-168``), with ``ConstraintClass`` a ``StrEnum``
-    (``tos/src/tos/venue/vocabulary.py:169``).
-
-    ⚠ Note for whoever writes the fix: ``CurrentnessPolicy.required_dimensions`` LOOKS
-    affected by type and this deployment does adopt it (``currentness.yaml``, PR #794), but it
-    is in the sorting six — measured stable across six hash seeds. A static type scan alone
-    over-reports; the override is what decides.
-
-    The other four PRINTED kinds (OCP / AGGREGATE_RISK / ACTION_FLOW / CRITICAL_INPUT) are
-    stable — their covered fields carry no set at all. That is a statement about the five
-    printed kinds, never about the kernel as a whole.
-
-    Consequence: the documented operator procedure (run ``print-policy-digests``, copy the
-    digests into ``safety_activation.yaml::members``) cannot work for an affected kind, because
-    it is a CROSS-PROCESS transcription. :func:`_verify_activation` therefore re-derives in a
-    fresh process and refuses here rather than letting the boot fail later.
+    The fix is one JSON-mode serialization hook on :class:`~tos.canonical.FrozenModel`
+    (``tos/src/tos/canonical/_canonical_json.py``;
+    ``docs/plans/2026-09-24-tos-canonical-set-order-plan.md``): every set is emitted in
+    ``sorted()`` order, so all 19 set-carrying canonical models — ``VenueConstraintPolicy``
+    among them — digest identically in every process.
+    ``tests/tools/test_tos_canonical_set_order.py`` measures that over six ``PYTHONHASHSEED``
+    values, and ``_verify_activation`` still re-derives in a fresh process: the cross-process
+    transcription is the property that must hold, and re-measuring it here is cheaper than
+    discovering a regression at boot.
 
     ⚠ **Separately: the activation record does not bind DIRECTION** (review-797 LOW-6).
     ``_runtime.construction.axes``' ``DIRECTION`` and ``admitted_quantity_bases`` sit OUTSIDE

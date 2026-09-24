@@ -53,7 +53,8 @@ Every covered field is an immutable claim; the current lifecycle state / injecte
 the predicate.
 
 **Deterministic set-covered digest (design #26 §3.1).** ``frozenset`` covered fields (policy class /
-scope-dimension manifests) are **sorted** in :meth:`covered_content` so the digest is deterministic
+scope-dimension manifests) are **sorted** by the shared
+:class:`~tos.canonical._canonical_json.CanonicalJsonMixin` JSON hook so the digest is deterministic
 across processes; the field type stays a ``frozenset`` for the predicate's subset math. Nested value
 models with only scalar / bool fields (``DeviationScope`` / ``NonWaivableBoundaryAnchor`` /
 ``AllFalseDeviationAuthority``) are digest-safe; nested models carrying frozensets are kept **out** of
@@ -69,7 +70,7 @@ no ``shared.*``, no sibling ``tos.*`` (design #26 §0.3).
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import model_validator
 
@@ -102,15 +103,6 @@ __all__ = [
     "ActiveDeviationSet",
     "AllFalseDeviationAuthority",
 ]
-
-
-def _sorted_set_fields(content: dict[str, Any], *names: str) -> dict[str, Any]:
-    """Sort the named ``frozenset``-derived list fields for a deterministic digest (§3.1)."""
-    for name in names:
-        value = content.get(name)
-        if value is not None:
-            content[name] = sorted(value)
-    return content
 
 
 def _scope_incomplete(scope: DeviationScope | None) -> bool:
@@ -175,17 +167,6 @@ class SafetyDeviationPolicy(IndependentIdArtifact):
     compatibility_manifest_digest: str | None = None
     #: §7 — a policy is governed content, not permission (all-false, WDR-INV-001).
     authority_effect: AllFalseDeviationAuthority = AllFalseDeviationAuthority()
-
-    def covered_content(self) -> dict[str, Any]:
-        """Digest preimage with the ``frozenset`` class fields serialized deterministically (§3.1)."""
-        return _sorted_set_fields(
-            super().covered_content(),
-            "eligible_deviation_classes",
-            "prohibited_deviation_classes",
-            "scope_dimensions",
-            "required_compensating_control_classes",
-            "required_evidence_levels",
-        )
 
 
 class SafetyDeviationRequest(IndependentIdArtifact):
