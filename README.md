@@ -209,6 +209,7 @@ docs/                architecture, plans, runbooks, operations docs
 |---|---|
 | [tos-rcl-schema-migration.md](docs/runbooks/tos-rcl-schema-migration.md) | RCL sqlite schema v1→v2 migration ordering, backup-before-migrate, rollback scope |
 | [tos-kis-mock-transport.md](docs/runbooks/tos-kis-mock-transport.md) | `--transport kis-mock` wiring, custody, and non-live admission |
+| [tos-paper-boot.md](docs/runbooks/tos-paper-boot.md) | TOS paper 첫 부팅 — 좌표 렌더(저장소 밖) → `run` → 정지 → 확인. LONG/SHORT 둘 다. ⛔ **아직 끝까지 가지 못한다** — §5 가 실측 차단 3건을 이름으로 적는다 |
 | [u17-prevention-control.md](docs/runbooks/u17-prevention-control.md) | U-17 예방 통제 — 아티팩트 countersign · main 착지 · 룰셋 필수 체크. **D0-A 착수 차단의 실제 해제 조건** |
 | [kis-capability-probes.md](docs/runbooks/kis-capability-probes.md) | KIS broker capability probes (P0-2 / T2) — measurement only, approval is human |
 | [2026-09-10-p02-probe-handover-paper-server.md](docs/runbooks/2026-09-10-p02-probe-handover-paper-server.md) | P0-2 probe handover to the paper server; `kis-capability-probes.md` is authoritative on conflict |

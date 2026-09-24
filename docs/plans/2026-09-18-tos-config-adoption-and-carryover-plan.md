@@ -632,3 +632,335 @@ review-794 HIGH-1/HIGH-2 는 「⚠ 값과 [A] 전사 bound 가 **값으로** �
   (여전히 양의 정수라 로더는 통과) 포함.
 - 뮤테이션은 **텍스트 치환**으로 바꿨다. `yaml.safe_dump` 왕복은 헤더 주석을 날려 **출처 시험이
   먼저 터지는** 공허한 RED 를 만든다(review-794 방법론 주의).
+
+#### 7.8.3 3차 (2026-09-23) — 좌표 렌더 + 첫 부팅 시도 (A-5 본체)
+
+설계 `docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md`(운영자 결정 1·3 ·
+운영자 선택 (가))의 구현. 브랜치 `feat/tos-paper-render-and-first-boot`, main `b5bb5eb5` 기준.
+런북 `docs/runbooks/tos-paper-boot.md`.
+
+##### 착지물
+
+| 항목 | 결과 |
+|---|---|
+| 렌더 스크립트 | `scripts/tos/render_paper_config.py` — 커밋된 `config/tos_runtime/paper` 를 저장소 밖으로 **바이트 복사**한 뒤 좌표 칸만 치환. tos 코드·방화벽 변경 **0**. `scripts/` 는 `tos`/`tos_runtime` 을 import 할 수 없으므로(TOS-FW-R) `print-policy-digests` 와 활성화 재확인은 **서브프로세스** |
+| 단위 테스트 | `tests/unit/scripts/test_render_paper_config.py` — 28건. §2 가드 표 **전 행**에 실패하는 입력 테스트. 임시 `git clone` 안에서 실제 CLI 를 돌려 `git status --porcelain --ignored` 불변 단정(`PYTHONDONTWRITEBYTECODE=1` + `python -B`) 포함 |
+| 부팅 증명 픽스처 | `construction.yaml` · `strategies/bootproof_band.strategy.yaml` · `marketfeed.yaml` · `critical_input_policy.yaml`. 파일마다 픽스처 헤더 문장. 값마다 file:line |
+| 커밋 값 | `finality::value_date="T+1"` · `proof_recipe_id`(픽스처 토큰) · OCP `admitted_quantity_bases=["RISK"]` · `axes[DIRECTION]="LONG"` |
+| 핀 갱신 | `_VALUE_PINS`(finality 2값) · 거부 핀(거부 키가 `value_date`→`source_revision` 으로 이동) · `_loader_probe` 프로브 2종 추가 → **18 PASS / 27**(이전 17/25) · 픽스처 4종 전 리프 핀 + 미렌더 좌표 칸을 **각자 로더의 거부로** 핀 |
+
+##### 계좌 형식 — 실측 결론
+
+**어떤 tos 로더도 계좌 형식을 검사하지 않는다.** 전부 「비어 있지 않고 `"TBD"` 가 아닌 문자열」
+만 요구한다(`venue/_policy_primitives.py::require_singleton_list_str` ·
+`riskstate/_action_flow_policy_loader.py:471-490` · `_aggregate_risk_policy_loader` ·
+`compose/_construction_config.py::_require_str`). 강제되는 것은 **파일 간 동일성**뿐이다
+(`compose/_venue_wiring.py:139-142` · `compose/_riskstate_wiring.py:86-89`).
+따라서 하이픈 문제는 렌더가 **한 번** 정하고 모든 칸에 같은 문자열을 넣는다 —
+**숫자만, 10자리 전부**(`shared/kis/client.py::_normalize_account` 「digits-only 10-char format」 ·
+`tools/broker_probes/common.py` 의 `cano=[:8]`/`acnt_prdt_cd=[8:10]` 와 같은 형태). 뒤 두 자리는
+상품코드라 그것을 버리면 「선물 계좌」라는 식별이 사라진다.
+⚠ 미결로 남긴 지점: (아직 운영자 미승인인) KIS mock transport 제안표는 이 좌표를 **CANO 한 필드**
+에 매핑하고 `ACNT_PRDT_CD` 를 별도 상수로 둔다(`docs/runbooks/tos-kis-mock-transport.md:97,101`).
+그 매핑이 그대로 채택되면 좌표는 8자리 CANO 가 된다. SYNTHETIC 스코프에서는 브로커에 도달하지
+않으므로 재렌더로 되돌릴 수 있다 — 조용히 선점하지 않고 명시해 둔다.
+
+##### A-5 결과 — **부팅 미완 · 남은 거부 3건을 이름으로 지목**
+
+1. ⛔ **`VenueConstraintPolicy.canonical_digest` 가 프로세스마다 다르다.**
+   `_COVERED_FIELDS`(`tos/src/tos/venue/records.py:406-416`) 안의 frozenset 필드
+   (`required_constraint_classes` `:424`, `shape_constraints` 의 `allowed_*` `:165-168`)가
+   `covered_content()`(`tos/src/tos/canonical/_base.py:187`)의 `model_dump(mode="json")` 에서
+   **집합 순회 순서 그대로의 리스트**가 되고, `_encode`(`canonicalization.py:148-149,174-176`)는
+   시퀀스를 **순서 유의미**로 취급한다. `ConstraintClass` 는 `StrEnum`(`vocabulary.py:169`).
+   → **§2 6항이 규정한 「`print-policy-digests` 출력을 `members` 에 전사한다」는 절차가 이
+   한 종류에서 성립하지 않는다.** 나머지 4종(OCP/ARE/AFG/CIP)은 covered 필드에 집합이 없어 안정.
+   기존 테스트가 전부 **한 프로세스 안에서** 계산·검증해 드러나지 않았다
+   (`test_deploy_policies.py::_install_real_policies` 주석: "done **in-process**").
+   렌더의 종료 검사를 **새 프로세스에서 정책을 재로드해 재확인**하도록 쓴 덕분에 즉시 잡혔다.
+   정본 직렬화 변경은 설계 PR 사안이라 **고치지 않고 지목**하고,
+   `test_venue_policy_canonical_digest_is_not_reproducible_across_processes` 로 결정적으로 고정했다.
+2. `venue_constraint_policy.yaml:55` `environments: ["paper"]` ≠ 설계 §2 부팅 명령의
+   `--environment-label non-live-test` → `VenuePolicyScopeMismatch`. `paper` 는
+   `cli.py:215` `_LIVE_ENVIRONMENT_LABELS` 소속이라 라벨 선택은 운영자 결정.
+3. `safety_envelope.yaml::governed_dimensions: []` ≠ `aggregate_risk_policy.yaml:74` 요구
+   → `RiskPolicyScopeMismatch`. 그 파일 헤더가 「별도 안전 승인 사안」이라 적는다 — 안전 한도라
+   채우지 않았다.
+
+##### 양방향 증거 (§3 (가))
+
+세 거부를 **진단으로만** 통과시킨 상태(해시 시드 고정 · 라벨 `paper` · 스크래치 사본에만 봉투
+차원 1건 추가; 커밋 파일 불변)에서 LONG·SHORT **두 구성 모두** 동일하게:
+
+- `run` 이 거부 없이 부팅 → `run_forever` → SIGTERM → `run: stopped (signal received).` **exit 0**
+- 틱은 `SKIPPED_SESSION_CLOSED`(`phase='EXPIRED'`) — 값이 아니라 **캘린더**다
+  (`calendar.yaml:36-40`: 08:45–15:45 KST + 9월 만기 이후 클래스 전체 EXPIRED, 클래스 단위 규칙)
+- 같은 산출물을 만기 이전 장중 시각으로 구동 → `TICKED`, `marketfeed.sqlite3`
+  `snapshots: 1 / preimages: 1`, 값 뷰 = 렌더 저널의 세 필드 그대로
+
+**실 계좌번호는 커밋 파일·테스트·커밋 메시지·PR 어디에도 쓰지 않았다**(로그는 지문만;
+기계 검사로 diff/커밋메시지/작업트리 전수 확인).
+
+
+#### 7.8.4 4차 (2026-09-24) — review-797 조치 + 운영자 결정 2건 + 2차 부팅
+
+PR #797 리뷰 판정 **HIGH 2 · MEDIUM 3 · LOW 6**(머지 불가)을 전건 처분하고, 같은 라운드에
+**운영자 결정 2건**을 반영했다. 리뷰가 코드로 확인해 준 것(가드 6종 뮤테이션 6/6 RED ·
+등록된 21키만 치환 · 계좌 유출 0 · 결함 ① 재현 · 결함 ② 재현 및 「첫 틱 가능일 10-01」
+정정 · 죽은 핀이 진짜로 살아났다는 확인 · 인용 file:line 전건 확인)은 **다시 받지 않았다.**
+
+##### HIGH-1 — **1차가 「실측」이라고 네 번 단언한 문장이 거짓이었다**
+
+주장: 「`marketfeed` 로더의 `_require_str` 는 `null`/빈 문자열만 거부하고 문자열 `"TBD"` 는
+거부하지 않는다(실측)」. **거짓이다.** 실제로 파일을 로드하지 않고 에러 메시지 문자열만
+훑고 결론 낸 것이다. 재측정:
+
+```
+instruments  null / "" / "TBD"  -> 전부 REFUSED
+account      null / "" / "TBD"  -> 전부 REFUSED
+journal_path null / "" / "TBD"  -> 전부 REFUSED
+```
+
+`_marketfeed_wiring._require_str` 는 타입 검사 뒤 `reject_named_tbd` 를 부르고(:200-202),
+`_require_instruments` 도 항목마다 부른다(:228-232). 그 기계적 차단은 `d2a36d22`
+(「close the named-TBD bypass class mechanically, not by list」, W-A A-0 round 2 ·
+origin/main 의 조상)가 이미 넣었다.
+
+왜 나쁜가: 런타임 위험은 없었지만(`null` 도 거부되므로 결과는 안전했다) 이 문장이
+**이미 머지된 안전 수정의 상태를 잘못 적었다** — `config/tos_runtime/README.md` 라는 내구
+문서에서. 그것을 읽은 사람은 「그 로더의 named-TBD 우회가 아직 열려 있다」고 결론 내리거나
+다른 로더에 같은 구멍을 남겨도 된다고 오독할 수 있다. 이 저장소가 기록해 둔 반복 결함
+(「가드가 자기가 막는다고 말한 것을 허용한다」)의 거울상이다.
+
+조치: 네 곳 정정 + 그 거짓이 유일한 근거였던 「placeholder 형태가 로더마다 다르다」 분류를
+폐기하고 **좌표 칸을 전 파일 `"TBD"` 로 통일**(렌더 규칙·핀 동반). 로더 프로브 분할은
+**18 PASS / 27** 그대로(거부 사유 문구만 바뀐다).
+
+##### HIGH-2 · MEDIUM-1 — 부팅 라벨: **운영자 결정 = `paper`**
+
+1차는 `critical_input_policy.yaml::environment` 에 `non-live-test` 를 두고 주석에
+「런북이 강제하는 라벨은 `non-live-test`」라고 적었는데, **같은 PR 의 런북이 `paper` 로
+부팅하고 있었다.** 무해한 불일치가 아니다 — 그 토큰은 발행되는 모든 스냅샷·캡슐의 covered
+content 로 들어가고(`marketfeed/snapshot.py:283`), 로더는 그것을 `--environment-label` 과
+**대조하지 않으므로** 부팅은 조용히 성공하고 증거만 틀린 라벨을 단다.
+
+운영자 결정에 따라 `paper` 로 통일했다. 그 라벨이 `cli.py:215` `_LIVE_ENVIRONMENT_LABELS`
+소속이라는 것과 **구체적 귀결**(`restore-drill` 이 이 라벨로 실행을 거부한다 — `cli.py:816`)을
+런북에 적었다. 실제 주문 도달 여부는 라벨이 아니라 `broker_scopes.yaml::active_scope`
+(`SYNTHETIC_FUTURES_ORDER`)가 정한다는 것도 같이 적었다.
+
+##### 운영자 승인 — HSE 지배 차원 `envelope_max = 1`(계약)
+
+요구는 이미 문서에 있었다(`aggregate_risk_policy.yaml:74`), 값 1 은 그 정책의 이미 승인된
+유효 한도(`:111`)이자 OCP 사이징 `max_quantity: 1` 이다. `safety_envelope.yaml` 에 차원을,
+`safety_profile.yaml` 에 같은 차원의 `profile_value: "1"` 을 함께 기입했다 —
+`profile_within_envelope` 가 (a) **빈 봉투를 무권한으로 거부**하고(`spg/predicates.py:274-277`)
+(b) 봉투 선언 차원을 프로파일이 **누락하면 거부**하기(`:278-283`) 때문이다.
+**부수 실측: 1차의 「둘 다 빈」 상태는 그 술어를 어느 쪽으로도 통과할 수 없었다** — 「봉투가
+0개를 선언하므로 프로파일도 0개가 유일하게 정합」이라던 1차 주석은 틀렸다.
+경계는 `INCLUSIVE` 여야 한다 — EXCLUSIVE 면 `value == max` 가 거부돼 1 계약이 통과하지 못한다.
+
+##### MEDIUM-2 — 실패한 렌더가 계좌가 채워진 디렉터리를 남기던 문제
+
+결함 ① 때문에 **이 호스트에서 런북을 따르는 모든 운영자가 1회차에 그 상태에 도달했다**:
+좌표가 채워졌는데 `RENDERED.json` 이 없는 디렉터리가 남고, 재실행은 「not empty and carries
+no RENDERED.json」으로 **영구 거부**된다. 렌더를 **원자적**으로 바꿨다 — 형제 스테이징에서
+조립하고 성공 시에만 이동, 어떤 실패(`KeyboardInterrupt` 포함)든 스테이징 삭제.
+실측(아래 2차 부팅 R0): 실패 후 출력 경로도 부모 디렉터리도 **비어 있다.**
+
+##### MEDIUM-3 — 결함 ① 범위: 리뷰의 「부류다」는 맞고 **예시는 틀렸다**
+
+`_COVERED_FIELDS` 보유 모델 **120** 전수 스캔(재측정):
+
+| 수 | 무엇 |
+|---|---|
+| 19 | covered content 에 집합 보유(중첩 포함) |
+| **6** | 그중 **이미 `covered_content()` 를 오버라이드해 정렬한다** — `cur`/`wdr`/`sir`/`rlp` 계열. `tos/src/tos/cur/records.py:44-49` 가 이유를 그대로 적는다(설계 #23 §3.1) |
+| **13** | 정렬하지 않는다 = digest 프로세스 의존. 이 배포가 오늘 digest 를 계산하는 것은 그중 `VenueConstraintPolicy` 하나 |
+
+리뷰가 든 **`CurrentnessPolicy.required_dimensions` 는 그 6에 속해 영향이 없다** — 배포된
+`currentness.yaml` 로 만든 digest 가 해시 시드 6개에서 **동일**함을 실측했다. 타입 스캔만
+보면 과대 보고된다. **수정 패턴이 커널에 이미 있다**는 것이 후속 설계 PR 에 가장 쓸모 있는
+사실이라 그것까지 적었다. 부류 전체(120/19/6/13)를 **이름으로** 고정하는 테스트를 추가했다.
+
+##### LOW 1~6
+
+인용 오귀속 정정(「production-shaped default」는 `test_run_e2e.py:58`) · `records.py:425` ·
+`account_fingerprint` 가 **무염·가역**(10^10 입력)이므로 마스킹이 아니라 상관자임을 명시하고
+저장소 밖 0700 밖으로 나가지 않게 유지 · `parse_account_from_env_file` 이 인라인 주석을
+처리(따옴표 안의 `#` 은 값의 일부) · 「`tests/unit/scripts/` 신설」 문구 정정 ·
+**활성화 기록이 방향을 결속하지 않는다**는 한계 명시(LONG·SHORT 렌더의 5종 digest 가 바이트
+동일 — `_runtime.construction.axes` 는 정본 covered content 밖이다).
+
+> LOW-4 조치 중 **테스트가 내 수정의 버그를 잡았다**: 따옴표 값 뒤에 주석이 오면
+> (`KIS_...='<값>'  # note`) 첫 판이 따옴표를 벗기지 못했다. 닫는 따옴표까지를 값으로
+> 취하도록 고쳤다. 동반 테스트는 이 가드가 막는 실패가 **진짜 조용하다**는 것도 보인다 —
+> 8자리 + `# 03` 은 정확히 10자리가 되어 **형식이 멀쩡한 다른 계좌**로 통과한다.
+
+##### 2차 부팅 (2026-09-24, 실 `.env.mock` · 라벨 `paper` · 런북 그대로)
+
+LONG·SHORT **양쪽 동일**:
+
+| 단계 | 결과 |
+|---|---|
+| R0 렌더(시드 미고정, 런북 그대로) | **거부 — 결함 ①**. `PolicyNotActivated … members[0]: digest '<A>' != '<B>'` |
+| R0 뒤 잔여물 | **없음** — 출력 경로 부재, 부모 디렉터리 비어 있음(MEDIUM-2 확인) |
+| R1 렌더(진단: 해시 시드 고정) | 성공 · `ACTIVATED 5 (re-derived in a fresh process)` · 계좌 미출력(지문만) |
+| `--check` | exit 0 (좌표 칸 외 차이 0) |
+| **B 부팅**(런북 §3 그대로, **스크래치 패치 없이**) | **부팅 성공** → `--- sending SIGTERM … ---` → `run: stopped (signal received).` **EXIT=0** |
+| 지속 저장소 | `evidence.sqlite3 entries: 17` · `rcl.sqlite3 entries: 1` · `marketfeed.sqlite3` 생성(`snapshots: 0`) |
+| 틱 | `phase='EXPIRED' is_open=False` → `SKIPPED_SESSION_CLOSED` |
+
+**1차와의 차이: ②③이 커밋 파일로 닫혀, 스크래치 사본을 손대지 않고 부팅한다.**
+남은 것은 ①(렌더가 정상 거부)과 ④(캘린더 만기 공백 — 별도 PR 소관, 이 PR 은 캘린더를
+건드리지 않았다).
+
+**실 계좌번호는 이번 라운드에도 커밋 파일·테스트·커밋 메시지 어디에도 쓰지 않았다**
+(기계 검사로 diff/커밋메시지/작업트리 전수 확인).
+
+
+#### 7.8.5 5차 (2026-09-24) — review-797 2차 조치 (HIGH 1 · LOW 3)
+
+2차 리뷰 판정 **HIGH 1 · LOW 3**. 1차 지적 11건은 전부 종결로 확인됐고, 그중 MEDIUM-3 의
+예시(`CurrentnessPolicy`)는 **리뷰어가 자기 지적을 철회**했다(우리 재측정이 맞았다).
+
+##### HIGH — 원자적 렌더의 보호 구간이 꼬리 3문장을 덮지 못했다
+
+4차에서 도입한 `try` 가 **지문 계산 직전에 끝나 있었다.** 그 뒤의
+`account_fingerprint` · `RENDERED.json` 쓰기 · `rmtree(out)` · `shutil.move` 는 보호 밖이고,
+리뷰어가 첫 미보호 문장에 실패를 주입해 **계좌가 든 파일 7개짜리
+`.paper-config.partial-<pid>`** 를 실제로 남겼다.
+
+더 나쁜 것은 **관측성이 1차보다 후퇴했다**는 점이다: 이름이 `.` 으로 시작해 `ls` 에 안
+보이고, 이름에 PID 가 박혀 있어 다음 실행이 **치우지도 알아채지도 못한 채 조용히
+성공**한다. 1차에는 적어도 다음 렌더가 「비어 있지 않고 `RENDERED.json` 이 없다」로 큰
+소리로 거부하며 경로를 알려줬다.
+
+그리고 **세 곳이 그럴 수 없다고 단언하고 있었다** — 코드 주석(「Every failure path,
+including KeyboardInterrupt」) · 런북(운영자가 읽는 문서) · 전칭 테스트 이름
+(`..._leaves_no_output_directory_and_no_account_on_disk`, 주입 지점은 보호 구간 안 하나뿐).
+**이번 라운드에 HIGH-1 로 고친 것과 같은 형태**이고, 이 저장소가 기록해 둔 반복 결함
+(「가드가 자기가 막는다고 말한 것을 허용한다」)의 또 한 사례다.
+
+**새 정리 설계**
+
+| | |
+|---|---|
+| 보호 구간 | 계좌 첫 바이트가 닿는 `_apply_rules` 부터 **교체 완료까지 전부** 한 `try`. `except BaseException` 이 스테이징과 `.replaced-<pid>` 를 **둘 다** 지운다 |
+| 교체 | `rmtree(out)` → `move` 를 버리고 **이름 바꾸기 3단계**(`os.replace`; 두 경로가 `out` 의 형제라 같은 파일시스템 = rename 보장): ① 이전 렌더를 `.replaced-<pid>` 로 **옮긴다**(지우지 않는다) ② 스테이징을 비어 있는 `out` 으로 옮긴다(비지 않은 디렉터리 위로는 `ENOTEMPTY`) ③ 교체가 끝난 뒤에야 이전 렌더를 지운다 |
+| 실패 처리 | ② 실패 → ①을 되돌리고 스테이징 삭제. ③ 실패 → 「렌더는 성공했고 `out` 은 올바르나 **이전** 렌더가 남았다」를 경로와 함께 **던진다**(계좌가 들었으므로 삼키지 않는다) |
+| 잔여물 | 시작 시 형제 `.partial-*`/`.replaced-*` 가 있으면 **거부하고 경로를 알려 준다.** 자동 삭제 안 함 — 동시 렌더의 것일 수 있고, PID 생존은 PID 재사용 때문에 믿을 수 없으며, **계좌가 든 디렉터리를 추측으로 지우는 것**이 이 가드가 막으려는 바로 그 조용한 동작이다 |
+
+**왜 「지우고 옮기기」가 아니라 「옮기고 지우기」인가**: `rmtree(out)` 과 `move` 사이에는
+이전 렌더가 **이미 없는데 새 것도 아직 없는** 창이 있고, 거기서 중단되면 이전 렌더를
+잃으면서 동시에 계좌가 든 스테이징이 남는다. rename 3단계에는 그 창이 없다.
+
+**테스트**: 단일 주입 테스트를 **실패 지점 7종 파라미터화**로 교체했다 — 치환 도중(첫 규칙만
+적용하고 실패) · members 쓰기 · `print-policy-digests` · 읽기-백 · **지문** ·
+**`RENDERED.json` 쓰기** · **교체 rename**. 각 케이스가 「출력 디렉터리 없음 + 작업
+디렉터리 없음 + 부모 아래 어느 파일에도 계좌 바이트 없음」을 단정한다. 이전 렌더가 있는
+경우는 별도 2종(롤백 · 예측자 제거 실패 보고)으로 나눴다 — 거기서는 「계좌 바이트 0」이
+성립할 수 없다(이전 렌더가 정당하게 갖고 있다).
+
+**뮤테이션 6/6 RED**:
+
+| # | 뮤테이션 | 결과 |
+|---|---|---|
+| n1 | `except` 를 지문 앞으로 올림(= 리뷰어가 찾은 그 결함) | **RED 3건** — 정확히 `in-account-fingerprint` · `writing-RENDERED.json` · `at-the-rename-of-the-swap` |
+| n2 | `except` 의 두 `rmtree` 제거 | **RED 5건** |
+| n3 | `_publish` 의 롤백 제거 | **RED 1건**(이전 렌더 소실) |
+| n4 | 교체를 `rmtree(out)` → `move` 로 되돌림 | **RED 2건** |
+| n5 | 잔여 작업 디렉터리 거부 제거 | **RED 1건** |
+| n6 | 예측자 제거 실패를 삼킴 | **RED 1건** |
+
+##### LOW 3건
+
+- `safety_envelope.yaml` 의 `_runtime.unit` 인용 `:100` → **`:105`**(`:100` 은 `governed_scopes`).
+- 부류 핀의 분할 기준을 **「오버라이드한다」에서 「실제로 정렬한다」(관측)**로 바꿨다.
+  기존 기준(`cls.covered_content is not base_impl`)은 **패스스루 오버라이드**를 안전 쪽으로
+  분류한다 — 그런 오버라이드가 이미 둘 있다(`ExactTrialPlan`·`ActiveSafetyIncidentSet`,
+  지금은 집합 필드가 없어 무해). 이제 각 집합 covered 필드를 `model_construct` 로 채워
+  **방출 결과가 `sorted(...)` 인지 관측**하고(서로 무관한 5토큰 조합 3회 — 우연히 정렬된
+  순서가 나올 확률 1/120^3), **모델이 소유한 모든 집합 필드가 정렬될 때만** 안전 쪽으로
+  분류한다(부분 정렬 방지). 직접 관측 불가(집합이 중첩 모델 안)인 7종은 그 사실을 따로
+  기록하고 보수적으로 「정렬하지 않음」에 넣는다. 분할 결과는 **6/13 으로 동일**하다.
+- 설계 §4 1항의 「`tests/unit/scripts/` 신설」 **원문 자리**에 §5 LOW-5 정정 포인터를 달았다.
+
+##### 재부팅 확인 (원자적 렌더 변경 후, LONG·SHORT 동일)
+
+R0(런북 그대로) = 결함 ① 로 정상 거부 · **잔여물 0** · R1(진단 시드) = `ACTIVATED 5` ·
+`--check` exit 0 · **B 부팅 성공 → `run: stopped (signal received).` EXIT=0** ·
+틱 = `SKIPPED_SESSION_CLOSED`(캘린더). 4차와 동일하다.
+
+
+#### 7.8.6 6차 (2026-09-24) — main `5d618f1c` 병합 + 캘린더 수정(#799) 이후 재측정
+
+PR #798(문서)·#799(캘린더 만기 롤) 머지로 main 이 `b5bb5eb5` → **`5d618f1c`** 로 움직여
+브랜치에 병합했다.
+
+##### 충돌 1건 — `docs/plans/INDEX.md`, 양쪽 의도 보존
+
+main 은 새 계획 행(`2026-09-24-tos-canonical-set-order-plan.md`)을 추가하면서 이 설계의
+행을 **옛 상태**("결정 확정 — 구현 미착수")로 들고 있었고, 우리 쪽은 같은 행을 착지 기록으로
+갱신했다. **main 의 새 행 + 우리의 갱신된 행**을 둘 다 남겼다. 그 외 12개 파일은 자동 병합
+(`test_deploy_approved_values.py` 포함 — main 의 캘린더/버전/digest 핀과 우리 픽스처·봉투·
+프로파일·finality·marketfeed·CIP 핀이 서로 다른 줄이라 충돌 없음).
+
+##### 코드 digest — main 과 **동일해야** 하고, 동일하다
+
+이 브랜치는 `tos/src`·`tos/runtime/src` 의 `*.py` 를 **한 줄도 바꾸지 않는다**(바꾸는 것은
+`config/`·`scripts/`·`tests/`·`docs/`뿐). 따라서 병합 뒤 `print-digests` 는 main 이 #799 에서
+기록한 값과 같아야 한다 — 실측:
+
+```
+expected_code_digest: b9eda9bd69cb24cb694ea44f75f8f44bbef701c3991eb9e6feaee34763d33571
+```
+
+`config/tos_runtime/paper/release.yaml:57` 과 `_VALUE_PINS`
+(`release.yaml::expected_code_digest`) 둘 다 정확히 이 값을 싣는다.
+
+##### 로더 프로브 분할 — **변경 없음 (18 PASS / 27)**
+
+main 의 변경은 캘린더 로더/월물 규칙과 버전 문자열이고, 프로브가 세는 것은 **좌표 미렌더
+거부**다. `calendar.yaml` 은 병합 전후 모두 PASS 이므로 분할이 움직이지 않았다 — 핀을
+건드릴 이유가 없다(움직였다면 그것이 바로 갱신 사유였을 것이다).
+
+##### 캘린더 — #799 의 효과를 이 배포의 파일로 재측정
+
+`calendar.yaml` `futures_expiry.krx-index-futures.months` 가 분기 `[3,6,9,12]` → **매월
+`[1..12]`**, `calendar_version` 은 `krx-2026.09` → **`krx-2026.09.1`**(`time.yaml::
+trading_calendar_version` 과 일치). 같은 파일로 실측(10:00 KST):
+
+| 날짜 | expiry_date | expired | phase |
+|---|---|---|---|
+| 2026-09-11 | 2026-10-08 | False | **CONTINUOUS** |
+| 2026-09-24 (오늘) | 2026-10-08 | False | **CLOSED** |
+| 2026-09-28 | 2026-10-08 | False | **CONTINUOUS** |
+| 2026-09-30 | 2026-10-08 | False | **CONTINUOUS** |
+| 2026-10-01 | 2026-10-08 | False | **CONTINUOUS** |
+
+4차 §7.8.4 가 기록한 「9월 만기(09-10) 이후 분기 내내 EXPIRED」는 **해소됐다.**
+
+⚠ **다만 오늘(2026-09-24)은 틱을 소비할 수 없다 — 값 문제도 만기 문제도 아니고
+`calendar.yaml:42` 의 휴장일(추석 연휴)이다.** 그래서 오늘은 08:45–15:45 창 자체가 없고,
+실 시계 부팅의 phase 는 (EXPIRED 가 아니라) **CLOSED** 로 나온다. 다음 개장은
+`boundary_value` 가 가리키는 **2026-09-28 08:45 KST**(09-25 추석 · 09-26 토 · 09-27 일).
+
+##### 재부팅 (병합 후 · 실 `.env.mock` · 라벨 `paper` · LONG·SHORT 동일)
+
+| 단계 | 결과 |
+|---|---|
+| R0 렌더(런북 그대로) | **거부 — 결함 ①**(커널 수정 전까지 예상된 상태) · **잔여물 0** |
+| R1 렌더(진단 시드) | `ACTIVATED 5` · `--check` exit 0 |
+| B 부팅 | **성공** → `run: stopped (signal received).` **EXIT=0** |
+| T 틱(실 시계, 15:0x KST) | `phase='CLOSED' is_open=False` → `SKIPPED_SESSION_CLOSED` — **휴장일** |
+| T 틱(주입 시계 2026-09-28 10:00 = 다음 개장) | **`TICKED`** · `value_view` = 렌더 저널의 세 필드 · `marketfeed.sqlite3` **snapshots: 1 / preimages: 1** |
+
+즉 **틱을 막던 만기 공백은 #799 로 사라졌고**, 남은 것은 휴장일이라는 평범한 달력 사실뿐이다.
+
+##### 스위트 (병합 후)
+
+`tos/runtime/tests` **2978 passed**(우리 2947 + main 의 캘린더 테스트 31) ·
+`tos/tests` **9542** · `tests/unit/scripts` **557** · 로더 프로브 **18/27** ·
+거버넌스 6종 전부 PASS · mypy(`tos/tests` 581 · `tos/runtime/tests` 224 ·
+`tos/runtime/src` 185 · 신규 2) 전부 Success · ruff/black clean.

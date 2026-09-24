@@ -1305,8 +1305,14 @@ def test_real_paper_ocp_carries_the_new_generation(tmp_path: Path) -> None:
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     assert raw["policy_generation"] == 3
     assert raw["_model_view"]["policy_generation"] == 3
+    # W-A / A-5 (2026-09-23, operator choice (가)): the operator-fill gate this line used to
+    # pin as ``["TBD"]`` is SETTLED — the deployed boot-proof strategy file's own
+    # ``quantity_basis`` is what proposal §4 ② was waiting for. Filling an operator-fill leaf
+    # is the pre-activation act the document's own header prescribes, so the generation stays
+    # 3 (asserted above); the value itself is pinned in
+    # ``tests/compose/test_deploy_approved_values.py`` against the strategy file.
     assert raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] == [
-        "TBD"
+        "RISK"
     ]
 
 
@@ -1350,46 +1356,53 @@ def test_real_paper_ocp_effect_dimension_id_matches_the_real_arp_capacity_lookup
     assert ocp_dimension_id not in arp_raw["_model_view"]["governed_dimensions"]
 
 
-def test_real_paper_ocp_refuses_on_admitted_quantity_bases_tbd_even_when_scope_is_filled(
-    tmp_path: Path,
-) -> None:
+def test_real_paper_ocp_refuses_on_scope_accounts_tbd(tmp_path: Path) -> None:
     """The shipped ``config/tos_runtime/paper/order_construction_policy.yaml`` pins its own
-    intentional not-yet-bootable state (OCP sizing proposal §4 ②): even with the
-    scope.accounts/scope.instruments operator-fill gate satisfied, the document still refuses
-    to load — now for admitted_quantity_bases, not merely for the scope gate this file already
-    pinned before the (a′) wave."""
+    intentional not-yet-bootable state: as committed it refuses, on the ONE operator-fill gate
+    that is still open — ``scope.accounts`` (the account coordinate is never committed;
+    ``scripts/tos/render_paper_config.py`` fills it off-repo).
+
+    W-A / A-5 (2026-09-23) closed the other two gates this test used to walk down
+    (``admitted_quantity_bases``, then the ``DIRECTION`` axis): both are committed values now,
+    pinned by ``test_real_paper_ocp_carries_the_new_generation`` above and by
+    ``tests/compose/test_deploy_approved_values.py``. Walking a chain of gates that no longer
+    exists would be a dead pin, so the chain is replaced by the one live gate plus the
+    "filled scope still loads" assertion below."""
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     assert raw["scope"]["accounts"] == ["TBD"]
     assert raw["scope"]["instruments"] == ["TBD"]
-    raw["scope"]["accounts"] = ["acct-x"]
-    raw["scope"]["instruments"] = ["inst-x"]
     text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
     path = tmp_path / "order_construction_policy.yaml"
     path.write_text(text, encoding="utf-8")
-    with pytest.raises(VenuePolicyConfigError, match="admitted_quantity_bases"):
+    with pytest.raises(VenuePolicyConfigError, match="scope.accounts"):
         load_order_construction_policy(path, scheme=SCHEME)
 
 
-def test_real_paper_ocp_refuses_on_direction_tbd_even_when_scope_and_bases_are_filled(
+def test_real_paper_ocp_loads_once_only_the_scope_coordinates_are_filled(
     tmp_path: Path,
 ) -> None:
-    """A third layer of the same operator-fill gate chain (review round 2026-09-16, PR #719):
-    after scope AND admitted_quantity_bases are filled, the shipped instance still refuses —
-    now on ``_runtime.construction.axes``' ``DIRECTION`` entry, which no operator has yet bound
-    this static, proposal-path-less composition to one trading direction."""
+    """The other half of the gate above, and the pin that keeps it honest: filling ONLY the
+    two scope coordinates — exactly what the render script does — is now sufficient for the
+    shipped document to load, carrying the committed ``RISK`` basis and ``LONG`` direction.
+
+    Without this, the refusal test above would pass equally well if some NEW named-TBD leaf
+    appeared behind it, and the fact that the document is otherwise complete would go
+    unrecorded."""
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     raw["scope"]["accounts"] = ["acct-x"]
     raw["scope"]["instruments"] = ["inst-x"]
-    raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] = ["RISK"]
-    direction_entries = [
-        entry
-        for entry in raw["_runtime"]["construction"]["axes"]
-        if entry["axis"] == "DIRECTION"
-    ]
-    assert len(direction_entries) == 1
-    assert direction_entries[0]["value"] == "TBD"
     text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
     path = tmp_path / "order_construction_policy.yaml"
     path.write_text(text, encoding="utf-8")
-    with pytest.raises(VenuePolicyConfigError, match="DIRECTION.*TBD"):
-        load_order_construction_policy(path, scheme=SCHEME)
+
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+
+    assert loaded.construction_rules.sizing_bound.admitted_quantity_bases == frozenset(
+        {"RISK"}
+    )
+    direction_axes = [
+        axis
+        for axis in loaded.construction_rules.authorized_axes
+        if axis.axis == "DIRECTION"
+    ]
+    assert [axis.value for axis in direction_axes] == ["LONG"]

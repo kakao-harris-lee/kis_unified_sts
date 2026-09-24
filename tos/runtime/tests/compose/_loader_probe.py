@@ -236,6 +236,20 @@ def _construction(d: Path) -> object:
     return load_construction_config(d / "construction.yaml")
 
 
+def _marketfeed(d: Path) -> object:
+    from tos_runtime.compose._marketfeed_wiring import load_marketfeed_config
+
+    return load_marketfeed_config(d / "marketfeed.yaml")
+
+
+def _critical_input_policy(d: Path) -> object:
+    from tos_runtime.marketfeed.policy import load_critical_input_policy
+
+    return load_critical_input_policy(
+        d / "critical_input_policy.yaml", scheme=_scheme()
+    )
+
+
 def _strategies(d: Path) -> object:
     from tos.dsl import AuthoredStrategy
     from tos.engine.admission import AdmissionResult
@@ -301,6 +315,12 @@ PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("action_flow_policy.yaml", _action_flow),
     ProbeSpec("construction.yaml", _construction),
     ProbeSpec("strategies/", _strategies),
+    # The tick-source pair — adopted 2026-09-23 as boot-proof fixtures (design
+    # docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §4 item 5).
+    # `marketfeed.yaml` carries coordinate slots and so refuses until rendered;
+    # `critical_input_policy.yaml` carries none and loads as committed.
+    ProbeSpec("marketfeed.yaml", _marketfeed),
+    ProbeSpec("critical_input_policy.yaml", _critical_input_policy),
 )
 
 

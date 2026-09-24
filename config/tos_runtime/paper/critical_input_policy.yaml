@@ -1,0 +1,103 @@
+# =============================================================================
+# critical_input_policy.yaml — TOS paper 배포 **부팅 증명 픽스처** (W-A / A-5)
+# =============================================================================
+# 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
+#
+# 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §4 5항
+#       (「저널 틱 원천 채택이 필요하면 그것도 이 PR — marketfeed.yaml +
+#        critical_input_policy.yaml 은 추천값이 없으므로 §3 과 같은 부팅 증명 픽스처
+#        규율로」) · 운영자 선택 (가) 2026-09-23
+#
+# **이 파일은 승인된 안전 정책이 아니다.** 제안표
+# (docs/plans/2026-09-18-tos-config-value-proposal.md)는 이 파일에 **값을 주지 않는다**
+# — 상위 계획 §7.8 A-5 가 그 사실을 기록한다(「특히 `critical_input_policy::fields[].
+# max_age_ms` 는 신선도 한도 — 안전 값이다. 그래서 채택하지 않았다」). 따라서 여기
+# 값들은 **승인값이 아니라 부팅 증명 픽스처**이며, 유일한 실측 출처는 이 저장소의
+# 헤르메틱 e2e 스위트가 실제로 부팅시킨 값이다(아래 각 줄의 file:line).
+# 운영 신선도 한도가 승인되면 그것으로 교체한다.
+#
+# 원본 템플릿: tos/runtime/config/critical_input_policy.example.yaml
+# 로더: tos_runtime.marketfeed.policy.load_critical_input_policy
+# 호출부: compose/_marketfeed_wiring (marketfeed.yaml 과 **함께 있을 때만** 틱 스케줄러를
+#         만든다) · compose/_cli_ops.py:126-145 `marketfeed_policy_digest_lines`
+#         (`print-policy-digests` 가 CRITICAL_INPUT_POLICY 줄을 하나 더 낸다)
+#
+# 좌표 칸 없음 — 이 파일은 렌더가 건드리지 않는다(계좌·종목을 담지 않는다).
+# =============================================================================
+
+# --- identity ---------------------------------------------------------------
+# 제안표 §4.3 식별자 규칙(`tos-paper-<무엇>-g<세대>`, 세대 1)을 그대로 따른다 —
+# 이 배포의 다른 승인 파일들(safety_activation.yaml `activation_id` 등)과 같은 형태.
+policy_id: "tos-paper-critical-input-bootproof-g1"
+policy_version: "1.0.0"
+policy_generation: 1
+
+# 발행 스냅샷의 귀속 주체(tos.capsule.CriticalInputSnapshot.issuer_principal_id).
+# egress_coordinates.yaml:57-58 의 `egressgw-{environment_label}` 관례와 같은 꼴이되,
+# 이 문서는 `{environment_label}` 치환 대상이 아니다 — 로더가 그 치환을 하지 않으므로
+# 여기에는 이미 확정된 리터럴을 적는다.
+issuer_principal_id: "tos-paper-critical-input-issuer-bootproof-g1"
+
+# --- scope --------------------------------------------------------------
+# 단일 라이브 스코프(v1). 틱 스케줄러는 environment/decision_class/intended_use 를
+# **이 파일에서만** 읽는다(marketfeed.example.yaml 헤더: 「구조 파생 > 자기신고」).
+#
+# `environment` — **운영자 결정 2026-09-23: 이 배포의 부팅 라벨은 `paper` 다.**
+#   그 라벨은 이미 `venue_constraint_policy.yaml:55` `environments: ["paper"]` 와
+#   `order_construction_policy.yaml:88` 이 선언한 값이고, compose 가 부팅 시점에
+#   대조한다(`compose/_venue_wiring.py` `_cross_check_scope` →
+#   `VenuePolicyScopeMismatch`). 그래서 런북 §1·§3 도 `LABEL=paper` 로 부팅한다.
+#
+#   ⚠ 이 토큰은 **발행되는 모든 스냅샷·캡슐의 covered content 로 들어간다**
+#   (`marketfeed/snapshot.py:283` `environment=self._policy.environment` ·
+#    `marketfeed/scheduler.py` 의 `CapsuleIssuer(environment=policy.environment, …)`).
+#   그런데 **로더는 이 값을 `--environment-label` 과 대조하지 않는다**(실측) — 둘이
+#   갈려도 부팅은 조용히 성공하고 증거만 틀린 라벨을 단다. 그래서 여기에 부팅 라벨과
+#   같은 값을 박고, 런북이 같은 라벨을 강제한다. (1차 판은 여기 `non-live-test` 를
+#   두고 「런북이 강제하는 라벨은 non-live-test」라고 적었는데, 같은 PR 의 런북이
+#   `paper` 로 부팅하고 있었다 — review-797 HIGH-2.)
+#
+# `decision_class` / `intended_use` —
+#   tos/runtime/tests/compose/test_marketfeed_wiring.py:93-94.
+environment: "paper"
+decision_class: "entry"
+intended_use: "entry-decision"
+
+# --- admissible fields -------------------------------------------------
+# 부팅 증명 전략(strategies/bootproof_band.strategy.yaml)이 읽는 세 필드.
+# 목록에 없는 필드는 커널의 UNKNOWN 바닥이 떨어뜨린다
+# (tos/src/tos/marketfeed/value.py:225-229).
+#
+# 각 슬롯의 값과 출처(tos/runtime/tests/compose/test_marketfeed_wiring.py:66-82
+# `_cip_fields()` — 이 저장소에서 실제로 틱을 발행시킨 유일한 실측 조합):
+#   * unit "KRW" — order_construction_policy.yaml:110-111
+#     `unit_multiplier_currency_and_numeric_rules` 의 "currency KRW" 와 같은 통화.
+#   * scale "minor" · multiplier "1" · sign "POSITIVE" — 같은 실측 조합.
+#     unit/scale/multiplier/sign 은 **각각 별개의 안전 필드**이며 하나의 토큰으로
+#     합치지 않는다(tos/src/tos/capsule/observation.py Mapping 독스트링).
+#   * max_age_ms 600000 — **신선도 한도**. 제안표에 값이 없다(위 헤더). 실측 출처는
+#     test_marketfeed_wiring.py:40-45 이고, 그 자리의 독스트링이 이 수치의 근거를
+#     적는다: 신선도 검사는 주입된 시계가 아니라 **실 시스템 시계**
+#     (`TrustworthyTimeService.wall_clock_now()`)와 비교하므로 느린 부팅을 흡수할
+#     여유가 필요하다. 렌더가 저널을 **부팅 직전에** 생성하므로(런북) 이 여유는
+#     실제로 그 부팅 지연만 덮는다. 더 좁은 값을 여기서 지어내지 않는다 —
+#     출처 없는 수치는 넣지 않는 것이 이 디렉터리의 규칙이다.
+fields:
+  - field_key: "close"
+    unit: "KRW"
+    scale: "minor"
+    multiplier: "1"
+    sign: "POSITIVE"
+    max_age_ms: 600000
+  - field_key: "lower_band"
+    unit: "KRW"
+    scale: "minor"
+    multiplier: "1"
+    sign: "POSITIVE"
+    max_age_ms: 600000
+  - field_key: "upper_band"
+    unit: "KRW"
+    scale: "minor"
+    multiplier: "1"
+    sign: "POSITIVE"
+    max_age_ms: 600000

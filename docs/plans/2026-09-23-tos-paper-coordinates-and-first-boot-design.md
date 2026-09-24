@@ -123,6 +123,7 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 ## 4. 구현 PR (결정 뒤) 모양
 
 1. `scripts/tos/render_paper_config.py` + 단위 테스트(`tests/unit/scripts/` 신설 — 레거시 `test` 워크플로 게이트, 가짜 env 파일) · `--check`.
+   > ⚠ **「신설」은 틀렸다 — §5 LOW-5 정정 참조.** `tests/unit/scripts/` 는 이미 존재했고 구현 PR 은 그 안에 파일 하나를 추가했다.
 2. 커밋 파일: `finality.yaml::value_date: "T+1"` · `proof_recipe_id: "tos-paper-proof-recipe-bootproof-g1"`(픽스처 헤더) + 핀 갱신
    (PR #794 의 `_VALUE_PINS`). `source_revision`(렌더 시 git SHA)과 `safety_activation.yaml::members`(렌더 시 `print-policy-digests`)는
    렌더 산출물이라 커밋 파일에서는 named-TBD 를 유지한다 — §2 5·6항.
@@ -133,4 +134,92 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 
 ## 5. 착지 기록
 
-(비어 있음)
+**구현 PR 브랜치 `feat/tos-paper-render-and-first-boot`(main `b5bb5eb5` 기준), 2026-09-23.**
+상세 기록은 상위 계획 §7.8.3. 런북은 `docs/runbooks/tos-paper-boot.md`.
+
+| §4 항목 | 착지 |
+|---|---|
+| 1. 렌더 스크립트 + 단위 테스트 | `scripts/tos/render_paper_config.py` · `tests/unit/scripts/test_render_paper_config.py`(28 tests, §2 가드 표 전 행 실패-입력 테스트 포함) · `--check` |
+| 2. 커밋 파일 값 + 핀 갱신 | `finality.yaml::value_date="T+1"` · `proof_recipe_id`(픽스처 토큰) · `source_revision` 은 렌더 산출물로 유지 · `_VALUE_PINS`/거부 핀/`_loader_probe` 분할(18 PASS / 27) 갱신 |
+| 3. (가) 부팅 증명 픽스처 | `construction.yaml` · `strategies/bootproof_band.strategy.yaml` · OCP 두 칸(`["RISK"]`/`LONG`) · LONG·SHORT **양쪽 렌더·부팅 증거 확보**(아래) |
+| 4. 런북 | `docs/runbooks/tos-paper-boot.md` |
+| 5. 종료조건 | **미충족 — 남은 거부 3건을 이름으로 지목**(아래 · 런북 §5) |
+
+**틱 원천은 이 PR 에서 채택했다**(§4 5항의 조건부 항목): `marketfeed.yaml`(`intake_kind: journal`)
++ `critical_input_policy.yaml` 을 §3 과 같은 부팅 증명 픽스처 규율로, 저널은 **렌더 시점 생성**
+(네트워크 0). 값 출처는 파일마다 file:line 으로 적었다 — 추천값이 없는
+`fields[].max_age_ms` 는 이 저장소에서 실제로 틱을 발행시킨 유일한 실측 조합
+(`tos/runtime/tests/compose/test_marketfeed_wiring.py:40-45`)을 그 자리의 근거 문장과 함께 인용했다.
+
+### 2차 (2026-09-24) — review-797 조치 · 운영자 결정 2건 반영
+
+리뷰 판정 HIGH 2 · MEDIUM 3 · LOW 6 을 전건 처분했고, **운영자 결정 2건이 아래 거부 ②③을
+닫았다.** 상세는 상위 계획 §7.8.4.
+
+- **HIGH-1 (거짓 주장 정정).** 1차가 네 곳에 적은 「marketfeed 로더는 문자열 `"TBD"` 를
+  거부하지 않는다(실측)」는 **거짓이었다** — 실제로 로드하지 않고 메시지 문자열만 훑은
+  결과였다. `_marketfeed_wiring._require_str` 는 `reject_named_tbd` 를 부르고(:200-202),
+  `_require_instruments` 도 항목마다 부른다(:228-232). `d2a36d22` 가 이미 닫은 부류다.
+  **재측정** 후 네 곳을 정정하고, 좌표 칸 placeholder 를 **전 파일 `"TBD"` 로 통일**했다
+  (파일마다 형태가 갈릴 근거가 애초에 없었다).
+- **HIGH-2 · MEDIUM-1 (라벨).** **운영자 결정: 부팅 라벨은 `paper`.**
+  `critical_input_policy.yaml::environment` 를 같은 토큰으로 맞추고, 런북이 라벨을
+  「고르지 않는다」고 쓰면서 `LABEL=paper` 를 박고 있던 모순을 없앴다. `paper` 가
+  `_LIVE_ENVIRONMENT_LABELS` 소속이라는 것과 그 구체적 귀결(`restore-drill` 거부)을
+  런북에 적었다.
+- **MEDIUM-2 (실패한 렌더의 잔여물).** 렌더를 **원자적**으로 바꿨다 — 형제 스테이징
+  디렉터리에서 조립하고 성공 시에만 옮긴다. 어떤 실패든 스테이징을 지우므로 **계좌가
+  채워진 디렉터리가 남지 않고**, 그래서 재실행도 막히지 않는다.
+- **MEDIUM-3 (결함 ① 범위).** 리뷰의 「부류다」는 맞고, 예시는 틀렸다. **재측정**:
+  `_COVERED_FIELDS` 보유 모델 **120** 중 집합 보유 **19**, 그중 **6 은 이미
+  `covered_content()` 를 오버라이드해 정렬한다**(`tos/src/tos/cur/records.py:44-49` 가
+  이유를 그대로 적는다 — 설계 #23 §3.1). 실제 영향은 **13**이고,
+  리뷰가 든 `CurrentnessPolicy.required_dimensions` 는 **그 6에 속해 영향 없다**(해시 시드
+  6개로 digest 불변 실측). 타입 스캔만으로는 과대 보고된다 — **수정 패턴은 커널에 이미
+  있다.** 부류 전체를 이름으로 고정하는 테스트를 추가했다.
+- **LOW 6건** 전부 조치(인용 오귀속 `test_run_e2e.py:58` · `records.py:425` ·
+  지문의 가역성 명시 · 인라인 주석 처리 + 테스트 · 아래 「신설」 문구 정정 ·
+  DIRECTION 이 정본 covered content 밖이라는 한계 명시).
+
+**LOW-5 정정**: 위 §4 1항의 「`tests/unit/scripts/` **신설**」은 사실이 아니다 —
+`origin/main` 에 이미 그 디렉터리와 10개 이상의 테스트 파일이 있다. 이 PR 은 그 안에
+파일 하나를 **추가**했다.
+
+### 거부 ②③ — **운영자 결정·승인으로 해소 (2026-09-23)**
+
+- **② 부팅 라벨 = `paper`**(운영자 결정). 채택된 정책 문서들이 이미 선언한 값이다.
+- **③ HSE 가 `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` 을 `envelope_max = 1`(계약)로
+  지배**(운영자 승인). 요구는 `aggregate_risk_policy.yaml:74` 에 이미 있었고, 1 은 그
+  정책의 이미 승인된 유효 한도(`:111`)다. 봉투에 차원을 선언하면 프로파일도 같은 차원을
+  선언해야 하므로(`spg/predicates.py:278-283`) `safety_profile.yaml` 에
+  `profile_value: "1"` 을 함께 기입했다 — 부수 실측: **1차의 「둘 다 빈」 상태는 그 술어를
+  통과할 수 없었다**(`:274-277` 이 빈 봉투를 무권한으로 거부한다).
+
+### 남은 거부 (실측, 2026-09-24) — **①만 남았다**
+
+1. ⛔ **`VenueConstraintPolicy.canonical_digest` 가 프로세스마다 다르다.** `_COVERED_FIELDS`
+   (`tos/src/tos/venue/records.py:406-416`)의 frozenset 필드들(`:424`, `:165-168`)이
+   `covered_content()`(`tos/src/tos/canonical/_base.py:187`)의 `model_dump(mode="json")` 에서
+   **집합 순회 순서 리스트**가 되고, `_encode`(`canonicalization.py:148-149,174-176`)는 시퀀스를
+   순서 유의미로 취급한다. `ConstraintClass` 가 `StrEnum`(`vocabulary.py:169`)이라 순서가
+   프로세스 해시 시드를 따른다. **그래서 §2 6항이 규정한 「출력을 `members` 에 전사한다」가
+   이 한 종류에서 성립하지 않는다.** 렌더 스크립트의 종료 검사(새 프로세스에서 정책 재로드 후
+   활성화 재확인 — 부팅과 동형)가 이것을 즉시 거부한다. 기존 테스트는 전부 한 프로세스
+   안에서 계산·검증해 드러나지 않았다. **정본 직렬화 변경은 이 설계의 범위 밖**이라 고치지
+   않고 지목한다.
+2. ~~`scope.environments` vs 부팅 라벨~~ → **해소**(운영자 결정: `paper`).
+3. ~~`safety_envelope.yaml::governed_dimensions: []`~~ → **해소**(운영자 승인:
+   `envelope_max = 1` 계약).
+
+### LONG·SHORT 양방향 증거 (§3 (가) 가 요구한 것)
+
+2차(2026-09-24) 기준으로 ②③은 커밋 파일이 닫았고, 남은 ①만 **진단 목적으로**(해시 시드
+고정) 통과시키면 LONG·SHORT **두 구성 모두**:
+
+- `run` 이 거부 없이 부팅해 `run_forever` 에 들어가고, SIGTERM 에 `run: stopped (signal received).`
+  **종료코드 0** 으로 정지한다.
+- 다만 틱은 소비되지 않는다 — `SKIPPED_SESSION_CLOSED`, `phase='EXPIRED'`. 값 문제가 아니라
+  캘린더다(`calendar.yaml:36-40` — 08:45–15:45 KST, 그리고 9월 만기 이후 클래스 전체 EXPIRED).
+- 같은 렌더 산출물을 만기 이전 장중 시각으로 구동하면 `TICKED` 되고
+  `marketfeed.sqlite3` 에 `snapshots: 1 / preimages: 1` 이 남는다. 값 뷰는 렌더가 만든 저널의
+  세 필드 그대로다. **LONG·SHORT 결과가 동일하다 — 대칭을 좁히지 않았다는 증거.**
