@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
@@ -569,38 +570,252 @@ def test_venue_policy_canonical_digest_is_not_reproducible_across_processes(
 # ---------------------------------------------------------------------------
 
 
-def test_a_failed_render_leaves_no_output_directory_and_no_account_on_disk(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_hash_seed: None
+#: Every point in :func:`render` AFTER the first account byte reaches the disk, as a
+#: ``(name, install)`` pair. ``install`` monkeypatches ONE statement boundary to fail.
+#:
+#: The list is the whole protected window, in execution order — coordinate substitution, the
+#: members write, the read-back, the fingerprint, the manifest write, and each of the three
+#: renames inside the swap. The first cut of this suite injected at ``_verify_activation``
+#: ALONE, which sat comfortably inside the ``try`` and therefore proved nothing about the
+#: tail; the reviewer injected at the first uncovered statement and got a hidden
+#: ``.paper-config.partial-<pid>`` holding seven account-bearing files.
+def _fail_inside_apply_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail PART WAY through the first coordinate substitution — the account is on disk in
+    some files but not others, which no whole-function hook can reproduce."""
+    real = rpc._apply_rules
+
+    def _partial(config_dir: Path, rules: Iterable[rpc.Rule]) -> None:
+        ordered = list(rules)
+        real(config_dir, ordered[:1])
+        raise rpc.RenderError("injected: part way through coordinate substitution")
+
+    monkeypatch.setattr(rpc, "_apply_rules", _partial)
+
+
+def _fail_after_first_apply_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail on the SECOND ``_apply_rules`` call (the members write), after every coordinate
+    slot is already filled."""
+    real = rpc._apply_rules
+    calls = {"n": 0}
+
+    def _counted(config_dir: Path, rules: Iterable[rpc.Rule]) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise rpc.RenderError("injected: at the members write")
+        real(config_dir, rules)
+
+    monkeypatch.setattr(rpc, "_apply_rules", _counted)
+
+
+def _fail_in_digests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        rpc,
+        "_policy_digest_lines",
+        lambda _dir: (_ for _ in ()).throw(
+            rpc.RenderError("injected: at print-policy-digests")
+        ),
+    )
+
+
+def _fail_in_verify(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        rpc,
+        "_verify_activation",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            rpc.RenderError("injected: at the activation read-back")
+        ),
+    )
+
+
+def _fail_in_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The FIRST statement the first cut left unprotected."""
+    monkeypatch.setattr(
+        rpc,
+        "account_fingerprint",
+        lambda _account: (_ for _ in ()).throw(
+            RuntimeError("injected: while fingerprinting")
+        ),
+    )
+
+
+def _fail_in_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        rpc,
+        "_write_rendered_manifest",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            OSError("injected: writing RENDERED.json (ENOSPC-shaped)")
+        ),
+    )
+
+
+def _fail_at_nth_replace(monkeypatch: pytest.MonkeyPatch, n: int) -> None:
+    """Fail at the n-th ``os.replace`` inside :func:`render_paper_config._publish`."""
+    real = rpc.os.replace
+    calls = {"n": 0}
+
+    def _counted(src, dst, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise OSError(f"injected: at os.replace call #{n}")
+        return real(src, dst, **kwargs)
+
+    monkeypatch.setattr(rpc.os, "replace", _counted)
+
+
+def _fail_in_publish_rmtree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail while removing the PREVIOUS render, after the swap already succeeded."""
+    real = rpc.shutil.rmtree
+
+    def _boom(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if rpc._REPLACED_KIND in Path(path).name and not kwargs.get("ignore_errors"):
+            raise OSError("injected: removing the previous render")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(rpc.shutil, "rmtree", _boom)
+
+
+_FAILURE_POINTS: list[tuple[str, Callable[[pytest.MonkeyPatch], None]]] = [
+    ("inside-coordinate-substitution", _fail_inside_apply_rules),
+    ("at-the-members-write", _fail_after_first_apply_rules),
+    ("at-print-policy-digests", _fail_in_digests),
+    ("at-the-activation-read-back", _fail_in_verify),
+    ("in-account-fingerprint", _fail_in_fingerprint),
+    ("writing-RENDERED.json", _fail_in_manifest),
+    # With a FRESH `out` the swap is a single rename (there is no previous render to move
+    # aside), so that is the only rename this parametrization can reach. The other two
+    # renames — the move-aside and the roll-back — exist only when `out` already holds a
+    # render, and they are covered by
+    # `test_a_failed_swap_rolls_the_previous_render_back` /
+    # `test_a_failure_while_removing_the_previous_render_is_reported_not_swallowed`, where
+    # "no account bytes anywhere" is deliberately NOT the assertion (the previous render
+    # legitimately holds them).
+    ("at-the-rename-of-the-swap", lambda mp: _fail_at_nth_replace(mp, 1)),
+]
+
+
+def _account_bearing_files(root: Path) -> list[str]:
+    return sorted(
+        str(path.relative_to(root))
+        for path in root.rglob("*")
+        if path.is_file()
+        and _FAKE_ACCOUNT in path.read_text(encoding="utf-8", errors="ignore")
+    )
+
+
+def _working_dirs(parent: Path) -> list[str]:
+    return sorted(p.name for p in parent.iterdir() if p.name.startswith("."))
+
+
+@pytest.mark.parametrize(
+    ("label", "install"), _FAILURE_POINTS, ids=[name for name, _ in _FAILURE_POINTS]
+)
+def test_a_failure_at_any_point_after_the_account_is_written_leaves_no_account_on_disk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pinned_hash_seed: None,
+    label: str,
+    install: Callable[[pytest.MonkeyPatch], None],
 ) -> None:
-    """A failure AFTER the coordinates are substituted must not leave an account-bearing
-    directory behind.
+    """**The universal claim, tested universally.**
 
-    This is not hypothetical: it is what every operator on this host hits today, because the
-    activation read-back refuses on the canonical-digest defect. The first cut left a fully
-    coordinate-filled directory with no ``RENDERED.json``, which then permanently self-refused
-    ("not empty and carries no RENDERED.json") — so the operator had to ``rm -rf`` a directory
-    holding their account number just to retry.
+    Every point after the first account byte reaches the disk is injected with a failure, and
+    each must leave: no output directory, no working directory, and no file anywhere under the
+    output's parent carrying the account.
 
-    The failure is injected at the read-back, the exact stage that fails for real.
+    This replaces a single-point test whose name made the same universal claim while injecting
+    at ONE statement well inside the protected window — the exact shape of defect this repo
+    keeps hitting ("a guard that admits what it says it blocks"). The reviewer demonstrated
+    the gap by injecting at the first uncovered statement.
     """
     out = tmp_path / "out"
+    install(monkeypatch)
 
-    def _boom(*_args: object, **_kwargs: object) -> str:
-        raise rpc.RenderError("injected failure at the activation read-back")
-
-    monkeypatch.setattr(rpc, "_verify_activation", _boom)
-
-    with pytest.raises(rpc.RenderError, match="injected failure"):
+    with pytest.raises((rpc.RenderError, OSError, RuntimeError)):
         _render(out)
 
-    assert not out.exists(), "the failed render left its output directory behind"
-    leftovers = sorted(p.name for p in tmp_path.iterdir())
-    assert leftovers == [], f"staging leftovers under the output parent: {leftovers}"
-    for path in tmp_path.rglob("*"):
-        if path.is_file():
-            assert _FAKE_ACCOUNT not in path.read_text(
-                encoding="utf-8", errors="ignore"
-            ), f"account bytes survived a failed render in {path}"
+    assert not out.exists(), f"{label}: the failed render left {out} behind"
+    assert _working_dirs(tmp_path) == [], f"{label}: working directory survived"
+    assert _account_bearing_files(tmp_path) == [], f"{label}: account bytes survived"
+
+
+def test_a_failure_while_removing_the_previous_render_is_reported_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_hash_seed: None
+) -> None:
+    """The one failure point where the render itself SUCCEEDED.
+
+    After the swap, ``out`` is correct — but the directory holding the PREVIOUS render's
+    account coordinate is still there. Silently returning would leave an account-bearing tree
+    with no one told, so this raises, names the path, and the caller's cleanup removes it.
+    """
+    out = tmp_path / "out"
+    _render(out)  # a previous render to be replaced
+    _fail_in_publish_rmtree(monkeypatch)
+
+    with pytest.raises(rpc.RenderError, match="PREVIOUS render could not be removed"):
+        _render(out)
+
+    # The new render is in place (the swap succeeded) and the predecessor is gone: the
+    # caller's `except` removed it after the message named it.
+    assert (out / rpc.RENDERED_NAME).is_file()
+    assert _working_dirs(tmp_path) == []
+
+
+def test_a_failed_swap_rolls_the_previous_render_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_hash_seed: None
+) -> None:
+    """If the swap fails midway, the PREVIOUS render must still be at ``out``.
+
+    ``rmtree(out)`` followed by ``move(staging, out)`` — the obvious implementation — has a
+    window where the old render is already destroyed and the new one is not yet there. The
+    rename-aside/rename-in/remove ordering has no such window, and this proves it by failing
+    the second rename.
+    """
+    out = tmp_path / "out"
+    first = _render(out)
+    before = (out / rpc.RENDERED_NAME).read_text(encoding="utf-8")
+
+    _fail_at_nth_replace(monkeypatch, 2)
+    with pytest.raises(OSError, match="injected"):
+        rpc.render(
+            _SOURCE,
+            out,
+            account=_FAKE_ACCOUNT,
+            instrument=_FAKE_INSTRUMENT,
+            revision="1" * 40,  # a DIFFERENT revision, so a swap would be visible
+            direction="LONG",
+        )
+
+    assert (out / rpc.RENDERED_NAME).read_text(encoding="utf-8") == before
+    assert first.revision == _FAKE_REVISION
+    assert _working_dirs(tmp_path) == []
+
+
+def test_a_stale_working_directory_refuses_loudly_and_names_it(
+    tmp_path: Path, pinned_hash_seed: None
+) -> None:
+    """A leftover from an earlier run must stop the next render and be named.
+
+    The first cut made leftovers INVISIBLE: the name is hidden, it carries the producing pid,
+    and the next render neither cleaned nor noticed it — strictly worse observability than
+    before the staging directory existed. This refuses instead, and deliberately does NOT
+    auto-delete: the directory may belong to a concurrent render, and deleting account-bearing
+    data on a pid-liveness heuristic is the quiet behaviour this guard exists to prevent.
+    """
+    out = tmp_path / "out"
+    stale = tmp_path / f".{out.name}.{rpc._STAGING_KIND}-999999"
+    stale.mkdir()
+    (stale / "venue_constraint_policy.yaml").write_text(
+        f'accounts: ["{_FAKE_ACCOUNT}"]\n', encoding="utf-8"
+    )
+
+    with pytest.raises(
+        rpc.RenderError, match="working directory from an earlier render"
+    ):
+        _render(out)
+
+    # Refused, not deleted — the operator decides.
+    assert stale.is_dir()
+    assert not out.exists()
 
 
 def test_a_successful_render_is_only_visible_once_complete(
@@ -700,20 +915,76 @@ def has_set(annotation, seen):
     return False
 
 
-base_impl = DigestBoundArtifact.covered_content
-total, sorts, unsorted_ = 0, [], []
+def direct_set(annotation):
+    # A set the model owns DIRECTLY (not through a nested model) — the shape this probe can
+    # populate with `model_construct` and therefore observe.
+    origin = typing.get_origin(annotation)
+    if origin in (set, frozenset):
+        return True
+    return any(direct_set(a) for a in typing.get_args(annotation))
+
+
+# Five tokens whose set iteration order is essentially never the sorted one by chance; three
+# independent draws make a coincidence (1/120 each) negligible.
+PROBES = [
+    ("zeta", "alpha", "omega", "beta", "kappa"),
+    ("q9", "a1", "m5", "z0", "c3"),
+    ("SESSION_PHASE", "ORDER_TYPE_TIF", "PRICE_TICK_LOT_QUANTITY", "AAA", "ZZZ"),
+]
+
+
+def sorts_field(cls, name):
+    \"\"\"Does this model's covered_content() emit `name` in sorted order? Observed, not
+    inferred from whether an override exists.\"\"\"
+    for probe in PROBES:
+        try:
+            instance = cls.model_construct(**{name: frozenset(probe)})
+            emitted = instance.covered_content().get(name)
+        except Exception:
+            return None  # cannot observe this field here
+        if not isinstance(emitted, list):
+            return None
+        if emitted != sorted(emitted):
+            return False
+    return True
+
+
+total, sorted_models, unsorted_models, unobserved = 0, {}, {}, {}
 for cls in set(subclasses(DigestBoundArtifact)):
     covered = getattr(cls, "_COVERED_FIELDS", None)
     if not covered:
         continue
     total += 1
-    if not any(
-        (f := cls.model_fields.get(n)) and has_set(f.annotation, frozenset())
+    fields = [
+        n
         for n in covered
-    ):
+        if (f := cls.model_fields.get(n)) and has_set(f.annotation, frozenset())
+    ]
+    if not fields:
         continue
-    (sorts if cls.covered_content is not base_impl else unsorted_).append(cls.__name__)
-print(json.dumps({"total": total, "sorts": sorted(sorts), "unsorted": sorted(unsorted_)}))
+    observable = [
+        n for n in fields if direct_set(cls.model_fields[n].annotation)
+    ]
+    verdicts = {n: sorts_field(cls, n) for n in observable}
+    if observable and all(v is True for v in verdicts.values()):
+        sorted_models[cls.__name__] = sorted(observable)
+    elif any(v is False for v in verdicts.values()):
+        unsorted_models[cls.__name__] = sorted(fields)
+    else:
+        # Only reachable when NO owned set field can be observed directly (the set lives in a
+        # nested model), so the sorting question is answered the same way: it does not sort.
+        unsorted_models[cls.__name__] = sorted(fields)
+        unobserved[cls.__name__] = sorted(set(fields) - set(observable))
+print(
+    json.dumps(
+        {
+            "total": total,
+            "sorts_every_owned_set_field": sorted_models,
+            "does_not_sort": unsorted_models,
+            "not_directly_observable": unobserved,
+        }
+    )
+)
 """
 
 
@@ -736,26 +1007,36 @@ def _scan_set_covered_models() -> dict:
 
 
 def test_set_covered_digest_instability_is_a_class_of_models_not_one_instance() -> None:
-    """**The defect's SCOPE, pinned (measured 2026-09-24, review-797 MEDIUM-3).**
+    """**The defect's SCOPE, pinned (measured 2026-09-24, review-797 MEDIUM-3 / round-2 LOW-2).**
 
     ``covered_content()``'s ``model_dump(mode="json", …)`` emits a set in set-iteration order
-    and the canonicalizer treats a sequence as order-significant, so ANY canonical model with
-    a set in covered content digests differently per process — unless it overrides
-    ``covered_content()`` to sort, which some families already do for exactly this reason
+    and the canonicalizer treats a sequence as order-significant, so a canonical model with a
+    set in covered content digests differently per process — UNLESS its ``covered_content()``
+    sorts that field, which some families do for exactly this reason
     (``tos/src/tos/cur/records.py:44-49``, design #23 §3.1).
+
+    **The partition is by OBSERVED SORTING, not by "overrides ``covered_content``"**
+    (round-2 LOW-2). The first cut split on ``cls.covered_content is not base_impl``, which
+    would file a *pass-through* override — ``super().covered_content()`` and nothing else — on
+    the safe side; two such overrides already exist (``ExactTrialPlan``,
+    ``ActiveSafetyIncidentSet``), harmless only because they own no set field today. Here each
+    owned set field is populated through ``model_construct`` and the emitted list is checked
+    against ``sorted(...)``, over three unrelated five-token probes so a coincidental sorted
+    iteration (1/120 per probe) cannot pass.
 
     Pinning only ``VenueConstraintPolicy`` would let a fix to that one class turn the
     companion test GREEN and read as "fixed" while twelve other models stayed broken. This
     pins the partition BY NAME.
 
-    Note what this also records: **``CurrentnessPolicy`` is NOT affected** even though its
-    ``required_dimensions`` is a frozenset and this deployment adopts it — it is in the
-    sorting group. A type-only scan over-reports; the override is what decides.
+    It also records what it could NOT observe: seven models keep their set inside a NESTED
+    model, which ``model_construct`` cannot populate from here. They are filed as
+    "does not sort" — the conservative side, and the correct one, since none of them
+    overrides ``covered_content()`` at all.
     """
     scan = _scan_set_covered_models()
 
     assert scan["total"] == 120, scan
-    assert set(scan["sorts"]) == {
+    assert set(scan["sorts_every_owned_set_field"]) == {
         "CurrentnessPolicy",
         "RestrictiveFenceRecord",
         "SafetyDeviationPolicy",
@@ -763,7 +1044,7 @@ def test_set_covered_digest_instability_is_a_class_of_models_not_one_instance() 
         "TrialEvidencePackage",
         "TrialPolicy",
     }, scan
-    assert set(scan["unsorted"]) == {
+    assert set(scan["does_not_sort"]) == {
         "BrokerCapabilityProfile",
         "HumanApprovalRequest",
         "HumanAuthorityPolicy",
@@ -778,8 +1059,51 @@ def test_set_covered_digest_instability_is_a_class_of_models_not_one_instance() 
         "StatementCoverageManifest",
         "VenueConstraintPolicy",
     }, scan
+    # 6 + 13 = the 19 models that carry a set in covered content at all.
+    assert len(scan["sorts_every_owned_set_field"]) + len(scan["does_not_sort"]) == 19
     # The one this deployment actually digests today.
-    assert "VenueConstraintPolicy" in scan["unsorted"]
+    assert "VenueConstraintPolicy" in scan["does_not_sort"]
+    # Recorded, not asserted away: the set lives in a nested model for these.
+    assert set(scan["not_directly_observable"]) == {
+        "BrokerCapabilityProfile",
+        "HumanApprovalRequest",
+        "HumanDelegationRecord",
+        "HumanHaltCommand",
+        "LiveAuthorization",
+        "OrderAdmissibilityDecision",
+        "ReArmApprovalRecord",
+    }, scan
+
+
+def test_every_sorting_model_sorts_every_set_field_it_owns() -> None:
+    """No PARTIAL sorter may hide in the safe group.
+
+    A model that sorts four of its five set covered fields is still process-dependent, and the
+    partition above would file it as safe if the check were per-model rather than per-field.
+    The scan only admits a model when EVERY owned set field it can observe sorts; this pins the
+    field lists so a newly added, unsorted field shows up here.
+    """
+    scan = _scan_set_covered_models()
+
+    assert scan["sorts_every_owned_set_field"] == {
+        "CurrentnessPolicy": ["required_dimensions"],
+        "RestrictiveFenceRecord": ["affected_scope"],
+        "SafetyDeviationPolicy": [
+            "eligible_deviation_classes",
+            "prohibited_deviation_classes",
+            "required_compensating_control_classes",
+            "required_evidence_levels",
+            "scope_dimensions",
+        ],
+        "SafetyIncidentPolicy": ["authoritative_signal_classes"],
+        "TrialEvidencePackage": ["present_element_classes"],
+        "TrialPolicy": [
+            "eligible_trial_classes",
+            "prohibited_trial_classes",
+            "required_evidence_classes",
+            "scope_dimensions",
+        ],
+    }, scan
 
 
 def test_currentness_policy_digest_is_stable_because_it_sorts(tmp_path: Path) -> None:

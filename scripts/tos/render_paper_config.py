@@ -65,6 +65,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -908,6 +909,100 @@ def _write_journal(path: Path, *, instrument: str, now_ms: int) -> int:
 # ---------------------------------------------------------------------------
 
 
+#: The two sibling working directories :func:`render` creates next to ``out``. Both can hold
+#: an account coordinate, so both are named by the same scheme and both are covered by
+#: :func:`_refuse_stale_working_dirs`.
+_STAGING_KIND = "partial"
+_REPLACED_KIND = "replaced"
+
+
+def _working_dir(out: Path, kind: str) -> Path:
+    """``.<out name>.<kind>-<pid>``, a sibling of ``out`` (same filesystem, so the swap in
+    :func:`_publish` is a rename and never a copy)."""
+    return out.parent / f".{out.name}.{kind}-{os.getpid()}"
+
+
+def _refuse_stale_working_dirs(out: Path) -> None:
+    """Refuse loudly when a working directory from an earlier run is still lying next to
+    ``out``, naming it so the operator can remove it.
+
+    **Why refuse instead of auto-deleting** (review-797 round 2): a working directory holds an
+    account coordinate, and the two candidate rules for deleting one automatically are both
+    wrong here.
+
+    * "delete any stale one" would destroy a CONCURRENT render's in-flight tree.
+    * "delete the ones whose pid is not alive" relies on pid liveness, which pid reuse makes
+      unreliable — and it would silently delete account-bearing data on a heuristic, which is
+      exactly the quiet behaviour this guard exists to make impossible.
+
+    Refusing is also what restores the observability the first cut lost: a leftover used to be
+    invisible (hidden name, wrong pid, next run succeeded anyway). Now the next run stops and
+    points at it.
+    """
+    stale = sorted(
+        path
+        for kind in (_STAGING_KIND, _REPLACED_KIND)
+        for path in out.parent.glob(f".{out.name}.{kind}-*")
+    )
+    if stale:
+        listed = " ".join(str(path) for path in stale)
+        raise RenderError(
+            "refusing to start: a working directory from an earlier render is still present "
+            f"next to {out} — {listed}. It holds an account coordinate. If no other render is "
+            f"running, remove it: rm -rf {listed}"
+        )
+
+
+def _write_rendered_manifest(staging: Path, payload: dict[str, Any]) -> None:
+    """Write ``RENDERED.json`` into ``staging`` (its own function so a test can inject a
+    failure exactly here — see the parametrized failure-point test)."""
+    (staging / RENDERED_NAME).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _publish(staging: Path, out: Path) -> None:
+    """Swap ``staging`` into place at ``out``.
+
+    The ordering matters, and the obvious ``rmtree(out); move(staging, out)`` is what this
+    deliberately does NOT do: between those two statements ``out`` is gone while ``staging``
+    still exists, so an interruption there destroys the previous render AND leaves an
+    account-bearing directory behind.
+
+    Instead, three renames, each atomic on a single filesystem (both paths are siblings of
+    ``out``, which is what :func:`_working_dir` guarantees):
+
+    1. the previous render, if any, is renamed ASIDE (not deleted) — so it can be put back;
+    2. ``staging`` is renamed ONTO the now-free ``out`` (``os.replace`` onto a non-existent
+       path; renaming onto an existing non-empty directory would fail with ``ENOTEMPTY``,
+       which is the whole reason for step 1);
+    3. only once ``out`` holds the new render is the old one removed.
+
+    If step 2 fails, step 1 is rolled back and the caller's ``except`` removes ``staging``. If
+    step 3 fails, the render itself succeeded but a directory holding the PREVIOUS account
+    coordinate survived, so that is raised rather than swallowed.
+    """
+    replaced = _working_dir(out, _REPLACED_KIND)
+    if out.exists():
+        os.replace(out, replaced)
+    try:
+        os.replace(staging, out)
+    except BaseException:
+        if replaced.exists():
+            os.replace(replaced, out)
+        raise
+    if replaced.exists():
+        try:
+            shutil.rmtree(replaced)
+        except OSError as exc:
+            raise RenderError(
+                f"the render completed and {out} is correct, but the PREVIOUS render could "
+                f"not be removed: {replaced} ({exc}). It holds an account coordinate — "
+                f"remove it: rm -rf {replaced}"
+            ) from exc
+
+
 @dataclass(frozen=True)
 class RenderResult:
     """What one render produced. Carries NO account number — only its fingerprint."""
@@ -979,16 +1074,22 @@ def render(
                 f"{RENDERED_NAME} — refusing to overwrite a directory this script did not "
                 f"render. If it IS a leftover you recognize, remove it first: rm -rf {out}"
             )
+    _refuse_stale_working_dirs(out)
 
-    # Build in a sibling staging directory and move into place only on success
-    # (review-797 MEDIUM-2). A failure AFTER the coordinates are substituted — which is what
-    # every operator on this host hits today, because the activation read-back refuses on the
-    # canonical-digest defect — must not leave an account-bearing directory behind. It would
-    # also self-refuse on the next run (no RENDERED.json), so the operator would have to
-    # `rm -rf` a directory holding their account number to make progress.
-    staging = out.parent / f".{out.name}.partial-{os.getpid()}"
-    if staging.exists():
-        shutil.rmtree(staging)
+    # Build in a sibling staging directory and swap it into place only on success
+    # (review-797 MEDIUM-2, scope corrected in round 2). A failure AFTER the first account
+    # byte reaches the disk — which is what every operator on this host hits today, because
+    # the activation read-back refuses on the canonical-digest defect — must not leave an
+    # account-bearing directory behind.
+    #
+    # ⚠ The first cut of this closed only PART of that: the `try` ended before the fingerprint,
+    # the RENDERED.json write and the move, so a failure in those left a HIDDEN
+    # `.<name>.partial-<pid>` holding seven account-bearing files, which the next run neither
+    # cleaned (the name carries THIS pid) nor noticed (it is not `out`). The window is now the
+    # whole body, the swap included, and both working directories are named by
+    # :func:`_working_dir` so a leftover from any run is visible to
+    # :func:`_refuse_stale_working_dirs`.
+    staging = _working_dir(out, _STAGING_KIND)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -1002,7 +1103,7 @@ def render(
         )
         effective_now_ms = int(now.timestamp() * 1000)
         # The journal FILE is written into staging, but the path baked into marketfeed.yaml
-        # is the FINAL one — the rendered config must be correct after the move, not during.
+        # is the FINAL one — the rendered config must be correct after the swap, not during.
         journal_path = out / JOURNAL_NAME
         journal_as_of_ms = _write_journal(
             staging / JOURNAL_NAME, instrument=instrument, now_ms=effective_now_ms
@@ -1015,6 +1116,7 @@ def render(
             direction=direction,
             journal_path=journal_path,
         )
+        # ---- the first account byte reaches the disk here ----
         _apply_rules(staging, rules)
 
         digests = _policy_digest_lines(staging)
@@ -1029,28 +1131,27 @@ def render(
                 "rendered key set does not match COORDINATE_RULE_KEYS — "
                 f"{sorted(set(rendered_keys) ^ set(COORDINATE_RULE_KEYS))!r}"
             )
-    except BaseException:
-        # Every failure path, including KeyboardInterrupt: the staging tree holds the account
-        # coordinate, so it never outlives the failure.
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
-    fingerprint = account_fingerprint(account)
-    result = RenderResult(
-        out=out,
-        source=source,
-        revision=revision,
-        direction=direction,
-        instrument=instrument,
-        account_fingerprint=fingerprint,
-        rendered_keys=rendered_keys,
-        policy_digests=digests,
-        activation_check=activation_check,
-        journal_path=journal_path,
-        journal_as_of_ms=journal_as_of_ms,
-        rendered_at_kst=rendered_at,
-    )
-    (staging / RENDERED_NAME).write_text(
-        json.dumps(
+
+        fingerprint = account_fingerprint(account)
+        result = RenderResult(
+            out=out,
+            source=source,
+            revision=revision,
+            direction=direction,
+            instrument=instrument,
+            account_fingerprint=fingerprint,
+            rendered_keys=rendered_keys,
+            policy_digests=digests,
+            activation_check=activation_check,
+            journal_path=journal_path,
+            journal_as_of_ms=journal_as_of_ms,
+            rendered_at_kst=rendered_at,
+        )
+        # RENDERED.json is written LAST inside staging, so the directory that lands at `out`
+        # can never be the "non-empty, no RENDERED.json" shape the guard above permanently
+        # refuses.
+        _write_rendered_manifest(
+            staging,
             {
                 "rendered_at_kst": rendered_at,
                 "source_dir": str(source),
@@ -1076,19 +1177,18 @@ def render(
                     "never recorded here, only its fingerprint."
                 ),
             },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    # Only now does anything appear at `out`. `RENDERED.json` is written last inside staging,
-    # so the moved directory can never be the "non-empty, no RENDERED.json" shape that the
-    # guard above permanently refuses.
-    if out.exists():
-        shutil.rmtree(out)
-    shutil.move(str(staging), str(out))
+        _publish(staging, out)
+    except BaseException:
+        # EVERY failure path from the first byte written into staging through the swap,
+        # `KeyboardInterrupt` included. BOTH working directories can hold an account
+        # coordinate, so neither outlives the failure.
+        #
+        # `out` itself is never removed here: :func:`_publish` either left the previous render
+        # in place (it rolls back) or already swapped the new one in.
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(_working_dir(out, _REPLACED_KIND), ignore_errors=True)
+        raise
     return result
 
 

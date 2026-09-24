@@ -84,7 +84,8 @@ envelope:
     - dimension: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
       # 운영자 결정 2026-09-23 — 1 계약.
       envelope_max: "1"
-      # aggregate_risk_policy.yaml:100 `_runtime.unit`.
+      # aggregate_risk_policy.yaml:105 `_runtime.unit` (1차 판은 `:100` 이라고 적었는데
+      # 그 줄은 `governed_scopes` 다 — review-797 2차 LOW-1 정정).
       unit: "CONTRACTS"
       # 이하 4개는 크기와 분리해 보존해야 하는 별개 안전 필드다(records.py:87-104 —
       # 절대 하나의 토큰으로 합치지 않는다). 형태는 이 저장소의 유일한 작동 예제

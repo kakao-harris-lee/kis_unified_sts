@@ -123,6 +123,7 @@ python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys
 ## 4. 구현 PR (결정 뒤) 모양
 
 1. `scripts/tos/render_paper_config.py` + 단위 테스트(`tests/unit/scripts/` 신설 — 레거시 `test` 워크플로 게이트, 가짜 env 파일) · `--check`.
+   > ⚠ **「신설」은 틀렸다 — §5 LOW-5 정정 참조.** `tests/unit/scripts/` 는 이미 존재했고 구현 PR 은 그 안에 파일 하나를 추가했다.
 2. 커밋 파일: `finality.yaml::value_date: "T+1"` · `proof_recipe_id: "tos-paper-proof-recipe-bootproof-g1"`(픽스처 헤더) + 핀 갱신
    (PR #794 의 `_VALUE_PINS`). `source_revision`(렌더 시 git SHA)과 `safety_activation.yaml::members`(렌더 시 `print-policy-digests`)는
    렌더 산출물이라 커밋 파일에서는 named-TBD 를 유지한다 — §2 5·6항.
