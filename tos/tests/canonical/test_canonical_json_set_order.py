@@ -11,6 +11,7 @@ Plan: ``docs/plans/2026-09-24-tos-canonical-set-order-plan.md``.
 
 from __future__ import annotations
 
+import statistics
 import timeit
 from typing import Any
 
@@ -18,7 +19,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, DigestBoundArtifact, get_scheme
 from tos.canonical._base import FrozenModel
-from tos.canonical._canonical_json import CanonicalJsonMixin
+from tos.canonical._canonical_json import CanonicalJsonMixin, _is_this_hook
 from tos.liveauth.records import LiveAuthorization, ReArmApprovalRecord
 
 from ._set_order_builders import (
@@ -94,6 +95,20 @@ class _NoSets(FrozenModel):
 
 class _PlainNoSets(BaseModel):
     """``_NoSets`` without the mixin — the cost baseline."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    a: str = "x"
+    b: int = 1
+    c: tuple[str, ...] = ("p", "q")
+
+
+class _PlainNoSetsToo(BaseModel):
+    """A second, identical copy of ``_PlainNoSets`` — the noise floor's other side.
+
+    Two classes with no hook on either, so any ratio this pair reads other than
+    1.00 is the runner's, not the hook's (``_noise_floor``).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -275,6 +290,46 @@ def test_frozen_model_itself_carries_no_hook() -> None:
     assert DigestBoundArtifact.__canonical_set_fields__ == ()
 
 
+def test_each_set_bearing_class_owns_its_serialization_node() -> None:
+    """No two classes share the schema node the hook installs — review-802 LOW-5.
+
+    pydantic may annotate a core-schema node in place; a node shared by every
+    set-bearing class would spread that annotation to all of them at once. The
+    node is a per-class copy, and the copy must still carry the same FUNCTION,
+    which is what :func:`_is_this_hook` recognises an earlier attachment by.
+    """
+    mine = _WithSet.__pydantic_core_schema__["serialization"]
+    theirs = _Nested.__pydantic_core_schema__["serialization"]
+    assert mine is not theirs
+    assert mine == theirs
+    assert _is_this_hook(mine) and _is_this_hook(theirs)
+
+
+def test_a_cached_schema_re_entered_through_a_union_stays_idempotent() -> None:
+    """A set-bearing model reached again as a union member must not be refused.
+
+    pydantic hands back the class's CACHED core schema the second time it is
+    reached, with this hook's ``serialization`` already on it. If the hook did
+    not recognise its own attachment — the copy above changes object identity,
+    so recognition has to be by function — it would read it as a foreign
+    ``model_serializer`` and raise the conflict ``TypeError`` at class-definition
+    time. Defining the holder below is the whole assertion.
+    """
+
+    class _UnionHolder(FrozenModel):
+        first: _WithSet | _Nested | None = None
+        second: _WithSet | None = None
+
+    holder = _UnionHolder(
+        first=_WithSet(), second=_WithSet(s=frozenset(MIXED_LENGTH_ELEMENTS[:6]))
+    )
+    expected = sorted(MIXED_LENGTH_ELEMENTS[:6])
+    dumped = holder.model_dump(mode="json")
+    assert dumped["first"]["s"] == expected
+    assert dumped["second"]["s"] == expected
+    assert _is_this_hook(_WithSet.__pydantic_core_schema__["serialization"])
+
+
 def test_set_bearing_class_with_its_own_model_serializer_is_refused() -> None:
     """Both serializers cannot coexist; the class definition fails loudly."""
     from pydantic import SerializerFunctionWrapHandler, model_serializer
@@ -291,26 +346,77 @@ def test_set_bearing_class_with_its_own_model_serializer_is_refused() -> None:
                 return dict(handler(self))
 
 
-def _dump_cost(model: BaseModel, mode: str) -> float:
-    """Best-of-rounds seconds per ``model_dump`` call (minimum absorbs runner noise)."""
-    return min(
-        timeit.timeit(lambda: model.model_dump(mode=mode), number=2000) / 2000
-        for _ in range(5)
-    )
+#: Paired-measurement shape. 21 rounds so the median has a unique middle; 500
+#: calls per round so a round is short enough that a scheduler excursion hits one
+#: round, not the whole measurement.
+_COST_ROUNDS = 21
+_COST_CALLS = 500
+
+
+def _dump_cost_ratio(model: BaseModel, baseline: BaseModel, mode: str) -> float:
+    """Median of per-round cost ratios — ``model`` over ``baseline``.
+
+    review-802 MEDIUM-1: the previous shape measured each side to completion and
+    divided the two minima, which made the ratio a function of what the runner
+    was doing BETWEEN the two measurements. Measured over 60 repetitions on an
+    idle host, a control of ``_PlainNoSets`` against an identical second plain
+    class — no hook on either side, so the true ratio is 1.00 — spread 0.42 to
+    2.73 and crossed the old 1.6 bound 1-2 times in 60. The bound was therefore
+    not measuring the hook.
+
+    Two changes fix it. The two sides are measured in the SAME round, adjacent in
+    time, so a frequency or scheduler excursion moves both. And the per-round
+    ratios are reduced by MEDIAN, not by taking a minimum of each side
+    independently, so a single bad round cannot move the answer. Same 60
+    repetitions with this shape: control 0.910-1.073, set-free 0.895-1.097,
+    set-bearing 1.683-2.683.
+    """
+    ratios = []
+    for _ in range(_COST_ROUNDS):
+        hooked = timeit.timeit(lambda: model.model_dump(mode=mode), number=_COST_CALLS)
+        plain = timeit.timeit(
+            lambda: baseline.model_dump(mode=mode), number=_COST_CALLS
+        )
+        ratios.append(hooked / plain)
+    return statistics.median(ratios)
+
+
+def _noise_floor(mode: str) -> float:
+    """The same measurement run against two classes that are genuinely identical.
+
+    Whatever this reads above 1.00 is the runner's own asymmetry, not a hook.
+    """
+    return _dump_cost_ratio(_PlainNoSets(), _PlainNoSetsToo(), mode)
 
 
 @pytest.mark.parametrize("mode", ["python", "json"])
 def test_classes_without_sets_pay_nothing_for_the_hook(mode: str) -> None:
     """A set-free ``FrozenModel`` dumps as fast as the same model without the mixin.
 
-    This is the plan §2.1 exit condition, stated as a RATIO so it survives a slow
-    or noisy runner. Attaching the hook unconditionally (the shape the plan
-    rejects) turns the native serializer into a Python callback for every model
-    and takes this ratio well past the bound — measured 2.1x (python) / 3.0x
-    (json) on the set-bearing control below.
+    This is the plan §2.1 exit condition. The GATE is structural and has a
+    concrete failing input: attaching the hook unconditionally — the shape the
+    plan rejects — leaves a ``serialization`` entry on a set-free class's core
+    schema, and that is a fact about the schema, not about a stopwatch.
+
+    The cost bound corroborates it, and is stated relative to a measured noise
+    floor (control = plain against an identical plain class) so a loaded runner
+    loosens it instead of failing it. Both halves are RED under the unconditional
+    attachment mutation: the structural one always, and the cost one because the
+    set-free ratio then lands in the set-bearing band (>= 1.68 measured).
     """
-    ratio = _dump_cost(_NoSets(), mode) / _dump_cost(_PlainNoSets(), mode)
-    assert ratio < 1.6, f"set-free FrozenModel dump is {ratio:.2f}x the plain cost"
+    assert _NoSets.__pydantic_core_schema__.get("serialization") is None, (
+        "a set-free FrozenModel kept a serialization entry — the hook attached "
+        "where it must not, and every dump of every such class now pays for a "
+        "Python callback"
+    )
+
+    floor = _noise_floor(mode)
+    ratio = _dump_cost_ratio(_NoSets(), _PlainNoSets(), mode)
+    bound = 1.35 * max(1.0, floor)
+    assert ratio <= bound, (
+        f"set-free FrozenModel dump is {ratio:.2f}x the plain cost, over the "
+        f"{bound:.2f}x bound (noise floor {floor:.2f}x)"
+    )
 
 
 @pytest.mark.parametrize("mode", ["python", "json"])
@@ -319,9 +425,10 @@ def test_the_cost_pin_can_actually_see_the_hook(mode: str) -> None:
 
     Without this, ``test_classes_without_sets_pay_nothing_for_the_hook`` could be
     green because the measurement is blind rather than because the hook is
-    absent — the failure shape this repo keeps meeting.
+    absent — the failure shape this repo keeps meeting. Lowest of 60 repetitions
+    with the paired estimator: 1.68 (python) / 2.40 (json).
     """
-    ratio = _dump_cost(_WithSet(), mode) / _dump_cost(_PlainWithSet(), mode)
+    ratio = _dump_cost_ratio(_WithSet(), _PlainWithSet(), mode)
     assert ratio > 1.3, f"the hook costs nothing measurable ({ratio:.2f}x)"
 
 

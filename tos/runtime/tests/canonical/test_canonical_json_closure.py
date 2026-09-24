@@ -7,6 +7,13 @@ non-determinism this plan closed (review-798 3차 M-2, silent-miss case 2). This
 file is the guard: it enumerates every pydantic model in **both** distributions
 and refuses any set-bearing model that is not a ``FrozenModel`` subclass.
 
+It carries the hook's other whole-tree bans for the same reason — each one is a
+shape the hook would leave partly or wholly unsorted, **silently**, and each is
+zero today: a set field carrying an alias, a set nested inside a set, and a
+stdlib dataclass / NamedTuple / TypedDict in a model's field tree (review-802
+MEDIUM-2). They live here rather than in the kernel test tree because a ban is
+only worth having if it sees ``tos_runtime`` too.
+
 Why this file lives in the runtime test tree: it has to see ``tos`` *and*
 ``tos_runtime``, and a kernel-scope file importing ``tos_runtime`` is firewall
 rule (g)/TOS-FW-G. Why the imports below are written out one by one: dynamic
@@ -19,11 +26,13 @@ RED here rather than a silent gap.
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import typing
 from pathlib import Path
 from types import ModuleType
 
+import tos_runtime.evidence.backup  # noqa: F401  # see _SHADOWED_SUBMODULE_NAMES
 from pydantic import BaseModel
 from tos.canonical import DigestBoundArtifact
 from tos.canonical._base import FrozenModel
@@ -238,6 +247,12 @@ from tos import (
 )
 
 #: Every module under ``tos`` and ``tos_runtime``, imported by name.
+#:
+#: The two distribution ROOTS are deliberately absent. Importing ``tos.x`` binds
+#: ``x`` as an attribute of the ``tos`` package object, so seeding the
+#: reachability walk with ``tos`` itself would make every module any other test
+#: happened to import "reachable" and empty the guard out (measured: the
+#: review-802 LOW-3 mutation went green with the roots in the list).
 _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_afg,
     k_are,
@@ -333,6 +348,15 @@ _MIN_COVERED_SET_MODELS = 19
 #: every entry needs a one-line reason for why its sets never reach a digest.
 _NON_FROZEN_ALLOWLIST: frozenset[str] = frozenset()
 
+#: Submodules whose own package imports them, but whose attribute on that
+#: package is SHADOWED by a same-named export — ``tos_runtime.evidence``
+#: re-exports a *function* called ``backup`` out of the module ``backup``, so
+#: ``vars(tos_runtime.evidence)["backup"]`` is the function and the attribute
+#: walk in :func:`_names_reachable_from_the_import_list` cannot see the module.
+#: The bare ``import tos_runtime.evidence.backup`` at the top of this file is
+#: what imports them; this names them so the walk counts them as reached.
+_SHADOWED_SUBMODULE_NAMES: tuple[str, ...] = ("tos_runtime.evidence.backup",)
+
 
 def _module_names_on_disk() -> set[str]:
     """Every importable module name under the two source trees."""
@@ -346,6 +370,32 @@ def _module_names_on_disk() -> set[str]:
                 parts[-1] = parts[-1][: -len(".py")]
             names.add(".".join([root_name, *parts]))
     return names
+
+
+def _names_reachable_from_the_import_list() -> set[str]:
+    """Module names reached by :data:`_IMPORTED_MODULES` **alone**.
+
+    Importing ``a.b`` binds ``b`` as an attribute of package ``a``, so walking
+    each listed module's own attributes transitively yields exactly the modules
+    this file's explicit imports pull in — with no dependence on what any other
+    test in the session happened to import, which is what ``sys.modules`` cannot
+    tell apart.
+    """
+    reached: set[str] = set()
+    pending: list[ModuleType] = [
+        *_IMPORTED_MODULES,
+        *(sys.modules[name] for name in _SHADOWED_SUBMODULE_NAMES),
+    ]
+    while pending:
+        module = pending.pop()
+        name = getattr(module, "__name__", "")
+        if name in reached or name.split(".")[0] not in _SRC_ROOTS:
+            continue
+        reached.add(name)
+        pending.extend(
+            value for value in vars(module).values() if isinstance(value, ModuleType)
+        )
+    return reached
 
 
 def _all_models() -> list[type[BaseModel]]:
@@ -397,15 +447,36 @@ def test_every_module_is_imported() -> None:
 
     A new module that nothing imports would leave its models invisible to the
     closure below, which would then report "no offenders" without having looked.
+
+    Two assertions, and the ORDER matters (review-802 LOW-3). The first compares
+    the source tree against what :data:`_IMPORTED_MODULES` reaches **on its
+    own**, so a new module that some *other* test file happens to import cannot
+    satisfy it — measured: the LOW-3 mutation (a new ``tos`` subpackage holding
+    a set-bearing ``BaseModel``, imported only from a conftest) leaves the
+    ``sys.modules`` assertion green and this one RED. A plain name-set
+    comparison would not do: the list names packages and the tree names every
+    file, so the comparison has to be against what the list *reaches*.
+
+    The ``sys.modules`` assertion stays as the weaker second one — it is the
+    only check that would catch a module reached through a path the walk cannot
+    see at all.
     """
     assert len(_IMPORTED_MODULES) >= 74
-    missing = sorted(
-        name for name in _module_names_on_disk() if name not in sys.modules
+    on_disk = _module_names_on_disk()
+    # The two distribution roots are imported by construction — every name in
+    # the list is a submodule of one of them — and are not walk seeds
+    # (:data:`_IMPORTED_MODULES`).
+    unreached = sorted(
+        on_disk - _names_reachable_from_the_import_list() - set(_SRC_ROOTS)
     )
-    assert missing == [], (
+    assert unreached == [], (
         "these modules are not reached by the explicit import list at the top "
-        f"of this file: {missing}"
+        f"of this file (add them to it): {unreached}"
     )
+    missing = sorted(name for name in on_disk if name not in sys.modules)
+    assert (
+        missing == []
+    ), f"these modules were never imported in this session at all: {missing}"
 
 
 def test_every_set_bearing_model_is_a_frozen_model() -> None:
@@ -459,4 +530,112 @@ def test_no_set_field_anywhere_carries_an_alias() -> None:
     assert offenders == {}, (
         "a set field with an alias is left unsorted by the canonical JSON hook: "
         f"{offenders}"
+    )
+
+
+def _reaches_a_set_without_crossing_a_model(annotation: object) -> bool:
+    """Whether an annotation reaches a set without entering a nested model.
+
+    A set held by a nested model is that model's own hook's business. A set held
+    by a plain container (list/tuple/dict/union) is still this field's.
+    """
+    if typing.get_origin(annotation) in (set, frozenset):
+        return True
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return False
+    return any(
+        _reaches_a_set_without_crossing_a_model(arg)
+        for arg in typing.get_args(annotation)
+    )
+
+
+def _nested_set_annotations(annotation: object) -> bool:
+    """Whether a set in this annotation tree holds another set."""
+    args = typing.get_args(annotation)
+    if typing.get_origin(annotation) in (set, frozenset):
+        return any(_reaches_a_set_without_crossing_a_model(arg) for arg in args)
+    return any(_nested_set_annotations(arg) for arg in args)
+
+
+def test_no_set_is_nested_inside_a_set() -> None:
+    """A set inside a set escapes the sort silently, in the seed-dependent direction.
+
+    ``_with_sorted_sets`` sorts a set's dumped list and stops: a set has no order
+    to pair the dumped elements back by, so it cannot recurse into them. The
+    inner lists therefore keep PYTHONHASHSEED order and the outer ``sorted()``
+    then orders seed-dependent values. Concrete input and the measured two-seed
+    output are in ``tos/src/tos/canonical/_canonical_json.py``'s module
+    docstring; the shape is ``frozenset[frozenset[str]]``.
+
+    Zero today, and banned rather than handled — the fix would have to give the
+    pairing an order the type does not have.
+    """
+    offenders: dict[str, list[str]] = {}
+    for model_cls in _tos_models():
+        nested = sorted(
+            name
+            for name, field in model_cls.model_fields.items()
+            if _nested_set_annotations(field.annotation)
+        )
+        if nested:
+            offenders[_qualified(model_cls)] = nested
+    assert offenders == {}, (
+        "these fields nest a set inside a set, which the canonical JSON hook "
+        f"leaves partly unsorted: {offenders}"
+    )
+
+
+def _opaque_leaf_kind(annotation: object) -> str | None:
+    """Name the stdlib aggregate kind of ``annotation``, or ``None``."""
+    if typing.is_typeddict(annotation):
+        return "TypedDict"
+    if not isinstance(annotation, type):
+        return None
+    if issubclass(annotation, BaseModel):
+        return None
+    if issubclass(annotation, tuple) and hasattr(annotation, "_fields"):
+        return "NamedTuple"
+    if dataclasses.is_dataclass(annotation):
+        return "dataclass"
+    return None
+
+
+def _opaque_leaves(annotation: object) -> list[str]:
+    """Every stdlib dataclass / NamedTuple / TypedDict in an annotation tree."""
+    kind = _opaque_leaf_kind(annotation)
+    if kind is not None:
+        return [f"{kind}:{getattr(annotation, '__name__', annotation)}"]
+    found: list[str] = []
+    for arg in typing.get_args(annotation):
+        found.extend(_opaque_leaves(arg))
+    return found
+
+
+def test_no_model_field_tree_holds_a_stdlib_aggregate() -> None:
+    """A stdlib dataclass / NamedTuple / TypedDict field is a double blind spot.
+
+    ``_schema_declares_set`` treats a ``dataclass`` core-schema node as OPAQUE
+    and does not descend, so a set inside one never puts the owning field into
+    ``__canonical_set_fields__`` and never gets sorted. And none of the three is
+    a ``BaseModel`` subclass, so ``_all_models()`` — which enumerates by walking
+    ``BaseModel.__subclasses__`` — never sees it either, which means
+    :func:`test_every_set_bearing_model_is_a_frozen_model` above would report
+    "no offenders" without having looked at it.
+
+    Zero today. Each model is scanned against its OWN annotations only; a nested
+    ``BaseModel`` is enumerated separately and scanned in its own right, so not
+    crossing model boundaries loses nothing.
+    """
+    offenders: dict[str, dict[str, list[str]]] = {}
+    for model_cls in _tos_models():
+        found = {
+            name: leaves
+            for name, field in model_cls.model_fields.items()
+            if (leaves := _opaque_leaves(field.annotation))
+        }
+        if found:
+            offenders[_qualified(model_cls)] = found
+    assert offenders == {}, (
+        "these fields hold a stdlib dataclass/NamedTuple/TypedDict, which both "
+        f"the set scan and the model enumeration walk past: {offenders}"
     )
