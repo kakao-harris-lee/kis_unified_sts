@@ -276,9 +276,11 @@ from tos_runtime.rcl.gates import (
     ReservationTransitionRefusal,
     check_reservation_from_state,
     classify_duplicate_command,
+    committed_vector_payload,
     digest_of_reservation_map,
     existing_command_row,
     fold_reservations_from_entries,
+    held_reservation_map,
     reservation_lifecycle_refusal,
     row_to_commit_entry,
 )
@@ -670,6 +672,9 @@ class SqliteCommitLog:
                 "to_state": to_state.value,
                 "cause": cause.value,
                 "finality_witness": finality_witness,
+                "committed_vector": committed_vector_payload(
+                    transition.committed_vector
+                ),
                 "scope": {
                     "account": transition.scope.account,
                     "instrument": transition.scope.instrument,
@@ -723,14 +728,7 @@ class SqliteCommitLog:
                 (:func:`tos.rcl.replay_reproduces_state` — fail-closed on
                 any disagreement, never a partial pass).
         """
-        held = {
-            reservation_id: {
-                "state": state.value,
-                "scope_account": scope.account,
-                "scope_instrument": scope.instrument,
-            }
-            for reservation_id, state, _seq, scope in self.reservation_rows()
-        }
+        held = held_reservation_map(self._conn)
         held_digest = digest_of_reservation_map(self._canon_scheme, held)
         replayed_digest = digest_of_reservation_map(
             self._canon_scheme, fold_reservations_from_entries(self._conn)
