@@ -19,7 +19,11 @@
 # 자신이 「key absent from VERIFICATION-PROFILE-002 — provisional」). **벽시계
 # 인터럽트가 아니라 정적 작업 수 비교**라 과대 설정의 위험이 낮다. 2026-09-08
 # 부터 열려 있던 운영자 결정 항목이다.
-dsl_evaluation_budget_steps: 1000
+# 운영자 2026-09-25 개정: 1000 → 64 (docs/plans/2026-09-12-tos-operator-value-proposals.md
+# §2 제안값 채택 · 작을수록 보수). 현 배포 전략 bootproof_band 의 정적 스텝 수는 4
+# (규칙 1 + 비교 1 + 피연산자 2 — tos.engine.admission.policy_work_steps). 전략을
+# 추가하면 그 정적 스텝 수를 다시 재고, 64 를 넘으면 이 값을 재승인받는다.
+dsl_evaluation_budget_steps: 64
 
 # [A] 제안표 §2.2 — VER-002 L1010 `MAX_unresolved_send_per_scope: 1`
 # (「at most one unresolved send per scope」, APPROVED 2026-07-29 operator

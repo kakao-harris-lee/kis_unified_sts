@@ -268,7 +268,7 @@ _VALUE_PINS: dict[str, Any] = {
     # --- broker_scopes.yaml ----------------------------------------------
     "broker_scopes.yaml::active_scope": "SYNTHETIC_FUTURES_ORDER",
     # --- engine.yaml -----------------------------------------------------
-    "engine.yaml::dsl_evaluation_budget_steps": 1000,
+    "engine.yaml::dsl_evaluation_budget_steps": 64,
     "engine.yaml::max_unresolved_send_per_scope": 1,
     # --- engine_driver.yaml ----------------------------------------------
     "engine_driver.yaml::replay_window_events": 1000000,
