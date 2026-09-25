@@ -202,8 +202,10 @@ def test_export_field_combines_an_earlier_write_failure_into_the_next_successful
 ) -> None:
     """team-lead Phase B directive: ``export.failures``/``export.last_error`` fold a
     :class:`~tos_runtime.operator.export.ProjectionExporter`'s own write-side failures into the
-    SAME document's export field. Drives one genuine write failure (an unwritable projection
-    directory) then restores write access and asserts the NEXT successful export reports it.
+    SAME document's export field. Drives one genuine write failure (a directory squatting on the
+    projection path, so the publishing ``os.replace`` fails) then removes it and asserts the NEXT
+    successful export reports it. A directory rather than ``chmod`` so the failure is real under
+    root too, where permission bits do not block writes.
     """
     projection_dir = tmp_path / "projection_dir"
     projection_dir.mkdir()
@@ -214,11 +216,12 @@ def test_export_field_combines_an_earlier_write_failure_into_the_next_successful
     )
     assert runtime.driver is not None
 
-    os.chmod(projection_dir, 0o500)
+    projection_path.unlink(missing_ok=True)
+    projection_path.mkdir()
     try:
         runtime.run_once((fx.crossing_event(seq=101),))
     finally:
-        os.chmod(projection_dir, 0o700)
+        projection_path.rmdir()
 
     runtime.run_once((fx.crossing_event(seq=102),))
 
