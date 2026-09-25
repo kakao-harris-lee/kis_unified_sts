@@ -98,6 +98,7 @@ __all__ = [
     "reservation_committed_vector",
     "reservation_rows",
     "reservation_lifecycle_refusal",
+    "reservation_transition_payload_json",
     "row_to_commit_entry",
     "upsert_reservation_projection",
 ]
@@ -339,6 +340,35 @@ def committed_vector_payload(committed_vector: CapacityVector | None) -> Any:
     if committed_vector is None:
         return None
     return json.loads(committed_vector.model_dump_json())
+
+
+def reservation_transition_payload_json(
+    transition: CapacityReservationTransition,
+    cause: TransitionCause,
+    finality_witness: bool | None,
+) -> str:
+    """The ``payload_json`` of one reservation-lifecycle entry — what
+    :func:`fold_reservations_from_entries` replays. Moved out of ``log.py``'s
+    ``apply_reservation_transition`` for that function's 100-line size budget when B-1 added the
+    ``committed_vector`` key (carryover plan W-B B-1); the caller has already refused a transition
+    missing ``reservation_id``/``scope``/``from_state``/``to_state``."""
+    assert transition.scope is not None
+    assert transition.from_state is not None and transition.to_state is not None
+    return json.dumps(
+        {
+            "reservation_id": transition.reservation_id,
+            "from_state": transition.from_state.value,
+            "to_state": transition.to_state.value,
+            "cause": cause.value,
+            "finality_witness": finality_witness,
+            "committed_vector": committed_vector_payload(transition.committed_vector),
+            "scope": {
+                "account": transition.scope.account,
+                "instrument": transition.scope.instrument,
+            },
+        },
+        sort_keys=True,
+    )
 
 
 def _normalized_vector(vector_json: str | None) -> str | None:

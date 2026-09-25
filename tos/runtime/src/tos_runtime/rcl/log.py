@@ -276,12 +276,12 @@ from tos_runtime.rcl.gates import (
     ReservationTransitionRefusal,
     check_reservation_from_state,
     classify_duplicate_command,
-    committed_vector_payload,
     digest_of_reservation_map,
     existing_command_row,
     fold_reservations_from_entries,
     held_reservation_map,
     reservation_lifecycle_refusal,
+    reservation_transition_payload_json,
     row_to_commit_entry,
 )
 from tos_runtime.rcl.gates import (
@@ -665,22 +665,8 @@ class SqliteCommitLog:
                     ".from_state, and .to_state are required"
                 ),
             )
-        payload_json = json.dumps(
-            {
-                "reservation_id": transition.reservation_id,
-                "from_state": from_state.value,
-                "to_state": to_state.value,
-                "cause": cause.value,
-                "finality_witness": finality_witness,
-                "committed_vector": committed_vector_payload(
-                    transition.committed_vector
-                ),
-                "scope": {
-                    "account": transition.scope.account,
-                    "instrument": transition.scope.instrument,
-                },
-            },
-            sort_keys=True,
+        payload_json = reservation_transition_payload_json(
+            transition, cause, finality_witness
         )
         return self._commit_entry(
             expected_seq=expected_seq,
