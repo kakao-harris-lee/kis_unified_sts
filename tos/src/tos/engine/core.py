@@ -720,6 +720,7 @@ class EngineCore:
                     filled_quantity=payload.filled_quantity,
                     remaining_quantity=payload.remaining_quantity,
                     broker_execution_id=payload.broker_execution_id,
+                    trading_date=payload.trading_date,
                     detail=detail,
                 )
             )
@@ -750,6 +751,7 @@ class EngineCore:
                 filled_quantity=reservation.filled_quantity,
                 remaining_quantity=reservation.remaining_quantity,
                 broker_execution_id=payload.broker_execution_id,
+                trading_date=payload.trading_date,
                 detail=(
                     "the projection advanced; capacity is never released here — release is the "
                     "RCL's (RFC-002 §9.1:557; ADR-002-002 INV-005:168)"

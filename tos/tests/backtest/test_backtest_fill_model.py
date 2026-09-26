@@ -252,6 +252,8 @@ def test_the_engine_egress_payload_has_no_price_field() -> None:
         "broker_execution_id",
         "resolution_generation",
         "reference",
+        # plan 2026-09-26 egress trading date — an injected KST date token, not a price
+        "trading_date",
     }
     assert not [name for name in field_names if "price" in name.lower()]
 
