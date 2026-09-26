@@ -1,12 +1,14 @@
 """``broker_execution_id`` cross-reference in ``ReconciliationService`` (carryover plan W-C C-1).
 
 A real broker witness returns orders with ``attempt_id=None``. These tests pin that such an order
-joins its attempt only through an unambiguous one-to-one broker-id match against the evidence
-receipts, and that every ambiguous or unmatched case stays an orphan (fail-closed).
+joins its attempt only through an unambiguous one-to-one broker-id match against same-trading-date
+evidence receipts, and that every ambiguous, cross-day, undated or unmatched case stays an orphan
+(fail-closed).
 """
 
 from __future__ import annotations
 
+import dataclasses
 from decimal import Decimal
 
 import pytest
@@ -28,9 +30,32 @@ from .test_service import (
     FakeEvidenceReader,
     FakeRclReader,
     FakeWitness,
-    _matched_receipt,
     _matched_witness_order,
 )
+from .test_service import _matched_receipt as _undated_receipt
+
+TODAY = "20260925"
+YESTERDAY = "20260924"
+
+
+_KEEP = object()
+
+
+def _matched_receipt(
+    trading_date: str | None = TODAY,
+    *,
+    attempt_id: str | None | object = _KEEP,
+    broker_execution_id: str | None | object = _KEEP,
+) -> EgressReceiptObservation:
+    """``test_service``'s matched receipt, dated ``TODAY`` unless told otherwise."""
+    receipt = dataclasses.replace(_undated_receipt(), trading_date=trading_date)
+    if attempt_id is not _KEEP:
+        assert attempt_id is None or isinstance(attempt_id, str)
+        receipt = dataclasses.replace(receipt, attempt_id=attempt_id)
+    if broker_execution_id is not _KEEP:
+        assert broker_execution_id is None or isinstance(broker_execution_id, str)
+        receipt = dataclasses.replace(receipt, broker_execution_id=broker_execution_id)
+    return receipt
 
 
 @pytest.fixture
@@ -50,6 +75,7 @@ def _reconcile(
     orders: tuple[WitnessOrder, ...],
     rcl: dict[str, CapacityState] | None = None,
     attempt_ids: tuple[str, ...] = ("a1",),
+    inquiry_date: str | None = TODAY,
 ) -> ReconciliationReport:
     service = ReconciliationService(
         FakeRclReader(
@@ -62,6 +88,7 @@ def _reconcile(
                 orders=orders,
                 provenance="independent-broker-double",
                 independent_of_evidence_store=True,
+                order_inquiry_date=inquiry_date,
             )
         ),
     )
@@ -206,3 +233,107 @@ def test_receipt_without_attempt_contributes_no_join_key(
     )
     assert (None, ReconciliationClass.ORPHAN_BROKER_ORDER) in _classes(report)
     assert report.permits_rearm is False
+
+
+def _assert_orphaned(report: ReconciliationReport) -> None:
+    assert _classes(report) == [
+        ("a1", ReconciliationClass.STALE_RESERVATION),
+        (None, ReconciliationClass.ORPHAN_BROKER_ORDER),
+    ]
+    assert report.permits_rearm is False
+    assert report.permits_capacity_release is False
+
+
+def test_receipt_from_another_trading_day_does_not_join(
+    fresh: FreshnessMarker,
+) -> None:
+    """Review S2: a KIS ODNO is a per-day sequence. Today's order with no receipt of its own must
+    not join yesterday's attempt that happened to record the same ODNO — before this guard both
+    permits went True here."""
+    report = _reconcile(
+        fresh,
+        receipts=(_matched_receipt(trading_date=YESTERDAY),),
+        orders=(_matched_witness_order(attempt_id=None),),
+    )
+    _assert_orphaned(report)
+
+
+@pytest.mark.parametrize(
+    ("receipt_date", "inquiry_date"),
+    [(None, TODAY), (TODAY, None), (None, None)],
+    ids=["undated-receipt", "undated-inquiry", "both-undated"],
+)
+def test_missing_date_on_either_side_does_not_join(
+    fresh: FreshnessMarker, receipt_date: str | None, inquiry_date: str | None
+) -> None:
+    report = _reconcile(
+        fresh,
+        receipts=(_matched_receipt(trading_date=receipt_date),),
+        orders=(_matched_witness_order(attempt_id=None),),
+        inquiry_date=inquiry_date,
+    )
+    _assert_orphaned(report)
+
+
+def test_attempt_whose_receipts_name_two_ids_does_not_join(
+    fresh: FreshnessMarker,
+) -> None:
+    """Review S1: receipts X then Y for one attempt; the broker shows only X. The service judges
+    against the last receipt (Y), so joining on X would merge a real disagreement into MATCHED —
+    before this guard both permits went True here."""
+    report = _reconcile(
+        fresh,
+        receipts=(
+            _matched_receipt(broker_execution_id="X"),
+            _matched_receipt(broker_execution_id="Y"),
+        ),
+        orders=(_matched_witness_order(attempt_id=None, broker_execution_id="X"),),
+    )
+    _assert_orphaned(report)
+
+
+def test_joined_id_must_be_on_the_receipt_used_as_evidence(
+    fresh: FreshnessMarker,
+) -> None:
+    """Same attempt, an id-less receipt last: the evidence receipt names no id at all."""
+    report = _reconcile(
+        fresh,
+        receipts=(
+            _matched_receipt(),
+            _matched_receipt(broker_execution_id=None),
+        ),
+        orders=(_matched_witness_order(attempt_id=None),),
+    )
+    _assert_orphaned(report)
+
+
+def test_earlier_receipt_with_another_id_blocks_the_join(
+    fresh: FreshnessMarker,
+) -> None:
+    """The evidence receipt (the last one) does carry the order's id, but an earlier receipt of the
+    same attempt names another — the attempt's broker identity is not one id."""
+    report = _reconcile(
+        fresh,
+        receipts=(
+            _matched_receipt(broker_execution_id="Y"),
+            _matched_receipt(broker_execution_id="X"),
+        ),
+        orders=(_matched_witness_order(attempt_id=None, broker_execution_id="X"),),
+    )
+    _assert_orphaned(report)
+
+
+def test_evidence_receipt_from_another_day_blocks_the_join(
+    fresh: FreshnessMarker,
+) -> None:
+    """Today's receipts all carry X, but the receipt the service judges quantities against is a
+    later one dated another day with Y — matching on X would compare against Y."""
+    report = _reconcile(
+        fresh,
+        receipts=(
+            _matched_receipt(broker_execution_id="X"),
+            _matched_receipt(trading_date=YESTERDAY, broker_execution_id="Y"),
+        ),
+        orders=(_matched_witness_order(attempt_id=None, broker_execution_id="X"),),
+    )
+    _assert_orphaned(report)

@@ -288,7 +288,8 @@ class KisStockBrokerWitness:
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
             positions, cash = self._read_balance(cano, acnt_prdt_cd, scope)
-            orders = self._read_orders(cano, acnt_prdt_cd, scope)
+            today = self._date_source.today()
+            orders = self._read_orders(cano, acnt_prdt_cd, scope, today)
         except WitnessUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - the port's own two-outcome contract
@@ -314,6 +315,9 @@ class KisStockBrokerWitness:
             # docstring) — unlike witness_synthetic.py, there is nothing here to be
             # non-independent OF.
             independent_of_evidence_store=True,
+            # The order inquiry below asks for exactly this one date (INQR_STRT_DT ==
+            # INQR_END_DT == today), so every returned order belongs to it.
+            order_inquiry_date=today,
         )
 
     # -- account -----------------------------------------------------------------------
@@ -516,7 +520,7 @@ class KisStockBrokerWitness:
     # -- orders --------------------------------------------------------------------------
 
     def _read_orders(
-        self, cano: str, acnt_prdt_cd: str, scope: WitnessScope
+        self, cano: str, acnt_prdt_cd: str, scope: WitnessScope, today: str
     ) -> tuple[WitnessOrder, ...]:
         """주식일별주문체결조회 — mirrors ``tools/broker_probes/probes_order.py``'s own
         ``stock_daily_ccld`` params exactly (module docstring).
@@ -530,7 +534,6 @@ class KisStockBrokerWitness:
         this class applies (see :class:`KisWitnessTokenSession`'s own docstring's
         sibling note on not overclaiming).
         """
-        today = self._date_source.today()
         symbols = [key.instrument for key in scope.instrument_keys] or [""]
 
         orders: list[WitnessOrder] = []

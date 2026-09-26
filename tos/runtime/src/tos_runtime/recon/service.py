@@ -64,7 +64,11 @@ re-reported as ``ORPHAN_BROKER_ORDER``). :func:`_join_orders_by_execution_id` no
 attempt-less witness order to the attempt whose evidence receipt recorded the same broker id (the
 ODNO the egress adapter received on ACK). Only an unambiguous one-to-one match joins; everything
 else stays an orphan, so the join can only move an order out of the fail-closed orphan bucket when
-the identity is certain. Joining grants nothing by itself — MATCHED, conflicts, corroboration and
+the identity is certain. A KIS ODNO is a per-day sequence, so the receipt must also carry the same
+trading date the witness queried (:attr:`~tos_runtime.recon.ports.EgressReceiptObservation
+.trading_date` vs :attr:`~tos_runtime.recon.ports.WitnessSnapshot.order_inquiry_date`); a missing
+date on either side means no join. **Today the egress-result evidence records no date, so the join
+does not fire yet** — the structure is fail-closed and waits for that date to be recorded. Joining grants nothing by itself — MATCHED, conflicts, corroboration and
 both permits are still the kernel predicates' call on the joined observations.
 
 Firewall: stdlib + ``tos.recon`` + ``tos.rcl`` (``CapacityState`` only, for the type
@@ -319,8 +323,9 @@ def _execution_id(value: str | None) -> str | None:
 
 
 def _join_orders_by_execution_id(
-    orders: tuple[WitnessOrder, ...],
+    snapshot: WitnessSnapshot,
     receipts: tuple[EgressReceiptObservation, ...],
+    receipts_by_attempt: dict[str, EgressReceiptObservation],
 ) -> tuple[dict[str, WitnessOrder], tuple[WitnessOrder, ...]]:
     """Split witness orders into ``{attempt_id: order}`` and the remaining orphans (module
     docstring "``broker_execution_id`` cross-reference").
@@ -329,17 +334,30 @@ def _join_orders_by_execution_id(
     ``attempt_id=None`` joins attempt ``a`` only when ALL of these hold — otherwise it stays an
     orphan (fail-closed):
 
-    1. its ``broker_execution_id`` appears on receipts of exactly one attempt (a broker id seen
-       under two attempts — e.g. an ODNO reused across trading days — is ambiguous);
-    2. no other attempt-less order carries a broker id that resolves to ``a``;
-    3. ``a`` has no order of its own already (a direct match and a cross-referenced one for the
-       same attempt disagree about which order is ``a``'s).
+    1. the witness queried one trading date, and only receipts carrying that same date are
+       considered (a KIS ODNO is a per-day sequence — an id from another day is not this order);
+    2. its ``broker_execution_id`` appears on receipts of exactly one attempt;
+    3. every dated receipt of ``a`` carries that one id, and so does the receipt the service
+       compares quantities against (``receipts_by_attempt[a]``) — otherwise the order would be
+       matched on one receipt and judged against another;
+    4. no other attempt-less order carries a broker id that resolves to ``a``;
+    5. ``a`` has no order of its own already.
     """
+    orders = snapshot.orders
     by_attempt = {o.attempt_id: o for o in orders if o.attempt_id is not None}
     attempts_for_id: dict[str, set[str]] = {}
+    ids_for_attempt: dict[str, set[str | None]] = {}
+    inquiry_date = snapshot.order_inquiry_date
     for receipt in receipts:
+        if (
+            inquiry_date is None
+            or receipt.trading_date != inquiry_date
+            or receipt.attempt_id is None
+        ):
+            continue
         key = _execution_id(receipt.broker_execution_id)
-        if receipt.attempt_id is not None and key is not None:
+        ids_for_attempt.setdefault(receipt.attempt_id, set()).add(key)
+        if key is not None:
             attempts_for_id.setdefault(key, set()).add(receipt.attempt_id)
 
     candidates: dict[str, list[WitnessOrder]] = {}
@@ -349,8 +367,15 @@ def _join_orders_by_execution_id(
             continue
         key = _execution_id(order.broker_execution_id)
         attempts = attempts_for_id.get(key, set()) if key is not None else set()
-        if len(attempts) == 1:
-            candidates.setdefault(next(iter(attempts)), []).append(order)
+        attempt_id = next(iter(attempts)) if len(attempts) == 1 else None
+        evidence = receipts_by_attempt.get(attempt_id) if attempt_id else None
+        if (
+            attempt_id is not None
+            and ids_for_attempt.get(attempt_id) == {key}
+            and evidence is not None
+            and _execution_id(evidence.broker_execution_id) == key
+        ):
+            candidates.setdefault(attempt_id, []).append(order)
         else:
             orphans.append(order)
 
@@ -601,7 +626,7 @@ class ReconciliationService:
             r.attempt_id: r for r in receipts if r.attempt_id is not None
         }
         witness_by_attempt, orphan_orders = _join_orders_by_execution_id(
-            snapshot.orders, receipts
+            snapshot, receipts, receipts_by_attempt
         )
         attempt_ids = (
             set(scope.attempt_ids) | set(receipts_by_attempt) | set(witness_by_attempt)

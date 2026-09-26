@@ -151,6 +151,20 @@ def test_independent_of_evidence_store_is_true(server: FakeKisGetServer) -> None
     assert snapshot.provenance == "kis-mock-stock"
 
 
+def test_snapshot_reports_the_one_date_its_order_inquiry_covered(
+    server: FakeKisGetServer,
+) -> None:
+    """C-1 review: the order join needs the inquiry date (a KIS ODNO is a per-day sequence). The
+    snapshot must report the same date the inquiry sent as INQR_STRT_DT/INQR_END_DT."""
+    _queue_two_page_balance(server)
+    server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
+    snapshot = _witness(server).observe(WitnessScope(account=ACCOUNT))
+    assert snapshot.order_inquiry_date == "20260917"  # FakeKstDateSource's default
+    [order_request] = server.requests_for(ORDER_PATH)
+    assert order_request.query["INQR_STRT_DT"] == snapshot.order_inquiry_date
+    assert order_request.query["INQR_END_DT"] == snapshot.order_inquiry_date
+
+
 def test_zero_and_negative_quantity_rows_are_excluded(server: FakeKisGetServer) -> None:
     server.queue_response(
         BALANCE_PATH,
