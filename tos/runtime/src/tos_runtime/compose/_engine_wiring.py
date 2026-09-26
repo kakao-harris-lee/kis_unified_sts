@@ -98,6 +98,7 @@ from tos_runtime.recovery.composite_state_writer import (
 from tos_runtime.safety.ports import SafetyMeshService
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 
 __all__ = [
     "ENGINE_DRIVER_CONFIG_NAME",
@@ -484,6 +485,7 @@ def wire_engine_and_driver(
     custody: CredentialCustody,
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
+    credential_sessions: KisCredentialSessions,
     safety_mesh: Sequence[SafetyMeshService] = (),
     mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
     trading_date_now: Callable[[], str | None] | None = None,
@@ -516,6 +518,8 @@ def wire_engine_and_driver(
             credential port a ``kis-mock`` transport loads its app key/secret through.
         transport_kind: The selected transport kind (T2 lane C).
         transport_config: The loaded KIS MOCK transport config, or ``None`` for ``synthetic``.
+        credential_sessions: This boot's KIS credential registry, forwarded to
+            :func:`~tos_runtime.compose._transport_wiring.build_transport` (C-2 decision (C)).
         mesh_snapshot_refresher: Forwarded to :func:`_build_preconditions` — see its own
             docstring.
     """
@@ -563,6 +567,7 @@ def wire_engine_and_driver(
         evidence_store=evidence_store,
         runtime_identity=identity,
         trading_date_now=trading_date_now,
+        credential_sessions=credential_sessions,
     )
     gateway = BrokerEgressGateway(
         contexts=context_resolver, transport=transport, sink=gateway_sink

@@ -595,7 +595,7 @@ exceptions:
     신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
     (공유 워크트리 동시 편집 회피).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 151
+  measured: 155
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
@@ -641,6 +641,7 @@ exceptions:
     정확히 1회로 고정하는 팀리드 처분(3곳 소비자가 같은 스냅샷을 공유).
     안전-부담 파라미터 관례상 압축 대신 등재.
     2026-09-26 egress 거래일 계획(docs/plans/2026-09-26-tos-egress-trading-date-plan.md T-3) — `trading_date_now` 매개변수 1줄 + `build_transport` 호출부 인자 1줄로 149→151(+2). 안전-부담 배선 관례상 압축 대신 재등재.
+    2026-09-26 주기 평가·C-2 계획(docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md W2) — `credential_sessions` 매개변수 1줄 + 도크스트링 2줄 + `build_transport` 호출부 인자 1줄로 151→155(+4). 앱키당 단일 자격증명 세션의 관통 배선이라 압축 대신 재등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
   measured: 149
   owner: tos-runtime
@@ -732,7 +733,7 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 420
+  measured: 421
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -892,6 +893,7 @@ exceptions:
     `account_facts_current_reader`, 각 `session_facts_owner`의 대응 리더 호출)로
     교체 — 정본 결선 순서 문서라 분해 대신 등재.
     2026-09-26 egress 거래일 계획 T-3 — `_finalize` 호출부에 `trading_date_now=` 람다(세션 소유자의 신뢰 시계·달력 재사용) + 근거 주석 2줄로 415→420(+5). 재등재.
+    2026-09-26 주기 평가·C-2 계획 W2 — `build_tick_scheduler` 호출부에 `credential_sessions=composed.kis_credential_sessions,` 1줄(시세 인입이 주문 전송과 같은 앱키 세션을 받음)로 420→421(+1). 재등재.
 # 2026-09-12 Phase 5 W5: _boot_integrity.py::record_operator_attested_inputs's own
 # exception entry (decomposition_order 39) is REMOVED here — removing the
 # egress_attestations row-generation tuple entry (item 12's attestation retired,
@@ -940,7 +942,7 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 105
+  measured: 108
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
@@ -958,6 +960,7 @@ exceptions:
     safety_mesh/protective 필드를 실값화) — 이 함수가 `ComposedRuntime` 조립의
     유일한 지점이라 분해 대신 등재.
     2026-09-26 egress 거래일 계획 T-3 — `trading_date_now` 매개변수 1줄 + `wire_engine_and_driver` 호출부 인자 1줄로 103→105(+2). 재등재.
+    2026-09-26 주기 평가·C-2 계획 W2 — `kis_credential_sessions` 생성 1줄(본문은 `_kis_credential_sessions` 헬퍼로 분리) + `wire_engine_and_driver`·`ComposedRuntime` 호출부 인자 각 1줄로 105→108(+3). 재등재.
 - target: tos/runtime/src/tos_runtime/compose/_preconditions.py::RuntimeCoordinatorPreconditions.live_scope_authorized
   measured: 107
   owner: tos-runtime

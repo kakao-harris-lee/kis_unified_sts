@@ -17,14 +17,18 @@ from tos_runtime.recon import witness_kis
 from tos_runtime.recon.ports import WitnessOrderState, WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import (
     KisStockBrokerWitness,
-    KisWitnessTokenSession,
+    KisWitnessCredentialSession,
     KstDateSource,
 )
 from tos_runtime.recon.witness_kis_client import KisWitnessHttpClient
 from tos_runtime.recon.witness_kis_config import FuturesAssetRefused, KisWitnessConfig
 
 from ._fake_kis_get_server import FakeKisGetServer
-from ._witness_kis_fakes import FakeKstDateSource, FakeTokenSession, RaisingTokenSession
+from ._witness_kis_fakes import (
+    FakeCredentialSession,
+    FakeKstDateSource,
+    RaisingCredentialSession,
+)
 
 BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 ORDER_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
@@ -58,7 +62,7 @@ def _witness(
     server: FakeKisGetServer,
     *,
     max_pages: int = 10,
-    token_session: KisWitnessTokenSession | None = None,
+    credential_session: KisWitnessCredentialSession | None = None,
     date_source: KstDateSource | None = None,
 ) -> KisStockBrokerWitness:
     config = _config(server, max_pages=max_pages)
@@ -70,7 +74,7 @@ def _witness(
     return KisStockBrokerWitness(
         config=config,
         client=client,
-        token_session=token_session or FakeTokenSession(),
+        credential_session=credential_session or FakeCredentialSession(),
         date_source=date_source or FakeKstDateSource(),
     )
 
@@ -402,7 +406,7 @@ def test_futures_asset_is_refused_at_construction(server: FakeKisGetServer) -> N
         KisStockBrokerWitness(
             config=config,
             client=client,
-            token_session=FakeTokenSession(),
+            credential_session=FakeCredentialSession(),
             date_source=FakeKstDateSource(),
             asset="futures",
         )
@@ -431,12 +435,12 @@ def test_secrets_appear_only_in_headers_never_in_query_params(
 ) -> None:
     _queue_two_page_balance(server)
     server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
-    token_session = FakeTokenSession(
+    credential_session = FakeCredentialSession(
         access_token="TOP-SECRET-TOKEN",
         app_key="TOP-SECRET-KEY",
         app_secret="TOP-SECRET-SECRET",
     )
-    witness = _witness(server, token_session=token_session)
+    witness = _witness(server, credential_session=credential_session)
     witness.observe(WitnessScope(account=ACCOUNT))
 
     for request in server.all_requests:
@@ -448,26 +452,61 @@ def test_secrets_appear_only_in_headers_never_in_query_params(
         assert request.headers.get("appkey") == "TOP-SECRET-KEY"
 
 
-def test_token_session_failure_is_wrapped_without_leaking_the_secret(
+def test_one_credential_block_per_request_and_none_left_open(
     server: FakeKisGetServer,
 ) -> None:
-    witness = _witness(server, token_session=RaisingTokenSession())
+    """C-2 decision (C): the key/secret are readable only inside a block wrapped around ONE
+    GET, and every block is closed when ``observe`` returns."""
+    _queue_two_page_balance(server)
+    server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
+    credential_session = FakeCredentialSession()
+    witness = _witness(server, credential_session=credential_session)
+    witness.observe(WitnessScope(account=ACCOUNT))
+    assert credential_session.request_credentials_calls == len(server.all_requests)
+    assert credential_session.open_blocks == 0
+
+
+def test_credential_session_failure_is_wrapped_without_leaking_the_secret(
+    server: FakeKisGetServer,
+) -> None:
+    witness = _witness(server, credential_session=RaisingCredentialSession())
     with pytest.raises(WitnessUnavailable) as excinfo:
         witness.observe(WitnessScope(account=ACCOUNT))
     assert "TOP-SECRET" not in str(excinfo.value)
     assert "fake-app-key" not in str(excinfo.value)
 
 
+def test_non_ascii_credential_is_refused_without_keeping_its_bytes(
+    server: FakeKisGetServer,
+) -> None:
+    """Review finding (PR #806): a ``UnicodeDecodeError`` carries the whole plaintext in
+    ``.object``; chained onto ``WitnessUnavailable`` it would outlive the zeroed handle. The
+    refusal must keep no link to it (neither ``__cause__`` nor ``__context__``)."""
+    witness = _witness(
+        server, credential_session=FakeCredentialSession(app_secret="SECRÉT-KEY")
+    )
+    with pytest.raises(WitnessUnavailable) as excinfo:
+        witness.observe(WitnessScope(account=ACCOUNT))
+    chain: list[BaseException] = []
+    exc: BaseException | None = excinfo.value
+    while exc is not None and len(chain) < 10:
+        chain.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    assert not any(isinstance(link, UnicodeDecodeError) for link in chain)
+    assert all("SECR" not in str(link) for link in chain)
+    assert server.all_requests == []
+
+
 def test_http_rejection_message_never_contains_appkey_or_appsecret(
     server: FakeKisGetServer,
 ) -> None:
     server.queue_response(BALANCE_PATH, status=200, body={"rt_cd": "9", "msg_cd": "X"})
-    token_session = FakeTokenSession(
+    credential_session = FakeCredentialSession(
         access_token="TOP-SECRET-TOKEN",
         app_key="TOP-SECRET-KEY",
         app_secret="TOP-SECRET-SECRET",
     )
-    witness = _witness(server, token_session=token_session)
+    witness = _witness(server, credential_session=credential_session)
     with pytest.raises(WitnessUnavailable) as excinfo:
         witness.observe(WitnessScope(account=ACCOUNT))
     message = str(excinfo.value)

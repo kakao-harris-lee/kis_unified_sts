@@ -421,6 +421,31 @@ def test_observe_caches_within_the_same_tick_generation(
     assert _kind_count(evidence_store, SESSION_FACTS_OBSERVED_KIND) == 1
 
 
+def test_observe_recomputes_when_the_wall_clock_advances_without_a_tick(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """While the session is closed no tick is consumed, so the tick generation never moves —
+    a cache keyed on the generation alone would serve "closed" forever, even after a periodic
+    time evaluation moved the reading into the session (plan 2026-09-26 periodic time eval,
+    W1). Mutation: key the cache on the generation alone -> the second ``observe`` stays
+    closed -> red."""
+    calendar = load_calendar_config(write_fixture_calendar(tmp_path))
+    clock = _SteppingWallClock(_kst_ms(2026, 1, 5, 8, 0))
+    owner = SessionFactsOwner(
+        calendar=calendar,
+        wall_clock=clock,
+        evidence_store=evidence_store,
+        tick_generation_reader=lambda: 7,  # no tick consumed while closed
+        time_tz_db_version="tzdb-1",
+        time_trading_calendar_version=calendar.calendar_version,
+    )
+    before = owner.session_context(STOCK_CLASS)
+    assert before is not None and before.is_open is False
+    clock.unix_ms = _kst_ms(2026, 1, 5, 10, 0)
+    after = owner.session_context(STOCK_CLASS)
+    assert after is not None and after.is_open is True
+
+
 # ============================================================================
 # Session-open-expectation fields (folded into SESSION_FACTS_OBSERVED — team-
 # lead review follow-up, 2026-09-12: no separate kind, no per-tick firing)

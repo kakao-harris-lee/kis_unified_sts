@@ -63,7 +63,7 @@ collaborator is injected by the caller, exactly like every other ``_*_wiring`` m
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -76,6 +76,7 @@ from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
+from tos_runtime.compose._kis_credential_wiring import kis_mock_credential_session
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -88,10 +89,12 @@ from tos_runtime.marketfeed.policy import (
 from tos_runtime.marketfeed.ports import ObservationIntake
 from tos_runtime.marketfeed.scheduler import TickScheduler
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, SqliteSnapshotStore
+from tos_runtime.marketfeed.time_pacer import TimeEvaluationPacer
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 from tos_runtime.transport.kis_quote.adapter import (
     KisQuoteObservationIntake,
     build_quote_client,
@@ -138,6 +141,7 @@ _INT_FIELDS: tuple[str, ...] = (
     "poll_interval_ms",
     "snapshot_age_bound",
     "interval_width",
+    "time_evaluate_closed_interval_ms",
 )
 
 
@@ -167,6 +171,9 @@ class MarketFeedConfig:
     poll_interval_ms: int
     snapshot_age_bound: int
     interval_width: int
+    #: Time-health evaluation spacing while the session is closed (plan 2026-09-26 periodic
+    #: time eval, operator option 나 — every pass while open, this interval while closed).
+    time_evaluate_closed_interval_ms: int
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -297,6 +304,11 @@ def load_marketfeed_config(path: Path) -> MarketFeedConfig:
     journal_path = _resolve_journal_path(raw, path, intake_kind=intake_kind)
     str_values = {field: _require_str(raw, field, path) for field in _STR_FIELDS}
     int_values = {field: _require_int(raw, field, path) for field in _INT_FIELDS}
+    if int_values["time_evaluate_closed_interval_ms"] <= 0:
+        raise MarketFeedConfigError(
+            f"{path}: 'time_evaluate_closed_interval_ms' must be positive — a closed session "
+            "that is never re-evaluated never sees the session open"
+        )
     return MarketFeedConfig(
         instruments=instruments,
         instrument_class=str_values["instrument_class"],
@@ -309,7 +321,31 @@ def load_marketfeed_config(path: Path) -> MarketFeedConfig:
         poll_interval_ms=int_values["poll_interval_ms"],
         snapshot_age_bound=int_values["snapshot_age_bound"],
         interval_width=int_values["interval_width"],
+        time_evaluate_closed_interval_ms=int_values["time_evaluate_closed_interval_ms"],
     )
+
+
+def _time_pacer_pass(
+    config: MarketFeedConfig,
+    time_service: TrustworthyTimeService,
+    session_owner: SessionFactsOwner,
+    monotonic: MonotonicSource,
+) -> Callable[[], bool]:
+    """The periodic time-health evaluation the ``run`` loop owes the time service (plan
+    2026-09-26 periodic time eval, W1 — operator option 나). Its closed input is the SAME
+    ``session_context`` the scheduler gates on, so the two can never disagree; no context (time
+    untrusted) is unknown, not closed (``time_pacer`` module docstring)."""
+
+    def session_known_closed() -> bool:
+        context = session_owner.session_context(config.instrument_class)
+        return context is not None and not context.is_open
+
+    return TimeEvaluationPacer(
+        evaluate=time_service.evaluate,
+        session_known_closed=session_known_closed,
+        closed_interval_ms=config.time_evaluate_closed_interval_ms,
+        monotonic_ms=monotonic.now_ms,
+    ).before_pass
 
 
 def _resolve_kis_instance_rest_bases(
@@ -392,6 +428,7 @@ def _build_intake(
     broker_scopes: BrokerScopesConfig,
     evidence_store: SqliteEvidenceStore,
     runtime_identity: RuntimeIdentity,
+    credential_sessions: KisCredentialSessions | None,
 ) -> ObservationIntake:
     """Build the ``ObservationIntake`` config.intake_kind selects (module docstring) — the ONE
     branch point between the two intake kinds; every other collaborator below is intake-kind-
@@ -400,6 +437,9 @@ def _build_intake(
     ``time_service`` — module docstring's "two clocks, two jobs" note, in
     ``tos_runtime.transport.kis_quote.adapter``); ``broker_scopes`` resolves the host seal
     (:func:`_resolve_kis_instance_rest_bases`); ``runtime_identity`` attributes evidence.
+    ``credential_sessions`` is the boot's KIS credential registry (C-2 decision (C)) — the
+    intake takes the SAME ``kis_mock.*`` session the order transport holds (required — a
+    private registry would silently give it a second token lifecycle for the same app key).
     """
     if config.intake_kind == "journal":
         assert config.journal_path is not None  # load_marketfeed_config's own invariant
@@ -415,11 +455,23 @@ def _build_intake(
         instance_mock_rest_base=instance_mock_rest_base,
         instance_real_rest_base=instance_real_rest_base,
     )
+    if credential_sessions is None:
+        raise MarketFeedConfigError(
+            "intake_kind: kis_quote needs the boot's KIS credential registry "
+            "(ComposedRuntime.kis_credential_sessions) — refusing to build a private one, which "
+            "would give this app key a second token lifecycle (C-2 decision (C))"
+        )
     client = build_quote_client(quote_config)
     return KisQuoteObservationIntake(
         config=quote_config,
         client=client,
-        custody=custody,
+        credential_session=kis_mock_credential_session(
+            credential_sessions,
+            client=client,
+            token_endpoint_base=quote_config.endpoint_rest_base,
+            token_path=quote_config.token_path,
+            token_reissue_min_interval_s=quote_config.token_reissue_min_interval_s,
+        ),
         monotonic=monotonic,
         time_service=time_service,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
@@ -441,6 +493,7 @@ def build_tick_scheduler(
     monotonic: MonotonicSource,
     broker_scopes: BrokerScopesConfig,
     runtime_identity: RuntimeIdentity,
+    credential_sessions: KisCredentialSessions | None,
 ) -> TickScheduler | None:
     """Build the tick scheduler, or ``None`` when this wave is not configured (module docstring).
 
@@ -459,8 +512,8 @@ def build_tick_scheduler(
             (module docstring on why this must be called after the barrier runs).
         inbox: This process's shared durable event inbox.
         evidence_store: This process's shared evidence store.
-        custody, monotonic, broker_scopes, runtime_identity: Used ONLY when ``intake_kind:
-            kis_quote`` — see :func:`_build_intake` for what each one feeds.
+        custody, monotonic, broker_scopes, runtime_identity, credential_sessions: Used ONLY
+            when ``intake_kind: kis_quote`` — see :func:`_build_intake` for what each one feeds.
 
     Returns:
         The built scheduler, or ``None`` when ``marketfeed.yaml`` is absent (an operator who has
@@ -495,6 +548,7 @@ def build_tick_scheduler(
         broker_scopes=broker_scopes,
         evidence_store=evidence_store,
         runtime_identity=runtime_identity,
+        credential_sessions=credential_sessions,
     )
     time_projection = RuntimeTimeProjection(
         config=time_config,
@@ -522,4 +576,5 @@ def build_tick_scheduler(
         inbox=inbox,
         evidence_store=evidence_store,
         poll_interval_ms=config.poll_interval_ms,
+        before_pass=_time_pacer_pass(config, time_service, session_owner, monotonic),
     )

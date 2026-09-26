@@ -75,7 +75,7 @@ from tos_runtime.recon.witness_kis_config import KisWitnessConfig
 from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 
 from ._fake_kis_get_server import FakeKisGetServer
-from ._witness_kis_fakes import FakeKstDateSource, FakeTokenSession
+from ._witness_kis_fakes import FakeCredentialSession, FakeKstDateSource
 
 BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 ORDER_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
@@ -225,7 +225,7 @@ def _kis_witness(server: FakeKisGetServer) -> KisStockBrokerWitness:
     return KisStockBrokerWitness(
         config=config,
         client=client,
-        token_session=FakeTokenSession(),
+        credential_session=FakeCredentialSession(),
         date_source=FakeKstDateSource(),
     )
 

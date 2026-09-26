@@ -31,7 +31,8 @@ from tos_runtime.recon.service import (
 )
 from tos_runtime.recon.witness_kis import (
     KisStockBrokerWitness,
-    KisWitnessTokenSession,
+    KisWitnessCredentialSession,
+    KisWitnessRequestCredentials,
     KstDateSource,
     SystemKstDateSource,
 )
@@ -62,9 +63,10 @@ __all__ = [
     "KisWitnessConfig",
     "KisWitnessConfigError",
     "KisWitnessConnectionError",
+    "KisWitnessCredentialSession",
     "KisWitnessHttpClient",
+    "KisWitnessRequestCredentials",
     "KisWitnessTimeoutError",
-    "KisWitnessTokenSession",
     "KstDateSource",
     "ReconciliationClass",
     "ReconciliationReport",

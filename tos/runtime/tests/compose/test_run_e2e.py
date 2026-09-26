@@ -93,6 +93,7 @@ def _write_fast_marketfeed_config(
                 "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _FAST_POLL_INTERVAL_MS,
+                "time_evaluate_closed_interval_ms": 60_000,
                 "snapshot_age_bound": 20,
                 "interval_width": 10,
             },
@@ -239,14 +240,11 @@ def test_run_forever_ticks_a_second_real_observation_after_the_pacing_interval(
         passes += 1
         return passes > 2
 
-    # TrustworthyTimeService.wall_clock_now() (time/service.py:668-682) returns the LAST
-    # evaluate() cycle's own frozen snapshot, never a live re-read of the system clock — so the
-    # pacing gate's `now_ms` needs a fresh evaluate() cycle to see real elapsed time at all
-    # (compose itself only runs two boot-time cycles, module docstring of `_reach_trusted`).
-    # A real deployment's own health-refresh loop calls this periodically; this test does the
-    # SAME real call, once, rather than depending on `run_forever` itself to do it (it does
-    # not — refreshing trust is the time service's own job, out of this loop's scope).
-    runtime.time_service.evaluate()
+    # No manual evaluate() between the two loops (it used to live here): wall_clock_now()
+    # returns the last evaluate() cycle's reading, and compose now wires a
+    # TimeEvaluationPacer into run_forever that evaluates before every open-session pass
+    # (plan 2026-09-26 periodic time eval, W1). Without it the second tick lands in
+    # SKIPPED_INTERVAL on a boot-frozen reading and this assertion goes red.
     runtime.marketfeed.run_forever(
         sleep=_real_short_sleep, stop=_stop_after_second_tick
     )

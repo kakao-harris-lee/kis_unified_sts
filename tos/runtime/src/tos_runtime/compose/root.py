@@ -557,6 +557,7 @@ def compose_paper_runtime(
         evidence_store=composed.evidence_store,
         custody=boot.infra.custody,
         monotonic=boot.infra.monotonic_source,
+        credential_sessions=composed.kis_credential_sessions,
         broker_scopes=boot.broker_scopes,
         runtime_identity=boot.identity,
     )
