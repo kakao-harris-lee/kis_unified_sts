@@ -18,7 +18,7 @@
 # [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
 #
 #   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
-#   expected_code_digest: b96213f5e64beff7b69af3146fa403d48c517b0c4f68f6531e4519a291564662
+#   expected_code_digest: 2a7e483dfa47d3fbc6d75441334a6a3f20495bf6d124f235d4853f4301a86a18
 #   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
 #   python_version: 3.12.12
 #   sqlite_version: 3.45.1
@@ -49,6 +49,16 @@
 #   커밋된 두 문자열만 비교하는 `_VALUE_PINS` 는 이 불일치를 잡지 못한다.
 #   `expected_dependency_set_digest` 는 네 번 모두 변하지 않았다.
 #
+#   5차 재측정(2026-09-25, 브랜치 claude/kis-tos-project-covm64 · 상위 계획 W-B B-1 +
+#   W-C C-1): `tos_runtime/rcl/{gates,log}.py`(verify_replay 가 committed_vector 를 덮음)와
+#   `tos_runtime/recon/service.py`(broker_execution_id 교차조회)가 바뀌었으므로 값이 바뀐다.
+#   이전 값 b96213f5e64beff7b69af3146fa403d48c517b0c4f68f6531e4519a291564662 은 main
+#   d209d279 측정치. 이 값은 클라우드 세션 컨테이너에서 `print-digests` 와
+#   `observe_source_tree_digest()` 두 경로로 얻었고 일치했다 — 코드 digest 는 커밋 내용에만
+#   묶이므로 호스트와 무관하다. `expected_dependency_set_digest` 는 **바꾸지 않았다**:
+#   그 컨테이너의 인터프리터(python 3.11.15)는 배포 호스트 `.venv` 가 아니므로 거기서 찍은
+#   값을 여기에 옮기면 안 된다(아래 규율). 배포 호스트 값 그대로다.
+#
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
@@ -70,7 +80,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "b96213f5e64beff7b69af3146fa403d48c517b0c4f68f6531e4519a291564662"
+expected_code_digest: "2a7e483dfa47d3fbc6d75441334a6a3f20495bf6d124f235d4853f4301a86a18"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
