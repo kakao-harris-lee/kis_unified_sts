@@ -18,7 +18,7 @@
 # [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
 #
 #   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
-#   expected_code_digest: b176ff65e3c00454e5d223bae4ed5c4e4e2681cefeededf45d100d5792bad6d8
+#   expected_code_digest: 48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52
 #   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
 #   python_version: 3.12.12
 #   sqlite_version: 3.45.1
@@ -84,6 +84,9 @@
 #   adapter}.py`·`transport/kis_quote/adapter.py`·`recon/{__init__,witness_kis}.py`·
 #   `compose/{_kis_credential_wiring,_transport_wiring,_engine_wiring,_finalize_wiring,_types,root}.py`
 #   가 바뀌어 값이 또 바뀐다. 이전 값 b430dc27fb7adee32f5cc827e1b3df433b2c03161843fb29ab300bc365a1a66a 은 1차(W1) 측정치.
+#   같은 브랜치 3차(폴백 리뷰 조치 — 미확정 세션을 닫힘으로 취급하지 않음 · 주입 단조시계 · 레지스트리 필수 ·
+#   증인 비ASCII 거부): `marketfeed/time_pacer.py`·`compose/{_marketfeed_wiring,_transport_wiring,_engine_wiring}.py`·
+#   `recon/witness_kis.py` 가 바뀌어 값이 또 바뀐다. 이전 값 b176ff65e3c00454e5d223bae4ed5c4e4e2681cefeededf45d100d5792bad6d8 은 2차(W2) 측정치.
 #
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
@@ -106,7 +109,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "b176ff65e3c00454e5d223bae4ed5c4e4e2681cefeededf45d100d5792bad6d8"
+expected_code_digest: "48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

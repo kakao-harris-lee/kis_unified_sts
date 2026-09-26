@@ -67,7 +67,6 @@ from tos_runtime.brokercap.scopes import transport_nature as scope_transport_nat
 from tos_runtime.compose._kis_credential_wiring import (
     KIS_MOCK_APP_KEY_SCOPE,
     KIS_MOCK_APP_SECRET_SCOPE,
-    build_kis_credential_sessions,
     kis_mock_credential_session,
 )
 from tos_runtime.compose._nonlive_admission import _capability_tuples_mock_simulation
@@ -444,7 +443,7 @@ def build_transport(
     evidence_store: SqliteEvidenceStore,
     runtime_identity: RuntimeIdentity,
     trading_date_now: Callable[[], str | None] | None = None,
-    credential_sessions: KisCredentialSessions | None = None,
+    credential_sessions: KisCredentialSessions,
 ) -> Transport:
     """Construct the selected transport (module docstring item 6).
 
@@ -473,8 +472,9 @@ def build_transport(
         credential_sessions: This boot's KIS credential registry
             (:func:`~tos_runtime.compose._kis_credential_wiring.build_kis_credential_sessions`)
             — the ``kis-mock`` adapter takes the
-            ``kis_mock.*`` session from it. ``None`` builds a private registry from ``custody``
-            (a standalone transport with no other consumer to share with).
+            ``kis_mock.*`` session from it. Required, never defaulted: a private registry here
+            would silently give the ``kis_quote`` intake a second token lifecycle for the same
+            app key (the collision C-2 exists to prevent).
 
     Returns:
         The constructed transport, structurally satisfying the kernel's
@@ -501,12 +501,6 @@ def build_transport(
             "resolve_transport_boot always supplies one"
         )
     client = build_client(transport_config)
-    if credential_sessions is None:
-        credential_sessions = build_kis_credential_sessions(
-            custody=custody,
-            monotonic=monotonic,
-            evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
-        )
     return KisMockTransport(
         config=transport_config,
         client=client,

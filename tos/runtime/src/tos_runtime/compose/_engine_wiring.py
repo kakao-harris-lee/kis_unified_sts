@@ -485,7 +485,7 @@ def wire_engine_and_driver(
     custody: CredentialCustody,
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
-    credential_sessions: KisCredentialSessions | None = None,
+    credential_sessions: KisCredentialSessions,
     safety_mesh: Sequence[SafetyMeshService] = (),
     mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
     trading_date_now: Callable[[], str | None] | None = None,

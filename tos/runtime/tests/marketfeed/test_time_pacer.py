@@ -11,20 +11,21 @@ from __future__ import annotations
 import pytest
 from tos_runtime.marketfeed.time_pacer import TimeEvaluationPacer
 
-_MS = 1_000_000  # ns per ms
-
 
 class _Harness:
-    def __init__(self, *, is_open: bool, closed_interval_ms: int = 60_000) -> None:
-        self.now_ns = 0
+    def __init__(
+        self, *, is_open: bool | None, closed_interval_ms: int = 60_000
+    ) -> None:
+        self.now_ms = 0
+        #: True open · False closed · None unknown (no trusted reading, no session context)
         self.is_open = is_open
         self.evaluations = 0
         self.fail_next = 0
         self.pacer = TimeEvaluationPacer(
             evaluate=self._evaluate,
-            session_is_open=lambda: self.is_open,
+            session_known_closed=lambda: self.is_open is False,
             closed_interval_ms=closed_interval_ms,
-            monotonic_ns=lambda: self.now_ns,
+            monotonic_ms=lambda: self.now_ms,
         )
 
     def _evaluate(self) -> None:
@@ -34,7 +35,7 @@ class _Harness:
         self.evaluations += 1
 
     def advance_ms(self, ms: int) -> None:
-        self.now_ns += ms * _MS
+        self.now_ms += ms
 
 
 def test_open_session_evaluates_before_every_pass() -> None:
@@ -106,6 +107,19 @@ def test_non_positive_or_non_int_interval_is_refused(bad: object) -> None:
     with pytest.raises(ValueError):
         TimeEvaluationPacer(
             evaluate=lambda: None,
-            session_is_open=lambda: False,
+            session_known_closed=lambda: False,
             closed_interval_ms=bad,  # type: ignore[arg-type]
+            monotonic_ms=lambda: 0,
         )
+
+
+def test_unknown_session_is_paced_like_open_not_closed() -> None:
+    """Review finding (PR #806): a degraded evaluation leaves no trusted reading, so no session
+    context. Treating that as closed backed off to the 60 s interval while recovery needs
+    consecutive evaluations — ticks stopped for minutes mid-session. Unknown evaluates every
+    pass. Mutation: treat ``None`` as closed -> 1 evaluation -> red."""
+    h = _Harness(is_open=None)
+    for _ in range(5):
+        assert h.pacer.before_pass() is True
+        h.advance_ms(1_000)
+    assert h.evaluations == 5

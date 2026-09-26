@@ -40,6 +40,7 @@ from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.ports import CredentialHandle
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.transport.kis_mock.adapter import KisMockTransport
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 
 from ..transport.kis_mock import _seal_fixtures as seal_fx
 from . import _fixtures as fx
@@ -543,6 +544,7 @@ def test_build_transport_synthetic_builds_a_synthetic_paper_transport() -> None:
         seal_lookup=SealRegistry(),
         evidence_store=_NullEvidenceStore(),
         runtime_identity=RuntimeIdentity(),
+        credential_sessions=_null_credential_sessions(),
     )
     assert isinstance(transport, SyntheticPaperTransport)
 
@@ -563,6 +565,7 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
         seal_lookup=SealRegistry(),
         evidence_store=_NullEvidenceStore(),
         runtime_identity=RuntimeIdentity(),
+        credential_sessions=_null_credential_sessions(),
     )
     assert isinstance(transport, KisMockTransport)
     # Independent review MEDIUM-2: pin the exact custody scope names build_transport wires the
@@ -573,6 +576,15 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
     session = transport._credential_session  # noqa: SLF001
     assert session._app_key_scope == "kis_mock.app_key"  # noqa: SLF001
     assert session._app_secret_scope == "kis_mock.app_secret"  # noqa: SLF001
+
+
+def _null_credential_sessions() -> KisCredentialSessions:
+    """A registry that never loads anything — ``build_transport`` only asks it for a session."""
+    return KisCredentialSessions(
+        custody=_NullCustody(),
+        monotonic=_NullMonotonic(),
+        evidence_sink=lambda _kind, _fields: None,
+    )
 
 
 class _NullCustody:

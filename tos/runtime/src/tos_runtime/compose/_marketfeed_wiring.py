@@ -63,7 +63,7 @@ collaborator is injected by the caller, exactly like every other ``_*_wiring`` m
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -76,10 +76,7 @@ from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
-from tos_runtime.compose._kis_credential_wiring import (
-    build_kis_credential_sessions,
-    kis_mock_credential_session,
-)
+from tos_runtime.compose._kis_credential_wiring import kis_mock_credential_session
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -328,24 +325,27 @@ def load_marketfeed_config(path: Path) -> MarketFeedConfig:
     )
 
 
-def _build_time_pacer(
+def _time_pacer_pass(
     config: MarketFeedConfig,
     time_service: TrustworthyTimeService,
     session_owner: SessionFactsOwner,
-) -> TimeEvaluationPacer:
+    monotonic: MonotonicSource,
+) -> Callable[[], bool]:
     """The periodic time-health evaluation the ``run`` loop owes the time service (plan
-    2026-09-26 periodic time eval, W1 — operator option 나). Its open/closed input is the SAME
-    ``session_context`` the scheduler gates on, so the two can never disagree."""
+    2026-09-26 periodic time eval, W1 — operator option 나). Its closed input is the SAME
+    ``session_context`` the scheduler gates on, so the two can never disagree; no context (time
+    untrusted) is unknown, not closed (``time_pacer`` module docstring)."""
 
-    def session_is_open() -> bool:
+    def session_known_closed() -> bool:
         context = session_owner.session_context(config.instrument_class)
-        return context is not None and context.is_open
+        return context is not None and not context.is_open
 
     return TimeEvaluationPacer(
         evaluate=time_service.evaluate,
-        session_is_open=session_is_open,
+        session_known_closed=session_known_closed,
         closed_interval_ms=config.time_evaluate_closed_interval_ms,
-    )
+        monotonic_ms=monotonic.now_ms,
+    ).before_pass
 
 
 def _resolve_kis_instance_rest_bases(
@@ -438,8 +438,8 @@ def _build_intake(
     ``tos_runtime.transport.kis_quote.adapter``); ``broker_scopes`` resolves the host seal
     (:func:`_resolve_kis_instance_rest_bases`); ``runtime_identity`` attributes evidence.
     ``credential_sessions`` is the boot's KIS credential registry (C-2 decision (C)) — the
-    intake takes the SAME ``kis_mock.*`` session the order transport holds; ``None`` builds a
-    private registry (no order transport to share with).
+    intake takes the SAME ``kis_mock.*`` session the order transport holds (required — a
+    private registry would silently give it a second token lifecycle for the same app key).
     """
     if config.intake_kind == "journal":
         assert config.journal_path is not None  # load_marketfeed_config's own invariant
@@ -455,13 +455,13 @@ def _build_intake(
         instance_mock_rest_base=instance_mock_rest_base,
         instance_real_rest_base=instance_real_rest_base,
     )
-    client = build_quote_client(quote_config)
     if credential_sessions is None:
-        credential_sessions = build_kis_credential_sessions(
-            custody=custody,
-            monotonic=monotonic,
-            evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
+        raise MarketFeedConfigError(
+            "intake_kind: kis_quote needs the boot's KIS credential registry "
+            "(ComposedRuntime.kis_credential_sessions) — refusing to build a private one, which "
+            "would give this app key a second token lifecycle (C-2 decision (C))"
         )
+    client = build_quote_client(quote_config)
     return KisQuoteObservationIntake(
         config=quote_config,
         client=client,
@@ -493,7 +493,7 @@ def build_tick_scheduler(
     monotonic: MonotonicSource,
     broker_scopes: BrokerScopesConfig,
     runtime_identity: RuntimeIdentity,
-    credential_sessions: KisCredentialSessions | None = None,
+    credential_sessions: KisCredentialSessions | None,
 ) -> TickScheduler | None:
     """Build the tick scheduler, or ``None`` when this wave is not configured (module docstring).
 
@@ -576,5 +576,5 @@ def build_tick_scheduler(
         inbox=inbox,
         evidence_store=evidence_store,
         poll_interval_ms=config.poll_interval_ms,
-        before_pass=_build_time_pacer(config, time_service, session_owner).before_pass,
+        before_pass=_time_pacer_pass(config, time_service, session_owner, monotonic),
     )

@@ -160,9 +160,25 @@ C-2 문서 §4 그대로: `transport/kis_mock` 옆에 앱키당 단일 소유자
 
 ### 7.3 공통
 
-- digest: `expected_code_digest` `fe72348e…` → `b430dc27…`(W1) → **`b176ff65…`**(W2). 의존성 digest 는 배포 호스트 값 유지.
-- 크기 예산: `build_tick_scheduler` 는 헬퍼(`_build_time_pacer`) 분리로 100 줄 안 · 재등재 3건
+- digest: `expected_code_digest` `fe72348e…` → `b430dc27…`(W1) → `b176ff65…`(W2) → **`48b07d22…`**(리뷰 조치 §7.4). 의존성 digest 는 배포 호스트 값 유지.
+- 크기 예산: `build_tick_scheduler` 는 헬퍼(`_time_pacer_pass`) 분리로 100 줄 안 · 재등재 3건
   (`wire_engine_and_driver` 151→155 · `_finalize` 105→108 · `compose_paper_runtime` 420→421).
 - 게이트: 방화벽 PASS · lint-imports 3 kept · completion GREEN · spec PASS · contract PASS(+self-test) · citation PASS ·
   size budget PASS · black/ruff/mypy(src·tests) 통과.
 - 리뷰: Codex 는 클라우드 환경 제외(운영자 2026-09-26) — Claude 쪽 `code-reviewer` 폴백 레인.
+
+### 7.4 폴백 리뷰 처분 (`code-reviewer`, 같은 모델 계열 — 잠정)
+
+1차 판정 needs-attention · MEDIUM 1 · LOW 3 — 전부 조치(각 뮤테이션 red 확인):
+
+- **MEDIUM — 시각 미확정을 「닫힘」으로 취급**: 열린 세션에서 평가 한 번이 DEGRADED/UNTRUSTED 로 떨어지면 판독값이
+  없어 세션 맥락이 `None` → pacer 가 닫힘 간격(60 s)으로 물러나고, 회복에는 연속 평가가 필요해 **장중 최대 ~2분
+  무틱**. 조치: pacer 입력을 `session_known_closed` 로 바꿔 **맥락이 있고 닫혔을 때만** 간격을 둔다(미확정 = 열림처럼
+  매 패스). 핀: pacer 단위(`unknown`) + compose 술어(`_time_pacer_pass`, 열림/닫힘/미확정 3행).
+- **LOW — 레지스트리 누락 시 조용히 개별 수명주기**: compose 계층(`build_transport`·`wire_engine_and_driver`)에서
+  `credential_sessions` 를 **필수**로, `kis_quote` 인입은 레지스트리 없으면 `MarketFeedConfigError` 로 거부. 어댑터
+  생성자의 단독 사용 대체 경로는 유지.
+- **LOW — 비 ASCII 자격증명의 평문이 예외 사슬에 남음**: 증인 헤더를 ASCII 로 디코드하고, 실패 시 **except 블록
+  밖에서** 새 예외를 던져 `__cause__`·`__context__` 어느 쪽에도 `UnicodeDecodeError`(평문 `.object`)가 걸리지 않게.
+  (`from None` 은 `__context__` 를 남기므로 부족 — 뮤테이션으로 확인.)
+- **LOW — pacer 가 프로세스 시계 직접 읽음**: 주입 `MonotonicSource.now_ms` 로(시간 서비스와 같은 원천).

@@ -476,6 +476,27 @@ def test_credential_session_failure_is_wrapped_without_leaking_the_secret(
     assert "fake-app-key" not in str(excinfo.value)
 
 
+def test_non_ascii_credential_is_refused_without_keeping_its_bytes(
+    server: FakeKisGetServer,
+) -> None:
+    """Review finding (PR #806): a ``UnicodeDecodeError`` carries the whole plaintext in
+    ``.object``; chained onto ``WitnessUnavailable`` it would outlive the zeroed handle. The
+    refusal must keep no link to it (neither ``__cause__`` nor ``__context__``)."""
+    witness = _witness(
+        server, credential_session=FakeCredentialSession(app_secret="SECRÉT-KEY")
+    )
+    with pytest.raises(WitnessUnavailable) as excinfo:
+        witness.observe(WitnessScope(account=ACCOUNT))
+    chain: list[BaseException] = []
+    exc: BaseException | None = excinfo.value
+    while exc is not None and len(chain) < 10:
+        chain.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    assert not any(isinstance(link, UnicodeDecodeError) for link in chain)
+    assert all("SECR" not in str(link) for link in chain)
+    assert server.all_requests == []
+
+
 def test_http_rejection_message_never_contains_appkey_or_appsecret(
     server: FakeKisGetServer,
 ) -> None:

@@ -139,6 +139,19 @@ def _decimal_or_none(value: Any) -> Decimal | None:
     return None
 
 
+def _header_value(secret: bytes) -> str:
+    """ASCII-decode one credential for its header. A non-ASCII credential is refused WITHOUT
+    chaining the decode error: ``UnicodeDecodeError.object`` holds the whole plaintext, which
+    would outlive the zeroed handle on the chained ``WitnessUnavailable`` (review finding, PR #806).
+    """
+    try:
+        return secret.decode("ascii")
+    except UnicodeDecodeError:
+        pass
+    # Raised OUTSIDE the except block so neither __cause__ nor __context__ carries the bytes.
+    raise ValueError("KIS credential is not ASCII — refusing to send it")
+
+
 @runtime_checkable
 class KisWitnessRequestCredentials(Protocol):
     """What one request needs, valid only inside the ``with`` block that produced it."""
@@ -392,8 +405,8 @@ class KisStockBrokerWitness:
         headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {credentials.access_token}",
-            "appkey": credentials.app_key().decode(),
-            "appsecret": credentials.app_secret().decode(),
+            "appkey": _header_value(credentials.app_key()),
+            "appsecret": _header_value(credentials.app_secret()),
             "tr_id": tr_id,
             "custtype": "P",
         }

@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 import yaml
 from tos.egressgw.construction import admitted_price_from_view
+from tos.time import SessionContext
 from tos_runtime.calendar.ports import AbsentWallClockReference
 from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
 from tos_runtime.marketfeed.ports import RawObservation, TickOutcome
@@ -505,3 +506,48 @@ def test_a_held_recovery_barrier_queues_the_tick_instead_of_running_or_dropping_
 
     runtime2.rcl_log.close()
     runtime2.evidence_store.close()
+
+
+# ----------------------------------------------------------------------------
+# _time_pacer_pass — the compose-side open/closed/unknown predicate (plan 2026-09-26 W1,
+# review finding PR #806: unknown must not be treated as closed)
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("context", "expected_evaluations"),
+    [
+        (None, 5),  # unknown (time untrusted) -> every pass, like open
+        (SessionContext(phase="CONTINUOUS", is_open=True), 5),  # open -> every pass
+        (SessionContext(phase="CLOSED", is_open=False), 1),  # known closed -> interval
+    ],
+)
+def test_time_pacer_backs_off_only_when_the_session_is_known_closed(
+    context: SessionContext | None, expected_evaluations: int
+) -> None:
+    """Mutation: treat a missing session context as closed -> the unknown row evaluates once
+    (60 s back-off mid-session) -> red."""
+    from types import SimpleNamespace
+
+    from tos_runtime.compose._marketfeed_wiring import _time_pacer_pass
+
+    evaluations = 0
+
+    def evaluate() -> None:
+        nonlocal evaluations
+        evaluations += 1
+
+    now = {"ms": 0}
+    before_pass = _time_pacer_pass(
+        SimpleNamespace(  # type: ignore[arg-type]
+            instrument_class="krx-index-futures",
+            time_evaluate_closed_interval_ms=60_000,
+        ),
+        SimpleNamespace(evaluate=evaluate),  # type: ignore[arg-type]
+        SimpleNamespace(session_context=lambda _cls: context),  # type: ignore[arg-type]
+        SimpleNamespace(now_ms=lambda: now["ms"]),
+    )
+    for _ in range(5):
+        assert before_pass() is True
+        now["ms"] += 1_000
+    assert evaluations == expected_evaluations
