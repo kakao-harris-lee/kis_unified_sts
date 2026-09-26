@@ -274,6 +274,7 @@ from tos_runtime.operations.schema_ledger import file_is_fresh
 from tos_runtime.rcl.gates import (
     ReservationRefusalReason,
     ReservationTransitionRefusal,
+    align_unrecorded_vectors,
     check_reservation_from_state,
     classify_duplicate_command,
     digest_of_reservation_map,
@@ -715,10 +716,10 @@ class SqliteCommitLog:
                 any disagreement, never a partial pass).
         """
         held = held_reservation_map(self._conn)
+        replayed = fold_reservations_from_entries(self._conn)
+        align_unrecorded_vectors(held, replayed)
         held_digest = digest_of_reservation_map(self._canon_scheme, held)
-        replayed_digest = digest_of_reservation_map(
-            self._canon_scheme, fold_reservations_from_entries(self._conn)
-        )
+        replayed_digest = digest_of_reservation_map(self._canon_scheme, replayed)
         reason = replay_reproduces_state(replayed_digest, held_digest)
         if reason is not None:
             raise CommitLogCorruption(

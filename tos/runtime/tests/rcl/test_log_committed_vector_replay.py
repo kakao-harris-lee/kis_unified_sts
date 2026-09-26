@@ -3,8 +3,9 @@
 Before B-1 the kernel round #4 K-4 ``committed_vector`` was written only to the
 ``reservations.committed_vector_json`` column, so ``verify_replay`` could not see a value
 altered there. These tests pin that it now does, that "no vector" and "explicitly empty vector"
-stay distinct, and that a pre-K-4 entry (payload without the key, column ``NULL`` after the
-v1→v2 migration) still replays clean.
+stay distinct, and that an entry written before B-1 (payload without the key) never produces a
+false corruption on a legitimate existing log — its vector has no append-only source, so it is
+excluded from the comparison until the reservation's next transition.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from tos.rcl import (
 )
 from tos.rcl.vector import CapacityComponent
 from tos.workload import RuntimeIdentity
-from tos_runtime.rcl.gates import fold_reservations_from_entries
+from tos_runtime.rcl.gates import UNRECORDED_VECTOR, fold_reservations_from_entries
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 
 _SCOPE = ReservationScope(account="acct-1", instrument="101S06")
@@ -114,7 +115,7 @@ def test_decimal_spelling_is_not_a_disagreement(
 def test_payload_carries_the_key_explicitly_even_when_none(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """New entries always write the key, so an absent key can only mean a pre-K-4 entry."""
+    """New entries always write the key, so an absent key can only mean a pre-B-1 entry."""
     _commit(log, identity, None)
     (payload_json,) = log._conn.execute(
         "SELECT payload_json FROM entries WHERE is_reservation_transition = 1"
@@ -124,9 +125,9 @@ def test_payload_carries_the_key_explicitly_even_when_none(
     assert payload["committed_vector"] is None
 
 
-def _rewrite_as_pre_k4(log: SqliteCommitLog) -> None:
-    """Make the committed entry look like a pre-K-4 one: payload without the key. ``entries``
-    is append-only, so the trigger is dropped for this simulation only."""
+def _rewrite_as_pre_b1(log: SqliteCommitLog) -> None:
+    """Make the committed entry look like one written before B-1: payload without the key.
+    ``entries`` is append-only, so the trigger is dropped for this simulation only."""
     conn = log._conn
     conn.execute("DROP TRIGGER entries_no_update")
     seq, payload_json = conn.execute(
@@ -140,23 +141,66 @@ def _rewrite_as_pre_k4(log: SqliteCommitLog) -> None:
     )
 
 
-def test_pre_k4_entry_with_null_column_replays_clean(
+def test_pre_b1_entry_folds_to_the_unrecorded_marker(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
     _commit(log, identity, None)
-    _rewrite_as_pre_k4(log)
+    _rewrite_as_pre_b1(log)
     assert (
-        fold_reservations_from_entries(log._conn)["res-1"]["committed_vector"] is None
+        fold_reservations_from_entries(log._conn)["res-1"]["committed_vector"]
+        == UNRECORDED_VECTOR
     )
+
+
+@pytest.mark.parametrize(
+    "vector", [None, CapacityVector(), _ONE_CONTRACT], ids=["none", "empty", "one"]
+)
+def test_pre_b1_entry_replays_clean_whatever_the_column_holds(
+    log: SqliteCommitLog, identity: RuntimeIdentity, vector: CapacityVector | None
+) -> None:
+    """The regression B-1 must not introduce: a post-K-4, pre-B-1 log legitimately holds a
+    vector in the column that its entry never recorded. That is not corruption."""
+    _commit(log, identity, vector)
+    _rewrite_as_pre_b1(log)
     log.verify_replay()
 
 
-def test_pre_k4_entry_with_a_vector_in_the_column_raises(
+def test_pre_b1_entry_still_compares_state(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """A pre-K-4 entry could carry no vector, so a non-NULL column against it is tampering."""
-    _commit(log, identity, None)
-    _rewrite_as_pre_k4(log)
-    _set_column(log, _ONE_CONTRACT.model_dump_json())
+    """Only the vector is excluded — a tampered state on the same row is still caught."""
+    _commit(log, identity, _ONE_CONTRACT)
+    _rewrite_as_pre_b1(log)
+    log._conn.execute(
+        "UPDATE reservations SET state = ? WHERE reservation_id = ?",
+        (CapacityState.QUARANTINED_UNKNOWN.value, "res-1"),
+    )
+    with pytest.raises(CommitLogCorruption):
+        log.verify_replay()
+
+
+def test_coverage_resumes_with_the_next_transition(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    _commit(log, identity, _ONE_CONTRACT)
+    _rewrite_as_pre_b1(log)
+    result = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="res-1",
+            writer_epoch=log.acquire_epoch(identity),
+            from_state=CapacityState.ATTEMPT_BOUND,
+            to_state=CapacityState.POTENTIALLY_LIVE,
+            scope=_SCOPE,
+            committed_vector=_ONE_CONTRACT,
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.MARK_SEND_STARTED,
+        command_id="cmd-2",
+        command_digest="dig-2",
+        expected_seq=0,
+    )
+    assert isinstance(result, AppendReceipt)
+    log.verify_replay()
+    _set_column(log, CapacityVector().model_dump_json())
     with pytest.raises(CommitLogCorruption):
         log.verify_replay()

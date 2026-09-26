@@ -86,6 +86,8 @@ from tos.rcl import (
 
 __all__ = [
     "INITIAL_RESERVATION_STATES",
+    "UNRECORDED_VECTOR",
+    "align_unrecorded_vectors",
     "ReservationRefusalReason",
     "ReservationTransitionRefusal",
     "check_reservation_from_state",
@@ -102,6 +104,11 @@ __all__ = [
     "row_to_commit_entry",
     "upsert_reservation_projection",
 ]
+
+#: The fold's value for a reservation whose latest entry was written before B-1 (no
+#: ``committed_vector`` payload key) — cannot collide with a normalized vector (a JSON object
+#: dump), ``None``, or an ``UNPARSEABLE:`` value. See :func:`fold_reservations_from_entries`.
+UNRECORDED_VECTOR = "UNRECORDED_BEFORE_B1"
 
 #: The only capacity state a reservation-lifecycle transition may claim as its
 #: ``from_state`` when the log holds NO prior row for that ``reservation_id``
@@ -272,10 +279,14 @@ def fold_reservations_from_entries(
     value altered there had no append-only source and went undetected. Each transition now
     writes the payload key explicitly (:func:`committed_vector_payload` — ``null`` for a
     transition with no vector, an object for any vector including an explicitly empty one).
-    A payload with **no key at all** is a pre-K-4 entry: it could carry no vector, and the
-    v1→v2 migration left that row's column ``NULL``, so it folds to ``None`` — the only value
-    a pre-K-4 row can legitimately hold. "No vector" (``None``) and "explicitly empty vector"
-    (``{"components": []}``) stay distinct on both sides (:func:`_normalized_vector`).
+    A payload with **no key at all** was written before B-1 — either pre-K-4 (no vector could
+    exist) or post-K-4 (the column may legitimately hold a vector the entry never recorded). The
+    two are indistinguishable in the payload, so such an entry folds to
+    :data:`UNRECORDED_VECTOR` and :func:`align_unrecorded_vectors` excludes that reservation's
+    vector from the comparison: there is no append-only source to check it against — exactly
+    the pre-B-1 coverage, never a false corruption on a legitimate existing log. Coverage
+    resumes with the reservation's next transition. "No vector" (``None``) and "explicitly empty
+    vector" (``{"components": []}``) stay distinct on both sides (:func:`_normalized_vector`).
 
     Args:
         conn: The live sqlite3 connection.
@@ -307,11 +318,30 @@ def fold_reservations_from_entries(
                 "state": to_state,
                 "scope_account": scope_account,
                 "scope_instrument": scope_instrument,
-                "committed_vector": _normalized_vector(
-                    None if raw_vector is None else json.dumps(raw_vector)
+                "committed_vector": (
+                    UNRECORDED_VECTOR
+                    if "committed_vector" not in payload
+                    else _normalized_vector(
+                        None if raw_vector is None else json.dumps(raw_vector)
+                    )
                 ),
             }
     return folded
+
+
+def align_unrecorded_vectors(
+    held: dict[str, dict[str, str | None]],
+    replayed: Mapping[str, Mapping[str, str | None]],
+) -> None:
+    """Exclude from the comparison the vector of every reservation whose latest folded entry
+    predates B-1 (:data:`UNRECORDED_VECTOR`, see :func:`fold_reservations_from_entries`), by
+    stamping the held side with the same marker. State and scope are still compared."""
+    for reservation_id, value in replayed.items():
+        if (
+            value.get("committed_vector") == UNRECORDED_VECTOR
+            and reservation_id in held
+        ):
+            held[reservation_id]["committed_vector"] = UNRECORDED_VECTOR
 
 
 def held_reservation_map(conn: sqlite3.Connection) -> dict[str, dict[str, str | None]]:
