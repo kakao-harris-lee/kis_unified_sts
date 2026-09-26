@@ -39,7 +39,7 @@
 | 09:19:38 | P-8 2/5 | `P-8-20260911T001938Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / [] | 동일 거부. 3~5회차 미실행 |
 | 09:22:31 | P-15 | `P-15-20260911T002231Z.json` | live / MEASURED / MOCK_VTS | [] / [] | 재발급 간격 5s → 2차 시도 **거부 HTTP 403**(`msg_cd`/`msg1` 없음 — 축자 본문 부재). 1차 `expires_in=86400`(브로커 반환값), 2차 null. |
 | 09:22:39 | N-15 | `N-15-20260911T002239Z.json` | live / MEASURED / MOCK_VTS | [] / [] | `invalidate_to_reissue_ms` **107,228 ms(n=1)** → 후보 상한 160,843 ms(`candidate_only`, 값 아님). 토큰 endpoint 호출 4회, 거부가 30.9s gap 을 넘김. **held-token 사용성 ACCEPTED 3 / REJECTED 0 / UNDETERMINED 0** → 거부 창은 재발급 쿨다운이지 egress 블랙아웃이 아님(아티팩트 `interaction_verdict`; `B_egress_hard_fence` 기입 불가). 소요 108s(07-29 ≥528s 관측보다 짧음 — 표본 n=1). |
-| 09:24:27 | P-BAL(모의 주식) | `P-BAL-20260911T002427Z.json` | live / MEASURED / MOCK_VTS | [] / [] | `VTTC8434R` 2페이지 walk, **양수 수량 25행 > page_size 20** → `TRUNCATION_RISK_DEMONSTRATED`(런타임은 1페이지만 읽음, `client.py:931-932`). 종료 원인 `BROKER_END_OF_SET`(page 1 `tr_cont='D'`), `tr_cont` 헤더 관측, 연속조회 지원. 2026-08-05 측정과 일치. 계좌 `50******01`(`54e7f8a5d841`). |
+| 09:24:27 | P-BAL(모의 주식) | `P-BAL-20260911T002427Z.json` | live / MEASURED / MOCK_VTS | [] / [] | `VTTC8434R` 2페이지 walk, **양수 수량 25행 > page_size 20** (`P-BAL-20260911T002427Z.json:measurements.rows_with_positive_qty_total=25` · `P-BAL-20260911T002427Z.json:measurements.truncation_risk.page_row_counts=[20,5]` · `P-BAL-20260911T002427Z.json:measurements.truncation_risk.page_size=20`) → `P-BAL-20260911T002427Z.json:measurements.truncation_risk.verdict=TRUNCATION_RISK_DEMONSTRATED`(런타임은 1페이지만 읽음, `client.py:931-932`). 종료 원인 `P-BAL-20260911T002427Z.json:measurements.termination_cause=BROKER_END_OF_SET`(page 1 `tr_cont='D'`), `tr_cont` 헤더 관측, 연속조회 지원. 2026-08-05 측정과 일치. 계좌 `50******01`(`54e7f8a5d841`). |
 
 ### 2026-09-15 (화) 밤 — 모의투자 재신청 직후 연결 확인 (GET-only)
 
@@ -70,11 +70,11 @@
 
 운영자 결정(09-15)대로 `.env.mock` 은 새 계좌 그대로 두고 이 실행에만 예전 계좌번호를 넘겼다(지문 `54e7f8a5d841`, 마스킹 `50******01`). `repo_commit` `1959656c`, 워크트리 clean, `futures_live.enabled=false`. 운영자 attest: 창 동안 이 계좌에 다른 주문·입출금 없음.
 
-**⚠ 예약 시각과 실제 실행 시각이 다르다.** 세션 예약은 08:31 KST 에 발화해 사전 확인(계좌 지문 일치·잔고 20행 정상, `P-BAL-20260916T233126Z.json` — 종목 식별은 이 아티팩트 범위 밖, 아래 표 주석 참조)까지 08:31 에 마쳤으나, 세션이 중단돼 **프로브 본체는 22:02:46 KST 에 실행**됐다. 프로브가 스스로 다시 읽은 baseline 도 `hldg_qty=1`(예수금 6,686,725원)로 같다. payable(00:00)은 두 시각 모두 이미 지난 뒤였지만, 창 8시간은 22:02→익일 06:02 로 밀렸다.
+**⚠ 예약 시각과 실제 실행 시각이 다르다.** 세션 예약은 08:31 KST 에 발화해 사전 확인(계좌 지문 일치·잔고 20행 정상, `P-BAL-20260916T233126Z.json` — 종목 식별은 이 아티팩트 범위 밖, 아래 표 주석 참조)까지 08:31 에 마쳤으나, 세션이 중단돼 **프로브 본체는 22:02:46 KST 에 실행**됐다. 프로브가 스스로 다시 읽은 baseline 도 `P-CA-20260917T130246Z.json:measurements.baseline.hldg_qty=1`(예수금 `P-CA-20260917T130246Z.json:measurements.baseline.dnca_tot_amt=6686725.0`원)로 같다. payable(00:00)은 두 시각 모두 이미 지난 뒤였지만, 창 8시간은 22:02→익일 06:02 로 밀렸다.
 
 | 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
 |---|---|---|---|---|---|
-| 08:31:26 | P-BAL(사전 확인) | `P-BAL-20260916T233126Z.json` | live / MEASURED / MOCK_VTS | [] / [] | 예전 계좌 **20행 정상** — 초기화로 리셋되지 않음. ⚠ 이 아티팩트는 페이지별 행 수·`rt_cd`·연속조회 키만 담고 `pdno`/종목명/단가 필드가 **없다**(`raw_excerpt` 도 빈 문자열) — **어느 종목을 보유하는지는 이 아티팩트로 확인 불가**다. SK텔레콤 1주 보유는 아래 P-CA 본체의 `measurements.baseline.hldg_qty=1`(프로브가 `--symbol 017670` 로 스코프된 상태에서 스스로 읽은 값)이 뒷받침한다 |
+| 08:31:26 | P-BAL(사전 확인) | `P-BAL-20260916T233126Z.json` | live / MEASURED / MOCK_VTS | [] / [] | 예전 계좌 **20행 정상** — 초기화로 리셋되지 않음. ⚠ 이 아티팩트는 페이지별 행 수·`rt_cd`·연속조회 키만 담고 `pdno`/종목명/단가 필드가 **없다**(`raw_excerpt` 도 빈 문자열) — **어느 종목을 보유하는지는 이 아티팩트로 확인 불가**다. SK텔레콤 1주 보유는 아래 P-CA 본체의 `P-CA-20260917T130246Z.json:measurements.baseline.hldg_qty=1`(프로브가 `--symbol 017670` 로 스코프된 상태에서 스스로 읽은 값)이 뒷받침한다 |
 | 22:02:46 | P-CA 1차 | `P-CA-20260917T130246Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 2 | 아래 |
 
 - **✅ `--reference-check` 는 성공 — 모의에서 CA 참조 TR 이 동작한다.** `mock_reference_support: SUPPORTED`. 반환 행: SK텔레콤 017670 · `divi_kind=분기` · `per_sto_divi_amt=830` · `record_date=20260831` · `divi_pay_dt=2026/09/17`. N-19 §3 의 "모의 CA 처리 여부 UNKNOWN" 중 **참조원 존부는 이 관측으로 해소**된다(값 인용은 §6.2 대로 MOCK 한정).

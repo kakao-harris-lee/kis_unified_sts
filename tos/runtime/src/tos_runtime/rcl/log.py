@@ -274,12 +274,15 @@ from tos_runtime.operations.schema_ledger import file_is_fresh
 from tos_runtime.rcl.gates import (
     ReservationRefusalReason,
     ReservationTransitionRefusal,
+    align_unrecorded_vectors,
     check_reservation_from_state,
     classify_duplicate_command,
     digest_of_reservation_map,
     existing_command_row,
     fold_reservations_from_entries,
+    held_reservation_map,
     reservation_lifecycle_refusal,
+    reservation_transition_payload_json,
     row_to_commit_entry,
 )
 from tos_runtime.rcl.gates import (
@@ -663,19 +666,8 @@ class SqliteCommitLog:
                     ".from_state, and .to_state are required"
                 ),
             )
-        payload_json = json.dumps(
-            {
-                "reservation_id": transition.reservation_id,
-                "from_state": from_state.value,
-                "to_state": to_state.value,
-                "cause": cause.value,
-                "finality_witness": finality_witness,
-                "scope": {
-                    "account": transition.scope.account,
-                    "instrument": transition.scope.instrument,
-                },
-            },
-            sort_keys=True,
+        payload_json = reservation_transition_payload_json(
+            transition, cause, finality_witness
         )
         return self._commit_entry(
             expected_seq=expected_seq,
@@ -723,18 +715,11 @@ class SqliteCommitLog:
                 (:func:`tos.rcl.replay_reproduces_state` — fail-closed on
                 any disagreement, never a partial pass).
         """
-        held = {
-            reservation_id: {
-                "state": state.value,
-                "scope_account": scope.account,
-                "scope_instrument": scope.instrument,
-            }
-            for reservation_id, state, _seq, scope in self.reservation_rows()
-        }
+        held = held_reservation_map(self._conn)
+        replayed = fold_reservations_from_entries(self._conn)
+        align_unrecorded_vectors(held, replayed)
         held_digest = digest_of_reservation_map(self._canon_scheme, held)
-        replayed_digest = digest_of_reservation_map(
-            self._canon_scheme, fold_reservations_from_entries(self._conn)
-        )
+        replayed_digest = digest_of_reservation_map(self._canon_scheme, replayed)
         reason = replay_reproduces_state(replayed_digest, held_digest)
         if reason is not None:
             raise CommitLogCorruption(

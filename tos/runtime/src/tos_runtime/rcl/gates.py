@@ -38,6 +38,9 @@ Contents:
   ``reservations.scope_account``/``scope_instrument`` column must disagree
   with the independent re-fold exactly like a tampered ``state`` column does
   — the digest :func:`digest_of_reservation_map` computes now covers both.
+  It also covers ``committed_vector`` (carryover plan W-B B-1, 2026-09-25): the payload
+  carries the vector (:func:`committed_vector_payload`) and :func:`held_reservation_map`
+  reads the column, both normalized by :func:`_normalized_vector`.
 * :class:`ReservationRefusalReason` + :class:`ReservationTransitionRefusal` +
   :func:`reservation_lifecycle_refusal` — moved here from ``log.py`` (laneO
   port-fix round, design #40 runtime slice #2 §5, 2026-09-08; a pure
@@ -83,19 +86,29 @@ from tos.rcl import (
 
 __all__ = [
     "INITIAL_RESERVATION_STATES",
+    "UNRECORDED_VECTOR",
+    "align_unrecorded_vectors",
     "ReservationRefusalReason",
     "ReservationTransitionRefusal",
     "check_reservation_from_state",
     "classify_duplicate_command",
+    "committed_vector_payload",
     "digest_of_reservation_map",
     "existing_command_row",
     "fold_reservations_from_entries",
+    "held_reservation_map",
     "reservation_committed_vector",
     "reservation_rows",
     "reservation_lifecycle_refusal",
+    "reservation_transition_payload_json",
     "row_to_commit_entry",
     "upsert_reservation_projection",
 ]
+
+#: The fold's value for a reservation whose latest entry was written before B-1 (no
+#: ``committed_vector`` payload key) — cannot collide with a normalized vector (a JSON object
+#: dump), ``None``, or an ``UNPARSEABLE:`` value. See :func:`fold_reservations_from_entries`.
+UNRECORDED_VECTOR = "UNRECORDED_BEFORE_B1"
 
 #: The only capacity state a reservation-lifecycle transition may claim as its
 #: ``from_state`` when the log holds NO prior row for that ``reservation_id``
@@ -244,7 +257,7 @@ def check_reservation_from_state(
 
 def fold_reservations_from_entries(
     conn: sqlite3.Connection,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, str | None]]:
     """Re-derive the final reservation-state map by replaying every entry.
 
     Reads ONLY entries whose ``is_reservation_transition`` column is ``1``
@@ -261,31 +274,32 @@ def fold_reservations_from_entries(
     ``reservation_id``/``to_state``, rather than folded in with a
     fabricated scope.
 
-    KNOWN LIMITATION (round #4 review MEDIUM, not fixed here — scope too large for a fixup
-    lane): ``committed_vector_json`` (kernel round #4 K-4) is written only to the
-    ``reservations`` table (:func:`upsert_reservation_projection`), never into ``payload_json``
-    here, so this fold — and :meth:`~tos_runtime.rcl.log.SqliteCommitLog.verify_replay`'s
-    digest comparison over its return value — cover only ``{state, scope_account,
-    scope_instrument}``. A ``committed_vector_json`` value altered directly in the
-    ``reservations`` table has no append-only source to re-derive it from and would go
-    undetected, unlike state/scope. Closing this needs: (1) a canonical, round-trip-safe
-    payload encoding for the vector's ``Decimal`` magnitudes, (2) extending this fold's and
-    :func:`digest_of_reservation_map`'s map shape, and (3) an explicit decision for how pre-K-4
-    entries (no ``committed_vector`` key at all) fold — each a real design decision, left open
-    rather than rushed through this fixup.
+    The folded value also carries ``committed_vector`` (kernel round #4 K-4; carryover plan
+    W-B B-1, 2026-09-25) — before B-1 it was written only to the ``reservations`` column, so a
+    value altered there had no append-only source and went undetected. Each transition now
+    writes the payload key explicitly (:func:`committed_vector_payload` — ``null`` for a
+    transition with no vector, an object for any vector including an explicitly empty one).
+    A payload with **no key at all** was written before B-1 — either pre-K-4 (no vector could
+    exist) or post-K-4 (the column may legitimately hold a vector the entry never recorded). The
+    two are indistinguishable in the payload, so such an entry folds to
+    :data:`UNRECORDED_VECTOR` and :func:`align_unrecorded_vectors` excludes that reservation's
+    vector from the comparison: there is no append-only source to check it against — exactly
+    the pre-B-1 coverage, never a false corruption on a legitimate existing log. Coverage
+    resumes with the reservation's next transition. "No vector" (``None``) and "explicitly empty
+    vector" (``{"components": []}``) stay distinct on both sides (:func:`_normalized_vector`).
 
     Args:
         conn: The live sqlite3 connection.
 
     Returns:
         The reconstructed ``{reservation_id: {"state": ..., "scope_account":
-        ..., "scope_instrument": ...}}`` map.
+        ..., "scope_instrument": ..., "committed_vector": ...}}`` map.
     """
     rows = conn.execute(
         "SELECT payload_json FROM entries WHERE is_reservation_transition = 1 "
         "ORDER BY seq ASC"
     ).fetchall()
-    folded: dict[str, dict[str, str]] = {}
+    folded: dict[str, dict[str, str | None]] = {}
     for (payload_json,) in rows:
         payload = json.loads(payload_json)
         reservation_id = payload.get("reservation_id")
@@ -299,19 +313,114 @@ def fold_reservations_from_entries(
             and scope_account is not None
             and scope_instrument is not None
         ):
+            raw_vector = payload.get("committed_vector")
             folded[reservation_id] = {
                 "state": to_state,
                 "scope_account": scope_account,
                 "scope_instrument": scope_instrument,
+                "committed_vector": (
+                    UNRECORDED_VECTOR
+                    if "committed_vector" not in payload
+                    else _normalized_vector(
+                        None if raw_vector is None else json.dumps(raw_vector)
+                    )
+                ),
             }
     return folded
 
 
+def align_unrecorded_vectors(
+    held: dict[str, dict[str, str | None]],
+    replayed: Mapping[str, Mapping[str, str | None]],
+) -> None:
+    """Exclude from the comparison the vector of every reservation whose latest folded entry
+    predates B-1 (:data:`UNRECORDED_VECTOR`, see :func:`fold_reservations_from_entries`), by
+    stamping the held side with the same marker. State and scope are still compared."""
+    for reservation_id, value in replayed.items():
+        if (
+            value.get("committed_vector") == UNRECORDED_VECTOR
+            and reservation_id in held
+        ):
+            held[reservation_id]["committed_vector"] = UNRECORDED_VECTOR
+
+
+def held_reservation_map(conn: sqlite3.Connection) -> dict[str, dict[str, str | None]]:
+    """The held ``reservations`` table in :func:`fold_reservations_from_entries`'s map shape —
+    the other side of :meth:`~tos_runtime.rcl.log.SqliteCommitLog.verify_replay`'s comparison,
+    ``committed_vector_json`` included (carryover plan W-B B-1)."""
+    rows = conn.execute(
+        "SELECT reservation_id, state, scope_account, scope_instrument, "
+        "committed_vector_json FROM reservations"
+    ).fetchall()
+    return {
+        reservation_id: {
+            "state": state,
+            "scope_account": scope_account,
+            "scope_instrument": scope_instrument,
+            "committed_vector": _normalized_vector(vector_json),
+        }
+        for reservation_id, state, scope_account, scope_instrument, vector_json in rows
+    }
+
+
+def committed_vector_payload(committed_vector: CapacityVector | None) -> Any:
+    """The ``payload_json`` form of a transition's ``committed_vector`` — the same JSON the
+    ``reservations.committed_vector_json`` column stores (:func:`upsert_reservation_projection`),
+    decoded so it nests in the payload object. ``None`` stays ``None``."""
+    if committed_vector is None:
+        return None
+    return json.loads(committed_vector.model_dump_json())
+
+
+def reservation_transition_payload_json(
+    transition: CapacityReservationTransition,
+    cause: TransitionCause,
+    finality_witness: bool | None,
+) -> str:
+    """The ``payload_json`` of one reservation-lifecycle entry — what
+    :func:`fold_reservations_from_entries` replays. Moved out of ``log.py``'s
+    ``apply_reservation_transition`` for that function's 100-line size budget when B-1 added the
+    ``committed_vector`` key (carryover plan W-B B-1); the caller has already refused a transition
+    missing ``reservation_id``/``scope``/``from_state``/``to_state``."""
+    assert transition.scope is not None
+    assert transition.from_state is not None and transition.to_state is not None
+    return json.dumps(
+        {
+            "reservation_id": transition.reservation_id,
+            "from_state": transition.from_state.value,
+            "to_state": transition.to_state.value,
+            "cause": cause.value,
+            "finality_witness": finality_witness,
+            "committed_vector": committed_vector_payload(transition.committed_vector),
+            "scope": {
+                "account": transition.scope.account,
+                "instrument": transition.scope.instrument,
+            },
+        },
+        sort_keys=True,
+    )
+
+
+def _normalized_vector(vector_json: str | None) -> str | None:
+    """One comparable form per vector for both replay sides: ``None`` stays ``None``; anything
+    else is re-validated as a :class:`~tos.rcl.CapacityVector` and re-dumped, so ``Decimal``
+    spellings (``"1.50"`` vs ``"1.5"``) cannot manufacture a disagreement. Text that does not
+    validate is kept verbatim behind an ``UNPARSEABLE:`` prefix — it can never equal a valid
+    vector's dump, so a corrupted value surfaces as a replay disagreement, never an exception.
+    """
+    if vector_json is None:
+        return None
+    try:
+        return CapacityVector.model_validate_json(vector_json).model_dump_json()
+    except ValueError:  # pydantic.ValidationError subclasses ValueError
+        return f"UNPARSEABLE:{vector_json}"
+
+
 def digest_of_reservation_map(
-    scheme: CanonicalizationScheme, mapping: Mapping[str, Mapping[str, str]]
+    scheme: CanonicalizationScheme, mapping: Mapping[str, Mapping[str, str | None]]
 ) -> str:
     """Canonical digest of a ``{reservation_id: {state, scope_account,
-    scope_instrument}}`` map (sorted, deterministic).
+    scope_instrument, committed_vector}}`` map (sorted, deterministic).
 
     Args:
         scheme: The registered ``tos.canonical`` scheme to digest with.

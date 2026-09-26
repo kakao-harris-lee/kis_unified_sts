@@ -121,6 +121,10 @@ class WitnessSnapshot:
     cash: Decimal | None = None
     provenance: str = ""
     independent_of_evidence_store: bool = False
+    #: The single KST trading date (``YYYYMMDD``) the witness's order inquiry covered, or
+    #: ``None`` when it did not query one date only. See
+    #: :attr:`EgressReceiptObservation.trading_date` for why the order join needs it.
+    order_inquiry_date: str | None = None
 
 
 class WitnessUnavailable(Exception):
@@ -174,6 +178,13 @@ class EgressReceiptObservation:
     remaining_quantity: Decimal | None
     finality_proof_recorded: bool
     source_ref: str
+    #: The KST trading date (``YYYYMMDD``) the receipt belongs to, or ``None`` when the recorded
+    #: evidence carries none (today: always — the egress-result evidence record has no date).
+    #: :class:`~tos_runtime.recon.service.ReconciliationService` joins an attempt-less witness
+    #: order by ``broker_execution_id`` only when this equals the witness's
+    #: :attr:`WitnessSnapshot.order_inquiry_date` — a broker order id (KIS ODNO) is a
+    #: per-day sequence, so an id match across days is not an identity (C-1 review).
+    trading_date: str | None = None
 
 
 @runtime_checkable

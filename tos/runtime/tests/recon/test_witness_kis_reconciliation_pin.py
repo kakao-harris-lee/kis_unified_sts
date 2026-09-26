@@ -1,6 +1,17 @@
 """Lane C pin (W3 plan §4 W3 row C: "``ReconciliationService`` 경로 실증 — 실 증인일 때
 ``CORROBORATED`` 의 의미가 바뀌는 지점을 테스트로 고정 · 합성 증인과의 차이").
 
+**Status (carryover plan W-C C-1, 2026-09-25/26): the join exists but does not fire yet.**
+``ReconciliationService`` now cross-references ``broker_execution_id``
+(``service._join_orders_by_execution_id``). Review of the first version found that a KIS ODNO is a
+per-day sequence, so an id match is an identity only within one trading date; the join therefore
+requires the receipt's ``trading_date`` to equal the witness's ``order_inquiry_date``. This witness
+now reports its inquiry date, but the egress-result evidence the real
+:class:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader` reads records **no date**, so
+with these concrete classes the gap below still holds. The (b) tests pin exactly that; they flip
+when the evidence records a trading date. The join rules themselves are pinned with dated doubles in
+``test_service_execution_id_join.py``.
+
 **Why this file exists — read this before deleting any test in it.** The W3 plan's own §0.4
 states the wave's entire justification: a genuinely independent witness turns a ``CORROBORATED``
 verdict from a structural label into something substantive. This file's second half
@@ -219,15 +230,15 @@ def _kis_witness(server: FakeKisGetServer) -> KisStockBrokerWitness:
     )
 
 
-def test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt(
+def test_real_kis_witness_cannot_yet_join_the_same_order_to_its_known_attempt(
     store, fresh, kis_server: FakeKisGetServer
 ) -> None:
-    """The finding: the SAME broker order (same ``broker_execution_id``/ODNO) the
-    evidence-receipt path already recorded for attempt ``a1`` comes back from the REAL witness
-    with ``attempt_id=None`` — ``ReconciliationService`` cannot see it as a match for ``a1`` (no
-    ``broker_execution_id`` cross-reference exists), so it (1) degrades attempt ``a1`` to
-    ``STALE_RESERVATION`` (RCL present, no witness confirmation) and (2) ALSO reports the very
-    same order as an unrelated ``ORPHAN_BROKER_ORDER`` — a double-count, not a corroboration.
+    """The SAME broker order (same ODNO) the evidence-receipt path recorded for attempt ``a1``
+    comes back from the REAL witness with ``attempt_id=None``. The join needs the receipt's trading
+    date, which the recorded evidence does not carry yet (module docstring), so ``a1`` stays
+    ``STALE_RESERVATION`` and the order is reported separately as an orphan — conservative (both
+    permits ``False``), never silently accepted as corroboration. The witness side is ready: it
+    reports the one date it queried.
     """
     _append_egress_result(store)
     kis_server.queue_response(
@@ -258,19 +269,11 @@ def test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt(
     )
 
     by_attempt = {c.attempt_id: c for c in report.classifications}
-    # (1) attempt "a1" sees no witness confirmation at all — degraded, not corroborated.
     assert by_attempt["a1"].classification == ReconciliationClass.STALE_RESERVATION
-    # (2) the SAME order (same broker_execution_id) surfaces AGAIN as an orphan — the join
-    # that would have prevented this (by broker_execution_id) does not exist today.
     orphans = [c for c in report.classifications if c.attempt_id is None]
-    assert len(orphans) == 1
-    assert orphans[0].classification == ReconciliationClass.ORPHAN_BROKER_ORDER
-    assert orphans[0].broker_execution_id == "0000004470"
-    assert by_attempt["a1"].broker_execution_id != "0000004470"  # never joined
-    # Never permits, either way — the double-count is conservative (fails closed), not silently
-    # accepted as corroboration.
-    assert report.permits_capacity_release is False
+    assert [o.broker_execution_id for o in orphans] == ["0000004470"]
     assert report.permits_rearm is False
+    assert report.permits_capacity_release is False
 
 
 @pytest.mark.parametrize(
@@ -289,17 +292,11 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     rcl_present: bool,
     evidence_present: bool,
 ) -> None:
-    """Closes the gap between "확인 불가" and a real proof (팀리드 요청 3): rather than resting
-    the "``permits_*`` stays False" claim on the ONE (RCL present, evidence present) case the
-    test above exercises, this walks all four reachable combinations of RCL-reservation-present
-    x evidence-receipt-present. In every one, ``classification`` is provably never ``MATCHED``
-    (module docstring's deduction: ``has_witness`` can never be ``True`` for this witness), so
-    both gates — which the source (``_attempt_field_confidences_and_gates``) gates on exactly
-    ``classification is MATCHED`` — stay ``False`` regardless of what RCL/evidence say. The one
-    case this loop does NOT reach is "no attempt named at all" (an empty scope with zero orders),
-    which is covered separately by ``ReconciliationReport``'s own empty-``rearm_flags`` guard
-    (``bool(capacity_flags) and all(capacity_flags)`` is ``False`` on an empty list too — module
-    docstring's "fail-closed throughout").
+    """All four combinations of RCL-reservation-present x evidence-receipt-present with the real
+    KIS witness: ``MATCHED`` is unreachable in all four while the recorded evidence carries no
+    trading date (module docstring), so both permits stay ``False``. The case this loop does NOT
+    reach is "no attempt named at all", covered by ``ReconciliationReport``'s own
+    empty-``rearm_flags`` guard (module docstring's "fail-closed throughout").
     """
     if evidence_present:
         _append_egress_result(store)
@@ -333,5 +330,5 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
 
     by_attempt = {c.attempt_id: c for c in report.classifications}
     assert by_attempt["a1"].classification is not ReconciliationClass.MATCHED
-    assert report.permits_capacity_release is False
     assert report.permits_rearm is False
+    assert report.permits_capacity_release is False
