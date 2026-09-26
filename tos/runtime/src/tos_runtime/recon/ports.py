@@ -94,6 +94,11 @@ class WitnessOrder:
     quantity: Decimal | None
     remaining: Decimal | None
     state: WitnessOrderState
+    #: The trading date the BROKER assigned this order (``YYYYMMDD`` — KIS 주문일자 ``ord_dt``),
+    #: or ``None`` when the witness row carries none. With ``broker_execution_id`` it is the
+    #: order's identity for the cross-reference join (:attr:`EgressReceiptObservation
+    #: .trading_date`); the date comes from the broker, never from this process's clock.
+    order_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,8 +127,8 @@ class WitnessSnapshot:
     provenance: str = ""
     independent_of_evidence_store: bool = False
     #: The single KST trading date (``YYYYMMDD``) the witness's order inquiry covered, or
-    #: ``None`` when it did not query one date only. See
-    #: :attr:`EgressReceiptObservation.trading_date` for why the order join needs it.
+    #: ``None`` when it did not query one date only — a record of the inquiry's range. The join
+    #: uses each order's own broker-assigned :attr:`WitnessOrder.order_date`, not this.
     order_inquiry_date: str | None = None
 
 
@@ -181,9 +186,10 @@ class EgressReceiptObservation:
     #: The KST trading date (``YYYYMMDD``) the receipt belongs to, or ``None`` when the recorded
     #: evidence carries none (today: always — the egress-result evidence record has no date).
     #: :class:`~tos_runtime.recon.service.ReconciliationService` joins an attempt-less witness
-    #: order by ``broker_execution_id`` only when this equals the witness's
-    #: :attr:`WitnessSnapshot.order_inquiry_date` — a broker order id (KIS ODNO) is a
-    #: per-day sequence, so an id match across days is not an identity (C-1 review).
+    #: order by ``broker_execution_id`` only when this equals that order's own
+    #: :attr:`WitnessOrder.order_date` — a broker order id (KIS ODNO) is a per-day sequence, so an
+    #: id match across days is not an identity (C-1 review). Recorded at the ACK instant from
+    #: trusted time (plan 2026-09-26 egress trading date); absent on older receipts.
     trading_date: str | None = None
 
 

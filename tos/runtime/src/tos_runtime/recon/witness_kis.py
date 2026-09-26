@@ -59,7 +59,7 @@ this class returns carries ``provenance="kis-mock-stock"`` and
 ``witness_synthetic.py``) because this class's only I/O is the two HTTP GETs described
 above; it holds no reference to any evidence store at all.
 
-Firewall (RUNTIME scope R1): stdlib (``dataclasses``, ``datetime``, ``decimal``,
+Firewall (RUNTIME scope R1): stdlib (``dataclasses``, ``datetime``, ``decimal``, ``re``,
 ``typing``, ``zoneinfo``) + this package's own sibling modules
 (:mod:`~tos_runtime.recon.ports`, :mod:`~tos_runtime.recon.witness_kis_config`,
 :mod:`~tos_runtime.recon.witness_kis_client`) — no ``os.environ``, no ``shared.*``, no
@@ -70,6 +70,7 @@ re-exports, so it opens no new commons edge beyond the one that module already h
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -96,6 +97,7 @@ __all__ = [
     "KisWitnessTokenSession",
     "KstDateSource",
     "SystemKstDateSource",
+    "TrustedKstDateSource",
 ]
 
 #: KIS's own "more follows" tr_cont response codes (measured:
@@ -103,6 +105,9 @@ __all__ = [
 #: ``shared/kis/client.py:354`` and KIS's official ``inquire_balance`` example). Any
 #: NON-EMPTY value outside this pair is the broker's end-of-set signal.
 _TR_CONT_MORE_CODES = ("M", "F")
+
+#: ``YYYYMMDD`` as KIS writes ``ord_dt`` — ASCII digits only.
+_YYYYMMDD = re.compile(r"[0-9]{8}")
 
 #: Request-side continuation header for a follow-up page (``probes_balance.py:189``).
 _TR_CONT_REQUEST_NEXT = "N"
@@ -201,16 +206,53 @@ class KstDateSource(Protocol):
 
 
 class SystemKstDateSource:
-    """Reads the real wall clock — the one ambient-time read in this module's own
-    production wiring, isolated to this one small class exactly the way
-    :class:`tos_runtime.time.sources.ProcessMonotonicSource` isolates
-    ``time.monotonic_ns()``. Test suites inject a fixed :class:`KstDateSource` double
-    instead of this class."""
+    """Reads the real wall clock UNGATED by trusted time — kept for standalone measurement only.
+    A composition root wires :class:`TrustedKstDateSource` instead (plan 2026-09-26 egress
+    trading date §2 decision 4). Test suites inject a fixed :class:`KstDateSource` double.
+    """
 
     _KST = ZoneInfo("Asia/Seoul")
 
     def today(self) -> str:
         return datetime.now(self._KST).strftime("%Y%m%d")
+
+
+class _UnixMsReading(Protocol):
+    @property
+    def unix_ms(self) -> int: ...
+
+
+class _WallClockLike(Protocol):
+    """Structural stand-in for :class:`tos_runtime.calendar.ports.WallClockReference` — kept
+    local so this module opens no import edge beyond its siblings (module docstring firewall).
+    """
+
+    def read(self) -> _UnixMsReading | None: ...
+
+
+class TrustedKstDateSource:
+    """``today()`` from a :class:`~tos_runtime.calendar.ports.WallClockReference` — in production
+    a :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` (trusted AND fresh; the
+    plain trusted reference serves the last evaluated snapshot, which can be days old — review
+    finding 1) — so the witness never queries a date the runtime does not trust.
+    An absent reading raises :class:`~tos_runtime.recon.ports.WitnessUnavailable`, the port's own
+    "could not answer" outcome, rather than guessing a date."""
+
+    _KST = ZoneInfo("Asia/Seoul")
+
+    def __init__(self, wall_clock: _WallClockLike) -> None:
+        self._wall_clock = wall_clock
+
+    def today(self) -> str:
+        reading = self._wall_clock.read()
+        if reading is None:
+            raise WitnessUnavailable(
+                "TrustedKstDateSource: no trusted wall-clock reading — refusing to guess the "
+                "inquiry date"
+            )
+        return datetime.fromtimestamp(reading.unix_ms / 1000, tz=self._KST).strftime(
+            "%Y%m%d"
+        )
 
 
 #: The KIS wire field-name spelling a continuation key arrives under — lowercase, exactly.
@@ -578,6 +620,7 @@ class KisStockBrokerWitness:
         filled_qty = _decimal_or_none(row.get("tot_ccld_qty"))
         remaining_qty = _decimal_or_none(row.get("rmn_qty"))
         odno = row.get("odno")
+        ord_dt = str(row.get("ord_dt") or "").strip()
 
         if cancelled:
             state = WitnessOrderState.CANCELLED
@@ -600,4 +643,7 @@ class KisStockBrokerWitness:
             quantity=filled_qty,
             remaining=remaining_qty,
             state=state,
+            # KIS 주문일자 — the broker's own date for this ODNO (plan 2026-09-26 egress trading
+            # date §2 decision 4). Anything but YYYYMMDD digits is no date at all.
+            order_date=ord_dt if _YYYYMMDD.fullmatch(ord_dt) is not None else None,
         )

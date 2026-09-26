@@ -709,3 +709,25 @@ class TrustworthyTimeService:
         if self._health_state is not HealthState.TRUSTED or self._snapshot is None:
             return None
         return self._snapshot.wall_clock_observation
+
+    def wall_clock_now_if_fresh(self, max_age_ms: int) -> int | None:
+        """:meth:`wall_clock_now`, but only while the snapshot it comes from is at most
+        ``max_age_ms`` old on this service's own monotonic clock; ``None`` otherwise.
+
+        :meth:`wall_clock_now` serves the observation captured at the last ``evaluate()`` — in a
+        composed runtime that is the boot cycle, so its value can be hours or days old. A consumer
+        that turns the reading into an identity (the egress trading date — plan 2026-09-26 egress
+        trading date, review finding 1) must not use a stale instant as "now": an ACK on day D+1
+        stamped with day D would pair a fresh ODNO with the wrong day. A snapshot with no
+        ``issue_monotonic_value``, or one from the future, is not fresh.
+        """
+        observation = self.wall_clock_now()
+        if observation is None or self._snapshot is None:
+            return None
+        issued = self._snapshot.issue_monotonic_value
+        if issued is None:
+            return None
+        age_ms = self._monotonic.now_ms() - issued
+        if age_ms < 0 or age_ms > max_age_ms:
+            return None
+        return observation

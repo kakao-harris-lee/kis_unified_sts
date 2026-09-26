@@ -67,7 +67,11 @@ from tos.venue.state import session_phase_admits
 
 from tos_runtime.calendar.config import CalendarConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
-from tos_runtime.calendar.ports import TrustedWallClockReference, WallClockReference
+from tos_runtime.calendar.ports import (
+    FreshTrustedWallClockReference,
+    TrustedWallClockReference,
+    WallClockReference,
+)
 from tos_runtime.compose._types import ComposedRuntime, ConstructionConfig
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -192,6 +196,18 @@ def build_session_facts_owner(
     return SessionFactsOwner(
         calendar=calendar,
         wall_clock=effective_wall_clock,
+        # The egress trading date turns "now" into half of an ODNO identity, so it reads a
+        # reference that is trusted AND fresh (plan 2026-09-26 egress trading date, review
+        # finding 1) — the boot-time snapshot the session phase reads can be days old. An
+        # explicitly injected wall_clock (tests) is used as-is.
+        trading_date_wall_clock=(
+            wall_clock
+            if wall_clock is not None
+            else FreshTrustedWallClockReference(
+                time_service,
+                max_age_ms=time_config.max_time_conservative_freshness_age_ms,
+            )
+        ),
         evidence_store=evidence_store,
         tick_generation_reader=tick_generation_reader,
         time_tz_db_version=time_config.tz_db_version,

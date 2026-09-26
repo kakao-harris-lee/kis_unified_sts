@@ -611,6 +611,53 @@ def test_wall_clock_now_returns_the_reading_once_trusted() -> None:
     assert service.wall_clock_now() == 1_700_000_000_000
 
 
+def _trusted_at_1010() -> tuple[TrustworthyTimeService, FakeMonotonicSource]:
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    service.evaluate()  # -> TRUSTED, snapshot issued at monotonic 1010
+    assert service.health_state is HealthState.TRUSTED
+    return service, monotonic
+
+
+def test_wall_clock_now_if_fresh_serves_a_fresh_snapshot() -> None:
+    service, monotonic = _trusted_at_1010()
+    monotonic.value = 1010 + 1000
+    assert service.wall_clock_now_if_fresh(1000) == 1_700_000_000_000
+
+
+def test_wall_clock_now_if_fresh_refuses_a_stale_snapshot() -> None:
+    """Review finding 1 (plan 2026-09-26 egress trading date): with no further ``evaluate()`` —
+    the composed runtime only evaluates at boot — the plain trusted read keeps serving the boot
+    instant a day later; the fresh read must not."""
+    service, monotonic = _trusted_at_1010()
+    monotonic.value = 1010 + 24 * 60 * 60 * 1000
+    assert service.health_state is HealthState.TRUSTED
+    assert service.wall_clock_now() == 1_700_000_000_000  # the staleness being guarded
+    assert service.wall_clock_now_if_fresh(1000) is None
+    monotonic.value = 1010 + 1001
+    assert service.wall_clock_now_if_fresh(1000) is None
+
+
+def test_wall_clock_now_if_fresh_refuses_a_snapshot_from_the_future() -> None:
+    service, monotonic = _trusted_at_1010()
+    monotonic.value = 1009
+    assert service.wall_clock_now_if_fresh(1000) is None
+
+
+def test_wall_clock_now_if_fresh_is_none_while_untrusted() -> None:
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(monotonic=monotonic)
+    service.start()
+    service.evaluate()  # SYNCHRONIZING
+    assert service.wall_clock_now_if_fresh(10_000) is None
+
+
 def test_wall_clock_now_reverts_to_none_after_untrusted_regression() -> None:
     """Reaching TRUSTED once does not latch wall_clock_now() permanently —
     a later regression to UNTRUSTED must re-gate it, same as HealthState

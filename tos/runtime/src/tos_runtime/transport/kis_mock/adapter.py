@@ -79,7 +79,7 @@ time`` + this package's own sibling modules only. No third-party import, no ``os
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
 from tos.canonical import CanonicalDecimal
@@ -176,6 +176,7 @@ class KisMockTransport:
         monotonic: MonotonicSource,
         seal_lookup: SealLookup,
         evidence_sink: EvidenceRecorder,
+        trading_date_now: Callable[[], str | None] | None = None,
     ) -> None:
         """Wire this transport's dependencies (all injected — no ambient state).
 
@@ -195,6 +196,11 @@ class KisMockTransport:
                 ``time.time()``).
             seal_lookup: Resolves an attempt's :class:`~tos.egressgw.SendSeal`.
             evidence_sink: Records this adapter's own evidence entries.
+            trading_date_now: Returns the KST trading date (``YYYYMMDD``) at this instant, or
+                ``None`` when it cannot be established (untrusted time, a midnight-crossing
+                session) — stamped onto a result that carries a broker execution id, the moment
+                the broker acknowledged it (plan 2026-09-26 egress trading date §2 decision 2).
+                ``None`` (the default) stamps nothing.
         """
         self._config = config
         self._client = client
@@ -204,6 +210,7 @@ class KisMockTransport:
         self._monotonic = monotonic
         self._seal_lookup = seal_lookup
         self._evidence = evidence_sink
+        self._trading_date_now = trading_date_now
 
         # W2 extraction (token.py module docstring) — the token state machine itself now lives
         # in KisTokenLifecycle, shared with the KIS quote intake; this class only delegates.
@@ -489,4 +496,20 @@ class KisMockTransport:
             kind=kind,
             broker_execution_id=broker_execution_id,
             reference=seal.reference,
+            # A KIS ODNO is a per-day sequence: the date is what makes it an identity. Only a
+            # result the broker actually numbered gets one.
+            trading_date=(
+                self._stamp_trading_date() if broker_execution_id is not None else None
+            ),
         )
+
+    def _stamp_trading_date(self) -> str | None:
+        """The injected trading date, or ``None``. Called AFTER a real order was acknowledged, so a
+        failure here must never lose the result: any exception degrades to ``None`` — an undated
+        result simply cannot join by ODNO (review finding 2)."""
+        if self._trading_date_now is None:
+            return None
+        try:
+            return self._trading_date_now()
+        except Exception:  # noqa: BLE001 - the ACK must reach the inbox regardless
+            return None

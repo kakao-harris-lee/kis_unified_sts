@@ -431,6 +431,11 @@ def compose_paper_runtime(
         instance_document=boot.instance_document,
         transport_kind=transport_kind,
         transport_config=boot.transport_config,
+        # The broker-acknowledged result's KST trading date, through the SAME trusted wall
+        # clock and calendar as every session phase (plan 2026-09-26 egress trading date).
+        trading_date_now=lambda: session_facts_owner.trading_date_now(
+            construction.instrument_class
+        ),
     )
     # TOS venue constraint service wave (plan §2 decision 9) — attach the already-live venue
     # service to the composed runtime (the service itself was built earlier, above, before

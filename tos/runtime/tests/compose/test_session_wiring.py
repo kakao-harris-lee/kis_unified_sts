@@ -440,3 +440,39 @@ def test_production_default_wall_clock_boots_with_real_session_facts(
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+def test_production_default_dates_egress_results_through_a_fresh_trusted_reference(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """Plan 2026-09-26 egress trading date, review finding 1: the session phase may keep reading
+    the boot-time trusted snapshot, but the trading date must read a reference that also bounds
+    its AGE — otherwise a process running past midnight would stamp every ACK with the boot day.
+    Pinned by wiring (the reference type and its bound come from ``time.yaml``) and by value (right
+    after boot the snapshot is fresh, so a date is produced)."""
+    from tos_runtime.calendar.ports import FreshTrustedWallClockReference
+
+    fx.write_band_strategy_file(config_dir)
+    runtime = compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=_aggregate_inputs,
+        action_flow_inputs_provider=_action_flow_inputs,
+        transport_kind=TransportKind.SYNTHETIC,
+    )
+    _reach_trusted(runtime)
+    assert runtime.session_facts is not None
+    reference = runtime.session_facts._trading_date_wall_clock
+    assert isinstance(reference, FreshTrustedWallClockReference)
+    assert (
+        reference._max_age_ms == 60_000
+    )  # conftest time.yaml MAX_time_conservative_freshness_age_ms
+    date = runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS)
+    assert date is None or (
+        len(date) == 8 and date.isdigit()
+    )  # None only in the 23:59 gap
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()

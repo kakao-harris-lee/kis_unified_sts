@@ -18,7 +18,7 @@
 # [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
 #
 #   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
-#   expected_code_digest: 1da8b70135d9159fa385482a4aad9b419987f2057d51f6d035a44fa64d3ec602
+#   expected_code_digest: fe72348e2e54379c87ac4b398682c2aaeda34c22c81c02d7cccd7c8694a8ffc8
 #   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
 #   python_version: 3.12.12
 #   sqlite_version: 3.45.1
@@ -66,6 +66,16 @@
 #   조인 · 날짜가 다른 ODNO 로 조인)을 찾아 `recon/{ports,service,witness_kis}.py` 를 고쳤으므로
 #   값이 또 바뀐다. 이전 값 90260205dd161f42103bb25bd87254c9211c7fe5d36f83d57c8d90c36438fce4 은 2차 측정치.
 #
+#   6차 재측정(2026-09-26, 브랜치 claude/kis-tos-project-covm64 · 계획
+#   docs/plans/2026-09-26-tos-egress-trading-date-plan.md): 커널 `tos/engine/{records,core}.py`
+#   (trading_date 주입 토큰) + 런타임 `calendar`·`transport/kis_mock`·`recon`·`compose` 가 바뀌어
+#   값이 바뀐다. 이전 값 1da8b70135d9159fa385482a4aad9b419987f2057d51f6d035a44fa64d3ec602 은 main 9434c280 측정치. `print-digests` 와
+#   `observe_source_tree_digest()` 일치. 의존성 digest 는 배포 호스트 값 그대로(이 컨테이너 값 아님).
+#   같은 브랜치 2차: Claude 쪽 리뷰 finding 1(신뢰 시각이 부팅 스냅샷 — 날짜가 낡음)·2(날짜
+#   소스 예외가 ACK 를 잃음) 조치로 `time/service.py`·`calendar/{ports,owner}.py`·
+#   `compose/_session_wiring.py`·`transport/kis_mock/adapter.py` 가 바뀌어 값이 또 바뀐다. 이전 값
+#   295bce988121e7f685ffeb2321af7e30c5756f1d27b63c761eba8e695f809372 은 1차 측정치.
+#
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
@@ -87,7 +97,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "1da8b70135d9159fa385482a4aad9b419987f2057d51f6d035a44fa64d3ec602"
+expected_code_digest: "fe72348e2e54379c87ac4b398682c2aaeda34c22c81c02d7cccd7c8694a8ffc8"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

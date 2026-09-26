@@ -520,3 +520,77 @@ def test_unknown_instrument_class_yields_none_phase(
         time_trading_calendar_version=None,
     )
     assert owner.phase_for_step3("some-unconfigured-class") is None
+
+
+# ============================================================================
+# trading_date_now (plan 2026-09-26 egress trading date, T-2)
+# ============================================================================
+
+
+def _owner_at(tmp_path: Path, evidence_store: SqliteEvidenceStore, wall_clock):
+    calendar = load_calendar_config(write_fixture_calendar(tmp_path))
+    return SessionFactsOwner(
+        calendar=calendar,
+        wall_clock=wall_clock,
+        evidence_store=evidence_store,
+        tick_generation_reader=lambda: None,
+        time_tz_db_version="tzdb-1",
+        time_trading_calendar_version=calendar.calendar_version,
+    )
+
+
+def test_trading_date_now_reads_the_owners_own_wall_clock(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    owner = _owner_at(
+        tmp_path, evidence_store, FixedWallClockReference(_kst_ms(2026, 1, 5, 10, 0))
+    )
+    assert owner.trading_date_now("krx-stock-fixture") == "20260105"
+
+
+def test_trading_date_now_is_none_without_a_wall_clock_reading(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """Production reads the trusted-time-gated reference: untrusted time means no date."""
+    owner = _owner_at(tmp_path, evidence_store, AbsentWallClockReference())
+    assert owner.trading_date_now("krx-stock-fixture") is None
+
+
+def test_trading_date_now_prefers_its_own_injected_clock(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """Production injects a trusted-AND-fresh reference for the trading date only (review
+    finding 1); session phases keep their own reference."""
+    calendar = load_calendar_config(write_fixture_calendar(tmp_path))
+    owner = SessionFactsOwner(
+        calendar=calendar,
+        wall_clock=FixedWallClockReference(_kst_ms(2026, 1, 5, 10, 0)),
+        evidence_store=evidence_store,
+        tick_generation_reader=lambda: None,
+        time_tz_db_version="tzdb-1",
+        time_trading_calendar_version=calendar.calendar_version,
+        trading_date_wall_clock=AbsentWallClockReference(),
+    )
+    assert owner.phase_for_step3("krx-stock-fixture") == "CONTINUOUS"
+    assert owner.trading_date_now("krx-stock-fixture") is None
+
+
+def test_fresh_trusted_reference_is_absent_when_the_service_says_stale() -> None:
+    from tos_runtime.calendar.ports import FreshTrustedWallClockReference
+
+    class _Service:
+        def __init__(self, value: int | None) -> None:
+            self.value = value
+            self.asked: list[int] = []
+
+        def wall_clock_now_if_fresh(self, max_age_ms: int) -> int | None:
+            self.asked.append(max_age_ms)
+            return self.value
+
+    fresh = _Service(1_789_601_400_000)
+    reading = FreshTrustedWallClockReference(fresh, max_age_ms=1000).read()
+    assert reading is not None and reading.unix_ms == 1_789_601_400_000
+    assert fresh.asked == [1000]
+    assert (
+        FreshTrustedWallClockReference(_Service(None), max_age_ms=1000).read() is None
+    )

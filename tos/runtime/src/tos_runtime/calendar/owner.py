@@ -72,7 +72,11 @@ from tos.time.predicates import (
 
 from tos_runtime.calendar.config import CalendarConfig, calendar_bind_digest
 from tos_runtime.calendar.model import MaturityFact, PhaseFact, WallClockReading
-from tos_runtime.calendar.phase import effective_phase_at, maturity_at
+from tos_runtime.calendar.phase import (
+    effective_phase_at,
+    maturity_at,
+    trading_date_at,
+)
 from tos_runtime.calendar.ports import WallClockReference
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
@@ -134,6 +138,7 @@ class SessionFactsOwner:
         time_tz_db_version: str | None,
         time_trading_calendar_version: str | None,
         tz_db_version_observed: Callable[[], str | None] | None = None,
+        trading_date_wall_clock: WallClockReference | None = None,
     ) -> None:
         """Construct the owner and record its two boot-time evidence rows.
 
@@ -179,6 +184,11 @@ class SessionFactsOwner:
             )
         self._calendar = calendar
         self._wall_clock = wall_clock
+        self._trading_date_wall_clock = (
+            trading_date_wall_clock
+            if trading_date_wall_clock is not None
+            else wall_clock
+        )
         self._evidence_store = evidence_store
         self._tick_generation_reader = tick_generation_reader
         self._time_tz_db_version = time_tz_db_version
@@ -234,6 +244,19 @@ class SessionFactsOwner:
         (never a fabricated phase; the kernel treats an absent phase as UNKNOWN,
         not as a silent admit)."""
         return self.observe(instrument_class).phase_fact.phase
+
+    def trading_date_now(self, instrument_class: str) -> str | None:
+        """The KST trading date for ``instrument_class`` at this instant
+        (:func:`~tos_runtime.calendar.phase.trading_date_at`), read through
+        ``trading_date_wall_clock`` when one was injected (production: a
+        :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` — trusted AND fresh),
+        else the session-phase reference. ``None`` whenever that reference is. Uncached on
+        purpose: the caller stamps the moment a broker acknowledged an order, not the current
+        tick generation."""
+        reading = self._trading_date_wall_clock.read()
+        if reading is None:
+            return None
+        return trading_date_at(reading.unix_ms, instrument_class, self._calendar)
 
     def session_context(self, instrument_class: str) -> SessionContext | None:
         """The kernel ``tos.time.SessionContext`` for ``instrument_class`` this

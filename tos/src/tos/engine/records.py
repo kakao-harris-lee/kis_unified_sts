@@ -22,9 +22,10 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, n
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from tos.capsule import DecisionContextCapsule
 from tos.dsl import (
@@ -211,6 +212,27 @@ class DecisionTickPayload(FrozenModel):
     value_view: ContextValueView | None = None
 
 
+def _omit_when_none(value: object) -> bool:
+    """``exclude_if`` predicate for fields added after records of their type were already
+    persisted: an unset field is left out of the dump, so a pre-existing record's dump — and
+    every digest/identity computed from it (:func:`event_identity`, the evidence ``entry_digest``)
+    — is byte-identical to what it was before the field existed."""
+    return value is None
+
+
+#: ``YYYYMMDD`` — ASCII digits only (``str.isdigit`` would also accept non-ASCII digits).
+_TRADING_DATE_SHAPE = re.compile(r"[0-9]{8}")
+
+
+def _check_trading_date(value: str | None, owner: str) -> None:
+    """An injected KST trading-date token is ``YYYYMMDD`` digits or ``None`` — the kernel is
+    clock-free and never derives one, it only refuses a malformed token."""
+    if value is not None and _TRADING_DATE_SHAPE.fullmatch(value) is None:
+        raise ArtifactIntegrityError(
+            f"{owner}.trading_date must be YYYYMMDD digits or None, got {value!r}"
+        )
+
+
 class EgressResultPayload(FrozenModel):
     """An ``EGRESS_RESULT`` payload re-injected from the D-E4 send boundary (design #31 §2.2).
 
@@ -247,10 +269,17 @@ class EgressResultPayload(FrozenModel):
     broker_execution_id: str | None = None
     resolution_generation: int | None = None
     reference: OrderingEvent = OrderingEvent()
+    #: The KST trading date the broker acknowledged this result on (``YYYYMMDD``), injected by the
+    #: runtime transport from trusted time; ``None`` when it could not be established. A broker
+    #: execution id such as a KIS ODNO is a per-day sequence, so reconciliation joins on it only
+    #: within one trading date (plan 2026-09-26 egress trading date). Not part of the duplicate
+    #: signature. Omitted from the dump when ``None`` (:func:`_omit_when_none`).
+    trading_date: str | None = Field(default=None, exclude_if=_omit_when_none)
 
     @model_validator(mode="after")
     def _fill_shape_consistent(self) -> EgressResultPayload:
         """Enforce magnitude/kind consistency — partial stays partial (RFC-005 §11:338-339)."""
+        _check_trading_date(self.trading_date, "EgressResultPayload")
         if not self.attempt_id.strip():
             raise ArtifactIntegrityError(
                 "EgressResultPayload.attempt_id must be concrete — a result with no attempt "
@@ -837,6 +866,8 @@ class EngineEvidenceRecord(FrozenModel):
     filled_quantity: CanonicalDecimal | None = None
     remaining_quantity: CanonicalDecimal | None = None
     broker_execution_id: str | None = None
+    #: Copied verbatim from :attr:`EgressResultPayload.trading_date` (same omission rule).
+    trading_date: str | None = Field(default=None, exclude_if=_omit_when_none)
     outcome_type: str | None = None
     outcome_digest: str | None = None
     capsule_id: str | None = None
@@ -846,3 +877,9 @@ class EngineEvidenceRecord(FrozenModel):
     attempt_id: str | None = None
     detail: str | None = None
     authority: AllFalseCoordinatorAuthority = AllFalseCoordinatorAuthority()
+
+    @model_validator(mode="after")
+    def _trading_date_shape(self) -> EngineEvidenceRecord:
+        """Refuse a malformed injected trading-date token (:func:`_check_trading_date`)."""
+        _check_trading_date(self.trading_date, "EngineEvidenceRecord")
+        return self

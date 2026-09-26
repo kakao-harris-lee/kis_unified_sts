@@ -25,6 +25,7 @@ import cycle.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -139,6 +140,7 @@ def _finalize(
     instance_document: InstanceDocument | None,
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
+    trading_date_now: Callable[[], str | None] | None = None,
 ) -> ComposedRuntime:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
     :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
@@ -178,6 +180,7 @@ def _finalize(
         transport_config=transport_config,
         safety_mesh=risk.safety_mesh.services,
         mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
+        trading_date_now=trading_date_now,
     )
 
     _verify_boot_replay(
