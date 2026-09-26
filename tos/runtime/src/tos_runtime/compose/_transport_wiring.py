@@ -64,6 +64,12 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.brokercap.instance import InstanceDocument, load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScope, BrokerScopesConfig
 from tos_runtime.brokercap.scopes import transport_nature as scope_transport_nature
+from tos_runtime.compose._kis_credential_wiring import (
+    KIS_MOCK_APP_KEY_SCOPE,
+    KIS_MOCK_APP_SECRET_SCOPE,
+    build_kis_credential_sessions,
+    kis_mock_credential_session,
+)
 from tos_runtime.compose._nonlive_admission import _capability_tuples_mock_simulation
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.ports import CredentialCustody
@@ -75,6 +81,7 @@ from tos_runtime.transport.kis_mock.config import (
     KisMockTransportConfig,
     load_kis_mock_transport_config,
 )
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 
 __all__ = [
     "KIS_MOCK_TRANSPORT_CONFIG_NAME",
@@ -83,6 +90,7 @@ __all__ = [
     "TransportKind",
     "TransportWiringError",
     "build_transport",
+    "evidence_recorder",
     "load_transport_config",
     "refuse_custody_principal_mismatch",
     "refuse_transport_scope_mismatch",
@@ -99,8 +107,10 @@ KIS_MOCK_TRANSPORT_CONFIG_NAME = "kis_mock_transport.yaml"
 #: ``app_secret_scope`` kwargs) — independent review MEDIUM-2: these two literals used to be
 #: written twice (once here, once again inline in ``build_transport``), so a mutation swapping
 #: or dropping one there went undetected by every existing test.
-_KIS_MOCK_APP_KEY_SCOPE = "kis_mock.app_key"
-_KIS_MOCK_APP_SECRET_SCOPE = "kis_mock.app_secret"
+#: C-2 decision (C): the literals now live in :mod:`~tos_runtime.compose._kis_credential_wiring`,
+#: shared with the ``kis_quote`` intake's session.
+_KIS_MOCK_APP_KEY_SCOPE = KIS_MOCK_APP_KEY_SCOPE
+_KIS_MOCK_APP_SECRET_SCOPE = KIS_MOCK_APP_SECRET_SCOPE
 _KIS_MOCK_CUSTODY_SCOPES = (_KIS_MOCK_APP_KEY_SCOPE, _KIS_MOCK_APP_SECRET_SCOPE)
 
 #: The Broker Capability Profile INSTANCE document environment name every KIS MOCK boot's host
@@ -414,6 +424,11 @@ def _evidence_recorder(
     return _record
 
 
+#: Public name for the compose root's other callers (``_finalize_wiring`` builds the KIS
+#: credential registry's evidence sink with it — C-2 decision (C)).
+evidence_recorder = _evidence_recorder
+
+
 # ===========================================================================
 # Transport construction
 # ===========================================================================
@@ -429,6 +444,7 @@ def build_transport(
     evidence_store: SqliteEvidenceStore,
     runtime_identity: RuntimeIdentity,
     trading_date_now: Callable[[], str | None] | None = None,
+    credential_sessions: KisCredentialSessions | None = None,
 ) -> Transport:
     """Construct the selected transport (module docstring item 6).
 
@@ -454,6 +470,11 @@ def build_transport(
         runtime_identity: Bound onto every evidence record the adapted recorder appends.
         trading_date_now: Forwarded to the ``kis-mock`` adapter (its own docstring); ignored for
             ``synthetic``.
+        credential_sessions: This boot's KIS credential registry
+            (:func:`~tos_runtime.compose._kis_credential_wiring.build_kis_credential_sessions`)
+            — the ``kis-mock`` adapter takes the
+            ``kis_mock.*`` session from it. ``None`` builds a private registry from ``custody``
+            (a standalone transport with no other consumer to share with).
 
     Returns:
         The constructed transport, structurally satisfying the kernel's
@@ -480,12 +501,22 @@ def build_transport(
             "resolve_transport_boot always supplies one"
         )
     client = build_client(transport_config)
+    if credential_sessions is None:
+        credential_sessions = build_kis_credential_sessions(
+            custody=custody,
+            monotonic=monotonic,
+            evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
+        )
     return KisMockTransport(
         config=transport_config,
         client=client,
-        custody=custody,
-        app_key_scope=_KIS_MOCK_APP_KEY_SCOPE,
-        app_secret_scope=_KIS_MOCK_APP_SECRET_SCOPE,
+        credential_session=kis_mock_credential_session(
+            credential_sessions,
+            client=client,
+            token_endpoint_base=transport_config.endpoint_rest_base,
+            token_path=transport_config.token_path,
+            token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
+        ),
         monotonic=monotonic,
         seal_lookup=seal_lookup,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),

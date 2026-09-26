@@ -299,6 +299,7 @@ class TickScheduler:
         inbox: SqliteEventInbox,
         evidence_store: SqliteEvidenceStore,
         poll_interval_ms: int,
+        before_pass: Callable[[], bool] | None = None,
     ) -> None:
         """Wire the scheduler (every arg's own docstring lives on the field it fills below —
         ``instruments``/``instrument_class``/``account``/``direction``/``quantity_basis``/
@@ -308,9 +309,16 @@ class TickScheduler:
         ``evidence_store`` are THIS PROCESS's shared instances, never a second independently-run
         one (mirrors every other compose wiring module's "SAME source" discipline)).
 
+        ``before_pass`` runs before every :meth:`run_forever` pass, which ticks only when it
+        returns ``True``. Compose passes :meth:`~tos_runtime.marketfeed.time_pacer
+        .TimeEvaluationPacer.before_pass` so the wall-clock reading advances between passes
+        (plan 2026-09-26 periodic time eval, W1); ``None`` leaves the time service to the caller.
+        :meth:`tick_once` never calls it — it stays a pure single pass.
+
         Raises:
             MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
         """
+        self._before_pass = before_pass
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -402,7 +410,11 @@ class TickScheduler:
                 loop without a real wall-clock wait.
             stop: Injected stop predicate, checked before every pass — a test supplies one that
                 flips ``True`` after N calls so this loop terminates.
+
+        Before every pass the constructor's ``before_pass`` (if any) runs, and the pass ticks
+        only when it returns ``True``.
         """
         while not stop():
-            self.tick_once()
+            if self._before_pass is None or self._before_pass():
+                self.tick_once()
             sleep(self._poll_interval_ms / 1000)

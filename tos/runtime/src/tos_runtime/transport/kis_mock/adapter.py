@@ -102,7 +102,8 @@ from tos_runtime.transport.kis_mock.client import (
 )
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
-from tos_runtime.transport.kis_mock.token import KisTokenLifecycle, TokenStale
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.token import TokenStale
 
 __all__ = [
     "EvidenceRecorder",
@@ -170,13 +171,14 @@ class KisMockTransport:
         *,
         config: KisMockTransportConfig,
         client: KisMockHttpClient,
-        custody: CredentialCustody,
-        app_key_scope: str,
-        app_secret_scope: str,
         monotonic: MonotonicSource,
         seal_lookup: SealLookup,
         evidence_sink: EvidenceRecorder,
+        custody: CredentialCustody | None = None,
+        app_key_scope: str | None = None,
+        app_secret_scope: str | None = None,
         trading_date_now: Callable[[], str | None] | None = None,
+        credential_session: KisCredentialSession | None = None,
     ) -> None:
         """Wire this transport's dependencies (all injected — no ambient state).
 
@@ -185,13 +187,16 @@ class KisMockTransport:
             client: The stdlib HTTP shim.
             custody: The credential source (Phase 2's ``CredentialCustody`` Protocol) —
                 scope-provisioning (whether ``app_key_scope``/``app_secret_scope`` are actually
-                loadable) is a compose-root/T2 concern; this class only calls
-                ``custody.load(scope)``. There is deliberately no account-number scope (review
+                loadable) is a compose-root/T2 concern; this class never loads it itself — its
+                credential session does (C-2 decision (C)). There is deliberately no account-number scope (review
                 F2) — the account number is the sealed outbound ``account`` coordinate, read
                 directly off the :class:`~tos.egressgw.SendSeal`
                 (:mod:`tos_runtime.transport.kis_mock.codec`).
             app_key_scope: The custody scope name for the KIS app key.
             app_secret_scope: The custody scope name for the KIS app secret.
+                ``custody``/``app_key_scope``/``app_secret_scope`` build this transport's own
+                :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession`
+                and are required iff ``credential_session`` is ``None``.
             monotonic: The injected monotonic clock (pacing + token bookkeeping — never
                 ``time.time()``).
             seal_lookup: Resolves an attempt's :class:`~tos.egressgw.SendSeal`.
@@ -201,29 +206,40 @@ class KisMockTransport:
                 session) — stamped onto a result that carries a broker execution id, the moment
                 the broker acknowledged it (plan 2026-09-26 egress trading date §2 decision 2).
                 ``None`` (the default) stamps nothing.
+            credential_session: The app key's single owner (C-2 decision (C)) — compose passes
+                the one it shares with the quote intake, so the two never hold separate token
+                lifecycles for one app key. ``None`` builds a private one from ``custody`` and
+                the two scopes (a standalone transport).
+
+        Raises:
+            KisMockAdapterError: Neither ``credential_session`` nor all of ``custody``/
+                ``app_key_scope``/``app_secret_scope`` were supplied.
         """
         self._config = config
         self._client = client
-        self._custody = custody
-        self._app_key_scope = app_key_scope
-        self._app_secret_scope = app_secret_scope
         self._monotonic = monotonic
         self._seal_lookup = seal_lookup
         self._evidence = evidence_sink
         self._trading_date_now = trading_date_now
-
-        # W2 extraction (token.py module docstring) — the token state machine itself now lives
-        # in KisTokenLifecycle, shared with the KIS quote intake; this class only delegates.
-        self._token_lifecycle = KisTokenLifecycle(
-            client=client,
-            custody=custody,
-            app_key_scope=app_key_scope,
-            app_secret_scope=app_secret_scope,
-            monotonic=monotonic,
-            token_path=config.token_path,
-            token_reissue_min_interval_s=config.token_reissue_min_interval_s,
-            evidence_sink=evidence_sink,
-        )
+        if credential_session is None:
+            if custody is None or app_key_scope is None or app_secret_scope is None:
+                raise KisMockAdapterError(
+                    "KisMockTransport: supply credential_session, or custody + app_key_scope "
+                    "+ app_secret_scope to build a private one"
+                )
+            credential_session = KisCredentialSession(
+                client=client,
+                custody=custody,
+                app_key_scope=app_key_scope,
+                app_secret_scope=app_secret_scope,
+                monotonic=monotonic,
+                token_path=config.token_path,
+                token_reissue_min_interval_s=config.token_reissue_min_interval_s,
+                evidence_sink=evidence_sink,
+            )
+        # C-2 decision (C) — the token lifecycle and every custody load of the app key live in
+        # the session; this class never touches custody itself.
+        self._credential_session = credential_session
         self._last_send_started_at_ms: int | None = None
 
     # -- send_once — the kernel Transport seam ----------------------------------------------
@@ -382,16 +398,13 @@ class KisMockTransport:
         block — wrapped directly around the one network call that needs them, so the
         credential handles are zeroed the instant this one POST returns (module docstring's
         honest accounting of what that does and does not guarantee)."""
-        with (
-            self._custody.load(self._app_key_scope) as key_handle,
-            self._custody.load(self._app_secret_scope) as secret_handle,
-        ):
+        with self._credential_session.app_credentials() as credentials:
             return self._client.post_order(
                 tr_id,
                 body_bytes,
                 access_token=access_token,
-                app_key=key_handle.value(),
-                app_secret=secret_handle.value(),
+                app_key=credentials.app_key(),
+                app_secret=credentials.app_secret(),
                 path=self._config.order_path,
             )
 
@@ -417,7 +430,7 @@ class KisMockTransport:
             TokenStale: The held token (or the absence of one) is stale and the reissue cooldown
                 has not elapsed since the last issuance attempt.
         """
-        return self._token_lifecycle.ensure_token_string()
+        return self._credential_session.ensure_token_string()
 
     # -- pacing (decision 6) -----------------------------------------------------------------
 

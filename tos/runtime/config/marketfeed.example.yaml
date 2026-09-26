@@ -71,6 +71,13 @@ journal_path: null
 
 poll_interval_ms: null
 
+# Time-health evaluation spacing while the session is CLOSED
+# (tos_runtime.marketfeed.time_pacer.TimeEvaluationPacer). While the session is
+# open the time service is evaluated before every pass; while closed, once per
+# this interval — it bounds how late the opening is noticed. Must be positive.
+
+time_evaluate_closed_interval_ms: null
+
 # --- time-projection frame parameters -------------------------------------
 # Injected construction parameters for tos_runtime.marketfeed.time_projection
 # .RuntimeTimeProjection — a frame-of-reference bound, not a measurement (see

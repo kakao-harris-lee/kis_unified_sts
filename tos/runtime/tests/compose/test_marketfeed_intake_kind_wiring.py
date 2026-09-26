@@ -69,6 +69,7 @@ def _valid_marketfeed_raw(*, journal_path: Path) -> dict[str, Any]:
         "intake_kind": "journal",
         "journal_path": str(journal_path),
         "poll_interval_ms": 100,
+        "time_evaluate_closed_interval_ms": 60_000,
         "snapshot_age_bound": 60_000,
         "interval_width": 1_000,
     }
@@ -117,6 +118,26 @@ def test_missing_intake_kind_refuses(
 
     with pytest.raises(MarketFeedConfigError, match="intake_kind"):
         _compose(tmp_path, config_dir, data_dir, custody_root)
+
+
+@pytest.mark.parametrize("value", [None, 0, -60_000, "60000"])
+def test_missing_or_non_positive_closed_evaluation_interval_refuses(
+    tmp_path: Path, value: object
+) -> None:
+    """``time_evaluate_closed_interval_ms`` (plan 2026-09-26 periodic time eval, W1) never
+    defaults, and a non-positive value would leave a closed-session boot unable to ever see the
+    session open — both refuse at load."""
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    raw = _valid_marketfeed_raw(journal_path=tmp_path / "journal.jsonl")
+    if value is None:
+        del raw["time_evaluate_closed_interval_ms"]
+    else:
+        raw["time_evaluate_closed_interval_ms"] = value
+    _write_marketfeed_config_raw(config_dir, raw)
+
+    with pytest.raises(MarketFeedConfigError, match="time_evaluate_closed_interval_ms"):
+        load_marketfeed_config(config_dir / "marketfeed.yaml")
 
 
 def test_null_intake_kind_refuses(
@@ -235,6 +256,12 @@ def test_kis_quote_intake_builds_through_the_full_compose_stack(
     try:
         assert runtime.marketfeed is not None
         assert isinstance(runtime.marketfeed._intake, KisQuoteObservationIntake)
+        # C-2 decision (C) pin: one app key, one session — the order transport and the quote
+        # intake hold the SAME KisCredentialSession (so one token lifecycle). Mutation: let
+        # _build_intake build its own registry -> two sessions -> red.
+        intake_session = runtime.marketfeed._intake._credential_session  # noqa: SLF001
+        transport_session = runtime.transport._credential_session  # noqa: SLF001
+        assert intake_session is transport_session
     finally:
         runtime.rcl_log.close()
         runtime.evidence_store.close()

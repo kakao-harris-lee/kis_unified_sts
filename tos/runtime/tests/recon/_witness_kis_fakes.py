@@ -2,11 +2,41 @@
 
 from __future__ import annotations
 
-__all__ = ["FakeKstDateSource", "FakeTokenSession", "RaisingTokenSession"]
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+__all__ = [
+    "FakeCredentialSession",
+    "FakeKstDateSource",
+    "RaisingCredentialSession",
+]
 
 
-class FakeTokenSession:
-    """A minimal :class:`~tos_runtime.recon.witness_kis.KisWitnessTokenSession` double."""
+class _FakeRequestCredentials:
+    """A :class:`~tos_runtime.recon.witness_kis.KisWitnessRequestCredentials` double whose
+    key/secret become unreadable once its block exits (the real session zeroes its handles).
+    """
+
+    def __init__(self, *, access_token: str, app_key: str, app_secret: str) -> None:
+        self.access_token = access_token
+        self._app_key = app_key
+        self._app_secret = app_secret
+        self.closed = False
+
+    def _read(self, value: str) -> bytes:
+        if self.closed:
+            raise RuntimeError("fake credentials read after their block exited")
+        return value.encode()
+
+    def app_key(self) -> bytes:
+        return self._read(self._app_key)
+
+    def app_secret(self) -> bytes:
+        return self._read(self._app_secret)
+
+
+class FakeCredentialSession:
+    """A minimal :class:`~tos_runtime.recon.witness_kis.KisWitnessCredentialSession` double."""
 
     def __init__(
         self,
@@ -18,31 +48,33 @@ class FakeTokenSession:
         self._access_token = access_token
         self._app_key = app_key
         self._app_secret = app_secret
-        self.access_token_calls = 0
+        self.request_credentials_calls = 0
+        self.open_blocks = 0
 
-    def access_token(self) -> str:
-        self.access_token_calls += 1
-        return self._access_token
+    @contextmanager
+    def request_credentials(self) -> Iterator[_FakeRequestCredentials]:
+        self.request_credentials_calls += 1
+        credentials = _FakeRequestCredentials(
+            access_token=self._access_token,
+            app_key=self._app_key,
+            app_secret=self._app_secret,
+        )
+        self.open_blocks += 1
+        try:
+            yield credentials
+        finally:
+            credentials.closed = True
+            self.open_blocks -= 1
 
-    def app_key_header(self) -> str:
-        return self._app_key
 
-    def app_secret_header(self) -> str:
-        return self._app_secret
-
-
-class RaisingTokenSession:
-    """A token session whose ``access_token()`` always raises — for the
+class RaisingCredentialSession:
+    """A credential session whose ``request_credentials()`` always raises — for the
     ``WitnessUnavailable``-wrapping test."""
 
-    def access_token(self) -> str:
-        raise RuntimeError("token session: reissue failed (fake)")
-
-    def app_key_header(self) -> str:
-        return "unused"
-
-    def app_secret_header(self) -> str:
-        return "unused"
+    @contextmanager
+    def request_credentials(self) -> Iterator[_FakeRequestCredentials]:
+        raise RuntimeError("credential session: reissue failed (fake)")
+        yield  # pragma: no cover - makes this a generator
 
 
 class FakeKstDateSource:

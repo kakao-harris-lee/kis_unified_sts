@@ -2,7 +2,7 @@
 
 - 작성: 2026-09-26 · 세션 모델 단독 저작(운영자 지시 2026-09-04) · 기준 main `f3856576`(#805 머지 직후)
 - 요청: 운영자 2026-09-26 「do it」 — #805 §8.1 이 남긴 두 후속(주기 평가 · KIS 증인 배선)의 계획.
-- 성격: **계획 문서다. 코드는 넣지 않았다.** 착수는 §6 운영자 확인 후.
+- 성격: 계획 + 구현(같은 PR). 운영자 처분 §6.1 · 착지 §7.
 
 ## 0. 요약 — 조사가 계획을 바꿨다
 
@@ -102,3 +102,67 @@ C-2 문서 §4 그대로: `transport/kis_mock` 옆에 앱키당 단일 소유자
 1. **평가 주기**: (가) 매 패스 / **(나) 열림 매 패스 · 닫힘 60 s (권고)** / (다) 단일 값.
 2. **범위**: W1 + W2 착수, **W3 증인 배선 보류**(전제 미충족) — 동의 여부.
 3. **증거 퍼지**는 별도 계획(데이터 파기 — 되돌리기 어려운 경로)으로 — 동의 여부.
+
+### 6.1 운영자 처분 (2026-09-26)
+
+1. **평가 주기 = (나)** — 세션 열림 매 패스 · 닫힘 60 s.
+2. **범위 = W1 + W2 착수, W3 보류** — 동의.
+3. **증거 퍼지 = 별도 계획** — 동의.
+
+## 7. 착지 기록 (2026-09-26, 브랜치 `claude/kis-tos-project-covm64` · PR #806)
+
+### 7.1 W1 — 주기 평가 (처분 (나))
+
+- `marketfeed/time_pacer.py::TimeEvaluationPacer` 신설 — 패스 앞에서 열림이면 매번, 닫힘이면
+  `time_evaluate_closed_interval_ms` 마다 `evaluate()`. 평가가 던지면 그 패스 틱 생략(stderr 한 줄) · 다음 패스 재시도.
+  닫힘 간격 시계는 프로세스 단조시계(루프 보폭용 — 신뢰 시각·증거·커널에 닿지 않음).
+- `TickScheduler(before_pass=...)` — 생성자 주입, `run_forever` 가 매 패스 호출. `tick_once` 는 그대로 순수.
+  §2 W1-1 의 「`run_forever(before_pass=...)` 인자」 대신 생성자로 둔 이유: `dispatch_run` 이 `run_forever(stop=...)`
+  만 부르므로 호출부 무변경으로 배선된다.
+- **계획과 다른 점(설정 위치)**: 키를 `time.yaml` 이 아니라 **`marketfeed.yaml::time_evaluate_closed_interval_ms`**
+  에 뒀다. 루프를 소유한 것이 marketfeed 이고, `time.yaml` 로더는 시간 서비스 전체가 공유한다. 필수 · 양의 정수 ·
+  예시 `null`(부팅 거부) · paper `60000` · `_VALUE_PINS` 고정.
+- **조사 중 추가 발견·수정**: `SessionFactsOwner.observe` 캐시가 **틱 세대만** 키로 썼다 — 닫힌 동안에는 틱이 없어
+  세대가 안 바뀌므로, 평가가 시각을 개장 안으로 옮겨도 「닫힘」을 영원히 돌려줬을 것이다. 벽시계 판독값도 키에 넣었다
+  (`calendar/owner.py`). `SESSION_FACTS_OBSERVED` 는 여전히 위상 변화 때만 기록된다.
+- `test_run_e2e.py` 의 수동 `runtime.time_service.evaluate()` 우회(멈춘 시계를 인정하던 주석) 제거 — 이제 루프가 한다.
+- 뮤테이션(전부 red 확인): 배선 제거(`before_pass=None`) → e2e 두 번째 틱 red · 닫힘 간격 무시 → pacer red ·
+  실패인데 틱 → pacer red · `before_pass` 응답 무시 → scheduler red · 열림 판정 제거 → pacer red ·
+  owner 캐시를 세대만으로 → owner red.
+- **실측 (T-3)** — 렌더한 paper 설정 그대로(의존성 digest 만 스크래치 사본에서 컨테이너 값으로):
+  - 실 `run`, 닫힌 세션(2026-09-26 토 21:11 KST), 150 s 후 SIGTERM → 종료코드 0. `TIME_HEALTH_SNAPSHOT` 5행 =
+    부팅 2 + 패스 평가 **+0.1 s · +60.2 s · +120.2 s** — 닫힘 60 s 주기 그대로.
+  - 세션 시계만 개장 시각(2026-09-28 10:00 KST, 런북 §5 ④ 진단)으로 주입하고 `run_forever` 를 실 `time.sleep`
+    으로 8 패스 · 4번째 패스에 더 새 관측을 저널에 추가 → **스냅샷 2 (TICKED ×2)** · 평가 10행(부팅 2 + 매 패스 8).
+  - 같은 조건에서 pacer 만 떼면(`_before_pass = None`) **스냅샷 1** · 평가 2행 — 수정 전 결함 재현.
+
+### 7.2 W2 — C-2 `KisCredentialSession`
+
+- `transport/kis_mock/credential_session.py`: `KisCredentialSession`(수명주기 + custody 로드의 유일한 소유자 ·
+  `ensure_token_string()` · `app_credentials()` · `request_credentials()`) + `KisCredentialSessions`(앱키당 하나 —
+  두 번째 소비자의 토큰 엔드포인트(host·path)·재발급 간격이 다르면 `KisCredentialSessionConflict` 로 거부).
+- compose: `compose/_kis_credential_wiring.py`(scope 상수 한 벌 + 레지스트리 빌더 — 시세 배선의 「주문 전송 배선
+  비의존」 성질을 지키는 중립 모듈) → `_finalize` 가 부팅당 하나 생성 → 주문 전송이 받고 `ComposedRuntime
+  .kis_credential_sessions` 로 실어 `build_tick_scheduler` 의 `kis_quote` 인입이 **같은 세션**을 받는다.
+- 증인: `KisWitnessTokenSession`(평문 `str` 반환 3종) → **`KisWitnessCredentialSession.request_credentials()`** 하나.
+  GET 한 번마다 블록 하나. 증인 배선 자체는 범위 밖(W3 보류 그대로).
+- **C-2 스케치와 다른 점**: (1) 세션이 수명주기를 **주입받지 않고 스스로 만든다** — scope 가 한 곳에서만 정해지게
+  (주입형이면 수명주기와 세션의 scope 가 어긋날 수 있다). (2) 두 어댑터는 `credential_session` 이 없을 때 자기
+  세션을 만드는 **대체 경로**를 남겼다 — C-2 §4.2 「어댑터 기존 테스트 스위트 무변경 통과」를 지키기 위해서다. 그래서
+  scope 문자열 사본은 compose 1 + custody 허용 목록 1 + **시세 어댑터 대체 경로 1 = 3**(C-2 §3 의 목표 2 가 아님).
+  로드 지점은 목표대로 1(세션 · 그 안의 수명주기).
+- 핀(C-2 §4.3, 전부 뮤테이션 red 확인): 같은 밀리초 두 소비자 → `issue_token` **1회**(레지스트리 공유 끊으면 2) ·
+  compose 전 스택에서 주문 전송과 시세 인입의 세션 **동일 객체**(`root.py` 에서 레지스트리 전달 끊으면 red) ·
+  AST 핀 — 세션·수명주기 밖 `*custody.load(` 0건(어댑터에 인라인 로드 복원 시 red) · 블록 밖 `app_key()` →
+  `CustodyError` · 낡은 토큰은 custody 로드 전에 거부 · 증인 GET 수 = 블록 수, 남은 블록 0.
+- 어댑터 스위트(`tests/transport/kis_mock`, `tests/transport/kis_quote`) **무변경 통과**. 바뀐 테스트는 compose
+  `test_transport_wiring.py` 의 scope 핀 1곳(속성이 세션으로 이동)과 증인 fakes/호출부(Protocol 교체)뿐.
+
+### 7.3 공통
+
+- digest: `expected_code_digest` `fe72348e…` → `b430dc27…`(W1) → **`b176ff65…`**(W2). 의존성 digest 는 배포 호스트 값 유지.
+- 크기 예산: `build_tick_scheduler` 는 헬퍼(`_build_time_pacer`) 분리로 100 줄 안 · 재등재 3건
+  (`wire_engine_and_driver` 151→155 · `_finalize` 105→108 · `compose_paper_runtime` 420→421).
+- 게이트: 방화벽 PASS · lint-imports 3 kept · completion GREEN · spec PASS · contract PASS(+self-test) · citation PASS ·
+  size budget PASS · black/ruff/mypy(src·tests) 통과.
+- 리뷰: Codex 는 클라우드 환경 제외(운영자 2026-09-26) — Claude 쪽 `code-reviewer` 폴백 레인.

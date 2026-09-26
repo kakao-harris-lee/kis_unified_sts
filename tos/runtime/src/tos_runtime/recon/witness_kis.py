@@ -46,12 +46,10 @@ Non-Negotiable Rules).
 
 **Token/credentials — injected, no lifecycle owned here (task instruction).** This class
 does not issue, cache, or reissue a bearer token, and does not itself hold the KIS app
-key/secret. It takes a :class:`KisWitnessTokenSession` (see that Protocol's own docstring
-for the exact shape assumed, and why) as a constructor dependency, calling it fresh for
-every page of every walk — mirroring
-:meth:`tos_runtime.transport.kis_mock.adapter.KisMockTransport._ensure_token_string`'s own
-"ask again every send, let the session decide freshness" discipline, never this class's own
-cooldown/expiry math.
+key/secret. It takes a :class:`KisWitnessCredentialSession` (see that Protocol's own
+docstring for the shape, and why — C-2 decision (C)) as a constructor dependency and opens one
+``request_credentials()`` block per page of every walk — "ask again every request, let the
+session decide freshness", never this class's own cooldown/expiry math.
 
 **Never claims more than it verified.** Every :class:`~tos_runtime.recon.ports.WitnessSnapshot`
 this class returns carries ``provenance="kis-mock-stock"`` and
@@ -72,6 +70,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -94,7 +93,8 @@ from tos_runtime.recon.witness_kis_config import KisWitnessConfig, refuse_future
 
 __all__ = [
     "KisStockBrokerWitness",
-    "KisWitnessTokenSession",
+    "KisWitnessCredentialSession",
+    "KisWitnessRequestCredentials",
     "KstDateSource",
     "SystemKstDateSource",
     "TrustedKstDateSource",
@@ -140,55 +140,51 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 
 
 @runtime_checkable
-class KisWitnessTokenSession(Protocol):
-    """The injected token-lifecycle dependency this witness assumes.
+class KisWitnessRequestCredentials(Protocol):
+    """What one request needs, valid only inside the ``with`` block that produced it."""
 
-    **Assumed shape (task instruction: study ``adapter.py``'s existing token handling
-    so this Protocol matches it, and report the assumption).** Read from
-    :meth:`tos_runtime.transport.kis_mock.adapter.KisMockTransport._ensure_token_string`
-    / ``_issue_token`` (``adapter.py:394-465``): that method (a) reissues only when the
-    held token is absent or has outlived its own ``expires_in`` seconds, read off the
-    token response itself — never a fixed TTL; (b) refuses to reissue inside a
-    cooldown window since the last issuance ATTEMPT (not the last success) if the held
-    token is already stale, raising rather than blocking; (c) loads the KIS app
-    key/secret from custody in the narrowest possible ``with`` block, wrapped directly
-    around the one ``issue_token`` network call.
+    access_token: str
 
-    This Protocol reduces that to the two facts a READ-ONLY caller needs and asks the
-    session to keep owning everything else:
+    def app_key(self) -> bytes:
+        """The KIS app key bytes for the ``appkey`` header (raises once the block exits)."""
+        ...
 
-    * :meth:`access_token` — a currently-valid bearer string, reissuing internally per
-      (a)/(b)/(c) above. This witness calls it before every page of every walk (never
-      caching it itself) and treats ANY exception it raises as this witness's own
-      :class:`~tos_runtime.recon.ports.WitnessUnavailable` (wrapped at the
-      :meth:`KisStockBrokerWitness.observe` boundary — see that method).
-    * :meth:`app_key_header` / :meth:`app_secret_header` — the plaintext app
-      key/secret for the ``appkey``/``appsecret`` request headers KIS's own wire
-      convention requires on EVERY call, not only token issuance
-      (``shared/kis/auth.py:494-506`` reference; ``kis_mock/client.py``'s own
-      ``post_order`` sends both alongside the bearer token). A read-only witness still
-      needs these per-GET, so this Protocol asks for them directly rather than
-      re-deriving them from a loaded :class:`~tos_runtime.custody.ports.CredentialHandle`
-      itself — this witness holds no ``CredentialCustody`` reference at all, by design
-      (task instruction: no token/credential lifecycle owned here).
+    def app_secret(self) -> bytes:
+        """The KIS app secret bytes for the ``appsecret`` header (raises once the block
+        exits)."""
+        ...
 
-    The concurrent W2 lane (2026-09-17) is extracting a reusable token session out of
-    ``adapter.py`` — whatever it lands must satisfy this Protocol, or a thin adapter
-    wraps it to do so; this witness does not import ``tos_runtime.transport.kis_mock``
-    at all (a GET-only reconciliation seam has no reason to depend on the order-transport
-    package), so the actual wiring is a compose-root concern, not this module's.
+
+@runtime_checkable
+class KisWitnessCredentialSession(Protocol):
+    """The injected credential owner this witness asks for one request's credentials
+    (C-2 decision (C): ``docs/plans/2026-09-23-tos-kis-credential-ownership-decision-c2.md`` §4).
+
+    Satisfied structurally by
+    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession` — this
+    module does not import it (the firewall lets a ``recon`` module import only its siblings);
+    only the compose root connects the two. The session keeps owning everything about the
+    token (issuance, expiry, the reissue cooldown) and the custody loads; this witness never
+    holds a ``CredentialCustody`` reference.
+
+    **Why a context, not three getters.** The earlier shape (``access_token()`` /
+    ``app_key_header()`` / ``app_secret_header()``) returned the plaintext key and secret as
+    ``str`` return values whose lifetime nothing bounded. Here the key and secret are readable
+    only inside the ``with`` block wrapped around one GET, and the session zeroes the
+    underlying handles when the block exits — the same lifetime the order transport and the
+    quote intake give them. The HTTP header values themselves are still ``str`` for the length
+    of the request (C-2 §1.1 L4 — unavoidable in every option).
+
+    Any exception :meth:`request_credentials` raises (a stale token inside the reissue
+    cooldown, a custody refusal) becomes this witness's own
+    :class:`~tos_runtime.recon.ports.WitnessUnavailable` at the :meth:`KisStockBrokerWitness
+    .observe` boundary.
     """
 
-    def access_token(self) -> str:
-        """Return a currently-valid bearer token string (module docstring)."""
-        ...
-
-    def app_key_header(self) -> str:
-        """Return the KIS app key (plaintext) for the ``appkey`` request header."""
-        ...
-
-    def app_secret_header(self) -> str:
-        """Return the KIS app secret (plaintext) for the ``appsecret`` request header."""
+    def request_credentials(
+        self,
+    ) -> AbstractContextManager[KisWitnessRequestCredentials]:
+        """Token + app key/secret for one request, inside the ``with`` block only."""
         ...
 
 
@@ -290,7 +286,7 @@ class KisStockBrokerWitness:
         *,
         config: KisWitnessConfig,
         client: KisWitnessHttpClient,
-        token_session: KisWitnessTokenSession,
+        credential_session: KisWitnessCredentialSession,
         date_source: KstDateSource,
         asset: str = "stock",
     ) -> None:
@@ -300,7 +296,7 @@ class KisStockBrokerWitness:
         Args:
             config: The fail-closed-loaded :class:`KisWitnessConfig`.
             client: The GET-only stdlib HTTP shim.
-            token_session: See :class:`KisWitnessTokenSession`'s own docstring.
+            credential_session: See :class:`KisWitnessCredentialSession`'s own docstring.
             date_source: Supplies "today" in KST for the execution-inquiry TR's date
                 window.
             asset: MUST be ``"stock"`` — any other value is refused immediately
@@ -313,7 +309,7 @@ class KisStockBrokerWitness:
         refuse_futures_asset(asset)
         self._config = config
         self._client = client
-        self._token_session = token_session
+        self._credential_session = credential_session
         self._date_source = date_source
 
     # -- BrokerWitness port -------------------------------------------------------------
@@ -323,7 +319,7 @@ class KisStockBrokerWitness:
 
         Raises:
             WitnessUnavailable: ``scope.account`` is not a 10-digit KIS account number,
-                the token session raised, a request failed/was rejected, or a
+                the credential session raised, a request failed/was rejected, or a
                 continuation walk could not be completed (module docstring — never a
                 silently truncated snapshot).
         """
@@ -389,12 +385,15 @@ class KisStockBrokerWitness:
 
     # -- HTTP --------------------------------------------------------------------------
 
-    def _headers(self, *, tr_id: str, tr_cont: str) -> dict[str, str]:
+    @staticmethod
+    def _headers(
+        credentials: KisWitnessRequestCredentials, *, tr_id: str, tr_cont: str
+    ) -> dict[str, str]:
         headers = {
             "content-type": "application/json",
-            "authorization": f"Bearer {self._token_session.access_token()}",
-            "appkey": self._token_session.app_key_header(),
-            "appsecret": self._token_session.app_secret_header(),
+            "authorization": f"Bearer {credentials.access_token}",
+            "appkey": credentials.app_key().decode(),
+            "appsecret": credentials.app_secret().decode(),
             "tr_id": tr_id,
             "custtype": "P",
         }
@@ -405,17 +404,21 @@ class KisStockBrokerWitness:
     def _get_page(
         self, *, path: str, tr_id: str, params: Mapping[str, str], tr_cont: str
     ) -> RawGetResponse:
-        try:
-            return self._client.get(
-                path,
-                headers=self._headers(tr_id=tr_id, tr_cont=tr_cont),
-                params=params,
-            )
-        except KisWitnessClientError as exc:
-            raise WitnessUnavailable(
-                f"KisStockBrokerWitness: transport failure on {path} — "
-                f"{type(exc).__name__}"
-            ) from exc
+        # One credential block per GET (KisWitnessCredentialSession docstring): the session
+        # decides token freshness every page, and the key/secret handles are zeroed the moment
+        # this one request returns.
+        with self._credential_session.request_credentials() as credentials:
+            try:
+                return self._client.get(
+                    path,
+                    headers=self._headers(credentials, tr_id=tr_id, tr_cont=tr_cont),
+                    params=params,
+                )
+            except KisWitnessClientError as exc:
+                raise WitnessUnavailable(
+                    f"KisStockBrokerWitness: transport failure on {path} — "
+                    f"{type(exc).__name__}"
+                ) from exc
 
     # -- generic continuation walk (module docstring's central discipline) -------------
 
@@ -573,8 +576,8 @@ class KisStockBrokerWitness:
         .attempt_id` is always ``None`` for every order this witness returns. Every
         order this witness reports is, from this witness's own perspective alone,
         indistinguishable from an "orphan" — that is an honest limitation, not a filter
-        this class applies (see :class:`KisWitnessTokenSession`'s own docstring's
-        sibling note on not overclaiming).
+        this class applies (the module docstring's "never claims more than it verified"
+        note).
         """
         symbols = [key.instrument for key in scope.instrument_keys] or [""]
 

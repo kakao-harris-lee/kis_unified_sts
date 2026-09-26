@@ -68,6 +68,7 @@ from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 from tos_runtime.venue import VenueConstraintService
 
 if TYPE_CHECKING:
@@ -361,6 +362,11 @@ class ComposedRuntime:
     #: :mod:`tos_runtime.compose._marketfeed_wiring`'s own module docstring has the full
     #: reasoning).
     marketfeed: TickScheduler | None = None
+    #: C-2 decision (C) — this boot's one-session-per-KIS-app-key registry. The order transport
+    #: took its session from it during :func:`~tos_runtime.compose._finalize_wiring._finalize`;
+    #: :func:`~tos_runtime.compose._marketfeed_wiring.build_tick_scheduler` hands the SAME
+    #: registry to a ``kis_quote`` intake so the two share one token lifecycle.
+    kis_credential_sessions: KisCredentialSessions | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.

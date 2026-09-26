@@ -118,6 +118,7 @@ def _write_marketfeed_config(
                 "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _POLL_INTERVAL_MS,
+                "time_evaluate_closed_interval_ms": 60_000,
                 "snapshot_age_bound": _SNAPSHOT_AGE_BOUND,
                 "interval_width": _INTERVAL_WIDTH,
             },

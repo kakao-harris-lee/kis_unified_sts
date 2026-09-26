@@ -254,6 +254,7 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("intake_kind",),
         ("journal_path",),
         ("poll_interval_ms",),
+        ("time_evaluate_closed_interval_ms",),
         ("snapshot_age_bound",),
         ("interval_width",),
     ],

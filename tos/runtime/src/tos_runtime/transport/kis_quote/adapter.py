@@ -147,9 +147,9 @@ from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.marketfeed.ports import ObservationIntake, RawObservation
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient, RawResponse
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
-    KisTokenLifecycle,
     TokenIssuingClient,
     TokenStale,
 )
@@ -246,10 +246,11 @@ class KisQuoteObservationIntake:
         *,
         config: KisQuoteTransportConfig,
         client: KisMockHttpClient,
-        custody: CredentialCustody,
         monotonic: MonotonicSource,
         time_service: WallClockSource,
         evidence_sink: EvidenceRecorder,
+        custody: CredentialCustody | None = None,
+        credential_session: KisCredentialSession | None = None,
     ) -> None:
         """Wire this intake's dependencies (all injected — no ambient state).
 
@@ -276,21 +277,35 @@ class KisQuoteObservationIntake:
             evidence_sink: Records this intake's own token-lifecycle evidence entries
                 (``TRANSPORT_TOKEN_STALE`` — forwarded to :class:`~tos_runtime.transport.kis_mock
                 .token.KisTokenLifecycle`, this module raises no evidence of its own).
+            credential_session: The app key's single owner (C-2 decision (C)) — compose passes
+                the one it shares with the order transport. ``None`` builds a private one from
+                ``custody`` (then required) and the ``kis_mock.*`` scopes above.
+
+        Raises:
+            KisQuoteAdapterError: Neither ``credential_session`` nor ``custody`` was supplied.
         """
         self._config = config
         self._client = client
-        self._custody = custody
         self._time_service = time_service
-        self._token_lifecycle = KisTokenLifecycle(
-            client=_TokenIssuingClientAdapter(client),
-            custody=custody,
-            app_key_scope=_KIS_MOCK_APP_KEY_SCOPE,
-            app_secret_scope=_KIS_MOCK_APP_SECRET_SCOPE,
-            monotonic=monotonic,
-            token_path=config.token_path,
-            token_reissue_min_interval_s=config.token_reissue_min_interval_s,
-            evidence_sink=evidence_sink,
-        )
+        if credential_session is None:
+            if custody is None:
+                raise KisQuoteAdapterError(
+                    "KisQuoteObservationIntake: supply credential_session, or custody to build "
+                    "a private one"
+                )
+            credential_session = KisCredentialSession(
+                client=_TokenIssuingClientAdapter(client),
+                custody=custody,
+                app_key_scope=_KIS_MOCK_APP_KEY_SCOPE,
+                app_secret_scope=_KIS_MOCK_APP_SECRET_SCOPE,
+                monotonic=monotonic,
+                token_path=config.token_path,
+                token_reissue_min_interval_s=config.token_reissue_min_interval_s,
+                evidence_sink=evidence_sink,
+            )
+        # C-2 decision (C) — the token lifecycle and every custody load of the app key live in
+        # the session; this class never touches custody itself.
+        self._credential_session = credential_session
         #: The last-EMITTED content digest, or ``None`` before this process's first successful
         #: poll (module docstring's phantom-churn note). Process-local: a restart re-emits one
         #: confirmatory observation even if the market has not moved since the last emission
@@ -337,7 +352,7 @@ class KisQuoteObservationIntake:
             )
 
         access_token = (
-            self._token_lifecycle.ensure_token_string()
+            self._credential_session.ensure_token_string()
         )  # may raise TokenStale
         response = self._fetch_quote(access_token)
         output = self._parse_output(response)
@@ -379,16 +394,13 @@ class KisQuoteObservationIntake:
             f"FID_COND_MRKT_DIV_CODE={self._config.market_div_code}"
             f"&FID_INPUT_ISCD={self._config.instrument}"
         )
-        with (
-            self._custody.load(_KIS_MOCK_APP_KEY_SCOPE) as key_handle,
-            self._custody.load(_KIS_MOCK_APP_SECRET_SCOPE) as secret_handle,
-        ):
+        with self._credential_session.app_credentials() as credentials:
             return self._client.get_quote(
                 self._config.tr_id,
                 query,
                 access_token=access_token,
-                app_key=key_handle.value(),
-                app_secret=secret_handle.value(),
+                app_key=credentials.app_key(),
+                app_secret=credentials.app_secret(),
                 path=self._config.quote_path,
             )
 

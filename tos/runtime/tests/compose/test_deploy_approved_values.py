@@ -202,7 +202,7 @@ _VALUE_PINS: dict[str, Any] = {
     "authority.yaml::containment_bound_ms": 1000,
     "authority.yaml::trading_approval_policy_generation": 1,
     # --- release.yaml ----------------------------------------------------
-    "release.yaml::expected_code_digest": "fe72348e2e54379c87ac4b398682c2aaeda34c22c81c02d7cccd7c8694a8ffc8",
+    "release.yaml::expected_code_digest": "b176ff65e3c00454e5d223bae4ed5c4e4e2681cefeededf45d100d5792bad6d8",
     "release.yaml::expected_dependency_set_digest": "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b",
     "release.yaml::admission_result": "ADMIT",
     "release.yaml::restriction_state_resolved": True,
@@ -1384,6 +1384,8 @@ _FIXTURE_VALUE_PINS: dict[str, Any] = {
     # journal, never kis_quote: kis_quote is an HTTP poller (an external call).
     "marketfeed.yaml::intake_kind": "journal",
     "marketfeed.yaml::poll_interval_ms": 1000,
+    # Operator disposition 2026-09-26 option (나): evaluate every pass while open, 60 s while closed.
+    "marketfeed.yaml::time_evaluate_closed_interval_ms": 60000,
     "marketfeed.yaml::snapshot_age_bound": 20,
     "marketfeed.yaml::interval_width": 10,
     # --- critical_input_policy.yaml ---------------------------------------

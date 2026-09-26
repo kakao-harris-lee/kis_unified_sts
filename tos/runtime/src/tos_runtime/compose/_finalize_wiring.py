@@ -41,11 +41,12 @@ from tos_runtime.compose._engine_wiring import (
     verify_replay_or_halt,
     wire_engine_and_driver,
 )
+from tos_runtime.compose._kis_credential_wiring import build_kis_credential_sessions
 from tos_runtime.compose._preconditions import (
     COORDINATOR_PRECONDITIONS_CONFIG_NAME,
     load_coordinator_preconditions_config,
 )
-from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose._transport_wiring import TransportKind, evidence_recorder
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.compose._wiring import (
     _ConstructionStages,
@@ -58,6 +59,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import ReplayVerdict
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 
 __all__ = ["_finalize"]
 
@@ -121,6 +123,20 @@ def _verify_boot_replay(
     )
 
 
+def _kis_credential_sessions(
+    infra: _Infra, identity: RuntimeIdentity
+) -> KisCredentialSessions:
+    """C-2 decision (C): one KIS credential session per app key for this whole boot — the
+    order transport takes its session in :func:`_finalize`, the ``kis_quote`` intake later
+    (``root.py``), both from the registry this returns (carried on
+    :attr:`~tos_runtime.compose._types.ComposedRuntime.kis_credential_sessions`)."""
+    return build_kis_credential_sessions(
+        custody=infra.custody,
+        monotonic=infra.monotonic_source,
+        evidence_sink=evidence_recorder(infra.evidence_store, identity),
+    )
+
+
 def _finalize(
     *,
     config_dir: Path,
@@ -155,6 +171,7 @@ def _finalize(
     )
     # SYNTHETIC post-trade finality policy (CR-4, plan §2.2) — fail-closed, from its own file.
     finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
+    kis_credential_sessions = _kis_credential_sessions(infra, identity)
     wired = wire_engine_and_driver(
         data_dir=data_dir,
         context_resolver=context_resolver,
@@ -178,6 +195,7 @@ def _finalize(
         custody=infra.custody,
         transport_kind=transport_kind,
         transport_config=transport_config,
+        credential_sessions=kis_credential_sessions,
         safety_mesh=risk.safety_mesh.services,
         mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
         trading_date_now=trading_date_now,
@@ -225,4 +243,5 @@ def _finalize(
         scopes=broker_scopes,
         safety_mesh_peek=risk.safety_mesh.peek_tick_snapshot,
         protective_last_verdict=lambda: risk.safety_mesh.protective_action.last_verdict,
+        kis_credential_sessions=kis_credential_sessions,
     )

@@ -10,6 +10,7 @@ mutation M9 ("다심볼 거부 제거 -> (10) red").
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -214,7 +215,12 @@ def test_multi_instrument_refused_on_an_empty_instruments_sequence() -> None:
 # ----------------------------------------------------------------------------
 
 
-def _build_scheduler(tmp_path: Path, *, poll_interval_ms: int) -> TickScheduler:
+def _build_scheduler(
+    tmp_path: Path,
+    *,
+    poll_interval_ms: int,
+    before_pass: Callable[[], bool] | None = None,
+) -> TickScheduler:
     """A real :class:`TickScheduler`, built with the real
     :func:`~tos_runtime.marketfeed.policy.load_critical_input_policy` output (reused from
     ``_fixtures.loaded_policy`` rather than hand-rolled) plus ``MagicMock`` doubles for every
@@ -242,6 +248,7 @@ def _build_scheduler(tmp_path: Path, *, poll_interval_ms: int) -> TickScheduler:
         inbox=MagicMock(),
         evidence_store=MagicMock(),
         poll_interval_ms=poll_interval_ms,
+        before_pass=before_pass,
     )
 
 
@@ -285,4 +292,35 @@ def test_run_forever_calls_tick_once_n_times_and_sleeps_the_configured_interval(
     scheduler.run_forever(sleep=sleep_calls.append, stop=_stop_after(3))
 
     assert tick_calls == 3
+    assert sleep_calls == [0.75, 0.75, 0.75]
+
+
+def test_run_forever_ticks_only_on_passes_before_pass_admits(tmp_path: Path) -> None:
+    """Plan 2026-09-26 periodic time eval, W1: ``before_pass`` runs before EVERY pass and a
+    ``False`` answer (a failed time evaluation) skips that pass's tick — never the sleep, never
+    the loop. Mutation: ignore the answer -> ``tick_calls == 3`` -> red."""
+    answers = iter([True, False, True])
+    before_calls = 0
+
+    def before_pass() -> bool:
+        nonlocal before_calls
+        before_calls += 1
+        return next(answers)
+
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=750, before_pass=before_pass
+    )
+    tick_calls = 0
+
+    def fake_tick_once() -> TickResult:
+        nonlocal tick_calls
+        tick_calls += 1
+        return TickResult(outcome=TickOutcome.SKIPPED_NO_OBSERVATION)
+
+    scheduler.tick_once = fake_tick_once  # type: ignore[method-assign]
+    sleep_calls: list[float] = []
+    scheduler.run_forever(sleep=sleep_calls.append, stop=_stop_after(3))
+
+    assert before_calls == 3
+    assert tick_calls == 2
     assert sleep_calls == [0.75, 0.75, 0.75]

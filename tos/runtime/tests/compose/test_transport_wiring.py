@@ -569,8 +569,10 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
     # adapter with — a mutation swapping app_key_scope/app_secret_scope (or dropping one from
     # _KIS_MOCK_CUSTODY_SCOPES) previously went undetected, because dry_run never loads a
     # credential.
-    assert transport._app_key_scope == "kis_mock.app_key"  # noqa: SLF001
-    assert transport._app_secret_scope == "kis_mock.app_secret"  # noqa: SLF001
+    # C-2 decision (C): the scopes now live on the transport's credential session.
+    session = transport._credential_session  # noqa: SLF001
+    assert session._app_key_scope == "kis_mock.app_key"  # noqa: SLF001
+    assert session._app_secret_scope == "kis_mock.app_secret"  # noqa: SLF001
 
 
 class _NullCustody:

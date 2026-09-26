@@ -42,7 +42,8 @@ once, at construction, when that is the case.
 a late-bound cell over the durable inbox's own ``count``, since the inbox does
 not exist yet when this owner is constructed — see
 :mod:`tos_runtime.compose._session_wiring`). :meth:`observe` recomputes only
-when the generation changes, never on every call within the same tick.
+when the generation or the wall-clock reading changes (the latter moves only when the time
+service re-evaluates, between scheduler passes), never on every call within the same tick.
 
 **The broker-scope endpoint classification is never read in this module.**
 An EC-1 governance gate (``tests/brokercap/test_exit_conditions.py`` and
@@ -196,6 +197,7 @@ class SessionFactsOwner:
         self._tz_db_version_observed = tz_db_version_observed
 
         self._cache_generation: int | None = None
+        self._cache_wall_clock_ms: int | None = None
         self._cache: dict[str, SessionFacts] = {}
         self._last_phase: dict[str, object] = {}
         self._last_expired: dict[str, object] = {}
@@ -227,9 +229,20 @@ class SessionFactsOwner:
         """The current tick generation's session facts for ``instrument_class``,
         cached once per generation (module docstring)."""
         generation = self._tick_generation_reader()
-        if generation != self._cache_generation:
+        reading = self._wall_clock.read()
+        wall_clock_ms = None if reading is None else reading.unix_ms
+        # Keyed on the wall-clock reading too (plan 2026-09-26 periodic time eval): while a
+        # session is closed no tick advances the generation, so a generation-only key would
+        # serve "closed" forever even after a fresh time-health evaluation — the open would
+        # never be seen. Within one attempt the reading does not change (evaluation happens
+        # only between scheduler passes), so the step-3 fold and the send boundary still agree.
+        if (
+            generation != self._cache_generation
+            or wall_clock_ms != self._cache_wall_clock_ms
+        ):
             self._cache = {}
             self._cache_generation = generation
+            self._cache_wall_clock_ms = wall_clock_ms
         cached = self._cache.get(instrument_class)
         if cached is not None:
             return cached

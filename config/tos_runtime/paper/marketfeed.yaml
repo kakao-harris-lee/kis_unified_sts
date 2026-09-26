@@ -78,6 +78,11 @@ journal_path: "TBD"
 # (1차 판은 인용 부호 붙은 문구의 출처를 :46 으로 잘못 적었다 — review-797 LOW-1.)
 poll_interval_ms: 1000
 
+# 세션이 **닫혀 있는 동안** 시간 건강 평가 간격(ms). 열려 있으면 매 패스 평가한다.
+# 운영자 처분 2026-09-26 (나) — docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md §6.1.
+# 개장을 알아채는 지연의 상한이 이 값이다.
+time_evaluate_closed_interval_ms: 60000
+
 # --- time-projection frame parameters -------------------------------------
 # tos_runtime.marketfeed.time_projection.RuntimeTimeProjection 의 **구성 인자**이지
 # 측정값이 아니다(그 모듈 독스트링: VER-002 프로파일 키가 아니다).
