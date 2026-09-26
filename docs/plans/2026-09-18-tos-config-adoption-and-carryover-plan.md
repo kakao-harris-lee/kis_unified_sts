@@ -969,3 +969,16 @@ trading_calendar_version` 과 일치). 같은 파일로 실측(10:00 KST):
 `tos/tests` **9542** · `tests/unit/scripts` **557** · 로더 프로브 **18/27** ·
 거버넌스 6종 전부 PASS · mypy(`tos/tests` 581 · `tos/runtime/tests` 224 ·
 `tos/runtime/src` 185 · 신규 2) 전부 Success · ruff/black clean.
+
+### 7.9 W-B B-1 · B-3 · W-C C-1 · C-3 착지 + R0 재확인 (2026-09-26)
+
+브랜치 `claude/kis-tos-project-covm64` · 기준 main `d209d279`.
+
+| 항목 | 착지 | 종료조건 대조 |
+|---|---|---|
+| R0 재확인 | 코드 변경 없음. 클라우드 컨테이너에서 **`PYTHONHASHSEED` 미설정** 렌더 LONG·SHORT → `ACTIVATED 5 (re-derived in a fresh process)` · `--check` 일치. 부팅은 Stage A 에서 `ReleaseAdmissionRefused` — `expected_dependency_set_digest` 가 호스트 좌표라 **다른 인터프리터에선 반드시 다르다**(`release.yaml` 주석 그대로). 렌더 사본(저장소 밖)의 그 한 값만 컨테이너 값으로 바꾸면 LONG·SHORT 부팅 → SIGTERM 정상 종료 | 결함 ① 해소 재현 |
+| **B-1** | `rcl/gates.py` · `rcl/log.py`: 전이 payload 에 `committed_vector` 를 **명시 키**로(없음 = `null`), fold 가 읽고 `held_reservation_map` 이 열을 읽어 둘 다 `CapacityVector` 재검증으로 정규화. **pre-K-4 엔트리(키 부재) = `None`** — v1→v2 마이그레이션이 그 행의 열을 `NULL` 로 남겼으므로 유일하게 정당한 값. 「없음」과 「빈 벡터」는 양쪽 모두 구별된다. KNOWN LIMITATION 주석 제거 | 기존 로그 재폴드 판정 불변(3002 통과) · 열 직접 변조 5종 검출 · 뮤테이션 3종 전부 red |
+| **C-1** | `recon/service.py` `_join_orders_by_execution_id`: `attempt_id=None` 증인 주문이 **같은 ODNO 를 기록한 영수증의 attempt** 에 1:1 일 때만 조인. 두 attempt 에 걸친 id · 한 attempt 로 모이는 두 주문 · 이미 직접 매치가 있는 attempt · 공백 외 정규화(선행 0 포함) → 전부 **고아 유지**. 조인은 아무것도 허가하지 않는다 — MATCHED·충돌·재무장은 여전히 커널 술어 | 조인 시 재무장 가능(KIS 실증인 pin: MATCHED · `permits_rearm=True` · FQP 없으므로 `permits_capacity_release=False`) · **M5(조인 제거) → 5 red** · 규칙별 뮤테이션 4종 red |
+| digest | `expected_code_digest` 5차 재도출 `b96213f5…` → `2a7e483d…`(`print-digests` = `observe_source_tree_digest()`) · `release.yaml` + `_VALUE_PINS` | 새 digest 로 Stage A 통과 부팅 확인 |
+| **B-3** | 설계·핸드오버 `docs/plans/2026-09-26-tos-stock-tick-table-probe-design.md` — 7 밴드 × 2 시장 × 3 종목 = 42 + 경계 ≤12 = **≤54 GET**(1.1 s 간격 ≈ 60 s) · 판정(MEASURED ≥3 일치 / CONFLICTED / PARTIAL) · 프로브 명세 `P-TICK`(모의 · `emits_orders=False`). 코드 없음 | 수치로 적힘 · GET-only · 배포 값 불변 |
+| **C-3** | 규칙 `docs/broker-profiles/evidence/CITATION-RULE.md` + 검사기 `tools/tos_evidence_citation_check.py`(인용 토큰 `` `artifact.json:path=value` `` 을 파일·경로·값까지 풀어 봄) · t3 README 3곳 소급(8 인용 PASS) · #729 주장을 토큰으로 쓰면 검사기가 막음을 테스트로 고정 | 소급 시연 1건 · #676→#729 부류: 인용된 값의 참·거짓은 기계가 판정. **인용 없는 산문 숫자는 여전히 리뷰 규칙**(검사기 한계, 규칙 문서 §3) |
