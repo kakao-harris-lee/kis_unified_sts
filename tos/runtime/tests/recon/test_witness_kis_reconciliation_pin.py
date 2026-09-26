@@ -1,6 +1,13 @@
 """Lane C pin (W3 plan §4 W3 row C: "``ReconciliationService`` 경로 실증 — 실 증인일 때
 ``CORROBORATED`` 의 의미가 바뀌는 지점을 테스트로 고정 · 합성 증인과의 차이").
 
+**Status (carryover plan W-C C-1, 2026-09-25): the orders-axis gap described below is closed.**
+``ReconciliationService`` now cross-references ``broker_execution_id``
+(``service._join_orders_by_execution_id``), so the same ODNO the evidence receipt recorded joins its
+attempt. The (b) tests below were flipped from pinning the gap to pinning the join; the history is
+kept because it is why the join exists. The one-to-one/ambiguity rules themselves are pinned in
+``test_service_execution_id_join.py``.
+
 **Why this file exists — read this before deleting any test in it.** The W3 plan's own §0.4
 states the wave's entire justification: a genuinely independent witness turns a ``CORROBORATED``
 verdict from a structural label into something substantive. This file's second half
@@ -219,15 +226,18 @@ def _kis_witness(server: FakeKisGetServer) -> KisStockBrokerWitness:
     )
 
 
-def test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt(
+def test_real_kis_witness_joins_the_same_order_to_its_known_attempt(
     store, fresh, kis_server: FakeKisGetServer
 ) -> None:
-    """The finding: the SAME broker order (same ``broker_execution_id``/ODNO) the
-    evidence-receipt path already recorded for attempt ``a1`` comes back from the REAL witness
-    with ``attempt_id=None`` — ``ReconciliationService`` cannot see it as a match for ``a1`` (no
-    ``broker_execution_id`` cross-reference exists), so it (1) degrades attempt ``a1`` to
-    ``STALE_RESERVATION`` (RCL present, no witness confirmation) and (2) ALSO reports the very
-    same order as an unrelated ``ORPHAN_BROKER_ORDER`` — a double-count, not a corroboration.
+    """C-1: the SAME broker order (same ODNO) the evidence-receipt path recorded for attempt ``a1``
+    comes back from the REAL witness with ``attempt_id=None`` and now joins ``a1`` through the
+    ``broker_execution_id`` cross-reference — MATCHED, and no duplicate orphan. Before C-1 this
+    exact setup degraded ``a1`` to ``STALE_RESERVATION`` and re-reported the order as an
+    ``ORPHAN_BROKER_ORDER`` (module docstring).
+
+    Re-arm follows: three independence classes (RCL, receipt, the independent KIS witness) agree on
+    existence and the quantities agree. Capacity release does NOT — no separately recorded
+    finality proof exists for ``a1``, and a fill receipt alone is not a Final Quantity Proof.
     """
     _append_egress_result(store)
     kis_server.queue_response(
@@ -257,20 +267,12 @@ def test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt(
         WitnessScope(account=ACCOUNT, attempt_ids=("a1",)), freshness=fresh
     )
 
-    by_attempt = {c.attempt_id: c for c in report.classifications}
-    # (1) attempt "a1" sees no witness confirmation at all — degraded, not corroborated.
-    assert by_attempt["a1"].classification == ReconciliationClass.STALE_RESERVATION
-    # (2) the SAME order (same broker_execution_id) surfaces AGAIN as an orphan — the join
-    # that would have prevented this (by broker_execution_id) does not exist today.
-    orphans = [c for c in report.classifications if c.attempt_id is None]
-    assert len(orphans) == 1
-    assert orphans[0].classification == ReconciliationClass.ORPHAN_BROKER_ORDER
-    assert orphans[0].broker_execution_id == "0000004470"
-    assert by_attempt["a1"].broker_execution_id != "0000004470"  # never joined
-    # Never permits, either way — the double-count is conservative (fails closed), not silently
-    # accepted as corroboration.
+    [record] = report.classifications
+    assert record.attempt_id == "a1"
+    assert record.classification == ReconciliationClass.MATCHED
+    assert record.broker_execution_id == "0000004470"
+    assert report.permits_rearm is True
     assert report.permits_capacity_release is False
-    assert report.permits_rearm is False
 
 
 @pytest.mark.parametrize(
@@ -289,17 +291,13 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     rcl_present: bool,
     evidence_present: bool,
 ) -> None:
-    """Closes the gap between "확인 불가" and a real proof (팀리드 요청 3): rather than resting
-    the "``permits_*`` stays False" claim on the ONE (RCL present, evidence present) case the
-    test above exercises, this walks all four reachable combinations of RCL-reservation-present
-    x evidence-receipt-present. In every one, ``classification`` is provably never ``MATCHED``
-    (module docstring's deduction: ``has_witness`` can never be ``True`` for this witness), so
-    both gates — which the source (``_attempt_field_confidences_and_gates``) gates on exactly
-    ``classification is MATCHED`` — stay ``False`` regardless of what RCL/evidence say. The one
-    case this loop does NOT reach is "no attempt named at all" (an empty scope with zero orders),
-    which is covered separately by ``ReconciliationReport``'s own empty-``rearm_flags`` guard
-    (``bool(capacity_flags) and all(capacity_flags)`` is ``False`` on an empty list too — module
-    docstring's "fail-closed throughout").
+    """All four combinations of RCL-reservation-present x evidence-receipt-present with the real
+    KIS witness. After C-1 the witness order joins ``a1`` only through a receipt that recorded its
+    ODNO, so ``MATCHED`` — and with it re-arm — is reached in exactly the (RCL, receipt) case and
+    in no other; capacity release stays ``False`` in all four (no finality proof is recorded).
+    Before C-1 ``MATCHED`` was unreachable in all four (module docstring). The case this loop
+    does NOT reach is "no attempt named at all", covered by ``ReconciliationReport``'s own
+    empty-``rearm_flags`` guard (module docstring's "fail-closed throughout").
     """
     if evidence_present:
         _append_egress_result(store)
@@ -332,6 +330,7 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     )
 
     by_attempt = {c.attempt_id: c for c in report.classifications}
-    assert by_attempt["a1"].classification is not ReconciliationClass.MATCHED
+    joined = rcl_present and evidence_present
+    assert (by_attempt["a1"].classification is ReconciliationClass.MATCHED) is joined
+    assert report.permits_rearm is joined
     assert report.permits_capacity_release is False
-    assert report.permits_rearm is False

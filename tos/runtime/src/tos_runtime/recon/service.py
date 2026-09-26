@@ -55,6 +55,18 @@ attempt id to whatever identity the caller's own ``rcl_reader`` actually uses, d
 identity mapping (unchanged behaviour for a caller whose RCL projection genuinely is
 per-attempt).
 
+**``broker_execution_id`` cross-reference (carryover plan W-C C-1, 2026-09-25).** A real broker
+witness cannot name an attempt: KIS's order inquiry has no attempt-id concept, so
+:class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness` returns every order with
+``attempt_id=None``. Joined on ``attempt_id`` alone, MATCHED was unreachable with that witness and
+the same order was counted twice (the attempt degraded to ``STALE_RESERVATION`` and the order
+re-reported as ``ORPHAN_BROKER_ORDER``). :func:`_join_orders_by_execution_id` now attributes an
+attempt-less witness order to the attempt whose evidence receipt recorded the same broker id (the
+ODNO the egress adapter received on ACK). Only an unambiguous one-to-one match joins; everything
+else stays an orphan, so the join can only move an order out of the fail-closed orphan bucket when
+the identity is certain. Joining grants nothing by itself — MATCHED, conflicts, corroboration and
+both permits are still the kernel predicates' call on the joined observations.
+
 Firewall: stdlib + ``tos.recon`` + ``tos.rcl`` (``CapacityState`` only, for the type
 signature this service reads through) + ``tos_runtime.recon.ports`` only.
 """
@@ -295,6 +307,62 @@ def _classify_attempt(
     return ReconciliationClass.RECEIPT_ONLY
 
 
+def _execution_id(value: str | None) -> str | None:
+    """A broker execution id as a join key: surrounding whitespace dropped (the KIS witness
+    strips ODNO, the egress adapter records it as received), empty treated as absent. Nothing
+    else is normalized — leading zeros are part of the id, and guessing an equivalence here
+    would be exactly the silent join the rules below exist to prevent."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _join_orders_by_execution_id(
+    orders: tuple[WitnessOrder, ...],
+    receipts: tuple[EgressReceiptObservation, ...],
+) -> tuple[dict[str, WitnessOrder], tuple[WitnessOrder, ...]]:
+    """Split witness orders into ``{attempt_id: order}`` and the remaining orphans (module
+    docstring "``broker_execution_id`` cross-reference").
+
+    An order that names its own attempt keeps that attempt (unchanged behaviour). An order with
+    ``attempt_id=None`` joins attempt ``a`` only when ALL of these hold — otherwise it stays an
+    orphan (fail-closed):
+
+    1. its ``broker_execution_id`` appears on receipts of exactly one attempt (a broker id seen
+       under two attempts — e.g. an ODNO reused across trading days — is ambiguous);
+    2. no other attempt-less order carries a broker id that resolves to ``a``;
+    3. ``a`` has no order of its own already (a direct match and a cross-referenced one for the
+       same attempt disagree about which order is ``a``'s).
+    """
+    by_attempt = {o.attempt_id: o for o in orders if o.attempt_id is not None}
+    attempts_for_id: dict[str, set[str]] = {}
+    for receipt in receipts:
+        key = _execution_id(receipt.broker_execution_id)
+        if receipt.attempt_id is not None and key is not None:
+            attempts_for_id.setdefault(key, set()).add(receipt.attempt_id)
+
+    candidates: dict[str, list[WitnessOrder]] = {}
+    orphans: list[WitnessOrder] = []
+    for order in orders:
+        if order.attempt_id is not None:
+            continue
+        key = _execution_id(order.broker_execution_id)
+        attempts = attempts_for_id.get(key, set()) if key is not None else set()
+        if len(attempts) == 1:
+            candidates.setdefault(next(iter(attempts)), []).append(order)
+        else:
+            orphans.append(order)
+
+    joined = dict(by_attempt)
+    for attempt_id, matched in candidates.items():
+        if len(matched) == 1 and attempt_id not in by_attempt:
+            joined[attempt_id] = matched[0]
+        else:
+            orphans.extend(matched)
+    return joined, tuple(orphans)
+
+
 class ReconciliationService:
     """Assembles the three observation paths and calls the kernel ``tos.recon``
     predicates for every judgement (module docstring)."""
@@ -532,10 +600,9 @@ class ReconciliationService:
         receipts_by_attempt = {
             r.attempt_id: r for r in receipts if r.attempt_id is not None
         }
-        witness_by_attempt = {
-            o.attempt_id: o for o in snapshot.orders if o.attempt_id is not None
-        }
-        orphan_orders = tuple(o for o in snapshot.orders if o.attempt_id is None)
+        witness_by_attempt, orphan_orders = _join_orders_by_execution_id(
+            snapshot.orders, receipts
+        )
         attempt_ids = (
             set(scope.attempt_ids) | set(receipts_by_attempt) | set(witness_by_attempt)
         )
