@@ -486,6 +486,7 @@ def wire_engine_and_driver(
     transport_config: KisMockTransportConfig | None,
     safety_mesh: Sequence[SafetyMeshService] = (),
     mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
+    trading_date_now: Callable[[], str | None] | None = None,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
@@ -561,6 +562,7 @@ def wire_engine_and_driver(
         seal_lookup=seal_registry,
         evidence_store=evidence_store,
         runtime_identity=identity,
+        trading_date_now=trading_date_now,
     )
     gateway = BrokerEgressGateway(
         contexts=context_resolver, transport=transport, sink=gateway_sink

@@ -520,3 +520,37 @@ def test_unknown_instrument_class_yields_none_phase(
         time_trading_calendar_version=None,
     )
     assert owner.phase_for_step3("some-unconfigured-class") is None
+
+
+# ============================================================================
+# trading_date_now (plan 2026-09-26 egress trading date, T-2)
+# ============================================================================
+
+
+def _owner_at(tmp_path: Path, evidence_store: SqliteEvidenceStore, wall_clock):
+    calendar = load_calendar_config(write_fixture_calendar(tmp_path))
+    return SessionFactsOwner(
+        calendar=calendar,
+        wall_clock=wall_clock,
+        evidence_store=evidence_store,
+        tick_generation_reader=lambda: None,
+        time_tz_db_version="tzdb-1",
+        time_trading_calendar_version=calendar.calendar_version,
+    )
+
+
+def test_trading_date_now_reads_the_owners_own_wall_clock(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    owner = _owner_at(
+        tmp_path, evidence_store, FixedWallClockReference(_kst_ms(2026, 1, 5, 10, 0))
+    )
+    assert owner.trading_date_now("krx-stock-fixture") == "20260105"
+
+
+def test_trading_date_now_is_none_without_a_wall_clock_reading(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """Production reads the trusted-time-gated reference: untrusted time means no date."""
+    owner = _owner_at(tmp_path, evidence_store, AbsentWallClockReference())
+    assert owner.trading_date_now("krx-stock-fixture") is None

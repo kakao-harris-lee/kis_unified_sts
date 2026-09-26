@@ -326,6 +326,66 @@ def test_orders_are_parsed_with_attempt_id_always_none_for_orphan_detection(
     assert by_odno["0000004473"].state is WitnessOrderState.CANCELLED
 
 
+def test_each_order_carries_the_brokers_own_order_date(
+    server: FakeKisGetServer,
+) -> None:
+    """Plan 2026-09-26 egress trading date T-4: ``ord_dt`` (KIS 주문일자) becomes the order's
+    date — the broker's, not this process's clock. Anything but YYYYMMDD digits is no date.
+    """
+    server.queue_response(BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []})
+    rows = [
+        ("0000004470", "20260917"),
+        ("0000004471", " 20260917 "),
+        ("0000004472", "2026-09-17"),
+        ("0000004473", ""),
+        ("0000004474", None),
+    ]
+    server.queue_response(
+        ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "output1": [
+                {
+                    "odno": odno,
+                    "tot_ccld_qty": "1",
+                    "rmn_qty": "0",
+                    "cncl_yn": "N",
+                    **({} if ord_dt is None else {"ord_dt": ord_dt}),
+                }
+                for odno, ord_dt in rows
+            ],
+        },
+    )
+    snapshot = _witness(server).observe(WitnessScope(account=ACCOUNT))
+    by_odno = {o.broker_execution_id: o.order_date for o in snapshot.orders}
+    assert by_odno == {
+        "0000004470": "20260917",
+        "0000004471": "20260917",
+        "0000004472": None,
+        "0000004473": None,
+        "0000004474": None,
+    }
+
+
+def test_trusted_date_source_reads_the_injected_wall_clock_in_kst() -> None:
+    from tos_runtime.calendar.ports import FixedWallClockReference
+    from tos_runtime.recon.witness_kis import TrustedKstDateSource
+
+    # 2026-09-16 23:30 UTC == 2026-09-17 08:30 KST
+    source = TrustedKstDateSource(FixedWallClockReference(1789601400000))
+    assert source.today() == "20260917"
+
+
+def test_trusted_date_source_refuses_without_a_reading() -> None:
+    """No trusted time, no inquiry — ``WitnessUnavailable``, the port's own "could not answer"."""
+    from tos_runtime.calendar.ports import AbsentWallClockReference
+    from tos_runtime.recon.witness_kis import TrustedKstDateSource
+
+    with pytest.raises(WitnessUnavailable):
+        TrustedKstDateSource(AbsentWallClockReference()).today()
+
+
 # ---------------------------------------------------------------------------
 # Futures refusal
 # ---------------------------------------------------------------------------

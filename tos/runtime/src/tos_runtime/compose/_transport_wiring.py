@@ -49,7 +49,7 @@ kis_mock``/``tos_runtime.workload`` (transitively, via ``tos.workload``) only. N
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
@@ -428,6 +428,7 @@ def build_transport(
     seal_lookup: SealRegistry,
     evidence_store: SqliteEvidenceStore,
     runtime_identity: RuntimeIdentity,
+    trading_date_now: Callable[[], str | None] | None = None,
 ) -> Transport:
     """Construct the selected transport (module docstring item 6).
 
@@ -451,6 +452,8 @@ def build_transport(
             what this transport can look up.
         evidence_store: The durable evidence store the adapted ``EvidenceRecorder`` appends into.
         runtime_identity: Bound onto every evidence record the adapted recorder appends.
+        trading_date_now: Forwarded to the ``kis-mock`` adapter (its own docstring); ignored for
+            ``synthetic``.
 
     Returns:
         The constructed transport, structurally satisfying the kernel's
@@ -486,4 +489,5 @@ def build_transport(
         monotonic=monotonic,
         seal_lookup=seal_lookup,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
+        trading_date_now=trading_date_now,
     )

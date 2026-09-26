@@ -1,16 +1,14 @@
 """Lane C pin (W3 plan §4 W3 row C: "``ReconciliationService`` 경로 실증 — 실 증인일 때
 ``CORROBORATED`` 의 의미가 바뀌는 지점을 테스트로 고정 · 합성 증인과의 차이").
 
-**Status (carryover plan W-C C-1, 2026-09-25/26): the join exists but does not fire yet.**
-``ReconciliationService`` now cross-references ``broker_execution_id``
-(``service._join_orders_by_execution_id``). Review of the first version found that a KIS ODNO is a
-per-day sequence, so an id match is an identity only within one trading date; the join therefore
-requires the receipt's ``trading_date`` to equal the witness's ``order_inquiry_date``. This witness
-now reports its inquiry date, but the egress-result evidence the real
-:class:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader` reads records **no date**, so
-with these concrete classes the gap below still holds. The (b) tests pin exactly that; they flip
-when the evidence records a trading date. The join rules themselves are pinned with dated doubles in
-``test_service_execution_id_join.py``.
+**Status: closed on the orders axis (plan 2026-09-26 egress trading date).** ``ReconciliationService``
+cross-references ``(broker_execution_id, date)``: the receipt's ``trading_date`` — recorded at the
+ACK instant from trusted time — against the order's own broker-assigned ``order_date`` (KIS
+``ord_dt``). A KIS ODNO is a per-day sequence, so the id alone is not an identity (#804 review S2).
+The (b) tests below now pin the JOIN with these concrete classes; the one that stays unjoined is a
+receipt recorded before the date existed (no ``trading_date``), which is fail-closed by design. The
+history below is kept because it is why the join exists; the join's rules are pinned with doubles
+in ``test_service_execution_id_join.py``.
 
 **Why this file exists — read this before deleting any test in it.** The W3 plan's own §0.4
 states the wave's entire justification: a genuinely independent witness turns a ``CORROBORATED``
@@ -82,6 +80,8 @@ from ._witness_kis_fakes import FakeKstDateSource, FakeTokenSession
 BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 ORDER_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
 ACCOUNT = "1234567801"  # CANO=12345678, ACNT_PRDT_CD=01
+#: ``FakeKstDateSource``'s default — the date the witness queries and the broker rows carry.
+TODAY = "20260917"
 
 
 class _MinimalRclReader:
@@ -230,17 +230,12 @@ def _kis_witness(server: FakeKisGetServer) -> KisStockBrokerWitness:
     )
 
 
-def test_real_kis_witness_cannot_yet_join_the_same_order_to_its_known_attempt(
-    store, fresh, kis_server: FakeKisGetServer
-) -> None:
-    """The SAME broker order (same ODNO) the evidence-receipt path recorded for attempt ``a1``
-    comes back from the REAL witness with ``attempt_id=None``. The join needs the receipt's trading
-    date, which the recorded evidence does not carry yet (module docstring), so ``a1`` stays
-    ``STALE_RESERVATION`` and the order is reported separately as an orphan — conservative (both
-    permits ``False``), never silently accepted as corroboration. The witness side is ready: it
-    reports the one date it queried.
-    """
-    _append_egress_result(store)
+def _reconcile_same_order(
+    store, fresh, kis_server: FakeKisGetServer, **receipt_overrides: object
+):
+    """Receipt for attempt ``a1`` with ODNO ``0000004470`` (plus ``receipt_overrides``) and the REAL
+    KIS witness reporting that same ODNO today with ``attempt_id=None``."""
+    _append_egress_result(store, **receipt_overrides)
     kis_server.queue_response(
         BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []}
     )
@@ -252,6 +247,7 @@ def test_real_kis_witness_cannot_yet_join_the_same_order_to_its_known_attempt(
             "output1": [
                 {
                     "odno": "0000004470",  # matches the evidence receipt's broker_execution_id
+                    "ord_dt": TODAY,  # the broker's own order date (KIS 주문일자)
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
                     "cncl_yn": "N",
@@ -268,6 +264,38 @@ def test_real_kis_witness_cannot_yet_join_the_same_order_to_its_known_attempt(
         WitnessScope(account=ACCOUNT, attempt_ids=("a1",)), freshness=fresh
     )
 
+    return report
+
+
+def test_real_kis_witness_joins_the_same_order_to_its_known_attempt(
+    store, fresh, kis_server: FakeKisGetServer
+) -> None:
+    """The receipt carries today's trading date, the broker row carries today's ``ord_dt``: the
+    order joins ``a1`` — MATCHED, no duplicate orphan. Re-arm follows (three independence classes
+    agree, quantities agree); capacity release does not (no separately recorded finality proof —
+    a fill receipt alone is not a Final Quantity Proof)."""
+    report = _reconcile_same_order(store, fresh, kis_server, trading_date=TODAY)
+    [record] = report.classifications
+    assert record.attempt_id == "a1"
+    assert record.classification == ReconciliationClass.MATCHED
+    assert record.broker_execution_id == "0000004470"
+    assert report.permits_rearm is True
+    assert report.permits_capacity_release is False
+
+
+@pytest.mark.parametrize(
+    "receipt_date", [None, "20260916"], ids=["recorded-before-dates", "other-day"]
+)
+def test_real_kis_witness_does_not_join_an_undated_or_other_day_receipt(
+    store, fresh, kis_server: FakeKisGetServer, receipt_date: str | None
+) -> None:
+    """A receipt recorded before the trading date existed (no key), or on another day: the ODNO
+    match is not an identity, so ``a1`` stays ``STALE_RESERVATION`` and the order stays an orphan
+    — conservative, both permits ``False``."""
+    overrides: dict[str, object] = (
+        {} if receipt_date is None else {"trading_date": receipt_date}
+    )
+    report = _reconcile_same_order(store, fresh, kis_server, **overrides)
     by_attempt = {c.attempt_id: c for c in report.classifications}
     assert by_attempt["a1"].classification == ReconciliationClass.STALE_RESERVATION
     orphans = [c for c in report.classifications if c.attempt_id is None]
@@ -293,13 +321,13 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     evidence_present: bool,
 ) -> None:
     """All four combinations of RCL-reservation-present x evidence-receipt-present with the real
-    KIS witness: ``MATCHED`` is unreachable in all four while the recorded evidence carries no
-    trading date (module docstring), so both permits stay ``False``. The case this loop does NOT
-    reach is "no attempt named at all", covered by ``ReconciliationReport``'s own
-    empty-``rearm_flags`` guard (module docstring's "fail-closed throughout").
+    KIS witness and a dated receipt: ``MATCHED`` — and with it re-arm — is reached in exactly the
+    (RCL, receipt) case and no other; capacity release stays ``False`` in all four (no finality
+    proof). The case this loop does NOT reach is "no attempt named at all", covered by
+    ``ReconciliationReport``'s own empty-``rearm_flags`` guard.
     """
     if evidence_present:
-        _append_egress_result(store)
+        _append_egress_result(store, trading_date=TODAY)
     kis_server.queue_response(
         BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []}
     )
@@ -311,6 +339,7 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
             "output1": [
                 {
                     "odno": "0000004470",
+                    "ord_dt": TODAY,
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
                     "cncl_yn": "N",
@@ -329,6 +358,7 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     )
 
     by_attempt = {c.attempt_id: c for c in report.classifications}
-    assert by_attempt["a1"].classification is not ReconciliationClass.MATCHED
-    assert report.permits_rearm is False
+    joined = rcl_present and evidence_present
+    assert (by_attempt["a1"].classification is ReconciliationClass.MATCHED) is joined
+    assert report.permits_rearm is joined
     assert report.permits_capacity_release is False

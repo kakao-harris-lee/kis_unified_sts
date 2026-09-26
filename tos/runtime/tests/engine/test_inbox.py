@@ -173,3 +173,40 @@ def test_clear_new_risk_halt_with_matching_seq_and_attestation_clears(
     )
     assert outcome is NewRiskHaltClearOutcome.CLEARED
     assert inbox.new_risk_halt() is None
+
+
+def test_dated_egress_result_replays_with_the_same_date_and_identity(
+    tmp_path: Path,
+) -> None:
+    """Plan 2026-09-26 egress trading date: the date rides the inbox payload, so a replay reads
+    it back rather than re-reading a clock — same date, same event identity, after a reopen.
+    """
+    from tos.engine.records import event_identity
+
+    scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
+    path = tmp_path / "dated-inbox.sqlite3"
+    from tos.engine import EgressResultKind, EgressResultPayload, EngineEvent, EventKind
+
+    dated = EngineEvent(
+        kind=EventKind.EGRESS_RESULT,
+        egress_result=EgressResultPayload(
+            instrument_key=fx.instrument_key(),
+            attempt_id="att-dated",
+            kind=EgressResultKind.ACK,
+            broker_execution_id="0000003663",
+            trading_date="20260805",
+        ),
+    )
+    first = SqliteEventInbox(path, scheme=scheme)
+    first.enqueue(dated)
+    first.close()
+
+    reopened = SqliteEventInbox(path, scheme=scheme)
+    for _ in range(2):
+        [(_seq, replayed)] = list(reopened.replay())
+        assert replayed.egress_result is not None
+        assert replayed.egress_result.trading_date == "20260805"
+        assert event_identity(replayed, scheme=scheme) == event_identity(
+            dated, scheme=scheme
+        )
+    reopened.close()

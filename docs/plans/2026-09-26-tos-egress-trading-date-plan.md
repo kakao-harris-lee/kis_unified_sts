@@ -4,7 +4,7 @@
 - 요청: 운영자 2026-09-26 「plan the change」 — #804 의 C-1 `broker_execution_id` 조인이 **발화하지 않는** 원인
   (egress-result 증거에 거래일이 없다)을 닫는 계획.
 - 상위: `docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` §7.9 C-1 행.
-- 성격: **계획 문서다. 코드는 넣지 않았다.** 착수는 운영자 검토 후.
+- 성격: 계획 + 구현(같은 PR). 운영자 처분 §6.1.
 - 되돌리기 어려운 경로: 재무장·캐파시티 해제(리스크 한도) — 구현 PR 은 운영자가 승인하면 `codex-gate` 대상(CLAUDE.md 2026-09-11).
 
 ## 0. 한 줄 요약
@@ -103,9 +103,36 @@
 3. **Codex 리뷰**: 구현 PR 은 재무장·캐파시티 경로이므로 승인 시 `codex-gate` 1회. 이 환경에는 Codex 가 없으므로
    운영자 호스트에서 실행하거나 폴백 레인으로 대체할지 미리 정해 두면 머지가 막히지 않는다.
 
+### 6.1 운영자 처분 (2026-09-26)
+
+1. **야간 세션 = `None`** — 채택. 측정 전에는 자정 횡단 세션에 날짜를 주지 않는다.
+2. **커널 레코드 필드 추가** — 동의.
+3. **Codex 리뷰** — 클라우드 환경에서는 **제외**(Codex 미가용). 구현 PR 은 Claude 쪽 검토로 진행한다.
+
 ## 7. 위험
 
 - **증인이 아직 배선되지 않았다** — 이 계획을 다 해도 복구 경로는 합성 증인을 쓴다. 조인은 **KIS 증인이 배선되는
   순간** 효과를 낸다. 증인 배선은 별도 작업이다(이 계획의 범위 밖).
 - **ODNO 일별 재시작은 가정이다** — 근거는 작은 ODNO 값(`0000003663` 09:05)과 일별 조회 TR 의 형태뿐이다. 날짜 가드는
   이 가정이 틀려도 안전한 쪽이다(같은 날 안에서만 조인하므로 조인 기회가 줄 뿐 잘못 잇지 않는다).
+
+## 8. 착지 기록 (2026-09-26)
+
+브랜치 `claude/kis-tos-project-covm64` · 기준 main `9434c280` · 운영자 처분 §6.1.
+
+| # | 착지 | 비고 |
+|---|---|---|
+| T-1 | `EgressResultPayload.trading_date` · `EngineEvidenceRecord.trading_date`(`YYYYMMDD` 주입 토큰, ASCII 정규식 검증) · `core.py` 복사 2곳 | ★ **계획에 없던 설계점**: `event_identity` 가 `model_dump` 전체를 해시하므로 필드를 그냥 더하면 **기존 인박스 이벤트 전부의 식별자가 바뀌어** 재생이 그 이벤트들을 「비교 대상 없음」으로 조용히 건너뛴다. `Field(exclude_if=None 이면 생략)` 으로 **날짜 없는 레코드의 덤프를 필드 도입 전과 바이트 동일**하게 유지(테스트로 핀). 중복 서명 불포함 핀 · 고정 필드 집합 핀(`test_the_engine_egress_payload_has_no_price_field`)에 의도적으로 추가 |
+| T-2 | `calendar.phase.trading_date_at` · `SessionFactsOwner.trading_date_now` — 세션 위상과 **같은** 신뢰 시계·달력 | 창 밖·미지 클래스·**자정 횡단 세션 → `None`**(운영자 처분 1) · UTC 날짜가 아니라 KST 날짜임을 핀 |
+| T-3 | KIS 어댑터가 ACK 결과(브로커 번호가 있는 결과만)에 날짜 기입 · `root → _finalize → wire_engine_and_driver → build_transport` 배선 | 크기 예산 등재 3건 재측정(149→151 · 415→420 · 103→105) |
+| T-4 | 판독기가 `trading_date` 읽음(형식 위반·부재 → `None`) · `WitnessOrder.order_date` ← 행의 `ord_dt` · 조인 키 = `(ODNO, 날짜)` 쌍 · `TrustedKstDateSource`(신뢰 시각 없으면 `WitnessUnavailable`) | 증인 모듈 방화벽 문구 유지 — 시계 참조는 로컬 구조 Protocol 로 받음(새 import 간선 없음) |
+| T-5 | 실 `SqliteEvidenceReceiptReader` + 실 `KisStockBrokerWitness` + 날짜 실린 영수증 → **MATCHED · `permits_rearm=True` · `permits_capacity_release=False`**(FQP 없음). 날짜 없는(이전) 영수증·다른 날 영수증 → 고아 유지 | pin 파일이 「아직 조인 안 됨」에서 「조인됨」으로 뒤집힘 |
+| T-6 | `expected_code_digest` 6차 `1da8b701…` → `295bce98…`(두 경로 일치) · `release.yaml` + `_VALUE_PINS` | 새 digest 로 부팅 확인 |
+
+**뮤테이션(전부 red)**: M1 커널 복사 제거 · M2 소유자가 게이트된 시계를 우회 · M3 자정 횡단 `None` 제거 · M4 증인이 `ord_dt` 무시 ·
+M5 판독기 형식 검증 제거 · M6 어댑터가 번호 없는 결과에도 날짜 기입.
+
+**검증**: `tos/tests` 9601 · `tos/runtime/tests` 3050 · `tests/tools/test_tos_*` 765 · mypy(src 2 + 테스트 트리 2) · black · ruff ·
+lint-imports · 크기 예산 · 방화벽 · 계약 · 완료(GREEN) · 스펙 · 인용 검사기 전부 통과.
+
+**남은 것**: KIS 증인은 여전히 컴포즈에 배선되지 않았다(§7) — 조인의 운영 효과는 그 배선에서 나타난다. 야간 세션 규칙은 측정 전 `None`.

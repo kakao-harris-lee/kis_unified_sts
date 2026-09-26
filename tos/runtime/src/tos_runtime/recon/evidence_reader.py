@@ -45,6 +45,7 @@ network, no writer call.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from decimal import Decimal
@@ -106,6 +107,19 @@ def _in_scope(payload: Mapping[str, object], scope: WitnessScope) -> bool:
         instrument_key.get("instrument") == key.instrument
         for key in scope.instrument_keys
     )
+
+
+#: ASCII digits only (``str.isdigit`` would also accept non-ASCII digits).
+_YYYYMMDD = re.compile(r"[0-9]{8}")
+
+
+def _yyyymmdd_or_none(value: object) -> str | None:
+    """A recorded ``trading_date`` token, or ``None`` when absent (every receipt recorded before
+    plan 2026-09-26 egress trading date) or not ``YYYYMMDD`` digits — a malformed date is not a
+    date, so it can never make a join happen."""
+    if isinstance(value, str) and _YYYYMMDD.fullmatch(value) is not None:
+        return value
+    return None
 
 
 class SqliteEvidenceReceiptReader:
@@ -216,6 +230,7 @@ class SqliteEvidenceReceiptReader:
                         attempt_id is not None and attempt_id in proven
                     ),
                     source_ref="evidence-egress-result",
+                    trading_date=_yyyymmdd_or_none(row.get("trading_date")),
                 )
             )
         return tuple(observations)

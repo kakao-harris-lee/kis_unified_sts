@@ -118,6 +118,7 @@ def _build_transport(
     custody: InMemoryCredentialCustody | None = None,
     evidence: RecordingEvidenceSink | None = None,
     seals: dict[str, Any] | None = None,
+    trading_date_now: Any = None,
 ) -> tuple[
     KisMockTransport,
     RecordingEvidenceSink,
@@ -150,6 +151,7 @@ def _build_transport(
         monotonic=mono,
         seal_lookup=make_seal_lookup(seal_map),
         evidence_sink=ev,
+        trading_date_now=trading_date_now,
     )
     return transport, ev, cust, mono
 
@@ -307,6 +309,62 @@ def test_ack_path(server: FakeKisServer) -> None:
     (record,) = evidence.of_kind("TRANSPORT_SEND")
     assert record["kind"] == "ACK"
     assert record["seal_digest"] == seal.seal_digest
+
+
+def test_ack_is_stamped_with_the_trading_date_at_the_ack_instant(
+    server: FakeKisServer,
+) -> None:
+    """Plan 2026-09-26 egress trading date T-3: the ODNO is a per-day sequence, so the result the
+    broker numbered carries the KST trading date read when it acknowledged."""
+    attempt, seal = _live_ack_setup(server)
+    calls: list[None] = []
+
+    def trading_date_now() -> str | None:
+        calls.append(None)
+        return "20260805"
+
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=trading_date_now
+    )
+    result = _send(transport, attempt)
+    assert result.broker_execution_id == "ODNO-1"
+    assert result.trading_date == "20260805"
+    assert len(calls) == 1
+
+
+def test_ack_without_an_established_date_carries_none(server: FakeKisServer) -> None:
+    """Untrusted time or a midnight-crossing session: the source answers ``None`` and nothing is
+    guessed."""
+    attempt, seal = _live_ack_setup(server)
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=lambda: None
+    )
+    assert _send(transport, attempt).trading_date is None
+
+
+def test_ack_without_a_date_source_carries_none(server: FakeKisServer) -> None:
+    attempt, seal = _live_ack_setup(server)
+    transport, _, _, _ = _build_transport(server, seals={attempt.attempt_id: seal})
+    assert _send(transport, attempt).trading_date is None
+
+
+def test_a_result_the_broker_never_numbered_is_not_dated(server: FakeKisServer) -> None:
+    attempt = _attempt("reject-dated")
+    seal = build_seal(attempt_id=attempt.attempt_id)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(
+        ORDER_PATH,
+        status=200,
+        body={"rt_cd": "1", "msg_cd": "APBK0919", "msg1": "주문가능금액 부족"},
+    )
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=lambda: "20260805"
+    )
+    result = _send(transport, attempt)
+    assert result.broker_execution_id is None
+    assert result.trading_date is None
 
 
 def test_sell_side_selects_the_sell_tr_id(server: FakeKisServer) -> None:

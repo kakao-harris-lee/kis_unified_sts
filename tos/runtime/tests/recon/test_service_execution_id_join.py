@@ -30,9 +30,9 @@ from .test_service import (
     FakeEvidenceReader,
     FakeRclReader,
     FakeWitness,
-    _matched_witness_order,
 )
 from .test_service import _matched_receipt as _undated_receipt
+from .test_service import _matched_witness_order as _undated_order
 
 TODAY = "20260925"
 YESTERDAY = "20260924"
@@ -58,6 +58,28 @@ def _matched_receipt(
     return receipt
 
 
+def _matched_witness_order(
+    order_date: str | None = TODAY,
+    *,
+    attempt_id: str | None | object = _KEEP,
+    broker_execution_id: str | None | object = _KEEP,
+    quantity: Decimal | None | object = _KEEP,
+) -> WitnessOrder:
+    """``test_service``'s matched witness order, carrying the broker's own order date
+    (``ord_dt``) — ``TODAY`` unless told otherwise."""
+    order = dataclasses.replace(_undated_order(), order_date=order_date)
+    if attempt_id is not _KEEP:
+        assert attempt_id is None or isinstance(attempt_id, str)
+        order = dataclasses.replace(order, attempt_id=attempt_id)
+    if broker_execution_id is not _KEEP:
+        assert broker_execution_id is None or isinstance(broker_execution_id, str)
+        order = dataclasses.replace(order, broker_execution_id=broker_execution_id)
+    if quantity is not _KEEP:
+        assert quantity is None or isinstance(quantity, Decimal)
+        order = dataclasses.replace(order, quantity=quantity)
+    return order
+
+
 @pytest.fixture
 def fresh() -> FreshnessMarker:
     return FreshnessMarker(
@@ -75,7 +97,6 @@ def _reconcile(
     orders: tuple[WitnessOrder, ...],
     rcl: dict[str, CapacityState] | None = None,
     attempt_ids: tuple[str, ...] = ("a1",),
-    inquiry_date: str | None = TODAY,
 ) -> ReconciliationReport:
     service = ReconciliationService(
         FakeRclReader(
@@ -88,7 +109,6 @@ def _reconcile(
                 orders=orders,
                 provenance="independent-broker-double",
                 independent_of_evidence_store=True,
-                order_inquiry_date=inquiry_date,
             )
         ),
     )
@@ -259,18 +279,29 @@ def test_receipt_from_another_trading_day_does_not_join(
 
 
 @pytest.mark.parametrize(
-    ("receipt_date", "inquiry_date"),
+    ("receipt_date", "order_date"),
     [(None, TODAY), (TODAY, None), (None, None)],
-    ids=["undated-receipt", "undated-inquiry", "both-undated"],
+    ids=["undated-receipt", "undated-order", "both-undated"],
 )
 def test_missing_date_on_either_side_does_not_join(
-    fresh: FreshnessMarker, receipt_date: str | None, inquiry_date: str | None
+    fresh: FreshnessMarker, receipt_date: str | None, order_date: str | None
 ) -> None:
+    """An undated receipt is every receipt recorded before the trading date existed — it must
+    never join. An undated order is a witness row without ``ord_dt``."""
     report = _reconcile(
         fresh,
         receipts=(_matched_receipt(trading_date=receipt_date),),
-        orders=(_matched_witness_order(attempt_id=None),),
-        inquiry_date=inquiry_date,
+        orders=(_matched_witness_order(order_date, attempt_id=None),),
+    )
+    _assert_orphaned(report)
+
+
+def test_order_dated_another_day_does_not_join(fresh: FreshnessMarker) -> None:
+    """The mirror of review S2: the receipt is today's, the broker dates the order yesterday."""
+    report = _reconcile(
+        fresh,
+        receipts=(_matched_receipt(),),
+        orders=(_matched_witness_order(YESTERDAY, attempt_id=None),),
     )
     _assert_orphaned(report)
 

@@ -26,6 +26,7 @@ __all__ = [
     "session_phase_at",
     "maturity_at",
     "effective_phase_at",
+    "trading_date_at",
 ]
 
 #: How many calendar days forward a "closed -> next window open" boundary
@@ -104,6 +105,33 @@ def _next_window_start(
         if day_candidates:
             return min(day_candidates)
     return None
+
+
+def trading_date_at(
+    instant_unix_ms: int, instrument_class: str, cfg: CalendarConfig
+) -> str | None:
+    """The KST trading date (``YYYYMMDD``) an order acknowledged at ``instant_unix_ms`` belongs
+    to, or ``None`` when the calendar cannot say (plan 2026-09-26 egress trading date §2 decision
+    3; operator 2026-09-26: midnight-crossing sessions stay ``None``).
+
+    * Unknown ``instrument_class``, or no session window open at the instant -> ``None``.
+    * An open window that does NOT cross midnight -> the window occurrence's start date in the
+      calendar's own zone (for these windows, the instant's local date).
+    * An open window that crosses midnight -> ``None``: which date a broker assigns a night-session
+      order to has never been measured, and a guessed date could join an order to the wrong day.
+    """
+    if instrument_class not in cfg.sessions:
+        return None
+    tz = zoneinfo.ZoneInfo(cfg.tz_id)
+    active = _active_window_at(
+        _to_local(instant_unix_ms, tz), cfg.sessions[instrument_class], cfg.holidays
+    )
+    if active is None:
+        return None
+    window, start_dt, _end_dt = active
+    if window.crosses_midnight:
+        return None
+    return start_dt.strftime("%Y%m%d")
 
 
 def session_phase_at(
