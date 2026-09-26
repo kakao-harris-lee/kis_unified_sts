@@ -232,7 +232,9 @@ class _WallClockLike(Protocol):
 
 class TrustedKstDateSource:
     """``today()`` from a :class:`~tos_runtime.calendar.ports.WallClockReference` — in production
-    the trusted-time-gated one — so the witness never queries a date the runtime does not trust.
+    a :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` (trusted AND fresh; the
+    plain trusted reference serves the last evaluated snapshot, which can be days old — review
+    finding 1) — so the witness never queries a date the runtime does not trust.
     An absent reading raises :class:`~tos_runtime.recon.ports.WitnessUnavailable`, the port's own
     "could not answer" outcome, rather than guessing a date."""
 

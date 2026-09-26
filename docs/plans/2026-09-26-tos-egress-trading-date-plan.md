@@ -9,7 +9,7 @@
 
 ## 0. 한 줄 요약
 
-영수증(`EGRESS_RESULT_CONSUMED`/`RESULT_UNMATCHED`)에 **ACK 시점의 신뢰 시각으로 계산한 KST 거래일**을 싣고,
+영수증(`EGRESS_RESULT_CONSUMED`/`RESULT_UNMATCHED`)에 **ACK 시점의 신뢰·신선 시각으로 계산한 KST 거래일**을 싣고(§8.1 — 신선도 한도 추가),
 증인은 조회일 대신 **행마다 브로커가 돌려준 `ord_dt`** 를 쓴다. 날짜는 커널 레코드의 주입 토큰(`str | None`)으로
 들어가므로 커널은 시계를 갖지 않고, 인박스 페이로드에 실리므로 재생이 결정적이다. 신뢰 시각이 없거나 날짜 규칙이
 측정되지 않은 세션(자정을 넘는 야간 세션)에서는 `None` — 조인이 일어나지 않는 fail-closed 가 기본이다.
@@ -136,3 +136,19 @@ M5 판독기 형식 검증 제거 · M6 어댑터가 번호 없는 결과에도 
 lint-imports · 크기 예산 · 방화벽 · 계약 · 완료(GREEN) · 스펙 · 인용 검사기 전부 통과.
 
 **남은 것**: KIS 증인은 여전히 컴포즈에 배선되지 않았다(§7) — 조인의 운영 효과는 그 배선에서 나타난다. 야간 세션 규칙은 측정 전 `None`.
+
+### 8.1 Claude 쪽 리뷰 (Codex 제외 — 운영자 처분 3) · needs-attention → 조치
+
+| # | 지적 | 조치 |
+|---|---|---|
+| **1 (조건부 fail-open)** | 「ACK 시점의 신뢰 시각」이 사실이 아니었다 — `TrustworthyTimeService.wall_clock_now()` 는 **마지막 `evaluate()` 의 관측치**를 돌려주고, 컴포즈 런타임은 `evaluate()` 를 **부팅 때만** 돈다. 자정을 넘겨 도는 프로세스는 D+1 의 ACK 를 전부 D 로 찍고, 같은 기준을 쓰는 증인도 D 를 조회해 **D 의 다른 주문과 같은 ODNO 로 조인**될 수 있다(재현됨) | `wall_clock_now_if_fresh(max_age_ms)` 신설(스냅샷 발행 단조시각 대비 나이) + `FreshTrustedWallClockReference` · `SessionFactsOwner` 가 **거래일 전용** 시계를 따로 받고 컴포즈는 그 자리에 `MAX_time_conservative_freshness_age_ms` 로 묶인 참조를 배선. 세션 위상은 기존 참조 그대로(범위 밖) |
+| 2 | ACK 후 날짜 소스가 예외를 던지면 결과가 인박스에 못 간다 | 어댑터가 예외를 `None` 으로 강등 — 날짜 없는 결과는 조인만 못 할 뿐 |
+
+**뮤테이션(추가, 전부 red)**: F1 나이 검사 제거 · F2 컴포즈가 평범한 신뢰 참조를 배선 · F3 어댑터 예외 가드 제거.
+
+**⚠ 결과적으로 지금 운영에서는 날짜가 거의 찍히지 않는다.** paper `time.yaml` 의 `MAX_time_conservative_freshness_age_ms` 는
+`1000` 이고 `evaluate()` 는 부팅 때만 돈다 → 부팅 후 약 1초가 지나면 `trading_date_now()` 는 `None` 이다. **정직한 결과다**
+(낡은 날짜로 잘못 잇는 것보다 날짜 없이 잇지 않는 쪽). 조인이 운영에서 실제로 발화하려면 **시간 건강 평가의 주기 실행**이
+필요하다 — `compose/_wiring.py` 주석이 이미 「ONGOING health-check cycles ... remain the caller's own job」이라 적은 그 일이고,
+KIS 증인 배선과 함께 후속 작업이다. 같은 낡음은 세션 위상·`kis_quote` 의 `as_of_ms` 에도 있다(이 변경 이전부터) — 그쪽은 이
+PR 범위 밖이며 같은 후속 작업에서 다룬다.

@@ -348,6 +348,25 @@ def test_ack_without_a_date_source_carries_none(server: FakeKisServer) -> None:
     assert _send(transport, attempt).trading_date is None
 
 
+def test_a_raising_date_source_never_loses_the_acknowledged_result(
+    server: FakeKisServer,
+) -> None:
+    """Review finding 2: the date is read after a real order was acknowledged — a failure there
+    degrades to an undated result, never to a lost ACK."""
+    attempt, seal = _live_ack_setup(server)
+
+    def broken() -> str | None:
+        raise RuntimeError("calendar exploded")
+
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=broken
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.ACK
+    assert result.broker_execution_id == "ODNO-1"
+    assert result.trading_date is None
+
+
 def test_a_result_the_broker_never_numbered_is_not_dated(server: FakeKisServer) -> None:
     attempt = _attempt("reject-dated")
     seal = build_seal(attempt_id=attempt.attempt_id)

@@ -499,9 +499,17 @@ class KisMockTransport:
             # A KIS ODNO is a per-day sequence: the date is what makes it an identity. Only a
             # result the broker actually numbered gets one.
             trading_date=(
-                self._trading_date_now()
-                if broker_execution_id is not None
-                and self._trading_date_now is not None
-                else None
+                self._stamp_trading_date() if broker_execution_id is not None else None
             ),
         )
+
+    def _stamp_trading_date(self) -> str | None:
+        """The injected trading date, or ``None``. Called AFTER a real order was acknowledged, so a
+        failure here must never lose the result: any exception degrades to ``None`` — an undated
+        result simply cannot join by ODNO (review finding 2)."""
+        if self._trading_date_now is None:
+            return None
+        try:
+            return self._trading_date_now()
+        except Exception:  # noqa: BLE001 - the ACK must reach the inbox regardless
+            return None

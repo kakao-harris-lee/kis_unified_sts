@@ -159,3 +159,42 @@ class TrustedWallClockReference:
         if unix_ms is None:
             return None
         return WallClockReading(unix_ms=unix_ms, source_label="trusted-time-service")
+
+
+class _FreshWallClockNowSource(Protocol):
+    """The slice of :class:`~tos_runtime.time.service.TrustworthyTimeService` that
+    :class:`FreshTrustedWallClockReference` reads (same no-import convention as
+    :class:`_WallClockNowSource`)."""
+
+    def wall_clock_now_if_fresh(self, max_age_ms: int) -> int | None: ...
+
+
+class FreshTrustedWallClockReference:
+    """A :class:`TrustedWallClockReference` that is also bounded in AGE: a reading only while the
+    trusted snapshot is at most ``max_age_ms`` old
+    (:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now_if_fresh`).
+
+    For a consumer that turns "now" into an identity — the egress trading date (plan 2026-09-26
+    egress trading date, review finding 1). The plain trusted reference serves the last evaluated
+    observation indefinitely; this one goes honestly absent once it is stale, so no date is
+    stamped rather than a wrong one.
+    """
+
+    def __init__(self, time_service: _FreshWallClockNowSource, max_age_ms: int) -> None:
+        self._time_service = time_service
+        self._max_age_ms = max_age_ms
+
+    def describe(self) -> str:
+        """Return a short, human-readable description of this gate."""
+        return (
+            "fresh trusted-time wall-clock reference: TrustworthyTimeService."
+            f"wall_clock_now_if_fresh(max_age_ms={self._max_age_ms})"
+        )
+
+    def read(self) -> WallClockReading | None:
+        unix_ms = self._time_service.wall_clock_now_if_fresh(self._max_age_ms)
+        if unix_ms is None:
+            return None
+        return WallClockReading(
+            unix_ms=unix_ms, source_label="fresh-trusted-time-service"
+        )
