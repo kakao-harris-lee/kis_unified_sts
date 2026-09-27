@@ -465,6 +465,37 @@ class _CapturingDriver:
         self.events.append(event)
 
 
+class _SessionOpeningBetweenReadingsOwner:
+    """A session owner that answers from the time service's CURRENT reading rather than holding a
+    constant — the shape the real :class:`~tos_runtime.calendar.owner.SessionFactsOwner` has
+    (``calendar/owner.py:269-277``: ``session_context`` derives from a wall-clock reading). Open
+    only at or after ``opens_at_ms``, which these tests place BETWEEN the reading a pass starts
+    with and the one its own evaluation produces — the 08:45 boundary case plan
+    ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §5 names."""
+
+    def __init__(
+        self, time_service: _AdvancingTimeService, *, opens_at_ms: int
+    ) -> None:
+        self._time_service = time_service
+        self._opens_at_ms = opens_at_ms
+
+    def session_context(self, instrument_class: str) -> SessionContext:
+        del instrument_class
+        return SessionContext(
+            tz_id="Asia/Seoul",
+            tz_db_version="2026c",
+            trading_calendar_version="krx-2026.09.1",
+            phase=(
+                "CONTINUOUS"
+                if self._time_service.wall_clock_now() >= self._opens_at_ms
+                else "CLOSED"
+            ),
+            is_open=self._time_service.wall_clock_now() >= self._opens_at_ms,
+            tz_version_conflict=False,
+            boundary_value=None,
+        )
+
+
 class _StampedSinceLastEvaluationIntake:
     """An intake that stamps each polled observation ``as_of = wall_clock_now() +
     _APPENDED_AFTER_MS`` — i.e. a collector that appended its line AFTER the reading currently
@@ -553,13 +584,15 @@ def _read_order_scheduler(
     store: SqliteSnapshotStore,
     driver: _CapturingDriver,
     before_decide: Callable[[], bool] | None = None,
+    session_owner: object | None = None,
 ) -> TickScheduler:
     """A :class:`TickScheduler` whose snapshot store, policy, issuers, time projection and kernel
     resolver are all REAL — only the time service, the session owner, the intake and the driver
     are doubles, and each for a stated reason (see their own docstrings). ``before_decide``
     defaults to the pacer's own shape: evaluate, then admit."""
     config = _read_order_time_config()
-    session_owner = _OpenSessionOwner()
+    if session_owner is None:
+        session_owner = _OpenSessionOwner()
 
     def evaluate_then_admit() -> bool:
         time_service.evaluate()
@@ -579,7 +612,7 @@ def _read_order_scheduler(
         time_projection=RuntimeTimeProjection(
             config=config,
             time_service=time_service,  # type: ignore[arg-type]
-            session_owner=session_owner,
+            session_owner=session_owner,  # type: ignore[arg-type]
             instrument_class=_READ_ORDER_INSTRUMENT_CLASS,
             snapshot_age_bound=20,  # config/tos_runtime/paper/marketfeed.yaml
             interval_width=10,  # config/tos_runtime/paper/marketfeed.yaml
@@ -612,6 +645,14 @@ def test_an_observation_appended_since_the_last_evaluation_reads_fresh_not_confl
     Every verdict below is the REAL kernel predicate over the REAL projected coordinates carried
     by the event the driver was handed — nothing is recomputed here. Mutation: move the hook back
     before the poll -> ``source_age == -200`` -> red.
+
+    The last assertion pins the OTHER half of the order, which the verdicts above cannot see:
+    ``source_age`` is computed by :class:`~tos_runtime.marketfeed.time_projection
+    .RuntimeTimeProjection` from its own ``wall_clock_now()`` at resolve time, which is after the
+    hook whatever the surrounding order is. The pass's ``now_ms`` — what issues the snapshot and
+    paces the next tick — is a SEPARATE read, and ``_last_tick_wall_clock_ms`` is the only place
+    it survives the call. Mutation: hoist ``now_ms``/``session_context`` back above the poll
+    (hook still after it) -> that value is the PRE-evaluation reading -> red.
     """
     time_service = _AdvancingTimeService(
         start_ms=_START_READING_MS, step_ms=_EVALUATION_STEP_MS
@@ -644,6 +685,56 @@ def test_an_observation_appended_since_the_last_evaluation_reads_fresh_not_confl
     )
     admitted, reason = time_admits(time_inputs)
     assert admitted is True, f"expected admission, got reason: {reason!r}"
+
+    assert (
+        scheduler._last_tick_wall_clock_ms  # noqa: SLF001 — see the docstring's last paragraph
+        == _START_READING_MS + _EVALUATION_STEP_MS
+    )
+
+    store.close()
+
+
+def test_a_session_that_opens_during_the_pass_is_seen_by_that_pass_not_the_next(
+    tmp_path: Path,
+) -> None:
+    """The success path's half of #809: ``now_ms`` AND the session context are read AFTER the
+    hook, so the pass decides on the reading its own evaluation produced.
+
+    The session opens 1 ms after the reading this pass starts with — the 08:45 boundary the plan
+    ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §5 names. Reading the session from
+    the post-evaluation reading sees it open and ticks; reading it from the reading the pass
+    started with sees it closed and answers ``SKIPPED_SESSION_CLOSED``, deferring a real tick by
+    a whole pass for no reason but read order.
+
+    Mutation: hoist ``now_ms``/``session_context`` back above the poll (leaving the hook after
+    it) -> ``SKIPPED_SESSION_CLOSED``, no event, ``_last_tick_wall_clock_ms`` still ``None`` ->
+    red. A behaviour difference, not a call-order assertion on a mock.
+    """
+    time_service = _AdvancingTimeService(
+        start_ms=_START_READING_MS, step_ms=_EVALUATION_STEP_MS
+    )
+    driver = _CapturingDriver()
+    store = SqliteSnapshotStore(tmp_path / "marketfeed.sqlite3")
+    scheduler = _read_order_scheduler(
+        tmp_path,
+        time_service=time_service,
+        intake=_FixedObservationIntake(as_of_ms=_START_READING_MS),
+        store=store,
+        driver=driver,
+        session_owner=_SessionOpeningBetweenReadingsOwner(
+            time_service, opens_at_ms=_START_READING_MS + 1
+        ),
+    )
+
+    result = scheduler.tick_once()
+
+    assert result.outcome is TickOutcome.TICKED
+    assert len(driver.events) == 1
+    # The reading that issued this tick and now paces the next one is the POST-evaluation one.
+    assert (
+        scheduler._last_tick_wall_clock_ms  # noqa: SLF001 — the only surviving copy of now_ms
+        == _START_READING_MS + _EVALUATION_STEP_MS
+    )
 
     store.close()
 
