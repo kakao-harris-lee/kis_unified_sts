@@ -1383,7 +1383,15 @@ _FIXTURE_VALUE_PINS: dict[str, Any] = {
     "marketfeed.yaml::unit": "CONTRACTS",
     # journal, never kis_quote: kis_quote is an HTTP poller (an external call).
     "marketfeed.yaml::intake_kind": "journal",
-    "marketfeed.yaml::poll_interval_ms": 1000,
+    # Operator disposition 2026-09-27 §6.1 (가) — plan docs/plans/2026-09-27-tos-poll-interval-
+    # freshness-budget-plan.md, issue #807. 400 + 100 = 500 <= 1000 - 4*50 = 800, leaving the
+    # upstream collector 300 ms of headroom. The boot guard
+    # (_marketfeed_wiring._load_config_within_freshness_budget) refuses a pair that exceeds the
+    # budget; these two pins are what stop the VALUES drifting back, and
+    # test_the_superseded_poll_interval_would_be_refused_at_boot below proves the old 1000 is
+    # now a boot refusal against these same approved time.yaml bounds.
+    "marketfeed.yaml::poll_interval_ms": 400,
+    "marketfeed.yaml::journal_pass_allowance_ms": 100,
     # Operator disposition 2026-09-26 option (나): evaluate every pass while open, 60 s while closed.
     "marketfeed.yaml::time_evaluate_closed_interval_ms": 60000,
     "marketfeed.yaml::snapshot_age_bound": 20,
@@ -1539,6 +1547,60 @@ def test_unrendered_fixtures_refuse_through_their_own_loaders_naming_the_key() -
 
     with pytest.raises(StrategyLoadError, match="target.account"):
         load_strategies(_DEPLOY_DIR / "strategies", parse=_never, admit=_never)
+
+
+def _rendered_marketfeed_mapping(tmp_path: Path, **overrides: Any) -> Path:
+    """The COMMITTED ``marketfeed.yaml`` with only its three coordinate slots filled — what
+    ``scripts/tos/render_paper_config.py`` produces — written under ``tmp_path`` so the
+    freshness-budget guard can be run against the real approved values without touching the
+    repo. ``overrides`` replaces individual keys (the superseded-value test below)."""
+    raw = _mapping("marketfeed.yaml")
+    raw["instruments"] = ["101W09"]
+    raw["account"] = "00000000-01"
+    raw["journal_path"] = str(tmp_path / "journal.jsonl")
+    raw.update(overrides)
+    path = tmp_path / "marketfeed.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_the_committed_pacing_fits_the_approved_freshness_budget(
+    tmp_path: Path,
+) -> None:
+    """The two approved files are cross-checked against EACH OTHER, by the guard that runs at
+    boot — ``marketfeed.yaml``'s pacing against ``time.yaml``'s VER-002 bounds (plan
+    docs/plans/2026-09-27-tos-poll-interval-freshness-budget-plan.md §2, operator disposition
+    §6.1). A per-file value pin cannot see this: both files can be individually "as approved"
+    and still be a combination that reads every observation STALE, which is exactly what the
+    deployment shipped until 2026-09-27 (issue #807)."""
+    from tos_runtime.compose._marketfeed_wiring import (
+        _load_config_within_freshness_budget,
+    )
+
+    time_config = load_time_config(_DEPLOY_DIR / "time.yaml")
+    config = _load_config_within_freshness_budget(
+        _rendered_marketfeed_mapping(tmp_path), time_config
+    )
+    assert config.poll_interval_ms == 400
+    assert config.journal_pass_allowance_ms == 100
+
+
+def test_the_superseded_poll_interval_would_be_refused_at_boot(tmp_path: Path) -> None:
+    """The regression pin with a named input: restore ONLY the superseded
+    ``poll_interval_ms: 1000`` and the same approved ``time.yaml`` refuses the boot
+    (1000 + 100 = 1100 > 1000 - 4*50 = 800). Without this, "the guard exists" and "the guard
+    refuses the value it was written for" would be unconnected statements — the project-memory
+    failure shape 「가드가 자기가 막는다고 말한 것을 허용한다」."""
+    from tos_runtime.compose._marketfeed_wiring import (
+        MarketFeedConfigError,
+        _load_config_within_freshness_budget,
+    )
+
+    time_config = load_time_config(_DEPLOY_DIR / "time.yaml")
+    path = _rendered_marketfeed_mapping(tmp_path, poll_interval_ms=1000)
+
+    with pytest.raises(MarketFeedConfigError, match="paces outside the conservative"):
+        _load_config_within_freshness_budget(path, time_config)
 
 
 def test_critical_input_policy_loads_as_committed() -> None:
