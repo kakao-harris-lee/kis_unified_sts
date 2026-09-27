@@ -117,3 +117,126 @@
 1. **순서 변경 + `SKIPPED_TIME_NOT_EVALUATED`** — 동의.
 2. **`kis_quote` 가 #810 전까지 항상 STALE** — 수용. #809 만 구현하고, #810 은 별도로 처리한다.
 3. **구현은 이 브랜치(PR #811)에서** — 동의.
+
+## 7. 착지 기록 (2026-09-27)
+
+### 7.1 무엇이 들어갔나
+
+| # | 커밋 | 내용 |
+|---|---|---|
+| T-1 | `36e2f354` | `marketfeed/scheduler.py` 순서 변경(판독 → 훅 → 판독값·세션 → 결정) · 훅 이름 `before_pass` → `before_decide`(생성자 인자 · pacer 메서드 · compose 배선) · `marketfeed/ports.py` 에 `TickOutcome.SKIPPED_TIME_NOT_EVALUATED` · `run_forever` 는 `tick_once` + `sleep` 만 · 테스트 3건 신규 |
+| T-2 | `97c1bd77` | `kis_quote` 가 #810 전까지 **항상 STALE** 임을 테스트로 고정(실 어댑터 + 실 커널 `freshness_verdict` + 배포 `time.yaml` 승인값) · 어댑터/배선 독스트링 · `marketfeed.example.yaml` · `config/tos_runtime/paper/marketfeed.yaml` 문구 |
+| T-3 | — | 리허설 재측정(§7.3) |
+| T-4 | 아래 | 런북 §5 ④ · INDEX 행 · 이 기록 · `expected_code_digest` 재도출 |
+
+`tick_once` 는 여전히 시간을 **직접 평가하지 않는다** — 주입 훅을 부를 뿐이다(§2.1). pacer 의
+판단 규칙(열림 매 패스 · 닫힘 60 s · 미확정은 열림처럼 · 실패는 그 패스 결정 생략)은 **한 줄도
+바뀌지 않았고**, 호출 위치와 이름만 옮겼다. `build_tick_scheduler` 는 인자 1:1 개명이라 100 줄
+예산 안에 그대로 남는다(`--check` 위반 0 유지).
+
+### 7.2 회귀 테스트와 뮤테이션
+
+회귀 테스트(`tos/runtime/tests/marketfeed/test_scheduler.py`
+`test_an_observation_appended_since_the_last_evaluation_reads_fresh_not_conflicted`): `evaluate()`
+가 판독값을 500 ms 전진시키는 가짜 시간 서비스 + poll 때 `as_of = wall_clock_now() + 200` 으로
+찍는 인입. 실 `SqliteSnapshotStore`·실 발행기·실 커널 resolver 를 지나 드라이버가 받은 페이로드의
+`TimeAdmissionInputs` 를 **커널 술어로** 판정한다. 수정 후 `source_age = +300` · `FRESH` ·
+`time_admits` 허용. 순서를 되돌리면 `source_age = -200` → 커널 `freshness_verdict` **CONFLICTED**
+(실측 확인: `freshness_verdict(-200, (50,)*4, 1000, 50) = CONFLICTED`).
+
+| 뮤테이션 | red 로 바뀐 테스트 |
+|---|---|
+| 훅을 다시 poll **앞**으로 | **3건** — 회귀(`source_age == -200`) · `SKIPPED_TIME_NOT_EVALUATED` 순서(poll 미호출) · 미소비 재판독(`polls == [None]`) |
+| 평가 실패 시 `store.put` 수행 | **2건** — 미소비 재판독(고수위가 전진) · `store.put` 미호출 |
+| `SKIPPED_NO_OBSERVATION` 반환 | **2건** — 결과 이름 2건 |
+
+각 뮤테이션은 적용 → red 확인 → 원복했다. 루프 쪽은
+`test_run_forever_calls_nothing_but_tick_once_and_sleep` 이 「훅을 루프에 되돌리면 red」를 잡는다.
+닫힘 60 s 주기 테스트(`test_time_pacer.py`)는 **메서드 이름만** 바뀐 채 전건 통과한다.
+
+### 7.3 실측 — 정지 주입 리허설 (호스트 로컬 · 2026-09-27 19:10/19:12 KST · 실주문 0 · 네트워크 없음)
+
+`compose_paper_runtime`(세션 시계만 2026-09-28 10:00 KST 주입) + 실 `run_forever` 90 s ·
+0.5 s 마다 관측 1건(`as_of = now`, 수집기 지연 **0**) · **정지 주입**: `TrustworthyTimeService
+.evaluate` 를 감싸 실 평가가 돌아온 **뒤** 80 ms sleep. 렌더는 각 워크트리에서 부팅 직전에.
+정지는 클래스 속성에 걸었다 — compose 가 pacer 에 `time_service.evaluate` 를 **바운드 메서드로**
+넘기므로 인스턴스 속성 패치는 pacer 에 보이지 않는다.
+
+| | **수정 전** (분리 워크트리 `4b1144d3`) | **수정 후** (`97c1bd77`) |
+|---|---|---|
+| 소비(`EVENT_CONSUMED`) | 162 | 166 |
+| **CONFLICTED** | **15** | **0** |
+| STALE | 1 | 1 |
+| 그 STALE 1건의 정체 | **렌더 부팅 증명 관측**(소비 #1 — `withheld_sequence` 첫 항목) | 같음 |
+| 추가 관측 중 CONFLICTED·STALE | 15 / 161 · 0 / 161 | **0 / 165 · 0 / 165** |
+| `DECISION_WITHHELD` | 16 | 1 |
+| 결정 결과 | NoAction 74 · Proposal 72 | NoAction 84 · Proposal 81 |
+| `TIME_HEALTH_SNAPSHOT` | 164 / 90.7 s | 168 / 90.7 s |
+| `FLOW_HALTED` | 72 | 81 |
+| data dir | 10.73 MB / 90.7 s | 10.78 MB / 90.7 s |
+
+- **목표 달성.** 수정 전 CONFLICTED 15 > 0 · 수정 후 추가 관측 중 CONFLICTED **0** · STALE **0**.
+- 남은 STALE 1건은 두 회차 모두 **첫 소비 = 렌더가 만든 부팅 증명 관측**이다(소비 순서로 확인).
+  §3 의 「고칠 수 없다」가 그대로고 런북 §5 ④ 에 이미 적혀 있다.
+- 평가 1회당 80 ms 정지에도 평가 횟수·증거량은 두 회차가 같은 자릿수다 — 순서 변경은 평가를
+  늘리지 않는다(§2.2).
+- `FLOW_HALTED` 는 전건 `STAGE_DENIED | the venue / broker quantity constraint is incomplete`
+  — venue `max_quantity` 가 null 인 **의도된 fail-closed** 로, #808 리허설과 같은 사유다.
+- 증거 페이로드에서 읽은 필드는 `kind`/`halt_reason`/`detail`/`outcome_type` 뿐이다(모의 계좌
+  좌표가 들어 있는 다른 필드는 조회하지 않았다).
+
+### 7.4 `kis_quote` 전이 — 숨기지 않고 고정했다
+
+수정 뒤 이 인입의 `as_of` 는 **직전 패스**의 캐시 판독값이므로 `source_age ≈ 패스 간격`이다.
+모의 시세 한도(1.0 rps clean · 프로브 P-13)가 강제하는 최소 간격 1000 ms 는 승인 예산
+1000 − 4×50 = 800 ms 를 넘으므로 **허용 가능한 어떤 간격에서도 FRESH 가 아니다**. 즉
+fail-open(항상 0)에서 fail-closed(항상 STALE)로 바뀐다 — 운영자 처분 §6.1-2 로 수용된 전이다.
+테스트(`tos/runtime/tests/transport/kis_quote/test_adapter.py`
+`test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_stale`)는 실
+어댑터를 가짜 KIS 서버에 물려 stamp 가 poll 이전 판독값임을 확인하고, 배포
+`config/tos_runtime/paper/time.yaml` 에서 읽은 승인 한계로 커널 `freshness_verdict` 가 STALE
+임을 판정한다. 숫자를 테스트에 다시 적지 않는다(가드가 자기가 지키는 값의 사본을 읽으면 안
+된다는 이 저장소의 반복 결함 형태). paper 는 `intake_kind: journal` 이라 배포 영향 0 이고,
+#810 은 **구현하지 않았다**.
+
+### 7.5 `expected_code_digest` 재도출
+
+런타임 소스(`marketfeed/{scheduler,ports,time_pacer}.py` · `compose/_marketfeed_wiring.py` ·
+`transport/kis_quote/adapter.py`)가 바뀌었으므로 재도출했다.
+
+```text
+06508a5d85305a23f034624b330178bff10e3d89046e5ff3c1748866ddc0eed3   (이전 · #808 머지 · main 4b1144d3)
+1f4f5ae52343da004d341a93febb87e487b7ffb6a24ab0a99def8d88a1d18462   (현재)
+```
+
+`print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. `config/tos_runtime/paper/release.yaml`
+(값 + 헤더 + 10차 이력 주석)과 `test_deploy_approved_values.py::_VALUE_PINS` **두 곳 모두** 갱신.
+`expected_dependency_set_digest` 는 **바꾸지 않았다** — 같은 배포 호스트 루트 `.venv`
+(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+
+### 7.6 편차
+
+1. **§4 T-2 가 지정하지 않은 파일 한 곳을 더 고쳤다** — `config/tos_runtime/paper/marketfeed.yaml`
+   의 주석. 그 파일은 `kis_quote` 의 `source_age` 가 「항상 0」이라고 적고 있었고 이 변경이 그
+   문장을 **거짓으로** 만든다. 값은 한 줄도 바꾸지 않았다(주석만) — `_FIXTURE_VALUE_PINS` 전건
+   통과.
+2. **T-1 커밋에 `compose/_marketfeed_wiring.py` 의 `kis_quote` 문단 정정이 함께 들어갔다.**
+   같은 파일의 인자 개명이 T-1 에서 필요했고, 그 파일의 문단은 순서 변경이 직접 거짓으로 만드는
+   서술이라 같은 커밋에서 고쳤다. 나머지 전이 서술과 테스트는 T-2 커밋이다.
+3. **회귀 테스트는 계획이 말한 「수정 전 CONFLICTED 재현」을 테스트 2개로 나누지 않았다.**
+   한 테스트가 FRESH 를 주장하고, 순서를 되돌리는 뮤테이션으로 CONFLICTED 재현을 확인했다
+   (§7.2). 코드베이스에 CONFLICTED 를 주장하는 테스트를 남기면 수정된 코드에서 red 가 된다.
+
+### 7.7 게이트
+
+방화벽 PASS · `lint-imports` 3 contracts kept / 0 broken · completion **GREEN(위반 0)** ·
+spec PASS(문서 13 · ADR 45 · baseline-plan WARNING 은 기존 비차단) · contract PASS +
+self-test PASS(뮤테이션 145종) · citation PASS(README 3개 8건) · named-TBD guard PASS(46 파일
+스캔 · 위반 0) · size budget PASS(위반 0 · 등재 39 — `build_tick_scheduler` 는 인자 1:1 개명이라
+100 줄 그대로) · ruff PASS · black: **이 브랜치가 바꾼 `.py` 11건 전건 통과**(저장소 전체
+`tos/ scripts/` 의 32건 미포맷은 분리 워크트리 `4b1144d3` 에서도 **같은 32건** — 기존 baseline).
+
+테스트: `tos/runtime/tests` **3123 passed**(#808 머지 시점 3119 + 신규 4) · `tos/tests` 커널
+**9601 passed**(`tos/src` 는 손대지 않았고 확인용으로 돌렸다) · `tests/tools` + `tests/tos_l3` +
+`tests/unit/scripts/test_render_paper_config.py` **1394 passed**(기존 로컬 실패
+`tests/tools/test_u17_verify.py` 3건은 `yq` 미설치 — CI 는 `--ignore`).
