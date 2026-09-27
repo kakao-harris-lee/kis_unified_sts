@@ -45,6 +45,12 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 #: computed against the real clock too, with enough headroom here to absorb a slow CI boot.
 _MAX_AGE_MS = 600_000
 _POLL_INTERVAL_MS = 1_000
+#: The runtime pass-duration share of the freshness budget (plan 2026-09-27 §2.2). The
+#: conftest ``time.yaml`` bounds are generous (``MAX_time_conservative_freshness_age_ms``
+#: 60 000 against 155 ms of delay bounds), so 1000 + 100 sits far inside the budget the
+#: journal pacing guard checks — the budget itself is exercised in
+#: ``test_marketfeed_pacing_budget.py``.
+_JOURNAL_PASS_ALLOWANCE_MS = 100
 _SNAPSHOT_AGE_BOUND = 20
 _INTERVAL_WIDTH = 10
 _DIRECTION = "LONG"
@@ -119,6 +125,7 @@ def _write_marketfeed_config(
                 "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _POLL_INTERVAL_MS,
+                "journal_pass_allowance_ms": _JOURNAL_PASS_ALLOWANCE_MS,
                 "time_evaluate_closed_interval_ms": 60_000,
                 "snapshot_age_bound": _SNAPSHOT_AGE_BOUND,
                 "interval_width": _INTERVAL_WIDTH,

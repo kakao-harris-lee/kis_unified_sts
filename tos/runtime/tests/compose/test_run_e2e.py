@@ -93,6 +93,7 @@ def _write_fast_marketfeed_config(
                 "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _FAST_POLL_INTERVAL_MS,
+                "journal_pass_allowance_ms": 100,
                 "time_evaluate_closed_interval_ms": 60_000,
                 "snapshot_age_bound": 20,
                 "interval_width": 10,

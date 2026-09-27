@@ -18,7 +18,7 @@
 # [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
 #
 #   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
-#   expected_code_digest: 48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52
+#   expected_code_digest: 06508a5d85305a23f034624b330178bff10e3d89046e5ff3c1748866ddc0eed3
 #   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
 #   python_version: 3.12.12
 #   sqlite_version: 3.45.1
@@ -88,6 +88,24 @@
 #   증인 비ASCII 거부): `marketfeed/time_pacer.py`·`compose/{_marketfeed_wiring,_transport_wiring,_engine_wiring}.py`·
 #   `recon/witness_kis.py` 가 바뀌어 값이 또 바뀐다. 이전 값 b176ff65e3c00454e5d223bae4ed5c4e4e2681cefeededf45d100d5792bad6d8 은 2차(W2) 측정치.
 #
+#   8차 재측정(2026-09-27, 브랜치 docs/tos-poll-interval-freshness-plan · 계획
+#   docs/plans/2026-09-27-tos-poll-interval-freshness-budget-plan.md T-1): `compose/
+#   _marketfeed_wiring.py` 가 바뀌어(`journal_pass_allowance_ms` 로더 + 신선도 예산 부팅
+#   가드) 값이 바뀐다. 이전 값 48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52
+#   은 7차 3회 측정치(#806 머지 · main f6348b19). `print-digests` 와
+#   `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 045ecf5a…).
+#   `expected_dependency_set_digest` 는 **바꾸지 않았다** — 같은 배포 호스트 루트 `.venv`
+#   에서 측정했고 출력이 커밋된 값과 바이트 동일했다(python 3.12.12 / sqlite 3.45.1).
+#
+#   9차 재측정(2026-09-27, 같은 브랜치 · PR #808 리뷰 처분 — 계획 §7.6): `compose/
+#   _marketfeed_wiring.py` 의 **독스트링만** 바뀌었다(MEDIUM-2 `kis_quote` 신선도 주장
+#   정정 · LOW-1 allowance 가 비강제 선언임을 명시 · LOW-2 로더가 예산을 검사하지 않음을
+#   명시). 동작 변경은 없지만 `expected_code_digest` 는 `*.py` **바이트**를 접으므로 주석
+#   한 줄에도 값이 바뀐다 — 그래서 다시 찍었다. 이전 값
+#   045ecf5aace6140aed5d1b51ccc08f35668229e0958c459a93c941e29fe4159f 은 8차 측정치.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 06508a5d…).
+#   `expected_dependency_set_digest` 는 아홉 번 모두 바뀌지 않았다.
+#
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
@@ -109,7 +127,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52"
+expected_code_digest: "06508a5d85305a23f034624b330178bff10e3d89046e5ff3c1748866ddc0eed3"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
