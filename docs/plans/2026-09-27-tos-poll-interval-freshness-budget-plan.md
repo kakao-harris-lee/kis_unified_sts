@@ -199,3 +199,47 @@ size budget PASS(위반 0 · 등재 39) · black/ruff 통과 · mypy 는 런타�
 9601 passed · `tos/runtime/tests` **3119 passed**(신규 26 + 승인값 2 포함) · `tests/tools/test_tos_*`
 + `tests/tos_l3` + `tests/unit/scripts/test_render_paper_config.py` 838 passed(기존 로컬 실패
 `test_u17_verify.py` 3건은 `yq` 미설치 — CI 는 `--ignore`).
+
+### 7.6 리뷰 처분 (`code-reviewer`, 같은 모델 계열 — 잠정)
+
+PR #808 · 판정 **approve** · MEDIUM 2 · LOW 3. Codex 는 이 범위(되돌리기 어려운 경로 아님)에서
+제외이므로 같은 모델 계열의 Claude 쪽 폴백 레인이고, 그래서 **잠정**이다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| MEDIUM-1 | 가드가 `MAX_time_conservative_freshness_age_ms` 와 Σ지연에 **설계상 민감**하다 — time.yaml 쪽 값이 바뀌면 marketfeed 쪽이 조용히 예산 밖으로 나갈 수 있고, 두 파일이 CONFLICTED 상태로 갈라질 여지 | **이슈 #809** 로 분리. 이 PR 의 가드는 부팅 시점 결합을 만들 뿐 값 변경의 조정까지는 다루지 않는다 |
+| MEDIUM-2 | `kis_quote` 가 «패스 안에서 새로 읽은» 시각으로 `as_of_ms` 를 찍는다는 서술이 **거짓** | 문구 수정(`331e55ab`) + **이슈 #810** |
+| LOW-1 | `journal_pass_allowance_ms` 가 강제되지 않는다는 사실이 어디에도 없음 | 독스트링·YAML 주석에 명시(`331e55ab`). 런타임 관측은 **후속 과제로 유보** |
+| LOW-2 | `load_marketfeed_config` 가 예산을 검사하지 않는데 그 사실이 안 적혀 있음 | 독스트링에 명시(`331e55ab`) |
+| LOW-3 | `store = SqliteSnapshotStore(...)` 를 인자로 인라인한 것이 크기 예산 때문 | **변경 없음** (아래 근거) |
+
+**MEDIUM-2 의 실체.** `TrustworthyTimeService.wall_clock_now()`
+(`tos/runtime/src/tos_runtime/time/service.py:697-711`)는 마지막 `evaluate()` 가 캐시한
+스냅샷(`self._snapshot.wall_clock_observation`)을 돌려준다 — 새로 읽지 않는다. 따라서 어댑터가
+찍는 `as_of_ms` 는 **스케줄러의 `now_ms` 와 같은, 패스 이전의 그 순간**이고 `source_age` 는
+**항상 0** 이다. 위상 항이 적용되지 않는 이유는 «더 신선해서» 가 아니라 **공유 캐시** 때문이고,
+실제 HTTP 왕복은 아예 측정되지 않는다. 가드가 `kis_quote` 를 제외하는 결론 자체는 유지되지만
+**근거가 달라서** 네 곳의 문구를 «패스 이전 캐시 판독값을 그대로 쓰므로 `source_age` 는 항상 0 이고
+위상 항이 적용되지 않는다» 로 고쳤다 — 모듈 독스트링 · `marketfeed.example.yaml` ·
+`config/tos_runtime/paper/marketfeed.yaml` · `test_marketfeed_pacing_budget.py`.
+`transport/kis_quote/adapter.py` 자체는 **손대지 않았다**: 그 독스트링의 «응답 이후에 읽는다»
+주장과 그 뒤의 미측정 레이턴시는 **#810 의 수정 대상**이지 이 PR 의 것이 아니다.
+
+**LOW-3 근거.** 인라인의 동기는 크기 예산이 맞지만, 관측 가능한 차이는 실패 경로에서만 나고 그
+방향이 **개선**이다. 이전에는 `store` 가 `_build_intake` 와 `RuntimeTimeProjection` **앞에서**
+생성됐으므로, 인입 구성 거부(`KisQuoteTransportConfigError`)·`MultiInstrumentRefused`·
+`TimeProjectionConfigError` 로 부팅이 거부되는 경우에도 sqlite 파일은 이미 만들어진 뒤였다. 지금은
+인자 평가 순서상 그 셋이 모두 성공한 뒤에야 생성되므로 **거부된 부팅이 잔여 파일을 남기지 않는다**.
+성공 경로는 같은 객체·같은 인자로 완전히 동일하다. 되돌릴 이유가 없어 그대로 둔다.
+
+**디제스트.** 이 라운드가 런타임 `*.py`(`compose/_marketfeed_wiring.py` 독스트링)를 건드리므로
+`expected_code_digest` 를 다시 도출했다(§7.4 의 9차).
+
+```text
+045ecf5aace6140aed5d1b51ccc08f35668229e0958c459a93c941e29fe4159f   (8차 · 이 브랜치 e401a6d1)
+06508a5d85305a23f034624b330178bff10e3d89046e5ff3c1748866ddc0eed3   (9차 · 현재)
+```
+
+`print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. `release.yaml`(값 + 9차 이력
+주석)과 `_VALUE_PINS` 두 곳 모두 갱신. `expected_dependency_set_digest` 는 **바꾸지 않았다**
+(같은 배포 호스트 루트 `.venv` · python 3.12.12 / sqlite 3.45.1 · 출력 바이트 동일).
