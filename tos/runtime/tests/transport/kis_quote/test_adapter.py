@@ -592,3 +592,40 @@ def test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_s
         )
         is FreshnessVerdict.STALE
     )
+
+
+def test_an_unconsumed_quote_is_dropped_by_this_intake_not_re_read_next_pass(
+    server: FakeKisServer,
+) -> None:
+    """The gap in the #809 re-read guarantee, for THIS intake — tracked in #810.
+
+    :attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED` means the
+    scheduler performed no ``store.put``, so ``latest_as_of`` did not advance and the next pass
+    asks ``poll`` from the SAME mark. That buys a re-read only from an intake whose ``poll`` is a
+    pure function of ``after_as_of_ms``. This one is not: it ignores the argument entirely and
+    commits ``_last_content_digest`` BEFORE returning, so the observation the scheduler declined
+    to consume is dropped here — the next pass sees "nothing new" until the PRICE changes, and
+    ``SKIPPED_NO_OBSERVATION`` is what the scheduler gets.
+
+    Pinned rather than left implicit because the reorder is what made it reachable (before #809
+    a failed evaluation skipped the whole pass, poll included). #810 is where the intake is
+    fixed; when it is, this test inverts — the second poll returns the observation again.
+    """
+    _set_token(server)
+    _set_quote(server)
+    intake, _, _, _ = _intake(server)
+
+    # Pass 1: polled, then the pass's time evaluation failed — nothing consumed.
+    (first,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+
+    # Pass 2 asks from the SAME unadvanced mark, and the quote has not moved.
+    second = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+
+    assert second == ()  # NOT (first,) — #810
+    # It was dropped by the dedup, not withheld by a skipped request: the GET really happened.
+    assert len(server.requests_for(QUOTE_ROUTE)) == 2
+
+    # And it stays dropped until the price moves, which is the only thing that revives it.
+    _set_quote(server, stck_prpr="71400")
+    (third,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+    assert third.raw_event_id != first.raw_event_id

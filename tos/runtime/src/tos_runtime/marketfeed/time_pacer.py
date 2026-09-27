@@ -35,9 +35,11 @@ it paces a loop, it is never a trusted time reading and never reaches evidence o
 **An evaluation failure skips that pass's decision; it never stops the loop** (plan §2 W1-3). A
 tick issued after a failed evaluation would carry the previous, stale reading. The pass is
 reported to stderr (the runtime's refusal convention), the scheduler answers
-``TickOutcome.SKIPPED_TIME_NOT_EVALUATED`` without consuming what it polled, and the next pass
-retries on the same observation. Degradation across repeated failures stays the time service's own
-rule — no second judgement is made here.
+``TickOutcome.SKIPPED_TIME_NOT_EVALUATED`` without consuming what it polled. ⚠ The next pass
+retries on the same observation only when the intake's ``poll`` is a pure function of
+``after_as_of_ms`` (the journal); the content-dedup ``kis_quote`` intake drops it until the price
+changes (``ports.py``'s own ``SKIPPED_TIME_NOT_EVALUATED`` docstring; #810). Degradation across
+repeated failures stays the time service's own rule — no second judgement is made here.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.*`` only.
 """

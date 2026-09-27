@@ -244,6 +244,17 @@ class TickOutcome(StrEnum):
     #: ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1; issue #809). A DIFFERENT
     #: absence from :attr:`SKIPPED_NO_OBSERVATION`: a polled observation may well exist, and it is
     #: deliberately **not consumed** — nothing reaches :meth:`DurableSnapshotStore.put`, so
-    #: ``latest_as_of`` does not advance and the next pass re-reads the same observation.
+    #: ``latest_as_of`` does not advance.
+    #:
+    #: ⚠ **Not consuming is all the scheduler can do; it cannot make an intake hand the same
+    #: observation back.** The next pass re-reads it exactly when ``poll`` is a pure function of
+    #: ``after_as_of_ms`` — :class:`ObservationIntake`'s own contract, and what
+    #: :class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does. An intake that
+    #: filters on anything else does not re-serve it:
+    #: ``transport.kis_quote.adapter.KisQuoteObservationIntake`` ignores ``after_as_of_ms`` and
+    #: dedups on content, committing its content digest inside the poll, so an unconsumed quote
+    #: is dropped until the PRICE changes (pinned by
+    #: ``tests/transport/kis_quote/test_adapter.py``'s own unconsumed-quote test; tracked in
+    #: #810). The re-read is a property of such an intake, not something this member promises.
     SKIPPED_TIME_NOT_EVALUATED = "SKIPPED_TIME_NOT_EVALUATED"
     REFUSED_POLICY = "REFUSED_POLICY"

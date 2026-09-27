@@ -40,7 +40,14 @@ nor narrowed, and the evaluation count stays exactly one per pass.
 :meth:`TickScheduler.run_forever` calls nothing but :meth:`TickScheduler.tick_once` and ``sleep``.
 A ``False`` answer — the evaluation was due and failed — returns
 :attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED` **without** a
-``store.put``, so the polled observation is not consumed and the next pass re-reads it.
+``store.put``, so the polled observation is not consumed. ⚠ Not consuming is the whole of what
+this module can do — whether the next pass actually SEES that observation again is the INTAKE's
+property, not this one's. It holds for an intake whose ``poll`` is a pure function of
+``after_as_of_ms`` (the port's own contract, and what
+:class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does) and NOT for
+``transport.kis_quote.adapter.KisQuoteObservationIntake``, which ignores that argument and dedups
+on a content digest committed inside the poll — an unconsumed quote is dropped there until the
+PRICE changes (``ports.py``'s own ``SKIPPED_TIME_NOT_EVALUATED`` docstring; tracked in #810).
 
 **Per-observation distinctness is checked here too, independently of the journal's own filter**
 (plan §2 decision 5; ``ports.py``'s ``DurableSnapshotStore.latest_as_of`` docstring). A collector
@@ -385,7 +392,9 @@ class TickScheduler:
         Returns:
             The :class:`TickResult`. ``SKIPPED_TIME_NOT_EVALUATED`` when ``before_decide``
             answered ``False``: no ``store.put`` happens on that path, so whatever was polled
-            stays unconsumed for the next pass.
+            stays unconsumed. Whether the next pass then SEES it again is the intake's own
+            property — true of a ``poll`` that is a pure function of ``after_as_of_ms``, false of
+            the content-dedup ``kis_quote`` intake (module docstring; #810).
         """
         latest_as_of_ms = self._store.latest_as_of(instrument=self._instrument)
         observations = self._intake.poll(
