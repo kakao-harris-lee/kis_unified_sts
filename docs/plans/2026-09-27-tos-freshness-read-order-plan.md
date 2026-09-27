@@ -248,3 +248,67 @@ self-test PASS(뮤테이션 145종) · citation PASS(README 3개 8건) · named-
 **9601 passed**(`tos/src` 는 손대지 않았고 확인용으로 돌렸다) · `tests/tools` + `tests/tos_l3` +
 `tests/unit/scripts/test_render_paper_config.py` **1394 passed**(기존 로컬 실패
 `tests/tools/test_u17_verify.py` 3건은 `yq` 미설치 — CI 는 `--ignore`).
+
+### 7.8 리뷰 처분 (`code-reviewer`, 같은 모델 계열 — 잠정)
+
+PR #811 · 판정 **needs-attention → 대응 완료** · MEDIUM 1 · LOW 3. Codex 는 이 범위(되돌리기
+어려운 경로 아님)에서 제외이므로 같은 모델 계열의 Claude 쪽 폴백 레인이고, 그래서 **잠정**이다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| MEDIUM | 「관측을 소비하지 않으므로 **다음 패스가 다시 읽는다**」가 `kis_quote` 에서 **거짓** — 그 어댑터는 `after_as_of_ms` 를 무시하고 `_last_content_digest` 를 poll 안에서 커밋하므로(`transport/kis_quote/adapter.py:385-388`), 소비되지 않은 관측이 **버려진다**. 순서 변경이 만든 새 결함 | **문구 한정**(4곳) + **고정 테스트 추가**. 어댑터 코드는 **손대지 않았다** — #810 범위 (`7ea6433b`) |
+| LOW-1 | 성공 경로가 `now_ms` 를 훅 **뒤**로 고정하지 않는다 — 회귀 테스트가 `now_ms` 를 위로 올려도 green | 회귀 테스트에 `_last_tick_wall_clock_ms` 단언 추가 + **세션 경계 행동 테스트 신규**. 뮤테이션 red 확인 (`04a23a2b`) |
+| LOW-2 | 「항상 STALE」이 **아무도 강제하지 않는 간격 하한**에 의존한다 | 6곳 문구 한정 + 테스트 개명 (`116c5321`) |
+| LOW-3 | 시간 미신뢰 시 `kis_quote` poll 이 **터진다** — 순서 변경으로 도달 가능해졌다 | **#810 노트로 이관 · 코드 변경 없음**(아래 근거) |
+
+**MEDIUM 의 실체.** `SKIPPED_TIME_NOT_EVALUATED` 가 보장하는 것은 **소비하지 않는 것**뿐이고,
+「다음 패스가 다시 본다」는 **인입의 성질**이다. `poll` 이 `after_as_of_ms` 의 순수 함수인 인입
+(`ObservationIntake` 의 계약이고 `JsonLinesObservationJournal` 이 그렇다)에서만 성립한다.
+`KisQuoteObservationIntake` 는 그 인자를 `del` 하고 내용 digest 로 dedup 하며 그 digest 를
+**반환 전에** 커밋하므로, 평가 실패로 소비되지 않은 시세는 **가격이 바뀔 때까지** 사라진다 —
+다음 패스는 `SKIPPED_NO_OBSERVATION` 을 본다. 순서 변경 이전에는 평가 실패가 패스 전체(poll 포함)를
+건너뛰었으므로 도달할 수 없던 상태다. 문구를 `marketfeed/ports.py` ·`marketfeed/scheduler.py`
+(모듈 + `tick_once`) · `marketfeed/time_pacer.py` 네 곳에서 한정하고, 실 어댑터 + 가짜 KIS 서버로
+`test_an_unconsumed_quote_is_dropped_by_this_intake_not_re_read_next_pass` 를 추가했다(같은 마크로
+두 번째 poll → `()`, GET 은 실제로 나갔음을 요청 수로 확인, 가격 변경 뒤 세 번째 poll 은 부활).
+#810 이 앵커를 고치면 이 테스트는 **뒤집힌다**.
+
+**LOW-1 의 실체.** 회귀 테스트가 판정하는 `source_age` 는 `RuntimeTimeProjection` 이 resolve 시점에
+**자기 `wall_clock_now()`** 로 계산한다 — 그 지점은 어떤 순서에서도 훅 뒤다. 패스 자신의 `now_ms`
+(스냅샷 발행 + 다음 틱 간격)는 **별개의 판독**이고 호출 밖으로 남는 유일한 사본이
+`_last_tick_wall_clock_ms` 다. 실측: `now_ms`/`session_context` 를 poll 위로 올려도 그 테스트는
+FRESH 로 green 이었다. 새 행동 테스트는 세션 개장을 패스 시작 판독 +1 ms 에 두고(§5 의 08:45 경계),
+실 `SessionFactsOwner` 와 같은 모양(현재 판독으로 답하는 더블, `calendar/owner.py:269-277`)으로
+TICKED 를 주장한다.
+
+| 뮤테이션 (`now_ms` + `session_context` 를 poll 위로 · 훅은 뒤에 유지) | red |
+|---|---|
+| `test_an_observation_appended_since_the_last_evaluation_reads_fresh_not_conflicted` | `_last_tick_wall_clock_ms` 가 평가 **전** 판독(`+500` 없음) |
+| `test_a_session_that_opens_during_the_pass_is_seen_by_that_pass_not_the_next` | `SKIPPED_SESSION_CLOSED` · 이벤트 0 |
+| `test_tick_once_reports_time_not_evaluated_after_polling_and_consumes_nothing` | 기존 순서 테스트 |
+
+적용 → red 확인 → **원복**했다.
+
+**LOW-3 근거 — #810 으로 넘긴 이유.** 지적 자체는 맞다. `wall_clock_now()` 는 `HealthState`
+가 `TRUSTED` 가 아니면 `None` 이고(`time/service.py:697-711`), `KisQuoteObservationIntake.poll` 은
+그때 `KisQuoteWallClockUntrusted` 를 **던진다**. 순서 변경 전에는 `run_forever` 가 `before_pass()`
+False 에서 `tick_once()` 자체를 부르지 않았으므로 그 raise 에 닿지 않았고, 지금은 poll 이 먼저라 닿는다.
+그럼에도 이 PR 에서 코드를 바꾸지 않는다:
+
+1. 그 raise 는 어댑터가 **의도적으로 정한 거부**다(시간을 꾸며내거나 「새 게 없다」로 위장하지
+   않는다 — 모듈 독스트링). 이 PR 이 만든 것이 아니라 도달 경로가 생긴 것이다.
+2. paper 는 `intake_kind: journal` 로 `_VALUE_PINS` 에 핀돼 있고 `JsonLinesObservationJournal.poll`
+   은 시계를 아예 읽지 않는다 — 배포된 경로에는 이 raise 가 없다.
+3. 올바른 수정은 poll 안에서 `wall_clock_now()` 에 의존하는 것을 없애는 것이고, 그것이 정확히
+   #810 의 receipt-anchored 재설계다(§2.4). 여기서 `try/except` 를 두르면 **#810 이 지울 코드**를
+   더하는 것이고, 미신뢰 상태를 조용히 삼키는 쪽으로 기울 위험이 있다.
+
+→ #810 에 노트로 남기고, 이 PR 에서는 회귀로 취급하지 않는다.
+
+**디제스트.** 이 라운드가 런타임 `*.py`(`marketfeed/{ports,scheduler,time_pacer}.py` ·
+`compose/_marketfeed_wiring.py` · `transport/kis_quote/adapter.py` 독스트링)를 건드리므로
+`expected_code_digest` 를 다시 도출했다(§7.5 의 10차에 이은 **11차**).
+
+```text
+DIGEST_PLACEHOLDER
+```
