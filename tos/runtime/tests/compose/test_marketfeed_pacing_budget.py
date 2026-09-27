@@ -234,9 +234,11 @@ def test_kis_quote_is_not_subject_to_the_pacing_guard(
     ⚠ Admitted by this guard is NOT "fresh". Since the 2026-09-27 read-order change (plan
     ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4, issue #809) that
     adapter's ``as_of_ms`` is the PREVIOUS pass's cached reading, so its ``source_age`` is
-    ≈ the pass spacing and every observation reads STALE until #810 — pinned explicitly by
+    ≈ the pass spacing and every observation reads STALE until #810 — at the ≥ 1000 ms
+    spacing the 모의 quote RATE LIMIT admits, which this loader does NOT enforce (it accepts
+    a shorter value here, and a shorter one could read FRESH). Pinned explicitly by
     ``tests/transport/kis_quote/test_adapter.py``'s own
-    ``test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_stale``,
+    ``test_the_previous_pass_stamp_exceeds_the_budget_at_every_admissible_spacing``,
     not left implicit here."""
     _write_paper_shaped_time_yaml(config_dir)
     time_config = load_time_config(config_dir / "time.yaml")

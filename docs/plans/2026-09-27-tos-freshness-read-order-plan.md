@@ -188,11 +188,19 @@
 ### 7.4 `kis_quote` 전이 — 숨기지 않고 고정했다
 
 수정 뒤 이 인입의 `as_of` 는 **직전 패스**의 캐시 판독값이므로 `source_age ≈ 패스 간격`이다.
-모의 시세 한도(1.0 rps clean · 프로브 P-13)가 강제하는 최소 간격 1000 ms 는 승인 예산
-1000 − 4×50 = 800 ms 를 넘으므로 **허용 가능한 어떤 간격에서도 FRESH 가 아니다**. 즉
-fail-open(항상 0)에서 fail-closed(항상 STALE)로 바뀐다 — 운영자 처분 §6.1-2 로 수용된 전이다.
+모의 시세 한도(1.0 rps clean · 프로브 P-13)가 실질 하한으로 두는 간격 1000 ms 는 승인 예산
+1000 − 4×50 = 800 ms 를 넘으므로 **브로커가 허용하는 어떤 간격에서도 FRESH 가 아니다**. 즉
+fail-open(항상 0)에서 fail-closed(그 간격대에서 STALE)로 바뀐다 — 운영자 처분 §6.1-2 로 수용된
+전이다.
+
+> ⚠ **그 1000 ms 하한은 설정이 강제하지 않는다**(§7.8 LOW-2). `kis_quote` 에 더 짧은
+> `poll_interval_ms` 를 적는 배포를 거부하는 로더 코드는 없고, 그때는 `source_age` 가 800 ms
+> 예산 안에 들어와 **FRESH 로 읽힐 수도 있다**(대신 브로커가 스로틀한다). 그래서 「항상 STALE」
+> 은 **허용 가능한 간격에서의 산술**이지 코드가 보장하는 불변식이 아니다.
+
 테스트(`tos/runtime/tests/transport/kis_quote/test_adapter.py`
-`test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_stale`)는 실
+`test_the_previous_pass_stamp_exceeds_the_budget_at_every_admissible_spacing` — 이름은 §7.8 에서
+「스케줄러 순서」가 아니라 **허용 간격에서의 산술**을 고정한다는 뜻으로 개명했다)는 실
 어댑터를 가짜 KIS 서버에 물려 stamp 가 poll 이전 판독값임을 확인하고, 배포
 `config/tos_runtime/paper/time.yaml` 에서 읽은 승인 한계로 커널 `freshness_verdict` 가 STALE
 임을 판정한다. 숫자를 테스트에 다시 적지 않는다(가드가 자기가 지키는 값의 사본을 읽으면 안

@@ -66,15 +66,17 @@ the phase term did not apply (fail-open: the adapter's real HTTP round trip was 
 measured at all). Now the pass evaluates AFTER the intake read (plan
 ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4; issue #809), so the cached
 value the adapter stamps is the PREVIOUS pass's reading and ``source_age`` comes out ≈ the
-pass spacing — which at the ≥ 1000 ms spacing the 모의 quote rate limit forces is past the
-800 ms budget on EVERY observation. So this intake is **always STALE until #810**
+pass spacing — which **at a pass spacing of 1000 ms or more** is past the 800 ms budget on
+EVERY observation. So this intake is **STALE at every admissible spacing until #810**
 (fail-closed conservative over-estimate, pinned by
-``tests/compose/test_marketfeed_pacing_budget.py``'s own transition test). Paper pins
-``intake_kind: journal``, so nothing is deployed on that path; #810 is where the anchor is
-fixed — and the post-read evaluation is exactly the "reading taken after the response" that
-adapter's own docstring always wanted. Separately, the same key doubles as that intake's
-HTTP request spacing, where the 모의 quote limit (1–2 rps, probe P-13) forbids shrinking
-below the budget.
+``tests/transport/kis_quote/test_adapter.py``'s own transition test). ⚠ That 1000 ms floor
+is the 모의 quote rate limit (1.0 rps clean, probe P-13), **not a bound this loader
+enforces**: nothing here refuses a shorter ``poll_interval_ms`` on this intake, and at a
+shorter spacing ``source_age`` can fit the budget and read FRESH (the broker throttles
+instead). "Always STALE" is the arithmetic at the spacings the broker admits, not an
+invariant this code holds. Paper pins ``intake_kind: journal``, so nothing is deployed on
+that path; #810 is where the anchor is fixed — and the post-read evaluation is exactly the
+"reading taken after the response" that adapter's own docstring always wanted.
 
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``

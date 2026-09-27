@@ -1,7 +1,8 @@
 """``KisQuoteObservationIntake`` tests — receipt-time stamping, phantom-churn dedup, token
-lifecycle sharing, broker rejection/malformed-response refusals, negative-greps, and the
-#809 read-order transition that makes this intake always STALE until #810 (TOS tick-source
-wave, W2 lane)."""
+lifecycle sharing, broker rejection/malformed-response refusals, negative-greps, and the two
+#809 read-order consequences this intake carries until #810: its stamp reads STALE at every
+spacing the 모의 quote rate limit admits, and an unconsumed quote is dropped rather than
+re-served (TOS tick-source wave, W2 lane)."""
 
 from __future__ import annotations
 
@@ -520,13 +521,16 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
 
 # ---------------------------------------------------------------------------
 # the #809 read-order transition: fail-open (always source_age 0) -> fail-closed
-# (always STALE), until #810 anchors `as_of` on a reading taken after the response
+# (STALE at every spacing the 모의 quote rate limit admits), plus the re-read gap
+# — both until #810 anchors `as_of` on a reading taken after the response
 # ---------------------------------------------------------------------------
 
 #: The smallest request spacing the 모의 quote rate limit allows — 1.0 rps clean / 2.0 rps
 #: throttled (probe P-13,
 #: ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1840-1846``), which is why a
-#: ``kis_quote`` deployment cannot shrink ``poll_interval_ms`` the way the journal one did.
+#: ``kis_quote`` deployment cannot USEFULLY shrink ``poll_interval_ms`` the way the journal one
+#: did. ⚠ A BROKER floor, not a configured or enforced one: nothing in the loader refuses a
+#: shorter value, so the claim below is scoped to the spacings this limit admits.
 _MIN_QUOTE_SPACING_MS = 1_000
 
 #: The APPROVED paper bounds, read from the deployed file rather than re-typed here — the claim
@@ -543,10 +547,12 @@ _PAPER_TIME_YAML = (
 )
 
 
-def test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_stale(
+def test_the_previous_pass_stamp_exceeds_the_budget_at_every_admissible_spacing(
     server: FakeKisServer,
 ) -> None:
-    """Makes the #809 consequence for this intake EXPLICIT rather than leaving it to be
+    """Pins the ARITHMETIC — stamp age against the deployed budget, across the spacings the
+    broker admits — not the scheduler's read order, which ``tests/marketfeed/test_scheduler.py``
+    owns. Makes the #809 consequence for this intake EXPLICIT rather than leaving it to be
     discovered in a rehearsal (plan ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md``
     §2.4; operator disposition §6.1-2 accepted it).
 
@@ -555,11 +561,16 @@ def test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_s
     BEFORE that evaluation runs. So the reading this adapter stamps is the PREVIOUS pass's, and
     by the time the kernel judges the observation the anchor has moved on by one pass spacing:
     ``source_age`` ≈ the spacing, not the 0 the pre-#809 wiring notes claimed. Against the
-    deployed paper bounds the freshness budget is 800 ms, and the 모의 quote rate limit forbids
-    a spacing below 1000 ms — so no admissible spacing is FRESH. That is a fail-OPEN (an
-    unmeasured HTTP round trip read as age 0) becoming a fail-CLOSED conservative
+    deployed paper bounds the freshness budget is 800 ms, and the 모의 quote rate limit puts
+    the smallest usable spacing at 1000 ms — so nothing the broker admits is FRESH. That is a
+    fail-OPEN (an unmeasured HTTP round trip read as age 0) becoming a fail-CLOSED conservative
     over-estimate; #810 is where the anchor is actually fixed. Paper pins ``intake_kind:
     journal``, so nothing is deployed on this path.
+
+    ⚠ The floor is the broker's, not the config's: no loader refuses a shorter
+    ``poll_interval_ms`` here, and below ~800 ms this arithmetic comes out FRESH (the broker
+    throttles instead). So the assertion below is ``budget_ms < _MIN_QUOTE_SPACING_MS`` — every
+    spacing the RATE LIMIT admits — never "this intake can never be fresh".
     """
     _set_token(server)
     _set_quote(server)
