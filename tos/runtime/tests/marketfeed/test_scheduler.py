@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -224,10 +225,10 @@ def _build_scheduler(
     *,
     poll_interval_ms: int,
     before_decide: Callable[[], bool] | None = None,
-    intake: object | None = None,
-    store: object | None = None,
-    time_service: object | None = None,
-    session_owner: object | None = None,
+    intake: Any = None,
+    store: Any = None,
+    time_service: Any = None,
+    session_owner: Any = None,
 ) -> TickScheduler:
     """A real :class:`TickScheduler`, built with the real
     :func:`~tos_runtime.marketfeed.policy.load_critical_input_policy` output (reused from
