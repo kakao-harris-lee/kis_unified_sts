@@ -118,3 +118,84 @@
 1. **`poll_interval_ms` = (가) 400.**
 2. **`journal_pass_allowance_ms: 100` 신설 + `journal` 한정 부팅 거부 가드** — 동의.
 3. **구현은 이 브랜치(PR #808)에서** — 동의.
+
+## 7. 착지 기록 (2026-09-27)
+
+### 7.1 무엇이 들어갔나
+
+| # | 커밋 | 내용 |
+|---|---|---|
+| T-1 | `010ccecd` | `compose/_marketfeed_wiring.py` — 새 키 `journal_pass_allowance_ms`(`journal` 필수·양수 · 다른 인입에서는 있으면 거부, `journal_path` 와 같은 XOR 규칙) + 헬퍼 `_load_config_within_freshness_budget`. 예시 파일 `null` · 예시 필수키 레지스트리 · 새 테스트 모듈 `test_marketfeed_pacing_budget.py`(26 케이스) |
+| T-2 | `548a5bc6` | paper `poll_interval_ms` 1000 → **400** · `journal_pass_allowance_ms: 100` · `_VALUE_PINS` 2행 · 승인값 교차검사 테스트 2건 |
+| T-3 | — | 리허설 재측정(§7.3) |
+| T-4 | 아래 | 런북 §4·§5 ④ · 이 기록 · `expected_code_digest` 재도출 |
+
+가드는 `build_tick_scheduler` 가 부르는 헬퍼 하나다(§2.3 대로). 그 함수는 정확히 **100 줄**이라
+(`function_max_lines: 100`) 한 줄도 늘릴 수 없어서, 로드 호출을 헬퍼 호출로 **1:1 교체**하고
+`store = SqliteSnapshotStore(...)` 지역변수를 호출 인자로 인라인해 docstring 증가분을 상쇄했다 —
+**크기 예산 예외 등재는 하지 않았다**(`--check` 0 위반 유지).
+
+Σ지연은 `time_projection._DELAY_BOUND_FIELDS` 를 그대로 순회한다 — 두 번째 사본 없음(§2.3).
+
+### 7.2 뮤테이션 (§2.3 입력 전부 · 각각 원복함)
+
+| 뮤테이션 | red 로 바뀐 테스트 |
+|---|---|
+| 가드 제거(`intake_kind` 분기를 무조건 return 으로) | **9건** — 1000+100 · 701+100 · 지연키 4종 × 650+100 · 메시지 · 부팅 거부 · 승인값 1000 거부 |
+| `>` → `>=` | **1건** — 700+100 경계 허용(등호는 FRESH) |
+| Σ 에서 항 하나 누락(`_DELAY_BOUND_FIELDS[1:]`) | **6건** — 701+100 · 지연키 4종 × 650+100 · 메시지 |
+| `kis_quote` 에도 가드 적용(분기 제거 + `allowance or 0`) | **2건** — `kis_quote` 로더·부팅 비적용 테스트 |
+
+### 7.3 실측 — 같은 진단, 수정 후 (호스트 로컬 · 2026-09-27 14:50/14:52 KST · 실주문 0 · 네트워크 없음)
+
+`compose_paper_runtime`(세션 시계만 2026-09-28 10:00 KST 주입) + 실 `run_forever` 90 s +
+5 s 마다 관측 1건(`as_of = now − 200 ms`). 렌더는 부팅 직전(`source_revision 548a5bc6`).
+
+| | **수정 전** (main `f6348b19`, poll 1000) | **수정 후 1회차** (poll 400) | **수정 후 2회차** |
+|---|---|---|---|
+| 소비(`EVENT_CONSUMED`) | 18 | 18 | 19 |
+| 드라이버가 추가한 관측 중 **STALE** | **7 / 18 (39 %)** | **0 / 17** | **0 / 18** |
+| `DECISION_WITHHELD` | 7 (전부 STALE) | 2 (STALE 1 · CONFLICTED 1) | 1 (STALE 1) |
+| 그 STALE 1건의 정체 | — | **렌더 부팅 증명 관측**(소비 #1) — §3 대로 고칠 수 없는 것 | 같음 |
+| `TIME_HEALTH_SNAPSHOT` | — | 216 / 90.3 s = **2.39 /s** | 220 / 90.6 s = **2.43 /s** |
+| 결정 결과 | NoAction 5 · Proposal 6 | NoAction 9 · Proposal 7 | NoAction 9 · Proposal 9 |
+| `FLOW_HALTED` | — | 7 | 9 |
+| data dir | — | 2.39 MB / 90 s | 2.49 MB / 90 s |
+
+- **목표(STALE 0/N) 달성.** 남은 STALE 1건은 두 회차 모두 **첫 관측 = 렌더가 만든 부팅 증명
+  관측**이다(소비 순서로 확인). 렌더와 부팅 사이 수 분이 이미 예산을 넘으므로 §3 의 「고칠 수
+  없다」가 그대로다 — 런북 §5 ④ 에 적었다.
+- `FLOW_HALTED` 는 전건 `STAGE_DENIED | the venue / broker quantity constraint is incomplete`
+  — venue `max_quantity` 가 null 인 **의도된 fail-closed** 로, 수정 전과 같은 사유다.
+- **1회차의 `CONFLICTED` 1건(소비 #17)은 새 관측이고, 이 예산의 반대편 끝이다.**
+  `source_age = wall_clock_now() − as_of` 가 **음수**이고 `MAX_future_timestamp_tolerance_ms`
+  (50)를 넘으면 CONFLICTED 다(`tos/src/tos/time/predicates.py` `freshness_verdict`). 즉 패스의
+  시간 평가와 그 패스의 저널 판독 사이가 200 ms 넘게 벌어지면, 200 ms 전으로 찍힌 관측이
+  **미래로** 보인다. 2회차에서는 재현되지 않았다(추가 관측 35건 중 1건). 이 측정 하네스는
+  수집기를 **같은 프로세스의 스레드**로 돌리므로(실 배포는 별도 프로세스) 하네스 쪽 경합일
+  수 있다 — 단정하지 않는다. 별도 관측 항목으로 남긴다.
+- 증거량: 장중 7 h 환산 ≈ 61 k `TIME_HEALTH_SNAPSHOT` 행 — §2.2 표의 추정(≈61 k)과 일치한다.
+
+### 7.4 `expected_code_digest` 재도출
+
+런타임 소스(`compose/_marketfeed_wiring.py`)가 바뀌었으므로 재도출했다.
+
+```text
+48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52   (이전 · #806 머지 · main f6348b19)
+045ecf5aace6140aed5d1b51ccc08f35668229e0958c459a93c941e29fe4159f   (현재)
+```
+
+`print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. `config/tos_runtime/paper/release.yaml`
+(값 + 이력 주석)과 `test_deploy_approved_values.py::_VALUE_PINS` **두 곳 모두** 갱신.
+`expected_dependency_set_digest` 는 **바꾸지 않았다** — 같은 배포 호스트 루트 `.venv` 에서 찍은
+출력이 커밋된 값과 바이트 동일했다.
+
+### 7.5 게이트
+
+방화벽 PASS · `lint-imports` 3 contracts kept · completion GREEN(위반 0) · spec PASS ·
+contract PASS + self-test PASS(뮤테이션 145종) · citation PASS(8) · named-TBD guard PASS(46 파일) ·
+size budget PASS(위반 0 · 등재 39) · black/ruff 통과 · mypy 는 런타임 `src` 27건 / `tests` 116건으로
+**main `f6348b19` 와 같은 수**(이 호스트 `.venv` 의 기존 baseline, 신규 0). 테스트: `tos/tests`
+9601 passed · `tos/runtime/tests` **3119 passed**(신규 26 + 승인값 2 포함) · `tests/tools/test_tos_*`
++ `tests/tos_l3` + `tests/unit/scripts/test_render_paper_config.py` 838 passed(기존 로컬 실패
+`test_u17_verify.py` 3건은 `yq` 미설치 — CI 는 `--ignore`).
