@@ -1,6 +1,8 @@
 """``KisQuoteObservationIntake`` tests — receipt-time stamping, phantom-churn dedup, token
-lifecycle sharing, broker rejection/malformed-response refusals, and negative-greps (TOS
-tick-source wave, W2 lane)."""
+lifecycle sharing, broker rejection/malformed-response refusals, negative-greps, and the two
+#809 read-order consequences this intake carries until #810: its stamp reads STALE at every
+spacing the 모의 quote rate limit admits, and an unconsumed quote is dropped rather than
+re-served (TOS tick-source wave, W2 lane)."""
 
 from __future__ import annotations
 
@@ -9,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tos.time import FreshnessVerdict, freshness_verdict
+from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
+from tos_runtime.time.config import load_time_config
 from tos_runtime.transport.kis_quote.adapter import (
     KisQuoteAdapterError,
     KisQuoteMalformedResponse,
@@ -512,3 +517,126 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
             instance_mock_rest_base="https://openapivts.koreainvestment.com:29443",
             instance_real_rest_base="https://openapi.koreainvestment.com:9443",
         )
+
+
+# ---------------------------------------------------------------------------
+# the #809 read-order transition: fail-open (always source_age 0) -> fail-closed
+# (STALE at every spacing the 모의 quote rate limit admits), plus the re-read gap
+# — both until #810 anchors `as_of` on a reading taken after the response
+# ---------------------------------------------------------------------------
+
+#: The smallest request spacing the 모의 quote rate limit allows — 1.0 rps clean / 2.0 rps
+#: throttled (probe P-13,
+#: ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1840-1846``), which is why a
+#: ``kis_quote`` deployment cannot USEFULLY shrink ``poll_interval_ms`` the way the journal one
+#: did. ⚠ A BROKER floor, not a configured or enforced one: nothing in the loader refuses a
+#: shorter value, so the claim below is scoped to the spacings this limit admits.
+_MIN_QUOTE_SPACING_MS = 1_000
+
+#: The APPROVED paper bounds, read from the deployed file rather than re-typed here — the claim
+#: under test is about THOSE numbers, and a guard that reads a second copy of what it guards is
+#: the repeated defect shape this repo already records. parents: [0]=kis_quote, [1]=transport,
+#: [2]=tests, [3]=runtime, [4]=tos, [5]=repo root (the same walk
+#: ``tests/compose/test_deploy_approved_values.py`` does).
+_PAPER_TIME_YAML = (
+    Path(__file__).resolve().parents[5]
+    / "config"
+    / "tos_runtime"
+    / "paper"
+    / "time.yaml"
+)
+
+
+def test_the_previous_pass_stamp_exceeds_the_budget_at_every_admissible_spacing(
+    server: FakeKisServer,
+) -> None:
+    """Pins the ARITHMETIC — stamp age against the deployed budget, across the spacings the
+    broker admits — not the scheduler's read order, which ``tests/marketfeed/test_scheduler.py``
+    owns. Makes the #809 consequence for this intake EXPLICIT rather than leaving it to be
+    discovered in a rehearsal (plan ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md``
+    §2.4; operator disposition §6.1-2 accepted it).
+
+    ``wall_clock_now()`` returns the reading the LAST ``evaluate()`` cached, never a fresh one
+    (``time/service.py:697-711``), and since #809 ``TickScheduler.tick_once`` polls the intake
+    BEFORE that evaluation runs. So the reading this adapter stamps is the PREVIOUS pass's, and
+    by the time the kernel judges the observation the anchor has moved on by one pass spacing:
+    ``source_age`` ≈ the spacing, not the 0 the pre-#809 wiring notes claimed. Against the
+    deployed paper bounds the freshness budget is 800 ms, and the 모의 quote rate limit puts
+    the smallest usable spacing at 1000 ms — so nothing the broker admits is FRESH. That is a
+    fail-OPEN (an unmeasured HTTP round trip read as age 0) becoming a fail-CLOSED conservative
+    over-estimate; #810 is where the anchor is actually fixed. Paper pins ``intake_kind:
+    journal``, so nothing is deployed on this path.
+
+    ⚠ The floor is the broker's, not the config's: no loader refuses a shorter
+    ``poll_interval_ms`` here, and below ~800 ms this arithmetic comes out FRESH (the broker
+    throttles instead). So the assertion below is ``budget_ms < _MIN_QUOTE_SPACING_MS`` — every
+    spacing the RATE LIMIT admits — never "this intake can never be fresh".
+    """
+    _set_token(server)
+    _set_quote(server)
+    intake, wall_clock, _, _ = _intake(server)
+
+    # The pass reads the intake first (#809), so this stamp is the previous evaluation's reading.
+    (observation,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+    assert observation.as_of_ms == wall_clock.wall_clock_now()
+
+    # ... and only THEN does this pass's own evaluation move the anchor on.
+    wall_clock.advance(_MIN_QUOTE_SPACING_MS)
+    this_pass_reading = wall_clock.wall_clock_now()
+    assert this_pass_reading is not None
+    source_age = this_pass_reading - observation.as_of_ms
+    assert source_age == _MIN_QUOTE_SPACING_MS  # not 0 — that was the pre-#809 claim
+
+    config = load_time_config(_PAPER_TIME_YAML)
+    delay_bounds = tuple(
+        getattr(config, field_name) for field_name in _DELAY_BOUND_FIELDS
+    )
+    budget_ms = config.max_time_conservative_freshness_age_ms - sum(delay_bounds)
+    # The bound, not just this one spacing: nothing the rate limit permits fits the budget.
+    assert budget_ms < _MIN_QUOTE_SPACING_MS
+    assert (
+        freshness_verdict(
+            source_age=source_age,
+            delay_bounds=delay_bounds,
+            max_age_bound=config.max_time_conservative_freshness_age_ms,
+            future_tolerance=config.max_future_timestamp_tolerance_ms,
+        )
+        is FreshnessVerdict.STALE
+    )
+
+
+def test_an_unconsumed_quote_is_dropped_by_this_intake_not_re_read_next_pass(
+    server: FakeKisServer,
+) -> None:
+    """The gap in the #809 re-read guarantee, for THIS intake — tracked in #810.
+
+    :attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED` means the
+    scheduler performed no ``store.put``, so ``latest_as_of`` did not advance and the next pass
+    asks ``poll`` from the SAME mark. That buys a re-read only from an intake whose ``poll`` is a
+    pure function of ``after_as_of_ms``. This one is not: it ignores the argument entirely and
+    commits ``_last_content_digest`` BEFORE returning, so the observation the scheduler declined
+    to consume is dropped here — the next pass sees "nothing new" until the PRICE changes, and
+    ``SKIPPED_NO_OBSERVATION`` is what the scheduler gets.
+
+    Pinned rather than left implicit because the reorder is what made it reachable (before #809
+    a failed evaluation skipped the whole pass, poll included). #810 is where the intake is
+    fixed; when it is, this test inverts — the second poll returns the observation again.
+    """
+    _set_token(server)
+    _set_quote(server)
+    intake, _, _, _ = _intake(server)
+
+    # Pass 1: polled, then the pass's time evaluation failed — nothing consumed.
+    (first,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+
+    # Pass 2 asks from the SAME unadvanced mark, and the quote has not moved.
+    second = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+
+    assert second == ()  # NOT (first,) — #810
+    # It was dropped by the dedup, not withheld by a skipped request: the GET really happened.
+    assert len(server.requests_for(QUOTE_ROUTE)) == 2
+
+    # And it stays dropped until the price moves, which is the only thing that revives it.
+    _set_quote(server, stck_prpr="71400")
+    (third,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+    assert third.raw_event_id != first.raw_event_id

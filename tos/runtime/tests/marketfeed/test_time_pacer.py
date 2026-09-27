@@ -41,7 +41,7 @@ class _Harness:
 def test_open_session_evaluates_before_every_pass() -> None:
     h = _Harness(is_open=True)
     for _ in range(5):
-        assert h.pacer.before_pass() is True
+        assert h.pacer.before_decide() is True
         h.advance_ms(1_000)
     assert h.evaluations == 5
 
@@ -50,11 +50,11 @@ def test_closed_session_evaluates_once_per_interval() -> None:
     """Mutation: drop the closed-interval gate -> 60 evaluations -> red."""
     h = _Harness(is_open=False)
     for _ in range(60):  # 60 one-second passes
-        assert h.pacer.before_pass() is True
+        assert h.pacer.before_decide() is True
         h.advance_ms(1_000)
     # First pass (never evaluated) plus the pass at t=60 s is outside this window.
     assert h.evaluations == 1
-    assert h.pacer.before_pass() is True  # t = 60 s
+    assert h.pacer.before_decide() is True  # t = 60 s
     assert h.evaluations == 2
 
 
@@ -63,18 +63,18 @@ def test_closed_to_open_is_seen_within_one_closed_interval() -> None:
     late — and from then on every pass evaluates. Mutation: never evaluate while closed ->
     the opening is never seen -> red."""
     h = _Harness(is_open=False, closed_interval_ms=60_000)
-    h.pacer.before_pass()  # t = 0, evaluated, closed
+    h.pacer.before_decide()  # t = 0, evaluated, closed
     # The venue opens at t = 30 s, but the session judgement reads the last evaluation, so the
     # harness keeps answering "closed" until an evaluation runs.
     h.advance_ms(30_000)
-    h.pacer.before_pass()
+    h.pacer.before_decide()
     assert h.evaluations == 1
     h.advance_ms(30_000)  # t = 60 s — due
     h.is_open = True  # what the fresh evaluation now reports
-    h.pacer.before_pass()
+    h.pacer.before_decide()
     assert h.evaluations == 2
     h.advance_ms(1_000)
-    h.pacer.before_pass()
+    h.pacer.before_decide()
     assert h.evaluations == 3  # open: every pass
 
 
@@ -85,10 +85,10 @@ def test_failed_evaluation_skips_the_tick_and_retries_next_pass(
     red."""
     h = _Harness(is_open=True)
     h.fail_next = 1
-    assert h.pacer.before_pass() is False
+    assert h.pacer.before_decide() is False
     assert "time evaluation failed" in capsys.readouterr().err
     h.advance_ms(1_000)
-    assert h.pacer.before_pass() is True
+    assert h.pacer.before_decide() is True
     assert h.evaluations == 1
 
 
@@ -96,9 +96,9 @@ def test_failed_evaluation_while_closed_retries_on_the_next_pass() -> None:
     """A failure does not restart the closed interval — the next pass is still due."""
     h = _Harness(is_open=False)
     h.fail_next = 1
-    assert h.pacer.before_pass() is False
+    assert h.pacer.before_decide() is False
     h.advance_ms(1_000)
-    assert h.pacer.before_pass() is True
+    assert h.pacer.before_decide() is True
     assert h.evaluations == 1
 
 
@@ -120,6 +120,6 @@ def test_unknown_session_is_paced_like_open_not_closed() -> None:
     pass. Mutation: treat ``None`` as closed -> 1 evaluation -> red."""
     h = _Harness(is_open=None)
     for _ in range(5):
-        assert h.pacer.before_pass() is True
+        assert h.pacer.before_decide() is True
         h.advance_ms(1_000)
     assert h.evaluations == 5

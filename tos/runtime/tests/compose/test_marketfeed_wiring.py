@@ -545,7 +545,7 @@ def test_time_pacer_backs_off_only_when_the_session_is_known_closed(
         evaluations += 1
 
     now = {"ms": 0}
-    before_pass = _time_pacer_pass(
+    before_decide = _time_pacer_pass(
         SimpleNamespace(  # type: ignore[arg-type]
             instrument_class="krx-index-futures",
             time_evaluate_closed_interval_ms=60_000,
@@ -555,6 +555,6 @@ def test_time_pacer_backs_off_only_when_the_session_is_known_closed(
         SimpleNamespace(now_ms=lambda: now["ms"]),
     )
     for _ in range(5):
-        assert before_pass() is True
+        assert before_decide() is True
         now["ms"] += 1_000
     assert evaluations == expected_evaluations

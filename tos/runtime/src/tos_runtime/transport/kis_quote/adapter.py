@@ -72,6 +72,31 @@ returns ``None`` when Trustworthy Time is not yet ``TRUSTED`` — this adapter R
 new", because those are different facts: "the clock is not trusted yet" is an operational fault,
 not "the market has not moved".
 
+⚠ **That paragraph is true of the CALL ORDER and false of the VALUE — issue #810.**
+``wall_clock_now()`` hands back the reading the last ``evaluate()`` cached, never a fresh one, so
+reading it after the response buys nothing: the stamp is whatever that evaluation read. Since
+2026-09-27 the evaluation runs AFTER the scheduler's intake read (plan
+``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4; issue #809), so the cached value
+this adapter stamps is the PREVIOUS pass's reading, ``source_age`` comes out ≈ the pass spacing,
+and **at a pass spacing of 1000 ms or more** every observation from this intake reads **STALE**.
+⚠ That floor is the 모의 quote rate limit (1.0 rps clean, probe P-13), **not a spacing anything
+enforces** — no loader refuses a shorter ``poll_interval_ms`` on this intake, and at a shorter one
+``source_age`` can fit the 800 ms budget and read FRESH (the broker throttles instead). So the
+claim is arithmetic at the spacings the broker admits, not an invariant of this module. Accepted
+deliberately (operator disposition 2026-09-27 §6.1-2) rather than discovered later: paper pins
+``intake_kind: journal``, so nothing is deployed on this path, and the transition is pinned by
+this module's own test module (``tests/transport/kis_quote/test_adapter.py``). #810 is where the
+anchor is actually fixed — and the post-read evaluation is exactly the "reading taken after the
+response" this paragraph wanted. Nothing here is changed for it.
+
+⚠ **A second consequence of the reorder, also #810's to fix.** ``poll`` ignores
+``after_as_of_ms`` and commits its content digest before returning, so an observation the
+scheduler declines to consume (``TickOutcome.SKIPPED_TIME_NOT_EVALUATED`` — no ``store.put``,
+``latest_as_of`` unmoved) is NOT re-served on the next pass: it is dropped until the price
+changes. The scheduler's "the next pass re-reads it" holds for an intake whose ``poll`` is a
+pure function of ``after_as_of_ms``, which this one is not (``marketfeed/ports.py``'s own
+``SKIPPED_TIME_NOT_EVALUATED`` docstring). Pinned by that same test module.
+
 **Two clocks, two jobs (deliberate, do not merge).** This adapter is injected with BOTH a
 :class:`~tos_runtime.time.sources.MonotonicSource` and a wall-clock reader, and they are never
 substituted for each other. The shared :class:`~tos_runtime.transport.kis_mock.token
