@@ -72,6 +72,20 @@ returns ``None`` when Trustworthy Time is not yet ``TRUSTED`` — this adapter R
 new", because those are different facts: "the clock is not trusted yet" is an operational fault,
 not "the market has not moved".
 
+⚠ **That paragraph is true of the CALL ORDER and false of the VALUE — issue #810.**
+``wall_clock_now()`` hands back the reading the last ``evaluate()`` cached, never a fresh one, so
+reading it after the response buys nothing: the stamp is whatever that evaluation read. Since
+2026-09-27 the evaluation runs AFTER the scheduler's intake read (plan
+``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4; issue #809), so the cached value
+this adapter stamps is the PREVIOUS pass's reading, ``source_age`` comes out ≈ the pass spacing,
+and every observation from this intake reads **STALE** at the ≥ 1000 ms spacing the 모의 quote
+rate limit forces. Accepted deliberately (operator disposition 2026-09-27 §6.1-2) rather than
+discovered later: paper pins ``intake_kind: journal``, so nothing is deployed on this path, and
+the transition is pinned by a test
+(``tests/compose/test_marketfeed_pacing_budget.py``). #810 is where the anchor is actually fixed —
+and the post-read evaluation is exactly the "reading taken after the response" this paragraph
+wanted. Nothing here is changed for it.
+
 **Two clocks, two jobs (deliberate, do not merge).** This adapter is injected with BOTH a
 :class:`~tos_runtime.time.sources.MonotonicSource` and a wall-clock reader, and they are never
 substituted for each other. The shared :class:`~tos_runtime.transport.kis_mock.token

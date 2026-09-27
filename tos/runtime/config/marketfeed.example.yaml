@@ -94,14 +94,21 @@ poll_interval_ms: null
 # collector was late". Observing the real pass duration at runtime is a possible
 # follow-up, not something this key provides.
 #
-# `kis_quote` is NOT budgeted this way — that adapter stamps `as_of_ms` from the
-# SAME cached pre-pass time reading the scheduler's own `now_ms` comes from
-# (TrustworthyTimeService.wall_clock_now() returns the snapshot cached by the
-# last evaluate(), not a fresh reading), so its `source_age` is always 0 and the
-# phase term does not apply. That is a property of the shared cache, not a short
-# path: the adapter's real HTTP round trip is never measured (issue #810). Leave
-# this key absent there (and note `poll_interval_ms` doubles as that intake's
-# HTTP request spacing, where the 모의 quote rate limit applies).
+# `kis_quote` is NOT budgeted this way — this share belongs to an upstream
+# journal collector and that intake has no such collector. Leave this key absent
+# there (and note `poll_interval_ms` doubles as that intake's HTTP request
+# spacing, where the 모의 quote rate limit applies).
+#
+# ⚠ Not budgeted is NOT the same as not stale. `kis_quote` stamps `as_of_ms`
+# from TrustworthyTimeService.wall_clock_now(), which returns the snapshot
+# cached by the last evaluate(), never a fresh reading — and since 2026-09-27
+# that evaluation happens AFTER the pass's intake read (issue #809, plan
+# docs/plans/2026-09-27-tos-freshness-read-order-plan.md §2.4). So the value it
+# stamps is the PREVIOUS pass's reading, `source_age` is ≈ the pass spacing, and
+# at the ≥ 1000 ms spacing the 모의 quote rate limit forces, every observation
+# from this intake reads STALE. Until issue #810 anchors `as_of` on the reading
+# taken after the response, this intake is always STALE — accepted deliberately
+# (operator disposition 2026-09-27 §6.1-2); paper pins `intake_kind: journal`.
 
 journal_pass_allowance_ms: null
 

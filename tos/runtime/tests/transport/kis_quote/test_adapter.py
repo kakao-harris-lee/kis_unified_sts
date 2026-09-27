@@ -1,6 +1,7 @@
 """``KisQuoteObservationIntake`` tests — receipt-time stamping, phantom-churn dedup, token
-lifecycle sharing, broker rejection/malformed-response refusals, and negative-greps (TOS
-tick-source wave, W2 lane)."""
+lifecycle sharing, broker rejection/malformed-response refusals, negative-greps, and the
+#809 read-order transition that makes this intake always STALE until #810 (TOS tick-source
+wave, W2 lane)."""
 
 from __future__ import annotations
 
@@ -9,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tos.time import FreshnessVerdict, freshness_verdict
+from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
+from tos_runtime.time.config import load_time_config
 from tos_runtime.transport.kis_quote.adapter import (
     KisQuoteAdapterError,
     KisQuoteMalformedResponse,
@@ -512,3 +516,79 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
             instance_mock_rest_base="https://openapivts.koreainvestment.com:29443",
             instance_real_rest_base="https://openapi.koreainvestment.com:9443",
         )
+
+
+# ---------------------------------------------------------------------------
+# the #809 read-order transition: fail-open (always source_age 0) -> fail-closed
+# (always STALE), until #810 anchors `as_of` on a reading taken after the response
+# ---------------------------------------------------------------------------
+
+#: The smallest request spacing the 모의 quote rate limit allows — 1.0 rps clean / 2.0 rps
+#: throttled (probe P-13,
+#: ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1840-1846``), which is why a
+#: ``kis_quote`` deployment cannot shrink ``poll_interval_ms`` the way the journal one did.
+_MIN_QUOTE_SPACING_MS = 1_000
+
+#: The APPROVED paper bounds, read from the deployed file rather than re-typed here — the claim
+#: under test is about THOSE numbers, and a guard that reads a second copy of what it guards is
+#: the repeated defect shape this repo already records. parents: [0]=kis_quote, [1]=transport,
+#: [2]=tests, [3]=runtime, [4]=tos, [5]=repo root (the same walk
+#: ``tests/compose/test_deploy_approved_values.py`` does).
+_PAPER_TIME_YAML = (
+    Path(__file__).resolve().parents[5]
+    / "config"
+    / "tos_runtime"
+    / "paper"
+    / "time.yaml"
+)
+
+
+def test_the_stamped_as_of_is_a_previous_pass_reading_so_the_observation_reads_stale(
+    server: FakeKisServer,
+) -> None:
+    """Makes the #809 consequence for this intake EXPLICIT rather than leaving it to be
+    discovered in a rehearsal (plan ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md``
+    §2.4; operator disposition §6.1-2 accepted it).
+
+    ``wall_clock_now()`` returns the reading the LAST ``evaluate()`` cached, never a fresh one
+    (``time/service.py:697-711``), and since #809 ``TickScheduler.tick_once`` polls the intake
+    BEFORE that evaluation runs. So the reading this adapter stamps is the PREVIOUS pass's, and
+    by the time the kernel judges the observation the anchor has moved on by one pass spacing:
+    ``source_age`` ≈ the spacing, not the 0 the pre-#809 wiring notes claimed. Against the
+    deployed paper bounds the freshness budget is 800 ms, and the 모의 quote rate limit forbids
+    a spacing below 1000 ms — so no admissible spacing is FRESH. That is a fail-OPEN (an
+    unmeasured HTTP round trip read as age 0) becoming a fail-CLOSED conservative
+    over-estimate; #810 is where the anchor is actually fixed. Paper pins ``intake_kind:
+    journal``, so nothing is deployed on this path.
+    """
+    _set_token(server)
+    _set_quote(server)
+    intake, wall_clock, _, _ = _intake(server)
+
+    # The pass reads the intake first (#809), so this stamp is the previous evaluation's reading.
+    (observation,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+    assert observation.as_of_ms == wall_clock.wall_clock_now()
+
+    # ... and only THEN does this pass's own evaluation move the anchor on.
+    wall_clock.advance(_MIN_QUOTE_SPACING_MS)
+    this_pass_reading = wall_clock.wall_clock_now()
+    assert this_pass_reading is not None
+    source_age = this_pass_reading - observation.as_of_ms
+    assert source_age == _MIN_QUOTE_SPACING_MS  # not 0 — that was the pre-#809 claim
+
+    config = load_time_config(_PAPER_TIME_YAML)
+    delay_bounds = tuple(
+        getattr(config, field_name) for field_name in _DELAY_BOUND_FIELDS
+    )
+    budget_ms = config.max_time_conservative_freshness_age_ms - sum(delay_bounds)
+    # The bound, not just this one spacing: nothing the rate limit permits fits the budget.
+    assert budget_ms < _MIN_QUOTE_SPACING_MS
+    assert (
+        freshness_verdict(
+            source_age=source_age,
+            delay_bounds=delay_bounds,
+            max_age_bound=config.max_time_conservative_freshness_age_ms,
+            future_tolerance=config.max_future_timestamp_tolerance_ms,
+        )
+        is FreshnessVerdict.STALE
+    )
