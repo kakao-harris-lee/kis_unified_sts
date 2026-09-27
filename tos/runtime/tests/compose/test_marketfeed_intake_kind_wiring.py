@@ -69,6 +69,7 @@ def _valid_marketfeed_raw(*, journal_path: Path) -> dict[str, Any]:
         "intake_kind": "journal",
         "journal_path": str(journal_path),
         "poll_interval_ms": 100,
+        "journal_pass_allowance_ms": 100,
         "time_evaluate_closed_interval_ms": 60_000,
         "snapshot_age_bound": 60_000,
         "interval_width": 1_000,
@@ -244,6 +245,8 @@ def test_kis_quote_intake_builds_through_the_full_compose_stack(
     raw = _valid_marketfeed_raw(journal_path=tmp_path / "unused.jsonl")
     raw["intake_kind"] = "kis_quote"
     del raw["journal_path"]
+    # journal-only, same XOR rule as journal_path (plan 2026-09-27 §2.3).
+    del raw["journal_pass_allowance_ms"]
     _write_marketfeed_config_raw(config_dir, raw)
 
     runtime = _compose(
@@ -283,6 +286,8 @@ def test_kis_quote_intake_missing_config_file_refuses_at_wiring_level(
     raw = _valid_marketfeed_raw(journal_path=tmp_path / "unused.jsonl")
     raw["intake_kind"] = "kis_quote"
     del raw["journal_path"]
+    # journal-only, same XOR rule as journal_path (plan 2026-09-27 §2.3).
+    del raw["journal_pass_allowance_ms"]
     _write_marketfeed_config_raw(config_dir, raw)
 
     with pytest.raises(KisQuoteTransportConfigError, match="not found"):
@@ -310,6 +315,8 @@ def test_kis_quote_intake_no_instance_binding_refuses_at_wiring_level(
     raw = _valid_marketfeed_raw(journal_path=tmp_path / "unused.jsonl")
     raw["intake_kind"] = "kis_quote"
     del raw["journal_path"]
+    # journal-only, same XOR rule as journal_path (plan 2026-09-27 §2.3).
+    del raw["journal_pass_allowance_ms"]
     _write_marketfeed_config_raw(config_dir, raw)
 
     with pytest.raises(MarketFeedConfigError, match="instance"):

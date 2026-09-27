@@ -36,6 +36,31 @@ that kind — ``journal_path`` is required (and must be the ONLY intake-shaped f
 up on the file journal because a real transport config was misnamed, nor silently poll a live KIS
 endpoint because an operator forgot to set ``intake_kind`` — both are named-TBD refusals.
 
+**``journal`` pacing must fit inside the conservative freshness budget (plan
+``docs/plans/2026-09-27-tos-poll-interval-freshness-budget-plan.md`` §2, operator disposition
+§6.1 2026-09-27).** With ``intake_kind: journal`` the worst-case age of an observation at the
+moment a pass reads it is ``collector delay + poll_interval_ms + pass duration``, while the
+kernel's own freshness verdict (``tos/src/tos/time/predicates.py`` ``freshness_verdict``)
+admits only ``source_age + sum(delay_bounds) <= MAX_time_conservative_freshness_age_ms``. Those
+two are configured in DIFFERENT files (``marketfeed.yaml`` and ``time.yaml``) and nothing used
+to hold them together: the paper deployment shipped ``poll_interval_ms: 1000`` against a
+1000 ms bound with 200 ms of delay bounds, so every observation that landed just after a pass
+was read STALE — consumed, withheld, and never retried (7 of 18 in the 2026-09-27 rehearsal,
+issue #807). :func:`_load_config_within_freshness_budget` now refuses that combination at boot:
+``poll_interval_ms + journal_pass_allowance_ms`` (a REQUIRED ``journal``-only key naming the
+runtime's own worst-case pass duration) must not exceed
+``MAX_time_conservative_freshness_age_ms - sum(delay_bounds)``, and whatever is left over is
+the upstream collector's headroom, named in the refusal message. The delay-bound sum iterates
+:data:`~tos_runtime.marketfeed.time_projection._DELAY_BOUND_FIELDS` — the SAME tuple the
+projection composes its ``delay_bounds`` from, deliberately imported rather than re-listed,
+because a guard that reads a second copy of the numbers it guards is exactly the failure this
+repo has already hit (the Redis-TTL rule in the root ``CLAUDE.md``: the check and the thing
+checked must read one value). ``kis_quote`` is NOT subject to this guard and must leave
+``journal_pass_allowance_ms`` absent: that adapter stamps ``as_of_ms`` from a FRESH time
+reading taken inside the pass (``transport/kis_quote/adapter.py``), so its observation age
+does not accumulate the poll phase at all, and the same key doubles as its HTTP request
+spacing, where the 모의 quote limit (1–2 rps, probe P-13) forbids shrinking below the budget.
+
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
 resolves for the order transport — resolved independently here (module-local
@@ -90,7 +115,10 @@ from tos_runtime.marketfeed.ports import ObservationIntake
 from tos_runtime.marketfeed.scheduler import TickScheduler
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, SqliteSnapshotStore
 from tos_runtime.marketfeed.time_pacer import TimeEvaluationPacer
-from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
+from tos_runtime.marketfeed.time_projection import (
+    _DELAY_BOUND_FIELDS,
+    RuntimeTimeProjection,
+)
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import MonotonicSource
@@ -168,6 +196,12 @@ class MarketFeedConfig:
     #: (module docstring's "never defaults" note — enforced by
     #: :func:`_require_journal_path_matches_intake_kind`).
     journal_path: Path | None
+    #: The runtime's own worst-case pass duration, in ms — required (positive) iff
+    #: ``intake_kind == "journal"`` and MUST be ``None`` otherwise (module docstring's pacing
+    #: paragraph; enforced by :func:`_resolve_journal_pass_allowance_ms`). Together with
+    #: :attr:`poll_interval_ms` it is the runtime's share of the conservative freshness
+    #: budget, checked at boot by :func:`_load_config_within_freshness_budget`.
+    journal_pass_allowance_ms: int | None
     poll_interval_ms: int
     snapshot_age_bound: int
     interval_width: int
@@ -289,19 +323,74 @@ def _resolve_journal_path(raw: Any, path: Path, *, intake_kind: str) -> Path | N
     return None
 
 
+def _resolve_journal_pass_allowance_ms(
+    raw: Any, path: Path, *, intake_kind: str
+) -> int | None:
+    """Enforce the module docstring's "``journal_pass_allowance_ms`` is required XOR
+    forbidden" rule — the SAME shape :func:`_resolve_journal_path` already applies to the
+    other ``journal``-only key, for the same reason (a key left in the file when an operator
+    switches intake kinds would look load-bearing while being ignored).
+
+    Args:
+        raw: The loaded YAML mapping.
+        path: The config file path (for error messages).
+        intake_kind: The already-validated ``intake_kind`` value.
+
+    Returns:
+        The positive allowance for ``intake_kind: journal``, else ``None``.
+
+    Raises:
+        MarketFeedConfigError: The key is missing/``null`` when ``intake_kind == "journal"``,
+            is not a positive ``int`` (the string ``"TBD"`` and ``""`` are refused by
+            :func:`_require_int`'s own type check — they are not ints; ``0`` and negatives
+            are refused below, because an allowance of zero claims a pass that takes no
+            time, which is the one direction this budget must never move), or is present at
+            all when ``intake_kind != "journal"`` (``kis_quote`` is not budgeted here —
+            module docstring).
+    """
+    present = isinstance(raw, dict) and raw.get("journal_pass_allowance_ms") is not None
+    if intake_kind != "journal":
+        if present:
+            raise MarketFeedConfigError(
+                f"{path}: 'journal_pass_allowance_ms' is set but "
+                f"intake_kind={intake_kind!r} — this key budgets the journal poll phase "
+                "only and is not read for any other intake kind (module docstring), so a "
+                "stray value would look load-bearing while being ignored"
+            )
+        return None
+    if not present:
+        raise MarketFeedConfigError(
+            f"{path}: 'journal_pass_allowance_ms' is missing or still null (named-TBD) — "
+            "required when intake_kind: journal, because the freshness budget cannot be "
+            "checked without the runtime's own worst-case pass duration"
+        )
+    value = _require_int(raw, "journal_pass_allowance_ms", path)
+    if value <= 0:
+        raise MarketFeedConfigError(
+            f"{path}: 'journal_pass_allowance_ms' must be positive (got {value}) — a "
+            "zero or negative allowance asserts a pass that costs no time, which would "
+            "hand the whole budget to poll_interval_ms and re-open the very gap this key "
+            "exists to close"
+        )
+    return value
+
+
 def load_marketfeed_config(path: Path) -> MarketFeedConfig:
     """Load and fail-closed-validate ``marketfeed.yaml`` from ``path`` (module docstring).
 
     Raises:
         MarketFeedConfigError: The file is missing/unreadable/not valid YAML/not a mapping, or
             any required leaf is absent, ``null``, or the wrong type; ``intake_kind`` is not one
-            of :data:`_VALID_INTAKE_KINDS`; or ``journal_path`` disagrees with ``intake_kind``
-            (module docstring).
+            of :data:`_VALID_INTAKE_KINDS`; or ``journal_path``/``journal_pass_allowance_ms``
+            disagrees with ``intake_kind`` (module docstring).
     """
     raw = _load_mapping(path)
     instruments = _require_instruments(raw, path)
     intake_kind = _require_intake_kind(raw, path)
     journal_path = _resolve_journal_path(raw, path, intake_kind=intake_kind)
+    journal_pass_allowance_ms = _resolve_journal_pass_allowance_ms(
+        raw, path, intake_kind=intake_kind
+    )
     str_values = {field: _require_str(raw, field, path) for field in _STR_FIELDS}
     int_values = {field: _require_int(raw, field, path) for field in _INT_FIELDS}
     if int_values["time_evaluate_closed_interval_ms"] <= 0:
@@ -318,11 +407,60 @@ def load_marketfeed_config(path: Path) -> MarketFeedConfig:
         unit=str_values["unit"],
         intake_kind=intake_kind,
         journal_path=journal_path,
+        journal_pass_allowance_ms=journal_pass_allowance_ms,
         poll_interval_ms=int_values["poll_interval_ms"],
         snapshot_age_bound=int_values["snapshot_age_bound"],
         interval_width=int_values["interval_width"],
         time_evaluate_closed_interval_ms=int_values["time_evaluate_closed_interval_ms"],
     )
+
+
+def _load_config_within_freshness_budget(
+    path: Path, time_config: TrustworthyTimeConfig
+) -> MarketFeedConfig:
+    """Load ``marketfeed.yaml`` and, for ``intake_kind: journal``, refuse a pacing that
+    cannot fit inside the conservative freshness budget (module docstring's pacing
+    paragraph). Split out of :func:`build_tick_scheduler` to keep that function inside the
+    100-line function budget (``config/tos_size_budget.yaml``).
+
+    Args:
+        path: The ``marketfeed.yaml`` INSTANCE path.
+        time_config: The SAME fully-valued Trustworthy Time config
+            :class:`~tos_runtime.marketfeed.time_projection.RuntimeTimeProjection` projects
+            with — read here (not copied) so this guard and the verdict it guards can never
+            disagree about the numbers.
+
+    Returns:
+        The loaded config, proven to pace inside the budget when ``intake_kind: journal``.
+
+    Raises:
+        MarketFeedConfigError: Every refusal :func:`load_marketfeed_config` itself raises,
+            plus (``journal`` only) ``poll_interval_ms + journal_pass_allowance_ms``
+            exceeding ``MAX_time_conservative_freshness_age_ms - sum(delay_bounds)``.
+    """
+    config = load_marketfeed_config(path)
+    if config.intake_kind != "journal":
+        return config
+    assert config.journal_pass_allowance_ms is not None  # the loader's own invariant
+    delay_bound_sum: int = sum(
+        getattr(time_config, field_name) for field_name in _DELAY_BOUND_FIELDS
+    )
+    budget_ms = time_config.max_time_conservative_freshness_age_ms - delay_bound_sum
+    runtime_share_ms = config.poll_interval_ms + config.journal_pass_allowance_ms
+    if runtime_share_ms > budget_ms:
+        raise MarketFeedConfigError(
+            f"{path}: intake_kind: journal paces outside the conservative freshness "
+            f"budget — poll_interval_ms={config.poll_interval_ms} + "
+            f"journal_pass_allowance_ms={config.journal_pass_allowance_ms} = "
+            f"{runtime_share_ms} ms, but the budget is "
+            f"MAX_time_conservative_freshness_age_ms="
+            f"{time_config.max_time_conservative_freshness_age_ms} - "
+            f"sum(delay_bounds)={delay_bound_sum} = {budget_ms} ms, which leaves the "
+            f"upstream collector {budget_ms - runtime_share_ms} ms of headroom. An "
+            "observation arriving just after a pass would then be read STALE and dropped "
+            "(consumed, never retried) — refusing to boot"
+        )
+    return config
 
 
 def _time_pacer_pass(
@@ -505,7 +643,8 @@ def build_tick_scheduler(
             :mod:`tos_runtime.compose._migrate_paths` already resolves for ``migrate``).
         scheme: The injected canonicalization scheme.
         time_config: The fully-valued Trustworthy Time config — forwarded to
-            :class:`~tos_runtime.marketfeed.time_projection.RuntimeTimeProjection`.
+            :class:`~tos_runtime.marketfeed.time_projection.RuntimeTimeProjection` and read by
+            :func:`_load_config_within_freshness_budget`'s journal pacing guard.
         time_service: This process's shared trustworthy-time service.
         session_owner: This process's shared session-facts owner.
         driver: This process's shared engine driver — the FINAL post-recovery-barrier value
@@ -520,8 +659,8 @@ def build_tick_scheduler(
         not adopted this wave).
 
     Raises:
-        MarketFeedConfigError: ``marketfeed.yaml`` malformed/incomplete, or ``intake_kind:
-            kis_quote``'s host-seal facts could not be resolved.
+        MarketFeedConfigError: ``marketfeed.yaml`` malformed/incomplete, its ``journal``
+            pacing outside the freshness budget, or ``kis_quote``'s host seal unresolvable.
         tos_runtime.marketfeed.policy.CriticalInputPolicyConfigError: ``critical_input_policy
             .yaml`` missing/malformed/incomplete.
         tos_runtime.transport.kis_quote.config.KisQuoteTransportConfigError: ``intake_kind:
@@ -534,11 +673,10 @@ def build_tick_scheduler(
     config_path = config_dir / MARKETFEED_CONFIG_NAME
     if not config_path.is_file():
         return None
-    config = load_marketfeed_config(config_path)
+    config = _load_config_within_freshness_budget(config_path, time_config)
     policy = load_critical_input_policy(
         config_dir / CRITICAL_INPUT_POLICY_CONFIG_NAME, scheme=scheme
     )
-    store = SqliteSnapshotStore(data_dir / MARKETFEED_FILE_NAME)
     intake = _build_intake(
         config,
         config_dir=config_dir,
@@ -568,7 +706,7 @@ def build_tick_scheduler(
         policy=policy,
         scheme=scheme,
         intake=intake,
-        store=store,
+        store=SqliteSnapshotStore(data_dir / MARKETFEED_FILE_NAME),
         time_projection=time_projection,
         time_service=time_service,
         session_owner=session_owner,
