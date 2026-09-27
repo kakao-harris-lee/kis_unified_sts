@@ -227,9 +227,13 @@ def test_kis_quote_is_not_subject_to_the_pacing_guard(
 ) -> None:
     """Plan §0-3 / §2.3's last row: ``kis_quote`` + ``poll_interval_ms: 1000`` is ADMITTED
     against the very budget that refuses the same number for ``journal``. That adapter
-    stamps ``as_of_ms`` from a fresh in-pass time reading, so its observation age never
-    accumulates the poll phase; and the same key is its HTTP request spacing, which the 모의
-    quote rate limit (1–2 rps, probe P-13) forbids shrinking below 800 ms."""
+    stamps ``as_of_ms`` from the SAME cached pre-pass time reading the scheduler's own
+    ``now_ms`` comes from (``TrustworthyTimeService.wall_clock_now()`` returns the snapshot
+    cached by the last ``evaluate()``, not a fresh reading), so its ``source_age`` is always
+    0 and the phase term does not apply — a property of the shared cache, not a measured
+    short path; the adapter's real HTTP round trip is never measured (issue #810). And the
+    same key is its HTTP request spacing, which the 모의 quote rate limit (1–2 rps, probe
+    P-13) forbids shrinking below 800 ms."""
     _write_paper_shaped_time_yaml(config_dir)
     time_config = load_time_config(config_dir / "time.yaml")
     path = _write_journal_marketfeed(

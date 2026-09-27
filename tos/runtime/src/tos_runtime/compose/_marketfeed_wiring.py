@@ -56,10 +56,16 @@ projection composes its ``delay_bounds`` from, deliberately imported rather than
 because a guard that reads a second copy of the numbers it guards is exactly the failure this
 repo has already hit (the Redis-TTL rule in the root ``CLAUDE.md``: the check and the thing
 checked must read one value). ``kis_quote`` is NOT subject to this guard and must leave
-``journal_pass_allowance_ms`` absent: that adapter stamps ``as_of_ms`` from a FRESH time
-reading taken inside the pass (``transport/kis_quote/adapter.py``), so its observation age
-does not accumulate the poll phase at all, and the same key doubles as its HTTP request
-spacing, where the 모의 quote limit (1–2 rps, probe P-13) forbids shrinking below the budget.
+``journal_pass_allowance_ms`` absent: that adapter stamps ``as_of_ms`` from
+:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now`, which returns the
+snapshot CACHED by the last ``evaluate()`` — the SAME cached pre-pass reading the scheduler's
+own ``now_ms`` comes from — so its ``source_age`` is always 0 and the phase term does not
+apply. That is a property of the shared cache, not evidence of a short path: the adapter's
+real HTTP round trip is never measured at all, and
+``transport/kis_quote/adapter.py``'s own docstring still claims the reading is taken AFTER
+the response. Correcting that adapter, and closing the latency gap behind it, is issue #810
+— not this guard. Separately, the same key doubles as that intake's HTTP request spacing,
+where the 모의 quote limit (1–2 rps, probe P-13) forbids shrinking below the budget.
 
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
@@ -378,6 +384,17 @@ def _resolve_journal_pass_allowance_ms(
 def load_marketfeed_config(path: Path) -> MarketFeedConfig:
     """Load and fail-closed-validate ``marketfeed.yaml`` from ``path`` (module docstring).
 
+    **This function does NOT check the freshness budget.** It validates each key's presence,
+    type and intake-kind agreement, and it will happily return a ``journal`` config whose
+    ``poll_interval_ms + journal_pass_allowance_ms`` exceeds
+    ``MAX_time_conservative_freshness_age_ms - sum(delay_bounds)`` — the combination that
+    made every observation landing just after a pass read STALE (issue #807). The
+    budget-checking entry point is :func:`_load_config_within_freshness_budget`, which is
+    what :func:`build_tick_scheduler` calls. Any NEW caller that builds a scheduler (or
+    anything else that consumes observations under the kernel's freshness verdict) must go
+    through that function, not this one; this one stays public only for callers that merely
+    read the file's values.
+
     Raises:
         MarketFeedConfigError: The file is missing/unreadable/not valid YAML/not a mapping, or
             any required leaf is absent, ``null``, or the wrong type; ``intake_kind`` is not one
@@ -422,6 +439,17 @@ def _load_config_within_freshness_budget(
     cannot fit inside the conservative freshness budget (module docstring's pacing
     paragraph). Split out of :func:`build_tick_scheduler` to keep that function inside the
     100-line function budget (``config/tos_size_budget.yaml``).
+
+    **What this guard does NOT do.** ``journal_pass_allowance_ms`` is an operator-DECLARED
+    bound, not a measured or enforced one: it comes from the 2026-09-27 measurement (worst
+    observed pass 78.6 ms = ``evaluate()`` 12.3 + ``tick_once`` TICKED 66.3, plan §1, rounded
+    up to 100 in the paper config). Nothing at runtime times a pass against it. A pass that
+    actually runs longer than the declared allowance pushes the observation's age past the
+    conservative freshness bound, and the result is SILENT — the observation is read STALE,
+    withheld, and consumed without retry, exactly as in #807; no refusal, no counter, no log
+    distinguishes "the allowance was wrong" from "the collector was late". Observing the real
+    pass duration at runtime (and refusing or alerting when it exceeds the declaration) is a
+    possible follow-up; it is deliberately NOT in this change.
 
     Args:
         path: The ``marketfeed.yaml`` INSTANCE path.

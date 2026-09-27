@@ -83,10 +83,25 @@ poll_interval_ms: null
 # STALE — consumed, withheld, never retried (plan docs/plans/2026-09-27-tos-poll-
 # interval-freshness-budget-plan.md §2, operator disposition §6.1; issue #807).
 # Whatever that inequality leaves over is the UPSTREAM COLLECTOR's headroom.
-# Must be positive. `kis_quote` is NOT budgeted this way — that adapter stamps
-# `as_of_ms` from a fresh in-pass time reading, so its age never accumulates the
-# poll phase; leave this key absent there (and note `poll_interval_ms` doubles as
-# that intake's HTTP request spacing, where the 모의 quote rate limit applies).
+# Must be positive.
+#
+# ⚠ This is an operator-DECLARED bound, not a measured or enforced one. The
+# paper value came from the 2026-09-27 measurement (worst observed pass 78.6 ms,
+# plan §1) rounded up. NOTHING times a pass against it at runtime: a pass that
+# actually runs longer silently pushes the observation past the freshness bound,
+# and it is then read STALE — withheld and consumed without retry, with no
+# refusal, counter, or log separating "the allowance was wrong" from "the
+# collector was late". Observing the real pass duration at runtime is a possible
+# follow-up, not something this key provides.
+#
+# `kis_quote` is NOT budgeted this way — that adapter stamps `as_of_ms` from the
+# SAME cached pre-pass time reading the scheduler's own `now_ms` comes from
+# (TrustworthyTimeService.wall_clock_now() returns the snapshot cached by the
+# last evaluate(), not a fresh reading), so its `source_age` is always 0 and the
+# phase term does not apply. That is a property of the shared cache, not a short
+# path: the adapter's real HTTP round trip is never measured (issue #810). Leave
+# this key absent there (and note `poll_interval_ms` doubles as that intake's
+# HTTP request spacing, where the 모의 quote rate limit applies).
 
 journal_pass_allowance_ms: null
 
