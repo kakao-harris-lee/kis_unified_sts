@@ -2,7 +2,8 @@
 ``docs/plans/2026-09-16-tos-tick-source-plan.md`` §2 decisions 1/5/6/7/8/9, lane D).
 
 Composes every other module in this package into one loop: poll the injected
-:class:`~tos_runtime.marketfeed.ports.ObservationIntake` -> gate on the session -> issue a
+:class:`~tos_runtime.marketfeed.ports.ObservationIntake` -> take this pass's wall-clock reading
+through the injected ``before_decide`` hook -> gate on the session -> issue a
 :class:`~tos.capsule.CriticalInputSnapshot` (lane A) -> durably record it (lane B) -> issue a
 :class:`~tos.capsule.DecisionContextCapsule` (lane A) -> resolve through the REAL kernel
 :class:`~tos.marketfeed.MarketFeedContextResolver` (injected with the durable store and the lane C
@@ -18,6 +19,28 @@ directly, or :meth:`TickScheduler.tick_once` (which performs the I/O and then ca
 :meth:`TickScheduler.run_forever` is the ONLY place ``time.sleep`` is called — mirrors the
 ``time.sleep`` precedent already shipped at ``transport/kis_mock/adapter.py:480`` (module
 docstring's own firewall note).
+
+**Read order: the intake FIRST, the wall-clock reading SECOND** (plan
+``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1, operator disposition §6.1;
+issue #809). :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` returns the
+reading the LAST ``evaluate()`` cached (``time/service.py:697-711``), so a pass that evaluated
+BEFORE reading the journal judged every line appended in between against a reading older than the
+line's own ``as_of`` — ``source_age`` went negative, and past
+``MAX_future_timestamp_tolerance_ms`` (50) the kernel answered ``CONFLICTED``
+(``tos/src/tos/time/predicates.py`` ``freshness_verdict``) for an observation that was simply
+*newer than the reading*. Measured: 1 of 35 appended observations in the 2026-09-27 rehearsal.
+Reading the journal first and evaluating after makes ``as_of <= R < S'`` for any sane collector,
+so ``source_age >= 0`` and ``CONFLICTED`` is left to mean what it should — a collector clock
+genuinely ahead by more than the tolerance. The kernel's future-dating defence is neither widened
+nor narrowed, and the evaluation count stays exactly one per pass.
+
+**``tick_once`` still never evaluates time itself.** It calls the constructor-injected
+``before_decide`` hook (compose passes :meth:`~tos_runtime.marketfeed.time_pacer
+.TimeEvaluationPacer.before_decide`) between the poll and the decision, and
+:meth:`TickScheduler.run_forever` calls nothing but :meth:`TickScheduler.tick_once` and ``sleep``.
+A ``False`` answer — the evaluation was due and failed — returns
+:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED` **without** a
+``store.put``, so the polled observation is not consumed and the next pass re-reads it.
 
 **Per-observation distinctness is checked here too, independently of the journal's own filter**
 (plan §2 decision 5; ``ports.py``'s ``DurableSnapshotStore.latest_as_of`` docstring). A collector
@@ -54,12 +77,18 @@ durable inbox (to be picked up once a driver eventually exists — the SAME "inb
 process" idiom :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade` already uses
 for its own held-runtime branch) and appends an evidence row naming what was queued. **Deviation
 from the committed ``ports.py`` ``TickOutcome`` vocabulary, reported rather than patched around**:
-that six-member enum (a contract landed before this module and not owned by this lane) has no
-"queued, driver absent" member. Rather than editing a landed contract to add one, or silently
-reusing ``SKIPPED_*`` (which would misreport — a tick genuinely WAS produced and durably queued,
-nothing was skipped), :meth:`TickScheduler.tick_once` returns the ADDITIVE :class:`TickResult`
+that enum has no "queued, driver absent" member. Rather than editing a landed contract to add one,
+or silently reusing ``SKIPPED_*`` (which would misreport — a tick genuinely WAS produced and
+durably queued, nothing was skipped), :meth:`TickScheduler.tick_once` returns the ADDITIVE
+:class:`TickResult`
 wrapper (this module's own type, not a `ports.py`` edit) — ``outcome=TickOutcome.TICKED`` with
 ``queued_until_recovery=True``, an honest "yes, but not yet run" the plain enum cannot express.
+(#809 DID add one member to that enum,
+:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED`, under the operator's
+own disposition — and the two cases are not the same shape: that one names a pass that produced
+**no** tick, which is exactly what this vocabulary is for, whereas "queued, driver absent" is a
+tick that WAS produced and therefore belongs on the richer result, as this enum's own docstring
+already says.)
 
 **Every declared field going ``UNKNOWN`` is still a tick, never ``REFUSED_POLICY``.** This wave's
 scheduler never produces :attr:`~tos_runtime.marketfeed.ports.TickOutcome.REFUSED_POLICY` — a
@@ -299,7 +328,7 @@ class TickScheduler:
         inbox: SqliteEventInbox,
         evidence_store: SqliteEvidenceStore,
         poll_interval_ms: int,
-        before_pass: Callable[[], bool] | None = None,
+        before_decide: Callable[[], bool] | None = None,
     ) -> None:
         """Wire the scheduler (every arg's own docstring lives on the field it fills below —
         ``instruments``/``instrument_class``/``account``/``direction``/``quantity_basis``/
@@ -309,16 +338,19 @@ class TickScheduler:
         ``evidence_store`` are THIS PROCESS's shared instances, never a second independently-run
         one (mirrors every other compose wiring module's "SAME source" discipline)).
 
-        ``before_pass`` runs before every :meth:`run_forever` pass, which ticks only when it
-        returns ``True``. Compose passes :meth:`~tos_runtime.marketfeed.time_pacer
-        .TimeEvaluationPacer.before_pass` so the wall-clock reading advances between passes
-        (plan 2026-09-26 periodic time eval, W1); ``None`` leaves the time service to the caller.
-        :meth:`tick_once` never calls it — it stays a pure single pass.
+        ``before_decide`` runs INSIDE every :meth:`tick_once` pass — after the intake read and
+        before this pass's wall-clock reading is taken (module docstring's own read-order
+        paragraph, plan 2026-09-27 §2.1 / issue #809) — and the pass decides only when it returns
+        ``True``. Compose passes :meth:`~tos_runtime.marketfeed.time_pacer
+        .TimeEvaluationPacer.before_decide` so the wall-clock reading advances once per pass, on
+        the intake-read side of the poll (plan 2026-09-26 periodic time eval, W1); ``None`` leaves
+        the time service to the caller. :meth:`tick_once` still evaluates nothing itself — it only
+        calls this hook.
 
         Raises:
             MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
         """
-        self._before_pass = before_pass
+        self._before_decide = before_decide
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -347,17 +379,22 @@ class TickScheduler:
         )
 
     def tick_once(self) -> TickResult:
-        """Run exactly one scheduler pass (module docstring).
+        """Run exactly one scheduler pass — intake read FIRST, wall-clock reading SECOND (module
+        docstring's own read-order paragraph; plan 2026-09-27 §2.1, issue #809).
 
         Returns:
-            The :class:`TickResult`.
+            The :class:`TickResult`. ``SKIPPED_TIME_NOT_EVALUATED`` when ``before_decide``
+            answered ``False``: no ``store.put`` happens on that path, so whatever was polled
+            stays unconsumed for the next pass.
         """
-        now_ms = self._time_service.wall_clock_now()
-        session_context = self._session_owner.session_context(self._instrument_class)
         latest_as_of_ms = self._store.latest_as_of(instrument=self._instrument)
         observations = self._intake.poll(
             instrument=self._instrument, after_as_of_ms=latest_as_of_ms
         )
+        if self._before_decide is not None and not self._before_decide():
+            return TickResult(outcome=TickOutcome.SKIPPED_TIME_NOT_EVALUATED)
+        now_ms = self._time_service.wall_clock_now()
+        session_context = self._session_owner.session_context(self._instrument_class)
         decision = decide_tick(
             session_context=session_context,
             observations=observations,
@@ -411,10 +448,12 @@ class TickScheduler:
             stop: Injected stop predicate, checked before every pass — a test supplies one that
                 flips ``True`` after N calls so this loop terminates.
 
-        Before every pass the constructor's ``before_pass`` (if any) runs, and the pass ticks
-        only when it returns ``True``.
+        This loop calls nothing but :meth:`tick_once` and ``sleep``: the constructor's
+        ``before_decide`` hook now runs INSIDE the pass, between the intake read and the decision
+        (module docstring's own read-order paragraph; plan 2026-09-27 §2.1, issue #809), so a
+        pass whose time evaluation failed is a :class:`TickResult` with
+        ``SKIPPED_TIME_NOT_EVALUATED``, not a pass this loop skipped.
         """
         while not stop():
-            if self._before_pass is None or self._before_pass():
-                self.tick_once()
+            self.tick_once()
             sleep(self._poll_interval_ms / 1000)

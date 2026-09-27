@@ -238,4 +238,12 @@ class TickOutcome(StrEnum):
     SKIPPED_NOT_NEWER = "SKIPPED_NOT_NEWER"
     SKIPPED_SESSION_CLOSED = "SKIPPED_SESSION_CLOSED"
     SKIPPED_INTERVAL = "SKIPPED_INTERVAL"
+    #: The intake WAS read, and then the time evaluation this pass owes the time service did not
+    #: succeed — there is no reading to judge freshness or the session against, and the pass
+    #: refuses to decide on the PREVIOUS pass's reading (plan
+    #: ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1; issue #809). A DIFFERENT
+    #: absence from :attr:`SKIPPED_NO_OBSERVATION`: a polled observation may well exist, and it is
+    #: deliberately **not consumed** — nothing reaches :meth:`DurableSnapshotStore.put`, so
+    #: ``latest_as_of`` does not advance and the next pass re-reads the same observation.
+    SKIPPED_TIME_NOT_EVALUATED = "SKIPPED_TIME_NOT_EVALUATED"
     REFUSED_POLICY = "REFUSED_POLICY"

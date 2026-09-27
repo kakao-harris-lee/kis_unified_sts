@@ -242,10 +242,11 @@ def test_run_forever_ticks_a_second_real_observation_after_the_pacing_interval(
         return passes > 2
 
     # No manual evaluate() between the two loops (it used to live here): wall_clock_now()
-    # returns the last evaluate() cycle's reading, and compose now wires a
-    # TimeEvaluationPacer into run_forever that evaluates before every open-session pass
-    # (plan 2026-09-26 periodic time eval, W1). Without it the second tick lands in
-    # SKIPPED_INTERVAL on a boot-frozen reading and this assertion goes red.
+    # returns the last evaluate() cycle's reading, and compose wires a TimeEvaluationPacer
+    # into the scheduler as its `before_decide` hook, which every open-session pass runs
+    # once — after the intake read, before the decision (plan 2026-09-26 periodic time eval,
+    # W1; repositioned by plan 2026-09-27 §2.1 / issue #809). Without it the second tick
+    # lands in SKIPPED_INTERVAL on a boot-frozen reading and this assertion goes red.
     runtime.marketfeed.run_forever(
         sleep=_real_short_sleep, stop=_stop_after_second_tick
     )

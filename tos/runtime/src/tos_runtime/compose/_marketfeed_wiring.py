@@ -56,16 +56,25 @@ projection composes its ``delay_bounds`` from, deliberately imported rather than
 because a guard that reads a second copy of the numbers it guards is exactly the failure this
 repo has already hit (the Redis-TTL rule in the root ``CLAUDE.md``: the check and the thing
 checked must read one value). ``kis_quote`` is NOT subject to this guard and must leave
-``journal_pass_allowance_ms`` absent: that adapter stamps ``as_of_ms`` from
+``journal_pass_allowance_ms`` absent: this budget is an upstream journal collector's share,
+and that intake has no such collector. ⚠ **Exempt from the guard is not exempt from
+staleness, and since #809 it is the opposite.** That adapter stamps ``as_of_ms`` from
 :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now`, which returns the
-snapshot CACHED by the last ``evaluate()`` — the SAME cached pre-pass reading the scheduler's
-own ``now_ms`` comes from — so its ``source_age`` is always 0 and the phase term does not
-apply. That is a property of the shared cache, not evidence of a short path: the adapter's
-real HTTP round trip is never measured at all, and
-``transport/kis_quote/adapter.py``'s own docstring still claims the reading is taken AFTER
-the response. Correcting that adapter, and closing the latency gap behind it, is issue #810
-— not this guard. Separately, the same key doubles as that intake's HTTP request spacing,
-where the 모의 quote limit (1–2 rps, probe P-13) forbids shrinking below the budget.
+snapshot CACHED by the last ``evaluate()`` — never a fresh reading. Before the 2026-09-27
+read-order change that cache was THIS pass's own reading, so ``source_age`` came out 0 and
+the phase term did not apply (fail-open: the adapter's real HTTP round trip was never
+measured at all). Now the pass evaluates AFTER the intake read (plan
+``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4; issue #809), so the cached
+value the adapter stamps is the PREVIOUS pass's reading and ``source_age`` comes out ≈ the
+pass spacing — which at the ≥ 1000 ms spacing the 모의 quote rate limit forces is past the
+800 ms budget on EVERY observation. So this intake is **always STALE until #810**
+(fail-closed conservative over-estimate, pinned by
+``tests/compose/test_marketfeed_pacing_budget.py``'s own transition test). Paper pins
+``intake_kind: journal``, so nothing is deployed on that path; #810 is where the anchor is
+fixed — and the post-read evaluation is exactly the "reading taken after the response" that
+adapter's own docstring always wanted. Separately, the same key doubles as that intake's
+HTTP request spacing, where the 모의 quote limit (1–2 rps, probe P-13) forbids shrinking
+below the budget.
 
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
@@ -500,7 +509,9 @@ def _time_pacer_pass(
     """The periodic time-health evaluation the ``run`` loop owes the time service (plan
     2026-09-26 periodic time eval, W1 — operator option 나). Its closed input is the SAME
     ``session_context`` the scheduler gates on, so the two can never disagree; no context (time
-    untrusted) is unknown, not closed (``time_pacer`` module docstring)."""
+    untrusted) is unknown, not closed (``time_pacer`` module docstring). The scheduler calls the
+    returned predicate AFTER its intake read and before the decision (plan 2026-09-27 §2.1,
+    issue #809) — the name says the position, the pacing rules are unchanged."""
 
     def session_known_closed() -> bool:
         context = session_owner.session_context(config.instrument_class)
@@ -511,7 +522,7 @@ def _time_pacer_pass(
         session_known_closed=session_known_closed,
         closed_interval_ms=config.time_evaluate_closed_interval_ms,
         monotonic_ms=monotonic.now_ms,
-    ).before_pass
+    ).before_decide
 
 
 def _resolve_kis_instance_rest_bases(
@@ -742,5 +753,5 @@ def build_tick_scheduler(
         inbox=inbox,
         evidence_store=evidence_store,
         poll_interval_ms=config.poll_interval_ms,
-        before_pass=_time_pacer_pass(config, time_service, session_owner, monotonic),
+        before_decide=_time_pacer_pass(config, time_service, session_owner, monotonic),
     )

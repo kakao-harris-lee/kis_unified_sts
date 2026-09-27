@@ -10,12 +10,19 @@ remain the caller's job" note). Without a caller that keeps evaluating, every wa
 interval and answers ``SKIPPED_INTERVAL`` after the first tick, and a boot while the session is
 closed never sees the session open.
 
-**Cadence (option 나).** Evaluate before every scheduler pass unless the session is KNOWN closed
+**Cadence (option 나).** Evaluate once in every scheduler pass unless the session is KNOWN closed
 (ticks happen only in an open session, and the tick interval is measured on evaluation readings,
 so the evaluation cadence bounds the tick cadence); while known closed, evaluate once per
 ``closed_interval_ms`` so the opening is noticed within that interval. The session judgement
 itself reads the last evaluation, so "stop evaluating while closed" would never see the session
 open — hence a slow cadence, not none.
+
+**Position inside the pass: after the intake read, before the decision** (plan
+``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1; issue #809). :meth:`before_decide`
+is named for that position. The pacing rules below are unchanged by the move — only *where*
+``TickScheduler`` calls them is. Reading the journal before this evaluation is what keeps a line
+appended between two passes from looking future-dated against a reading taken before it
+(``scheduler.py``'s own read-order paragraph).
 
 **Unknown is not closed** (review finding, PR #806). When the last evaluation left time
 untrusted there is no reading, so no session context — that is "unknown", and it is paced like
@@ -25,10 +32,12 @@ to the closed interval there would stop ticks for minutes in the middle of a ses
 The closed-interval clock is the injected monotonic source (the SAME one the time service uses):
 it paces a loop, it is never a trusted time reading and never reaches evidence or the kernel.
 
-**An evaluation failure skips that pass's tick; it never stops the loop** (plan §2 W1-3). A
+**An evaluation failure skips that pass's decision; it never stops the loop** (plan §2 W1-3). A
 tick issued after a failed evaluation would carry the previous, stale reading. The pass is
-reported to stderr (the runtime's refusal convention) and the next pass retries. Degradation
-across repeated failures stays the time service's own rule — no second judgement is made here.
+reported to stderr (the runtime's refusal convention), the scheduler answers
+``TickOutcome.SKIPPED_TIME_NOT_EVALUATED`` without consuming what it polled, and the next pass
+retries on the same observation. Degradation across repeated failures stays the time service's own
+rule — no second judgement is made here.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.*`` only.
 """
@@ -42,8 +51,8 @@ __all__ = ["TimeEvaluationPacer"]
 
 
 class TimeEvaluationPacer:
-    """Decides, before each scheduler pass, whether to evaluate time health and whether the pass
-    may tick (module docstring)."""
+    """Decides, inside each scheduler pass and after its intake read, whether to evaluate time
+    health and whether the pass may go on to decide (module docstring)."""
 
     def __init__(
         self,
@@ -86,13 +95,13 @@ class TimeEvaluationPacer:
             return True
         return now_ms - self._last_evaluated_ms >= self._closed_interval_ms
 
-    def before_pass(self) -> bool:
-        """Evaluate when due, and answer whether this pass may tick.
+    def before_decide(self) -> bool:
+        """Evaluate when due, and answer whether this pass may go on to decide.
 
         Returns:
-            ``False`` iff an evaluation was due and failed (never tick on a stale reading);
-            ``True`` otherwise — including a known-closed pass that was not due, whose tick
-            attempt reads the last (closed) evaluation and skips on the session gate.
+            ``False`` iff an evaluation was due and failed (never decide on a stale reading);
+            ``True`` otherwise — including a known-closed pass that was not due, whose decision
+            reads the last (closed) evaluation and skips on the session gate.
         """
         now_ms = self._monotonic_ms()
         if not self._due(now_ms):
