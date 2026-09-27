@@ -310,5 +310,20 @@ False 에서 `tick_once()` 자체를 부르지 않았으므로 그 raise 에 닿
 `expected_code_digest` 를 다시 도출했다(§7.5 의 10차에 이은 **11차**).
 
 ```text
-DIGEST_PLACEHOLDER
+1f4f5ae52343da004d341a93febb87e487b7ffb6a24ab0a99def8d88a1d18462   (10차 · 이 브랜치 221430ee)
+1dcbeac60ff90c4e5e7b91df19a0c813bfe0dfe77481eea7b6511dec942f9af0   (11차 · 현재)
 ```
+
+`print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. `config/tos_runtime/paper/release.yaml`
+(값 + 헤더 샘플 + 11차 이력 주석)과 `test_deploy_approved_values.py::_VALUE_PINS` **두 곳 모두** 갱신.
+`expected_dependency_set_digest` 는 **바꾸지 않았다** — 같은 배포 호스트 루트 `.venv`
+(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+
+**이 라운드 게이트.** 방화벽 PASS · `lint-imports` 3 contracts kept / 0 broken · completion
+**GREEN(위반 0)** · spec PASS(baseline-plan WARNING 은 기존 비차단) · contract PASS + self-test
+PASS(뮤테이션 145종) · citation PASS(README 3개 8건) · named-TBD guard PASS(46 파일 · 위반 0) ·
+size budget PASS(위반 0 · 등재 39) · 이 브랜치가 바꾼 `.py` 12건 black/ruff 전건 통과.
+테스트: `tos/runtime/tests` **3125 passed**(§7.7 의 3123 + 신규 2 —
+`test_an_unconsumed_quote_is_dropped_by_this_intake_not_re_read_next_pass` ·
+`test_a_session_that_opens_during_the_pass_is_seen_by_that_pass_not_the_next`) ·
+`tests/unit/scripts/test_render_paper_config.py` **42 passed**.
