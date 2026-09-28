@@ -205,12 +205,81 @@ T-5 배선 끊기(인입에 사설 `ProcessMonotonicSource` 주입)도 red 확�
 | black · ruff | 1293 files unchanged · all checks passed |
 | mypy `tos/src` | Success (265 files) |
 | mypy `tos/runtime/src` | 27 errors — **main 기준선과 동일**(전건 기존 `no-any-return`; 이 호스트 스텁 탓) |
-| mypy `tos/runtime/tests` (CI 와 같은 `--disable-error-code=no-untyped-def`) | 122 errors in 45 files — **main 기준선과 동일**, 검사 파일은 233 → 235 (신규 2건 0 errors) |
+| mypy `tos/runtime/tests` (CI 와 같은 `--disable-error-code=no-untyped-def`) | ⚠ 이 줄의 「122 errors = main 기준선」은 **틀렸다** — 아래 정정 |
 | `pytest tos/runtime/tests` | **3150 passed** |
 | `pytest tests/unit/scripts/test_render_paper_config.py tests/tools` | 1399 passed · 3 failed — `tests/tools/test_u17_verify.py` 기존 로컬 실패(`yq` 미설치, CI 는 `--ignore`) |
 
 main 기준선은 `git archive origin/main` 로 추출한 트리에서 같은 명령으로 측정했다(이 호스트 venv 는 스텁이 더 있어 CI 와 절대 수치가 다르다 — 그래서 절대값이 아니라 **차이**를 본다).
 
+**정정 (2026-09-28, `b458736b` 이후).** 위 표의 mypy `tos/runtime/tests` 줄이 적은 「122 errors in 45 files — main 기준선과 동일」은 **측정 오류였다**. 그 122 를 낸 호출이 무엇이었는지는 기록이 남아 있지 않아 원인을 단정하지 않는다 — 확실한 것은 **CI 와 같은 호출이 아니었다**는 것이다. CI 의 호출은 저장소 루트에서 다음 하나다.
+
+```bash
+PYTHONPATH=tos/src:tos/runtime/src mypy tos/runtime/tests \
+  --ignore-missing-imports --disable-error-code=no-untyped-def
+```
+
+이 호출로 main(`git archive origin/main` 추출 트리)은 **`Success: no issues found in 233 source files`** 를 낸다 — 기준선은 122 가 아니라 **0** 이다. 그래서 「기준선과 동일」이라는 판정이 성립할 여지가 애초에 없었고, CI 가 `031e2902` 에서 낸 **새 오류 6건**(#810 테스트 더블의 타입)을 로컬이 놓쳤다. 같은 호출로 재현·수정했고(`b458736b`), 현재 값은 §7.7 의 게이트 표에 있다. **교훈: 「기준선과 같은 숫자」는 호출이 같을 때만 뜻이 있다 — 숫자를 비교하기 전에 명령을 비교할 것.**
+
 ### 7.6 배포 영향
 
 없다. paper 는 `intake_kind: journal` 로 핀돼 있고 값은 바뀌지 않았다(주석만). `config/tos_runtime/paper/time.yaml` 승인값 무변경. 런타임 소스가 바뀌었으므로 `expected_code_digest` 는 재도출했다(마지막 커밋 · `release.yaml` 12차 + `_VALUE_PINS` 동시 갱신).
+
+### 7.7 리뷰 처분 (`code-reviewer`, 같은 모델 계열 — 잠정)
+
+PR #812 · 판정 **approve** · MEDIUM 1 · LOW 4. Codex 는 이 범위(되돌리기 어려운 경로 아님)에서 제외이므로 같은 모델 계열의 Claude 쪽 폴백 레인이고, 그래서 **잠정**이다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| MEDIUM-1 | 세션이 닫힌 것을 아는 패스가 `SKIPPED_TIME_UNANCHORED` 로 보고된다 — 그 멤버 독스트링의 「평가는 성공했다」와 모순 | **수정**. `tick_once` 의 세션 게이트를 앵커 앞으로 |
+| LOW-1 | 「두 `MonotonicSource` 인스턴스의 판독은 비교 불가」는 **거짓** — 두 `ProcessMonotonicSource` 는 같은 `time.monotonic_ns()` 를 읽는다 | **수정**(문구 3곳). `is` 핀은 유지 |
+| LOW-2 | `wall_clock_at_monotonic` 의 `suspension_ms is None → None` 분기가 미검증이고 실 운영 TRUSTED 경로에서 도달 불가 | **유지 + 테스트 + 독스트링 1문장** |
+| LOW-3 | FRESH 지연 테스트가 실제 타이밍에 의존한다(호스트가 느리면 red) | **수정**. STALE 쌍까지 결정론화 |
+| LOW-4 | `release.yaml:121` 과 한 테스트 독스트링에 「항상 STALE」 계열의 옛 문구가 남아 있다 | **변경 없음** — 둘 다 **역사 기록**(11차 재측정 이력 · #811 이 무엇을 고정했는지) |
+
+**MEDIUM-1 의 실체.** `kis_quote` 인입에서 세션이 닫힌 줄 아는 동안에는 pacer 가 due 가 아니므로 `before_decide()` 가 **평가 없이** `True` 를 돌려준다. 그 패스가 든 사상은 이전 주기의 것이고, 방금 가져온 시세의 `requested_monotonic_ms` 는 그 주기의 상한 `S'_mono` 보다 **뒤**여서 사상은 `None` 이다. 앵커가 먼저 돌면 그 패스는 `SKIPPED_TIME_UNANCHORED` 로 보고되는데, 그 멤버의 독스트링은 「인입을 읽었고 **시간 평가는 성공했다**」를 뜻한다 — 장이 닫혀 있다는 충분하고 참인 이유가 운영자에게 가려진다. `tick_once` 는 이제 훅 직후 `now_ms` · `session_context` 를 읽고, 세션이 `None` 이거나 열려 있지 않으면 **앵커 이전에** `SKIPPED_SESSION_CLOSED` 로 답한다(`store.put` 없음은 전과 같다). `decide_tick` 자신의 게이트 순서와 같아졌다 — 순수 함수와 얇은 루프가 같은 패스에 같은 이름의 부재를 붙인다. 테스트 `test_a_closed_session_is_reported_as_closed_not_as_unanchored`(현재 코드 기준 red 확인 후 green).
+
+**LOW-1 의 실체.** 세 곳이 「두 인스턴스의 판독은 비교 불가」라고 적고 있었지만, `ProcessMonotonicSource.now_ms()` 는 `time.monotonic_ns() // 1_000_000` 이므로 두 인스턴스는 **실제로 일치**한다. 참인 명제는 **포트가 보장하는 범위**에 대한 것이다 — `MonotonicSource` 는 한 인스턴스 **안에서만** 비교 가능함을 보장하고, 그래서 계약은 **공유 인스턴스** 쪽이다. 자기 원점을 가진 원천(가짜, 또는 장래의 비-프로세스 원천)이면 모든 사상이 정의역 밖으로 나간다. 문구를 그렇게 고쳤다: `transport/kis_quote/adapter.py` · `marketfeed/ports.py` 의 `MonotonicAnchoredObservation` · `tests/compose/test_marketfeed_intake_kind_wiring.py` 의 같은-객체 테스트 독스트링. `is` 핀 자체는 그대로다 — 우연히 일치하는 구현에 기대는 배선은 포트가 약속하지 않은 것에 기대는 배선이다.
+
+**LOW-2 처분.** 분기는 **유지**한다(미지를 0 으로 접으면 사상된 순간이 조용히 덜 늙는다 — fail-open). 대신 (a) 실 운영에서 TRUSTED 경로가 이 분기에 닿지 않는 이유를 `wall_clock_at_monotonic` 독스트링에 적었다(previous 판독이 없는 유일한 주기는 아직 `SYNCHRONIZING` 이고, Phase 2 가 배선하는 유일한 리더 종류는 항상 벽시계 값을 싣는다), (b) 진짜 TRUSTED 서비스를 두 주기로 몰아 사상이 동작함을 먼저 확인한 뒤 **포착된 필드 하나만** 비우는 테스트를 넣었다(`test_mapping_refuses_a_trusted_cycle_whose_suspension_is_unknown`). 검사 대상 메서드는 monkeypatch 하지 않는다.
+
+**LOW-3 처분.** 지연 주입을 **실 `sleep` 에서 스크립트 시계 전진으로** 바꿨다. `FakeKisServer.set_response` 에 `on_request` 훅(요청 기록 뒤 · 응답 바이트 전)을 더하고, 시세 핸들러 안에서 (단조, 벽) 두 바늘을 **같이** L 만큼 전진시킨다. 두 바늘이 같이 가므로 서비스가 관측하는 중단분은 **실측 0** 이고, 사상 산술은 그대로 진짜 `TrustworthyTimeService` 의 것이다. 결과적으로 `source_age` 는 근사가 아니라 **정확히 L** 이 되어 경계 양쪽을 1 ms 로 고정할 수 있다 — 실 타이밍 테스트로는 불가능한 핀이다.
+
+| 주입 L | `source_age` | 판정 |
+|---|---|---|
+| 0 ms | 0 | FRESH |
+| 800 ms (= 예산, 파일에서 도출) | 800 | FRESH (`800 + 200 = 1000 ≤ 1000`) |
+| 801 ms (= 예산 + 1) | 801 | STALE |
+| 1000 ms | 1000 | STALE |
+
+예산 `_BUDGET_MS` 는 배포된 `config/tos_runtime/paper/time.yaml` 에서 import 시점에 도출한다 — 800 을 타이핑하지 않는다. 실 `sleep` 은 이 두 테스트에서 사라졌고, `FakeKisServer` 의 `delay_s` 는 타임아웃·연결 테스트 몫으로 남는다.
+
+**뮤테이션 (red 확인 후 복구).**
+
+| # | 뮤테이션 | red |
+|---|---|---|
+| 1 | 세션 게이트를 `_anchor_polled` 뒤로 되돌림 | `test_a_closed_session_is_reported_as_closed_not_as_unanchored` |
+| 2 | `- suspension_ms` 를 `- (suspension_ms or 0)` 로 접고 가드 제거 | `test_mapping_refuses_a_trusted_cycle_whose_suspension_is_unknown` |
+| 3 | 요청 스탬프를 응답 뒤로 이동(어댑터) | 결정론 FRESH/STALE 4건 중 3건 |
+
+**게이트 / 테스트 (이 라운드).**
+
+| 항목 | 결과 |
+|---|---|
+| `tos_firewall_check.py` · `lint-imports` | PASS · 3 contracts kept |
+| `tos_contract_check.py` (+ `--self-test`) | PASS · 뮤테이션 전건 판별 |
+| `tos_completion_status.py --check` · `tos_spec_status.py --check` | GREEN · PASS |
+| `tos_evidence_citation_check.py` · `tos_named_tbd_guard.py` · `tos_size_budget.py --check` | PASS · PASS · PASS |
+| black · ruff (변경 파일) | all checks passed |
+| mypy `tos/runtime/tests` (CI 호출 그대로) | `Success: no issues found in 235 source files` |
+| mypy `tos/runtime/src` (CI 호출 그대로) | `Success: no issues found in 188 source files` |
+| `pytest tos/runtime/tests` | **3154 passed** |
+| `pytest tests/unit/scripts/test_render_paper_config.py` | 42 passed |
+
+**디제스트.** 이 라운드가 런타임 `*.py`(`marketfeed/{scheduler,ports}.py` · `time/service.py` · `transport/kis_quote/adapter.py`)를 건드리므로 `expected_code_digest` 를 다시 도출했다(13차).
+
+```text
+4a265f7edfd2c33942aa3bf69d36d4d403e1e7e8c047b0674ef44a435ac11fc8   (12차 · 이 브랜치 031e2902)
+4548f1f90692ce7af97a90c034ccdbc896a9a8a98d4acb7265a0040df7c069cb   (13차 · 현재)
+```
+
+`release.yaml`(값 + 13차 이력)과 `tests/compose/test_deploy_approved_values.py::_VALUE_PINS` 를 같은 커밋에서 갱신했다. `expected_dependency_set_digest` 는 무변경.
