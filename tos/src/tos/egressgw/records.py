@@ -832,6 +832,10 @@ def positive_decimal(value: Decimal | None) -> bool:
         return False
     return value > 0
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> c6546579 (style(tos): normalize spacing after comment cleanup)
 def send_boundary_context(
     *,
     attempt: AttemptRequest,
