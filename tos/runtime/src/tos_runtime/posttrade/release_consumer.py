@@ -1,156 +1,21 @@
-"""``FinalityReleaseConsumer`` — the ONE production call site reaching a ``RELEASED``/
-``POSITION_CONSUMED`` RCL destination (TOS Phase 5 W2-R; plan §10 row ①).
+"""Consume durable finality evidence and release the RCL reservation.
 
-**Kernel diff 0.** This module never touches ``tos.engine.state.PROJECTION_ORDER`` (the engine's
-own in-memory reservation ledger, which still carries no ``RELEASED`` member — that stays a
-kernel-round #2 / W2-K concern, plan §10's own W2-K row) — it writes ONLY to the separate,
-durable :class:`~tos_runtime.rcl.log.SqliteCommitLog`, the authoritative capacity ledger design
-#40 D2.1 establishes. The engine's in-process projection therefore stays occupied for the life
-of the process regardless of what this consumer does — a disclosed, accepted limit (plan §10's
-own "정직 상태" note), not a bug this module works around.
+This is the runtime's production path to ``RELEASED`` or
+``POSITION_CONSUMED``. It runs after the driver has written finality evidence,
+then independently reloads the proof, economic obligation, reservation scope,
+and reconciliation result. Every release gate is conjunctive; a non-positive
+gate records ``CAPACITY_RELEASE_HELD`` and performs no RCL transition.
 
-**Called by, never calling, the driver.** :mod:`tos_runtime.engine.finality_projection`'s
-``project_finality`` invokes :meth:`FinalityReleaseConsumer.consume` once per genuinely-
-``APPLIED`` ``EGRESS_RESULT``, AFTER the durable ``attempt_finality_witness`` row and (for a
-``FULL_FILL``) the ``POSTTRADE_FINALITY_PROOF``/``ECONOMIC_OBLIGATION`` evidence rows are
-already committed — this consumer never produces those two rows itself for a ``FULL_FILL``; it
-only RE-LOADS them from the evidence store (never the in-memory
-:class:`~tos.posttrade.records.PostTradeFinalityProof` object the driver just built) as its own
-independent read of durable truth.
+``FULL_FILL`` targets ``POSITION_CONSUMED``. A confirmed non-execution result
+(``CANCEL_ACK``, ``EXPIRED``, or ``REJECT``) requires a fresh non-execution
+proof and targets ``RELEASED``. Positive intent is evidenced before the RCL
+mutation, and the returned :class:`ReleaseOutcome` lets the caller update its
+in-memory projection only after the durable transition commits.
 
-**Every gate is a conjunction; any non-positive gate holds, never releases (plan §3 "주문 응답으로
-finality 판정" is a rejected alternative).** Per attempt:
-
-1. The durable witness row (:func:`tos_runtime.rcl.finality_witness.finality_witness_for`'s own
-   output, read back via :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.finality_witness`)
-   must be ``True`` — checked only on the ``FULL_FILL`` path, where the driver already derived it
-   from the SAME proof this consumer re-loads.
-2. The :class:`~tos.posttrade.records.PostTradeFinalityProof` and
-   :class:`~tos.posttrade.records.EconomicObligationRecord` must be durably re-loadable from the
-   evidence store by this exact attempt id AND the destination-specific id/idempotency-key
-   prefix (:data:`~tos_runtime.posttrade.finality.FULL_FILL_PROOF_ID_PREFIX` vs
-   :data:`~tos_runtime.posttrade.finality.NON_EXECUTION_PROOF_ID_PREFIX` — independent-review
-   finding M4, 2026-09-10: distinct prefixes so a later non-execution proof can never shadow an
-   earlier fill proof for the same attempt id, or vice versa).
-3. :meth:`~tos_runtime.recon.service.ReconciliationService.reconcile` must report
-   ``permits_capacity_release is True`` AND this attempt's own classification must be
-   :attr:`~tos_runtime.recon.service.ReconciliationClass.MATCHED` — the SAME conjunction
-   :mod:`tos_runtime.recovery.reconciliation` already requires for a possibly-live attempt to
-   clear (W1); this consumer never relaxes it. Applies to BOTH destinations (independent-review
-   finding M3, 2026-09-10 — the non-execution path used to skip straight to gate 4 after
-   producing its proof; it now runs the identical :meth:`_apply_gate4_and_release` gate 4 the
-   ``FULL_FILL`` path runs).
-4. The kernel :func:`~tos.posttrade.predicates.finality_proof_non_transferable` and
-   :func:`~tos.posttrade.predicates.finality_proof_current` must both hold, evaluated against
-   inputs read INDEPENDENTLY of the proof under test (independent-review finding H1, 2026-09-10
-   — "the M6 lesson verbatim: a constant argument deadens the predicate"; the prior version
-   rebuilt ``target_leg_scope`` from ``self.account`` + ``FinalityConfig`` constants — the SAME
-   inputs that minted the proof — and read ``active_generation`` off the SAME obligation record
-   the proof was minted against, making both checks structurally ``x == x`` for every reachable
-   input in this compose root):
-
-   - ``target_leg_scope``'s ``account`` component is read from the RCL reservation's OWN
-     persisted :class:`~tos.rcl.ReservationScope` (:meth:`_reservation_scope`, a fresh scan of
-     :meth:`~tos_runtime.rcl.log.SqliteCommitLog.reservation_rows` — a genuinely separate write
-     path from the one that minted the proof's own ``leg_scope``), not from ``self.account``.
-     ``currency``/``value_date``/``source_revision`` still come from
-     :attr:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer.config` — this runtime has
-     no OTHER source for those three (:mod:`tos_runtime.posttrade.config`'s own docstring: they
-     are OPERATOR-APPROVED STATIC values, never derived), a disclosed, not a hidden, limit.
-   - ``active_generation`` is the NEWEST ``obligation_generation`` durably recorded across every
-     ``ECONOMIC_OBLIGATION`` evidence row sharing this reservation's ``(account, instrument)``
-     scope (:meth:`_active_generation` — an independent evidence-store SCAN, never
-     ``proof.bound_generation`` read off the very artifact under test). This runtime implements
-     no correction/generation-advance mechanism yet, so today every reachable obligation for one
-     attempt is the only one ever recorded for it — but a SECOND obligation later recorded for
-     the SAME scope (a future correction lane) is picked up by this scan and correctly reopens
-     finality for a proof bound to the now-superseded generation; pinned directly by
-     ``tests/posttrade/test_release_consumer.py``'s divergent-scope / advanced-generation tests.
-
-   **Honest ceiling (re-review, 2026-09-10): independent in MECHANISM, not (yet) in every
-   reachable VALUE.** Both inputs above are read through a genuinely separate code path from
-   the one that minted the proof under test — that is what makes the gate non-vacuous, and what
-   the divergent-scope/advanced-generation tests exercise directly. But for every input this
-   compose root can actually construct today, the two sides still coincide: this compose root
-   wires exactly ONE :class:`~tos.engine.records.InstrumentKey` for its whole process lifetime
-   (so the RCL reservation's own persisted account can never differ from the proof's, absent a
-   test that deliberately forces it, as the divergent-scope test does), and
-   :mod:`tos_runtime.posttrade.finality` hardcodes ``obligation_generation=0`` for every proof it
-   mints (so no genuine correction ever exists to advance ``active_generation`` past it). A
-   future multi-instrument compose root or a real correction/generation-advance lane is what
-   would make this gate's own divergence reachable from production traffic, not merely from a
-   test.
-
-Any non-positive gate records ``CAPACITY_RELEASE_HELD`` (with the reason) and performs NO RCL
-transition. Every positive path records ``CAPACITY_RELEASE_INTENT`` BEFORE calling
-:func:`~tos_runtime.rcl.finality_witness.release_reservation` — evidence always precedes the RCL
-mutation it intends, mirroring this runtime's own halt-then-append convention everywhere else
-(:func:`~tos_runtime.evidence.emergency.record_halt`'s own discipline, inverted for a positive
-outcome instead of a halt).
-
-**W2-K wiring (kernel round #3 §2 decision 5).** :meth:`consume` now RETURNS a
-:class:`ReleaseOutcome` (previously ``None``) reporting whether the RCL transition actually
-committed, plus the exact ``(proof_digest, evidence_seq, resolution_generation)`` triple its
-caller (:func:`~tos_runtime.engine.finality_projection.project_finality`) needs to build a kernel
-:class:`~tos.engine.state.FinalityProofRef` and call
-:meth:`~tos.engine.state.ProvisionalReservationLedger.release` — the engine's own in-memory
-projection reaches ``RELEASED`` (kernel round #3) only AFTER this consumer's own RCL write is
-durable, never before or independently of it (this module stays "kernel diff 0": it still never
-imports ``tos.engine.state`` itself, only reports the primitive data another module turns into
-the kernel type).
-
-**Destinations.** A ``FULL_FILL`` targets :attr:`~tos.rcl.CapacityState.POSITION_CONSUMED`; a
-``CANCEL_ACK``/``EXPIRED``/``REJECT`` targets :attr:`~tos.rcl.CapacityState.RELEASED`, gated on a
-FRESHLY-PRODUCED non-execution proof (:meth:`~tos_runtime.posttrade.finality
-.SyntheticFinalityProducer.produce_non_execution`, filled zero / remaining zero) that this
-consumer itself appends to evidence and then re-loads — never produced from the payload alone,
-only after gate 3's reconciliation corroborates non-execution. Every other result kind (``ACK``,
-``PARTIAL_FILL``, ``UNKNOWN``, ``TIMEOUT``) has no release destination at all and this consumer
-does nothing for it — not even a ``CAPACITY_RELEASE_HELD`` row, since no release was ever
-attempted.
-
-**Obligation expiry (plan §10 row ④, record-only).** On every call where
-:attr:`~tos_runtime.time.service.TrustworthyTimeService.health_state` is
-:attr:`~tos.time.domains.HealthState.TRUSTED` (independent-review finding H2, 2026-09-10 — see
-below), :meth:`consume` also checks the SCOPE reservation's current projected state: once it has
-sat in ``RELEASE_PENDING_PROOF``/``QUARANTINED_UNKNOWN`` longer than ``release_proof_wait_ms``
-(as measured from this consumer's own first observation of that OCCUPANCY — see next paragraph
-— the RCL log's ``reservations`` table carries no per-transition timestamp to measure from,
-disclosed rather than fabricated), a ``RELEASE_PROOF_OVERDUE`` evidence row is appended ONCE PER
-OCCUPANCY. This is a record, never a state change or an incident response — an operator or a
-future lane reads it.
-
-**Monotonic reading: in-process only, never persisted (independent-review finding H2, 2026-09-10
-— ``tos_runtime.time.sources.MonotonicSource.now_ms``'s own docstring: "only meaningful relative
-to another reading from the SAME source instance within the SAME process lifetime … never
-persisted or compared across a restart").** The prior version durably wrote the first-observed
-``now_ms`` into a ``RELEASE_PROOF_WAIT_START`` evidence row and read it back on a later call,
-across however many process restarts happened in between — after a restart,
-``time.monotonic_ns()`` restarts near zero, so the stored reading could never be exceeded again
-and the row plan §10 row ④ exists to produce would silently, permanently stop being writable for
-that occupancy. :attr:`_wait_start_ms` is now an IN-MEMORY-ONLY mapping (never appended to the
-evidence store) that a fresh process starts empty — the elapsed-time clock for an
-already-overdue occupancy simply restarts after a reboot (a disclosed, not a hidden, limit: the
-alternative, a durable comparison, would need a trusted WALL-clock reading this runtime's own
-``tos.time`` design deliberately never provides — "the model has no path that reconstructs it
-from a wall clock", ``tos/src/tos/time/elements.py``'s own ``TimeContinuityIdentity`` docstring).
-The DURABLE ``RELEASE_PROOF_OVERDUE`` dedup (:meth:`_overdue_already_recorded`) is unaffected —
-it never compares a monotonic value, only checks presence of a durable fact — so a restart never
-produces a duplicate row for an occupancy already marked overdue in an earlier process lifetime.
-
-**Once per OCCUPANCY, not once per reservation forever (independent-review finding M1,
-2026-09-10).** The reservation id is scope-level and constant for the process
-(:func:`~tos_runtime.rcl.reservation_identity.scope_reservation_id`), so keying the wait-start
-marker and the overdue dedup by reservation id ALONE would let at most one ``RELEASE_PROOF_
-OVERDUE`` row ever exist for any number of separate occupancies of an overdue-eligible state.
-Both are now additionally keyed by the reservation's own ``reservation_last_seq`` AT THE MOMENT
-OF FIRST OBSERVATION (:meth:`~tos_runtime.rcl.projection.SqliteReservationProjectionReader
-.reservation_last_seq`) — an occupancy discriminator already durably available, since any
-transition into or out of the reservation's state advances that seq.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``json``, ``dataclasses``,
-``enum``) + ``tos.canonical``/``tos.engine.records``/``tos.engine.vocabulary``/``tos.posttrade``/
-``tos.rcl``/``tos.time.domains`` + ``tos_runtime.*`` only. No ``shared.*``.
+Obligation-expiry observations are record-only and deduplicated per
+reservation occupancy. Their wait clock is process-local monotonic time; it
+is never persisted or compared across restarts. The consumer does not import
+or mutate the engine's reservation projection.
 """
 
 from __future__ import annotations

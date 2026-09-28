@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1827
+  measured: 1764
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -182,7 +182,7 @@ exceptions:
     2026-09-09 Phase 3 웨이브 3 [KW3-EV] — event_id·bound 값 스탬프 추가에도 11개
     `_halt` 호출부를 `_stop` 클로저로 추출해 304→298(감소 · 래칫 재등록).
 - target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
-  measured: 283
+  measured: 269
   owner: tos-kernel
   decomposition_order: 13
   expires_on: '2026-12-31'
@@ -219,7 +219,7 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 245
+  measured: 235
   owner: tos-kernel
   decomposition_order: 15
   expires_on: '2026-12-31'
@@ -578,22 +578,6 @@ exceptions:
     `venue_session_account_facts_reader` 1줄을 3개 리더 매개변수로 교체(+2줄) +
     `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) + 도크스트링
     설명 확장(+2줄).
-- target: tos/runtime/src/tos_runtime/authority/iap.py
-  measured: 1049
-  owner: tos-runtime
-  decomposition_order: 31
-  expires_on: '2026-12-31'
-  note: >-
-    레인 A2 등재(kernel round #1 §2.2 재심 finding #7, LOW) — receipt-less
-    load_operator_approval_file 이 non-null max_decision_age_ms 를 다시
-    무조건 거부하도록 복원(_refuse_max_decision_age_ms_without_a_receipt 신설
-    + _build_decision_from_raw 에 age_check 콜백 주입)하며 999→1026 초과.
-    W-A A-0 round 2(2026-09-18): _build_decision_from_raw 에 decision_id 등
-    8개 필드의 named-TBD 문자열 가드 추가로 1026→1049 재등재(의도적, 새 위반
-    아님 — 커널 round #4 재심 BLOCKER 처분).
-    도크스트링 두 차례 축약으로 완화했으나(1033→1026) 완전 회피는 불가 —
-    신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
-    (공유 워크트리 동시 편집 회피).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
   measured: 155
   owner: tos-runtime
@@ -699,7 +683,7 @@ exceptions:
     직전(래치는 이 이벤트의 EVENT_CONSUMED 영수증이 이미 커밋된 뒤에만 그 seq 를
     참조해야 하므로), measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1132
+  measured: 1070
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'

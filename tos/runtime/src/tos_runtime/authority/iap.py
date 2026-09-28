@@ -1,96 +1,15 @@
-"""``IntentRegistry`` — the Independent Approval / Intent Registry runtime
-(design #40 §5 order 4 item 3; ADR-002-023).
+"""Runtime owner for operator-authored Independent Approval decisions.
 
-**Zero auto-approval code (plan directive, DR-0001 §17.1 single-operator
-variant).** The Phase 2 independent approver is an **operator-authored
-approval file** under ``approvals/<proposal_digest>.yaml`` — never a
-computation this module performs. :func:`load_operator_approval_file` reuses
-the exact same 0600-mode + owner-uid custody rule
-(:func:`tos_runtime.custody.file_custody.verify_file_mode_and_owner`) plus an
-environment-label check, then parses whatever ``result``
-(``APPROVE``/``DENY``/``UNKNOWN``) the operator wrote **verbatim** into an
-:class:`~tos.iap.IndependentApprovalDecision` — there is no branch anywhere in
-this module that computes ``APPROVE``. :meth:`IntentRegistry.approve` records
-receipt of an already-decided decision; it does not decide.
+Approval files are custody and environment checked, then their
+``APPROVE``/``DENY``/``UNKNOWN`` result is parsed verbatim. This module never
+computes an approval. Consumption is single-use through one content-addressed
+RCL append, so retries and restarts are governed by the durable log.
 
-**Single-use consumption is log-enforced, not memory-enforced.**
-:meth:`IntentRegistry.consume` performs exactly **one** ``append_cas`` whose
-success (or ``DUPLICATE_COMMAND_ID``/``COMMAND_BYTES_MISMATCH`` refusal) *is*
-the consumption outcome — the entry's ``command_id`` is content-addressed as
-``f"iap-consumption:{request_id}:{decision_generation}:{decision_id}"``
-(:func:`_consumption_command_id`), fixed per decision regardless of who
-calls ``consume`` or how many times (the ``request_id``/``decision_generation``
-prefix is what lets :meth:`IntentRegistry.decision_current` derive
-proposal-scoped supersession from the log with no payload readback — see
-that method's own docstring). A second consumption attempt against the same
-decision therefore collides on the log's own ``entries.command_id``
-``UNIQUE`` constraint — enforced by :class:`~tos_runtime.rcl.log.SqliteCommitLog`
-itself, not by an in-memory flag this class holds — so a freshly re-created
-:class:`IntentRegistry` over the SAME log (a simulated restart) refuses the
-second consumption identically to the still-running first instance would
-have.
-
-**Decision currency has no kernel predicate (2026-09-08).**
-``tos.iap.predicates.approval_decision``/``tos.iap.state.consumption_transition``
-both take ``decision_current``/``generation_current`` as an **injected**
-``bool | None`` — ADR-002-023 §12 item 2 names "current governed policy
-generations" as a required fact but no ``tos.iap`` function computes it.
-:meth:`IntentRegistry.decision_current` is therefore this module's own input
-collection, not a kernel call: it authors exactly one comparison (equality
-of the decision's ``trading_approval_policy_generation`` against the
-registry's configured, currently-loaded value) plus one log-derived
-supersession check (a later-generation decision for the same proposal
-already consumed) — never anything more permissive than those two facts.
-
-**Decision expiry runtime path (kernel round #1 §1.2/§2.2, resolving the
-2026-09-08 re-review MEDIUM).** ADR-002-023 §12 item 2 requires a consumed
-decision be "current, **unexpired**". ``tos.iap`` stays clock-free; kernel
-round #1 §1.2 added :func:`tos.iap.decision_unexpired` — a pure, fail-closed
-predicate over an already-composed ``(max_decision_age_ms,
-decision_age_bound_ms)`` pair, isomorphic to
-:func:`tos.time.snapshot_age_admissible`. This module composes that bound,
-ONLY via kernel ``tos.time`` predicates, in three steps:
-
-1. **Load**: a non-``null`` ``max_decision_age_ms`` now REQUIRES the file's
-   new optional ``issued_at_unix_ms`` field
-   (:func:`_check_decision_age_requires_issued_at`, replacing the prior
-   unconditional refusal); absence still refuses. ``None`` is unaffected.
-2. **Receipt** (:func:`load_operator_approval_with_receipt`, a NEW, ADDITIONAL
-   loader — :func:`load_operator_approval_file` keeps its exact prior
-   signature/return type): captures this process's own continuity + a
-   :class:`~tos.time.ConsumerReceiptAnchor` from the injected
-   :class:`~tos_runtime.time.service.TrustworthyTimeService`, refuses a
-   future-dated ``issued_at_unix_ms``, and returns a :class:`LoadedApproval`
-   wrapping the kernel decision plus these receipt-time facts — the kernel
-   :class:`~tos.iap.IndependentApprovalDecision` itself is NOT edited.
-3. **Consumption** (:meth:`IntentRegistry.decision_current` /
-   :meth:`IntentRegistry.consume`, both gaining an optional ``receipt:
-   LoadedApproval | None``): ``max_decision_age_ms is None`` keeps prior
-   behaviour (evidence records ``NOT_CONFIGURED``); non-``None`` composes an
-   age bound via kernel
-   :func:`tos.time.effective_snapshot_age_bound_from_continuity` from the
-   current vs. receipt-time continuity and the injected ``time_config``
-   bounds, then calls :func:`~tos.iap.decision_unexpired`. A ``None`` bound
-   (time not ``TRUSTED``, not started, or incomplete ``receipt``/``time``/
-   ``time_config``) is fail-closed ``False``. Evidence carries the receipt
-   anchor, age bound, and expiry verdict.
-
-Every existing caller (``time``/``time_config`` omitted) keeps working
-unchanged as long as its files keep ``max_decision_age_ms`` ``null``.
-
-**Reported ``CommandType`` gap — resolved by kernel round #1 (plan §1.1).**
-This module previously reused :data:`~tos.rcl.vocabulary.CommandType.CONSUME_TRANSMISSION_CAPABILITY`
-(a different governed artifact, the RCL Transmission Capability nonce) as the
-closest structural analog for "consume an Independent Approval decision,
-once" — no closed ``CommandType`` member named that act. Kernel round #1
-§1.1 ratified a dedicated member,
-:data:`~tos.rcl.vocabulary.CommandType.CONSUME_APPROVAL_DECISION`; this
-module now writes/reads exclusively under it (the old reuse retired, §2.1).
-Both :meth:`IntentRegistry._current_consumption` (exact match) and the
-supersession scan in :meth:`IntentRegistry.decision_current` (prefix match)
-raise :class:`~tos_runtime.rcl.log.CommitLogCorruption` on a matching entry
-whose ``kind`` is NOT that member — never silently read as "not yet
-consumed" / "no supersession" (either would be a fail-open).
+Decision currency combines the configured policy generation with log-derived
+supersession. When expiry is configured, receipt-time continuity and age
+bounds are collected and passed to kernel predicates; missing or untrusted
+inputs fail closed. Consumption and supersession entries must use the
+dedicated command type or the log is treated as corrupt.
 """
 
 from __future__ import annotations
@@ -143,22 +62,18 @@ __all__ = [
     "load_operator_approval_with_receipt",
 ]
 
-#: Command-id prefix for every IAP consumption entry — see the module
-#: docstring's "single-use consumption is log-enforced" section.
+#: Command-id prefix for every IAP consumption entry.
 _CONSUMPTION_PREFIX = "iap-consumption"
 
-#: The dedicated ``CommandType`` member for a single IAP consumption (kernel
-#: round #1 §1.1/§2.1 — module docstring).
+#: The command kind used for a single IAP consumption.
 _CONSUMPTION_KIND = CommandType.CONSUME_APPROVAL_DECISION
 
 _EVIDENCE_KIND_PROPOSAL = "IAP_PROPOSAL"
 _EVIDENCE_KIND_DECISION = "IAP_DECISION_REGISTERED"
 _EVIDENCE_KIND_CONSUMPTION = "IAP_CONSUMPTION"
 
-#: The free string/id/digest fields ``_build_decision_from_raw`` reads straight off the
-#: operator file and seals into ``IndependentApprovalDecision.issue``'s own canonical
-#: digest (W-A A-0 round 2) — none of these are enum-gated, so an operator-typed
-#: ``"TBD"`` was never caught the way a bare ``null`` already is.
+#: Free string/id/digest fields are checked for the named-TBD placeholder
+#: before they are sealed into the decision digest.
 _DECISION_TBD_CHECKED_FIELDS: tuple[str, ...] = (
     "decision_id",
     "request_id",
@@ -651,12 +566,9 @@ class IntentRegistry:
             if entry.command_id != entry_command_id:
                 continue
             if entry.kind is not _CONSUMPTION_KIND:
-                # An entry already sits at this decision's own consumption
-                # identity under a DIFFERENT kind (e.g. the now-retired
-                # CONSUME_TRANSMISSION_CAPABILITY reuse, or a foreign
-                # writer) — never silently read as "not yet consumed": that
-                # would let a second, differently-kinded consumption slip
-                # through undetected (fail-open). Kernel round #1 §2.1.
+                # An entry at this decision's identity under another kind is
+                # corruption, never "not yet consumed"; skipping it could
+                # allow a second consumption.
                 raise CommitLogCorruption(
                     "IntentRegistry._current_consumption: entry "
                     f"{entry.command_id!r} matches this decision's own "
@@ -725,10 +637,8 @@ class IntentRegistry:
             if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
             if entry.kind is not _CONSUMPTION_KIND:
-                # A prefix-matching entry under any OTHER kind (e.g. the
-                # now-retired CONSUME_TRANSMISSION_CAPABILITY reuse, or a
-                # foreign writer) is never silently skipped — that would hide
-                # a real supersession (fail-open). Kernel round #1 §2.1.
+                # A prefix-matching entry under another kind is corruption,
+                # never a skipped supersession; ignoring it would hide one.
                 raise CommitLogCorruption(
                     "IntentRegistry.decision_current: entry "
                     f"{entry.command_id!r} matches the consumption prefix for "
@@ -791,7 +701,7 @@ class IntentRegistry:
             receipt.receipt_anchor,
             consumer_continuity_now=continuity_now,
             consumer_anchor=receipt.receipt_continuity,
-            # OBSERVED (never fabricated) — re-review finding #2. `None`
+            # OBSERVED (never fabricated). ``None``
             # (unobserved) is NOT coerced to "not suspended"; anchor_valid
             # treats it as invalid, fail-closed, like max_suspension_ms below.
             suspension_ms=snapshot.suspension_status.suspension_ms,
@@ -799,8 +709,8 @@ class IntentRegistry:
             issuer_signed_age=receipt.issuer_signed_age_ms,
             issuer_age_uncertainty=receipt.issuer_age_uncertainty_ms,
             transport_bound=self._time_config.max_time_transport_and_queue_uncertainty_ms,
-            # Phase 2's time config folds transport + queue delay into ONE
-            # combined bound (MAX_time_transport_and_queue_uncertainty_ms) —
+            # The time config folds transport and queue delay into one combined
+            # bound; there is no separate queue-only key, so zero here means
             # there is no separately-tracked queue-only key, so 0 here is a
             # concrete "already folded into transport_bound", never an
             # unbounded/None term (which would fail this closed instead).
