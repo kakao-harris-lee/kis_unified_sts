@@ -158,22 +158,7 @@ def snapshot_binds_capsule_reference(
     ref = capsule.critical_input_snapshot
     if ref.snapshot_id is None or ref.canonical_digest is None:
         return False
-    # ★ Redundant defence — a *provably equivalent* mutant, kept deliberately (review MINOR-2 N4).
-    #
-    # Two corrections to the review's reasoning, both measured 2026-07-29 against the shipped
-    # models. (a) The premise "an IdDerivedArtifact can never carry a None id/digest" is false: a
-    # pre-issuance ``CriticalInputSnapshot()`` *is* constructible through ordinary construction —
-    # ``status=DRAFT`` leaves both ``None`` — as is a pre-issuance ``DecisionContextCapsule()``. So
-    # this line does get executed. (b) It nevertheless cannot change the result, which is the
-    # stronger statement: control only reaches here once the reference side is positively concrete,
-    # and for a concrete ``ref`` against any ``None`` snapshot field the equality below is already
-    # ``False`` (``"cis-1" == None``). Deleting these two lines is therefore behaviour-preserving —
-    # no test can kill it, and one that appeared to would be testing something else.
-    #
-    # It stays because the equality's fail-closed behaviour would then be *incidental* (a property
-    # of ``==`` against ``None``) rather than *stated*. The both-None case — a DRAFT capsule against
-    # a DRAFT snapshot — is caught one branch earlier by the reference-side guard; this makes the
-    # symmetric claim explicit on the body side rather than leaving it to be re-derived.
+    # Keep the symmetric guard explicit; the equality below also rejects missing snapshot IDs.
     if snapshot.snapshot_id is None or snapshot.canonical_digest is None:
         return False
     return (
@@ -259,14 +244,7 @@ def index_observations(
             ambiguous.add(raw_event_id)
             continue
         index[raw_event_id] = observation
-    # ★ Second seal, and load-bearing beyond the publication path (review MINOR-2 L7).
-    # :func:`_admit_one` already refuses a candidate whose ``observation_ref`` is in the returned
-    # ``ambiguous`` set, so for *that* caller this pop is defence in depth. It is **not** redundant
-    # for the others: this function is a public export, and :func:`lineage_state_for_output`
-    # resolves lineage parents through the index alone, with no access to the ambiguous set. Leaving
-    # an ambiguous id in the index would hand that path the *first* observation under a contested
-    # identity — an arbitrary fold. Popping it makes the parent unresolvable, so causality fails
-    # closed to ``UNKNOWN`` instead (design #32 §5.4/§6).
+    # Keep ambiguous IDs out of the public index so lineage never picks an arbitrary observation.
     for raw_event_id in ambiguous:
         index.pop(raw_event_id, None)
     return index, frozenset(ambiguous)

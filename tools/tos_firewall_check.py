@@ -57,13 +57,7 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
                 second root name) — see that rule's docstring.
   (h) TOS-FW-H  a RUNTIME-scope file imports ANY ``shared.*`` module — even
                 one of the six commons packages the KERNEL is itself allowed
-                to import under §3.2 (design #40 D1.1, corrected v1.2,
-                ratified by the operator 2026-09-08: an
-                earlier draft of R1 unioned in the kernel's `shared.*`
-                allowance; the operator's decision was that D1.1's "runtime
-                opens no new commons dependency" wins, so R1 excludes all of
-                `shared.*`, full stop, regardless of the kernel's own
-                allowlist).
+                to import under §3.2 (design #40 D1.1).
 
 ------------------------------------------------------------------------------
 SCOPE SPLIT (design #40 D1.3, ratified by the operator 2026-09-08)
@@ -77,7 +71,7 @@ stricter (kernel) allowlist for any path it does not recognize as runtime:
                  UNCHANGED by this split.
   RUNTIME scope  ``tos/runtime/**`` — allowlist **R1** = (the kernel
                  allowlist MINUS all six ``shared.*`` commons packages — rule
-                 (h) above; v1.2 correction, 2026-09-07) ∪ ``tos.*`` (the
+                 (h) above) ∪ ``tos.*`` (the
                  kernel — the one EXPECTED dependency direction) ∪
                  ``tos_runtime.*`` (self) ∪ the stdlib egress primitives
                  ``socket``/``ssl``/``http``/``urllib.request`` (``sqlite3``
@@ -135,9 +129,7 @@ does not own it.
 The RUNTIME_* constants (allowlist R1) mechanize design document #40
 (`2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md`) §D1.3 item 2,
 cross-referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
-item 6). Design #40 is ratified by the operator (2026-09-08) — see that
-document's §0 for why the skeleton this enables (``tos/runtime/``) still
-contains no I/O until the D2/D3 implementation lanes land it.
+item 6).
 
 This gate itself lives under ``tools/`` (outside ``tos/``) and is therefore NOT
 governed by the firewall; it may use ``os``/``argparse``/etc. freely.
@@ -203,7 +195,7 @@ SHARED_ALLOWED: frozenset[str] = frozenset(
         "shared.resilience",
         "shared.utils",
         "shared.exceptions",
-        # §3.4 dual-use extraction (created in parallel work); allowed per §3.2
+        # §3.4 dual-use extraction; allowed per §3.2
         # "커먼즈(신설 후)" row.
         "shared.determinism",
     }
@@ -218,15 +210,8 @@ STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
 # referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
 # item 6). Do not edit in isolation from that document.
 #
-# v1.2 correction (2026-09-07, same day, operator decision): an earlier cut
-# of R1 defined it as a UNION with the full kernel allowlist, which would
-# have carried SHARED_ALLOWED's six commons packages into runtime scope too
-# — contradicting design #40 D1.1's own table ("tos_runtime -> shared.* ✘").
-# The operator resolved the contradiction in D1.1's favor: R1 EXCLUDES all of
-# `shared.*` (rule (h)/TOS-FW-H, enforced in `classify_module` below, not by
-# a set constant here — `shared` needs a scope-conditional branch, not a
-# subtraction, since the kernel's own `shared` handling already branches on
-# SHARED_ALLOWED).
+# Runtime excludes all shared.* imports, including the kernel commons allowlist
+# (design #40 D1.1). classify_module enforces this as rule (h)/TOS-FW-H.
 # ============================================================================
 
 # The self-import name of the new `tos-runtime` distribution (design #40
@@ -252,53 +237,11 @@ RUNTIME_STDLIB_CARVEOUT: frozenset[str] = frozenset(
 # #40 D1.3 item 2 "계속 금지" list).
 FORBIDDEN_STDLIB_RUNTIME: frozenset[str] = FORBIDDEN_STDLIB - RUNTIME_STDLIB_CARVEOUT
 
-# The reverse scan (rule e / R-reverse, repo files OUTSIDE tos/) prunes ONLY
-# an explicit, small set of repo-root-relative roots, matched by
-# resolved-path IDENTITY — never by name, and never at any depth. Each root
-# below is resolved once (as `repo_root / rel`) before the walk starts.
-#
-# `_REVERSE_SCAN_PRUNE_ROOTS` = VCS/generated/gitignored roots — `.git`
-# (VCS internals), `.venv` (this repo's own dev venv), `.omc` and `.history`
-# (tooling scratch dirs) — verified 2026-09-04 to be where this checkout's
-# gitignored `.py` files live (`git ls-files --others --ignored --exclude-standard
-# | grep '\.py$'`). Plus `tos` at the repo root: the forward scan's territory
-# (rules a-d), not a name-based exclusion — a NESTED dir literally named
-# `tos` (e.g. `services/tos/`) is NOT this root and IS scanned.
-#
-# Two earlier versions of this were both rejected by Codex review:
-#   1. A fixed name set (`_REVERSE_SCAN_PRUNE = {"tos", ".git", ".venv",
-#      "node_modules", "__pycache__", ".omc", ".history"}`) pruned at ANY
-#      depth — `tos`, `node_modules`, `__pycache__` are valid identifiers, so
-#      e.g. `shared/node_modules/x.py` containing `import tos` would have
-#      been silently skipped by rule e yet remained importable.
-#   2. An `isidentifier()` predicate (prune any dir whose name is not a
-#      valid Python identifier, at any depth) was rejected too: §3.2
-#      R-역방향 requires scanning EVERY Python file outside tos/, and a
-#      tracked script under a non-identifier-named directory (e.g.
-#      `docs/reviews/phase0-completion-contract/probe.py`) still executes by
-#      path — a hyphenated/dotted directory name says nothing about
-#      importability. `node_modules`/`__pycache__`/hyphenated dirs like
-#      `strategy-builder-ui` are therefore NOT pruned; they are ordinary,
-#      scanned directories under this design.
-#
-# Two further explicit roots, added after measuring the live-tree wall time
-# (2026-09-04):
-#
-#   - `open-trading-api/` — a gitignored, root-level clone of KIS's own
-#     sample-code repo (`.gitignore:60`; `git ls-files open-trading-api` = 0
-#     tracked files). Measured 12,247 `.py` files, by far the dominant cost
-#     of this scan (`grep -rl '^import tos\|^from tos' open-trading-api` = 0
-#     matches — an independent, unrelated codebase that was never going to
-#     trip rule e). This alone was the majority of the ~7.7s live-tree wall
-#     time before pruning.
-#   - `strategy-builder-ui/node_modules` — npm's vendor tree (gitignored,
-#     2995 subdirectories). NOTE this is a deliberate scope tradeoff, not a
-#     "zero Python" claim: it in fact contains exactly one `.py` file
-#     measured (`flatted/python/flatted.py`, a vendored npm package's
-#     optional Python bridge script, unrelated to this repo's own `tos`
-#     package and never containing `import tos`). `strategy-builder-ui/`
-#     itself is NOT pruned — only its `node_modules/` subtree — so a real
-#     script directly under `strategy-builder-ui/` is still scanned.
+# Reverse-scan exclusions are explicit repo-relative roots, matched by resolved
+# path identity. Never prune by directory name or Python identifier validity:
+# nested packages and scripts in hyphenated directories must still be scanned.
+# Vendor/scratch trees are excluded from walking; git-tracked Python files under
+# these roots are added back by _git_tracked_py_under_pruned_roots.
 _REVERSE_SCAN_PRUNE_ROOTS: tuple[str, ...] = (
     ".git",
     ".venv",
@@ -309,35 +252,11 @@ _REVERSE_SCAN_PRUNE_ROOTS: tuple[str, ...] = (
     "strategy-builder-ui/node_modules",
 )
 
-# The forward scan (rules a-d, inside tos/ itself) excludes ONLY the
-# uv-generated top-level `tos/.venv/` tree — i.e. `p.relative_to(tos_dir).parts[0]
-# == ".venv"`, not any-depth pruning by directory name. `.venv` is not a valid
-# Python identifier, so it can never be a package/module path component; a
-# top-level-only check is therefore safe with zero bypass risk. An earlier
-# version of this fix pruned `node_modules`/`__pycache__`/`.git`/`.venv` at ANY
-# depth (mirroring `_REVERSE_SCAN_PRUNE`), but that was rejected on Codex
-# review: `node_modules` and `__pycache__` ARE valid identifiers, so a tracked
-# `tos/src/tos/node_modules/egress.py` would have been silently skipped by
-# rules A-D yet remained importable via `from .node_modules import egress` —
-# an exact bypass of the firewall this file exists to enforce. Rationale for
-# excluding `.venv` at all: a developer running `cd tos && uv sync` creates a
-# gitignored `tos/.venv/`, and without this exclusion the forward scan walks
-# into its vendored site-packages and reports thousands of false violations.
-#
-# `_iter_py_files` deliberately does NOT skip `__pycache__` directories either
-# (a second Codex review finding, 2026-09-04): `__pycache__` is likewise a
-# valid identifier, so a package literally named that would have been
-# silently skipped by rules A-D yet remained importable via
-# `from .__pycache__ import egress` — the same bypass class as `node_modules`
-# above. No exclusion is needed for the *real* compiled-cache use case: Python
-# writes only `.pyc` files under `__pycache__/`, and `root.rglob("*.py")`
-# never matches those, so the directory is already inert to this scan without
-# any special-casing.
+# The forward scan excludes only top-level tos/.venv to avoid scanning installed
+# dependencies. Nested node_modules and __pycache__ can be importable packages
+# and must remain in scope; ordinary .pyc cache files do not match the .py scan.
 
-# The names rule R/rule-(e) scans for: the kernel package AND, since design
-# #40 D1.3 item 3 ("규칙 (e) 확장"), the runtime distribution — a file OUTSIDE
-# tos/ entirely may import NEITHER, symmetric with rule (g)'s kernel-scope
-# prohibition on `tos_runtime` above.
+# Neither kernel nor runtime may be imported from outside tos/ (design #40 D1.3).
 _REVERSE_SCAN_TARGET_NAMES: frozenset[str] = frozenset({"tos", "tos_runtime"})
 
 # Line-level fallback used only when a repo file outside tos/ fails to AST-parse
@@ -415,11 +334,7 @@ def classify_module(dotted: str, scope: str = "kernel") -> tuple[bool, str | Non
         return False, "TOS-FW-G"
     if top == "shared":
         if scope == "runtime":
-            # design #40 D1.1 (corrected v1.2, 2026-09-07 — operator
-            # decision): `tos_runtime -> shared.*` is forbidden OUTRIGHT, all
-            # six commons packages included. R1 is therefore the KERNEL
-            # allowlist MINUS `shared.*`, not a superset of it — the runtime
-            # shell opens no new commons dependency, full stop. Rule (h).
+            # Runtime may not import even the kernel's allowed commons (design #40 D1.1).
             return False, "TOS-FW-H"
         if _matches_prefix(dotted, SHARED_ALLOWED):
             return True, None
@@ -598,19 +513,9 @@ _UNSET = object()
 
 
 def _run_git(args: list[str], repo_root: Path) -> subprocess.CompletedProcess:
-    """Run ``git -C repo_root <args>``, bytes in and out (Claude-side review
-    batch 2, LOW: ``text=True`` would raise ``UnicodeDecodeError`` on a
-    non-UTF-8 filename anywhere in the output; every caller here decodes
-    path bytes itself with ``os.fsdecode`` instead, which round-trips even
-    surrogate-escaped bytes).
+    """Run git with byte output so non-UTF-8 filenames survive os.fsdecode.
 
-    Forces ``LC_ALL=C`` so git's fatal/error messages come back in English
-    and are safe to substring-match, regardless of the invoking user's
-    locale — verified 2026-09-04 that this is NOT a hypothetical concern:
-    this very checkout's git prints Korean-locale messages by default (e.g.
-    "fatal: not a git repository" renders as "깃 저장소가 아닙니다" without
-    this), which would have silently broken the not-a-work-tree detection
-    in ``_git_toplevel_or_none`` below on this exact machine.
+    LC_ALL=C keeps error messages stable for callers that match git diagnostics.
     """
     env = dict(os.environ)
     env["LC_ALL"] = "C"
@@ -628,24 +533,9 @@ def _git_toplevel_or_none(repo_root: Path) -> Path | None:
     (covers both "no git work tree here at all" and "inside SOME work tree,
     but not its toplevel").
 
-    Called ONCE per ``run_checks`` invocation and threaded through every
-    caller that needs it (``_walk_repo_py``, ``_git_tracked_py_under_pruned_roots``,
-    ``_git_tracked_symlinks``, ``_tos_root_is_symlink``) — this used to be a
-    verbatim-duplicated probe inside each of the latter two (DRY, CLAUDE.md
-    non-negotiable), and duplicating it meant up to three separate
-    ``rev-parse`` subprocess calls per firewall run for no reason.
-
-    Fail-open (return ``None``, no error) ONLY when genuinely not inside a
-    git work tree at all (``git rev-parse --show-toplevel``'s own stderr
-    says so) or git is not installed. Fail-CLOSED (raise ``RuntimeError``)
-    for ANY OTHER probe failure — most importantly a real work tree that
-    git refuses to probe for "dubious ownership" reasons (CVE-2022-24765;
-    a live scenario for a CI checkout owned by a different uid than the
-    one running this tool). Claude-side review, batch 2: the earlier code
-    treated every non-zero exit as "not a work tree", which would silently
-    have dropped the tracked-``.py`` union AND the tracked-symlink source —
-    exactly the class of bypass this whole rule-R/rule-S effort exists to
-    close — with no error, no warning, nothing.
+    Missing git and non-work-tree errors return None.
+    Other probe failures (including dubious ownership) must raise: silently
+    dropping tracked-file and tracked-symlink checks would bypass the firewall.
     """
     try:
         result = _run_git(["rev-parse", "--show-toplevel"], repo_root)
@@ -688,7 +578,7 @@ def _git_tracked_py_under_pruned_roots(
 ) -> list[Path]:
     """Every git-tracked ``.py`` beneath a pruned root OTHER than ``tos``.
 
-    Closes a bypass (Codex re-review #7, 2026-09-04): ``git add -f`` can
+    ``git add -f`` can
     force-track a file under a normally-pruned root (e.g.
     ``open-trading-api/x.py``, ``.venv/x.py``) even though that root is
     gitignored. CI checks out and runs that file, but ``_walk_repo_py``'s
@@ -711,7 +601,7 @@ def _git_tracked_py_under_pruned_roots(
 
     # Lexical (not resolved): a force-tracked symlink under a pruned root
     # must be identified by its OWN path, never by the path its target
-    # happens to resolve to (Codex re-review #8 — see `check_reverse_imports`
+    # happens to resolve to (see `check_reverse_imports`
     # and the module-level comment on lexical boundary classification).
     return [
         Path(os.path.abspath(repo_root / os.fsdecode(rel)))
@@ -787,16 +677,14 @@ def _git_tracked_symlinks(repo_root: Path, toplevel: Path | None) -> list[Path]:
     """Every git-tracked symlink (index mode ``120000``) EXCEPT beneath
     (strictly under) the repo-root ``tos/`` (the forward-scan mirror owns
     tos-INTERNAL symlinks — see ``_forward_scan_boundary_symlinks``). A
-    tracked symlink AT ``tos`` itself IS returned — narrowed from
-    ``rel == "tos" or rel.startswith("tos/")`` to `rel.startswith("tos/")``
-    only (Claude-side review, 2026-09-04): the repo-root `tos` path is not
+    tracked symlink AT ``tos`` itself IS returned: the repo-root `tos` path is not
     "inside tos/", it IS the boundary marker, and ``_tos_root_is_symlink``
     (called from ``run_checks``) needs this function's output to detect a
     tracked-but-not-yet-materialized symlink there. Lexical paths, not
     resolved.
 
     Closes the directory-symlink half of the same bypass class as
-    ``_git_tracked_py_under_pruned_roots`` (Codex re-review #9):
+    ``_git_tracked_py_under_pruned_roots``:
     ``os.walk(followlinks=False)`` never descends into ANY directory
     symlink, regardless of where it points or whether its parent is a
     pruned root — so a directory alias force-tracked under a pruned root
@@ -840,7 +728,7 @@ def _subtree_contains(root: Path, candidate: Path) -> bool:
     machines) two differently-cased paths can name the same physical file
     while comparing unequal here — a gap noted, not closed: enforcement is
     Linux CI, where the filesystem is case-sensitive and this is exact by
-    construction (LOW, Claude-side review batch 2).
+    construction.
     """
     return candidate == root or root in candidate.parents
 
@@ -850,14 +738,8 @@ def _classify_symlink_crossing(
 ) -> tuple[bool, Path | None]:
     """Does ``link_lexical`` (a symlink) cross the tos/ boundary?
 
-    Crossing is SUBTREE INTERSECTION, not "which side is the target on"
-    (Claude-side review, 2026-09-04 — the earlier "which side" check missed
-    a link OUTSIDE tos/ pointing at an ANCESTOR of tos/, e.g.
-    ``shared/up -> <repo root>``: the repo root is "outside" tos/ too, so
-    the old same-side/different-side comparison judged it clean, even
-    though the ancestor's subtree obviously *contains* tos/ —
-    ``shared.up.tos.src.tos`` reaches the kernel through it, invisible to
-    rule R's own walk since a directory symlink is never traversed):
+    Crossing is subtree intersection: an outside link to an ancestor of tos/
+    also exposes the kernel (e.g. shared/up -> repo root).
 
       - Link lexically OUTSIDE tos/: crossing iff the target's subtree and
         tos_dir's subtree overlap AT ALL — target IS tos_dir, target is a
@@ -898,19 +780,14 @@ def _forward_scan_boundary_symlinks(repo_root: Path, tos_dir: Path) -> list[Viol
     somewhere else entirely. Walks ``tos_dir`` directly with
     ``os.walk(followlinks=False)`` (never descends into a directory
     symlink), mirroring ``_iter_py_files``'s top-level `.venv/` exclusion so
-    this stays as cheap as the forward `.py` scan. Known residue (Claude-side
-    review pass 2, SUGGESTION): the `.venv` entry itself is classified, but a
+    this stays as cheap as the forward `.py` scan. Known limitation: the `.venv` entry itself is classified, but a
     symlink one level deeper (``tos/.venv/leak -> ../../shared/real``) is not
     reached because the tree is pruned after recording; bounded, since nothing
     under ``tos/.venv`` is importable as ``tos.*``.
 
     RECORDS symlinks in ``dirnames``/``filenames`` BEFORE pruning `.venv`
     out of ``dirnames`` — same discipline as ``_walk_repo_py``'s
-    ``symlinks_out`` side-channel. An earlier version pruned `.venv` FIRST
-    (Claude-side review batch 2, MEDIUM): a force-tracked (or merely
-    present) `tos/.venv` symlink to somewhere outside tos/ was stripped out
-    of ``dirnames`` before the islink check ever ran, so nothing ever
-    reported it.
+    ``symlinks_out`` side-channel, so a tos/.venv symlink cannot evade detection.
     """
     tos_dir_lexical = Path(os.path.abspath(tos_dir))
     violations: list[Violation] = []
@@ -942,9 +819,7 @@ def _safe_rel(path: Path, root: Path) -> str:
     resolved (``os.path.relpath`` normalises to absolute but never follows
     symlinks). A violation must name the file that actually contains it: if
     ``path`` is a symlink, resolving it here would substitute its TARGET's
-    path in the report, misattributing the violation to a different file
-    (Codex re-review #8 — the same lexical-vs-resolved bug class as the
-    boundary classification in ``check_reverse_imports`` below).
+    path in the report, misattributing the violation to a different file.
     """
     try:
         return os.path.relpath(path, root)
@@ -959,15 +834,14 @@ def _make_symlink_crossing_violation(
 ) -> Violation:
     """Build the one ``TOS-FW-S`` ``Violation`` shape both the reverse loop
     (``check_reverse_imports``) and the forward mirror
-    (``_forward_scan_boundary_symlinks``) need — DRY (they used to build
-    this inline, verbatim, in both places).
+    (``_forward_scan_boundary_symlinks``) need.
 
     Message wording: a dangling target (``target_lexical is None``) gets
     its own wording, "dangling symlink (target unresolvable) — fail-closed",
     rather than reusing the generic "crosses the tos/ boundary" phrasing —
     a dangling link hasn't been PROVEN to cross anything; it is flagged
     because its status is unknown, and that distinction is worth keeping
-    visible in the message itself (LOW, Claude-side review batch 2).
+    visible in the message itself.
     """
     rel = _safe_rel(link_lexical, repo_root)
     if target_lexical is None:
@@ -1004,8 +878,8 @@ def check_reverse_imports(
     # where it lexically SITS in the tree, never by what a symlink resolves
     # to. `.resolve()` here would misclassify a symlink OUTSIDE tos/ whose
     # target happens to live inside tos/ as tos-internal, silently exempting
-    # it from rule e even though it is importable exactly where it sits
-    # (Codex re-review #8). `os.path.abspath` normalises without following
+    # it from rule e even though it is importable exactly where it sits.
+    # `os.path.abspath` normalises without following
     # symlinks.
     tos_dir_lexical = Path(os.path.abspath(tos_dir))
 
@@ -1114,15 +988,9 @@ def _tos_root_is_symlink(
     check in this file is anchored to; there is no target that keeps it "on
     the same side", because the symlink's mere existence means the kernel's
     real content lives somewhere physically else. Checked FIRST, from
-    ``run_checks``, before anything else runs (Claude-side review,
-    2026-09-04): neither the reverse rule-S loop (which explicitly skips
-    anything lexically equal to ``tos_dir``) nor the forward mirror (which
-    walks INSIDE ``tos_dir`` as its OWN root, so it structurally can never
-    inspect ``tos_dir`` itself) can ever catch this — and the old
-    ``run_checks`` gated the ENTIRE forward scan (rules a-d AND the forward
-    rule-S mirror) on ``tos_dir.is_dir()``, so a dangling symlink at ``tos``
-    made every one of those checks silently vanish, reporting a clean PASS
-    despite the kernel being structurally unverifiable.
+    ``run_checks``, before any scan: neither the reverse loop (which skips the
+    root) nor the forward walk (which inspects descendants) can catch it.
+    A dangling root symlink must fail instead of silently skipping the scan.
 
     Two independent sources, fail-closed if EITHER says yes:
       1. The filesystem (``os.path.islink`` directly on ``tos_dir``).
@@ -1159,13 +1027,6 @@ def run_checks(repo_root: Path) -> list[Violation]:
     missing/non-directory entry there, is ALWAYS a visible, reported
     failure — never a silent PASS (see ``_tos_root_is_symlink``).
 
-    Git is probed exactly ONCE here (``_git_toplevel_or_none``) and the
-    tracked-symlink query exactly ONCE (``_git_tracked_symlinks``); both
-    results are threaded down to every function that needs them
-    (``_tos_root_is_symlink``, ``check_reverse_imports`` and, through it,
-    ``_walk_repo_py``) instead of each re-probing independently (DRY,
-    CLAUDE.md non-negotiable — this used to be up to three separate
-    ``rev-parse`` calls and two duplicate ``ls-files -s`` calls per run).
     """
     repo_root = repo_root.resolve()
     tos_dir = repo_root / "tos"

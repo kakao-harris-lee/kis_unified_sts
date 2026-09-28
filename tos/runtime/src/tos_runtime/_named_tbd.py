@@ -1,42 +1,13 @@
-"""Shared named-TBD placeholder rejection (W-A A-0; kernel round #4 ``contract-keeper``
-HIGH finding).
+"""Reject the reserved named-TBD placeholder used by runtime config loaders.
 
-Every ``tos_runtime.*`` config loader in this package already refuses a bare ``null`` leaf
-as "named-TBD, not filled in yet" — the "null=named-TBD ⇒ refuse to start" discipline nearly
-every loader's own module docstring cites. Kernel round #4's ``contract-keeper`` review
-found a SECOND, narrower gap in ``tos_runtime.compose._construction_config``'s
-``optional_str`` helper: an operator who instead types the literal STRING ``"TBD"`` into a
-free-string field (rather than leaving it ``null``) was never caught there — a plain
-``isinstance(value, str) and value.strip()`` check happily accepts ``"TBD"`` as if it were a
-real value, silently sealing a placeholder into a canonical digest the next commit reads
-back as though an operator had actually filled it in.
+Runtime loaders reserve ``None`` for an unfilled value; this module rejects the
+separate exact string ``"TBD"`` before it can be sealed into a canonical
+configuration digest. The match is intentionally exact and case-sensitive.
+``reject_named_tbd`` preserves each caller's error type and names the field and
+loader context in its failure.
 
-That was one instance; W-A A-0's own survey (``docs/plans/2026-09-18-tos-config-adoption-
-and-carryover-plan.md`` §0.1.3) found the SAME gap-shape open in every other free-string
-loader that had no enum/allow-list backing its type check (an enum lookup already refuses
-``"TBD"`` on its own, since it is never a valid member name — those loaders needed no
-change). This module gives every one of those loaders the same guard from ONE place, so the
-check is a single class-closing fact rather than N independently-drifting copies (the two
-loaders that already had their own local check —
-:mod:`tos_runtime.venue._policy_primitives` / :mod:`tos_runtime.compose._construction_config`
-— now source their own ``TBD_STR``/``_TBD_STR`` constant from here too, so there is exactly
-one literal, not three).
-
-**Re-survey, round 2 (team-lead disposition, kernel round #4 re-review BLOCKER).** The first
-survey worked from a hand-maintained file list that turned out to be stale (missing
-``tos_runtime.safety.profile``, both ``tos_runtime.transport.kis_*.config`` modules, and
-``tos_runtime.safety.rearm``) — the exact "레지스트리 + 고정 안 된 위성" failure shape this
-repo has hit before. :func:`first_named_tbd_leaf` (promoted here from
-:mod:`tos_runtime.strategy.loader`, which re-exports it for backward compatibility — no
-behavioural change) is this module's answer to the "whole raw dict handed to
-``pydantic.model_validate`` with no per-field extraction at all" loader shape
-(:mod:`tos_runtime.safety.profile`'s three policy documents) — the SAME depth-first walk
-:mod:`tos_runtime.strategy.loader`/``.bindings`` already apply to a free-form strategy file,
-generalized here because it turns out to be the right tool for ANY raw-dict-to-pydantic
-loader, not just strategy files.
-
-Pure stdlib module: no ``tos.*``, no ``yaml`` — a bare string-equality/tree-walk helper has no
-reason to know a kernel record shape or a YAML shape.
+The helpers are stdlib-only and operate on arbitrary nested mappings and
+sequences so raw-dict-to-model loaders can apply the same fail-closed guard.
 """
 
 from __future__ import annotations
@@ -50,14 +21,8 @@ __all__ = [
     "reject_named_tbd",
 ]
 
-#: The one placeholder string this codebase's example configs use for "an operator has not
-#: filled this in yet" — an EXACT match only, deliberately never case-folded or fuzzy.
-#: ``"tbd"``/``"Tbd"``/``"TODO"``/an empty string etc. are ordinary strings some other field
-#: might legitimately need (W-A A-0 survey: this codebase's own convention, set by
-#: ``tos_runtime.venue._policy_primitives.TBD_STR`` and the shipped ``*.example.yaml``
-#: templates, is the exact uppercase token — widening the match risks refusing a legitimate
-#: value that merely happens to look similar, which is a different, unrelated failure mode
-#: from the one this module closes).
+#: Exact placeholder used by example configs. The match stays case-sensitive and
+#: other similar-looking strings remain ordinary values.
 NAMED_TBD_PLACEHOLDER = "TBD"
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tos kernel module/function size budget checker (Phase 1 작업 6).
+"""tos kernel module/function size budget checker.
 
 Enforces a configurable size budget (``config/tos_size_budget.yaml``) over the tos
 kernel source tree: any module or function whose physical line count exceeds the

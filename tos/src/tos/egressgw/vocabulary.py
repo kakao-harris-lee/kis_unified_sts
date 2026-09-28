@@ -72,11 +72,6 @@ class _NonTruthyStrEnum(StrEnum):
         )
 
 
-# ===========================================================================
-# §4.1 — the RFC-002 §10.8:741-759 verify list (17 items, the ADR's own order)
-# ===========================================================================
-
-
 class SendVerifyItem(StrEnum):
     """The 17 things the Broker Egress Gateway verifies before a send (RFC-002 §10.8:741-759).
 
@@ -89,31 +84,31 @@ class SendVerifyItem(StrEnum):
     the deferred items are gated on :class:`BrokerApplicability` rather than on a live flag.
     """
 
-    VALID_UNUSED_TRANSMISSION_CAPABILITY = "VALID_UNUSED_TRANSMISSION_CAPABILITY"  # 1
+    VALID_UNUSED_TRANSMISSION_CAPABILITY = "VALID_UNUSED_TRANSMISSION_CAPABILITY"
     MATCHING_INTENT_AND_RESERVATION_IDENTITIES = (
-        "MATCHING_INTENT_AND_RESERVATION_IDENTITIES"  # 2
+        "MATCHING_INTENT_AND_RESERVATION_IDENTITIES"
     )
-    CURRENT_COMMITMENT_EPOCH = "CURRENT_COMMITMENT_EPOCH"  # 3
-    CURRENT_SAFETY_AUTHORITY_EPOCH = "CURRENT_SAFETY_AUTHORITY_EPOCH"  # 4
-    VALID_LIVE_SCOPE = "VALID_LIVE_SCOPE"  # 5
+    CURRENT_COMMITMENT_EPOCH = "CURRENT_COMMITMENT_EPOCH"
+    CURRENT_SAFETY_AUTHORITY_EPOCH = "CURRENT_SAFETY_AUTHORITY_EPOCH"
+    VALID_LIVE_SCOPE = "VALID_LIVE_SCOPE"
     ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY = (
-        "ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY"  # 6
+        "ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY"
     )
-    HARD_SAFETY_ENVELOPE_VERSIONS = "HARD_SAFETY_ENVELOPE_VERSIONS"  # 7
-    SAFETY_DEVIATION = "SAFETY_DEVIATION"  # 8
-    SAFETY_INCIDENT = "SAFETY_INCIDENT"  # 9
-    SAFETY_MONITORING = "SAFETY_MONITORING"  # 10
+    HARD_SAFETY_ENVELOPE_VERSIONS = "HARD_SAFETY_ENVELOPE_VERSIONS"
+    SAFETY_DEVIATION = "SAFETY_DEVIATION"
+    SAFETY_INCIDENT = "SAFETY_INCIDENT"
+    SAFETY_MONITORING = "SAFETY_MONITORING"
     VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION = (
-        "VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION"  # 11
+        "VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION"
     )
     VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION = (
-        "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"  # 12
+        "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
     )
-    ORDER_CONSTRUCTION = "ORDER_CONSTRUCTION"  # 13
-    TRADING_APPROVAL = "TRADING_APPROVAL"  # 14
-    ACTION_FLOW = "ACTION_FLOW"  # 15
-    CURRENTNESS = "CURRENTNESS"  # 16
-    ACTUAL_OUTBOUND_CONFORMANCE = "ACTUAL_OUTBOUND_CONFORMANCE"  # 17
+    ORDER_CONSTRUCTION = "ORDER_CONSTRUCTION"
+    TRADING_APPROVAL = "TRADING_APPROVAL"
+    ACTION_FLOW = "ACTION_FLOW"
+    CURRENTNESS = "CURRENTNESS"
+    ACTUAL_OUTBOUND_CONFORMANCE = "ACTUAL_OUTBOUND_CONFORMANCE"
 
 
 #: The normative 17-item order (RFC-002 §10.8:741-759). Tuple order **is** the contract.
@@ -246,7 +241,7 @@ class SendHaltReason(StrEnum):
     ATTEMPT_ALREADY_CONSUMED = "ATTEMPT_ALREADY_CONSUMED"
     #: The scalars about to cross the transport seam are not the ones step 2 derived, or the
     #: outbound request does not carry the exact compiled command digest (design #34 §4.4 /
-    #: RFC-005 §7:213; adversarial review MINOR-2).
+    #: RFC-005 §7:213).
     OUTBOUND_NOT_BOUND_TO_CONSTRUCTION = "OUTBOUND_NOT_BOUND_TO_CONSTRUCTION"
     VERIFY_ITEM_DENIED = "VERIFY_ITEM_DENIED"
     VERIFY_ITEM_UNKNOWN = "VERIFY_ITEM_UNKNOWN"
@@ -255,19 +250,13 @@ class SendHaltReason(StrEnum):
     SINGLE_USE_CLAIM_REFUSED = "SINGLE_USE_CLAIM_REFUSED"
     TRANSPORT_UNAVAILABLE = "TRANSPORT_UNAVAILABLE"
     TRANSPORT_RAISED = "TRANSPORT_RAISED"
-    #: ⚠ **Unreachable since Phase 4 작업 6 (SendSeal).** Deriving the outbound coordinates
-    #: (:func:`~tos.egressgw.seal.outbound_coordinates`) used to raise from inside step 18, after
-    #: the claim and ``SEND_STARTED``; that call site now runs at seal-build time (step 15½,
-    #: *before* the claim), and any coordinate-derivation fault there is folded into
-    #: :attr:`SEND_SEAL_UNCONSTRUCTABLE` instead (design #34 phase 4 작업 6 §1.2 — "이 자리로
-    #: 흡수"). The member is kept, never reused for a new site, so a historical evidence record
-    #: still decodes; a *new* halt is never tagged with it.
+    #: Reserved for decoding existing evidence. New coordinate failures occur while building the
+    #: pre-claim seal and use :attr:`SEND_SEAL_UNCONSTRUCTABLE` instead.
     OUTBOUND_COORDINATE_DERIVATION_RAISED = "OUTBOUND_COORDINATE_DERIVATION_RAISED"
     #: The pre-``SEND_STARTED`` :class:`~tos.egressgw.seal.SendSeal` could not be built — a
     #: required fact was absent from the send-boundary context, or the assembled seal failed its
     #: own construction-time validation (coordinate mismatch, diverging claim/active principal).
-    #: Recorded **before** the step-16 claim, so nothing is consumed (design #34 phase 4 작업 6
-    #: §1.2). Absorbs the former :attr:`OUTBOUND_COORDINATE_DERIVATION_RAISED` site.
+    #: Recorded **before** the step-16 claim, so nothing is consumed.
     SEND_SEAL_UNCONSTRUCTABLE = "SEND_SEAL_UNCONSTRUCTABLE"
     #: The transport call itself succeeded (``send_once`` returned), but the result object it
     #: returned could not be read — an attribute access on ``result`` (identity, kind, fill
@@ -276,11 +265,6 @@ class SendHaltReason(StrEnum):
     #: (UNKNOWN-restrictive, §4.2 "unknown preserves capacity, deny").
     RESULT_UNREADABLE = "RESULT_UNREADABLE"
     RESULT_ATTEMPT_IDENTITY_MISMATCH = "RESULT_ATTEMPT_IDENTITY_MISMATCH"
-
-
-# ===========================================================================
-# §3.1 — Order Construction derivation vocabulary
-# ===========================================================================
 
 
 class DerivationOutcome(_NonTruthyStrEnum):

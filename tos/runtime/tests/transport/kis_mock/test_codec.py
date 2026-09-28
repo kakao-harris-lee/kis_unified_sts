@@ -1,9 +1,7 @@
-"""``KisOrderWireCodec`` tests (review disposition F1).
+"""Tests for ``KisOrderWireCodec``.
 
-Written red-first: before ``codec.py`` existed, every test below failed on import. These pin
-the codec's exact serialization recipe so a future T2 binding (the compose context resolver)
-can reproduce it byte-for-byte (review instruction: "report the codec's exact serialization
-recipe so T2 can bind to it")."""
+These tests pin the exact serialization recipe so callers can reproduce the wire body
+byte-for-byte."""
 
 from __future__ import annotations
 
@@ -117,11 +115,11 @@ def test_account_is_read_from_the_sealed_account_coordinate() -> None:
 
 
 def test_account_is_the_seal_field_never_instrument_key_account() -> None:
-    """(F2, team-lead re-review mutation M8) Every OTHER fixture in this suite builds
+    """The codec must use ``seal.account`` even when
+    ``instrument_key.account`` differs. Every OTHER fixture in this suite builds
     ``instrument_key.account`` equal to ``seal.account``, so a mutation swapping
     ``seal.account`` for ``seal.instrument_key.account`` inside the codec would silently
-    survive every other test here. This test builds a seal where the two DIVERGE and asserts
-    ``CANO`` follows ``seal.account`` — never ``seal.instrument_key.account``."""
+    survive every other test here."""
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,

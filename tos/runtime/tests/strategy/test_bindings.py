@@ -1,7 +1,4 @@
-"""``tos_runtime.strategy.bindings`` tests (TOS Phase 3 슬라이스 D-R
-``[D-R-3a]``, docs/plans/2026-09-09-tos-phase3-event-core-plan.md §1.2 finding
-#9 disposition).
-"""
+"""Tests for ``tos_runtime.strategy.bindings``."""
 
 from __future__ import annotations
 
@@ -115,7 +112,7 @@ def test_null_leaf_in_bindings_refuses_naming_the_key(tmp_path: Path) -> None:
 def test_named_tbd_placeholder_in_bindings_refuses_naming_the_key(
     tmp_path: Path,
 ) -> None:
-    """W-A A-0: the null-only leaf walk never caught the literal placeholder
+    """The null-only leaf walk must also catch the literal placeholder
     string ``"TBD"`` typed in place of a real bindings value."""
     path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
     mapping = {

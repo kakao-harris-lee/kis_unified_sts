@@ -1,30 +1,9 @@
-"""``tos_runtime.compose._migrate_paths`` — path resolution for the ``migrate`` CLI subcommand
-(the SAME "``cli.py``'s size budget pushed a print-only helper here" idiom
-:mod:`tos_runtime.compose._cli_ops` already uses for :func:`~tos_runtime.compose._cli_ops
-.rearm_and_clear` / :func:`~tos_runtime.compose._cli_ops.risk_state_policy_digest_lines`).
+"""Resolve migration-store keys to their configured SQLite paths.
 
-**Why this exists as its own module, not inline in ``cli.py``.** Two reasons, landed together
-(tick-source wave, lane B fix): (1) ``compose/cli.py``'s own ``migrate`` dispatch resolved each
-:data:`~tos_runtime.operations.schema_migrations.STORE_MIGRATIONS` key's path from a hardcoded
-dict that only ever listed ``evidence``/``rcl``/``inbox`` — when ``"marketfeed"`` joined
-``STORE_MIGRATIONS``, that dict was never updated, and ``migrate`` (with no ``--store`` given)
-raised a bare ``KeyError`` deep inside the dispatch loop instead of running. (2) ``cli.py`` was
-already sitting at exactly its 1000-line size budget (``config/tos_size_budget.yaml``) before
-this fix — zero headroom, so any new code there, however small, pushed it over. Extracting the
-path resolver here (rather than registering the runtime tree's first size-budget exception, which
-the tick-source wave plan explicitly rules out) fixes the DRIFT CLASS, not just this one instance,
-and leaves ``cli.py`` with headroom for the next change too.
-
-:data:`MIGRATE_PATH_BY_STORE` resolves every :data:`~tos_runtime.operations.schema_migrations
-.STORE_MIGRATIONS` key to the file ``migrate`` should open; :func:`migrate_path_for` is the
-lookup :mod:`tos_runtime.compose.cli` calls, and refuses BY NAME (naming the unresolved store) on
-a key with no matching entry — never a bare ``KeyError`` from inside a loop. ``tests/compose
-/test_cli.py`` pins ``set(MIGRATE_PATH_BY_STORE) == set(STORE_MIGRATIONS)`` so the two can never
-drift apart again.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``collections.abc``,
-``pathlib``) + ``tos_runtime.marketfeed.store`` + ``tos_runtime.operations.backup_set`` only.
-No ``shared.*``.
+``MIGRATE_PATH_BY_STORE`` is the single mapping used by the CLI migration
+command. ``migrate_path_for`` rejects unknown keys instead of falling back to
+a hardcoded path, and the mapping is kept in one module so it can be checked
+against ``STORE_MIGRATIONS`` without duplicating path logic.
 """
 
 from __future__ import annotations
