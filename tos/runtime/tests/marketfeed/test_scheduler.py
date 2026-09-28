@@ -18,7 +18,11 @@ from unittest.mock import MagicMock
 import pytest
 from tos.engine import time_admits
 from tos.time import FreshnessVerdict, HealthState, SessionContext, freshness_verdict
-from tos_runtime.marketfeed.ports import RawObservation, TickOutcome
+from tos_runtime.marketfeed.ports import (
+    MonotonicAnchoredObservation,
+    RawObservation,
+    TickOutcome,
+)
 from tos_runtime.marketfeed.scheduler import (
     MultiInstrumentRefused,
     TickDecision,
@@ -229,6 +233,7 @@ def _build_scheduler(
     store: Any = None,
     time_service: Any = None,
     session_owner: Any = None,
+    time_projection: Any = None,
 ) -> TickScheduler:
     """A real :class:`TickScheduler`, built with the real
     :func:`~tos_runtime.marketfeed.policy.load_critical_input_policy` output (reused from
@@ -240,8 +245,11 @@ def _build_scheduler(
     ``tick_once`` onto, never to exercise a real tick path (that path already has its own
     dedicated coverage in this module and in ``tests/compose/test_marketfeed_wiring.py``).
 
-    The four collaborator overrides exist for the ``SKIPPED_TIME_NOT_EVALUATED`` test, which
-    drives the REAL ``tick_once`` and therefore needs to see which of them were touched.
+    The collaborator overrides exist for the tests that drive the REAL ``tick_once`` and
+    therefore need to see which of them were touched. ``time_projection`` is among them
+    because a pass that reaches ``TICKED`` resolves through the REAL kernel resolver, which
+    refuses a ``MagicMock`` where a ``TimeAdmissionInputs`` belongs — a test that ticks passes
+    a real :class:`~tos_runtime.marketfeed.time_projection.RuntimeTimeProjection`.
     """
     return TickScheduler(
         instruments=(INSTRUMENT,),
@@ -254,7 +262,9 @@ def _build_scheduler(
         scheme=SCHEME,
         intake=intake if intake is not None else MagicMock(),
         store=store if store is not None else MagicMock(),
-        time_projection=MagicMock(),
+        time_projection=(
+            time_projection if time_projection is not None else MagicMock()
+        ),
         time_service=time_service if time_service is not None else MagicMock(),
         session_owner=session_owner if session_owner is not None else MagicMock(),
         driver=None,
@@ -787,3 +797,181 @@ def test_a_failed_evaluation_leaves_the_observation_for_the_next_pass(
     assert len(driver.events) == 1
 
     store.close()
+
+
+# ----------------------------------------------------------------------------
+# #810 (plan docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md §2.3) —
+# a pending observation is anchored HERE, after the hook, and an unmappable one
+# is a named absence instead of a fabricated stamp.
+# ----------------------------------------------------------------------------
+
+
+def _real_time_projection(
+    time_service: Any, session_owner: Any
+) -> RuntimeTimeProjection:
+    """The REAL projection over the paper-shaped config ``_read_order_time_config`` already
+    transcribes — needed by any test here that reaches ``TICKED`` (``_build_scheduler``'s own
+    docstring)."""
+    return RuntimeTimeProjection(
+        config=_read_order_time_config(),
+        time_service=time_service,
+        session_owner=session_owner,
+        instrument_class=_READ_ORDER_INSTRUMENT_CLASS,
+        snapshot_age_bound=20,  # config/tos_runtime/paper/marketfeed.yaml
+        interval_width=10,  # config/tos_runtime/paper/marketfeed.yaml
+    )
+
+
+def _pending(
+    *, requested_monotonic_ms: int = 1_000, received_monotonic_ms: int = 1_180
+) -> MonotonicAnchoredObservation:
+    return MonotonicAnchoredObservation(
+        instrument=INSTRUMENT,
+        fields=(("close", CLOSE_BAR_ONE), ("session", "REGULAR")),
+        source_id="kis-quote-test",
+        content_digest="d" * 64,
+        requested_monotonic_ms=requested_monotonic_ms,
+        received_monotonic_ms=received_monotonic_ms,
+    )
+
+
+def test_tick_once_anchors_a_pending_observation_on_the_request_instant(
+    tmp_path: Path,
+) -> None:
+    """The mapping is asked for BOTH instants and the REQUEST one becomes ``as_of_ms`` —
+    mutation: anchor on ``received_monotonic_ms`` instead -> the as-of is 180 ms later and the
+    ``as_of_ms`` assertion goes red (that mutation is the fail-open direction: it discards the
+    round trip the request anchor exists to charge)."""
+    intake = MagicMock()
+    intake.poll.return_value = (_pending(),)
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    time_service = MagicMock()
+    mapped = {1_000: 1_790_000_000_000, 1_180: 1_790_000_000_180}
+    time_service.wall_clock_at_monotonic.side_effect = lambda mono_ms: mapped[mono_ms]
+    time_service.wall_clock_now.return_value = 1_790_000_000_200
+    time_service.health_state = HealthState.TRUSTED
+    session_owner = MagicMock()
+    session_owner.session_context.return_value = _OPEN_SESSION
+
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=lambda: True,
+        intake=intake,
+        store=store,
+        time_service=time_service,
+        session_owner=session_owner,
+        time_projection=_real_time_projection(time_service, session_owner),
+    )
+    scheduler.tick_once()
+
+    store.put.assert_called_once()
+    issued = store.put.call_args.args[0]
+    assert issued.observations[0].time.source_event_time == 1_790_000_000_000
+
+
+def test_tick_once_reports_time_unanchored_when_the_mapping_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    """``before_decide`` SUCCEEDED and the pass still cannot place the observation on the wall
+    clock (time not TRUSTED, or the instants outside the evaluated cycle) — a DIFFERENT named
+    absence from ``SKIPPED_TIME_NOT_EVALUATED``, with no ``store.put`` either way.
+
+    Mutations: (1) anchor anyway with a substituted stamp -> ``store.put`` fires -> red;
+    (2) return ``SKIPPED_TIME_NOT_EVALUATED`` here -> red (the evaluation did run, and an
+    operator reading the two members must be able to tell the cases apart).
+    """
+    intake = MagicMock()
+    intake.poll.return_value = (_pending(),)
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    time_service = MagicMock()
+    time_service.wall_clock_at_monotonic.return_value = None
+    session_owner = MagicMock()
+    hook_calls = 0
+
+    def before_decide() -> bool:
+        nonlocal hook_calls
+        hook_calls += 1
+        return True
+
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=before_decide,
+        intake=intake,
+        store=store,
+        time_service=time_service,
+        session_owner=session_owner,
+    )
+
+    result = scheduler.tick_once()
+
+    assert result.outcome is TickOutcome.SKIPPED_TIME_UNANCHORED
+    assert result.queued_until_recovery is False
+    assert result.value_view is None
+    assert hook_calls == 1  # the evaluation DID happen — that is the whole distinction
+    store.put.assert_not_called()
+    session_owner.session_context.assert_not_called()
+
+
+def test_one_unmappable_observation_withholds_the_whole_batch(tmp_path: Path) -> None:
+    """All-or-nothing (``_anchor_polled``'s own docstring): a batch silently reduced to its
+    mappable members would let ``decide_tick`` pick a "newest" that is merely the newest of the
+    survivors. Mutation: skip the unmappable one and carry on -> TICKED -> red."""
+    intake = MagicMock()
+    intake.poll.return_value = (
+        _pending(requested_monotonic_ms=1_000, received_monotonic_ms=1_100),
+        _pending(requested_monotonic_ms=2_000, received_monotonic_ms=2_100),
+    )
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    time_service = MagicMock()
+    time_service.wall_clock_at_monotonic.side_effect = lambda mono_ms: (
+        None if mono_ms >= 2_000 else 1_790_000_000_000 + mono_ms
+    )
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=lambda: True,
+        intake=intake,
+        store=store,
+        time_service=time_service,
+        session_owner=MagicMock(),
+    )
+
+    assert scheduler.tick_once().outcome is TickOutcome.SKIPPED_TIME_UNANCHORED
+    store.put.assert_not_called()
+
+
+def test_a_raw_observation_is_never_re_anchored(tmp_path: Path) -> None:
+    """The journal's own collector measured a real source event time; this module does not
+    overwrite measurements. Mutation: re-stamp every polled observation from the mapping ->
+    the as-of becomes the pass's own reading -> red."""
+    intake = MagicMock()
+    intake.poll.return_value = (_observation(as_of_ms=1_790_000_000_000),)
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    time_service = MagicMock()
+    time_service.wall_clock_now.return_value = 1_790_000_000_500
+    time_service.health_state = HealthState.TRUSTED
+    session_owner = MagicMock()
+    session_owner.session_context.return_value = _OPEN_SESSION
+
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=lambda: True,
+        intake=intake,
+        store=store,
+        time_service=time_service,
+        session_owner=session_owner,
+        time_projection=_real_time_projection(time_service, session_owner),
+    )
+    scheduler.tick_once()
+
+    time_service.wall_clock_at_monotonic.assert_not_called()
+    store.put.assert_called_once()
+    issued = store.put.call_args.args[0]
+    assert issued.observations[0].time.source_event_time == 1_790_000_000_000

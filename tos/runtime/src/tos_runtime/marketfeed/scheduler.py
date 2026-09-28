@@ -44,10 +44,23 @@ A ``False`` answer — the evaluation was due and failed — returns
 this module can do — whether the next pass actually SEES that observation again is the INTAKE's
 property, not this one's. It holds for an intake whose ``poll`` is a pure function of
 ``after_as_of_ms`` (the port's own contract, and what
-:class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does) and NOT for
-``transport.kis_quote.adapter.KisQuoteObservationIntake``, which ignores that argument and dedups
-on a content digest committed inside the poll — an unconsumed quote is dropped there until the
-PRICE changes (``ports.py``'s own ``SKIPPED_TIME_NOT_EVALUATED`` docstring; tracked in #810).
+:class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does), and it also holds for
+``transport.kis_quote.adapter.KisQuoteObservationIntake``, which dedups on a content digest it
+holds PENDING until ``after_as_of_ms`` advances — the signal that the previous pass's observation
+was durably consumed (``ports.py``'s own ``SKIPPED_TIME_NOT_EVALUATED`` docstring).
+
+**The request anchor: a pending observation is stamped HERE, after the hook** (plan
+``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.3; issue #810). A pull intake
+with no source event time of its own returns
+:class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` — the monotonic instants its
+fetch spanned — and :meth:`TickScheduler._anchor_polled` maps them onto THIS pass's freshly
+evaluated reading through :meth:`~tos_runtime.time.service.TrustworthyTimeService
+.wall_clock_at_monotonic`, so ``as_of`` is the instant the REQUEST went out and ``source_age``
+carries the round trip instead of the pass spacing. When either mapping is unavailable (time not
+``TRUSTED``, or the instants fall outside the cycle that evaluation covers) the pass answers
+:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_UNANCHORED` — again without a
+``store.put``, and again without stopping the loop. A ``RawObservation`` is never re-anchored:
+its collector measured a real event time and this module does not overwrite measurements.
 
 **Per-observation distinctness is checked here too, independently of the journal's own filter**
 (plan §2 decision 5; ``ports.py``'s ``DurableSnapshotStore.latest_as_of`` docstring). A collector
@@ -132,9 +145,11 @@ from tos_runtime.marketfeed.capsule import CapsuleIssuer
 from tos_runtime.marketfeed.policy import LoadedCriticalInputPolicy
 from tos_runtime.marketfeed.ports import (
     DurableSnapshotStore,
+    MonotonicAnchoredObservation,
     ObservationIntake,
     RawObservation,
     TickOutcome,
+    anchor_observation,
 )
 from tos_runtime.marketfeed.snapshot import SnapshotIssuer
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
@@ -385,23 +400,65 @@ class TickScheduler:
             time_projection=time_projection,
         )
 
+    def _anchor_polled(
+        self, polled: Sequence[RawObservation | MonotonicAnchoredObservation]
+    ) -> tuple[RawObservation, ...] | None:
+        """Finalize every :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation`
+        in ``polled`` against the reading THIS pass's evaluation just produced (module
+        docstring's own request-anchor paragraph; plan 2026-09-28 §2.3).
+
+        A :class:`~tos_runtime.marketfeed.ports.RawObservation` passes through untouched — the
+        journal's collector already stamped an honest source event time, and re-anchoring it
+        here would overwrite a measurement with a guess.
+
+        Returns:
+            The finalized batch, or ``None`` when ANY pending observation cannot be mapped —
+            the whole pass is then :attr:`~tos_runtime.marketfeed.ports.TickOutcome
+            .SKIPPED_TIME_UNANCHORED`. All-or-nothing on purpose: a batch silently reduced to
+            its mappable members would let ``decide_tick`` pick a "newest" that is merely the
+            newest of the survivors.
+        """
+        finalized: list[RawObservation] = []
+        for observation in polled:
+            if isinstance(observation, RawObservation):
+                finalized.append(observation)
+                continue
+            as_of_ms = self._time_service.wall_clock_at_monotonic(
+                observation.requested_monotonic_ms
+            )
+            received_ms = self._time_service.wall_clock_at_monotonic(
+                observation.received_monotonic_ms
+            )
+            if as_of_ms is None or received_ms is None:
+                return None
+            finalized.append(
+                anchor_observation(
+                    observation, as_of_ms=as_of_ms, received_ms=received_ms
+                )
+            )
+        return tuple(finalized)
+
     def tick_once(self) -> TickResult:
         """Run exactly one scheduler pass — intake read FIRST, wall-clock reading SECOND (module
         docstring's own read-order paragraph; plan 2026-09-27 §2.1, issue #809).
 
         Returns:
             The :class:`TickResult`. ``SKIPPED_TIME_NOT_EVALUATED`` when ``before_decide``
-            answered ``False``: no ``store.put`` happens on that path, so whatever was polled
-            stays unconsumed. Whether the next pass then SEES it again is the intake's own
-            property — true of a ``poll`` that is a pure function of ``after_as_of_ms``, false of
-            the content-dedup ``kis_quote`` intake (module docstring; #810).
+            answered ``False``, and ``SKIPPED_TIME_UNANCHORED`` when it answered ``True`` but a
+            polled :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` could not
+            be placed on the resulting reading: no ``store.put`` happens on either path, so
+            whatever was polled stays unconsumed. Whether the next pass then SEES it again is
+            the intake's own property (module docstring).
         """
         latest_as_of_ms = self._store.latest_as_of(instrument=self._instrument)
-        observations = self._intake.poll(
+        polled = self._intake.poll(
             instrument=self._instrument, after_as_of_ms=latest_as_of_ms
         )
         if self._before_decide is not None and not self._before_decide():
             return TickResult(outcome=TickOutcome.SKIPPED_TIME_NOT_EVALUATED)
+        observations = self._anchor_polled(polled)
+        if observations is None:
+            return TickResult(outcome=TickOutcome.SKIPPED_TIME_UNANCHORED)
         now_ms = self._time_service.wall_clock_now()
         session_context = self._session_owner.session_context(self._instrument_class)
         decision = decide_tick(
