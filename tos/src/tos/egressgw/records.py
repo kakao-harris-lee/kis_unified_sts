@@ -832,7 +832,6 @@ def positive_decimal(value: Decimal | None) -> bool:
         return False
     return value > 0
 
-
 def send_boundary_context(
     *,
     attempt: AttemptRequest,

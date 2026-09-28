@@ -683,7 +683,7 @@ exceptions:
     직전(래치는 이 이벤트의 EVENT_CONSUMED 영수증이 이미 커밋된 뒤에만 그 seq 를
     참조해야 하므로), measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1070
+  measured: 1072
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
