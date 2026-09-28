@@ -226,20 +226,19 @@ def test_kis_quote_is_not_subject_to_the_pacing_guard(
     tmp_path: Path, config_dir: Path
 ) -> None:
     """Plan §0-3 / §2.3's last row: ``kis_quote`` + ``poll_interval_ms: 1000`` is ADMITTED
-    against the very budget that refuses the same number for ``journal``. The budget this
-    guard enforces is an upstream journal collector's share and that intake has no such
-    collector; and the same key is its HTTP request spacing, which the 모의 quote rate limit
-    (1–2 rps, probe P-13) forbids shrinking below 800 ms anyway.
+    against the very budget that refuses the same number for ``journal``.
 
-    ⚠ Admitted by this guard is NOT "fresh". Since the 2026-09-27 read-order change (plan
-    ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4, issue #809) that
-    adapter's ``as_of_ms`` is the PREVIOUS pass's cached reading, so its ``source_age`` is
-    ≈ the pass spacing and every observation reads STALE until #810 — at the ≥ 1000 ms
-    spacing the 모의 quote RATE LIMIT admits, which this loader does NOT enforce (it accepts
-    a shorter value here, and a shorter one could read FRESH). Pinned explicitly by
-    ``tests/transport/kis_quote/test_adapter.py``'s own
-    ``test_the_previous_pass_stamp_exceeds_the_budget_at_every_admissible_spacing``,
-    not left implicit here."""
+    The REASON the exemption stands, restated after #810 (plan
+    ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.4): this budget is an
+    upstream journal collector's share, and that intake has no such collector — its own age is
+    the HTTP round trip of the request it just made, measured per pass, not the poll phase this
+    key sets. The same key is also its HTTP request spacing, which the 모의 quote rate limit
+    (1–2 rps, probe P-13) forbids shrinking much below 1000 ms anyway.
+
+    ⚠ Admitted by this guard is NOT "fresh": a slow round trip still pushes ``source_age`` past
+    the same 800 ms budget and reads STALE. What decides it is the measured latency, pinned by
+    ``tests/transport/kis_quote/test_adapter.py``'s own delay-injection tests, not left implicit
+    here."""
     _write_paper_shaped_time_yaml(config_dir)
     time_config = load_time_config(config_dir / "time.yaml")
     path = _write_journal_marketfeed(

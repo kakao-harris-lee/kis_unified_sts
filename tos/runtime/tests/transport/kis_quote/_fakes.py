@@ -1,5 +1,7 @@
-"""Fakes for the ``kis_quote`` adapter test suite — a controllable wall clock, an in-memory
-custody, and a recording evidence sink.
+"""Fakes for the ``kis_quote`` adapter test suite — a controllable monotonic clock, an
+in-memory custody, a recording evidence sink, and the two collaborators a REAL
+:class:`~tos_runtime.time.service.TrustworthyTimeService` needs (the delay-injection tests
+build one rather than faking the request anchor's own mapping).
 
 Deliberately NOT imported from ``tests/transport/kis_mock/_fakes.py`` (even though
 ``InMemoryCredentialCustody``/``RecordingEvidenceSink`` are structurally identical there) — each
@@ -13,13 +15,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from tos.evidence import EvidenceAppendReceipt
+from tos.workload import RuntimeIdentity
 from tos_runtime.custody.ports import CredentialHandle, CustodyScopeNotProvisioned
 
 __all__ = [
     "FakeMonotonicSource",
-    "FakeWallClock",
     "InMemoryCredentialCustody",
+    "InMemoryEvidencePort",
     "RecordingEvidenceSink",
+    "runtime_identity",
 ]
 
 
@@ -58,26 +63,37 @@ class FakeMonotonicSource:
         self._now_ms += delta_ms
 
 
-class FakeWallClock:
-    """A controllable :class:`~tos_runtime.transport.kis_quote.adapter.WallClockSource` double.
+class InMemoryEvidencePort:
+    """A minimal :class:`~tos_runtime.evidence.ports.EvidenceAppendPort` double — the durable
+    half a real :class:`~tos_runtime.time.service.TrustworthyTimeService` commits every
+    snapshot through before exposing it. Records nothing a test reads back; it exists so the
+    service can be driven to ``TRUSTED`` without a sqlite store."""
 
-    ``None`` means "not yet TRUSTED" (the real service's own honest answer before it reaches
-    that health state) — a test sets it explicitly to exercise
-    :class:`~tos_runtime.transport.kis_quote.adapter.KisQuoteWallClockUntrusted`.
-    """
+    def __init__(self) -> None:
+        self._seq = 0
 
-    def __init__(self, start_ms: int | None = 1_700_000_000_000) -> None:
-        self._now_ms = start_ms
+    def append(
+        self, payload: Mapping[str, Any], *, kind: str, record_class: str
+    ) -> EvidenceAppendReceipt:
+        del payload, kind, record_class
+        self._seq += 1
+        return EvidenceAppendReceipt(
+            segment_id="kis-quote-test-segment",
+            seq=self._seq,
+            chain_digest=f"digest-{self._seq}",
+            key_generation=0,
+        )
 
-    def wall_clock_now(self) -> int | None:
-        return self._now_ms
 
-    def set(self, value_ms: int | None) -> None:
-        self._now_ms = value_ms
-
-    def advance(self, delta_ms: int) -> None:
-        assert self._now_ms is not None
-        self._now_ms += delta_ms
+def runtime_identity() -> RuntimeIdentity:
+    """This process's identity, as a real :class:`~tos_runtime.time.service
+    .TrustworthyTimeService` requires one (design #40 D4)."""
+    return RuntimeIdentity(
+        cell_id="kis-quote-test-cell",
+        runtime_generation=0,
+        process_nonce="kis-quote-test-nonce",
+        code_digest="kis-quote-test-digest",
+    )
 
 
 class RecordingEvidenceSink:

@@ -14,9 +14,7 @@ from tos_runtime.transport.kis_quote.adapter import (
     KisQuoteMalformedResponse,
     KisQuoteObservationIntake,
     KisQuoteRejected,
-    KisQuoteWallClockUntrusted,
     TokenStale,
-    WallClockSource,
     build_quote_client,
 )
 from tos_runtime.transport.kis_quote.config import (
@@ -32,9 +30,7 @@ __all__ = [
     "KisQuoteRejected",
     "KisQuoteTransportConfig",
     "KisQuoteTransportConfigError",
-    "KisQuoteWallClockUntrusted",
     "TokenStale",
-    "WallClockSource",
     "build_quote_client",
     "load_kis_quote_transport_config",
 ]
