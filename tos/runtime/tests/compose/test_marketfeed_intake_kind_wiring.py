@@ -280,12 +280,17 @@ def test_kis_quote_intake_and_the_time_service_share_one_monotonic_source(
 
     Not hygiene — a correctness precondition. The intake stamps its request anchor on that
     clock and :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_at_monotonic`
-    maps those readings against the service's OWN readings from the same clock. Two separate
-    :class:`~tos_runtime.time.sources.ProcessMonotonicSource` instances both look perfectly
-    healthy in isolation (each is monotonic, each returns plausible milliseconds) and their
-    readings are not comparable: every instant would fall outside the mapping's domain and
-    every pass would answer ``SKIPPED_TIME_UNANCHORED`` — a silent, total loss of ticks with no
-    refusal anywhere.
+    maps those readings against the service's OWN readings from the same clock. The
+    :class:`~tos_runtime.time.sources.MonotonicSource` port guarantees comparability only
+    WITHIN one instance, so the SHARED instance is the contract this pins — not a claim that
+    any two sources disagree. (Two
+    :class:`~tos_runtime.time.sources.ProcessMonotonicSource` objects do in fact agree: both
+    read the same ``time.monotonic_ns()``. That is one implementation's coincidence, and wiring
+    that leans on it leans on something no port promises.) A source with an origin of its own —
+    a fake, or a future non-process source — looks perfectly healthy in isolation (monotonic,
+    plausible milliseconds) while putting every instant outside the mapping's domain: every
+    pass would answer ``SKIPPED_TIME_UNANCHORED``, a silent, total loss of ticks with no
+    refusal anywhere. Hence an object-identity pin.
 
     Mutation: pass ``ProcessMonotonicSource()`` to ``_build_intake``'s
     ``KisQuoteObservationIntake`` call (or to ``TrustworthyTimeService``) instead of the shared

@@ -62,6 +62,17 @@ carries the round trip instead of the pass spacing. When either mapping is unava
 ``store.put``, and again without stopping the loop. A ``RawObservation`` is never re-anchored:
 its collector measured a real event time and this module does not overwrite measurements.
 
+**The session gate runs before the anchor, not after it** (PR #812 review, MEDIUM). While the
+session is known shut the pacer is typically not due, so ``before_decide`` answers ``True``
+without evaluating and the pass still holds an EARLIER cycle's mapping — a pending observation
+fetched since then lies outside that cycle's domain and maps to ``None``. Anchoring first would
+then label a shut market ``SKIPPED_TIME_UNANCHORED``, whose whole meaning is "the evaluation
+succeeded, the anchor did not". :meth:`TickScheduler.tick_once` therefore reads the session
+immediately after the hook and answers
+:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_SESSION_CLOSED` first — the same gate
+order :func:`decide_tick` itself applies, so the thin loop and the pure function name the same
+absence for the same pass.
+
 **Per-observation distinctness is checked here too, independently of the journal's own filter**
 (plan §2 decision 5; ``ports.py``'s ``DurableSnapshotStore.latest_as_of`` docstring). A collector
 could hand a raw observation to ANY :class:`~tos_runtime.marketfeed.ports.ObservationIntake`
@@ -444,9 +455,10 @@ class TickScheduler:
 
         Returns:
             The :class:`TickResult`. ``SKIPPED_TIME_NOT_EVALUATED`` when ``before_decide``
-            answered ``False``, and ``SKIPPED_TIME_UNANCHORED`` when it answered ``True`` but a
+            answered ``False``, ``SKIPPED_SESSION_CLOSED`` when the session this pass reads is
+            absent or shut, and ``SKIPPED_TIME_UNANCHORED`` when the session WAS open and a
             polled :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` could not
-            be placed on the resulting reading: no ``store.put`` happens on either path, so
+            be placed on the resulting reading: no ``store.put`` happens on any of the three, so
             whatever was polled stays unconsumed. Whether the next pass then SEES it again is
             the intake's own property (module docstring).
         """
@@ -456,11 +468,21 @@ class TickScheduler:
         )
         if self._before_decide is not None and not self._before_decide():
             return TickResult(outcome=TickOutcome.SKIPPED_TIME_NOT_EVALUATED)
+        now_ms = self._time_service.wall_clock_now()
+        session_context = self._session_owner.session_context(self._instrument_class)
+        # The session gate runs BEFORE the anchor — the same order :func:`decide_tick` applies
+        # it in (module docstring's own gate-order paragraph). While the session is known shut
+        # the pacer is typically NOT due, so ``before_decide`` answers ``True`` without
+        # evaluating and this pass still holds an earlier cycle's mapping; a pending
+        # observation fetched since then falls outside that cycle's domain and maps to
+        # ``None``. Anchoring first would therefore report SKIPPED_TIME_UNANCHORED — "the
+        # evaluation succeeded, the anchor did not" — for a pass whose real and sufficient
+        # reason is that the market is shut.
+        if session_context is None or not session_context.is_open:
+            return TickResult(outcome=TickOutcome.SKIPPED_SESSION_CLOSED)
         observations = self._anchor_polled(polled)
         if observations is None:
             return TickResult(outcome=TickOutcome.SKIPPED_TIME_UNANCHORED)
-        now_ms = self._time_service.wall_clock_now()
-        session_context = self._session_owner.session_context(self._instrument_class)
         decision = decide_tick(
             session_context=session_context,
             observations=observations,

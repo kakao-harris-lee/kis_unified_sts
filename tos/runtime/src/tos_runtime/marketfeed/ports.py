@@ -119,11 +119,16 @@ class MonotonicAnchoredObservation:
     evaluation is what puts the request's own round trip inside ``source_age`` instead of the
     pass spacing.
 
-    A monotonic reading is process-local and comparable only against readings from the SAME
-    :class:`~tos_runtime.time.sources.MonotonicSource` instance — which is why an intake
-    producing this shape must be injected with the very object the time service was built with
-    (pinned by ``tests/compose/test_marketfeed_intake_kind_wiring.py``'s own same-object test),
-    never a second ``time.monotonic()`` of its own.
+    A monotonic reading is process-local, and the :class:`~tos_runtime.time.sources
+    .MonotonicSource` port guarantees comparability only WITHIN one instance — nothing in it
+    obliges two instances to share an origin. (Two
+    :class:`~tos_runtime.time.sources.ProcessMonotonicSource` objects happen to, since both
+    read the same ``time.monotonic_ns()``; that is an implementation coincidence, not the
+    contract.) So the contract an intake producing this shape works to is the SHARED instance:
+    it must be injected with the very object the time service was built with (pinned by
+    ``tests/compose/test_marketfeed_intake_kind_wiring.py``'s own same-object test). A source
+    with an origin of its own — a fake, or a future non-process source — would put every
+    mapping outside the domain.
 
     Attributes:
         instrument: The instrument this observation is about.
@@ -358,10 +363,18 @@ class TickOutcome(StrEnum):
     #: own re-emission test). An intake that did neither would drop it, and the re-read is a
     #: property of the intake either way, not something this member promises.
     SKIPPED_TIME_NOT_EVALUATED = "SKIPPED_TIME_NOT_EVALUATED"
-    #: The intake WAS read, the time evaluation DID succeed, and the pass still cannot place a
-    #: :class:`MonotonicAnchoredObservation` on the wall clock: the freshly evaluated snapshot
-    #: is not ``TRUSTED``, or the fetch's monotonic instants fall outside the cycle this
-    #: evaluation can map (plan 2026-09-28 §2.2/§2.3; issue #810).
+    #: The intake WAS read, the time evaluation DID succeed, the session was known OPEN, and
+    #: the pass still cannot place a :class:`MonotonicAnchoredObservation` on the wall clock:
+    #: the freshly evaluated snapshot is not ``TRUSTED``, or the fetch's monotonic instants
+    #: fall outside the cycle this evaluation can map (plan 2026-09-28 §2.2/§2.3; issue #810).
+    #:
+    #: ⚠ **The open session is part of the claim, not a coincidence of the call order** (PR
+    #: #812 review, MEDIUM). ``TickScheduler.tick_once`` applies the session gate BEFORE it
+    #: anchors, so a shut market is :attr:`SKIPPED_SESSION_CLOSED` even when the pending
+    #: observation would also have failed to map — which it routinely would, since a pacer that
+    #: is not due admits the pass without evaluating and leaves it holding an earlier cycle's
+    #: mapping. Reporting that pass here would contradict this member's own "the evaluation
+    #: DID succeed" reading for an operator.
     #:
     #: A DIFFERENT absence from :attr:`SKIPPED_TIME_NOT_EVALUATED`: the evaluation succeeded —
     #: what is missing is a trusted reading to anchor THIS observation to, not the evaluation

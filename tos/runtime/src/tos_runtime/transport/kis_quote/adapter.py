@@ -109,12 +109,16 @@ age/cooldown bookkeeping and the two request-anchor readings. Those two uses hav
 requirements and the stricter one governs: token pacing needs only relative elapsed time from any
 consistent source, while the anchor readings are mapped by
 :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_at_monotonic`, which compares
-them against the time service's own readings — so this must be the very
-:class:`~tos_runtime.time.sources.MonotonicSource` INSTANCE that service was built with, not a
-second one. Compose passes exactly that (``compose/_wiring.py``'s ``_Infra.monotonic_source``),
-and ``tests/compose/test_marketfeed_intake_kind_wiring.py`` pins the object identity; a private
-second source would make every mapping fall outside the domain and every pass answer
-``SKIPPED_TIME_UNANCHORED``.
+them against the time service's own readings. The :class:`~tos_runtime.time.sources
+.MonotonicSource` port guarantees those readings are comparable only WITHIN one instance, so the
+SHARED instance is the contract: this must be the very object that service was built with.
+(Two :class:`~tos_runtime.time.sources.ProcessMonotonicSource` objects would in fact agree —
+both read the same ``time.monotonic_ns()`` — but that is an implementation coincidence of one
+implementation, not something the port promises.) Compose passes exactly that
+(``compose/_wiring.py``'s ``_Infra.monotonic_source``), and
+``tests/compose/test_marketfeed_intake_kind_wiring.py`` pins the object identity; a source with
+an origin of its own — a fake, or a future non-process source — would put every mapping outside
+the domain and every pass would answer ``SKIPPED_TIME_UNANCHORED``.
 
 ⚠ **Against reintroducing a wall clock here.** An earlier revision derived the token lifecycle's
 clock from ``wall_clock_now()``, which made a perfectly valid, still-live token unusable the

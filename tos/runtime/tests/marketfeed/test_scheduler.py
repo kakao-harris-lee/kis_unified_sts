@@ -878,6 +878,10 @@ def test_tick_once_reports_time_unanchored_when_the_mapping_is_unavailable(
     clock (time not TRUSTED, or the instants outside the evaluated cycle) — a DIFFERENT named
     absence from ``SKIPPED_TIME_NOT_EVALUATED``, with no ``store.put`` either way.
 
+    The session is OPEN here, deliberately: since the PR #812 review the session gate runs
+    BEFORE the anchor, so this member's "the evaluation succeeded, the anchor did not" reading
+    is only ever reported for a pass the session admitted (see the closed-session test below).
+
     Mutations: (1) anchor anyway with a substituted stamp -> ``store.put`` fires -> red;
     (2) return ``SKIPPED_TIME_NOT_EVALUATED`` here -> red (the evaluation did run, and an
     operator reading the two members must be able to tell the cases apart).
@@ -889,6 +893,7 @@ def test_tick_once_reports_time_unanchored_when_the_mapping_is_unavailable(
     time_service = MagicMock()
     time_service.wall_clock_at_monotonic.return_value = None
     session_owner = MagicMock()
+    session_owner.session_context.return_value = _OPEN_SESSION
     hook_calls = 0
 
     def before_decide() -> bool:
@@ -913,7 +918,61 @@ def test_tick_once_reports_time_unanchored_when_the_mapping_is_unavailable(
     assert result.value_view is None
     assert hook_calls == 1  # the evaluation DID happen — that is the whole distinction
     store.put.assert_not_called()
-    session_owner.session_context.assert_not_called()
+    # Read once, and BEFORE the anchor — the gate order this outcome's own meaning rests on.
+    session_owner.session_context.assert_called_once()
+
+
+def test_a_closed_session_is_reported_as_closed_not_as_unanchored(
+    tmp_path: Path,
+) -> None:
+    """PR #812 review (MEDIUM). The shape a deployed ``kis_quote`` pass actually has outside
+    trading hours: the pacer is NOT due, so ``before_decide`` answers ``True`` WITHOUT
+    evaluating and the pass carries an older cycle's mapping, which cannot place the quote
+    this pass just fetched (``wall_clock_at_monotonic`` -> ``None``). The session is known
+    shut, and THAT is what the pass reports.
+
+    Before the fix the anchor ran first, so this pass answered ``SKIPPED_TIME_UNANCHORED`` —
+    contradicting that member's own "the time evaluation DID succeed" docstring for every
+    closed-market pass. Mutation: move the session gate back after ``_anchor_polled`` ->
+    ``SKIPPED_TIME_UNANCHORED`` -> red.
+    """
+    intake = MagicMock()
+    intake.poll.return_value = (_pending(),)
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    time_service = MagicMock()
+    time_service.wall_clock_at_monotonic.return_value = (
+        None  # the stale cycle cannot map
+    )
+    session_owner = MagicMock()
+    session_owner.session_context.return_value = _CLOSED_SESSION
+    hook_calls = 0
+
+    def before_decide() -> bool:
+        """The pacer's not-due answer: admit the pass, evaluate nothing."""
+        nonlocal hook_calls
+        hook_calls += 1
+        return True
+
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=before_decide,
+        intake=intake,
+        store=store,
+        time_service=time_service,
+        session_owner=session_owner,
+    )
+
+    result = scheduler.tick_once()
+
+    assert result.outcome is TickOutcome.SKIPPED_SESSION_CLOSED
+    assert result.queued_until_recovery is False
+    assert result.value_view is None
+    assert hook_calls == 1
+    store.put.assert_not_called()
+    # The anchor was never attempted — the session already answered the pass.
+    time_service.wall_clock_at_monotonic.assert_not_called()
 
 
 def test_one_unmappable_observation_withholds_the_whole_batch(tmp_path: Path) -> None:
@@ -931,6 +990,10 @@ def test_one_unmappable_observation_withholds_the_whole_batch(tmp_path: Path) ->
     time_service.wall_clock_at_monotonic.side_effect = lambda mono_ms: (
         None if mono_ms >= 2_000 else 1_790_000_000_000 + mono_ms
     )
+    session_owner = MagicMock()
+    session_owner.session_context.return_value = (
+        _OPEN_SESSION  # the gate that runs first
+    )
     scheduler = _build_scheduler(
         tmp_path,
         poll_interval_ms=400,
@@ -938,7 +1001,7 @@ def test_one_unmappable_observation_withholds_the_whole_batch(tmp_path: Path) ->
         intake=intake,
         store=store,
         time_service=time_service,
-        session_owner=MagicMock(),
+        session_owner=session_owner,
     )
 
     assert scheduler.tick_once().outcome is TickOutcome.SKIPPED_TIME_UNANCHORED
