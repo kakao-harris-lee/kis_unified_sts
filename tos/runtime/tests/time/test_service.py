@@ -987,6 +987,28 @@ def test_mapping_returns_none_on_the_first_cycle_that_can_observe_no_suspension(
     assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
 
 
+def test_mapping_refuses_a_trusted_cycle_whose_suspension_is_unknown() -> None:
+    """The ``suspension_ms is None`` branch, pinned as the defense in depth it is (PR #812
+    review, LOW). :meth:`~tos_runtime.time.service.TrustworthyTimeService
+    .wall_clock_at_monotonic`'s own docstring records why no ``TRUSTED`` path in a real run
+    reaches it: the only cycle with no previous reading is still ``SYNCHRONIZING``, and the one
+    wired reader kind always carries a wall-clock value. So this drives a genuinely ``TRUSTED``
+    service — real ``evaluate()`` cycles, real snapshot, real domain floor, and the mapping
+    verified working first — then clears the ONE captured field, the smallest honest way in.
+    The method under test is never patched.
+
+    Mutation: fold the unknown to a zero (guard dropped, ``- (suspension_ms or 0)``) -> this
+    answers ``_MAPPING_WALL_MS`` instead of ``None`` -> red, in the fail-OPEN direction (an
+    un-aged instant).
+    """
+    service = _trusted_for_mapping()
+    assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) == _MAPPING_WALL_MS
+
+    service._cycle_suspension_ms = None  # noqa: SLF001
+
+    assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) is None
+
+
 def test_the_domain_floor_advances_with_each_cycle() -> None:
     """The domain is THIS cycle, not "everything since boot": a third evaluation moves the
     floor up to the second cycle's reading, and the first cycle's instant — mappable a moment

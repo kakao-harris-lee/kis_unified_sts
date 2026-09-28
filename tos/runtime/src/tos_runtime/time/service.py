@@ -800,6 +800,19 @@ class TrustworthyTimeService:
           cycle with no wall-clock reading on either side) — an unknown term is not a zero;
         * ``mono_ms`` is outside the domain above.
 
+        **The unknown-suspension branch is defense in depth: no ``TRUSTED`` path in a real run
+        reaches it** (PR #812 review, LOW). :meth:`_observed_suspension_ms` answers ``None`` on
+        exactly three inputs — no previous monotonic reading, no previous wall-clock reading, no
+        current one — and a real run closes all three before this line: the first
+        ``evaluate()`` (the only one with no previous reading) is still ``SYNCHRONIZING``, so
+        the ``TRUSTED`` gate above has already returned ``None``; and Phase 2 wires exactly one
+        reference-reader kind (:class:`~tos_runtime.time.sources.LocalSystemClockReader`), which
+        always carries a wall-clock value, so neither the previous nor the current observation
+        can be absent while the service is ``TRUSTED``. The branch is kept — and pinned by
+        ``tests/time/test_service.py`` — because folding the unknown to a zero (``suspension_ms
+        or 0``) would silently un-age every mapped instant on the day a future reader kind, or
+        a degraded read, does expose a trusted reading with no suspension behind it.
+
         Args:
             mono_ms: A reading taken from THIS service's own injected
                 :class:`~tos_runtime.time.sources.MonotonicSource` — monotonic readings are
