@@ -14,6 +14,8 @@ Pure: no clock, no I/O, no ``tmp_path``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from tos_runtime.marketfeed.ports import (
     MonotonicAnchoredObservation,
     RawObservation,
@@ -30,8 +32,8 @@ _AS_OF_MS = 1_790_557_200_123
 _RECEIVED_MS = 1_790_557_200_456
 
 
-def _pending(**overrides: object) -> MonotonicAnchoredObservation:
-    base: dict[str, object] = {
+def _pending(**overrides: Any) -> MonotonicAnchoredObservation:
+    base: dict[str, Any] = {
         "instrument": _INSTRUMENT,
         "fields": (("last_price", "71300"), ("volume", 12345)),
         "source_id": _SOURCE_ID,
@@ -108,7 +110,9 @@ def test_pending_observations_are_immutable() -> None:
     """Frozen by construction — a pending observation travels from the intake to the
     scheduler across a pass boundary, and nothing downstream may re-stamp it in place.
     """
-    pending = _pending()
+    # Typed ``Any`` on purpose: the assignment below is the thing under test, and mypy
+    # (correctly) rejects it statically on the real type.
+    pending: Any = _pending()
     try:
         pending.requested_monotonic_ms = 0
     except AttributeError:

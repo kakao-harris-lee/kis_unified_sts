@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -180,8 +181,9 @@ class _Chain:
                 interval_width=10,  # config/tos_runtime/paper/marketfeed.yaml
             ),
             time_service=self.time_service,
-            session_owner=session_owner,
-            driver=self.driver,
+            # Hand-rolled doubles (structural, not subclasses) — cast for the nominal types.
+            session_owner=cast(Any, session_owner),
+            driver=cast(Any, self.driver),
             inbox=MagicMock(),
             evidence_store=MagicMock(),
             poll_interval_ms=poll_interval_ms,
