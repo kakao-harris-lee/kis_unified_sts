@@ -1,5 +1,4 @@
-"""Hermetic tests for tos_runtime.time.service.TrustworthyTimeService
-(slice plan §1 item 2 + "테스트" list + team-lead additional requirements).
+"""Hermetic tests for ``tos_runtime.time.service.TrustworthyTimeService``.
 
 Every kernel predicate the service calls is exercised only through the
 service's own public surface (``start``/``evaluate``/``current_snapshot``/
@@ -44,7 +43,7 @@ class FakeMonotonicSource:
         return self.value
 
 
-#: G-1 (team-lead follow-up, 2026-09-13): a fixed, non-None default wall
+#: A fixed, non-None default wall
 #: reading for :class:`FakeReferenceReader` — since anchor validity now needs
 #: a REAL Δwall-Δmono observation (:meth:`~tos_runtime.time.service
 #: .TrustworthyTimeService._observed_suspension_ms`), a reader that never
@@ -65,8 +64,8 @@ class FakeReferenceReader:
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
-    #: G-1 (runtime operations wiring plan §2 decision 1) — a fixed, static
-    #: default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s own docstring);
+    #: fixed static default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s
+    #: own docstring);
     #: a test proving the "no wall clock at all" gap sets this to ``None``
     #: explicitly.
     wall_clock_unix_ms: int | None = _DEFAULT_TEST_WALL_CLOCK_UNIX_MS
@@ -333,7 +332,7 @@ def test_new_generation_after_recovery_makes_old_snapshot_binding_fail() -> None
     assert service.health_state is HealthState.UNTRUSTED
 
     # recovery: UNTRUSTED -> SYNCHRONIZING (re-anchors AND mints generation 2 —
-    # LOW-5 fix, review of ba7d438f: recovery itself must strictly advance the
+    # Recovery itself must strictly advance the
     # generation past whatever the last exposed [UNTRUSTED] snapshot carried).
     monotonic.value = 2000
     recovery_snapshot = service.evaluate()
@@ -363,8 +362,7 @@ def test_new_generation_after_recovery_makes_old_snapshot_binding_fail() -> None
 
 
 # ----------------------------------------------------------------------------
-# LOW-5 (review of ba7d438f): the recovery generation-advance guard is real,
-# not a stripped-under-`-O` `assert` that always passed anyway
+# The recovery generation-advance guard must be a runtime check, not an assert.
 # ----------------------------------------------------------------------------
 
 
@@ -440,13 +438,13 @@ def test_single_reference_source_with_two_required_never_reaches_trusted() -> No
 
 
 # ----------------------------------------------------------------------------
-# HIGH-2 (review of ba7d438f): same-clock instances must not count as
-# independent, and un-measured disagreement must not be asserted as agreement
+# Same-clock instances must not count as independent, and unmeasured
+# disagreement must not be asserted as agreement.
 # ----------------------------------------------------------------------------
 
 
 def test_single_reader_reaches_trusted_unchanged_control() -> None:
-    """Control: the pre-fix single-reader path is untouched by the HIGH-2 fix."""
+    """A single reader reaches ``TRUSTED`` with the normal configuration."""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(monotonic=monotonic)  # default: one FakeReferenceReader
     service.start()
@@ -459,7 +457,7 @@ def test_single_reader_reaches_trusted_unchanged_control() -> None:
 
 
 def test_two_same_clock_readers_never_reach_trusted_with_min_two_required() -> None:
-    """HIGH-2 red-proof, now green: two readers sharing ONE common_mode_group
+    """Two readers sharing ONE common_mode_group
     (the real LocalSystemClockReader case) must collapse to 1 independent
     reference, never satisfying a profile requiring 2."""
     monotonic = FakeMonotonicSource(1000)
@@ -484,8 +482,8 @@ def test_two_same_clock_readers_never_reach_trusted_with_min_two_required() -> N
 
 
 def test_two_distinct_group_readers_with_no_comparison_never_reach_trusted() -> None:
-    """HIGH-2: two readers with genuinely DISTINCT common_mode_group values
-    satisfy the independent-count requirement (2 >= 2), but Phase 2 performs
+    """Two readers with genuinely DISTINCT common_mode_group values
+    satisfy the independent-count requirement (2 >= 2), but this service performs
     no pairwise disagreement comparison — disagreement must be reported
     UNKNOWN, not silently asserted as 0/agreeing, so TRUSTED still must not
     be reached."""
@@ -571,12 +569,12 @@ def test_snapshot_exposed_only_after_evidence_append_succeeds() -> None:
 
 
 # ----------------------------------------------------------------------------
-# G-1 (runtime operations wiring plan §2 decision 1) — wall-clock exposure
+# Wall-clock exposure
 # ----------------------------------------------------------------------------
 
 
 def test_wall_clock_now_is_none_before_trusted() -> None:
-    """M1 (plan §5 mutation table): a SYNCHRONIZING snapshot — even one
+    """A SYNCHRONIZING snapshot — even one
     carrying a real wall-clock observation — must never be surfaced through
     ``wall_clock_now()``."""
     monotonic = FakeMonotonicSource(1000)
@@ -632,7 +630,7 @@ def test_wall_clock_now_if_fresh_serves_a_fresh_snapshot() -> None:
 
 
 def test_wall_clock_now_if_fresh_refuses_a_stale_snapshot() -> None:
-    """Review finding 1 (plan 2026-09-26 egress trading date): with no further ``evaluate()`` —
+    """With no further ``evaluate()`` —
     the composed runtime only evaluates at boot — the plain trusted read keeps serving the boot
     instant a day later; the fresh read must not."""
     service, monotonic = _trusted_at_1010()
@@ -685,7 +683,7 @@ def test_reader_without_a_wall_clock_value_never_fabricates_one_and_keeps_truste
 ):
     """A reference reader that never supplies wall_clock_unix_ms must never
     see one invented on its behalf — AND, since anchor validity now needs a
-    real Δwall-Δmono comparison (team-lead follow-up, 2026-09-13), a service
+    real Δwall-Δmono comparison, a service
     with no wall-observing reader at all can no longer reach TRUSTED: there
     is never a comparison to make (:meth:`TrustworthyTimeService
     ._observed_suspension_ms` returns ``None`` forever, which the kernel's
@@ -748,11 +746,10 @@ def test_time_wall_clock_exposed_never_fires_without_a_reading() -> None:
 
 
 # ----------------------------------------------------------------------------
-# G-1 (team-lead follow-up, 2026-09-13) — observed_suspension_ms =
+# ``observed_suspension_ms`` =
 # max(0, Δwall_clock_ms - Δmonotonic_ms) between consecutive evaluate() cycles,
 # fed into BOTH the kernel anchor_valid call and the issued snapshot's
-# suspension_status. Supersedes the earlier expected_evaluate_cadence_ms
-# config key (removed — one source for one fact).
+# suspension_status.
 # ----------------------------------------------------------------------------
 
 

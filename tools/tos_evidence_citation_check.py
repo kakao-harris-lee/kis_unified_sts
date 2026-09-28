@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Evidence README citation checker (carryover plan W-C C-3 / arc plan F-4).
+"""Validate evidence README citations against their JSON artifacts.
 
-**The class this closes.** An evidence README states a value next to an artifact name, and the
-value is not in that artifact: #676 attributed a holding to a ``P-BAL`` artifact whose
-``observations`` carry no ``pdno``; #729 repeated it and added an average price that no artifact
-contained at all. Both were caught by review, after the fact. The rule
-(``docs/broker-profiles/evidence/CITATION-RULE.md``) is that a value stated in an evidence README
-names **the artifact and the field** it came from, in one machine-checkable token::
+Citations name the artifact, field and value in a machine-checkable token
+(``docs/broker-profiles/evidence/CITATION-RULE.md``)::
 
     `P-BAL-20260911T002427Z.json:measurements.truncation_risk.page_size=20`
 

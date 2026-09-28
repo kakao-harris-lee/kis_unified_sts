@@ -1,4 +1,4 @@
-"""Hermetic tests for tos_runtime.time.config (slice plan §1 item 4).
+"""Hermetic tests for ``tos_runtime.time.config``.
 
 All fixtures are written under ``tmp_path`` per D1.4 (conftest.py's write
 guard refuses anything else).
@@ -80,7 +80,7 @@ def test_null_version_string_is_rejected(tmp_path: Path) -> None:
 
 
 def test_named_tbd_placeholder_version_string_is_rejected(tmp_path: Path) -> None:
-    """W-A A-0: a version string literally ``"TBD"`` is a template placeholder an
+    """A version string literally ``"TBD"`` is a template placeholder an
     operator typed in place of a real value, not a genuine version — never sealed
     into a ``TimeHealthSnapshot`` as if it were concrete."""
     content = dict(_FULLY_VALUED)
@@ -99,7 +99,7 @@ def test_negative_bound_is_rejected(tmp_path: Path) -> None:
 
 
 def test_zero_send_result_wait_bound_is_rejected(tmp_path: Path) -> None:
-    """Independent review finding #16 (2026-09-09): every OTHER bound key accepts ``0``
+    """Every OTHER bound key accepts ``0``
     (``MAX_process_suspension_ms`` above does), but ``MAX_send_result_wait_ms`` is the wait
     ``EngineDriver``'s ``_TimeoutTracker`` uses before injecting a synthetic ``TIMEOUT`` — a
     ``0`` value would time out every hand-off on the very next drain, mirroring

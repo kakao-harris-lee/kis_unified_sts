@@ -204,11 +204,6 @@ def _reachability_rejection_anchor() -> None:
 _reachability_rejection_anchor()
 
 
-# ===========================================================================
-# ports — the injected transport and the provisional evidence sink
-# ===========================================================================
-
-
 @runtime_checkable
 class SendTransport(Protocol):
     """The injected step-18 transport port (design #34 §5.1 firewall seam).
@@ -454,9 +449,6 @@ def verify_send_boundary(
     )
 
 
-# -- item 1 ------------------------------------------------------------------------------
-
-
 def _check_capability(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -496,9 +488,6 @@ def _check_capability(
         VerifyOutcome.SATISFIED,
         reason="single-use capability + permit nonces are unclaimed for this exact bind",
     )
-
-
-# -- item 2 ------------------------------------------------------------------------------
 
 
 def _check_identities(
@@ -545,9 +534,6 @@ def _check_identities(
     )
 
 
-# -- item 3 ------------------------------------------------------------------------------
-
-
 def _check_commitment_epoch(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -574,9 +560,6 @@ def _check_commitment_epoch(
             "ledger, fencing epoch, or CAS is claimed (design #34 §4.6)"
         ),
     )
-
-
-# -- item 6 ------------------------------------------------------------------------------
 
 
 def _check_allowance(
@@ -669,9 +652,6 @@ def _check_allowance(
     )
 
 
-# -- item 11 -----------------------------------------------------------------------------
-
-
 def _check_venue(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -739,9 +719,6 @@ def _check_venue(
     )
 
 
-# -- item 12 -----------------------------------------------------------------------------
-
-
 def _check_venue_generations(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -758,9 +735,6 @@ def _check_venue_generations(
     """
     del attempt, applicability
     return venue_generation_item_verdict(context)
-
-
-# -- item 13 -----------------------------------------------------------------------------
 
 
 def _check_construction(
@@ -871,9 +845,6 @@ def _check_construction(
     )
 
 
-# -- item 14 -----------------------------------------------------------------------------
-
-
 def _check_approval(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -911,9 +882,6 @@ def _check_approval(
         VerifyOutcome.SATISFIED,
         reason="⚠ provisional stand-in: approval consumed and bound to this exact intent digest",
     )
-
-
-# -- item 15 -----------------------------------------------------------------------------
 
 
 def _check_action_flow(
@@ -954,9 +922,6 @@ def _check_action_flow(
         VerifyOutcome.SATISFIED,
         reason="⚠ provisional stand-in: Action Flow Permit bound to this exact attempt",
     )
-
-
-# -- item 16 -----------------------------------------------------------------------------
 
 
 def _check_currentness(
@@ -1045,9 +1010,6 @@ def _check_currentness(
         ),
         native_value=currentness.native_verdict_value,
     )
-
-
-# -- item 17 -----------------------------------------------------------------------------
 
 
 def _check_actual_outbound(
@@ -1144,16 +1106,8 @@ def _check_dispatch_anchor() -> None:
 _check_dispatch_anchor()
 
 
-# ===========================================================================
-# §4.6 / §5.3 — the gateway itself (D-E1 ``Transmit`` slot)
-# ===========================================================================
-#
-# ``outbound_coordinates`` / ``OUTBOUND_COORDINATE_NAMES`` now live in
-# :mod:`tos.egressgw.seal` (Phase 4 작업 6) — :func:`~tos.egressgw.seal.build_send_seal` needs
-# the identical derivation this gateway calls, and a single definition is what keeps the two from
-# drifting apart. Imported above and re-exported here so existing ``tos.egressgw.gateway`` /
-# ``tos.egressgw`` call sites (including the test suite's monkeypatch of this module attribute)
-# are unchanged.
+# ``outbound_coordinates`` and ``OUTBOUND_COORDINATE_NAMES`` are re-exported for existing
+# gateway import and monkeypatch paths.
 
 
 def outbound_binding_mismatch(context: SendBoundaryContext) -> str | None:
@@ -1458,9 +1412,6 @@ class BrokerEgressGateway:
             return None, self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE,
-                # The seal is step 15's output (design §1.2 survey note) — a construction
-                # failure is a Send Boundary Verification failure, not a step of its own
-                # (the 19-step CommitmentStep enum stays closed; there is no "step 15½").
                 step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=(
                     f"cannot build the pre-SEND_STARTED send seal: {type(exc).__name__}: "
@@ -1600,10 +1551,6 @@ class BrokerEgressGateway:
                 detail=mismatch,
             )
 
-        # -- build the pre-SEND_STARTED seal (step 15's own output), then the step-16 claim --
-        # (Phase 4 작업 6.) A seal-construction failure — including a coordinate-derivation
-        # fault, which used to surface from inside step 18 as OUTBOUND_COORDINATE_DERIVATION_
-        # RAISED — halts here, before the claim, so nothing is consumed.
         seal, halted = self._seal_and_claim(
             attempt_id=attempt_id, attempt=attempt, context=context
         )
@@ -1611,8 +1558,6 @@ class BrokerEgressGateway:
             return halted
         assert seal is not None  # narrowed by _seal_and_claim's own contract
 
-        # The seal is step 15's own artifact (design §1.2 survey note) — not a "step 15½"; the
-        # closed 19-step CommitmentStep enum gains no member for it.
         self._record(
             kind="SEND_SEALED",
             attempt_id=attempt_id,
@@ -1653,7 +1598,7 @@ class BrokerEgressGateway:
             ),
         )
 
-        # -- step 18: exactly one delegation to the injected transport --------------------
+        # Step 18 delegates exactly once, using the seal as its sole input source.
         # Every argument below is read from ``seal`` alone — never from ``context`` again, with
         # ZERO exceptions (design §0 "봉인이 유일 입력 원천이어야 한다"; the M-K1 AST pin in the
         # test suite enforces this literally). ``reference`` (the causal-ordering tag) is sealed
@@ -1670,10 +1615,7 @@ class BrokerEgressGateway:
                     "and the attempt stays consumed so nothing is resent"
                 ),
             )
-        # Write-ahead mark (Phase 3 wave 3 KW3-GW): recorded immediately BEFORE send_once, so
-        # "was the network call entered" is auditable from evidence even if send_once itself
-        # never returns (RFC-002 §10.8 send boundary). Carries the seal digest / attempt id
-        # like its SEND_STARTED / EGRESS_RESULT_RECORDED neighbours.
+        # Record entry before send_once so a call that never returns remains auditable.
         self._record(
             kind="NETWORK_CALL_ENTERED",
             attempt_id=attempt_id,
@@ -1710,12 +1652,7 @@ class BrokerEgressGateway:
                 ),
             )
 
-        # -- step 19: evidence ------------------------------------------------------------
-        # send_once above is now the *only* transport call this attempt will ever make
-        # (single-shot by construction, §5.4) — everything below only reads and records what
-        # already happened. A fault reading the result is UNKNOWN-restrictive (§4.2 "unknown
-        # preserves capacity, deny"), so it halts under its own recorded reason rather than
-        # being misread as a transport failure.
+        # No further transport call occurs below; unreadable results fail closed as UNKNOWN.
         try:
             attempt_identity_mismatch = result.attempt_id != attempt_id
         except (

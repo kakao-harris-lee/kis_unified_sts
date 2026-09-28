@@ -1,181 +1,95 @@
-"""``KisQuoteObservationIntake`` — the KIS 모의투자 quote HTTP
-:class:`~tos_runtime.marketfeed.ports.ObservationIntake` (TOS tick-source wave, W2 lane, plan
-``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W2).
+"""KIS quote intake implementing the runtime observation port.
 
-Gives the tick source a REAL market-data intake — an HTTP GET against a KIS 모의투자 quotations
-TR — so a deployment is no longer driven only by a file journal an upstream collector writes
-(:mod:`tos_runtime.marketfeed.journal`, this wave's other, file-backed
-:class:`~tos_runtime.marketfeed.ports.ObservationIntake`).
+The adapter performs one configured HTTP request per poll, for the one
+instrument its config declares, and maps only the configured response fields
+into a market observation. It never extracts an event timestamp from the
+response body; this statement is about this adapter's code path and does not
+claim that other KIS feeds lack execution times.
 
-**Step 0 measurement 1 — this TR's OWN response body carries no genuine source event time (do not
-skip this, and do not over-read it as a claim about KIS as a whole — see the explicit scope note
-below).** The legacy KIS client stamps ``"timestamp": time.time()`` itself on every quote —
-``shared/kis/client.py:648`` (stock) and ``:737`` (futures) — its own comment reads "Use local
-time as approx". This is receipt time, not a broker-attested event time, by the legacy code's OWN
-admission. Independent evidence confirms THIS RESPONSE BODY (the ``inquire-price`` quotations TR
-this adapter polls) carries no genuine event-time field either: a live MOCK_VTS stock quote
-capture (``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-16-20260729T133539Z.json``,
-005930, n=5, errors 0) lists ``body_timestamp_like_keys: [crdt_able_yn, ovtm_vi_cls_code,
-rstc_wdth_prc]`` — and the broker profile itself
-(``KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2325-2331``) records that all three are FALSE
-POSITIVES from a substring heuristic (신용가능여부/시간외VI구분코드/제한폭가격 — none is a
-timestamp), leaving genuinely **zero** timestamp-like fields in the measured body. The futures
-scope probe (``P-16-20260729T063005Z``) independently records ``body_timestamp_like_keys: []`` —
-zero, not merely zero after the false-positive correction.
+Observations are anchored on the request, on the MONOTONIC clock, and the
+scheduler finalizes them. This adapter reads no wall clock at all: it takes a
+:meth:`~tos_runtime.time.sources.MonotonicSource.now_ms` reading immediately
+before the request goes out and another immediately after the response
+arrives, and returns a
+:class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` carrying
+both. :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once` maps
+them onto that pass's own freshly evaluated reading
+(:meth:`~tos_runtime.time.service.TrustworthyTimeService
+.wall_clock_at_monotonic`) — ``as_of_ms`` from the request instant,
+``received_ms`` from the response one — so this request's own round trip lands
+in ``source_age``. Stamping
+:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` here
+instead would reuse whatever reading the last ``evaluate()`` cached, which
+runs after the pass's intake read and so carries the previous pass's time.
 
-**Scope note — KIS DOES have a genuine execution-time field elsewhere; this adapter cannot reach
-it.** ``shared/kis/stock_feed.py:67`` (``_F_TIME`` = ``STCK_CNTG_HOUR``, "체결시간") shows the KIS
-real-time WebSocket trade feed (TR ``H0STCNT0``, subscription-based push, not an HTTP GET) DOES
-carry a genuine broker execution time — the legacy WebSocket handler parses that field's position
-and then DISCARDS it in favor of ``time.time()`` at ``stock_feed.py:120``, the same receipt-time
-substitution as the REST client. No REST/HTTP TR carrying an equivalent field is measured,
-referenced, or implemented anywhere in this repository, and this adapter's whole architecture
-(:class:`~tos_runtime.marketfeed.ports.ObservationIntake`'s pull-based ``poll()``, this wave's own
-stdlib-HTTP-only scope) is a REST poller, not a WebSocket subscriber — adopting the WebSocket feed
-would be a different transport architecture, out of this lane's scope, not a code change here.
-This paragraph exists so a future reader who wants genuine event time knows WHERE to look (a
-WebSocket-subscribing intake, a lane this module does not attempt), rather than concluding KIS
-never offers one.
+What the anchor still does NOT know, stated rather than implied: the response
+body carries no event time, so how stale the data already was on the broker's
+side remains unknown. Anchoring on the request start raises the age's LOWER
+BOUND from zero to the HTTP round trip; it does not produce the true age. A
+genuine source event time would need the KIS real-time WebSocket trade feed —
+a different transport architecture this module does not attempt — not a
+different stamp here.
 
-**Conclusion, stated loudly rather than implied, and made unconditionally true rather than resting
-on a measurement that does not cover every value this adapter's own config admits (independent
-review MEDIUM, 2026-09-17 — see that note below).** This adapter anchors an observation on the
-LOCAL instants of its own request — never a value read from the response body — as a STRUCTURAL
-fact about this module's own code, not a claim earned by measuring any one TR: the only times
-:meth:`poll` supplies are two ``monotonic.now_ms()`` readings taken around the request (below);
-nothing in :meth:`_parse_output`/:meth:`_map_fields` ever extracts a timestamp candidate from the
-response body, for ANY TR id
-:class:`~tos_runtime.transport.kis_quote.config.KisQuoteTransportConfig`'s loader admits. This is deliberately the general, code-level statement, not the TR-specific one an
-earlier revision of this paragraph made — that revision was true for the two TR ids this adapter
-was actually measured against (``FHKST01010100``, ``FHMIF10000000`` — Step 0 measurement 1 above),
-but ``_QUOTE_TR_ID_PATTERN`` (``config.py``) admits any ``^FH[A-Z]{3}\\d{8}$`` id, including the
-other two the shape itself was derived from (``FHPPG04600001``/``FHKST03030200``) whose OWN
-response bodies were never independently checked for a timestamp field. Resting the honesty
-argument on a per-TR measurement would have been false for an operator who (harmlessly, from a
-safety point of view — this code still never reads one) configured one of those. The Step 0
-measurement above still stands as the motivating EVIDENCE for why this design was chosen in the
-first place — it is just no longer the thing the conclusion's own truth depends on.
+The deferred-digest note: an unconsumed quote is re-emitted, not dropped.
+``poll`` cannot filter on ``after_as_of_ms`` (the quote TR has no "since"
+parameter), but it does READ it: that argument is the durable store's own
+high-water mark, so it advances exactly when the previous pass's observation
+was consumed. This adapter therefore holds a freshly emitted content digest as
+pending and promotes it to the last-consumed digest only on a later poll whose
+``after_as_of_ms`` has advanced. An observation the scheduler declined to
+consume (``TickOutcome.SKIPPED_TIME_NOT_EVALUATED`` /
+``SKIPPED_TIME_UNANCHORED`` — no ``store.put``, ``latest_as_of`` unmoved) is
+re-emitted on the next pass rather than dropped until the price changes.
 
-This is not a claim that no KIS TR anywhere carries a genuine event time (the scope note above is
-the counter-evidence) — it is a claim about what this adapter's own code does with whatever body a
-configured TR returns. A future change to poll a different REST TR that does carry a genuine event
-time — or a future WebSocket-based intake — would need this module's own analysis, and its own new
-code path, not a silent assumption inherited from this one.
+The phantom-churn note: every GET returns the CURRENT price, so minting an
+observation on every poll would make each one look like a market event even
+when the market has not moved. This adapter dedups on its last-consumed
+content digest — taken over the mapped, admitted field tuple only, never the
+raw response, so an unmapped KIS field changing does not by itself mint a tick
+— and returns an EMPTY sequence, the ``SKIPPED_NO_OBSERVATION`` "nothing new"
+contract, when the polled content is byte-identical to it. Only a genuine
+content change, or an emission that was never consumed, mints an observation,
+and only then does :func:`~tos_runtime.marketfeed.ports.anchor_observation`
+derive ``raw_event_id`` as
+``{source_id}:{instrument}:{as_of_ms}:{content_digest}``. Combining the anchor
+instant with the content digest keeps a byte-identical body reappearing at a
+LATER instant a distinct observation, and separates two polls anchored in the
+same millisecond by content; this adapter never emits two observations sharing
+a ``raw_event_id``.
 
-**Request-start anchor, on the MONOTONIC clock — the scheduler stamps it after the evaluation**
-(plan ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.4; issue #810). This
-adapter reads NO wall clock at all. It takes a
-:meth:`~tos_runtime.time.sources.MonotonicSource.now_ms` reading immediately before the request
-goes out and another immediately after the response arrives, and returns a
-:class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` carrying both.
-:meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once` maps them onto that pass's own
-freshly evaluated reading (:meth:`~tos_runtime.time.service.TrustworthyTimeService
-.wall_clock_at_monotonic`) — ``as_of_ms`` from the REQUEST instant, ``received_ms`` from the
-response one.
-
-*Why not stamp a wall-clock reading here.*
-:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` hands back the reading
-the last ``evaluate()`` cached, never a fresh one, and since 2026-09-27 that evaluation runs
-AFTER the pass's intake read (plan
-``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4; issue #809). So a stamp taken
-here — before or after the response, it makes no difference — is the PREVIOUS pass's reading, and
-``source_age`` came out ≈ the pass spacing: at the ≥ 1000 ms spacings the 모의 quote rate limit
-admits (1.0 rps clean, probe P-13) every observation read STALE against the 800 ms paper budget.
-Anchoring on the request instead puts THIS request's own round trip into ``source_age``, which is
-the quantity that was actually measured.
-
-⚠ **What this still does NOT know, stated rather than implied** (plan §2.5). The response body
-carries no event time (the measurements above), so how stale the data was on the BROKER's side
-remains unknown. Anchoring on the request start raises the age's LOWER BOUND from 0 to the HTTP
-round trip; it does not produce the true age. Stricter than the pre-#809 "age 0" fail-open,
-still not a source event time — a genuine one needs the WebSocket feed named in the scope note
-above, not a different stamp here.
-
-**The deferred digest: an unconsumed quote is re-emitted, not dropped** (plan §2.4). ``poll``
-cannot filter on ``after_as_of_ms`` (KIS's quote TR has no "since" parameter), but it does READ
-it: that argument is the durable store's own high-water mark, so it advances exactly when the
-previous pass's observation was consumed. This adapter therefore holds a freshly emitted content
-digest as *pending* and promotes it to ``_last_content_digest`` only on a later poll whose
-``after_as_of_ms`` has advanced. An observation the scheduler declined to consume
-(``TickOutcome.SKIPPED_TIME_NOT_EVALUATED``/``SKIPPED_TIME_UNANCHORED`` — no ``store.put``,
-``latest_as_of`` unmoved) is re-emitted on the next pass instead of being dropped until the price
-changes. The phantom-churn guarantee below is unaffected: once an emission IS consumed, an
-unchanged quote goes back to returning ``()``.
-
-**One clock, two jobs — and it must be THE process's monotonic source.** Since #810 this adapter
-is injected with a single clock, a :class:`~tos_runtime.time.sources.MonotonicSource`, serving
-both the shared :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle`'s own
-age/cooldown bookkeeping and the two request-anchor readings. Those two uses have DIFFERENT
-requirements and the stricter one governs: token pacing needs only relative elapsed time from any
+One clock, two jobs — and it must be THE process's monotonic source. A single
+injected :class:`~tos_runtime.time.sources.MonotonicSource` serves both the
+shared :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle`'s
+age/cooldown bookkeeping and the two request-anchor readings, and the stricter
+requirement governs. Token pacing needs only relative elapsed time from any
 consistent source, while the anchor readings are mapped by
-:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_at_monotonic`, which compares
-them against the time service's own readings. The :class:`~tos_runtime.time.sources
-.MonotonicSource` port guarantees those readings are comparable only WITHIN one instance, so the
-SHARED instance is the contract: this must be the very object that service was built with.
-(Two :class:`~tos_runtime.time.sources.ProcessMonotonicSource` objects would in fact agree —
-both read the same ``time.monotonic_ns()`` — but that is an implementation coincidence of one
-implementation, not something the port promises.) Compose passes exactly that
-(``compose/_wiring.py``'s ``_Infra.monotonic_source``), and
-``tests/compose/test_marketfeed_intake_kind_wiring.py`` pins the object identity; a source with
-an origin of its own — a fake, or a future non-process source — would put every mapping outside
-the domain and every pass would answer ``SKIPPED_TIME_UNANCHORED``.
+``wall_clock_at_monotonic``, which compares them against the time service's
+own readings — and the :class:`~tos_runtime.time.sources.MonotonicSource` port
+guarantees readings are comparable only WITHIN one instance. The injected
+source must therefore be the very object this process's
+:class:`~tos_runtime.time.service.TrustworthyTimeService` was built with;
+compose passes exactly that, and ``tests/compose/
+test_marketfeed_intake_kind_wiring.py`` pins the object identity. A source
+with an origin of its own would put every mapping outside the domain and every
+pass would answer ``SKIPPED_TIME_UNANCHORED``.
 
-⚠ **Against reintroducing a wall clock here.** An earlier revision derived the token lifecycle's
-clock from ``wall_clock_now()``, which made a perfectly valid, still-live token unusable the
-instant wall-clock trust degraded, for a reason unrelated to the token. A later one stamped
-``as_of_ms`` from that same reading, which is the #810 defect this module has now removed. Token
-validity, observation anchoring, and wall-clock TRUST are three different facts; the first two
-live on the monotonic clock here, and the third is the scheduler's to apply after its own
-evaluation.
+The note against reintroducing a wall clock here: token validity, observation
+anchoring, and wall-clock TRUST are three different facts. The first two live
+on the monotonic clock in this module; the third is the scheduler's to apply
+after its own evaluation. Deriving token pacing from wall-clock trust makes a
+live token unusable for a reason unrelated to the token, and stamping
+``as_of_ms`` from a cached wall-clock reading is the defect the request anchor
+above removed.
 
-**Step 0 measurement 2 — the token lifecycle is shared, not duplicated.** This adapter's token
-handling is :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle` — the SAME class the
-KIS MOCK order transport uses, against the SAME custody scopes (``kis_mock.app_key``/
-``kis_mock.app_secret``): KIS's own environment separation is enforced per TR family, not per
-credential (this module's own imports' docstrings cite the measurement), so a quote TR and an
-order TR authenticate with the same mock app key and may share one cached token. See
-``tos_runtime.transport.kis_mock.token``'s own module docstring for the extraction's
-behavior-preservation proof.
-
-**The phantom-churn problem (a real design decision, not a detail).** KIS's quote TR has no
-"since" parameter — every GET returns the CURRENT price, full stop. Naively minting an
-observation on every poll, anchored at a fresh instant, would make EVERY poll look like a new
-market event even when the market has not moved — manufacturing ticks with no real change, and
-(per :mod:`tos_runtime.marketfeed.ports`'s own "field state is derived, never declared"
-discipline) silently inflating "freshness" with no matching cause. This adapter instead tracks its
-own LAST-CONSUMED content digest (over the mapped, admitted field tuple only — never the raw
-response, so an unmapped, economically-insignificant KIS field changing does not, by itself, mint
-a tick) and returns an EMPTY sequence — :attr:`~tos_runtime.marketfeed.ports.TickOutcome
-.SKIPPED_NO_OBSERVATION`'s own "nothing new" contract — when the freshly polled content is
-byte-identical to it. Only a genuine content change (or an emission that was never consumed — the
-deferred-digest note above) mints an observation, and only then does
-:func:`~tos_runtime.marketfeed.ports.anchor_observation` derive ``raw_event_id`` as
-``{source_id}:{instrument}:{as_of_ms}:{content_digest}`` — combining the anchor instant with the
-content digest so two observations can never collide even if a byte-identical body reappears at a
-LATER instant (a legitimate, distinct observation: the market genuinely returned to a prior price
-at a new instant) or, in the pathological case of two polls anchored in the same millisecond,
-differ only in content (the digest disambiguates that too). This adapter never emits two
-observations sharing a ``raw_event_id`` — the ambiguity :mod:`tos_runtime.marketfeed.ports`'s own
-module docstring warns a producer must never create.
-
-**Field mapping is configured, never hardcoded.** ``KisQuoteTransportConfig.field_mapping`` names
+Credential access stays inside the shared session seam, and field mapping is
+configured, never hardcoded. ``KisQuoteTransportConfig.field_mapping`` names
 exactly which KIS wire field keys this adapter reads and which
-``critical_input_policy.yaml``-admitted ``field_key`` each feeds. A KIS response field NOT named
-in that mapping is dropped here, silently from this module's own point of view (the CIP's own
-∅-floor already drops anything it does not itself admit — ``tos/src/tos/marketfeed/value.py``'s
-``UNKNOWN`` floor — so a second, redundant drop-with-a-warning here would only duplicate that
-floor, not add information). **No unit/scale/multiplier/sign interpretation happens in this
-module** — the raw KIS scalar value (a numeral-as-string, per KIS's own JSON convention observed
-in every cited evidence artifact) is carried through UNCHANGED; that interpretation is the
-CIP-governed value-derivation layer's job (``policy.py``'s own ``unit``/``scale``/``multiplier``/
-``sign`` fields), never something a collector invents for itself (``ports.py``'s own "field state
-is derived, never declared" discipline).
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``hashlib``, ``json``,
-``typing``) + ``tos.*`` (``tos.dsl`` for :data:`~tos.dsl.ScalarValue`) +
-``tos_runtime.custody``/``tos_runtime.time``/``tos_runtime.marketfeed``/this package's own sibling
-``config``/``tos_runtime.transport.kis_mock`` (the shared token lifecycle + HTTP client) only. No
-``shared.*``, no ``os.environ``.
+``critical_input_policy.yaml``-admitted ``field_key`` each feeds; a response
+field not named there is dropped here, since the CIP's own ∅-floor already
+drops anything it does not itself admit. No unit/scale/multiplier/sign
+interpretation happens in this module — the raw KIS scalar value is carried
+through UNCHANGED, because that interpretation belongs to the CIP-governed
+value-derivation layer, never to a collector.
 """
 
 from __future__ import annotations
