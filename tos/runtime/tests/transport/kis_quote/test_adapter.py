@@ -11,7 +11,7 @@ scheduler does, through :func:`~tos_runtime.marketfeed.ports.anchor_observation`
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,6 @@ from tos_runtime.marketfeed.ports import (
 from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.service import TrustworthyTimeService
-from tos_runtime.time.sources import LocalSystemClockReader, ProcessMonotonicSource
 from tos_runtime.transport.kis_quote.adapter import (
     KisQuoteAdapterError,
     KisQuoteMalformedResponse,
@@ -42,6 +41,9 @@ from ._fakes import (
     InMemoryCredentialCustody,
     InMemoryEvidencePort,
     RecordingEvidenceSink,
+    ScriptedClock,
+    ScriptedMonotonicSource,
+    ScriptedReferenceReader,
 )
 from ._fakes import (
     runtime_identity as _runtime_identity,
@@ -150,10 +152,12 @@ def _set_quote(
     rt_cd: str = "0",
     route: str = QUOTE_ROUTE,
     extra_output: dict[str, Any] | None = None,
-    delay_s: float = 0.0,
+    on_request: Callable[[], None] | None = None,
 ) -> None:
-    """Script the quote route. ``delay_s`` is the fake server's own transport delay — the
-    injected round trip the #810 anchor tests measure."""
+    """Script the quote route. ``on_request`` runs inside the server's own quote handler,
+    between the request arriving and the response being written — how the #810 anchor tests
+    below inject the round trip they MEASURE, by advancing their scripted clocks rather than
+    sleeping."""
     output = {"stck_prpr": stck_prpr, "acml_vol": acml_vol}
     if extra_output:
         output.update(extra_output)
@@ -161,7 +165,7 @@ def _set_quote(
         route,
         status=200,
         body={"rt_cd": rt_cd, "msg1": "정상처리 되었습니다", "output": output},
-        delay_s=delay_s,
+        on_request=on_request,
     )
 
 
@@ -557,6 +561,14 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
 # an injected transport delay lands in `source_age`, and decides FRESH/STALE
 # against the DEPLOYED paper bounds. Inverts the two pins #811 left here —
 # "STALE at every admissible spacing" and "an unconsumed quote is dropped".
+#
+# DETERMINISTIC (PR #812 review, LOW): the transport delay is injected by
+# advancing a scripted clock inside the fake server's quote handler, not by
+# sleeping — so `source_age` comes out EQUAL to the injected value and the
+# boundary can be pinned on both sides. Everything that decides the verdict is
+# still real: the TrustworthyTimeService, its wall_clock_at_monotonic
+# arithmetic, the kernel's freshness_verdict, the loopback HTTP round trip and
+# the deployed paper bounds. Only the clocks are scripted.
 # ---------------------------------------------------------------------------
 
 #: The APPROVED paper bounds, read from the deployed file rather than re-typed here — the claim
@@ -571,10 +583,6 @@ _PAPER_TIME_YAML = (
     / "paper"
     / "time.yaml"
 )
-
-#: An injected transport delay comfortably past the deployed 800 ms budget (asserted below
-#: against the loaded file, never assumed).
-_SLOW_ROUND_TRIP_S = 1.0
 
 
 def _paper_budget() -> tuple[Any, tuple[int, ...], int]:
@@ -596,19 +604,31 @@ def _paper_budget() -> tuple[Any, tuple[int, ...], int]:
     )
 
 
+#: The budget the parametrizations below straddle — derived from the deployed file at import,
+#: never a typed-in 800, so a change to ``time.yaml`` moves the cases rather than silently
+#: leaving them on the wrong side of the boundary.
+_BUDGET_MS = _paper_budget()[2]
+
+#: A transport delay comfortably past that budget (the magnitude #811 measured as the pass
+#: spacing, kept so the two arcs' numbers stay comparable).
+_SLOW_ROUND_TRIP_MS = 1_000
+
+
 def _trusted_time_service(
-    monotonic: ProcessMonotonicSource, config: Any
+    monotonic: ScriptedMonotonicSource, reader: ScriptedReferenceReader, config: Any
 ) -> TrustworthyTimeService:
-    """A REAL :class:`~tos_runtime.time.service.TrustworthyTimeService` on the REAL local
-    clock readers, driven to ``TRUSTED`` — not a double.
+    """A REAL :class:`~tos_runtime.time.service.TrustworthyTimeService`, driven to ``TRUSTED``
+    over two real ``evaluate()`` cycles — not a double.
 
     The mapping under test is that service's own ``wall_clock_at_monotonic`` arithmetic
     (``tests/time/test_service.py`` pins its edges); re-implementing it in a fake here would
-    make these tests pass whatever the real one does.
+    make these tests pass whatever the real one does. Only the two CLOCKS are scripted, and
+    they advance together, so the suspension this service observes is a measured 0 rather than
+    a guess (:class:`~tests.transport.kis_quote._fakes.ScriptedClock`).
     """
     service = TrustworthyTimeService(
         monotonic=monotonic,
-        references=(LocalSystemClockReader(),),
+        references=(reader,),
         config=config,
         identity=_runtime_identity(),
         evidence=InMemoryEvidencePort(),
@@ -621,24 +641,38 @@ def _trusted_time_service(
 
 
 def _anchored_source_age(
-    *, server: FakeKisServer, delay_s: float
+    *, server: FakeKisServer, transport_ms: int
 ) -> tuple[int, tuple[int, ...], Any, int]:
-    """Run ONE real pass — evaluate, poll (with ``delay_s`` injected into the quote route),
-    evaluate — and return ``(source_age, delay_bounds, time config, budget_ms)``.
+    """Run ONE pass — evaluate, poll (with ``transport_ms`` of round trip injected by the
+    quote handler itself), evaluate — and return
+    ``(source_age, delay_bounds, time config, budget_ms)``.
 
     The order mirrors :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once`
     exactly: the intake is read FIRST (#809) and the pending observation is anchored against
     the reading THIS pass's own evaluation produced (#810).
+
+    **Why the resulting age is exactly ``transport_ms``, not approximately.** The scripted pair
+    advances ONLY inside the quote handler, and by the same amount on both hands. So the
+    finalizing cycle's mapping sees an elapsed monotonic gap of ``transport_ms`` and an
+    observed suspension of 0, which puts ``as_of`` at the reading the request instant
+    corresponds to and leaves ``wall_clock_now() - as_of == transport_ms``. No real time
+    passes, and nothing about the host's speed enters the number.
     """
     config, delay_bounds, budget_ms = _paper_budget()
-    monotonic = ProcessMonotonicSource()
-    time_service = _trusted_time_service(monotonic, config)
+    clock = ScriptedClock()
+    monotonic = ScriptedMonotonicSource(clock)
+    time_service = _trusted_time_service(
+        monotonic, ScriptedReferenceReader(clock), config
+    )
 
     _set_token(server)
-    _set_quote(server, delay_s=delay_s)
+    _set_quote(server, on_request=lambda: clock.advance(transport_ms))
     intake, _, _ = _intake(server, monotonic=monotonic)
 
     (pending,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+    assert (
+        pending.received_monotonic_ms - pending.requested_monotonic_ms == transport_ms
+    )  # the handler's advance really did land between the two anchor readings
     time_service.evaluate()  # the pass's own evaluation, AFTER the intake read
 
     as_of_ms = time_service.wall_clock_at_monotonic(pending.requested_monotonic_ms)
@@ -652,26 +686,38 @@ def _anchored_source_age(
     return reading_ms - observation.as_of_ms, delay_bounds, config, budget_ms
 
 
+@pytest.mark.parametrize(
+    "transport_ms",
+    [
+        pytest.param(_BUDGET_MS + 1, id="one-ms-over-the-budget"),
+        pytest.param(_SLOW_ROUND_TRIP_MS, id="well-over-the-budget"),
+    ],
+)
 def test_an_injected_transport_delay_lands_in_source_age_and_reads_stale(
-    server: FakeKisServer,
+    server: FakeKisServer, transport_ms: int
 ) -> None:
     """**The inversion of #811's "STALE at every admissible spacing" pin.** Staleness is now
-    decided by THIS request's own round trip, not by the pass spacing: a 1000 ms transport
-    delay injected into the fake KIS server's quote route shows up in ``source_age`` (which is
-    what the previous anchor could not see at all), and 1000 > the deployed 800 ms budget, so
-    the kernel's own predicate answers STALE.
+    decided by THIS request's own round trip, not by the pass spacing: the round trip injected
+    into the fake KIS server's quote handler shows up in ``source_age`` (which is what the
+    previous anchor could not see at all), and past the deployed budget the kernel's own
+    predicate answers STALE.
+
+    The two cases are the boundary's far side — one millisecond over, and the 1000 ms #811
+    measured as the pass spacing — so the pin is on the deployed budget itself, not on a
+    comfortable margin from it.
 
     Mutations: anchor on the RESPONSE instant instead of the request -> ``source_age`` drops to
-    ~0 and the STALE assertion goes red (that is the pre-#809 fail-open); drop the delay
-    injection -> the ``>= delay`` assertion goes red.
+    0 and both the equality and the STALE assertion go red (that is the pre-#809 fail-open);
+    drop the ``on_request`` advance -> the equality assertion goes red.
     """
-    delay_ms = int(_SLOW_ROUND_TRIP_S * 1000)
     source_age, delay_bounds, config, budget_ms = _anchored_source_age(
-        server=server, delay_s=_SLOW_ROUND_TRIP_S
+        server=server, transport_ms=transport_ms
     )
 
-    assert source_age >= delay_ms
-    assert delay_ms > budget_ms  # the deployed numbers, not a chosen pair
+    assert (
+        source_age == transport_ms
+    )  # exact: nothing here is a real elapsed measurement
+    assert transport_ms > budget_ms  # the deployed numbers, not a chosen pair
     assert (
         freshness_verdict(
             source_age=source_age,
@@ -683,23 +729,30 @@ def test_an_injected_transport_delay_lands_in_source_age_and_reads_stale(
     )
 
 
+@pytest.mark.parametrize(
+    "transport_ms",
+    [
+        pytest.param(0, id="instant-round-trip"),
+        pytest.param(_BUDGET_MS, id="exactly-at-the-budget"),
+    ],
+)
 def test_a_quick_round_trip_reads_fresh_against_the_same_budget(
-    server: FakeKisServer,
+    server: FakeKisServer, transport_ms: int
 ) -> None:
     """The other half of the inversion — the one the old pin said was unreachable at any
-    spacing the broker admits. With no injected delay the round trip is a loopback GET, the
-    age is a handful of milliseconds, and the SAME deployed budget answers FRESH.
+    spacing the broker admits. Below the deployed budget the SAME numbers answer FRESH.
 
-    ⚠ This assertion is a real timing claim, not a mock: it fails if this host cannot
-    complete a loopback GET plus two time evaluations inside the deployed 800 ms budget. That
-    is an honest failure — the intake's freshness genuinely depends on the round trip now —
-    and 800 ms is roughly two orders of magnitude of slack over the measured path.
+    The two cases are the boundary's near side: no round trip at all, and a round trip landing
+    exactly ON the budget (``source_age + Σ delay_bounds == max_age_bound`` is still FRESH —
+    ``freshness_verdict`` goes STALE on ``>``). Together with the STALE pair above this pins
+    the verdict on both sides of one millisecond, which a real-timing test could not do.
     """
     source_age, delay_bounds, config, budget_ms = _anchored_source_age(
-        server=server, delay_s=0.0
+        server=server, transport_ms=transport_ms
     )
 
-    assert 0 <= source_age <= budget_ms
+    assert source_age == transport_ms
+    assert source_age <= budget_ms
     assert (
         freshness_verdict(
             source_age=source_age,
