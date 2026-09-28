@@ -139,3 +139,78 @@ KIS 응답에는 이벤트 시각이 없다. 그래서 서버 쪽에서 데이�
 1. **설계(§2)** — 동의.
 2. **모의 서버 GET-only 실측** — 별도 단계로 미룬다. 이번 PR 은 가짜 KIS 서버 안에서만 검증한다.
 3. **구현은 이 브랜치(PR #812)에서** — 동의.
+
+## 7. 착지 기록 (2026-09-28 · 브랜치 `fix/tos-kis-quote-request-anchor` · PR #812)
+
+기준 main `ac2efb0f`. 운영자 처분 §6.1 대로 **가짜 KIS 서버 안에서만** 검증했다(모의 서버 GET 실측은 별도 단계).
+
+### 7.1 무엇이 어디로 갔나
+
+| 작업 | 착지 |
+|---|---|
+| T-1 | `marketfeed/ports.py`: `MonotonicAnchoredObservation` · `anchor_observation` · `ObservationIntake.poll` 반환형 확장 · `TickOutcome.SKIPPED_TIME_UNANCHORED` · `time/service.py`: `wall_clock_at_monotonic` + `_capture_cycle` |
+| T-2 | `marketfeed/scheduler.py`: `TickScheduler._anchor_polled` — `before_decide` 뒤 · `decide_tick` 앞 |
+| T-3 | `transport/kis_quote/adapter.py`: 단조시계 2회 스탬프 · 벽시계 판독 전면 제거 · `_pending_digest` 지연 기록 |
+| T-4 | #811 이 남긴 두 고정 테스트 교체 · `#810 전까지 …` 문구 전건 제거(`ports.py`·`scheduler.py`·`time_pacer.py`·`compose/_marketfeed_wiring.py`·예시/paper `marketfeed.yaml` 주석·`tests/compose/test_marketfeed_pacing_budget.py`) |
+| T-5 | `tests/compose/test_marketfeed_intake_kind_wiring.py`: 인입과 시간 서비스가 **같은 `MonotonicSource` 객체**임을 `is` 로 핀 |
+| T-6 | digest 재도출 · 이 절 |
+
+kis_quote 인입이 저널 pacing 가드에서 면제되는 것은 유지하되 **이유를 정정**했다: 「그 예산은 상류 저널 수집기 몫이고 그 인입에는 그런 수집기가 없다 — 그 인입의 나이는 **패스마다 실측되는 요청 왕복**이지 poll 위상에서 파생되지 않는다」.
+
+### 7.2 실측 (가짜 KIS 서버 · 배포된 `config/tos_runtime/paper/time.yaml`)
+
+예산 = `MAX_time_conservative_freshness_age_ms`(1000) − Σdelay_bounds(4×50) = **800 ms**.
+
+| 주입 지연 L | 실측 `source_age` | 판정 |
+|---|---|---|
+| 1000 ms | **1002 ms** | STALE (1002 + 200 > 1000) |
+| 0 ms (loopback) | **1 ms** | FRESH |
+
+`source_age ≥ L` 이 성립한다 — #809 이후의 「≈ 패스 간격」도, #809 이전의 「0(왕복 미측정)」도 아니다.
+
+### 7.3 뮤테이션 (전건 red 확인 후 복구)
+
+| # | 뮤테이션 | red |
+|---|---|---|
+| 1 | 사상에서 중단분 차감 제거 (`time/service.py`) | `test_mapping_subtracts_the_suspension_this_cycle_observed` |
+| 2 | `as_of` 에 수신 시각 사용 (스케줄러) + 요청 스탬프를 응답 뒤로 이동 (어댑터) | `test_tick_once_anchors_a_pending_observation_on_the_request_instant` · `test_an_injected_transport_delay_lands_in_source_age_and_reads_stale` |
+| 3 | digest 를 poll 안에서 즉시 기록 | 어댑터 재출력 2건 + 체인 4건 (계 6건) |
+| 4 | 사상이 `None` 인데 대체값으로 확정 진행 | 스케줄러 2건 + 체인 3건 (계 5건) |
+| 5 | 정의역 하한 제거 | `test_mapping_refuses_one_millisecond_below_the_domain_floor` · `test_the_domain_floor_advances_with_each_cycle` |
+
+T-5 배선 끊기(인입에 사설 `ProcessMonotonicSource` 주입)도 red 확인 후 복구했다.
+
+### 7.4 계획에서 벗어난 것 (전건 사유 포함)
+
+1. **어댑터에서 `time_service` 주입 자체를 제거**했다(`WallClockSource` 프로토콜 · `KisQuoteWallClockUntrusted` · `_build_intake` 의 인자까지). 계획은 「poll 안의 호출과 예외 제거」만 요구했지만, 벽시계 판독이 사라지면 그 의존성은 **아무도 읽지 않는 채로 남는다** — 나중에 잘못 문서화되는 바로 그 형태다. 사전 확인: 두 이름을 쓰는 곳은 이 패키지 `__init__` 재수출과 이 스위트뿐이었고, 둘 다 같이 정리했다(deprecation 경로 없음 — 외부 소비자 0).
+2. **`TrustworthyTimeService.evaluate` 가 100줄 예산을 넘겼다**(103). 예외 등재가 아니라 `_capture_cycle` 로 분해했다.
+3. **중단 관측이 없는 주기(`suspension_ms is None`)는 사상이 `None`**이다. 계획의 식에는 그 항의 값이 없다 — 미지를 0 으로 접지 않는다(첫 `evaluate()`, 또는 양쪽 주기 중 하나에 벽시계 판독이 없는 경우).
+4. **미확정 관측이 하나라도 사상 불가면 배치 전체를 보류**한다. 살아남은 것만 추리면 `decide_tick` 이 「생존자 중 최신」을 최신으로 고른다.
+5. 어댑터에 `_polled_once` 를 별도로 둔다 — `after_as_of_ms` 의 `None` 은 「이전 poll 없음」과 「이전 mark 가 None」 두 사실을 겸할 수 없다.
+6. **스케줄러 레벨 체인 테스트는 새 모듈** `tests/marketfeed/test_scheduler_kis_quote_anchor.py` 에 둔다(실 저장소·실 정책·실 스케줄러가 필요해 어댑터 스위트 범위를 넘는다). 지연 실측 2건은 어댑터 스위트에 남는다.
+7. 지연 실측은 **진짜 `TrustworthyTimeService`**(실 프로세스 단조시계 + `LocalSystemClockReader`)로 사상한다 — 가짜 사상은 「검사가 검사 대상의 사본을 읽는」 형태가 된다.
+8. `tests/marketfeed/test_scheduler.py::_build_scheduler` 에 `time_projection` 오버라이드를 추가했다 — `MagicMock` 투영으로는 실제 커널 리졸버가 TICKED 경로를 거부한다.
+9. `wall_clock_at_monotonic` 안에서 `issue_mono_ms: int | None` 로 **명시 주석**을 달았다. 이 호스트 venv 는 스텁이 더 있어 그 줄이 `no-any-return` 하나를 새로 냈고, 주석으로 전수 카운트를 main 과 같게 맞췄다(§7.5).
+
+### 7.5 게이트 / 테스트
+
+| 항목 | 결과 |
+|---|---|
+| `tos_firewall_check.py` · `lint-imports` | PASS · 3 contracts kept |
+| `tos_contract_check.py` (+ `--self-test`) | PASS · 뮤테이션 145종 전건 판별 |
+| `tos_completion_status.py --check` | GREEN (violations=0) |
+| `tos_spec_status.py --check` | PASS (비차단 baseline-plan 경고는 기존) |
+| `tos_evidence_citation_check.py` · `tos_named_tbd_guard.py` | PASS · PASS (0 violations) |
+| `tos_size_budget.py --check` | PASS (0 violations) |
+| black · ruff | 1293 files unchanged · all checks passed |
+| mypy `tos/src` | Success (265 files) |
+| mypy `tos/runtime/src` | 27 errors — **main 기준선과 동일**(전건 기존 `no-any-return`; 이 호스트 스텁 탓) |
+| mypy `tos/runtime/tests` (CI 와 같은 `--disable-error-code=no-untyped-def`) | 122 errors in 45 files — **main 기준선과 동일**, 검사 파일은 233 → 235 (신규 2건 0 errors) |
+| `pytest tos/runtime/tests` | **3150 passed** |
+| `pytest tests/unit/scripts/test_render_paper_config.py tests/tools` | 1399 passed · 3 failed — `tests/tools/test_u17_verify.py` 기존 로컬 실패(`yq` 미설치, CI 는 `--ignore`) |
+
+main 기준선은 `git archive origin/main` 로 추출한 트리에서 같은 명령으로 측정했다(이 호스트 venv 는 스텁이 더 있어 CI 와 절대 수치가 다르다 — 그래서 절대값이 아니라 **차이**를 본다).
+
+### 7.6 배포 영향
+
+없다. paper 는 `intake_kind: journal` 로 핀돼 있고 값은 바뀌지 않았다(주석만). `config/tos_runtime/paper/time.yaml` 승인값 무변경. 런타임 소스가 바뀌었으므로 `expected_code_digest` 는 재도출했다(마지막 커밋 · `release.yaml` 12차 + `_VALUE_PINS` 동시 갱신).
