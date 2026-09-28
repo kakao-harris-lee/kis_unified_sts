@@ -822,3 +822,189 @@ def test_first_evaluate_cycle_has_no_previous_reading_to_compare() -> None:
     assert service.health_state is HealthState.SYNCHRONIZING
     assert snap.suspension_status.suspension_ms is None
     assert snap.suspension_status.suspended is False
+
+
+# ----------------------------------------------------------------------------
+# #810 (plan docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md §2.2) —
+# wall_clock_at_monotonic(): map a PAST monotonic instant of this cycle onto the
+# freshly evaluated, trusted wall-clock reading. Backward only, conservative,
+# and domain-limited to the cycle the exposed snapshot covers.
+# ----------------------------------------------------------------------------
+
+#: The wall-clock reading both mapping fixtures below start from.
+_MAPPING_WALL_MS = 1_700_000_000_000
+#: The monotonic readings of the two evaluate() cycles: the domain's floor and its ceiling.
+_MAPPING_FIRST_MONO_MS = 1_000
+_MAPPING_SECOND_MONO_MS = 1_010
+
+
+def _trusted_for_mapping(
+    *, wall_jump_ms: int = 0, max_process_suspension_ms: int = 2_000
+) -> TrustworthyTimeService:
+    """A service driven to TRUSTED over exactly two evaluate() cycles.
+
+    ``wall_jump_ms`` is how far the reference reader's wall clock moves between them while
+    the monotonic clock moves ``_MAPPING_SECOND_MONO_MS - _MAPPING_FIRST_MONO_MS`` (10 ms), so
+    the observed suspension is ``max(0, wall_jump_ms - 10)``. ``max_process_suspension_ms``
+    defaults to the APPROVED paper value (``config/tos_runtime/paper/time.yaml``: 2000), not
+    this module's own ``_config`` default of 0 — at 0 any jump at all loses TRUSTED and the
+    mapping would return ``None`` for a reason that has nothing to do with the domain.
+    """
+    monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
+    reader = FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[reader],
+        config=_config(max_process_suspension_ms=max_process_suspension_ms),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING (this cycle's reading becomes the domain floor)
+    monotonic.value = _MAPPING_SECOND_MONO_MS
+    assert reader.wall_clock_unix_ms is not None
+    reader.wall_clock_unix_ms += wall_jump_ms
+    service.evaluate()  # -> TRUSTED
+    assert service.health_state is HealthState.TRUSTED
+    return service
+
+
+def test_mapping_at_the_domain_ceiling_is_the_evaluated_reading_itself() -> None:
+    """The upper domain edge — the instant the evaluation itself was taken. Nothing is
+    subtracted there, so the answer is exactly the reading the snapshot carries."""
+    service = _trusted_for_mapping()
+
+    assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) == _MAPPING_WALL_MS
+    assert service.wall_clock_now() == _MAPPING_WALL_MS
+
+
+def test_mapping_at_the_domain_floor_subtracts_the_whole_cycle() -> None:
+    """The lower domain edge — the PREVIOUS evaluation's own monotonic reading. 10 ms of
+    monotonic time separates the two cycles, so the floor maps 10 ms earlier."""
+    service = _trusted_for_mapping()
+
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) == (
+        _MAPPING_WALL_MS - (_MAPPING_SECOND_MONO_MS - _MAPPING_FIRST_MONO_MS)
+    )
+
+
+def test_mapping_refuses_one_millisecond_below_the_domain_floor() -> None:
+    """Mutation: drop the lower-bound check -> this returns
+    ``_MAPPING_WALL_MS - 11`` instead of ``None`` -> red. An instant before the previous
+    evaluation is not covered by the suspension this cycle measured, so mapping it would be an
+    extrapolation past what was evaluated."""
+    service = _trusted_for_mapping()
+
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS - 1) is None
+
+
+def test_mapping_refuses_one_millisecond_above_the_evaluated_instant() -> None:
+    """The other edge — the "extrapolate now" direction the 2026-09-26 plan §3 rejected.
+    Mutation: drop the upper-bound check -> this returns a manufactured FUTURE instant no
+    reference source ever attested -> red."""
+    service = _trusted_for_mapping()
+
+    assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS + 1) is None
+
+
+def test_mapping_subtracts_the_suspension_this_cycle_observed() -> None:
+    """A 500 ms wall jump against a 10 ms monotonic advance is an observed suspension of 490
+    (``max(0, Δwall - Δmono)``), and the mapping charges the whole of it to the interval —
+    placing the floor EARLIER, i.e. making anything aged from it OLDER.
+
+    Mutation: drop ``- suspension_ms`` from the mapping -> this comes out 490 ms later
+    (``_MAPPING_WALL_MS + 490``) -> red, in the fail-OPEN direction.
+    """
+    service = _trusted_for_mapping(wall_jump_ms=500)
+    observed_suspension_ms = 500 - (_MAPPING_SECOND_MONO_MS - _MAPPING_FIRST_MONO_MS)
+    assert (
+        service.current_snapshot().suspension_status.suspension_ms
+        == observed_suspension_ms
+    )
+
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) == (
+        _MAPPING_WALL_MS
+        + 500
+        - (_MAPPING_SECOND_MONO_MS - _MAPPING_FIRST_MONO_MS)
+        - observed_suspension_ms
+    )
+
+
+def test_mapping_returns_none_while_not_trusted() -> None:
+    """Same ``TRUSTED`` gate ``wall_clock_now`` applies — a SYNCHRONIZING cycle has a reading
+    in its snapshot, and this method still refuses to serve it."""
+    monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)],
+    )
+    service.start()
+    snapshot = service.evaluate()  # -> SYNCHRONIZING
+
+    assert service.health_state is HealthState.SYNCHRONIZING
+    assert snapshot.wall_clock_observation == _MAPPING_WALL_MS  # it IS there...
+    assert (
+        service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
+    )  # ...and refused
+
+
+def test_mapping_returns_none_after_trust_is_lost() -> None:
+    """Trust lost after a mapping was available: a monotonic regression forces UNTRUSTED, and
+    the mapping stops answering with it — never keeps serving the last good cycle."""
+    monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)],
+        config=_config(max_process_suspension_ms=2_000),
+    )
+    service.start()
+    service.evaluate()
+    monotonic.value = _MAPPING_SECOND_MONO_MS
+    service.evaluate()
+    assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) is not None
+
+    monotonic.value = 500  # regression -> UNTRUSTED
+    service.evaluate()
+
+    assert service.health_state is HealthState.UNTRUSTED
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
+
+
+def test_mapping_returns_none_on_the_first_cycle_that_can_observe_no_suspension() -> (
+    None
+):
+    """An unknown suspension term is not a zero. The first ``evaluate()`` has no previous
+    reading to diff against, so even if that cycle somehow reached TRUSTED there is no
+    measured suspension covering the interval — and the mapping says ``None`` rather than
+    quietly assuming 0."""
+    monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)],
+    )
+    service.start()
+    service.evaluate()
+
+    assert service.current_snapshot().suspension_status.suspension_ms is None
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
+
+
+def test_the_domain_floor_advances_with_each_cycle() -> None:
+    """The domain is THIS cycle, not "everything since boot": a third evaluation moves the
+    floor up to the second cycle's reading, and the first cycle's instant — mappable a moment
+    ago — stops being mappable."""
+    monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)],
+        config=_config(max_process_suspension_ms=2_000),
+    )
+    service.start()
+    service.evaluate()
+    monotonic.value = _MAPPING_SECOND_MONO_MS
+    service.evaluate()
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is not None
+
+    monotonic.value = _MAPPING_SECOND_MONO_MS + 10
+    service.evaluate()
+
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
+    assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) is not None
