@@ -148,20 +148,27 @@ def _child(
 ) -> None:
     """Open ``store`` over ``path_str`` in lockstep with every sibling; report the outcome.
 
-    The outcome is REPORTED, never raised: a child that dies silently would look exactly like a
-    child that succeeded, so every path ends in exactly one ``queue.put``.
+    The outcome is REPORTED, never raised, and the whole body — the barrier wait and the
+    connection patch included — is inside the ``try``: a child that died before its ``queue.put``
+    would leave the parent blocked on ``queue.get`` for the full timeout and then fail with
+    "never reported an outcome", which says nothing about WHY. Every path ends in exactly one
+    ``queue.put``.
     """
-    global _pause_after_sql
-    _pause_after_sql = pause_after_sql
-    real_connect = sqlite3.connect
-
-    def connect_with_delay(*args: Any, **kwargs: Any) -> sqlite3.Connection:
-        kwargs["factory"] = _DelayedConnection
-        return real_connect(*args, **kwargs)
-
-    sqlite3.connect = connect_with_delay  # type: ignore[assignment]
-    barrier.wait(timeout=_JOIN_TIMEOUT_S)
     try:
+        global _pause_after_sql
+        _pause_after_sql = pause_after_sql
+        real_connect = sqlite3.connect
+
+        def connect_with_delay(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs["factory"] = _DelayedConnection
+            # Annotated rather than returned directly: `real_connect` resolves to `Any` under
+            # the CI mypy invocation (`tos_runtime` is not on mypy's path from the repo root),
+            # and a bare return of it raises `no-any-return`.
+            connection: sqlite3.Connection = real_connect(*args, **kwargs)
+            return connection
+
+        sqlite3.connect = connect_with_delay  # type: ignore[assignment]
+        barrier.wait(timeout=_JOIN_TIMEOUT_S)
         handle = _open_store(store, Path(path_str), party=f"child-{party}")
         handle.close()
         queue.put("OK")

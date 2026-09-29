@@ -75,7 +75,7 @@ __all__ = [
 #: durable form of ``CapacityReservationTransition.committed_vector``, kernel round #4 K-4) — a
 #: pre-existing v1 store file must be brought up via
 #: ``tos_runtime.operations.schema_migrations.apply_migrations(path, "rcl")`` BEFORE this code
-#: can open it again (:func:`apply_schema_ledger` / ``ensure_schema_current`` refuses a
+#: can open it again (:func:`apply_schema_ledger` / ``open_or_create_schema`` refuses a
 #: non-fresh file whose stamped version disagrees — a boot refusal, never an auto-migrate).
 RCL_SCHEMA_VERSION = 2
 

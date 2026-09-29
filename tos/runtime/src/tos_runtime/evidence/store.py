@@ -154,7 +154,7 @@ __all__ = [
 #: :data:`_CREATE_KIND_SEQ_INDEX_SQL` covering index. A pre-existing v1 file must be brought
 #: up via ``tos_runtime.operations.schema_migrations.apply_migrations(path, "evidence")`` (the
 #: ``migrate`` CLI) BEFORE this code can open it again —
-#: :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current` refuses a non-fresh
+#: :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` refuses a non-fresh
 #: file whose stamped version disagrees: a boot refusal, never an auto-migrate.
 EVIDENCE_SCHEMA_VERSION = 2
 
@@ -198,14 +198,14 @@ CREATE TABLE IF NOT EXISTS entries (
 #: ``DROP INDEX entries_kind_seq`` restores the v1 storage exactly (see
 #: :mod:`tos_runtime.operations.schema_migrations`'s own rollback note).
 #:
-#: **Created at genesis, and NEVER on a boot** (``__init__`` below guards it with
-#: ``was_fresh``). Unlike the ``CREATE TABLE``/``CREATE TRIGGER`` statements beside it,
+#: **Created at genesis, and NEVER on a boot** (:func:`_create_evidence_schema` below runs it
+#: only when :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` hands it
+#: ``fresh=True``). Unlike the ``CREATE TABLE``/``CREATE TRIGGER`` statements beside it,
 #: ``CREATE INDEX IF NOT EXISTS`` is not a no-op against a pre-existing file: running it
-#: unconditionally would build a full index into a v1 file that
-#: :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current` is about to refuse two
-#: statements later — a boot that writes and then refuses, against that module's own "부팅 시
-#: 자동 적용 0" — and would rebuild an index an operator had just dropped to roll v2 back. Both
-#: belong to ``migrate``, and only to ``migrate``.
+#: unconditionally would build a full index into a v1 file that the same call is about to refuse
+#: as BEHIND — a boot that writes and then refuses, against that module's own "부팅 시 자동 적용
+#: 0" — and would rebuild an index an operator had just dropped to roll v2 back. Both belong to
+#: ``migrate``, and only to ``migrate``.
 _CREATE_KIND_SEQ_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS entries_kind_seq ON entries (kind, seq)
 """

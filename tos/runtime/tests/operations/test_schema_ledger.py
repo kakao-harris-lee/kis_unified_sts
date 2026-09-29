@@ -385,7 +385,10 @@ def _open_widgets(
     schema_version: int = 3,
     create_ddl: Callable[[sqlite3.Connection, bool], None] = _widget_ddl,
 ) -> bool:
-    return open_or_create_schema(
+    # Annotated, not returned directly: from the repo root `tos_runtime` is not on mypy's path,
+    # so every symbol imported from it is `Any` and a bare `return` of one raises
+    # `no-any-return`. Keeps this suite's error count equal to main's baseline (plan §7).
+    performed_genesis: bool = open_or_create_schema(
         conn,
         store_name="widgets-store",
         schema_version=schema_version,
@@ -393,6 +396,7 @@ def _open_widgets(
         shape_tables=("widgets",),
         monotonic_ns=lambda: 4242,
     )
+    return performed_genesis
 
 
 def _connect(path: Path) -> sqlite3.Connection:

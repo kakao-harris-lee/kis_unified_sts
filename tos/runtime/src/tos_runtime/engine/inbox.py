@@ -25,7 +25,7 @@ retrying loses data.
 Phase 5 W4 plan §2 decision 3).** Unlike the evidence store and RCL log, this constructor takes
 no injected ``monotonic_ns`` callable — widening that public signature for one boot-time-only
 ledger stamp was judged not worth it. The schema-ledger genesis row is written at most once per
-file (``ensure_schema_current``'s ``CREATED`` case) and is never read back for anything time-
+file (``open_or_create_schema``'s ``CREATED`` case) and is never read back for anything time-
 sensitive, so this is a disclosed exception to the "never read the wall/monotonic clock directly"
 convention, not an oversight.
 
