@@ -283,3 +283,23 @@ PR #812 · 판정 **approve** · MEDIUM 1 · LOW 4. Codex 는 이 범위(되돌�
 ```
 
 `release.yaml`(값 + 13차 이력)과 `tests/compose/test_deploy_approved_values.py::_VALUE_PINS` 를 같은 커밋에서 갱신했다. `expected_dependency_set_digest` 는 무변경.
+
+### 7.8 main 병합 — #814 와의 충돌 (2026-09-29)
+
+머지 직전 main 에 #814(`chore(tos): trim historical and redundant comments`, `815385f2`, 26 파일)가 먼저 들어갔다. `transport/kis_quote/adapter.py` 에서 충돌이 났다.
+
+- **병합 방식**: `origin/main` 을 병합 커밋(`4fb70c6a`)으로 합쳤다. rebase 는 하지 않았다 — 이 문서 §7 이 리뷰 처분 커밋을 sha 로 인용한다.
+- **충돌 해소**: 이 브랜치의 동작과 새 독스트링을 우선했다. 이 브랜치가 건드리지 않은 주석 블록은 #814 의 삭제를 받아들였다.
+  - 검증: `adapter.py` 의 코드 본문은 13차 상태(`0fff063a`)와 **동일**하다 — 독스트링을 뺀 AST 비교로 확인했다.
+  - §2.5 의 정직성 문장(「나이의 하한을 HTTP 왕복으로 올릴 뿐, 참 나이를 주지 않는다」)과 §7.7 LOW-1 의 단조시계 계약 문구는 남아 있다.
+- **⚠ #814 는 소스 바이트를 바꾸고도 `expected_code_digest` 를 다시 도출하지 않았다.** 그래서 main `815385f2` 의 커밋된 값(`1dcbeac6…`)은 그 트리의 실측과 다르고, 그 main 으로 부팅하면 `ReleaseAdmissionRefused` 다. CI 는 이 drift 를 잡지 못한다(메모리 함정 ①).
+- **14차 재도출**: 이 병합 뒤의 값이 #814 의 소스 변경까지 함께 덮는다 — 이 PR 이 머지되면 main 의 stale 상태도 닫힌다. `print-digests` 로 재도출한 값과 커밋값이 일치한다.
+
+```text
+4548f1f90692ce7af97a90c034ccdbc896a9a8a98d4acb7265a0040df7c069cb   (13차 · 이 브랜치 0fff063a)
+39a8d87dcd1d187c01fba7ca3ec4ef562ee3f19d84838b4383c4424c60a94007   (14차 · 병합 뒤)
+```
+
+**게이트 (병합 뒤)**: 방화벽 PASS · lint-imports 3 kept · completion GREEN · spec PASS · contract PASS(+self-test 145) · citation PASS · named-TBD PASS · size budget PASS(등재 예외 38) · black/ruff(병합으로 바뀐 24 파일) 통과 · mypy `tos/runtime/tests` / `tos/runtime/src` / `tos/src` 전부 `Success`.
+
+**테스트 (병합 뒤)**: `pytest tos/runtime/tests` 종료코드 0 · 실패 0(수집 3154 — 병합 전 `0fff063a` 와 같다) · `pytest tos/tests` 종료코드 0 · 실패 0 · `tests/unit/scripts/test_render_paper_config.py` 42 통과.
