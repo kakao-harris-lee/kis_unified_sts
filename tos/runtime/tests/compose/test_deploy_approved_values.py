@@ -202,7 +202,7 @@ _VALUE_PINS: dict[str, Any] = {
     "authority.yaml::containment_bound_ms": 1000,
     "authority.yaml::trading_approval_policy_generation": 1,
     # --- release.yaml ----------------------------------------------------
-    "release.yaml::expected_code_digest": "25f0300a3e278112880e051a34617f7cd9b870a122c72ca05a6f859a306543c2",
+    "release.yaml::expected_code_digest": "60ad47de5a50a8f3844c20238bb4f41e10f37979cac7cd0f1b0d51b3fba7a806",
     "release.yaml::expected_dependency_set_digest": "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b",
     "release.yaml::admission_result": "ADMIT",
     "release.yaml::restriction_state_resolved": True,
