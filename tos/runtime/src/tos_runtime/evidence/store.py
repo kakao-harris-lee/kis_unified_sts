@@ -131,11 +131,7 @@ from tos_runtime.operations.key_rotation import (
     KeyContinuityVerdict,
     verify_key_generation_continuity,
 )
-from tos_runtime.operations.schema_ledger import (
-    compute_schema_shape_digest,
-    ensure_schema_current,
-    file_is_fresh,
-)
+from tos_runtime.operations.schema_ledger import open_or_create_schema
 
 __all__ = [
     "ChainVerification",
@@ -396,6 +392,22 @@ def _resolve_signing_key(
     return key_generation, key_provider.key_for(key_generation)
 
 
+def _create_evidence_schema(conn: sqlite3.Connection, fresh: bool) -> None:
+    """This store's own DDL, run by :func:`~tos_runtime.operations.schema_ledger
+    .open_or_create_schema` inside the genesis transaction — in exactly the order, and with
+    exactly the statements, ``__init__`` used to run inline.
+
+    ``fresh`` gates the covering index and nothing else: see
+    :data:`_CREATE_KIND_SEQ_INDEX_SQL`'s own "created at genesis, and NEVER on a boot".
+    """
+    conn.execute(_CREATE_ENTRIES_TABLE_SQL)
+    if fresh:
+        conn.execute(_CREATE_KIND_SEQ_INDEX_SQL)
+    conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
+    conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
+    _outbox.create_outbox_table(conn)
+
+
 class SqliteEvidenceStore:
     """The append-only, HMAC-chained, durable evidence log (design #40 D3.1).
 
@@ -452,24 +464,15 @@ class SqliteEvidenceStore:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        # Captured BEFORE any CREATE TABLE below runs (schema_ledger's own module docstring on
-        # `file_is_fresh` — a fresh file looks identical to an already-populated one otherwise).
-        was_fresh = file_is_fresh(self._conn)
-        self._conn.execute(_CREATE_ENTRIES_TABLE_SQL)
-        if was_fresh:
-            # Genesis ONLY — see `_CREATE_KIND_SEQ_INDEX_SQL`'s own "never on a boot".
-            self._conn.execute(_CREATE_KIND_SEQ_INDEX_SQL)
-        self._conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
-        self._conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
-        _outbox.create_outbox_table(self._conn)
-        ensure_schema_current(
+        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+        # that closes.
+        open_or_create_schema(
             self._conn,
             store_name="evidence",
             schema_version=EVIDENCE_SCHEMA_VERSION,
-            was_fresh=was_fresh,
-            migration_digest=compute_schema_shape_digest(
-                self._conn, ("entries", "outbox")
-            ),
+            create_ddl=_create_evidence_schema,
+            shape_tables=("entries", "outbox"),
             monotonic_ns=monotonic_ns,
         )
         # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run

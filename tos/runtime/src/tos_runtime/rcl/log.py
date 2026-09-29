@@ -44,7 +44,6 @@ from tos.rcl import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
-from tos_runtime.operations.schema_ledger import file_is_fresh
 from tos_runtime.rcl.gates import (
     ReservationRefusalReason,
     ReservationTransitionRefusal,
@@ -66,13 +65,7 @@ from tos_runtime.rcl.gates import reservation_rows as gates_reservation_rows
 from tos_runtime.rcl.gates import (
     upsert_reservation_projection as gates_upsert_reservation_projection,
 )
-from tos_runtime.rcl.schema import (
-    CREATE_ENTRIES_TABLE_SQL,
-    CREATE_EPOCHS_TABLE_SQL,
-    CREATE_RESERVATIONS_TABLE_SQL,
-    NO_MUTATION_TRIGGERS_SQL,
-    apply_schema_ledger,
-)
+from tos_runtime.rcl.schema import apply_schema_ledger
 
 __all__ = [
     "CommitLogCorruption",
@@ -181,13 +174,10 @@ class SqliteCommitLog:
         )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        was_fresh = file_is_fresh(self._conn)  # before any CREATE TABLE below
-        self._conn.execute(CREATE_EPOCHS_TABLE_SQL)
-        self._conn.execute(CREATE_ENTRIES_TABLE_SQL)
-        self._conn.execute(CREATE_RESERVATIONS_TABLE_SQL)
-        for trigger_sql in NO_MUTATION_TRIGGERS_SQL:
-            self._conn.execute(trigger_sql)
-        apply_schema_ledger(self._conn, was_fresh=was_fresh, monotonic_ns=monotonic_ns)
+        # This log's DDL, the freshness decision and the genesis stamp all inside ONE
+        # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
+        # `open_or_create_schema`'s own docstring names the two races that closes.
+        apply_schema_ledger(self._conn, monotonic_ns=monotonic_ns)
 
     # -- lifecycle -------------------------------------------------------
 

@@ -8,6 +8,7 @@ call site is caught here, not just a regression in the shared helper.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -216,6 +217,148 @@ def test_ensure_schema_current_fresh_file_uses_the_given_migration_digest(
     assert row == (7, 42, "digest-under-test", "CREATED")
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
     conn.close()
+
+
+# -- T-2: moving the four stores onto the helper changed no store's shape ----------------------
+#
+# The #801 fix relocated four constructors' DDL into a transaction. That is a refactor of WHEN the
+# statements run, and it must be nothing else: a fresh file must come out byte-identical, or every
+# `migration_digest` already written into a deployed `schema_ledger` (and every backup taken from
+# one) silently disagrees with what this code now produces.
+#
+# The values below were MEASURED on the pre-change tree (main `7d039339`, before
+# `open_or_create_schema` existed) and pasted here — they are a golden record of the old code's
+# output, not a restatement of the new code's. `_sql_digest` folds every object's own `sql` text,
+# so a reordered, reworded or dropped statement moves it; the object list is pinned separately so
+# a failure says WHICH object went missing rather than only "the digest moved".
+
+_PRE_CHANGE_SHAPES: dict[str, tuple[tuple[tuple[str, str], ...], str, int, str]] = {
+    "evidence": (
+        (
+            ("index", "entries_kind_seq"),
+            ("table", "entries"),
+            ("table", "outbox"),
+            ("table", "schema_ledger"),
+            ("trigger", "entries_no_delete"),
+            ("trigger", "entries_no_update"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "0fc7818cc7bce14be74a654946737ae9658a45b8d89e3c23064f1095d5de473d",
+        2,
+        "c9be86187b9602e8f2d720561b12aedf8f9b451fe540c9eb347282a55a0ce7b5",
+    ),
+    "inbox": (
+        (
+            ("index", "events_unconsumed"),
+            ("table", "attempt_composites"),
+            ("table", "attempt_finality_witness"),
+            ("table", "events"),
+            ("table", "new_risk_halt"),
+            ("table", "schema_ledger"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "b320cdc8dfb7d40183cf13b078259a62cf0bec7237863ffc29be66174305edb3",
+        1,
+        "f899aa98b0c37790f7eb094780445b7598d054c2a41d9945e391f8c89c4a8966",
+    ),
+    "marketfeed": (
+        (
+            ("index", "snapshots_instrument_as_of"),
+            ("table", "preimages"),
+            ("table", "schema_ledger"),
+            ("table", "snapshots"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "f00ed029ef22073f23f47a520c37861a19e1ed6e9166fa468e90012966d71599",
+        1,
+        "7c1633c8c0ef090fea2809c6dec2cfea61d405316721f0a8edba6f64a682db50",
+    ),
+    "rcl": (
+        (
+            ("table", "entries"),
+            ("table", "epochs"),
+            ("table", "reservations"),
+            ("table", "schema_ledger"),
+            ("trigger", "entries_no_delete"),
+            ("trigger", "entries_no_update"),
+            ("trigger", "epochs_no_delete"),
+            ("trigger", "epochs_no_update"),
+            ("trigger", "reservations_no_delete"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "01220d07930ab0f332ace276f911f21f919fcf7f593973e013fe73c7c01028c5",
+        2,
+        "79967105de085c556ba837b3ed9969b21475489f0c6fbbbf9e20e8f2d46be2b2",
+    ),
+}
+
+
+def _sqlite_objects(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    return sorted(
+        (str(row[0]), str(row[1]), str(row[2] or ""))
+        for row in conn.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        )
+    )
+
+
+def _build_fresh_store(store: str, tmp_path: Path) -> Path:
+    """Create ``store``'s file through its REAL constructor and return the path."""
+    path = tmp_path / f"{store}.sqlite3"
+    if store == "evidence":
+        SqliteEvidenceStore(path, key_provider=FixedKeyProvider()).close()
+    elif store == "inbox":
+        SqliteEventInbox(path, scheme=_SCHEME).close()
+    elif store == "marketfeed":
+        SqliteSnapshotStore(path).close()
+    elif store == "rcl":
+        evidence = SqliteEvidenceStore(
+            tmp_path / "rcl-evidence.sqlite3", key_provider=FixedKeyProvider()
+        )
+        SqliteCommitLog(path, evidence_port=evidence).close()
+        evidence.close()
+    else:  # pragma: no cover - guards a typo in the parametrisation
+        raise AssertionError(store)
+    return path
+
+
+@pytest.mark.parametrize(
+    "store", sorted(_PRE_CHANGE_SHAPES), ids=sorted(_PRE_CHANGE_SHAPES)
+)
+def test_a_fresh_store_has_the_same_shape_as_before_the_atomic_genesis_change(
+    store: str, tmp_path: Path
+) -> None:
+    expected_objects, expected_sql_digest, expected_version, expected_digest = (
+        _PRE_CHANGE_SHAPES[store]
+    )
+    path = _build_fresh_store(store, tmp_path)
+
+    conn = sqlite3.connect(str(path))
+    try:
+        objects = _sqlite_objects(conn)
+        ledger = conn.execute(
+            "SELECT version, migration_digest, applied_by FROM schema_ledger"
+        ).fetchall()
+        stamped = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert tuple((kind, name) for kind, name, _ in objects) == expected_objects
+    folded = hashlib.sha256(
+        "\n".join(sql for _, _, sql in objects).encode("utf-8")
+    ).hexdigest()
+    assert folded == expected_sql_digest, (
+        f"the {store} store's on-disk DDL text changed — a fresh file is no longer what the "
+        "pre-#801 code produced"
+    )
+    # `applied_at_monotonic_ns` is deliberately excluded: it is a clock reading, so it is the one
+    # column that legitimately differs between two runs of identical code.
+    assert ledger == [(expected_version, expected_digest, "CREATED")]
+    assert stamped == expected_version
 
 
 # -- open_or_create_schema: the atomic-genesis helper (#801 plan T-1) --------------------------
