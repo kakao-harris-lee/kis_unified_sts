@@ -409,6 +409,179 @@ def test_backup_set_forwards_readiness_verdict(
     assert calls == ["READY"]
 
 
+def test_backup_set_without_archive_dir_never_reaches_the_archive_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The archive is opt-in (evidence growth plan §2 A3): the default invocation must behave
+    exactly as it did before, which means not calling ``archive_backup_set`` at all."""
+
+    class _FakeManifest:
+        generation = 1
+
+    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("archive_backup_set reached without --archive-dir")
+
+    monkeypatch.setattr(cli, "archive_backup_set", _must_not_be_called)
+
+    assert (
+        cli.main(
+            [
+                "backup-set",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--dest",
+                str(tmp_path / "backups"),
+                "--generation",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+
+def test_backup_set_archive_dir_forwards_manifest_path_and_preset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple] = []
+
+    class _FakeManifest:
+        generation = 7
+
+    class _FakeVerification:
+        generation = 7
+        archive_path = "/archives/gen7.set.tar.xz"
+        source_bytes = 100
+        archive_bytes = 10
+        files_verified = ("evidence", "rcl", "inbox")
+
+    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda root, **_kw: ("keys", root))
+
+    def _fake_archive(manifest_path, archive_dir, verify_dir, *, key_provider, preset):
+        calls.append((manifest_path, archive_dir, verify_dir, key_provider, preset))
+        return _FakeVerification()
+
+    monkeypatch.setattr(cli, "archive_backup_set", _fake_archive)
+
+    dest = tmp_path / "backups"
+    exit_code = cli.main(
+        [
+            "backup-set",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--dest",
+            str(dest),
+            "--generation",
+            "7",
+            "--archive-dir",
+            str(tmp_path / "cold"),
+            "--verify-dir",
+            str(tmp_path / "verify"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--xz-preset",
+            "9",
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    manifest_path, archive_dir, verify_dir, key_provider, preset = calls[0]
+    # The manifest path is derived from the generation backup_set just wrote, never guessed
+    # from the CLI's own --generation (they agree today; a mismatch would be a silent archive
+    # of the wrong generation).
+    assert manifest_path == dest / "gen7.set.manifest.json"
+    assert (archive_dir, verify_dir, preset) == (
+        tmp_path / "cold",
+        tmp_path / "verify",
+        9,
+    )
+    assert key_provider == ("keys", tmp_path / "custody")
+
+
+@pytest.mark.parametrize("omitted", ["--verify-dir", "--custody-root"])
+def test_backup_set_archive_dir_without_its_companions_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, omitted: str
+) -> None:
+    """The snapshot itself still succeeds — the refusal is about the archive only, and says so
+    rather than leaving the operator to guess whether a backup was taken."""
+
+    class _FakeManifest:
+        generation = 1
+
+    taken: list[int] = []
+
+    def _fake_backup_set(*args, **kwargs):
+        taken.append(1)
+        return _FakeManifest()
+
+    monkeypatch.setattr(cli, "backup_set", _fake_backup_set)
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("archive_backup_set reached with incomplete arguments")
+
+    monkeypatch.setattr(cli, "archive_backup_set", _must_not_be_called)
+
+    argv = [
+        "backup-set",
+        "--data-dir",
+        str(tmp_path / "data"),
+        "--dest",
+        str(tmp_path / "backups"),
+        "--generation",
+        "1",
+        "--archive-dir",
+        str(tmp_path / "cold"),
+        "--verify-dir",
+        str(tmp_path / "verify"),
+        "--custody-root",
+        str(tmp_path / "custody"),
+    ]
+    index = argv.index(omitted)
+    del argv[index : index + 2]
+
+    assert cli.main(argv) == 1
+    assert taken == [1]
+
+
+def test_backup_set_reports_an_archive_refusal_as_a_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _FakeManifest:
+        generation = 2
+
+    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda _root, **_kw: None)
+
+    def _refuse(*args, **kwargs):
+        raise cli.BackupArchiveRefused("decompressed 'evidence' digests abc")
+
+    monkeypatch.setattr(cli, "archive_backup_set", _refuse)
+
+    assert (
+        cli.main(
+            [
+                "backup-set",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--dest",
+                str(tmp_path / "backups"),
+                "--generation",
+                "2",
+                "--archive-dir",
+                str(tmp_path / "cold"),
+                "--verify-dir",
+                str(tmp_path / "verify"),
+                "--custody-root",
+                str(tmp_path / "custody"),
+            ]
+        )
+        == 1
+    )
+
+
 # -- restore-drill --------------------------------------------------------------
 
 
