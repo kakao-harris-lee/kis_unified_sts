@@ -229,3 +229,138 @@ def test_an_out_of_range_xz_preset_is_refused_before_anything_is_written(
         )
 
     assert not (tmp_path / "archives").exists()
+
+
+# -- review 2026-09-30 dispositions -------------------------------------------------------------
+
+
+def test_a_failed_verification_leaves_no_archive_and_does_not_block_a_retry(
+    tmp_path: Path,
+) -> None:
+    """MEDIUM-4, proven on both halves.
+
+    Before the ``.partial``/rename split, a failed verification left an UNVERIFIED ``.tar.xz``
+    in cold storage that looked exactly like a good one — and, because this function refuses to
+    overwrite an existing archive for a generation, that leftover then blocked every retry.
+    """
+    _live_dir, backups_dir, manifest_path = _prepare(tmp_path)
+    archive_dir = tmp_path / "archives"
+
+    # Corrupt one member so verification fails AFTER the archive has been written.
+    evidence_backup = backups_dir / "gen1" / "evidence.sqlite3"
+    original = evidence_backup.read_bytes()
+    evidence_backup.write_bytes(original + b"tampered")
+
+    with pytest.raises(BackupArchiveRefused, match="digests"):
+        archive_backup_set(
+            manifest_path,
+            archive_dir,
+            tmp_path / "verify-fail",
+            key_provider=FixedKeyProvider(),
+        )
+
+    # Nothing under either name survives a failure.
+    assert not (archive_dir / _ARCHIVE_NAME).exists()
+    assert list(archive_dir.glob("*.partial")) == []
+
+    # And the retry, once the cause is fixed, is not blocked by a leftover.
+    evidence_backup.write_bytes(original)
+    verification = archive_backup_set(
+        manifest_path,
+        archive_dir,
+        tmp_path / "verify-retry",
+        key_provider=FixedKeyProvider(),
+    )
+    assert Path(verification.archive_path) == archive_dir / _ARCHIVE_NAME
+    assert (archive_dir / _ARCHIVE_NAME).is_file()
+
+
+def test_verify_dir_is_removed_on_success_and_kept_on_failure(tmp_path: Path) -> None:
+    """MEDIUM-5. A passing run leaves no multi-GB decompressed copy behind; a failing one keeps
+    it, because that copy is the evidence of what went wrong — and the refusal says where.
+    """
+    _live_dir, backups_dir, manifest_path = _prepare(tmp_path)
+
+    success_dir = tmp_path / "verify-ok"
+    _archive(tmp_path, manifest_path)
+    assert not success_dir.exists()
+    assert not (tmp_path / "verify").exists()
+
+    evidence_backup = backups_dir / "gen1" / "evidence.sqlite3"
+    evidence_backup.write_bytes(evidence_backup.read_bytes() + b"tampered")
+    failure_dir = tmp_path / "verify-kept"
+    with pytest.raises(BackupArchiveRefused) as refusal:
+        archive_backup_set(
+            manifest_path,
+            tmp_path / "archives-2",
+            failure_dir,
+            key_provider=FixedKeyProvider(),
+        )
+    assert failure_dir.is_dir()
+    assert str(failure_dir) in str(refusal.value)
+
+
+@pytest.mark.parametrize(
+    ("arcname", "label"),
+    [("../escaped.sqlite3", "parent"), ("/tmp/escaped.sqlite3", "absolute")],
+)
+def test_a_member_that_tries_to_escape_the_verify_dir_cannot(
+    tmp_path: Path, arcname: str, label: str
+) -> None:
+    """L1: ``extractall(filter="data")`` is what stops a crafted member from writing outside
+    ``verify_dir``. This test goes red under ``filter="fully_trusted"``.
+
+    The escape is asserted by its ABSENCE at the target path, not by the refusal type — a
+    crafted member may be rejected outright or silently confined depending on the shape, and
+    either is acceptable; landing outside ``verify_dir`` is not.
+    """
+    _live_dir, backups_dir, manifest_path = _prepare(tmp_path)
+
+    archive_dir = tmp_path / "archives"
+    archive_dir.mkdir()
+    archive_path = archive_dir / _ARCHIVE_NAME
+    escape_target = tmp_path / "escaped.sqlite3"
+    payload = backups_dir / "gen1" / "rcl.sqlite3"
+    with tarfile.open(archive_path, mode="w:xz") as archive:
+        archive.add(manifest_path, arcname=_MANIFEST_NAME)
+        for child in sorted((backups_dir / "gen1").iterdir()):
+            archive.add(child, arcname=child.name)
+        archive.add(payload, arcname=arcname)
+
+    verify_dir = tmp_path / f"verify-{label}"
+    with pytest.raises(BackupArchiveRefused):
+        verify_archive(
+            archive_path,
+            manifest_path,
+            verify_dir,
+            key_provider=FixedKeyProvider(),
+        )
+
+    assert not escape_target.exists()
+    assert not Path("/tmp/escaped.sqlite3").exists()
+
+
+def test_an_archive_carrying_an_unaccounted_member_is_refused(tmp_path: Path) -> None:
+    """L7: the digest loop only proves every EXPECTED member is present and correct, so on its
+    own it passes an archive that ALSO carries a stray file. A restore must never be handed
+    material nothing attests."""
+    _live_dir, backups_dir, manifest_path = _prepare(tmp_path)
+
+    archive_dir = tmp_path / "archives"
+    archive_dir.mkdir()
+    archive_path = archive_dir / _ARCHIVE_NAME
+    stowaway = tmp_path / "stowaway.sqlite3"
+    stowaway.write_bytes(b"not part of this backup")
+    with tarfile.open(archive_path, mode="w:xz") as archive:
+        archive.add(manifest_path, arcname=_MANIFEST_NAME)
+        for child in sorted((backups_dir / "gen1").iterdir()):
+            archive.add(child, arcname=child.name)
+        archive.add(stowaway, arcname="stowaway.sqlite3")
+
+    with pytest.raises(BackupArchiveRefused, match="does not account for"):
+        verify_archive(
+            archive_path,
+            manifest_path,
+            tmp_path / "verify-stowaway",
+            key_provider=FixedKeyProvider(),
+        )

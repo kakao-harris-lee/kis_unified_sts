@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import lzma
+import shutil
 import tarfile
 from pathlib import Path
 from typing import Literal, cast
@@ -49,6 +50,10 @@ __all__ = [
 #: One generation's compressed cold archive: ``gen{N}.set.tar.xz`` beside (or far away from)
 #: the uncompressed backup tree. Evidence growth plan §2 A3.
 _ARCHIVE_SUFFIX = ".set.tar.xz"
+
+#: Appended while the archive is being written and verified. The final name is a rename, so a
+#: file under :data:`_ARCHIVE_SUFFIX` is always one that passed :func:`verify_archive`.
+_PARTIAL_SUFFIX = ".partial"
 
 #: stdlib ``lzma``'s own default. Named, and overridable per call, because it is a cost/ratio
 #: tradeoff an operator may want to move (the plan's §1 measured 14× on evidence at this
@@ -137,16 +142,42 @@ def _verify_archived_files(
         if not extracted.is_file():
             raise BackupArchiveRefused(
                 f"verify_archive: {name!r} is missing from the decompressed archive "
-                f"(expected {extracted.name}) — refused"
+                f"(expected {extracted.name}) — refused. The decompressed copy is kept at "
+                f"{extracted_dir} for inspection"
             )
         actual = hashlib.sha256(extracted.read_bytes()).hexdigest()
         if actual != entry.file_digest:
             raise BackupArchiveRefused(
                 f"verify_archive: decompressed {name!r} digests {actual}, manifest records "
-                f"{entry.file_digest} — the archive does not hold what it claims to; refused"
+                f"{entry.file_digest} — the archive does not hold what it claims to; refused. "
+                f"The decompressed copy is kept at {extracted_dir} for inspection"
             )
         verified.append(name)
     return tuple(verified)
+
+
+def _refuse_unexpected_members(
+    manifest: BackupSetManifest, extracted_dir: Path, *, manifest_name: str
+) -> None:
+    """Refuse an archive carrying anything the manifest does not account for.
+
+    The digest loop only checks that every EXPECTED member is present and correct; on its own it
+    would happily pass an archive that also carried a stray file. ``filter="data"`` already stops
+    a member from landing outside ``extracted_dir``, but "inside the verify dir and unaccounted
+    for" is still not something a backup this code wrote could contain, and a restore should
+    never be handed material nothing attests (review L7).
+    """
+    expected = {manifest_name} | {
+        Path(entry.path).name for entry in manifest.files.values() if entry is not None
+    }
+    actual = {child.name for child in extracted_dir.iterdir()}
+    unexpected = sorted(actual - expected)
+    if unexpected:
+        raise BackupArchiveRefused(
+            f"verify_archive: the archive carries {len(unexpected)} member(s) the manifest does "
+            f"not account for ({', '.join(unexpected)}) — refused. The decompressed copy is "
+            f"kept at {extracted_dir} for inspection"
+        )
 
 
 def _extract_archive(
@@ -161,6 +192,16 @@ def _extract_archive(
     try:
         with tarfile.open(archive_path, mode="r:xz") as archive:
             archive.extractall(verify_dir, filter="data")
+    except TypeError as exc:
+        # `extractall(filter=...)` landed in 3.11.4/3.12. On anything older this is a TypeError
+        # about an unexpected keyword — an ENVIRONMENT fault, not a corrupt archive. Reporting
+        # it as corruption would send an operator hunting a bad backup that is perfectly fine,
+        # so it is named for what it is and never folded into the refusal below.
+        raise RuntimeError(
+            "verify_archive: this interpreter does not support tarfile's `filter=` argument "
+            "(added in Python 3.11.4). Extraction is not attempted without it — the filter is "
+            "what keeps an archive member from escaping verify_dir"
+        ) from exc
     # `lzma.LZMAError` is named explicitly: it derives straight from `Exception`, so byte rot
     # inside the xz stream escapes an `OSError`/`TarError` catch entirely — the first shape
     # of corruption anyone tests, and the one that would otherwise propagate raw.
@@ -230,7 +271,9 @@ def verify_archive(
         manifest_path: The manifest that archive is held to. Read, never written.
         verify_dir: Scratch directory to decompress into. Must not already exist — a directory
             this call did not create could hide a stale file behind a member the archive failed
-            to carry, turning a missing member into a passing verification.
+            to carry, turning a missing member into a passing verification. **Removed on
+            success, kept on failure** so the decompressed copy is there to inspect; every
+            refusal names it.
         key_provider: The evidence store's key source for check 3.
 
     Returns:
@@ -248,6 +291,7 @@ def verify_archive(
         )
     manifest = BackupSetManifest.model_validate_json(manifest_path.read_text())
     _extract_archive(archive_path, verify_dir, expected_manifest=manifest_path)
+    _refuse_unexpected_members(manifest, verify_dir, manifest_name=manifest_path.name)
     files_verified = _verify_archived_files(manifest, verify_dir)
     # Measured BEFORE the evidence store is opened: opening it writes WAL sidecars into
     # verify_dir, which are an artefact of this check and not part of what was archived.
@@ -265,13 +309,18 @@ def verify_archive(
     finally:
         evidence_store.close()
 
-    return ArchiveVerification(
+    verification = ArchiveVerification(
         archive_path=str(archive_path),
         generation=manifest.generation,
         source_bytes=source_bytes,
         archive_bytes=archive_path.stat().st_size,
         files_verified=files_verified,
     )
+    # Only once every check has passed. A failure path deliberately leaves verify_dir behind
+    # (its refusal says where) — the decompressed copy is the evidence of what went wrong, and
+    # a caller that retries passes a fresh directory anyway.
+    shutil.rmtree(verify_dir, ignore_errors=True)
+    return verification
 
 
 def archive_backup_set(
@@ -294,6 +343,13 @@ def archive_backup_set(
     The manifest is archived alongside the files, so the archive is self-describing, and
     :func:`verify_archive` is then run against what was just written — there is no path through
     this function that produces an unverified archive.
+
+    **The final name appears only after verification passes.** Compression writes to
+    ``gen{N}.set.tar.xz.partial`` and renames on success; a failed verification unlinks the
+    partial. Without that, a failed run left an unverified ``.tar.xz`` sitting in the cold-storage
+    directory looking exactly like a good one — and, because this function refuses to overwrite
+    an existing archive for a generation, that leftover then blocked every retry (review
+    MEDIUM-4).
 
     Args:
         manifest_path: The ``gen{N}.set.manifest.json``
@@ -329,10 +385,17 @@ def archive_backup_set(
 
     checked_preset = _checked_preset(preset)
     archive_dir.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive_path, mode="w:xz", preset=checked_preset) as archive:
-        for member_name, source in sorted(members.items()):
-            archive.add(source, arcname=member_name)
-
-    return verify_archive(
-        archive_path, manifest_path, verify_dir, key_provider=key_provider
-    )
+    partial_path = archive_path.with_name(archive_path.name + _PARTIAL_SUFFIX)
+    partial_path.unlink(missing_ok=True)
+    try:
+        with tarfile.open(partial_path, mode="w:xz", preset=checked_preset) as archive:
+            for member_name, source in sorted(members.items()):
+                archive.add(source, arcname=member_name)
+        verification = verify_archive(
+            partial_path, manifest_path, verify_dir, key_provider=key_provider
+        )
+    except BaseException:
+        partial_path.unlink(missing_ok=True)
+        raise
+    partial_path.rename(archive_path)
+    return verification.model_copy(update={"archive_path": str(archive_path)})
