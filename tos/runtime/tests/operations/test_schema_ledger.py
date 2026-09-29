@@ -9,6 +9,7 @@ call site is caught here, not just a regression in the shared helper.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,8 @@ from tos_runtime.operations.schema_ledger import (
     compute_schema_shape_digest,
     ensure_schema_current,
     file_is_fresh,
+    open_or_create_schema,
+    user_tables,
 )
 from tos_runtime.operations.schema_migrations import (
     EVIDENCE_MIGRATIONS,
@@ -213,6 +216,174 @@ def test_ensure_schema_current_fresh_file_uses_the_given_migration_digest(
     assert row == (7, 42, "digest-under-test", "CREATED")
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
     conn.close()
+
+
+# -- open_or_create_schema: the atomic-genesis helper (#801 plan T-1) --------------------------
+#
+# The four real stores go through this helper, and their own wiring is covered above and in
+# `test_schema_genesis_concurrency.py`. These tests drive it directly, over a synthetic store, so
+# each disposition (fresh / same / behind / ahead / DDL raises) is pinned without needing a real
+# store that happens to sit at that version.
+
+_WIDGET_DDL = "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, label TEXT)"
+
+
+def _widget_ddl(conn: sqlite3.Connection, fresh: bool) -> None:
+    """A synthetic store's DDL. ``fresh`` is threaded through to a genesis-only index, the same
+    shape the evidence store's own ``entries_kind_seq`` uses."""
+    conn.execute(_WIDGET_DDL)
+    if fresh:
+        conn.execute("CREATE INDEX IF NOT EXISTS widgets_label ON widgets (label)")
+
+
+def _open_widgets(
+    conn: sqlite3.Connection,
+    *,
+    schema_version: int = 3,
+    create_ddl: Callable[[sqlite3.Connection, bool], None] = _widget_ddl,
+) -> bool:
+    return open_or_create_schema(
+        conn,
+        store_name="widgets-store",
+        schema_version=schema_version,
+        create_ddl=create_ddl,
+        shape_tables=("widgets",),
+        monotonic_ns=lambda: 4242,
+    )
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    """A connection shaped like every real store's own: autocommit + WAL."""
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def test_open_or_create_schema_stamps_a_fresh_file_once(tmp_path: Path) -> None:
+    conn = _connect(tmp_path / "widgets.sqlite3")
+    try:
+        assert _open_widgets(conn) is True
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        rows = conn.execute(
+            "SELECT version, applied_at_monotonic_ns, migration_digest, applied_by "
+            "FROM schema_ledger"
+        ).fetchall()
+        assert len(rows) == 1
+        version, applied_at, digest, applied_by = rows[0]
+        assert (version, applied_at, applied_by) == (3, 4242, "CREATED")
+        # The digest really is this file's own shape, computed after the DDL ran — not a value
+        # the caller could have passed in stale.
+        assert digest == compute_schema_shape_digest(conn, ("widgets",))
+        # `fresh` reached the DDL callable: the genesis-only index exists.
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+                ("widgets_label",),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        conn.close()
+
+
+def test_open_or_create_schema_passes_silently_at_the_same_version(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        _open_widgets(first)
+    finally:
+        first.close()
+
+    second = _connect(path)
+    try:
+        assert _open_widgets(second) is False
+        # Reopening never re-stamps, and never rebuilds the genesis-only index either.
+        assert second.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
+    finally:
+        second.close()
+
+
+@pytest.mark.parametrize(
+    ("stamped", "expected"), ((2, "BEHIND"), (9, "AHEAD")), ids=("behind", "ahead")
+)
+def test_open_or_create_schema_refuses_a_disagreeing_version(
+    tmp_path: Path, stamped: int, expected: str
+) -> None:
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        _open_widgets(first)
+        first.execute(f"PRAGMA user_version = {stamped}")
+    finally:
+        first.close()
+
+    second = _connect(path)
+    try:
+        with pytest.raises(SchemaVersionRefused, match=expected):
+            _open_widgets(second)
+    finally:
+        second.close()
+
+
+def test_open_or_create_schema_rolls_a_failed_genesis_all_the_way_back(
+    tmp_path: Path,
+) -> None:
+    """A DDL that raises mid-genesis must leave ZERO user tables (plan §4 T-1).
+
+    This is the mutation "remove the ``ROLLBACK``": without it, sqlite's implicit rollback on
+    close would still cover this synthetic case, but the caller's connection stays OPEN and in a
+    failed transaction — the next statement on it (a retry, a second store's construction on the
+    same connection, or the diagnostic read below) sees a file with half the schema in it. With
+    the pre-#801 autocommit DDL it was not even a transaction: the ``widgets`` table simply
+    stayed on disk, and the NEXT boot then read ``file_is_fresh = False`` on a file no genesis
+    had ever stamped, i.e. exactly the false "BEHIND" refusal R-2 names.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+
+    def exploding_ddl(inner: sqlite3.Connection, fresh: bool) -> None:
+        inner.execute(_WIDGET_DDL)
+        del fresh
+        raise RuntimeError("DDL blew up half way through")
+
+    try:
+        with pytest.raises(RuntimeError, match="blew up"):
+            _open_widgets(conn, create_ddl=exploding_ddl)
+        # Same live connection: the transaction is gone, not merely unfinished.
+        assert user_tables(conn) == frozenset()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        # And a retry on that same connection now performs an ordinary, clean genesis.
+        assert _open_widgets(conn) is True
+        assert conn.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_open_or_create_schema_leaves_no_tables_after_a_failed_genesis_on_disk(
+    tmp_path: Path,
+) -> None:
+    """The same claim, read back through a SEPARATE connection — the durable half."""
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+
+    def exploding_ddl(inner: sqlite3.Connection, fresh: bool) -> None:
+        del fresh
+        inner.execute(_WIDGET_DDL)
+        raise RuntimeError("DDL blew up half way through")
+
+    try:
+        with pytest.raises(RuntimeError):
+            _open_widgets(conn, create_ddl=exploding_ddl)
+    finally:
+        conn.close()
+
+    reader = sqlite3.connect(str(path))
+    try:
+        assert user_tables(reader) == frozenset()
+    finally:
+        reader.close()
 
 
 # -- schema_migrations.apply_migrations ----------------------------------------------------------
