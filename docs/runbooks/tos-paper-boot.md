@@ -196,14 +196,38 @@ v2 가 더하는 것은 **인덱스 하나뿐**이다. 행 바이트·`entry_dig
 ::test_evidence_v1_promotes_to_v2_without_moving_a_single_row_byte`).
 
 **롤백.** 인덱스는 저장 표현이 아니라 보조 구조이므로 되돌리는 데 백업 복원이 필요 없다.
-구 코드로 되돌릴 때만 `user_version` 도 함께 내린다(신 코드로 다시 갈 때는 `migrate` 재실행):
+지원되는 절차는 **하나뿐이고, 두 문장을 반드시 함께** 실행한다:
 
 ```bash
 sqlite3 "$DATA/evidence.sqlite3" "DROP INDEX IF EXISTS entries_kind_seq; PRAGMA user_version = 1;"
 ```
 
-부팅은 이 인덱스를 **다시 만들지 않는다** — 생성은 신규 파일의 genesis 와 `migrate` 뿐이다.
-그래서 위 롤백이 다음 부팅에 조용히 덮이지 않는다.
+⚠ **`user_version` 을 2 로 둔 채 인덱스만 지우는 것은 롤백이 아니다.** 그 상태는 v2 코드가
+멀쩡히 부팅하면서 모든 by-kind 읽기를 조용히 전체 스캔으로 되돌린다. 그리고 아무것도 못
+잡는다 — `compute_schema_shape_digest` 는 `PRAGMA table_info` 를 읽고, 그것은 인덱스를 보지
+못한다. 실수로 그 상태가 됐다면 아래 롤포워드가 복구한다.
+
+**롤포워드(= 복구).** 손으로 `CREATE INDEX` 를 치지 않는다. 항상 `migrate` 다:
+
+```bash
+PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
+  'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
+  migrate --data-dir "$DATA" --store evidence
+```
+
+`migrate` 는 두 반쪽 상태를 모두 복구한다 — `user_version=1` 이면 v2 를 다시 적용하고,
+이미 2 인데 인덱스만 없으면 **복구 패스**가 다시 만든다. 출력이 무엇을 했는지 말해 준다:
+
+```
+migrate: evidence at ... — already at v2, nothing to do
+migrate: evidence at ... — applied v1 -> v2 (v2); ledger row(s) already present for v2, not re-recorded (append-only)
+migrate: evidence at ... — already at v2, but REBUILT missing entries_kind_seq — the file was running unindexed
+```
+
+`schema_ledger` 는 append-only 이고 `version` 이 PK 라서 롤백 뒤에도 v2 행이 남는다. 그래서
+재적용은 대장 행을 다시 쓰지 않는다(대장은 「언제 처음 적용됐나」의 기록이지 실행 횟수가
+아니다). 부팅은 이 인덱스를 **절대 만들지 않는다** — 생성은 신규 파일의 genesis 와 `migrate`
+뿐이라, 위 롤백이 다음 부팅에 조용히 덮이지 않는다.
 
 ## 4-B. 장 마감 뒤 압축 백업
 

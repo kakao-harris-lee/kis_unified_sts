@@ -24,7 +24,10 @@ from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityVerdict, SqliteEvidenceStore
 from tos_runtime.operations.backup_set import DurableSetPaths
-from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS
+from tos_runtime.operations.schema_migrations import (
+    STORE_MIGRATIONS,
+    MigrationOutcome,
+)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -657,15 +660,59 @@ def test_restore_drill_dispatches_to_restore_set_for_a_non_live_label(
 # -- migrate --------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        (
+            MigrationOutcome("evidence", 2, 2, (), (), ()),
+            "already at v2, nothing to do",
+        ),
+        (
+            MigrationOutcome("evidence", 2, 2, (), (), ("entries_kind_seq",)),
+            "already at v2, but REBUILT missing entries_kind_seq",
+        ),
+        (
+            MigrationOutcome("evidence", 0, 2, (1, 2), (1, 2), ()),
+            "applied v0 -> v2 (v1, v2)",
+        ),
+        (
+            MigrationOutcome("evidence", 1, 2, (2,), (), ()),
+            "not re-recorded (append-only)",
+        ),
+    ],
+)
+def test_migrate_report_names_what_it_did(
+    outcome: MigrationOutcome, expected: str
+) -> None:
+    """`migrate` printed "is current" for three materially different outcomes — nothing to do,
+    versions applied, and an index rebuilt — so a repair was indistinguishable from a no-op in
+    the one place an operator looks (review L3)."""
+    assert expected in cli._migrate_report(outcome)
+
+
+def _noop_outcome(store_name: str) -> MigrationOutcome:
+    """A `MigrationOutcome` for a store that was already current — what `apply_migrations`
+    returns when there is nothing to do."""
+    return MigrationOutcome(
+        store_name=store_name,
+        from_version=1,
+        to_version=1,
+        applied=(),
+        ledgered=(),
+        repaired=(),
+    )
+
+
 def test_migrate_runs_every_store_when_store_omitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple] = []
-    monkeypatch.setattr(
-        cli,
-        "apply_migrations",
-        lambda path, store_name: calls.append((path, store_name)),
-    )
+
+    def _record(path, store_name):
+        calls.append((path, store_name))
+        return _noop_outcome(store_name)
+
+    monkeypatch.setattr(cli, "apply_migrations", _record)
 
     data_dir = tmp_path / "data"
     exit_code = cli.main(["migrate", "--data-dir", str(data_dir)])
@@ -679,11 +726,12 @@ def test_migrate_runs_only_the_named_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple] = []
-    monkeypatch.setattr(
-        cli,
-        "apply_migrations",
-        lambda path, store_name: calls.append((path, store_name)),
-    )
+
+    def _record(path, store_name):
+        calls.append((path, store_name))
+        return _noop_outcome(store_name)
+
+    monkeypatch.setattr(cli, "apply_migrations", _record)
 
     data_dir = tmp_path / "data"
     exit_code = cli.main(["migrate", "--data-dir", str(data_dir), "--store", "rcl"])

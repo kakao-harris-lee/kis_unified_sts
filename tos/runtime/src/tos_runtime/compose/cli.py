@@ -168,7 +168,11 @@ from tos_runtime.operations.key_rotation import (
     RotationOutcome,
     rotate_evidence_key,
 )
-from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS, apply_migrations
+from tos_runtime.operations.schema_migrations import (
+    STORE_MIGRATIONS,
+    MigrationOutcome,
+    apply_migrations,
+)
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.safety.ack import acknowledge_alert
 from tos_runtime.time.config import load_time_config
@@ -814,6 +818,35 @@ def _dispatch_ack_alert(args: AckAlertArgs) -> int:
     return 0 if outcome.acknowledged else 1
 
 
+def _migrate_report(outcome: MigrationOutcome) -> str:
+    """One operator-facing line naming what ``migrate`` actually did.
+
+    "is current" used to be printed for three materially different outcomes — nothing to do,
+    versions applied, and an index rebuilt — which made a repair indistinguishable from a no-op
+    in the one place an operator looks (review L3).
+    """
+    if outcome.applied:
+        parts = [
+            f"applied v{outcome.from_version} -> v{outcome.to_version} "
+            f"({', '.join(f'v{v}' for v in outcome.applied)})"
+        ]
+        unrecorded = tuple(v for v in outcome.applied if v not in outcome.ledgered)
+        if unrecorded:
+            parts.append(
+                "ledger row(s) already present for "
+                f"{', '.join(f'v{v}' for v in unrecorded)}, not re-recorded (append-only)"
+            )
+        if outcome.repaired:
+            parts.append(f"rebuilt {', '.join(outcome.repaired)}")
+        return "; ".join(parts)
+    if outcome.repaired:
+        return (
+            f"already at v{outcome.to_version}, but REBUILT missing "
+            f"{', '.join(outcome.repaired)} — the file was running unindexed"
+        )
+    return f"already at v{outcome.to_version}, nothing to do"
+
+
 def _dispatch_backup_set(args: BackupSetArgs) -> int:
     """Take the durable-set snapshot, then — only when ``--archive-dir`` was given — compress
     and verify it (evidence growth plan §2 A3).
@@ -914,8 +947,8 @@ def main(argv: list[str] | None = None) -> int:
             store_path = migrate_path_for(
                 store_name, paths=paths, data_dir=args.data_dir
             )
-            apply_migrations(store_path, store_name)
-            print(f"migrate: {store_name} at {store_path} is current")
+            outcome = apply_migrations(store_path, store_name)
+            print(f"migrate: {store_name} at {store_path} — {_migrate_report(outcome)}")
         return 0
 
     if isinstance(args, RotateKeyArgs):

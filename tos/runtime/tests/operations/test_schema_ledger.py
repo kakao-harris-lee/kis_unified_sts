@@ -741,3 +741,149 @@ def test_appends_still_work_and_stay_chained_after_the_index_lands(
         assert len(rows) == 3
     finally:
         store.close()
+
+
+# -- HIGH-1 (review 2026-09-30): the documented rollback must be reversible ---------------------
+#
+# The runbook (docs/runbooks/tos-paper-boot.md §4-A) tells an operator how to roll v2 back. Both
+# tests below were RED before the `apply_migrations` fix: (1) the ledger's surviving v2 row made
+# a re-`migrate` abort with `IntegrityError UNIQUE constraint failed: schema_ledger.version`,
+# stranding the file at v1 with no index — refused by v2 code and unreachable by `migrate`;
+# (2) an index dropped while `user_version` stayed at 2 was invisible to every check
+# (`compute_schema_shape_digest` reads `PRAGMA table_info`, which does not see indexes) and
+# `migrate` no-op'd, so nothing could rebuild it.
+
+#: The rollback the runbook prints, verbatim. Kept as literal SQL, split exactly as an operator
+#: would paste it, so this test fails if the runbook and the code ever disagree about the
+#: procedure rather than merely about its wording.
+_RUNBOOK_ROLLBACK_SQL: tuple[str, ...] = (
+    "DROP INDEX IF EXISTS entries_kind_seq",
+    "PRAGMA user_version = 1",
+)
+
+
+def _run_rollback(path: Path, statements: tuple[str, ...]) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        for statement in statements:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_the_runbook_rollback_can_be_rolled_forward_again(tmp_path: Path) -> None:
+    """The whole point of documenting a rollback: it has to be reversible."""
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    _run_rollback(path, _RUNBOOK_ROLLBACK_SQL)
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME not in _index_names(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        # The v2 ledger row SURVIVES the rollback — schema_ledger is append-only and `version`
+        # is its PRIMARY KEY, which is exactly what used to make the roll-forward abort.
+        assert (2,) in conn.execute("SELECT version FROM schema_ledger").fetchall()
+    finally:
+        conn.close()
+
+    outcome = apply_migrations(path, "evidence")
+
+    assert outcome.applied == (2,)
+    # Applied but NOT re-ledgered: the row was already there, and an append-only ledger records
+    # "first applied here", not a run count.
+    assert outcome.ledgered == ()
+    assert schema_version(path) == EVIDENCE_SCHEMA_VERSION
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME in _index_names(conn)
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM schema_ledger WHERE version = 2"
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        conn.close()
+
+    # And the rolled-forward file boots and still verifies.
+    provider = FixedKeyProvider()
+    store = SqliteEvidenceStore(path, key_provider=provider)
+    try:
+        key_generation, key_bytes = provider.current()
+        assert store.verify({key_generation: key_bytes}) is True
+    finally:
+        store.close()
+
+
+def test_migrate_rebuilds_an_index_dropped_at_the_current_version(
+    tmp_path: Path,
+) -> None:
+    """The half-rollback: index gone, ``user_version`` still 2.
+
+    Nothing refuses this state — v2 code boots and silently runs every by-kind read as a full
+    scan — so ``migrate`` has to be able to notice and repair it. Before the repair pass it
+    could not: its loop skips every version ``<= current_version``.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    _run_rollback(path, ("DROP INDEX entries_kind_seq",))
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert _INDEX_NAME not in _index_names(conn)
+    finally:
+        conn.close()
+    # The state really is undetectable by the boot check — this is why the repair exists.
+    SqliteEvidenceStore(path, key_provider=FixedKeyProvider()).close()
+
+    outcome = apply_migrations(path, "evidence")
+
+    assert outcome.applied == ()
+    assert outcome.repaired == (_INDEX_NAME,)
+    assert outcome.changed is True
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME in _index_names(conn)
+        # No second ledger row was invented for a repair — it is not a migration.
+        assert conn.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_migrate_on_a_healthy_file_reports_no_change(tmp_path: Path) -> None:
+    """The repair pass must be a no-op on a healthy file, or every `migrate` would look like it
+    had found damage."""
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+
+    outcome = apply_migrations(path, "evidence")
+
+    assert (outcome.applied, outcome.repaired, outcome.changed) == ((), (), False)
+    assert outcome.from_version == outcome.to_version == EVIDENCE_SCHEMA_VERSION
+
+
+def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
+    tmp_path: Path,
+) -> None:
+    """RCL v2 is a bare ``ALTER TABLE ... ADD COLUMN``, which raises "duplicate column name" on a
+    second run — so it declares NO ``repair_statements`` and the repair pass must leave it alone.
+
+    This is the test that keeps the repair pass from being generalized into "re-run the head
+    migration", which would break the moment a store's head migration changes column shape.
+    """
+    assert RCL_MIGRATIONS[-1].repair_statements == ()
+    evidence = SqliteEvidenceStore(
+        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
+    )
+    rcl = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence)
+    rcl.close()
+    evidence.close()
+
+    first = apply_migrations(tmp_path / "rcl.sqlite3", "rcl")
+    second = apply_migrations(tmp_path / "rcl.sqlite3", "rcl")
+
+    assert first.changed is False
+    assert second.changed is False

@@ -17,11 +17,31 @@ never an edit to the v1 entry's own statements/expected shape.
 it is not uniform. ``RCL`` v2 added a nullable column: sqlite has no ``DROP COLUMN`` on that
 shape, so rolling it back means restoring the durable set from a backup taken before the
 migration (``operations.backup_set``) — the reason that migration is one-way in practice.
-``EVIDENCE`` v2 is the opposite and the easy case: it adds only an INDEX, an auxiliary
-structure that stores no row content, so ``DROP INDEX entries_kind_seq`` (followed by
-``PRAGMA user_version = 1`` if the operator also intends to run v1-expecting code again) leaves
-every row's bytes, ``entry_digest`` and ``chain_digest`` exactly as they were, and
-``SqliteEvidenceStore.verify()`` unchanged either way. No backup restore is needed for it.
+
+``EVIDENCE`` v2 is the easy case: it adds only an INDEX, an auxiliary structure that stores no
+row content, so rolling it back leaves every row's bytes, ``entry_digest`` and ``chain_digest``
+exactly as they were, and ``SqliteEvidenceStore.verify()`` unchanged either way. No backup
+restore is needed. There is exactly ONE supported procedure, and both halves are required::
+
+    DROP INDEX IF EXISTS entries_kind_seq;
+    PRAGMA user_version = 1;
+
+Dropping the index while LEAVING ``user_version`` at 2 is not a rollback: v2 code boots happily
+and silently runs every by-kind read as a full scan again, and nothing detects it —
+``compute_schema_shape_digest`` reads ``PRAGMA table_info``, which does not see indexes at all.
+Rolling forward again is always ``apply_migrations`` (the ``migrate`` CLI), never a hand-written
+``CREATE INDEX``; it re-applies the step from either half-state and, at an already-current
+version, rebuilds a dropped index through the repair pass
+(:attr:`SchemaMigration.repair_statements`).
+
+**A re-applied step is not re-recorded.** ``schema_ledger.version`` is a PRIMARY KEY on an
+append-only table, so the v2 row survives the rollback above and a second ``migrate`` cannot
+insert it again. :func:`apply_migrations` therefore skips the INSERT when the row already
+exists, while still running the DDL and stamping ``user_version``. The ledger is a record of
+"this version was first applied here", not a count of how many times it ran. Before this
+(review HIGH-1), the duplicate INSERT raised ``IntegrityError``, rolled the whole transaction
+back, and left the file stuck at v1 with no index — unbootable by v2 code and unreachable by
+``migrate``.
 
 **Rollout order (round #4 review LOW — first genuine v1->v2 bump, so this module carried no
 prior worked example of the deploy-time ordering it requires).**
@@ -77,6 +97,7 @@ from tos_runtime.operations.schema_ledger import (
 __all__ = [
     "EVIDENCE_MIGRATIONS",
     "INBOX_MIGRATIONS",
+    "MigrationOutcome",
     "MARKETFEED_MIGRATIONS",
     "RCL_MIGRATIONS",
     "STORE_MIGRATIONS",
@@ -94,6 +115,38 @@ class SchemaMigrationRefused(RuntimeError):
 
 
 @dataclass(frozen=True)
+class MigrationOutcome:
+    """What one :func:`apply_migrations` call actually did — the operator-facing report.
+
+    ``migrate`` used to print "is current" for three materially different outcomes: nothing to
+    do, versions applied, and an auxiliary structure rebuilt. Returning this lets the CLI say
+    which (review L3).
+
+    Args:
+        store_name: The store this ran against.
+        from_version: ``PRAGMA user_version`` on entry.
+        to_version: ``PRAGMA user_version`` on exit.
+        applied: Versions whose statements ran, in order.
+        ledgered: The subset of :attr:`applied` that also wrote a ``schema_ledger`` row. A
+            version can be applied WITHOUT being ledgered when its row already survived from an
+            earlier run (the ledger is append-only, so a re-applied step is never re-recorded).
+        repaired: Names of auxiliary structures rebuilt at an already-current version.
+    """
+
+    store_name: str
+    from_version: int
+    to_version: int
+    applied: tuple[int, ...]
+    ledgered: tuple[int, ...]
+    repaired: tuple[str, ...]
+
+    @property
+    def changed(self) -> bool:
+        """Whether this call altered the file at all."""
+        return bool(self.applied or self.repaired)
+
+
+@dataclass(frozen=True)
 class SchemaMigration:
     """One registered schema migration for one store.
 
@@ -108,12 +161,21 @@ class SchemaMigration:
             ``user_version == 0``, the shape :func:`apply_migrations` verifies BEFORE stamping).
             Column order matters (matches ``PRAGMA table_info`` order); empty for a migration
             that adds no new table shape to verify (none in this wave).
+        repair_statements: The subset of :attr:`statements` that is safe to re-run against a
+            file ALREADY stamped at :attr:`version`, to rebuild an auxiliary structure that was
+            dropped out from under it (:func:`apply_migrations`'s repair pass). Only genuinely
+            idempotent DDL belongs here: ``CREATE INDEX IF NOT EXISTS`` qualifies, ``ALTER TABLE
+            ... ADD COLUMN`` does NOT (it raises "duplicate column name" on the second run), so
+            this is stated per migration rather than inferred. Empty means "this version has
+            nothing repairable" — the default, and the honest answer for every migration that
+            changes column shape.
     """
 
     version: int
     description: str
     statements: tuple[str, ...]
     expected_tables: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    repair_statements: tuple[str, ...] = ()
 
     @property
     def statements_digest(self) -> str:
@@ -207,11 +269,16 @@ EVIDENCE_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=2,
         description=(
-            "entries gains the entries_kind_seq (kind, seq) covering index — the 19 "
-            "boot/recovery readers' WHERE kind = ?/IN (...) ORDER BY seq shape (evidence "
-            "growth plan §2 A2)"
+            "entries gains the entries_kind_seq (kind, seq) covering index — the 14 "
+            "boot/recovery readers' WHERE kind = ?/IN (...) ORDER BY seq shape, of the 19 "
+            "modules that read this store at all (evidence growth plan §2 A2)"
         ),
         statements=_EVIDENCE_V2_STATEMENTS,
+        # The whole migration is one `CREATE INDEX IF NOT EXISTS`, so re-running it against an
+        # already-v2 file is a no-op when the index is there and a rebuild when it is not —
+        # which is exactly the repair `migrate` needs to be able to perform (review HIGH-1: a
+        # dropped index is otherwise invisible to every check and unreachable by every tool).
+        repair_statements=_EVIDENCE_V2_STATEMENTS,
     ),
 )
 
@@ -491,6 +558,53 @@ def schema_version(path: Path) -> int:
         conn.close()
 
 
+def _ledger_has_version(conn: sqlite3.Connection, version: int) -> bool:
+    """Whether ``schema_ledger`` already carries a row for ``version``.
+
+    ``schema_ledger.version`` is a PRIMARY KEY on an append-only table, so a re-applied step
+    cannot insert a second row and cannot delete the first — it can only skip the insert
+    (review HIGH-1: before this check, a step whose ledger row survived a rollback aborted the
+    whole transaction with ``IntegrityError`` and stranded the file).
+    """
+    row = conn.execute(
+        "SELECT 1 FROM schema_ledger WHERE version = ?", (version,)
+    ).fetchone()
+    return row is not None
+
+
+def _repair_at_current_version(
+    conn: sqlite3.Connection, head: SchemaMigration
+) -> tuple[str, ...]:
+    """Re-run ``head``'s :attr:`~SchemaMigration.repair_statements` against an already-current
+    file, and report which auxiliary structures were actually rebuilt.
+
+    Exists because an auxiliary structure — an index — can be dropped out from under a stamped
+    version and leave NOTHING that notices: ``PRAGMA user_version`` still reads latest, the
+    schema-ledger boot check passes, and ``compute_schema_shape_digest`` reads
+    ``PRAGMA table_info``, which is blind to indexes. Before this pass the only tool that could
+    have rebuilt it (``migrate``) no-op'd, because its loop skips every version ``<=
+    current_version``.
+
+    The statements are idempotent by declaration (see :attr:`SchemaMigration.repair_statements`),
+    so this is a no-op on a healthy file. The return value names what was missing, which is what
+    lets the CLI say "repaired" instead of the misleading "is current".
+    """
+    if not head.repair_statements:
+        return ()
+    before = _index_names(conn)
+    for statement in head.repair_statements:
+        conn.execute(statement)
+    conn.commit()
+    return tuple(sorted(_index_names(conn) - before))
+
+
+def _index_names(conn: sqlite3.Connection) -> frozenset[str]:
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IS NOT NULL"
+    ).fetchall()
+    return frozenset(str(row[0]) for row in rows)
+
+
 def _verify_expected_shape_or_refuse(
     conn: sqlite3.Connection, *, store_name: str, migration: SchemaMigration
 ) -> None:
@@ -518,7 +632,7 @@ def apply_migrations(
     store_name: str,
     *,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
-) -> None:
+) -> MigrationOutcome:
     """Bring the CLOSED store file at ``path`` up to ``store_name``'s latest known migration.
 
     Operates on its own, fresh ``sqlite3.connect`` — the caller is responsible for the store
@@ -532,6 +646,10 @@ def apply_migrations(
             ``"inbox"``).
         monotonic_ns: Injected monotonic-clock callable for the ledger row's
             ``applied_at_monotonic_ns``.
+
+    Returns:
+        A :class:`MigrationOutcome` naming what ran — versions applied, ledger rows written,
+        and auxiliary structures repaired at an already-current version.
 
     Raises:
         ValueError: ``store_name`` is not registered.
@@ -552,6 +670,9 @@ def apply_migrations(
                 f"{store_name}: on-disk user_version={current_version} is already AHEAD of "
                 f"the newest known migration ({target_version}) — refusing"
             )
+        from_version = current_version
+        applied: list[int] = []
+        ledgered: list[int] = []
         for migration in migrations:
             if migration.version <= current_version:
                 continue
@@ -559,26 +680,43 @@ def apply_migrations(
                 _verify_expected_shape_or_refuse(
                     conn, store_name=store_name, migration=migration
                 )
+            already_ledgered = _ledger_has_version(conn, migration.version)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 for statement in migration.statements:
                     conn.execute(statement)
-                conn.execute(
-                    "INSERT INTO schema_ledger "
-                    "(version, applied_at_monotonic_ns, migration_digest, applied_by) "
-                    "VALUES (?, ?, ?, ?)",
-                    (
-                        migration.version,
-                        monotonic_ns(),
-                        migration.statements_digest,
-                        MIGRATE_APPLIED_BY,
-                    ),
-                )
+                if not already_ledgered:
+                    conn.execute(
+                        "INSERT INTO schema_ledger "
+                        "(version, applied_at_monotonic_ns, migration_digest, applied_by) "
+                        "VALUES (?, ?, ?, ?)",
+                        (
+                            migration.version,
+                            monotonic_ns(),
+                            migration.statements_digest,
+                            MIGRATE_APPLIED_BY,
+                        ),
+                    )
                 conn.execute(f"PRAGMA user_version = {int(migration.version)}")
                 conn.execute("COMMIT")
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
+            applied.append(migration.version)
+            if not already_ledgered:
+                ledgered.append(migration.version)
             current_version = migration.version
+
+        repaired: tuple[str, ...] = ()
+        if not applied and current_version == target_version:
+            repaired = _repair_at_current_version(conn, migrations[-1])
+        return MigrationOutcome(
+            store_name=store_name,
+            from_version=from_version,
+            to_version=current_version,
+            applied=tuple(applied),
+            ledgered=tuple(ledgered),
+            repaired=repaired,
+        )
     finally:
         conn.close()
