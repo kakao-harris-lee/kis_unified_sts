@@ -221,10 +221,11 @@ inbox **6/80** · marketfeed **21/80** · rcl **8/80**. 즉 경합은 진짜지�
 8. **T-4 는 수정 전에도 통과한다.** fail-closed 고정이지 뮤테이션 검출기가 아니다(계획 §2.3 「테스트로
    고정한다」). 수정 전 코드에서는 첫 `CREATE TABLE` 이 autocommit 으로 실패해 같은 `OperationalError` 가
    나므로 판별력이 없다 — 그렇게 기록한다.
-9. **`no-any-return` 두 건을 주석과 함께 명시 annotation 으로 없앴다**(`test_schema_ledger.py` ·
-   `test_schema_genesis_concurrency.py`). 저장소 루트에서 도는 CI mypy 는 `tos_runtime` 이 경로에 없어
-   그 패키지의 모든 심볼이 `Any` 이고, 그것을 그대로 `return` 하면 새 오류가 된다. 전수 카운트를 main
-   기준선과 같게 맞추기 위한 것이다(§7.5).
+9. **`no-any-return` 두 건을 명시 annotation 으로 없앴다**(`test_schema_ledger.py` ·
+   `test_schema_genesis_concurrency.py`). 이 두 건은 `PYTHONPATH` 없이 돌린 mypy 에서만 나타난다 — 그 호출에서는
+   `tos_runtime` 이 경로에 없어 모든 심볼이 `Any` 가 된다. **정정(세션 모델, 2026-09-30)**: 원 기록은 이것을
+   「CI mypy」라고 적었으나 틀렸다. CI 는 `tos_runtime` 을 해석한다(#812 에서 CI 가 `TickScheduler` 의 실제
+   타입으로 오류를 냈다). annotation 자체는 무해하므로 그대로 둔다.
 
 ### 7.5 뮤테이션 (전건 red 확인 후 복구 · `schema_ledger.py` 백업 대조로 복구 검증)
 
@@ -250,15 +251,17 @@ inbox **6/80** · marketfeed **21/80** · rcl **8/80**. 즉 경합은 진짜지�
 | `tos_named_tbd_guard.py` | PASS — 46 candidate file(s), 0 violations |
 | `tos_size_budget.py --check` | PASS — 0 violations (38 registered exception(s)) |
 | black · ruff (변경한 `*.py` 12개) | 12 files would be left unchanged · All checks passed |
-| mypy `tos/runtime/tests` (CI 와 같은 `--disable-error-code=no-untyped-def`) | `Found 122 errors in 45 files (checked 237 source files)` — main `7d039339` 기준선 `Found 122 errors in 45 files (checked 236 source files)` 와 **오류 수 동일**(파일 하나 늘어난 것은 새 테스트 모듈) |
-| mypy `tos/runtime/src` | `Found 27 errors in 18 files (checked 189 source files)` — main 기준선과 **한 건도 다르지 않다** |
+| mypy `tos/runtime/tests` (저장소 루트 · `PYTHONPATH=tos/src:tos/runtime/src` · `--ignore-missing-imports --disable-error-code=no-untyped-def`) | `Success: no issues found in 237 source files` |
+| mypy `tos/runtime/src` (같은 `PYTHONPATH` · `--ignore-missing-imports`) | `Success: no issues found in 189 source files` |
 | mypy `tos/src` (`cd tos && mypy src`) | `Success: no issues found in 265 source files` |
 | `pytest tos/runtime/tests` | **3208 collected · 전건 pass** (main 기준선 3189 → 신규 19건: T-1 6 · T-2 4 · T-3/T-4 9) |
 | `pytest tests/tools -k tos` | 783 collected · 전건 pass |
 | `pytest tests/unit/scripts/test_render_paper_config.py` | 42 collected · 전건 pass |
 
-mypy 절대 수치는 이 호스트 venv 가 CI 보다 스텁이 많아 CI 와 다르다 — 그래서 절대값이 아니라 **main 과의
-차이**를 본다. 기준선은 `git archive 7d039339` 로 추출한 별도 트리에서 같은 명령으로 측정했다.
+**정정(세션 모델, 2026-09-30)**: 원 기록의 mypy 두 줄(`Found 122 errors …` · `Found 27 errors …`)은
+`PYTHONPATH` 없이 돌린 값이었다. 이 표의 세 줄은 CI 와 같은 해석 경로(`PYTHONPATH=tos/src:tos/runtime/src`)로
+세션 모델이 다시 잰 값이다. main 과의 오류 수 비교는 판정 기준으로 쓰지 않는다 — #812 에서 그 방식이 CI 실패를
+가렸다. 판정은 CI 호출의 마지막 줄 `Success` 다.
 
 ### 7.7 배포 영향
 
