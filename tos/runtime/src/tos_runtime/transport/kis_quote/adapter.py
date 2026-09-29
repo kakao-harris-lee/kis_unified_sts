@@ -1,25 +1,95 @@
 """KIS quote intake implementing the runtime observation port.
 
-The adapter performs one configured HTTP request per poll and maps only the
-configured response fields into a market observation. It never extracts an
-event timestamp from the response body; this statement is about this adapter's
-code path and does not claim that other KIS feeds lack execution times.
+The adapter performs one configured HTTP request per poll, for the one
+instrument its config declares, and maps only the configured response fields
+into a market observation. It never extracts an event timestamp from the
+response body; this statement is about this adapter's code path and does not
+claim that other KIS feeds lack execution times.
 
-Both ``as_of_ms`` and ``received_ms`` use the wall-clock reader after the
-response returns. The reader exposes the last value cached by Trustworthy Time,
-so a post-response call does not guarantee a fresh clock value. With the
-current scheduler ordering, that can stamp the previous pass's time and make
-observations stale at normal one-second quote spacing. The adapter also
-advances its content digest before the scheduler decides whether to consume an
-observation; a time-gated skip therefore drops that unchanged content until
-the quote changes. These are current behavior constraints, not freshness
-guarantees.
+Observations are anchored on the request, on the MONOTONIC clock, and the
+scheduler finalizes them. This adapter reads no wall clock at all: it takes a
+:meth:`~tos_runtime.time.sources.MonotonicSource.now_ms` reading immediately
+before the request goes out and another immediately after the response
+arrives, and returns a
+:class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` carrying
+both. :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once` maps
+them onto that pass's own freshly evaluated reading
+(:meth:`~tos_runtime.time.service.TrustworthyTimeService
+.wall_clock_at_monotonic`) — ``as_of_ms`` from the request instant,
+``received_ms`` from the response one — so this request's own round trip lands
+in ``source_age``. Stamping
+:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` here
+instead would reuse whatever reading the last ``evaluate()`` cached, which
+runs after the pass's intake read and so carries the previous pass's time.
 
-Token lifecycle pacing and expiry use the injected monotonic clock, while
-observation timestamps use the wall-clock reader; the two clocks must remain
-separate. Credential access stays inside the shared session seam. Content
-deduplication prevents a repeated quote body from manufacturing ticks, and
-field mapping remains configuration-driven.
+What the anchor still does NOT know, stated rather than implied: the response
+body carries no event time, so how stale the data already was on the broker's
+side remains unknown. Anchoring on the request start raises the age's LOWER
+BOUND from zero to the HTTP round trip; it does not produce the true age. A
+genuine source event time would need the KIS real-time WebSocket trade feed —
+a different transport architecture this module does not attempt — not a
+different stamp here.
+
+The deferred-digest note: an unconsumed quote is re-emitted, not dropped.
+``poll`` cannot filter on ``after_as_of_ms`` (the quote TR has no "since"
+parameter), but it does READ it: that argument is the durable store's own
+high-water mark, so it advances exactly when the previous pass's observation
+was consumed. This adapter therefore holds a freshly emitted content digest as
+pending and promotes it to the last-consumed digest only on a later poll whose
+``after_as_of_ms`` has advanced. An observation the scheduler declined to
+consume (``TickOutcome.SKIPPED_TIME_NOT_EVALUATED`` /
+``SKIPPED_TIME_UNANCHORED`` — no ``store.put``, ``latest_as_of`` unmoved) is
+re-emitted on the next pass rather than dropped until the price changes.
+
+The phantom-churn note: every GET returns the CURRENT price, so minting an
+observation on every poll would make each one look like a market event even
+when the market has not moved. This adapter dedups on its last-consumed
+content digest — taken over the mapped, admitted field tuple only, never the
+raw response, so an unmapped KIS field changing does not by itself mint a tick
+— and returns an EMPTY sequence, the ``SKIPPED_NO_OBSERVATION`` "nothing new"
+contract, when the polled content is byte-identical to it. Only a genuine
+content change, or an emission that was never consumed, mints an observation,
+and only then does :func:`~tos_runtime.marketfeed.ports.anchor_observation`
+derive ``raw_event_id`` as
+``{source_id}:{instrument}:{as_of_ms}:{content_digest}``. Combining the anchor
+instant with the content digest keeps a byte-identical body reappearing at a
+LATER instant a distinct observation, and separates two polls anchored in the
+same millisecond by content; this adapter never emits two observations sharing
+a ``raw_event_id``.
+
+One clock, two jobs — and it must be THE process's monotonic source. A single
+injected :class:`~tos_runtime.time.sources.MonotonicSource` serves both the
+shared :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle`'s
+age/cooldown bookkeeping and the two request-anchor readings, and the stricter
+requirement governs. Token pacing needs only relative elapsed time from any
+consistent source, while the anchor readings are mapped by
+``wall_clock_at_monotonic``, which compares them against the time service's
+own readings — and the :class:`~tos_runtime.time.sources.MonotonicSource` port
+guarantees readings are comparable only WITHIN one instance. The injected
+source must therefore be the very object this process's
+:class:`~tos_runtime.time.service.TrustworthyTimeService` was built with;
+compose passes exactly that, and ``tests/compose/
+test_marketfeed_intake_kind_wiring.py`` pins the object identity. A source
+with an origin of its own would put every mapping outside the domain and every
+pass would answer ``SKIPPED_TIME_UNANCHORED``.
+
+The note against reintroducing a wall clock here: token validity, observation
+anchoring, and wall-clock TRUST are three different facts. The first two live
+on the monotonic clock in this module; the third is the scheduler's to apply
+after its own evaluation. Deriving token pacing from wall-clock trust makes a
+live token unusable for a reason unrelated to the token, and stamping
+``as_of_ms`` from a cached wall-clock reading is the defect the request anchor
+above removed.
+
+Credential access stays inside the shared session seam, and field mapping is
+configured, never hardcoded. ``KisQuoteTransportConfig.field_mapping`` names
+exactly which KIS wire field keys this adapter reads and which
+``critical_input_policy.yaml``-admitted ``field_key`` each feeds; a response
+field not named there is dropped here, since the CIP's own ∅-floor already
+drops anything it does not itself admit. No unit/scale/multiplier/sign
+interpretation happens in this module — the raw KIS scalar value is carried
+through UNCHANGED, because that interpretation belongs to the CIP-governed
+value-derivation layer, never to a collector.
 """
 
 from __future__ import annotations
@@ -27,12 +97,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from tos.dsl import ScalarValue
 
 from tos_runtime.custody.ports import CredentialCustody
-from tos_runtime.marketfeed.ports import ObservationIntake, RawObservation
+from tos_runtime.marketfeed.ports import MonotonicAnchoredObservation, ObservationIntake
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient, RawResponse
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
@@ -48,9 +118,7 @@ __all__ = [
     "KisQuoteMalformedResponse",
     "KisQuoteObservationIntake",
     "KisQuoteRejected",
-    "KisQuoteWallClockUntrusted",
     "TokenStale",
-    "WallClockSource",
     "build_quote_client",
 ]
 
@@ -67,21 +135,6 @@ _KIS_MOCK_APP_SECRET_SCOPE = "kis_mock.app_secret"
 #: before ``int`` for the same reason: ``bool`` is an ``int`` subclass in Python, and this
 #: adapter never silently narrows ``True`` to ``1``).
 _SCALAR_FIELD_TYPES: tuple[type, ...] = (bool, int, float, str)
-
-
-@runtime_checkable
-class WallClockSource(Protocol):
-    """The one method this module needs from a time service — mirrors
-    :class:`tos_runtime.calendar.ports`'s own private ``_WallClockNowSource`` Protocol
-    (identical shape, independently duplicated there for the same reason: match
-    :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` structurally without
-    importing that module, keeping this module's own import surface — and a test's own fake —
-    minimal)."""
-
-    def wall_clock_now(self) -> int | None:
-        """The current wall-clock reading, or ``None`` when not yet ``TRUSTED``. MUST NOT
-        raise."""
-        ...
 
 
 class KisQuoteAdapterError(Exception):
@@ -104,13 +157,6 @@ class KisQuoteMalformedResponse(Exception):
     """
 
 
-class KisQuoteWallClockUntrusted(Exception):
-    """:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` returned ``None``
-    — Trustworthy Time is not yet ``TRUSTED``. Raised rather than treated as "nothing new" (module
-    docstring): those are different facts, and collapsing them would hide an operational fault
-    behind an ordinary quiet poll."""
-
-
 def build_quote_client(config: KisQuoteTransportConfig) -> KisMockHttpClient:
     """The one sanctioned way to build a client for a real KIS quote poll (mirrors
     :func:`tos_runtime.transport.kis_mock.client.build_client`'s own "one sanctioned
@@ -126,8 +172,9 @@ def build_quote_client(config: KisQuoteTransportConfig) -> KisMockHttpClient:
 
 class KisQuoteObservationIntake:
     """The KIS 모의투자 quote :class:`~tos_runtime.marketfeed.ports.ObservationIntake` (module
-    docstring for the full contract: receipt-time ``as_of_ms``, shared token lifecycle,
-    content-dedup against phantom churn, configured field mapping)."""
+    docstring for the full contract: monotonic request anchor finalized by the scheduler, shared
+    token lifecycle, content-dedup against phantom churn with a deferred digest, configured field
+    mapping)."""
 
     def __init__(
         self,
@@ -135,7 +182,6 @@ class KisQuoteObservationIntake:
         config: KisQuoteTransportConfig,
         client: KisMockHttpClient,
         monotonic: MonotonicSource,
-        time_service: WallClockSource,
         evidence_sink: EvidenceRecorder,
         custody: CredentialCustody | None = None,
         credential_session: KisCredentialSession | None = None,
@@ -148,20 +194,14 @@ class KisQuoteObservationIntake:
             client: The stdlib HTTP shim — build via :func:`build_quote_client` for real use.
             custody: The credential source — the two ``kis_mock.*`` scopes must already be
                 provisioned (module-level constants above).
-            monotonic: The injected monotonic clock — used ONLY for the shared token
-                lifecycle's own pacing/expiry bookkeeping (module docstring's "two clocks, two
-                jobs" note). Deliberately NOT derived from ``time_service``: a token's own
-                validity is a purely process-local, RELATIVE-elapsed-time concern that has
-                nothing to do with whether Trustworthy Time currently considers wall-clock
-                readings ``TRUSTED`` — conflating the two would make a perfectly good, still-
-                valid token suddenly unusable the moment wall-clock trust degrades, for a
-                reason that has nothing to do with the token itself (an earlier revision of
-                this module made exactly that mistake; kept here as a note against
-                reintroducing it).
-            time_service: This process's shared Trustworthy Time service — the ONE wall-clock
-                reading this adapter takes for its OWN ``as_of_ms``/``received_ms`` stamp,
-                taken once per emitted observation, after the HTTP response is received
-                (module docstring).
+            monotonic: The injected monotonic clock, used for BOTH jobs this adapter has
+                (module docstring's "one clock, two jobs" note): the shared token lifecycle's
+                pacing/expiry bookkeeping, and the two request-anchor readings each poll
+                takes. MUST be the same :class:`~tos_runtime.time.sources.MonotonicSource`
+                INSTANCE this process's :class:`~tos_runtime.time.service
+                .TrustworthyTimeService` was built with — the scheduler maps those readings
+                through that service, and readings from a second source are not comparable
+                against its own.
             evidence_sink: Records this intake's own token-lifecycle evidence entries
                 (``TRANSPORT_TOKEN_STALE`` — forwarded to :class:`~tos_runtime.transport.kis_mock
                 .token.KisTokenLifecycle`, this module raises no evidence of its own).
@@ -174,7 +214,7 @@ class KisQuoteObservationIntake:
         """
         self._config = config
         self._client = client
-        self._time_service = time_service
+        self._monotonic = monotonic
         if credential_session is None:
             if custody is None:
                 raise KisQuoteAdapterError(
@@ -194,84 +234,115 @@ class KisQuoteObservationIntake:
         # C-2 decision (C) — the token lifecycle and every custody load of the app key live in
         # the session; this class never touches custody itself.
         self._credential_session = credential_session
-        #: The last-EMITTED content digest, or ``None`` before this process's first successful
-        #: poll (module docstring's phantom-churn note). Process-local: a restart re-emits one
-        #: confirmatory observation even if the market has not moved since the last emission
-        #: before the restart — a legitimate, honest re-confirmation, not a bug (the durable
-        #: snapshot store's own ``latest_as_of`` re-derivation in ``decide_tick`` still applies
-        #: on top of this).
+        #: The last CONSUMED content digest, or ``None`` before this process's first consumed
+        #: emission (module docstring's phantom-churn note). Process-local: a restart re-emits
+        #: one confirmatory observation even if the market has not moved since the last
+        #: emission before the restart — a legitimate, honest re-confirmation, not a bug (the
+        #: durable snapshot store's own ``latest_as_of`` re-derivation in ``decide_tick`` still
+        #: applies on top of this).
         self._last_content_digest: str | None = None
+        #: The digest of the most recent EMITTED-but-not-yet-known-consumed observation
+        #: (module docstring's deferred-digest note), or ``None`` when there is none
+        #: outstanding. Promoted into :attr:`_last_content_digest` by
+        #: :meth:`_commit_pending_if_consumed`.
+        self._pending_digest: str | None = None
+        #: The ``after_as_of_ms`` the PREVIOUS poll was asked from, and whether there was one.
+        #: A plain ``None`` cannot carry both facts — ``None`` is also a legitimate mark (no
+        #: snapshot issued yet) — so the flag is separate rather than overloaded.
+        self._polled_once = False
+        self._previous_after_as_of_ms: int | None = None
+
+    def _commit_pending_if_consumed(self, after_as_of_ms: int | None) -> None:
+        """Promote a pending digest to :attr:`_last_content_digest` iff the store's high-water
+        mark has ADVANCED since the previous poll (module docstring's deferred-digest note).
+
+        ``after_as_of_ms`` is ``DurableSnapshotStore.latest_as_of`` for this instrument, read
+        by the scheduler immediately before this poll, and this scheduler is the only consumer
+        of this instrument's snapshots — so an advance is exactly "the observation this intake
+        emitted last pass was durably consumed". An unmoved mark means it was not (a failed
+        time evaluation, an unanchorable pass, a refusal downstream), and the pending digest
+        stays pending so the same quote is emitted again rather than dropped until the price
+        moves.
+        """
+        advanced = (
+            self._polled_once
+            and after_as_of_ms is not None
+            and (
+                self._previous_after_as_of_ms is None
+                or after_as_of_ms > self._previous_after_as_of_ms
+            )
+        )
+        if advanced and self._pending_digest is not None:
+            self._last_content_digest = self._pending_digest
+            self._pending_digest = None
+        self._polled_once = True
+        self._previous_after_as_of_ms = after_as_of_ms
 
     def poll(
         self, *, instrument: str, after_as_of_ms: int | None
-    ) -> Sequence[RawObservation]:
-        """Return a single fresh observation for ``instrument``, or none (module docstring).
+    ) -> Sequence[MonotonicAnchoredObservation]:
+        """Return a single fresh, not-yet-anchored observation for ``instrument``, or none
+        (module docstring).
 
         Args:
             instrument: MUST equal ``config.instrument`` — this intake serves exactly one,
                 configured instrument (FORWARD-OBLIGATION-MS1 is unratified).
-            after_as_of_ms: Accepted for :class:`~tos_runtime.marketfeed.ports.ObservationIntake`
-                conformance; NOT used to filter here — KIS's quote TR has no "since" parameter, so
-                every poll fetches the CURRENT price and the phantom-churn content-dedup (module
-                docstring) is what decides whether that counts as "new". ``decide_tick``'s own
-                ``SKIPPED_NOT_NEWER`` re-derivation (``scheduler.py`` module docstring) still runs
-                as a second, independent check downstream.
+            after_as_of_ms: NOT used to filter — KIS's quote TR has no "since" parameter, so
+                every poll fetches the CURRENT price and the phantom-churn content-dedup
+                (module docstring) is what decides whether that counts as "new". It IS read,
+                as the consumption signal :meth:`_commit_pending_if_consumed` needs.
+                ``decide_tick``'s own ``SKIPPED_NOT_NEWER`` re-derivation (``scheduler.py``
+                module docstring) still runs as a second, independent check downstream.
 
         Returns:
-            Exactly one observation when the polled content differs from the last one this
-            process emitted; an empty sequence otherwise ("nothing new" — a first-class answer,
-            per :class:`~tos_runtime.marketfeed.ports.ObservationIntake`'s own docstring).
+            Exactly one :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation`
+            when the polled content differs from the last CONSUMED one; an empty sequence
+            otherwise ("nothing new" — a first-class answer, per
+            :class:`~tos_runtime.marketfeed.ports.ObservationIntake`'s own docstring). The
+            wall-clock anchor is the scheduler's to stamp (module docstring).
 
         Raises:
             KisQuoteAdapterError: ``instrument`` does not equal ``config.instrument``.
-            KisQuoteWallClockUntrusted: Trustworthy Time is not yet ``TRUSTED``.
             TokenStale: The held token has expired and the reissue cooldown has not elapsed.
             KisMockConnectionError: The connection failed or was reset.
             KisMockTimeoutError: The request timed out.
             KisQuoteRejected: The broker's response carried ``rt_cd != "0"``.
             KisQuoteMalformedResponse: The response body was not usable (module docstring).
         """
-        del after_as_of_ms  # module docstring — content-dedup decides "new", not this parameter
         if instrument != self._config.instrument:
             raise KisQuoteAdapterError(
                 f"KisQuoteObservationIntake: poll() called for instrument {instrument!r} but "
                 f"this config is scoped to {self._config.instrument!r} — refusing to serve the "
                 "wrong instrument's quote"
             )
+        self._commit_pending_if_consumed(after_as_of_ms)
 
         access_token = (
             self._credential_session.ensure_token_string()
         )  # may raise TokenStale
+        # The two anchor readings bracket the request as tightly as this module can: nothing
+        # but the HTTP call itself lies between them (parsing happens after the second one).
+        requested_monotonic_ms = self._monotonic.now_ms()
         response = self._fetch_quote(access_token)
+        received_monotonic_ms = self._monotonic.now_ms()
         output = self._parse_output(response)
         fields = self._map_fields(output)
-
-        # Read after the response is complete; the time service may return its
-        # last evaluated value, as described in the module contract.
-        wall_now_ms = self._time_service.wall_clock_now()
-        if wall_now_ms is None:
-            raise KisQuoteWallClockUntrusted(
-                "KisQuoteObservationIntake: TrustworthyTimeService.wall_clock_now() returned "
-                "None (not yet TRUSTED) — refusing to stamp an observation with no honest clock"
-            )
 
         content_digest = self._content_digest(fields)
         if content_digest == self._last_content_digest:
             return ()  # nothing new — module docstring's phantom-churn discipline
 
-        self._last_content_digest = content_digest
-        raw_event_id = (
-            f"{self._config.source_id}:{instrument}:{wall_now_ms}:{content_digest}"
+        self._pending_digest = content_digest
+        return (
+            MonotonicAnchoredObservation(
+                instrument=instrument,
+                fields=fields,
+                source_id=self._config.source_id,
+                content_digest=content_digest,
+                requested_monotonic_ms=requested_monotonic_ms,
+                received_monotonic_ms=received_monotonic_ms,
+            ),
         )
-        observation = RawObservation(
-            raw_event_id=raw_event_id,
-            instrument=instrument,
-            as_of_ms=wall_now_ms,
-            fields=fields,
-            source_id=self._config.source_id,
-            received_ms=wall_now_ms,
-        )
-        return (observation,)
 
     def _fetch_quote(self, access_token: str) -> RawResponse:
         """(mirrors ``KisMockTransport._send_order_with_credentials``'s own discipline) The app

@@ -270,6 +270,60 @@ def test_kis_quote_intake_builds_through_the_full_compose_stack(
         runtime.evidence_store.close()
 
 
+def test_kis_quote_intake_and_the_time_service_share_one_monotonic_source(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """#810 (plan ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §4 T-5): the
+    composed runtime gives the ``kis_quote`` intake and the
+    :class:`~tos_runtime.time.service.TrustworthyTimeService` the **same**
+    :class:`~tos_runtime.time.sources.MonotonicSource` OBJECT.
+
+    Not hygiene — a correctness precondition. The intake stamps its request anchor on that
+    clock and :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_at_monotonic`
+    maps those readings against the service's OWN readings from the same clock. The
+    :class:`~tos_runtime.time.sources.MonotonicSource` port guarantees comparability only
+    WITHIN one instance, so the SHARED instance is the contract this pins — not a claim that
+    any two sources disagree. (Two
+    :class:`~tos_runtime.time.sources.ProcessMonotonicSource` objects do in fact agree: both
+    read the same ``time.monotonic_ns()``. That is one implementation's coincidence, and wiring
+    that leans on it leans on something no port promises.) A source with an origin of its own —
+    a fake, or a future non-process source — looks perfectly healthy in isolation (monotonic,
+    plausible milliseconds) while putting every instant outside the mapping's domain: every
+    pass would answer ``SKIPPED_TIME_UNANCHORED``, a silent, total loss of ticks with no
+    refusal anywhere. Hence an object-identity pin.
+
+    Mutation: pass ``ProcessMonotonicSource()`` to ``_build_intake``'s
+    ``KisQuoteObservationIntake`` call (or to ``TrustworthyTimeService``) instead of the shared
+    one -> red. The check is ``is``, never equality: these objects have no value identity.
+    """
+    _activate_mock_stock_order(config_dir)
+    fx.write_kis_mock_transport_config(config_dir)
+    _build_custody(custody_root)
+    _write_critical_input_policy(config_dir)
+    _write_kis_quote_transport_config(config_dir)
+    raw = _valid_marketfeed_raw(journal_path=tmp_path / "unused.jsonl")
+    raw["intake_kind"] = "kis_quote"
+    del raw["journal_path"]
+    del raw["journal_pass_allowance_ms"]
+    _write_marketfeed_config_raw(config_dir, raw)
+
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        transport_kind=TransportKind.KIS_MOCK,
+    )
+    try:
+        assert runtime.marketfeed is not None
+        intake = runtime.marketfeed._intake  # noqa: SLF001
+        assert isinstance(intake, KisQuoteObservationIntake)
+        assert intake._monotonic is runtime.time_service._monotonic  # noqa: SLF001
+    finally:
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
 def test_kis_quote_intake_missing_config_file_refuses_at_wiring_level(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:

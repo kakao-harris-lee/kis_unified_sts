@@ -56,27 +56,21 @@ projection composes its ``delay_bounds`` from, deliberately imported rather than
 because a guard that reads a second copy of the numbers it guards is exactly the failure this
 repo has already hit (the Redis-TTL rule in the root ``CLAUDE.md``: the check and the thing
 checked must read one value). ``kis_quote`` is NOT subject to this guard and must leave
-``journal_pass_allowance_ms`` absent: this budget is an upstream journal collector's share,
-and that intake has no such collector. ⚠ **Exempt from the guard is not exempt from
-staleness, and since #809 it is the opposite.** That adapter stamps ``as_of_ms`` from
-:meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now`, which returns the
-snapshot CACHED by the last ``evaluate()`` — never a fresh reading. Before the 2026-09-27
-read-order change that cache was THIS pass's own reading, so ``source_age`` came out 0 and
-the phase term did not apply (fail-open: the adapter's real HTTP round trip was never
-measured at all). Now the pass evaluates AFTER the intake read (plan
-``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.4; issue #809), so the cached
-value the adapter stamps is the PREVIOUS pass's reading and ``source_age`` comes out ≈ the
-pass spacing — which **at a pass spacing of 1000 ms or more** is past the 800 ms budget on
-EVERY observation. So this intake is **STALE at every admissible spacing until #810**
-(fail-closed conservative over-estimate, pinned by
-``tests/transport/kis_quote/test_adapter.py``'s own transition test). ⚠ That 1000 ms floor
-is the 모의 quote rate limit (1.0 rps clean, probe P-13), **not a bound this loader
-enforces**: nothing here refuses a shorter ``poll_interval_ms`` on this intake, and at a
-shorter spacing ``source_age`` can fit the budget and read FRESH (the broker throttles
-instead). "Always STALE" is the arithmetic at the spacings the broker admits, not an
-invariant this code holds. Paper pins ``intake_kind: journal``, so nothing is deployed on
-that path; #810 is where the anchor is fixed — and the post-read evaluation is exactly the
-"reading taken after the response" that adapter's own docstring always wanted.
+``journal_pass_allowance_ms`` absent, and the REASON is specific: this budget is an upstream
+journal collector's share, and that intake has no such collector — its own age is the HTTP
+round trip of the request it just made, measured per pass rather than derived from the poll
+phase (``tos_runtime.transport.kis_quote.adapter``'s request anchor; issue #810).
+⚠ **Exempt from the guard is not exempt from staleness.** A slow round trip pushes
+``source_age`` past the same 800 ms conservative budget, and the observation reads STALE —
+what changed with #810 is that the number now reflects THIS request's latency instead of the
+pass spacing (before it, the adapter stamped the previous evaluation's cached reading, so
+every observation read STALE at the ≥ 1000 ms spacings the 모의 quote rate limit admits; and
+before #809, ``source_age`` came out 0 and the round trip was not measured at all). Pinned by
+``tests/transport/kis_quote/test_adapter.py``'s own delay-injection test. ⚠ The 1000 ms
+spacing floor is the 모의 quote rate limit (1.0 rps clean, probe P-13), **not a bound this
+loader enforces**: nothing here refuses a shorter ``poll_interval_ms`` on this intake — the
+broker throttles instead. Paper pins ``intake_kind: journal``, so nothing is deployed on that
+path either way.
 
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
@@ -603,7 +597,6 @@ def _build_intake(
     config_dir: Path,
     custody: CredentialCustody,
     monotonic: MonotonicSource,
-    time_service: TrustworthyTimeService,
     broker_scopes: BrokerScopesConfig,
     evidence_store: SqliteEvidenceStore,
     runtime_identity: RuntimeIdentity,
@@ -612,9 +605,12 @@ def _build_intake(
     """Build the ``ObservationIntake`` config.intake_kind selects (module docstring) — the ONE
     branch point between the two intake kinds; every other collaborator below is intake-kind-
     agnostic. ``custody``/``monotonic`` feed the shared KIS token lifecycle (custody: the SAME
-    ``kis_mock.*`` scopes the order transport uses; monotonic: its pacing clock, independent of
-    ``time_service`` — module docstring's "two clocks, two jobs" note, in
-    ``tos_runtime.transport.kis_quote.adapter``); ``broker_scopes`` resolves the host seal
+    ``kis_mock.*`` scopes the order transport uses), and ``monotonic`` ALSO supplies that
+    intake's request-anchor readings — which is why it must be the process's one
+    ``MonotonicSource``, the very object ``TrustworthyTimeService`` was built with, since the
+    scheduler maps those readings through that service (``tos_runtime.transport.kis_quote
+    .adapter``'s own "one clock, two jobs" note; #810). The kis_quote intake takes NO time
+    service: it reads no wall clock at all. ``broker_scopes`` resolves the host seal
     (:func:`_resolve_kis_instance_rest_bases`); ``runtime_identity`` attributes evidence.
     ``credential_sessions`` is the boot's KIS credential registry (C-2 decision (C)) — the
     intake takes the SAME ``kis_mock.*`` session the order transport holds (required — a
@@ -652,7 +648,6 @@ def _build_intake(
             token_reissue_min_interval_s=quote_config.token_reissue_min_interval_s,
         ),
         monotonic=monotonic,
-        time_service=time_service,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
     )
 
@@ -723,7 +718,6 @@ def build_tick_scheduler(
         config_dir=config_dir,
         custody=custody,
         monotonic=monotonic,
-        time_service=time_service,
         broker_scopes=broker_scopes,
         evidence_store=evidence_store,
         runtime_identity=runtime_identity,

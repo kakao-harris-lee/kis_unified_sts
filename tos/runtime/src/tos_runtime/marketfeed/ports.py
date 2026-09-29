@@ -56,9 +56,11 @@ from tos.marketfeed import AdmittedValue, RawPayloadPreimage
 
 __all__ = [
     "DurableSnapshotStore",
+    "MonotonicAnchoredObservation",
     "ObservationIntake",
     "RawObservation",
     "TickOutcome",
+    "anchor_observation",
 ]
 
 
@@ -102,6 +104,97 @@ class RawObservation:
     received_ms: int | None = None
 
 
+@dataclass(frozen=True)
+class MonotonicAnchoredObservation:
+    """One observation an intake has fetched but CANNOT yet stamp with a wall-clock time —
+    it carries the two MONOTONIC instants the fetch spanned instead (plan
+    ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.1; issue #810).
+
+    **Why a second shape rather than an ``as_of_ms`` the intake fills in.** A pull intake that
+    reads a wall clock inside its own ``poll`` can only read the one the LAST time evaluation
+    cached — :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` never takes
+    a fresh reading — and since #809 that evaluation runs AFTER the pass's intake read, so the
+    stamp would be the PREVIOUS pass's reading. Handing back the monotonic instants and letting
+    :class:`~tos_runtime.marketfeed.scheduler.TickScheduler` finalize them AFTER this pass's own
+    evaluation is what puts the request's own round trip inside ``source_age`` instead of the
+    pass spacing.
+
+    A monotonic reading is process-local, and the :class:`~tos_runtime.time.sources
+    .MonotonicSource` port guarantees comparability only WITHIN one instance — nothing in it
+    obliges two instances to share an origin. (Two
+    :class:`~tos_runtime.time.sources.ProcessMonotonicSource` objects happen to, since both
+    read the same ``time.monotonic_ns()``; that is an implementation coincidence, not the
+    contract.) So the contract an intake producing this shape works to is the SHARED instance:
+    it must be injected with the very object the time service was built with (pinned by
+    ``tests/compose/test_marketfeed_intake_kind_wiring.py``'s own same-object test). A source
+    with an origin of its own — a fake, or a future non-process source — would put every
+    mapping outside the domain.
+
+    Attributes:
+        instrument: The instrument this observation is about.
+        fields: ``(key, value)`` pairs of the raw payload — the same shape
+            :attr:`RawObservation.fields` carries, and carried through unchanged by
+            :func:`anchor_observation`.
+        source_id: The feed/source identity.
+        content_digest: The intake's own digest over ``fields`` — the identity component
+            :func:`anchor_observation` folds into ``raw_event_id``. Derived by the intake
+            because it is also what that intake's own dedup compares; never re-derived here
+            (a second derivation is a second opportunity to disagree).
+        requested_monotonic_ms: The monotonic reading taken IMMEDIATELY BEFORE the request went
+            out — what becomes ``as_of_ms``. The earliest instant at which the broker could
+            have observed the returned value, so it is the conservative (age-maximizing)
+            choice of the two.
+        received_monotonic_ms: The monotonic reading taken IMMEDIATELY AFTER the response was
+            received — what becomes ``received_ms``, the consumer-local receipt anchor.
+    """
+
+    instrument: str
+    fields: tuple[tuple[str, ScalarValue], ...]
+    source_id: str
+    content_digest: str
+    requested_monotonic_ms: int
+    received_monotonic_ms: int
+
+
+def anchor_observation(
+    pending: MonotonicAnchoredObservation, *, as_of_ms: int, received_ms: int
+) -> RawObservation:
+    """Finalize a :class:`MonotonicAnchoredObservation` into a :class:`RawObservation`.
+
+    Pure: no clock read, no I/O. The caller supplies both wall-clock values — the scheduler
+    maps them from the pending observation's own monotonic instants through
+    :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_at_monotonic` (plan
+    §2.3).
+
+    ``raw_event_id`` is derived HERE, in one place, as
+    ``{source_id}:{instrument}:{as_of_ms}:{content_digest}`` — **byte-identical to the format
+    the kis_quote adapter derived inline before #810** (``adapter.py:400-402`` at main
+    ``ac2efb0f``), pinned by ``tests/marketfeed/test_ports.py``'s own format test. Only the
+    derivation SITE moved: combining the anchor instant with the content digest is what keeps
+    two observations distinct when a byte-identical body reappears at a later instant, and what
+    keeps them distinct when two fetches land in the same millisecond.
+
+    Args:
+        pending: The unfinalized observation.
+        as_of_ms: The wall-clock time the request went out — the Validity-Window anchor.
+        received_ms: The wall-clock time the response arrived.
+
+    Returns:
+        The finalized :class:`RawObservation`.
+    """
+    return RawObservation(
+        raw_event_id=(
+            f"{pending.source_id}:{pending.instrument}:{as_of_ms}:"
+            f"{pending.content_digest}"
+        ),
+        instrument=pending.instrument,
+        as_of_ms=as_of_ms,
+        fields=pending.fields,
+        source_id=pending.source_id,
+        received_ms=received_ms,
+    )
+
+
 @runtime_checkable
 class ObservationIntake(Protocol):
     """The injected supplier of raw observations (plan §2 decision 4).
@@ -114,16 +207,29 @@ class ObservationIntake(Protocol):
 
     Returning an empty sequence is a first-class answer ("nothing new"), and the scheduler reports
     it as :attr:`TickOutcome.SKIPPED_NO_OBSERVATION` rather than manufacturing a tick.
+
+    **Two return shapes, one contract (plan 2026-09-28 §2.1; issue #810).** An intake that
+    already HOLDS an honest source event time returns :class:`RawObservation` — the journal
+    does, because its upstream collector stamped each line. A PULL intake that does not (a
+    quote GET whose body carries no event time) returns
+    :class:`MonotonicAnchoredObservation` instead, and the scheduler finalizes it after this
+    pass's own time evaluation. The alternative — letting such an intake stamp a wall-clock
+    time itself — can only ever reach the reading the LAST evaluation cached, which is a
+    different instant from the one this pass judges against.
     """
 
     def poll(
         self, *, instrument: str, after_as_of_ms: int | None
-    ) -> Sequence[RawObservation]:
+    ) -> Sequence[RawObservation | MonotonicAnchoredObservation]:
         """Return observations for ``instrument`` strictly newer than ``after_as_of_ms``.
 
         Args:
             instrument: The single instrument in scope.
             after_as_of_ms: The newest as-of already issued, or ``None`` when none has been.
+                A pull intake that cannot filter on it (KIS's quote TR has no "since"
+                parameter) may still READ it as this scheduler's own consumption signal: it
+                advances exactly when the previous pass's observation was durably consumed
+                (``transport.kis_quote.adapter``'s own deferred-digest note).
 
         Returns:
             The new observations, oldest first. Empty when there are none.
@@ -247,14 +353,34 @@ class TickOutcome(StrEnum):
     #: ``latest_as_of`` does not advance.
     #:
     #: ⚠ **Not consuming is all the scheduler can do; it cannot make an intake hand the same
-    #: observation back.** The next pass re-reads it exactly when ``poll`` is a pure function of
-    #: ``after_as_of_ms`` — :class:`ObservationIntake`'s own contract, and what
-    #: :class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does. An intake that
-    #: filters on anything else does not re-serve it:
-    #: ``transport.kis_quote.adapter.KisQuoteObservationIntake`` ignores ``after_as_of_ms`` and
-    #: dedups on content, committing its content digest inside the poll, so an unconsumed quote
-    #: is dropped until the PRICE changes (pinned by
-    #: ``tests/transport/kis_quote/test_adapter.py``'s own unconsumed-quote test; tracked in
-    #: #810). The re-read is a property of such an intake, not something this member promises.
+    #: observation back.** The next pass re-reads it exactly when an intake either filters
+    #: purely on ``after_as_of_ms`` — :class:`ObservationIntake`'s own contract, and what
+    #: :class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does — or treats
+    #: that argument as the consumption signal it is:
+    #: ``transport.kis_quote.adapter.KisQuoteObservationIntake`` dedups on content and holds
+    #: its content digest PENDING until ``after_as_of_ms`` advances, so an unconsumed quote is
+    #: re-emitted on the next pass (pinned by ``tests/transport/kis_quote/test_adapter.py``'s
+    #: own re-emission test). An intake that did neither would drop it, and the re-read is a
+    #: property of the intake either way, not something this member promises.
     SKIPPED_TIME_NOT_EVALUATED = "SKIPPED_TIME_NOT_EVALUATED"
+    #: The intake WAS read, the time evaluation DID succeed, the session was known OPEN, and
+    #: the pass still cannot place a :class:`MonotonicAnchoredObservation` on the wall clock:
+    #: the freshly evaluated snapshot is not ``TRUSTED``, or the fetch's monotonic instants
+    #: fall outside the cycle this evaluation can map (plan 2026-09-28 §2.2/§2.3; issue #810).
+    #:
+    #: ⚠ **The open session is part of the claim, not a coincidence of the call order** (PR
+    #: #812 review, MEDIUM). ``TickScheduler.tick_once`` applies the session gate BEFORE it
+    #: anchors, so a shut market is :attr:`SKIPPED_SESSION_CLOSED` even when the pending
+    #: observation would also have failed to map — which it routinely would, since a pacer that
+    #: is not due admits the pass without evaluating and leaves it holding an earlier cycle's
+    #: mapping. Reporting that pass here would contradict this member's own "the evaluation
+    #: DID succeed" reading for an operator.
+    #:
+    #: A DIFFERENT absence from :attr:`SKIPPED_TIME_NOT_EVALUATED`: the evaluation succeeded —
+    #: what is missing is a trusted reading to anchor THIS observation to, not the evaluation
+    #: itself. Different again from :attr:`SKIPPED_NO_OBSERVATION`: an observation exists and
+    #: was deliberately not consumed (no :meth:`DurableSnapshotStore.put`, so ``latest_as_of``
+    #: does not advance — which is also what tells the intake to re-emit it). Fabricating an
+    #: anchor instead would hand the kernel's freshness predicate a time nothing measured.
+    SKIPPED_TIME_UNANCHORED = "SKIPPED_TIME_UNANCHORED"
     REFUSED_POLICY = "REFUSED_POLICY"

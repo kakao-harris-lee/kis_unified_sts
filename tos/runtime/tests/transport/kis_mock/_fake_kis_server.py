@@ -33,6 +33,10 @@ class _Route:
     body: dict[str, Any] | None
     delay_s: float = 0.0
     reset: bool = False
+    #: Called on the server thread while this route is being served, after the request has
+    #: been recorded and before any response byte is written (see :meth:`FakeKisServer
+    #: .set_response`).
+    on_request: Callable[[], None] | None = None
 
 
 class FakeKisServer:
@@ -74,9 +78,31 @@ class FakeKisServer:
         body: dict[str, Any] | None,
         delay_s: float = 0.0,
         reset: bool = False,
+        on_request: Callable[[], None] | None = None,
     ) -> None:
+        """Script one route.
+
+        Args:
+            path: The FULL path (query string included) this route answers.
+            status: The HTTP status to return.
+            body: The JSON body, or ``None`` for an empty one.
+            delay_s: A REAL ``time.sleep`` before the response — a genuine wall-clock wait, so
+                it belongs only to tests about timeouts and connection behaviour.
+            reset: Abort the socket instead of answering.
+            on_request: Called on the server thread once the request has been recorded and
+                before any response byte is written. This is how a test injects a transport
+                delay it wants to MEASURE rather than wait out: the callback advances the
+                test's own scripted clocks by the delay, the client's "after" reading picks it
+                up through the response, and no real time passes (``tests/transport/kis_quote
+                /test_adapter.py``'s own deterministic FRESH/STALE pair). It must not raise —
+                an exception here surfaces as a broken connection, not as a test failure.
+        """
         self._routes[path] = _Route(
-            status=status, body=body, delay_s=delay_s, reset=reset
+            status=status,
+            body=body,
+            delay_s=delay_s,
+            reset=reset,
+            on_request=on_request,
         )
 
     def requests_for(self, path: str) -> list[RecordedRequest]:
@@ -138,6 +164,8 @@ class FakeKisServer:
                     self.send_response(404)
                     self.end_headers()
                     return
+                if route.on_request is not None:
+                    route.on_request()
                 if route.delay_s:
                     time.sleep(route.delay_s)
                 if route.reset:

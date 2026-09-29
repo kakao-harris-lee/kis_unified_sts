@@ -99,24 +99,20 @@ poll_interval_ms: null
 # there (and note `poll_interval_ms` doubles as that intake's HTTP request
 # spacing, where the 모의 quote rate limit applies).
 #
-# ⚠ Not budgeted is NOT the same as not stale. `kis_quote` stamps `as_of_ms`
-# from TrustworthyTimeService.wall_clock_now(), which returns the snapshot
-# cached by the last evaluate(), never a fresh reading — and since 2026-09-27
-# that evaluation happens AFTER the pass's intake read (issue #809, plan
-# docs/plans/2026-09-27-tos-freshness-read-order-plan.md §2.4). So the value it
-# stamps is the PREVIOUS pass's reading and `source_age` is ≈ the pass spacing. At
-# a pass spacing ≥ 1000 ms that exceeds the 800 ms budget, so every observation
-# from this intake reads STALE until issue #810 anchors `as_of` on the reading
-# taken after the response.
+# ⚠ Not budgeted is NOT the same as not stale. Since issue #810 that intake's
+# `as_of_ms` is the instant its HTTP request went out (stamped on the monotonic
+# clock, mapped onto the pass's own freshly evaluated reading by the scheduler),
+# so its `source_age` is that request's ROUND TRIP — measured per pass, not
+# derived from this spacing. A slow round trip still pushes it past the same
+# 800 ms conservative budget and reads STALE; what this key no longer does is
+# decide that outcome.
 #
-# ⚠ That 1000 ms floor is the 모의 quote rate limit (1.0 rps clean, probe P-13),
-# NOT something this config enforces — nothing refuses a deployment that writes a
-# shorter spacing here, and at a shorter one `source_age` can fit the budget and
-# read FRESH (the broker throttles instead). "Always STALE" is the arithmetic at
-# the admissible spacings, not an invariant the code holds.
+# ⚠ The 1000 ms spacing floor for `kis_quote` is the 모의 quote rate limit
+# (1.0 rps clean, probe P-13), NOT something this config enforces — nothing
+# refuses a deployment that writes a shorter spacing here; the broker throttles
+# instead.
 #
-# The transition was accepted deliberately (operator disposition 2026-09-27
-# §6.1-2); paper pins `intake_kind: journal`.
+# Paper pins `intake_kind: journal`.
 
 journal_pass_allowance_ms: null
 
