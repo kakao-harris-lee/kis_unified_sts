@@ -152,7 +152,15 @@ __all__ = [
 #: ``schema_ledger`` baseline. Bumped only when this store's table shape actually changes; see
 #: :mod:`tos_runtime.operations.schema_migrations` for the registered migration this version
 #: corresponds to.
-EVIDENCE_SCHEMA_VERSION = 1
+#:
+#: **v2 (evidence growth plan §2 A2,
+#: ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md``).** ``entries`` gained the
+#: :data:`_CREATE_KIND_SEQ_INDEX_SQL` covering index. A pre-existing v1 file must be brought
+#: up via ``tos_runtime.operations.schema_migrations.apply_migrations(path, "evidence")`` (the
+#: ``migrate`` CLI) BEFORE this code can open it again —
+#: :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current` refuses a non-fresh
+#: file whose stamped version disagrees: a boot refusal, never an auto-migrate.
+EVIDENCE_SCHEMA_VERSION = 2
 
 #: The genesis commitment every fresh chain folds from — matches
 #: :mod:`tos.evidence.chain`'s own (private) ``_CHAIN_GENESIS`` convention.
@@ -174,6 +182,33 @@ CREATE TABLE IF NOT EXISTS entries (
     key_generation INTEGER NOT NULL,
     appended_at_monotonic_ns INTEGER NOT NULL
 )
+"""
+
+#: Schema v2 (evidence growth plan §2 A2). Every historical read this runtime performs at
+#: boot/recovery is ``WHERE kind = ?`` / ``WHERE kind IN (...)``, optionally with ``AND seq >
+#: ?`` and always ordered by ``seq`` — 19 modules issue that shape (the plan's §7 reader
+#: table). Without this index each of them is a full table scan, so boot cost grows with TOTAL
+#: history even though every one of those readers wants a single kind; ``TIME_HEALTH_SNAPSHOT``
+#: alone is 77 % of the rows and 89 % of the bytes those scans read, and nothing in this
+#: runtime ever reads it back. ``(kind, seq)`` — in that order — makes the filter a range seek
+#: and the ``ORDER BY seq`` free within a kind.
+#:
+#: **This is an auxiliary structure, not a change of stored representation.** No row's bytes,
+#: ``entry_digest`` or ``chain_digest`` move, so the append-only triggers below and
+#: :meth:`SqliteEvidenceStore.verify` are untouched by it. Rollback is correspondingly total:
+#: ``DROP INDEX entries_kind_seq`` restores the v1 storage exactly (see
+#: :mod:`tos_runtime.operations.schema_migrations`'s own rollback note).
+#:
+#: **Created at genesis, and NEVER on a boot** (``__init__`` below guards it with
+#: ``was_fresh``). Unlike the ``CREATE TABLE``/``CREATE TRIGGER`` statements beside it,
+#: ``CREATE INDEX IF NOT EXISTS`` is not a no-op against a pre-existing file: running it
+#: unconditionally would build a full index into a v1 file that
+#: :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current` is about to refuse two
+#: statements later — a boot that writes and then refuses, against that module's own "부팅 시
+#: 자동 적용 0" — and would rebuild an index an operator had just dropped to roll v2 back. Both
+#: belong to ``migrate``, and only to ``migrate``.
+_CREATE_KIND_SEQ_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS entries_kind_seq ON entries (kind, seq)
 """
 
 _CREATE_NO_UPDATE_TRIGGER_SQL = """
@@ -418,6 +453,9 @@ class SqliteEvidenceStore:
         # `file_is_fresh` — a fresh file looks identical to an already-populated one otherwise).
         was_fresh = file_is_fresh(self._conn)
         self._conn.execute(_CREATE_ENTRIES_TABLE_SQL)
+        if was_fresh:
+            # Genesis ONLY — see `_CREATE_KIND_SEQ_INDEX_SQL`'s own "never on a boot".
+            self._conn.execute(_CREATE_KIND_SEQ_INDEX_SQL)
         self._conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
         self._conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
         _outbox.create_outbox_table(self._conn)

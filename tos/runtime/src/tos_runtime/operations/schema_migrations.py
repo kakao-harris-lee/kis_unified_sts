@@ -11,6 +11,17 @@ introduction". A future wave that actually changes a table's shape adds a SECOND
 ``reservations`` gains ``committed_vector_json`` — the first store in this module to move past
 baseline. It is the worked example for the pattern above: a NEW ``SchemaMigration`` appended,
 never an edit to the v1 entry's own statements/expected shape.
+``EVIDENCE_MIGRATIONS`` follows it (evidence growth plan §2 A2).
+
+**Rollback, per migration.** A migration's rollback is stated where the migration is, because
+it is not uniform. ``RCL`` v2 added a nullable column: sqlite has no ``DROP COLUMN`` on that
+shape, so rolling it back means restoring the durable set from a backup taken before the
+migration (``operations.backup_set``) — the reason that migration is one-way in practice.
+``EVIDENCE`` v2 is the opposite and the easy case: it adds only an INDEX, an auxiliary
+structure that stores no row content, so ``DROP INDEX entries_kind_seq`` (followed by
+``PRAGMA user_version = 1`` if the operator also intends to run v1-expecting code again) leaves
+every row's bytes, ``entry_digest`` and ``chain_digest`` exactly as they were, and
+``SqliteEvidenceStore.verify()`` unchanged either way. No backup restore is needed for it.
 
 **Rollout order (round #4 review LOW — first genuine v1->v2 bump, so this module carried no
 prior worked example of the deploy-time ordering it requires).**
@@ -153,6 +164,12 @@ _EVIDENCE_BASELINE_STATEMENTS: tuple[str, ...] = (
     """,
 )
 
+_EVIDENCE_V2_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE INDEX IF NOT EXISTS entries_kind_seq ON entries (kind, seq)
+    """,
+)
+
 EVIDENCE_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -178,6 +195,23 @@ EVIDENCE_MIGRATIONS: tuple[SchemaMigration, ...] = (
                 "delivered_at_monotonic_ns",
             ),
         },
+    ),
+    # Evidence growth plan §2 A2 (docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md):
+    # `entries` gains the `entries_kind_seq` covering index, mirroring
+    # `tos_runtime.evidence.store`'s own `_CREATE_KIND_SEQ_INDEX_SQL` (which a FRESH file gets
+    # at genesis — this migration is the pre-existing-file half). Like RCL's v2 above it only
+    # ever runs against an already-v1-ledgered store, so `expected_tables` is empty; and unlike
+    # every other migration in this module it changes NO column shape at all, which is exactly
+    # why it is safe: an index is an auxiliary structure, so no row's bytes, `entry_digest` or
+    # `chain_digest` move and `SqliteEvidenceStore.verify()` is unaffected.
+    SchemaMigration(
+        version=2,
+        description=(
+            "entries gains the entries_kind_seq (kind, seq) covering index — the 19 "
+            "boot/recovery readers' WHERE kind = ?/IN (...) ORDER BY seq shape (evidence "
+            "growth plan §2 A2)"
+        ),
+        statements=_EVIDENCE_V2_STATEMENTS,
     ),
 )
 
