@@ -186,8 +186,11 @@ CREATE TABLE IF NOT EXISTS entries (
 
 #: Schema v2 (evidence growth plan §2 A2). Every historical read this runtime performs at
 #: boot/recovery is ``WHERE kind = ?`` / ``WHERE kind IN (...)``, optionally with ``AND seq >
-#: ?`` and always ordered by ``seq`` — 19 modules issue that shape (the plan's §7 reader
-#: table). Without this index each of them is a full table scan, so boot cost grows with TOTAL
+#: ?`` and always ordered by ``seq``. ``git grep -l "FROM entries" -- tos/runtime/src`` matches
+#: 21 files, but TWO of those (``rcl/gates.py``, ``rcl/log.py``) query the RCL commit log's own,
+#: separate ``entries`` table — so 19 modules read THIS store, and 14 of the 19 are on the
+#: boot/recovery path (the plan's §7 reader table names each one). Without this index each of
+#: them is a full table scan, so boot cost grows with TOTAL
 #: history even though every one of those readers wants a single kind; ``TIME_HEALTH_SNAPSHOT``
 #: alone is 77 % of the rows and 89 % of the bytes those scans read, and nothing in this
 #: runtime ever reads it back. ``(kind, seq)`` — in that order — makes the filter a range seek

@@ -112,7 +112,7 @@ def test_a_reference_whose_entries_shape_drifted_is_refused(tmp_path: Path) -> N
     conn.commit()
     conn.close()
 
-    with pytest.raises(bench.BenchRefused, match="disagree with this tool's own copy"):
+    with pytest.raises(bench.BenchRefused, match="disagrees with this tool's own copy"):
         bench.profile_kinds(reference)
 
 
@@ -326,3 +326,218 @@ def test_main_reports_a_refusal_as_exit_one(
 ) -> None:
     assert bench.main(["profile", "--reference", str(tmp_path / "absent.sqlite3")]) == 1
     assert "no sqlite file at" in capsys.readouterr().err
+
+
+# -- review 2026-09-30 dispositions -------------------------------------------------------------
+
+
+class _NoFetchAllCursor:
+    """A cursor proxy that iterates normally but explodes on ``fetchall``."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def __iter__(self):
+        return iter(self._inner)
+
+    def fetchall(self):
+        raise AssertionError("fetchall() called — this module must stream")
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _NoFetchAllConnection:
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def execute(self, *args, **kwargs):
+        return _NoFetchAllCursor(self._inner.execute(*args, **kwargs))
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _NoFetchAllSqlite:
+    """Stands in for the module's own ``sqlite3`` so every cursor it opens refuses
+    ``fetchall``. ``sqlite3.Cursor`` is a C type and cannot be monkeypatched directly.
+    """
+
+    def __init__(self, real) -> None:
+        self._real = real
+
+    def connect(self, *args, **kwargs):
+        return _NoFetchAllConnection(self._real.connect(*args, **kwargs))
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_the_module_never_calls_fetchall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HIGH-2, structurally.
+
+    The memory bound this tool documents is only real if nothing materializes a result set. An
+    earlier revision claimed the bound while ``build_synthetic`` held a whole kind's rows in a
+    list, and its ``measure`` had already been killed at 16 GB RSS for exactly that. A docstring
+    cannot enforce it; this can — it goes red the moment any path reverts to ``fetchall``.
+    """
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    monkeypatch.setattr(bench, "sqlite3", _NoFetchAllSqlite(sqlite3))
+
+    bench.profile_kinds(reference)
+    db = tmp_path / "synth.sqlite3"
+    bench.build_synthetic(
+        reference,
+        db,
+        days=2,
+        session_hours=7.0,
+        reference_minutes=15.0,
+        boot_once_max_rows=1,
+        batch_rows=7,
+    )
+    bench.validate_shape_kinds(db)
+    bench.measure(db, repeats=1, explain=True)
+
+
+def test_the_duplicated_entries_ddl_still_matches_the_real_store(
+    tmp_path: Path,
+) -> None:
+    """MEDIUM-HIGH-3: the copy is checked against the source of truth, by READING it.
+
+    The firewall forbids ``tools/`` from importing ``tos_runtime`` (rule TOS-FW-R), so the DDL
+    is duplicated. Reading the real module as text is firewall-safe and closes the drift the
+    duplication otherwise invites: this goes red if ``_CREATE_ENTRIES_TABLE_SQL`` changes and
+    the copy does not.
+    """
+    del tmp_path
+    store_src = (
+        _REPO_ROOT / "tos" / "runtime" / "src" / "tos_runtime" / "evidence" / "store.py"
+    ).read_text()
+    marker = "_CREATE_ENTRIES_TABLE_SQL = "
+    start = store_src.index(marker) + len(marker)
+    literal = store_src[start:]
+    quote = literal[:3]
+    assert quote == '"""', f"unexpected literal form: {literal[:20]!r}"
+    real_ddl = literal[3 : literal.index('"""', 3)]
+
+    assert _normalized(real_ddl) == _normalized(bench._ENTRIES_TABLE_SQL)
+
+
+def _normalized(sql: str) -> str:
+    """Whitespace-insensitive SQL comparison — indentation differs between the two files, the
+    column list must not."""
+    return " ".join(sql.split())
+
+
+def test_the_entries_shape_copy_matches_what_the_real_store_creates(
+    tmp_path: Path,
+) -> None:
+    """The runtime half of the same guard: the ``(name, type, notnull, pk)`` tuple this tool
+    compares against must be what the DDL it carries actually produces."""
+    path = tmp_path / "shape.sqlite3"
+    conn = sqlite3.connect(str(path))
+    conn.execute(bench._ENTRIES_TABLE_SQL)
+    conn.commit()
+    try:
+        assert bench._entries_shape(conn) == bench._ENTRIES_SHAPE
+    finally:
+        conn.close()
+
+
+def test_a_reference_whose_column_type_changed_is_refused(tmp_path: Path) -> None:
+    """A name-only drift check passes this; the full ``table_info`` comparison does not
+    (review MEDIUM-HIGH-3). ``payload_json`` losing NOT NULL is the shape of change that would
+    quietly make the synthetic file a different thing from the runtime's own."""
+    reference = tmp_path / "loosened.sqlite3"
+    conn = sqlite3.connect(str(reference))
+    conn.execute(
+        bench._ENTRIES_TABLE_SQL.replace(
+            "payload_json TEXT NOT NULL", "payload_json TEXT"
+        )
+    )
+    conn.execute(
+        "INSERT INTO entries VALUES (1, NULL, 'K', 'K', NULL, 'p', 'd', 'c', 1, 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(bench.BenchRefused, match="disagrees with this tool's own copy"):
+        bench.profile_kinds(reference)
+
+
+def test_measure_refuses_when_the_absent_kind_is_not_absent(tmp_path: Path) -> None:
+    """MEDIUM-6. ``__absent`` is only the index's best case if the kind really is absent."""
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    db = tmp_path / "synth.sqlite3"
+    bench.build_synthetic(
+        reference,
+        db,
+        days=1,
+        session_hours=7.0,
+        reference_minutes=15.0,
+        boot_once_max_rows=1,
+        batch_rows=1000,
+    )
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "INSERT INTO entries VALUES (999999, NULL, 'REARM_APPROVED', 'REARM_APPROVED', "
+        "NULL, 'p', 'd', 'c', 1, 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(bench.BenchRefused, match="supposed to be ABSENT"):
+        bench.measure(db, repeats=1, explain=False)
+
+
+def test_measure_refuses_when_the_hot_kind_is_not_the_most_frequent(
+    tmp_path: Path,
+) -> None:
+    """MEDIUM-6, the other half. ``__hot`` is only the worst case it claims to bound if the
+    kind really is the dominant one."""
+    reference = tmp_path / "evidence.sqlite3"
+    # EVENT_CONSUMED outnumbers TIME_HEALTH_SNAPSHOT here — a distribution that would make the
+    # '__hot' shape measure something other than the worst case.
+    _write_reference(reference, hot_rows=2)
+    db = tmp_path / "synth.sqlite3"
+    bench.build_synthetic(
+        reference,
+        db,
+        days=1,
+        session_hours=7.0,
+        reference_minutes=15.0,
+        boot_once_max_rows=1,
+        batch_rows=1000,
+    )
+
+    with pytest.raises(bench.BenchRefused, match="most frequent kind"):
+        bench.measure(db, repeats=1, explain=False)
+
+
+def test_json_out_refuses_to_overwrite_a_previous_measurement(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """L6: a measurement run is evidence a plan record cites."""
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    db = tmp_path / "synth.sqlite3"
+    assert (
+        bench.main(
+            ["build", "--reference", str(reference), "--out", str(db), "--days", "1"]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    json_out = tmp_path / "measured.json"
+    argv = ["measure", "--db", str(db), "--repeats", "1", "--json-out", str(json_out)]
+
+    assert bench.main(argv) == 0
+    first = json_out.read_text()
+
+    assert bench.main(argv) == 1
+    assert "refusing to overwrite" in capsys.readouterr().err
+    assert json_out.read_text() == first

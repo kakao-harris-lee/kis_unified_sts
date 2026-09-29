@@ -34,9 +34,15 @@ firewall forbids anything outside ``tos/`` from importing ``tos`` or ``tos_runti
 carries its own copy of the ``entries`` DDL — the same "duplicate the literal, do not
 reach across the boundary" discipline
 ``tos_runtime/operations/schema_migrations.py`` already documents for its own baseline
-statements. ``build`` additionally re-reads the reference file's real ``CREATE TABLE``
-text from ``sqlite_master`` and refuses when it disagrees with the copy below, so the
-duplication cannot silently drift.
+statements. Two checks keep that copy from silently drifting:
+
+* at runtime, ``profile`` and ``build`` compare the reference file's FULL ``PRAGMA
+  table_info`` — name, declared type, ``notnull``, ``pk``, not just the column names —
+  against the copy below, and refuse on any disagreement;
+* in the suite, ``tests/tools/test_tos_evidence_scan_bench.py`` READS
+  ``tos/runtime/src/tos_runtime/evidence/store.py`` as text and asserts the real
+  ``_CREATE_ENTRIES_TABLE_SQL`` literal still matches this module's copy. Reading that
+  file is firewall-safe; importing it would not be.
 
 Paths, day counts, session length and repeat counts are all arguments — nothing about a
 particular host, run or threshold is written into this file.
@@ -60,6 +66,7 @@ __all__ = [
     "Measurement",
     "QueryShape",
     "build_synthetic",
+    "validate_shape_kinds",
     "main",
     "measure",
     "profile_kinds",
@@ -86,19 +93,32 @@ CREATE TABLE IF NOT EXISTS entries (
 )
 """
 
-#: The ``entries`` columns, in their on-disk order — used both for the copy ``SELECT`` and
-#: for the drift check against the reference file's real shape.
-_ENTRIES_COLUMNS: tuple[str, ...] = (
-    "seq",
-    "segment_id",
-    "kind",
-    "record_class",
-    "runtime_identity_json",
-    "payload_json",
-    "entry_digest",
-    "chain_digest",
-    "key_generation",
-    "appended_at_monotonic_ns",
+#: The ``entries`` shape as ``PRAGMA table_info`` reports it: ``(name, type, notnull, pk)`` per
+#: column, in on-disk order. Names alone are not enough — a reference whose ``payload_json`` had
+#: become nullable, or whose ``seq`` had stopped being the primary key, would pass a name-only
+#: check while making the synthetic file a different thing from what the runtime uses (review
+#: MEDIUM-HIGH-3). ``dflt_value`` is deliberately excluded: no column here declares one, and it
+#: is the one field a harmless future default would move.
+_ENTRIES_SHAPE: tuple[tuple[str, str, int, int], ...] = (
+    ("seq", "INTEGER", 0, 1),
+    ("segment_id", "TEXT", 0, 0),
+    ("kind", "TEXT", 1, 0),
+    ("record_class", "TEXT", 1, 0),
+    ("runtime_identity_json", "TEXT", 0, 0),
+    ("payload_json", "TEXT", 1, 0),
+    ("entry_digest", "TEXT", 1, 0),
+    ("chain_digest", "TEXT", 1, 0),
+    ("key_generation", "INTEGER", 1, 0),
+    ("appended_at_monotonic_ns", "INTEGER", 1, 0),
+)
+
+#: One reference kind's rows, in commit order — re-executed per synthetic repeat and streamed
+#: (review HIGH-2). Named here rather than inlined so the "no ``fetchall``" property is visible
+#: at the one place the query lives.
+_TEMPLATE_SQL = (
+    "SELECT segment_id, kind, record_class, runtime_identity_json, payload_json, "
+    "entry_digest, chain_digest, key_generation, appended_at_monotonic_ns "
+    "FROM entries WHERE kind = ? AND record_class = ? ORDER BY seq ASC"
 )
 
 #: The index A2 adds through the real ``migrate`` path. ``measure --with-index`` creates it
@@ -170,9 +190,16 @@ _WARM_KIND = "EVENT_CONSUMED"
 _ABSENT_KIND = "REARM_APPROVED"
 
 _SEND_KINDS = ("SEND_STARTED", "SEND_HANDED_OFF")
+#: The EXACT set the real callers exclude — ``compose/_safety_wiring.py``'s stall observer and
+#: ``compose/_operations_wiring.py`` both pass ``frozenset({"STM_ALERT"})``, one kind. An earlier
+#: revision paired it with an invented ``STALL_ALERT`` that does not exist anywhere in ``tos/``
+#: (review MEDIUM-6), which measured a two-parameter ``NOT IN`` no caller ever issues.
+_TIP_EXCLUDED_KINDS = ("STM_ALERT",)
 _RELEASE_KINDS = ("CAPACITY_RELEASE_INTENT", "CAPACITY_RELEASE_HELD")
 
-#: Every distinct shape the 19 evidence-reading runtime modules issue, plus the two
+#: Every distinct shape the 19 evidence-reading runtime modules issue (21 files match
+#: ``FROM entries`` under ``tos/runtime/src``; ``rcl/gates.py`` and ``rcl/log.py`` query the
+#: RCL commit log's own separate ``entries`` table, not this one), plus the two
 #: unfiltered full scans (``replay``/``iter_entry_meta``) kept as the control group: an
 #: index on ``kind`` cannot help those, and showing them unchanged is what proves the
 #: measured improvement elsewhere is the index and not a warmer cache.
@@ -213,7 +240,7 @@ QUERY_SHAPES: tuple[QueryShape, ...] = (
             "safety/rearm.py:682",
             "safety/ack.py:208",
             "compose/_operations_wiring.py:363",
-            "evidence/store.py:302",
+            "evidence/store.py:337",
             "posttrade/release_consumer.py:747",
             "engine/replay_transmit.py:94",
         ),
@@ -298,17 +325,17 @@ QUERY_SHAPES: tuple[QueryShape, ...] = (
         name="tip_excluding_kinds",
         sql=(
             "SELECT seq, chain_digest, key_generation FROM entries "
-            "WHERE kind NOT IN (?, ?) ORDER BY seq DESC LIMIT 1"
+            "WHERE kind NOT IN (?) ORDER BY seq DESC LIMIT 1"
         ),
-        params=("STM_ALERT", "STALL_ALERT"),
-        readers=("evidence/store.py:831",),
+        params=_TIP_EXCLUDED_KINDS,
+        readers=("evidence/store.py:869",),
         boot_path=True,
     ),
     QueryShape(
         name="tip_unfiltered",
         sql="SELECT seq, chain_digest FROM entries ORDER BY seq DESC LIMIT 1",
         params=(),
-        readers=("evidence/store.py:487", "evidence/store.py:797"),
+        readers=("evidence/store.py:525", "evidence/store.py:835"),
         boot_path=True,
     ),
     QueryShape(
@@ -318,7 +345,7 @@ QUERY_SHAPES: tuple[QueryShape, ...] = (
             "ORDER BY seq ASC"
         ),
         params=(),
-        readers=("evidence/store.py:739", "evidence/store.py:845"),
+        readers=("evidence/store.py:777", "evidence/store.py:883"),
         boot_path=False,
     ),
 )
@@ -344,25 +371,37 @@ def _connect_readonly(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 
 
-def _entries_columns(conn: sqlite3.Connection) -> tuple[str, ...]:
-    return tuple(str(row[1]) for row in conn.execute("PRAGMA table_info(entries)"))
+def _entries_shape(conn: sqlite3.Connection) -> tuple[tuple[str, str, int, int], ...]:
+    """``(name, type, notnull, pk)`` per column, in on-disk order — what the drift check compares.
+
+    ``PRAGMA table_info`` rows are ``(cid, name, type, notnull, dflt_value, pk)``.
+    """
+    return tuple(
+        (str(row[1]), str(row[2]), int(row[3]), int(row[5]))
+        for row in conn.execute("PRAGMA table_info(entries)")
+    )
 
 
 def profile_kinds(reference: Path) -> tuple[KindProfile, ...]:
     """The per-``kind`` distribution of a real evidence file (read-only)."""
     conn = _connect_readonly(reference)
     try:
-        columns = _entries_columns(conn)
-        if columns != _ENTRIES_COLUMNS:
+        shape = _entries_shape(conn)
+        if shape != _ENTRIES_SHAPE:
             raise BenchRefused(
-                f"{reference}: entries columns {columns!r} disagree with this tool's own "
-                f"copy {_ENTRIES_COLUMNS!r} — refusing rather than building a synthetic "
-                "file in a shape the runtime does not use"
+                f"{reference}: entries shape {shape!r} disagrees with this tool's own copy "
+                f"{_ENTRIES_SHAPE!r} — refusing rather than building a synthetic file in a "
+                "shape the runtime does not use"
             )
-        rows = conn.execute(
-            "SELECT kind, record_class, COUNT(*), SUM(LENGTH(payload_json)) "
-            "FROM entries GROUP BY kind, record_class ORDER BY COUNT(*) DESC, kind ASC"
-        ).fetchall()
+        # Iterated, not `fetchall()`-ed — this module calls `fetchall` nowhere at all, which
+        # is what lets `test_the_module_never_calls_fetchall` state the bound absolutely
+        # instead of carving out exceptions the next edit could widen (review HIGH-2).
+        rows = list(
+            conn.execute(
+                "SELECT kind, record_class, COUNT(*), SUM(LENGTH(payload_json)) "
+                "FROM entries GROUP BY kind, record_class ORDER BY COUNT(*) DESC, kind ASC"
+            )
+        )
     finally:
         conn.close()
     if not rows:
@@ -400,12 +439,16 @@ def build_synthetic(
 
     ⚠ The resulting chain is NOT valid — see the module docstring.
 
-    **Memory is bounded by** ``batch_rows``, **not by** ``days``. The only things held at once
-    are one kind's reference rows (a few MB — the reference window is minutes, not days) and one
-    ``batch_rows``-sized insert batch, which is committed and cleared before the next is built.
-    A 365-day build therefore costs the same RSS as a 1-day one. This is not a micro-
-    optimization: an earlier revision of this tool's ``measure`` reached 16 GB RSS on a 90-day
-    file and was SIGTERM'd by the host's earlyoom, taking an unrelated build down with it.
+    **Memory is bounded by** ``batch_rows``, **not by** ``days`` **or by the reference file's
+    size.** Nothing is materialized: the reference kind is RE-QUERIED per repeat and streamed
+    straight into the ``batch_rows``-sized insert batch, which is committed and cleared before
+    the next is built. A 365-day build costs the same RSS as a 1-day one, against any reference.
+
+    This is not a micro-optimization, and "the reference window is only minutes long" is not a
+    bound — it is an assumption about the caller's input. An earlier revision of this tool's
+    ``measure`` reached 16 GB RSS on a 90-day file and was SIGTERM'd by the host's earlyoom,
+    taking an unrelated build down with it; the same revision's ``build`` held a whole kind's
+    rows in a list while claiming this bound (review HIGH-2).
 
     Raises:
         BenchRefused: ``out`` already exists, or the reference shape disagrees with this
@@ -442,16 +485,13 @@ def build_synthetic(
                 if profile.rows <= boot_once_max_rows
                 else recurring_repeats
             )
-            template = source.execute(
-                "SELECT segment_id, kind, record_class, runtime_identity_json, "
-                "payload_json, entry_digest, chain_digest, key_generation, "
-                "appended_at_monotonic_ns FROM entries WHERE kind = ? AND record_class = ? "
-                "ORDER BY seq ASC",
-                (profile.kind, profile.record_class),
-            ).fetchall()
             batch: list[tuple[object, ...]] = []
             for _ in range(repeats):
-                for row in template:
+                # Re-executed per repeat, and ITERATED — never `fetchall()`. The cursor is the
+                # only thing standing between this loop and holding a whole kind in memory.
+                for row in source.execute(
+                    _TEMPLATE_SQL, (profile.kind, profile.record_class)
+                ):
                     batch.append((next_seq, *row))
                     next_seq += 1
                     if len(batch) >= batch_rows:
@@ -476,6 +516,45 @@ def build_synthetic(
         recurring_repeats=recurring_repeats,
         boot_repeats=boot_repeats,
     )
+
+
+def validate_shape_kinds(db_path: Path) -> None:
+    """Refuse to report timings whose parameters do not mean what :data:`QUERY_SHAPES` claims.
+
+    The three selectivity regimes are the whole point of the table: ``__absent`` is only the
+    index's best case if the kind really is absent, and ``__hot`` is only the worst case if the
+    kind really is the dominant one. Both were hardcoded strings that nothing checked against
+    the file being measured (review MEDIUM-6), so a reference whose distribution had shifted —
+    or a typo — would have produced a table that looked fine and meant something else.
+
+    Raises:
+        BenchRefused: The absent kind is present, or the hot kind is not the most frequent.
+    """
+    conn = _connect_readonly(db_path)
+    try:
+        rows = list(
+            conn.execute(
+                "SELECT kind, COUNT(*) FROM entries GROUP BY kind ORDER BY COUNT(*) DESC"
+            )
+        )
+    finally:
+        conn.close()
+    if not rows:
+        raise BenchRefused(f"{db_path}: entries is empty — nothing to measure")
+    counts = {str(kind): int(count) for kind, count in rows}
+    if counts.get(_ABSENT_KIND):
+        raise BenchRefused(
+            f"{db_path}: {_ABSENT_KIND!r} is supposed to be ABSENT (it is the index's best "
+            f"case) but the file holds {counts[_ABSENT_KIND]} row(s) — the shape named "
+            "'__absent' would not measure what it claims"
+        )
+    most_frequent = str(rows[0][0])
+    if most_frequent != _HOT_KIND:
+        raise BenchRefused(
+            f"{db_path}: the most frequent kind is {most_frequent!r} "
+            f"({rows[0][1]} rows), not {_HOT_KIND!r} — the shape named '__hot' would not "
+            "measure the worst case it claims to bound"
+        )
 
 
 def measure(
@@ -506,6 +585,7 @@ def measure(
         raise BenchRefused(f"--repeats must be >= 1, got {repeats}")
     if not db_path.is_file():
         raise BenchRefused(f"no sqlite file at {db_path}")
+    validate_shape_kinds(db_path)
     results: list[Measurement] = []
     for shape in shapes:
         timings: list[float] = []
@@ -651,6 +731,14 @@ def main(argv: list[str] | None = None) -> int:
         measurements = measure(args.db, repeats=args.repeats, explain=args.explain)
         _print_measurements(measurements)
         if args.json_out is not None:
+            # Never overwrite: a measurement run is evidence a plan record cites, and silently
+            # replacing an earlier run's numbers with a later run's is exactly the drift the
+            # before/after table exists to make visible (review L6).
+            if args.json_out.exists():
+                raise BenchRefused(
+                    f"{args.json_out} already exists — refusing to overwrite a previous "
+                    "measurement"
+                )
             args.json_out.write_text(
                 json.dumps([m.__dict__ for m in measurements], indent=2)
             )
