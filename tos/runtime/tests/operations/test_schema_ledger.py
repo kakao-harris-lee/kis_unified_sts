@@ -17,12 +17,14 @@ from tos_runtime.engine.inbox import INBOX_SCHEMA_VERSION, SqliteEventInbox
 from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION, SqliteEvidenceStore
 from tos_runtime.marketfeed.store import MARKETFEED_SCHEMA_VERSION, SqliteSnapshotStore
 from tos_runtime.operations.schema_ledger import (
+    SCHEMA_LEDGER_TABLE_SQL,
     SchemaVersionRefused,
     compute_schema_shape_digest,
     ensure_schema_current,
     file_is_fresh,
 )
 from tos_runtime.operations.schema_migrations import (
+    EVIDENCE_MIGRATIONS,
     MARKETFEED_MIGRATIONS,
     RCL_MIGRATIONS,
     SchemaMigrationRefused,
@@ -231,8 +233,12 @@ def test_apply_migrations_brings_a_pre_ledger_file_to_baseline(tmp_path: Path) -
 
     assert schema_version(path) == EVIDENCE_SCHEMA_VERSION
     conn = sqlite3.connect(str(path))
-    rows = conn.execute("SELECT version, applied_by FROM schema_ledger").fetchall()
-    assert rows == [(EVIDENCE_SCHEMA_VERSION, "MIGRATE")]
+    rows = conn.execute(
+        "SELECT version, applied_by FROM schema_ledger ORDER BY version ASC"
+    ).fetchall()
+    # Every registered migration, in order — the evidence store moved past baseline when the
+    # growth plan's §2 A2 index landed, so a pre-ledger file climbs the whole ladder in one run.
+    assert rows == [(migration.version, "MIGRATE") for migration in EVIDENCE_MIGRATIONS]
     conn.close()
 
     # Migrated file now boots cleanly.
@@ -431,3 +437,453 @@ def test_rcl_v1_data_dir_promotes_to_v2_preserving_existing_rows(
     finally:
         rcl.close()
         evidence.close()
+
+
+# -- evidence v1 -> v2 promotion (evidence growth plan §2 A2: entries_kind_seq index) ---------
+#
+# The measurement this migration answers to is in that plan's §7: every boot/recovery reader
+# issues `WHERE kind = ?`/`WHERE kind IN (...)` over `entries`, and without an index each one
+# is a full table scan whose cost grows with TOTAL history rather than with the kind asked for.
+# The tests below pin the three properties that make the migration safe to run against a real
+# paper store: the index really lands, no row's content moves, and the chain still verifies.
+
+_INDEX_NAME = "entries_kind_seq"
+
+#: Two real reader shapes, verbatim from `tos_runtime.engine.replay` (:194) and
+#: `tos_runtime.recon.evidence_reader` (:150) — `EXPLAIN QUERY PLAN` over these is what proves
+#: the index is actually reachable by the queries it was added for, rather than merely present.
+_READER_SHAPES: tuple[tuple[str, tuple[object, ...]], ...] = (
+    ("SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC", ("ALPHA",)),
+    (
+        "SELECT payload_json FROM entries WHERE kind IN (?, ?) ORDER BY seq ASC",
+        ("ALPHA", "BETA"),
+    ),
+    ("SELECT COUNT(*) FROM entries WHERE kind = ?", ("ABSENT",)),
+)
+
+
+def _index_names(conn: sqlite3.Connection) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'entries'"
+        )
+    }
+
+
+def _entry_rows(conn: sqlite3.Connection) -> list[tuple[object, ...]]:
+    """Every column of every row, in seq order — the "did any byte move?" fixture."""
+    return conn.execute(
+        "SELECT seq, segment_id, kind, record_class, runtime_identity_json, payload_json, "
+        "entry_digest, chain_digest, key_generation, appended_at_monotonic_ns "
+        "FROM entries ORDER BY seq ASC"
+    ).fetchall()
+
+
+_SEEDED_ROWS = 4
+
+
+def _seed_evidence(path: Path) -> None:
+    """Append a few real, chained entries through the real store, then close it."""
+    store = SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+    try:
+        for index in range(_SEEDED_ROWS):
+            store.append(
+                {"n": index, "note": "seeded"},
+                kind="ALPHA" if index % 2 == 0 else "BETA",
+                record_class="ALPHA" if index % 2 == 0 else "BETA",
+            )
+    finally:
+        store.close()
+
+
+def _build_v1_evidence_file(tmp_path: Path, path: Path) -> None:
+    """Write the file a v1 deployment would have left behind, with a REAL chain in it.
+
+    Built from ``EVIDENCE_MIGRATIONS[0]``'s own registered baseline statements — never this
+    test's ad hoc DDL, the same discipline
+    :func:`test_rcl_v1_data_dir_promotes_to_v2_preserving_existing_rows` follows. The rows are
+    copied verbatim out of a throwaway store the CURRENT code seeded, so their
+    ``entry_digest``/``chain_digest`` are genuine and the chain folds from genesis exactly as a
+    v1 store's own would have.
+
+    A v2 file cannot simply be demoted instead: its ``schema_ledger`` already holds the
+    ``(2, CREATED)`` genesis row, ``version`` is that table's PRIMARY KEY, and the table is
+    append-only by trigger — so ``apply_migrations`` would hit an ``IntegrityError`` inserting
+    its own v2 row, which is an artefact of the demotion and not a fact about the migration.
+    """
+    donor = tmp_path / "donor.sqlite3"
+    _seed_evidence(donor)
+    donor_conn = sqlite3.connect(str(donor))
+    try:
+        rows = _entry_rows(donor_conn)
+    finally:
+        donor_conn.close()
+
+    conn = sqlite3.connect(str(path))
+    try:
+        for statement in EVIDENCE_MIGRATIONS[0].statements:
+            conn.execute(statement)
+        conn.execute(SCHEMA_LEDGER_TABLE_SQL)
+        conn.execute(
+            "INSERT INTO schema_ledger "
+            "(version, applied_at_monotonic_ns, migration_digest, applied_by) "
+            "VALUES (?, ?, ?, ?)",
+            (1, 0, EVIDENCE_MIGRATIONS[0].statements_digest, "CREATED"),
+        )
+        conn.executemany(
+            "INSERT INTO entries (seq, segment_id, kind, record_class, "
+            "runtime_identity_json, payload_json, entry_digest, chain_digest, "
+            "key_generation, appended_at_monotonic_ns) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_evidence_v2_is_the_registered_head_migration() -> None:
+    """The same lockstep pin marketfeed/RCL already carry: the store's own constant and the
+    migration registry's head are two hand-maintained integers in two files, and a bump to one
+    alone is a permanent deadlock (`migrate` no-ops, boot keeps refusing)."""
+    assert EVIDENCE_MIGRATIONS[-1].version == EVIDENCE_SCHEMA_VERSION == 2
+
+
+def test_a_fresh_evidence_file_gets_the_kind_index_at_genesis(tmp_path: Path) -> None:
+    path = tmp_path / "evidence.sqlite3"
+    store = SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+    try:
+        assert _INDEX_NAME in _index_names(store.connection)
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        store.close()
+
+
+def test_a_v1_evidence_file_refuses_boot_and_names_migrate(tmp_path: Path) -> None:
+    """The operator-visible half of the rollout: a v1 file does not silently boot slow, and
+    does not silently self-migrate — it refuses, pointing at the ``migrate`` CLI."""
+    path = tmp_path / "evidence.sqlite3"
+    _build_v1_evidence_file(tmp_path, path)
+
+    with pytest.raises(SchemaVersionRefused, match="BEHIND"):
+        SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+
+
+def test_a_refused_v1_boot_does_not_build_the_index(tmp_path: Path) -> None:
+    """Boot is a check, never a migration (`operations.schema_ledger`'s own contract).
+
+    Without the ``was_fresh`` guard in ``SqliteEvidenceStore.__init__`` this is exactly what
+    would go red: ``CREATE INDEX IF NOT EXISTS`` is NOT the no-op that the ``CREATE TABLE``/
+    ``CREATE TRIGGER`` statements beside it are, so a refused boot would still have written a
+    full index into the file first — and would rebuild one an operator had just dropped to roll
+    the migration back.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _build_v1_evidence_file(tmp_path, path)
+
+    with pytest.raises(SchemaVersionRefused):
+        SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME not in _index_names(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_evidence_v1_promotes_to_v2_without_moving_a_single_row_byte(
+    tmp_path: Path,
+) -> None:
+    """The migration's whole safety claim, asserted rather than argued: an index is an
+    auxiliary structure, so every row's content, ``entry_digest`` and ``chain_digest`` are
+    identical before and after, and the chain still verifies under the same key."""
+    path = tmp_path / "evidence.sqlite3"
+    _build_v1_evidence_file(tmp_path, path)
+    assert schema_version(path) == 1
+
+    conn = sqlite3.connect(str(path))
+    try:
+        before = _entry_rows(conn)
+        assert _INDEX_NAME not in _index_names(conn)
+    finally:
+        conn.close()
+    assert len(before) == _SEEDED_ROWS
+
+    apply_migrations(path, "evidence")
+
+    assert schema_version(path) == EVIDENCE_SCHEMA_VERSION
+    conn = sqlite3.connect(str(path))
+    try:
+        after = _entry_rows(conn)
+        assert _INDEX_NAME in _index_names(conn)
+        ledger = conn.execute(
+            "SELECT version, applied_by FROM schema_ledger ORDER BY version ASC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert after == before
+    # The file was genesis-stamped at v2 and demoted by hand, so the only ledger row this
+    # migration adds is the v2 MIGRATE one — the v1 row never existed on this file.
+    assert (2, "MIGRATE") in ledger
+
+    # The promoted file boots through the real store, and its chain still verifies.
+    provider = FixedKeyProvider()
+    reopened = SqliteEvidenceStore(path, key_provider=provider)
+    try:
+        key_generation, key_bytes = provider.current()
+        assert reopened.verify({key_generation: key_bytes}) is True
+        detailed = reopened.verify_detailed({key_generation: key_bytes})
+        assert (detailed.ok, detailed.verified_links) == (True, _SEEDED_ROWS)
+    finally:
+        reopened.close()
+
+
+def test_apply_migrations_brings_a_pre_ledger_evidence_file_all_the_way_to_v2(
+    tmp_path: Path,
+) -> None:
+    """A file predating the schema ledger entirely (no ``schema_ledger`` table,
+    ``user_version = 0``) runs BOTH registered migrations in one ``migrate``, ending indexed
+    and bootable — the path a real pre-W4 paper data dir takes."""
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(f"DROP INDEX IF EXISTS {_INDEX_NAME}")
+        conn.execute("DROP TABLE schema_ledger")
+        conn.execute("PRAGMA user_version = 0")
+        conn.commit()
+    finally:
+        conn.close()
+
+    apply_migrations(path, "evidence")
+
+    assert schema_version(path) == EVIDENCE_SCHEMA_VERSION
+    conn = sqlite3.connect(str(path))
+    try:
+        rows = conn.execute(
+            "SELECT version, applied_by FROM schema_ledger ORDER BY version ASC"
+        ).fetchall()
+        assert _INDEX_NAME in _index_names(conn)
+    finally:
+        conn.close()
+    assert rows == [(1, "MIGRATE"), (2, "MIGRATE")]
+
+    reopened = SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+    reopened.close()
+
+
+def test_reader_query_shapes_scan_before_the_index_and_seek_after(
+    tmp_path: Path,
+) -> None:
+    """``EXPLAIN QUERY PLAN`` over the real reader shapes, on the SAME file before and after.
+
+    The "before" half is what makes this test live: an index that exists but that the readers'
+    own query shape cannot use would still satisfy a bare "the index is present" assertion.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _build_v1_evidence_file(tmp_path, path)
+
+    conn = sqlite3.connect(str(path))
+    try:
+        for sql, params in _READER_SHAPES:
+            plan = " ".join(
+                str(part)
+                for row in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params)
+                for part in row
+            )
+            assert _INDEX_NAME not in plan, sql
+            assert "SCAN entries" in plan, sql
+    finally:
+        conn.close()
+
+    apply_migrations(path, "evidence")
+
+    conn = sqlite3.connect(str(path))
+    try:
+        for sql, params in _READER_SHAPES:
+            plan = " ".join(
+                str(part)
+                for row in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params)
+                for part in row
+            )
+            assert _INDEX_NAME in plan, sql
+            assert "SCAN entries" not in plan, sql
+    finally:
+        conn.close()
+
+
+def test_appends_still_work_and_stay_chained_after_the_index_lands(
+    tmp_path: Path,
+) -> None:
+    """The write side of the migration's cost: an index is maintained on every insert. The
+    append path must still commit, still chain, and still be readable THROUGH the new index.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+
+    provider = FixedKeyProvider()
+    store = SqliteEvidenceStore(path, key_provider=provider)
+    try:
+        receipt = store.append(
+            {"n": 99}, kind="ALPHA", record_class="ALPHA", segment_id=None
+        )
+        assert receipt.seq == _SEEDED_ROWS
+        key_generation, key_bytes = provider.current()
+        assert store.verify({key_generation: key_bytes}) is True
+        rows = store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
+            ("ALPHA",),
+        ).fetchall()
+        assert len(rows) == 3
+    finally:
+        store.close()
+
+
+# -- HIGH-1 (review 2026-09-30): the documented rollback must be reversible ---------------------
+#
+# The runbook (docs/runbooks/tos-paper-boot.md §4-A) tells an operator how to roll v2 back. Both
+# tests below were RED before the `apply_migrations` fix: (1) the ledger's surviving v2 row made
+# a re-`migrate` abort with `IntegrityError UNIQUE constraint failed: schema_ledger.version`,
+# stranding the file at v1 with no index — refused by v2 code and unreachable by `migrate`;
+# (2) an index dropped while `user_version` stayed at 2 was invisible to every check
+# (`compute_schema_shape_digest` reads `PRAGMA table_info`, which does not see indexes) and
+# `migrate` no-op'd, so nothing could rebuild it.
+
+#: The rollback the runbook prints, verbatim. Kept as literal SQL, split exactly as an operator
+#: would paste it, so this test fails if the runbook and the code ever disagree about the
+#: procedure rather than merely about its wording.
+_RUNBOOK_ROLLBACK_SQL: tuple[str, ...] = (
+    "DROP INDEX IF EXISTS entries_kind_seq",
+    "PRAGMA user_version = 1",
+)
+
+
+def _run_rollback(path: Path, statements: tuple[str, ...]) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        for statement in statements:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_the_runbook_rollback_can_be_rolled_forward_again(tmp_path: Path) -> None:
+    """The whole point of documenting a rollback: it has to be reversible."""
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    _run_rollback(path, _RUNBOOK_ROLLBACK_SQL)
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME not in _index_names(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        # The v2 ledger row SURVIVES the rollback — schema_ledger is append-only and `version`
+        # is its PRIMARY KEY, which is exactly what used to make the roll-forward abort.
+        assert (2,) in conn.execute("SELECT version FROM schema_ledger").fetchall()
+    finally:
+        conn.close()
+
+    outcome = apply_migrations(path, "evidence")
+
+    assert outcome.applied == (2,)
+    # Applied but NOT re-ledgered: the row was already there, and an append-only ledger records
+    # "first applied here", not a run count.
+    assert outcome.ledgered == ()
+    assert schema_version(path) == EVIDENCE_SCHEMA_VERSION
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME in _index_names(conn)
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM schema_ledger WHERE version = 2"
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        conn.close()
+
+    # And the rolled-forward file boots and still verifies.
+    provider = FixedKeyProvider()
+    store = SqliteEvidenceStore(path, key_provider=provider)
+    try:
+        key_generation, key_bytes = provider.current()
+        assert store.verify({key_generation: key_bytes}) is True
+    finally:
+        store.close()
+
+
+def test_migrate_rebuilds_an_index_dropped_at_the_current_version(
+    tmp_path: Path,
+) -> None:
+    """The half-rollback: index gone, ``user_version`` still 2.
+
+    Nothing refuses this state — v2 code boots and silently runs every by-kind read as a full
+    scan — so ``migrate`` has to be able to notice and repair it. Before the repair pass it
+    could not: its loop skips every version ``<= current_version``.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    _run_rollback(path, ("DROP INDEX entries_kind_seq",))
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert _INDEX_NAME not in _index_names(conn)
+    finally:
+        conn.close()
+    # The state really is undetectable by the boot check — this is why the repair exists.
+    SqliteEvidenceStore(path, key_provider=FixedKeyProvider()).close()
+
+    outcome = apply_migrations(path, "evidence")
+
+    assert outcome.applied == ()
+    assert outcome.repaired == (_INDEX_NAME,)
+    assert outcome.changed is True
+    conn = sqlite3.connect(str(path))
+    try:
+        assert _INDEX_NAME in _index_names(conn)
+        # No second ledger row was invented for a repair — it is not a migration.
+        assert conn.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_migrate_on_a_healthy_file_reports_no_change(tmp_path: Path) -> None:
+    """The repair pass must be a no-op on a healthy file, or every `migrate` would look like it
+    had found damage."""
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+
+    outcome = apply_migrations(path, "evidence")
+
+    assert (outcome.applied, outcome.repaired, outcome.changed) == ((), (), False)
+    assert outcome.from_version == outcome.to_version == EVIDENCE_SCHEMA_VERSION
+
+
+def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
+    tmp_path: Path,
+) -> None:
+    """RCL v2 is a bare ``ALTER TABLE ... ADD COLUMN``, which raises "duplicate column name" on a
+    second run — so it declares NO ``repair_statements`` and the repair pass must leave it alone.
+
+    This is the test that keeps the repair pass from being generalized into "re-run the head
+    migration", which would break the moment a store's head migration changes column shape.
+    """
+    assert RCL_MIGRATIONS[-1].repair_statements == ()
+    evidence = SqliteEvidenceStore(
+        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
+    )
+    rcl = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence)
+    rcl.close()
+    evidence.close()
+
+    first = apply_migrations(tmp_path / "rcl.sqlite3", "rcl")
+    second = apply_migrations(tmp_path / "rcl.sqlite3", "rcl")
+
+    assert first.changed is False
+    assert second.changed is False

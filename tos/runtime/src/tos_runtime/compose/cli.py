@@ -153,6 +153,11 @@ from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityRefused, SqliteEvidenceStore
 from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
+from tos_runtime.operations.backup_archive import (
+    DEFAULT_XZ_PRESET,
+    BackupArchiveRefused,
+    archive_backup_set,
+)
 from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
 from tos_runtime.operations.dependency_admission import (
     observe_runtime_artifact,
@@ -163,7 +168,11 @@ from tos_runtime.operations.key_rotation import (
     RotationOutcome,
     rotate_evidence_key,
 )
-from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS, apply_migrations
+from tos_runtime.operations.schema_migrations import (
+    STORE_MIGRATIONS,
+    MigrationOutcome,
+    apply_migrations,
+)
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.safety.ack import acknowledge_alert
 from tos_runtime.time.config import load_time_config
@@ -232,12 +241,23 @@ class Args:
 
 @dataclass(frozen=True)
 class BackupSetArgs:
-    """``backup-set`` subcommand args."""
+    """``backup-set`` subcommand args.
+
+    ``archive_dir`` is the opt-in compressed cold copy (evidence growth plan §2 A3): omitted,
+    this subcommand behaves exactly as before. Given, the snapshot is additionally compressed
+    to ``archive_dir`` and read back — decompress, digest every member against the manifest,
+    re-verify the evidence chain — which needs ``custody_root`` for the chain keys and
+    ``verify_dir`` as the scratch directory to read back into.
+    """
 
     data_dir: Path
     dest: Path
     generation: int
     readiness_verdict: str | None = None
+    archive_dir: Path | None = None
+    verify_dir: Path | None = None
+    custody_root: Path | None = None
+    xz_preset: int = DEFAULT_XZ_PRESET
 
 
 @dataclass(frozen=True)
@@ -412,6 +432,18 @@ def build_parser() -> argparse.ArgumentParser:
     backup_parser.add_argument("--dest", required=True, type=Path)
     backup_parser.add_argument("--generation", required=True, type=int)
     backup_parser.add_argument("--readiness-verdict", default=None, type=str)
+    backup_parser.add_argument(
+        "--archive-dir",
+        default=None,
+        type=Path,
+        help=(
+            "Opt-in (evidence growth plan §2 A3): also write gen{N}.set.tar.xz here and "
+            "verify it by reading it back. Requires --verify-dir and --custody-root."
+        ),
+    )
+    backup_parser.add_argument("--verify-dir", default=None, type=Path)
+    backup_parser.add_argument("--custody-root", default=None, type=Path)
+    backup_parser.add_argument("--xz-preset", default=DEFAULT_XZ_PRESET, type=int)
 
     restore_parser = subparsers.add_parser(
         "restore-drill",
@@ -564,6 +596,10 @@ def parse_args(
             dest=namespace.dest,
             generation=namespace.generation,
             readiness_verdict=namespace.readiness_verdict,
+            archive_dir=namespace.archive_dir,
+            verify_dir=namespace.verify_dir,
+            custody_root=namespace.custody_root,
+            xz_preset=namespace.xz_preset,
         )
     if command == "restore-drill":
         return RestoreDrillArgs(
@@ -782,6 +818,84 @@ def _dispatch_ack_alert(args: AckAlertArgs) -> int:
     return 0 if outcome.acknowledged else 1
 
 
+def _migrate_report(outcome: MigrationOutcome) -> str:
+    """One operator-facing line naming what ``migrate`` actually did.
+
+    "is current" used to be printed for three materially different outcomes — nothing to do,
+    versions applied, and an index rebuilt — which made a repair indistinguishable from a no-op
+    in the one place an operator looks (review L3).
+    """
+    if outcome.applied:
+        parts = [
+            f"applied v{outcome.from_version} -> v{outcome.to_version} "
+            f"({', '.join(f'v{v}' for v in outcome.applied)})"
+        ]
+        unrecorded = tuple(v for v in outcome.applied if v not in outcome.ledgered)
+        if unrecorded:
+            parts.append(
+                "ledger row(s) already present for "
+                f"{', '.join(f'v{v}' for v in unrecorded)}, not re-recorded (append-only)"
+            )
+        if outcome.repaired:
+            parts.append(f"rebuilt {', '.join(outcome.repaired)}")
+        return "; ".join(parts)
+    if outcome.repaired:
+        return (
+            f"already at v{outcome.to_version}, but REBUILT missing "
+            f"{', '.join(outcome.repaired)} — the file was running unindexed"
+        )
+    return f"already at v{outcome.to_version}, nothing to do"
+
+
+def _dispatch_backup_set(args: BackupSetArgs) -> int:
+    """Take the durable-set snapshot, then — only when ``--archive-dir`` was given — compress
+    and verify it (evidence growth plan §2 A3).
+
+    The snapshot itself is never conditional on the archive step: a failed or refused archive
+    leaves the uncompressed generation exactly as ``backup_set`` wrote it, and is reported as a
+    non-zero exit with the refusal on stderr rather than as a silent partial success.
+    """
+    paths = DurableSetPaths.from_data_dir(args.data_dir)
+    manifest = backup_set(
+        paths,
+        args.dest,
+        args.generation,
+        readiness_verdict_at_backup=args.readiness_verdict,
+    )
+    manifest_path = args.dest / f"gen{manifest.generation}.set.manifest.json"
+    print(f"backup-set: wrote gen{manifest.generation} manifest under {args.dest}")
+    if args.archive_dir is None:
+        return 0
+    if args.verify_dir is None or args.custody_root is None:
+        print(
+            "backup-set: --archive-dir requires --verify-dir and --custody-root (the archive "
+            "is verified by reading it back, which needs a scratch directory and the evidence "
+            "chain keys) — the uncompressed snapshot above is complete and untouched",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        verification = archive_backup_set(
+            manifest_path,
+            args.archive_dir,
+            args.verify_dir,
+            key_provider=FileKeyProvider(
+                args.custody_root, expected_owner_uid=os.getuid()
+            ),
+            preset=args.xz_preset,
+        )
+    except BackupArchiveRefused as refusal:
+        print(f"backup-set: archive refused — {refusal}", file=sys.stderr)
+        return 1
+    print(
+        f"backup-set: archived gen{verification.generation} to "
+        f"{verification.archive_path} ({verification.source_bytes} -> "
+        f"{verification.archive_bytes} bytes), read back and verified: "
+        f"{len(verification.files_verified)} file digest(s) + evidence chain"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse ``argv`` and dispatch to the right subcommand (module docstring).
 
@@ -802,15 +916,7 @@ def main(argv: list[str] | None = None) -> int:
         return _dispatch_run(args)
 
     if isinstance(args, BackupSetArgs):
-        paths = DurableSetPaths.from_data_dir(args.data_dir)
-        manifest = backup_set(
-            paths,
-            args.dest,
-            args.generation,
-            readiness_verdict_at_backup=args.readiness_verdict,
-        )
-        print(f"backup-set: wrote gen{manifest.generation} manifest under {args.dest}")
-        return 0
+        return _dispatch_backup_set(args)
 
     if isinstance(args, RestoreDrillArgs):
         if args.environment_label in _LIVE_ENVIRONMENT_LABELS:
@@ -841,8 +947,8 @@ def main(argv: list[str] | None = None) -> int:
             store_path = migrate_path_for(
                 store_name, paths=paths, data_dir=args.data_dir
             )
-            apply_migrations(store_path, store_name)
-            print(f"migrate: {store_name} at {store_path} is current")
+            outcome = apply_migrations(store_path, store_name)
+            print(f"migrate: {store_name} at {store_path} — {_migrate_report(outcome)}")
         return 0
 
     if isinstance(args, RotateKeyArgs):

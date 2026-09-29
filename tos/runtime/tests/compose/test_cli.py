@@ -24,7 +24,10 @@ from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityVerdict, SqliteEvidenceStore
 from tos_runtime.operations.backup_set import DurableSetPaths
-from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS
+from tos_runtime.operations.schema_migrations import (
+    STORE_MIGRATIONS,
+    MigrationOutcome,
+)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -409,6 +412,179 @@ def test_backup_set_forwards_readiness_verdict(
     assert calls == ["READY"]
 
 
+def test_backup_set_without_archive_dir_never_reaches_the_archive_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The archive is opt-in (evidence growth plan §2 A3): the default invocation must behave
+    exactly as it did before, which means not calling ``archive_backup_set`` at all."""
+
+    class _FakeManifest:
+        generation = 1
+
+    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("archive_backup_set reached without --archive-dir")
+
+    monkeypatch.setattr(cli, "archive_backup_set", _must_not_be_called)
+
+    assert (
+        cli.main(
+            [
+                "backup-set",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--dest",
+                str(tmp_path / "backups"),
+                "--generation",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+
+def test_backup_set_archive_dir_forwards_manifest_path_and_preset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple] = []
+
+    class _FakeManifest:
+        generation = 7
+
+    class _FakeVerification:
+        generation = 7
+        archive_path = "/archives/gen7.set.tar.xz"
+        source_bytes = 100
+        archive_bytes = 10
+        files_verified = ("evidence", "rcl", "inbox")
+
+    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda root, **_kw: ("keys", root))
+
+    def _fake_archive(manifest_path, archive_dir, verify_dir, *, key_provider, preset):
+        calls.append((manifest_path, archive_dir, verify_dir, key_provider, preset))
+        return _FakeVerification()
+
+    monkeypatch.setattr(cli, "archive_backup_set", _fake_archive)
+
+    dest = tmp_path / "backups"
+    exit_code = cli.main(
+        [
+            "backup-set",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--dest",
+            str(dest),
+            "--generation",
+            "7",
+            "--archive-dir",
+            str(tmp_path / "cold"),
+            "--verify-dir",
+            str(tmp_path / "verify"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--xz-preset",
+            "9",
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    manifest_path, archive_dir, verify_dir, key_provider, preset = calls[0]
+    # The manifest path is derived from the generation backup_set just wrote, never guessed
+    # from the CLI's own --generation (they agree today; a mismatch would be a silent archive
+    # of the wrong generation).
+    assert manifest_path == dest / "gen7.set.manifest.json"
+    assert (archive_dir, verify_dir, preset) == (
+        tmp_path / "cold",
+        tmp_path / "verify",
+        9,
+    )
+    assert key_provider == ("keys", tmp_path / "custody")
+
+
+@pytest.mark.parametrize("omitted", ["--verify-dir", "--custody-root"])
+def test_backup_set_archive_dir_without_its_companions_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, omitted: str
+) -> None:
+    """The snapshot itself still succeeds — the refusal is about the archive only, and says so
+    rather than leaving the operator to guess whether a backup was taken."""
+
+    class _FakeManifest:
+        generation = 1
+
+    taken: list[int] = []
+
+    def _fake_backup_set(*args, **kwargs):
+        taken.append(1)
+        return _FakeManifest()
+
+    monkeypatch.setattr(cli, "backup_set", _fake_backup_set)
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("archive_backup_set reached with incomplete arguments")
+
+    monkeypatch.setattr(cli, "archive_backup_set", _must_not_be_called)
+
+    argv = [
+        "backup-set",
+        "--data-dir",
+        str(tmp_path / "data"),
+        "--dest",
+        str(tmp_path / "backups"),
+        "--generation",
+        "1",
+        "--archive-dir",
+        str(tmp_path / "cold"),
+        "--verify-dir",
+        str(tmp_path / "verify"),
+        "--custody-root",
+        str(tmp_path / "custody"),
+    ]
+    index = argv.index(omitted)
+    del argv[index : index + 2]
+
+    assert cli.main(argv) == 1
+    assert taken == [1]
+
+
+def test_backup_set_reports_an_archive_refusal_as_a_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _FakeManifest:
+        generation = 2
+
+    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda _root, **_kw: None)
+
+    def _refuse(*args, **kwargs):
+        raise cli.BackupArchiveRefused("decompressed 'evidence' digests abc")
+
+    monkeypatch.setattr(cli, "archive_backup_set", _refuse)
+
+    assert (
+        cli.main(
+            [
+                "backup-set",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--dest",
+                str(tmp_path / "backups"),
+                "--generation",
+                "2",
+                "--archive-dir",
+                str(tmp_path / "cold"),
+                "--verify-dir",
+                str(tmp_path / "verify"),
+                "--custody-root",
+                str(tmp_path / "custody"),
+            ]
+        )
+        == 1
+    )
+
+
 # -- restore-drill --------------------------------------------------------------
 
 
@@ -484,15 +660,59 @@ def test_restore_drill_dispatches_to_restore_set_for_a_non_live_label(
 # -- migrate --------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        (
+            MigrationOutcome("evidence", 2, 2, (), (), ()),
+            "already at v2, nothing to do",
+        ),
+        (
+            MigrationOutcome("evidence", 2, 2, (), (), ("entries_kind_seq",)),
+            "already at v2, but REBUILT missing entries_kind_seq",
+        ),
+        (
+            MigrationOutcome("evidence", 0, 2, (1, 2), (1, 2), ()),
+            "applied v0 -> v2 (v1, v2)",
+        ),
+        (
+            MigrationOutcome("evidence", 1, 2, (2,), (), ()),
+            "not re-recorded (append-only)",
+        ),
+    ],
+)
+def test_migrate_report_names_what_it_did(
+    outcome: MigrationOutcome, expected: str
+) -> None:
+    """`migrate` printed "is current" for three materially different outcomes — nothing to do,
+    versions applied, and an index rebuilt — so a repair was indistinguishable from a no-op in
+    the one place an operator looks (review L3)."""
+    assert expected in cli._migrate_report(outcome)
+
+
+def _noop_outcome(store_name: str) -> MigrationOutcome:
+    """A `MigrationOutcome` for a store that was already current — what `apply_migrations`
+    returns when there is nothing to do."""
+    return MigrationOutcome(
+        store_name=store_name,
+        from_version=1,
+        to_version=1,
+        applied=(),
+        ledgered=(),
+        repaired=(),
+    )
+
+
 def test_migrate_runs_every_store_when_store_omitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple] = []
-    monkeypatch.setattr(
-        cli,
-        "apply_migrations",
-        lambda path, store_name: calls.append((path, store_name)),
-    )
+
+    def _record(path, store_name):
+        calls.append((path, store_name))
+        return _noop_outcome(store_name)
+
+    monkeypatch.setattr(cli, "apply_migrations", _record)
 
     data_dir = tmp_path / "data"
     exit_code = cli.main(["migrate", "--data-dir", str(data_dir)])
@@ -506,11 +726,12 @@ def test_migrate_runs_only_the_named_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple] = []
-    monkeypatch.setattr(
-        cli,
-        "apply_migrations",
-        lambda path, store_name: calls.append((path, store_name)),
-    )
+
+    def _record(path, store_name):
+        calls.append((path, store_name))
+        return _noop_outcome(store_name)
+
+    monkeypatch.setattr(cli, "apply_migrations", _record)
 
     data_dir = tmp_path / "data"
     exit_code = cli.main(["migrate", "--data-dir", str(data_dir), "--store", "rcl"])
