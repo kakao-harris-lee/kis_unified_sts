@@ -29,6 +29,7 @@ Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
 from __future__ import annotations
 
 import inspect
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -72,7 +73,7 @@ _CLOSE = 4_512_500
 
 def _capsule() -> DecisionContextCapsule:
     """An issued Capsule bound to a snapshot reference."""
-    return DecisionContextCapsule.issue(  # type: ignore[return-value]
+    return DecisionContextCapsule.issue(
         scheme=SCHEME,
         issuer_principal_id="iss-1",
         critical_input_policy=PolicyRef(policy_id="pol-1", canonical_digest="pd-1"),
@@ -149,7 +150,7 @@ def _strategy(*, threshold: int) -> AuthoredStrategy:
             kind=DecisionKind.NO_ACTION, rationale="the guard did not fire — hold"
         ),
     )
-    return AuthoredStrategy.issue(  # type: ignore[return-value]
+    return AuthoredStrategy.issue(
         scheme=SCHEME,
         dsl_version="dsl-0",
         config_binding_version="cfg-bind-0",
@@ -205,7 +206,9 @@ def test_an_absent_as_of_or_provenance_pointer_is_unconstructable() -> None:
         ContextValue(
             field_key="close",
             value=1,
-            as_of=None,
+            # Deliberately illegal per the (non-Optional) signature — this test's
+            # whole point is an absent as_of pointer.
+            as_of=cast(int, None),
             payload_digest="p",
             observation_ref="r",
         )
@@ -327,7 +330,7 @@ def test_a_namespace_collision_raises_rather_than_shadowing() -> None:
     """(§3.2 (1) ★) The merge refuses to overwrite a Capsule top-level key."""
 
     class _CollidingCapsule(DecisionContextCapsule):
-        def model_dump(self, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+        def model_dump(self, **kwargs: object) -> dict[str, object]:
             dumped = super().model_dump(**kwargs)  # type: ignore[arg-type]
             dumped[VALUE_NAMESPACE] = {"smuggled": 1}
             return dumped

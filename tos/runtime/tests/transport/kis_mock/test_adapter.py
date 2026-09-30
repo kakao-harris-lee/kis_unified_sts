@@ -4,9 +4,9 @@ token lifecycle, dry-run, and negative-greps (plan §4 슬라이스 T1)."""
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict, Unpack
 
 import pytest
 from tos.brokeradapter import Transport
@@ -52,8 +52,47 @@ def server() -> Iterator[FakeKisServer]:
         srv.stop()
 
 
-def _config(server: FakeKisServer, **overrides: Any) -> KisMockTransportConfig:
-    base = {
+class _KisMockConfigKwargs(TypedDict):
+    """1:1 with :class:`KisMockTransportConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
+    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
+    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+
+    mode: Literal["dry_run", "live"]
+    endpoint_rest_base: str
+    order_path: str
+    token_path: str
+    tr_id_buy: str
+    tr_id_sell: str
+    field_map: Mapping[str, str]
+    static_body_fields: Mapping[str, str]
+    min_send_interval_ms: int
+    token_reissue_min_interval_s: int
+    request_timeout_s: float
+    allow_plaintext_for_tests: bool
+
+
+class _KisMockConfigKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_KisMockConfigKwargs`, all optional — the override-kwargs shape
+    for :func:`_config`."""
+
+    mode: Literal["dry_run", "live"]
+    endpoint_rest_base: str
+    order_path: str
+    token_path: str
+    tr_id_buy: str
+    tr_id_sell: str
+    field_map: Mapping[str, str]
+    static_body_fields: Mapping[str, str]
+    min_send_interval_ms: int
+    token_reissue_min_interval_s: int
+    request_timeout_s: float
+    allow_plaintext_for_tests: bool
+
+
+def _config(
+    server: FakeKisServer, **overrides: Unpack[_KisMockConfigKwargsPartial]
+) -> KisMockTransportConfig:
+    base: _KisMockConfigKwargs = {
         "mode": "live",
         "endpoint_rest_base": server.rest_base,
         "order_path": ORDER_PATH,
@@ -79,6 +118,7 @@ def _build_transport(
     custody: InMemoryCredentialCustody | None = None,
     evidence: RecordingEvidenceSink | None = None,
     seals: dict[str, Any] | None = None,
+    trading_date_now: Any = None,
 ) -> tuple[
     KisMockTransport,
     RecordingEvidenceSink,
@@ -111,6 +151,7 @@ def _build_transport(
         monotonic=mono,
         seal_lookup=make_seal_lookup(seal_map),
         evidence_sink=ev,
+        trading_date_now=trading_date_now,
     )
     return transport, ev, cust, mono
 
@@ -268,6 +309,81 @@ def test_ack_path(server: FakeKisServer) -> None:
     (record,) = evidence.of_kind("TRANSPORT_SEND")
     assert record["kind"] == "ACK"
     assert record["seal_digest"] == seal.seal_digest
+
+
+def test_ack_is_stamped_with_the_trading_date_at_the_ack_instant(
+    server: FakeKisServer,
+) -> None:
+    """Plan 2026-09-26 egress trading date T-3: the ODNO is a per-day sequence, so the result the
+    broker numbered carries the KST trading date read when it acknowledged."""
+    attempt, seal = _live_ack_setup(server)
+    calls: list[None] = []
+
+    def trading_date_now() -> str | None:
+        calls.append(None)
+        return "20260805"
+
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=trading_date_now
+    )
+    result = _send(transport, attempt)
+    assert result.broker_execution_id == "ODNO-1"
+    assert result.trading_date == "20260805"
+    assert len(calls) == 1
+
+
+def test_ack_without_an_established_date_carries_none(server: FakeKisServer) -> None:
+    """Untrusted time or a midnight-crossing session: the source answers ``None`` and nothing is
+    guessed."""
+    attempt, seal = _live_ack_setup(server)
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=lambda: None
+    )
+    assert _send(transport, attempt).trading_date is None
+
+
+def test_ack_without_a_date_source_carries_none(server: FakeKisServer) -> None:
+    attempt, seal = _live_ack_setup(server)
+    transport, _, _, _ = _build_transport(server, seals={attempt.attempt_id: seal})
+    assert _send(transport, attempt).trading_date is None
+
+
+def test_a_raising_date_source_never_loses_the_acknowledged_result(
+    server: FakeKisServer,
+) -> None:
+    """Review finding 2: the date is read after a real order was acknowledged — a failure there
+    degrades to an undated result, never to a lost ACK."""
+    attempt, seal = _live_ack_setup(server)
+
+    def broken() -> str | None:
+        raise RuntimeError("calendar exploded")
+
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=broken
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.ACK
+    assert result.broker_execution_id == "ODNO-1"
+    assert result.trading_date is None
+
+
+def test_a_result_the_broker_never_numbered_is_not_dated(server: FakeKisServer) -> None:
+    attempt = _attempt("reject-dated")
+    seal = build_seal(attempt_id=attempt.attempt_id)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(
+        ORDER_PATH,
+        status=200,
+        body={"rt_cd": "1", "msg_cd": "APBK0919", "msg1": "주문가능금액 부족"},
+    )
+    transport, _, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}, trading_date_now=lambda: "20260805"
+    )
+    result = _send(transport, attempt)
+    assert result.broker_execution_id is None
+    assert result.trading_date is None
 
 
 def test_sell_side_selects_the_sell_tr_id(server: FakeKisServer) -> None:
@@ -550,7 +666,7 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
 
     attempt1 = _attempt("pace-1")
     seal1 = build_seal(attempt_id=attempt1.attempt_id)
-    transport._seal_lookup = make_seal_lookup({attempt1.attempt_id: seal1})  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup({attempt1.attempt_id: seal1})
     _send(transport, attempt1)
     assert sleeps == []  # first send never waits
 
@@ -558,7 +674,7 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
 
     attempt2 = _attempt("pace-2")
     seal2 = build_seal(attempt_id=attempt2.attempt_id)
-    transport._seal_lookup = make_seal_lookup({attempt2.attempt_id: seal2})  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup({attempt2.attempt_id: seal2})
     before_second_send_wall = mono.now_ms()
     _send(transport, attempt2)
 
@@ -587,7 +703,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     transport, _, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("nopace-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt1.attempt_id: build_seal(attempt_id=attempt1.attempt_id)}
     )
     _send(transport, attempt1)
@@ -595,7 +711,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     mono.advance(1500)  # more than the floor has already elapsed
 
     attempt2 = _attempt("nopace-2")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt2.attempt_id: build_seal(attempt_id=attempt2.attempt_id)}
     )
     _send(transport, attempt2)
@@ -621,7 +737,7 @@ def test_token_is_issued_once_and_reused_while_fresh(server: FakeKisServer) -> N
     )
     for i in range(2):
         attempt = _attempt(f"reuse-{i}")
-        transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+        transport._seal_lookup = make_seal_lookup(
             {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
         )
         mono.advance(10)
@@ -644,7 +760,7 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     transport, evidence, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("stale-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt1.attempt_id: build_seal(attempt_id=attempt1.attempt_id)}
     )
     _send(transport, attempt1)
@@ -656,7 +772,7 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     )  # token (expires_in=1s) is now stale; cooldown (300s) has not elapsed
 
     attempt2 = _attempt("stale-2")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt2.attempt_id: build_seal(attempt_id=attempt2.attempt_id)}
     )
     with pytest.raises(TokenStale):
@@ -688,7 +804,7 @@ def test_a_later_attempt_after_the_cooldown_reissues_the_token(
     transport, _, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("recover-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt1.attempt_id: build_seal(attempt_id=attempt1.attempt_id)}
     )
     _send(transport, attempt1)
@@ -698,7 +814,7 @@ def test_a_later_attempt_after_the_cooldown_reissues_the_token(
     )  # both the token's own expiry (1s) and the reissue cooldown (1s) elapse
 
     attempt2 = _attempt("recover-2")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt2.attempt_id: build_seal(attempt_id=attempt2.attempt_id)}
     )
     result = _send(transport, attempt2)
@@ -728,7 +844,7 @@ def test_the_app_secret_never_appears_in_any_evidence_record(
     )
     transport, evidence, _, _ = _build_transport(server, custody=custody)
     attempt = _attempt("secret-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
     )
     _send(transport, attempt)

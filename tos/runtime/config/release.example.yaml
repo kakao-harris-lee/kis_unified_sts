@@ -10,11 +10,26 @@
 # each value before service construction succeeds
 # (tos_runtime.release.config.ReleaseAdmissionConfigError otherwise).
 
-# The expected runtime artifact-set digest this release must match
-# (compared against tos.workload.RuntimeIdentity.code_digest — "runtime
-# input collection: equality", tos_runtime.release.admission module
-# docstring; no kernel predicate computes this comparison).
+# The expected SOURCE-TREE digest this release must match (Phase 5 W4 §2
+# decision 5): a sha256-per-file fold over every *.py file under the
+# installed `tos` + `tos_runtime` package trees, computed by
+# tos_runtime.operations.dependency_admission.observe_source_tree_digest
+# and compared against that same real measurement — "runtime input
+# collection: equality" (tos_runtime.release.admission module docstring; no
+# kernel predicate computes this comparison). Obtain this value for THIS
+# deployment tree by running the `print-digests` CLI subcommand on the
+# server the config will actually run on — it differs per deployment tree,
+# never copy it from another environment's release.yaml.
 expected_code_digest: null
+
+# The expected installed DEPENDENCY-SET digest this release must match
+# (Phase 5 W4 §2 decision 5): the sorted (name, version) pairs from
+# `importlib.metadata.distributions()` plus the interpreter/sqlite
+# coordinates, computed by
+# tos_runtime.operations.dependency_admission.observe_dependency_set_digest.
+# Also obtained from the `print-digests` CLI subcommand, on the same
+# deployment tree.
+expected_dependency_set_digest: null
 
 # The exact tos.sci.AdmissionResult for the deployed artifact: "ADMIT",
 # "DENY", or "UNKNOWN". Phase 2 has no automatic admission — this is an

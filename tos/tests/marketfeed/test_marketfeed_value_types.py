@@ -21,6 +21,7 @@ Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from tos.dsl import (
@@ -29,6 +30,7 @@ from tos.dsl import (
     CompareOp,
     EvaluationConfig,
     Operand,
+    ScalarValue,
     build_environment,
     eval_compare,
 )
@@ -119,7 +121,8 @@ def test_a_decimal_token_is_refused_before_any_coercion(magnitude: Decimal) -> N
     reaches the environment as a float — a silent, lossy conversion with no record that it happened.
     """
     with pytest.raises(INTEGRITY_ERRORS, match="Decimal"):
-        PreimageEntry(key="close", value=magnitude)
+        # Deliberately illegal per the (non-Decimal) ScalarValue signature — fail-closed proof.
+        PreimageEntry(key="close", value=cast(ScalarValue, magnitude))
 
 
 def test_the_decimal_guard_does_not_over_reject_the_admitted_shapes() -> None:

@@ -85,9 +85,15 @@ class SegmentCommitmentScheme(Protocol):
     Parallel to ``CanonicalizationScheme``: a production choice of chain or
     Merkle-equivalent commitment plugs in behind this Protocol without model
     rework.
+
+    Declared as a read-only property (not a plain attribute) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models)
+    satisfy this Protocol structurally, not just today's mutable implementers
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
     """
 
-    version: str
+    @property
+    def version(self) -> str: ...
 
     def commit(self, ordered_record_digests: tuple[str, ...]) -> str:
         """Return the commitment over an ordered sequence of record digests."""

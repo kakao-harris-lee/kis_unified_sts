@@ -1,0 +1,46 @@
+# Active Safety Incident Set policy document (tos_runtime.safety.incident.IncidentService).
+#
+# TOS Phase 5 W3 plan §2 decision 2, INCIDENT bullet
+# (docs/plans/2026-09-11-tos-phase5-w3-safety-mesh-plan.md). Fed to
+# tos.sir.ActiveSafetyIncidentSet + tos.sir.ActiveSetMember, consumed by
+# active_set_is_canonical_union / dominating_open_incident_present.
+#
+# named-TBD discipline: every value below is null. The loader refuses to
+# start on any unfilled required field (tos_runtime.safety.incident
+# .IncidentConfigError) — this file is never copied into a running instance
+# as-is; an operator (or the T2/W3 handoff) fills every value first.
+#
+# `members` / `applicable_incident_ids` are EXPLICIT lists: an empty list
+# ([]) is the valid "no active incident" nominal state; a bare `null` is a
+# refusal to load, never treated as "empty" (plan §2 decision 2 "명시적 빈
+# 리스트 허용").
+incidents:
+  active_set:
+    active_set_id: null
+    active_set_generation: null
+    incident_generation: null
+    safety_cell: null
+    # Explicit list — [] means "no shared dependency currently declared".
+    shared_dependencies: null
+    # Positive-polarity operator attestation that this document IS the
+    # complete, current Active Safety Incident Set for `safety_cell`
+    # (ADR-002-027 §5.5 line 126; §10 line 311).
+    is_complete: null
+    is_current: null
+  # Every incident_id this Safety Cell has open or suspected right now.
+  # Declared SEPARATELY from `members` below so a real mismatch between the
+  # two (an id here with no member, or a member with an id not listed here)
+  # is a genuine, catchable configuration drift — not a vacuous self-check.
+  applicable_incident_ids: null
+  # One entry per tos.sir.ActiveSetMember. Each entry:
+  #   incident_id: str (required)
+  #   lifecycle_state: str (required) — one of SUSPECTED / DECLARED /
+  #     CONTAINING / STABILIZED_NON_LIVE / INVESTIGATING /
+  #     REMEDIATION_PENDING / ELIGIBLE_FOR_CLOSURE / CLOSED
+  #     (ADR-002-027 §9 line 278-286; only CLOSED is non-restrictive).
+  #   incident_digest: str | null (optional)
+  #   parent_id: str | null (optional)
+  #   shared_cause_ids: list[str] (optional, defaults to [])
+  #   resolved: bool | null (optional; positive polarity — only `true`
+  #     counts a shared cause as resolved)
+  members: null

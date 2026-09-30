@@ -136,7 +136,7 @@ def parse_strategy(mapping: Mapping[str, Any]) -> AuthoredStrategy:
         raise StrategyParseError(_format_validation_error(exc)) from exc
 
     scheme = get_scheme(content.canonicalization_version or EV_L1_PROVISIONAL_VERSION)
-    return AuthoredStrategy.issue(  # type: ignore[return-value]
+    return AuthoredStrategy.issue(
         scheme=scheme,
         dsl_version=content.dsl_version,
         config_binding_version=content.config_binding_version,

@@ -93,7 +93,10 @@ from shared.exceptions import (
 )
 from shared.execution.config import ATSRoutingConfig
 from shared.execution.futures_instrument import (
+    EXPLICIT_SYMBOL_SOURCE,
     FuturesProductContractValidation,
+    front_month_roll_message,
+    resolve_futures_instrument_from_env,
     validate_futures_runtime_product_contract,
 )
 from shared.execution.models import ExecutionVenue
@@ -149,6 +152,10 @@ MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
 
 _SETUP_TYPE_BY_STRATEGY = SETUP_TYPE_BY_STRATEGY
 _SIGNALS_ALL_INSERT_SQL = SIGNALS_ALL_INSERT_SQL
+# ``producer`` field of the futures:daily_reference:{symbol} read-model — the
+# compose service name, so an operator reading a stale key knows which process
+# to look at (the other producer is `market-ingest`).
+_DAILY_REFERENCE_PRODUCER = "trader-futures"
 _risk_params_for_runtime_capital = _runtime_config.risk_params_for_runtime_capital
 
 
@@ -604,6 +611,11 @@ class TradingOrchestrator:
 
         logger.info("Starting trading...")
 
+        # Before anything reads config.symbols: the KIS client, price feeds,
+        # data provider, prewarm and prev_close prefetch below are all rebuilt
+        # from it every session.
+        self._roll_futures_front_month_at_session_start()
+
         # Initialize components
         await self._initialize_components()
 
@@ -675,6 +687,36 @@ class TradingOrchestrator:
             f"Strategy: {self._strategy_label()}\n"
             f"Capital: {self.config.initial_capital:,.0f}"
         )
+
+    def _roll_futures_front_month_at_session_start(self) -> None:
+        """Re-resolve the futures contract so a daemon follows the front-month roll.
+
+        ``TradingConfig.futures()`` resolves the contract once at process start,
+        but the daemon loops sessions in-process: trader-futures started on the
+        09-10 expiry day opened its 2026-09-11 session on the dead A01609 (zero
+        ticks). ``start()`` rebuilds every symbol consumer from ``config.symbols``
+        each session, so swapping the code here rolls them all in place. Skipped
+        for explicit symbols (constructor argument or ``FUTURES_STRATEGY_SYMBOL``).
+        """
+        if (
+            self.config.asset_class != "futures"
+            or not self.config.futures_symbol_auto_resolved
+            or not self.config.symbols
+        ):
+            return
+        instrument = resolve_futures_instrument_from_env()
+        old_symbol = self.config.symbols[0]
+        if (
+            instrument.source == EXPLICIT_SYMBOL_SOURCE
+            or instrument.symbol == old_symbol
+        ):
+            return
+        logger.warning(front_month_roll_message(old_symbol, instrument.symbol))
+        self.config.symbols = [
+            instrument.symbol if symbol == old_symbol else symbol
+            for symbol in self.config.symbols
+        ]
+        self._futures_daily_reference.pop(old_symbol, None)
 
     async def _initialize_components(self):
         """Initialize trading components"""
@@ -796,30 +838,35 @@ class TradingOrchestrator:
         needs it to compute gap_pct. Falls back silently on per-symbol failure —
         downstream guards (`if ctx.prev_close <= 0: return None`) handle missing
         data without crashing.
+
+        Each fetched value is also published as the
+        ``futures:daily_reference:{symbol}`` read-model so the decoupled
+        decision-engine — which has no KIS credentials and whose parquet daily
+        bars never carried the trading symbol — reads the SAME number this
+        process uses. Fetch, guard, and publish are the shared helper that
+        market-ingest also calls; the publish is best-effort (the helper warns
+        on any Redis failure), so the in-process cache below never depends on
+        Redis.
         """
         if not self._kis_client:
             return
         symbols = list(self.config.symbols or [])
         if not symbols:
             return
-        for symbol in symbols:
-            try:
-                price = await self._kis_client._get_futures_price(symbol)
-            except Exception as e:
-                logger.warning(
-                    "prev_close prefetch failed for %s: %s — Setup A will skip",
-                    symbol,
-                    e,
-                )
-                continue
-            prev_close = float(price.get("prev_close", 0) or 0)
-            if prev_close > 0:
-                self._futures_daily_reference[symbol] = {"prev_close": prev_close}
-                logger.info(
-                    "prev_close prefetched: %s = %s (Setup A gap_pct ready)",
-                    symbol,
-                    prev_close,
-                )
+        from shared.streaming.daily_reference import (
+            prefetch_and_publish_futures_daily_references,
+        )
+
+        result = await prefetch_and_publish_futures_daily_references(
+            self._kis_client, symbols, producer=_DAILY_REFERENCE_PRODUCER
+        )
+        for symbol, prev_close in result.prev_closes.items():
+            self._futures_daily_reference[symbol] = {"prev_close": prev_close}
+            logger.info(
+                "prev_close prefetched: %s = %s (Setup A gap_pct ready)",
+                symbol,
+                prev_close,
+            )
 
     def _load_stream_staleness_threshold(self) -> float:
         """Staleness threshold for the stream feed — mirror the failover config."""
@@ -3089,12 +3136,19 @@ class TradingOrchestrator:
         )
 
     def _save_candle_cache_to_redis(self) -> None:
-        """Serialize indicator engine candles to Redis for restart recovery."""
+        """Serialize indicator engine candles to Redis for restart recovery.
+
+        Only symbols still traded or held are saved: the publish replaces the
+        whole hash, so an accumulator for a contract that rolled out (or a
+        symbol that left the universe) drops out of the cache instead of being
+        re-published with a fresh TTL on every save.
+        """
         if not self._state_publisher or not self._indicator_engine:
             return
+        market_symbols = set(self._get_market_symbols())
         candle_data: dict[str, list[dict]] = {}
         for symbol, acc in self._indicator_engine._accumulators.items():
-            if not acc.candles:
+            if symbol not in market_symbols or not acc.candles:
                 continue
             candle_data[symbol] = [
                 {
@@ -3115,7 +3169,12 @@ class TradingOrchestrator:
             )
 
     async def _load_candle_cache_from_redis(self) -> int:
-        """Load cached candles from Redis to pre-warm indicators."""
+        """Load cached candles from Redis to pre-warm indicators.
+
+        Seeds only symbols still traded or held. After a futures front-month
+        roll the cache still carries the expired contract (2026-09-11: A01609
+        was seeded next to A01612 and reported as the warm sample symbol).
+        """
         try:
             from shared.streaming.trading_state import TradingStateReader
 
@@ -3123,9 +3182,12 @@ class TradingOrchestrator:
             cache = reader.get_candle_cache()
             if not cache:
                 return 0
+            market_symbols = set(self._get_market_symbols())
             loaded = 0
             for symbol, candles in cache.items():
-                if self._indicator_engine.is_warm(symbol):
+                if symbol not in market_symbols or self._indicator_engine.is_warm(
+                    symbol
+                ):
                     continue
                 self._indicator_engine.seed_candles(symbol, candles)
                 loaded += 1

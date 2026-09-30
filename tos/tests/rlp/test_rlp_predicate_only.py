@@ -11,6 +11,8 @@ Regime tag: predicate substrate only; the named RLP-EV rows remain NOT_IMPLEMENT
 
 from __future__ import annotations
 
+from typing import Any
+
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given
@@ -73,7 +75,8 @@ def test_trial_status_waives_no_gate_all_false() -> None:
 )
 def test_trial_status_bypass_flag_denies(flag: str) -> None:
     """(§6.2) Any bypass-relevant flag (model_construct) means the trial status would waive a gate."""
-    permissive = AllFalseTrialAuthority.model_construct(**{flag: True})
+    permissive_values: dict[str, Any] = {flag: True}
+    permissive = AllFalseTrialAuthority.model_construct(**permissive_values)
     assert trial_status_waives_no_gate(permissive) is False
 
 

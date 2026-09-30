@@ -7,12 +7,20 @@ its closure is a *superset* of theirs. That is the nature of an integrator, not 
 loudly as it does everywhere else::
 
     {tos, tos.canonical, tos.ordering, tos.dsl, tos.capsule, tos.time, tos.evidence,
-     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate}
+     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate,
+     tos.nontrade}
 
 ``tos.orthostate`` was added 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2 — the
 ``engine/orthostate_projection.py`` adapter). It is safe in the direction that matters:
 ``tos.orthostate`` does not, and structurally cannot without breaking its own ratified
 closure, import ``tos.engine`` back.
+
+``tos.nontrade`` was added 2026-09-12 (kernel round #3 §2 결정 1 — the
+``EventKind.CORPORATE_ACTION`` handler, ``engine/_corporate_action.py``), the SAME one-way
+widening argument as ``tos.orthostate``: ``tos.nontrade`` holds "sibling edge 0" by its own
+design (§0.4b/§0.4c) and cannot, and structurally cannot without breaking its own ratified
+closure, import ``tos.engine`` back. It moves from ``_FORBIDDEN_SIBLINGS`` to this allowlist —
+never both.
 
 The two packages the design puts **outside** the closure carry the most weight: ``tos.brokercap``
 and ``tos.egress`` live beyond the D-E4 send-boundary injection point, and ``tos.egress`` (the QCC
@@ -48,6 +56,7 @@ from pathlib import Path
 
 import tos.engine
 import tos.engine._base
+import tos.engine._corporate_action
 import tos.engine.adapters
 import tos.engine.admission
 import tos.engine.core
@@ -83,6 +92,7 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
+        "tos.nontrade",
     }
 )
 
@@ -96,7 +106,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
-        "tos.nontrade",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -202,6 +211,7 @@ _FORBIDDEN_BUILTIN_CALLS = frozenset({"hash", "id"})
 _ENGINE_SUBMODULES = (
     "tos.engine",
     "tos.engine._base",
+    "tos.engine._corporate_action",
     "tos.engine.adapters",
     "tos.engine.admission",
     "tos.engine.core",
@@ -222,6 +232,7 @@ _ENGINE_SUBMODULES = (
 _LOADED_SUBMODULES = {
     "tos.engine": tos.engine,
     "tos.engine._base": tos.engine._base,
+    "tos.engine._corporate_action": tos.engine._corporate_action,
     "tos.engine.adapters": tos.engine.adapters,
     "tos.engine.admission": tos.engine.admission,
     "tos.engine.core": tos.engine.core,
@@ -264,6 +275,7 @@ def _closure_child(queue: mp.Queue) -> None:
 
     import tos.engine  # noqa: F401
     import tos.engine._base  # noqa: F401
+    import tos.engine._corporate_action  # noqa: F401
     import tos.engine.adapters  # noqa: F401
     import tos.engine.admission  # noqa: F401
     import tos.engine.core  # noqa: F401
@@ -331,6 +343,7 @@ def _run_child(target) -> dict:
     result = queue.get(timeout=120)
     proc.join(timeout=120)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
+    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
     return result
 
 
@@ -558,14 +571,14 @@ def test_source_imports_no_module_outside_the_allowlist() -> None:
     for path in sorted(_ENGINE_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            names: list[str] = []
+            entries: list[tuple[str, int]] = []
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
+                entries = [(alias.name, node.lineno) for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
+                entries = [(node.module, node.lineno)]
+            for name, lineno in entries:
                 if not _is_allowed_tos_module(name):
-                    offenders.append(f"{path.name}:{node.lineno} import {name}")
+                    offenders.append(f"{path.name}:{lineno} import {name}")
     assert offenders == [], f"forbidden sibling import in source: {offenders}"
 
 

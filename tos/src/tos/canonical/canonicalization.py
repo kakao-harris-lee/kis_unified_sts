@@ -65,9 +65,15 @@ class CanonicalizationScheme(Protocol):
     Implementations map a *covered* content mapping (the digest preimage, with
     the §3.2/§3.3 self-exclusion set already removed by the caller) to canonical
     bytes and a hex digest.
+
+    Declared as a read-only property (not a plain attribute) so frozen
+    implementations (dataclass ``frozen=True`` / pydantic frozen models)
+    satisfy this Protocol structurally, not just today's mutable implementer
+    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
     """
 
-    version: str
+    @property
+    def version(self) -> str: ...
 
     def canonical_bytes(self, covered: Mapping[str, Any]) -> bytes:
         """Serialize ``covered`` to canonical bytes."""

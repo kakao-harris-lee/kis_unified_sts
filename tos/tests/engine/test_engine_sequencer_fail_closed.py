@@ -95,8 +95,13 @@ class _WrongStepStage:
 class _RaisingStage:
     """A stage that raises — an exception is a restrictive stop, never a skip."""
 
-    def __call__(self, _request: StageRequest) -> StageVerdict:
-        """Raise instead of judging."""
+    def __call__(self, request: StageRequest) -> StageVerdict:  # noqa: ARG002
+        """Raise instead of judging.
+
+        The parameter is named to match ``Stage.__call__`` exactly (mypy's structural
+        Protocol match checks the keyword name, not just position); it is unused because
+        this double always raises.
+        """
         raise RuntimeError("stage exploded")
 
 
@@ -188,7 +193,7 @@ def test_an_absent_verdict_stops_the_flow(failing_step) -> None:
     """(§7.2-1) A stage that returns nothing stops the flow — absence is not admission."""
     transmit = RecordingTransmit()
     stages = admitting_stages()
-    stages[failing_step] = _AbsentVerdictStage()
+    stages[failing_step] = _AbsentVerdictStage()  # type: ignore[assignment]
     flow, _ = _run_flow(stages, transmit=transmit)
 
     assert flow.handed_off is False
@@ -293,7 +298,12 @@ def test_coordinator_realized_steps_are_not_injectable(sealed_step) -> None:
         validate_stage_map(stages)
 
 
-@pytest.mark.parametrize("send_step", sorted(SEND_BOUNDARY_STEPS, key=step_number))
+_SORTED_SEND_BOUNDARY_STEPS: list[CommitmentStep] = sorted(
+    SEND_BOUNDARY_STEPS, key=step_number
+)
+
+
+@pytest.mark.parametrize("send_step", _SORTED_SEND_BOUNDARY_STEPS)
 def test_send_boundary_steps_are_not_hostable(send_step) -> None:
     """(§4.5 item-7) Steps 15-19 are constitutionally D-E4's; the sequencer refuses to host them."""
     stages = admitting_stages()

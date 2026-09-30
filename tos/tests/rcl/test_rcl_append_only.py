@@ -21,7 +21,7 @@ def test_records_are_frozen() -> None:
     """An issued record cannot be mutated in place (frozen)."""
     reservation = issue_reservation()
     with pytest.raises(ValidationError):  # frozen assignment is rejected
-        reservation.action_class = "CLOSE"  # type: ignore[misc]
+        reservation.action_class = "CLOSE"
 
 
 def test_no_update_or_delete_methods_on_records() -> None:

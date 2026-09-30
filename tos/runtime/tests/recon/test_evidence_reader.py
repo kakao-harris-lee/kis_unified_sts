@@ -152,3 +152,59 @@ def test_module_never_writes_to_the_evidence_store() -> None:
     assert "store.append(" not in source
     assert "import os" not in source
     assert "time.time(" not in source
+
+
+# ---------------------------------------------------------------------------
+# trading_date (plan 2026-09-26 egress trading date, T-4)
+# ---------------------------------------------------------------------------
+
+
+def test_trading_date_is_read_through_the_real_engine_evidence_sink(store) -> None:
+    """The date the kernel copied onto the evidence record reaches the receipt observation —
+    written by the production sink, not a hand-built payload."""
+    from tos.engine import (
+        EgressResultKind,
+        EngineEvidenceRecord,
+        EvidenceKind,
+        InstrumentKey,
+    )
+    from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
+
+    EngineEvidenceSinkAdapter(store).record(
+        EngineEvidenceRecord(
+            kind=EvidenceKind.EGRESS_RESULT_CONSUMED,
+            instrument_key=InstrumentKey(account="acct-1", instrument="005930"),
+            egress_result_kind=EgressResultKind.ACK,
+            attempt_id="a1",
+            broker_execution_id="0000003663",
+            trading_date="20260805",
+        )
+    )
+    (receipt,) = SqliteEvidenceReceiptReader(store).receipts(
+        WitnessScope(account="acct-1")
+    )
+    assert receipt.trading_date == "20260805"
+    assert receipt.broker_execution_id == "0000003663"
+
+
+@pytest.mark.parametrize(
+    "recorded", [None, "", "2026-08-05", "2026085", 20260805], ids=repr
+)
+def test_absent_or_malformed_trading_date_reads_as_none(store, recorded) -> None:
+    """Every receipt recorded before the date existed has no key; a malformed value is no date.
+    Either way the join cannot use it."""
+    store.append(
+        {
+            "attempt_id": "a1",
+            "instrument_key": {"account": "acct-1", "instrument": "005930"},
+            "egress_result_kind": "ACK",
+            "broker_execution_id": "0000003663",
+            **({} if recorded is None else {"trading_date": recorded}),
+        },
+        kind="EGRESS_RESULT_CONSUMED",
+        record_class="EGRESS_RESULT_CONSUMED",
+    )
+    (receipt,) = SqliteEvidenceReceiptReader(store).receipts(
+        WitnessScope(account="acct-1")
+    )
+    assert receipt.trading_date is None

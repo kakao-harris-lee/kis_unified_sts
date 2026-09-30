@@ -202,7 +202,7 @@ def test_leases_reconciled_any_none_or_false_fails_closed() -> None:
         "reconciliation_evidence_current",
         "no_unresolved_protective_lease_conflicts",
     )
-    base = dict.fromkeys(fields, True)
+    base: dict[str, bool | None] = dict.fromkeys(fields, True)
     for field in fields:
         for value in (None, False):
             kwargs = dict(base)

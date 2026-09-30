@@ -18,6 +18,7 @@ Regime tag: predicate substrate only; closes **no** STM-EV; EV-L1-complete claim
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -106,7 +107,7 @@ def _coverage(**item_overrides: object) -> bool:
 
 #: Every **negative**-polarity coordinate mapped to a one-argument judgement that consumes it.
 #: ``value`` is injected into the clean carrier; the judgement must be ``True`` only for ``False``.
-_NEGATIVE_CASES: dict[str, object] = {
+_NEGATIVE_CASES: dict[str, Callable[[bool | None], bool]] = {
     "excluded": lambda v: _coverage(excluded=v),
     "coverage_score_present": lambda v: critical_coverage_complete_or_gap(
         clean_coverage_manifest(coverage_score_present=v),
@@ -205,7 +206,7 @@ _NEGATIVE_CASES.update(
 )
 
 #: Every **positive**-polarity coordinate mapped to a judgement that consumes it.
-_POSITIVE_CASES: dict[str, object] = {
+_POSITIVE_CASES: dict[str, Callable[[bool | None], bool]] = {
     "is_complete": lambda v: critical_coverage_complete_or_gap(
         clean_coverage_manifest(is_complete=v),
         CLEAN_APPLICABLE_OBLIGATIONS,

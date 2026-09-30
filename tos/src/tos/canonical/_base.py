@@ -29,7 +29,6 @@ so the whole id-binding substrate lives in one core home:
   and ``tos.authority`` inherit this promoted base (design #6 §0.4c PROMOTE —
   ``tos.rcl._base`` / ``tos.dsl._base`` re-export it as thin shims, no sibling
   import edge; the ordering / canonicalization / classify PROMOTE precedent).
-
 * :class:`ArtifactStatus` — lifecycle marker (excluded from the digest, §3.2).
 * :class:`ArtifactIntegrityError` — construction-time integrity violation
   (``tos.capsule`` re-exports it as ``CapsuleIntegrityError``).
@@ -40,10 +39,11 @@ Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from tos.canonical._canonical_json import CanonicalJsonMixin
 from tos.canonical.canonicalization import CanonicalizationScheme, get_scheme
 
 
@@ -70,7 +70,7 @@ class ArtifactStatus(StrEnum):
     INVALIDATED = "INVALIDATED"
 
 
-class FrozenModel(BaseModel):
+class FrozenModel(CanonicalJsonMixin, BaseModel):
     """Immutable, schema-strict base for every tos artifact model (design §2).
 
     ``allow_inf_nan=False`` is pinned **explicitly**, not inherited from whatever
@@ -229,7 +229,7 @@ class DigestBoundArtifact(FrozenModel):
         scheme: CanonicalizationScheme,
         status: ArtifactStatus = ArtifactStatus.ISSUED,
         **content: Any,
-    ) -> DigestBoundArtifact:
+    ) -> Self:
         """Issue an artifact: compute its digest over the covered content (§4.1).
 
         Builds a transient ``DRAFT`` to extract the covered content, computes the
@@ -304,7 +304,7 @@ class IdDerivedArtifact(DigestBoundArtifact):
         scheme: CanonicalizationScheme,
         status: ArtifactStatus = ArtifactStatus.ISSUED,
         **content: Any,
-    ) -> IdDerivedArtifact:
+    ) -> Self:
         """Issue an id-derived artifact: compute the digest and derive the id (§4.1).
 
         Args:

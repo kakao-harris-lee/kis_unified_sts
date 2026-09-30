@@ -128,6 +128,7 @@ rather than owning a family of its own — the same shape as `canonical` and
 | `nontrade` | ADR-002-028 | L1 pure predicate substrate | NT: 2 READY / 10 NOT_IMPLEMENTED | corporate-action/cash source and owning runtime absent |
 | `ordering` | shared 016/008 substrate | shared ordering substrate | no direct family | no global sequencer/trusted coordinate owner |
 | `orthostate` | ADR-002-006 | L1 pure state substrate | STATE: 2 READY / 3 NOT_IMPLEMENTED | no authoritative state owner/persistence runtime |
+| `position` | DR-0003 | L1 pure predicate substrate | unit tests only; closes no EV | pure value types/predicates only; durable-evidence I/O stays tos_runtime-owned |
 | `posttrade` | ADR-002-030 | L1 pure predicate substrate | PTF: 12 NOT_IMPLEMENTED | no PTOL/settlement/finality authority |
 | `protective` | ADR-002-001 | L1 pure predicate substrate | PRD: 1 READY / 1 NOT_IMPLEMENTED | no Protective Controller/classifier/broker runtime |
 | `rcl` | ADR-002-002/012 | L1 in-memory predicate substrate | RCLP: 3 READY / 9 NOT_IMPLEMENTED | not durable/linearizable/distributed; no quorum log |

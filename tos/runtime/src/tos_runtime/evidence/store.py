@@ -81,9 +81,27 @@ injected version string.
 invariant is unrepresentable through this store's own sqlite handle, not
 merely undocumented.
 
+**``rotate-key`` ordering (TOS Phase 5 W4 §2 decision 4(b), discovered during implementation).**
+:class:`~tos_runtime.custody.key_provider.FileKeyProvider`'s own rotation-order contract is
+"place the new generation's key file FIRST, only THEN call :meth:`SqliteEvidenceStore.rotate`" —
+but that means the new file is ALREADY on disk by the time an operator's ``rotate-key`` CLI
+invocation opens this store fresh, and the constructor's own deny-first continuity gate
+(``__init__``'s own body, below) unconditionally refuses exactly that state
+(``KeyContinuityVerdict.ROTATION_PENDING``) for every caller — empirically confirmed: a plain
+re-open with the new generation's file present always raises, with no way to reach
+:func:`~tos_runtime.operations.key_rotation.rotate_evidence_key` at all. ``__init__``'s
+``permit_rotation_pending_for_generation`` parameter is the one, narrowly-scoped exception: a
+caller (only the ``rotate-key`` CLI path) that explicitly names the EXACT pending generation it
+intends to rotate to may open the store anyway, signing under the store's OWN EXISTING tip
+generation (never the pending new one — ``rotate()`` is still the only way to actually switch
+signing keys). Every other caller passes ``None`` (the default) and gets the unconditional
+refusal unchanged; every OTHER non-``CONTINUOUS`` verdict still refuses regardless of this
+parameter (see :func:`_rotation_permitted`'s own docstring for the exact condition).
+
 Firewall: stdlib (``sqlite3``, ``json``, ``time``) + ``pydantic`` +
 ``tos.canonical``/``tos.evidence``/``tos.workload`` + ``tos_runtime.evidence``
-only (R1 allowlist).
++ ``tos_runtime.operations`` (the schema-ledger boot check, TOS Phase 5 W4
+plan §2 decision 3) only (R1 allowlist).
 """
 
 from __future__ import annotations
@@ -107,14 +125,38 @@ from tos.evidence import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence import outbox as _outbox
+from tos_runtime.operations.key_rotation import (
+    KeyContinuityCheck,
+    KeyContinuityRefused,
+    KeyContinuityVerdict,
+    verify_key_generation_continuity,
+)
+from tos_runtime.operations.schema_ledger import open_or_create_schema
 
 __all__ = [
     "ChainVerification",
+    "EVIDENCE_SCHEMA_VERSION",
     "EvidenceCorruption",
     "InjectedCrash",
+    "KeyContinuityCheck",
+    "KeyContinuityRefused",
     "KeyProvider",
     "SqliteEvidenceStore",
 ]
+
+#: TOS Phase 5 W4 plan §2 decision 3 — this store's own ``PRAGMA user_version`` /
+#: ``schema_ledger`` baseline. Bumped only when this store's table shape actually changes; see
+#: :mod:`tos_runtime.operations.schema_migrations` for the registered migration this version
+#: corresponds to.
+#:
+#: **v2 (evidence growth plan §2 A2,
+#: ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md``).** ``entries`` gained the
+#: :data:`_CREATE_KIND_SEQ_INDEX_SQL` covering index. A pre-existing v1 file must be brought
+#: up via ``tos_runtime.operations.schema_migrations.apply_migrations(path, "evidence")`` (the
+#: ``migrate`` CLI) BEFORE this code can open it again —
+#: :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` refuses a non-fresh
+#: file whose stamped version disagrees: a boot refusal, never an auto-migrate.
+EVIDENCE_SCHEMA_VERSION = 2
 
 #: The genesis commitment every fresh chain folds from — matches
 #: :mod:`tos.evidence.chain`'s own (private) ``_CHAIN_GENESIS`` convention.
@@ -136,6 +178,36 @@ CREATE TABLE IF NOT EXISTS entries (
     key_generation INTEGER NOT NULL,
     appended_at_monotonic_ns INTEGER NOT NULL
 )
+"""
+
+#: Schema v2 (evidence growth plan §2 A2). Every historical read this runtime performs at
+#: boot/recovery is ``WHERE kind = ?`` / ``WHERE kind IN (...)``, optionally with ``AND seq >
+#: ?`` and always ordered by ``seq``. ``git grep -l "FROM entries" -- tos/runtime/src`` matches
+#: 21 files, but TWO of those (``rcl/gates.py``, ``rcl/log.py``) query the RCL commit log's own,
+#: separate ``entries`` table — so 19 modules read THIS store, and 14 of the 19 are on the
+#: boot/recovery path (the plan's §7 reader table names each one). Without this index each of
+#: them is a full table scan, so boot cost grows with TOTAL
+#: history even though every one of those readers wants a single kind; ``TIME_HEALTH_SNAPSHOT``
+#: alone is 77 % of the rows and 89 % of the bytes those scans read, and nothing in this
+#: runtime ever reads it back. ``(kind, seq)`` — in that order — makes the filter a range seek
+#: and the ``ORDER BY seq`` free within a kind.
+#:
+#: **This is an auxiliary structure, not a change of stored representation.** No row's bytes,
+#: ``entry_digest`` or ``chain_digest`` move, so the append-only triggers below and
+#: :meth:`SqliteEvidenceStore.verify` are untouched by it. Rollback is correspondingly total:
+#: ``DROP INDEX entries_kind_seq`` restores the v1 storage exactly (see
+#: :mod:`tos_runtime.operations.schema_migrations`'s own rollback note).
+#:
+#: **Created at genesis, and NEVER on a boot** (:func:`_create_evidence_schema` below runs it
+#: only when :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` hands it
+#: ``fresh=True``). Unlike the ``CREATE TABLE``/``CREATE TRIGGER`` statements beside it,
+#: ``CREATE INDEX IF NOT EXISTS`` is not a no-op against a pre-existing file: running it
+#: unconditionally would build a full index into a v1 file that the same call is about to refuse
+#: as BEHIND — a boot that writes and then refuses, against that module's own "부팅 시 자동 적용
+#: 0" — and would rebuild an index an operator had just dropped to roll v2 back. Both belong to
+#: ``migrate``, and only to ``migrate``.
+_CREATE_KIND_SEQ_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS entries_kind_seq ON entries (kind, seq)
 """
 
 _CREATE_NO_UPDATE_TRIGGER_SQL = """
@@ -199,14 +271,33 @@ class KeyProvider(Protocol):
     Custody of the real key bytes is ``tos_runtime.custody`` territory
     (design #40 D4, sequence item 4 — out of this slice's scope); this
     Protocol is the seam a future custody implementation satisfies. Tests
-    inject a fixed-byte double. Consulted exactly once, at construction —
-    :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation mechanism
-    thereafter (explicit ``new_generation``/``new_key`` arguments, not a
-    second ``KeyProvider`` call).
+    inject a fixed-byte double. :meth:`current` is consulted exactly once, at
+    construction — :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation
+    mechanism thereafter (explicit ``new_generation``/``new_key`` arguments,
+    not a second :meth:`current` call).
+
+    :meth:`generations` was added by TOS Phase 5 W4 plan §2 decision 4 — the
+    constructor's own key-generation continuity gate
+    (:func:`tos_runtime.operations.key_rotation.verify_key_generation_continuity`)
+    calls it, ALSO at construction, before :meth:`current` — every caller
+    that constructs a :class:`SqliteEvidenceStore` with a custom
+    :class:`KeyProvider` double must implement both methods.
     """
 
     def current(self) -> tuple[int, bytes]:
         """Return ``(key_generation, key_bytes)`` for the initial signing key."""
+        ...
+
+    def generations(self) -> tuple[int, ...]:
+        """Return every key generation this provider can currently supply, sorted ascending."""
+        ...
+
+    def key_for(self, generation: int) -> bytes:
+        """Return the key bytes for a SPECIFIC ``generation`` — added alongside
+        ``permit_rotation_pending_for_generation`` (module docstring's "rotate-key ordering"
+        note): the rotation-pending-permitted construction path signs under the store's
+        existing tip generation via this method, never :meth:`current` (which would resolve
+        the PENDING new generation instead)."""
         ...
 
 
@@ -221,6 +312,100 @@ class _EntryRow(NamedTuple):
     appended_at_monotonic_ns: int
     entry_digest: str
     chain_digest: str
+
+
+def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
+    """The ``key_generation`` of the most recently committed ``entries`` row, or ``None`` for
+    an empty (fresh) store — the constructor's own continuity-gate input (TOS Phase 5 W4 plan
+    §2 decision 4)."""
+    row = conn.execute(
+        "SELECT key_generation FROM entries ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def _tip_has_rotation_commit_for(conn: sqlite3.Connection, generation: int) -> bool:
+    """Whether a ``KEY_ROTATION`` entry recording ``new_key_generation == generation`` exists.
+
+    Reads ``payload_json`` in Python rather than sqlite's ``json_extract`` — the JSON1
+    extension is not guaranteed compiled into every sqlite3 build this runtime might run
+    against, and the number of rotations in a store's lifetime is small enough that a full
+    scan of ``KEY_ROTATION``-kind rows costs nothing worth optimizing for.
+    """
+    cur = conn.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?", ("KEY_ROTATION",)
+    )
+    for (payload_json,) in cur:
+        payload = json.loads(payload_json)
+        if payload.get("payload", {}).get("new_key_generation") == generation:
+            return True
+    return False
+
+
+def _rotation_permitted(
+    continuity: KeyContinuityCheck,
+    provider_generations: tuple[int, ...],
+    permit_rotation_pending_for_generation: int | None,
+    conn: sqlite3.Connection,
+) -> bool:
+    """Whether the constructor's ``permit_rotation_pending_for_generation`` override
+    (that parameter's own docstring) applies to THIS specific ``continuity`` result.
+
+    ``True`` only when ALL of: the verdict is exactly ``ROTATION_PENDING`` (never
+    ``HISTORY_UNVERIFIABLE``, which always refuses regardless of this parameter); the caller
+    supplied a generation; the highest generation actually on disk equals it (never a
+    caller-claimed generation the custody root does not, in fact, have staged); and a real
+    tip generation exists (a fresh store with no prior entries at all is a different,
+    ill-defined case this override does not cover — module docstring)."""
+    if continuity.verdict != KeyContinuityVerdict.ROTATION_PENDING:
+        return False
+    if permit_rotation_pending_for_generation is None:
+        return False
+    if not provider_generations:
+        return False
+    if max(provider_generations) != permit_rotation_pending_for_generation:
+        return False
+    return _tip_key_generation(conn) is not None
+
+
+def _resolve_signing_key(
+    continuity: KeyContinuityCheck, conn: sqlite3.Connection, key_provider: KeyProvider
+) -> tuple[int, bytes]:
+    """The ``(key_generation, key_bytes)`` pair the constructor signs new entries with.
+
+    ``key_provider.current()`` (the highest generation on disk) when ``continuity`` is
+    ``CONTINUOUS``; otherwise the store's OWN EXISTING tip generation — NEVER the pending new
+    one — for the rotation-pending-permitted path (module docstring's "rotate-key ordering"
+    note; :meth:`SqliteEvidenceStore.rotate` is the only sanctioned way to actually switch
+    signing keys). The constructor only reaches this function at all when ``continuity`` is
+    either ``CONTINUOUS`` or an explicitly-permitted ``ROTATION_PENDING`` — see
+    :func:`_rotation_permitted`.
+    """
+    if continuity.verdict == KeyContinuityVerdict.CONTINUOUS:
+        return key_provider.current()
+    key_generation = _tip_key_generation(conn)
+    if key_generation is None:
+        raise KeyContinuityRefused(  # unreachable; never a bare `assert` (`-O` strips it)
+            "SqliteEvidenceStore: rotation-pending permitted with no tip key generation "
+            "— invariant violation, refusing"
+        )
+    return key_generation, key_provider.key_for(key_generation)
+
+
+def _create_evidence_schema(conn: sqlite3.Connection, fresh: bool) -> None:
+    """This store's own DDL, run by :func:`~tos_runtime.operations.schema_ledger
+    .open_or_create_schema` inside the genesis transaction — in exactly the order, and with
+    exactly the statements, ``__init__`` used to run inline.
+
+    ``fresh`` gates the covering index and nothing else: see
+    :data:`_CREATE_KIND_SEQ_INDEX_SQL`'s own "created at genesis, and NEVER on a boot".
+    """
+    conn.execute(_CREATE_ENTRIES_TABLE_SQL)
+    if fresh:
+        conn.execute(_CREATE_KIND_SEQ_INDEX_SQL)
+    conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
+    conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
+    _outbox.create_outbox_table(conn)
 
 
 class SqliteEvidenceStore:
@@ -242,6 +427,7 @@ class SqliteEvidenceStore:
         canonicalization_version: str = _CANONICALIZATION_VERSION,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
         crash_hook: Callable[[str], None] | None = None,
+        permit_rotation_pending_for_generation: int | None = None,
     ) -> None:
         """Open (or create) the evidence store at ``path``.
 
@@ -264,6 +450,11 @@ class SqliteEvidenceStore:
             crash_hook: Test-only crash-injection callable (contract ④); see
                 the module docstring's fault-contract table. ``None`` in
                 production.
+            permit_rotation_pending_for_generation: The ONE sanctioned override of the
+                deny-first continuity gate below — ``None`` (default) for every normal
+                caller, unchanged behaviour. See :func:`_rotation_permitted`'s own
+                docstring for the exact condition and the module docstring's "rotate-key
+                ordering" note for why this exists at all.
         """
         self.path = path
         self._secret_keys = secret_keys
@@ -273,11 +464,45 @@ class SqliteEvidenceStore:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        self._conn.execute(_CREATE_ENTRIES_TABLE_SQL)
-        self._conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
-        self._conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
-        _outbox.create_outbox_table(self._conn)
-        key_generation, key = key_provider.current()
+        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+        # that closes.
+        open_or_create_schema(
+            self._conn,
+            store_name="evidence",
+            schema_version=EVIDENCE_SCHEMA_VERSION,
+            create_ddl=_create_evidence_schema,
+            shape_tables=("entries", "outbox"),
+            monotonic_ns=monotonic_ns,
+        )
+        # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run
+        # BEFORE `key_provider.current()` is ever consulted: a boot that is not CONTINUOUS
+        # must never select (let alone sign with) any key at all (see module docstring's own
+        # forward pointer and `tos_runtime.operations.key_rotation`'s module docstring for the
+        # gap this closes).
+        provider_generations = key_provider.generations()
+        continuity = verify_key_generation_continuity(
+            _tip_key_generation(self._conn),
+            lambda generation: _tip_has_rotation_commit_for(self._conn, generation),
+            provider_generations,
+        )
+        if (
+            continuity.verdict != KeyContinuityVerdict.CONTINUOUS
+            and not _rotation_permitted(
+                continuity,
+                provider_generations,
+                permit_rotation_pending_for_generation,
+                self._conn,
+            )
+        ):
+            raise KeyContinuityRefused(
+                f"SqliteEvidenceStore: key generation continuity refused "
+                f"({continuity.verdict}) for {path}: {continuity.reason}"
+            )
+        #: Boot-time continuity fact for a later reader (e.g. the operator projection's
+        #: ``operations.key_continuity``) — module docstring on why this can be ``ROTATION_PENDING``.
+        self.key_continuity: KeyContinuityCheck = continuity
+        key_generation, key = _resolve_signing_key(continuity, self._conn, key_provider)
         self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
 
     @property
@@ -615,6 +840,41 @@ class SqliteEvidenceStore:
         row = self._conn.execute(
             "SELECT seq, chain_digest, key_generation FROM entries "
             "ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None, _CHAIN_GENESIS, None
+        last_seq, last_chain_digest, last_key_generation = row
+        return last_seq, last_chain_digest, last_key_generation
+
+    def last_committed_excluding(
+        self, kinds: frozenset[str]
+    ) -> tuple[int | None, str, int | None]:
+        """Same as :meth:`last_committed`, but ignores rows whose ``kind`` is in
+        ``kinds`` (W3.1 independent review HIGH-1).
+
+        Exists for a caller that BOTH observes this store's own tip AND writes to it
+        (e.g. a stall detector whose own alert-emission sink is this same store): reading
+        the unfiltered tip would see the caller's own writes as "the tip advanced",
+        self-perturbing the very observation the caller is making. Excluding the
+        caller's own write ``kind``(s) from the tip query breaks that loop.
+
+        Args:
+            kinds: The ``kind`` values to exclude from consideration — never a
+                caller-supplied SQL fragment (bound as ordinary parameters below).
+
+        Returns:
+            ``(last_seq, last_chain_digest, last_key_generation)`` over the entries NOT
+            in ``kinds``, or ``(None, _CHAIN_GENESIS, None)`` when no such entry exists
+            (mirrors :meth:`last_committed`'s own empty-store contract — indistinguishable
+            from "no entries at all" when every entry happens to be excluded).
+        """
+        if not kinds:
+            return self.last_committed()
+        placeholders = ", ".join("?" for _ in kinds)
+        row = self._conn.execute(
+            f"SELECT seq, chain_digest, key_generation FROM entries "
+            f"WHERE kind NOT IN ({placeholders}) ORDER BY seq DESC LIMIT 1",
+            tuple(sorted(kinds)),
         ).fetchone()
         if row is None:
             return None, _CHAIN_GENESIS, None

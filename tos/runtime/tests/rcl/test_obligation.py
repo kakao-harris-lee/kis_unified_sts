@@ -14,10 +14,13 @@ from pathlib import Path
 
 import pytest
 from tos.egressgw.records import GatewayEvidenceRecord
+from tos.engine.records import InstrumentKey
+from tos.engine.vocabulary import CommitmentStep
 from tos.rcl import (
     AppendReceipt,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     ReservationScope,
     TransitionCause,
@@ -39,6 +42,13 @@ _IDENTITY = RuntimeIdentity(cell_id="test-cell", process_nonce="test-nonce-1")
 class _FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes")
+
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return b"test-fixed-key-bytes"
 
 
 def _store(tmp_path: Path) -> SqliteEvidenceStore:
@@ -89,6 +99,9 @@ def _commit_reservation(
         raise AssertionError(
             f"_commit_reservation only supports POTENTIALLY_LIVE/RELEASED, got {state!r}"
         )
+    # A successful append (AppendReceipt, never AppendRefusal) always carries a real seq —
+    # the log's own construction site (`log.py:999`) never leaves it None.
+    assert setup.seq is not None
     result = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=reservation_id,
@@ -129,10 +142,18 @@ class _FixedStateProjection:
     def all_reservations(self) -> dict[str, CapacityState]:
         return {self._reservation_id: self._state}
 
-    def instrument_state(self, _key: object) -> CapacityState | None:
+    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
         return None
 
-    def instrument_last_seq(self, _key: object) -> int | None:
+    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
+        return None
+
+    def reservation_committed_vector(
+        self, _reservation_id: str
+    ) -> CapacityVector | None:
+        return None
+
+    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 
@@ -173,6 +194,7 @@ def test_no_obligation_appends_no_evidence_and_never_resolves(tmp_path: Path) ->
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=None,
         )
@@ -222,6 +244,7 @@ def test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts(
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=None,
             preserved_obligation_magnitude_unknown=True,
@@ -264,6 +287,7 @@ def test_consuming_state_appends_evidence_with_no_halt(tmp_path: Path) -> None:
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=5,
         )
@@ -301,6 +325,7 @@ def test_released_state_appends_evidence_and_halts(tmp_path: Path) -> None:
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=5,
         )
@@ -333,6 +358,7 @@ def test_unresolvable_reservation_appends_evidence_and_halts(tmp_path: Path) -> 
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=5,
         )
@@ -366,6 +392,7 @@ def test_attempt_id_none_never_calls_the_resolver(tmp_path: Path) -> None:
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id=None,
             preserved_worst_credible_capacity=5,
         )
@@ -400,10 +427,18 @@ class _MutableStateProjection:
     def all_reservations(self) -> dict[str, CapacityState]:
         return {self._reservation_id: self.state}
 
-    def instrument_state(self, _key: object) -> CapacityState | None:
+    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
         return None
 
-    def instrument_last_seq(self, _key: object) -> int | None:
+    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
+        return None
+
+    def reservation_committed_vector(
+        self, _reservation_id: str
+    ) -> CapacityVector | None:
+        return None
+
+    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 
@@ -437,7 +472,10 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
 
     recorder(
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a1", preserved_worst_credible_capacity=5
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="a1",
+            preserved_worst_credible_capacity=5,
         )
     )
     kinds_after_a1 = [m.kind for m in store.iter_entry_meta()]
@@ -451,7 +489,10 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
 
     recorder(
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a2", preserved_worst_credible_capacity=3
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="a2",
+            preserved_worst_credible_capacity=3,
         )
     )
     kinds_after_a2 = [m.kind for m in store.iter_entry_meta()]
@@ -482,7 +523,10 @@ def test_every_capacity_state_matches_the_kernel_predicate(
     )
     recorder(
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a1", preserved_worst_credible_capacity=1
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="a1",
+            preserved_worst_credible_capacity=1,
         )
     )
 

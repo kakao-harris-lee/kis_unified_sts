@@ -39,7 +39,7 @@ def test_mapping_mismatch_is_rejected(field: str, expected: str, observed: str) 
     if expected == observed:
         return
     obs = Observation(mapping=Mapping(**{field: observed}))
-    expectation = AdmissionExpectation(**{field: expected})
+    expectation = AdmissionExpectation.model_validate({field: expected})
     result, reasons = compute_admission(obs, expectation)
     assert result == AdmissionResult.REJECTED
     assert f"{field}_mismatch" in reasons
@@ -53,7 +53,7 @@ def test_exact_match_is_admitted(field: str, value: str) -> None:
         mapping=Mapping(**{field: value}),
         continuity=Continuity(continuity_gap=False),
     )
-    expectation = AdmissionExpectation(**{field: value})
+    expectation = AdmissionExpectation.model_validate({field: value})
     result, reasons = compute_admission(obs, expectation)
     assert result == AdmissionResult.ADMITTED
     assert reasons == ()
@@ -66,7 +66,7 @@ def test_exact_match_is_admitted(field: str, value: str) -> None:
 def test_missing_observed_is_uncertain(field: str, expected: str) -> None:
     """An expected-but-unverifiable field is uncertain -> UNKNOWN (fail-closed)."""
     obs = Observation(mapping=Mapping())  # observed field is None
-    expectation = AdmissionExpectation(**{field: expected})
+    expectation = AdmissionExpectation.model_validate({field: expected})
     result, _ = compute_admission(obs, expectation)
     assert result == AdmissionResult.UNCERTAIN
     assert admitted_field_state(result) == FieldState.UNKNOWN

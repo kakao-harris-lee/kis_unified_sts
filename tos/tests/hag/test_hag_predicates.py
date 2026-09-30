@@ -33,6 +33,7 @@ from ._hag_strategies import clean_attestation, clean_request
 def test_approval_binding_exact_matches_request_digest() -> None:
     """(§5.2) An attestation binding the request's exact digest is exact; a mismatch fails closed."""
     request = clean_request()
+    assert request.canonical_digest is not None
     bound = clean_attestation(
         attestation_id="a1",
         principal_id="alice",

@@ -168,7 +168,7 @@ def test_records_are_frozen_and_extra_forbid() -> None:
     """(§2.0) Models are frozen (no mutation) and forbid unknown fields."""
     att = clean_attestation(attestation_id="att-1", principal_id="alice")
     with pytest.raises((ValueError, TypeError)):
-        att.decision = AttestationDecision.DENY  # type: ignore[misc]
+        att.decision = AttestationDecision.DENY
     with pytest.raises((ValueError, TypeError)):
         HumanHaltCommand(command_id="c", unknown_field="y")  # type: ignore[call-arg]
 

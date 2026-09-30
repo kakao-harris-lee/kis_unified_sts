@@ -65,8 +65,9 @@ coverage manifest and the snapshot, ``bound_alert_id`` on the escalation record)
 this escalation belong to?" is bound unforgeably (§5.9). Numeric bounds (telemetry / snapshot / alert
 ages, suppression duration) are excluded and Phase-1 null (design #30 §8). Nested models carrying
 ``frozenset`` fields are kept **out** of the covered set to avoid unstable serialization (the sir / wdr
-precedent); ``frozenset`` covered fields are **sorted** in :meth:`covered_content` so the digest is
-deterministic across processes.
+precedent); ``frozenset`` covered fields are **sorted** by the shared
+:class:`~tos.canonical._canonical_json.CanonicalJsonMixin` JSON hook so the digest is deterministic
+across processes.
 
 **All-false authority (design #30 §2.4; STM-INV-001).** Every artifact carries an
 :class:`~tos.stm._base.AllFalseMonitoringAuthority` with every flag ``False`` — a monitoring artifact is

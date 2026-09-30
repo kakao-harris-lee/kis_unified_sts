@@ -1,0 +1,132 @@
+# tos_runtime.marketfeed tick-scheduler example config
+# (TOS tick-source wave, plan docs/plans/2026-09-16-tos-tick-source-plan.md §2/§4, lane D)
+#
+# Loader: tos_runtime.compose._marketfeed_wiring.load_marketfeed_config
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved config. A real deployment copies this file (e.g. under
+# config/tos_runtime/paper/), fills in every leaf, and keeps a
+# critical_input_policy.yaml alongside it — compose only builds the tick
+# scheduler when BOTH files exist under --config-dir; absent, the scheduler
+# stays None (a legitimate, unconfigured state, never a boot refusal). A
+# still-null or missing required leaf here IS a fail-closed refusal at load
+# (tos_runtime.compose._marketfeed_wiring.MarketFeedConfigError), never a
+# silent default.
+#
+# environment / decision_class / issuer_principal_id / intended_use are NOT
+# repeated here — the scheduler reads them straight off the loaded
+# critical_input_policy.yaml (구조 파생 > 자기신고: the tick source's capsule
+# scope is the SAME deployment fact its governing policy already declares,
+# never a second, independently-typed copy that could drift from it).
+
+# --- instrument scope --------------------------------------------------
+# `instruments` MUST name exactly one instrument — TickScheduler refuses at
+# construction otherwise (FORWARD-OBLIGATION-MS1, tos/src/tos/backtest/
+# driver.py:78-86, is unratified for a live multi-symbol source). Shaped as
+# a list, not a bare string, so a misconfigured multi-symbol deployment is
+# expressible and therefore refusable, rather than silently unrepresentable.
+
+instruments: null
+
+# The session/calendar instrument class key this scheduler's session gate
+# reads (tos_runtime.calendar.owner.SessionFactsOwner.session_context's own
+# argument — must be a class calendar.yaml actually declares sessions for).
+instrument_class: null
+
+# --- capsule scope -------------------------------------------------------
+# The account every issued snapshot/capsule is scoped to, and the
+# SafetyCriticalFacts every issued capsule carries (tos.capsule.capsule
+# .SafetyCriticalFacts — direction/quantity_basis/unit).
+
+account: null
+direction: null
+quantity_basis: null
+unit: null
+
+# --- observation intake --------------------------------------------------
+# `intake_kind` names EXACTLY ONE observation source and is REQUIRED — there is
+# no default and neither kind is ever substituted for the other
+# (tos_runtime.compose._marketfeed_wiring's module docstring). Two values are
+# recognized; anything else, or a still-null leaf, is a fail-closed refusal:
+#
+#   journal    — the append-only JSON-Lines journal an upstream collector
+#                writes (tos_runtime.marketfeed.journal
+#                .JsonLinesObservationJournal). `journal_path` below is then
+#                REQUIRED.
+#   kis_quote  — the KIS 모의투자 quote HTTP poller (tos_runtime.transport
+#                .kis_quote). `kis_quote.yaml` must then exist alongside this
+#                file, and `journal_path` below must be ABSENT.
+
+intake_kind: null
+
+# Path to the observation journal — REQUIRED when `intake_kind: journal`, and
+# refused when `intake_kind: kis_quote` (the cross-check is what stops a
+# deployment from naming one source while configuring the other).
+
+journal_path: null
+
+# --- pacing ----------------------------------------------------------------
+# Minimum wall-clock milliseconds between two TICKED passes
+# (tos_runtime.marketfeed.scheduler.decide_tick's own SKIPPED_INTERVAL gate).
+
+poll_interval_ms: null
+
+# The runtime's own worst-case duration of ONE scheduler pass, in ms — REQUIRED
+# when `intake_kind: journal`, and refused (must stay absent/null) for any other
+# intake kind. Together with `poll_interval_ms` it is the runtime's share of the
+# conservative freshness budget, and compose refuses to boot when
+#
+#     poll_interval_ms + journal_pass_allowance_ms
+#         >  MAX_time_conservative_freshness_age_ms - sum(delay_bounds)  # time.yaml
+#
+# because an observation landing just after a pass would then always be read
+# STALE — consumed, withheld, never retried (plan docs/plans/2026-09-27-tos-poll-
+# interval-freshness-budget-plan.md §2, operator disposition §6.1; issue #807).
+# Whatever that inequality leaves over is the UPSTREAM COLLECTOR's headroom.
+# Must be positive.
+#
+# ⚠ This is an operator-DECLARED bound, not a measured or enforced one. The
+# paper value came from the 2026-09-27 measurement (worst observed pass 78.6 ms,
+# plan §1) rounded up. NOTHING times a pass against it at runtime: a pass that
+# actually runs longer silently pushes the observation past the freshness bound,
+# and it is then read STALE — withheld and consumed without retry, with no
+# refusal, counter, or log separating "the allowance was wrong" from "the
+# collector was late". Observing the real pass duration at runtime is a possible
+# follow-up, not something this key provides.
+#
+# `kis_quote` is NOT budgeted this way — this share belongs to an upstream
+# journal collector and that intake has no such collector. Leave this key absent
+# there (and note `poll_interval_ms` doubles as that intake's HTTP request
+# spacing, where the 모의 quote rate limit applies).
+#
+# ⚠ Not budgeted is NOT the same as not stale. Since issue #810 that intake's
+# `as_of_ms` is the instant its HTTP request went out (stamped on the monotonic
+# clock, mapped onto the pass's own freshly evaluated reading by the scheduler),
+# so its `source_age` is that request's ROUND TRIP — measured per pass, not
+# derived from this spacing. A slow round trip still pushes it past the same
+# 800 ms conservative budget and reads STALE; what this key no longer does is
+# decide that outcome.
+#
+# ⚠ The 1000 ms spacing floor for `kis_quote` is the 모의 quote rate limit
+# (1.0 rps clean, probe P-13), NOT something this config enforces — nothing
+# refuses a deployment that writes a shorter spacing here; the broker throttles
+# instead.
+#
+# Paper pins `intake_kind: journal`.
+
+journal_pass_allowance_ms: null
+
+# Time-health evaluation spacing while the session is CLOSED
+# (tos_runtime.marketfeed.time_pacer.TimeEvaluationPacer). While the session is
+# open the time service is evaluated before every pass; while closed, once per
+# this interval — it bounds how late the opening is noticed. Must be positive.
+
+time_evaluate_closed_interval_ms: null
+
+# --- time-projection frame parameters -------------------------------------
+# Injected construction parameters for tos_runtime.marketfeed.time_projection
+# .RuntimeTimeProjection — a frame-of-reference bound, not a measurement (see
+# that module's own docstring on why these are NOT VER-002 profile keys).
+
+snapshot_age_bound: null
+interval_width: null

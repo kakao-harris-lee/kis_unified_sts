@@ -142,7 +142,7 @@ def test_capability_provenance_requires_every_identity_field(missing: str) -> No
     }
     del kwargs[missing]
     with pytest.raises(pydantic.ValidationError):
-        CapabilityProvenance(**kwargs)
+        CapabilityProvenance.model_validate(kwargs)
 
 
 def test_capability_provenance_is_frozen() -> None:
@@ -152,7 +152,7 @@ def test_capability_provenance_is_frozen() -> None:
         captured_at="2026-09-07",
     )
     with pytest.raises(pydantic.ValidationError):
-        provenance.source_ref = "changed"  # type: ignore[misc]
+        provenance.source_ref = "changed"
 
 
 def test_capability_provenance_carries_evidence_ref() -> None:

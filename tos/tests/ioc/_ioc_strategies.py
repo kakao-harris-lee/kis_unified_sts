@@ -48,7 +48,7 @@ FINITE_MAGNITUDE = st.decimals(
 )
 
 #: The authorized axis set used across the conformance tests (the identity + direction axes).
-AUTHORIZED_AXES: dict[ConformanceAxis, str] = {
+AUTHORIZED_AXES: dict[ConformanceAxis, str | None] = {
     ConformanceAxis.ENVIRONMENT: "PAPER",
     ConformanceAxis.ACCOUNT: "ACCT-1",
     ConformanceAxis.INSTRUMENT: "INSTR-1",

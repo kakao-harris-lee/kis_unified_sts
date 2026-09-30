@@ -14,6 +14,7 @@ from tos.authority import (
     CapabilityType,
     Ordering,
     OrderingEvent,
+    SafetyAuthorityCapability,
     compare_order,
     halt_denies,
     is_restrictive_dominating_type,
@@ -26,13 +27,13 @@ from tos.authority import (
 from ._authority_strategies import issue_capability
 
 
-def _halt() -> object:
+def _halt() -> SafetyAuthorityCapability:
     return issue_capability(
         capability_id="halt-1", capability_type=CapabilityType.HALT, issue_sequence=1
     )
 
 
-def _permissive(issue_sequence: int) -> object:
+def _permissive(issue_sequence: int) -> SafetyAuthorityCapability:
     return issue_capability(
         capability_id="perm-1",
         capability_type=CapabilityType.NORMAL_RISK_INCREASING,

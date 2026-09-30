@@ -102,6 +102,35 @@ class FileKeyProvider:
                 generations.append(int(suffix))
         return sorted(generations)
 
+    def generations(self) -> tuple[int, ...]:
+        """Every key generation with a file on disk, sorted ascending.
+
+        Read-only — a directory scan, nothing else. Unlike :meth:`_discover_generations`
+        (which silently tolerates a stray non-generation file alongside real key files, e.g.
+        ``evidence.key.bak``, because its only caller cares about the highest VALID
+        generation), this method is deny-first (TOS Phase 5 W4 plan §2 decision 4's
+        continuity check consumes it): a malformed match cannot be silently dropped here,
+        because doing so could hide a real generation from the very check that exists to
+        catch a gap.
+
+        Raises:
+            CustodyLoadRefused: A file under ``root_dir`` matches the
+                :data:`KEY_FILENAME_PREFIX` glob but its suffix is not purely digits — refuse
+                rather than silently ignore it.
+        """
+        generations: list[int] = []
+        for candidate in self._root_dir.glob(f"{KEY_FILENAME_PREFIX}*"):
+            suffix = candidate.name[len(KEY_FILENAME_PREFIX) :]
+            if not suffix.isdigit():
+                raise CustodyLoadRefused(
+                    f"FileKeyProvider.generations: {candidate.name!r} under "
+                    f"{self._root_dir} does not match {KEY_FILENAME_PREFIX}<digits> — "
+                    "refuse (fail-closed, continuity verification cannot tolerate an "
+                    "ambiguous custody root)"
+                )
+            generations.append(int(suffix))
+        return tuple(sorted(generations))
+
     def current_generation(self) -> int:
         """The highest generation with a file present on disk.
 

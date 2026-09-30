@@ -89,7 +89,7 @@ _GUARD_SITES: dict[str, tuple[tuple[str, int, str], ...]] = {
     "ST-05": ((_BASE, 211, "if digest != expected_digest:"),),
     "ST-06": ((_BASE, 211, "if digest != expected_digest:"),),
     "ST-07": (
-        (_CANONICALIZATION, 255, "if version is None or version not in _REGISTRY:"),
+        (_CANONICALIZATION, 261, "if version is None or version not in _REGISTRY:"),
         (_BASE, 209, "get_scheme(self.canonicalization_version)"),
     ),
     "ST-08": ((_RECORD_PAIR, 96, "else RecordPairKind.CRITICAL_CONFLICT"),),

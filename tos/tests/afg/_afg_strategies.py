@@ -91,12 +91,12 @@ CANCEL_DIM: str = action_flow_dimension_id(ActionFlowDimensionKind.CANCEL_AMEND_
 # ---------------------------------------------------------------------------
 
 #: Scope sets **including the empty set** (the ∅-void branch must be exercised).
-SCOPE_SETS = st.one_of(
+SCOPE_SETS: st.SearchStrategy[frozenset[ActionFlowScopeKind]] = st.one_of(
     st.just(frozenset()),
     st.frozensets(st.sampled_from(list(ActionFlowScopeKind)), min_size=0, max_size=5),
 )
 #: Action-class sets **including the empty set**.
-ACTION_CLASS_SETS = st.one_of(
+ACTION_CLASS_SETS: st.SearchStrategy[frozenset[ActionClassKind]] = st.one_of(
     st.just(frozenset()),
     st.frozensets(st.sampled_from(list(ActionClassKind)), min_size=0, max_size=4),
 )

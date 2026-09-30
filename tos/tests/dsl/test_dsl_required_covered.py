@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from tos.canonical import DigestBoundArtifact
 from tos.dsl import (
     AdmissibilityResult,
     AuthoredStrategy,
@@ -56,7 +57,7 @@ from ._dsl_strategies import (
 )
 
 # (artifact class, kwargs builder) — the digest-bound artifacts under test.
-_ARTIFACTS: list[tuple[type, Callable[..., dict[str, Any]]]] = [
+_ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
     (AuthoredStrategy, strategy_required_kwargs),
     (Proposal, proposal_required_kwargs),
     (NoActionOutcome, no_action_required_kwargs),
@@ -84,7 +85,7 @@ def _cases() -> list[Any]:
     """Yield one param per (artifact, required covered path)."""
     cases: list[Any] = []
     for cls, kwargs_fn in _ARTIFACTS:
-        for path in cls._REQUIRED_COVERED:  # type: ignore[attr-defined]
+        for path in cls._REQUIRED_COVERED:
             cases.append(
                 pytest.param(cls, kwargs_fn, path, id=f"{cls.__name__}:{path}")
             )
@@ -93,12 +94,12 @@ def _cases() -> list[Any]:
 
 @pytest.mark.parametrize("cls,kwargs_fn,path", _cases())
 def test_missing_required_covered_rejects_issuance(
-    cls: type, kwargs_fn: Callable[..., dict[str, Any]], path: str
+    cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
 ) -> None:
     """Dropping any required covered path makes an ISSUED artifact unconstructable (★1; design §2)."""
     kwargs = _null_path(kwargs_fn(), path)
     with pytest.raises(ValidationError):
-        cls.issue(scheme=SCHEME, **kwargs)  # type: ignore[attr-defined]
+        cls.issue(scheme=SCHEME, **kwargs)
 
 
 def test_every_digest_bound_artifact_has_non_vacuous_required_covered() -> None:
@@ -108,10 +109,10 @@ def test_every_digest_bound_artifact_has_non_vacuous_required_covered() -> None:
 
 
 @pytest.mark.parametrize("cls", [cls for cls, _ in _ARTIFACTS])
-def test_bare_issue_is_rejected(cls: type) -> None:
+def test_bare_issue_is_rejected(cls: type[DigestBoundArtifact]) -> None:
     """Issuing an artifact with no covered content is rejected (no empty artifact reaches ISSUED)."""
     with pytest.raises(ValidationError):
-        cls.issue(scheme=SCHEME)  # type: ignore[attr-defined]
+        cls.issue(scheme=SCHEME)
 
 
 def test_issue_fixtures_are_genuinely_complete() -> None:

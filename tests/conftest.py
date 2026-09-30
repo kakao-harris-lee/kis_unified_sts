@@ -226,10 +226,11 @@ def _reset_config_loader_singleton():
 
 @pytest.fixture(autouse=True)
 def _reset_futures_open_cache():
-    """Clear the module-level futures-open cache between tests.
+    """Clear the module-level futures open/close cache between tests.
 
-    ``shared.decision.context._load_futures_open_from_config`` memoizes the
-    parsed ``futures.regular.open`` per config path. Tests that point it at a
+    ``shared.decision.context.load_futures_open_from_config`` (and the
+    ``close`` twin) memoizes the parsed ``futures.regular`` time per config
+    path. Tests that point it at a
     temp config (or rely on the default) could otherwise leak a cached value
     into a later test — especially under pytest-xdist where module state is
     shared within a worker. Clearing before AND after keeps each test hermetic.

@@ -50,7 +50,8 @@ transition must not change an artifact's digest and be mis-flagged as a same-id 
 is an immutable claim; the current lifecycle state is injected into the predicate.
 
 **Deterministic set-covered digest (design #25 §3.1).** ``frozenset`` covered fields (policy /
-package class manifests) are **sorted** in :meth:`covered_content` so the digest is deterministic
+package class manifests) are **sorted** by the shared
+:class:`~tos.canonical._canonical_json.CanonicalJsonMixin` JSON hook so the digest is deterministic
 across processes (a frozenset's iteration order is otherwise unstable); the field type stays a
 ``frozenset`` for the predicate's subset math (the cur ``required_dimensions`` precedent).
 
@@ -97,15 +98,6 @@ __all__ = [
     "ProductionScopePromotionDecision",
     "AllFalseTrialAuthority",
 ]
-
-
-def _sorted_set_fields(content: dict[str, Any], *names: str) -> dict[str, Any]:
-    """Sort the named ``frozenset``-derived list fields for a deterministic digest (§3.1)."""
-    for name in names:
-        value = content.get(name)
-        if value is not None:
-            content[name] = sorted(value)
-    return content
 
 
 class TrialPolicy(IndependentIdArtifact):
@@ -157,16 +149,6 @@ class TrialPolicy(IndependentIdArtifact):
     compatibility_manifest_digest: str | None = None
     #: §7 — a policy is governed content, not permission (all-false, RLP-INV-001).
     authority_effect: AllFalseTrialAuthority = AllFalseTrialAuthority()
-
-    def covered_content(self) -> dict[str, Any]:
-        """Digest preimage with the ``frozenset`` class fields serialized deterministically (§3.1)."""
-        return _sorted_set_fields(
-            super().covered_content(),
-            "eligible_trial_classes",
-            "prohibited_trial_classes",
-            "scope_dimensions",
-            "required_evidence_classes",
-        )
 
 
 class ExactTrialPlan(IndependentIdArtifact):
@@ -463,10 +445,6 @@ class TrialEvidencePackage(IndependentIdArtifact):
     commit_receipt_id: str | None = None
     #: §7 — a package is verified data, not permission (all-false, RLP-INV-001).
     authority_effect: AllFalseTrialAuthority = AllFalseTrialAuthority()
-
-    def covered_content(self) -> dict[str, Any]:
-        """Digest preimage with the ``present_element_classes`` set serialized deterministically (§3.1)."""
-        return _sorted_set_fields(super().covered_content(), "present_element_classes")
 
     @model_validator(mode="after")
     def _complete_claim_requires_negative_retention(self) -> TrialEvidencePackage:

@@ -21,14 +21,25 @@ value** (:attr:`InboxReceipt.duplicate`), never an unhandled exception the calle
 to interpret. A different id can only mean different bytes, so there is no representable case where
 retrying loses data.
 
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``json``, ``sqlite3``) +
-``pydantic`` + ``tos.canonical``/``tos.engine`` only. No ``shared.*``, no ``tos.backtest``.
+**Schema-ledger genesis timestamp uses ``time.monotonic_ns`` directly (disclosed choice, TOS
+Phase 5 W4 plan §2 decision 3).** Unlike the evidence store and RCL log, this constructor takes
+no injected ``monotonic_ns`` callable — widening that public signature for one boot-time-only
+ledger stamp was judged not worth it. The schema-ledger genesis row is written at most once per
+file (``open_or_create_schema``'s ``CREATED`` case) and is never read back for anything time-
+sensitive, so this is a disclosed exception to the "never read the wall/monotonic clock directly"
+convention, not an oversight.
+
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``json``, ``sqlite3``,
+``time``) + ``pydantic`` + ``tos.canonical``/``tos.engine`` + ``tos_runtime.operations`` (the
+schema-ledger boot check, TOS Phase 5 W4 plan §2 decision 3) only. No ``shared.*``, no
+``tos.backtest``.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
@@ -37,7 +48,22 @@ from pathlib import Path
 from tos.canonical import CanonicalizationScheme
 from tos.engine.records import EngineEvent, event_identity
 
-__all__ = ["InboxReceipt", "NewRiskHaltClearOutcome", "SqliteEventInbox"]
+from tos_runtime.operations.schema_ledger import open_or_create_schema
+
+__all__ = [
+    "INBOX_SCHEMA_VERSION",
+    "InboxReceipt",
+    "NewRiskHaltClearOutcome",
+    "SqliteEventInbox",
+]
+
+#: TOS Phase 5 W4 plan §2 decision 3 — see
+#: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION``'s own docstring for the shared
+#: convention. Baseline v1 already includes the ``_ADDED_COLUMNS`` columns below (the plan's own
+#: "baseline includes the added columns" instruction) — this store's schema-ledger baseline and
+#: its pre-ledger ``_ADDED_COLUMNS`` idiom are two independent mechanisms that happen to agree on
+#: the SAME target shape; the older idiom is kept as-is for a file older than either mechanism.
+INBOX_SCHEMA_VERSION = 1
 
 _CREATE_EVENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -179,6 +205,15 @@ class NewRiskHaltClearOutcome(StrEnum):
     #: but the storage-layer clear itself still refused — a concurrent relatch changed the seq
     #: between the two (never reachable through this single-threaded runtime today).
     STORAGE_REFUSED = "STORAGE_REFUSED"
+    #: Wrapper-only (TOS Phase 5 W3 plan §2 decision 7): the HAG two-person re-arm quorum
+    #: (:mod:`tos_runtime.safety.rearm`) did not positively approve — a missing/malformed
+    #: ``approvals/rearm/<seq>.yaml`` file, or any of the five kernel predicates
+    #: (``dual_control_effective_distinct`` / ``quorum_independence_satisfied`` /
+    #: ``approval_binding_exact`` / ``approval_set_single_use`` / ``no_automatic_rearm``) not
+    #: positively satisfied. Replaces the free-text ``EMPTY_ATTESTATION`` refusal for this
+    #: wrapper's own pre-checks (latch present + seq match still refuse with ``NO_LATCH`` /
+    #: ``SEQ_MISMATCH`` before a re-arm file is even consulted).
+    QUORUM_REFUSED = "QUORUM_REFUSED"
 
 
 @dataclass(frozen=True)
@@ -195,6 +230,26 @@ class InboxReceipt:
     seq: int
     event_id: str
     duplicate: bool
+
+
+def _create_inbox_schema(conn: sqlite3.Connection, fresh: bool) -> None:
+    """This inbox's own DDL, run by :func:`~tos_runtime.operations.schema_ledger
+    .open_or_create_schema` inside the genesis transaction — exactly the statements ``__init__``
+    used to run inline, in the same order.
+
+    ``fresh`` is unused: every statement here is idempotent on a pre-existing file, including the
+    :data:`_ADDED_COLUMNS` pass, which is itself conditioned on the columns actually present.
+    """
+    del fresh
+    conn.execute(_CREATE_EVENTS_TABLE_SQL)
+    conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
+    conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
+    conn.execute(_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL)
+    conn.execute(_CREATE_NEW_RISK_HALT_TABLE_SQL)
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    for column, decl in _ADDED_COLUMNS:
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE events ADD COLUMN {column} {decl}")
 
 
 class SqliteEventInbox:
@@ -226,17 +281,22 @@ class SqliteEventInbox:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        self._conn.execute(_CREATE_EVENTS_TABLE_SQL)
-        self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
-        self._conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
-        self._conn.execute(_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL)
-        self._conn.execute(_CREATE_NEW_RISK_HALT_TABLE_SQL)
-        existing_columns = {
-            row[1] for row in self._conn.execute("PRAGMA table_info(events)")
-        }
-        for column, decl in _ADDED_COLUMNS:
-            if column not in existing_columns:
-                self._conn.execute(f"ALTER TABLE events ADD COLUMN {column} {decl}")
+        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+        # that closes.
+        open_or_create_schema(
+            self._conn,
+            store_name="inbox",
+            schema_version=INBOX_SCHEMA_VERSION,
+            create_ddl=_create_inbox_schema,
+            shape_tables=(
+                "events",
+                "attempt_composites",
+                "attempt_finality_witness",
+                "new_risk_halt",
+            ),
+            monotonic_ns=time.monotonic_ns,
+        )
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection."""
@@ -257,6 +317,21 @@ class SqliteEventInbox:
         driver-issued coordinate, so this count IS the number of coordinates already issued.
         """
         row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
+        return int(row[0])
+
+    @property
+    def unconsumed_count(self) -> int:
+        """How many admitted events are NOT yet consumed (the subset :attr:`count` does not
+        distinguish) — the MONITORING safety-mesh service's own inbox-backlog observation
+        (Phase 5 W3-b, plan §2 decision 2's "MonitoringService" bullet, item 3:
+        ``inbox_unconsumed_observer``). Reuses the SAME partial index
+        :meth:`next_unconsumed`'s own query already relies on
+        (``events_unconsumed ON events (seq) WHERE consumed_evidence_seq IS NULL``), so this
+        count is never a second, independently-derived view of consumption.
+        """
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE consumed_evidence_seq IS NULL"
+        ).fetchone()
         return int(row[0])
 
     def enqueue(self, event: EngineEvent) -> InboxReceipt:

@@ -31,6 +31,7 @@ from ._cur_strategies import (
     clean_dimensions,
     clean_fence,
     clean_revision,
+    dimension_key,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,7 +45,7 @@ def test_all_floors_met_both_ways() -> None:
     assert all_floors_met(clean_dimensions(revision=rev)) is True
     assert all_floors_met([]) is False
     below = clean_dimension(
-        dimension_key=next(iter(clean_dimensions(revision=rev))).dimension_key,
+        dimension_key=dimension_key(next(iter(clean_dimensions(revision=rev)))),
         revision=rev,
         bound_generation=1,
         restrictive_floor=9,  # generation below floor ⇒ stale
@@ -56,7 +57,7 @@ def test_all_floors_met_equal_generation_is_met() -> None:
     """(§6.1 / §0.4e) The equal case is MET (direct >= shape, not strict compare_order BEFORE)."""
     rev = clean_revision()
     equal = clean_dimension(
-        dimension_key=next(iter(clean_dimensions(revision=rev))).dimension_key,
+        dimension_key=dimension_key(next(iter(clean_dimensions(revision=rev)))),
         revision=rev,
         bound_generation=4,
         restrictive_floor=4,

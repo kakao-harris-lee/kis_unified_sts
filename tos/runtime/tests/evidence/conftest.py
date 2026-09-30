@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,13 @@ class FixedKeyProvider:
 
     def current(self) -> tuple[int, bytes]:
         return (self._key_generation, self._key)
+
+    def generations(self) -> tuple[int, ...]:
+        return (self._key_generation,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return self._key
 
 
 class FakeMonotonicClock:
@@ -44,7 +52,7 @@ def monotonic_clock() -> FakeMonotonicClock:
 @pytest.fixture
 def store(
     tmp_path: Path, key_provider: KeyProvider, monotonic_clock: FakeMonotonicClock
-) -> SqliteEvidenceStore:
+) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3",
         key_provider=key_provider,

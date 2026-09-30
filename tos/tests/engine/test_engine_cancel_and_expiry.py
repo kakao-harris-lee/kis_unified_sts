@@ -241,13 +241,14 @@ def test_the_cancel_crossing_fills_magnitude_reaches_the_evidence_store() -> Non
 def test_mutation_cancel_ack_treated_as_released_is_a_cpl4_violation() -> None:
     """Mutation guard (plan §2.2 "뮤테이션: CANCEL_ACK ⇒ RELEASED 위반 red").
 
-    ``RELEASE_PENDING_PROOF`` is not, and must never become, ``RELEASED`` (which this
-    projection cannot even represent — see ``PROJECTION_ORDER``'s own docstring, "RELEASED is
-    absent, because this projection cannot release"). This test would go **red** under the
-    mutation the plan names: if a future edit made ``CANCEL_ACK`` skip straight past
-    ``RELEASE_PENDING_PROOF`` — the only way to simulate "released" here — the assertion below
-    fails because the capacity state would no longer be the last, least-settled projection
-    position.
+    ``RELEASE_PENDING_PROOF`` is not, and must never become, ``RELEASED`` through
+    ``apply_egress_result``'s ordinary rank-advance path — the ONLY way to reach ``RELEASED`` is
+    now :meth:`~tos.engine.state.ProvisionalReservationLedger.release`'s dedicated, typed
+    finality-proof-token gate (kernel round #3 §2 decision 5; ``PROJECTION_ORDER``'s own
+    docstring), which an ordinary ``core.handle(...)`` call never reaches. This test would go
+    **red** under the mutation the plan names: if a future edit made ``CANCEL_ACK`` skip straight
+    to ``RELEASED`` inside ``_RESULT_TRANSITIONS`` — bypassing the token gate entirely — the
+    assertion below fails.
     """
     core, _, _, attempt_id = _sent_core()
     result = core.handle(_egress_event(EgressResultKind.CANCEL_ACK, attempt_id))

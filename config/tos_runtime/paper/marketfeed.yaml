@@ -1,0 +1,132 @@
+# =============================================================================
+# marketfeed.yaml — TOS paper 배포 **부팅 증명 픽스처** (W-A / A-5)
+# =============================================================================
+# 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
+#
+# 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §4 5항 ·
+#       운영자 선택 (가) 2026-09-23 · 상위 계획 §7.8 A-5
+#       (「로컬 헤르메틱 틱 원천이 존재하는지는 측정했다: 존재한다.
+#         `marketfeed.yaml::intake_kind: journal` 이 그것이고, 구현
+#         `tos_runtime/marketfeed/journal.py::JsonLinesObservationJournal` 은
+#         json+pathlib 만 쓰며 소켓을 열지 않고 시계도 읽지 않는다」).
+#
+# **제안표는 이 파일에 값을 주지 않는다.** 그러므로 여기 값들은 승인값이 아니라
+# **부팅 증명 픽스처**이고, 출처는 이 저장소의 헤르메틱 e2e 스위트가 실제로 틱을
+# 발행시킨 조합이다(아래 각 줄의 file:line). `intake_kind` 는 `journal` 로 고정한다 —
+# 다른 값 `kis_quote` 는 HTTP 폴러(외부 호출)이고 이번 대상이 아니다.
+#
+# 원본 템플릿: tos/runtime/config/marketfeed.example.yaml
+# 로더: tos_runtime.compose._marketfeed_wiring.load_marketfeed_config
+# 호출부: compose 가 이 파일과 critical_input_policy.yaml 이 **둘 다** 있을 때만 틱
+#         스케줄러를 만든다. 없으면 `composed.marketfeed is None` 이고 `run` 이
+#         거부한다(compose/_run_dispatch.py:121-130).
+#
+# placeholder 형태 — **재측정 2026-09-24(review-797 HIGH-1 정정)**:
+#   이 로더는 좌표 칸 세 개(`instruments`·`account`·`journal_path`)에 대해
+#   `null`·빈 문자열·문자열 `"TBD"` 를 **전부** 거부한다. `_require_str`
+#   (_marketfeed_wiring.py:194-204)가 타입 검사 뒤 `reject_named_tbd(...)`(:200-202)를
+#   부르고, `_require_instruments` 도 항목마다 같은 호출을 한다(:228-232). 그 기계적
+#   차단은 `d2a36d22`(「close the named-TBD bypass class mechanically, not by list」,
+#   W-A A-0 round 2 · origin/main 의 조상)가 넣었다.
+#   ⚠ 이 파일의 1차 판(PR #797)은 「`"TBD"` 는 거부하지 않는다(실측)」이라고 적었다.
+#   **거짓이었다** — 실제로 로드하지 않고 메시지 문자열만 훑은 결과였다. 그래서 좌표
+#   칸은 이제 다른 픽스처 파일과 **같은** `"TBD"` 관례를 쓴다(형태가 파일마다 갈리지
+#   않는다).
+# =============================================================================
+
+# --- instrument scope --------------------------------------------------
+# [좌표] 렌더가 근월물 하나로 채운다. TickScheduler 는 단일 종목 스코프라
+# 정확히 하나여야 한다(marketfeed/scheduler.py:212-226 `_require_single_instrument`).
+# 리스트 모양은 유지한다 — 「여러 종목」이 표현 가능해야 거부도 가능하다(example 헤더).
+instruments: ["TBD"]
+
+# 세션 게이트가 읽는 캘린더 클래스 — construction.yaml 과 같은 값이어야 하고,
+# config/tos_runtime/paper/calendar.yaml:36 이 선언하는 클래스여야 한다.
+instrument_class: "krx-index-futures"
+
+# --- capsule scope -------------------------------------------------------
+# [좌표] 렌더가 채운다(construction.yaml `account` 와 같은 값).
+account: "TBD"
+
+# 발행되는 모든 캡슐이 싣는 SafetyCriticalFacts(tos.capsule.capsule.SafetyCriticalFacts).
+#   * direction — order_construction_policy.yaml:195-196 의 DIRECTION 축과 같은 값.
+#     `--direction SHORT` 렌더가 이 줄과 그 축을 함께 바꾼다.
+#   * quantity_basis — order_construction_policy.yaml:178 `admitted_quantity_bases`
+#     및 전략 파일의 `quantity_basis` 와 같은 토큰이어야 한다.
+#   * unit — 이 배포가 선언한 수량 단위. aggregate_risk_policy.yaml:58 및
+#     order_construction_policy.yaml:215 `effect_dimensions[0].unit` 가 "CONTRACTS" 다.
+direction: "LONG"
+quantity_basis: "RISK"
+unit: "CONTRACTS"
+
+# --- observation intake --------------------------------------------------
+# 로컬 저널 — 소켓을 열지 않는다(상위 계획 §7.8 A-5 실측).
+intake_kind: "journal"
+
+# [좌표 아님 · 호스트 사실] 렌더가 만든 부팅 증명 저널의 **절대 경로**로 채운다.
+# 저널 자체는 커밋되지 않는다(렌더 산출물) — 관측 시각이 렌더 시점에 고정되므로
+# 런북은 **부팅 직전 렌더**를 강제한다.
+journal_path: "TBD"
+
+# --- pacing ----------------------------------------------------------------
+# TICKED 패스 사이의 최소 실시간 간격(ms).
+#
+# **1000 → 400 (운영자 처분 2026-09-27 §6.1 (가) · 계획
+# docs/plans/2026-09-27-tos-poll-interval-freshness-budget-plan.md · 이슈 #807).**
+# 이 값은 취향이 아니라 **신선도 예산의 한 항**이다. `journal` 인입에서 관측이 읽히는
+# 나이의 최악값은 `수집기 지연 + poll_interval_ms + 패스 소요` 인데, 커널의 신선도
+# 판정은 `source_age + Σdelay_bounds ≤ MAX_time_conservative_freshness_age_ms` 만
+# 허용한다. time.yaml 승인값으로 예산은 1000 − 4×50 = **800 ms** 다. 1000 이면
+# 1000 + 100 = 1100 > 800 이라 **패스 직후 도착한 관측은 언제나 STALE** 이었고,
+# 거부된 관측은 소비 처리되어 재시도되지 않았다(리허설 18 건 중 7 건, 계획 §1).
+# 400 + 100 = 500 이므로 수집기 여유는 **300 ms**.
+# 이 결합은 이제 부팅 가드가 강제한다 —
+# tos_runtime.compose._marketfeed_wiring._load_config_within_freshness_budget.
+#
+# ⚠ **`kis_quote` 배포는 이 400 을 물려받으면 안 된다.** 그 인입에서 같은 키는 HTTP
+# 요청 간격이고, 모의 시세 한도는 **1.0 rps clean · 2.0 rps 스로틀**(프로브 P-13,
+# docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1840-1846)이라
+# 400 ms 로 폴링하면 스로틀된다. 그 인입이 가드 대상이 아닌 이유는 «더 신선해서» 가
+# 아니라, 이 예산 몫이 **상류 저널 수집기**의 것이고 그 인입에는 그런 수집기가 없기
+# 때문이다.
+#
+# ⚠ **가드 대상이 아니라는 것과 신선하다는 것은 다르다.**
+# 이슈 #810 이후 그 어댑터의 `as_of_ms` 는 **HTTP 요청이 나간 순간**이다(단조시계로
+# 찍고, 스케줄러가 그 패스의 갓 평가된 판독에 사상한다 — 계획
+# docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md §2). 따라서
+# `source_age` 는 **그 요청의 왕복 시간**이고, 이 키(패스 간격)에서 파생되지 않는다.
+# 왕복이 느리면 같은 800 ms 보수 예산을 넘어 STALE 로 읽힌다 — 달라진 것은 그
+# 판정이 이 키가 아니라 실제 측정치에 달려 있다는 점이다.
+#
+# ⚠ `kis_quote` 의 1000 ms 간격 하한은 **모의 시세 rate limit**(1.0 rps clean ·
+# 프로브 P-13)이지 **설정이 강제하는 값이 아니다** — 이 키를 그보다 짧게 적는 배포를
+# 거부하는 코드는 없다(대신 브로커가 스로틀한다).
+#
+# 전이 자체는 운영자 처분 2026-09-27 §6.1-2 로 **수용**됐고, 이 배포는
+# `intake_kind: journal` 이라 운영 영향은 0 이다. 값은 그 배포가 따로 정한다.
+poll_interval_ms: 400
+
+# 런타임 패스 하나의 최악 소요(ms) — **`journal` 인입 전용 필수 키**(다른 인입에서는
+# 있으면 거부). poll_interval_ms 와 합쳐 위 예산의 «런타임 몫» 이고, 남는 폭이
+# 수집기 여유다. 값 100 은 실측 최악 패스(`evaluate()` 12.3 + `tick_once` TICKED
+# 66.3 = 78.6 ms, 계획 §1)의 올림 — 운영자 처분 2026-09-27 §6.1 2항.
+#
+# ⚠ 이 값은 **운영자가 선언한 상한**이지 런타임이 강제하는 값이 아니다. 실제 패스
+# 소요를 이 값과 대조하는 계측은 **없다**. 선언보다 오래 걸린 패스는 관측의 나이를
+# 신선도 상한 밖으로 밀어내고, 그 관측은 **조용히** STALE 로 읽혀 보류·소비되고
+# 재시도되지 않는다(#807 과 같은 형태). 「선언이 틀렸다」와 「수집기가 늦었다」를
+# 구분해 주는 거부·카운터·로그가 하나도 없다. 런타임 관측(실측 패스 소요를 재고
+# 초과 시 거부·경보)은 후속 과제이며 이 변경에 포함되지 않는다.
+journal_pass_allowance_ms: 100
+
+# 세션이 **닫혀 있는 동안** 시간 건강 평가 간격(ms). 열려 있으면 매 패스 평가한다.
+# 운영자 처분 2026-09-26 (나) — docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md §6.1.
+# 개장을 알아채는 지연의 상한이 이 값이다.
+time_evaluate_closed_interval_ms: 60000
+
+# --- time-projection frame parameters -------------------------------------
+# tos_runtime.marketfeed.time_projection.RuntimeTimeProjection 의 **구성 인자**이지
+# 측정값이 아니다(그 모듈 독스트링: VER-002 프로파일 키가 아니다).
+# 값 출처: test_marketfeed_wiring.py:47-48.
+snapshot_age_bound: 20
+interval_width: 10

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import yaml
@@ -420,6 +421,43 @@ def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
         assert services[service_name]["environment"]["TZ"] == "Asia/Seoul", service_name
 
 
+def test_futures_equity_denominator_knob_reaches_both_consumers():
+    """F-9 gap G4: config/risk.yaml (MDD, read by futures-risk-filter) and
+    config/futures_margin.yaml (LeverageFilter in futures-risk-filter, the
+    margin read-model in `scheduler`) share ${FUTURES_MARGIN_FALLBACK_EQUITY}.
+    `.env.paper` is interpolation-only, so both containers need the var in
+    compose — and with the SAME expression, or plumbing it into only one
+    silently splits the two denominators. The compose default must equal the
+    YAML default so an unset var gives one value everywhere."""
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    risk_filter = services["futures-risk-filter"]["environment"][
+        "FUTURES_MARGIN_FALLBACK_EQUITY"
+    ]
+    scheduler = services["scheduler"]["environment"]["FUTURES_MARGIN_FALLBACK_EQUITY"]
+    assert risk_filter == "${FUTURES_MARGIN_FALLBACK_EQUITY:-50000000}"
+    assert scheduler == risk_filter
+
+    # Both YAML consumers use the loader's ${VAR:default} form with the same
+    # default the compose expression carries.
+    compose_default = risk_filter.removeprefix(
+        "${FUTURES_MARGIN_FALLBACK_EQUITY:-"
+    ).removesuffix("}")
+    yaml_expression = "${FUTURES_MARGIN_FALLBACK_EQUITY:" + compose_default + "}"
+    risk_yaml = yaml.safe_load(
+        (_REPO_ROOT / "config" / "risk.yaml").read_text(encoding="utf-8")
+    )
+    margin_yaml = yaml.safe_load(
+        (_REPO_ROOT / "config" / "futures_margin.yaml").read_text(encoding="utf-8")
+    )
+    assert risk_yaml["risk"]["account_equity_krw"] == yaml_expression
+    assert (
+        margin_yaml["futures_margin"]["fallback_account_equity_krw"] == yaml_expression
+    )
+
+
 def test_scheduler_mounts_data_market_and_reports_writable():
     """The scheduler runs EOD backfills + report jobs, so data/market and reports
     must be writable (the shared pipeline-service mount is data/market:ro and does
@@ -572,3 +610,150 @@ def test_producer_and_consumer_futures_tick_stream_defaults_agree():
 
     for name in (".env.paper.example", ".env.live.example"):
         assert _read_env_template(name)["FUTURES_TICK_STREAM"] == producer_default
+
+
+def _calls_configure_logging(source: Path) -> bool:
+    """Whether the module's ``main()`` reaches ``configure_logging``.
+
+    Substring-matching the file cannot tell a call from a mention in a comment
+    or docstring, nor a module that merely *defines* a setup wrapper from one
+    whose ``main()`` actually calls it — which is how the exporter shipped a
+    ``main()`` that could have dropped the call with every test still green.
+    So this walks the AST: collect the names each module-level function calls,
+    then follow that graph out of ``main``. The hop matters because half these
+    entrypoints call ``configure_logging()`` directly and half go through a
+    local ``_setup_logging()`` wrapper.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    callees: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            callees[node.name] = {
+                call.func.id
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+            }
+
+    pending, seen = ["main"], set()
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in callees:
+            continue
+        seen.add(name)
+        if "configure_logging" in callees[name]:
+            return True
+        pending.extend(callees[name])
+    return False
+
+
+def _entrypoint_sources(service: dict) -> list[Path]:
+    """Return the repo files a service's python ``command`` runs, if any.
+
+    Two shapes appear in this compose file: ``python -m pkg.mod`` (a module or
+    a package ``__main__``) and ``python /app/path/to/script.py``. Anything
+    else — supercronic, uvicorn, npm, redis-server, a bash entrypoint script —
+    has no single python entrypoint to read here and yields nothing.
+    """
+    command = service.get("command")
+    if not isinstance(command, list) or not command:
+        return []
+    if "python" not in str(command[0]):
+        return []
+    if "-m" in command:
+        module = command[command.index("-m") + 1].replace(".", "/")
+        candidates = [_REPO_ROOT / f"{module}.py", _REPO_ROOT / module / "__main__.py"]
+    elif str(command[-1]).endswith(".py"):
+        candidates = [_REPO_ROOT / str(command[-1]).removeprefix("/app/")]
+    else:
+        return []
+    return [path for path in candidates if path.is_file()]
+
+
+def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
+    """Every entrypoint that reads LOG_LEVEL gets it from compose, and only those.
+
+    No env_file is mounted into these containers, so a key absent from the
+    service's ``environment`` block simply does not exist at runtime and the
+    daemon silently falls back to INFO. That is what made the knob half-true
+    between #749 and #751: two services honoured ``LOG_LEVEL=DEBUG`` and nine
+    ignored it, which reads to an operator as a broken knob.
+
+    The roster is derived from the code — a service is expected to carry the
+    key iff the ``main()`` of the module its ``command`` runs actually calls
+    ``configure_logging`` — so a daemon migrated to the helper without its
+    compose line, or handed the line without reading it, fails here.
+    ``expected`` is spelled out anyway: it is the reviewable list, and it keeps
+    a resolver that silently matched nothing from passing vacuously.
+
+    The key is declared per service rather than folded into an anchor; see the
+    NOTE above ``x-redis-runtime-env`` in docker-compose.yml. This test cannot
+    police that on its own — ``yaml.safe_load`` expands the ``<<`` merge keys,
+    so an inherited key is indistinguishable from a local one here.
+    """
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+
+    expected = {
+        "stock-market-ingest",
+        "stock-strategy",
+        "stock-risk-filter",
+        "stock-order-router",
+        "stock-exit",
+        "stock-monitor",
+        "futures-market-ingest",
+        "futures-decision-engine",
+        "futures-risk-filter",
+        "futures-order-router",
+        "futures-monitor",
+        "futures-kill-switch",
+        "stream-exporter",
+    }
+    readers = {
+        name
+        for name, service in services.items()
+        if any(_calls_configure_logging(path) for path in _entrypoint_sources(service))
+    }
+    assert readers == expected
+
+    for name in sorted(expected):
+        environment = services[name]["environment"]
+        assert environment["LOG_LEVEL"] == "${LOG_LEVEL:-INFO}", name
+
+    # And nowhere else: a service that ignores the variable must not advertise
+    # it, or the knob is half-true in the other direction.
+    for name, service in services.items():
+        if name in expected:
+            continue
+        environment = service.get("environment") or {}
+        keys = (
+            set(environment)
+            if isinstance(environment, dict)
+            else {entry.split("=", 1)[0] for entry in environment}
+        )
+        assert "LOG_LEVEL" not in keys, f"{name} does not read LOG_LEVEL"
+
+    # The exporter keeps its own older knob, which outranks LOG_LEVEL. It has
+    # to interpolate to empty when unset: any literal default would pin the
+    # container at that level and make LOG_LEVEL unreachable there (#753).
+    exporter_env = services["stream-exporter"]["environment"]
+    assert exporter_env["STREAM_EXPORTER_LOG_LEVEL"] == "${STREAM_EXPORTER_LOG_LEVEL:-}"
+
+    # The templates document the knob and ship the default the code falls back
+    # to; a template that drifted to another value would move every one of
+    # these daemons' levels on every deploy from it.
+    #
+    # .env.production.example is in the list because it is the one that drifted:
+    # it carried WARNING from a time when the variable reached two daemons, and
+    # nothing failed when #751/#753 grew that to 13 — including the order
+    # routers and the kill switch, whose INFO lines are the records an incident
+    # is reconstructed from. A template may of course be *deliberately* quieter,
+    # but not silently.
+    for name in (
+        ".env.example",
+        ".env.paper.example",
+        ".env.live.example",
+        ".env.production.example",
+    ):
+        assert _read_env_template(name)["LOG_LEVEL"] == "INFO", name

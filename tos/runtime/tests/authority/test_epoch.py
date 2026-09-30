@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -208,6 +209,8 @@ def test_witness_present_false_before_time_service_started(
             min_time_independent_reference_count=1,
             max_clock_domain_conversion_uncertainty_ms=50,
             max_send_result_wait_ms=5000,
+            max_critical_input_consumer_receipt_age_ms=1000,
+            max_time_source_sequence_gap_ms=50,
             tz_db_version="2026a",
             trading_calendar_version="cal-1",
             verification_profile_version="vp-0",
@@ -378,7 +381,9 @@ def test_witness_recovers_after_a_transient_log_failure(
     real_read = epoch_service._log.read_linearizable  # noqa: SLF001
     calls = {"n": 0}
 
-    def failing_read(*args: object, **kwargs: object) -> object:
+    # `Any`, not `object`: this spy stands in for `read_linearizable`'s own signature and must
+    # forward every call unchanged (plan §1.1 A-rt boundary use of `Any`).
+    def failing_read(*args: Any, **kwargs: Any) -> object:
         calls["n"] += 1
         if calls["n"] <= 2:
             raise sqlite3.OperationalError("database is locked")

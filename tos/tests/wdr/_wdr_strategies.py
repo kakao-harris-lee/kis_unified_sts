@@ -24,8 +24,10 @@ wdr bounds are Verification-Profile injected and all null in Phase 1 (design #26
 
 from __future__ import annotations
 
+from typing import Any
+
 import hypothesis.strategies as st
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactStatus, get_scheme
 from tos.wdr import (
     ActiveDeviationSet,
     CompensatingControl,
@@ -58,7 +60,7 @@ def clean_boundary(**overrides: object) -> NonWaivableBoundaryAnchor:
         NonWaivableBoundaryAnchor.BOUNDARY_ITEMS, True
     )
     kwargs.update(overrides)
-    return NonWaivableBoundaryAnchor(**kwargs)
+    return NonWaivableBoundaryAnchor.model_validate(kwargs)
 
 
 def clean_scope(**overrides: object) -> DeviationScope:
@@ -68,7 +70,7 @@ def clean_scope(**overrides: object) -> DeviationScope:
         for dimension in ScopeDimension
     }
     kwargs.update(overrides)
-    return DeviationScope(**kwargs)
+    return DeviationScope.model_validate(kwargs)
 
 
 def clean_closure(**overrides: object) -> DeviationDependencyClosure:
@@ -78,7 +80,7 @@ def clean_closure(**overrides: object) -> DeviationDependencyClosure:
         "closure_complete": True,
     }
     kwargs.update(overrides)
-    return DeviationDependencyClosure(**kwargs)
+    return DeviationDependencyClosure.model_validate(kwargs)
 
 
 def clean_control(**overrides: object) -> CompensatingControl:
@@ -93,7 +95,7 @@ def clean_control(**overrides: object) -> CompensatingControl:
         "observation_only": False,
     }
     kwargs.update(overrides)
-    return CompensatingControl(**kwargs)
+    return CompensatingControl.model_validate(kwargs)
 
 
 def clean_policy(
@@ -106,6 +108,7 @@ def clean_policy(
     """A digest-verified governed Safety Deviation Policy (id ⊥ digest, all-false)."""
     return SafetyDeviationPolicy.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         policy_id=policy_id,
         policy_generation=policy_generation,
         policy_digest=policy_digest,
@@ -140,6 +143,7 @@ def clean_request(
     """A digest-verified, genuinely eligible Safety Deviation Request (id ⊥ digest, all-false)."""
     return SafetyDeviationRequest.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         request_id=request_id,
         request_version=request_version,
         request_digest=request_digest,
@@ -162,6 +166,58 @@ def clean_request(
     )
 
 
+#: The five §4.3 scope-drift flags — all ``bool | None``, all default ``False`` on
+#: :func:`clean_request` (used by :func:`clean_request_with_scope_drift_flag`).
+SCOPE_DRIFT_FIELDS = (
+    "scope_wildcard",
+    "scope_patched",
+    "scope_widened",
+    "scope_stale",
+    "scope_conflicting",
+)
+
+
+def clean_request_with_scope_drift_flag(
+    field: str,
+    value: bool | None,
+    *,
+    non_waivable_classification: NonWaivableClassification | None = (
+        NonWaivableClassification.WAIVABLE_ELIGIBLE
+    ),
+) -> SafetyDeviationRequest:
+    """Set exactly one of :data:`SCOPE_DRIFT_FIELDS` by (dynamic) name.
+
+    A caller-side ``clean_request(**{field: value})`` with a non-literal ``field: str`` cannot
+    type-check against :func:`clean_request`'s heterogeneously-typed parameters (plan §1.1 A-rt
+    fallback — "그 헬퍼만 명시 키워드"): every other field the dict *could* address (``request_id:
+    str``, ``request_version: int``, …) makes ``dict[str, bool | None]`` incompatible, even though
+    the actual key is always one of the five uniformly ``bool | None`` drift flags. Dispatch by
+    literal branch keeps each call to :func:`clean_request` precisely, individually typed.
+    """
+    if field not in SCOPE_DRIFT_FIELDS:
+        raise ValueError(f"not a scope-drift field: {field!r}")
+    if field == "scope_wildcard":
+        return clean_request(
+            non_waivable_classification=non_waivable_classification,
+            scope_wildcard=value,
+        )
+    if field == "scope_patched":
+        return clean_request(
+            non_waivable_classification=non_waivable_classification, scope_patched=value
+        )
+    if field == "scope_widened":
+        return clean_request(
+            non_waivable_classification=non_waivable_classification, scope_widened=value
+        )
+    if field == "scope_stale":
+        return clean_request(
+            non_waivable_classification=non_waivable_classification, scope_stale=value
+        )
+    return clean_request(
+        non_waivable_classification=non_waivable_classification, scope_conflicting=value
+    )
+
+
 def construct_request(**overrides: object) -> SafetyDeviationRequest:
     """A request built via ``model_construct`` (bypasses the coexistence validator, §2.3).
 
@@ -169,7 +225,7 @@ def construct_request(**overrides: object) -> SafetyDeviationRequest:
     ``WAIVABLE_ELIGIBLE`` claim coexisting with a boundary hit / blank scope) so the §5 predicate layer
     (defence in depth) can be exercised on them.
     """
-    base: dict[str, object] = {
+    base: dict[str, Any] = {
         "request_id": "req-mc",
         "request_version": 1,
         "request_digest": "reqdg",
@@ -191,22 +247,40 @@ def construct_request(**overrides: object) -> SafetyDeviationRequest:
     return SafetyDeviationRequest.model_construct(**base)
 
 
-def clean_unknown_request(**overrides: object) -> SafetyDeviationRequest:
-    """A request with every §16 UNKNOWN flag explicitly ``False`` (all-known) + no protective bypass."""
-    kwargs: dict[str, object] = {
-        "broker_state_unknown": False,
-        "order_state_unknown": False,
-        "exposure_unknown": False,
-        "residual_risk_unknown": False,
-        "control_state_unknown": False,
-        "evidence_unknown": False,
-        "scope_unknown": False,
-        "currentness_unknown": False,
-        "materiality_unknown": False,
-        "protective_label_bypass": False,
-    }
-    kwargs.update(overrides)
-    return clean_request(**kwargs)
+def clean_unknown_request(
+    *,
+    broker_state_unknown: bool | None = False,
+    order_state_unknown: bool | None = False,
+    exposure_unknown: bool | None = False,
+    residual_risk_unknown: bool | None = False,
+    control_state_unknown: bool | None = False,
+    evidence_unknown: bool | None = False,
+    scope_unknown: bool | None = False,
+    currentness_unknown: bool | None = False,
+    materiality_unknown: bool | None = False,
+    protective_label_bypass: bool | None = False,
+    applicability_resolved: bool | None = True,
+) -> SafetyDeviationRequest:
+    """A request with every §16 UNKNOWN flag explicitly ``False`` (all-known) + no protective bypass.
+
+    Every keyword here is a uniformly ``bool | None``-typed §16 UNKNOWN flag (or
+    ``applicability_resolved``), so a caller's ``clean_unknown_request(**{field: flag})`` with a
+    dynamically-named ``field`` type-checks precisely — a generic ``dict[str, object]`` forwarded
+    into :func:`clean_request`'s heterogeneously-typed parameters would not (plan §1.1 A-rt).
+    """
+    return clean_request(
+        broker_state_unknown=broker_state_unknown,
+        order_state_unknown=order_state_unknown,
+        exposure_unknown=exposure_unknown,
+        residual_risk_unknown=residual_risk_unknown,
+        control_state_unknown=control_state_unknown,
+        evidence_unknown=evidence_unknown,
+        scope_unknown=scope_unknown,
+        currentness_unknown=currentness_unknown,
+        materiality_unknown=materiality_unknown,
+        protective_label_bypass=protective_label_bypass,
+        applicability_resolved=applicability_resolved,
+    )
 
 
 def clean_decision(
@@ -226,6 +300,7 @@ def clean_decision(
     """A digest-verified, genuinely eligible single-use Safety Deviation Decision."""
     return SafetyDeviationDecision.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         decision_id=decision_id,
         decision_generation=decision_generation,
         request_id=request_id,
@@ -253,6 +328,7 @@ def clean_acceptance(
     kwargs.update(overrides)
     return ResidualRiskAcceptanceRecord.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         acceptance_id=acceptance_id,
         acceptance_generation=acceptance_generation,
         request_id=request_id,
@@ -276,6 +352,7 @@ def clean_active_set(
     """A digest-verified Active Deviation Set (mutable state / spg verdict injected, not covered)."""
     return ActiveDeviationSet.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         active_set_id=active_set_id,
         active_set_generation=active_set_generation,
         deviation_generation=deviation_generation,
@@ -290,7 +367,7 @@ def clean_ladder(**overrides: object) -> GateSeparationLadder:
     """A gate-separation ladder with every stage an explicit False bool and an all-false authority."""
     kwargs: dict[str, object] = dict.fromkeys(GateSeparationLadder.STAGE_FIELDS, False)
     kwargs.update(overrides)
-    return GateSeparationLadder(**kwargs)
+    return GateSeparationLadder.model_validate(kwargs)
 
 
 def clean_waived_item(**overrides: object) -> WaivedEvidenceItem:
@@ -305,4 +382,4 @@ def clean_waived_item(**overrides: object) -> WaivedEvidenceItem:
         "relabeled_status": WaivedEvidenceStatus.WAIVED_WITH_RESIDUAL_RISK,
     }
     kwargs.update(overrides)
-    return WaivedEvidenceItem(**kwargs)
+    return WaivedEvidenceItem.model_validate(kwargs)

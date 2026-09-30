@@ -79,7 +79,7 @@ time`` + this package's own sibling modules only. No third-party import, no ``os
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
 from tos.canonical import CanonicalDecimal
@@ -95,7 +95,6 @@ from tos.ordering import OrderingEvent
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import (
-    KisMockClientError,
     KisMockConnectionError,
     KisMockHttpClient,
     KisMockTimeoutError,
@@ -103,6 +102,8 @@ from tos_runtime.transport.kis_mock.client import (
 )
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.token import TokenStale
 
 __all__ = [
     "EvidenceRecorder",
@@ -127,10 +128,10 @@ class SendRefused(Exception):
     (conservative, non-rejecting) — see the module docstring."""
 
 
-class TokenStale(Exception):
-    """The held token has expired and the reissue cooldown has not yet elapsed — this attempt
-    does not reissue (decision 4). A later attempt, once the cooldown has elapsed, may.
-    """
+# TokenStale is re-exported (not redefined) here — W2 extraction moved the token lifecycle
+# (and this exception) to token.py (module docstring there); kept importable from this module's
+# own namespace so `from tos_runtime.transport.kis_mock.adapter import TokenStale` (the existing
+# test suite's own import) keeps working unchanged.
 
 
 @runtime_checkable
@@ -170,12 +171,14 @@ class KisMockTransport:
         *,
         config: KisMockTransportConfig,
         client: KisMockHttpClient,
-        custody: CredentialCustody,
-        app_key_scope: str,
-        app_secret_scope: str,
         monotonic: MonotonicSource,
         seal_lookup: SealLookup,
         evidence_sink: EvidenceRecorder,
+        custody: CredentialCustody | None = None,
+        app_key_scope: str | None = None,
+        app_secret_scope: str | None = None,
+        trading_date_now: Callable[[], str | None] | None = None,
+        credential_session: KisCredentialSession | None = None,
     ) -> None:
         """Wire this transport's dependencies (all injected — no ambient state).
 
@@ -184,31 +187,59 @@ class KisMockTransport:
             client: The stdlib HTTP shim.
             custody: The credential source (Phase 2's ``CredentialCustody`` Protocol) —
                 scope-provisioning (whether ``app_key_scope``/``app_secret_scope`` are actually
-                loadable) is a compose-root/T2 concern; this class only calls
-                ``custody.load(scope)``. There is deliberately no account-number scope (review
+                loadable) is a compose-root/T2 concern; this class never loads it itself — its
+                credential session does (C-2 decision (C)). There is deliberately no account-number scope (review
                 F2) — the account number is the sealed outbound ``account`` coordinate, read
                 directly off the :class:`~tos.egressgw.SendSeal`
                 (:mod:`tos_runtime.transport.kis_mock.codec`).
             app_key_scope: The custody scope name for the KIS app key.
             app_secret_scope: The custody scope name for the KIS app secret.
+                ``custody``/``app_key_scope``/``app_secret_scope`` build this transport's own
+                :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession`
+                and are required iff ``credential_session`` is ``None``.
             monotonic: The injected monotonic clock (pacing + token bookkeeping — never
                 ``time.time()``).
             seal_lookup: Resolves an attempt's :class:`~tos.egressgw.SendSeal`.
             evidence_sink: Records this adapter's own evidence entries.
+            trading_date_now: Returns the KST trading date (``YYYYMMDD``) at this instant, or
+                ``None`` when it cannot be established (untrusted time, a midnight-crossing
+                session) — stamped onto a result that carries a broker execution id, the moment
+                the broker acknowledged it (plan 2026-09-26 egress trading date §2 decision 2).
+                ``None`` (the default) stamps nothing.
+            credential_session: The app key's single owner (C-2 decision (C)) — compose passes
+                the one it shares with the quote intake, so the two never hold separate token
+                lifecycles for one app key. ``None`` builds a private one from ``custody`` and
+                the two scopes (a standalone transport).
+
+        Raises:
+            KisMockAdapterError: Neither ``credential_session`` nor all of ``custody``/
+                ``app_key_scope``/``app_secret_scope`` were supplied.
         """
         self._config = config
         self._client = client
-        self._custody = custody
-        self._app_key_scope = app_key_scope
-        self._app_secret_scope = app_secret_scope
         self._monotonic = monotonic
         self._seal_lookup = seal_lookup
         self._evidence = evidence_sink
-
-        self._access_token: str | None = None
-        self._token_issued_at_ms: int | None = None
-        self._token_expires_in_s: int | None = None
-        self._last_token_issue_attempt_ms: int | None = None
+        self._trading_date_now = trading_date_now
+        if credential_session is None:
+            if custody is None or app_key_scope is None or app_secret_scope is None:
+                raise KisMockAdapterError(
+                    "KisMockTransport: supply credential_session, or custody + app_key_scope "
+                    "+ app_secret_scope to build a private one"
+                )
+            credential_session = KisCredentialSession(
+                client=client,
+                custody=custody,
+                app_key_scope=app_key_scope,
+                app_secret_scope=app_secret_scope,
+                monotonic=monotonic,
+                token_path=config.token_path,
+                token_reissue_min_interval_s=config.token_reissue_min_interval_s,
+                evidence_sink=evidence_sink,
+            )
+        # C-2 decision (C) — the token lifecycle and every custody load of the app key live in
+        # the session; this class never touches custody itself.
+        self._credential_session = credential_session
         self._last_send_started_at_ms: int | None = None
 
     # -- send_once — the kernel Transport seam ----------------------------------------------
@@ -367,16 +398,13 @@ class KisMockTransport:
         block — wrapped directly around the one network call that needs them, so the
         credential handles are zeroed the instant this one POST returns (module docstring's
         honest accounting of what that does and does not guarantee)."""
-        with (
-            self._custody.load(self._app_key_scope) as key_handle,
-            self._custody.load(self._app_secret_scope) as secret_handle,
-        ):
+        with self._credential_session.app_credentials() as credentials:
             return self._client.post_order(
                 tr_id,
                 body_bytes,
                 access_token=access_token,
-                app_key=key_handle.value(),
-                app_secret=secret_handle.value(),
+                app_key=credentials.app_key(),
+                app_secret=credentials.app_secret(),
                 path=self._config.order_path,
             )
 
@@ -390,6 +418,10 @@ class KisMockTransport:
         )
 
     # -- token lifecycle (decision 4) --------------------------------------------------------
+    # Delegated to KisTokenLifecycle (token.py module docstring) — extracted so the KIS quote
+    # intake can share this exact state machine against the same custody-loaded credential
+    # rather than duplicating it. ``_ensure_token_string`` is kept as a thin same-named
+    # forwarder so ``_perform_live_send`` reads unchanged.
 
     def _ensure_token_string(self) -> str:
         """Return the bearer access token string for the send about to happen.
@@ -398,71 +430,7 @@ class KisMockTransport:
             TokenStale: The held token (or the absence of one) is stale and the reissue cooldown
                 has not elapsed since the last issuance attempt.
         """
-        now = self._monotonic.now_ms()
-        needs_fresh = self._access_token is None or (
-            self._token_issued_at_ms is not None
-            and self._token_expires_in_s is not None
-            and (now - self._token_issued_at_ms) >= self._token_expires_in_s * 1000
-        )
-        if not needs_fresh:
-            assert self._access_token is not None
-            return self._access_token
-
-        if self._last_token_issue_attempt_ms is not None:
-            elapsed_since_last_attempt_ms = now - self._last_token_issue_attempt_ms
-            cooldown_ms = self._config.token_reissue_min_interval_s * 1000
-            if elapsed_since_last_attempt_ms < cooldown_ms:
-                # (review F8) the burned attempt's evidence explains exactly how much cooldown
-                # remained, so a reader of the evidence store understands why this attempt was
-                # refused rather than reissued.
-                self._evidence(
-                    "TRANSPORT_TOKEN_STALE",
-                    {
-                        "reissue_cooldown_s": self._config.token_reissue_min_interval_s,
-                        "elapsed_ms": elapsed_since_last_attempt_ms,
-                        "cooldown_remaining_ms": cooldown_ms
-                        - elapsed_since_last_attempt_ms,
-                    },
-                )
-                raise TokenStale(
-                    "KisMockTransport: token is stale/absent and the reissue cooldown "
-                    f"({self._config.token_reissue_min_interval_s}s) has not elapsed since "
-                    "the last issuance attempt — refusing to reissue within this attempt "
-                    "(decision 4)"
-                )
-
-        self._last_token_issue_attempt_ms = now
-        self._issue_token()
-        assert self._access_token is not None
-        return self._access_token
-
-    def _issue_token(self) -> None:
-        """(review F5) The app key/secret are loaded inside the narrowest possible ``with``
-        block — wrapped directly around the one ``issue_token`` network call."""
-        with (
-            self._custody.load(self._app_key_scope) as key_handle,
-            self._custody.load(self._app_secret_scope) as secret_handle,
-        ):
-            body = self._client.issue_token(
-                key_handle.value(), secret_handle.value(), path=self._config.token_path
-            )
-        access_token = body.get("access_token")
-        expires_in = body.get("expires_in")
-        if not isinstance(access_token, str) or not access_token:
-            raise KisMockClientError(
-                "KisMockTransport: token response missing a usable access_token"
-            )
-        if (
-            not isinstance(expires_in, int)
-            or isinstance(expires_in, bool)
-            or expires_in <= 0
-        ):
-            raise KisMockClientError(
-                "KisMockTransport: token response missing a usable expires_in"
-            )
-        self._access_token = access_token
-        self._token_expires_in_s = expires_in
-        self._token_issued_at_ms = self._monotonic.now_ms()
+        return self._credential_session.ensure_token_string()
 
     # -- pacing (decision 6) -----------------------------------------------------------------
 
@@ -541,4 +509,20 @@ class KisMockTransport:
             kind=kind,
             broker_execution_id=broker_execution_id,
             reference=seal.reference,
+            # A KIS ODNO is a per-day sequence: the date is what makes it an identity. Only a
+            # result the broker actually numbered gets one.
+            trading_date=(
+                self._stamp_trading_date() if broker_execution_id is not None else None
+            ),
         )
+
+    def _stamp_trading_date(self) -> str | None:
+        """The injected trading date, or ``None``. Called AFTER a real order was acknowledged, so a
+        failure here must never lose the result: any exception degrades to ``None`` — an undated
+        result simply cannot join by ODNO (review finding 2)."""
+        if self._trading_date_now is None:
+            return None
+        try:
+            return self._trading_date_now()
+        except Exception:  # noqa: BLE001 - the ACK must reach the inbox regardless
+            return None

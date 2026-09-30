@@ -178,7 +178,7 @@ def test_surplus_axis_outside_envelope_is_non_conformant() -> None:
 
 def test_command_declaring_subset_of_axes_is_unknown_not_surplus() -> None:
     """(direction check) A command omitting an authorized axis entirely => UNKNOWN (not surplus)."""
-    subset = {
+    subset: dict[ConformanceAxis, str | None] = {
         k: v for k, v in AUTHORIZED_AXES.items() if k is not ConformanceAxis.ACCOUNT
     }
     result = command_conforms(

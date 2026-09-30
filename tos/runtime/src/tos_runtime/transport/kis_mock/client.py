@@ -257,6 +257,53 @@ class KisMockHttpClient:
         }
         return self._do_request("POST", path, headers=headers, body=body)
 
+    def get_quote(
+        self,
+        tr_id: str,
+        query: str,
+        *,
+        access_token: str,
+        app_key: bytes,
+        app_secret: bytes,
+        path: str,
+    ) -> RawResponse:
+        """GET ``path?query`` (a KIS quotations TR, e.g. ``inquire-price``) exactly once.
+
+        Header shape mirrors :meth:`post_order` exactly — KIS's own convention carries the same
+        bearer token / appkey / appsecret / tr_id / custtype headers on a quote GET as on an
+        order POST (``shared/kis/auth.py:494-505``'s ``get_auth_headers`` plus each call site's
+        own ``tr_id``/``custtype`` addition — cited as an existing-code shape reference only;
+        this package never imports ``shared.kis``, firewalled).
+
+        Args:
+            tr_id: The KIS quotations transaction id (``KisQuoteTransportConfig.tr_id`` — shaped
+                ``FH`` + 3 letters + 8 digits, enforced by that config's own loader; NOT the
+                order transport's ``V``-prefixed shape, a different TR family entirely).
+            query: The pre-built, already URL-encoded query string (no leading ``?``), e.g.
+                ``FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930``.
+            access_token: The bearer token string (never logged by this method).
+            app_key: The KIS app key bytes (never logged).
+            app_secret: The KIS app secret bytes (never logged).
+            path: The quotations endpoint's path (``KisQuoteTransportConfig.quote_path``).
+
+        Returns:
+            The raw response — the caller (the quote adapter) maps it to an ``ObservationIntake``
+            result; this client interprets nothing beyond "did the body parse as JSON".
+
+        Raises:
+            KisMockConnectionError: The connection failed or was reset.
+            KisMockTimeoutError: The request timed out.
+        """
+        headers = {
+            "authorization": f"Bearer {access_token}",
+            "appkey": app_key.decode("utf-8"),
+            "appsecret": app_secret.decode("utf-8"),
+            "tr_id": tr_id,
+            "custtype": "P",
+        }
+        full_path = f"{path}?{query}" if query else path
+        return self._do_request("GET", full_path, headers=headers, body=b"")
+
 
 def build_client(config: KisMockTransportConfig) -> KisMockHttpClient:
     """The one sanctioned way to build a :class:`KisMockHttpClient` for real use (review F3).

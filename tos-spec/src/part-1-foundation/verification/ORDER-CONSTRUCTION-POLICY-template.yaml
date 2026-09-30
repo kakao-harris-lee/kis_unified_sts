@@ -8,6 +8,14 @@ status: DRAFT
 approved_by: []
 effective_from: null
 review_due: null
+# Kernel round #4 K-3 (named-TBD; kis_unified_sts CLAUDE.md "원천 없는 수치는 null" — no
+# approved signer/approval/evidence-package source exists yet, so these stay null rather than
+# a fabricated value). `OrderConstructionPolicy._COVERED_FIELDS` (tos/src/tos/ioc/records.py)
+# already digest-covers all three; `null` here reproduces the same digest as their absence did
+# before this round.
+signer_identity: null
+approval_identity: null
+evidence_package_ref: null
 scope:
   environments: []
   safety_cells: []

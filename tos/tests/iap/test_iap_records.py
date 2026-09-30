@@ -203,7 +203,7 @@ def test_request_is_frozen_no_mutate() -> None:
     """(§2.0 / §9 line 255) A request is frozen — any field change is a NEW identity, not a patch."""
     request = complete_request()
     with pytest.raises(ValidationError):
-        request.account = "OTHER"  # type: ignore[misc]
+        request.account = "OTHER"
 
 
 def test_extra_field_is_forbidden() -> None:

@@ -6,6 +6,7 @@ autouse guards enforce this); no network, no ambient env.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,13 @@ class FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (self._key_generation, self._key)
 
+    def generations(self) -> tuple[int, ...]:
+        return (self._key_generation,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return self._key
+
 
 class FakeMonotonicSource:
     """A settable, injectable monotonic-ms source (:class:`~tos_runtime.time.sources.MonotonicSource`)."""
@@ -49,7 +57,9 @@ def key_provider() -> KeyProvider:
 
 
 @pytest.fixture
-def evidence_store(tmp_path: Path, key_provider: KeyProvider) -> SqliteEvidenceStore:
+def evidence_store(
+    tmp_path: Path, key_provider: KeyProvider
+) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=key_provider
     )
@@ -63,7 +73,7 @@ def emergency_log(tmp_path: Path) -> EmergencyAppendLog:
 
 
 @pytest.fixture
-def inbox(tmp_path: Path) -> SqliteEventInbox:
+def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
     instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=SCHEME)
     yield instance
     instance.close()

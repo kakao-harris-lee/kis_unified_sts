@@ -17,8 +17,6 @@ Pure module: ``pydantic`` + stdlib + ``tos.authority`` + ``tos.time`` +
 
 from __future__ import annotations
 
-from pydantic import field_serializer
-
 from tos.authority import (
     AuthorityEpochState,
     AuthorityState,
@@ -40,7 +38,9 @@ class LiveAuthorizationScope(FrozenModel):
     closed at the consuming predicate. The elements are serialized **sorted** so the
     covered-digest bytes are deterministic across processes even though a ``frozenset``
     iterates in hash order (a Live Authorization / approval record nests a scope in its
-    digest preimage; §2.2/§2.4).
+    digest preimage; §2.2/§2.4) — since 2026-09-24 that ordering comes from the shared
+    :class:`tos.canonical._canonical_json.CanonicalJsonMixin` JSON hook rather than a
+    per-field serializer here, with byte-identical digests.
     """
 
     accounts: frozenset[str] | None = None
@@ -50,20 +50,6 @@ class LiveAuthorizationScope(FrozenModel):
     sessions: frozenset[str] | None = None
     order_types: frozenset[str] | None = None
     action_classes: frozenset[str] | None = None
-
-    @field_serializer(
-        "accounts",
-        "strategies",
-        "instrument_classes",
-        "venues",
-        "sessions",
-        "order_types",
-        "action_classes",
-        when_used="always",
-    )
-    def _sorted_dimension(self, value: frozenset[str] | None) -> list[str] | None:
-        """Serialize a scope dimension as a sorted list (deterministic digest bytes)."""
-        return None if value is None else sorted(value)
 
 
 class LimitLayering(FrozenModel):

@@ -6,11 +6,16 @@ paper/live/shadow services do not drift on product or symbol selection.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
+import math
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import date
-from typing import Literal, NamedTuple
+from datetime import date, datetime, time
+from typing import Any, Literal, NamedTuple
+from zoneinfo import ZoneInfo
 
 from shared.exceptions import ConfigurationError
 from shared.instruments.futures import (
@@ -18,8 +23,24 @@ from shared.instruments.futures import (
     KOSPI200_PREFIX,
     KOSPI_MINI_LEGACY_PREFIX,
     KOSPI_MINI_PREFIX,
+    get_expiry_date,
     get_front_month_code,
+    parse_code,
 )
+
+logger = logging.getLogger(__name__)
+
+KST = ZoneInfo("Asia/Seoul")
+
+#: ``FuturesInstrumentConfig.source`` when ``FUTURES_STRATEGY_SYMBOL`` pins the
+#: contract. A pinned contract never rolls automatically.
+EXPLICIT_SYMBOL_SOURCE = "FUTURES_STRATEGY_SYMBOL"
+
+#: Exit status of a decoupled futures daemon that stopped because the front
+#: month rolled. Compose ``restart: unless-stopped`` restarts on any status, so
+#: the value only has to be distinguishable in ``docker inspect``/logs from a
+#: clean stop (0) and a usage error (64): 75 is sysexits ``EX_TEMPFAIL``.
+FRONT_MONTH_ROLL_EXIT_CODE = 75
 
 DEFAULT_FUTURES_PRODUCT = "mini"
 SUPPORTED_FUTURES_PRODUCTS = frozenset({"mini", "kospi200"})
@@ -163,7 +184,13 @@ def resolve_futures_instrument_from_env(
     environ: Mapping[str, str] | None = None,
     target_date: date | None = None,
 ) -> FuturesInstrumentConfig:
-    """Resolve the futures contract from env with an explicit symbol override."""
+    """Resolve the futures contract from env with an explicit symbol override.
+
+    ``target_date`` defaults to today in KST (not the host clock's date), so a
+    daemon restarted by a front-month roll resolves the same contract the
+    once-per-KST-day check (:func:`run_with_front_month_watch`) compared against
+    — even if its container TZ is not Asia/Seoul.
+    """
     env = os.environ if environ is None else environ
     product = normalize_futures_product(env.get("FUTURES_TRADING_PRODUCT"))
     explicit_symbol = (env.get("FUTURES_STRATEGY_SYMBOL") or "").strip()
@@ -171,18 +198,230 @@ def resolve_futures_instrument_from_env(
         return FuturesInstrumentConfig(
             symbol=explicit_symbol,
             product=product,
-            source="FUTURES_STRATEGY_SYMBOL",
+            source=EXPLICIT_SYMBOL_SOURCE,
         )
-    symbol = (
-        get_front_month_code(product=product)
-        if target_date is None
-        else get_front_month_code(product=product, target_date=target_date)
-    )
+    if target_date is None:
+        target_date = datetime.now(KST).date()
     return FuturesInstrumentConfig(
-        symbol=symbol,
+        symbol=get_front_month_code(product=product, target_date=target_date),
         product=product,
         source="FUTURES_TRADING_PRODUCT",
     )
+
+
+def front_month_changed(
+    current_symbol: str,
+    product: str,
+    today: date,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return the new front-month code if ``current_symbol`` is no longer front.
+
+    Returns ``None`` when ``current_symbol`` is still the front contract on
+    ``today`` (a KST trade date — the expiry day itself is still front), or
+    when ``FUTURES_STRATEGY_SYMBOL`` pins the contract explicitly.
+    """
+    env = os.environ if environ is None else environ
+    if (env.get(EXPLICIT_SYMBOL_SOURCE) or "").strip():
+        return None
+    front = get_front_month_code(
+        product=normalize_futures_product(product), target_date=today
+    )
+    return None if front == current_symbol.strip() else front
+
+
+def front_month_roll_message(old_symbol: str, new_symbol: str) -> str:
+    """The single WARNING text every futures process logs on a front-month roll.
+
+    ``expiry`` is the new contract's expiry, i.e. when the next roll happens.
+    Never raises: an unparseable code reports ``expiry unknown`` so the roll
+    itself is not blocked by its own log line.
+    """
+    try:
+        year, month = parse_code(new_symbol)
+        expiry = get_expiry_date(year, month).isoformat()
+    except (ValueError, IndexError):
+        expiry = "unknown"
+    return f"futures front-month rolled: {old_symbol} -> {new_symbol} (expiry {expiry})"
+
+
+def _parse_hhmm(value: Any) -> time:
+    hour, minute = str(value).strip().split(":")[:2]
+    return time(int(hour), int(minute))
+
+
+@dataclass(frozen=True)
+class FrontMonthRolloverSchedule:
+    """KST daily front-month check for long-lived decoupled futures daemons.
+
+    Loaded from ``config/market_schedule.yaml::market_schedule.futures.
+    front_month_rollover``; the dataclass defaults are the fallback when the
+    block or a key is absent (same convention as ``MarketSchedule.load_from_yaml``).
+    A non-positive poll interval falls back to the default (it would busy-spin
+    every daemon), and a ``check_time`` not before ``futures.regular.open`` is
+    kept but warned about (the roll restart would land inside the session).
+    """
+
+    check_time: time = time(8, 30)
+    poll_interval_seconds: float = 60.0
+
+    @classmethod
+    def from_yaml(cls) -> FrontMonthRolloverSchedule:
+        from shared.config.loader import ConfigLoader
+
+        default = cls()
+        defaults_text = (
+            f"{default.check_time:%H:%M} KST every "
+            f"{default.poll_interval_seconds:.0f}s"
+        )
+        try:
+            data: Any = ConfigLoader.load("market_schedule.yaml")
+            futures = data["market_schedule"]["futures"]
+            raw = futures.get("front_month_rollover")
+            if not raw:
+                logger.info(
+                    "front_month_rollover not configured in market_schedule.yaml; "
+                    "using defaults (%s)",
+                    defaults_text,
+                )
+                return default
+            check_time = (
+                _parse_hhmm(raw["check_time"])
+                if "check_time" in raw
+                else default.check_time
+            )
+            poll_interval_seconds = float(
+                raw.get("poll_interval_seconds", default.poll_interval_seconds)
+            )
+            open_raw = (futures.get("regular") or {}).get("open")
+            futures_open = _parse_hhmm(open_raw) if open_raw else None
+        except Exception as exc:  # noqa: BLE001 — a bad config must not kill a daemon
+            logger.warning(
+                "front_month_rollover schedule unreadable (%s); using defaults (%s)",
+                exc,
+                defaults_text,
+            )
+            return default
+
+        if not math.isfinite(poll_interval_seconds) or poll_interval_seconds <= 0:
+            logger.warning(
+                "front_month_rollover.poll_interval_seconds=%s must be a positive "
+                "number; using %.0fs",
+                poll_interval_seconds,
+                default.poll_interval_seconds,
+            )
+            poll_interval_seconds = default.poll_interval_seconds
+        if futures_open is not None and check_time >= futures_open:
+            logger.warning(
+                "front_month_rollover.check_time %s KST is not before the futures "
+                "open %s KST; a roll restart would land inside the session",
+                check_time.strftime("%H:%M"),
+                futures_open.strftime("%H:%M"),
+            )
+        return cls(check_time=check_time, poll_interval_seconds=poll_interval_seconds)
+
+
+async def run_with_front_month_watch(
+    run: Callable[[], Awaitable[None]],
+    stop: Callable[[], Awaitable[None]],
+    instrument: FuturesInstrumentConfig,
+    *,
+    daemon_name: str,
+    schedule: FrontMonthRolloverSchedule | None = None,
+    environ: Mapping[str, str] | None = None,
+    now_fn: Callable[[], datetime] = lambda: datetime.now(KST),
+) -> int:
+    """Run a decoupled futures daemon until it stops or its contract expires.
+
+    A daemon resolves its contract once at start, so a process that outlives an
+    expiry keeps consuming the dead code (2026-09-11: A01609 expired 09-10,
+    zero ticks all morning). Alongside ``run()``, this checks once per KST day,
+    at or after ``schedule.check_time``, whether ``instrument.symbol`` is still
+    the front month. On a roll it logs the WARNING, awaits ``stop()`` and
+    returns :data:`FRONT_MONTH_ROLL_EXIT_CODE`, so the process exits and compose
+    restarts it on the new code. The daemons hold no cross-session state, so a
+    restart is the whole roll. Returns 0 when ``run()`` ends for any other
+    reason (a signal). A pinned ``FUTURES_STRATEGY_SYMBOL`` disables the check.
+    """
+    if instrument.source == EXPLICIT_SYMBOL_SOURCE:
+        logger.info(
+            "%s: front-month rollover check disabled — %s=%s pins the contract",
+            daemon_name,
+            EXPLICIT_SYMBOL_SOURCE,
+            instrument.symbol,
+        )
+        await run()
+        return 0
+
+    schedule = schedule or FrontMonthRolloverSchedule.from_yaml()
+    logger.info(
+        "%s: front-month rollover check active — symbol=%s product=%s, daily at "
+        "%s KST",
+        daemon_name,
+        instrument.symbol,
+        instrument.product,
+        schedule.check_time.strftime("%H:%M"),
+    )
+    rolled_to: str | None = None
+
+    async def _watch() -> None:
+        # Every Exception is caught per iteration: an asyncio task that raises
+        # dies silently, which would leave the daemon unwatched for good and
+        # re-raise at shutdown (a clean SIGTERM exiting 1). CancelledError is a
+        # BaseException, so cancellation still ends the task.
+        nonlocal rolled_to
+        last_checked: date | None = None
+        last_failure: str | None = None
+        while True:
+            try:
+                if rolled_to is None:
+                    now = now_fn().astimezone(KST)
+                    if last_checked != now.date() and now.time() >= schedule.check_time:
+                        new_symbol = front_month_changed(
+                            instrument.symbol,
+                            instrument.product,
+                            now.date(),
+                            environ=environ,
+                        )
+                        last_checked = now.date()
+                        if new_symbol is not None:
+                            rolled_to = new_symbol
+                            logger.warning(
+                                front_month_roll_message(instrument.symbol, new_symbol)
+                            )
+                            logger.warning(
+                                "%s: exiting with status %d so compose restarts it "
+                                "on %s",
+                                daemon_name,
+                                FRONT_MONTH_ROLL_EXIT_CODE,
+                                new_symbol,
+                            )
+                if rolled_to is not None:
+                    await stop()  # retried on the next poll if it raises
+                    return
+                if last_failure is not None:
+                    logger.info("%s: front-month check recovered", daemon_name)
+                    last_failure = None
+            except Exception as exc:  # noqa: BLE001 — log and keep watching
+                failure = f"{type(exc).__name__}: {exc}"
+                if failure != last_failure:  # one traceback per distinct failure
+                    logger.exception(
+                        "%s: front-month check failed; retrying every %.0fs",
+                        daemon_name,
+                        schedule.poll_interval_seconds,
+                    )
+                    last_failure = failure
+            await asyncio.sleep(schedule.poll_interval_seconds)
+
+    watch_task = asyncio.create_task(_watch(), name=f"{daemon_name}-front-month-watch")
+    try:
+        await run()
+    finally:
+        watch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watch_task
+    return FRONT_MONTH_ROLL_EXIT_CODE if rolled_to is not None else 0
 
 
 def resolve_futures_market_from_env(

@@ -113,7 +113,9 @@ def _run_child(target) -> list[str]:
     proc.start()
     proc.join(timeout=60)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
-    return queue.get(timeout=5)
+    leaked = queue.get(timeout=5)
+    assert isinstance(leaked, list), f"closure child returned {type(leaked).__name__}"
+    return leaked
 
 
 def test_evidence_import_closure_has_no_forbidden_packages() -> None:

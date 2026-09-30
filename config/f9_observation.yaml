@@ -1,0 +1,446 @@
+# F-9 Gate 1 shadow observation — harvest targets and observation evidence.
+#
+# Read by scripts/ops/f9_observation_harvest.py. Nothing in that script hardcodes
+# a service name, a container name, a log pattern, or a threshold; they all live
+# here (CLAUDE.md: configuration-driven only).
+#
+# The session window is NOT here — it is read from
+# config/market_schedule.yaml::market_schedule.futures.regular.{open,close}
+# through shared/decision/context.py's loader (the one PR #668 added), so this
+# file cannot drift from what the runtime believes the session is.
+#
+# WHY the `observed` / `blind` split exists: from 2026-09-17 00:00 to
+# 2026-09-18 12:34 both monitor daemons were up with RestartCount=0 while
+# consuming nothing (a vanished-stream NOGROUP loop, fixed in #739/#741). A row
+# recorded on either day would have said "consumers: 4" and been wrong. "How
+# many are running" is not "how many observed"; only a line a consumer emits
+# when it really handles a message proves the second.
+
+f9_observation:
+  # Harvest destination: reports/f9-gate1/<KST date>/<service>.<HHMMSS>.log
+  # (git-ignored; these files ARE the durable record — Redis streams carry a
+  # 24h TTL and their entries vanish).
+  report_root: "reports/f9-gate1"
+  container_prefix: "kis_paper-"
+  # KST clock time `docker logs --since` starts from. Before the 08:45 open so
+  # a pre-open blind window is captured too.
+  harvest_since: "08:00"
+  # Blind timestamps closer together than this are reported as one window.
+  # The dense blind signals repeat every 30-60s, so 300s merges a run without
+  # merging two genuinely separate outages.
+  blind_run_merge_seconds: 300
+  # How long a consumer may go without proving it consumed before the silence
+  # has to be accounted for. A line only testifies to the instant it was
+  # written: a harvest whose coverage brackets the session says "we watched",
+  # never "it was working". Without this bound one surviving
+  # `stream_message_processed` plus a startup and a shutdown banner — three
+  # lines — rendered a whole session `consumed (COMPLETE)`.
+  #
+  # WHAT IT MEANS NOW THAT `liveness` EXISTS BELOW. This bound used to be a
+  # PROXY for liveness: with no direct evidence, "still proving it consumed"
+  # was the only available stand-in for "still running", so exceeding it was
+  # scored as a defect outright. It is not a proxy any more, and leaving one
+  # running underneath a direct measurement would re-answer a question the
+  # heartbeat now answers properly — a quiet session would keep reading
+  # `stale_observation` while 390 heartbeats sat in the same file saying the
+  # consumer was watching the whole time.
+  #
+  # So it is now the TRIGGER, not the verdict: exceeding it is what makes the
+  # harvester demand a positive liveness answer for that stretch. A stretch the
+  # heartbeat vouches for is `idle (alive)` — a successful observation of an
+  # empty stream. A stretch it does not is `stale_observation`, exactly as
+  # before. A service with no `liveness` patterns configured keeps the old
+  # behaviour unchanged, because for it the proxy is still all there is.
+  #
+  # WHAT IT NO LONGER CATCHES, so nothing rests on it by accident: a wedged
+  # handler. `MultiStreamStage` emits `stream_message_processed … ack=false`
+  # on every redelivery of a message the handler refuses, and that line used to
+  # match `observed`, so a consumer making zero net progress renewed its own
+  # freshness forever. What catches it is the `ack=true` requirement in each
+  # `observed` pattern plus the `stalled` group beside it, not this bound.
+  #
+  # 1800s is a policy knob, not a measurement: long enough that a normal lull in
+  # sparse shadow traffic does not trip it, short enough that a wedged consumer
+  # is named for the same session rather than a week later. It bounds three
+  # gaps — open to the first proof, between consecutive proofs, and the last
+  # proof to the close — each of which must be at or under this value (a gap of
+  # exactly 1800s passes).
+  #
+  # It applies only to services with `freshness_scored: true`, which since the
+  # liveness heartbeats landed is every shipped service — see
+  # futures-decision-engine below for why the producer's exemption was lifted.
+  observation_max_gap_seconds: 1800
+
+  # ---- Liveness: proof the loop turned, kept apart from proof it consumed ----
+  #
+  # `observed` answers "did this service CONSUME?"; `liveness` answers "was it
+  # WATCHING?". They are different claims and they are scored separately on
+  # purpose. Merge them and a day on which a consumer polled 390 times and
+  # consumed nothing renders `consumed` — the defect closed at the cost of the
+  # whole `observed`/`blind` split above, walked back in through a new door.
+  #
+  # SCORED BY DENSITY, NOT BY MATCH. The signal a dead loop gives is the line's
+  # ABSENCE, and no regex matches a line that was never written: during the
+  # 2026-09-17 read-failure loop the stage spun 200 failed reads across 6.7
+  # heartbeat intervals and emitted ZERO heartbeats. So "the pattern appears
+  # somewhere in the session" would be satisfied by one line and would certify
+  # seven silent hours around it. The rule is instead that no stretch of an
+  # otherwise-unproven window may go longer than `liveness_expected_interval_
+  # seconds * (1 + liveness_missed_beats_allowed)` without one — i.e. at least
+  # the number of lines the configured cadence predicts, spread across the
+  # window rather than bunched at one end.
+  #
+  # WHY A BARE MATCH IS SAFE TO COUNT, once density is what is being counted:
+  # `polls=0` is unrepresentable. `_LivenessHeartbeat.record_poll`
+  # (shared/streaming/stage.py) increments the counter BEFORE the due-check, so
+  # every emitted line stands for at least one completed poll in the preceding
+  # interval. The harvester therefore never parses the fields — a matched line
+  # is "the loop turned", full stop.
+  #
+  # MUST EQUAL the emitters' own configured intervals:
+  #   config/streaming.yaml::consumer_stage.heartbeat_interval_seconds  (60)
+  #   config/decision_engine.yaml::liveness.log_interval_seconds        (60)
+  # tests/unit/scripts/ops/test_f9_observation_harvest.py reads all three real
+  # files and fails if they drift apart, in either direction: too low here and
+  # a healthy day reads stale, too high and a dead stretch reads alive.
+  liveness_expected_interval_seconds: 60
+  # How many consecutive beats may go missing before the silence is scored. A
+  # heartbeat becomes due during a poll and is emitted when that poll returns,
+  # so the observed cadence is the interval plus one `xread_block_ms` (measured
+  # 60.4s against the shipped 60s/2s pair on 2026-09-23), and a container under
+  # GC or a slow batch can miss one outright. Two missed beats — 180s of total
+  # silence from a line that costs nothing to emit — is generous for that and
+  # still ten times tighter than `observation_max_gap_seconds`.
+  liveness_missed_beats_allowed: 2
+  # How a message is named in every `shared/streaming/stage.py` audit line, so
+  # one line about a message can change what another line about the SAME
+  # message meant. See `retracted_by` under futures-monitor.
+  #
+  # BOTH GROUPS ARE REQUIRED, and `stream` is not decoration: **a Redis entry id
+  # is unique per stream, not per server.** The `<ms>-<seq>` sequence counter
+  # lives on the stream key, so two streams that take an entry in the same
+  # millisecond get byte-identical ids. Measured 2026-09-23 on a throwaway
+  # redis:7-alpine — 200 XADDs alternating between two keys produced 200
+  # identical ids, a 200/200 collision rate, not a rare race.
+  #
+  # `futures-monitor` consumes two streams (`order.fill.futures.shadow` and
+  # `signal.final.futures.shadow`), so keying retraction on `msg_id` alone would
+  # let a dropped *signal* void a legitimate *fill* — striking real evidence,
+  # which under-counts silently and in the direction that looks safe.
+  #
+  # Every line this matters for carries `stream=` before `msg_id=`
+  # (`_log_processed_message` in shared/streaming/stage.py and the
+  # `stream_message_dropped` in both monitor daemons always pass it), and the
+  # heartbeat's plural `streams=` cannot be mistaken for it — `\bstream=`
+  # requires the `=` right after `stream`.
+  message_key_pattern: '\bstream=(?P<stream>\S+) .*\bmsg_id=(?P<msg_id>\S+)'
+  # Counters printed in the observation-log row's third column, in order.
+  #
+  # The first three are the pipeline funnel and narrow monotonically:
+  # candidates -> final -> fills. `dropped` is NOT a fourth funnel stage and no
+  # longer a correction term on `fills` either — since the `retracted_by`
+  # correlation landed, `fills` is already corrected. It is a count of poison
+  # records, listed here rather than left in the JSON sidecar because a reader
+  # reconciling this row against the ledger needs to know records arrived that
+  # the monitor could not parse. See it under futures-monitor for its scope.
+  #
+  # Adding it also makes a dropped message count toward `has_evidence`
+  # (f9_observation_harvest.py: `any(self.counters.values())`), which only
+  # matters on a day both holiday sources call closed. That is correct: a
+  # dropped message means traffic arrived, so the day was not dead — the exact
+  # case the NO_SESSION override exists for.
+  row_counters: ["candidates", "final", "fills", "dropped"]
+
+  services:
+    - name: futures-decision-engine
+      container: futures-decision-engine
+      # The producer of candidates. Its "observation" is evaluating setups
+      # against a live market context, not consuming a stream.
+      role: producer
+      # `docker logs` without --tail (or with a large one) stops at
+      # 2026-09-09 23:30 on a container that survived the host reboots — see
+      # the "--tail caveat" in docs/runbooks/futures-pipeline-cutover-f9.md.
+      harvest_mode: tail
+      # RAISED FROM 900 when the liveness heartbeat landed (2026-09-23). 900 was
+      # already at the cap — every harvest of this service comes back at exactly
+      # 900 lines with `coverage_truncated: true` — and the heartbeat adds ~60
+      # lines/hour on top, so the same cap would have reached back far less far.
+      #
+      # Measured backwards through the real timestamps of
+      # reports/f9-gate1/2026-09-22/futures-decision-engine.233452.log rather
+      # than divided out of its average, because the average is wrong here: the
+      # OFF-HOURS lines are the dense ones (879 of its 900 lines are the
+      # once-a-minute `Indicator data stale` WARNING, which only fires while the
+      # feed is cold) and the session hours are nearly empty. Counting real
+      # timestamps backwards with one heartbeat per 60.4s added:
+      #   tail=900  -> 7.5h   (a 23:34 harvest would start at 16:03 — AFTER the
+      #                        15:45 close, i.e. the whole session uncovered)
+      #   tail=1500 -> 15.8h
+      #   tail=1800 -> 18.3h  <- covers a harvest any time up to ~03:00 next day
+      #   tail=2400 -> the file's whole 21.5h
+      # Dividing instead gives 8.9h and is the number to distrust.
+      #
+      # WHY NOT `since` MODE, which has no cap at all: the runbook's --tail
+      # caveat (docs/runbooks/futures-pipeline-cutover-f9.md) records that after
+      # a host reboot this container's JSON log carries a broken record, and
+      # that `docker logs` **with `--since`** is one of the forms that stops
+      # dead at it. `--tail 900` was the workaround. Switching to the form the
+      # caveat names as broken, to fix a capacity problem, would trade a
+      # measurable truncation for an unmeasurable one.
+      #
+      # WHY NOT MUCH LARGER: the same caveat says a `--tail` large enough to
+      # CROSS the broken record fails too. At the post-heartbeat density (~120
+      # lines/h off-hours, ~65 in-session, ≈2500 lines/day) 1800 lines is under
+      # three quarters of a day, so it can never reach a boundary left by a
+      # previous day's reboot. 2400+ can.
+      harvest_tail: 1800
+      # Scored against observation_max_gap_seconds like every other service.
+      #
+      # IT WAS NOT, until 2026-09-23, and the reason it was not is worth keeping
+      # because it is what the heartbeat had to remove. A consumer's proof
+      # (`stream_message_processed`) is emitted once per message, so it is
+      # traffic-driven and silence between two proofs is a real claim. This
+      # producer's `observed` proof is the setup-evaluation INFO below, and
+      # shared/strategy/entry/setup_eval_publisher.py emits it once per *state
+      # change* (setup_eval_throttle_key(name, outcome, reason)) — an unchanged
+      # verdict logs nothing however many cycles run. Silence carried no
+      # information at any timescale, so no bound over it asserted anything, so
+      # the service was exempted by name and the day it went quiet read
+      # `LIVENESS_UNVERIFIED`.
+      #
+      # Measured on the two real harvests (08:45-15:45, in-session):
+      #   2026-09-11  observed 24, worst gap 11235s | +blind 36, worst 11235s
+      #   2026-09-18  observed 10, worst gap 17050s | +blind 20, worst 17050s
+      # Widening the proof set to `observed + blind` moved the worst gap by zero
+      # on both days — the blind set is sparser — so there was no denser pattern
+      # to promote, and the fix had to be an emission rather than a threshold.
+      #
+      # PR #766 is that emission: `event=decision_engine_alive` is written from
+      # the evaluation loop's `finally`, once per heartbeat interval, on EVERY
+      # exit path of a cycle including the two early returns. It is not
+      # throttled by state, so its silence does mean the loop stopped. That is
+      # the premise the exemption rested on, and it is gone — the exemption goes
+      # with it, and the `liveness` group below carries the claim instead.
+      #
+      # `freshness_scored: false` and its mandatory reason are still supported
+      # in scripts/ops/f9_observation_harvest.py, keyed on the facts rather than
+      # on a service name, so a future service whose proof is throttled inherits
+      # the `LIVENESS_UNVERIFIED` disclosure the day it is configured. No
+      # shipped service sets it today.
+      liveness:
+        # One line per heartbeat interval from the evaluation loop, emitted
+        # whatever the cycle did — including the cycles that had no market
+        # context at all, which is the state a dead feed and a dead daemon used
+        # to render alike.
+        - 'event=decision_engine_alive\b'
+      observed:
+        # One line per setup-evaluation state change: proof the daemon had a
+        # market context and ran the setup against it.
+        - '\[setup_[a-z_0-9]+\] (signal [a-z]+|no signal this cycle): '
+      blind:
+        # Checked BEFORE `observed`, so a reject whose reason is "I had no
+        # input" counts as blindness, not as an evaluation.
+        - '\[setup_[a-z_0-9]+\] no signal this cycle: (no_market_context|no_vwap|no_prev_close)\b'
+        # Emitted every cycle while the tick feed is stale — the dense signal
+        # that gives a blind window its edges.
+        - 'Indicator data stale for \S+ \(\d+s since last tick'
+      counters:
+        candidates:
+          pattern: 'event=signal_published\b'
+
+    - name: futures-risk-filter
+      container: futures-risk-filter
+      role: consumer
+      harvest_mode: since
+      # `ack=true` IS PART OF THE PROOF, on every consumer, and the `stalled`
+      # group beside it is why. `MultiStreamStage` logs
+      # `stream_message_processed … ack=false` when `handle_message` returns
+      # False, and leaves the message pending; Redis then redelivers the SAME
+      # msg_id, which logs another one, forever. Matching the event alone made a
+      # consumer with zero net progress renew its own freshness on every
+      # redelivery and read `consumed` — the shape issue #767 names. Only an
+      # ACKed message advanced the stream, so only an ACKed message is a proof.
+      observed:
+        - 'event=stream_message_processed .*\bconsumer_group=risk_filter\b.*\back=true\b'
+      # Delivered and NOT completed. Scored for nothing on its own — it is what
+      # separates "alive and nothing arrived" (idle, a successful observation)
+      # from "alive, things arrived, and none of them got anywhere" (wedged, a
+      # failed one). Without it a wedged consumer would inherit the idle
+      # verdict, since both are silent in `observed`.
+      stalled:
+        - 'event=stream_message_processed .*\bconsumer_group=risk_filter\b.*\back=false\b'
+      # Proof the consume loop turned, emitted by shared/streaming/stage.py once
+      # per heartbeat interval whether or not anything was delivered. Scored by
+      # density against liveness_expected_interval_seconds — see the top of this
+      # file for why a bare "it appears somewhere" would certify a dead loop.
+      liveness:
+        - 'event=stream_consumer_alive .*\bconsumer_group=risk_filter\b'
+      blind: &stream_consumer_blind
+        - 'event=monitor_stream_read_error\b'
+        - 'event=tick_stream_read_error\b'
+        - 'event=consumer_group_ensure_failed\b'
+        # The group was GONE and had to be recreated: whatever was published
+        # while it was missing never reached this consumer. This is the exact
+        # 2026-09-17 / 09-18 signature. Both spellings are listed because the
+        # harvested logs of that window predate PR #740's structured wording.
+        - 'event=consumer_group_recovered\b'
+        - 'consumer group missing; recreated\b'
+        - 'xreadgroup error; sleeping'
+      counters:
+        # The runbook's de-duplication rule: a redelivered candidate logs a
+        # fresh verdict under the SAME msg_id, so the raw count overstates
+        # passes. Keep the last verdict per msg_id and count the passes.
+        final:
+          pattern: 'risk_filter verdict=(?P<state>passed|rejected) msg_id=(?P<key>\S+)'
+          keep_last_per_key: true
+          count_state: "passed"
+
+    - name: futures-order-router
+      container: futures-order-router
+      role: consumer
+      harvest_mode: since
+      observed:
+        - 'event=stream_message_processed .*\bconsumer_group=order_router\b.*\back=true\b'
+      stalled:
+        - 'event=stream_message_processed .*\bconsumer_group=order_router\b.*\back=false\b'
+      liveness:
+        - 'event=stream_consumer_alive .*\bconsumer_group=order_router\b'
+      blind: *stream_consumer_blind
+
+    - name: futures-monitor
+      container: futures-monitor
+      role: consumer
+      harvest_mode: since
+      # INSTRUMENTATION BOUNDARY: 2026-09-23 (PR #776). This daemon moved from a
+      # hand-rolled consume loop onto shared/streaming/stage.py's
+      # MultiStreamStage, and what it emits changed with it. `reports/f9-gate1/`
+      # is the durable record — Redis streams carry a 24h TTL — so a session
+      # re-scoring an old day is reading logs written by a different daemon.
+      # Three facts, in the order they will bite:
+      #
+      # 1. `fills: 0` ON EVERY PRE-DEPLOY DAY IS A STRUCTURAL ZERO, NOT A
+      #    MEASUREMENT. The counter below reads a line the old loop never
+      #    emitted, so the number had no emitter behind it. Do not quote a
+      #    pre-deploy day as "0 shadow fills observed"; it is a null result. A
+      #    zero looks like data, which is why this one misleads.
+      # 2. Pre-deploy day directories hold ZERO `stream_message_processed`
+      #    lines, and the `observed` pattern below is unchanged, so re-scoring
+      #    an old day returns the identical verdict it returned before — there
+      #    is no inflation hazard. The hazard is interpretive: that verdict
+      #    reads as a daemon health problem when it was an instrumentation gap.
+      # 3. BLIND DETECTION IS CONTINUOUS ACROSS THE BOUNDARY and needs no
+      #    caveat: pre-deploy days carry `event=monitor_stream_read_error`,
+      #    post-deploy days `xreadgroup error; sleeping`, and the shared
+      #    `&stream_consumer_blind` anchor lists both.
+      #
+      # THE BOUNDARY IS THE DEPLOY DATE, NOT THE MERGE DATE — the day the
+      # container was recreated on the new image. `reports/f9-gate1/<KST date>/`
+      # is date-keyed, so that single date is the whole discriminator. Here the
+      # two dates coincide, which is a coincidence and not a rule: #776 merged
+      # and deployed in the same KST day.
+      #
+      # deploy_date: 2026-09-23 — `kis_paper-futures-monitor` was recreated at
+      # 2026-09-23 00:58:14 KST, and emitted `event=stream_consumer_alive` one
+      # heartbeat interval later at 00:59:19. So `reports/f9-gate1/2026-09-23/`
+      # onward measures this consumer's consumption; every earlier date
+      # directory carries the structural zero of fact 1 above.
+      #
+      # Kept as a comment rather than a key on purpose: nothing in
+      # scripts/ops/f9_observation_harvest.py reads it (`load_observation_config`
+      # takes named fields and ignores the rest), so a real key here would look
+      # load-bearing while changing nothing — which is the exact failure mode
+      # this whole block exists to warn about.
+      observed:
+        - 'event=stream_message_processed .*\bconsumer_group=futures_monitor\b.*\back=true\b'
+      stalled:
+        - 'event=stream_message_processed .*\bconsumer_group=futures_monitor\b.*\back=false\b'
+      liveness:
+        - 'event=stream_consumer_alive .*\bconsumer_group=futures_monitor\b'
+      blind: *stream_consumer_blind
+      # A line that VOIDS every other line carrying the same `msg_id`: the
+      # message named here reached a handler that raised, so nothing downstream
+      # happened for it, and the `stream_message_processed … ack=true` the
+      # framework logs a moment later — deliberately, to preserve
+      # drop-and-continue — describes an ACK, not a fill.
+      #
+      # This is the correlation issue #767 asked for, and it closes BOTH halves
+      # of that issue at once because they are one mechanism: read a line, then
+      # let another line about the same message change what it meant. It strikes
+      # the proof out of `observed` (so a session whose only deliveries were
+      # poison cannot read `consumed`) AND out of `fills` (so the counter stops
+      # reporting a dropped record as a shadow fill).
+      #
+      # Do NOT "fix" the overcount by changing the daemon's catch instead:
+      # re-raising would make the monitor die on the first malformed record,
+      # trading one bad count for total blindness.
+      retracted_by:
+        - 'event=stream_message_dropped\b'
+      counters:
+        # Every shadow fill reaches the ledger through this consumer, so the
+        # fill count and the monitor's proof-of-consumption are the same line.
+        # That is why a blind monitor cannot report "0 fills" as a measurement.
+        #
+        # ONE KNOWN DEFECT REMAINS IN THIS COUNT. The other — the over-count
+        # described at length here until 2026-09-23 — is CORRECTED now, by the
+        # `retracted_by` group above: a fill whose handler raised is struck from
+        # this count by its own msg_id, so the number no longer reports a
+        # dropped record as a shadow fill. That was the second half of issue
+        # #767.
+        #
+        # STRUCTURAL ZERO BEFORE PR #776 IS DEPLOYED (the half correlation
+        # cannot fix). The hand-rolled loop never emitted
+        # `stream_message_processed` at all, so every date directory harvested
+        # before the deploy carries `fills: 0` with no emitter behind it. That
+        # is not "no shadow fills observed"; it is "nothing could have been
+        # counted". The boundary is the DEPLOY date (the day the container was
+        # recreated on the new image), not the merge date, because the report
+        # tree is keyed by KST date.
+        #
+        # `ack=true` is required here for the same reason it is required in
+        # `observed`: a fill delivered to a handler that refused it is pending,
+        # not consumed, and Redis will deliver it again.
+        fills:
+          pattern: 'event=stream_message_processed stream=order\.fill\.futures\.shadow .*\back=true\b'
+        # KEPT, with a changed meaning. It shipped in #776 as DISCLOSURE of the
+        # over-count — an upper bound on a correction the harvester could not
+        # yet make. The correction exists now, so this is no longer a caveat on
+        # `fills`; it is its own measurement: how many poison records arrived.
+        # A non-zero value beside a correct `fills` says the producers are
+        # emitting records this monitor cannot parse, which is worth an
+        # operator's attention on its own and is invisible everywhere else in
+        # the row.
+        #
+        # It still counts drops on BOTH input streams, so it is not the
+        # arithmetic difference between the raw and corrected fill counts — a
+        # dropped *signal* raises it without ever having touched `fills`. That
+        # was a hazard while it stood in for the correction; it is merely the
+        # scope of the number now.
+        dropped:
+          pattern: 'event=stream_message_dropped\b'
+
+    - name: trader-futures
+      container: trader-futures
+      # Harvested for the row's "Orchestrator (ledger)" column. NOT part of the
+      # decoupled observation surface, so it is never scored in the verdict.
+      role: reference
+      harvest_mode: since
+
+  # Read live at run time, recorded in the JSON sidecar under `point_in_time`,
+  # and NEVER used to verdict a day: Redis streams expire after 24h, so none of
+  # this is reconstructible for a past session. The verdict comes only from the
+  # harvested files above.
+  point_in_time:
+    redis_url_env: "REDIS_URL"
+    redis_url_default: "redis://localhost:6379/1"
+    tick_stream: "raw_data"
+    daily_reference_key: "futures:daily_reference:{symbol}"
+    # Trading symbol for the daily_reference lookup, taken from the harvested
+    # logs so a past-date run still names the right key.
+    symbol_pattern: '\bsymbol=(A[0-9]{5})\b'
+    consumer_groups:
+      - stream: "signal.candidate.futures.shadow"
+        group: "risk_filter"
+      - stream: "signal.final.futures.shadow"
+        group: "order_router"
+      - stream: "order.fill.futures.shadow"
+        group: "futures_monitor"

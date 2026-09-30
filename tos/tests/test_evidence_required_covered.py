@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from tos.canonical import DigestBoundArtifact
 from tos.evidence import (
     EvidenceCommitReceipt,
     EvidenceIntegrityPolicy,
@@ -39,7 +40,7 @@ from ._evidence_strategies import (
     replay_required_kwargs,
 )
 
-_ARTIFACTS: list[tuple[type, Callable[..., dict[str, Any]]]] = [
+_ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
     (SafetyEvidenceEnvelope, envelope_required_kwargs),
     (EvidenceCommitReceipt, receipt_required_kwargs),
     (EvidenceIntegrityPolicy, eip_required_kwargs),
@@ -64,7 +65,7 @@ def _cases() -> list[Any]:
     """Yield one param per (artifact, required covered path)."""
     cases: list[Any] = []
     for cls, kwargs_fn in _ARTIFACTS:
-        for path in cls._REQUIRED_COVERED:  # type: ignore[attr-defined]
+        for path in cls._REQUIRED_COVERED:
             cases.append(
                 pytest.param(cls, kwargs_fn, path, id=f"{cls.__name__}:{path}")
             )
@@ -73,12 +74,12 @@ def _cases() -> list[Any]:
 
 @pytest.mark.parametrize("cls,kwargs_fn,path", _cases())
 def test_missing_required_covered_rejects_issuance(
-    cls: type, kwargs_fn: Callable[..., dict[str, Any]], path: str
+    cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
 ) -> None:
     """Dropping any required covered path makes an ISSUED artifact unconstructable (§3.2)."""
     kwargs = _null_path(kwargs_fn(), path)
     with pytest.raises(ValidationError):
-        cls.issue(scheme=SCHEME, **kwargs)  # type: ignore[attr-defined]
+        cls.issue(scheme=SCHEME, **kwargs)
 
 
 def test_every_artifact_has_non_vacuous_required_covered() -> None:

@@ -222,7 +222,7 @@ def build_proposal(
     Returns:
         The issued, digest-verified :class:`Proposal` candidate.
     """
-    return Proposal.issue(  # type: ignore[return-value]
+    return Proposal.issue(
         scheme=scheme,
         status=status,
         proposer=proposer,

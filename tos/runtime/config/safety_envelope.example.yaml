@@ -1,0 +1,53 @@
+# Hard Safety Envelope policy document (tos_runtime.safety.profile.SafetyProfileService).
+#
+# Loaded into tos.spg.HardSafetyEnvelope via model_validate — see
+# tos_runtime/safety/profile.py for the loader and the predicates that
+# consume this document (profile_within_envelope, hard_and_runtime_versions_
+# match, activation_atomic, envelope_bounded).
+#
+# Every value below is a named-TBD `null` (or an empty collection where the
+# schema allows one) — an operator MUST replace every null with a concrete,
+# governance-approved value before this file can be used in production.
+#
+# UNLIKE most loaders in this codebase, the loader here does NOT itself
+# refuse a still-null field: HardSafetyEnvelope's own fields are all
+# `X | None = None` (tos/src/tos/spg/records.py), so model_validate accepts
+# an all-null mapping exactly as readily as a fully filled-in one (confirmed
+# 2026-09-18, PR #737 review — replacing this file wholesale with concrete
+# values left the whole test suite green). What actually blocks an unfilled
+# deployment is downstream: the predicates this envelope feeds
+# (profile_within_envelope, activation_atomic, envelope_bounded) treat an
+# undeclared/null dimension as most-restrictive, and the safety_activation
+# document's own `not_expired` attestation is the one field in this
+# three-file chain the loader itself still raises on. See
+# docs/runbooks/tos-safety-mesh.md for the proposal table an operator
+# reviews before filling this in, and
+# tos/runtime/tests/compose/example_integrity_registry.py's own
+# EXAMPLE_TEMPLATE_ONLY comment for how the shipped example's own
+# all-null/[] shape is verified directly (never by loader refusal) instead.
+envelope:
+  envelope_id: null
+  envelope_generation: null
+  envelope_version:
+    version: null
+    effective_date: null
+    evidence_package_version: null
+    approver_identity: null
+    expiration_or_revalidation_date: null
+    superseded_version_link: null
+    change_classification: null
+  # One entry per governed dimension this envelope bounds. Example shape
+  # (delete the null placeholder, add real dimensions):
+  #   - dimension: null
+  #     envelope_max: null
+  #     unit: null
+  #     multiplier: null
+  #     sign: null
+  #     precision: null
+  #     rounding: null
+  #     boundary: null
+  governed_dimensions: []
+  permitted_scope: []
+  prohibited_fallbacks: []
+  residual_risk_ceiling: null
+  evidence_package_ref: null

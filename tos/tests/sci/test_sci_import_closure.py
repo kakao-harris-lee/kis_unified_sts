@@ -228,7 +228,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     )
 
 
-def _run_child(target) -> dict:  # type: ignore[no-untyped-def]
+def _run_child(target) -> dict:
     """Spawn ``target`` in a clean interpreter and return its reported result dict."""
     ctx = mp.get_context("spawn")
     queue: mp.Queue = ctx.Queue()
@@ -237,6 +237,7 @@ def _run_child(target) -> dict:  # type: ignore[no-untyped-def]
     result = queue.get(timeout=60)
     proc.join(timeout=60)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
+    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
     return result
 
 
@@ -440,14 +441,14 @@ def test_source_imports_no_forbidden_sibling_statically() -> None:
     for path in sorted(_SCI_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            names: list[str] = []
+            entries: list[tuple[str, int]] = []
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
+                entries = [(alias.name, node.lineno) for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
+                entries = [(node.module, node.lineno)]
+            for name, lineno in entries:
                 if not _is_allowed_tos_module(name) or _is_forbidden_non_tos(name):
-                    offenders.append(f"{path.name}:{node.lineno} import {name}")
+                    offenders.append(f"{path.name}:{lineno} import {name}")
     assert offenders == [], f"forbidden sibling import in source: {offenders}"
 
 

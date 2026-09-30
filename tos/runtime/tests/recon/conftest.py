@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,13 @@ class FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes")
 
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return b"test-fixed-key-bytes"
+
 
 @pytest.fixture
 def key_provider() -> KeyProvider:
@@ -22,7 +30,7 @@ def key_provider() -> KeyProvider:
 
 
 @pytest.fixture
-def store(tmp_path: Path, key_provider: KeyProvider) -> SqliteEvidenceStore:
+def store(tmp_path: Path, key_provider: KeyProvider) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=key_provider
     )

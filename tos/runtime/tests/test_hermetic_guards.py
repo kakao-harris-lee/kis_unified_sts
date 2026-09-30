@@ -1,7 +1,7 @@
-"""D1.4 hermetic-guard coverage (2026-09-08, independent review follow-up).
+"""Hermetic-guard coverage.
 
-``test_placeholder.py`` proves the original ``connect()`` guard; this file
-proves the two gaps that review found and closed in ``conftest.py``:
+``test_placeholder.py`` covers the original ``connect()`` guard; this file
+covers two additional guard surfaces in ``conftest.py``:
 
   1. ``connect_ex``/``sendto``/``sendmsg`` are ALSO guarded, not just
      ``connect`` — each is proven to raise BEFORE reaching the real syscall,
@@ -78,10 +78,8 @@ def test_hermetic_guard_blocks_sendmsg() -> None:
 
 
 def test_hermetic_guard_localhost_is_no_longer_allowed() -> None:
-    # LOW finding, 2026-09-08: 'localhost' was previously in the allowed-host
-    # set; it is now removed (only the literal loopback addresses remain), so
-    # a connect attempt naming it must be refused just like any other
-    # non-loopback host.
+    # Hostname resolution must not expand the allowlist; only literal loopback
+    # addresses are allowed, so a named localhost attempt is refused.
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         with pytest.raises(PermissionError, match="tos_runtime hermetic test guard"):

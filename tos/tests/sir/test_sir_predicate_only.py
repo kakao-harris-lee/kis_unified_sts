@@ -14,6 +14,8 @@ NOT_IMPLEMENTED pending ``EV-L2`` / ``EV-L3`` component-fault and integration ev
 
 from __future__ import annotations
 
+from typing import Any
+
 import tos.sir as s
 
 from ._sir_strategies import (
@@ -54,15 +56,14 @@ def test_plan_without_exact_bindings_denies() -> None:
     is the ``model_construct`` escape hatch — which the predicate layer catches (two layers, §2.3).
     """
     for blank in ("incident_generation", "active_set_digest"):
-        forged = s.IncidentContainmentPlan.model_construct(
-            **{
-                "incident_generation": 5,
-                "active_set_digest": "set-1-digest",
-                "proposed_actions": (),
-                "authority_effect": s.AllFalseIncidentAuthority(),
-                blank: None,
-            }
-        )
+        values: dict[str, Any] = {
+            "incident_generation": 5,
+            "active_set_digest": "set-1-digest",
+            "proposed_actions": (),
+            "authority_effect": s.AllFalseIncidentAuthority(),
+            blank: None,
+        }
+        forged = s.IncidentContainmentPlan.model_construct(**values)
         assert s.containment_uses_normal_authority(forged) is False
 
 

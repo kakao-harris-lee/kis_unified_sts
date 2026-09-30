@@ -57,6 +57,26 @@ def test_next_unconsumed_returns_oldest_first_then_none(
     assert inbox.next_unconsumed() is None
 
 
+def test_unconsumed_count_tracks_admitted_minus_consumed(
+    inbox: SqliteEventInbox,
+) -> None:
+    """The MONITORING safety-mesh service's own inbox-backlog observation (Phase 5
+    W3-b) — distinct from :attr:`~SqliteEventInbox.count`, which never falls as
+    events are consumed."""
+    assert inbox.unconsumed_count == 0
+    inbox.enqueue(fx.decision_tick_event(seq=1))
+    inbox.enqueue(fx.decision_tick_event(seq=2))
+    assert inbox.unconsumed_count == 2
+    assert inbox.count == 2
+
+    inbox.mark_consumed(1, evidence_seq=100, generation=1)
+    assert inbox.unconsumed_count == 1
+    assert inbox.count == 2  # count never falls
+
+    inbox.mark_consumed(2, evidence_seq=101, generation=1)
+    assert inbox.unconsumed_count == 0
+
+
 def test_mark_consumed_is_reflected_in_is_consumed(inbox: SqliteEventInbox) -> None:
     receipt = inbox.enqueue(fx.decision_tick_event(seq=1))
     assert inbox.is_consumed(receipt.seq) is False
@@ -153,3 +173,40 @@ def test_clear_new_risk_halt_with_matching_seq_and_attestation_clears(
     )
     assert outcome is NewRiskHaltClearOutcome.CLEARED
     assert inbox.new_risk_halt() is None
+
+
+def test_dated_egress_result_replays_with_the_same_date_and_identity(
+    tmp_path: Path,
+) -> None:
+    """Plan 2026-09-26 egress trading date: the date rides the inbox payload, so a replay reads
+    it back rather than re-reading a clock — same date, same event identity, after a reopen.
+    """
+    from tos.engine.records import event_identity
+
+    scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
+    path = tmp_path / "dated-inbox.sqlite3"
+    from tos.engine import EgressResultKind, EgressResultPayload, EngineEvent, EventKind
+
+    dated = EngineEvent(
+        kind=EventKind.EGRESS_RESULT,
+        egress_result=EgressResultPayload(
+            instrument_key=fx.instrument_key(),
+            attempt_id="att-dated",
+            kind=EgressResultKind.ACK,
+            broker_execution_id="0000003663",
+            trading_date="20260805",
+        ),
+    )
+    first = SqliteEventInbox(path, scheme=scheme)
+    first.enqueue(dated)
+    first.close()
+
+    reopened = SqliteEventInbox(path, scheme=scheme)
+    for _ in range(2):
+        [(_seq, replayed)] = list(reopened.replay())
+        assert replayed.egress_result is not None
+        assert replayed.egress_result.trading_date == "20260805"
+        assert event_identity(replayed, scheme=scheme) == event_identity(
+            dated, scheme=scheme
+        )
+    reopened.close()

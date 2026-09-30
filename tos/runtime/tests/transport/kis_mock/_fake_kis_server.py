@@ -33,10 +33,19 @@ class _Route:
     body: dict[str, Any] | None
     delay_s: float = 0.0
     reset: bool = False
+    #: Called on the server thread while this route is being served, after the request has
+    #: been recorded and before any response byte is written (see :meth:`FakeKisServer
+    #: .set_response`).
+    on_request: Callable[[], None] | None = None
 
 
 class FakeKisServer:
     """A threaded HTTP server bound to ``127.0.0.1`` with per-path scripted responses.
+
+    Handles both POST (order/token) and GET (quote) requests. A GET route is matched by its
+    FULL path, query string included (``set_response("/…/inquire-price?FID_INPUT_ISCD=005930",
+    ...)``) — a test that wants to distinguish two quote calls scripts two distinct full paths,
+    the same way it would script two distinct POST bodies via two separate assertions.
 
     Usage::
 
@@ -58,6 +67,7 @@ class FakeKisServer:
     @property
     def rest_base(self) -> str:
         host, port = self._httpd.server_address[:2]
+        assert isinstance(host, str), f"expected a str host, got {type(host)!r}"
         return f"http://{host}:{port}"
 
     def set_response(
@@ -68,9 +78,31 @@ class FakeKisServer:
         body: dict[str, Any] | None,
         delay_s: float = 0.0,
         reset: bool = False,
+        on_request: Callable[[], None] | None = None,
     ) -> None:
+        """Script one route.
+
+        Args:
+            path: The FULL path (query string included) this route answers.
+            status: The HTTP status to return.
+            body: The JSON body, or ``None`` for an empty one.
+            delay_s: A REAL ``time.sleep`` before the response — a genuine wall-clock wait, so
+                it belongs only to tests about timeouts and connection behaviour.
+            reset: Abort the socket instead of answering.
+            on_request: Called on the server thread once the request has been recorded and
+                before any response byte is written. This is how a test injects a transport
+                delay it wants to MEASURE rather than wait out: the callback advances the
+                test's own scripted clocks by the delay, the client's "after" reading picks it
+                up through the response, and no real time passes (``tests/transport/kis_quote
+                /test_adapter.py``'s own deterministic FRESH/STALE pair). It must not raise —
+                an exception here surfaces as a broken connection, not as a test failure.
+        """
         self._routes[path] = _Route(
-            status=status, body=body, delay_s=delay_s, reset=reset
+            status=status,
+            body=body,
+            delay_s=delay_s,
+            reset=reset,
+            on_request=on_request,
         )
 
     def requests_for(self, path: str) -> list[RecordedRequest]:
@@ -107,12 +139,23 @@ class FakeKisServer:
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers.get("Content-Length", 0))
                 raw_body = self.rfile.read(length) if length else b""
-                route = server._routes.get(self.path)
+                self._handle("POST", self.path, raw_body)
+
+            def do_GET(self) -> None:  # noqa: N802
+                # A quote GET carries no body — recorded with an empty one for symmetry with
+                # RecordedRequest's shape. Route lookup, like recording, uses the FULL path
+                # (query string included): a quote adapter's own routing distinguishes requests
+                # by their query string (e.g. a different FID_INPUT_ISCD), unlike the order
+                # transport's POST routes, which never carry one.
+                self._handle("GET", self.path, b"")
+
+            def _handle(self, method: str, path: str, raw_body: bytes) -> None:
+                route = server._routes.get(path)
                 with server._lock:
                     server._requests.append(
                         RecordedRequest(
-                            method="POST",
-                            path=self.path,
+                            method=method,
+                            path=path,
                             headers={k.lower(): v for k, v in self.headers.items()},
                             body=raw_body,
                         )
@@ -121,6 +164,8 @@ class FakeKisServer:
                     self.send_response(404)
                     self.end_headers()
                     return
+                if route.on_request is not None:
+                    route.on_request()
                 if route.delay_s:
                     time.sleep(route.delay_s)
                 if route.reset:

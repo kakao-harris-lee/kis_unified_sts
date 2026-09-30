@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import pytest
 import yaml
@@ -60,12 +61,29 @@ class FakeMonotonicSource:
         return self.value
 
 
+#: G-1 (team-lead follow-up, 2026-09-13): a fixed, non-None default wall
+#: reading. Anchor validity now needs a real Δwall-Δmono observation
+#: (``TrustworthyTimeService._observed_suspension_ms``) — a reader that never
+#: supplies a wall value can no longer reach TRUSTED at all, which would
+#: break every existing ``make_trusted()``-driven test in this package.
+#: Held CONSTANT across every read() by default (this class's instances are
+#: never mutated between evaluate() calls unless a test does so explicitly),
+#: so Δwall == 0 and the observed suspension is always exactly 0 for every
+#: test that isn't specifically about wall-clock/suspension semantics.
+_DEFAULT_TEST_WALL_CLOCK_UNIX_MS = 1_700_000_000_000
+
+
 @dataclass
 class FakeReferenceReader:
     reachable: bool = True
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
+    #: G-1 (runtime operations wiring plan §2 decision 1) — a fixed, static
+    #: default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s own docstring);
+    #: a test proving the "no wall clock at all" gap sets this to ``None``
+    #: explicitly.
+    wall_clock_unix_ms: int | None = _DEFAULT_TEST_WALL_CLOCK_UNIX_MS
 
     def read(self) -> ReferenceObservation:
         return ReferenceObservation(
@@ -73,6 +91,7 @@ class FakeReferenceReader:
             healthy=self.healthy,
             quality=self.quality,
             common_mode_group=self.common_mode_group,
+            wall_clock_unix_ms=self.wall_clock_unix_ms,
         )
 
 
@@ -92,7 +111,9 @@ def log_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def log(log_path: Path, evidence_port: FakeEvidenceAppendPort) -> SqliteCommitLog:
+def log(
+    log_path: Path, evidence_port: FakeEvidenceAppendPort
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(log_path, evidence_port=evidence_port)
     yield instance
     instance.close()
@@ -103,8 +124,53 @@ def writer_epoch(log: SqliteCommitLog, identity: RuntimeIdentity) -> int:
     return log.acquire_epoch(identity)
 
 
-def _time_config(**overrides: object) -> TrustworthyTimeConfig:
-    base: dict[str, object] = {
+class _TimeConfigKwargs(TypedDict):
+    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
+    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
+    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+
+    max_time_source_precision_ms: int
+    max_time_transport_and_queue_uncertainty_ms: int
+    max_time_conservative_freshness_age_ms: int
+    max_future_timestamp_tolerance_ms: int
+    max_process_suspension_ms: int
+    max_time_source_disagreement_ms: int
+    min_time_independent_reference_count: int
+    max_clock_domain_conversion_uncertainty_ms: int
+    max_send_result_wait_ms: int
+    max_critical_input_consumer_receipt_age_ms: int
+    max_time_source_sequence_gap_ms: int
+    tz_db_version: str
+    trading_calendar_version: str
+    verification_profile_version: str
+    safety_profile_version: str
+
+
+class _TimeConfigKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape
+    for :func:`_time_config`."""
+
+    max_time_source_precision_ms: int
+    max_time_transport_and_queue_uncertainty_ms: int
+    max_time_conservative_freshness_age_ms: int
+    max_future_timestamp_tolerance_ms: int
+    max_process_suspension_ms: int
+    max_time_source_disagreement_ms: int
+    min_time_independent_reference_count: int
+    max_clock_domain_conversion_uncertainty_ms: int
+    max_send_result_wait_ms: int
+    max_critical_input_consumer_receipt_age_ms: int
+    max_time_source_sequence_gap_ms: int
+    tz_db_version: str
+    trading_calendar_version: str
+    verification_profile_version: str
+    safety_profile_version: str
+
+
+def _time_config(
+    **overrides: Unpack[_TimeConfigKwargsPartial],
+) -> TrustworthyTimeConfig:
+    base: _TimeConfigKwargs = {
         "max_time_source_precision_ms": 5,
         "max_time_transport_and_queue_uncertainty_ms": 10,
         "max_time_conservative_freshness_age_ms": 1000,
@@ -114,6 +180,8 @@ def _time_config(**overrides: object) -> TrustworthyTimeConfig:
         "min_time_independent_reference_count": 1,
         "max_clock_domain_conversion_uncertainty_ms": 50,
         "max_send_result_wait_ms": 5000,
+        "max_critical_input_consumer_receipt_age_ms": 1000,
+        "max_time_source_sequence_gap_ms": 50,
         "tz_db_version": "2026a",
         "trading_calendar_version": "cal-1",
         "verification_profile_version": "vp-0",
@@ -252,12 +320,24 @@ class FakeTimeService:
     exactly): returns a fixed, injected :class:`~tos.time.TimeHealthSnapshot`
     (or raises ``TimeServiceNotStarted`` when none is set) — the real FSM is
     lane K's own test scope, not this lane's. Using a duck-typed double
-    (rather than driving the real FSM to a chosen wall-clock reading, which
-    :class:`TrustworthyTimeService` cannot do — see
-    :func:`load_operator_approval_with_receipt`'s own "honest gap" docstring
-    note: ``wall_clock_observation`` is never populated by the real service
-    in the current build) keeps this test hermetic and lets it exercise the
-    expiry composition logic directly."""
+    (rather than driving the real FSM to a chosen wall-clock reading) keeps
+    most of these tests hermetic and focused on the expiry composition logic
+    directly, at an arbitrary chosen instant, without needing a real clock
+    read or a multi-``evaluate()`` FSM walk for every scenario.
+
+    G-1 update (runtime operations wiring plan §2 decision 1): the real
+    :class:`~tos_runtime.time.service.TrustworthyTimeService` CAN now
+    populate ``wall_clock_observation`` once TRUSTED, PROVIDED it is wired
+    with a reference reader that itself supplies a
+    :attr:`~tos_runtime.time.sources.ReferenceObservation.wall_clock_unix_ms`
+    value (:class:`FakeReferenceReader` above defaults this to ``None`` —
+    matching every reader already configured on the shared ``time_service``
+    fixture, unaffected). ``test_iap.py``'s
+    ``test_real_time_service_refuses_a_future_dated_issuance`` exercises this
+    end-to-end with the real service, replacing this double for that one
+    case, precisely to prove the wiring is genuinely connected now — this
+    double remains the right tool for every OTHER expiry-composition test in
+    this suite, which do not need a live FSM walk."""
 
     def __init__(self, snapshot: TimeHealthSnapshot | None = None) -> None:
         self._snapshot = snapshot

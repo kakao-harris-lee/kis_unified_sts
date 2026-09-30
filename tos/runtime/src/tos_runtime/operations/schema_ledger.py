@@ -1,0 +1,427 @@
+"""The generic, per-store append-only ``schema_ledger`` table (TOS Phase 5 W4 plan §2 decision 3).
+
+Every runtime-owned durable sqlite store (evidence, RCL, inbox — **not** the kernel-owned
+composite-state store, which this package never opens as a table at all; see
+:mod:`tos_runtime.operations.backup_set`'s own module docstring) hands its OWN ``CREATE TABLE IF
+NOT EXISTS`` DDL to :func:`open_or_create_schema` from its own ``__init__``, so the freshness
+decision, that DDL, this module's own ledger DDL and the genesis stamp all happen on the SAME
+connection, inside the SAME construction call — and, since #801, inside ONE ``BEGIN IMMEDIATE``
+transaction.
+
+**Genesis is atomic (#801, plan ``docs/plans/2026-09-30-tos-schema-genesis-toctou-plan.md``).**
+Two runtimes booting against the same EMPTY ``data_dir`` used to reach two distinct failures,
+because "decide freshness -> run DDL -> stamp" held no lock across the three steps:
+
+* **R-1** — both processes read :func:`file_is_fresh` as ``True`` before either created a table,
+  so both attempted the genesis ``INSERT`` and the loser died on ``sqlite3.IntegrityError:
+  UNIQUE constraint failed: schema_ledger.version``.
+* **R-2** — a process opening after the winner's ``CREATE TABLE`` but before its stamp saw
+  ``was_fresh=False`` with ``user_version = 0`` and refused to boot as "BEHIND", against a file
+  that was merely half-created. Re-reading ``file_is_fresh`` inside a lock (#801's own
+  recommendation) does not reach this one: that process is already on the non-genesis branch.
+
+:func:`open_or_create_schema` closes both by making the half-created state unobservable — a
+second process waits on sqlite's own write lock and then sees a FINISHED file. Its fixture is
+:mod:`tos_runtime.tests.operations.test_schema_genesis_concurrency`.
+
+**What is closed, and what is not.** The GENESIS TRANSACTION race (R-1/R-2 above) is closed. A
+concurrent first boot against a **brand-new** file can still fail EARLIER than this function: each
+store sets ``PRAGMA journal_mode=WAL`` on its own connection before calling here, and switching a
+never-yet-WAL file's journal mode takes a lock that sqlite does NOT retry through the busy timeout,
+so one side can lose with ``sqlite3.OperationalError: database is locked`` before any schema code
+runs. Measured on a brand-new file: ~22/80 losing openers at N=2, 57/160 at N=4, 90/320 at N=8.
+That race is **out of #801's scope and still open — tracked in #818**; this module's own fixture
+pre-creates the file in WAL mode precisely so it measures the genesis transaction and not that.
+
+**A steady-state boot takes no write lock (review MEDIUM-1).** Folding the DDL into the genesis
+transaction would otherwise have made EVERY boot contend for the exclusive write lock — with a live
+runtime appending evidence, an operator CLI (``rearm`` / ``ack-alert`` / ``rotate-key``), or a long
+``apply_migrations`` index build — where before #801 a boot against an existing, current file took
+no write lock at all. A store constructed with a short busy timeout
+(``SqliteCommitLog(sqlite_timeout_s=0)``) would fail instantly against any of them. So
+:func:`open_or_create_schema` decides the common case with two LOCK-FREE reads before it starts a
+transaction: ``PRAGMA user_version == schema_version`` **and** the ``schema_ledger`` table exists.
+
+That is sound in the direction it is used. The version stamp and the tables commit in the SAME
+transaction, so ``user_version == schema_version`` cannot be observed unless a genesis (or an
+``apply_migrations``) already finished — there is no state where the version is current but the
+schema is not. Every other observation (version 0, a behind/ahead version, a missing ledger) falls
+through to ``BEGIN IMMEDIATE``, so R-1/R-2 stay closed: a concurrent FIRST boot can never take the
+fast path, because ``user_version`` is 0 until someone commits the stamp.
+
+The consequence to know: a steady-state boot now runs NO DDL, so it no longer re-creates an
+auxiliary structure that was removed by hand (an index an operator dropped, say). That was never a
+reliable repair anyway — the evidence store's ``entries_kind_seq`` is genesis-only since #816 — and
+:attr:`~tos_runtime.operations.schema_migrations.SchemaMigration.repair_statements` is the
+sanctioned path for it.
+
+**Boot is a check, never a migration.** Neither :func:`open_or_create_schema` nor
+:func:`ensure_schema_current` ever runs an ``ALTER TABLE``/data-shape change of its own — the
+three-way disposition is:
+
+1. **Fresh file** (:func:`file_is_fresh` was ``True`` — no user tables existed before the
+   caller's own DDL ran): this is a genesis, not a migration. Stamp ``PRAGMA user_version =
+   schema_version`` and append one ``schema_ledger`` row with ``applied_by="CREATED"``.
+2. **``user_version == schema_version``**: pass silently — this is the ordinary "already at the
+   expected version" boot.
+3. **``user_version < schema_version``**: :class:`SchemaVersionRefused` — a pre-existing file at
+   an older schema. The operator's ``migrate`` CLI
+   (:func:`tos_runtime.operations.schema_migrations.apply_migrations`) is the ONLY path that
+   changes this; boot never auto-applies (plan §2 decision 3: "부팅 시 자동 적용 0").
+4. **``user_version > schema_version``**: :class:`SchemaVersionRefused` — this file was created
+   or migrated by code newer than what is running right now; refusing (never silently trusting a
+   newer shape) is the same fail-closed discipline as case 3.
+
+``schema_ledger`` itself is append-only, mechanically (``BEFORE UPDATE``/``BEFORE DELETE``
+triggers that unconditionally ``RAISE(ABORT, ...)``) — the same discipline
+:mod:`tos_runtime.evidence.store`'s own ``entries`` table already uses.
+
+Firewall: stdlib (``sqlite3``, ``hashlib``, ``json``) only.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from collections.abc import Callable, Sequence
+from typing import NoReturn
+
+__all__ = [
+    "SCHEMA_LEDGER_TABLE_SQL",
+    "SchemaVersionRefused",
+    "compute_schema_shape_digest",
+    "ensure_schema_current",
+    "file_is_fresh",
+    "open_or_create_schema",
+    "read_schema_version",
+    "user_tables",
+]
+
+SCHEMA_LEDGER_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS schema_ledger (
+    version INTEGER PRIMARY KEY,
+    applied_at_monotonic_ns INTEGER NOT NULL,
+    migration_digest TEXT NOT NULL,
+    applied_by TEXT NOT NULL
+)
+"""
+
+_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER IF NOT EXISTS schema_ledger_no_update
+BEFORE UPDATE ON schema_ledger
+BEGIN
+    SELECT RAISE(ABORT, 'tos_runtime schema ledger: schema_ledger is append-only — UPDATE forbidden');
+END
+"""
+
+_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER IF NOT EXISTS schema_ledger_no_delete
+BEFORE DELETE ON schema_ledger
+BEGIN
+    SELECT RAISE(ABORT, 'tos_runtime schema ledger: schema_ledger is append-only — DELETE forbidden');
+END
+"""
+
+#: The ``applied_by`` value :func:`ensure_schema_current` writes for a genesis stamp — never a
+#: migration (case 1 above).
+CREATED_APPLIED_BY = "CREATED"
+
+#: The ``applied_by`` value :func:`tos_runtime.operations.schema_migrations.apply_migrations`
+#: writes for an operator-run migration.
+MIGRATE_APPLIED_BY = "MIGRATE"
+
+
+class SchemaVersionRefused(RuntimeError):
+    """Raised at store construction (or by ``apply_migrations``) when the on-disk
+    ``PRAGMA user_version`` disagrees with what this code expects — a boot refusal, never an
+    auto-applied fix (module docstring cases 3/4)."""
+
+
+def user_tables(conn: sqlite3.Connection) -> frozenset[str]:
+    """The names of every non-sqlite-internal table currently in ``conn``'s own file."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return frozenset(row[0] for row in rows)
+
+
+def file_is_fresh(conn: sqlite3.Connection) -> bool:
+    """``True`` iff ``conn`` has no user tables yet.
+
+    **Must be called BEFORE the caller's own ``CREATE TABLE`` DDL runs** (including before this
+    module's own :data:`SCHEMA_LEDGER_TABLE_SQL`) — otherwise a genuinely fresh file looks
+    identical to one this very call already populated.
+
+    :func:`open_or_create_schema` calls this INSIDE its own ``BEGIN IMMEDIATE``, which is what
+    makes the answer still true by the time the genesis row is written (module docstring, R-1).
+    It remains public because :mod:`tos_runtime.operations.schema_migrations` and the test suites
+    ask the same question outside that transaction.
+    """
+    return len(user_tables(conn)) == 0
+
+
+def compute_schema_shape_digest(
+    conn: sqlite3.Connection, table_names: Sequence[str]
+) -> str:
+    """Digest the CURRENT on-disk column shape of ``table_names`` (sorted, stable).
+
+    Reads ``PRAGMA table_info`` for each table (never the source DDL text) — the digest reflects
+    what sqlite actually holds, not what a caller's SQL string happened to say, so it stays
+    correct even if a future migration changes the DDL wording without changing the resulting
+    shape (e.g. reformatting) or vice versa. Table order in ``table_names`` does not matter (
+    sorted internally) — order of *columns within* a table is preserved (as sqlite reports it),
+    since column ORDER is part of a table's real shape.
+    """
+    shapes: list[tuple[str, tuple[tuple[object, ...], ...]]] = []
+    for name in sorted(table_names):
+        rows = conn.execute(f"PRAGMA table_info({name})").fetchall()
+        shapes.append((name, tuple(tuple(row) for row in rows)))
+    canonical = json.dumps(shapes, sort_keys=False, default=str, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def read_schema_version(path_conn: sqlite3.Connection) -> int:
+    """Read-only helper: the ``PRAGMA user_version`` currently stamped on ``path_conn``'s file."""
+    row = path_conn.execute("PRAGMA user_version").fetchone()
+    return int(row[0])
+
+
+def _schema_ledger_exists(conn: sqlite3.Connection) -> bool:
+    """``True`` iff the ``schema_ledger`` table is already on ``conn``'s file.
+
+    A lock-free read, used only by :func:`open_or_create_schema`'s steady-state fast path as the
+    second half of "this file is already finished". It is not redundant with the version check: a
+    file that predates the schema ledger entirely, or one an operator demoted by dropping the
+    table, can carry a matching ``user_version`` with no ledger — that file must reach
+    ``BEGIN IMMEDIATE`` so the ledger DDL runs, not be waved through.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_ledger'"
+    ).fetchone()
+    return row is not None
+
+
+def _refuse_version(store_name: str, current: int, schema_version: int) -> NoReturn:
+    """Raise the BEHIND/AHEAD refusal for a non-fresh file (module docstring cases 3/4).
+
+    Shared verbatim by :func:`ensure_schema_current` and :func:`open_or_create_schema` so the two
+    entry points cannot drift into refusing on different wording — or, worse, on different
+    conditions.
+    """
+    if current < schema_version:
+        raise SchemaVersionRefused(
+            f"{store_name}: on-disk schema user_version={current} is BEHIND this code's "
+            f"schema_version={schema_version} — run the operator `migrate` CLI "
+            "(tos_runtime.operations.schema_migrations.apply_migrations) before booting; "
+            "boot never auto-applies a migration"
+        )
+    raise SchemaVersionRefused(
+        f"{store_name}: on-disk schema user_version={current} is AHEAD of this code's "
+        f"schema_version={schema_version} — this file was created or migrated by newer code "
+        "than what is running now"
+    )
+
+
+def _run_genesis_transaction(
+    conn: sqlite3.Connection,
+    *,
+    schema_version: int,
+    create_ddl: Callable[[sqlite3.Connection, bool], None],
+    shape_tables: Sequence[str],
+    monotonic_ns: Callable[[], int],
+) -> tuple[bool, int]:
+    """Run the whole genesis inside ONE ``BEGIN IMMEDIATE`` ... ``COMMIT``; return
+    ``(was_fresh, on_disk_version)``.
+
+    Extracted from :func:`open_or_create_schema` to keep both functions inside the repo's
+    100-line function budget (``tools/tos_size_budget.py``, operator-configured threshold) — a
+    pure decomposition, no behavior change: the same statements run on the same connection in the
+    same order, inside the same one transaction.
+
+    The version comparison deliberately stays with the CALLER: it happens after ``COMMIT``, so it
+    is not part of the transaction this function owns.
+
+    Raises:
+        Whatever ``create_ddl`` raises, or sqlite3's own errors — always after a ``ROLLBACK``, so
+        a failed genesis leaves zero user tables.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        fresh = file_is_fresh(conn)
+        create_ddl(conn, fresh)
+        conn.execute(SCHEMA_LEDGER_TABLE_SQL)
+        conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
+        conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+        if fresh:
+            conn.execute(f"PRAGMA user_version = {int(schema_version)}")
+            conn.execute(
+                "INSERT INTO schema_ledger "
+                "(version, applied_at_monotonic_ns, migration_digest, applied_by) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    schema_version,
+                    monotonic_ns(),
+                    compute_schema_shape_digest(conn, shape_tables),
+                    CREATED_APPLIED_BY,
+                ),
+            )
+        current = read_schema_version(conn)
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.OperationalError:
+            # The transaction was already ended — a ``create_ddl`` that committed or rolled back
+            # itself before failing leaves sqlite reporting "cannot rollback - no transaction is
+            # active". The ORIGINAL exception is the diagnosis; replacing it with this one would
+            # throw the diagnosis away and report a symptom of the cleanup instead (review LOW-1).
+            pass
+        raise
+    return fresh, current
+
+
+def open_or_create_schema(
+    conn: sqlite3.Connection,
+    *,
+    store_name: str,
+    schema_version: int,
+    create_ddl: Callable[[sqlite3.Connection, bool], None],
+    shape_tables: Sequence[str],
+    monotonic_ns: Callable[[], int],
+) -> bool:
+    """Create this store's schema if the file is fresh, else check it — atomically (#801).
+
+    Everything a genesis consists of runs inside ONE ``BEGIN IMMEDIATE`` ... ``COMMIT``::
+
+        if user_version == schema_version and schema_ledger exists:
+            return False            <- STEADY-STATE FAST PATH: two lock-free reads, no write lock
+        BEGIN IMMEDIATE                 <- write lock; a second process waits HERE
+          fresh = file_is_fresh(conn)   <- decided under the lock (module docstring, R-1/R-2)
+          create_ddl(conn, fresh)       <- the caller's own CREATE TABLE/INDEX/TRIGGER
+          schema_ledger DDL + triggers
+          if fresh: PRAGMA user_version = schema_version; INSERT the CREATED row
+        COMMIT
+        if not fresh: compare versions  <- unchanged rules (module docstring cases 2/3/4)
+
+    Two properties follow from the transaction, and neither held before: a concurrent opener never
+    observes a half-created file (it blocks on sqlite's own write lock, then reads ``fresh=False``
+    with the version already stamped), and any exception ``ROLLBACK``s, so a failed genesis leaves
+    ZERO user tables instead of the partial set autocommitted DDL used to leave behind. The
+    fast path's own rationale and its one consequence are in the module docstring, as is the
+    ``journal_mode`` race on a brand-new file that this function does NOT close (**#818**).
+
+    Args:
+        conn: The store's own live connection, in autocommit mode (``isolation_level=None``) so
+            the explicit ``BEGIN IMMEDIATE`` below is the only transaction in play. Enforced —
+            under sqlite3's implicit-transaction modes the ``BEGIN IMMEDIATE`` below raises
+            mid-genesis and the whole atomicity argument is void.
+        store_name: The store's own name (``"evidence"`` / ``"rcl"`` / ``"inbox"`` /
+            ``"marketfeed"``) — used only in a refusal's error message.
+        schema_version: The CODE's own expected schema version for this store.
+        create_ddl: The store's own DDL, called as ``create_ddl(conn, fresh)``. It receives the
+            freshness verdict because some statements are genesis-only: the evidence store's
+            ``entries_kind_seq`` index must NOT be built on a non-fresh file (that is
+            ``migrate``'s job, and boot is a check — see
+            :mod:`tos_runtime.evidence.store`'s own note on it).
+        shape_tables: The tables whose on-disk shape is digested into the genesis ledger row
+            (:func:`compute_schema_shape_digest`), read AFTER ``create_ddl`` has run.
+        monotonic_ns: Injected monotonic-clock callable — never ``time.monotonic_ns`` read
+            directly (matches every other store's own constructor-injection discipline).
+
+    Returns:
+        ``True`` iff THIS call performed the genesis (and therefore wrote the ``CREATED`` row).
+
+    Raises:
+        ValueError: ``conn`` is not in autocommit mode (``isolation_level`` is not ``None``).
+        SchemaVersionRefused: On-disk ``user_version`` is behind OR ahead of ``schema_version``
+            for a non-fresh file (module docstring cases 3/4).
+        sqlite3.OperationalError: The write lock could not be taken within the connection's own
+            busy timeout — a fail-closed boot refusal, never a partially created file. A
+            steady-state boot does not reach the lock at all (fast path above).
+    """
+    if conn.isolation_level is not None:
+        raise ValueError(
+            f"{store_name}: open_or_create_schema needs a connection in autocommit mode "
+            f"(sqlite3.connect(..., isolation_level=None)); got "
+            f"isolation_level={conn.isolation_level!r}. Otherwise sqlite3 opens an implicit "
+            "transaction of its own and the explicit BEGIN IMMEDIATE that makes genesis atomic "
+            "raises 'cannot start a transaction within a transaction' mid-boot"
+        )
+    # Steady-state fast path (review MEDIUM-1) — two lock-free reads, no write lock. The module
+    # docstring carries the argument for why `user_version == schema_version` is sufficient.
+    if read_schema_version(conn) == schema_version and _schema_ledger_exists(conn):
+        return False
+    fresh, current = _run_genesis_transaction(
+        conn,
+        schema_version=schema_version,
+        create_ddl=create_ddl,
+        shape_tables=shape_tables,
+        monotonic_ns=monotonic_ns,
+    )
+    if fresh:
+        return True
+    if current != schema_version:
+        _refuse_version(store_name, current, schema_version)
+    return False
+
+
+def ensure_schema_current(
+    conn: sqlite3.Connection,
+    *,
+    store_name: str,
+    schema_version: int,
+    was_fresh: bool,
+    migration_digest: str,
+    monotonic_ns: Callable[[], int],
+) -> None:
+    """Check (never migrate) ``conn``'s own ``schema_ledger``/``user_version`` state.
+
+    **Kept for callers that own their own transaction boundary.** Since #801 no store constructor
+    calls this — they all go through :func:`open_or_create_schema`, which folds the DDL and this
+    check into one transaction. This function stays because it still has genuine callers
+    (:mod:`tos_runtime.operations.schema_migrations`'s tests, and the generic-helper tests), and
+    because it is the only form usable when the DDL is NOT the caller's to run. It carries the
+    pre-#801 TOCTOU by construction — ``was_fresh`` is decided by the caller, outside any lock —
+    so a NEW store must use :func:`open_or_create_schema`, not this.
+
+    Args:
+        conn: The store's own live connection — this function creates the ``schema_ledger``
+            table on it (idempotent) and, in the fresh-file case, writes the genesis stamp.
+        store_name: The store's own name (``"evidence"`` / ``"rcl"`` / ``"inbox"``) — used only
+            in a refusal's error message.
+        schema_version: The CODE's own expected schema version for this store.
+        was_fresh: The :func:`file_is_fresh` result, captured by the CALLER before it ran its own
+            ``CREATE TABLE`` DDL (this function cannot determine that itself — by the time it
+            runs, the caller's tables already exist).
+        migration_digest: The digest recorded on a genesis (``CREATED``) ledger row — the
+            caller's own :func:`compute_schema_shape_digest` over the tables it just created.
+        monotonic_ns: Injected monotonic-clock callable — never ``time.monotonic_ns`` read
+            directly (matches every other store's own constructor-injection discipline).
+
+    Raises:
+        SchemaVersionRefused: On-disk ``user_version`` is behind OR ahead of ``schema_version``
+            for a non-fresh file (module docstring cases 3/4).
+    """
+    conn.execute(SCHEMA_LEDGER_TABLE_SQL)
+    conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
+    conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+    current = read_schema_version(conn)
+    if was_fresh:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(f"PRAGMA user_version = {int(schema_version)}")
+            conn.execute(
+                "INSERT INTO schema_ledger "
+                "(version, applied_at_monotonic_ns, migration_digest, applied_by) "
+                "VALUES (?, ?, ?, ?)",
+                (schema_version, monotonic_ns(), migration_digest, CREATED_APPLIED_BY),
+            )
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        return
+    if current == schema_version:
+        return
+    _refuse_version(store_name, current, schema_version)

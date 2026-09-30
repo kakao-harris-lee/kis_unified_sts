@@ -43,6 +43,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -357,11 +358,12 @@ def test_spg_08_precision_rounding_boundary_and_boundary_equality(
     # set would leave the combined case still rejected (on precision) and the fault
     # still MET, so the three-axis form cannot falsify any single axis — measured.
     limb_a_by_axis: dict[str, str] = {}
-    for axis, env_meta, prof_meta in (
+    axis_cases: tuple[tuple[str, dict[str, Any], dict[str, Any]], ...] = (
         ("precision", {"precision": "2"}, {"precision": "8"}),
         ("rounding", {"rounding": "HALF_UP"}, {"rounding": "FLOOR"}),
         ("boundary", {"boundary": "INCLUSIVE"}, {"boundary": "EXCLUSIVE"}),
-    ):
+    )
+    for axis, env_meta, prof_meta in axis_cases:
         single_axis = issue_bundle(
             envelope=issue_envelope(
                 governed_dimensions=(envelope_dimension(**env_meta),),

@@ -50,8 +50,7 @@ def _partial_vector(
         writer_epoch=writer_epoch,
         policy=policy,
         mandated=frozenset({DimensionKey.COMMIT_LOG, DimensionKey.TRUSTWORTHY_TIME}),
-        authority_dimension_reader=lambda: None,
-        action_flow_dimension_reader=lambda: None,
+        dimension_readers={},
     )
     vector = assembler.assemble()
     assert vector is not None
@@ -341,8 +340,7 @@ def test_a_fully_populated_vector_reaches_current_and_is_admissible(
         writer_epoch=writer_epoch,
         policy=full_floor_policy,
         mandated=frozenset({DimensionKey.COMMIT_LOG, DimensionKey.TRUSTWORTHY_TIME}),
-        authority_dimension_reader=lambda: None,
-        action_flow_dimension_reader=lambda: None,
+        dimension_readers={},
     )
     partial = assembler.assemble()
     assert partial is not None

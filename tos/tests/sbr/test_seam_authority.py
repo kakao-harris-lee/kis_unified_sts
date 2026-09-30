@@ -44,11 +44,11 @@ _OTHER_13 = tuple(
 
 def _checklist(*, item12: bool | None) -> RearmChecklist:
     """A checklist with the other 13 prerequisites True + distinct principals; item 12 injected."""
-    fields = dict.fromkeys(_OTHER_13, True)
+    fields: dict[str, bool | str | None] = dict.fromkeys(_OTHER_13, True)
     fields["recovery_coordinator_evidence_complete"] = item12
     fields["limit_enlarger_principal"] = "principal-A"
     fields["armer_principal"] = "principal-B"
-    return RearmChecklist(**fields)
+    return RearmChecklist.model_validate(fields)
 
 
 def test_item_12_is_the_sbr_produced_prerequisite() -> None:
@@ -82,11 +82,11 @@ def test_readiness_is_not_rearm_item_12_true_alone_is_insufficient() -> None:
     # SBR says the coordinator evidence is complete…
     assert recovery_coordinator_evidence_complete(issue_decision()) is True
     # …but if a different prerequisite (fresh Live Authorization) is missing, re-arm is denied.
-    fields = dict.fromkeys(_REARM_PREREQUISITES, True)
+    fields: dict[str, bool | str | None] = dict.fromkeys(_REARM_PREREQUISITES, True)
     fields["fresh_live_authorization_issued"] = None
     fields["limit_enlarger_principal"] = "A"
     fields["armer_principal"] = "B"
-    assert rearm_gate(RearmChecklist(**fields)).armable is False
+    assert rearm_gate(RearmChecklist.model_validate(fields)).armable is False
 
 
 def test_recovery_generation_reference_coordinate_seam() -> None:

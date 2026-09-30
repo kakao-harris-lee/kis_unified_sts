@@ -14,6 +14,7 @@ import tos.wdr as w
 from ._wdr_strategies import (
     clean_closure,
     clean_request,
+    clean_request_with_scope_drift_flag,
     clean_scope,
     construct_request,
 )
@@ -60,7 +61,7 @@ def test_scope_drift_flags_deny() -> None:
         "scope_conflicting",
     ):
         for bad in (True, None):
-            req = clean_request(**{field: bad})
+            req = clean_request_with_scope_drift_flag(field, bad)
             assert w.scope_exact_and_complete(req, w.MANDATED_SCOPE_FLOOR) is False
 
 

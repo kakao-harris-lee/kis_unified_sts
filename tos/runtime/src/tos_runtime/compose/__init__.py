@@ -27,8 +27,13 @@ Public surface:
 * :mod:`tos_runtime.compose.context` — the ``SendBoundaryContext`` lazy
   resolver + the small, explicitly-reported compose-only recording shims
   (see that module's own docstring).
-* :mod:`tos_runtime.compose.cli` — argument parsing only; no daemon loop
-  (Phase 5).
+* :mod:`tos_runtime.compose.cli` — argument parsing for ``run`` (still no daemon loop for it —
+  Phase 5) plus real dispatch for the TOS Phase 5 W4 operations subcommands (``backup-set``,
+  ``restore-drill``, ``migrate``, ``print-digests``).
+* :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` — TOS Phase 5 W4 §2
+  decisions 7-11: operations facts (schema versions, last backup, dependency admission, key
+  continuity) plus the optional operator-projection export, wired last (after
+  ``apply_recovery_barrier``).
 
 Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
 + ``tos_runtime.*`` only. No ``shared.*``.

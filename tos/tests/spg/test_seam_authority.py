@@ -20,6 +20,7 @@ another test package's strategies is NOT a runtime package edge (design #12 §3.
 from __future__ import annotations
 
 import inspect
+from typing import TypedDict, Unpack
 
 from tos.authority import (
     AuthorityState,
@@ -31,18 +32,60 @@ from tos.spg import (
     active_profile_version,
     envelope_incompatible,
 )
+from tos.time import TimeContinuityIdentity
 
 from ..authority._authority_strategies import anchor, issue_lease
 from ._spg_strategies import issue_envelope, issue_profile
 
 
-def _valid_invalidation_kwargs(**overrides: object) -> dict[str, object]:
+class _ValidInvalidationKwargs(TypedDict):
+    """1:1 with :func:`degraded_lease_invalidated`'s keyword-only signature (plan §1.1
+    A-fn) — a ``**_valid_invalidation_kwargs(...)`` splat is checked key-by-key and
+    type-by-type, not swallowed by a ``**dict[str, object]`` splat."""
+
+    continuity_now: TimeContinuityIdentity
+    suspension_ms: int | None
+    max_suspension_ms: int | None
+    issued_lifetime: int | None
+    elapsed_monotonic: int | None
+    source_transport_uncertainty: int | None
+    max_drift_error: int | None
+    suspension_uncertainty: int | None
+    safety_margin: int | None
+    protective_capacity_exhausted: bool | None
+    hard_envelope_incompatible: bool | None
+    broker_profile_revoked: bool | None
+    dominating_state: AuthorityState
+
+
+class _ValidInvalidationKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_ValidInvalidationKwargs`, all optional — the
+    override-kwargs shape for :func:`_valid_invalidation_kwargs`."""
+
+    continuity_now: TimeContinuityIdentity
+    suspension_ms: int | None
+    max_suspension_ms: int | None
+    issued_lifetime: int | None
+    elapsed_monotonic: int | None
+    source_transport_uncertainty: int | None
+    max_drift_error: int | None
+    suspension_uncertainty: int | None
+    safety_margin: int | None
+    protective_capacity_exhausted: bool | None
+    hard_envelope_incompatible: bool | None
+    broker_profile_revoked: bool | None
+    dominating_state: AuthorityState
+
+
+def _valid_invalidation_kwargs(
+    **overrides: Unpack[_ValidInvalidationKwargsPartial],
+) -> _ValidInvalidationKwargs:
     """Kwargs for ``degraded_lease_invalidated`` describing a still-valid lease (not invalidated).
 
     Mirrors the authority suite's own non-invalidated fixture; ``hard_envelope_incompatible``
     defaults to ``False`` (not incompatible) so the baseline lease is valid.
     """
-    base: dict[str, object] = {
+    base: _ValidInvalidationKwargs = {
         "continuity_now": anchor(),
         "suspension_ms": 0,
         "max_suspension_ms": 2000,

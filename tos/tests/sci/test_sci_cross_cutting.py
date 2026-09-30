@@ -217,8 +217,8 @@ def test_each_supply_claim_is_negative_polarity(
     §1 line 27 verbatim: "It cannot supply capacity, authority, protection, approval,
     admissibility, or permission that another owner has not independently granted."
     """
-    args = [False] * len(_GATE_ARGS)
-    args[position] = flag  # type: ignore[call-overload]
+    args: list[bool | None] = [False] * len(_GATE_ARGS)
+    args[position] = flag
     assert sci.active_currentness_is_negative_gate(True, *args) is (flag is False)
 
 

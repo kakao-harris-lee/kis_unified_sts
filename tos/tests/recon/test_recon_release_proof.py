@@ -32,6 +32,15 @@ _CAP = SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY
 _NONCAP = SafetyRelevantField.ORDER_EXISTENCE
 
 
+def _field(fc: FieldConfidence) -> SafetyRelevantField:
+    """``fc.field``, asserted present — every :func:`field_confidence` fixture below sets it
+    explicitly (the field is ``| None`` only for a genuinely unattributed reading, never for
+    one this module's own builder produces)."""
+    field = fc.field
+    assert field is not None
+    return field
+
+
 # ---------------------------------------------------------------------------
 # field_reconciled_proof_ok — positive path + fail-closed conjuncts
 # ---------------------------------------------------------------------------
@@ -196,7 +205,7 @@ def test_one_weak_field_blocks_release_regardless_of_others() -> None:
         if fc.field in CAPACITY_RELEASING_FIELDS
     ]
     assert all(
-        field_reconciled_proof_ok(fc.field, fc, release_inputs())
+        field_reconciled_proof_ok(_field(fc), fc, release_inputs())
         for fc in strong_others
     )
     assert field_specific_release_proof_ok(_CAP, weak, release_inputs()) is False

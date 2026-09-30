@@ -7,6 +7,8 @@ successful ``evaluate()`` (``tos_runtime/time/service.py:195``/``:200``)."""
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 import pytest
 from tos_runtime.compose._wiring import _time_permits_new_risk
 from tos_runtime.time.service import TimeServiceNotStarted
@@ -18,7 +20,7 @@ class _NotStartedTimeService:
     """Duck-typed double: only ``current_snapshot`` is called by
     ``_time_permits_new_risk``."""
 
-    def current_snapshot(self) -> None:
+    def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("no TimeHealthSnapshot has been evaluated yet")
 
 
@@ -26,7 +28,7 @@ class _BrokenTimeService:
     """A double whose ``current_snapshot`` raises an UNRELATED programming
     error — this must propagate, never be read as "not started"."""
 
-    def current_snapshot(self) -> None:
+    def current_snapshot(self) -> NoReturn:
         raise ValueError("injected unrelated error")
 
 

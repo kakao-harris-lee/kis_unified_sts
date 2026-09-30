@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from tos.engine.records import event_identity
+from tos.evidence import EvidenceAppendReceipt
 from tos.orthostate import (
     BrokerOrderState,
     CompositeState,
@@ -34,15 +37,31 @@ class _NeverStartedTimeService:
     :mod:`tos_runtime.recovery.reconciliation`'s own fail-closed freshness path is exercised
     exactly as it would be against a real one."""
 
-    def current_snapshot(self):
+    def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("never started (test double)")
 
 
 @pytest.fixture()
-def rcl_log(tmp_path: Path, evidence_store: SqliteEvidenceStore) -> SqliteCommitLog:
+def rcl_log(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
     yield instance
     instance.close()
+
+
+def _mark_handling_started(
+    inbox: SqliteEventInbox, seq: int, marker: EvidenceAppendReceipt
+) -> None:
+    """``inbox.mark_handling_started(...)``, narrowing ``marker``'s ``seq``/
+    ``key_generation`` — a successful evidence ``append()`` never returns either
+    as ``None`` (``EvidenceAppendReceipt``'s own docstring: "a failed or partial
+    append never returns this type")."""
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+    inbox.mark_handling_started(
+        seq, evidence_seq=marker.seq, generation=marker.key_generation
+    )
 
 
 def _assemble(
@@ -152,9 +171,7 @@ def test_possibly_live_attempt_is_also_composite_state_incomplete(
         kind="EVENT_HANDLING_STARTED",
         record_class="EVENT_HANDLING_STARTED",
     )
-    inbox.mark_handling_started(
-        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
-    )
+    _mark_handling_started(inbox, receipt.seq, marker)
 
     inputs = _assemble(
         rcl_log=rcl_log,
@@ -198,9 +215,7 @@ def test_composite_state_is_complete_after_a_clean_hand_off(
         kind="EVENT_HANDLING_STARTED",
         record_class="EVENT_HANDLING_STARTED",
     )
-    inbox.mark_handling_started(
-        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
-    )
+    _mark_handling_started(inbox, receipt.seq, marker)
     attempt_id = "attempt-clean-hand-off"
     evidence_store.append(
         {"event_id": event_id, "attempt_id": attempt_id},

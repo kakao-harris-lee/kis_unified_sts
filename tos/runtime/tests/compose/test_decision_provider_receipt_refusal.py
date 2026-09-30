@@ -24,7 +24,9 @@ and evidence port duck-typed doubles.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 import yaml
@@ -33,6 +35,7 @@ from tos.dsl import Proposal
 from tos.dsl.proposal import DecisionContextCapsuleRef, Proposer
 from tos.engine.records import InstrumentKey, StageRequest
 from tos.engine.vocabulary import CommitmentStep
+from tos.evidence import EvidenceAppendReceipt
 from tos_runtime.compose._wiring import _decision_provider
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TimeServiceNotStarted
@@ -46,7 +49,7 @@ class _NeverStartedTimeService:
     before any receipt work starts (module docstring's own "checks run
     before the file is opened" discipline, shared with ``FileCustody``)."""
 
-    def current_snapshot(self) -> None:
+    def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("unused by this test")
 
 
@@ -59,9 +62,10 @@ class _RecordingEvidencePort:
         self.calls: list[tuple[dict[str, object], str, str]] = []
 
     def append(
-        self, payload: dict[str, object], *, kind: str, record_class: str
-    ) -> None:
+        self, payload: Mapping[str, object], *, kind: str, record_class: str
+    ) -> EvidenceAppendReceipt:
         self.calls.append((dict(payload), kind, record_class))
+        return EvidenceAppendReceipt()
 
 
 def _time_config() -> TrustworthyTimeConfig:
@@ -75,6 +79,8 @@ def _time_config() -> TrustworthyTimeConfig:
         min_time_independent_reference_count=1,
         max_clock_domain_conversion_uncertainty_ms=50,
         max_send_result_wait_ms=5000,
+        max_critical_input_consumer_receipt_age_ms=1000,
+        max_time_source_sequence_gap_ms=50,
         tz_db_version="2026a",
         trading_calendar_version="cal-1",
         verification_profile_version="vp-0",
@@ -152,7 +158,9 @@ def test_a_refused_approval_file_is_recorded_before_returning_none(
     assert kind == "IAP_APPROVAL_FILE_REFUSED"
     assert record_class == "IAP_APPROVAL_FILE_REFUSED"
     assert payload["path"] == str(path)
-    assert "mode" in payload["error"]
+    error = payload["error"]
+    assert isinstance(error, str)
+    assert "mode" in error
 
 
 def test_a_missing_approval_file_records_nothing(tmp_path: Path) -> None:

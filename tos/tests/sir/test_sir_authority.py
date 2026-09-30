@@ -13,6 +13,8 @@ Regime tag: predicate substrate only; closes **no** SIR-EV; EV-L1-complete claim
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import tos.sir as s
 
@@ -67,7 +69,7 @@ def test_any_true_flag_is_unconstructable(flag: str) -> None:
 @pytest.mark.parametrize("flag", sorted(_ADR_AUTHORITY_AXES))
 def test_model_construct_bypass_is_caught_by_the_predicate(flag: str) -> None:
     """(2-layer §2.3) A ``model_construct`` forged grant is re-caught by the predicate layer."""
-    kwargs = dict.fromkeys(_ADR_AUTHORITY_AXES, False)
+    kwargs: dict[str, Any] = dict.fromkeys(_ADR_AUTHORITY_AXES, False)
     kwargs[flag] = True
     forged = s.AllFalseIncidentAuthority.model_construct(**kwargs)
     assert s.all_false_incident_authority(forged) is False
@@ -82,7 +84,7 @@ def test_model_construct_unknown_flag_is_caught_by_the_predicate(flag: str) -> N
     ``None`` as "does not grant" — the #18/#22/#23/#25 fail-open in its authority-block form. The
     predicate therefore requires each flag to be **positively** ``False``.
     """
-    kwargs: dict[str, object] = dict.fromkeys(_ADR_AUTHORITY_AXES, False)
+    kwargs: dict[str, Any] = dict.fromkeys(_ADR_AUTHORITY_AXES, False)
     kwargs[flag] = None
     forged = s.AllFalseIncidentAuthority.model_construct(**kwargs)
     assert s.all_false_incident_authority(forged) is False
@@ -110,12 +112,11 @@ def test_incident_system_holds_no_route() -> None:
     """(SIR-INV-006 line 178; §15 line 414; §22 line 538) No transmission capability, no broker route."""
     assert s.incident_system_no_route(s.AllFalseIncidentAuthority()) is True
     assert s.incident_system_no_route(None) is False
-    forged = s.AllFalseIncidentAuthority.model_construct(
-        **{
-            **dict.fromkeys(_ADR_AUTHORITY_AXES, False),
-            "grants_broker_permission": True,
-        }
-    )
+    route_values: dict[str, Any] = {
+        **dict.fromkeys(_ADR_AUTHORITY_AXES, False),
+        "grants_broker_permission": True,
+    }
+    forged = s.AllFalseIncidentAuthority.model_construct(**route_values)
     assert s.incident_system_no_route(forged) is False
 
 
@@ -132,9 +133,11 @@ def test_economic_effect_outlives_incident_state_uses_the_authority_shape() -> N
     )
     assert s.economic_effect_outlives_incident_state(None) is False
     for flag in ("creates_capacity", "classifies_protective_action"):
-        forged = s.AllFalseIncidentAuthority.model_construct(
-            **{**dict.fromkeys(_ADR_AUTHORITY_AXES, False), flag: True}
-        )
+        effect_values: dict[str, Any] = {
+            **dict.fromkeys(_ADR_AUTHORITY_AXES, False),
+            flag: True,
+        }
+        forged = s.AllFalseIncidentAuthority.model_construct(**effect_values)
         assert s.economic_effect_outlives_incident_state(forged) is False
     for forbidden in ("is_expired", "expiry_clears_effect", "expires"):
         assert not hasattr(

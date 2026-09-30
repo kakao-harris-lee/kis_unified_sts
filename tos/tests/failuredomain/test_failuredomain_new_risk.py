@@ -116,7 +116,9 @@ def test_each_rejected_conversion_cannot_be_passed(excuse: str) -> None:
 def test_no_positional_second_argument_is_accepted() -> None:
     """(M4) Not even a positional smuggle works — arity is one."""
     with pytest.raises(TypeError):
-        new_risk_blocked_by_unproven_isolation(IsolationClaimStatus.COMMON_MODE, True)
+        new_risk_blocked_by_unproven_isolation(  # type: ignore[call-arg]
+            IsolationClaimStatus.COMMON_MODE, True
+        )
 
 
 def test_verdict_is_invariant_across_all_thirty_two_excuse_combinations() -> None:

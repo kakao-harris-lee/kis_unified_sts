@@ -41,6 +41,22 @@ concrete; a ``null`` anywhere (the repo's "named-TBD" convention, e.g.
 shape with every value left as an explicit placeholder, the same way every
 other example config in this tree does.
 
+**Named-TBD ``"TBD"`` STRING leaves, same walk (W-A A-0).** A ``null`` leaf is
+refused above, but an operator who instead types the literal template-placeholder
+STRING ``"TBD"`` (:data:`~tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`, the SAME
+token :mod:`tos_runtime.venue._policy_primitives` and every other fail-closed
+loader in this tree refuse) into a rule/target/threshold leaf was not caught by
+the null-only walk — an unbounded free-form ``AuthoredStrategy`` mapping has no
+enum/allow-list to fall back on the way a fixed-shape config loader's fields do,
+so this walker closes the SAME gap :func:`first_null_leaf` closes, over the
+SAME tree, before ``parse`` ever sees the file. :func:`~tos_runtime._named_tbd
+.first_named_tbd_leaf` itself now lives in the shared ``_named_tbd`` module (promoted
+there, W-A A-0 round 2) — re-imported here so this module's own name and
+:mod:`tos_runtime.strategy.bindings`'s existing import both keep working unchanged;
+:mod:`tos_runtime.safety.profile` reuses the SAME walker for its own three
+raw-dict-to-pydantic policy documents, which have no per-field extraction of their own
+for :func:`~tos_runtime._named_tbd.reject_named_tbd` to wrap.
+
 Firewall: this module is ``tos_runtime`` scope — ``tos.*`` (the kernel),
 stdlib, and ``pyyaml``/``pydantic`` (already-pinned third parties) only; no
 ``shared.*`` (``tools/tos_firewall_check.py`` R1 allowlist).
@@ -59,6 +75,8 @@ from pydantic import ValidationError
 from tos.dsl import ArtifactIntegrityError, AuthoredStrategy
 from tos.engine.admission import AdmissionResult
 from tos.engine.vocabulary import AdmissionVerdict
+
+from tos_runtime._named_tbd import first_named_tbd_leaf
 
 __all__ = [
     "AdmitFn",
@@ -208,6 +226,14 @@ def _load_one(path: Path, *, parse: ParseFn, admit: AdmitFn) -> LoadedStrategy:
         raise StrategyLoadError(
             f"{path}: field {null_leaf!r} is still null (named-TBD) — refusing to "
             "load until an operator attests a concrete value"
+        )
+
+    tbd_leaf = first_named_tbd_leaf(raw, "")
+    if tbd_leaf is not None:
+        raise StrategyLoadError(
+            f"{path}: field {tbd_leaf!r} is still the template placeholder "
+            "'TBD' (named-TBD) — refusing to load until an operator attests a "
+            "concrete value"
         )
 
     try:

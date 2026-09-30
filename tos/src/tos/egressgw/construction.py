@@ -39,6 +39,14 @@ the **seam**: what may flow, what is forbidden, and which artifact encloses the 
 
 VER-002-KEYS: ``risk_budget``, ``per_unit_risk``, ``lot_size``, ``min_quantity``, ``max_quantity``, ``max_notional``
 
+**Kernel round #4 K-3.** :func:`construct_candidate_command` now threads
+``signer_identity``/``approval_identity``/``evidence_package_ref`` through to
+``OrderConstructionPolicy.issue`` — those three fields were already digest-covered
+(``ioc/records.py`` ``OrderConstructionPolicy._COVERED_FIELDS``) but this function never passed
+them, so they were always ``None`` (a runtime-loader decision, not a kernel one). The three
+parameters default to ``None`` — a caller that has no source yet passes nothing and the issued
+policy's digest is unchanged from before this round.
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #34 §0.3). No clock, no RNG.
 """
 
@@ -568,6 +576,9 @@ def construct_candidate_command(
     policy_generation: int,
     command_id: str,
     generation: int,
+    signer_identity: str | None = None,
+    approval_identity: str | None = None,
+    evidence_package_ref: str | None = None,
 ) -> CandidateConstruction:
     """Compile the candidate command from a derived size and seal it with ioc (design #34 §3.2).
 
@@ -597,6 +608,15 @@ def construct_candidate_command(
         policy_generation: The Order Construction Policy generation.
         command_id: The independent command identity to assign.
         generation: The Construction Generation (monotonic, ADR-002-020 §5.7).
+        signer_identity: The OCP signer identity (kernel round #4 K-3; ``None`` by
+            default — a caller that has no source for it passes nothing, and the
+            issued policy's digest is unaffected relative to today, since
+            ``OrderConstructionPolicy`` already declares this field ``None``-default
+            and digest-covered).
+        approval_identity: The OCP approval identity (kernel round #4 K-3; same
+            ``None``-default / no-regression contract as ``signer_identity``).
+        evidence_package_ref: The OCP evidence-package reference (kernel round #4
+            K-3; same ``None``-default / no-regression contract).
 
     Returns:
         The :class:`~tos.egressgw.records.CandidateConstruction` bundle.
@@ -639,6 +659,9 @@ def construct_candidate_command(
             policy_id=policy_id,
             policy_generation=policy_generation,
             policy_version=policy_version,
+            signer_identity=signer_identity,
+            approval_identity=approval_identity,
+            evidence_package_ref=evidence_package_ref,
         )
         assert isinstance(issued_policy, OrderConstructionPolicy)
         policy = issued_policy

@@ -72,6 +72,9 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
+        # kernel round #3 §2 결정 1 (2026-09-12): tos.engine now directly realizes
+        # tos.nontrade too (the CORPORATE_ACTION handler) — same widening as tos.orthostate.
+        "tos.nontrade",
         "tos.marketfeed",
     }
 )
@@ -92,7 +95,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
-        "tos.nontrade",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -300,6 +302,7 @@ def _run_child(target) -> dict:
     result = queue.get(timeout=120)
     proc.join(timeout=120)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
+    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
     return result
 
 
@@ -445,15 +448,15 @@ def test_no_dsl_or_engine_source_statically_imports_marketfeed() -> None:
         for path in sorted((src_root / package).rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
-                names: list[str] = []
+                entries: list[tuple[str, int]] = []
                 if isinstance(node, ast.Import):
-                    names = [alias.name for alias in node.names]
+                    entries = [(alias.name, node.lineno) for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.module:
-                    names = [node.module]
-                for name in names:
+                    entries = [(node.module, node.lineno)]
+                for name, lineno in entries:
                     if name == "tos.marketfeed" or name.startswith("tos.marketfeed."):
                         offenders.append(
-                            f"{package}/{path.name}:{node.lineno} import {name}"
+                            f"{package}/{path.name}:{lineno} import {name}"
                         )
     assert (
         offenders == []
@@ -470,9 +473,11 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
 
     The count pin moved from 14 to 15 on 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2):
     ``tos.orthostate`` was added as a directly realized engine edge for
-    ``engine/orthostate_projection.py`` — see ``tos/tests/engine/test_engine_import_closure.py``'s
+    ``engine/orthostate_projection.py``. It moved again, 15 to 16, on 2026-09-12 (kernel round
+    #3 §2 결정 1): ``tos.nontrade`` was added the same way for
+    ``engine/_corporate_action.py`` — see ``tos/tests/engine/test_engine_import_closure.py``'s
     own "Closure widened" note. ``tos.marketfeed`` staying absent is the claim this test actually
-    protects, and that claim is unaffected by the unrelated widening.
+    protects, and that claim is unaffected by either widening.
     """
     engine_canary = (
         Path(__file__).resolve().parents[1] / "engine" / "test_engine_import_closure.py"
@@ -493,7 +498,7 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
         declared
     ), "could not read the engine canary's allowlist — the anti-phantom read failed"
     assert "tos.marketfeed" not in declared
-    assert len(declared) == 15
+    assert len(declared) == 16
 
 
 # ---------------------------------------------------------------------------

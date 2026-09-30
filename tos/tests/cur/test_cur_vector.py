@@ -35,6 +35,7 @@ from ._cur_strategies import (
     clean_policy,
     clean_revision,
     clean_vector,
+    dimension_key,
 )
 
 #: The ADR §9-derived reference dimension catalogue (design #23 §2.2 verbatim; CONTEXT included as a
@@ -150,7 +151,7 @@ def test_dimension_present_but_not_established_is_incomplete() -> None:
     dims = list(clean_dimensions(revision=rev))
     # Flip ONE dimension to not-established (None).
     dims[0] = clean_dimension(
-        dimension_key=dims[0].dimension_key,
+        dimension_key=dimension_key(dims[0]),
         revision=rev,
         positively_established=None,
     )
@@ -163,7 +164,7 @@ def test_mixed_revision_is_incomplete() -> None:
     rev_a = clean_revision(revision_id="rev-a", commit_index=10)
     rev_b = clean_revision(revision_id="rev-b", commit_index=11)
     dims = list(clean_dimensions(revision=rev_a))
-    dims[-1] = clean_dimension(dimension_key=dims[-1].dimension_key, revision=rev_b)
+    dims[-1] = clean_dimension(dimension_key=dimension_key(dims[-1]), revision=rev_b)
     vec = clean_vector(revision=rev_a, dimensions=tuple(dims))
     assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False
 
@@ -173,7 +174,7 @@ def test_forbidden_placeholder_is_incomplete() -> None:
     rev = clean_revision()
     dims = list(clean_dimensions(revision=rev))
     dims[0] = clean_dimension(
-        dimension_key=dims[0].dimension_key,
+        dimension_key=dimension_key(dims[0]),
         revision=rev,
         bound_digest="latest",  # forbidden sentinel (§9 line 266)
     )
@@ -241,7 +242,7 @@ def test_single_revision_consistent_both_ways() -> None:
     rev_a = clean_revision(revision_id="a", commit_index=1)
     rev_b = clean_revision(revision_id="b", commit_index=2)
     dims = list(clean_dimensions(revision=rev_a))
-    dims[0] = clean_dimension(dimension_key=dims[0].dimension_key, revision=rev_b)
+    dims[0] = clean_dimension(dimension_key=dimension_key(dims[0]), revision=rev_b)
     assert (
         single_revision_consistent(clean_vector(revision=rev_a, dimensions=tuple(dims)))
         is False
@@ -269,7 +270,7 @@ def test_no_forbidden_placeholder_both_ways() -> None:
     rev = clean_revision()
     dims = list(clean_dimensions(revision=rev))
     dims[0] = clean_dimension(
-        dimension_key=dims[0].dimension_key, revision=rev, bound_digest="*"
+        dimension_key=dimension_key(dims[0]), revision=rev, bound_digest="*"
     )
     assert (
         no_forbidden_placeholder(clean_vector(revision=rev, dimensions=tuple(dims)))
@@ -311,6 +312,6 @@ def test_any_two_distinct_revisions_make_vector_incomplete(revs: list) -> None:
     """(§5.3 property) Any two DISTINCT revisions across dimensions ⇒ incomplete."""
     rev_a, rev_b = revs
     dims = list(clean_dimensions(revision=rev_a))
-    dims[-1] = clean_dimension(dimension_key=dims[-1].dimension_key, revision=rev_b)
+    dims[-1] = clean_dimension(dimension_key=dimension_key(dims[-1]), revision=rev_b)
     vec = clean_vector(revision=rev_a, dimensions=tuple(dims))
     assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False

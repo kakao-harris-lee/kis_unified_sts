@@ -16,10 +16,13 @@ Four properties, each of which a naive implementation gets wrong in a different 
 * escaping the quarantine happens only through positive broker evidence for the *same* attempt
   (:data:`~tos.engine.state.QUARANTINE_RESOLUTION_EDGES`) — never a bare repeated ``UNKNOWN`` /
   ``TIMEOUT`` (ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion");
-* **no** result kind may release the scope. The projection has no release path at all: releasing is
-  the RCL's act and a producer-local counter creates no headroom (RFC-002 §9.1:557-558). This is
-  asserted over the *whole* result vocabulary, not just the UNKNOWN case, so a future "an ACK frees
-  the scope" shortcut fails here.
+* **no** result kind may release the scope through the ordinary rank-advance path. Releasing is
+  the RCL's act and a producer-local counter creates no headroom (RFC-002 §9.1:557-558); the ONE
+  exception (kernel round #3 §2 decision 5) is
+  :meth:`~tos.engine.state.ProvisionalReservationLedger.release`, gated on a typed
+  :class:`~tos.engine.state.FinalityProofRef` — never an egress result kind. This is asserted over
+  the *whole* ordinary result vocabulary, not just the UNKNOWN case, so a future "an ACK frees the
+  scope" shortcut fails here.
 
 Regime tag: orchestration authoring evidence only; closes no EV.
 """
@@ -40,6 +43,8 @@ from tos.engine import (
     EngineEvent,
     EventKind,
     HaltReason,
+    InstrumentKey,
+    ProvisionalReservation,
     ProvisionalReservationLedger,
     ResultDisposition,
     knowledge_for_result,
@@ -55,6 +60,21 @@ from ._engine_fixtures import (
     instrument_key,
     ordering,
 )
+
+
+def _outstanding(
+    ledger: ProvisionalReservationLedger, key: InstrumentKey
+) -> ProvisionalReservation:
+    """``ledger.outstanding(key)``, asserted present.
+
+    ``outstanding()`` is typed ``ProvisionalReservation | None`` (absent is a real,
+    reachable case elsewhere in this module) — every call site below already knows,
+    from the test's own preceding setup, that the reservation exists at this point;
+    this makes that assumption explicit and checked rather than typing it away.
+    """
+    reservation = ledger.outstanding(key)
+    assert reservation is not None
+    return reservation
 
 
 def _sent_core():
@@ -154,13 +174,20 @@ def test_no_egress_result_ever_releases_the_scope(kind, fills) -> None:
     assert core.ledger.admits_new_exposure(instrument_key()) is False
 
 
-def test_the_projection_has_no_release_method_at_all() -> None:
-    """(§4.4 structural seal) The projection exposes no release/free/clear path in any spelling."""
+def test_the_projection_has_no_free_form_release_path_under_any_other_spelling() -> (
+    None
+):
+    """(§4.4 structural seal; kernel round #3 §2 decision 5) ``release`` now exists — a single,
+    typed, token-gated method — but every OTHER spelling a free-form release path could take stays
+    absent. This test used to pin ``release`` itself absent too, when the projection truly had no
+    release path of any kind; that pin is now false (round #3 added the token-gated method), so
+    this test asserts the narrower, still-true claim: no UNGATED or differently-spelled release
+    surface exists alongside it."""
     ledger = ProvisionalReservationLedger(
         max_unresolved_send_per_scope=PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE
     )
+    assert hasattr(ledger, "release")
     for forbidden in (
-        "release",
         "free",
         "clear",
         "reset",
@@ -170,7 +197,7 @@ def test_the_projection_has_no_release_method_at_all() -> None:
         assert not hasattr(ledger, forbidden), (
             f"ProvisionalReservationLedger.{forbidden} must not exist — releasing capacity is the "
             "Risk Capacity Ledger's act and a producer-local counter creates no headroom "
-            "(RFC-002 §9.1:557-558)"
+            "(RFC-002 §9.1:557-558); the ONE gated exception is release() itself"
         )
 
 
@@ -813,14 +840,14 @@ def test_a_backwards_projection_transition_is_refused(backwards) -> None:
             remaining_quantity=Decimal("0"),
         )
     )
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
     with pytest.raises(ArtifactIntegrityError, match="may not revive"):
         if backwards == "bind_attempt":
             ledger.bind_attempt(key, attempt_id="attempt-2")
         else:
             ledger.mark_potentially_live(key)
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
 
 def test_the_projection_rank_orders_the_states_conservatively() -> None:
@@ -848,10 +875,18 @@ def test_the_projection_rank_orders_the_states_conservatively() -> None:
     )
 
 
-def test_quarantined_unknown_is_the_last_projection_order_member() -> None:
-    """([KW2b-#2]) QUARANTINED_UNKNOWN sits after RELEASE_PENDING_PROOF, not before it."""
-    assert PROJECTION_ORDER[-1] is CapacityState.QUARANTINED_UNKNOWN
-    assert PROJECTION_ORDER[-2] is CapacityState.RELEASE_PENDING_PROOF
+def test_quarantined_unknown_sits_after_release_pending_proof_before_released() -> None:
+    """([KW2b-#2]; kernel round #3 §2 decision 5) QUARANTINED_UNKNOWN sits after
+    RELEASE_PENDING_PROOF, not before it — and RELEASED (reachable only through
+    ``ProvisionalReservationLedger.release``'s finality-proof-token gate, never through the
+    ordinary rank-advance path any egress result uses) now sits after QUARANTINED_UNKNOWN, at the
+    very end. This test used to pin QUARANTINED_UNKNOWN as the LAST member outright; that pin is
+    now false since round #3 appended RELEASED after it — the KW2b-#2 relative ordering the test
+    was actually protecting (QUARANTINED_UNKNOWN after RELEASE_PENDING_PROOF) still holds and is
+    reasserted below."""
+    assert PROJECTION_ORDER[-1] is CapacityState.RELEASED
+    assert PROJECTION_ORDER[-2] is CapacityState.QUARANTINED_UNKNOWN
+    assert PROJECTION_ORDER[-3] is CapacityState.RELEASE_PENDING_PROOF
 
 
 # ---------------------------------------------------------------------------
@@ -1178,7 +1213,7 @@ def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> No
     key = instrument_key()
     ledger.commit_unbound(key, proposal_id="prop-r2")
     ledger.bind_attempt(key, attempt_id="attempt-r2")
-    assert ledger.outstanding(key).capacity_state is CapacityState.ATTEMPT_BOUND
+    assert _outstanding(ledger, key).capacity_state is CapacityState.ATTEMPT_BOUND
 
     timeout_application = ledger.apply_egress_result(
         EgressResultPayload(
@@ -1186,7 +1221,7 @@ def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> No
         )
     )
     assert timeout_application.disposition is ResultDisposition.APPLIED
-    assert ledger.outstanding(key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
+    assert _outstanding(ledger, key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
 
     fill_application = ledger.apply_egress_result(
         EgressResultPayload(
@@ -1198,7 +1233,7 @@ def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> No
         )
     )
     assert fill_application.disposition is ResultDisposition.APPLIED
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
 
 def test_pre_quarantine_capacity_invariant_is_non_none_iff_quarantined() -> None:

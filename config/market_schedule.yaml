@@ -34,6 +34,16 @@ market_schedule:
       enabled: false
       open: "18:00"
       close: "05:00"  # 다음날
+    # 근월물 롤오버 일일 점검 (KST). 디커플 선물 데몬(decision_engine /
+    # order_router / futures_monitor)은 기동 시 한 번 계약을 해석하므로, 만기
+    # 익일 이 시각 이후 첫 폴링에서 근월물이 바뀌었으면 WARNING 후 종료 →
+    # compose restart 가 새 코드로 재기동한다 (2026-09-11 A01609 만기 사고).
+    # 개장(regular.open) 전이어야 한다. trader-futures 는 세션 시작마다
+    # 재해석하므로 이 값을 쓰지 않는다.
+    # shared/execution/futures_instrument.py::FrontMonthRolloverSchedule
+    front_month_rollover:
+      check_time: "08:30"
+      poll_interval_seconds: 60
 
   # 거래 시작 전 준비 시간 (분)
   pre_market_buffer: 5

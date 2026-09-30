@@ -131,6 +131,7 @@ def test_physically_reserved_without_failure_independence_downgrades() -> None:
         failure_independence_evidenced=None,
     )
     assert is_reserved_guarantee(decl) is False
+    assert decl.domain is not None  # reserved_declaration always sets it
     profile = issue_profile(declarations=(decl, *drop_domain(decl.domain)))
     # resolved is downgraded to PRIORITIZED_ONLY (a claim never outranks its evidence).
     assert (

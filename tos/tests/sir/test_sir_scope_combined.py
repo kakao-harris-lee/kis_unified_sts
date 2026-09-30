@@ -193,6 +193,8 @@ def test_surplus_member_denies() -> None:
 def test_member_without_an_id_denies() -> None:
     """(§5.5) A member with no incident identity cannot be part of a canonical union."""
     anonymous = clean_active_set(
+        # `incident_id` is genuinely `str | None` on the real domain field
+        # (`ActiveSetMember.incident_id`, sir/state.py) — no cast needed.
         members=(clean_member(incident_id=None), clean_members()[1]),
     )
     assert (
@@ -371,7 +373,9 @@ def test_missing_affected_id_entry_denies() -> None:
 
 def test_explicitly_empty_affected_id_entry_is_represented() -> None:
     """(§5.2 conjunct 4) An **explicitly empty** entry is a represented dimension, not an omission."""
-    entries = {dimension: frozenset() for dimension in s.ClosureDimension}
+    entries: dict[s.ClosureDimension, frozenset[str]] = {
+        dimension: frozenset() for dimension in s.ClosureDimension
+    }
     sparse = clean_dependency_closure(affected_ids_by_dimension=entries)
     assert s.dependency_closure_complete(sparse, frozenset()) is True
 

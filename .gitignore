@@ -45,6 +45,12 @@ mlruns/
 # Logs
 *.log
 logs/
+# …except the vendored real-harvest excerpts the F-9 observation tests run on.
+# They are source, not artifacts: reports/f9-gate1 is git-ignored and the Redis
+# streams behind it carry a 24h TTL, so without these a test cannot be driven by
+# a real captured log — and the two HIGH findings of the 2026-09-19 review were
+# both invisible to hand-built fixtures.
+!tests/unit/scripts/ops/fixtures/*.log
 
 # KIS token cache (.kis_token_real / .kis_token_mock hold live KIS tokens —
 # secrets, never commit). The dir itself is tracked via .gitkeep so the

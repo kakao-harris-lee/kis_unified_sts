@@ -1,165 +1,19 @@
-"""``replay_engine`` — independent re-derivation over a durable event inbox (TOS Phase 3 Wave 1
-Lane A-R; plan §1.1 "재생 판정 replay digest 동일").
+"""Replay durable inbox events against a fresh core and compare recorded outcomes.
 
-Rebuilds a FRESH core (via the injected ``build_core`` factory — never constructed here; typed
-:class:`ReplayableCore`, not :class:`~tos.engine.EngineCore`, since the factory may hand back a
-wrapper — see that Protocol's own docstring) and re-consumes the inbox's own admitted events, in
-``seq`` order.
+``EGRESS_RESULT`` comparisons use ``EventResult.outcome_digest``.
+``DECISION_TICK`` comparisons use that digest plus a
+:class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` covering
+hand-off, halt, and attempt identity. A recorded pre-pipeline refusal with no
+outcome digest is counted as uncompared only for the closed set of halt reasons
+that prove the pipeline never ran; other missing or mismatched combinations
+are divergences. Missing flow fingerprints remain disclosed as
+``RECEIPT_FINGERPRINT_MISSING``.
 
-**The comparison surface, precisely (wave-3 review finding #1, 2026-09-09 — this paragraph
-replaces an earlier, narrower claim; see findings #1 and #2 below for the full history).** Two
-DIFFERENT things are compared, one per event kind:
-
-- **``EGRESS_RESULT``**: ``EventResult.outcome_digest`` alone —
-  :func:`~tos.engine.records.egress_result_outcome_digest` (kernel lane KW3-RD, ``783fadf0``),
-  which since that commit is a REAL digest over the applied disposition/capacity/knowledge/
-  quantities, never honestly ``None`` for an event that reached the pipeline (see finding #2).
-- **``DECISION_TICK``**: ``EventResult.outcome_digest`` (the decision pipeline's own Proposal
-  digest, fixed strictly BEFORE the 19-step commitment flow starts) TOGETHER WITH a
-  :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` (finding #1(b), 2026-09-09) —
-  ``handed_off``/``halt_step``/``halt_reason``/``attempt_id`` off the flow's own
-  :class:`~tos.engine.sequencer.FlowResult`. The Proposal digest alone is STRUCTURALLY blind to
-  everything the commitment flow does (see finding #1's own probes P5/P6): it cannot detect a
-  flow that halted early, never handed off, or bound the wrong attempt, because none of that
-  feeds the digest at all. The fingerprint is the SEPARATE, independent thing that does.
-
-**Independent review finding #1/#11 (2026-09-09), corrected here.** A prior revision of this
-docstring claimed a stream of only ``EGRESS_RESULT`` events "trivially compares ``None`` to
-``None``" — the opposite is true: feeding ``None``/``None`` into
-:func:`~tos.evidence.compute_replay_result` (via :func:`~tos.engine.sink.replay_result_for`)
-returns ``ReplayResultState.INCONCLUSIVE``, not ``MATCH`` (that function's own "expected/actual
-digest is present and equal" rule for ``MATCH``), and this module used to treat any non-``MATCH``
-state as a divergence — reporting a permanent, un-recoverable boot-time
-:class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` for every event whose recorded
-baseline digest is ``None``, i.e. every event AFTER the first real send hand-off, forever. This
-function now SKIPS the comparison (never calls :func:`~tos.engine.sink.replay_result_for` at
-all) in the one honest EGRESS_RESULT case — recorded digest ``None`` AND replayed digest
-``None``, "no outcome identity to compare" — counting it in :attr:`ReplayVerdict.uncompared`
-rather than :attr:`ReplayVerdict.total_compared`. Every OTHER combination still goes through the
-normal comparison and is treated as a divergence exactly as before: a ``None``-recorded /
-non-``None``-replayed pair (or the reverse) still reaches
-:func:`~tos.evidence.compute_replay_result` and comes back ``INCONCLUSIVE`` (non-``MATCH``), and
-two present-but-different digests still come back ``DIVERGED`` — this fix narrows the skip to
-exactly the ``None``/``None`` pair; it does not widen it. (Wave 2's own finding #1 below widens
-the skip once more, to a DIFFERENT, narrowly-identified case — a recorded halt — never to a bare
-``None``/non-``None`` asymmetry with no halt reason attached.)
-
-**Wave-3 review finding #2 (2026-09-09) — the paragraph above describes wave-1 history, not
-today's invariant.** Kernel lane KW3-RD (``783fadf0``) gave ``EGRESS_RESULT`` events a real,
-non-``None`` ``outcome_digest`` (:func:`~tos.engine.records.egress_result_outcome_digest`, over
-the applied disposition/capacity/knowledge/quantities). The "honest ``None``/``None``" case this
-paragraph describes is therefore, since that commit, reachable ONLY by a ``DECISION_TICK``
-refused before the pipeline ever ran with NO recorded ``halt_reason`` at all — a shape that should
-not occur in practice (every such refusal this runtime knows about DOES record a ``halt_reason``;
-see wave-2 finding #1 and re-review finding R1 below) — never by an ``EGRESS_RESULT`` receipt.
-:func:`replay_engine` asserts this narrowed invariant directly at the branch itself, rather than
-leaving it as prose a future edit could silently invalidate by widening the skip.
-
-**Wave-3 review finding #1(b) (2026-09-09) — the FLOW FINGERPRINT.** The digest comparison above,
-even corrected for KW3-RD, answers only "does this event's own outcome identity match" — for a
-``DECISION_TICK`` that identity is the Proposal digest, fixed BEFORE the commitment flow runs, so
-it is STRUCTURALLY blind to everything steps 2-19 do. Measured directly (review probes P5/P6): an
-inbox holding only a ``DECISION_TICK`` (no ``EGRESS_RESULT`` re-injected afterward) whose durable
-``FLOW_STEP_ADMITTED`` rows (or ``SEND_HANDED_OFF``) are deleted still replays ``ok=True`` — a
-flow that diverged from ``STAGE_UNKNOWN``-halted-at-step-2 (or ``TRANSMIT_UNAVAILABLE``) all the
-way to "handed off" produces the IDENTICAL Proposal digest either way. :func:`replay_engine` now
-ALSO compares a :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` for every
-``DECISION_TICK`` — ``handed_off``/``halt_step``/``halt_reason``/``attempt_id``, the exact fields
-:mod:`tos.tests.engine.test_sequencer_mutation_matrix`'s own ``_fingerprint`` already established
-as load-bearing for this class of check. A mismatch is a divergence, naming the FIRST field that
-differs (:func:`~tos_runtime.engine.flow_fingerprint.first_mismatched_field`) in the durably
-recorded ``REPLAY_DIVERGED`` detail. A receipt with NO recorded fingerprint at all (a pre-this-fix
-row) is never silently treated as a pass: it is counted in :attr:`ReplayVerdict.uncompared` with
-reason ``"RECEIPT_FINGERPRINT_MISSING"`` — fail-closed disclosure that this tick's flow was never
-actually verified, rather than a quiet, structurally-blind "ok".
-
-**Independent review finding #1, wave 2 (2026-09-09), corrected here — a SEPARATE half of
-finding #1 from the EGRESS_RESULT case above.** A ``DECISION_TICK`` refused by the kernel's own
-RFC-002 §10.7 Coordinator gate (``tos.engine.core.EngineCore._coordinator_precondition_refusal``
-— ``HaltReason.AUTHORITY_NOT_CURRENT`` / ``LIVE_SCOPE_NOT_AUTHORIZED``, or any other halt
-reached before the decision pipeline ever ran) ALSO records ``outcome_digest=None`` on its
-``EVENT_CONSUMED`` receipt — but WITH a ``halt_reason``, unlike the honest EGRESS_RESULT case
-above. The boot-time replay core's own ``CoordinatorPreconditions`` stand-in
-(:class:`tos_runtime.compose._preconditions._ReplayPreconditions`) is unconditionally
-``True``/``True`` — by design, per its own docstring, because "a tick the gate refused at the
-time never produced pipeline evidence to replay in the first place". That premise is exactly
-what this receipt disproves: refused ticks DO get an ``EVENT_CONSUMED`` receipt (``outcome_
-digest=None``, real ``halt_reason``). So without this fix, replay would run the FULL pipeline
-for a historically-refused tick, manufacture a real, non-``None`` digest, and reach the exact
-``None``-recorded/non-``None``-replayed asymmetry the paragraph above already treats as a
-divergence — a single Coordinator-gate refusal (reachable via nothing more than a transient
-``sqlite3.Error`` on the authority-epoch log) permanently bricking every later boot. The fix:
-:func:`_recorded_receipts` now reads ``halt_reason`` alongside ``outcome_digest``, and
-:func:`replay_engine` counts a receipt as :attr:`ReplayVerdict.uncompared` (the reason preserved
-in :attr:`ReplayVerdict.uncompared_halt_reasons`) when ``outcome_digest`` is ``None`` AND
-``halt_reason`` is one of :data:`_PIPELINE_NEVER_RAN_HALT_REASONS` — the CLOSED set of halt reasons
-that are STRUCTURALLY reached before ``EventResult.pipeline`` is ever populated (see that
-constant's own docstring for why this must be a closed set, not "any halt_reason": several other
-halt reasons, e.g. ``TRANSMIT_UNAVAILABLE``, are reached AFTER a real proposal already gave the
-receipt a real, non-``None`` digest, and must still be compared — an earlier draft of this fix
-treated any halt as uncompared and silently broke exactly that case, caught by this module's own
-``test_mutated_recorded_outcome_digest_is_detected_as_a_divergence``). For a genuine pre-pipeline
-halt, ``core.handle`` is never even called for it (unlike the EGRESS_RESULT case, which still
-re-derives to advance ledger state honestly; here the live run's own ``HaltReason`` accounting
-already establishes "nothing is consumed", so skipping the call reproduces the live run's ledger
-state exactly, rather than manufacturing a divergent one). A ``None``/non-``None`` asymmetry with
-no recorded ``halt_reason``, or with a halt reason outside the closed set, still reaches the
-normal comparison and is still reported as a divergence; this fix does not touch that path.
-
-**Re-review finding R1 (2026-09-09), corrected here — the wave-2 fix above re-opened itself.**
-:data:`_PIPELINE_NEVER_RAN_HALT_REASONS` (renamed from ``_PRE_PIPELINE_HALT_REASONS`` — see that
-constant's own docstring) held only the five kernel ``HaltReason`` members reachable before
-``_handle_decision_tick`` runs the pipeline. It did NOT hold
-:data:`~tos_runtime.engine.orthostate_projection.NEW_RISK_HALTED_BY_COUPLING_VIOLATION` — the
-independent review finding #3 new-risk latch's own reason string, which :meth:`~tos_runtime.engine
-.driver.EngineDriver._new_risk_halted_result` records on a refused ``DECISION_TICK`` WITHOUT ever
-calling ``core.handle`` (``tos_runtime.engine.driver`` module, the latch-check branch) — exactly
-the same "``outcome_digest`` is ``None`` because the pipeline never ran" shape the kernel reasons
-already cover, just from a RUNTIME-level refusal instead of a kernel one. Before this fix, a
-latched tick's receipt reached the normal comparison, replay ran the pipeline for it (the latch
-is a runtime concept the replay core's own ``EngineCore`` has no knowledge of), and the resulting
-``None``-recorded / non-``None``-replayed asymmetry reproduced finding #1's exact boot-brick —
-reachable through finding #8's own cancel-crossing-fill correction, which is DESIGNED to trip
-this latch on a scenario ADR-002-005 §7 calls routine. The fix is one addition to the closed set;
-see that constant's own updated docstring for why the set's THEME changed from "kernel
-``HaltReason`` members" to "reasons for which the pipeline provably never ran" (kernel- or
-runtime-sourced, closed either way — never a wildcard).
-
-**Side-effect scope, reported precisely (plan §1.1's own escape hatch: "if a fully
-side-effect-free rebuild is impossible without kernel changes, report precisely").** This module
-performs no I/O of its own beyond reading the ``inbox``/``evidence_store`` it is handed, and it
-never mutates either. It does NOT, however, make the ``build_core`` factory's own core
-side-effect-free — that responsibility belongs to the CALLER's factory; this module only compares
-whatever ``EventResult.outcome_digest`` that factory's core produces. **Independent review
-finding #2 (2026-09-09), corrected here**: this repo's own compose wiring
-(:func:`tos_runtime.compose._engine_wiring.verify_replay_or_halt`) now builds its replay core
-with ``transmit=None`` AND a genuinely side-effect-free stand-in
-(:class:`tos_runtime.compose._engine_wiring._ReplayStage`) for every injected commitment-flow
-stage — not the real stages, which each carry their OWN evidence sink bound to the real durable
-store, independent of whatever sink the replay ``EngineCore`` itself is given. Since
-``EventResult.outcome_digest`` is always the DECISION PIPELINE's own digest, computed strictly
-BEFORE the 19-step commitment flow starts (``tos/src/tos/engine/core.py``'s
-``EngineCore._run_entries``), a stand-in that halts the flow at the very first injected step
-cannot affect the comparison this module performs — see :class:`_ReplayStage`'s own docstring for
-the full measurement. Re-deriving all the way through a REAL send boundary's own idempotent
-replay (so that a fresh core wired with a WORKING transmit reproduces byte-identical
-``POTENTIALLY_LIVE``/fill outcomes without re-sending) needs the send boundary to expose a
-recording/replaying transport of its own — the design plan's own §4 rejected "an async replay
-loop" but did not yet ratify a synchronous replay transport for the gateway, so that half is out
-of this module's scope and is reported here rather than silently assumed away.
-
-**``window_events`` path-dependency caveat, measured directly (2026-09-09).** A fresh core's
-``ProvisionalReservationLedger`` starts EMPTY. When an earlier, windowed-out event left a
-reservation outstanding (e.g. ``COMMITTED_UNBOUND``/``ATTEMPT_BOUND`` under
-``max_unresolved_send_per_scope``'s at-most-one retention, design #31 §4.4), a later event's
-ORIGINAL outcome depended on that outstanding state — replaying only the later event in isolation
-reaches a genuinely DIFFERENT outcome (e.g. ``AT_MOST_ONE_EXPOSURE_HELD`` originally vs. an
-unconstrained admit on replay), which :func:`replay_engine` reports as a divergence even though
-nothing is actually wrong. A windowed replay is therefore sound ONLY when the windowed-out prefix
-carries no ledger state into the window (e.g. every tick outside it was a defined no-action, or
-resolved its reservation before the window starts) — ``window_events=None`` (replay the whole
-inbox, rebuilding the ledger from scratch) is the only generally correct choice for a
-ledger-carrying stream.
+The module reads but does not mutate the inbox or evidence store. The
+``build_core`` factory owns its side effects; compose wiring supplies
+side-effect-free replay stages. Windowed replay is sound only when excluded
+events carry no reservation state, so replaying the full inbox is the safe
+default.
 """
 
 from __future__ import annotations
@@ -322,6 +176,9 @@ class _RecordedReceipt:
     outcome_digest: str | None
     halt_reason: str | None
     flow_fingerprint: FlowFingerprint | None
+    #: A ``CORPORATE_ACTION`` event's recorded :class:`~tos.nontrade.NonTradeDisposition` string
+    #: (kernel round #3 §2 결정 3) — ``None`` for every other event kind.
+    nontrade_disposition: str | None = None
 
 
 def _recorded_receipts(
@@ -350,6 +207,7 @@ def _recorded_receipts(
                     if fingerprint_payload is None
                     else FlowFingerprint.model_validate(fingerprint_payload)
                 ),
+                nontrade_disposition=payload.get("nontrade_disposition"),
             )
     return recorded
 
@@ -367,6 +225,79 @@ class _EventOutcome:
     #: is ``False``) but its ``DECISION_TICK`` flow fingerprint could not be — a pre-CR6 receipt.
     #: Never set together with ``uncompared=True`` (that path returns before this could apply).
     fingerprint_uncompared: bool = False
+
+
+def _check_fingerprint(
+    event: EngineEvent, result: EventResult, receipt: _RecordedReceipt
+) -> tuple[str | None, bool]:
+    """The ``DECISION_TICK``-only flow-fingerprint half of the comparison (re-review finding R1,
+    2026-09-09) — factored out of :func:`_compare_one_event` for size-budget discipline.
+
+    Returns:
+        ``(fingerprint_mismatch, fingerprint_uncompared)``.
+    """
+    if event.kind is not EventKind.DECISION_TICK:
+        return None, False
+    if receipt.flow_fingerprint is None:
+        return None, True
+    actual_fingerprint = flow_fingerprint_for(result)
+    assert actual_fingerprint is not None  # DECISION_TICK guarantees this structurally
+    return (
+        first_mismatched_field(receipt.flow_fingerprint, actual_fingerprint),
+        False,
+    )
+
+
+def _check_disposition_mismatch(
+    event: EngineEvent, result: EventResult, receipt: _RecordedReceipt
+) -> bool:
+    """Kernel round #3 §2 결정 3: a ``CORPORATE_ACTION``'s recorded ``nontrade_disposition`` is
+    compared alongside its outcome_digest, exactly the way a ``DECISION_TICK``'s flow_fingerprint
+    is compared alongside ITS digest — a second, independent signal over the same event, not
+    folded into the digest comparison itself (a digest collision across two different
+    dispositions is not claimed impossible; this is defence in depth, mirroring the fingerprint's
+    own role). Factored out of :func:`_compare_one_event` for size-budget discipline."""
+    return bool(
+        event.kind is EventKind.CORPORATE_ACTION
+        and result.nontrade_outcome is not None
+        and receipt.nontrade_disposition is not None
+        and receipt.nontrade_disposition != result.nontrade_outcome.disposition.value
+    )
+
+
+def _record_divergence_halt(
+    *,
+    event_id: str,
+    expected_digest: str | None,
+    actual_digest: str | None,
+    state: ReplayResultState,
+    fingerprint_mismatch: str | None,
+    receipt: _RecordedReceipt,
+    result: EventResult,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Durably record one ``REPLAY_DIVERGED`` halt — factored out of :func:`_compare_one_event`
+    for size-budget discipline."""
+    record_halt(
+        evidence_store,
+        emergency_log,
+        payload={
+            "event_id": event_id,
+            "expected_outcome_digest": expected_digest,
+            "actual_outcome_digest": actual_digest,
+            "replay_result_state": state.value,
+            "fingerprint_mismatch_field": fingerprint_mismatch,
+            "expected_nontrade_disposition": receipt.nontrade_disposition,
+            "actual_nontrade_disposition": (
+                None
+                if result.nontrade_outcome is None
+                else result.nontrade_outcome.disposition.value
+            ),
+        },
+        kind=_REPLAY_DIVERGED_KIND,
+        record_class=_REPLAY_DIVERGED_RECORD_CLASS,
+    )
 
 
 def _compare_one_event(
@@ -403,11 +334,18 @@ def _compare_one_event(
     if expected_digest is None and actual_digest is None:
         # Wave-3 review finding #2: since kernel lane KW3-RD, reachable ONLY by a Coordinator-
         # gate refusal (or equivalent) with no recorded halt_reason at all — never an
-        # EGRESS_RESULT (module docstring's "comparison surface" section).
-        assert event.kind is not EventKind.EGRESS_RESULT, (
-            "an EGRESS_RESULT reached the None/None skip branch — outcome_digest must be real "
-            "for every EGRESS_RESULT since kernel lane KW3-RD (783fadf0); this would silently "
-            "reopen the exact comparison gap that commit closed"
+        # EGRESS_RESULT (module docstring's "comparison surface" section), and (kernel round #3
+        # §2 결정 3) never a CORPORATE_ACTION either — the handler always sets
+        # EventResult.nontrade_outcome, so outcome_digest is real for every CORPORATE_ACTION the
+        # same way it has been for every EGRESS_RESULT since KW3-RD.
+        assert event.kind not in (
+            EventKind.EGRESS_RESULT,
+            EventKind.CORPORATE_ACTION,
+        ), (
+            "an EGRESS_RESULT or CORPORATE_ACTION reached the None/None skip branch — "
+            "outcome_digest must be real for both since kernel lane KW3-RD (783fadf0) / kernel "
+            "round #3 §2 결정 1-3; this would silently reopen the exact comparison gap those "
+            "changes closed"
         )
         return _EventOutcome(uncompared=True, diverged=False)
 
@@ -416,19 +354,10 @@ def _compare_one_event(
     # regressed coverage to "compares nothing at all" for exactly the receipts that most need
     # verifying (every receipt written before this fix landed). The digest half is ALWAYS
     # compared; only the fingerprint half is reported separately as unverifiable.
-    fingerprint_mismatch: str | None = None
-    fingerprint_uncompared = False
-    if event.kind is EventKind.DECISION_TICK:
-        if receipt.flow_fingerprint is None:
-            fingerprint_uncompared = True
-        else:
-            actual_fingerprint = flow_fingerprint_for(result)
-            assert (
-                actual_fingerprint is not None
-            )  # DECISION_TICK guarantees this structurally
-            fingerprint_mismatch = first_mismatched_field(
-                receipt.flow_fingerprint, actual_fingerprint
-            )
+    fingerprint_mismatch, fingerprint_uncompared = _check_fingerprint(
+        event, result, receipt
+    )
+    disposition_mismatch = _check_disposition_mismatch(event, result, receipt)
 
     state = replay_result_for(
         expected_outcome_digest=expected_digest,
@@ -436,20 +365,22 @@ def _compare_one_event(
         baseline_supported=True,
         input_complete=True,
     )
-    diverged = state is not ReplayResultState.MATCH or fingerprint_mismatch is not None
+    diverged = (
+        state is not ReplayResultState.MATCH
+        or fingerprint_mismatch is not None
+        or disposition_mismatch
+    )
     if diverged:
-        record_halt(
-            evidence_store,
-            emergency_log,
-            payload={
-                "event_id": event_id,
-                "expected_outcome_digest": expected_digest,
-                "actual_outcome_digest": actual_digest,
-                "replay_result_state": state.value,
-                "fingerprint_mismatch_field": fingerprint_mismatch,
-            },
-            kind=_REPLAY_DIVERGED_KIND,
-            record_class=_REPLAY_DIVERGED_RECORD_CLASS,
+        _record_divergence_halt(
+            event_id=event_id,
+            expected_digest=expected_digest,
+            actual_digest=actual_digest,
+            state=state,
+            fingerprint_mismatch=fingerprint_mismatch,
+            receipt=receipt,
+            result=result,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
         )
     return _EventOutcome(
         uncompared=False,

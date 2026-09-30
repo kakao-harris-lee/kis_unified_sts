@@ -59,7 +59,12 @@ dependencies = [
     # docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md).
     # TA-Lib ships prebuilt manylinux wheels (0.5.x+); resolves cleanly on the
     # python:3.11-slim (Debian/glibc) base images with no C source build.
-    "TA-Lib>=0.5.1",
+    # Cap <0.8 (2026-09-15): ta-lib 0.8.0 bundles TA-Lib C 0.8.1, which shifts
+    # BBANDS upper/lower (~1.7e-12) and RSI (~1.4e-14) in the last float
+    # digits, failing the bit-exact pins in
+    # tests/unit/strategy_builder/test_indicator_context_golden.py on fresh CI
+    # installs. Lift the cap only after evaluating 0.8.x and re-pinning goldens.
+    "TA-Lib>=0.5.1,<0.8",
     # NOTE: Polars (planned for the cache-engine batch/fan-out, WS-A2/WS-A4) is
     # intentionally NOT added here yet — no code in this change imports it.
     # The legacy `core/` package (data_engine, indicator_engine, state_manager,

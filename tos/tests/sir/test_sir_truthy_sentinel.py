@@ -16,6 +16,7 @@ Regime tag: predicate substrate only; closes **no** SIR-EV; EV-L1-complete claim
 from __future__ import annotations
 
 import ast
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ _SEALED_ENUMS = (
 
 
 @pytest.mark.parametrize("enum_type", _SEALED_ENUMS, ids=lambda e: e.__name__)
-def test_every_member_raises_on_truthiness(enum_type: type) -> None:
+def test_every_member_raises_on_truthiness(enum_type: type[Enum]) -> None:
     """(§4.2) ``bool(member)`` raises ``TypeError`` for every member of every sealed enum."""
     members = list(enum_type)
     assert members, f"{enum_type.__name__} has no members"
@@ -45,7 +46,7 @@ def test_every_member_raises_on_truthiness(enum_type: type) -> None:
 
 
 @pytest.mark.parametrize("enum_type", _SEALED_ENUMS, ids=lambda e: e.__name__)
-def test_identity_value_and_membership_still_work(enum_type: type) -> None:
+def test_identity_value_and_membership_still_work(enum_type: type[Enum]) -> None:
     """(§4.2) The seal touches only ``__bool__`` — identity, value, hashing and membership are intact."""
     for member in enum_type:
         assert member is enum_type(member.value)

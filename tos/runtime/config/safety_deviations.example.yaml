@@ -1,0 +1,36 @@
+# Active Deviation Set policy document (tos_runtime.safety.deviation.DeviationService).
+#
+# Loaded into tos.wdr.ActiveDeviationSet (+ per-member
+# tos.wdr.DeviationClassification) via model_validate. An explicit empty
+# `members: []` / `applicable_decision_ids: []` is the valid NOMINAL state
+# (no active deviations) — never rejected; see
+# tos.wdr.combined_set_no_permissive_union's "explicit empty" allowance and
+# tos_runtime/safety/deviation.py.
+#
+# `active_set.combined_within_envelope` is an operator attestation: the
+# kernel's own ActiveDeviationSet.combined_within_envelope field is an
+# INJECTED spg verdict (§13 item 3) that this lane has no live wiring for
+# yet (see the module docstring in deviation.py for why, and what should
+# replace this attestation later).
+#
+# Every value below is a named-TBD `null` (or an empty collection where the
+# schema allows one) — an operator MUST replace every null with a concrete
+# value (or a deliberate `[]` for "none") before this file can be used in
+# production. The loader refuses to start on a still-null required field.
+deviations:
+  active_set:
+    active_set_id: null
+    active_set_generation: null
+    deviation_generation: null
+    is_complete: null
+    combined_within_envelope: null
+  applicable_decision_ids: []
+  # One entry per currently active deviation. Example shape (delete the
+  # comment, add real members):
+  #   - decision_id: null
+  #     classification: null          # WAIVABLE_ELIGIBLE | NON_WAIVABLE | UNRESOLVED
+  #     applicability_resolved: null
+  #     boundary_hits: []
+  #     revoke_generation: null       # int, only when a revocation is in progress
+  #     send_generation: null         # int, only when an outstanding send exists
+  members: []

@@ -63,6 +63,7 @@ from typing import Any
 
 import yaml
 
+from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.compose._types import ConstructionConfig
 
 __all__ = [
@@ -127,6 +128,12 @@ def _require_str(raw: Any, field: str, path: Path) -> str:
             "not a string — refusing to start until an operator attests a "
             "concrete value"
         )
+    reject_named_tbd(
+        value,
+        field=f"{field}.value",
+        context=str(path),
+        error_cls=EgressCoordinateConfigError,
+    )
     return value
 
 

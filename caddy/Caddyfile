@@ -10,6 +10,9 @@
 #   /api/strategy-builder*,
 #   /api/metrics*,
 #   /api/trading*,
+#   /api/tos/*         (Phase 5 W4 e5 — read-only tos_runtime operator
+#                        projection, see docs/plans/2026-09-12-tos-phase5-w4-
+#                        operations-plan.md §2 decision 9)
 #   /health, /docs,
 #   /openapi.json,
 #   /redoc, /metrics,
@@ -52,6 +55,9 @@
 		path /api/strategy-builder /api/strategy-builder/*
 		path /api/metrics /api/metrics/*
 		path /api/trading /api/trading/*
+		# Phase 5 W4 e5 (plan §2 decision 9): read-only tos_runtime operator
+		# projection reader — never writes.
+		path /api/tos /api/tos/*
 		path /health /docs /openapi.json /redoc /metrics
 		path /ws
 	}

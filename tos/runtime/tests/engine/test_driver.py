@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactIntegrityError, get_scheme
+from tos.engine import EngineCore
 from tos.engine.records import EgressResultPayload, EngineEvent, event_identity
 from tos.engine.vocabulary import (
     EgressResultKind,
@@ -49,7 +50,7 @@ def _make_driver(
     monotonic_source: FakeMonotonicSource,
     max_send_result_wait_ms: int = _NO_TIMEOUT_WITHIN_TEST,
     transmit: object = None,
-) -> tuple[EngineDriver, object]:
+) -> tuple[EngineDriver, EngineCore]:
     core = fx.build_core(transmit=transmit)
     driver = EngineDriver(
         core=core,

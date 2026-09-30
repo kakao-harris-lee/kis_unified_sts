@@ -26,7 +26,7 @@ reserved ``"TBD"`` placeholder is excluded from required-field text.
 from __future__ import annotations
 
 import hypothesis.strategies as st
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactStatus, get_scheme
 from tos.rlp import (
     MANDATED_EVIDENCE_FLOOR,
     CoverageClaim,
@@ -60,12 +60,12 @@ def clean_scope(**overrides: object) -> TrialScope:
         for dimension in ScopeDimension
     }
     kwargs.update(overrides)
-    return TrialScope(**kwargs)
+    return TrialScope.model_validate(kwargs)
 
 
 def clean_budget(**overrides: object) -> TrialBudget:
     """A trial request envelope (NOT capacity; numerics injected, null-safe in Phase 1)."""
-    return TrialBudget(**overrides)
+    return TrialBudget.model_validate(overrides)
 
 
 def clean_policy(
@@ -78,6 +78,7 @@ def clean_policy(
     """A digest-verified governed Trial Policy (id ⊥ digest, all-false)."""
     return TrialPolicy.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         policy_id=policy_id,
         policy_generation=policy_generation,
         policy_digest=policy_digest,
@@ -104,6 +105,7 @@ def clean_plan(
     """A digest-verified, genuinely eligible Exact Trial Plan (id ⊥ digest, all-false)."""
     return ExactTrialPlan.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         plan_id=plan_id,
         plan_generation=plan_generation,
         plan_digest=plan_digest,
@@ -133,6 +135,7 @@ def clean_run(
     """A digest-verified Trial Run (mutable lifecycle state injected, not covered)."""
     return TrialRun.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         run_id=run_id,
         run_generation=run_generation,
         plan_id=plan_id,
@@ -170,6 +173,7 @@ def clean_package(
     """
     return TrialEvidencePackage.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         package_id=package_id,
         package_generation=package_generation,
         package_digest=package_digest,
@@ -213,7 +217,7 @@ def clean_ladder(**overrides: object) -> GateStatusLadder:
     """A gate-status ladder with every stage an explicit False bool and an all-false authority."""
     kwargs: dict[str, object] = dict.fromkeys(GateStatusLadder.STAGE_FIELDS, False)
     kwargs.update(overrides)
-    return GateStatusLadder(**kwargs)
+    return GateStatusLadder.model_validate(kwargs)
 
 
 def clean_claims(
@@ -255,6 +259,7 @@ def clean_decision(
     )
     return ProductionScopePromotionDecision.issue(
         scheme=SCHEME,
+        status=ArtifactStatus.ISSUED,
         decision_id=decision_id,
         decision_generation=decision_generation,
         promotion_generation=promotion_generation,
@@ -278,8 +283,6 @@ PROMOTION_MAX_DELTA = 5
 PROMOTION_PREDECESSOR_FLOOR = 0
 
 
-def clean_promotion_policy(
-    *, max_delta: int = PROMOTION_MAX_DELTA, **overrides: object
-) -> TrialPolicy:
+def clean_promotion_policy(*, max_delta: int = PROMOTION_MAX_DELTA) -> TrialPolicy:
     """A Trial Policy carrying a concrete approved ``max_delta`` ceiling (§18) for the promotion gate."""
-    return clean_policy(max_delta=max_delta, **overrides)
+    return clean_policy(max_delta=max_delta)

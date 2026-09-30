@@ -61,8 +61,9 @@ covered field is an immutable claim; the current state / injected verdict is fed
 this close?" is bound unforgeably (§5.10). Numeric bounds (status / plan / closure-evidence ages, quorum
 N) are excluded and Phase-1 null (design #28 §8). Nested models carrying ``frozenset`` / mapping fields
 are kept **out** of the covered set to avoid unstable serialization (the wdr precedent); ``frozenset``
-covered fields are **sorted** in :meth:`covered_content` so the digest is deterministic across
-processes.
+covered fields are **sorted** by the shared
+:class:`~tos.canonical._canonical_json.CanonicalJsonMixin` JSON hook so the digest is deterministic
+across processes.
 
 **All-false authority (design #28 §2.4; SIR-INV-001).** Every artifact carries an
 :class:`~tos.sir._base.AllFalseIncidentAuthority` with every flag ``False`` — an incident artifact is
@@ -112,15 +113,6 @@ __all__ = [
     "IncidentClosureDecision",
     "AllFalseIncidentAuthority",
 ]
-
-
-def _sorted_set_fields(content: dict[str, Any], *names: str) -> dict[str, Any]:
-    """Sort the named ``frozenset``-derived list fields for a deterministic digest (§3.1)."""
-    for name in names:
-        value = content.get(name)
-        if value is not None:
-            content[name] = sorted(value)
-    return content
 
 
 class SafetyIncidentPolicy(IndependentIdArtifact):
@@ -184,12 +176,6 @@ class SafetyIncidentPolicy(IndependentIdArtifact):
     failure_behavior: tuple[str, ...] = ()
     #: §7 / SIR-INV-001 — a policy is governed content, not permission (all-false).
     authority_effect: AllFalseIncidentAuthority = AllFalseIncidentAuthority()
-
-    def covered_content(self) -> dict[str, Any]:
-        """Digest preimage with the ``frozenset`` class field serialized deterministically (§3.1)."""
-        return _sorted_set_fields(
-            super().covered_content(), "authoritative_signal_classes"
-        )
 
 
 class SafetyIncidentRecord(IndependentIdArtifact):

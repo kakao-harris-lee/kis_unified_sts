@@ -40,6 +40,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from services.decision_engine.config import (
+    DecisionEngineLivenessWiring,
     DecisionEngineMarketRiskGateWiring,
     DecisionEngineSetupEvalWiring,
 )
@@ -47,6 +48,7 @@ from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.observability.logging_setup import configure_logging
 from shared.portfolio.config import track_for_asset_class
 from shared.risk.gate_decision_record import (
     GateDecisionRecord,
@@ -71,6 +73,13 @@ from shared.streaming.parquet_warmup import (
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
+
+#: Throttle key for the liveness heartbeat. ``ReasonLogThrottle`` is keyed per
+#: reason; the heartbeat has exactly one reason ("the loop turned"), and what
+#: varies between emissions travels in the counters, not in the key — a
+#: per-state key would reintroduce the very defect this line exists to fix
+#: (``setup_eval_throttle_key`` goes quiet precisely while nothing changes).
+_LIVENESS_THROTTLE_KEY = "liveness"
 
 
 class _ThrottledInfoLog:
@@ -121,6 +130,7 @@ class DecisionEngineDaemon:
         market_risk_redis: Any | None = None,
         shadow_gate_log_interval_seconds: float | None = None,
         setup_eval_log_interval_seconds: float | None = None,
+        liveness_log_interval_seconds: float | None = None,
         setup_eval_key_suffix: str = "",
         setup_eval_enabled: bool = True,
         futures_context_redis: Any | None = None,
@@ -179,6 +189,38 @@ class DecisionEngineDaemon:
         self._setup_eval_log_throttle = ReasonLogThrottle(
             interval_seconds=setup_eval_log_interval_seconds
         )
+        # Proof-of-work heartbeat (design 2026-09-19 §2.1). Its OWN configured
+        # interval for the same reason the setup-eval log has one, and because
+        # the two are opposites in kind: the setup-eval line is throttled per
+        # STATE CHANGE and so goes quiet exactly while nothing changes, which is
+        # when liveness is the open question. ``None`` resolves to the wiring
+        # config's field default rather than a third copy of the number.
+        if liveness_log_interval_seconds is None:
+            liveness_log_interval_seconds = (
+                DecisionEngineLivenessWiring().log_interval_seconds
+            )
+        # Same ReasonLogThrottle the two logs above use — one throttle
+        # implementation for this daemon, not a second mechanism. (The other
+        # candidate, shared.streaming.audit.RateLimitedLog, is shaped around
+        # exceptions: its only emit method logs a traceback and it reports
+        # suppressed counts, with no plain "may I log now?" predicate.)
+        self._liveness_log_throttle = ReasonLogThrottle(
+            interval_seconds=liveness_log_interval_seconds
+        )
+        # Counts for the CURRENT, not-yet-emitted heartbeat interval. Reset on
+        # every emission so a line describes exactly the cycles it covers
+        # (_reset_liveness_window).
+        self._liveness_cycles = 0
+        self._liveness_context_cycles = 0
+        self._liveness_context_errors = 0
+        # Monotonic stamp where the current window began — REPORTING only. The
+        # throttle above is the sole authority on whether to emit; this exists
+        # so the line can state the wall span its counts cover, which is what
+        # makes a loop that is turning but slowly ("cycles=2
+        # interval_seconds=600") distinguishable from a healthy one. None until
+        # run() opens the first window; there is no meaningful "now" at
+        # construction.
+        self._liveness_last_emit_monotonic: float | None = None
         # Redis key namespace for the eval rows. "" = the orchestrator
         # adapters' historical keys; ".shadow" in shadow mode so the daemon
         # cannot overwrite the rows trader-futures is writing at the same time
@@ -233,104 +275,185 @@ class DecisionEngineDaemon:
             )
 
     async def run(self) -> None:
+        # The heartbeat's span starts at the first turn of the loop, not at
+        # construction: _build_and_run resolves the front-month contract and
+        # the context provider before calling this, and an interval that
+        # counted that wait would overstate the first line's span.
+        self._reset_liveness_window(time.monotonic())
         while not self._stop.is_set():
-            await self._publish_volatility_reference()
+            self._liveness_cycles += 1
             try:
-                ctx = await self.context_provider()
-            except Exception:
-                logger.exception("context_provider raised; sleeping and retrying")
-                await asyncio.sleep(self.tick_interval_seconds)
-                continue
+                await self._run_one_cycle()
+            finally:
+                # In ``finally`` so EVERY exit path of a cycle is covered,
+                # including the two early returns (context_provider raised, no
+                # market context). A heartbeat that only fired on the fully
+                # evaluated path would go silent in exactly the degraded
+                # conditions where liveness is the open question — and
+                # ``ctx is None`` is what a weekend or a stale feed produces.
+                self._maybe_log_liveness()
 
-            if ctx is None:
-                # The provider suppressed the tick (cold engine, no ATR, no
-                # price). Record it per setup with the SAME reason string the
-                # monolith adapters use, so "0 candidates" never has to be
-                # guessed at from the absence of rows. Skipped entirely in the
-                # inert modes — see ``setup_eval_enabled``.
-                if self.setup_eval_enabled:
-                    for setup in self.setups:
-                        await self._publish_setup_eval(
-                            setup, "reject", "no_market_context"
-                        )
-                await asyncio.sleep(self.tick_interval_seconds)
-                continue
+    async def _run_one_cycle(self) -> None:
+        """One turn of the evaluation loop, including its own tick sleep.
 
-            has_vwap = getattr(ctx, "vwap", 0.0) > 0.0
-            for setup in self.setups:
-                if not has_vwap and getattr(setup, "REQUIRES_VWAP", False):
-                    # Only the vwap-dependent setups are skipped. At vwap == 0
-                    # Setup D's stretch becomes z = price/atr — a fabricated
-                    # extreme that would FIRE, not a quiet zero. Suppressing the
-                    # whole tick instead would darken Setup A/C, which never
-                    # read vwap.
-                    await self._publish_setup_eval(setup, "reject", "no_vwap")
-                    continue
-                try:
-                    signal = setup.check(ctx)
-                except Exception:
-                    logger.exception(
-                        "setup %s raised; skipping this tick",
-                        setup.__class__.__name__,
-                    )
-                    await self._publish_setup_eval(setup, "reject", "setup_exception")
-                    continue
-                if signal is None:
-                    # "0 candidates" must be distinguishable from "never
-                    # evaluated": record WHY this setup declined, in the same
-                    # hash/history format the monolith adapters write (under
-                    # this daemon's own key namespace — see
-                    # ``setup_eval_key_suffix``).
-                    await self._publish_setup_eval(
-                        setup,
-                        "reject",
-                        getattr(setup, "last_reject_reason", None) or "setup_rejected",
-                    )
-                    continue
-                await self._publish_setup_eval(setup, "fired", signal.direction)
-
-                # Market-risk ENTRY gate — new-entry candidates only; exit /
-                # stop / kill_switch paths never flow through this daemon
-                # (futures exits are pseudo-OCO fills in order_router).
-                gate_decision = self._evaluate_market_risk_gate(signal)
-                if gate_decision is not None and not gate_decision.allow:
-                    # enforce mode + blocking matrix cell (HIGH new-long /
-                    # CRITICAL all). Mirror of the monolith adapters'
-                    # reject-reason pattern (PR #483): record a canonical
-                    # machine-readable reason at the daemon boundary, then
-                    # drop the entry candidate. allow=False is impossible
-                    # outside enforce mode (fixed gate contract).
-                    logger.info(
-                        format_audit_kv(
-                            event="entry_rejected",
-                            stage="market_risk_gate",
-                            setup_type=signal.setup_type,
-                            symbol=signal.symbol,
-                            direction=signal.direction,
-                            reason=gate_decision.reason,
-                        )
-                    )
-                    # O14-①: this branch is enforce-mode-only by the gate's
-                    # own contract (allow=False never happens in shadow/off),
-                    # so every reject reaching here is exactly the row that
-                    # belongs in signal_decisions — shadow's would-block stays
-                    # log-only via _maybe_log_shadow_gate above, untouched.
-                    await self._record_gate_reject(signal, gate_decision)
-                    continue
-
-                try:
-                    await self._publish(signal, gate_decision=gate_decision)
-                except Exception:
-                    logger.exception(
-                        "publish to %s failed; signal dropped (%s)",
-                        self.candidate_stream,
-                        signal.setup_type,
-                    )
-
+        Extracted from :meth:`run` so the liveness heartbeat can wrap a whole
+        cycle in one ``finally`` rather than being repeated at each of the
+        loop's three exits. The two degraded paths ``return`` here where the
+        loop body used to ``continue``; behaviour is otherwise unchanged.
+        """
+        await self._publish_volatility_reference()
+        try:
+            ctx = await self.context_provider()
+        except Exception:
+            # Counted separately from a None context: a provider that RAISED is
+            # a broken daemon, one that returned None is (usually) a closed or
+            # cold market. The heartbeat must not render those the same.
+            self._liveness_context_errors += 1
+            logger.exception("context_provider raised; sleeping and retrying")
             await asyncio.sleep(self.tick_interval_seconds)
+            return
+
+        if ctx is None:
+            # The provider suppressed the tick (cold engine, no ATR, no
+            # price). Record it per setup with the SAME reason string the
+            # monolith adapters use, so "0 candidates" never has to be
+            # guessed at from the absence of rows. Skipped entirely in the
+            # inert modes — see ``setup_eval_enabled``.
+            if self.setup_eval_enabled:
+                for setup in self.setups:
+                    await self._publish_setup_eval(setup, "reject", "no_market_context")
+            await asyncio.sleep(self.tick_interval_seconds)
+            return
+
+        # Past this point the cycle has a usable market context, so it counts
+        # as an evaluating cycle in the heartbeat. Incremented BEFORE the setup
+        # roster runs: whether an individual setup fires, rejects or raises is
+        # not what this number answers — "did the loop have something to
+        # evaluate" is.
+        self._liveness_context_cycles += 1
+
+        has_vwap = getattr(ctx, "vwap", 0.0) > 0.0
+        for setup in self.setups:
+            if not has_vwap and getattr(setup, "REQUIRES_VWAP", False):
+                # Only the vwap-dependent setups are skipped. At vwap == 0
+                # Setup D's stretch becomes z = price/atr — a fabricated
+                # extreme that would FIRE, not a quiet zero. Suppressing the
+                # whole tick instead would darken Setup A/C, which never
+                # read vwap.
+                await self._publish_setup_eval(setup, "reject", "no_vwap")
+                continue
+            try:
+                signal = setup.check(ctx)
+            except Exception:
+                logger.exception(
+                    "setup %s raised; skipping this tick",
+                    setup.__class__.__name__,
+                )
+                await self._publish_setup_eval(setup, "reject", "setup_exception")
+                continue
+            if signal is None:
+                # "0 candidates" must be distinguishable from "never
+                # evaluated": record WHY this setup declined, in the same
+                # hash/history format the monolith adapters write (under
+                # this daemon's own key namespace — see
+                # ``setup_eval_key_suffix``).
+                await self._publish_setup_eval(
+                    setup,
+                    "reject",
+                    getattr(setup, "last_reject_reason", None) or "setup_rejected",
+                )
+                continue
+            await self._publish_setup_eval(setup, "fired", signal.direction)
+
+            # Market-risk ENTRY gate — new-entry candidates only; exit /
+            # stop / kill_switch paths never flow through this daemon
+            # (futures exits are pseudo-OCO fills in order_router).
+            gate_decision = self._evaluate_market_risk_gate(signal)
+            if gate_decision is not None and not gate_decision.allow:
+                # enforce mode + blocking matrix cell (HIGH new-long /
+                # CRITICAL all). Mirror of the monolith adapters'
+                # reject-reason pattern (PR #483): record a canonical
+                # machine-readable reason at the daemon boundary, then
+                # drop the entry candidate. allow=False is impossible
+                # outside enforce mode (fixed gate contract).
+                logger.info(
+                    format_audit_kv(
+                        event="entry_rejected",
+                        stage="market_risk_gate",
+                        setup_type=signal.setup_type,
+                        symbol=signal.symbol,
+                        direction=signal.direction,
+                        reason=gate_decision.reason,
+                    )
+                )
+                # O14-①: this branch is enforce-mode-only by the gate's
+                # own contract (allow=False never happens in shadow/off),
+                # so every reject reaching here is exactly the row that
+                # belongs in signal_decisions — shadow's would-block stays
+                # log-only via _maybe_log_shadow_gate above, untouched.
+                await self._record_gate_reject(signal, gate_decision)
+                continue
+
+            try:
+                await self._publish(signal, gate_decision=gate_decision)
+            except Exception:
+                logger.exception(
+                    "publish to %s failed; signal dropped (%s)",
+                    self.candidate_stream,
+                    signal.setup_type,
+                )
+
+        await asyncio.sleep(self.tick_interval_seconds)
 
     async def stop(self) -> None:
         self._stop.set()
+
+    def _maybe_log_liveness(self) -> None:
+        """Throttled proof that the evaluation loop turned.
+
+        The counters are the point of the line, not decoration. "Turned 30
+        times and had no market context 30 times" and "turned 30 times and
+        evaluated 30 times" are both alive, but only one of them is working,
+        and the setup-eval INFO tells them apart on neither — it is throttled
+        per state change, so both render as silence once their verdict stops
+        moving. ``context_errors`` splits the blind half again: a provider that
+        RAISED is a broken daemon, one that returned None is usually a closed
+        or cold market. ``setups`` catches the roster being empty, which is
+        alive, evaluating nothing, and otherwise invisible.
+
+        Absence remains the alarm: a heartbeat is emitted on every path of the
+        cycle, so no line at all means the loop is not turning.
+        """
+        now = time.monotonic()
+        if not self._liveness_log_throttle.should_log(_LIVENESS_THROTTLE_KEY, now):
+            return
+        last = self._liveness_last_emit_monotonic
+        logger.info(
+            format_audit_kv(
+                event="decision_engine_alive",
+                cycles=self._liveness_cycles,
+                context_cycles=self._liveness_context_cycles,
+                context_errors=self._liveness_context_errors,
+                setups=len(self.setups),
+                # Omitted (format_audit_kv drops None) only if this is reached
+                # without run() having stamped the start of the span.
+                interval_seconds=None if last is None else round(now - last, 1),
+            )
+        )
+        self._reset_liveness_window(now)
+
+    def _reset_liveness_window(self, now: float) -> None:
+        """Open a fresh heartbeat window at ``now``.
+
+        One place, so the span stamp and the counts can never be reset apart:
+        a line whose counts predate its own ``interval_seconds`` would be a
+        quiet lie, and that is exactly the shape of bug this whole line exists
+        to stop shipping.
+        """
+        self._liveness_last_emit_monotonic = now
+        self._liveness_cycles = 0
+        self._liveness_context_cycles = 0
+        self._liveness_context_errors = 0
 
     def _setup_eval_clients(self) -> tuple[Any, Any]:
         """``acquire_clients`` hook for :func:`publish_setup_eval`.
@@ -875,13 +998,15 @@ def build_atr_readings(engine: Any, symbol: str) -> Callable[[], dict[str, float
 
 async def _build_context_provider(
     redis_client: Any,
+    instrument: Any = None,
 ) -> tuple[Any, Any, Any, Any]:
     """Wire indicator engine + StreamConsumerFeed(raw_data) + FuturesContextProvider.
 
     Mode-agnostic: used for both shadow and live producing modes. Returns
     ``(context_provider, feed, sync_redis, atr_readings)``.  The caller is
     responsible for calling ``await feed.stop()`` and ``sync_redis.close()`` on
-    shutdown.
+    shutdown. ``instrument`` is the contract the caller's front-month check
+    watches; ``None`` resolves it here.
 
     ``atr_readings`` is a zero-arg ``{symbol: current_atr}`` reader over the
     same ``engine.get_indicators(symbol)["atr"]`` accessor the context provider
@@ -907,7 +1032,8 @@ async def _build_context_provider(
     from shared.storage.market_data_store import ParquetMarketDataStore
     from shared.streaming.consumer_feed import StreamConsumerFeed
 
-    instrument = resolve_futures_instrument_from_env()
+    if instrument is None:
+        instrument = resolve_futures_instrument_from_env()
     symbol = instrument.symbol
 
     engine = StreamingIndicatorEngine()
@@ -927,7 +1053,6 @@ async def _build_context_provider(
     feed.update_symbols([symbol])
     await feed.start()
 
-    daily_ref = FuturesDailyReference(store=store, symbol=symbol)
     macro_stream = os.environ.get("MACRO_OVERNIGHT_STREAM", "stream:macro.overnight")
     events_path = os.environ.get(
         "SCHEDULED_EVENTS_PATH", "config/scheduled_events.yaml"
@@ -939,6 +1064,12 @@ async def _build_context_provider(
     import redis as _redis_sync
 
     sync_redis = _redis_sync.Redis.from_url(redis_url, decode_responses=True)
+
+    # Same sync client feeds the prev_close read-model
+    # (futures:daily_reference:{symbol}, published by the producers' session-start
+    # REST prefetch). Without it the daemon falls back to the parquet daily bars,
+    # which never carried the TRADING symbol — Setup A's permanent blind spot.
+    daily_ref = FuturesDailyReference(store=store, symbol=symbol, redis=sync_redis)
 
     def _macro_reader() -> Any:
         return read_latest_macro_snapshot(sync_redis, macro_stream)
@@ -962,7 +1093,7 @@ async def _build_context_provider(
 
 
 async def _resolve_context_provider(
-    mode: str, redis_client: Any
+    mode: str, redis_client: Any, instrument: Any = None
 ) -> tuple[Any, Any, Any, Any]:
     """Return (context_provider, feed, sync_redis, atr_readings) for the mode.
 
@@ -972,7 +1103,7 @@ async def _resolve_context_provider(
     feed=sync_redis=atr_readings=None (no engine exists to sample).
     """
     if _is_producing_mode(mode):
-        return await _build_context_provider(redis_client)
+        return await _build_context_provider(redis_client, instrument)
 
     async def _stub_context_provider() -> None:
         return None
@@ -1076,6 +1207,7 @@ def _build_daemon(
     market_risk_gate_config = MarketRiskGateConfig.load_or_default()
     market_risk_gate_wiring = DecisionEngineMarketRiskGateWiring.load_or_default()
     setup_eval_wiring = DecisionEngineSetupEvalWiring.load_or_default()
+    liveness_wiring = DecisionEngineLivenessWiring.load_or_default()
 
     return DecisionEngineDaemon(
         redis=redis_client,
@@ -1091,6 +1223,7 @@ def _build_daemon(
             market_risk_gate_wiring.would_block_log_interval_seconds
         ),
         setup_eval_log_interval_seconds=setup_eval_wiring.log_interval_seconds,
+        liveness_log_interval_seconds=liveness_wiring.log_interval_seconds,
         setup_eval_key_suffix=setup_eval_key_suffix,
         setup_eval_enabled=setup_eval_enabled,
         # Phase C structured-context trace: reuse the sync client that reads
@@ -1113,6 +1246,11 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
 
+    from shared.execution.futures_instrument import (
+        resolve_futures_instrument_from_env,
+        run_with_front_month_watch,
+    )
+
     redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
@@ -1120,8 +1258,11 @@ async def _build_and_run() -> int:
     mode = _resolve_mode()
     candidate_stream = _candidate_stream_for(mode)
 
+    # Resolved once and shared by the context provider and the front-month
+    # check, so the check watches exactly the contract the engine consumes.
+    instrument = resolve_futures_instrument_from_env()
     context_provider, feed, sync_redis, atr_readings = await _resolve_context_provider(
-        mode, redis_client
+        mode, redis_client, instrument
     )
     volatility_publisher = _build_volatility_publisher(redis_client, atr_readings)
 
@@ -1164,7 +1305,14 @@ async def _build_and_run() -> int:
         loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
 
     try:
-        await daemon.run()
+        if _is_producing_mode(mode):
+            exit_code = await run_with_front_month_watch(
+                daemon.run, daemon.stop, instrument, daemon_name="decision-engine"
+            )
+        else:
+            # Inert modes consume no contract; nothing to roll.
+            await daemon.run()
+            exit_code = 0
     finally:
         if feed is not None:
             await feed.stop()
@@ -1174,16 +1322,11 @@ async def _build_and_run() -> int:
         await redis_client.aclose()
         if runtime_ledger is not None:
             runtime_ledger.close()
-    return 0
+    return exit_code
 
 
 def main() -> int:
-    import logging
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging()
     return asyncio.run(_build_and_run())
 
 

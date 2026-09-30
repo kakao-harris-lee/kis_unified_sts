@@ -127,7 +127,7 @@ def test_frozen_models_reject_mutation() -> None:
     """(§2.0/§4.6) Every record is frozen — there is no in-place mutate path."""
     decision = issue_decision()
     with pytest.raises(ValidationError):
-        decision.verdict = ReadinessVerdict.NOT_READY  # type: ignore[misc]
+        decision.verdict = ReadinessVerdict.NOT_READY
 
 
 def test_extra_fields_are_forbidden() -> None:

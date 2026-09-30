@@ -27,6 +27,7 @@ def _config() -> FinalityConfig:
         value_date="2026-09-09",
         source_revision="synthetic-rev-1",
         proof_recipe_id="synthetic-recipe-1",
+        release_proof_wait_ms=60_000,
     )
 
 
@@ -180,7 +181,7 @@ def test_config_missing_key_refuses(tmp_path, missing_key: str) -> None:
     import yaml
     from tos_runtime.posttrade.config import FinalityConfigError, load_finality_config
 
-    raw = {
+    raw: dict[str, str | None] = {
         "currency": "KRW",
         "value_date": "2026-09-09",
         "source_revision": "rev-1",

@@ -139,7 +139,7 @@ def test_no_mutating_transition_between_records() -> None:
     """State advances only by appending a *new* record, never by mutating one (§2.7)."""
     suspected = make_gap(GapStatus.SUSPECTED)
     with pytest.raises(ValidationError):
-        suspected.status = GapStatus.CONFIRMED  # type: ignore[misc]
+        suspected.status = GapStatus.CONFIRMED
 
 
 def test_consecutive_pairs_of_valid_chain_are_allowed_transitions() -> None:

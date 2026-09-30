@@ -21,6 +21,8 @@ Nothing here is a *policy* number — this package is number-free by constructio
 
 from __future__ import annotations
 
+from typing import Any
+
 import hypothesis.strategies as st
 from tos.failuredomain import (
     ExplicitlyAnalyzedEmpty,
@@ -62,7 +64,9 @@ MATRIX_FIELDS: tuple[str, ...] = (
 BLANK_TEXTS: tuple[str, ...] = ("", " ", "\t", "\n", "   \t\n ")
 
 #: Every ``∅``-shaped / absent value a claim collection field can take.
-VOID_COLLECTIONS = st.sampled_from([None, frozenset()])
+VOID_COLLECTIONS: st.SearchStrategy[frozenset[Any] | None] = st.sampled_from(
+    [None, frozenset()]
+)
 
 #: Status values that are **not** ``ESTABLISHED`` (every one must block).
 NON_ESTABLISHED_STATUS = st.sampled_from(
@@ -104,7 +108,7 @@ def clean_claim(**overrides: object) -> IsolationClaim:
         "residual_risk": "shared broker resource remains a common mode; owner: profile",
     }
     kwargs.update(overrides)
-    return IsolationClaim(**kwargs)
+    return IsolationClaim.model_validate(kwargs)
 
 
 def clean_cell(**overrides: object) -> SafetyCellScope:
@@ -113,7 +117,7 @@ def clean_cell(**overrides: object) -> SafetyCellScope:
         field: f"cell-{field}" for field in SafetyCellScope.model_fields
     }
     kwargs.update(overrides)
-    return SafetyCellScope(**kwargs)
+    return SafetyCellScope.model_validate(kwargs)
 
 
 def clean_entry(**overrides: object) -> FailureDomainAllocationEntry:
@@ -139,7 +143,7 @@ def clean_entry(**overrides: object) -> FailureDomainAllocationEntry:
         "isolation_kind": IsolationKind.LOGICAL,
     }
     kwargs.update(overrides)
-    return FailureDomainAllocationEntry(**kwargs)
+    return FailureDomainAllocationEntry.model_validate(kwargs)
 
 
 #: A strategy over claims that are complete except for exactly one voided field.

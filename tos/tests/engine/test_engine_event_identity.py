@@ -19,6 +19,7 @@ from decimal import Decimal
 
 from tos.engine import EgressResultPayload, EngineEvent, EventKind, event_identity
 from tos.engine.records import EVENT_ID_PREFIX
+from tos.engine.vocabulary import EgressResultKind
 
 from ._engine_fixtures import SCHEME, decision_tick, instrument_key, ordering
 
@@ -56,7 +57,7 @@ def test_the_canary_also_holds_for_egress_result_events() -> None:
             egress_result=EgressResultPayload(
                 instrument_key=instrument_key(),
                 attempt_id=attempt_id,
-                kind="FULL_FILL",
+                kind=EgressResultKind.FULL_FILL,
                 filled_quantity=Decimal("1"),
                 remaining_quantity=Decimal("0"),
                 reference=ordering(1),

@@ -63,9 +63,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from tos.canonical import CanonicalDecimal, RecordPairKind, classify_record_pair
+from tos.nontrade._base import AllFalseNonTradeAuthority
 from tos.nontrade.records import (
     CorrectionReversalRecord,
-    NonTradeAuthorityEffect,
     SplitTransformationSpec,
     TransitionEnvelope,
 )
@@ -557,7 +557,7 @@ def correction_reversal_idempotent(
 
 
 def nontrade_authority_effect_all_false(
-    effect: NonTradeAuthorityEffect | None,
+    effect: AllFalseNonTradeAuthority | None,
 ) -> bool:
     """Whether a non-trade label / record grants no authority (ADR §6 line 144).
 

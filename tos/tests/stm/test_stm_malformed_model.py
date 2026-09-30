@@ -20,6 +20,8 @@ Regime tag: predicate substrate only; closes **no** STM-EV; EV-L1-complete claim
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from tos.stm import (
     AggregateConformanceResult,
@@ -106,19 +108,18 @@ def test_active_suppressions_do_not_block_a_conforming_snapshot() -> None:
 @pytest.mark.parametrize("binding", _SNAPSHOT_BINDINGS)
 def test_the_predicate_catches_a_model_construct_snapshot(binding: str) -> None:
     """(second layer, §2.3) ``model_construct`` skips the validator — the predicate does not."""
-    forged = ContinuousConformanceSnapshot.model_construct(
-        **{
-            **dict.fromkeys(_SNAPSHOT_BINDINGS, "x"),
-            "monitor_results": (clean_evaluation(),),
-            "source_continuity_present": True,
-            "active_violations": (),
-            "active_unknowns": (),
-            "active_gaps": (),
-            "delivery_failures": (),
-            "aggregate_result": AggregateConformanceResult.CONFORMING,
-            binding: None,
-        }
-    )
+    values: dict[str, Any] = {
+        **dict.fromkeys(_SNAPSHOT_BINDINGS, "x"),
+        "monitor_results": (clean_evaluation(),),
+        "source_continuity_present": True,
+        "active_violations": (),
+        "active_unknowns": (),
+        "active_gaps": (),
+        "delivery_failures": (),
+        "aggregate_result": AggregateConformanceResult.CONFORMING,
+        binding: None,
+    }
+    forged = ContinuousConformanceSnapshot.model_construct(**values)
     assert conformance_requires_complete_current_valid(forged) is False
 
 
@@ -214,7 +215,9 @@ def test_unbound_escalation_content_is_unconstructable(content: str) -> None:
             escalation_id="escalation-1",
             escalation_generation=7,
             bound_alert_id=None,
-            **{content: ("value-1",)},
+            # illegal input under test: a value bound to `content` (a field name unknown
+            # to this test) may collide with any of the model's typed fields.
+            **cast("dict[str, Any]", {content: ("value-1",)}),
         )
 
 

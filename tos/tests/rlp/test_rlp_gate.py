@@ -9,6 +9,8 @@ Regime tag: structural / separation predicate substrate only; RLP-EV-012 NOT_IMP
 
 from __future__ import annotations
 
+from typing import Any
+
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given
@@ -102,8 +104,9 @@ def test_readiness_carries_no_authority() -> None:
 def test_non_all_false_authority_denies_via_model_construct() -> None:
     """(§5.4 point 4 / §2.3) A model_construct ladder with a permissive authority fails readiness."""
     permissive = AllFalseTrialAuthority.model_construct(transmits=True)
+    stage_values: dict[str, Any] = dict.fromkeys(_STAGE_ANCHOR, False)
     malformed = GateStatusLadder.model_construct(
-        **dict.fromkeys(_STAGE_ANCHOR, False), authority_effect=permissive
+        **stage_values, authority_effect=permissive
     )
     assert all_false_trial_authority(permissive) is False
     assert readiness_not_authority(malformed) is False

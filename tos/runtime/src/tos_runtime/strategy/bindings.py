@@ -44,7 +44,8 @@ helper, deliberately not underscore-prefixed since two modules share it —
 2026-09-09 independent-review finding #7) so a still-``null`` value
 anywhere in this file, including a nested ``bindings`` leaf, refuses before
 pydantic ever sees it — identical discipline to every strategy file's own
-null-leaf gate.
+null-leaf gate. Also reuses :func:`tos_runtime.strategy.loader.first_named_tbd_leaf`
+(W-A A-0) for the SAME file's ``"TBD"`` placeholder-string leaves.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): ``tos.*`` (the
 kernel — ``tos.dsl.vocabulary.ScalarValue`` only, a pure type alias, no
@@ -63,7 +64,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from tos.canonical import ArtifactIntegrityError
 from tos.dsl.vocabulary import ScalarValue
 
-from tos_runtime.strategy.loader import first_null_leaf
+from tos_runtime.strategy.loader import first_named_tbd_leaf, first_null_leaf
 
 __all__ = [
     "STRATEGY_BINDINGS_FILE_NAME",
@@ -175,6 +176,14 @@ def load_strategy_bindings(path: Path) -> LoadedStrategyBindings:
         raise StrategyBindingsLoadError(
             f"{path}: field {null_leaf!r} is still null (named-TBD) — "
             "refusing to load until an operator attests a concrete value"
+        )
+
+    tbd_leaf = first_named_tbd_leaf(raw, "")
+    if tbd_leaf is not None:
+        raise StrategyBindingsLoadError(
+            f"{path}: field {tbd_leaf!r} is still the template placeholder "
+            "'TBD' (named-TBD) — refusing to load until an operator attests a "
+            "concrete value"
         )
 
     try:

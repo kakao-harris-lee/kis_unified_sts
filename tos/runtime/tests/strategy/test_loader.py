@@ -1,6 +1,4 @@
-"""``tos_runtime.strategy.loader`` tests (TOS Phase 3 슬라이스 D-R ``[D-R-1]``,
-docs/plans/2026-09-09-tos-phase3-event-core-plan.md §1.2).
-"""
+"""Tests for ``tos_runtime.strategy.loader``."""
 
 from __future__ import annotations
 
@@ -128,6 +126,23 @@ def test_top_level_null_leaf_refuses(strategies_dir, parse, admit):
         load_strategies(strategies_dir, parse=parse, admit=admit)
 
 
+def test_named_tbd_placeholder_leaf_anywhere_refuses_naming_the_field(
+    strategies_dir, parse, admit
+):
+    """The null-only leaf walk must also catch an operator typing the literal
+    placeholder string ``"TBD"`` in place of a real value anywhere in a strategy
+    file — an unbounded ``AuthoredStrategy`` mapping has no enum/allow-list to fall
+    back on the way a fixed-shape config loader's fields do."""
+    mapping = admissible_strategy_mapping()
+    mapping["policy"]["rules"][0]["decision"]["rationale"] = "TBD"
+    path = write_strategy_yaml(strategies_dir, "tbd-leaf.strategy.yaml", mapping)
+    with pytest.raises(StrategyLoadError) as excinfo:
+        load_strategies(strategies_dir, parse=parse, admit=admit)
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "rationale" in message
+
+
 def test_not_a_mapping_refuses(strategies_dir, parse, admit):
     path = strategies_dir / "list.strategy.yaml"
     path.write_text("- 1\n- 2\n", encoding="utf-8")
@@ -171,8 +186,7 @@ def test_one_bad_file_refuses_the_whole_directory_not_a_partial_admit(
 ):
     """A directory with one good file and one bad file must refuse
     entirely — never silently admit the good one and skip the bad one
-    (plan §1.2: "이유를 evidence STRATEGY_REFUSED" — the whole load is
-    refused, not filtered)."""
+    (the whole load is refused, not filtered)."""
     write_strategy_yaml(
         strategies_dir, "a-good.strategy.yaml", admissible_strategy_mapping()
     )
@@ -219,8 +233,7 @@ def test_null_leaf_on_optional_only_field_refuses(strategies_dir, parse, admit):
 
 
 def test_yml_suffix_is_loaded_like_yaml(strategies_dir, parse, admit):
-    """2026-09-09 independent-review finding #12: ``*.yml`` (not just
-    ``*.yaml``) is a genuine strategy file, not silently skipped."""
+    """``*.yml`` (not just ``*.yaml``) is a genuine strategy file, not silently skipped."""
     path = strategies_dir / "band.strategy.yml"
     path.write_text(
         yaml.safe_dump(admissible_strategy_mapping(), sort_keys=False),
@@ -231,7 +244,7 @@ def test_yml_suffix_is_loaded_like_yaml(strategies_dir, parse, admit):
 
 
 def test_stray_non_strategy_file_refuses_naming_it(strategies_dir, parse, admit):
-    """2026-09-09 independent-review finding #12: a stray file that is
+    """A stray file that is
     neither ``*.yaml`` nor ``*.yml`` (e.g. a renamed-away bad strategy, an
     editor backup) refuses the WHOLE directory rather than being silently
     ignored by the glob."""
@@ -246,15 +259,11 @@ def test_stray_non_strategy_file_refuses_naming_it(strategies_dir, parse, admit)
 
 
 def test_unknown_top_level_key_refuses_naming_the_path(strategies_dir, parse, admit):
-    """Runtime-level coverage for 2026-09-09 independent-review finding #17
-    mutation M7: ``_StrategyAuthoringContent`` (the kernel's top-level
-    parsing model, ``tos.dsl.serialization``) is ``extra='forbid'`` — this
-    was kernel-red but runtime-green (the only existing nested-unknown-key
-    test exercises a DIFFERENT, nested pydantic model, ``TargetSpec``, not
-    the top-level authoring content). An unknown key directly alongside
-    ``dsl_version``/``config_binding_version``/``policy`` must refuse here
-    too, through the REAL injected ``parse`` (``tos.dsl.serialization.
-    parse_strategy``), not just in the kernel's own unit test."""
+    """An unknown key alongside the top-level strategy fields must be refused by
+    the real injected parser. ``_StrategyAuthoringContent`` (the kernel's top-level
+    parsing model, ``tos.dsl.serialization``) is ``extra='forbid'``. This differs
+    from the nested-unknown-key test, which exercises ``TargetSpec`` rather than
+    the top-level authoring content."""
     mapping = admissible_strategy_mapping()
     mapping["not_a_real_top_level_field"] = "x"
     path = write_strategy_yaml(strategies_dir, "bad-top-level.strategy.yaml", mapping)
@@ -266,11 +275,8 @@ def test_unknown_top_level_key_refuses_naming_the_path(strategies_dir, parse, ad
 def test_dropping_a_rule_changes_the_loaded_strategy_digest(
     strategies_dir, parse, admit
 ):
-    """Runtime-level coverage for 2026-09-09 independent-review finding #17
-    mutation M5 (``lower_strategy`` silently drops the first authored rule —
-    kernel-red, runtime-green): the runtime suite had no assertion that a
-    strategy's own identity (``canonical_digest``) is sensitive to its rule
-    count at all. Two strategy files differing ONLY by one extra rule must
+    """A strategy's identity (``canonical_digest``) must be sensitive to its rule
+    count. Two strategy files differing ONLY by one extra rule must
     load to two DIFFERENT digests — if a rule were silently dropped
     somewhere on this path, the two artifacts could otherwise collide."""
     one_rule = admissible_strategy_mapping()

@@ -42,8 +42,15 @@ fund_movement:
 # equity(track) = capital_base + cumulative realized PnL (RuntimeLedger trades
 # tagged with the track id) + open-position unrealized PnL (best-effort from
 # the trading-state positions hash). Absolute bases keep the monthly-MDD math
-# stable across process restarts. Values mirror the per-asset risk equity
-# anchors in config/risk.yaml (risk.account_equity_krw / risk_stock.*).
+# stable across process restarts. track_b_stock_krw mirrors
+# config/risk.yaml::risk_stock.account_equity_krw. track_c_futures_krw does NOT
+# mirror risk.account_equity_krw any more: PR #667 (F-9 gap G4) moved the
+# futures MDD denominator to ${FUTURES_MARGIN_FALLBACK_EQUITY:50000000} and
+# intentionally left Track C at 5,000,000 — changing it moves the published
+# portfolio-MDD figures. Operator decision required BEFORE
+# circuit_breaker.mode is flipped to enforce: at 5M a single normal-size
+# kospi200 stop (2026-09-10: -588,839원 = -11.8%) crosses halt_new (-8%), and
+# stage_latch holds that new-entry halt for the rest of the KST month.
 # track_a_core_krw stays null until the Phase 5 manual core ledger lands —
 # the monitor then reports track_a_equity as missing (coverage recorded).
 capital_base:

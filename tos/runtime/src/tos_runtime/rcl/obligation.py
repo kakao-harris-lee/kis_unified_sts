@@ -1,148 +1,17 @@
-"""``CapacityObligationRecorder`` — SEND_REFUSED preserved-capacity obligation
-recorder/verifier (design #40 kernel round #1 §3; commandtype/expiry/
-obligation plan §3).
+"""Record and verify preserved capacity for ``SEND_REFUSED`` obligations.
 
-Kernel round #1 §1.3 (``1e06f0b8``/``cba1972c``) typed item 16's (CURRENTNESS)
-worst-credible-capacity obligation onto ``VerifyItemVerdict``/
-``GatewayEvidenceRecord.preserved_worst_credible_capacity`` and added the
-kernel predicate ``tos.cur.obligation_preserved(obligation, reservation_state,
-*, capacity_consuming_states, magnitude_unknown)`` (the ``magnitude_unknown``
-keyword-only, no-default parameter landed with independent review finding #4,
-commit ``5521ec7b`` — see below). Blocking a not-yet-provably-safe release was
-already structurally closed before this lane started (§0 survey: rcl's own
-``commitlog.release_admissible`` admits only on a positive finality witness) —
-what was missing was **recording and verifying** whether the obligation an
-UNKNOWN/DENIED currentness outcome asserted is actually still honored by the
-bound reservation's live rcl capacity state. This module is that recorder.
+A concrete worst-credible-capacity obligation is checked against the current
+reservation projection before its evidence is recorded. A missing obligation
+is a no-op only when no unknown magnitude was asserted; an unknown magnitude
+is restrictive and must fail closed through the kernel predicate.
 
-**Magnitude-unknown obligations (independent review finding #4, kernel round
-#1 §3 fix pass).** ``obligation is None`` used to conflate two different
-facts on both ``VerifyItemVerdict`` and ``GatewayEvidenceRecord``: "no
-obligation was ever asserted" (trivially safe) and "an obligation WAS
-asserted but its magnitude could not be observed" (the single most
-dangerous input this recorder can see, since it degraded to the quietest
-possible handling — a silent no-op). The kernel now types this explicitly:
-``GatewayEvidenceRecord.preserved_obligation_magnitude_unknown: bool``,
-mutually exclusive with a concrete ``preserved_worst_credible_capacity``
-(kernel validator-enforced). ``CapacityObligationRecorder.__call__``'s
-no-op condition is therefore two-part now, not one:
-``preserved_worst_credible_capacity is None AND NOT
-preserved_obligation_magnitude_unknown``. Independent review finding #9's
-own four legitimate cases for the first half of that condition (the halt
-frequently IS item 16 and still carries ``None`` — the prior docstring
-named only two):
-
-1. The halt item was not item 16 (an earlier verify item halted first) —
-   item 16's own computed obligation, if any, never reaches
-   ``SEND_REFUSED`` (gateway review finding #1).
-2. Item 16 itself is the halt item and its verdict is positively
-   ``ADMIT`` — nothing to preserve.
-3. Item 16 is the halt item but halts at an earlier latch or
-   structural-completeness gate before the currentness verdict is even
-   computed — no obligation is ever asserted.
-4. Item 16 is the halt item, its verdict is non-``ADMIT``, and the
-   worst-credible-capacity itself was UNKNOWN — this is where
-   ``preserved_obligation_magnitude_unknown`` is ``True`` instead, which
-   is why it does NOT reach the no-op: this fifth, previously-conflated
-   case is the MOST dangerous one (a concrete halt whose obligation size
-   is unknown), not the safest, so it takes the SAME
-   resolve/predicate/evidence/halt path a concrete obligation takes
-   (``magnitude_unknown=True`` forces the kernel predicate's answer to
-   ``False`` unconditionally — CUR-INV-011:183, "UNKNOWN is restrictive
-   and capacity-consuming" — so this case always halts).
-
-**Reservation-id resolution (reported seam — re-surveyed, independent review
-finding #5, kernel round #1 §3 lane B fix pass).** Neither
-``GatewayEvidenceRecord`` nor ``SendBoundaryContext`` carries a reservation
-identity (only ``reservation_attempt_id`` — the attempt, not the
-reservation). Rather than add a kernel field for this (out of lane B's write
-surface — kernel edits are lane K's alone this round), the caller injects a
-``reservation_id_resolver: Callable[[str], str | None]`` that maps an
-attempt id to the rcl reservation id bound to it.
-
-The fix pass surveyed every place in this runtime that could plausibly carry
-a real attempt -> reservation binding, looking for one this module could
-resolve through instead of a formula, and found none retrievable:
-
-- rcl's own reservation-transition log rows
-  (:class:`~tos.rcl.CapacityReservationTransition`, persisted by
-  :meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`)
-  carry ``reservation_id``/``writer_epoch``/``from_state``/``to_state``/
-  ``scope`` only — no attempt identity field anywhere in that row shape.
-- Step 9's ``AtomicCommitStage`` (``tos_runtime.risk.ledger_stages``)
-  computes a ``reservation_id`` fresh on every call via its own injected
-  ``reservation_id_provider`` and caches nothing keyed by attempt — there is
-  no stage-local map to read back afterward.
-- Step 14's ``TransmissionCapabilityStage`` (``tos_runtime.currentness.stages``)
-  DOES construct a real per-attempt binding — its committed
-  :class:`~tos.rcl.TransmissionCapability` carries both
-  ``reservation_identity`` and ``bound_reservation_revision`` alongside
-  ``attempt_identity=attempt.attempt_id`` — but commits it to the RCL only
-  as a digest (``command_digest``/``payload_digest``; no full payload is
-  persisted for readback), and the stage itself caches only the issued
-  nonce in its own ``_nonces`` dict, exposed solely through
-  ``nonce_for(attempt_id)``. The reservation identity and bound revision
-  are not retained anywhere retrievable by attempt id once
-  ``_commit_capability`` returns.
-
-No attempt-scoped binding exists in this runtime for this recorder to
-resolve through, so the resolver keeps the same per-(account, instrument)
-formula every other wiring site in this compose root already computes
-identically (``_wiring.py``'s ``AtomicCommitStage`` reservation-id provider,
-``TransmissionCapabilityStage``'s context reader, and
-``ComposeContextResolver._reconstruct_transmission_capability``):
-``f"resv-{account}-{instrument}"`` off the compose root's own single, fixed
-:class:`~tos.engine.records.InstrumentKey`.
-
-That formula is **not** "EXACT, full stop" — the prior wording overclaimed
-this. It is exact only under an invariant this module cannot itself enforce:
-at most one live reservation ever exists under the resolved id for the
-whole process lifetime. The rcl log's own already-landed
-``check_reservation_from_state`` gate (``tos_runtime/rcl/gates.py``, HIGH-1
-fix) does forbid literally reusing an id once it reaches the terminal
-``RELEASED`` state — a claimed ``from_state`` must equal the row's held
-state exactly, and ``RELEASED`` has no legal successor — so the specific
-"a fresh reservation silently replaces a released one under the same id"
-race this review raised cannot occur via the legitimate write path
-(verified directly: attempting ``COMMITTED_UNBOUND -> POTENTIALLY_LIVE``
-against an id already held at ``RELEASED`` is refused with
-``INTEGRITY_VIOLATION``, never silently admitted).
-
-But the resolver is still genuinely NOT attempt-scoped: every attempt
-sharing this account+instrument pair resolves to the SAME id, so this
-recorder always verifies an attempt's obligation against whatever state
-that ONE shared reservation currently holds — not the state as of the
-moment that specific attempt's ``SEND_REFUSED`` was recorded. A compose
-root that ever holds more than one live reservation per instrument
-(concurrent orders on the same account+instrument, or a future
-multi-instrument root) MUST inject a real attempt -> reservation lookup
-instead of this formula. See
-``test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_state``
-in the test module for a direct demonstration. A resolver is injected
-rather than this formula being hardcoded in this module precisely so that
-future lookup can be supplied without touching this recorder.
-
-**Capacity-consuming state set (reported deviation).** ``obligation_preserved``
-takes an injected ``capacity_consuming_states: frozenset[str]`` because
-``cur`` cannot import ``tos.rcl`` (sibling-edge-0 import closure —
-``obligation_preserved``'s own docstring). The kernel's own reference set,
-``tos.rcl.predicates._LIVE_COMMITTED_STATES``, is **not** re-exported by
-``tos.rcl.__init__`` (an underscore-prefixed module-private symbol, absent
-from that module's ``__all__``) — importing it directly would be reaching
-into a private implementation detail across a package boundary. This module
-therefore re-derives the same set from the PUBLIC :class:`~tos.rcl.CapacityState`
-enum: every member except ``RELEASED`` (rcl/predicates.py:172-174's own
-definition, mirrored here member-for-member so a future ``CapacityState``
-addition is picked up automatically rather than silently excluded by a
-hand-typed literal set).
-
-Firewall: stdlib + ``tos.cur``/``tos.rcl``/``tos.egressgw.records`` +
-``tos_runtime.evidence``/``tos_runtime.rcl`` only (this lane's scoped
-firewall for this module — no ``tos.workload``/``tos.engine``, so this
-recorder is never told a ``RuntimeIdentity`` and never stamps one onto the
-evidence it appends; ``runtime_identity`` defaults to ``None`` the same way
-an omitted keyword to :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append`
-would).
+The default attempt-to-reservation resolver uses the compose root's
+``(account, instrument)`` identity and is intentionally scope-level. It is
+safe only while that scope has at most one live reservation for the process
+lifetime; concurrent or multi-reservation callers MUST inject a real
+attempt-to-reservation lookup. The capacity-consuming state set is derived
+from the public ``CapacityState`` enum so it follows the kernel vocabulary
+without importing a private predicate constant.
 """
 
 from __future__ import annotations

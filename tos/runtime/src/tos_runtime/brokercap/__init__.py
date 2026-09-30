@@ -12,6 +12,7 @@ from __future__ import annotations
 from tos_runtime.brokercap.derive import (
     Item6Item12Fields,
     derive_item6_item12,
+    is_broker_reaching,
     load_active_instance_document,
 )
 from tos_runtime.brokercap.instance import (
@@ -55,6 +56,7 @@ __all__ = [
     "credential_route_inventory",
     "derive_item6_item12",
     "instance_version_current",
+    "is_broker_reaching",
     "load_active_instance_document",
     "load_broker_scopes",
     "load_instance_document",

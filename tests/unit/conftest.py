@@ -32,10 +32,17 @@ see against a genuinely down Redis — just fast instead of ~9.6s slow.
 ``_create_client``'s own control flow directly, with ``redis.Redis`` itself
 mocked (so it never touches the network or the real retry policy). Patching
 ``_create_client`` out from under it would neuter what it is testing.
+
+Root log level restore
+----------------------
+``restore_root_log_level`` is opt-in (not autouse) for tests that call a
+service's ``LOG_LEVEL`` setup: that setup sets the *root* logger level, which
+would otherwise leak into every later test on the same worker.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 import pytest
@@ -53,6 +60,21 @@ _EXCLUDED_TEST_FILES = frozenset(
 def _is_excluded(request: pytest.FixtureRequest) -> bool:
     fspath = str(request.node.fspath).replace("\\", "/")
     return any(fspath.endswith(excluded) for excluded in _EXCLUDED_TEST_FILES)
+
+
+@pytest.fixture
+def restore_root_log_level() -> Iterator[logging.Logger]:
+    """Yield the root logger and restore its level afterwards.
+
+    ``configure_logging()`` deliberately mutates the process-wide root logger,
+    so any test that calls it has to put the level back.
+    """
+    root = logging.getLogger()
+    before = root.level
+    try:
+        yield root
+    finally:
+        root.setLevel(before)
 
 
 @pytest.fixture(autouse=True)

@@ -264,11 +264,13 @@ def test_every_result_kind_produces_a_composite_with_no_coupling_violation(
         fills = {"filled_quantity": Decimal("1"), "remaining_quantity": Decimal("1")}
 
     application = ledger.apply_egress_result(
-        EgressResultPayload(
-            instrument_key=key,
-            attempt_id="attempt-sweep",
-            kind=kind,
-            **fills,
+        EgressResultPayload.model_validate(
+            {
+                "instrument_key": key,
+                "attempt_id": "attempt-sweep",
+                "kind": kind,
+                **fills,
+            }
         )
     )
     assert application.applied, f"{kind} was not applied: {application.disposition}"

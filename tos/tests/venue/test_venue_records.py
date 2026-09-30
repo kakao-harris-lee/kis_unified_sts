@@ -132,7 +132,7 @@ def test_records_are_frozen_and_extra_forbid() -> None:
     """(§2.0) Models are frozen (no mutation) and forbid unknown fields."""
     decision = clean_decision()
     with pytest.raises((ValueError, TypeError)):
-        decision.result = OrderAdmissibilityResult.INADMISSIBLE  # type: ignore[misc]
+        decision.result = OrderAdmissibilityResult.INADMISSIBLE
     with pytest.raises((ValueError, TypeError)):
         VenueConstraintSnapshot(snapshot_id="x", unknown_field="y")  # type: ignore[call-arg]
 

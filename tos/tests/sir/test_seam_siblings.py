@@ -53,7 +53,7 @@ def _clear_de_restriction_inputs(**overrides: object) -> DeRestrictionInputs:
         _CONSUMER_SLOT: False,
     }
     kwargs.update(overrides)
-    return DeRestrictionInputs(**kwargs)
+    return DeRestrictionInputs.model_validate(kwargs)
 
 
 # --- the consumer slot really exists, with the polarity design #28 §4.3 records ---

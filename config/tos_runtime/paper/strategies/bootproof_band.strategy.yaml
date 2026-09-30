@@ -1,0 +1,73 @@
+# =============================================================================
+# bootproof_band.strategy.yaml — TOS paper 배포 **부팅 증명 픽스처** (W-A / A-5)
+# =============================================================================
+# 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
+#
+# 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §3 선택지 (가)
+#       (운영자 선택 2026-09-23) · 상위 계획 §7.8
+#
+# **이것은 거래 전략이 아니다.** 규칙 한 줄("close 가 lower_band 아래")은 부팅 경로가
+# 틱을 소비해 결정까지 도달하는지를 보이기 위한 최소 술어이고, 밴드 값은 렌더가 만드는
+# 부팅 증명 저널의 합성 값이다(실 시세 아님). 진입 우위(edge)·리스크·검증 어느 것도
+# 주장하지 않는다. 채택 스코프가 `SYNTHETIC_FUTURES_ORDER` 라 브로커에 도달하지 않는다.
+#
+# **방향 대칭.** 여기 박힌 `direction: "LONG"` 은 이 배포가 롱 전용이라는 뜻이 아니다.
+# 현 설계에서 `DIRECTION` 은 배포 전체에 하나만 줄 수 있고
+# (order_construction_policy.yaml:185-194), 대칭은 전략 제안 경로가 착지한 뒤 시도별
+# 조회로 풀린다. 그 사이의 증거로 `scripts/tos/render_paper_config.py --direction SHORT`
+# 가 같은 픽스처를 SHORT 구성으로 렌더하고, LONG·SHORT 두 구성 모두 부팅시킨다.
+# **두 번째 사본을 커밋하지 않는다** — 커밋되는 방향은 LONG 하나뿐이다.
+#
+# 원본 템플릿: tos/runtime/config/strategies/example.strategy.yaml
+# 로더: tos_runtime.strategy.loader.load_strategies (파서 = tos.dsl.serialization.parse_strategy)
+#   · `null` 리프와 `"TBD"` 문자열 리프를 **둘 다** 거부한다
+#     (`first_null_leaf` · `tos_runtime._named_tbd.first_named_tbd_leaf`).
+#   · 빈 디렉터리/파싱 실패는 디렉터리 전체 거부(부분 채택 없음).
+#
+# 좌표 칸(`account`/`instrument`)은 커밋되지 않는다 — 렌더가 저장소 밖에서만 채운다.
+# =============================================================================
+
+# 연산 서명에 기록되는 운영자 지정 버전 문자열(파생값 아님) —
+# tos.dsl.determinism.RecordedInputSignature. 제안표 §4.3 식별자 규칙
+# (`tos-paper-<무엇>-g<세대>`, 세대 1)을 그대로 따른다.
+dsl_version: "tos-paper-bootproof-dsl-g1"
+config_binding_version: "tos-paper-bootproof-cfg-g1"
+
+policy:
+  rules:
+    # 규칙 하나. 두 피연산자 모두 capsule 에서 읽는다 —
+    # tos.engine.admission.compare_has_capsule_operand 가 「시장 의존 결정이 설정/리터럴
+    # 만으로 라우팅되지 않을 것」을 요구한다. 네임스페이스 `resolved_values` 는
+    # tos/src/tos/dsl/context_value.py:67 `VALUE_NAMESPACE` 의 값이다.
+    - all_of:
+        - left:
+            ref: ["capsule", "resolved_values", "close"]
+          op: "LT"
+          right:
+            ref: ["capsule", "resolved_values", "lower_band"]
+      decision:
+        kind: "ACTION"
+        rationale: "부팅 증명 픽스처 — close 가 lower_band 아래. 거래 근거 아님."
+        target:
+          kind: "ACTION"
+          # [좌표] 렌더가 채운다. construction.yaml 의 account/instrument 와 같은 값.
+          account: "TBD"
+          instrument: "TBD"
+          # order_construction_policy.yaml:195-196 `_runtime.construction.axes` 의
+          # DIRECTION 값과 같아야 한다(배포 단위 고정값). `--direction SHORT` 렌더는
+          # 이 줄과 그 축을 함께 바꾼다.
+          direction: "LONG"
+          # NEW_LONG 의 position_effect — order_construction_policy.yaml:203-204
+          # `action_class_shape.NEW_LONG.LONG.position_effect`.
+          position_effect: "OPEN"
+          # order_construction_policy.yaml:178 `admitted_quantity_bases` 와 같아야 한다
+          # (tos/src/tos/egressgw/construction.py:396 — 허용 집합 밖이면 거부).
+          quantity_basis: "RISK"
+          # 우위/확신은 **증거이지 권한이 아니다**(tos/src/tos/dsl/proposal.py:74-76).
+          # 픽스처임을 값 자체에 적는다.
+          edge_or_confidence: "bootproof-fixture"
+          rationale: "부팅 증명 픽스처 — 거래 전략 아님."
+  # 어떤 규칙도 발화하지 않을 때의 필수 기본 결과(RFC-008 §9 — 평가는 전역적).
+  default:
+    kind: "NO_ACTION"
+    rationale: "부팅 증명 픽스처 — 밴드 안. 제안 없음."

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+import time
 
 import fakeredis.aioredis
 import pytest
@@ -476,3 +477,249 @@ async def test_on_startup_exception_still_runs_shutdown():
     with pytest.raises(RuntimeError):
         await asyncio.wait_for(task, timeout=1.0)
     assert stage.shutdown_calls == 1
+
+
+# --------------------------------------------------------------------------- #
+# Vanished-stream recovery: the three-way rule (#741, ported from the monitors)
+# --------------------------------------------------------------------------- #
+
+_BACKOFF = 0.25  # distinctive, so a recorded sleep says which path was taken
+_NOGROUP = "NOGROUP No such key 's:in' or consumer group 'g' in XREADGROUP"
+_UNBLOCKED = "UNBLOCKED the stream key no longer exists"
+_CLIENT_UNBLOCK = "UNBLOCKED client unblocked via CLIENT UNBLOCK"
+
+
+class _RecoveryRedis(FakeRedis):
+    """XREADGROUP fails with a scripted error; XGROUP CREATE answers on demand.
+
+    ``group_state`` is what each recreate reports:
+    ``"created"`` (the group really was gone), ``"existed"`` (BUSYGROUP —
+    nothing was missing after all), or ``"failed"`` (the recreate itself cannot
+    run: ACL, or eviction racing it).
+    """
+
+    def __init__(
+        self,
+        *,
+        group_state: str,
+        read_error: str = _NOGROUP,
+        read_fails_forever: bool = True,
+        batches=None,
+    ) -> None:
+        super().__init__(batches or [])
+        self.group_state = group_state
+        self.read_error = read_error
+        self.read_fails_forever = read_fails_forever
+        self._read_failed = False
+
+    async def xgroup_create(self, stream, group, id="0", mkstream=False):
+        self.group_created_calls.append((stream, group, id, mkstream))
+        self.group_created = (stream, group, id, mkstream)
+        if self.group_state == "existed":
+            raise RuntimeError("BUSYGROUP Consumer Group name already exists")
+        if self.group_state == "failed":
+            raise RuntimeError("NOPERM this user has no permissions to run 'xgroup'")
+
+    async def xreadgroup(self, **kwargs):
+        if self.read_fails_forever or not self._read_failed:
+            self._read_failed = True
+            self.xreadgroup_calls += 1
+            raise RuntimeError(self.read_error)
+        return await super().xreadgroup(**kwargs)
+
+
+# Bound before any test can monkeypatch ``asyncio.sleep``, so the driver below
+# keeps a way to yield that the recorder does not see.
+_REAL_SLEEP = asyncio.sleep
+
+
+def _record_sleeps(monkeypatch) -> list[float]:
+    """Replace ``asyncio.sleep`` with a recorder that never actually waits.
+
+    The recorded durations are the observable difference between the two paths:
+    ``0`` is the fast retry a genuine recreate earns, ``_BACKOFF`` is the
+    rate-limited error path. A hot loop shows up as a list with no backoff in it.
+    """
+    sleeps: list[float] = []
+
+    async def record_sleep(seconds=0):
+        sleeps.append(seconds)
+        await _REAL_SLEEP(0)
+
+    monkeypatch.setattr("shared.streaming.stage.asyncio.sleep", record_sleep)
+    return sleeps
+
+
+async def _drive_until(stage, predicate, *, timeout=2.0) -> None:
+    """Run the loop until ``predicate()`` holds, then stop it and await exit."""
+    task = asyncio.create_task(stage.run())
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:  # pragma: no cover - guards a hang
+            task.cancel()
+            raise AssertionError(f"condition not reached within {timeout}s")
+        await _REAL_SLEEP(0)
+    await stage.stop()
+    await asyncio.wait_for(task, timeout=timeout)
+
+
+def _read_error_logs(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if "xreadgroup error" in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_vanished_read_that_recreated_the_group_retries_without_backoff(
+    monkeypatch, caplog
+):
+    """A recreate that really happened earns the immediate retry.
+
+    This is the one outcome where skipping the backoff is right: the next read
+    now has a reason to succeed.
+    """
+    caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
+    redis = _RecoveryRedis(
+        group_state="created",
+        read_fails_forever=False,
+        batches=[[(b"9-0", {})]],
+    )
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=_BACKOFF)
+    sleeps = _record_sleeps(monkeypatch)
+
+    await _drive_until(stage, lambda: stage.handled)
+
+    assert stage.handled == [b"9-0"]
+    assert _BACKOFF not in sleeps
+    assert _read_error_logs(caplog) == []
+    assert _audit_records(caplog, "consumer_group_recovered")
+
+
+@pytest.mark.asyncio
+async def test_vanished_read_with_group_already_present_backs_off_instead_of_spinning(
+    monkeypatch, caplog
+):
+    """The hot-loop regression, pinned directly.
+
+    A read that keeps reporting a vanished stream while the group is already
+    there recovers nothing, so the read error had some other cause. The shape
+    this replaces retried instantly and logged nothing: 33,746 reads/s, 0
+    records, 0 log lines in production (#741). Every read must now be paired
+    with the backoff, which bounds the loop at 1/backoff reads per second.
+    """
+    caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
+    redis = _RecoveryRedis(group_state="existed")
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=_BACKOFF)
+    sleeps = _record_sleeps(monkeypatch)
+
+    await _drive_until(stage, lambda: redis.xreadgroup_calls >= 3)
+
+    # every failing read paid the backoff; none took the zero-sleep fast path
+    assert set(sleeps) == {_BACKOFF}
+    assert len(sleeps) == redis.xreadgroup_calls
+    # nothing was recovered, so nothing may claim a recreate
+    assert _audit_records(caplog, "consumer_group_recovered") == []
+    assert redis.group_created_calls  # but it did try
+    # and the operator sees the read error, once, rate-limited
+    errors = _read_error_logs(caplog)
+    assert len(errors) == 1
+    assert errors[0].levelno == logging.ERROR
+    assert errors[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_vanished_read_with_failed_recreate_backs_off_and_logs(
+    monkeypatch, caplog
+):
+    """A recreate that could not run must not buy an immediate retry either."""
+    caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
+    redis = _RecoveryRedis(group_state="failed")
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=_BACKOFF)
+    sleeps = _record_sleeps(monkeypatch)
+
+    await _drive_until(stage, lambda: redis.xreadgroup_calls >= 3)
+
+    assert set(sleeps) == {_BACKOFF}
+    assert len(sleeps) == redis.xreadgroup_calls
+    assert _audit_records(caplog, "consumer_group_recovered") == []
+    assert _audit_records(caplog, "consumer_group_ensure_failed")
+    assert len(_read_error_logs(caplog)) == 1
+
+
+@pytest.mark.asyncio
+async def test_unblocked_vanished_stream_recovers_like_nogroup(monkeypatch, caplog):
+    """The blocking read's own failure shape must reach recovery too.
+
+    All five live consumers read a stream carrying a 24h TTL and block for 2s,
+    so the key can expire while this client is already parked in XREADGROUP.
+    Redis answers UNBLOCKED rather than NOGROUP for that, and the NOGROUP-only
+    predicate would have sent it to the generic error path.
+    """
+    caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
+    redis = _RecoveryRedis(
+        group_state="created",
+        read_error=_UNBLOCKED,
+        read_fails_forever=False,
+        batches=[[(b"9-0", {})]],
+    )
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=_BACKOFF)
+    sleeps = _record_sleeps(monkeypatch)
+
+    await _drive_until(stage, lambda: stage.handled)
+
+    assert stage.handled == [b"9-0"]
+    assert _BACKOFF not in sleeps
+    assert _audit_records(caplog, "consumer_group_recovered")
+    assert _read_error_logs(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_client_unblock_is_not_treated_as_a_vanished_stream(monkeypatch, caplog):
+    """An operator's CLIENT UNBLOCK is not a missing group; do not recreate."""
+    caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
+    redis = _RecoveryRedis(group_state="created", read_error=_CLIENT_UNBLOCK)
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=_BACKOFF)
+    sleeps = _record_sleeps(monkeypatch)
+
+    await _drive_until(stage, lambda: redis.xreadgroup_calls >= 3)
+
+    # only the one startup create; the error path never swept the group
+    assert redis.group_created_calls == [("s:in", "g", "0", True)]
+    assert set(sleeps) == {_BACKOFF}
+    assert len(_read_error_logs(caplog)) == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_claim_records_a_failed_recovery_without_taking_the_backoff(
+    caplog,
+):
+    """The claim path stays outcome-independent, and stays observable.
+
+    ``_claim_pending_messages`` returns ``[]`` whatever the recovery answered
+    and lets the caller's XREADGROUP decide — it is not a hot loop, so it must
+    not grow a backoff. What it must not do is go quiet: a recreate that cannot
+    run is already on the record at WARNING, with the traceback.
+    """
+    caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
+
+    class _NoGroupClaimRedis(_RecoveryRedis):
+        async def xautoclaim(self, *_args, **_kwargs):
+            self.xautoclaim_calls += 1
+            raise RuntimeError(_NOGROUP)
+
+    redis = _NoGroupClaimRedis(group_state="failed")
+    stage = _stage(
+        redis,
+        pending_retry_idle_ms=0,
+        xreadgroup_error_sleep_seconds=_BACKOFF,
+    )
+
+    claimed = await stage._claim_pending_messages()
+
+    assert claimed == []
+    assert stage._pending_claim_start_id == "0-0"
+    failures = _audit_records(caplog, "consumer_group_ensure_failed")
+    assert len(failures) == 1
+    assert [
+        r.levelno
+        for r in caplog.records
+        if "consumer_group_ensure_failed" in r.getMessage()
+    ] == [logging.WARNING]

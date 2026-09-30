@@ -41,7 +41,6 @@ import pytest
 import redis
 
 from shared.streaming.client import RedisClient
-from shared.streaming.consumer import StreamConsumer
 from shared.streaming.message import StreamMessage
 from shared.streaming.publisher import StreamPublisher
 
@@ -123,17 +122,62 @@ def _format_latency_stats(latencies: list[float], label: str) -> str:
     )
 
 
-class _TestConsumer(StreamConsumer):
-    """Test consumer that tracks processing latency."""
+# Upper bound on one drain. The benchmark publishes every message before it
+# starts consuming, so a drain that has not finished by now is stalled, not slow.
+_CONSUME_TIMEOUT_SECONDS = 60.0
 
-    def __init__(self, stream_name: str, group_name: str):
-        super().__init__(stream_name, group_name)
+
+class _LatencyRecordingConsumer:
+    """Consumer-group reader that records end-to-end latency, local to this file.
+
+    Deliberately not built on ``shared.streaming.stage.StreamStage``: that
+    framework is async and expects an async Redis client, while the publisher
+    half of this same end-to-end measurement is synchronous, and it logs and
+    times every message it handles. Both would land inside the
+    ``consume_duration`` measured below. A benchmark needs a measurement
+    instrument, not a production daemon, so it carries its own.
+
+    Replaces the retired ``StreamConsumer`` base class (issue #752), whose read
+    loop logged every exception and immediately re-looped -- a NOGROUP fails
+    fast past ``block=``, so that loop spun uncapped. Here read errors
+    propagate and a stalled drain trips ``_CONSUME_TIMEOUT_SECONDS``, so the
+    benchmark fails loudly instead of spinning or hanging.
+    """
+
+    def __init__(
+        self,
+        stream_name: str,
+        group_name: str,
+        expected_count: int,
+        timeout_seconds: float = _CONSUME_TIMEOUT_SECONDS,
+    ) -> None:
+        self.stream = stream_name
+        self.group = group_name
+        self.consumer = f"{group_name}_worker_1"
+        self.expected_count = expected_count
+        self.timeout_seconds = timeout_seconds
+        self.client = RedisClient.get_client()
+        self.running = False
         self.processed_count = 0
         self.latencies: list[float] = []  # End-to-end latency in microseconds
-        self.expected_count = 0
+
+        # Same env knobs and defaults the retired StreamConsumer read, so a
+        # tuned benchmark environment keeps measuring the same batch shape.
+        self._read_count = int(os.environ.get("REDIS_CONSUMER_READ_COUNT", "10"))
+        self._block_ms = int(os.environ.get("REDIS_CONSUMER_BLOCK_MS", "1000"))
+
+        self._ensure_group_exists()
+
+    def _ensure_group_exists(self) -> None:
+        """Create the consumer group from the head of the stream."""
+        try:
+            self.client.xgroup_create(self.stream, self.group, id="0", mkstream=True)
+        except redis.ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
 
     def process_message(self, message: StreamMessage) -> bool:
-        """Process message and record latency.
+        """Record latency for one message.
 
         Latency = (current_time - message.timestamp)
         """
@@ -148,10 +192,34 @@ class _TestConsumer(StreamConsumer):
 
         return True
 
-    def reset(self) -> None:
-        """Reset counters for next test."""
-        self.processed_count = 0
-        self.latencies = []
+    def run(self) -> None:
+        """Drain the stream until ``expected_count`` messages are processed."""
+        self.running = True
+        deadline = time.monotonic() + self.timeout_seconds
+
+        while self.running:
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"Drained only {self.processed_count}/{self.expected_count} "
+                    f"messages from {self.stream} in {self.timeout_seconds}s"
+                )
+
+            result = self.client.xreadgroup(
+                self.group,
+                self.consumer,
+                {self.stream: ">"},  # > = new messages only
+                count=self._read_count,
+                block=self._block_ms,
+            )
+            for stream_name, stream_msgs in result or []:
+                for msg_id, fields in stream_msgs:
+                    message = StreamMessage.from_raw(stream_name, msg_id, fields)
+                    if self.process_message(message):
+                        self.client.xack(self.stream, self.group, message.id)
+
+    def stop(self) -> None:
+        """Leave the drain loop once the current batch finishes."""
+        self.running = False
 
 
 def _benchmark_publish_throughput(
@@ -214,8 +282,9 @@ def _benchmark_end_to_end(
     """
     # Create publisher and consumer
     publisher = StreamPublisher(stream_name, maxlen=num_messages * 2)
-    consumer = _TestConsumer(stream_name, f"{stream_name}_test_group")
-    consumer.expected_count = num_messages
+    consumer = _LatencyRecordingConsumer(
+        stream_name, f"{stream_name}_test_group", expected_count=num_messages
+    )
 
     # Publish messages (with rate limiting if specified)
     publish_start = time.perf_counter()

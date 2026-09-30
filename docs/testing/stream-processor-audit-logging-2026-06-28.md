@@ -5,6 +5,16 @@ Runtime log samples are intentionally deferred: this development host does not
 have the paper-trading market session logs, so the final evidence check should
 run on the mock/paper trading machine after the next session.
 
+> **Superseded in part, 2026-09-23.** Both monitor daemons now run on
+> `shared/streaming/stage.py`'s `MultiStreamStage`, so they emit the common
+> stage's evidence (`stream_message_processed`, `stream_message_ack_failed`,
+> `stream_consumer_alive`) and its read-error wording — `xreadgroup error;
+> sleeping 0.5s` — instead of `event=monitor_stream_read_error`. Only
+> `event=stream_message_dropped` is still theirs, and it no longer carries
+> `ack=true` (the ACK is the framework's, and it has its own line). The table
+> and the `rg` pattern below are left as written: this is a dated record of the
+> 06-28 pass, not a living reference.
+
 ## Scope
 
 | Area | Services | Expected evidence |

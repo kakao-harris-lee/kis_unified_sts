@@ -10,7 +10,9 @@ tools: Bash
 > **Scope note (operator directive 2026-09-04): plan review is on explicit operator
 > request only.** Plans and specs are authored solo by the session model and reviewed
 > by the operator; do not run unless the instruction states the operator asked for a
-> Codex plan critique. Code diffs are out of Codex scope entirely (`SCOPE_EXCLUDED`).
+> Codex plan critique. Code is not this lane's business — the hard-to-reverse code
+> paths Codex may review (2026-09-11 scope) go to `codex-reviewer`, everything else to
+> the Claude-side lane.
 
 ## 경계 (가장 먼저 못박는다)
 

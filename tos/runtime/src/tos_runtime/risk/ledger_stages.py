@@ -117,18 +117,22 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Mapping
+from typing import Protocol
 
 from tos.afg import ActionFlowPermit
 from tos.engine.records import StageRequest, StageVerdict
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
 from tos.rcl import (
+    AppendReceipt,
     AppendRefusal,
     AppendRefusalReason,
     CapacityReservationTransition,
     CapacityState,
     CommandType,
+    LogView,
     ReservationScope,
     TransitionCause,
+    WriterEpoch,
     capacity_at_least_as_conservative,
 )
 
@@ -148,6 +152,7 @@ from tos_runtime.risk.flow import (
 __all__ = [
     "ActionFlowDecisionStage",
     "AggregateRiskDecisionStage",
+    "AtomicCommitLogPort",
     "AtomicCommitStage",
     "CommitmentUnavailabilityStage",
     "LedgerVerificationStage",
@@ -394,6 +399,33 @@ class LedgerVerificationStage:
         )
 
 
+class AtomicCommitLogPort(Protocol):
+    """The narrow read/write surface :class:`AtomicCommitStage` needs off a
+    :class:`~tos_runtime.rcl.log.SqliteCommitLog` (mypy stage 3 §1.3 rule 3 port
+    introduction) — only :meth:`read_linearizable` and
+    :meth:`apply_reservation_transition`, never any other commit-log member."""
+
+    def read_linearizable(self, *, writer_epoch: WriterEpoch) -> LogView:
+        """See :meth:`~tos_runtime.rcl.log.SqliteCommitLog.read_linearizable`'s own
+        docstring."""
+        ...
+
+    def apply_reservation_transition(
+        self,
+        transition: CapacityReservationTransition,
+        cause: TransitionCause,
+        *,
+        command_type: CommandType,
+        command_id: str,
+        command_digest: str | None,
+        expected_seq: int,
+        finality_witness: bool | None = None,
+    ) -> AppendReceipt | AppendRefusal:
+        """See :meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`'s
+        own docstring."""
+        ...
+
+
 class AtomicCommitStage:
     """Step 9 (``ATOMIC_COMMIT``) — reservation + permit in ONE
     ``apply_reservation_transition`` transaction (module docstring's
@@ -401,7 +433,7 @@ class AtomicCommitStage:
 
     def __init__(
         self,
-        log: SqliteCommitLog,
+        log: AtomicCommitLogPort,
         *,
         writer_epoch: int,
         permit_provider: PermitProvider,

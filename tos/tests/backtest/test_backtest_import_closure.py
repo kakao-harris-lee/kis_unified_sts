@@ -75,6 +75,11 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
+        # kernel round #3 §2 결정 1 (2026-09-12): tos.engine now directly realizes
+        # tos.nontrade too (the CORPORATE_ACTION handler), reaching every tos.engine
+        # consumer through the already-ratified tos.engine edge — same widening as
+        # tos.orthostate above.
+        "tos.nontrade",
         "tos.backtest",
     }
 )
@@ -106,7 +111,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
-        "tos.nontrade",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -341,6 +345,7 @@ def _run_child(target) -> dict:  # noqa: ANN001 - a multiprocessing target calla
     result = queue.get(timeout=120)
     proc.join(timeout=120)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
+    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
     return result
 
 
@@ -616,14 +621,14 @@ def test_source_imports_no_module_outside_the_direct_allowlist() -> None:
     for path in sorted(_BACKTEST_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            names: list[str] = []
+            entries: list[tuple[str, int]] = []
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
+                entries = [(alias.name, node.lineno) for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
+                entries = [(node.module, node.lineno)]
+            for name, lineno in entries:
                 if not _is_allowed_direct_import(name):
-                    offenders.append(f"{path.name}:{node.lineno} import {name}")
+                    offenders.append(f"{path.name}:{lineno} import {name}")
     assert offenders == [], f"forbidden sibling import in source: {offenders}"
 
 

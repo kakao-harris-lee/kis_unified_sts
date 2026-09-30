@@ -48,6 +48,16 @@ def _scope(config: BrokerScopesConfig, name: str):
     return next(s for s in config.scopes if s.name == name)
 
 
+def _instance_path(config: BrokerScopesConfig) -> Path:
+    """``config.instance_path``, asserted present — every call site below
+    builds its config via ``_load_config`` (this module's own helper),
+    which always sets ``instance_path`` explicitly (absent is a real,
+    reachable case for other configs — never for one built here)."""
+    path = config.instance_path
+    assert path is not None
+    return path
+
+
 # ===========================================================================
 # SYNTHETIC_FUTURES_ORDER — no instance block, endpoint_class SYNTHETIC
 # ===========================================================================
@@ -132,7 +142,7 @@ def test_real_read_item6_true_structurally_admissible_and_bound(
     scope = _scope(config, "REAL_READ")
     assert scope.admissibility is Admissibility.ADMISSIBLE
 
-    instance = load_instance_document(config.instance_path, environment="REAL_PROD")
+    instance = load_instance_document(_instance_path(config), environment="REAL_PROD")
     fields = derive_item6_item12(scope, config, instance)
 
     assert fields.account_instrument_action_allowed is True
@@ -160,7 +170,7 @@ def test_real_read_instance_binds_to_the_real_prod_document(
     scope = _scope(config, "REAL_READ")
     assert scope.instance is not None
     instance = load_instance_document(
-        config.instance_path, environment=scope.instance.environment
+        _instance_path(config), environment=scope.instance.environment
     )
     assert instance.environment == "REAL_PROD"
     assert instance.status == "DRAFT"
@@ -180,7 +190,7 @@ def test_mock_stock_order_item6_false_when_evidence_not_positive(
     scope = _scope(config, "MOCK_STOCK_ORDER")
     assert scope.admissibility is Admissibility.PROHIBITED  # profile_evidence_ok: null
 
-    instance = load_instance_document(config.instance_path, environment="MOCK_VTS")
+    instance = load_instance_document(_instance_path(config), environment="MOCK_VTS")
     fields = derive_item6_item12(scope, config, instance)
 
     assert fields.account_instrument_action_allowed is False
@@ -205,7 +215,7 @@ def test_mock_stock_order_item6_false_when_evidence_positive_but_reduced_scope(
     scope = _scope(config, "MOCK_STOCK_ORDER")
     assert scope.admissibility is Admissibility.REDUCED
 
-    instance = load_instance_document(config.instance_path, environment="MOCK_VTS")
+    instance = load_instance_document(_instance_path(config), environment="MOCK_VTS")
     fields = derive_item6_item12(scope, config, instance)
     assert fields.account_instrument_action_allowed is False
 
@@ -224,7 +234,7 @@ def test_derive_item6_item12_threads_scopes_own_degraded_flag(
     assert scope.instance is not None
     # The shipped example ships `degraded_since_authorization: null`.
     assert scope.instance.degraded_since_authorization is None
-    instance = load_instance_document(config.instance_path, environment="MOCK_VTS")
+    instance = load_instance_document(_instance_path(config), environment="MOCK_VTS")
 
     captured: dict[str, object] = {}
     original = derive_module.instance_version_current

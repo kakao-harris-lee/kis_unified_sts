@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from tos_runtime.custody.file_custody import PROVISIONED_SCOPES, FileCustody
@@ -16,8 +18,23 @@ from tos_runtime.custody.ports import (
     CustodyManifestError,
     CustodyScopeNotProvisioned,
 )
+from tos_runtime.evidence.ports import EvidenceAppendPort
 
 from .conftest import FakeEvidenceDouble, write_manifest, write_scope_file
+
+
+def _payload(record: dict[str, object]) -> dict[str, object]:
+    """Narrow ``record["payload"]`` from ``object`` back to ``dict[str, object]``.
+
+    ``FakeEvidenceDouble.records`` stores ``{"payload": dict(payload), ...}``
+    (see ``conftest.py``), so ``payload`` is always a dict at runtime — this
+    just asserts what every ``record["payload"][...]`` chain below already
+    assumed implicitly, so mypy can check the second subscript too.
+    """
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    return payload
+
 
 _DEFAULT_SCOPES = {
     "read.principal": {
@@ -38,6 +55,28 @@ _DEFAULT_SCOPES = {
 }
 
 
+class _FileCustodyKwargs(TypedDict):
+    """1:1 with :class:`FileCustody`'s ``__init__`` REQUIRED keyword parameters (plan §1.1
+    A-rt; #784 LOW carry-over — mypy stage 3 §1.3 3-e) — ``total=True`` so a ``**kwargs`` call
+    site is checked key-by-key and type-by-type, and a missing required key is caught,
+    matching every other ``_*Kwargs``/``_*KwargsPartial`` pair in this test tree
+    (``tos/runtime/tests/time/test_service.py``'s ``_TimeConfigKwargs`` etc.)."""
+
+    root_dir: Path
+    environment_label: str | None
+    expected_owner_uid: int
+    evidence: EvidenceAppendPort
+
+
+class _FileCustodyKwargsPartial(TypedDict, total=False):
+    """The two DEFAULTED :class:`FileCustody` keyword parameters — ``total=False`` since
+    :func:`_make_custody` only sets ``getuid`` conditionally, never ``secret_field_names``.
+    """
+
+    getuid: Callable[[], int]
+    secret_field_names: frozenset[str]
+
+
 def _make_custody(
     custody_root: Path,
     evidence_double: FakeEvidenceDouble,
@@ -52,15 +91,16 @@ def _make_custody(
         environment_label=environment_label,
         scopes=scopes if scopes is not None else _DEFAULT_SCOPES,
     )
-    kwargs: dict[str, object] = {
+    base: _FileCustodyKwargs = {
         "root_dir": custody_root,
         "environment_label": environment_label,
         "expected_owner_uid": expected_owner_uid,
         "evidence": evidence_double,
     }
+    overrides: _FileCustodyKwargsPartial = {}
     if getuid is not None:
-        kwargs["getuid"] = getuid
-    return FileCustody(**kwargs)
+        overrides["getuid"] = getuid
+    return FileCustody(**base, **overrides)
 
 
 # ============================================================================
@@ -192,11 +232,41 @@ def test_provisioned_scopes_is_pinned_exactly() -> None:
     only that a few sampled strings were refused. This pins the exact set,
     so ANY addition, removal, or rename is caught immediately regardless of
     which specific scope strings the behavioural tests happen to exercise.
+
+    TOS KIS MOCK transport plan T2 lane C extended this set with the two
+    stock MOCK-order custody scopes (``kis_mock.app_key``/
+    ``kis_mock.app_secret``) — deliberately NOT ``kis_mock.account`` (review
+    F2: the account number is the sealed outbound coordinate, never a
+    custody credential).
     """
     assert (
-        frozenset({"read.principal", "evidence.key", "replay.params"})
+        frozenset(
+            {
+                "read.principal",
+                "evidence.key",
+                "replay.params",
+                "kis_mock.app_key",
+                "kis_mock.app_secret",
+            }
+        )
         == PROVISIONED_SCOPES
     )
+
+
+def test_scope_principal_reads_the_manifest_only_no_credential_file_needed(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """Independent review LOW-5: ``scope_principal``'s own "zero secret I/O" docstring claim had
+    no test. Proven directly: the scope's credential FILE is never written at all (unlike every
+    other test in this suite, which calls ``write_scope_file``), and ``scope_principal`` still
+    returns the manifest principal, with no evidence recorded either (a real ``load()`` always
+    appends one ``CUSTODY_LOAD`` record; this method appends none)."""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    assert not (custody_root / "read.principal").exists()
+    assert custody.scope_principal("read.principal") == "read-principal-v1"
+    assert evidence_double.records == []
 
 
 @pytest.mark.parametrize(
@@ -293,9 +363,9 @@ def test_evidence_record_never_contains_secret_bytes(
     serialized = repr(record)
     assert secret not in serialized.encode()
     assert secret.decode() not in serialized
-    assert record["payload"]["principal_id"] == "read-principal-v1"
-    assert record["payload"]["scope"] == "read.principal"
-    assert record["payload"]["file_sha256"] == hashlib.sha256(secret).hexdigest()
+    assert _payload(record)["principal_id"] == "read-principal-v1"
+    assert _payload(record)["scope"] == "read.principal"
+    assert _payload(record)["file_sha256"] == hashlib.sha256(secret).hexdigest()
     assert record["kind"] == "CUSTODY_LOAD"
 
 
@@ -472,8 +542,8 @@ def test_load_succeeds_with_correctly_pinned_digest(
 
     assert handle.value() == data
     record = evidence_double.records[0]
-    assert record["payload"]["digest_pinned"] is True
-    assert "digest_note" not in record["payload"]
+    assert _payload(record)["digest_pinned"] is True
+    assert "digest_note" not in _payload(record)
 
 
 def test_load_with_null_digest_succeeds_and_records_unpinned_note(
@@ -488,8 +558,8 @@ def test_load_with_null_digest_succeeds_and_records_unpinned_note(
 
     assert handle.value() == b"unpinned-key-bytes"
     record = evidence_double.records[0]
-    assert record["payload"]["digest_pinned"] is False
-    assert record["payload"]["digest_note"] == "digest 미고정"
+    assert _payload(record)["digest_pinned"] is False
+    assert _payload(record)["digest_note"] == "digest 미고정"
 
 
 # ============================================================================
@@ -562,6 +632,33 @@ def test_manifest_rejects_absolute_file_path(
         )
 
     # Refused at CONSTRUCTION — no scope was ever loaded, no evidence write.
+    assert evidence_double.records == []
+
+
+def test_manifest_rejects_named_tbd_placeholder_principal(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+) -> None:
+    """W-A A-0 round 2: a scope's own ``principal`` (ADR-002-013 :267-269) is a real
+    identity sealed into every ``CUSTODY_LOAD`` evidence record — an operator typing
+    the literal placeholder string ``"TBD"`` must never pass for one."""
+    scopes = dict(_DEFAULT_SCOPES)
+    scopes["read.principal"] = {
+        "file": "read.principal",
+        "principal": "TBD",
+        "expected_sha256": None,
+    }
+    write_manifest(custody_root, environment_label="non-live-test", scopes=scopes)
+
+    with pytest.raises(CustodyManifestError, match="template placeholder"):
+        FileCustody(
+            root_dir=custody_root,
+            environment_label="non-live-test",
+            expected_owner_uid=expected_owner_uid,
+            evidence=evidence_double,
+        )
+
     assert evidence_double.records == []
 
 

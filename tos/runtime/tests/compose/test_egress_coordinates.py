@@ -19,6 +19,7 @@ from tos_runtime.compose._egress_coordinates import (
     EgressCoordinateConfigError,
     load_egress_coordinates,
 )
+from tos_runtime.compose._request_digest import CapsuleStandInDigest
 
 from . import _fixtures as fx
 from .conftest import write_approval_file
@@ -69,6 +70,19 @@ def test_loader_happy_path_and_environment_label_substitution(tmp_path: Path) ->
     # performs.
     assert loaded.active_principal == "egressgw-paper-env-7"
     assert loaded.capsule_terminus_fields == ("account", "instrument")
+
+
+def test_named_tbd_placeholder_endpoint_is_refused(tmp_path: Path) -> None:
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
+    one of the eight authorized-coordinate literals must never be sealed into
+    ``EgressCoordinateSet`` as though it were a genuine value — the pre-existing
+    ``_require_str`` guard only refused a bare ``null``/empty string."""
+    raw = _valid_egress_coordinates()
+    raw["endpoint"] = {"value": "TBD"}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+    with pytest.raises(EgressCoordinateConfigError, match="template placeholder"):
+        load_egress_coordinates(path, environment_label="paper-env-7")
 
 
 def test_active_principal_without_the_token_passes_through_unchanged(
@@ -221,7 +235,11 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     ]
     assert matching_inventory_principals == [resolved.principal]
 
-    assert resolved.capsule_egress_request_digest == _SCHEME.compute_digest(
+    # T2 lane A: the DEFAULT ``request_bytes_digest_source`` is still the unchanged
+    # capsule-terminus stand-in — same constant, same computation, now wrapped in
+    # ``CapsuleStandInDigest`` rather than assigned to a bare field.
+    assert isinstance(resolved.request_bytes_digest_source, CapsuleStandInDigest)
+    assert resolved.request_bytes_digest_source.digest == _SCHEME.compute_digest(
         {
             "account": runtime.context_resolver.instrument_key.account,
             "instrument": runtime.context_resolver.instrument_key.instrument,

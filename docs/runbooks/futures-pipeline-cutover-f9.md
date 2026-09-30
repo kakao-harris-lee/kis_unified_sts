@@ -261,6 +261,427 @@ also enforces at least 100 signals and absolute backtest tracking error <= 20%.
 Passing the bundle check does **not** replace the actual shadow logs, Phase-5
 artifacts, or written operator approval.
 
+**Daily checks added 2026-09-10** (F-9 gap closure, plan
+`docs/plans/2026-09-10-f9-gate1-parity-gap-closure.md`):
+
+- **Setup A has a previous close.** The decoupled daemon has no
+  MarketDataProvider; before PR #668 it read parquet daily bars for the trading
+  symbol, which do not exist (`data/market/futures/daily` holds only
+  `101S6000` / `krx_kospi200f_continuous`, stale since 2026-06-25), so every
+  session evaluated Setup A as `no_prev_close` (2026-09-09: 411 warnings,
+  2026-09-10: 830) while the orchestrator fired Setup A at 08:55 / 08:59. The
+  producer now publishes the REST `futs_prdy_clpr` it already prefetches:
+
+  ```bash
+  redis-cli -p 6379 -n 1 hgetall futures:daily_reference:<trading symbol>   # prev_close, source, asof_ts (today, KST), producer
+  docker logs --tail 300 kis_paper-futures-decision-engine 2>&1 | grep -E "prev_close source="
+  ```
+
+  An `asof_ts` older than today means the producer did not prefetch this
+  session (`trader-futures` pre-cutover, `futures-market-ingest` after): Setup A
+  rows read `no_prev_close` again and the day proves nothing about Setup A.
+- **Every risk-filter verdict is on the log.** Rejections used to be silent
+  (no log line, the audit writer is the `shared/backtest` no-op stub, no
+  metric), so no Gate 1b row could ever be evidenced CLOSED. PR #667 logs one
+  line per evaluation:
+
+  ```text
+  risk_filter verdict=rejected msg_id=<stream id> signal_id=… setup_type=… direction=… symbol=… filter=leverage reason=… size_multiplier=… layer_size_multiplier=… entry_size_factor=… outcomes=trading_hours:pass,…,leverage:fail
+  ```
+
+  The daemons log through `logging.basicConfig` (stderr), so every `docker logs`
+  pipe below needs `2>&1`. Count from the harvested files (step "Harvest the
+  session's logs" below) — they are what an observation-log row cites, and they
+  survive a redeploy. `sort -u` puts every harvest of the day in time order
+  (lines start with the KST `asctime`) and drops the lines two overlapping
+  harvests of the same container both contain, while keeping real redeliveries
+  (their timestamps differ). For a live look mid-session, replace the `cat` with
+  `docker logs --since <session start> kis_paper-futures-risk-filter 2>&1`.
+
+  Raw count per verdict and rejecting filter (every evaluation, redeliveries
+  included):
+
+  ```bash
+  cat reports/f9-gate1/<KST date>/futures-risk-filter.*.log \
+    | grep -F "risk_filter verdict=" | sort -u \
+    | grep -oE "verdict=(passed|rejected)|filter=[^ ]+" | paste -d' ' - - \
+    | sort | uniq -c
+  ```
+
+  A candidate whose signals_all enqueue / final XADD / expire / approval
+  hold fails is left pending and redelivered (XAUTOCLAIM, also into a
+  recreated container), and logs a fresh verdict line under the SAME `msg_id`
+  each time — the raw count above then overstates passes. De-duplicated count,
+  keeping the last evaluation per stream entry across all of the day's files:
+
+  ```bash
+  cat reports/f9-gate1/<KST date>/futures-risk-filter.*.log \
+    | grep -F "risk_filter verdict=" | sort -u \
+    | awk '{v=f=m=""; for (i = 1; i <= NF; i++) {
+              if ($i ~ /^verdict=/) v = $i; else if ($i ~ /^filter=/) f = $i;
+              else if ($i ~ /^msg_id=/) m = $i }
+            last[m] = v " " f } END { for (k in last) print last[k] }' \
+    | sort | uniq -c
+  ```
+
+  The last line per `msg_id` is the final evaluation, not always the one that
+  took effect: when the final XADD succeeded and only the TTL `expire` failed,
+  the earlier pass was already forwarded and the redelivery can forward it again
+  or be rejected (#696). A `msg_id` with more than one line is worth reading in
+  full.
+
+  Reconciling with the candidate stream: the de-duplicated total equals the
+  day's `signal.candidate.futures.shadow` entries **minus** the distinct
+  `Unparseable candidate; ACKing as poison-pill` lines (same `cat … | sort -u`;
+  ACKed with no verdict);
+  any remaining shortfall should equal the entries whose evaluation keeps
+  raising (`Filter evaluation failed … leaving pending` — no verdict line, still
+  in `XPENDING signal.candidate.futures.shadow risk_filter`). A raw total above
+  the de-duplicated one is the redelivery count. `filter=` names the rejecting
+  filter (`-` on a pass) and is what a CLOSED row cites. On `verdict=passed`
+  lines `size_multiplier=` is the product forwarded to order_router (or held
+  for Telegram approval when that gate is on) — `layer_size_multiplier` ×
+  `entry_size_factor`; on `verdict=rejected` lines nothing is forwarded and the
+  field only echoes the entry factor, so do not read it as a size. `outcomes=`
+  marks a filter that passed but scaled size as `name:pass@0.50`.
+- **The shadow `LeverageFilter` reads the SHADOW book.** Until PR #667 the
+  risk-filter process never set `TRADING_STATE_KEY_SUFFIX` (the monitor does),
+  so the filter read `trading:futures:positions` — the orchestrator's book — and
+  rejected every shadow entry while the orchestrator held one contract (≈5.5x
+  against the 3.0 cap on 2026-09-10; the only pass that day fell in the
+  orchestrator's flat window 09:38–09:43). Check the startup line:
+
+  ```bash
+  docker logs kis_paper-futures-risk-filter 2>&1 | grep -E "positions_key=" | tail -1   # expect trading:futures:positions:shadow
+  ```
+
+- **Read the decision-engine log with `--tail`.** After the 2026-09-09
+  23:32 / 23:34 host reboots the container's JSON log carries a broken record
+  at the boundary: `docker logs` without `--tail`, with `--since`, or with a
+  `--tail` large enough to cross it stop at 2026-09-09 23:30. `--tail 900` and
+  smaller return the current day. Recreating the container clears it.
+  The cap is `harvest_tail` in `config/f9_observation.yaml` and was **raised to
+  1800 on 2026-09-23**, when the liveness heartbeat roughly doubled this
+  service's off-hours line rate: counted backwards through the real timestamps
+  of `reports/f9-gate1/2026-09-22/futures-decision-engine.233452.log`, 900 lines
+  would have reached back only 7.5h, so a 23:34 harvest would have started after
+  the 15:45 close. 1800 reaches 18.3h and stays under three quarters of a day's
+  lines, so it cannot cross a boundary left by a previous day's reboot. The
+  derivation is in the config comment; do not raise it further without redoing
+  it.
+- **Harvest the session's logs before anything recreates a container.** The
+  verdict lines are the only record of a shadow rejection, and they live only in
+  each container's json-file log, which rotates at 10m × 3
+  (`docker-compose.yml` `x-pipeline-service` logging) and is discarded with the
+  container — `scripts/deploy_paper.sh`, `up -d --force-recreate`, or a rebuild
+  erases the Gate 1b evidence for every session not yet copied out. After the
+  close (and before any redeploy, even mid-day), per session:
+
+  ```bash
+  python scripts/ops/f9_observation_harvest.py                    # harvest + verdict, today
+  python scripts/ops/f9_observation_harvest.py --date 2026-09-18  # past day, verdict only
+  ```
+
+  The script harvests every service named in `config/f9_observation.yaml`
+  (`--since 08:00 KST`, and `--tail 1800` for the decision-engine per the caveat
+  above), then emits the observation-log row and a JSON sidecar. Exit status is
+  `0` when the day's observation is `COMPLETE`, on a `NO_SESSION` day (a weekend
+  or a KRX holiday — there was no session to observe, so a per-session cron must
+  not raise a standing alarm), and on `LIVENESS_UNVERIFIED` (see below — the row
+  carries the caveat instead). Every other verdict exits `1`. A
+  `--report-root` naming a day directory that does not exist exits `2` without
+  writing anything: with no harvested files there is no input, and a confident
+  `NOT OBSERVED - 0/4` against a mistyped path must not look like a dead
+  observation surface. Relative roots anchor at the repo root, not the working
+  directory, and the resolved root is echoed on stderr.
+
+  **`COMPLETE` requires evidence that spans the session.** A service counts as
+  `consumed` only when its harvest brackets 08:45–15:45: rotation drops the
+  *oldest* lines, so it preferentially destroys early-session blindness, and a
+  container recreated mid-day takes everything before the recreate with it —
+  2026-09-18's `futures-monitor` harvest reaches 11:33 and stops, though the
+  daemon was blind until 12:34. What the files do not reach is rendered as
+  `no evidence HH:MM-HH:MM`, never as the end of a blind window. A window that
+  rests on a single line renders open-ended (`BLIND <=09:47`), because one
+  `consumer group missing; recreated` line dates the *end* of an outage of
+  unknown length, not a point event. A missing, zero-byte, unparseable, or
+  failed capture (`<service>.<HHMMSS>.harvest-failed`, written when
+  `docker logs` exits non-zero) is a **harvest failure**, reported as such and
+  never counted as a quiet service.
+
+  A file's coverage runs to its own `<HHMMSS>` harvest stamp, not to its last
+  line. `docker logs` returns everything up to the instant it runs in both
+  harvest modes, so silence after the last line is silence the harvest
+  *watched* — otherwise `COMPLETE` turned on how chatty a service happened to
+  be near 15:45 (four consuming services whose files stopped 30 seconds short
+  of the close read `PARTIAL` with `no evidence 15:44-15:45`). The stamp is a
+  clock with no date, and the directory that supplies one is the *session*
+  date, so a harvest run after midnight — `2026-09-15/*.000135.log` was
+  captured 2026-09-16 00:01 — used to date itself nine hours before the session
+  and silently switch this rule off. It now rolls forward when it is both
+  before the open and before the file's own last line, which is that case and
+  nothing else.
+
+  The head runs back to the `--since` floor in `since` mode. `--since 08:00`
+  was asked for, so a first line at 08:45:05 means the service was quiet from
+  08:00, not that the harvest missed those 45 minutes — without this, every
+  healthy day whose first line landed a second after the open read `PARTIAL`
+  with `no evidence <=08:45`, and the real `futures-risk-filter.113330.log`
+  (146 bytes, first line 09:47) was that case. The cost: a container recreated
+  mid-morning returns only post-recreate lines and is credited with coverage it
+  did not have, so head-hole detection moves to the freshness bound below — a
+  recreate at 11:00 leaves `no proof of consumption 08:45-11:00`. In `tail`
+  mode the head stays at the first surviving line: `--tail N` truncates by line
+  *count*, so there is no floor to anchor at and a late head cannot be told
+  from a quiet start.
+
+  **`COMPLETE` also requires the proof to stay fresh.** Coverage is granted by
+  *any* timestamped line — a startup banner will do — so it answers "did we
+  look?" and cannot also answer "was it working?". Two banners plus one
+  `stream_message_processed` at 08:46 once rendered a whole session
+  `4/4 consumed (COMPLETE)` with the counts bare. So the gap from the open to
+  the first proof, between consecutive proofs, and from the last proof to the
+  close must each stay at or under `observation_max_gap_seconds`
+  (`config/f9_observation.yaml`, 1800s; a gap of exactly 1800s passes).
+
+  **Since 2026-09-23 that bound TRIGGERS a question instead of answering one.**
+  It used to be a *proxy* for liveness: with no direct evidence, "still proving
+  it consumed" was the only stand-in for "still running". Every service now
+  emits a heartbeat — `event=stream_consumer_alive` from
+  `shared/streaming/stage.py` (#765/#776) and `event=decision_engine_alive` from
+  the decision engine's evaluation loop (#766), both every 60s — so each
+  over-the-bound stretch is offered to the `liveness` pattern group:
+
+  - the heartbeat vouches for it → the service is **`idle (alive)`**, a
+    *successful* observation of an empty stream, and COMPLETE-eligible;
+  - it cannot → **`stale_observation`**, exactly as before, and the row says
+    `no proof of consumption or liveness HH:MM-HH:MM`.
+
+  Liveness is scored by **density, not presence**: a stage in a read-failure
+  loop emits *zero* heartbeats (200 failed reads across 6.7 intervals), so
+  absence is the whole signal and "the pattern appears somewhere" would let one
+  line certify seven silent hours. The rule is that no stretch goes longer than
+  `liveness_expected_interval_seconds * (1 + liveness_missed_beats_allowed)`
+  (60 × 3 = 180s) without one. `liveness_expected_interval_seconds` **must
+  equal** `config/streaming.yaml::consumer_stage.heartbeat_interval_seconds`
+  and `config/decision_engine.yaml::liveness.log_interval_seconds`; a test reads
+  all three real files and fails if they drift.
+
+  **180s is also the EMITTER-side ceiling, and that is a change.**
+  `shared/streaming/stage.py` used to derive its ceiling from
+  `observation_max_gap_seconds` (1800) because that was the only bound the
+  harvester had. It is not the bound heartbeats are scored against any more, so
+  `heartbeat_interval_seconds: 300` satisfied every guard-rail the code and the
+  config comments stated while making every healthy quiet day read
+  `stale_observation`. The mirror in that module is now
+  `LIVENESS_MAX_GAP_SECONDS = 180`, the per-stage ceiling is `180 − block − 1`
+  (177 at the shipped 2s block), and the pydantic field refuses anything at or
+  above 180 outright. **Which bound governs the heartbeat: the liveness one,
+  and only it.** 1800 still governs the gap between proofs of *consumption*,
+  and no longer appears in `stage.py` at all — a second number there that looks
+  like a bound and governs nothing is how the hole opened.
+
+  **What the bound no longer catches, so nothing rests on it by accident:** a
+  wedged handler. `MultiStreamStage` logs `stream_message_processed … ack=false`
+  on every redelivery of a message the handler refuses, so a consumer making
+  zero net progress used to renew its own freshness forever. Every `observed`
+  pattern now requires `ack=true`, and a `stalled` group beside it catches the
+  refusals.
+
+  A consumer that completed **nothing at all** therefore reads **`no_progress`**
+  — never `idle (alive)`, because idle means nothing arrived. A consumer that
+  completed *some* messages while refusing others is `consumed`, correctly: it
+  really did consume. That case is the common one and it is not a status, so
+  the refusals ride in the consumers cell beside the tally instead:
+
+  ```
+  4/4 consumed [futures-monitor: 85 deliveries of 1 message made no progress] (COMPLETE)
+  ```
+
+  **Read the two numbers together.** `85 deliveries of 1 message` is one record
+  pinned in the PEL all session and never getting through — a defect. `85
+  deliveries of 85 messages` is a consumer refusing each once and moving on,
+  which is ordinary back-pressure. No threshold decides which; the pair does.
+
+  **The row keeps the two facts apart**: `2/4 consumed, 2/4 alive (idle)`, not
+  `4/4 consumed`. Both are successful observations and they are not the same
+  observation. The second clause is omitted when nothing is idle, so a fully
+  consuming day still reads `4/4 consumed (COMPLETE)` like every earlier row in
+  the table.
+
+  **Instrumentation boundary, PR #776 — read this before re-scoring an old
+  day.** `futures-monitor` moved from a hand-rolled consume loop onto
+  `shared/streaming/stage.py`, and what it emits changed with it.
+  `reports/f9-gate1/` is the durable record (Redis streams expire after 24h), so
+  a session re-scoring a past date is reading logs written by a different
+  daemon. **The boundary is the deploy date — the day the container was
+  recreated on the new image — not the merge date**; the report tree is keyed by
+  KST date, so that single date is the whole discriminator.
+
+  **Boundary: `2026-09-23`.** `kis_paper-futures-monitor` was recreated at
+  2026-09-23 00:58:14 KST and emitted `event=stream_consumer_alive` one
+  heartbeat interval later at 00:59:19. `reports/f9-gate1/2026-09-23/` onward
+  measures this consumer; every earlier date directory does not. (#776 merged
+  and deployed within the same KST day, so the two dates coincide here — a
+  coincidence, not a rule.) The same date and provenance are recorded next to
+  the `futures-monitor` entry in `config/f9_observation.yaml`.
+
+  - **`fills: 0` on every pre-deploy day is a structural zero, not a
+    measurement.** The counter reads `stream_message_processed`, which the old
+    loop never emitted. Never quote a pre-deploy day as "0 shadow fills
+    observed" — it is a null result. A zero looks like data, which is why this
+    one misleads.
+  - Pre-deploy day directories hold **zero** `stream_message_processed` lines,
+    so re-scoring an old day cannot inflate anything: the `observed` pattern
+    got *stricter* (it now requires `ack=true`) and an empty set stays empty.
+    The hazard is interpretive: that verdict reads as a daemon health problem
+    when it was an instrumentation gap. Pre-deploy days also hold zero
+    heartbeats, so their producer, which used to be exempt from freshness
+    scoring, now reads `stale_observation` where it once read
+    `LIVENESS_UNVERIFIED`. Same evidence, and the stronger of the two true
+    statements about it — but do not read it as a daemon that died.
+  - **Blind detection is continuous across the boundary** and needs no caveat:
+    pre-deploy days carry `event=monitor_stream_read_error`, post-deploy days
+    `xreadgroup error; sleeping`, and the shared blind anchor lists both.
+
+  Post-deploy, the row's counts cell gains a fourth number, `dropped`. It is
+  not a funnel stage and, since issue #767 landed, not a correction term
+  either: `fills` is already corrected. A `stream_message_dropped` names a
+  `msg_id`, and every line about that same message — the `ack=true` the
+  framework logs a moment later included — is struck from the proofs and from
+  the counters. **"The same message" is `(stream, msg_id)`, not `msg_id`:** a
+  Redis entry id is unique per stream, not per server (the `<ms>-<seq>` counter
+  lives on the stream key), and `futures-monitor` consumes two streams.
+  Measured 2026-09-23 on a throwaway `redis:7-alpine`, 200 XADDs alternating
+  between two keys produced 200 identical ids, so keyed on the id alone a
+  dropped signal would silently strike a real fill.
+  `dropped` is now its own measurement: how many poison records arrived, which
+  says the producers are emitting something this monitor cannot parse. It counts
+  drops on **both** input streams, so it is not the arithmetic difference
+  between a raw and a corrected fill count.
+
+  The orphan-task route to that state is **closed** as of PR #776: both monitor
+  daemons run one loop on `shared/streaming/stage.py`, so the consume loop can
+  no longer die while the process stays up — it used to create `_consume_loop`
+  as a task and await it only in `finally`, so a raise there left the task dead
+  and unretrieved while `_status_loop` kept the container alive. **Do not spend
+  a cutover window hunting that orphan task; it cannot exist.** The bound still
+  earns its place: a wedged handler (redelivered the same `msg_id`, acking
+  nothing) and a genuinely silent upstream both reach the same silence, and a
+  `docker restart` near the close (which preserves the log, unlike a recreate)
+  still closes the span over a dead stretch.
+
+  **The freshness exemption is gone, and what replaced it.** A consumer's
+  proof, `stream_message_processed`, is emitted once per message
+  (`shared/streaming/stage.py`), so given traffic its silence is a real claim
+  about the consumer. The **producer's** proof is the setup-evaluation INFO,
+  and `shared/strategy/entry/setup_eval_publisher.py` emits it once per *state
+  change* — an unchanged verdict logs nothing however many cycles run. On the
+  two real harvests the producer's worst in-session gap was 11235s (09-11) and
+  17050s (09-18), and widening the proof set to `observed + blind` moved it by
+  zero on both days, so there was no honest bound to set and
+  `futures-decision-engine` carried `freshness_scored: false` by name. PR #766
+  gave it `event=decision_engine_alive`, written from the evaluation loop's
+  `finally` on **every** exit path of a cycle and throttled by nothing but the
+  interval, so silence does now mean the loop stopped. The exemption was lifted
+  with the premise it rested on; the producer is scored like everything else.
+
+  **No shipped service is exempt today**, so `LIVENESS_UNVERIFIED` is
+  unreachable from `config/f9_observation.yaml`. It is kept, tested, and
+  documented here because the predicate is keyed on `freshness_scored: false`
+  **and** `observation_is_fresh: false` — never on a service name or role — so
+  the day a throttled-proof service is configured it inherits the disclosure
+  rather than the hole. If you ever see it: the row names the stretch and quotes
+  the configured reason, the counts ship `UNQUALIFIED`, and the **exit status
+  stays 0**, because a dead throttled emitter and a healthy one leave identical
+  records and exiting 1 would alarm every trading day. The row is loud; the exit
+  status is not.
+
+  **A quiet day now reads `COMPLETE` — on evidence, not on an exemption.** It
+  used to read `1/4 consumed, 3 no evidence (PARTIAL)`, and that was honest
+  while the constraint was a **code path, not a log level**: the healthy idle
+  loop emitted nothing at any level (`xreadgroup` returns no messages,
+  `post_poll(count)`, `asyncio.sleep(0)`, `continue`), and
+  `consumer_group_already_present`, the one line that might have stood in, fires
+  only after a read has *already* failed. `LOG_LEVEL=DEBUG` would have added
+  nothing. The heartbeat is the emission that closed it, and a service proven
+  alive across a silence reads `idle (alive)`.
+
+  What did **not** change: a service that says nothing at all is still
+  `no_evidence`, and a day holding one is still PARTIAL. Liveness is a claim a
+  daemon has to *make*; the absence of the claim is not the claim.
+
+  **`NO_SESSION` qualifies a verdict; it never replaces one.** Both holiday
+  sources describe themselves as provisional (`shared/calendar.py`:
+  `예상 - 확정 시 업데이트 필요`), so a non-trading day that nevertheless holds
+  substantive evidence keeps that evidence's verdict and says both things
+  (`(no session - … is not a trading day) **BUT THE HARVEST HOLDS EVIDENCE** -
+  4/4 consumed (COMPLETE)`), with its counts flagged `check the calendar`. Only
+  a non-trading day with nothing to report reads `n/a - no session`. One wrong
+  calendar entry must not silently unscore a real trading day.
+
+  "Substantive" means a service demonstrably **worked** — `consumed`,
+  `partially_blind`, `partial_coverage`, `stale_observation` — or a non-zero
+  counter. Blindness is not substantive, because the pipeline runs on weekends
+  too: `services/decision_engine/main.py`'s loop has no trading-day gate, so
+  `context_provider()` returns None and it publishes `no_market_context` per
+  setup while the indicator engine emits `Indicator data stale …` every minute,
+  and both are `blind` patterns. Counting those made every Saturday render
+  `**BUT THE HARVEST HOLDS EVIDENCE** … BLIND 08:45-15:45` and exit `1` — the
+  standing alarm this exit-status rule exists to prevent.
+
+  **`idle (alive)` is deliberately not substantive either**, for the same
+  reason. The daemons heartbeat every 60s on Saturdays too — nothing in that
+  loop knows about the calendar — so counting liveness as evidence a session
+  happened would resurrect that standing weekend alarm in a new costume.
+  Liveness says the surface was watching, which changes no fact about whether
+  there was anything to watch. It does count for `COMPLETE` on a day the
+  calendar calls open; the two questions are scored from different sets on
+  purpose.
+
+  Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
+  before a mid-session redeploy and again at the close keeps both halves of the
+  day — the script never renames or overwrites them, and it reads all of a
+  day's files together, de-duplicating the lines two overlapping harvests share
+  (the `sort -u` rule in "Every risk-filter verdict is on the log" above).
+  `reports/**` is git-ignored; cite the harvested files (paths + the
+  de-duplicated counts) in the observation-log row, not live `docker logs`
+  output.
+
+  **The verdict is derived from the harvested files only.** Redis streams carry
+  a 24h TTL and their entries vanish, so a past day is not reconstructible from
+  Redis. Live Redis (`xinfo groups` lag, `raw_data` tip,
+  `futures:daily_reference` `asof_ts`) and `docker inspect`
+  (`RestartCount`, `StartedAt`) are collected as context, recorded under
+  `point_in_time` in the sidecar, and never feed the verdict.
+
+**Shadow observation log** (Gate 1 — feeds the Gate 2 one-line summary):
+
+**`Consumers` means consumers that DEMONSTRABLY CONSUMED** — each one having
+emitted at least one `event=stream_message_processed` line during the session,
+or (for the decision-engine) having evaluated its setups against a real market
+context. It is **not** a count of consumers that were running. From 2026-09-17
+00:00 to 2026-09-18 12:34 both monitor daemons were up with `RestartCount=0`
+while consuming nothing — a vanished-stream NOGROUP loop, fixed in PRs
+#739/#741 — so a running-count row on either day would have said "4" and been
+wrong, and a reader would have taken two days of "no signals" for a quiet
+market rather than for a dead instrument. This is the INERT-GATE CAVEAT below
+applied to the observation surface itself: **"observed 0" and "could not
+observe" must never occupy the same cell.** `scripts/ops/f9_observation_harvest.py`
+emits the cell, and qualifies the candidate → final → fills counts on any day
+whose observation is not `COMPLETE`.
+
+**The three rows below (2026-09-08 … 2026-09-10) were recorded under the OLD
+definition** (consumers running) and are left as recorded; do not read their
+`Consumers` numbers as proof of consumption, and do not restate them under the
+new definition — no completeness evidence was captured for those days.
+
+| Day | Consumers | Setup D candidates → final → fills | Orchestrator (ledger) | Direction parity | Notes |
+|---|---|---|---|---|---|
+| 2026-09-08 | 3 (router stopped, DUAL-WS) | 0 — Setup D not yet ported | 20 fills, all Setup D | n/a | scope gap → #659 / #660 |
+| 2026-09-09 | 3, router from 14:54 (stream) | 30 (26 short → 4 long) → 7 → 0 (backlog, `stale_signal`) | 11 Setup D (9 short → 2 long) | OK on direction and sequence | first stream-mode session started mid-day |
+| 2026-09-10 | 4 (stream) | 30 (all long, 09:35–10:57) → 1 → 1 (long 09:39:50 @1103.95, stop 09:41:21 @1101.59, −588,839 KRW) | A short ×1 (+1.66), D long ×5, D short ×6 (all stop-loss) | morning long OK; Setup A blind (`no_prev_close`); afternoon shorts absent (`vol_below_gate` 0.66→0.37 vs monolith 0.89) | 29 / 30 rejections silent — LeverageFilter cross-read + DailyMDD 150k lockout (plan gaps G2–G4); `slippage_gate: blocked` 0 |
+
 **INERT-GATE CAVEAT — read before interpreting any Gate 1 pass rate.** Several
 filters in the decoupled chain cannot reject anything as shipped (see Gate 1b).
 A shadow chain containing structurally-inert gates produces an **inflated** pass
@@ -372,6 +793,12 @@ inventory"). Line numbers here are as of `26fc52b0` and will drift.
 | Daily trade ceiling | none on this path | `DailyTradeCountFilter` (`layer.py:251`, compare `daily_trade_count.py:68`), `max_daily_trades: 3` (`risk.yaml:6`) | **present** — see caveat below |
 | Exit semantics (holding period / EOD flatten) | `setup_target_exit` honours the signal's stop/target and adds an EOD close at 15:15 KST (`config/strategies/futures/setup_*.yaml` `exit.params.eod_close_*`); no TTL-driven close | PseudoOCO force-closes the position at `signal.valid_until` (`shared/execution/pseudo_oco.py::check_expiry`, called from `order_router/main.py`), i.e. `signal_ttl_minutes` becomes a HOLDING cap — 10 min for Setup A/D, 30 for C. No EOD flatten exists anywhere in the decoupled chain | **intentional deviation candidate** — operator disposition required |
 | Post-exit re-entry cooldown | `services/trading/reentry_guard.py`, per-strategy cooldown after an exit (orchestrator-only) | none — no per-strategy cooldown in the decoupled chain (`ConsecutiveLossFilter` is a different control: it counts losses, it does not space re-entries) | **intentional deviation candidate** — operator disposition required |
+| Setup A previous close (`gap_pct` input) | REST `FHMIF10000000.futs_prdy_clpr` prefetched at session start (`orchestrator.py::_prefetch_futures_daily_reference`) | parquet daily bars for the trading symbol — none exist (only `101S6000` / `krx_kospi200f_continuous`, stale 2026-06-25) → `no_prev_close` every session; PR #668 publishes the prefetched value as `futures:daily_reference:{symbol}` (24h TTL) and the daemon reads it, parquet as fallback | **gap, measured 2026-09-09/10** — CLOSED once #668 is deployed and a session shows Setup A rows past `no_prev_close` |
+| Gross leverage cap | none (position-count caps only) | `LeverageFilter` armed (`risk.yaml` `leverage.mode: enforce`, cap 3.0, equity `futures_margin.yaml` fallback 50,000,000) — in shadow it read `trading:futures:positions`, the orchestrator's book (`TRADING_STATE_KEY_SUFFIX` unset in the risk-filter process); PR #667 binds the suffix like the monitor and logs `positions_key=` | **shadow contamination, measured 2026-09-10** — until #667 is deployed every shadow entry while the orchestrator held a contract was rejected (≈5.5x > 3.0); afterwards a genuine decoupled-only control: dispose CLOSED (with a shadow rejection) or ACCEPTED |
+| Margin gate position source | none — the monolith builds no margin gate (`futures:risk:latest` is published beside it, not read by it) | `MarginGateFilter` armed (`risk.yaml` `margin_gate.mode: enforce`, rejects `block_new_entries` ≥ 0.80 / `critical` ≥ 0.90 margin usage, `futures_margin.yaml` thresholds) reads `futures:risk:latest`, which `services/futures_margin_risk` (scheduler, every 10 min 08–15 KST) computes from the UNSUFFIXED `trading:futures:positions` — the orchestrator's book. `services/risk_filter` passes no `margin_snapshot_provider`, so PR #667's suffix binding moves only the LeverageFilter to the shadow book, not this gate | **shadow contamination, not yet measured** — one full-size orchestrator contract ≈ 275M × 0.08 ≈ 22M = 44% of 50M (`ok`, as observed 2026-09-10); two held at once (A/C/D overlap) ≈ 88% → every shadow candidate is rejected `margin_gate_block_new_entries` whatever the shadow book holds. Until the code fix (#690: in-process margin computation from the shadow positions, no new Redis key) read verdict-log `filter=margin_gate` rejections inside such a window as contamination, not as evidence for or against any row; CLOSED after #690 is deployed |
+| Daily / weekly MDD | catastrophic-only breaker (#600; P&L in points, no equity denominator) | `DailyMDDFilter` / `WeeklyMDDFilter` on `risk.account_equity_krw` — was 5,000,000 (3% = 150,000 KRW; one full-size stop-loss of −588,839 KRW locked 2026-09-10 out after 09:41); PR #667 makes it `${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}` (the leverage / margin lane's denominator → 1,500,000 KRW per day). Side effect: the same `FuturesRiskConfig.from_yaml()` feeds the MDD filters of `scripts/walk_forward_{phase3,sensitivity,bootstrap}.py` and `scripts/optimize_decision_engine.py`, so backtests re-run after #667 carry the 10× looser ceiling than the archived Setup A/C/D artefacts | **divergence, measured 2026-09-10** — decoupled-only control; the value (and the backtest re-baseline) is an operator decision, record ACCEPTED with the number |
+| Setup D volatility-gate window cadence | `shared/decision/setups/vwap_reversion.py::_vol_reference` — the same 780-bar trailing window, filled on every tick (~90/min → ≈10 min of history) | same code, filled once per 60 s bar (≈2 sessions — the design's own unit, plan 2026-09-08-setup-d-decoupled-port) | **intentional deviation, measured 2026-09-10** — 11:02 monolith `vol_below_gate(0.89<0.9)` then fired 6 shorts 12:04–13:39 (all stop-loss); shadow held `vol_below_gate` 0.66→0.37 from 11:00 and fired none. Not a wiring gap; dispose ACCEPTED (the decoupled cadence is canonical) |
+| Risk-filter verdict observability | n/a (monolith gates log inline) | rejections were silent — `handle_message` ACKed without a log, `layer.py:82` "Signal rejected" is a docstring example, `SignalsAllWriter` is the `shared/backtest` no-op, no metric; PR #667 logs `risk_filter verdict=… msg_id=… filter=… reason=…` per evaluation (a redelivered candidate logs again under the same `msg_id`) | **prerequisite** — no CLOSED row above can be evidenced without it; 2026-09-10 had 29 unexplained rejections |
 | Setup D adapter-layer entry gates | `shared/strategy/entry/setup_d_adapter.py`: the `short_blocked_regimes: ["BULL_STRONG"]` direction block (PR #559, `setup_d_vwap_reversion.yaml`) — the only one in force. The file's `regime_gate` block is `enabled: false`, and Setup D's adapter carries no LLM tuning/veto and no daily-bias filter | none — the daemon calls the Setup CORE (`shared/decision/setups/vwap_reversion.py`) directly, so the adapter layer does not travel with the cutover | **intentional deviation** — operator decision ② 2026-09-09: not ported; observed via setup_eval |
 | Setup A `regime_gate` | `shared/strategy/gates/regime_gate.py` via the Setup A adapter; `regime_gate.enabled: true` in `config/strategies/futures/setup_a_gap_reversion.yaml` (activated 2026-05-23, PR #330 follow-up). Blocks entries on the live HAR-RV / event-impact regime | none — same reason as the Setup D row above | **OPEN** — needs operator disposition (decision ② covered Setup D only) |
 
@@ -464,11 +891,21 @@ are in force in which mode.
     stop-outs); the orchestrator's re-entry guard is what bounds that, and it
     does not travel with the cutover. Watch the shadow stream for repeated
     same-direction candidates on one symbol before signing this off.
-- **Other filters in the chain are inert for unrelated reasons** —
-  `MarginGateFilter` fails open while the `futures_margin_risk` publisher is
-  dormant (`layer.py:350`), `LeverageFilter` is inert without a snapshot
-  provider (`layer.py:387`). They are not parity gaps, but they do inflate the
-  Gate 1 pass rate the same way.
+- **Two more filters are armed, not inert — check them, don't assume.**
+  `MarginGateFilter` is fed by the scheduler's `futures_margin_risk intraday`
+  job (every 10 min 08–15 KST → `futures:risk:latest`; `level=ok` on
+  2026-09-10 with `degraded=True`, `atr:A01609` / `account_snapshot_stale`
+  missing — advisory) and rejects only `block_new_entries` / `critical`.
+  `LeverageFilter` has had a snapshot provider since P5-3
+  (`_build_leverage_wiring`, `mode: enforce` since 2026-07-12) and DID reject
+  on 2026-09-10 — against the wrong book (row "Gross leverage cap"). Neither
+  filter exists in the monolith, so their rejections are decoupled-only
+  controls rather than retired ones — but both currently read position state
+  the shadow chain does not own, which IS a shadow-parity defect: the leverage
+  cross-read is closed by PR #667, the margin gate's is still open (row
+  "Margin gate position source", #690). Until #690 ships, a Gate 1 pass rate
+  measured while the orchestrator holds two or more contracts understates the
+  decoupled chain's own pass rate.
 
 ### Consequence of cutting over with the gaps open
 
@@ -529,6 +966,15 @@ Setup D adapter direction block (BULL_STRONG short) not ported:
                                      CLOSED @ ______  | ACCEPTED by ______ because ______
 Setup A regime_gate (enabled in monolith) not ported:
                                      CLOSED @ ______  | ACCEPTED by ______ because ______
+Setup A previous-close source (#668):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Gross leverage cap reads the shadow book (#667):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Daily/weekly MDD denominator = FUTURES_MARGIN_FALLBACK_EQUITY (#667):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Setup D vol-gate window cadence (60 s canonical):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Risk-filter verdict log present for every signed session:      yes / no
 Paper vs live spread threshold understood (1 tick live / 6 paper):  yes / no
 Live-only nature of the order_router caps understood:               yes / no
 ```

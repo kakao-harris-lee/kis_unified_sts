@@ -16,6 +16,8 @@ a persisted digest or an injected token means.
 
 from __future__ import annotations
 
+from enum import Enum
+
 import pytest
 from tos.posttrade import (
     EVENT_OBLIGATION_LEG_MINIMUM_SET,
@@ -56,7 +58,7 @@ _ENUM_COUNTS = (
 
 
 @pytest.mark.parametrize(("enum_type", "expected"), _ENUM_COUNTS)
-def test_enum_member_counts_match_the_adr(enum_type: type, expected: int) -> None:
+def test_enum_member_counts_match_the_adr(enum_type: type[Enum], expected: int) -> None:
     """(§2.2) Every enum has exactly the ADR item count — no truncation, no invention."""
     assert (
         len(list(enum_type)) == expected

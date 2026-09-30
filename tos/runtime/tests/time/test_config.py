@@ -1,4 +1,4 @@
-"""Hermetic tests for tos_runtime.time.config (slice plan §1 item 4).
+"""Hermetic tests for ``tos_runtime.time.config``.
 
 All fixtures are written under ``tmp_path`` per D1.4 (conftest.py's write
 guard refuses anything else).
@@ -22,6 +22,8 @@ _FULLY_VALUED: dict[str, object] = {
     "MIN_time_independent_reference_count": 1,
     "MAX_clock_domain_conversion_uncertainty_ms": 50,
     "MAX_send_result_wait_ms": 5000,
+    "MAX_critical_input_consumer_receipt_age_ms": 1000,
+    "MAX_time_source_sequence_gap_ms": 50,
     "tz_db_version": "2026a",
     "trading_calendar_version": "cal-1",
     "verification_profile_version": "vp-0",
@@ -77,6 +79,17 @@ def test_null_version_string_is_rejected(tmp_path: Path) -> None:
         load_time_config(path)
 
 
+def test_named_tbd_placeholder_version_string_is_rejected(tmp_path: Path) -> None:
+    """A version string literally ``"TBD"`` is a template placeholder an
+    operator typed in place of a real value, not a genuine version — never sealed
+    into a ``TimeHealthSnapshot`` as if it were concrete."""
+    content = dict(_FULLY_VALUED)
+    content["tz_db_version"] = "TBD"
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="template placeholder"):
+        load_time_config(path)
+
+
 def test_negative_bound_is_rejected(tmp_path: Path) -> None:
     content = dict(_FULLY_VALUED)
     content["MAX_process_suspension_ms"] = -1
@@ -86,7 +99,7 @@ def test_negative_bound_is_rejected(tmp_path: Path) -> None:
 
 
 def test_zero_send_result_wait_bound_is_rejected(tmp_path: Path) -> None:
-    """Independent review finding #16 (2026-09-09): every OTHER bound key accepts ``0``
+    """Every OTHER bound key accepts ``0``
     (``MAX_process_suspension_ms`` above does), but ``MAX_send_result_wait_ms`` is the wait
     ``EngineDriver``'s ``_TimeoutTracker`` uses before injecting a synthetic ``TIMEOUT`` — a
     ``0`` value would time out every hand-off on the very next drain, mirroring

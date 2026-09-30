@@ -3,9 +3,10 @@ clock, and a recording evidence sink."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
+from tos.egressgw import SendSeal
 from tos_runtime.custody.ports import CredentialHandle, CustodyScopeNotProvisioned
 
 __all__ = [
@@ -60,8 +61,22 @@ class RecordingEvidenceSink:
         return [fields for k, fields in self.records if k == kind]
 
 
-def make_seal_lookup(seal_by_attempt_id: Mapping[str, Any]) -> Callable[[str], Any]:
-    def _lookup(attempt_id: str) -> Any:
-        return seal_by_attempt_id.get(attempt_id)
+class _SealLookup:
+    """A ``SealLookup`` double backed by a plain mapping.
 
-    return _lookup
+    A bare closure has type ``Callable[[str], SendSeal | None]``, which mypy will not accept
+    where a ``SealLookup`` (a callback ``Protocol`` with a named ``attempt_id`` parameter) is
+    expected — ``Callable`` erases parameter names, and ``SealLookup.__call__`` is not
+    positional-only. A small class whose ``__call__`` matches the protocol's signature exactly
+    satisfies it structurally.
+    """
+
+    def __init__(self, seal_by_attempt_id: Mapping[str, SendSeal]) -> None:
+        self._seal_by_attempt_id = seal_by_attempt_id
+
+    def __call__(self, attempt_id: str) -> SendSeal | None:
+        return self._seal_by_attempt_id.get(attempt_id)
+
+
+def make_seal_lookup(seal_by_attempt_id: Mapping[str, SendSeal]) -> _SealLookup:
+    return _SealLookup(seal_by_attempt_id)

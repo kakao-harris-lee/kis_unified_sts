@@ -59,6 +59,8 @@ from tos.egressgw._base import (
 )
 from tos.egressgw.seal import SendSeal
 from tos.egressgw.vocabulary import (
+    PROVISIONAL_ITEMS,
+    REALIZED_ITEMS,
     BrokerApplicability,
     DerivationOutcome,
     EffectBasis,
@@ -459,25 +461,15 @@ class VerifyItemVerdict(FrozenModel):
     native_verdict_type: str | None = None
     #: The native verdict's own value (for the result enums), recorded as a plain string.
     native_verdict_value: str | None = None
-    #: The worst-credible capacity obligation cur's ``unknown_preserves_capacity`` says must be
-    #: preserved because this item's currentness outcome is not positively known (kernel round
-    #: #1 §1.3; CUR-INV-011:183 "missing-ACK ≠ non-acceptance"). ``None`` in every one of these
-    #: cases (independent review round #1 finding #9 — the prior docstring named only the first
-    #: two): (i) any item but item 16
-    #: (:attr:`~tos.egressgw.vocabulary.SendVerifyItem.CURRENTNESS`); (ii) item 16 SATISFIED
-    #: (currentness positively ``ADMIT`` — nothing to preserve); (iii) item 16 halting at the
-    #: earlier restrictive-latch or structurally-incomplete-proof gates
-    #: (:func:`~tos.egressgw.gateway._check_currentness`'s latch / structural-completeness
-    #: checks) — no obligation is computed there at all; (iv) item 16 non-admit but the
-    #: obligation's own **magnitude** is unknown (``context.worst_credible_capacity is None``) —
-    #: see :attr:`preserved_obligation_magnitude_unknown`, which is ``True`` in that case instead
-    #: of this field carrying a concrete number.
+    #: The worst-credible capacity obligation to preserve when item 16 currentness is not positively
+    #: known (CUR-INV-011:183). ``None`` means no obligation was authored, or its magnitude was
+    #: unknown; :attr:`preserved_obligation_magnitude_unknown` distinguishes the latter.
     preserved_worst_credible_capacity: int | None = None
     #: Whether item 16 asserted an obligation but its **magnitude** is unknown — the reservation's
     #: worst-credible capacity was itself never observed
     #: (``context.worst_credible_capacity is None``) when currentness did not positively admit
-    #: (kernel round #1 review #4; CUR-INV-011:183 "UNKNOWN is restrictive and
-    #: capacity-consuming"). Distinct from ``preserved_worst_credible_capacity is None``, which
+    #: (CUR-INV-011:183 "UNKNOWN is restrictive and capacity-consuming"). Distinct from
+    #: ``preserved_worst_credible_capacity is None``, which
     #: can *also* mean "no obligation was ever asserted" — this flag disambiguates the two so a
     #: consumer does not treat an unknown-magnitude obligation as trivially preserved. ``False``
     #: on every item but item 16, and ``False`` on item 16 whenever a concrete
@@ -542,6 +534,46 @@ class VerifyItemVerdict(FrozenModel):
         return self
 
 
+def _verdict(
+    item: SendVerifyItem,
+    outcome: VerifyOutcome,
+    *,
+    reason: str | None = None,
+    native: object | None = None,
+    native_value: str | None = None,
+    preserved_worst_credible_capacity: int | None = None,
+    preserved_obligation_magnitude_unknown: bool = False,
+) -> VerifyItemVerdict:
+    """Assemble one item verdict, deriving its disposition from the design §4.1 partition.
+
+    Shared by ``gateway.py``'s eleven non-deferred item checks and ``mesh.py``'s deferred-item
+    judgement (kernel round #2 §2 decision 1) — a single definition, never duplicated. Lives
+    here (next to :class:`VerifyItemVerdict` itself) rather than in ``_base.py``: this module
+    already imports :data:`~tos.egressgw.vocabulary.REALIZED_ITEMS` /
+    :data:`~tos.egressgw.vocabulary.PROVISIONAL_ITEMS` at module scope, so no function-body
+    import is needed here (independent review round #1 LOW-1 — the prior placement in
+    ``_base.py`` needed a deferred import of this very class to avoid a real base<->records
+    import cycle; moving the function next to its own return type removes the cycle instead of
+    working around it).
+    """
+    if item in REALIZED_ITEMS:
+        disposition = VerifyDisposition.REALIZED_STRUCTURAL
+    elif item in PROVISIONAL_ITEMS:
+        disposition = VerifyDisposition.PROVISIONAL_STAND_IN
+    else:
+        disposition = VerifyDisposition.DEFERRED_APPLICABILITY
+    return VerifyItemVerdict(
+        item=item,
+        disposition=disposition,
+        outcome=outcome,
+        reason=reason,
+        native_verdict_type=None if native is None else type(native).__name__,
+        native_verdict_value=native_value,
+        preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+        preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
+    )
+
+
 class SendBoundaryVerification(FrozenModel):
     """The whole step-15 verify result (design #34 §4.1).
 
@@ -579,54 +611,39 @@ class GatewayEvidenceRecord(FrozenModel):
     applicability: BrokerApplicability | None = None
     halt_reason: SendHaltReason | None = None
     detail: str | None = None
-    #: Item 16's preserved worst-credible-capacity obligation, carried onto a ``SEND_REFUSED``
-    #: record from item 16's own verdict **regardless of which item halted** (kernel round #1
-    #: §1.3; independent review round #1 finding #1 — transferring it only when item 16 itself
-    #: was ``halt_item`` silently dropped the obligation whenever an earlier verify item also
-    #: failed, since all 17 items are always evaluated). ``None`` in every one of these cases
-    #: (review round #1 finding #9): (i) item 16's own verdict authored no obligation at all
-    #: (any item but item 16 never authors one); (ii) item 16 SATISFIED; (iii) item 16 halting at
-    #: the earlier restrictive-latch or structurally-incomplete-proof gates, where no obligation
-    #: is computed; (iv) item 16 non-admit with the obligation's magnitude unknown — see
-    #: :attr:`preserved_obligation_magnitude_unknown`.
+    #: Item 16's preserved capacity obligation, copied onto ``SEND_REFUSED`` regardless of which
+    #: verify item halted. ``None`` means item 16 authored no concrete obligation; an unknown
+    #: magnitude is reported by :attr:`preserved_obligation_magnitude_unknown`.
     preserved_worst_credible_capacity: int | None = None
-    #: Mirrors :attr:`VerifyItemVerdict.preserved_obligation_magnitude_unknown`, transferred onto
-    #: ``SEND_REFUSED`` the same unconditional way as :attr:`preserved_worst_credible_capacity`
-    #: (kernel round #1 review #4). ``False`` unless item 16's own verdict flagged it.
+    #: Mirrors :attr:`VerifyItemVerdict.preserved_obligation_magnitude_unknown` on ``SEND_REFUSED``.
+    #: ``False`` unless item 16's own verdict flagged an unknown magnitude.
     preserved_obligation_magnitude_unknown: bool = False
     #: The whole pre-``SEND_STARTED`` :class:`~tos.egressgw.seal.SendSeal`, carried on the
-    #: ``SEND_SEALED`` record only (Phase 4 작업 6, design §1.2) — enforced below by
-    #: :meth:`_seal_fields_match_their_kind`, not merely documented (independent review
-    #: finding #9): a non-``None`` value on any other kind is rejected at construction.
+    #: ``SEND_SEALED`` record only and enforced by :meth:`_seal_fields_match_their_kind`.
     send_seal: SendSeal | None = None
-    #: The sealed :attr:`~tos.egressgw.seal.SendSeal.seal_digest`, carried on ``SEND_STARTED`` and
-    #: the terminal ``EGRESS_RESULT_RECORDED`` record (Phase 4 작업 6, design §1.2) — the compact
-    #: reference a durable Evidence Store row would use to point back at the full seal without
-    #: repeating it. Also enforced below by :meth:`_seal_fields_match_their_kind`: a non-``None``
-    #: value on any other kind is rejected at construction (independent review finding #9).
+    #: The sealed :attr:`~tos.egressgw.seal.SendSeal.seal_digest`, carried on ``SEND_STARTED``,
+    #: ``NETWORK_CALL_ENTERED``, and ``EGRESS_RESULT_RECORDED`` so durable evidence can reference
+    #: the full seal. Other record kinds reject a non-``None`` value via
+    #: :meth:`_seal_fields_match_their_kind`.
     send_seal_digest: str | None = None
     #: Which of the closed 19 ADR-002-002 §11 :class:`~tos.engine.CommitmentStep` this record
-    #: belongs to (Phase 3 wave 3 KW3-GW — mutation-matrix finding: the executable Send Boundary
-    #: order was not auditable from evidence because ``kind`` alone did not carry step identity).
-    #: ``gateway.py`` stamps this on every record it emits. Most kinds have exactly one fixed
-    #: step (enforced below, when stated, by :meth:`_step_matches_fixed_kind_when_given`);
-    #: ``SEND_REFUSED`` is the one exception — it is emitted from many different steps depending
-    #: on which check failed, so its step is supplied per halt site, never derived from the kind.
-    #: ``None`` stays backward compatible with every call site predating this field.
-    step: CommitmentStep | None = None
+    #: belongs to. **Required**: ``gateway.py`` stamps it on every record, and an unstamped record
+    #: is unconstructable. Most kinds have exactly one fixed step (enforced below by
+    #: :meth:`_step_matches_fixed_kind_when_given`); ``SEND_REFUSED`` is the one exception — it
+    #: is emitted from many different steps depending on which check failed, so its step is
+    #: supplied per halt site, never derived from the kind.
+    step: CommitmentStep
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
-    #: The kinds ``gateway.py`` itself stamps :attr:`send_seal_digest` onto (its own
-    #: ``send_seal_digest=`` call sites) — the source of truth for the validator below, not a
-    #: separately maintained list (independent review finding #9). ``NETWORK_CALL_ENTERED``
-    #: (Phase 3 wave 3 KW3-GW, the step-18 write-ahead mark) carries the digest like its
-    #: ``SEND_STARTED`` / ``EGRESS_RESULT_RECORDED`` neighbours.
+    #: The kinds carrying :attr:`send_seal_digest`; keep this set aligned with the gateway's
+    #: emission sites. ``NETWORK_CALL_ENTERED`` carries the digest like its ``SEND_STARTED`` /
+    #: ``EGRESS_RESULT_RECORDED`` neighbours.
     SEND_SEAL_DIGEST_KINDS: ClassVar[frozenset[str]] = frozenset(
         {"SEND_STARTED", "NETWORK_CALL_ENTERED", "EGRESS_RESULT_RECORDED"}
     )
 
-    #: The single fixed :class:`~tos.engine.CommitmentStep` each non-``SEND_REFUSED`` kind
-    #: belongs to (Phase 3 wave 3 KW3-GW) — the source of truth for the validator below.
+    #: The single fixed :class:`~tos.engine.CommitmentStep` each non-``SEND_REFUSED`` kind belongs to;
+    #: this is the source of truth for the validator below.
     #: ``SEND_REFUSED`` is deliberately absent: it is the one kind emitted from more than one
     #: step (whichever check actually failed), so it has no single fixed mapping here.
     FIXED_KIND_STEPS: ClassVar[dict[str, CommitmentStep]] = {
@@ -667,16 +684,14 @@ class GatewayEvidenceRecord(FrozenModel):
 
     @model_validator(mode="after")
     def _step_matches_fixed_kind_when_given(self) -> GatewayEvidenceRecord:
-        """When both ``kind`` and ``step`` are given, ``step`` must be the kind's fixed one.
+        """``step`` must be the kind's fixed one, when that kind has exactly one.
 
-        Backward compatible by construction: a record built without ``step`` (every call site
-        predating Phase 3 wave 3 KW3-GW) is untouched — a ``None`` step is never rejected here.
-        This only catches a *stated* step that disagrees with a kind that has exactly one
-        legitimate step. ``SEND_REFUSED`` has no entry in :attr:`FIXED_KIND_STEPS` and is
-        therefore exempt (its step varies by which check actually failed).
+        ``step`` is now a required field (kernel round #2 §2 decision 3) — a record built
+        without it is unconstructable before this validator ever runs. This validator only
+        catches a *stated* step that disagrees with a kind that has exactly one legitimate step.
+        ``SEND_REFUSED`` has no entry in :attr:`FIXED_KIND_STEPS` and is therefore exempt (its
+        step varies by which check actually failed).
         """
-        if self.step is None:
-            return self
         expected = self.FIXED_KIND_STEPS.get(self.kind)
         if expected is not None and self.step is not expected:
             raise ArtifactIntegrityError(
@@ -700,7 +715,6 @@ class SendBoundaryContext(FrozenModel):
     Action Flow Governor) and close no EV (design #34 §1.1 / §4.4).
     """
 
-    # ---- scope + transport (§4.2 broker-applicability, §4.7 environment) --------------
     instrument_key: InstrumentKey | None = None
     transport_nature: TransportNature | None = None
     #: The injected ``environment`` scope token (register §3:88 — the only fixed scope value,
@@ -713,7 +727,6 @@ class SendBoundaryContext(FrozenModel):
     environment_inherited: bool | None = None
     credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...] = ()
 
-    # ---- item 1 (Realize): single-use Transmission Capability ------------------------
     #: ⚠ the capability's *issuance* is a provisional RCL stand-in; what is verified here is its
     #: presence plus the structural single-use of its nonce (design #34 §4.1 item 1).
     transmission_capability: TransmissionCapability | None = None
@@ -723,16 +736,28 @@ class SendBoundaryContext(FrozenModel):
     principal: str | None = None
     request_digest: str | None = None
 
-    # ---- item 2 (Realize): intent / reservation identity match ------------------------
     reservation_attempt_id: str | None = None
     reservation_conformance_proof_digest: str | None = None
     reservation_action_flow_permit_identity: str | None = None
 
-    # ---- item 3 (Provisional): commitment epoch ---------------------------------------
     #: ⚠ provisional RCL stand-in — real epoch fencing is deferred (design #34 §4.1 item 3).
     commitment_epoch_current: bool | None = None
 
-    # ---- items 6 / 12 (Provisional): broker + venue generation facts ------------------
+    # Deferred safety flags come from their owning runtime; the kernel maps True/False/None to
+    # SATISFIED/DENIED/UNKNOWN and never derives the flags itself.
+    #: Item 4 — Safety Authority epoch currency (``CURRENT_SAFETY_AUTHORITY_EPOCH``).
+    safety_authority_epoch_current: bool | None = None
+    #: Item 5 — live-scope validity (``VALID_LIVE_SCOPE``).
+    live_scope_valid: bool | None = None
+    #: Item 7 — Hard Safety Envelope version currency (``HARD_SAFETY_ENVELOPE_VERSIONS``).
+    safety_profile_current: bool | None = None
+    #: Item 8 — safety-deviation clear (``SAFETY_DEVIATION``).
+    deviation_clear: bool | None = None
+    #: Item 9 — safety-incident clear (``SAFETY_INCIDENT``).
+    incident_clear: bool | None = None
+    #: Item 10 — safety-monitoring clear (``SAFETY_MONITORING``).
+    monitoring_clear: bool | None = None
+
     broker_capability_profile: BrokerCapabilityProfile | None = None
     required_capability_set: RequiredCapabilitySet | None = None
     #: brokercap ``capability_admissible`` version currency (§6.1); ``None`` / ``False`` ⇒
@@ -745,11 +770,16 @@ class SendBoundaryContext(FrozenModel):
     #: account / instrument / action-class / max-quantity allowance is a stand-in (§4.1 item 6).
     account_instrument_action_allowed: bool | None = None
     max_quantity_within_allowance: bool | None = None
+    #: Item 12's venue-half sub-facts are supplied by the owning runtime and composed by
+    #: :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current` with a
+    #: None-propagating AND. ``tradability_facts_current`` / ``account_facts_current`` may be
+    #: ``None`` when no broker query source exists.
+    session_facts_current: bool | None = None
+    tradability_facts_current: bool | None = None
+    account_facts_current: bool | None = None
     #: ⚠ provisional — broker-constraint generation currency (§4.1 item 12).
-    venue_session_account_facts_current: bool | None = None
     broker_constraint_generation_current: bool | None = None
 
-    # ---- item 11 (Realize): venue snapshot + admissibility decision -------------------
     venue_snapshot: VenueConstraintSnapshot | None = None
     venue_policy: VenueConstraintPolicy | None = None
     venue_decision: OrderAdmissibilityDecision | None = None
@@ -758,21 +788,17 @@ class SendBoundaryContext(FrozenModel):
     order_shape: OrderShapeFields | None = None
     venue_shape_constraints: VenueShapeConstraints | None = None
 
-    # ---- item 13 (Realize): order construction ---------------------------------------
     construction: CandidateConstruction | None = None
     conformance_proof: OrderConformanceProof | None = None
 
-    # ---- item 14 (Provisional): trading approval --------------------------------------
     #: ⚠ provisional iap stand-in — no independent approver runtime exists (§4.1 item 14).
     approval_consumed_for_this_intent: bool | None = None
     approval_intent_binding_digest: str | None = None
 
-    # ---- item 15 (Provisional): action flow -------------------------------------------
     #: ⚠ provisional afg stand-in — no Action Flow Governor runtime exists (§4.1 item 15).
     action_flow_permit_identity: str | None = None
     action_flow_commitment_current: bool | None = None
 
-    # ---- item 16 (Realize): currentness ------------------------------------------------
     egress_currentness_proof: EgressCurrentnessProof | None = None
     egress_currentness_result: ProofResult | None = None
     restrictive_latch_state: RestrictiveLatchState | None = None
@@ -780,13 +806,11 @@ class SendBoundaryContext(FrozenModel):
     #: currentness is not positively known — recorded, never released (CUR-INV-011:183).
     worst_credible_capacity: int | None = None
 
-    # ---- item 17 (Realize): actual-outbound coordinate equivalence ---------------------
     egress_request: EgressRequestRecord | None = None
     quorum_commit_certificate: QuorumCommitCertificate | None = None
     authorized_coordinates: EgressCoordinateSet | None = None
     capsule_egress_request_digest: str | None = None
 
-    # ---- step 18 outbound payload ------------------------------------------------------
     outbound_quantity: CanonicalDecimal | None = None
     outbound_price: CanonicalDecimal | None = None
     outbound_side: str | None = None
@@ -809,26 +833,18 @@ def positive_decimal(value: Decimal | None) -> bool:
     return value > 0
 
 
-# ===========================================================================
-# GAP-2 — the shipped send-boundary context factory (design #35 §3)
-# ===========================================================================
-
-
 def send_boundary_context(
     *,
-    # -- the four flow artifacts everything derivable is derived from -------------------
     attempt: AttemptRequest,
     construction: CandidateConstruction,
     conformance_proof: OrderConformanceProof | None,
     reference: OrderingEvent,
-    # -- item 17 (Realize): the two artifacts that bind *this* command's digest ---------
     egress_request_for_command: (
         Callable[[str | None], EgressRequestRecord | None] | None
     ) = None,
     quorum_certificate_for_command: (
         Callable[[str | None], QuorumCommitCertificate | None] | None
     ) = None,
-    # -- scope + transport / environment (§4.2, §4.7) -----------------------------------
     instrument_key: InstrumentKey | None = None,
     transport_nature: TransportNature | None = None,
     non_live_test_environment_token: str | None = None,
@@ -836,14 +852,12 @@ def send_boundary_context(
     evidence_environment: str | None = None,
     environment_inherited: bool | None = None,
     credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...] = (),
-    # -- item 1: the single-use Transmission Capability ---------------------------------
     transmission_capability: TransmissionCapability | None = None,
     capability_nonce: str | None = None,
     action_flow_permit_nonce: str | None = None,
     prior_claims: tuple[ClaimObservation, ...] = (),
     principal: str | None = None,
     request_digest: str | None = None,
-    # -- item 11: the venue snapshot + admissibility decision ---------------------------
     venue_snapshot: VenueConstraintSnapshot | None = None,
     venue_policy: VenueConstraintPolicy | None = None,
     venue_decision: OrderAdmissibilityDecision | None = None,
@@ -851,15 +865,18 @@ def send_boundary_context(
     action_class: ActionClass | None = None,
     order_shape: OrderShapeFields | None = None,
     venue_shape_constraints: VenueShapeConstraints | None = None,
-    # -- item 16: currentness ------------------------------------------------------------
     egress_currentness_proof: EgressCurrentnessProof | None = None,
     egress_currentness_result: ProofResult | None = None,
     restrictive_latch_state: RestrictiveLatchState | None = None,
     worst_credible_capacity: int | None = None,
-    # -- item 17: the authorized coordinates -------------------------------------------
     authorized_coordinates: EgressCoordinateSet | None = None,
     capsule_egress_request_digest: str | None = None,
-    # -- items 3 / 6 / 12 / 14 / 15: the provisional stand-in facts ---------------------
+    safety_authority_epoch_current: bool | None = None,
+    live_scope_valid: bool | None = None,
+    safety_profile_current: bool | None = None,
+    deviation_clear: bool | None = None,
+    incident_clear: bool | None = None,
+    monitoring_clear: bool | None = None,
     commitment_epoch_current: bool | None = None,
     broker_capability_profile: BrokerCapabilityProfile | None = None,
     required_capability_set: RequiredCapabilitySet | None = None,
@@ -867,12 +884,13 @@ def send_boundary_context(
     idempotency_proven: bool | None = None,
     account_instrument_action_allowed: bool | None = None,
     max_quantity_within_allowance: bool | None = None,
-    venue_session_account_facts_current: bool | None = None,
+    session_facts_current: bool | None = None,
+    tradability_facts_current: bool | None = None,
+    account_facts_current: bool | None = None,
     broker_constraint_generation_current: bool | None = None,
     approval_consumed_for_this_intent: bool | None = None,
     action_flow_permit_identity: str | None = None,
     action_flow_commitment_current: bool | None = None,
-    # -- step 18 outbound payload --------------------------------------------------------
     outbound_side: str | None = None,
 ) -> SendBoundaryContext:
     """Assemble the verify list's input surface from **this flow's own artifacts** (§35 §3.1).
@@ -940,6 +958,18 @@ def send_boundary_context(
         worst_credible_capacity: The worst-credible capacity obligation cur preserves (item 16).
         authorized_coordinates: The authorized egress coordinate set (item 17).
         capsule_egress_request_digest: The Capsule-bound request-bytes digest (item 17).
+        safety_authority_epoch_current: The Safety Authority epoch's own currency flag,
+            positively supplied by its owning runtime service (item 4).
+        live_scope_valid: The live-scope validity flag, positively supplied by its owning
+            runtime service (item 5).
+        safety_profile_current: The Hard Safety Envelope version-currency flag, positively
+            supplied by its owning runtime service (item 7).
+        deviation_clear: The safety-deviation-clear flag, positively supplied by its owning
+            runtime service (item 8).
+        incident_clear: The safety-incident-clear flag, positively supplied by its owning
+            runtime service (item 9).
+        monitoring_clear: The safety-monitoring-clear flag, positively supplied by its owning
+            runtime service (item 10).
         commitment_epoch_current: ⚠ provisional RCL epoch stand-in (item 3).
         broker_capability_profile: The Broker Capability Profile (items 6 / 12).
         required_capability_set: The required capability set (items 6 / 12).
@@ -947,7 +977,12 @@ def send_boundary_context(
         idempotency_proven: The positive same-order-retry witness (items 6 / 12).
         account_instrument_action_allowed: ⚠ provisional allowance stand-in (item 6).
         max_quantity_within_allowance: ⚠ provisional allowance stand-in (item 6).
-        venue_session_account_facts_current: ⚠ provisional currency stand-in (item 12).
+        session_facts_current: item 12's session sub-fact, positively supplied by its owning
+            runtime service (kernel round #3 §2 decision 4).
+        tradability_facts_current: item 12's tradability sub-fact, positively supplied by its
+            owning runtime service, or ``None`` when unsourced (kernel round #3 §2 decision 4).
+        account_facts_current: item 12's account sub-fact, positively supplied by its owning
+            runtime service, or ``None`` when unsourced (kernel round #3 §2 decision 4).
         broker_constraint_generation_current: ⚠ provisional currency stand-in (item 12).
         approval_consumed_for_this_intent: ⚠ provisional iap stand-in (item 14).
         action_flow_permit_identity: ⚠ provisional afg stand-in (item 15).
@@ -985,6 +1020,12 @@ def send_boundary_context(
         reservation_attempt_id=attempt.attempt_id,
         reservation_conformance_proof_digest=attempt.conformance_proof_digest,
         reservation_action_flow_permit_identity=attempt.action_flow_permit_identity,
+        safety_authority_epoch_current=safety_authority_epoch_current,
+        live_scope_valid=live_scope_valid,
+        safety_profile_current=safety_profile_current,
+        deviation_clear=deviation_clear,
+        incident_clear=incident_clear,
+        monitoring_clear=monitoring_clear,
         commitment_epoch_current=commitment_epoch_current,
         broker_capability_profile=broker_capability_profile,
         required_capability_set=required_capability_set,
@@ -992,7 +1033,9 @@ def send_boundary_context(
         idempotency_proven=idempotency_proven,
         account_instrument_action_allowed=account_instrument_action_allowed,
         max_quantity_within_allowance=max_quantity_within_allowance,
-        venue_session_account_facts_current=venue_session_account_facts_current,
+        session_facts_current=session_facts_current,
+        tradability_facts_current=tradability_facts_current,
+        account_facts_current=account_facts_current,
         broker_constraint_generation_current=broker_constraint_generation_current,
         venue_snapshot=venue_snapshot,
         venue_policy=venue_policy,

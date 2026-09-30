@@ -119,6 +119,7 @@ from typing import Literal, Protocol, runtime_checkable
 from tos.canonical import RecordPairKind, classify_record_pair
 from tos.rcl._base import FrozenModel
 from tos.rcl.predicates import transition_allowed
+from tos.rcl.vector import CapacityVector
 from tos.rcl.vocabulary import CapacityState, CommandType, TransitionCause
 
 __all__ = [
@@ -294,6 +295,14 @@ class CapacityReservationTransition(FrozenModel):
     from_state: CapacityState | None = None
     to_state: CapacityState | None = None
     scope: ReservationScope | None = None
+    #: The committed adverse-increment Capacity Vector for this transition (kernel round #4
+    #: K-4) — the wire-shape counterpart of :class:`~tos.rcl.records.ReservationRecord`'s own
+    #: ``adverse_increment_vector`` (which already carried this per-reservation, ADR-002-002
+    #: §6.1). ``None`` here means "no vector committed with this transition" (e.g. a pre-K-4
+    #: transition, or one whose vector genuinely has no declared dimension) — never a zero
+    #: vector; a runtime projection distinguishes "no committed vector recorded" from "an
+    #: explicitly empty one" as it already does for every other optional field on this record.
+    committed_vector: CapacityVector | None = None
 
 
 # ===========================================================================

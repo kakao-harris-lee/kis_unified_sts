@@ -105,7 +105,6 @@ from tos.egress import (
     ClaimObservation,
     RestrictiveLatchState,
     capability_and_permit_single_use,
-    credential_route_authority_disjoint,
     exact_binding_holds,
     monotonic_denial_no_revival,
 )
@@ -113,15 +112,17 @@ from tos.egressgw._base import (
     EV_L1_PROVISIONAL_VERSION,
     ArtifactIntegrityError,
     CanonicalizationScheme,
+    _positive,
     get_scheme,
 )
 from tos.egressgw.construction import fold_venue_admissibility
+from tos.egressgw.mesh import deferred_item_verdict, resolve_broker_applicability
 from tos.egressgw.records import (
     GatewayEvidenceRecord,
     SendBoundaryContext,
     SendBoundaryVerification,
-    TransportNature,
     VerifyItemVerdict,
+    _verdict,
 )
 from tos.egressgw.seal import (
     OUTBOUND_COORDINATE_NAMES,
@@ -129,18 +130,15 @@ from tos.egressgw.seal import (
     build_send_seal,
     outbound_coordinates,
 )
+from tos.egressgw.venuefacts import venue_generation_item_verdict
 from tos.egressgw.vocabulary import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
-    PROVISIONAL_ITEMS,
-    REALIZED_ITEMS,
     SEND_VERIFY_ITEMS,
     BrokerApplicability,
     SendHaltReason,
     SendVerifyItem,
-    VerifyDisposition,
     VerifyOutcome,
-    verify_item_number,
 )
 from tos.engine import (
     AttemptRequest,
@@ -168,7 +166,6 @@ __all__ = [
     "SendTransport",
     "outbound_binding_mismatch",
     "outbound_coordinates",
-    "resolve_broker_applicability",
     "verify_send_boundary",
 ]
 
@@ -205,11 +202,6 @@ def _reachability_rejection_anchor() -> None:
 
 
 _reachability_rejection_anchor()
-
-
-# ===========================================================================
-# ports — the injected transport and the provisional evidence sink
-# ===========================================================================
 
 
 @runtime_checkable
@@ -385,176 +377,6 @@ class SendAttemptLedger:
         return True
 
 
-# ===========================================================================
-# §4.2 — the broker-applicability positive gate (runs BEFORE the per-item gates)
-# ===========================================================================
-
-
-def resolve_broker_applicability(
-    nature: TransportNature | None,
-    context: SendBoundaryContext,
-) -> BrokerApplicability:
-    """Positively establish whether this send consumes a broker resource (design #34 §4.2).
-
-    RFC-002 §10.8:741 triggers the verify list "before any risk-relevant **or**
-    broker-resource-consuming transmission", so this — not live / non-live — is the axis that
-    decides whether the deferred safety-governance mesh is required (design #34 MAJOR-1).
-
-    Returns :attr:`~tos.egressgw.vocabulary.BrokerApplicability.NON_BROKER_SYNTHETIC` **only**
-    when every one of the following positively holds:
-
-    1. the declared :class:`~tos.egressgw.records.TransportNature` names a principal and carries
-       ``reaches_broker is False``, ``credential_bearing is False``, ``route_bearing is False``,
-       and ``risk_relevant_live is False`` — **explicit ``False``**, because a ``None`` is an
-       unestablished nature and is conservatively broker-consuming (negative polarity, §4.2);
-    2. that declaration is **structurally corroborated**: the transport principal is explicitly
-       represented in the injected credential-route inventory holding neither a usable credential
-       (``usable_credential is False``) nor a broker route (``broker_route is False``). A
-       self-report alone never establishes it — the structural fact is that a synthetic transport
-       does not constitute the ADR-002-013 §1 Final Egress Trust Boundary at all, and that is
-       what the inventory shows (design #34 §1.1-1 / §4.5);
-    3. egress :func:`~tos.egress.credential_route_authority_disjoint` holds over the whole
-       inventory — an ∅ inventory is ``False`` there (disjointness unproven), so an empty
-       inventory can never produce a synthetic verdict;
-    4. the environment binds positively to the injected non-live-test scope token through
-       brokercap :func:`~tos.brokercap.environment_binding_ok` (profile- and VERIFIED-independent
-       — BC-INV-009 §4.7).
-
-    Any positively-established broker-reaching or risk-relevant-live flag returns
-    ``BROKER_RESOURCE_CONSUMING``; anything unestablished returns ``UNKNOWN``. **Both** make the
-    deferred mesh required, so the fail-closed behaviour is identical — the distinction exists so
-    the recorded evidence says which it was.
-
-    Args:
-        nature: The declared transport nature (``None`` ⇒ ``UNKNOWN``).
-        context: The send-boundary context carrying the inventory and environment coordinates.
-
-    Returns:
-        The :class:`~tos.egressgw.vocabulary.BrokerApplicability` verdict.
-    """
-    if nature is None:
-        return BrokerApplicability.UNKNOWN
-    if (
-        nature.reaches_broker is True
-        or nature.credential_bearing is True
-        or nature.route_bearing is True
-        or nature.risk_relevant_live is True
-    ):
-        return BrokerApplicability.BROKER_RESOURCE_CONSUMING
-    if not (
-        nature.reaches_broker is False
-        and nature.credential_bearing is False
-        and nature.route_bearing is False
-        and nature.risk_relevant_live is False
-    ):
-        return BrokerApplicability.UNKNOWN
-    principal = nature.principal
-    if principal is None or not principal.strip():
-        return BrokerApplicability.UNKNOWN
-    inventory = context.credential_route_inventory
-    if not credential_route_authority_disjoint(inventory):
-        return BrokerApplicability.UNKNOWN
-    corroborated = False
-    for entry in inventory:
-        if entry.principal == principal:
-            if entry.usable_credential is False and entry.broker_route is False:
-                corroborated = True
-            else:
-                # The principal is represented but holds (or may hold) a credential or a route:
-                # that is a broker-reaching transport whatever it declared about itself.
-                return BrokerApplicability.BROKER_RESOURCE_CONSUMING
-    if not corroborated:
-        return BrokerApplicability.UNKNOWN
-    if context.non_live_test_environment_token is None:
-        return BrokerApplicability.UNKNOWN
-    if context.scope_environment != context.non_live_test_environment_token:
-        return BrokerApplicability.UNKNOWN
-    if not environment_binding_ok(
-        context.evidence_environment,
-        context.scope_environment,
-        context.environment_inherited,
-    ):
-        return BrokerApplicability.UNKNOWN
-    return BrokerApplicability.NON_BROKER_SYNTHETIC
-
-
-# ===========================================================================
-# §4.1 — the 17-item verify list
-# ===========================================================================
-
-
-def _verdict(
-    item: SendVerifyItem,
-    outcome: VerifyOutcome,
-    *,
-    reason: str | None = None,
-    native: object | None = None,
-    native_value: str | None = None,
-    preserved_worst_credible_capacity: int | None = None,
-    preserved_obligation_magnitude_unknown: bool = False,
-) -> VerifyItemVerdict:
-    """Assemble one item verdict, deriving its disposition from the design §4.1 partition."""
-    if item in REALIZED_ITEMS:
-        disposition = VerifyDisposition.REALIZED_STRUCTURAL
-    elif item in PROVISIONAL_ITEMS:
-        disposition = VerifyDisposition.PROVISIONAL_STAND_IN
-    else:
-        disposition = VerifyDisposition.DEFERRED_APPLICABILITY
-    return VerifyItemVerdict(
-        item=item,
-        disposition=disposition,
-        outcome=outcome,
-        reason=reason,
-        native_verdict_type=None if native is None else type(native).__name__,
-        native_verdict_value=native_value,
-        preserved_worst_credible_capacity=preserved_worst_credible_capacity,
-        preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
-    )
-
-
-def _positive(flag: bool | None) -> bool:
-    """Positive-polarity read of an injected stand-in flag (``None`` / ``False`` ⇒ not admitted)."""
-    return flag is True
-
-
-def _deferred_item_verdict(
-    item: SendVerifyItem, applicability: BrokerApplicability
-) -> VerifyItemVerdict:
-    """Judge one deferred safety-governance mesh item (design #34 §4.2 MAJOR-2).
-
-    ``NOT_APPLICABLE`` **only** for a positively established synthetic non-broker send — a
-    recorded positive judgement, never a silent skip. Everything else (a broker-reaching send, a
-    risk-relevant-live send, or an unresolved nature) makes the item *required*, and because its
-    owning runtime has not landed the required fact is unverifiable ⇒ ``UNKNOWN`` ⇒ deny
-    (RFC-002 §10.8:741 trigger → :761 "reject … missing, stale, conflicting, or unverifiable").
-    """
-    if applicability is BrokerApplicability.NON_BROKER_SYNTHETIC:
-        return _verdict(
-            item,
-            VerifyOutcome.NOT_APPLICABLE,
-            reason=(
-                f"item {verify_item_number(item)} is not applicable: the send was positively "
-                "established as synthetic and non-broker-reaching, so no broker resource is "
-                "consumed and no live scope is in play. The justification is 'no broker route "
-                "was reached', NOT 'no live scope was armed' — a real paper-account API call is "
-                "non-live and still broker-resource-consuming, and would be denied here "
-                "(design #34 §4.2/§4.7)"
-            ),
-            native_value=applicability.value,
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.UNKNOWN,
-        reason=(
-            f"item {verify_item_number(item)} is required for a "
-            f"{applicability.value} send and its owning runtime has not landed — the required "
-            "fact is unverifiable, which is a rejection (RFC-002 §10.8:741 → :761); "
-            "design #34 §4.1 records this item as Deferred"
-        ),
-        native_value=applicability.value,
-    )
-
-
 def verify_send_boundary(
     *,
     attempt: AttemptRequest,
@@ -578,7 +400,7 @@ def verify_send_boundary(
     verdicts: list[VerifyItemVerdict] = []
     for item in SEND_VERIFY_ITEMS:
         if item in DEFERRED_ITEMS:
-            verdicts.append(_deferred_item_verdict(item, applicability))
+            verdicts.append(deferred_item_verdict(item, applicability, context))
         else:
             verdicts.append(_ITEM_CHECKS[item](attempt, context, applicability))
 
@@ -627,9 +449,6 @@ def verify_send_boundary(
     )
 
 
-# -- item 1 ------------------------------------------------------------------------------
-
-
 def _check_capability(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -669,9 +488,6 @@ def _check_capability(
         VerifyOutcome.SATISFIED,
         reason="single-use capability + permit nonces are unclaimed for this exact bind",
     )
-
-
-# -- item 2 ------------------------------------------------------------------------------
 
 
 def _check_identities(
@@ -718,9 +534,6 @@ def _check_identities(
     )
 
 
-# -- item 3 ------------------------------------------------------------------------------
-
-
 def _check_commitment_epoch(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -749,9 +562,6 @@ def _check_commitment_epoch(
     )
 
 
-# -- item 6 ------------------------------------------------------------------------------
-
-
 def _check_allowance(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -769,8 +579,11 @@ def _check_allowance(
       (design #34 §1.1-3). The gateway therefore admits **no** live send, by construction rather
       than by policy.
 
-    The allowance flags themselves are ⚠ provisional stand-ins: the approved Broker Capability
-    Profile INSTANCE is P0-2-blocked (design #34 §4.1 item 6).
+    The allowance flags are injected facts, never derived here: the caller (compose) is
+    responsible for deriving them from the active Broker Scope and its bound Broker Capability
+    Profile INSTANCE document (Phase 4 plan §2 decision 4). This gate sees only a ``bool |
+    None`` and cannot verify where it came from — it judges only whether the supplied flag is
+    positive (kernel round #2 §2 decision 4; independent review round #1 MEDIUM-2).
     """
     del attempt
     item = SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY
@@ -817,7 +630,9 @@ def _check_allowance(
             VerifyOutcome.UNKNOWN,
             reason=(
                 "the account / instrument / action class allowance is not positively "
-                "established — ⚠ provisional stand-in pending the P0-2 approved Profile INSTANCE"
+                "established — the caller is responsible for deriving this flag from the "
+                "scope table + INSTANCE (Phase 4 plan §2 decision 4); this gate judges only "
+                "the supplied flag's positivity (kernel round #2 §2 decision 4)"
             ),
         )
     if not _positive(context.max_quantity_within_allowance):
@@ -825,19 +640,16 @@ def _check_allowance(
             item,
             VerifyOutcome.UNKNOWN,
             reason=(
-                "the maximum-quantity allowance is not positively established — ⚠ provisional "
-                "stand-in; the derived size's own bound is enclosed in the Authorized "
-                "Construction Envelope (design #34 §3.1)"
+                "the maximum-quantity allowance is not positively established; the derived "
+                "size's own bound is enclosed in the Authorized Construction Envelope "
+                "(design #34 §3.1)"
             ),
         )
     return _verdict(
         item,
         VerifyOutcome.SATISFIED,
-        reason="⚠ provisional stand-in: account / instrument / action / quantity allowance held",
+        reason="account / instrument / action / quantity allowance held",
     )
-
-
-# -- item 11 -----------------------------------------------------------------------------
 
 
 def _check_venue(
@@ -907,43 +719,22 @@ def _check_venue(
     )
 
 
-# -- item 12 -----------------------------------------------------------------------------
-
-
 def _check_venue_generations(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
     applicability: BrokerApplicability,
 ) -> VerifyItemVerdict:
-    """Item 12 — venue / session / account / broker-constraint generation currency (provisional)."""
+    """Item 12 — venue / session / account / broker-constraint generation currency.
+
+    Delegates the full judgement to :func:`~tos.egressgw.venuefacts.venue_generation_item_verdict`
+    (kernel round #3 §2 decision 4, splitting this item's logic out of ``gateway.py`` the same way
+    round #2 §2 decision 1 split the deferred mesh into ``mesh.py``) — this wrapper exists only so
+    the item stays dispatched through :data:`_ITEM_CHECKS`'s uniform
+    ``(attempt, context, applicability) -> VerifyItemVerdict`` signature; ``attempt`` and
+    ``applicability`` are not inputs to item 12's own judgement.
+    """
     del attempt, applicability
-    item = SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION
-    if not _positive(context.venue_session_account_facts_current):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "the venue / session / halt / tradability / account / margin / settlement facts "
-                "are not positively current — ⚠ provisional stand-in (design #34 §4.1 item 12)"
-            ),
-        )
-    if not _positive(context.broker_constraint_generation_current):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "the broker-constraint generation is not positively current — ⚠ provisional; "
-                "the versioned Profile is P0-2-blocked (RFC-002 §10.8:765)"
-            ),
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason="⚠ provisional stand-in: venue / account / broker-constraint generations current",
-    )
-
-
-# -- item 13 -----------------------------------------------------------------------------
+    return venue_generation_item_verdict(context)
 
 
 def _check_construction(
@@ -1054,9 +845,6 @@ def _check_construction(
     )
 
 
-# -- item 14 -----------------------------------------------------------------------------
-
-
 def _check_approval(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -1094,9 +882,6 @@ def _check_approval(
         VerifyOutcome.SATISFIED,
         reason="⚠ provisional stand-in: approval consumed and bound to this exact intent digest",
     )
-
-
-# -- item 15 -----------------------------------------------------------------------------
 
 
 def _check_action_flow(
@@ -1137,9 +922,6 @@ def _check_action_flow(
         VerifyOutcome.SATISFIED,
         reason="⚠ provisional stand-in: Action Flow Permit bound to this exact attempt",
     )
-
-
-# -- item 16 -----------------------------------------------------------------------------
 
 
 def _check_currentness(
@@ -1228,9 +1010,6 @@ def _check_currentness(
         ),
         native_value=currentness.native_verdict_value,
     )
-
-
-# -- item 17 -----------------------------------------------------------------------------
 
 
 def _check_actual_outbound(
@@ -1327,16 +1106,8 @@ def _check_dispatch_anchor() -> None:
 _check_dispatch_anchor()
 
 
-# ===========================================================================
-# §4.6 / §5.3 — the gateway itself (D-E1 ``Transmit`` slot)
-# ===========================================================================
-#
-# ``outbound_coordinates`` / ``OUTBOUND_COORDINATE_NAMES`` now live in
-# :mod:`tos.egressgw.seal` (Phase 4 작업 6) — :func:`~tos.egressgw.seal.build_send_seal` needs
-# the identical derivation this gateway calls, and a single definition is what keeps the two from
-# drifting apart. Imported above and re-exported here so existing ``tos.egressgw.gateway`` /
-# ``tos.egressgw`` call sites (including the test suite's monkeypatch of this module attribute)
-# are unchanged.
+# ``outbound_coordinates`` and ``OUTBOUND_COORDINATE_NAMES`` are re-exported for existing
+# gateway import and monkeypatch paths.
 
 
 def outbound_binding_mismatch(context: SendBoundaryContext) -> str | None:
@@ -1609,11 +1380,14 @@ class BrokerEgressGateway:
         The ledger claims ``request_digest=seal.claim_request_digest`` — the item-1 single-use
         identity (``context.request_digest``), the same one item 1's own
         ``capability_and_permit_single_use`` check verifies against. This is **not**
-        ``seal.request_bytes_digest`` — the item-17 Capsule/exact-binding identity — which is a
-        different value by design: in the composed runtime the claim identity is per-attempt
-        while the exact-binding identity is per account+instrument (identical across every
-        attempt on the same egress request). Binding the ledger claim to the wrong one of the
-        two would record an admission decision the verify list never actually made.
+        ``seal.request_bytes_digest`` — the item-17 Capsule/exact-binding identity, whose own
+        unit is whichever digest source the compose root binds: per-attempt (quantity and price
+        included) once bound to the KIS wire codec (T2 seal-codec binding), or per
+        account+instrument (identical across every attempt on the same egress request) under the
+        earlier capsule stand-in — that the claim identity and the exact-binding identity can
+        land on a different value is still the design, whichever source is bound. Binding the
+        ledger claim to the wrong one of the two would record an admission decision the verify
+        list never actually made.
 
         Args:
             attempt_id: The attempt identity (for the halt record).
@@ -1638,9 +1412,6 @@ class BrokerEgressGateway:
             return None, self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE,
-                # The seal is step 15's output (design §1.2 survey note) — a construction
-                # failure is a Send Boundary Verification failure, not a step of its own
-                # (the 19-step CommitmentStep enum stays closed; there is no "step 15½").
                 step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=(
                     f"cannot build the pre-SEND_STARTED send seal: {type(exc).__name__}: "
@@ -1780,10 +1551,6 @@ class BrokerEgressGateway:
                 detail=mismatch,
             )
 
-        # -- build the pre-SEND_STARTED seal (step 15's own output), then the step-16 claim --
-        # (Phase 4 작업 6.) A seal-construction failure — including a coordinate-derivation
-        # fault, which used to surface from inside step 18 as OUTBOUND_COORDINATE_DERIVATION_
-        # RAISED — halts here, before the claim, so nothing is consumed.
         seal, halted = self._seal_and_claim(
             attempt_id=attempt_id, attempt=attempt, context=context
         )
@@ -1791,8 +1558,6 @@ class BrokerEgressGateway:
             return halted
         assert seal is not None  # narrowed by _seal_and_claim's own contract
 
-        # The seal is step 15's own artifact (design §1.2 survey note) — not a "step 15½"; the
-        # closed 19-step CommitmentStep enum gains no member for it.
         self._record(
             kind="SEND_SEALED",
             attempt_id=attempt_id,
@@ -1833,7 +1598,7 @@ class BrokerEgressGateway:
             ),
         )
 
-        # -- step 18: exactly one delegation to the injected transport --------------------
+        # Step 18 delegates exactly once, using the seal as its sole input source.
         # Every argument below is read from ``seal`` alone — never from ``context`` again, with
         # ZERO exceptions (design §0 "봉인이 유일 입력 원천이어야 한다"; the M-K1 AST pin in the
         # test suite enforces this literally). ``reference`` (the causal-ordering tag) is sealed
@@ -1850,10 +1615,7 @@ class BrokerEgressGateway:
                     "and the attempt stays consumed so nothing is resent"
                 ),
             )
-        # Write-ahead mark (Phase 3 wave 3 KW3-GW): recorded immediately BEFORE send_once, so
-        # "was the network call entered" is auditable from evidence even if send_once itself
-        # never returns (RFC-002 §10.8 send boundary). Carries the seal digest / attempt id
-        # like its SEND_STARTED / EGRESS_RESULT_RECORDED neighbours.
+        # Record entry before send_once so a call that never returns remains auditable.
         self._record(
             kind="NETWORK_CALL_ENTERED",
             attempt_id=attempt_id,
@@ -1890,12 +1652,7 @@ class BrokerEgressGateway:
                 ),
             )
 
-        # -- step 19: evidence ------------------------------------------------------------
-        # send_once above is now the *only* transport call this attempt will ever make
-        # (single-shot by construction, §5.4) — everything below only reads and records what
-        # already happened. A fault reading the result is UNKNOWN-restrictive (§4.2 "unknown
-        # preserves capacity, deny"), so it halts under its own recorded reason rather than
-        # being misread as a transport failure.
+        # No further transport call occurs below; unreadable results fail closed as UNKNOWN.
         try:
             attempt_identity_mismatch = result.attempt_id != attempt_id
         except (

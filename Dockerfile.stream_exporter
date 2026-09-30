@@ -22,6 +22,11 @@ COPY shared/config/tls.py /app/shared/config/tls.py
 COPY shared/exceptions /app/shared/exceptions
 COPY shared/streaming /app/shared/streaming
 COPY shared/models /app/shared/models
+# shared.observability.logging_setup backs _setup_logging (#753). This is the
+# only minimal image in the repo, so a `shared.*` import that is not COPYed
+# here breaks the container and nothing else — a unit test pins this list to
+# the exporter's imports.
+COPY shared/observability /app/shared/observability
 COPY services/monitoring/stream_exporter.py /app/services/monitoring/stream_exporter.py
 
 EXPOSE 9093

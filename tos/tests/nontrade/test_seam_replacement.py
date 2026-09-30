@@ -55,7 +55,9 @@ _NETTING_KINDS = (
 
 def _claim(**magnitudes: Decimal | None) -> OverlapReservationClaim:
     """A replacement overlap-first claim covering all nine credible intermediate outcomes."""
-    base = {kind: Decimal("1") for kind in _NETTING_KINDS}
+    base: dict[CredibleIntermediateOutcomeKind, Decimal | None] = {
+        kind: Decimal("1") for kind in _NETTING_KINDS
+    }
     for name, value in magnitudes.items():
         base[CredibleIntermediateOutcomeKind[name]] = value
     return OverlapReservationClaim(

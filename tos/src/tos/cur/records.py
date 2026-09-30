@@ -44,9 +44,11 @@ immutable claim; the current lifecycle state is injected into the predicate.
 **Deterministic set-covered digest (design #23 §3.1).** ``CurrentnessPolicy.required_dimensions``
 and ``RestrictiveFenceRecord.affected_scope`` are ``frozenset``s (the §8 subset-check contract);
 because ``model_dump(mode="json")`` serializes a ``frozenset`` to an **unordered** list and the
-canonicalizer preserves sequence order, :meth:`covered_content` **sorts** each set field so the digest
-is deterministic across processes (a frozenset's iteration order is otherwise unstable). The field
-type stays a ``frozenset`` for the predicate's subset math.
+canonicalizer preserves sequence order, the shared
+:class:`~tos.canonical._canonical_json.CanonicalJsonMixin` JSON hook on
+:class:`~tos.canonical.FrozenModel` **sorts** every set field so the digest is deterministic across
+processes (a frozenset's iteration order is otherwise unstable). The field type stays a ``frozenset``
+for the predicate's subset math.
 
 **All-false authority (design #23 §2.4/§6.13; CUR-INV-005).** Every artifact carries an
 :class:`~tos.cur._base.AllFalseCurrentnessAuthority` with all nine flags ``False`` — a vector / proof
@@ -58,7 +60,7 @@ only; no ``shared.*``, no sibling ``tos.*`` (design #23 §0.3).
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from tos.cur._base import AllFalseCurrentnessAuthority, IndependentIdArtifact
 from tos.cur.state import (
@@ -116,23 +118,6 @@ class CurrentnessPolicy(IndependentIdArtifact):
     compatibility_manifest_digest: str | None = None
     #: §6.13 — a policy is governed content, not permission (all-false, CUR-INV-005).
     authority_effect: AllFalseCurrentnessAuthority = AllFalseCurrentnessAuthority()
-
-    def covered_content(self) -> dict[str, Any]:
-        """Digest preimage with the ``required_dimensions`` set serialized deterministically (§3.1).
-
-        ``model_dump(mode="json")`` serializes a ``frozenset`` to an **unordered** list and the
-        canonicalizer preserves sequence order, so the raw dump would give an unstable digest across
-        processes. This override sorts ``required_dimensions`` into a canonical list so the digest is
-        deterministic; the field itself stays a ``frozenset`` for the subset-check contract.
-
-        Returns:
-            The covered content mapping with ``required_dimensions`` as a sorted list.
-        """
-        content = super().covered_content()
-        value = content.get("required_dimensions")
-        if value is not None:
-            content["required_dimensions"] = sorted(value)
-        return content
 
 
 class SafetyCurrentnessVector(IndependentIdArtifact):
@@ -355,19 +340,3 @@ class RestrictiveFenceRecord(IndependentIdArtifact):
     fence_digest: str | None = None
     #: §6.13 — a fence is verified ordering data, not permission (all-false, CUR-INV-005).
     authority_effect: AllFalseCurrentnessAuthority = AllFalseCurrentnessAuthority()
-
-    def covered_content(self) -> dict[str, Any]:
-        """Digest preimage with the ``affected_scope`` set serialized deterministically (§3.1).
-
-        Mirrors :meth:`CurrentnessPolicy.covered_content`: a ``frozenset`` dumps to an unordered
-        list and the canonicalizer preserves order, so the scope is sorted into a canonical list for
-        a deterministic digest; the field stays a ``frozenset`` for the §6.3 union math.
-
-        Returns:
-            The covered content mapping with ``affected_scope`` as a sorted list.
-        """
-        content = super().covered_content()
-        value = content.get("affected_scope")
-        if value is not None:
-            content["affected_scope"] = sorted(value)
-        return content

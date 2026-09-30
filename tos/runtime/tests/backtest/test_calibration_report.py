@@ -19,6 +19,7 @@ therefore by ``attempt_id`` alone, unconditionally — every test below reflects
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -26,7 +27,7 @@ import pytest
 import yaml
 from tos.backtest.calibration import CalibrationVerdict, DeviationBudget
 from tos.backtest.records import LocalFillRecord
-from tos.backtest.vocabulary import QuantityProvenance, SettlementStatus
+from tos.backtest.vocabulary import FillSide, QuantityProvenance, SettlementStatus
 from tos.engine.records import EngineEvidenceRecord, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind, EvidenceKind
 from tos_runtime.backtest.calibration_report import (
@@ -50,9 +51,16 @@ class _FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes")
 
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
+
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return b"test-fixed-key-bytes"
+
 
 @pytest.fixture
-def store(tmp_path: Path) -> SqliteEvidenceStore:
+def store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=_FixedKeyProvider()
     )
@@ -98,7 +106,7 @@ def _backtest_fill(attempt_id: str, *, filled: Decimal | None) -> LocalFillRecor
         result_kind=(
             EgressResultKind.FULL_FILL if is_positive_fill else EgressResultKind.REJECT
         ),
-        side="BUY",
+        side=FillSide.BUY,
         quantity_provenance=QuantityProvenance.SCENARIO_PARAMETER,
         filled_quantity=filled,
         remaining_quantity=Decimal(0) if filled is not None else None,

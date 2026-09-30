@@ -1,72 +1,15 @@
-"""``SafetyAuthorityEpochService`` — the Safety Authority epoch runtime (design #40
-§5 order 4, slice plan §1 item 1).
+"""Runtime owner for Safety Authority epoch and currentness state.
 
-**This service does not judge.** It collects inputs — the log's own committed
-entries, the injected :class:`~tos_runtime.time.service.TrustworthyTimeService`
-snapshot, and a configured containment bound — and calls the kernel's own
-conservative, fail-closed predicates (``tos.authority.predicates``) to derive
-:class:`~tos.authority.state.AuthorityEpochState` and
-:class:`~tos.authority.state.CurrentnessWitness`. It never itself decides
-whether an epoch or a capability is current; that is
-``tos.authority.authority_epoch_current`` / ``currentness_admissible`` /
-``permissive_capability_valid``'s job (:mod:`tos_runtime.authority.capability`
-calls the last one).
+The service collects committed RCL entries, trusted-time observations, and a
+configured containment bound, then delegates epoch and capability judgements
+to kernel predicates. RCL writer epochs fence access to the log; Safety
+Authority epochs identify capability issuance. They are distinct coordinates.
 
-**Writer epoch != Safety Authority epoch (design #40 v1.1 note (2)).** The RCL
-``WriterEpoch`` this service's ``append_cas`` calls are fenced under (a single
-integer, ``tos_runtime.rcl.log.SqliteCommitLog.acquire_epoch``) and the Safety
-Authority epoch this service issues/reads (``AuthorityEpochState
-.current_epoch_floor``, a *different*, independently-advancing counter scoped
-to ``authority_domain``) are never equated anywhere in this module. The two
-values happen to both be committed through the same
-:class:`~tos_runtime.rcl.log.SqliteCommitLog` instance, but one fences *who may
-write to the log at all* and the other fences *which Safety Authority epoch a
-capability was issued under* — ``tos.rcl.commitlog``'s own module docstring
-makes exactly this distinction for ``AuthorityEpochTransitionRecord`` (see its
-"anti-phantom greps recorded" section).
-
-**Reported ``CommandType`` gap — resolved by kernel round #1 (plan §1.1).**
-No member of the ADR-002-012 §10 / ADR-002-002 §27 closed
-``tos.rcl.vocabulary.CommandType`` vocabulary named "Safety Authority epoch
-transition" — the 16 persistence commands and the 11 conceptual commands are
-all RCL capacity/order-lifecycle verbs (``CommitReservation``, ``BindAttempt``,
-``RecordFill``, ...), and this module previously reused the structurally
-closest analog, :data:`~tos.rcl.vocabulary.CommandType.ADVANCE_RESTORE_GENERATION`
-(a different governed axis, ADR-002-017 Recovery Generation). Kernel round #1
-§1.1 (`docs/plans/2026-09-08-tos-phase2-kernel-round-1-commandtype-expiry-
-obligation-plan.md`) ratified a dedicated fourth member,
-:data:`~tos.rcl.vocabulary.CommandType.ADVANCE_AUTHORITY_EPOCH`, under the new
-"Runtime-realized authority/currentness commands" vocabulary block — this
-module now writes and reads exclusively under that member; the
-``ADVANCE_RESTORE_GENERATION`` reuse is retired here (kernel round #1 §2.1;
-``currentness/stages.py``'s own, unrelated ``TransmissionCapability`` use of a
-different member is untouched by this round). The epoch domain/value is still
-disambiguated entirely through the log-visible ``command_id`` (see
-:func:`_epoch_transition_command_id`), never through ``kind`` alone —
-:meth:`SafetyAuthorityEpochService.current_state` additionally now raises
-:class:`~tos_runtime.rcl.log.CommitLogCorruption` on any log entry whose
-``command_id`` matches this module's own epoch-transition prefix but whose
-``kind`` is NOT :data:`CommandType.ADVANCE_AUTHORITY_EPOCH` (kernel round #1
-§2.1) — silently skipping such an entry (e.g. one written under the
-now-retired legacy kind, or by any other unrelated writer) would let the
-derived epoch floor regress toward its ``None`` (unfenced) starting point,
-a fail-open this service must never allow.
-
-**Deriving state from the log without a payload-read API.** The kernel
-``CommitLog.append_cas``/``read_linearizable``/``replay`` Protocol exposes only
-``CommitEntry(seq, writer_epoch, command_id, command_digest, kind,
-payload_digest)`` — the full JSON payload a caller supplies to ``append_cas``
-is durably stored by :class:`~tos_runtime.rcl.log.SqliteCommitLog` but is
-**not** returned by any Protocol read path (only the reservation-transition
-side channel folds ``payload_json`` for its own dedicated
-``reservations`` projection). :meth:`SafetyAuthorityEpochService.current_state`
-therefore never depends on payload readback: every committed transition's
-``command_id`` is itself content-addressed as
-``f"authority-epoch-transition:{authority_domain}:{new_epoch}"``
-(:func:`_epoch_transition_command_id`) — a value ``read_linearizable`` DOES
-return — so the current epoch floor is derivable purely by scanning
-``command_id`` strings for the matching ``kind`` and domain prefix and taking
-the maximum embedded ``new_epoch``. No cache, no separate projection table.
+Authority transitions use a command-id prefix and the dedicated
+``CommandType.ADVANCE_AUTHORITY_EPOCH`` member, so a matching entry with the
+wrong kind is corruption rather than an entry to ignore. Current state is
+derived by scanning the log, without payload readback or a process-local
+cache.
 """
 
 from __future__ import annotations
@@ -98,16 +41,11 @@ __all__ = [
     "load_authority_config",
 ]
 
-#: Command-id prefix for every authority-epoch-transition entry this service
-#: commits — never reused for any other purpose (module docstring, "deriving
-#: state from the log" section).
+#: Command-id prefix for every authority-epoch-transition entry. It is not
+#: reused for another log entry type.
 _EPOCH_TRANSITION_PREFIX = "authority-epoch-transition"
 
-#: The dedicated ``CommandType`` member for a Safety Authority epoch
-#: transition (kernel round #1 §1.1/§2.1 — module docstring). Fixed here so
-#: both the writer (:meth:`SafetyAuthorityEpochService.transition`) and the
-#: reader (:meth:`SafetyAuthorityEpochService.current_state`) agree on exactly
-#: one value.
+#: The command kind shared by the transition writer and log reader.
 _EPOCH_TRANSITION_KIND = CommandType.ADVANCE_AUTHORITY_EPOCH
 
 _EVIDENCE_KIND = "AUTHORITY_EPOCH_TRANSITION"
@@ -318,8 +256,6 @@ class SafetyAuthorityEpochService:
         #: successful online verification.
         self._last_verified_monotonic_ms: int | None = None
 
-    # -- state derivation (no cache) --------------------------------------
-
     def current_state(self) -> AuthorityEpochState:
         """Derive the current :class:`~tos.authority.AuthorityEpochState`.
 
@@ -342,11 +278,8 @@ class SafetyAuthorityEpochService:
             if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
             if entry.kind is not _EPOCH_TRANSITION_KIND:
-                # A prefix-matching entry under any OTHER kind (e.g. the
-                # now-retired ADVANCE_RESTORE_GENERATION reuse, or any
-                # unrelated writer) is never silently skipped — that would
-                # let the derived epoch floor regress toward its unfenced
-                # None starting point (fail-open). Kernel round #1 §2.1.
+                # A prefix-matching entry under another kind is corruption;
+                # skipping it could regress the derived epoch floor to None.
                 raise CommitLogCorruption(
                     "SafetyAuthorityEpochService.current_state: entry "
                     f"{entry.command_id!r} matches the epoch-transition prefix "
@@ -435,9 +368,8 @@ class SafetyAuthorityEpochService:
         except StaleEpochRead:
             return CurrentnessWitness(present=False, witness_source="stale_epoch_read")
         except sqlite3.Error:
-            # The underlying log file is locked/unreachable — a genuine read
-            # failure (2026-09-08 independent-review MEDIUM fix), never a
-            # raised exception for a routine currentness check.
+            # The underlying log file is locked or unreachable; a routine
+            # currentness check reports absence rather than raising.
             return CurrentnessWitness(present=False, witness_source="log_unreachable")
         now_ms = snapshot.evaluated_monotonic_anchor.monotonic_anchor_value
         if now_ms is None:
@@ -472,7 +404,7 @@ class SafetyAuthorityEpochService:
             present=True, within_containment_bound=True, witness_source="rcl_log"
         )
 
-    # -- epoch transitions (authority-making; RCL-committed) --------------
+    # Authority-making transitions are committed through the RCL.
 
     def transition(
         self,

@@ -1,12 +1,10 @@
-"""``tos_runtime.strategy.bindings`` tests (TOS Phase 3 슬라이스 D-R
-``[D-R-3a]``, docs/plans/2026-09-09-tos-phase3-event-core-plan.md §1.2 finding
-#9 disposition).
-"""
+"""Tests for ``tos_runtime.strategy.bindings``."""
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -73,7 +71,7 @@ def test_malformed_yaml_refuses(tmp_path: Path) -> None:
 
 def test_null_leaf_at_top_level_refuses_naming_the_field(tmp_path: Path) -> None:
     path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
-    mapping = {
+    mapping: dict[str, Any] = {
         "strategies": {
             "example.strategy": {"config_binding_version": None, "bindings": {}}
         }
@@ -109,6 +107,28 @@ def test_null_leaf_in_bindings_refuses_naming_the_key(tmp_path: Path) -> None:
     message = str(excinfo.value)
     assert "threshold" in message
     assert "still null (named-TBD)" in message
+
+
+def test_named_tbd_placeholder_in_bindings_refuses_naming_the_key(
+    tmp_path: Path,
+) -> None:
+    """The null-only leaf walk must also catch the literal placeholder
+    string ``"TBD"`` typed in place of a real bindings value."""
+    path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
+    mapping = {
+        "strategies": {
+            "example.strategy": {
+                "config_binding_version": "cfg-1",
+                "bindings": {"threshold": "TBD"},
+            }
+        }
+    }
+    path.write_text(yaml.safe_dump(mapping, sort_keys=False), encoding="utf-8")
+    with pytest.raises(StrategyBindingsLoadError) as excinfo:
+        load_strategy_bindings(path)
+    message = str(excinfo.value)
+    assert "threshold" in message
+    assert "template placeholder" in message
 
 
 def test_unrecognized_key_refuses(tmp_path: Path) -> None:

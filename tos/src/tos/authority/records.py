@@ -198,6 +198,54 @@ class AuthorityEpochTransitionRecord(IndependentIdArtifact):
             )
         return self
 
+    @property
+    def issued_old_epoch(self) -> int:
+        """The ISSUED-only ``old_epoch``, narrowed to a concrete ``int`` (§3.2).
+
+        Both epochs are declared ``int | None`` because a ``DRAFT`` record
+        legitimately carries neither yet — the required-covered guard AND
+        :meth:`_epoch_strictly_increasing` only run their real checks for a
+        non-``DRAFT`` (ISSUED-or-later) instance; both return early for
+        ``DRAFT`` (§3.2). So this accessor expresses the ISSUED-only contract at
+        the type level, for callers that have ALREADY established the record is
+        issued (a record built via :meth:`issue` never reaches the ``None``
+        branch).
+
+        Reachability: calling this on a genuinely ``DRAFT`` record DOES raise —
+        it is not dead code — see
+        ``test_issued_epoch_accessors_raise_on_a_draft_transition``
+        (``tos/tests/authority/test_authority_required_covered.py``).
+
+        Do NOT use this inside :meth:`_epoch_strictly_increasing` itself
+        (``records.py:191``, ``self.old_epoch is None or self.new_epoch is
+        None``) — that guard is what makes the ISSUED-only guarantee true in
+        the first place, so calling this accessor from it would be circular.
+        There is no other production call site today; this accessor is for
+        code (today: tests only) that needs the epochs of an
+        already-established-issued record and should treat ``None`` there as
+        the programming error it would be.
+        """
+        if self.old_epoch is None:
+            raise ArtifactIntegrityError(
+                "AuthorityEpochTransitionRecord.issued_old_epoch called on a "
+                "DRAFT (or otherwise epoch-less) record — this accessor is "
+                "ISSUED-only; call it only past .issue()/§3.2 completeness, "
+                "never on a DRAFT instance"
+            )
+        return self.old_epoch
+
+    @property
+    def issued_new_epoch(self) -> int:
+        """The ISSUED-only ``new_epoch`` — see :attr:`issued_old_epoch`."""
+        if self.new_epoch is None:
+            raise ArtifactIntegrityError(
+                "AuthorityEpochTransitionRecord.issued_new_epoch called on a "
+                "DRAFT (or otherwise epoch-less) record — this accessor is "
+                "ISSUED-only; call it only past .issue()/§3.2 completeness, "
+                "never on a DRAFT instance"
+            )
+        return self.new_epoch
+
 
 class DegradedLeaseOwnershipRecord(IndependentIdArtifact):
     """Degraded Lease Ownership Record (ADR-002-003 §14.2 line 545-556).

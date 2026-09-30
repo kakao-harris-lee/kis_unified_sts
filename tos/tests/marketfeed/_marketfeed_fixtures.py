@@ -147,7 +147,7 @@ def issue_snapshot(
         "transformation_lineage": transformation_lineage,
     }
     base.update(overrides)
-    return CriticalInputSnapshot.issue(scheme=SCHEME, **base)  # type: ignore[return-value]
+    return CriticalInputSnapshot.issue(scheme=SCHEME, **base)
 
 
 def issue_capsule(
@@ -175,7 +175,7 @@ def issue_capsule(
         ),
     }
     base.update(overrides)
-    return DecisionContextCapsule.issue(scheme=SCHEME, **base)  # type: ignore[return-value]
+    return DecisionContextCapsule.issue(scheme=SCHEME, **base)
 
 
 def candidate(

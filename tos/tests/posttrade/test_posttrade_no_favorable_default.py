@@ -23,6 +23,7 @@ from decimal import Decimal
 import pytest
 from hypothesis import given
 from tos.posttrade import (
+    ObligationLeg,
     ObligationLegDirection,
     missing_counterleg_is_adverse,
     monetary_leg_conservative,
@@ -137,11 +138,11 @@ def test_the_booked_zero_field_admits_no_non_boolean_forgery() -> None:
 # --- §4.5-A truth table: netting_requires_positive_proof ---------------------
 
 
-def _receivable(magnitude: Decimal | None = Decimal("5.00")) -> object:
+def _receivable(magnitude: Decimal | None = Decimal("5.00")) -> ObligationLeg:
     return clean_leg(ObligationLegDirection.CREDIT, magnitude)
 
 
-def _payable(magnitude: Decimal | None = Decimal("3.00")) -> object:
+def _payable(magnitude: Decimal | None = Decimal("3.00")) -> ObligationLeg:
     return clean_leg(ObligationLegDirection.DEBIT, magnitude)
 
 

@@ -22,6 +22,7 @@ The source is additionally scanned for the two forbidden idioms: an ``is not Tru
 from __future__ import annotations
 
 import ast
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -88,16 +89,16 @@ def test_every_result_member_is_truthy_untestable(member: object) -> None:
     [member for enum_type in _RESULT_ENUMS for member in enum_type],
     ids=lambda member: f"{type(member).__name__}.{member.name}",
 )
-def test_identity_value_hashing_and_membership_still_work(member: object) -> None:
+def test_identity_value_hashing_and_membership_still_work(member: Enum) -> None:
     """(§2.2-8) The seal touches ``__bool__`` only — the mandated gate stays usable."""
-    assert member is type(member)(member.value)  # type: ignore[call-arg]
+    assert member is type(member)(member.value)
     assert member.value  # the raw string is a normal truthy str
     assert member in set(type(member))
     assert str(member) == member.value
 
 
 @pytest.mark.parametrize("enum_type", _STRUCTURAL_ENUMS)
-def test_structural_vocabulary_enums_are_not_sealed(enum_type: type) -> None:
+def test_structural_vocabulary_enums_are_not_sealed(enum_type: type[Enum]) -> None:
     """(§2.1 m7) Only the two **result** enums are sealed; an axis is not a verdict.
 
     Sealing the structural axes would break ordinary set / mapping use for no safety gain —

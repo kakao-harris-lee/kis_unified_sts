@@ -265,14 +265,14 @@ def test_no_numeric_bound_constant_is_hardcoded() -> None:
     for path in sorted(_SIR_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            targets: list[ast.expr] = []
+            entries: list[tuple[ast.expr, int]] = []
             if isinstance(node, ast.Assign):
-                targets = list(node.targets)
+                entries = [(target, node.lineno) for target in node.targets]
             elif isinstance(node, ast.AnnAssign):
-                targets = [node.target]
-            for target in targets:
+                entries = [(node.target, node.lineno)]
+            for target, lineno in entries:
                 if not isinstance(target, ast.Name):
                     continue
                 if target.id.startswith(("B_incident", "MAX_incident", "B_controlled")):
-                    offenders.append(f"{path.name}:{node.lineno} {target.id}")
+                    offenders.append(f"{path.name}:{lineno} {target.id}")
     assert offenders == [], f"hardcoded Profile-INSTANCE bound in tos.sir: {offenders}"

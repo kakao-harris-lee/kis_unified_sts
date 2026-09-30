@@ -1,0 +1,301 @@
+# =============================================================================
+# release.yaml — TOS paper 배포 승인값 (W-A / A-2 · A-3)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.1 · §3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/release.example.yaml
+# 로더: tos_runtime.release.config.load_release_config (release/config.py:172)
+# 호출부: compose/_wiring.py:1045 (`_boot_services`, 무조건, Stage A probe)
+# =============================================================================
+#
+# [D] 아래 두 digest 는 **명령으로 얻었다 — 손으로 짓지 않았다**(제안표 §3 1행).
+#
+#   $ tos-runtime print-digests          # 인자 없음. `print-policy-digests` 와 **다른 서브커맨드**다.
+#   expected_code_digest: 39a8d87dcd1d187c01fba7ca3ec4ef562ee3f19d84838b4383c4424c60a94007
+#   expected_dependency_set_digest: 20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b
+#   python_version: 3.12.12
+#   sqlite_version: 3.45.1
+#
+#   재측정(2026-09-24, 브랜치 fix/tos-calendar-expiry-roll · PR #799): 이 브랜치가
+#   `tos/runtime/src/tos_runtime/calendar/{phase,config}.py` 를 수정했으므로
+#   `expected_code_digest` 가 바뀐다(아래 갱신 규율). 이전 값
+#   0876c3e091df07119bdf0a80ae7e6b68ca337150225fe4292cf5dfc383e81260 는 2026-09-23 / main c1c9bffa 측정치.
+#   2차 재측정(같은 날, review-799 라운드 2 조치로 `calendar/config.py` 의 만기
+#   규칙 가드 술어와 `calendar/phase.py` docstring 을 다시 수정 → 8bc76e443ca844620b99e0d7766e1b6ca55ae48518dc120a84ce7b3dbbc478d9
+#   에서 위 값으로 갱신). 같은 브랜치에서 런타임 소스를 또 건드리면 또 바뀐다.
+#   `expected_dependency_set_digest` 는 **변하지 않았다** — 같은 루트 `.venv`
+#   에서 측정했고 설치 분포 집합·python/sqlite 좌표가 동일하다(명령 출력으로 확인).
+#
+#   3차 재측정(2026-09-24, 브랜치 fix/tos-canonical-set-order): 정본 집합 순서
+#   훅(`tos/src/tos/canonical/_canonical_json.py` 신설 + `_base.py`·`cur`·`wdr`·
+#   `sir`·`rlp`·`liveauth`·`stm` 수정)이 `tos/src/**.py` 를 바꾸므로 값이 다시 바뀐다.
+#   이전 값 b9eda9bd69cb24cb694ea44f75f8f44bbef701c3991eb9e6feaee34763d33571 은
+#   2026-09-24 / main 153c8fd0 측정치.
+#   `expected_dependency_set_digest` 는 또 변하지 않았다 — 같은 루트 `.venv`, 같은
+#   python/sqlite 좌표(명령 출력으로 확인).
+#
+#   4차 재측정(2026-09-24, 같은 브랜치, review-802 조치): LOW-5·LOW-6·MEDIUM-2 가
+#   `tos/src/tos/canonical/_canonical_json.py` 를 또 바꾸므로 값이 또 바뀐다
+#   (클래스별 스키마 사본 · 분기 지역변수 개명 · docstring 사각 2건 추가).
+#   이전 값 1600de4c387817cd0b6a54590139d8279e22d23f1d242fee69520debaa9cb110 은
+#   같은 브랜치의 3차 측정치. **소스가 바뀌는 모든 라운드마다 다시 돌려야 한다** —
+#   커밋된 두 문자열만 비교하는 `_VALUE_PINS` 는 이 불일치를 잡지 못한다.
+#   `expected_dependency_set_digest` 는 네 번 모두 변하지 않았다.
+#
+#   5차 재측정(2026-09-25, 브랜치 claude/kis-tos-project-covm64 · 상위 계획 W-B B-1 +
+#   W-C C-1): `tos_runtime/rcl/{gates,log}.py`(verify_replay 가 committed_vector 를 덮음)와
+#   `tos_runtime/recon/service.py`(broker_execution_id 교차조회)가 바뀌었으므로 값이 바뀐다.
+#   이전 값 b96213f5e64beff7b69af3146fa403d48c517b0c4f68f6531e4519a291564662 은 main
+#   d209d279 측정치. 이 값은 클라우드 세션 컨테이너에서 `print-digests` 와
+#   `observe_source_tree_digest()` 두 경로로 얻었고 일치했다 — 코드 digest 는 커밋 내용에만
+#   묶이므로 호스트와 무관하다. `expected_dependency_set_digest` 는 **바꾸지 않았다**:
+#   그 컨테이너의 인터프리터(python 3.11.15)는 배포 호스트 `.venv` 가 아니므로 거기서 찍은
+#   값을 여기에 옮기면 안 된다(아래 규율). 배포 호스트 값 그대로다.
+#   같은 브랜치 2차: 자기 리뷰가 B-1 의 회귀(K-4 이후·B-1 이전 엔트리의 벡터를 거짓 손상으로
+#   판정 → 정당한 기존 로그에서 부팅 거부)를 찾아 `rcl/{gates,log}.py` 를 다시 고쳤으므로
+#   값이 또 바뀐다. 이전 값 2a7e483dfa47d3fbc6d75441334a6a3f20495bf6d124f235d4853f4301a86a18 은
+#   같은 브랜치의 1차 측정치.
+#   같은 브랜치 3차: 폴백 리뷰(Codex 미가용)가 C-1 조인의 fail-open 2건(증거 영수증과 다른 id 로
+#   조인 · 날짜가 다른 ODNO 로 조인)을 찾아 `recon/{ports,service,witness_kis}.py` 를 고쳤으므로
+#   값이 또 바뀐다. 이전 값 90260205dd161f42103bb25bd87254c9211c7fe5d36f83d57c8d90c36438fce4 은 2차 측정치.
+#
+#   6차 재측정(2026-09-26, 브랜치 claude/kis-tos-project-covm64 · 계획
+#   docs/plans/2026-09-26-tos-egress-trading-date-plan.md): 커널 `tos/engine/{records,core}.py`
+#   (trading_date 주입 토큰) + 런타임 `calendar`·`transport/kis_mock`·`recon`·`compose` 가 바뀌어
+#   값이 바뀐다. 이전 값 1da8b70135d9159fa385482a4aad9b419987f2057d51f6d035a44fa64d3ec602 은 main 9434c280 측정치. `print-digests` 와
+#   `observe_source_tree_digest()` 일치. 의존성 digest 는 배포 호스트 값 그대로(이 컨테이너 값 아님).
+#   같은 브랜치 2차: Claude 쪽 리뷰 finding 1(신뢰 시각이 부팅 스냅샷 — 날짜가 낡음)·2(날짜
+#   소스 예외가 ACK 를 잃음) 조치로 `time/service.py`·`calendar/{ports,owner}.py`·
+#   `compose/_session_wiring.py`·`transport/kis_mock/adapter.py` 가 바뀌어 값이 또 바뀐다. 이전 값
+#   295bce988121e7f685ffeb2321af7e30c5756f1d27b63c761eba8e695f809372 은 1차 측정치.
+#
+#   7차 재측정(2026-09-26, 같은 브랜치 · 계획 docs/plans/2026-09-26-tos-periodic-time-eval-and-
+#   witness-wiring-plan.md W1): `marketfeed/{scheduler,time_pacer}.py`·`calendar/owner.py`·
+#   `compose/_marketfeed_wiring.py` 가 바뀌어(주기 시간 평가) 값이 바뀐다. 이전 값
+#   fe72348e2e54379c87ac4b398682c2aaeda34c22c81c02d7cccd7c8694a8ffc8 은 6차 2회 측정치(#805 머지).
+#   같은 브랜치 2차(W2 · C-2 `KisCredentialSession`): `transport/kis_mock/{credential_session,
+#   adapter}.py`·`transport/kis_quote/adapter.py`·`recon/{__init__,witness_kis}.py`·
+#   `compose/{_kis_credential_wiring,_transport_wiring,_engine_wiring,_finalize_wiring,_types,root}.py`
+#   가 바뀌어 값이 또 바뀐다. 이전 값 b430dc27fb7adee32f5cc827e1b3df433b2c03161843fb29ab300bc365a1a66a 은 1차(W1) 측정치.
+#   같은 브랜치 3차(폴백 리뷰 조치 — 미확정 세션을 닫힘으로 취급하지 않음 · 주입 단조시계 · 레지스트리 필수 ·
+#   증인 비ASCII 거부): `marketfeed/time_pacer.py`·`compose/{_marketfeed_wiring,_transport_wiring,_engine_wiring}.py`·
+#   `recon/witness_kis.py` 가 바뀌어 값이 또 바뀐다. 이전 값 b176ff65e3c00454e5d223bae4ed5c4e4e2681cefeededf45d100d5792bad6d8 은 2차(W2) 측정치.
+#
+#   8차 재측정(2026-09-27, 브랜치 docs/tos-poll-interval-freshness-plan · 계획
+#   docs/plans/2026-09-27-tos-poll-interval-freshness-budget-plan.md T-1): `compose/
+#   _marketfeed_wiring.py` 가 바뀌어(`journal_pass_allowance_ms` 로더 + 신선도 예산 부팅
+#   가드) 값이 바뀐다. 이전 값 48b07d22412ea4d5d0f6e7e7164f9e3c432edf5746d7851e6a024ee5c4de9d52
+#   은 7차 3회 측정치(#806 머지 · main f6348b19). `print-digests` 와
+#   `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 045ecf5a…).
+#   `expected_dependency_set_digest` 는 **바꾸지 않았다** — 같은 배포 호스트 루트 `.venv`
+#   에서 측정했고 출력이 커밋된 값과 바이트 동일했다(python 3.12.12 / sqlite 3.45.1).
+#
+#   9차 재측정(2026-09-27, 같은 브랜치 · PR #808 리뷰 처분 — 계획 §7.6): `compose/
+#   _marketfeed_wiring.py` 의 **독스트링만** 바뀌었다(MEDIUM-2 `kis_quote` 신선도 주장
+#   정정 · LOW-1 allowance 가 비강제 선언임을 명시 · LOW-2 로더가 예산을 검사하지 않음을
+#   명시). 동작 변경은 없지만 `expected_code_digest` 는 `*.py` **바이트**를 접으므로 주석
+#   한 줄에도 값이 바뀐다 — 그래서 다시 찍었다. 이전 값
+#   045ecf5aace6140aed5d1b51ccc08f35668229e0958c459a93c941e29fe4159f 은 8차 측정치.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 06508a5d…).
+#   `expected_dependency_set_digest` 는 아홉 번 모두 바뀌지 않았다.
+#
+#   10차 재측정(2026-09-27, 브랜치 fix/tos-freshness-read-order · PR #811 · 계획
+#   docs/plans/2026-09-27-tos-freshness-read-order-plan.md): 인입 판독을 시간 판독 앞으로
+#   옮기면서 `marketfeed/{scheduler,ports,time_pacer}.py` · `compose/_marketfeed_wiring.py` ·
+#   `transport/kis_quote/adapter.py`(독스트링)가 바뀌어 값이 바뀐다. 이전 값
+#   06508a5d85305a23f034624b330178bff10e3d89046e5ff3c1748866ddc0eed3 은 9차 측정치(#808 머지 ·
+#   main 4b1144d3). `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다
+#   (둘 다 1f4f5ae5…). `expected_dependency_set_digest` 는 열 번 모두 바뀌지 않았다 — 같은
+#   배포 호스트 루트 `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트
+#   동일했다.
+#
+#   11차 재측정(2026-09-27, 같은 브랜치 · PR #811 리뷰 처분 — 계획 §7.8): 런타임
+#   `*.py` 의 **독스트링만** 바뀌었다(MEDIUM `kis_quote` 에서 재판독 보장이 거짓임을
+#   `marketfeed/{ports,scheduler,time_pacer}.py` 에 한정 명시 · LOW-2 「항상 STALE」을
+#   허용 간격 한정으로 고친 `compose/_marketfeed_wiring.py`·`transport/kis_quote/adapter.py`).
+#   동작 변경은 없지만 `expected_code_digest` 는 `*.py` **바이트**를 접으므로 주석 한 줄에도
+#   값이 바뀐다 — 그래서 다시 찍었다. 이전 값
+#   1f4f5ae52343da004d341a93febb87e487b7ffb6a24ab0a99def8d88a1d18462 은 10차 측정치.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 1dcbeac6…).
+#   `expected_dependency_set_digest` 는 열한 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   12차 재측정(2026-09-28, 브랜치 fix/tos-kis-quote-request-anchor · PR #812 · 계획
+#   docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md): kis_quote 관측 시각을 요청
+#   시작에 묶으면서 `marketfeed/{ports,scheduler,time_pacer}.py` · `time/service.py` ·
+#   `transport/kis_quote/{adapter,__init__}.py` · `compose/_marketfeed_wiring.py` 가 바뀌어
+#   값이 바뀐다. 이전 값
+#   1dcbeac60ff90c4e5e7b91df19a0c813bfe0dfe77481eea7b6511dec942f9af0 은 11차 측정치
+#   (#806 머지 이후 · #811 머지 · main ac2efb0f).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 4a265f7e…).
+#   `expected_dependency_set_digest` 는 열두 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   13차 재측정(2026-09-28, 같은 브랜치 · PR #812 리뷰 처분 — 계획 §7.7): 런타임
+#   `marketfeed/{scheduler,ports}.py` · `time/service.py` ·
+#   `transport/kis_quote/adapter.py` 가 바뀌어 값이 바뀐다. 이번에는 **동작 변경이
+#   하나 있다** — MEDIUM-1: `tick_once` 의 세션 게이트가 앵커 **앞으로** 이동해, 장이
+#   닫힌 패스가 `SKIPPED_TIME_UNANCHORED` 대신 `SKIPPED_SESSION_CLOSED` 로 보고된다
+#   (`store.put` 없음은 전과 같아 소비 동작은 불변). 나머지 셋은 독스트링만이다
+#   (LOW-1 단조시계 비교가능성 문구 · LOW-2 중단분 미지 분기 근거). 이전 값
+#   4a265f7edfd2c33942aa3bf69d36d4d403e1e7e8c047b0674ef44a435ac11fc8 은 12차 측정치
+#   (같은 브랜치 031e2902).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 4548f1f9…).
+#   `expected_dependency_set_digest` 는 열세 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   14차 재측정(2026-09-29, 같은 브랜치 · origin/main 머지 4fb70c6a): 이 라운드는 **동작
+#   변경이 0 이다** — 브랜치 쪽에서 바뀐 런타임 `*.py` 는 충돌 해소로 다시 쓴
+#   `transport/kis_quote/adapter.py` 의 모듈 독스트링 하나뿐이다(코드 본문은 이 브랜치
+#   13차 상태와 바이트 동일). 값이 바뀌는 진짜 이유는 **머지로 들어온 #814**
+#   (`chore(tos): trim historical and redundant comments`, main 815385f2)다: `tos/src/**.py`
+#   6개 · `tos/runtime/src/**.py` 10개에서 주석·독스트링 약 1500 줄을 지웠다.
+#   ⚠ **#814 는 소스 바이트를 바꾸고도 `expected_code_digest` 를 다시 도출하지 않았다.**
+#   그래서 main 815385f2 는 지금 stale 이다 — 커밋된 값은
+#   1dcbeac60ff90c4e5e7b91df19a0c813bfe0dfe77481eea7b6511dec942f9af0(11차, ac2efb0f 측정치)
+#   인데 그 트리의 실측은 05ed61d5a8fa11791e0640f87d5e6af1a8e84c32307f4937b806028001383f45
+#   이다(같은 `observe_source_tree_digest()` 로 ac2efb0f 트리를 재측정해 커밋된 11차 값을
+#   그대로 재현한 뒤 잰 값). 이 커밋의 14차 값은 **#814 의 소스 변경까지 함께 덮는다** —
+#   즉 이 PR 이 머지되면 그 stale 상태도 같이 닫힌다. CI 는 이 종류의 drift 를 잡지 못한다
+#   (부팅만이 거부한다). 이전 값
+#   4548f1f90692ce7af97a90c034ccdbc896a9a8a98d4acb7265a0040df7c069cb 은 13차 측정치
+#   (같은 브랜치 0fff063a).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 39a8d87d…).
+#   `expected_dependency_set_digest` 는 열네 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   15차 재측정(2026-09-30, 브랜치 docs/tos-evidence-growth-plan · PR #816 · 계획
+#   docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md 트랙 A): 증거 성장 계획의
+#   A2·A3 가 런타임 `*.py` 를 바꾼다. **동작 변경이 둘 있다.**
+#   (1) A2 — `evidence/store.py` 의 `EVIDENCE_SCHEMA_VERSION` 1 → 2 와 genesis 전용
+#   `entries_kind_seq` 인덱스 DDL · `operations/schema_migrations.py` 의 v2 항목.
+#   ⚠ **이 값을 배포하는 순간부터 기존 v1 data dir 은 부팅이 거부된다** — `migrate` 를
+#   먼저 돌려야 한다(런북 §4-A). digest 와 무관한, 이 라운드의 진짜 배포 전제다.
+#   (2) A3 — 새 모듈 `operations/backup_archive.py` 와 `compose/cli.py` 의 `backup-set`
+#   압축 옵션(`--archive-dir`/`--verify-dir`/`--custody-root`/`--xz-preset`). 옵트인이라
+#   플래그를 주지 않는 기존 호출은 동작이 같다. 이전 값
+#   39a8d87dcd1d187c01fba7ca3ec4ef562ee3f19d84838b4383c4424c60a94007 은 14차 측정치
+#   (main 341a4430 = 이 브랜치의 분기점).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 5e0472ca…).
+#   `expected_dependency_set_digest` 는 열다섯 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   16차 재측정(2026-09-30, 같은 브랜치 · PR #816 리뷰 처분 — 계획 §7.1.6): 런타임 `*.py`
+#   네 개가 바뀐다. **동작 변경이 둘 있다.**
+#   (1) HIGH-1 — `operations/schema_migrations.py`: 대장 스탬프 멱등화 +
+#   `SchemaMigration.repair_statements` 복구 패스. 문서화된 v2 롤백이 편도였다(재-`migrate`
+#   가 `IntegrityError` 로 죽고 파일이 v1·무인덱스에 갇혔다). `apply_migrations` 가 이제
+#   `MigrationOutcome` 을 반환하고 `compose/cli.py` 가 무엇을 했는지 출력한다(L3).
+#   (2) MEDIUM-4 — `operations/backup_archive.py`: 압축을 `*.tar.xz.partial` 에 쓰고 검증
+#   통과 뒤에만 rename(실패 시 unlink). MEDIUM-5 `verify_dir` 성공 시 정리 · L7 미설명 멤버
+#   거부 · L2 `filter=` 미지원 인터프리터를 환경 결함으로 보고.
+#   `evidence/store.py` 는 주석만(L4 「19 vs 21」 문언 정정)이지만 digest 는 `*.py` **바이트**
+#   를 접으므로 값이 바뀐다. 이전 값
+#   5e0472ca5be78b26791582930b35c99d2b24fc5598f0a373ac5e6e5d40350f53 은 15차 측정치
+#   (같은 브랜치 2ad72daa).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 25f0300a…).
+#   `expected_dependency_set_digest` 는 열여섯 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   17차 재측정(2026-09-30, 브랜치 fix/tos-schema-genesis-toctou · PR #817 · #801 · 계획
+#   docs/plans/2026-09-30-tos-schema-genesis-toctou-plan.md): 런타임 `*.py` 여섯 개가 바뀐다.
+#   **동작 변경이 하나 있다.** `operations/schema_ledger.py` 의 새 `open_or_create_schema` 가
+#   「신선 판단 → 스토어 DDL → 대장 DDL → 제네시스 도장」을 `BEGIN IMMEDIATE` 하나로 묶고, 네
+#   스토어(`evidence/store.py` · `engine/inbox.py` · `marketfeed/store.py` · `rcl/schema.py` +
+#   `rcl/log.py`)가 자기 DDL 을 콜러블로 넘긴다. 같은 빈 data_dir 로 두 런타임이 동시에 첫 부팅할
+#   때의 경합 둘을 닫는다 — R-1 중복 CREATED INSERT(`IntegrityError`)와 R-2 반쯤 만든 파일을
+#   BEHIND 로 오판하는 거짓 부팅 거부. **갓 만든 파일의 모양은 바이트 동일**하다(main 7d039339
+#   에서 실측한 `sqlite_master` 전수 · DDL 텍스트 fold · CREATED 행 · `user_version` 대조, 그리고
+#   `monotonic_ns` 를 고정한 파일 sha256 대조 — 계획 §7.2). `operations/schema_migrations.py` ·
+#   `evidence/store.py` · `engine/inbox.py` · `rcl/schema.py` 의 주석 일부는 문언만 바뀌었지만
+#   digest 는 `*.py` **바이트**를 접으므로 값이 바뀐다. 이전 값
+#   25f0300a3e278112880e051a34617f7cd9b870a122c72ca05a6f859a306543c2 은 16차 측정치
+#   (main 20290f82).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 60ad47de…).
+#   `expected_dependency_set_digest` 는 열일곱 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   18차 재측정(2026-09-30, 같은 브랜치 · PR #817 리뷰 처분 — 계획 §7.9): 런타임 `*.py` 한 개
+#   (`operations/schema_ledger.py`)가 바뀐다. **동작 변경이 셋 있다.**
+#   (1) MEDIUM-1 — 정상 상태 부팅에 **fast path**: 잠금 없이 `PRAGMA user_version` 을 읽어
+#   `schema_version` 과 같고 `schema_ledger` 가 존재하면 `BEGIN IMMEDIATE` 를 건너뛴다. 17차에서는
+#   모든 부팅이 배타 쓰기 잠금을 잡아 살아 있는 writer(런타임 append · 운영자 CLI · 긴
+#   `apply_migrations`)와 경합했고 `sqlite_timeout_s=0` 은 즉시 실패했다 — 수정 전에는 그 잠금이
+#   아예 필요 없었으므로 회귀였다. R-1·R-2 는 닫힌 채다(동시 첫 부팅은 `user_version` 이 0 이라
+#   fast path 에 들어갈 수 없다).
+#   (2) LOW-1 — 예외 처리의 `ROLLBACK` 을 `except sqlite3.OperationalError: pass` 로 감싸 원래
+#   예외가 「cannot rollback」에 가려지지 않게 한다.
+#   (3) LOW-2 — 진입에서 `isolation_level is None` 을 명시 `ValueError` 로 강제(assert 아님).
+#   HIGH-1(주장 과대)은 **코드 무변경** — 테스트 개명과 #818 표기뿐이다.
+#   이전 값 60ad47de5a50a8f3844c20238bb4f41e10f37979cac7cd0f1b0d51b3fba7a806 은 17차 측정치
+#   (같은 브랜치 5f0fb1d3).
+#   HIGH-1 은 코드 무변경이지만, 위 셋으로 늘어난 `open_or_create_schema` 가 100줄 함수 예산을
+#   넘겨(141줄) `_run_genesis_transaction` 으로 분해했다 — 예외 등재가 아니라 분해다(순수
+#   decomposition · 같은 문장 · 같은 순서 · 같은 한 트랜잭션).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 d75a3616…).
+#   `expected_dependency_set_digest` 는 열여덟 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
+#   실행(위 두 측정 모두 같은 형태):
+#     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
+#       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
+#
+# **두 값의 유효 범위가 서로 다르다 — 갱신 규율도 다르다.**
+#   * `expected_code_digest` 는 설치된 `tos`/`tos_runtime` **패키지 트리의
+#     `*.py` 내용**만 접는다(`operations/dependency_admission.py:60-89`,
+#     roots = `default_package_roots()` = 두 패키지 디렉터리; 테스트 트리·YAML 은
+#     포함되지 않는다). 따라서 체크아웃 위치와 무관하고 **커밋 내용에만** 묶인다 —
+#     `tos/src/**.py` 또는 `tos/runtime/src/**.py` 가 한 바이트라도 바뀌면 갱신해야 한다.
+#     ⚠ 갱신은 **두 곳을 함께**: 이 파일의 값과
+#     `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS` 의 같은 키.
+#     (값 핀은 부팅 실패 여부와 무관하게 커밋된 두 문자열만 비교한다.)
+#   * `expected_dependency_set_digest` 는 **이 프로세스가 실제로 실행된
+#     인터프리터의 설치 분포 집합** + python/sqlite 좌표다. 위 값은 저장소 루트
+#     `.venv`(레거시 스택 포함, python 3.12.12 / sqlite 3.45.1)에서 측정됐다.
+#     `tos/.venv`(hermetic uv 환경)나 다른 호스트에서 구동하면 **반드시 다르다** —
+#     example 주석의 경고 그대로 「never copy it from another environment's
+#     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
+# =============================================================================
+
+expected_code_digest: "d75a3616b9d9e487ddee070384fdb6a8bed25e7c768fffd9be53905c829dcd0c"
+expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
+
+# ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
+# 로컬 부팅을 위해 허용으로 두되, **`restriction_present: false`** 와 짝이어야 한다.
+#
+# 제안표의 **정정(fact-check)** 을 그대로 옮긴다: 초고는 `ADMITTED` 라고 적었는데
+# **그런 멤버는 없다** — `tos.sci.AdmissionResult`(tos/src/tos/sci/vocabulary.py:100)
+# 는 `ADMIT`/`DENY`/`UNKNOWN` 뿐이고 `release/config.py:130-137`
+# (`_resolve_admission_result` → L132 `_ADMISSION_RESULT_BY_NAME.get(value)`)이
+# **정확히** 대조한다. 그대로 썼으면 **부팅이 거부**됐다.
+admission_result: "ADMIT"
+
+# ⚠ 제안표는 `admission_result`/`restriction_present` **두 행만** 명시한다.
+# `restriction_state_resolved` 에는 전용 행이 없으나, 제안표가 채택한 「로컬
+# 부팅을 위해 허용(ADMIT) + restriction_present: false」 태세가 실제로 허용이
+# 되려면 **이 값이 true 여야 한다** — SCI-INV-014 상 미해소 조회는
+# `restriction_present` 가 무엇이든 **보수적으로 거부**하므로 false 를 두면
+# 채택된 ADMIT 이 무효가 된다(example 주석 L40-42). 즉 이것은 새 판단이 아니라
+# 채택된 태세의 **귀결**이다. Phase 2 에 실제 제한 레지스트리 스캐너는 없고
+# 이 스냅숏은 운영자 서명 정적 값이다.
+restriction_state_resolved: true
+
+# ⚠ [O] 제안표 §4.1 — `admission_result: ADMIT` 과 **짝**이어야 하는 값.
+# 음의 극성이다(present 이거나 unknown 이면 거부). 이 릴리스 범위에 적용되는
+# 활성 `tos.sci.ReleaseRestriction` 이 **없다**는 운영자 서명 진술이다.
+restriction_present: false
+
+# `restriction_present` 가 false 이므로 이 블록은 읽히지 않는다
+# (release/config.py:141-145 — `_resolve_restriction` 은 present 가 false 면
+#  L144-145 에서 즉시 None 을 반환한다).
+restriction:
+  restriction_id: null
+  restriction_generation: null
+  trigger_class: null

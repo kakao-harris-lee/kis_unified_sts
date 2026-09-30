@@ -12,23 +12,18 @@ calling the *other* ``tos.are`` §5 predicates (:func:`tos.are.snapshot_scope_co
 ``tos_runtime.authority.stages.IndependentApprovalStage`` precedent: the stage
 routes inputs into a kernel judgement call, it never judges).
 
-**Reported gap: no per-dimension usage magnitude in the landed RCL projection.**
-:class:`~tos_runtime.rcl.projection.ReservationProjectionReader` (lane M,
-already landed) tracks only :class:`~tos.rcl.CapacityState` per reservation —
-not a :class:`~tos.rcl.CapacityVector` magnitude. So
-:meth:`AggregateRiskService.snapshot`'s ``conservative_current_usage`` field
-cannot be *derived* from the ledger and stays the empty ``CapacityVector()``
-(zero declared dimensions — a legitimate, non-invented value; are's own
-``AggregateRiskStateSnapshot`` does not require it non-empty,
-``tos/src/tos/are/records.py`` ``_REQUIRED_COVERED``). The per-cell magnitudes
-:func:`tos.are.adverse_increment` needs (:class:`~tos.are.ProjectedCell`) are
-Phase-0 / broker-capability-profile valuation inputs this slice does not own
-either way (design #13 §4 non-scope) — they arrive via the caller-injected
-:class:`AggregateRiskDecisionInputs`, never computed here. A future kernel/
-runtime change that persists committed adverse-increment vectors on the
-``reservations`` table (``tos_runtime/rcl/schema.py``, out of this lane's
-write surface) would let a later revision populate this field from the ledger
-instead of leaving it empty; that change is reported, not made here.
+**Per-dimension usage magnitude landed (kernel round #4 K-4).** The RCL log now persists
+``CapacityReservationTransition.committed_vector`` on the ``reservations`` row
+(``tos_runtime/rcl/schema.py`` schema v2) and
+:class:`~tos_runtime.rcl.projection.ReservationProjectionReader` exposes it via
+``instrument_committed_vector``/``reservation_committed_vector``. :meth:`AggregateRiskService
+.snapshot`'s ``conservative_current_usage`` now derives from that accessor — the empty
+``CapacityVector()`` fallback stays only for a reservation with no committed vector on record
+(no reservation yet, or a pre-K-4 row a store never re-migrated past — never a fabricated
+magnitude). The per-cell magnitudes :func:`tos.are.adverse_increment` needs
+(:class:`~tos.are.ProjectedCell`) remain Phase-0 / broker-capability-profile valuation inputs
+this slice does not own either way (design #13 §4 non-scope) — they still arrive via the
+caller-injected :class:`AggregateRiskDecisionInputs`, never computed here.
 
 **Single-node quorum honesty (R-RCL-F0).** This service claims no quorum
 certificate — see ``RESIDUAL-RISK-REGISTER-002`` R-RCL-F0 and
@@ -100,6 +95,14 @@ __all__ = [
 _EVIDENCE_KIND_SNAPSHOT = "ARE_SNAPSHOT"
 _EVIDENCE_KIND_DECISION = "ARE_DECISION"
 
+#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own closed R1 Firewall allowlist (module docstring): ``scenario_set_id``
+#: / ``policy_binding_id`` / ``evidence_package_ref`` are free strings sealed straight into the
+#: issued ``AdverseScenarioSet``'s digest — ``AdverseScenarioSet.issue`` refuses a bare
+#: ``null`` (module docstring), but never caught an operator typing this literal instead.
+_TBD_STR = "TBD"
+
 
 class AggregateRiskConfigError(Exception):
     """Raised when the ``AdverseScenarioSet`` / coverage-floor config is
@@ -170,6 +173,12 @@ def load_adverse_scenario_set(
     covered = _parse_scenario_kinds(
         path, raw.get("covered_scenario_kinds"), field_name="covered_scenario_kinds"
     )
+    for field_name in ("scenario_set_id", "policy_binding_id", "evidence_package_ref"):
+        if raw.get(field_name) == _TBD_STR:
+            raise AggregateRiskConfigError(
+                f"{path}: {field_name!r} is still the template placeholder {_TBD_STR!r} — "
+                "operator-fill before activation, never a value this loader treats as concrete"
+            )
     try:
         scenario_set = AdverseScenarioSet.issue(
             scheme=scheme,
@@ -330,6 +339,7 @@ class AggregateRiskService:
         """
         last_seq = self._projection.instrument_last_seq(key)
         state = self._projection.instrument_state(key)
+        committed_vector = self._projection.instrument_committed_vector(key)
         self._snapshot_seq += 1
         cut_digest = self._scheme.compute_digest(
             {
@@ -346,7 +356,9 @@ class AggregateRiskService:
             snapshot_generation=snapshot_generation,
             consistency_cut_identity=derive_id("are-cut", cut_digest),
             covered_scopes=tuple(sorted(required_scopes, key=lambda s: s.value)),
-            conservative_current_usage=CapacityVector(),
+            conservative_current_usage=(
+                committed_vector if committed_vector is not None else CapacityVector()
+            ),
             lineage_ref=lineage_ref,
         )
         assert isinstance(snapshot, AggregateRiskStateSnapshot)

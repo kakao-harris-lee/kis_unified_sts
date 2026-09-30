@@ -168,6 +168,7 @@ def test_event_result_outcome_digest_is_identical_across_fresh_cores() -> None:
 
     assert first.outcome_digest is not None
     assert first.outcome_digest == second.outcome_digest
+    assert first.pipeline is not None
     assert first.outcome_digest == first.pipeline.outcome_digest
 
 

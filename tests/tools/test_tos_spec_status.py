@@ -28,6 +28,31 @@ def _load_status_module():
 
 status = _load_status_module()
 
+# Single source of truth for the live-corpus migration/Q6 register row count.
+#
+# `validate_migration_conformance` already derives *structural* consistency
+# from the CSV itself (TOS_PACKAGE census against the real tos/src/tos
+# directories, contiguous LEGACY/READ/MOCK numbering, complexity octet), so a
+# missing or extra row in one of those categories already fails closed on its
+# own. This literal exists for the categories that scan does NOT cross-check
+# against a second source (e.g. a brand-new BROKER_READ_SITE row would not
+# trip any of the structural checks above): it forces whoever adds a row to
+# also bump this constant and explain why, so growth stays a deliberate,
+# reviewed act instead of silently drifting.
+#
+# Do not let this become a second hardcoded value per test -- previously each
+# of the three tests below carried its own literal "55, not 54" comment, and
+# K-2 (2026-09-17, registers tos.position as TOS-position) updated the CSV
+# without updating all three, which is exactly the failure mode this
+# constant now closes off in one place. Bump this ONE constant (with a
+# comment citing the commit/design that grew the register) when the census
+# legitimately changes; do not derive it from the CSV, or growth in a
+# non-cross-checked category (see above) would silently pass.
+#
+# 56, not 55: 2026-09-17, K-2 registers the new tos.position kernel package
+# (TOS-position) in the TOS_PACKAGE category.
+_EXPECTED_MIGRATION_REGISTER_ROWS = 56
+
 
 def _row(**overrides: str) -> dict[str, str]:
     row = dict.fromkeys(status.REQUIRED_EVIDENCE_FIELDS, "value")
@@ -320,13 +345,9 @@ def test_current_corpus_is_consistent_and_axes_are_separate():
     assert snapshot.direct_traceability_total == 30
     assert snapshot.p2_carried_questions == 28
     assert snapshot.const003_result == "INCONCLUSIVE"
-    # 55, not 54: 2026-09-08, design #40 D4 registers the new tos.workload
-    # package as TOS-workload (Phase 2 runtime-shell RuntimeIdentity record +
-    # consistency predicate). The TOS_PACKAGE census is derived from the
-    # directories under tos/src/tos, so a new package that is NOT registered
-    # fails the census -- this literal is the canary that keeps that a
-    # deliberate act.
-    assert snapshot.migration_rows == 55
+    # See _EXPECTED_MIGRATION_REGISTER_ROWS above for why this is a single
+    # shared constant rather than a per-test literal.
+    assert snapshot.migration_rows == _EXPECTED_MIGRATION_REGISTER_ROWS
     # The warning tier is advisory; the fail-closed tier already proved no
     # unregistered site is an invocable order-sending entrypoint.
     assert "shared/execution/executor.py" not in snapshot.unregistered_broker_sites
@@ -496,9 +517,9 @@ def test_migration_register_covers_code_packages_and_open_q6():
         _real_vocabulary(),
     )
 
-    # 55, not 54: 2026-09-08, design #40 D4 registers tos.workload as
-    # TOS-workload (see the migration_rows canary above for the same count).
-    assert rows == 55
+    # See _EXPECTED_MIGRATION_REGISTER_ROWS above for why this is a single
+    # shared constant rather than a per-test literal.
+    assert rows == _EXPECTED_MIGRATION_REGISTER_ROWS
     assert broker_sites == 9
     # The live corpus registers every construction site the scan can see, so the
     # warning tier is empty.  This is an assertion about the register, not about
@@ -673,11 +694,11 @@ def test_legacy_census_is_derived_from_the_csv_not_a_hardcoded_range(tmp_path):
         _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
     )
 
-    # 55, not 54: 2026-09-08, design #40 D4 registers tos.workload as
-    # TOS-workload -- `_migration_copy` copies the CURRENT real CSV verbatim
-    # (no `replace`), so this is the same live-corpus row count as the two
-    # canaries above, not a separate hardcoded range.
-    assert rows == 55
+    # `_migration_copy` copies the CURRENT real CSV verbatim (no `replace`),
+    # so this is the same live-corpus row count as the other assertions --
+    # see _EXPECTED_MIGRATION_REGISTER_ROWS above, not a separate hardcoded
+    # range.
+    assert rows == _EXPECTED_MIGRATION_REGISTER_ROWS
 
 
 def test_legacy_census_rejects_a_gap_in_the_route_numbering(tmp_path):

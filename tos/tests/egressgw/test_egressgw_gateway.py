@@ -445,6 +445,7 @@ def test_the_authorized_coordinates_cross_the_seam_as_opaque_ordered_scalars() -
     gateway(attempt)
     assert len(transport.requests) == 1
     request = transport.requests[0]
+    assert context.authorized_coordinates is not None
     assert request.coordinate("account") == context.authorized_coordinates.account
     assert request.coordinate("environment") == "non-live-test"
     assert [name for name, _ in request.coordinates] == [
@@ -553,7 +554,7 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
     (
         "stale venue facts",
         SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
-        {"venue_session_account_facts_current": False},
+        {"session_facts_current": False},
     ),
     ("no construction", SendVerifyItem.ORDER_CONSTRUCTION, {"construction": None}),
     (
@@ -1169,7 +1170,11 @@ def test_the_claim_consumes_both_nonces_exactly_once() -> None:
     gateway, _ = build_gateway(attempt=attempt, context=context)
     gateway(attempt)
     nonces = [claim.nonce for claim in gateway.ledger.claims]
-    assert sorted(nonces) == sorted(
+    concrete_nonces = [nonce for nonce in nonces if nonce is not None]
+    assert len(concrete_nonces) == len(nonces), "no claimed nonce may be null"
+    assert context.capability_nonce is not None
+    assert context.action_flow_permit_nonce is not None
+    assert sorted(concrete_nonces) == sorted(
         {context.capability_nonce, context.action_flow_permit_nonce}
     )
 

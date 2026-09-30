@@ -94,7 +94,7 @@ def test_records_are_frozen() -> None:
     """An issued authority record cannot be mutated in place (frozen; append-only §2.0)."""
     capability = issue_capability()
     with pytest.raises(ValidationError):
-        capability.capability_type = None  # type: ignore[misc]
+        capability.capability_type = None
 
 
 def test_no_update_or_delete_methods_on_records() -> None:

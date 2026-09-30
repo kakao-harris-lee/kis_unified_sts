@@ -169,7 +169,7 @@ def test_artifacts_are_frozen() -> None:
     """(§2.0) Every artifact is frozen — no in-place mutation (append-only)."""
     decision = issue_decision()
     with pytest.raises(ValidationError):
-        decision.result = RiskDecisionResult.DENY  # type: ignore[misc]
+        decision.result = RiskDecisionResult.DENY
 
 
 def test_extra_field_is_forbidden() -> None:

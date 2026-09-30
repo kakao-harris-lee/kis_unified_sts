@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ import yaml
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -138,47 +141,67 @@ def load_scheduled_events(path: str) -> list[ScheduledEvent]:
     return events
 
 
-_FUTURES_OPEN_CACHE: dict[str, tuple[int, int]] = {}
+#: (config_path, "open"|"close") -> (hour, minute).
+_FUTURES_OPEN_CACHE: dict[tuple[str, str], tuple[int, int]] = {}
+# Fallbacks only — config/market_schedule.yaml is the source of truth. Used
+# (with a WARNING) when the file or the key cannot be read.
+_FUTURES_REGULAR_DEFAULTS: dict[str, tuple[int, int]] = {
+    "open": (8, 45),
+    "close": (15, 45),
+}
 
 
-def _load_futures_open_from_config(
+def load_futures_open_from_config(
     config_path: str = "config/market_schedule.yaml",
 ) -> tuple[int, int]:
-    """Read ``market_schedule.futures.regular.open`` and return (hour, minute).
+    """Read ``market_schedule.futures.regular.open`` as ``(hour, minute)`` KST.
 
-    Result is cached per *config_path* after the first successful read so
-    per-tick callers (setup_adapters._build_market_context) pay the I/O cost
-    only once per process lifetime.  Returns the 08:45 default if the config
-    is missing or unparseable so callers always get a safe value without raising.
+    Cached per *config_path* so per-tick callers
+    (setup_adapters._build_market_context) pay the I/O cost once per process.
+    Never raises: an unreadable file, a missing key, or an unparseable value
+    logs one WARNING and returns 08:45.
     """
-    _DEFAULT = (8, 45)
-    if config_path in _FUTURES_OPEN_CACHE:
-        return _FUTURES_OPEN_CACHE[config_path]
+    return _load_futures_regular_time("open", config_path)
+
+
+def load_futures_close_from_config(
+    config_path: str = "config/market_schedule.yaml",
+) -> tuple[int, int]:
+    """Read ``market_schedule.futures.regular.close`` as ``(hour, minute)`` KST.
+
+    Same caching and fallback contract as :func:`load_futures_open_from_config`
+    (fallback 15:45).
+    """
+    return _load_futures_regular_time("close", config_path)
+
+
+def _load_futures_regular_time(field: str, config_path: str) -> tuple[int, int]:
+    cache_key = (config_path, field)
+    if cache_key in _FUTURES_OPEN_CACHE:
+        return _FUTURES_OPEN_CACHE[cache_key]
     try:
-        path = Path(config_path)
-        if not path.exists():
-            return _DEFAULT
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        open_str: str | None = (
-            data.get("market_schedule", {})
-            .get("futures", {})
-            .get("regular", {})
-            .get("open")
+        data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+        raw = data["market_schedule"]["futures"]["regular"][field]
+        hour_text, minute_text = str(raw).strip().split(":")[:2]
+        result = (int(hour_text), int(minute_text))
+        if not (0 <= result[0] < 24 and 0 <= result[1] < 60):
+            raise ValueError(f"{raw!r} is not a valid HH:MM")
+    except Exception as e:  # noqa: BLE001 - never raise into a per-tick caller
+        result = _FUTURES_REGULAR_DEFAULTS[field]
+        logger.warning(
+            "%s::market_schedule.futures.regular.%s unreadable (%r); using %02d:%02d",
+            config_path,
+            field,
+            e,
+            *result,
         )
-        if not open_str:
-            return _DEFAULT
-        parts = str(open_str).strip().split(":")
-        if len(parts) < 2:
-            return _DEFAULT
-        result: tuple[int, int] = (int(parts[0]), int(parts[1]))
-        _FUTURES_OPEN_CACHE[config_path] = result
-        return result
-    except Exception:  # noqa: BLE001
-        return _DEFAULT
+    # The fallback is cached too, so a missing file warns once, not per tick.
+    _FUTURES_OPEN_CACHE[cache_key] = result
+    return result
 
 
 def _reset_futures_open_cache() -> None:
-    """Clear the cached futures-open lookups.
+    """Clear the cached futures open/close lookups.
 
     Intended for test isolation: an autouse fixture clears this between tests so
     a value cached by one test (e.g. via a temp config path) cannot leak into
@@ -242,7 +265,7 @@ def build_market_context(
     values (e.g. the orchestrator builds from its loaded ``MarketSchedule``).
     """
     if market_open_hour is None or market_open_minute is None:
-        cfg_hour, cfg_minute = _load_futures_open_from_config(config_path)
+        cfg_hour, cfg_minute = load_futures_open_from_config(config_path)
         if market_open_hour is None:
             market_open_hour = cfg_hour
         if market_open_minute is None:

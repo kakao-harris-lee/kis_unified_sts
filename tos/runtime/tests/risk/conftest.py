@@ -3,7 +3,7 @@ slice plan §2)."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -133,7 +133,9 @@ def log_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def log(log_path: Path, evidence_port: FakeEvidenceAppendPort) -> SqliteCommitLog:
+def log(
+    log_path: Path, evidence_port: FakeEvidenceAppendPort
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(log_path, evidence_port=evidence_port)
     yield instance
     instance.close()
