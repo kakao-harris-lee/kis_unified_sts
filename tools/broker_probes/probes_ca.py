@@ -56,6 +56,7 @@ Nothing in this module can mutate an order, in mock or in real.
 from __future__ import annotations
 
 import argparse
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -209,6 +210,24 @@ class _Pacer:
         successor = _Pacer(interval_s)
         successor._next_allowed_at = self._next_allowed_at
         return successor
+
+    def defer(self, seconds: float) -> None:
+        """Push the next allowed call ``seconds`` out from NOW.
+
+        The transient-error retry (:func:`_read_balance_retrying`) has to wait a
+        WHOLE interval before trying again, and ``wait()`` alone does not give
+        that: the failed attempt already armed the gap before it went out, so by
+        the time a 20s read timeout surfaces, ``wait()`` owes only the remainder
+        (10s of a 30s interval — the 2026-09-30 trial-3 shape). Deferring from
+        NOW makes the following ``wait()`` sleep the full interval, which is
+        where the wait lives — this method never sleeps itself, so there is
+        exactly one sleep site per call.
+
+        It never SHORTENS an outstanding gap: a longer pending interval wins.
+        """
+        target = time.monotonic() + max(0.0, float(seconds))
+        if self._next_allowed_at is None or target > self._next_allowed_at:
+            self._next_allowed_at = target
 
 
 def _now() -> datetime:
@@ -513,6 +532,95 @@ _BAL_RATE_LIMITED = "RATE_LIMITED"
 _BAL_REJECTED = "REJECTED"
 _BAL_CAPPED = "CAPPED"
 
+#: A balance read that failed for a reason NOT attributable to this probe's own
+#: call rate, and is therefore worth ONE retry (2026-09-30 P-CA trial 2: four
+#: attempts, four stops, zero cash-leg observations — two transport read
+#: timeouts, one ``EGW00215`` ledger throttle, one runner guard defect). The
+#: "stop at once, never retry" rule these fell under was written for
+#: 2026-09-17, whose cause WAS our own pacing (``EGW00201``); none of the
+#: 09-30 stops was (no co-resident process on the account — evidence README
+#: 09-30 block, "제거 논증"). ``EGW00201``/HTTP 429 keep the old rule (plan §3).
+#:
+#: The two sub-kinds are separate ``_read_balance`` statuses rather than an
+#: extra tuple element, so the classification travels through the existing
+#: 6-tuple and every existing caller and test keeps its arity.
+_BAL_TRANSIENT = "TRANSIENT"
+_TRANSIENT_TRANSPORT = "transport"
+_TRANSIENT_LEDGER_THROTTLE = "ledger_throttle"
+_BAL_TRANSIENT_TRANSPORT = f"{_BAL_TRANSIENT}:{_TRANSIENT_TRANSPORT}"
+_BAL_TRANSIENT_LEDGER_THROTTLE = f"{_BAL_TRANSIENT}:{_TRANSIENT_LEDGER_THROTTLE}"
+
+_BAL_TRANSIENT_KINDS: dict[str, str] = {
+    _BAL_TRANSIENT_TRANSPORT: _TRANSIENT_TRANSPORT,
+    _BAL_TRANSIENT_LEDGER_THROTTLE: _TRANSIENT_LEDGER_THROTTLE,
+}
+
+#: 원장에서 허용 가능한 초당 거래건수를 초과하였습니다 — the LEDGER-side throttle,
+#: which the mock server answers with HTTP 500 and ``rt_cd='1'``
+#: (P-CA-20260930T015946Z.json poll #14, verbatim). It is NOT ``EGW00201``:
+#: ``is_rate_limited`` (common.py) never sees it, so before this change it fell
+#: through to :data:`_BAL_REJECTED` and stopped the run on the spot.
+_LEDGER_THROTTLE_MSG_CD = "EGW00215"
+
+
+def _is_ledger_throttled(parsed: dict[str, Any]) -> bool:
+    """``msg_cd`` is exactly :data:`_LEDGER_THROTTLE_MSG_CD`.
+
+    Field-exact, deliberately not the substring sweep over
+    ``msg_cd``/``msg1``/raw body that ``is_rate_limited`` does for
+    ``EGW00201``: the ledger throttle is worth a retry, so a body that merely
+    MENTIONS the code (an operator note echoed back, a future envelope that
+    quotes it) must not buy one.
+    """
+    return str(parsed.get("msg_cd") or "").strip() == _LEDGER_THROTTLE_MSG_CD
+
+
+def _transport_transient_types() -> tuple[type[BaseException], ...]:
+    """The exception types :func:`_get`'s transport actually raises for a
+    timeout or a failed connection — and ONLY those.
+
+    ``_get`` calls ``requests``' ``session.request``, so the transient set is
+    ``requests.exceptions.Timeout`` (covers ``ReadTimeout``, the one the
+    2026-09-30 trials 3 and 4 died on, and ``ConnectTimeout``) and
+    ``requests.exceptions.ConnectionError`` (covers ``SSLError``,
+    ``ProxyError``). Everything else ``requests`` can raise —
+    ``TooManyRedirects``, ``InvalidURL``, ``MissingSchema``,
+    ``ChunkedEncodingError`` — is a defect in this probe or its configuration,
+    not a transient, and must still surface as a failed run rather than being
+    retried into a second identical failure.
+
+    Imported lazily for the same reason :func:`probe_pca` imports ``requests``
+    lazily: ``--list``/``--dry-run`` and the registry import this module and
+    must not pay for (or require) the HTTP stack.
+    """
+    import requests
+
+    return (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+
+
+#: Anything from ``?`` to the next whitespace in a transport exception message.
+#: ``requests``' ``ConnectionError`` renders the URL it failed on IN FULL —
+#: "Max retries exceeded with url: /uapi/...?CANO=12345678&ACNT_PRDT_CD=01..." —
+#: and these artifacts are committed under ``docs/broker-profiles/evidence/``.
+#: ``redact()`` (common.py:228) keys on field NAMES and cannot reach inside a
+#: raw string leaf, and :func:`_call_evidence`'s excerpt cap only bounds the
+#: length, so without this the account number would reach the corpus through
+#: the one field that carries a broker string verbatim. Over-redaction is the
+#: safe direction: the diagnosis a reader needs is the exception CLASS and the
+#: timeout value, both of which sit before the ``?``.
+_QUERY_STRING_IN_MESSAGE = re.compile(r"\?\S*")
+
+
+def _transport_excerpt(exc: BaseException) -> str:
+    """One transport exception rendered for the artifact, query string removed."""
+    return _QUERY_STRING_IN_MESSAGE.sub("?<redacted>", f"{type(exc).__name__}: {exc}")
+
+
+def _transient_kind(status: str) -> str | None:
+    """``"transport"``/``"ledger_throttle"`` for a transient status, else ``None``."""
+    return _BAL_TRANSIENT_KINDS.get(status)
+
+
 #: Why :func:`_poll_loop` stopped. ``None`` means it ran to its natural end —
 #: ``--window-s`` genuinely elapsed, or every leg was observed — which is the
 #: ONLY state in which an unobserved leg is CENSORED (:func:`_finalize`).
@@ -523,6 +631,11 @@ _BAL_CAPPED = "CAPPED"
 _STOP_RATE_LIMITED = "rate_limited"
 _STOP_REJECTED = "rejected"
 _STOP_PAGE_CAP = "page_cap"
+#: Two consecutive transport failures (:data:`_BAL_TRANSIENT_TRANSPORT`). A
+#: doubled LEDGER throttle reports :data:`_STOP_RATE_LIMITED` instead — it IS a
+#: rate limit, just not one keyed on ``EGW00201`` — so a reader of the row does
+#: not have to know which code the broker used to know the run was throttled.
+_STOP_TRANSIENT = "transient"
 
 #: Cap on the verbatim broker body carried by a FAILED call's evidence record.
 #: The excerpt is GATED first (:func:`_call_evidence`), and the gate is PAYLOAD-
@@ -612,8 +725,14 @@ def _read_balance(
     ``(status, qty, cash, parsed_last_page, text_last_page, http_status)`` where
     ``status`` is one of :data:`_BAL_OK` / :data:`_BAL_RATE_LIMITED` /
     :data:`_BAL_REJECTED` / :data:`_BAL_CAPPED` (F6: capped ⇒ INCONCLUSIVE,
-    never "not held"). ``http_status`` is the transport status of the LAST page
-    fetched — the caller records it verbatim (:func:`_call_evidence`)."""
+    never "not held") / :data:`_BAL_TRANSIENT_TRANSPORT` /
+    :data:`_BAL_TRANSIENT_LEDGER_THROTTLE`. ``http_status`` is the transport
+    status of the LAST page fetched — the caller records it verbatim
+    (:func:`_call_evidence`); it is ``0`` when no answer arrived at all.
+
+    A transient return ABANDONS the page walk in progress: the continuation
+    cursors of a page that failed are not resumable, so the retry
+    (:func:`_read_balance_retrying`) starts the walk again from page 1."""
     fk = nk = ""
     cash = 0.0
     parsed: dict[str, Any] = {}
@@ -623,16 +742,42 @@ def _read_balance(
     http_status = 0
     for _page in range(_MAX_BALANCE_PAGES):
         pacer.wait()
-        http_status, parsed, text, _elapsed_ms = _get(
-            session,
-            auth,
-            base_url=base_url,
-            path=_STOCK_BALANCE_PATH,
-            tr_id=tr_id,
-            params=_balance_params(creds, fk=fk, nk=nk),
-        )
+        try:
+            http_status, parsed, text, _elapsed_ms = _get(
+                session,
+                auth,
+                base_url=base_url,
+                path=_STOCK_BALANCE_PATH,
+                tr_id=tr_id,
+                params=_balance_params(creds, fk=fk, nk=nk),
+            )
+        except _transport_transient_types() as exc:
+            # No answer arrived, so there is no body and no HTTP status: 0 is
+            # this function's own "no call completed" marker (see above). The
+            # excerpt carries the exception class, not the request.
+            return (
+                _BAL_TRANSIENT_TRANSPORT,
+                0,
+                cash,
+                {},
+                _transport_excerpt(exc),
+                0,
+            )
         if is_rate_limited(http_status, parsed, text):
             return _BAL_RATE_LIMITED, 0, cash, parsed, text, http_status
+        # AFTER is_rate_limited and BEFORE the rt_cd check, deliberately: the
+        # first keeps HTTP 429/EGW00201 on the no-retry path they have always
+        # been on, and the second is where EGW00215 used to land (rt_cd='1' ⇒
+        # _BAL_REJECTED ⇒ immediate stop, 2026-09-30 trial 2 poll #14).
+        if _is_ledger_throttled(parsed):
+            return (
+                _BAL_TRANSIENT_LEDGER_THROTTLE,
+                0,
+                cash,
+                parsed,
+                text,
+                http_status,
+            )
         rt_cd = str(parsed.get("rt_cd") or "").strip()
         if rt_cd != "0":
             return _BAL_REJECTED, 0, cash, parsed, text, http_status
@@ -653,6 +798,187 @@ def _read_balance(
 
 
 # ---------------------------------------------------------------------------
+# Transient-error retry — ONE retry, one full poll interval apart (plan §2.1)
+# ---------------------------------------------------------------------------
+
+
+class _Retries:
+    """Counts the retries this run spent, and keeps ``measurements.retries``
+    current at EVERY exit path.
+
+    A run that retried is still labelled OBSERVED/CENSORED/ABORTED exactly as
+    before — the retry changes no verdict. What it changes is the timing a
+    reader reconstructs from the artifact, by up to one poll interval per
+    retry, so the count has to be in the artifact whatever happens: it is
+    published on construction (all zeros, so "no retries" is stated rather
+    than inferred from a missing key) and republished on every increment,
+    because the baseline and reference-check phases can stop the run long
+    before :func:`_finalize` would get to write anything.
+    """
+
+    def __init__(self, run: ProbeRun) -> None:
+        self._run = run
+        self._counts: dict[str, int] = {
+            _TRANSIENT_TRANSPORT: 0,
+            _TRANSIENT_LEDGER_THROTTLE: 0,
+        }
+        self._publish()
+
+    def bump(self, kind: str) -> None:
+        self._counts[kind] = self._counts.get(kind, 0) + 1
+        self._publish()
+
+    def as_dict(self) -> dict[str, int]:
+        return dict(self._counts)
+
+    def _publish(self) -> None:
+        self._run.measure("retries", self.as_dict())
+
+
+def _retry_evidence(
+    *,
+    phase: str,
+    kind: str,
+    status: str,
+    http_status: int,
+    parsed: dict[str, Any],
+    text: str,
+    poll_index: int | None,
+) -> dict[str, Any]:
+    """The record written for a transient that WAS retried.
+
+    Same shape and the same payload gate as :func:`_call_evidence` (a
+    successful balance body is never excerpted), plus which phase and which
+    poll it happened on — a retried run must be reconstructible down to "when,
+    and how many times", which is the whole reason the retry is capped at one.
+    """
+    record: dict[str, Any] = {"phase": phase, "transient_kind": kind}
+    if poll_index is not None:
+        record["poll_index"] = poll_index
+    record.update(
+        _call_evidence(
+            status_kind=status, http_status=http_status, parsed=parsed, text=text
+        )
+    )
+    return record
+
+
+def _read_balance_retrying(
+    run: ProbeRun,
+    session: Any,
+    auth: Any,
+    base_url: str,
+    tr_id: str,
+    creds: Any,
+    symbol: str,
+    pacer: _Pacer,
+    retries: _Retries,
+    *,
+    wait_s: float,
+    phase: str,
+    poll_index_base: int | None = None,
+) -> tuple[str, int, float, dict[str, Any], str, int, int]:
+    """:func:`_read_balance`, retried ONCE on a transient error.
+
+    Returns what :func:`_read_balance` returns plus ``attempts`` (1 or 2). The
+    caller sees a transient status back only when BOTH attempts were transient
+    — that is the "second consecutive transient" stop the plan specifies, and
+    the callers all treat it as the stop they already had.
+
+    Exactly one retry, exactly one full interval apart (:meth:`_Pacer.defer`).
+    No backoff, no attempt count to tune: each of the three 09-30 stops was a
+    SINGLE failure, so one retry would have carried all three, and every extra
+    knob blurs the "when, and how many times" the artifact has to answer.
+    """
+    attempts = 0
+    while True:
+        attempts += 1
+        status, qty, cash, parsed, text, http_status = _read_balance(
+            session, auth, base_url, tr_id, creds, symbol, pacer
+        )
+        kind = _transient_kind(status)
+        if kind is None or attempts >= 2:
+            return status, qty, cash, parsed, text, http_status, attempts
+        run.observe(
+            poll_retry_evidence=_retry_evidence(
+                phase=phase,
+                kind=kind,
+                status=status,
+                http_status=http_status,
+                parsed=parsed,
+                text=text,
+                poll_index=(
+                    None if poll_index_base is None else poll_index_base + attempts
+                ),
+            )
+        )
+        retries.bump(kind)
+        pacer.defer(wait_s)
+
+
+def _ksdinfo_get_retrying(
+    run: ProbeRun,
+    session: Any,
+    auth: Any,
+    base_url: str,
+    pacer: _Pacer,
+    retries: _Retries,
+    *,
+    ksd_key: str,
+    symbol: str,
+    wait_s: float,
+) -> tuple[int, dict[str, Any], str, str | None]:
+    """One paced ksdinfo GET, retried ONCE on a transient error.
+
+    Returns ``(http_status, parsed, text, transient_kind)``; ``transient_kind``
+    is non-``None`` only when BOTH attempts were transient. The reference check
+    needs its own retry because it is the one call that does not go through
+    :func:`_read_balance` — and it is also the call a transport exception used
+    to escape from, taking the whole run with it (``run.py`` rc 5).
+    """
+    ksd_tr, ksd_path = _KSDINFO_TRS[ksd_key]
+    attempts = 0
+    while True:
+        attempts += 1
+        pacer.wait()
+        try:
+            status, parsed, text, _elapsed_ms = _get(
+                session,
+                auth,
+                base_url=base_url,
+                path=ksd_path,
+                tr_id=ksd_tr,
+                params=_ksdinfo_params(ksd_key, symbol),
+            )
+        except _transport_transient_types() as exc:
+            status, parsed, text = 0, {}, _transport_excerpt(exc)
+            kind: str | None = _TRANSIENT_TRANSPORT
+            status_kind = _BAL_TRANSIENT_TRANSPORT
+        else:
+            if _is_ledger_throttled(parsed):
+                kind = _TRANSIENT_LEDGER_THROTTLE
+                status_kind = _BAL_TRANSIENT_LEDGER_THROTTLE
+            else:
+                kind = None
+                status_kind = ""
+        if kind is None or attempts >= 2:
+            return status, parsed, text, kind
+        run.observe(
+            poll_retry_evidence=_retry_evidence(
+                phase="reference_check",
+                kind=kind,
+                status=status_kind,
+                http_status=status,
+                parsed=parsed,
+                text=text,
+                poll_index=None,
+            )
+        )
+        retries.bump(kind)
+        pacer.defer(wait_s)
+
+
+# ---------------------------------------------------------------------------
 # Procedure steps — each kept small and independently readable/testable
 # ---------------------------------------------------------------------------
 
@@ -666,12 +992,30 @@ def _do_baseline(
     creds: Any,
     pacer: _Pacer,
     symbol: str,
+    retries: _Retries,
+    retry_wait_s: float,
 ) -> tuple[int, float] | None:
-    """Paced, paginated balance snapshot (:func:`_read_balance`). Returns
-    ``(qty, cash)`` or ``None`` if the run should stop here (rate-limited,
-    rejected, capped, or no holding)."""
-    status, qty, cash, parsed, text, http_status = _read_balance(
-        session, auth, base_url, tr_id, creds, symbol, pacer
+    """Paced, paginated balance snapshot (:func:`_read_balance`), retried once
+    on a transient error. Returns ``(qty, cash)`` or ``None`` if the run should
+    stop here (rate-limited, transient twice over, rejected, capped, or no
+    holding).
+
+    The retry belongs here and not only in the poll loop because the 2026-09-30
+    trial 4 died on this very call — the FIRST GET of the run — and left an
+    artifact with no baseline at all.
+    """
+    status, qty, cash, parsed, text, http_status, _attempts = _read_balance_retrying(
+        run,
+        session,
+        auth,
+        base_url,
+        tr_id,
+        creds,
+        symbol,
+        pacer,
+        retries,
+        wait_s=retry_wait_s,
+        phase="baseline",
     )
     run.observe(
         baseline_call=_call_evidence(
@@ -680,6 +1024,13 @@ def _do_baseline(
     )
     if status == _BAL_RATE_LIMITED:
         run.error("rate-limited on baseline balance call; stopping — no retry")
+        return None
+    transient = _transient_kind(status)
+    if transient is not None:
+        run.error(
+            f"baseline balance call failed twice in a row with a transient "
+            f"{transient} error (one retry, {retry_wait_s}s apart); stopping"
+        )
         return None
     if status == _BAL_REJECTED:
         run.error(
@@ -715,19 +1066,36 @@ def _do_reference_check(
     base_url: str,
     pacer: _Pacer,
     trial: _Trial,
+    retries: _Retries,
 ) -> None:
-    """One paced GET to the ksdinfo TR matching ``--event-class``, BEFORE polling."""
+    """One paced GET to the ksdinfo TR matching ``--event-class``, BEFORE
+    polling; retried once on a transient error.
+
+    A transient that survives the retry STOPS the run (:class:`_StopRun`), as a
+    rate limit here always has: the reference check is optional, but two
+    consecutive failures on it say the path to the broker is unhealthy right
+    now, and the polling loop is a far longer walk down that same path. Before
+    this change a transport exception here did not stop the run politely — it
+    escaped the probe entirely (``run.py`` rc 5).
+    """
     ksd_key = _EVENT_CLASS_KSDINFO_KEY[trial.event_class]
-    ksd_tr, ksd_path = _KSDINFO_TRS[ksd_key]
-    pacer.wait()
-    status, parsed, text, _elapsed_ms = _get(
+    status, parsed, text, transient = _ksdinfo_get_retrying(
+        run,
         session,
         auth,
-        base_url=base_url,
-        path=ksd_path,
-        tr_id=ksd_tr,
-        params=_ksdinfo_params(ksd_key, trial.symbol),
+        base_url,
+        pacer,
+        retries,
+        ksd_key=ksd_key,
+        symbol=trial.symbol,
+        wait_s=trial.effective_poll_ms / 1000.0,
     )
+    if transient is not None:
+        run.error(
+            f"reference-check call failed twice in a row with a transient "
+            f"{transient} error; stopping"
+        )
+        raise _StopRun
     if is_rate_limited(status, parsed, text):
         run.error(
             f"rate-limited on reference-check call (status={status}); "
@@ -746,7 +1114,13 @@ def _do_reference_check(
         run.observe(mock_reference_support="SUPPORTED")
 
 
-class _RateLimited(ProbeError):
+class _StopRun(ProbeError):
+    """Signal: the reason is ALREADY recorded via ``run.error``; stop and write
+    the artifact as it stands. Never propagates out of :func:`probe_pca`, so it
+    never reaches ``run.py``'s catch-all failure path."""
+
+
+class _RateLimited(_StopRun):
     """Signal: a rate limit was already recorded via ``run.error``; stop, no retry."""
 
 
@@ -762,6 +1136,7 @@ def _poll_loop(
     baseline_cash: float,
     legs: list[tuple[str, str, datetime]],
     pacer: _Pacer,
+    retries: _Retries,
 ) -> tuple[dict[str, dict[str, Any]], int, int, float, str | None]:
     """Poll balance until every leg is observed or ``--window-s`` expires.
 
@@ -771,7 +1146,13 @@ def _poll_loop(
     natural end (window elapsed, or every leg observed), in which case a leg
     absent from ``found`` is CENSORED; otherwise it is one of
     :data:`_STOP_RATE_LIMITED` / :data:`_STOP_REJECTED` / :data:`_STOP_PAGE_CAP`
-    and the remaining legs were ABORTED, not censored (:func:`_finalize`).
+    / :data:`_STOP_TRANSIENT` and the remaining legs were ABORTED, not censored
+    (:func:`_finalize`).
+
+    A transient failure costs one extra ATTEMPT and no completed poll:
+    ``polls_used`` counts both tries, ``polls_completed`` counts the one that
+    came back with a balance. A poll only stops the loop when its retry fails
+    transiently too.
     """
     pending = {name: (t0_field, t0_dt) for name, t0_field, t0_dt in legs}
     found: dict[str, dict[str, Any]] = {}
@@ -791,11 +1172,34 @@ def _poll_loop(
     deadline = started_at + trial.window_s
 
     while pending and time.monotonic() < deadline:
-        polls_used += 1
-        status, qty, cash, parsed, text, http_status = _read_balance(
-            session, auth, base_url, tr_id, creds, trial.symbol, poll_pacer
+        (
+            status,
+            qty,
+            cash,
+            parsed,
+            text,
+            http_status,
+            attempts,
+        ) = _read_balance_retrying(
+            run,
+            session,
+            auth,
+            base_url,
+            tr_id,
+            creds,
+            trial.symbol,
+            poll_pacer,
+            retries,
+            wait_s=trial.effective_poll_ms / 1000.0,
+            phase="poll",
+            poll_index_base=polls_used,
         )
-        if status in (_BAL_RATE_LIMITED, _BAL_REJECTED, _BAL_CAPPED):
+        # Every ATTEMPT counts, the retried one included — polls_used is the
+        # index poll_stop_evidence / poll_retry_evidence report, so a reader
+        # can line the records up against it.
+        polls_used += attempts
+        transient = _transient_kind(status)
+        if status in (_BAL_RATE_LIMITED, _BAL_REJECTED, _BAL_CAPPED) or transient:
             # ONE verbatim evidence record per stop, so a later reader can tell
             # HTTP 429 from EGW00201 and read the broker's own words (the
             # 2026-09-17 artifact recorded neither).
@@ -813,6 +1217,18 @@ def _poll_loop(
         if status == _BAL_RATE_LIMITED:
             run.error(f"rate-limited during poll #{polls_used}; stopping — no retry")
             stop_reason = _STOP_RATE_LIMITED
+            break
+        if transient is not None:
+            run.error(
+                f"poll #{polls_used} failed twice in a row with a transient "
+                f"{transient} error (one retry, "
+                f"{trial.effective_poll_ms / 1000.0}s apart); stopping"
+            )
+            stop_reason = (
+                _STOP_TRANSIENT
+                if transient == _TRANSIENT_TRANSPORT
+                else _STOP_RATE_LIMITED
+            )
             break
         if status == _BAL_REJECTED:
             run.error(
@@ -1071,10 +1487,20 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
     base_url = REAL_BASE_URL if trial.is_real else MOCK_BASE_URL
     tr_id = _STOCK_TR_REAL if trial.is_real else _STOCK_TR_MOCK
     pacer = _Pacer(trial.pace_s)
+    retries = _Retries(run)
 
     try:
         baseline = _do_baseline(
-            run, session, auth, base_url, tr_id, creds, pacer, trial.symbol
+            run,
+            session,
+            auth,
+            base_url,
+            tr_id,
+            creds,
+            pacer,
+            trial.symbol,
+            retries,
+            trial.effective_poll_ms / 1000.0,
         )
         if baseline is None:
             return run
@@ -1082,8 +1508,8 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
 
         if trial.reference_check:
             try:
-                _do_reference_check(run, session, auth, base_url, pacer, trial)
-            except _RateLimited:
+                _do_reference_check(run, session, auth, base_url, pacer, trial, retries)
+            except _StopRun:
                 return run
 
         if trial.event_class == "cash_dividend":
@@ -1126,6 +1552,7 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
             baseline_cash,
             legs,
             pacer,
+            retries,
         )
         _finalize(
             run,
