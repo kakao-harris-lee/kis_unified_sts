@@ -1813,6 +1813,25 @@ def _holding_failure_detail(outcome: _Outcome) -> str:
     return head or "unknown"
 
 
+def _print_holding_transient(
+    wait_s: float,
+) -> Callable[[dict[str, Any], str], None]:
+    """The pre-flight's ``on_transient``: say what happened on stderr, and say
+    only what is true — ``_retry_once`` reports EVERY transient, so the one
+    that bought no retry must not announce a retry."""
+
+    def _print(evidence: dict[str, Any], kind: str) -> None:
+        detail = evidence.get("body_excerpt") or evidence.get("msg_cd") or "no detail"
+        tail = (
+            f"retrying once in {wait_s}s"
+            if evidence.get("retried")
+            else "no retry left"
+        )
+        print(f"holding check: transient {kind} ({detail}); {tail}", file=sys.stderr)
+
+    return _print
+
+
 def check_holding(argv: list[str] | None = None) -> int:
     """Answer "is ``--symbol`` held, and do we actually KNOW?" for a runner.
 
@@ -1870,12 +1889,7 @@ def check_holding(argv: list[str] | None = None) -> int:
             lambda: _balance_outcome(
                 session, auth, base_url, tr_id, creds, args.symbol, pacer
             ),
-            lambda evidence, kind: print(
-                f"holding check: transient {kind} "
-                f"({evidence.get('body_excerpt') or evidence.get('msg_cd')}); "
-                f"retrying once in {args.pace_s}s",
-                file=sys.stderr,
-            ),
+            _print_holding_transient(args.pace_s),
             pacer,
             wait_s=args.pace_s,
             phase="holding_check",

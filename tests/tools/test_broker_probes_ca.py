@@ -2375,9 +2375,14 @@ def test_holding_check_never_reports_a_timeout_as_zero(
 ) -> None:
     wire(_TransientSession([_read_timeout(), _read_timeout()]))
     rc = pc.check_holding(_holding_argv())
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     assert rc != 0
-    assert "HOLDING_QUERY_FAILED=TRANSIENT:transport:ReadTimeout" in out
+    assert "HOLDING_QUERY_FAILED=TRANSIENT:transport:ReadTimeout" in captured.out
+    # Both transients are announced, and only the first claims a retry: the
+    # callback now fires for every transient, so the wording has to follow.
+    assert captured.err.count("transient transport") == 2
+    assert captured.err.count("retrying once") == 1
+    assert "no retry left" in captured.err
 
 
 def test_holding_check_never_reports_a_rate_limit_as_zero(
@@ -2404,6 +2409,7 @@ def test_holding_check_retries_one_transient_and_then_answers(
     captured = capsys.readouterr()
     assert "HELD=2" in captured.out
     assert "transient transport" in captured.err
+    assert "retrying once in 0.0s" in captured.err
     assert len(session.calls) == 2
 
 
