@@ -119,7 +119,7 @@
 | `tools/broker_probes/probes_ca.py` | `_BAL_TRANSIENT` 분류 · 단일 분류기 `_get_classified` · 단일 재시도 `_retry_once` · `_Pacer.defer` · `_Outcome` · `_Retries` · `_STOP_TRANSIENT` · `_StopRun` · 전처리 진입점 `check_holding` |
 | `tools/broker_probes/runners/run_p_ca.sh` | 추적되는 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | 분리 워크트리에서 인스턴스화하는 법(신규) |
-| `tests/tools/test_broker_probes_ca.py` | 새 테스트 44건 — 라운드 1 25건(§7.3) + 리뷰 처분 19건(§7.6) |
+| `tests/tools/test_broker_probes_ca.py` | 새 테스트 55건 — 라운드 1 25건(§7.3) + 라운드 2 처분 19건(§7.6) + 라운드 3 처분 11건(§7.8), 강화 8건 |
 
 라운드 1 의 `_read_balance_retrying` / `_ksdinfo_get_retrying` 두 벌은 리뷰 F4·F5 처분으로
 `_get_classified` + `_retry_once` 한 벌로 합쳐졌다(§7.6).
@@ -254,6 +254,56 @@ red 는 F1 의 **재현**이 아니라 옛 문장과의 불일치다. F1·F2 자
 ```
 .venv/bin/pytest (같은 3파일) -q -p no:cacheprovider
   → 174 passed, 1 skipped (shellcheck 미설치)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 파일 2건)               → 2 files would be left unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+```
+
+### 7.8 리뷰 처분 (PR #825 라운드 2 · 9건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | 러너가 `$REPO/.venv/bin/python` 을 고정으로 쓰는데 새 분리 워크트리에는 `.venv` 가 없다 — README 대로 하면 **매번** ABORT. 테스트가 가짜 `.venv` 를 심어 이를 가렸다 | **수정.** `PCA_PYTHON` 필수 env + **모듈 출처 가드** |
+| F2 | 보유 점검과 프로브가 별도 프로세스라 페이서가 따로 논다 — 프로브 첫 GET 이 점검 마지막 GET 에 붙는다(2026-09-17 `EGW00201` 의 그 모양) | **수정.** 사이에 `sleep "$PCA_PACE_S"` |
+| F3 | `PCA_EFFECTIVE` 조건부 필수 검사가 **자격증명 소싱과 보유 조회 뒤**에 있다 | **수정.** env 검증 단계로 이동 |
+| F4 | `_BAL_CAPPED` 의 `parsed` 는 마지막 **성공** 페이지라 `CAPPED:<성공 msg_cd>` 가 찍힌다 | **수정.** `page_cap:<n>`, `msg_cd` 는 `rt_cd≠0` 일 때만 |
+| F5 | 폴 루프의 재시도가 창 마감을 안 본다 — 마지막 폴의 일시 오류가 창 **밖** 폴을 만든다 | **수정.** `can_retry` 로 마감 확인 |
+| F6 | `check_holding` 이 `probe_pca` 의 부트스트랩을 복제했고 이미 `warn_shared_token_cache()` 가 빠져 있었다 | **수정.** `_open_broker_session` 하나 |
+| F7 | 두 docstring 이 존재하지 않는 `_read_balance_retrying` 를 가리킨다 | **수정.** `_retry_once` 로 |
+| F8 | 네 단계가 전부 `poll_retry_evidence` 키에 기록된다 | **수정.** `retry_evidence` + `phase` |
+| F9 | 폴마다 클로저 두 개를 새로 만든다 | **수정.** 루프 밖으로 |
+
+**F1 이 드러낸 더 큰 것.** 지적은 「README 대로 하면 못 돈다」였는데, 고치는 쪽을
+확인하다 보니 `repo_commit` 과 results 디렉터리가 **둘 다 로드된 `common.py.__file__`**
+을 따른다(`common.py:70,506,512`). 즉 인터프리터를 메인 체크아웃의 venv 로 바꾸면,
+그 venv 의 editable 설치가 메인 체크아웃 코드를 해석할 때 러너의 clean·분리·조상 가드가
+**돌지도 않은 트리를 보증**하게 된다(#793 의 정확히 반대 방향). 그래서 `PCA_PYTHON` 만
+받는 것으로 끝내지 않고, `PYTHONPATH=$REPO` 로 모듈을 import 해 `__file__` 이 `$REPO`
+아래인지 **증명**한 뒤에야 진행한다. 이 가드가 없으면 F1 의 수정이 새 결함이 된다.
+
+**F5 는 리뷰 서술보다 한 칸 더 나빴다.** 리뷰는 「CENSORED 판정이 창 밖 폴에 기댄다」로
+적었는데, 수정 전 코드로 실측하니 창(60 s) 밖 110 s 에서 돌아온 폴이 변화를 보고
+**OBSERVED 를 만들어냈다**(`assert 'OBSERVED' == 'CENSORED'`). 값이 생기는 쪽이라 더
+위험하다. 처분: 창이 이미 지났으면 재시도를 거부하고 루프는 원래대로 끝난다 —
+`stop_reason` 은 `None`(창은 진짜로 다 흘렀고 그것이 CENSORED 가 주장하는 것) 이며,
+일시 오류 자체는 `retry_evidence`(`retried: false`)로 남는다.
+
+**F8 과 함께 「전송량」과 「본 것」을 분리했다.** 이제 `_retry_once` 는 **모든** 일시
+오류를 기록하고(재시도한 것 · 두 번째라 못 한 것 · 창이 지나 거부된 것),
+`measurements.retries` 는 **실제로 쓴 재시도**만 센다. 둘을 같은 수로 세면 「이 런이
+추가로 얼마나 기다렸나」라는 질문에 답할 수 없다.
+
+**라운드 3 red 증명.** 새/강화 테스트 19건 전부 라운드-2 HEAD(`e1a8ee85`)에서 red.
+특기할 것 셋: F4 는 옛 코드가 실제로 `HOLDING_QUERY_FAILED=CAPPED:MCA00000` 을 찍었고
+(성공 코드를 실패 사유로), F5 는 `assert 'OBSERVED' == 'CENSORED'` 로 위의 더 나쁜
+형태가 확인됐으며, F1 은 옛 러너가 `ABORT: no python at …/repo/.venv/bin/python` 으로
+죽어 README 레시피가 애초에 불가능했음을 보였다.
+
+### 7.9 라운드 3 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -q -p no:cacheprovider
+  → 179 passed, 1 skipped (shellcheck 미설치)
 ruff check tools/broker_probes tests/tools → All checks passed!
 black --check (변경 파일 2건)               → 2 files would be left unchanged
 bash -n tools/broker_probes/runners/run_p_ca.sh → OK
