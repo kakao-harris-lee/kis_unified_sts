@@ -85,8 +85,10 @@ Six EV-L3-only gates can withhold GREEN, and none of them is a self-report:
   * ``crash_injection.persistence_real`` — the conjunction of a run-time
     measurement (a non-empty store file observed after its writer died) and a
     **source property** (:func:`check_persistence_substrate`: one connection, no
-    literal target, no ``:memory:``, both pragmas). Either alone is satisfiable
-    by something that is not really durable.
+    literal target, no ``:memory:``, both pragmas — counting a pragma the
+    constructor delegates to :data:`PERSISTENCE_PRAGMA_DELEGATE_PATH` only when
+    it really calls it). Either alone is satisfiable by something that is not
+    really durable.
   * ``prior_stage_runs[*]`` — STATE-EV-001's EV-L1 **AND** EV-L2 must both be
     bound at THIS baseline. Not this row's own staging requirement: it is the
     durable-limb continuity that lets L3 evidence attach to a non-stale model
