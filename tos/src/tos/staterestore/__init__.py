@@ -48,6 +48,10 @@ Public surface
 * :mod:`tos.staterestore._l3_worker` — the ``python -m`` writer/reader entry point
   (S-4), parametrized by **argv only** (``os.environ`` / ``os.getenv`` are forbidden
   anywhere under ``tos/`` by TOS-FW-C).
+* :mod:`tos.staterestore._wal` — the ``journal_mode=WAL`` switch the store opens
+  through, which waits out the birth race two concurrent first opens produce (#823).
+  Private: the store is its only caller. Only :class:`JournalModeRefused`, its
+  fail-closed refusal, is re-exported here — that one a caller can catch.
 
 ⚠ Authoring is not evidence: this package closes no Evidence Register row. STATE-EV-004
 remains NOT_IMPLEMENTED, and an executed EV-L3 stage covers its persistence + process +
@@ -57,6 +61,7 @@ reconstruction axes only — real network and real credential identity stay defe
 
 from __future__ import annotations
 
+from tos.staterestore._wal import JournalModeRefused
 from tos.staterestore.reload import (
     ABSENT_DIMENSION_FILL,
     IncompleteStoreError,
@@ -75,6 +80,7 @@ __all__ = [
     "CompositeStateStore",
     "DIMENSION_COMMIT_ORDER",
     "IncompleteStoreError",
+    "JournalModeRefused",
     "RestartReconstruction",
     "StoreIntegrityError",
     "discard_caches",
