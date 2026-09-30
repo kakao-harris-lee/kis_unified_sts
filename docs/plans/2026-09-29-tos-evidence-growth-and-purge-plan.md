@@ -66,12 +66,14 @@
 - **읽기 목록 표**: 21 개 모듈 × 읽는 `kind` × 부팅 경로 여부 × 질의 형태(전 이력 / 꼬리 / 존재 여부).
 - **종료 조건**: 「며칠치 이력에서 부팅이 N 초를 넘는가」의 곡선. A2 의 필요성과 효과를 이 숫자로 판단한다.
 
-### A1-b. 측정 가드를 in-tree 로 (후속 · 미착수)
+### A1-b. 측정 가드를 in-tree 로 (**구현 — PR #826**)
 
 - A1 재실행 전에 프리플라이트·워치독 드라이버를 **저장소에 커밋하고 기본-on** 으로 둔다 —
   co-tenant 빌드 · `MemAvailable` · **스왑 여유**(전역 `CLAUDE.md`: Swap free 2 GB 미만이면
   착수 금지) · 상위 RSS 를 착수 전과 진행 중에 확인. 2026-09-30 실행의 가드는 커밋되지 않아
   소실됐고 스왑 문턱은 애초에 빠져 있었다(§7.1.7 편차 11 · 11-b).
+- 착지: `tools/tos_evidence_scan_measure.py` + `tests/tools/test_tos_evidence_scan_measure.py`
+  (§7.1.9). 벤치는 무변경 — 드라이버가 벤치를 자식 프로세스로 몬다.
 
 ### A2. `kind` 인덱스 (A1 이 필요를 보이면)
 
@@ -550,3 +552,153 @@ CI 와 같은 형태의 mypy 세 줄 전부 `Success`:
 `expected_code_digest`: `39a8d87d…` → `5e0472ca…`(15차) → **`25f0300a…`**(16차, 리뷰 처분
 반영). `expected_dependency_set_digest` 불변
 (`20559763…`, 같은 배포 호스트 루트 `.venv`).
+
+### 7.1.9 A1-b 착지 — PR #826 (2026-09-30, 분기점 main `2b018a27`)
+
+§7.1.7 편차 11(가드 소실)·11-b(스왑 문턱 누락)를 닫는다. **측정 자체는 다시 돌리지 않았다** —
+이 PR 은 다음 실행이 받을 보호를 in-tree 로 올릴 뿐이고, §7.1.2 의 수치는 하나도 바뀌지 않는다.
+
+| 커밋 | 내용 |
+|---|---|
+| `fb083dde` | 프리플라이트·워치독 드라이버 + 헤르메틱 테스트 |
+
+**무엇이 들어왔나.** `tools/tos_evidence_scan_measure.py`(순수 stdlib) 가 한 번의 측정을 몰고,
+호스트가 감당 못 할 때 **착수를 거부하거나 진행 중 중단**한다. 기존 벤치
+`tools/tos_evidence_scan_bench.py` 는 **한 줄도 바뀌지 않았다** — 드라이버가 벤치를 자식 프로세스로
+부른다. `tos/src` · `tos/runtime/src` 무변경이므로 **digest 재도출 없음**.
+
+단계는 `build` → `before` → `after` 셋이다. **별도의 「인덱스 생성」 단계는 없다** — 벤치에 그런
+하위명령이 없고 인덱스 생성은 `measure --create-index` 안에 있어서, `after` 단계가 그것을 부르고
+인덱스 생성 시간은 자식의 stdout(`after-Nd.out`)에 남는다.
+
+**문턱과 그 출처.** 코드에 맨 상수로 박힌 문턱은 없다 — 전부 인자이고, 기본값마다 출처를 적었다.
+
+| 인자 | 기본값 | 출처 |
+|---|---:|---|
+| `--min-available-gb` | 6 | 전역 `~/.claude/CLAUDE.md` 「로컬 빌드 동시 실행 제한」(2026-09-25) |
+| `--min-swap-free-gb` | 2 | **같은 규칙의 스왑 절** — 편차 11-b 가 빠져 있었다고 적은 그 조항 |
+| `--abort-available-gb` | 4 | 2026-09-30 실행이 실제로 쓴 값(§7.1.2 「진행 중 < 4 GB」) — 재실행 비교 가능성 |
+| `--abort-swap-free-gb` | 1 | **규칙 없음.** 전역 규칙은 착수만 말한다. 이 드라이버 자신의 값(착수 문턱의 절반, 메모리 쌍의 4/6 과 같은 관계)이라고 코드에 적었다 |
+| `--watch-interval-s` | 5 | §7.1.5 「재발 방지」의 「5 초마다」 |
+| `--term-grace-s` | 10 | 이 드라이버 자신의 값 |
+| `--disk-headroom-ratio` | 1.25 | 예측은 합성 파일만 덮는다. `after` 가 인덱스를 제자리에 만들고(+1.8 %, §7.1.2 30·90 일 공통) sqlite 가 만드는 동안 임시 공간을 쓴다. 1.25 는 그 실측 위에 얹은 이 드라이버의 여유 |
+
+**디스크 추정은 유도값이지 상수가 아니다.** 벤치 자신의 `profile_kinds`(따라서 `entries` 형상
+드리프트 가드가 그대로 적용된다)로 참조 분포를 읽고, 벤치의 복제 규칙(부팅 1회 kind 는 `days` 배,
+나머지는 `round(days×session_hours×60÷reference_minutes)` 배)을 다시 적용한 뒤, payload 를 **참조
+파일 자신의** `file_bytes / payload_bytes` 비로 환산한다. 2026-09-30 아티팩트와 대조:
+
+| 값 | 예측 | `a1/build-30d.json` 실측 | 차 |
+|---|---:|---:|---:|
+| 행 | 2,359,200 | 2,359,200 | **정확 일치** |
+| 바이트 | 4,471,389,391 | 4,373,725,184 | +2.2 % |
+
+행이 정확히 맞는 것은 우연이 아니라 **테스트가 들고 있는 성질**이다(`test_the_size_estimate_
+predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤치의 보고 행수와 대조한다).
+복제 규칙은 드라이버가 **다시 적은** 것이므로 — 벤치가 그 규칙을 함수로 노출하지 않는다 — 그
+사본이 조용히 벌어지는 것을 그 테스트가 막는다. 바이트는 추정이고, 틀리는 방향은 **거부 쪽**이다.
+
+**§7.1.2 가 「없다」고 적은 두 가지를 부수적으로 닫는다.**
+
+1. **아티팩트가 남는다.** `preflight.json`(최신) · `preflight.jsonl`(누적) · `watchdog.jsonl`(표본
+   시계열) · `<step>-Nd.resource.json` · `<step>-Nd.time`. 「프리플라이트 셋 다 `no competing
+   build`」 같은 문장을 다음부터는 **파일로** 인용한다. 프리플라이트는 **거부할 때도** 쓴다 —
+   아무것도 안 남기는 거부는 애초에 검사하지 않은 것과 구별되지 않는다.
+2. **물리 대 논리 읽기.** 자식의 `/proc/<pid>/io` 에서 `rchar`(프로세스가 요청한 바이트, 페이지
+   캐시 포함) 옆에 `read_bytes`(블록 계층이 실제로 옮긴 바이트)를 남긴다. §7.1.2 가 90 일치에서
+   논리 433 GB 대 물리 19.0 GB 로 **23 배** 벌어지는 것을 `File system inputs` 하나로 겨우 짚어낸
+   그 구분이, 다음부터는 단계마다 직접 기록된다. 표본은 종료 직전 것이라 각 레코드가 자신의
+   `proc_io_sample_age_seconds` 를 들고 있다 — `--watch-interval-s` 로 묶인 잔차를 숨기지 않고 적는다.
+
+**자원 계측은 `os.wait4` 다** — A1-b 가 지정받은 `getrusage(RUSAGE_CHILDREN)` 차분이 아니다.
+`RUSAGE_CHILDREN.ru_maxrss` 는 지금까지 거둔 **모든** 자식에 대한 진행 최대값이라, 최대값을 올리지
+않은 단계에서는 전·후 차가 0 이고 아무것도 말하지 않는다(실제로 §7.1.2 의 `measure` 단계들이
+`build` 의 49.8 MB 아래다). `os.wait4(pid, …)` 는 **그 자식 하나의** rusage 를 돌려주고, GNU
+`time -v` 가 읽는 것과 같은 커널 카운터다. 의도적 개선이라 코드와 커밋에 이유를 적었다.
+
+`.time` 파일은 GNU `time -v` 의 **필드명 그대로** 쓴다 — §7.1.2 가 `before-90d.time` 의
+`File system inputs: 37,112,704` 을 인용하고 있어서, 같은 grep 이 계속 같은 이름을 찾아야 한다.
+`wait4` 가 주지 않는 필드는 **0 으로 채우지 않고 뺀다**(「측정 안 함」을 뜻하는 0 은 이 계획이 이미
+한 번 철회해야 했던 종류의 숫자다).
+
+**「자기가 막는다고 말한 것을 허용하는 가드」 방지.** 중단 문턱이 착수 문턱보다 **높게** 설정되면
+드라이버가 거부한다. 그 조합은 프리플라이트가 방금 통과시킨 런을 워치독이 첫 표본에서 죽이는
+것이거나, 뒤집어 읽으면 착수 문턱이 진짜 진행 중 문턱이고 중단 문턱이 장식이라는 뜻이다.
+
+**실호스트 실측 2건(합성 실행 아님).**
+
+1. **프리플라이트가 실제로 거부했다.** 이 PR 작업 중 호스트에서 다른 프로젝트의 Gradle 빌드가
+   돌고 있었고, `preflight` 하위명령이 그 PID 들을 대며 rc=1 로 멈췄다. 같은 실행에서 **오탐
+   1건**이 드러났다 — 다른 에이전트 세션의 `bash -c "… pgrep -f 'GradleWrapperMain|…'"` 가
+   **패턴을 찾고 있다는 이유로** 매치됐다. 전역 규칙 자신의 `| grep -v pgrep` 이 겨냥한 바로 그
+   경우라 검색 명령 필터를 넣고 **양방향**으로 테스트했다(검색 줄은 통과, 진짜
+   `java … GradleWorkerMain` 줄은 거부). 무엇을 가릴 수 있는지도 코드에 적었다.
+2. **추정이 2026-09-30 아티팩트와 맞는다** — 위 표.
+
+**테스트 증거.**
+`.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`
+→ **46 passed**(신규 28 + 기존 벤치 18).
+
+**가드 레드 증명 — 13/13, 초록으로 남은 가드 0.** 각 가드를 하나씩 무력화하고 그 테스트만 다시
+돌려 red 를 확인한 뒤 복원했다. §7.1.5 의 교훈(「계획이 주장하면 테스트가 그 주장을 들고 있어야
+한다」)을 가드 자신에게 적용한 것이고, `MEMORY.md` 의 반복 결함 형태
+(「새 가드에 **이것이 실패하는 구체적 입력**을 못 쓰면 아무것도 막지 않는 것」)가 요구하는 절차다.
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| 프리플라이트 `MemAvailable` 문턱 | `test_preflight_refuses_when_mem_available_is_below_the_start_floor` |
+| 프리플라이트 `SwapFree` 문턱 (편차 11-b) | `test_preflight_refuses_when_swap_free_is_below_the_start_floor` |
+| 프리플라이트 경합 빌드/측정 | `..._when_a_gradle_build_is_running` · `..._when_another_measurement_driver_is_running` |
+| 검색 명령 필터(오탐 쪽) | `test_a_process_merely_searching_for_the_marker_is_not_a_competing_build` |
+| 프리플라이트 디스크 여유 | `..._when_the_disk_cannot_hold_the_synthetic_file` · `test_the_cli_reports_a_refusal_as_exit_one_and_starts_nothing` |
+| 프리플라이트 기존 아티팩트 | `..._when_a_step_artifact_already_exists` |
+| meminfo 필드 결손 fail-closed | `test_meminfo_without_the_fields_the_guards_need_is_refused` |
+| 중단 문턱 < 착수 문턱 검증 | `test_an_abort_floor_above_the_start_floor_is_refused` |
+| 워치독 `MemAvailable` 중단 | `test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_artifact` |
+| 워치독 `SwapFree` 중단 | `test_the_watchdog_aborts_on_low_swap_alone` |
+| 워치독 co-tenant 중단 | `test_the_watchdog_aborts_when_a_competing_build_appears_mid_run` |
+| 유예 뒤 SIGKILL 승격 | `test_a_child_that_ignores_sigterm_is_escalated_to_sigkill` |
+| 크기 추정 스케일 규칙 | `test_the_size_estimate_predicts_the_real_row_count_exactly` |
+
+SIGKILL 승격 테스트는 자식이 **핸들러를 설치했다고 알린 뒤에만** 중단을 일으킨다. 그러지 않으면
+인터프리터 기동 중에 SIGTERM 이 닿아 기본 처리로 죽고, 테스트는 **초록인데 승격은 증명하지 못한다.**
+
+**계획 §2 A1-b 대비 편차.**
+
+| # | 편차 | 이유 |
+|---|---|---|
+| a | 자원 계측을 `getrusage(RUSAGE_CHILDREN)` 차분이 아니라 `os.wait4` 로 | 위 「자원 계측은 `os.wait4` 다」 — 차분은 최대값을 올리지 않은 단계에 대해 0 을 준다 |
+| b | 중단 아티팩트 이름이 `ABORTED-<step>.json` 이 아니라 `ABORTED-<step>-<days>d.json` | 출력 디렉터리 하나를 크기별로 공유한다(기존 `a1/` 가 그렇다). 다른 아티팩트가 전부 `-Nd` 를 달고 있는 이유와 같다 |
+| c | `.time` 텍스트와 `.resource.json` 을 **둘 다** 쓴다 | 지시는 「JSON 으로」였다. `.time` 을 JSON 으로 바꾸면 §7.1.2 의 `File system inputs` 인용과 같은 grep 이 죽는다 — 비교 가능성을 지키려고 둘을 쓴다 |
+| d | 호스트 판독기(`HostReader`)가 `main()` 의 **키워드 인자**이지 CLI 플래그가 아니다 | 테스트는 주입해야 하고, 운영자는 셸에서 더 관대한 `/proc` 을 가리킬 수 없어야 한다 |
+| e | 검색 명령 필터를 추가했다 | 위 실측 1 — 첫 실호스트 실행이 오탐을 냈다. 전역 규칙의 `grep -v pgrep` 을 일반화한 것이고 양방향으로 테스트했다 |
+
+**게이트.** `tos_firewall_check.py` PASS · size budget PASS(0 violations, `tools/` 는 애초에 범위 밖) ·
+contract PASS · completion GREEN · spec PASS · `ruff check` 통과 · `black --check` 통과 ·
+`mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports` 클린 ·
+`mypy tests/… --disable-error-code=no-untyped-def`(CI 의 테스트 트리 형태) 클린.
+⚠ `lint-imports` 는 **로컬에서 돌지 않았다** — 배포 호스트 루트 `.venv` 에 `tos_runtime` 이 editable
+설치돼 있지 않고(`Could not find package 'tos_runtime'`), 공유 루트 venv 에 설치하지 않는 규율이
+있다. CI 의 `tos-firewall` 잡이 설치 후 돌린다. 이 PR 은 import 를 하나도 추가하지 않는다.
+
+**365 일치 재실행 명령 (이 PR 에서 돌리지 않았다).** 호스트에 다른 프로젝트의 Gradle 빌드가 도는
+동안에는 이 드라이버가 **스스로 거부한다** — 그것이 의도된 동작이다. 빌드가 끝난 뒤:
+
+```bash
+cd <repo>
+.venv/bin/python tools/tos_evidence_scan_measure.py run \
+  --reference ~/.local/state/tos/realclock-20260928T110001-LONG/data/evidence.sqlite3 \
+  --synthetic ~/.local/state/tos/measure/synth/synth-365d.sqlite3 \
+  --out-dir   ~/.local/state/tos/measure/a1b \
+  --days 365 --repeats 3
+```
+
+문턱은 전부 기본값(착수 6 GB / 2 GB · 진행 중 4 GB / 1 GB · 5 초 표본)이라 평시에는 아무 플래그도
+필요 없다. 착수 전에 먼저 보고 싶으면 같은 인자로 `run` 대신 `preflight` 를 쓰면 자식을 하나도
+띄우지 않고 판정만 낸다. 30·90 일치는 `--days` 만 바꾼다. 합성 파일은 쌍 측정이 끝나면 기본으로
+지워진다(피크 디스크 = 한 파일) — 남기려면 `--keep-synthetic`.
+
+⚠ 운영자 면제(§7.1.7 편차 11 의 「co-tenant 조건 해제」)를 **다시** 쓰려면 이 드라이버에는 그런
+플래그가 없다. 그때는 면제를 편차로 등재하고 `--min-available-gb`/`--min-swap-free-gb` 를 명시적으로
+낮춰야 하며, 그 값은 `preflight.json` 의 `thresholds` 에 그대로 남는다 — 지난번처럼 기록 없이
+빠지지 않는다.
