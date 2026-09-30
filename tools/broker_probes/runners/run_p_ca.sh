@@ -130,71 +130,59 @@ log "stock account fingerprint=$ACCOUNT_FP (expect $PCA_EXPECT_ACCOUNT_FP)"
 # --- 5. the holding: a FAILED query is not "not held" ----------------------
 #
 # The 09-30 10:58 attempt logged "held qty=0" and stopped, when the balance
-# query had in fact errored after 32s — a direct GET two minutes later showed
-# qty 1. A failed query and an empty holding are different verdicts and get
-# different log lines here.
+# query had in fact errored after 32 s — a direct GET two minutes later showed
+# qty 1. The check therefore runs on the PROBE's own reader
+# (`probes_ca.check_holding`, which pages and classifies) and not on
+# `shared/kis/client.py::get_stock_balance`, which returns [] on every failure
+# and reads page 1 only. It prints exactly one of two anchored lines.
 
-HELD_OUT=$("$PY" - <<'PYEOF' 2>&1
-import asyncio
-import os
-
-from shared.kis.client import KISClient
-from tools.broker_probes.common import (
-    build_auth_config,
-    probe_token_cache_dir,
-    resolve_credentials,
-)
-
-
-async def main() -> None:
-    creds = resolve_credentials("stock", is_real=os.environ["PCA_KIS_ENV"] == "real")
-    client = KISClient(
-        build_auth_config(creds, probe_token_cache_dir(os.environ["PCA_TOKEN_CACHE"]))
-    )
-    rows = await client.get_stock_balance()
-    close = getattr(client, "close", None)
-    if close:
-        await close()
-    want = os.environ["PCA_SYMBOL"]
-    print(
-        "HELD=%d"
-        % sum(int(r.get("quantity") or 0) for r in rows if str(r.get("code")) == want)
-    )
-
-
-asyncio.run(main())
-PYEOF
-)
+HELD_OUT=$("$PY" -m tools.broker_probes.probes_ca --check-holding \
+  --env "$PCA_KIS_ENV" --symbol "$PCA_SYMBOL" \
+  --token-cache-dir "$PCA_TOKEN_CACHE" --pace-s "$PCA_PACE_S" 2>&1)
+held_rc=$?
 HELD=$(printf '%s\n' "$HELD_OUT" | sed -n 's/^HELD=//p' | tail -1)
-case "${HELD:-}" in
-  '')
-    die "balance query FAILED (this is not a holding verdict): $(printf '%s' "$HELD_OUT" | tail -1 | cut -c1-160)"
-    ;;
-  0)
-    log "held qty($PCA_SYMBOL)=0"
-    die "$PCA_SYMBOL is not held — nothing to observe"
-    ;;
-esac
+HELD_FAILED=$(printf '%s\n' "$HELD_OUT" | sed -n 's/^HOLDING_QUERY_FAILED=//p' | tail -1)
+
+if [ -n "$HELD_FAILED" ]; then
+  die "holding check FAILED (this is not a holding verdict): $HELD_FAILED"
+fi
+if [ -z "$HELD" ]; then
+  die "holding check printed neither HELD= nor HOLDING_QUERY_FAILED= (rc=$held_rc): $(printf '%s' "$HELD_OUT" | tail -1 | cut -c1-160)"
+fi
+if [ "$held_rc" -ne 0 ]; then
+  die "holding check exited $held_rc while reporting HELD=$HELD — refusing to trust the number"
+fi
+if [ "$HELD" = "0" ]; then
+  log "held qty($PCA_SYMBOL)=0 (the walk completed; this is a real absence)"
+  die "$PCA_SYMBOL is not held — nothing to observe"
+fi
 log "held qty($PCA_SYMBOL)=$HELD"
 
 # --- 6. the probe ----------------------------------------------------------
-
-# Optional flags. Unquoted on purpose below: an empty scalar expands to
-# nothing, which an empty "${array[@]}" does not do reliably under `set -u`.
-REF_CHECK=
-[ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && REF_CHECK=--reference-check
-
+#
+# argv is built as an ARRAY and expanded quoted: an ISO-8601 value with a
+# SPACE separator ("2026-10-01 09:00:00+09:00") is accepted by the probe's own
+# datetime.fromisoformat, and an unquoted scalar would split it into two argv
+# words (independent review F6).
+PROBE_ARGS=(
+  --asset stock --env "$PCA_KIS_ENV" --symbol "$PCA_SYMBOL"
+  --event-class "$PCA_EVENT_CLASS"
+  --payable-time "$PCA_PAYABLE"
+  --window-s "$PCA_WINDOW_S" --poll-ms "$PCA_POLL_MS" --pace-s "$PCA_PACE_S"
+  --confirm --token-cache-dir "$PCA_TOKEN_CACHE"
+  --note "$PCA_NOTE"
+)
 # PCA_EFFECTIVE is optional because it is meaningless for a cash dividend
 # (N-19 §2.3: the 기준가 adjustment is not on the balance surface). It is
-# REQUIRED in practice for every other event class, whose observable leg is
-# the quantity leg and pairs with --effective-time: without it such a run
-# polls the cash leg only and silently observes the wrong thing.
-EFFECTIVE=
+# REQUIRED for every other event class, whose observable leg is the quantity
+# leg and pairs with --effective-time: without it such a run polls the cash
+# leg only and silently observes the wrong thing.
 if [ -n "${PCA_EFFECTIVE:-}" ]; then
-  EFFECTIVE="--effective-time $PCA_EFFECTIVE"
+  PROBE_ARGS+=(--effective-time "$PCA_EFFECTIVE")
 elif [ "$PCA_EVENT_CLASS" != "cash_dividend" ]; then
   die "PCA_EVENT_CLASS=$PCA_EVENT_CLASS observes a QUANTITY leg, which pairs with --effective-time; set PCA_EFFECTIVE"
 fi
+[ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && PROBE_ARGS+=(--reference-check)
 
 # Record what the results dir already holds, so step 7 can tell this run's
 # artifact from a leftover: `ls -t | head -1` on an empty run copies somebody
@@ -202,15 +190,7 @@ fi
 ART_BEFORE=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
 
 log "=== START P-CA $PCA_SYMBOL env=$PCA_KIS_ENV window=${PCA_WINDOW_S}s poll=${PCA_POLL_MS}ms pace=${PCA_PACE_S}s"
-printf '\n' | "$PY" -m tools.broker_probes.run P-CA \
-  --asset stock --env "$PCA_KIS_ENV" --symbol "$PCA_SYMBOL" \
-  --event-class "$PCA_EVENT_CLASS" \
-  --payable-time "$PCA_PAYABLE" \
-  $EFFECTIVE \
-  --window-s "$PCA_WINDOW_S" --poll-ms "$PCA_POLL_MS" --pace-s "$PCA_PACE_S" \
-  $REF_CHECK \
-  --confirm --token-cache-dir "$PCA_TOKEN_CACHE" \
-  --note "$PCA_NOTE" \
+printf '\n' | "$PY" -m tools.broker_probes.run P-CA "${PROBE_ARGS[@]}" \
   >>"$PCA_LOG" 2>&1
 rc=$?
 log "=== END P-CA rc=$rc"

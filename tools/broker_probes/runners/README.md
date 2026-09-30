@@ -46,6 +46,7 @@ export PCA_NOTE="t3 P-CA trial 3: ..."
 # optional
 export PCA_REFERENCE_CHECK=1        # also GET the ksdinfo TR before polling
 export PCA_EFFECTIVE=...            # required for every class but cash_dividend
+                                    # (a space-separated ISO value is fine)
 export PCA_CRON_MARK=run_p_ca_20261022   # remove this one crontab line when done
 
 # 3. run it from the worktree's own copy — that is how it finds the checkout
@@ -63,9 +64,16 @@ Notes:
 - The script **never deletes itself**. `PCA_CRON_MARK` removes only the one
   matching `crontab -l` line, and only after the probe has actually run — an
   early ABORT leaves the schedule in place so the next slot can retry.
-- The holding check separates a **failed** balance query from a holding of 0.
-  The 09-30 10:58 attempt logged `held qty=0` for a query that had errored;
-  a direct GET two minutes later showed qty 1.
+- The holding check runs on the probe's own reader
+  (`python -m tools.broker_probes.probes_ca --check-holding`), which pages
+  through the balance and classifies the result. It prints exactly one of
+  `HELD=<n>` (exit 0) or `HOLDING_QUERY_FAILED=<kind>:<detail>` (exit
+  non-zero), and the runner parses only those two anchored forms. It does
+  **not** use `shared/kis/client.py::get_stock_balance`, which returns `[]` on
+  every failure and reads page 1 only — that is how the 09-30 10:58 attempt
+  logged `held qty=0` for a query that had errored (a direct GET two minutes
+  later showed qty 1), and how a holding on page 2 of the 25-row mock account
+  would read as "not held".
 - The artifact is copied to `PCA_EVIDENCE_DIR` only when it is newer than
   whatever the results directory already held.
 - Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
