@@ -1891,10 +1891,16 @@ def test_a_run_with_no_transient_still_states_that_it_retried_nothing(
     assert _retry_records(run) == []
 
 
-def test_only_timeouts_and_connection_errors_count_as_transient() -> None:
-    """The transient set is the transport failures ``_get`` actually raises,
-    not "any exception": a malformed URL or a redirect loop is a defect in this
-    probe, and retrying it just produces the same failure twice.
+def test_the_transient_set_is_no_intact_answer_not_any_exception() -> None:
+    """``_get`` raises from TWO places and both belong in the set: the request
+    itself (timeouts, connection errors) and the BODY READ, where a cut
+    chunked transfer or an undecodable gzip surfaces as
+    ``ChunkedEncodingError`` / ``ContentDecodingError`` (independent review
+    F3 — these were excluded and documented as misconfigurations, so a
+    truncated body still escaped the probe as ``run.py`` rc 5).
+
+    A malformed URL or a redirect loop stays out: it is a defect in this probe,
+    and retrying it just produces the identical failure twice.
     """
     import requests
 
@@ -1904,16 +1910,98 @@ def test_only_timeouts_and_connection_errors_count_as_transient() -> None:
         requests.exceptions.ConnectTimeout,
         requests.exceptions.ConnectionError,
         requests.exceptions.SSLError,
+        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.ContentDecodingError,
     ):
         assert issubclass(exc_type, transient), exc_type
     for exc_type in (
         requests.exceptions.TooManyRedirects,
         requests.exceptions.InvalidURL,
         requests.exceptions.MissingSchema,
-        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.URLRequired,
         ValueError,
     ):
         assert not issubclass(exc_type, transient), exc_type
+
+
+def test_a_body_cut_mid_read_is_retried_like_a_timeout(
+    stock_env: None, wire: Any
+) -> None:
+    """The scenario behind the set above: the broker answers 200 with a
+    chunked body and the connection dies before the terminating chunk.
+    ``requests`` raises only when ``_get`` reads ``response.text``."""
+    import requests
+
+    class _TruncatedResponse:
+        status_code = 200
+
+        @property
+        def text(self) -> str:
+            raise requests.exceptions.ChunkedEncodingError(
+                "Connection broken: IncompleteRead(512 bytes read)"
+            )
+
+        def json(self) -> dict[str, Any]:  # pragma: no cover - never reached
+            raise AssertionError("text is read first")
+
+    session = wire(
+        _TransientSession([_balance_body(10), _TruncatedResponse(), _balance_body(11)])
+    )
+    run = pc.probe_pca(_poll_args())
+
+    assert run.errors == []
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert "ChunkedEncodingError" in _retry_records(run)[0]["body_excerpt"]
+    assert len(session.calls) == 3
+
+
+def test_a_rate_limited_body_is_never_retried_on_the_reference_check_either(
+    stock_env: None, wire: Any
+) -> None:
+    """Independent review F4: the ksdinfo path classified the ledger throttle
+    BEFORE ``is_rate_limited``, so a 429 body carrying ``EGW00215`` bought a
+    retry there and stopped the run at once on the balance walk. One
+    classifier, one precedence — HTTP 429 / ``EGW00201`` win."""
+    both_signals = _FakeResponse(
+        {"rt_cd": "1", "msg_cd": "EGW00215", "msg1": "초당 거래건수 초과"}, status=429
+    )
+    session = wire(_TransientSession([_balance_body(10), both_signals]))
+    run = pc.probe_pca(_poll_args(reference_check=True))
+
+    assert len(session.calls) == 2, "the reference check retried a rate limit"
+    assert _retry_records(run) == []
+    assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
+    assert any("rate-limited on reference-check" in msg for msg in run.errors)
+
+
+def test_the_same_body_is_classified_the_same_way_on_both_paths() -> None:
+    """The point of a single classifier, stated directly."""
+    rate_limited = {"rt_cd": "1", "msg_cd": "EGW00215", "msg1": "x"}
+    assert pc._get_classified.__doc__ is not None
+    session = _ScriptedSession(
+        [
+            _FakeResponse(rate_limited, status=429),
+            _FakeResponse(rate_limited, status=429),
+        ]
+    )
+    balance_kind, _s, _p, _t = pc._get_classified(
+        session,
+        _FakeAuth(),
+        base_url=pc.MOCK_BASE_URL,
+        path=pc._STOCK_BALANCE_PATH,
+        tr_id=pc._STOCK_TR_MOCK,
+        params={},
+    )
+    ksd_tr, ksd_path = pc._KSDINFO_TRS["dividend"]
+    ksd_kind, _s2, _p2, _t2 = pc._get_classified(
+        session,
+        _FakeAuth(),
+        base_url=pc.MOCK_BASE_URL,
+        path=ksd_path,
+        tr_id=ksd_tr,
+        params={},
+    )
+    assert balance_kind == ksd_kind == pc._BAL_RATE_LIMITED
 
 
 def test_defer_re_arms_the_gap_from_now_and_never_shortens_it(
@@ -2024,6 +2112,8 @@ def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
     (repo / "tools/broker_probes/probes_ca.py").write_text(
         "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
     )
+    # So a fake .venv added after the commit does not trip the dirty guard.
+    (repo / ".gitignore").write_text(".venv/\nresults/\n", encoding="utf-8")
 
     def git(*argv: str) -> None:
         subprocess.run(
@@ -2208,3 +2298,293 @@ def test_runner_aborts_when_the_checkout_lacks_the_transient_retry_fix(
     assert result.returncode == 4
     assert "missing '_BAL_TRANSIENT'" in result.stdout
     assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
+# the pre-flight holding check (independent review F1/F2)
+# ---------------------------------------------------------------------------
+#
+# The runner used to ask shared/kis/client.py::get_stock_balance whether the
+# symbol was held. That function returns [] on EVERY failure (non-200,
+# non-JSON, rt_cd != '0', and a catch-all `except Exception`) and sends empty
+# continuation cursors, so it reads page 1 only. Both defects turn a failure
+# or a page-2 holding into "held qty=0" — the 2026-09-30 10:58 misdiagnosis,
+# reproduced by the tool the fix was built on.
+
+
+def _holding_argv(**overrides: str) -> list[str]:
+    argv = {
+        "--env": "mock",
+        "--symbol": "005930",
+        "--pace-s": "0",
+    }
+    argv.update(overrides)
+    flat = ["--check-holding"]
+    for key, value in argv.items():
+        flat += [key, value]
+    return flat
+
+
+def test_holding_check_reports_a_completed_walk_as_held(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wire(_ScriptedSession([_balance_body(4)]))
+    rc = pc.check_holding(_holding_argv())
+    assert rc == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "HELD=4"
+
+
+def test_holding_check_reports_a_real_absence_as_zero(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other direction: a completed walk that found nothing IS HELD=0, and
+    the runner is entitled to stop on it. The failure form must not be used to
+    paper over a genuine absence."""
+    wire(
+        _ScriptedSession([_paged_balance(qty_row={"pdno": "000660", "hldg_qty": "1"})])
+    )
+    rc = pc.check_holding(_holding_argv())
+    assert rc == 0
+    assert "HELD=0" in capsys.readouterr().out
+
+
+def test_holding_check_never_reports_a_rejection_as_zero(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The 10:58 shape. A rejected balance query is NOT a holding verdict."""
+    wire(_ScriptedSession([_balance_body(0, rt_cd="1")]))
+    rc = pc.check_holding(_holding_argv())
+    out = capsys.readouterr().out
+    assert rc != 0
+    assert "HELD=" not in out.replace("HOLDING_QUERY_FAILED=", "")
+    assert "HOLDING_QUERY_FAILED=REJECTED:APBK0919" in out
+
+
+def test_holding_check_never_reports_a_timeout_as_zero(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wire(_TransientSession([_read_timeout(), _read_timeout()]))
+    rc = pc.check_holding(_holding_argv())
+    out = capsys.readouterr().out
+    assert rc != 0
+    assert "HOLDING_QUERY_FAILED=TRANSIENT:transport:ReadTimeout" in out
+
+
+def test_holding_check_never_reports_a_rate_limit_as_zero(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = wire(
+        _TransientSession(
+            [_FakeResponse({"rt_cd": "1", "msg_cd": "EGW00201"}, status=429)]
+        )
+    )
+    rc = pc.check_holding(_holding_argv())
+    assert rc != 0
+    assert "HOLDING_QUERY_FAILED=RATE_LIMITED:EGW00201" in capsys.readouterr().out
+    assert len(session.calls) == 1, "the pre-flight retried a rate limit"
+
+
+def test_holding_check_retries_one_transient_and_then_answers(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One read timeout must not cost a whole trial window before it starts."""
+    session = wire(_TransientSession([_read_timeout(), _balance_body(2)]))
+    rc = pc.check_holding(_holding_argv())
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "HELD=2" in captured.out
+    assert "transient transport" in captured.err
+    assert len(session.calls) == 2
+
+
+def test_holding_check_walks_to_page_two_before_saying_not_held(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F6, one step earlier than the probe: the mock stock account holds 25
+    rows across 2 pages and ``get_stock_balance`` returns 20, so a target on
+    page 2 read as "not held" and the runner aborted before the probe ever
+    started."""
+    page1 = _paged_balance(
+        qty_row={"pdno": "000660", "hldg_qty": "3"}, fk="F1", nk="N1"
+    )
+    page2 = _paged_balance(qty_row={"pdno": "005930", "hldg_qty": "7"})
+    session = wire(_ScriptedSession([page1, page2]))
+    rc = pc.check_holding(_holding_argv())
+    assert rc == 0
+    assert "HELD=7" in capsys.readouterr().out
+    assert len(session.calls) == 2
+
+
+def test_holding_check_reports_the_page_cap_as_a_failure_not_zero(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pages = [
+        _paged_balance(qty_row={"pdno": "000660", "hldg_qty": "1"}, fk="F", nk="N")
+        for _ in range(pc._MAX_BALANCE_PAGES)
+    ]
+    wire(_ScriptedSession(pages))
+    rc = pc.check_holding(_holding_argv())
+    assert rc != 0
+    assert "HOLDING_QUERY_FAILED=CAPPED" in capsys.readouterr().out
+
+
+def _fake_python(repo: Path, *, holding_line: str, holding_rc: int, dump: Path) -> None:
+    """A stand-in for ``$REPO/.venv/bin/python`` that answers the three calls
+    the runner makes, so the template can be driven end to end offline."""
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    script = venv_bin / "python"
+    script.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  -c) printf '%s\\n' \"$PCA_EXPECT_ACCOUNT_FP\" ;;\n"
+        "  -m)\n"
+        '    case "$2" in\n'
+        f"      tools.broker_probes.probes_ca) printf '%s\\n' '{holding_line}'; "
+        f"exit {holding_rc} ;;\n"
+        '      tools.broker_probes.run) for a in "$@"; do '
+        f"printf '%s\\n' \"$a\" >> '{dump}'; done ;;\n"
+        "    esac\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
+def _run_runner_end_to_end(
+    tmp_path: Path,
+    *,
+    holding_line: str = "HELD=1",
+    holding_rc: int = 0,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[Any, list[str]]:
+    """Drive the whole template against a fake python; return (result, probe argv)."""
+    import hashlib
+    import subprocess
+
+    repo = _runner_repo(tmp_path, detached=True, dirty=False)
+    _publish_origin_main(repo)
+    dump = tmp_path / "probe-argv.txt"
+    _fake_python(repo, holding_line=holding_line, holding_rc=holding_rc, dump=dump)
+
+    env_file = tmp_path / "creds.env"
+    env_file.write_text(
+        f"KIS_STOCK_APP_KEY=test-key\nKIS_STOCK_ACCOUNT_NO=1234567890\n"
+        f"echo {_CREDENTIAL_SENTINEL}\n",
+        encoding="utf-8",
+    )
+    key_fp = hashlib.sha256(b"test-key").hexdigest()[:12]
+    env = {
+        "PATH": __import__("os").environ["PATH"],
+        "HOME": str(tmp_path),
+        "PCA_LOG": str(tmp_path / "run.log"),
+        "PCA_ENV_FILE": str(env_file),
+        "PCA_KIS_ENV": "mock",
+        "PCA_SYMBOL": "000660",
+        "PCA_EVENT_CLASS": "cash_dividend",
+        "PCA_PAYABLE": "2020-01-01T00:00:00+09:00",
+        "PCA_WINDOW_S": "60",
+        "PCA_POLL_MS": "30000",
+        "PCA_PACE_S": "1.5",
+        "PCA_EXPECT_KEY_FP": key_fp,
+        "PCA_EXPECT_ACCOUNT_FP": "0123456789ab",
+        "PCA_TOKEN_CACHE": str(tmp_path / "token-cache"),
+        "PCA_EVIDENCE_DIR": str(tmp_path),
+        "PCA_NOTE": "runner end-to-end test",
+    }
+    env.update(extra_env or {})
+    result = subprocess.run(
+        ["bash", str(repo / "tools/broker_probes/runners/run_p_ca.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    argv = dump.read_text(encoding="utf-8").splitlines() if dump.exists() else []
+    return result, argv
+
+
+def test_runner_passes_a_space_separated_iso_time_as_one_argv_word(
+    tmp_path: Path,
+) -> None:
+    """Independent review F6: ``--effective-time $PCA_EFFECTIVE`` unquoted
+    splits ``2026-10-01 09:00:00+09:00`` — a value the probe's own
+    ``datetime.fromisoformat`` accepts — into two argv words, and argparse
+    rejects the run before it starts."""
+    spaced = "2020-10-01 09:00:00+09:00"
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env={"PCA_EVENT_CLASS": "bonus_issue", "PCA_EFFECTIVE": spaced},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--effective-time" in argv
+    assert argv[argv.index("--effective-time") + 1] == spaced
+
+
+def test_runner_passes_the_note_as_one_argv_word(tmp_path: Path) -> None:
+    """The same quoting property on the field most likely to contain spaces."""
+    result, argv = _run_runner_end_to_end(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert argv[argv.index("--note") + 1] == "runner end-to-end test"
+    assert "--reference-check" not in argv
+
+
+def test_runner_adds_the_reference_check_flag_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env={"PCA_REFERENCE_CHECK": "1"}
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--reference-check" in argv
+
+
+def test_runner_aborts_when_the_holding_check_reports_a_failure(
+    tmp_path: Path,
+) -> None:
+    """Independent review F1: the gate must distinguish "the query failed"
+    from "nothing is held", and never start the probe on the former."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        holding_line="HOLDING_QUERY_FAILED=TRANSIENT:transport:ReadTimeout",
+        holding_rc=1,
+    )
+    assert result.returncode != 0
+    assert "holding check FAILED (this is not a holding verdict)" in result.stdout
+    assert "TRANSIENT:transport:ReadTimeout" in result.stdout
+    assert "not held" not in result.stdout
+    assert argv == [], "the probe ran despite an unknown holding"
+
+
+def test_runner_aborts_on_a_real_zero_holding_with_a_different_message(
+    tmp_path: Path,
+) -> None:
+    """The other direction: HELD=0 from a COMPLETED walk is a real absence and
+    gets its own line, so the two verdicts stay distinguishable in the log."""
+    result, argv = _run_runner_end_to_end(tmp_path, holding_line="HELD=0")
+    assert result.returncode != 0
+    assert "the walk completed; this is a real absence" in result.stdout
+    assert "not held — nothing to observe" in result.stdout
+    assert "holding check FAILED" not in result.stdout
+    assert argv == []
+
+
+def test_runner_refuses_a_holding_number_from_a_failed_exit(tmp_path: Path) -> None:
+    """A number printed by a process that then failed is not a verdict."""
+    result, argv = _run_runner_end_to_end(tmp_path, holding_line="HELD=3", holding_rc=7)
+    assert result.returncode != 0
+    assert "exited 7 while reporting HELD=3" in result.stdout
+    assert argv == []
+
+
+def test_runner_aborts_when_the_holding_check_says_nothing_parseable(
+    tmp_path: Path,
+) -> None:
+    result, argv = _run_runner_end_to_end(
+        tmp_path, holding_line="Traceback (most recent call last):", holding_rc=1
+    )
+    assert result.returncode != 0
+    assert "printed neither HELD= nor HOLDING_QUERY_FAILED=" in result.stdout
+    assert argv == []
