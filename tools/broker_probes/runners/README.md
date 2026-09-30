@@ -37,7 +37,9 @@ export PCA_PYTHON=/home/deploy/project/kis_unified_sts/.venv/bin/python
 
 # 3. the instance
 export PCA_LOG=~/.config/kis-probes/p-ca-20261022.log
-export PCA_ENV_FILE=~/.config/kis-probes/backups/.env.mock.bak-20260915-mock-reapply
+export PCA_CREDENTIAL_FILE=.env.mock   # relative -> this worktree, copied in if absent
+                                      # absolute -> used as given, never copied, e.g.
+                                      # ~/.config/kis-probes/backups/.env.mock.bak-20260915-mock-reapply
 export PCA_KIS_ENV=mock                       # mock | real (real is GET-only here)
 export PCA_SYMBOL=058610
 export PCA_EVENT_CLASS=cash_dividend
@@ -62,8 +64,24 @@ export PCA_CRON_MARK=run_p_ca_20261022   # remove this one crontab line when don
 /home/deploy/.local/state/kis/wt-pca/tools/broker_probes/runners/run_p_ca.sh
 ```
 
+### The credential file
+
+`PCA_CREDENTIAL_FILE` is read two ways:
+
+- **Relative** (the documented case, `.env.mock`): resolved against the
+  worktree. A freshly added worktree carries none of the `.env.*` files, since
+  they are gitignored, so the runner copies it in from the **primary
+  checkout** — located from the first entry of `git worktree list --porcelain`,
+  never a hardcoded path, so it keeps working when the checkout moves. The copy
+  is `install -m 600`, one log line names the source and destination **paths
+  only**, and the run refuses when the file is in neither checkout, naming
+  both. The copy persists; `.env.*` is gitignored, so it does not make the
+  worktree dirty for the next run's clean-checkout guard.
+- **Absolute** (e.g. the 2026-09-15 credential backup under `~/.config`): used
+  exactly as given, never copied anywhere.
+
 `PCA_EXPECT_ACCOUNT_FP` is what `tools/broker_probes/common.py::account_fingerprint`
-prints for the account number in `PCA_ENV_FILE`; `PCA_EXPECT_KEY_FP` is
+prints for the account number in `PCA_CREDENTIAL_FILE`; `PCA_EXPECT_KEY_FP` is
 `printf '%s' "$KIS_STOCK_APP_KEY" | sha256sum | cut -c1-12`. Both are checked
 before the probe starts, because the 2026-09-23 `INVALID_CHECK_ACNO` outage was
 a key paired with the wrong account, not a propagation delay.

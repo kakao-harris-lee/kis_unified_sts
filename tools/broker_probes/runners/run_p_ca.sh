@@ -17,7 +17,8 @@
 #      non-main commit). Override: PCA_ALLOW_SHARED_CHECKOUT=1, logged.
 #   2. the checkout carries the fixes this probe depends on.
 #   3. every required PCA_* variable is set (PCA_EFFECTIVE included, when the
-#      event class needs it).
+#      event class needs it), and the credential file is present in this
+#      worktree — copied from the primary checkout when it is not (§3b).
 #   4. PCA_PYTHON runs, and the tools.broker_probes it loads is THIS
 #      checkout's — the interpreter is the main checkout's .venv, so that is
 #      not automatic, and every guard above is worthless without it.
@@ -90,7 +91,7 @@ log "required probes_ca.py fixes present"
 # --- 3. instance values (no defaults) --------------------------------------
 
 for _name in \
-  PCA_LOG PCA_PYTHON PCA_ENV_FILE PCA_KIS_ENV PCA_SYMBOL PCA_EVENT_CLASS \
+  PCA_LOG PCA_PYTHON PCA_CREDENTIAL_FILE PCA_KIS_ENV PCA_SYMBOL PCA_EVENT_CLASS \
   PCA_PAYABLE PCA_WINDOW_S PCA_POLL_MS PCA_PACE_S PCA_EXPECT_KEY_FP \
   PCA_EXPECT_ACCOUNT_FP PCA_TOKEN_CACHE PCA_EVIDENCE_DIR PCA_NOTE; do
   _value=$(printenv "$_name" || true)
@@ -133,15 +134,50 @@ case "$LOADED" in
 esac
 export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 
-[ -r "$PCA_ENV_FILE" ] || die "credential file unreadable: $PCA_ENV_FILE"
 [ -d "$PCA_EVIDENCE_DIR" ] || die "evidence dir missing: $PCA_EVIDENCE_DIR"
+
+# --- 3b. the credential file, copied into the worktree if it is not there ---
+#
+# Operator directive 2026-10-01: "워크트리에 .env가 없으면 기본 디렉토리에서
+# 복사해". A RELATIVE PCA_CREDENTIAL_FILE (the documented case, e.g. .env.mock)
+# is resolved against this worktree; a freshly added worktree carries none of
+# the ignored env files, so it is copied from the PRIMARY checkout — the first
+# entry of `git worktree list --porcelain`, never a hardcoded path, so this
+# keeps working when the checkout moves. An ABSOLUTE path (e.g. the 09-15
+# credential backup under ~/.config) is used exactly as given and never copied.
+#
+# The copy is mode 600 and the log line carries PATHS ONLY — never a byte of
+# the file. It persists in the worktree; `.env.*` is gitignored, so it does not
+# make the checkout dirty for the next run's guard.
+case "$PCA_CREDENTIAL_FILE" in
+  /*)
+    CRED_FILE=$PCA_CREDENTIAL_FILE
+    [ -r "$CRED_FILE" ] ||
+      die "credential file unreadable: $CRED_FILE (absolute path, used as given)"
+    ;;
+  *)
+    CRED_FILE="$REPO/$PCA_CREDENTIAL_FILE"
+    if [ ! -r "$CRED_FILE" ]; then
+      PRIMARY=$(git -C "$REPO" worktree list --porcelain |
+        awk '/^worktree /{print substr($0, 10); exit}')
+      [ -n "$PRIMARY" ] ||
+        die "cannot determine the primary checkout from 'git worktree list' in $REPO"
+      CRED_SOURCE="$PRIMARY/$PCA_CREDENTIAL_FILE"
+      [ -r "$CRED_SOURCE" ] ||
+        die "credential file '$PCA_CREDENTIAL_FILE' is in neither checkout — not at $CRED_FILE and not at $CRED_SOURCE"
+      install -m 600 "$CRED_SOURCE" "$CRED_FILE" ||
+        die "could not copy the credential file: $CRED_SOURCE -> $CRED_FILE"
+      log "credential file copied from the primary checkout: $CRED_SOURCE -> $CRED_FILE (mode 600)"
+    fi
+    ;;
+esac
 
 # --- 4. credentials, checked by fingerprint --------------------------------
 
 set -a
 # The path is operator-supplied by design, so it cannot be followed statically.
 # shellcheck disable=SC1090
-. "$PCA_ENV_FILE"
+. "$CRED_FILE"
 set +a
 
 mkdir -p "$PCA_TOKEN_CACHE" && chmod 700 "$PCA_TOKEN_CACHE"
@@ -149,7 +185,7 @@ mkdir -p "$PCA_TOKEN_CACHE" && chmod 700 "$PCA_TOKEN_CACHE"
 KEY_FP=$(printf '%s' "${KIS_STOCK_APP_KEY:-}" | sha256sum | cut -c1-12)
 log "stock app key fp=$KEY_FP (expect $PCA_EXPECT_KEY_FP)"
 [ "$KEY_FP" = "$PCA_EXPECT_KEY_FP" ] ||
-  die "app key fingerprint mismatch — $PCA_ENV_FILE is not the credential set this trial was planned against"
+  die "app key fingerprint mismatch — $CRED_FILE is not the credential set this trial was planned against"
 
 ACCOUNT_FP=$("$PY" -c "
 import os

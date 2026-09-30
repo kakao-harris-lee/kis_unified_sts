@@ -2117,12 +2117,16 @@ def test_runner_template_never_removes_itself() -> None:
     and 4 went out through a hand-made copy."""
     text = _RUNNER.read_text(encoding="utf-8")
     assert re.search(r"(?<![\w-])rm(?![\w-])", text) is None, "the runner runs rm"
-    # ``$0`` is legitimate exactly once — deriving the checkout from the
-    # script's own location. Anywhere else it is the script talking about
-    # itself, which is how the 09-30 runner deleted itself.
-    self_references = [line for line in text.splitlines() if "$0" in line]
+    # The SHELL's ``"$0"`` is legitimate exactly once — deriving the checkout
+    # from the script's own location. Anywhere else it is the script talking
+    # about itself, which is how the 09-30 runner deleted itself. Matched
+    # quoted, because awk's ``$0`` (the whole input record, in the
+    # `git worktree list` parse) is a different variable in a different
+    # language and says nothing about this file.
+    self_references = [line for line in text.splitlines() if '"$0"' in line]
     assert len(self_references) == 1, self_references
     assert "SCRIPT_DIR=" in self_references[0], self_references
+    assert '"$0"' not in text.split("SCRIPT_DIR=", 1)[1].split("\n", 1)[1]
 
 
 def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
@@ -2187,7 +2191,7 @@ def _run_runner(repo: Path, tmp_path: Path) -> Any:
         "PATH": __import__("os").environ["PATH"],
         "HOME": str(tmp_path),
         "PCA_LOG": str(tmp_path / "run.log"),
-        "PCA_ENV_FILE": str(env_file),
+        "PCA_CREDENTIAL_FILE": str(env_file),
         "PCA_KIS_ENV": "mock",
         "PCA_SYMBOL": "000660",
         "PCA_EVENT_CLASS": "cash_dividend",
@@ -2534,7 +2538,7 @@ def _run_runner_end_to_end(
         "PCA_LOG": str(tmp_path / "run.log"),
         "PCA_PYTHON": str(python),
         "FAKE_MODULE_PATH": str(repo / "tools/broker_probes/probes_ca.py"),
-        "PCA_ENV_FILE": str(env_file),
+        "PCA_CREDENTIAL_FILE": str(env_file),
         "PCA_KIS_ENV": "mock",
         "PCA_SYMBOL": "000660",
         "PCA_EVENT_CLASS": "cash_dividend",
@@ -2793,4 +2797,213 @@ def test_runner_refuses_a_quantity_leg_class_without_an_effective_time(
     assert "set PCA_EFFECTIVE" in result.stdout
     assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
     assert "held qty" not in result.stdout
+    assert argv == []
+
+
+# ---------------------------------------------------------------------------
+# the credential file is copied into the worktree when it is not there
+# ---------------------------------------------------------------------------
+#
+# Operator directive 2026-10-01: "워크트리에 .env가 없으면 기본 디렉토리에서 복사해".
+# A fresh `git worktree add` carries none of the ignored env files, so a
+# relative PCA_CREDENTIAL_FILE is copied from the primary checkout.
+
+
+def _worktree_pair(
+    tmp_path: Path,
+    *,
+    primary_has_credentials: bool,
+    credential_name: str = ".env.mock",
+) -> tuple[Path, Path]:
+    """A primary checkout plus a detached linked worktree of it — the real
+    shape, so the copy is exercised against an actual ``git worktree``."""
+    import shutil
+    import subprocess
+
+    primary = tmp_path / "primary"
+    (primary / "tools" / "broker_probes" / "runners").mkdir(parents=True)
+    shutil.copy2(_RUNNER, primary / "tools/broker_probes/runners/run_p_ca.sh")
+    (primary / "tools/broker_probes/probes_ca.py").write_text(
+        "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
+    )
+    (primary / ".gitignore").write_text("results/\n.env.*\n", encoding="utf-8")
+
+    def git(*argv: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(primary), *argv],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(primary)],
+        check=True,
+        capture_output=True,
+    )
+    git("config", "user.email", "probe@example.invalid")
+    git("config", "user.name", "probe")
+    git("add", "-A")
+    git("commit", "-q", "-m", "runner")
+    _publish_origin_main(primary)
+
+    if primary_has_credentials:
+        cred = primary / credential_name
+        cred.write_text(
+            "KIS_STOCK_APP_KEY=test-key\nKIS_STOCK_ACCOUNT_NO=1234567890\n"
+            f"echo {_CREDENTIAL_SENTINEL}\n",
+            encoding="utf-8",
+        )
+        # Deliberately NOT 600: a 600 target then proves `install -m 600` set
+        # it rather than the source happening to be tight already.
+        cred.chmod(0o644)
+
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "--detach", "-q", str(worktree), "HEAD")
+    return primary, worktree
+
+
+def _run_from_worktree(
+    tmp_path: Path,
+    worktree: Path,
+    *,
+    credential_file: str,
+    holding_line: str = "HELD=1",
+) -> tuple[Any, list[str]]:
+    import hashlib
+    import os
+    import subprocess
+
+    dump = tmp_path / "probe-argv.txt"
+    python = _fake_python(tmp_path, holding_line=holding_line, holding_rc=0, dump=dump)
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        "PCA_LOG": str(tmp_path / "run.log"),
+        "PCA_PYTHON": str(python),
+        "FAKE_MODULE_PATH": str(worktree / "tools/broker_probes/probes_ca.py"),
+        "PCA_CREDENTIAL_FILE": credential_file,
+        "PCA_KIS_ENV": "mock",
+        "PCA_SYMBOL": "000660",
+        "PCA_EVENT_CLASS": "cash_dividend",
+        "PCA_PAYABLE": "2020-01-01T00:00:00+09:00",
+        "PCA_WINDOW_S": "60",
+        "PCA_POLL_MS": "30000",
+        "PCA_PACE_S": "0",
+        "PCA_EXPECT_KEY_FP": hashlib.sha256(b"test-key").hexdigest()[:12],
+        "PCA_EXPECT_ACCOUNT_FP": "0123456789ab",
+        "PCA_TOKEN_CACHE": str(tmp_path / "token-cache"),
+        "PCA_EVIDENCE_DIR": str(tmp_path),
+        "PCA_NOTE": "worktree credential test",
+    }
+    result = subprocess.run(
+        ["bash", str(worktree / "tools/broker_probes/runners/run_p_ca.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    argv = dump.read_text(encoding="utf-8").splitlines() if dump.exists() else []
+    return result, argv
+
+
+def test_runner_copies_the_credential_file_into_a_bare_worktree(
+    tmp_path: Path,
+) -> None:
+    """A freshly added worktree carries none of the ignored env files, so the
+    relative credential file is copied from the primary checkout — resolved
+    from ``git worktree list``, never a hardcoded path."""
+    import stat
+
+    primary, worktree = _worktree_pair(tmp_path, primary_has_credentials=True)
+    assert not (worktree / ".env.mock").exists(), "precondition: worktree is bare"
+
+    result, argv = _run_from_worktree(tmp_path, worktree, credential_file=".env.mock")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    copied = worktree / ".env.mock"
+    assert copied.is_file()
+    assert stat.S_IMODE(copied.stat().st_mode) == 0o600
+    assert "credential file copied from the primary checkout" in result.stdout
+    assert str(primary / ".env.mock") in result.stdout
+    assert str(copied) in result.stdout
+    # Paths only — never a byte of the file.
+    assert "test-key" not in result.stdout
+    assert "1234567890" not in result.stdout
+    # It was actually used, and the run went on to the probe.
+    assert _CREDENTIAL_SENTINEL in result.stdout
+    assert argv, "the probe never ran"
+
+
+def test_a_copied_credential_file_does_not_dirty_the_worktree(
+    tmp_path: Path,
+) -> None:
+    """The copy persists, so it must land on an ignored path — otherwise the
+    next run's own clean-checkout guard would refuse."""
+    import subprocess
+
+    _primary, worktree = _worktree_pair(tmp_path, primary_has_credentials=True)
+    result, _argv = _run_from_worktree(tmp_path, worktree, credential_file=".env.mock")
+
+    # The property is about a copy that HAPPENED — without this the test would
+    # also pass on a runner that never copies anything.
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (worktree / ".env.mock").is_file()
+
+    status = subprocess.run(
+        ["git", "-C", str(worktree), "status", "--short"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert status.stdout == "", f"the copy dirtied the worktree: {status.stdout!r}"
+
+
+def test_runner_aborts_naming_both_paths_when_neither_checkout_has_it(
+    tmp_path: Path,
+) -> None:
+    primary, worktree = _worktree_pair(tmp_path, primary_has_credentials=False)
+    result, argv = _run_from_worktree(tmp_path, worktree, credential_file=".env.mock")
+
+    assert result.returncode != 0
+    assert "is in neither checkout" in result.stdout
+    assert str(worktree / ".env.mock") in result.stdout
+    assert str(primary / ".env.mock") in result.stdout
+    assert not (worktree / ".env.mock").exists()
+    assert argv == []
+
+
+def test_an_absolute_credential_path_is_used_as_given_and_never_copied(
+    tmp_path: Path,
+) -> None:
+    """The 09-15 credential backup lives under ~/.config and is named
+    absolutely; copying it into a checkout would be the wrong move."""
+    _primary, worktree = _worktree_pair(tmp_path, primary_has_credentials=False)
+    absolute = tmp_path / "backup-creds.env"
+    absolute.write_text(
+        "KIS_STOCK_APP_KEY=test-key\nKIS_STOCK_ACCOUNT_NO=1234567890\n"
+        f"echo {_CREDENTIAL_SENTINEL}\n",
+        encoding="utf-8",
+    )
+
+    result, argv = _run_from_worktree(tmp_path, worktree, credential_file=str(absolute))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "copied from the primary checkout" not in result.stdout
+    assert not (worktree / ".env.mock").exists()
+    assert _CREDENTIAL_SENTINEL in result.stdout
+    assert argv
+
+
+def test_an_unreadable_absolute_credential_path_says_so_without_copying(
+    tmp_path: Path,
+) -> None:
+    _primary, worktree = _worktree_pair(tmp_path, primary_has_credentials=True)
+    result, argv = _run_from_worktree(
+        tmp_path, worktree, credential_file=str(tmp_path / "nope.env")
+    )
+
+    assert result.returncode != 0
+    assert "absolute path, used as given" in result.stdout
+    assert "copied from the primary checkout" not in result.stdout
     assert argv == []
