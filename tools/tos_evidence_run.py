@@ -1172,12 +1172,16 @@ PERSISTENCE_PRAGMA_DELEGATE_PATH = "tos/src/tos/staterestore/_wal.py"
 
 #: The delegate's entry point, which the store's CONSTRUCTOR must call for the delegate's
 #: pragmas to count at all. Checked as a real call node inside
-#: :data:`PERSISTENCE_SUBSTRATE_CONSTRUCTOR`, never as a mention.
+#: :data:`PERSISTENCE_SUBSTRATE_CLASS`.\ :data:`PERSISTENCE_SUBSTRATE_CONSTRUCTOR`, never
+#: as a mention.
 PERSISTENCE_PRAGMA_DELEGATE_CALL = "enable_wal_journal"
 
-#: The store function the delegate call must appear in. Construction, not "somewhere in
-#: the module": a switch that only runs on some other code path would leave an ordinary
-#: open on the rollback journal.
+#: The store class and the method the delegate call must appear in — **that** class's
+#: construction, not "some ``__init__`` somewhere in the module". The module-wide form
+#: would be satisfied by any other class's constructor calling the delegate while the
+#: store's own did not, which is the same shape of hole the delegate-call requirement
+#: exists to close.
+PERSISTENCE_SUBSTRATE_CLASS = "CompositeStateStore"
 PERSISTENCE_SUBSTRATE_CONSTRUCTOR = "__init__"
 
 #: The pragmas the pilot substrate decision (design §3.2 candidate A) names. Each must be
@@ -1222,16 +1226,24 @@ def _executed_pragmas(tree: ast.AST) -> dict[str, str]:
     return executed
 
 
-def _calls_inside_function(tree: ast.AST, function: str, call: str) -> bool:
-    """``True`` iff a real call node named ``call`` appears inside ``def function``.
+def _calls_inside_method(tree: ast.AST, cls: str, method: str, call: str) -> bool:
+    """``True`` iff a real call node named ``call`` appears inside ``cls.method``.
 
     A **call**, not a mention: the same discipline :func:`_executed_pragmas` applies to
     the pragma literals. An import of the delegate, a docstring naming it, or an
     assignment holding the function object all fail this — only a call does.
+
+    Scoped to the named CLASS, not to any method of that name in the module: "some
+    ``__init__`` calls it" would be satisfied by a second class while the store's own
+    constructor skipped the switch entirely.
     """
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == function:
-            for inner in ast.walk(node):
+        if not (isinstance(node, ast.ClassDef) and node.name == cls):
+            continue
+        for member in node.body:
+            if not (isinstance(member, ast.FunctionDef) and member.name == method):
+                continue
+            for inner in ast.walk(member):
                 if (
                     isinstance(inner, ast.Call)
                     and isinstance(inner.func, ast.Name)
@@ -1255,7 +1267,7 @@ def check_persistence_substrate(repo_root: Path) -> dict:
         ``execute(...)`` argument, not merely mentioned somewhere in the file;
       * where a pragma is executed by the delegate module
         (:data:`PERSISTENCE_PRAGMA_DELEGATE_PATH`) rather than by the store itself, the
-        store's constructor really **calls** that delegate.
+        store CLASS's own constructor really **calls** that delegate.
 
     **Why a delegate at all (#823).** The ``journal_mode`` switch left the constructor
     when it stopped being a bare PRAGMA: on a brand-new file that switch takes an
@@ -1329,8 +1341,11 @@ def check_persistence_substrate(repo_root: Path) -> dict:
 
     store_pragmas = _executed_pragmas(tree)
     delegate_pragmas = {} if delegate_tree is None else _executed_pragmas(delegate_tree)
-    delegate_called = delegate_tree is not None and _calls_inside_function(
-        tree, PERSISTENCE_SUBSTRATE_CONSTRUCTOR, PERSISTENCE_PRAGMA_DELEGATE_CALL
+    delegate_called = delegate_tree is not None and _calls_inside_method(
+        tree,
+        PERSISTENCE_SUBSTRATE_CLASS,
+        PERSISTENCE_SUBSTRATE_CONSTRUCTOR,
+        PERSISTENCE_PRAGMA_DELEGATE_CALL,
     )
     # The delegate contributes ONLY when the constructor calls it. Order of composition
     # is the store last: a pragma the store itself executes is what the connection ends
@@ -1393,7 +1408,7 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             "delegate_executed_pragmas": dict(sorted(delegate_pragmas.items())),
             "delegate_called_from_constructor": delegate_called,
             "delegate_call": (
-                f"{PERSISTENCE_SUBSTRATE_CONSTRUCTOR}()"
+                f"{PERSISTENCE_SUBSTRATE_CLASS}.{PERSISTENCE_SUBSTRATE_CONSTRUCTOR}()"
                 f" -> {PERSISTENCE_PRAGMA_DELEGATE_CALL}()"
             ),
             "pragma_value_conflicts": conflicts,

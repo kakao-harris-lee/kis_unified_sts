@@ -2823,6 +2823,30 @@ def test_a_delegate_the_constructor_never_calls_does_not_count(tmp_path) -> None
     assert result["measured"]["delegate_executed_pragmas"] == {"journal_mode": "WAL"}
 
 
+def test_another_class_calling_the_delegate_does_not_count(tmp_path) -> None:
+    """The call must be the STORE class's own constructor, not any ``__init__`` nearby.
+
+    A module-wide "some ``__init__`` calls it" test is satisfied by a second class while
+    :data:`ev.PERSISTENCE_SUBSTRATE_CLASS` skips the switch entirely — the same shape of
+    hole the delegate-call requirement exists to close, one scope out. Here the store's
+    own constructor loses the call and a sibling class gains it.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace("        enable_wal_journal(self._conn)\n", "")
+        + "class SomethingElse:\n"
+        "    def __init__(self, conn):\n"
+        "        enable_wal_journal(conn)\n",
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_called_from_constructor"] is False
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+
+
 def test_a_delegate_that_does_not_switch_to_wal_is_unmet(tmp_path) -> None:
     """The failing input the gate must keep: a store that ends up WITHOUT WAL.
 
