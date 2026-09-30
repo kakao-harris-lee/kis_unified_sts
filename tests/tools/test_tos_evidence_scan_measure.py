@@ -1007,3 +1007,74 @@ def test_the_measure_pattern_does_not_match_this_test_process_itself() -> None:
     reader = driver.HostReader()
     found = reader.competing_processes(driver.COMPETING_MEASURE_PATTERN)
     assert os.getpid() not in {p.pid for p in found}
+
+
+def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> None:
+    """A watchdog abort must not throw the build away.
+
+    The guard fires because the host is short of MEMORY; deleting a multi-gigabyte
+    synthetic file does nothing for that and costs the operator the whole build (366 s at
+    365 days, plan §7.1.2). The cheapest recovery is to rerun the remaining steps against
+    the file that already exists, so the run keeps it and says where it is.
+    """
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+
+    # A pgrep that reports a Gradle daemon exactly once the synthetic file exists — a
+    # competing build appearing after the run started. Tying the trigger to the file
+    # rather than to a call count makes the test deterministic: whenever it fires, there
+    # really is a build on disk to preserve.
+    fake_pgrep = tmp_path / "fake-pgrep.sh"
+    fake_pgrep.write_text(
+        "#!/bin/sh\n"
+        f'[ -f "{synthetic}" ] && echo "4242 /usr/bin/java GradleDaemon"\n'
+        "exit 0\n"
+    )
+    fake_pgrep.chmod(0o755)
+    reader = driver.HostReader(
+        meminfo_path=_meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0),
+        pgrep_argv=(str(fake_pgrep),),
+    )
+
+    rc = driver.main(
+        [
+            "run",
+            "--reference",
+            str(reference),
+            "--synthetic",
+            str(synthetic),
+            "--out-dir",
+            str(out_dir),
+            "--days",
+            "1",
+            "--repeats",
+            "1",
+            "--batch-rows",
+            "200",
+            "--min-available-gb",
+            "0",
+            "--min-swap-free-gb",
+            "0",
+            "--abort-available-gb",
+            "0",
+            "--abort-swap-free-gb",
+            "0",
+            "--watch-interval-s",
+            "0.05",
+            "--bench",
+            str(_BENCH_PATH),
+        ],
+        reader=reader,
+    )
+
+    assert rc == 1
+    # Whichever step the competing build lands in, the abort is recorded.
+    aborted = sorted(out_dir.glob("ABORTED-*-1d.json"))
+    assert aborted, "an abort must never be silent"
+    assert json.loads(aborted[0].read_text())["check"] == "competing_build"
+    assert synthetic.exists(), "the aborted run deleted the build it had just paid for"
+    log = (out_dir / "measure-1d.log").read_text()
+    assert "KEPT synthetic" in log
+    assert "--steps" in log, "the log must say how to resume"

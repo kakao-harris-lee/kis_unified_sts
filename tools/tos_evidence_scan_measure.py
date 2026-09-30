@@ -1449,6 +1449,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             return 0
 
         created_synthetic = not args.synthetic.exists()
+        every_step_ran = False
         try:
             for step in steps:
                 run_step(
@@ -1460,14 +1461,31 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                     out_dir=out_dir,
                     log=log,
                 )
+            every_step_ran = True
         finally:
+            # Deleted only after the whole pair actually ran (plan §7.1.2: peak disk is one
+            # file). An abort is exactly when NOT to delete it: the watchdog fires because
+            # the host is short of memory, which throwing away a 53 GB / 6-minute build does
+            # nothing for, and the operator's cheapest recovery is to rerun the remaining
+            # steps against the file that already exists.
             if (
                 created_synthetic
                 and not args.keep_synthetic
                 and args.synthetic.exists()
             ):
-                args.synthetic.unlink()
-                log(f"removed synthetic {args.synthetic}")
+                if every_step_ran:
+                    args.synthetic.unlink()
+                    log(f"removed synthetic {args.synthetic}")
+                else:
+                    remaining = ",".join(
+                        s.name for s in steps if s.name != steps[0].name
+                    )
+                    log(
+                        f"KEPT synthetic {args.synthetic} "
+                        f"({args.synthetic.stat().st_size / _GB:.2f} GB) — the run did not "
+                        "finish, so the build is not thrown away. Delete it by hand, or "
+                        f"resume once the host recovers with --steps {remaining or 'before,after'}"
+                    )
             (out_dir / f"measure-{args.days}d.log").write_text(
                 "\n".join(log_lines) + "\n", encoding="utf-8"
             )

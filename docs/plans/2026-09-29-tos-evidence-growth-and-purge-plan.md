@@ -561,6 +561,7 @@ CI 와 같은 형태의 mypy 세 줄 전부 `Success`:
 | 커밋 | 내용 |
 |---|---|
 | `fb083dde` | 프리플라이트·워치독 드라이버 + 헤르메틱 테스트 |
+| `<keep-on-abort>` | 자체 리뷰가 잡은 결함 — 중단이 방금 만든 합성 파일을 지우고 있었다 |
 
 **무엇이 들어왔나.** `tools/tos_evidence_scan_measure.py`(순수 stdlib) 가 한 번의 측정을 몰고,
 호스트가 감당 못 할 때 **착수를 거부하거나 진행 중 중단**한다. 기존 벤치
@@ -637,9 +638,9 @@ predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤�
 
 **테스트 증거.**
 `.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`
-→ **46 passed**(신규 28 + 기존 벤치 18).
+→ **47 passed**(신규 29 + 기존 벤치 18).
 
-**가드 레드 증명 — 13/13, 초록으로 남은 가드 0.** 각 가드를 하나씩 무력화하고 그 테스트만 다시
+**가드 레드 증명 — 14/14, 초록으로 남은 가드 0.** 각 가드를 하나씩 무력화하고 그 테스트만 다시
 돌려 red 를 확인한 뒤 복원했다. §7.1.5 의 교훈(「계획이 주장하면 테스트가 그 주장을 들고 있어야
 한다」)을 가드 자신에게 적용한 것이고, `MEMORY.md` 의 반복 결함 형태
 (「새 가드에 **이것이 실패하는 구체적 입력**을 못 쓰면 아무것도 막지 않는 것」)가 요구하는 절차다.
@@ -659,9 +660,17 @@ predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤�
 | 워치독 co-tenant 중단 | `test_the_watchdog_aborts_when_a_competing_build_appears_mid_run` |
 | 유예 뒤 SIGKILL 승격 | `test_a_child_that_ignores_sigterm_is_escalated_to_sigkill` |
 | 크기 추정 스케일 규칙 | `test_the_size_estimate_predicts_the_real_row_count_exactly` |
+| 중단 시 합성 파일 보존 | `test_an_aborted_run_keeps_the_synthetic_file_it_built` |
 
 SIGKILL 승격 테스트는 자식이 **핸들러를 설치했다고 알린 뒤에만** 중단을 일으킨다. 그러지 않으면
 인터프리터 기동 중에 SIGTERM 이 닿아 기본 처리로 죽고, 테스트는 **초록인데 승격은 증명하지 못한다.**
+
+**자체 리뷰가 잡은 결함 1건.** 초판은 실행이 끝나면 합성 파일을 지웠는데, 그 `finally` 가
+**중단에도 걸렸다** — 워치독이 메모리 부족으로 단계를 멈추면 방금 만든 합성 파일까지 사라진다.
+지우는 것은 메모리에 아무 도움이 안 되고(부족한 것은 RAM 이지 디스크가 아니다) 365 일치면 366 s
+· 53 GB 를 버리는 것이다. 이제 **전 단계가 실제로 돈 뒤에만** 지우고, 중단 시에는 파일 경로와
+크기, 재개용 `--steps` 를 로그에 적고 남긴다. 테스트가 이것을 들고 있다(위 표 14번째 행 — 되돌리면
+「the aborted run deleted the build it had just paid for」로 red).
 
 **계획 §2 A1-b 대비 편차.**
 
