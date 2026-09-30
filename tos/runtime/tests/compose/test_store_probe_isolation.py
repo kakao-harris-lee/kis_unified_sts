@@ -7,31 +7,39 @@ main thread. That probe used to CONSTRUCT a
 :class:`~tos_runtime.marketfeed.store.SqliteSnapshotStore` over the compose-owned file the moment
 the file appeared. That constructor is a writer: it captures
 :func:`~tos_runtime.operations.schema_ledger.file_is_fresh`, runs three ``CREATE TABLE``/
-``CREATE INDEX`` statements, and calls
-:func:`~tos_runtime.operations.schema_ledger.ensure_schema_current`, which on a ``was_fresh=True``
-file stamps ``PRAGMA user_version`` and ``INSERT``s the genesis ``schema_ledger`` row
-(``schema_ledger.py:167-181``). With both parties opening a still-fresh file, BOTH observe
-``was_fresh=True`` and both attempt that ``INSERT``; the loser dies on
+``CREATE INDEX`` statements, and stamps ``PRAGMA user_version`` plus the genesis
+``schema_ledger`` row. Before #801 those three steps held no lock between them, so with both
+parties opening a still-fresh file BOTH observed it as fresh and both attempted that
+``INSERT``; the loser died on
 ``sqlite3.IntegrityError: UNIQUE constraint failed: schema_ledger.version``, which in CI surfaced
 as ``run: refused — compose_paper_runtime raised IntegrityError: ...`` and a red
 ``assert exit_code == 0``.
+
+**Since #801 the store no longer loses that race either** (plan
+``docs/plans/2026-09-30-tos-schema-genesis-toctou-plan.md``): genesis is one ``BEGIN IMMEDIATE``
+transaction, so a second construction waits for the write lock and then finds a finished file.
+That does not retire this suite — a probe that WRITES is still wrong, and the probe's own contract
+(it must read what the store reads, and never raise into the sender thread) is what tests 3-6
+pin — but it does change what the first test can assert; see its own docstring.
 
 **Why these tests, and not a loop.** The production failure needs the probe to open the file
 inside the microsecond-wide window between compose's ``sqlite3.connect`` and its first committed
 ``CREATE TABLE`` — measured here at 2 failures in 30 runs of the real e2e test, i.e. exactly the
 kind of "passes locally, reds once in CI" flake a repeat-until-it-happens test cannot pin. The
 first two tests below therefore FORCE that interleave with a monkeypatched ``file_is_fresh``
-that blocks at the genesis decision point, so the race is reproduced by construction rather than
-by timing luck. Every test names a mutation it turns red:
+that blocks at the genesis decision point, so the interleave is reproduced by construction rather
+than by timing luck. Every test names a mutation it turns red:
 
-* :func:`test_two_concurrent_store_constructions_on_a_fresh_file_lose_the_genesis_race` pins the
-  MECHANISM — the old probe pattern, deterministically raising the exact CI error.
-* :func:`test_the_read_only_probe_cannot_disturb_a_store_mid_genesis` pins the FIX — the real
-  helper ``test_run_e2e.read_only_latest_as_of``, run inside that same window, leaves the file
-  byte-identical, lets the paused construction finish, and leaves exactly ONE genesis ledger row.
-  Restoring the old store-constructing probe in that helper turns this test red — on the byte
-  diff, which is the assertion that fires first; the ``IntegrityError`` assertion behind it
-  detects the same mutation independently (see that test's own docstring for the measurement).
+* :func:`test_a_second_store_construction_cannot_enter_the_first_ones_genesis_window` pins that
+  the window is no longer interleavable at all, and that both parties now boot. It replaces the
+  test that pinned the old MECHANISM (two parties inside one window, loser dead on
+  ``IntegrityError``), which #801 made unreachable — its own docstring records what it was and why
+  it changed.
+* :func:`test_the_read_only_probe_cannot_disturb_a_store_mid_genesis` pins the probe's half — the
+  real helper ``test_run_e2e.read_only_latest_as_of``, run inside that same window, leaves the
+  file byte-identical, lets the paused construction finish, and leaves exactly ONE genesis ledger
+  row. Restoring the old store-constructing probe in that helper turns this test red on the byte
+  diff (see that test's own docstring for the measurement).
 
 The remaining four pin the probe's own contract, which is what makes it a usable substitute for
 the store — a probe that never wrote because it never read anything would satisfy the two above:
@@ -55,12 +63,14 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from tos_runtime.marketfeed import store as store_module
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, SqliteSnapshotStore
+from tos_runtime.operations import schema_ledger as schema_ledger_module
 
 from . import _fixtures as fx
 from .test_run_e2e import read_only_latest_as_of
@@ -81,8 +91,18 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _HANDSHAKE_TIMEOUT_S = 10.0
 
 #: The shape of :func:`~tos_runtime.operations.schema_ledger.file_is_fresh`, which both tests
-#: below monkeypatch on :mod:`tos_runtime.marketfeed.store` to pin the genesis interleave.
+#: below monkeypatch on :mod:`tos_runtime.operations.schema_ledger` to pin the genesis interleave.
+#: Patched THERE, not on :mod:`tos_runtime.marketfeed.store`, since #801 moved the call inside
+#: :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` — the store module no
+#: longer names it, so a patch applied there would silently do nothing and both tests below would
+#: pass vacuously.
 _FreshPredicate = Callable[[sqlite3.Connection], bool]
+
+#: How long the second construction is watched for while the first is paused inside its genesis
+#: transaction. It only has to exceed the microseconds a construction needs to reach its OWN
+#: freshness decision when nothing is blocking it — which is what the pre-#801 code did, and what
+#: the "``file_is_fresh`` read back outside the lock" mutation restores.
+_BLOCKED_OBSERVATION_S = 0.5
 
 #: How many times the read-only probe is run inside the paused genesis window. One call would
 #: already prove "does not raise"; a burst also proves the file is unchanged by REPEATED probing,
@@ -176,43 +196,67 @@ def _schema_ledger_rows(db_path: Path) -> list[tuple[object, ...]]:
         conn.close()
 
 
-def test_two_concurrent_store_constructions_on_a_fresh_file_lose_the_genesis_race(
+def test_a_second_store_construction_cannot_enter_the_first_ones_genesis_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The OLD probe pattern, deterministically: two ``SqliteSnapshotStore(path)`` constructions
-    that both observe ``was_fresh=True`` on the same file, and the exact error CI reported.
+    """The genesis window is no longer INTERLEAVABLE — which is why the old probe's race is gone.
 
-    The interleave is forced, not raced: a 2-party :class:`threading.Barrier` inside the patched
-    ``file_is_fresh`` holds each construction at its own genesis decision — after it has answered
-    "is this file fresh?" and before EITHER has run a ``CREATE TABLE`` that would make the answer
-    ``False`` for the other. That is precisely the window compose and the old probe both entered
-    in CI; here neither party can leave it early, so the outcome does not depend on timing.
+    **What this test used to be.** Until #801 it was
+    ``test_two_concurrent_store_constructions_on_a_fresh_file_lose_the_genesis_race``: a 2-party
+    :class:`threading.Barrier` inside the patched ``file_is_fresh`` held BOTH constructions at
+    their own genesis decision, and the test asserted that exactly one of them then died on
+    ``sqlite3.IntegrityError: UNIQUE constraint failed: schema_ledger.version`` — the literal
+    error CI reported on PR #797. That assertion pinned the DEFECT, as the motivation for making
+    ``test_run_e2e``'s probe read-only, and #801 (plan
+    ``docs/plans/2026-09-30-tos-schema-genesis-toctou-plan.md``) removed the defect: the
+    freshness decision, the DDL and the genesis stamp are now one ``BEGIN IMMEDIATE``
+    transaction, so a two-party barrier in there can no longer be reached by two parties at all —
+    the second is still waiting for the write lock. The test now pins that, which is the stronger
+    property and the one a future regression would break.
+
+    **How the claim avoids passing vacuously.** The second thread reports that it is about to
+    construct BEFORE it does, so "it never reached its freshness decision" cannot be satisfied by
+    a thread that simply never started. It is then watched for :data:`_BLOCKED_OBSERVATION_S`,
+    which is orders of magnitude more than an unblocked construction needs.
+
+    **Mutation.** Reading ``file_is_fresh`` back outside the lock (plan §4 mutation 1) makes the
+    second construction reach its own decision immediately — ``calls`` reaches 2 while the first
+    party is still paused — and then duplicate the genesis ``INSERT``, so both the "did not
+    enter" assertion and the single-``CREATED``-row assertion turn red.
 
     The file is pre-created in WAL mode first, which is also the real sequence (compose connects
-    and sets ``journal_mode`` before the probe ever sees the path, so the probe's own
+    and sets ``journal_mode`` before the probe ever sees the path, so a second party's own
     ``PRAGMA journal_mode=WAL`` is a no-op) — an empty WAL file is still ``file_is_fresh`` because
-    that predicate asks about USER TABLES, not about bytes (``schema_ledger.py:98-105``), so both
-    parties still enter the genesis window. Without it the two constructions can instead collide
-    on the ``journal_mode`` PRAGMA itself, which does not honour sqlite's busy timeout and fails
-    one side with ``OperationalError: database is locked`` before it ever reaches the barrier —
-    a different (and here merely noisy) race that would stop this test from pinning the one it
-    is named for.
+    that predicate asks about USER TABLES, not about bytes, so both parties still target the
+    genesis path. Without it the two constructions can instead collide on the ``journal_mode``
+    PRAGMA itself, which does not honour sqlite's busy timeout and fails one side with
+    ``OperationalError: database is locked`` before any store code runs — a different race,
+    out of #801's scope, that would only blur this one.
     """
     db_path = tmp_path / MARKETFEED_FILE_NAME
     _precreate_wal_file(db_path)
-    barrier = threading.Barrier(2, timeout=_HANDSHAKE_TIMEOUT_S)
-    real_file_is_fresh: _FreshPredicate = store_module.file_is_fresh
+    reached_genesis = threading.Event()
+    may_continue = threading.Event()
+    second_about_to_construct = threading.Event()
+    real_file_is_fresh: _FreshPredicate = schema_ledger_module.file_is_fresh
+    calls: list[bool] = []
 
-    def _barriered_file_is_fresh(conn: sqlite3.Connection) -> bool:
+    def _pausing_file_is_fresh(conn: sqlite3.Connection) -> bool:
         fresh = real_file_is_fresh(conn)
-        barrier.wait()
+        calls.append(fresh)
+        if len(calls) == 1:
+            reached_genesis.set()
+            released = may_continue.wait(timeout=_HANDSHAKE_TIMEOUT_S)
+            assert released, "the main thread never released the first construction"
         return fresh
 
-    monkeypatch.setattr(store_module, "file_is_fresh", _barriered_file_is_fresh)
+    monkeypatch.setattr(schema_ledger_module, "file_is_fresh", _pausing_file_is_fresh)
 
     outcomes: dict[str, BaseException | None] = {}
 
     def _construct(name: str) -> None:
+        if name == "second":
+            second_about_to_construct.set()
         try:
             store = SqliteSnapshotStore(db_path)
             store.close()
@@ -220,41 +264,54 @@ def test_two_concurrent_store_constructions_on_a_fresh_file_lose_the_genesis_rac
         except BaseException as exc:  # noqa: BLE001 - the exception IS the outcome
             outcomes[name] = exc
 
-    names = ("first", "second")
-    threads = [
-        threading.Thread(target=_construct, args=(name,), daemon=True) for name in names
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=_HANDSHAKE_TIMEOUT_S * 2)
-        assert not thread.is_alive(), "a construction thread never finished"
+    threads = {
+        name: threading.Thread(target=_construct, args=(name,), daemon=True)
+        for name in ("first", "second")
+    }
+    threads["first"].start()
+    assert reached_genesis.wait(
+        timeout=_HANDSHAKE_TIMEOUT_S
+    ), "the first construction never reached its genesis decision"
+    try:
+        threads["second"].start()
+        assert second_about_to_construct.wait(
+            timeout=_HANDSHAKE_TIMEOUT_S
+        ), "the second construction thread never started"
+        time.sleep(_BLOCKED_OBSERVATION_S)
 
-    raised = [exc for exc in outcomes.values() if exc is not None]
-    assert len(raised) == 1, (
-        "exactly one of the two concurrent genesis constructions must lose the race; "
+        assert calls == [True], (
+            "the second construction observed its own freshness while the first was still "
+            f"inside its genesis transaction — the window is interleavable again ({calls})"
+        )
+    finally:
+        may_continue.set()
+        for thread in threads.values():
+            thread.join(timeout=_HANDSHAKE_TIMEOUT_S * 2)
+
+    assert all(
+        not thread.is_alive() for thread in threads.values()
+    ), "a construction thread never finished"
+    assert outcomes == {"first": None, "second": None}, (
+        "both concurrent first boots must now succeed — neither may lose a genesis race; "
         f"got {outcomes}"
     )
-    loser = raised[0]
-    assert isinstance(loser, sqlite3.IntegrityError), (
-        "the losing construction must fail the way CI saw it "
-        f"(sqlite3.IntegrityError), got {type(loser).__name__}: {loser}"
-    )
-    assert "schema_ledger.version" in str(loser), (
-        "the refusal must name the duplicated schema-ledger genesis row — that is the whole "
-        f"mechanism this test pins; got {loser}"
-    )
+    # The second party saw a FINISHED file (fresh=False) once the lock was released.
+    assert calls == [True, False], calls
+    assert _schema_ledger_rows(db_path) == [
+        (store_module.MARKETFEED_SCHEMA_VERSION, "CREATED")
+    ]
 
 
 def test_the_read_only_probe_cannot_disturb_a_store_mid_genesis(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The FIX, at the SAME interleave: ``read_only_latest_as_of`` runs inside the window that
-    broke the old probe and changes nothing.
+    """The PROBE's half, at the SAME interleave: ``read_only_latest_as_of`` runs inside the window
+    that broke the old probe and changes nothing.
 
     One store construction runs on a worker thread and is pinned inside its patched
-    ``file_is_fresh`` — it has already decided ``was_fresh=True`` and has not yet created a
-    table. While it waits, this thread captures every byte of durable database content
+    ``file_is_fresh`` — it has already decided ``fresh=True`` (since #801, from inside its own
+    ``BEGIN IMMEDIATE``) and has not yet created a table. While it waits, this thread captures
+    every byte of durable database content
     (:data:`_CONTENT_FILE_SUFFIXES`), runs the REAL probe helper :data:`_PROBE_BURST` times, and
     captures those bytes again. Then the construction is released and must complete normally.
 
@@ -264,25 +321,30 @@ def test_the_read_only_probe_cannot_disturb_a_store_mid_genesis(
     2. the database file and its ``-wal`` are byte-identical across the burst
        (:data:`_CONTENT_FILE_SUFFIXES`) — the probe wrote no durable content, not merely
        "nothing that mattered";
-    3. the paused construction finishes without an ``IntegrityError`` and the finished file
-       carries exactly ONE ``CREATED`` ledger row at the store's own schema version.
+    3. the paused construction finishes cleanly and the finished file carries exactly ONE
+       ``CREATED`` ledger row at the store's own schema version.
 
     The patch is one-shot deliberately, so that this test still has teeth under the mutation it
     exists to catch: with the old probe restored, the probe's own construction is NOT paused
-    (it is the second call), so it performs the genesis write itself instead of deadlocking
+    (it is the second call), so it reaches the genesis transaction itself instead of deadlocking
     against a second pause.
 
-    **What actually fails under that mutation, measured:** assertion 2 is the one that fires —
-    ``the read-only probe changed durable bytes on disk (-wal) — it is not read-only`` — because
-    pytest stops at the first failing assert and 2 precedes 3. Assertion 3 independently holds
-    the defect and was confirmed by neutralising 2 and re-running: it then reports
-    ``IntegrityError: UNIQUE constraint failed: schema_ledger.version``, the literal CI error.
-    Two independent detectors, one visible at a time — not two failures in one run.
+    **What actually fails under that mutation, re-measured after #801:** assertion 2 is still the
+    one that fires — ``the read-only probe changed durable bytes on disk (-wal) — it is not
+    read-only`` — because pytest stops at the first failing assert and 2 precedes 3. Assertion 3
+    independently detects the same mutation, confirmed by neutralising 1 and 2 and re-running,
+    but its MECHANISM changed with the fix and this docstring records the new one rather than the
+    old: the mutated probe's construction can no longer steal the genesis (it blocks on the write
+    lock the paused construction holds, for the full sqlite busy timeout per attempt), so the
+    burst overruns :data:`_HANDSHAKE_TIMEOUT_S` and the paused construction fails with ``the
+    probing thread never released the construction`` instead of the pre-#801
+    ``IntegrityError: UNIQUE constraint failed: schema_ledger.version``. Two independent
+    detectors, one visible at a time — not two failures in one run.
     """
     db_path = tmp_path / MARKETFEED_FILE_NAME
     reached_genesis = threading.Event()
     may_continue = threading.Event()
-    real_file_is_fresh: _FreshPredicate = store_module.file_is_fresh
+    real_file_is_fresh: _FreshPredicate = schema_ledger_module.file_is_fresh
     pauses_left = [1]
 
     def _pausing_file_is_fresh(conn: sqlite3.Connection) -> bool:
@@ -294,7 +356,7 @@ def test_the_read_only_probe_cannot_disturb_a_store_mid_genesis(
             assert released, "the probing thread never released the construction"
         return fresh
 
-    monkeypatch.setattr(store_module, "file_is_fresh", _pausing_file_is_fresh)
+    monkeypatch.setattr(schema_ledger_module, "file_is_fresh", _pausing_file_is_fresh)
 
     construction_error: list[BaseException] = []
 

@@ -76,11 +76,7 @@ from tos.capsule.observation import Observation
 from tos.engine import InstrumentKey
 from tos.marketfeed import AdmittedValue, RawPayloadPreimage
 
-from tos_runtime.operations.schema_ledger import (
-    compute_schema_shape_digest,
-    ensure_schema_current,
-    file_is_fresh,
-)
+from tos_runtime.operations.schema_ledger import open_or_create_schema
 
 __all__ = [
     "MARKETFEED_FILE_NAME",
@@ -190,6 +186,21 @@ def _latest_observation_as_of(observations: Sequence[Observation]) -> int:
     return max(as_of_values)
 
 
+def _create_marketfeed_schema(conn: sqlite3.Connection, fresh: bool) -> None:
+    """This store's own DDL, run by :func:`~tos_runtime.operations.schema_ledger
+    .open_or_create_schema` inside the genesis transaction — exactly the statements ``__init__``
+    used to run inline, in the same order.
+
+    ``fresh`` is unused: ``snapshots_instrument_as_of`` has always been built unconditionally
+    (it predates the schema ledger, so no file this code can open is without it), unlike the
+    evidence store's genesis-only ``entries_kind_seq``.
+    """
+    del fresh
+    conn.execute(_CREATE_SNAPSHOTS_TABLE_SQL)
+    conn.execute(_CREATE_SNAPSHOTS_INDEX_SQL)
+    conn.execute(_CREATE_PREIMAGES_TABLE_SQL)
+
+
 class SqliteSnapshotStore:
     """The durable, content-addressed snapshot + preimage store (module docstring).
 
@@ -225,20 +236,15 @@ class SqliteSnapshotStore:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        # Captured BEFORE any CREATE TABLE below runs — schema_ledger.file_is_fresh's own
-        # docstring: a fresh file looks identical to an already-populated one otherwise.
-        was_fresh = file_is_fresh(self._conn)
-        self._conn.execute(_CREATE_SNAPSHOTS_TABLE_SQL)
-        self._conn.execute(_CREATE_SNAPSHOTS_INDEX_SQL)
-        self._conn.execute(_CREATE_PREIMAGES_TABLE_SQL)
-        ensure_schema_current(
+        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+        # that closes.
+        open_or_create_schema(
             self._conn,
             store_name="marketfeed",
             schema_version=MARKETFEED_SCHEMA_VERSION,
-            was_fresh=was_fresh,
-            migration_digest=compute_schema_shape_digest(
-                self._conn, ("snapshots", "preimages")
-            ),
+            create_ddl=_create_marketfeed_schema,
+            shape_tables=("snapshots", "preimages"),
             monotonic_ns=monotonic_ns,
         )
 

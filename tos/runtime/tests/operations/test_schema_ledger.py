@@ -8,7 +8,9 @@ call site is caught here, not just a regression in the shared helper.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,8 @@ from tos_runtime.operations.schema_ledger import (
     compute_schema_shape_digest,
     ensure_schema_current,
     file_is_fresh,
+    open_or_create_schema,
+    user_tables,
 )
 from tos_runtime.operations.schema_migrations import (
     EVIDENCE_MIGRATIONS,
@@ -213,6 +217,526 @@ def test_ensure_schema_current_fresh_file_uses_the_given_migration_digest(
     assert row == (7, 42, "digest-under-test", "CREATED")
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
     conn.close()
+
+
+# -- T-2: moving the four stores onto the helper changed no store's shape ----------------------
+#
+# The #801 fix relocated four constructors' DDL into a transaction. That is a refactor of WHEN the
+# statements run, and it must be nothing else: a fresh file must come out byte-identical, or every
+# `migration_digest` already written into a deployed `schema_ledger` (and every backup taken from
+# one) silently disagrees with what this code now produces.
+#
+# The values below were MEASURED on the pre-change tree (main `7d039339`, before
+# `open_or_create_schema` existed) and pasted here — they are a golden record of the old code's
+# output, not a restatement of the new code's. `_sql_digest` folds every object's own `sql` text,
+# so a reordered, reworded or dropped statement moves it; the object list is pinned separately so
+# a failure says WHICH object went missing rather than only "the digest moved".
+
+_PRE_CHANGE_SHAPES: dict[str, tuple[tuple[tuple[str, str], ...], str, int, str]] = {
+    "evidence": (
+        (
+            ("index", "entries_kind_seq"),
+            ("table", "entries"),
+            ("table", "outbox"),
+            ("table", "schema_ledger"),
+            ("trigger", "entries_no_delete"),
+            ("trigger", "entries_no_update"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "0fc7818cc7bce14be74a654946737ae9658a45b8d89e3c23064f1095d5de473d",
+        2,
+        "c9be86187b9602e8f2d720561b12aedf8f9b451fe540c9eb347282a55a0ce7b5",
+    ),
+    "inbox": (
+        (
+            ("index", "events_unconsumed"),
+            ("table", "attempt_composites"),
+            ("table", "attempt_finality_witness"),
+            ("table", "events"),
+            ("table", "new_risk_halt"),
+            ("table", "schema_ledger"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "b320cdc8dfb7d40183cf13b078259a62cf0bec7237863ffc29be66174305edb3",
+        1,
+        "f899aa98b0c37790f7eb094780445b7598d054c2a41d9945e391f8c89c4a8966",
+    ),
+    "marketfeed": (
+        (
+            ("index", "snapshots_instrument_as_of"),
+            ("table", "preimages"),
+            ("table", "schema_ledger"),
+            ("table", "snapshots"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "f00ed029ef22073f23f47a520c37861a19e1ed6e9166fa468e90012966d71599",
+        1,
+        "7c1633c8c0ef090fea2809c6dec2cfea61d405316721f0a8edba6f64a682db50",
+    ),
+    "rcl": (
+        (
+            ("table", "entries"),
+            ("table", "epochs"),
+            ("table", "reservations"),
+            ("table", "schema_ledger"),
+            ("trigger", "entries_no_delete"),
+            ("trigger", "entries_no_update"),
+            ("trigger", "epochs_no_delete"),
+            ("trigger", "epochs_no_update"),
+            ("trigger", "reservations_no_delete"),
+            ("trigger", "schema_ledger_no_delete"),
+            ("trigger", "schema_ledger_no_update"),
+        ),
+        "01220d07930ab0f332ace276f911f21f919fcf7f593973e013fe73c7c01028c5",
+        2,
+        "79967105de085c556ba837b3ed9969b21475489f0c6fbbbf9e20e8f2d46be2b2",
+    ),
+}
+
+
+def _sqlite_objects(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    return sorted(
+        (str(row[0]), str(row[1]), str(row[2] or ""))
+        for row in conn.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        )
+    )
+
+
+def _build_fresh_store(store: str, tmp_path: Path) -> Path:
+    """Create ``store``'s file through its REAL constructor and return the path."""
+    path = tmp_path / f"{store}.sqlite3"
+    if store == "evidence":
+        SqliteEvidenceStore(path, key_provider=FixedKeyProvider()).close()
+    elif store == "inbox":
+        SqliteEventInbox(path, scheme=_SCHEME).close()
+    elif store == "marketfeed":
+        SqliteSnapshotStore(path).close()
+    elif store == "rcl":
+        evidence = SqliteEvidenceStore(
+            tmp_path / "rcl-evidence.sqlite3", key_provider=FixedKeyProvider()
+        )
+        SqliteCommitLog(path, evidence_port=evidence).close()
+        evidence.close()
+    else:  # pragma: no cover - guards a typo in the parametrisation
+        raise AssertionError(store)
+    return path
+
+
+@pytest.mark.parametrize(
+    "store", sorted(_PRE_CHANGE_SHAPES), ids=sorted(_PRE_CHANGE_SHAPES)
+)
+def test_a_fresh_store_has_the_same_shape_as_before_the_atomic_genesis_change(
+    store: str, tmp_path: Path
+) -> None:
+    expected_objects, expected_sql_digest, expected_version, expected_digest = (
+        _PRE_CHANGE_SHAPES[store]
+    )
+    path = _build_fresh_store(store, tmp_path)
+
+    conn = sqlite3.connect(str(path))
+    try:
+        objects = _sqlite_objects(conn)
+        ledger = conn.execute(
+            "SELECT version, migration_digest, applied_by FROM schema_ledger"
+        ).fetchall()
+        stamped = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert tuple((kind, name) for kind, name, _ in objects) == expected_objects
+    folded = hashlib.sha256(
+        "\n".join(sql for _, _, sql in objects).encode("utf-8")
+    ).hexdigest()
+    assert folded == expected_sql_digest, (
+        f"the {store} store's on-disk DDL text changed — a fresh file is no longer what the "
+        "pre-#801 code produced"
+    )
+    # `applied_at_monotonic_ns` is deliberately excluded: it is a clock reading, so it is the one
+    # column that legitimately differs between two runs of identical code.
+    assert ledger == [(expected_version, expected_digest, "CREATED")]
+    assert stamped == expected_version
+
+
+# -- open_or_create_schema: the atomic-genesis helper (#801 plan T-1) --------------------------
+#
+# The four real stores go through this helper, and their own wiring is covered above and in
+# `test_schema_genesis_concurrency.py`. These tests drive it directly, over a synthetic store, so
+# each disposition (fresh / same / behind / ahead / DDL raises) is pinned without needing a real
+# store that happens to sit at that version.
+
+_WIDGET_DDL = "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, label TEXT)"
+
+
+def _widget_ddl(conn: sqlite3.Connection, fresh: bool) -> None:
+    """A synthetic store's DDL. ``fresh`` is threaded through to a genesis-only index, the same
+    shape the evidence store's own ``entries_kind_seq`` uses."""
+    conn.execute(_WIDGET_DDL)
+    if fresh:
+        conn.execute("CREATE INDEX IF NOT EXISTS widgets_label ON widgets (label)")
+
+
+def _open_widgets(
+    conn: sqlite3.Connection,
+    *,
+    schema_version: int = 3,
+    create_ddl: Callable[[sqlite3.Connection, bool], None] = _widget_ddl,
+) -> bool:
+    return open_or_create_schema(
+        conn,
+        store_name="widgets-store",
+        schema_version=schema_version,
+        create_ddl=create_ddl,
+        shape_tables=("widgets",),
+        monotonic_ns=lambda: 4242,
+    )
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    """A connection shaped like every real store's own: autocommit + WAL."""
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def test_open_or_create_schema_stamps_a_fresh_file_once(tmp_path: Path) -> None:
+    conn = _connect(tmp_path / "widgets.sqlite3")
+    try:
+        assert _open_widgets(conn) is True
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        rows = conn.execute(
+            "SELECT version, applied_at_monotonic_ns, migration_digest, applied_by "
+            "FROM schema_ledger"
+        ).fetchall()
+        assert len(rows) == 1
+        version, applied_at, digest, applied_by = rows[0]
+        assert (version, applied_at, applied_by) == (3, 4242, "CREATED")
+        # The digest really is this file's own shape, computed after the DDL ran — not a value
+        # the caller could have passed in stale.
+        assert digest == compute_schema_shape_digest(conn, ("widgets",))
+        # `fresh` reached the DDL callable: the genesis-only index exists.
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+                ("widgets_label",),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        conn.close()
+
+
+def test_open_or_create_schema_passes_silently_at_the_same_version(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        _open_widgets(first)
+    finally:
+        first.close()
+
+    second = _connect(path)
+    try:
+        assert _open_widgets(second) is False
+        # Reopening never re-stamps, and never rebuilds the genesis-only index either.
+        assert second.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
+    finally:
+        second.close()
+
+
+@pytest.mark.parametrize(
+    ("stamped", "expected"), ((2, "BEHIND"), (9, "AHEAD")), ids=("behind", "ahead")
+)
+def test_open_or_create_schema_refuses_a_disagreeing_version(
+    tmp_path: Path, stamped: int, expected: str
+) -> None:
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        _open_widgets(first)
+        first.execute(f"PRAGMA user_version = {stamped}")
+    finally:
+        first.close()
+
+    second = _connect(path)
+    try:
+        with pytest.raises(SchemaVersionRefused, match=expected):
+            _open_widgets(second)
+    finally:
+        second.close()
+
+
+def test_open_or_create_schema_rolls_a_failed_genesis_all_the_way_back(
+    tmp_path: Path,
+) -> None:
+    """A DDL that raises mid-genesis must leave ZERO user tables (plan §4 T-1).
+
+    This is the mutation "remove the ``ROLLBACK``": without it, sqlite's implicit rollback on
+    close would still cover this synthetic case, but the caller's connection stays OPEN and in a
+    failed transaction — the next statement on it (a retry, a second store's construction on the
+    same connection, or the diagnostic read below) sees a file with half the schema in it. With
+    the pre-#801 autocommit DDL it was not even a transaction: the ``widgets`` table simply
+    stayed on disk, and the NEXT boot then read ``file_is_fresh = False`` on a file no genesis
+    had ever stamped, i.e. exactly the false "BEHIND" refusal R-2 names.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+
+    def exploding_ddl(inner: sqlite3.Connection, fresh: bool) -> None:
+        inner.execute(_WIDGET_DDL)
+        del fresh
+        raise RuntimeError("DDL blew up half way through")
+
+    try:
+        with pytest.raises(RuntimeError, match="blew up"):
+            _open_widgets(conn, create_ddl=exploding_ddl)
+        # Same live connection: the transaction is gone, not merely unfinished.
+        assert user_tables(conn) == frozenset()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        # And a retry on that same connection now performs an ordinary, clean genesis.
+        assert _open_widgets(conn) is True
+        assert conn.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_open_or_create_schema_leaves_no_tables_after_a_failed_genesis_on_disk(
+    tmp_path: Path,
+) -> None:
+    """The same claim, read back through a SEPARATE connection — the durable half."""
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+
+    def exploding_ddl(inner: sqlite3.Connection, fresh: bool) -> None:
+        del fresh
+        inner.execute(_WIDGET_DDL)
+        raise RuntimeError("DDL blew up half way through")
+
+    try:
+        with pytest.raises(RuntimeError):
+            _open_widgets(conn, create_ddl=exploding_ddl)
+    finally:
+        conn.close()
+
+    reader = sqlite3.connect(str(path))
+    try:
+        assert user_tables(reader) == frozenset()
+    finally:
+        reader.close()
+
+
+# -- review MEDIUM-1: a steady-state boot must not need the write lock -------------------------
+#
+# Before #801 a boot against an existing, current file took no write lock at all. Folding the DDL
+# into `BEGIN IMMEDIATE` made every boot contend with whatever holds that lock — a live runtime
+# appending evidence, an operator CLI (`rearm`/`ack-alert`/`rotate-key`), or a long
+# `apply_migrations` index build. The lock-free fast path restores the old property; these tests
+# pin both halves of it (it really is lock-free, and it really cannot wave a stale file through).
+
+
+def test_an_already_current_file_boots_while_another_writer_holds_the_lock(
+    tmp_path: Path,
+) -> None:
+    """RED before the fast path: this is the regression #801 introduced and MEDIUM-1 names.
+
+    A second connection holds ``BEGIN IMMEDIATE`` for the whole boot, and the booting connection
+    is given ``timeout=0`` so it cannot wait at all — the same shape as a runtime booting beside a
+    live writer with ``SqliteCommitLog(sqlite_timeout_s=0)``. With the DDL inside an unconditional
+    ``BEGIN IMMEDIATE`` this raises ``sqlite3.OperationalError: database is locked``.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        assert _open_widgets(first) is True
+    finally:
+        first.close()
+
+    holder = _connect(path)
+    booting = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+
+        assert _open_widgets(booting) is False
+
+        # And it really was lock-free: the holder's transaction is still open and intact.
+        assert holder.execute("PRAGMA user_version").fetchone()[0] == 3
+        holder.execute("ROLLBACK")
+    finally:
+        booting.close()
+        holder.close()
+
+
+def test_the_fast_path_still_refuses_a_behind_or_ahead_version_under_a_held_lock(
+    tmp_path: Path,
+) -> None:
+    """The fast path must not become a way to skip the version check.
+
+    A disagreeing version is NOT the fast path, so it falls through to ``BEGIN IMMEDIATE`` — and
+    with the lock held and ``timeout=0`` that surfaces as ``OperationalError``, i.e. still
+    fail-closed. What must never happen is a silent pass.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        _open_widgets(first)
+        first.execute("PRAGMA user_version = 2")
+    finally:
+        first.close()
+
+    holder = _connect(path)
+    booting = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            _open_widgets(booting)
+        holder.execute("ROLLBACK")
+    finally:
+        booting.close()
+        holder.close()
+
+    # With the lock free, the very same file is refused on the version, as it always was.
+    reopened = _connect(path)
+    try:
+        with pytest.raises(SchemaVersionRefused, match="BEHIND"):
+            _open_widgets(reopened)
+    finally:
+        reopened.close()
+
+
+def test_a_matching_version_without_a_schema_ledger_does_not_take_the_fast_path(
+    tmp_path: Path,
+) -> None:
+    """The second half of the fast-path predicate, pinned.
+
+    A file whose ``user_version`` matches but that carries no ``schema_ledger`` (a pre-ledger
+    file, or one an operator demoted by dropping the table) must reach the transaction so the
+    ledger DDL runs. A fast path keyed on the version alone would wave it through with no ledger.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+    try:
+        _open_widgets(conn)
+        conn.execute("DROP TRIGGER schema_ledger_no_update")
+        conn.execute("DROP TRIGGER schema_ledger_no_delete")
+        conn.execute("DROP TABLE schema_ledger")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        conn.close()
+
+    reopened = _connect(path)
+    try:
+        # Not fresh (widgets exists) and the version already matches, so this is the ordinary
+        # "already current" outcome — but the ledger table is back, which only the transaction
+        # could have done.
+        assert _open_widgets(reopened) is False
+        assert "schema_ledger" in user_tables(reopened)
+        # No genesis row was invented for a file whose genesis it did not perform.
+        assert reopened.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 0
+    finally:
+        reopened.close()
+
+
+def test_a_v1_evidence_file_is_still_refused_and_never_fast_pathed(
+    tmp_path: Path,
+) -> None:
+    """The real store, not the synthetic one: #816's v1 -> v2 refusal must survive the fast path.
+
+    ``user_version`` 1 != ``EVIDENCE_SCHEMA_VERSION`` 2, so a v1 file cannot match the fast-path
+    predicate and is refused exactly as before — and, as #816 requires, without the
+    ``entries_kind_seq`` index having been built by the refused boot.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _build_v1_evidence_file(tmp_path, path)
+
+    with pytest.raises(SchemaVersionRefused, match="BEHIND"):
+        SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert _INDEX_NAME not in _index_names(conn)
+    finally:
+        conn.close()
+
+
+def test_a_real_store_boots_beside_a_held_write_lock(tmp_path: Path) -> None:
+    """MEDIUM-1 through a REAL store, with the timeout the fault-③ suite already injects.
+
+    ``SqliteCommitLog`` is the one store that takes ``sqlite_timeout_s``, so it is the one that
+    can express "cannot wait at all" without a new config key. RED before the fast path.
+    """
+    evidence = SqliteEvidenceStore(
+        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
+    )
+    path = tmp_path / "rcl.sqlite3"
+    first = SqliteCommitLog(path, evidence_port=evidence)
+    first.close()
+
+    holder = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        reopened = SqliteCommitLog(path, evidence_port=evidence, sqlite_timeout_s=0)
+        reopened.close()
+        holder.execute("ROLLBACK")
+    finally:
+        holder.close()
+        evidence.close()
+
+
+# -- review LOW-1/LOW-2: the helper's own contract ---------------------------------------------
+
+
+def test_a_create_ddl_that_ends_the_transaction_surfaces_its_own_exception(
+    tmp_path: Path,
+) -> None:
+    """LOW-1: the cleanup must never replace the diagnosis.
+
+    A ``create_ddl`` that commits (or rolls back) before failing leaves no transaction for the
+    handler's ``ROLLBACK``, and sqlite answers "cannot rollback - no transaction is active". If
+    that escapes, the real failure is gone. RED before the wrapped ``ROLLBACK``.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+
+    def commits_then_raises(inner: sqlite3.Connection, fresh: bool) -> None:
+        del fresh
+        inner.execute(_WIDGET_DDL)
+        inner.execute(
+            "COMMIT"
+        )  # ends the genesis transaction out from under the helper
+        raise RuntimeError("the real failure, which must not be masked")
+
+    try:
+        with pytest.raises(RuntimeError, match="the real failure"):
+            _open_widgets(conn, create_ddl=commits_then_raises)
+    finally:
+        conn.close()
+
+
+def test_a_connection_not_in_autocommit_mode_is_refused_with_a_clear_error(
+    tmp_path: Path,
+) -> None:
+    """LOW-2: a ``ValueError``, not an ``assert`` (``-O`` strips asserts) and not a mid-genesis
+    sqlite error.
+
+    With sqlite3's implicit transactions the explicit ``BEGIN IMMEDIATE`` raises "cannot start a
+    transaction within a transaction" — after the caller believed it had a working store — so the
+    precondition is checked before anything is touched.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = sqlite3.connect(str(path))  # sqlite3's default: isolation_level == ""
+    try:
+        assert conn.isolation_level is not None
+        with pytest.raises(ValueError, match="autocommit"):
+            _open_widgets(conn)
+        # Nothing was created before the refusal.
+        assert user_tables(conn) == frozenset()
+    finally:
+        conn.close()
 
 
 # -- schema_migrations.apply_migrations ----------------------------------------------------------

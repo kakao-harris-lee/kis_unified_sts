@@ -25,7 +25,7 @@ retrying loses data.
 Phase 5 W4 plan §2 decision 3).** Unlike the evidence store and RCL log, this constructor takes
 no injected ``monotonic_ns`` callable — widening that public signature for one boot-time-only
 ledger stamp was judged not worth it. The schema-ledger genesis row is written at most once per
-file (``ensure_schema_current``'s ``CREATED`` case) and is never read back for anything time-
+file (``open_or_create_schema``'s ``CREATED`` case) and is never read back for anything time-
 sensitive, so this is a disclosed exception to the "never read the wall/monotonic clock directly"
 convention, not an oversight.
 
@@ -48,11 +48,7 @@ from pathlib import Path
 from tos.canonical import CanonicalizationScheme
 from tos.engine.records import EngineEvent, event_identity
 
-from tos_runtime.operations.schema_ledger import (
-    compute_schema_shape_digest,
-    ensure_schema_current,
-    file_is_fresh,
-)
+from tos_runtime.operations.schema_ledger import open_or_create_schema
 
 __all__ = [
     "INBOX_SCHEMA_VERSION",
@@ -236,6 +232,26 @@ class InboxReceipt:
     duplicate: bool
 
 
+def _create_inbox_schema(conn: sqlite3.Connection, fresh: bool) -> None:
+    """This inbox's own DDL, run by :func:`~tos_runtime.operations.schema_ledger
+    .open_or_create_schema` inside the genesis transaction — exactly the statements ``__init__``
+    used to run inline, in the same order.
+
+    ``fresh`` is unused: every statement here is idempotent on a pre-existing file, including the
+    :data:`_ADDED_COLUMNS` pass, which is itself conditioned on the columns actually present.
+    """
+    del fresh
+    conn.execute(_CREATE_EVENTS_TABLE_SQL)
+    conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
+    conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
+    conn.execute(_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL)
+    conn.execute(_CREATE_NEW_RISK_HALT_TABLE_SQL)
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    for column, decl in _ADDED_COLUMNS:
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE events ADD COLUMN {column} {decl}")
+
+
 class SqliteEventInbox:
     """The append-and-mark-consumed durable admission queue (design plan §1.1).
 
@@ -265,33 +281,19 @@ class SqliteEventInbox:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        # Captured BEFORE any CREATE TABLE below runs — see
-        # tos_runtime.operations.schema_ledger.file_is_fresh's own docstring.
-        was_fresh = file_is_fresh(self._conn)
-        self._conn.execute(_CREATE_EVENTS_TABLE_SQL)
-        self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
-        self._conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
-        self._conn.execute(_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL)
-        self._conn.execute(_CREATE_NEW_RISK_HALT_TABLE_SQL)
-        existing_columns = {
-            row[1] for row in self._conn.execute("PRAGMA table_info(events)")
-        }
-        for column, decl in _ADDED_COLUMNS:
-            if column not in existing_columns:
-                self._conn.execute(f"ALTER TABLE events ADD COLUMN {column} {decl}")
-        ensure_schema_current(
+        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+        # that closes.
+        open_or_create_schema(
             self._conn,
             store_name="inbox",
             schema_version=INBOX_SCHEMA_VERSION,
-            was_fresh=was_fresh,
-            migration_digest=compute_schema_shape_digest(
-                self._conn,
-                (
-                    "events",
-                    "attempt_composites",
-                    "attempt_finality_witness",
-                    "new_risk_halt",
-                ),
+            create_ddl=_create_inbox_schema,
+            shape_tables=(
+                "events",
+                "attempt_composites",
+                "attempt_finality_witness",
+                "new_risk_halt",
             ),
             monotonic_ns=time.monotonic_ns,
         )
