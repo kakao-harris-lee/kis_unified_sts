@@ -146,17 +146,43 @@ class SchemaVersionRefused(RuntimeError):
 #: sqlite actually reports, never assumed — see :func:`enable_wal_journal`.
 _WAL_JOURNAL_MODE = "wal"
 
-#: sqlite's own name for the error the WAL switch loses with when a sibling process is mid-switch
-#: on the same brand-new file. The machine-readable identity rather than a ``database is locked``
-#: substring, so a reworded sqlite build cannot quietly turn the one retry below into a no-op.
-#: Measured: every one of the 73/320 losing openers at N=8 carried exactly this code.
-_SQLITE_BUSY_ERRORNAME = "SQLITE_BUSY"
+#: Mask that reduces an sqlite EXTENDED result code to its primary code. Every ``SQLITE_BUSY_*``
+#: variant is ``SQLITE_BUSY | (n << 8)``, so the low byte is the only part that answers "was this
+#: a lock contest".
+_SQLITE_PRIMARY_CODE_MASK = 0xFF
 
 
 class JournalModeRefused(RuntimeError):
     """Raised at store construction when the file did NOT come out in ``journal_mode=WAL`` — a
     boot refusal, never a silent fallback to the rollback journal (:func:`enable_wal_journal`).
     """
+
+
+def _is_lock_contest(exc: sqlite3.OperationalError) -> bool:
+    """``True`` iff ``exc`` is sqlite's "somebody else holds the lock" — ANY ``SQLITE_BUSY_*``.
+
+    The PRIMARY result code is what carries that meaning; the extended code adds a reason in the
+    high bits. Python surfaces the EXTENDED one in both attributes (measured: a stale-snapshot
+    write raises ``sqlite_errorname='SQLITE_BUSY_SNAPSHOT'``, ``sqlite_errorcode=517``, message
+    ``database is locked``), so comparing the NAME to ``"SQLITE_BUSY"`` — which this function
+    replaced after review — silently dropped every variant into the "not a lock contest,
+    re-raise" branch. ``SQLITE_BUSY_RECOVERY`` is the one that matters here: a late opener whose
+    PRAGMA meets the winner's WAL recovery gets it, and it is exactly the case the retry exists
+    for.
+
+    Masking is also what keeps this honest about errors that are NOT contention: ``SQLITE_LOCKED``
+    (primary 6, a table lock inside the same connection handle) and every other primary code still
+    fall through to the re-raise.
+
+    A hand-built ``sqlite3.OperationalError`` carries no ``sqlite_errorcode`` at all (measured), so
+    the attribute is read defensively and its absence means "not a lock contest" — the tests that
+    exercise this path replay errors captured from real sqlite operations rather than fabricating
+    them, precisely because the fabricated object is not the one production sees.
+    """
+    code = getattr(exc, "sqlite_errorcode", None)
+    if not isinstance(code, int):
+        return False
+    return (code & _SQLITE_PRIMARY_CODE_MASK) == sqlite3.SQLITE_BUSY
 
 
 def _switch_journal_to_wal(conn: sqlite3.Connection) -> str:
@@ -186,26 +212,46 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
 
     So when the PRAGMA loses that lock, this waits on sqlite's OWN busy handler — ``BEGIN
     IMMEDIATE`` takes a write lock and, unlike the PRAGMA, it DOES retry through the connection's
-    timeout — and then calls the PRAGMA exactly once more. By then the winner has finished the
-    switch, so the second call is a no-op against a file that is already WAL. The ``ROLLBACK`` is
-    immediate and the transaction wrote nothing.
+    timeout — and then calls the PRAGMA exactly once more. The ``ROLLBACK`` is immediate and the
+    transaction wrote nothing.
+
+    **What the retry actually does depends on who held the lock (review F3).** In the case this
+    exists for — a brand-new file, a sibling runtime mid-switch — the holder WAS the switcher, so
+    by the time the wait returns the file is already WAL and the second PRAGMA is a no-op. If the
+    holder was an ordinary writer on a file still in rollback mode (an operator CLI's transaction,
+    say), the second PRAGMA performs the REAL switch, and its own ``RESERVED`` upgrade bypasses
+    the busy handler exactly like the first one did — so a third party that grabs the lock in the
+    gap makes the retry lose immediately and the boot is refused. That is fail-closed and correct,
+    but it is not the "already WAL, so it cannot fail" story: every store file this package owns is
+    born in WAL inside its own constructor, which is why the precondition for that shape is rare
+    rather than why it is impossible.
 
     Four deliberate edges, each with its own test in :mod:`.test_wal_journal`:
 
     * **Exactly one retry.** No loop, no attempt counter. A second failure means nobody released
       the lock within the connection's whole timeout, which is a boot refusal rather than
       something to keep hammering — that ``OperationalError`` propagates unchanged.
-    * **No new waiting constant.** The wait is bounded by the timeout already configured on
-      ``conn`` (python's 5 s default for the evidence, inbox and marketfeed stores; the injected
-      ``sqlite_timeout_s`` for :class:`~tos_runtime.rcl.log.SqliteCommitLog`). This module adds no
-      timeout, sleep or interval of its own — plan §3 rejects the interval-retry alternative for
-      exactly that reason.
+    * **No new waiting constant — but the bound is THREE of them, not one (review F4).** Every
+      wait here is the busy timeout already configured on ``conn`` (python's 5 s default for the
+      evidence, inbox and marketfeed stores; the injected ``sqlite_timeout_s`` for
+      :class:`~tos_runtime.rcl.log.SqliteCommitLog`), and this module adds no timeout, sleep or
+      interval of its own — plan §3 rejects the interval-retry alternative for exactly that
+      reason. What it does NOT add up to is a single timeout: the first PRAGMA can itself wait
+      (its ``SHARED``/``EXCLUSIVE`` acquisitions DO go through the handler; only the ``RESERVED``
+      upgrade skips it), then ``BEGIN IMMEDIATE`` can wait, then the retried PRAGMA can wait.
+      Worst case a refused boot takes about 3x the connection's timeout — ~15 s at the stdlib
+      default. Size boot deadlines against that number, not against 5 s.
     * **The return value is checked.** sqlite reports a refused switch by RETURNING the mode it
       kept, not by raising (a ``:memory:`` connection answers ``memory``). Accepting that silently
       would leave a store on the rollback journal while every durability argument in this package
       assumes WAL plus ``synchronous=FULL``, so a non-``wal`` answer is :class:`JournalModeRefused`.
-    * **Only a lock contest is retried.** Any other ``OperationalError`` propagates from the first
-      attempt; retrying it would only delay and obscure it.
+    * **Only a lock contest is retried — every ``SQLITE_BUSY_*``, by PRIMARY code (review F2).**
+      :func:`_is_lock_contest` masks the extended result code, because python reports the
+      EXTENDED name and an exact ``"SQLITE_BUSY"`` name comparison (what this first shipped with)
+      dropped ``SQLITE_BUSY_RECOVERY`` — a late opener meeting the winner's WAL recovery, which is
+      the very case the retry exists for — into the re-raise branch. Any OTHER primary code,
+      ``SQLITE_LOCKED`` included, still propagates from the first attempt; retrying it would only
+      delay and obscure it.
 
     The refusal does not name the store (this helper is deliberately given nothing but the
     connection, per plan §2.1) — the raising constructor in the traceback does.
@@ -218,13 +264,14 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
 
     Raises:
         JournalModeRefused: The file is not in WAL mode after the switch.
-        sqlite3.OperationalError: The lock was still held after waiting out ``conn``'s own busy
-            timeout — a fail-closed boot refusal; nothing was written.
+        sqlite3.OperationalError: The lock was still held when the single retry ran, or the wait
+            itself could not take it — a fail-closed boot refusal; nothing was written. Also any
+            ``OperationalError`` whose primary code is not ``SQLITE_BUSY``, unretried.
     """
     try:
         mode = _switch_journal_to_wal(conn)
     except sqlite3.OperationalError as exc:
-        if getattr(exc, "sqlite_errorname", None) != _SQLITE_BUSY_ERRORNAME:
+        if not _is_lock_contest(exc):
             raise
         # Wait on sqlite's own busy handler (the PRAGMA above would not), then try once more.
         conn.execute("BEGIN IMMEDIATE")
