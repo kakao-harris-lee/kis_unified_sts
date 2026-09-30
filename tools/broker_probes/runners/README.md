@@ -27,7 +27,15 @@ git -C /home/deploy/project/kis_unified_sts fetch -q origin
 git -C /home/deploy/project/kis_unified_sts worktree add --detach \
     /home/deploy/.local/state/kis/wt-pca origin/main
 
-# 2. the instance
+# 2. the interpreter — the MAIN checkout's venv. A freshly added worktree has
+#    no .venv, and installing one into it is not allowed (never pip install
+#    into the shared root venv). The runner exports PYTHONPATH=$REPO itself and
+#    then PROVES the tools.broker_probes it loads is the worktree's, because
+#    `repo_commit` and the results directory follow the loaded module, not the
+#    runner's $REPO.
+export PCA_PYTHON=/home/deploy/project/kis_unified_sts/.venv/bin/python
+
+# 3. the instance
 export PCA_LOG=~/.config/kis-probes/p-ca-20261022.log
 export PCA_ENV_FILE=~/.config/kis-probes/backups/.env.mock.bak-20260915-mock-reapply
 export PCA_KIS_ENV=mock                       # mock | real (real is GET-only here)
@@ -45,11 +53,12 @@ export PCA_NOTE="t3 P-CA trial 3: ..."
 
 # optional
 export PCA_REFERENCE_CHECK=1        # also GET the ksdinfo TR before polling
-export PCA_EFFECTIVE=...            # required for every class but cash_dividend
-                                    # (a space-separated ISO value is fine)
+export PCA_EFFECTIVE=...            # required for every class but cash_dividend,
+                                    # and checked before anything touches the
+                                    # broker (a space-separated ISO value is fine)
 export PCA_CRON_MARK=run_p_ca_20261022   # remove this one crontab line when done
 
-# 3. run it from the worktree's own copy — that is how it finds the checkout
+# 4. run it from the worktree's own copy — that is how it finds the checkout
 /home/deploy/.local/state/kis/wt-pca/tools/broker_probes/runners/run_p_ca.sh
 ```
 
@@ -76,5 +85,10 @@ Notes:
   would read as "not held".
 - The artifact is copied to `PCA_EVIDENCE_DIR` only when it is newer than
   whatever the results directory already held.
+- One `PCA_PACE_S` wait separates the holding check from the probe. They are
+  two processes with independent pacers, so without it the probe's baseline GET
+  follows the check's last GET with no gap — the back-to-back pair that
+  produced the 2026-09-17 `EGW00201` stop, which stays a no-retry stop.
 - Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
-  `PCA_*` exports (a cron shell inherits almost nothing).
+  `PCA_*` exports, `PCA_PYTHON` included (a cron shell inherits almost
+  nothing).

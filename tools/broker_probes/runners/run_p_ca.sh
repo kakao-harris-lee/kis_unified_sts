@@ -16,7 +16,11 @@
 #      branch under a running probe, and repo_commit is then stamped with a
 #      non-main commit). Override: PCA_ALLOW_SHARED_CHECKOUT=1, logged.
 #   2. the checkout carries the fixes this probe depends on.
-#   3. every required PCA_* variable is set.
+#   3. every required PCA_* variable is set (PCA_EFFECTIVE included, when the
+#      event class needs it).
+#   4. PCA_PYTHON runs, and the tools.broker_probes it loads is THIS
+#      checkout's — the interpreter is the main checkout's .venv, so that is
+#      not automatic, and every guard above is worthless without it.
 # Then: credential fingerprints (key + account) must match what the operator
 # expected, and the holding must be READ successfully and be non-zero — a
 # FAILED balance query is reported as a failure, never as "not held" (the
@@ -86,9 +90,9 @@ log "required probes_ca.py fixes present"
 # --- 3. instance values (no defaults) --------------------------------------
 
 for _name in \
-  PCA_LOG PCA_ENV_FILE PCA_KIS_ENV PCA_SYMBOL PCA_EVENT_CLASS PCA_PAYABLE \
-  PCA_WINDOW_S PCA_POLL_MS PCA_PACE_S PCA_EXPECT_KEY_FP PCA_EXPECT_ACCOUNT_FP \
-  PCA_TOKEN_CACHE PCA_EVIDENCE_DIR PCA_NOTE; do
+  PCA_LOG PCA_PYTHON PCA_ENV_FILE PCA_KIS_ENV PCA_SYMBOL PCA_EVENT_CLASS \
+  PCA_PAYABLE PCA_WINDOW_S PCA_POLL_MS PCA_PACE_S PCA_EXPECT_KEY_FP \
+  PCA_EXPECT_ACCOUNT_FP PCA_TOKEN_CACHE PCA_EVIDENCE_DIR PCA_NOTE; do
   _value=$(printenv "$_name" || true)
   [ -n "$_value" ] ||
     die "required env $_name is unset — this template ships no instance defaults"
@@ -99,8 +103,36 @@ case "$PCA_KIS_ENV" in
   *) die "PCA_KIS_ENV must be 'mock' or 'real' (got '$PCA_KIS_ENV')" ;;
 esac
 
-PY="$REPO/.venv/bin/python"
-[ -x "$PY" ] || die "no python at $PY"
+# Conditionally required, and checked HERE with the rest (review F3): every
+# other class's observable leg is the QUANTITY leg, which pairs with
+# --effective-time, so without it such a run polls the cash leg only and
+# silently observes the wrong thing. It used to be checked at step 6, after
+# the credentials were sourced and the holding walk had already been spent on
+# the account — a pure configuration error costing broker calls.
+if [ -z "${PCA_EFFECTIVE:-}" ] && [ "$PCA_EVENT_CLASS" != "cash_dividend" ]; then
+  die "PCA_EVENT_CLASS=$PCA_EVENT_CLASS observes a QUANTITY leg, which pairs with --effective-time; set PCA_EFFECTIVE"
+fi
+
+PY="$PCA_PYTHON"
+[ -x "$PY" ] || die "PCA_PYTHON is not executable: $PY"
+
+# The interpreter comes from somewhere else (the main checkout's .venv — a
+# freshly added detached worktree has no .venv, and installing one into it is
+# forbidden), so the code it LOADS has to be proven to be this checkout's.
+# Without this the runner's clean/detached/ancestor guards would vouch for a
+# tree that never ran: `repo_commit` and the results directory both follow
+# `common.py.__file__` (common.py:70,506,512), not $REPO, so an interpreter
+# resolving tools.broker_probes from the main checkout would stamp the wrong
+# commit and write the artifact where this script does not look (review F1).
+LOADED=$(PYTHONPATH="$REPO" "$PY" -c \
+  "import tools.broker_probes.probes_ca as m; print(m.__file__)" 2>&1) ||
+  die "cannot import tools.broker_probes from $REPO with $PY: $(printf '%s' "$LOADED" | tail -1 | cut -c1-160)"
+case "$LOADED" in
+  "$REPO"/*) log "probe module resolves inside the checkout: $LOADED" ;;
+  *) die "probe module resolves OUTSIDE the checkout ($LOADED) — the guards above would vouch for code that never ran" ;;
+esac
+export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+
 [ -r "$PCA_ENV_FILE" ] || die "credential file unreadable: $PCA_ENV_FILE"
 [ -d "$PCA_EVIDENCE_DIR" ] || die "evidence dir missing: $PCA_EVIDENCE_DIR"
 
@@ -158,6 +190,14 @@ if [ "$HELD" = "0" ]; then
 fi
 log "held qty($PCA_SYMBOL)=$HELD"
 
+# The holding check and the probe are two processes with independent pacers,
+# so the probe's baseline GET would otherwise follow the check's last GET with
+# no gap at all — the back-to-back pair that produced the 2026-09-17 EGW00201
+# stop, which this harness deliberately keeps as "stop, never retry" (review
+# F2). One PCA_PACE_S here is the same interval the pacer would have owed; no
+# new constant.
+sleep "$PCA_PACE_S"
+
 # --- 6. the probe ----------------------------------------------------------
 #
 # argv is built as an ARRAY and expanded quoted: an ISO-8601 value with a
@@ -172,16 +212,10 @@ PROBE_ARGS=(
   --confirm --token-cache-dir "$PCA_TOKEN_CACHE"
   --note "$PCA_NOTE"
 )
-# PCA_EFFECTIVE is optional because it is meaningless for a cash dividend
-# (N-19 §2.3: the 기준가 adjustment is not on the balance surface). It is
-# REQUIRED for every other event class, whose observable leg is the quantity
-# leg and pairs with --effective-time: without it such a run polls the cash
-# leg only and silently observes the wrong thing.
-if [ -n "${PCA_EFFECTIVE:-}" ]; then
-  PROBE_ARGS+=(--effective-time "$PCA_EFFECTIVE")
-elif [ "$PCA_EVENT_CLASS" != "cash_dividend" ]; then
-  die "PCA_EVENT_CLASS=$PCA_EVENT_CLASS observes a QUANTITY leg, which pairs with --effective-time; set PCA_EFFECTIVE"
-fi
+# Optional only for a cash dividend, where the 기준가 adjustment is not on
+# the balance surface at all (N-19 §2.3). Every other class was required to
+# supply it back in step 3.
+[ -n "${PCA_EFFECTIVE:-}" ] && PROBE_ARGS+=(--effective-time "$PCA_EFFECTIVE")
 [ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && PROBE_ARGS+=(--reference-check)
 
 # Record what the results dir already holds, so step 7 can tell this run's
