@@ -178,10 +178,11 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
     ``PRAGMA journal_mode`` does **not** go through sqlite's busy handler: the loser of a
     concurrent first boot fails IMMEDIATELY with ``sqlite3.OperationalError: database is locked``
     instead of waiting out its own connection's timeout. Measured on a brand-new file before this
-    helper existed — 17/80 losing openers at N=2, 73/320 at N=8 (plan
-    ``docs/plans/2026-09-30-tos-wal-birth-race-plan.md`` §1); through the real store constructors,
-    22/80 at N=2, 90/320 at N=8. It is the one concurrent-first-boot failure #801's atomic genesis
-    left open, and it fires BEFORE any schema code runs.
+    helper existed: the bare PRAGMA lost 17/80 openers at N=2 (plan
+    ``docs/plans/2026-09-30-tos-wal-birth-race-plan.md`` §1) and 73/320 at N=8 (re-measured while
+    implementing it); through the real store constructors, #801's review measured 22/80 at N=2 and
+    90/320 at N=8. It is the one concurrent-first-boot failure #801's atomic genesis left open,
+    and it fires BEFORE any schema code runs.
 
     So when the PRAGMA loses that lock, this waits on sqlite's OWN busy handler — ``BEGIN
     IMMEDIATE`` takes a write lock and, unlike the PRAGMA, it DOES retry through the connection's

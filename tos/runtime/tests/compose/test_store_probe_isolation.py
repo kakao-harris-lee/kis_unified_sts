@@ -228,10 +228,13 @@ def test_a_second_store_construction_cannot_enter_the_first_ones_genesis_window(
     and sets ``journal_mode`` before the probe ever sees the path, so a second party's own
     ``PRAGMA journal_mode=WAL`` is a no-op) — an empty WAL file is still ``file_is_fresh`` because
     that predicate asks about USER TABLES, not about bytes, so both parties still target the
-    genesis path. Without it the two constructions can instead collide on the ``journal_mode``
-    PRAGMA itself, which does not honour sqlite's busy timeout and fails one side with
-    ``OperationalError: database is locked`` before any store code runs — a different race,
-    out of #801's scope, that would only blur this one.
+    genesis path. Without it the two constructions also contend on the ``journal_mode`` PRAGMA
+    itself, which does not honour sqlite's busy timeout — a DIFFERENT race, out of #801's scope
+    and closed separately by #818
+    (:func:`~tos_runtime.operations.schema_ledger.enable_wal_journal`, which makes the loser wait
+    and retry instead of dying on ``OperationalError: database is locked``). Its wait lands
+    between the two parties this test choreographs, so letting it fire here would only blur the
+    interleave under test.
     """
     db_path = tmp_path / MARKETFEED_FILE_NAME
     _precreate_wal_file(db_path)
