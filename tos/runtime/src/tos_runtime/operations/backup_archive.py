@@ -60,6 +60,11 @@ _PARTIAL_SUFFIX = ".partial"
 #: preset) — never a constant this module decides on the operator's behalf.
 DEFAULT_XZ_PRESET = 6
 
+#: Read size for the pre-extraction integrity pass. Every chunk is discarded as soon as it is
+#: read, so this bounds that pass's memory rather than trading memory for speed — an archive of
+#: any size is checked within this much RAM.
+_INTEGRITY_CHUNK_BYTES = 1 << 20
+
 
 class BackupArchiveRefused(RuntimeError):
     """Raised by :func:`archive_backup_set` — the archive could not be written, could not be
@@ -180,6 +185,46 @@ def _refuse_unexpected_members(
         )
 
 
+def _refuse_unreadable(archive_path: Path, exc: BaseException) -> BackupArchiveRefused:
+    """The one "the bytes would not come back" refusal, raised from both read paths.
+
+    Shared so that where the rot fell never changes what the operator is told: the integrity
+    pass and the extraction below report the same fact in the same words.
+    """
+    return BackupArchiveRefused(
+        f"verify_archive: {archive_path} could not be read back ({exc!r}) — the archive "
+        "is not a usable backup; refused"
+    )
+
+
+def _require_intact_xz_stream(archive_path: Path) -> None:
+    """Decompress the whole xz stream, discarding it, so its integrity check ALWAYS runs.
+
+    ``tarfile``'s ``r:xz`` reads only as far as the tar end-of-archive marker, and xz verifies a
+    block's CRC only once that block ENDS. Two consequences, both measured on a real archive
+    this module wrote:
+
+    * Rot past the point the tar reader stops at — the record padding after the end-of-archive
+      marker, the stream index, the 12-byte stream footer — was never decoded at all, so a
+      **corrupt archive verified clean** and got renamed out of ``.partial`` as if it were a
+      usable backup. It is not: ``xz -d`` refuses it, so the cold copy would be found dead at
+      the one moment it is needed.
+    * Rot inside a tar HEADER makes the reader stop early (a garbled header can read as the
+      end-of-archive marker), so the refusal arrived from the manifest comparison instead of
+      from here, and which of the two fired depended on where the byte fell.
+
+    Reading to EOF first collapses both into one deterministic outcome, before anything is
+    extracted. The cost is one extra decompression pass; it reads
+    :data:`_INTEGRITY_CHUNK_BYTES` at a time and keeps nothing.
+    """
+    try:
+        with lzma.open(archive_path, "rb") as stream:
+            while stream.read(_INTEGRITY_CHUNK_BYTES):
+                pass
+    except (lzma.LZMAError, EOFError, OSError, ValueError) as exc:
+        raise _refuse_unreadable(archive_path, exc) from exc
+
+
 def _extract_archive(
     archive_path: Path, verify_dir: Path, *, expected_manifest: Path
 ) -> None:
@@ -189,6 +234,7 @@ def _extract_archive(
     ``..`` components, links) — never a hand-rolled path check.
     """
     verify_dir.mkdir(parents=True)
+    _require_intact_xz_stream(archive_path)
     try:
         with tarfile.open(archive_path, mode="r:xz") as archive:
             archive.extractall(verify_dir, filter="data")
@@ -206,10 +252,7 @@ def _extract_archive(
     # inside the xz stream escapes an `OSError`/`TarError` catch entirely — the first shape
     # of corruption anyone tests, and the one that would otherwise propagate raw.
     except (lzma.LZMAError, tarfile.TarError, EOFError, OSError, ValueError) as exc:
-        raise BackupArchiveRefused(
-            f"verify_archive: {archive_path} could not be read back ({exc!r}) — the archive "
-            "is not a usable backup; refused"
-        ) from exc
+        raise _refuse_unreadable(archive_path, exc) from exc
 
     extracted = verify_dir / expected_manifest.name
     if (
@@ -254,8 +297,10 @@ def verify_archive(
 
     Three checks, each fail-closed:
 
-    1. The archive decompresses at all, and the manifest inside it is byte-identical to
-       ``manifest_path`` (``tarfile``'s ``r:xz``, ``filter="data"``).
+    1. The archive decompresses **to its end** — the whole xz stream is read and discarded
+       first (:func:`_require_intact_xz_stream`), so xz's own integrity check always runs
+       rather than only as far as the tar reader happens to go — and the manifest inside it is
+       byte-identical to ``manifest_path`` (``tarfile``'s ``r:xz``, ``filter="data"``).
     2. Every member's sha256 equals the digest the :class:`BackupSetManifest` records — the same
        check :func:`~tos_runtime.operations.backup_set.restore_set` performs on a restore
        (mutation M1), moved onto the round trip. This is the one an archive's own xz CRC cannot

@@ -15,6 +15,7 @@ already exists, and a ``verify_dir`` that already exists.
 from __future__ import annotations
 
 import hashlib
+import lzma
 import tarfile
 from pathlib import Path
 
@@ -107,23 +108,96 @@ def test_the_live_files_are_never_modified(tmp_path: Path) -> None:
     assert _digests_under(live_dir) == before
 
 
-def test_a_corrupted_archive_is_refused(tmp_path: Path) -> None:
-    """Byte rot inside the xz stream: read-back raises, and that is reported as a refusal
-    naming the archive — never as a silently empty verification."""
+@pytest.mark.parametrize(
+    ("label", "position"),
+    [
+        # An `int` is an index into the archive, negative counting from the end; a `float` is
+        # a fraction of its length. Both are anchored to the xz FORMAT rather than to an
+        # absolute byte offset, because the archive's size moves: tar headers carry mtimes, so
+        # the same fixture compresses to slightly different bytes on every run. A single
+        # absolute offset is what made this test flaky in CI (#821) while passing locally.
+        ("xz stream header", 7),
+        ("xz block header", 12),
+        ("compressed data, early", 0.1),
+        ("compressed data, midpoint", 0.5),
+        ("compressed data, late", 0.75),
+        ("xz stream footer flags", -4),
+        ("xz stream footer magic", -1),
+    ],
+)
+def test_a_corrupted_archive_is_refused(
+    tmp_path: Path, label: str, position: int | float
+) -> None:
+    """Byte rot anywhere in the xz stream is refused, and by the SAME path wherever it fell.
+
+    xz verifies a block's CRC only at the block's END, and ``tarfile``'s ``r:xz`` reads only as
+    far as the tar end-of-archive marker. So before :func:`verify_archive` decompressed the
+    whole stream up front, the refusal an operator got depended on where the byte landed: rot
+    in a tar header made the reader stop early and surface as "the manifest did not survive",
+    and rot past the marker surfaced as nothing at all (the next test). Every position here now
+    reports the one fact true of all of them.
+    """
     _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
     verification = _archive(tmp_path, manifest_path)
 
     archive_path = Path(verification.archive_path)
     raw = bytearray(archive_path.read_bytes())
-    midpoint = len(raw) // 2
-    raw[midpoint] ^= 0xFF
+    index = int(position * len(raw)) if isinstance(position, float) else position
+    raw[index] ^= 0xFF
     archive_path.write_bytes(bytes(raw))
 
     with pytest.raises(BackupArchiveRefused, match="could not be read back"):
         verify_archive(
             archive_path,
             manifest_path,
-            tmp_path / "verify-corrupt",
+            tmp_path / f"verify-corrupt-{label.replace(' ', '-').replace(',', '')}",
+            key_provider=FixedKeyProvider(),
+        )
+
+
+def test_rot_past_the_tar_end_of_archive_marker_is_refused(tmp_path: Path) -> None:
+    """The regression #821 exists for — and the reason it is a safety fix, not only a
+    determinism one.
+
+    ``tarfile`` stops at the tar end-of-archive marker, so it never decodes what follows it:
+    the record padding, the stream index, the 12-byte stream footer. Before the pre-extraction
+    integrity pass, rot there was invisible to every check this module makes — each extracted
+    member was intact, each digest matched the manifest, the evidence chain re-verified, and
+    :func:`verify_archive` RETURNED an :class:`ArchiveVerification`. That stamped an archive
+    ``xz -d`` refuses as a usable backup, and :func:`archive_backup_set` then renamed it out of
+    ``.partial`` into cold storage under the name reserved for verified archives.
+
+    The corruption is the file's last byte — the ``Z`` of the xz footer magic — so it is
+    anchored to the format and lands in the footer whatever the archive's size.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    archive_path = Path(verification.archive_path)
+
+    raw = bytearray(archive_path.read_bytes())
+    raw[-1] ^= 0xFF
+    archive_path.write_bytes(bytes(raw))
+
+    # Two facts stated independently of this module, because together they ARE the defect.
+    # First: the archive really is unreadable now.
+    with pytest.raises(lzma.LZMAError):
+        lzma.decompress(archive_path.read_bytes())
+    # Second: extraction alone still completes, and delivers every member. `extractall`
+    # iterates the tar LAZILY and stops at the end-of-archive marker, so it never decodes the
+    # rot behind it. (An eager `getmembers()` would — which is precisely why "some tar reader
+    # would have noticed" is not a check anything can rely on.) This is the exact call
+    # `_extract_archive` used to make on its own, and what it could not see.
+    naive_dir = tmp_path / "naive-extract"
+    naive_dir.mkdir()
+    with tarfile.open(archive_path, mode="r:xz") as archive:
+        archive.extractall(naive_dir, filter="data")
+    assert (naive_dir / _MANIFEST_NAME).is_file()
+
+    with pytest.raises(BackupArchiveRefused, match="could not be read back"):
+        verify_archive(
+            archive_path,
+            manifest_path,
+            tmp_path / "verify-footer-rot",
             key_provider=FixedKeyProvider(),
         )
 
