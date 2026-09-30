@@ -17,8 +17,8 @@
 - **수정 — 기다린 뒤 한 번 더**: PRAGMA 가 잠금으로 실패하면 `BEGIN IMMEDIATE; ROLLBACK` 으로 **sqlite 자신의
   busy handler 로 기다린 뒤** PRAGMA 를 다시 부른다.
   - 전환을 끝낸 쪽이 잠금을 놓으면, 기다린 쪽의 두 번째 PRAGMA 는 이미 WAL 인 파일에 대한 무동작이다.
-  - 새 대기 상수가 없다. 대기 상한은 연결에 이미 설정된 timeout 이다(`PRAGMA busy_timeout`, 기본 5000 ms ·
-    rcl 은 주입값).
+  - 새 대기 상수가 없다. 대기의 단위는 연결에 이미 설정된 timeout 이다(`PRAGMA busy_timeout`, 기본 5000 ms ·
+    rcl 은 주입값). ⚠ 상한은 그 **3배**다 — §5 (리뷰 F4).
   - 반환값이 `wal` 이 아니면 **부팅 거부** — 지금은 반환값을 확인하지 않는다.
 
 ## 1. 실측 (2026-09-30 · 스크래치 · 호스트 로컬)
@@ -62,9 +62,14 @@ if mode != "wal": raise (부팅 거부 — 조용히 롤백 저널로 돌지 않
 
 - `tos/src/tos/staterestore/store.py:124` 에도 같은 줄이 있다. 하지만 이것은 **커널**이라 런타임 헬퍼를
   import 할 수 없다(방화벽).
-- 부팅 때가 아니라 복구 기록자가 **필요할 때** 연다(`recovery/composite_state_writer.py:110`). 한 프로세스
-  안에서만 열린다.
+- 부팅 때가 아니라 복구 기록자가 **필요할 때** 연다(`recovery/composite_state_writer.py:110`).
 - 커널 쪽 사본을 만들면 DRY 위반 + 커널 변경이다. 노출이 다르므로 별도 결정으로 남긴다(§5).
+- ⚠ **정정(리뷰 F7, 2026-09-30)**: 이 절의 초판은 「한 프로세스 안에서만 열린다」고 적었는데 **틀렸다**.
+  compose 가 같은 공유 `data_dir` 아래로 이 스토어를 배선하고
+  (`compose/_engine_wiring.py:267-269`, `data_dir / COMPOSITE_STATE_STORE_FILE_NAME`), 기록자는 쓸 때마다
+  새 연결을 열고 닫는다. 두 런타임이 같은 빈 `data_dir` 로 부팅해 **첫 composite-state 기록에 동시에
+  도달**하면 같은 경합이 난다. 범위 밖이라는 판단(처분 §6.1 3항)은 유지하되, 근거는 「한 프로세스」가 아니라
+  「방화벽 + 노출 시점이 다름」이다. 추적: **issue #823**.
 
 ## 3. 기각한 대안
 
@@ -95,9 +100,12 @@ if mode != "wal": raise (부팅 거부 — 조용히 롤백 저널로 돌지 않
 - **#817 머지 뒤 시작**(같은 줄). #817 의 `_precreate_wal_file` 은 T-3 에서 뺀 변종과 함께, 원래 목적(제네시스
   트랜잭션만 격리해 보기)을 그대로 두고 문구만 갱신한다.
 - **커널 `CompositeStateStore`**(§2.2)는 이번 범위 밖이다. 두 런타임이 같은 `data_dir` 에서 복구 기록을 동시에
-  처음 쓰는 경우에만 드러난다. 필요하면 별도 이슈로 연다.
-- 대기 상한은 연결의 timeout 이다. evidence·inbox·marketfeed 는 파이썬 기본 5 s, rcl 은 주입값이다. 새 설정 키는
-  만들지 않는다.
+  처음 쓰는 경우에 드러난다 — **issue #823 으로 열었다**(리뷰 F7).
+- 대기의 단위는 연결에 이미 설정된 timeout 이고 새 설정 키는 만들지 않는다(evidence·inbox·marketfeed 는 파이썬
+  기본 5 s, rcl 은 주입값). ⚠ **정정(리뷰 F4)**: 그 timeout **하나**가 상한은 아니다. 첫 PRAGMA 자체가 기다릴
+  수 있고(SHARED/EXCLUSIVE 획득은 busy handler 를 탄다 — 건너뛰는 것은 RESERVED 승급뿐), 그 뒤
+  `BEGIN IMMEDIATE` 가 기다리고, 재시도 PRAGMA 가 또 기다린다. 거부까지 최악 **약 3배**(기본값이면 ~15 s)다.
+  부팅 데드라인은 5 s 가 아니라 이 값에 맞춰 잡을 것.
 - 런타임 소스 변경 → digest 재도출.
 
 ## 6. 운영자 확인
@@ -129,7 +137,8 @@ if mode != "wal": raise (부팅 거부 — 조용히 롤백 저널로 돌지 않
 | T-2 | 네 스토어의 맨 PRAGMA 한 줄을 헬퍼 호출로 — `evidence/store.py` · `engine/inbox.py` · `marketfeed/store.py` · `rcl/log.py` | `b6e0bcdd` |
 | T-3·T-4 | `tests/operations/test_wal_journal.py` 신설(헬퍼 네 모서리 · 결정적) + `test_schema_genesis_concurrency.py` 에 **미리 만들지 않은** 파일 변종(스토어별 8프로세스 × 5라운드) · #818 을 「열려 있음」으로 적던 독스트링 셋 정정 | `43407863` |
 | T-5 (부수) | 수정이 무효로 만든 문구 둘 — `enable_wal_journal` 독스트링의 실측 출처 귀속(계획 §1 값과 이번에 잰 값과 #801 리뷰 값이 뒤섞여 있었다) · `tests/compose/test_store_probe_isolation.py` 의 「진 쪽이 `database is locked` 로 죽는다」(이제 기다렸다 재시도한다 — 미리 만드는 이유는 그 **대기**가 두 party 사이에 끼어들기 때문으로 바뀐다) | `98066a6d` |
-| T-5 | digest 재도출 · 이 절 · `docs/plans/INDEX.md` | 마지막 커밋들 |
+| T-5 | digest 재도출 · 이 절 · `docs/plans/INDEX.md` | `99c63ea5` · `968a4885` |
+| 리뷰 처분 | F2 판별자 수정(+F3·F4 독스트링) · F1·F5·F6 테스트 · F7 issue #823 · 계획 §7.8-7.9 · digest 재도출 | §7.8 표 |
 
 ### 7.2 계획에서 벗어난 것 (전건 사유 포함)
 
@@ -179,8 +188,8 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/runtime/tests -p no:cacheprovider` | **3226 passed** (8:24). ⚠ digest 재도출 **전**에는 stale `expected_code_digest` 때문에 compose·recovery **184건**이 `ReleaseAdmissionRefused` 로 red 였다 — 런타임 소스를 바꾸면 이 스위트는 digest 를 다시 찍기 전까지 green 이 될 수 없다 |
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9601 passed** (2:02, 커널 무변경 확인) |
+| `pytest tos/runtime/tests -p no:cacheprovider` | 최초 **3226 passed**(8:24) · 리뷰 처분 뒤 **3228 passed**(4:23, 새 테스트 2건). ⚠ digest 재도출 **전**에는 stale `expected_code_digest` 때문에 compose·recovery **184건**이 `ReleaseAdmissionRefused` 로 red 였다 — 런타임 소스를 바꾸면 이 스위트는 digest 를 다시 찍기 전까지 green 이 될 수 없다 |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9601 passed** (1:57, 커널 무변경 확인) |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
 | `mypy tos/runtime/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 238 source files` |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 265 source files` |
@@ -194,21 +203,68 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 
 ### 7.6 digest
 
-`expected_code_digest`: **d75a3616 → e4cf4908**
-(`e4cf49080a416cdfe90094e2b9514fb0558704461f70a25771c3e8a8f2619613`).
-`print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다.
+`expected_code_digest`: **d75a3616 → e4cf4908 → 569aac29**
+(`569aac29e8de8797327a88992c1b0428b5846253ef0b401985284aede75e05b7`).
+두 번 도출했다 — 19차는 최초 구현(`968a4885`), 20차는 리뷰 처분 §7.8 의 F2 수정과 F3·F4 독스트링
+정정을 담는다. 매번 `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다.
 `expected_dependency_set_digest` 는 무변경(`20559763…`). 갱신은 두 곳 —
-`config/tos_runtime/paper/release.yaml`(19차 재측정 주석 포함)과
+`config/tos_runtime/paper/release.yaml`(19·20차 재측정 주석 포함)과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
 
-⚠ **#821(`fix/tos-verify-archive-determinism`)이 이 PR 보다 먼저 머지된다.** 그쪽도 런타임 소스를
-바꾸므로, 머지 뒤 이 브랜치는 `git merge origin/main` 후 **digest 를 한 번 더 재도출**해야 한다
-(계획 §6.1 4항 메모의 직렬 머지 규율).
+⚠ **#822(#821 수정)가 이 PR 보다 먼저 머지된다.** 그쪽도 런타임 소스를 바꾸므로, 머지 뒤 이 브랜치는
+`git merge origin/main` 후 **digest 를 한 번 더 재도출**해야 한다(계획 §6.1 4항 메모의 직렬 머지 규율).
 
 ### 7.7 남긴 것
 
-- 커널 `CompositeStateStore`(§2.2)는 여전히 맨 PRAGMA 다. 두 런타임이 같은 `data_dir` 에서 복구
-  기록을 **동시에 처음** 쓸 때만 드러나며, 방화벽 때문에 런타임 헬퍼를 쓸 수 없다. 별도 이슈 대상.
+- 커널 `CompositeStateStore`(§2.2)는 여전히 맨 PRAGMA 다. 방화벽 때문에 런타임 헬퍼를 쓸 수 없고,
+  노출 시점도 다르다(부팅이 아니라 첫 복구 기록). **issue #823 으로 열었다** — 재현 경로와 제안 셋,
+  수용 기준이 거기 있다.
 - `test_schema_genesis_concurrency._precreate_wal_file` 은 그대로 남는다. 이제 「열린 결함을
   가린다」가 아니라 「두 경합을 서로 다른 픽스처로 갈라 둔다」가 이유다 — 실패가 어느 쪽인지 이름으로
   말해 준다.
+
+### 7.8 리뷰 처분 (독립 리뷰 high, 2026-09-30 · 7건)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F2 | 잠금 판별이 `sqlite_errorname == "SQLITE_BUSY"` 정확일치라 **확장 코드**(`SQLITE_BUSY_RECOVERY`/`_SNAPSHOT`/`_TIMEOUT`)가 전부 「재시도 안 함」 가지로 샌다 | **수정.** `_is_lock_contest()` 신설 — `(errorcode & 0xFF) == sqlite3.SQLITE_BUSY`. 실측 확인: 정체 스냅샷 쓰기가 `SQLITE_BUSY_SNAPSHOT`·517·메시지 `database is locked` 를 낸다(하위 바이트 5). 특히 `SQLITE_BUSY_RECOVERY` 는 **재시도가 존재하는 바로 그 경우**(늦은 opener 가 승자의 WAL recovery 를 만남)라 실제 결함이다 |
+| F1 | 다중 프로세스 테스트의 red 보장이 과대 — `p<1e-20` 은 **맨 PRAGMA 비율**이고 실제 구동하는 것은 생성자 비율(inbox 4/80) → 5라운드면 옛 코드가 13 % 확률로 green | **수정.** 라운드 5 → **20**. 근거를 「가장 낮게 측정된 생성자 비율(5 %)」로 바꿔 상수 주석에 산술까지 적었다: `0.95**160 = 0.03 %`. 실측 재확인 §7.9 |
+| F3 | 「재시도는 이미 WAL 인 파일에 대한 무동작」은 **무조건 참이 아니다** — RESERVED 를 쥐고 있던 쪽이 전환자가 아니었다면 재시도가 진짜 전환이고, 그 RESERVED 승급도 busy handler 를 건너뛴다 | **수정(문서).** 독스트링에 조건을 명시하고, 그 형태가 드문 이유를 「불가능해서」가 아니라 「이 패키지의 스토어 파일은 전부 생성자에서 WAL 로 태어나서」로 고쳤다 |
+| F4 | 「대기 상한 = 연결 timeout」이 과소 — 첫 PRAGMA + `BEGIN IMMEDIATE` + 재시도 PRAGMA 로 **약 3배**(기본값 ~15 s) | **수정(문서).** 독스트링·계획 §0·§5 전부 정정. 운영자가 부팅 데드라인을 잡을 때 읽는 숫자라 명시적으로 「5 s 가 아니라 이 값」이라고 적었다 |
+| F5 | 「no WAL sidecars」를 독스트링이 약속하는데 본문은 확인하지 않는다 | **수정.** 거부 뒤 `-wal`·`-shm` 부재를 실제로 assert |
+| F6 | 새 테스트가 3-튜플 `_STORES` 로 파라미터화하면서 `pause_after_sql` 를 쓰지 않는 죽은 인자 | **수정.** `_BIRTH_RACE_STORES` 2-튜플로 분리 |
+| F7 | 커널 `CompositeStateStore` 후속 이슈가 안 열렸고, §2.2 의 「한 프로세스 안에서만 열린다」가 부정확 | **수정.** **issue #823** 개설(재현 경로·제안 3안·수용 기준). §2.2 의 서술은 정정했고, 범위 밖 판단 자체는 처분 §6.1 3항대로 유지 |
+
+기각 0건.
+
+### 7.9 리뷰 처분 실측
+
+**F2 — 확장 코드가 실제로 새어 나갔다.** 파이썬은 확장 결과 코드/이름을 올린다:
+
+```text
+정체 스냅샷 쓰기 → sqlite_errorname='SQLITE_BUSY_SNAPSHOT' · sqlite_errorcode=517
+                   메시지='database is locked'             · 517 & 0xFF = 5
+```
+
+새 테스트 `test_an_extended_busy_code_is_still_a_lock_contest` 는 수정 전 판별자에서 **red** 다
+(잡아 둔 실제 오류가 생성자를 그대로 빠져나온다). 반대 방향 `SQLITE_LOCKED`(primary 6)은
+`test_a_locked_table_is_not_treated_as_a_lock_contest` 로 고정했다 — 「메시지에 locked 가 있으면
+재시도」로 과잉 수정되지 않게 한다.
+
+**F1 — 라운드 재산정.** 수정 전 생성자 손실률(10라운드 × 8)과 그에 따른 「깨진 코드가 green 으로
+나올 확률」:
+
+| 스토어 | 손실률 | 5라운드(40 opener) | 20라운드(160 opener) |
+|---|---|---|---|
+| evidence | 15/80 = 18.75 % | 0.025 % | < 1e-6 % |
+| **inbox** | **4/80 = 5.00 %** | **12.85 %** | **0.027 %** |
+| marketfeed | 5/80 = 6.25 % | 7.57 % | 0.0033 % |
+| rcl | 30/80 = 37.5 % | < 1e-6 % | < 1e-6 % |
+
+가장 낮은 inbox 기준 5라운드는 **여덟 번에 한 번꼴로 green** 이었다 — 회귀 테스트가 아니다.
+20라운드로 올린 뒤 재확인: 헬퍼를 맨 PRAGMA 로 되돌린 상태에서 **연속 3회 모두 4/4 파라미터 red**,
+수정 후 4/4 green. 모듈 벽시계 16.4 s(네 파라미터 합 ~10 s).
+
+**교훈(기록용).** 「p < 1e-20」은 계산은 맞았고 **어느 비율에 대입했는지가 틀렸다** — 맨 PRAGMA 로 잰
+값을 실제로 구동하는 생성자 경로의 보장으로 썼다. 확률 경계를 적는 가드는 **그 숫자가 어느 실측에서
+왔는지**를 같은 줄에 적어야 한다. [[guards-that-admit-what-they-name]] 계열의 같은 실패 형태다.
