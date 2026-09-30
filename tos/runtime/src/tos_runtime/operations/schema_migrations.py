@@ -45,8 +45,8 @@ back, and left the file stuck at v1 with no index — unbootable by v2 code and 
 
 **Rollout order (round #4 review LOW — first genuine v1->v2 bump, so this module carried no
 prior worked example of the deploy-time ordering it requires).**
-:func:`~tos_runtime.operations.schema_ledger.ensure_schema_current` refuses BOTH directions on
-open (module docstring's points 3/4: behind OR ahead of the running code's expected version), so
+:func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` refuses BOTH directions on
+open (that module's docstring points 3/4: behind OR ahead of the running code's expected version), so
 a `RCL_SCHEMA_VERSION` bump is not safe to roll out in an arbitrary order against a running store.
 The required sequence: (1) fully stop every process still running the OLD (v1-expecting) code
 against this store file — a still-live v1 process would itself get refused the instant
@@ -64,7 +64,7 @@ into ``events`` directly here since baseline v1 IS "the current DDL, added colum
 the plan). This is intentional, not an oversight: :func:`apply_migrations` must be able to bring a
 PRE-EXISTING file (real tables, ``user_version == 0``, never ledgered) up to baseline WITHOUT
 constructing the real store class first — that class's own constructor now calls
-:func:`~tos_runtime.operations.schema_ledger.ensure_schema_current`, which would immediately
+:func:`~tos_runtime.operations.schema_ledger.open_or_create_schema`, which would immediately
 refuse a non-fresh, sub-baseline file with :class:`~tos_runtime.operations.schema_ledger
 .SchemaVersionRefused` — precisely the refusal this function exists to resolve. Importing the
 store classes here to reuse their DDL would recreate that exact bootstrapping problem.

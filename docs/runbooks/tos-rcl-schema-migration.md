@@ -22,6 +22,14 @@ cron은 존재하지 않는다. 순서를 지키는 장치는 **사람과 이 �
 
 ## 1. 왜 순서가 문제가 되는가
 
+> ⚠ **이름 정정 (2026-09-30 · #801 · PR #817).** 아래 본문과 §6 재현 기록은 부팅 검사를
+> `ensure_schema_current`라고 부른다 — 이 문서를 쓴 시점의 함수 이름이다. #801 이후 **스토어
+> 생성자가 부르는 것은 `tos_runtime.operations.schema_ledger.open_or_create_schema`**이고,
+> 온디스크 버전이 어긋날 때 방향 관계없이 부팅을 거부하는 **규칙은 한 글자도 바뀌지 않았다**
+> (`ensure_schema_current` 자체도 하위호환으로 남아 있어 §6 의 재현 코드는 그대로 돈다).
+> 바뀐 것은 제네시스가 이제 `BEGIN IMMEDIATE` 하나 안에서 원자적이라는 점뿐이며, 이 런북의
+> 절차·판정·순서 제약은 전부 유효하다.
+
 `tos_runtime.operations.schema_ledger.ensure_schema_current`는 스토어 생성자(`__init__`)에서
 매번 불리며, 온디스크 `PRAGMA user_version`이 그 코드가 기대하는 스키마 버전과 **다르면 방향에
 관계없이 부팅을 거부한다** — 뒤처져도 거부, 앞서도 거부(fail-closed, 자동 마이그레이션 0).

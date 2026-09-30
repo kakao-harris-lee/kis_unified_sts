@@ -287,17 +287,23 @@ def read_only_latest_as_of(
 
     **Why this may not simply construct a** :class:`~tos_runtime.marketfeed.store
     .SqliteSnapshotStore` **(the defect this helper exists to close; review-797, one observed CI
-    failure on PR #797).** That constructor is a WRITER, not a reader: ``store.py:230-243``
-    captures ``file_is_fresh(conn)``, runs its three ``CREATE TABLE``/``CREATE INDEX`` statements
-    and then calls :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current`, which on a
-    ``was_fresh=True`` file stamps ``PRAGMA user_version`` and ``INSERT``s the genesis
-    ``schema_ledger`` row (``schema_ledger.py:167-181``). A probe doing that on the SAME path a
-    composing runtime is opening at that moment makes BOTH parties observe ``was_fresh=True`` —
-    the probe wins the race to the ``INSERT``, and compose's own construction dies on
-    ``sqlite3.IntegrityError: UNIQUE constraint failed: schema_ledger.version``, surfacing as
-    ``run: refused — compose_paper_runtime raised IntegrityError: ...``. A "read-only probe" that
-    writes is not a read-only probe. ``tests/compose/test_store_probe_isolation.py`` pins both
-    halves of this deterministically.
+    failure on PR #797).** That constructor is a WRITER, not a reader: it hands its three ``CREATE
+    TABLE``/``CREATE INDEX`` statements to :func:`~tos_runtime.operations.schema_ledger
+    .open_or_create_schema`, which on a fresh file stamps ``PRAGMA user_version`` and ``INSERT``s
+    the genesis ``schema_ledger`` row. Before #801 that sequence held no lock across its three
+    steps, so a probe running it on the SAME path a composing runtime was opening made BOTH
+    parties observe a fresh file — the probe won the race to the ``INSERT`` and compose's own
+    construction died on ``sqlite3.IntegrityError: UNIQUE constraint failed:
+    schema_ledger.version``, surfacing as ``run: refused — compose_paper_runtime raised
+    IntegrityError: ...``.
+
+    #801 made genesis one ``BEGIN IMMEDIATE`` transaction, so that particular collision is gone —
+    and this helper still may not construct a store, for a reason that does not depend on it: a
+    constructing probe takes the file's WRITE LOCK, which a composing runtime holds for its own
+    genesis, so the probe would block for the whole sqlite busy timeout on every poll and then
+    write durable content of its own. A "read-only probe" that writes is not a read-only probe.
+    ``tests/compose/test_store_probe_isolation.py`` pins both halves deterministically, and its
+    own docstrings record what #801 changed.
 
     ``mode=ro`` (a URI connection, ``uri=True``) is what makes it structurally read-only rather
     than read-only by convention: sqlite itself refuses every CONTENT write on such a connection
