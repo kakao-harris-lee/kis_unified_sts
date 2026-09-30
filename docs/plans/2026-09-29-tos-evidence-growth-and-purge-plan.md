@@ -561,7 +561,16 @@ CI 와 같은 형태의 mypy 세 줄 전부 `Success`:
 | 커밋 | 내용 |
 |---|---|
 | `fb083dde` | 프리플라이트·워치독 드라이버 + 헤르메틱 테스트 |
-| `5310e90a` | 자체 리뷰가 잡은 결함 — 중단이 방금 만든 합성 파일을 지우고 있었다 |
+| `f12ca02a` · `2e68d4ff` · `202ac95d` | 이 절(§7.1.9) 자체 — 착지 기록 · 헤딩 깊이 · 커밋 SHA |
+| `5310e90a` | 자체 리뷰 1 — 중단이 방금 만든 합성 파일을 지우고 있었다 |
+| `12988f4a` | 자체 리뷰 2 — 부분 빌드를 「재개 가능」이라고 안내하던 메시지 |
+| `1b2293e1` | 자체 리뷰 3 — 중단된 단계가 자원 수치를 하나도 안 남겼다 |
+| `77af085b` | 독립 리뷰 #826 지적 F1~F9 |
+
+⚠ 이 표는 초판에서 `fb083dde` 와 `5310e90a` 만 들고 있었다. 그 뒤 두 커밋이 더 들어왔는데
+같은 절의 산문은 그 동작을 「착지했다」고 서술하고 있었다 — 감사자가 git 과 대조하면 주인 없는
+동작이 나온다(리뷰 F10). 이 절의 규율이 「세션 기록이 아니라 파일을 인용한다」인 이상, 표가
+브랜치와 어긋나는 것은 사소한 누락이 아니다.
 
 **무엇이 들어왔나.** `tools/tos_evidence_scan_measure.py`(순수 stdlib) 가 한 번의 측정을 몰고,
 호스트가 감당 못 할 때 **착수를 거부하거나 진행 중 중단**한다. 기존 벤치
@@ -724,3 +733,55 @@ cd <repo>
 플래그가 없다. 그때는 면제를 편차로 등재하고 `--min-available-gb`/`--min-swap-free-gb` 를 명시적으로
 낮춰야 하며, 그 값은 `preflight.json` 의 `thresholds` 에 그대로 남는다 — 지난번처럼 기록 없이
 빠지지 않는다.
+
+#### 7.1.10 독립 리뷰 #826 처분 (2026-10-01)
+
+리뷰 레인은 **저자와 다른 패스**였다. 교차모델 독립성은 **없다**(§7.1.6 과 같은 상태 — Codex
+심사는 붙이지 않았다). 그 사실을 판정의 일부로 적는다. 판정 **needs-attention**, 지적 10 건,
+**전건 수정**(기각 0).
+
+| # | 지적 | 조치 |
+|---|---|---|
+| F1 | **실패한 자식이 「완료된 단계」였다.** `main()` 이 `StepResult.returncode` 를 안 봐서, `build` 가 1 로 죽어도 `before`/`after` 가 없는 DB 에 대고 돌고, 셋 다 완료로 집계돼 합성 파일이 지워지고 **종료코드 0** 이 나왔다 | `MeasureStepFailed` — 즉시 중단 · 파일 보존 · rc≠0. 테스트 2건(기존 `--synthetic` 으로 `build` 실패 · `--repeats 0` 으로 `before` 실패) |
+| F2 | **실행 중 예외가 아티팩트 없이 자식을 죽였다.** 일시적 `pgrep` 2/3 이나 읽을 수 없는 `/proc` → `MeasureRefused` → `BaseException` 경로가 자식을 죽이고 「Nothing was started」 뜻의 예외로 종료 | (a) 호스트 읽기 실패는 `--host-read-retries`(기본 1) 재시도 후 `check="host_read"` 정식 중단 (b) 예상 못 한 예외는 `check="driver_error"` 로 **아티팩트를 쓴 뒤** 재-raise |
+| F3 | **이 파일을 열기만 해도 「경쟁 측정」.** 패턴이 파일명 부분문자열이라 `pytest …test_tos_evidence_scan_measure.py` · `mypy` · `vim` · `git show` 가 전부 매치 — 장시간 측정 중 이 도구를 고치면 측정이 죽는다 | 패턴을 **호출 형태**로 좁히고(`…\.py +(run\|preflight\|build\|measure\|profile)\b`), 출력 디렉터리에 **락 파일**을 추가. 주인이 사라진 락은 stale 로 무시(SIGKILL 당한 런이 다음을 영영 막지 않게) |
+| F4 | **문서화한 재개가 실제로는 막혔다.** 중단 로그가 `--steps before,after` 를 권하는데 `artifacts_absent` 가 그 중단이 만든 `.out`/`.err` 때문에 거부 | 중단 시 그 둘을 `<step>-Nd.<run_id>.aborted.{out,err}` 로 **옮긴다**(삭제 아님). 테스트가 중단 뒤 **권고된 명령 그대로** 돌려 rc=0 확인 |
+| F5 | **재개가 자기 빌드가 쓴 공간을 또 요구.** 60 GB 디스크에 53 GB 를 쓴 뒤 재개가 66 GB 를 요구받아 거부 | `build` 가 계획에 없고 파일이 있으면 새 바이트는 인덱스뿐 — `--index-growth-ratio`(§7.1.2 실측 +1.8 %). 덤으로 `build` 없이 파일도 없으면 **선행 거부** |
+| F6 | **벽시계가 표본 주기만큼 부풀었다.** `wait4` 를 5 s 주기로만 폴링해 8.0 s 단계가 10.0 s · CPU 80 % 로 찍힘 — §7.1.2 가 인용하는 GNU `time -v` 수치와 비교 불가 | 두 주기로 분리: `--poll-interval-s`(0.1 s)로 거두고 호스트는 `--watch-interval-s` 로 표본 |
+| F7 | **이미 끝난 자식에 대한 중단.** 표본과 종료가 겹치면 완결된 `<step>-Nd.json` 옆에 `ABORTED` 가 생겨 다음 재개가 막힌다 · `AbortRecord.returncode` 가 raw wait status(256)를 적었다 | 위반 발견 시 **자식을 먼저 재확인** — 이미 끝났으면 성공으로 마무리. 종료코드 변환을 `_returncode()` 하나로 통일 |
+| F8 | **스왑 없는 호스트에서 안내가 틀렸다.** 도움말은 `--min-swap-free-gb 0` 으로 빠지라는데 기본 중단 문턱 1.0 이 거부 — 타본 적 없는 플래그를 대며 | 지정 안 한 중단 문턱은 `min(기본, 착수 문턱)` 으로 **유도**하고 `preflight.json` warnings 에 기록. **명시한** 값이 착수 문턱보다 높은 것은 여전히 모순이므로 거부 |
+| F9 | **셸 문법에 붙은 검색 명령을 못 알아봤다** — `$(pgrep`, `;pgrep`, `\|grep` | 셸 구두점으로도 분리. 양방향 테스트(`/opt/grepbuild/gradlew` 는 여전히 빌드) |
+| F10 | §7.1.9 커밋 표가 브랜치와 어긋났다 | 위 표 전면 갱신 + 왜 사소하지 않은지 한 줄 |
+
+**F3 에 대해 한 가지 더.** 패턴과 락은 **다른 질문에 답하므로 둘 다** 둔다 — 패턴은 같은
+호스트에서 다른 디렉터리에 쓰는 드라이버를 보고, 락은 이 출력 디렉터리를 정말 누가 잡았는지를
+오탐 0 으로 말한다. 락만 두면 다른 out-dir 의 동시 실행을 놓치고, 패턴만 두면 F3 의 오탐 계열이
+영원히 남는다.
+
+**부수 개선.** `PreflightCheck` 가 `measured_bytes`/`floor_bytes` 를 들어, `preflight.json` 을
+「12.00 GB」 문자열 재파싱이 아니라 숫자로 인용할 수 있다.
+
+**테스트.** 두 파일 **66 passed**(measure 48 + bench 18). 이 라운드의 **레드 증명 13 건 추가,
+초록으로 남은 가드 0** — 누적 **29/29**. F7 의 경쟁 테스트는 마커 파일 대신 커널의 좀비 상태
+(`/proc/<pid>/stat` 의 `Z`)를 기다린다: 「다 했다」를 파일에 쓰는 것과 실제로 종료하는 것은 서로
+다른 순간이라, 마커로는 「이미 끝났다」를 표현할 수 없고 초판 테스트가 실제로 깜빡였다.
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| F1 실패 단계 중단 | `test_f1_a_failed_step_stops_the_run_keeps_the_file_and_exits_non_zero` · `test_f1_a_failed_step_keeps_a_synthetic_this_run_did_create` |
+| F2 호스트 읽기 재시도 후 중단 | `test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact` |
+| F2 드라이버 오류도 아티팩트 | `test_f2_an_unexpected_driver_error_still_writes_an_abort_artifact` |
+| F3 호출 형태 패턴 | `test_f3_editing_or_testing_this_tool_is_not_a_competing_measurement` · `test_f3_the_pattern_matches_a_real_invocation_through_the_real_pgrep` |
+| F9 셸 구두점 토큰화 | `test_f9_a_search_command_glued_to_shell_syntax_is_still_a_search` |
+| F4 중단 산출물 이동 | `test_f4_the_documented_resume_command_actually_gets_past_preflight` |
+| F5 계획된 단계 기준 디스크 | `test_f5_a_resume_is_not_asked_for_the_space_its_build_already_spent` |
+| F5 합성 파일 없는 measure-only 거부 | `test_f5_measure_only_without_a_synthetic_file_is_refused_up_front` |
+| F6 두 주기 | `test_f6_wall_clock_is_not_rounded_up_to_the_host_sample_interval` |
+| F7 종료 재확인 | `test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort` |
+| F7 종료코드 변환 | `test_f7_an_abort_records_the_exit_code_the_way_a_step_result_does` |
+| F8 중단 문턱 유도 | `test_f8_lowering_the_start_floor_lowers_the_in_run_floor_with_it` · `test_f8_a_swapless_host_runs_end_to_end_with_one_flag` |
+| 출력 디렉터리 락 | `test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill` |
+
+**365 일치 재실행 명령은 §7.1.9 의 것 그대로다** — 새 플래그는 전부 기본값이 있고, 기본값은
+이 라운드에서 바뀌지 않았다. 달라진 것은 그 명령이 **중간에 멈췄을 때**다: 실패한 단계가 rc≠0
+로 보고되고, 중단이 산출물을 남기며, 로그가 권하는 재개가 실제로 돈다.
