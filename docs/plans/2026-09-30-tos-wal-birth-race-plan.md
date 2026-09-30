@@ -189,8 +189,8 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/runtime/tests -p no:cacheprovider` | 최초 **3226 passed**(8:24) · 리뷰 처분 뒤 **3228 passed**(4:23) · 라운드-2 처분 뒤 **3232 passed**(4:26, 새 테스트 누적 6건). ⚠ digest 재도출 **전**에는 stale `expected_code_digest` 때문에 compose·recovery **184건**이 `ReleaseAdmissionRefused` 로 red 였다 — 런타임 소스를 바꾸면 이 스위트는 digest 를 다시 찍기 전까지 green 이 될 수 없다 |
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9601 passed** (1:55, 커널 무변경 확인 — 라운드-2 뒤 재실행) |
+| `pytest tos/runtime/tests -p no:cacheprovider` | 최초 **3226**(8:24) · 리뷰 처분 뒤 **3228**(4:23) · 라운드-2 뒤 **3232**(4:26) · main 머지 뒤 **3245**(4:41, #822 테스트 포함) · 라운드-3 뒤 **3246 passed**(4:12). ⚠ digest 재도출 **전**에는 stale `expected_code_digest` 때문에 compose·recovery **184건**이 `ReleaseAdmissionRefused` 로 red 였다 — 런타임 소스를 바꾸면 이 스위트는 digest 를 다시 찍기 전까지 green 이 될 수 없다 |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9601 passed** (1:46, 커널 무변경 — 라운드마다 재실행) |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
 | `mypy tos/runtime/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 238 source files` |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 265 source files` |
@@ -204,17 +204,31 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 
 ### 7.6 digest
 
-`expected_code_digest`: **d75a3616 → e4cf4908 → 569aac29 → f2ab3d49**
-(`f2ab3d49efa9b541a45ae7e18841617592e20e869dbde20b48d354f50459b811`).
-세 번 도출했다 — 19차는 최초 구현(`968a4885`), 20차는 리뷰 처분 §7.8(F2 판별자 + F3·F4 독스트링),
-21차는 라운드-2 처분 §7.10(F3 생성자 가드 · F2 구조 · F6 로그 · 예산 분해). 매번 `print-digests` 와
-`observe_source_tree_digest()` 두 경로가 일치했다.
-`expected_dependency_set_digest` 는 무변경(`20559763…`). 갱신은 두 곳 —
-`config/tos_runtime/paper/release.yaml`(19·20·21차 재측정 주석 포함)과
+`expected_code_digest`: **d75a3616 → e4cf4908 → 569aac29 → f2ab3d49 → 2e30d5a8 → 9595ef63**
+(`9595ef63fa82fd76657fbf979865bdc6d8e7aca7a8edaeec6eedd4e6731032cb`).
+
+다섯 번 도출했다. 릴리스 파일의 회차 번호는 두 계열이 머지에서 합류하며 다시 매겨졌다 —
+main 쪽 #821/#822 가 19~21, 이 PR 이 22~26이다.
+
+| 회차 | 무엇이 바뀌어서 | 커밋 |
+|---|---|---|
+| 22 | 최초 구현(#818) | `968a4885` |
+| 23 | 리뷰 처분 §7.8 — F2 판별자 + F3·F4 독스트링 | `3be56a86` |
+| 24 | 라운드-2 처분 §7.10 — F3 생성자 가드 · F2 구조 · F6 로그 · 예산 분해 | `8c828161` |
+| 25 | **origin/main a342236a 머지** — 소스 수정 0, 두 계열이 한 트리에서 처음 만남 | `5f568656` |
+| 26 | 라운드-3 처분 §7.12 — F2 restore 가드 · F3 공용 컨텍스트 매니저 · F5 로그 · F6 | 마지막 커밋 |
+
+매번 `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다.
+`expected_dependency_set_digest` 는 무변경(`20559763…`). 갱신은 항상 두 곳 —
+`config/tos_runtime/paper/release.yaml`(회차별 재측정 주석 포함)과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
 
-⚠ **#822(#821 수정)가 이 PR 보다 먼저 머지된다.** 그쪽도 런타임 소스를 바꾸므로, 머지 뒤 이 브랜치는
-`git merge origin/main` 후 **digest 를 한 번 더 재도출**해야 한다(계획 §6.1 4항 메모의 직렬 머지 규율).
+**25차가 이 PR 의 F1(라운드-2)을 닫았다.** #822 가 먼저 머지된 뒤 `git merge origin/main` 으로
+합류한 트리에서 다시 찍었다 — 두 브랜치의 마지막 값 중 **어느 것도** 그 트리에 맞지 않았다.
+⚠ **CI 는 이 종류의 stale 을 못 잡는다**: `tests/compose/conftest.py` 의 `EXPECTED_CODE_DIGEST` 는
+살아 있는 트리에서 다시 계산하고 `_VALUE_PINS` 는 커밋된 두 문자열끼리만 대조하므로, 둘이 함께
+stale 이면 CI 는 green 이고 **부팅만** `ReleaseAdmissionRefused` 로 떨어진다(#814 전례).
+직렬 머지에서 나중에 들어가는 PR 이 병합 트리 위에서 다시 찍는 것이 유일한 방어다.
 
 ### 7.7 남긴 것
 
@@ -304,3 +318,19 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 이긴다 — 8 중 최대 7 만 질 수 있다) 한 라운드가 통째로 green 이어야 테스트가 통과하므로, 측정해야 할
 것은 opener 비율이 아니라 **라운드 clean 비율**이다. 20은 점추정으로도 상한으로도 1 % 아래인 가장
 가까운 라운드 수다(상한 기준 필요 라운드 15.1).
+
+### 7.12 라운드-3 리뷰 처분 (독립 리뷰 high, 2026-09-30 · 6건 · 최종 라운드)
+
+리뷰어 판정: **운영 재시도 경로에 정정할 correctness 결함 없음**(sqlite btree/pager 잠금 동작과
+대조해 확인). 6건은 누수·중복·표현 문제다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F2 | `evidence/backup.py::restore_evidence` 가 스토어를 **다 만든 뒤** 검증한다 — 검증이 거부하면 그 스토어를 아무도 닫지 않고, traceback 이 연결(과 -wal·-shm)을 붙들고 있다. **25차에서 네 생성자에 넣은 가드와 같은 결함이 한 프레임 위에 남아 있었다** | **수정.** 같은 가드를 씌웠다. 백업 파일의 `chain_digest` 를 손상시켜 거부를 유발하고, traceback 으로 그 연결에 도달해 닫혔는지 단언하는 테스트 추가 — 가드를 빼면 red |
+| F3 | 8줄 근거 + `try/except BaseException: close(); raise` 가 네 생성자에 **복붙**돼 있다 | **수정.** `schema_ledger.closing_on_failure` 컨텍스트 매니저 **하나**로 모으고 근거도 거기 한 번만. 기계적 변경(같은 문장·같은 순서·테스트 무변경 green). F2 가 스토어를, 생성자가 연결을 넘기므로 인자는 `close()` 를 가진 무엇이든 받는다 |
+| F5 | 경고가 「최대 **3배**」라고 하는데 그 줄을 쓰는 시점엔 첫 PRAGMA 대기가 이미 소진돼 남은 상한은 **2배**다. 게다가 결과를 안 적어 로그만으로 「회복」과 「아직 멈춤」을 구별할 수 없다 | **수정.** 문구 정정 + **결과 줄 둘**(복구됨 / 거부함). 거부 줄은 `raise` 로 같은 객체를 다시 올리므로 연쇄되지 않는다(F2 성질 유지) |
+| F6 | `mode = ""` + `contended` 가 한 사실을 두 변수로 들고 있다 | **수정.** `mode: str | None` 하나로 |
+| F4 | `_WAIT_AND_RETRY` 가 로그용 진단 읽기(`PRAGMA database_list`)를 **메커니즘 단언에 못박아** 뒀다 — 경고 문구를 무해하게 바꾸면 네 테스트가 동시에 깨지고, 정작 중요한 주장(전환 시도 둘이 대기 하나를 감싼다)은 따로 서술돼 있지 않았다 | **수정.** 상수는 메커니즘만, 비교 전에 진단을 걸러낸다. 진단이 실제로 돈다는 것은 한 테스트에서 따로 단언해 로그 경로 커버리지를 잃지 않는다 |
+| F1 | `_construct('rcl')` 가 사설 evidence 스토어를 열고 안 닫는다 — **거부된 부팅이 핸들을 남기지 않음을 단언하는 바로 그 테스트가 하나 흘리고 있었다** | **수정.** `ExitStack` 등록. `-W error::ResourceWarning` 으로 확인 |
+
+기각 0건.
