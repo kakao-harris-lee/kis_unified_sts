@@ -176,25 +176,29 @@ def test_rot_past_the_tar_end_of_archive_marker_is_refused(tmp_path: Path) -> No
     raw[-1] ^= 0xFF
     archive_path.write_bytes(bytes(raw))
 
-    # Two facts stated independently of this module, because together they ARE the defect.
-    # First: the archive really is unreadable now.
+    # The archive really is unreadable now, stated without reference to this module.
     with pytest.raises(lzma.LZMAError):
         lzma.decompress(archive_path.read_bytes())
-    # Second: extraction alone still completes, and delivers every member. This is the exact
-    # call `_extract_archive` makes; it walks the tar lazily, stops at the end-of-archive
-    # marker, and never decodes the rot behind it.
-    #
-    # Whether some OTHER tar walk would have noticed is not a property to rely on, and the
-    # asymmetry is the point: measured 2026-09-30, `getmembers()` RAISES `LZMAError` on this
-    # five-member fixture but returns cleanly on a smaller single-member archive, because what
-    # it sees depends only on how much of the stream the decompressor happened to buffer. So
-    # this test asserts the call the module actually makes, not the one that happens to catch
-    # it here.
+
+    # Below is a DEMONSTRATION of why the check cannot be left to extraction, not a guard.
+    # Whether a tar walk reaches the rot behind the end-of-archive marker is a buffering
+    # accident of the interpreter, not a property of the archive: measured 2026-09-30 on
+    # CPython 3.12, `extractall` delivers every member here while an eager `getmembers()`
+    # raises `LZMAError` on this same five-member fixture, and on a smaller single-member
+    # archive `getmembers()` returns cleanly too. A future CPython or liblzma that happens to
+    # drain the last chunk would make this raise — which is not a regression in the guard, so
+    # it must not fail the test. The guard is the `verify_archive` refusal below (review
+    # round 2, finding 1).
     naive_dir = tmp_path / "naive-extract"
     naive_dir.mkdir()
-    with tarfile.open(archive_path, mode="r:xz") as archive:
-        archive.extractall(naive_dir, filter="data")
-    assert (naive_dir / _MANIFEST_NAME).is_file()
+    try:
+        with tarfile.open(archive_path, mode="r:xz") as archive:
+            archive.extractall(naive_dir, filter="data")
+    except lzma.LZMAError:
+        pass  # the other acceptable stdlib outcome: it happened to reach the rot
+    else:
+        # It did not notice, and handed over a complete-looking set of members.
+        assert (naive_dir / _MANIFEST_NAME).is_file()
 
     with pytest.raises(BackupArchiveRefused, match="could not be read back"):
         verify_archive(
@@ -247,6 +251,36 @@ def test_bytes_after_the_end_of_the_xz_stream_are_refused(tmp_path: Path) -> Non
         )
 
 
+def test_xz_stream_padding_is_refused_and_the_refusal_says_so(tmp_path: Path) -> None:
+    """Review round 2, finding 2: a divergence from ``xz -t``, named rather than hidden.
+
+    The xz format permits **Stream Padding** — a 4-byte-aligned run of NULs after a stream —
+    and ``xz -t`` accepts it (measured: rc=0 for 4 and 8 NULs, rc=1 for 3, which is not valid
+    padding). The trailing-bytes check refuses all of it. That is deliberate and fail-closed:
+    ``tarfile``'s ``w:xz`` emits exactly one unpadded stream, so nothing this module writes is
+    ever padded, and a cold archive that acquired padding somewhere is not the file that was
+    verified.
+
+    What this pins is the WORDING. An operator hitting this must not be told their padded but
+    otherwise perfect archive is corrupt, so the refusal names padding as one of the two
+    things it means.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    archive_path = Path(verification.archive_path)
+    archive_path.write_bytes(archive_path.read_bytes() + b"\x00" * 4)
+
+    with pytest.raises(BackupArchiveRefused, match="could not be read back") as refusal:
+        verify_archive(
+            archive_path,
+            manifest_path,
+            tmp_path / "verify-padding",
+            key_provider=FixedKeyProvider(),
+        )
+    assert "stream padding" in str(refusal.value)
+    assert "one unpadded stream" in str(refusal.value)
+
+
 def test_a_lzma_alone_container_is_refused(tmp_path: Path) -> None:
     """Review finding 3, first half: a container that carries no integrity check at all.
 
@@ -289,13 +323,53 @@ def test_an_xz_stream_with_no_integrity_check_is_refused(tmp_path: Path) -> None
         check=lzma.CHECK_NONE,
     )
 
-    with pytest.raises(BackupArchiveRefused, match="could not be read back"):
+    with pytest.raises(BackupArchiveRefused, match="could not be read back") as refusal:
         verify_archive(
             repacked,
             manifest_path,
             tmp_path / "verify-nocheck",
             key_provider=FixedKeyProvider(),
         )
+    assert "CHECK_NONE" in str(refusal.value)
+
+
+def test_a_checkless_container_is_refused_before_the_stream_is_decoded(
+    tmp_path: Path,
+) -> None:
+    """Review round 2, finding 4(a): decide on the check type from the stream HEADER.
+
+    ``LZMADecompressor.check`` reads ``CHECK_UNKNOWN`` (16) until the 12-byte stream header is
+    parsed and the real id immediately after, so there is no reason to decode a GB-scale
+    archive before refusing a container that was never going to prove anything.
+
+    Pinned deterministically rather than by timing: this archive is checkless AND corrupt in
+    its data region, so a pass that decoded first would report the ``LZMAError`` it hit on the
+    way. Reporting ``CHECK_NONE`` instead is only possible if the check type was read first.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    repacked = _repack(
+        Path(verification.archive_path),
+        tmp_path / "nocheck-rotten.tar.xz",
+        container=lzma.FORMAT_XZ,
+        check=lzma.CHECK_NONE,
+    )
+    raw = bytearray(repacked.read_bytes())
+    raw[len(raw) // 2] ^= 0xFF
+    repacked.write_bytes(bytes(raw))
+    # The corruption really would stop a full decode, so the two paths are distinguishable.
+    with pytest.raises(lzma.LZMAError):
+        lzma.decompress(repacked.read_bytes())
+
+    with pytest.raises(BackupArchiveRefused, match="could not be read back") as refusal:
+        verify_archive(
+            repacked,
+            manifest_path,
+            tmp_path / "verify-nocheck-rotten",
+            key_provider=FixedKeyProvider(),
+        )
+    assert "CHECK_NONE" in str(refusal.value)
+    assert "LZMAError" not in str(refusal.value)
 
 
 def test_an_unreadable_archive_leaves_no_verify_dir_to_block_the_retry(
