@@ -37,6 +37,7 @@ would not be sound for a positive case, which is why none of those use one.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -50,16 +51,20 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _WAL_PRAGMA = "PRAGMA journal_mode=WAL"
 
-#: Exactly what the helper runs when it loses the lock once: the failed switch, the diagnostic
-#: read that names the file in the warning line, the wait, and the single retry. Spelled out
-#: rather than summarised — the COUNT is the property most of these tests turn on.
-_WAIT_AND_RETRY = [
-    _WAL_PRAGMA,
-    "PRAGMA database_list",
-    "BEGIN IMMEDIATE",
-    "ROLLBACK",
-    _WAL_PRAGMA,
-]
+#: The MECHANISM, and nothing else: two switch attempts bracketing exactly one wait. This is the
+#: property the retry exists for, and the count is what most of these tests turn on.
+_WAIT_AND_RETRY = [_WAL_PRAGMA, "BEGIN IMMEDIATE", "ROLLBACK", _WAL_PRAGMA]
+
+#: Statements the helper runs only to build a log line. Filtered out before comparing against
+#: :data:`_WAIT_AND_RETRY` (review round-3 F4): pinning them there made four tests fail for any
+#: harmless change to the warning — dropping the filename, reading it differently, moving the
+#: line — while the mechanism was untouched, and left the mechanism claim unstated on its own.
+_DIAGNOSTIC_STATEMENTS = frozenset({"PRAGMA database_list"})
+
+
+def _mechanism(log: list[str]) -> list[str]:
+    """``log`` with the log-line diagnostics removed — what the helper did, not what it said."""
+    return [sql for sql in log if sql not in _DIAGNOSTIC_STATEMENTS]
 
 
 # -- real captured sqlite errors --------------------------------------------------------------
@@ -190,7 +195,10 @@ def test_a_lock_lost_once_is_waited_out_and_the_switch_retried(tmp_path: Path) -
     try:
         enable_wal_journal(conn)
 
-        assert conn.log == _WAIT_AND_RETRY
+        assert _mechanism(conn.log) == _WAIT_AND_RETRY
+        # The diagnostic is filtered from the mechanism claim, not left unasserted: the warning
+        # line names the file, and reading it is the only reason that statement runs at all.
+        assert _DIAGNOSTIC_STATEMENTS.issubset(conn.log)
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     finally:
         conn.close()
@@ -210,7 +218,7 @@ def test_a_lock_still_held_when_the_retry_runs_refuses_the_boot(tmp_path: Path) 
         with pytest.raises(sqlite3.OperationalError, match="locked") as refusal:
             enable_wal_journal(conn)
 
-        assert conn.log == _WAIT_AND_RETRY
+        assert _mechanism(conn.log) == _WAIT_AND_RETRY
         # The refusal must NOT be chained onto the first, deliberately-handled SQLITE_BUSY
         # (review round-2 F2). If the retry ran inside the `except` block, python would attach
         # that first error as `__context__` and the operator's traceback would carry two
@@ -295,7 +303,7 @@ def test_an_operational_error_that_is_not_a_lock_is_not_retried(tmp_path: Path) 
         with pytest.raises(sqlite3.OperationalError, match="no such table"):
             enable_wal_journal(conn)
 
-        assert conn.log == [_WAL_PRAGMA]
+        assert _mechanism(conn.log) == [_WAL_PRAGMA]
     finally:
         conn.close()
 
@@ -318,7 +326,7 @@ def test_an_extended_busy_code_is_still_a_lock_contest(tmp_path: Path) -> None:
     try:
         enable_wal_journal(conn)
 
-        assert conn.log == _WAIT_AND_RETRY
+        assert _mechanism(conn.log) == _WAIT_AND_RETRY
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     finally:
         conn.close()
@@ -348,7 +356,7 @@ def test_a_locked_table_is_not_treated_as_a_lock_contest(tmp_path: Path) -> None
         with pytest.raises(sqlite3.OperationalError, match="table is locked"):
             enable_wal_journal(conn)
 
-        assert conn.log == [_WAL_PRAGMA]
+        assert _mechanism(conn.log) == [_WAL_PRAGMA]
     finally:
         conn.close()
 
@@ -359,7 +367,7 @@ def test_an_ordinary_fresh_file_switches_on_the_first_attempt(tmp_path: Path) ->
     try:
         enable_wal_journal(conn)
 
-        assert conn.log == [_WAL_PRAGMA]
+        assert _mechanism(conn.log) == [_WAL_PRAGMA]
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     finally:
         conn.close()
@@ -405,7 +413,9 @@ def test_every_durable_store_boots_into_wal_through_the_helper(tmp_path: Path) -
 #: it is given, exactly the way compose does, and is expected to RAISE here — the point is what
 #: it leaves behind when it does. The RCL entry needs an evidence port, which is a store of its
 #: own on a private path, so the contended path is still the only one under test.
-def _construct(store: str, path: Path, tmp_path: Path) -> object:
+def _construct(
+    store: str, path: Path, tmp_path: Path, stack: contextlib.ExitStack
+) -> object:
     from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
     from tos_runtime.engine.inbox import SqliteEventInbox
     from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -419,8 +429,17 @@ def _construct(store: str, path: Path, tmp_path: Path) -> object:
     if store == "marketfeed":
         return SqliteSnapshotStore(path)
     if store == "rcl":
-        evidence = SqliteEvidenceStore(
-            tmp_path / "rcl-private-evidence.sqlite3", key_provider=FixedKeyProvider()
+        # Registered on the caller's stack, not merely local (review round-3 F1): the RCL log
+        # below is EXPECTED to raise, so a bare local would leave this private evidence store —
+        # and its own -wal/-shm — open until interpreter teardown, in the very test that asserts
+        # a refused boot leaves no handle behind.
+        evidence = stack.enter_context(
+            contextlib.closing(
+                SqliteEvidenceStore(
+                    tmp_path / "rcl-private-evidence.sqlite3",
+                    key_provider=FixedKeyProvider(),
+                )
+            )
         )
         return SqliteCommitLog(path, evidence_port=evidence, sqlite_timeout_s=0)
     raise AssertionError(f"unknown store {store!r}")
@@ -483,12 +502,13 @@ def test_a_refused_boot_closes_the_store_connection(
 
         monkeypatch.setattr(sqlite3, "connect", connect_without_waiting)
 
-        with pytest.raises(sqlite3.OperationalError, match="locked") as refusal:
-            _construct(store, path, tmp_path)
+        with contextlib.ExitStack() as stack:
+            with pytest.raises(sqlite3.OperationalError, match="locked") as refusal:
+                _construct(store, path, tmp_path, stack)
 
-        conn = _connection_from_traceback(refusal.value)
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            conn.execute("SELECT 1")
+            conn = _connection_from_traceback(refusal.value)
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                conn.execute("SELECT 1")
     finally:
         holder.execute("ROLLBACK")
         holder.close()
