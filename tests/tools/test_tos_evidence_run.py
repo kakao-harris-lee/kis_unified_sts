@@ -2749,6 +2749,158 @@ def test_the_substrate_check_reads_pragmas_only_from_execute_arguments(
     }
 
 
+_DELEGATING_STORE = (
+    '"""A store module with no pragma tokens in its prose at all."""\n'
+    "import sqlite3\n"
+    "from tos.staterestore._wal import enable_wal_journal\n"
+    "class CompositeStateStore:\n"
+    "    def __init__(self, path):\n"
+    "        self._conn = sqlite3.connect(str(path))\n"
+    "        enable_wal_journal(self._conn)\n"
+    '        self._conn.execute("PRAGMA synchronous=FULL")\n'
+)
+
+_DELEGATE_MODULE = (
+    "import sqlite3\n"
+    "def enable_wal_journal(conn):\n"
+    '    conn.execute("PRAGMA journal_mode=WAL")\n'
+)
+
+
+def _write_substrate_pair(root, *, store: str, delegate: str | None) -> None:
+    """Lay a synthetic store (and optionally its delegate) out under ``root``."""
+    for rel, text in (
+        (ev.PERSISTENCE_SUBSTRATE_PATH, store),
+        (ev.PERSISTENCE_PRAGMA_DELEGATE_PATH, delegate),
+    ):
+        if text is None:
+            continue
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+
+
+def test_a_pragma_the_constructor_delegates_still_counts(tmp_path) -> None:
+    """#823: the switch moved into a helper, and the gate follows it THERE.
+
+    The store no longer executes ``PRAGMA journal_mode=WAL`` itself — on a brand-new
+    file that bare PRAGMA loses a concurrent first open to ``database is locked``, so it
+    now goes through a helper that waits out the lock and retries. Before this test the
+    gate looked only at the store module and went red on a store that had become
+    strictly more durable.
+    """
+    _write_substrate_pair(tmp_path, store=_DELEGATING_STORE, delegate=_DELEGATE_MODULE)
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is True, result
+    assert result["measured"]["delegate_called_from_constructor"] is True
+    assert result["measured"]["store_executed_pragmas"] == {"synchronous": "FULL"}
+    assert result["measured"]["delegate_executed_pragmas"] == {"journal_mode": "WAL"}
+    assert result["measured"]["pragmas_missing"] == []
+
+
+def test_a_delegate_the_constructor_never_calls_does_not_count(tmp_path) -> None:
+    """The hole following the literal would otherwise open, held shut and proven red.
+
+    A pragma sitting in a module nobody calls is the "documented, not executed" defect
+    :func:`ev._executed_pragmas` closes, one file further out: the store would open on
+    the rollback journal while the gate read WAL out of dead code. Only the CALL is
+    removed here — the import stays, so what is measured is the call and not a mention.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace("        enable_wal_journal(self._conn)\n", ""),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_called_from_constructor"] is False
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+    # The delegate's own pragma is still REPORTED — the manifest says what was seen and
+    # why it did not count, rather than hiding the module.
+    assert result["measured"]["delegate_executed_pragmas"] == {"journal_mode": "WAL"}
+
+
+def test_a_delegate_that_does_not_switch_to_wal_is_unmet(tmp_path) -> None:
+    """The failing input the gate must keep: a store that ends up WITHOUT WAL.
+
+    Same deceptive shape as the docstring fixture above, moved into the delegate — the
+    helper is called, but what it executes is a journal mode that is not WAL. The gate
+    reads the value, not the presence of a call.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE,
+        delegate=_DELEGATE_MODULE.replace("journal_mode=WAL", "journal_mode=DELETE"),
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+    assert result["measured"]["executed_pragmas"]["journal_mode"] == "DELETE"
+
+
+def test_a_delegating_store_whose_delegate_is_gone_is_unmet(tmp_path) -> None:
+    """Deleting the helper is a red gate, not a silently skipped check."""
+    _write_substrate_pair(tmp_path, store=_DELEGATING_STORE, delegate=None)
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_called_from_constructor"] is False
+    assert result["measured"]["delegate_executed_pragmas"] == {}
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+    assert result["delegate_sha256"] is None
+
+
+def test_a_connection_opened_inside_the_delegate_is_counted(tmp_path) -> None:
+    """The delegate is inside the "exactly one connection" fence too.
+
+    Following the pragma into a second file would otherwise hand that file an exemption
+    from the two checks the gate's first fact is made of — a helper that opened its own
+    in-memory connection and switched THAT to WAL would read as a compliant substrate.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE,
+        delegate=(
+            "import sqlite3\n"
+            "def enable_wal_journal(conn):\n"
+            '    sqlite3.connect(":memory:").execute("PRAGMA journal_mode=WAL")\n'
+        ),
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["connect_call_sites"] == 2
+    assert result["measured"]["literal_connection_targets"] == [":memory:"]
+    assert result["measured"]["in_memory_tokens_present"] == [":memory:"]
+
+
+def test_the_store_and_its_delegate_disagreeing_on_a_pragma_is_unmet(tmp_path) -> None:
+    """Two executed values for one pragma is a conflict, never a quiet resolution.
+
+    Which one a connection ends up with depends on statement order across two files, so
+    the gate refuses to guess: it records the conflict and counts the pragma missing.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE
+        + '        self._conn.execute("PRAGMA journal_mode=DELETE")\n',
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["pragma_value_conflicts"] == ["journal_mode"]
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+
+
 def test_an_absent_or_unparseable_substrate_is_unmet_not_ignored(tmp_path) -> None:
     assert ev.check_persistence_substrate(tmp_path)["met"] is False
     rel = ev.PERSISTENCE_SUBSTRATE_PATH

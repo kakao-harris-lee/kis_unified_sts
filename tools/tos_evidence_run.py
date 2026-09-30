@@ -1154,8 +1154,33 @@ def summarise_crash_schedule(
 #: execution can do. Verified by parsing the source, never by importing it (TOS-FW-R).
 PERSISTENCE_SUBSTRATE_PATH = "tos/src/tos/staterestore/store.py"
 
+#: The module the store DELEGATES its ``journal_mode`` switch to (**#823**). The switch
+#: is no longer a bare PRAGMA in the constructor: on a brand-new file it needs an
+#: exclusive lock that ``PRAGMA journal_mode`` does not wait for, so it now goes through
+#: a helper that waits out the lock and retries once. The literal moved with it, and a
+#: gate that kept looking only at :data:`PERSISTENCE_SUBSTRATE_PATH` would have gone red
+#: on a store that got strictly MORE durable — reported on #820's round-2 review and
+#: recorded on issue #823 before the change landed.
+#:
+#: Following the literal into the helper is only sound together with
+#: :data:`PERSISTENCE_PRAGMA_DELEGATE_CALL` below: a pragma in a module nobody calls is
+#: exactly the "documented, not executed" hole :func:`_executed_pragmas` exists to close,
+#: one file further out.
+PERSISTENCE_PRAGMA_DELEGATE_PATH = "tos/src/tos/staterestore/_wal.py"
+
+#: The delegate's entry point, which the store's CONSTRUCTOR must call for the delegate's
+#: pragmas to count at all. Checked as a real call node inside
+#: :data:`PERSISTENCE_SUBSTRATE_CONSTRUCTOR`, never as a mention.
+PERSISTENCE_PRAGMA_DELEGATE_CALL = "enable_wal_journal"
+
+#: The store function the delegate call must appear in. Construction, not "somewhere in
+#: the module": a switch that only runs on some other code path would leave an ordinary
+#: open on the rollback journal.
+PERSISTENCE_SUBSTRATE_CONSTRUCTOR = "__init__"
+
 #: The pragmas the pilot substrate decision (design §3.2 candidate A) names. Each must be
-#: bound in a real ``execute(...)`` call argument — see :func:`_executed_pragmas`.
+#: bound in a real ``execute(...)`` call argument — see :func:`_executed_pragmas` — in the
+#: substrate module itself, or in the delegate module it really calls.
 PERSISTENCE_REQUIRED_PRAGMAS = ("journal_mode=WAL", "synchronous=FULL")
 
 #: Matches one ``PRAGMA <name>=<value>`` statement, normalised for whitespace and case.
@@ -1195,10 +1220,29 @@ def _executed_pragmas(tree: ast.AST) -> dict[str, str]:
     return executed
 
 
+def _calls_inside_function(tree: ast.AST, function: str, call: str) -> bool:
+    """``True`` iff a real call node named ``call`` appears inside ``def function``.
+
+    A **call**, not a mention: the same discipline :func:`_executed_pragmas` applies to
+    the pragma literals. An import of the delegate, a docstring naming it, or an
+    assignment holding the function object all fail this — only a call does.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == function:
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Name)
+                    and inner.func.id == call
+                ):
+                    return True
+    return False
+
+
 def check_persistence_substrate(repo_root: Path) -> dict:
     """Confirm the store is a real on-disk sqlite substrate, from its syntax tree.
 
-    Three structural facts, each falsifiable:
+    Four structural facts, each falsifiable:
 
       * the module opens exactly one connection, and its target is **not a string
         literal** — so no ``":memory:"`` (or any other hardcoded target) can be what a
@@ -1206,10 +1250,26 @@ def check_persistence_substrate(repo_root: Path) -> dict:
       * neither ``:memory:`` nor ``mode=memory`` appears anywhere in the module, so the
         in-memory redefinition is unreachable rather than merely unused;
       * both design §3.2 pragmas are **executed** — bound as a string literal in a real
-        ``execute(...)`` argument, not merely mentioned somewhere in the file.
+        ``execute(...)`` argument, not merely mentioned somewhere in the file;
+      * where a pragma is executed by the delegate module
+        (:data:`PERSISTENCE_PRAGMA_DELEGATE_PATH`) rather than by the store itself, the
+        store's constructor really **calls** that delegate.
+
+    **Why a delegate at all (#823).** The ``journal_mode`` switch left the constructor
+    when it stopped being a bare PRAGMA: on a brand-new file that switch takes an
+    exclusive lock ``PRAGMA journal_mode`` does not wait for, so two concurrent first
+    opens lost one of them outright. The retrying helper owns the literal now. Following
+    it is what keeps this gate measuring the substrate rather than the line number of a
+    statement; the delegate-call requirement is what stops the follow from becoming a
+    hole, since a pragma in a module nobody calls is not a pragma that runs. The store's
+    own module is still where ``connect`` and the in-memory tokens are judged — with the
+    delegate's source added to both scans, so a second connection or an in-memory target
+    smuggled into the helper trips the same checks.
 
     An absent or unparseable file is unmet — treating a parse failure as "nothing found"
-    would be the same ∅-fail-open the schedule summary refuses.
+    would be the same ∅-fail-open the schedule summary refuses. That applies to the
+    delegate too: if it is gone, its pragmas are simply not found, and the store had
+    better still execute them itself.
 
     Returns:
         ``{"met": bool, "path": str, "measured": {...}}`` — the measurements are
@@ -1231,9 +1291,27 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             "path": PERSISTENCE_SUBSTRATE_PATH,
             "reason": f"SOURCE_DOES_NOT_PARSE: {exc}",
         }
+
+    delegate_path = repo_root / PERSISTENCE_PRAGMA_DELEGATE_PATH
+    delegate_source = ""
+    delegate_tree: ast.AST | None = None
+    if delegate_path.is_file():
+        delegate_source = delegate_path.read_text(encoding="utf-8")
+        try:
+            delegate_tree = ast.parse(delegate_source, filename=str(delegate_path))
+        except SyntaxError as exc:
+            return {
+                "met": False,
+                "path": PERSISTENCE_SUBSTRATE_PATH,
+                "delegate_path": PERSISTENCE_PRAGMA_DELEGATE_PATH,
+                "reason": f"DELEGATE_SOURCE_DOES_NOT_PARSE: {exc}",
+            }
+
+    scanned_trees = [tree] if delegate_tree is None else [tree, delegate_tree]
     connects = [
         node
-        for node in ast.walk(tree)
+        for scanned in scanned_trees
+        for node in ast.walk(scanned)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "connect"
@@ -1246,17 +1324,42 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
         }
     )
-    executed_pragmas = _executed_pragmas(tree)
+
+    store_pragmas = _executed_pragmas(tree)
+    delegate_pragmas = {} if delegate_tree is None else _executed_pragmas(delegate_tree)
+    delegate_called = delegate_tree is not None and _calls_inside_function(
+        tree, PERSISTENCE_SUBSTRATE_CONSTRUCTOR, PERSISTENCE_PRAGMA_DELEGATE_CALL
+    )
+    # The delegate contributes ONLY when the constructor calls it. Order of composition
+    # is the store last: a pragma the store itself executes is what the connection ends
+    # up with, since the constructor runs the delegate first and its own statements
+    # after. A pragma both sides execute at DIFFERENT values is neither — it is a
+    # conflict, recorded and counted as missing rather than silently resolved.
+    effective_pragmas = dict(delegate_pragmas) if delegate_called else {}
+    conflicts = sorted(
+        name
+        for name, value in store_pragmas.items()
+        if name in effective_pragmas and effective_pragmas[name] != value
+    )
+    effective_pragmas.update(store_pragmas)
+
     pragmas_present: list[str] = []
     pragmas_missing: list[str] = []
     for pragma in PERSISTENCE_REQUIRED_PRAGMAS:
         name, _, value = pragma.partition("=")
-        if executed_pragmas.get(name.lower()) == value.upper():
+        if (
+            effective_pragmas.get(name.lower()) == value.upper()
+            and name.lower() not in conflicts
+        ):
             pragmas_present.append(pragma)
         else:
             pragmas_missing.append(pragma)
     in_memory_tokens = sorted(
-        token for token in (":memory:", "mode=memory") if token in source
+        {
+            token
+            for token in (":memory:", "mode=memory")
+            if token in source or token in delegate_source
+        }
     )
     met = (
         len(connects) == 1
@@ -1268,16 +1371,30 @@ def check_persistence_substrate(repo_root: Path) -> dict:
         "met": met,
         "path": PERSISTENCE_SUBSTRATE_PATH,
         "sha256": sha256_file(path),
+        "delegate_path": PERSISTENCE_PRAGMA_DELEGATE_PATH,
+        "delegate_sha256": (
+            sha256_file(delegate_path) if delegate_path.is_file() else None
+        ),
         "measured_from": (
             "structural analysis of the executed source's syntax tree; pragmas are read "
             "out of real execute(...) arguments, so a docstring or comment mentioning "
-            "one cannot satisfy the check; the harness never imports tos (TOS-FW-R)"
+            "one cannot satisfy the check; a pragma owned by the delegate module counts "
+            "only when the store's constructor really CALLS the delegate; the harness "
+            "never imports tos (TOS-FW-R)"
         ),
         "measured": {
             "connect_call_sites": len(connects),
             "literal_connection_targets": literal_targets,
             "in_memory_tokens_present": in_memory_tokens,
-            "executed_pragmas": dict(sorted(executed_pragmas.items())),
+            "executed_pragmas": dict(sorted(effective_pragmas.items())),
+            "store_executed_pragmas": dict(sorted(store_pragmas.items())),
+            "delegate_executed_pragmas": dict(sorted(delegate_pragmas.items())),
+            "delegate_called_from_constructor": delegate_called,
+            "delegate_call": (
+                f"{PERSISTENCE_SUBSTRATE_CONSTRUCTOR}()"
+                f" -> {PERSISTENCE_PRAGMA_DELEGATE_CALL}()"
+            ),
+            "pragma_value_conflicts": conflicts,
             "pragmas_present": sorted(pragmas_present),
             "pragmas_missing": sorted(pragmas_missing),
             "pragmas_required": list(PERSISTENCE_REQUIRED_PRAGMAS),
