@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -1508,3 +1509,702 @@ def test_derived_pacer_inherits_the_outstanding_gap() -> None:
     derived = pacer.derive(5.0)
     assert derived.interval_s == pytest.approx(5.0)
     assert derived._next_allowed_at == pacer._next_allowed_at
+
+
+# ---------------------------------------------------------------------------
+# transient errors: ONE retry, one poll interval apart (2026-09-30 P-CA trial 2)
+# ---------------------------------------------------------------------------
+#
+# 2026-09-30: four attempts to observe SK하이닉스 000660's cash dividend, four
+# stops, zero cash-leg observations. The broker said only two things — a
+# transport read timeout (twice) and EGW00215, the LEDGER throttle — and the
+# harness treated both as "stop at once, never retry". That rule was written
+# for 2026-09-17, whose cause was OUR pacing (EGW00201); none of the 09-30
+# stops was ours. These tests pin the new policy AND pin that EGW00201 / HTTP
+# 429 did not move with it.
+
+
+def _read_timeout() -> BaseException:
+    """The exact exception the 09-30 trials died on (artifact ``errors[0]``)."""
+    import requests
+
+    return requests.exceptions.ReadTimeout(
+        "HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): "
+        "Read timed out. (read timeout=20.0)"
+    )
+
+
+def _throttle_body() -> _FakeResponse:
+    """EGW00215 verbatim from ``P-CA-20260930T015946Z.json`` poll #14."""
+    return _FakeResponse(
+        {
+            "rt_cd": "1",
+            "msg_cd": "EGW00215",
+            "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다.",
+        },
+        status=500,
+    )
+
+
+class _TransientSession(_ScriptedSession):
+    """A scripted session whose script may also contain exceptions to RAISE.
+
+    A transport failure is not a response, so it cannot be scripted as one:
+    the probe has to meet the same ``requests`` exception the broker handed it
+    on 09-30, raised out of ``session.request`` where ``_get`` will see it.
+    """
+
+    def request(self, *args: Any, **kwargs: Any) -> _FakeResponse:
+        if self._responses and isinstance(self._responses[0], BaseException):
+            self.calls.append({"method": "GET", "url": "", "params": {}})
+            raise self._responses.pop(0)
+        return super().request(*args, **kwargs)
+
+
+def _retry_records(run: Any) -> list[dict[str, Any]]:
+    return [
+        obs["poll_retry_evidence"]
+        for obs in run.observations
+        if "poll_retry_evidence" in obs
+    ]
+
+
+def _poll_args(**overrides: object) -> argparse.Namespace:
+    base: dict[str, object] = {
+        "effective_time": "2020-01-01T09:00:00+09:00",
+        "poll_ms": 0.0,
+        "pace_s": 0.0,
+        "window_s": 60.0,
+    }
+    base.update(overrides)
+    return _args(**base)
+
+
+def test_one_transport_timeout_is_retried_once_and_the_run_continues(
+    stock_env: None, wire: Any
+) -> None:
+    """Trial 3's shape: poll #8 raised ``ReadTimeout`` and the exception left
+    the probe entirely (``run.py`` rc 5, no class_leg_table). One retry carries
+    it — the leg is OBSERVED, and the artifact says a retry was spent."""
+    session = wire(
+        _TransientSession(
+            [
+                _balance_body(10),  # baseline
+                _read_timeout(),  # poll #1 attempt 1 — transport
+                _balance_body(11),  # poll #1 attempt 2 — quantity changed
+            ]
+        )
+    )
+    run = pc.probe_pca(_poll_args())
+
+    assert run.errors == []
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    # Both ATTEMPTS counted; one poll actually came back with a balance.
+    assert run.measurements["polls_used"] == 2
+    assert run.measurements["polls_completed"] == 1
+    assert _leg_row(run, "quantity")["status"] == "OBSERVED"
+    assert len(session.calls) == 3
+
+    record = _retry_records(run)
+    assert len(record) == 1
+    assert record[0]["phase"] == "poll"
+    assert record[0]["poll_index"] == 1
+    assert record[0]["transient_kind"] == "transport"
+    assert record[0]["status_kind"] == pc._BAL_TRANSIENT_TRANSPORT
+    assert record[0]["http_status"] == 0
+    assert "ReadTimeout" in record[0]["body_excerpt"]
+
+
+def test_two_consecutive_transport_timeouts_abort_with_the_transient_reason(
+    stock_env: None, wire: Any
+) -> None:
+    """One retry, not a retry loop: a second consecutive transport failure
+    stops the run, and the leg is ABORTED (never CENSORED — the window did not
+    elapse)."""
+    session = wire(
+        _TransientSession([_balance_body(10), _read_timeout(), _read_timeout()])
+    )
+    run = pc.probe_pca(_poll_args())
+
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert row["stop_reason"] == pc._STOP_TRANSIENT
+    assert (row["polls_used"], row["polls_completed"]) == (2, 0)
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert any("twice in a row" in message for message in run.errors)
+    assert _stop_evidence(run)["status_kind"] == pc._BAL_TRANSIENT_TRANSPORT
+    assert len(session.calls) == 3
+
+
+def test_one_ledger_throttle_is_retried_once_and_the_run_continues(
+    stock_env: None, wire: Any
+) -> None:
+    """Trial 2's shape: poll #14 answered EGW00215 (HTTP 500, rt_cd='1'), which
+    ``is_rate_limited`` does not see, so it fell through to _BAL_REJECTED and
+    stopped the run on the spot."""
+    session = wire(
+        _TransientSession([_balance_body(10), _throttle_body(), _balance_body(11)])
+    )
+    run = pc.probe_pca(_poll_args())
+
+    assert run.errors == []
+    assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 1}
+    assert run.measurements["polls_completed"] == 1
+    assert _leg_row(run, "quantity")["status"] == "OBSERVED"
+    record = _retry_records(run)
+    assert len(record) == 1
+    assert record[0]["transient_kind"] == "ledger_throttle"
+    assert record[0]["msg_cd"] == "EGW00215"
+    assert record[0]["http_status"] == 500
+    assert len(session.calls) == 3
+
+
+def test_two_consecutive_ledger_throttles_abort_as_rate_limited(
+    stock_env: None, wire: Any
+) -> None:
+    """A doubled LEDGER throttle IS a rate limit, so the row says
+    ``rate_limited`` — a reader must not need to know which broker code fired
+    to know the run was throttled."""
+    wire(_TransientSession([_balance_body(10), _throttle_body(), _throttle_body()]))
+    run = pc.probe_pca(_poll_args())
+
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert row["stop_reason"] == pc._STOP_RATE_LIMITED
+    assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 1}
+    assert _stop_evidence(run)["status_kind"] == pc._BAL_TRANSIENT_LEDGER_THROTTLE
+
+
+@pytest.mark.parametrize(
+    ("body", "status"),
+    [
+        ({"rt_cd": "1", "msg_cd": "", "msg1": "EGW00201"}, 429),
+        ({"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"}, 200),
+    ],
+    ids=["http-429", "body-egw00201"],
+)
+def test_our_own_rate_limit_is_still_never_retried(
+    stock_env: None, wire: Any, body: dict[str, Any], status: int
+) -> None:
+    """REGRESSION PIN (plan §3). EGW00201 / HTTP 429 mean WE called too fast —
+    2026-09-17's cause — and that rule is an account protection, not a
+    transport hiccup. The retry policy must not have widened to cover it: one
+    attempt, no retry record, ``retries`` untouched.
+    """
+    session = wire(
+        _TransientSession([_balance_body(10), _FakeResponse(body, status=status)])
+    )
+    run = pc.probe_pca(_poll_args())
+
+    assert len(session.calls) == 2, "a rate limit bought a retry"
+    assert _retry_records(run) == []
+    assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
+    row = _leg_row(run, "quantity")
+    assert row["stop_reason"] == pc._STOP_RATE_LIMITED
+    assert (row["polls_used"], row["polls_completed"]) == (1, 0)
+    assert any("no retry" in message for message in run.errors)
+
+
+def test_a_plain_rejection_is_still_never_retried(stock_env: None, wire: Any) -> None:
+    """The other direction of the EGW00215 rule: a rejection that merely
+    MENTIONS the code in ``msg1`` is not the ledger throttle and buys no retry.
+    ``_is_ledger_throttled`` keys on ``msg_cd`` exactly, unlike
+    ``is_rate_limited``'s substring sweep for EGW00201."""
+    session = wire(
+        _TransientSession(
+            [
+                _balance_body(10),
+                _FakeResponse(
+                    {"rt_cd": "1", "msg_cd": "APBK0919", "msg1": "not EGW00215 really"},
+                    status=200,
+                ),
+            ]
+        )
+    )
+    run = pc.probe_pca(_poll_args())
+
+    assert len(session.calls) == 2
+    assert _retry_records(run) == []
+    assert _leg_row(run, "quantity")["stop_reason"] == pc._STOP_REJECTED
+
+
+def test_the_wait_between_a_poll_and_its_retry_is_one_whole_poll_interval(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry waits a WHOLE poll interval, which ``_Pacer.wait()`` alone
+    does not give: the failed attempt armed the gap before it went out, so
+    after a 20s read timeout the ordinary pacer owes only the remaining 10s of
+    a 30s interval. ``_Pacer.defer`` re-arms it from NOW; this pins the 30s.
+    """
+    clock = [1000.0]
+
+    class _TickingTransientSession(_TransientSession):
+        def request(self, *args: Any, **kwargs: Any) -> _FakeResponse:
+            try:
+                return super().request(*args, **kwargs)
+            finally:
+                clock[0] += 20.0  # a read timeout burns 20s of wall clock
+
+    wire(
+        _TickingTransientSession(
+            [_balance_body(10), _read_timeout(), _balance_body(11)]
+        )
+    )
+    sleeps: list[float] = []
+    # After wire(), which installs its own no-op sleep.
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+    run = pc.probe_pca(
+        _poll_args(poll_ms=30000.0, pace_s=0.0, window_s=28800.0),
+    )
+
+    assert run.errors == []
+    assert sleeps == [pytest.approx(30.0)], (
+        "the retry must wait a whole poll interval (30s), not the 10s the "
+        f"pacer still owed: {sleeps}"
+    )
+    assert run.measurements["poll_interval_ms_effective"] == 30000.0
+
+
+def test_a_transport_timeout_on_the_baseline_is_retried_too(
+    stock_env: None, wire: Any
+) -> None:
+    """Trial 4 died on the FIRST GET of the run and left an artifact with no
+    baseline at all. The retry covers the baseline walk, and its record carries
+    no ``poll_index`` because no poll had started."""
+    session = wire(
+        _TransientSession([_read_timeout(), _balance_body(10), _balance_body(11)])
+    )
+    run = pc.probe_pca(_poll_args())
+
+    assert run.errors == []
+    assert run.measurements["baseline"] == {"hldg_qty": 10, "dnca_tot_amt": 1_000_000.0}
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert _leg_row(run, "quantity")["status"] == "OBSERVED"
+    record = _retry_records(run)
+    assert len(record) == 1
+    assert record[0]["phase"] == "baseline"
+    assert "poll_index" not in record[0]
+    assert len(session.calls) == 3
+
+
+def test_two_transport_timeouts_on_the_baseline_stop_before_any_poll(
+    stock_env: None, wire: Any
+) -> None:
+    session = wire(_TransientSession([_read_timeout(), _read_timeout()]))
+    run = pc.probe_pca(_poll_args())
+
+    assert any(
+        "baseline balance call failed twice in a row" in message
+        for message in run.errors
+    )
+    assert "baseline" not in run.measurements
+    assert "class_leg_table" not in run.measurements
+    # The count is published even on a path that never reaches _finalize.
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert len(session.calls) == 2
+
+
+def test_a_transient_on_the_reference_check_is_retried_then_the_run_continues(
+    stock_env: None, wire: Any
+) -> None:
+    """The reference check is the one call that does not go through
+    ``_read_balance`` — and the one a transport exception used to escape from,
+    taking the whole run with it."""
+    wire(
+        _TransientSession(
+            [
+                _balance_body(10),  # baseline
+                _read_timeout(),  # --reference-check attempt 1
+                _ksdinfo_body(rows=[{"sht_cd": "005930"}]),  # attempt 2
+                _balance_body(11),  # poll #1
+            ]
+        )
+    )
+    run = pc.probe_pca(_poll_args(reference_check=True))
+
+    assert run.errors == []
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert _retry_records(run)[0]["phase"] == "reference_check"
+    assert any("reference_dates" in obs for obs in run.observations)
+    assert _leg_row(run, "quantity")["status"] == "OBSERVED"
+
+
+def test_two_transients_on_the_reference_check_stop_the_run_politely(
+    stock_env: None, wire: Any
+) -> None:
+    """Two consecutive failures say the path to the broker is unhealthy, and
+    the polling loop is a far longer walk down it. The run STOPS — but through
+    the probe's own signal, so the artifact is written with what it has rather
+    than rebuilt by ``run.py``'s catch-all."""
+    session = wire(
+        _TransientSession([_balance_body(10), _read_timeout(), _read_timeout()])
+    )
+    run = pc.probe_pca(_poll_args(reference_check=True))
+
+    assert any(
+        "reference-check call failed twice in a row" in message
+        for message in run.errors
+    )
+    assert "class_leg_table" not in run.measurements
+    assert len(session.calls) == 3
+
+
+def test_a_transport_excerpt_never_carries_the_request_query_string(
+    stock_env: None, wire: Any
+) -> None:
+    """``requests``' ConnectionError renders the URL it failed on IN FULL, and
+    that URL carries CANO — the account number — as a query parameter. These
+    artifacts are committed under docs/broker-profiles/evidence/, and
+    ``redact()`` keys on field names, so it cannot reach inside this one raw
+    string leaf. The query string is stripped before the excerpt is recorded.
+    """
+    import requests
+
+    leaky = requests.exceptions.ConnectionError(
+        "HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): "
+        "Max retries exceeded with url: /uapi/domestic-stock/v1/trading/"
+        f"inquire-balance?CANO={_CANO}&ACNT_PRDT_CD=01&INQR_DVSN=02 "
+        "(Caused by NewConnectionError('failed to establish a new connection'))"
+    )
+    wire(_TransientSession([_balance_body(10), leaky, _balance_body(11)]))
+    run = pc.probe_pca(_poll_args())
+
+    excerpt = _retry_records(run)[0]["body_excerpt"]
+    assert "ConnectionError" in excerpt
+    assert "?<redacted>" in excerpt
+    assert "CANO" not in excerpt
+    assert _CANO not in json.dumps(run.to_dict(get("P-CA")), ensure_ascii=False)
+
+
+def test_a_run_with_no_transient_still_states_that_it_retried_nothing(
+    stock_env: None, wire: Any
+) -> None:
+    """A run that retried nothing has to SAY so, rather than leave a reader to
+    infer it from a missing key: someone comparing artifacts across the policy
+    change must be able to tell a clean run from one the old code wrote."""
+    wire(_ScriptedSession([_balance_body(10), _balance_body(11)]))
+    run = pc.probe_pca(_poll_args())
+
+    assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
+    assert _retry_records(run) == []
+
+
+def test_only_timeouts_and_connection_errors_count_as_transient() -> None:
+    """The transient set is the transport failures ``_get`` actually raises,
+    not "any exception": a malformed URL or a redirect loop is a defect in this
+    probe, and retrying it just produces the same failure twice.
+    """
+    import requests
+
+    transient = pc._transport_transient_types()
+    for exc_type in (
+        requests.exceptions.ReadTimeout,
+        requests.exceptions.ConnectTimeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.SSLError,
+    ):
+        assert issubclass(exc_type, transient), exc_type
+    for exc_type in (
+        requests.exceptions.TooManyRedirects,
+        requests.exceptions.InvalidURL,
+        requests.exceptions.MissingSchema,
+        requests.exceptions.ChunkedEncodingError,
+        ValueError,
+    ):
+        assert not issubclass(exc_type, transient), exc_type
+
+
+def test_defer_re_arms_the_gap_from_now_and_never_shortens_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    pacer = pc._Pacer(30.0)
+    pacer.wait()  # arms next_allowed_at = 130.0
+    clock[0] = 120.0  # a 20s read timeout burned part of the interval
+    pacer.defer(30.0)
+    assert pacer._next_allowed_at == pytest.approx(150.0)
+    # A shorter deferral must not pull an outstanding longer gap forward.
+    pacer.defer(1.0)
+    assert pacer._next_allowed_at == pytest.approx(150.0)
+
+
+# ---------------------------------------------------------------------------
+# the tracked runner template (plan §2.2)
+# ---------------------------------------------------------------------------
+
+
+_RUNNER = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "broker_probes"
+    / "runners"
+    / "run_p_ca.sh"
+)
+
+#: Sourcing this would print the sentinel. A guard that fires "before any
+#: credential sourcing" is only worth the words if its absence is observable.
+_CREDENTIAL_SENTINEL = "CREDENTIAL_FILE_WAS_SOURCED"
+
+
+def test_runner_template_is_tracked_and_executable() -> None:
+    """It is in the repository at all — the 09-30 runner was not, and deleted
+    itself, so the review could not say which script had run."""
+    import os
+
+    assert _RUNNER.is_file(), _RUNNER
+    assert os.access(_RUNNER, os.X_OK), f"{_RUNNER} is not executable"
+
+
+def test_runner_template_parses() -> None:
+    import subprocess
+
+    result = subprocess.run(
+        ["bash", "-n", str(_RUNNER)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_runner_template_passes_shellcheck_when_it_is_available() -> None:
+    import shutil
+    import subprocess
+
+    shellcheck = shutil.which("shellcheck")
+    if shellcheck is None:
+        pytest.skip("shellcheck is not installed")
+    result = subprocess.run(
+        [shellcheck, "--severity=warning", str(_RUNNER)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_runner_template_carries_no_instance_defaults() -> None:
+    """Every ``PCA_*`` instance value must be read WITHOUT a ``:-`` default.
+    A default is how one trial's symbol, window or fingerprint silently
+    becomes the next trial's."""
+    text = _RUNNER.read_text(encoding="utf-8")
+    defaulted = set(re.findall(r"\$\{(PCA_[A-Z_]+):-[^}]*\}", text))
+    # The only PCA_* variables allowed a default are the three switches, whose
+    # default is "off" rather than an instance value.
+    assert defaulted <= {
+        "PCA_ALLOW_SHARED_CHECKOUT",
+        "PCA_REFERENCE_CHECK",
+        "PCA_CRON_MARK",
+        "PCA_EFFECTIVE",
+        "PCA_LOG",
+    }, defaulted
+
+
+def test_runner_template_never_removes_itself() -> None:
+    """2026-09-30: the runner self-deleted after its first run, so attempts 3
+    and 4 went out through a hand-made copy."""
+    text = _RUNNER.read_text(encoding="utf-8")
+    assert re.search(r"(?<![\w-])rm(?![\w-])", text) is None, "the runner runs rm"
+    # ``$0`` is legitimate exactly once — deriving the checkout from the
+    # script's own location. Anywhere else it is the script talking about
+    # itself, which is how the 09-30 runner deleted itself.
+    self_references = [line for line in text.splitlines() if "$0" in line]
+    assert len(self_references) == 1, self_references
+    assert "SCRIPT_DIR=" in self_references[0], self_references
+
+
+def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
+    """A throwaway git checkout holding a copy of the template, so the guards
+    can be exercised against a real ``git`` rather than a stubbed one."""
+    import shutil
+    import subprocess
+
+    repo = tmp_path / "repo"
+    (repo / "tools" / "broker_probes" / "runners").mkdir(parents=True)
+    shutil.copy2(_RUNNER, repo / "tools/broker_probes/runners/run_p_ca.sh")
+    (repo / "tools/broker_probes/probes_ca.py").write_text(
+        "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
+    )
+
+    def git(*argv: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(repo), *argv],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(repo)], check=True, capture_output=True
+    )
+    git("config", "user.email", "probe@example.invalid")
+    git("config", "user.name", "probe")
+    git("add", "-A")
+    git("commit", "-q", "-m", "runner")
+    if detached:
+        git("checkout", "-q", "--detach", "HEAD")
+    if dirty:
+        (repo / "untracked.txt").write_text("x", encoding="utf-8")
+    return repo
+
+
+def _publish_origin_main(repo: Path, ref: str = "HEAD") -> None:
+    """Point ``refs/remotes/origin/main`` at ``ref`` without a real remote."""
+    import subprocess
+
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", sha],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _run_runner(repo: Path, tmp_path: Path) -> Any:
+    import subprocess
+
+    env_file = tmp_path / "creds.env"
+    env_file.write_text(f"echo {_CREDENTIAL_SENTINEL}\n", encoding="utf-8")
+    env = {
+        "PATH": __import__("os").environ["PATH"],
+        "HOME": str(tmp_path),
+        "PCA_LOG": str(tmp_path / "run.log"),
+        "PCA_ENV_FILE": str(env_file),
+        "PCA_KIS_ENV": "mock",
+        "PCA_SYMBOL": "000660",
+        "PCA_EVENT_CLASS": "cash_dividend",
+        "PCA_PAYABLE": "2020-01-01T00:00:00+09:00",
+        "PCA_WINDOW_S": "60",
+        "PCA_POLL_MS": "30000",
+        "PCA_PACE_S": "1.5",
+        "PCA_EXPECT_KEY_FP": "deadbeefcafe",
+        "PCA_EXPECT_ACCOUNT_FP": "0123456789ab",
+        "PCA_TOKEN_CACHE": str(tmp_path / "token-cache"),
+        "PCA_EVIDENCE_DIR": str(tmp_path),
+        "PCA_NOTE": "runner guard test",
+    }
+    return subprocess.run(
+        ["bash", str(repo / "tools/broker_probes/runners/run_p_ca.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+
+
+def test_runner_aborts_on_a_checkout_that_is_not_detached(tmp_path: Path) -> None:
+    """#793: a shared checkout lets a parallel lane move the branch under a
+    running probe, and ``repo_commit`` is then stamped with a non-main commit.
+    The guard must fire BEFORE the credential file is sourced."""
+    repo = _runner_repo(tmp_path, detached=False, dirty=False)
+    result = _run_runner(repo, tmp_path)
+
+    assert result.returncode != 0
+    assert "ABORT:" in result.stdout
+    assert "not a detached worktree" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+
+
+def test_runner_aborts_on_a_dirty_checkout(tmp_path: Path) -> None:
+    """The 00:20 cron attempt on 2026-09-30 died here — correctly — on an
+    untracked backup file in the shared checkout. Same guard, still before any
+    credential sourcing."""
+    repo = _runner_repo(tmp_path, detached=True, dirty=True)
+    result = _run_runner(repo, tmp_path)
+
+    assert result.returncode != 0
+    assert "ABORT:" in result.stdout
+    assert "is dirty" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+
+
+def test_runner_override_skips_the_checkout_guards_and_says_so(
+    tmp_path: Path,
+) -> None:
+    """The escape hatch exists (plan §5) but is never silent: with it the run
+    gets past the dirty/branch guards and is logged as an override."""
+    import subprocess
+
+    repo = _runner_repo(tmp_path, detached=False, dirty=True)
+    env_file = tmp_path / "creds.env"
+    env_file.write_text("true\n", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", str(repo / "tools/broker_probes/runners/run_p_ca.sh")],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": __import__("os").environ["PATH"],
+            "HOME": str(tmp_path),
+            "PCA_ALLOW_SHARED_CHECKOUT": "1",
+        },
+        cwd=str(tmp_path),
+    )
+    assert "PCA_ALLOW_SHARED_CHECKOUT=1" in result.stdout
+    assert "SKIPPED" in result.stdout
+    # It still stops: the next guard is the required-env check, which has no
+    # instance defaults to fall back on.
+    assert result.returncode != 0
+    assert "required env PCA_LOG is unset" in result.stdout
+
+
+def test_runner_aborts_when_head_is_not_an_ancestor_of_origin_main(
+    tmp_path: Path,
+) -> None:
+    """The third checkout guard, with the input that actually trips it: a
+    detached, clean worktree carrying a commit that never reached
+    ``origin/main``. Evidence has to be produced by merged code (#793)."""
+    import subprocess
+
+    repo = _runner_repo(tmp_path, detached=True, dirty=False)
+    _publish_origin_main(repo)
+    (repo / "local-only.txt").write_text("x", encoding="utf-8")
+    for argv in (
+        ["add", "-A"],
+        ["commit", "-q", "-m", "not on origin/main"],
+    ):
+        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True)
+
+    result = _run_runner(repo, tmp_path)
+    assert result.returncode != 0
+    assert "is not an ancestor of origin/main" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+
+
+def test_runner_accepts_a_clean_detached_ancestor_checkout(tmp_path: Path) -> None:
+    """The other direction: the guards must not be a blanket refusal. A clean,
+    detached checkout that IS an ancestor of origin/main gets past all three
+    and stops at the next gate instead — which here is the missing python."""
+    repo = _runner_repo(tmp_path, detached=True, dirty=False)
+    _publish_origin_main(repo)
+
+    result = _run_runner(repo, tmp_path)
+    assert "checkout ok:" in result.stdout
+    assert "required probes_ca.py fixes present" in result.stdout
+    assert "ABORT: no python at" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+
+
+def test_runner_aborts_when_the_checkout_lacks_the_transient_retry_fix(
+    tmp_path: Path,
+) -> None:
+    """A checkout without the fix this trial depends on must not be used to
+    produce evidence — the 2026-09-30 runner already guarded ``pacer.derive(``
+    for the same reason, and the retry policy joins it."""
+    repo = _runner_repo(tmp_path, detached=True, dirty=False)
+    (repo / "tools/broker_probes/probes_ca.py").write_text(
+        "pacer.derive(\n", encoding="utf-8"
+    )
+    import subprocess
+
+    for argv in (["add", "-A"], ["commit", "-q", "-m", "drop the retry fix"]):
+        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True)
+    _publish_origin_main(repo)
+
+    result = _run_runner(repo, tmp_path)
+    assert result.returncode == 4
+    assert "missing '_BAL_TRANSIENT'" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
