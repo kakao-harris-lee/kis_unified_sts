@@ -105,7 +105,8 @@ if mode != "wal": raise (부팅 거부 — 조용히 롤백 저널로 돌지 않
   기본 5 s, rcl 은 주입값). ⚠ **정정(리뷰 F4)**: 그 timeout **하나**가 상한은 아니다. 첫 PRAGMA 자체가 기다릴
   수 있고(SHARED/EXCLUSIVE 획득은 busy handler 를 탄다 — 건너뛰는 것은 RESERVED 승급뿐), 그 뒤
   `BEGIN IMMEDIATE` 가 기다리고, 재시도 PRAGMA 가 또 기다린다. 거부까지 최악 **약 3배**(기본값이면 ~15 s)다.
-  부팅 데드라인은 5 s 가 아니라 이 값에 맞춰 잡을 것.
+  부팅 데드라인은 5 s 가 아니라 이 값에 맞춰 잡을 것 — 스토어 넷을 순차로 열면 **~60 s** 다.
+  그 침묵을 깨기 위해 재시도 경로에 로그 한 줄을 넣었다(라운드-2 F6, §7.10) — 설정 노브는 없다.
 - 런타임 소스 변경 → digest 재도출.
 
 ## 6. 운영자 확인
@@ -188,13 +189,13 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/runtime/tests -p no:cacheprovider` | 최초 **3226 passed**(8:24) · 리뷰 처분 뒤 **3228 passed**(4:23, 새 테스트 2건). ⚠ digest 재도출 **전**에는 stale `expected_code_digest` 때문에 compose·recovery **184건**이 `ReleaseAdmissionRefused` 로 red 였다 — 런타임 소스를 바꾸면 이 스위트는 digest 를 다시 찍기 전까지 green 이 될 수 없다 |
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9601 passed** (1:57, 커널 무변경 확인) |
+| `pytest tos/runtime/tests -p no:cacheprovider` | 최초 **3226 passed**(8:24) · 리뷰 처분 뒤 **3228 passed**(4:23) · 라운드-2 처분 뒤 **3232 passed**(4:26, 새 테스트 누적 6건). ⚠ digest 재도출 **전**에는 stale `expected_code_digest` 때문에 compose·recovery **184건**이 `ReleaseAdmissionRefused` 로 red 였다 — 런타임 소스를 바꾸면 이 스위트는 digest 를 다시 찍기 전까지 green 이 될 수 없다 |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9601 passed** (1:55, 커널 무변경 확인 — 라운드-2 뒤 재실행) |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
 | `mypy tos/runtime/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 238 source files` |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 265 source files` |
 | `mypy tos/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 585 source files` |
-| `ruff check` (변경 `*.py` 9개) | `All checks passed!` |
+| `ruff check tos/runtime/src tos/runtime/tests` | `All checks passed!` |
 | `black --check tos/src tos/tests tos/runtime/src tos/runtime/tests tools/tos_*.py tests/tools/test_tos_*.py tests/tools/test_u17_verify.py` (CI 스텝 그대로) | `1299 files would be left unchanged` |
 | `python tools/tos_firewall_check.py` | `PASS — no import-firewall violations` |
 | `lint-imports` | `Contracts: 3 kept, 0 broken` |
@@ -203,12 +204,13 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 
 ### 7.6 digest
 
-`expected_code_digest`: **d75a3616 → e4cf4908 → 569aac29**
-(`569aac29e8de8797327a88992c1b0428b5846253ef0b401985284aede75e05b7`).
-두 번 도출했다 — 19차는 최초 구현(`968a4885`), 20차는 리뷰 처분 §7.8 의 F2 수정과 F3·F4 독스트링
-정정을 담는다. 매번 `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다.
+`expected_code_digest`: **d75a3616 → e4cf4908 → 569aac29 → f2ab3d49**
+(`f2ab3d49efa9b541a45ae7e18841617592e20e869dbde20b48d354f50459b811`).
+세 번 도출했다 — 19차는 최초 구현(`968a4885`), 20차는 리뷰 처분 §7.8(F2 판별자 + F3·F4 독스트링),
+21차는 라운드-2 처분 §7.10(F3 생성자 가드 · F2 구조 · F6 로그 · 예산 분해). 매번 `print-digests` 와
+`observe_source_tree_digest()` 두 경로가 일치했다.
 `expected_dependency_set_digest` 는 무변경(`20559763…`). 갱신은 두 곳 —
-`config/tos_runtime/paper/release.yaml`(19·20차 재측정 주석 포함)과
+`config/tos_runtime/paper/release.yaml`(19·20·21차 재측정 주석 포함)과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
 
 ⚠ **#822(#821 수정)가 이 PR 보다 먼저 머지된다.** 그쪽도 런타임 소스를 바꾸므로, 머지 뒤 이 브랜치는
@@ -268,3 +270,37 @@ M3 가 red 가 되는 근거는 **문장 로그**다 — 올라오는 예외는 
 **교훈(기록용).** 「p < 1e-20」은 계산은 맞았고 **어느 비율에 대입했는지가 틀렸다** — 맨 PRAGMA 로 잰
 값을 실제로 구동하는 생성자 경로의 보장으로 썼다. 확률 경계를 적는 가드는 **그 숫자가 어느 실측에서
 왔는지**를 같은 줄에 적어야 한다. [[guards-that-admit-what-they-name]] 계열의 같은 실패 형태다.
+
+### 7.10 라운드-2 리뷰 처분 (독립 리뷰 high, 2026-09-30 · 6건)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | `expected_code_digest` 는 이 브랜치 트리에만 유효 — #822 가 먼저 머지되면 나중에 들어가는 쪽이 stale digest 를 싣는다. **CI 는 못 잡는다**(`tests/compose/conftest.py` 의 `EXPECTED_CODE_DIGEST = observe_source_tree_digest()` 가 살아 있는 트리에서 다시 계산하고, `_VALUE_PINS` 는 커밋된 두 문자열끼리만 비교한다 — 실측 확인) | **연기(해소 예정).** 알고 있는 사항이고 §7.6 · INDEX · PR 본문에 이미 적혀 있다. **#822 머지 뒤 `git merge origin/main` + 마지막 재도출**로 닫는다. 지금 할 수 있는 것이 없다 — 병합 트리가 존재하지 않는다 |
+| F2 | 대기·재시도가 `except` **안**에서 돌아, 두 번째 실패가 처리 완료된 첫 `SQLITE_BUSY` 를 `__context__` 로 달고 「During handling of the above exception」 로 연쇄 출력된다 | **수정.** `except` 는 분류만 하고 플래그를 세운다. 대기·재시도는 블록 **밖**(`_wait_out_the_lock_and_retry`). 거부 테스트가 `__context__ is None`·`__cause__ is None` 을 단언하고, 옛 구조에서 red |
+| F3 | 네 생성자가 `self._conn` 을 열고 바로 실패 가능 코드를 부르는데 try/close 가 없다 — 거부된 부팅이 열린 연결(과 -wal·-shm)을 남긴다. refcount 로도 안 닫힌다(예외 traceback 이 프레임을 잡고 있다) | **수정.** 네 생성자 모두 「WAL 전환 ~ 생성 끝」을 `try/except BaseException: self._conn.close(); raise` 로 감쌌다. 스토어별 파라미터 테스트가 거부 뒤 연결이 닫혔는지 단언(traceback 으로 그 연결 객체에 도달 — `/proc` 미사용, 플랫폼 무관). close 를 빼면 4/4 red |
+| F4 | 독스트링이 `SQLITE_LOCKED` 테스트 객체를 「잡아온 진짜 오류」라고 하는데 실제로는 **조작**이다 | **수정(정직한 쪽).** 「이것 하나는 조작이다」를 두 독스트링에 명시하고, 여기서만 타당한 이유(**음성** 방향 단언 — 조작된 객체가 「재시도 안 함」을 통과시킬 수는 없다)를 함께 적었다 |
+| F5 | 20라운드 근거가 4/80 **점추정**이고 라운드 내 opener 실패가 독립이 아니다 — 신뢰구간 하단(~1.4 %)이면 깨진 코드가 ~10 % 확률로 green | **수정(근거 교체).** 모델링 대신 **라운드 단위 clean 비율을 직접 실측**했다(40라운드×8, §7.11). 최악 rcl q=0.600 → 20라운드 3.7e-5, 95 % Wilson **상한** q=0.737 로도 2.2e-3 < 1 %. 라운드 수 변경 불필요 → 벽시계 비용 0 |
+| F6 | 스토어당 최악 ~3배 timeout, 넷이면 ~60 s 를 **아무 기록 없이** 블록한다 — 시작 예산이 짧은 supervisor 는 fail-closed 거부가 출력되기 전에 프로세스를 죽인다 | **수정.** 재시도 경로에서 `logging.WARNING` 한 줄(파일명 + 「대기 상한은 이 연결의 busy timeout」). ⚠ **`tos_runtime` 최초의 logging 사용** — 기존 채널이 CLI 의 `print(stderr)` 뿐이라 라이브러리 모듈이 쓸 것이 없었고, `logging.lastResort` 가 핸들러 없이도 stderr 로 내보내므로 **설정 키 0** 으로 운영자에게 닿는다. 설정 노브는 만들지 않았다 |
+
+기각 0건. 연기 1건(F1).
+
+**부수(리뷰의 findings cap 밖 메모, 실재 확인함).** `tools/tos_evidence_run.py` 가
+`tos/src/tos/staterestore/store.py` 를 **AST 로 파싱해** `execute(...)` 인자의 리터럴
+`PRAGMA journal_mode=WAL`·`synchronous=FULL` 을 요구한다(설계 §6.2 게이트 3). 따라서 **#823 에서
+커널 스토어에 같은 헬퍼 리팩터를 적용하면 그 게이트가 조용히 red 가 된다** — 이슈에 코멘트로 적었다.
+
+### 7.11 라운드 단위 clean 비율 실측 (F5 근거)
+
+수정 전 트리(맨 PRAGMA), 스토어별 **40라운드 × 8프로세스**, 「손실 자녀 0인 라운드」 수:
+
+| 스토어 | 손실 자녀 | clean 라운드 | q | 95 % Wilson 상한 | 1 % 미만에 필요한 라운드(q / 상한) | 20라운드 green 확률(상한 기준) |
+|---|---|---|---|---|---|---|
+| evidence | 98/320 | 13/40 | 0.325 | 0.480 | 4.1 / 6.3 | 4.2e-7 |
+| inbox | 54/320 | 15/40 | 0.375 | 0.530 | 4.7 / 7.2 | 3.0e-6 |
+| marketfeed | 49/320 | 14/40 | 0.350 | 0.505 | 4.4 / 6.7 | 1.2e-6 |
+| **rcl** | 47/320 | **24/40** | **0.600** | **0.737** | **9.0 / 15.1** | **2.2e-3** |
+
+이것이 F1·F5 가 두 번 놓친 **올바른 양**이다. 라운드 내 opener 실패는 독립이 아니고(누군가는 전환에
+이긴다 — 8 중 최대 7 만 질 수 있다) 한 라운드가 통째로 green 이어야 테스트가 통과하므로, 측정해야 할
+것은 opener 비율이 아니라 **라운드 clean 비율**이다. 20은 점추정으로도 상한으로도 1 % 아래인 가장
+가까운 라운드 수다(상한 기준 필요 라운드 15.1).
