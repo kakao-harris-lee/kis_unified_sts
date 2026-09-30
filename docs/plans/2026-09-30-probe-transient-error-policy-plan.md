@@ -112,4 +112,91 @@
 
 ## 7. 착지 기록
 
-(구현 PR 에서 채운다.)
+### 7.1 바뀐 파일
+
+| 파일 | 무엇 |
+|---|---|
+| `tools/broker_probes/probes_ca.py` | `_BAL_TRANSIENT` 분류(전송 예외 · `EGW00215`) · `_Pacer.defer` · `_read_balance_retrying` / `_ksdinfo_get_retrying` · `_Retries` · `_STOP_TRANSIENT` · `_StopRun` |
+| `tools/broker_probes/runners/run_p_ca.sh` | 추적되는 러너 템플릿(신규) |
+| `tools/broker_probes/runners/README.md` | 분리 워크트리에서 인스턴스화하는 법(신규) |
+| `tests/tools/test_broker_probes_ca.py` | 새 테스트 25건(§7.3) |
+
+### 7.2 구현이 계획과 다른 점
+
+- **분류를 한 상수가 아니라 두 상태 문자열로 넣었다.** `_BAL_TRANSIENT` 는 접두사로 남기고
+  `_read_balance` 는 `TRANSIENT:transport` / `TRANSIENT:ledger_throttle` 을 돌려준다. 이유는
+  기존 6-튜플의 arity 를 그대로 두기 위해서다 — 7번째 원소를 붙이면 기존 호출부와 기존
+  테스트가 전부 손을 타고, 「`EGW00201`/429 는 바이트 단위로 그대로」라는 이 PR 의 회귀
+  조건을 검사할 기준 자체가 흔들린다.
+- **대기는 `_Pacer.defer(effective_poll_ms)`** 로 넣었다. `wait()` 만으로는 부족하다:
+  실패한 시도가 **나가기 전에** 이미 간격을 예약해 두므로, 20 s read timeout 이 끝난 시점에
+  pacer 가 남겨둔 빚은 30 s 간격 중 10 s 뿐이다(09-30 3차의 실제 모양). `defer` 는 지금
+  시점에서 한 간격을 다시 잰다. 새 상수는 0 — 길이는 `effective_poll_ms` 이고, 잠은
+  여전히 `wait()` 한 곳에서만 잔다. 기준선·참조조회도 같은 길이를 쓴다(세 단계가 같은
+  「한 폴링 간격」이어야 판독자가 보정할 수 있다).
+- **전송 예외 발췌에서 query string 을 지운다.** `requests` 의 `ConnectionError` 는 실패한
+  URL 을 통째로 렌더링하고 그 URL 에는 `CANO`(계좌번호)가 들어 있다. `redact()` 는 필드
+  **이름**으로 동작해 raw 문자열 안으로 못 들어가고, 발췌 상한은 길이만 자른다 — 그대로
+  두면 커밋되는 증거 말뭉치에 계좌번호가 들어간다. 계획에 없던 조치이고, 테스트
+  `test_a_transport_excerpt_never_carries_the_request_query_string` 가 지킨다.
+- **참조조회의 2연속 일시 오류는 런을 멈춘다.** 계획은 「지금처럼 중단」이라고만 했는데
+  참조조회의 「지금」은 전송 예외가 프로브 밖으로 새어 `run.py` rc 5 로 끝나는 것이었다.
+  `_StopRun` 으로 정중히 멈춰 아티팩트를 남긴다.
+- **러너 템플릿에 계획에 없던 것 둘.** (a) `PCA_EVENT_CLASS` 가 `cash_dividend` 가 아니면
+  `PCA_EFFECTIVE` 를 요구한다 — 없으면 수량 leg 이 조용히 추적되지 않는다. (b) 실행 전
+  results 디렉터리의 최신 아티팩트를 기억해 두고, 실행 뒤에도 그것이 최신이면 **복사하지
+  않는다** — `ls -t | head -1` 은 프로브가 아무것도 안 썼을 때 남의 시행을 증거로 복사한다.
+
+### 7.3 테스트와 수정 전 red 증명
+
+새 테스트 25건(+ shellcheck 미설치 시 skip 1건). 전부 **수정 전 코드에서 red** 임을 실측했다
+— `probes_ca.py` 를 `origin/main` 판으로 되돌리고 러너 템플릿을 치운 뒤 한 번 돌린 결과:
+
+| 테스트 | 수정 전 실패 |
+|---|---|
+| 전송 timeout 1회 → 재시도 → OBSERVED | `requests.exceptions.ReadTimeout` 이 프로브 밖으로 탈출 |
+| 전송 timeout 2연속 → `_STOP_TRANSIENT` | 같음(탈출) |
+| 기준선 전송 timeout 1회/2연속 | 같음(탈출) |
+| 참조조회 전송 timeout 1회/2연속 | 같음(탈출) |
+| 재시도 대기 = 한 폴링 간격 | 같음(탈출) |
+| query string 미기록 | 같음(탈출, 그리고 계좌번호가 메시지에 있다) |
+| `EGW00215` 1회 → 재시도 | `assert ["poll #1 rejected: … msg_cd='EGW00215'"] == []` |
+| `EGW00215` 2연속 → `_STOP_RATE_LIMITED` | `assert 'rejected' == 'rate_limited'` |
+| 「재시도 0」도 명시한다 | `KeyError: 'retries'` |
+| 일시 집합은 timeout·connection 뿐 | `AttributeError: … no attribute '_transport_transient_types'` |
+| `defer` 는 지금부터 재고 줄이지 않는다 | `AttributeError: '_Pacer' object has no attribute 'defer'` |
+| 러너 템플릿 10건 | 파일 부재(`FileNotFoundError` / `No such file or directory`) |
+
+**정직하게 적어둘 것 하나**: `EGW00201`/429 회귀 핀 2건도 수정 전에 red 지만, 사유는
+`KeyError: 'retries'` 다 — 즉 「재시도하지 않는다」는 **행동** 자체는 수정 전에도 옳았다.
+이 두 건은 결함을 잡는 테스트가 아니라 **바뀌지 말아야 할 것을 고정하는 핀**이고, 그것이
+이 핀의 용도다(정책이 넓어지면 `len(session.calls) == 2` 와 `_retry_records(run) == []` 가
+먼저 깨진다).
+
+러너 가드는 **양방향**으로 확인한다: dirty · 비분리 · `origin/main` 비조상 · 수정 누락이
+각각 ABORT 하고(그리고 **자격증명 파일을 source 하기 전에** 그렇게 한다 — 센티널 문자열로
+확인), clean·분리·조상 체크아웃은 세 가드를 **통과**해 다음 게이트에서 멈춘다.
+
+### 7.4 게이트
+
+```
+.venv/bin/pytest tests/tools/test_broker_probes_ca.py \
+  tests/tools/test_broker_probes_pacing.py \
+  tests/tools/test_broker_probes_balance.py -q -p no:cacheprovider
+  → 156 passed, 1 skipped (shellcheck 미설치)
+
+ruff check tools/broker_probes tests/tools     → All checks passed!
+black --check (변경 파일 2건)                   → 2 files would be left unchanged
+```
+
+`mypy tools/broker_probes` 는 **CI 게이트가 아니다** — `.github/workflows/test.yml` 의
+`type-check` 잡은 `mypy shared/` 만 돌리고 그나마 `continue-on-error: true` 다. 참고로
+`probes_ca.py` 단독 검사는 수정 전후 모두 무오류였다(`tools/` 에 `__init__.py` 가 없어
+디렉터리 단위 실행은 수정과 무관하게 모듈 경로 충돌로 실패한다).
+
+### 7.5 남은 것
+
+- §4 그대로: P-8 공존 폴링(`probes_order.py`)의 「전송 오류 → STOP」 전이는 이 PR 범위 밖.
+  P-8 3~5회차 재개 조건으로 남는다.
+- `EGW00215` 의 원인(모의 서버 공용 스로틀 가설)은 여전히 관측만 있고 단정하지 않는다.
+- 3차 관측 대상(058610 에스피지, 지급일 재확인 필요)을 이 템플릿으로 예약할지는 운영자 결정.
