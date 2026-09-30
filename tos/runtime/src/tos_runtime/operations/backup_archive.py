@@ -185,20 +185,33 @@ def _refuse_unexpected_members(
         )
 
 
-def _refuse_unreadable(archive_path: Path, exc: BaseException) -> BackupArchiveRefused:
+def _refuse_unreadable(
+    archive_path: Path, detail: str, *, verify_dir: Path | None = None
+) -> BackupArchiveRefused:
     """The one "the bytes would not come back" refusal, raised from both read paths.
 
     Shared so that where the rot fell never changes what the operator is told: the integrity
     pass and the extraction below report the same fact in the same words.
+
+    ``verify_dir`` is named only when this call actually left one behind, which is the promise
+    :func:`verify_archive`'s docstring makes ("kept on failure … every refusal names it"). The
+    integrity pass runs before the directory is created, so it has nothing to point at and
+    says nothing — and, because it created nothing, a retry with the same ``--verify-dir`` is
+    not blocked by an empty leftover.
     """
+    kept = (
+        f". The decompressed copy is kept at {verify_dir} for inspection"
+        if verify_dir is not None
+        else ""
+    )
     return BackupArchiveRefused(
-        f"verify_archive: {archive_path} could not be read back ({exc!r}) — the archive "
-        "is not a usable backup; refused"
+        f"verify_archive: {archive_path} could not be read back ({detail}) — the archive "
+        f"is not a usable backup; refused{kept}"
     )
 
 
 def _require_intact_xz_stream(archive_path: Path) -> None:
-    """Decompress the whole xz stream, discarding it, so its integrity check ALWAYS runs.
+    """Decode the whole xz stream, discarding it, so its integrity check ALWAYS runs.
 
     ``tarfile``'s ``r:xz`` reads only as far as the tar end-of-archive marker, and xz verifies a
     block's CRC only once that block ENDS. Two consequences, both measured on a real archive
@@ -207,22 +220,67 @@ def _require_intact_xz_stream(archive_path: Path) -> None:
     * Rot past the point the tar reader stops at — the record padding after the end-of-archive
       marker, the stream index, the 12-byte stream footer — was never decoded at all, so a
       **corrupt archive verified clean** and got renamed out of ``.partial`` as if it were a
-      usable backup. It is not: ``xz -d`` refuses it, so the cold copy would be found dead at
+      usable backup. It is not: ``xz -t`` refuses it, so the cold copy would be found dead at
       the one moment it is needed.
     * Rot inside a tar HEADER makes the reader stop early (a garbled header can read as the
       end-of-archive marker), so the refusal arrived from the manifest comparison instead of
       from here, and which of the two fired depended on where the byte fell.
 
-    Reading to EOF first collapses both into one deterministic outcome, before anything is
-    extracted. The cost is one extra decompression pass; it reads
+    Three things this deliberately does NOT delegate to :func:`lzma.open`, each measured
+    against ``xz -t`` on the same bytes (review 2026-09-30 findings 2-3):
+
+    * **A raw** :class:`lzma.LZMADecompressor`, **not** :class:`lzma.LZMAFile`. That file
+      wrapper treats bytes after a complete stream as a possible second stream and, when they
+      do not parse as one, *silently ignores them* (``_compression.DecompressReader``'s
+      ``except self._trailing_error: break``). A valid stream with garbage appended therefore
+      read back clean while ``xz -t`` reported "Compressed data is corrupt" — the same
+      fail-open this function exists to close, one layer up. ``unused_data`` plus a probe read
+      of the file catch it here. This necessarily also refuses a legitimately CONCATENATED
+      multi-stream xz file: nothing this module writes is one (``tarfile``'s ``w:xz`` emits a
+      single stream), and for a cold archive someone re-packed that way, refusing and asking
+      for a single-stream copy is the fail-closed answer.
+    * **``format=FORMAT_XZ``, pinned.** The default ``FORMAT_AUTO`` also accepts a
+      ``.lzma``-alone container, which carries no integrity check at all; a re-packed archive
+      in that container would pass this pass with nothing ever checksummed.
+    * **``CHECK_NONE`` refused.** An xz stream can be written with no check
+      (``xz --check=none``); decoding it proves only that the LZMA2 filter chain parsed.
+      Archives this module writes always carry CRC64 (measured: ``check == CHECK_CRC64``), so
+      this rejects nothing it produces — it rejects a cold archive someone re-packed weaker,
+      which :func:`verify_archive` is public to re-check months later.
+
+    Reading to the end first collapses all of it into one deterministic outcome, before
+    anything is extracted. The cost is one extra decode pass; it holds
     :data:`_INTEGRITY_CHUNK_BYTES` at a time and keeps nothing.
     """
+    decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
     try:
-        with lzma.open(archive_path, "rb") as stream:
-            while stream.read(_INTEGRITY_CHUNK_BYTES):
-                pass
+        with archive_path.open("rb") as raw:
+            while not decompressor.eof:
+                chunk = b""
+                if decompressor.needs_input:
+                    chunk = raw.read(_INTEGRITY_CHUNK_BYTES)
+                    if not chunk:
+                        raise EOFError(
+                            "the file ends before the xz stream's end-of-stream marker"
+                        )
+                decompressor.decompress(chunk, max_length=_INTEGRITY_CHUNK_BYTES)
+            # `unused_data` holds what was fed past the stream's end; anything still unread in
+            # the file counts too, since the last chunk may have stopped exactly at the end.
+            trailing = bool(decompressor.unused_data) or bool(raw.read(1))
     except (lzma.LZMAError, EOFError, OSError, ValueError) as exc:
-        raise _refuse_unreadable(archive_path, exc) from exc
+        raise _refuse_unreadable(archive_path, repr(exc)) from exc
+
+    if decompressor.check == lzma.CHECK_NONE:
+        raise _refuse_unreadable(
+            archive_path,
+            "the xz stream carries no integrity check (CHECK_NONE), so decoding it proves "
+            "nothing about its contents",
+        )
+    if trailing:
+        raise _refuse_unreadable(
+            archive_path,
+            "bytes follow the end of the xz stream — the file is not exactly one archive",
+        )
 
 
 def _extract_archive(
@@ -232,9 +290,13 @@ def _extract_archive(
 
     ``filter="data"`` is what keeps a member from escaping ``verify_dir`` (absolute paths,
     ``..`` components, links) — never a hand-rolled path check.
+
+    The integrity pass runs BEFORE ``verify_dir`` is created: an archive whose bytes will not
+    come back has nothing to decompress into, and creating the directory first left an empty
+    one behind that then blocked the operator's retry (review 2026-09-30 finding 4).
     """
-    verify_dir.mkdir(parents=True)
     _require_intact_xz_stream(archive_path)
+    verify_dir.mkdir(parents=True)
     try:
         with tarfile.open(archive_path, mode="r:xz") as archive:
             archive.extractall(verify_dir, filter="data")
@@ -250,9 +312,14 @@ def _extract_archive(
         ) from exc
     # `lzma.LZMAError` is named explicitly: it derives straight from `Exception`, so byte rot
     # inside the xz stream escapes an `OSError`/`TarError` catch entirely — the first shape
-    # of corruption anyone tests, and the one that would otherwise propagate raw.
+    # of corruption anyone tests, and the one that would otherwise propagate raw. (The
+    # integrity pass above now reaches xz rot first; what is left here is a stream that
+    # decodes cleanly but is not a readable tar.) This refusal DOES name verify_dir: unlike
+    # the pass, it has created the directory and may have written members into it.
     except (lzma.LZMAError, tarfile.TarError, EOFError, OSError, ValueError) as exc:
-        raise _refuse_unreadable(archive_path, exc) from exc
+        raise _refuse_unreadable(
+            archive_path, repr(exc), verify_dir=verify_dir
+        ) from exc
 
     extracted = verify_dir / expected_manifest.name
     if (
@@ -297,10 +364,12 @@ def verify_archive(
 
     Three checks, each fail-closed:
 
-    1. The archive decompresses **to its end** — the whole xz stream is read and discarded
-       first (:func:`_require_intact_xz_stream`), so xz's own integrity check always runs
-       rather than only as far as the tar reader happens to go — and the manifest inside it is
-       byte-identical to ``manifest_path`` (``tarfile``'s ``r:xz``, ``filter="data"``).
+    1. The file is **exactly one intact xz stream**, decoded to its end and discarded before
+       anything is extracted (:func:`_require_intact_xz_stream`) — so xz's own integrity check
+       always runs, rather than only as far as the tar reader happens to go, and neither
+       trailing bytes nor a checkless container can pass for a verified archive. Then the
+       manifest inside it is byte-identical to ``manifest_path`` (``tarfile``'s ``r:xz``,
+       ``filter="data"``).
     2. Every member's sha256 equals the digest the :class:`BackupSetManifest` records — the same
        check :func:`~tos_runtime.operations.backup_set.restore_set` performs on a restore
        (mutation M1), moved onto the round trip. This is the one an archive's own xz CRC cannot

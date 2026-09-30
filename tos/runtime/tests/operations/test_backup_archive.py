@@ -109,25 +109,23 @@ def test_the_live_files_are_never_modified(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("label", "position"),
+    "position",
     [
         # An `int` is an index into the archive, negative counting from the end; a `float` is
         # a fraction of its length. Both are anchored to the xz FORMAT rather than to an
         # absolute byte offset, because the archive's size moves: tar headers carry mtimes, so
         # the same fixture compresses to slightly different bytes on every run. A single
         # absolute offset is what made this test flaky in CI (#821) while passing locally.
-        ("xz stream header", 7),
-        ("xz block header", 12),
-        ("compressed data, early", 0.1),
-        ("compressed data, midpoint", 0.5),
-        ("compressed data, late", 0.75),
-        ("xz stream footer flags", -4),
-        ("xz stream footer magic", -1),
+        pytest.param(7, id="xz-stream-header"),
+        pytest.param(12, id="xz-block-header"),
+        pytest.param(0.1, id="compressed-data-early"),
+        pytest.param(0.5, id="compressed-data-midpoint"),
+        pytest.param(0.75, id="compressed-data-late"),
+        pytest.param(-4, id="xz-stream-footer-flags"),
+        pytest.param(-1, id="xz-stream-footer-magic"),
     ],
 )
-def test_a_corrupted_archive_is_refused(
-    tmp_path: Path, label: str, position: int | float
-) -> None:
+def test_a_corrupted_archive_is_refused(tmp_path: Path, position: int | float) -> None:
     """Byte rot anywhere in the xz stream is refused, and by the SAME path wherever it fell.
 
     xz verifies a block's CRC only at the block's END, and ``tarfile``'s ``r:xz`` reads only as
@@ -150,7 +148,7 @@ def test_a_corrupted_archive_is_refused(
         verify_archive(
             archive_path,
             manifest_path,
-            tmp_path / f"verify-corrupt-{label.replace(' ', '-').replace(',', '')}",
+            tmp_path / "verify-corrupt",
             key_provider=FixedKeyProvider(),
         )
 
@@ -182,11 +180,16 @@ def test_rot_past_the_tar_end_of_archive_marker_is_refused(tmp_path: Path) -> No
     # First: the archive really is unreadable now.
     with pytest.raises(lzma.LZMAError):
         lzma.decompress(archive_path.read_bytes())
-    # Second: extraction alone still completes, and delivers every member. `extractall`
-    # iterates the tar LAZILY and stops at the end-of-archive marker, so it never decodes the
-    # rot behind it. (An eager `getmembers()` would — which is precisely why "some tar reader
-    # would have noticed" is not a check anything can rely on.) This is the exact call
-    # `_extract_archive` used to make on its own, and what it could not see.
+    # Second: extraction alone still completes, and delivers every member. This is the exact
+    # call `_extract_archive` makes; it walks the tar lazily, stops at the end-of-archive
+    # marker, and never decodes the rot behind it.
+    #
+    # Whether some OTHER tar walk would have noticed is not a property to rely on, and the
+    # asymmetry is the point: measured 2026-09-30, `getmembers()` RAISES `LZMAError` on this
+    # five-member fixture but returns cleanly on a smaller single-member archive, because what
+    # it sees depends only on how much of the stream the decompressor happened to buffer. So
+    # this test asserts the call the module actually makes, not the one that happens to catch
+    # it here.
     naive_dir = tmp_path / "naive-extract"
     naive_dir.mkdir()
     with tarfile.open(archive_path, mode="r:xz") as archive:
@@ -200,6 +203,133 @@ def test_rot_past_the_tar_end_of_archive_marker_is_refused(tmp_path: Path) -> No
             tmp_path / "verify-footer-rot",
             key_provider=FixedKeyProvider(),
         )
+
+
+def _repack(
+    archive_path: Path, target: Path, *, container: int, check: int = -1
+) -> Path:
+    """The SAME tar bytes, put back in a different xz container.
+
+    Every member is byte-identical to the archive :func:`archive_backup_set` wrote, so every
+    check downstream of the integrity pass passes. Only the container changed — which is what
+    makes these fixtures a test of the pass and nothing else.
+    """
+    tar_bytes = lzma.decompress(archive_path.read_bytes())
+    target.write_bytes(lzma.compress(tar_bytes, format=container, check=check))
+    return target
+
+
+def test_bytes_after_the_end_of_the_xz_stream_are_refused(tmp_path: Path) -> None:
+    """Review finding 2: the fail-open one layer up from the one #821 named.
+
+    A complete stream with bytes appended is not one archive, and ``xz -t`` refuses it
+    (measured: rc=1, "Compressed data is corrupt"). :func:`lzma.open` does not —
+    ``_compression.DecompressReader`` treats trailing bytes as a possible SECOND stream and,
+    when they do not parse as one, breaks out of its loop silently. Reading the archive
+    through :class:`lzma.LZMAFile` therefore reproduced exactly the fail-open the integrity
+    pass was added to close, so the pass drives a raw :class:`lzma.LZMADecompressor` and
+    inspects what is left over.
+
+    Every member here is intact, so nothing downstream would object: without this check the
+    archive passes verification whole.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    archive_path = Path(verification.archive_path)
+    archive_path.write_bytes(archive_path.read_bytes() + b"\x00appended\xff" * 4)
+
+    with pytest.raises(BackupArchiveRefused, match="could not be read back"):
+        verify_archive(
+            archive_path,
+            manifest_path,
+            tmp_path / "verify-trailing",
+            key_provider=FixedKeyProvider(),
+        )
+
+
+def test_a_lzma_alone_container_is_refused(tmp_path: Path) -> None:
+    """Review finding 3, first half: a container that carries no integrity check at all.
+
+    :func:`lzma.open`'s default ``FORMAT_AUTO`` accepts a ``.lzma``-alone stream, and
+    ``tarfile``'s ``r:xz`` extracts one happily (both measured), so a re-packed cold archive
+    in that container would be stamped integrity-checked with no checksum in the file to
+    check. The pass pins ``FORMAT_XZ``.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    repacked = _repack(
+        Path(verification.archive_path),
+        tmp_path / "alone.tar.xz",
+        container=lzma.FORMAT_ALONE,
+    )
+
+    with pytest.raises(BackupArchiveRefused, match="could not be read back"):
+        verify_archive(
+            repacked,
+            manifest_path,
+            tmp_path / "verify-alone",
+            key_provider=FixedKeyProvider(),
+        )
+
+
+def test_an_xz_stream_with_no_integrity_check_is_refused(tmp_path: Path) -> None:
+    """Review finding 3, second half: ``xz --check=none``.
+
+    Decoding such a stream proves only that the LZMA2 filter chain parsed — there is no
+    checksum over the contents, which is the whole thing this pass claims to run. Archives
+    this module writes always carry CRC64 (measured: ``LZMADecompressor.check ==
+    CHECK_CRC64``), so refusing ``CHECK_NONE`` rejects nothing it produces.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    repacked = _repack(
+        Path(verification.archive_path),
+        tmp_path / "nocheck.tar.xz",
+        container=lzma.FORMAT_XZ,
+        check=lzma.CHECK_NONE,
+    )
+
+    with pytest.raises(BackupArchiveRefused, match="could not be read back"):
+        verify_archive(
+            repacked,
+            manifest_path,
+            tmp_path / "verify-nocheck",
+            key_provider=FixedKeyProvider(),
+        )
+
+
+def test_an_unreadable_archive_leaves_no_verify_dir_to_block_the_retry(
+    tmp_path: Path,
+) -> None:
+    """Review finding 4: the integrity pass runs before ``verify_dir`` is created.
+
+    ``verify_archive``'s docstring promises the directory is "kept on failure … every refusal
+    names it". An archive whose bytes will not come back is decompressed into nothing, so
+    there is nothing to keep and nothing to name — and creating it first left an EMPTY
+    directory behind whose only effect was to make the operator's retry fail with
+    "verify_dir already exists" instead of naming the real fault.
+    """
+    _live_dir, _backups_dir, manifest_path = _prepare(tmp_path)
+    verification = _archive(tmp_path, manifest_path)
+    archive_path = Path(verification.archive_path)
+    raw = bytearray(archive_path.read_bytes())
+    raw[-1] ^= 0xFF
+    archive_path.write_bytes(bytes(raw))
+
+    verify_dir = tmp_path / "verify-rot"
+    for _attempt in range(2):
+        with pytest.raises(
+            BackupArchiveRefused, match="could not be read back"
+        ) as refusal:
+            verify_archive(
+                archive_path,
+                manifest_path,
+                verify_dir,
+                key_provider=FixedKeyProvider(),
+            )
+        # Named by its real fault both times, not by a leftover from the first attempt.
+        assert "already exists" not in str(refusal.value)
+        assert not verify_dir.exists()
 
 
 def test_an_archive_whose_content_was_swapped_is_refused_by_the_digest_check(
