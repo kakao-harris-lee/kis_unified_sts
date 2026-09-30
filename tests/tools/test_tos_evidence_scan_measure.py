@@ -1022,14 +1022,15 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
 
-    # A pgrep that reports a Gradle daemon exactly once the synthetic file exists — a
-    # competing build appearing after the run started. Tying the trigger to the file
-    # rather than to a call count makes the test deterministic: whenever it fires, there
-    # really is a build on disk to preserve.
+    # A pgrep that reports a Gradle daemon exactly once the `before` step's stdout file
+    # exists — that file is created by posix_spawn the instant the child starts, so the
+    # trigger lands in `before`, after `build` has finished and written the synthetic.
+    # Tying it to a file rather than to a call count keeps the test deterministic: the
+    # build really is complete and really is worth preserving whenever this fires.
     fake_pgrep = tmp_path / "fake-pgrep.sh"
     fake_pgrep.write_text(
         "#!/bin/sh\n"
-        f'[ -f "{synthetic}" ] && echo "4242 /usr/bin/java GradleDaemon"\n'
+        f'[ -f "{out_dir / "before-1d.out"}" ] && echo "4242 /usr/bin/java GradleDaemon"\n'
         "exit 0\n"
     )
     fake_pgrep.chmod(0o755)
@@ -1073,8 +1074,35 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
     # Whichever step the competing build lands in, the abort is recorded.
     aborted = sorted(out_dir.glob("ABORTED-*-1d.json"))
     assert aborted, "an abort must never be silent"
+    assert aborted[0].name == "ABORTED-before-1d.json"
     assert json.loads(aborted[0].read_text())["check"] == "competing_build"
     assert synthetic.exists(), "the aborted run deleted the build it had just paid for"
     log = (out_dir / "measure-1d.log").read_text()
     assert "KEPT synthetic" in log
-    assert "--steps" in log, "the log must say how to resume"
+    assert "--steps before,after" in log, "the log must say how to resume"
+
+
+def test_the_synthetic_disposition_says_the_right_thing_for_each_outcome(
+    tmp_path: Path,
+) -> None:
+    """The three branches of the keep/delete decision, including the one the CLI test
+    cannot reach deterministically (an abort DURING the build, which leaves a partial
+    file that must not be advertised as resumable)."""
+    path = tmp_path / "synth-365d.sqlite3"
+
+    done = driver.decide_synthetic_disposition(path, remaining=[], size_bytes=53 * _GB)
+    assert done.action == "delete"
+
+    partial = driver.decide_synthetic_disposition(
+        path, remaining=["build", "before", "after"], size_bytes=7 * _GB
+    )
+    assert partial.action == "keep-partial"
+    assert "INCOMPLETE" in partial.message
+    assert "--steps" not in partial.message, "a partial file is not resumable"
+
+    resumable = driver.decide_synthetic_disposition(
+        path, remaining=["before", "after"], size_bytes=53 * _GB
+    )
+    assert resumable.action == "keep-resumable"
+    assert "--steps before,after" in resumable.message
+    assert "53.00 GB" in resumable.message

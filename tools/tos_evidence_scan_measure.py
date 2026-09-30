@@ -91,7 +91,9 @@ __all__ = [
     "PreflightRecord",
     "SizeEstimate",
     "Step",
+    "SyntheticDisposition",
     "StepResult",
+    "decide_synthetic_disposition",
     "estimate_synthetic_size",
     "main",
     "plan_steps",
@@ -1078,6 +1080,54 @@ class PreflightRecord:
         return data
 
 
+@dataclass(frozen=True)
+class SyntheticDisposition:
+    """What to do with the synthetic file this run created, and what to tell the operator.
+
+    ``action`` is one of ``delete`` / ``keep-partial`` / ``keep-resumable``.
+    """
+
+    action: str
+    message: str
+
+
+def decide_synthetic_disposition(
+    path: Path, *, remaining: Sequence[str], size_bytes: int
+) -> SyntheticDisposition:
+    """Delete the synthetic file only when every planned step actually ran.
+
+    Plan §7.1.2 keeps peak disk at one file by deleting each size's synthetic DB once its
+    before/after pair is done. An abort is exactly when NOT to apply that: the watchdog
+    fires because the host is short of MEMORY, and deleting a 53 GB file does nothing for
+    memory while costing the operator the whole build (366 s at 365 days).
+
+    Two unfinished cases, because they need different advice:
+
+    * ``build`` still in ``remaining`` — the file is a PARTIAL write. It is not measurable
+      and the bench refuses to overwrite an existing ``--out``, so the honest instruction is
+      "delete it before rebuilding", not a resume that cannot work.
+    * ``build`` done, a measure step left — the file is complete and the run really is
+      resumable with ``--steps``.
+    """
+    size_gb = size_bytes / _GB
+    if not remaining:
+        return SyntheticDisposition("delete", f"removed synthetic {path}")
+    if "build" in remaining:
+        return SyntheticDisposition(
+            "keep-partial",
+            f"KEPT synthetic {path} ({size_gb:.2f} GB) — INCOMPLETE: the build step did not "
+            "finish, so this file is a partial write, not a measurable one. It is kept so "
+            "nothing is deleted behind your back; delete it before rebuilding (the bench "
+            "refuses to overwrite an existing --out).",
+        )
+    return SyntheticDisposition(
+        "keep-resumable",
+        f"KEPT synthetic {path} ({size_gb:.2f} GB) — the run did not finish, so the build "
+        "it already paid for is not thrown away. Once the host recovers, resume with "
+        f"--steps {','.join(remaining)}, then delete the file by hand.",
+    )
+
+
 def _disk_free(path: Path) -> int:
     """Free bytes on the filesystem that will hold ``path``, walking up to the nearest
     directory that exists (the synthetic file's parent is often not created yet)."""
@@ -1449,7 +1499,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             return 0
 
         created_synthetic = not args.synthetic.exists()
-        every_step_ran = False
+        completed: list[str] = []
         try:
             for step in steps:
                 run_step(
@@ -1461,31 +1511,25 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                     out_dir=out_dir,
                     log=log,
                 )
-            every_step_ran = True
+                completed.append(step.name)
         finally:
-            # Deleted only after the whole pair actually ran (plan §7.1.2: peak disk is one
-            # file). An abort is exactly when NOT to delete it: the watchdog fires because
-            # the host is short of memory, which throwing away a 53 GB / 6-minute build does
-            # nothing for, and the operator's cheapest recovery is to rerun the remaining
-            # steps against the file that already exists.
+            # Deleted only after every planned step actually ran (plan §7.1.2: peak disk is
+            # one file). An abort is exactly when NOT to delete it: the watchdog fires
+            # because the host is short of MEMORY, which throwing away a 53 GB / 366 s build
+            # does nothing for.
             if (
                 created_synthetic
                 and not args.keep_synthetic
                 and args.synthetic.exists()
             ):
-                if every_step_ran:
+                disposition = decide_synthetic_disposition(
+                    args.synthetic,
+                    remaining=[s.name for s in steps if s.name not in completed],
+                    size_bytes=args.synthetic.stat().st_size,
+                )
+                if disposition.action == "delete":
                     args.synthetic.unlink()
-                    log(f"removed synthetic {args.synthetic}")
-                else:
-                    remaining = ",".join(
-                        s.name for s in steps if s.name != steps[0].name
-                    )
-                    log(
-                        f"KEPT synthetic {args.synthetic} "
-                        f"({args.synthetic.stat().st_size / _GB:.2f} GB) — the run did not "
-                        "finish, so the build is not thrown away. Delete it by hand, or "
-                        f"resume once the host recovers with --steps {remaining or 'before,after'}"
-                    )
+                log(disposition.message)
             (out_dir / f"measure-{args.days}d.log").write_text(
                 "\n".join(log_lines) + "\n", encoding="utf-8"
             )
