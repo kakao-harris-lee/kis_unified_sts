@@ -85,9 +85,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Sequence
 from typing import NoReturn
+
+#: The FIRST logger in ``tos_runtime`` (review round-2 F6). Nothing in this package logged before,
+#: and nothing else does now — this one line exists because :func:`enable_wal_journal` can block
+#: for up to three busy timeouts per store, which on four stores is ~60 s of a boot that used to
+#: fail in milliseconds. A supervisor with a shorter start budget kills the process before the
+#: fail-closed refusal is ever printed, and the operator sees a boot that "hung" with no record of
+#: why. ``logging.lastResort`` sends WARNING and above to stderr with no handler configured, so
+#: this reaches an operator by default and stays silenceable without any config key of ours.
+_LOG = logging.getLogger(__name__)
 
 __all__ = [
     "SCHEMA_LEDGER_TABLE_SQL",
@@ -156,6 +166,22 @@ class JournalModeRefused(RuntimeError):
     """Raised at store construction when the file did NOT come out in ``journal_mode=WAL`` — a
     boot refusal, never a silent fallback to the rollback journal (:func:`enable_wal_journal`).
     """
+
+
+def _database_file(conn: sqlite3.Connection) -> str:
+    """The main database's filename, for the one log line — never for control flow.
+
+    ``PRAGMA database_list`` answers with the attached databases; ``main``'s file is what the
+    caller opened. Best effort by construction: this runs while the file is contended, so a
+    failure to read it must not turn a recoverable wait into a boot refusal. ``"<unknown>"`` then.
+    """
+    try:
+        for _seq, name, filename in conn.execute("PRAGMA database_list").fetchall():
+            if name == "main":
+                return str(filename) or "<in-memory>"
+    except sqlite3.Error:  # pragma: no cover - defensive; the pragma takes no lock
+        return "<unknown>"
+    return "<unknown>"
 
 
 def _is_lock_contest(exc: sqlite3.OperationalError) -> bool:
@@ -268,11 +294,26 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
             itself could not take it — a fail-closed boot refusal; nothing was written. Also any
             ``OperationalError`` whose primary code is not ``SQLITE_BUSY``, unretried.
     """
+    mode = ""
+    contended = False
     try:
         mode = _switch_journal_to_wal(conn)
     except sqlite3.OperationalError as exc:
         if not _is_lock_contest(exc):
             raise
+        contended = True
+    # OUTSIDE the except block, deliberately (review round-2 F2). Raising from inside it would
+    # attach the handled first SQLITE_BUSY as `__context__`, and a refused boot would print two
+    # chained "database is locked" tracebacks under "During handling of the above exception" —
+    # inviting the operator to read the first, expected, already-handled one as the failure.
+    # Out here the exception state is cleared, so the second failure propagates unchained.
+    if contended:
+        _LOG.warning(
+            "journal_mode=WAL switch lost the lock on %s; waiting on sqlite's busy handler "
+            "and retrying once. The wait is bounded by this connection's own busy timeout and "
+            "this call can take up to three of them before it refuses the boot.",
+            _database_file(conn),
+        )
         # Wait on sqlite's own busy handler (the PRAGMA above would not), then try once more.
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("ROLLBACK")
