@@ -76,7 +76,10 @@ from tos.capsule.observation import Observation
 from tos.engine import InstrumentKey
 from tos.marketfeed import AdmittedValue, RawPayloadPreimage
 
-from tos_runtime.operations.schema_ledger import open_or_create_schema
+from tos_runtime.operations.schema_ledger import (
+    enable_wal_journal,
+    open_or_create_schema,
+)
 
 __all__ = [
     "MARKETFEED_FILE_NAME",
@@ -234,7 +237,7 @@ class SqliteSnapshotStore:
         self._monotonic_ns = monotonic_ns
         self._crash_hook = crash_hook
         self._conn = sqlite3.connect(str(path), isolation_level=None)
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        enable_wal_journal(self._conn)
         self._conn.execute("PRAGMA synchronous=FULL")
         # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
         # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races

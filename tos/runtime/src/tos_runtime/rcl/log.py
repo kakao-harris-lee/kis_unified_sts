@@ -44,6 +44,7 @@ from tos.rcl import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
+from tos_runtime.operations.schema_ledger import enable_wal_journal
 from tos_runtime.rcl.gates import (
     ReservationRefusalReason,
     ReservationTransitionRefusal,
@@ -172,7 +173,7 @@ class SqliteCommitLog:
         self._conn = sqlite3.connect(
             str(path), isolation_level=None, timeout=sqlite_timeout_s
         )
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        enable_wal_journal(self._conn)
         self._conn.execute("PRAGMA synchronous=FULL")
         # This log's DDL, the freshness decision and the genesis stamp all inside ONE
         # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
