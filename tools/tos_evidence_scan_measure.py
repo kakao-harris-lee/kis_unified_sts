@@ -88,6 +88,7 @@ __all__ = [
     "HostSample",
     "MeasureAborted",
     "MeasureRefused",
+    "MeasureStepFailed",
     "PreflightCheck",
     "PreflightRecord",
     "SizeEstimate",
@@ -96,6 +97,9 @@ __all__ = [
     "StepResult",
     "decide_synthetic_disposition",
     "estimate_synthetic_size",
+    "read_lock",
+    "release_lock",
+    "write_lock",
     "main",
     "plan_steps",
     "preflight",
@@ -134,6 +138,19 @@ DEFAULT_ABORT_SWAP_FREE_GB = 1.0
 #: cadence plan §7.1.5's "재발 방지" describes ("5 초마다").
 DEFAULT_WATCH_INTERVAL_S = 5.0
 
+#: Seconds between ``wait4`` polls. Separate from the host-sample cadence so a child's
+#: wall clock is not rounded up to the next sample: polling only every 5 s reported an
+#: 8.0 s step as 10.0 s at 80 % CPU, which is not comparable with the GNU ``time -v``
+#: numbers plan §7.1.2 cites (review F6). This driver's own value; it bounds the
+#: attribution error, and 0.1 s costs ~10 cheap syscalls a second.
+DEFAULT_POLL_INTERVAL_S = 0.1
+
+#: How many consecutive host-read failures are tolerated before the watchdog treats itself
+#: as blind and stops the run. This driver's own value: one transient ``pgrep`` exit 2/3 or
+#: an unreadable ``/proc`` must not end a six-hour measurement, and two in a row must not
+#: pass unnoticed either (review F2).
+DEFAULT_HOST_READ_RETRIES = 1
+
 #: Seconds a child gets after ``SIGTERM`` before ``SIGKILL``. This driver's own value: the
 #: bench's steps hold an open sqlite connection and nothing else, so there is no long
 #: unwind to wait for, but a hung interpreter must not keep the host under pressure either.
@@ -146,6 +163,12 @@ DEFAULT_TERM_GRACE_S = 10.0
 #: own margin over that measurement.
 DEFAULT_DISK_HEADROOM_RATIO = 1.25
 
+#: How much an ``entries_kind_seq`` index grows the file, as a fraction. Source: plan
+#: §7.1.2 measured +1.8 % at BOTH 30 and 90 days (4.374 → 4.452 GB, 13.123 → 13.357 GB).
+#: Used to size the disk check for a resume, where the synthetic file already exists and
+#: the only new bytes are the index (review F5).
+DEFAULT_INDEX_GROWTH_RATIO = 0.018
+
 #: Processes whose presence means "a heavy build is already running on this host". Source:
 #: the global rule's own check, ``pgrep -af 'GradleWrapperMain|GradleWorkerMain'``, plus
 #: ``GradleDaemon`` (the rule's separate instruction to look for leftover daemons).
@@ -154,7 +177,16 @@ COMPETING_BUILD_PATTERN = "GradleWrapperMain|GradleWorkerMain|GradleDaemon"
 #: A second measurement of this kind already in flight. Two of these on one host is the
 #: co-tenancy the whole preflight exists to prevent, and it would also race on the
 #: synthetic file and the artifact names.
-COMPETING_MEASURE_PATTERN = "tos_evidence_scan_(measure|bench)"
+#:
+#: It matches the INVOCATION SHAPE, not the filename. A bare ``tos_evidence_scan_measure``
+#: substring appears in every command that merely mentions these files — ``pytest
+#: tests/tools/test_tos_evidence_scan_measure.py``, ``mypy tools/…``, ``vim tools/…``,
+#: ``git show main:tools/…`` — and the first revision counted all of them, so editing or
+#: testing this tool during a multi-hour run would have killed the run (review F3).
+#: Requiring a subcommand token right after the ``.py`` leaves only an actual invocation.
+COMPETING_MEASURE_PATTERN = (
+    r"tos_evidence_scan_(measure|bench)\.py +(run|preflight|build|measure|profile)\b"
+)
 
 #: Commands whose mention of a pattern means they are LOOKING FOR it, not running it. The
 #: global rule's own check ends in ``| grep -v pgrep`` for this reason, and the case is real:
@@ -169,6 +201,11 @@ COMPETING_MEASURE_PATTERN = "tos_evidence_scan_(measure|bench)"
 #: matched on its own. What this cannot see is a build whose ONLY process is a shell whose
 #: command line also contains ``grep``; there is no such thing for these markers.
 _SEARCH_COMMANDS = frozenset({"pgrep", "grep", "egrep", "fgrep", "rg", "ugrep"})
+
+#: Shell punctuation that glues a command name to its surroundings. Splitting on whitespace
+#: alone left ``$(pgrep``, ``;pgrep`` and ``|grep`` unrecognized, so a line that was plainly
+#: searching still counted as a build (review F9).
+_SHELL_PUNCTUATION = "\"'`;|&()<>{}$\n\t"
 
 #: How many of the most recent samples an abort record carries. Bounds artifact size; gates
 #: nothing, which is why it is not an argument.
@@ -193,6 +230,12 @@ class MeasureRefused(RuntimeError):
 class MeasureAborted(RuntimeError):
     """A guard fired while a child was running. The child was terminated and an
     ``ABORTED-<step>-<days>d.json`` artifact was written."""
+
+
+class MeasureStepFailed(RuntimeError):
+    """A child exited non-zero. The remaining steps do not run, the synthetic file is
+    kept, and the driver exits non-zero — a failed measurement must not be reported as a
+    finished one (review F1)."""
 
 
 def _now_kst() -> str:
@@ -234,10 +277,9 @@ def _is_searching_for_the_pattern(args: str) -> bool:
     hide. Token-wise, not substring-wise, so a path like ``/opt/grepbuild/gradlew`` is still
     a build.
     """
-    return any(
-        os.path.basename(token) in _SEARCH_COMMANDS
-        for token in args.replace("'", " ").split()
-    )
+    for char in _SHELL_PUNCTUATION:
+        args = args.replace(char, " ")
+    return any(os.path.basename(token) in _SEARCH_COMMANDS for token in args.split())
 
 
 @dataclass(frozen=True)
@@ -471,15 +513,15 @@ class HostReader:
 
 @dataclass(frozen=True)
 class GuardConfig:
-    """The four memory floors plus the watchdog's cadence and kill escalation.
+    """The four memory floors plus the watchdog's cadences and kill escalation.
 
     Raises:
-        MeasureRefused: on construction through :meth:`validated`, when an abort floor sits
-            at or above the matching start floor. That combination is a guard that admits
-            what it names: preflight would pass at exactly the level the watchdog is
-            supposed to call fatal, so the first sample of a healthy run would abort it —
-            or, read the other way, the start floor would be the real in-run floor and the
-            abort floor decoration.
+        MeasureRefused: on construction through :meth:`validated`, when an abort floor the
+            operator set EXPLICITLY sits above the matching start floor. That combination
+            is a guard that admits what it names: preflight would pass at exactly the level
+            the watchdog is supposed to call fatal, so the first sample of a healthy run
+            would abort it — or, read the other way, the start floor would be the real
+            in-run floor and the abort floor decoration.
     """
 
     min_available_bytes: int
@@ -487,8 +529,12 @@ class GuardConfig:
     abort_available_bytes: int
     abort_swap_free_bytes: int
     watch_interval_s: float
+    poll_interval_s: float
     term_grace_s: float
+    host_read_retries: int
     watchdog_enabled: bool = True
+    #: Human-readable notes about floors this class derived rather than took as given.
+    derivations: tuple[str, ...] = ()
 
     @classmethod
     def validated(
@@ -496,19 +542,48 @@ class GuardConfig:
         *,
         min_available_gb: float,
         min_swap_free_gb: float,
-        abort_available_gb: float,
-        abort_swap_free_gb: float,
-        watch_interval_s: float,
-        term_grace_s: float,
+        abort_available_gb: float | None = None,
+        abort_swap_free_gb: float | None = None,
+        watch_interval_s: float = DEFAULT_WATCH_INTERVAL_S,
+        poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
+        term_grace_s: float = DEFAULT_TERM_GRACE_S,
+        host_read_retries: int = DEFAULT_HOST_READ_RETRIES,
         watchdog_enabled: bool = True,
     ) -> GuardConfig:
-        if abort_available_gb > min_available_gb:
+        """Build a config, deriving an unset abort floor from the matching start floor.
+
+        ``None`` means "the operator did not say", and then the abort floor is
+        ``min(default, start floor)``. Without that, lowering a start floor turned into a
+        refusal citing a flag the operator never typed: ``--min-swap-free-gb 0`` on a
+        swapless host hit ``--abort-swap-free-gb 1.0 is above --min-swap-free-gb 0.0``,
+        even though the help text advertised the first flag as the way to opt out (review
+        F8). An abort floor the operator DID type is still checked, because that is a real
+        contradiction rather than a default meeting an unusual host.
+        """
+        derivations: list[str] = []
+        if abort_available_gb is None:
+            abort_available_gb = min(DEFAULT_ABORT_AVAILABLE_GB, min_available_gb)
+            if abort_available_gb != DEFAULT_ABORT_AVAILABLE_GB:
+                derivations.append(
+                    f"abort_available_gb derived as {abort_available_gb} (the default "
+                    f"{DEFAULT_ABORT_AVAILABLE_GB} is above the start floor "
+                    f"{min_available_gb} you set)"
+                )
+        elif abort_available_gb > min_available_gb:
             raise MeasureRefused(
                 f"--abort-available-gb {abort_available_gb} is above --min-available-gb "
                 f"{min_available_gb}: the watchdog would abort a run the preflight had just "
                 "let start"
             )
-        if abort_swap_free_gb > min_swap_free_gb:
+        if abort_swap_free_gb is None:
+            abort_swap_free_gb = min(DEFAULT_ABORT_SWAP_FREE_GB, min_swap_free_gb)
+            if abort_swap_free_gb != DEFAULT_ABORT_SWAP_FREE_GB:
+                derivations.append(
+                    f"abort_swap_free_gb derived as {abort_swap_free_gb} (the default "
+                    f"{DEFAULT_ABORT_SWAP_FREE_GB} is above the start floor "
+                    f"{min_swap_free_gb} you set)"
+                )
+        elif abort_swap_free_gb > min_swap_free_gb:
             raise MeasureRefused(
                 f"--abort-swap-free-gb {abort_swap_free_gb} is above --min-swap-free-gb "
                 f"{min_swap_free_gb}: the watchdog would abort a run the preflight had just "
@@ -518,16 +593,33 @@ class GuardConfig:
             raise MeasureRefused(
                 f"--watch-interval-s must be > 0, got {watch_interval_s}"
             )
+        if poll_interval_s <= 0:
+            raise MeasureRefused(
+                f"--poll-interval-s must be > 0, got {poll_interval_s}"
+            )
+        if poll_interval_s > watch_interval_s:
+            raise MeasureRefused(
+                f"--poll-interval-s {poll_interval_s} is above --watch-interval-s "
+                f"{watch_interval_s}: the child would be reaped no sooner than the host is "
+                "sampled, which is the wall-clock inflation the two cadences exist to avoid"
+            )
         if term_grace_s < 0:
             raise MeasureRefused(f"--term-grace-s must be >= 0, got {term_grace_s}")
+        if host_read_retries < 0:
+            raise MeasureRefused(
+                f"--host-read-retries must be >= 0, got {host_read_retries}"
+            )
         return cls(
             min_available_bytes=int(min_available_gb * _GB),
             min_swap_free_bytes=int(min_swap_free_gb * _GB),
             abort_available_bytes=int(abort_available_gb * _GB),
             abort_swap_free_bytes=int(abort_swap_free_gb * _GB),
             watch_interval_s=watch_interval_s,
+            poll_interval_s=poll_interval_s,
             term_grace_s=term_grace_s,
+            host_read_retries=host_read_retries,
             watchdog_enabled=watchdog_enabled,
+            derivations=tuple(derivations),
         )
 
     def in_run_breach(self, sample: HostSample) -> tuple[str, str] | None:
@@ -816,6 +908,18 @@ def _spawn(argv: Sequence[str], stdout_path: Path, stderr_path: Path) -> int:
     return os.posix_spawn(executable, list(argv), os.environ, file_actions=file_actions)
 
 
+def _returncode(status: int) -> int:
+    """A wait status as a shell-style return code: ``-N`` for signal N, else the exit code.
+
+    ``AbortRecord`` used the RAW wait status on the non-signalled branch, so a child that
+    had already exited with 1 was recorded as ``256`` while ``StepResult`` recorded ``1``
+    for the same thing (review F7). One conversion, used by both.
+    """
+    if os.WIFSIGNALED(status):
+        return -os.WTERMSIG(status)
+    return os.WEXITSTATUS(status)
+
+
 def _terminate(
     pid: int, *, grace_s: float, sleep: Callable[[float], None]
 ) -> tuple[bool, int, resource.struct_rusage]:
@@ -868,13 +972,27 @@ def run_step(
     to be trustworthy. Samples go to ``watchdog.jsonl`` as they are taken, so an abort — or
     a kill of the driver itself — still leaves the series behind.
 
+    **Two cadences, one loop.** ``wait4`` is polled every ``--poll-interval-s`` (0.1 s) and
+    the host is sampled every ``--watch-interval-s`` (5 s). Polling only at the sample
+    cadence would attribute up to a whole interval of idle waiting to the child: an 8.0 s
+    measure step reaped at t=10.0 reports 10.0 s wall and 80 % CPU, which is not comparable
+    with the GNU ``time -v`` numbers plan §7.1.2 cites (review F6).
+
+    **A breach is re-checked against the child before it becomes an abort.** If the child
+    exited between the last poll and the sample, the step has already succeeded and there
+    is nothing to kill; killing a zombie and writing an ``ABORTED`` artifact next to a
+    complete ``<step>-Nd.json`` would make the next resume unrunnable (review F7).
+
     Args:
         sampler: Overrides how a sample is taken, for tests that need a specific series.
             Production passes ``None`` and the injected :class:`HostReader` is used.
 
     Raises:
-        MeasureAborted: a floor was crossed or a competing build appeared. The child is
-            terminated and the abort artifact is written before this is raised.
+        MeasureAborted: a floor was crossed, a competing build appeared, the host could not
+            be read for ``--host-read-retries`` + 1 consecutive samples, or the driver hit
+            an unexpected error. In every one of those cases the child is terminated and
+            ``ABORTED-<step>-<days>d.json`` is written BEFORE this is raised — an abort is
+            never silent, whatever caused it (review F2).
     """
     take = sampler or (lambda pid: reader.sample(child_pid=pid))
     watchdog_path = out_dir / "watchdog.jsonl"
@@ -889,9 +1007,7 @@ def run_step(
     started_at = _now_kst()
     pid = _spawn(step.argv, step.stdout_path, step.stderr_path)
 
-    def record(sample: HostSample) -> None:
-        nonlocal last_io, last_io_at, peak_rss_sampled
-        row = sample.as_dict()
+    def record(row: dict[str, object]) -> None:
         row.update(
             {
                 "run_id": run_id,
@@ -904,23 +1020,24 @@ def run_step(
         samples.append(row)
         with watchdog_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row) + "\n")
+
+    def record_sample(sample: HostSample) -> None:
+        nonlocal last_io, last_io_at, peak_rss_sampled
+        record(sample.as_dict())
         if sample.child_io:
             last_io = dict(sample.child_io)
             last_io_at = time.monotonic()
         if sample.child_peak_rss_bytes:
             peak_rss_sampled = max(peak_rss_sampled, sample.child_peak_rss_bytes)
 
-    def guard_or_abort(sample: HostSample) -> None:
-        if not guard.watchdog_enabled:
-            return
-        breach = guard.in_run_breach(sample)
-        if breach is None:
-            return
-        check, reason = breach
-        log(f"ABORT ({step.name}): {reason}")
-        escalated, status, usage = _terminate(
-            pid, grace_s=guard.term_grace_s, sleep=sleep
-        )
+    def write_abort(
+        *,
+        check: str,
+        reason: str,
+        escalated: bool,
+        status: int,
+        usage: resource.struct_rusage | None,
+    ) -> None:
         record_out = AbortRecord(
             run_id=run_id,
             step=step.name,
@@ -931,13 +1048,15 @@ def run_step(
             elapsed_seconds=round(time.monotonic() - started_wall, 3),
             signal_sent="SIGTERM",
             escalated_to_sigkill=escalated,
-            returncode=-os.WTERMSIG(status) if os.WIFSIGNALED(status) else status,
+            returncode=_returncode(status),
             partial_resource={
-                "max_rss_bytes": max(usage.ru_maxrss * 1024, peak_rss_sampled),
-                "user_seconds": usage.ru_utime,
-                "system_seconds": usage.ru_stime,
-                "fs_inputs_blocks": usage.ru_inblock,
-                "fs_outputs_blocks": usage.ru_oublock,
+                "max_rss_bytes": max(
+                    (usage.ru_maxrss * 1024) if usage else 0, peak_rss_sampled
+                ),
+                "user_seconds": usage.ru_utime if usage else None,
+                "system_seconds": usage.ru_stime if usage else None,
+                "fs_inputs_blocks": usage.ru_inblock if usage else None,
+                "fs_outputs_blocks": usage.ru_oublock if usage else None,
                 "proc_io": dict(last_io),
                 "proc_io_sample_age_seconds": (
                     round(time.monotonic() - last_io_at, 3)
@@ -950,36 +1069,110 @@ def run_step(
         path = out_dir / f"ABORTED-{step.name}-{days}d.json"
         path.write_text(json.dumps(asdict(record_out), indent=2), encoding="utf-8")
         log(f"wrote {path}")
+        # The step's own stdout/stderr are moved aside so the documented resume is not
+        # refused by the artifacts_absent preflight for files this abort itself created
+        # (review F4). They are renamed, never deleted: they are the aborted step's output.
+        for path_ in (step.stdout_path, step.stderr_path):
+            if path_.exists():
+                moved = path_.with_name(f"{path_.stem}.{run_id}.aborted{path_.suffix}")
+                path_.replace(moved)
+                log(f"moved {path_.name} aside as {moved.name}")
+
+    def abort(check: str, reason: str) -> None:
+        log(f"ABORT ({step.name}): {reason}")
+        escalated, status, usage = _terminate(
+            pid, grace_s=guard.term_grace_s, sleep=sleep
+        )
+        write_abort(
+            check=check,
+            reason=reason,
+            escalated=escalated,
+            status=status,
+            usage=usage,
+        )
         raise MeasureAborted(reason)
 
+    consecutive_read_failures = 0
+    next_sample_at = started_wall
     try:
-        # One sample immediately, before the first wait: a child that finishes inside a
-        # single interval still leaves a series behind, and a competing build that appeared
-        # between preflight and spawn is caught here rather than a whole step later.
-        first = take(pid)
-        record(first)
-        guard_or_abort(first)
         while True:
             done, status, usage = os.wait4(pid, os.WNOHANG)
             if done == pid:
+                wall = time.monotonic() - started_wall
                 break
-            sleep(guard.watch_interval_s)
-            sample = take(pid)
-            record(sample)
-            guard_or_abort(sample)
+            now = time.monotonic()
+            if now < next_sample_at:
+                sleep(guard.poll_interval_s)
+                continue
+            next_sample_at = now + guard.watch_interval_s
+            try:
+                sample = take(pid)
+            except MeasureRefused as exc:
+                # A transient host read (pgrep exiting 2/3, a momentarily unreadable
+                # /proc) must not end a multi-hour run on its first occurrence, and must
+                # not pass silently either (review F2).
+                consecutive_read_failures += 1
+                record(
+                    {
+                        "host_read_error": str(exc),
+                        "consecutive": consecutive_read_failures,
+                    }
+                )
+                log(f"host read failed ({consecutive_read_failures}): {exc}")
+                if consecutive_read_failures > guard.host_read_retries:
+                    abort(
+                        "host_read",
+                        f"the host could not be read {consecutive_read_failures} times in "
+                        f"a row, so the guards are blind: {exc}",
+                    )
+                sleep(guard.poll_interval_s)
+                continue
+            consecutive_read_failures = 0
+            record_sample(sample)
+            if not guard.watchdog_enabled:
+                continue
+            breach = guard.in_run_breach(sample)
+            if breach is None:
+                continue
+            # The child may have finished while this sample was being taken. A finished
+            # step is a success, not an abort (review F7).
+            done, status, usage = os.wait4(pid, os.WNOHANG)
+            if done == pid:
+                wall = time.monotonic() - started_wall
+                log(
+                    f"{step.name}: {breach[0]} tripped but the child had already exited — "
+                    "completing the step instead of aborting it"
+                )
+                break
+            abort(*breach)
     except MeasureAborted:
         raise
-    except BaseException:
-        # A driver that dies must not leave the child holding the host.
+    except BaseException as exc:
+        # A driver that dies must not leave the child holding the host, AND must not leave
+        # a stopped run with no artifact — the exact shape §7.1.2 had to demote to
+        # hypothesis for the 365-day pass (review F2).
+        # Separate names: the happy path's `usage` is always a struct_rusage, and reusing
+        # the name here would make it Optional for the whole function.
+        failed_usage: resource.struct_rusage | None
         try:
-            _terminate(pid, grace_s=guard.term_grace_s, sleep=sleep)
+            failed_escalated, failed_status, failed_usage = _terminate(
+                pid, grace_s=guard.term_grace_s, sleep=sleep
+            )
         except ChildProcessError:
-            pass
+            failed_escalated, failed_status, failed_usage = (False, 0, None)
+        try:
+            write_abort(
+                check="driver_error",
+                reason=f"{type(exc).__name__}: {exc}",
+                escalated=failed_escalated,
+                status=failed_status,
+                usage=failed_usage,
+            )
+        except Exception as write_exc:  # never mask the original failure
+            log(f"could not write the abort artifact: {write_exc!r}")
         raise
 
-    wall = time.monotonic() - started_wall
     signalled = os.WTERMSIG(status) if os.WIFSIGNALED(status) else None
-    returncode = -signalled if signalled is not None else os.WEXITSTATUS(status)
     rusage_peak = usage.ru_maxrss * 1024
     result = StepResult(
         name=step.name,
@@ -987,7 +1180,7 @@ def run_step(
         started_at_kst=started_at,
         finished_at_kst=_now_kst(),
         wall_seconds=wall,
-        returncode=returncode,
+        returncode=_returncode(status),
         terminated_by_signal=signalled,
         max_rss_bytes=max(rusage_peak, peak_rss_sampled),
         user_seconds=usage.ru_utime,
@@ -1079,6 +1272,10 @@ class PreflightCheck:
     floor: str
     source: str
     detail: str = ""
+    #: The same two values as raw bytes where the check is numeric, so ``preflight.json``
+    #: can be cited arithmetically instead of by re-parsing a formatted "12.00 GB".
+    measured_bytes: int | None = None
+    floor_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1155,6 +1352,78 @@ def decide_synthetic_disposition(
     )
 
 
+LOCK_NAME = ".measure.lock"
+
+
+def read_lock(
+    out_dir: Path, *, proc_root: Path = Path("/proc")
+) -> dict[str, object] | None:
+    """The live lock in ``out_dir``, or ``None`` when there is none.
+
+    A pattern match over ``pgrep`` output tells you that something LOOKS like a second
+    driver; a lock file tells you that one really claimed this output directory. Both are
+    kept because they answer different questions — the pattern sees a driver writing
+    somewhere else on the same host, the lock is exact about this directory and has no
+    false positives at all.
+
+    A lock whose PID is gone, or whose PID has been recycled by an unrelated process, is
+    STALE and reported as absent: a driver killed with SIGKILL cannot clean up after
+    itself, and a lock that outlives its owner would block every later run forever. The
+    recycle check compares the recorded argv0 against ``/proc/<pid>/cmdline``.
+    """
+    path = out_dir / LOCK_NAME
+    try:
+        held = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(held, dict):
+        return None
+    pid = held.get("pid")
+    if not isinstance(pid, int):
+        return None
+    try:
+        cmdline = (
+            (proc_root / str(pid) / "cmdline")
+            .read_bytes()
+            .replace(b"\0", b" ")
+            .decode("utf-8", "replace")
+        )
+    except OSError:
+        return None  # owner is gone
+    if str(held.get("argv0", "")) not in cmdline:
+        return None  # pid recycled by something else
+    return dict(held)
+
+
+def write_lock(out_dir: Path, *, run_id: str, argv: Sequence[str]) -> Path:
+    path = out_dir / LOCK_NAME
+    path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "argv0": sys.argv[0] if sys.argv and sys.argv[0] else __file__,
+                "run_id": run_id,
+                "argv": list(argv),
+                "at_kst": _now_kst(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def release_lock(out_dir: Path) -> None:
+    """Remove this process's own lock. Another process's lock is left alone."""
+    path = out_dir / LOCK_NAME
+    try:
+        held = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    if held.get("pid") == os.getpid():
+        path.unlink(missing_ok=True)
+
+
 def _disk_free(path: Path) -> int:
     """Free bytes on the filesystem that will hold ``path``, walking up to the nearest
     directory that exists (the synthetic file's parent is often not created yet)."""
@@ -1174,6 +1443,7 @@ def preflight(
     estimate: SizeEstimate | None,
     expect_bytes: int | None,
     disk_headroom_ratio: float,
+    index_growth_ratio: float,
     steps: Sequence[Step],
     argv: Sequence[str],
     synthetic: Path,
@@ -1195,6 +1465,8 @@ def preflight(
             ok=info["MemAvailable"] >= guard.min_available_bytes,
             measured=f"{info['MemAvailable'] / _GB:.2f} GB",
             floor=f"{guard.min_available_bytes / _GB:.2f} GB",
+            measured_bytes=info["MemAvailable"],
+            floor_bytes=guard.min_available_bytes,
             source="operator rule ~/.claude/CLAUDE.md 로컬 빌드 동시 실행 제한 (2026-09-25)",
         )
     )
@@ -1204,6 +1476,8 @@ def preflight(
             ok=info["SwapFree"] >= guard.min_swap_free_bytes,
             measured=f"{info['SwapFree'] / _GB:.2f} GB",
             floor=f"{guard.min_swap_free_bytes / _GB:.2f} GB",
+            measured_bytes=info["SwapFree"],
+            floor_bytes=guard.min_swap_free_bytes,
             source="same operator rule — the clause plan §7.1.7 deviation 11-b records as missing",
             detail=f"SwapTotal {info['SwapTotal'] / _GB:.2f} GB",
         )
@@ -1232,11 +1506,38 @@ def preflight(
             )
         )
 
-    base_bytes = (
-        expect_bytes
-        if expect_bytes is not None
-        else (estimate.predicted_file_bytes if estimate else 0)
-    )
+    # A resume must not be asked for the space its own build already spent. When `build`
+    # is not planned and the synthetic file is already on disk, the only new bytes are the
+    # index the `after` step creates (review F5).
+    build_planned = any(step.name == "build" for step in steps)
+    synthetic_present = synthetic.exists()
+    if not build_planned and not synthetic_present:
+        checks.append(
+            PreflightCheck(
+                check="synthetic_present",
+                ok=False,
+                measured=f"{synthetic} does not exist",
+                floor="the file the measure steps read must already exist",
+                source="this driver: --steps excludes build, so nothing would create it",
+            )
+        )
+    if expect_bytes is not None:
+        base_bytes = expect_bytes
+        basis = f"--expect-gb (operator-supplied) x --disk-headroom-ratio {disk_headroom_ratio}"
+    elif build_planned:
+        base_bytes = estimate.predicted_file_bytes if estimate else 0
+        basis = (
+            f"predicted synthetic size x --disk-headroom-ratio {disk_headroom_ratio}"
+        )
+    else:
+        # Measure-only: the file exists, so only the index is new. Sized off the file on
+        # disk, not off the prediction, because the real thing is right there to measure.
+        on_disk = synthetic.stat().st_size if synthetic_present else 0
+        base_bytes = int(on_disk * index_growth_ratio)
+        basis = (
+            f"existing synthetic x --index-growth-ratio {index_growth_ratio} "
+            f"x --disk-headroom-ratio {disk_headroom_ratio} (build not planned)"
+        )
     required_bytes = int(base_bytes * disk_headroom_ratio)
     worst_free = min(_disk_free(out_dir), _disk_free(synthetic.parent))
     checks.append(
@@ -1245,11 +1546,9 @@ def preflight(
             ok=worst_free >= required_bytes,
             measured=f"{worst_free / _GB:.2f} GB free",
             floor=f"{required_bytes / _GB:.2f} GB needed",
-            source=(
-                f"--expect-gb (operator-supplied) x --disk-headroom-ratio {disk_headroom_ratio}"
-                if expect_bytes is not None
-                else f"predicted synthetic size x --disk-headroom-ratio {disk_headroom_ratio}"
-            ),
+            measured_bytes=worst_free,
+            floor_bytes=required_bytes,
+            source=basis,
             detail=(
                 ""
                 if estimate is None
@@ -1283,6 +1582,32 @@ def preflight(
                 "this driver, matching the bench's own --json-out rule: a measurement is "
                 "evidence a plan cites, and a later run must not silently replace it"
             ),
+            detail=(
+                ""
+                if not existing
+                else "remove or rename these before rerunning: "
+                + " ".join(sorted(set(existing)))
+            ),
+        )
+    )
+
+    held = read_lock(out_dir, proc_root=reader.proc_root)
+    checks.append(
+        PreflightCheck(
+            check="output_dir_unlocked",
+            ok=held is None,
+            measured=(
+                "no live lock"
+                if held is None
+                else f"pid {held.get('pid')} holds it (run {held.get('run_id')}, "
+                f"since {held.get('at_kst')})"
+            ),
+            floor="no other run may hold this output directory",
+            source=(
+                "this driver: two runs sharing an --out-dir would interleave "
+                "watchdog.jsonl and race on the step artifacts. A lock whose owner is gone "
+                "is treated as absent, so a SIGKILLed run does not block the next one"
+            ),
         )
     )
 
@@ -1308,8 +1633,11 @@ def preflight(
             "abort_available_gb": guard.abort_available_bytes / _GB,
             "abort_swap_free_gb": guard.abort_swap_free_bytes / _GB,
             "watch_interval_s": guard.watch_interval_s,
+            "poll_interval_s": guard.poll_interval_s,
             "term_grace_s": guard.term_grace_s,
+            "host_read_retries": guard.host_read_retries,
             "disk_headroom_ratio": disk_headroom_ratio,
+            "index_growth_ratio": index_growth_ratio,
         },
         estimate=asdict(estimate) if estimate else None,
         top_rss=top_rss,
@@ -1343,22 +1671,53 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
         "--min-swap-free-gb",
         type=float,
         default=DEFAULT_MIN_SWAP_FREE_GB,
-        help="Start floor on SwapFree (same rule). 0 opts out explicitly, e.g. a swapless host.",
+        help=(
+            "Start floor on SwapFree (same rule). 0 opts out explicitly, e.g. a swapless "
+            f"host — the in-run floor then follows it down on its own (default "
+            f"{DEFAULT_ABORT_SWAP_FREE_GB} GB, capped at whatever you set here), so no "
+            "second flag is needed."
+        ),
     )
     parser.add_argument(
         "--abort-available-gb",
         type=float,
-        default=DEFAULT_ABORT_AVAILABLE_GB,
-        help="In-run abort floor on MemAvailable (the 2026-09-30 run's value, plan §7.1.2).",
+        default=None,
+        help=(
+            "In-run abort floor on MemAvailable. Unset, it is "
+            f"min({DEFAULT_ABORT_AVAILABLE_GB}, --min-available-gb) — the 2026-09-30 run's "
+            "value (plan §7.1.2), never above the start floor."
+        ),
     )
     parser.add_argument(
         "--abort-swap-free-gb",
         type=float,
-        default=DEFAULT_ABORT_SWAP_FREE_GB,
-        help="In-run abort floor on SwapFree (this driver's own value; no rule sets one).",
+        default=None,
+        help=(
+            "In-run abort floor on SwapFree. Unset, it is "
+            f"min({DEFAULT_ABORT_SWAP_FREE_GB}, --min-swap-free-gb). No external rule sets "
+            "an in-run swap floor; this default is this driver's own."
+        ),
     )
     parser.add_argument(
         "--watch-interval-s", type=float, default=DEFAULT_WATCH_INTERVAL_S
+    )
+    parser.add_argument(
+        "--poll-interval-s",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL_S,
+        help=(
+            "How often the child is reaped. Separate from --watch-interval-s so a step's "
+            "wall clock is not rounded up to the next host sample."
+        ),
+    )
+    parser.add_argument(
+        "--host-read-retries",
+        type=int,
+        default=DEFAULT_HOST_READ_RETRIES,
+        help=(
+            "Consecutive host-read failures tolerated before the watchdog calls itself "
+            "blind and stops the run."
+        ),
     )
     parser.add_argument("--term-grace-s", type=float, default=DEFAULT_TERM_GRACE_S)
     parser.add_argument(
@@ -1372,6 +1731,15 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--disk-headroom-ratio", type=float, default=DEFAULT_DISK_HEADROOM_RATIO
+    )
+    parser.add_argument(
+        "--index-growth-ratio",
+        type=float,
+        default=DEFAULT_INDEX_GROWTH_RATIO,
+        help=(
+            "How much entries_kind_seq grows the file (plan §7.1.2 measured +1.8 %%). Sizes "
+            "the disk check for a resume, where only the index is new."
+        ),
     )
     parser.add_argument(
         "--expect-gb",
@@ -1468,10 +1836,12 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             abort_available_gb=args.abort_available_gb,
             abort_swap_free_gb=args.abort_swap_free_gb,
             watch_interval_s=args.watch_interval_s,
+            poll_interval_s=args.poll_interval_s,
             term_grace_s=args.term_grace_s,
+            host_read_retries=args.host_read_retries,
             watchdog_enabled=not args.no_watchdog,
         )
-        warnings: list[str] = []
+        warnings: list[str] = list(guard.derivations)
         if not guard.watchdog_enabled:
             warnings.append(
                 "--no-watchdog: the in-run memory/swap/co-tenant guard is OFF for this run. "
@@ -1513,6 +1883,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             estimate=estimate,
             expect_bytes=None if args.expect_gb is None else int(args.expect_gb * _GB),
             disk_headroom_ratio=args.disk_headroom_ratio,
+            index_growth_ratio=args.index_growth_ratio,
             steps=steps,
             argv=raw,
             synthetic=args.synthetic,
@@ -1527,9 +1898,10 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
 
         created_synthetic = not args.synthetic.exists()
         completed: list[str] = []
+        write_lock(out_dir, run_id=run_id, argv=raw)
         try:
             for step in steps:
-                run_step(
+                result = run_step(
                     step,
                     guard=guard,
                     reader=reader,
@@ -1538,6 +1910,16 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                     out_dir=out_dir,
                     log=log,
                 )
+                # A child that failed has NOT completed the step. The first revision only
+                # looked at exceptions, so a `build` that refused (an existing --synthetic,
+                # a disk error) let `before`/`after` run against a missing DB, counted all
+                # three as done, deleted the file and exited 0 — the "job succeeded" shape
+                # plan §7.1.2/#772 complains about (review F1).
+                if result.returncode != 0:
+                    raise MeasureStepFailed(
+                        f"step {step.name!r} exited {result.returncode}; see "
+                        f"{step.stderr_path}"
+                    )
                 completed.append(step.name)
         finally:
             # Deleted only after every planned step actually ran (plan §7.1.2: peak disk is
@@ -1560,8 +1942,9 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             (out_dir / f"measure-{args.days}d.log").write_text(
                 "\n".join(log_lines) + "\n", encoding="utf-8"
             )
+            release_lock(out_dir)
         return 0
-    except (MeasureRefused, MeasureAborted) as exc:
+    except (MeasureRefused, MeasureAborted, MeasureStepFailed) as exc:
         print(f"tos_evidence_scan_measure: {exc}", file=sys.stderr)
         return 1
 

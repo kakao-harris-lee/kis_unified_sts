@@ -21,7 +21,9 @@ import importlib.util
 import json
 import os
 import sqlite3
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -83,12 +85,18 @@ def _reader(
         available_gb=available_gb,
         swap_free_gb=swap_free_gb,
     )
-    return driver.HostReader(
-        meminfo_path=meminfo,
-        pgrep_argv=(
-            ("/bin/echo", "-n", pgrep_output) if pgrep_output else ("/bin/true",)
-        ),
-    )
+    if not pgrep_output:
+        return driver.HostReader(meminfo_path=meminfo, pgrep_argv=("/bin/true",))
+    # A faithful `pgrep -af`: a fixed process table, matched with the SAME extended regex
+    # the real binary would apply. Echoing the lines back unconditionally would test the
+    # reader's parsing while leaving the patterns themselves unexercised — and the patterns
+    # are where review F3 found the bug.
+    table = tmp_path / f"proc-table-{abs(hash(pgrep_output))}"
+    table.write_text(pgrep_output)
+    fake = tmp_path / f"fake-pgrep-{abs(hash(pgrep_output))}.sh"
+    fake.write_text(f'#!/bin/sh\ngrep -E -- "$1" "{table}" || true\nexit 0\n')
+    fake.chmod(0o755)
+    return driver.HostReader(meminfo_path=meminfo, pgrep_argv=(str(fake),))
 
 
 def _guard(**overrides):
@@ -98,6 +106,7 @@ def _guard(**overrides):
         "abort_available_gb": driver.DEFAULT_ABORT_AVAILABLE_GB,
         "abort_swap_free_gb": driver.DEFAULT_ABORT_SWAP_FREE_GB,
         "watch_interval_s": 0.01,
+        "poll_interval_s": 0.005,
         "term_grace_s": 0.5,
     }
     kwargs.update(overrides)
@@ -180,6 +189,7 @@ def _preflight(
         estimate=estimate,
         expect_bytes=None if expect_gb is None else int(expect_gb * _GB),
         disk_headroom_ratio=driver.DEFAULT_DISK_HEADROOM_RATIO,
+        index_growth_ratio=driver.DEFAULT_INDEX_GROWTH_RATIO,
         steps=planned,
         argv=["run", "--days", str(days)],
         synthetic=synthetic,
@@ -211,6 +221,7 @@ def test_preflight_passes_on_a_healthy_host_and_records_the_context(
         "competing_measurement",
         "disk_free",
         "artifacts_absent",
+        "output_dir_unlocked",
     }
     # The global rule asks for the top-RSS census as part of the check; it is recorded, not
     # gated, and a run must be readable afterwards next to what else was resident.
@@ -826,6 +837,8 @@ def test_the_whole_driver_runs_build_before_and_after_end_to_end(
             "0",
             "--watch-interval-s",
             "0.05",
+            "--poll-interval-s",
+            "0.01",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -894,6 +907,8 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
                 "0",
                 "--watch-interval-s",
                 "0.05",
+                "--poll-interval-s",
+                "0.01",
                 "--keep-synthetic",
                 "--bench",
                 str(_BENCH_PATH),
@@ -930,6 +945,8 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
                 "0",
                 "--watch-interval-s",
                 "0.05",
+                "--poll-interval-s",
+                "0.01",
                 "--bench",
                 str(_BENCH_PATH),
             ],
@@ -1071,6 +1088,8 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
             "0",
             "--watch-interval-s",
             "0.05",
+            "--poll-interval-s",
+            "0.01",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -1113,3 +1132,533 @@ def test_the_synthetic_disposition_says_the_right_thing_for_each_outcome(
     assert resumable.action == "keep-resumable"
     assert "--steps before,after" in resumable.message
     assert "53.00 GB" in resumable.message
+
+
+# ---------------------------------------------------------------------------------------
+# Review #826 findings — each with the scenario the reviewer named
+# ---------------------------------------------------------------------------------------
+
+
+def _cli(
+    tmp_path: Path,
+    *extra: str,
+    reference: Path | None = None,
+    out_dir: Path | None = None,
+    synthetic: Path | None = None,
+    reader=None,
+):
+    """Run the CLI with the floors lowered to what any host satisfies, so a test decides
+    the outcome rather than whatever else is running on the machine."""
+    reference = reference or (tmp_path / "evidence.sqlite3")
+    if not reference.exists():
+        _write_reference(reference)
+    out_dir = out_dir or (tmp_path / "out")
+    synthetic = synthetic or (tmp_path / "synth" / "synth-1d.sqlite3")
+    return driver.main(
+        [
+            "run",
+            "--reference",
+            str(reference),
+            "--synthetic",
+            str(synthetic),
+            "--out-dir",
+            str(out_dir),
+            "--days",
+            "1",
+            "--repeats",
+            "1",
+            "--batch-rows",
+            "200",
+            "--min-available-gb",
+            "0",
+            "--min-swap-free-gb",
+            "0",
+            "--abort-available-gb",
+            "0",
+            "--abort-swap-free-gb",
+            "0",
+            "--watch-interval-s",
+            "0.05",
+            "--poll-interval-s",
+            "0.01",
+            "--bench",
+            str(_BENCH_PATH),
+            *extra,
+        ],
+        reader=reader if reader is not None else _reader(tmp_path),
+    )
+
+
+def test_f1_a_failed_step_stops_the_run_keeps_the_file_and_exits_non_zero(
+    tmp_path: Path,
+) -> None:
+    """F1. The first revision only looked at exceptions, so a child that merely exited
+    non-zero counted as a completed step: the later steps ran against a DB that was never
+    built, all three names landed in `completed`, the file was deleted and the process
+    returned 0."""
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    synthetic.parent.mkdir(parents=True)
+    # A pre-existing --synthetic is the reviewer's own scenario: the bench's `build`
+    # refuses to overwrite it and exits 1.
+    synthetic.write_text("not a database")
+    out_dir = tmp_path / "out"
+
+    rc = _cli(tmp_path, out_dir=out_dir, synthetic=synthetic)
+
+    assert rc == 1
+    assert (out_dir / "build-1d.err").read_text().strip(), "the child's reason is kept"
+    # The later steps must not have run.
+    assert not (out_dir / "before-1d.json").exists()
+    assert not (out_dir / "after-1d.json").exists()
+    assert not (out_dir / "before-1d.resource.json").exists()
+    # And the file is still there (this run did not create it, so it was never ours).
+    assert synthetic.exists()
+    assert "rc=1" in (out_dir / "measure-1d.log").read_text()
+
+
+def test_f1_a_failed_step_keeps_a_synthetic_this_run_did_create(tmp_path: Path) -> None:
+    """The other half of F1: when the failing step is not `build`, the build's own output
+    must survive rather than be deleted as if the pair had finished."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    # Point `--repeats 0` at the measure steps: the bench refuses (`--repeats must be >= 1`)
+    # so `before` exits 1 after `build` has succeeded.
+    rc = _cli(tmp_path, "--repeats", "0", out_dir=out_dir, synthetic=synthetic)
+
+    assert rc == 1
+    assert (out_dir / "build-1d.json").is_file(), "the build really did run"
+    assert not (out_dir / "after-1d.json").exists(), "after must not run"
+    assert synthetic.exists(), "a failed run must not delete the build it paid for"
+    assert "KEPT synthetic" in (out_dir / "measure-1d.log").read_text()
+
+
+def test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact(
+    tmp_path: Path,
+) -> None:
+    """F2. A transient `pgrep` exit 2/3 raised MeasureRefused out of the sampler, which the
+    BaseException path turned into a silent kill: child dead, no ABORTED artifact, and a
+    message whose exception type says 'Nothing was started'."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    calls = {"n": 0}
+
+    def sampler(pid: int):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return driver.HostSample(
+                at_kst="2026-10-01T12:00:00.000+09:00",
+                mem_available_bytes=12 * _GB,
+                swap_free_bytes=5 * _GB,
+                swap_total_bytes=8 * _GB,
+            )
+        raise driver.MeasureRefused("pgrep exited 2: resource temporarily unavailable")
+
+    with pytest.raises(driver.MeasureAborted, match="could not be read"):
+        driver.run_step(
+            _sleep_step(tmp_path, seconds=120),
+            guard=_guard(host_read_retries=1),
+            reader=driver.HostReader(),
+            run_id="hostread",
+            days=90,
+            out_dir=out_dir,
+            log=lambda _m: None,
+            sampler=sampler,
+        )
+
+    record = json.loads((out_dir / "ABORTED-before-90d.json").read_text())
+    assert record["check"] == "host_read"
+    assert "pgrep exited 2" in record["reason"]
+    # Retried once: the run survived the first failure and stopped on the second.
+    assert calls["n"] == 3
+    rows = [
+        json.loads(line)
+        for line in (out_dir / "watchdog.jsonl").read_text().splitlines()
+    ]
+    assert any(
+        "host_read_error" in row for row in rows
+    ), "the failure itself is recorded"
+
+
+def test_f2_an_unexpected_driver_error_still_writes_an_abort_artifact(
+    tmp_path: Path,
+) -> None:
+    """The general case of F2: any exception out of the loop must leave the same evidence,
+    not the zero-artifact stop §7.1.2 had to demote to a hypothesis."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    def sampler(pid: int):
+        raise OSError(28, "No space left on device")
+
+    with pytest.raises(OSError):
+        driver.run_step(
+            _sleep_step(tmp_path, seconds=120),
+            guard=_guard(),
+            reader=driver.HostReader(),
+            run_id="enospc",
+            days=365,
+            out_dir=out_dir,
+            log=lambda _m: None,
+            sampler=sampler,
+        )
+
+    record = json.loads((out_dir / "ABORTED-before-365d.json").read_text())
+    assert record["check"] == "driver_error"
+    assert "No space left on device" in record["reason"]
+
+
+def test_f3_editing_or_testing_this_tool_is_not_a_competing_measurement(
+    tmp_path: Path,
+) -> None:
+    """F3. The pattern was a bare filename substring, so `pytest tests/tools/
+    test_tos_evidence_scan_measure.py`, `mypy tools/…`, `vim tools/…` and `git show
+    main:tools/…` all counted — editing this tool during a multi-hour run killed the run.
+    """
+    innocent = "\n".join(
+        (
+            "101 /usr/bin/python -m pytest tests/tools/test_tos_evidence_scan_measure.py -q",
+            "102 /usr/bin/mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports",
+            "103 vim tools/tos_evidence_scan_measure.py",
+            "104 git show main:tools/tos_evidence_scan_bench.py",
+            "105 /usr/bin/black tools/tos_evidence_scan_measure.py",
+        )
+    )
+    assert (
+        _preflight(tmp_path, _reader(tmp_path, pgrep_output=innocent + "\n")).verdict
+        == "ok"
+    )
+
+
+def test_f3_a_real_second_driver_invocation_is_still_caught(tmp_path: Path) -> None:
+    """The other direction — the tightened pattern must not have tightened the guard away."""
+    for line in (
+        "201 /usr/bin/python tools/tos_evidence_scan_measure.py run --days 365",
+        "202 /usr/bin/python tools/tos_evidence_scan_bench.py build --days 90",
+        "203 /usr/bin/python /opt/x/tos_evidence_scan_measure.py preflight --days 30",
+    ):
+        record = _preflight(tmp_path, _reader(tmp_path, pgrep_output=line + "\n"))
+        assert record.verdict == "refused", line
+        assert "competing_measurement" in _failed(record), line
+
+
+def test_f3_the_pattern_matches_a_real_invocation_through_the_real_pgrep(
+    tmp_path: Path,
+) -> None:
+    """The regex is only ever evaluated by `pgrep`, not by Python, so the two cases are
+    checked against a live process and the real binary."""
+    script = tmp_path / "tos_evidence_scan_measure.py"
+    script.write_text("import time\ntime.sleep(20)\n")
+    running = subprocess.Popen([sys.executable, str(script), "run", "--days", "365"])
+    decoy = subprocess.Popen([sys.executable, str(script), "-q"])
+    try:
+        time.sleep(1.0)
+        found = {
+            p.pid
+            for p in driver.HostReader().competing_processes(
+                driver.COMPETING_MEASURE_PATTERN
+            )
+        }
+        assert running.pid in found, "a real invocation must be seen"
+        assert decoy.pid not in found, "a bare mention of the file must not be"
+    finally:
+        for proc in (running, decoy):
+            proc.kill()
+            proc.wait()
+
+
+def test_f9_a_search_command_glued_to_shell_syntax_is_still_a_search(
+    tmp_path: Path,
+) -> None:
+    """F9. Splitting on whitespace after stripping single quotes left `$(pgrep`, `;pgrep`
+    and `|grep` unrecognized, so a line that was plainly searching counted as a build.
+    """
+    for args in (
+        "bash -c 'for p in $(pgrep -f GradleWorkerMain); do kill $p; done'",
+        'sh -c "pgrep -f GradleDaemon|wc -l"',
+        "bash -c 'ps aux;grep GradleWrapperMain'",
+    ):
+        assert driver._is_searching_for_the_pattern(args), args
+    # And a path that merely contains the letters is not a search command.
+    assert not driver._is_searching_for_the_pattern(
+        "/opt/grepbuild/gradlew --daemon org.gradle.launcher.daemon.bootstrap.GradleDaemon"
+    )
+
+
+def test_f4_the_documented_resume_command_actually_gets_past_preflight(
+    tmp_path: Path,
+) -> None:
+    """F4. The abort log said 'resume with --steps before,after'; the artifacts_absent
+    check then refused that exact command, because the aborted step's own `.out`/`.err`
+    (created by posix_spawn) were sitting there. The resume was advice nothing tested.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    gate = out_dir / "before-1d.out"
+    fake_pgrep = tmp_path / "fake-pgrep.sh"
+    fake_pgrep.write_text(
+        "#!/bin/sh\n"
+        f'[ -f "{gate}" ] && echo "4242 /usr/bin/java GradleDaemon"\n'
+        "exit 0\n"
+    )
+    fake_pgrep.chmod(0o755)
+    aborting_reader = driver.HostReader(
+        meminfo_path=_meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0),
+        pgrep_argv=(str(fake_pgrep),),
+    )
+
+    assert (
+        _cli(tmp_path, out_dir=out_dir, synthetic=synthetic, reader=aborting_reader)
+        == 1
+    )
+    log = (out_dir / "measure-1d.log").read_text()
+    assert "--steps before,after" in log
+    assert synthetic.exists()
+    # The aborted step's output was moved aside, not deleted.
+    assert list(out_dir.glob("before-1d.*.aborted.out")), "the output is preserved"
+    assert not (out_dir / "before-1d.out").exists()
+
+    # Now run the command the log told the operator to run. It must get past preflight.
+    rc = _cli(tmp_path, "--steps", "before,after", out_dir=out_dir, synthetic=synthetic)
+
+    assert rc == 0, "the documented resume must actually work"
+    assert (out_dir / "before-1d.json").is_file()
+    assert (out_dir / "after-1d.json").is_file()
+
+
+def test_f5_a_resume_is_not_asked_for_the_space_its_build_already_spent(
+    tmp_path: Path,
+) -> None:
+    """F5. disk_free always demanded predicted x headroom, so a measure-only rerun on the
+    very disk that now holds the synthetic file was refused by the tool's own advice."""
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    synthetic.parent.mkdir(parents=True)
+    synthetic.write_bytes(b"x" * 4096)
+
+    build = _preflight(tmp_path, _reader(tmp_path), steps=["build"])
+    measure_only = _preflight(tmp_path, _reader(tmp_path), steps=["before", "after"])
+
+    build_check = next(c for c in build.checks if c.check == "disk_free")
+    resume_check = next(c for c in measure_only.checks if c.check == "disk_free")
+    assert "index-growth-ratio" in resume_check.source
+    assert resume_check.floor_bytes is not None
+    assert build_check.floor_bytes is not None
+    assert resume_check.floor_bytes < build_check.floor_bytes
+    # Only the index is new: ~1.8 % of the file on disk, not the whole predicted file.
+    assert resume_check.floor_bytes <= int(
+        4096 * driver.DEFAULT_INDEX_GROWTH_RATIO * driver.DEFAULT_DISK_HEADROOM_RATIO
+    )
+
+
+def test_f5_measure_only_without_a_synthetic_file_is_refused_up_front(
+    tmp_path: Path,
+) -> None:
+    """The step selection has to be consistent with what is on disk: with `build` excluded
+    nothing creates the file, so refusing now beats three children failing later."""
+    record = _preflight(tmp_path, _reader(tmp_path), steps=["before", "after"])
+
+    assert record.verdict == "refused"
+    assert "synthetic_present" in _failed(record)
+
+
+def test_f6_wall_clock_is_not_rounded_up_to_the_host_sample_interval(
+    tmp_path: Path,
+) -> None:
+    """F6. wait4 was polled only after sleep(watch_interval_s), so a step that finished
+    early was still reported as having run until the next sample: an 8 s step under a 5 s
+    cadence read as 10 s at 80 % CPU, not comparable with the GNU `time -v` numbers."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    step = driver.Step(
+        name="build",
+        argv=(sys.executable, "-c", "import time; time.sleep(0.3)"),
+        stdout_path=tmp_path / "w.out",
+        stderr_path=tmp_path / "w.err",
+    )
+
+    result = driver.run_step(
+        step,
+        # A deliberately coarse host cadence next to a fine reap cadence.
+        guard=_guard(watch_interval_s=5.0, poll_interval_s=0.02),
+        reader=driver.HostReader(),
+        run_id="cadence",
+        days=1,
+        out_dir=out_dir,
+        log=lambda _m: None,
+        sampler=_healthy(),
+    )
+
+    assert 0.3 <= result.wall_seconds < 1.0, result.wall_seconds
+    assert result.samples_taken == 1, "the host cadence is still 5 s"
+
+
+def _wait_until_reapable(pid: int, timeout: float = 10.0) -> bool:
+    """Block until ``pid`` is a zombie (exited, not yet reaped) or gone.
+
+    A child writing "I am done" to a file and then exiting are two different instants, so
+    a marker file cannot express "the child has already exited" — the first version of the
+    F7 test used one and raced. The kernel's own ``Z`` state can.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+        except OSError:
+            return True
+        state = stat[stat.rindex(")") + 2]
+        if state == "Z":
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort(
+    tmp_path: Path,
+) -> None:
+    """F7. A sample taken on a child that had already exited could produce an ABORTED
+    artifact next to a complete `<step>-Nd.json`, and the next resume was then refused by
+    artifacts_absent for a step that had in fact succeeded."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    step = driver.Step(
+        name="build",
+        argv=(sys.executable, "-c", "pass"),
+        stdout_path=tmp_path / "r.out",
+        stderr_path=tmp_path / "r.err",
+    )
+    seen = {"reaped": False}
+
+    def sampler(pid: int):
+        # Hold the sample until the child really has exited, then report a starved host:
+        # exactly the interleaving the guard has to recognize as "already finished".
+        seen["reaped"] = _wait_until_reapable(pid)
+        return driver.HostSample(
+            at_kst="2026-10-01T12:00:00.000+09:00",
+            mem_available_bytes=int(0.5 * _GB),
+            swap_free_bytes=5 * _GB,
+            swap_total_bytes=8 * _GB,
+        )
+
+    result = driver.run_step(
+        step,
+        guard=_guard(),
+        reader=driver.HostReader(),
+        run_id="race",
+        days=1,
+        out_dir=out_dir,
+        log=lambda _m: None,
+        sampler=sampler,
+    )
+
+    assert seen["reaped"], "the test did not reach the interleaving it is about"
+    assert result.returncode == 0
+    assert not (out_dir / "ABORTED-build-1d.json").exists()
+    assert (out_dir / "build-1d.resource.json").is_file()
+
+
+def test_f7_an_abort_records_the_exit_code_the_way_a_step_result_does(
+    tmp_path: Path,
+) -> None:
+    """The raw wait status leaked into AbortRecord.returncode on the non-signalled branch:
+    a child that had exited 1 was recorded as 256 while StepResult said 1."""
+    assert driver._returncode(0) == 0
+    assert driver._returncode(1 << 8) == 1, "exit 1 is 1, not 256"
+    assert driver._returncode(9) == -9, "SIGKILL is -9"
+
+
+def test_f8_lowering_the_start_floor_lowers_the_in_run_floor_with_it(
+    tmp_path: Path,
+) -> None:
+    """F8. The help said `--min-swap-free-gb 0` opts out on a swapless host; the default
+    abort floor of 1.0 then refused, citing a flag the operator had never typed."""
+    guard = driver.GuardConfig.validated(min_available_gb=6.0, min_swap_free_gb=0.0)
+
+    assert guard.abort_swap_free_bytes == 0
+    assert guard.abort_available_bytes == int(driver.DEFAULT_ABORT_AVAILABLE_GB * _GB)
+    assert any("abort_swap_free_gb derived" in d for d in guard.derivations)
+
+    # An abort floor the operator DID type above the start floor is still a contradiction.
+    with pytest.raises(driver.MeasureRefused, match="abort-swap-free-gb"):
+        driver.GuardConfig.validated(
+            min_available_gb=6.0, min_swap_free_gb=0.0, abort_swap_free_gb=1.0
+        )
+
+
+def test_f8_a_swapless_host_runs_end_to_end_with_one_flag(tmp_path: Path) -> None:
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    reader = driver.HostReader(
+        meminfo_path=_meminfo(
+            tmp_path / "swapless",
+            available_gb=12.0,
+            swap_free_gb=0.0,
+            swap_total_gb=0.0,
+        ),
+        pgrep_argv=("/bin/true",),
+    )
+    rc = driver.main(
+        [
+            "run",
+            "--reference",
+            str(reference),
+            "--synthetic",
+            str(tmp_path / "synth" / "s.sqlite3"),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--days",
+            "1",
+            "--repeats",
+            "1",
+            "--batch-rows",
+            "200",
+            "--min-available-gb",
+            "0",
+            # The one flag the help text names. No --abort-swap-free-gb.
+            "--min-swap-free-gb",
+            "0",
+            "--watch-interval-s",
+            "0.05",
+            "--poll-interval-s",
+            "0.01",
+            "--bench",
+            str(_BENCH_PATH),
+        ],
+        reader=reader,
+    )
+
+    assert rc == 0
+    payload = json.loads((tmp_path / "out" / "preflight.json").read_text())
+    assert payload["thresholds"]["abort_swap_free_gb"] == 0.0
+    assert any("derived" in w for w in payload["warnings"])
+
+
+def test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill(
+    tmp_path: Path,
+) -> None:
+    """The lock is the exact half of F3 that a pattern cannot do: it says whether another
+    run claimed THIS output directory. A lock whose owner is gone must not block forever —
+    a SIGKILLed run cannot clean up after itself."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
+    try:
+        (out_dir / driver.LOCK_NAME).write_text(
+            json.dumps({"pid": live.pid, "argv0": sys.executable, "run_id": "other"})
+        )
+        assert driver.read_lock(out_dir) is not None
+        assert _preflight(tmp_path, _reader(tmp_path)).verdict == "refused"
+    finally:
+        live.kill()
+        live.wait()
+
+    # Owner gone: stale, and the next run proceeds.
+    assert driver.read_lock(out_dir) is None
+    assert _preflight(tmp_path, _reader(tmp_path)).verdict == "ok"
+
+
+def test_the_lock_is_released_when_a_run_finishes(tmp_path: Path) -> None:
+    out_dir = tmp_path / "out"
+    assert _cli(tmp_path, out_dir=out_dir) == 0
+    assert not (out_dir / driver.LOCK_NAME).exists()
