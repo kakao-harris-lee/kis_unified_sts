@@ -223,6 +223,36 @@ def _switch_journal_to_wal(conn: sqlite3.Connection) -> str:
     return "" if row is None else str(row[0]).lower()
 
 
+def _wait_out_the_lock_and_retry(conn: sqlite3.Connection) -> str:
+    """Wait on sqlite's OWN busy handler, then run the switch PRAGMA exactly once more.
+
+    ``BEGIN IMMEDIATE`` takes a write lock and, unlike ``PRAGMA journal_mode``, it DOES retry
+    through the connection's configured busy timeout — which is the whole trick: the wait costs
+    no new constant, because the connection already carries one. The ``ROLLBACK`` is immediate
+    and the transaction writes nothing.
+
+    **Called from OUTSIDE its caller's ``except`` block, deliberately** (review round-2 F2).
+    Raising from inside it would attach the handled first ``SQLITE_BUSY`` as ``__context__``, and
+    a refused boot would print two chained "database is locked" tracebacks under "During handling
+    of the above exception" — inviting the operator to read the first, expected, already-handled
+    one as the failure. Out here the exception state is cleared and a second failure propagates
+    unchained.
+
+    Returns:
+        The journal mode sqlite left in place after the retry — the caller checks it, since a
+        refused switch is reported by the RETURN value, not by raising.
+    """
+    _LOG.warning(
+        "journal_mode=WAL switch lost the lock on %s; waiting on sqlite's busy handler and "
+        "retrying once. The wait is bounded by this connection's own busy timeout, and this "
+        "call can take up to three of them before it refuses the boot.",
+        _database_file(conn),
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("ROLLBACK")
+    return _switch_journal_to_wal(conn)
+
+
 def enable_wal_journal(conn: sqlite3.Connection) -> None:
     """Put ``conn``'s file into ``journal_mode=WAL``, waiting out the birth race (**#818**).
 
@@ -308,16 +338,7 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
     # inviting the operator to read the first, expected, already-handled one as the failure.
     # Out here the exception state is cleared, so the second failure propagates unchained.
     if contended:
-        _LOG.warning(
-            "journal_mode=WAL switch lost the lock on %s; waiting on sqlite's busy handler "
-            "and retrying once. The wait is bounded by this connection's own busy timeout and "
-            "this call can take up to three of them before it refuses the boot.",
-            _database_file(conn),
-        )
-        # Wait on sqlite's own busy handler (the PRAGMA above would not), then try once more.
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("ROLLBACK")
-        mode = _switch_journal_to_wal(conn)
+        mode = _wait_out_the_lock_and_retry(conn)
     if mode != _WAL_JOURNAL_MODE:
         raise JournalModeRefused(
             f"sqlite kept journal_mode={mode!r} instead of switching this store file to WAL; "
