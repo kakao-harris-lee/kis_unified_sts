@@ -1,13 +1,16 @@
 """The GENESIS TRANSACTION of the four durable stores, under concurrent first boot (#801).
 
-**Scope, stated first, because the obvious wider claim is false (review HIGH-1).** Every test here
-runs against a file that is already ``journal_mode=WAL`` (:func:`_precreate_wal_file`), so what
-they measure is the genesis transaction: atomic, non-interleavable, exactly one ``CREATED`` row.
-Concurrent first boot on a genuinely brand-new file is **still broken** — the ``journal_mode=WAL``
-switch takes a lock sqlite does not retry through the busy timeout, and a loser gets
-``OperationalError: database is locked`` before any schema code runs (22/80 openers at N=2, 57/160
-at N=4, 90/320 at N=8). That is **#818**, out of #801's scope. Nothing in this module may be read
-as "concurrent first boot works".
+**Two races, two fixes, and this module now covers both (#801, then #818).** Most tests here run
+against a file that is already ``journal_mode=WAL`` (:func:`_precreate_wal_file`), so what they
+measure is the genesis transaction alone: atomic, non-interleavable, exactly one ``CREATED`` row.
+Concurrent first boot on a genuinely BRAND-NEW file used to fail earlier than any of that — the
+``journal_mode=WAL`` switch takes a lock sqlite does not retry through the busy timeout, and a
+loser got ``OperationalError: database is locked`` before any schema code ran (22/80 openers at
+N=2, 57/160 at N=4, 90/320 at N=8). That was **#818**, out of #801's scope; it is closed by
+:func:`~tos_runtime.operations.schema_ledger.enable_wal_journal` and pinned here by
+:func:`test_concurrent_first_boot_on_a_brand_new_file_admits_every_process`, whose own fixture
+deliberately does NOT pre-create the file. The pre-created tests stay as they are: keeping the two
+races in separate fixtures is what lets a failure name which one broke.
 
 Two runtimes started against the same empty ``data_dir`` both reach every store's constructor
 with the file still carrying no user tables. Before the atomic-genesis fix
@@ -194,13 +197,15 @@ def _precreate_wal_file(path: Path) -> None:
     journal mode to WAL needs an exclusive lock that ``PRAGMA journal_mode`` does NOT retry
     through sqlite's busy timeout, so concurrent first connections can lose one side to
     ``OperationalError: database is locked`` before any store code runs. That race is out of
-    #801's scope (plan §2.1 keeps the pragma outside the transaction), it is unaffected by this
-    fix, and letting it fire here would only blur the one under test.
+    #801's scope (plan §2.1 keeps the pragma outside the transaction) and letting it fire here
+    would only blur the one under test.
 
-    **It is also still OPEN, and this helper is what hides it — so say so where the hiding
-    happens (review HIGH-1).** It is not rare: measured on a brand-new file, 22/80 losing openers
-    at N=2, 57/160 at N=4, 90/320 at N=8. Tracked in **#818**. Anything this module reports is a
-    statement about the genesis transaction, never about first boot as a whole.
+    **It is closed now — by #818, not by this helper, and this helper still hides it.** It was
+    never rare: measured on a brand-new file, 22/80 losing openers at N=2, 57/160 at N=4, 90/320
+    at N=8. What a pre-created test reports is therefore still a statement about the genesis
+    transaction only; the brand-new-file claim belongs to
+    :func:`test_concurrent_first_boot_on_a_brand_new_file_admits_every_process`, which skips this
+    helper precisely so it measures the birth race instead.
     """
     conn = sqlite3.connect(str(path), isolation_level=None)
     try:
@@ -269,9 +274,10 @@ def test_the_genesis_transaction_is_atomic_under_concurrent_first_boot(
     (review HIGH-1, which measured the older name as an overreach). What this pins is exactly the
     scope of #801: the genesis transaction is atomic and non-interleavable, measured on a file that
     is **already** ``journal_mode=WAL`` (:func:`_precreate_wal_file`). A concurrent first boot on a
-    genuinely brand-new file can still lose a process to the ``journal_mode`` switch itself, which
-    this fix does not touch — reviewer measurement 22/80 openers at N=2, 57/160 at N=4, 90/320 at
-    N=8 — and that is tracked in **#818**.
+    genuinely brand-new file loses a process to the ``journal_mode`` switch itself, which this fix
+    does not touch — reviewer measurement 22/80 openers at N=2, 57/160 at N=4, 90/320 at N=8. That
+    is #818's scope, closed separately and pinned by
+    :func:`test_concurrent_first_boot_on_a_brand_new_file_admits_every_process` below.
 
     RED on the pre-fix code, per store, with the window widened as the module docstring
     describes: the losers report ``IntegrityError: UNIQUE constraint failed:
@@ -383,3 +389,53 @@ def test_a_write_lock_held_past_the_busy_timeout_refuses_boot_explicitly(
     finally:
         holder.close()
         evidence.close()
+
+
+#: Rounds of :data:`_PROCESSES` openers the brand-new-file test runs per store. The birth race is
+#: probabilistic (measured ~21 % of openers at N=2 and 73/320 at N=8 on the pre-#818 code), so one
+#: round proves nothing about the fix — but it is also frequent enough that five rounds of eight
+#: leave the old code no realistic way to come out clean (p < 1e-20 at the measured rate).
+_BIRTH_RACE_ROUNDS = 5
+
+
+@pytest.mark.parametrize(
+    ("store", "expected_version", "pause_after_sql"), _STORES, ids=_STORE_IDS
+)
+def test_concurrent_first_boot_on_a_brand_new_file_admits_every_process(
+    tmp_path: Path, store: str, expected_version: int, pause_after_sql: str
+) -> None:
+    """Eight processes open the same NON-EXISTENT store path at once: all eight boot (**#818**).
+
+    This is the claim the rest of this module deliberately does not make. No
+    :func:`_precreate_wal_file` here and no DDL pause either (``pause_after_sql`` is dropped): the
+    window under test is the ``PRAGMA journal_mode=WAL`` switch itself, which happens before the
+    first ``CREATE TABLE``, and widening the later window would only push the children past each
+    other. What makes it deterministic enough to assert on is repetition —
+    :data:`_BIRTH_RACE_ROUNDS` rounds per store, a fresh path each round.
+
+    RED on the pre-#818 code, per store, with no mutation needed: the losers report
+    ``OperationalError: database is locked`` out of the constructor's own journal-mode switch.
+    Measured on this branch with :func:`~tos_runtime.operations.schema_ledger.enable_wal_journal`
+    reverted to the bare PRAGMA, ten rounds of eight per store — evidence 15/80, inbox 4/80,
+    marketfeed 5/80, rcl 30/80 losing children — and every one of three full runs of this test
+    failed on all four stores.
+
+    The ledger assertion is the second half, exactly as in the genesis tests above: surviving the
+    birth race must still leave ONE ``CREATED`` row, or the two fixes would be trading one
+    defect for another.
+    """
+    for round_index in range(_BIRTH_RACE_ROUNDS):
+        path = tmp_path / f"{store}-{round_index}.sqlite3"
+        assert not path.exists()
+
+        outcomes = _run_concurrent_first_boot(store, path, "")
+
+        assert outcomes == ["OK"] * _PROCESSES, (
+            f"every concurrent first boot of a BRAND-NEW {store} file must succeed "
+            f"(round {round_index}); failures: "
+            f"{sorted(outcome for outcome in outcomes if outcome != 'OK')}"
+        )
+        assert _ledger_rows(path) == [(expected_version, "CREATED")], (
+            f"the {store} store must carry exactly one genesis row after a concurrent first "
+            f"boot on a brand-new file (round {round_index})"
+        )
