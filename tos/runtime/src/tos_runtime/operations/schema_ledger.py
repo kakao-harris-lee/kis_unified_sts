@@ -24,6 +24,37 @@ because "decide freshness -> run DDL -> stamp" held no lock across the three ste
 second process waits on sqlite's own write lock and then sees a FINISHED file. Its fixture is
 :mod:`tos_runtime.tests.operations.test_schema_genesis_concurrency`.
 
+**What is closed, and what is not.** The GENESIS TRANSACTION race (R-1/R-2 above) is closed. A
+concurrent first boot against a **brand-new** file can still fail EARLIER than this function: each
+store sets ``PRAGMA journal_mode=WAL`` on its own connection before calling here, and switching a
+never-yet-WAL file's journal mode takes a lock that sqlite does NOT retry through the busy timeout,
+so one side can lose with ``sqlite3.OperationalError: database is locked`` before any schema code
+runs. Measured on a brand-new file: ~22/80 losing openers at N=2, 57/160 at N=4, 90/320 at N=8.
+That race is **out of #801's scope and still open — tracked in #818**; this module's own fixture
+pre-creates the file in WAL mode precisely so it measures the genesis transaction and not that.
+
+**A steady-state boot takes no write lock (review MEDIUM-1).** Folding the DDL into the genesis
+transaction would otherwise have made EVERY boot contend for the exclusive write lock — with a live
+runtime appending evidence, an operator CLI (``rearm`` / ``ack-alert`` / ``rotate-key``), or a long
+``apply_migrations`` index build — where before #801 a boot against an existing, current file took
+no write lock at all. A store constructed with a short busy timeout
+(``SqliteCommitLog(sqlite_timeout_s=0)``) would fail instantly against any of them. So
+:func:`open_or_create_schema` decides the common case with two LOCK-FREE reads before it starts a
+transaction: ``PRAGMA user_version == schema_version`` **and** the ``schema_ledger`` table exists.
+
+That is sound in the direction it is used. The version stamp and the tables commit in the SAME
+transaction, so ``user_version == schema_version`` cannot be observed unless a genesis (or an
+``apply_migrations``) already finished — there is no state where the version is current but the
+schema is not. Every other observation (version 0, a behind/ahead version, a missing ledger) falls
+through to ``BEGIN IMMEDIATE``, so R-1/R-2 stay closed: a concurrent FIRST boot can never take the
+fast path, because ``user_version`` is 0 until someone commits the stamp.
+
+The consequence to know: a steady-state boot now runs NO DDL, so it no longer re-creates an
+auxiliary structure that was removed by hand (an index an operator dropped, say). That was never a
+reliable repair anyway — the evidence store's ``entries_kind_seq`` is genesis-only since #816 — and
+:attr:`~tos_runtime.operations.schema_migrations.SchemaMigration.repair_statements` is the
+sanctioned path for it.
+
 **Boot is a check, never a migration.** Neither :func:`open_or_create_schema` nor
 :func:`ensure_schema_current` ever runs an ``ALTER TABLE``/data-shape change of its own — the
 three-way disposition is:
@@ -156,6 +187,21 @@ def read_schema_version(path_conn: sqlite3.Connection) -> int:
     return int(row[0])
 
 
+def _schema_ledger_exists(conn: sqlite3.Connection) -> bool:
+    """``True`` iff the ``schema_ledger`` table is already on ``conn``'s file.
+
+    A lock-free read, used only by :func:`open_or_create_schema`'s steady-state fast path as the
+    second half of "this file is already finished". It is not redundant with the version check: a
+    file that predates the schema ledger entirely, or one an operator demoted by dropping the
+    table, can carry a matching ``user_version`` with no ledger — that file must reach
+    ``BEGIN IMMEDIATE`` so the ledger DDL runs, not be waved through.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_ledger'"
+    ).fetchone()
+    return row is not None
+
+
 def _refuse_version(store_name: str, current: int, schema_version: int) -> NoReturn:
     """Raise the BEHIND/AHEAD refusal for a non-fresh file (module docstring cases 3/4).
 
@@ -177,64 +223,28 @@ def _refuse_version(store_name: str, current: int, schema_version: int) -> NoRet
     )
 
 
-def open_or_create_schema(
+def _run_genesis_transaction(
     conn: sqlite3.Connection,
     *,
-    store_name: str,
     schema_version: int,
     create_ddl: Callable[[sqlite3.Connection, bool], None],
     shape_tables: Sequence[str],
     monotonic_ns: Callable[[], int],
-) -> bool:
-    """Create this store's schema if the file is fresh, else check it — atomically (#801).
+) -> tuple[bool, int]:
+    """Run the whole genesis inside ONE ``BEGIN IMMEDIATE`` ... ``COMMIT``; return
+    ``(was_fresh, on_disk_version)``.
 
-    Everything a genesis consists of runs inside ONE ``BEGIN IMMEDIATE`` ... ``COMMIT``::
+    Extracted from :func:`open_or_create_schema` to keep both functions inside the repo's
+    100-line function budget (``tools/tos_size_budget.py``, operator-configured threshold) — a
+    pure decomposition, no behavior change: the same statements run on the same connection in the
+    same order, inside the same one transaction.
 
-        BEGIN IMMEDIATE                 <- write lock; a second process waits HERE
-          fresh = file_is_fresh(conn)   <- decided under the lock (module docstring, R-1/R-2)
-          create_ddl(conn, fresh)       <- the caller's own CREATE TABLE/INDEX/TRIGGER
-          schema_ledger DDL + triggers
-          if fresh: PRAGMA user_version = schema_version; INSERT the CREATED row
-        COMMIT
-        if not fresh: compare versions  <- unchanged rules (module docstring cases 2/3/4)
-
-    Two properties follow, and neither held before:
-
-    * A concurrent opener never observes a half-created file. It blocks on sqlite's own write
-      lock until the winner commits, then reads ``fresh=False`` with the version already stamped
-      and takes the ordinary "already current" path.
-    * Any exception — from ``create_ddl`` or from this function — ``ROLLBACK``s, so a failed
-      genesis leaves ZERO user tables rather than the partial set autocommitted DDL used to
-      leave behind.
-
-    ``PRAGMA journal_mode`` is deliberately NOT set here: it cannot be changed inside a
-    transaction, so each store keeps setting it on its own connection immediately after
-    connecting, before this call.
-
-    Args:
-        conn: The store's own live connection, in autocommit mode (``isolation_level=None``) so
-            the explicit ``BEGIN IMMEDIATE`` below is the only transaction in play.
-        store_name: The store's own name (``"evidence"`` / ``"rcl"`` / ``"inbox"`` /
-            ``"marketfeed"``) — used only in a refusal's error message.
-        schema_version: The CODE's own expected schema version for this store.
-        create_ddl: The store's own DDL, called as ``create_ddl(conn, fresh)``. It receives the
-            freshness verdict because some statements are genesis-only: the evidence store's
-            ``entries_kind_seq`` index must NOT be built on a non-fresh file (that is
-            ``migrate``'s job, and boot is a check — see
-            :mod:`tos_runtime.evidence.store`'s own note on it).
-        shape_tables: The tables whose on-disk shape is digested into the genesis ledger row
-            (:func:`compute_schema_shape_digest`), read AFTER ``create_ddl`` has run.
-        monotonic_ns: Injected monotonic-clock callable — never ``time.monotonic_ns`` read
-            directly (matches every other store's own constructor-injection discipline).
-
-    Returns:
-        ``True`` iff THIS call performed the genesis (and therefore wrote the ``CREATED`` row).
+    The version comparison deliberately stays with the CALLER: it happens after ``COMMIT``, so it
+    is not part of the transaction this function owns.
 
     Raises:
-        SchemaVersionRefused: On-disk ``user_version`` is behind OR ahead of ``schema_version``
-            for a non-fresh file (module docstring cases 3/4).
-        sqlite3.OperationalError: The write lock could not be taken within the connection's own
-            busy timeout — a fail-closed boot refusal, never a partially created file.
+        Whatever ``create_ddl`` raises, or sqlite3's own errors — always after a ``ROLLBACK``, so
+        a failed genesis leaves zero user tables.
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -259,8 +269,96 @@ def open_or_create_schema(
         current = read_schema_version(conn)
         conn.execute("COMMIT")
     except BaseException:
-        conn.execute("ROLLBACK")
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.OperationalError:
+            # The transaction was already ended — a ``create_ddl`` that committed or rolled back
+            # itself before failing leaves sqlite reporting "cannot rollback - no transaction is
+            # active". The ORIGINAL exception is the diagnosis; replacing it with this one would
+            # throw the diagnosis away and report a symptom of the cleanup instead (review LOW-1).
+            pass
         raise
+    return fresh, current
+
+
+def open_or_create_schema(
+    conn: sqlite3.Connection,
+    *,
+    store_name: str,
+    schema_version: int,
+    create_ddl: Callable[[sqlite3.Connection, bool], None],
+    shape_tables: Sequence[str],
+    monotonic_ns: Callable[[], int],
+) -> bool:
+    """Create this store's schema if the file is fresh, else check it — atomically (#801).
+
+    Everything a genesis consists of runs inside ONE ``BEGIN IMMEDIATE`` ... ``COMMIT``::
+
+        if user_version == schema_version and schema_ledger exists:
+            return False            <- STEADY-STATE FAST PATH: two lock-free reads, no write lock
+        BEGIN IMMEDIATE                 <- write lock; a second process waits HERE
+          fresh = file_is_fresh(conn)   <- decided under the lock (module docstring, R-1/R-2)
+          create_ddl(conn, fresh)       <- the caller's own CREATE TABLE/INDEX/TRIGGER
+          schema_ledger DDL + triggers
+          if fresh: PRAGMA user_version = schema_version; INSERT the CREATED row
+        COMMIT
+        if not fresh: compare versions  <- unchanged rules (module docstring cases 2/3/4)
+
+    Two properties follow from the transaction, and neither held before: a concurrent opener never
+    observes a half-created file (it blocks on sqlite's own write lock, then reads ``fresh=False``
+    with the version already stamped), and any exception ``ROLLBACK``s, so a failed genesis leaves
+    ZERO user tables instead of the partial set autocommitted DDL used to leave behind. The
+    fast path's own rationale and its one consequence are in the module docstring, as is the
+    ``journal_mode`` race on a brand-new file that this function does NOT close (**#818**).
+
+    Args:
+        conn: The store's own live connection, in autocommit mode (``isolation_level=None``) so
+            the explicit ``BEGIN IMMEDIATE`` below is the only transaction in play. Enforced —
+            under sqlite3's implicit-transaction modes the ``BEGIN IMMEDIATE`` below raises
+            mid-genesis and the whole atomicity argument is void.
+        store_name: The store's own name (``"evidence"`` / ``"rcl"`` / ``"inbox"`` /
+            ``"marketfeed"``) — used only in a refusal's error message.
+        schema_version: The CODE's own expected schema version for this store.
+        create_ddl: The store's own DDL, called as ``create_ddl(conn, fresh)``. It receives the
+            freshness verdict because some statements are genesis-only: the evidence store's
+            ``entries_kind_seq`` index must NOT be built on a non-fresh file (that is
+            ``migrate``'s job, and boot is a check — see
+            :mod:`tos_runtime.evidence.store`'s own note on it).
+        shape_tables: The tables whose on-disk shape is digested into the genesis ledger row
+            (:func:`compute_schema_shape_digest`), read AFTER ``create_ddl`` has run.
+        monotonic_ns: Injected monotonic-clock callable — never ``time.monotonic_ns`` read
+            directly (matches every other store's own constructor-injection discipline).
+
+    Returns:
+        ``True`` iff THIS call performed the genesis (and therefore wrote the ``CREATED`` row).
+
+    Raises:
+        ValueError: ``conn`` is not in autocommit mode (``isolation_level`` is not ``None``).
+        SchemaVersionRefused: On-disk ``user_version`` is behind OR ahead of ``schema_version``
+            for a non-fresh file (module docstring cases 3/4).
+        sqlite3.OperationalError: The write lock could not be taken within the connection's own
+            busy timeout — a fail-closed boot refusal, never a partially created file. A
+            steady-state boot does not reach the lock at all (fast path above).
+    """
+    if conn.isolation_level is not None:
+        raise ValueError(
+            f"{store_name}: open_or_create_schema needs a connection in autocommit mode "
+            f"(sqlite3.connect(..., isolation_level=None)); got "
+            f"isolation_level={conn.isolation_level!r}. Otherwise sqlite3 opens an implicit "
+            "transaction of its own and the explicit BEGIN IMMEDIATE that makes genesis atomic "
+            "raises 'cannot start a transaction within a transaction' mid-boot"
+        )
+    # Steady-state fast path (review MEDIUM-1) — two lock-free reads, no write lock. The module
+    # docstring carries the argument for why `user_version == schema_version` is sufficient.
+    if read_schema_version(conn) == schema_version and _schema_ledger_exists(conn):
+        return False
+    fresh, current = _run_genesis_transaction(
+        conn,
+        schema_version=schema_version,
+        create_ddl=create_ddl,
+        shape_tables=shape_tables,
+        monotonic_ns=monotonic_ns,
+    )
     if fresh:
         return True
     if current != schema_version:

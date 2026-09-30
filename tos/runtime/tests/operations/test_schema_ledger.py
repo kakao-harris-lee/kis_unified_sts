@@ -385,10 +385,7 @@ def _open_widgets(
     schema_version: int = 3,
     create_ddl: Callable[[sqlite3.Connection, bool], None] = _widget_ddl,
 ) -> bool:
-    # Annotated, not returned directly: from the repo root `tos_runtime` is not on mypy's path,
-    # so every symbol imported from it is `Any` and a bare `return` of one raises
-    # `no-any-return`. Keeps this suite's error count equal to main's baseline (plan §7).
-    performed_genesis: bool = open_or_create_schema(
+    return open_or_create_schema(
         conn,
         store_name="widgets-store",
         schema_version=schema_version,
@@ -396,7 +393,6 @@ def _open_widgets(
         shape_tables=("widgets",),
         monotonic_ns=lambda: 4242,
     )
-    return performed_genesis
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -531,6 +527,216 @@ def test_open_or_create_schema_leaves_no_tables_after_a_failed_genesis_on_disk(
         assert user_tables(reader) == frozenset()
     finally:
         reader.close()
+
+
+# -- review MEDIUM-1: a steady-state boot must not need the write lock -------------------------
+#
+# Before #801 a boot against an existing, current file took no write lock at all. Folding the DDL
+# into `BEGIN IMMEDIATE` made every boot contend with whatever holds that lock — a live runtime
+# appending evidence, an operator CLI (`rearm`/`ack-alert`/`rotate-key`), or a long
+# `apply_migrations` index build. The lock-free fast path restores the old property; these tests
+# pin both halves of it (it really is lock-free, and it really cannot wave a stale file through).
+
+
+def test_an_already_current_file_boots_while_another_writer_holds_the_lock(
+    tmp_path: Path,
+) -> None:
+    """RED before the fast path: this is the regression #801 introduced and MEDIUM-1 names.
+
+    A second connection holds ``BEGIN IMMEDIATE`` for the whole boot, and the booting connection
+    is given ``timeout=0`` so it cannot wait at all — the same shape as a runtime booting beside a
+    live writer with ``SqliteCommitLog(sqlite_timeout_s=0)``. With the DDL inside an unconditional
+    ``BEGIN IMMEDIATE`` this raises ``sqlite3.OperationalError: database is locked``.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        assert _open_widgets(first) is True
+    finally:
+        first.close()
+
+    holder = _connect(path)
+    booting = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+
+        assert _open_widgets(booting) is False
+
+        # And it really was lock-free: the holder's transaction is still open and intact.
+        assert holder.execute("PRAGMA user_version").fetchone()[0] == 3
+        holder.execute("ROLLBACK")
+    finally:
+        booting.close()
+        holder.close()
+
+
+def test_the_fast_path_still_refuses_a_behind_or_ahead_version_under_a_held_lock(
+    tmp_path: Path,
+) -> None:
+    """The fast path must not become a way to skip the version check.
+
+    A disagreeing version is NOT the fast path, so it falls through to ``BEGIN IMMEDIATE`` — and
+    with the lock held and ``timeout=0`` that surfaces as ``OperationalError``, i.e. still
+    fail-closed. What must never happen is a silent pass.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    first = _connect(path)
+    try:
+        _open_widgets(first)
+        first.execute("PRAGMA user_version = 2")
+    finally:
+        first.close()
+
+    holder = _connect(path)
+    booting = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            _open_widgets(booting)
+        holder.execute("ROLLBACK")
+    finally:
+        booting.close()
+        holder.close()
+
+    # With the lock free, the very same file is refused on the version, as it always was.
+    reopened = _connect(path)
+    try:
+        with pytest.raises(SchemaVersionRefused, match="BEHIND"):
+            _open_widgets(reopened)
+    finally:
+        reopened.close()
+
+
+def test_a_matching_version_without_a_schema_ledger_does_not_take_the_fast_path(
+    tmp_path: Path,
+) -> None:
+    """The second half of the fast-path predicate, pinned.
+
+    A file whose ``user_version`` matches but that carries no ``schema_ledger`` (a pre-ledger
+    file, or one an operator demoted by dropping the table) must reach the transaction so the
+    ledger DDL runs. A fast path keyed on the version alone would wave it through with no ledger.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+    try:
+        _open_widgets(conn)
+        conn.execute("DROP TRIGGER schema_ledger_no_update")
+        conn.execute("DROP TRIGGER schema_ledger_no_delete")
+        conn.execute("DROP TABLE schema_ledger")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        conn.close()
+
+    reopened = _connect(path)
+    try:
+        # Not fresh (widgets exists) and the version already matches, so this is the ordinary
+        # "already current" outcome — but the ledger table is back, which only the transaction
+        # could have done.
+        assert _open_widgets(reopened) is False
+        assert "schema_ledger" in user_tables(reopened)
+        # No genesis row was invented for a file whose genesis it did not perform.
+        assert reopened.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 0
+    finally:
+        reopened.close()
+
+
+def test_a_v1_evidence_file_is_still_refused_and_never_fast_pathed(
+    tmp_path: Path,
+) -> None:
+    """The real store, not the synthetic one: #816's v1 -> v2 refusal must survive the fast path.
+
+    ``user_version`` 1 != ``EVIDENCE_SCHEMA_VERSION`` 2, so a v1 file cannot match the fast-path
+    predicate and is refused exactly as before — and, as #816 requires, without the
+    ``entries_kind_seq`` index having been built by the refused boot.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _build_v1_evidence_file(tmp_path, path)
+
+    with pytest.raises(SchemaVersionRefused, match="BEHIND"):
+        SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert _INDEX_NAME not in _index_names(conn)
+    finally:
+        conn.close()
+
+
+def test_a_real_store_boots_beside_a_held_write_lock(tmp_path: Path) -> None:
+    """MEDIUM-1 through a REAL store, with the timeout the fault-③ suite already injects.
+
+    ``SqliteCommitLog`` is the one store that takes ``sqlite_timeout_s``, so it is the one that
+    can express "cannot wait at all" without a new config key. RED before the fast path.
+    """
+    evidence = SqliteEvidenceStore(
+        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
+    )
+    path = tmp_path / "rcl.sqlite3"
+    first = SqliteCommitLog(path, evidence_port=evidence)
+    first.close()
+
+    holder = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        reopened = SqliteCommitLog(path, evidence_port=evidence, sqlite_timeout_s=0)
+        reopened.close()
+        holder.execute("ROLLBACK")
+    finally:
+        holder.close()
+        evidence.close()
+
+
+# -- review LOW-1/LOW-2: the helper's own contract ---------------------------------------------
+
+
+def test_a_create_ddl_that_ends_the_transaction_surfaces_its_own_exception(
+    tmp_path: Path,
+) -> None:
+    """LOW-1: the cleanup must never replace the diagnosis.
+
+    A ``create_ddl`` that commits (or rolls back) before failing leaves no transaction for the
+    handler's ``ROLLBACK``, and sqlite answers "cannot rollback - no transaction is active". If
+    that escapes, the real failure is gone. RED before the wrapped ``ROLLBACK``.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = _connect(path)
+
+    def commits_then_raises(inner: sqlite3.Connection, fresh: bool) -> None:
+        del fresh
+        inner.execute(_WIDGET_DDL)
+        inner.execute(
+            "COMMIT"
+        )  # ends the genesis transaction out from under the helper
+        raise RuntimeError("the real failure, which must not be masked")
+
+    try:
+        with pytest.raises(RuntimeError, match="the real failure"):
+            _open_widgets(conn, create_ddl=commits_then_raises)
+    finally:
+        conn.close()
+
+
+def test_a_connection_not_in_autocommit_mode_is_refused_with_a_clear_error(
+    tmp_path: Path,
+) -> None:
+    """LOW-2: a ``ValueError``, not an ``assert`` (``-O`` strips asserts) and not a mid-genesis
+    sqlite error.
+
+    With sqlite3's implicit transactions the explicit ``BEGIN IMMEDIATE`` raises "cannot start a
+    transaction within a transaction" — after the caller believed it had a working store — so the
+    precondition is checked before anything is touched.
+    """
+    path = tmp_path / "widgets.sqlite3"
+    conn = sqlite3.connect(str(path))  # sqlite3's default: isolation_level == ""
+    try:
+        assert conn.isolation_level is not None
+        with pytest.raises(ValueError, match="autocommit"):
+            _open_widgets(conn)
+        # Nothing was created before the refusal.
+        assert user_tables(conn) == frozenset()
+    finally:
+        conn.close()
 
 
 # -- schema_migrations.apply_migrations ----------------------------------------------------------
