@@ -7,23 +7,26 @@ state: switching a never-yet-WAL file to WAL takes an exclusive lock, and that P
 go through sqlite's busy handler, so a concurrent first boot loses one side outright with
 ``sqlite3.OperationalError: database is locked``. The cross-PROCESS proof that the fix closes it
 lives next door in :mod:`.test_schema_genesis_concurrency` (the brand-new-file case); this module
-pins the helper's own four edges, deterministically and without a race:
+pins the helper's own edges, deterministically and without a race:
 
 * a lock lost once is waited out and the switch retried (and it is a REAL wait — the
   ``BEGIN IMMEDIATE``/``ROLLBACK`` pair is observed, not assumed);
-* a lock still held after that wait refuses the boot, in both shapes it can take;
+* a lock still held after that wait refuses the boot, in both shapes it can take, leaving the
+  file and its sidecars untouched;
 * a journal mode that comes back as anything but ``wal`` refuses the boot — sqlite reports a
   refused switch by RETURNING the mode it kept, never by raising, and the pre-#818 code did not
   look at the answer at all;
 * an ``OperationalError`` that is not a lock contest is re-raised on the FIRST attempt, never
-  retried.
+  retried — while EVERY ``SQLITE_BUSY_*`` extended code still counts as one (review F2).
 
-**Every sqlite error used here is a real one.** The two doubles below replay
-:class:`sqlite3.OperationalError` instances captured from genuine sqlite operations (an exclusive
-lock held by a second connection; a select against a missing table), because the helper
-discriminates on ``sqlite_errorname`` — a hand-built ``OperationalError("database is locked")``
-carries no such attribute, so a test that fabricated one would be testing a different object than
-production ever sees.
+**Every sqlite error used here is a real one.** The doubles below replay
+:class:`sqlite3.OperationalError` instances captured from genuine sqlite operations — an exclusive
+lock held by a second connection, a stale WAL snapshot, a select against a missing table — because
+the helper discriminates on ``sqlite_errorcode``, and a hand-built
+``OperationalError("database is locked")`` carries no such attribute at all (measured). A test
+that fabricated one would be exercising a different object than production ever sees. The single
+exception is the ``SQLITE_LOCKED`` case, which re-labels a captured real error rather than
+inventing one, because sqlite will not hand out that code on demand here.
 """
 
 from __future__ import annotations
@@ -69,6 +72,40 @@ def _capture_locked_error(tmp_path: Path) -> sqlite3.OperationalError:
         holder.execute("ROLLBACK")
         victim.close()
         holder.close()
+
+
+def _capture_extended_busy_error(tmp_path: Path) -> sqlite3.OperationalError:
+    """A genuine ``SQLITE_BUSY_SNAPSHOT`` — a real EXTENDED variant of the same primary code.
+
+    sqlite raises this when a connection that already holds a read snapshot tries to write after
+    the WAL moved past it. It is not the variant the birth race produces (that is
+    ``SQLITE_BUSY_RECOVERY``, which needs a recovery window too narrow to force deterministically)
+    but it is the same thing that matters here: ``sqlite_errorname`` carries the EXTENDED name and
+    ``sqlite_errorcode`` is ``517``, whose low byte is ``SQLITE_BUSY``. Anything that discriminates
+    on the name fails this; anything that masks the code passes it.
+    """
+    path = tmp_path / "snapshot-source.sqlite3"
+    writer = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    reader = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE t(x)")
+        writer.execute("INSERT INTO t VALUES (1)")
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM t").fetchall()
+        writer.execute("INSERT INTO t VALUES (2)")
+        try:
+            reader.execute("INSERT INTO t VALUES (3)")
+        except sqlite3.OperationalError as exc:
+            assert exc.sqlite_errorcode == 517, exc.sqlite_errorcode
+            assert exc.sqlite_errorname == "SQLITE_BUSY_SNAPSHOT", exc.sqlite_errorname
+            return exc
+        raise AssertionError(  # pragma: no cover - only if sqlite stops detecting stale snapshots
+            "a stale-snapshot write did not raise SQLITE_BUSY_SNAPSHOT"
+        )
+    finally:
+        reader.close()
+        writer.close()
 
 
 def _capture_non_lock_error() -> sqlite3.OperationalError:
@@ -189,6 +226,11 @@ def test_a_lock_held_past_the_busy_timeout_refuses_the_boot_with_nothing_written
             ).fetchone()[0]
             == 0
         )
+        # The sidecar half of "untouched" — asserted, not merely claimed (review F5). A switch
+        # that got far enough to create -wal/-shm and then failed would leave the next boot
+        # reading a file whose header and sidecars disagree.
+        assert not path.with_name(path.name + "-wal").exists()
+        assert not path.with_name(path.name + "-shm").exists()
 
         # And once the lock is gone, the very same connection switches cleanly.
         enable_wal_journal(conn)
@@ -226,6 +268,54 @@ def test_an_operational_error_that_is_not_a_lock_is_not_retried(tmp_path: Path) 
     conn = _scripted(tmp_path / "store.sqlite3", [_capture_non_lock_error()])
     try:
         with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            enable_wal_journal(conn)
+
+        assert conn.log == [_WAL_PRAGMA]
+    finally:
+        conn.close()
+
+
+def test_an_extended_busy_code_is_still_a_lock_contest(tmp_path: Path) -> None:
+    """``SQLITE_BUSY_SNAPSHOT`` (517) must take the wait, exactly like plain ``SQLITE_BUSY`` (5).
+
+    RED on the first cut of #818, which compared ``sqlite_errorname`` to the literal
+    ``"SQLITE_BUSY"``. Python reports the EXTENDED name, so every ``SQLITE_BUSY_*`` variant fell
+    into the "not a lock contest, re-raise" branch and skipped the wait the helper exists for. The
+    variant that makes this a real defect rather than a tidiness point is
+    ``SQLITE_BUSY_RECOVERY``: a late opener whose PRAGMA meets the winner's WAL recovery gets it,
+    which is precisely a birth race. This test uses ``SQLITE_BUSY_SNAPSHOT`` instead only because
+    that one is reproducible on demand (:func:`_capture_extended_busy_error`) — same primary code,
+    same branch, and it is a real sqlite error object, not a fabricated one.
+    """
+    conn = _scripted(
+        tmp_path / "store.sqlite3", [_capture_extended_busy_error(tmp_path)]
+    )
+    try:
+        enable_wal_journal(conn)
+
+        assert conn.log == [_WAL_PRAGMA, "BEGIN IMMEDIATE", "ROLLBACK", _WAL_PRAGMA]
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        conn.close()
+
+
+def test_a_locked_table_is_not_treated_as_a_lock_contest(tmp_path: Path) -> None:
+    """The masking cuts the other way too: ``SQLITE_LOCKED`` (primary 6) is NOT retried.
+
+    Guards the fix for the extended-code defect from overshooting into "anything whose message
+    says locked". ``SQLITE_LOCKED`` means a table lock inside one connection handle, which no
+    amount of waiting on another party resolves. Built by masking the real
+    ``SQLITE_BUSY_SNAPSHOT`` capture's primary code up to 6, so the object is still a genuine
+    sqlite exception and only the code under test differs.
+    """
+    busy = _capture_extended_busy_error(tmp_path)
+    locked = sqlite3.OperationalError("database table is locked")
+    locked.sqlite_errorcode = (busy.sqlite_errorcode & ~0xFF) | 6
+    locked.sqlite_errorname = "SQLITE_LOCKED_SHAREDCACHE"
+
+    conn = _scripted(tmp_path / "store.sqlite3", [locked])
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="table is locked"):
             enable_wal_journal(conn)
 
         assert conn.log == [_WAL_PRAGMA]

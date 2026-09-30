@@ -391,34 +391,48 @@ def test_a_write_lock_held_past_the_busy_timeout_refuses_boot_explicitly(
         evidence.close()
 
 
-#: Rounds of :data:`_PROCESSES` openers the brand-new-file test runs per store. The birth race is
-#: probabilistic (measured ~21 % of openers at N=2 and 73/320 at N=8 on the pre-#818 code), so one
-#: round proves nothing about the fix — but it is also frequent enough that five rounds of eight
-#: leave the old code no realistic way to come out clean (p < 1e-20 at the measured rate).
-_BIRTH_RACE_ROUNDS = 5
+#: ``(store, expected schema version)`` for the brand-new-file test, which — unlike the genesis
+#: tests above — has no DDL window to widen and therefore no ``pause_after_sql`` (review F6: it
+#: used to carry the 3-tuple and pass ``""``, a dead parameter).
+_BIRTH_RACE_STORES: tuple[tuple[str, int], ...] = tuple(
+    (store, version) for store, version, _ in _STORES
+)
+
+#: Rounds of :data:`_PROCESSES` openers the brand-new-file test runs per store.
+#:
+#: **Sized against the rate it actually guards (review F1).** The first cut ran 5 rounds and
+#: claimed p < 1e-20, but that number came from the BARE-PRAGMA loss rate, not from the rate seen
+#: through the real store CONSTRUCTORS — which is what this test drives. Measured on the pre-#818
+#: code, ten rounds of eight per store: evidence 15/80, inbox 4/80, marketfeed 5/80, rcl 30/80.
+#: At the lowest of those (inbox, 5.00 % per opener) five rounds is 0.95**40 = 12.85 % — roughly
+#: one run in eight comes out GREEN on the broken code, which is not a regression test. Twenty
+#: rounds is 0.95**160 = 0.027 % at that same rate; marketfeed (6.25 %) lands at 0.0033 % and the
+#: other two below 1e-6 %.
+_BIRTH_RACE_ROUNDS = 20
 
 
 @pytest.mark.parametrize(
-    ("store", "expected_version", "pause_after_sql"), _STORES, ids=_STORE_IDS
+    ("store", "expected_version"), _BIRTH_RACE_STORES, ids=_STORE_IDS
 )
 def test_concurrent_first_boot_on_a_brand_new_file_admits_every_process(
-    tmp_path: Path, store: str, expected_version: int, pause_after_sql: str
+    tmp_path: Path, store: str, expected_version: int
 ) -> None:
     """Eight processes open the same NON-EXISTENT store path at once: all eight boot (**#818**).
 
     This is the claim the rest of this module deliberately does not make. No
-    :func:`_precreate_wal_file` here and no DDL pause either (``pause_after_sql`` is dropped): the
-    window under test is the ``PRAGMA journal_mode=WAL`` switch itself, which happens before the
-    first ``CREATE TABLE``, and widening the later window would only push the children past each
-    other. What makes it deterministic enough to assert on is repetition —
-    :data:`_BIRTH_RACE_ROUNDS` rounds per store, a fresh path each round.
+    :func:`_precreate_wal_file` here and no DDL pause either (this parametrisation carries no
+    ``pause_after_sql`` at all): the window under test is the ``PRAGMA journal_mode=WAL`` switch
+    itself, which happens before the first ``CREATE TABLE``, so widening the later window would
+    only push the children past each other. What makes it deterministic enough to assert on is
+    repetition — :data:`_BIRTH_RACE_ROUNDS` rounds per store, a fresh path each round.
 
     RED on the pre-#818 code, per store, with no mutation needed: the losers report
     ``OperationalError: database is locked`` out of the constructor's own journal-mode switch.
     Measured on this branch with :func:`~tos_runtime.operations.schema_ledger.enable_wal_journal`
     reverted to the bare PRAGMA, ten rounds of eight per store — evidence 15/80, inbox 4/80,
-    marketfeed 5/80, rcl 30/80 losing children — and every one of three full runs of this test
-    failed on all four stores.
+    marketfeed 5/80, rcl 30/80 losing children. :data:`_BIRTH_RACE_ROUNDS` is sized against the
+    LOWEST of those, not against the much higher bare-PRAGMA rate; its own comment carries the
+    arithmetic (review F1).
 
     The ledger assertion is the second half, exactly as in the genesis tests above: surviving the
     birth race must still leave ONE ``CREATED`` row, or the two fixes would be trading one
