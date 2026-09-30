@@ -173,12 +173,24 @@ class SqliteCommitLog:
         self._conn = sqlite3.connect(
             str(path), isolation_level=None, timeout=sqlite_timeout_s
         )
-        enable_wal_journal(self._conn)
-        self._conn.execute("PRAGMA synchronous=FULL")
-        # This log's DDL, the freshness decision and the genesis stamp all inside ONE
-        # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
-        # `open_or_create_schema`'s own docstring names the two races that closes.
-        apply_schema_ledger(self._conn, monotonic_ns=monotonic_ns)
+        # Everything from here to the end of construction runs under this guard (review
+        # round-2 F3): the WAL switch, the schema genesis and the checks after it can all
+        # refuse a boot, and a raise out of __init__ leaves nobody holding a reference to
+        # close `self._conn`. The exception's own traceback keeps this frame — and so the
+        # connection, its -wal and its -shm — alive for as long as the caller holds the
+        # exception, which for a caller that catches and logs is unbounded. Closing here
+        # makes a refused construction leave no handle behind. The refusal itself is
+        # re-raised untouched.
+        try:
+            enable_wal_journal(self._conn)
+            self._conn.execute("PRAGMA synchronous=FULL")
+            # This log's DDL, the freshness decision and the genesis stamp all inside ONE
+            # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
+            # `open_or_create_schema`'s own docstring names the two races that closes.
+            apply_schema_ledger(self._conn, monotonic_ns=monotonic_ns)
+        except BaseException:
+            self._conn.close()
+            raise
 
     # -- lifecycle -------------------------------------------------------
 

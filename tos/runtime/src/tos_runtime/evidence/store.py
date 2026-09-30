@@ -465,48 +465,62 @@ class SqliteEvidenceStore:
         self._monotonic_ns = monotonic_ns
         self._crash_hook = crash_hook
         self._conn = sqlite3.connect(str(path), isolation_level=None)
-        enable_wal_journal(self._conn)
-        self._conn.execute("PRAGMA synchronous=FULL")
-        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
-        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
-        # that closes.
-        open_or_create_schema(
-            self._conn,
-            store_name="evidence",
-            schema_version=EVIDENCE_SCHEMA_VERSION,
-            create_ddl=_create_evidence_schema,
-            shape_tables=("entries", "outbox"),
-            monotonic_ns=monotonic_ns,
-        )
-        # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run
-        # BEFORE `key_provider.current()` is ever consulted: a boot that is not CONTINUOUS
-        # must never select (let alone sign with) any key at all (see module docstring's own
-        # forward pointer and `tos_runtime.operations.key_rotation`'s module docstring for the
-        # gap this closes).
-        provider_generations = key_provider.generations()
-        continuity = verify_key_generation_continuity(
-            _tip_key_generation(self._conn),
-            lambda generation: _tip_has_rotation_commit_for(self._conn, generation),
-            provider_generations,
-        )
-        if (
-            continuity.verdict != KeyContinuityVerdict.CONTINUOUS
-            and not _rotation_permitted(
-                continuity,
-                provider_generations,
-                permit_rotation_pending_for_generation,
+        # Everything from here to the end of construction runs under this guard (review
+        # round-2 F3): the WAL switch, the schema genesis and the checks after it can all
+        # refuse a boot, and a raise out of __init__ leaves nobody holding a reference to
+        # close `self._conn`. The exception's own traceback keeps this frame — and so the
+        # connection, its -wal and its -shm — alive for as long as the caller holds the
+        # exception, which for a caller that catches and logs is unbounded. Closing here
+        # makes a refused construction leave no handle behind. The refusal itself is
+        # re-raised untouched.
+        try:
+            enable_wal_journal(self._conn)
+            self._conn.execute("PRAGMA synchronous=FULL")
+            # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+            # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+            # that closes.
+            open_or_create_schema(
                 self._conn,
+                store_name="evidence",
+                schema_version=EVIDENCE_SCHEMA_VERSION,
+                create_ddl=_create_evidence_schema,
+                shape_tables=("entries", "outbox"),
+                monotonic_ns=monotonic_ns,
             )
-        ):
-            raise KeyContinuityRefused(
-                f"SqliteEvidenceStore: key generation continuity refused "
-                f"({continuity.verdict}) for {path}: {continuity.reason}"
+            # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run
+            # BEFORE `key_provider.current()` is ever consulted: a boot that is not CONTINUOUS
+            # must never select (let alone sign with) any key at all (see module docstring's own
+            # forward pointer and `tos_runtime.operations.key_rotation`'s module docstring for the
+            # gap this closes).
+            provider_generations = key_provider.generations()
+            continuity = verify_key_generation_continuity(
+                _tip_key_generation(self._conn),
+                lambda generation: _tip_has_rotation_commit_for(self._conn, generation),
+                provider_generations,
             )
-        #: Boot-time continuity fact for a later reader (e.g. the operator projection's
-        #: ``operations.key_continuity``) — module docstring on why this can be ``ROTATION_PENDING``.
-        self.key_continuity: KeyContinuityCheck = continuity
-        key_generation, key = _resolve_signing_key(continuity, self._conn, key_provider)
-        self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
+            if (
+                continuity.verdict != KeyContinuityVerdict.CONTINUOUS
+                and not _rotation_permitted(
+                    continuity,
+                    provider_generations,
+                    permit_rotation_pending_for_generation,
+                    self._conn,
+                )
+            ):
+                raise KeyContinuityRefused(
+                    f"SqliteEvidenceStore: key generation continuity refused "
+                    f"({continuity.verdict}) for {path}: {continuity.reason}"
+                )
+            #: Boot-time continuity fact for a later reader (e.g. the operator projection's
+            #: ``operations.key_continuity``) — module docstring on why this can be ``ROTATION_PENDING``.
+            self.key_continuity: KeyContinuityCheck = continuity
+            key_generation, key = _resolve_signing_key(
+                continuity, self._conn, key_provider
+            )
+            self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
+        except BaseException:
+            self._conn.close()
+            raise
 
     @property
     def connection(self) -> sqlite3.Connection:

@@ -282,24 +282,36 @@ class SqliteEventInbox:
         self.path = path
         self._scheme = scheme
         self._conn = sqlite3.connect(str(path), isolation_level=None)
-        enable_wal_journal(self._conn)
-        self._conn.execute("PRAGMA synchronous=FULL")
-        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
-        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
-        # that closes.
-        open_or_create_schema(
-            self._conn,
-            store_name="inbox",
-            schema_version=INBOX_SCHEMA_VERSION,
-            create_ddl=_create_inbox_schema,
-            shape_tables=(
-                "events",
-                "attempt_composites",
-                "attempt_finality_witness",
-                "new_risk_halt",
-            ),
-            monotonic_ns=time.monotonic_ns,
-        )
+        # Everything from here to the end of construction runs under this guard (review
+        # round-2 F3): the WAL switch, the schema genesis and the checks after it can all
+        # refuse a boot, and a raise out of __init__ leaves nobody holding a reference to
+        # close `self._conn`. The exception's own traceback keeps this frame — and so the
+        # connection, its -wal and its -shm — alive for as long as the caller holds the
+        # exception, which for a caller that catches and logs is unbounded. Closing here
+        # makes a refused construction leave no handle behind. The refusal itself is
+        # re-raised untouched.
+        try:
+            enable_wal_journal(self._conn)
+            self._conn.execute("PRAGMA synchronous=FULL")
+            # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+            # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+            # that closes.
+            open_or_create_schema(
+                self._conn,
+                store_name="inbox",
+                schema_version=INBOX_SCHEMA_VERSION,
+                create_ddl=_create_inbox_schema,
+                shape_tables=(
+                    "events",
+                    "attempt_composites",
+                    "attempt_finality_witness",
+                    "new_risk_halt",
+                ),
+                monotonic_ns=time.monotonic_ns,
+            )
+        except BaseException:
+            self._conn.close()
+            raise
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection."""
