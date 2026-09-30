@@ -437,6 +437,11 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 (`20559763…`). 갱신은 늘 두 곳 — `config/tos_runtime/paper/release.yaml` 과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
 
+⚠ digest 커밋 **뒤에** 두 커밋이 더 있다(위임 판정의 클래스 범위 한정 + 이 문서). 둘 다 `tools/`·
+`tests/tools/`·`docs/` 만 건드리므로 digest 가 접는 두 패키지 트리 밖이다 — 그래도 **가정하지 않고**
+마지막 HEAD 에서 다시 찍어 커밋된 값과 같음을 확인했다(`git diff --name-only 71f43174 HEAD` 로 대상
+파일도 함께 확인). 「안 건드렸으니 같을 것」이 아니라 「같은 것을 쟀다」로 남긴다 — 26차 주석과 같은 규율.
+
 ⚠ 순서: **커널 소스를 바꾼 뒤 digest 를 다시 찍기 전에는 런타임 스위트가 green 이 될 수 없다** —
 compose·recovery 가 `ReleaseAdmissionRefused` 로 떨어진다(§7.5 가 런타임 소스에 대해 적은 것과 같은
 함정이 커널 변경에서도 그대로 성립한다).
