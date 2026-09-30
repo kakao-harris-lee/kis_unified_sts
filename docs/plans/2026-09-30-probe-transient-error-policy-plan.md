@@ -308,3 +308,36 @@ ruff check tools/broker_probes tests/tools → All checks passed!
 black --check (변경 파일 2건)               → 2 files would be left unchanged
 bash -n tools/broker_probes/runners/run_p_ca.sh → OK
 ```
+
+### 7.10 CI red 처분 (`test` 잡, run 36725449907 · 36728739404)
+
+**원인 1건, 내 검증 구멍 1건.** 두 실행 모두 실패한 테스트는 하나뿐이었다 —
+`test_runner_template_passes_shellcheck_when_it_is_available`, 사유 SC1007:
+
+```
+run_p_ca.sh line 48:
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
+                    ^-- SC1007 (warning): Remove space after = if trying to assign a value
+```
+
+`CDPATH= cd` 는 유효한 POSIX 일회성 환경 할당이지만 shellcheck 에게는 「빈 값을
+할당하려다 만 것」으로 보인다. SC1007 문서가 권하는 형태 그대로 `CDPATH=''` 로 고쳤다.
+
+**구멍이 더 중요하다.** 이 호스트에는 shellcheck 가 없어서 그 테스트는 **매번 skip**
+됐고, 로컬 게이트는 계속 「179 passed, 1 skipped」로 초록이었다. 즉 이 lint 게이트의
+첫 실전 실행이 브랜치를 red 로 만든 CI 잡이었다. 처분 둘:
+
+1. `CI` 환경변수가 있는데 shellcheck 가 없으면 **skip 이 아니라 fail** 한다. 게이트는
+   어딘가에서는 반드시 돌아야 하고, 그 「어딘가」는 도구가 보장되는 유일한 기계다.
+   양방향 확인: `CI=true` 로 red, 없으면 skip.
+2. 이번 수정은 믿고 미는 대신 **컨테이너로 실측**했다
+   (`docker run --rm koalaman/shellcheck:stable --severity=warning`) → rc 0.
+   같은 스캔에서 함께 고친 둘: 지시문 뒤 산문이 붙어 SC1107 을 부를 수 있던
+   `# shellcheck disable=SC1090  # …` 를 두 줄로 분리, `exit $rc` 인용.
+   남은 것은 info 레벨 SC2012 2건(`ls -t`)뿐이고 게이트(`--severity=warning`) 밖이다 —
+   파일명이 하네스가 만드는 `P-CA-<UTC>Z.json` 고정 패턴이라 `find | sort` 쪽이 오히려
+   더 깨지기 쉬워 주석으로 남기고 그대로 둔다.
+
+리뷰어가 의심한 나머지 후보는 해당 없음이었다: xdist 순서 의존도, 실제 `~/.config`
+접근도 없다(러너 테스트는 `HOME` 을 `tmp_path` 로 두고 env 를 통째로 넘긴다), 두 실행의
+실패 목록에 다른 테스트는 없었다.

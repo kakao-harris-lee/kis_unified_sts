@@ -2066,13 +2066,27 @@ def test_runner_template_parses() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_runner_template_passes_shellcheck_when_it_is_available() -> None:
+def test_runner_template_passes_shellcheck() -> None:
+    """A lint gate whose only local evidence is a skip is not a gate.
+
+    This test skipped on the author's host (no shellcheck installed) and its
+    FIRST real run was the CI job that failed the branch on SC1007. So on CI,
+    where the runner image ships shellcheck, a missing binary is a failure
+    rather than a skip: the gate has to run somewhere, and that somewhere is
+    the only machine guaranteed to have the tool.
+    """
+    import os
     import shutil
     import subprocess
 
     shellcheck = shutil.which("shellcheck")
     if shellcheck is None:
-        pytest.skip("shellcheck is not installed")
+        if os.environ.get("CI"):
+            pytest.fail(
+                "shellcheck is missing on CI, where this gate is meant to run; "
+                "add it to the workflow rather than letting the check vanish"
+            )
+        pytest.skip("shellcheck is not installed locally — CI runs this gate")
     result = subprocess.run(
         [shellcheck, "--severity=warning", str(_RUNNER)],
         capture_output=True,
