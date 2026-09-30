@@ -116,10 +116,13 @@
 
 | 파일 | 무엇 |
 |---|---|
-| `tools/broker_probes/probes_ca.py` | `_BAL_TRANSIENT` 분류(전송 예외 · `EGW00215`) · `_Pacer.defer` · `_read_balance_retrying` / `_ksdinfo_get_retrying` · `_Retries` · `_STOP_TRANSIENT` · `_StopRun` |
+| `tools/broker_probes/probes_ca.py` | `_BAL_TRANSIENT` 분류 · 단일 분류기 `_get_classified` · 단일 재시도 `_retry_once` · `_Pacer.defer` · `_Outcome` · `_Retries` · `_STOP_TRANSIENT` · `_StopRun` · 전처리 진입점 `check_holding` |
 | `tools/broker_probes/runners/run_p_ca.sh` | 추적되는 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | 분리 워크트리에서 인스턴스화하는 법(신규) |
-| `tests/tools/test_broker_probes_ca.py` | 새 테스트 25건(§7.3) |
+| `tests/tools/test_broker_probes_ca.py` | 새 테스트 44건 — 라운드 1 25건(§7.3) + 리뷰 처분 19건(§7.6) |
+
+라운드 1 의 `_read_balance_retrying` / `_ksdinfo_get_retrying` 두 벌은 리뷰 F4·F5 처분으로
+`_get_classified` + `_retry_once` 한 벌로 합쳐졌다(§7.6).
 
 ### 7.2 구현이 계획과 다른 점
 
@@ -200,3 +203,58 @@ black --check (변경 파일 2건)                   → 2 files would be left u
   P-8 3~5회차 재개 조건으로 남는다.
 - `EGW00215` 의 원인(모의 서버 공용 스로틀 가설)은 여전히 관측만 있고 단정하지 않는다.
 - 3차 관측 대상(058610 에스피지, 지급일 재확인 필요)을 이 템플릿으로 예약할지는 운영자 결정.
+
+### 7.6 리뷰 처분 (PR #825 라운드 1 · 독립 리뷰 high · 6건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | 러너의 「실패는 0 이 아니다」 가드가 작동하지 않는다 — `KISClient.get_stock_balance()` 는 비-200 · 비-JSON · `rt_cd≠0` · 포괄 `except Exception` 전부를 `[]` 로 되돌린다 | **수정.** 게이트를 프로브 자신의 판독기로 옮겼다 |
+| F2 | 같은 함수가 `CTX_AREA_*` 를 비운 채 **1페이지만** 읽는다 — 2페이지 보유는 「미보유」 | **수정.** 같은 이동으로 함께 닫힘 |
+| F3 | `ChunkedEncodingError` 가 일시 집합에서 빠져 있고 「설정 결함」으로 문서화돼 있다 — 실제로는 `response.text` 가 던지는 전송 실패 | **수정.** 전제 자체를 고쳤다 |
+| F4 | `_ksdinfo_get_retrying` 이 원장 스로틀을 `is_rate_limited` **앞에서** 본다 — 잔고 경로와 우선순위가 반대 | **수정.** 분류를 한 곳으로 |
+| F5 | 재시도 정책이 두 벌 — 이미 F4 로 갈라졌다 | **수정.** `_retry_once` 하나 |
+| F6 | `--effective-time $PCA_EFFECTIVE` 무인용 전개 — 공백 구분 ISO 가 argv 두 개로 쪼개진다 | **수정.** bash 배열 |
+
+**F1·F2 — 게이트를 프로브의 판독기로.** 확인부터: `shared/kis/client.py:910-1029` 를 읽어
+지적을 실측했다 — 실패 경로 네 갈래가 전부 `return []` 이고(`status != 200` · `data is None` ·
+`rt_cd != '0'` · `except Exception`), `CTX_AREA_FK100/NK100` 은 빈 문자열 고정에 연속조회
+루프가 없다. **즉 러너는 자신이 고쳤다고 주장한 바로 그 결함 위에 세워져 있었다.**
+새 진입점 `probes_ca.check_holding`
+(`python -m tools.broker_probes.probes_ca --check-holding`)은 `_read_balance` 를 쓰므로
+페이지를 걷고 분류하며, 두 줄 중 하나만 찍는다 — `HELD=<n>`(종료 0) 또는
+`HOLDING_QUERY_FAILED=<종류>:<상세>`(종료 비-0). 러너는 그 두 형태만 파싱하고, 숫자를
+찍었더라도 종료코드가 0 이 아니면 그 숫자를 **믿지 않는다**. 일시 오류에는 프로브와 같은
+1회 재시도가 붙는다(전처리 한 번의 timeout 이 시행 창 전체를 먹지 않도록).
+
+**F3 — 전제 정정.** `_get` 은 두 곳에서 던진다: `session.request`(timeout · connection)와
+**본문 읽기** `response.text`(`ChunkedEncodingError` · `ContentDecodingError`). 둘 다
+「완전한 응답이 오지 않았다」이고 read timeout 이 몇 바이트 늦게 온 것과 같은 실패다.
+리뷰가 지목한 `ChunkedEncodingError` 에 더해 `ContentDecodingError` 도 넣었다 — 같은
+경로·같은 성질이고, 하나만 넣으면 다음 리뷰가 나머지를 지적한다. `TooManyRedirects` ·
+`InvalidURL` · `MissingSchema` · `URLRequired` 는 여전히 제외(우리 결함이고, 재시도해 봐야
+같은 실패가 두 번 날 뿐이다).
+
+**F4·F5 — 분류 한 곳, 재시도 한 곳.** `_get_classified` 가 유일한 우선순위 소유자다:
+①응답 없음 ⇒ 일시 · ②`is_rate_limited`(429·`EGW00201`) ⇒ **중단, 재시도 없음** ·
+③`EGW00215` ⇒ 일시. ②가 ③보다 앞인 것이 핵심이다 — 한 응답이 두 신호를 다 담을 수 있고
+계좌 보호 규칙이 이겨야 한다. 재시도는 `_retry_once` 하나이고 `on_transient` 콜백으로
+단계가 기록처를 정한다(프로브는 관측+계수, 전처리는 stderr 한 줄). `_read_balance` 의
+6-튜플 시그니처와 기존 테스트는 그대로다.
+
+**추가 red 증명 (라운드 2).** 새 테스트 19건 전부 **리뷰 시점 HEAD(`fb3e77fa`)에서 red**:
+`AttributeError: … no attribute 'check_holding'`(보유 게이트 8건) ·
+`AttributeError: … no attribute '_get_classified'` · `AssertionError:
+<class 'requests.exceptions.ChunkedEncodingError'>` · 러너 6건은 옛 러너가 다른 문장으로
+ABORT 한다. **단서 하나**: 러너 end-to-end 테스트는 가짜 `python` 을 쓰므로 옛 러너에서의
+red 는 F1 의 **재현**이 아니라 옛 문장과의 불일치다. F1·F2 자체는 위처럼
+`shared/kis/client.py` 를 직접 읽어 확인했다.
+
+### 7.7 라운드 2 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -q -p no:cacheprovider
+  → 174 passed, 1 skipped (shellcheck 미설치)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 파일 2건)               → 2 files would be left unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+```
