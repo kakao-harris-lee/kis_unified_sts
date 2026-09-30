@@ -58,7 +58,7 @@ if mode != "wal": raise (부팅 거부 — 조용히 롤백 저널로 돌지 않
 - 네 스토어(evidence · inbox · marketfeed · rcl)의 `self._conn.execute("PRAGMA journal_mode=WAL")` 한 줄을 이
   헬퍼 호출로 바꾼다(DRY).
 
-### 2.2 커널 `CompositeStateStore` — 범위 밖
+### 2.2 커널 `CompositeStateStore` — 이 PR(#818) 범위 밖 · **#823 에서 닫힘**
 
 - `tos/src/tos/staterestore/store.py:124` 에도 같은 줄이 있다. 하지만 이것은 **커널**이라 런타임 헬퍼를
   import 할 수 없다(방화벽).
@@ -66,10 +66,16 @@ if mode != "wal": raise (부팅 거부 — 조용히 롤백 저널로 돌지 않
 - 커널 쪽 사본을 만들면 DRY 위반 + 커널 변경이다. 노출이 다르므로 별도 결정으로 남긴다(§5).
 - ⚠ **정정(리뷰 F7, 2026-09-30)**: 이 절의 초판은 「한 프로세스 안에서만 열린다」고 적었는데 **틀렸다**.
   compose 가 같은 공유 `data_dir` 아래로 이 스토어를 배선하고
-  (`compose/_engine_wiring.py:267-269`, `data_dir / COMPOSITE_STATE_STORE_FILE_NAME`), 기록자는 쓸 때마다
-  새 연결을 열고 닫는다. 두 런타임이 같은 빈 `data_dir` 로 부팅해 **첫 composite-state 기록에 동시에
-  도달**하면 같은 경합이 난다. 범위 밖이라는 판단(처분 §6.1 3항)은 유지하되, 근거는 「한 프로세스」가 아니라
-  「방화벽 + 노출 시점이 다름」이다. 추적: **issue #823**.
+  (`compose/_engine_wiring.py:267-269`, `data_dir / COMPOSITE_STATE_STORE_FILE_NAME`), 기록자는 **쓸 때마다
+  새 연결을 열고 닫는다**(`recovery/composite_state_writer.py:110` —
+  `with CompositeStateStore(self._store_path) as store:`). 두 런타임이 같은 빈 `data_dir` 로 부팅해
+  **첫 composite-state 기록에 동시에 도달**하면 같은 경합이 난다. 범위 밖이라는 판단(처분 §6.1 3항)은
+  유지하되, 근거는 「한 프로세스」가 아니라 「방화벽 + 노출 시점이 다름」이다. 추적: **issue #823**.
+- ⚠ **후속 정정(#823 착지, 2026-09-30)**: 셋째 줄의 「사본 = DRY 위반」은 **결론이 아니라 비용**이었다.
+  #823 은 사본을 만들되(`tos/src/tos/staterestore/_wal.py` — stdlib `sqlite3` 만, 방화벽 통과) 그 비용을
+  **드리프트 핀**으로 갚는다: `tests/tools/test_tos_wal_mechanism_drift.py` 가 두 모듈을 텍스트로 읽어
+  메커니즘 일곱 가지가 같은지 대조한다. 노출 경로도 이 절이 적은 그대로 실측됐다 — 실제 커널 생성자로
+  N=8 × 40라운드에서 **손실 96/320 · clean 라운드 6/40(q=0.150)**. 착지 기록은 §8.
 
 ## 3. 기각한 대안
 
@@ -234,7 +240,7 @@ stale 이면 CI 는 green 이고 **부팅만** `ReleaseAdmissionRefused` 로 떨
 
 - 커널 `CompositeStateStore`(§2.2)는 여전히 맨 PRAGMA 다. 방화벽 때문에 런타임 헬퍼를 쓸 수 없고,
   노출 시점도 다르다(부팅이 아니라 첫 복구 기록). **issue #823 으로 열었다** — 재현 경로와 제안 셋,
-  수용 기준이 거기 있다.
+  수용 기준이 거기 있다. → **해소됨**: #823 이 별도 PR 로 닫았다(§8).
 - `test_schema_genesis_concurrency._precreate_wal_file` 은 그대로 남는다. 이제 「열린 결함을
   가린다」가 아니라 「두 경합을 서로 다른 픽스처로 갈라 둔다」가 이유다 — 실패가 어느 쪽인지 이름으로
   말해 준다.
@@ -334,3 +340,100 @@ stale 이면 CI 는 green 이고 **부팅만** `ReleaseAdmissionRefused` 로 떨
 | F1 | `_construct('rcl')` 가 사설 evidence 스토어를 열고 안 닫는다 — **거부된 부팅이 핸들을 남기지 않음을 단언하는 바로 그 테스트가 하나 흘리고 있었다** | **수정.** `ExitStack` 등록. `-W error::ResourceWarning` 으로 확인 |
 
 기각 0건.
+
+## 8. 후속 착지 — 커널 `CompositeStateStore` (2026-09-30 · **#823** · 브랜치 `fix/tos-kernel-store-wal-birth-race`)
+
+§2.2 가 #818 범위 밖으로 남기고 §7.7 이 「여전히 맨 PRAGMA」로 적었던 그 한 줄을 닫는다. 결정은
+세션 모델이 이미 내렸다 — **이슈 #823 의 1안(커널 독립 구현)**. 2안(헬퍼를 커널로 내림)은 여섯 순수
+commons 집합을 바꾸는 설계 문서 개정이고, 3안(compose 선생성)은 §3 이 이미 기각한 이유가 그대로
+적용된다(스토어를 여는 경로가 compose 하나가 아니다).
+
+### 8.1 실측 — 수정 전
+
+실제 커널 생성자(`CompositeStateStore(path)` → `commit_composite`)로, 갓 만든 경로에 N=8 동시 오픈:
+
+| 조건 | 손실 자녀 | clean 라운드 | q | 95 % Wilson 상한 |
+|---|---|---|---|---|
+| 40라운드 × 8 | **96 / 320** (전부 `OperationalError: database is locked`) | **6 / 40** | **0.150** | 0.291 |
+
+라운드 수는 이 **라운드 단위** 비율에서 나왔다(§7.11 이 세운 규율 그대로 — opener 비율을 거듭제곱하지
+않는다). 1 % 아래로 내리는 데 필요한 라운드는 점추정 3, 상한 4. `_BIRTH_RACE_ROUNDS = 10` 은 둘 다를
+한 자릿수 이상 넘기는 가장 가까운 라운드 수다 — 점추정 5.8e-9 · 상한 4.3e-6 · 벽시계 2.3 s.
+(#820 의 20 은 네 스토어 중 최악이 q=0.600 이라 필요 라운드가 15.1 이었기 때문이다. 같은 규율,
+다른 입력.)
+
+### 8.2 무엇이 어디로 갔나
+
+| 작업 | 착지 |
+|---|---|
+| 커널 헬퍼 | `tos/src/tos/staterestore/_wal.py` 신설 — `enable_wal_journal` · `_switch_journal_to_wal` · `_wait_out_the_lock_and_retry` · `_is_lock_contest` · 새 예외 `JournalModeRefused`. stdlib `sqlite3` 만 쓴다(방화벽 통과). `store.py::__init__` 가 이것을 부르고, **연 뒤 실패하면 연결을 닫는다** |
+| **로그 없음** | 런타임 헬퍼의 `logging.WARNING` 세 줄은 옮기지 **않았다**. 커널에는 로깅 관례가 아예 없다(실측: `tos/src` 아래 `import logging` 0건). 버그 수정의 부수효과로 tos 전체 결정을 내리지 않는다 — 모듈 독스트링에 그 사실과, 커널 쪽 침묵의 경계가 다른 이유(부팅 때 스토어 넷이 아니라 기록마다 파일 하나)를 적었다 |
+| DRY 장치 | `tests/tools/test_tos_wal_mechanism_drift.py` — 두 모듈을 **텍스트로 읽어** AST 로 메커니즘 일곱 가지를 뽑아 대조한다. import 를 하지 않으므로 어느 방향으로도 방화벽 간선이 생기지 않고, `tests/tools` 에 두어 어느 쪽 스위트에도 속하지 않게 했다 |
+| 테스트 | `tos/tests/staterestore/test_staterestore_wal_journal.py`(모서리 10건) · `test_staterestore_wal_birth_race.py`(N=8 × 10라운드 + 재오픈) · 폐쇄 테스트에 `_wal` 서브모듈 추가 |
+| EV-L3 게이트 | `tools/tos_evidence_run.py` — §7.10 부수 메모가 예고한 red 를 실측하고 닫았다(§8.4) |
+| digest | `9595ef63 → 3ea8f6dc` (§8.6) |
+
+### 8.3 뮤테이션 (red 확인 · 전건)
+
+| 뮤테이션 | red 가 된 테스트 |
+|---|---|
+| M1 수정 전 생성자 전체(맨 PRAGMA · close 가드 없음) | `test_concurrent_first_open_of_a_brand_new_store_admits_every_process` **연속 3회 red** · `test_a_refused_open_closes_the_store_connection` red |
+| M2 반환값 확인 제거 | `test_a_journal_mode_that_is_not_wal_refuses` (단독) |
+| M3 `SQLITE_BUSY` 아닌 오류도 재시도 | `test_an_operational_error_that_is_not_a_lock_is_not_retried` · `test_a_locked_table_is_not_treated_as_a_lock_contest` |
+| M4 재시도를 한 번 더(드리프트 핀) | `test_a_second_retry_is_refused_by_the_comparison` — 스크래치 사본으로 실제 변이시켜 확인 |
+
+### 8.4 EV-L3 게이트 — 예고된 red 를 실측하고 닫았다
+
+§7.10 의 부수 메모가 옳았다. 헬퍼로 옮긴 직후 실측:
+
+```text
+check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
+```
+
+처분은 이슈 코멘트의 **1안**이다 — 게이트가 리터럴의 새 위치를 보게 하되 **게이트의 의도를
+보존하는 방향으로**:
+
+- `PERSISTENCE_PRAGMA_DELEGATE_PATH` 신설. 위임 모듈의 pragma 도 읽는다.
+- **단, `store.py::__init__` 가 그 위임을 실제로 «호출»할 때만 센다**(`ast.Call` 노드로 확인 — 언급이
+  아니라 호출). 이 조건이 없으면 「독스트링에 적혀 있을 뿐 실행되지 않는 pragma」라는 원래의 구멍이
+  파일 하나 건너에서 그대로 재현된다. 그것이 `_executed_pragmas` 가 존재하는 이유다.
+- 위임 모듈도 「연결은 정확히 하나」·in-memory 토큰 검사 **안쪽**에 둔다 — 헬퍼가 자기 연결을 열어
+  거기에 WAL 을 걸면 준수한 substrate 로 읽히는 것을 막는다.
+- 두 파일이 같은 pragma 를 **다른 값**으로 실행하면 해석하지 않고 conflict 로 기록하고 missing 처리한다.
+
+새 테스트 6건 중 5건이 음성이다 — 호출되지 않는 위임 · WAL 아닌 위임 · 위임 파일 삭제 · 위임 안의
+두 번째 연결 · 값 충돌. 전부 `met=False`.
+
+### 8.5 게이트
+
+모두 워크트리 루트에서, `PYTHONPATH=tos/src:tos/runtime/src` · 저장소 루트 `.venv`.
+
+| 게이트 | 결과 |
+|---|---|
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9613 passed** (1:52). 이전 9601 + 이번 12(모서리 10 · 경합 2) |
+| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (4:23). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
+| `pytest tests/tools/test_tos_evidence_run.py test_tos_evidence_citation_check.py test_tos_wal_mechanism_drift.py` | **222 passed** (0:47) |
+| `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 266 source files` |
+| `mypy tos/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 587 source files` |
+| `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
+| `mypy tos/runtime/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 238 source files` |
+| `black --check` (CI 스텝 그대로) | `1303 files would be left unchanged` |
+| `ruff check` | `All checks passed!` |
+| `python tools/tos_firewall_check.py` | `PASS — no import-firewall violations` |
+| `lint-imports` | `Contracts: 3 kept, 0 broken` |
+| `python tools/tos_size_budget.py --check` | `PASS: 0 violations (38 registered exception(s))` |
+
+### 8.6 digest
+
+`expected_code_digest`: **9595ef63 → 3ea8f6dc**
+(`3ea8f6dc4f6d49c05c9477ba1a04a475e6124053ff141faea185885439f72cf7`).
+
+27차. **26차까지와 달리 바뀐 것이 커널 소스다** — 이 digest 는 `tos/src/**.py` 와
+`tos/runtime/src/**.py` 를 함께 접으므로 커널만 바꿔도 값이 바뀐다(6차 전례). `print-digests` 와
+`observe_source_tree_digest()` 두 경로가 일치했고, `expected_dependency_set_digest` 는 무변경
+(`20559763…`). 갱신은 늘 두 곳 — `config/tos_runtime/paper/release.yaml` 과
+`tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
+
+⚠ 순서: **커널 소스를 바꾼 뒤 digest 를 다시 찍기 전에는 런타임 스위트가 green 이 될 수 없다** —
+compose·recovery 가 `ReleaseAdmissionRefused` 로 떨어진다(§7.5 가 런타임 소스에 대해 적은 것과 같은
+함정이 커널 변경에서도 그대로 성립한다).
