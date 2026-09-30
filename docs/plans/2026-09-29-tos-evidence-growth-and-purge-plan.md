@@ -601,6 +601,11 @@ predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤�
 
 **§7.1.2 가 「없다」고 적은 두 가지를 부수적으로 닫는다.**
 
+0. **중단도 수치를 남긴다.** `ABORTED-…json` 의 `partial_resource` 가 죽인 자식의 rusage
+   (최대 RSS · user/system · `File system inputs`/`outputs`)와 마지막 `/proc/<pid>/io` 를 든다.
+   §7.1.2 가 365 일치 중단에 대해 「중단 시점의 수치도 남기지 않았다」고 적고 초판의 수치를 전부
+   **가설로 격하**해야 했던 바로 그 구멍이다 — `before-365d.time` 은 0 바이트였고
+   `before-365d.json` 은 없었다. `os.wait4` 가 죽인 자식의 rusage 를 돌려주므로 버리지 않고 적는다.
 1. **아티팩트가 남는다.** `preflight.json`(최신) · `preflight.jsonl`(누적) · `watchdog.jsonl`(표본
    시계열) · `<step>-Nd.resource.json` · `<step>-Nd.time`. 「프리플라이트 셋 다 `no competing
    build`」 같은 문장을 다음부터는 **파일로** 인용한다. 프리플라이트는 **거부할 때도** 쓴다 —
@@ -640,7 +645,7 @@ predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤�
 `.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`
 → **48 passed**(신규 30 + 기존 벤치 18).
 
-**가드 레드 증명 — 15/15, 초록으로 남은 가드 0.** 각 가드를 하나씩 무력화하고 그 테스트만 다시
+**가드 레드 증명 — 16/16, 초록으로 남은 가드 0.** 각 가드를 하나씩 무력화하고 그 테스트만 다시
 돌려 red 를 확인한 뒤 복원했다. §7.1.5 의 교훈(「계획이 주장하면 테스트가 그 주장을 들고 있어야
 한다」)을 가드 자신에게 적용한 것이고, `MEMORY.md` 의 반복 결함 형태
 (「새 가드에 **이것이 실패하는 구체적 입력**을 못 쓰면 아무것도 막지 않는 것」)가 요구하는 절차다.
@@ -662,6 +667,7 @@ predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤�
 | 크기 추정 스케일 규칙 | `test_the_size_estimate_predicts_the_real_row_count_exactly` |
 | 중단 시 합성 파일 보존 | `test_an_aborted_run_keeps_the_synthetic_file_it_built` |
 | 보존 판정 세 갈래 | `test_the_synthetic_disposition_says_the_right_thing_for_each_outcome` |
+| 중단 레코드의 부분 자원 수치 | `test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_artifact` |
 
 SIGKILL 승격 테스트는 자식이 **핸들러를 설치했다고 알린 뒤에만** 중단을 일으킨다. 그러지 않으면
 인터프리터 기동 중에 SIGTERM 이 닿아 기본 처리로 죽고, 테스트는 **초록인데 승격은 증명하지 못한다.**

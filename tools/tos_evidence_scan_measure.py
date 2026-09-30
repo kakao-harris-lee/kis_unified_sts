@@ -67,6 +67,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import resource
 import shutil
 import signal
 import subprocess
@@ -794,6 +795,9 @@ class AbortRecord:
     signal_sent: str
     escalated_to_sigkill: bool
     returncode: int
+    #: How far the stopped child actually got — the numbers plan §7.1.2 could not cite for
+    #: the aborted 365-day pass because nothing recorded them.
+    partial_resource: dict[str, object]
     last_samples: tuple[dict[str, object], ...]
 
 
@@ -814,27 +818,35 @@ def _spawn(argv: Sequence[str], stdout_path: Path, stderr_path: Path) -> int:
 
 def _terminate(
     pid: int, *, grace_s: float, sleep: Callable[[float], None]
-) -> tuple[bool, int]:
-    """``SIGTERM``, then ``SIGKILL`` after ``grace_s``. Returns ``(escalated, status)``."""
+) -> tuple[bool, int, resource.struct_rusage]:
+    """``SIGTERM``, then ``SIGKILL`` after ``grace_s``.
+
+    Returns ``(escalated, status, rusage)``. The rusage is the killed child's own, and it
+    is returned rather than discarded because plan §7.1.2's complaint about the aborted
+    365-day pass was precisely that it left no numbers behind: ``before-365d.time`` was
+    0 bytes, ``before-365d.json`` never existed, and every figure the first draft cited
+    for that pass had to be demoted to a hypothesis. A stopped step now reports how far it
+    got.
+    """
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        _, status, _ = os.wait4(pid, 0)
-        return (False, status)
+        _, status, usage = os.wait4(pid, 0)
+        return (False, status, usage)
     deadline = time.monotonic() + grace_s
     poll = min(0.05, grace_s) if grace_s > 0 else 0.0
     while time.monotonic() < deadline:
-        done, status, _ = os.wait4(pid, os.WNOHANG)
+        done, status, usage = os.wait4(pid, os.WNOHANG)
         if done == pid:
-            return (False, status)
+            return (False, status, usage)
         if poll:
             sleep(poll)
     try:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    _, status, _ = os.wait4(pid, 0)
-    return (True, status)
+    _, status, usage = os.wait4(pid, 0)
+    return (True, status, usage)
 
 
 def run_step(
@@ -906,7 +918,9 @@ def run_step(
             return
         check, reason = breach
         log(f"ABORT ({step.name}): {reason}")
-        escalated, status = _terminate(pid, grace_s=guard.term_grace_s, sleep=sleep)
+        escalated, status, usage = _terminate(
+            pid, grace_s=guard.term_grace_s, sleep=sleep
+        )
         record_out = AbortRecord(
             run_id=run_id,
             step=step.name,
@@ -918,6 +932,19 @@ def run_step(
             signal_sent="SIGTERM",
             escalated_to_sigkill=escalated,
             returncode=-os.WTERMSIG(status) if os.WIFSIGNALED(status) else status,
+            partial_resource={
+                "max_rss_bytes": max(usage.ru_maxrss * 1024, peak_rss_sampled),
+                "user_seconds": usage.ru_utime,
+                "system_seconds": usage.ru_stime,
+                "fs_inputs_blocks": usage.ru_inblock,
+                "fs_outputs_blocks": usage.ru_oublock,
+                "proc_io": dict(last_io),
+                "proc_io_sample_age_seconds": (
+                    round(time.monotonic() - last_io_at, 3)
+                    if last_io_at is not None
+                    else None
+                ),
+            },
             last_samples=tuple(samples[-_ABORT_SAMPLE_TAIL:]),
         )
         path = out_dir / f"ABORTED-{step.name}-{days}d.json"

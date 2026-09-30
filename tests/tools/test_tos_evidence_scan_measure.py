@@ -503,6 +503,13 @@ def test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_art
     assert record["signal_sent"] == "SIGTERM"
     assert record["returncode"] != 0
     assert record["last_samples"], "the abort record must carry the samples it acted on"
+    # Plan §7.1.2: the aborted 365-day pass left NO numbers (before-365d.time was 0 bytes),
+    # so every figure cited for it had to be demoted to a hypothesis. A stopped step now
+    # reports how far it got.
+    partial = record["partial_resource"]
+    assert partial["max_rss_bytes"] > 0
+    assert partial["user_seconds"] >= 0.0
+    assert "fs_inputs_blocks" in partial and "proc_io" in partial
     assert record["elapsed_seconds"] < 120, "the 120 s child did not actually die"
     # The series is on disk too, so a later plan section cites an artifact, not a session.
     lines = (out_dir / "watchdog.jsonl").read_text().strip().splitlines()
