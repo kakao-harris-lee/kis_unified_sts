@@ -84,9 +84,61 @@
 
 이후 남은 것: **P-CA 재시도**(2차 대상 에스피지 058610 10-22, 또는 SK텔레콤 재실행 시 폴링 전 rate-limit 여유 확보), **P-EXT ×5**·**P-8 ×5**(모의 선물 주문 권한 복구 후, 운영자 MTS 동석).
 
+### 2026-09-28 (월) — P-8 재실행 (호스트 cron · 분리 워크트리)
+
+09-23 에 운영자가 앱키↔새 선물 계좌 연결을 보고한 뒤 첫 재실행. 호스트 cron 이 **분리 워크트리**(detached `origin/main`, 로그 표현 "clean by construction")에서 돌렸다 — `repo_commit=ac2efb0f2b1698b87cac4d927886583c77e5357a`(아티팩트 `repo_commit` `ac2efb0f`). 러너 가드: `futures:live:suspended=''`, 모의 선물 앱키 지문 `39a004459922` · `shared_workers=none`, 선물 계좌 지문 `46c39c54d3bb`(09-15 재신청으로 받은 **새** 계좌, 마스킹 `60******03`), mini 근월물 `A05610`. 로그 `~/.config/kis-probes/p8-20260928.log`.
+
+**✅ 모의 선물 주문이 처음으로 접수됐다.** 09-11 의 `모의투자 주문이 불가한 계좌입니다`·09-16 의 `인증 시점의 계좌번호와 요청 계좌번호가 일치하지 않습니다` 거부가 사라지고, 제출·정정·취소가 모두 `rt_cd=0` 으로 돌아갔다.
+
+| 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
+|---|---|---|---|---|---|
+| 09:05:06 | P-8 1/5 | `P-8-20260928T000506Z.json` | live / **MEASURED** / MOCK_VTS | [] / [] | 지정가 `1002.22`(unrounded `1002.2399999999999`, `tick_size 0.02`, `rounding floor`) → 정정 `992.18`(unrounded `992.1978`). `amend_rt_cd=0` `모의투자 정정주문이 완료 되었습니다.` 원 ODNO `0000000512` → 신 ODNO `0000000513`. `replace_issues_new_odno: true` · `replace_rejected: false` · `coexistence_ms: 0.0` (`poll_granularity_ms: 1100.0`). 소요 36.791s |
+| 09:06:58 | P-8 2/5 | `P-8-20260928T000658Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / [] | 지정가 `1005.26`(unrounded `1005.264`) → 정정 `995.2`(unrounded `995.2074`), `amend_rt_cd=0`, ODNO `0000000558` → `0000000560`. 정정·취소까지는 갔으나 `ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))` 로 중단 → `coexistence_ms` 등 공존 측정 필드 미기록. 소요 33.363s |
+
+- **ODNO 표기 비대칭 재확인(양쪽 정규화 필요).** 제출 응답은 zero-pad, 조회 행은 space-pad 다. 1회차 제출 `"0000000512"`·`"0000000513"` vs 조회 행 `"       513"`·`"       512"`; 2회차 제출 `"0000000558"`·`"0000000560"` vs 조회 행 `"       560"`·`"       558"`·`"       528"`. 아티팩트 `odno_wire_format.scope` 대로 **모의 계좌 1개·세션 1회의 관측이며 실전으로 외삽하지 않는다**.
+- **정정 뒤 원 주문은 취소 대상이 남지 않는다.** 1회차 `cleanup_cancel 0000000512` → `ok: false` `msg: 모의투자 정정/취소할 수량이 없습니다.` `disposition: NOTHING_TO_CANCEL_NO_LIVE_ROW`, liveness 증거 `pages_walked 1 / rows_seen 2 / outcome COMPLETE_WALK`; 신 ODNO `0000000513` 은 `CANCELLED`. 2회차도 동일한 형태(`0000000558` NOTHING_TO_CANCEL_NO_LIVE_ROW, `rows_seen 5`; `0000000560` CANCELLED). `original_not_cancellable_after_amend: true` 이지만 아티팩트 `amend_consumption_note` 가 못박은 대로 **체결도 똑같은 관측을 낳으므로 이 필드는 구조적 사실만 말하고 원인을 지목하지 않는다**(P-8 은 체결 조회를 하지 않음).
+- **⛔ 판정에는 못 쓴다.** 아티팩트 `mode_determination`: "Map to ReplaceSemantics only after N>=5 trials agree. A single trial showing zero coexistence does NOT prove atomicity — polling can miss an interval shorter than poll_granularity_ms". MEASURED 는 1회뿐이고 2회차는 연결 오류로 끊겼다. 러너 판정 `VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 중단(재시도 금지)` → **3~5회차 미실행**. 따라서 `capabilities.replace_semantics.mode` 기입 불가, `B_protective_request_complete` **NOT_ESTABLISHED 유지**.
+- `approval_status` 두 건 모두 `UNAPPROVED_CANDIDATE`.
+
+### 2026-09-30 (수) — P-CA 2차 (SK하이닉스 현금배당) — **3회 모두 ABORT**
+
+대상은 SK하이닉스 `000660` `cash_dividend`, `payable_time 2026-09-30T00:00:00+09:00`(375원/주, record `20260831`) — 위 표의 2차 후보(에스피지 058610)보다 지급일이 일러 먼저 실행했다. 계좌는 09-17 과 같은 **예전** 모의 주식 계좌 지문 `54e7f8a5d841`(마스킹 `50******01`)이고, 09-23 키 로테이션 뒤라 아티팩트 `--note` 대로 **09-15 백업의 자격증명 한 벌**(예전 앱키 지문 `7763f26aac49`)을 그대로 썼다. GET-only(`read_only_attestation`: 잔고 2 TR + ksdinfo 참조 12 TR 허용목록, 모듈에 주문 경로 없음). `repo_commit aec37535`, 토큰 캐시 `/home/deploy/.config/kis-probes/p-ca-20260930-token-cache`. 로그 `~/.config/kis-probes/p-ca-20260930.log`.
+
+러너 로그의 ABORT/START/END 줄(시각 KST):
+
+| 시각(KST) | 로그 줄 | 결과 |
+|---|---|---|
+| 00:20:01 | `ABORT: worktree dirty` | 아티팩트 없음(호스트 cron 1차). 원인은 main 체크아웃의 untracked `.claude/settings.local.json.bak.*` — 증거 파일이 아니라 설정 백업이어서 `~/.claude/backups/` 로 옮겼다 |
+| 10:58:37 | `held qty(000660)=0` → `ABORT: 000660 not held (or balance query rejected) — nothing to observe` | 아티팩트 없음. **보유 판정이 아니라 거부된 잔고 조회**(10:58:05 시작 → 10:58:37, 32초). 11:00 경 직접 GET 은 20행·`000660` 수량 1 을 반환했다 |
+| 10:59:46 | `=== START P-CA 000660 window=21018s poll=30000ms pace=1.5s` | → `P-CA-20260930T015946Z.json` |
+| 11:06:27 | `=== END P-CA rc=0` | |
+| 11:27:35 | `=== START P-CA 000660 window=19351s poll=30000ms pace=1.5s (attempt 3)` | → `P-CA-20260930T022735Z.json` |
+| 11:31:34 | `=== END P-CA rc=5` | |
+| 12:47:27 | `=== START P-CA 000660 window=14554s poll=30000ms pace=1.5s (attempt 3)` | → `P-CA-20260930T034727Z.json`. 로그의 "attempt 3" 은 스크래치 러너의 START 줄을 안 고친 것이고, 아티팩트 `--note` 는 **attempt 4** 다 |
+| 12:47:48 | `=== END P-CA rc=5` | |
+
+| 시각(KST) | 시도 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
+|---|---|---|---|---|---|
+| 10:59:46 | 2 | `P-CA-20260930T015946Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 2 | 폴 13회 완료, #14 에서 `rt_cd='1' msg_cd='EGW00215'` HTTP 500 거부. 소요 401.343s |
+| 11:27:35 | 3 | `P-CA-20260930T022735Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | baseline·참조 조회 뒤 폴 7건 기록, 그다음 `ReadTimeout`. 소요 238.674s |
+| 12:47:27 | 4 | `P-CA-20260930T034727Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / [] | `measurements` 비어 있고 `baseline_call`·`reference_dates` 관측 없음 → 첫 조회 단계에서 `ReadTimeout`, 폴 0회. 소요 20.446s |
+
+- **✅ `--reference-check` 는 2·3차 시도 모두 성공 — `mock_reference_support: SUPPORTED`.** 09-17 SK텔레콤에 이은 두 번째 확인이다. 반환 행(축자): `record_date=20260831` · `sht_cd=000660` · `isin_name=에스케이하이닉스` · `divi_kind=분기` · `face_val=5000` · `per_sto_divi_amt=375` · `divi_rate=7.50` · `stk_divi_rate=0.00` · `divi_pay_dt=2026/09/30` · `stk_div_pay_dt=`(빈 값) · `odd_pay_dt=`(빈 값) · `stk_kind=보통` · `high_divi_gb=`(빈 값). 값 인용은 §6.2 대로 MOCK 한정.
+- **⛔ 2차 시도 — `legs.cash_dividend.cash` = `ABORTED`.** `class_leg_table` 행: `status ABORTED` · `window_s 21018.0` · `polled_elapsed_s 394.072` · `stop_reason rejected` · `polls_used 14` · `polls_completed 13`. skip 사유(축자): "ABORTED — polling stopped early (stop_reason=rejected, polls_used=14 (attempts), polls_completed=13); polling ran 394.072s, so --window-s=21018.0s did NOT elapse. This is not even a censored observation: the window never ran, so nothing at all was observed about this leg." `poll_stop_evidence`: `http_status 500` · `rt_cd '1'` · `msg_cd 'EGW00215'` · `msg1 원장에서 허용 가능한 초당 거래건수를 초과하였습니다.` · `body_excerpt {"rt_cd":"1","msg1":"원장에서 허용 가능한 초당 거래건수를 초과하였습니다.","msg_cd":"EGW00215"}`.
+  - **1차(09-17)의 하네스 갭은 이 경로에서 닫혔다** — 축자 응답 본문이 아티팩트에 남았다. 그리고 코드는 1차 때 추정했던 `EGW00201`(앱키 유량)도 HTTP 429 도 아닌 **`EGW00215`(원장 초당 거래건수)** 였다.
+  - 호출 간격은 30 s 였고(`poll_interval_ms_effective: 30000.0`, `pace_s 1.5`), 이 계좌 `54e7f8a5d841` 을 쓰는 프로세스는 이 호스트에 없다(paper 스택 계좌 지문 `a43943c80cc3`, 현재 `.env.mock` `ee1bdb5f1ca2`). 따라서 `EGW00215` 는 우리 호출률이 아니라 **모의 서버 원장의 공유 스로틀**로 읽는다 — **해석이지 측정이 아니다**.
+- **3·4차 — `ReadTimeout: HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Read timed out. (read timeout=20.0)`.** 3차는 폴 7건까지 기록됐고(4차 아티팩트 `--note`: "attempt 3 (11:27) ABORTED poll #8 ReadTimeout 20s on openapivts"), 4차는 baseline 도 못 남겼다.
+- **ex leg 는 설계상 SKIP**(2·3차): `NOT_OBSERVABLE_ON_BALANCE_SURFACE — 기준가 조정은 잔고 TR로 관측 불가(N-19 §2.3: 주식잔고조회 72필드 중 가격 필드 없음); 현금 leg만 관측 가능.` 4차는 그 단계 전에 끊겨 `skips` 가 비어 있다.
+- **⛔ 판정: P-CA 2차 = ABORTED ×3 (전부 브로커 측 일시 오류) — 현금 leg 미관측.** **CENSORED 가 아니다**: 2차 아티팩트가 스스로 적었듯 "This is not even a censored observation: the window never ran". 남은 유일한 관측은 **10:59:46 ~ 11:31 KST 사이 baseline 2건 + 폴 20건(13+7) 전부 `hldg_qty 1` · `dnca_tot_amt 6686725.0` 으로 변화 없음**이라는 사실뿐이고, 이것이 "배당이 반영되지 않았다"는 뜻은 아니다(VP-002:772 'observed 0 != 0'). 이 예수금 값은 09-17 1차 baseline 과도 같다.
+- `B_non_trade_event_detect` / `B_non_trade_reconcile` 두 키 모두 **NOT_ESTABLISHED 유지**. `approval_status` 세 건 모두 `UNAPPROVED_CANDIDATE`.
+- **실행이 payable(00:00 KST)보다 크게 늦다.** 00:20 cron 이 ABORT 하는 바람에 본 실행이 10:59 로 밀렸고, 17:05 보고 cron 이 아티팩트를 보도록 창 종료를 16:50 KST 로 줄였다(`window_s` 2차 `21018.0` → 3차 `19351.0` → 4차 `14554.0`). 3·4차는 자기삭제된 러너의 **스크래치 사본**에서 돌렸다 — 가드와 프로브 명령은 같고, 보유 수량 파싱만 "조회 실패"와 "0주"를 구분하도록 갈랐다(10:58 의 오판을 막기 위해).
+- **남은 것**: **P-8 3~5회차**(주문 권한이 돌아왔으므로 재개 가능) → **P-EXT ×5**(운영자 MTS 동석) → **N-15**(마지막). **P-CA 는 다음 대상 후보가 에스피지 `058610`(위 표의 2차 후보)이지만 실행 여부·시점은 운영자 결정이며 미정이다.**
+
 ## 수동 개입 기록
 
 - 2026-09-10: 없음(실전 GET 2건은 무인 실행, HTS/MTS 미사용).
+- 2026-09-28: 없음(P-8 ×2 는 호스트 cron 무인 실행, HTS/MTS 미사용).
+- 2026-09-30: 00:20 cron ABORT 뒤 수동 재실행 3회(10:59 · 11:27 · 12:47). main 체크아웃의 untracked `.claude/settings.local.json.bak.*` 를 `~/.claude/backups/` 로 이동(증거 파일 아님, 워크트리 dirty 가드 해제 목적). 10:58 ABORT 의 원인 판별을 위해 11:00 경 보유 확인용 직접 GET 1회(20행, `000660` 수량 1). HTS/MTS 미사용, 주문 0건.
 
 ## 반환 항목 (핸드오버 §4)
 
