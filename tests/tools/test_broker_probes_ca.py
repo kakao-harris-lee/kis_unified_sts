@@ -1562,10 +1562,12 @@ class _TransientSession(_ScriptedSession):
 
 
 def _retry_records(run: Any) -> list[dict[str, Any]]:
+    """Every transient recorded, retried or not. The key is ``retry_evidence``
+    and not ``poll_retry_evidence`` (review F8): three of the four phases that
+    can write one are not the poll loop, and a harvester filtering on the old
+    key counted baseline and reference-check retries as poll retries."""
     return [
-        obs["poll_retry_evidence"]
-        for obs in run.observations
-        if "poll_retry_evidence" in obs
+        obs["retry_evidence"] for obs in run.observations if "retry_evidence" in obs
     ]
 
 
@@ -1609,6 +1611,7 @@ def test_one_transport_timeout_is_retried_once_and_the_run_continues(
     assert len(record) == 1
     assert record[0]["phase"] == "poll"
     assert record[0]["poll_index"] == 1
+    assert record[0]["retried"] is True
     assert record[0]["transient_kind"] == "transport"
     assert record[0]["status_kind"] == pc._BAL_TRANSIENT_TRANSPORT
     assert record[0]["http_status"] == 0
@@ -1630,7 +1633,10 @@ def test_two_consecutive_transport_timeouts_abort_with_the_transient_reason(
     assert row["status"] == "ABORTED"
     assert row["stop_reason"] == pc._STOP_TRANSIENT
     assert (row["polls_used"], row["polls_completed"]) == (2, 0)
+    # One retry SPENT, two transients SEEN: the counter answers "how much
+    # extra waiting did this run buy", the records answer "what happened".
     assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert [r["retried"] for r in _retry_records(run)] == [True, False]
     assert any("twice in a row" in message for message in run.errors)
     assert _stop_evidence(run)["status_kind"] == pc._BAL_TRANSIENT_TRANSPORT
     assert len(session.calls) == 3
@@ -1653,6 +1659,7 @@ def test_one_ledger_throttle_is_retried_once_and_the_run_continues(
     assert _leg_row(run, "quantity")["status"] == "OBSERVED"
     record = _retry_records(run)
     assert len(record) == 1
+    assert record[0]["retried"] is True
     assert record[0]["transient_kind"] == "ledger_throttle"
     assert record[0]["msg_cd"] == "EGW00215"
     assert record[0]["http_status"] == 500
@@ -1672,6 +1679,7 @@ def test_two_consecutive_ledger_throttles_abort_as_rate_limited(
     assert row["status"] == "ABORTED"
     assert row["stop_reason"] == pc._STOP_RATE_LIMITED
     assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 1}
+    assert [r["retried"] for r in _retry_records(run)] == [True, False]
     assert _stop_evidence(run)["status_kind"] == pc._BAL_TRANSIENT_LEDGER_THROTTLE
 
 
@@ -1785,6 +1793,7 @@ def test_a_transport_timeout_on_the_baseline_is_retried_too(
     record = _retry_records(run)
     assert len(record) == 1
     assert record[0]["phase"] == "baseline"
+    assert record[0]["retried"] is True
     assert "poll_index" not in record[0]
     assert len(session.calls) == 3
 
@@ -1803,6 +1812,7 @@ def test_two_transport_timeouts_on_the_baseline_stop_before_any_poll(
     assert "class_leg_table" not in run.measurements
     # The count is published even on a path that never reaches _finalize.
     assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert [r["phase"] for r in _retry_records(run)] == ["baseline", "baseline"]
     assert len(session.calls) == 2
 
 
@@ -1827,6 +1837,7 @@ def test_a_transient_on_the_reference_check_is_retried_then_the_run_continues(
     assert run.errors == []
     assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
     assert _retry_records(run)[0]["phase"] == "reference_check"
+    assert _retry_records(run)[0]["retried"] is True
     assert any("reference_dates" in obs for obs in run.observations)
     assert _leg_row(run, "quantity")["status"] == "OBSERVED"
 
@@ -2112,8 +2123,7 @@ def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
     (repo / "tools/broker_probes/probes_ca.py").write_text(
         "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
     )
-    # So a fake .venv added after the commit does not trip the dirty guard.
-    (repo / ".gitignore").write_text(".venv/\nresults/\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("results/\n", encoding="utf-8")
 
     def git(*argv: str) -> None:
         subprocess.run(
@@ -2274,7 +2284,7 @@ def test_runner_accepts_a_clean_detached_ancestor_checkout(tmp_path: Path) -> No
     result = _run_runner(repo, tmp_path)
     assert "checkout ok:" in result.stdout
     assert "required probes_ca.py fixes present" in result.stdout
-    assert "ABORT: no python at" in result.stdout
+    assert "ABORT: required env PCA_PYTHON is unset" in result.stdout
     assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
 
 
@@ -2415,42 +2425,62 @@ def test_holding_check_walks_to_page_two_before_saying_not_held(
     assert len(session.calls) == 2
 
 
-def test_holding_check_reports_the_page_cap_as_a_failure_not_zero(
+def test_holding_check_reports_the_page_cap_without_a_success_code(
     stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Review F4: the capped walk's ``parsed`` is the last SUCCESSFUL page, so
+    keying the detail on "is there a body" printed a success code as the
+    reason a run was abandoned — ``CAPPED:MCA00000``, which a reader looks up
+    and finds 정상처리."""
     pages = [
         _paged_balance(qty_row={"pdno": "000660", "hldg_qty": "1"}, fk="F", nk="N")
         for _ in range(pc._MAX_BALANCE_PAGES)
     ]
     wire(_ScriptedSession(pages))
     rc = pc.check_holding(_holding_argv())
+    out = capsys.readouterr().out
     assert rc != 0
-    assert "HOLDING_QUERY_FAILED=CAPPED" in capsys.readouterr().out
+    assert f"HOLDING_QUERY_FAILED=CAPPED:page_cap:{pc._MAX_BALANCE_PAGES}" in out
+    assert "MCA00000" not in out
 
 
-def _fake_python(repo: Path, *, holding_line: str, holding_rc: int, dump: Path) -> None:
-    """A stand-in for ``$REPO/.venv/bin/python`` that answers the three calls
-    the runner makes, so the template can be driven end to end offline."""
-    venv_bin = repo / ".venv" / "bin"
-    venv_bin.mkdir(parents=True)
-    script = venv_bin / "python"
-    script.write_text(
-        "#!/bin/sh\n"
-        'case "$1" in\n'
-        "  -c) printf '%s\\n' \"$PCA_EXPECT_ACCOUNT_FP\" ;;\n"
-        "  -m)\n"
-        '    case "$2" in\n'
-        f"      tools.broker_probes.probes_ca) printf '%s\\n' '{holding_line}'; "
-        f"exit {holding_rc} ;;\n"
+def _fake_python(
+    tmp_path: Path, *, holding_line: str, holding_rc: int, dump: Path
+) -> Path:
+    """A stand-in interpreter answering the four calls the runner makes.
+
+    It lives OUTSIDE the checkout, like the real one: a freshly added detached
+    worktree has no ``.venv``, and installing one into it is forbidden, so the
+    runner takes ``PCA_PYTHON`` and proves separately that the code it loads is
+    this checkout's (review F1). The earlier version of this helper planted a
+    fake ``.venv`` INSIDE the temp repo, which is exactly what hid the defect:
+    the README recipe could never have worked.
+    """
+    body = [
+        "#!/bin/sh",
+        'case "$1" in',
+        "  -c)",
+        '    case "$2" in',
+        '      *__file__*) printf "%s\\n" "$FAKE_MODULE_PATH" ;;',
+        '      *) printf "%s\\n" "$PCA_EXPECT_ACCOUNT_FP" ;;',
+        "    esac",
+        "    ;;",
+        "  -m)",
+        '    case "$2" in',
+        f'      tools.broker_probes.probes_ca) printf "%s\\n" {holding_line!r};'
+        f" exit {holding_rc} ;;",
         '      tools.broker_probes.run) for a in "$@"; do '
-        f"printf '%s\\n' \"$a\" >> '{dump}'; done ;;\n"
-        "    esac\n"
-        "    ;;\n"
-        "esac\n"
-        "exit 0\n",
-        encoding="utf-8",
-    )
+        f'printf "%s\\n" "$a" >> {str(dump)!r}; done ;;',
+        "    esac",
+        "    ;;",
+        "esac",
+        "exit 0",
+        "",
+    ]
+    script = tmp_path / "fake-python"
+    script.write_text("\n".join(body), encoding="utf-8")
     script.chmod(0o755)
+    return script
 
 
 def _run_runner_end_to_end(
@@ -2467,7 +2497,9 @@ def _run_runner_end_to_end(
     repo = _runner_repo(tmp_path, detached=True, dirty=False)
     _publish_origin_main(repo)
     dump = tmp_path / "probe-argv.txt"
-    _fake_python(repo, holding_line=holding_line, holding_rc=holding_rc, dump=dump)
+    python = _fake_python(
+        tmp_path, holding_line=holding_line, holding_rc=holding_rc, dump=dump
+    )
 
     env_file = tmp_path / "creds.env"
     env_file.write_text(
@@ -2480,6 +2512,8 @@ def _run_runner_end_to_end(
         "PATH": __import__("os").environ["PATH"],
         "HOME": str(tmp_path),
         "PCA_LOG": str(tmp_path / "run.log"),
+        "PCA_PYTHON": str(python),
+        "FAKE_MODULE_PATH": str(repo / "tools/broker_probes/probes_ca.py"),
         "PCA_ENV_FILE": str(env_file),
         "PCA_KIS_ENV": "mock",
         "PCA_SYMBOL": "000660",
@@ -2487,7 +2521,7 @@ def _run_runner_end_to_end(
         "PCA_PAYABLE": "2020-01-01T00:00:00+09:00",
         "PCA_WINDOW_S": "60",
         "PCA_POLL_MS": "30000",
-        "PCA_PACE_S": "1.5",
+        "PCA_PACE_S": "0",
         "PCA_EXPECT_KEY_FP": key_fp,
         "PCA_EXPECT_ACCOUNT_FP": "0123456789ab",
         "PCA_TOKEN_CACHE": str(tmp_path / "token-cache"),
@@ -2587,4 +2621,156 @@ def test_runner_aborts_when_the_holding_check_says_nothing_parseable(
     )
     assert result.returncode != 0
     assert "printed neither HELD= nor HOLDING_QUERY_FAILED=" in result.stdout
+    assert argv == []
+
+
+# ---------------------------------------------------------------------------
+# the retry must not outlive the window (independent review F5)
+# ---------------------------------------------------------------------------
+
+
+class _ClockedTransientSession(_TransientSession):
+    """A scripted session that burns a scripted number of seconds per call."""
+
+    def __init__(self, responses: list[Any], clock: list[float], burns: list[float]):
+        super().__init__(responses)
+        self._clock = clock
+        self._burns = list(burns)
+
+    def request(self, *args: Any, **kwargs: Any) -> Any:
+        burn = self._burns.pop(0) if self._burns else 0.0
+        try:
+            return super().request(*args, **kwargs)
+        finally:
+            self._clock[0] += burn
+
+
+def _run_windowed_poll(
+    wire: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    burn_on_transient: float,
+) -> tuple[Any, Any]:
+    """Baseline, then one poll that fails transiently after ``burn_on_transient``
+    seconds. ``--window-s`` is 60 and the poll interval 30s."""
+    clock = [1000.0]
+    session = wire(
+        _ClockedTransientSession(
+            [_balance_body(10), _read_timeout(), _balance_body(11)],
+            clock,
+            [0.0, burn_on_transient, 0.0],
+        )
+    )
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    run = pc.probe_pca(
+        _poll_args(poll_ms=30000.0, pace_s=0.0, window_s=60.0),
+    )
+    return run, session
+
+
+def test_a_transient_after_the_window_buys_no_retry(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review's scenario: window 60s, the poll fails 80s in. Retrying would
+    defer another 30s and poll at ~110s, then a CENSORED verdict would rest on
+    a reading taken outside the window it claims to cover. The window has
+    elapsed, so the loop simply ends — and the transient is still recorded."""
+    run, session = _run_windowed_poll(wire, monkeypatch, burn_on_transient=80.0)
+
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "CENSORED"
+    assert "stop_reason" not in row
+    assert len(session.calls) == 2, "the retry fired outside the window"
+    assert run.measurements["polls_used"] == 1
+    assert run.measurements["polls_completed"] == 0
+    # No retry was spent, but the transient is not swallowed either.
+    assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
+    record = _retry_records(run)
+    assert len(record) == 1
+    assert record[0]["retried"] is False
+    assert record[0]["phase"] == "poll"
+    assert run.measurements["polled_elapsed_s"] == pytest.approx(80.0)
+
+
+def test_a_transient_inside_the_window_still_buys_its_retry(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other direction of the same guard: the deadline refuses the retry
+    only when the window is actually over."""
+    run, session = _run_windowed_poll(wire, monkeypatch, burn_on_transient=10.0)
+
+    assert run.errors == []
+    assert len(session.calls) == 3
+    assert run.measurements["retries"] == {"transport": 1, "ledger_throttle": 0}
+    assert _retry_records(run)[0]["retried"] is True
+    assert _leg_row(run, "quantity")["status"] == "OBSERVED"
+
+
+# ---------------------------------------------------------------------------
+# runner: interpreter provenance, inter-process pacing, early config refusal
+# ---------------------------------------------------------------------------
+
+
+def test_runner_refuses_an_interpreter_that_loads_another_checkout(
+    tmp_path: Path,
+) -> None:
+    """Review F1's consequence. The interpreter is the MAIN checkout's venv, so
+    the code it resolves is not automatically this worktree's — and
+    ``repo_commit`` and the results directory both follow the loaded module,
+    not the runner's ``$REPO``. Without this check the clean/detached/ancestor
+    guards would vouch for a tree that never ran."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env={"FAKE_MODULE_PATH": "/some/other/checkout/probes_ca.py"},
+    )
+    assert result.returncode != 0
+    assert "resolves OUTSIDE the checkout" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+    assert argv == []
+
+
+def test_runner_paces_the_probe_against_the_holding_check(tmp_path: Path) -> None:
+    """Review F2: the holding check and the probe are two processes with
+    independent pacers, so the probe's baseline GET would follow the check's
+    last GET with no gap — the back-to-back pair that produced the 2026-09-17
+    EGW00201 stop, which this harness keeps as "stop, never retry"."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    slept = tmp_path / "slept.txt"
+    fake_sleep = bindir / "sleep"
+    fake_sleep.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$1" >> {str(slept)!r}\nexit 0\n',
+        encoding="utf-8",
+    )
+    fake_sleep.chmod(0o755)
+    import os
+
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env={
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "PCA_PACE_S": "1.5",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert argv, "the probe never ran"
+    assert slept.read_text(encoding="utf-8").split() == ["1.5"], (
+        "expected exactly one PCA_PACE_S wait between the holding check and "
+        f"the probe, got {slept.read_text(encoding='utf-8')!r}"
+    )
+
+
+def test_runner_refuses_a_quantity_leg_class_without_an_effective_time(
+    tmp_path: Path,
+) -> None:
+    """Review F3: a pure configuration error must not cost broker calls. The
+    check moved into the env step, ahead of the credential source and the
+    holding walk."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env={"PCA_EVENT_CLASS": "split"}
+    )
+    assert result.returncode != 0
+    assert "set PCA_EFFECTIVE" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+    assert "held qty" not in result.stdout
     assert argv == []
