@@ -223,7 +223,7 @@ class _Pacer:
     def defer(self, seconds: float) -> None:
         """Push the next allowed call ``seconds`` out from NOW.
 
-        The transient-error retry (:func:`_read_balance_retrying`) has to wait a
+        The transient-error retry (:func:`_retry_once`) has to wait a
         WHOLE interval before trying again, and ``wait()`` alone does not give
         that: the failed attempt already armed the gap before it went out, so by
         the time a 20s read timeout surfaces, ``wait()`` owes only the remainder
@@ -806,7 +806,7 @@ def _read_balance(
 
     A transient return ABANDONS the page walk in progress: the continuation
     cursors of a page that failed are not resumable, so the retry
-    (:func:`_read_balance_retrying`) starts the walk again from page 1."""
+    (:func:`_retry_once`) starts the walk again from page 1."""
     fk = nk = ""
     cash = 0.0
     parsed: dict[str, Any] = {}
@@ -895,15 +895,28 @@ def _retry_evidence(
     parsed: dict[str, Any],
     text: str,
     poll_index: int | None,
+    retried: bool,
 ) -> dict[str, Any]:
-    """The record written for a transient that WAS retried.
+    """The record written for EVERY transient, retried or not.
 
     Same shape and the same payload gate as :func:`_call_evidence` (a
-    successful balance body is never excerpted), plus which phase and which
-    poll it happened on — a retried run must be reconstructible down to "when,
-    and how many times", which is the whole reason the retry is capped at one.
+    successful balance body is never excerpted), plus which phase it happened
+    in, which poll (when there was one), and whether a retry followed. A run
+    must be reconstructible down to "when, and how many times", which is the
+    whole reason the retry is capped at one — and ``retried: false`` is how the
+    two refusals are told apart from a retry: the second consecutive transient,
+    and a transient that surfaced after ``--window-s`` had already elapsed.
+
+    The key this lands under is ``retry_evidence``, not ``poll_retry_evidence``:
+    three of the four phases that can write one are not the poll loop, and a
+    harvester filtering on the key would have counted baseline and
+    reference-check retries as poll retries (independent review F8).
     """
-    record: dict[str, Any] = {"phase": phase, "transient_kind": kind}
+    record: dict[str, Any] = {
+        "phase": phase,
+        "transient_kind": kind,
+        "retried": retried,
+    }
     if poll_index is not None:
         record["poll_index"] = poll_index
     record.update(
@@ -940,9 +953,18 @@ def _retry_once(
     wait_s: float,
     phase: str,
     poll_index_base: int | None = None,
-) -> tuple[_Outcome, int]:
+    can_retry: Callable[[], bool] | None = None,
+) -> tuple[_Outcome, int, bool]:
     """Run ``call``; on a transient outcome wait one whole interval and run it
-    exactly once more. Returns ``(outcome, attempts)`` with ``attempts`` 1 or 2.
+    exactly once more. Returns ``(outcome, attempts, retried)`` — ``attempts``
+    is 1 or 2, and ``retried`` says whether a second attempt was actually made.
+
+    ``can_retry`` lets a caller REFUSE the retry for a reason of its own. The
+    poll loop passes the window deadline: a transient surfacing after
+    ``--window-s`` has elapsed must not buy another interval of waiting plus
+    another call, or a CENSORED verdict ends up resting on a poll made outside
+    the window it claims to cover (independent review F5 — window 60s, poll at
+    58s, 20s timeout, 30s defer, retry at 108s).
 
     The caller sees a transient ``kind`` back only when BOTH attempts were
     transient — the "second consecutive transient" stop of plan §2.1. This is
@@ -955,17 +977,20 @@ def _retry_once(
     SINGLE failure, so one retry would have carried all three, and every extra
     knob blurs the "when, and how many times" the artifact has to answer.
 
-    ``on_transient`` receives ``(evidence, kind)`` for each retried failure, so
-    the phase decides where that goes — the probe records it on the run and
-    counts it, the pre-flight holding check just prints it.
+    ``on_transient`` receives ``(evidence, kind)`` for EVERY transient — the
+    retried one and the one that ends the phase — so the phase decides where
+    that goes: the probe records it on the run and counts only the retries, the
+    pre-flight holding check just prints it. Recording both is the point: a
+    transient that bought no retry is exactly the case a reader needs to see.
     """
     attempts = 0
     while True:
         attempts += 1
         outcome = call()
         kind = _transient_kind(outcome.kind)
-        if kind is None or attempts >= 2:
-            return outcome, attempts
+        if kind is None:
+            return outcome, attempts, attempts > 1
+        retrying = attempts < 2 and (can_retry is None or can_retry())
         on_transient(
             _retry_evidence(
                 phase=phase,
@@ -977,9 +1002,12 @@ def _retry_once(
                 poll_index=(
                     None if poll_index_base is None else poll_index_base + attempts
                 ),
+                retried=retrying,
             ),
             kind,
         )
+        if not retrying:
+            return outcome, attempts, attempts > 1
         pacer.defer(wait_s)
 
 
@@ -1034,11 +1062,17 @@ def _ksdinfo_outcome(
 def _record_retry(
     run: ProbeRun, retries: _Retries
 ) -> Callable[[dict[str, Any], str], None]:
-    """The probe's ``on_transient``: observe the evidence and count it."""
+    """The probe's ``on_transient``: observe EVERY transient, count the RETRIES.
+
+    The two differ, and conflating them is how a counter stops meaning
+    anything: ``measurements.retries`` answers "how much extra waiting did this
+    run spend", which a transient that bought no retry did not.
+    """
 
     def _record(evidence: dict[str, Any], kind: str) -> None:
-        run.observe(poll_retry_evidence=evidence)
-        retries.bump(kind)
+        run.observe(retry_evidence=evidence)
+        if evidence.get("retried"):
+            retries.bump(kind)
 
     return _record
 
@@ -1069,7 +1103,7 @@ def _do_baseline(
     trial 4 died on this very call — the FIRST GET of the run — and left an
     artifact with no baseline at all.
     """
-    outcome, _attempts = _retry_once(
+    outcome, _attempts, _retried = _retry_once(
         lambda: _balance_outcome(session, auth, base_url, tr_id, creds, symbol, pacer),
         _record_retry(run, retries),
         pacer,
@@ -1145,7 +1179,7 @@ def _do_reference_check(
     escaped the probe entirely (``run.py`` rc 5).
     """
     ksd_key = _EVENT_CLASS_KSDINFO_KEY[trial.event_class]
-    outcome, _attempts = _retry_once(
+    outcome, _attempts, _retried = _retry_once(
         lambda: _ksdinfo_outcome(session, auth, base_url, pacer, ksd_key, trial.symbol),
         _record_retry(run, retries),
         pacer,
@@ -1234,17 +1268,30 @@ def _poll_loop(
     # requested --window-s it never reached (an ~1s run carrying window_s=28800).
     started_at = time.monotonic()
     deadline = started_at + trial.window_s
+    # Hoisted (review F9): neither depends on loop state, and a 16-hour window
+    # at 30s polls would otherwise build ~1,920 of each for nothing.
+    on_transient = _record_retry(run, retries)
 
-    while pending and time.monotonic() < deadline:
-        outcome, attempts = _retry_once(
-            lambda: _balance_outcome(
-                session, auth, base_url, tr_id, creds, trial.symbol, poll_pacer
-            ),
-            _record_retry(run, retries),
+    def read_balance_now() -> _Outcome:
+        return _balance_outcome(
+            session, auth, base_url, tr_id, creds, trial.symbol, poll_pacer
+        )
+
+    def window_still_open() -> bool:
+        return time.monotonic() < deadline
+
+    while pending and window_still_open():
+        outcome, attempts, retried = _retry_once(
+            read_balance_now,
+            on_transient,
             poll_pacer,
             wait_s=trial.effective_poll_ms / 1000.0,
             phase="poll",
             poll_index_base=polls_used,
+            # F5: a transient that surfaces after the window has elapsed must
+            # not buy another interval of waiting plus another call — the
+            # retry is allowed on exactly the terms a fresh poll would be.
+            can_retry=window_still_open,
         )
         status, http_status, parsed, text = (
             outcome.kind,
@@ -1258,6 +1305,14 @@ def _poll_loop(
         # can line the records up against it.
         polls_used += attempts
         transient = _transient_kind(status)
+        if transient is not None and not retried:
+            # The retry was REFUSED because --window-s had already elapsed, so
+            # the loop ends the way it would have ended anyway: stop_reason
+            # stays None, because the window genuinely ran its course and that
+            # is exactly what CENSORED asserts. The transient itself is in the
+            # artifact as a retry_evidence record with retried=false; it is not
+            # a stop reason, because it did not stop anything (review F5).
+            break
         if status in (_BAL_RATE_LIMITED, _BAL_REJECTED, _BAL_CAPPED) or transient:
             # ONE verbatim evidence record per stop, so a later reader can tell
             # HTTP 429 from EGW00201 and read the broker's own words (the
@@ -1457,6 +1512,37 @@ def _finalize(
 # ---------------------------------------------------------------------------
 
 
+def _open_broker_session(
+    *, is_real: bool, token_cache_dir: Any
+) -> tuple[Any, Any, str, str, Any]:
+    """Resolve credentials and open the ONE broker session shape this module
+    uses. Returns ``(session, auth, base_url, tr_id, creds)``.
+
+    Both entry points go through here — :func:`probe_pca` and
+    :func:`check_holding` (independent review F6: the pre-flight gate had a
+    line-for-line copy of this and had already drifted, dropping
+    :func:`warn_shared_token_cache`). The caller closes the session.
+
+    ``requests`` and ``KISAuthManager`` are imported lazily for the reason the
+    module docstring gives: ``--list``/``--dry-run`` and the registry import
+    this module and must not pay for (or require) the HTTP stack.
+    """
+    warn_shared_token_cache()
+    creds = resolve_credentials("stock", is_real=is_real)
+    require_account(creds)
+
+    import requests
+
+    from shared.kis.auth import KISAuthManager
+
+    cfg = build_auth_config(creds, probe_token_cache_dir(token_cache_dir))
+    auth = KISAuthManager(cfg, use_singleton=False)
+    session = requests.Session()
+    base_url = REAL_BASE_URL if is_real else MOCK_BASE_URL
+    tr_id = _STOCK_TR_REAL if is_real else _STOCK_TR_MOCK
+    return session, auth, base_url, tr_id, creds
+
+
 def _build_run(spec: ProbeSpec, args: argparse.Namespace, trial: _Trial) -> ProbeRun:
     """Construct the artifact and record the attestation — before any network call."""
     run = ProbeRun(
@@ -1531,20 +1617,10 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
         run.observe(would_send=_dry_run_would_send(trial))
         return run
 
-    warn_shared_token_cache()
-    creds = resolve_credentials("stock", is_real=trial.is_real)
+    session, auth, base_url, tr_id, creds = _open_broker_session(
+        is_real=trial.is_real, token_cache_dir=args.token_cache_dir
+    )
     run.credentials = creds.describe()
-    require_account(creds)
-
-    import requests
-
-    from shared.kis.auth import KISAuthManager
-
-    cfg = build_auth_config(creds, probe_token_cache_dir(args.token_cache_dir))
-    auth = KISAuthManager(cfg, use_singleton=False)
-    session = requests.Session()
-    base_url = REAL_BASE_URL if trial.is_real else MOCK_BASE_URL
-    tr_id = _STOCK_TR_REAL if trial.is_real else _STOCK_TR_MOCK
     pacer = _Pacer(trial.pace_s)
     retries = _Retries(run)
 
@@ -1719,10 +1795,19 @@ _HOLDING_FAILED_PREFIX = "HOLDING_QUERY_FAILED="
 
 
 def _holding_failure_detail(outcome: _Outcome) -> str:
-    """The short reason after the status kind: the broker's ``msg_cd`` when
-    there was a body, else the transport exception class."""
+    """The short reason after the status kind.
+
+    ``msg_cd`` only when the broker actually REJECTED the call (``rt_cd`` not
+    ``'0'``). The page cap is the case that forced this (review F4): its
+    ``parsed`` is the last SUCCESSFUL page, so keying on "is there a body"
+    printed a success code — ``CAPPED:KIOK0510`` — as the reason a run was
+    abandoned, and a reader looking that code up finds 정상처리.
+    """
+    if outcome.kind == _BAL_CAPPED:
+        return f"page_cap:{_MAX_BALANCE_PAGES}"
+    rt_cd = str(outcome.parsed.get("rt_cd") or "").strip()
     msg_cd = str(outcome.parsed.get("msg_cd") or "").strip()
-    if msg_cd:
+    if rt_cd != "0" and msg_cd:
         return msg_cd
     head = (outcome.text or "").split(":", 1)[0].strip()
     return head or "unknown"
@@ -1771,26 +1856,17 @@ def check_holding(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        creds = resolve_credentials("stock", is_real=args.env == "real")
-        require_account(creds)
+        session, auth, base_url, tr_id, creds = _open_broker_session(
+            is_real=args.env == "real", token_cache_dir=args.token_cache_dir
+        )
     except ProbeError as exc:
         print(f"{_HOLDING_FAILED_PREFIX}PRECONDITION:{exc}")
         return 2
 
-    import requests
-
-    from shared.kis.auth import KISAuthManager
-
-    cfg = build_auth_config(creds, probe_token_cache_dir(args.token_cache_dir))
-    auth = KISAuthManager(cfg, use_singleton=False)
-    session = requests.Session()
     pacer = _Pacer(args.pace_s)
-    is_real = args.env == "real"
-    base_url = REAL_BASE_URL if is_real else MOCK_BASE_URL
-    tr_id = _STOCK_TR_REAL if is_real else _STOCK_TR_MOCK
 
     try:
-        outcome, _attempts = _retry_once(
+        outcome, _attempts, _retried = _retry_once(
             lambda: _balance_outcome(
                 session, auth, base_url, tr_id, creds, args.symbol, pacer
             ),
