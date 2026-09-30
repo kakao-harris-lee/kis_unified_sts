@@ -158,7 +158,7 @@ if not fresh: 기존 버전 비교 (같음 → 통과 · 뒤/앞 → SchemaVersi
 
 | 테스트 | 수정 전 | 수정 후 |
 |---|---|---|
-| `test_concurrent_first_boot_of_one_store_admits_every_process` | **4/4 파라미터 red** | 4/4 green |
+| `test_the_genesis_transaction_is_atomic_under_concurrent_first_boot` (아크 도중 개명 — 리뷰 HIGH-1) | **4/4 파라미터 red** | 4/4 green |
 | `test_a_store_created_by_a_race_is_immediately_reopenable` | **4/4 파라미터 red** | 4/4 green |
 | `test_a_write_lock_held_past_the_busy_timeout_refuses_boot_explicitly` | pass — T-4 는 뮤테이션 검출기가 아니라 fail-closed 고정이다(§7.4 8항) | pass |
 | 합계 | **8 failed, 1 passed** | **9 passed** (연속 3회) |
@@ -195,6 +195,11 @@ inbox **6/80** · marketfeed **21/80** · rcl **8/80**. 즉 경합은 진짜지�
    locked` 로 잃을 수 있다(micro-probe 실측 **47/240**). 이 경합은 #801 범위 밖(계획 §2.1 이 pragma 를
    트랜잭션 밖에 둔다)이고 이 수정에 영향받지 않는다 — WAL 은 파일에 지속되므로 한 번 설정된 뒤의 같은
    pragma 는 잠금 없는 no-op 이다. 여기서 발화시키면 검증 대상만 흐려진다.
+   ⚠ **그리고 이 경합은 여전히 열려 있다 — `#818`**(리뷰 HIGH-1, §7.9). 리뷰어 실측으로 갓 생긴 파일에서
+   N=2 **22/80** · N=4 **57/160** · N=8 **90/320** 이 잃는다. 즉 이 스위트가 증명하는 것은 **제네시스
+   트랜잭션**이고 「동시 첫 부팅이 된다」가 아니다 — 그래서 HIGH-1 처분으로 테스트 이름을
+   `test_the_genesis_transaction_is_atomic_under_concurrent_first_boot` 로 좁히고, 모듈 독스트링 ·
+   `_precreate_wal_file` · `schema_ledger` 모듈 독스트링 세 곳에 #818 을 적었다.
 4. **기존 스위트가 「무변경 통과」하지 않았다 — 두 테스트를 고쳐야 했다.** 계획 T-2 의 종료조건은
    「기존 스위트 무변경 통과」였는데, `tests/compose/test_store_probe_isolation.py` 의
    `test_two_concurrent_store_constructions_on_a_fresh_file_lose_the_genesis_race` 는 **이 수정이 없애는
@@ -254,7 +259,7 @@ inbox **6/80** · marketfeed **21/80** · rcl **8/80**. 즉 경합은 진짜지�
 | mypy `tos/runtime/tests` (저장소 루트 · `PYTHONPATH=tos/src:tos/runtime/src` · `--ignore-missing-imports --disable-error-code=no-untyped-def`) | `Success: no issues found in 237 source files` |
 | mypy `tos/runtime/src` (같은 `PYTHONPATH` · `--ignore-missing-imports`) | `Success: no issues found in 189 source files` |
 | mypy `tos/src` (`cd tos && mypy src`) | `Success: no issues found in 265 source files` |
-| `pytest tos/runtime/tests` | **3208 collected · 전건 pass** (main 기준선 3189 → 신규 19건: T-1 6 · T-2 4 · T-3/T-4 9) |
+| `pytest tos/runtime/tests` | **3215 collected · 전건 pass** (main 기준선 3189 → 신규 26건: T-1 6 · T-2 4 · T-3/T-4 9 · 리뷰 처분 7 — §7.9) |
 | `pytest tests/tools -k tos` | 783 collected · 전건 pass |
 | `pytest tests/unit/scripts/test_render_paper_config.py` | 42 collected · 전건 pass |
 
@@ -265,8 +270,16 @@ inbox **6/80** · marketfeed **21/80** · rcl **8/80**. 즉 경합은 진짜지�
 
 ### 7.7 배포 영향
 
-- **동작 변경은 부팅 경로 하나뿐**이고, 갓 만든 파일의 모양은 바이트 동일하다(§7.2) — 이미 배포된
-  `data_dir` 에 대한 영향은 0 이다. 마이그레이션도, 순서 제약도 새로 생기지 않는다.
+- **동작 변경은 부팅 경로 하나뿐**이고, 갓 만든 파일의 모양은 바이트 동일하다(§7.2). 마이그레이션도,
+  순서 제약도 새로 생기지 않는다.
+- ⚠ **「이미 배포된 `data_dir` 에 대한 영향은 0」은 처음 판이 틀렸다**(리뷰 MEDIUM-1, §7.9). 파일 내용은
+  그대로지만 **부팅이 하는 잠금 행동**이 바뀌었다: 원래 판은 모든 부팅을 `BEGIN IMMEDIATE` 로 시작해,
+  현재 버전의 기존 파일을 여는 부팅조차 **쓰기 잠금을 이겨야** 했다(수정 전에는 쓰기 잠금이 전혀 필요
+  없었다). 살아 있는 런타임의 증거 append · 운영자 CLI(`rearm`/`ack-alert`/`rotate-key`) · 긴
+  `apply_migrations` 인덱스 빌드 중 아무거나와 경합했고, `SqliteCommitLog(sqlite_timeout_s=0)` 은 즉시
+  실패했다. 처분으로 **정상 상태 부팅은 잠금 없는 판독 둘**(`user_version` 일치 + `schema_ledger` 존재)로
+  결정해 트랜잭션에 아예 들어가지 않는다. 그래서 **지금은** 정상 상태 부팅의 잠금 행동이 수정 전과 같다.
+  잠금을 잡는 부팅은 **실제로 스키마를 써야 하는 부팅**(제네시스 · 버전 불일치)뿐이다.
 - #816 이 세운 전제(증거 스키마 v2 — 구 코드 정지 → `migrate` → 신 코드, 런북 §4-A)는 **그대로**다.
   이 PR 은 그 전제를 바꾸지 않는다.
 - `expected_code_digest` 갱신은 필수다. 어긋나면 Stage A probe 가 **부팅을 거부**한다 — 이 브랜치에서
@@ -294,3 +307,45 @@ test_a_corrupted_archive_is_refused` 가 한 번 red 였다. 재현되지 않았
 - 이 수정은 그 테스트가 압축하는 파일의 **바이트를 바꾸지 않는다**(§7.2).
 
 기록만 남긴다. 재발하면 이 항을 근거로 추적할 것.
+
+### 7.9 리뷰 처분 (2026-09-30 · needs-attention 4건 → 전건 대응 · 잠정)
+
+심판 레인은 **같은 모델 계열(Sonnet)의 Claude-side 패스**다 — 다른 모델 계열의 독립 심판이 아니므로
+이 처분은 **잠정**이다(CLAUDE.md 하네스 규율: 되돌리기 어려운 경로만 Codex 로 가고, 이 디프는 그 범주가
+아니다). 저자와 심판이 분리된 것은 맞다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| HIGH-1 | **주장 과대.** 갓 생긴 파일의 동시 첫 부팅은 여전히 `PRAGMA journal_mode=WAL` 에서 실패한다(busy handler 없음) — 실측 N=2 **22/80** · N=4 **57/160** · N=8 **90/320**. 그런데 테스트 이름이 `..._admits_every_process` 였다 | **수용.** ① 테스트 개명 → `test_the_genesis_transaction_is_atomic_under_concurrent_first_boot`(이름이 고정하는 것을 그대로 말한다: WAL 로 미리 만든 파일에서 제네시스 트랜잭션이 원자적·비교차라는 것) ② `schema_ledger` 모듈 독스트링에 「무엇이 닫혔고 무엇이 아닌가」 한 단락 신설 — 제네시스 트랜잭션 경합은 닫혔고 **`journal_mode` 출생 경합은 닫히지 않았다 · #818** ③ #818 을 `_precreate_wal_file` docstring · T-3 모듈 독스트링 · 헬퍼 docstring · 이 계획 §7.4 3항에 적었다. 범위는 #818(별도) |
+| MEDIUM-1 | **모든 부팅이 배타 쓰기 잠금을 잡는다.** 수정 전에는 현재 버전의 기존 파일을 여는 부팅에 쓰기 잠금이 필요 없었다. `BEGIN IMMEDIATE` 를 무조건 걸면 살아 있는 writer(런타임 append · 운영자 CLI · 긴 `apply_migrations`)와 경합하고 `sqlite_timeout_s=0` 은 즉시 실패한다 | **수용.** `open_or_create_schema` 에 **정상 상태 fast path**: 먼저 잠금 없이 `PRAGMA user_version` 을 읽고, `schema_version` 과 같고 `schema_ledger` 가 존재하면 트랜잭션을 건너뛰어 기존 non-fresh 경로(DDL 0)를 그대로 탄다. 안전 방향이 성립한다 — 도장과 테이블이 **같은 트랜잭션에서** 커밋되므로 `user_version == schema_version` 관측은 제네시스(또는 `apply_migrations`)가 끝났다는 뜻이다. 그 밖의 모든 상태(버전 0 · 뒤/앞 · 대장 부재)는 `BEGIN IMMEDIATE` 로 떨어지므로 R-1·R-2 는 닫힌 채다. 동시 **첫** 부팅은 누군가 도장을 커밋하기 전까지 `user_version` 이 0 이라 fast path 에 절대 들어가지 못한다 |
+| LOW-1 | 예외 처리의 `ROLLBACK` 이 스스로 던질 수 있다(`cannot rollback - no transaction is active`) → 원래 예외가 가려진다 | **수용.** `try: ROLLBACK except sqlite3.OperationalError: pass` 로 감싸고 원래 예외를 re-raise 한다 |
+| LOW-2 | `isolation_level is None` 전제가 문서에만 있다 | **수용.** 헬퍼 진입에서 명시 `ValueError`(assert 아님 — `-O` 가 벗긴다). sqlite3 의 암묵 트랜잭션 모드에서는 `BEGIN IMMEDIATE` 가 제네시스 도중에 터져 원자성 논증이 무효가 된다 |
+
+**red-before / green-after (처분 테스트 4건, 수정 전 헬퍼로 실측):**
+
+| 테스트 | 수정 전(literal) | 수정 후 |
+|---|---|---|
+| `test_an_already_current_file_boots_while_another_writer_holds_the_lock` | `sqlite3.OperationalError: database is locked` | pass |
+| `test_a_real_store_boots_beside_a_held_write_lock`(실 `SqliteCommitLog` · `sqlite_timeout_s=0`) | `sqlite3.OperationalError: database is locked` | pass |
+| `test_a_create_ddl_that_ends_the_transaction_surfaces_its_own_exception` | `sqlite3.OperationalError: cannot rollback - no transaction is active`(원래 `RuntimeError` 가 가려졌다) | pass — `RuntimeError: the real failure…` 가 그대로 나온다 |
+| `test_a_connection_not_in_autocommit_mode_is_refused_with_a_clear_error` | `DID NOT RAISE <class 'ValueError'>` | pass |
+
+fast path 가 **거짓 통과 경로가 되지 않는다**는 것도 따로 고정했다(이 셋은 수정 전에도 green — 새 경로의
+가드이지 구 코드의 회귀 검출기가 아니다, 그렇게 적는다):
+`test_the_fast_path_still_refuses_a_behind_or_ahead_version_under_a_held_lock` ·
+`test_a_matching_version_without_a_schema_ledger_does_not_take_the_fast_path` ·
+`test_a_v1_evidence_file_is_still_refused_and_never_fast_pathed`(실 evidence v1 파일 — `user_version` 1 ≠ 2
+라 fast path 에 들어갈 수 없고, #816 대로 인덱스도 만들지 않은 채 거부된다).
+
+**부수 효과 — 크기 예산.** 위 세 처분으로 `open_or_create_schema` 가 141줄이 되어 100줄 함수 예산을
+넘겼다(`tools/tos_size_budget.py` 가 red: `[unregistered] … open_or_create_schema: 141 lines exceeds
+100`). **예외 등재가 아니라 분해했다** — 트랜잭션 본문을 `_run_genesis_transaction(conn, …) ->
+(was_fresh, on_disk_version)` 으로 빼고, fast path 근거 문단은 모듈 독스트링으로 옮겼다(순수
+decomposition: 같은 문장 · 같은 순서 · 같은 한 트랜잭션 · 버전 비교는 COMMIT 뒤 호출자에 그대로 남는다).
+분해 뒤 `tos size budget PASS: 0 violations`.
+
+**부수 정정**: `a2b54e6b` 이 바로잡은 mypy 기록에 따라, 첫 판에서 `no-any-return` 회피용으로 달았던 주석
+두 개의 전제가 거짓이 됐다(「저장소 루트에서 `tos_runtime` 이 mypy 경로에 없다」 — `PYTHONPATH` 를 주면
+있다). `test_schema_ledger.py` 쪽은 annotation 자체가 불필요해 **되돌렸고**,
+`test_schema_genesis_concurrency.py` 쪽은 실제로 필요하지만 이유가 다르므로(`**kwargs: Any` 래퍼)
+**이유를 실측에 맞게 고쳤다**. 거짓 전제 주석을 남기지 않는다.
