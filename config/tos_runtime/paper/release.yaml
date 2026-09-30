@@ -243,6 +243,26 @@
 #   `expected_dependency_set_digest` 는 열여덟 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
 #   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
 #
+#   19차 재측정(2026-09-30, 브랜치 fix/tos-verify-archive-determinism · PR #821): 런타임
+#   `*.py` 한 개(`operations/backup_archive.py`)가 바뀐다. **동작 변경이 하나 있다.**
+#   `verify_archive` 가 추출 **전에** xz 스트림 전체를 1 MiB 청크로 끝까지 해제해 버린다
+#   (`_require_intact_xz_stream`). `tarfile` 의 `r:xz` 는 tar 끝 표식에서 멈추고 xz 는 블록
+#   **끝**에서만 CRC 를 따지므로, 그 표식 뒤(레코드 패딩 · 스트림 인덱스 · 12바이트 스트림
+#   푸터)에 떨어진 손상은 **아예 디코딩되지 않았다** — 멤버는 전부 온전하고 다이제스트도
+#   맞고 체인도 재검증돼 `verify_archive` 가 **통과를 반환했다**. 실측: 이 모듈이 쓴 실제
+#   아카이브에서 손상 위치 12곳 중 4곳이 검증을 통과했고, `archive_backup_set` 은 그것을
+#   `.partial` 에서 최종 이름으로 rename 했다(= `xz -d` 가 거부하는 파일이 「검증된 아카이브」
+#   이름으로 콜드 스토리지에 남는다). 이슈 #821 은 이를 결정성 문제로만 적었으나(「검증 통과로
+#   내보내는 경로는 찾지 못했다」) 그 경로가 있었다. 부수적으로 tar **헤더** 손상이 리더를
+#   일찍 멈추게 해 거부가 매니페스트 비교에서 나오던 비결정성도 닫힌다 — CI flaky 의 원인.
+#   두 읽기 경로가 `_refuse_unreadable` 하나로 같은 문구를 낸다. 그 밖의 동작 · 메시지 ·
+#   설정 표면은 불변이고 새 설정 손잡이는 없다. 이전 값
+#   d75a3616b9d9e487ddee070384fdb6a8bed25e7c768fffd9be53905c829dcd0c 은 18차 측정치
+#   (main 341a4430 이후 · #817 머지 aec37535 = 이 브랜치의 분기점).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 6a4f314f…).
+#   `expected_dependency_set_digest` 는 열아홉 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
@@ -264,7 +284,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "d75a3616b9d9e487ddee070384fdb6a8bed25e7c768fffd9be53905c829dcd0c"
+expected_code_digest: "6a4f314f24836ecd35bf4b9f2db0c66d85579149aa4ef871e8afe307b917473d"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
