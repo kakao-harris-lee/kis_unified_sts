@@ -48,7 +48,11 @@ from pathlib import Path
 from tos.canonical import CanonicalizationScheme
 from tos.engine.records import EngineEvent, event_identity
 
-from tos_runtime.operations.schema_ledger import open_or_create_schema
+from tos_runtime.operations.schema_ledger import (
+    closing_on_failure,
+    enable_wal_journal,
+    open_or_create_schema,
+)
 
 __all__ = [
     "INBOX_SCHEMA_VERSION",
@@ -279,24 +283,27 @@ class SqliteEventInbox:
         self.path = path
         self._scheme = scheme
         self._conn = sqlite3.connect(str(path), isolation_level=None)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=FULL")
-        # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
-        # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
-        # that closes.
-        open_or_create_schema(
-            self._conn,
-            store_name="inbox",
-            schema_version=INBOX_SCHEMA_VERSION,
-            create_ddl=_create_inbox_schema,
-            shape_tables=(
-                "events",
-                "attempt_composites",
-                "attempt_finality_witness",
-                "new_risk_halt",
-            ),
-            monotonic_ns=time.monotonic_ns,
-        )
+        # Construction from here on is guarded: a refused boot closes `self._conn` instead of
+        # leaving it to the exception's traceback. The rationale lives once, on the helper.
+        with closing_on_failure(self._conn):
+            enable_wal_journal(self._conn)
+            self._conn.execute("PRAGMA synchronous=FULL")
+            # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
+            # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
+            # that closes.
+            open_or_create_schema(
+                self._conn,
+                store_name="inbox",
+                schema_version=INBOX_SCHEMA_VERSION,
+                create_ddl=_create_inbox_schema,
+                shape_tables=(
+                    "events",
+                    "attempt_composites",
+                    "attempt_finality_witness",
+                    "new_risk_halt",
+                ),
+                monotonic_ns=time.monotonic_ns,
+            )
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection."""

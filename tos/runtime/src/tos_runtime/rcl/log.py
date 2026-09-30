@@ -44,6 +44,10 @@ from tos.rcl import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
+from tos_runtime.operations.schema_ledger import (
+    closing_on_failure,
+    enable_wal_journal,
+)
 from tos_runtime.rcl.gates import (
     ReservationRefusalReason,
     ReservationTransitionRefusal,
@@ -172,12 +176,15 @@ class SqliteCommitLog:
         self._conn = sqlite3.connect(
             str(path), isolation_level=None, timeout=sqlite_timeout_s
         )
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=FULL")
-        # This log's DDL, the freshness decision and the genesis stamp all inside ONE
-        # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
-        # `open_or_create_schema`'s own docstring names the two races that closes.
-        apply_schema_ledger(self._conn, monotonic_ns=monotonic_ns)
+        # Construction from here on is guarded: a refused boot closes `self._conn` instead of
+        # leaving it to the exception's traceback. The rationale lives once, on the helper.
+        with closing_on_failure(self._conn):
+            enable_wal_journal(self._conn)
+            self._conn.execute("PRAGMA synchronous=FULL")
+            # This log's DDL, the freshness decision and the genesis stamp all inside ONE
+            # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
+            # `open_or_create_schema`'s own docstring names the two races that closes.
+            apply_schema_ledger(self._conn, monotonic_ns=monotonic_ns)
 
     # -- lifecycle -------------------------------------------------------
 
