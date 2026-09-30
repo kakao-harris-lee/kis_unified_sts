@@ -1,0 +1,158 @@
+{
+  "artifact_id": "P-8-20260928T000506Z",
+  "probe_id": "P-8",
+  "title": "REPLACE_OR_AMEND — RVSE_CNCL_DVSN_CD=01 semantics",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-09-28T00:05:06.512294+00:00",
+  "finished_at_utc": "2026-09-28T00:05:43.303685+00:00",
+  "duration_s": 36.791,
+  "repo_commit": "ac2efb0f",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-8",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05610",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "t3 P-8 trial 1/5 re-run after 09-15 account re-application; new mock futures account 46c39c54d3bb; operator reported app-key linkage 2026-09-23; runner on detached origin/main worktree",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "46c39c54d3bb"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "1002.22",
+      "unrounded": 1002.2399999999999,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "amend_price_tick": {
+      "wire_value": "992.18",
+      "unrounded": 992.1978,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "odno_wire_format": {
+      "paired": true,
+      "submit_response_field": "output.ODNO (order accept response)",
+      "query_row_field": "output1[].odno (inquire-ccnl row)",
+      "submit_response_samples": [
+        {
+          "verbatim": "0000000512",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "512"
+        },
+        {
+          "verbatim": "0000000513",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "513"
+        }
+      ],
+      "query_row_samples": [
+        {
+          "verbatim": "       513",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "513"
+        },
+        {
+          "verbatim": "       512",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "512"
+        }
+      ],
+      "identity_matching": "The two surfaces disagree on padding, so matching a submitted order against a query row must canonicalize BOTH sides (strip whitespace, then strip leading zeros). A raw strip-and-compare evaluates '762' == '0000000762' and never matches: artifact P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly that reason while the cleanup cancel of the same ODNO returned rt_cd=0, proving the order existed and the query had returned it.",
+      "reported_identifiers": "Measurements that list ODNOs report canonical keys (leading zeros stripped). The verbatim wire forms are the samples above.",
+      "scope": "One 모의투자 account, one session, mock environment. Recorded as the encoding observed here — not as a general KIS guarantee, and not extrapolated to 실전."
+    },
+    "replace_issues_new_odno": true,
+    "replace_rejected": false,
+    "coexistence_ms": 0.0,
+    "poll_granularity_ms": 1100.0,
+    "liveness_predicate_note": "'live' here means visible on the inquire-ccnl surface with qty>0. That is survival ON THE QUERY SURFACE and an UPPER approximation of real survival, so coexistence_ms is quoted as an UPPER BOUND only. For this consumer the bias is fail-closed: over-stating coexistence over-states the protection-overlap hazard that B_protective_request_complete defends. The dangerous direction — missing a live leg and declaring atomicity — came from ODNO normalization and was fixed in 55c3d162. This argument is SCOPED TO coexistence_ms: cleanup consumes the same predicate with the opposite polarity and needs its own guards, which is what cleanup_liveness_note records.",
+    "mode_determination": "Map to ReplaceSemantics only after N>=5 trials agree. A single trial showing zero coexistence does NOT prove atomicity — polling can miss an interval shorter than poll_granularity_ms, which is the EFFECTIVE interval max(--poll-ms, --pace-s) and not the requested --poll-ms.",
+    "cleanup_liveness_note": "Cleanup consumes the qty>0 liveness predicate with the OPPOSITE polarity to coexistence_ms. Here a missing live row silences an error, so a surface that under-reports liveness is fail-OPEN, and the 2026-08-01 'the bias is the safe one' argument does NOT carry over. That is why this lookup requires rt_cd=0, walks the continuation keys to the end of the book (P-5b measured this same surface at 15 rows/page with continuation), refuses to answer on a truncated or unreadable walk, and is never consulted at all for a throttled cancel.",
+    "cleanup_dispositions": {
+      "0000000512": "NOTHING_TO_CANCEL_NO_LIVE_ROW",
+      "0000000513": "CANCELLED"
+    },
+    "original_not_cancellable_after_amend": true,
+    "amend_consumption_note": "A fill produces the SAME observation — an original that is not live and cannot be cancelled — and P-8 does not query the execution surface, so this field states the STRUCTURAL fact only and names no cause. The amend taking the quantity is the leading reading because the order is placed --price-offset-pct away from the touch specifically to avoid filling, but 'unlikely to fill' is not 'did not fill'. To attribute the cause, add the execution inquiry P-11 already calls (_FILL_EVIDENCE_SOURCE)."
+  },
+  "observations": [
+    {
+      "original_odno": "0000000512",
+      "amend_rt_cd": "0",
+      "amend_msg": "모의투자 정정주문이 완료 되었습니다.",
+      "new_odno": "0000000513",
+      "new_price": "992.18"
+    },
+    {
+      "cleanup_cancel": "0000000512",
+      "ok": false,
+      "msg": "모의투자 정정/취소할 수량이 없습니다.",
+      "disposition": "NOTHING_TO_CANCEL_NO_LIVE_ROW",
+      "attempt": 1,
+      "liveness_evidence": {
+        "pages_walked": 1,
+        "rows_seen": 2,
+        "outcome": "COMPLETE_WALK"
+      },
+      "liveness_source": "inquire-ccnl answered rt_cd=0 for the whole book and showed no row with qty>0 for this ODNO — nothing was left to cancel"
+    },
+    {
+      "cleanup_cancel": "0000000513",
+      "ok": true,
+      "msg": "모의투자 취소주문이 완료 되었습니다.",
+      "disposition": "CANCELLED",
+      "attempt": 1
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_protective_request_complete"
+    ],
+    "instance_fields": [
+      "capabilities.replace_semantics.mode",
+      "capabilities.replace_semantics.status"
+    ],
+    "capability_dimension": "REPLACE_OR_AMEND"
+  }
+}
