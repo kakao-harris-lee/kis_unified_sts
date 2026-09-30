@@ -83,12 +83,13 @@ Firewall: stdlib (``sqlite3``, ``hashlib``, ``json``) only.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import sqlite3
-from collections.abc import Callable, Sequence
-from typing import NoReturn
+from collections.abc import Callable, Iterator, Sequence
+from typing import NoReturn, Protocol
 
 #: The FIRST logger in ``tos_runtime`` (review round-2 F6). Nothing in this package logged before,
 #: and nothing else does now — this one line exists because :func:`enable_wal_journal` can block
@@ -102,6 +103,7 @@ _LOG = logging.getLogger(__name__)
 __all__ = [
     "SCHEMA_LEDGER_TABLE_SQL",
     "JournalModeRefused",
+    "closing_on_failure",
     "SchemaVersionRefused",
     "compute_schema_shape_digest",
     "enable_wal_journal",
@@ -160,6 +162,41 @@ _WAL_JOURNAL_MODE = "wal"
 #: variant is ``SQLITE_BUSY | (n << 8)``, so the low byte is the only part that answers "was this
 #: a lock contest".
 _SQLITE_PRIMARY_CODE_MASK = 0xFF
+
+
+class SupportsClose(Protocol):
+    """Anything with a no-argument ``close()`` — a connection, or a store that owns one."""
+
+    def close(
+        self,
+    ) -> None: ...  # pragma: no cover - a structural type, never called here
+
+
+@contextlib.contextmanager
+def closing_on_failure(resource: SupportsClose) -> Iterator[None]:
+    """Close ``resource`` if the block raises; leave it open if the block completes.
+
+    **The one place the boot-refusal leak is closed** (review round-2 F3, round-3 F3). Every
+    durable store assigns ``self._conn`` and only then runs code that can refuse a boot — the
+    WAL switch, the schema genesis, the evidence store's key-continuity gate. A raise out of
+    ``__init__`` hands the half-built instance to nobody, so nothing closes that connection, and
+    refcounting does not save it: the raising frame is held by the exception's traceback, so the
+    connection and its ``-wal``/``-shm`` files live as long as the caller keeps the exception —
+    unbounded for a caller that catches and logs, which is exactly what
+    :func:`tos_runtime.operations.backup_archive.verify_archive` and the operator CLIs do.
+
+    The same shape appears one frame up, wherever a caller builds a store and then validates it
+    (:func:`tos_runtime.evidence.backup.restore_evidence`), which is why this takes anything with
+    ``close()`` rather than a connection specifically.
+
+    ``contextlib.closing`` is deliberately NOT what this is: that one closes unconditionally, and
+    a successful construction must hand back a live handle.
+    """
+    try:
+        yield
+    except BaseException:
+        resource.close()
+        raise
 
 
 class JournalModeRefused(RuntimeError):
@@ -242,15 +279,31 @@ def _wait_out_the_lock_and_retry(conn: sqlite3.Connection) -> str:
         The journal mode sqlite left in place after the retry — the caller checks it, since a
         refused switch is reported by the RETURN value, not by raising.
     """
+    path = _database_file(conn)
+    # "Two more", not "three" (review round-3 F5): the first PRAGMA's own wait is already spent
+    # by the time this line is written, so the bound an operator can still act on is the wait
+    # below plus the retried PRAGMA.
     _LOG.warning(
         "journal_mode=WAL switch lost the lock on %s; waiting on sqlite's busy handler and "
-        "retrying once. The wait is bounded by this connection's own busy timeout, and this "
-        "call can take up to three of them before it refuses the boot.",
-        _database_file(conn),
+        "retrying once. From here this can take up to two more of this connection's busy "
+        "timeouts before it refuses the boot.",
+        path,
     )
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("ROLLBACK")
-    return _switch_journal_to_wal(conn)
+    try:
+        mode = _switch_journal_to_wal(conn)
+    except sqlite3.OperationalError:
+        # A bare re-raise: same object, no new exception, so nothing is chained onto it. Logged
+        # because the line above promised an outcome and a silent stall reads like a hang.
+        _LOG.warning(
+            "journal_mode=WAL still locked after the wait on %s; refusing boot.", path
+        )
+        raise
+    _LOG.warning(
+        "journal_mode=WAL switch recovered on %s; journal_mode is now %r.", path, mode
+    )
+    return mode
 
 
 def enable_wal_journal(conn: sqlite3.Connection) -> None:
@@ -324,20 +377,21 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
             itself could not take it — a fail-closed boot refusal; nothing was written. Also any
             ``OperationalError`` whose primary code is not ``SQLITE_BUSY``, unretried.
     """
-    mode = ""
-    contended = False
+    # One variable, not two (review round-3 F6): `None` IS "the first attempt yielded no mode",
+    # so there is no second flag to keep consistent with it. A no-row answer is `""`, which is
+    # not None and therefore not retried — correct, since that is not a lock contest.
+    mode: str | None = None
     try:
         mode = _switch_journal_to_wal(conn)
     except sqlite3.OperationalError as exc:
         if not _is_lock_contest(exc):
             raise
-        contended = True
     # OUTSIDE the except block, deliberately (review round-2 F2). Raising from inside it would
     # attach the handled first SQLITE_BUSY as `__context__`, and a refused boot would print two
     # chained "database is locked" tracebacks under "During handling of the above exception" —
     # inviting the operator to read the first, expected, already-handled one as the failure.
     # Out here the exception state is cleared, so the second failure propagates unchained.
-    if contended:
+    if mode is None:
         mode = _wait_out_the_lock_and_retry(conn)
     if mode != _WAL_JOURNAL_MODE:
         raise JournalModeRefused(

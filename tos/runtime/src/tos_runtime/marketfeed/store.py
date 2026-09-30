@@ -77,6 +77,7 @@ from tos.engine import InstrumentKey
 from tos.marketfeed import AdmittedValue, RawPayloadPreimage
 
 from tos_runtime.operations.schema_ledger import (
+    closing_on_failure,
     enable_wal_journal,
     open_or_create_schema,
 )
@@ -237,15 +238,9 @@ class SqliteSnapshotStore:
         self._monotonic_ns = monotonic_ns
         self._crash_hook = crash_hook
         self._conn = sqlite3.connect(str(path), isolation_level=None)
-        # Everything from here to the end of construction runs under this guard (review
-        # round-2 F3): the WAL switch, the schema genesis and the checks after it can all
-        # refuse a boot, and a raise out of __init__ leaves nobody holding a reference to
-        # close `self._conn`. The exception's own traceback keeps this frame — and so the
-        # connection, its -wal and its -shm — alive for as long as the caller holds the
-        # exception, which for a caller that catches and logs is unbounded. Closing here
-        # makes a refused construction leave no handle behind. The refusal itself is
-        # re-raised untouched.
-        try:
+        # Construction from here on is guarded: a refused boot closes `self._conn` instead of
+        # leaving it to the exception's traceback. The rationale lives once, on the helper.
+        with closing_on_failure(self._conn):
             enable_wal_journal(self._conn)
             self._conn.execute("PRAGMA synchronous=FULL")
             # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
@@ -259,9 +254,6 @@ class SqliteSnapshotStore:
                 shape_tables=("snapshots", "preimages"),
                 monotonic_ns=monotonic_ns,
             )
-        except BaseException:
-            self._conn.close()
-            raise
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection."""

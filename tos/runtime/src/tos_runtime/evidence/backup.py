@@ -29,6 +29,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
+from tos_runtime.operations.schema_ledger import closing_on_failure
 
 __all__ = ["BackupManifest", "RestoreComparison", "RestoredStore", "backup", "restore"]
 
@@ -175,19 +176,25 @@ def restore(
         source_conn.close()
 
     restored_store = SqliteEvidenceStore(dest_path, key_provider=key_provider)
-    key_generation, key_bytes = key_provider.current()
-    restored_store.verify_or_raise({key_generation: key_bytes})
+    # The store is fully constructed here, and everything below can still refuse — verification
+    # first of all. Without this guard the refusal hands the caller an exception whose traceback
+    # holds an OPEN connection on `dest_path` (plus its -wal/-shm), for as long as that caller
+    # keeps the exception: the same leak the store constructors close, one frame up (review
+    # round-3 F2). Success leaves it open on purpose — the caller is handed a live store.
+    with closing_on_failure(restored_store):
+        key_generation, key_bytes = key_provider.current()
+        restored_store.verify_or_raise({key_generation: key_bytes})
 
-    restored_last_seq, restored_chain_digest, _ = restored_store.last_committed()
-    comparison = _build_comparison(
-        manifest, restored_last_seq, restored_chain_digest, live_store
-    )
-    if live_store is not None:
-        live_store.append(
-            comparison.model_dump(mode="json"),
-            kind="RESTORE_COMPARISON",
-            record_class="RESTORE_COMPARISON",
+        restored_last_seq, restored_chain_digest, _ = restored_store.last_committed()
+        comparison = _build_comparison(
+            manifest, restored_last_seq, restored_chain_digest, live_store
         )
+        if live_store is not None:
+            live_store.append(
+                comparison.model_dump(mode="json"),
+                kind="RESTORE_COMPARISON",
+                record_class="RESTORE_COMPARISON",
+            )
 
     return RestoredStore(
         store=restored_store, new_generation=new_generation, non_live=True
