@@ -289,6 +289,31 @@
 #   `expected_dependency_set_digest` 는 스무 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
 #   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
 #
+#   21차 재측정(2026-09-30, 같은 브랜치 · PR #822 리뷰 라운드 2 + origin/main 머지 8578dbad):
+#   런타임 `*.py` 한 개(`operations/backup_archive.py`)가 바뀐다. **동작 변경이 둘 있다.**
+#   (1) 라운드 2 지적 4(a) — xz **스트림 헤더 12바이트를 따로 먼저** 디코더에 먹여, 체크
+#   종류를 본문 해제 **전에** 판정한다. `LZMADecompressor.check` 는 그 헤더를 파싱하기
+#   전까지 `CHECK_UNKNOWN`(16)이고 직후에 실제 id 가 된다. 20차처럼 1 MiB 청크 뒤에
+#   검사하면 **아카이브가 한 청크보다 작을 때 본문이 먼저 다 풀려**, 「검사할 것이 없었다」
+#   대신 도중에 만난 rot 이 보고된다(새 테스트가 이 구분을 고정한다).
+#   (2) 라운드 2 지적 2 — 후행 바이트 거부 문구. xz **Stream Padding**(4바이트 정렬 NUL)은
+#   `xz -t` 가 rc=0 으로 받는데 여기서는 거부한다(실측). 거부는 유지하되(이 모듈의 `w:xz` 는
+#   패딩 없는 단일 스트림만 쓴다) 「the file is not exactly one archive」가 패딩에는 거짓이라
+#   「bytes follow the end of the xz stream (trailing data or stream padding) — this module
+#   writes exactly one unpadded stream and refuses anything else」로 고쳤다. 독스트링도 패딩을
+#   연결(concatenation) 옆에 명시한다.
+#   그 밖에 무결성 패스 호출을 `_extract_archive` 에서 `verify_archive` 로 올리고(지적 5),
+#   `verify_dir` Args 독스트링을 실제 계약으로 고쳤다(지적 3) — 동작 불변.
+#   ⚠ **origin/main 머지(8578dbad, docs-only #819)는 이 값에 영향이 없다** —
+#   `git diff --name-only 7ba9573b HEAD -- 'tos/src/**.py' 'tos/runtime/src/**.py'` 가 비어
+#   있고, 값이 바뀐 원인은 위 소스 수정(7ba9573b)뿐이다. 그래도 머지 **뒤에** 다시 찍어
+#   숫자로 확인했다. 이전 값
+#   9bba69c6bd708ab5de161a708c408bbaecf0e3a5483c1fba87cba41d03b5a91c 은 20차 측정치
+#   (같은 브랜치 afb1c73b).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 a351a848…).
+#   `expected_dependency_set_digest` 는 스물한 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
+#
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
@@ -310,7 +335,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "9bba69c6bd708ab5de161a708c408bbaecf0e3a5483c1fba87cba41d03b5a91c"
+expected_code_digest: "a351a84878826c28e26cd58104433845ab8233bc1bc5eeb9a21a0bcb505c526d"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
