@@ -24,14 +24,16 @@ because "decide freshness -> run DDL -> stamp" held no lock across the three ste
 second process waits on sqlite's own write lock and then sees a FINISHED file. Its fixture is
 :mod:`tos_runtime.tests.operations.test_schema_genesis_concurrency`.
 
-**What is closed, and what is not.** The GENESIS TRANSACTION race (R-1/R-2 above) is closed. A
-concurrent first boot against a **brand-new** file can still fail EARLIER than this function: each
-store sets ``PRAGMA journal_mode=WAL`` on its own connection before calling here, and switching a
-never-yet-WAL file's journal mode takes a lock that sqlite does NOT retry through the busy timeout,
-so one side can lose with ``sqlite3.OperationalError: database is locked`` before any schema code
-runs. Measured on a brand-new file: ~22/80 losing openers at N=2, 57/160 at N=4, 90/320 at N=8.
-That race is **out of #801's scope and still open — tracked in #818**; this module's own fixture
-pre-creates the file in WAL mode precisely so it measures the genesis transaction and not that.
+**The earlier race, and where it is closed (#818).** The GENESIS TRANSACTION race (R-1/R-2
+above) is closed by :func:`open_or_create_schema`. A concurrent first boot against a **brand-new**
+file used to fail EARLIER than that function ever ran: each store sets ``PRAGMA journal_mode=WAL``
+on its own connection before calling here, and switching a never-yet-WAL file's journal mode takes
+a lock that sqlite does NOT retry through the busy timeout, so one side lost with
+``sqlite3.OperationalError: database is locked`` before any schema code ran (measured on a
+brand-new file: ~22/80 losing openers at N=2, 57/160 at N=4, 90/320 at N=8). That was out of
+#801's scope; it is closed here by :func:`enable_wal_journal`, which every store now calls in
+place of the bare PRAGMA. The two fixes are independent and both are needed — this one gets the
+file into WAL, that one makes the schema genesis on it atomic.
 
 **A steady-state boot takes no write lock (review MEDIUM-1).** Folding the DDL into the genesis
 transaction would otherwise have made EVERY boot contend for the exclusive write lock — with a live
@@ -89,8 +91,10 @@ from typing import NoReturn
 
 __all__ = [
     "SCHEMA_LEDGER_TABLE_SQL",
+    "JournalModeRefused",
     "SchemaVersionRefused",
     "compute_schema_shape_digest",
+    "enable_wal_journal",
     "ensure_schema_current",
     "file_is_fresh",
     "open_or_create_schema",
@@ -136,6 +140,101 @@ class SchemaVersionRefused(RuntimeError):
     """Raised at store construction (or by ``apply_migrations``) when the on-disk
     ``PRAGMA user_version`` disagrees with what this code expects — a boot refusal, never an
     auto-applied fix (module docstring cases 3/4)."""
+
+
+#: The journal mode every runtime-owned durable store must end up in. Compared against what
+#: sqlite actually reports, never assumed — see :func:`enable_wal_journal`.
+_WAL_JOURNAL_MODE = "wal"
+
+#: sqlite's own name for the error the WAL switch loses with when a sibling process is mid-switch
+#: on the same brand-new file. The machine-readable identity rather than a ``database is locked``
+#: substring, so a reworded sqlite build cannot quietly turn the one retry below into a no-op.
+#: Measured: every one of the 73/320 losing openers at N=8 carried exactly this code.
+_SQLITE_BUSY_ERRORNAME = "SQLITE_BUSY"
+
+
+class JournalModeRefused(RuntimeError):
+    """Raised at store construction when the file did NOT come out in ``journal_mode=WAL`` — a
+    boot refusal, never a silent fallback to the rollback journal (:func:`enable_wal_journal`).
+    """
+
+
+def _switch_journal_to_wal(conn: sqlite3.Connection) -> str:
+    """Run the switch PRAGMA once; return the journal mode sqlite actually left in place.
+
+    sqlite reports a REFUSED switch by returning the mode it kept rather than by raising, so the
+    answer is the only evidence there is. ``""`` for the (unreachable in sqlite, but not in a
+    double) no-row case, which :func:`enable_wal_journal` then refuses like any other non-WAL
+    answer instead of indexing into ``None``.
+    """
+    row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+    return "" if row is None else str(row[0]).lower()
+
+
+def enable_wal_journal(conn: sqlite3.Connection) -> None:
+    """Put ``conn``'s file into ``journal_mode=WAL``, waiting out the birth race (**#818**).
+
+    Switching a never-yet-WAL file from the rollback journal to WAL takes an exclusive lock, and
+    ``PRAGMA journal_mode`` does **not** go through sqlite's busy handler: the loser of a
+    concurrent first boot fails IMMEDIATELY with ``sqlite3.OperationalError: database is locked``
+    instead of waiting out its own connection's timeout. Measured on a brand-new file before this
+    helper existed — 17/80 losing openers at N=2, 73/320 at N=8 (plan
+    ``docs/plans/2026-09-30-tos-wal-birth-race-plan.md`` §1); through the real store constructors,
+    22/80 at N=2, 90/320 at N=8. It is the one concurrent-first-boot failure #801's atomic genesis
+    left open, and it fires BEFORE any schema code runs.
+
+    So when the PRAGMA loses that lock, this waits on sqlite's OWN busy handler — ``BEGIN
+    IMMEDIATE`` takes a write lock and, unlike the PRAGMA, it DOES retry through the connection's
+    timeout — and then calls the PRAGMA exactly once more. By then the winner has finished the
+    switch, so the second call is a no-op against a file that is already WAL. The ``ROLLBACK`` is
+    immediate and the transaction wrote nothing.
+
+    Four deliberate edges, each with its own test in :mod:`.test_wal_journal`:
+
+    * **Exactly one retry.** No loop, no attempt counter. A second failure means nobody released
+      the lock within the connection's whole timeout, which is a boot refusal rather than
+      something to keep hammering — that ``OperationalError`` propagates unchanged.
+    * **No new waiting constant.** The wait is bounded by the timeout already configured on
+      ``conn`` (python's 5 s default for the evidence, inbox and marketfeed stores; the injected
+      ``sqlite_timeout_s`` for :class:`~tos_runtime.rcl.log.SqliteCommitLog`). This module adds no
+      timeout, sleep or interval of its own — plan §3 rejects the interval-retry alternative for
+      exactly that reason.
+    * **The return value is checked.** sqlite reports a refused switch by RETURNING the mode it
+      kept, not by raising (a ``:memory:`` connection answers ``memory``). Accepting that silently
+      would leave a store on the rollback journal while every durability argument in this package
+      assumes WAL plus ``synchronous=FULL``, so a non-``wal`` answer is :class:`JournalModeRefused`.
+    * **Only a lock contest is retried.** Any other ``OperationalError`` propagates from the first
+      attempt; retrying it would only delay and obscure it.
+
+    The refusal does not name the store (this helper is deliberately given nothing but the
+    connection, per plan §2.1) — the raising constructor in the traceback does.
+
+    Args:
+        conn: The store's own live connection, in autocommit mode (``isolation_level=None``),
+            already opened on the file about to be booted. Autocommit is what makes the ``BEGIN
+            IMMEDIATE`` below legal as an explicit statement; :func:`open_or_create_schema`, which
+            every caller of this helper reaches immediately afterwards, enforces it by hand.
+
+    Raises:
+        JournalModeRefused: The file is not in WAL mode after the switch.
+        sqlite3.OperationalError: The lock was still held after waiting out ``conn``'s own busy
+            timeout — a fail-closed boot refusal; nothing was written.
+    """
+    try:
+        mode = _switch_journal_to_wal(conn)
+    except sqlite3.OperationalError as exc:
+        if getattr(exc, "sqlite_errorname", None) != _SQLITE_BUSY_ERRORNAME:
+            raise
+        # Wait on sqlite's own busy handler (the PRAGMA above would not), then try once more.
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("ROLLBACK")
+        mode = _switch_journal_to_wal(conn)
+    if mode != _WAL_JOURNAL_MODE:
+        raise JournalModeRefused(
+            f"sqlite kept journal_mode={mode!r} instead of switching this store file to WAL; "
+            "refusing to boot on it — every durability argument in tos_runtime's durable "
+            "stores assumes journal_mode=WAL together with synchronous=FULL"
+        )
 
 
 def user_tables(conn: sqlite3.Connection) -> frozenset[str]:
@@ -309,7 +408,8 @@ def open_or_create_schema(
     with the version already stamped), and any exception ``ROLLBACK``s, so a failed genesis leaves
     ZERO user tables instead of the partial set autocommitted DDL used to leave behind. The
     fast path's own rationale and its one consequence are in the module docstring, as is the
-    ``journal_mode`` race on a brand-new file that this function does NOT close (**#818**).
+    earlier ``journal_mode`` race on a brand-new file, which this function does not touch and
+    :func:`enable_wal_journal` closes (**#818**).
 
     Args:
         conn: The store's own live connection, in autocommit mode (``isolation_level=None``) so
