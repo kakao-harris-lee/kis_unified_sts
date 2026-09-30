@@ -19,14 +19,20 @@ pins the helper's own edges, deterministically and without a race:
 * an ``OperationalError`` that is not a lock contest is re-raised on the FIRST attempt, never
   retried — while EVERY ``SQLITE_BUSY_*`` extended code still counts as one (review F2).
 
-**Every sqlite error used here is a real one.** The doubles below replay
+**Every sqlite error that must be RETRIED is a real one.** The doubles below replay
 :class:`sqlite3.OperationalError` instances captured from genuine sqlite operations — an exclusive
 lock held by a second connection, a stale WAL snapshot, a select against a missing table — because
 the helper discriminates on ``sqlite_errorcode``, and a hand-built
 ``OperationalError("database is locked")`` carries no such attribute at all (measured). A test
-that fabricated one would be exercising a different object than production ever sees. The single
-exception is the ``SQLITE_LOCKED`` case, which re-labels a captured real error rather than
-inventing one, because sqlite will not hand out that code on demand here.
+that fabricated one would be exercising a different object than production ever sees.
+
+**One object here IS fabricated, and it is the ``SQLITE_LOCKED`` one** (review round-2 F4; an
+earlier version of this paragraph called it captured, which was false). sqlite will not hand out
+``SQLITE_LOCKED`` on demand in a hermetic test — it needs shared-cache mode or a vtab — so that
+test builds a fresh ``OperationalError`` and sets ``sqlite_errorcode``/``sqlite_errorname`` by
+hand. That is sound for what it checks, because it is the NEGATIVE direction: it asserts the
+helper does NOT retry, and a fabricated object cannot make a non-retry look like a retry. It
+would not be sound for a positive case, which is why none of those use one.
 """
 
 from __future__ import annotations
@@ -43,6 +49,17 @@ from .conftest import FixedKeyProvider
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 _WAL_PRAGMA = "PRAGMA journal_mode=WAL"
+
+#: Exactly what the helper runs when it loses the lock once: the failed switch, the diagnostic
+#: read that names the file in the warning line, the wait, and the single retry. Spelled out
+#: rather than summarised — the COUNT is the property most of these tests turn on.
+_WAIT_AND_RETRY = [
+    _WAL_PRAGMA,
+    "PRAGMA database_list",
+    "BEGIN IMMEDIATE",
+    "ROLLBACK",
+    _WAL_PRAGMA,
+]
 
 
 # -- real captured sqlite errors --------------------------------------------------------------
@@ -173,7 +190,7 @@ def test_a_lock_lost_once_is_waited_out_and_the_switch_retried(tmp_path: Path) -
     try:
         enable_wal_journal(conn)
 
-        assert conn.log == [_WAL_PRAGMA, "BEGIN IMMEDIATE", "ROLLBACK", _WAL_PRAGMA]
+        assert conn.log == _WAIT_AND_RETRY
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     finally:
         conn.close()
@@ -190,10 +207,18 @@ def test_a_lock_still_held_when_the_retry_runs_refuses_the_boot(tmp_path: Path) 
     errors = [_capture_locked_error(tmp_path), _capture_locked_error(tmp_path)]
     conn = _scripted(tmp_path / "store.sqlite3", errors)
     try:
-        with pytest.raises(sqlite3.OperationalError, match="locked"):
+        with pytest.raises(sqlite3.OperationalError, match="locked") as refusal:
             enable_wal_journal(conn)
 
-        assert conn.log == [_WAL_PRAGMA, "BEGIN IMMEDIATE", "ROLLBACK", _WAL_PRAGMA]
+        assert conn.log == _WAIT_AND_RETRY
+        # The refusal must NOT be chained onto the first, deliberately-handled SQLITE_BUSY
+        # (review round-2 F2). If the retry ran inside the `except` block, python would attach
+        # that first error as `__context__` and the operator's traceback would carry two
+        # "database is locked" frames under "During handling of the above exception" — the top
+        # one the real refusal, the bottom one an expected, already-handled event that reads
+        # exactly like an unhandled crash.
+        assert refusal.value.__context__ is None
+        assert refusal.value.__cause__ is None
     finally:
         conn.close()
 
@@ -293,7 +318,7 @@ def test_an_extended_busy_code_is_still_a_lock_contest(tmp_path: Path) -> None:
     try:
         enable_wal_journal(conn)
 
-        assert conn.log == [_WAL_PRAGMA, "BEGIN IMMEDIATE", "ROLLBACK", _WAL_PRAGMA]
+        assert conn.log == _WAIT_AND_RETRY
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     finally:
         conn.close()
@@ -304,9 +329,14 @@ def test_a_locked_table_is_not_treated_as_a_lock_contest(tmp_path: Path) -> None
 
     Guards the fix for the extended-code defect from overshooting into "anything whose message
     says locked". ``SQLITE_LOCKED`` means a table lock inside one connection handle, which no
-    amount of waiting on another party resolves. Built by masking the real
-    ``SQLITE_BUSY_SNAPSHOT`` capture's primary code up to 6, so the object is still a genuine
-    sqlite exception and only the code under test differs.
+    amount of waiting on another party resolves.
+
+    **This error object is FABRICATED** — unlike every other double in this module (review
+    round-2 F4). sqlite does not produce ``SQLITE_LOCKED`` in a hermetic single-connection test,
+    so the test constructs an ``OperationalError`` and sets the two attributes the helper reads,
+    taking the extended high bits from a real capture so the shape is right. Sound here and only
+    here: the assertion is that the helper does NOT retry, and no property of a fabricated object
+    can turn a missing retry into a passing test.
     """
     busy = _capture_extended_busy_error(tmp_path)
     locked = sqlite3.OperationalError("database table is locked")
@@ -366,3 +396,99 @@ def test_every_durable_store_boots_into_wal_through_the_helper(tmp_path: Path) -
         finally:
             probe.close()
         assert mode.lower() == "wal", f"{path.name} did not come out in WAL mode"
+
+
+# -- a refused construction leaves no open connection (review round-2 F3) ----------------------
+
+
+#: ``(store name, constructor)`` for the leak test. Each callable builds that store over the path
+#: it is given, exactly the way compose does, and is expected to RAISE here — the point is what
+#: it leaves behind when it does. The RCL entry needs an evidence port, which is a store of its
+#: own on a private path, so the contended path is still the only one under test.
+def _construct(store: str, path: Path, tmp_path: Path) -> object:
+    from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+    from tos_runtime.engine.inbox import SqliteEventInbox
+    from tos_runtime.evidence.store import SqliteEvidenceStore
+    from tos_runtime.marketfeed.store import SqliteSnapshotStore
+    from tos_runtime.rcl.log import SqliteCommitLog
+
+    if store == "evidence":
+        return SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
+    if store == "inbox":
+        return SqliteEventInbox(path, scheme=get_scheme(EV_L1_PROVISIONAL_VERSION))
+    if store == "marketfeed":
+        return SqliteSnapshotStore(path)
+    if store == "rcl":
+        evidence = SqliteEvidenceStore(
+            tmp_path / "rcl-private-evidence.sqlite3", key_provider=FixedKeyProvider()
+        )
+        return SqliteCommitLog(path, evidence_port=evidence, sqlite_timeout_s=0)
+    raise AssertionError(f"unknown store {store!r}")
+
+
+def _connection_from_traceback(exc: BaseException) -> sqlite3.Connection:
+    """The ``self._conn`` of the constructor frame that raised ``exc``.
+
+    Reaching into the traceback rather than counting file descriptors makes the assertion say
+    the thing it means — THIS connection object is closed — and keeps it platform-independent
+    (``/proc/self/fd`` would not run off Linux, and a skip that only fires elsewhere is a guard
+    that can quietly stop guarding). It is also the honest way to test the property at all: a
+    constructor that raises hands its instance to nobody, so the traceback is the only reference.
+    """
+    tb = exc.__traceback__
+    found: sqlite3.Connection | None = None
+    while tb is not None:
+        candidate = tb.tb_frame.f_locals.get("self")
+        conn = getattr(candidate, "_conn", None)
+        if isinstance(conn, sqlite3.Connection):
+            found = conn
+        tb = tb.tb_next
+    assert found is not None, "no constructor frame with a `_conn` in the traceback"
+    return found
+
+
+@pytest.mark.parametrize("store", ["evidence", "inbox", "marketfeed", "rcl"])
+def test_a_refused_boot_closes_the_store_connection(
+    tmp_path: Path, store: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A constructor that refuses must not leave its sqlite connection open (**F3**).
+
+    All four stores assign ``self._conn`` and only then reach the code that can refuse — the WAL
+    switch this PR added two new raise paths to, plus the schema genesis and (for evidence) the
+    key-continuity gate. Nothing closed it on that path. CPython's refcounting does not save it
+    either: the raising frame is held by the exception's traceback, so the connection and its
+    ``-wal``/``-shm`` handles live exactly as long as the caller keeps the exception, which for a
+    caller that catches and logs is unbounded.
+
+    The refusal is provoked the same way for every store — a second connection holding
+    ``BEGIN EXCLUSIVE`` on a brand-new file. Only ``SqliteCommitLog`` takes a ``sqlite_timeout_s``,
+    so the other three would each sit through two 5 s stdlib waits (measured: 30 s for the four
+    parameters); the test therefore patches its OWN ``sqlite3.connect`` to pass ``timeout=0``,
+    the same test-side idiom :mod:`.test_schema_genesis_concurrency` uses for its delayed
+    connection. Production code is untouched and the refusal is identical, just immediate.
+
+    What is asserted is not the refusal (other tests do that) but the state after it: operating
+    on the connection must raise "closed database".
+    """
+    path = tmp_path / f"{store}.sqlite3"
+    holder = sqlite3.connect(str(path), isolation_level=None, timeout=0)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")
+        real_connect = sqlite3.connect
+
+        def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs["timeout"] = 0
+            connection: sqlite3.Connection = real_connect(*args, **kwargs)
+            return connection
+
+        monkeypatch.setattr(sqlite3, "connect", connect_without_waiting)
+
+        with pytest.raises(sqlite3.OperationalError, match="locked") as refusal:
+            _construct(store, path, tmp_path)
+
+        conn = _connection_from_traceback(refusal.value)
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            conn.execute("SELECT 1")
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()

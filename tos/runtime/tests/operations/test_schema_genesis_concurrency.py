@@ -400,14 +400,26 @@ _BIRTH_RACE_STORES: tuple[tuple[str, int], ...] = tuple(
 
 #: Rounds of :data:`_PROCESSES` openers the brand-new-file test runs per store.
 #:
-#: **Sized against the rate it actually guards (review F1).** The first cut ran 5 rounds and
-#: claimed p < 1e-20, but that number came from the BARE-PRAGMA loss rate, not from the rate seen
-#: through the real store CONSTRUCTORS — which is what this test drives. Measured on the pre-#818
-#: code, ten rounds of eight per store: evidence 15/80, inbox 4/80, marketfeed 5/80, rcl 30/80.
-#: At the lowest of those (inbox, 5.00 % per opener) five rounds is 0.95**40 = 12.85 % — roughly
-#: one run in eight comes out GREEN on the broken code, which is not a regression test. Twenty
-#: rounds is 0.95**160 = 0.027 % at that same rate; marketfeed (6.25 %) lands at 0.0033 % and the
-#: other two below 1e-6 %.
+#: **Sized against a DIRECTLY MEASURED per-round rate** (review F1, then round-2 F5). Two earlier
+#: justifications for this number were wrong in the same way — each modelled the per-OPENER loss
+#: rate and raised it to a power, which is the wrong quantity twice over: the first cut used the
+#: bare-PRAGMA rate rather than the store-CONSTRUCTOR rate the test actually drives, and the
+#: second used a 4/80 point estimate as if it were exact AND as if openers within a round failed
+#: independently (they do not — at most 7 of 8 can lose, since somebody wins the switch).
+#:
+#: What matters is one measurable thing: **how often a whole round comes out clean on the broken
+#: code.** Measured directly on the pre-#818 tree, 40 rounds of 8 per store, counting rounds with
+#: zero losing children:
+#:
+#:     evidence 13/40 (q=0.325) · inbox 15/40 (q=0.375) · marketfeed 14/40 (q=0.350) ·
+#:     rcl 24/40 (q=0.600)
+#:
+#: A test of N rounds is green on the broken code with probability q**N. The worst store is rcl,
+#: and 20 rounds puts it at 0.600**20 = 3.7e-5. Sizing against the 95 % Wilson UPPER bound of
+#: each q instead of the point estimate (rcl 0.737, the others below 0.53) still leaves 20 rounds
+#: at 2.2e-3 for rcl and below 3.1e-6 for the rest — under 1 % with room, which is what the
+#: number is chosen for. Nine rounds would clear 1 % at the point estimate and 16 at the upper
+#: bound; 20 is the round number above both.
 _BIRTH_RACE_ROUNDS = 20
 
 
@@ -429,10 +441,11 @@ def test_concurrent_first_boot_on_a_brand_new_file_admits_every_process(
     RED on the pre-#818 code, per store, with no mutation needed: the losers report
     ``OperationalError: database is locked`` out of the constructor's own journal-mode switch.
     Measured on this branch with :func:`~tos_runtime.operations.schema_ledger.enable_wal_journal`
-    reverted to the bare PRAGMA, ten rounds of eight per store — evidence 15/80, inbox 4/80,
-    marketfeed 5/80, rcl 30/80 losing children. :data:`_BIRTH_RACE_ROUNDS` is sized against the
-    LOWEST of those, not against the much higher bare-PRAGMA rate; its own comment carries the
-    arithmetic (review F1).
+    reverted to the bare PRAGMA, 40 rounds of eight per store: evidence 98/320 losing children
+    over 27 unclean rounds, inbox 54/320 over 25, marketfeed 49/320 over 26, rcl 47/320 over 16.
+    :data:`_BIRTH_RACE_ROUNDS` is sized against the per-ROUND clean rate those numbers give, not
+    against a per-opener rate raised to a power; its own comment carries the arithmetic and the
+    confidence bound (review F1, round-2 F5).
 
     The ledger assertion is the second half, exactly as in the genesis tests above: surviving the
     birth race must still leave ONE ``CREATED`` row, or the two fixes would be trading one
