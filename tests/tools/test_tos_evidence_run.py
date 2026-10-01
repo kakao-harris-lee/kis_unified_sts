@@ -2910,6 +2910,146 @@ def test_a_shadowing_rebind_after_a_real_import_does_not_count(tmp_path) -> None
     assert result["measured"]["delegate_name_rebound_by"] == ["module:assign"]
 
 
+#: The rebinding forms review round-2 F1 EXECUTED against this gate, each of which left
+#: it green with the constructor calling a stub. Parametrised rather than written out
+#: once each, because the point is that the check is about BINDING OCCURRENCES and not
+#: about a list of statement kinds — a list is what missed all six.
+_REBINDING_FORMS: tuple[tuple[str, str, str], ...] = (
+    (
+        "aliased-import",
+        "from tos.staterestore._stub import noop as enable_wal_journal\n",
+        "module:import-as",
+    ),
+    (
+        "tuple-target",
+        "enable_wal_journal, _unused = (lambda c: None), 0\n",
+        "module:assign",
+    ),
+    (
+        "for-target",
+        "for enable_wal_journal in [lambda c: None]:\n    pass\n",
+        "module:assign",
+    ),
+    ("import-as", "import os as enable_wal_journal\n", "module:import-as"),
+    (
+        "with-as",
+        "import contextlib\n"
+        "with contextlib.nullcontext(lambda c: None) as enable_wal_journal:\n"
+        "    pass\n",
+        "module:assign",
+    ),
+    (
+        "walrus",
+        "_held = (enable_wal_journal := (lambda c: None))\n",
+        "module:assign",
+    ),
+    (
+        "except-as",
+        "try:\n    raise ValueError\nexcept ValueError as enable_wal_journal:\n    pass\n",
+        "module:except-as",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("form", "extra", "expected_kind"),
+    _REBINDING_FORMS,
+    ids=[name for name, _, _ in _REBINDING_FORMS],
+)
+def test_every_rebinding_form_is_seen(tmp_path, form, extra, expected_kind) -> None:
+    """**Review round-2 F1.** Six of these were measured green against the branch tool.
+
+    Each keeps the real, un-aliased import — so ``delegate_name_imported_from_module``
+    stays True — and then puts something else under the same name. The constructor's
+    call then reaches that something else, and the file is never switched to WAL, while
+    the gate credited the delegate's pragma. The seventh (``except ... as``) is the same
+    class of binding and is included so the scan is pinned on all of them.
+    """
+    del form
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace(
+            "class CompositeStateStore:\n", extra + "class CompositeStateStore:\n"
+        ),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_name_imported_from_module"] is True
+    assert expected_kind in result["measured"]["delegate_name_rebound_by"]
+
+
+def test_a_parameter_shadowing_the_delegate_name_is_seen(tmp_path) -> None:
+    """A parameter is a binding too, and the one that shadows inside a whole function."""
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE
+        + "def _helper(enable_wal_journal):\n    return enable_wal_journal\n",
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert "module:param" in result["measured"]["delegate_name_rebound_by"]
+
+
+def test_a_pragma_in_an_unreached_delegate_helper_does_not_count(tmp_path) -> None:
+    """**Review round-2 F2.** The entry point does nothing; a dead helper owns the PRAGMA.
+
+    Measured green against the branch tool: import, call and no-rebinding all held, and
+    the delegate's pragmas were read module-wide, so the store opened on the rollback
+    journal while the gate reported WAL. The gate's own rule — "a pragma in a module
+    nobody calls is not a pragma that runs" — was only enforced at module granularity.
+    Extraction now follows the call graph from the entry point.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE,
+        delegate="import sqlite3\n"
+        "def enable_wal_journal(conn):\n"
+        "    return None\n"
+        "def _legacy(conn):\n"
+        '    conn.execute("PRAGMA journal_mode=WAL")\n',
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_called_from_constructor"] is True
+    assert result["measured"]["delegate_executed_pragmas"] == {}
+    assert result["measured"]["delegate_functions_reached"] == ["enable_wal_journal"]
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+
+
+def test_a_pragma_in_a_helper_the_entry_point_calls_does_count(tmp_path) -> None:
+    """The other direction: the real delegate's own layering must keep working.
+
+    `enable_wal_journal` does not execute the PRAGMA itself — `_switch_journal_to_wal`
+    does — so an extraction scoped to the entry point's own body alone would refuse the
+    genuine article. The reachable set is what is scoped, not one function.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE,
+        delegate="import sqlite3\n"
+        "def _switch(conn):\n"
+        '    return conn.execute("PRAGMA journal_mode=WAL").fetchone()\n'
+        "def enable_wal_journal(conn):\n"
+        "    return _switch(conn)\n",
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is True, result
+    assert result["measured"]["delegate_functions_reached"] == [
+        "_switch",
+        "enable_wal_journal",
+    ]
+
+
 def test_an_import_error_fallback_stub_does_not_count(tmp_path) -> None:
     """The same F1 dodge, one statement deeper: a fallback ``def`` inside ``try/except``.
 

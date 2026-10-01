@@ -1264,29 +1264,24 @@ def _binds_name_from_module(tree: ast.AST, module: str, name: str) -> bool:
 
 
 def _rebindings_of(tree: ast.AST, name: str, cls: str, method: str) -> list[str]:
-    """Where ``name`` is bound to something OTHER than the import.
+    """Where ``name`` is bound to something OTHER than the delegate import.
 
-    The legitimate binding is an ``ImportFrom``; a ``def``, a ``class`` or an assignment
-    of that name is therefore a rebinding wherever it sits, so the scan is over the WHOLE
-    tree rather than over the module body. A module-body-only scan missed the obvious
-    dodge one level in — ``try: from ... import enable_wal_journal / except ImportError:
-    def enable_wal_journal(conn): return None`` — which is the same F1 defect nested in a
-    statement.
+    The legitimate binding is an un-aliased ``ImportFrom``. **Everything else that can
+    put a value under that name is a rebinding**, wherever it sits — which is why this
+    asks "is this a binding occurrence of the name" rather than enumerating statement
+    kinds. Review round-2 F1 executed six forms the enumeration missed, every one of
+    them leaving the gate green with the constructor calling a stub: an aliased import,
+    a tuple-target assignment, a ``for`` target, ``import os as enable_wal_journal``, a
+    ``with ... as`` target, and a walrus.
+
+    The binding occurrences are therefore taken as: any ``Name`` in ``Store`` context
+    (that one covers assignment of every target shape, ``for``, ``with ... as``,
+    comprehensions and the walrus), any import ``asname``, any ``except ... as`` name,
+    any ``def``/``class`` of that name, and any parameter of that name.
 
     Each hit is reported as ``"<scope>:<kind>"``, with ``scope`` naming the store's
-    constructor when the binding is inside it, so an unmet run says which one it saw
-    rather than only that something was wrong.
+    constructor when the binding is inside it, so an unmet run says which one it saw.
     """
-
-    def _assigned_names(node: ast.AST) -> list[str]:
-        if isinstance(node, ast.Assign):
-            return [t.id for t in node.targets if isinstance(t, ast.Name)]
-        if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            return [node.target.id] if isinstance(node.target, ast.Name) else []
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            return [node.name]
-        return []
-
     constructor_nodes: set[int] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.ClassDef) and node.name == cls):
@@ -1298,18 +1293,67 @@ def _rebindings_of(tree: ast.AST, name: str, cls: str, method: str) -> list[str]
             ):
                 constructor_nodes.update(id(inner) for inner in ast.walk(member))
 
+    def _kind(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            return "assign" if node.id == name else None
+        if isinstance(node, ast.alias):
+            return "import-as" if node.asname == name else None
+        if isinstance(node, ast.ExceptHandler):
+            return "except-as" if node.name == name else None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return "def" if node.name == name else None
+        if isinstance(node, ast.ClassDef):
+            return "class" if node.name == name else None
+        if isinstance(node, ast.arg):
+            return "param" if node.arg == name else None
+        return None
+
     found: list[str] = []
     for node in ast.walk(tree):
-        if name not in _assigned_names(node):
+        kind = _kind(node)
+        if kind is None:
             continue
-        kind = (
-            "def"
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            else "class" if isinstance(node, ast.ClassDef) else "assign"
-        )
         scope = "constructor" if id(node) in constructor_nodes else "module"
         found.append(f"{scope}:{kind}")
     return sorted(set(found))
+
+
+def _reachable_functions(tree: ast.AST, entry: str) -> dict[str, ast.FunctionDef]:
+    """``entry`` plus every module-level function it reaches by BARE-NAME call.
+
+    Review round-2 F2: the delegate's pragmas were credited module-wide, so a
+    ``PRAGMA journal_mode=WAL`` in a function nobody calls satisfied the gate while
+    ``enable_wal_journal`` itself did nothing — the module-granularity version of the
+    hole the delegate-call requirement exists to close.
+
+    Bare-name calls only, which is what this module's own helpers use. A call reached
+    through an attribute or a variable is not followed, so a delegate written that way
+    would read as having no pragmas and the gate would go red: fail-closed, and visible.
+
+    Returns:
+        ``{function name: node}`` for the reachable set. Empty if ``entry`` is absent.
+    """
+    by_name = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if entry not in by_name:
+        return {}
+    reached: dict[str, ast.FunctionDef] = {}
+    pending = [entry]
+    while pending:
+        current = pending.pop()
+        if current in reached or current not in by_name:
+            continue
+        node = by_name[current]
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        reached[current] = node
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+                pending.append(inner.func.id)
+    return reached
 
 
 def _calls_inside_method(tree: ast.AST, cls: str, method: str, call: str) -> bool:
@@ -1432,7 +1476,17 @@ def check_persistence_substrate(repo_root: Path) -> dict:
     )
 
     store_pragmas = _executed_pragmas(tree)
-    delegate_pragmas = {} if delegate_tree is None else _executed_pragmas(delegate_tree)
+    # Scoped to what `enable_wal_journal` REACHES, not to the delegate module (review
+    # round-2 F2). Module granularity let a `PRAGMA journal_mode=WAL` in a dead helper
+    # stand in for one the entry point actually executes.
+    delegate_reached = (
+        {}
+        if delegate_tree is None
+        else _reachable_functions(delegate_tree, PERSISTENCE_PRAGMA_DELEGATE_CALL)
+    )
+    delegate_pragmas: dict[str, str] = {}
+    for _reached in delegate_reached.values():
+        delegate_pragmas.update(_executed_pragmas(_reached))
     # Three conditions, not one (review F1). The call is a bare-NAME match, so on its own
     # it credits whatever that name happens to be bound to: a local
     # `def enable_wal_journal(conn): return None` satisfies it while `_wal.py` sits unused
@@ -1522,6 +1576,7 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             "delegate_call_node_present": delegate_invoked,
             "delegate_name_rebound_by": delegate_rebindings,
             "delegate_module": PERSISTENCE_PRAGMA_DELEGATE_MODULE,
+            "delegate_functions_reached": sorted(delegate_reached),
             "delegate_call": (
                 f"{PERSISTENCE_SUBSTRATE_CLASS}.{PERSISTENCE_SUBSTRATE_CONSTRUCTOR}()"
                 f" -> {PERSISTENCE_PRAGMA_DELEGATE_CALL}()"
