@@ -264,6 +264,9 @@ def build_engine_driver(
     # TOS Phase 5 W1 GAP 2: the real staterestore composite-state writer -- the ONE concrete
     # implementation this compose root wires (tests construct EngineDriver without one, which
     # degrades to the documented pre-GAP-2 no-op; see EngineDriver's own constructor docstring).
+    # ⚠ Its `write` can block for ~3 sqlite busy timeouts (~15 s) per write since #823, with
+    # nothing logged; size any deadline around it against that. CompositeStateWriter's own
+    # class docstring carries the number and why no timeout is injected here (round-3 F5).
     recovery_composite_writer = CompositeStateWriter(
         data_dir / COMPOSITE_STATE_STORE_FILE_NAME
     )
