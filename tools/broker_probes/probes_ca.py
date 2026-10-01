@@ -189,11 +189,17 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
 #: (independent review F7). A source grep cannot tell a fix from a mention —
 #: this PR's own plan quotes the literal ``_BAL_TRANSIENT`` — and it breaks on
 #: a rename, failing a scheduled trial with "required fix not present" when the
-#: fix is right there. Bump it whenever the retry policy or the pre-flight
-#: contract changes shape; a runner copied out of the tree (the 2026-09-30
-#: mistake) then says so instead of silently driving a probe it was not
-#: written for.
-POLICY_VERSION = "p-ca-retry-policy/1"
+#: fix is right there. Bump it whenever the retry policy, the pre-flight
+#: contract, or the anchored lines the runner parses change shape; a runner
+#: copied out of the tree (the 2026-09-30 mistake) then says so instead of
+#: silently driving a probe it was not written for.
+#:
+#: ``/2`` (#830): ``--reference-only`` plus the ``REFERENCE_*`` anchored lines
+#: the runner reads to compare the broker's own ``divi_pay_dt`` against
+#: ``--payable-time`` BEFORE a polling window is spent. A ``/1`` runner never
+#: passes ``--reference-only`` and never looks for those lines, so pairing it
+#: with a ``/2`` probe would silently skip the comparison.
+POLICY_VERSION = "p-ca-retry-policy/2"
 
 #: Default minimum interval between ANY two broker calls this probe makes.
 #: Same measured value P-13/P-BAL use (clean 1.0 rps, P-13-20260729T063120Z);
@@ -305,12 +311,22 @@ class _Trial:
     payable_time: datetime | None
     settlement_time_raw: str
     reference_check: bool
+    #: ``--reference-only`` (#830): the ksdinfo GET and nothing else — no
+    #: baseline, no holding requirement, no polling, and a FUTURE operator time
+    #: is accepted because nothing is paired against it.
+    reference_only: bool
+    #: ``--reference-from``/``--reference-to`` (``YYYYMMDD``), empty when the
+    #: window is derived. See :func:`_ksdinfo_window`.
+    reference_from: str
+    reference_to: str
     #: Per-flag UTC offset actually supplied (e.g. ``{"effective_time": "+09:00"}``)
     #: — F8: recorded and warned on when != KST, never silently normalized.
     t0_offsets: dict[str, str]
 
 
-def _parse_operator_time(raw: str, flag: str) -> tuple[datetime | None, str | None]:
+def _parse_operator_time(
+    raw: str, flag: str, *, allow_future: bool = False
+) -> tuple[datetime | None, str | None]:
     """Parse one operator time. Returns ``(value, offset)``.
 
     Two preconditions beyond "is it ISO-8601" (independent review F1/F2): a
@@ -318,6 +334,15 @@ def _parse_operator_time(raw: str, flag: str) -> tuple[datetime | None, str | No
     window is spent — reject it here, before any network call; a future value
     would record a negative latency — reject it too, against
     :func:`_reference_now`.
+
+    ``allow_future`` lifts the SECOND check only, and only for
+    ``--reference-only`` (#830). The rationale for refusing a future t0 is that
+    a poll would be paired against it; a reference-only run polls nothing, so
+    the time is pure window-anchoring input (:func:`_ksdinfo_window`) and a
+    future value is the NORMAL case there — the 2026-10-01 058610 pre-check was
+    refused ``rc 4`` before a single reference GET for exactly this reason. The
+    naive-value check is never lifted: a timestamp with no offset cannot be
+    converted to KST for the window either.
     """
     raw = (raw or "").strip()
     if not raw:
@@ -334,13 +359,28 @@ def _parse_operator_time(raw: str, flag: str) -> tuple[datetime | None, str | No
             "clock."
         )
     now = _reference_now()
-    if parsed > now:
+    if parsed > now and not allow_future:
         raise ProbeError(
             f"{flag} is in the future ({raw!r} > {now.isoformat()}) — P-CA "
             "pairs a poll against a time that has ALREADY passed; a future t0 "
-            "would record a negative latency."
+            "would record a negative latency. Use --reference-only to look the "
+            "event up in the ksdinfo reference table without polling anything."
         )
     return parsed, _offset_str(parsed)
+
+
+def _parse_reference_date(raw: str, flag: str) -> str:
+    """One ``YYYYMMDD`` ksdinfo window override, or ``""`` when not supplied."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if len(raw) != 8 or not raw.isdigit():
+        raise ProbeError(f"{flag} must be YYYYMMDD (got {raw!r})")
+    try:
+        datetime.strptime(raw, "%Y%m%d")
+    except ValueError as exc:
+        raise ProbeError(f"{flag} is not a real date (got {raw!r}): {exc}") from None
+    return raw
 
 
 def _parse_trial(args: argparse.Namespace) -> _Trial:
@@ -370,8 +410,15 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
     if env not in {"mock", "real"}:
         raise ProbeError(f"--env must be 'mock' or 'real' (got {env!r})")
 
+    reference_only = bool(getattr(args, "reference_only", False))
+
     window_s = float(getattr(args, "window_s", 0) or 0)
-    if window_s <= 0:
+    # A reference-only run polls nothing, so --window-s has nothing to bound
+    # and is accepted at any value (the runner passes the trial's own window
+    # through without knowing it is irrelevant here). Every other run still
+    # needs a positive window, because an unobserved leg's CENSORED row
+    # asserts an absence OVER that window.
+    if window_s <= 0 and not reference_only:
         raise ProbeError("--window-s must be > 0")
     poll_ms = float(getattr(args, "poll_ms", 0) or 0)
     if poll_ms < 0:
@@ -381,12 +428,18 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         raise ProbeError("--pace-s must be >= 0")
 
     t0_offsets: dict[str, str] = {}
-    ex_time, ex_offset = _parse_operator_time(getattr(args, "ex_time", ""), "--ex-time")
+    ex_time, ex_offset = _parse_operator_time(
+        getattr(args, "ex_time", ""), "--ex-time", allow_future=reference_only
+    )
     effective_time, effective_offset = _parse_operator_time(
-        getattr(args, "effective_time", ""), "--effective-time"
+        getattr(args, "effective_time", ""),
+        "--effective-time",
+        allow_future=reference_only,
     )
     payable_time, payable_offset = _parse_operator_time(
-        getattr(args, "payable_time", ""), "--payable-time"
+        getattr(args, "payable_time", ""),
+        "--payable-time",
+        allow_future=reference_only,
     )
     for flag_name, offset in (
         ("ex_time", ex_offset),
@@ -408,7 +461,17 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         effective_time=effective_time,
         payable_time=payable_time,
         settlement_time_raw=str(getattr(args, "settlement_time", "") or "").strip(),
-        reference_check=bool(getattr(args, "reference_check", False)),
+        # --reference-only IMPLIES --reference-check: the reference GET is the
+        # only thing a reference-only run does, so requiring both flags would
+        # make "--reference-only alone" a run that contacts nobody.
+        reference_check=bool(getattr(args, "reference_check", False)) or reference_only,
+        reference_only=reference_only,
+        reference_from=_parse_reference_date(
+            getattr(args, "reference_from", ""), "--reference-from"
+        ),
+        reference_to=_parse_reference_date(
+            getattr(args, "reference_to", ""), "--reference-to"
+        ),
         t0_offsets=t0_offsets,
     )
 
@@ -485,25 +548,97 @@ def _balance_params(creds: Any, *, fk: str = "", nk: str = "") -> dict[str, str]
     }
 
 
-def _ksdinfo_window() -> tuple[str, str]:
-    """Default ``F_DT``/``T_DT`` window: 30 days back, 180 days forward (KST)."""
+#: ``F_DT``/``T_DT`` margins, in days. The ksdinfo window filters on the row's
+#: 기준일 (``record_date``) — the 2026-10-01 re-observation measured that: a run
+#: on 10-01 sent ``F_DT=20260901`` and the 09-30 row's ``record_date=20260831``
+#: came back ABSENT, one day outside (campaign README 2026-10-01 block).
+_KSDINFO_LOOKBACK_DAYS = 30
+_KSDINFO_LOOKAHEAD_DAYS = 180
+
+
+def _ksdinfo_anchor(trial: _Trial) -> tuple[datetime | None, str]:
+    """The EARLIEST operator time supplied, and the flag it came from.
+
+    Earliest, because the window's job is to CONTAIN the event: the record
+    date precedes every one of the seven ADR §8 times, so anchoring on the
+    earliest supplied time is the choice that reaches furthest back.
+    """
+    supplied = [
+        (value, name)
+        for value, name in (
+            (trial.ex_time, "ex_time"),
+            (trial.effective_time, "effective_time"),
+            (trial.payable_time, "payable_time"),
+        )
+        if value is not None
+    ]
+    if not supplied:
+        return None, "run_time"
+    return min(supplied, key=lambda pair: pair[0])
+
+
+def _ksdinfo_window(trial: _Trial) -> dict[str, Any]:
+    """``F_DT``/``T_DT`` for this trial's ksdinfo GET, and where they came from.
+
+    Anchored on the operator's own t0 whenever one was supplied, not on the
+    run clock (#830). Run time alone is the wrong anchor twice over: a FUTURE
+    event (the 2026-10-22 058610 pay date) sits inside the forward margin by
+    luck, and a PAST one walks out of the lookback as the days pass — which is
+    exactly what the 2026-10-01 re-observation hit, returning zero rows for an
+    event whose row had come back the day before.
+
+    The window spans run time AND the anchor, so neither end can be excluded
+    by the other: ``min(...) - lookback`` … ``max(...) + lookahead``.
+
+    The margins are UNCHANGED (30/180). They are a heuristic, not a bound: the
+    gap between 기준일 and 지급일 is issuer-specific, and an annual dividend's
+    can exceed 30 days, so ``--reference-from``/``--reference-to`` override
+    either end verbatim when an operator knows better.
+    """
     from datetime import timedelta
 
     kst_now = datetime.now(UTC) + timedelta(hours=9)
-    f_dt = (kst_now - timedelta(days=30)).strftime("%Y%m%d")
-    t_dt = (kst_now + timedelta(days=180)).strftime("%Y%m%d")
-    return f_dt, t_dt
+    anchor, anchor_source = _ksdinfo_anchor(trial)
+    if anchor is None:
+        low = high = kst_now
+    else:
+        anchor_kst = anchor.astimezone(UTC) + timedelta(hours=9)
+        low, high = min(kst_now, anchor_kst), max(kst_now, anchor_kst)
+
+    derived_f = (low - timedelta(days=_KSDINFO_LOOKBACK_DAYS)).strftime("%Y%m%d")
+    derived_t = (high + timedelta(days=_KSDINFO_LOOKAHEAD_DAYS)).strftime("%Y%m%d")
+    overrides = [
+        name
+        for name, value in (
+            ("F_DT", trial.reference_from),
+            ("T_DT", trial.reference_to),
+        )
+        if value
+    ]
+    return {
+        "f_dt": trial.reference_from or derived_f,
+        "t_dt": trial.reference_to or derived_t,
+        "anchor": anchor.isoformat() if anchor is not None else None,
+        "anchor_source": anchor_source,
+        "lookback_days": _KSDINFO_LOOKBACK_DAYS,
+        "lookahead_days": _KSDINFO_LOOKAHEAD_DAYS,
+        "operator_overrides": overrides,
+    }
 
 
-def _ksdinfo_params(key: str, symbol: str) -> dict[str, str]:
+def _ksdinfo_params(key: str, symbol: str, window: dict[str, Any]) -> dict[str, str]:
     """Param shapes read verbatim from the open-trading-api SDK per-TR wrapper.
 
     Not every ksdinfo TR takes the same params (N-19 §2.1): ``dividend`` and
     ``paidin_capin`` add ``GB1``, ``dividend`` alone adds ``HIGH_GB``, and
     ``rev_split`` adds ``MARKET_GB`` instead. The common trio is
     ``CTS``/``F_DT``/``T_DT``/``SHT_CD``.
+
+    ``window`` comes from :func:`_ksdinfo_window` and is computed ONCE per
+    reference check, so a retry re-sends the identical window and the artifact
+    records the window that was actually used rather than one recomputed later.
     """
-    f_dt, t_dt = _ksdinfo_window()
+    f_dt, t_dt = str(window["f_dt"]), str(window["t_dt"])
     params: dict[str, str] = {"CTS": "", "F_DT": f_dt, "T_DT": t_dt, "SHT_CD": symbol}
     if key in ("dividend", "paidin_capin"):
         params["GB1"] = "0"
@@ -1050,6 +1185,7 @@ def _ksdinfo_outcome(
     pacer: _Pacer,
     ksd_key: str,
     symbol: str,
+    window: dict[str, Any],
 ) -> _Outcome:
     """One paced ksdinfo GET as an :class:`_Outcome`.
 
@@ -1064,7 +1200,7 @@ def _ksdinfo_outcome(
         base_url=base_url,
         path=ksd_path,
         tr_id=ksd_tr,
-        params=_ksdinfo_params(ksd_key, symbol),
+        params=_ksdinfo_params(ksd_key, symbol, window),
     )
     return _Outcome(kind=kind, http_status=http_status, parsed=parsed, text=text)
 
@@ -1189,8 +1325,15 @@ def _do_reference_check(
     escaped the probe entirely (``run.py`` rc 5).
     """
     ksd_key = _EVENT_CLASS_KSDINFO_KEY[trial.event_class]
+    # ONCE, before the first attempt: a retry must re-send the identical
+    # window, and the artifact has to record the window that actually went out.
+    window = _ksdinfo_window(trial)
+    run.observe(reference_window=window)
+    print(f"{_REFERENCE_WINDOW_PREFIX}{window['f_dt']}-{window['t_dt']}")
     outcome, _attempts, _retried = _retry_once(
-        lambda: _ksdinfo_outcome(session, auth, base_url, pacer, ksd_key, trial.symbol),
+        lambda: _ksdinfo_outcome(
+            session, auth, base_url, pacer, ksd_key, trial.symbol, window
+        ),
         _record_retry(run, retries),
         pacer,
         wait_s=trial.effective_poll_ms / 1000.0,
@@ -1215,11 +1358,116 @@ def _do_reference_check(
         detail = f"{rt_cd}/{parsed.get('msg_cd')}:{parsed.get('msg1')}"
         key = "mock_reference_support" if not trial.is_real else "reference_check_error"
         run.observe(**{key: f"UNSUPPORTED_OR_ERROR:{detail}"})
+        print(f"{_REFERENCE_STATUS_PREFIX}UNSUPPORTED_OR_ERROR:{_one_line(detail)}")
         return
     rows = parsed.get("output1")
-    run.observe(reference_dates=rows if isinstance(rows, list) else [])
+    rows = rows if isinstance(rows, list) else []
+    run.observe(reference_dates=rows)
     if not trial.is_real:
         run.observe(mock_reference_support="SUPPORTED")
+    _print_reference_rows(rows)
+
+
+#: The anchored stdout lines the runner parses out of a reference check. Same
+#: discipline as :data:`_HELD_PREFIX`: one record per line, nothing else on
+#: stdout is contractual, and every broker-supplied value goes through
+#: :func:`_reference_field` first.
+_REFERENCE_WINDOW_PREFIX = "REFERENCE_WINDOW="
+_REFERENCE_STATUS_PREFIX = "REFERENCE_STATUS="
+_REFERENCE_ROWS_PREFIX = "REFERENCE_ROWS="
+_REFERENCE_ROW_PREFIX = "REFERENCE_ROW="
+
+#: A date field is digits and separators. 32 chars is already four times what
+#: ``2026/09/30`` needs.
+_REFERENCE_FIELD_MAX_CHARS = 32
+
+
+def _reference_field(value: Any) -> str:
+    """One broker-supplied date, fit for the anchored line the runner parses.
+
+    The runner reads these with ``sed -n 's/^…//p'`` and splits on ``|``, so a
+    value carrying a newline would both split the record and let
+    broker-controlled text begin a line of its own — the property
+    :func:`_one_line` keeps for the holding check. A date is digits plus
+    separators, so anything else is DROPPED rather than escaped: there is no
+    legitimate ``|``, quote or control character in ``record_date`` or
+    ``divi_pay_dt``, and dropping cannot be got wrong the way escaping can.
+    """
+    text = " ".join(str(value if value is not None else "").split())
+    kept = [ch for ch in text if ch.isdigit() or ch in "/-."]
+    return "".join(kept)[:_REFERENCE_FIELD_MAX_CHARS]
+
+
+def _print_reference_rows(rows: list[Any]) -> None:
+    """``REFERENCE_ROWS=<n>`` then one ``REFERENCE_ROW=`` line per row.
+
+    ``<record_date>|<divi_pay_dt>`` — the two fields the runner compares
+    ``--payable-time`` against (#830). They are printed verbatim-after-
+    sanitising rather than selected here: which row is "the" row is the
+    runner's call (it knows ``PCA_RECORD_DATE``), and a probe that picked one
+    silently would hide the others from the log.
+    """
+    print(f"{_REFERENCE_STATUS_PREFIX}OK")
+    print(f"{_REFERENCE_ROWS_PREFIX}{len(rows)}")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        record = _reference_field(row.get("record_date"))
+        pay = _reference_field(row.get("divi_pay_dt"))
+        print(f"{_REFERENCE_ROW_PREFIX}{record}|{pay}")
+
+
+def _do_reference_only(
+    run: ProbeRun,
+    session: Any,
+    auth: Any,
+    base_url: str,
+    pacer: _Pacer,
+    trial: _Trial,
+    retries: _Retries,
+) -> None:
+    """``--reference-only`` (#830): the ksdinfo GET, and nothing else.
+
+    No baseline, so no holding requirement — the 12 ksdinfo TRs are
+    account-independent reference lookups (N-19 §2.1: no ``CANO`` /
+    ``ACNT_PRDT_CD`` parameter, see :func:`_ksdinfo_params`), so the symbol is
+    the only input they need. No poll loop either, so every leg is skipped
+    with ``REFERENCE_ONLY`` rather than CENSORED: nothing was polled, and a
+    CENSORED row would assert an absence over a window that never ran (the
+    2026-09-17 distinction :func:`_finalize` exists to keep).
+    """
+    run.observe(
+        reference_only=True,
+        reference_only_note=(
+            "--reference-only: ONE ksdinfo GET for --event-class "
+            f"{trial.event_class}, no balance call, no holding requirement, no "
+            "polling. --window-s/--poll-ms are accepted and IGNORED (nothing "
+            "is polled). An operator time is accepted even when it is in the "
+            "FUTURE — nothing is paired against it; it only anchors the "
+            "ksdinfo F_DT/T_DT window (observations.reference_window)."
+        ),
+    )
+    try:
+        _do_reference_check(run, session, auth, base_url, pacer, trial, retries)
+    except _StopRun:
+        return
+    run.skip(
+        "leg polling",
+        "REFERENCE_ONLY — --reference-only looks the event up in the ksdinfo "
+        "reference table and stops. No leg is OBSERVED, CENSORED or ABORTED "
+        "here: no balance was read, so no leg was polled at all. See "
+        "observations.reference_dates for what the broker's reference table "
+        "says, and run the probe without --reference-only to measure a "
+        "reflection latency.",
+    )
+    run.measure("leg_provenance_class", "NOT_MEASURED")
+    run.measure(
+        "no_aggregate_scalar_note",
+        "B_non_trade_event_detect / B_non_trade_reconcile are never written as "
+        "a single scalar by this probe, and a --reference-only run measures no "
+        "latency at all — it records the broker's declared CA dates, nothing "
+        "more. Both VP-002 keys stay NOT_ESTABLISHED.",
+    )
 
 
 class _StopRun(ProbeError):
@@ -1615,6 +1863,15 @@ def _build_run(spec: ProbeSpec, args: argparse.Namespace, trial: _Trial) -> Prob
 
 def _dry_run_would_send(trial: _Trial) -> str:
     tr_id = _STOCK_TR_MOCK if not trial.is_real else _STOCK_TR_REAL
+    if trial.reference_only:
+        ksd_tr, ksd_path = _KSDINFO_TRS[_EVENT_CLASS_KSDINFO_KEY[trial.event_class]]
+        window = _ksdinfo_window(trial)
+        return (
+            f"one read-only ksdinfo GET for {trial.symbol} ({ksd_tr} {ksd_path}, "
+            f"F_DT={window['f_dt']} T_DT={window['t_dt']}, anchored on "
+            f"{window['anchor_source']}) and NOTHING else — no balance call, no "
+            "polling (--reference-only)"
+        )
     return (
         f"one read-only GET balance snapshot for {trial.symbol} ({tr_id}); "
         "optionally one ksdinfo reference-check GET; then a bounded poll loop "
@@ -1632,6 +1889,10 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
     (:func:`_finalize`). No aggregate scalar is ever written for
     ``B_non_trade_event_detect``/``B_non_trade_reconcile`` — a Bounds-Approver
     decision this probe cannot make.
+
+    ``--reference-only`` (#830) short-circuits all of that to the ksdinfo GET
+    alone (:func:`_do_reference_only`), which is how a FUTURE event can be
+    looked up before its window is scheduled.
     """
     spec = get("P-CA")
     trial = _parse_trial(args)
@@ -1654,6 +1915,10 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
     retries = _Retries(run)
 
     try:
+        if trial.reference_only:
+            _do_reference_only(run, session, auth, base_url, pacer, trial, retries)
+            return run
+
         baseline = _do_baseline(
             run,
             session,
@@ -1789,6 +2054,31 @@ def add_ca_args(parser: argparse.ArgumentParser) -> None:
         "--reference-check",
         action="store_true",
         help="Also GET the ksdinfo TR for --event-class BEFORE polling (N-19 §3 MOCK feasibility observation).",
+    )
+    parser.add_argument(
+        "--reference-only",
+        action="store_true",
+        help=(
+            "Do ONLY the ksdinfo reference GET: no balance call, no holding "
+            "requirement, no polling. A FUTURE --payable-time/--ex-time/"
+            "--effective-time is accepted in this mode (nothing is paired "
+            "against it; it anchors the F_DT/T_DT window). Implies "
+            "--reference-check; --window-s/--poll-ms are ignored."
+        ),
+    )
+    parser.add_argument(
+        "--reference-from",
+        default="",
+        help=(
+            "YYYYMMDD — override the ksdinfo F_DT. The derived window is "
+            f"anchor-{_KSDINFO_LOOKBACK_DAYS}d and filters on the row's 기준일, "
+            "which precedes 지급일 by an issuer-specific gap."
+        ),
+    )
+    parser.add_argument(
+        "--reference-to",
+        default="",
+        help=f"YYYYMMDD — override the ksdinfo T_DT (derived: anchor+{_KSDINFO_LOOKAHEAD_DAYS}d).",
     )
 
 
