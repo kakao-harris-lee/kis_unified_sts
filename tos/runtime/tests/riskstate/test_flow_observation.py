@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from tos.afg.records import ActionAmplificationEnvelope
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload, EngineEvent, InstrumentKey
@@ -26,7 +27,12 @@ from tos_runtime.riskstate.flow_observation import (
 )
 from tos_runtime.riskstate.policies import DeploymentFlowFacts
 
-from .conftest import seed_egress_result, seed_recovery_marker, seed_send_sealed
+from .._sqlite_plans import query_plans
+from .conftest import (
+    seed_egress_result,
+    seed_recovery_marker,
+    seed_send_sealed,
+)
 
 _ACCOUNT = "acct-1"
 _INSTRUMENT = "K200F"
@@ -290,7 +296,7 @@ def test_observe_counts_recovery_marker_for_resolved_root_event(
 ) -> None:
     """Integration pin: a REAL restart-recovery marker keyed to the CURRENT row's own
     content-addressed ``event_id`` (read back via
-    :meth:`InboxFlowReader._resolve_root_content_event_id`'s own ``EVENT_HANDLING_STARTED``
+    :meth:`InboxFlowReader._resolve_handling_started`'s own ``EVENT_HANDLING_STARTED``
     lookup, the SAME write-ahead idiom ``EngineDriver._process_next`` uses) durably yields
     ``replays >= 1`` — never ``None``, never silently zero for a genuinely matching marker.
     """
@@ -714,7 +720,7 @@ def test_handling_started_monotonic_resolves_from_a_real_inbox_row(
     ``current_seq_reader`` feeds this in production (built from
     ``SqliteEventInbox.next_unconsumed()`` in ``tos_runtime.compose._riskstate_wiring``).
 
-    A mutation that hardcodes :meth:`InboxFlowReader._resolve_handling_started_monotonic` (or
+    A mutation that hardcodes :meth:`InboxFlowReader._resolve_handling_started` (or
     ``RiskStateService._elapsed_monotonic_ms``) to always return ``None`` must fail exactly
     this assertion — the review's own M11 finding.
     """
@@ -743,3 +749,212 @@ def test_handling_started_monotonic_resolves_from_a_real_inbox_row(
     assert obs.root_event_seq == receipt.seq
     assert obs.handling_started_monotonic is not None
     assert isinstance(obs.handling_started_monotonic, int)
+
+
+# ============================================================================
+# A2-b — the handling-started row is fetched by primary key, not walked
+# (evidence growth plan docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md
+#  §2 A2-b · §7.1.12 "읽어야 할 것" 2)
+# ============================================================================
+
+
+def _walk_handling_started_monotonic(
+    evidence_store: SqliteEvidenceStore, evidence_seq: int
+) -> int | None:
+    """The PRE-A2-b resolution, reproduced verbatim: walk the whole table and take the first
+    row matching both ``seq`` and the handling-started kind.
+
+    Kept as the oracle the new primary-key lookup is compared against, so "faster" is held to
+    "same answer" on the shapes where the answer is meant to be the same. The one shape where
+    it is deliberately NOT the same — a row from another key generation — has its own test
+    below, which asserts this oracle and the new resolution DISAGREE.
+    """
+    for entry in evidence_store.iter_entry_meta():
+        if entry.seq == evidence_seq and entry.kind == "EVENT_HANDLING_STARTED":
+            return entry.appended_at_monotonic_ns
+    return None
+
+
+def _resolved_monotonic(reader: InboxFlowReader, inbox_seq: int) -> int | None:
+    facts = reader._resolve_handling_started(inbox_seq)
+    return None if facts is None else facts.appended_at_monotonic_ns
+
+
+def _seed_handling_started_pointing_at(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    *,
+    shape: str,
+) -> tuple[int, int]:
+    """Enqueue one real event, append some unrelated evidence rows around it, and point the
+    inbox row's handling-started receipt at ``shape``'s evidence row.
+
+    Returns ``(inbox seq, the evidence seq that receipt names)``. The shapes are the ones the
+    resolution can meet: the real marker row, a row of ANOTHER kind at that seq, a seq no row
+    carries at all, and a marker row written under a DIFFERENT key generation than the one
+    the receipt recorded (``stale_generation`` — what a restore from an older evidence backup
+    under a surviving inbox looks like).
+    """
+    payload = EgressResultPayload(
+        instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+        attempt_id="a1",
+        kind=EgressResultKind.ACK,
+    )
+    event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+    receipt = inbox.enqueue(event)
+
+    # Rows on both sides of the target, so a walk that stopped early or late would differ
+    # from a lookup that goes straight to the row.
+    evidence_store.append({"n": 0}, kind="NOISE", record_class="NOISE")
+    marker_kind = (
+        "SOME_OTHER_KIND" if shape == "kind_mismatch" else "EVENT_HANDLING_STARTED"
+    )
+    marker = evidence_store.append(
+        {"event_id": receipt.event_id},
+        kind=marker_kind,
+        record_class=marker_kind,
+    )
+    evidence_store.append({"n": 1}, kind="NOISE", record_class="NOISE")
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+
+    evidence_seq = marker.seq
+    generation = marker.key_generation
+    if shape == "absent":
+        evidence_seq = 10_000
+    elif shape == "stale_generation":
+        # The evidence file was replaced under a surviving inbox: the receipt still names a
+        # seq, but the row now AT that seq was signed under a later generation — a different
+        # event's marker. Rotating and re-appending reproduces that without mutating a row
+        # (the append-only triggers forbid mutation, which is why this is the real shape).
+        evidence_store.rotate(marker.key_generation + 1, b"rotated-key-bytes-riskstate")
+        replacement = evidence_store.append(
+            {"event_id": "some-other-events-identity"},
+            kind="EVENT_HANDLING_STARTED",
+            record_class="EVENT_HANDLING_STARTED",
+        )
+        assert replacement.seq is not None
+        assert replacement.key_generation == marker.key_generation + 1
+        evidence_seq = replacement.seq
+
+    inbox.mark_handling_started(
+        receipt.seq, evidence_seq=evidence_seq, generation=generation
+    )
+    return receipt.seq, evidence_seq
+
+
+@pytest.mark.parametrize("shape", ["present", "kind_mismatch", "absent"])
+def test_handling_started_lookup_agrees_with_the_pre_a2b_walk(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+    shape: str,
+) -> None:
+    """A2-b replaced a full-table walk with a primary-key lookup. Behaviour on the shapes the
+    walk could meet must be byte-identical, absence included — the resolution's contract is a
+    RECORDED absence (``None``), never a guessed timestamp, and a faster wrong answer would
+    be worse than the slow one it replaced."""
+    inbox_seq, evidence_seq = _seed_handling_started_pointing_at(
+        inbox, evidence_store, shape=shape
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+
+    expected = _walk_handling_started_monotonic(evidence_store, evidence_seq)
+    resolved = _resolved_monotonic(reader, inbox_seq)
+
+    assert resolved == expected
+    if shape == "present":
+        assert isinstance(resolved, int)
+    else:
+        assert resolved is None
+
+
+def test_a_marker_row_from_another_key_generation_is_a_recorded_absence(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """``mark_handling_started`` stores ``(evidence_seq, generation)`` TOGETHER, and the
+    generation is the half that says WHICH row the seq meant. Checking only ``kind`` accepts
+    any handling-started row that happens to sit at that seq — so an evidence file restored
+    from an older backup, or re-seeded, under a surviving inbox hands back ANOTHER event's
+    timestamp and content identity as if they were this cause's. That is precisely the
+    guessed fact this module's contract forbids, and it is silent.
+
+    Both facts must come back absent, not merely the timestamp: ``content_event_id`` feeds
+    ``count_recovery_markers``'s ``root_event_ids``, so a wrong identity there would count
+    another event's recovery markers as this cause's replays.
+
+    This test is red before the generation check: the assertion below shows the pre-A2-b
+    walk — which also matched on ``kind`` alone — DOES return a value for this store, so the
+    two disagree by design here, unlike the three shapes in the equality test above.
+    """
+    inbox_seq, evidence_seq = _seed_handling_started_pointing_at(
+        inbox, evidence_store, shape="stale_generation"
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+
+    # The row IS there and IS a handling-started row — kind alone accepts it.
+    assert _walk_handling_started_monotonic(evidence_store, evidence_seq) is not None
+    assert reader._resolve_handling_started(inbox_seq) is None
+
+
+def test_handling_started_resolution_never_scans_the_evidence_table(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """The A2-b regression guard: the resolution must reach its row by primary key.
+
+    Equality with the old walk (the test above) cannot catch a reintroduced scan — the walk
+    returns the right answer, it just reads the whole history to get it, which is the ≥130 s
+    per-proposal cost on a 365-day store that §2 A2-b exists to remove. So this asserts the
+    PLAN instead: every statement the resolution issues against ``entries`` must seek the
+    integer primary key, and none may scan. Red before A2-b: the walk's own
+    ``SELECT … FROM entries ORDER BY seq ASC`` plans as ``SCAN entries``.
+    """
+    inbox_seq, _evidence_seq = _seed_handling_started_pointing_at(
+        inbox, evidence_store, shape="present"
+    )
+    for index in range(20):
+        evidence_store.append({"i": index}, kind="NOISE", record_class="NOISE")
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+
+    plans = query_plans(
+        evidence_store.connection,
+        "entries",
+        lambda: reader._resolve_handling_started(inbox_seq),
+    )
+
+    assert plans, "the resolution issued no statement against entries at all"
+    assert not any(plan.startswith("SCAN") for plan in plans), plans
+    assert all("USING INTEGER PRIMARY KEY" in plan for plan in plans), plans
+
+
+def test_handling_started_resolution_reads_its_row_exactly_once(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Both facts come from ONE row, so one statement reads it. Before the merge, ``observe``
+    read the same row twice per attempt — meta through the store, payload through a
+    hand-written ``SELECT payload_json`` against the raw connection — and that second
+    statement coupled this package to the ``entries`` column layout. Counting the statements
+    pins the merge, which the plan guard above cannot see (two PK seeks both plan fine).
+    """
+    inbox_seq, _evidence_seq = _seed_handling_started_pointing_at(
+        inbox, evidence_store, shape="present"
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+
+    plans = query_plans(
+        evidence_store.connection,
+        "entries",
+        lambda: reader._resolve_handling_started(inbox_seq),
+    )
+    assert len(plans) == 1, plans
+
+    facts = reader._resolve_handling_started(inbox_seq)
+    assert facts is not None
+    assert isinstance(facts.appended_at_monotonic_ns, int)
+    assert facts.content_event_id is not None

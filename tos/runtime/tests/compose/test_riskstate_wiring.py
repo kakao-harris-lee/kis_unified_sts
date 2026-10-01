@@ -1536,10 +1536,11 @@ class TestComposeE2E:
         ``event_id`` this attempt's own ``EVENT_HANDLING_STARTED`` marker carries cannot be
         derived in advance from the fixture's own ``event`` object — it is only knowable via
         :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
-        ._resolve_root_content_event_id` at the moment ``observe`` actually runs (the SAME
-        method production code calls). This test wraps ``observe`` to resolve the REAL content
-        identity via that exact method, seed against it, then delegate to the original
-        implementation — never a guessed or pre-computed identifier."""
+        ._resolve_handling_started` at the moment ``observe`` actually runs (the SAME method
+        production code calls — it returns the marker row's ``content_event_id`` alongside
+        its timestamp, both read from one row). This test wraps ``observe`` to resolve the
+        REAL content identity via that exact method, seed against it, then delegate to the
+        original implementation — never a guessed or pre-computed identifier."""
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1559,7 +1560,8 @@ class TestComposeE2E:
         def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
             if not seeded["done"]:
                 seeded["done"] = True
-                content_event_id = reader._resolve_root_content_event_id(root_event_seq)
+                started = reader._resolve_handling_started(root_event_seq)
+                content_event_id = None if started is None else started.content_event_id
                 assert content_event_id is not None, (
                     "the root row's own content-addressed event_id could not be resolved — "
                     "nothing to seed against"
