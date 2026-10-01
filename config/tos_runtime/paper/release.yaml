@@ -552,6 +552,13 @@
 #   아니라 「같은 것을 쟀다」로 남긴다(#814 이후 이 파일의 규율 — 위 32539e07 머지와 같은
 #   형태).
 #
+#   ⚠ **두 번째 origin/main 머지(d7ce609b — #831 P-CA 프로브)도 영향이 없다** — 가져온 것은
+#   `tools/broker_probes/**` · `tests/tools/**` · `docs/**` 여덟 파일이고 `tos/` 아래는
+#   한 건도 없다. 두 경로 모두 df25a550… 그대로다. (이 머지 자체는 이 레인이 만들지
+#   않았다 — 다른 레인이 같은 워크트리에서 수행·푸시했고, 여기서는 그 뒤에 digest 를
+#   다시 찍어 확인하고 이 줄을 남긴다. 머지를 누가 했든 「같은 것을 쟀다」는 기록은
+#   브랜치의 마지막 커밋이어야 한다는 규율은 그대로다.)
+#
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
