@@ -341,7 +341,7 @@ stale 이면 CI 는 green 이고 **부팅만** `ReleaseAdmissionRefused` 로 떨
 
 기각 0건.
 
-## 8. 후속 착지 — 커널 `CompositeStateStore` (2026-09-30 · **#823** · 브랜치 `fix/tos-kernel-store-wal-birth-race`)
+## 8. 후속 착지 — 커널 `CompositeStateStore` (2026-09-30 · **issue #823 / PR #827** · 브랜치 `fix/tos-kernel-store-wal-birth-race`)
 
 §2.2 가 #818 범위 밖으로 남기고 §7.7 이 「여전히 맨 PRAGMA」로 적었던 그 한 줄을 닫는다. 결정은
 세션 모델이 이미 내렸다 — **이슈 #823 의 1안(커널 독립 구현)**. 2안(헬퍼를 커널로 내림)은 여섯 순수
@@ -413,9 +413,9 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9613 passed** (1:52). 이전 9601 + 이번 12(모서리 10 · 경합 2) |
-| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (4:23). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
-| `pytest tests/tools/test_tos_evidence_run.py test_tos_evidence_citation_check.py test_tos_wal_mechanism_drift.py` | **222 passed** (0:47) |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9614 passed** (1:37). 최초 구현 9613 + 리뷰 처분 1(읽기 전용 거부) · 기준선 9601 |
+| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (5:00). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
+| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **819 passed** (4:39) |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 266 source files` |
 | `mypy tos/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 587 source files` |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
@@ -426,10 +426,44 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 | `lint-imports` | `Contracts: 3 kept, 0 broken` |
 | `python tools/tos_size_budget.py --check` | `PASS: 0 violations (38 registered exception(s))` |
 
+### 8.7 리뷰 처분 (독립 리뷰 high, 2026-10-01 · 8건)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | EV-L3 게이트가 위임 호출을 **이름만** 보고 인정한다 — `store.py` 가 `def enable_wal_journal(conn): return None` 을 자기 안에 정의해도 호출 노드가 맞아 `met=True`. 「적혀 있을 뿐 실행되지 않는」 구멍이 **바인딩 하나 건너**에서 다시 열린다 | **수정.** 세 조건의 논리곱으로 바꿨다 — (a) `from tos.staterestore._wal import enable_wal_journal` 을 **별칭 없이** import 하고, (b) 그 이름이 모듈/생성자 어디서도 재바인딩되지 않으며, (c) 생성자가 호출한다. 음성 테스트 4건(지역 stub · import 뒤 재바인딩 · 별칭 import · 다른 모듈에서 import) 전건 **수정 전 red** |
+| F2 | 읽기 전용 경로(`reload_conservative`·L3 reader)가 fail-closed WAL 전환을 타게 됐다 — 읽히던 스토어가 거부된다 · 새 예외가 문서화도 분류도 안 됐다 | **부분 수정 + 부분 기각(실측).** 「읽히던 것이 거부된다」는 **재현되지 않는다**: 읽기 전용 롤백저널 파일에서 맨 `PRAGMA journal_mode=WAL` 은 **수정 전에도** `attempt to write a readonly database` 로 죽었다(§8.8 표 — 같은 문장, 같은 오류, 양쪽 트리). `SQLITE_READONLY` 는 잠금 경합이 아니므로 첫 시도에서 그대로 올라가고 `JournalModeRefused` 가 되지도 않는다 — 결정적 테스트로 고정했다. 읽기 전용 오픈으로 바꾸는 쪽은 **기각**: 이 스토어의 생성자는 하나뿐이고 그것이 파일·테이블을 만든다(없는 경로 → 지금은 빈 스토어 + `IncompleteStoreError`, `mode=ro` 로 바꾸면 `unable to open database file`). 스키마 생성 경로를 읽기/쓰기로 가르는 것은 #823 범위 밖 결정이다. **문서·분류는 수정**: `reload_conservative` 의 `Raises:` 에 두 경우를 적고, L3 reader 에 `STORE_UNOPENABLE_EXIT = 71` 을 신설했다(전에는 분류 없는 traceback 으로 exit 1 — `_CRASH_EXIT` 주석이 구별하려고 존재한다던 바로 그 값). 「읽혔지만 불완전」은 여전히 `IncompleteStoreError` 로 exit 0 이 아닌 제 경로를 탄다 |
+| F3 | 드리프트 핀의 「재시도 정확히 1회」가 **호출 지점 수**라 루프로 감싸면 2 를 유지한다 | **수정.** `_reject_repetition` 신설 — `enable`·`wait`·`switch` 안의 `For`/`While`/재귀를 `MechanismNotFound` 로 거부한다. 리뷰가 함께 지목한 `Try` 는 **기각**: 양쪽이 정당하게 갖고 있다(`enable` 의 분류 핸들러, 런타임 wait 의 로깅 re-raise) — 금지하면 **현재의 올바른 코드에서 red** 다. 루프 변종을 런타임 텍스트에 실제로 적용해 확인: `switch_attempts` 는 그대로 **2**, `wait_sql` 도 그대로 → 옛 핀은 green 이었다 |
+| F4 | 커널 독스트링이 런타임의 리뷰-F3 문단(재시도가 항상 무동작인 것은 아니다)을 빠뜨렸다 | **수정.** 문단을 옮기고 상한 문구를 고쳤다 — 최악 3배는 유지하되 「빠른 거부 = 안 기다렸다」로 읽히지 않도록 명시 |
+| F5 | 자녀가 멈추면 `finally` 가 자녀마다 60 s 씩 join 해 약 9분을 잡아먹는다 | **수정.** `_reap()` 하나로 모으고 **공유 데드라인 10 s**. `terminate` 는 그 join **뒤에만** 돌아, 정상 경로에서 `-SIGTERM` exitcode 를 만들지 않는다 |
+| F6 | `PR #823` — #823 은 이슈고 PR 은 #827 | **수정.** release.yaml 27차 항목과 §8 제목 둘 다 |
+| F7 | 위임 파일을 세 번 읽고, `delegate_sha256` 를 새 `is_file()` 로 판단해 `delegate_called=True` 옆에 `None` 이 기록될 수 있다 | **수정.** 파일마다 **바이트 한 번** 읽어 그 바이트로 파싱하고 그 바이트로 해시한다. `delegate_sha256` 는 **파싱된 트리**에 걸었다. `sha256_file` 과 값이 같음을 테스트로 확인(둘 다 원시 바이트 sha256) |
+| F8 | 코드 주석 「~3 s」와 계획 「2.3 s」가 다르다 | **수정.** 실제로 세 번 재어 모듈 전체 **1.4 / 2.0 / 2.0 s** 를 주석과 이 문서에 같은 값으로 적었다 |
+
+기각 0건(부분 기각 2건 — F2 의 읽기 전용 오픈, F3 의 `Try` 금지. 둘 다 사유는 위 표에 실측/현재 코드 기준으로 적었다).
+
+### 8.8 F2 실측 — 읽기 전용 스토어는 수정 전후가 같다
+
+`PRAGMA journal_mode=WAL` → `PRAGMA synchronous=FULL` → `CREATE TABLE IF NOT EXISTS` → `SELECT` 를
+파일 권한별로 한 문장씩 돌린 결과:
+
+| 파일 | 디렉터리 | `journal_mode=WAL` | `synchronous=FULL` | `CREATE TABLE IF NOT EXISTS` | `SELECT` |
+|---|---|---|---|---|---|
+| 롤백저널 · 읽기전용 | 쓰기가능 | **OperationalError: attempt to write a readonly database** | OK | OK | OK |
+| 롤백저널 · 읽기전용 | 읽기전용 | **같은 오류** | OK | OK | OK |
+| WAL · 읽기전용 | 쓰기가능 | OK (`wal`) | OK | OK | OK |
+| WAL · 읽기전용 | 읽기전용 | 오류 | 오류 | 오류 | 오류 |
+
+즉 거부는 **첫 줄에서** 났고 그 줄은 #823 이 바꾸기 전에도 똑같이 있었다. 생성자 전체로도 확인했다 —
+수정 전 트리와 수정 후 트리 모두 `CompositeStateStore(path)` 가 `attempt to write a readonly database`
+로 실패한다(문구·타입 동일). `mode=ro` URI + `SELECT` 는 롤백저널 파일에서 **OK** 다: 읽는 방법이
+없는 것이 아니라, 이 생성자가 그 방법이 아닌 것이다.
+
 ### 8.6 digest
 
-`expected_code_digest`: **9595ef63 → 3ea8f6dc**
-(`3ea8f6dc4f6d49c05c9477ba1a04a475e6124053ff141faea185885439f72cf7`).
+`expected_code_digest`: **9595ef63 → 3ea8f6dc → 7ea0d6d4**
+(`7ea0d6d4c9c96a9227a670b5fe3c2b295d82e57ec7310ff37d30a16b372dcb47`). 두 번 도출했다 —
+27차가 최초 구현, 28차가 §8.7 리뷰 처분(F2 의 reader 분류가 동작 변경, F4 와 `reload.py` 의
+`Raises:` 가 문서).
 
 27차. **26차까지와 달리 바뀐 것이 커널 소스다** — 이 digest 는 `tos/src/**.py` 와
 `tos/runtime/src/**.py` 를 함께 접으므로 커널만 바꿔도 값이 바뀐다(6차 전례). `print-digests` 와
