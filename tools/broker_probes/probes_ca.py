@@ -427,6 +427,24 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
     if pace_s < 0:
         raise ProbeError("--pace-s must be >= 0")
 
+    reference_from = _parse_reference_date(
+        getattr(args, "reference_from", ""), "--reference-from"
+    )
+    reference_to = _parse_reference_date(
+        getattr(args, "reference_to", ""), "--reference-to"
+    )
+    # An inverted pair is a precondition failure, not a query (review #831 F9).
+    # The broker answers it with zero rows or a rejection, and BOTH of those
+    # read downstream as "the event is not in the reference table" — the one
+    # answer this pre-check exists to distinguish from a wrong date.
+    if reference_from and reference_to and reference_from > reference_to:
+        raise ProbeError(
+            f"--reference-from ({reference_from}) is after --reference-to "
+            f"({reference_to}) — the ksdinfo window would be empty, and an "
+            "empty answer is indistinguishable from 'this event is not in the "
+            "reference table'."
+        )
+
     t0_offsets: dict[str, str] = {}
     ex_time, ex_offset = _parse_operator_time(
         getattr(args, "ex_time", ""), "--ex-time", allow_future=reference_only
@@ -466,12 +484,8 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         # make "--reference-only alone" a run that contacts nobody.
         reference_check=bool(getattr(args, "reference_check", False)) or reference_only,
         reference_only=reference_only,
-        reference_from=_parse_reference_date(
-            getattr(args, "reference_from", ""), "--reference-from"
-        ),
-        reference_to=_parse_reference_date(
-            getattr(args, "reference_to", ""), "--reference-to"
-        ),
+        reference_from=reference_from,
+        reference_to=reference_to,
         t0_offsets=t0_offsets,
     )
 
@@ -491,6 +505,21 @@ def _legs_to_track(trial: _Trial) -> list[tuple[str, str, datetime]]:
     if trial.payable_time is not None:
         legs.append(("cash", "payable_time", trial.payable_time))
     return legs
+
+
+def _observable_leg_names(event_class: str) -> tuple[str, ...]:
+    """Which legs this probe COULD observe for ``event_class``, whether or not
+    an operator time was supplied.
+
+    :func:`_legs_to_track` is this list narrowed to the legs that actually
+    have a t0 — it cannot serve a ``--reference-only`` run, which may carry no
+    t0 at all and still has to say, per leg, that it observed nothing
+    (review #831 F1: a reader and the re-arm guard both key on
+    ``legs.<class>.<leg>``). A test pins the two against each other.
+    """
+    if event_class == "cash_dividend":
+        return ("cash",)
+    return ("quantity", "cash")
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +581,18 @@ def _balance_params(creds: Any, *, fk: str = "", nk: str = "") -> dict[str, str]
 #: 기준일 (``record_date``) — the 2026-10-01 re-observation measured that: a run
 #: on 10-01 sent ``F_DT=20260901`` and the 09-30 row's ``record_date=20260831``
 #: came back ABSENT, one day outside (campaign README 2026-10-01 block).
-_KSDINFO_LOOKBACK_DAYS = 30
+#:
+#: The lookback is therefore sized for the 기준일→지급일 GAP, not for "recent":
+#: every anchor this probe has is one of the seven ADR §8 times, all of which
+#: come AFTER the record date the window filters on. 30 days was the gap for
+#: one quarterly dividend (000660: record 08-31, pay 09-30) and it put the
+#: next target exactly on the boundary (058610: record 09-22, pay 10-22).
+#: A Korean annual dividend's gap is a different order — record 12-31, paid
+#: after the March AGM — so 30 days excluded those rows ALWAYS, and the
+#: pre-check would have answered "no row" instead of catching a wrong date
+#: (review #831 F4). 120 days covers the annual case with margin; an issuer
+#: outside even that is what ``--reference-from``/``--reference-to`` are for.
+_KSDINFO_LOOKBACK_DAYS = 120
 _KSDINFO_LOOKAHEAD_DAYS = 180
 
 
@@ -590,10 +630,13 @@ def _ksdinfo_window(trial: _Trial) -> dict[str, Any]:
     The window spans run time AND the anchor, so neither end can be excluded
     by the other: ``min(...) - lookback`` … ``max(...) + lookahead``.
 
-    The margins are UNCHANGED (30/180). They are a heuristic, not a bound: the
-    gap between 기준일 and 지급일 is issuer-specific, and an annual dividend's
-    can exceed 30 days, so ``--reference-from``/``--reference-to`` override
-    either end verbatim when an operator knows better.
+    The margins (:data:`_KSDINFO_LOOKBACK_DAYS` /
+    :data:`_KSDINFO_LOOKAHEAD_DAYS`) are sized for the 기준일→지급일 gap, since
+    every anchor is a time that FOLLOWS the record date the window filters on.
+    They are still a heuristic, not a bound, so
+    ``--reference-from``/``--reference-to`` override either end verbatim when
+    an operator knows the record date (the runner passes the former whenever
+    ``PCA_RECORD_DATE`` is set).
     """
     from datetime import timedelta
 
@@ -1346,19 +1389,26 @@ def _do_reference_check(
             f"reference-check call failed twice in a row with a transient "
             f"{transient} error; stopping"
         )
+        # Said out loud, because the runner's next move is a 16-hour poll down
+        # this same path (review #831 F5). Before this line a stopped reference
+        # check printed NOTHING, so the runner could not tell "the broker is
+        # unreachable" from "this event is not in the table" and launched the
+        # trial anyway — against the very reason this stop exists.
+        print(f"{_REFERENCE_STATUS_PREFIX}{_REF_TRANSIENT_STOP}:{transient}")
         raise _StopRun
     if outcome.kind == _BAL_RATE_LIMITED:
         run.error(
             f"rate-limited on reference-check call (status={status}); "
             "stopping — no retry"
         )
+        print(f"{_REFERENCE_STATUS_PREFIX}{_REF_RATE_LIMITED}:http_{status}")
         raise _RateLimited
     rt_cd = str(parsed.get("rt_cd") or "").strip()
     if rt_cd != "0":
         detail = f"{rt_cd}/{parsed.get('msg_cd')}:{parsed.get('msg1')}"
         key = "mock_reference_support" if not trial.is_real else "reference_check_error"
         run.observe(**{key: f"UNSUPPORTED_OR_ERROR:{detail}"})
-        print(f"{_REFERENCE_STATUS_PREFIX}UNSUPPORTED_OR_ERROR:{_one_line(detail)}")
+        print(f"{_REFERENCE_STATUS_PREFIX}{_REF_UNSUPPORTED}:{_one_line(detail)}")
         return
     rows = parsed.get("output1")
     rows = rows if isinstance(rows, list) else []
@@ -1377,9 +1427,27 @@ _REFERENCE_STATUS_PREFIX = "REFERENCE_STATUS="
 _REFERENCE_ROWS_PREFIX = "REFERENCE_ROWS="
 _REFERENCE_ROW_PREFIX = "REFERENCE_ROW="
 
-#: A date field is digits and separators. 32 chars is already four times what
-#: ``2026/09/30`` needs.
-_REFERENCE_FIELD_MAX_CHARS = 32
+#: Every value ``REFERENCE_STATUS=`` can take, each optionally followed by
+#: ``:<detail>``. A reference check prints EXACTLY ONE of these, on every path
+#: it can leave by (review #831 F5) — the two STOP values exist so the runner
+#: can tell "the broker path is unhealthy" from "the table has no such row",
+#: which decides whether a 16-hour trial should start at all.
+_REF_OK = "OK"
+_REF_NO_ROWS = "NO_ROWS"
+_REF_UNSUPPORTED = "UNSUPPORTED"
+_REF_TRANSIENT_STOP = "TRANSIENT_STOP"
+_REF_RATE_LIMITED = "RATE_LIMITED"
+REFERENCE_STATUSES: tuple[str, ...] = (
+    _REF_OK,
+    _REF_NO_ROWS,
+    _REF_UNSUPPORTED,
+    _REF_TRANSIENT_STOP,
+    _REF_RATE_LIMITED,
+)
+
+#: A date field on an anchored line is DIGITS ONLY (review #831 F7). 16 chars
+#: is twice what ``YYYYMMDD`` needs.
+_REFERENCE_FIELD_MAX_CHARS = 16
 
 
 def _reference_field(value: Any) -> str:
@@ -1388,26 +1456,32 @@ def _reference_field(value: Any) -> str:
     The runner reads these with ``sed -n 's/^…//p'`` and splits on ``|``, so a
     value carrying a newline would both split the record and let
     broker-controlled text begin a line of its own — the property
-    :func:`_one_line` keeps for the holding check. A date is digits plus
-    separators, so anything else is DROPPED rather than escaped: there is no
-    legitimate ``|``, quote or control character in ``record_date`` or
-    ``divi_pay_dt``, and dropping cannot be got wrong the way escaping can.
+    :func:`_one_line` keeps for the holding check.
+
+    Reduced to DIGITS, so the whole wire contract is
+    ``REFERENCE_ROW=YYYYMMDD|YYYYMMDD``. The broker does not spell its two
+    date columns alike — ``record_date`` comes back ``20260831`` and
+    ``divi_pay_dt`` ``2026/09/30`` in every artifact so far — and normalising
+    only one side left the runner matching ``PCA_RECORD_DATE`` verbatim
+    against a field that might carry separators, so a separator-bearing record
+    date could never be selected (review #831 F7). Dropping rather than
+    escaping, because no legitimate ``|``, quote or control character exists
+    in either column, and dropping cannot be got wrong the way escaping can.
     """
-    text = " ".join(str(value if value is not None else "").split())
-    kept = [ch for ch in text if ch.isdigit() or ch in "/-."]
-    return "".join(kept)[:_REFERENCE_FIELD_MAX_CHARS]
+    text = str(value if value is not None else "")
+    return "".join(ch for ch in text if ch.isdigit())[:_REFERENCE_FIELD_MAX_CHARS]
 
 
 def _print_reference_rows(rows: list[Any]) -> None:
     """``REFERENCE_ROWS=<n>`` then one ``REFERENCE_ROW=`` line per row.
 
     ``<record_date>|<divi_pay_dt>`` — the two fields the runner compares
-    ``--payable-time`` against (#830). They are printed verbatim-after-
-    sanitising rather than selected here: which row is "the" row is the
-    runner's call (it knows ``PCA_RECORD_DATE``), and a probe that picked one
-    silently would hide the others from the log.
+    ``--payable-time`` against (#830). They are printed after sanitising
+    rather than selected here: which rows are candidates is the runner's call
+    (it knows ``PCA_RECORD_DATE``), and a probe that picked one silently would
+    hide the others from the log.
     """
-    print(f"{_REFERENCE_STATUS_PREFIX}OK")
+    print(f"{_REFERENCE_STATUS_PREFIX}{_REF_OK if rows else _REF_NO_ROWS}")
     print(f"{_REFERENCE_ROWS_PREFIX}{len(rows)}")
     for row in rows:
         if not isinstance(row, dict):
@@ -1451,15 +1525,24 @@ def _do_reference_only(
         _do_reference_check(run, session, auth, base_url, pacer, trial, retries)
     except _StopRun:
         return
-    run.skip(
-        "leg polling",
-        "REFERENCE_ONLY — --reference-only looks the event up in the ksdinfo "
-        "reference table and stops. No leg is OBSERVED, CENSORED or ABORTED "
-        "here: no balance was read, so no leg was polled at all. See "
-        "observations.reference_dates for what the broker's reference table "
-        "says, and run the probe without --reference-only to measure a "
-        "reflection latency.",
-    )
+    # Per LEG, under the same ``legs.<class>.<leg>`` key a trial uses, because
+    # that key is what a reader and the 10-22 re-arm guard look for when they
+    # ask "was this event observed?" (review #831 F1). A reference-only
+    # artifact answering only under "leg polling" left the per-leg question
+    # unanswered, and an answer that is absent is the one a guard mistakes for
+    # a pass. ``REFERENCE_ONLY`` is deliberately neither CENSORED nor ABORTED:
+    # no window ran, so neither claim is available.
+    for leg in _observable_leg_names(trial.event_class):
+        run.skip(
+            f"legs.{trial.event_class}.{leg}",
+            "REFERENCE_ONLY — --reference-only looks the event up in the "
+            "ksdinfo reference table and stops. This leg was not OBSERVED, "
+            "not CENSORED and not ABORTED: no balance was read, so no window "
+            "ran and nothing at all was observed about it. See "
+            "observations.reference_dates for what the broker's reference "
+            "table says, and run the probe WITHOUT --reference-only to "
+            "measure a reflection latency.",
+        )
     run.measure("leg_provenance_class", "NOT_MEASURED")
     run.measure(
         "no_aggregate_scalar_note",

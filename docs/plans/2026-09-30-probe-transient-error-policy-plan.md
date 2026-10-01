@@ -507,3 +507,57 @@ docker koalaman/shellcheck:stable --severity=warning → rc 0 (필터 없이도 
 DART 출처라 ksdinfo 와 다를 가능성을 감안해 **불일치 시 슬롯을 포기할지**(기본) **경고만
 남기고 돌릴지**(`PCA_ALLOW_PAYDATE_MISMATCH=1`) 를 미리 정해 둬야 한다. 아무 행도 안 오면
 기본값은 「경고 후 진행」이다.
+
+#### 7.14.1 리뷰 처분 (PR #831 라운드 1 · high · 10건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | 참조 전용 아티팩트가 `PCA_EVIDENCE_DIR` 에 같은 이름·같은 종목·`errors=[]` 로 떨어져, 10-22 래퍼의 재무장 가드가 **완료 관측으로 읽고 남은 슬롯을 해제**한다 | **수정.** 복사 목적지를 `$PCA_EVIDENCE_DIR/reference-only/` 로 분리 + leg 을 `legs.<class>.<leg>` 키에 `REFERENCE_ONLY` 로 명시 skip + 래퍼 가드 계약을 테스트로 고정 |
+| F2 | 기본 행 선택(`sort -r | head -1` = 최신 기준일)이 **다음 분기 배당 행**을 비교해 거짓 불일치 ABORT | **수정.** 「**어느** 행이든 `divi_pay_dt == WANT_PAY` 면 확인」, 행이 있는데 전부 불일치일 때만 ABORT |
+| F3 | `WANT_PAY` 가 운영자가 적은 오프셋 그대로의 앞 10자 — 비-KST 오프셋이면 거짓 불일치 (CLAUDE.md 비협상 위반) | **수정.** `TZ=Asia/Seoul date -d` 로 KST 변환 후 날짜. 파싱 불가도 여기서 ABORT |
+| F4 | 룩백 30일이 **지급일** 기준이라 기준일→지급일 간격에 맞지 않는다 — 058610 은 경계 정확히, 연배당은 **항상** 창 밖 → 조용히 0행 | **수정.** 룩백 120일 + `PCA_RECORD_DATE` 를 알면 러너가 `--reference-from = 기준일−1d` 를 넘긴다 |
+| F5 | 참조조회가 **건강하지 않은 경로** 때문에 멈춘 것과 「행 없음」이 러너에게 구분 불가(그 경로에 16 h 폴링을 건다) | **수정.** 상태 토큰 5종을 **모든 경로에서 정확히 한 줄**; `OK`/`NO_ROWS`/`UNSUPPORTED` 외는 전부 하드 ABORT(줄 자체가 없어도) |
+| F6 | 5b 와 본 시행이 **같은 GET 을 두 번** 보낸다 | **수정.** 5b 가 돌면 본 시행에서 `--reference-check` 를 뺀다. 행은 `--note` 에 싣는다 |
+| F7 | `record_date` 는 구분자를 남기고 `divi_pay_dt` 만 숫자화 — 계약의 양쪽이 다르게 정규화된다 | **수정.** `_reference_field` 가 **둘 다 숫자만**. 계약은 `REFERENCE_ROW=YYYYMMDD|YYYYMMDD`, 러너의 `tr -cd` 는 제거 |
+| F8 | 같은 기준일의 형제 행(현금/주식) 중 `tail -1` 이 **빈 지급일 쪽**을 집는다 | **수정.** F2 와 같은 처분 — 후보 전체를 본다 |
+| F9 | `--reference-from`/`--reference-to` 역전 쌍이 그대로 나간다 | **수정.** 사전조건 거부(`is after --reference-to`) |
+| F10 | 복사 실패가 **로그 한 줄도 없이** `ART_BEFORE` 를 전진시킨다 | **수정.** 성공했을 때만 전진, 실패는 WARN |
+
+**F1 이 가장 위험했다.** 지적이 옳았고, 범위도 리뷰가 적은 것보다 넓다: 래퍼의
+`done_already` 는 OBSERVED 를 `measurements["legs.cash_dividend.cash"]` 로 판정하는데,
+그 키는 `_poll_loop` 이 쓰고 `_finalize` 가 쓰지 않는다 — 즉 **아티팩트 모양과 가드 계약이
+서로 다른 파일에 있고 아무도 둘을 함께 검사하지 않았다**. 처분은 세 겹이다: 복사 분리(글롭이
+닿지 않는다) · `args.reference_only`(래퍼가 읽는다) · leg 별 `REFERENCE_ONLY` skip(사람이
+읽는다). 그리고 래퍼의 술어를 **테스트에 그대로 옮겨** 네 가지 모양(참조 전용 · CENSORED ·
+OBSERVED · ABORTED)에 대해 판정을 고정했다. 이게 없으면 둘은 조용히 어긋나고, 어긋난 것을
+아는 날은 10-22 하루뿐이다.
+
+**F5 의 교훈은 「침묵은 상태가 아니다」.** 수정 전 참조조회는 두 전송 오류로 멈출 때 **아무
+것도 찍지 않았고**, 러너는 그것을 「행 없음」으로 읽어 경고 후 16 h 창을 시작했다 —
+`_do_reference_check` 의 docstring 이 「폴링 루프는 같은 경로를 훨씬 멀리 걷는다」고 적어둔
+바로 그 일이다. 가드가 자기가 막는다고 적은 것을 통과시키는 형태.
+
+**라운드 2 red 증명.** 새/변경 테스트 45건 중 **32건이 라운드-1 HEAD(`d9435432`)에서 red**.
+행동 red 의 예: 불일치 입력에 `assert 0 != 0`(창을 그대로 폴링) · `'20260831' == '20260602'`
+(룩백) · `'2026/09/30' == '20260930'`(F7) · `--reference-check not in argv`(F6) ·
+`[PosixPath('…20261022T000000Z.json')] == []`(F1, 아티팩트가 증거 디렉터리 루트에 떨어짐) ·
+`'no candidate row carries a divi_pay_dt'` 부재.
+red 가 아닌 13건은 전부 **핀**이다(바뀌지 말아야 할 것): 래퍼 계약 4종 중 3종은 기존 시행
+모양이 이미 맞았음을 고정하고, `reference_only` 로 거르는 것도 라운드 1 에서 이미 참이었다 ·
+`_reference_field` 의 숫자-입력 3건 · 깨끗한 상태 3종이 시행을 막지 **않는다** · 기준일을
+모를 때 override 를 보내지 **않는다** · 5b 가 안 돌면 `--reference-check` 가 **남는다** ·
+역전이 아닌 동일 쌍은 허용.
+⚠ 처음에 상태 토큰을 `@pytest.mark.parametrize` 안에서 `pc._REF_*` 로 읽었더니 수정 전
+코드에서 **수집 오류**가 나 파일 전체가 죽었다 — 그러면 어느 테스트도 증명하지 못한다.
+데코레이터는 리터럴로 바꾸고, 리터럴과 모듈 상수를 잇는 핀 1건을 따로 뒀다.
+
+#### 7.14.2 라운드 2 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -p no:cacheprovider
+  → 269 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 .py 2건)               → unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0
+```

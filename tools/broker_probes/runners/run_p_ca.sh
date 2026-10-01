@@ -280,19 +280,26 @@ log "held qty($PCA_SYMBOL)=$HELD"
 ART_BEFORE=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
 
 # $1: phase label for the log line, "" for the main probe (whose wording
-# predates this helper and is quoted verbatim in the campaign README).
+#     predates this helper and is quoted verbatim in the campaign README).
+# $2: destination directory, defaulting to PCA_EVIDENCE_DIR.
 copy_new_artifact() {
   _phase=${1:+ ($1)}
+  _dest=${2:-$PCA_EVIDENCE_DIR}
   # shellcheck disable=SC2012
   _art=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
   if [ -z "$_art" ]; then
     log "WARN: no P-CA artifact under $REPO/tools/broker_probes/results/ — nothing copied$_phase"
   elif [ "$_art" = "$ART_BEFORE" ]; then
     log "WARN: newest artifact ($(basename "$_art")) predates this run — NOT copied$_phase"
-  else
-    cp "$_art" "$PCA_EVIDENCE_DIR"/ &&
-      log "artifact copied: $(basename "$_art") -> $PCA_EVIDENCE_DIR$_phase"
+  elif mkdir -p "$_dest" && cp "$_art" "$_dest"/; then
+    log "artifact copied: $(basename "$_art") -> $_dest$_phase"
+    # Only once the copy SUCCEEDED. Advancing on failure told the next phase
+    # this artifact was already secured, so a copy that never happened left no
+    # trace at all — not even a WARN, because only the success branch was
+    # chained (review #831 F10).
     ART_BEFORE=$_art
+  else
+    log "WARN: could NOT copy $(basename "$_art") to $_dest$_phase — this run's evidence is only in $REPO/tools/broker_probes/results/"
   fi
   return 0
 }
@@ -309,11 +316,31 @@ copy_new_artifact() {
 # Cash dividends only: `divi_pay_dt` is the CASH leg's field. The other classes
 # put their dates in different columns (`stk_div_pay_dt`, …) and pair with
 # `--effective-time`, so comparing them against this one would be wrong.
+REFERENCE_DONE=0
 if [ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && [ "$PCA_EVENT_CLASS" = "cash_dividend" ]; then
-  WANT_PAY=$(printf '%s' "$PCA_PAYABLE" |
-    sed -n 's/^\([0-9]\{4\}\)-\([0-9]\{2\}\)-\([0-9]\{2\}\).*/\1\2\3/p')
-  [ -n "$WANT_PAY" ] ||
-    die "PCA_PAYABLE='$PCA_PAYABLE' does not start with an ISO-8601 date, so it cannot be compared with the broker's divi_pay_dt"
+  # In KST, not in whatever offset the operator typed (review #831 F3). The
+  # broker's divi_pay_dt is a KST calendar date, and the probe deliberately
+  # ACCEPTS a non-KST offset on --payable-time (it only warns, finding F8), so
+  # slicing the first ten characters off PCA_PAYABLE made
+  # `2026-10-21T15:00:00Z` — the same instant as 2026-10-22 00:00 KST —
+  # compare as 20261021 and abort the run. CLAUDE.md: convert to KST BEFORE
+  # comparing. `date -d` also rejects an unparseable value, which the old
+  # prefix match silently let through as empty.
+  WANT_PAY=$(TZ=Asia/Seoul date -d "$PCA_PAYABLE" +%Y%m%d 2>/dev/null) ||
+    die "PCA_PAYABLE='$PCA_PAYABLE' is not a date this shell can parse, so it cannot be compared with the broker's divi_pay_dt"
+  [ -n "$WANT_PAY" ] || die "PCA_PAYABLE='$PCA_PAYABLE' produced no KST date"
+
+  # The ksdinfo window filters on 기준일, which PRECEDES the pay date by an
+  # issuer-specific gap. When the operator knows the record date, say so
+  # instead of relying on the probe's lookback heuristic — one day of margin,
+  # because an F_DT equal to the record date is a boundary and a boundary is
+  # not a margin (review #831 F4).
+  REF_WINDOW_ARGS=()
+  if [ -n "${PCA_RECORD_DATE:-}" ]; then
+    _ref_from=$(TZ=Asia/Seoul date -d "$PCA_RECORD_DATE -1 day" +%Y%m%d 2>/dev/null) ||
+      die "PCA_RECORD_DATE='$PCA_RECORD_DATE' is not a date this shell can parse"
+    REF_WINDOW_ARGS=(--reference-from "$_ref_from")
+  fi
 
   # Same reason as the sleep before the probe: this is a third process with a
   # pacer of its own, and its GET would otherwise follow the holding check's
@@ -324,60 +351,79 @@ if [ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && [ "$PCA_EVENT_CLASS" = "cash_dividen
     --asset stock --env "$PCA_KIS_ENV" --symbol "$PCA_SYMBOL" \
     --event-class "$PCA_EVENT_CLASS" --payable-time "$PCA_PAYABLE" \
     --reference-only --pace-s "$PCA_PACE_S" --confirm \
+    "${REF_WINDOW_ARGS[@]+"${REF_WINDOW_ARGS[@]}"}" \
     --token-cache-dir "$PCA_TOKEN_CACHE" \
     --note "$PCA_NOTE | reference-only pay-date pre-check" 2>&1)
   ref_rc=$?
   printf '%s\n' "$REF_OUT" >>"$PCA_LOG"
   log "=== END P-CA reference-only rc=$ref_rc"
-  copy_new_artifact "reference-only"
+  REFERENCE_DONE=1
+  # Into a subdirectory of its own: a lookup is not a trial, and the 10-22
+  # re-arm guard globs `$PCA_EVIDENCE_DIR/P-CA-*.json` to decide whether the
+  # event has already been observed. It also reads `args.reference_only`, but
+  # a guard that depends on only one of the two is a guard with one way to be
+  # wrong (review #831 F1).
+  copy_new_artifact "reference-only" "$PCA_EVIDENCE_DIR/reference-only"
 
-  # The probe prints one REFERENCE_ROW=<record_date>|<divi_pay_dt> line per row
-  # it got back, already stripped to digits and separators on its side.
-  if [ -n "${PCA_RECORD_DATE:-}" ]; then
-    SELECTED=$(printf '%s\n' "$REF_OUT" |
-      sed -n "s/^REFERENCE_ROW=\($PCA_RECORD_DATE|.*\)\$/\1/p" | tail -1)
-    ROW_PICK="record_date=$PCA_RECORD_DATE"
-  else
-    # No record date given: the LATEST row. The field is YYYYMMDD, so a
-    # reverse lexicographic sort is a reverse chronological one.
-    SELECTED=$(printf '%s\n' "$REF_OUT" | sed -n 's/^REFERENCE_ROW=//p' |
-      sort -r | head -1)
-    ROW_PICK="latest row (PCA_RECORD_DATE unset)"
-  fi
-  # A line with no separator would make `${SELECTED#*|}` yield the WHOLE
-  # string — comparing the record date against the pay date and calling that a
-  # match. The probe always prints the separator; a line without one is not a
-  # row this can read, so it counts as none at all.
-  case "$SELECTED" in
-    *"|"*) ROW_PAY=$(printf '%s' "${SELECTED#*|}" | tr -cd '0-9') ;;
+  # Exactly one REFERENCE_STATUS= line, on every path the probe can leave by.
+  # Anything but a clean answer means the path to the broker is unhealthy
+  # right now, and the next thing this script does is walk down it for 16
+  # hours — which is the reason the probe stops on two transients in the first
+  # place (review #831 F5). A MISSING line counts as unhealthy too: it is what
+  # a crash out of the probe looks like from here.
+  REF_STATUS=$(printf '%s\n' "$REF_OUT" | sed -n 's/^REFERENCE_STATUS=//p' | tail -1)
+  case "${REF_STATUS%%:*}" in
+    OK | NO_ROWS | UNSUPPORTED) ;;
     *)
-      SELECTED=""
-      ROW_PAY=""
+      die "reference check did not complete (REFERENCE_STATUS=${REF_STATUS:-<none>}, probe rc=$ref_rc) — the broker path is unhealthy right now and the trial is a far longer walk down the same path. Not starting a ${PCA_WINDOW_S}s window"
       ;;
   esac
-  REF_STATUS=$(printf '%s\n' "$REF_OUT" | sed -n 's/^REFERENCE_STATUS=//p' | tail -1)
 
-  if [ -z "$SELECTED" ] || [ -z "$ROW_PAY" ]; then
-    # Record-only, as before this change: the reference table not answering is
-    # not evidence that PCA_PAYABLE is wrong, and the trial's own t0 is the
-    # operator's (DART for 058610, not ksdinfo). PCA_REQUIRE_REFERENCE_ROW=1
-    # makes it a hard precondition for an unattended slot that would rather
-    # skip than measure against an unconfirmed date.
-    _why="no row matched"
-    [ -n "$SELECTED" ] && _why="the matched row carries no divi_pay_dt"
-    if [ "${PCA_REQUIRE_REFERENCE_ROW:-0}" = "1" ]; then
-      die "reference check: $_why ($ROW_PICK, probe rc=$ref_rc, REFERENCE_STATUS=${REF_STATUS:-<none>}) and PCA_REQUIRE_REFERENCE_ROW=1"
-    fi
-    log "WARN: reference check: $_why ($ROW_PICK, probe rc=$ref_rc, REFERENCE_STATUS=${REF_STATUS:-<none>}) — PCA_PAYABLE=$PCA_PAYABLE is NOT confirmed by the broker; continuing (record-only)"
-  elif [ "$ROW_PAY" != "$WANT_PAY" ]; then
-    if [ "${PCA_ALLOW_PAYDATE_MISMATCH:-0}" = "1" ]; then
-      log "WARN: pay-date MISMATCH allowed by PCA_ALLOW_PAYDATE_MISMATCH=1 — broker divi_pay_dt=$ROW_PAY, PCA_PAYABLE=$WANT_PAY ($ROW_PICK); the window will be polled against PCA_PAYABLE"
-    else
-      die "pay-date mismatch: broker divi_pay_dt=$ROW_PAY but PCA_PAYABLE=$WANT_PAY ($ROW_PICK) — polling a window against the wrong t0 spends it for nothing. Fix PCA_PAYABLE, or set PCA_ALLOW_PAYDATE_MISMATCH=1 to proceed anyway"
-    fi
+  # Candidate rows: every row the broker returned, narrowed to PCA_RECORD_DATE
+  # when one was given. The question is "does ANY candidate confirm
+  # PCA_PAYABLE", not "what does one chosen row say" (review #831 F2/F8): a
+  # quarterly payer's answer carries several 기준일 — the window reaches 180
+  # days past the pay date — so picking the latest row compared the NEXT
+  # dividend's pay date and aborted on a row that was never the trial's. The
+  # same answer can also carry two rows under one 기준일 (cash and stock), only
+  # one of which has a divi_pay_dt.
+  ROWS_ALL=$(printf '%s\n' "$REF_OUT" | sed -n 's/^REFERENCE_ROW=//p')
+  if [ -n "${PCA_RECORD_DATE:-}" ]; then
+    CANDIDATES=$(printf '%s\n' "$ROWS_ALL" | grep "^$PCA_RECORD_DATE|" || true)
+    ROW_PICK="record_date=$PCA_RECORD_DATE"
   else
-    log "pay date confirmed by the broker: divi_pay_dt=$ROW_PAY == PCA_PAYABLE=$WANT_PAY ($ROW_PICK)"
+    CANDIDATES=$ROWS_ALL
+    ROW_PICK="any returned row (PCA_RECORD_DATE unset)"
   fi
+  # A pay field is eight digits or it is not a date. The probe prints digits
+  # only, so anything else here is an empty column (the stock-dividend row) or
+  # something this cannot read — either way it confirms nothing.
+  PAY_DATES=$(printf '%s\n' "$CANDIDATES" | sed -n 's/^[0-9]*|\([0-9]\{8\}\)$/\1/p')
+  MATCHED=$(printf '%s\n' "$PAY_DATES" | grep -cx "$WANT_PAY" || true)
+
+  if [ "$MATCHED" -gt 0 ]; then
+    log "pay date confirmed by the broker: divi_pay_dt=$WANT_PAY matches $MATCHED of $(printf '%s\n' "$PAY_DATES" | grep -c . || true) candidate row(s) ($ROW_PICK)"
+  elif [ -z "$(printf '%s' "$PAY_DATES" | tr -d '[:space:]')" ]; then
+    # Record-only, as before this change: a reference table that returns no
+    # usable pay date is not evidence that PCA_PAYABLE is wrong, and the
+    # trial's t0 is the operator's (DART for 058610, not ksdinfo).
+    # PCA_REQUIRE_REFERENCE_ROW=1 is for an unattended slot that would rather
+    # skip than measure against an unconfirmed date.
+    _why="no candidate row carries a divi_pay_dt"
+    [ -z "$(printf '%s' "$CANDIDATES" | tr -d '[:space:]')" ] && _why="no row matched"
+    if [ "${PCA_REQUIRE_REFERENCE_ROW:-0}" = "1" ]; then
+      die "reference check: $_why ($ROW_PICK, REFERENCE_STATUS=$REF_STATUS) and PCA_REQUIRE_REFERENCE_ROW=1"
+    fi
+    log "WARN: reference check: $_why ($ROW_PICK, REFERENCE_STATUS=$REF_STATUS) — PCA_PAYABLE=$WANT_PAY (KST) is NOT confirmed by the broker; continuing (record-only)"
+  else
+    _seen=$(printf '%s\n' "$PAY_DATES" | sort -u | tr '\n' ',' | sed 's/,$//')
+    if [ "${PCA_ALLOW_PAYDATE_MISMATCH:-0}" = "1" ]; then
+      log "WARN: pay-date MISMATCH allowed by PCA_ALLOW_PAYDATE_MISMATCH=1 — broker divi_pay_dt in {$_seen}, PCA_PAYABLE=$WANT_PAY (KST) ($ROW_PICK); the window will be polled against PCA_PAYABLE"
+    else
+      die "pay-date mismatch: the broker's candidate rows carry divi_pay_dt in {$_seen}, none equal to PCA_PAYABLE=$WANT_PAY (KST) ($ROW_PICK) — polling a window against the wrong t0 spends it for nothing. Fix PCA_PAYABLE, narrow with PCA_RECORD_DATE, or set PCA_ALLOW_PAYDATE_MISMATCH=1 to proceed anyway"
+    fi
+  fi
+  REF_ROWS_NOTE=$(printf '%s\n' "$ROWS_ALL" | grep . | head -8 | tr '\n' ',' | sed 's/,$//')
 fi
 
 # The holding check and the probe are two processes with independent pacers,
@@ -394,19 +440,31 @@ sleep "$PCA_PACE_S"
 # SPACE separator ("2026-10-01 09:00:00+09:00") is accepted by the probe's own
 # datetime.fromisoformat, and an unquoted scalar would split it into two argv
 # words (independent review F6).
+#
+# The note carries step 5b's rows when it ran, so the trial artifact still
+# records what the reference table said without re-asking for it.
+TRIAL_NOTE=$PCA_NOTE
+[ -n "${REF_ROWS_NOTE:-}" ] &&
+  TRIAL_NOTE="$PCA_NOTE | ksdinfo(5b) record|pay: $REF_ROWS_NOTE"
 PROBE_ARGS=(
   --asset stock --env "$PCA_KIS_ENV" --symbol "$PCA_SYMBOL"
   --event-class "$PCA_EVENT_CLASS"
   --payable-time "$PCA_PAYABLE"
   --window-s "$PCA_WINDOW_S" --poll-ms "$PCA_POLL_MS" --pace-s "$PCA_PACE_S"
   --confirm --token-cache-dir "$PCA_TOKEN_CACHE"
-  --note "$PCA_NOTE"
+  --note "$TRIAL_NOTE"
 )
 # Optional only for a cash dividend, where the 기준가 adjustment is not on
 # the balance surface at all (N-19 §2.3). Every other class was required to
 # supply it back in step 3.
 [ -n "${PCA_EFFECTIVE:-}" ] && PROBE_ARGS+=(--effective-time "$PCA_EFFECTIVE")
-[ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && PROBE_ARGS+=(--reference-check)
+# Only when step 5b did NOT run (a non-cash class, say). With 5b the identical
+# GET — same TR, same symbol, same window — would go out twice per slot, and
+# the second one is one more place a transient can stop the trial, this time
+# AFTER the holding walk has been spent on the account (review #831 F6). The
+# rows 5b got are in the trial note instead.
+[ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && [ "$REFERENCE_DONE" -eq 0 ] &&
+  PROBE_ARGS+=(--reference-check)
 
 log "=== START P-CA $PCA_SYMBOL env=$PCA_KIS_ENV window=${PCA_WINDOW_S}s poll=${PCA_POLL_MS}ms pace=${PCA_PACE_S}s"
 # A brace GROUP, not a subshell, so the two assignments inside persist. If the

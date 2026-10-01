@@ -63,8 +63,9 @@ export PCA_EFFECTIVE=...            # required for every class but cash_dividend
 export PCA_CRON_MARK=run_p_ca_20261022   # remove this one crontab line when done
 
 # optional, and only read when PCA_REFERENCE_CHECK=1 on a cash dividend
-export PCA_RECORD_DATE=20260930          # YYYYMMDD — which reference row to compare
-                                         # against; unset = the latest row
+export PCA_RECORD_DATE=20260930          # YYYYMMDD — narrows the comparison to one
+                                         # 기준일, and anchors F_DT on it;
+                                         # unset = every row the broker returned
 export PCA_ALLOW_PAYDATE_MISMATCH=1      # proceed on a mismatch, with a WARN
 export PCA_REQUIRE_REFERENCE_ROW=1       # ABORT when the table returns no usable row
 
@@ -86,39 +87,67 @@ holding check → [pace] → probe --reference-only → compare → [pace] → p
 `--reference-only` is the probe's own mode: one ksdinfo GET, no balance call,
 no holding requirement, no polling, and a **future** `--payable-time` is
 accepted there (nothing is paired against it). It writes a normal artifact,
-which the runner copies to `PCA_EVIDENCE_DIR` on the same newer-than guard the
-main artifact gets — so the pre-check leaves evidence even when the comparison
-then aborts the run.
+which the runner copies to **`$PCA_EVIDENCE_DIR/reference-only/`** on the same
+newer-than guard the trial artifact gets — so the pre-check leaves evidence
+even when the comparison then aborts the run, without putting a lookup where a
+`P-CA-*.json` glob of the evidence directory would read it as a completed
+observation. (The artifact also carries `args.reference_only: true` and skips
+each leg with a `REFERENCE_ONLY` reason, so a reader has three ways to tell
+the two apart.) A copy that fails logs a WARN and does not count as done.
+
+Because the pre-check already made the call, the trial itself is run **without**
+`--reference-check`; the rows go into the trial's `--note`. One ksdinfo GET per
+slot, not two.
 
 The probe prints the rows on anchored lines and the runner reads only those:
 
 ```
 REFERENCE_WINDOW=<F_DT>-<T_DT>
-REFERENCE_STATUS=OK                     # or UNSUPPORTED_OR_ERROR:<detail>
+REFERENCE_STATUS=<one of OK NO_ROWS UNSUPPORTED TRANSIENT_STOP RATE_LIMITED>[:detail]
 REFERENCE_ROWS=<n>
-REFERENCE_ROW=<record_date>|<divi_pay_dt>
+REFERENCE_ROW=<record_date>|<divi_pay_dt>     # both YYYYMMDD, digits only
 ```
 
-What the runner does with them:
+Exactly one `REFERENCE_STATUS=` line is printed, on every path the probe can
+leave by. `TRANSIENT_STOP` and `RATE_LIMITED` mean the path to the broker is
+unhealthy right now, so the runner **aborts** rather than starting a 16-hour
+poll down it — and so does a missing line, which is what a crash looks like
+from here. Only `OK`, `NO_ROWS` and `UNSUPPORTED` let the trial start.
+
+What the runner then does with the rows:
 
 | outcome | default | override |
 | --- | --- | --- |
-| `divi_pay_dt` == `PCA_PAYABLE`'s date | logged, run proceeds | — |
-| they differ | **ABORT**, both dates logged | `PCA_ALLOW_PAYDATE_MISMATCH=1` → WARN + proceed |
-| no row, or a row with no `divi_pay_dt` | WARN + proceed (record-only) | `PCA_REQUIRE_REFERENCE_ROW=1` → ABORT |
+| **any** candidate row's `divi_pay_dt` equals `PCA_PAYABLE`'s KST date | logged, run proceeds | — |
+| candidate rows carry pay dates and **none** match | **ABORT**, every date seen is logged | `PCA_ALLOW_PAYDATE_MISMATCH=1` → WARN + proceed |
+| no candidate row, or none with a `divi_pay_dt` | WARN + proceed (record-only) | `PCA_REQUIRE_REFERENCE_ROW=1` → ABORT |
 
-`PCA_RECORD_DATE` (`YYYYMMDD`) picks the row: several quarters of one issuer
-come back in a single answer. Unset, the runner takes the **latest** 기준일.
+"Any row", not "the latest row": the window reaches 180 days past the pay date,
+so a quarterly payer's answer carries the next dividend too, and comparing
+against the newest 기준일 aborted slots on a row that was never the trial's.
+The same answer can also hold two rows under one 기준일 — cash and stock — of
+which only the cash row has a `divi_pay_dt`.
+
+`PCA_RECORD_DATE` (`YYYYMMDD`) narrows the candidates to one 기준일 and is
+never required. When it is set the runner also sends `--reference-from` as
+`PCA_RECORD_DATE − 1 day`, because the ksdinfo window filters on 기준일 and an
+`F_DT` equal to it is a boundary, not a margin.
+
+`PCA_PAYABLE` is converted to **KST** before its date is taken. The probe
+accepts a non-KST offset on `--payable-time` (it warns rather than refusing),
+and `2026-10-21T15:00:00Z` is the same instant as 2026-10-22 00:00 KST.
 
 Why the mode exists at all: on 2026-10-01 a pre-check of the next target was
 refused `rc 4` before any reference GET, because `--payable-time` was in the
 future — a rule written for the polling path. The same day's re-observation
 got zero rows because the ksdinfo `F_DT`/`T_DT` window was anchored on the RUN
 CLOCK, and the row's 기준일 had walked out of it overnight. The window is now
-anchored on the operator's t0 as well as the run clock, spanning both;
-`--reference-from`/`--reference-to` (`YYYYMMDD`) override either end, which is
-the answer when an issuer's 기준일-to-지급일 gap is wider than the 30-day
-lookback.
+anchored on the operator's t0 as well as the run clock, spanning both, and the
+lookback is sized for the 기준일→지급일 gap (120 days) rather than for
+"recent" — every anchor the probe has is a time that FOLLOWS the record date
+the window filters on, and 30 days excluded every annual dividend.
+`--reference-from`/`--reference-to` (`YYYYMMDD`) override either end for an
+issuer outside even that.
 
 ### The credential file
 
