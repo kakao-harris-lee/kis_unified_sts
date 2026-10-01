@@ -413,9 +413,9 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9614 passed** (1:52, main 머지 뒤 재실행). 기준선 9601 + 이번 아크 13 |
-| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (6:46, main 머지 뒤 재실행). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
-| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **897 passed** (4:02, main 머지 뒤 — #826 이 `test_tos_evidence_scan_measure.py` 를 더한다) |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9616 passed** (1:57). 기준선 9601 + 이번 아크 15 |
+| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (6:24, 라운드-3 뒤). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
+| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **883 passed** (4:03, 라운드-3 뒤 — F9 가 위임 분석기 테스트를 걷어내고 측정 테스트를 더한다) |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 266 source files` |
 | `mypy tos/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 587 source files` |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
@@ -500,12 +500,51 @@ AST 대조가 차이를 본다: True
 
 일곱 사실이 **전부 동일**하다. 투영으로는 원리적으로 못 잡는다는 F7 의 지적이 맞다.
 
+### 8.11 라운드-3 리뷰 처분 (독립 리뷰 high, 2026-10-01 · 9건 · 최종)
+
+**이 라운드의 결정은 F9 채택이다** — 게이트 3 의 판정 근거를 **소스 분석에서 파일 측정으로** 옮긴다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **F9** | 게이트가 「pragma 가 실행된다」를 증명하려고 정적 분석기를 계속 키우는데, 하네스는 **writer 가 만든 실제 스토어 파일**을 갖고 있고 거기서 저널 모드를 그냥 읽을 수 있다 | **채택.** 크래시 시나리오마다 writer 가 죽은 **직후**(reader 보다 **먼저** — 안 그러면 reader 가 세운 모드를 재게 된다) 실제 파일을 `mode=ro` URI 로 열어 `PRAGMA journal_mode` 를 읽고 `store_journal_mode` 로 행에 적는다. `summarise_crash_schedule` 이 **모든 행에 `wal` 을 요구**한다. 필드가 없는 행은 **만족이 아니라 deviation**(∅-seal). 정적 검사는 **보조 신호**로 축소 — 연결 1개 · 리터럴 타깃 없음 · in-memory 타깃 없음 · 두 pragma 가 실행 리터럴로 존재. **위임 바인딩/도달성 분석기는 삭제**했다 |
+| F1 | 두 번째 **별칭 없는** `from <other> import enable_wal_journal`(또는 `import *`)는 재바인딩으로 안 보인다 | **F9 로 소멸.** 그 분석기가 사라졌다 |
+| F2 | 위임 pragma 병합이 DFS pop 순서라 나중 `journal_mode=DELETE` 가 WAL 로 기록될 수 있다 | **F9 로 소멸** |
+| F6 | `_reachable_functions` 가 「모듈 수준 함수」라고 적고는 `ast.walk` 로 중첩 함수·메서드까지 줍고, `async def` 진입점은 조용히 버린다 | **F9 로 소멸** |
+| F7 | in-memory 검사가 **파일 텍스트** substring 이라, `_wal.py` 산문에 `:memory:` 가 들어가면 게이트가 red 가 된다(런타임 쌍둥이 독스트링에 이미 그 문장이 있고 드리프트 핀은 정렬을 권한다) | **수정.** `connect(...)` **인자 리터럴**만 본다. 산문이 게이트를 깨지 못함을 테스트로 고정 |
+| F3 | 오픈 경계가 `StoreJournalModeRefused`·`sqlite3.Error` 만 잡는데, 생성자의 부모 `mkdir` 은 **sqlite 호출 전에** `OSError` 로 실패한다 | **수정.** 경계를 `OSError` 까지 넓혔다. 실측: 부모가 일반 파일이면 `FileExistsError`. reader·writer 양쪽 |
+| F8 | writer 가 `reload.py` 의 오픈 분류를 **복붙**해 두고 있다 — 세 번째 사본이 될 참 | **수정.** `reload.open_store(path)` **하나**가 `StoreOpenRefused` 를 올리고 reader·writer 가 그 한 타입만 잡는다. F3 의 확장이 한 곳에서 끝났다 |
+| F4 | 캐시 버리기가 오픈 **전**이라, 거부된(그리고 이제 재시도 가능하다고 구분해 둔) 오픈이 캐시를 이미 지워 버린다 | **수정(오픈 먼저).** 테스트된 계약을 바꾸지 않는다 — 기존 계약은 「성공한 reload 는 캐시를 버리고 참조하지 않는다」뿐이고 S-3 는 읽기 **전**이기만 하면 된다. 거부된 오픈이 캐시를 남기는지 테스트 추가 |
+| F5 | writer 가 쓰기마다 여는데 그 오픈이 이제 busy timeout **약 3배**(~15 s) 블록할 수 있고, 아무도 그 숫자로 데드라인을 잡지 않는다 | **수정(기록).** `compose/_engine_wiring.py` 배선 자리에 최악값을 적었다. **설정 키는 만들지 않았다** — `CompositeStateStore` 는 timeout 인자가 없고 `config/tos_runtime/**` 에 둘 자리도 없다(`sqlite_timeout_s` 는 `SqliteCommitLog` 의 생성자 기본값일 뿐이다). 키를 만드는 것은 배선이 아니라 설정 결정이라 범위 밖 |
+
+기각 0건.
+
+### 8.12 왜 F9 인가 — 세 라운드가 같은 자리를 세 번 뚫었다
+
+게이트 3 의 소스 쪽 절반은 #823 이후 「위임을 따라가되 호출을 요구한다」로 자라났고, **리뷰 라운드마다
+그때의 규칙 집합에 우회로가 있었다.**
+
+| 라운드 | 그때의 규칙 | 뚫린 방법 |
+|---|---|---|
+| 1 | 「`__init__` 이 호출한다」 | 옆 클래스의 `__init__` · `try/except ImportError` 안의 `def` |
+| 2 | 「`Store` 문맥 이름 + asname 재바인딩 없음」+「모듈이 pragma 를 실행」 | 별칭 import · 튜플/`for`/`with`/왈러스 타깃 · `import os as …` · 죽은 헬퍼의 pragma |
+| 3 | 「별칭 재바인딩 없음」+「도달 가능 함수의 pragma」 | **별칭 없는** 두 번째 import · `import *` · 도달 가능한 헬퍼가 전환을 **되돌림** |
+
+매 라운드의 수정은 규칙 하나를 더하는 것이었고, 매 라운드 다음 리뷰어가 다음 형태를 찾았다. 이것이
+**실제 측정이 가능한데 대리 측정을 키울 때** 나는 모양이다. 원하는 성질 — 「크래시한 writer 가 남긴
+파일이 WAL 이다」 — 은 stdlib `sqlite3` 로 `mode=ro` 로 열어 한 줄로 읽을 수 있고 `tos` 를 import 하지
+않는다(TOS-FW-R 유지). 그래서 그것을 잰다. 소스 검사는 「구성요소가 애초에 on-disk sqlite 가 아닐 수
+없다」만 말하는 보조 신호로 남는다 — 한 번의 실행이 말할 수 없는 것, 딱 그것만.
+
+[[guards-that-admit-what-they-name]] 계열의 같은 실패 형태이고, 이번 교훈은 한 줄로: **가드를 규칙으로
+키우기 전에, 재려는 성질을 직접 잴 수 있는지 먼저 보라.**
+
 ### 8.6 digest
 
-`expected_code_digest`: **9595ef63 → 3ea8f6dc → 7ea0d6d4 → 9fa70b6c**
-(`9fa70b6c7bb38d665acc5cb912691f18045bc3ebb8a624e964a5de668fcac426`). 세 번 도출했다 —
-27차가 최초 구현, 28차가 §8.7 라운드-1 처분, 29차가 §8.9 라운드-2 처분(F3·F4·F5 가 동작 변경,
-F7 이 커널 wait 의 문장 모양, 런타임은 상호참조 독스트링 한 문단).
+`expected_code_digest`: **9595ef63 → 3ea8f6dc → 7ea0d6d4 → 9fa70b6c → e58cecd4**
+(`3c4be1d9d3422f25aa3aa7f15361e9edb228f676b8367e9bcde26bcb54f80f35`). 네 번 도출했다 —
+27차 최초 구현 · 28차 §8.7 라운드-1 · 29차 §8.9 라운드-2 · 30차 §8.11 라운드-3
+(단일 오픈 경계와 `OSError`, 캐시 버리는 순서, 배선 주석). ⚠ 라운드-3 의 가장 큰 변경(F9,
+게이트 3 의 판정 근거를 소스에서 **파일**로)은 `tools/`·`tests/` 에만 있어 이 값에 들어가지 않는다.
 
 27차. **26차까지와 달리 바뀐 것이 커널 소스다** — 이 digest 는 `tos/src/**.py` 와
 `tos/runtime/src/**.py` 를 함께 접으므로 커널만 바꿔도 값이 바뀐다(6차 전례). `print-digests` 와
