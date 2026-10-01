@@ -74,6 +74,11 @@ _COMPONENT = (
 #: would otherwise redefine the expectation to match itself.
 _CRASH_EXIT = 137
 
+#: The reader's classified "the store could not be opened" status (#823 / review F2).
+#: Hardcoded for the same reason as :data:`_CRASH_EXIT`: a worker that stopped refusing
+#: would otherwise redefine the expectation to match itself.
+_STORE_UNOPENABLE_EXIT = 71
+
 #: The five-dimension coordinate order the anchors are written in.
 _DIMENSION_KEYS = (
     "intent_state",
@@ -488,6 +493,34 @@ def test_a_store_no_writer_ever_touched_is_refused_not_fabricated(tmp_path) -> N
         "IncompleteStoreError" in reader.stderr
         or "cannot be identified" in reader.stderr
     )
+
+
+def test_a_store_that_cannot_be_opened_is_a_classified_refusal(tmp_path) -> None:
+    """An unopenable substrate exits with its OWN code, not an unhandled traceback.
+
+    Review F2 on PR #827: #823 made the store's open fail-closed on ``journal_mode=WAL``,
+    and the reader had no classification for that — it would have died with exit 1, which
+    :data:`_CRASH_EXIT`'s own comment says is exactly the value these constants exist to
+    be distinguishable from. The refusal here is provoked without ``chmod`` (so it holds
+    for a root CI container too) by pointing the reader at a directory: sqlite cannot
+    open it, and the failure is a substrate one before any reconstruction happens.
+
+    Paired with ``test_a_store_no_writer_ever_touched_is_refused_not_fabricated`` above,
+    which pins the OTHER direction — a store that opens but holds nothing is an
+    ``IncompleteStoreError``, a reconstruction verdict, and must NOT be collapsed into
+    this code.
+    """
+    store = tmp_path / "a-directory-not-a-store"
+    store.mkdir()
+    cache = tmp_path / "unused.cache.json"
+
+    reader = _spawn("reader", "L3-01", store, cache)
+
+    assert reader.returncode == _STORE_UNOPENABLE_EXIT, (
+        f"expected the classified substrate refusal {_STORE_UNOPENABLE_EXIT}, got "
+        f"{reader.returncode}; stderr={reader.stderr}"
+    )
+    assert "could not be opened" in reader.stderr
 
 
 def test_the_verdict_follows_the_store_not_the_scenario_argument(

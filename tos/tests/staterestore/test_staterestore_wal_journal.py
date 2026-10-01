@@ -121,6 +121,28 @@ def _capture_extended_busy_error(tmp_path: Path) -> sqlite3.OperationalError:
         writer.close()
 
 
+def _capture_readonly_error(tmp_path: Path) -> sqlite3.OperationalError:
+    """A genuine ``SQLITE_READONLY`` — what a store file you may not write really raises.
+
+    Provoked through a ``mode=ro`` URI rather than ``chmod``, so it is the same object
+    on any filesystem and in a container running as root (where ``chmod`` restrains
+    nobody and a permissions-based test would silently stop testing).
+    """
+    path = tmp_path / "readonly-source.sqlite3"
+    sqlite3.connect(str(path)).close()
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        conn.execute("CREATE TABLE t(x)")
+    except sqlite3.OperationalError as exc:
+        assert exc.sqlite_errorname.startswith("SQLITE_READONLY"), exc.sqlite_errorname
+        return exc
+    finally:
+        conn.close()
+    raise AssertionError(  # pragma: no cover - only if sqlite stops refusing this
+        "writing through a mode=ro connection did not raise"
+    )
+
+
 def _capture_non_lock_error() -> sqlite3.OperationalError:
     """A genuine ``OperationalError`` that is NOT a lock contest (``SQLITE_ERROR``)."""
     conn = sqlite3.connect(":memory:", isolation_level=None)
@@ -294,6 +316,39 @@ def test_an_operational_error_that_is_not_a_lock_is_not_retried(tmp_path: Path) 
         with pytest.raises(sqlite3.OperationalError, match="no such table"):
             enable_wal_journal(conn)
 
+        assert conn.log == [_WAL_PRAGMA]
+    finally:
+        conn.close()
+
+
+def test_a_readonly_store_is_refused_exactly_as_it_was_before_the_fix(
+    tmp_path: Path,
+) -> None:
+    """A store file that may not be written raises the SAME error, at the SAME attempt.
+
+    Review F2 on PR #827 read this as a regression — that a readable-but-not-switchable
+    store was refused where it used to read back fine. Measured on both trees, it is
+    not: ``PRAGMA journal_mode=WAL`` on a read-only rollback-journal file raises
+    ``attempt to write a readonly database`` (``SQLITE_READONLY``, primary code 8), and
+    the pre-#823 constructor did not catch it either — it died at the same statement,
+    before ``synchronous=FULL`` and the schema, which both go on to succeed there. What
+    #823 changed on that path is nothing, and this pins it:
+
+    * the error is NOT a lock contest, so it is re-raised from the FIRST attempt (the
+      log is the evidence — no ``BEGIN IMMEDIATE``, no second PRAGMA);
+    * it is an ``OperationalError``, never the new :class:`JournalModeRefused`, so a
+      caller that distinguishes "cannot write this file" from "this file did not end up
+      in WAL" still can.
+
+    Reading such a file is still possible for a caller that opens it read-only; that is
+    a different constructor than this one, and #823 did not add it.
+    """
+    conn = _scripted(tmp_path / "store.sqlite3", [_capture_readonly_error(tmp_path)])
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly") as refusal:
+            enable_wal_journal(conn)
+
+        assert not isinstance(refusal.value, JournalModeRefused)
         assert conn.log == [_WAL_PRAGMA]
     finally:
         conn.close()

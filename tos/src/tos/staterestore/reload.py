@@ -207,6 +207,17 @@ def reload_conservative(
     Raises:
         IncompleteStoreError: If the Intent dimension is absent (unidentifiable record).
         tos.staterestore.store.StoreIntegrityError: If a stored marker is unreadable.
+        tos.staterestore.JournalModeRefused: If opening the store did not leave the file
+            in ``journal_mode=WAL`` (#823). This read path shares
+            :class:`~tos.staterestore.store.CompositeStateStore`'s one constructor, so
+            it inherits that constructor's fail-closed open — a reader is refused rather
+            than handed a store whose durability shape is not the one every argument
+            here assumes.
+        sqlite3.OperationalError: If the journal-mode switch could not take its lock
+            within the connection's busy timeout, or failed for a reason that is not a
+            lock contest — a read-only store file raises ``attempt to write a readonly
+            database`` here, as it did before #823 (measured on both trees: the bare
+            ``PRAGMA journal_mode=WAL`` raised the same error at the same statement).
     """
     discarded = discard_caches(cache_paths)
     with CompositeStateStore(Path(store_path)) as store:

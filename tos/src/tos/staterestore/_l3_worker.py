@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,7 @@ from tos.orthostate import (
     coupling_violations,
 )
 from tos.rcl import CapacityState
+from tos.staterestore._wal import JournalModeRefused
 from tos.staterestore.reload import reload_conservative
 from tos.staterestore.store import CompositeStateStore
 
@@ -80,6 +82,17 @@ CPL_MISMATCH_EXIT = 70
 
 #: Usage / unknown-scenario refusal.
 USAGE_EXIT = 64
+
+#: The reader aborts with this code when the store cannot be OPENED on the substrate
+#: this stage is defined over — the fail-closed ``journal_mode=WAL`` open (#823) refused,
+#: or its lock could not be taken. Classified rather than left as an unhandled traceback
+#: (review F2 on PR #827): every other refusal this worker can reach has a code the
+#: outside orchestration can assert on, and "the reader died with exit 1" is
+#: indistinguishable from an ordinary interpreter failure — which is exactly the
+#: distinction :data:`CRASH_EXIT`'s own comment says these constants exist to preserve.
+#: It is NOT a reconstruction verdict: an *incomplete* store still reads back and
+#: reconstructs conservatively, and that path keeps exit 0.
+STORE_UNOPENABLE_EXIT = 71
 
 #: The intent identity every scenario uses. Fixed, so a run is reproducible from argv
 #: alone (VER §9.1 seed/schedule reproducibility).
@@ -364,11 +377,24 @@ def run_reader(scenario: CrashScenario, store_path: Path, cache_path: Path) -> i
     Returns:
         The process exit code (``0``).
     """
-    outcome = reload_conservative(
-        store_path,
-        INTENT_IDENTITY,
-        cache_paths=(cache_path,),
-    )
+    try:
+        outcome = reload_conservative(
+            store_path,
+            INTENT_IDENTITY,
+            cache_paths=(cache_path,),
+        )
+    except (JournalModeRefused, sqlite3.Error) as exc:
+        # The SUBSTRATE, and only the substrate: every sqlite-level failure to open or
+        # read the file means this stage has no store to measure. `IncompleteStoreError`
+        # and `StoreIntegrityError` are RuntimeErrors, not `sqlite3.Error`, so they keep
+        # propagating — they are findings ABOUT a store that WAS read, which is the thing
+        # this stage exists to produce, and folding them into an exit code would hide a
+        # reconstruction verdict behind a substrate one.
+        _fail(
+            f"store at {store_path} could not be opened on the WAL substrate this "
+            f"stage is defined over: {type(exc).__name__}: {exc}",
+            STORE_UNOPENABLE_EXIT,
+        )
     post = outcome.composite
     verdict = {
         "role": "reader",
