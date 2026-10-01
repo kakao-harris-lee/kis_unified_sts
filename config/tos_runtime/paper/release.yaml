@@ -495,7 +495,7 @@
 #   31차 재측정(2026-10-01, 브랜치 perf/tos-flow-observation-pk-lookup · 증거 성장 계획
 #   §2 A2-b): 런타임 둘이 바뀐다 — `evidence/store.py` 와 `riskstate/flow_observation.py`.
 #   커널(`tos/src/**.py`)은 한 바이트도 바뀌지 않았다. **동작 변경이 하나 있다(성능, 결과는
-#   불변)** — `FlowObservationReader._resolve_handling_started_monotonic` 이 `(seq, kind)`
+#   불변)** — `InboxFlowReader._resolve_handling_started_monotonic` 이 `(seq, kind)`
 #   한 행을 찾으려고 `iter_entry_meta()` 로 `entries` 전체를 훑던 것을, 새 읽기 전용 메서드
 #   `SqliteEvidenceStore.entry_meta(seq)` 의 **기본키 조회**로 바꿨다. 365 일치 스토어에서
 #   그 전체 스캔은 **제안 하나에 ≥130 s** 였고(계획 §7.1.12 「읽어야 할 것」 2), 호출 경로
@@ -515,6 +515,35 @@
 #   **그래도 그 커밋 뒤에 다시 찍어 숫자로 확인했다**: 두 경로 모두 62be5abf… 그대로다.
 #   「소스를 안 건드렸으니 같을 것」이 아니라 「같은 것을 쟀다」로 남긴다(#814 이후 이 파일의
 #   규율 — 위 32539e07 머지 때와 같은 형태).
+#
+#   ⚠ 위 31차 문단은 **그 시점의 구현**을 적은 기록이다 — 거기 나오는 `entry_meta` 는 32차에서
+#   `entry` 로 접혔다. 문단을 고쳐 쓰지 않는 이유는 그것이 측정 이력이기 때문이고, 다만
+#   **존재하지 않는 클래스명 하나는 정정했다**(`FlowObservationReader` → `InboxFlowReader`;
+#   그런 클래스는 처음부터 없었다 — 측정 사실이 아니라 오기다. #832 리뷰 F6).
+#
+#   32차 재측정(2026-10-01, 같은 브랜치 · PR #832 독립 리뷰 처분 F1~F3): 런타임 둘이 또
+#   바뀐다(같은 두 파일). 커널은 그대로다. **동작 변경이 하나 있다 — F1: 핸들링 시작 마커를
+#   해소할 때 인박스 영수증의 `generation` 을 행의 `key_generation` 과 대조하고, 어긋나면
+#   부재(`None`)로 처리한다.** 전에는 `kind` 만 봤다 — 증거 파일이 살아남은 인박스 밑에서
+#   교체되면(옛 백업 복원 · 재시드) 같은 `seq` 에 앉은 **다른 이벤트의 마커**를 그대로 받아
+#   그 이벤트의 타임스탬프와 content identity 를 이 원인의 것으로 돌려줬다. 리뷰가 든 바로
+#   그 추측이고, 조용했다. 영수증은 `(evidence_seq, generation)` 을 **함께** 적는다 —
+#   generation 은 장식이 아니라 「그 seq 가 어느 행이었는지」를 말하는 쪽이다.
+#   구조 변경 둘(동작 불변) — F2: 해소기 둘(`_resolve_handling_started_monotonic` ·
+#   `_resolve_root_content_event_id`)을 `_resolve_handling_started` 하나로 접었다. 둘은
+#   **같은 행**을 서로 다른 방식으로 두 번 읽고 있었고(메타는 스토어 경유, payload 는
+#   `riskstate` 가 손으로 쓴 `SELECT payload_json` 을 raw connection 에), 뒤쪽은 `entries`
+#   열 구성에 리스크 모듈을 묶는 누수였다. 스토어 쪽은 `entry_meta` 를 `entry`(메타+payload)
+#   로 접어 관측당 증거 문장이 **둘에서 하나**로 준다. F3: `_ENTRY_META_COLUMNS_SQL` 을
+#   `_EntryRow._fields` 에서 **파생**한다(손으로 적은 열 목록과 NamedTuple 이 어긋나면 모든
+#   필드가 조용히 밀린다).
+#   ⚠ 이 라운드에서도 size budget 이 한 번 red 였다: 해소기를 합치니 `InboxFlowReader.observe`
+#   가 101 줄이 됐다. 30차 때와 같은 판단으로 **예외 등재 대신** 한 필드 투영을
+#   `_started_monotonic` 으로 이름 붙여 꺼냈다(98 줄).
+#   이전 값 62be5abfbefc24fce3f1d81dd51e2feb607c5ec1bdea381f19c8e39671d72391 은 31차 측정치.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 df25a550…).
+#   `expected_dependency_set_digest` 는 서른두 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1)에서 출력이 커밋된 값과 바이트 동일했다.
 #
 #   실행(위 두 측정 모두 같은 형태):
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
@@ -537,7 +566,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "62be5abfbefc24fce3f1d81dd51e2feb607c5ec1bdea381f19c8e39671d72391"
+expected_code_digest: "df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
