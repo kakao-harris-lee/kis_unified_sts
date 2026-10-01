@@ -2035,6 +2035,8 @@ def test_defer_re_arms_the_gap_from_now_and_never_shortens_it(
 # ---------------------------------------------------------------------------
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 _RUNNER = (
     Path(__file__).resolve().parents[2]
     / "tools"
@@ -2112,21 +2114,57 @@ def test_runner_template_carries_no_instance_defaults() -> None:
     }, defaulted
 
 
+def _assert_no_self_deletion(text: str) -> None:
+    """Two checks, applied to a runner's source.
+
+    Factored out so :func:`test_the_self_deletion_guard_catches_what_it_names`
+    can run them against DELIBERATELY BROKEN copies. A guard nobody has seen
+    fail is a comment: this one defends against a FUTURE edit, which no amount
+    of green on today's file demonstrates.
+    """
+    # Not just ``rm``: ``unlink``, ``mv``, ``shred``, ``truncate`` and the
+    # ``: >`` truncation idiom delete a file just as well, and the earlier
+    # single-verb check would have waved all of them through (review F3).
+    destructive = re.search(
+        r"(?<![\w-])(rm|unlink|mv|shred|truncate)(?![\w-])|:\s*>[^>]", text
+    )
+    assert destructive is None, f"the runner runs a destructive command: {destructive}"
+    # ``$0`` matched BROADLY — narrowing it to the quoted form to tolerate
+    # awk's ``$0`` would have let an unquoted ``unlink $0`` through. The awk
+    # line is excluded by name instead: there ``$0`` is the whole input record
+    # of a different language and says nothing about this file.
+    self_references = [
+        line for line in text.splitlines() if "$0" in line and "awk" not in line
+    ]
+    assert len(self_references) == 1, self_references
+    assert "SCRIPT_DIR=" in self_references[0], self_references
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        'rm -f "$0"',
+        "unlink $0",
+        "mv $0 /tmp/",
+        "shred -u $0",
+        "truncate -s 0 $0",
+        ': > "$0"',
+        'rm -f "$SCRIPT_DIR/run_p_ca.sh"',
+    ],
+)
+def test_the_self_deletion_guard_catches_what_it_names(mutation: str) -> None:
+    """Every form the 09-30 runner could have used to delete itself. The guard
+    was narrowed once already, to tolerate awk's ``$0``, and that narrowing
+    silently let four of these through."""
+    mutated = _RUNNER.read_text(encoding="utf-8") + f"\n{mutation}\n"
+    with pytest.raises(AssertionError):
+        _assert_no_self_deletion(mutated)
+
+
 def test_runner_template_never_removes_itself() -> None:
     """2026-09-30: the runner self-deleted after its first run, so attempts 3
     and 4 went out through a hand-made copy."""
-    text = _RUNNER.read_text(encoding="utf-8")
-    assert re.search(r"(?<![\w-])rm(?![\w-])", text) is None, "the runner runs rm"
-    # The SHELL's ``"$0"`` is legitimate exactly once — deriving the checkout
-    # from the script's own location. Anywhere else it is the script talking
-    # about itself, which is how the 09-30 runner deleted itself. Matched
-    # quoted, because awk's ``$0`` (the whole input record, in the
-    # `git worktree list` parse) is a different variable in a different
-    # language and says nothing about this file.
-    self_references = [line for line in text.splitlines() if '"$0"' in line]
-    assert len(self_references) == 1, self_references
-    assert "SCRIPT_DIR=" in self_references[0], self_references
-    assert '"$0"' not in text.split("SCRIPT_DIR=", 1)[1].split("\n", 1)[1]
+    _assert_no_self_deletion(_RUNNER.read_text(encoding="utf-8"))
 
 
 def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
@@ -2301,31 +2339,38 @@ def test_runner_accepts_a_clean_detached_ancestor_checkout(tmp_path: Path) -> No
 
     result = _run_runner(repo, tmp_path)
     assert "checkout ok:" in result.stdout
-    assert "required probes_ca.py fixes present" in result.stdout
     assert "ABORT: required env PCA_PYTHON is unset" in result.stdout
     assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
 
 
-def test_runner_aborts_when_the_checkout_lacks_the_transient_retry_fix(
+def test_runner_aborts_when_the_probe_reports_a_different_policy_version(
     tmp_path: Path,
 ) -> None:
-    """A checkout without the fix this trial depends on must not be used to
-    produce evidence — the 2026-09-30 runner already guarded ``pacer.derive(``
-    for the same reason, and the retry policy joins it."""
-    repo = _runner_repo(tmp_path, detached=True, dirty=False)
-    (repo / "tools/broker_probes/probes_ca.py").write_text(
-        "pacer.derive(\n", encoding="utf-8"
+    """Review F7: the gate used to grep probes_ca.py for ``pacer.derive(`` and
+    ``_BAL_TRANSIENT``. A substring cannot tell a fix from a mention — this
+    PR's own plan quotes the literal — and a rename would fail every scheduled
+    trial while the fix was present. The probe now reports a POLICY_VERSION and
+    the runner checks it, which catches what actually goes wrong: a runner
+    copied out of a different tree than the probe it drives (2026-09-30)."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env={"FAKE_POLICY_VERSION": "p-ca-retry-policy/0"}
     )
-    import subprocess
-
-    for argv in (["add", "-A"], ["commit", "-q", "-m", "drop the retry fix"]):
-        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True)
-    _publish_origin_main(repo)
-
-    result = _run_runner(repo, tmp_path)
     assert result.returncode == 4
-    assert "missing '_BAL_TRANSIENT'" in result.stdout
+    assert "policy version mismatch" in result.stdout
+    assert pc.POLICY_VERSION in result.stdout
+    assert "p-ca-retry-policy/0" in result.stdout
     assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+    assert argv == []
+
+
+def test_runner_accepts_the_policy_version_the_probe_reports(tmp_path: Path) -> None:
+    """The other direction: the matching version is logged and the run goes on."""
+    result, argv = _run_runner_end_to_end(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"probe policy version {pc.POLICY_VERSION} matches this runner" in (
+        result.stdout
+    )
+    assert argv
 
 
 # ---------------------------------------------------------------------------
@@ -2485,7 +2530,8 @@ def _fake_python(
         'case "$1" in',
         "  -c)",
         '    case "$2" in',
-        '      *__file__*) printf "%s\\n" "$FAKE_MODULE_PATH" ;;',
+        '      *__file__*) printf "%s\\n%s\\n" "$FAKE_MODULE_PATH" '
+        '"$FAKE_POLICY_VERSION" ;;',
         '      *) printf "%s\\n" "$PCA_EXPECT_ACCOUNT_FP" ;;',
         "    esac",
         "    ;;",
@@ -2538,6 +2584,7 @@ def _run_runner_end_to_end(
         "PCA_LOG": str(tmp_path / "run.log"),
         "PCA_PYTHON": str(python),
         "FAKE_MODULE_PATH": str(repo / "tools/broker_probes/probes_ca.py"),
+        "FAKE_POLICY_VERSION": pc.POLICY_VERSION,
         "PCA_CREDENTIAL_FILE": str(env_file),
         "PCA_KIS_ENV": "mock",
         "PCA_SYMBOL": "000660",
@@ -2826,7 +2873,11 @@ def _worktree_pair(
     (primary / "tools/broker_probes/probes_ca.py").write_text(
         "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
     )
-    (primary / ".gitignore").write_text("results/\n.env.*\n", encoding="utf-8")
+    # The REAL repo .gitignore, not a fabricated one (review F2): the test
+    # that "proved" the copy lands on an ignored path used to write
+    # `.env.*`, a glob this repository does not have — it ignores exact
+    # names, so `.env.mock.bak-20260915` is NOT ignored.
+    shutil.copy2(_REPO_ROOT / ".gitignore", primary / ".gitignore")
 
     def git(*argv: str) -> None:
         subprocess.run(
@@ -2882,6 +2933,7 @@ def _run_from_worktree(
         "PCA_LOG": str(tmp_path / "run.log"),
         "PCA_PYTHON": str(python),
         "FAKE_MODULE_PATH": str(worktree / "tools/broker_probes/probes_ca.py"),
+        "FAKE_POLICY_VERSION": pc.POLICY_VERSION,
         "PCA_CREDENTIAL_FILE": credential_file,
         "PCA_KIS_ENV": "mock",
         "PCA_SYMBOL": "000660",
@@ -3007,3 +3059,239 @@ def test_an_unreadable_absolute_credential_path_says_so_without_copying(
     assert "absolute path, used as given" in result.stdout
     assert "copied from the primary checkout" not in result.stdout
     assert argv == []
+
+
+# ---------------------------------------------------------------------------
+# round-3 disposition: secrets, log directory, cron gating, caps, pre-flight wait
+# ---------------------------------------------------------------------------
+
+
+def test_the_repo_ignores_exact_env_names_not_a_glob() -> None:
+    """The premise the credential copy rests on, measured rather than assumed
+    (review F2). `.env.*` is NOT a rule in this repository, so the earlier
+    test's fabricated .gitignore asserted a property the real tree lacks."""
+    import subprocess
+
+    def ignored(name: str) -> bool:
+        return (
+            subprocess.run(
+                ["git", "-C", str(_REPO_ROOT), "check-ignore", "-q", "--", name],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+
+    assert ignored(".env.mock")
+    assert ignored(".env.real")
+    assert not ignored(".env.mock.bak-20260915")
+    assert not ignored(".env.probe")
+
+
+def test_runner_refuses_a_relative_credential_name_that_is_not_ignored(
+    tmp_path: Path,
+) -> None:
+    """Review F2, the secrets rule. `.env.mock.bak-20260915` is a name the
+    README itself once suggested, and it is not gitignored: copying a filled
+    credential file there puts it where `git add -A` stages it. Refused before
+    anything is written."""
+    primary, worktree = _worktree_pair(
+        tmp_path, primary_has_credentials=True, credential_name=".env.mock.bak-x"
+    )
+    result, argv = _run_from_worktree(
+        tmp_path, worktree, credential_file=".env.mock.bak-x"
+    )
+
+    assert result.returncode != 0
+    assert "is NOT gitignored" in result.stdout
+    # Nothing written, and the source left alone.
+    assert not (worktree / ".env.mock.bak-x").exists()
+    assert (primary / ".env.mock.bak-x").is_file()
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+    assert argv == []
+
+
+def test_runner_creates_a_missing_log_directory_instead_of_losing_the_trial(
+    tmp_path: Path,
+) -> None:
+    """Review F1: with the log directory absent, step 6's `>>"$PCA_LOG"`
+    redirection failed, the probe never ran, and step 7 still retired the cron
+    entry — the "attempt vanished" shape this runner exists to prevent."""
+    fresh = tmp_path / "logs-that-do-not-exist-yet" / "p-ca.log"
+    result, argv = _run_runner_end_to_end(tmp_path, extra_env={"PCA_LOG": str(fresh)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fresh.is_file()
+    assert argv, "the probe never ran"
+
+
+def test_runner_aborts_when_the_log_path_cannot_be_created(tmp_path: Path) -> None:
+    """The other direction: an unusable PCA_LOG stops the run loudly, before
+    the credentials are sourced — not silently at the redirection."""
+    blocker = tmp_path / "a-file"
+    blocker.write_text("not a directory", encoding="utf-8")
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env={"PCA_LOG": str(blocker / "sub" / "p-ca.log")}
+    )
+    assert result.returncode != 0
+    assert "PCA_LOG" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+    assert argv == []
+
+
+def _fake_crontab(tmp_path: Path, *, existing_line: str) -> tuple[Path, Path]:
+    """A `crontab` stand-in on PATH that records whether a write happened."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    written = tmp_path / "crontab-written.txt"
+    table = tmp_path / "crontab-table.txt"
+    table.write_text(existing_line + "\n", encoding="utf-8")
+    script = bindir / "crontab"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-l" ]; then cat ' + repr(str(table))[1:-1] + "; exit 0; fi\n"
+        "cat > " + repr(str(written))[1:-1] + "\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return bindir, written
+
+
+def test_runner_retires_the_cron_entry_once_the_probe_has_run(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    bindir, written = _fake_crontab(tmp_path, existing_line="30 0 * * * run_p_ca_mark")
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env={
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "PCA_CRON_MARK": "run_p_ca_mark",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert argv, "the probe never ran"
+    assert written.is_file(), "the crontab was never rewritten"
+    assert "run_p_ca_mark" not in written.read_text(encoding="utf-8")
+
+
+def test_runner_leaves_the_cron_entry_when_it_aborts_before_the_probe(
+    tmp_path: Path,
+) -> None:
+    """Review F1: a run that never started the probe must not retire its own
+    schedule — the next slot has to get a chance."""
+    import os
+
+    bindir, written = _fake_crontab(tmp_path, existing_line="30 0 * * * run_p_ca_mark")
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        holding_line="HOLDING_QUERY_FAILED=TRANSIENT:transport:ReadTimeout",
+        holding_rc=1,
+        extra_env={
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "PCA_CRON_MARK": "run_p_ca_mark",
+        },
+    )
+    assert result.returncode != 0
+    assert argv == []
+    assert not written.exists(), "an aborted run retired its own cron entry"
+
+
+def test_the_holding_failure_detail_is_capped_and_single_line(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review F5: a gateway can answer with a colon-free HTML page, and the
+    detail went onto the runner's anchored line uncapped. Two hazards — a
+    body prefix hundreds of bytes long in the log, and an embedded newline
+    that both splits the record and lets broker text start a line of its own.
+    """
+    # HELD=99 sits BEFORE the padding, so it survives the 300-char cap: what
+    # keeps it from becoming a line the runner would parse is the newline
+    # collapse, and this test has to prove that rather than the cap.
+    html = "<html>\nHELD=99\n" + ("A" * 900) + "\n</html>"
+
+    class _HtmlResponse:
+        status_code = 502
+        text = html
+
+        def json(self) -> dict[str, Any]:
+            raise ValueError("not json")
+
+    wire(_TransientSession([_HtmlResponse()]))
+    rc = pc.check_holding(_holding_argv())
+    out = capsys.readouterr().out
+
+    assert rc != 0
+    failed = [ln for ln in out.splitlines() if ln.startswith("HOLDING_QUERY_FAILED=")]
+    assert len(failed) == 1
+    detail = failed[0].split(":", 1)[1]
+    assert len(detail) <= pc._BODY_EXCERPT_MAX_CHARS
+    # It is still in the detail — and precisely not as a line of its own.
+    assert "HELD=99" in detail
+    assert not any(ln.startswith("HELD=") for ln in out.splitlines())
+
+
+def test_the_preflight_retry_waits_the_trial_polling_interval(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F6: the pre-flight retried a ledger throttle after --pace-s, the
+    same per-second cadence that just tripped it. It now waits whatever
+    --retry-wait-ms says, which the runner sets to the trial's --poll-ms."""
+    wire(_TransientSession([_throttle_body(), _balance_body(3)]))
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+    rc = pc.check_holding(_holding_argv(**{"--retry-wait-ms": "30000"}))
+
+    assert rc == 0
+    assert sleeps == [pytest.approx(30.0)], sleeps
+
+
+def test_the_preflight_falls_back_to_pace_when_no_interval_is_given(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire(_TransientSession([_throttle_body(), _balance_body(3)]))
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+    rc = pc.check_holding(_holding_argv(**{"--pace-s": "1.5"}))
+
+    assert rc == 0
+    assert sleeps == [pytest.approx(1.5)], sleeps
+
+
+def test_the_holding_check_announces_the_policy_version(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """So the log of any run records which policy actually answered, not just
+    the one the runner expected."""
+    wire(_ScriptedSession([_balance_body(4)]))
+    pc.check_holding(_holding_argv())
+    assert f"POLICY_VERSION={pc.POLICY_VERSION}" in capsys.readouterr().out
+
+
+def test_credentials_are_recorded_before_the_session_is_opened(
+    stock_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Review F4: anything after the credential resolution can raise something
+    that is not a ProbeError, and run.py then salvages the artifact as it
+    stands. It has to carry the account fingerprint by then."""
+    seen: dict[str, Any] = {}
+
+    def _boom(cfg: Any, use_singleton: bool = True) -> Any:
+        raise OSError("token cache unreadable")
+
+    monkeypatch.setattr("shared.kis.auth.KISAuthManager", _boom)
+    monkeypatch.setattr(pc, "build_auth_config", lambda creds, cache: object())
+    monkeypatch.setattr(pc, "probe_token_cache_dir", lambda explicit: tmp_path)
+
+    def _record(resolved: Any) -> None:
+        seen["credentials"] = resolved.describe()
+
+    with pytest.raises(OSError):
+        pc._open_broker_session(
+            is_real=False, token_cache_dir=None, on_credentials=_record
+        )
+    assert seen["credentials"], "credentials were not recorded before the failure"

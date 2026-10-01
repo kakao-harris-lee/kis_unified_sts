@@ -69,9 +69,13 @@ export PCA_CRON_MARK=run_p_ca_20261022   # remove this one crontab line when don
 `PCA_CREDENTIAL_FILE` is read two ways:
 
 - **Relative** (the documented case, `.env.mock`): resolved against the
-  worktree. A freshly added worktree carries none of the `.env.*` files, since
-  they are gitignored, so the runner copies it in from the **primary
-  checkout** — located from the first entry of `git worktree list --porcelain`,
+  worktree. The name must be one `git check-ignore` accepts, and the runner
+  refuses otherwise **before writing anything** — this repository ignores
+  exact names (`.env`, `.env.mock`, `.env.real`, `.env.paper`, `.env.live`,
+  `.env.production`, `.env.local`, `.env.*.local`), **not** a `.env.*` glob,
+  so a name like `.env.mock.bak-20260915` would land a filled credential file
+  where `git add -A` stages it. A freshly added worktree carries none of these
+  files, so the runner copies it in from the **primary checkout** — located from the first entry of `git worktree list --porcelain`,
   never a hardcoded path, so it keeps working when the checkout moves. The copy
   is `install -m 600`, one log line names the source and destination **paths
   only**, and the run refuses when the file is in neither checkout, naming
@@ -103,6 +107,13 @@ Notes:
   would read as "not held".
 - The artifact is copied to `PCA_EVIDENCE_DIR` only when it is newer than
   whatever the results directory already held.
+- The runner and the probe must be the same generation: the probe reports a
+  `POLICY_VERSION` and the runner checks it against the version it was written
+  for. A mismatch means the runner was copied out of a different tree, which
+  is the 2026-09-30 mistake. (This replaced grepping `probes_ca.py` for
+  substrings, which could not tell a fix from a mention and broke on renames.)
+- `PCA_LOG`'s directory is created if missing, and the run aborts if it cannot
+  be. The crontab entry is retired only once the probe has actually started.
 - One `PCA_PACE_S` wait separates the holding check from the probe. They are
   two processes with independent pacers, so without it the probe's baseline GET
   follows the check's last GET with no gap — the back-to-back pair that

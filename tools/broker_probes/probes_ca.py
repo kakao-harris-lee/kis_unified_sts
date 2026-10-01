@@ -185,6 +185,16 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
 # probes_balance.py's DEFAULT_INTER_PAGE_S comment makes the same call).
 # ---------------------------------------------------------------------------
 
+#: What the runner checks instead of grepping this file for substrings
+#: (independent review F7). A source grep cannot tell a fix from a mention —
+#: this PR's own plan quotes the literal ``_BAL_TRANSIENT`` — and it breaks on
+#: a rename, failing a scheduled trial with "required fix not present" when the
+#: fix is right there. Bump it whenever the retry policy or the pre-flight
+#: contract changes shape; a runner copied out of the tree (the 2026-09-30
+#: mistake) then says so instead of silently driving a probe it was not
+#: written for.
+POLICY_VERSION = "p-ca-retry-policy/1"
+
 #: Default minimum interval between ANY two broker calls this probe makes.
 #: Same measured value P-13/P-BAL use (clean 1.0 rps, P-13-20260729T063120Z);
 #: 1.1s sits just above it.
@@ -1513,7 +1523,10 @@ def _finalize(
 
 
 def _open_broker_session(
-    *, is_real: bool, token_cache_dir: Any
+    *,
+    is_real: bool,
+    token_cache_dir: Any,
+    on_credentials: Callable[[Any], None] | None = None,
 ) -> tuple[Any, Any, str, str, Any]:
     """Resolve credentials and open the ONE broker session shape this module
     uses. Returns ``(session, auth, base_url, tr_id, creds)``.
@@ -1523,6 +1536,16 @@ def _open_broker_session(
     line-for-line copy of this and had already drifted, dropping
     :func:`warn_shared_token_cache`). The caller closes the session.
 
+    ``on_credentials`` fires as soon as the credentials are resolved and
+    accepted, BEFORE the token cache or the HTTP session is touched. The
+    ordering is the point (independent review F4): everything after it can
+    raise something that is not a :class:`ProbeError` — an unreadable token
+    cache directory, malformed cached token JSON — and ``run.py``'s salvage
+    path then writes the artifact as it stands. That artifact has to carry the
+    account fingerprint and which token cache was in use, which is the exact
+    provenance the salvage path exists to preserve (``run.py``: "no account
+    fingerprint, no record of which token cache was in use").
+
     ``requests`` and ``KISAuthManager`` are imported lazily for the reason the
     module docstring gives: ``--list``/``--dry-run`` and the registry import
     this module and must not pay for (or require) the HTTP stack.
@@ -1530,6 +1553,8 @@ def _open_broker_session(
     warn_shared_token_cache()
     creds = resolve_credentials("stock", is_real=is_real)
     require_account(creds)
+    if on_credentials is not None:
+        on_credentials(creds)
 
     import requests
 
@@ -1617,10 +1642,14 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
         run.observe(would_send=_dry_run_would_send(trial))
         return run
 
+    def _record_credentials(resolved: Any) -> None:
+        run.credentials = resolved.describe()
+
     session, auth, base_url, tr_id, creds = _open_broker_session(
-        is_real=trial.is_real, token_cache_dir=args.token_cache_dir
+        is_real=trial.is_real,
+        token_cache_dir=args.token_cache_dir,
+        on_credentials=_record_credentials,
     )
-    run.credentials = creds.describe()
     pacer = _Pacer(trial.pace_s)
     retries = _Retries(run)
 
@@ -1789,9 +1818,12 @@ def write(run: ProbeRun, spec: ProbeSpec, args: argparse.Namespace) -> None:
 # So the gate runs on :func:`_read_balance`: paced, paginated, and classifying.
 # It prints exactly one machine-readable line for the runner to parse.
 
-#: The two lines the runner parses. Anything else on stdout is diagnostic.
+#: The three lines the runner parses. Anything else on stdout is diagnostic.
 _HELD_PREFIX = "HELD="
 _HOLDING_FAILED_PREFIX = "HOLDING_QUERY_FAILED="
+#: Printed first, always — so the log of any run records which policy answered,
+#: not just which one the runner expected (:data:`POLICY_VERSION`).
+_POLICY_PREFIX = "POLICY_VERSION="
 
 
 def _holding_failure_detail(outcome: _Outcome) -> str:
@@ -1808,9 +1840,23 @@ def _holding_failure_detail(outcome: _Outcome) -> str:
     rt_cd = str(outcome.parsed.get("rt_cd") or "").strip()
     msg_cd = str(outcome.parsed.get("msg_cd") or "").strip()
     if rt_cd != "0" and msg_cd:
-        return msg_cd
-    head = (outcome.text or "").split(":", 1)[0].strip()
-    return head or "unknown"
+        return _one_line(msg_cd)
+    return _one_line((outcome.text or "").split(":", 1)[0]) or "unknown"
+
+
+def _one_line(text: str) -> str:
+    """Broker text, fit for the single anchored line the runner parses.
+
+    Two properties, both load-bearing (independent review F5). CAPPED at
+    :data:`_BODY_EXCERPT_MAX_CHARS`, the same bound every other broker body in
+    this module gets — a gateway that answers HTTP 429 with a colon-free HTML
+    page would otherwise put hundreds of bytes of it into the runner's log,
+    where the runner's own 160-char truncation does not reach. And collapsed to
+    ONE line, because the runner reads this with ``sed -n 's/^…//p'``: an
+    embedded newline would both split the record and let broker-controlled text
+    begin a line of its own.
+    """
+    return " ".join((text or "").split())[:_BODY_EXCERPT_MAX_CHARS]
 
 
 def _print_holding_transient(
@@ -1835,7 +1881,8 @@ def _print_holding_transient(
 def check_holding(argv: list[str] | None = None) -> int:
     """Answer "is ``--symbol`` held, and do we actually KNOW?" for a runner.
 
-    Prints ONE of two anchored lines and exits accordingly:
+    Prints ``POLICY_VERSION=<v>`` and then ONE of two anchored lines, exiting
+    accordingly:
 
     * ``HELD=<n>`` and 0 — the balance walk completed. ``n`` may be 0, and
       then it is a real "not held", not a failure wearing its clothes.
@@ -1866,10 +1913,18 @@ def check_holding(argv: list[str] | None = None) -> int:
         "--pace-s",
         type=float,
         default=DEFAULT_PACE_S,
+        help=f"Min interval between calls (default {DEFAULT_PACE_S}s).",
+    )
+    parser.add_argument(
+        "--retry-wait-ms",
+        type=float,
+        default=None,
         help=(
-            f"Min interval between calls, and the wait before the single "
-            f"retry (default {DEFAULT_PACE_S}s). No separate retry constant: "
-            "the pre-flight has no polling interval to borrow."
+            "Wait before the single retry, in ms. Pass the trial's --poll-ms: "
+            "a ledger throttle (EGW00215) is answered by waiting a whole "
+            "polling interval, not by asking again at the per-second cadence "
+            "that just tripped it. Defaults to --pace-s, which is only right "
+            "when there is no trial interval to borrow."
         ),
     )
     args = parser.parse_args(argv)
@@ -1883,15 +1938,19 @@ def check_holding(argv: list[str] | None = None) -> int:
         return 2
 
     pacer = _Pacer(args.pace_s)
+    retry_wait_s = (
+        args.pace_s if args.retry_wait_ms is None else args.retry_wait_ms / 1000.0
+    )
+    print(f"{_POLICY_PREFIX}{POLICY_VERSION}")
 
     try:
         outcome, _attempts, _retried = _retry_once(
             lambda: _balance_outcome(
                 session, auth, base_url, tr_id, creds, args.symbol, pacer
             ),
-            _print_holding_transient(args.pace_s),
+            _print_holding_transient(retry_wait_s),
             pacer,
-            wait_s=args.pace_s,
+            wait_s=retry_wait_s,
             phase="holding_check",
         )
     finally:

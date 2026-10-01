@@ -372,3 +372,57 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
 
 **부수**: 자기참조 가드 테스트를 `"$0"`(셸) 기준으로 좁혔다 — `git worktree list` 파싱에
 쓰는 awk 의 `$0`(입력 레코드 전체)은 다른 언어의 다른 변수이고 이 파일을 가리키지 않는다.
+
+### 7.12 리뷰 처분 (PR #825 라운드 3 · 7건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | `PCA_LOG` 의 디렉터리를 검사하지 않는다 — 없으면 step 6 리다이렉션이 실패해 **프로브가 아예 안 돌고**, step 7 은 그래도 crontab 엔트리를 지운다 | **수정.** `mkdir -p`+`touch` 선검사, 그리고 crontab 제거를 「프로브가 실제로 시작됨」에 게이트 |
+| F2 | 복사가 기대는 「`.env.*` 는 gitignore」가 **사실이 아니다** — 저장소는 정확한 이름만 무시한다. 그 속성을 「증명」하던 테스트는 자기 `.gitignore` 를 날조했다 | **수정.** 쓰기 전에 `git check-ignore` 로 거부, 테스트는 **실제** `.gitignore` 사용 |
+| F3 | 자기삭제 가드를 `"$0"` 로 좁혀서 `unlink $0`·`mv $0`·`shred $0`·`: > $0` 가 전부 통과한다 | **수정.** 넓은 `$0` + awk 줄만 제외, 동사 집합 확장, **뮤테이션 테스트 7종** |
+| F4 | `run.credentials` 가 세션 생성 **뒤**로 옮겨져, 부트스트랩이 비-ProbeError 로 죽으면 salvage 아티팩트에 자격증명 블록이 없다 | **수정.** `on_credentials` 콜백으로 `require_account` 직후 기록 |
+| F5 | `_holding_failure_detail` 이 브로커 본문을 **무제한·개행 포함**으로 앵커 줄에 찍는다 | **수정.** `_one_line()` — 300자 상한 + 한 줄로 접기 |
+| F6 | 전처리 재시도가 `--pace-s`(1.5 s)만 기다린다 — 방금 스로틀을 유발한 바로 그 초당 간격 | **수정.** `--retry-wait-ms`, 러너가 `PCA_POLL_MS` 를 넘긴다 |
+| F7 | 「필요한 수정이 있나」 게이트가 소스 **문자열 grep** 이다 — 언급과 수정을 구분 못 하고 rename 에 깨진다 | **수정.** `POLICY_VERSION` 핸드셰이크 |
+
+**F2 가 유일한 보안 건이고, 지적이 옳았다.** 실측: `git check-ignore` 는 `.env.mock` 을
+무시하지만 `.env.mock.bak-20260915`(README 가 거론하던 이름) · `.env.probe` 는 **무시하지
+않는다**. 저장소에는 `.env.*` 글롭이 없고 정확한 이름 목록만 있다. 그런데 그 속성을
+지키던 테스트가 자기 `.gitignore` 에 `.env.*` 를 **날조**해 넣고 통과하고 있었다 — 가드가
+자기가 막는다고 말한 것을 허용하는, 이 저장소가 네 번 겪은 바로 그 형태다. 처분은
+**복사 전 거부**(`git check-ignore -q`, 존재하지 않는 경로에도 답하므로 아무것도 쓰이지
+않는다)이고, 테스트는 실제 `.gitignore` 를 복사해 쓴다. 음성 테스트 1건 추가:
+`.env.mock.bak-x` → 거부, 워크트리에 아무것도 남지 않음.
+
+**F3 은 내가 라운드 2 에서 좁혀 만든 구멍이다.** awk 의 `$0` 을 피하려고 셸 `"$0"` 로
+좁혔고, 그 결과 `unlink $0` 류가 전부 통과하게 됐다. 되돌려 넓게 보되 awk 줄만 이름으로
+제외하고, 동사도 `rm|unlink|mv|shred|truncate|: >` 로 넓혔다. **이 가드는 미래의 편집을
+막는 것이라 오늘 코드가 green 이어도 아무것도 증명하지 못하므로**, 일부러 망가뜨린 사본
+7종에 대해 가드가 실제로 red 가 되는지 확인하는 뮤테이션 테스트를 붙였다.
+
+**라운드 4 red 증명.** 새 테스트 14건 중 **11건이 `22e9747a` 에서 red**. red 가 아닌 3건과
+그 이유를 그대로 적는다 — 셋 다 의도된 것이다:
+
+- `test_the_repo_ignores_exact_env_names_not_a_glob` — 실제 `.gitignore` 를 **측정**하는
+  전제 확인 테스트다. 코드가 바뀐 게 아니므로 전후가 같아야 맞다.
+- `test_the_preflight_falls_back_to_pace_when_no_interval_is_given` — 바뀌지 **않아야**
+  하는 기본값을 고정하는 핀(`EGW00201` 핀과 같은 성격).
+- `test_runner_template_never_removes_itself` — 오늘 파일은 전후 모두 깨끗하다. 효력은
+  위의 뮤테이션 테스트 7종이 증명한다(그쪽은 좁은 가드에서 4종이 통과해 red).
+
+### 7.13 라운드 4 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -q -p no:cacheprovider
+  → 203 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 파일 2건)               → unchanged
+bash -n run_p_ca.sh                        → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0
+```
+
+**CI 비고**: `22e9747a` 에서 `test` pass(6m38s) · `performance` fail(+236.5%).
+후자는 이 PR 과 무관한 기존 상태다 — 메모리 `ci-gating-reality` 의 「baseline 이
+2026-05-30 생성 후 미갱신이고 현재값이 일관되게 ~2.6배」와 수치가 일치하고, 이 PR 은
+`tools/broker_probes/**` 와 `tests/tools/**` 밖을 건드리지 않는다. **baseline 재생성은
+하지 않는다** — 먼저 재생성하면 진짜 회귀가 영구히 안 보이게 된다(같은 메모리 경고).

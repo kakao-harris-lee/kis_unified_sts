@@ -76,17 +76,17 @@ else
 fi
 log "checkout ok: repo=$REPO repo_commit=$(git -C "$REPO" rev-parse HEAD)"
 
-# --- 2. the code this run depends on ---------------------------------------
+# --- 2. runner and probe must be the same generation -----------------------
 #
-# Each needle is a fix an earlier P-CA trial was lost to, so a checkout without
-# it must not be used to produce evidence: `pacer.derive(` is the cross-phase
-# pacing fix (2026-09-17, poll #1 went out back-to-back with the reference GET)
-# and `_BAL_TRANSIENT` is the transient-retry policy (2026-09-30, four stops).
-for _needle in 'pacer.derive(' '_BAL_TRANSIENT'; do
-  grep -q -- "$_needle" "$REPO/tools/broker_probes/probes_ca.py" ||
-    die "probes_ca.py in this checkout is missing '$_needle' — required fix not present" 4
-done
-log "required probes_ca.py fixes present"
+# The probe's own POLICY_VERSION, checked against the one this template was
+# written for. This replaces grepping probes_ca.py for 'pacer.derive(' and
+# '_BAL_TRANSIENT': a substring test cannot tell a fix from a mention (this
+# PR's plan quotes the literal), and it breaks on a rename — failing a
+# scheduled trial with "required fix not present" while the fix is right
+# there. Both files live in this checkout, so a mismatch means the runner was
+# COPIED OUT of a different tree, which is exactly the 2026-09-30 mistake.
+# The comparison happens in step 3, once PCA_PYTHON is known.
+EXPECT_POLICY_VERSION=p-ca-retry-policy/1
 
 # --- 3. instance values (no defaults) --------------------------------------
 
@@ -103,6 +103,15 @@ case "$PCA_KIS_ENV" in
   mock | real) ;;
   *) die "PCA_KIS_ENV must be 'mock' or 'real' (got '$PCA_KIS_ENV')" ;;
 esac
+
+# Step 6 appends the probe's whole output to PCA_LOG. If that directory does
+# not exist the redirection fails, bash never runs the probe, and every log()
+# call has already been silently dropping its line — the "attempt vanished"
+# shape this runner exists to prevent (review F1). Make it real here, and fail
+# loudly if it cannot be.
+mkdir -p -- "$(dirname -- "$PCA_LOG")" ||
+  die "cannot create the directory for PCA_LOG=$PCA_LOG"
+touch -- "$PCA_LOG" || die "PCA_LOG is not writable: $PCA_LOG"
 
 # Conditionally required, and checked HERE with the rest (review F3): every
 # other class's observable leg is the QUANTITY leg, which pairs with
@@ -126,12 +135,17 @@ PY="$PCA_PYTHON"
 # resolving tools.broker_probes from the main checkout would stamp the wrong
 # commit and write the artifact where this script does not look (review F1).
 LOADED=$(PYTHONPATH="$REPO" "$PY" -c \
-  "import tools.broker_probes.probes_ca as m; print(m.__file__)" 2>&1) ||
+  "import tools.broker_probes.probes_ca as m; print(m.__file__); print(m.POLICY_VERSION)" 2>&1) ||
   die "cannot import tools.broker_probes from $REPO with $PY: $(printf '%s' "$LOADED" | tail -1 | cut -c1-160)"
-case "$LOADED" in
-  "$REPO"/*) log "probe module resolves inside the checkout: $LOADED" ;;
-  *) die "probe module resolves OUTSIDE the checkout ($LOADED) — the guards above would vouch for code that never ran" ;;
+MODULE_PATH=$(printf '%s\n' "$LOADED" | sed -n '1p')
+MODULE_POLICY=$(printf '%s\n' "$LOADED" | sed -n '2p')
+case "$MODULE_PATH" in
+  "$REPO"/*) log "probe module resolves inside the checkout: $MODULE_PATH" ;;
+  *) die "probe module resolves OUTSIDE the checkout ($MODULE_PATH) — the guards above would vouch for code that never ran" ;;
 esac
+[ "$MODULE_POLICY" = "$EXPECT_POLICY_VERSION" ] ||
+  die "policy version mismatch: this runner was written for '$EXPECT_POLICY_VERSION', the checkout's probes_ca.py reports '$MODULE_POLICY' — runner and probe are from different trees" 4
+log "probe policy version $MODULE_POLICY matches this runner"
 export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 
 [ -d "$PCA_EVIDENCE_DIR" ] || die "evidence dir missing: $PCA_EVIDENCE_DIR"
@@ -157,6 +171,17 @@ case "$PCA_CREDENTIAL_FILE" in
     ;;
   *)
     CRED_FILE="$REPO/$PCA_CREDENTIAL_FILE"
+    # BEFORE anything is written. The repo ignores EXACT names (.env,
+    # .env.mock, .env.real, .env.paper, .env.live, .env.production,
+    # .env.local, .env.*.local) — not a `.env.*` glob, so `.env.mock.bak-…`,
+    # the very name this README once suggested, is NOT ignored (review F2).
+    # Copying a filled credential file onto an unignored path puts it where
+    # `git add -A` would stage it: CLAUDE.md Non-Negotiable, "never commit
+    # real credentials … or filled .env files". `git check-ignore` answers for
+    # a path that does not exist yet, so the refusal costs nothing and nothing
+    # is ever written to the wrong place.
+    git -C "$REPO" check-ignore -q -- "$PCA_CREDENTIAL_FILE" ||
+      die "relative credential file '$PCA_CREDENTIAL_FILE' is NOT gitignored in $REPO — refusing to place a filled credential file where 'git add -A' would stage it. Use an ignored name (.env.mock, .env.real, .env.paper, …) or give an absolute path outside the checkout"
     if [ ! -r "$CRED_FILE" ]; then
       PRIMARY=$(git -C "$REPO" worktree list --porcelain |
         awk '/^worktree /{print substr($0, 10); exit}')
@@ -205,9 +230,13 @@ log "stock account fingerprint=$ACCOUNT_FP (expect $PCA_EXPECT_ACCOUNT_FP)"
 # `shared/kis/client.py::get_stock_balance`, which returns [] on every failure
 # and reads page 1 only. It prints exactly one of two anchored lines.
 
+# --retry-wait-ms is this trial's own polling interval: a ledger throttle
+# (EGW00215) is answered by waiting a whole interval, not by asking again at
+# the per-second cadence that just tripped it (review F6). No new constant.
 HELD_OUT=$("$PY" -m tools.broker_probes.probes_ca --check-holding \
   --env "$PCA_KIS_ENV" --symbol "$PCA_SYMBOL" \
-  --token-cache-dir "$PCA_TOKEN_CACHE" --pace-s "$PCA_PACE_S" 2>&1)
+  --token-cache-dir "$PCA_TOKEN_CACHE" --pace-s "$PCA_PACE_S" \
+  --retry-wait-ms "$PCA_POLL_MS" 2>&1)
 held_rc=$?
 HELD=$(printf '%s\n' "$HELD_OUT" | sed -n 's/^HELD=//p' | tail -1)
 HELD_FAILED=$(printf '%s\n' "$HELD_OUT" | sed -n 's/^HOLDING_QUERY_FAILED=//p' | tail -1)
@@ -264,9 +293,20 @@ PROBE_ARGS=(
 ART_BEFORE=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
 
 log "=== START P-CA $PCA_SYMBOL env=$PCA_KIS_ENV window=${PCA_WINDOW_S}s poll=${PCA_POLL_MS}ms pace=${PCA_PACE_S}s"
-printf '\n' | "$PY" -m tools.broker_probes.run P-CA "${PROBE_ARGS[@]}" \
-  >>"$PCA_LOG" 2>&1
-rc=$?
+# A brace GROUP, not a subshell, so the two assignments inside persist. If the
+# redirection itself fails, bash runs NEITHER line and PROBE_LAUNCHED stays 0
+# — which is how step 7 can tell "the probe ran and failed" from "the probe
+# never started", and refuse to retire the cron entry in the second case
+# (review F1).
+PROBE_LAUNCHED=0
+rc=0
+{
+  printf '\n' | "$PY" -m tools.broker_probes.run P-CA "${PROBE_ARGS[@]}"
+  rc=$?
+  PROBE_LAUNCHED=1
+} >>"$PCA_LOG" 2>&1
+[ "$PROBE_LAUNCHED" -eq 1 ] ||
+  die "could not append to PCA_LOG ($PCA_LOG), so the probe was never started — the crontab entry is left in place"
 log "=== END P-CA rc=$rc"
 
 # --- 7. artifact + crontab (never self-deletion) ---------------------------
@@ -280,6 +320,8 @@ else
   cp "$ART" "$PCA_EVIDENCE_DIR"/ && log "artifact copied: $(basename "$ART") -> $PCA_EVIDENCE_DIR"
 fi
 
+# Only now, with PROBE_LAUNCHED proven above: an early ABORT leaves the
+# schedule alone so the next slot can retry.
 if [ -n "${PCA_CRON_MARK:-}" ]; then
   if crontab -l 2>/dev/null | grep -Fq -- "$PCA_CRON_MARK"; then
     crontab -l 2>/dev/null | grep -Fv -- "$PCA_CRON_MARK" | crontab - &&
