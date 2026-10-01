@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import sqlite3
+import time
+from collections.abc import Sequence
 from multiprocessing.synchronize import Barrier as BarrierType
 from pathlib import Path
 from queue import Empty
@@ -51,9 +53,17 @@ from tos.staterestore.store import DIMENSION_COMMIT_ORDER, CompositeStateStore
 #: pre-fix loss show up in nearly every round rather than occasionally.
 _PROCESSES = 8
 
-#: Bound on every cross-process wait, so a broken child fails the test instead of
-#: wedging the suite.
-_JOIN_TIMEOUT_S = 60.0
+#: How long the parent waits for a child to REPORT, and how long a child waits at the
+#: start barrier. Generous: it is only reached when something is already broken.
+_REPORT_TIMEOUT_S = 60.0
+
+#: The budget for bringing every child down afterwards, **shared across all of them**
+#: rather than spent per child (review F5). Given one child that wedges in
+#: ``barrier.wait`` or inside sqlite's busy handler — the class of failure this module
+#: exists to catch — a per-child timeout of the size above turns "the parent already
+#: waited 60 s" into "and now waits up to 8 x 60 s more" before the intended
+#: ``AssertionError`` ever surfaces, which is wedging the suite, not failing the test.
+_REAP_TIMEOUT_S = 10.0
 
 #: Rounds of :data:`_PROCESSES` openers this test runs.
 #:
@@ -71,7 +81,8 @@ _JOIN_TIMEOUT_S = 60.0
 #: A test of N rounds is green on the broken code with probability q**N. Clearing 1 %
 #: needs 3 rounds at that point estimate and 4 at its 95 % Wilson UPPER bound
 #: (q = 0.291). Ten is the next round number an order of magnitude past both: 5.8e-9 at
-#: the point estimate, 4.3e-6 at the upper bound, for ~3 s of wall clock.
+#: the point estimate, 4.3e-6 at the upper bound. Measured cost of the whole module
+#: (both tests, 10 rounds plus the reopen round): 1.4 / 2.0 / 2.0 s over three runs.
 _BIRTH_RACE_ROUNDS = 10
 
 #: The identity every child commits under. Fixed so the reopen assertion below is a
@@ -129,12 +140,29 @@ def _child(
     the ONLY way this file is ever created in production.
     """
     try:
-        barrier.wait(timeout=_JOIN_TIMEOUT_S)
+        barrier.wait(timeout=_REPORT_TIMEOUT_S)
         with CompositeStateStore(Path(path_str)) as store:
             store.commit_composite(_composite())
         queue.put("OK")
     except BaseException as exc:  # noqa: BLE001 - the exception IS this child's result
         queue.put(f"{type(exc).__name__}: {exc}")
+
+
+def _reap(children: Sequence[mp.process.BaseProcess]) -> None:
+    """Bring every child down inside ONE shared deadline, then terminate the stragglers.
+
+    The join budget is :data:`_REAP_TIMEOUT_S` for the whole set, not per child, so a
+    single wedged opener costs one deadline rather than eight. ``terminate`` runs only
+    AFTER that join: on the healthy path every child has already exited by then, so the
+    exit-code assertion downstream never sees a ``-SIGTERM`` this helper caused.
+    """
+    deadline = time.monotonic() + _REAP_TIMEOUT_S
+    for child in children:
+        child.join(timeout=max(0.0, deadline - time.monotonic()))
+    for child in children:
+        if child.is_alive():  # pragma: no cover - only on a wedged child
+            child.terminate()
+            child.join(timeout=_REAP_TIMEOUT_S)
 
 
 def _run_concurrent_first_open(path: Path) -> list[str]:
@@ -149,16 +177,13 @@ def _run_concurrent_first_open(path: Path) -> list[str]:
     for child in children:
         child.start()
     try:
-        outcomes = [queue.get(timeout=_JOIN_TIMEOUT_S) for _ in range(_PROCESSES)]
+        outcomes = [queue.get(timeout=_REPORT_TIMEOUT_S) for _ in range(_PROCESSES)]
     except Empty as exc:  # pragma: no cover - only on a wedged child
+        _reap(children)
         raise AssertionError(
-            f"a child never reported an outcome within {_JOIN_TIMEOUT_S}s"
+            f"a child never reported an outcome within {_REPORT_TIMEOUT_S}s"
         ) from exc
-    finally:
-        for child in children:
-            child.join(timeout=_JOIN_TIMEOUT_S)
-            if child.is_alive():  # pragma: no cover - only on a wedged child
-                child.terminate()
+    _reap(children)
     assert all(
         child.exitcode == 0 for child in children
     ), f"a child exited abnormally: {[child.exitcode for child in children]}"
