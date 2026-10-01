@@ -50,7 +50,7 @@ Public surface
   anywhere under ``tos/`` by TOS-FW-C).
 * :mod:`tos.staterestore._wal` — the ``journal_mode=WAL`` switch the store opens
   through, which waits out the birth race two concurrent first opens produce (#823).
-  Private: the store is its only caller. Only :class:`JournalModeRefused`, its
+  Private: the store is its only caller. Only :class:`StoreJournalModeRefused`, its
   fail-closed refusal, is re-exported here — that one a caller can catch.
 
 ⚠ Authoring is not evidence: this package closes no Evidence Register row. STATE-EV-004
@@ -61,11 +61,12 @@ reconstruction axes only — real network and real credential identity stay defe
 
 from __future__ import annotations
 
-from tos.staterestore._wal import JournalModeRefused
+from tos.staterestore._wal import StoreJournalModeRefused
 from tos.staterestore.reload import (
     ABSENT_DIMENSION_FILL,
     IncompleteStoreError,
     RestartReconstruction,
+    StoreOpenRefused,
     discard_caches,
     reload_conservative,
 )
@@ -80,9 +81,10 @@ __all__ = [
     "CompositeStateStore",
     "DIMENSION_COMMIT_ORDER",
     "IncompleteStoreError",
-    "JournalModeRefused",
+    "StoreJournalModeRefused",
     "RestartReconstruction",
     "StoreIntegrityError",
+    "StoreOpenRefused",
     "discard_caches",
     "reload_conservative",
 ]

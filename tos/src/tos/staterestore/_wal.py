@@ -47,8 +47,15 @@ _WAL_JOURNAL_MODE = "wal"
 _SQLITE_PRIMARY_CODE_MASK = 0xFF
 
 
-class JournalModeRefused(RuntimeError):
+class StoreJournalModeRefused(RuntimeError):
     """The store file did NOT come out in ``journal_mode=WAL``.
+
+    **Named distinctly from the runtime twin on purpose** (review round-2 F5). The
+    runtime shell raises ``tos_runtime.operations.schema_ledger.JournalModeRefused`` for
+    the same condition on ITS four stores, and the two are different classes with no
+    base in common: an ``except JournalModeRefused`` written against one catches nothing
+    from the other. Identical names would have made that a silent miss in any supervisor
+    that opened both; distinct names make it a visible import.
 
     Fail-closed, and for the same reason :class:`~tos.staterestore.store
     .StoreIntegrityError` is: every durability argument this package makes assumes WAL
@@ -115,7 +122,8 @@ def _wait_out_the_lock_and_retry(conn: sqlite3.Connection) -> str:
     """
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("ROLLBACK")
-    return _switch_journal_to_wal(conn)
+    mode = _switch_journal_to_wal(conn)
+    return mode
 
 
 def enable_wal_journal(conn: sqlite3.Connection) -> None:
@@ -134,7 +142,7 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
       released the lock within the connection's whole timeout, which is a refusal rather
       than something to keep hammering — that ``OperationalError`` propagates unchanged.
     * **The return value is checked.** sqlite reports a refused switch by RETURNING the
-      mode it kept, not by raising, so a non-``wal`` answer is :class:`JournalModeRefused`.
+      mode it kept, not by raising, so a non-``wal`` answer is :class:`StoreJournalModeRefused`.
     * **Only a lock contest is retried**, by PRIMARY code (:func:`_is_lock_contest`).
 
     **What the retry actually does depends on who held the lock.** In the case this
@@ -166,7 +174,7 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
             makes the ``BEGIN IMMEDIATE`` above legal as an explicit statement.
 
     Raises:
-        JournalModeRefused: The file is not in WAL mode after the switch.
+        StoreJournalModeRefused: The file is not in WAL mode after the switch.
         sqlite3.OperationalError: The lock was still held when the single retry ran, or
             the wait itself could not take it — fail-closed; nothing was written. Also
             any ``OperationalError`` whose primary code is not ``SQLITE_BUSY``, unretried.
@@ -180,7 +188,7 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
     if mode is None:
         mode = _wait_out_the_lock_and_retry(conn)
     if mode != _WAL_JOURNAL_MODE:
-        raise JournalModeRefused(
+        raise StoreJournalModeRefused(
             f"sqlite kept journal_mode={mode!r} instead of switching this store file to "
             "WAL; refusing to open it — every durability argument in tos.staterestore "
             "assumes journal_mode=WAL together with synchronous=FULL"

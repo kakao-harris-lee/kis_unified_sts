@@ -202,6 +202,11 @@ def closing_on_failure(resource: SupportsClose) -> Iterator[None]:
 class JournalModeRefused(RuntimeError):
     """Raised at store construction when the file did NOT come out in ``journal_mode=WAL`` — a
     boot refusal, never a silent fallback to the rollback journal (:func:`enable_wal_journal`).
+
+    Covers the four stores THIS package owns. The kernel's own composite-state store raises
+    ``tos.staterestore.StoreJournalModeRefused`` for the same condition from its own copy of
+    the mechanism (#823); the two are deliberately different names because they are different
+    classes, and catching one would silently miss the other (review round-2 F5).
     """
 
 

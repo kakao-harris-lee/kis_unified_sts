@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tos.staterestore._wal import JournalModeRefused, enable_wal_journal
+from tos.staterestore._wal import StoreJournalModeRefused, enable_wal_journal
 from tos.staterestore.store import CompositeStateStore
 
 _WAL_PRAGMA = "PRAGMA journal_mode=WAL"
@@ -297,7 +297,7 @@ def test_a_journal_mode_that_is_not_wal_refuses() -> None:
     """
     conn = sqlite3.connect(":memory:", isolation_level=None)
     try:
-        with pytest.raises(JournalModeRefused, match="'memory'"):
+        with pytest.raises(StoreJournalModeRefused, match="'memory'"):
             enable_wal_journal(conn)
     finally:
         conn.close()
@@ -336,7 +336,7 @@ def test_a_readonly_store_is_refused_exactly_as_it_was_before_the_fix(
 
     * the error is NOT a lock contest, so it is re-raised from the FIRST attempt (the
       log is the evidence — no ``BEGIN IMMEDIATE``, no second PRAGMA);
-    * it is an ``OperationalError``, never the new :class:`JournalModeRefused`, so a
+    * it is an ``OperationalError``, never the new :class:`StoreJournalModeRefused`, so a
       caller that distinguishes "cannot write this file" from "this file did not end up
       in WAL" still can.
 
@@ -348,7 +348,7 @@ def test_a_readonly_store_is_refused_exactly_as_it_was_before_the_fix(
         with pytest.raises(sqlite3.OperationalError, match="readonly") as refusal:
             enable_wal_journal(conn)
 
-        assert not isinstance(refusal.value, JournalModeRefused)
+        assert not isinstance(refusal.value, StoreJournalModeRefused)
         assert conn.log == [_WAL_PRAGMA]
     finally:
         conn.close()
