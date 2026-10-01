@@ -92,7 +92,7 @@
 - ⚠ 비용 쪽(+1.8 % 파일 증가)은 365 일치에서 **재확인되지 않았다**(드라이버가 인덱스 뒤 크기를
   적지 않는다 — §7.1.12 「아티팩트가 답하지 못한 것」 2).
 
-### A2-b. `FlowObservationReader` 의 제안별 전체 스캔 (후속 — 이 계획에서 구현하지 않음)
+### A2-b. `FlowObservationReader` 의 제안별 전체 스캔 (**구현 — PR #832**)
 
 - 위 전체 스캔의 소비자 넷 중 셋(복원 시 체인 재검증 · 보존 판정 · 운영자 프로젝션)은 오프라인
   이지만 넷째는 **런타임이고 제안마다 돈다**: `riskstate/flow_observation.py` 의
@@ -105,6 +105,9 @@
 - **고칠 자리는 인덱스가 아니라 그 행이다.** `seq` 는 `entries` 의 PK 이므로 PK 조회 한 번으로
   행을 집고 `kind` 를 확인하면 된다. 별도 PR 로 다루고, 회귀 테스트는 「전체 스캔을 하지 않는다」를
   들어야 한다.
+- **착지: PR #832 (2026-10-01) — §7.1.13.** 위 두 문장 그대로 구현했다. 새 인덱스는 없다
+  (`seq` 가 이미 PK 다). 회귀 테스트는 **질의계획을 핀**한다 — 동치성만으로는 스캔 재발을
+  못 잡기 때문이다(걷기도 답은 맞다).
 
 ### A3. 압축 콜드 백업 (기존 `backup()` 재사용)
 
@@ -1308,6 +1311,63 @@ RSS 는 §7.1.2 의 RSS 표에서 365 일치 `measure` 칸이 `(중단 — 아�
    전체 스캔 소비자 넷 중 셋은 복원·보존·운영자 프로젝션(오프라인)이지만, 넷째는
    **리스크 단계 시도마다 도는 런타임 경로**다(위 「읽어야 할 것」 2 의 소비자 표). A2 인덱스는
    그것을 돕지 못하고 **고칠 자리는 그 행**이다 — `§2 A2-b` 로 등재했고 이 PR 에서
-   구현하지 않는다.
+   구현하지 않는다. **✅ 후속 PR #832 에서 구현됐다 — §7.1.13.**
 4. **트랙 B 의 급함은 바뀌지 않는다.** 디스크는 여전히 여유 ≈4.7 년이고(§0-2), 이 측정은
    파괴적 퍼지의 전제 B-1…B-5 중 어느 것도 건드리지 않는다.
+
+#### 7.1.13 A2-b 착지 — PR #832 (2026-10-01, 분기점 main `a0578bf9`) — §7.1 과 별개 PR
+
+§7.1.12 「읽어야 할 것」 2 의 소비자 표가 가리킨 **넷째**(런타임·제안마다)를 닫는다.
+앞의 셋(복원 시 체인 재검증 · 보존 판정 · 운영자 프로젝션)은 손대지 않았다 — 오프라인·복원
+경로라 같은 무게를 갖지 않는다는 그 절의 판단 그대로다.
+
+**바꾼 것은 한 줄의 읽기 방식이지 저장 표현이 아니다.** 새 읽기 전용
+`SqliteEvidenceStore.entry_meta(seq) -> _EntryRow | None` 이 `iter_entry_meta` 와 **같은
+meta-only 행 모양**을 `WHERE seq = ?` 로 읽고, `_resolve_handling_started_monotonic` 이
+그것을 쓴다. 스키마·PRAGMA·행 바이트·digest 는 그대로이고 **새 인덱스도 없다** — `seq` 는
+이미 `entries` 의 `INTEGER PRIMARY KEY` 다. 모자랐던 것은 인덱스가 아니라 **그것을 쓰는
+질의**였다. `iter_entry_meta` 는 나머지 호출부를 위해 전체 테이블 계약 그대로 남는다.
+
+| | 질의계획 |
+|---|---|
+| 전 | `SCAN entries` |
+| 후 | `SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)` |
+
+**동작은 불변이다.** `kind` 확인은 걷기가 하던 바로 그 확인이고, 행이 없거나 `kind` 가
+다르면 전처럼 `None` — 기록된 부재이지 추측이 아니다. 조회는 **어떤 행을 읽을지**를 좁히지
+**어떤 행을 받아들일지**를 좁히지 않는다.
+
+**⚠ 이 PR 은 「130 s → X」를 재지 않았다.** 위 표는 **질의계획**이고, 365 일치 합성
+스토어에 대한 전·후 벽시계 비교는 하지 않았다(§7.1.12 의 드라이버를 이 변경으로 다시
+돌리지 않았다). 들 수 있는 수치는 §7.1.12 의 **전**(129.7 s) 하나뿐이다 — 후를 거기에
+짝지어 적지 않는 이유는 §7.1.12 자신이 「서로 다른 형태 집합의 양끝을 짝지었다」로 정정한
+그 실수를 되풀이하지 않기 위해서다.
+
+**회귀 테스트는 동치성과 계획을 따로 든다** — 동치성만으로는 스캔 재발을 못 잡기 때문이다.
+걷기도 **답은 맞다**, 전 이력을 읽을 뿐이다. 그래서 둘을 함께 둔다:
+
+| 테스트 | 무엇을 드는가 |
+|---|---|
+| `test_handling_started_lookup_agrees_with_the_pre_a2b_walk` | A2-b **이전 걷기를 오라클로 재현**해 세 모양(실제 마커 · 같은 `seq` 의 **다른 `kind`** · **없는 `seq`**)에서 값이 같은지 |
+| `test_handling_started_resolution_never_scans_the_evidence_table` | 해소가 실제로 날린 문장을 `set_trace_callback` 으로 잡아 `EXPLAIN QUERY PLAN` 으로 다시 돌린다. `SEARCH … USING INTEGER PRIMARY KEY` 요구 · `SCAN` 거부 · **문장 0 건이면 실패**(공허한 green 차단) |
+| `test_entry_meta_seeks_the_primary_key_while_iter_entry_meta_scans` | 스토어 레벨에서 **양쪽**을 핀 — `entry_meta` 는 PK 탐색, `iter_entry_meta` 는 여전히 `SCAN`(그 메서드의 문서화된 계약) |
+
+**레드 증명(실측).** 구현만 전 코드로 되돌려 돌렸고, 뒤에 복원했다:
+
+```
+E       AssertionError: ['SCAN entries']
+FAILED ...::test_handling_started_resolution_never_scans_the_evidence_table
+```
+
+같은 실행에서 동치성 3 건은 **green 이었다** — 이것이 계획 핀을 따로 두는 이유를 숫자로
+보여 준다(오라클은 전 코드에서도 통과한다).
+
+**게이트** (워크트리 루트 · 루트 `.venv`): `pytest tos/runtime/tests` **3253 passed** ·
+`pytest tos/tests` **9616 passed** · `ruff check .` pass · `black --check`(CI 와 같은 대상)
+1305 unchanged · mypy 4 스텝 전부 `Success`(266 / 189 / 587 / 238) ·
+`tools/tos_firewall_check.py` PASS · `lint-imports` 3 kept / 0 broken ·
+`tools/tos_size_budget.py --check` 0 violations.
+
+**digest 31차 재도출** — 런타임 소스 두 파일이 바뀌므로 필수다.
+`3c4be1d9…`(30차) → **`62be5abf…`**, 두 경로 일치, `release.yaml` 과
+`_VALUE_PINS` 양쪽 갱신(상세는 `config/tos_runtime/paper/release.yaml` 의 31차 문단).
