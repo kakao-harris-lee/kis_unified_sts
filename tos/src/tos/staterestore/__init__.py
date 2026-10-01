@@ -68,6 +68,7 @@ from tos.staterestore.reload import (
     RestartReconstruction,
     StoreOpenRefused,
     discard_caches,
+    open_store,
     reload_conservative,
 )
 from tos.staterestore.store import (
@@ -86,5 +87,6 @@ __all__ = [
     "StoreIntegrityError",
     "StoreOpenRefused",
     "discard_caches",
+    "open_store",
     "reload_conservative",
 ]

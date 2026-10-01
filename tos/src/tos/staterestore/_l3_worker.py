@@ -50,7 +50,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,9 +66,11 @@ from tos.orthostate import (
     coupling_violations,
 )
 from tos.rcl import CapacityState
-from tos.staterestore._wal import StoreJournalModeRefused
-from tos.staterestore.reload import StoreOpenRefused, reload_conservative
-from tos.staterestore.store import CompositeStateStore
+from tos.staterestore.reload import (
+    StoreOpenRefused,
+    open_store,
+    reload_conservative,
+)
 
 #: The deterministic crash status. 137 is the conventional "killed" code; the value is a
 #: constant so the outside orchestration can assert the crash was *the parametrized one*
@@ -336,17 +337,14 @@ def run_writer(scenario: CrashScenario, store_path: Path, cache_path: Path) -> N
             CPL_MISMATCH_EXIT,
         )
 
-    # The writer classifies its own open the same way the reader does (review round-2
-    # F3). Only the CONSTRUCTOR is wrapped: a failure to commit is a defect in this
-    # worker or in the catalog, and must not be reported as "there was no store".
+    # The writer classifies its own open the same way the reader does, through the SAME
+    # boundary (review round-2 F3, then round-3 F8 for the shared one). Only the open is
+    # classified: a failure to commit is a defect in this worker or in the catalog, and
+    # must not be reported as "there was no store".
     try:
-        store = CompositeStateStore(store_path)
-    except (StoreJournalModeRefused, sqlite3.Error) as exc:
-        _fail(
-            f"the composite-state store at {store_path} could not be opened on the "
-            f"WAL substrate this stage is defined over: {type(exc).__name__}: {exc}",
-            STORE_UNOPENABLE_EXIT,
-        )
+        store = open_store(store_path)
+    except StoreOpenRefused as exc:
+        _fail(str(exc), STORE_UNOPENABLE_EXIT)
     with contextlib.closing(store):
         committed = store.commit_composite(
             composite, stop_after=scenario.commit_dimension_count

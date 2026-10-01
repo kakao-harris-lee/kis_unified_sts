@@ -137,6 +137,44 @@ class StoreOpenRefused(RuntimeError):
     """
 
 
+def open_store(path: Path) -> CompositeStateStore:
+    """Open the durable store, or refuse with :class:`StoreOpenRefused`.
+
+    **The one open boundary** (review round-3 F8). ``run_reader`` reached it through
+    :func:`reload_conservative` while ``run_writer`` had its own copy of the same
+    ``try``/``except`` tuple and the same message; finding 3 then required widening
+    that tuple, in two places, with nothing holding them together. There is one now,
+    and both callers catch one type.
+
+    The OPEN and the READ are separate on purpose (review round-2 F4). They fail for
+    different reasons and a caller must be able to tell them apart: a store that cannot
+    be opened is a substrate finding, while anything raised after a successful open — a
+    malformed page, a column that is not there — is a finding ABOUT a store that WAS
+    read, which is what this package exists to produce.
+
+    Args:
+        path: The store file. Its parent is created by the constructor, so a parent
+            that cannot be made is an open failure like any other.
+
+    Raises:
+        StoreOpenRefused: The store could not be opened, chained onto the underlying
+            error. Three families reach this, and the third is the one review round-3
+            F3 found escaping: the fail-closed WAL switch
+            (:class:`~tos.staterestore.StoreJournalModeRefused`), sqlite itself
+            (:class:`sqlite3.Error` — a lock contest, a read-only file, a path sqlite
+            cannot open), and the filesystem (:class:`OSError` from the parent
+            ``mkdir`` — a parent that is a regular file, or one that may not be written,
+            both of which raise BEFORE ``sqlite3.connect`` is ever called).
+    """
+    try:
+        return CompositeStateStore(path)
+    except (StoreJournalModeRefused, sqlite3.Error, OSError) as exc:
+        raise StoreOpenRefused(
+            f"the composite-state store at {path} could not be opened on the WAL "
+            f"substrate this package is defined over: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 class IncompleteStoreError(RuntimeError):
     """The store cannot identify the record it holds (fail-closed).
 
@@ -215,7 +253,9 @@ def reload_conservative(
     Args:
         store_path: The on-disk store written before the crash.
         intent_identity: The identity whose markers are re-derived.
-        cache_paths: Optimistic caches to discard before re-deriving (S-3).
+        cache_paths: Optimistic caches to discard before re-deriving (S-3). Discarded
+            only once the store has been opened — a refused open leaves them in place
+            (review round-3 F4).
         state_model_version: Carried onto the rebuilt composite when known.
 
     Returns:
@@ -234,20 +274,19 @@ def reload_conservative(
             malformed page, a missing column. Deliberately not wrapped: it is a finding
             about a store that was opened (review round-2 F4).
     """
+    # OPEN FIRST, then discard (review round-3 F4). Discarding is irreversible — the
+    # files are unlinked — and a refused open is now a distinguishable, retryable
+    # condition (:class:`StoreOpenRefused`, added so a supervisor could tell a lock
+    # contest from a verdict). Discarding before the open destroyed the optimistic
+    # caches on the way to telling the caller the open had failed, so a retry ran
+    # against a tree whose cache evidence was already gone and the eventual
+    # ``discarded_caches`` no longer said what had really been there.
+    #
+    # S-3 is unaffected: the discard still happens before anything is READ, and nothing
+    # in this module consults a cache on any path, so "re-derived from evidence alone"
+    # does not depend on which of the two statements comes first.
+    store = open_store(Path(store_path))
     discarded = discard_caches(cache_paths)
-    # The OPEN and the READ are separate statements on purpose (review round-2 F4). They
-    # fail for different reasons and a caller must be able to tell them apart: a store
-    # that cannot be opened is a substrate finding, while anything raised after a
-    # successful open — a malformed page, a column that is not there — is a finding
-    # ABOUT a store that WAS read, which is what this stage exists to produce. Wrapping
-    # the whole `with` in one handler folded the second into the first.
-    try:
-        store = CompositeStateStore(Path(store_path))
-    except (StoreJournalModeRefused, sqlite3.Error) as exc:
-        raise StoreOpenRefused(
-            f"the composite-state store at {store_path} could not be opened on the "
-            f"WAL substrate this package is defined over: {type(exc).__name__}: {exc}"
-        ) from exc
     with contextlib.closing(store):
         markers = store.read_markers(intent_identity)
 
