@@ -67,6 +67,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import resource
 import shutil
 import signal
@@ -74,7 +75,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -88,6 +89,7 @@ __all__ = [
     "HostSample",
     "MeasureAborted",
     "MeasureRefused",
+    "MeasureSignalled",
     "MeasureStepFailed",
     "PreflightCheck",
     "PreflightRecord",
@@ -99,8 +101,10 @@ __all__ = [
     "estimate_synthetic_size",
     "read_lock",
     "release_lock",
+    "step_artifact_paths",
     "write_lock",
     "main",
+    "move_step_artifacts_aside",
     "plan_steps",
     "preflight",
     "run_step",
@@ -184,8 +188,12 @@ COMPETING_BUILD_PATTERN = "GradleWrapperMain|GradleWorkerMain|GradleDaemon"
 #: ``git show main:tools/…`` — and the first revision counted all of them, so editing or
 #: testing this tool during a multi-hour run would have killed the run (review F3).
 #: Requiring a subcommand token right after the ``.py`` leaves only an actual invocation.
+#: ``profile`` and ``preflight`` are deliberately NOT in the alternation: ``profile`` is a
+#: read-only ``GROUP BY`` over a 5 MB reference and ``preflight`` starts no child at all, so
+#: neither competes for anything, while killing a six-hour measurement for one of them is a
+#: real loss (round-2 review F2).
 COMPETING_MEASURE_PATTERN = (
-    r"tos_evidence_scan_(measure|bench)\.py +(run|preflight|build|measure|profile)\b"
+    r"tos_evidence_scan_(measure|bench)\.py +(run|build|measure)\b"
 )
 
 #: Commands whose mention of a pattern means they are LOOKING FOR it, not running it. The
@@ -206,6 +214,44 @@ _SEARCH_COMMANDS = frozenset({"pgrep", "grep", "egrep", "fgrep", "rg", "ugrep"})
 #: alone left ``$(pgrep``, ``;pgrep`` and ``|grep`` unrecognized, so a line that was plainly
 #: searching still counted as a build (review F9).
 _SHELL_PUNCTUATION = "\"'`;|&()<>{}$\n\t"
+
+#: The subset of the above that STARTS a new command, as opposed to merely being noise.
+#: ``"`` and ``'`` do not: ``sh -c "pgrep …"`` puts the command after ``-c``, not after the
+#: quote.
+_SHELL_SEPARATORS = "`;|&()<>{}$\n"
+
+#: Shells whose ``-c`` argument is itself a command line.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "busybox"})
+
+#: Words that occupy a command position but are FOLLOWED by the real command: shell
+#: keywords and the wrappers people put in front of things. Without these,
+#: ``bash -c "eval 'if ! pgrep -f X; …'"`` hid its ``pgrep`` behind ``eval`` and ``!``, and
+#: the line counted as a build.
+_COMMAND_PREFIXES = frozenset(
+    {
+        "!",
+        "command",
+        "do",
+        "elif",
+        "else",
+        "env",
+        "eval",
+        "exec",
+        "if",
+        "nice",
+        "nohup",
+        "sudo",
+        "then",
+        "time",
+        "until",
+        "while",
+        "xargs",
+    }
+)
+
+#: ``VAR=value`` prefixing a command. Not a command itself, and in particular not a
+#: command named after whatever its value's last path component happens to be.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 #: How many of the most recent samples an abort record carries. Bounds artifact size; gates
 #: nothing, which is why it is not an argument.
@@ -230,6 +276,16 @@ class MeasureRefused(RuntimeError):
 class MeasureAborted(RuntimeError):
     """A guard fired while a child was running. The child was terminated and an
     ``ABORTED-<step>-<days>d.json`` artifact was written."""
+
+
+class MeasureSignalled(RuntimeError):
+    """The driver itself was sent ``SIGTERM``/``SIGHUP``.
+
+    Without a handler the default disposition exits the interpreter immediately: the
+    ``except BaseException`` path never runs, the bench child is ORPHANED and keeps writing
+    a 53 GB file with no watchdog, the lock goes stale and no abort artifact is written
+    (round-2 review F1). Raising instead routes a signal into the same path a crash takes.
+    """
 
 
 class MeasureStepFailed(RuntimeError):
@@ -270,16 +326,59 @@ def _load_bench_module(bench_path: Path) -> ModuleType:
 # --------------------------------------------------------------------------------------
 
 
+def _command_position_tokens(args: str) -> list[str]:
+    """The tokens of ``args`` that sit where a COMMAND NAME goes.
+
+    Taking the basename of every token classified ``-Dorg.gradle.appname=/home/u/rg`` as
+    the command ``rg`` — so a Gradle build of any directory whose last path component is
+    ``rg``, ``grep`` or the like was filed as "merely searching" and hidden from both the
+    preflight and the watchdog (round-2 review F7). A command name appears in exactly three
+    places, and nowhere else:
+
+    * first,
+    * right after a shell separator (``;`` ``|`` ``&`` ``(`` ``$(`` `````),
+    * right after a shell's own ``-c``, which is how ``bash -c 'pgrep …'`` gets its
+      command — the case the F9 fix exists for, so it cannot simply be dropped.
+
+    A leading ``VAR=value`` is an assignment, not a command, so the scan steps over it.
+    """
+    sentinel = "\x00"
+    for char in _SHELL_PUNCTUATION:
+        args = args.replace(char, f" {sentinel} " if char in _SHELL_SEPARATORS else " ")
+    tokens = args.split()
+    out: list[str] = []
+    at_command = True
+    current_shell = False
+    for token in tokens:
+        if token == sentinel:
+            at_command = True
+            current_shell = False
+            continue
+        if at_command:
+            if _ASSIGNMENT.match(token):
+                continue  # VAR=value cmd …  — the command is still ahead
+            base = os.path.basename(token)
+            if base in _COMMAND_PREFIXES:
+                continue  # eval / if / ! / sudo … — the command is still ahead
+            out.append(token)
+            current_shell = base in _SHELLS
+            at_command = False
+            continue
+        if current_shell and token == "-c":
+            at_command = True
+    return out
+
+
 def _is_searching_for_the_pattern(args: str) -> bool:
     """Whether a matched command line is a SEARCH for the marker rather than a build.
 
     See :data:`_SEARCH_COMMANDS` for why this exists and exactly what it can and cannot
-    hide. Token-wise, not substring-wise, so a path like ``/opt/grepbuild/gradlew`` is still
-    a build.
+    hide, and :func:`_command_position_tokens` for why only some tokens are even looked at.
     """
-    for char in _SHELL_PUNCTUATION:
-        args = args.replace(char, " ")
-    return any(os.path.basename(token) in _SEARCH_COMMANDS for token in args.split())
+    return any(
+        os.path.basename(token) in _SEARCH_COMMANDS
+        for token in _command_position_tokens(args)
+    )
 
 
 @dataclass(frozen=True)
@@ -331,6 +430,10 @@ class HostReader:
     pgrep_argv: tuple[str, ...] = ("pgrep", "-af")
     ps_argv: tuple[str, ...] = ("ps", "-eo", "pid,rss,args", "--sort=-rss")
     proc_root: Path = Path("/proc")
+    #: Memo for things that cannot change during a run. A six-hour measurement takes ~4,300
+    #: samples, and rebuilding the driver's own ancestor chain from ``/proc`` on each of
+    #: them was pure overhead on a host this tool exists to keep quiet (round-2 review F9).
+    _cache: dict[str, object] = field(default_factory=dict, repr=False, compare=False)
 
     # -- memory ------------------------------------------------------------------------
 
@@ -369,13 +472,12 @@ class HostReader:
 
     # -- competing processes -----------------------------------------------------------
 
-    def competing_processes(self, pattern: str) -> tuple[CompetingProcess, ...]:
-        """Processes matching ``pattern``, excluding this process and its own ancestors.
+    def _pgrep(self, pattern: str) -> list[tuple[int, str]]:
+        """``pgrep -af <pattern>`` as ``(pid, args)`` pairs.
 
-        The self-exclusion is by PID identity, walked up ``/proc/<pid>/status``'s ``PPid``
-        chain: with :data:`COMPETING_MEASURE_PATTERN` the driver's own command line matches,
-        and so does the shell that launched it. Excluding the chain removes exactly this
-        invocation and leaves a genuinely concurrent second driver visible.
+        Raises:
+            MeasureRefused: ``pgrep`` is missing or exited for a reason other than "no
+                match". Fail closed: a check that could not run has not run.
         """
         argv = (*self.pgrep_argv, pattern)
         try:
@@ -391,24 +493,105 @@ class HostReader:
                 f"{argv[0]} exited {completed.returncode}: "
                 f"{completed.stderr.strip() or '(no stderr)'}"
             )
-        mine = self._self_pid_chain()
-        found: list[CompetingProcess] = []
+        pairs: list[tuple[int, str]] = []
         for line in completed.stdout.splitlines():
             pid_text, _, args = line.strip().partition(" ")
             try:
-                pid = int(pid_text)
+                pairs.append((int(pid_text), args))
             except ValueError:
                 continue
+        return pairs
+
+    def scan(
+        self, patterns: Mapping[str, str]
+    ) -> dict[str, tuple[CompetingProcess, ...]]:
+        """Every named pattern, in ONE ``pgrep``, with this driver's own work excluded.
+
+        One subprocess instead of one per pattern per sample (round-2 review F9): the
+        alternation goes to ``pgrep`` and each matched line is then attributed back to the
+        patterns it satisfies. ``pgrep`` applies POSIX ERE and the re-attribution uses
+        Python's ``re``; the two agree on everything these patterns use (alternation,
+        escaped dot, ``\b``), and the attribution can only narrow what ``pgrep`` already
+        matched.
+
+        Four kinds of line are dropped, each for a stated reason:
+
+        * this process and its own ancestors — the driver's command line matches its own
+          measurement pattern, and so does the shell that launched it;
+        * this process's DESCENDANTS — the bench child the driver itself spawned, and
+          anything that child spawns, are the work being measured, not competition;
+        * descendants of a ``pytest`` — the suite spawns real ``bench build``/``measure``
+          children, so without this a colleague running the tests would SIGTERM a live
+          six-hour measurement (round-2 review F2);
+        * lines that are SEARCHING for the marker rather than running it
+          (:func:`_is_searching_for_the_pattern`).
+        """
+        if not patterns:
+            return {}
+        combined = "|".join(f"({p})" for p in patterns.values())
+        compiled = {name: re.compile(p) for name, p in patterns.items()}
+        found: dict[str, list[CompetingProcess]] = {name: [] for name in patterns}
+        mine = self._self_pid_chain()
+        for pid, args in self._pgrep(combined):
             if pid in mine or _is_searching_for_the_pattern(args):
                 continue
-            found.append(
-                CompetingProcess(
-                    pid=pid, pattern=pattern, args=args[:_TOP_RSS_ARGS_CHARS]
+            if self._is_descendant_of(pid, mine):
+                continue
+            if self._has_pytest_ancestor(pid):
+                continue
+            for name, rx in compiled.items():
+                if rx.search(args):
+                    found[name].append(
+                        CompetingProcess(
+                            pid=pid,
+                            pattern=patterns[name],
+                            args=args[:_TOP_RSS_ARGS_CHARS],
+                        )
+                    )
+        return {name: tuple(rows) for name, rows in found.items()}
+
+    def competing_processes(self, pattern: str) -> tuple[CompetingProcess, ...]:
+        """One pattern's matches. A thin wrapper over :meth:`scan` for single-pattern
+        callers and for the tests that exercise one rule at a time."""
+        return self.scan({"only": pattern})["only"]
+
+    def _ancestors(self, pid: int) -> list[int]:
+        """``pid``'s ancestor chain, nearest first, bounded so a ``/proc`` oddity cannot
+        hang a sample."""
+        chain: list[int] = []
+        seen = {pid}
+        current = pid
+        for _ in range(64):
+            parent = self._parent_pid(current)
+            if parent is None or parent <= 0 or parent in seen:
+                break
+            chain.append(parent)
+            seen.add(parent)
+            current = parent
+        return chain
+
+    def _is_descendant_of(self, pid: int, forebears: frozenset[int]) -> bool:
+        return any(ancestor in forebears for ancestor in self._ancestors(pid))
+
+    def _has_pytest_ancestor(self, pid: int) -> bool:
+        for ancestor in self._ancestors(pid):
+            try:
+                cmdline = (
+                    (self.proc_root / str(ancestor) / "cmdline")
+                    .read_bytes()
+                    .replace(b"\0", b" ")
+                    .decode("utf-8", "replace")
                 )
-            )
-        return tuple(found)
+            except OSError:
+                continue
+            if "pytest" in cmdline:
+                return True
+        return False
 
     def _self_pid_chain(self) -> frozenset[int]:
+        cached = self._cache.get("self_pid_chain")
+        if isinstance(cached, frozenset):
+            return cached
         chain = {os.getpid()}
         pid = os.getpid()
         for _ in range(64):  # bounded: a runaway /proc must not hang the preflight
@@ -417,7 +600,9 @@ class HostReader:
                 break
             chain.add(ppid)
             pid = ppid
-        return frozenset(chain)
+        frozen = frozenset(chain)
+        self._cache["self_pid_chain"] = frozen
+        return frozen
 
     def _parent_pid(self, pid: int) -> int | None:
         try:
@@ -488,9 +673,10 @@ class HostReader:
 
     def sample(self, *, child_pid: int | None = None) -> HostSample:
         info = self.meminfo()
-        competing = self.competing_processes(
-            COMPETING_BUILD_PATTERN
-        ) + self.competing_processes(COMPETING_MEASURE_PATTERN)
+        scanned = self.scan(
+            {"build": COMPETING_BUILD_PATTERN, "measure": COMPETING_MEASURE_PATTERN}
+        )
+        competing = scanned["build"] + scanned["measure"]
         if child_pid is not None:
             competing = tuple(c for c in competing if c.pid != child_pid)
         return HostSample(
@@ -693,7 +879,7 @@ class SizeEstimate:
 
 
 def estimate_synthetic_size(
-    reference: Path,
+    reference: Path | None,
     *,
     days: int,
     session_hours: float,
@@ -703,6 +889,8 @@ def estimate_synthetic_size(
 ) -> SizeEstimate:
     """Predict the synthetic file's size from the reference distribution. See
     :class:`SizeEstimate` for the derivation."""
+    if reference is None:
+        raise MeasureRefused("no --reference to size the synthetic file from")
     if days < 1:
         raise MeasureRefused(f"--days must be >= 1, got {days}")
     if reference_minutes <= 0:
@@ -766,7 +954,7 @@ def plan_steps(
     names: Sequence[str],
     python: str,
     bench_path: Path,
-    reference: Path,
+    reference: Path | None,
     synthetic: Path,
     out_dir: Path,
     days: int,
@@ -792,6 +980,8 @@ def plan_steps(
     ordered = [n for n in STEP_NAMES if n in names]
     bench = str(bench_path)
     steps: list[Step] = []
+    if "build" in ordered and reference is None:
+        raise MeasureRefused("--reference is required to plan a build step")
     for name in ordered:
         argv: tuple[str, ...]
         if name == "build":
@@ -840,6 +1030,47 @@ def plan_steps(
             )
         )
     return tuple(steps)
+
+
+def step_artifact_paths(step: Step, *, out_dir: Path, days: int) -> tuple[Path, ...]:
+    """Every file one step writes, in one place.
+
+    The ``artifacts_absent`` preflight and the move-aside path have to agree on this list.
+    They did not: the preflight guarded ``.out``/``.err``/``.json`` while a failed step had
+    already written ``.time`` and ``.resource.json``, so the rerun the operator was told to
+    do silently replaced the failed pass's resource numbers — against this driver's own
+    stated rule that a later run must not quietly replace an earlier one's evidence
+    (round-2 review F5).
+    """
+    return tuple(
+        dict.fromkeys(
+            (
+                step.stdout_path,
+                step.stderr_path,
+                out_dir / f"{step.name}-{days}d.json",
+                out_dir / f"{step.name}-{days}d.time",
+                out_dir / f"{step.name}-{days}d.resource.json",
+            )
+        )
+    )
+
+
+def move_step_artifacts_aside(
+    step: Step, *, out_dir: Path, days: int, run_id: str
+) -> list[Path]:
+    """Rename a stopped step's files out of the way, keeping every byte.
+
+    Renamed, never deleted: they are that attempt's output and the next plan section may
+    want them. The run id in the name keeps a second stop from clobbering the first.
+    """
+    moved: list[Path] = []
+    for path in step_artifact_paths(step, out_dir=out_dir, days=days):
+        if not path.exists():
+            continue
+        target = path.with_name(f"{path.stem}.{run_id}.aborted{path.suffix}")
+        path.replace(target)
+        moved.append(target)
+    return moved
 
 
 @dataclass(frozen=True)
@@ -1069,14 +1300,12 @@ def run_step(
         path = out_dir / f"ABORTED-{step.name}-{days}d.json"
         path.write_text(json.dumps(asdict(record_out), indent=2), encoding="utf-8")
         log(f"wrote {path}")
-        # The step's own stdout/stderr are moved aside so the documented resume is not
-        # refused by the artifacts_absent preflight for files this abort itself created
-        # (review F4). They are renamed, never deleted: they are the aborted step's output.
-        for path_ in (step.stdout_path, step.stderr_path):
-            if path_.exists():
-                moved = path_.with_name(f"{path_.stem}.{run_id}.aborted{path_.suffix}")
-                path_.replace(moved)
-                log(f"moved {path_.name} aside as {moved.name}")
+        # The step's own files are moved aside so the documented resume is not refused by
+        # the artifacts_absent preflight for files this abort itself created (review F4).
+        for moved in move_step_artifacts_aside(
+            step, out_dir=out_dir, days=days, run_id=run_id
+        ):
+            log(f"moved aside: {moved.name}")
 
     def abort(check: str, reason: str) -> None:
         log(f"ABORT ({step.name}): {reason}")
@@ -1116,10 +1345,18 @@ def run_step(
                     {
                         "host_read_error": str(exc),
                         "consecutive": consecutive_read_failures,
+                        "fatal": guard.watchdog_enabled,
                     }
                 )
                 log(f"host read failed ({consecutive_read_failures}): {exc}")
-                if consecutive_read_failures > guard.host_read_retries:
+                # With --no-watchdog there is no guard to go blind: killing the child for
+                # an unreadable /proc would be the one in-run kill condition left after
+                # the operator deliberately turned the in-run kills off (round-2 review
+                # F4). The failure is still recorded, every time.
+                if (
+                    guard.watchdog_enabled
+                    and consecutive_read_failures > guard.host_read_retries
+                ):
                     abort(
                         "host_read",
                         f"the host could not be read {consecutive_read_failures} times in "
@@ -1162,7 +1399,11 @@ def run_step(
             failed_escalated, failed_status, failed_usage = (False, 0, None)
         try:
             write_abort(
-                check="driver_error",
+                check=(
+                    "driver_signalled"
+                    if isinstance(exc, (MeasureSignalled, KeyboardInterrupt))
+                    else "driver_error"
+                ),
                 reason=f"{type(exc).__name__}: {exc}",
                 escalated=failed_escalated,
                 status=failed_status,
@@ -1276,6 +1517,12 @@ class PreflightCheck:
     #: can be cited arithmetically instead of by re-parsing a formatted "12.00 GB".
     measured_bytes: int | None = None
     floor_bytes: int | None = None
+    #: ``False`` when the check was SKIPPED because the run is already refused for another
+    #: reason — never a quiet pass. A not-evaluated check is excluded from the refusal
+    #: list (it would add a second, bogus reason) and visible in the record, and
+    #: ``test_every_check_is_evaluated_on_a_healthy_host`` pins that a passing host
+    #: evaluates all of them.
+    evaluated: bool = True
 
 
 @dataclass(frozen=True)
@@ -1440,7 +1687,7 @@ def preflight(
     reader: HostReader,
     out_dir: Path,
     days: int,
-    estimate: SizeEstimate | None,
+    estimator: Callable[[], SizeEstimate] | None,
     expect_bytes: int | None,
     disk_headroom_ratio: float,
     index_growth_ratio: float,
@@ -1457,37 +1704,77 @@ def preflight(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     checks: list[PreflightCheck] = []
+    build_planned = any(step.name == "build" for step in steps)
+    synthetic_present = synthetic.exists()
 
-    info = reader.meminfo()
-    checks.append(
-        PreflightCheck(
-            check="mem_available",
-            ok=info["MemAvailable"] >= guard.min_available_bytes,
-            measured=f"{info['MemAvailable'] / _GB:.2f} GB",
-            floor=f"{guard.min_available_bytes / _GB:.2f} GB",
-            measured_bytes=info["MemAvailable"],
-            floor_bytes=guard.min_available_bytes,
-            source="operator rule ~/.claude/CLAUDE.md 로컬 빌드 동시 실행 제한 (2026-09-25)",
-        )
-    )
-    checks.append(
-        PreflightCheck(
-            check="swap_free",
-            ok=info["SwapFree"] >= guard.min_swap_free_bytes,
-            measured=f"{info['SwapFree'] / _GB:.2f} GB",
-            floor=f"{guard.min_swap_free_bytes / _GB:.2f} GB",
-            measured_bytes=info["SwapFree"],
-            floor_bytes=guard.min_swap_free_bytes,
-            source="same operator rule — the clause plan §7.1.7 deviation 11-b records as missing",
-            detail=f"SwapTotal {info['SwapTotal'] / _GB:.2f} GB",
-        )
-    )
+    # Reader failures become FAILED CHECKS, not exceptions. Raising here skipped
+    # preflight.json entirely, so a host with no SwapFree line or a broken pgrep produced
+    # the "refusal that leaves no artifact" this record exists to prevent — contradicting
+    # both PreflightRecord's own docstring and plan §7.1.9 (round-2 review F6).
+    try:
+        info: dict[str, int] | None = reader.meminfo()
+        memory_error = ""
+    except MeasureRefused as exc:
+        info, memory_error = None, str(exc)
 
-    for pattern, label in (
-        (COMPETING_BUILD_PATTERN, "competing_build"),
-        (COMPETING_MEASURE_PATTERN, "competing_measurement"),
-    ):
-        found = reader.competing_processes(pattern)
+    if info is None:
+        for label in ("mem_available", "swap_free"):
+            checks.append(
+                PreflightCheck(
+                    check=label,
+                    ok=False,
+                    measured=f"unreadable: {memory_error}",
+                    floor="the memory floors must be readable to be checked",
+                    source="fail-closed: a preflight that cannot read memory has not checked it",
+                )
+            )
+    else:
+        checks.append(
+            PreflightCheck(
+                check="mem_available",
+                ok=info["MemAvailable"] >= guard.min_available_bytes,
+                measured=f"{info['MemAvailable'] / _GB:.2f} GB",
+                floor=f"{guard.min_available_bytes / _GB:.2f} GB",
+                measured_bytes=info["MemAvailable"],
+                floor_bytes=guard.min_available_bytes,
+                source="operator rule ~/.claude/CLAUDE.md 로컬 빌드 동시 실행 제한 (2026-09-25)",
+            )
+        )
+        checks.append(
+            PreflightCheck(
+                check="swap_free",
+                ok=info["SwapFree"] >= guard.min_swap_free_bytes,
+                measured=f"{info['SwapFree'] / _GB:.2f} GB",
+                floor=f"{guard.min_swap_free_bytes / _GB:.2f} GB",
+                measured_bytes=info["SwapFree"],
+                floor_bytes=guard.min_swap_free_bytes,
+                source="same operator rule — the clause plan §7.1.7 deviation 11-b records as missing",
+                detail=f"SwapTotal {info['SwapTotal'] / _GB:.2f} GB",
+            )
+        )
+
+    labels = {
+        "competing_build": COMPETING_BUILD_PATTERN,
+        "competing_measurement": COMPETING_MEASURE_PATTERN,
+    }
+    try:
+        scanned = reader.scan(labels)
+        scan_error = ""
+    except MeasureRefused as exc:
+        scanned, scan_error = {}, str(exc)
+    for label, pattern in labels.items():
+        if scan_error:
+            checks.append(
+                PreflightCheck(
+                    check=label,
+                    ok=False,
+                    measured=f"unreadable: {scan_error}",
+                    floor="none running",
+                    source="fail-closed: a check that could not run has not run",
+                )
+            )
+            continue
+        found = scanned[label]
         checks.append(
             PreflightCheck(
                 check=label,
@@ -1503,14 +1790,11 @@ def preflight(
                     if label == "competing_build"
                     else "this driver: two measurements would race on the host and on the artifacts"
                 ),
+                detail=f"pattern: {pattern}",
             )
         )
 
-    # A resume must not be asked for the space its own build already spent. When `build`
-    # is not planned and the synthetic file is already on disk, the only new bytes are the
-    # index the `after` step creates (review F5).
-    build_planned = any(step.name == "build" for step in steps)
-    synthetic_present = synthetic.exists()
+    # The two directions of "is the file where the planned steps need it to be".
     if not build_planned and not synthetic_present:
         checks.append(
             PreflightCheck(
@@ -1521,53 +1805,108 @@ def preflight(
                 source="this driver: --steps excludes build, so nothing would create it",
             )
         )
-    if expect_bytes is not None:
-        base_bytes = expect_bytes
-        basis = f"--expect-gb (operator-supplied) x --disk-headroom-ratio {disk_headroom_ratio}"
-    elif build_planned:
-        base_bytes = estimate.predicted_file_bytes if estimate else 0
-        basis = (
-            f"predicted synthetic size x --disk-headroom-ratio {disk_headroom_ratio}"
+    if build_planned and synthetic_present:
+        # The bench refuses to overwrite its --out, so this run is GUARANTEED to fail at
+        # step 1 — after preflight said ok, and after leaving four artifacts behind that
+        # then block the retry (round-2 review F3).
+        checks.append(
+            PreflightCheck(
+                check="synthetic_absent",
+                ok=False,
+                measured=f"{synthetic} already exists ({synthetic.stat().st_size} bytes)",
+                floor="build writes a new file; the bench refuses to overwrite one",
+                source=(
+                    "this driver, mirroring tos_evidence_scan_bench.build_synthetic's own "
+                    "refusal: failing here costs nothing, failing at step 1 leaves "
+                    "artifacts that block the retry"
+                ),
+                detail="delete it, or drop build from --steps to measure the existing file",
+            )
+        )
+
+    # The estimate is a GROUP BY over the whole reference file. It runs LAST of the cheap
+    # checks, only when `build` is planned (a measure-only resume never uses it), and only
+    # when nothing has already refused the run — scanning a reference to size a disk for a
+    # run that is not going to start is work on a host that is already in trouble
+    # (round-2 review F10).
+    estimate: SizeEstimate | None = None
+    estimate_error = ""
+    already_refused = any(c.evaluated and not c.ok for c in checks)
+    if build_planned and estimator is not None and not already_refused:
+        try:
+            estimate = estimator()
+        except MeasureRefused as exc:
+            estimate_error = str(exc)
+
+    if estimate_error:
+        checks.append(
+            PreflightCheck(
+                check="disk_free",
+                ok=False,
+                measured=f"cannot size the run: {estimate_error}",
+                floor="the synthetic size must be predictable to check the disk",
+                source="fail-closed",
+            )
+        )
+    elif build_planned and estimate is None:
+        checks.append(
+            PreflightCheck(
+                check="disk_free",
+                ok=False,
+                evaluated=False,
+                measured="not evaluated",
+                floor=f"{'; '.join(c.check for c in checks if c.evaluated and not c.ok)} already refused this run",
+                source=(
+                    "skipped deliberately: sizing the run means scanning the reference, "
+                    "and the run is not going to start"
+                ),
+            )
         )
     else:
-        # Measure-only: the file exists, so only the index is new. Sized off the file on
-        # disk, not off the prediction, because the real thing is right there to measure.
-        on_disk = synthetic.stat().st_size if synthetic_present else 0
-        base_bytes = int(on_disk * index_growth_ratio)
-        basis = (
-            f"existing synthetic x --index-growth-ratio {index_growth_ratio} "
-            f"x --disk-headroom-ratio {disk_headroom_ratio} (build not planned)"
+        if expect_bytes is not None:
+            base_bytes = expect_bytes
+            basis = (
+                f"--expect-gb (operator-supplied) x --disk-headroom-ratio "
+                f"{disk_headroom_ratio}"
+            )
+        elif build_planned:
+            base_bytes = estimate.predicted_file_bytes if estimate else 0
+            basis = f"predicted synthetic size x --disk-headroom-ratio {disk_headroom_ratio}"
+        else:
+            # Measure-only: the file exists, so only the index is new. Sized off the file
+            # on disk, not off a prediction, because the real thing is right there.
+            on_disk = synthetic.stat().st_size if synthetic_present else 0
+            base_bytes = int(on_disk * index_growth_ratio)
+            basis = (
+                f"existing synthetic x --index-growth-ratio {index_growth_ratio} "
+                f"x --disk-headroom-ratio {disk_headroom_ratio} (build not planned)"
+            )
+        required_bytes = int(base_bytes * disk_headroom_ratio)
+        worst_free = min(_disk_free(out_dir), _disk_free(synthetic.parent))
+        checks.append(
+            PreflightCheck(
+                check="disk_free",
+                ok=worst_free >= required_bytes,
+                measured=f"{worst_free / _GB:.2f} GB free",
+                floor=f"{required_bytes / _GB:.2f} GB needed",
+                measured_bytes=worst_free,
+                floor_bytes=required_bytes,
+                source=basis,
+                detail=(
+                    ""
+                    if estimate is None
+                    else (
+                        f"predicted {estimate.predicted_file_bytes / _GB:.2f} GB "
+                        f"({estimate.predicted_rows} rows) from {estimate.reference}"
+                    )
+                ),
+            )
         )
-    required_bytes = int(base_bytes * disk_headroom_ratio)
-    worst_free = min(_disk_free(out_dir), _disk_free(synthetic.parent))
-    checks.append(
-        PreflightCheck(
-            check="disk_free",
-            ok=worst_free >= required_bytes,
-            measured=f"{worst_free / _GB:.2f} GB free",
-            floor=f"{required_bytes / _GB:.2f} GB needed",
-            measured_bytes=worst_free,
-            floor_bytes=required_bytes,
-            source=basis,
-            detail=(
-                ""
-                if estimate is None
-                else (
-                    f"predicted {estimate.predicted_file_bytes / _GB:.2f} GB "
-                    f"({estimate.predicted_rows} rows) from {estimate.reference}"
-                )
-            ),
-        )
-    )
 
     existing = [
         str(p)
         for step in steps
-        for p in (
-            step.stdout_path,
-            step.stderr_path,
-            out_dir / f"{step.name}-{days}d.json",
-        )
+        for p in step_artifact_paths(step, out_dir=out_dir, days=days)
         if p.exists()
     ]
     checks.append(
@@ -1612,7 +1951,7 @@ def preflight(
     )
 
     top_rss = reader.top_rss()
-    failed = [c for c in checks if not c.ok]
+    failed = [c for c in checks if c.evaluated and not c.ok]
     refusal = (
         None
         if not failed
@@ -1750,7 +2089,15 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_shared_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--reference", required=True, type=Path)
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        default=None,
+        help=(
+            "The real evidence.sqlite3 whose distribution `build` replicates. Required "
+            "only when --steps includes build; a measure-only resume never reads it."
+        ),
+    )
     parser.add_argument("--synthetic", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--days", required=True, type=int)
@@ -1798,6 +2145,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Signals that mean "stop now" and must not bypass the abort path: a closed tmux pane
+#: (``SIGHUP``), a ``kill`` or ``timeout`` (``SIGTERM``), or earlyoom choosing the driver
+#: rather than the child.
+_STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
+def _install_signal_handlers() -> dict[int, object]:
+    """Route ``SIGTERM``/``SIGHUP`` into the same path a crash takes, and return the
+    handlers they replaced so they can be put back."""
+
+    def handler(signum: int, _frame: object) -> None:
+        raise MeasureSignalled(
+            f"received {signal.Signals(signum).name} — terminating the child and "
+            "recording the stop"
+        )
+
+    previous: dict[int, object] = {}
+    for signum in _STOP_SIGNALS:
+        try:
+            previous[signum] = signal.signal(signum, handler)
+        except (ValueError, OSError):
+            # Not the main thread, or the platform has no such signal. The driver still
+            # works; it just keeps the default disposition for that one signal.
+            continue
+    return previous
+
+
+def _restore_signal_handlers(previous: dict[int, object]) -> None:
+    for signum, handler in previous.items():
+        try:
+            signal.signal(signum, handler)  # type: ignore[arg-type]
+        except (ValueError, OSError):
+            continue
+
+
 def _print_preflight(record: PreflightRecord, *, log: Callable[[str], None]) -> None:
     for check in record.checks:
         mark = "ok " if check.ok else "NO "
@@ -1829,6 +2211,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         log_lines.append(message)
         print(message, flush=True)
 
+    previous_handlers = _install_signal_handlers()
     try:
         guard = GuardConfig.validated(
             min_available_gb=args.min_available_gb,
@@ -1849,16 +2232,26 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             )
             print(f"WARNING: {warnings[-1]}", file=sys.stderr)
 
-        bench = _load_bench_module(args.bench)
         out_dir.mkdir(parents=True, exist_ok=True)
-        estimate = estimate_synthetic_size(
-            args.reference,
-            days=args.days,
-            session_hours=args.session_hours,
-            reference_minutes=args.reference_minutes,
-            boot_once_max_rows=args.boot_once_max_rows,
-            bench=bench,
-        )
+        step_names = [s.strip() for s in args.steps.split(",") if s.strip()]
+        if "build" in step_names and args.reference is None:
+            raise MeasureRefused(
+                "--reference is required when --steps includes build (it is the "
+                "distribution the synthetic file replicates)"
+            )
+
+        def estimator() -> SizeEstimate:
+            """Deferred so the reference is scanned only when `build` is planned AND the
+            cheap host checks have passed (round-2 review F10)."""
+            return estimate_synthetic_size(
+                args.reference,
+                days=args.days,
+                session_hours=args.session_hours,
+                reference_minutes=args.reference_minutes,
+                boot_once_max_rows=args.boot_once_max_rows,
+                bench=_load_bench_module(args.bench),
+            )
+
         steps = plan_steps(
             names=[s.strip() for s in args.steps.split(",") if s.strip()],
             python=args.python,
@@ -1880,7 +2273,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             reader=reader,
             out_dir=out_dir,
             days=args.days,
-            estimate=estimate,
+            estimator=estimator,
             expect_bytes=None if args.expect_gb is None else int(args.expect_gb * _GB),
             disk_headroom_ratio=args.disk_headroom_ratio,
             index_growth_ratio=args.index_growth_ratio,
@@ -1898,8 +2291,8 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
 
         created_synthetic = not args.synthetic.exists()
         completed: list[str] = []
-        write_lock(out_dir, run_id=run_id, argv=raw)
         try:
+            write_lock(out_dir, run_id=run_id, argv=raw)
             for step in steps:
                 result = run_step(
                     step,
@@ -1916,9 +2309,20 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 # three as done, deleted the file and exited 0 — the "job succeeded" shape
                 # plan §7.1.2/#772 complains about (review F1).
                 if result.returncode != 0:
+                    # Its five files go aside like an abort's, so the retry is not blocked
+                    # by this attempt's own output and this attempt's `.time`/
+                    # `.resource.json` are not silently overwritten (round-2 review F5).
+                    moved = move_step_artifacts_aside(
+                        step, out_dir=out_dir, days=args.days, run_id=run_id
+                    )
+                    for path in moved:
+                        log(f"moved aside: {path.name}")
+                    stderr_note = next(
+                        (str(m) for m in moved if m.name.endswith(".err")),
+                        str(step.stderr_path),
+                    )
                     raise MeasureStepFailed(
-                        f"step {step.name!r} exited {result.returncode}; see "
-                        f"{step.stderr_path}"
+                        f"step {step.name!r} exited {result.returncode}; see {stderr_note}"
                     )
                 completed.append(step.name)
         finally:
@@ -1939,14 +2343,30 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 if disposition.action == "delete":
                     args.synthetic.unlink()
                 log(disposition.message)
-            (out_dir / f"measure-{args.days}d.log").write_text(
-                "\n".join(log_lines) + "\n", encoding="utf-8"
-            )
+            # APPENDED, with a run header. `write_text` meant the documented resume
+            # (same --days, same --out-dir) replaced the aborted run's log wholesale,
+            # including the ABORT line and the disposition message — the human-readable
+            # timeline the plan says it will cite instead of session memory (round-2
+            # review F8).
+            with (out_dir / f"measure-{args.days}d.log").open(
+                "a", encoding="utf-8"
+            ) as handle:
+                handle.write(
+                    f"##### run {run_id} · {_now_kst()} · argv: {' '.join(raw)}\n"
+                )
+                handle.write("\n".join(log_lines) + "\n")
             release_lock(out_dir)
         return 0
-    except (MeasureRefused, MeasureAborted, MeasureStepFailed) as exc:
+    except (
+        MeasureRefused,
+        MeasureAborted,
+        MeasureStepFailed,
+        MeasureSignalled,
+    ) as exc:
         print(f"tos_evidence_scan_measure: {exc}", file=sys.stderr)
         return 1
+    finally:
+        _restore_signal_handlers(previous_handlers)
 
 
 if __name__ == "__main__":

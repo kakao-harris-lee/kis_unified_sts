@@ -20,6 +20,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -150,6 +151,39 @@ def _write_reference(path: Path, *, hot_rows: int = 20) -> None:
         conn.close()
 
 
+def _stub_bench(
+    tmp_path: Path, main_body: str, name: str = "tos_evidence_scan_bench.py"
+):
+    """A stand-in for the bench: importable (the driver loads it for `profile_kinds`) and
+    doing whatever a test needs when run as a child.
+
+    Needed because the real bench cannot be made to fail or to run long on a tiny fixture,
+    and because `synthetic_absent` now refuses the "pre-create the file" trick the F1 test
+    used to make `build` fail.
+    """
+    path = tmp_path / name
+    path.write_text(
+        "import sys, time, os, pathlib\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "class BenchRefused(RuntimeError):\n"
+        "    pass\n"
+        "\n"
+        "@dataclass(frozen=True)\n"
+        "class KindProfile:\n"
+        "    kind: str\n"
+        "    record_class: str\n"
+        "    rows: int\n"
+        "    payload_bytes: int\n"
+        "\n"
+        "def profile_kinds(reference):\n"
+        "    return (KindProfile('TIME_HEALTH_SNAPSHOT', 'X', 20, 4000),)\n"
+        "\n"
+        "if __name__ == '__main__':\n" + main_body
+    )
+    return path
+
+
 def _preflight(
     tmp_path: Path, reader, *, guard=None, days: int = 1, expect_gb=None, steps=None
 ):
@@ -158,14 +192,17 @@ def _preflight(
         _write_reference(reference)
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / f"synth-{days}d.sqlite3"
-    estimate = driver.estimate_synthetic_size(
-        reference,
-        days=days,
-        session_hours=7.0,
-        reference_minutes=15.0,
-        boot_once_max_rows=1,
-        bench=bench,
-    )
+
+    def estimator():
+        return driver.estimate_synthetic_size(
+            reference,
+            days=days,
+            session_hours=7.0,
+            reference_minutes=15.0,
+            boot_once_max_rows=1,
+            bench=bench,
+        )
+
     planned = driver.plan_steps(
         names=steps or list(driver.STEP_NAMES),
         python=sys.executable,
@@ -186,7 +223,7 @@ def _preflight(
         reader=reader,
         out_dir=out_dir,
         days=days,
-        estimate=estimate,
+        estimator=estimator,
         expect_bytes=None if expect_gb is None else int(expect_gb * _GB),
         disk_headroom_ratio=driver.DEFAULT_DISK_HEADROOM_RATIO,
         index_growth_ratio=driver.DEFAULT_INDEX_GROWTH_RATIO,
@@ -1196,23 +1233,23 @@ def test_f1_a_failed_step_stops_the_run_keeps_the_file_and_exits_non_zero(
     non-zero counted as a completed step: the later steps ran against a DB that was never
     built, all three names landed in `completed`, the file was deleted and the process
     returned 0."""
-    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
-    synthetic.parent.mkdir(parents=True)
-    # A pre-existing --synthetic is the reviewer's own scenario: the bench's `build`
-    # refuses to overwrite it and exits 1.
-    synthetic.write_text("not a database")
     out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    failing = _stub_bench(
+        tmp_path,
+        "    sys.stderr.write('bench: refusing\\n')\n    raise SystemExit(1)\n",
+    )
 
-    rc = _cli(tmp_path, out_dir=out_dir, synthetic=synthetic)
+    rc = _cli(tmp_path, "--bench", str(failing), out_dir=out_dir, synthetic=synthetic)
 
     assert rc == 1
-    assert (out_dir / "build-1d.err").read_text().strip(), "the child's reason is kept"
+    # The failed step's own files are moved aside, reason and all.
+    err = list(out_dir.glob("build-1d.*.aborted.err"))
+    assert err and "refusing" in err[0].read_text()
     # The later steps must not have run.
     assert not (out_dir / "before-1d.json").exists()
     assert not (out_dir / "after-1d.json").exists()
     assert not (out_dir / "before-1d.resource.json").exists()
-    # And the file is still there (this run did not create it, so it was never ours).
-    assert synthetic.exists()
     assert "rc=1" in (out_dir / "measure-1d.log").read_text()
 
 
@@ -1334,36 +1371,176 @@ def test_f3_a_real_second_driver_invocation_is_still_caught(tmp_path: Path) -> N
     for line in (
         "201 /usr/bin/python tools/tos_evidence_scan_measure.py run --days 365",
         "202 /usr/bin/python tools/tos_evidence_scan_bench.py build --days 90",
-        "203 /usr/bin/python /opt/x/tos_evidence_scan_measure.py preflight --days 30",
+        "203 /usr/bin/python /opt/x/tos_evidence_scan_bench.py measure --db /tmp/s",
     ):
         record = _preflight(tmp_path, _reader(tmp_path, pgrep_output=line + "\n"))
         assert record.verdict == "refused", line
         assert "competing_measurement" in _failed(record), line
 
+    # `profile` reads a 5 MB file and `preflight` starts no child: neither competes, and
+    # killing a six-hour run for one of them is a real loss (round-2 F2).
+    for harmless in (
+        "301 /usr/bin/python tools/tos_evidence_scan_bench.py profile --reference /x",
+        "302 /usr/bin/python tools/tos_evidence_scan_measure.py preflight --days 30",
+    ):
+        assert (
+            _preflight(
+                tmp_path, _reader(tmp_path, pgrep_output=harmless + "\n")
+            ).verdict
+            == "ok"
+        ), harmless
+
 
 def test_f3_the_pattern_matches_a_real_invocation_through_the_real_pgrep(
     tmp_path: Path,
 ) -> None:
-    """The regex is only ever evaluated by `pgrep`, not by Python, so the two cases are
-    checked against a live process and the real binary."""
+    """The regex is evaluated by `pgrep`, not by Python, so both directions are checked
+    against live processes and the real binary. `_pgrep` is used rather than `scan` because
+    these children ARE descendants of pytest, which `scan` now deliberately excludes."""
     script = tmp_path / "tos_evidence_scan_measure.py"
     script.write_text("import time\ntime.sleep(20)\n")
     running = subprocess.Popen([sys.executable, str(script), "run", "--days", "365"])
     decoy = subprocess.Popen([sys.executable, str(script), "-q"])
+    profiling = subprocess.Popen(
+        [sys.executable, str(script), "profile", "--reference", "/x"]
+    )
     try:
         time.sleep(1.0)
         found = {
-            p.pid
-            for p in driver.HostReader().competing_processes(
-                driver.COMPETING_MEASURE_PATTERN
-            )
+            pid
+            for pid, _ in driver.HostReader()._pgrep(driver.COMPETING_MEASURE_PATTERN)
         }
         assert running.pid in found, "a real invocation must be seen"
         assert decoy.pid not in found, "a bare mention of the file must not be"
+        assert profiling.pid not in found, "a read-only profile is not a competitor"
     finally:
-        for proc in (running, decoy):
+        for proc in (running, decoy, profiling):
             proc.kill()
             proc.wait()
+
+
+def test_f2_the_test_suites_own_bench_children_cannot_kill_a_live_run(
+    tmp_path: Path,
+) -> None:
+    """F2, the integration half. The suite spawns real `bench build`/`measure` children
+    (the e2e tests do) and they match the measurement pattern. Here they are this
+    process's own descendants, so the descendant rule covers them; the OTHER pytest's
+    children are covered by `_has_pytest_ancestor`, tested separately below."""
+    script = tmp_path / "tos_evidence_scan_bench.py"
+    script.write_text("import time\ntime.sleep(20)\n")
+    child = subprocess.Popen([sys.executable, str(script), "build", "--days", "1"])
+    try:
+        time.sleep(1.0)
+        reader = driver.HostReader()
+        raw = {pid for pid, _ in reader._pgrep(driver.COMPETING_MEASURE_PATTERN)}
+        assert child.pid in raw, "pgrep really does see it — the exclusion is the point"
+        filtered = {
+            p.pid for p in reader.scan({"m": driver.COMPETING_MEASURE_PATTERN})["m"]
+        }
+        assert (
+            child.pid not in filtered
+        ), "a pytest's own child must not stop a live run"
+    finally:
+        child.kill()
+        child.wait()
+
+
+def _fake_proc(root: Path, tree: dict[int, tuple[int, str]]) -> Path:
+    """A `/proc` with just the two files the ancestry walk reads: `status` (PPid) and
+    `cmdline`."""
+    for pid, (ppid, cmdline) in tree.items():
+        entry = root / str(pid)
+        entry.mkdir(parents=True, exist_ok=True)
+        (entry / "status").write_text(f"Name:\tx\nPPid:\t{ppid}\n")
+        (entry / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode())
+    return root
+
+
+def test_f2_a_process_descended_from_another_pytest_is_excluded(tmp_path: Path) -> None:
+    """F2, the rule itself, on a constructed process tree.
+
+    The scenario the review names is a LIVE driver watching a colleague's test run: those
+    bench children are not the driver's descendants, so only this rule keeps them from
+    SIGTERMing a six-hour measurement. The suite cannot stage that with real processes —
+    its own children are its descendants — so the tree is built by hand.
+    """
+    root = _fake_proc(
+        tmp_path / "proc",
+        {
+            1: (0, "/sbin/init"),
+            100: (1, "/usr/bin/python -m pytest tests/tools"),
+            101: (100, "/usr/bin/python tools/tos_evidence_scan_bench.py build"),
+            200: (1, "/bin/bash -l"),
+            201: (200, "/usr/bin/python tools/tos_evidence_scan_bench.py build"),
+        },
+    )
+    reader = driver.HostReader(proc_root=root)
+
+    assert reader._has_pytest_ancestor(101), "a test run's child must be excluded"
+    assert not reader._has_pytest_ancestor(201), "a real second run must NOT be"
+
+
+def test_f2_the_descendant_rule_is_live_in_scan_not_just_available(
+    tmp_path: Path,
+) -> None:
+    """F2, the descendant rule exercised THROUGH `scan`, with no pytest in the picture.
+
+    Under pytest every descendant of this process also has a pytest ancestor, so the two
+    exclusions cover each other and removing either leaves the suite green — a guard that
+    is never the reason for anything. Here the whole process tree is constructed: pid 200
+    stands in for the driver (a plain shell, no pytest anywhere), 201 is its bench child,
+    and 300 is an unrelated second run that must still be seen.
+    """
+    root = _fake_proc(
+        tmp_path / "proc",
+        {
+            1: (0, "/sbin/init"),
+            200: (1, "/bin/bash -l"),
+            201: (
+                200,
+                "/usr/bin/python tools/tos_evidence_scan_bench.py build --days 1",
+            ),
+            300: (
+                1,
+                "/usr/bin/python tools/tos_evidence_scan_bench.py build --days 90",
+            ),
+        },
+    )
+    table = tmp_path / "table"
+    table.write_text(
+        "201 /usr/bin/python tools/tos_evidence_scan_bench.py build --days 1\n"
+        "300 /usr/bin/python tools/tos_evidence_scan_bench.py build --days 90\n"
+    )
+    fake = tmp_path / "fake-pgrep.sh"
+    fake.write_text(f'#!/bin/sh\ngrep -E -- "$1" "{table}" || true\nexit 0\n')
+    fake.chmod(0o755)
+    reader = driver.HostReader(proc_root=root, pgrep_argv=(str(fake),))
+    # Stand in for pid 200 by seeding the documented memo for the self chain.
+    reader._cache["self_pid_chain"] = frozenset({200})
+
+    found = {p.pid for p in reader.scan({"m": driver.COMPETING_MEASURE_PATTERN})["m"]}
+
+    assert 201 not in found, "the driver's own bench child is the work, not competition"
+    assert 300 in found, "an unrelated second run must still be caught"
+
+
+def test_f2_the_drivers_own_child_and_grandchildren_are_not_competitors(
+    tmp_path: Path,
+) -> None:
+    """The other exclusion: the bench child this driver spawned is the work being
+    measured. Checked by identity on the real `/proc` ancestry, with this process standing
+    in for the driver."""
+    script = tmp_path / "tos_evidence_scan_bench.py"
+    script.write_text("import time\ntime.sleep(20)\n")
+    child = subprocess.Popen([sys.executable, str(script), "measure", "--db", "/x"])
+    try:
+        time.sleep(1.0)
+        reader = driver.HostReader()
+        assert reader._is_descendant_of(child.pid, frozenset({os.getpid()}))
+        assert not reader._is_descendant_of(1, frozenset({os.getpid()}))
+    finally:
+        child.kill()
+        child.wait()
 
 
 def test_f9_a_search_command_glued_to_shell_syntax_is_still_a_search(
@@ -1382,6 +1559,30 @@ def test_f9_a_search_command_glued_to_shell_syntax_is_still_a_search(
     assert not driver._is_searching_for_the_pattern(
         "/opt/grepbuild/gradlew --daemon org.gradle.launcher.daemon.bootstrap.GradleDaemon"
     )
+
+
+def test_r2_f7_a_build_whose_paths_end_in_a_search_command_name_is_not_hidden() -> None:
+    """Round-2 F7, both cases the reviewer EXECUTED against the branch.
+
+    `os.path.basename` was applied to every whitespace token, so a JVM argument like
+    `-Dorg.gradle.appname=/home/u/rg` read as the command `rg` and the whole Gradle build
+    was filed as "merely searching" — invisible to both the preflight and the watchdog.
+    A command name only appears at a command position; a `key=/path` value never is one.
+    """
+    for hidden in (
+        "java -Dorg.gradle.appname=/home/u/rg -cp x worker.GradleWorkerMain",
+        "/usr/bin/java -Duser.dir=/srv/grep "
+        "org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.5",
+        "/usr/lib/jvm/java-21/bin/java -cp /opt/pgrep/lib/x.jar "
+        "worker.org.gradle.process.internal.worker.GradleWorkerMain",
+    ):
+        assert not driver._is_searching_for_the_pattern(hidden), hidden
+
+    # The command positions themselves still classify.
+    assert driver._command_position_tokens(
+        "java -Dorg.gradle.appname=/home/u/rg -cp x worker.GradleWorkerMain"
+    ) == ["java"]
+    assert driver._command_position_tokens("FOO=/x/rg pgrep -f y") == ["pgrep"]
 
 
 def test_f4_the_documented_resume_command_actually_gets_past_preflight(
@@ -1430,17 +1631,26 @@ def test_f5_a_resume_is_not_asked_for_the_space_its_build_already_spent(
 ) -> None:
     """F5. disk_free always demanded predicted x headroom, so a measure-only rerun on the
     very disk that now holds the synthetic file was refused by the tool's own advice."""
-    reference = tmp_path / "evidence.sqlite3"
-    _write_reference(reference)
-    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    # The `build` case needs the file ABSENT (otherwise synthetic_absent refuses first),
+    # so the two cases get their own directories.
+    build_dir = tmp_path / "b"
+    build_dir.mkdir()
+    _write_reference(build_dir / "evidence.sqlite3")
+    build = _preflight(build_dir, _reader(build_dir), steps=["build"])
+
+    resume_dir = tmp_path / "r"
+    resume_dir.mkdir()
+    _write_reference(resume_dir / "evidence.sqlite3")
+    synthetic = resume_dir / "synth" / "synth-1d.sqlite3"
     synthetic.parent.mkdir(parents=True)
     synthetic.write_bytes(b"x" * 4096)
-
-    build = _preflight(tmp_path, _reader(tmp_path), steps=["build"])
-    measure_only = _preflight(tmp_path, _reader(tmp_path), steps=["before", "after"])
+    measure_only = _preflight(
+        resume_dir, _reader(resume_dir), steps=["before", "after"]
+    )
 
     build_check = next(c for c in build.checks if c.check == "disk_free")
     resume_check = next(c for c in measure_only.checks if c.check == "disk_free")
+    assert build_check.evaluated and resume_check.evaluated
     assert "index-growth-ratio" in resume_check.source
     assert resume_check.floor_bytes is not None
     assert build_check.floor_bytes is not None
@@ -1662,3 +1872,365 @@ def test_the_lock_is_released_when_a_run_finishes(tmp_path: Path) -> None:
     out_dir = tmp_path / "out"
     assert _cli(tmp_path, out_dir=out_dir) == 0
     assert not (out_dir / driver.LOCK_NAME).exists()
+
+
+# ---------------------------------------------------------------------------------------
+# Round-2 review findings
+# ---------------------------------------------------------------------------------------
+
+
+def test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact(
+    tmp_path: Path,
+) -> None:
+    """Round-2 F1. With no handler, SIGTERM to the driver (a closed tmux pane, `kill`,
+    `timeout`, earlyoom picking the driver) exited the interpreter immediately: the abort
+    path never ran, the bench child was ORPHANED and kept writing a 53 GB file with no
+    watchdog, and no artifact was written."""
+    out_dir = tmp_path / "out"
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    child_pid_file = tmp_path / "child.pid"
+    slow = _stub_bench(
+        tmp_path,
+        f"    pathlib.Path({str(child_pid_file)!r}).write_text(str(os.getpid()))\n"
+        "    time.sleep(120)\n",
+    )
+    meminfo = _meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0)
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            str(_MODULE_PATH),
+            "run",
+            "--reference",
+            str(reference),
+            "--synthetic",
+            str(tmp_path / "synth" / "s.sqlite3"),
+            "--out-dir",
+            str(out_dir),
+            "--days",
+            "1",
+            "--repeats",
+            "1",
+            "--min-available-gb",
+            "0",
+            "--min-swap-free-gb",
+            "0",
+            "--abort-available-gb",
+            "0",
+            "--abort-swap-free-gb",
+            "0",
+            "--watch-interval-s",
+            "0.05",
+            "--poll-interval-s",
+            "0.01",
+            "--term-grace-s",
+            "1",
+            "--bench",
+            str(slow),
+        ],
+        # The real HostReader is used here (this is a real subprocess), so the fake
+        # /proc/meminfo is handed over the only way a subprocess can take it: it cannot.
+        # The floors are zeroed above instead, and the fake file is unused.
+        env={**os.environ, "TOS_MEASURE_FAKE_MEMINFO": str(meminfo)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not child_pid_file.exists():
+            time.sleep(0.05)
+        assert child_pid_file.exists(), "the bench child never started"
+        child_pid = int(child_pid_file.read_text())
+
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    assert proc.returncode == 1, proc.stderr
+    # The child is gone, not orphaned.
+    assert not _pid_alive(child_pid), "the bench child outlived the signalled driver"
+    record = json.loads((out_dir / "ABORTED-build-1d.json").read_text())
+    assert record["check"] == "driver_signalled"
+    assert "SIGTERM" in record["reason"]
+    # And the lock the run took is released.
+    assert not (out_dir / driver.LOCK_NAME).exists()
+
+
+def _pid_alive(pid: int) -> bool:
+    """Alive AND not a zombie — a reaped-but-unwaited child still has a /proc entry."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return stat[stat.rindex(")") + 2] != "Z"
+
+
+def test_r2_f3_a_build_onto_an_existing_synthetic_is_refused_before_anything_runs(
+    tmp_path: Path,
+) -> None:
+    """Round-2 F3. The bench refuses to overwrite its `--out`, so this run was GUARANTEED
+    to fail at step 1 — after preflight said ok, and after leaving four artifacts behind
+    that then blocked the retry."""
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    synthetic.parent.mkdir(parents=True)
+    synthetic.write_bytes(b"not a database")
+    out_dir = tmp_path / "out"
+
+    rc = _cli(tmp_path, out_dir=out_dir, synthetic=synthetic)
+
+    assert rc == 1
+    payload = json.loads((out_dir / "preflight.json").read_text())
+    checks = {c["check"]: c for c in payload["checks"]}
+    assert checks["synthetic_absent"]["ok"] is False
+    # Nothing ran, so nothing was left behind to block the retry.
+    assert not (out_dir / "build-1d.json").exists()
+    assert not (out_dir / "build-1d.err").exists()
+    assert not list(out_dir.glob("*.resource.json"))
+
+
+def test_r2_f4_with_the_watchdog_off_a_host_read_failure_is_recorded_not_fatal(
+    tmp_path: Path,
+) -> None:
+    """Round-2 F4. `--no-watchdog` turns the in-run guards off, but the `host_read` abort
+    still fired and killed the child citing blind guards that were disabled."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    def sampler(pid: int):
+        raise driver.MeasureRefused("pgrep exited 2")
+
+    result = driver.run_step(
+        driver.Step(
+            name="build",
+            argv=(sys.executable, "-c", "import time; time.sleep(0.3)"),
+            stdout_path=tmp_path / "n.out",
+            stderr_path=tmp_path / "n.err",
+        ),
+        guard=_guard(watchdog_enabled=False),
+        reader=driver.HostReader(),
+        run_id="nowatch",
+        days=1,
+        out_dir=out_dir,
+        log=lambda _m: None,
+        sampler=sampler,
+    )
+
+    assert result.returncode == 0, "the child ran to completion"
+    assert not (out_dir / "ABORTED-build-1d.json").exists()
+    rows = [
+        json.loads(line)
+        for line in (out_dir / "watchdog.jsonl").read_text().splitlines()
+    ]
+    assert rows, "the failures are still recorded"
+    assert all(row["fatal"] is False for row in rows if "host_read_error" in row)
+
+
+def test_r2_f5_a_failed_step_cannot_have_its_resource_numbers_overwritten(
+    tmp_path: Path,
+) -> None:
+    """Round-2 F5. `artifacts_absent` guarded `.out/.err/.json` only, while a failed step
+    had already written `.time` and `.resource.json`; the rerun then replaced the failed
+    pass's numbers with no trace."""
+    step = driver.Step(
+        name="before",
+        argv=("x",),
+        stdout_path=tmp_path / "before-90d.out",
+        stderr_path=tmp_path / "before-90d.err",
+    )
+    names = {
+        p.name for p in driver.step_artifact_paths(step, out_dir=tmp_path, days=90)
+    }
+
+    assert names == {
+        "before-90d.out",
+        "before-90d.err",
+        "before-90d.json",
+        "before-90d.time",
+        "before-90d.resource.json",
+    }
+
+    for name in names:
+        (tmp_path / name).write_text("x")
+    moved = driver.move_step_artifacts_aside(
+        step, out_dir=tmp_path, days=90, run_id="abc123"
+    )
+    assert len(moved) == 5
+    assert all(".abc123.aborted" in m.name for m in moved)
+    assert all(m.read_text() == "x" for m in moved), "moved, never deleted"
+    assert not any((tmp_path / name).exists() for name in names)
+
+
+def test_r2_f6_a_reader_failure_still_writes_the_preflight_record(
+    tmp_path: Path,
+) -> None:
+    """Round-2 F6. `meminfo()` and `competing_processes()` raised out of `preflight()`
+    before the record was written, so a host with no SwapFree line produced the very
+    'refusal that leaves no artifact' this record exists to prevent."""
+    partial = tmp_path / "partial-meminfo"
+    partial.write_text("MemTotal: 22016000 kB\nMemAvailable: 12000000 kB\n")
+    reader = driver.HostReader(meminfo_path=partial, pgrep_argv=("/bin/true",))
+
+    record = _preflight(tmp_path, reader)
+
+    assert record.verdict == "refused"
+    payload = json.loads((tmp_path / "out" / "preflight.json").read_text())
+    checks = {c["check"]: c for c in payload["checks"]}
+    assert checks["swap_free"]["ok"] is False
+    assert "SwapFree" in checks["swap_free"]["measured"]
+
+    # Same for an unusable pgrep.
+    broken = driver.HostReader(
+        meminfo_path=_meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0),
+        pgrep_argv=("/bin/sh", "-c", "exit 2", "--"),
+    )
+    record = _preflight(tmp_path, broken)
+    assert record.verdict == "refused"
+    payload = json.loads((tmp_path / "out" / "preflight.json").read_text())
+    checks = {c["check"]: c for c in payload["checks"]}
+    assert checks["competing_build"]["ok"] is False
+    assert "exited 2" in checks["competing_build"]["measured"]
+
+
+def test_r2_f8_the_run_log_is_appended_not_replaced(tmp_path: Path) -> None:
+    """Round-2 F8. The documented resume (same --days, same --out-dir) overwrote the
+    aborted run's log wholesale, including the ABORT line — the human-readable timeline
+    the plan says it will cite instead of session memory."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    gate = out_dir / "before-1d.out"
+    fake_pgrep = tmp_path / "fake-pgrep.sh"
+    fake_pgrep.write_text(
+        "#!/bin/sh\n"
+        f'[ -f "{gate}" ] && echo "4242 /usr/bin/java GradleDaemon"\n'
+        "exit 0\n"
+    )
+    fake_pgrep.chmod(0o755)
+    aborting = driver.HostReader(
+        meminfo_path=_meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0),
+        pgrep_argv=(str(fake_pgrep),),
+    )
+
+    assert _cli(tmp_path, out_dir=out_dir, synthetic=synthetic, reader=aborting) == 1
+    first = (out_dir / "measure-1d.log").read_text()
+    assert "ABORT (before)" in first
+
+    assert (
+        _cli(tmp_path, "--steps", "before,after", out_dir=out_dir, synthetic=synthetic)
+        == 0
+    )
+    second = (out_dir / "measure-1d.log").read_text()
+    assert "ABORT (before)" in second, "the aborted run's timeline survived the resume"
+    assert second.count("##### run ") == 2, "each run is headed by its own id"
+    assert len(second) > len(first)
+
+
+def test_r2_f10_a_measure_only_resume_needs_no_reference_at_all(
+    tmp_path: Path,
+) -> None:
+    """Round-2 F10. The estimate (a GROUP BY over the whole reference) ran unconditionally
+    before the memory checks and even for resumes that never use it, so `--reference` was
+    mandatory for a run that does not read it."""
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert (
+        _cli(
+            tmp_path,
+            "--steps",
+            "build",
+            "--keep-synthetic",
+            out_dir=out_dir,
+            synthetic=synthetic,
+            reference=reference,
+        )
+        == 0
+    )
+    assert synthetic.exists()
+    rc = driver.main(
+        [
+            "run",
+            "--synthetic",
+            str(synthetic),
+            "--out-dir",
+            str(out_dir),
+            "--days",
+            "1",
+            "--steps",
+            "before",
+            "--repeats",
+            "1",
+            "--min-available-gb",
+            "0",
+            "--min-swap-free-gb",
+            "0",
+            "--abort-available-gb",
+            "0",
+            "--abort-swap-free-gb",
+            "0",
+            "--watch-interval-s",
+            "0.05",
+            "--poll-interval-s",
+            "0.01",
+            "--bench",
+            str(_BENCH_PATH),
+        ],
+        reader=_reader(tmp_path),
+    )
+
+    assert rc == 0, "a measure-only resume must not require --reference"
+    assert (out_dir / "before-1d.json").is_file()
+
+
+def test_r2_f10_a_build_without_a_reference_is_refused_with_a_clear_reason(
+    tmp_path: Path,
+) -> None:
+    rc = driver.main(
+        [
+            "run",
+            "--synthetic",
+            str(tmp_path / "s.sqlite3"),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--days",
+            "1",
+            "--bench",
+            str(_BENCH_PATH),
+        ],
+        reader=_reader(tmp_path),
+    )
+    assert rc == 1
+
+
+def test_r2_f10_the_reference_is_not_scanned_when_the_host_already_failed(
+    tmp_path: Path,
+) -> None:
+    """Sizing the run means scanning the reference. Doing that for a run that is not going
+    to start is work on a host that is already in trouble — and the disk check says it was
+    skipped rather than quietly passing."""
+    record = _preflight(tmp_path, _reader(tmp_path, available_gb=1.0, swap_free_gb=0.1))
+
+    assert record.verdict == "refused"
+    disk = next(c for c in record.checks if c.check == "disk_free")
+    assert disk.evaluated is False
+    assert "mem_available" in disk.floor
+    # Not evaluated is not a pass: it stays out of the refusal list but is in the record.
+    assert "disk_free" not in (record.refusal or "")
+    assert record.estimate is None
+
+
+def test_every_check_is_evaluated_on_a_healthy_host(tmp_path: Path) -> None:
+    """The guard on the guard: `evaluated=False` must only ever happen because something
+    else already refused the run. If a healthy host could skip a check, the skip would be
+    a silent pass."""
+    record = _preflight(tmp_path, _reader(tmp_path))
+
+    assert record.verdict == "ok"
+    assert all(c.evaluated for c in record.checks)
