@@ -57,12 +57,14 @@ _PROCESSES = 8
 #: start barrier. Generous: it is only reached when something is already broken.
 _REPORT_TIMEOUT_S = 60.0
 
-#: The budget for bringing every child down afterwards, **shared across all of them**
-#: rather than spent per child (review F5). Given one child that wedges in
-#: ``barrier.wait`` or inside sqlite's busy handler — the class of failure this module
+#: The budget for ONE phase of bringing the children down, **shared across all of them**
+#: rather than spent per child (review F5, then round-2 F6). Given one child that wedges
+#: in ``barrier.wait`` or inside sqlite's busy handler — the class of failure this module
 #: exists to catch — a per-child timeout of the size above turns "the parent already
 #: waited 60 s" into "and now waits up to 8 x 60 s more" before the intended
 #: ``AssertionError`` ever surfaces, which is wedging the suite, not failing the test.
+#: :func:`_reap` spends at most three of these in total (join, terminate+join,
+#: kill+join), so the bound does not grow with the number of children.
 _REAP_TIMEOUT_S = 10.0
 
 #: Rounds of :data:`_PROCESSES` openers this test runs.
@@ -148,21 +150,40 @@ def _child(
         queue.put(f"{type(exc).__name__}: {exc}")
 
 
-def _reap(children: Sequence[mp.process.BaseProcess]) -> None:
-    """Bring every child down inside ONE shared deadline, then terminate the stragglers.
-
-    The join budget is :data:`_REAP_TIMEOUT_S` for the whole set, not per child, so a
-    single wedged opener costs one deadline rather than eight. ``terminate`` runs only
-    AFTER that join: on the healthy path every child has already exited by then, so the
-    exit-code assertion downstream never sees a ``-SIGTERM`` this helper caused.
-    """
+def _join_all(children: Sequence[mp.process.BaseProcess]) -> None:
+    """Join every child against ONE deadline shared by the whole set."""
     deadline = time.monotonic() + _REAP_TIMEOUT_S
     for child in children:
         child.join(timeout=max(0.0, deadline - time.monotonic()))
-    for child in children:
-        if child.is_alive():  # pragma: no cover - only on a wedged child
-            child.terminate()
-            child.join(timeout=_REAP_TIMEOUT_S)
+
+
+def _reap(children: Sequence[mp.process.BaseProcess]) -> None:
+    """Bring every child down in at most THREE shared deadlines, never one per child.
+
+    Three phases, each with its own whole-set budget: join, then ``terminate`` whatever
+    is still alive and join again, then ``kill`` whatever survived that and join a last
+    time. Worst case is ``3 * _REAP_TIMEOUT_S`` no matter how many children wedge —
+    review round-2 F6 caught the previous cut still multiplying by the child count in
+    its straggler loop (``terminate`` then a full per-child join), which is a smaller
+    version of the shape F5 was filed against in the first place.
+
+    ``terminate`` runs only AFTER the first join: on the healthy path every child has
+    already exited by then, so the exit-code assertion downstream never sees a
+    ``-SIGTERM`` this helper caused.
+    """
+    _join_all(children)
+    stragglers = [child for child in children if child.is_alive()]
+    if not stragglers:  # the healthy path, every time
+        return
+    for child in stragglers:  # pragma: no cover - only on a wedged child
+        child.terminate()
+    _join_all(stragglers)  # pragma: no cover - only on a wedged child
+    survivors = [  # pragma: no cover - only on a child that ignores SIGTERM
+        child for child in stragglers if child.is_alive()
+    ]
+    for child in survivors:  # pragma: no cover - only on a wedged child
+        child.kill()
+    _join_all(survivors)  # pragma: no cover - only on a wedged child
 
 
 def _run_concurrent_first_open(path: Path) -> list[str]:
