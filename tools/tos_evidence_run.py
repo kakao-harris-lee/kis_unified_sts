@@ -85,8 +85,10 @@ Six EV-L3-only gates can withhold GREEN, and none of them is a self-report:
   * ``crash_injection.persistence_real`` — the conjunction of a run-time
     measurement (a non-empty store file observed after its writer died) and a
     **source property** (:func:`check_persistence_substrate`: one connection, no
-    literal target, no ``:memory:``, both pragmas). Either alone is satisfiable
-    by something that is not really durable.
+    literal target, no ``:memory:``, both pragmas — counting a pragma the
+    constructor delegates to :data:`PERSISTENCE_PRAGMA_DELEGATE_PATH` only when
+    it really calls it). Either alone is satisfiable by something that is not
+    really durable.
   * ``prior_stage_runs[*]`` — STATE-EV-001's EV-L1 **AND** EV-L2 must both be
     bound at THIS baseline. Not this row's own staging requirement: it is the
     durable-limb continuity that lets L3 evidence attach to a non-stale model
@@ -1060,9 +1062,24 @@ def summarise_crash_schedule(
         return writer > 0 and reader > 0 and writer != reader
 
     def _persistence_real(row: dict) -> bool:
+        """The store this scenario left behind was a real, durable, WAL sqlite file.
+
+        The journal mode is the half added by review round-3 F9, and it is the one that
+        actually says "WAL": read from the file itself after the writer died, not
+        inferred from source. A row that does not carry it is **not** treated as
+        satisfying it — an older artifact, or a harness that stopped measuring, is a
+        deviation rather than a silent pass.
+        """
         on_disk = row.get("store_real_on_disk")
         size = row.get("store_bytes")
-        return on_disk is True and isinstance(size, int) and size > 0
+        mode = row.get("store_journal_mode")
+        return (
+            on_disk is True
+            and isinstance(size, int)
+            and size > 0
+            and isinstance(mode, str)
+            and mode.lower() == PERSISTENCE_REQUIRED_JOURNAL_MODE
+        )
 
     def _derived_outcome(row: dict) -> str:
         expected = str(row.get("expected_reconstruction") or "").strip()
@@ -1094,6 +1111,9 @@ def summarise_crash_schedule(
     )
     shared_pid = sorted(_sid(row) for row in rows if not _boundary_real(row))
     not_on_disk = sorted(_sid(row) for row in rows if not _persistence_real(row))
+    journal_modes = sorted(
+        {str(row.get("store_journal_mode") or "<unrecorded>").lower() for row in rows}
+    )
     duplicates = sorted({sid for sid in scenario_ids if scenario_ids.count(sid) > 1})
     foreign = sorted(
         {
@@ -1119,6 +1139,8 @@ def summarise_crash_schedule(
         "unobserved_reconstruction_scenarios": unobserved,
         "shared_process_scenarios": shared_pid,
         "non_durable_store_scenarios": not_on_disk,
+        "observed_store_journal_modes": journal_modes,
+        "required_store_journal_mode": PERSISTENCE_REQUIRED_JOURNAL_MODE,
         "crash_points": sorted({str(row.get("crash_point", "")) for row in rows}),
         "process_boundary_real": bool(rows) and not shared_pid,
         "persistence_real_measured": bool(rows) and not not_on_disk,
@@ -1140,23 +1162,70 @@ def summarise_crash_schedule(
             "field is cross-checked, never trusted); withheld on an empty schedule "
             "(0 injected != 0 violations), any deviation or misreport, any undefined "
             "Expected or unobserved reconstruction, a writer/reader pid that is not a "
-            "real distinct pair, a store that was not a non-empty on-disk file, a "
+            "real distinct pair, a store that was not a non-empty on-disk file left in journal_mode=wal, a "
             "duplicated scenario id, a row from another evidence id, or a recount that "
             "disagrees with the catalog size"
         ),
     }
 
 
-#: The EV-L3 persistence substrate, checked **structurally** (design §6.2 gate 3). The
-#: run-time rows say the store file existed; this says the component cannot be anything
-#: other than a real on-disk sqlite database in the first place. Both are needed: a row
-#: measurement proves what one execution did, a source property proves what any
-#: execution can do. Verified by parsing the source, never by importing it (TOS-FW-R).
+#: The EV-L3 persistence substrate, checked **structurally** (design §6.2 gate 3) as a
+#: SECONDARY signal only.
+#:
+#: **What decides `persistence_real` is the file, not this** (review round-3 F9). The
+#: deciding evidence is a run-time measurement on the store the crashed writer actually
+#: left behind: ``store_journal_mode`` on every crash row, read from the real file
+#: through a ``mode=ro`` URI and required to be ``wal`` by
+#: :func:`summarise_crash_schedule`. This source check adds what a single execution
+#: cannot say — that the component could not have been something other than an on-disk
+#: sqlite database in the first place — and nothing more.
+#:
+#: **Why it was cut back to that.** Between #823 and PR #827 this grew a bespoke static
+#: analyser: which module the delegate's name was imported from, whether anything
+#: rebound it, which functions the entry point reached, whether two reached functions
+#: disagreed on a pragma value. **Three consecutive review rounds each found a bypass in
+#: the then-current rule set** — a sibling class's ``__init__``, a ``def`` inside
+#: ``try/except ImportError``, six binding forms the statement-kind enumeration did not
+#: name, a second un-aliased import of the same name, a pragma in an unreached helper,
+#: a reached helper that undid the switch afterwards. Every round the fix was another
+#: rule, and every round the next reviewer found the next form. That is what a proxy
+#: measurement looks like when the real one is available: the journal mode of the file
+#: is observable with stdlib sqlite3 and no ``tos`` import (TOS-FW-R holds), so it is
+#: now the thing that is measured, and this check no longer tries to prove by reading
+#: source that a statement ran.
+#:
+#: Verified by parsing the source, never by importing it (TOS-FW-R).
 PERSISTENCE_SUBSTRATE_PATH = "tos/src/tos/staterestore/store.py"
 
+#: The module the store opens through. Scanned together with the store itself, because
+#: the ``journal_mode`` switch lives here (#823) — the pragmas are required across the
+#: pair, with no attempt to prove which one executes. That proof is the file's job now.
+PERSISTENCE_PRAGMA_DELEGATE_PATH = "tos/src/tos/staterestore/_wal.py"
+
+#: Both files, in scan order.
+PERSISTENCE_SOURCE_PATHS = (
+    PERSISTENCE_SUBSTRATE_PATH,
+    PERSISTENCE_PRAGMA_DELEGATE_PATH,
+)
+
+#: The journal mode every crash scenario's store file must be left in, **measured on
+#: the file** and carried on the row (review round-3 F9). Compared case-insensitively,
+#: because sqlite answers ``wal`` while the pragma that sets it is written ``WAL``.
+PERSISTENCE_REQUIRED_JOURNAL_MODE = "wal"
+
 #: The pragmas the pilot substrate decision (design §3.2 candidate A) names. Each must be
-#: bound in a real ``execute(...)`` call argument — see :func:`_executed_pragmas`.
+#: bound in a real ``execute(...)`` call argument — see :func:`_executed_pragmas` — in one
+#: of :data:`PERSISTENCE_SOURCE_PATHS`.
 PERSISTENCE_REQUIRED_PRAGMAS = ("journal_mode=WAL", "synchronous=FULL")
+
+#: Connection targets that would make the substrate an in-memory database. Matched
+#: against the string literals passed to ``connect(...)`` — **not** against the file text
+#: (review round-3 F7). A raw substring scan over the source made a docstring able to
+#: turn the gate red, which is the mirror image of the defect :func:`_executed_pragmas`
+#: exists to prevent: the runtime twin's own docstring contains ``:memory:``, and copying
+#: that sentence across — which the drift pin encourages — would have failed this check
+#: with no change to any statement.
+PERSISTENCE_IN_MEMORY_TARGETS = (":memory:", "mode=memory")
 
 #: Matches one ``PRAGMA <name>=<value>`` statement, normalised for whitespace and case.
 _PRAGMA_RE = re.compile(r"^\s*PRAGMA\s+(\w+)\s*=\s*(\w+)\s*$", re.IGNORECASE)
@@ -1195,58 +1264,104 @@ def _executed_pragmas(tree: ast.AST) -> dict[str, str]:
     return executed
 
 
+def _connect_target_literals(tree: ast.AST) -> list[str]:
+    """Every string literal passed positionally to a call named ``connect``."""
+    return [
+        arg.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "connect"
+        for arg in node.args
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+    ]
+
+
+def _connect_call_count(tree: ast.AST) -> int:
+    return sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "connect"
+    )
+
+
 def check_persistence_substrate(repo_root: Path) -> dict:
     """Confirm the store is a real on-disk sqlite substrate, from its syntax tree.
 
-    Three structural facts, each falsifiable:
+    Three structural facts, each falsifiable, read across
+    :data:`PERSISTENCE_SOURCE_PATHS`:
 
-      * the module opens exactly one connection, and its target is **not a string
-        literal** — so no ``":memory:"`` (or any other hardcoded target) can be what a
-        run actually exercised;
-      * neither ``:memory:`` nor ``mode=memory`` appears anywhere in the module, so the
-        in-memory redefinition is unreachable rather than merely unused;
+      * the pair opens exactly one connection, and its target is **not a string
+        literal** — so no hardcoded target can be what a run actually exercised;
+      * no ``connect(...)`` argument names an in-memory database
+        (:data:`PERSISTENCE_IN_MEMORY_TARGETS`), so the in-memory redefinition is
+        unreachable rather than merely unused;
       * both design §3.2 pragmas are **executed** — bound as a string literal in a real
         ``execute(...)`` argument, not merely mentioned somewhere in the file.
+
+    **This is the secondary half of gate 3.** It says what the component could be; what
+    it *was* is measured on the file the crashed writer left behind and carried on every
+    crash row as ``store_journal_mode`` (review round-3 F9 — see
+    :data:`PERSISTENCE_SUBSTRATE_PATH`'s own comment for why the static delegate analysis
+    that used to live here was removed rather than extended a fourth time).
 
     An absent or unparseable file is unmet — treating a parse failure as "nothing found"
     would be the same ∅-fail-open the schedule summary refuses.
 
     Returns:
-        ``{"met": bool, "path": str, "measured": {...}}`` — the measurements are
+        ``{"met": bool, "paths": [...], "measured": {...}}`` — the measurements are
         recorded either way, so an unmet run says exactly what was seen.
     """
-    path = repo_root / PERSISTENCE_SUBSTRATE_PATH
-    if not path.is_file():
-        return {
-            "met": False,
-            "path": PERSISTENCE_SUBSTRATE_PATH,
-            "reason": "FILE_ABSENT",
-        }
-    source = path.read_text(encoding="utf-8")
-    try:
-        tree = ast.parse(source, filename=str(path))
-    except SyntaxError as exc:
-        return {
-            "met": False,
-            "path": PERSISTENCE_SUBSTRATE_PATH,
-            "reason": f"SOURCE_DOES_NOT_PARSE: {exc}",
-        }
-    connects = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "connect"
-    ]
+    trees: dict[str, ast.AST] = {}
+    digests: dict[str, str] = {}
+    for rel in PERSISTENCE_SOURCE_PATHS:
+        path = repo_root / rel
+        if not path.is_file():
+            # The STORE must exist; the delegate need not. Collapsing the switch back
+            # into the store is a legitimate shape, and the required pragmas still have
+            # to be found somewhere — a delegate that vanishes without the store taking
+            # its pragma back simply leaves `journal_mode=WAL` missing.
+            if rel == PERSISTENCE_SUBSTRATE_PATH:
+                return {"met": False, "path": rel, "reason": "FILE_ABSENT"}
+            continue
+        # Read ONCE, as bytes: the text the AST is parsed from and the bytes the digest
+        # is taken over are then provably the same file content.
+        raw = path.read_bytes()
+        try:
+            trees[rel] = ast.parse(raw.decode("utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            return {
+                "met": False,
+                "path": rel,
+                "reason": f"SOURCE_DOES_NOT_PARSE: {exc}",
+            }
+        digests[rel] = hashlib.sha256(raw).hexdigest()
+
+    connect_call_sites = sum(_connect_call_count(tree) for tree in trees.values())
     literal_targets = sorted(
         {
-            arg.value
-            for call in connects
-            for arg in call.args
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            literal
+            for tree in trees.values()
+            for literal in _connect_target_literals(tree)
         }
     )
-    executed_pragmas = _executed_pragmas(tree)
+    in_memory_targets = sorted(
+        {
+            literal
+            for literal in literal_targets
+            for token in PERSISTENCE_IN_MEMORY_TARGETS
+            if token in literal
+        }
+    )
+
+    executed_pragmas: dict[str, str] = {}
+    per_file: dict[str, dict[str, str]] = {}
+    for rel, tree in trees.items():
+        per_file[rel] = dict(sorted(_executed_pragmas(tree).items()))
+        executed_pragmas.update(per_file[rel])
+
     pragmas_present: list[str] = []
     pragmas_missing: list[str] = []
     for pragma in PERSISTENCE_REQUIRED_PRAGMAS:
@@ -1255,29 +1370,33 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             pragmas_present.append(pragma)
         else:
             pragmas_missing.append(pragma)
-    in_memory_tokens = sorted(
-        token for token in (":memory:", "mode=memory") if token in source
-    )
+
     met = (
-        len(connects) == 1
+        connect_call_sites == 1
         and not literal_targets
-        and not in_memory_tokens
+        and not in_memory_targets
         and not pragmas_missing
     )
     return {
         "met": met,
         "path": PERSISTENCE_SUBSTRATE_PATH,
-        "sha256": sha256_file(path),
+        "paths": sorted(trees),
+        "sha256": digests[PERSISTENCE_SUBSTRATE_PATH],
+        "sha256_by_path": digests,
         "measured_from": (
-            "structural analysis of the executed source's syntax tree; pragmas are read "
-            "out of real execute(...) arguments, so a docstring or comment mentioning "
-            "one cannot satisfy the check; the harness never imports tos (TOS-FW-R)"
+            "structural analysis of the executed source's syntax tree, as the SECONDARY "
+            "half of gate 3; pragmas are read out of real execute(...) arguments and "
+            "in-memory targets out of real connect(...) arguments, so prose cannot "
+            "satisfy or break either; what the run actually produced is measured on the "
+            "store file itself and carried as store_journal_mode on every crash row; "
+            "the harness never imports tos (TOS-FW-R)"
         ),
         "measured": {
-            "connect_call_sites": len(connects),
+            "connect_call_sites": connect_call_sites,
             "literal_connection_targets": literal_targets,
-            "in_memory_tokens_present": in_memory_tokens,
+            "in_memory_connection_targets": in_memory_targets,
             "executed_pragmas": dict(sorted(executed_pragmas.items())),
+            "executed_pragmas_by_path": per_file,
             "pragmas_present": sorted(pragmas_present),
             "pragmas_missing": sorted(pragmas_missing),
             "pragmas_required": list(PERSISTENCE_REQUIRED_PRAGMAS),

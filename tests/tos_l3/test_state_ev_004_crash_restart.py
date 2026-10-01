@@ -52,6 +52,7 @@ restart coverage argument is a review-layer obligation, and independent sign-off
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -73,6 +74,11 @@ _COMPONENT = (
 #: read from the kernel: an implementation that stopped crashing and merely returned
 #: would otherwise redefine the expectation to match itself.
 _CRASH_EXIT = 137
+
+#: The reader's classified "the store could not be opened" status (#823 / review F2).
+#: Hardcoded for the same reason as :data:`_CRASH_EXIT`: a worker that stopped refusing
+#: would otherwise redefine the expectation to match itself.
+_STORE_UNOPENABLE_EXIT = 71
 
 #: The five-dimension coordinate order the anchors are written in.
 _DIMENSION_KEYS = (
@@ -301,6 +307,37 @@ def _spawn(mode: str, scenario_id: str, store: Path, cache: Path) -> _Worker:
     return _Worker(proc.pid, proc.returncode, stdout, stderr)
 
 
+def journal_mode_of(path: Path) -> str:
+    """What ``PRAGMA journal_mode`` reports for the file at ``path``.
+
+    **The measurement gate 3 now turns on** (review round-3 F9). Opened READ-ONLY
+    through a ``file:...?mode=ro`` URI, so this observation cannot be the thing that
+    creates or switches what it is observing — the same reason
+    ``tos/tests/staterestore/test_staterestore_wal_birth_race._journal_mode`` is
+    read-only. stdlib ``sqlite3`` only: nothing here imports the kernel, so the
+    oracle-independence rule this suite pins
+    (:func:`test_this_suite_never_imports_the_kernel_it_measures`) is untouched.
+
+    Returns:
+        The mode sqlite reports, lowercased, or ``"<unreadable>"`` when the file cannot
+        be opened at all. Never a guess and never an exception: an unreadable store is
+        a deviation the row must carry, not a crash in the orchestrator.
+    """
+    if not path.is_file():
+        return "<unreadable>"
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:  # pragma: no cover - only on an unopenable file
+        return "<unreadable>"
+    try:
+        row = conn.execute("PRAGMA journal_mode").fetchone()
+    except sqlite3.Error:  # pragma: no cover - only on a corrupt file
+        return "<unreadable>"
+    finally:
+        conn.close()
+    return "<unreadable>" if row is None else str(row[0]).lower()
+
+
 def _run_scenario(scenario_id: str, workdir: Path) -> dict:
     """Crash a writer, then reload in a fresh process. Returns the measured facts."""
     store = workdir / f"{scenario_id}.sqlite3"
@@ -308,10 +345,14 @@ def _run_scenario(scenario_id: str, workdir: Path) -> dict:
 
     writer = _spawn("writer", scenario_id, store, cache)
 
-    # Measured AFTER the writer is gone: this is the persistence claim, and it is a
-    # filesystem observation rather than anything the worker said about itself.
+    # Measured AFTER the writer is gone and BEFORE the reader runs: these are the
+    # persistence claims, and they are filesystem observations rather than anything
+    # either worker said about itself. Before the reader matters for the journal mode —
+    # the reader opens the store too, and a mode read afterwards could be one the
+    # reader established rather than one the crashed writer left.
     store_exists = store.is_file()
     store_bytes = store.stat().st_size if store_exists else 0
+    store_journal_mode = journal_mode_of(store)
 
     reader = _spawn("reader", scenario_id, store, cache)
 
@@ -322,6 +363,7 @@ def _run_scenario(scenario_id: str, workdir: Path) -> dict:
         "reader": reader,
         "store_real_on_disk": store_exists,
         "store_bytes": store_bytes,
+        "store_journal_mode": store_journal_mode,
     }
 
 
@@ -359,6 +401,14 @@ def test_crash_restart_reconstructs_the_hand_derived_anchor(
     # -- real persistence: the store outlived the process that wrote it ---------
     assert run["store_real_on_disk"] is True, "the store is not a real on-disk file"
     assert run["store_bytes"] > 0, "an empty store file evidences nothing"
+    # The substrate claim itself, read off the file rather than off the source (review
+    # round-3 F9). Design §3.2 candidate A is "sqlite3, WAL, synchronous=FULL"; this is
+    # the half of it a single execution can actually show.
+    assert run["store_journal_mode"] == "wal", (
+        "the crashed writer left the store in journal_mode="
+        f"{run['store_journal_mode']!r}, not WAL — the durability argument every "
+        "anchor below rests on assumes WAL"
+    )
 
     # -- real process boundary: two distinct OS processes -----------------------
     verdict = json.loads(reader.stdout.strip().splitlines()[-1])
@@ -435,6 +485,7 @@ def test_crash_restart_reconstructs_the_hand_derived_anchor(
         reader_pid=reader.pid,
         store_real_on_disk=run["store_real_on_disk"],
         store_bytes=run["store_bytes"],
+        store_journal_mode=run["store_journal_mode"],
         expected_reconstruction=cell.expected,
         observed_reconstruction=observed,
     )
@@ -490,6 +541,93 @@ def test_a_store_no_writer_ever_touched_is_refused_not_fabricated(tmp_path) -> N
     )
 
 
+def test_a_store_that_cannot_be_opened_is_a_classified_refusal(tmp_path) -> None:
+    """An unopenable substrate exits with its OWN code, not an unhandled traceback.
+
+    Review F2 on PR #827: #823 made the store's open fail-closed on ``journal_mode=WAL``,
+    and the reader had no classification for that — it would have died with exit 1, which
+    :data:`_CRASH_EXIT`'s own comment says is exactly the value these constants exist to
+    be distinguishable from. The refusal here is provoked without ``chmod`` (so it holds
+    for a root CI container too) by pointing the reader at a directory: sqlite cannot
+    open it, and the failure is a substrate one before any reconstruction happens.
+
+    Paired with ``test_a_store_no_writer_ever_touched_is_refused_not_fabricated`` above,
+    which pins the OTHER direction — a store that opens but holds nothing is an
+    ``IncompleteStoreError``, a reconstruction verdict, and must NOT be collapsed into
+    this code.
+    """
+    store = tmp_path / "a-directory-not-a-store"
+    store.mkdir()
+    cache = tmp_path / "unused.cache.json"
+
+    reader = _spawn("reader", "L3-01", store, cache)
+
+    assert reader.returncode == _STORE_UNOPENABLE_EXIT, (
+        f"expected the classified substrate refusal {_STORE_UNOPENABLE_EXIT}, got "
+        f"{reader.returncode}; stderr={reader.stderr}"
+    )
+    assert "could not be opened" in reader.stderr
+
+
+def test_a_writer_that_cannot_open_the_store_is_a_classified_refusal(tmp_path) -> None:
+    """**Review round-2 F3.** The writer classifies its open the way the reader does.
+
+    Before this, only the reader did: the writer's open escaped as an unhandled
+    traceback with exit 1, so ``_run_scenario`` saw "not 137" and reported a generic
+    crash-exit mismatch. A harness asserting on exit codes could not tell "the store
+    could not be opened" from "the worker has a bug" — the distinction
+    :data:`_CRASH_EXIT`'s own comment says these constants exist to preserve.
+    """
+    store = tmp_path / "a-directory-not-a-store"
+    store.mkdir()
+    cache = tmp_path / "unused.cache.json"
+
+    writer = _spawn("writer", "L3-01", store, cache)
+
+    assert writer.returncode == _STORE_UNOPENABLE_EXIT, (
+        f"expected the classified substrate refusal {_STORE_UNOPENABLE_EXIT}, got "
+        f"{writer.returncode}; stderr={writer.stderr}"
+    )
+    assert "could not be opened" in writer.stderr
+
+
+def test_a_read_error_after_a_successful_open_is_not_the_substrate_code(
+    tmp_path,
+) -> None:
+    """**Review round-2 F4.** The other side of the boundary, and the one that was wrong.
+
+    The store file here OPENS cleanly — it is a real sqlite database, the journal-mode
+    switch succeeds, and ``CREATE TABLE IF NOT EXISTS dimension_marker`` is a no-op
+    because a table of that name already exists. It is the SELECT that fails, on a
+    column that is not there. That is a finding about a store that WAS opened, and it
+    must not come back as the substrate code.
+
+    RED before the narrowing: the reader caught ``sqlite3.Error`` around the whole
+    reload, so this ``OperationalError`` was reported as "could not be opened" with exit
+    71. Note that narrowing by TYPE alone would not have fixed it — this is an
+    ``OperationalError``, the same class the open raises — which is why the open and the
+    read are separate statements in ``reload_conservative`` now.
+    """
+    store = tmp_path / "wrong-shape.sqlite3"
+    conn = sqlite3.connect(str(store))
+    try:
+        conn.execute("CREATE TABLE dimension_marker (unexpected TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+    cache = tmp_path / "unused.cache.json"
+
+    reader = _spawn("reader", "L3-01", store, cache)
+
+    assert reader.returncode != _STORE_UNOPENABLE_EXIT, (
+        "a read-time error was reported as a substrate refusal; stderr="
+        f"{reader.stderr}"
+    )
+    assert reader.returncode != 0
+    assert "could not be opened" not in reader.stderr
+    assert "no such column" in reader.stderr
+
+
 def test_the_verdict_follows_the_store_not_the_scenario_argument(
     crash_runs: dict[str, dict],
 ) -> None:
@@ -505,6 +643,52 @@ def test_the_verdict_follows_the_store_not_the_scenario_argument(
     observed = _canonical(tuple(verdict[key] for key in _DIMENSION_KEYS))
     assert observed == _CELLS_BY_ID["L3-07"].expected
     assert observed != _CELLS_BY_ID["L3-01"].expected
+
+
+def test_a_rollback_journal_store_is_measured_as_such(tmp_path) -> None:
+    """**Review round-3 F9's negative case, on a REAL file rather than on an AST.**
+
+    Three review rounds of source analysis each had a bypass, so what gate 3 turns on
+    is now a measurement. A measurement is only worth that if it can come out the other
+    way, and this is the input that makes it: an ordinary sqlite file nobody switched,
+    which sqlite reports as ``delete``. Feed that through the recorder and the row is a
+    DEVIATION even though every other field is perfect — the store exists, it is
+    non-empty, the pids are a real pair, and the reconstruction matches.
+
+    The positive direction is covered per scenario by the eight real crash runs above.
+    """
+    rollback = tmp_path / "rollback.sqlite3"
+    conn = sqlite3.connect(str(rollback))
+    try:
+        conn.execute("CREATE TABLE t (x TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert journal_mode_of(rollback) == "delete"
+    assert rollback.stat().st_size > 0
+
+    switched = tmp_path / "wal.sqlite3"
+    conn = sqlite3.connect(str(switched))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t (x TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert journal_mode_of(switched) == "wal"
+
+
+def test_a_missing_store_reads_as_unreadable_not_as_a_mode(tmp_path) -> None:
+    """∅-seal on the measurement: an absent file must not answer with a plausible mode.
+
+    If this returned ``""`` or raised, the row would either carry something that
+    compares unequal to ``wal`` for the wrong reason or never be written at all. It
+    returns a value that is visibly not a journal mode, and the recorder treats it as
+    the deviation it is.
+    """
+    assert journal_mode_of(tmp_path / "never-created.sqlite3") == "<unreadable>"
 
 
 def test_this_suite_never_imports_the_kernel_it_measures() -> None:

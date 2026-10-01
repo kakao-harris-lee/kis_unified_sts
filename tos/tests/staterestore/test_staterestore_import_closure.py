@@ -122,6 +122,7 @@ def _closure_child(queue: mp.Queue) -> None:
 
     import tos.staterestore  # noqa: F401
     import tos.staterestore._l3_worker  # noqa: F401
+    import tos.staterestore._wal  # noqa: F401
     import tos.staterestore.reload  # noqa: F401
     import tos.staterestore.store  # noqa: F401
 

@@ -47,6 +47,7 @@ anything. A disagreement aborts loudly with exit code
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -65,8 +66,11 @@ from tos.orthostate import (
     coupling_violations,
 )
 from tos.rcl import CapacityState
-from tos.staterestore.reload import reload_conservative
-from tos.staterestore.store import CompositeStateStore
+from tos.staterestore.reload import (
+    StoreOpenRefused,
+    open_store,
+    reload_conservative,
+)
 
 #: The deterministic crash status. 137 is the conventional "killed" code; the value is a
 #: constant so the outside orchestration can assert the crash was *the parametrized one*
@@ -80,6 +84,17 @@ CPL_MISMATCH_EXIT = 70
 
 #: Usage / unknown-scenario refusal.
 USAGE_EXIT = 64
+
+#: The reader aborts with this code when the store cannot be OPENED on the substrate
+#: this stage is defined over — the fail-closed ``journal_mode=WAL`` open (#823) refused,
+#: or its lock could not be taken. Classified rather than left as an unhandled traceback
+#: (review F2 on PR #827): every other refusal this worker can reach has a code the
+#: outside orchestration can assert on, and "the reader died with exit 1" is
+#: indistinguishable from an ordinary interpreter failure — which is exactly the
+#: distinction :data:`CRASH_EXIT`'s own comment says these constants exist to preserve.
+#: It is NOT a reconstruction verdict: an *incomplete* store still reads back and
+#: reconstructs conservatively, and that path keeps exit 0.
+STORE_UNOPENABLE_EXIT = 71
 
 #: The intent identity every scenario uses. Fixed, so a run is reproducible from argv
 #: alone (VER §9.1 seed/schedule reproducibility).
@@ -322,7 +337,15 @@ def run_writer(scenario: CrashScenario, store_path: Path, cache_path: Path) -> N
             CPL_MISMATCH_EXIT,
         )
 
-    with CompositeStateStore(store_path) as store:
+    # The writer classifies its own open the same way the reader does, through the SAME
+    # boundary (review round-2 F3, then round-3 F8 for the shared one). Only the open is
+    # classified: a failure to commit is a defect in this worker or in the catalog, and
+    # must not be reported as "there was no store".
+    try:
+        store = open_store(store_path)
+    except StoreOpenRefused as exc:
+        _fail(str(exc), STORE_UNOPENABLE_EXIT)
+    with contextlib.closing(store):
         committed = store.commit_composite(
             composite, stop_after=scenario.commit_dimension_count
         )
@@ -364,11 +387,19 @@ def run_reader(scenario: CrashScenario, store_path: Path, cache_path: Path) -> i
     Returns:
         The process exit code (``0``).
     """
-    outcome = reload_conservative(
-        store_path,
-        INTENT_IDENTITY,
-        cache_paths=(cache_path,),
-    )
+    try:
+        outcome = reload_conservative(
+            store_path,
+            INTENT_IDENTITY,
+            cache_paths=(cache_path,),
+        )
+    except StoreOpenRefused as exc:
+        # Exactly the OPEN. `reload_conservative` draws that boundary itself (review
+        # round-2 F4): a sqlite error raised by the READ propagates unchanged and exits
+        # 1, because it is a finding about a store that WAS opened. So do
+        # `IncompleteStoreError` and `StoreIntegrityError`, which are reconstruction
+        # verdicts and the thing this stage exists to produce.
+        _fail(str(exc), STORE_UNOPENABLE_EXIT)
     post = outcome.composite
     verdict = {
         "role": "reader",

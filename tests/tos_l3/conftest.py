@@ -42,6 +42,10 @@ L3_CRASH_SEED = 0
 OUTCOME_MET = "MET"
 OUTCOME_DEVIATION = "DEVIATION"
 
+#: The journal mode the substrate decision (design §3.2 candidate A) requires, as
+#: sqlite reports it. Compared case-insensitively against the measured value.
+L3_REQUIRED_JOURNAL_MODE = "wal"
+
 #: The exact ordered field set of one crash-timeline row (design §6.2 — the harness's
 #: six gates must each be re-derivable from these fields alone).
 L3_TIMELINE_FIELDS: tuple[str, ...] = (
@@ -55,6 +59,7 @@ L3_TIMELINE_FIELDS: tuple[str, ...] = (
     "reader_pid",
     "store_real_on_disk",
     "store_bytes",
+    "store_journal_mode",
     "expected_reconstruction",
     "observed_reconstruction",
     "outcome",
@@ -115,6 +120,7 @@ class L3CrashTimeline:
         reader_pid: int,
         store_real_on_disk: bool,
         store_bytes: int,
+        store_journal_mode: str,
         expected_reconstruction: str,
         observed_reconstruction: str,
     ) -> dict[str, Any]:
@@ -132,6 +138,14 @@ class L3CrashTimeline:
                 the writer died — measured with :meth:`pathlib.Path.is_file`, never
                 self-reported by the worker.
             store_bytes: The store file's size after the crash.
+            store_journal_mode: What ``PRAGMA journal_mode`` reports for that file,
+                read through a read-only connection to the file ITSELF after the writer
+                died — the measurement that says the substrate really was WAL (design
+                §3.2 candidate A). Carried on the row because it is the evidence the
+                harness re-derives gate 3 from; the source-level check it replaced could
+                only say what the code might do, and three review rounds each found a
+                way for that to be wrong (review round-3 F9). ``"<unreadable>"`` when
+                the file could not be opened, which is a deviation like any other.
             expected_reconstruction: The hand-derived §4 anchor, as the canonical
                 five-dimension string. Derived independently of the implementation:
                 nothing outside ``tos/`` can call ``reconstruct_conservative``.
@@ -148,6 +162,7 @@ class L3CrashTimeline:
             and boundary_real
             and store_real_on_disk
             and store_bytes > 0
+            and store_journal_mode.lower() == L3_REQUIRED_JOURNAL_MODE
         )
         row: dict[str, Any] = {
             "scenario_id": scenario_id,
@@ -160,6 +175,7 @@ class L3CrashTimeline:
             "reader_pid": reader_pid,
             "store_real_on_disk": store_real_on_disk,
             "store_bytes": store_bytes,
+            "store_journal_mode": store_journal_mode,
             "expected_reconstruction": expected_reconstruction,
             "observed_reconstruction": observed_reconstruction,
             "outcome": OUTCOME_MET if met else OUTCOME_DEVIATION,

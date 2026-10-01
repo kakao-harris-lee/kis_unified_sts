@@ -46,6 +46,7 @@ from tos.orthostate import (
     TransmissionAttemptState,
 )
 from tos.rcl import CapacityState
+from tos.staterestore._wal import enable_wal_journal
 
 #: The fixed per-dimension commit order (see the module docstring). A crash after the
 #: *k*-th entry leaves exactly the first *k* dimensions durable — that is the whole
@@ -117,13 +118,33 @@ class CompositeStateStore:
     """
 
     def __init__(self, path: Path) -> None:
-        """Open (creating if needed) the store at ``path`` in WAL / synchronous=FULL."""
+        """Open (creating if needed) the store at ``path`` in WAL / synchronous=FULL.
+
+        The journal-mode switch goes through :func:`~tos.staterestore._wal
+        .enable_wal_journal` rather than a bare ``PRAGMA journal_mode=WAL``: on a
+        brand-new file that switch needs an exclusive lock the PRAGMA does **not** wait
+        for, so two callers reaching an empty ``data_dir``'s first composite-state write
+        at the same moment used to lose one of them to ``OperationalError: database is
+        locked`` (**#823**; measured 96/320 openers, only 6/40 rounds clean).
+
+        Everything after the connection is opened runs under ``try`` / ``close()``. A
+        constructor that raises hands the half-built instance to nobody, so nothing
+        closes that connection, and refcounting does not save it: the raising frame is
+        held by the exception's traceback, so the connection and its ``-wal`` / ``-shm``
+        handles live exactly as long as the caller keeps the exception. The runtime
+        shell factored the identical guard into a context manager because four
+        constructors shared it; here there is one, so the block is written out.
+        """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path), isolation_level=None)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=FULL")
-        self._conn.execute(_SCHEMA)
+        try:
+            enable_wal_journal(self._conn)
+            self._conn.execute("PRAGMA synchronous=FULL")
+            self._conn.execute(_SCHEMA)
+        except BaseException:
+            self._conn.close()
+            raise
 
     # -- context manager ----------------------------------------------------
 

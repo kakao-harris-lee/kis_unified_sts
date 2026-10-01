@@ -105,6 +105,22 @@ class CompositeStateWriter:
                 call (:meth:`~tos.staterestore.CompositeStateStore.commit_composite`'s own
                 per-dimension-transaction behaviour — a crash mid-call leaves a genuinely
                 INCOMPLETE store, the correct conservative outcome, never a torn record).
+
+        ⚠ **This call can block for about three sqlite busy timeouts — ~15 s at python's
+        default — and prints nothing while it does** (review round-3 F5). A fresh store is
+        opened per write, and since #823 that open WAITS out a concurrent journal-mode
+        switch instead of failing fast: the kernel's helper can spend a timeout on the
+        first PRAGMA, one on the ``BEGIN IMMEDIATE`` wait and one on the retry before it
+        refuses, and the kernel emits no log line by design (``tos/src`` has no logging
+        convention). Before #823 the same contest failed in milliseconds with
+        ``database is locked``. Anything sizing a deadline around this method must use
+        that number rather than one busy timeout.
+
+        No timeout is injected: :class:`~tos.staterestore.store.CompositeStateStore` takes
+        none, and there is no config-file home for one — ``sqlite_timeout_s`` exists only
+        as a constructor default on :class:`~tos_runtime.rcl.log.SqliteCommitLog`, not as a
+        key under ``config/tos_runtime/``. Adding a key is a configuration decision rather
+        than a wiring one, so what is recorded here is the bound, not a knob.
         """
         keyed = composite.model_copy(update={"intent_identity": attempt_id})
         with CompositeStateStore(self._store_path) as store:
