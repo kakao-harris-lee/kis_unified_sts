@@ -2910,6 +2910,35 @@ def test_a_shadowing_rebind_after_a_real_import_does_not_count(tmp_path) -> None
     assert result["measured"]["delegate_name_rebound_by"] == ["module:assign"]
 
 
+def test_an_import_error_fallback_stub_does_not_count(tmp_path) -> None:
+    """The same F1 dodge, one statement deeper: a fallback ``def`` inside ``try/except``.
+
+    The import succeeds in the gate's eyes — it IS the real one — and the fallback is not
+    in the module BODY, so a module-body-only rebinding scan walks straight past it. At
+    run time, on any environment where that import fails, the constructor calls a no-op
+    and the file never reaches WAL. Found while re-reading the F1 fix rather than by the
+    review, which is why the scan is over the whole tree.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace(
+            "from tos.staterestore._wal import enable_wal_journal\n",
+            "try:\n"
+            "    from tos.staterestore._wal import enable_wal_journal\n"
+            "except ImportError:\n"
+            "    def enable_wal_journal(conn):\n"
+            "        return None\n",
+        ),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_name_imported_from_module"] is True
+    assert result["measured"]["delegate_name_rebound_by"] == ["module:def"]
+
+
 def test_an_aliased_import_of_the_delegate_does_not_count(tmp_path) -> None:
     """``import ... as _real`` binds a different name than the call site matches.
 

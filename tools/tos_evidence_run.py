@@ -1264,50 +1264,51 @@ def _binds_name_from_module(tree: ast.AST, module: str, name: str) -> bool:
 
 
 def _rebindings_of(tree: ast.AST, name: str, cls: str, method: str) -> list[str]:
-    """Where ``name`` is bound to something OTHER than the import — module or constructor.
+    """Where ``name`` is bound to something OTHER than the import.
 
-    A ``def``/``class`` of that name at module level, or an assignment to it at module
-    level or inside the constructor, all shadow the imported delegate while leaving both
-    the import and the call node intact. Each is reported as ``"<scope>:<kind>"`` so an
-    unmet run says which one it saw rather than only that something was wrong.
+    The legitimate binding is an ``ImportFrom``; a ``def``, a ``class`` or an assignment
+    of that name is therefore a rebinding wherever it sits, so the scan is over the WHOLE
+    tree rather than over the module body. A module-body-only scan missed the obvious
+    dodge one level in — ``try: from ... import enable_wal_journal / except ImportError:
+    def enable_wal_journal(conn): return None`` — which is the same F1 defect nested in a
+    statement.
+
+    Each hit is reported as ``"<scope>:<kind>"``, with ``scope`` naming the store's
+    constructor when the binding is inside it, so an unmet run says which one it saw
+    rather than only that something was wrong.
     """
-    found: list[str] = []
 
-    def _targets(node: ast.AST) -> list[str]:
+    def _assigned_names(node: ast.AST) -> list[str]:
         if isinstance(node, ast.Assign):
             return [t.id for t in node.targets if isinstance(t, ast.Name)]
         if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
             return [node.target.id] if isinstance(node.target, ast.Name) else []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return [node.name]
         return []
 
-    module_body = tree.body if isinstance(tree, ast.Module) else []
-    for node in module_body:
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == name
-        ):
-            found.append("module:def")
-        elif isinstance(node, ast.ClassDef) and node.name == name:
-            found.append("module:class")
-        elif name in _targets(node):
-            found.append("module:assign")
-
+    constructor_nodes: set[int] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.ClassDef) and node.name == cls):
             continue
         for member in node.body:
-            if not (
+            if (
                 isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and member.name == method
             ):
-                continue
-            for inner in ast.walk(member):
-                if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-                    inner is not member and inner.name == name
-                ):
-                    found.append("constructor:def")
-                elif name in _targets(inner):
-                    found.append("constructor:assign")
+                constructor_nodes.update(id(inner) for inner in ast.walk(member))
+
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if name not in _assigned_names(node):
+            continue
+        kind = (
+            "def"
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            else "class" if isinstance(node, ast.ClassDef) else "assign"
+        )
+        scope = "constructor" if id(node) in constructor_nodes else "module"
+        found.append(f"{scope}:{kind}")
     return sorted(set(found))
 
 
