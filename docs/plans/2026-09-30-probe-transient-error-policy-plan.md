@@ -96,6 +96,8 @@
   `probes_order.py` 공존 폴링에 적용해야 하나 이 PR 은 P-CA 경로만 고친다. P-8 3~5회차 재개
   조건으로 남긴다.
 - `EGW00215` 의 원인 규명(모의 서버 공용 스로틀 가설) — 관측만 남기고 단정하지 않는다.
+- ~~참조조회(`--reference-check`)가 기록만 하고 `divi_pay_dt` 를 t0 와 대조하지 않는 것, 그리고
+  ksdinfo 질의 창이 실행 시각에만 고정된 것~~ → **#830 으로 착지(§7.14)**. 이 PR 범위 밖이었다.
 
 ## 5. 위험
 
@@ -200,7 +202,8 @@ black --check (변경 파일 2건)                   → 2 files would be left u
 ### 7.5 남은 것
 
 - §4 그대로: P-8 공존 폴링(`probes_order.py`)의 「전송 오류 → STOP」 전이는 이 PR 범위 밖.
-  P-8 3~5회차 재개 조건으로 남는다.
+  P-8 3~5회차 재개 조건으로 남는다. (참조 전용 모드·지급일 대조는 §4 에서 빠져 #830 으로
+  착지했다 — §7.14.)
 - `EGW00215` 의 원인(모의 서버 공용 스로틀 가설)은 여전히 관측만 있고 단정하지 않는다.
 - 3차 관측 대상(058610 에스피지, 지급일 재확인 필요)을 이 템플릿으로 예약할지는 운영자 결정.
 
@@ -426,3 +429,81 @@ docker koalaman/shellcheck:stable --severity=warning → rc 0
 2026-05-30 생성 후 미갱신이고 현재값이 일관되게 ~2.6배」와 수치가 일치하고, 이 PR 은
 `tools/broker_probes/**` 와 `tests/tools/**` 밖을 건드리지 않는다. **baseline 재생성은
 하지 않는다** — 먼저 재생성하면 진짜 회귀가 영구히 안 보이게 된다(같은 메모리 경고).
+
+### 7.14 후속 착지 — #830 참조 전용 모드와 러너의 지급일 대조 (2026-10-01)
+
+§4 에 적지 못했던 결합 하나가 10-01 에 두 가지 형태로 동시에 드러났고(캠페인 README
+2026-10-01 블록), 별도 PR 로 닫았다. 이 절은 그 착지 기록이다.
+
+**관측된 결함 둘.**
+
+1. 다음 대상 058610 의 **사전 참조조회가 거부됐다**(rc 4, 아티팩트 없음, 로그
+   `~/.config/kis-probes/p-ca-20261001-058610-refcheck.log`): `--payable-time is in the
+   future ('2026-10-22T00:00:00+09:00' > 2026-10-01T08:04:53Z)`. 그 거부는 **폴링 경로를
+   위한 규칙**이다(미래 t0 는 음수 지연을 기록한다). 참조조회는 아무것도 페어링하지 않으므로
+   해당되지 않는데, `--reference-check` 가 폴링 인자에 묶여 있어 함께 막혔다.
+2. 같은 날 000660 재관측의 `reference_dates=[]` — ksdinfo 질의 창이 **실행 시각** 기준
+   −30d…+180d 라서 10-01 실행의 `F_DT=20260901` 이 됐고, 09-30 에 돌아왔던 행의
+   `record_date=20260831` 이 **하루 차이로 창 밖**이었다. 행이 사라진 게 아니라 창이 지나갔다.
+
+그리고 둘을 합치면 더 나쁜 것이 남아 있었다: `_do_reference_check` 는 행을 **기록만** 하고
+`divi_pay_dt` 를 t0 로 되먹이지 않았고, 러너도 대조하지 않았다. 브로커 지급일이 하루만
+달라도 프로브는 **틀린 t0 로 16 h 창을 다 쓰고 CENSORED 를 쓴 뒤에야** 아티팩트 안에서
+불일치가 드러난다.
+
+**처분.**
+
+| 무엇 | 어디 |
+|---|---|
+| `--reference-only` — ksdinfo GET 하나, 잔고 호출·보유 요구·폴링 전부 없음. 미래 t0 허용(페어링하지 않으므로). leg 은 `REFERENCE_ONLY` 로 명시 skip — CENSORED/ABORTED 아님 | `probes_ca.py::_do_reference_only` |
+| ksdinfo 창을 **t0 와 실행 시각을 모두 포함**하도록 앵커링(`min(…)−30d … max(…)+180d`). 마진은 그대로이고, 기준일↔지급일 간격이 발행사마다 달라 `--reference-from/--reference-to` 로 직접 지정할 수 있다. 창은 아티팩트 `observations.reference_window` 에 남는다 | `probes_ca.py::_ksdinfo_window` |
+| 러너가 폴링 **전에** `divi_pay_dt` 를 `PCA_PAYABLE` 과 대조하고 불일치면 ABORT. 행 선택은 `PCA_RECORD_DATE`, 없으면 최신 기준일. 우회는 `PCA_ALLOW_PAYDATE_MISMATCH=1`(로그 남김), 행 없음을 차단하려면 `PCA_REQUIRE_REFERENCE_ROW=1` | `runners/run_p_ca.sh` 5b |
+| `POLICY_VERSION` `p-ca-retry-policy/1` → `/2` (양쪽). 러너 계약이 바뀌었고 `/1` 러너는 대조를 **조용히 건너뛴다** | 양쪽 |
+
+**계획과 다른 점.** (a) 러너가 아티팩트 JSON 을 파싱하지 않는다 — 프로브가 `REFERENCE_WINDOW=`
+/`REFERENCE_STATUS=`/`REFERENCE_ROWS=`/`REFERENCE_ROW=<record_date>|<divi_pay_dt>` 앵커 줄을
+찍고 러너는 그것만 읽는다(`HELD=` 와 같은 규율). 덕분에 선택·대조 로직은 bash 몇 줄이고,
+줄을 만드는 쪽은 Python 테스트로 실측된다. 행 값은 **숫자와 구분자만 남기고 전부 버린다** —
+브로커 문자열이 줄을 하나 더 만들어 내지 못하도록. (b) 아티팩트 복사를 `copy_new_artifact`
+한 곳으로 모아 참조 전용 실행의 아티팩트도 `PCA_EVIDENCE_DIR` 로 남긴다(수용 기준 1).
+(c) `--reference-from/--reference-to` 는 「싸면 추가」 항목이었고 실제로 쌌다 — 그리고 30일
+룩백이 **경계값**이라는 걸 10-01 사례가 보여줬으므로(09-30 − 30d = 08-31, 하루만 어긋나도
+놓친다) 운영자 탈출구가 필요했다.
+
+**수정 전 red 증명.** 두 번 나눠 측정했다.
+
+- **프로브 쪽**(`probes_ca.py` 를 `origin/main` 판으로): 새 테스트 18건 전부 red.
+  `--reference-only` 가 잔고 TR 을 먼저 친다(`assert '/ksdinfo/dividend' in '…/inquire-balance'`) ·
+  미래 t0 가 그대로 거부된다(10-01 의 그 문장 축자) · 앵커 없는 창이 10-01 reproduction 을
+  0행으로 만든다(`IndexError`, ksdinfo 호출 자체가 없다) · `_REFERENCE_*` 접두사 부재 ·
+  `--reference-from` 이 무시된다 · `--window-s must be > 0`.
+- **러너 쪽**(러너만 `origin/main` 판, `EXPECT_POLICY_VERSION` 만 `/2` 로 맞춰 핸드셰이크
+  abort 가 행동을 가리지 않게 함): #830 러너 테스트 16건 중 **12건 red**. 불일치 입력에
+  `assert 0 != 0`(즉 **창을 그대로 폴링했다** — 이 이슈의 결함 그 자체) · 확인 로그 부재 ·
+  `(reference-only)` 복사 없음 · pacing sleep 이 2회가 아니라 1회.
+  red 가 아닌 4건과 이유: `test_runner_template_carries_no_instance_defaults`(옛 템플릿을
+  **측정**하는 전제 확인) · `test_the_pay_date_check_is_skipped_for_a_quantity_leg_class` ·
+  `test_no_pay_date_check_runs_when_the_reference_check_is_not_asked`(둘 다 「대조가 돌지
+  **않아야** 하는」 핀이라 옛 코드에서도 참) · `test_runner_refuses_a_quantity_leg_class_without_an_effective_time`(기존 테스트).
+  ⚠ 프로브만 되돌린 1차 측정에서는 러너 테스트가 공유 헬퍼의 `AttributeError` 로 죽어
+  **행동을 증명하지 못했다** — 그래서 러너만 되돌린 2차 측정을 따로 했다.
+
+**게이트.**
+
+```
+.venv/bin/pytest tests/tools/test_broker_probes_ca.py \
+  tests/tools/test_broker_probes_pacing.py \
+  tests/tools/test_broker_probes_balance.py -p no:cacheprovider
+  → 236 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 .py 2건)               → unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0 (필터 없이도 rc 0)
+```
+
+**운영자가 해야 할 것 — 10-22 무인 래퍼.** `~/.config/kis-probes/run-p-ca-20261022.sh` 는
+`PCA_REFERENCE_CHECK=1` 을 이미 넣으므로, 이 PR 이 머지되면 10-22 슬롯은 **대조를 하게 된다**.
+058610 의 기준일을 알면 `PCA_RECORD_DATE` 를 넣는 편이 낫고(모르면 최신 행), 지급일이
+DART 출처라 ksdinfo 와 다를 가능성을 감안해 **불일치 시 슬롯을 포기할지**(기본) **경고만
+남기고 돌릴지**(`PCA_ALLOW_PAYDATE_MISMATCH=1`) 를 미리 정해 둬야 한다. 아무 행도 안 오면
+기본값은 「경고 후 진행」이다.
