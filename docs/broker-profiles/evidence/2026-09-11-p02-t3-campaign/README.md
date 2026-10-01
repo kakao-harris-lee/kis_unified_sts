@@ -197,7 +197,80 @@
 - **⛔ 판정: P-CA 2차 = ABORTED ×3(전부 브로커 측 일시 오류) — 현금 leg 미관측.** **CENSORED 가 아니다** — 09-17 1차는 창이 돌다가 잘린 CENSORED 였지만, 여기서는 2차 아티팩트가 스스로 "This is not even a censored observation: the window never ran" 이라 적었다. 남은 유일한 관측은 **10:59:46 ~ 11:31 KST 사이 baseline 2건 + 폴 20건(13+7)이 전부 같은 값**이라는 것뿐이다 — `P-CA-20260930T015946Z.json:measurements.baseline.hldg_qty=1` · `P-CA-20260930T015946Z.json:measurements.baseline.dnca_tot_amt=6686725.0` 로 시작해 `P-CA-20260930T015946Z.json:observations[17].poll.hldg_qty=1` · `P-CA-20260930T015946Z.json:observations[17].poll.dnca_tot_amt=6686725.0` (2차 마지막 폴), `P-CA-20260930T022735Z.json:measurements.baseline.dnca_tot_amt=6686725.0` (3차 baseline), `P-CA-20260930T022735Z.json:observations[11].poll.dnca_tot_amt=6686725.0` (3차 마지막 폴)로 끝난다. 이 예수금 값은 09-17 1차 baseline 과도 같다. **변화가 없었다는 것이 「배당이 반영되지 않았다」는 뜻은 아니다**(VP-002:772 'observed 0 != 0').
 - `B_non_trade_event_detect` / `B_non_trade_reconcile` 두 키 모두 **NOT_ESTABLISHED 유지**. `approval_status` 세 건 모두 `P-CA-20260930T015946Z.json:approval_status=UNAPPROVED_CANDIDATE` · `P-CA-20260930T022735Z.json:approval_status=UNAPPROVED_CANDIDATE` · `P-CA-20260930T034727Z.json:approval_status=UNAPPROVED_CANDIDATE`.
 - **실행이 payable(00:00 KST)보다 크게 늦다.** 00:20 cron 이 ABORT 하는 바람에 본 실행이 10:59 로 밀렸고, 17:05 보고 cron 이 아티팩트를 보도록 창 종료를 16:50 KST 로 줄였다 — `P-CA-20260930T015946Z.json:args.window_s=21018.0` → `P-CA-20260930T022735Z.json:args.window_s=19351.0` → `P-CA-20260930T034727Z.json:args.window_s=14554.0`. 3·4차는 11:06 에 자기삭제된 `run-p-ca-20260930.sh` 의 사본에서 돌렸고, 그 사본은 **`~/.config/kis-probes/run-p-ca-20260930-retry.sh`(mode 700)로 보존돼 있다**. 원본과의 차이는 셋뿐이다 — crontab 편집·자기삭제 없음, 보유 수량 파서가 「조회 실패」와 「0주」를 구분함(10:58 오판의 재발 방지), 그리고 `--note` 문구. 가드 넷(`git status --short` · poll-pacer 존재 · 앱키 지문 · 계좌 지문)과 프로브 명령은 같다. ⚠ 이 사본의 START 로그 줄은 4차에도 `(attempt 3)` 을 찍는다 — 위 로그 표의 12:47 행이 그것이다.
-- **남은 것**: **P-8 3~5회차** — 주문 권한은 돌아왔으니 재개할 수 있지만, **러너가 전송 오류(1회 재시도)와 `rt_cd≠0`(중단)을 갈라 판정하도록 고친 뒤**에 돌린다(위 09-28 절의 불일치). 이어서 **P-EXT ×5**(운영자 MTS 동석) → **N-15**(마지막). P-CA 는 다음 대상 후보가 에스피지 `058610`(위 표의 2차 후보)이지만 **실행 여부·시점은 운영자 결정이며 아직 정해지지 않았다**.
+- **남은 것**: **P-8 3~5회차** — 주문 권한은 돌아왔으니 재개할 수 있지만, **러너가 전송 오류(1회 재시도)와 `rt_cd≠0`(중단)을 갈라 판정하도록 고친 뒤**에 돌린다(위 09-28 절의 불일치). 이어서 **P-EXT ×5**(운영자 MTS 동석) → **N-15**(마지막). P-CA 는 다음 대상 후보가 에스피지 `058610`(위 표의 2차 후보)이지만 **실행 여부·시점은 운영자 결정이며 아직 정해지지 않았다**. **〔2026-10-01 추가〕 이 절이 적은 관측 실패들(러너의 공유 체크아웃 하드코딩 · 전송 오류 처리)의 수정은 PR #825 로 머지됐다** — 계획 `docs/plans/2026-09-30-probe-transient-error-policy-plan.md`, 추적 러너 템플릿 `tools/broker_probes/runners/run_p_ca.sh`(main `197f5803`). 그 템플릿의 **첫 실사용이 아래 10-01 절**이고 가드는 전부 통과했다. ⚠ **#825 는 P-CA 경로에만 걸린다 — 이 「남은 것」의 선결 조건은 아직 충족되지 않았다.** #825 가 건드린 것은 `probes_ca.py` · `tools/broker_probes/runners/run_p_ca.sh` · 그 테스트뿐이고, **`probes_order.py` 와 P-8 cron 러너는 그대로다**(`_retry_once` 는 `probes_order.py` 에 0건). 위 09-28 절이 적은 불일치 — 러너 `VERDICT` 가 `ConnectionError` 를 「브로커 거부 포함」으로 묶는 것 — 는 살아 있으므로 **P-8 3~5회차는 아직 재개 조건을 만족하지 않는다**.
+
+### 2026-10-01 (목) — P-CA 2차 후속 (지급일 +1 재관측) — **창 완주 · 현금 leg CENSORED**
+
+09-30 과 **같은 사건의 재관측**이다. 대상 `P-CA-20261001T075835Z.json:args.symbol=000660` · `P-CA-20261001T075835Z.json:args.event_class=cash_dividend`, t0 도 그대로 `P-CA-20261001T075835Z.json:args.payable_time=2026-09-30T00:00:00+09:00` 이고 **실행만 지급일 다음 날 오후**다 — `P-CA-20261001T075835Z.json:started_at_utc=2026-10-01T07:58:35.945514+00:00`(16:58:35 KST) → `P-CA-20261001T075835Z.json:finished_at_utc=2026-10-01T08:03:59.385381+00:00`(17:03:59 KST), 소요 `P-CA-20261001T075835Z.json:duration_s=323.44` s. 계좌·자격증명은 09-30 과 동일하다 — 예전 모의 주식 계좌 `P-CA-20261001T075835Z.json:credentials.account_fingerprint=54e7f8a5d841` · `P-CA-20261001T075835Z.json:credentials.account_masked=50******01`, 09-15 백업의 예전 앱키, 전용 토큰 캐시 `P-CA-20261001T075835Z.json:args.token_cache_dir=/home/deploy/.config/kis-probes/p-ca-20260930-token-cache`. GET-only(아티팩트 `read_only_attestation`: 잔고 2 TR + ksdinfo 참조 12 TR 허용목록, 모듈에 주문 경로 없음).
+
+**✅ 09-30 절이 「다음 프로브 전에 고쳐야 할 러너 결함」으로 적은 것이 고쳐진 채로 돌았다.** 공유 체크아웃 하드코딩은 PR #825(계획 `docs/plans/2026-09-30-probe-transient-error-policy-plan.md`)로 닫혔고, 러너가 저장소의 **추적 템플릿** `tools/broker_probes/runners/run_p_ca.sh` 로 들어왔다(main `197f5803`). 이 실행이 그 템플릿의 **첫 실사용**이고, 호스트 래퍼는 환경변수만 넘긴다. 템플릿 가드는 전부 통과했다 — 로그 `~/.config/kis-probes/p-ca-20261001-payplus1.log` 축자:
+
+```text
+2026-10-01 16:58:33 checkout ok: repo=/home/deploy/.local/state/kis/wt-pca repo_commit=f23bb4c3a6629a1665dd98151f88fcd35f31fdeb
+2026-10-01 16:58:33 probe module resolves inside the checkout: /home/deploy/.local/state/kis/wt-pca/tools/broker_probes/probes_ca.py
+2026-10-01 16:58:33 probe policy version p-ca-retry-policy/1 matches this runner
+2026-10-01 16:58:33 stock app key fp=7763f26aac49 (expect 7763f26aac49)
+2026-10-01 16:58:33 stock account fingerprint=54e7f8a5d841 (expect 54e7f8a5d841)
+2026-10-01 16:58:34 held qty(000660)=1
+```
+
+`P-CA-20261001T075835Z.json:repo_commit=f23bb4c3` 가 로그의 `repo_commit=` 과 같은 커밋이다(그 시각 `origin/main`). **#793 의 「프로브는 분리 워크트리에서」 규칙이 P-CA 경로에서 처음으로 지켜졌다.**
+
+| 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
+|---|---|---|---|---|---|
+| 16:58:35 | P-CA 2차 후속(지급일+1) | `P-CA-20261001T075835Z.json` | live / **MEASURED** / MOCK_VTS | `P-CA-20261001T075835Z.json:errors=[]` / 2 | 창 `P-CA-20261001T075835Z.json:args.window_s=300.0` s 를 **끝까지 돌고**(`P-CA-20261001T075835Z.json:measurements.polled_elapsed_s=321.541` s) 현금 leg `P-CA-20261001T075835Z.json:measurements.class_leg_table[0].status=CENSORED`. 폴 `P-CA-20261001T075835Z.json:measurements.polls_completed=10` 회 완료 / `P-CA-20261001T075835Z.json:measurements.polls_used=11` 시도. 전 폴이 baseline 과 같은 값 |
+
+- **✅ ABORT 없이 창이 끝까지 돈 것은 P-CA 세 차례 중 처음이다.** 09-17 은 폴 #1 rate-limit 으로 CENSORED(창 안 돌음), 09-30 은 ABORTED ×3 이었다. 여기서는 `P-CA-20261001T075835Z.json:errors=[]` 이고 재시도 비용도 0 이다 — `P-CA-20261001T075835Z.json:measurements.retries.transport=0` · `P-CA-20261001T075835Z.json:measurements.retries.ledger_throttle=0`. baseline 호출도 정상(`P-CA-20261001T075835Z.json:observations[2].baseline_call.rt_cd=0` · `P-CA-20261001T075835Z.json:observations[2].baseline_call.http_status=200` · `P-CA-20261001T075835Z.json:observations[2].baseline_call.msg_cd=20310000`).
+- **⛔ 그래도 현금 leg 는 `CENSORED` 다 — 관측된 반영이 없다.** skip 사유(축자): `P-CA-20261001T075835Z.json:skips[1].reason=CENSORED — no broker-reflect observed within --window-s=300.0s (polls_used=11). Absence of an observed reflection is not evidence of zero latency (VP-002:772 'observed 0 != 0').` leg 출처 등급은 `P-CA-20261001T075835Z.json:measurements.leg_provenance_class=NOT_MEASURED` 다. ⚠ 아티팩트 상단의 `P-CA-20261001T075835Z.json:provenance_class=MEASURED` 는 **실행이 오류 없이 끝났다**는 스탬프이지 leg 가 측정됐다는 뜻이 아니다 — 둘을 같이 읽어야 한다.
+- **폴 11회차의 전송 오류는 창이 이미 끝난 뒤라 재시도되지 않았고, 그래서 판정을 바꾸지 않았다.** `P-CA-20261001T075835Z.json:observations[15].retry_evidence.poll_index=11` · `P-CA-20261001T075835Z.json:observations[15].retry_evidence.status_kind=TRANSIENT:transport` · `P-CA-20261001T075835Z.json:observations[15].retry_evidence.retried=false` · `P-CA-20261001T075835Z.json:observations[15].retry_evidence.body_excerpt=ReadTimeout: HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Read timed out. (read timeout=20.0)`. **이것이 PR #825 가 넣은 F5 규칙이 실제로 동작한 모습이다** — 창 밖 재시도를 거부하므로 CENSORED 가 창 밖 폴에 기대지 않고, 재시도를 안 샀으니 `retries.transport` 도 0 으로 남는다(`tools/broker_probes/probes_ca.py::_retry_once` 의 `can_retry`, `_record_retry` 는 **retried 인 것만** 센다). 09-30 3·4차를 끊은 것과 같은 종류의 `ReadTimeout` 이지만, 이번에는 아무것도 끊지 못했다.
+- **모든 읽기값이 동일하다.** baseline `P-CA-20261001T075835Z.json:measurements.baseline.hldg_qty=1` · `P-CA-20261001T075835Z.json:measurements.baseline.dnca_tot_amt=6686725.0`(6,686,725원)로 시작해 첫 폴 `P-CA-20261001T075835Z.json:observations[5].poll.index=1` · `P-CA-20261001T075835Z.json:observations[5].poll.dnca_tot_amt=6686725.0` 부터 마지막 폴 `P-CA-20261001T075835Z.json:observations[14].poll.index=10` · `P-CA-20261001T075835Z.json:observations[14].poll.hldg_qty=1` · `P-CA-20261001T075835Z.json:observations[14].poll.dnca_tot_amt=6686725.0` 까지 10건 전부 같다. 이 예수금 값은 **09-30 지급일 baseline `P-CA-20260930T015946Z.json:measurements.baseline.dnca_tot_amt=6686725.0` 와도, 09-17 1차 baseline `P-CA-20260917T130246Z.json:measurements.baseline.dnca_tot_amt=6686725.0` 와도 같다.**
+- **⚠ `--reference-check` — TR 은 여전히 동작하지만 오늘은 반환 행이 0건이다.** `P-CA-20261001T075835Z.json:observations[4].mock_reference_support=SUPPORTED` 로 09-17·09-30 ×2 에 이은 네 번째 확인이지만, `P-CA-20261001T075835Z.json:observations[3].reference_dates=[]` 다. **해석(측정 아님):** ksdinfo 질의 창은 KST 기준 **now−30일 ~ now+180일**(`tools/broker_probes/probes_ca.py::_ksdinfo_window`)이라 10-01 실행의 `F_DT` 는 2026-09-01 이고, 09-30 에 돌아왔던 그 행의 기준일 `P-CA-20260930T015946Z.json:observations[3].reference_dates[0].record_date=20260831` 은 **하루 차이로 창 밖**이다. 즉 행이 사라진 것은 브로커가 CA 를 지운 것이 아니라 질의 창이 지나간 것과 정합적이다 — 확정하려면 `F_DT` 를 넓힌 재질의가 필요하고, 이 실행은 하지 않았다. **`mock_reference_support` 는 행 수와 무관하게 `rt_cd=0` 만 보므로**(같은 파일 `_do_reference_check`) 「SUPPORTED + 0행」은 모순이 아니다.
+- **ex leg 는 설계상 SKIP**: `P-CA-20261001T075835Z.json:skips[0].what=legs.cash_dividend.ex` — `P-CA-20261001T075835Z.json:skips[0].reason=NOT_OBSERVABLE_ON_BALANCE_SURFACE — 기준가 조정은 잔고 TR로 관측 불가(N-19 §2.3: 주식잔고조회 72필드 중 가격 필드 없음); 현금 leg만 관측 가능.`
+- `B_non_trade_event_detect` / `B_non_trade_reconcile` 두 키 모두 **NOT_ESTABLISHED 유지**. `P-CA-20261001T075835Z.json:approval_status=UNAPPROVED_CANDIDATE`.
+
+#### 캠페인 판정 — 모의 현금배당 반영 (운영자 요청)
+
+**관측(측정):** 사건은 SK하이닉스 000660 분기 현금배당, 지급일 `P-CA-20261001T075835Z.json:args.payable_time=2026-09-30T00:00:00+09:00`(참조행 `P-CA-20260930T015946Z.json:observations[3].reference_dates[0].divi_pay_dt=2026/09/30` · 주당 `P-CA-20260930T015946Z.json:observations[3].reference_dates[0].per_sto_divi_amt=375` 원 · 기준일 `P-CA-20260930T015946Z.json:observations[3].reference_dates[0].record_date=20260831`), 보유 1주. 같은 계좌의 `dnca_tot_amt` 를 두 창에서 읽었다.
+
+| 창 | 시각(KST) | baseline | 완료 폴 | 읽은 값 |
+|---|---|---|---|---|
+| 지급일 | 10:59:46 ~ 11:31:34 | 2건 | 20건(13+7) | 전부 `6686725.0` |
+| 지급일 +1 | 16:58:35 ~ ≈17:03(마지막 성공 읽기) | 1건 | 10건 | 전부 `6686725.0` |
+
+**판정(관측 태그):** 현금 leg 는 **`NOT_REFLECTED_WITHIN_41H`** — 지급일 00:00 KST 로부터 **약 41시간** 뒤까지 **모의(VTS) 주식 계좌의 잔고면에 이 배당이 나타나지 않았다**는 관측 사실이다.
+
+바운드의 끝 앵커는 **마지막으로 성공한 읽기(폴 #10)** 이지 실행 종료 시각이 아니다 — `P-CA-20261001T075835Z.json:finished_at_utc=2026-10-01T08:03:59.385381+00:00`(17:03:59 KST)은 **실패한 20초 `ReadTimeout` 이 돌아온 순간**이고 그때 읽은 값은 없다. 아티팩트에 **폴별 타임스탬프 필드가 없으므로** 폴 #10 의 시각은 도출값이다 — 폴링 경과 `P-CA-20261001T075835Z.json:measurements.polled_elapsed_s=321.541` s 에서 마지막 시도의 20초 타임아웃을 빼면 **t0+≈41.06시간**이다. 소수 둘째 자리의 정밀도는 근거가 없으니 **본문은 「약 41시간」으로 읽는다.**
+
+⚠ **`NOT_REFLECTED_WITHIN_41H` 는 관측 태그이지 `capabilities.corporate_actions.status` 의 값이 아니다.** 그 필드는 닫힌 7값 어휘(`tos/src/tos/brokercap/vocabulary.py::CapabilityStatus` — `VERIFIED` / `VERIFIED_WITH_RESTRICTION` / `DOCUMENTED_NOT_VERIFIED` / `UNSUPPORTED` / `CONTRADICTORY` / `UNKNOWN` / `EXPIRED`, ADR-002-004 §5.3)다. 이 관측이 떠받치는 **어휘 값은 `UNKNOWN` 유지**이고, 많이 가야 `DOCUMENTED_NOT_VERIFIED` 다 — 단일 모의 계좌·단일 사건의 미반영 관측은 `UNSUPPORTED` 를 뒷받침하지 않는다. **이 태그를 INSTANCE 의 status 필드에 그대로 적어서는 안 된다.**
+
+참조 TR(ksdinfo)은 **모의에서 지원된다**(`P-CA-20261001T075835Z.json:observations[4].mock_reference_support=SUPPORTED`) — 09-17 판정에서 바뀐 것이 없다.
+
+**이 판정이 말하지 않는 것(경계):**
+
+- **「영영 반영되지 않는다」가 아니다.** 측정한 것은 **약 41시간**(끝 앵커 = 마지막 성공 읽기) 바운드뿐이다. 그 뒤는 관측하지 않았다.
+- 두 창 사이 **약 29.5시간은 폴링하지 않았다.** 그래도 바운드가 그 공백에 걸리는 이유는 예수금이 **수준(level)** 이기 때문이다 — 공백 중에 세전 375원(원천징수 여부와 무관하게 0원이 아니다)이 들어왔다면 10-01 의 값은 달랐을 것이다. **전제는 운영자 attest(창 동안 이 계좌에 다른 주문·입출금 없음)와 09-15 재신청 이후 이 계좌가 정적이라는 것**이고, 정확히 상쇄하는 다른 변동은 배제하지 못한다. **해석(측정 아님)** 으로 분류한다.
+- **잔고 TR 72필드 중 이 프로브가 보는 것은 2개뿐이다** — `hldg_qty` 와 `output2[0].dnca_tot_amt`(`tools/broker_probes/probes_ca.py` 모듈 독스트링 · `_read_cash_total`). 모의 서버가 배당을 **다른 필드**(가수도정산·D+2 계열)로 적었다면 이 관측은 그것을 보지 못한다. 「잔고면 미반영」이 「원장 미반영」보다 좁은 주장인 이유다.
+- **위 09-30 절의 유보와 모순이 아니다.** 그 절은 「변화가 없었다는 것이 「배당이 반영되지 않았다」는 뜻은 아니다」라고 적었고 그것은 **단일 창 안의 무변화**에 대한 규칙으로 여전히 옳다 — 한 창에서 값이 안 변한 것은 반영이 창 밖에 있었을 뿐일 수 있다. 여기서 다른 것은 **두 창에 걸친 level 비교**다 — 지급일 창과 지급일+1 창의 값이 같다는 것은 그 사이에 들어온 현금이 없다는 뜻이고, 이는 한 창 안의 무변화보다 강한 진술이다. 09-30 블록만 읽는 독자를 위해 적어 둔다: **09-30 의 유보는 철회된 것이 아니라 적용 범위가 다르다.**
+- 아티팩트의 `attribution_caveat` 는 **변화가 관측된 경우** 그것을 CA 에 귀속할 수 없다고 적는다. 여기서는 그 반대(변화 0)지만 같은 이유로, 이 관측 하나가 브로커 쪽 CA 처리 유무를 직접 말하지는 않는다.
+- 두 바운드 키 `B_non_trade_event_detect` / `B_non_trade_reconcile` 는 **여전히 NOT_ESTABLISHED** 이고, INSTANCE 기입에는 P0-2 승인 체인이 필요하다(`P-CA-20261001T075835Z.json:approval_note`). 위 관측 태그는 **승인 전 후보**이고, `capabilities.corporate_actions.status` 에 들어갈 **어휘 값은 `UNKNOWN` 유지**다.
+
+#### 058610 당일 사전 확인 시도 — 프로브가 거부 (아티팩트 없음)
+
+같은 자격증명으로 17:04:49 에 다음 대상 에스피지 058610 의 참조조회를 미리 돌려 보려 했으나, 템플릿 가드(체크아웃·모듈 경로·정책 버전·앱키 지문·계좌 지문·`held qty(058610)=1`)를 전부 통과한 뒤 **프로브가 전제조건에서 거부했다**(rc 4, 로그 `~/.config/kis-probes/p-ca-20261001-058610-refcheck.log` 축자): `PRECONDITION NOT MET: --payable-time is in the future ('2026-10-22T00:00:00+09:00' > 2026-10-01T08:04:53.228420+00:00) — P-CA pairs a poll against a time that has ALREADY passed; a future t0 would record a negative latency.` 아티팩트는 쓰이지 않았고 러너도 `WARN: newest artifact (P-CA-20261001T075835Z.json) predates this run — NOT copied` 로 **직전 실행의 아티팩트를 복사하지 않았다**(오염 방지 가드가 동작한 것이다). 따라서 **10-22 지급일은 09-17 참조표 값 그대로 둔다** — 그 값은 DART 접수(`20260907900152`/`20260907900150`, 위 §서버 측에서 채운 값)에서 온 것이지 ksdinfo 참조표에서 온 것이 아니다.
+
+⚠ **당일 `--reference-check` 는 「재확인」이 아니라 「기록」이다.** `tools/broker_probes/probes_ca.py::_do_reference_check` 는 ksdinfo 행을 `reference_dates` 에 적을 뿐 **`--payable-time` 으로 되먹이지 않고**, 래퍼도 `divi_pay_dt` 를 t0 와 비교하지 않는다. 그래서 브로커의 지급일이 10-23 이었다면 프로브는 그대로 10-22 를 t0 로 삼아 창을 다 쓰고 CENSORED 를 쓴 뒤에야 아티팩트 안에서 불일치가 드러난다 — **창을 쓰기 전에 막아 주지 않는다.** 이 결합을 푸는 후속(참조 전용 모드 + 지급일 대조)은 아래 「남은 것」에 적는다.
+
+- **남은 것**:
+  - **P-CA 3차(에스피지 `058610`) — 무인 예약 완료, 슬롯 3개.** 운영자 지시(2026-10-01)로 10-22 를 기다리거나 레인을 열어 두지 않는다. 호스트 crontab(`CRON_TZ=Asia/Seoul`)에 **00:20 · 06:20 · 12:20 KST 세 줄**이 있고 셋 다 같은 래퍼를 같은 lock 으로 부른다 — `20 0 22 10 *` / `20 6 22 10 *` / `20 12 22 10 *` → `/usr/bin/flock -n /tmp/p-ca-20261022.lock` + `~/.config/kis-probes/run-p-ca-20261022.sh`, 로그 `~/.config/kis-probes/p-ca-20261022.log`(cron stdout 은 `p-ca-20261022-cron.log`). 래퍼는 호스트 로컬이고, `origin/main` 분리 워크트리 `/home/deploy/.local/state/kis/wt-pca-20261022` 를 새로 만들어 **추적 템플릿**을 호출한다.
+    - **창 종료는 슬롯과 무관하게 16:20 KST 고정**이고 `PCA_WINDOW_S` 는 슬롯 시작 시각에서 그때까지로 계산된다(00:20 슬롯이면 57,600 s). 남은 시간이 **30분 미만이면 그 슬롯은 돌지 않고 전부 해제**한다.
+    - **한 번의 ABORT 는 종결이 아니다.** 각 슬롯은 시작 전에 **이미 끝난 관측**(058610 · `legs.cash_dividend.cash` 가 `ABORTED` 가 아니고 `errors` 가 빈 아티팩트)이 있는지 보고, 있으면 아무 것도 하지 않고 세 줄을 전부 지운다. 없으면 돌고, 끝난 뒤 같은 검사를 다시 해 **완료면 해제, 미완이면 다음 슬롯에 넘긴다**. 따라서 **세 슬롯이 연달아 ABORT 해야 종결**이다. `PCA_CRON_MARK` 는 **일부러 비워 둔다** — 설정하면 템플릿이 rc 와 무관하게 크론 줄을 지워 재무장이 사라진다.
+    - 완료 판정의 아티팩트 글롭은 `P-CA-2026102[12]T*.json` 이다. **아티팩트 id 는 UTC 스탬프**(`tools/broker_probes/common.py::artifact_id` 가 `started_at` 을 그대로 쓴다 — 10-01 의 16:58 KST 실행이 `P-CA-20261001T075835Z` 로 떨어진 것이 그 예다)라 00:20·06:20 KST 슬롯은 `P-CA-20261021T…Z` 로 떨어진다 — 10-21·10-22 **두 UTC 날짜를 다 보는** 이유다.
+      ⚠ **이 글롭은 처음에 `P-CA-20261022T*.json` 하나였고, #829 리뷰 레인의 F1 지적을 호스트에 적용하려고 래퍼를 다시 읽다가 잡았다.** 그대로 뒀다면 00:20·06:20 슬롯의 **완료 관측이 탐지되지 않아** — 세 슬롯 중 12:20 만 UTC 10-22 에 떨어진다 — Telegram 이 완료를 「ABORT/미완」으로 보고하고, 크론 줄은 해제되지 않고, 다음 슬롯이 **이미 관측된 사건에 창을 또 썼을 것**이다. 재무장 가드가 자기가 막는다고 적은 것(중복 실행)을 그대로 통과시키는 모양이었다. 자동 검사로는 안 잡힌다 — 10-22 에 한 번 돌 코드이고 실패 모드가 침묵이다.
+    - 파라미터: `058610` · `cash_dividend` · payable `2026-10-22T00:00:00+09:00` · poll `30000` ms · pace `1.5` s · 09-15 백업 자격증명 파일 · 토큰 캐시 `p-ca-20260930-token-cache` · `PCA_REFERENCE_CHECK=1`. 끝나면 Telegram briefing 채널로 rc·아티팩트명·판정 줄·다음 슬롯 여부를 보낸다.
+    - **아티팩트 복사 목적지는 내구 호스트 경로 `/home/deploy/.local/state/kis/p-ca-evidence/` 다**(`PCA_EVIDENCE_DIR`). 이 PR 브랜치의 워크트리를 가리키지 않는다 — 템플릿은 그 디렉터리가 없으면 **프로브를 돌리기 전에 die** 하므로(`run_p_ca.sh:151`), 워크트리 정리가 관측을 통째로 날릴 수 있었다. ⚠ **캠페인 README 편입·커밋·PR 은 그 경로에서 수동으로 한다.**
+    - ⚠ **당일 `--reference-check` 는 기록만 한다**(위 058610 절) — 래퍼는 `divi_pay_dt` 를 t0 와 대조하지 않으므로, 브로커 지급일이 10-22 가 아니면 창을 다 쓴 뒤에야 드러난다.
+  - 09-30 절에서 이월: **P-8 3~5회차** → **P-EXT ×5**(운영자 MTS 동석) → **N-15**(마지막). ⚠ **P-8 의 선결 조건(러너가 전송 오류와 `rt_cd≠0` 를 갈라 판정하는 것)은 아직 충족되지 않았다** — #825 는 P-CA 경로만 고쳤고 `probes_order.py` 와 P-8 러너는 그대로다(위 09-30 절 주석).
+  - 비차단 후속 **#830** — `--reference-only` 모드(미래 지급일의 ksdinfo 참조조회를 t0 없이 허용)와 러너의 `divi_pay_dt`↔t0 대조. 오늘 두 가지가 같은 결합에서 나왔다: 058610 사전 확인이 rc 4 로 거부된 것(미래 t0)과, 10-22 창이 **대조 없이** 돌게 되는 것. ksdinfo 질의 창을 t0 기준으로도 잡는 것(현재는 실행 시각 −30일 고정, 오늘의 0행이 그 한계다)도 같은 이슈에 묶었다.
 
 ## 수동 개입 기록
 
@@ -208,6 +281,10 @@
   - 10:58:04 수동 — 가드를 통과해 러너의 보유 사전 확인 `get_stock_balance()` 가 나갔다. **잔고 GET 1회**, 그 결과로 ABORT(위 로그 표).
   - 10:59:46 · 11:27:35 · 12:47:27 수동 — 각각 attempt 2 · 3 · 4. 3·4차는 보존된 사본 러너(`~/.config/kis-probes/run-p-ca-20260930-retry.sh`).
   - 11:00 경 수동 — 10:58 ABORT 의 원인을 가르기 위한 확인용 직접 GET 1회(20행, `000660` 수량 1, 11.9 초). **attempt 2 의 폴링 창 안에 들어갔다**(위 EGW00215 해석 참조).
+- 2026-10-01: 브로커에 닿은 것은 **템플릿 러너 실행 2회**다. 전부 GET, 주문 0건, HTS/MTS 미사용.
+  - 16:58:33~17:03:59 수동 — 000660 지급일+1 재관측. 러너 사전 확인 GET 1회(`held qty(000660)=1`) + 프로브 baseline 1회 + ksdinfo 참조조회 1회 + 폴 11회(그중 11회차는 `ReadTimeout`). 아티팩트 `P-CA-20261001T075835Z.json`.
+  - 17:04:49~17:04:53 수동 — 058610 사전 확인 시도. 러너 사전 확인 GET 1회(`held qty(058610)=1`) 뒤 프로브가 `PRECONDITION NOT MET: --payable-time is in the future` 로 거부(rc 4) → **아티팩트 없음**, 복사도 없음.
+- 2026-10-22 (예정): **수동 개입 없음** — P-CA 3차(058610)는 호스트 cron **무인 실행이고 슬롯이 3개**다(00:20 · 06:20 · 12:20 KST, 위 10-01 절 「남은 것」). 앞 슬롯이 완료 관측을 남기면 뒤 슬롯은 돌지 않고 세 줄이 해제되며, 세 슬롯이 연달아 ABORT 해야 종결이다. 운영자 동석·HTS/MTS 사용 계획 없음. 아티팩트는 `/home/deploy/.local/state/kis/p-ca-evidence/` 로 떨어지고, **README 편입만 수동**이다.
 
 ## 반환 항목 (핸드오버 §4)
 
