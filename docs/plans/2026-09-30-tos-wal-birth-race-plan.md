@@ -413,9 +413,9 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9614 passed** (1:37). 최초 구현 9613 + 리뷰 처분 1(읽기 전용 거부) · 기준선 9601 |
-| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (5:00). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
-| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **819 passed** (4:39) |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9614 passed** (1:45). 기준선 9601 + 이번 아크 13 |
+| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (4:22). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
+| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **834 passed** (5:59) |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 266 source files` |
 | `mypy tos/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 587 source files` |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
@@ -459,12 +459,53 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 로 실패한다(문구·타입 동일). `mode=ro` URI + `SELECT` 는 롤백저널 파일에서 **OK** 다: 읽는 방법이
 없는 것이 아니라, 이 생성자가 그 방법이 아닌 것이다.
 
+### 8.9 라운드-2 리뷰 처분 (독립 리뷰 high, 2026-10-01 · 7건 · 최종 라운드)
+
+F1·F2 는 리뷰가 **이 브랜치의 게이트로 직접 실행**해 녹색임을 보였다. 재현해 확인한 뒤 고쳤다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | 재바인딩 검사가 **문장 종류를 열거**해서, 별칭 import · 튜플 타깃 · `for` 타깃 · `import os as …` · `with … as` · 왈러스는 전부 못 본다 | **수정.** 재현: 여섯 형태 **전부 `met=True`**(아래). 열거를 버리고 **바인딩 발생**으로 바꿨다 — `Store` 문맥의 모든 `Name`(대입 전 형태·`for`·`with as`·컴프리헨션·왈러스를 한 번에 덮는다) + 모든 `alias.asname` + `except … as` + `def`/`class` + 파라미터. 파라미터 포함 7형태를 파라미터라이즈드 음성 테스트로 고정 |
+| F2 | 위임의 pragma 를 **모듈 단위**로 읽어, 아무도 부르지 않는 헬퍼 안의 `PRAGMA journal_mode=WAL` 이 게이트를 만족시킨다 | **수정.** 재현: 죽은 헬퍼가 pragma 를 들고 있어도 `met=True`. 추출을 **진입점에서 도달 가능한 호출 그래프**(bare-name 호출 추이)로 좁혔다. 실제 `_wal.py` 는 네 함수 전부 도달하므로 그대로 green. 양방향 테스트 — 죽은 헬퍼는 unmet, 진입점이 부르는 헬퍼는 met |
+| F3 | writer 의 오픈 실패는 아직 분류 없이 exit 1 — F2 가 reader 만 고쳤다 | **수정.** writer 도 **생성자만** 감싸 `STORE_UNOPENABLE_EXIT`. 커밋 실패는 감싸지 않는다(그건 이 워커나 카탈로그의 결함이지 「스토어가 없다」가 아니다) |
+| F4 | reader 의 `except (…, sqlite3.Error)` 가 `reload_conservative` **전체**를 감싸, 오픈에 성공한 **뒤** 나는 오류(손상 페이지 · 없는 컬럼 · `ProgrammingError`)까지 「열지 못했다」로 접는다 | **수정(구조).** 타입만 좁히는 것으로는 부족하다 — 읽기 실패도 `OperationalError` 일 수 있다. `reload_conservative` 가 **오픈과 읽기를 두 문장으로 분리**하고 오픈 거부만 새 `StoreOpenRefused` 로 싸서 올린다. reader 는 그 하나만 잡는다. 양방향 테스트: 디렉터리 → 71, **열리지만 컬럼이 없는 파일 → 71 아님**(이 테스트는 타입 좁히기로는 통과하지 못한다) |
+| F5 | 커널이 런타임과 **같은 이름**의 다른 예외 클래스를 쓴다 — 한쪽을 잡는 `except` 가 다른 쪽을 조용히 놓친다 | **수정.** 커널 쪽을 `StoreJournalModeRefused` 로 개명하고 **양쪽 독스트링에 상호참조**를 적었다(런타임 `schema_ledger.py` 는 이 한 문단만 바뀐다) |
+| F6 | `_reap` 의 공유 데드라인이 **첫 join 에만** 걸려, 그 뒤 자녀마다 `terminate` + 10 s join 이면 다시 자녀 수에 비례한다 | **수정.** 세 국면 각각 **전체 공유** 데드라인 — join → terminate+join → kill+join. 자녀가 몇이든 상한은 `3 × _REAP_TIMEOUT_S` |
+| F7 | 드리프트 핀이 **일곱 가지 사실의 투영**이라 그 밖의 의미 변화(예: `.lower()` 누락)를 못 본다 | **수정.** 투영을 버리고 네 함수의 **정규화한 AST** 를 통째로 대조한다. 벗겨내는 것은 셋뿐이고 각각 이유를 적었다 — 독스트링 · `_LOG` 호출과 그것만 먹이는 대입 · 본문이 bare `raise` 뿐인 핸들러 — 그리고 각 모듈의 refusal 클래스는 플레이스홀더로 치환(F5 가 이름을 일부러 갈라놨다). 루프·재귀 거부는 유지. 커널 wait 의 꼬리를 런타임과 같은 문장 모양으로 맞췄다 |
+
+기각 0건.
+
+### 8.10 라운드-2 실측
+
+**F1·F2 — 수정 전 게이트는 일곱 형태 모두 green 이었다.** 합법 import 를 그대로 둔 채
+이름만 다른 것에 묶는다:
+
+| 형태 | 수정 전 | 수정 후 |
+|---|---|---|
+| `from … import noop as enable_wal_journal` | `met=True` · `rebound=[]` | `met=False` · `module:import-as` |
+| `enable_wal_journal, _ = (lambda c: None), 0` | `met=True` · `rebound=[]` | `met=False` · `module:assign` |
+| `for enable_wal_journal in [...]` | `met=True` · `rebound=[]` | `met=False` · `module:assign` |
+| `import os as enable_wal_journal` | `met=True` · `rebound=[]` | `met=False` · `module:import-as` |
+| `with … as enable_wal_journal` | `met=True` · `rebound=[]` | `met=False` · `module:assign` |
+| `(enable_wal_journal := lambda c: None)` | `met=True` · `rebound=[]` | `met=False` · `module:assign` |
+| 죽은 헬퍼가 pragma 를 소유(F2) | `met=True` | `met=False` · `reached=['enable_wal_journal']` |
+
+**F7 — 투영이 못 보는 것을 실제로 재어 봤다.** `_switch_journal_to_wal` 의 `.lower()` 를 떼면:
+
+```text
+원본   switch_sql=('PRAGMA journal_mode=WAL',) wait_sql=('BEGIN IMMEDIATE','ROLLBACK') attempts=2 contest='code & _SQLITE_PRIMARY_CODE_MASK == sqlite3.SQLITE_BUSY'
+변이후 switch_sql=('PRAGMA journal_mode=WAL',) wait_sql=('BEGIN IMMEDIATE','ROLLBACK') attempts=2 contest='code & _SQLITE_PRIMARY_CODE_MASK == sqlite3.SQLITE_BUSY'
+AST 대조가 차이를 본다: True
+```
+
+일곱 사실이 **전부 동일**하다. 투영으로는 원리적으로 못 잡는다는 F7 의 지적이 맞다.
+
 ### 8.6 digest
 
-`expected_code_digest`: **9595ef63 → 3ea8f6dc → 7ea0d6d4**
-(`7ea0d6d4c9c96a9227a670b5fe3c2b295d82e57ec7310ff37d30a16b372dcb47`). 두 번 도출했다 —
-27차가 최초 구현, 28차가 §8.7 리뷰 처분(F2 의 reader 분류가 동작 변경, F4 와 `reload.py` 의
-`Raises:` 가 문서).
+`expected_code_digest`: **9595ef63 → 3ea8f6dc → 7ea0d6d4 → 9fa70b6c**
+(`9fa70b6c7bb38d665acc5cb912691f18045bc3ebb8a624e964a5de668fcac426`). 세 번 도출했다 —
+27차가 최초 구현, 28차가 §8.7 라운드-1 처분, 29차가 §8.9 라운드-2 처분(F3·F4·F5 가 동작 변경,
+F7 이 커널 wait 의 문장 모양, 런타임은 상호참조 독스트링 한 문단).
 
 27차. **26차까지와 달리 바뀐 것이 커널 소스다** — 이 digest 는 `tos/src/**.py` 와
 `tos/runtime/src/**.py` 를 함께 접으므로 커널만 바꿔도 값이 바뀐다(6차 전례). `print-digests` 와
