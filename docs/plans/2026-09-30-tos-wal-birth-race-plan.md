@@ -413,9 +413,9 @@ check_persistence_substrate: met=False  pragmas_missing=['journal_mode=WAL']
 
 | 게이트 | 결과 |
 |---|---|
-| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9614 passed** (1:45). 기준선 9601 + 이번 아크 13 |
-| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (4:22). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
-| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **834 passed** (5:59) |
+| `pytest tos/tests -p no:cacheprovider` (커널 · CI `tos-firewall` 스텝) | **9614 passed** (1:52, main 머지 뒤 재실행). 기준선 9601 + 이번 아크 13 |
+| `pytest tos/runtime/tests -p no:cacheprovider` | **3246 passed** (6:46, main 머지 뒤 재실행). 커널만 바꿨는데도 이 스위트를 도는 이유는 compose 가 이 스토어를 배선하기 때문이다 — 그리고 digest 를 먼저 찍지 않았으면 여기가 `ReleaseAdmissionRefused` 로 떨어진다(§8.6 ⚠) |
+| `pytest tests/tools/test_tos_*.py tests/tos_l3 -p no:cacheprovider` (CI 거버넌스 배터리, `test_u17_verify.py` 제외 — 로컬 `yq` 미설치) | **897 passed** (4:02, main 머지 뒤 — #826 이 `test_tos_evidence_scan_measure.py` 를 더한다) |
 | `cd tos && mypy src --ignore-missing-imports` | `Success: no issues found in 266 source files` |
 | `mypy tos/tests --ignore-missing-imports --disable-error-code=no-untyped-def` | `Success: no issues found in 587 source files` |
 | `mypy tos/runtime/src --ignore-missing-imports` | `Success: no issues found in 189 source files` |
