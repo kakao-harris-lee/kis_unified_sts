@@ -318,6 +318,17 @@ class _EntryRow(NamedTuple):
     chain_digest: str
 
 
+#: The ``entries`` columns :class:`_EntryRow` unpacks, in field order. Shared by the two
+#: readers of that shape — :meth:`SqliteEvidenceStore.iter_entry_meta` (the whole table) and
+#: :meth:`SqliteEvidenceStore.entry_meta` (ONE row by primary key) — so the two cannot drift
+#: apart: both hand their result straight to ``_EntryRow(*row)``, which unpacks POSITIONALLY
+#: and would silently mis-assign every field if one SELECT's column order changed alone.
+_ENTRY_META_COLUMNS_SQL = (
+    "seq, segment_id, kind, record_class, key_generation, "
+    "appended_at_monotonic_ns, entry_digest, chain_digest"
+)
+
+
 def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
     """The ``key_generation`` of the most recently committed ``entries`` row, or ``None`` for
     an empty (fresh) store — the constructor's own continuity-gate input (TOS Phase 5 W4 plan
@@ -891,11 +902,42 @@ class SqliteEvidenceStore:
         return last_seq, last_chain_digest, last_key_generation
 
     def iter_entry_meta(self) -> Iterator[_EntryRow]:
-        """Yield every entry's meta fields (no payload) — :mod:`tos_runtime.evidence.retention`'s read shape."""
+        """Yield every entry's meta fields (no payload) — :mod:`tos_runtime.evidence.retention`'s read shape.
+
+        A whole-table walk by construction (no ``WHERE``, ``ORDER BY seq ASC``): sqlite plans
+        it as ``SCAN entries`` and the ``entries_kind_seq`` index above cannot narrow it,
+        because there is no ``kind`` to narrow by. A caller that wants ONE row by ``seq``
+        must use :meth:`entry_meta` instead, not filter this walk.
+        """
         cur = self._conn.execute(
-            "SELECT seq, segment_id, kind, record_class, key_generation, "
-            "appended_at_monotonic_ns, entry_digest, chain_digest "
-            "FROM entries ORDER BY seq ASC"
+            f"SELECT {_ENTRY_META_COLUMNS_SQL} FROM entries ORDER BY seq ASC"
         )
         for row in cur:
             yield _EntryRow(*row)
+
+    def entry_meta(self, seq: int) -> _EntryRow | None:
+        """The ONE ``entries`` row ``seq`` names, meta fields only (no payload) — the SAME
+        :class:`_EntryRow` shape :meth:`iter_entry_meta` yields, read by primary key instead
+        of walked. ``None`` when no row carries that ``seq`` — a recorded absence, never a
+        guess (the caller decides what an absent marker means).
+
+        ``seq`` is this table's ``INTEGER PRIMARY KEY`` (the ``CREATE TABLE`` above), so
+        sqlite plans this statement as ``SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)``:
+        one row visited, independent of how long the history is. Added for
+        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
+        ._resolve_handling_started_monotonic`, which wants exactly one ``(seq, kind)`` row and
+        used to reach it by walking :meth:`iter_entry_meta` — a ``kind``-less full scan
+        measured at **≥130 s on a 365-day store** (evidence growth plan
+        ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b, §7.1.12
+        "읽어야 할 것" 2), on the one consumer of that scan that is neither offline nor
+        restore-only: it runs once per risk-stage attempt.
+
+        Read-only: no new PRAGMA, no schema change, no index — the primary key is already
+        there. :meth:`iter_entry_meta` keeps its own whole-table contract unchanged for
+        :mod:`tos_runtime.evidence.retention` and its other callers.
+        """
+        row = self._conn.execute(
+            f"SELECT {_ENTRY_META_COLUMNS_SQL} FROM entries WHERE seq = ?",
+            (seq,),
+        ).fetchone()
+        return None if row is None else _EntryRow(*row)

@@ -72,9 +72,11 @@ constructor is still a satisfying implementation of it, the
 implementation of the narrower Protocol" convention): when a scheme is supplied,
 ``root_event_seq`` is resolved by replaying the inbox and recomputing each event's identity;
 ``handling_started_monotonic`` is then read from :meth:`~tos_runtime.evidence.store
-.SqliteEvidenceStore.iter_entry_meta`'s own ``appended_at_monotonic_ns`` column for that seq's
-``EVENT_HANDLING_STARTED`` evidence receipt. Without a scheme, both fields are ``None`` (never
-guessed).
+.SqliteEvidenceStore.entry_meta`'s own ``appended_at_monotonic_ns`` column for that seq's
+``EVENT_HANDLING_STARTED`` evidence receipt — a primary-key lookup of that ONE row, never a
+walk of the evidence table (evidence growth plan §2 A2-b; see
+:meth:`InboxFlowReader._resolve_handling_started_monotonic`). Without a scheme, both fields
+are ``None`` (never guessed).
 
 **Superseded in production by a second, additive widening (team-lead disposition
 2026-09-16): :meth:`InboxFlowReader.observe` now also accepts an optional
@@ -337,16 +339,34 @@ class InboxFlowReader:
     def _resolve_handling_started_monotonic(
         self, root_event_seq: int | None
     ) -> int | None:
+        """``appended_at_monotonic_ns`` of ``root_event_seq``'s own ``EVENT_HANDLING_STARTED``
+        evidence receipt, or ``None`` — a recorded absence (the row was never durably marked
+        handling-started, or the evidence row that marker names is gone or is of another
+        kind), never a guessed timestamp.
+
+        **Two primary-key lookups, no scan** (evidence growth plan
+        ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b). The inbox
+        side was always O(1) (``SqliteEventInbox.handling_started_receipt``, "an O(1) lookup
+        by primary key"); the evidence side used to walk the WHOLE ``entries`` table via
+        ``SqliteEvidenceStore.iter_entry_meta()`` looking for the one row whose ``seq``
+        matched — a ``kind``-less full scan the ``entries_kind_seq`` index cannot help,
+        measured at **≥130 s per proposal on a 365-day store** (plan §7.1.12 "읽어야 할 것" 2)
+        on a path :meth:`~tos_runtime.riskstate.service.RiskStateService._observe_flow` runs
+        once per risk-stage attempt. ``seq`` is the ``entries`` primary key, so
+        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry_meta` fetches that single
+        row directly. The ``kind`` check below is the SAME one the walk made — the lookup
+        narrows which rows are read, never which rows are accepted.
+        """
         if root_event_seq is None:
             return None
         receipt = self._inbox.handling_started_receipt(root_event_seq)
         if receipt is None:
             return None
         evidence_seq, _generation = receipt
-        for entry in self._evidence_store.iter_entry_meta():
-            if entry.seq == evidence_seq and entry.kind == _HANDLING_STARTED_KIND:
-                return entry.appended_at_monotonic_ns
-        return None
+        entry = self._evidence_store.entry_meta(evidence_seq)
+        if entry is None or entry.kind != _HANDLING_STARTED_KIND:
+            return None
+        return entry.appended_at_monotonic_ns
 
     def _resolve_root_content_event_id(self, root_event_seq: int | None) -> str | None:
         """The root row's own content-addressed ``event_id`` — read back from the SAME
@@ -358,7 +378,13 @@ class InboxFlowReader:
         digest ``EngineDriver._process_next`` computes for its crash-window recovery markers
         (``driver.py:771``) — never the caller-authored ``reference.event_id`` label the
         ``root_event_id`` parameter carries. ``None`` when ``root_event_seq`` is absent or the
-        marker row cannot be found (never guessed)."""
+        marker row cannot be found (never guessed).
+
+        This one keeps its own ``WHERE kind = ? AND seq = ?`` statement rather than reusing
+        the sibling's :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry_meta`: it
+        needs ``payload_json``, which the meta-only ``_EntryRow`` shape deliberately excludes.
+        Both are narrowed reads — neither walks the table (evidence growth plan §2 A2-b).
+        """
         if root_event_seq is None:
             return None
         receipt = self._inbox.handling_started_receipt(root_event_seq)

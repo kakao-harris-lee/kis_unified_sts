@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from tos.afg.records import ActionAmplificationEnvelope
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload, EngineEvent, InstrumentKey
@@ -743,3 +744,136 @@ def test_handling_started_monotonic_resolves_from_a_real_inbox_row(
     assert obs.root_event_seq == receipt.seq
     assert obs.handling_started_monotonic is not None
     assert isinstance(obs.handling_started_monotonic, int)
+
+
+# ============================================================================
+# A2-b — the handling-started row is fetched by primary key, not walked
+# (evidence growth plan docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md
+#  §2 A2-b · §7.1.12 "읽어야 할 것" 2)
+# ============================================================================
+
+
+def _walk_handling_started_monotonic(
+    evidence_store: SqliteEvidenceStore, evidence_seq: int
+) -> int | None:
+    """The PRE-A2-b resolution, reproduced verbatim: walk the whole table and take the first
+    row matching both ``seq`` and the handling-started kind.
+
+    Kept as the oracle the new primary-key lookup is compared against, so "faster" is held to
+    "same answer" on every shape below rather than asserted separately from it.
+    """
+    for entry in evidence_store.iter_entry_meta():
+        if entry.seq == evidence_seq and entry.kind == "EVENT_HANDLING_STARTED":
+            return entry.appended_at_monotonic_ns
+    return None
+
+
+def _seed_handling_started_pointing_at(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    *,
+    shape: str,
+) -> tuple[int, int]:
+    """Enqueue one real event, append some unrelated evidence rows around it, and point the
+    inbox row's handling-started receipt at ``shape``'s evidence row.
+
+    Returns ``(inbox seq, the evidence seq that receipt names)``. The three shapes are the
+    three the resolution can meet: the real marker row, a row of ANOTHER kind at that seq,
+    and a seq no row carries at all.
+    """
+    payload = EgressResultPayload(
+        instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+        attempt_id="a1",
+        kind=EgressResultKind.ACK,
+    )
+    event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+    receipt = inbox.enqueue(event)
+
+    # Rows on both sides of the target, so a walk that stopped early or late would differ
+    # from a lookup that goes straight to the row.
+    evidence_store.append({"n": 0}, kind="NOISE", record_class="NOISE")
+    marker_kind = (
+        "SOME_OTHER_KIND" if shape == "kind_mismatch" else ("EVENT_HANDLING_STARTED")
+    )
+    marker = evidence_store.append(
+        {"event_id": receipt.event_id},
+        kind=marker_kind,
+        record_class=marker_kind,
+    )
+    evidence_store.append({"n": 1}, kind="NOISE", record_class="NOISE")
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+
+    evidence_seq = 10_000 if shape == "absent" else marker.seq
+    inbox.mark_handling_started(
+        receipt.seq, evidence_seq=evidence_seq, generation=marker.key_generation
+    )
+    return receipt.seq, evidence_seq
+
+
+@pytest.mark.parametrize("shape", ["present", "kind_mismatch", "absent"])
+def test_handling_started_lookup_agrees_with_the_pre_a2b_walk(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+    shape: str,
+) -> None:
+    """A2-b replaced a full-table walk with a primary-key lookup. Behaviour on every shape the
+    walk could meet must be byte-identical, absence included — the resolution's contract is a
+    RECORDED absence (``None``), never a guessed timestamp, and a faster wrong answer would
+    be worse than the slow one it replaced."""
+    inbox_seq, evidence_seq = _seed_handling_started_pointing_at(
+        inbox, evidence_store, shape=shape
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+
+    expected = _walk_handling_started_monotonic(evidence_store, evidence_seq)
+    resolved = reader._resolve_handling_started_monotonic(inbox_seq)
+
+    assert resolved == expected
+    if shape == "present":
+        assert isinstance(resolved, int)
+    else:
+        assert resolved is None
+
+
+def test_handling_started_resolution_never_scans_the_evidence_table(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """The A2-b regression guard: the resolution must reach its row by primary key.
+
+    Equality with the old walk (the test above) cannot catch a reintroduced scan — the walk
+    returns the right answer, it just reads the whole history to get it, which is the ≥130 s
+    per-proposal cost on a 365-day store that §2 A2-b exists to remove. So this asserts the
+    PLAN instead: every statement the resolution issues against ``entries`` must seek the
+    integer primary key, and none may scan. Red before A2-b: the walk's own
+    ``SELECT … FROM entries ORDER BY seq ASC`` plans as ``SCAN entries``.
+    """
+    inbox_seq, _evidence_seq = _seed_handling_started_pointing_at(
+        inbox, evidence_store, shape="present"
+    )
+    for index in range(20):
+        evidence_store.append({"i": index}, kind="NOISE", record_class="NOISE")
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+
+    statements: list[str] = []
+    evidence_store.connection.set_trace_callback(statements.append)
+    try:
+        assert reader._resolve_handling_started_monotonic(inbox_seq) is not None
+    finally:
+        evidence_store.connection.set_trace_callback(None)
+
+    plans: list[str] = []
+    for sql in statements:
+        if "from entries" not in sql.lower():
+            continue
+        rows = evidence_store.connection.execute(
+            "EXPLAIN QUERY PLAN " + sql, [None] * sql.count("?")
+        ).fetchall()
+        plans.extend(str(row[3]) for row in rows)
+
+    assert plans, "the resolution issued no statement against entries at all"
+    assert not any(plan.startswith("SCAN") for plan in plans), plans
+    assert all("USING INTEGER PRIMARY KEY" in plan for plan in plans), plans
