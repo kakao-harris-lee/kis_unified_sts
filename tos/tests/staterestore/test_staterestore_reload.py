@@ -34,7 +34,9 @@ from tos.staterestore import (
     ABSENT_DIMENSION_FILL,
     CompositeStateStore,
     IncompleteStoreError,
+    StoreOpenRefused,
     discard_caches,
+    open_store,
     reload_conservative,
 )
 
@@ -184,6 +186,55 @@ def test_a_stale_optimistic_cache_is_discarded_and_never_consulted(tmp_path) -> 
     assert cache.exists() is False, "the cache survived — it must be discarded"
     assert outcome.composite.knowledge_state is KnowledgeState.UNOBSERVED
     assert outcome.composite.knowledge_state not in _FORBIDDEN_POST_RESTART_KNOWLEDGE
+
+
+def test_a_refused_open_leaves_the_caches_alone(tmp_path) -> None:
+    """**Review round-3 F4.** Discarding is irreversible; a refused open must not do it.
+
+    ``StoreOpenRefused`` exists so a caller can tell a retryable substrate failure from
+    a verdict about a store it read. That is only useful if a retry still has the same
+    evidence in front of it — and the discard unlinks files, so an order that destroyed
+    them on the way to reporting the failure made the distinction worth less than it
+    looked.
+
+    The refusal is provoked without ``chmod`` (so it holds as root too): the store
+    path's parent is a regular file, so the constructor's ``mkdir`` raises
+    ``NotADirectoryError`` before sqlite is ever called — which is also the ``OSError``
+    family review round-3 F3 found escaping the boundary unclassified.
+    """
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    cache = tmp_path / "resume.cache.json"
+    cache.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(StoreOpenRefused, match="could not be opened"):
+        reload_conservative(blocker / "store.sqlite3", _IDENTITY, cache_paths=(cache,))
+
+    assert cache.exists(), "a refused open discarded the caches anyway"
+
+
+def test_a_parent_that_cannot_be_created_is_a_classified_open_refusal(
+    tmp_path,
+) -> None:
+    """**Review round-3 F3.** ``mkdir`` fails before sqlite, and used to escape raw.
+
+    ``CompositeStateStore.__init__`` creates the store's parent directory before it
+    connects, so a parent that is a regular file raises ``OSError`` from a line the
+    open boundary did not cover — reaching the caller as an unclassified error and the
+    L3 worker as exit 1, the outcome that boundary was added to remove. Measured, the
+    error is ``FileExistsError`` (``mkdir(exist_ok=True)`` still refuses when the path
+    exists and is not a directory); the refusal names whichever one it caught rather
+    than asserting a particular errno, since the family is what matters.
+    """
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+
+    with pytest.raises(StoreOpenRefused) as refusal:
+        open_store(blocker / "store.sqlite3")
+
+    assert isinstance(refusal.value.__cause__, OSError)
+    assert type(refusal.value.__cause__).__name__ in str(refusal.value)
+    assert "could not be opened" in str(refusal.value)
 
 
 def test_the_store_value_is_what_flows_through_not_a_constant(tmp_path) -> None:
