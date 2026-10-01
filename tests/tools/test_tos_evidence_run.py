@@ -2340,6 +2340,7 @@ def test_l3_crash_timeline_rows_carry_every_section_6_1_field(l3_package: dict) 
             "reader_pid",
             "store_real_on_disk",
             "store_bytes",
+            "store_journal_mode",
             "expected_reconstruction",
             "observed_reconstruction",
             "outcome",
@@ -2348,6 +2349,9 @@ def test_l3_crash_timeline_rows_carry_every_section_6_1_field(l3_package: dict) 
         assert row["outcome"] == "MET"
         assert row["evidence_id"] == "STATE-EV-004"
         assert row["writer_pid"] != row["reader_pid"]
+        # The substrate measurement gate 3 now turns on (review round-3 F9): read off
+        # the store file after the writer died, not inferred from source.
+        assert row["store_journal_mode"] == "wal"
         assert row["store_real_on_disk"] is True and row["store_bytes"] > 0
         assert row["expected_reconstruction"] == row["observed_reconstruction"]
     assert len({row["scenario_id"] for row in rows}) == _L3_CATALOG_SIZE
@@ -2530,12 +2534,64 @@ def _crash_row(scenario_id: str, **overrides) -> dict:
         "reader_pid": 1002,
         "store_real_on_disk": True,
         "store_bytes": 4096,
+        "store_journal_mode": "wal",
         "expected_reconstruction": "INTENT=ACTIVE|KNOWLEDGE=UNOBSERVED",
         "observed_reconstruction": "INTENT=ACTIVE|KNOWLEDGE=UNOBSERVED",
         "outcome": "MET",
     }
     row.update(overrides)
     return row
+
+
+@pytest.mark.parametrize(
+    ("mode", "why"),
+    [
+        ("delete", "a rollback-journal store is not the §3.2 substrate"),
+        ("memory", "an in-memory store is the EV-L2-pilot C1 defect itself"),
+        ("", "an empty mode is not a measurement"),
+        (None, "an UNRECORDED mode must not read as satisfied"),
+    ],
+    ids=["rollback-journal", "in-memory", "empty", "unrecorded"],
+)
+def test_a_crash_row_without_a_wal_journal_mode_is_not_persistence_real(
+    mode, why
+) -> None:
+    """**Review round-3 F9.** The measurement is what gate 3 turns on, so it can refuse.
+
+    Every other field on these rows is perfect — the store exists, it is non-empty, the
+    pids are a real distinct pair, observed equals expected. Only the mode measured on
+    the file differs, and that alone withholds ``persistence_real_measured``.
+
+    The ``None`` case is the ∅-seal and the one that matters most for older artifacts:
+    a row that never carried the field must be a deviation, not a silent pass, or
+    adding the requirement would have changed nothing for anything already recorded.
+    """
+    row = _crash_row("L3-01")
+    if mode is None:
+        del row["store_journal_mode"]
+    else:
+        row["store_journal_mode"] = mode
+
+    summary = ev.summarise_crash_schedule(
+        [row], expected_scenario_count=1, evidence_id="STATE-EV-004"
+    )
+
+    assert summary["persistence_real_measured"] is False, why
+    assert summary["all_crash_scenarios_met"] is False
+    assert summary["non_durable_store_scenarios"] == ["L3-01"]
+
+
+def test_the_schedule_summary_reports_the_modes_it_saw() -> None:
+    """An unmet run says which mode it measured, not only that something was wrong."""
+    summary = ev.summarise_crash_schedule(
+        [_crash_row("L3-01", store_journal_mode="delete"), _crash_row("L3-02")],
+        expected_scenario_count=2,
+        evidence_id="STATE-EV-004",
+    )
+
+    assert summary["observed_store_journal_modes"] == ["delete", "wal"]
+    assert summary["required_store_journal_mode"] == "wal"
+    assert summary["persistence_real_measured"] is False
 
 
 def test_a_well_formed_crash_schedule_is_met() -> None:
@@ -2637,119 +2693,13 @@ def test_an_absent_crash_schedule_reads_as_empty_and_withholds_green(tmp_path) -
     )
 
 
-def test_the_persistence_substrate_is_measured_from_the_executed_source() -> None:
-    """gate 3's source half — measured against the real repository."""
-    result = ev.check_persistence_substrate(_REPO_ROOT)
-    assert result["met"] is True, result
-    assert result["measured"]["connect_call_sites"] == 1
-    assert result["measured"]["literal_connection_targets"] == []
-    assert result["measured"]["in_memory_tokens_present"] == []
-    assert result["measured"]["pragmas_present"] == sorted(
-        ev.PERSISTENCE_REQUIRED_PRAGMAS
-    )
-
-
-def test_the_persistence_substrate_check_catches_an_in_memory_store(tmp_path) -> None:
-    """The other way: a store that opened ``:memory:`` is unmet, not ignored."""
-    rel = ev.PERSISTENCE_SUBSTRATE_PATH
-    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / rel).write_text(
-        "import sqlite3\n"
-        "def open_store():\n"
-        '    return sqlite3.connect(":memory:")\n',
-        encoding="utf-8",
-    )
-    result = ev.check_persistence_substrate(tmp_path)
-    assert result["met"] is False
-    assert result["measured"]["literal_connection_targets"] == [":memory:"]
-    assert result["measured"]["in_memory_tokens_present"] == [":memory:"]
-
-
-def test_the_persistence_substrate_check_requires_both_pragmas(tmp_path) -> None:
-    rel = ev.PERSISTENCE_SUBSTRATE_PATH
-    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / rel).write_text(
-        "import sqlite3\n"
-        "def open_store(path):\n"
-        "    conn = sqlite3.connect(str(path))\n"
-        '    conn.execute("PRAGMA journal_mode=WAL")\n'
-        "    return conn\n",
-        encoding="utf-8",
-    )
-    result = ev.check_persistence_substrate(tmp_path)
-    assert result["met"] is False
-    assert result["measured"]["pragmas_present"] == ["journal_mode=WAL"]
-    assert result["measured"]["pragmas_missing"] == ["synchronous=FULL"]
-
-
-def test_a_docstring_that_names_the_pragma_cannot_satisfy_the_check(tmp_path) -> None:
-    """The deceptive fixture: documented ``FULL``, executed ``OFF``.
-
-    This is not hypothetical. The real store module documents its substrate decision in
-    its module docstring and in ``__init__``'s docstring, and while this check scanned
-    the file for the token, lowering the actual ``PRAGMA synchronous=FULL`` to ``OFF``
-    left the gate green — the docstrings satisfied it (measured). The earlier fixture
-    could not expose that, because it carried no docstring for the token to hide in.
-
-    A substrate whose durability setting is a sentence rather than a statement is the
-    exact ``persistence_real`` over-claim gate 3 exists to prevent.
-    """
-    rel = ev.PERSISTENCE_SUBSTRATE_PATH
-    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / rel).write_text(
-        '"""Durable store using journal_mode=WAL and synchronous=FULL (design §3.2)."""\n'
-        "import sqlite3\n"
-        "def open_store(path):\n"
-        '    """Open at journal_mode=WAL / synchronous=FULL."""\n'
-        "    conn = sqlite3.connect(str(path))\n"
-        "    # synchronous=FULL is the ratified pilot substrate decision\n"
-        '    conn.execute("PRAGMA journal_mode=WAL")\n'
-        '    conn.execute("PRAGMA synchronous=OFF")\n'
-        "    return conn\n",
-        encoding="utf-8",
-    )
-    result = ev.check_persistence_substrate(tmp_path)
-    assert (
-        result["met"] is False
-    ), "a documented-but-not-executed pragma satisfied gate 3"
-    assert result["measured"]["pragmas_missing"] == ["synchronous=FULL"]
-    # what is really executed is reported, so the manifest names the actual setting
-    assert result["measured"]["executed_pragmas"] == {
-        "journal_mode": "WAL",
-        "synchronous": "OFF",
-    }
-
-
-def test_the_substrate_check_reads_pragmas_only_from_execute_arguments(
-    tmp_path,
-) -> None:
-    """Both ways: the same tokens in real ``execute`` arguments DO satisfy it.
-
-    Paired with the deceptive fixture above, this pins the discrimination itself — the
-    check distinguishes *executed* from *mentioned*, rather than rejecting everything.
-    """
-    rel = ev.PERSISTENCE_SUBSTRATE_PATH
-    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / rel).write_text(
-        '"""A store module with no pragma tokens in its prose at all."""\n'
-        "import sqlite3\n"
-        "def open_store(path):\n"
-        "    conn = sqlite3.connect(str(path))\n"
-        '    conn.execute("PRAGMA journal_mode=WAL")\n'
-        '    conn.execute("PRAGMA synchronous=FULL")\n'
-        "    return conn\n",
-        encoding="utf-8",
-    )
-    result = ev.check_persistence_substrate(tmp_path)
-    assert result["met"] is True, result
-    assert result["measured"]["pragmas_missing"] == []
-    assert result["measured"]["executed_pragmas"] == {
-        "journal_mode": "WAL",
-        "synchronous": "FULL",
-    }
-
-
-_DELEGATING_STORE = (
+#: A synthetic store/delegate pair in the shape the real pair has: the store opens the
+#: one connection and sets ``synchronous``, the delegate owns the ``journal_mode``
+#: switch. Which of the two executes which pragma is no longer something the gate tries
+#: to prove by reading source — see :data:`ev.PERSISTENCE_SUBSTRATE_PATH`'s own comment
+#: and review round-3 F9 — so these fixtures exist only to drive the three structural
+#: facts that remain.
+_STORE_SOURCE = (
     '"""A store module with no pragma tokens in its prose at all."""\n'
     "import sqlite3\n"
     "from tos.staterestore._wal import enable_wal_journal\n"
@@ -2760,14 +2710,14 @@ _DELEGATING_STORE = (
     '        self._conn.execute("PRAGMA synchronous=FULL")\n'
 )
 
-_DELEGATE_MODULE = (
+_DELEGATE_SOURCE = (
     "import sqlite3\n"
     "def enable_wal_journal(conn):\n"
     '    conn.execute("PRAGMA journal_mode=WAL")\n'
 )
 
 
-def _write_substrate_pair(root, *, store: str, delegate: str | None) -> None:
+def _write_substrate_sources(root, *, store: str, delegate: str | None) -> None:
     """Lay a synthetic store (and optionally its delegate) out under ``root``."""
     for rel, text in (
         (ev.PERSISTENCE_SUBSTRATE_PATH, store),
@@ -2779,411 +2729,165 @@ def _write_substrate_pair(root, *, store: str, delegate: str | None) -> None:
         (root / rel).write_text(text, encoding="utf-8")
 
 
-def test_a_pragma_the_constructor_delegates_still_counts(tmp_path) -> None:
-    """#823: the switch moved into a helper, and the gate follows it THERE.
+def test_the_persistence_substrate_is_measured_from_the_executed_source() -> None:
+    """gate 3's SOURCE half — measured against the real repository.
 
-    The store no longer executes ``PRAGMA journal_mode=WAL`` itself — on a brand-new
-    file that bare PRAGMA loses a concurrent first open to ``database is locked``, so it
-    now goes through a helper that waits out the lock and retries. Before this test the
-    gate looked only at the store module and went red on a store that had become
-    strictly more durable.
+    The source half says what the component could be. What it WAS is measured on the
+    store file the crashed writer left behind and carried as ``store_journal_mode`` on
+    every crash row (review round-3 F9); that half is pinned by
+    :func:`test_a_crash_row_without_a_wal_journal_mode_is_not_persistence_real` below
+    and, on real files, by ``tests/tos_l3``.
     """
-    _write_substrate_pair(tmp_path, store=_DELEGATING_STORE, delegate=_DELEGATE_MODULE)
+    result = ev.check_persistence_substrate(_REPO_ROOT)
+    assert result["met"] is True, result
+    assert result["measured"]["connect_call_sites"] == 1
+    assert result["measured"]["literal_connection_targets"] == []
+    assert result["measured"]["in_memory_connection_targets"] == []
+    assert result["measured"]["pragmas_present"] == sorted(
+        ev.PERSISTENCE_REQUIRED_PRAGMAS
+    )
+    # The pair, not one file: the journal-mode switch lives in the delegate.
+    assert set(result["measured"]["executed_pragmas_by_path"]) == set(
+        ev.PERSISTENCE_SOURCE_PATHS
+    )
+
+
+def test_the_recorded_digest_comes_from_the_bytes_that_were_parsed() -> None:
+    """One read per file: the digest and the syntax tree agree by construction."""
+    result = ev.check_persistence_substrate(_REPO_ROOT)
+
+    for rel, digest in result["sha256_by_path"].items():
+        assert digest == ev.sha256_file(_REPO_ROOT / rel), rel
+    assert result["sha256"] == result["sha256_by_path"][ev.PERSISTENCE_SUBSTRATE_PATH]
+
+
+def test_the_persistence_substrate_check_catches_an_in_memory_store(tmp_path) -> None:
+    """The other way: a store that opened ``:memory:`` is unmet, not ignored."""
+    _write_substrate_sources(
+        tmp_path,
+        store=(
+            "import sqlite3\n"
+            "def open_store():\n"
+            '    return sqlite3.connect(":memory:")\n'
+        ),
+        delegate=_DELEGATE_SOURCE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["literal_connection_targets"] == [":memory:"]
+    assert result["measured"]["in_memory_connection_targets"] == [":memory:"]
+
+
+def test_prose_naming_an_in_memory_target_does_not_break_the_check(tmp_path) -> None:
+    """**Review round-3 F7.** The in-memory scan reads ``connect`` arguments, not text.
+
+    It used to be a raw substring scan over the file, which is the mirror image of the
+    defect :func:`ev._executed_pragmas` exists to prevent: a docstring could turn the
+    gate red with no change to any statement. That is not hypothetical — the runtime
+    twin's ``enable_wal_journal`` docstring contains exactly this sentence, and the
+    drift pin encourages keeping the two helpers aligned.
+    """
+    _write_substrate_sources(
+        tmp_path,
+        store=_STORE_SOURCE,
+        delegate=(
+            '"""A :memory: connection answers ``memory``, so mode=memory is refused."""\n'
+            + _DELEGATE_SOURCE
+        ),
+    )
 
     result = ev.check_persistence_substrate(tmp_path)
 
     assert result["met"] is True, result
-    assert result["measured"]["delegate_called_from_constructor"] is True
-    assert result["measured"]["store_executed_pragmas"] == {"synchronous": "FULL"}
-    assert result["measured"]["delegate_executed_pragmas"] == {"journal_mode": "WAL"}
+    assert result["measured"]["in_memory_connection_targets"] == []
+
+
+def test_the_persistence_substrate_check_requires_both_pragmas(tmp_path) -> None:
+    _write_substrate_sources(
+        tmp_path,
+        store=(
+            "import sqlite3\n"
+            "def open_store(path):\n"
+            "    conn = sqlite3.connect(str(path))\n"
+            '    conn.execute("PRAGMA journal_mode=WAL")\n'
+            "    return conn\n"
+        ),
+        delegate=None,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["pragmas_present"] == ["journal_mode=WAL"]
+    assert result["measured"]["pragmas_missing"] == ["synchronous=FULL"]
+
+
+def test_a_docstring_that_names_the_pragma_cannot_satisfy_the_check(tmp_path) -> None:
+    """The deceptive fixture: documented ``FULL``, executed ``OFF``.
+
+    This is not hypothetical. The real store module documents its substrate decision in
+    its module docstring and in ``__init__``'s docstring, and while this check scanned
+    the file for the token, lowering the actual ``PRAGMA synchronous=FULL`` to ``OFF``
+    left the gate green — the docstrings satisfied it (measured). A substrate whose
+    durability setting is a sentence rather than a statement is the exact
+    ``persistence_real`` over-claim gate 3 exists to prevent.
+    """
+    _write_substrate_sources(
+        tmp_path,
+        store=(
+            '"""Durable store using journal_mode=WAL and synchronous=FULL (design §3.2)."""\n'
+            "import sqlite3\n"
+            "def open_store(path):\n"
+            '    """Open at journal_mode=WAL / synchronous=FULL."""\n'
+            "    conn = sqlite3.connect(str(path))\n"
+            "    # synchronous=FULL is the ratified pilot substrate decision\n"
+            '    conn.execute("PRAGMA journal_mode=WAL")\n'
+            '    conn.execute("PRAGMA synchronous=OFF")\n'
+            "    return conn\n"
+        ),
+        delegate=None,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert (
+        result["met"] is False
+    ), "a documented-but-not-executed pragma satisfied gate 3"
+    assert result["measured"]["pragmas_missing"] == ["synchronous=FULL"]
+    assert result["measured"]["executed_pragmas"] == {
+        "journal_mode": "WAL",
+        "synchronous": "OFF",
+    }
+
+
+def test_the_substrate_check_reads_pragmas_only_from_execute_arguments(
+    tmp_path,
+) -> None:
+    """Both ways: the same tokens in real ``execute`` arguments DO satisfy it."""
+    _write_substrate_sources(tmp_path, store=_STORE_SOURCE, delegate=_DELEGATE_SOURCE)
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is True, result
     assert result["measured"]["pragmas_missing"] == []
+    assert result["measured"]["executed_pragmas"] == {
+        "journal_mode": "WAL",
+        "synchronous": "FULL",
+    }
 
 
-def test_a_delegate_the_constructor_never_calls_does_not_count(tmp_path) -> None:
-    """The hole following the literal would otherwise open, held shut and proven red.
-
-    A pragma sitting in a module nobody calls is the "documented, not executed" defect
-    :func:`ev._executed_pragmas` closes, one file further out: the store would open on
-    the rollback journal while the gate read WAL out of dead code. Only the CALL is
-    removed here — the import stays, so what is measured is the call and not a mention.
-    """
-    _write_substrate_pair(
+def test_a_second_connection_anywhere_in_the_pair_is_unmet(tmp_path) -> None:
+    """ "Exactly one connection" spans both files, so the delegate cannot open its own."""
+    _write_substrate_sources(
         tmp_path,
-        store=_DELEGATING_STORE.replace("        enable_wal_journal(self._conn)\n", ""),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_called_from_constructor"] is False
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
-    # The delegate's own pragma is still REPORTED — the manifest says what was seen and
-    # why it did not count, rather than hiding the module.
-    assert result["measured"]["delegate_executed_pragmas"] == {"journal_mode": "WAL"}
-
-
-def test_another_class_calling_the_delegate_does_not_count(tmp_path) -> None:
-    """The call must be the STORE class's own constructor, not any ``__init__`` nearby.
-
-    A module-wide "some ``__init__`` calls it" test is satisfied by a second class while
-    :data:`ev.PERSISTENCE_SUBSTRATE_CLASS` skips the switch entirely — the same shape of
-    hole the delegate-call requirement exists to close, one scope out. Here the store's
-    own constructor loses the call and a sibling class gains it.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace("        enable_wal_journal(self._conn)\n", "")
-        + "class SomethingElse:\n"
-        "    def __init__(self, conn):\n"
-        "        enable_wal_journal(conn)\n",
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_called_from_constructor"] is False
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
-
-
-def test_the_delegate_path_and_module_name_the_same_file() -> None:
-    """The two delegate constants must describe one file, or the gate checks two things.
-
-    ``PERSISTENCE_PRAGMA_DELEGATE_PATH`` is what gets parsed and hashed;
-    ``PERSISTENCE_PRAGMA_DELEGATE_MODULE`` is what the store's import must name. If they
-    drift apart the gate reads pragmas out of one file while requiring a binding to
-    another, and both halves look satisfied.
-    """
-    dotted = ev.PERSISTENCE_PRAGMA_DELEGATE_MODULE.replace(".", "/") + ".py"
-    assert ev.PERSISTENCE_PRAGMA_DELEGATE_PATH.endswith(dotted)
-
-
-def test_a_locally_defined_stub_with_the_delegate_name_does_not_count(tmp_path) -> None:
-    """**Review F1.** The call is a bare-NAME match; a name can be bound to anything.
-
-    Here ``_wal.py`` is on disk and exported exactly as the real one, the constructor
-    calls ``enable_wal_journal``, and the call node matches — but the store defines its
-    own no-op of that name, so nothing ever switches the file to WAL. Before the import
-    and rebinding checks this fixture passed the gate: a store that never reaches the
-    delegate, credited with the delegate's pragma.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace(
-            "from tos.staterestore._wal import enable_wal_journal\n",
-            "def enable_wal_journal(conn):\n    return None\n",
-        ),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_call_node_present"] is True
-    assert result["measured"]["delegate_name_imported_from_module"] is False
-    assert result["measured"]["delegate_name_rebound_by"] == ["module:def"]
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
-
-
-def test_a_shadowing_rebind_after_a_real_import_does_not_count(tmp_path) -> None:
-    """The other half of F1: import the real one, then rebind the name over it.
-
-    ``delegate_name_imported_from_module`` is True here — the import IS the real one —
-    so the import check alone would pass. What the constructor actually calls is the
-    module-level rebinding below it, which is why the rebinding scan exists as a
-    separate condition rather than as an ``else`` of the import one.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace(
-            "class CompositeStateStore:\n",
-            "enable_wal_journal = lambda conn: None\n" "class CompositeStateStore:\n",
-        ),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_name_imported_from_module"] is True
-    assert result["measured"]["delegate_name_rebound_by"] == ["module:assign"]
-
-
-#: The rebinding forms review round-2 F1 EXECUTED against this gate, each of which left
-#: it green with the constructor calling a stub. Parametrised rather than written out
-#: once each, because the point is that the check is about BINDING OCCURRENCES and not
-#: about a list of statement kinds — a list is what missed all six.
-_REBINDING_FORMS: tuple[tuple[str, str, str], ...] = (
-    (
-        "aliased-import",
-        "from tos.staterestore._stub import noop as enable_wal_journal\n",
-        "module:import-as",
-    ),
-    (
-        "tuple-target",
-        "enable_wal_journal, _unused = (lambda c: None), 0\n",
-        "module:assign",
-    ),
-    (
-        "for-target",
-        "for enable_wal_journal in [lambda c: None]:\n    pass\n",
-        "module:assign",
-    ),
-    ("import-as", "import os as enable_wal_journal\n", "module:import-as"),
-    (
-        "with-as",
-        "import contextlib\n"
-        "with contextlib.nullcontext(lambda c: None) as enable_wal_journal:\n"
-        "    pass\n",
-        "module:assign",
-    ),
-    (
-        "walrus",
-        "_held = (enable_wal_journal := (lambda c: None))\n",
-        "module:assign",
-    ),
-    (
-        "except-as",
-        "try:\n    raise ValueError\nexcept ValueError as enable_wal_journal:\n    pass\n",
-        "module:except-as",
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    ("form", "extra", "expected_kind"),
-    _REBINDING_FORMS,
-    ids=[name for name, _, _ in _REBINDING_FORMS],
-)
-def test_every_rebinding_form_is_seen(tmp_path, form, extra, expected_kind) -> None:
-    """**Review round-2 F1.** Six of these were measured green against the branch tool.
-
-    Each keeps the real, un-aliased import — so ``delegate_name_imported_from_module``
-    stays True — and then puts something else under the same name. The constructor's
-    call then reaches that something else, and the file is never switched to WAL, while
-    the gate credited the delegate's pragma. The seventh (``except ... as``) is the same
-    class of binding and is included so the scan is pinned on all of them.
-    """
-    del form
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace(
-            "class CompositeStateStore:\n", extra + "class CompositeStateStore:\n"
-        ),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_name_imported_from_module"] is True
-    assert expected_kind in result["measured"]["delegate_name_rebound_by"]
-
-
-def test_a_parameter_shadowing_the_delegate_name_is_seen(tmp_path) -> None:
-    """A parameter is a binding too, and the one that shadows inside a whole function."""
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE
-        + "def _helper(enable_wal_journal):\n    return enable_wal_journal\n",
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert "module:param" in result["measured"]["delegate_name_rebound_by"]
-
-
-def test_a_pragma_in_an_unreached_delegate_helper_does_not_count(tmp_path) -> None:
-    """**Review round-2 F2.** The entry point does nothing; a dead helper owns the PRAGMA.
-
-    Measured green against the branch tool: import, call and no-rebinding all held, and
-    the delegate's pragmas were read module-wide, so the store opened on the rollback
-    journal while the gate reported WAL. The gate's own rule — "a pragma in a module
-    nobody calls is not a pragma that runs" — was only enforced at module granularity.
-    Extraction now follows the call graph from the entry point.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE,
-        delegate="import sqlite3\n"
-        "def enable_wal_journal(conn):\n"
-        "    return None\n"
-        "def _legacy(conn):\n"
-        '    conn.execute("PRAGMA journal_mode=WAL")\n',
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_called_from_constructor"] is True
-    assert result["measured"]["delegate_executed_pragmas"] == {}
-    assert result["measured"]["delegate_functions_reached"] == ["enable_wal_journal"]
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
-
-
-def test_a_pragma_in_a_helper_the_entry_point_calls_does_count(tmp_path) -> None:
-    """The other direction: the real delegate's own layering must keep working.
-
-    `enable_wal_journal` does not execute the PRAGMA itself — `_switch_journal_to_wal`
-    does — so an extraction scoped to the entry point's own body alone would refuse the
-    genuine article. The reachable set is what is scoped, not one function.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE,
-        delegate="import sqlite3\n"
-        "def _switch(conn):\n"
-        '    return conn.execute("PRAGMA journal_mode=WAL").fetchone()\n'
-        "def enable_wal_journal(conn):\n"
-        "    return _switch(conn)\n",
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is True, result
-    assert result["measured"]["delegate_functions_reached"] == [
-        "_switch",
-        "enable_wal_journal",
-    ]
-
-
-def test_an_import_error_fallback_stub_does_not_count(tmp_path) -> None:
-    """The same F1 dodge, one statement deeper: a fallback ``def`` inside ``try/except``.
-
-    The import succeeds in the gate's eyes — it IS the real one — and the fallback is not
-    in the module BODY, so a module-body-only rebinding scan walks straight past it. At
-    run time, on any environment where that import fails, the constructor calls a no-op
-    and the file never reaches WAL. Found while re-reading the F1 fix rather than by the
-    review, which is why the scan is over the whole tree.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace(
-            "from tos.staterestore._wal import enable_wal_journal\n",
-            "try:\n"
-            "    from tos.staterestore._wal import enable_wal_journal\n"
-            "except ImportError:\n"
-            "    def enable_wal_journal(conn):\n"
-            "        return None\n",
-        ),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_name_imported_from_module"] is True
-    assert result["measured"]["delegate_name_rebound_by"] == ["module:def"]
-
-
-def test_an_aliased_import_of_the_delegate_does_not_count(tmp_path) -> None:
-    """``import ... as _real`` binds a different name than the call site matches.
-
-    Accepting the alias would move the gap from the definition to the alias: the gate
-    would credit the delegate while the constructor called whatever ``enable_wal_journal``
-    means in that module.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace(
-            "from tos.staterestore._wal import enable_wal_journal\n",
-            "from tos.staterestore._wal import enable_wal_journal as _real\n"
-            "def enable_wal_journal(conn):\n    return None\n",
-        ),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_name_imported_from_module"] is False
-
-
-def test_an_import_from_another_module_does_not_count(tmp_path) -> None:
-    """The name must come from THE delegate — the file whose pragmas are being credited."""
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE.replace(
-            "from tos.staterestore._wal import enable_wal_journal\n",
-            "from tos.staterestore._other import enable_wal_journal\n",
-        ),
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_name_imported_from_module"] is False
-    assert result["measured"]["delegate_name_rebound_by"] == []
-
-
-def test_the_recorded_digests_come_from_the_bytes_that_were_parsed(tmp_path) -> None:
-    """**Review F7.** One read per file: the digest and the syntax tree agree by construction.
-
-    Also pins the pairing the old code could break — a delegate that was parsed must
-    carry a digest, never ``None``.
-    """
-    _write_substrate_pair(tmp_path, store=_DELEGATING_STORE, delegate=_DELEGATE_MODULE)
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["sha256"] == ev.sha256_file(tmp_path / ev.PERSISTENCE_SUBSTRATE_PATH)
-    assert result["delegate_sha256"] == ev.sha256_file(
-        tmp_path / ev.PERSISTENCE_PRAGMA_DELEGATE_PATH
-    )
-    assert result["measured"]["delegate_called_from_constructor"] is True
-
-
-def test_a_delegate_that_does_not_switch_to_wal_is_unmet(tmp_path) -> None:
-    """The failing input the gate must keep: a store that ends up WITHOUT WAL.
-
-    Same deceptive shape as the docstring fixture above, moved into the delegate — the
-    helper is called, but what it executes is a journal mode that is not WAL. The gate
-    reads the value, not the presence of a call.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE,
-        delegate=_DELEGATE_MODULE.replace("journal_mode=WAL", "journal_mode=DELETE"),
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
-    assert result["measured"]["executed_pragmas"]["journal_mode"] == "DELETE"
-
-
-def test_a_delegating_store_whose_delegate_is_gone_is_unmet(tmp_path) -> None:
-    """Deleting the helper is a red gate, not a silently skipped check."""
-    _write_substrate_pair(tmp_path, store=_DELEGATING_STORE, delegate=None)
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["delegate_called_from_constructor"] is False
-    assert result["measured"]["delegate_executed_pragmas"] == {}
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
-    assert result["delegate_sha256"] is None
-
-
-def test_a_connection_opened_inside_the_delegate_is_counted(tmp_path) -> None:
-    """The delegate is inside the "exactly one connection" fence too.
-
-    Following the pragma into a second file would otherwise hand that file an exemption
-    from the two checks the gate's first fact is made of — a helper that opened its own
-    in-memory connection and switched THAT to WAL would read as a compliant substrate.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE,
+        store=_STORE_SOURCE,
         delegate=(
             "import sqlite3\n"
             "def enable_wal_journal(conn):\n"
-            '    sqlite3.connect(":memory:").execute("PRAGMA journal_mode=WAL")\n'
+            "    other = sqlite3.connect(str(conn))\n"
+            '    other.execute("PRAGMA journal_mode=WAL")\n'
         ),
     )
 
@@ -3191,28 +2895,6 @@ def test_a_connection_opened_inside_the_delegate_is_counted(tmp_path) -> None:
 
     assert result["met"] is False
     assert result["measured"]["connect_call_sites"] == 2
-    assert result["measured"]["literal_connection_targets"] == [":memory:"]
-    assert result["measured"]["in_memory_tokens_present"] == [":memory:"]
-
-
-def test_the_store_and_its_delegate_disagreeing_on_a_pragma_is_unmet(tmp_path) -> None:
-    """Two executed values for one pragma is a conflict, never a quiet resolution.
-
-    Which one a connection ends up with depends on statement order across two files, so
-    the gate refuses to guess: it records the conflict and counts the pragma missing.
-    """
-    _write_substrate_pair(
-        tmp_path,
-        store=_DELEGATING_STORE
-        + '        self._conn.execute("PRAGMA journal_mode=DELETE")\n',
-        delegate=_DELEGATE_MODULE,
-    )
-
-    result = ev.check_persistence_substrate(tmp_path)
-
-    assert result["met"] is False
-    assert result["measured"]["pragma_value_conflicts"] == ["journal_mode"]
-    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
 
 
 def test_an_absent_or_unparseable_substrate_is_unmet_not_ignored(tmp_path) -> None:

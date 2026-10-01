@@ -307,6 +307,37 @@ def _spawn(mode: str, scenario_id: str, store: Path, cache: Path) -> _Worker:
     return _Worker(proc.pid, proc.returncode, stdout, stderr)
 
 
+def journal_mode_of(path: Path) -> str:
+    """What ``PRAGMA journal_mode`` reports for the file at ``path``.
+
+    **The measurement gate 3 now turns on** (review round-3 F9). Opened READ-ONLY
+    through a ``file:...?mode=ro`` URI, so this observation cannot be the thing that
+    creates or switches what it is observing — the same reason
+    ``tos/tests/staterestore/test_staterestore_wal_birth_race._journal_mode`` is
+    read-only. stdlib ``sqlite3`` only: nothing here imports the kernel, so the
+    oracle-independence rule this suite pins
+    (:func:`test_this_suite_never_imports_the_kernel_it_measures`) is untouched.
+
+    Returns:
+        The mode sqlite reports, lowercased, or ``"<unreadable>"`` when the file cannot
+        be opened at all. Never a guess and never an exception: an unreadable store is
+        a deviation the row must carry, not a crash in the orchestrator.
+    """
+    if not path.is_file():
+        return "<unreadable>"
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:  # pragma: no cover - only on an unopenable file
+        return "<unreadable>"
+    try:
+        row = conn.execute("PRAGMA journal_mode").fetchone()
+    except sqlite3.Error:  # pragma: no cover - only on a corrupt file
+        return "<unreadable>"
+    finally:
+        conn.close()
+    return "<unreadable>" if row is None else str(row[0]).lower()
+
+
 def _run_scenario(scenario_id: str, workdir: Path) -> dict:
     """Crash a writer, then reload in a fresh process. Returns the measured facts."""
     store = workdir / f"{scenario_id}.sqlite3"
@@ -314,10 +345,14 @@ def _run_scenario(scenario_id: str, workdir: Path) -> dict:
 
     writer = _spawn("writer", scenario_id, store, cache)
 
-    # Measured AFTER the writer is gone: this is the persistence claim, and it is a
-    # filesystem observation rather than anything the worker said about itself.
+    # Measured AFTER the writer is gone and BEFORE the reader runs: these are the
+    # persistence claims, and they are filesystem observations rather than anything
+    # either worker said about itself. Before the reader matters for the journal mode —
+    # the reader opens the store too, and a mode read afterwards could be one the
+    # reader established rather than one the crashed writer left.
     store_exists = store.is_file()
     store_bytes = store.stat().st_size if store_exists else 0
+    store_journal_mode = journal_mode_of(store)
 
     reader = _spawn("reader", scenario_id, store, cache)
 
@@ -328,6 +363,7 @@ def _run_scenario(scenario_id: str, workdir: Path) -> dict:
         "reader": reader,
         "store_real_on_disk": store_exists,
         "store_bytes": store_bytes,
+        "store_journal_mode": store_journal_mode,
     }
 
 
@@ -365,6 +401,14 @@ def test_crash_restart_reconstructs_the_hand_derived_anchor(
     # -- real persistence: the store outlived the process that wrote it ---------
     assert run["store_real_on_disk"] is True, "the store is not a real on-disk file"
     assert run["store_bytes"] > 0, "an empty store file evidences nothing"
+    # The substrate claim itself, read off the file rather than off the source (review
+    # round-3 F9). Design §3.2 candidate A is "sqlite3, WAL, synchronous=FULL"; this is
+    # the half of it a single execution can actually show.
+    assert run["store_journal_mode"] == "wal", (
+        "the crashed writer left the store in journal_mode="
+        f"{run['store_journal_mode']!r}, not WAL — the durability argument every "
+        "anchor below rests on assumes WAL"
+    )
 
     # -- real process boundary: two distinct OS processes -----------------------
     verdict = json.loads(reader.stdout.strip().splitlines()[-1])
@@ -441,6 +485,7 @@ def test_crash_restart_reconstructs_the_hand_derived_anchor(
         reader_pid=reader.pid,
         store_real_on_disk=run["store_real_on_disk"],
         store_bytes=run["store_bytes"],
+        store_journal_mode=run["store_journal_mode"],
         expected_reconstruction=cell.expected,
         observed_reconstruction=observed,
     )
@@ -598,6 +643,52 @@ def test_the_verdict_follows_the_store_not_the_scenario_argument(
     observed = _canonical(tuple(verdict[key] for key in _DIMENSION_KEYS))
     assert observed == _CELLS_BY_ID["L3-07"].expected
     assert observed != _CELLS_BY_ID["L3-01"].expected
+
+
+def test_a_rollback_journal_store_is_measured_as_such(tmp_path) -> None:
+    """**Review round-3 F9's negative case, on a REAL file rather than on an AST.**
+
+    Three review rounds of source analysis each had a bypass, so what gate 3 turns on
+    is now a measurement. A measurement is only worth that if it can come out the other
+    way, and this is the input that makes it: an ordinary sqlite file nobody switched,
+    which sqlite reports as ``delete``. Feed that through the recorder and the row is a
+    DEVIATION even though every other field is perfect — the store exists, it is
+    non-empty, the pids are a real pair, and the reconstruction matches.
+
+    The positive direction is covered per scenario by the eight real crash runs above.
+    """
+    rollback = tmp_path / "rollback.sqlite3"
+    conn = sqlite3.connect(str(rollback))
+    try:
+        conn.execute("CREATE TABLE t (x TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert journal_mode_of(rollback) == "delete"
+    assert rollback.stat().st_size > 0
+
+    switched = tmp_path / "wal.sqlite3"
+    conn = sqlite3.connect(str(switched))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t (x TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert journal_mode_of(switched) == "wal"
+
+
+def test_a_missing_store_reads_as_unreadable_not_as_a_mode(tmp_path) -> None:
+    """∅-seal on the measurement: an absent file must not answer with a plausible mode.
+
+    If this returned ``""`` or raised, the row would either carry something that
+    compares unequal to ``wal`` for the wrong reason or never be written at all. It
+    returns a value that is visibly not a journal mode, and the recorder treats it as
+    the deviation it is.
+    """
+    assert journal_mode_of(tmp_path / "never-created.sqlite3") == "<unreadable>"
 
 
 def test_this_suite_never_imports_the_kernel_it_measures() -> None:
