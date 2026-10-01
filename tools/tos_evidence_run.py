@@ -1170,10 +1170,29 @@ PERSISTENCE_SUBSTRATE_PATH = "tos/src/tos/staterestore/store.py"
 #: one file further out.
 PERSISTENCE_PRAGMA_DELEGATE_PATH = "tos/src/tos/staterestore/_wal.py"
 
+#: The delegate's DOTTED module path — the same file as
+#: :data:`PERSISTENCE_PRAGMA_DELEGATE_PATH`, named the way an import names it (the two
+#: are checked against each other by
+#: ``test_the_delegate_path_and_module_name_the_same_file``).
+#:
+#: The call check alone is a bare-NAME match, and a name can be bound to anything. Review
+#: F1 on PR #827: keep ``_wal.py`` on disk, add ``def enable_wal_journal(conn): return
+#: None`` to ``store.py``, and the constructor's call still matches while the file is
+#: never switched — the "documented, not executed" hole reopened one binding away. So the
+#: store must also IMPORT the name from this module, un-aliased, and must not rebind it.
+#:
+#: Only the ABSOLUTE form is accepted (``from tos.staterestore._wal import ...``), which
+#: is the kernel's own convention — every import in ``store.py`` is absolute. A relative
+#: import would need package context this harness deliberately does not have, since it
+#: never imports ``tos`` (TOS-FW-R); switching to one turns this gate red rather than
+#: quietly unchecked.
+PERSISTENCE_PRAGMA_DELEGATE_MODULE = "tos.staterestore._wal"
+
 #: The delegate's entry point, which the store's CONSTRUCTOR must call for the delegate's
 #: pragmas to count at all. Checked as a real call node inside
 #: :data:`PERSISTENCE_SUBSTRATE_CLASS`.\ :data:`PERSISTENCE_SUBSTRATE_CONSTRUCTOR`, never
-#: as a mention.
+#: as a mention, and only when the name is bound to
+#: :data:`PERSISTENCE_PRAGMA_DELEGATE_MODULE`.
 PERSISTENCE_PRAGMA_DELEGATE_CALL = "enable_wal_journal"
 
 #: The store class and the method the delegate call must appear in — **that** class's
@@ -1224,6 +1243,72 @@ def _executed_pragmas(tree: ast.AST) -> dict[str, str]:
             if match:
                 executed[match.group(1).lower()] = match.group(2).upper()
     return executed
+
+
+def _binds_name_from_module(tree: ast.AST, module: str, name: str) -> bool:
+    """``True`` iff the tree carries ``from <module> import <name>`` (un-aliased).
+
+    ``asname`` must be absent: ``from ... import enable_wal_journal as _real`` binds a
+    different name than the one :func:`_calls_inside_method` matches, so accepting it
+    would re-open the gap at the alias instead of the definition.
+    """
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.ImportFrom) and node.level == 0):
+            continue
+        if node.module != module:
+            continue
+        for alias in node.names:
+            if alias.name == name and alias.asname is None:
+                return True
+    return False
+
+
+def _rebindings_of(tree: ast.AST, name: str, cls: str, method: str) -> list[str]:
+    """Where ``name`` is bound to something OTHER than the import — module or constructor.
+
+    A ``def``/``class`` of that name at module level, or an assignment to it at module
+    level or inside the constructor, all shadow the imported delegate while leaving both
+    the import and the call node intact. Each is reported as ``"<scope>:<kind>"`` so an
+    unmet run says which one it saw rather than only that something was wrong.
+    """
+    found: list[str] = []
+
+    def _targets(node: ast.AST) -> list[str]:
+        if isinstance(node, ast.Assign):
+            return [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            return [node.target.id] if isinstance(node.target, ast.Name) else []
+        return []
+
+    module_body = tree.body if isinstance(tree, ast.Module) else []
+    for node in module_body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            found.append("module:def")
+        elif isinstance(node, ast.ClassDef) and node.name == name:
+            found.append("module:class")
+        elif name in _targets(node):
+            found.append("module:assign")
+
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.ClassDef) and node.name == cls):
+            continue
+        for member in node.body:
+            if not (
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name == method
+            ):
+                continue
+            for inner in ast.walk(member):
+                if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                    inner is not member and inner.name == name
+                ):
+                    found.append("constructor:def")
+                elif name in _targets(inner):
+                    found.append("constructor:assign")
+    return sorted(set(found))
 
 
 def _calls_inside_method(tree: ast.AST, cls: str, method: str, call: str) -> bool:
@@ -1296,7 +1381,11 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             "path": PERSISTENCE_SUBSTRATE_PATH,
             "reason": "FILE_ABSENT",
         }
-    source = path.read_text(encoding="utf-8")
+    # Read ONCE, as bytes: the text the AST is parsed from and the bytes the digest is
+    # taken over are then provably the same file content (review F7). Re-opening for the
+    # hash let a manifest record a digest for a file other than the one it measured.
+    source_bytes = path.read_bytes()
+    source = source_bytes.decode("utf-8")
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError as exc:
@@ -1308,9 +1397,11 @@ def check_persistence_substrate(repo_root: Path) -> dict:
 
     delegate_path = repo_root / PERSISTENCE_PRAGMA_DELEGATE_PATH
     delegate_source = ""
+    delegate_bytes = b""
     delegate_tree: ast.AST | None = None
     if delegate_path.is_file():
-        delegate_source = delegate_path.read_text(encoding="utf-8")
+        delegate_bytes = delegate_path.read_bytes()
+        delegate_source = delegate_bytes.decode("utf-8")
         try:
             delegate_tree = ast.parse(delegate_source, filename=str(delegate_path))
         except SyntaxError as exc:
@@ -1341,12 +1432,26 @@ def check_persistence_substrate(repo_root: Path) -> dict:
 
     store_pragmas = _executed_pragmas(tree)
     delegate_pragmas = {} if delegate_tree is None else _executed_pragmas(delegate_tree)
-    delegate_called = delegate_tree is not None and _calls_inside_method(
+    # Three conditions, not one (review F1). The call is a bare-NAME match, so on its own
+    # it credits whatever that name happens to be bound to: a local
+    # `def enable_wal_journal(conn): return None` satisfies it while `_wal.py` sits unused
+    # on disk. So the name must also be IMPORTED from the delegate module and not rebound.
+    delegate_imported = delegate_tree is not None and _binds_name_from_module(
+        tree, PERSISTENCE_PRAGMA_DELEGATE_MODULE, PERSISTENCE_PRAGMA_DELEGATE_CALL
+    )
+    delegate_rebindings = _rebindings_of(
+        tree,
+        PERSISTENCE_PRAGMA_DELEGATE_CALL,
+        PERSISTENCE_SUBSTRATE_CLASS,
+        PERSISTENCE_SUBSTRATE_CONSTRUCTOR,
+    )
+    delegate_invoked = _calls_inside_method(
         tree,
         PERSISTENCE_SUBSTRATE_CLASS,
         PERSISTENCE_SUBSTRATE_CONSTRUCTOR,
         PERSISTENCE_PRAGMA_DELEGATE_CALL,
     )
+    delegate_called = delegate_imported and delegate_invoked and not delegate_rebindings
     # The delegate contributes ONLY when the constructor calls it. Order of composition
     # is the store last: a pragma the store itself executes is what the connection ends
     # up with, since the constructor runs the delegate first and its own statements
@@ -1387,10 +1492,15 @@ def check_persistence_substrate(repo_root: Path) -> dict:
     return {
         "met": met,
         "path": PERSISTENCE_SUBSTRATE_PATH,
-        "sha256": sha256_file(path),
+        "sha256": hashlib.sha256(source_bytes).hexdigest(),
         "delegate_path": PERSISTENCE_PRAGMA_DELEGATE_PATH,
+        # Keyed off the PARSED delegate, not a fresh `is_file()` (review F7): the old form
+        # could record `delegate_sha256: None` beside `delegate_called: True` if the file
+        # went away between the parse and the hash.
         "delegate_sha256": (
-            sha256_file(delegate_path) if delegate_path.is_file() else None
+            hashlib.sha256(delegate_bytes).hexdigest()
+            if delegate_tree is not None
+            else None
         ),
         "measured_from": (
             "structural analysis of the executed source's syntax tree; pragmas are read "
@@ -1407,6 +1517,10 @@ def check_persistence_substrate(repo_root: Path) -> dict:
             "store_executed_pragmas": dict(sorted(store_pragmas.items())),
             "delegate_executed_pragmas": dict(sorted(delegate_pragmas.items())),
             "delegate_called_from_constructor": delegate_called,
+            "delegate_name_imported_from_module": delegate_imported,
+            "delegate_call_node_present": delegate_invoked,
+            "delegate_name_rebound_by": delegate_rebindings,
+            "delegate_module": PERSISTENCE_PRAGMA_DELEGATE_MODULE,
             "delegate_call": (
                 f"{PERSISTENCE_SUBSTRATE_CLASS}.{PERSISTENCE_SUBSTRATE_CONSTRUCTOR}()"
                 f" -> {PERSISTENCE_PRAGMA_DELEGATE_CALL}()"

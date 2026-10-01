@@ -2847,6 +2847,127 @@ def test_another_class_calling_the_delegate_does_not_count(tmp_path) -> None:
     assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
 
 
+def test_the_delegate_path_and_module_name_the_same_file() -> None:
+    """The two delegate constants must describe one file, or the gate checks two things.
+
+    ``PERSISTENCE_PRAGMA_DELEGATE_PATH`` is what gets parsed and hashed;
+    ``PERSISTENCE_PRAGMA_DELEGATE_MODULE`` is what the store's import must name. If they
+    drift apart the gate reads pragmas out of one file while requiring a binding to
+    another, and both halves look satisfied.
+    """
+    dotted = ev.PERSISTENCE_PRAGMA_DELEGATE_MODULE.replace(".", "/") + ".py"
+    assert ev.PERSISTENCE_PRAGMA_DELEGATE_PATH.endswith(dotted)
+
+
+def test_a_locally_defined_stub_with_the_delegate_name_does_not_count(tmp_path) -> None:
+    """**Review F1.** The call is a bare-NAME match; a name can be bound to anything.
+
+    Here ``_wal.py`` is on disk and exported exactly as the real one, the constructor
+    calls ``enable_wal_journal``, and the call node matches — but the store defines its
+    own no-op of that name, so nothing ever switches the file to WAL. Before the import
+    and rebinding checks this fixture passed the gate: a store that never reaches the
+    delegate, credited with the delegate's pragma.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace(
+            "from tos.staterestore._wal import enable_wal_journal\n",
+            "def enable_wal_journal(conn):\n    return None\n",
+        ),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_call_node_present"] is True
+    assert result["measured"]["delegate_name_imported_from_module"] is False
+    assert result["measured"]["delegate_name_rebound_by"] == ["module:def"]
+    assert result["measured"]["pragmas_missing"] == ["journal_mode=WAL"]
+
+
+def test_a_shadowing_rebind_after_a_real_import_does_not_count(tmp_path) -> None:
+    """The other half of F1: import the real one, then rebind the name over it.
+
+    ``delegate_name_imported_from_module`` is True here — the import IS the real one —
+    so the import check alone would pass. What the constructor actually calls is the
+    module-level rebinding below it, which is why the rebinding scan exists as a
+    separate condition rather than as an ``else`` of the import one.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace(
+            "class CompositeStateStore:\n",
+            "enable_wal_journal = lambda conn: None\n" "class CompositeStateStore:\n",
+        ),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_name_imported_from_module"] is True
+    assert result["measured"]["delegate_name_rebound_by"] == ["module:assign"]
+
+
+def test_an_aliased_import_of_the_delegate_does_not_count(tmp_path) -> None:
+    """``import ... as _real`` binds a different name than the call site matches.
+
+    Accepting the alias would move the gap from the definition to the alias: the gate
+    would credit the delegate while the constructor called whatever ``enable_wal_journal``
+    means in that module.
+    """
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace(
+            "from tos.staterestore._wal import enable_wal_journal\n",
+            "from tos.staterestore._wal import enable_wal_journal as _real\n"
+            "def enable_wal_journal(conn):\n    return None\n",
+        ),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_name_imported_from_module"] is False
+
+
+def test_an_import_from_another_module_does_not_count(tmp_path) -> None:
+    """The name must come from THE delegate — the file whose pragmas are being credited."""
+    _write_substrate_pair(
+        tmp_path,
+        store=_DELEGATING_STORE.replace(
+            "from tos.staterestore._wal import enable_wal_journal\n",
+            "from tos.staterestore._other import enable_wal_journal\n",
+        ),
+        delegate=_DELEGATE_MODULE,
+    )
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["met"] is False
+    assert result["measured"]["delegate_name_imported_from_module"] is False
+    assert result["measured"]["delegate_name_rebound_by"] == []
+
+
+def test_the_recorded_digests_come_from_the_bytes_that_were_parsed(tmp_path) -> None:
+    """**Review F7.** One read per file: the digest and the syntax tree agree by construction.
+
+    Also pins the pairing the old code could break — a delegate that was parsed must
+    carry a digest, never ``None``.
+    """
+    _write_substrate_pair(tmp_path, store=_DELEGATING_STORE, delegate=_DELEGATE_MODULE)
+
+    result = ev.check_persistence_substrate(tmp_path)
+
+    assert result["sha256"] == ev.sha256_file(tmp_path / ev.PERSISTENCE_SUBSTRATE_PATH)
+    assert result["delegate_sha256"] == ev.sha256_file(
+        tmp_path / ev.PERSISTENCE_PRAGMA_DELEGATE_PATH
+    )
+    assert result["measured"]["delegate_called_from_constructor"] is True
+
+
 def test_a_delegate_that_does_not_switch_to_wal_is_unmet(tmp_path) -> None:
     """The failing input the gate must keep: a store that ends up WITHOUT WAL.
 
