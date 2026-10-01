@@ -96,6 +96,8 @@
   `probes_order.py` 공존 폴링에 적용해야 하나 이 PR 은 P-CA 경로만 고친다. P-8 3~5회차 재개
   조건으로 남긴다.
 - `EGW00215` 의 원인 규명(모의 서버 공용 스로틀 가설) — 관측만 남기고 단정하지 않는다.
+- ~~참조조회(`--reference-check`)가 기록만 하고 `divi_pay_dt` 를 t0 와 대조하지 않는 것, 그리고
+  ksdinfo 질의 창이 실행 시각에만 고정된 것~~ → **#830 으로 착지(§7.14)**. 이 PR 범위 밖이었다.
 
 ## 5. 위험
 
@@ -200,7 +202,8 @@ black --check (변경 파일 2건)                   → 2 files would be left u
 ### 7.5 남은 것
 
 - §4 그대로: P-8 공존 폴링(`probes_order.py`)의 「전송 오류 → STOP」 전이는 이 PR 범위 밖.
-  P-8 3~5회차 재개 조건으로 남는다.
+  P-8 3~5회차 재개 조건으로 남는다. (참조 전용 모드·지급일 대조는 §4 에서 빠져 #830 으로
+  착지했다 — §7.14.)
 - `EGW00215` 의 원인(모의 서버 공용 스로틀 가설)은 여전히 관측만 있고 단정하지 않는다.
 - 3차 관측 대상(058610 에스피지, 지급일 재확인 필요)을 이 템플릿으로 예약할지는 운영자 결정.
 
@@ -426,3 +429,188 @@ docker koalaman/shellcheck:stable --severity=warning → rc 0
 2026-05-30 생성 후 미갱신이고 현재값이 일관되게 ~2.6배」와 수치가 일치하고, 이 PR 은
 `tools/broker_probes/**` 와 `tests/tools/**` 밖을 건드리지 않는다. **baseline 재생성은
 하지 않는다** — 먼저 재생성하면 진짜 회귀가 영구히 안 보이게 된다(같은 메모리 경고).
+
+### 7.14 후속 착지 — #830 참조 전용 모드와 러너의 지급일 대조 (2026-10-01)
+
+§4 에 적지 못했던 결합 하나가 10-01 에 두 가지 형태로 동시에 드러났고(캠페인 README
+2026-10-01 블록), 별도 PR 로 닫았다. 이 절은 그 착지 기록이다.
+
+**관측된 결함 둘.**
+
+1. 다음 대상 058610 의 **사전 참조조회가 거부됐다**(rc 4, 아티팩트 없음, 로그
+   `~/.config/kis-probes/p-ca-20261001-058610-refcheck.log`): `--payable-time is in the
+   future ('2026-10-22T00:00:00+09:00' > 2026-10-01T08:04:53Z)`. 그 거부는 **폴링 경로를
+   위한 규칙**이다(미래 t0 는 음수 지연을 기록한다). 참조조회는 아무것도 페어링하지 않으므로
+   해당되지 않는데, `--reference-check` 가 폴링 인자에 묶여 있어 함께 막혔다.
+2. 같은 날 000660 재관측의 `reference_dates=[]` — ksdinfo 질의 창이 **실행 시각** 기준
+   −30d…+180d 라서 10-01 실행의 `F_DT=20260901` 이 됐고, 09-30 에 돌아왔던 행의
+   `record_date=20260831` 이 **하루 차이로 창 밖**이었다. 행이 사라진 게 아니라 창이 지나갔다.
+
+그리고 둘을 합치면 더 나쁜 것이 남아 있었다: `_do_reference_check` 는 행을 **기록만** 하고
+`divi_pay_dt` 를 t0 로 되먹이지 않았고, 러너도 대조하지 않았다. 브로커 지급일이 하루만
+달라도 프로브는 **틀린 t0 로 16 h 창을 다 쓰고 CENSORED 를 쓴 뒤에야** 아티팩트 안에서
+불일치가 드러난다.
+
+**처분.**
+
+| 무엇 | 어디 |
+|---|---|
+| `--reference-only` — ksdinfo GET 하나, 잔고 호출·보유 요구·폴링 전부 없음. 미래 t0 허용(페어링하지 않으므로). leg 은 `REFERENCE_ONLY` 로 명시 skip — CENSORED/ABORTED 아님 | `probes_ca.py::_do_reference_only` |
+| ksdinfo 창을 **t0 와 실행 시각을 모두 포함**하도록 앵커링(`min(…)−30d … max(…)+180d`). 마진은 그대로이고, 기준일↔지급일 간격이 발행사마다 달라 `--reference-from/--reference-to` 로 직접 지정할 수 있다. 창은 아티팩트 `observations.reference_window` 에 남는다 | `probes_ca.py::_ksdinfo_window` |
+| 러너가 폴링 **전에** `divi_pay_dt` 를 `PCA_PAYABLE` 과 대조하고 불일치면 ABORT. 행은 `PCA_RECORD_DATE` 로 좁히되 **필수가 아니고**, 없으면 돌아온 **모든 행**이 후보다(어느 하나라도 맞으면 확인). 우회는 `PCA_ALLOW_PAYDATE_MISMATCH=1`(로그 남김), 행 없음을 차단하려면 `PCA_REQUIRE_REFERENCE_ROW=1` | `runners/run_p_ca.sh` 5b |
+| `POLICY_VERSION` `p-ca-retry-policy/1` → `/2` (양쪽). 러너 계약이 바뀌었고 `/1` 러너는 대조를 **조용히 건너뛴다** | 양쪽 |
+
+**계획과 다른 점.** (a) 러너가 아티팩트 JSON 을 파싱하지 않는다 — 프로브가 `REFERENCE_WINDOW=`
+/`REFERENCE_STATUS=`/`REFERENCE_ROWS=`/`REFERENCE_ROW=<record_date>|<divi_pay_dt>` 앵커 줄을
+찍고 러너는 그것만 읽는다(`HELD=` 와 같은 규율). 덕분에 선택·대조 로직은 bash 몇 줄이고,
+줄을 만드는 쪽은 Python 테스트로 실측된다. 행 값은 **숫자와 구분자만 남기고 전부 버린다** —
+브로커 문자열이 줄을 하나 더 만들어 내지 못하도록. (b) 아티팩트 복사를 `copy_new_artifact`
+한 곳으로 모아 참조 전용 실행의 아티팩트도 `PCA_EVIDENCE_DIR` 로 남긴다(수용 기준 1).
+(c) `--reference-from/--reference-to` 는 「싸면 추가」 항목이었고 실제로 쌌다 — 그리고 30일
+룩백이 **경계값**이라는 걸 10-01 사례가 보여줬으므로(09-30 − 30d = 08-31, 하루만 어긋나도
+놓친다) 운영자 탈출구가 필요했다.
+
+**수정 전 red 증명.** 두 번 나눠 측정했다.
+
+- **프로브 쪽**(`probes_ca.py` 를 `origin/main` 판으로): 새 테스트 18건 전부 red.
+  `--reference-only` 가 잔고 TR 을 먼저 친다(`assert '/ksdinfo/dividend' in '…/inquire-balance'`) ·
+  미래 t0 가 그대로 거부된다(10-01 의 그 문장 축자) · 앵커 없는 창이 10-01 reproduction 을
+  0행으로 만든다(`IndexError`, ksdinfo 호출 자체가 없다) · `_REFERENCE_*` 접두사 부재 ·
+  `--reference-from` 이 무시된다 · `--window-s must be > 0`.
+- **러너 쪽**(러너만 `origin/main` 판, `EXPECT_POLICY_VERSION` 만 `/2` 로 맞춰 핸드셰이크
+  abort 가 행동을 가리지 않게 함): #830 러너 테스트 16건 중 **12건 red**. 불일치 입력에
+  `assert 0 != 0`(즉 **창을 그대로 폴링했다** — 이 이슈의 결함 그 자체) · 확인 로그 부재 ·
+  `(reference-only)` 복사 없음 · pacing sleep 이 2회가 아니라 1회.
+  red 가 아닌 4건과 이유: `test_runner_template_carries_no_instance_defaults`(옛 템플릿을
+  **측정**하는 전제 확인) · `test_the_pay_date_check_is_skipped_for_a_quantity_leg_class` ·
+  `test_no_pay_date_check_runs_when_the_reference_check_is_not_asked`(둘 다 「대조가 돌지
+  **않아야** 하는」 핀이라 옛 코드에서도 참) · `test_runner_refuses_a_quantity_leg_class_without_an_effective_time`(기존 테스트).
+  ⚠ 프로브만 되돌린 1차 측정에서는 러너 테스트가 공유 헬퍼의 `AttributeError` 로 죽어
+  **행동을 증명하지 못했다** — 그래서 러너만 되돌린 2차 측정을 따로 했다.
+
+**게이트.**
+
+```
+.venv/bin/pytest tests/tools/test_broker_probes_ca.py \
+  tests/tools/test_broker_probes_pacing.py \
+  tests/tools/test_broker_probes_balance.py -p no:cacheprovider
+  → 236 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 .py 2건)               → unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0 (필터 없이도 rc 0)
+```
+
+**운영자가 해야 할 것 — 10-22 무인 래퍼.** `~/.config/kis-probes/run-p-ca-20261022.sh` 는
+`PCA_REFERENCE_CHECK=1` 을 이미 넣으므로, 이 PR 이 머지되면 10-22 슬롯은 **대조를 하게 된다**.
+058610 의 기준일을 알면 `PCA_RECORD_DATE` 를 넣는 편이 낫고(모르면 최신 행), 지급일이
+DART 출처라 ksdinfo 와 다를 가능성을 감안해 **불일치 시 슬롯을 포기할지**(기본) **경고만
+남기고 돌릴지**(`PCA_ALLOW_PAYDATE_MISMATCH=1`) 를 미리 정해 둬야 한다. 아무 행도 안 오면
+기본값은 「경고 후 진행」이다.
+
+#### 7.14.1 리뷰 처분 (PR #831 라운드 1 · high · 10건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | 참조 전용 아티팩트가 `PCA_EVIDENCE_DIR` 에 같은 이름·같은 종목·`errors=[]` 로 떨어져, 10-22 래퍼의 재무장 가드가 **완료 관측으로 읽고 남은 슬롯을 해제**한다 | **수정.** 복사 목적지를 `$PCA_EVIDENCE_DIR/reference-only/` 로 분리 + leg 을 `legs.<class>.<leg>` 키에 `REFERENCE_ONLY` 로 명시 skip + 래퍼 가드 계약을 테스트로 고정 |
+| F2 | 기본 행 선택(`sort -r | head -1` = 최신 기준일)이 **다음 분기 배당 행**을 비교해 거짓 불일치 ABORT | **수정.** 「**어느** 행이든 `divi_pay_dt == WANT_PAY` 면 확인」, 행이 있는데 전부 불일치일 때만 ABORT |
+| F3 | `WANT_PAY` 가 운영자가 적은 오프셋 그대로의 앞 10자 — 비-KST 오프셋이면 거짓 불일치 (CLAUDE.md 비협상 위반) | **수정.** `TZ=Asia/Seoul date -d` 로 KST 변환 후 날짜. 파싱 불가도 여기서 ABORT |
+| F4 | 룩백 30일이 **지급일** 기준이라 기준일→지급일 간격에 맞지 않는다 — 058610 은 경계 정확히, 연배당은 **항상** 창 밖 → 조용히 0행 | **수정.** 룩백 120일 + `PCA_RECORD_DATE` 를 알면 러너가 `--reference-from = 기준일−1d` 를 넘긴다 |
+| F5 | 참조조회가 **건강하지 않은 경로** 때문에 멈춘 것과 「행 없음」이 러너에게 구분 불가(그 경로에 16 h 폴링을 건다) | **수정.** 상태 토큰 5종을 **모든 경로에서 정확히 한 줄**; `OK`/`NO_ROWS`/`UNSUPPORTED` 외는 전부 하드 ABORT(줄 자체가 없어도) |
+| F6 | 5b 와 본 시행이 **같은 GET 을 두 번** 보낸다 | **수정.** 5b 가 돌면 본 시행에서 `--reference-check` 를 뺀다. 행은 `--note` 에 싣는다 |
+| F7 | `record_date` 는 구분자를 남기고 `divi_pay_dt` 만 숫자화 — 계약의 양쪽이 다르게 정규화된다 | **수정.** `_reference_field` 가 **둘 다 숫자만**. 계약은 `REFERENCE_ROW=YYYYMMDD|YYYYMMDD`, 러너의 `tr -cd` 는 제거 |
+| F8 | 같은 기준일의 형제 행(현금/주식) 중 `tail -1` 이 **빈 지급일 쪽**을 집는다 | **수정.** F2 와 같은 처분 — 후보 전체를 본다 |
+| F9 | `--reference-from`/`--reference-to` 역전 쌍이 그대로 나간다 | **수정.** 사전조건 거부(`is after --reference-to`) |
+| F10 | 복사 실패가 **로그 한 줄도 없이** `ART_BEFORE` 를 전진시킨다 | **수정.** 성공했을 때만 전진, 실패는 WARN |
+
+**F1 이 가장 위험했다.** 지적이 옳았고, 범위도 리뷰가 적은 것보다 넓다: 래퍼의
+`done_already` 는 OBSERVED 를 `measurements["legs.cash_dividend.cash"]` 로 판정하는데,
+그 키는 `_poll_loop` 이 쓰고 `_finalize` 가 쓰지 않는다 — 즉 **아티팩트 모양과 가드 계약이
+서로 다른 파일에 있고 아무도 둘을 함께 검사하지 않았다**. 처분은 세 겹이다: 복사 분리(글롭이
+닿지 않는다) · `args.reference_only`(래퍼가 읽는다) · leg 별 `REFERENCE_ONLY` skip(사람이
+읽는다). 그리고 래퍼의 술어를 **테스트에 그대로 옮겨** 네 가지 모양(참조 전용 · CENSORED ·
+OBSERVED · ABORTED)에 대해 판정을 고정했다. 이게 없으면 둘은 조용히 어긋나고, 어긋난 것을
+아는 날은 10-22 하루뿐이다.
+
+**F5 의 교훈은 「침묵은 상태가 아니다」.** 수정 전 참조조회는 두 전송 오류로 멈출 때 **아무
+것도 찍지 않았고**, 러너는 그것을 「행 없음」으로 읽어 경고 후 16 h 창을 시작했다 —
+`_do_reference_check` 의 docstring 이 「폴링 루프는 같은 경로를 훨씬 멀리 걷는다」고 적어둔
+바로 그 일이다. 가드가 자기가 막는다고 적은 것을 통과시키는 형태.
+
+**라운드 2 red 증명.** 새/변경 테스트 45건 중 **32건이 라운드-1 HEAD(`d9435432`)에서 red**.
+행동 red 의 예: 불일치 입력에 `assert 0 != 0`(창을 그대로 폴링) · `'20260831' == '20260602'`
+(룩백) · `'2026/09/30' == '20260930'`(F7) · `--reference-check not in argv`(F6) ·
+`[PosixPath('…20261022T000000Z.json')] == []`(F1, 아티팩트가 증거 디렉터리 루트에 떨어짐) ·
+`'no candidate row carries a divi_pay_dt'` 부재.
+red 가 아닌 13건은 전부 **핀**이다(바뀌지 말아야 할 것): 래퍼 계약 4종 중 3종은 기존 시행
+모양이 이미 맞았음을 고정하고, `reference_only` 로 거르는 것도 라운드 1 에서 이미 참이었다 ·
+`_reference_field` 의 숫자-입력 3건 · 깨끗한 상태 3종이 시행을 막지 **않는다** · 기준일을
+모를 때 override 를 보내지 **않는다** · 5b 가 안 돌면 `--reference-check` 가 **남는다** ·
+역전이 아닌 동일 쌍은 허용.
+⚠ 처음에 상태 토큰을 `@pytest.mark.parametrize` 안에서 `pc._REF_*` 로 읽었더니 수정 전
+코드에서 **수집 오류**가 나 파일 전체가 죽었다 — 그러면 어느 테스트도 증명하지 못한다.
+데코레이터는 리터럴로 바꾸고, 리터럴과 모듈 상수를 잇는 핀 1건을 따로 뒀다.
+
+#### 7.14.2 라운드 2 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -p no:cacheprovider
+  → 269 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 .py 2건)               → unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0
+```
+
+#### 7.14.3 리뷰 처분 (PR #831 라운드 2 · high · 10건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | `UNSUPPORTED` 가 **HTTP 500·비-JSON 본문까지** 덮어서, 러너가 「깨끗한 답」으로 통과시킨다 — F5 게이트가 정작 중요한 곳에서 샌다 | **수정.** `ERROR` 토큰 분리. 기준은 **브로커가 답했는가**: HTTP 200 + `rt_cd` 있는 봉투 ⇒ `UNSUPPORTED`(경로 건강, TR 미지원), 그 외 ⇒ `ERROR`(러너 ABORT) |
+| F2 | 5b 가 `--poll-ms` 를 안 넘겨 원장 스로틀 재시도가 `--pace-s` 만 기다린다 — 방금 스로틀을 유발한 그 초당 간격 | **수정.** `--poll-ms "$PCA_POLL_MS"` 전달. 「`--poll-ms` 는 무시된다」는 프로브 주석도 정정(무시되지 않는다 — 재시도 대기다) |
+| F3 | `ref_rc` 를 **게이트하지 않는다** — 깨끗한 상태 줄을 찍고 rc 5 로 죽은 전처리를 건강하다고 본다 | **수정.** 보유 점검과 같은 규칙: 비-0 종료면 숫자(여기선 상태)를 믿지 않고 ABORT |
+| F4 | 역전 검사가 **override 끼리만** 비교한다 — 한쪽만 준 경우(파생된 반대쪽과의 역전)는 그대로 빈 창 | **수정.** 검사를 **파생 후** 창(`_ksdinfo_window`)에 대해 수행. 단일 override 두 형태 + 쌍 역전 전부 사전조건 거부 |
+| F5 | 5b 가 돌면 본 시행 아티팩트에서 `reference_dates`/`mock_reference_support` 가 **사라진다**(런북이 기록한다고 적은 관측). `--note` 대체는 8행·2필드로 손실 | **수정.** `--reference-rows-from <5b 아티팩트>` — 그 관측들을 **축자 입양**. GET 0회, 형식 불변, 출처 관측 1건 추가 |
+| F6 | 복사가 실패하면 `ART_BEFORE` 가 그대로라, 본 시행이 아티팩트를 안 쓴 경우 step 8 이 **참조 전용 아티팩트를 증거 루트로** 복사한다 | **수정.** `REF_ART` 로 신원 기록, 본 시행 복사에서 **이름이 아니라 신원으로** 제외 |
+| F7 | 보유가 필요 없는 5b 가 **페이지네이션 보유 조회 뒤**에 있다 — 지급일 불일치 슬롯마다 잔고 조회를 통째로 버린다 | **수정.** 5b 를 자격증명 가드 직후, 보유 점검 **앞**으로 옮겼다(step 5). 단계 번호 재배치 |
+| F8 | `_do_reference_only` 가 `_StopRun` 을 삼키고 **leg skip 전에** 반환 — 멈춘 조회는 `legs.<class>.<leg>` 가 **없는** 아티팩트를 쓴다 | **수정.** `finally` 로 모든 경로에서 leg skip + `leg_provenance_class` |
+| F9 | 「없으면 최신 기준일」이 러너 주석·계획·PR 본문에 남아 코드(어느 행이든)와 모순 | **수정.** 러너 주석·계획 §7.14 정정. ⚠ **PR 본문은 `gh pr edit` 금지 규칙상 내가 못 고친다 — 운영자 반영 필요** |
+| F10 | `REFERENCE_ROWS` 는 `output1` 전체를, `REFERENCE_ROW=` 는 dict 행만 센다 | **수정.** 실제 **방출한 행**만 센다. 방출 0이면 상태도 `NO_ROWS` |
+
+**F1 과 F8 은 같은 형태다 — 가드가 자기가 막는다고 적은 것을 통과시킨다.** F1 은 「건강하지
+않은 경로엔 창을 걸지 않는다」는 게이트가 500 을 통과시켰고, F8 은 「leg 질문을 비워두지
+않는다」는 F1 처분이 **오류 경로에서만** 비워뒀다. 둘 다 정상 경로만 보면 초록이다.
+
+**F1 의 처분은 리뷰 문구와 한 군데 다르다.** 리뷰·지시는 「알려진 `msg_cd` 허용목록」을
+제안했는데, **모의 ksdinfo 미지원 응답의 msg_cd 는 이 저장소에 한 건도 측정돼 있지 않다**
+(관측은 전부 `SUPPORTED`). 지금 허용목록을 만들면 목록이 비어 있어서, `UNSUPPORTED` 팔이
+**존재 이유인 바로 그 경우를 ABORT 로 바꾼다** — 가드가 자기가 허용한다고 적은 것을 막는
+형태다. 그래서 지시가 함께 제시한 「documented shape」 쪽을 택했다: **브로커가 답했는지**
+(HTTP 200 + `rt_cd` 봉투)로 가른다. 리뷰의 실패 시나리오(500 + HTML)는 그대로 `ERROR` 로
+떨어지고, 코드는 상태 줄에 찍히므로 운영자가 **측정 뒤에** 더 좁힐 수 있다.
+
+**라운드 3 red 증명.** 새/변경 테스트 32건 중 **26건이 라운드-2 HEAD(`5608aa62`)에서 red**.
+행동 red: `the trial re-sent the reference GET`(F5) · `the holding walk was spent anyway`(F7) ·
+`the holding walk ran before the pre-check`(F7 역방향) · `assert 0 != 0`(ERROR 가 ABORT 를
+안 만든다, F1) · `REFERENCE_ROWS=3` 에 행 1줄(F10) · `probe contacted the broker when it must
+not`(F4 단일 override) · `--poll-ms not in argv`(F2) · `reference check exited 5` 부재(F3) ·
+`is this run's reference-only lookup` 부재(F6) · 멈춘 조회의 `skips == []`(F8).
+red 가 아닌 6건은 핀이다: 깨끗한 봉투의 거부가 `UNSUPPORTED` 로 남는 것(F1 역방향) ·
+파생 창 안쪽 단일 override 허용(F4 역방향) · 입양 시행도 완료 관측으로 세어지는 것 ·
+`OK`/`NO_ROWS`/`UNSUPPORTED` 3종이 시행을 막지 않는 것.
+
+#### 7.14.4 라운드 3 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -p no:cacheprovider
+  → 294 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 .py 2건)               → unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0
+```
+
+라운드 2 CI(`5608aa62`): `test` pass(6m18s) · `tos-gate`·`tos-firewall`·`ruff`·`lint`·
+`type-check`·`backtest-extra` pass · `performance` fail — 메모리 `ci-gating-reality` 의
+기존 baseline 미갱신 건이고 이 PR 은 `tools/broker_probes/**`·`tests/tools/**` 밖을 건드리지
+않는다. **baseline 재생성 안 함.**

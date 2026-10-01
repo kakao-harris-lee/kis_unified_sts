@@ -54,15 +54,117 @@ export PCA_EVIDENCE_DIR=/path/to/docs/broker-profiles/evidence/<campaign>
 export PCA_NOTE="t3 P-CA trial 3: ..."
 
 # optional
-export PCA_REFERENCE_CHECK=1        # also GET the ksdinfo TR before polling
+export PCA_REFERENCE_CHECK=1        # also GET the ksdinfo TR before polling — and,
+                                    # for a cash dividend, compare the broker's
+                                    # divi_pay_dt with PCA_PAYABLE first (see below)
 export PCA_EFFECTIVE=...            # required for every class but cash_dividend,
                                     # and checked before anything touches the
                                     # broker (a space-separated ISO value is fine)
 export PCA_CRON_MARK=run_p_ca_20261022   # remove this one crontab line when done
 
+# optional, and only read when PCA_REFERENCE_CHECK=1 on a cash dividend
+export PCA_RECORD_DATE=20260930          # YYYYMMDD — narrows the comparison to one
+                                         # 기준일, and anchors F_DT on it;
+                                         # unset = every row the broker returned
+export PCA_ALLOW_PAYDATE_MISMATCH=1      # proceed on a mismatch, with a WARN
+export PCA_REQUIRE_REFERENCE_ROW=1       # ABORT when the table returns no usable row
+
 # 4. run it from the worktree's own copy — that is how it finds the checkout
 /home/deploy/.local/state/kis/wt-pca/tools/broker_probes/runners/run_p_ca.sh
 ```
+
+### The pay-date pre-check (#830)
+
+With `PCA_REFERENCE_CHECK=1` on a `cash_dividend`, the runner asks the broker
+what IT thinks the pay date is **before** anything else is spent, and aborts
+when the two disagree. It is the **first** broker call of the slot — the
+ksdinfo TRs need no holding, so a wrong pay date should cost one GET rather
+than a balance walk on top of it:
+
+```
+probe --reference-only → compare → [pace] → holding check → [pace] → probe
+```
+
+`--reference-only` is the probe's own mode: one ksdinfo GET, no balance call,
+no holding requirement, no polling, and a **future** `--payable-time` is
+accepted there (nothing is paired against it). It writes a normal artifact,
+which the runner copies to **`$PCA_EVIDENCE_DIR/reference-only/`** on the same
+newer-than guard the trial artifact gets — so the pre-check leaves evidence
+even when the comparison then aborts the run, without putting a lookup where a
+`P-CA-*.json` glob of the evidence directory would read it as a completed
+observation. (The artifact also carries `args.reference_only: true` and skips
+each leg with a `REFERENCE_ONLY` reason, so a reader has three ways to tell
+the two apart.) A copy that fails logs a WARN and does not count as done.
+
+Because the pre-check already made the call, the trial is run with
+`--reference-rows-from <the pre-check's artifact>` instead of
+`--reference-check`: it **adopts** that artifact's `reference_dates`,
+`reference_window` and `mock_reference_support` observations verbatim, so the
+trial artifact carries what it always carried and the broker is asked once per
+slot. An extra observation records which artifact the rows came from, so an
+adopted row is never mistaken for one the trial fetched.
+
+The probe prints the rows on anchored lines and the runner reads only those:
+
+```
+REFERENCE_WINDOW=<F_DT>-<T_DT>
+REFERENCE_STATUS=<one of OK NO_ROWS UNSUPPORTED TRANSIENT_STOP RATE_LIMITED>[:detail]
+REFERENCE_ROWS=<n>
+REFERENCE_ROW=<record_date>|<divi_pay_dt>     # both YYYYMMDD, digits only
+```
+
+Exactly one `REFERENCE_STATUS=` line is printed, on every path the probe can
+leave by. Only `OK`, `NO_ROWS` and `UNSUPPORTED` let the trial start:
+
+- `UNSUPPORTED` is the broker **answering** (HTTP 200, a real envelope) that
+  it does not serve this TR. The path is healthy; the mock not supporting the
+  reference TR must not block a trial.
+- `ERROR` is a non-200 or a body that is not an envelope at all — a gateway
+  page, say. `TRANSIENT_STOP` and `RATE_LIMITED` are the probe's own stops.
+  All three mean the path is unhealthy right now, and the runner aborts
+  rather than starting a 16-hour poll down it.
+- A **missing** line aborts too: that is what a crash looks like from here.
+
+A pre-check that printed a clean status and then **exited non-zero** is also
+refused, the same rule the holding check applies to `HELD=`: the probe can
+print its rows and still die writing the artifact.
+
+What the runner then does with the rows:
+
+| outcome | default | override |
+| --- | --- | --- |
+| **any** candidate row's `divi_pay_dt` equals `PCA_PAYABLE`'s KST date | logged, run proceeds | — |
+| candidate rows carry pay dates and **none** match | **ABORT**, every date seen is logged | `PCA_ALLOW_PAYDATE_MISMATCH=1` → WARN + proceed |
+| no candidate row, or none with a `divi_pay_dt` | WARN + proceed (record-only) | `PCA_REQUIRE_REFERENCE_ROW=1` → ABORT |
+
+"Any row", not "the latest row": the window reaches 180 days past the pay date,
+so a quarterly payer's answer carries the next dividend too, and comparing
+against the newest 기준일 aborted slots on a row that was never the trial's.
+The same answer can also hold two rows under one 기준일 — cash and stock — of
+which only the cash row has a `divi_pay_dt`.
+
+`PCA_RECORD_DATE` (`YYYYMMDD`) narrows the candidates to one 기준일 and is
+never required. When it is set the runner also sends `--reference-from` as
+`PCA_RECORD_DATE − 1 day`, because the ksdinfo window filters on 기준일 and an
+`F_DT` equal to it is a boundary, not a margin.
+
+`PCA_PAYABLE` is converted to **KST** before its date is taken. The probe
+accepts a non-KST offset on `--payable-time` (it warns rather than refusing),
+and `2026-10-21T15:00:00Z` is the same instant as 2026-10-22 00:00 KST.
+
+Why the mode exists at all: on 2026-10-01 a pre-check of the next target was
+refused `rc 4` before any reference GET, because `--payable-time` was in the
+future — a rule written for the polling path. The same day's re-observation
+got zero rows because the ksdinfo `F_DT`/`T_DT` window was anchored on the RUN
+CLOCK, and the row's 기준일 had walked out of it overnight. The window is now
+anchored on the operator's t0 as well as the run clock, spanning both, and the
+lookback is sized for the 기준일→지급일 gap (120 days) rather than for
+"recent" — every anchor the probe has is a time that FOLLOWS the record date
+the window filters on, and 30 days excluded every annual dividend.
+`--reference-from`/`--reference-to` (`YYYYMMDD`) override either end for an
+issuer outside even that; a window that cannot contain anything is refused
+before the call, including when only one end was overridden and the other was
+derived.
 
 ### The credential file
 
@@ -106,7 +208,8 @@ Notes:
   later showed qty 1), and how a holding on page 2 of the 25-row mock account
   would read as "not held".
 - The artifact is copied to `PCA_EVIDENCE_DIR` only when it is newer than
-  whatever the results directory already held.
+  whatever the results directory already held. With the pay-date pre-check on,
+  there are two such copies — the reference-only artifact and the trial's.
 - The runner and the probe must be the same generation: the probe reports a
   `POLICY_VERSION` and the runner checks it against the version it was written
   for. A mismatch means the runner was copied out of a different tree, which
@@ -114,10 +217,11 @@ Notes:
   substrings, which could not tell a fix from a mention and broke on renames.)
 - `PCA_LOG`'s directory is created if missing, and the run aborts if it cannot
   be. The crontab entry is retired only once the probe has actually started.
-- One `PCA_PACE_S` wait separates the holding check from the probe. They are
-  two processes with independent pacers, so without it the probe's baseline GET
-  follows the check's last GET with no gap — the back-to-back pair that
-  produced the 2026-09-17 `EGW00201` stop, which stays a no-retry stop.
+- One `PCA_PACE_S` wait separates each pair of processes — holding check,
+  pay-date pre-check, probe. They have independent pacers, so without it one
+  process's first GET follows the previous one's last with no gap — the
+  back-to-back pair that produced the 2026-09-17 `EGW00201` stop, which stays
+  a no-retry stop.
 - Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
   `PCA_*` exports, `PCA_PYTHON` included (a cron shell inherits almost
   nothing).
