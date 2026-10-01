@@ -6,8 +6,8 @@ the table in ``store.py``'s own module docstring.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -15,8 +15,10 @@ from tos_runtime.evidence.store import (
     EvidenceCorruption,
     InjectedCrash,
     SqliteEvidenceStore,
+    _EntryRow,
 )
 
+from .._sqlite_plans import query_plans
 from .conftest import FixedKeyProvider
 
 # ============================================================================
@@ -452,39 +454,27 @@ def test_non_secret_fields_are_not_scrubbed(store: SqliteEvidenceStore) -> None:
 
 
 # ============================================================================
-# entry_meta — ONE row by primary key (evidence growth plan §2 A2-b)
+# entry — ONE row by primary key (evidence growth plan §2 A2-b)
 # ============================================================================
 
 
-def _entries_query_plans(
-    store: SqliteEvidenceStore, run: Callable[[], object]
-) -> list[str]:
-    """Every query plan sqlite chose for the ``entries``-reading statements ``run`` issues on
-    this store's own connection.
-
-    The statements are captured with ``sqlite3.Connection.set_trace_callback`` (CPython hands
-    it the EXPANDED sql, parameters already substituted) and then re-planned with ``EXPLAIN
-    QUERY PLAN`` once tracing is off, so the explain itself is never traced. The ``?`` count
-    is honoured anyway, for the case where a future CPython traces the unexpanded form.
-    """
-    statements: list[str] = []
-    store.connection.set_trace_callback(statements.append)
-    try:
-        run()
-    finally:
-        store.connection.set_trace_callback(None)
-    plans: list[str] = []
-    for sql in statements:
-        if "from entries" not in sql.lower():
-            continue
-        rows = store.connection.execute(
-            "EXPLAIN QUERY PLAN " + sql, [None] * sql.count("?")
-        ).fetchall()
-        plans.extend(str(row[3]) for row in rows)
-    return plans
+def test_entry_meta_fields_are_all_real_columns_of_the_entries_table(
+    store: SqliteEvidenceStore,
+) -> None:
+    """``_ENTRY_META_COLUMNS_SQL`` is derived from ``_EntryRow._fields``, which is only
+    correct while every meta field name is also a column name. Pin that against the schema
+    itself, so adding a field that is NOT a column is a red test here rather than an
+    ``OperationalError`` raised from whichever reader happens to run first."""
+    columns = {
+        row[1]
+        for row in store.connection.execute("PRAGMA table_info(entries)").fetchall()
+    }
+    assert set(_EntryRow._fields) <= columns
+    assert "payload_json" in columns
+    assert "payload_json" not in _EntryRow._fields
 
 
-def test_entry_meta_returns_the_same_row_iter_entry_meta_yields(
+def test_entry_returns_the_same_meta_row_iter_entry_meta_yields(
     store: SqliteEvidenceStore,
 ) -> None:
     for index in range(4):
@@ -493,35 +483,47 @@ def test_entry_meta_returns_the_same_row_iter_entry_meta_yields(
     walked = {row.seq: row for row in store.iter_entry_meta()}
     assert len(walked) == 4
     for seq, expected in walked.items():
-        assert store.entry_meta(seq) == expected
+        fetched = store.entry(seq)
+        assert fetched is not None
+        assert fetched.meta == expected
 
 
-def test_entry_meta_is_none_for_a_seq_no_row_carries(
+def test_entry_returns_the_payload_alongside_the_meta(
     store: SqliteEvidenceStore,
 ) -> None:
     store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
-    assert store.entry_meta(0) is not None
-    assert store.entry_meta(1) is None
-    assert store.entry_meta(10_000) is None
+    fetched = store.entry(0)
+    assert fetched is not None
+    assert fetched.meta.kind == "TEST"
+    assert json.loads(fetched.payload_json)["payload"] == {"a": 1}
 
 
-def test_entry_meta_seeks_the_primary_key_while_iter_entry_meta_scans(
+def test_entry_is_none_for_a_seq_no_row_carries(store: SqliteEvidenceStore) -> None:
+    store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
+    assert store.entry(0) is not None
+    assert store.entry(1) is None
+    assert store.entry(10_000) is None
+
+
+def test_entry_seeks_the_primary_key_while_iter_entry_meta_scans(
     store: SqliteEvidenceStore,
 ) -> None:
-    """The point of :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry_meta` is the
+    """The point of :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry` is the
     PLAN, not the return value — a one-row ``WHERE seq = ?`` that happened to be served by a
     full table scan would return exactly the same row while keeping the ≥130 s cost the
-    evidence growth plan §2 A2-b exists to remove. So this pins both sides: ``entry_meta``
-    seeks the integer primary key and never scans; ``iter_entry_meta`` still scans, which is
-    its documented whole-table contract and the reason a per-row caller must not use it.
+    evidence growth plan §2 A2-b exists to remove. So this pins both sides: ``entry`` seeks
+    the integer primary key and never scans; ``iter_entry_meta`` still scans, which is its
+    documented whole-table contract and the reason a per-row caller must not use it.
     """
     for index in range(5):
         store.append({"i": index}, kind="TEST", record_class="TESTCLASS")
 
-    seek_plans = _entries_query_plans(store, lambda: store.entry_meta(3))
-    assert seek_plans, "entry_meta issued no statement against entries"
+    seek_plans = query_plans(store.connection, "entries", lambda: store.entry(3))
+    assert seek_plans, "entry issued no statement against entries"
     assert all("USING INTEGER PRIMARY KEY" in plan for plan in seek_plans), seek_plans
     assert not any(plan.startswith("SCAN") for plan in seek_plans), seek_plans
 
-    walk_plans = _entries_query_plans(store, lambda: list(store.iter_entry_meta()))
+    walk_plans = query_plans(
+        store.connection, "entries", lambda: list(store.iter_entry_meta())
+    )
     assert any(plan.startswith("SCAN") for plan in walk_plans), walk_plans

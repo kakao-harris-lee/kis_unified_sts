@@ -47,7 +47,7 @@ amplification class (``tos/src/tos/afg/state.py:515-524``, ``non_revival_holds``
 list), so :func:`count_recovery_markers` counts BOTH kinds whose ``event_id`` durably names
 this cause's own root event — resolved as the root row's own content-addressed identity, read
 back from its ``EVENT_HANDLING_STARTED`` write-ahead marker
-(:meth:`InboxFlowReader._resolve_root_content_event_id`), never the caller-authored
+(:meth:`InboxFlowReader._resolve_handling_started`), never the caller-authored
 ``reference.event_id`` label the ``root_event_id`` parameter carries (module docstring's own
 "``StageRequest.reference.event_id`` is a caller-authored label" note above). **Disclosed
 under-count**: a SECOND restart of the SAME still-pending row does not append a second marker
@@ -72,10 +72,10 @@ constructor is still a satisfying implementation of it, the
 implementation of the narrower Protocol" convention): when a scheme is supplied,
 ``root_event_seq`` is resolved by replaying the inbox and recomputing each event's identity;
 ``handling_started_monotonic`` is then read from :meth:`~tos_runtime.evidence.store
-.SqliteEvidenceStore.entry_meta`'s own ``appended_at_monotonic_ns`` column for that seq's
+.SqliteEvidenceStore.entry`'s own ``appended_at_monotonic_ns`` column for that seq's
 ``EVENT_HANDLING_STARTED`` evidence receipt — a primary-key lookup of that ONE row, never a
 walk of the evidence table (evidence growth plan §2 A2-b; see
-:meth:`InboxFlowReader._resolve_handling_started_monotonic`). Without a scheme, both fields
+:meth:`InboxFlowReader._resolve_handling_started`). Without a scheme, both fields
 are ``None`` (never guessed).
 
 **Superseded in production by a second, additive widening (team-lead disposition
@@ -138,6 +138,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import NamedTuple
 
 from tos.afg.records import ActionCause, ObservedAmplification
 from tos.canonical import CanonicalizationScheme
@@ -204,6 +205,51 @@ class FlowObservation:
     #: :data:`REPLAYS_DEFINITION`) — ``None`` only for a :class:`FlowObservation` built by a
     #: caller other than :meth:`InboxFlowReader.observe` that never set it.
     replays_definition: str | None = None
+
+
+class _HandlingStartedFacts(NamedTuple):
+    """The two facts :meth:`InboxFlowReader._resolve_handling_started` reads off the root
+    row's own ``EVENT_HANDLING_STARTED`` marker — resolved TOGETHER, from one evidence row.
+
+    Both used to be resolved separately, each re-reading the same row (module docstring's
+    own lineage section; evidence growth plan §2 A2-b). ``content_event_id`` is ``None``
+    when the marker row carries no decodable ``event_id`` — the timestamp is still a fact
+    in that case, so this is a tuple of two independently-absent facts, not an all-or-
+    nothing pair.
+    """
+
+    appended_at_monotonic_ns: int
+    content_event_id: str | None
+
+
+def _decode_content_event_id(payload_json: str) -> str | None:
+    """The root row's own content-addressed ``event_id``, decoded out of an
+    ``EVENT_HANDLING_STARTED`` payload (``{"event_id": event_identity(event, scheme=...)}``,
+    ``tos_runtime/engine/driver.py:788-792``).
+
+    This is the SAME content digest ``EngineDriver._process_next`` computes for its
+    crash-window recovery markers (``driver.py:771``) — never the caller-authored
+    ``reference.event_id`` label the ``root_event_id`` parameter carries. ``None`` when the
+    payload is not a mapping or carries no string ``event_id`` (never guessed).
+    """
+    decoded = json.loads(payload_json)
+    payload = decoded.get("payload", decoded)
+    if not isinstance(payload, dict):
+        return None
+    event_id = payload.get("event_id")
+    return event_id if isinstance(event_id, str) else None
+
+
+def _started_monotonic(facts: _HandlingStartedFacts | None) -> int | None:
+    """The ``appended_at_monotonic_ns`` projection of a resolved marker, or ``None`` for a
+    recorded absence.
+
+    A one-field projection with its own name because :meth:`InboxFlowReader.observe` sits
+    at its 100-line size budget and the inline conditional does not fit the line length —
+    the honest fix is to name the projection, never to register the method as an exception
+    (``config/tos_size_budget.yaml``: "등재는 면허가 아니라 가시성이다").
+    """
+    return None if facts is None else facts.appended_at_monotonic_ns
 
 
 def _read_kind_payloads(
@@ -281,7 +327,7 @@ def count_recovery_markers(
     """The restart-recovery episode count (module docstring's own "replays" section) — rows of
     the two recovery marker kinds (:data:`_RECOVERY_MARKER_KINDS`) whose ``event_id`` is a
     member of ``root_event_ids`` (this cause's own content-addressed root event identity, or
-    identities — see :meth:`InboxFlowReader._resolve_root_content_event_id`). A marker for a
+    identities — see :meth:`InboxFlowReader._resolve_handling_started`). A marker for a
     different ``event_id``, or an empty ``root_event_ids`` (the root could not be resolved), is
     never counted — never a fabricated match. Pure: takes already-read payload lists, returns a
     plain ``int`` — ``0`` for an empty or fully-non-matching scan, never ``None``.
@@ -336,91 +382,83 @@ class InboxFlowReader:
                 return seq
         return None
 
-    def _resolve_handling_started_monotonic(
+    def _resolve_handling_started(
         self, root_event_seq: int | None
-    ) -> int | None:
-        """``appended_at_monotonic_ns`` of ``root_event_seq``'s own ``EVENT_HANDLING_STARTED``
-        evidence receipt, or ``None`` — a recorded absence (the row was never durably marked
-        handling-started, or the evidence row that marker names is gone or is of another
-        kind), never a guessed timestamp.
+    ) -> _HandlingStartedFacts | None:
+        """Both facts this reader reads off ``root_event_seq``'s own ``EVENT_HANDLING_STARTED``
+        marker, resolved together from ONE evidence row; ``None`` for a recorded absence,
+        never a guessed timestamp or a guessed identity.
 
-        **Two primary-key lookups, no scan** (evidence growth plan
+        Absence has four shapes, all of them ``None``: no ``root_event_seq``; the inbox row
+        was never durably marked handling-started; no evidence row carries the ``seq`` that
+        marker names; or the row that does carry it is not the marker the receipt describes
+        (wrong ``kind``, or a ``key_generation`` other than the one the receipt recorded).
+
+        **Why the generation is compared.** ``SqliteEventInbox.mark_handling_started`` stores
+        ``(evidence_seq, generation)`` TOGETHER — the generation is not decoration, it is the
+        half that says WHICH row the seq meant. Rows here are append-only, so the pair can
+        only come apart when the evidence file is replaced under a surviving inbox: a restore
+        from an older backup, or a re-seeded store, where ``seq`` N is now some other event's
+        marker. Checking ``kind`` alone accepts that row and hands back ANOTHER event's
+        ``appended_at_monotonic_ns`` and ``event_id`` as if they were this cause's — exactly
+        the guessed fact this module's contract forbids. Comparing the generation refuses it
+        as an absence instead. (It is a bound, not a proof: two rows of the same generation
+        are indistinguishable this way. It uses the datum the receipt already carries and
+        never widens the accepted set.)
+
+        **One primary-key lookup, no scan** (evidence growth plan
         ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b). The inbox
         side was always O(1) (``SqliteEventInbox.handling_started_receipt``, "an O(1) lookup
-        by primary key"); the evidence side used to walk the WHOLE ``entries`` table via
-        ``SqliteEvidenceStore.iter_entry_meta()`` looking for the one row whose ``seq``
-        matched — a ``kind``-less full scan the ``entries_kind_seq`` index cannot help,
+        by primary key"). The evidence side used to be read TWICE per ``observe`` and in two
+        different ways: a walk of ``SqliteEvidenceStore.iter_entry_meta()`` for the
+        timestamp — a ``kind``-less full scan the ``entries_kind_seq`` index cannot help,
         measured at **≥130 s per proposal on a 365-day store** (plan §7.1.12 "읽어야 할 것" 2)
         on a path :meth:`~tos_runtime.riskstate.service.RiskStateService._observe_flow` runs
-        once per risk-stage attempt. ``seq`` is the ``entries`` primary key, so
-        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry_meta` fetches that single
-        row directly. The ``kind`` check below is the SAME one the walk made — the lookup
-        narrows which rows are read, never which rows are accepted.
+        once per risk-stage attempt — plus a hand-written ``SELECT payload_json`` against the
+        store's raw ``connection`` for the identity. Both are now the one call to
+        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry`, which also puts the
+        ``entries`` column list back behind the store's own API instead of duplicating it in
+        this module. The ``kind`` check is the SAME one the walk made — the lookup narrows
+        which rows are READ, never which rows are ACCEPTED.
         """
         if root_event_seq is None:
             return None
         receipt = self._inbox.handling_started_receipt(root_event_seq)
         if receipt is None:
             return None
-        evidence_seq, _generation = receipt
-        entry = self._evidence_store.entry_meta(evidence_seq)
-        if entry is None or entry.kind != _HANDLING_STARTED_KIND:
+        evidence_seq, generation = receipt
+        entry = self._evidence_store.entry(evidence_seq)
+        if entry is None:
             return None
-        return entry.appended_at_monotonic_ns
-
-    def _resolve_root_content_event_id(self, root_event_seq: int | None) -> str | None:
-        """The root row's own content-addressed ``event_id`` — read back from the SAME
-        write-ahead ``EVENT_HANDLING_STARTED`` evidence row (``{"event_id": event_identity(
-        event, scheme=...)}``, ``tos_runtime/engine/driver.py:788-792``) that
-        :meth:`_resolve_handling_started_monotonic` already locates via
-        ``SqliteEventInbox.handling_started_receipt`` — an O(1) primary-key lookup, no inbox
-        replay needed (module docstring's own "replays" section). This is the SAME content
-        digest ``EngineDriver._process_next`` computes for its crash-window recovery markers
-        (``driver.py:771``) — never the caller-authored ``reference.event_id`` label the
-        ``root_event_id`` parameter carries. ``None`` when ``root_event_seq`` is absent or the
-        marker row cannot be found (never guessed).
-
-        This one keeps its own ``WHERE kind = ? AND seq = ?`` statement rather than reusing
-        the sibling's :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry_meta`: it
-        needs ``payload_json``, which the meta-only ``_EntryRow`` shape deliberately excludes.
-        Both are narrowed reads — neither walks the table (evidence growth plan §2 A2-b).
-        """
-        if root_event_seq is None:
+        if entry.meta.kind != _HANDLING_STARTED_KIND:
             return None
-        receipt = self._inbox.handling_started_receipt(root_event_seq)
-        if receipt is None:
+        if entry.meta.key_generation != generation:
             return None
-        evidence_seq, _generation = receipt
-        cursor = self._evidence_store.connection.execute(
-            "SELECT payload_json FROM entries WHERE kind = ? AND seq = ?",
-            (_HANDLING_STARTED_KIND, evidence_seq),
+        return _HandlingStartedFacts(
+            appended_at_monotonic_ns=entry.meta.appended_at_monotonic_ns,
+            content_event_id=_decode_content_event_id(entry.payload_json),
         )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        decoded = json.loads(row[0])
-        payload = decoded.get("payload", decoded)
-        if not isinstance(payload, dict):
-            return None
-        event_id = payload.get("event_id")
-        return event_id if isinstance(event_id, str) else None
 
     def _count_amplification_axes(
         self,
         *,
         unmatched_payloads: list[dict[str, object]],
         cause_attempts: set[str],
-        resolved_root_event_seq: int | None,
+        handling_started: _HandlingStartedFacts | None,
     ) -> tuple[int, int, tuple[str, ...]]:
         """The dedup/replay axis counts — split out of :meth:`observe` purely for that
         method's own 100-line size budget (module docstring's own "Two dedup layers"/
         "replays" sections). Returns ``(duplicates_rejected, replays, extra_sources)``.
+
+        Takes the ALREADY-RESOLVED :class:`_HandlingStartedFacts` rather than the root seq:
+        :meth:`observe` needs the same row's timestamp, so resolving it here as well would
+        read one evidence row twice per observation.
         """
         duplicates_rejected = count_duplicate_dispositions(
             unmatched_payloads, cause_attempts=cause_attempts
         )
-        root_content_event_id = self._resolve_root_content_event_id(
-            resolved_root_event_seq
+        root_content_event_id = (
+            handling_started.content_event_id if handling_started is not None else None
         )
         root_event_ids = (
             frozenset({root_content_event_id})
@@ -554,9 +592,8 @@ class InboxFlowReader:
             sources.append("evidence:RESULT_UNMATCHED")
         sources.append("inbox:unconsumed_count")
 
-        handling_started_monotonic = self._resolve_handling_started_monotonic(
-            resolved_root_event_seq
-        )
+        handling_started = self._resolve_handling_started(resolved_root_event_seq)
+        handling_started_monotonic = _started_monotonic(handling_started)
         if handling_started_monotonic is not None:
             sources.append(f"evidence:{_HANDLING_STARTED_KIND}")
 
@@ -564,7 +601,7 @@ class InboxFlowReader:
             self._count_amplification_axes(
                 unmatched_payloads=unmatched_payloads,
                 cause_attempts=cause_attempts,
-                resolved_root_event_seq=resolved_root_event_seq,
+                handling_started=handling_started,
             )
         )
         sources.extend(amplification_sources)

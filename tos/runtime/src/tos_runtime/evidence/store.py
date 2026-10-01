@@ -318,15 +318,36 @@ class _EntryRow(NamedTuple):
     chain_digest: str
 
 
-#: The ``entries`` columns :class:`_EntryRow` unpacks, in field order. Shared by the two
-#: readers of that shape — :meth:`SqliteEvidenceStore.iter_entry_meta` (the whole table) and
-#: :meth:`SqliteEvidenceStore.entry_meta` (ONE row by primary key) — so the two cannot drift
-#: apart: both hand their result straight to ``_EntryRow(*row)``, which unpacks POSITIONALLY
-#: and would silently mis-assign every field if one SELECT's column order changed alone.
-_ENTRY_META_COLUMNS_SQL = (
-    "seq, segment_id, kind, record_class, key_generation, "
-    "appended_at_monotonic_ns, entry_digest, chain_digest"
-)
+class _Entry(NamedTuple):
+    """One raw ``entries`` row, meta fields PLUS the payload — :meth:`SqliteEvidenceStore
+    .entry`'s read shape.
+
+    Composed of :class:`_EntryRow` rather than re-listing its eight fields, so the meta
+    shape has exactly one definition for both readers to follow.
+    """
+
+    meta: _EntryRow
+    payload_json: str
+
+
+#: The ``entries`` columns :class:`_EntryRow` unpacks, in field order — DERIVED from the
+#: NamedTuple, never hand-maintained beside it.
+#:
+#: Every meta field's name is also its column name in the ``CREATE TABLE`` above, so the
+#: field order IS the correct select list. Writing it out by hand would leave two places to
+#: keep in lockstep with a third (the tuple), and ``_EntryRow(*row)`` unpacks POSITIONALLY:
+#: inserting or reordering one field without editing the string would silently mis-assign
+#: every field after it, in both readers at once. Deriving it removes that failure class
+#: instead of halving it. A field added here that is NOT a column fails loudly on the next
+#: read (``sqlite3.OperationalError: no such column``), and
+#: ``tos/runtime/tests/evidence/test_store.py`` pins the correspondence directly against
+#: ``PRAGMA table_info`` so the failure is a red test, not a runtime surprise.
+_ENTRY_META_COLUMNS_SQL = ", ".join(_EntryRow._fields)
+
+#: :data:`_ENTRY_META_COLUMNS_SQL` plus the payload — :meth:`SqliteEvidenceStore.entry`'s
+#: select list. ``payload_json`` is appended LAST so the meta fields keep their positions and
+#: ``_EntryRow(*row[:-1])`` stays correct.
+_ENTRY_COLUMNS_SQL = f"{_ENTRY_META_COLUMNS_SQL}, payload_json"
 
 
 def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
@@ -907,7 +928,7 @@ class SqliteEvidenceStore:
         A whole-table walk by construction (no ``WHERE``, ``ORDER BY seq ASC``): sqlite plans
         it as ``SCAN entries`` and the ``entries_kind_seq`` index above cannot narrow it,
         because there is no ``kind`` to narrow by. A caller that wants ONE row by ``seq``
-        must use :meth:`entry_meta` instead, not filter this walk.
+        must use :meth:`entry` instead, not filter this walk.
         """
         cur = self._conn.execute(
             f"SELECT {_ENTRY_META_COLUMNS_SQL} FROM entries ORDER BY seq ASC"
@@ -915,29 +936,36 @@ class SqliteEvidenceStore:
         for row in cur:
             yield _EntryRow(*row)
 
-    def entry_meta(self, seq: int) -> _EntryRow | None:
-        """The ONE ``entries`` row ``seq`` names, meta fields only (no payload) — the SAME
-        :class:`_EntryRow` shape :meth:`iter_entry_meta` yields, read by primary key instead
-        of walked. ``None`` when no row carries that ``seq`` — a recorded absence, never a
-        guess (the caller decides what an absent marker means).
+    def entry(self, seq: int) -> _Entry | None:
+        """The ONE ``entries`` row ``seq`` names — meta fields AND ``payload_json``, read by
+        primary key instead of walked. ``None`` when no row carries that ``seq`` — a recorded
+        absence, never a guess (the caller decides what an absent row means).
 
         ``seq`` is this table's ``INTEGER PRIMARY KEY`` (the ``CREATE TABLE`` above), so
         sqlite plans this statement as ``SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)``:
-        one row visited, independent of how long the history is. Added for
-        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
-        ._resolve_handling_started_monotonic`, which wants exactly one ``(seq, kind)`` row and
-        used to reach it by walking :meth:`iter_entry_meta` — a ``kind``-less full scan
-        measured at **≥130 s on a 365-day store** (evidence growth plan
-        ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b, §7.1.12
-        "읽어야 할 것" 2), on the one consumer of that scan that is neither offline nor
-        restore-only: it runs once per risk-stage attempt.
+        one row visited, independent of how long the history is.
+
+        Added for :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
+        ._resolve_handling_started`, which wants exactly one row's ``kind``,
+        ``key_generation``, ``appended_at_monotonic_ns`` and ``payload_json`` and used to
+        reach them two ways at once: a walk of :meth:`iter_entry_meta` for the meta (a
+        ``kind``-less full scan measured at **≥130 s on a 365-day store** — evidence growth
+        plan ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b, §7.1.12
+        "읽어야 할 것" 2) plus a second, hand-written ``SELECT payload_json`` issued from
+        :mod:`tos_runtime.riskstate` against :attr:`connection`. That second statement coupled
+        a riskstate module to this table's layout; returning both halves here is what lets it
+        go away, so the ``entries`` select lists live in this module only.
+
+        Meta and payload come back as ONE row because both resolvers want the SAME row: the
+        caller that needs only the timestamp still pays a single primary-key read, where
+        before it paid a full scan.
 
         Read-only: no new PRAGMA, no schema change, no index — the primary key is already
         there. :meth:`iter_entry_meta` keeps its own whole-table contract unchanged for
         :mod:`tos_runtime.evidence.retention` and its other callers.
         """
         row = self._conn.execute(
-            f"SELECT {_ENTRY_META_COLUMNS_SQL} FROM entries WHERE seq = ?",
+            f"SELECT {_ENTRY_COLUMNS_SQL} FROM entries WHERE seq = ?",
             (seq,),
         ).fetchone()
-        return None if row is None else _EntryRow(*row)
+        return None if row is None else _Entry(_EntryRow(*row[:-1]), row[-1])
