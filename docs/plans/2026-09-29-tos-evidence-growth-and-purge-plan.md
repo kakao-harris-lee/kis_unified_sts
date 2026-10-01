@@ -92,13 +92,13 @@
 - ⚠ 비용 쪽(+1.8 % 파일 증가)은 365 일치에서 **재확인되지 않았다**(드라이버가 인덱스 뒤 크기를
   적지 않는다 — §7.1.12 「아티팩트가 답하지 못한 것」 2).
 
-### A2-b. `FlowObservationReader` 의 제안별 전체 스캔 (**구현 — PR #832**)
+### A2-b. `InboxFlowReader` 의 제안별 전체 스캔 (**구현 — PR #832**)
 
 - 위 전체 스캔의 소비자 넷 중 셋(복원 시 체인 재검증 · 보존 판정 · 운영자 프로젝션)은 오프라인
   이지만 넷째는 **런타임이고 제안마다 돈다**: `riskstate/flow_observation.py` 의
-  `FlowObservationReader._resolve_handling_started_monotonic` 이 `(seq, kind)` **한 행**을 찾으려고
+  `InboxFlowReader._resolve_handling_started_monotonic` 이 `(seq, kind)` **한 행**을 찾으려고
   `iter_entry_meta()` 로 테이블 전체를 훑는다. 호출 경로는
-  `riskstate/service.py::_observe_flow` → `FlowObservationReader.observe` 이고, `_observe_flow` 는
+  `riskstate/service.py::_observe_flow` → `InboxFlowReader.observe` 이고, `_observe_flow` 는
   `aggregate_inputs_for` · `action_flow_inputs_for` 에서 **리스크 단계 시도마다** 불린다.
 - 365 일치 실측으로 그 전체 스캔은 **≥130 s** 다(§7.1.12 「읽어야 할 것」 2). A2 인덱스는 이것을
   돕지 못한다 — `kind` 로 좁히는 질의가 아니기 때문이다.
@@ -1249,7 +1249,7 @@ RSS 는 §7.1.2 의 RSS 표에서 365 일치 `measure` 칸이 `(중단 — 아�
 | `SqliteEvidenceStore.replay` → `verify_chain` | 복원 시 체인 재검증 | 복원마다 |
 | `evidence/retention.py` 보존 판정 | 오프라인 | 판정마다 |
 | `compose/_operations_wiring.py` `_read_unresolved_candidates` | 운영자 프로젝션 — **`lambda` 지연 호출**이라 배선 시점엔 돌지 않는다 | 프로젝션 조회마다 |
-| **`riskstate/flow_observation.py` `FlowObservationReader._resolve_handling_started_monotonic`** | **런타임 · 제안마다** — `riskstate/service.py::_observe_flow` → `FlowObservationReader.observe` 가 호출하고, `_observe_flow` 자신은 `aggregate_inputs_for` · `action_flow_inputs_for` 에서 **리스크 단계 시도마다** 불린다 | **제안마다** |
+| **`riskstate/flow_observation.py` `InboxFlowReader._resolve_handling_started_monotonic`** | **런타임 · 제안마다** — `riskstate/service.py::_observe_flow` → `InboxFlowReader.observe` 가 호출하고, `_observe_flow` 자신은 `aggregate_inputs_for` · `action_flow_inputs_for` 에서 **리스크 단계 시도마다** 불린다 | **제안마다** |
 
 넷째가 운영상 중요한 쪽이다. 그 코드는 `(seq, kind)` **한 행**을 찾으려고 테이블 전체를
 `iter_entry_meta()` 로 훑는다 — 365 일치에서 **제안 하나에 ≥130 s** 다. 고칠 자리는 인덱스가
@@ -1307,7 +1307,7 @@ RSS 는 §7.1.2 의 RSS 표에서 365 일치 `measure` 칸이 `(중단 — 아�
    요지: 인덱스 뒤 선택도 높은 부팅 형태의 비용이 30·90·365 일치에서 **같고**, 인덱스의
    최악(hot kind 전량)은 365 일치에서도 **측정 가능한 열화가 없다**. 비용 쪽(파일 증가)만
    재확인되지 않았다(위 「답하지 못한 것」 2).
-3. **새 후속 — A2-b: `FlowObservationReader` 의 제안별 전체 스캔.** ~130 s 의 인덱스 면역
+3. **새 후속 — A2-b: `InboxFlowReader` 의 제안별 전체 스캔.** ~130 s 의 인덱스 면역
    전체 스캔 소비자 넷 중 셋은 복원·보존·운영자 프로젝션(오프라인)이지만, 넷째는
    **리스크 단계 시도마다 도는 런타임 경로**다(위 「읽어야 할 것」 2 의 소비자 표). A2 인덱스는
    그것을 돕지 못하고 **고칠 자리는 그 행**이다 — `§2 A2-b` 로 등재했고 이 PR 에서
@@ -1322,20 +1322,30 @@ RSS 는 §7.1.2 의 RSS 표에서 365 일치 `measure` 칸이 `(중단 — 아�
 경로라 같은 무게를 갖지 않는다는 그 절의 판단 그대로다.
 
 **바꾼 것은 한 줄의 읽기 방식이지 저장 표현이 아니다.** 새 읽기 전용
-`SqliteEvidenceStore.entry_meta(seq) -> _EntryRow | None` 이 `iter_entry_meta` 와 **같은
-meta-only 행 모양**을 `WHERE seq = ?` 로 읽고, `_resolve_handling_started_monotonic` 이
+`SqliteEvidenceStore.entry(seq) -> _Entry | None` 이 그 행의 메타와 `payload_json` 을
+`WHERE seq = ?` 로 한 번에 읽고, 해소기 `InboxFlowReader._resolve_handling_started` 가
 그것을 쓴다. 스키마·PRAGMA·행 바이트·digest 는 그대로이고 **새 인덱스도 없다** — `seq` 는
 이미 `entries` 의 `INTEGER PRIMARY KEY` 다. 모자랐던 것은 인덱스가 아니라 **그것을 쓰는
 질의**였다. `iter_entry_meta` 는 나머지 호출부를 위해 전체 테이블 계약 그대로 남는다.
+
+(초판은 메타 전용 `entry_meta` 였고 payload 는 `riskstate` 가 손으로 쓴 두 번째 문장으로
+읽고 있었다 — 독립 리뷰 F2 가 그 둘을 접게 했다. §7.1.14.)
 
 | | 질의계획 |
 |---|---|
 | 전 | `SCAN entries` |
 | 후 | `SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)` |
 
-**동작은 불변이다.** `kind` 확인은 걷기가 하던 바로 그 확인이고, 행이 없거나 `kind` 가
-다르면 전처럼 `None` — 기록된 부재이지 추측이 아니다. 조회는 **어떤 행을 읽을지**를 좁히지
-**어떤 행을 받아들일지**를 좁히지 않는다.
+**성능 변경 자체는 동작을 바꾸지 않는다.** `kind` 확인은 걷기가 하던 바로 그 확인이고,
+행이 없거나 `kind` 가 다르면 전처럼 `None` — 기록된 부재이지 추측이 아니다. 조회는
+**어떤 행을 읽을지**를 좁히지 **어떤 행을 받아들일지**를 좁히지 않는다.
+
+**다만 동작 변경이 하나 들어왔다 — 독립 리뷰 F1 이 찾은 선재 결함이다**(§7.1.14).
+해소기는 인박스 영수증의 `generation` 을 버리고 `kind` 만 보고 있었다. 영수증은
+`(evidence_seq, generation)` 을 **함께** 적는데, generation 은 「그 seq 가 어느 행이었는지」를
+말하는 쪽이다. 증거 파일이 살아남은 인박스 밑에서 교체되면(옛 백업 복원 · 재시드) 같은
+`seq` 의 **다른 이벤트 마커**를 받아 그 타임스탬프와 content identity 를 이 원인의 것으로
+돌려준다 — 조용히. 이제 어긋나면 부재다.
 
 **⚠ 이 PR 은 「130 s → X」를 재지 않았다.** 위 표는 **질의계획**이고, 365 일치 합성
 스토어에 대한 전·후 벽시계 비교는 하지 않았다(§7.1.12 의 드라이버를 이 변경으로 다시
@@ -1349,18 +1359,23 @@ meta-only 행 모양**을 `WHERE seq = ?` 로 읽고, `_resolve_handling_started
 | 테스트 | 무엇을 드는가 |
 |---|---|
 | `test_handling_started_lookup_agrees_with_the_pre_a2b_walk` | A2-b **이전 걷기를 오라클로 재현**해 세 모양(실제 마커 · 같은 `seq` 의 **다른 `kind`** · **없는 `seq`**)에서 값이 같은지 |
+| `test_a_marker_row_from_another_key_generation_is_a_recorded_absence` | F1 — 같은 `seq` 에 **다른 세대**의 마커가 앉은 스토어에서 부재여야 한다. 같은 테스트가 **오라클은 값을 돌려준다**고 단언한다(여기서만 의도적으로 불일치) |
 | `test_handling_started_resolution_never_scans_the_evidence_table` | 해소가 실제로 날린 문장을 `set_trace_callback` 으로 잡아 `EXPLAIN QUERY PLAN` 으로 다시 돌린다. `SEARCH … USING INTEGER PRIMARY KEY` 요구 · `SCAN` 거부 · **문장 0 건이면 실패**(공허한 green 차단) |
-| `test_entry_meta_seeks_the_primary_key_while_iter_entry_meta_scans` | 스토어 레벨에서 **양쪽**을 핀 — `entry_meta` 는 PK 탐색, `iter_entry_meta` 는 여전히 `SCAN`(그 메서드의 문서화된 계약) |
+| `test_handling_started_resolution_reads_its_row_exactly_once` | F2 — 증거 문장이 관측당 **1 건**. 계획 가드는 이것을 못 본다(PK 탐색 둘도 계획은 멀쩡하다) |
+| `test_entry_seeks_the_primary_key_while_iter_entry_meta_scans` | 스토어 레벨에서 **양쪽**을 핀 — `entry` 는 PK 탐색, `iter_entry_meta` 는 여전히 `SCAN`(그 메서드의 문서화된 계약) |
+| `test_entry_meta_fields_are_all_real_columns_of_the_entries_table` | F3 — 파생한 열 목록(`_EntryRow._fields`)이 실제 스키마와 맞는지 `PRAGMA table_info` 로 직접 |
 
 **레드 증명(실측).** 구현만 전 코드로 되돌려 돌렸고, 뒤에 복원했다:
 
 ```
-E       AssertionError: ['SCAN entries']
+E       AssertionError: ['SCAN entries', 'SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)']
+E       assert 2 == 1
 FAILED ...::test_handling_started_resolution_never_scans_the_evidence_table
+FAILED ...::test_handling_started_resolution_reads_its_row_exactly_once
 ```
 
 같은 실행에서 동치성 3 건은 **green 이었다** — 이것이 계획 핀을 따로 두는 이유를 숫자로
-보여 준다(오라클은 전 코드에서도 통과한다).
+보여 준다(오라클은 전 코드에서도 통과한다). F1 가드도 따로 레드를 확인했다(§7.1.14).
 
 **게이트** (워크트리 루트 · 루트 `.venv`): `pytest tos/runtime/tests` **3253 passed** ·
 `pytest tos/tests` **9616 passed** · `ruff check .` pass · `black --check`(CI 와 같은 대상)
@@ -1368,6 +1383,43 @@ FAILED ...::test_handling_started_resolution_never_scans_the_evidence_table
 `tools/tos_firewall_check.py` PASS · `lint-imports` 3 kept / 0 broken ·
 `tools/tos_size_budget.py --check` 0 violations.
 
-**digest 31차 재도출** — 런타임 소스 두 파일이 바뀌므로 필수다.
-`3c4be1d9…`(30차) → **`62be5abf…`**, 두 경로 일치, `release.yaml` 과
-`_VALUE_PINS` 양쪽 갱신(상세는 `config/tos_runtime/paper/release.yaml` 의 31차 문단).
+**digest 재도출** — 런타임 소스가 바뀌므로 필수다. 이 PR 에서 두 번 찍었다:
+31차 `3c4be1d9…`(30차) → `62be5abf…`, 그리고 리뷰 처분 뒤 32차 → **`df25a550…`**.
+매번 두 경로 일치, `release.yaml` 과 `_VALUE_PINS` 양쪽 갱신(상세는
+`config/tos_runtime/paper/release.yaml` 의 31·32차 문단).
+
+#### 7.1.14 독립 리뷰 #832 처분 (2026-10-01)
+
+여섯 건 전부 수용했다. **한 건(F1)은 이 PR 이 들여온 것이 아니라 선재 결함**이고, 성능
+변경이 그 줄을 열어 두는 바람에 드러났다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **F1** | 해소기가 영수증의 `generation` 을 버리고 `kind` 만 본다 — 같은 `seq` 에 다른 이벤트의 마커가 앉으면 그 타임스탬프·identity 를 이 원인의 것으로 돌려준다 | **수용 · 수정.** 두 해소기(합쳐진 하나) 모두 `entry.meta.key_generation != generation → None`. 세대 불일치 스토어로 가드 추가 |
+| **F2** | 같은 행을 관측당 두 번, 두 방식으로 읽는다(메타는 스토어, payload 는 `riskstate` 가 손으로 쓴 SQL) — 계층 누수 | **수용 · 수정.** `entry_meta` → `entry`(메타+payload) 로 접고 해소기 둘을 `_resolve_handling_started` 하나로. raw `SELECT payload_json` 제거. 문장 수 가드 추가 |
+| **F3** | `_ENTRY_META_COLUMNS_SQL` 이 손으로 적은 열 목록 — NamedTuple 과 어긋나면 모든 필드가 밀린다 | **수용 · 수정.** `", ".join(_EntryRow._fields)` 로 파생 + `PRAGMA table_info` 대조 테스트 |
+| **F4** | 계획 프로브 헬퍼가 두 테스트 파일에 복붙 | **수용 · 수정.** `tos/runtime/tests/_sqlite_plans.py` 로 옮기고 양쪽에서 import(테스트 루트 — 서브스위트 conftest 간 교차 import 금지 규약을 지킨다) |
+| **F5** | `sql.count("?")` 가 **치환된 문자열 안**의 `?` 를 자리표시자로 센다 → `Incorrect number of bindings` | **수용 · 수정.** 따옴표 리터럴을 먼저 제거하고 센다. 트레이스 경유는 **유지** — 리터럴 질의문으로 바꾸면 「코드가 실제로 그 문장을 냈다」를 더 이상 증명하지 못한다 |
+| **F6** | `FlowObservationReader` 라는 클래스는 없다(`InboxFlowReader`) | **수용 · 수정.** `release.yaml` · 계획 §2 A2-b · §7.1.13 · PR 제목. **§7.1.12 의 소비자 표도 함께 고쳤다** — 그것은 측정 사실이 아니라 오기이고, 남겨 두면 grep 이 계속 유령을 가리킨다 |
+
+**F1 레드 증명** (세대 비교만 빼고 실행):
+
+```
+E       AssertionError: assert _HandlingStartedFacts(
+E           appended_at_monotonic_ns=128469350622324,
+E           content_event_id='some-other-events-identity') is None
+FAILED ...::test_a_marker_row_from_another_key_generation_is_a_recorded_absence
+```
+
+반환값이 **다른 이벤트의 identity 를 글자 그대로 들고 있다** — 지적이 서술한 실패가
+추상이 아니라 실물임을 그대로 보여 준다.
+
+⚠ **F1 은 바운드이지 증명이 아니다.** 같은 세대의 두 행은 이 방법으로 구별되지 않는다.
+영수증이 이미 들고 있던 값을 쓸 뿐이고 받아들이는 집합을 넓히지 않는다 — 더 강한 보장
+(마커 payload 의 `event_id` 를 인박스 행의 재계산 identity 와 대조)은 이 PR 의 범위가
+아니고, 스키마 없이는 `scheme` 이 있는 호출자에게만 가능하다.
+
+⚠ **size budget 이 이 라운드에서 한 번 red 였다** — 해소기를 합치니
+`InboxFlowReader.observe` 가 101 줄이 됐다. 30차 때와 같은 판단으로 **예외 등재 대신**
+한 필드 투영을 `_started_monotonic` 으로 꺼냈다(98 줄). 예외 등재는 「면허가 아니라
+가시성」이라는 `config/tos_size_budget.yaml` 자신의 규율대로다.
