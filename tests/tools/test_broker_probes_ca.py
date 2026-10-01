@@ -164,6 +164,7 @@ def _args(**overrides: object) -> argparse.Namespace:
         "reference_only": False,
         "reference_from": "",
         "reference_to": "",
+        "reference_rows_from": "",
         "token_cache_dir": None,
     }
     base.update(overrides)
@@ -623,6 +624,7 @@ def test_legs_to_track_direct_cash_dividend_has_no_quantity_or_ex_entry() -> Non
         reference_only=False,
         reference_from="",
         reference_to="",
+        reference_rows_from="",
         t0_offsets={},
     )
     legs = pc._legs_to_track(trial)
@@ -1294,6 +1296,7 @@ def test_the_status_tokens_the_runner_branches_on_are_the_ones_the_probe_prints(
         "OK",
         "NO_ROWS",
         "UNSUPPORTED",
+        "ERROR",
         "TRANSIENT_STOP",
         "RATE_LIMITED",
     )
@@ -1387,7 +1390,7 @@ def test_an_inverted_window_override_is_refused_before_any_call(
     a wrong date. It is a precondition failure, like every other input check
     in this module."""
     wire(_ExplodingSession())
-    with pytest.raises(ProbeError, match="is after --reference-to"):
+    with pytest.raises(ProbeError, match="the ksdinfo window is empty"):
         pc.probe_pca(
             _reference_args(reference_from="20261001", reference_to="20260901")
         )
@@ -1400,6 +1403,290 @@ def test_an_equal_window_override_pair_is_accepted(stock_env: None, wire: Any) -
     pc.probe_pca(_reference_args(reference_from="20260831", reference_to="20260831"))
     params = _ksdinfo_calls(session)[0]["params"]
     assert (params["F_DT"], params["T_DT"]) == ("20260831", "20260831")
+
+
+# ---------------------------------------------------------------------------
+# round 2: a refusal the broker ANSWERED vs a path that failed (#831 r2 F1)
+# ---------------------------------------------------------------------------
+
+
+def test_a_broker_refusal_with_a_clean_envelope_is_unsupported(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """HTTP 200 with a real envelope saying ``rt_cd != 0`` is the broker
+    ANSWERING that it does not serve this TR — the mock behaviour N-19 §3
+    opened this observation for, and the one the runner must not abort on."""
+    wire(_ScriptedSession([_ksdinfo_body(rt_cd="1")]))
+    run = pc.probe_pca(_reference_args())
+
+    printed = capsys.readouterr().out.splitlines()
+    assert any(
+        line.startswith(f"{pc._REFERENCE_STATUS_PREFIX}{pc._REF_UNSUPPORTED}:")
+        for line in printed
+    ), printed
+    assert run.errors == []
+    # The artifact value is the one it has always carried.
+    assert _observation(run, "mock_reference_support").startswith(
+        "UNSUPPORTED_OR_ERROR:"
+    )
+
+
+@pytest.mark.parametrize(
+    ("response", "why"),
+    [
+        (_FakeResponse({"rt_cd": "1"}, status=500), "a non-200 is not an answer"),
+        (_FakeResponse({}, status=200), "a body with no rt_cd is not an envelope"),
+    ],
+)
+def test_a_failed_reference_path_is_error_not_unsupported(
+    stock_env: None,
+    wire: Any,
+    capsys: pytest.CaptureFixture[str],
+    response: Any,
+    why: str,
+) -> None:
+    """Round 2, F1: one token for both put an HTTP 500 carrying a gateway page
+    into the runner's "clean answer" arm, and the 16-hour poll started down
+    the path that had just returned 500."""
+    wire(_ScriptedSession([response]))
+    run = pc.probe_pca(_reference_args())
+
+    printed = capsys.readouterr().out.splitlines()
+    assert any(
+        line.startswith(f"{pc._REFERENCE_STATUS_PREFIX}{pc._REF_ERROR}:")
+        for line in printed
+    ), (why, printed)
+    assert not any(
+        line.startswith(f"{pc._REFERENCE_STATUS_PREFIX}{pc._REF_UNSUPPORTED}")
+        for line in printed
+    )
+    assert run.errors, why
+
+
+def test_the_refusal_split_is_answered_versus_failed() -> None:
+    """The predicate itself, stated once. Not a msg_cd allowlist: no code for
+    a mock-unsupported ksdinfo answer has ever been measured here, so the list
+    would be empty today and would abort the one case the UNSUPPORTED arm
+    exists to tolerate."""
+    assert pc._reference_refusal_status(200, {"rt_cd": "1"}) == pc._REF_UNSUPPORTED
+    assert pc._reference_refusal_status(200, {"rt_cd": "7", "msg_cd": "?"}) == (
+        pc._REF_UNSUPPORTED
+    )
+    assert pc._reference_refusal_status(500, {"rt_cd": "1"}) == pc._REF_ERROR
+    assert pc._reference_refusal_status(200, {}) == pc._REF_ERROR
+    assert pc._reference_refusal_status(None, {}) == pc._REF_ERROR
+
+
+# ---------------------------------------------------------------------------
+# round 2: the rest of the probe-side dispositions
+# ---------------------------------------------------------------------------
+
+
+def test_a_stopped_lookup_still_answers_per_leg(stock_env: None, wire: Any) -> None:
+    """Round 2, F8. ``_do_reference_only`` swallowed ``_StopRun`` and returned
+    BEFORE the per-leg skips, so a transient-stopped lookup wrote an artifact
+    with ``args.reference_only=true``, errors, and no ``legs.<class>.<leg>``
+    key at all — the absent answer the F1 disposition says this probe no
+    longer produces, reappearing on the error path."""
+    wire(_TransientSession([_read_timeout(), _read_timeout()]))
+    run = pc.probe_pca(_reference_args())
+
+    assert run.errors
+    cash = [s for s in run.skips if s["what"] == "legs.cash_dividend.cash"]
+    assert len(cash) == 1, run.skips
+    assert cash[0]["reason"].startswith("REFERENCE_ONLY —")
+    assert run.measurements["leg_provenance_class"] == "NOT_MEASURED"
+    assert _wrapper_says_done(run.to_dict(), symbol="005930") is False
+
+
+def test_the_row_count_matches_the_rows_actually_emitted(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round 2, F10. ``REFERENCE_ROWS`` counted every element of ``output1``
+    while only dict rows became ``REFERENCE_ROW=`` lines, so the two halves of
+    the wire contract disagreed about the same answer."""
+    wire(_ScriptedSession([_ksdinfo_body(rows=[_SKH_ROW, "", None])]))
+    pc.probe_pca(_reference_args())
+
+    printed = capsys.readouterr().out.splitlines()
+    rows = [line for line in printed if line.startswith(pc._REFERENCE_ROW_PREFIX)]
+    assert f"{pc._REFERENCE_ROWS_PREFIX}{len(rows)}" in printed
+    assert len(rows) == 1
+
+
+def test_a_body_of_only_unusable_rows_is_no_rows(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """And the status follows the same count: rows that cannot be emitted are
+    not rows, so this is NO_ROWS rather than an OK with nothing under it."""
+    wire(_ScriptedSession([_ksdinfo_body(rows=["", None])]))
+    pc.probe_pca(_reference_args())
+
+    printed = capsys.readouterr().out.splitlines()
+    assert f"{pc._REFERENCE_STATUS_PREFIX}{pc._REF_NO_ROWS}" in printed
+    assert f"{pc._REFERENCE_ROWS_PREFIX}0" in printed
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "why"),
+    [
+        ({"reference_to": "20260501"}, "a lone --reference-to before the derived F_DT"),
+        (
+            {"reference_from": "20280101"},
+            "a lone --reference-from after the derived T_DT",
+        ),
+        (
+            {"reference_from": "20261001", "reference_to": "20260901"},
+            "the inverted pair the first check caught",
+        ),
+    ],
+)
+def test_an_empty_window_is_refused_however_it_was_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+    stock_env: None,
+    wire: Any,
+    kwargs: dict[str, str],
+    why: str,
+) -> None:
+    """Round 2, F4. Comparing the two overrides only with EACH OTHER missed
+    every single-override case: one end is usually derived from the anchor, so
+    a lone ``--reference-to`` earlier than the derived ``F_DT`` still sent an
+    empty window — and the broker answers that with zero rows, which reads
+    downstream as "this event is not in the reference table"."""
+    monkeypatch.setattr(
+        pc, "datetime", _FrozenDatetime(datetime(2026, 10, 1, 8, 0, tzinfo=UTC))
+    )
+    monkeypatch.setattr(
+        pc, "_reference_now", lambda: datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+    )
+    wire(_ExplodingSession())
+    with pytest.raises(ProbeError, match="the ksdinfo window is empty"):
+        pc.probe_pca(
+            _reference_args(payable_time="2026-09-30T00:00:00+09:00", **kwargs)
+        )
+
+
+def test_a_single_override_inside_the_derived_window_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, stock_env: None, wire: Any
+) -> None:
+    """The other direction, so the check cannot become "no single override is
+    allowed": one end given, the other derived, and the window is real."""
+    monkeypatch.setattr(
+        pc, "datetime", _FrozenDatetime(datetime(2026, 10, 1, 8, 0, tzinfo=UTC))
+    )
+    monkeypatch.setattr(
+        pc, "_reference_now", lambda: datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+    )
+    session = wire(_ScriptedSession([_ksdinfo_body(rows=[_SKH_ROW])]))
+    pc.probe_pca(
+        _reference_args(
+            payable_time="2026-09-30T00:00:00+09:00", reference_from="20260801"
+        )
+    )
+    params = _ksdinfo_calls(session)[0]["params"]
+    assert (params["F_DT"], params["T_DT"]) == ("20260801", "20270330")
+
+
+# ---------------------------------------------------------------------------
+# round 2: the trial adopts the pre-check's rows (#831 r2 F5)
+# ---------------------------------------------------------------------------
+
+
+def _reference_only_artifact(tmp_path: Path, stock_env: None, wire: Any) -> Path:
+    """Run a real ``--reference-only`` probe and write its artifact to disk."""
+    wire(_ScriptedSession([_ksdinfo_body(rows=[_SKH_ROW])]))
+    run = pc.probe_pca(
+        _reference_args(symbol="058610", payable_time="2020-01-01T09:00:00+09:00")
+    )
+    path = tmp_path / "P-CA-reference-only.json"
+    path.write_text(json.dumps(run.to_dict()), encoding="utf-8")
+    return path
+
+
+def test_a_trial_adopts_the_precheck_rows_without_a_second_get(
+    tmp_path: Path, stock_env: None, wire: Any
+) -> None:
+    """Round 2, F5. Dropping ``--reference-check`` from the trial to avoid the
+    duplicate GET cost the trial artifact its ``reference_dates`` /
+    ``mock_reference_support`` observations, which the runbook says a P-CA
+    artifact records. The rows travel as DATA instead: same keys, same values,
+    no second call."""
+    source = _reference_only_artifact(tmp_path, stock_env, wire)
+
+    body = _balance_body(10, symbol="058610")
+    session = wire(_ScriptedSession([body, body]))
+    run = pc.probe_pca(
+        _cash_trial_args(reference_rows_from=str(source), reference_check=True)
+    )
+
+    assert _ksdinfo_calls(session) == [], "the trial re-sent the reference GET"
+    assert _observation(run, "reference_dates") == [_SKH_ROW]
+    assert _observation(run, "mock_reference_support") == "SUPPORTED"
+    assert _observation(run, "reference_window")["anchor_source"] == "payable_time"
+    # And a reader can never mistake an adopted row for one this run fetched.
+    assert "ADOPTED VERBATIM" in _observation(run, "reference_rows_provenance")
+
+
+def test_an_adopted_trial_is_still_a_completed_observation(
+    tmp_path: Path, stock_env: None, wire: Any
+) -> None:
+    """Adopting must not disturb the shape the 10-22 re-arm guard reads."""
+    source = _reference_only_artifact(tmp_path, stock_env, wire)
+    body = _balance_body(10, symbol="058610")
+    wire(_ScriptedSession([body, body]))
+    run = pc.probe_pca(_cash_trial_args(reference_rows_from=str(source)))
+    assert _wrapper_says_done(run.to_dict()) is True
+
+
+@pytest.mark.parametrize(
+    "contents",
+    ["not json at all", '{"observations": []}', '["a list, not an artifact"]'],
+)
+def test_an_unusable_rows_source_is_refused_before_any_broker_call(
+    tmp_path: Path, stock_env: None, wire: Any, contents: str
+) -> None:
+    """A trial that cannot read the artifact it was told to adopt would poll a
+    16-hour window while claiming reference data it does not have. Refused
+    before the session opens, so it costs no broker call."""
+    source = tmp_path / "bad.json"
+    source.write_text(contents, encoding="utf-8")
+    wire(_ExplodingSession())
+    with pytest.raises(ProbeError, match="--reference-rows-from"):
+        pc.probe_pca(_cash_trial_args(reference_rows_from=str(source)))
+
+
+def test_a_missing_rows_source_is_refused_before_any_broker_call(
+    tmp_path: Path, stock_env: None, wire: Any
+) -> None:
+    wire(_ExplodingSession())
+    with pytest.raises(ProbeError, match="could not be read"):
+        pc.probe_pca(_cash_trial_args(reference_rows_from=str(tmp_path / "nope.json")))
+
+
+def test_adopting_and_fetching_write_the_same_observation_keys(
+    tmp_path: Path, stock_env: None, wire: Any
+) -> None:
+    """The property that keeps the two paths from drifting: whatever a
+    ``--reference-check`` trial records, an adopting trial records too."""
+    source = _reference_only_artifact(tmp_path, stock_env, wire)
+
+    body = _balance_body(10, symbol="058610")
+    wire(_ScriptedSession([body, _ksdinfo_body(rows=[_SKH_ROW]), body]))
+    fetched = pc.probe_pca(_cash_trial_args(reference_check=True))
+
+    wire(_ScriptedSession([body, body]))
+    adopted = pc.probe_pca(_cash_trial_args(reference_rows_from=str(source)))
+
+    def keys(run: Any) -> set[str]:
+        return {
+            key
+            for obs in run.observations
+            for key in obs
+            if key in pc._REFERENCE_OBSERVATION_KEYS
+        }
+
+    assert keys(fetched) <= keys(adopted), (keys(fetched), keys(adopted))
+    assert "reference_dates" in keys(adopted)
 
 
 # ---------------------------------------------------------------------------
@@ -3327,12 +3614,22 @@ def test_the_trial_does_not_repeat_the_reference_get_the_precheck_made(
     after the holding walk has been spent. The rows ride along in the note
     instead."""
     result, argv = _run_runner_end_to_end(
-        tmp_path, extra_env=_pay_date_env(["20260930|20261022"])
+        tmp_path,
+        extra_env=_pay_date_env(
+            ["20260930|20261022"],
+            FAKE_REFERENCE_ARTIFACT="P-CA-20261022T000000Z.json",
+        ),
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "--reference-check" not in argv
     assert "--reference-only" in _reference_argv(tmp_path)
-    assert "20260930|20261022" in argv[argv.index("--note") + 1]
+    # The rows travel as DATA, not as a second GET and not as a lossy note
+    # (round 2, F5).
+    assert "--reference-rows-from" in argv
+    assert argv[argv.index("--reference-rows-from") + 1].endswith(
+        "P-CA-20261022T000000Z.json"
+    )
+    assert argv[argv.index("--note") + 1] == "runner end-to-end test"
 
 
 def test_the_trial_still_asks_for_the_reference_rows_when_no_precheck_ran(
@@ -3725,8 +4022,13 @@ def test_a_copy_that_fails_says_so_and_does_not_claim_the_artifact(
     finally:
         os.chmod(evidence, 0o700)
     failed = [line for line in result.stdout.splitlines() if "could NOT copy" in line]
-    assert len(failed) == 2, result.stdout
+    assert len(failed) == 1, result.stdout
     assert "(reference-only)" in failed[0]
+    # ART_BEFORE did not advance, so the trial phase still SEES this artifact
+    # as new — and refuses it by identity rather than copying a lookup into
+    # the evidence root, which is what the stale ART_BEFORE used to allow
+    # whenever the trial itself wrote nothing (round 2, F6).
+    assert "is this run's reference-only lookup, not a trial" in result.stdout
     assert list(evidence.iterdir()) == []
 
 
@@ -3854,6 +4156,126 @@ def test_the_reference_only_call_is_paced_like_every_other_process(
         "expected one PCA_PACE_S wait before the reference-only call and one "
         f"before the probe, got {slept.read_text(encoding='utf-8')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# round 2: the runner's remaining dispositions (#831 r2 F1/F2/F3/F6/F7)
+# ---------------------------------------------------------------------------
+
+
+def test_an_error_status_aborts_while_unsupported_proceeds(tmp_path: Path) -> None:
+    """Round 2, F1. One token covered both "the mock does not serve this TR"
+    and "the gateway returned 500 with an HTML page", and the runner
+    whitelisted it — so the gate was porous exactly where it matters."""
+    bad, _argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env=_pay_date_env(
+            [], FAKE_REFERENCE_OUTPUT=_reference_output([], status="ERROR:http_500/")
+        ),
+    )
+    assert bad.returncode != 0
+    assert "ABORT: reference check did not complete" in bad.stdout
+
+
+def test_the_precheck_retry_waits_the_trials_polling_interval(
+    tmp_path: Path,
+) -> None:
+    """Round 2, F2. Without --poll-ms the single retry after a ledger throttle
+    waits one --pace-s — the per-second cadence that just tripped the
+    throttle, and the exact mistake the holding check passes --retry-wait-ms
+    to avoid."""
+    _result, _argv = _run_runner_end_to_end(
+        tmp_path, extra_env=_pay_date_env(["20260930|20261022"])
+    )
+    ref_argv = _reference_argv(tmp_path)
+    assert "--poll-ms" in ref_argv
+    assert ref_argv[ref_argv.index("--poll-ms") + 1] == "30000"
+
+
+def test_a_precheck_that_failed_after_printing_is_not_trusted(
+    tmp_path: Path,
+) -> None:
+    """Round 2, F3. The probe can print its rows and still die writing the
+    artifact (rc 5), so a clean status line from a process that then failed
+    is not a clean answer — the same rule the holding check applies to
+    HELD=."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env=_pay_date_env(["20260930|20261022"], FAKE_REFERENCE_RC="5"),
+    )
+    assert result.returncode != 0
+    assert "reference check exited 5 while reporting" in result.stdout
+    assert argv == [], "the trial started on a pre-check that had failed"
+
+
+def test_the_pay_date_is_checked_before_the_holding_walk(tmp_path: Path) -> None:
+    """Round 2, F7. The pre-check needs no holding — the ksdinfo TRs are
+    account-independent — so a slot whose pay date is wrong should cost one
+    GET, not a two-page balance walk on top of it, on every retried slot."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env=_pay_date_env(["20260930|20261023"])
+    )
+    assert result.returncode != 0
+    assert "ABORT: pay-date mismatch" in result.stdout
+    assert "held qty" not in result.stdout, "the holding walk was spent anyway"
+    assert argv == []
+
+
+def test_the_holding_walk_still_runs_when_the_pay_date_agrees(
+    tmp_path: Path,
+) -> None:
+    """The other direction, so moving the pre-check first cannot quietly drop
+    the holding gate: agreement leads straight into it."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env=_pay_date_env(["20260930|20261022"])
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    order = result.stdout.index("reference-only") < result.stdout.index("held qty")
+    assert order, "the holding walk ran before the pre-check"
+    assert argv
+
+
+def test_a_reference_only_artifact_is_never_copied_into_the_evidence_root(
+    tmp_path: Path,
+) -> None:
+    """Round 2, F6. The subdirectory keeps a lookup out of the re-arm guard's
+    glob only while the copy SUCCEEDS; a failed copy left ART_BEFORE where it
+    was, and the trial phase then copied the lookup into the root whenever
+    the trial itself wrote no artifact. It is excluded by identity now."""
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    result, _argv = _run_runner_end_to_end(
+        tmp_path,
+        extra_env=_pay_date_env(
+            ["20260930|20261022"],
+            PCA_EVIDENCE_DIR=str(evidence),
+            FAKE_REFERENCE_ARTIFACT="P-CA-20261022T000000Z.json",
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    # The trial wrote nothing of its own (the fake probe only writes for the
+    # reference-only call), so the newest artifact is still the lookup.
+    assert "is this run's reference-only lookup, not a trial" in result.stdout
+    assert list(evidence.glob("P-CA-*.json")) == []
+    assert [p.name for p in (evidence / "reference-only").iterdir()] == [
+        "P-CA-20261022T000000Z.json"
+    ]
+
+
+def test_the_runner_says_so_when_the_precheck_left_no_artifact_to_adopt(
+    tmp_path: Path,
+) -> None:
+    """The trial then carries no reference_dates, and silence about that is
+    how the round-1 note substitute went unnoticed."""
+    result, argv = _run_runner_end_to_end(
+        tmp_path, extra_env=_pay_date_env(["20260930|20261022"])
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "left no artifact, so this trial carries no reference_dates" in (
+        result.stdout
+    )
+    assert "--reference-rows-from" not in argv
+    assert "--reference-check" not in argv
 
 
 # ---------------------------------------------------------------------------

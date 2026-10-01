@@ -903,6 +903,13 @@ VERIFIED/E1), 그 일정이 잔고·포지션에 **언제** 반영되는지는 �
    오류/거부면 `observations.mock_reference_support`에
    `UNSUPPORTED_OR_ERROR:<rt_cd/msg>`를 남긴다 — 이것이 N-19 §3이 요구한 1차
    MOCK feasibility 관측이다.
+   `--reference-rows-from <아티팩트>`를 주면 **GET 없이** 그 아티팩트의
+   `reference_dates`·`reference_window`·`mock_reference_support`를 축자로
+   물려받는다(출처는 `observations.reference_rows_provenance`). 러너가
+   폴링 전에 지급일 대조용으로 이미 같은 GET을 했을 때 쓰는 경로이고,
+   **아티팩트에 남는 관측 키는 동일하다**(#830 · #831 round 2 F5).
+   `--reference-only`는 이 GET **만** 하고 끝낸다 — 잔고 호출·보유 요구·폴링
+   없음, 미래 t0 허용, leg는 `REFERENCE_ONLY`로 명시 skip.
 4. 추적할 leg가 하나도 없으면(7-시각 전부 미공급) `skip`하고 폴링하지 않는다.
 5. operator 프롬프트(`[Enter when the first relevant time has passed]`, P-EXT
    문형) — 관련 시각이 지난 뒤 Enter.

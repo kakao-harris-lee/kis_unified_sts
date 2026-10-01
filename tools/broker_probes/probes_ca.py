@@ -319,6 +319,10 @@ class _Trial:
     #: window is derived. See :func:`_ksdinfo_window`.
     reference_from: str
     reference_to: str
+    #: ``--reference-rows-from``: path to a ``--reference-only`` artifact whose
+    #: reference observations this run adopts verbatim INSTEAD of making the
+    #: ksdinfo GET again. See :func:`_adopt_reference_rows`.
+    reference_rows_from: str
     #: Per-flag UTC offset actually supplied (e.g. ``{"effective_time": "+09:00"}``)
     #: — F8: recorded and warned on when != KST, never silently normalized.
     t0_offsets: dict[str, str]
@@ -433,18 +437,6 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
     reference_to = _parse_reference_date(
         getattr(args, "reference_to", ""), "--reference-to"
     )
-    # An inverted pair is a precondition failure, not a query (review #831 F9).
-    # The broker answers it with zero rows or a rejection, and BOTH of those
-    # read downstream as "the event is not in the reference table" — the one
-    # answer this pre-check exists to distinguish from a wrong date.
-    if reference_from and reference_to and reference_from > reference_to:
-        raise ProbeError(
-            f"--reference-from ({reference_from}) is after --reference-to "
-            f"({reference_to}) — the ksdinfo window would be empty, and an "
-            "empty answer is indistinguishable from 'this event is not in the "
-            "reference table'."
-        )
-
     t0_offsets: dict[str, str] = {}
     ex_time, ex_offset = _parse_operator_time(
         getattr(args, "ex_time", ""), "--ex-time", allow_future=reference_only
@@ -467,7 +459,7 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         if offset is not None:
             t0_offsets[flag_name] = offset
 
-    return _Trial(
+    trial = _Trial(
         symbol=symbol,
         event_class=event_class,
         is_real=env == "real",
@@ -486,7 +478,35 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         reference_only=reference_only,
         reference_from=reference_from,
         reference_to=reference_to,
+        reference_rows_from=str(getattr(args, "reference_rows_from", "") or "").strip(),
         t0_offsets=t0_offsets,
+    )
+    _assert_reference_window_is_not_empty(trial)
+    return trial
+
+
+def _assert_reference_window_is_not_empty(trial: _Trial) -> None:
+    """Refuse a ksdinfo window that cannot contain anything, before the call.
+
+    Checked against the window as DERIVED (:func:`_ksdinfo_window`), not
+    override-against-override: one end is often left to the anchor, so a
+    single ``--reference-to`` earlier than the derived ``F_DT`` produced the
+    same empty window the pair check was added to stop, and it slipped through
+    (round 2, F4). The broker answers an empty window with zero rows, which
+    downstream reads as "this event is not in the reference table" — the one
+    answer the pre-check exists to distinguish from a wrong date.
+    """
+    window = _ksdinfo_window(trial)
+    if window["f_dt"] <= window["t_dt"]:
+        return
+    overrides = window["operator_overrides"]
+    raise ProbeError(
+        f"the ksdinfo window is empty: F_DT={window['f_dt']} is after "
+        f"T_DT={window['t_dt']} "
+        f"(operator overrides: {', '.join(overrides) or 'none'}; the other "
+        f"end is derived from {window['anchor_source']}). An empty window "
+        "answers zero rows, which is indistinguishable from 'this event is "
+        "not in the reference table'."
     )
 
 
@@ -1407,8 +1427,16 @@ def _do_reference_check(
     if rt_cd != "0":
         detail = f"{rt_cd}/{parsed.get('msg_cd')}:{parsed.get('msg1')}"
         key = "mock_reference_support" if not trial.is_real else "reference_check_error"
+        # The artifact keeps the value it has always carried; only the wire
+        # token splits (review round 2, F1).
         run.observe(**{key: f"UNSUPPORTED_OR_ERROR:{detail}"})
-        print(f"{_REFERENCE_STATUS_PREFIX}{_REF_UNSUPPORTED}:{_one_line(detail)}")
+        token = _reference_refusal_status(status, parsed)
+        if token == _REF_ERROR:
+            run.error(
+                f"reference-check call did not complete: http={status} "
+                f"body={_one_line(detail)}"
+            )
+        print(f"{_REFERENCE_STATUS_PREFIX}{token}:http_{status}/{_one_line(detail)}")
         return
     rows = parsed.get("output1")
     rows = rows if isinstance(rows, list) else []
@@ -1435,15 +1463,45 @@ _REFERENCE_ROW_PREFIX = "REFERENCE_ROW="
 _REF_OK = "OK"
 _REF_NO_ROWS = "NO_ROWS"
 _REF_UNSUPPORTED = "UNSUPPORTED"
+_REF_ERROR = "ERROR"
 _REF_TRANSIENT_STOP = "TRANSIENT_STOP"
 _REF_RATE_LIMITED = "RATE_LIMITED"
 REFERENCE_STATUSES: tuple[str, ...] = (
     _REF_OK,
     _REF_NO_ROWS,
     _REF_UNSUPPORTED,
+    _REF_ERROR,
     _REF_TRANSIENT_STOP,
     _REF_RATE_LIMITED,
 )
+
+
+def _reference_refusal_status(http_status: int | None, parsed: dict[str, Any]) -> str:
+    """``UNSUPPORTED`` or ``ERROR`` for a ksdinfo answer with ``rt_cd != '0'``.
+
+    The runner lets UNSUPPORTED through and ABORTS on ERROR, so the split has
+    to be the one that gate is for: did the broker ANSWER, or did the path
+    fail? One token for both put an HTTP 500 carrying a gateway HTML page into
+    the "clean answer" arm and started a 16-hour poll down it (round 2, F1).
+
+    Answered — HTTP 200 and a body that is a real envelope, i.e. it HAS an
+    ``rt_cd`` — is UNSUPPORTED. The path is healthy and the broker is refusing
+    this TR, which is the mock behaviour N-19 §3 opened this observation for
+    and which must not block a trial. Everything else is ERROR: a non-200, or
+    a body with no ``rt_cd`` at all (:func:`_get` hands back ``{}`` for a
+    non-JSON gateway page).
+
+    Deliberately NOT an allowlist of ``msg_cd`` values. No msg_cd for a
+    mock-unsupported ksdinfo answer has ever been measured here — every
+    observation so far is ``SUPPORTED`` — so the list would be empty today and
+    would turn the one case this arm exists to tolerate into an abort: a guard
+    refusing exactly what it was written to allow. The code is printed on the
+    line instead, so the operator sees what the mock actually said and can
+    narrow this with evidence rather than by guess.
+    """
+    answered = http_status == 200 and "rt_cd" in parsed
+    return _REF_UNSUPPORTED if answered else _REF_ERROR
+
 
 #: A date field on an anchored line is DIGITS ONLY (review #831 F7). 16 chars
 #: is twice what ``YYYYMMDD`` needs.
@@ -1481,14 +1539,98 @@ def _print_reference_rows(rows: list[Any]) -> None:
     (it knows ``PCA_RECORD_DATE``), and a probe that picked one silently would
     hide the others from the log.
     """
-    print(f"{_REFERENCE_STATUS_PREFIX}{_REF_OK if rows else _REF_NO_ROWS}")
-    print(f"{_REFERENCE_ROWS_PREFIX}{len(rows)}")
-    for row in rows:
-        if not isinstance(row, dict):
+    # The count is of the lines actually emitted, not of ``output1``: a body
+    # padded with non-dict entries made ``REFERENCE_ROWS=3`` sit above one
+    # ``REFERENCE_ROW=`` line, so the two halves of the wire contract
+    # disagreed about the same answer (round 2, F10).
+    emitted = [
+        f"{_reference_field(row.get('record_date'))}|"
+        f"{_reference_field(row.get('divi_pay_dt'))}"
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    print(f"{_REFERENCE_STATUS_PREFIX}{_REF_OK if emitted else _REF_NO_ROWS}")
+    print(f"{_REFERENCE_ROWS_PREFIX}{len(emitted)}")
+    for line in emitted:
+        print(f"{_REFERENCE_ROW_PREFIX}{line}")
+
+
+#: The reference observations a ``--reference-only`` artifact carries, and the
+#: exact set :func:`_adopt_reference_rows` copies forward. Named once, so the
+#: adopting path cannot drift from the GET path's own output.
+_REFERENCE_OBSERVATION_KEYS: tuple[str, ...] = (
+    "reference_dates",
+    "reference_window",
+    "mock_reference_support",
+    "reference_check_error",
+)
+
+
+def _adopt_reference_rows(run: ProbeRun, trial: _Trial) -> None:
+    """Copy a ``--reference-only`` artifact's reference observations into this
+    run, VERBATIM, instead of re-sending the ksdinfo GET.
+
+    The runner makes that GET in its pre-check (#830 step 5b) and the trial
+    used to make it again — same TR, same symbol, same window — so round 1
+    dropped ``--reference-check`` from the trial. That silently cost the trial
+    artifact its ``reference_dates`` / ``mock_reference_support``
+    observations, which the runbook says a P-CA artifact records (round 2,
+    F5): the ``--note`` substitute held eight rows of two digit-only fields
+    and lost every other ksdinfo column.
+
+    So the rows travel as DATA rather than as a second call. The keys are the
+    ones the GET path writes (:data:`_REFERENCE_OBSERVATION_KEYS`), copied
+    unchanged, plus a provenance observation naming the artifact they came
+    from — a reader must never mistake an adopted row for one this run
+    fetched.
+
+    An unreadable or unparseable path is a precondition failure: the trial
+    would otherwise run a 16-hour window while quietly claiming reference data
+    it does not have.
+    """
+    import json
+    from pathlib import Path
+
+    source = Path(trial.reference_rows_from)
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ProbeError(
+            f"--reference-rows-from {trial.reference_rows_from!r} could not be "
+            f"read as a probe artifact: {exc}"
+        ) from None
+    if not isinstance(payload, dict):
+        raise ProbeError(
+            f"--reference-rows-from {trial.reference_rows_from!r} is not a "
+            "probe artifact object"
+        )
+    observations = payload.get("observations")
+    adopted: dict[str, Any] = {}
+    for entry in observations if isinstance(observations, list) else []:
+        if not isinstance(entry, dict):
             continue
-        record = _reference_field(row.get("record_date"))
-        pay = _reference_field(row.get("divi_pay_dt"))
-        print(f"{_REFERENCE_ROW_PREFIX}{record}|{pay}")
+        for key in _REFERENCE_OBSERVATION_KEYS:
+            if key in entry:
+                adopted[key] = entry[key]
+    if "reference_dates" not in adopted:
+        raise ProbeError(
+            f"--reference-rows-from {trial.reference_rows_from!r} carries no "
+            "reference_dates observation — it is not a completed "
+            "--reference-only artifact, and this run would otherwise poll a "
+            "window while claiming reference data it does not have."
+        )
+    run.observe(**adopted)
+    run.observe(
+        reference_rows_provenance=(
+            "observations.reference_dates (and the reference_window / "
+            "mock_reference_support beside it) were ADOPTED VERBATIM from "
+            f"{payload.get('artifact_id', source.name)}, a --reference-only "
+            "run made by this trial's runner before polling started. This run "
+            "sent no ksdinfo GET of its own: the pre-check already made it, "
+            "and asking twice adds a broker call and one more place a "
+            "transient can stop the trial (#831 round 2, F5)."
+        )
+    )
 
 
 def _do_reference_only(
@@ -1515,42 +1657,48 @@ def _do_reference_only(
         reference_only_note=(
             "--reference-only: ONE ksdinfo GET for --event-class "
             f"{trial.event_class}, no balance call, no holding requirement, no "
-            "polling. --window-s/--poll-ms are accepted and IGNORED (nothing "
-            "is polled). An operator time is accepted even when it is in the "
+            "polling. --window-s is accepted and IGNORED (nothing is polled); "
+            "--poll-ms is NOT ignored — it is the wait before the single "
+            "retry of a transient failure, the same interval every other "
+            "phase uses. An operator time is accepted even when it is in the "
             "FUTURE — nothing is paired against it; it only anchors the "
             "ksdinfo F_DT/T_DT window (observations.reference_window)."
         ),
     )
+    # ``finally``, because a stopped lookup is still a run that has to say,
+    # per leg, that it observed nothing (round 2, F8). Swallowing _StopRun
+    # before these skips left an artifact with args.reference_only=true and no
+    # ``legs.<class>.<leg>`` key at all — the absent answer the F1 disposition
+    # claims this probe no longer writes, reappearing on the error path.
     try:
         _do_reference_check(run, session, auth, base_url, pacer, trial, retries)
     except _StopRun:
         return
-    # Per LEG, under the same ``legs.<class>.<leg>`` key a trial uses, because
-    # that key is what a reader and the 10-22 re-arm guard look for when they
-    # ask "was this event observed?" (review #831 F1). A reference-only
-    # artifact answering only under "leg polling" left the per-leg question
-    # unanswered, and an answer that is absent is the one a guard mistakes for
-    # a pass. ``REFERENCE_ONLY`` is deliberately neither CENSORED nor ABORTED:
-    # no window ran, so neither claim is available.
-    for leg in _observable_leg_names(trial.event_class):
-        run.skip(
-            f"legs.{trial.event_class}.{leg}",
-            "REFERENCE_ONLY — --reference-only looks the event up in the "
-            "ksdinfo reference table and stops. This leg was not OBSERVED, "
-            "not CENSORED and not ABORTED: no balance was read, so no window "
-            "ran and nothing at all was observed about it. See "
-            "observations.reference_dates for what the broker's reference "
-            "table says, and run the probe WITHOUT --reference-only to "
-            "measure a reflection latency.",
+    finally:
+        # Per LEG, under the same key a trial uses, because that key is what a
+        # reader and the 10-22 re-arm guard look for when they ask "was this
+        # event observed?". ``REFERENCE_ONLY`` is deliberately neither
+        # CENSORED nor ABORTED: no window ran, so neither claim is available.
+        for leg in _observable_leg_names(trial.event_class):
+            run.skip(
+                f"legs.{trial.event_class}.{leg}",
+                "REFERENCE_ONLY — --reference-only looks the event up in the "
+                "ksdinfo reference table and stops. This leg was not "
+                "OBSERVED, not CENSORED and not ABORTED: no balance was read, "
+                "so no window ran and nothing at all was observed about it. "
+                "See observations.reference_dates for what the broker's "
+                "reference table says, and run the probe WITHOUT "
+                "--reference-only to measure a reflection latency.",
+            )
+        run.measure("leg_provenance_class", "NOT_MEASURED")
+        run.measure(
+            "no_aggregate_scalar_note",
+            "B_non_trade_event_detect / B_non_trade_reconcile are never "
+            "written as a single scalar by this probe, and a --reference-only "
+            "run measures no latency at all — it records the broker's "
+            "declared CA dates, nothing more. Both VP-002 keys stay "
+            "NOT_ESTABLISHED.",
         )
-    run.measure("leg_provenance_class", "NOT_MEASURED")
-    run.measure(
-        "no_aggregate_scalar_note",
-        "B_non_trade_event_detect / B_non_trade_reconcile are never written as "
-        "a single scalar by this probe, and a --reference-only run measures no "
-        "latency at all — it records the broker's declared CA dates, nothing "
-        "more. Both VP-002 keys stay NOT_ESTABLISHED.",
-    )
 
 
 class _StopRun(ProbeError):
@@ -1986,6 +2134,12 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
         run.observe(would_send=_dry_run_would_send(trial))
         return run
 
+    # Before the session, so an unreadable artifact costs no broker call at
+    # all — the whole point of adopting rather than re-fetching is that this
+    # run does not touch the reference TR.
+    if trial.reference_rows_from:
+        _adopt_reference_rows(run, trial)
+
     def _record_credentials(resolved: Any) -> None:
         run.credentials = resolved.describe()
 
@@ -2018,7 +2172,7 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
             return run
         baseline_qty, baseline_cash = baseline
 
-        if trial.reference_check:
+        if trial.reference_check and not trial.reference_rows_from:
             try:
                 _do_reference_check(run, session, auth, base_url, pacer, trial, retries)
             except _StopRun:
@@ -2162,6 +2316,17 @@ def add_ca_args(parser: argparse.ArgumentParser) -> None:
         "--reference-to",
         default="",
         help=f"YYYYMMDD — override the ksdinfo T_DT (derived: anchor+{_KSDINFO_LOOKAHEAD_DAYS}d).",
+    )
+    parser.add_argument(
+        "--reference-rows-from",
+        default="",
+        help=(
+            "Path to a --reference-only artifact. Adopt its reference_dates / "
+            "reference_window / mock_reference_support observations VERBATIM "
+            "instead of sending the ksdinfo GET again — for a runner that "
+            "already made the call in a pre-check. Mutually exclusive with "
+            "the GET: --reference-check becomes a no-op when this is given."
+        ),
     )
 
 

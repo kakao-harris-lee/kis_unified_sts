@@ -76,12 +76,13 @@ export PCA_REQUIRE_REFERENCE_ROW=1       # ABORT when the table returns no usabl
 ### The pay-date pre-check (#830)
 
 With `PCA_REFERENCE_CHECK=1` on a `cash_dividend`, the runner asks the broker
-what IT thinks the pay date is **before** the polling window is spent, and
-aborts when the two disagree. The step costs one extra ksdinfo GET and runs
-after the holding check:
+what IT thinks the pay date is **before** anything else is spent, and aborts
+when the two disagree. It is the **first** broker call of the slot — the
+ksdinfo TRs need no holding, so a wrong pay date should cost one GET rather
+than a balance walk on top of it:
 
 ```
-holding check → [pace] → probe --reference-only → compare → [pace] → probe
+probe --reference-only → compare → [pace] → holding check → [pace] → probe
 ```
 
 `--reference-only` is the probe's own mode: one ksdinfo GET, no balance call,
@@ -95,9 +96,13 @@ observation. (The artifact also carries `args.reference_only: true` and skips
 each leg with a `REFERENCE_ONLY` reason, so a reader has three ways to tell
 the two apart.) A copy that fails logs a WARN and does not count as done.
 
-Because the pre-check already made the call, the trial itself is run **without**
-`--reference-check`; the rows go into the trial's `--note`. One ksdinfo GET per
-slot, not two.
+Because the pre-check already made the call, the trial is run with
+`--reference-rows-from <the pre-check's artifact>` instead of
+`--reference-check`: it **adopts** that artifact's `reference_dates`,
+`reference_window` and `mock_reference_support` observations verbatim, so the
+trial artifact carries what it always carried and the broker is asked once per
+slot. An extra observation records which artifact the rows came from, so an
+adopted row is never mistaken for one the trial fetched.
 
 The probe prints the rows on anchored lines and the runner reads only those:
 
@@ -109,10 +114,20 @@ REFERENCE_ROW=<record_date>|<divi_pay_dt>     # both YYYYMMDD, digits only
 ```
 
 Exactly one `REFERENCE_STATUS=` line is printed, on every path the probe can
-leave by. `TRANSIENT_STOP` and `RATE_LIMITED` mean the path to the broker is
-unhealthy right now, so the runner **aborts** rather than starting a 16-hour
-poll down it — and so does a missing line, which is what a crash looks like
-from here. Only `OK`, `NO_ROWS` and `UNSUPPORTED` let the trial start.
+leave by. Only `OK`, `NO_ROWS` and `UNSUPPORTED` let the trial start:
+
+- `UNSUPPORTED` is the broker **answering** (HTTP 200, a real envelope) that
+  it does not serve this TR. The path is healthy; the mock not supporting the
+  reference TR must not block a trial.
+- `ERROR` is a non-200 or a body that is not an envelope at all — a gateway
+  page, say. `TRANSIENT_STOP` and `RATE_LIMITED` are the probe's own stops.
+  All three mean the path is unhealthy right now, and the runner aborts
+  rather than starting a 16-hour poll down it.
+- A **missing** line aborts too: that is what a crash looks like from here.
+
+A pre-check that printed a clean status and then **exited non-zero** is also
+refused, the same rule the holding check applies to `HELD=`: the probe can
+print its rows and still die writing the artifact.
 
 What the runner then does with the rows:
 
@@ -147,7 +162,9 @@ lookback is sized for the 기준일→지급일 gap (120 days) rather than for
 "recent" — every anchor the probe has is a time that FOLLOWS the record date
 the window filters on, and 30 days excluded every annual dividend.
 `--reference-from`/`--reference-to` (`YYYYMMDD`) override either end for an
-issuer outside even that.
+issuer outside even that; a window that cannot contain anything is refused
+before the call, including when only one end was overridden and the other was
+derived.
 
 ### The credential file
 

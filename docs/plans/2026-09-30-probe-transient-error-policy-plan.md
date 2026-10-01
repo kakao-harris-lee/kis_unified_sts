@@ -457,7 +457,7 @@ docker koalaman/shellcheck:stable --severity=warning → rc 0
 |---|---|
 | `--reference-only` — ksdinfo GET 하나, 잔고 호출·보유 요구·폴링 전부 없음. 미래 t0 허용(페어링하지 않으므로). leg 은 `REFERENCE_ONLY` 로 명시 skip — CENSORED/ABORTED 아님 | `probes_ca.py::_do_reference_only` |
 | ksdinfo 창을 **t0 와 실행 시각을 모두 포함**하도록 앵커링(`min(…)−30d … max(…)+180d`). 마진은 그대로이고, 기준일↔지급일 간격이 발행사마다 달라 `--reference-from/--reference-to` 로 직접 지정할 수 있다. 창은 아티팩트 `observations.reference_window` 에 남는다 | `probes_ca.py::_ksdinfo_window` |
-| 러너가 폴링 **전에** `divi_pay_dt` 를 `PCA_PAYABLE` 과 대조하고 불일치면 ABORT. 행 선택은 `PCA_RECORD_DATE`, 없으면 최신 기준일. 우회는 `PCA_ALLOW_PAYDATE_MISMATCH=1`(로그 남김), 행 없음을 차단하려면 `PCA_REQUIRE_REFERENCE_ROW=1` | `runners/run_p_ca.sh` 5b |
+| 러너가 폴링 **전에** `divi_pay_dt` 를 `PCA_PAYABLE` 과 대조하고 불일치면 ABORT. 행은 `PCA_RECORD_DATE` 로 좁히되 **필수가 아니고**, 없으면 돌아온 **모든 행**이 후보다(어느 하나라도 맞으면 확인). 우회는 `PCA_ALLOW_PAYDATE_MISMATCH=1`(로그 남김), 행 없음을 차단하려면 `PCA_REQUIRE_REFERENCE_ROW=1` | `runners/run_p_ca.sh` 5b |
 | `POLICY_VERSION` `p-ca-retry-policy/1` → `/2` (양쪽). 러너 계약이 바뀌었고 `/1` 러너는 대조를 **조용히 건너뛴다** | 양쪽 |
 
 **계획과 다른 점.** (a) 러너가 아티팩트 JSON 을 파싱하지 않는다 — 프로브가 `REFERENCE_WINDOW=`
@@ -561,3 +561,56 @@ black --check (변경 .py 2건)               → unchanged
 bash -n tools/broker_probes/runners/run_p_ca.sh → OK
 docker koalaman/shellcheck:stable --severity=warning → rc 0
 ```
+
+#### 7.14.3 리뷰 처분 (PR #831 라운드 2 · high · 10건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | `UNSUPPORTED` 가 **HTTP 500·비-JSON 본문까지** 덮어서, 러너가 「깨끗한 답」으로 통과시킨다 — F5 게이트가 정작 중요한 곳에서 샌다 | **수정.** `ERROR` 토큰 분리. 기준은 **브로커가 답했는가**: HTTP 200 + `rt_cd` 있는 봉투 ⇒ `UNSUPPORTED`(경로 건강, TR 미지원), 그 외 ⇒ `ERROR`(러너 ABORT) |
+| F2 | 5b 가 `--poll-ms` 를 안 넘겨 원장 스로틀 재시도가 `--pace-s` 만 기다린다 — 방금 스로틀을 유발한 그 초당 간격 | **수정.** `--poll-ms "$PCA_POLL_MS"` 전달. 「`--poll-ms` 는 무시된다」는 프로브 주석도 정정(무시되지 않는다 — 재시도 대기다) |
+| F3 | `ref_rc` 를 **게이트하지 않는다** — 깨끗한 상태 줄을 찍고 rc 5 로 죽은 전처리를 건강하다고 본다 | **수정.** 보유 점검과 같은 규칙: 비-0 종료면 숫자(여기선 상태)를 믿지 않고 ABORT |
+| F4 | 역전 검사가 **override 끼리만** 비교한다 — 한쪽만 준 경우(파생된 반대쪽과의 역전)는 그대로 빈 창 | **수정.** 검사를 **파생 후** 창(`_ksdinfo_window`)에 대해 수행. 단일 override 두 형태 + 쌍 역전 전부 사전조건 거부 |
+| F5 | 5b 가 돌면 본 시행 아티팩트에서 `reference_dates`/`mock_reference_support` 가 **사라진다**(런북이 기록한다고 적은 관측). `--note` 대체는 8행·2필드로 손실 | **수정.** `--reference-rows-from <5b 아티팩트>` — 그 관측들을 **축자 입양**. GET 0회, 형식 불변, 출처 관측 1건 추가 |
+| F6 | 복사가 실패하면 `ART_BEFORE` 가 그대로라, 본 시행이 아티팩트를 안 쓴 경우 step 8 이 **참조 전용 아티팩트를 증거 루트로** 복사한다 | **수정.** `REF_ART` 로 신원 기록, 본 시행 복사에서 **이름이 아니라 신원으로** 제외 |
+| F7 | 보유가 필요 없는 5b 가 **페이지네이션 보유 조회 뒤**에 있다 — 지급일 불일치 슬롯마다 잔고 조회를 통째로 버린다 | **수정.** 5b 를 자격증명 가드 직후, 보유 점검 **앞**으로 옮겼다(step 5). 단계 번호 재배치 |
+| F8 | `_do_reference_only` 가 `_StopRun` 을 삼키고 **leg skip 전에** 반환 — 멈춘 조회는 `legs.<class>.<leg>` 가 **없는** 아티팩트를 쓴다 | **수정.** `finally` 로 모든 경로에서 leg skip + `leg_provenance_class` |
+| F9 | 「없으면 최신 기준일」이 러너 주석·계획·PR 본문에 남아 코드(어느 행이든)와 모순 | **수정.** 러너 주석·계획 §7.14 정정. ⚠ **PR 본문은 `gh pr edit` 금지 규칙상 내가 못 고친다 — 운영자 반영 필요** |
+| F10 | `REFERENCE_ROWS` 는 `output1` 전체를, `REFERENCE_ROW=` 는 dict 행만 센다 | **수정.** 실제 **방출한 행**만 센다. 방출 0이면 상태도 `NO_ROWS` |
+
+**F1 과 F8 은 같은 형태다 — 가드가 자기가 막는다고 적은 것을 통과시킨다.** F1 은 「건강하지
+않은 경로엔 창을 걸지 않는다」는 게이트가 500 을 통과시켰고, F8 은 「leg 질문을 비워두지
+않는다」는 F1 처분이 **오류 경로에서만** 비워뒀다. 둘 다 정상 경로만 보면 초록이다.
+
+**F1 의 처분은 리뷰 문구와 한 군데 다르다.** 리뷰·지시는 「알려진 `msg_cd` 허용목록」을
+제안했는데, **모의 ksdinfo 미지원 응답의 msg_cd 는 이 저장소에 한 건도 측정돼 있지 않다**
+(관측은 전부 `SUPPORTED`). 지금 허용목록을 만들면 목록이 비어 있어서, `UNSUPPORTED` 팔이
+**존재 이유인 바로 그 경우를 ABORT 로 바꾼다** — 가드가 자기가 허용한다고 적은 것을 막는
+형태다. 그래서 지시가 함께 제시한 「documented shape」 쪽을 택했다: **브로커가 답했는지**
+(HTTP 200 + `rt_cd` 봉투)로 가른다. 리뷰의 실패 시나리오(500 + HTML)는 그대로 `ERROR` 로
+떨어지고, 코드는 상태 줄에 찍히므로 운영자가 **측정 뒤에** 더 좁힐 수 있다.
+
+**라운드 3 red 증명.** 새/변경 테스트 32건 중 **26건이 라운드-2 HEAD(`5608aa62`)에서 red**.
+행동 red: `the trial re-sent the reference GET`(F5) · `the holding walk was spent anyway`(F7) ·
+`the holding walk ran before the pre-check`(F7 역방향) · `assert 0 != 0`(ERROR 가 ABORT 를
+안 만든다, F1) · `REFERENCE_ROWS=3` 에 행 1줄(F10) · `probe contacted the broker when it must
+not`(F4 단일 override) · `--poll-ms not in argv`(F2) · `reference check exited 5` 부재(F3) ·
+`is this run's reference-only lookup` 부재(F6) · 멈춘 조회의 `skips == []`(F8).
+red 가 아닌 6건은 핀이다: 깨끗한 봉투의 거부가 `UNSUPPORTED` 로 남는 것(F1 역방향) ·
+파생 창 안쪽 단일 override 허용(F4 역방향) · 입양 시행도 완료 관측으로 세어지는 것 ·
+`OK`/`NO_ROWS`/`UNSUPPORTED` 3종이 시행을 막지 않는 것.
+
+#### 7.14.4 라운드 3 게이트
+
+```
+.venv/bin/pytest (같은 3파일) -p no:cacheprovider
+  → 294 passed, 1 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check (변경 .py 2건)               → unchanged
+bash -n tools/broker_probes/runners/run_p_ca.sh → OK
+docker koalaman/shellcheck:stable --severity=warning → rc 0
+```
+
+라운드 2 CI(`5608aa62`): `test` pass(6m18s) · `tos-gate`·`tos-firewall`·`ruff`·`lint`·
+`type-check`·`backtest-extra` pass · `performance` fail — 메모리 `ci-gating-reality` 의
+기존 baseline 미갱신 건이고 이 PR 은 `tools/broker_probes/**`·`tests/tools/**` 밖을 건드리지
+않는다. **baseline 재생성 안 함.**
