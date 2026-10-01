@@ -156,13 +156,48 @@ def _if_tests(func: ast.FunctionDef) -> list[str]:
     ]
 
 
+def _reject_repetition(func: ast.FunctionDef, callees: tuple[str, ...]) -> None:
+    """Refuse any shape that could run the switch more than the pinned number of times.
+
+    **Review F3.** ``switch_attempts`` counts CALL SITES, which is only the same thing as
+    "attempts" while the code is straight-line. Wrap the wait and the retry in
+    ``for _ in range(5): ...`` and the count stays 2 while the mechanism has become an
+    unbounded hammer — precisely the drift this module says it forbids, passing green.
+    So a loop anywhere in these two functions is refused outright, and so is recursion
+    back into the switch or the wait.
+
+    ``ast.Try`` is deliberately NOT refused, though the review listed it: both sides
+    legitimately contain one — ``enable_wal_journal``'s classifying handler on both, and
+    the runtime's logging re-raise in the wait — so banning it would turn this pin red on
+    the current, correct code. A ``try`` cannot repeat anything by itself; the ``if``
+    counts in :func:`_mechanism_of` already pin the handler's shape.
+    """
+    for node in ast.walk(func):
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            raise MechanismNotFound(
+                f"{func.name} contains a {type(node).__name__} — the retry must be "
+                "straight-line, since 'exactly one retry' is counted from call sites"
+            )
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in callees
+        ):
+            raise MechanismNotFound(
+                f"{func.name} calls {node.func.id} — recursion would repeat the switch "
+                "without adding a call site the attempt count can see"
+            )
+
+
 def _mechanism_of(path: Path) -> dict[str, object]:
     """The seven mechanism facts, read out of ``path``'s syntax tree.
 
     Raises:
-        MechanismNotFound: A required function or constant is absent, or a required
-            statement shape is not there to read. Never returns a partial answer — an
-            extractor that shrugged would make this whole comparison vacuous.
+        MechanismNotFound: A required function or constant is absent, a required
+            statement shape is not there to read, or the retry is written as a loop or a
+            recursion rather than straight-line (:func:`_reject_repetition`). Never
+            returns a partial answer — an extractor that shrugged would make this whole
+            comparison vacuous.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     functions = {name: _function(tree, name) for name in _REQUIRED_FUNCTIONS}
@@ -170,6 +205,9 @@ def _mechanism_of(path: Path) -> dict[str, object]:
 
     enable = functions["enable_wal_journal"]
     wait = functions["_wait_out_the_lock_and_retry"]
+    _reject_repetition(enable, ("enable_wal_journal",))
+    _reject_repetition(wait, ("_wait_out_the_lock_and_retry", "enable_wal_journal"))
+    _reject_repetition(functions["_switch_journal_to_wal"], ("_switch_journal_to_wal",))
 
     handlers = [
         node for node in ast.walk(enable) if isinstance(node, ast.ExceptHandler)
@@ -271,6 +309,60 @@ def test_a_renamed_mechanism_function_is_refused_not_ignored(
 
     with pytest.raises(MechanismNotFound, match=name):
         _mechanism_of(renamed)
+
+
+def test_a_looped_retry_is_refused_even_though_the_call_count_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    """**Review F3.** The loop shape that slipped past the attempt count, on the RUNTIME text.
+
+    The mutation is the one the review named: wrap the wait and the retry in
+    ``for _ in range(5)`` with a ``break`` on success. ``_switch_journal_to_wal`` is
+    still called once in the wait and once in ``enable_wal_journal``, so
+    ``switch_attempts`` stays 2 and ``wait_sql`` is unchanged — the comparison alone
+    could not see it. It is measured on the runtime module rather than the kernel one
+    because that is the side with the more elaborate wait, and the pin has to hold for
+    whichever side drifts.
+    """
+    source = RUNTIME_MODULE.read_text(encoding="utf-8")
+    marker = '    conn.execute("BEGIN IMMEDIATE")\n    conn.execute("ROLLBACK")\n'
+    assert source.count(marker) == 1, "the wait's statement pair moved"
+    looped = source.replace(
+        marker,
+        "    for _attempt in range(5):\n"
+        '        conn.execute("BEGIN IMMEDIATE")\n'
+        '        conn.execute("ROLLBACK")\n'
+        "        if _attempt >= 0:\n"
+        "            break\n",
+    )
+    mutated = tmp_path / "schema_ledger.py"
+    mutated.write_text(looped, encoding="utf-8")
+
+    with pytest.raises(MechanismNotFound, match="For"):
+        _mechanism_of(mutated)
+
+
+def test_a_recursive_retry_is_refused(tmp_path: Path) -> None:
+    """The other unbounded shape: the wait calling itself instead of looping.
+
+    Recursion adds no call site inside the function body that ``switch_attempts`` can
+    see, so without this the attempt count would still read 2.
+    """
+    source = KERNEL_MODULE.read_text(encoding="utf-8")
+    marker = "    return _switch_journal_to_wal(conn)\n"
+    assert source.count(marker) == 1
+    recursive = source.replace(
+        marker,
+        "    mode = _switch_journal_to_wal(conn)\n"
+        "    if mode != _WAL_JOURNAL_MODE:\n"
+        "        return _wait_out_the_lock_and_retry(conn)\n"
+        "    return mode\n",
+    )
+    mutated = tmp_path / "_wal.py"
+    mutated.write_text(recursive, encoding="utf-8")
+
+    with pytest.raises(MechanismNotFound, match="recursion"):
+        _mechanism_of(mutated)
 
 
 def test_a_second_retry_is_refused_by_the_comparison(tmp_path: Path) -> None:
