@@ -5,7 +5,8 @@ Task 5 of the futures-strategy-daemon plan. Wires:
   -> FuturesContextProvider -> SetupCEventReaction
   -> DecisionEngineDaemon -> signal.candidate.futures.shadow
 
-Uses fakeredis.aioredis with a FakeServer so two client instances share state
+Uses fakeredis.aioredis clients on a shared fakeredis.FakeServer so two client
+instances share state
 (feed client + assertion client) while avoiding the fakeredis connection-close
 side-effect that makes xrange return None after the feed task is cancelled.
 
@@ -24,6 +25,7 @@ import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import fakeredis
 import fakeredis.aioredis
 import pandas as pd
 import pytest
@@ -83,7 +85,11 @@ async def test_event_breakout_produces_candidate(candidate_stream):
     Parametrized over the shadow and live candidate streams (F-2): the producer
     → daemon path carries a candidate on either stream.
     """
-    server = fakeredis.aioredis.FakeServer()
+    # `fakeredis.FakeServer`, not `fakeredis.aioredis.FakeServer`: 2.39.0 layered the
+    # internals into `_core`/`_clients`/`_socket` and the async module's explicit
+    # `__all__` no longer re-exports it. The top-level name is the same object and is
+    # what the sibling integration tests already use.
+    server = fakeredis.FakeServer()
     # Two clients on the same server: one drives the feed/daemon, one for assertions.
     # Using separate client objects avoids the fakeredis connection-close side-effect
     # (feed.stop() cancels the xread task which corrupts the originating client's
