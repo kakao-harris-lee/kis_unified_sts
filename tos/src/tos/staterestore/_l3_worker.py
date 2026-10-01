@@ -47,6 +47,7 @@ anything. A disagreement aborts loudly with exit code
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -66,8 +67,8 @@ from tos.orthostate import (
     coupling_violations,
 )
 from tos.rcl import CapacityState
-from tos.staterestore._wal import JournalModeRefused
-from tos.staterestore.reload import reload_conservative
+from tos.staterestore._wal import StoreJournalModeRefused
+from tos.staterestore.reload import StoreOpenRefused, reload_conservative
 from tos.staterestore.store import CompositeStateStore
 
 #: The deterministic crash status. 137 is the conventional "killed" code; the value is a
@@ -335,7 +336,18 @@ def run_writer(scenario: CrashScenario, store_path: Path, cache_path: Path) -> N
             CPL_MISMATCH_EXIT,
         )
 
-    with CompositeStateStore(store_path) as store:
+    # The writer classifies its own open the same way the reader does (review round-2
+    # F3). Only the CONSTRUCTOR is wrapped: a failure to commit is a defect in this
+    # worker or in the catalog, and must not be reported as "there was no store".
+    try:
+        store = CompositeStateStore(store_path)
+    except (StoreJournalModeRefused, sqlite3.Error) as exc:
+        _fail(
+            f"the composite-state store at {store_path} could not be opened on the "
+            f"WAL substrate this stage is defined over: {type(exc).__name__}: {exc}",
+            STORE_UNOPENABLE_EXIT,
+        )
+    with contextlib.closing(store):
         committed = store.commit_composite(
             composite, stop_after=scenario.commit_dimension_count
         )
@@ -383,18 +395,13 @@ def run_reader(scenario: CrashScenario, store_path: Path, cache_path: Path) -> i
             INTENT_IDENTITY,
             cache_paths=(cache_path,),
         )
-    except (JournalModeRefused, sqlite3.Error) as exc:
-        # The SUBSTRATE, and only the substrate: every sqlite-level failure to open or
-        # read the file means this stage has no store to measure. `IncompleteStoreError`
-        # and `StoreIntegrityError` are RuntimeErrors, not `sqlite3.Error`, so they keep
-        # propagating — they are findings ABOUT a store that WAS read, which is the thing
-        # this stage exists to produce, and folding them into an exit code would hide a
-        # reconstruction verdict behind a substrate one.
-        _fail(
-            f"store at {store_path} could not be opened on the WAL substrate this "
-            f"stage is defined over: {type(exc).__name__}: {exc}",
-            STORE_UNOPENABLE_EXIT,
-        )
+    except StoreOpenRefused as exc:
+        # Exactly the OPEN. `reload_conservative` draws that boundary itself (review
+        # round-2 F4): a sqlite error raised by the READ propagates unchanged and exits
+        # 1, because it is a finding about a store that WAS opened. So do
+        # `IncompleteStoreError` and `StoreIntegrityError`, which are reconstruction
+        # verdicts and the thing this stage exists to produce.
+        _fail(str(exc), STORE_UNOPENABLE_EXIT)
     post = outcome.composite
     verdict = {
         "role": "reader",

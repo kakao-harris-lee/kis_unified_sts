@@ -52,6 +52,7 @@ restart coverage argument is a review-layer obligation, and independent sign-off
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -521,6 +522,65 @@ def test_a_store_that_cannot_be_opened_is_a_classified_refusal(tmp_path) -> None
         f"{reader.returncode}; stderr={reader.stderr}"
     )
     assert "could not be opened" in reader.stderr
+
+
+def test_a_writer_that_cannot_open_the_store_is_a_classified_refusal(tmp_path) -> None:
+    """**Review round-2 F3.** The writer classifies its open the way the reader does.
+
+    Before this, only the reader did: the writer's open escaped as an unhandled
+    traceback with exit 1, so ``_run_scenario`` saw "not 137" and reported a generic
+    crash-exit mismatch. A harness asserting on exit codes could not tell "the store
+    could not be opened" from "the worker has a bug" — the distinction
+    :data:`_CRASH_EXIT`'s own comment says these constants exist to preserve.
+    """
+    store = tmp_path / "a-directory-not-a-store"
+    store.mkdir()
+    cache = tmp_path / "unused.cache.json"
+
+    writer = _spawn("writer", "L3-01", store, cache)
+
+    assert writer.returncode == _STORE_UNOPENABLE_EXIT, (
+        f"expected the classified substrate refusal {_STORE_UNOPENABLE_EXIT}, got "
+        f"{writer.returncode}; stderr={writer.stderr}"
+    )
+    assert "could not be opened" in writer.stderr
+
+
+def test_a_read_error_after_a_successful_open_is_not_the_substrate_code(
+    tmp_path,
+) -> None:
+    """**Review round-2 F4.** The other side of the boundary, and the one that was wrong.
+
+    The store file here OPENS cleanly — it is a real sqlite database, the journal-mode
+    switch succeeds, and ``CREATE TABLE IF NOT EXISTS dimension_marker`` is a no-op
+    because a table of that name already exists. It is the SELECT that fails, on a
+    column that is not there. That is a finding about a store that WAS opened, and it
+    must not come back as the substrate code.
+
+    RED before the narrowing: the reader caught ``sqlite3.Error`` around the whole
+    reload, so this ``OperationalError`` was reported as "could not be opened" with exit
+    71. Note that narrowing by TYPE alone would not have fixed it — this is an
+    ``OperationalError``, the same class the open raises — which is why the open and the
+    read are separate statements in ``reload_conservative`` now.
+    """
+    store = tmp_path / "wrong-shape.sqlite3"
+    conn = sqlite3.connect(str(store))
+    try:
+        conn.execute("CREATE TABLE dimension_marker (unexpected TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+    cache = tmp_path / "unused.cache.json"
+
+    reader = _spawn("reader", "L3-01", store, cache)
+
+    assert reader.returncode != _STORE_UNOPENABLE_EXIT, (
+        "a read-time error was reported as a substrate refusal; stderr="
+        f"{reader.stderr}"
+    )
+    assert reader.returncode != 0
+    assert "could not be opened" not in reader.stderr
+    assert "no such column" in reader.stderr
 
 
 def test_the_verdict_follows_the_store_not_the_scenario_argument(

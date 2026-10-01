@@ -54,6 +54,8 @@ Non-transmitting: this module reads a local file. No socket, no route, no creden
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
@@ -68,6 +70,7 @@ from tos.orthostate import (
     reconstruct_conservative,
 )
 from tos.rcl import CapacityState
+from tos.staterestore._wal import StoreJournalModeRefused
 from tos.staterestore.store import DIMENSION_COMMIT_ORDER, CompositeStateStore
 
 _EnumMarker = TypeVar(
@@ -118,6 +121,20 @@ ABSENT_DIMENSION_FILL: dict[StateDimension, object] = {
     StateDimension.KNOWLEDGE: KnowledgeState.UNOBSERVED,
     StateDimension.CAPACITY: CapacityState.POTENTIALLY_LIVE,
 }
+
+
+class StoreOpenRefused(RuntimeError):
+    """The durable store could not be OPENED — a substrate refusal, not a verdict.
+
+    Raised only around :class:`~tos.staterestore.store.CompositeStateStore`'s
+    construction (review round-2 F4), and chained onto whatever sqlite or
+    :class:`~tos.staterestore.StoreJournalModeRefused` actually raised. Its whole job is
+    to be distinguishable from the two findings this module produces about a store it
+    DID read — :class:`IncompleteStoreError` and
+    :class:`~tos.staterestore.store.StoreIntegrityError` — so a caller classifying
+    outcomes cannot collapse "there was no store to read" into "this is what the store
+    said".
+    """
 
 
 class IncompleteStoreError(RuntimeError):
@@ -207,20 +224,31 @@ def reload_conservative(
     Raises:
         IncompleteStoreError: If the Intent dimension is absent (unidentifiable record).
         tos.staterestore.store.StoreIntegrityError: If a stored marker is unreadable.
-        tos.staterestore.JournalModeRefused: If opening the store did not leave the file
-            in ``journal_mode=WAL`` (#823). This read path shares
-            :class:`~tos.staterestore.store.CompositeStateStore`'s one constructor, so
-            it inherits that constructor's fail-closed open — a reader is refused rather
-            than handed a store whose durability shape is not the one every argument
-            here assumes.
-        sqlite3.OperationalError: If the journal-mode switch could not take its lock
-            within the connection's busy timeout, or failed for a reason that is not a
-            lock contest — a read-only store file raises ``attempt to write a readonly
-            database`` here, as it did before #823 (measured on both trees: the bare
+        StoreOpenRefused: If the store could not be OPENED — the fail-closed
+            ``journal_mode=WAL`` switch refused (#823), its lock could not be taken, or
+            sqlite could not open the file at all. Chained onto the underlying error.
+            A read-only store file lands here with ``attempt to write a readonly
+            database``, as it did before #823 (measured on both trees: the bare
             ``PRAGMA journal_mode=WAL`` raised the same error at the same statement).
+        sqlite3.Error: Raised unchanged by the READ, after a successful open — a
+            malformed page, a missing column. Deliberately not wrapped: it is a finding
+            about a store that was opened (review round-2 F4).
     """
     discarded = discard_caches(cache_paths)
-    with CompositeStateStore(Path(store_path)) as store:
+    # The OPEN and the READ are separate statements on purpose (review round-2 F4). They
+    # fail for different reasons and a caller must be able to tell them apart: a store
+    # that cannot be opened is a substrate finding, while anything raised after a
+    # successful open — a malformed page, a column that is not there — is a finding
+    # ABOUT a store that WAS read, which is what this stage exists to produce. Wrapping
+    # the whole `with` in one handler folded the second into the first.
+    try:
+        store = CompositeStateStore(Path(store_path))
+    except (StoreJournalModeRefused, sqlite3.Error) as exc:
+        raise StoreOpenRefused(
+            f"the composite-state store at {store_path} could not be opened on the "
+            f"WAL substrate this package is defined over: {type(exc).__name__}: {exc}"
+        ) from exc
+    with contextlib.closing(store):
         markers = store.read_markers(intent_identity)
 
     if StateDimension.INTENT not in markers:
