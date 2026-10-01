@@ -566,7 +566,9 @@ CI 와 같은 형태의 mypy 세 줄 전부 `Success`:
 | `12988f4a` | 자체 리뷰 2 — 부분 빌드를 「재개 가능」이라고 안내하던 메시지 |
 | `1b2293e1` | 자체 리뷰 3 — 중단된 단계가 자원 수치를 하나도 안 남겼다 |
 | `77af085b` | 독립 리뷰 #826 지적 F1~F9 |
-| `b3650672` | 리뷰 처분 §7.1.10 · 이 표 (F10) |
+| `b3650672` · `e13203ed` | 리뷰 1회차 처분 §7.1.10 · 이 표 (F10) |
+| `a5c5bfec` | 리뷰 2회차 지적 F1~F10 |
+| `<r2-docs>` | 리뷰 2회차 처분 §7.1.11 · 이 표 |
 
 ⚠ 이 표는 초판에서 `fb083dde` 와 `5310e90a` 만 들고 있었다. 그 뒤 두 커밋이 더 들어왔는데
 같은 절의 산문은 그 동작을 「착지했다」고 서술하고 있었다 — 감사자가 git 과 대조하면 주인 없는
@@ -786,3 +788,66 @@ cd <repo>
 **365 일치 재실행 명령은 §7.1.9 의 것 그대로다** — 새 플래그는 전부 기본값이 있고, 기본값은
 이 라운드에서 바뀌지 않았다. 달라진 것은 그 명령이 **중간에 멈췄을 때**다: 실패한 단계가 rc≠0
 로 보고되고, 중단이 산출물을 남기며, 로그가 권하는 재개가 실제로 돈다.
+
+#### 7.1.11 독립 리뷰 #826 2회차 처분 (2026-10-01)
+
+1회차와 같은 조건 — 저자와 **다른 패스**, 교차모델 독립성 **없음**. 판정
+**needs-attention**, 지적 10 건, **전건 수정**(기각 0). 둘(F2 · F7)은 리뷰어가 브랜치
+코드로 **실행해서** 확인한 것이라 가설이 아니다.
+
+| # | 지적 | 조치 |
+|---|---|---|
+| F1 | **SIGTERM 이 자식을 고아로 남겼다.** 핸들러가 없어 드라이버에 SIGTERM/SIGHUP 이 닿으면 인터프리터가 즉시 끝나고 중단 경로가 아예 안 돈다 — tmux 창을 닫거나 `timeout`·`kill`·earlyoom 이 **드라이버를** 고르면 53 GB 를 쓰던 자식이 **워치독 없이 계속 돌고** 락은 stale, 아티팩트는 0 | 두 신호를 `MeasureSignalled` 로 올려 같은 중단 경로를 타게 하고 `check="driver_signalled"` 로 기록. 테스트가 실제 하위 프로세스에 SIGTERM 을 보내 **자식이 죽었는지**와 아티팩트·락 해제를 확인 |
+| F2 | **테스트 스위트가 실행 중인 측정을 죽일 수 있었다**(실행 확인). 1회차에서 좁힌 패턴이 스위트가 실제로 띄우는 `bench build\|measure` 자식과 읽기 전용 `profile` 까지 맞혔다 | 패턴에서 `profile`·`preflight` 제거(둘 다 경합하지 않는다) · **자기 자손 제외** · **pytest 자손 제외** |
+| F3 | 기존 `--synthetic` 위의 build 를 프리플라이트가 통과시켰다 — 벤치가 반드시 거부하므로 **1단계 실패가 확정**인데, 네 아티팩트를 남겨 재시도까지 막았다 | `synthetic_absent` 검사. 여기서 거부하면 비용 0 |
+| F4 | `--no-watchdog` 인데 in-run kill 이 하나 남아 있었다 — 호스트 읽기 2연속 실패가 「가드가 눈이 멀었다」며 자식을 죽였다, **끈 가드를 근거로** | 기록만 하고 `fatal: false` 를 함께 남긴다 |
+| F5 | **실패한 단계의 수치가 조용히 덮였다.** `artifacts_absent` 는 `.out/.err/.json` 만 보는데 실패 단계는 이미 `.time`·`.resource.json` 을 썼다 | 다섯 파일을 `step_artifact_paths()` 한 곳에 모으고, 실패 시에도 중단과 똑같이 전부 옆으로 옮긴다 |
+| F6 | 리더 실패(`meminfo` 필드 결손 · `pgrep` 비정상 종료)가 **`preflight.json` 을 쓰기 전에** 터져, 「아티팩트 없는 거부」가 그대로 재현됐다 — 그 기록이 막으려던 바로 그것 | 실패한 **검사**로 적고 기록을 쓴다 |
+| F7 | **경로 끝이 `rg`/`grep` 인 빌드가 숨었다**(실행 확인). 모든 토큰에 basename 을 적용해 `-Dorg.gradle.appname=/home/u/rg` 가 명령 `rg` 로 읽혔다 | **명령 자리**의 토큰만 분류 — 첫 토큰 · 셸 구분자 뒤 · 셸의 `-c` 뒤. `VAR=value` 와 `eval`/`if`/`!`/`sudo` 접두어는 건너뛴다(그래야 F9 사례를 여전히 잡는다) |
+| F8 | 재개가 중단된 런의 로그를 통째로 덮었다 — ABORT 줄과 처분 메시지가 사라진다 | run_id 헤더를 달고 **append** |
+| F9 | 매 표본마다 pgrep 2회 + 조상 체인 2회 재구성(6시간이면 ~4,300 표본) | 자기 체인 1회 캐시 · 두 패턴을 **하나의 pgrep** 으로 |
+| F10 | 추정(참조 전체 `GROUP BY`)이 메모리 검사보다 **먼저**, 쓰지도 않는 measure-only 에서도 돌았다 | 지연 호출로 바꿔 **build 가 계획에 있고 앞선 검사가 통과했을 때만**. `--reference` 는 measure-only 에서 선택 |
+
+**건너뛴 검사는 통과가 아니다.** F10 때문에 디스크 검사가 「평가 안 함」이 될 수 있어
+`PreflightCheck.evaluated` 를 추가했다. 그 값은 **이미 다른 이유로 거부된 런에서만**
+False 가 되고, 거부 사유 목록에서는 빠지되 기록에는 남는다. 건강한 호스트에서 전 검사가
+evaluated 임을 테스트가 고정한다 — 그러지 않으면 「건너뜀」이 조용한 통과가 된다.
+
+**⚠ 레드 증명 초안에서 3건이 초록이었다.** 이 라운드의 교훈이라 그대로 적는다.
+
+- **자손 제외와 pytest 제외가 서로를 덮고 있었다.** pytest 아래에서는 자기 자손이 곧
+  pytest 자손이라, 둘 중 **어느 쪽을 꺼도 스위트가 초록**이었다 — 둘 다 「무엇의 이유도
+  아닌 가드」. 가짜 `/proc` 트리를 만들어 규칙을 분리했다(pid 200 이 드라이버, 201 이 그
+  자식, 300 이 무관한 두 번째 런).
+- **실행 확인된 F7 사례의 음성 테스트가 아예 없었다.** 기존 F9 테스트는 옛 토크나이저로도
+  통과하므로 F7 수정을 전혀 지키지 않았다. 두 사례를 음성으로 추가했다.
+
+이것이 `MEMORY.md` 의 반복 결함 형태(「가드가 자기가 막는다고 말한 것을 허용한다」)가
+**가드가 아니라 가드의 증명**에서 나타난 경우다. 레드 증명을 돌리지 않았다면 「지적 10건
+수정」이라고 적고 셋은 사실이 아니었을 것이다.
+
+**테스트.** 두 파일 **81 passed**(measure 63 + bench 18) · `tests/tools/test_tos_*.py`
+전체 배터리 green. **레드 증명 이 라운드 14 건, 초록으로 남은 가드 0 — 누적 43/43.**
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| F1 SIGTERM/SIGHUP 핸들러 | `test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact` |
+| F2 pytest 자손 제외 | `test_f2_a_process_descended_from_another_pytest_is_excluded` |
+| F2 자기 자손 제외(`scan` 호출부) | `test_f2_the_descendant_rule_is_live_in_scan_not_just_available` |
+| F2 패턴에서 `profile`/`preflight` 제거 | `test_f3_a_real_second_driver_invocation_is_still_caught` · `test_f3_the_pattern_matches_a_real_invocation_through_the_real_pgrep` |
+| F3 `synthetic_absent` | `test_r2_f3_a_build_onto_an_existing_synthetic_is_refused_before_anything_runs` |
+| F4 no-watchdog 비치명 | `test_r2_f4_with_the_watchdog_off_a_host_read_failure_is_recorded_not_fatal` |
+| F5 다섯 파일 한 목록 | `test_r2_f5_a_failed_step_cannot_have_its_resource_numbers_overwritten` |
+| F6 리더 실패도 기록 | `test_r2_f6_a_reader_failure_still_writes_the_preflight_record` |
+| F7 명령 자리 토크나이저 | `test_a_process_merely_searching_for_the_marker_is_not_a_competing_build` |
+| F7 명령 자리만 분류 | `test_r2_f7_a_build_whose_paths_end_in_a_search_command_name_is_not_hidden` |
+| F8 로그 append | `test_r2_f8_the_run_log_is_appended_not_replaced` |
+| F10 추정 지연·조건부 | `test_r2_f10_the_reference_is_not_scanned_when_the_host_already_failed` |
+| F10 measure-only 에 `--reference` 불필요 | `test_r2_f10_a_measure_only_resume_needs_no_reference_at_all` |
+| `evaluated=False` 는 통과가 아니다 | `test_r2_f10_the_reference_is_not_scanned_when_the_host_already_failed` |
+
+**365 일치 재실행 명령은 §7.1.9 의 것 그대로다.** 새 인자(`--poll-interval-s` ·
+`--host-read-retries` · `--index-growth-ratio`)는 전부 기본값이 있다. 이 라운드가 바꾼 것은
+**그 명령이 잘못될 때**다: 창을 닫아도 자식이 남지 않고, 동료가 테스트를 돌려도 측정이
+죽지 않으며, 재개가 앞선 런의 로그와 수치를 덮지 않고, 측정 전용 재개에는 `--reference`
+조차 필요 없다.
