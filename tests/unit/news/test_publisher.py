@@ -49,13 +49,58 @@ async def test_publisher_serializes_keywords_as_json(redis):
     assert fields[b"keywords_json"] == b'["kw1"]'
 
 
+def _as_bytes(value):
+    """Stream ids come back as ``bytes`` from a default client and ``str`` from a
+    ``decode_responses=True`` one — normalize so the comparison does not depend on it.
+    """
+    return value.encode() if isinstance(value, str) else value
+
+
+_MAXLEN = 2
+#: Comfortably more than one radix node (100 entries), so trimming is guaranteed to have
+#: something whole to drop — see :func:`test_publisher_respects_maxlen`.
+_WELL_OVER_ONE_NODE = 300
+
+
 @pytest.mark.asyncio
 async def test_publisher_respects_maxlen(redis):
-    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=2)
-    for i in range(5):
-        await pub.publish(_item(f"id_{i}"))
+    """The stream is trimmed, and the oldest entries are the ones that go.
+
+    ⚠ This deliberately does NOT assert ``XLEN <= maxlen``. The publisher calls
+    ``xadd(..., maxlen=..., approximate=True)`` (``shared/news/publisher.py``), and
+    ``MAXLEN ~`` is explicitly not a hard cap in Redis: it drops whole radix-tree nodes
+    (~100 entries each) and stops, so a stream can legitimately sit well above ``maxlen``.
+    The old assertion (``<= 2`` after 5 publishes) only ever passed because fakeredis
+    below 2.39 emulated EXACT trimming; 2.39.0 fixed that to match Redis and the
+    assertion started failing. The library became more faithful — the test was asserting a
+    guarantee production does not have, so nothing downstream may rely on ``maxlen`` as a
+    hard bound on this stream.
+
+    What IS guaranteed, and what this pins: trimming happens at all, it never goes below
+    ``maxlen``, and it removes from the head. A publisher that stopped passing ``maxlen``
+    would leave all 300 entries and fail the upper bound here, so the regression the old
+    test caught is still caught.
+
+    An exact bound is not asserted anywhere, because reaching it would mean
+    ``approximate=False``, which is a production change (and a real cost — exact trimming
+    is why Redis offers the ``~`` form). If the news stream ever needs a hard cap, that is
+    a deliberate decision in the publisher, with this test updated alongside it.
+    """
+    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=_MAXLEN)
+    published = [
+        await pub.publish(_item(f"id_{i}")) for i in range(_WELL_OVER_ONE_NODE)
+    ]
+    first_id = _as_bytes(published[0])
+
     entries = await redis.xrange("stream:news.raw")
-    assert len(entries) <= 2
+
+    # Trimming happened, and never below maxlen.
+    assert _MAXLEN <= len(entries) < _WELL_OVER_ONE_NODE
+    # It came off the head: the first entry published is gone.
+    assert entries[0][0] != first_id
+    assert first_id not in {entry_id for entry_id, _ in entries}
+    # The newest entry is never trimmed.
+    assert entries[-1][1][b"news_id"] == f"id_{_WELL_OVER_ONE_NODE - 1}".encode()
 
 
 @pytest.mark.asyncio

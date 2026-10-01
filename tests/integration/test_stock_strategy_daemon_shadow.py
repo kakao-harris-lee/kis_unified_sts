@@ -6,7 +6,8 @@ Task 5 of the stock-strategy-daemon plan. Wires the full pipeline:
   -> StockStrategyDaemon.evaluate_once()
   -> signal.candidate.stock.shadow
 
-Uses fakeredis.aioredis with a FakeServer so two client instances share state
+Uses fakeredis.aioredis clients on a shared fakeredis.FakeServer so two client
+instances share state
 (feed client + assertion client) while avoiding the fakeredis connection-close
 side-effect that makes xrange return None after the feed task is cancelled.
 
@@ -33,6 +34,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
+import fakeredis
 import fakeredis.aioredis
 import pytest
 
@@ -70,7 +72,11 @@ async def test_pipeline_integrity_market_ticks_to_shadow():
     These confirm the whole plumbing: feed -> engine -> resolver -> manager ->
     daemon is wired correctly and produces no runtime errors.
     """
-    server = fakeredis.aioredis.FakeServer()
+    # `fakeredis.FakeServer`, not `fakeredis.aioredis.FakeServer`: 2.39.0 layered the
+    # internals into `_core`/`_clients`/`_socket` and the async module's explicit
+    # `__all__` no longer re-exports it. The top-level name is the same object and is
+    # what the sibling integration tests already use.
+    server = fakeredis.FakeServer()
     # Two clients on the same FakeServer: one drives the feed/daemon, the other
     # is used for XADD (seeding) and final assertions.  Keeping them separate
     # avoids the fakeredis connection-close side-effect: feed.stop() cancels the
