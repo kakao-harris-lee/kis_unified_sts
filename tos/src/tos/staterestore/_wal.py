@@ -137,12 +137,28 @@ def enable_wal_journal(conn: sqlite3.Connection) -> None:
       mode it kept, not by raising, so a non-``wal`` answer is :class:`JournalModeRefused`.
     * **Only a lock contest is retried**, by PRIMARY code (:func:`_is_lock_contest`).
 
-    **The bound is THREE busy timeouts, not one.** The first PRAGMA can itself wait (its
-    ``SHARED``/``EXCLUSIVE`` acquisitions DO go through the handler; only the
-    ``RESERVED`` upgrade skips it), then ``BEGIN IMMEDIATE`` can wait, then the retried
-    PRAGMA can wait. Worst case a refusal takes about 3x the connection's timeout —
-    ~15 s at the stdlib default. This module adds no timeout, sleep or interval of its
-    own, and prints nothing while it waits (see the module docstring).
+    **What the retry actually does depends on who held the lock.** In the case this
+    exists for — a brand-new file, a sibling mid-switch — the holder WAS the switcher, so
+    by the time the wait returns the file is already WAL and the second PRAGMA is a
+    no-op. If the holder was an ordinary writer on a file still in rollback mode, the
+    second PRAGMA performs the REAL switch, and its own ``RESERVED`` upgrade bypasses the
+    busy handler exactly like the first one did — so a third party that grabs the lock in
+    the ``ROLLBACK``-to-PRAGMA gap makes the retry lose IMMEDIATELY and the open is
+    refused without having waited a further timeout. That is fail-closed and correct, and
+    it is reachable at the N=8 concurrency the tests drive (the winner can time out on its
+    own ``EXCLUSIVE`` upgrade, leaving nobody to have switched the file). It is not the
+    "already WAL, so it cannot fail" story: this store's file is born in WAL inside its
+    own constructor, which is why that shape is rare rather than why it is impossible.
+
+    **The upper bound is THREE busy timeouts, not one — and a refusal can also come back
+    far sooner than that.** The first PRAGMA can itself wait (its ``SHARED``/
+    ``EXCLUSIVE`` acquisitions DO go through the handler; only the ``RESERVED`` upgrade
+    skips it), then ``BEGIN IMMEDIATE`` can wait, then the retried PRAGMA can wait — so
+    the worst case is about 3x the connection's timeout, ~15 s at the stdlib default.
+    Size deadlines against that number, not against 5 s; but do not read a quick refusal
+    as "it never waited", because the paragraph above is the case where it could not.
+    This module adds no timeout, sleep or interval of its own, and prints nothing while
+    it waits (see the module docstring).
 
     Args:
         conn: The store's own live connection, in autocommit mode
