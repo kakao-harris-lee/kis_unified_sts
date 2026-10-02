@@ -46,11 +46,17 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
+
+#: Captured before ``no_sleeping`` replaces ``time.sleep`` process-wide. The
+#: late-window test needs the deadline to really pass, and the deadline is
+#: read from the real monotonic clock.
+_REAL_SLEEP = time.sleep
 
 from tools.broker_probes import common, probes_order
 from tools.broker_probes.probes_order import (
@@ -165,6 +171,8 @@ class _Wire:
 
     ``both``       both ODNOs live — the coexistence shape.
     ``new_only``   only the amended order is live (the campaign's normal shape).
+    ``live``       every order the broker actually holds — what a real book
+                   walk returns, and the cleanup default.
     ``timeout``    ``requests.exceptions.ReadTimeout``.
     ``conn``       ``requests.exceptions.ConnectionError`` carrying a URL with
                    the account number in the query string, exactly as
@@ -174,6 +182,9 @@ class _Wire:
     ``throttle``   HTTP 500 + ``EGW00215``, the LEDGER throttle.
     ``no_rows``    ``rt_cd='7'`` + ``KIOK0560`` — this broker's empty-set
                    notation, a REJECTION shape and not a rate limit.
+    ``rt_cd_zero`` a healthy page whose ``rt_cd`` is the JSON NUMBER ``0``.
+                   ``str(x or "")`` turns that into ``""`` — the falsy-zero
+                   trap ``call_evidence`` documents.
     ``http429``    HTTP 429, no body.
     ``egw00201``   HTTP 200 + ``EGW00201``, our own call rate in the body.
     """
@@ -186,12 +197,30 @@ class _Wire:
         submit_raises: BaseException | None = None,
         amend_raises: BaseException | None = None,
         submit_rejects: bool = False,
+        amend_rejects: bool = False,
+        amend_without_odno: bool = False,
+        accept_before_raising: bool = False,
+        delay_before: dict[int, float] | None = None,
     ) -> None:
         self.poll_script = list(poll_script or ["new_only"])
-        self.cleanup_script = list(cleanup_script or ["new_only"])
+        # "live", not "new_only": the cleanup walk reads the BOOK, and the
+        # whole point of the F1 case is a row the probe never named. A
+        # scripted subset there would hide exactly what the walk exists to
+        # find. In the ordinary flow the two are the same set.
+        self.cleanup_script = list(cleanup_script or ["live"])
         self.submit_raises = submit_raises
         self.amend_raises = amend_raises
         self.submit_rejects = submit_rejects
+        self.amend_rejects = amend_rejects
+        self.amend_without_odno = amend_without_odno
+        #: The hazard F1 names: the broker ACCEPTED the order and is resting
+        #: it, and only the answer was lost. Without this the fake would make
+        #: a lost POST look harmless, which is the assumption under review.
+        self.accept_before_raising = accept_before_raising
+        #: 1-based inquire index -> real seconds to burn first, for the
+        #: late-window case. Real, because the fixture patches time.sleep out
+        #: and the deadline is read from the real monotonic clock.
+        self.delay_before = dict(delay_before or {})
         self.calls: list[dict[str, Any]] = []
         self.inquiries: list[str] = []
         self.cleanup_phase = False
@@ -219,7 +248,15 @@ class _Wire:
         """
         return [
             {
-                "odno": odno.lstrip("0").rjust(11),  # space-padded, as observed
+                # Space-padded to TEN, which is what the campaign artifacts
+                # measure on this surface — the same width the accept
+                # response zero-pads to (P-8-20260928T000506Z:
+                # odno_wire_format, submit "0000000512" len 10, query
+                # "       512" len 10). The width matters here: the cancel of
+                # an unaccounted row is reconstructed by re-padding the row,
+                # so a fake that padded to 11 would "prove" a reconstruction
+                # the broker never accepted.
+                "odno": odno.lstrip("0").rjust(10),
                 "pdno": _SYMBOL,
                 "ord_qty": "1",
                 "tot_ccld_qty": "0",
@@ -255,6 +292,16 @@ class _Wire:
             return self._rvsecncl(body)
         if url.endswith("trading/order"):
             if self.submit_raises is not None:
+                if self.accept_before_raising:
+                    # Accepted, resting, and the answer never came back.
+                    self._original = self._next_odno()
+                    self._live.add(self._original)
+                # Everything after this is the probe's ``finally``: there is
+                # no poll loop left to serve. The phase normally flips on the
+                # first cancel, and after a lost SUBMIT there are no ODNOs to
+                # cancel, so without this the book walk would be answered
+                # from the poll script.
+                self.cleanup_phase = True
                 raise self.submit_raises
             if self.submit_rejects:
                 return (
@@ -271,6 +318,9 @@ class _Wire:
     def _inquire(self) -> tuple[int, dict[str, Any], float, str]:
         token = self._next_token()
         self.inquiries.append(token)
+        delay = self.delay_before.pop(len(self.inquiries), None)
+        if delay:
+            _REAL_SLEEP(delay)
         if token == "timeout":
             raise requests.exceptions.ReadTimeout(
                 "HTTPSConnectionPool(host='openapivts.koreainvestment.com', "
@@ -291,6 +341,9 @@ class _Wire:
             return 500, dict(_LEDGER_THROTTLE), 1.0, str(_LEDGER_THROTTLE)
         if token == "http429":
             return 429, {}, 1.0, "Too Many Requests"
+        if token == "rt_cd_zero":
+            rows = self._rows([self._new], honour_live=self.cleanup_phase)
+            return 200, {"rt_cd": 0, "output1": rows}, 1.0, "{}"
         if token == "no_rows":
             # This broker's empty-set notation on the sibling balance surface:
             # a REJECTION shape, not rt_cd=0 with an empty list
@@ -309,25 +362,43 @@ class _Wire:
                 "msg1": "초당 거래건수를 초과하였습니다.",
             }
             return 200, payload, 1.0, str(payload)
-        shown = [self._original, self._new] if token == "both" else [self._new]
+        if token == "live":
+            shown = sorted(self._live)
+        elif token == "both":
+            shown = [self._original, self._new]
+        else:
+            shown = [self._new]
         rows = self._rows(shown, honour_live=self.cleanup_phase)
         return 200, {"rt_cd": "0", "output1": rows}, 1.0, "{}"
 
     def _rvsecncl(self, body: dict[str, Any]) -> tuple[int, dict[str, Any], float, str]:
         if body.get("RVSE_CNCL_DVSN_CD") == "01":
             if self.amend_raises is not None:
+                if self.accept_before_raising:
+                    self._live.discard(self._original)
+                    self._new = self._next_odno()
+                    self._live.add(self._new)
+                self.cleanup_phase = True
                 raise self.amend_raises
+            if self.amend_rejects:
+                return (
+                    200,
+                    {"rt_cd": "1", "msg1": "모의투자 정정주문이 불가합니다."},
+                    1.0,
+                    "{}",
+                )
             # The amend consumes the original's quantity and rests under a
             # new number — all five 2026-07-31 trials and both 09-28 trials.
             self._live.discard(self._original)
             self._new = self._next_odno()
             self._live.add(self._new)
+            output = {} if self.amend_without_odno else {"ODNO": self._new}
             return (
                 200,
                 {
                     "rt_cd": "0",
                     "msg1": "모의투자 정정주문이 완료 되었습니다.",
-                    "output": {"ODNO": self._new},
+                    "output": output,
                 },
                 1.0,
                 "{}",
@@ -630,22 +701,145 @@ def test_a_rate_limit_body_that_also_carries_the_ledger_code_still_stops(
 # ---------------------------------------------------------------------------
 
 
-def test_a_transport_failure_on_the_submit_is_classified_and_not_resent(
+def test_a_lost_submit_stops_the_series_and_cancels_what_it_orphaned(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A resent submit is the duplicate-order hazard P-2 exists to measure, so
-    this one gets the classification and no second attempt. Before the change
-    the exception escaped and the runner read the resulting rc 5 as a
-    rejection."""
+    """Review F1, the serious one.
+
+    A ``ReadTimeout`` on the submit says only that no ANSWER came back. The
+    broker may have accepted the order and be resting it right now, under an
+    ODNO this probe never saw — so ``odnos`` is empty, ``_cleanup`` cancels
+    nothing, and the first version of this PR let the runner start trial N+1
+    on top of it, up to ``P8_MAX_TRANSIENT_STOPS`` resting orders deep. Before
+    the PR the escape at least stopped the series (rc 5).
+
+    So: the series stops, AND the book is walked and the orphan cancelled.
+    """
     wire = _install(
         monkeypatch,
         _Wire(
             submit_raises=requests.exceptions.ConnectionError(
                 f"Max retries exceeded with url: /uapi/x?CANO={_ACCOUNT} "
                 f"(Caused by {_CONNECTION_ABORTED})"
-            )
+            ),
+            accept_before_raising=True,
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "order_state_unknown"
+    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
+        "order_state_unknown"
+    ]
+    # Not resent: a second submit is the duplicate-order hazard P-2 measures.
+    assert len([c for c in wire.calls if c["url"].endswith("trading/order")]) == 1
+    assert [r["phase"] for r in _retry_records(run)] == ["submit"]
+
+    found = run.measurements["unaccounted_live_orders"]
+    assert found["status"] == "FOUND"
+    assert found["canonical_keys"] == ["558"]
+    assert list(found["cleanup_dispositions"].values()) == [_CLEANUP_CANCELLED]
+    assert any("UNACCOUNTED LIVE ORDER" in e for e in run.errors)
+    # And it really is gone from the book.
+    assert wire._live == set()
+    assert _ACCOUNT not in " ".join(run.errors)
+
+
+def test_a_lost_amend_does_not_count_the_known_original_as_orphaned(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """The amend consumed the original and rests under a number the probe
+    never saw. ``_cleanup`` handles the original (it is known); the walk must
+    find only the NEW leg, or the operator is sent after a row that already
+    has a disposition of its own."""
+    wire = _install(
+        monkeypatch,
+        _Wire(
+            amend_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=True,
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "order_state_unknown"
+    assert [r["phase"] for r in _retry_records(run)] == ["amend"]
+    # The original was known, so _cleanup owned it...
+    assert list(run.measurements["cleanup_dispositions"].values()) == [
+        _CLEANUP_NOTHING_TO_CANCEL
+    ]
+    # ...and only the leg nobody saw is reported as unaccounted.
+    found = run.measurements["unaccounted_live_orders"]
+    assert found["status"] == "FOUND"
+    assert found["canonical_keys"] == ["559"]
+    assert wire._live == set()
+
+
+def test_a_lost_submit_that_orphaned_nothing_says_so(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """ "The walk ran and the book was clean" is what lets the operator stop
+    looking, so it has to be written down. Silence would be the same shape as
+    no walk at all."""
+    _install(
+        monkeypatch,
+        _Wire(
+            submit_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=False,
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "order_state_unknown"
+    found = run.measurements["unaccounted_live_orders"]
+    assert found["status"] == "NONE_FOUND"
+    assert not any("UNACCOUNTED LIVE ORDER" in e for e in run.errors)
+
+
+def test_a_book_walk_that_cannot_answer_cancels_nothing_and_says_to_look(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Fail-closed, the same polarity cleanup uses: a walk that established
+    nothing must not be read as "nothing is resting", and it must certainly
+    not license cancelling rows it never saw."""
+    wire = _install(
+        monkeypatch,
+        _Wire(
+            submit_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=True,
+            cleanup_script=["conn"],
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    found = run.measurements["unaccounted_live_orders"]
+    assert found["status"] == "UNDETERMINED"
+    assert found["liveness_evidence"]["outcome"] == "QUERY_NOT_AN_ANSWER"
+    assert any("check 555" not in e for e in run.errors)
+    assert any("by hand" in e for e in run.errors)
+    # Nothing was cancelled, and the order is still on the book.
+    assert wire._live != set()
+
+
+def test_the_quote_phase_still_continues_because_nothing_is_resting(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The split F1 draws is "is an order's state unknown", not "is it a
+    POST". The quote fails before anything is placed, so the next trial starts
+    from a clean account and the series may continue."""
+    wire = _install(monkeypatch, _Wire())
+    monkeypatch.setattr(
+        probes_order.MockTradingClient,
+        "futures_last_price",
+        lambda self, symbol: (_ for _ in ()).throw(
+            requests.exceptions.ReadTimeout("read timeout=15.0")
         ),
     )
 
@@ -655,33 +849,28 @@ def test_a_transport_failure_on_the_submit_is_classified_and_not_resent(
     assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
         "transient:transport"
     ]
-    submits = [c for c in wire.calls if c["url"].endswith("trading/order")]
-    assert len(submits) == 1
-    assert [r["phase"] for r in _retry_records(run)] == ["submit"]
-    assert _retry_records(run)[0]["retried"] is False
-    assert _ACCOUNT not in " ".join(run.errors)
+    assert [c for c in wire.calls if c["url"].endswith("trading/order")] == []
+    assert "unaccounted_live_orders" not in run.measurements
+    errors = " ".join(run.errors)
+    assert "price lookup" in errors
+    assert "duplicate-order hazard" not in errors
 
 
-def test_a_transport_failure_on_the_amend_is_classified_and_not_resent(
-    monkeypatch: pytest.MonkeyPatch,
-    futures_env: None,
-    capsys: pytest.CaptureFixture[str],
+def test_each_unretried_phase_gives_its_own_reason(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Resending an amend could consume the quantity twice."""
-    wire = _install(
+    """Three phases, three reasons, no shared sentence that is false for one
+    of them."""
+    assert set(probes_order._P8_NO_RETRY_REASON) == {"quote", "submit", "amend"}
+    _install(
         monkeypatch,
         _Wire(amend_raises=requests.exceptions.ReadTimeout("read timeout=15.0")),
     )
 
     run = probe_p8(_args())
 
-    assert run.measurements["stop_reason"] == "transient:transport"
-    amends = [c for c in wire.calls if c["body"].get("RVSE_CNCL_DVSN_CD") == "01"]
-    assert len(amends) == 1
-    assert [r["phase"] for r in _retry_records(run)] == ["amend"]
-    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
-        "transient:transport"
-    ]
+    assert any("consume the original's quantity twice" in e for e in run.errors)
+    assert not any("price lookup" in e for e in run.errors)
 
 
 def test_a_query_rejection_mid_poll_does_not_end_the_coexistence_interval(
@@ -817,24 +1006,6 @@ def test_a_transport_failure_on_the_quote_is_its_own_phase(
     assert "duplicate-order hazard" not in errors
 
 
-def test_each_unretried_phase_gives_its_own_reason(
-    monkeypatch: pytest.MonkeyPatch, futures_env: None
-) -> None:
-    """Three phases, three reasons, no shared sentence that is false for one
-    of them. A missing key would fall back to a generic line, so the mapping
-    is pinned to the phases that use it."""
-    assert set(probes_order._P8_NO_RETRY_REASON) == {"quote", "submit", "amend"}
-    _install(
-        monkeypatch,
-        _Wire(amend_raises=requests.exceptions.ReadTimeout("read timeout=15.0")),
-    )
-
-    run = probe_p8(_args())
-
-    assert any("consume the original's quantity twice" in e for e in run.errors)
-    assert not any("price lookup" in e for e in run.errors)
-
-
 def test_a_rejected_submit_is_still_a_rejection(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
@@ -955,23 +1126,186 @@ def test_two_transport_failures_in_the_cleanup_walk_count_the_order_as_live(
 # ---------------------------------------------------------------------------
 
 
-def test_a_transient_after_the_window_has_elapsed_buys_no_retry(
-    monkeypatch: pytest.MonkeyPatch, futures_env: None
+def test_a_window_that_never_opened_measures_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A retry costs an interval of waiting plus another call. Spending them
-    after ``--visibility-timeout-s`` has passed would put the deciding poll
-    outside the window the verdict claims to cover (#825 round-2 review F5,
-    where the same shape MANUFACTURED an observation)."""
+    """Review F2: zero polls is zero observations, whatever the stop says.
+
+    With ``--visibility-timeout-s 0`` the loop never runs. ``answered`` and
+    ``unanswered`` are both 0, so the ``query_unanswered`` guard does not
+    fire and the run came out ``stop=none``, ``measured=True``,
+    ``coexistence_ms: 0.0`` — a MEASURED artifact asserting an atomic replace
+    off a window that never opened, which the runner then counted toward
+    N>=5. The gate is ``answered > 0``, not "did something stop me".
+    """
     _install(monkeypatch, _Wire(poll_script=["conn", "both", "new_only"]))
 
-    # Zero window: the deadline is already behind us when the first transient
-    # surfaces, so can_retry() refuses.
     run = probe_p8(_args(visibility_timeout_s=0.0))
 
     assert _retry_records(run, "coexistence_poll") == []
     assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
-    # The loop never entered, so this is the natural end, not a stop.
+    # The loop never entered, so this is the natural end, not a stop...
     assert run.measurements["stop_reason"] == "none"
+    # ...and it measured nothing.
+    assert "coexistence_ms" not in run.measurements
+    assert "mode_determination" not in run.measurements
+    assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == [
+        "not_measured"
+    ]
+    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
+    assert skipped and "not one poll came back rt_cd=0" in skipped[0]["reason"]
+
+
+def test_a_rejected_amend_measures_no_coexistence(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review F3: no replace happened, so there is no interval.
+
+    A rejected amend issues no new ODNO, so ``both`` can never be true and
+    ``coexist_last`` stays None — which used to be written out as
+    ``coexistence_ms: 0.0`` and counted by the runner as an agreeing "atomic"
+    sample. ``replace_rejected`` is still measured; it is the INTERVAL that
+    was not.
+    """
+    _install(monkeypatch, _Wire(amend_rejects=True))
+
+    run = probe_p8(_args(visibility_timeout_s=0.1))
+
+    assert run.measurements["replace_rejected"] is True
+    assert run.measurements["replace_issues_new_odno"] is False
+    assert run.measurements["stop_reason"] == "none"
+    assert "coexistence_ms" not in run.measurements
+    assert "mode_determination" not in run.measurements
+    assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == [
+        "not_measured"
+    ]
+    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
+    assert skipped and "REJECTED the amend" in skipped[0]["reason"]
+
+
+def test_an_accepted_amend_with_no_new_odno_measures_no_coexistence(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """``rt_cd=0`` with no ``output.ODNO``: the second leg the measurement
+    compares against never existed, so neither did the interval."""
+    _install(monkeypatch, _Wire(amend_without_odno=True))
+
+    run = probe_p8(_args(visibility_timeout_s=0.1))
+
+    assert run.measurements["replace_rejected"] is False
+    assert run.measurements["replace_issues_new_odno"] is False
+    assert "coexistence_ms" not in run.measurements
+    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
+    assert skipped and "no new ODNO was issued" in skipped[0]["reason"]
+
+
+def test_a_transient_after_the_deadline_says_the_window_elapsed(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Review F4, the case ``can_retry`` exists for, now actually exercised.
+
+    Window 0.05 s, poll 1 answers, poll 2 burns 0.12 s and then fails. The
+    transient surfaces AFTER the deadline, so the retry is refused — and the
+    window was spent in FULL. The narration said "did NOT elapse", which is
+    the 2026-09-17 P-CA error. The committed test for this used a 0 s window,
+    where the loop never enters and the path is never taken.
+    """
+    _install(
+        monkeypatch,
+        _Wire(poll_script=["both", "conn", "new_only"], delay_before={2: 0.12}),
+    )
+
+    run = probe_p8(_args(visibility_timeout_s=0.05, poll_ms=1.0))
+
+    assert run.measurements["stop_reason"] == "transient:transport"
+    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
+    assert skipped and "DID elapse" in skipped[0]["reason"]
+    assert "did NOT elapse" not in skipped[0]["reason"]
+    # One transient, refused for the window rather than for being the second.
+    records = _retry_records(run, "coexistence_poll")
+    assert [r["retried"] for r in records] == [False]
+    assert records[0]["not_retried_because"] == "window_already_closed"
+
+
+def test_a_second_consecutive_transient_names_that_reason_instead(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """The other refusal. Both used to carry only ``retried: false``, and a
+    reader counting unhealthy links cannot add them together: one means the
+    broker failed twice, the other means it failed once, late."""
+    _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
+
+    run = probe_p8(_args())
+
+    records = _retry_records(run, "coexistence_poll")
+    assert [r["retried"] for r in records] == [True, False]
+    assert "not_retried_because" not in records[0]
+    assert records[1]["not_retried_because"] == "second_consecutive_transient"
+    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
+    assert "did NOT elapse" in skipped[0]["reason"]
+
+
+def test_a_rate_limited_stop_records_the_envelope_it_points_at(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Review F5: the narration told the reader to see ``retry_evidence``,
+    which ``retry_once`` writes only for TRANSIENTS — so the one stop with no
+    record was the one pointing at it."""
+    _install(monkeypatch, _Wire(poll_script=["both", "egw00201", "new_only"]))
+
+    run = probe_p8(_args())
+
+    recorded = [o for o in run.observations if "coexistence_poll_rate_limited" in o]
+    assert len(recorded) == 1
+    envelope = recorded[0]["coexistence_poll_rate_limited"]
+    assert envelope["msg_cd"] == "EGW00201"
+    assert envelope["rt_cd"] == "1"
+    assert any("coexistence_poll_rate_limited" in e for e in run.errors)
+
+
+def test_a_rate_limited_cleanup_walk_keeps_the_envelope_too(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Same regression on the other surface: an HTTP-200 ``EGW00201`` body
+    used to land in the ``rt_cd!=0`` branch with its fields recorded, and now
+    lands in the classified branch, which kept only ``status_kind``."""
+    _install(
+        monkeypatch,
+        _Wire(poll_script=["both", "new_only"], cleanup_script=["egw00201"]),
+    )
+
+    run = probe_p8(_args())
+
+    walks = [
+        o["liveness_evidence"]
+        for o in run.observations
+        if o.get("liveness_evidence", {}).get("outcome") == "QUERY_NOT_AN_ANSWER"
+    ]
+    assert walks
+    assert walks[0]["msg_cd"] == "EGW00201"
+    assert walks[0]["rt_cd"] == "1"
+    assert walks[0]["status_kind"] == "RATE_LIMITED"
+
+
+def test_a_numeric_zero_rt_cd_is_a_healthy_answer(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Review F6: ``str(x or "")`` turns the JSON NUMBER ``0`` into ``""``,
+    so a successful page read as a refusal — and a whole window of them would
+    have stopped the series as ``query_unanswered``. ``call_evidence`` in this
+    same PR documents the trap; the poll loop had re-introduced it."""
+    _install(monkeypatch, _Wire(poll_script=["both", "rt_cd_zero", "new_only"]))
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "none"
+    assert run.measurements["coexistence_polls_not_answered"] == 0
+    assert run.measurements["coexistence_polls_answered"] >= 2
+    assert "coexistence_ms" in run.measurements
 
 
 # ---------------------------------------------------------------------------
@@ -1379,6 +1713,7 @@ _LEDGER = "0|P8_STOP=transient:ledger_throttle~P8_COEXISTENCE=not_measured"
 _REJECTED = "0|P8_STOP=rejected~P8_COEXISTENCE=not_measured"
 _RATE_LIMITED = "0|P8_STOP=rate_limited~P8_COEXISTENCE=not_measured"
 _UNANSWERED = "0|P8_STOP=query_unanswered~P8_COEXISTENCE=not_measured"
+_ORDER_UNKNOWN = "0|P8_STOP=order_state_unknown~P8_COEXISTENCE=not_measured"
 
 
 def _verdict(stdout: str) -> str:
@@ -1465,6 +1800,71 @@ def test_a_rate_limit_stop_still_ends_the_series(tmp_path: Path) -> None:
     assert len(invocations) == 2
     assert "rate_limit_stops=1" in _verdict(result.stdout)
     assert result.returncode != 0
+
+
+def test_an_order_state_unknown_stop_ends_the_series(tmp_path: Path) -> None:
+    """Review F1 at the series level. A submit or amend that never answered
+    may be resting under an ODNO nobody saw; the one thing this runner must
+    not do is place another order on top of it. Counted in its own field — it
+    is not a broker rejection and not a transport stop."""
+    result, invocations, _evidence = _run_series(
+        tmp_path, script=[_OK, _ORDER_UNKNOWN, _OK, _OK, _OK]
+    )
+
+    assert len(invocations) == 2
+    verdict = _verdict(result.stdout)
+    assert "order_state_unknown_stops=1" in verdict
+    assert "broker_rejections=0" in verdict
+    assert "transport_stops=0" in verdict
+    assert "unaccounted_live_orders" in result.stdout
+    assert result.returncode != 0
+
+
+def test_a_transport_stop_is_still_the_one_that_continues(tmp_path: Path) -> None:
+    """The split must not have swallowed the thing this PR is for: a POLL
+    transport stop still leaves the series running, which is the 2026-09-28
+    regression."""
+    result, invocations, _evidence = _run_series(
+        tmp_path, script=[_OK, _TRANSPORT, _OK, _OK, _OK]
+    )
+
+    assert len(invocations) == 5
+    verdict = _verdict(result.stdout)
+    assert "transport_stops=1" in verdict
+    assert "order_state_unknown_stops=0" in verdict
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize("bad", ["30s", "abc", "1.2.3", "", "."])
+def test_runner_refuses_an_inter_trial_gap_that_is_not_a_number(
+    tmp_path: Path, bad: str
+) -> None:
+    """Review F7. This value reaches ``sleep``, and ``set -u`` without
+    ``set -e`` means a failed sleep is a warning on stderr and then trial N+1
+    fires back to back against the same account — the pacing hazard the gap
+    exists for. Every other shell-consumed numeric is already validated."""
+    repo = _runner_repo(tmp_path, detached=True, dirty=False)
+    _publish_origin_main(repo)
+
+    result = _run_runner(repo, tmp_path, P8_INTER_TRIAL_S=bad, P8_PYTHON="/bin/true")
+
+    assert result.returncode != 0
+    assert "P8_INTER_TRIAL_S" in result.stdout
+    assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("good", ["0", "1", "1.5", "0.25"])
+def test_runner_accepts_a_plain_inter_trial_gap(tmp_path: Path, good: str) -> None:
+    """The guard must pass the values the README prescribes, or it is just a
+    way of never running."""
+    repo = _runner_repo(tmp_path, detached=True, dirty=False)
+    _publish_origin_main(repo)
+
+    result = _run_runner(repo, tmp_path, P8_INTER_TRIAL_S=good)
+
+    # Past the numeric gate, stopped at the next one.
+    assert "ABORT: required env P8_PYTHON is unset" in result.stdout
+    assert "P8_INTER_TRIAL_S must be" not in result.stdout
 
 
 def test_an_unanswered_poll_series_ends_the_series(tmp_path: Path) -> None:

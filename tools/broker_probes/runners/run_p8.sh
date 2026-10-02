@@ -24,7 +24,12 @@
 #   * an UNANSWERED poll series (P8_STOP=query_unanswered) stops the series:
 #     nothing came back rt_cd=0 for a whole window, and the next trial is
 #     another walk down the same path.
-#   * a TRANSPORT stop (P8_STOP=transient:*) does NOT. The probe already waited
+#   * an ORDER-STATE-UNKNOWN stop (P8_STOP=order_state_unknown) stops the
+#     series. A submit or amend that never answered may be resting on the
+#     book under an ODNO nobody saw; the probe walks the book and cancels
+#     what it can, and placing another order on top of that is the one thing
+#     this runner must not do.
+#   * a TRANSPORT stop (P8_STOP=transient:*, the POLL phase only) does NOT. The probe already waited
 #     a whole poll interval and tried again; the series continues until
 #     P8_MAX_TRANSIENT_STOPS of them, because a link that keeps dropping is a
 #     reason to come back later and not a measurement.
@@ -81,6 +86,15 @@ esac
 case "$P8_MAX_TRANSIENT_STOPS" in
 *[!0-9]* | '')
   die "P8_MAX_TRANSIENT_STOPS must be a non-negative integer (got '$P8_MAX_TRANSIENT_STOPS')"
+  ;;
+esac
+# This one reaches `sleep`, and `set -u` without `set -e` means a failed sleep
+# is a WARNING on stderr and then trial N+1 fires back to back against the
+# same account — the pacing hazard the inter-trial gap exists for. Seconds, so
+# a decimal is fine; "30s" and "abc" are not (review F7).
+case "$P8_INTER_TRIAL_S" in
+'' | *[!0-9.]* | *.*.* | .)
+  die "P8_INTER_TRIAL_S must be a non-negative number of seconds, digits and at most one '.' (got '$P8_INTER_TRIAL_S')"
   ;;
 esac
 
@@ -155,6 +169,7 @@ MEASURED=0
 REJECTIONS=0
 RATE_LIMIT_STOPS=0
 QUERY_UNANSWERED=0
+ORDER_STATE_UNKNOWN=0
 TRANSPORT_STOPS=0
 TRIALS_RUN=0
 VERDICT=
@@ -215,6 +230,11 @@ while [ "$trial" -le "$P8_TRIALS" ]; do
     VERDICT="STOP: trial $trial was rate-limited (HTTP 429 / EGW00201) — that is OUR call rate, and it stays a no-retry stop"
     break
     ;;
+  order_state_unknown)
+    ORDER_STATE_UNKNOWN=$((ORDER_STATE_UNKNOWN + 1))
+    VERDICT="STOP: trial $trial lost an order-mutating call in transport, so whether the broker accepted it is UNKNOWN — the probe walked the book and its unaccounted_live_orders measurement says what it found. Placing another order on top of that is the one thing this runner must not do"
+    break
+    ;;
   query_unanswered)
     QUERY_UNANSWERED=$((QUERY_UNANSWERED + 1))
     VERDICT="STOP: trial $trial got no rt_cd=0 answer out of the open-order surface in its whole window — the surface is not answering, and the next trial is another walk down the same path"
@@ -247,7 +267,10 @@ fi
 
 # The counts are separate fields, never a sum. "오류 1건(브로커 거부 포함)" is
 # the exact sentence this line exists to make unwriteable.
-log "VERDICT: $VERDICT | trials_run=$TRIALS_RUN/$P8_TRIALS measured=$MEASURED broker_rejections=$REJECTIONS rate_limit_stops=$RATE_LIMIT_STOPS query_unanswered_stops=$QUERY_UNANSWERED transport_stops=$TRANSPORT_STOPS"
+log "VERDICT: $VERDICT | trials_run=$TRIALS_RUN/$P8_TRIALS measured=$MEASURED broker_rejections=$REJECTIONS rate_limit_stops=$RATE_LIMIT_STOPS query_unanswered_stops=$QUERY_UNANSWERED order_state_unknown_stops=$ORDER_STATE_UNKNOWN transport_stops=$TRANSPORT_STOPS"
+if [ "$ORDER_STATE_UNKNOWN" -gt 0 ]; then
+  log "⚠ an order-mutating call was lost in transport — read the trial artifact's unaccounted_live_orders before scheduling P-8 again"
+fi
 if [ "$MEASURED" -ge 5 ]; then
   log "mode_determination: $MEASURED measured trial(s) — N>=5 is met; map to ReplaceSemantics only if they AGREE"
 else
