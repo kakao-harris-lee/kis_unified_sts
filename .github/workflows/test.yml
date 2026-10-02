@@ -301,7 +301,31 @@ jobs:
             exit 1
           fi
         env:
-          REDIS_URL: redis://localhost:6379/0
+          # The twelve benchmarks in tests/performance/test_redis_load.py and
+          # test_websocket_load.py are gated on this opt-in (tests/conftest.py
+          # and tests/support/live_infra.py). Without it they skipped, the
+          # checker reported twelve non-fatal "Test not found" warnings, and
+          # the job measured 13 of 25 benchmarks while going green — for four
+          # months (#768 / #796 / #679). The flag is safe HERE and nowhere
+          # else by default: the gate exists because the deploy host's paper
+          # runtime shares Redis DB 1 with the suite, and these tests write
+          # runtime-shaped keys (trading:{asset}:positions). This runner's
+          # Redis is a throwaway service container.
+          #
+          # Neither module reaches a KIS endpoint. test_websocket_load.py is
+          # named for what the Redis Streams it measures carry, not for a KIS
+          # WebSocket connection — nothing in tests/performance/ needs network
+          # access beyond this container.
+          KIS_RUN_LIVE_INFRA_TESTS: '1'
+          # shared/streaming/client.py::RedisClient reads these three. It does
+          # NOT read REDIS_URL, so the previous `REDIS_URL: ...:6379/0` set
+          # nothing on this path (the client defaulted to DB 1 regardless).
+          # REDIS_URL is kept, corrected to DB 1, for anything else that reads
+          # it; DB 1 is the project default (CLAUDE.md).
+          REDIS_HOST: localhost
+          REDIS_PORT: '6379'
+          REDIS_DB: '1'
+          REDIS_URL: redis://localhost:6379/1
           ENVIRONMENT: test
 
       - name: Check for performance regressions
