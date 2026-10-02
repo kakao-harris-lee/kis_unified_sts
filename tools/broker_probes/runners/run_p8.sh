@@ -187,6 +187,16 @@ while [ "$trial" -le "$P8_TRIALS" ]; do
     --confirm --token-cache-dir "$P8_TOKEN_CACHE"
     --note "$P8_NOTE | trial $trial/$P8_TRIALS"
   )
+  # Opt-in, and deliberately not the default. After a lost submit or amend the
+  # probe walks the book; a live row that MATCHES this trial's order body but
+  # that the probe never saw placed is almost certainly the order the lost
+  # call left behind — but this 모의 account is shared by the whole campaign,
+  # so "almost" is carrying weight. Without the flag such a row is recorded as
+  # FOUND_NOT_CANCELLED and the series stops for a human. Rows that do NOT
+  # match the order body are never cancelled either way.
+  if [ "${P8_CANCEL_UNACCOUNTED:-0}" = "1" ]; then
+    PROBE_ARGS+=(--cancel-unaccounted)
+  fi
   OUT=$("$PY" -m tools.broker_probes.run P-8 "${PROBE_ARGS[@]}" 2>&1)
   rc=$?
   printf '%s\n' "$OUT" >>"$P8_LOG"
@@ -269,7 +279,7 @@ fi
 # the exact sentence this line exists to make unwriteable.
 log "VERDICT: $VERDICT | trials_run=$TRIALS_RUN/$P8_TRIALS measured=$MEASURED broker_rejections=$REJECTIONS rate_limit_stops=$RATE_LIMIT_STOPS query_unanswered_stops=$QUERY_UNANSWERED order_state_unknown_stops=$ORDER_STATE_UNKNOWN transport_stops=$TRANSPORT_STOPS"
 if [ "$ORDER_STATE_UNKNOWN" -gt 0 ]; then
-  log "⚠ an order-mutating call was lost in transport — read the trial artifact's unaccounted_live_orders before scheduling P-8 again"
+  log "⚠ an order-mutating call was lost or throttled — read the trial artifact's unaccounted_live_orders (and foreign_live_rows_present, if there) before scheduling P-8 again"
 fi
 if [ "$MEASURED" -ge 5 ]; then
   log "mode_determination: $MEASURED measured trial(s) — N>=5 is met; map to ReplaceSemantics only if they AGREE"

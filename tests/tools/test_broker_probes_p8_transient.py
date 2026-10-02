@@ -149,6 +149,7 @@ def _args(**overrides: object) -> argparse.Namespace:
         "late_window_s": 0.05,
         "max_pages": 10,
         "allow_fill": False,
+        "cancel_unaccounted": False,
         "stock_order_type": "market",
         "pace_s": 0.0,
         "token_cache_dir": None,
@@ -182,6 +183,8 @@ class _Wire:
     ``throttle``   HTTP 500 + ``EGW00215``, the LEDGER throttle.
     ``no_rows``    ``rt_cd='7'`` + ``KIOK0560`` — this broker's empty-set
                    notation, a REJECTION shape and not a rate limit.
+    ``sick``       a rejection with some OTHER code, i.e. a surface that is
+                   not answering for a reason of its own.
     ``rt_cd_zero`` a healthy page whose ``rt_cd`` is the JSON NUMBER ``0``.
                    ``str(x or "")`` turns that into ``""`` — the falsy-zero
                    trap ``call_evidence`` documents.
@@ -201,6 +204,11 @@ class _Wire:
         amend_without_odno: bool = False,
         accept_before_raising: bool = False,
         delay_before: dict[int, float] | None = None,
+        foreign_rows: list[dict[str, str]] | None = None,
+        submit_rate_limited: bool = False,
+        amend_rate_limited: bool = False,
+        amend_ledger_throttled: bool = False,
+        refuse_cancels: bool = False,
     ) -> None:
         self.poll_script = list(poll_script or ["new_only"])
         # "live", not "new_only": the cleanup walk reads the BOOK, and the
@@ -221,6 +229,16 @@ class _Wire:
         #: late-window case. Real, because the fixture patches time.sleep out
         #: and the deadline is read from the real monotonic clock.
         self.delay_before = dict(delay_before or {})
+        #: Rows the book shows that this probe never placed — another probe's
+        #: resting order, or the operator's. Each entry overrides fields on
+        #: the default row shape. They are live and they are not ours.
+        self.foreign_rows = [dict(r) for r in (foreign_rows or [])]
+        self.submit_rate_limited = submit_rate_limited
+        self.amend_rate_limited = amend_rate_limited
+        self.amend_ledger_throttled = amend_ledger_throttled
+        #: Every cancel is refused while the order stays live — the
+        #: REJECTED_AND_STILL_LIVE shape that makes _cleanup call run.error.
+        self.refuse_cancels = refuse_cancels
         self.calls: list[dict[str, Any]] = []
         self.inquiries: list[str] = []
         self.cleanup_phase = False
@@ -303,6 +321,8 @@ class _Wire:
                 # from the poll script.
                 self.cleanup_phase = True
                 raise self.submit_raises
+            if self.submit_rate_limited:
+                return 429, {}, 1.0, "Too Many Requests"
             if self.submit_rejects:
                 return (
                     200,
@@ -344,6 +364,16 @@ class _Wire:
         if token == "rt_cd_zero":
             rows = self._rows([self._new], honour_live=self.cleanup_phase)
             return 200, {"rt_cd": 0, "output1": rows}, 1.0, "{}"
+        if token == "sick":
+            # A rejection that is NOT the empty-set code: the surface is
+            # answering for some other reason, which is what makes a longer
+            # walk down it a bad idea.
+            payload = {
+                "rt_cd": "1",
+                "msg_cd": "APBK0919",
+                "msg1": "조회가 불가합니다",
+            }
+            return 200, payload, 1.0, str(payload)
         if token == "no_rows":
             # This broker's empty-set notation on the sibling balance surface:
             # a REJECTION shape, not rt_cd=0 with an empty list
@@ -363,8 +393,24 @@ class _Wire:
             }
             return 200, payload, 1.0, str(payload)
         if token == "live":
-            shown = sorted(self._live)
-        elif token == "both":
+            rows = self._rows(sorted(self._live), honour_live=True)
+            rows += [
+                {
+                    "odno": str(r.get("odno", "9999")).lstrip("0").rjust(10),
+                    "pdno": r.get("pdno", _SYMBOL),
+                    "ord_qty": r.get("ord_qty", "1"),
+                    "tot_ccld_qty": "0",
+                    "qty": "1",
+                    **{
+                        k: v
+                        for k, v in r.items()
+                        if k not in {"odno", "pdno", "ord_qty"}
+                    },
+                }
+                for r in self.foreign_rows
+            ]
+            return 200, {"rt_cd": "0", "output1": rows}, 1.0, "{}"
+        if token == "both":
             shown = [self._original, self._new]
         else:
             shown = [self._new]
@@ -380,6 +426,15 @@ class _Wire:
                     self._live.add(self._new)
                 self.cleanup_phase = True
                 raise self.amend_raises
+            if self.amend_rate_limited:
+                payload = {
+                    "rt_cd": "1",
+                    "msg_cd": "EGW00201",
+                    "msg1": "초당 거래건수를 초과하였습니다.",
+                }
+                return 200, payload, 1.0, str(payload)
+            if self.amend_ledger_throttled:
+                return 500, dict(_LEDGER_THROTTLE), 1.0, str(_LEDGER_THROTTLE)
             if self.amend_rejects:
                 return (
                     200,
@@ -405,6 +460,8 @@ class _Wire:
             )
         # A cancel. Everything from here on is cleanup.
         self.cleanup_phase = True
+        if self.refuse_cancels:
+            return 200, {"rt_cd": "1", "msg1": "취소 불가"}, 1.0, "{}"
         origin = str(body.get("ORGN_ODNO", ""))
         if origin not in self._live:
             return 200, {"rt_cd": "1", "msg1": _NO_QTY}, 1.0, "{}"
@@ -701,21 +758,18 @@ def test_a_rate_limit_body_that_also_carries_the_ledger_code_still_stops(
 # ---------------------------------------------------------------------------
 
 
-def test_a_lost_submit_stops_the_series_and_cancels_what_it_orphaned(
+def test_a_lost_submit_stops_the_series_and_reports_what_it_orphaned(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F1, the serious one.
+    """A ``ReadTimeout`` on the submit says only that no ANSWER came back. The
+    broker may have accepted the order and be resting it under an ODNO this
+    probe never saw — so ``odnos`` is empty, ``_cleanup`` cancels nothing, and
+    without this the runner would start trial N+1 on top of it.
 
-    A ``ReadTimeout`` on the submit says only that no ANSWER came back. The
-    broker may have accepted the order and be resting it right now, under an
-    ODNO this probe never saw — so ``odnos`` is empty, ``_cleanup`` cancels
-    nothing, and the first version of this PR let the runner start trial N+1
-    on top of it, up to ``P8_MAX_TRANSIENT_STOPS`` resting orders deep. Before
-    the PR the escape at least stopped the series (rc 5).
-
-    So: the series stops, AND the book is walked and the orphan cancelled.
+    The DEFAULT is record-and-stop, not cancel: see
+    :func:`test_an_unaccounted_order_is_not_cancelled_without_the_opt_in`.
     """
     wire = _install(
         monkeypatch,
@@ -737,15 +791,133 @@ def test_a_lost_submit_stops_the_series_and_cancels_what_it_orphaned(
     # Not resent: a second submit is the duplicate-order hazard P-2 measures.
     assert len([c for c in wire.calls if c["url"].endswith("trading/order")]) == 1
     assert [r["phase"] for r in _retry_records(run)] == ["submit"]
+    assert _retry_records(run)[0]["not_retried_because"] == "single_shot_call"
+
+    found = run.measurements["unaccounted_live_orders"]
+    assert found["status"] == "FOUND_NOT_CANCELLED"
+    assert found["canonical_keys"] == ["558"]
+    assert any("UNACCOUNTED LIVE ORDER" in e for e in run.errors)
+    assert _ACCOUNT not in " ".join(run.errors)
+
+
+def test_an_unaccounted_order_is_not_cancelled_without_the_opt_in(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Review F5. The 모의 account is shared by the whole campaign, so a row
+    this trial cannot account for may be another probe's. The first version
+    cancelled it on its own authority.
+
+    Default: record it, say so, stop the series, touch nothing.
+    """
+    wire = _install(
+        monkeypatch,
+        _Wire(
+            submit_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=True,
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    found = run.measurements["unaccounted_live_orders"]
+    assert found["status"] == "FOUND_NOT_CANCELLED"
+    assert "cleanup_dispositions" not in found
+    # It says what it WOULD have sent, so the operator can do it by hand.
+    assert found["cancel_odno_would_send"] == {"558": "0000000558"}
+    # And the order is still there.
+    assert wire._live == {"0000000558"}
+    assert not [c for c in wire.calls if c["body"].get("RVSE_CNCL_DVSN_CD") == "02"]
+
+
+def test_the_opt_in_cancels_a_row_that_matches_this_trial(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """With ``--cancel-unaccounted`` the matching row IS cancelled, through
+    ``_cancel_one`` so it gets the same verified disposition as any other
+    cleanup cancel."""
+    wire = _install(
+        monkeypatch,
+        _Wire(
+            submit_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=True,
+        ),
+    )
+
+    run = probe_p8(_args(cancel_unaccounted=True))
 
     found = run.measurements["unaccounted_live_orders"]
     assert found["status"] == "FOUND"
-    assert found["canonical_keys"] == ["558"]
     assert list(found["cleanup_dispositions"].values()) == [_CLEANUP_CANCELLED]
-    assert any("UNACCOUNTED LIVE ORDER" in e for e in run.errors)
-    # And it really is gone from the book.
+    assert found["cancel_odno_sent"] == {"558": "0000000558"}
     assert wire._live == set()
-    assert _ACCOUNT not in " ".join(run.errors)
+
+
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [
+        ({"odno": "7001", "ord_qty": "7"}, "a different quantity"),
+        ({"odno": "7002", "sll_buy_dvsn_cd": "01"}, "the opposite side"),
+        ({"odno": "7003", "ord_unpr": "999.99"}, "a different price"),
+    ],
+)
+def test_a_row_that_is_not_this_trials_order_is_never_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    row: dict[str, str],
+    why: str,
+) -> None:
+    """Review F5, the part no flag may override. P-5, P-11, P-EXT or an
+    operator MTS order resting on the same contract is not this trial's
+    order, and cancelling it destroys another measurement and attributes the
+    loss to "the order the timed-out call left behind".
+
+    Run WITH the opt-in, to pin that the flag does not reach these.
+    """
+    wire = _install(
+        monkeypatch,
+        _Wire(
+            submit_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=False,
+            foreign_rows=[row],
+        ),
+    )
+
+    run = probe_p8(_args(cancel_unaccounted=True))
+
+    foreign = run.measurements["foreign_live_rows_present"]
+    assert foreign["status"] == "FOREIGN_LIVE_ROWS_PRESENT"
+    assert foreign["canonical_keys"] == [row["odno"]], why
+    assert any("FOREIGN LIVE ROW" in e for e in run.errors)
+    # Nothing was cancelled, flag or no flag.
+    assert not [c for c in wire.calls if c["body"].get("RVSE_CNCL_DVSN_CD") == "02"]
+    assert run.measurements["unaccounted_live_orders"]["status"] == "NONE_FOUND"
+
+
+def test_the_match_records_which_criteria_it_could_actually_apply(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """The order PRICE and the 매도매수구분 are not in the field set the
+    runtime reads off this surface, and no artifact here records a name for
+    either. So the matcher checks them when the row carries one and SAYS so
+    when it does not — a guess would make the match silently never succeed,
+    and a guard that matches nothing protects nothing.
+    """
+    _install(
+        monkeypatch,
+        _Wire(
+            submit_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
+            accept_before_raising=True,
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    criteria = run.measurements["unaccounted_live_orders"]["match_criteria"]
+    assert criteria["checked"] == ["pdno", "ord_qty"]
+    assert criteria["not_carried_by_the_row"] == [
+        "sll_buy_dvsn_cd",
+        "ord_unpr|ord_idx",
+    ]
 
 
 def test_a_lost_amend_does_not_count_the_known_original_as_orphaned(
@@ -755,7 +927,7 @@ def test_a_lost_amend_does_not_count_the_known_original_as_orphaned(
     never saw. ``_cleanup`` handles the original (it is known); the walk must
     find only the NEW leg, or the operator is sent after a row that already
     has a disposition of its own."""
-    wire = _install(
+    _install(
         monkeypatch,
         _Wire(
             amend_raises=requests.exceptions.ReadTimeout("read timeout=15.0"),
@@ -767,23 +939,19 @@ def test_a_lost_amend_does_not_count_the_known_original_as_orphaned(
 
     assert run.measurements["stop_reason"] == "order_state_unknown"
     assert [r["phase"] for r in _retry_records(run)] == ["amend"]
-    # The original was known, so _cleanup owned it...
     assert list(run.measurements["cleanup_dispositions"].values()) == [
         _CLEANUP_NOTHING_TO_CANCEL
     ]
-    # ...and only the leg nobody saw is reported as unaccounted.
     found = run.measurements["unaccounted_live_orders"]
-    assert found["status"] == "FOUND"
+    assert found["status"] == "FOUND_NOT_CANCELLED"
     assert found["canonical_keys"] == ["559"]
-    assert wire._live == set()
 
 
 def test_a_lost_submit_that_orphaned_nothing_says_so(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
     """ "The walk ran and the book was clean" is what lets the operator stop
-    looking, so it has to be written down. Silence would be the same shape as
-    no walk at all."""
+    looking, so it has to be written down."""
     _install(
         monkeypatch,
         _Wire(
@@ -795,8 +963,7 @@ def test_a_lost_submit_that_orphaned_nothing_says_so(
     run = probe_p8(_args())
 
     assert run.measurements["stop_reason"] == "order_state_unknown"
-    found = run.measurements["unaccounted_live_orders"]
-    assert found["status"] == "NONE_FOUND"
+    assert run.measurements["unaccounted_live_orders"]["status"] == "NONE_FOUND"
     assert not any("UNACCOUNTED LIVE ORDER" in e for e in run.errors)
 
 
@@ -815,15 +982,100 @@ def test_a_book_walk_that_cannot_answer_cancels_nothing_and_says_to_look(
         ),
     )
 
-    run = probe_p8(_args())
+    run = probe_p8(_args(cancel_unaccounted=True))
 
     found = run.measurements["unaccounted_live_orders"]
     assert found["status"] == "UNDETERMINED"
     assert found["liveness_evidence"]["outcome"] == "QUERY_NOT_AN_ANSWER"
-    assert any("check 555" not in e for e in run.errors)
     assert any("by hand" in e for e in run.errors)
-    # Nothing was cancelled, and the order is still on the book.
     assert wire._live != set()
+
+
+def test_a_rate_limited_submit_is_not_narrated_as_a_broker_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review F2. HTTP 429 made ``placed`` None, which read as ``rejected`` —
+    and the runner's verdict for that says "every remaining trial would be
+    refused the same way", naming a cause that had not happened."""
+    _install(monkeypatch, _Wire(submit_rate_limited=True))
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "rate_limited"
+    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == ["rate_limited"]
+    assert any("RATE LIMITED on the submit" in e for e in run.errors)
+    assert not any("submit rejected" in e for e in run.errors)
+    refused = [o for o in run.observations if "order_call_refused" in o]
+    assert refused and refused[0]["phase"] == "submit"
+
+
+def test_a_rate_limited_amend_stops_the_series_instead_of_polling_on(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The worse half of F2: on the amend a rate limit was INVISIBLE —
+    ``replace_futures`` dropped the status, ``amend_accepted`` went False, the
+    trial polled on and the series placed the next order, bypassing the "our
+    call rate ⇒ stop, never retry" rule on the one POST where it matters."""
+    wire = _install(monkeypatch, _Wire(amend_rate_limited=True))
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "rate_limited"
+    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == ["rate_limited"]
+    assert any("RATE LIMITED on the amend" in e for e in run.errors)
+    # It stopped before polling.
+    assert "coexistence_polls_used" not in run.measurements
+    # ...and the order it did place was cleaned up.
+    assert wire._live == set()
+
+
+def test_a_ledger_throttled_amend_walks_the_book_before_stopping(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """``EGW00215`` is an answer, so strictly the amend was not accepted — but
+    "strictly" is doing too much work on the one surface where being wrong
+    leaves a live order, so it takes the order-state-unknown path and pays for
+    one book walk."""
+    _install(monkeypatch, _Wire(amend_ledger_throttled=True))
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "order_state_unknown"
+    assert "unaccounted_live_orders" in run.measurements
+    assert any("LEDGER THROTTLE on the amend" in e for e in run.errors)
+
+
+def test_a_cleanup_error_stops_the_trial_counting_toward_n5(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review F1. The poll loop ends with a sample, then ``_cleanup`` in the
+    same ``finally`` fails to cancel and calls ``run.error`` — which makes the
+    artifact NOT_MEASURED. The printed token came from the local flag, so the
+    runner counted toward N>=5 a trial whose own artifact disagrees."""
+    _install(
+        monkeypatch,
+        _Wire(
+            poll_script=["both", "new_only"],
+            cleanup_script=["conn"],
+            refuse_cancels=True,
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "none"
+    assert "coexistence_ms" in run.measurements
+    assert run.errors
+    assert run.to_dict()["provenance_class"] == "NOT_MEASURED"
+    assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == [
+        "not_measured"
+    ]
 
 
 def test_the_quote_phase_still_continues_because_nothing_is_resting(
@@ -907,15 +1159,15 @@ def test_a_query_rejection_mid_poll_does_not_end_the_coexistence_interval(
     assert recorded[0]["coexistence_poll_not_answered"]["msg_cd"] == "KIOK0560"
 
 
-def test_a_poll_series_that_never_answers_reports_no_coexistence(
+def test_a_poll_series_that_only_gets_sick_answers_stops_the_series(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Nothing came back ``rt_cd=0`` for the whole window. Before the change
-    that was ``coexistence_ms: 0.0`` with ``errors: []`` — "the replace was
-    atomic", observed by nothing."""
-    _install(monkeypatch, _Wire(poll_script=["no_rows"]))
+    """Nothing came back ``rt_cd=0`` for the whole window, and not because the
+    book was empty. Before the change that was ``coexistence_ms: 0.0`` with
+    ``errors: []`` — "the replace was atomic", observed by nothing."""
+    _install(monkeypatch, _Wire(poll_script=["sick"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.3))
 
@@ -925,20 +1177,56 @@ def test_a_poll_series_that_never_answers_reports_no_coexistence(
     assert run.measurements["coexistence_polls_answered"] == 0
     polls = run.measurements["coexistence_polls_not_answered"]
     assert polls > 0
-    assert run.measurements["coexistence_not_answered_codes"] == {"KIOK0560": polls}
+    assert run.measurements["coexistence_not_answered_codes"] == {"APBK0919": polls}
     out = capsys.readouterr().out
     assert _anchored(out, _P8_STOP_PREFIX) == ["query_unanswered"]
-    # The window DID elapse here — nothing in it answered. Saying it did not
-    # is the 2026-09-17 P-CA error, and the two-way ternary this replaced said
-    # exactly that, plus "the stop is our own call rate", over a stop that was
-    # neither.
     skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
     assert skipped and "DID elapse" in skipped[0]["reason"]
     assert "did NOT elapse" not in skipped[0]["reason"]
-    # The false sentence, verbatim as the old ternary emitted it. (The real
-    # message does mention the call rate — to say it was NOT the problem.)
     assert not any("The stop is our own call rate" in e for e in run.errors)
     assert any("answered rt_cd!=0 to every poll" in e for e in run.errors)
+
+
+def test_an_empty_book_for_the_whole_window_does_not_stop_the_series(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review F4. This broker answers an EMPTY RESULT SET with a rejection
+    shape, and an empty book is the ordinary end of a P-8 trial — both legs
+    gone to a fill, or to a resting price too close to the touch. Stopping
+    the series on it would cancel trials 2..5 over one filled order, the same
+    over-stopping this PR exists to remove.
+
+    It measures nothing (``answered == 0``), and it does not stop.
+    """
+    _install(monkeypatch, _Wire(poll_script=["no_rows"]))
+
+    run = probe_p8(_args(visibility_timeout_s=0.1))
+
+    assert run.measurements["stop_reason"] == "none"
+    assert "coexistence_ms" not in run.measurements
+    assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == [
+        "not_measured"
+    ]
+    assert run.measurements["coexistence_not_answered_codes"]
+
+
+def test_one_sick_answer_among_empty_ones_still_stops(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """The quieter treatment is for a window that was ONLY the empty-set
+    code. One answer the broker gave for another reason is enough to make a
+    longer walk down the surface a bad idea."""
+    _install(monkeypatch, _Wire(poll_script=["no_rows", "sick"]))
+
+    run = probe_p8(_args(visibility_timeout_s=0.3))
+
+    assert run.measurements["stop_reason"] == "query_unanswered"
+    assert set(run.measurements["coexistence_not_answered_codes"]) == {
+        "KIOK0560",
+        "APBK0919",
+    }
 
 
 def test_the_unanswered_evidence_is_bounded_by_distinct_codes_not_by_polls(
@@ -950,7 +1238,7 @@ def test_the_unanswered_evidence_is_bounded_by_distinct_codes_not_by_polls(
 
     One verbatim record per distinct ``msg_cd``; the counts are kept in full.
     """
-    _install(monkeypatch, _Wire(poll_script=["no_rows"]))
+    _install(monkeypatch, _Wire(poll_script=["sick"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.3))
 
@@ -958,7 +1246,7 @@ def test_the_unanswered_evidence_is_bounded_by_distinct_codes_not_by_polls(
     assert len(recorded) == 1
     polls = run.measurements["coexistence_polls_not_answered"]
     assert polls > 100, polls  # the loop really did spin
-    assert run.measurements["coexistence_not_answered_codes"]["KIOK0560"] == polls
+    assert run.measurements["coexistence_not_answered_codes"]["APBK0919"] == polls
 
 
 def test_a_stop_narration_exists_for_every_stop_the_poll_can_report() -> None:
@@ -1203,16 +1491,21 @@ def test_an_accepted_amend_with_no_new_odno_measures_no_coexistence(
     assert skipped and "no new ODNO was issued" in skipped[0]["reason"]
 
 
-def test_a_transient_after_the_deadline_says_the_window_elapsed(
-    monkeypatch: pytest.MonkeyPatch, futures_env: None
+def test_a_lone_transient_after_the_deadline_is_the_natural_end(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F4, the case ``can_retry`` exists for, now actually exercised.
+    """Review F3. Window 0.05 s, poll 1 answers with both legs live, poll 2
+    burns 0.12 s and then fails. The transient surfaces AFTER the deadline, so
+    ``can_retry`` refuses the retry — and the loop would have ended on the
+    next iteration anyway.
 
-    Window 0.05 s, poll 1 answers, poll 2 burns 0.12 s and then fails. The
-    transient surfaces AFTER the deadline, so the retry is refused — and the
-    window was spent in FULL. The narration said "did NOT elapse", which is
-    the 2026-09-17 P-CA error. The committed test for this used a 0 s window,
-    where the loop never enters and the path is never taken.
+    That is the window ENDING, not a link that failed twice. Reporting it as
+    ``transient:transport`` voided a window spent in full, threw away a sample
+    the pre-PR code would have kept, and charged the trial to the runner's
+    link-health budget — which is exactly what ``REFUSED_WINDOW_CLOSED`` says
+    must not be added together.
     """
     _install(
         monkeypatch,
@@ -1221,14 +1514,18 @@ def test_a_transient_after_the_deadline_says_the_window_elapsed(
 
     run = probe_p8(_args(visibility_timeout_s=0.05, poll_ms=1.0))
 
-    assert run.measurements["stop_reason"] == "transient:transport"
-    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
-    assert skipped and "DID elapse" in skipped[0]["reason"]
-    assert "did NOT elapse" not in skipped[0]["reason"]
-    # One transient, refused for the window rather than for being the second.
+    assert run.measurements["stop_reason"] == "none"
+    # The sample survives: both legs were live and the window ran out, which
+    # is the same shape as any other window-elapsed end.
+    assert run.measurements["coexistence_ms"] > 0.0
+    assert "mode_determination" in run.measurements
+    assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == ["measured"]
+    # The transient is still recorded, and still says why it bought no retry.
     records = _retry_records(run, "coexistence_poll")
     assert [r["retried"] for r in records] == [False]
     assert records[0]["not_retried_because"] == "window_already_closed"
+    # ...and it is NOT a stop, so nothing claims the window was cut short.
+    assert [s for s in run.skips if s["what"] == "measurements.coexistence_ms"] == []
 
 
 def test_a_second_consecutive_transient_names_that_reason_instead(
@@ -1378,6 +1675,7 @@ def test_runner_template_carries_no_instance_defaults() -> None:
     assert {name for name, default in pairs if default not in ("", "0")} == set(), pairs
     assert {name for name, _default in pairs} <= {
         "P8_ALLOW_SHARED_CHECKOUT",
+        "P8_CANCEL_UNACCOUNTED",
         "P8_CRON_MARK",
         "P8_LOG",
     }, pairs
@@ -1402,6 +1700,50 @@ def test_the_runner_expects_the_policy_version_the_probe_reports() -> None:
     """The handshake is only a handshake if the two literals agree today."""
     text = _RUNNER.read_text(encoding="utf-8")
     assert f"EXPECT_POLICY_VERSION={POLICY_VERSION}" in text
+
+
+def test_every_token_the_runner_branches_on_is_in_the_readme() -> None:
+    """Review F7. The README is the documented recipe, and a token an
+    operator meets in a log but cannot find in the contract table leaves them
+    without the one post-condition the runner's own warning line says must be
+    read before P-8 runs again."""
+    runner = _RUNNER.read_text(encoding="utf-8")
+    readme = (_RUNNERS_DIR / "README.md").read_text(encoding="utf-8")
+    # The case arms of the STOP classifier, as the runner actually spells them.
+    arms = set(re.findall(r"^  ([a-z_]+(?::\*)?)\)$", runner, re.M))
+    assert "none" in arms and len(arms) >= 5, arms
+
+    # The CONTRACT block, not just the prose table below it. That is where
+    # the omission was: the table had the two new tokens and the
+    # `P8_STOP=<...>` fence an operator reads first did not.
+    fence = re.search(r"P8_STOP=<(.+?)>", readme, re.S)
+    assert fence, "the README no longer states the P8_STOP contract"
+    documented = {t.strip() for t in fence.group(1).replace("\n", " ").split("|")}
+
+    for arm in arms:
+        if arm.endswith(":*"):
+            # A wildcard arm is documented by its concrete tokens.
+            prefix = arm.removesuffix("*")
+            assert any(d.startswith(prefix) for d in documented), (arm, documented)
+            continue
+        assert arm in documented, (arm, documented)
+        if arm != "none":
+            assert f"`{arm}`" in readme, f"{arm} is handled but has no table row"
+
+
+def test_the_liveness_walk_hands_back_rows_not_just_numbers() -> None:
+    """Review F8. ``_cancel_one`` annotated this ``set[str] | None`` after it
+    became a mapping, and the cleanup path that reads it runs inside
+    ``probe_p8``'s ``finally`` — the worst place for a TypeError. The
+    annotation is checked by mypy; the CONTRACT it describes is checked here,
+    because a future caller doing set arithmetic on it is what the stale
+    annotation invited."""
+    import inspect
+
+    sig = inspect.signature(probes_order._live_odno_keys)
+    assert "dict[str, dict[str, Any]] | None" in str(sig.return_annotation)
+    cancel_src = inspect.getsource(probes_order._cancel_one)
+    assert "live_keys: dict[str, dict[str, Any]] | None" in cancel_src
 
 
 def test_the_runner_reads_the_prefixes_the_probe_prints() -> None:
@@ -1800,6 +2142,25 @@ def test_a_rate_limit_stop_still_ends_the_series(tmp_path: Path) -> None:
     assert len(invocations) == 2
     assert "rate_limit_stops=1" in _verdict(result.stdout)
     assert result.returncode != 0
+
+
+def test_the_cancel_opt_in_reaches_the_probe_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    """Review F5. The flag authorises cancelling a live row the probe never
+    saw placed, on an account the whole campaign shares, so it must be the
+    operator's decision and not a default."""
+    off = tmp_path / "off"
+    off.mkdir()
+    _result, invocations, _e = _run_series(off, script=[_OK], P8_TRIALS="1")
+    assert "--cancel-unaccounted" not in invocations[0]
+
+    on = tmp_path / "on"
+    on.mkdir()
+    _result2, invocations2, _e2 = _run_series(
+        on, script=[_OK], P8_TRIALS="1", P8_CANCEL_UNACCOUNTED="1"
+    )
+    assert "--cancel-unaccounted" in invocations2[0]
 
 
 def test_an_order_state_unknown_stop_ends_the_series(tmp_path: Path) -> None:

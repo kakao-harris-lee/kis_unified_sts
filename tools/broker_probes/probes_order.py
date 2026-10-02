@@ -75,6 +75,7 @@ from zoneinfo import ZoneInfo
 
 from tools.broker_probes.common import (
     MOCK_BASE_URL,
+    REFUSED_SINGLE_SHOT,
     STATUS_RATE_LIMITED,
     STATUS_TRANSIENT_TRANSPORT,
     TRANSIENT_TRANSPORT,
@@ -965,8 +966,25 @@ class MockTradingClient:
     def submit_futures(
         self, body: dict[str, str]
     ) -> tuple[Placed | None, dict[str, Any], float]:
+        """The parsed submit. Status and raw text are dropped — see
+        :meth:`submit_futures_verbose` for the callers that need them."""
+        placed, _status, parsed, _text, ms = self.submit_futures_verbose(body)
+        return placed, parsed, ms
+
+    def submit_futures_verbose(
+        self, body: dict[str, str]
+    ) -> tuple[Placed | None, int, dict[str, Any], str, float]:
+        """:meth:`submit_futures` plus the HTTP status and the raw body.
+
+        Both are needed to classify the answer: ``is_rate_limited`` fires on
+        HTTP 429 OR ``EGW00201`` anywhere in the envelope, and a caller given
+        only the parsed dict cannot see the first. A 429 on the submit used to
+        arrive as ``placed is None`` and be reported as a broker REJECTION —
+        "every remaining trial would be refused the same way" — naming a cause
+        that had not happened (round-2 review F2).
+        """
         tr_id = self.tr_ids["futures_order_day_mock"]
-        status, parsed, ms, _text = self.trading_call(
+        status, parsed, ms, text = self.trading_call(
             "POST", _FUT_ORDER_PATH, tr_id, body=body
         )
         # t0 comes from the pacer, not from before the call: the pacing sleep
@@ -979,7 +997,7 @@ class MockTradingClient:
             if status == 200 and parsed.get("rt_cd") == "0" and odno
             else None
         )
-        return placed, parsed, ms
+        return placed, status, parsed, text, ms
 
     def cancel_futures(self, odno: str, qty: int) -> dict[str, Any]:
         """Cancel — ``RVSE_CNCL_DVSN_CD='02'`` (executor.py:689)."""
@@ -1006,7 +1024,18 @@ class MockTradingClient:
         off-tick amend is rejected exactly like an off-tick submit, and a rejected
         amend makes P-8 report replace semantics it never observed.
         """
-        return self._rvsecncl(odno, qty, dvsn="01", price=price)[1]
+        return self.replace_futures_verbose(odno, qty, price)[1]
+
+    def replace_futures_verbose(
+        self, odno: str, qty: int, price: TickPrice
+    ) -> tuple[int, dict[str, Any], str]:
+        """:meth:`replace_futures` plus the HTTP status and the raw body, for
+        the same reason :meth:`submit_futures_verbose` exists: a rate limit on
+        the amend was invisible to the parsed dict alone, so the trial carried
+        on polling and the series placed the next order — bypassing the "our
+        call rate ⇒ stop, never retry" rule on the one POST where it matters
+        most (round-2 review F2)."""
+        return self._rvsecncl(odno, qty, dvsn="01", price=price)
 
     def _rvsecncl(
         self, odno: str, qty: int, *, dvsn: str, price: TickPrice | None
@@ -1365,15 +1394,16 @@ def _live_odno_keys(
     *,
     run: ProbeRun | None = None,
     retries: Retries | None = None,
-) -> tuple[dict[str, str] | None, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]] | None, dict[str, Any]]:
     """Every order the open-order surface shows with ``qty > 0``.
 
     Returns:
         ``(live, evidence)``. ``live`` maps each row's CANONICAL key to the
-        row's VERBATIM ``odno``, because the two are for different jobs:
-        comparison needs the canonical form (the submit and query surfaces pad
-        differently) and a cancel needs the verbatim one (it goes back on the
-        wire as ``ORGN_ODNO``). It is ``None`` — never an empty mapping —
+        ROW, because callers need three different things from it: membership
+        (the canonical key — the submit and query surfaces pad differently),
+        the verbatim ``odno`` for a cancel (it goes back on the wire as
+        ``ORGN_ODNO``), and the rest of the fields to decide whether a row is
+        this trial's at all. It is ``None`` — never an empty mapping —
         whenever the surface did not positively answer for the WHOLE book.
         ``evidence`` records how the walk ended and goes into the artifact, so
         a lookup that established nothing cannot do so silently.
@@ -1402,7 +1432,7 @@ def _live_odno_keys(
       progressing through the book. Both poison the whole answer rather than being
       skipped.
     """
-    live: dict[str, str] = {}
+    live: dict[str, dict[str, Any]] = {}
     evidence: dict[str, Any] = {"pages_walked": 0, "rows_seen": 0}
     cursor = {"fk": "", "nk": ""}
     on_transient = _transient_recorder(run, retries)
@@ -1478,7 +1508,7 @@ def _live_odno_keys(
                 evidence["outcome"] = "UNREADABLE_ROW"
                 return None, evidence
             if qty > 0:
-                live[key] = str(row.get("odno") or "")
+                live[key] = row
         evidence["rows_seen"] += len(rows)
         next_fk = str(listing.get("ctx_area_fk200") or "").strip()
         next_nk = str(listing.get("ctx_area_nk200") or "").strip()
@@ -1518,7 +1548,7 @@ def _cancel_one(
         key: str | None = odno_key(odno)
     except ProbeError:
         key = None
-    live_keys: set[str] | None = None
+    live_keys: dict[str, dict[str, Any]] | None = None
     liveness: dict[str, Any] = {}
     throttled = False
     result: dict[str, Any] = {}
@@ -1651,6 +1681,82 @@ def _cleanup(
 #: facts, and only one of them licenses the operator to stop looking.
 _UNACCOUNTED_KEY = "unaccounted_live_orders"
 
+#: Row fields this surface is KNOWN to carry, because the runtime reads them
+#: off it: ``odno``, ``ord_qty``, ``qty``, ``tot_ccld_qty``, ``avg_idx``
+#: (``executor.py``'s inquire-ccnl row parse; ``probes_real_order.classify_fill``
+#: cites the same set). A row's ORDER PRICE and its 매도매수구분 are NOT in
+#: that set — no artifact in this repo records a field name for either on this
+#: surface — so this matcher checks them only when the row happens to carry
+#: one of the names the repo uses elsewhere, and records which criteria it was
+#: actually able to apply. Guessing a field name would be worse than not
+#: checking: the match would silently never succeed, and a guard that matches
+#: nothing is a guard that protects nothing.
+_ROW_PRICE_FIELDS = ("ord_unpr", "ord_idx")
+_ROW_SIDE_FIELD = "sll_buy_dvsn_cd"
+
+#: 매수 — P-8 always places a BUY (``_resting_price``). ``shared/kis/client.py``
+#: reads ``01=매도 / 02=매수`` off a sibling surface.
+_SIDE_BUY = "02"
+
+
+def _row_matches_this_trial(
+    row: dict[str, Any], *, symbol: str, qty: int, price: TickPrice
+) -> tuple[bool, list[str], list[str]]:
+    """Could this open-order row be the order THIS trial placed?
+
+    Returns ``(matches, checked, unavailable)`` — which criteria were applied
+    and which the row did not carry, both of which go into the artifact.
+
+    Conservative by construction: a row that fails any criterion the probe
+    COULD check is not a candidate. The criteria the row does not carry are
+    named rather than assumed, so a reader can see how strong the match
+    actually was.
+    """
+    checked: list[str] = []
+    unavailable: list[str] = []
+    matches = True
+
+    row_pdno = str(row.get("pdno") or "").strip()
+    if row_pdno:
+        checked.append("pdno")
+        matches = matches and row_pdno == symbol
+    else:
+        # The query is already scoped with PDNO=symbol, so the server has
+        # filtered; the row simply did not echo it back.
+        unavailable.append("pdno")
+
+    raw_qty = str(row.get("ord_qty") or "").strip()
+    if raw_qty:
+        checked.append("ord_qty")
+        try:
+            matches = matches and int(float(raw_qty)) == qty
+        except (TypeError, ValueError):
+            matches = False
+    else:
+        unavailable.append("ord_qty")
+
+    side = str(row.get(_ROW_SIDE_FIELD) or "").strip()
+    if side:
+        checked.append(_ROW_SIDE_FIELD)
+        matches = matches and side == _SIDE_BUY
+    else:
+        unavailable.append(_ROW_SIDE_FIELD)
+
+    for field in _ROW_PRICE_FIELDS:
+        raw_price = str(row.get(field) or "").strip()
+        if not raw_price:
+            continue
+        checked.append(field)
+        try:
+            matches = matches and Decimal(raw_price) == Decimal(price.wire)
+        except (ArithmeticError, TypeError, ValueError):
+            matches = False
+        break
+    else:
+        unavailable.append("|".join(_ROW_PRICE_FIELDS))
+
+    return matches, checked, unavailable
+
 
 def _cancellable_odno(query_row_value: str) -> str:
     """The wire form to send as ``ORGN_ODNO`` for a row seen only in a QUERY.
@@ -1680,38 +1786,43 @@ def _cleanup_unaccounted(
     *,
     symbol: str,
     qty: int,
+    price: TickPrice,
     max_pages: int,
     known: set[str],
+    may_cancel: bool,
     retries: Retries | None = None,
 ) -> None:
-    """Cancel anything live on ``symbol`` that this trial cannot account for.
+    """Account for anything live on ``symbol`` that this trial did not place.
 
-    Runs only after an order-mutating call failed in transport
-    (:data:`_P8_STOP_ORDER_STATE_UNKNOWN`), and only AFTER :func:`_cleanup`,
-    so the ODNOs the probe does know about are already cancelled and what is
-    left is the genuinely unaccounted-for.
+    Runs only after an order-mutating call failed in transport or was
+    ledger-throttled (:data:`_P8_STOP_ORDER_STATE_UNKNOWN`), and only AFTER
+    :func:`_cleanup`, so the ODNOs the probe does know about are already
+    cancelled and what is left is the genuinely unaccounted-for.
 
     ``known`` is every canonical key the probe recorded, and a key stays
     "known" even when its own cancel was rejected and it is still live: that
     row already has a disposition and an error of its own, and counting it
     twice would hide the row that has neither.
 
-    Three outcomes, all recorded under :data:`_UNACCOUNTED_KEY`:
+    **It does not cancel on its own authority, and it never touches a row that
+    does not look like this trial's order.** The first version did both, and
+    on a 모의 account the whole campaign shares that is a way to destroy
+    another probe's measurement — P-5, P-11, P-EXT or an operator MTS order
+    resting on the same contract would have been cancelled and the loss
+    attributed to "the order the timed-out call left behind" (round-2 review
+    F5). So:
 
-    * the walk did not answer for the whole book — nothing can be concluded,
-      and the operator is told to look. This is the fail-closed direction and
-      the same polarity :data:`_CLEANUP_LIVENESS_NOTE` sets for cleanup.
-    * the walk answered and the book is clean — recorded as such, which is
-      what lets the operator stop looking.
-    * the walk answered and found rows — each is cancelled through
-      :func:`_cancel_one`, so it gets the same verified disposition any other
-      cleanup cancel gets, and the run carries an error naming them.
+    * rows that do not match this trial's body are recorded as
+      ``FOREIGN_LIVE_ROWS_PRESENT`` and left alone, always;
+    * matching rows are cancelled only with ``--cancel-unaccounted``, which
+      the runner passes from ``P8_CANCEL_UNACCOUNTED=1``. The default is
+      record and stop, because an orphan the operator is TOLD about is a
+      bounded problem and a cancelled stranger is not.
 
-    The cancel is deliberate rather than flag-only. A resting futures order
-    nobody is tracking is the hazard this whole cleanup path exists for, and
-    the walk is scoped to ``PDNO=symbol`` on a 모의 account the runner holds
-    for the series. What it will NOT do is guess: a walk that cannot answer
-    cancels nothing.
+    Outcomes under :data:`_UNACCOUNTED_KEY`: ``UNDETERMINED`` (the walk did
+    not answer for the whole book — nothing concluded, same fail-closed
+    polarity as :data:`_CLEANUP_LIVENESS_NOTE`), ``NONE_FOUND``,
+    ``FOUND_NOT_CANCELLED`` (recorded, opt-in absent) or ``FOUND`` (cancelled).
     """
     live, evidence = _live_odno_keys(
         client, symbol, max_pages, run=run, retries=retries
@@ -1733,47 +1844,98 @@ def _cleanup_unaccounted(
             "hand before running P-8 again"
         )
         return
-    unaccounted = {key: odno for key, odno in live.items() if key not in known}
-    if not unaccounted:
+
+    candidates: dict[str, str] = {}
+    foreign: list[str] = []
+    criteria: dict[str, Any] = {}
+    for key, row in live.items():
+        if key in known:
+            continue
+        matches, checked, unavailable = _row_matches_this_trial(
+            row, symbol=symbol, qty=qty, price=price
+        )
+        criteria = {"checked": checked, "not_carried_by_the_row": unavailable}
+        if matches:
+            candidates[key] = str(row.get("odno") or "")
+        else:
+            foreign.append(key)
+
+    if foreign:
+        # Named and left alone. This is the only outcome for a row that is
+        # live on the same contract but is not this trial's order.
+        run.measure(
+            "foreign_live_rows_present",
+            {
+                "status": "FOREIGN_LIVE_ROWS_PRESENT",
+                "canonical_keys": sorted(foreign),
+                "match_criteria": criteria,
+                "reading": "live on this symbol, not placed by this trial, and "
+                "not matching this trial's order body — another probe's or the "
+                "operator's. NOT touched.",
+            },
+        )
+        run.error(
+            f"FOREIGN LIVE ROW(S) on {symbol}: {sorted(foreign)} — left alone. "
+            "They do not match this trial's order body."
+        )
+
+    if not candidates:
         run.measure(
             _UNACCOUNTED_KEY,
             {
                 "status": "NONE_FOUND",
                 "liveness_evidence": evidence,
-                "reading": "the surface answered for the whole book and every "
-                "live row was one this trial placed; nothing is orphaned",
+                "match_criteria": criteria,
+                "reading": "the surface answered for the whole book and no live "
+                "row both (a) was unknown to this trial and (b) matched its "
+                "order body",
             },
         )
         return
-    sent = {key: _cancellable_odno(raw) for key, raw in unaccounted.items()}
+
+    sent = {key: _cancellable_odno(raw) for key, raw in candidates.items()}
+    record: dict[str, Any] = {
+        "liveness_evidence": evidence,
+        "canonical_keys": sorted(candidates),
+        "query_row_verbatim": {k: candidates[k] for k in sorted(candidates)},
+        "match_criteria": criteria,
+        "odno_form_note": (
+            "the query surface space-pads and the order surface zero-pads "
+            "(odno_wire_format); an unaccounted row has no accept response, "
+            "so a cancelled form is RECONSTRUCTED from the row by re-padding "
+            "with zeros to the same width"
+        ),
+        "reading": "live on this symbol, unknown to this trial, and matching "
+        "its order body — the order the lost call left behind is the leading "
+        "reading, and it is not the only one",
+    }
+    if not may_cancel:
+        record["status"] = "FOUND_NOT_CANCELLED"
+        record["cancel_odno_would_send"] = {k: sent[k] for k in sorted(sent)}
+        record["reading"] += (
+            ". NOT cancelled: --cancel-unaccounted was not given, and this "
+            "account is shared by the campaign"
+        )
+        run.measure(_UNACCOUNTED_KEY, record)
+        run.error(
+            f"UNACCOUNTED LIVE ORDER(S) on {symbol}: {sorted(candidates)} — "
+            "matching this trial's order body and NOT cancelled (no "
+            "--cancel-unaccounted). Cancel them before running P-8 again."
+        )
+        return
+
+    record["status"] = "FOUND"
+    record["cancel_odno_sent"] = {k: sent[k] for k in sorted(sent)}
     dispositions = {
         odno: _cancel_one(client, run, odno, qty, symbol, max_pages, retries)
         for odno in sent.values()
     }
-    run.measure(
-        _UNACCOUNTED_KEY,
-        {
-            "status": "FOUND",
-            "liveness_evidence": evidence,
-            "canonical_keys": sorted(unaccounted),
-            "query_row_verbatim": {k: unaccounted[k] for k in sorted(unaccounted)},
-            "cancel_odno_sent": {k: sent[k] for k in sorted(sent)},
-            "odno_form_note": (
-                "the query surface space-pads and the order surface zero-pads "
-                "(odno_wire_format); an unaccounted row has no accept response, "
-                "so the cancelled form is RECONSTRUCTED from the row by "
-                "re-padding with zeros to the same width"
-            ),
-            "cleanup_dispositions": dispositions,
-            "reading": "live on this symbol and not placed by any call this "
-            "trial saw answered — the order the timed-out call left behind is "
-            "the leading reading, and it is not the only one",
-        },
-    )
+    record["cleanup_dispositions"] = dispositions
+    run.measure(_UNACCOUNTED_KEY, record)
     run.error(
-        f"UNACCOUNTED LIVE ORDER(S) on {symbol}: {sorted(unaccounted)} — not "
-        f"placed by any call this trial saw answered. Cancel dispositions: "
-        f"{dispositions}"
+        f"UNACCOUNTED LIVE ORDER(S) on {symbol}: {sorted(candidates)} — "
+        f"matching this trial's order body, cancelled under "
+        f"--cancel-unaccounted. Dispositions: {dispositions}"
     )
 
 
@@ -2188,6 +2350,18 @@ _P8_STOP_TRANSIENT = "transient"
 #: answered reports this stop, because that one provably observed nothing.
 _P8_STOP_QUERY_UNANSWERED = "query_unanswered"
 
+#: 조회할 내용이 없습니다 — this broker's EMPTY RESULT SET, served as a
+#: rejection rather than as ``rt_cd=0`` with no rows. Measured on the sibling
+#: balance surface as ``rt_cd='7'`` + ``msg_cd='KIOK0560'``
+#: (``P-BAL-20260731T114344Z``), and ``_live_odno_keys`` has always refused to
+#: read it as "nothing is live".
+#:
+#: For the COEXISTENCE consumer it means the opposite thing: an empty book is
+#: the ordinary end of a trial, not an unhealthy surface. Field-exact on
+#: ``msg_cd``, like :func:`is_ledger_throttled` and for the same reason — a
+#: body that merely mentions the code must not buy the quieter treatment.
+_EMPTY_BOOK_MSG_CD = "KIOK0560"
+
 #: Something left the probe that it does not classify — an exception out of a
 #: path with no handler. Fail-closed: the runner stops the series on it,
 #: because a state the probe cannot name is not a state to keep ordering in.
@@ -2254,6 +2428,7 @@ def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) 
             text=excerpt,
             poll_index=None,
             retried=False,
+            not_retried_because=REFUSED_SINGLE_SHOT,
         )
     )
     # Why THIS phase was not retried, not why "a POST" is not: the quote is a
@@ -2336,6 +2511,54 @@ def _window_note(elapsed: bool, window_s: float) -> str:
     )
 
 
+def _classify_order_answer(
+    run: ProbeRun, phase: str, status: int, parsed: dict[str, Any], text: str
+) -> str | None:
+    """A ``P8_STOP`` token when the order POST's ANSWER ends the trial, else
+    ``None``.
+
+    The submit and the amend used to skip the classifier entirely, so the two
+    rules this harness codifies were both bypassed on the POSTs (round-2
+    review F2):
+
+    * HTTP 429 / ``EGW00201`` is OUR call rate. On the submit it arrived as
+      ``placed is None`` and was reported as a broker REJECTION — "every
+      remaining trial would be refused the same way", a cause that had not
+      happened. On the amend it was invisible: the trial polled on and the
+      series placed the next order.
+    * ``EGW00215`` is the LEDGER throttle. It is an ANSWER, so strictly the
+      order was not accepted — but "strictly" is doing too much work on the
+      one surface where being wrong leaves a live order, so it takes the
+      :data:`_P8_STOP_ORDER_STATE_UNKNOWN` path and pays for one book walk.
+      The walk is cheap; assuming a throttled POST never reached the book is
+      not.
+
+    Either way the evidence goes in the artifact, keyed by phase, so the
+    narration points at a record that exists.
+    """
+    kind = classify_answer(status, parsed, text)
+    if kind is None:
+        return None
+    evidence = call_evidence(
+        status_kind=kind, http_status=status, parsed=parsed, text=text
+    )
+    run.observe(order_call_refused=evidence, phase=phase)
+    if kind == STATUS_RATE_LIMITED:
+        run.error(
+            f"RATE LIMITED on the {phase} (HTTP 429 / EGW00201) — that is OUR "
+            "call rate, not a broker rejection of this order, and it stays a "
+            "no-retry stop. See the order_call_refused observation."
+        )
+        return _P8_STOP_RATE_LIMITED
+    run.error(
+        f"LEDGER THROTTLE on the {phase} (EGW00215) — the broker answered, "
+        "but this is the one surface where being wrong about acceptance "
+        "leaves a live order, so the book is walked before stopping. See the "
+        "order_call_refused observation."
+    )
+    return _P8_STOP_ORDER_STATE_UNKNOWN
+
+
 def _poll_coexistence(
     run: ProbeRun,
     client: MockTradingClient,
@@ -2391,7 +2614,10 @@ def _poll_coexistence(
         return client.inquire_futures_classified(args.symbol)
 
     def _window_still_open() -> bool:
-        return time.monotonic() < deadline
+        # bool(), because `deadline` is derived from argparse.Namespace and is
+        # therefore Any to mypy; without it this returns Any from a function
+        # declared bool.
+        return bool(time.monotonic() < deadline)
 
     try:
         while time.monotonic() < deadline:
@@ -2407,6 +2633,17 @@ def _poll_coexistence(
             polls += attempts
             kind = transient_kind(outcome.kind)
             if kind is not None:
+                if attempts == 1:
+                    # One failure, and the retry was refused — which
+                    # ``can_retry`` only ever does because the window has
+                    # closed. That is the window ENDING, not a link that
+                    # failed twice: the loop would have stopped on the next
+                    # iteration anyway. Calling it a stop voided a window
+                    # that had been spent in full and charged it to the
+                    # runner's link-health budget, which is precisely what
+                    # ``REFUSED_WINDOW_CLOSED`` says must not be added
+                    # together (round-2 review F3).
+                    break
                 return (
                     coexist_last,
                     f"{_P8_STOP_TRANSIENT}:{kind}",
@@ -2493,6 +2730,17 @@ def _poll_coexistence(
         # None by construction, and before this change that became
         # `coexistence_ms: 0.0` on a MEASURED artifact — "the replace was
         # atomic", observed by nothing.
+        #
+        # But WHICH rejection decides whether the series stops. This broker
+        # answers an EMPTY RESULT SET with a rejection shape, and an empty
+        # book is the ordinary end of a P-8 trial: both legs gone (a fill, or
+        # a resting price too close to the touch). Stopping the series on it
+        # would cancel trials 2..5 over one filled order — the same
+        # over-stopping this PR exists to remove (round-2 review F4). Only an
+        # answer the broker gave for some OTHER reason means the surface is
+        # unhealthy enough to refuse a longer walk down it.
+        if set(not_answered_codes) <= {_EMPTY_BOOK_MSG_CD}:
+            return coexist_last, None, answered, True
         return coexist_last, _P8_STOP_QUERY_UNANSWERED, answered, True
     return coexist_last, None, answered, not _window_still_open()
 
@@ -2575,6 +2823,11 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
     # exception with no handler — stops the series rather than continuing it.
     stop = _P8_STOP_UNKNOWN
     measured = False
+    # Bound before the try for the same reason amend_accepted/new_odno_seen
+    # are: the finally reads it, and an undefined name there would replace a
+    # real result with a NameError raised out of the finally block. It stays
+    # None only on the quote-failure path, which never reaches the book walk.
+    resting_price: TickPrice | None = None
     try:
         # The quote is its OWN phase. It is a GET and nothing is resting yet, so
         # a failure here is a different fact from a failure on the submit — and
@@ -2585,11 +2838,18 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
         except transport_transient_types() as exc:
             stop = _record_write_transport_stop(run, "quote", exc)
             return run
+        resting_price = price
         try:
             body = client.futures_order_body(args.symbol, args.quantity, price, side)
-            placed, raw, _ms = client.submit_futures(body)
+            placed, submit_status, raw, submit_text, _ms = (
+                client.submit_futures_verbose(body)
+            )
         except transport_transient_types() as exc:
             stop = _record_write_transport_stop(run, "submit", exc)
+            return run
+        refused = _classify_order_answer(run, "submit", submit_status, raw, submit_text)
+        if refused is not None:
+            stop = refused
             return run
         if placed is None:
             stop = _P8_STOP_REJECTED
@@ -2602,13 +2862,19 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             price.value * 0.99, price.tick, side=side, marketable=False
         )
         try:
-            amend = client.replace_futures(placed.odno, args.quantity, new_price)
+            amend_status, amend, amend_text = client.replace_futures_verbose(
+                placed.odno, args.quantity, new_price
+            )
             # Same rule as submit_futures: t0 is the pacer's release instant, so
             # the pacing sleep before the amend is not counted into
             # coexistence_ms.
             amended_at = client.last_send_instant()
         except transport_transient_types() as exc:
             stop = _record_write_transport_stop(run, "amend", exc)
+            return run
+        refused = _classify_order_answer(run, "amend", amend_status, amend, amend_text)
+        if refused is not None:
+            stop = refused
             return run
         new_odno = str((amend.get("output") or {}).get("ODNO") or "").strip()
         # Mirrored into function scope for the cleanup measurement in ``finally``.
@@ -2737,7 +3003,7 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             max_pages=args.max_pages,
             retries=retries,
         )
-        if stop == _P8_STOP_ORDER_STATE_UNKNOWN:
+        if stop == _P8_STOP_ORDER_STATE_UNKNOWN and resting_price is not None:
             # AFTER _cleanup, so every ODNO the probe does know about is
             # already cancelled and whatever is still live is the genuinely
             # unaccounted-for. A known ODNO whose own cancel was refused stays
@@ -2754,8 +3020,10 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
                 run,
                 symbol=args.symbol,
                 qty=args.quantity,
+                price=resting_price,
                 max_pages=args.max_pages,
                 known=known,
+                may_cancel=bool(getattr(args, "cancel_unaccounted", False)),
                 retries=retries,
             )
         if dispositions:
@@ -2771,7 +3039,13 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             )
             run.measure("amend_consumption_note", _P8_CONSUMPTION_NOTE)
         run.measure("stop_reason", stop)
-        _print_p8_verdict(stop, measured)
+        # `and not run.errors`, because ProbeRun.to_dict classes any run with
+        # errors as NOT_MEASURED — and the cleanup that just ran in this same
+        # finally can add one (REJECTED_AND_STILL_LIVE, THROTTLED,
+        # LIVENESS_UNDETERMINED). Printing `measured` off the local flag let
+        # the runner count toward N>=5 a trial whose own artifact says
+        # NOT_MEASURED (round-2 review F1).
+        _print_p8_verdict(stop, measured and not run.errors)
         client.close()
     return run
 
@@ -3937,6 +4211,21 @@ def add_order_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--max-pages", type=int, default=10, help="P-5b: pagination walk cap."
+    )
+    parser.add_argument(
+        "--cancel-unaccounted",
+        action="store_true",
+        help=(
+            "P-8 only: after a lost submit or amend, CANCEL live rows that "
+            "match this trial's order body but that the probe never saw "
+            "placed. Off by default: the 모의 account is shared by the whole "
+            "campaign, so a row the probe cannot account for may belong to "
+            "another probe or to the operator, and cancelling it destroys "
+            "that measurement. Without this flag such rows are recorded in "
+            "measurements.unaccounted_live_orders as FOUND_NOT_CANCELLED and "
+            "the series stops so a human can look. Rows that do NOT match the "
+            "order body are never cancelled, flag or no flag."
+        ),
     )
     parser.add_argument(
         "--allow-fill",
