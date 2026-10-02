@@ -33,51 +33,29 @@
 # This script never deletes itself. With PCA_CRON_MARK set it removes the one
 # matching crontab line, and only after the probe has actually run.
 #
+# The guards themselves live in _common.sh beside this file, shared with
+# run_p8.sh: they are a policy, and this harness has already paid once for
+# keeping a policy in two places (#825 independent review F4).
+#
 # See tools/broker_probes/runners/README.md for an instantiation recipe.
 
 set -u
 
-log() {
-  _line="$(TZ=Asia/Seoul date '+%F %T') $*"
-  printf '%s\n' "$_line"
-  if [ -n "${PCA_LOG:-}" ]; then
-    printf '%s\n' "$_line" >>"$PCA_LOG"
-  fi
-  return 0
-}
+# --- 0. the shared guards --------------------------------------------------
 
-die() {
-  log "ABORT: $1"
-  exit "${2:-3}"
-}
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
+# shellcheck source=tools/broker_probes/runners/_common.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/_common.sh"
+# Before the first log() call, so even step 1's ABORT lands in the operator's
+# log file. PCA_LOG is only PROVEN usable in step 3; this is the same "tee if
+# set" behaviour the runner has always had.
+set_log_file "${PCA_LOG:-}"
 
 # --- 1. the checkout -------------------------------------------------------
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
-REPO=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null) ||
-  die "$SCRIPT_DIR is not inside a git checkout"
-cd "$REPO" || exit 2
-
-if [ "${PCA_ALLOW_SHARED_CHECKOUT:-0}" = "1" ]; then
-  log "WARN: PCA_ALLOW_SHARED_CHECKOUT=1 — clean/detached/ancestor guards SKIPPED" \
-      "by operator override; repo_commit in the artifact may not be an" \
-      "origin/main commit (#793)"
-else
-  DIRTY=$(git -C "$REPO" status --short)
-  [ -z "$DIRTY" ] ||
-    die "checkout $REPO is dirty; probes run from a clean detached worktree (#793). First line: $(printf '%s' "$DIRTY" | head -1)"
-
-  BRANCH=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null) ||
-    die "cannot read HEAD in $REPO"
-  [ "$BRANCH" = "HEAD" ] ||
-    die "checkout $REPO is on branch '$BRANCH', not a detached worktree — a parallel lane can move it under a running probe (#793)"
-
-  git -C "$REPO" rev-parse --verify --quiet origin/main >/dev/null ||
-    die "origin/main is not present in $REPO — run 'git fetch origin' first"
-  git -C "$REPO" merge-base --is-ancestor HEAD origin/main ||
-    die "HEAD ($(git -C "$REPO" rev-parse --short HEAD)) is not an ancestor of origin/main — probe evidence must be produced by merged code (#793)"
-fi
-log "checkout ok: repo=$REPO repo_commit=$(git -C "$REPO" rev-parse HEAD)"
+guard_checkout "$SCRIPT_DIR" "${PCA_ALLOW_SHARED_CHECKOUT:-0}" \
+  PCA_ALLOW_SHARED_CHECKOUT
 
 # --- 2. runner and probe must be the same generation -----------------------
 #
@@ -97,28 +75,18 @@ EXPECT_POLICY_VERSION=p-ca-retry-policy/2
 
 # --- 3. instance values (no defaults) --------------------------------------
 
-for _name in \
+require_env \
   PCA_LOG PCA_PYTHON PCA_CREDENTIAL_FILE PCA_KIS_ENV PCA_SYMBOL PCA_EVENT_CLASS \
   PCA_PAYABLE PCA_WINDOW_S PCA_POLL_MS PCA_PACE_S PCA_EXPECT_KEY_FP \
-  PCA_EXPECT_ACCOUNT_FP PCA_TOKEN_CACHE PCA_EVIDENCE_DIR PCA_NOTE; do
-  _value=$(printenv "$_name" || true)
-  [ -n "$_value" ] ||
-    die "required env $_name is unset — this template ships no instance defaults"
-done
+  PCA_EXPECT_ACCOUNT_FP PCA_TOKEN_CACHE PCA_EVIDENCE_DIR PCA_NOTE
 
 case "$PCA_KIS_ENV" in
   mock | real) ;;
   *) die "PCA_KIS_ENV must be 'mock' or 'real' (got '$PCA_KIS_ENV')" ;;
 esac
 
-# Step 6 appends the probe's whole output to PCA_LOG. If that directory does
-# not exist the redirection fails, bash never runs the probe, and every log()
-# call has already been silently dropping its line — the "attempt vanished"
-# shape this runner exists to prevent (review F1). Make it real here, and fail
-# loudly if it cannot be.
-mkdir -p -- "$(dirname -- "$PCA_LOG")" ||
-  die "cannot create the directory for PCA_LOG=$PCA_LOG"
-touch -- "$PCA_LOG" || die "PCA_LOG is not writable: $PCA_LOG"
+# Step 7 appends the probe's whole output to PCA_LOG, so prove the path first.
+ensure_log_file "$PCA_LOG" PCA_LOG
 
 # Conditionally required, and checked HERE with the rest (review F3): every
 # other class's observable leg is the QUANTITY leg, which pairs with
@@ -142,78 +110,18 @@ case "${PCA_RECORD_DATE:-}" in
 esac
 
 PY="$PCA_PYTHON"
-[ -x "$PY" ] || die "PCA_PYTHON is not executable: $PY"
-
-# The interpreter comes from somewhere else (the main checkout's .venv — a
-# freshly added detached worktree has no .venv, and installing one into it is
-# forbidden), so the code it LOADS has to be proven to be this checkout's.
-# Without this the runner's clean/detached/ancestor guards would vouch for a
-# tree that never ran: `repo_commit` and the results directory both follow
-# `common.py.__file__` (common.py:70,506,512), not $REPO, so an interpreter
-# resolving tools.broker_probes from the main checkout would stamp the wrong
-# commit and write the artifact where this script does not look (review F1).
-LOADED=$(PYTHONPATH="$REPO" "$PY" -c \
-  "import tools.broker_probes.probes_ca as m; print(m.__file__); print(m.POLICY_VERSION)" 2>&1) ||
-  die "cannot import tools.broker_probes from $REPO with $PY: $(printf '%s' "$LOADED" | tail -1 | cut -c1-160)"
-MODULE_PATH=$(printf '%s\n' "$LOADED" | sed -n '1p')
-MODULE_POLICY=$(printf '%s\n' "$LOADED" | sed -n '2p')
-case "$MODULE_PATH" in
-  "$REPO"/*) log "probe module resolves inside the checkout: $MODULE_PATH" ;;
-  *) die "probe module resolves OUTSIDE the checkout ($MODULE_PATH) — the guards above would vouch for code that never ran" ;;
-esac
-[ "$MODULE_POLICY" = "$EXPECT_POLICY_VERSION" ] ||
-  die "policy version mismatch: this runner was written for '$EXPECT_POLICY_VERSION', the checkout's probes_ca.py reports '$MODULE_POLICY' — runner and probe are from different trees" 4
-log "probe policy version $MODULE_POLICY matches this runner"
-export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+guard_python_module "$PY" PCA_PYTHON tools.broker_probes.probes_ca \
+  "$EXPECT_POLICY_VERSION"
 
 [ -d "$PCA_EVIDENCE_DIR" ] || die "evidence dir missing: $PCA_EVIDENCE_DIR"
 
 # --- 3b. the credential file, copied into the worktree if it is not there ---
 #
 # Operator directive 2026-10-01: "워크트리에 .env가 없으면 기본 디렉토리에서
-# 복사해". A RELATIVE PCA_CREDENTIAL_FILE (the documented case, e.g. .env.mock)
-# is resolved against this worktree; a freshly added worktree carries none of
-# the ignored env files, so it is copied from the PRIMARY checkout — the first
-# entry of `git worktree list --porcelain`, never a hardcoded path, so this
-# keeps working when the checkout moves. An ABSOLUTE path (e.g. the 09-15
-# credential backup under ~/.config) is used exactly as given and never copied.
-#
-# The copy is mode 600 and the log line carries PATHS ONLY — never a byte of
-# the file. It persists in the worktree; `.env.*` is gitignored, so it does not
-# make the checkout dirty for the next run's guard.
-case "$PCA_CREDENTIAL_FILE" in
-  /*)
-    CRED_FILE=$PCA_CREDENTIAL_FILE
-    [ -r "$CRED_FILE" ] ||
-      die "credential file unreadable: $CRED_FILE (absolute path, used as given)"
-    ;;
-  *)
-    CRED_FILE="$REPO/$PCA_CREDENTIAL_FILE"
-    # BEFORE anything is written. The repo ignores EXACT names (.env,
-    # .env.mock, .env.real, .env.paper, .env.live, .env.production,
-    # .env.local, .env.*.local) — not a `.env.*` glob, so `.env.mock.bak-…`,
-    # the very name this README once suggested, is NOT ignored (review F2).
-    # Copying a filled credential file onto an unignored path puts it where
-    # `git add -A` would stage it: CLAUDE.md Non-Negotiable, "never commit
-    # real credentials … or filled .env files". `git check-ignore` answers for
-    # a path that does not exist yet, so the refusal costs nothing and nothing
-    # is ever written to the wrong place.
-    git -C "$REPO" check-ignore -q -- "$PCA_CREDENTIAL_FILE" ||
-      die "relative credential file '$PCA_CREDENTIAL_FILE' is NOT gitignored in $REPO — refusing to place a filled credential file where 'git add -A' would stage it. Use an ignored name (.env.mock, .env.real, .env.paper, …) or give an absolute path outside the checkout"
-    if [ ! -r "$CRED_FILE" ]; then
-      PRIMARY=$(git -C "$REPO" worktree list --porcelain |
-        awk '/^worktree /{print substr($0, 10); exit}')
-      [ -n "$PRIMARY" ] ||
-        die "cannot determine the primary checkout from 'git worktree list' in $REPO"
-      CRED_SOURCE="$PRIMARY/$PCA_CREDENTIAL_FILE"
-      [ -r "$CRED_SOURCE" ] ||
-        die "credential file '$PCA_CREDENTIAL_FILE' is in neither checkout — not at $CRED_FILE and not at $CRED_SOURCE"
-      install -m 600 "$CRED_SOURCE" "$CRED_FILE" ||
-        die "could not copy the credential file: $CRED_SOURCE -> $CRED_FILE"
-      log "credential file copied from the primary checkout: $CRED_SOURCE -> $CRED_FILE (mode 600)"
-    fi
-    ;;
-esac
+# 복사해". Relative -> this worktree, copied in from the primary checkout when
+# absent and refused outright when the name is not gitignored; absolute -> used
+# as given, never copied. The whole rule is in _common.sh.
+resolve_credential_file "$PCA_CREDENTIAL_FILE"
 
 # --- 4. credentials, checked by fingerprint --------------------------------
 
@@ -225,28 +133,15 @@ set +a
 
 mkdir -p "$PCA_TOKEN_CACHE" && chmod 700 "$PCA_TOKEN_CACHE"
 
-KEY_FP=$(printf '%s' "${KIS_STOCK_APP_KEY:-}" | sha256sum | cut -c1-12)
-log "stock app key fp=$KEY_FP (expect $PCA_EXPECT_KEY_FP)"
-[ "$KEY_FP" = "$PCA_EXPECT_KEY_FP" ] ||
-  die "app key fingerprint mismatch — $CRED_FILE is not the credential set this trial was planned against"
-
-ACCOUNT_FP=$("$PY" -c "
-import os
-from tools.broker_probes.common import account_fingerprint
-print(account_fingerprint(os.environ['KIS_STOCK_ACCOUNT_NO']))") ||
-  die "account fingerprint call failed"
-log "stock account fingerprint=$ACCOUNT_FP (expect $PCA_EXPECT_ACCOUNT_FP)"
-[ "$ACCOUNT_FP" = "$PCA_EXPECT_ACCOUNT_FP" ] ||
-  die "account fingerprint mismatch"
+check_key_fingerprint stock "${KIS_STOCK_APP_KEY:-}" "$PCA_EXPECT_KEY_FP" \
+  "$CRED_FILE"
+check_account_fingerprint stock "$PY" KIS_STOCK_ACCOUNT_NO \
+  "$PCA_EXPECT_ACCOUNT_FP"
 
 # Record what the results dir already holds, so each copy below can tell this
-# run's artifact from a leftover: `ls -t | head -1` on a run that wrote nothing
-# copies somebody else's trial into the evidence corpus. (shellcheck SC2012,
-# info-level, is left standing: these names are generated by the harness as
-# P-CA-<UTC timestamp>Z.json — no spaces, no newlines — and `find | sort` for a
-# fixed pattern would be the more fragile of the two.)
-# shellcheck disable=SC2012
-ART_BEFORE=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
+# run's artifact from a leftover: the newest file on a run that wrote nothing
+# is somebody else's trial, and copying it puts it in the evidence corpus.
+ART_BEFORE=$(newest_artifact P-CA)
 
 # The reference-only artifact, once step 5 has produced one. Named here so
 # every later step can exclude it by identity rather than by hoping ART_BEFORE
@@ -261,8 +156,7 @@ REF_ART=
 copy_new_artifact() {
   _phase=${1:+ ($1)}
   _dest=${2:-$PCA_EVIDENCE_DIR}
-  # shellcheck disable=SC2012
-  _art=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
+  _art=$(newest_artifact P-CA)
   if [ -z "$_art" ]; then
     log "WARN: no P-CA artifact under $REPO/tools/broker_probes/results/ — nothing copied$_phase"
   elif [ -n "$REF_ART" ] && [ "$_art" = "$REF_ART" ] && [ -z "$1" ]; then
@@ -344,8 +238,7 @@ if [ "${PCA_REFERENCE_CHECK:-0}" = "1" ] && [ "$PCA_EVENT_CLASS" = "cash_dividen
   printf '%s\n' "$REF_OUT" >>"$PCA_LOG"
   log "=== END P-CA reference-only rc=$ref_rc"
   REFERENCE_DONE=1
-  # shellcheck disable=SC2012
-  REF_ART=$(ls -t "$REPO"/tools/broker_probes/results/P-CA-*.json 2>/dev/null | head -1)
+  REF_ART=$(newest_artifact P-CA)
   [ "$REF_ART" = "$ART_BEFORE" ] && REF_ART=
   # Into a subdirectory of its own: a lookup is not a trial, and the 10-22
   # re-arm guard globs `$PCA_EVIDENCE_DIR/P-CA-*.json` to decide whether the
