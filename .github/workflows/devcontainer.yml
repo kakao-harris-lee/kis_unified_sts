@@ -4,6 +4,11 @@
 # Path-gated: only runs when the relevant config changes, so it never slows down
 # ordinary code PRs (the host test suite in test.yml covers those).
 #
+# ⚠ That gate watches the clone-and-go CONFIG, but both jobs run tests/unit — so any
+# tests/unit change can break them while the gate stays quiet. It did: #835 sat red for two
+# weeks because no PR touched a gated path. Hence the weekly run on main below; widening the
+# gate to tests/** would instead make every code PR pay for two container builds.
+#
 # Both jobs run the unit suite as TWO passes — parallel (non-serial) then serial
 # — exactly like test.yml. `serial`-marked tests assume the dedicated serial
 # pass (shared external state / ordering-sensitive) and fail if mixed in.
@@ -22,6 +27,12 @@ on:
   pull_request:
     branches: [main]
     paths: *paths
+  # Backstop for the path gate above (schedule ignores `paths`): run on main weekly so
+  # drift surfaces within 7 days instead of at the next config PR. Monday 19:00 UTC =
+  # Tuesday 04:00 KST — off test.yml's Monday 00:00 UTC performance sweep.
+  schedule:
+    - cron: '0 19 * * 1'
+  workflow_dispatch:
 
 jobs:
   docker-test-profile:

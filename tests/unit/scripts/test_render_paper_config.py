@@ -37,6 +37,33 @@ import render_paper_config as rpc  # noqa: E402
 
 _SOURCE = _REPO_ROOT / "config" / "tos_runtime" / "paper"
 
+
+def _repo_is_a_git_checkout() -> bool:
+    """Is ``_REPO_ROOT`` a git work tree the guard below can clone from?
+
+    The concrete failing input this answers ``False`` for (#835): the ``Dockerfile.test``
+    image. Its ``.dockerignore`` excludes ``.git``, so ``COPY . .`` lands a plain directory
+    at ``/app`` and ``git clone --no-hardlinks /app <tmp>`` dies with
+    ``fatal: repository '/app' does not exist`` (rc 128) — measured, not assumed.
+
+    A bare ``(_REPO_ROOT / ".git").exists()`` would not do: in a linked worktree ``.git`` is
+    a FILE, and an installed-but-broken git would still read as present. This asks git.
+    """
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:  # no git CLI at all
+        return False
+    return probe.stdout.strip() == "true"
+
+
+#: Resolved once, at import: every skip decision in this module reads the same answer.
+_REPO_IS_A_GIT_CHECKOUT = _repo_is_a_git_checkout()
+
 #: A fake account, never a real one. Ten digits, the length the guard requires.
 _FAKE_ACCOUNT = "9999999999"
 #: The same fake account in the hyphenated shape ``.env.mock`` actually stores.
@@ -372,6 +399,15 @@ def test_guard_output_directory_that_is_not_ours_refuses(tmp_path: Path) -> None
         _render(out)
 
 
+@pytest.mark.skipif(
+    not _REPO_IS_A_GIT_CHECKOUT,
+    reason=(
+        "needs a git work tree at the repo root to clone from; the Dockerfile.test image "
+        "has none (.dockerignore excludes .git, so /app is a plain directory — #835). "
+        "The host `test` workflow, which is this guard's real gate, always has one, so "
+        "this must never be skipped there."
+    ),
+)
 def test_guard_render_leaves_the_repository_byte_identical(tmp_path: Path) -> None:
     """Guard "렌더가 저장소에 아무것도 남기지 않는다" (design §2, review-795 HIGH-3).
 
