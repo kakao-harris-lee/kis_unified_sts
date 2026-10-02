@@ -341,3 +341,17 @@ def test_guard_installs_once():
     assert dotenv.load_dotenv is first
     restore()
     assert dotenv.load_dotenv is first
+
+
+def test_guard_installs_without_python_dotenv(monkeypatch):
+    """Installing is a no-op where python-dotenv is absent.
+
+    The ``tos-firewall`` job installs the root project with ``--no-deps``, so
+    conftest runs there with no loader to wrap. Importing dotenv
+    unconditionally turned that job's whole collection into an ImportError.
+    """
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+    monkeypatch.setitem(sys.modules, "dotenv.main", None)
+
+    restore = hermetic_env.install_dotenv_guard()
+    restore()

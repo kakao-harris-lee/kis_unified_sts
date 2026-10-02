@@ -140,9 +140,15 @@ def install_dotenv_guard() -> Callable[[], None]:
     Returns:
         A callable that restores the original function. Idempotent — calling
         this twice installs one guard and the second call's restore is a no-op.
+        A no-op too when python-dotenv is not installed: the ``tos-firewall``
+        job installs the root project with ``--no-deps``, and with no loader
+        present there is nothing to guard.
     """
-    import dotenv
-    import dotenv.main
+    try:
+        import dotenv
+        import dotenv.main
+    except ImportError:
+        return lambda: None
 
     real = dotenv.main.load_dotenv
     if getattr(real, _GUARD_MARKER, False):

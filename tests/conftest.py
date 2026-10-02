@@ -98,9 +98,13 @@ else:
     os.environ.pop(hermetic_env.HERMETIC_ENV, None)
     TOKEN_CACHE_DIR = None  # type: ignore[assignment]
 
-    from shared.config.dotenv_guard import load_project_dotenv  # noqa: E402
+    with suppress(ImportError):
+        # python-dotenv is a runtime dependency, but the tos-firewall job
+        # installs the root project with --no-deps.
+        from shared.config.dotenv_guard import load_project_dotenv  # noqa: E402
 
-    load_project_dotenv()
+        load_project_dotenv()
+
     SCRUBBED_ENV = [key for key in list(os.environ) if key.startswith("TELEGRAM_")]
     for _tg_key in SCRUBBED_ENV:
         del os.environ[_tg_key]
