@@ -6,11 +6,23 @@ expected fingerprints) comes from the environment and has **no default**, so
 an unset variable aborts the run instead of quietly inheriting somebody else's
 trial.
 
-They are tracked because the 2026-09-30 P-CA runner was not: it lived only in
-`~/.config/kis-probes/` and deleted itself after its first run, so attempts 3
-and 4 went out through a hand-made copy and the review could not establish
-afterwards which script had actually run
-(`docs/plans/2026-09-30-probe-transient-error-policy-plan.md` §2.2).
+They are tracked because the untracked ones cost measurements twice. The
+2026-09-30 P-CA runner lived only in `~/.config/kis-probes/` and deleted
+itself after its first run, so attempts 3 and 4 went out through a hand-made
+copy and the review could not establish afterwards which script had actually
+run (`docs/plans/2026-09-30-probe-transient-error-policy-plan.md` §2.2). The
+2026-09-28 P-8 runner is simply gone, and the only surviving record of what it
+decided is one line transcribed into the campaign README — a line that called
+a `ConnectionError` a broker rejection and cancelled three of five trials
+(§7.15).
+
+`_common.sh` holds the guards both templates use: clean/detached/ancestor
+checkout, required-env checking, the interpreter and module-provenance proof,
+the `POLICY_VERSION` handshake, and the credential-file rule. It is sourced,
+not executed. Nothing in it reads a `PCA_*` or `P8_*` variable — every
+instance value arrives as an argument, including the NAME of the variable a
+message should cite — so one runner cannot read the other's environment, and a
+test pins that property.
 
 ## `run_p_ca.sh` — P-CA corporate-action reflection
 
@@ -225,3 +237,156 @@ Notes:
 - Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
   `PCA_*` exports, `PCA_PYTHON` included (a cron shell inherits almost
   nothing).
+
+## `run_p8.sh` — P-8 replace/amend semantics
+
+Same checkout, interpreter, credential and `POLICY_VERSION` guards as
+`run_p_ca.sh` (they are the shared ones in `_common.sh`). What is P-8's own is
+the **trial series** and the rule that ends it.
+
+```bash
+# 1. a throwaway detached worktree on merged code
+git -C /home/deploy/project/kis_unified_sts fetch -q origin
+git -C /home/deploy/project/kis_unified_sts worktree add --detach \
+    /home/deploy/.local/state/kis/wt-p8-run origin/main
+
+# 2. the interpreter — the MAIN checkout's venv (a fresh worktree has no
+#    .venv, and installing one into it is not allowed). The runner exports
+#    PYTHONPATH itself and then PROVES the tools.broker_probes it loads is the
+#    worktree's, because repo_commit and the results directory follow the
+#    loaded module, not the runner's $REPO.
+export P8_PYTHON=/home/deploy/project/kis_unified_sts/.venv/bin/python
+
+# 3. the instance
+export P8_LOG=~/.config/kis-probes/p8-20261005.log
+export P8_CREDENTIAL_FILE=.env.mock   # relative -> this worktree, copied in if absent
+                                      # absolute -> used as given, never copied
+export P8_SYMBOL=A05610               # the mini near-month contract ON THE DAY
+export P8_TRIALS=5                    # N>=5 is what mode_determination needs
+export P8_QUANTITY=1
+export P8_PRICE_OFFSET_PCT=10.0       # far from the touch: the order must REST
+export P8_POLL_MS=200
+export P8_PACE_S=1.1
+export P8_VISIBILITY_TIMEOUT_S=30
+export P8_INTER_TRIAL_S=1            # seconds; digits and at most one '.'
+export P8_MAX_TRANSIENT_STOPS=2       # transport stops tolerated before giving up
+export P8_EXPECT_KEY_FP=<sha256(futures app key)[:12]>
+export P8_EXPECT_ACCOUNT_FP=<account_fingerprint(futures account no)>
+export P8_TOKEN_CACHE=~/.config/kis-probes/p8-20261005-token-cache
+export P8_EVIDENCE_DIR=/path/to/docs/broker-profiles/evidence/<campaign>
+export P8_NOTE="t3 P-8 trials 3-5: ..."
+
+# optional
+export P8_ALLOW_SHARED_CHECKOUT=1     # skip the checkout guards, logged (#793)
+export P8_CRON_MARK=run_p8_20261005   # remove this one crontab line when done
+export P8_CANCEL_UNACCOUNTED=1        # see "The STOP rule" — off by default
+
+# 4. run it from the worktree's own copy — that is how it finds the checkout
+/home/deploy/.local/state/kis/wt-p8-run/tools/broker_probes/runners/run_p8.sh
+```
+
+### The STOP rule — four reasons, counted separately
+
+The probe prints two anchored lines per trial, exactly one of each on every
+path it can leave by, and the runner reads only those:
+
+```
+P8_STOP=<none | transient:transport | transient:ledger_throttle
+       | order_state_unknown | query_unanswered | rate_limited | rejected
+       | unknown | dry_run>
+P8_COEXISTENCE=<measured | not_measured>
+```
+
+| token | what happened | the series |
+| --- | --- | --- |
+| `none` | the trial ran to its end (a REJECTED AMEND lands here — that is a replace-semantics observation) | continues |
+| `transient:transport` | two consecutive transport failures on the **poll** GET (or a lost quote), after one retry a whole poll interval apart | **continues**, up to `P8_MAX_TRANSIENT_STOPS` |
+| `transient:ledger_throttle` | the same, for two consecutive `EGW00215` | **continues**, same budget |
+| `order_state_unknown` | a transport failure or `EGW00215` on the **submit or amend** — whether the broker accepted it is unknown | stops |
+| `rate_limited` | HTTP 429 or `EGW00201`, on a poll **or on either order POST** — OUR call rate | stops |
+| `query_unanswered` | the open-order surface refused every poll for the whole window, for a reason **other than** an empty book | stops |
+| `rejected` | the broker refused the SUBMIT | stops |
+| anything else, or no line at all | a state the probe did not name | stops |
+
+The line between the first group and `order_state_unknown` is **"is an
+order's state unknown"**, not "was it a POST". A lost quote leaves nothing
+resting, so the next trial starts from a clean account. A lost submit or
+amend may have been accepted and be resting right now under an ODNO the probe
+never saw: before stopping, the probe walks the whole book and records what it
+finds in `measurements.unaccounted_live_orders` as `FOUND`,
+`FOUND_NOT_CANCELLED`, `NONE_FOUND` or `UNDETERMINED`. **Read that field
+before scheduling P-8 again** — the runner says so on its last line whenever
+such a stop happened. A walk that cannot answer cancels nothing and tells you
+to check by hand.
+
+Two things it will not do. It never touches a live row that does **not** match
+this trial's order body (same symbol, same quantity, and the side and price
+when the row carries them): that row belongs to another probe or to the
+operator, it is reported as `foreign_live_rows_present`, and no flag
+overrides that. And it does not cancel even a MATCHING row unless you ask:
+
+```bash
+export P8_CANCEL_UNACCOUNTED=1   # cancel rows that match this trial's body
+```
+
+The default is record-and-stop, because an orphan you are told about is a
+bounded problem and a cancelled stranger is not. Without the flag the artifact
+carries `cancel_odno_would_send` so you can do it by hand.
+
+A `query_unanswered` stop is narrower than it sounds: this broker answers an
+**empty result set** with a rejection shape (`rt_cd=7` / `KIOK0560`), and an
+empty book is the ordinary end of a trial — both legs gone to a fill, or to a
+resting price too close to the touch. That case measures nothing and does
+**not** stop the series. Only a refusal the broker gave for some other reason
+does.
+
+A non-zero exit stops the series too, before the token is believed: the probe
+can print a clean verdict and still die writing the artifact, and then an
+order may be unaccounted for. Same rule `run_p_ca.sh` applies to `HELD=`.
+
+Why the transport row is the point: on 2026-09-28 a five-trial series lost
+trials 3, 4 and 5 to one `ConnectionError` in the middle of trial 2's
+coexistence poll. The runner's verdict read
+
+```
+VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 중단(재시도 금지)
+```
+
+Nothing had been rejected, and the cleanup cancel issued seconds later
+returned `rt_cd=0`. This runner's verdict line carries the four counts as
+separate fields, so there is no field in which a transport stop and a
+rejection can be added together:
+
+```
+VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n query_unanswered_stops=n order_state_unknown_stops=n transport_stops=n
+```
+
+`measured=n` counts only trials that actually produced a `coexistence_ms`. A
+trial whose amend was rejected, whose amend issued no new ODNO, or whose poll
+loop never got one `rt_cd=0` answer measured **nothing** — it prints
+`P8_COEXISTENCE=not_measured` and does not count toward N≥5, even though it
+did not stop.
+
+It then says in so many words whether `N>=5` was reached, because
+`capabilities.replace_semantics.mode` stays unwritten until five trials both
+measured and agreed, and the runner is the only place that knows the count.
+
+### Notes
+
+- **Mock-only is enforced in code, not here.** Every P-8 order call passes
+  `assert_mock_host()` and `assert_mock_trading_tr()`, and `_setup()` runs
+  `assert_no_live_futures_config()` before the first socket. A bash guard
+  would only be a second, weaker copy of a refusal that cannot be bypassed.
+  There is no `P8_KIS_ENV`.
+- **`P8_SYMBOL` is the near-month contract on the day it runs.** It is an
+  instance value with no default for that reason — an expired contract is a
+  rejection, not a measurement.
+- Artifacts are copied to `P8_EVIDENCE_DIR` after each trial, and only when
+  newer than what the results directory already held: a trial that wrote
+  nothing must not copy somebody else's.
+- The script **never deletes itself**. `P8_CRON_MARK` removes only the one
+  matching `crontab -l` line, and only once a trial has actually run — an
+  early ABORT leaves the schedule in place so the next slot can retry.
+- Exit status: 0 when the series completed, non-zero when it stopped.
+- Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
+  `P8_*` exports, `P8_PYTHON` included (a cron shell inherits almost nothing).

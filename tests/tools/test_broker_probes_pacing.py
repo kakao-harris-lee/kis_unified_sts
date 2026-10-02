@@ -24,8 +24,9 @@ into the bound. That is fail-open in the approval direction, so the recorded val
 is asserted too.
 
 No test here opens a socket. ``probes_order.http_json`` is replaced by a recorder
-and ``probes_order.time`` by a deterministic fake, so the assertions are on exact
-instants rather than on wall-clock tolerances.
+and the ``time`` module by a deterministic fake — in ``probes_order`` AND in
+``common``, where the pacer itself lives — so the assertions are on exact instants
+rather than on wall-clock tolerances.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from typing import Any
 
 import pytest
 
-from tools.broker_probes import probes_order
+from tools.broker_probes import common, probes_order
 from tools.broker_probes.common import ProbeCredentials, ProbeError, ProbeRun
 from tools.broker_probes.probes_order import (
     DEFAULT_PACE_S,
@@ -54,10 +55,16 @@ _RTT_S = 0.05
 
 
 class _FakeTime:
-    """Deterministic stand-in for the ``time`` module as ``probes_order`` sees it.
+    """Deterministic stand-in for the ``time`` module the probe harness sees.
 
-    ``probes_order`` does ``import time``, so replacing the module-global name
-    isolates the fake to that module: pytest's own timing is untouched.
+    Both modules do ``import time``, so replacing the module-global name
+    isolates the fake to them: pytest's own timing is untouched. ``common`` is
+    patched as well as ``probes_order`` because the pacer itself lives there —
+    ``_CallPacer`` is ``common.Pacer`` plus a docstring, one implementation
+    shared with P-CA's — so ``wait``/``defer`` read ``common``'s clock. Leaving
+    it unpatched did not fail loudly: the pacer simply used the REAL clock
+    beside a fake one, and the latency assertions came out as nine-digit
+    negative numbers.
     """
 
     def __init__(self, start: float = _START) -> None:
@@ -80,6 +87,7 @@ class _FakeTime:
 def faketime(monkeypatch: pytest.MonkeyPatch) -> _FakeTime:
     fake = _FakeTime()
     monkeypatch.setattr(probes_order, "time", fake)
+    monkeypatch.setattr(common, "time", fake)
     return fake
 
 
