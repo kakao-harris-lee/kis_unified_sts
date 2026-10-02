@@ -1,0 +1,138 @@
+name: performance-baseline
+
+# Manual-only: measure tests/performance/ N times ON A CI RUNNER and publish a
+# baseline candidate as an artifact. Nothing is committed here — a human opens
+# the PR that replaces tests/performance/baselines.json, quoting the provenance
+# the candidate carries (runner, commit, date, rounds, per-benchmark
+# n/median/min/max/sd).
+#
+# Why this exists (#768 / #796): the committed baseline was a SINGLE sample
+# taken on 2026-05-30. Re-running the `performance` job 10x on one fixed head
+# showed test_entry_path_100_symbols spanning 0.1217–0.3800s — the 2026-05-30
+# value (0.1329s) is near the BOTTOM of that distribution, so an average run
+# reads as a +107% regression with no code change at all. A baseline that is one
+# draw from a wide distribution is not a baseline, so regenerating one by hand
+# from a single local run is not allowed to be the easy path; this is.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: 'Measurement rounds (minimum 5; more is better)'
+        required: false
+        default: '7'
+      note:
+        description: 'Why this baseline is being regenerated (stored in provenance)'
+        required: false
+        default: ''
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install prometheus-client pytest-json-report
+
+      - name: Measure the performance suite
+        # Inputs are passed through env, never interpolated into the script: a
+        # workflow_dispatch input is attacker-controllable text.
+        env:
+          ROUNDS: ${{ inputs.rounds }}
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: test
+        run: |
+          set -euo pipefail
+          case "$ROUNDS" in
+            ''|*[!0-9]*) echo "rounds must be a positive integer, got '$ROUNDS'"; exit 1 ;;
+          esac
+          if [ "$ROUNDS" -lt 5 ]; then
+            echo "rounds must be >= 5 (a thinly sampled baseline is the defect, not the fix)"
+            exit 1
+          fi
+          mkdir -p tests/performance/rounds
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "::group::baseline round $round/$ROUNDS"
+            pytest tests/performance/ -q -s \
+              --json-report \
+              --json-report-file="tests/performance/rounds/round-$round.json"
+            echo "::endgroup::"
+          done
+
+      - name: Write the baseline candidate
+        env:
+          NOTE: ${{ inputs.note }}
+        run: |
+          set -euo pipefail
+          python scripts/performance/check_regression.py \
+            --current tests/performance/rounds/round-*.json \
+            --write-samples tests/performance/current.json \
+            --write-baseline tests/performance/baselines.candidate.json \
+            --min-baseline-rounds 5 \
+            --provenance-note "$NOTE" \
+            | tee baseline-candidate.log
+
+      - name: Compare the candidate against the committed baseline
+        # Informational only. A large difference here is the measurement this
+        # workflow exists to produce, not a failure.
+        continue-on-error: true
+        run: |
+          python scripts/performance/check_regression.py \
+            --baseline tests/performance/baselines.json \
+            --current tests/performance/current.json \
+            --markdown-summary "$GITHUB_STEP_SUMMARY" \
+            --warning-threshold 1.5 \
+            --error-threshold 2.0 \
+            --min-duration 0.05 || true
+
+      - name: Explain what to do with the artifact
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "### Baseline candidate"
+            echo ""
+            echo "Download the \`performance-baseline-candidate\` artifact, then in a PR:"
+            echo ""
+            echo '```'
+            echo "cp baselines.candidate.json tests/performance/baselines.json"
+            echo '```'
+            echo ""
+            echo "Quote the candidate's \`provenance\` block (runner, commit, date, rounds)"
+            echo "and the per-benchmark n/median/min/max/sd in the PR body."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the baseline candidate
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-baseline-candidate
+          path: |
+            tests/performance/baselines.candidate.json
+            tests/performance/current.json
+            tests/performance/rounds/
+            baseline-candidate.log
+          retention-days: 90
