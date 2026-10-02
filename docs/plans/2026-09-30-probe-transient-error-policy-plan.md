@@ -1000,3 +1000,88 @@ black --check                              → unchanged
 bash -n ×3                                 → OK
 docker koalaman/shellcheck:stable --severity=warning, 각 파일 단독 3 + 쌍 2 → 전부 rc 0
 ```
+
+#### 7.15.12 리뷰 처분 (PR #841 라운드 2 · 8건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | `P8_COEXISTENCE=measured` 를 로컬 플래그에서 찍고 `run.errors` 와 대조하지 않아, 아티팩트가 NOT_MEASURED 인 시행을 러너가 N≥5 에 센다 | **수정.** `measured and not run.errors` |
+| F2 | 제출·정정 응답이 `classify_answer` 를 안 탄다 — 정정의 레이트리밋은 **보이지 않고**(폴링 계속, 다음 주문 발사), 제출의 레이트리밋은 **브로커 거부로 서술**된다 | **수정.** verbose 변형으로 status·text 를 받아 분류. 429/`EGW00201` ⇒ `rate_limited` 중단, `EGW00215` ⇒ `order_state_unknown`(책 조사) |
+| F3 | 창이 닫혀 거절된 **단발** 일시 오류를 2연속과 같은 `transient:<kind>` 로 돌려줘, 다 쓴 창을 무효화하고 링크 건강 예산에 청구한다 | **수정.** `attempts == 1` 이면 자연 종료(`stop=None`), 표본이 있으면 유지 |
+| F4 | 러너가 `query_unanswered` 에 시리즈를 멈추는데, 프로브가 단발 `rt_cd≠0` 에 안 멈추는 **바로 그 근거**가 「빈 장부 표기일 수 있다」였다 | **수정.** 창 전체가 빈-장부 코드(`KIOK0560`)뿐이면 자연 종료, 다른 코드가 하나라도 섞이면 중단 |
+| F5 | `_cleanup_unaccounted` 가 이 시행이 놓지 않은 **모든** qty>0 행을 취소한다 — 공유 모의 계좌에서 다른 프로브나 운영자의 주문을 지운다 | **수정.** 본문 대조 + 옵트인. 아래 |
+| F6 | `_record_write_transport_stop` 가 `retried=False` 만 적고 `not_retried_because` 가 없다 — 새 필드가 없애려던 바로 그 모호한 기록 | **수정.** `REFUSED_SINGLE_SHOT` |
+| F7 | README 토큰 집합에 `order_state_unknown`·`query_unanswered` 가 빠졌다 | **수정.** 코드펜스·표·`P8_CANCEL_UNACCOUNTED` 모두 |
+| F8 | `_cancel_one` 의 `live_keys` 주석이 `set[str] | None` 인데 실제는 dict — 주석이 거짓말이고 mypy 가 잡는다 | **수정.** 행 전체를 담도록 `dict[str, dict[str, Any]] | None` |
+
+**F5 가 가장 위험했고, 내가 라운드 1 에서 만든 것이다.** F1 을 고치면서 「고아를
+치운다」를 **「설명되지 않는 live 행을 전부 취소한다」**로 썼다. 이 모의 계좌는 캠페인
+전체가 공유한다 — P-5·P-11·P-EXT 나 운영자 MTS 주문이 같은 종목에 걸려 있으면 그것을
+지우고 「잃어버린 호출이 남긴 주문」이라고 적었을 것이다. **다른 측정을 조용히
+파괴하는 코드를 안전 조치라고 불렀다.**
+
+처분은 두 겹이고 둘 다 되돌릴 수 없는 쪽을 막는다.
+
+1. **본문 대조.** 이 시행의 주문 본문과 맞지 않는 행은 `foreign_live_rows_present` 로
+   **기록만** 하고 손대지 않는다 — 플래그로도 못 넘는다.
+2. **옵트인.** 맞는 행조차 `--cancel-unaccounted`(러너의 `P8_CANCEL_UNACCOUNTED=1`)
+   없이는 취소하지 않는다. 기본은 기록하고 멈추기이고, 아티팩트에
+   `cancel_odno_would_send` 가 남아 운영자가 손으로 한다. **운영자가 아는 고아는 한정된
+   문제이고, 취소된 남의 주문은 아니다.**
+
+**대조 기준을 정직하게 적는다.** 이 표면에서 런타임이 실제로 읽는 필드는
+`odno`·`ord_qty`·`qty`·`tot_ccld_qty`·`avg_idx` 뿐이고(`executor.py` 의 행 파싱,
+`probes_real_order.classify_fill` 이 같은 집합을 인용), **주문 가격과 매도매수구분의
+필드명은 이 저장소 어디에도 측정돼 있지 않다**. 그래서 매처는 행이 그 이름을 **가지고
+있을 때만** 검사하고, 무엇을 검사했고 무엇을 행이 안 실어왔는지를
+`match_criteria` 에 적는다. 이름을 **추측**하는 것이 더 나빴을 것이다 — 대조가 조용히
+한 번도 성립하지 않고, 아무것도 막지 않는 가드가 된다(이 저장소가 네 번 겪은 형태).
+
+**F2 는 내가 「POST 는 분류만 한다」고 쓰면서 분류를 안 한 것이다.** 라운드 1 의 문장은
+「분류야말로 09-28 에 없던 것」이었는데, 정작 `classify_answer` 는 폴에만 걸려 있었다.
+이제 두 POST 다 탄다. `EGW00215` 를 `order_state_unknown` 으로 보내는 것은 한 칸 보수적인
+선택이다 — 스로틀은 **답**이므로 엄밀히는 접수되지 않았지만, 틀렸을 때 live 주문이 남는
+유일한 표면에서 「엄밀히」에 기대지 않는다. 책 조사 한 번이 싸다.
+
+**F3·F4 는 같은 질문의 두 형태다 — 「이것이 정말 중단인가」.** 창이 닫혀 거절된 단발
+전송 오류는 **창이 끝난 것**이고(루프는 다음 바퀴에 어차피 끝났다), 창 전체가 빈-장부
+코드인 것은 **장부가 빈 것**이다(체결이거나 터치에 너무 가까운 지정가). 둘 다 멈출
+이유가 아니고, 멈추면 이 PR 이 없애려던 과잉 중단을 새로 만든다.
+
+**수정 전 red 증명.** 라운드 1 HEAD(`c2e68a30`)에 새 테스트 파일만 얹어 돌렸다:
+**16건 red**. 여덟 지적 전부 최소 1건씩 덮는다.
+
+| 테스트 | `c2e68a30` 에서의 실패 | 지적 |
+|---|---|---|
+| 옵트인 없이는 취소하지 않는다 | `assert 'FOUND' == 'FOUND_NOT_CANCELLED'` | F5 |
+| 남의 행은 플래그로도 안 건드린다 ×3(수량·방향·가격) | `KeyError: 'foreign_live_rows_present'` | F5 |
+| 적용한 대조 기준을 적는다 | `KeyError: 'match_criteria'` | F5 |
+| 옵트인이 요청될 때만 프로브에 닿는다 | `--cancel-unaccounted` 미전달 | F5 |
+| 잃어버린 제출/정정 보고 ×2 | 같은 `FOUND` vs `FOUND_NOT_CANCELLED`, `KeyError: 'not_retried_because'` | F5·F6 |
+| 정리 오류가 N≥5 계수를 막는다 | `assert ['measured'] == ['not_measured']` | F1 |
+| 레이트리밋 제출이 거부로 서술되지 않는다 | `assert 'rejected' == 'rate_limited'` | F2 |
+| 레이트리밋 정정이 폴링하지 않고 멈춘다 | 같은 계열 | F2 |
+| 원장 스로틀 정정이 책을 걷는다 | 같은 계열 | F2 |
+| 늦은 단발 전송 오류는 자연 종료 | `assert 'transient:transport' == 'none'` | F3 |
+| 빈 장부 창은 시리즈를 멈추지 않는다 | `assert 'query_unanswered' == 'none'` | F4 |
+| 러너가 분기하는 토큰이 README 계약에 있다 | 코드펜스에 두 토큰 없음 | F7 |
+| liveness 걷기가 행을 돌려준다 | `assert 'dict[str, dict[str, Any]] \| None' in 'tuple[dict[str, str] …'` | F8 |
+
+⚠ F7 은 **처음 쓴 테스트가 결함을 못 잡았다**. 토큰이 README 어딘가에 있으면 통과하도록
+썼는데, 라운드 1 에서 **표**에는 이미 두 토큰이 있었고 빠진 것은 그 위의
+`P8_STOP=<…>` **코드펜스**였다 — 운영자가 먼저 읽는 쪽이다. 펜스를 파싱해 러너의 case
+arm 과 대조하도록 좁히고 나서야 red 가 됐다. 가드가 자기가 막는다고 말한 것을 통과시키는
+형태를 또 한 번, 이번엔 테스트에서 했다.
+
+**라운드 2 게이트.**
+
+```
+.venv/bin/pytest (브로커 프로브 13파일) -p no:cacheprovider
+  → 716 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check                              → unchanged
+mypy tools/broker_probes/probes_order.py --ignore-missing-imports
+  --explicit-package-bases                 → 16 (origin/main 기준 18; 남은 것은 전부
+                                             다른 프로브의 기존 `output1` Any 패턴)
+bash -n ×3 · docker shellcheck 각 파일 단독 3 + 쌍 2 → 전부 rc 0
+```

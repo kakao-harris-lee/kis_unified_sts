@@ -279,6 +279,7 @@ export P8_NOTE="t3 P-8 trials 3-5: ..."
 # optional
 export P8_ALLOW_SHARED_CHECKOUT=1     # skip the checkout guards, logged (#793)
 export P8_CRON_MARK=run_p8_20261005   # remove this one crontab line when done
+export P8_CANCEL_UNACCOUNTED=1        # see "The STOP rule" — off by default
 
 # 4. run it from the worktree's own copy — that is how it finds the checkout
 /home/deploy/.local/state/kis/wt-p8-run/tools/broker_probes/runners/run_p8.sh
@@ -290,7 +291,9 @@ The probe prints two anchored lines per trial, exactly one of each on every
 path it can leave by, and the runner reads only those:
 
 ```
-P8_STOP=<none | transient:transport | transient:ledger_throttle | rate_limited | rejected | unknown | dry_run>
+P8_STOP=<none | transient:transport | transient:ledger_throttle
+       | order_state_unknown | query_unanswered | rate_limited | rejected
+       | unknown | dry_run>
 P8_COEXISTENCE=<measured | not_measured>
 ```
 
@@ -299,9 +302,9 @@ P8_COEXISTENCE=<measured | not_measured>
 | `none` | the trial ran to its end (a REJECTED AMEND lands here — that is a replace-semantics observation) | continues |
 | `transient:transport` | two consecutive transport failures on the **poll** GET (or a lost quote), after one retry a whole poll interval apart | **continues**, up to `P8_MAX_TRANSIENT_STOPS` |
 | `transient:ledger_throttle` | the same, for two consecutive `EGW00215` | **continues**, same budget |
-| `order_state_unknown` | a transport failure on the **submit or amend** — whether the broker accepted it is unknown | stops |
-| `rate_limited` | HTTP 429 or `EGW00201` — OUR call rate | stops |
-| `query_unanswered` | the open-order surface returned no `rt_cd=0` answer for the whole window | stops |
+| `order_state_unknown` | a transport failure or `EGW00215` on the **submit or amend** — whether the broker accepted it is unknown | stops |
+| `rate_limited` | HTTP 429 or `EGW00201`, on a poll **or on either order POST** — OUR call rate | stops |
+| `query_unanswered` | the open-order surface refused every poll for the whole window, for a reason **other than** an empty book | stops |
 | `rejected` | the broker refused the SUBMIT | stops |
 | anything else, or no line at all | a state the probe did not name | stops |
 
@@ -309,12 +312,33 @@ The line between the first group and `order_state_unknown` is **"is an
 order's state unknown"**, not "was it a POST". A lost quote leaves nothing
 resting, so the next trial starts from a clean account. A lost submit or
 amend may have been accepted and be resting right now under an ODNO the probe
-never saw: before stopping, the probe walks the whole book and cancels
-anything live it cannot account for, recording the result in
-`measurements.unaccounted_live_orders` as `FOUND`, `NONE_FOUND` or
-`UNDETERMINED`. **Read that field before scheduling P-8 again** — the runner
-says so on its last line whenever such a stop happened. A walk that cannot
-answer cancels nothing and tells you to check by hand.
+never saw: before stopping, the probe walks the whole book and records what it
+finds in `measurements.unaccounted_live_orders` as `FOUND`,
+`FOUND_NOT_CANCELLED`, `NONE_FOUND` or `UNDETERMINED`. **Read that field
+before scheduling P-8 again** — the runner says so on its last line whenever
+such a stop happened. A walk that cannot answer cancels nothing and tells you
+to check by hand.
+
+Two things it will not do. It never touches a live row that does **not** match
+this trial's order body (same symbol, same quantity, and the side and price
+when the row carries them): that row belongs to another probe or to the
+operator, it is reported as `foreign_live_rows_present`, and no flag
+overrides that. And it does not cancel even a MATCHING row unless you ask:
+
+```bash
+export P8_CANCEL_UNACCOUNTED=1   # cancel rows that match this trial's body
+```
+
+The default is record-and-stop, because an orphan you are told about is a
+bounded problem and a cancelled stranger is not. Without the flag the artifact
+carries `cancel_odno_would_send` so you can do it by hand.
+
+A `query_unanswered` stop is narrower than it sounds: this broker answers an
+**empty result set** with a rejection shape (`rt_cd=7` / `KIOK0560`), and an
+empty book is the ordinary end of a trial — both legs gone to a fill, or to a
+resting price too close to the touch. That case measures nothing and does
+**not** stop the series. Only a refusal the broker gave for some other reason
+does.
 
 A non-zero exit stops the series too, before the token is believed: the probe
 can print a clean verdict and still die writing the artifact, and then an
