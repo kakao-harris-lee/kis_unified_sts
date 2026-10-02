@@ -902,16 +902,21 @@ CI 의 P-8 테스트는 **한 파일**만 넘겨 red 가 됐다. 실측해 보�
    파일은 전부 `tools/broker_probes/**` · `tests/tools/**` · `docs/**` 다.
 2. 같은 잡이 #825(§7.13) · #831(§7.14.4)에서도 fail 했고, main 에서는 아예 **skip**
    된다(잡 조건이 PR 또는 schedule).
-3. 결정적으로, **셸 수정만 담은 다음 푸시의 재실행에서 같은 잡이 pass 했다** —
-   그 사이 `tests/performance/` 도 `shared/` 도 한 줄 바뀌지 않았다. 즉 이 임계값은
-   공유 러너의 편차 안에 있다.
+3. 결정적으로, **같은 테스트가 세 번 돌아 fail → pass → fail 했다**. 그 사이
+   `tests/performance/` 도 `shared/` 도 한 줄 바뀌지 않았다. 측정값:
+   baseline 0.1329 s 에 대해 0.3055 s(+112.7 %) → pass → 0.4784 s(+252.6 %).
+   즉 이 임계값은 공유 러너의 편차 안에 있고, 편차의 폭이 임계값보다 크다.
 
 메모리 `ci-gating-reality` 의 경고대로 **baseline 재생성은 하지 않는다** — 먼저
 재생성하면 진짜 회귀가 영구히 안 보이게 된다. 3의 「한 번 fail 한 번 pass」는 baseline
 이 현재 러너 편차보다 빡빡하다는 관측이지 회귀의 부재 증명이 아니다.
 
-**최종 CI (`60378385`)**: `test` · `tos-gate` · `tos-firewall` · `ruff` · `lint` ·
-`type-check` · `backtest-extra` · `performance` — **8개 전부 pass**.
+**CI (`60378385`)**: 8개 전부 pass.
+
+**CI (`31fae3b0`, 라운드 1 처분)**: `test` · `tos-gate` · `tos-firewall` · `ruff` ·
+`lint` · `type-check` · `backtest-extra` **pass**, `performance` fail(위 3번의 세
+번째 데이터 포인트). **게이트는 `test` 뿐이고 그것은 green 이다**(메모리
+`ci-gating-reality`).
 
 #### 7.15.11 리뷰 처분 (PR #841 라운드 1 · 7건 · 기각 0)
 
