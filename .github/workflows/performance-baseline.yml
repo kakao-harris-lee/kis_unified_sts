@@ -6,13 +6,13 @@ name: performance-baseline
 # the candidate carries (runner, commit, date, rounds, per-benchmark
 # n/median/min/max/sd).
 #
-# Why this exists (#768 / #796): the committed baseline was a SINGLE sample
-# taken on 2026-05-30. Re-running the `performance` job 10x on one fixed head
-# showed test_entry_path_100_symbols spanning 0.1217–0.3800s — the 2026-05-30
-# value (0.1329s) is near the BOTTOM of that distribution, so an average run
-# reads as a +107% regression with no code change at all. A baseline that is one
-# draw from a wide distribution is not a baseline, so regenerating one by hand
-# from a single local run is not allowed to be the easy path; this is.
+# Why this exists (#768 / #796): the committed baseline is a SINGLE sample taken
+# on 2026-05-30, with no recorded spread, so whatever offset it carries is
+# arbitrary. It is not currently producing a false regression — with medians of
+# 5 rounds the job is green against it — but nothing can tell a real shift from
+# where that one draw happened to land. A baseline must come from several
+# rounds on the hardware the check runs on, and regenerating one by hand from a
+# single local run must not be the easy path; this workflow is the easy path.
 on:
   workflow_dispatch:
     inputs:
@@ -29,6 +29,16 @@ jobs:
   regenerate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    env:
+      # Same single source as .github/workflows/test.yml::performance, so the
+      # candidate is judged against the thresholds the gate actually uses. The
+      # minimum round count is NOT repeated here: check_regression.py's
+      # --min-baseline-rounds default is the one place it is defined.
+      PERF_WARNING_THRESHOLD: '1.5'
+      PERF_ERROR_THRESHOLD: '2.0'
+      PERF_MIN_DURATION: '0.05'
+      PERF_COMMIT_SHA: ${{ github.sha }}
 
     services:
       redis:
@@ -69,10 +79,10 @@ jobs:
           case "$ROUNDS" in
             ''|*[!0-9]*) echo "rounds must be a positive integer, got '$ROUNDS'"; exit 1 ;;
           esac
-          if [ "$ROUNDS" -lt 5 ]; then
-            echo "rounds must be >= 5 (a thinly sampled baseline is the defect, not the fix)"
-            exit 1
-          fi
+          # The floor lives in check_regression.py (--min-baseline-rounds); the
+          # write step below refuses a thin candidate and names the short
+          # benchmarks. Repeating the number here would be a second place to
+          # change it, and the two would drift.
           mkdir -p tests/performance/rounds
           # A failing round only costs that round's sample. The write step
           # refuses an under-sampled baseline and names the short benchmarks,
@@ -98,7 +108,6 @@ jobs:
             --current tests/performance/rounds/round-*.json \
             --write-samples tests/performance/current.json \
             --write-baseline tests/performance/baselines.candidate.json \
-            --min-baseline-rounds 5 \
             --provenance-note "$NOTE" \
             | tee baseline-candidate.log
 
@@ -111,9 +120,9 @@ jobs:
             --baseline tests/performance/baselines.json \
             --current tests/performance/current.json \
             --markdown-summary "$GITHUB_STEP_SUMMARY" \
-            --warning-threshold 1.5 \
-            --error-threshold 2.0 \
-            --min-duration 0.05 || true
+            --warning-threshold "$PERF_WARNING_THRESHOLD" \
+            --error-threshold "$PERF_ERROR_THRESHOLD" \
+            --min-duration "$PERF_MIN_DURATION" || true
 
       - name: Explain what to do with the artifact
         if: always()

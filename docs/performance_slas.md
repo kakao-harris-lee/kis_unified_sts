@@ -50,8 +50,15 @@ python scripts/performance/check_regression.py \
   --current tests/performance/rounds/round-*.json \
   --write-samples tests/performance/current.json \
   --markdown-summary "$GITHUB_STEP_SUMMARY" \
-  --warning-threshold 1.5 --error-threshold 2.0 --min-duration 0.05
+  --warning-threshold "$PERF_WARNING_THRESHOLD" \
+  --error-threshold "$PERF_ERROR_THRESHOLD" \
+  --min-duration "$PERF_MIN_DURATION"
 ```
+
+`PERF_ROUNDS`, the three thresholds and `PERF_COMMIT_SHA` are job-level `env`
+in `test.yml::performance`, and `performance-baseline.yml` reads the same three
+thresholds. The minimum round count for a baseline is defined once, as
+`check_regression.py --min-baseline-rounds`'s default.
 
 A round that FAILS a test does not stop the loop, and does not by itself fail
 the job. Running N rounds multiplies the chance of hitting a flaky assertion by
@@ -74,7 +81,26 @@ failure and does fail the build.
 Thresholds are unchanged: `>=2x` fails, `1.5x-2x` is a non-fatal warning, and
 benchmarks whose baseline median is under 50 ms are exempt because their
 wall-clock ratios are noise. Exit codes: `0` pass, `1` warning (not fatal unless
-`--fail-on-warning`), `2` regression.
+`--fail-on-warning`), `2` regression or invalid measurement.
+
+### A session that never ran is an error, not a pass
+
+`pytest-json-report` writes a report even when collection aborts, so the file
+existing proves nothing. The checker reads each round report's own `exitcode`
+and `collectors`:
+
+| round report | verdict |
+| --- | --- |
+| exit 0 or 1 | session completed (1 = some test failed, judged by the table below) |
+| exit 2/3/4/5, or a failed collector | 🔴 measurement invalid, exit 2 |
+| zero benchmarks with a passing sample | 🔴 measurement invalid, exit 2 |
+| file missing entirely | the workflow fails the measure step |
+
+Without this, an `ImportError` in one performance module would abort collection
+in all five rounds, turn all 25 baseline entries into non-fatal
+`Test not found` warnings, and report green having measured nothing. Before the
+N-round loop the single `pytest` invocation's non-zero exit failed the step; the
+loop swallows that exit, so the property had to move into the checker.
 
 **The job is not a required check.** A red `performance` does not block a merge;
 `test` is the only real gate (see `CLAUDE.md`).
@@ -152,9 +178,16 @@ It also settles the regression question numerically: `call` alone is 0.1085 s
 today versus 0.1012 s on 2026-05-30, **+7.2%** across four months and a runner
 generation.
 
-Repeating inside one job shrinks only the *within-job* noise, by roughly
-`sqrt(N)`. All N rounds share one runner, so a globally slow runner still shifts
-them together; that component is what the runner-speed factor targets.
+The mechanism is not averaging-down of noise. The within-job distribution is
+bimodal — one cold round and N−1 warm ones — and the median of N simply
+**excludes the cold round** as long as fewer than half the rounds are cold. That
+is why N=5 suffices and why raising N further buys almost nothing: round 2 is
+already warm. It is not a `sqrt(N)` effect; that law is for the *mean* of
+independent samples and describes neither the median nor this distribution.
+
+Between-runner variance is untouched: all N rounds share one runner, so a
+globally slow runner still shifts them together. That component is what the
+runner-speed factor targets.
 
 ### Runner-speed normalization and its measured limit
 

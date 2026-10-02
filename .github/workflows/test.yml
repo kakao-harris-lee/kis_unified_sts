@@ -229,6 +229,15 @@ jobs:
       # phase, which the median drops. Raising this costs ~1.3s per extra round
       # and shrinks only the within-job noise — all rounds share one runner.
       PERF_ROUNDS: '5'
+      # Single source for the thresholds, so they are not copied between this
+      # job, the baseline workflow and the docs.
+      PERF_WARNING_THRESHOLD: '1.5'
+      PERF_ERROR_THRESHOLD: '2.0'
+      PERF_MIN_DURATION: '0.05'
+      # On a pull_request event github.sha is the ephemeral refs/pull/N/merge
+      # commit, which is garbage-collected after the merge. Provenance has to
+      # name a commit that still exists.
+      PERF_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     services:
       redis:
@@ -281,22 +290,30 @@ jobs:
           done
           produced=$(ls tests/performance/rounds/round-*.json 2>/dev/null | wc -l)
           echo "rounds with a report: $produced of $PERF_ROUNDS"
-          if [ "$produced" -eq 0 ]; then
-            echo "no round report was produced — nothing to compare"
-            exit 1
-          fi
+          # pytest-json-report writes a report on every normal exit, collection
+          # errors included, so a MISSING file means the process died (OOM,
+          # segfault, timeout). That is a broken measurement, not a slow one.
+          # A report that exists but records an aborted session is caught by the
+          # checker, which reads pytest's exitcode and collectors.
           if [ "$produced" -lt "$PERF_ROUNDS" ]; then
-            echo "::warning::only $produced of $PERF_ROUNDS rounds produced a report"
+            echo "only $produced of $PERF_ROUNDS rounds produced a report —"
+            echo "a round died before writing one; the measurement is incomplete"
+            exit 1
           fi
         env:
           REDIS_URL: redis://localhost:6379/0
           ENVIRONMENT: test
 
       - name: Check for performance regressions
-        # Thresholds tuned for shared GitHub-hosted runner variance: only a
-        # >=2x slowdown fails the build; 1.5x-2x is an informational warning
-        # (non-fatal); tests under 50ms are exempt (their wall-clock ratios are
-        # noise-dominated). The comparison is MEDIAN of PERF_ROUNDS rounds
+        # Thresholds tuned for shared GitHub-hosted runner variance and set in
+        # this job's env above: PERF_ERROR_THRESHOLD fails the build,
+        # PERF_WARNING_THRESHOLD is an informational warning (non-fatal), and a
+        # benchmark whose baseline median is below PERF_MIN_DURATION is exempt
+        # because its wall-clock ratio is noise-dominated. Exit 2 also covers a session that never ran: the
+        # checker reads each round report's pytest exitcode and collectors, so a
+        # collection error that writes `tests: []` in every round fails here
+        # instead of reporting 25 "Test not found" warnings and going green.
+        # The comparison is MEDIAN of PERF_ROUNDS rounds
         # against the median of the baseline's rounds; --write-samples emits the
         # aggregated sample arrays (n/median/min/max/sd + provenance) that the
         # upload step publishes and that --write-baseline consumes.
@@ -306,9 +323,9 @@ jobs:
             --current tests/performance/rounds/round-*.json \
             --write-samples tests/performance/current.json \
             --markdown-summary "$GITHUB_STEP_SUMMARY" \
-            --warning-threshold 1.5 \
-            --error-threshold 2.0 \
-            --min-duration 0.05
+            --warning-threshold "$PERF_WARNING_THRESHOLD" \
+            --error-threshold "$PERF_ERROR_THRESHOLD" \
+            --min-duration "$PERF_MIN_DURATION"
         continue-on-error: false
 
       - name: Upload performance report
