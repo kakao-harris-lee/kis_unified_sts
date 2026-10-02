@@ -23,9 +23,9 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from dotenv import load_dotenv
+from shared.config.dotenv_guard import load_project_dotenv
 
-load_dotenv()
+load_project_dotenv()
 
 from services.trading.orchestrator import run_stock_trading
 

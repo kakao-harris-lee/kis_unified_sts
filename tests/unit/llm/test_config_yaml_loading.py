@@ -89,12 +89,14 @@ krx_api:
 
 
 def test_from_yaml_loads_relative_path_through_config_loader(
-    tmp_path: Path,
-    _restore_config_loader_dir: None,
+    config_dir: Path,
 ) -> None:
-    ConfigLoader.set_config_dir(tmp_path)
+    # `config_dir` sets KIS_CONFIG_DIR too. `ServiceConfigBase.from_yaml`
+    # re-points the loader at that env var whenever the two disagree, so a
+    # programmatic set_config_dir alone would make this load the real
+    # config/llm.yaml instead of the fixture below (#698 round-2 review).
     _write_yaml(
-        tmp_path / "llm.yaml",
+        config_dir / "llm.yaml",
         """
 llm:
   provider: "claude"

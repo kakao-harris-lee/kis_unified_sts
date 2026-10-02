@@ -17,19 +17,17 @@ class TestConfigLoaderThreadSafety:
     """Thread-safety tests for ConfigLoader cache operations"""
 
     @pytest.fixture(autouse=True)
-    def setup_teardown(self, tmp_path):
-        """Setup and teardown for each test"""
-        # Create test config directory
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
+    def setup_teardown(self, config_dir):
+        """Setup and teardown for each test
 
-        # Create test config files
+        ``config_dir`` (tests/conftest.py) points the loader AND
+        ``KIS_CONFIG_DIR`` at one directory; setting only the first lets
+        ``ServiceConfigBase.from_yaml`` snap back to the session's pinned
+        config dir (#698 round-2 review).
+        """
         (config_dir / "test1.yaml").write_text("key: value1\n")
         (config_dir / "test2.yaml").write_text("key: value2\n")
         (config_dir / "test3.yaml").write_text("key: value3\n")
-
-        # Set config directory
-        ConfigLoader.set_config_dir(config_dir)
 
         yield
 

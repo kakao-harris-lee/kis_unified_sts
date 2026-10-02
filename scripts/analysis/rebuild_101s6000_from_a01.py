@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from dotenv import load_dotenv
 
+from shared.config.dotenv_guard import load_project_dotenv
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 
@@ -104,7 +104,7 @@ def _summarize(df: pd.DataFrame) -> RebuildSummary:
 
 
 def main() -> int:
-    load_dotenv(".env")
+    load_project_dotenv()
 
     parser = argparse.ArgumentParser(
         description="Rebuild continuous 101S6000 from A01* contracts"

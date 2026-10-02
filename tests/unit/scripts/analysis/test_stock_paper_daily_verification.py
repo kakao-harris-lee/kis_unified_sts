@@ -809,8 +809,21 @@ def test_active_verdict_still_fails_operational_gates():
 def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
-    monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH", raising=False)
+    # The helper is a no-op during a hermetic pytest session (#698). This
+    # test covers the standalone-run path instead, so it turns the switch off
+    # and makes tmp_path the loader's checkout. Pointing the *working
+    # directory* at tmp_path would not do: the checkout's own .env wins, so on
+    # a checkout that has one (the deploy host) this would read that file
+    # instead and the test would depend on which machine ran it.
+    from shared.config import dotenv_guard
+
+    monkeypatch.delenv("KIS_TEST_HERMETIC", raising=False)
+    monkeypatch.setattr(dotenv_guard, "_CHECKOUT_ROOT", tmp_path)
+    # setenv first so monkeypatch records the variable and removes it at
+    # teardown; a bare delenv of an unset name records nothing, and the value
+    # the loader writes below would outlive the test.
+    monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", "placeholder")
+    monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH")
     monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "already-set")
     (tmp_path / ".env").write_text(
         "RUNTIME_STORAGE_SQLITE_PATH='data/runtime/paper/runtime.db'\n"

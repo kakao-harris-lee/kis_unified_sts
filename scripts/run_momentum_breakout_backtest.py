@@ -37,14 +37,15 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from dotenv import load_dotenv
 
 # Setup project path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-load_dotenv(REPO_ROOT / ".env")
+from shared.config.dotenv_guard import load_project_dotenv
+
+load_project_dotenv()
 
 # Import after path setup
 from shared.backtest import BacktestConfig, BacktestEngine

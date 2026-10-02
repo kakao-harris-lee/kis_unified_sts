@@ -31,12 +31,20 @@ import os
 
 LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
 
-_TRUTHY = {"1", "true", "yes"}
-
 
 def live_infra_enabled() -> bool:
-    """Return whether tests may touch real infrastructure."""
-    return os.getenv(LIVE_INFRA_ENV, "").lower() in _TRUTHY
+    """Return whether tests may touch real infrastructure.
+
+    Reads the flag through ``shared.config.env_flag`` so this project has one
+    truthy set rather than one per helper. Two readings of this same variable
+    with different sets is not hypothetical: ``KIS_RUN_LIVE_INFRA_TESTS=on``
+    used to drop ``tests/conftest.py``'s hermetic session while leaving every
+    live-infra test skipped — credentials loaded, nothing gained, and no test
+    noticing (#698 round-2 review).
+    """
+    from shared.config import env_flag
+
+    return env_flag(LIVE_INFRA_ENV)
 
 
 def skip_reason() -> str:

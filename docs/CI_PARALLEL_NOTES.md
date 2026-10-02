@@ -36,6 +36,132 @@ are documented in [`performance_slas.md`](performance_slas.md#the-ci-performance
 Validated: full suite at `-n auto` (16 workers, the worst-case contention,
 ≥ CI's 2–4) — parallel pass 0 failures, serial pass 0 failures.
 
+## Update 2026-10-02 — the session is hermetic by construction (#698)
+
+A pytest process must never reach a real `.env`, a real broker credential or a
+real token cache. On 2026-09-15 it did: a unit run inside a worktree under
+`<repo>/.claude/worktrees/<name>/` loaded the **primary** checkout's `.env` and
+had a real KIS token issued and written to `.kis_token_real`. The mechanism was
+python-dotenv's `find_dotenv()`, which walks from the calling file up to the
+filesystem root, reached by an argument-less `load_dotenv()` in
+`cli/commands/common.py` that ran during collection.
+
+### The rules
+
+- **Entrypoints never walk.** Every `.env` load goes through
+  `shared.config.dotenv_guard.load_project_dotenv()`, which reads at most
+  `<checkout>/.env` and then `<cwd>/.env`. No ancestor directory is ever
+  consulted, so a nested worktree cannot reach the checkout above it. The
+  checkout wins because thirteen scripts previously loaded `REPO_ROOT/.env`
+  explicitly: preferring the working directory would make them read another
+  project's `.env` when run from that project's directory.
+- **The rule is enforced, not just written here.**
+  `tests/unit/config/test_dotenv_call_gate.py` walks the AST of every `.py`
+  file **git tracks** and rejects a call to or import of `load_dotenv`,
+  `dotenv_values` or `find_dotenv` outside a four-entry allowlist. Tracked
+  files rather than an `rglob`, because a worktree under
+  `.claude/worktrees/<name>/` would otherwise be scanned as part of the
+  primary checkout and report every nested copy as an offender. The runtime
+  guard below only fires for modules a test imports, which is almost no script
+  under `scripts/analysis/`; the gate covers the rest. Three helpers parse
+  `.env` with their own line loop where no dotenv-shaped check can see them —
+  each is registered in the same file with its function name and a reason,
+  and the gate checks by AST that the named function *calls*
+  `hermetic_mode_enabled`. A substring check would pass on the import line
+  alone.
+- **`KIS_TEST_HERMETIC` switches the loader off.** `tests/conftest.py` sets it
+  at import time, before collection. It is the only knob this adds, it is a
+  test switch rather than a configuration surface, and the paper/live runtime
+  never sets it — with it unset the entrypoints behave exactly as before. The
+  name and its truthy values live in `dotenv_guard` and are imported by the
+  test-side helper, so the two halves of the switch cannot drift apart.
+- **The credential namespace is emptied.** The whole `KIS_*` and `TELEGRAM_*`
+  space is removed from `os.environ`, whatever its source — a `.env` already
+  loaded, or variables exported in the operator's shell. Only the test switches
+  survive (`KIS_TEST_HERMETIC`, `KIS_RUN_LIVE_INFRA_TESTS`,
+  `KIS_TEST_IMAGE_NO_GIT_METADATA`). This also keeps local runs honest: CI sets
+  none of these, so a test that quietly depended on one used to pass locally
+  and fail in CI.
+- **Config and token caches are pinned.** `KIS_CONFIG_DIR` points at *this*
+  checkout's `config/`, and `KIS_TOKEN_CACHE_DIR` at a per-process temp
+  directory, so a `.kis_token_*` can no longer land in a repository root (the
+  default is `Path.cwd()`). Both pins, the scrub and the switch are written by
+  one `_apply_hermetic_pins()` called from the import-time block and again
+  from the session fixture, so a pin added to one is never missing from the
+  other.
+- **A stray token cache is detected by comparison, not by absence, and at
+  session end.** The session snapshots size and mtime of every place a token
+  can land — the checkout root, the working directory, the pinned
+  `KIS_TOKEN_CACHE_DIR`, and `~/.cache/kis_token_*.json`, which two collectors
+  hardcode — and `pytest_sessionfinish` fails the run on any file this session
+  created or rewrote. The verdict is a hook rather than a test because a test
+  only sees what ran before it, and under `-n auto` it lands mid-session on
+  one worker. An absence check would fail forever on the primary checkout,
+  which legitimately holds `.kis_token_real` (2026-07-08) and
+  `.kis_token_mock` (2026-06-09) from ordinary host `sts` runs.
+- **A leftover `.env` read fails loudly.** All three python-dotenv readers
+  (`load_dotenv`, `dotenv_values`, `find_dotenv`) are wrapped for the session:
+  an argument-less call is refused outright, a path that *exists* outside the
+  temp sandbox is refused by name, and `find_dotenv` may walk but may not hand
+  back a real file from outside it. A path that does not exist passes through,
+  so CI — which has no `.env` anywhere — is unaffected and the guard only
+  speaks when there is something real to read. Installing the guard also
+  sweeps `sys.modules` to rebind names a plugin or `sitecustomize` imported
+  with `from dotenv import load_dotenv` before `tests/conftest.py` ran; the
+  sweep tests `name in vars(module)` rather than `getattr`, so a package with
+  a lazy module-level `__getattr__` is not made to import on every name.
+- **The sandbox follows `--basetemp`.** `pytest --basetemp=./.pytest-tmp` puts
+  every `tmp_path` inside the checkout, where the guard would otherwise refuse
+  the suite's own fixture files. `pytest_configure` registers the basetemp, and
+  the roots are read lazily on each check because the guard is installed at
+  conftest import, before the option is parsed.
+
+### `KIS_CONFIG_DIR` and `ConfigLoader.set_config_dir`
+
+Pinning `KIS_CONFIG_DIR` changed what a test must do to redirect config.
+`ServiceConfigBase.from_yaml` re-points the loader at that variable whenever
+the two disagree (`shared/config/base.py`), so **setting only
+`ConfigLoader.set_config_dir(tmp)` is no longer enough** — the next
+`from_yaml` snaps back to `<checkout>/config` and the test reads the real file
+instead of its fixture, passing or failing for the wrong reason. Before the
+pin the variable was unset in CI and the programmatic directory won, so the
+two halves agreed by accident.
+
+Use the `config_dir` fixture in `tests/conftest.py`, which sets both and
+restores the loader at teardown. `test_loader_env_vars`, `test_loader_security`,
+`test_loader_thread_safety` and `test_config_yaml_loading` use it.
+
+### There is no opt-out
+
+Hermeticity is unconditional. `KIS_RUN_LIVE_INFRA_TESTS=1` lifts the **Redis
+gate** and nothing else: it un-skips the `live_infra` tests and lets
+`pytest_runtest_setup` ping Redis. It does not load a `.env`, does not restore
+`KIS_*`/`TELEGRAM_*`, and does not unpin the config or token-cache directories.
+
+The two used to share one switch, and that made the one CI job which always
+opts in — `performance`, which injects `KIS_RUN_LIVE_INFRA_TESTS=1` — the only
+job running with no scrub, no dotenv guard and no token-cache pin. They answer
+different questions:
+
+| question | answered by |
+| --- | --- |
+| may a test talk to real Redis? | `live_infra_enabled()` |
+| may this process hold real broker credentials? | always no |
+
+Nothing in `tests/` needs real broker credentials; the probe harness that does
+live KIS calls is under `tools/`, outside the pytest tree, so there is no
+third mode to support. Redis settings are unaffected by the scrub, which
+touches only `KIS_*` and `TELEGRAM_*`: CI injects `REDIS_HOST`/`PORT`/`DB`
+explicitly, and their defaults (`localhost:6379` db 1, no password) already
+match this host.
+
+`tests/unit/config/test_dotenv_hermeticity.py` asserts all of the above, and
+proves the loader half in subprocesses with the switch *off*, so it still
+catches a regression in the entrypoints if the session guard is ever removed.
+`tests/unit/test_cli_commands.py` covers the ordering the loader depends on:
+`.env` must be read before the command modules capture `DEFAULT_DASHBOARD_URL`
+as a Click default.
+
 ### Original (2026-05-09) analysis below
 
 ## TL;DR
