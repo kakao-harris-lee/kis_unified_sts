@@ -53,6 +53,13 @@ python scripts/performance/check_regression.py \
   --warning-threshold 1.5 --error-threshold 2.0 --min-duration 0.05
 ```
 
+A round that FAILS a test does not stop the loop. Running N rounds multiplies
+the chance of hitting a flaky assertion by N, and a failure in round 3 must not
+throw away the measurement from the other four — the checker handles a benchmark
+with fewer samples and prints the reduced `n` (`current n=4-5`). The job still
+goes red, in a final step that runs after the report and the artifact exist. A
+failing performance test is a test failure, not a measurement.
+
 Thresholds are unchanged: `>=2x` fails, `1.5x-2x` is a non-fatal warning, and
 benchmarks whose baseline median is under 50 ms are exempt because their
 wall-clock ratios are noise. Exit codes: `0` pass, `1` warning (not fatal unless

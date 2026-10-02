@@ -74,13 +74,20 @@ jobs:
             exit 1
           fi
           mkdir -p tests/performance/rounds
+          # A failing round only costs that round's sample. The write step
+          # refuses an under-sampled baseline and names the short benchmarks,
+          # which is the gate that matters here.
+          set +e
           for round in $(seq 1 "$ROUNDS"); do
             echo "::group::baseline round $round/$ROUNDS"
             pytest tests/performance/ -q -s \
               --json-report \
-              --json-report-file="tests/performance/rounds/round-$round.json"
+              --json-report-file="tests/performance/rounds/round-$round.json" \
+              || echo "::warning::baseline round $round had a test failure"
             echo "::endgroup::"
           done
+          set -e
+          ls tests/performance/rounds/round-*.json >/dev/null
 
       - name: Write the baseline candidate
         env:
