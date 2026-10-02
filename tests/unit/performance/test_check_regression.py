@@ -1157,3 +1157,636 @@ class TestCommitProvenance:
         assert collect_provenance(rounds=5)["commit"] == "b" * 40
         monkeypatch.delenv("GITHUB_SHA", raising=False)
         assert isinstance(collect_provenance(rounds=5)["commit"], str)
+
+
+# ----------------------------------------------------------------------
+# Excluded benchmarks (#768 / #796 / #679)
+# ----------------------------------------------------------------------
+
+EXCLUDED_KEY = _crmod.EXCLUDED_KEY
+
+LIVE_KIS_REASON = "needs a live KIS endpoint; unreachable from a CI runner"
+
+
+def _baseline_document(
+    durations: dict[str, float],
+    excluded: dict | None = None,
+    rounds: int = 7,
+) -> dict:
+    """A kis-perf-samples/v1 baseline with ``rounds`` identical samples each."""
+    checker = _crmod.RegressionChecker()
+    return checker.build_samples_document(
+        {name: _stats([value] * rounds) for name, value in durations.items()},
+        collect_provenance(rounds=rounds, role="baseline"),
+        excluded,
+    )
+
+
+class TestExclusionParsing:
+    def test_absent_section_means_nothing_is_excluded(self, tmp_path):
+        checker = _checker()
+        path = _write_json(tmp_path / "baselines.json", _report({"a": 0.2}))
+        assert checker.load_exclusions([path]) == {}
+
+    def test_plain_reason_strings_are_read(self):
+        checker = _checker()
+        document = _baseline_document({"a": 0.2}, {"b": LIVE_KIS_REASON})
+        assert checker.extract_exclusions(document) == {"b": LIVE_KIS_REASON}
+
+    def test_structured_reason_is_read(self):
+        checker = _checker()
+        document = _baseline_document({"a": 0.2})
+        document[EXCLUDED_KEY] = {"b": {"reason": LIVE_KIS_REASON}}
+        assert checker.extract_exclusions(document) == {"b": LIVE_KIS_REASON}
+
+    def test_exclusion_without_a_reason_is_rejected(self):
+        """A bare name is indistinguishable from a benchmark quietly dropped."""
+        checker = _checker()
+        document = _baseline_document({"a": 0.2})
+        document[EXCLUDED_KEY] = {"b": ""}
+        with pytest.raises(ValueError, match="no reason"):
+            checker.extract_exclusions(document)
+
+    def test_a_non_mapping_section_is_rejected(self):
+        checker = _checker()
+        document = _baseline_document({"a": 0.2})
+        document[EXCLUDED_KEY] = ["b"]
+        with pytest.raises(ValueError, match="must be a mapping"):
+            checker.extract_exclusions(document)
+
+    def test_a_benchmark_cannot_be_both_measured_and_excluded(self):
+        checker = _checker()
+        document = _baseline_document({"a": 0.2}, {"a": LIVE_KIS_REASON})
+        with pytest.raises(ValueError, match="both measured and listed"):
+            checker.extract_exclusions(document)
+
+    def test_a_written_document_always_carries_the_section(self):
+        document = _baseline_document({"a": 0.2})
+        assert document[EXCLUDED_KEY] == {}
+
+
+class TestExcludedBenchmarksAreNotCompared:
+    def test_an_excluded_benchmark_produces_no_comparison_at_all(self):
+        """The point of the section: no per-run noise for a declared absence.
+
+        Undeclared, the same absence is an error (see
+        ``TestAnUnmeasuredBaselineEntryIsAnError``). The exclusion is what
+        turns "nobody noticed" into "somebody wrote down why".
+        """
+        checker = _checker()
+        baseline = {"a": _stats([0.10] * 7), "b": _stats([0.20] * 7)}
+        current = {"a": _stats([0.10] * 5)}
+
+        without = _statuses(checker.compare_metrics(baseline, current))
+        assert without["b"] == "error"
+
+        with_exclusion = checker.compare_metrics(
+            baseline, current, exclusions={"b": LIVE_KIS_REASON}
+        )
+        assert [c.test_name for c in with_exclusion] == ["a"]
+
+    def test_an_excluded_name_is_not_reported_as_a_new_test(self):
+        checker = _checker()
+        comparisons = checker.compare_metrics(
+            {"a": _stats([0.10] * 7)},
+            {"a": _stats([0.10] * 5), "b": _stats([0.20] * 5)},
+            exclusions={"b": LIVE_KIS_REASON},
+        )
+        assert [c.test_name for c in comparisons] == ["a"]
+
+
+class TestStaleExclusionIsAnError:
+    def test_an_excluded_benchmark_that_produced_samples_is_a_problem(self):
+        """The concrete input this guard exists to catch.
+
+        A baseline says ``b`` cannot be measured here; the run measured it
+        five times. Silence would mean a benchmark that runs and is never
+        checked — the failure mode the exclusion section is supposed to
+        prevent, not create.
+        """
+        checker = _checker()
+        problems = checker.exclusion_problems(
+            {"b": LIVE_KIS_REASON}, {"b": _stats([0.2] * 5)}
+        )
+        assert len(problems) == 1
+        assert "stale" in problems[0]
+        assert "5 sample(s)" in problems[0]
+        assert LIVE_KIS_REASON in problems[0]
+
+    def test_an_exclusion_with_no_samples_is_silent(self):
+        checker = _checker()
+        assert checker.exclusion_problems({"b": LIVE_KIS_REASON}, {}) == []
+
+    def test_it_changes_the_exit_code(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document(
+                {f"t{i}": 0.10 for i in range(5)}, {"stale": LIVE_KIS_REASON}
+            ),
+        )
+        current = _write_json(
+            tmp_path / "current.json",
+            _report({**{f"t{i}": 0.10 for i in range(5)}, "stale": 0.10}),
+        )
+        assert (
+            _crmod.main(["--baseline", str(baseline), "--current", str(current)]) == 2
+        )
+
+    def test_a_live_exclusion_alone_keeps_the_run_green(self, tmp_path, capsys):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document(
+                {f"t{i}": 0.10 for i in range(5)}, {"excluded_one": LIVE_KIS_REASON}
+            ),
+        )
+        current = _write_json(
+            tmp_path / "current.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+        assert (
+            _crmod.main(["--baseline", str(baseline), "--current", str(current)]) == 0
+        )
+        out = capsys.readouterr().out
+        assert "EXCLUDED (1 not measured here)" in out
+        assert "Test not found" not in out
+
+
+class TestExclusionsSurviveRegeneration:
+    def test_write_baseline_carries_the_exclusions_of_the_compared_baseline(
+        self, tmp_path
+    ):
+        baseline_path = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document({"a": 0.10}, {"b": LIVE_KIS_REASON}),
+        )
+        current = _write_json(
+            tmp_path / "current.json",
+            _crmod.RegressionChecker().build_samples_document(
+                {"a": _stats([0.10] * 7)}, collect_provenance(rounds=7)
+            ),
+        )
+        out = tmp_path / "regenerated.json"
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline_path),
+                    "--current",
+                    str(current),
+                    "--write-baseline",
+                    str(out),
+                ]
+            )
+            == 0
+        )
+        assert json.loads(out.read_text())[EXCLUDED_KEY] == {"b": LIVE_KIS_REASON}
+
+    def test_exclusions_from_supplies_them_without_a_comparison(self, tmp_path):
+        source = _write_json(
+            tmp_path / "old-baseline.json",
+            _baseline_document({"a": 0.10}, {"b": LIVE_KIS_REASON}),
+        )
+        current = _write_json(
+            tmp_path / "current.json",
+            _crmod.RegressionChecker().build_samples_document(
+                {"a": _stats([0.10] * 7)}, collect_provenance(rounds=7)
+            ),
+        )
+        out = tmp_path / "regenerated.json"
+        assert (
+            _crmod.main(
+                [
+                    "--current",
+                    str(current),
+                    "--write-baseline",
+                    str(out),
+                    "--exclusions-from",
+                    str(source),
+                ]
+            )
+            == 0
+        )
+        assert json.loads(out.read_text())[EXCLUDED_KEY] == {"b": LIVE_KIS_REASON}
+
+    def test_writing_a_self_contradictory_baseline_is_refused(self, tmp_path, capsys):
+        """Carrying an exclusion for a benchmark the new samples contain.
+
+        ``--force-baseline`` does not cover this: the result would be rejected
+        by ``extract_exclusions`` on the next read, so writing it just moves
+        the failure somewhere less legible.
+        """
+        source = _write_json(
+            tmp_path / "old-baseline.json",
+            _baseline_document({"a": 0.10}, {"b": LIVE_KIS_REASON}),
+        )
+        current = _write_json(
+            tmp_path / "current.json",
+            _crmod.RegressionChecker().build_samples_document(
+                {"a": _stats([0.10] * 7), "b": _stats([0.20] * 7)},
+                collect_provenance(rounds=7),
+            ),
+        )
+        out = tmp_path / "regenerated.json"
+        assert (
+            _crmod.main(
+                [
+                    "--current",
+                    str(current),
+                    "--write-baseline",
+                    str(out),
+                    "--exclusions-from",
+                    str(source),
+                    "--force-baseline",
+                ]
+            )
+            == 2
+        )
+        assert not out.exists()
+        assert "contradicts its own samples" in capsys.readouterr().out
+
+
+class TestExclusionsInTheMarkdownSummary:
+    def test_the_table_names_each_exclusion_and_its_reason(self):
+        checker = _checker()
+        text = checker.markdown_summary(
+            checker.compare_metrics({"a": _stats([0.1] * 7)}, {"a": _stats([0.1] * 5)}),
+            exclusions={"b": LIVE_KIS_REASON},
+        )
+        assert "Excluded from this check (1)" in text
+        assert LIVE_KIS_REASON in text
+
+    def test_a_stale_exclusion_is_called_out(self):
+        checker = _checker()
+        text = checker.markdown_summary(
+            [],
+            exclusions={"b": LIVE_KIS_REASON},
+            exclusion_problems=["b: ... stale ..."],
+        )
+        assert "Stale exclusion" in text
+
+
+class TestAnUnmeasuredBaselineEntryIsAnError:
+    """Every baseline entry must be measured or explicitly excluded.
+
+    The third state -- present in the baseline, absent from the run, nobody
+    told -- is what the CI job sat in for four months: twelve benchmarks
+    skipped, twelve non-fatal warnings nobody read, green check (#768 / #796 /
+    #679). Making it an error is what gives the empty ``excluded`` map teeth:
+    with nothing excluded, all 25 benchmarks have to run.
+    """
+
+    def test_a_missing_benchmark_fails_the_check(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document({f"t{i}": 0.10 for i in range(6)}),
+        )
+        current = _write_json(
+            tmp_path / "current.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+        assert (
+            _crmod.main(["--baseline", str(baseline), "--current", str(current)]) == 2
+        )
+
+    def test_the_message_names_both_ways_out(self):
+        checker = _checker()
+        comparison = next(
+            c
+            for c in checker.compare_metrics({"gone": _stats([0.2] * 7)}, {})
+            if c.test_name == "gone"
+        )
+        assert comparison.status == "error"
+        assert "NOT MEASURED" in comparison.message
+        assert EXCLUDED_KEY in comparison.message
+
+    def test_declaring_it_excluded_is_the_way_out(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document(
+                {f"t{i}": 0.10 for i in range(5)}, {"gone": LIVE_KIS_REASON}
+            ),
+        )
+        current = _write_json(
+            tmp_path / "current.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+        assert (
+            _crmod.main(["--baseline", str(baseline), "--current", str(current)]) == 0
+        )
+
+
+# ----------------------------------------------------------------------
+# Review round 1 — findings F1-F4, F7, F8
+# ----------------------------------------------------------------------
+
+
+class TestTheMeasurementSurvivesAnUnusableBaseline:
+    """F1: --write-samples is what preserves the run; a baseline problem is not
+    allowed to cost it.
+
+    The CI job uploads current.json as the artifact an operator regenerates a
+    baseline from. Before this, the carried-exclusion read happened first, so
+    an absent or malformed baseline threw the measurement away on the way to
+    reporting the baseline's own problem — a regression against main, where
+    the write happened first.
+    """
+
+    def test_a_missing_baseline_still_writes_current_json(self, tmp_path, capsys):
+        current = _write_json(tmp_path / "round-1.json", _report({"a": 0.2}))
+        samples_out = tmp_path / "current.json"
+
+        exit_code = _crmod.main(
+            [
+                "--baseline",
+                str(tmp_path / "does-not-exist.json"),
+                "--current",
+                str(current),
+                "--write-samples",
+                str(samples_out),
+            ]
+        )
+
+        assert exit_code == 2
+        assert samples_out.exists()
+        assert json.loads(samples_out.read_text())["benchmarks"]["a"]["n"] == 1
+        out = capsys.readouterr().out
+        assert "BASELINE UNREADABLE" in out
+        assert "were still written" in out
+
+    def test_a_malformed_exclusion_map_still_writes_current_json(self, tmp_path):
+        bad = _baseline_document({"a": 0.2})
+        bad[EXCLUDED_KEY] = {"b": ""}  # no reason -> rejected at load
+        baseline = _write_json(tmp_path / "baselines.json", bad)
+        current = _write_json(tmp_path / "round-1.json", _report({"a": 0.2}))
+        samples_out = tmp_path / "current.json"
+
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--write-samples",
+                    str(samples_out),
+                ]
+            )
+            == 2
+        )
+        assert samples_out.exists()
+
+    def test_a_readable_baseline_is_unaffected(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json", _baseline_document({"a": 0.10})
+        )
+        current = _write_json(tmp_path / "round-1.json", _report({"a": 0.10}))
+        samples_out = tmp_path / "current.json"
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--write-samples",
+                    str(samples_out),
+                ]
+            )
+            == 0
+        )
+        assert samples_out.exists()
+
+
+class TestWrittenSamplesNeverContradictThemselves:
+    """F2: a stamped exclusion for a benchmark the same file measures produces
+    a document the script's own reader rejects."""
+
+    def test_a_measured_name_is_not_stamped_into_current_json(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document(
+                {f"t{i}": 0.10 for i in range(5)}, {"stale": LIVE_KIS_REASON}
+            ),
+        )
+        # The run measures the excluded benchmark: a stale exclusion.
+        current = _write_json(
+            tmp_path / "round-1.json",
+            _report({**{f"t{i}": 0.10 for i in range(5)}, "stale": 0.10}),
+        )
+        samples_out = tmp_path / "current.json"
+
+        # Still exit 2 — the stale exclusion is an error, reported separately.
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--write-samples",
+                    str(samples_out),
+                ]
+            )
+            == 2
+        )
+
+        document = json.loads(samples_out.read_text())
+        assert "stale" in document["benchmarks"]
+        assert "stale" not in document[EXCLUDED_KEY]
+
+    def test_the_written_file_can_be_read_back(self, tmp_path):
+        """The property that matters: no artifact the script refuses to load."""
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document({"a": 0.10}, {"stale": LIVE_KIS_REASON}),
+        )
+        current = _write_json(
+            tmp_path / "round-1.json", _report({"a": 0.10, "stale": 0.10})
+        )
+        samples_out = tmp_path / "current.json"
+        _crmod.main(
+            [
+                "--baseline",
+                str(baseline),
+                "--current",
+                str(current),
+                "--write-samples",
+                str(samples_out),
+            ]
+        )
+        # Would raise "both measured and listed in 'excluded'" before the fix.
+        checker = _checker()
+        assert checker.load_exclusions([samples_out]) == {}
+
+    def test_an_exclusion_with_no_samples_is_still_stamped(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document({"a": 0.10}, {"b": LIVE_KIS_REASON}),
+        )
+        current = _write_json(tmp_path / "round-1.json", _report({"a": 0.10}))
+        samples_out = tmp_path / "current.json"
+        _crmod.main(
+            [
+                "--baseline",
+                str(baseline),
+                "--current",
+                str(current),
+                "--write-samples",
+                str(samples_out),
+            ]
+        )
+        assert json.loads(samples_out.read_text())[EXCLUDED_KEY] == {
+            "b": LIVE_KIS_REASON
+        }
+
+
+class TestEmptyExclusionsFromArgument:
+    """F3: `--exclusions-from "$UNSET"` must be a no-op, not a TypeError."""
+
+    def test_an_empty_argument_reads_as_absent(self, tmp_path):
+        current = _write_json(
+            tmp_path / "current.json",
+            _crmod.RegressionChecker().build_samples_document(
+                {"a": _stats([0.10] * 7)}, collect_provenance(rounds=7)
+            ),
+        )
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(
+                [
+                    "--current",
+                    str(current),
+                    "--write-baseline",
+                    str(out),
+                    "--exclusions-from",
+                    "",
+                ]
+            )
+            == 0
+        )
+        assert json.loads(out.read_text())[EXCLUDED_KEY] == {}
+
+    def test_parse_args_strips_the_empty_entries(self):
+        args = _crmod.parse_args(["--current", "c.json", "--exclusions-from", ""])
+        assert args.exclusions_from is None
+
+    def test_a_real_path_alongside_an_empty_one_survives(self):
+        args = _crmod.parse_args(
+            ["--current", "c.json", "--exclusions-from", "", "b.json"]
+        )
+        assert args.exclusions_from == [Path("b.json")]
+
+
+class TestMergedBaselineExclusionConflicts:
+    """F4: the overlap check has to run on the MERGE of several --baseline docs.
+
+    `--baseline old.json new.json` where old.json measures X and new.json
+    excludes X passes both per-document checks, and X was then dropped from
+    the comparison with no error at all — the "measured and not checked" state
+    the mechanism exists to forbid.
+    """
+
+    def test_measured_in_one_document_and_excluded_in_another_is_an_error(
+        self, tmp_path, capsys
+    ):
+        old = _write_json(
+            tmp_path / "old.json", _baseline_document({"a": 0.10, "x": 0.20})
+        )
+        new = _write_json(
+            tmp_path / "new.json",
+            _baseline_document({"b": 0.10}, {"x": LIVE_KIS_REASON}),
+        )
+        current = _write_json(
+            tmp_path / "current.json", _report({"a": 0.10, "b": 0.10})
+        )
+
+        exit_code = _crmod.main(
+            [
+                "--baseline",
+                str(old),
+                str(new),
+                "--current",
+                str(current),
+            ]
+        )
+        assert exit_code == 2
+        out = capsys.readouterr().out
+        assert "BASELINE SET CONTRADICTS ITSELF" in out
+        assert "x" in out
+
+    def test_the_check_is_silent_when_the_documents_agree(self, tmp_path):
+        checker = _checker()
+        assert (
+            checker.merged_exclusion_conflicts(
+                {"x": LIVE_KIS_REASON}, {"a": _stats([0.1])}
+            )
+            == []
+        )
+
+    def test_a_single_document_saying_both_is_still_rejected_at_load(self):
+        checker = _checker()
+        with pytest.raises(ValueError, match="both measured and listed"):
+            checker.extract_exclusions(
+                _baseline_document({"a": 0.2}, {"a": LIVE_KIS_REASON})
+            )
+
+
+class TestBaselineIsParsedOnce:
+    """F7: three json.load calls and three identical log lines per check."""
+
+    def test_the_normal_ci_invocation_reads_the_baseline_once(
+        self, tmp_path, monkeypatch
+    ):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _baseline_document({f"t{i}": 0.10 for i in range(5)}),
+        )
+        current = _write_json(
+            tmp_path / "round-1.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+
+        reads: list[str] = []
+        original = _crmod.RegressionChecker.load_metrics
+
+        def _counting(self, json_path):
+            reads.append(str(json_path))
+            return original(self, json_path)
+
+        monkeypatch.setattr(_crmod.RegressionChecker, "load_metrics", _counting)
+
+        _crmod.main(
+            [
+                "--baseline",
+                str(baseline),
+                "--current",
+                str(current),
+                "--write-samples",
+                str(tmp_path / "current.json"),
+            ]
+        )
+        assert reads.count(str(baseline)) == 1
+
+
+class TestMarkdownCellsAreEscaped:
+    """F8: a reason is free text, so it will eventually contain a pipe."""
+
+    def test_a_pipe_in_a_reason_does_not_add_a_column(self):
+        checker = _checker()
+        text = checker.markdown_summary(
+            [], exclusions={"t": "needs live KIS | see #679"}
+        )
+        row = next(line for line in text.splitlines() if line.startswith("| `t`"))
+        # 2 content cells -> 3 splits on an unescaped pipe would be 4.
+        assert row.count("|") - row.count("\\|") == 3
+        assert "\\|" in row
+
+    def test_a_newline_in_a_reason_does_not_end_the_row(self):
+        checker = _checker()
+        text = checker.markdown_summary([], exclusions={"t": "line one\nline two"})
+        rows = [line for line in text.splitlines() if line.startswith("| `t`")]
+        assert len(rows) == 1
+        assert "line one line two" in rows[0]
+
+    def test_a_pipe_in_a_benchmark_id_is_escaped_too(self):
+        """Parametrized ids can contain one: `test_x[a|b]`."""
+        checker = _checker()
+        text = checker.markdown_summary([], exclusions={"test_x[a|b]": "r"})
+        row = next(line for line in text.splitlines() if "test_x" in line)
+        assert "a\\|b" in row

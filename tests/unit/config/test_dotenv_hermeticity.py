@@ -33,13 +33,14 @@ import pytest
 
 from shared.config import dotenv_guard
 from tests.support import hermetic_env
+from tests.support.live_infra import live_infra_enabled
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: The session-layer assertions describe the hermetic default. The
 #: live-infra opt-in deliberately loads .env, so they do not apply there.
 requires_hermetic_session = pytest.mark.skipif(
-    hermetic_env.env_flag(hermetic_env.LIVE_INFRA_ENV),
+    hermetic_env.live_infra_enabled(),
     reason=(
         "session is non-hermetic by operator opt-in "
         f"({hermetic_env.LIVE_INFRA_ENV}=1)"
@@ -500,3 +501,39 @@ def test_guard_installs_without_python_dotenv(monkeypatch):
 
     restore = hermetic_env.install_dotenv_guard()
     restore()
+
+
+# ---------------------------------------------------------------------------
+# The hermetic session and the live-infra gate are one switch, not two
+# ---------------------------------------------------------------------------
+
+
+def test_hermeticity_is_the_exact_negation_of_the_live_infra_gate(
+    hermetic_session_state,
+):
+    """One predicate decides both, so no env value can split them.
+
+    Two readings of ``KIS_RUN_LIVE_INFRA_TESTS`` with different truthy sets —
+    ``live_infra.py`` accepts 1/true/yes, ``dotenv_guard`` also accepts "on" —
+    would let ``=on`` drop hermeticity while leaving every live_infra test
+    skipped: credentials loaded, nothing gained, and silently (#845/#698).
+    """
+    assert hermetic_session_state.hermetic is not (
+        hermetic_session_state.live_infra_enabled
+    )
+    assert hermetic_session_state.live_infra_enabled is live_infra_enabled()
+
+
+@requires_hermetic_session
+def test_live_infra_gate_never_pings_redis_in_a_hermetic_session(
+    hermetic_session_state,
+):
+    """The gate's one-ping-per-process must not fire when nobody opted in.
+
+    ``pytest_runtest_setup`` reaches ``redis_failure()`` only for an item
+    marked ``live_infra`` *and* ``live_infra_enabled()``. A hermetic session is
+    by definition the second one being false, so the ping — a real socket to
+    Redis DB 1, which the paper runtime shares — cannot happen here.
+    """
+    assert hermetic_session_state.live_infra_enabled is False
+    assert hermetic_session_state.redis_probed() is False

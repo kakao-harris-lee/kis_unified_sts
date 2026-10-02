@@ -44,11 +44,13 @@ from collections.abc import Callable, Iterable, MutableMapping
 from pathlib import Path
 
 from shared.config.dotenv_guard import HERMETIC_ENV, TRUTHY_VALUES, env_flag
+from tests.support.live_infra import LIVE_INFRA_ENV, live_infra_enabled
 
 __all__ = [
     "HERMETIC_ENV",
     "HOME_TOKEN_CACHE_NAMES",
     "LIVE_INFRA_ENV",
+    "live_infra_enabled",
     "PRESERVED_ENV",
     "SCRUBBED_PREFIXES",
     "TRUTHY_VALUES",
@@ -63,8 +65,6 @@ __all__ = [
     "token_cache_witnesses",
     "token_caches_touched_since",
 ]
-
-LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
 
 #: Every variable in these namespaces is removed from a hermetic session. Both
 #: carry broker or operator credentials (``KIS_*_APP_KEY``, ``KIS_*_ACCOUNT_NO``,

@@ -17,6 +17,7 @@ import sys
 import tempfile
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -27,6 +28,12 @@ sys.path.insert(0, str(project_root))
 
 # Imported AFTER project_root lands on sys.path — `tests` is a namespace package.
 from tests.support import git_env, hermetic_env  # noqa: E402
+from tests.support.live_infra import (  # noqa: E402
+    live_infra_enabled,
+    redis_failure,
+    redis_unreachable_message,
+    skip_reason,
+)
 
 _LIVE_INFRA_TEST_PATHS = {
     # These tests connect to real Redis DB 1. Some of them
@@ -44,7 +51,6 @@ _LIVE_INFRA_TEST_PATHS = {
     "tests/shared/risk/test_persistence.py",
 }
 
-_LIVE_INFRA_ENV = hermetic_env.LIVE_INFRA_ENV
 
 # --- Hermetic session --------------------------------------------------------
 # Everything below runs at conftest *import* time, before collection, because
@@ -55,10 +61,17 @@ _LIVE_INFRA_ENV = hermetic_env.LIVE_INFRA_ENV
 # stop that; `_hermetic_broker_env` below re-asserts the same invariants once
 # the session starts.
 #
-# Opting into live infrastructure (KIS_RUN_LIVE_INFRA_TESTS=1, the same switch
-# that un-skips the live_infra tests) restores the previous behavior: this
+# Opting into live infrastructure restores the previous behavior: this
 # checkout's .env is loaded exactly as the runtime loads it.
-HERMETIC_SESSION = not hermetic_env.env_flag(_LIVE_INFRA_ENV)
+#
+# `live_infra_enabled()` decides — not a second reading of the same variable —
+# so hermeticity is the exact negation of the live-infra gate (#845/#698). A
+# duplicate predicate with its own truthy set would let
+# KIS_RUN_LIVE_INFRA_TESTS=on drop hermeticity while leaving every live_infra
+# test skipped: credentials loaded, nothing gained, and silently. Sharing the
+# function is also what keeps `pytest_runtest_setup`'s Redis ping out of a
+# hermetic session, because that hook asks the same question.
+HERMETIC_SESSION = not live_infra_enabled()
 
 #: The throwaway directory every token cache is pinned to, or ``None`` under
 #: the live-infra opt-in. One per process, so xdist workers do not share it.
@@ -218,18 +231,10 @@ def pytest_collection_modifyitems(config, items):
     policy. Skipping these tests by default prevents accidental deletion or
     overwrite of active paper-trading keys during ordinary local test runs.
     """
-    allow_live_infra = os.getenv(_LIVE_INFRA_ENV, "").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    skip_live_infra = pytest.mark.skip(
-        reason=(
-            "live Redis test skipped by default; set "
-            f"{_LIVE_INFRA_ENV}=1 only on an isolated test host or after "
-            "stopping paper trading"
-        )
-    )
+    allow_live_infra = live_infra_enabled()
+    # One gate, one message: the wording lives in tests/support/live_infra.py
+    # so the skip reason and the failure text cannot drift apart.
+    skip_live_infra = pytest.mark.skip(reason=skip_reason())
 
     for item in items:
         try:
@@ -276,6 +281,60 @@ def token_cache_snapshot():
     ``sts`` runs (#698).
     """
     return TOKEN_CACHE_SNAPSHOT
+
+
+# Probe result for this process, computed at most once: ``None`` = not probed
+# yet, ``(failure_or_None,)`` = probed. A tuple rather than a bare value so
+# "probed, and it was fine" is distinguishable from "not probed".
+_REDIS_PROBE: tuple[str | None] | None = None
+
+
+def _redis_failure_once() -> str | None:
+    """Ping Redis at most once per process; return why it is unusable."""
+    global _REDIS_PROBE
+    if _REDIS_PROBE is None:
+        _REDIS_PROBE = (redis_failure(),)
+    return _REDIS_PROBE[0]
+
+
+def pytest_runtest_setup(item):
+    """Fail — never skip — a live-infra test that cannot reach Redis.
+
+    This is the second half of the gate whose first half is in
+    ``pytest_collection_modifyitems`` above. Not opted in: that hook already
+    skipped the item and the builtin skipping plugin (``tryfirst``) short-
+    circuits before this runs. Opted in: the test must run, so an unreachable
+    Redis is a failure, not silence. A skip here is exactly how the CI
+    ``performance`` job reported green for four months while measuring 13 of
+    its 25 benchmarks.
+
+    Failing per item, rather than raising at import time in the test modules,
+    keeps the blast radius to the gated tests: the rest of the session still
+    runs instead of pytest aborting collection with zero tests executed. It
+    also covers all of ``_LIVE_INFRA_TEST_PATHS``, not just the two
+    performance modules.
+    """
+    if "live_infra" not in item.keywords or not live_infra_enabled():
+        return
+    failure = _redis_failure_once()
+    if failure is not None:
+        pytest.fail(redis_unreachable_message(failure), pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def hermetic_session_state():
+    """How this session was configured, for the guard tests to assert on.
+
+    ``redis_probed`` is a callable rather than a value because the live-infra
+    gate pings lazily, at the first gated item — reading the flag at fixture
+    setup would always see "not probed" and pin nothing.
+    """
+    return SimpleNamespace(
+        hermetic=HERMETIC_SESSION,
+        live_infra_enabled=live_infra_enabled(),
+        token_cache_dir=TOKEN_CACHE_DIR,
+        redis_probed=lambda: _REDIS_PROBE is not None,
+    )
 
 
 @pytest.fixture(autouse=True)

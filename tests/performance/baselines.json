@@ -1,927 +1,507 @@
 {
-  "created": 1780153185.8466973,
-  "duration": 23.381126642227173,
-  "exitcode": 0,
-  "root": "/home/runner/work/kis_unified_sts/kis_unified_sts",
-  "environment": {
-    "hardware": "github-actions-ubuntu-latest",
-    "note": "Regenerated on the same hardware the performance check runs on (GitHub-hosted ubuntu-latest) to remove systematic hardware bias. Source: PR #376 perf run 26686962754.",
-    "regenerated": "2026-05-31"
+  "schema": "kis-perf-samples/v1",
+  "provenance": {
+    "generated_at": "2026-10-02T16:13:11+09:00",
+    "timezone": "Asia/Seoul",
+    "role": "baseline",
+    "rounds": 9,
+    "runner": "github-actions-ubuntu24-X64",
+    "cpu_count": 4,
+    "python": "3.11.16",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "commit": "16d7101ecfd13db50be402bcf5a3fc98e32d0f25",
+    "github_event": "workflow_dispatch",
+    "repository": "kakao-harris-lee/kis_unified_sts",
+    "workflow_run": "https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070",
+    "note": "Redis service + KIS_RUN_LIVE_INFRA_TESTS=1 so all 25 benchmarks are measured; first baseline that contains the 12 Redis benchmarks since 2026-05-30 (PR #845, issues #768/#796/#679)",
+    "sources": [
+      "round-1.json",
+      "round-2.json",
+      "round-3.json",
+      "round-4.json",
+      "round-5.json",
+      "round-6.json",
+      "round-7.json",
+      "round-8.json",
+      "round-9.json"
+    ]
   },
-  "summary": {
-    "skipped": 0,
-    "passed": 25,
-    "total": 25,
-    "collected": 25
-  },
-  "collectors": [
-    {
-      "nodeid": "",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance",
-          "type": "Dir"
-        }
+  "excluded": {},
+  "benchmarks": {
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction": {
+      "n": 9,
+      "median": 0.10796778500002802,
+      "min": 0.1072909249999725,
+      "max": 0.14091859199996293,
+      "mean": 0.11250567966666204,
+      "sd": 0.010882333901653742,
+      "samples": [
+        0.14091859199996293,
+        0.1072909249999725,
+        0.10791531800003895,
+        0.10764597899998307,
+        0.10739556700002595,
+        0.10796778500002802,
+        0.11399899399992819,
+        0.10835854100002962,
+        0.11105941599998914
       ]
     },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols",
-          "type": "Function",
-          "lineno": 181
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols",
-          "type": "Function",
-          "lineno": 226
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols",
-          "type": "Function",
-          "lineno": 271
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count",
-          "type": "Function",
-          "lineno": 314
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead",
-          "type": "Function",
-          "lineno": 349
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput",
-          "type": "Function",
-          "lineno": 383
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction",
-          "type": "Function",
-          "lineno": 436
-        }
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead": {
+      "n": 9,
+      "median": 0.0006396700000550481,
+      "min": 0.0005780520000087108,
+      "max": 0.0007352769999329212,
+      "mean": 0.000650718111090656,
+      "sd": 4.97510117573172e-05,
+      "samples": [
+        0.0005780520000087108,
+        0.0006211639999662566,
+        0.0006248610000056942,
+        0.000616754999953173,
+        0.0006930169999463942,
+        0.0006447189999221337,
+        0.0007029480000255717,
+        0.0007352769999329212,
+        0.0006396700000550481
       ]
     },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark",
-          "type": "Class"
-        }
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count": {
+      "n": 9,
+      "median": 0.0005577850000122453,
+      "min": 0.0004956199999810451,
+      "max": 0.0006211030000145001,
+      "mean": 0.0005618318888846514,
+      "sd": 3.915868733034696e-05,
+      "samples": [
+        0.0005956659999810654,
+        0.0005180810000240399,
+        0.0004956199999810451,
+        0.0006211030000145001,
+        0.0005891949999181634,
+        0.0005536279999773797,
+        0.0005781529999921986,
+        0.0005577850000122453,
+        0.0005472560000612248
       ]
     },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position",
-          "type": "Function",
-          "lineno": 263
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions",
-          "type": "Function",
-          "lineno": 289
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions",
-          "type": "Function",
-          "lineno": 315
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions",
-          "type": "Function",
-          "lineno": 345
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling",
-          "type": "Function",
-          "lineno": 371
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary",
-          "type": "Function",
-          "lineno": 420
-        }
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols": {
+      "n": 9,
+      "median": 0.12600116100003333,
+      "min": 0.12499996200000396,
+      "max": 0.273022353999977,
+      "mean": 0.14226718655556347,
+      "sd": 0.04903688725010267,
+      "samples": [
+        0.273022353999977,
+        0.12592228500000147,
+        0.12600116100003333,
+        0.1263823049999928,
+        0.1251075490000062,
+        0.12499996200000396,
+        0.1257086169999866,
+        0.1263831090000167,
+        0.1268773370000531
       ]
     },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability",
-          "type": "Class"
-        }
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols": {
+      "n": 9,
+      "median": 0.1085300830000051,
+      "min": 0.10666574600003287,
+      "max": 0.1580372479999994,
+      "mean": 0.11408945477778173,
+      "sd": 0.01652151872682625,
+      "samples": [
+        0.1580372479999994,
+        0.10774894400003632,
+        0.10846776099998579,
+        0.11033113100000946,
+        0.1085300830000051,
+        0.10892728199996782,
+        0.10666574600003287,
+        0.10785345300001836,
+        0.11024344499998051
       ]
     },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput",
-          "type": "Function",
-          "lineno": 306
-        },
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput",
-          "type": "Function",
-          "lineno": 336
-        },
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput",
-          "type": "Function",
-          "lineno": 366
-        },
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers",
-          "type": "Function",
-          "lineno": 397
-        },
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers",
-          "type": "Function",
-          "lineno": 456
-        },
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles",
-          "type": "Function",
-          "lineno": 517
-        }
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols": {
+      "n": 9,
+      "median": 0.044778046000089944,
+      "min": 0.04366942200005042,
+      "max": 0.061412485999994715,
+      "mean": 0.04649611100000723,
+      "sd": 0.005623897048365731,
+      "samples": [
+        0.061412485999994715,
+        0.04510186899997848,
+        0.04433255399999325,
+        0.044778046000089944,
+        0.04547687800004496,
+        0.04366942200005042,
+        0.04524946499992666,
+        0.04433580200003462,
+        0.04410847699995202
       ]
     },
-    {
-      "nodeid": "tests/performance/test_redis_load.py",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD",
-          "type": "Class"
-        }
+    "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput": {
+      "n": 9,
+      "median": 0.01598701800003255,
+      "min": 0.015740145999984634,
+      "max": 0.022307709999978442,
+      "mean": 0.01662682088889432,
+      "sd": 0.0021327587395362983,
+      "samples": [
+        0.022307709999978442,
+        0.01577659899999162,
+        0.015921429000002263,
+        0.016029622000019117,
+        0.01598701800003255,
+        0.01588359399994488,
+        0.015740145999984634,
+        0.015997439000045688,
+        0.0159978310000497
       ]
     },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages",
-          "type": "Function",
-          "lineno": 265
-        },
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages",
-          "type": "Function",
-          "lineno": 291
-        },
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs",
-          "type": "Function",
-          "lineno": 317
-        },
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs",
-          "type": "Function",
-          "lineno": 349
-        },
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs",
-          "type": "Function",
-          "lineno": 381
-        },
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs",
-          "type": "Function",
-          "lineno": 414
-        }
+    "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions": {
+      "n": 9,
+      "median": 0.021062381999968238,
+      "min": 0.0197482110000351,
+      "max": 0.023655885000010812,
+      "mean": 0.021524669222224527,
+      "sd": 0.0014078397078042906,
+      "samples": [
+        0.023655885000010812,
+        0.02254268900000511,
+        0.022306446000015967,
+        0.02037848499998063,
+        0.021062381999968238,
+        0.023122735000072225,
+        0.02070825999999215,
+        0.0197482110000351,
+        0.020196929999940494
       ]
     },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad",
-          "type": "Class"
-        }
+    "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position": {
+      "n": 9,
+      "median": 0.025948822000003702,
+      "min": 0.024661580999975286,
+      "max": 0.028288830999997572,
+      "mean": 0.026075589111103328,
+      "sd": 0.001331365915726326,
+      "samples": [
+        0.025948822000003702,
+        0.024911739000003763,
+        0.026405448999980763,
+        0.025189321999960157,
+        0.027912233999984437,
+        0.0248647310000365,
+        0.028288830999997572,
+        0.024661580999975286,
+        0.026497592999987774
       ]
     },
-    {
-      "nodeid": "tests/performance",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py",
-          "type": "Module"
-        },
-        {
-          "nodeid": "tests/performance/test_orchestrator_scalability.py",
-          "type": "Module"
-        },
-        {
-          "nodeid": "tests/performance/test_redis_load.py",
-          "type": "Module"
-        },
-        {
-          "nodeid": "tests/performance/test_websocket_load.py",
-          "type": "Module"
-        }
+    "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions": {
+      "n": 9,
+      "median": 0.022253616000028842,
+      "min": 0.021044218999918485,
+      "max": 0.02793025699992313,
+      "mean": 0.02283219766665449,
+      "sd": 0.0020502963578255436,
+      "samples": [
+        0.022072568999988107,
+        0.022759476000004497,
+        0.022253616000028842,
+        0.02155587300001116,
+        0.02358774800006813,
+        0.02793025699992313,
+        0.02257645299999922,
+        0.021044218999918485,
+        0.02170956799994883
+      ]
+    },
+    "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions": {
+      "n": 9,
+      "median": 0.02021734900000638,
+      "min": 0.01945877099996096,
+      "max": 0.021271937000022945,
+      "mean": 0.020352061666658174,
+      "sd": 0.0006733913342078744,
+      "samples": [
+        0.019985748000010517,
+        0.0211891229999992,
+        0.021271937000022945,
+        0.01945877099996096,
+        0.020911798999975417,
+        0.02021289100002832,
+        0.020456017999947562,
+        0.01946491899997227,
+        0.02021734900000638
+      ]
+    },
+    "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling": {
+      "n": 9,
+      "median": 0.08031882799997447,
+      "min": 0.07637070599997742,
+      "max": 0.09544106599997804,
+      "mean": 0.08325927577777116,
+      "sd": 0.006941750902067815,
+      "samples": [
+        0.08391211400001453,
+        0.09544106599997804,
+        0.0784132049999755,
+        0.0768115359999797,
+        0.0933813979999627,
+        0.08472828000009258,
+        0.0799563489999855,
+        0.07637070599997742,
+        0.08031882799997447
+      ]
+    },
+    "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary": {
+      "n": 9,
+      "median": 0.08061521599995558,
+      "min": 0.07671942399997533,
+      "max": 0.08700919300002852,
+      "mean": 0.08066893455555639,
+      "sd": 0.003719111865660756,
+      "samples": [
+        0.083342636000026,
+        0.08700919300002852,
+        0.07773118500000464,
+        0.07671942399997533,
+        0.08061521599995558,
+        0.0847973499999739,
+        0.08096355600008565,
+        0.07677086600000393,
+        0.07807098499995391
+      ]
+    },
+    "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers": {
+      "n": 9,
+      "median": 0.4245229370000061,
+      "min": 0.421843143999979,
+      "max": 0.43211373000002595,
+      "mean": 0.4260436995555621,
+      "sd": 0.0034581636706315848,
+      "samples": [
+        0.42446592400000327,
+        0.4245229370000061,
+        0.43136894100004497,
+        0.4254046930000186,
+        0.421843143999979,
+        0.43211373000002595,
+        0.4238058500000079,
+        0.42446934499997724,
+        0.42639873199999556
+      ]
+    },
+    "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers": {
+      "n": 9,
+      "median": 1.0515343749999033,
+      "min": 1.0423657030000015,
+      "max": 1.0645482659999743,
+      "mean": 1.0516983515555358,
+      "sd": 0.007048180483252091,
+      "samples": [
+        1.0596537620000106,
+        1.0446630090000042,
+        1.0423657030000015,
+        1.0530817789999674,
+        1.0522173559999715,
+        1.0645482659999743,
+        1.0462512999999944,
+        1.050969613999996,
+        1.0515343749999033
+      ]
+    },
+    "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles": {
+      "n": 9,
+      "median": 0.40755447499998354,
+      "min": 0.39935469599998896,
+      "max": 0.42803520299992215,
+      "mean": 0.41229331044443207,
+      "sd": 0.011414200868308428,
+      "samples": [
+        0.41474030200001266,
+        0.42301106600004346,
+        0.40508962800001314,
+        0.39935469599998896,
+        0.42803520299992215,
+        0.3994075199999543,
+        0.4273666039999853,
+        0.4060802999999851,
+        0.40755447499998354
+      ]
+    },
+    "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput": {
+      "n": 9,
+      "median": 0.5294035890000828,
+      "min": 0.5230292059999897,
+      "max": 0.5427160329999765,
+      "mean": 0.5303497457777743,
+      "sd": 0.0063900949483209814,
+      "samples": [
+        0.523144263999967,
+        0.5283860340000217,
+        0.5230292059999897,
+        0.5297036700000035,
+        0.5273585149999462,
+        0.5427160329999765,
+        0.5294035890000828,
+        0.5375501980000195,
+        0.5318562029999612
+      ]
+    },
+    "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput": {
+      "n": 9,
+      "median": 2.0181442650000463,
+      "min": 2.0128480980000063,
+      "max": 2.0753342479999333,
+      "mean": 2.03224775999999,
+      "sd": 0.022860426481411317,
+      "samples": [
+        2.041563980999996,
+        2.0128480980000063,
+        2.036136623999994,
+        2.060268956000016,
+        2.0144193330000917,
+        2.0181442650000463,
+        2.0753342479999333,
+        2.016115728999921,
+        2.0153986059999056
+      ]
+    },
+    "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput": {
+      "n": 9,
+      "median": 2.1525235149999844,
+      "min": 2.1072003400000767,
+      "max": 2.210210663000055,
+      "mean": 2.152671575777785,
+      "sd": 0.027963782419506856,
+      "samples": [
+        2.1388498940000034,
+        2.1525235149999844,
+        2.1642485369999918,
+        2.144520685000032,
+        2.210210663000055,
+        2.153894614999956,
+        2.1072003400000767,
+        2.166799771000001,
+        2.135796161999963
+      ]
+    },
+    "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs": {
+      "n": 9,
+      "median": 1.0797537809999653,
+      "min": 1.0758566370000153,
+      "max": 1.0849363939998966,
+      "mean": 1.0801928002222307,
+      "sd": 0.0033737897959348075,
+      "samples": [
+        1.079845171000045,
+        1.0788156190000109,
+        1.077584480000013,
+        1.0849363939998966,
+        1.0769687860000658,
+        1.0848684770000432,
+        1.0797537809999653,
+        1.083105857000021,
+        1.0758566370000153
+      ]
+    },
+    "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs": {
+      "n": 9,
+      "median": 1.417222277999997,
+      "min": 1.4034331790000465,
+      "max": 1.422258218999957,
+      "mean": 1.4149302891111089,
+      "sd": 0.0072275338957039775,
+      "samples": [
+        1.4170611229999963,
+        1.4211943349999956,
+        1.417253560999967,
+        1.422258218999957,
+        1.417222277999997,
+        1.4216152510000484,
+        1.4096543439999323,
+        1.4034331790000465,
+        1.404680312000039
+      ]
+    },
+    "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs": {
+      "n": 9,
+      "median": 1.7524452820000533,
+      "min": 1.7369031150000183,
+      "max": 1.7704189019999603,
+      "mean": 1.752458113666683,
+      "sd": 0.012370655931151128,
+      "samples": [
+        1.7395491110000307,
+        1.7392013119999774,
+        1.7632204109999918,
+        1.7704189019999603,
+        1.7496232970000278,
+        1.7662087800000563,
+        1.7524452820000533,
+        1.7369031150000183,
+        1.754552813000032
+      ]
+    },
+    "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages": {
+      "n": 9,
+      "median": 0.4359994260000235,
+      "min": 0.42430992000004153,
+      "max": 0.4506891550000205,
+      "mean": 0.437626002444451,
+      "sd": 0.008342151423365047,
+      "samples": [
+        0.43013286199999357,
+        0.4359994260000235,
+        0.44567138800002226,
+        0.4323096289999171,
+        0.42430992000004153,
+        0.4506891550000205,
+        0.4399291720000065,
+        0.4443928940000319,
+        0.43519957600000225
+      ]
+    },
+    "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages": {
+      "n": 9,
+      "median": 0.04447500699995999,
+      "min": 0.04109604500001751,
+      "max": 0.0477838020000263,
+      "mean": 0.04465318622222488,
+      "sd": 0.0019862701659254596,
+      "samples": [
+        0.04109604500001751,
+        0.0477838020000263,
+        0.045205044999988786,
+        0.043705070999919826,
+        0.04357983200003446,
+        0.045159063000028254,
+        0.04447500699995999,
+        0.04381954799998766,
+        0.04705526300006113
+      ]
+    },
+    "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs": {
+      "n": 9,
+      "median": 14.195707887999959,
+      "min": 14.162565391000015,
+      "max": 14.225960687000054,
+      "mean": 14.194139545666692,
+      "sd": 0.01970997451021014,
+      "samples": [
+        14.20601772300003,
+        14.162565391000015,
+        14.192900460999994,
+        14.204202850000058,
+        14.200862064000091,
+        14.165747930000066,
+        14.225960687000054,
+        14.195707887999959,
+        14.193290916999956
       ]
     }
-  ],
-  "tests": [
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols",
-      "lineno": 181,
-      "outcome": "passed",
-      "keywords": [
-        "test_entry_path_100_symbols",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.03154887899999892,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.10119068299999867,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00018041299999538296,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols",
-      "lineno": 226,
-      "outcome": "passed",
-      "keywords": [
-        "test_exit_path_50_symbols",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.000290903999996317,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.04153578999999752,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00017525699999509925,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols",
-      "lineno": 271,
-      "outcome": "passed",
-      "keywords": [
-        "test_entry_path_scalability_200_symbols",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00027948900000751564,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.10399510199999895,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00020432099999823095,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count",
-      "lineno": 314,
-      "outcome": "passed",
-      "keywords": [
-        "test_dict_operations_count",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00021058600000856131,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.00010881200000767421,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00008935099999973772,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead",
-      "lineno": 349,
-      "outcome": "passed",
-      "keywords": [
-        "test_cache_memory_overhead",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00020777799998938917,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.00021987599998851692,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0001272200000101975,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput",
-      "lineno": 383,
-      "outcome": "passed",
-      "keywords": [
-        "test_realistic_throughput",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00016160399999876063,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.014667013999996925,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00011483000000112042,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction",
-      "lineno": 436,
-      "outcome": "passed",
-      "keywords": [
-        "test_aggregate_cost_reduction",
-        "TestOrchestratorHotPathBenchmark",
-        "test_orchestrator_hot_path_benchmark.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00016977900000370028,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.10151042500000074,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0001823260000008986,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position",
-      "lineno": 263,
-      "outcome": "passed",
-      "keywords": [
-        "test_cycle_time_1_position",
-        "TestOrchestratorScalability",
-        "test_orchestrator_scalability.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0002317650000094318,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.0374951399999901,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00014042999998764572,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions",
-      "lineno": 289,
-      "outcome": "passed",
-      "keywords": [
-        "test_cycle_time_5_positions",
-        "TestOrchestratorScalability",
-        "test_orchestrator_scalability.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0001868129999991197,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.030196075000006317,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00012929800000449632,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions",
-      "lineno": 315,
-      "outcome": "passed",
-      "keywords": [
-        "test_cycle_time_10_positions",
-        "TestOrchestratorScalability",
-        "test_orchestrator_scalability.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0002227100000027349,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.03159450699999411,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00013595599999405295,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions",
-      "lineno": 345,
-      "outcome": "passed",
-      "keywords": [
-        "test_cycle_time_20_positions",
-        "TestOrchestratorScalability",
-        "test_orchestrator_scalability.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00019995899999969424,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.0335701519999958,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0001380729999880259,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling",
-      "lineno": 371,
-      "outcome": "passed",
-      "keywords": [
-        "test_memory_usage_scaling",
-        "TestOrchestratorScalability",
-        "test_orchestrator_scalability.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00020494999999698393,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.13277427300000966,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00013325700000166307,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary",
-      "lineno": 420,
-      "outcome": "passed",
-      "keywords": [
-        "test_scalability_summary",
-        "TestOrchestratorScalability",
-        "test_orchestrator_scalability.py",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00023286699999403027,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.12404105599999582,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00013600599999108454,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput",
-      "lineno": 306,
-      "outcome": "passed",
-      "keywords": [
-        "test_position_write_throughput",
-        "TestRedisPositionStateCRUD",
-        "test_redis_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0008495139999951107,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 1.5557372979999968,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0005900430000025381,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput",
-      "lineno": 336,
-      "outcome": "passed",
-      "keywords": [
-        "test_position_read_throughput",
-        "TestRedisPositionStateCRUD",
-        "test_redis_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0007900220000038871,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 1.4472763870000023,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00043821399999899313,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput",
-      "lineno": 366,
-      "outcome": "passed",
-      "keywords": [
-        "test_position_read_all_throughput",
-        "TestRedisPositionStateCRUD",
-        "test_redis_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0006302169999941043,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.4668296279999993,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00043158799999787334,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers",
-      "lineno": 397,
-      "outcome": "passed",
-      "keywords": [
-        "test_concurrent_access_10_workers",
-        "TestRedisPositionStateCRUD",
-        "test_redis_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0006458029999976134,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.3202677629999897,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0004040329999952519,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers",
-      "lineno": 456,
-      "outcome": "passed",
-      "keywords": [
-        "test_concurrent_access_50_workers",
-        "TestRedisPositionStateCRUD",
-        "test_redis_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0009676949999999351,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.8031267500000041,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0010425140000052124,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles",
-      "lineno": 517,
-      "outcome": "passed",
-      "keywords": [
-        "test_latency_percentiles",
-        "TestRedisPositionStateCRUD",
-        "test_redis_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0005815399999988813,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.27791381999999487,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.0008754249999896047,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages",
-      "lineno": 265,
-      "outcome": "passed",
-      "keywords": [
-        "test_publish_throughput_100_messages",
-        "TestWebSocketLoad",
-        "test_websocket_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0005816219999985606,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.031624843999992436,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00018487699999525375,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages",
-      "lineno": 291,
-      "outcome": "passed",
-      "keywords": [
-        "test_publish_throughput_1000_messages",
-        "TestWebSocketLoad",
-        "test_websocket_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0005731199999985392,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 0.29870126199999447,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00017499999999870397,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs",
-      "lineno": 317,
-      "outcome": "passed",
-      "keywords": [
-        "test_end_to_end_latency_100_msgs",
-        "TestWebSocketLoad",
-        "test_websocket_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0005492290000006506,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 1.0727519059999935,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00017269999999314223,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs",
-      "lineno": 349,
-      "outcome": "passed",
-      "keywords": [
-        "test_end_to_end_latency_500_msgs",
-        "TestWebSocketLoad",
-        "test_websocket_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0005418639999987818,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 1.2841963700000036,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00020914200000277106,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs",
-      "lineno": 381,
-      "outcome": "passed",
-      "keywords": [
-        "test_peak_load_1000_msgs",
-        "slow",
-        "pytestmark",
-        "TestWebSocketLoad",
-        "test_websocket_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0006861829999991187,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 1.5348554729999933,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00020818599999472553,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs",
-      "lineno": 414,
-      "outcome": "passed",
-      "keywords": [
-        "test_sustained_load_5000_msgs",
-        "TestWebSocketLoad",
-        "test_websocket_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.0007102360000033059,
-        "outcome": "passed"
-      },
-      "call": {
-        "duration": 12.801332692999992,
-        "outcome": "passed"
-      },
-      "teardown": {
-        "duration": 0.00028594699999473505,
-        "outcome": "passed"
-      }
-    }
-  ],
-  "warnings": [
-    {
-      "message": "SelectableGroups dict interface is deprecated. Use select.",
-      "category": "DeprecationWarning",
-      "when": "collect",
-      "filename": "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/opentelemetry/util/_importlib_metadata.py",
-      "lineno": 32
-    }
-  ]
+  }
 }
