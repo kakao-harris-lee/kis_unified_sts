@@ -8,18 +8,21 @@ Two separate questions, deliberately answered separately:
     these tests write runtime-shaped keys (``trading:{asset}:positions``).
     Opting in is explicit: ``KIS_RUN_LIVE_INFRA_TESTS=1``.
 
-``require_redis()``
+``redis_failure()``
     Given that they may, *can* they? If the answer is no, that is a broken
     environment, not a reason to go quiet. A skip here is how the CI
     ``performance`` job measured 13 of 25 benchmarks for four months while
     reporting green: the twelve Redis benchmarks skipped with the reason "Redis
     not available (start with: docker-compose up -d redis)" even though the
     Redis service container was up and healthy — the real cause was the unset
-    flag, and nothing in the report distinguished the two. So when the opt-in is
-    explicit and Redis is nevertheless unreachable, this raises during
-    collection: pytest exits non-zero, and
-    ``scripts/performance/check_regression.py`` reports the round as an invalid
-    measurement instead of a pass with missing benchmarks.
+    flag, and nothing in the report distinguished the two.
+
+The two answers are combined in ONE place, ``tests/conftest.py``, which already
+owns the list of live-infra modules (``_LIVE_INFRA_TEST_PATHS``): not allowed →
+skip; allowed but unreachable → the gated items FAIL at setup. Doing it there
+rather than per module covers all nine modules instead of two, and keeps the
+blast radius to those items — an earlier draft raised at import time in two
+modules, which aborted collection for the whole session and ran zero tests.
 """
 
 from __future__ import annotations
@@ -69,27 +72,24 @@ def redis_failure() -> str | None:
     return None
 
 
-def require_redis(module_name: str) -> None:
-    """Fail collection when live infra is opted into but Redis is unreachable.
+def redis_unreachable_message(failure: str) -> str:
+    """The failure text for a live-infra test that cannot reach Redis.
 
-    No-op when the opt-in is absent: the module's own ``skipif`` handles that
-    case, and the point of this function is the *other* case.
+    Says why a skip would be the wrong answer, so the next reader does not
+    "fix" this by restoring one, and names the variables the client actually
+    reads — a reader who sets ``REDIS_URL`` and sees no change needs to be told
+    that ``RedisClient`` does not read it.
     """
-    if not live_infra_enabled():
-        return
-    failure = redis_failure()
-    if failure is None:
-        return
     host = os.environ.get("REDIS_HOST", "localhost")
     port = os.environ.get("REDIS_PORT", "6379")
     db = os.environ.get("REDIS_DB", "1")
-    raise RuntimeError(
-        f"{module_name}: {LIVE_INFRA_ENV} is set, so these benchmarks must run, "
-        f"but Redis at {host}:{port}/{db} is unreachable — {failure}. "
-        "This is a broken measurement environment, not a reason to skip: a "
-        "skipped benchmark leaves the baseline entry unmeasured and the job "
-        "green. Start Redis (docker compose up -d redis) or unset "
-        f"{LIVE_INFRA_ENV}. Note that these modules read REDIS_HOST/REDIS_PORT/"
-        "REDIS_DB via shared.streaming.client.RedisClient — REDIS_URL is not "
-        "read on this path."
+    return (
+        f"{LIVE_INFRA_ENV} is set, so this live-infra test must run, but Redis "
+        f"at {host}:{port}/{db} is unreachable — {failure}. This is a broken "
+        "test environment, not a reason to skip: a skipped benchmark leaves "
+        "its baseline entry unmeasured and the job green. Start Redis "
+        f"(docker compose up -d redis) or unset {LIVE_INFRA_ENV}. Note that "
+        "these tests read REDIS_HOST/REDIS_PORT/REDIS_DB via "
+        "shared.streaming.client.RedisClient — REDIS_URL is not read on this "
+        "path."
     )

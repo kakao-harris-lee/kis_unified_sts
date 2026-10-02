@@ -43,20 +43,14 @@ import redis
 from shared.streaming.client import RedisClient
 from shared.streaming.message import StreamMessage
 from shared.streaming.publisher import StreamPublisher
-from tests.support.live_infra import live_infra_enabled, require_redis, skip_reason
 
 # Despite the module name, nothing here talks to a KIS WebSocket endpoint: the
 # subject is the Redis Stream layer that carries market data between services
-# (see the module docstring). These benchmarks are therefore runnable in CI
-# with a Redis service container, and the only thing that kept them out was the
-# unset opt-in flag. Same two-case split as test_redis_load.py: opted out ->
-# skip; opted in with Redis unreachable -> fail collection loudly.
-require_redis(__name__)
-
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(not live_infra_enabled(), reason=skip_reason()),
-]
+# (see the module docstring). These benchmarks are runnable in CI with a Redis
+# service container, and the only thing that kept them out was the unset opt-in
+# flag. The gate itself lives once in tests/conftest.py — see the note in
+# test_redis_load.py.
+pytestmark = [pytest.mark.integration]
 
 
 def _calculate_percentiles(latencies: list[float]) -> dict[str, float]:

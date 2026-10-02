@@ -39,21 +39,16 @@ import pytest
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.streaming.client import RedisClient
-from tests.support.live_infra import live_infra_enabled, require_redis, skip_reason
 
-# Opted out -> skip, with a reason that names the flag instead of guessing at
-# Redis. Opted in but Redis unreachable -> raise here, during collection.
-# The old code collapsed both into one `skipif(not _is_redis_available())`, so
-# the CI `performance` job skipped these six benchmarks for four months with
-# the reason "Redis not available" while its Redis service container was up and
-# healthy; the real cause was the unset flag. A silent skip also leaves the
-# baseline entry unmeasured and the job green, which is the #768 failure mode.
-require_redis(__name__)
-
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(not live_infra_enabled(), reason=skip_reason()),
-]
+# The live-infra gate for this module lives in tests/conftest.py, which already
+# lists this path in `_LIVE_INFRA_TEST_PATHS`: not opted in -> skipped there;
+# opted in but Redis unreachable -> failed there, per test. There is
+# deliberately no second gate here. The old module-level
+# `skipif(not _is_redis_available())` collapsed the two cases into one silent
+# skip whose reason ("Redis not available") was false whenever the flag was
+# merely unset — which is why the CI `performance` job reported green for four
+# months while measuring 13 of its 25 benchmarks.
+pytestmark = [pytest.mark.integration]
 
 
 def _create_test_position(position_id: str, code: str = "005930") -> Position:
