@@ -461,6 +461,12 @@ def is_rate_limited(status: int, parsed: dict[str, Any], text: str) -> bool:
 #: them together.
 REFUSED_SECOND_CONSECUTIVE = "second_consecutive_transient"
 REFUSED_WINDOW_CLOSED = "window_already_closed"
+#: A call that is never retried at all, whatever it answers — an order POST,
+#: or a one-off lookup whose repeat would only move the clock. It does not go
+#: through :func:`retry_once`, so without a third value its record would carry
+#: a bare ``retried: false`` and a harvester separating the two above would
+#: meet a kind it cannot classify and lump it with the unhealthy ones.
+REFUSED_SINGLE_SHOT = "single_shot_call"
 
 #: The two transient sub-kinds, as they appear in ``measurements.retries`` and
 #: in every ``retry_evidence`` record.
