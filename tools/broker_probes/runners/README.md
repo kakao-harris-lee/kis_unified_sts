@@ -300,6 +300,7 @@ P8_COEXISTENCE=<measured | not_measured>
 | `transient:transport` | two consecutive transport failures on the order-status GET, after one retry a whole poll interval apart | **continues**, up to `P8_MAX_TRANSIENT_STOPS` |
 | `transient:ledger_throttle` | the same, for two consecutive `EGW00215` | **continues**, same budget |
 | `rate_limited` | HTTP 429 or `EGW00201` — OUR call rate | stops |
+| `query_unanswered` | the open-order surface returned no `rt_cd=0` answer for the whole window | stops |
 | `rejected` | the broker refused the SUBMIT | stops |
 | anything else, or no line at all | a state the probe did not name | stops |
 
@@ -321,7 +322,7 @@ separate fields, so there is no field in which a transport stop and a
 rejection can be added together:
 
 ```
-VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n transport_stops=n
+VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n query_unanswered_stops=n transport_stops=n
 ```
 
 It then says in so many words whether `N>=5` was reached, because

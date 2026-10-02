@@ -87,6 +87,7 @@ from tools.broker_probes.common import (
     assert_mock_trading_tr,
     assert_no_live_futures_config,
     build_auth_config,
+    call_evidence,
     classify_answer,
     dry_run_banner,
     http_json,
@@ -2001,6 +2002,27 @@ _P8_STOP_RATE_LIMITED = "rate_limited"
 #: "오류 1건(브로커 거부 포함)".
 _P8_STOP_TRANSIENT = "transient"
 
+#: The coexistence poll never got a single ``rt_cd=0`` answer out of the
+#: open-order surface, so the trial learned nothing about the interval.
+#:
+#: This closes the other half of the same defect. The loop reads ``output1``,
+#: and a REJECTION carries none — so before this change a refusal read as "no
+#: legs are live", which is the loop's own signal that coexistence has ENDED.
+#: :func:`classify_answer` catches 429/``EGW00201``/``EGW00215``, but a plain
+#: ``rt_cd != '0'`` is not any of those: this broker answers an empty result
+#: set with a rejection shape (``rt_cd='7'`` + ``msg_cd='KIOK0560'``,
+#: ``P-BAL-20260731T114344Z``), and ``_live_odno_keys`` already refuses to read
+#: that as "nothing is live" for the cleanup consumer.
+#:
+#: The treatment here is deliberately NOT a stop on the first one. Whether this
+#: surface switches to a rejection shape once the book is empty has never been
+#: measured, and stopping on it would turn a normal end-of-coexistence into an
+#: abort — breaking measurements that work today on an unmeasured hunch. So an
+#: unanswered poll is recorded and SKIPPED: it neither sets nor clears the
+#: coexistence mark, and the loop keeps going. Only a loop in which NOTHING
+#: answered reports this stop, because that one provably observed nothing.
+_P8_STOP_QUERY_UNANSWERED = "query_unanswered"
+
 #: Something left the probe that it does not classify — an exception out of a
 #: path with no handler. Fail-closed: the runner stops the series on it,
 #: because a state the probe cannot name is not a state to keep ordering in.
@@ -2091,6 +2113,8 @@ def _poll_coexistence(
     made outside the window it claims to cover.
     """
     coexist_last: float | None = None
+    answered = 0
+    unanswered = 0
     deadline = time.monotonic() + args.visibility_timeout_s
     # The EFFECTIVE interval, not the requested one: the pacer will not release
     # two calls closer together than --pace-s, so this is the gap the retry
@@ -2125,6 +2149,23 @@ def _poll_coexistence(
                 return coexist_last, f"{_P8_STOP_TRANSIENT}:{kind}"
             if outcome.kind == STATUS_RATE_LIMITED:
                 return coexist_last, _P8_STOP_RATE_LIMITED
+            if str(outcome.parsed.get("rt_cd") or "").strip() != "0":
+                # Not an answer, and not the end of coexistence either
+                # (:data:`_P8_STOP_QUERY_UNANSWERED`). Recorded, then skipped:
+                # the mark is neither set nor cleared.
+                unanswered += 1
+                run.observe(
+                    coexistence_poll_not_answered=call_evidence(
+                        status_kind="QUERY_REJECTED",
+                        http_status=outcome.http_status,
+                        parsed=outcome.parsed,
+                        text=outcome.text,
+                    ),
+                    poll_index=polls,
+                )
+                time.sleep(args.poll_ms / 1000.0)
+                continue
+            answered += 1
             rows = outcome.payload
             record_odno_wire_format(run, [original_odno, new_odno], rows)
             # Canonical keys on both sides: a raw compare finds neither leg live
@@ -2151,6 +2192,14 @@ def _poll_coexistence(
         # what the 2026-09-28 artifact could only be reconstructed from by
         # counting odno_wire_format samples afterwards.
         run.measure("coexistence_polls_used", polls)
+        run.measure("coexistence_polls_answered", answered)
+        run.measure("coexistence_polls_not_answered", unanswered)
+    if answered == 0 and unanswered > 0:
+        # Every poll the window had room for was a rejection. coexist_last is
+        # None by construction, and before this change that became
+        # `coexistence_ms: 0.0` on a MEASURED artifact — "the replace was
+        # atomic", observed by nothing.
+        return coexist_last, _P8_STOP_QUERY_UNANSWERED
     return coexist_last, None
 
 

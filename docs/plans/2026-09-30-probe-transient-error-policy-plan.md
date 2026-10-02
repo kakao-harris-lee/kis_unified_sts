@@ -662,9 +662,27 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 즉 **거부·스로틀 응답 하나가 「공존 구간이 끝났다」로 읽혀 아무도 관측하지 않은
 `coexistence_ms` 를 MEASURED 아티팩트에 써 넣고 있었다.** 방향은 작은 값 = 「원자적
 교체」 쪽이고, 그것이 `B_protective_request_complete` 에 대해 fail-open 이다. 계획에
-없던 발견이며, 이 PR 이 함께 닫는다(폴은 이제 분류하고 멈추며, 멈춘 폴은 측정을 쓰지
-않는다). `tests/tools/test_broker_probes_p8_transient.py` 의 429/`EGW00201`/`EGW00215`
-테스트가 `"coexistence_ms" not in run.measurements` 로 고정한다.
+없던 발견이며, 이 PR 이 함께 닫는다.
+
+**나머지 절반 — `classify_answer` 가 잡지 않는 거부.** 위 셋은 429/`EGW00201`/
+`EGW00215` 라 분류기가 잡지만, **평범한 `rt_cd≠0` 은 그 셋 중 아무것도 아니다**.
+이 브로커는 빈 결과 집합을 거부 모양으로 답한다 — `rt_cd='7'` + `msg_cd='KIOK0560'`
+(「조회할 내용이 없습니다」, `P-BAL-20260731T114344Z`) — 그리고 `_live_odno_keys` 는
+정리 소비자에 대해 **이미** 그것을 「아무것도 live 가 아니다」로 읽기를 거부한다.
+폴 루프만 읽고 있었다. 즉 분류기만 붙였다면 가드가 자기가 막는다고 적은 것을 그대로
+통과시켰을 것이다(이 저장소가 네 번 겪은 그 형태).
+
+**처분은 일부러 「중단」이 아니다.** 이 표면이 책이 비면 거부 모양으로 바뀌는지는
+여기서 측정된 적이 없고, 첫 거부에 멈추면 **정상적인 공존 종료를 중단으로 바꿔** 오늘
+돌아가는 측정을 근거 없는 추측으로 깨뜨린다. 그래서 답하지 않은 폴은 **기록하고
+건너뛴다** — 공존 마크를 세우지도 지우지도 않고 루프는 계속한다. 창 전체에서
+**하나도** 답하지 않았을 때만 `stop_reason=query_unanswered` 다. 그 경우만이
+「아무것도 관측하지 못했다」를 증명하기 때문이다. 아티팩트에
+`coexistence_polls_answered`·`coexistence_polls_not_answered` 가 남는다.
+
+고정하는 테스트: 429/`EGW00201`/`EGW00215` 는 `"coexistence_ms" not in
+run.measurements` · `no_rows` 한 번은 구간을 **끊지 않는다**(`coexistence_ms > 0`,
+`polls_not_answered == 1`) · 전부 `no_rows` 면 `query_unanswered` 이고 측정 없음.
 
 #### 7.15.3 바뀐 파일
 
@@ -672,12 +690,12 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 |---|---|
 | `tools/broker_probes/common.py` | 일시 오류 정책 **한 벌**: `TRANSIENT_*`/`STATUS_*` · `is_ledger_throttled` · `transport_transient_types` · `transport_excerpt` · `transient_kind` · `classify_answer` · `call_evidence` · `retry_evidence` · `Outcome` · `Pacer`(`wait`+`defer`) · `Retries` · `record_retry` · `retry_once` |
 | `tools/broker_probes/probes_ca.py` | 그 한 벌을 **쓴다**. 로컬 이름은 전부 별칭(`_retry_once = retry_once` …)이라 6-튜플 시그니처와 기존 테스트 전부 그대로 |
-| `tools/broker_probes/probes_order.py` | `POLICY_VERSION` · `_CallPacer(Pacer)` · `inquire_futures_classified` · `_poll_coexistence`(재시도·창 마감·분류) · 제출/정정의 전송 오류 분류(재시도 없음) · `_live_odno_keys` 재시도 · `P8_STOP=`/`P8_COEXISTENCE=` 앵커 줄 · `measurements.stop_reason`·`coexistence_polls_used` |
+| `tools/broker_probes/probes_order.py` | `POLICY_VERSION` · `_CallPacer(Pacer)` · `inquire_futures_classified` · `_poll_coexistence`(재시도·창 마감·분류·`rt_cd≠0` 는 끊지 않고 기록) · 제출/정정의 전송 오류 분류(재시도 없음) · `_live_odno_keys` 재시도 · `P8_STOP=`/`P8_COEXISTENCE=` 앵커 줄 · `measurements.stop_reason`·`coexistence_polls_used` |
 | `tools/broker_probes/runners/_common.sh` | 두 러너가 **source** 하는 공유 가드(신규) |
 | `tools/broker_probes/runners/run_p_ca.sh` | 그 가드를 쓰도록 축약. 로그 문구는 한 글자도 바꾸지 않았다 |
 | `tools/broker_probes/runners/run_p8.sh` | 추적되는 P-8 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | `_common.sh` · `run_p8.sh` 인스턴스화 레시피와 STOP 규칙 표 |
-| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 55건(+shellcheck 미설치 시 skip 1건) |
+| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 58건(+shellcheck 미설치 시 skip 1건) |
 | `tests/tools/test_broker_probes_ca.py` · `test_broker_probes_pacing.py` | 공유 파일을 따라가는 수정(아래 7.15.6) |
 
 #### 7.15.4 정책 — P-CA 와 같은 것, 그리고 다른 것
@@ -716,10 +734,11 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 포함)」이라는 문장을 쓸 수 있는 필드가 존재하지 않는다.
 
 ```
-VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n transport_stops=n
+VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n query_unanswered_stops=n transport_stops=n
 ```
 
-- `rejected` · `rate_limited` · rc≠0 · 분류 불가(줄 없음 포함) ⇒ **시리즈 중단**.
+- `rejected` · `rate_limited` · `query_unanswered` · rc≠0 · 분류 불가(줄 없음 포함)
+  ⇒ **시리즈 중단**.
 - `transient:*` ⇒ **계속**. `P8_MAX_TRANSIENT_STOPS`(기본값 없는 필수 env)를 넘으면
   그때 멈추고, 그 문구는 「링크가 측정할 만큼 건강하지 않다」이지 「발견」이 아니다.
 - `none` + `not_measured` 는 중단도 표본도 **아니다** — WARN 한 줄로 말한다. 그걸
@@ -791,7 +810,7 @@ VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_sto
   tests/tools/test_broker_probes_n15_blackout.py \
   tests/tools/test_broker_probes_nontrade_registry.py \
   tests/tools/test_broker_probes_token_cache.py -p no:cacheprovider
-  → 674 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+  → 677 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
 
 ruff check tools/broker_probes tests/tools          → All checks passed!
 black --check (변경 .py 전부)                        → unchanged

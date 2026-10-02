@@ -172,6 +172,8 @@ class _Wire:
     ``chunked``    ``requests.exceptions.ChunkedEncodingError`` — the body-read
                    half of the transport set.
     ``throttle``   HTTP 500 + ``EGW00215``, the LEDGER throttle.
+    ``no_rows``    ``rt_cd='7'`` + ``KIOK0560`` — this broker's empty-set
+                   notation, a REJECTION shape and not a rate limit.
     ``http429``    HTTP 429, no body.
     ``egw00201``   HTTP 200 + ``EGW00201``, our own call rate in the body.
     """
@@ -289,6 +291,17 @@ class _Wire:
             return 500, dict(_LEDGER_THROTTLE), 1.0, str(_LEDGER_THROTTLE)
         if token == "http429":
             return 429, {}, 1.0, "Too Many Requests"
+        if token == "no_rows":
+            # This broker's empty-set notation on the sibling balance surface:
+            # a REJECTION shape, not rt_cd=0 with an empty list
+            # (P-BAL-20260731T114344Z).
+            payload = {
+                "rt_cd": "7",
+                "msg_cd": "KIOK0560",
+                "msg1": "조회할 내용이 없습니다",
+                "output1": [],
+            }
+            return 200, payload, 1.0, str(payload)
         if token == "egw00201":
             payload = {
                 "rt_cd": "1",
@@ -666,6 +679,60 @@ def test_a_transport_failure_on_the_amend_is_classified_and_not_resent(
     assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
         "transient:transport"
     ]
+
+
+def test_a_query_rejection_mid_poll_does_not_end_the_coexistence_interval(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """The other half of the manufactured-value defect, and the half
+    ``classify_answer`` does not catch.
+
+    A rejection carries no ``output1``, and the loop reads rows — so before
+    this change ``rt_cd='7'`` + ``KIOK0560`` read as "no legs are live", which
+    is the loop's own signal that coexistence has ENDED. It is not a rate
+    limit, so the 429/``EGW00215`` arms never see it.
+
+    It is recorded and SKIPPED rather than stopped on: whether this surface
+    switches to a rejection shape once the book is empty has never been
+    measured here, and stopping on it would abort a normal end-of-coexistence
+    on an unmeasured hunch.
+    """
+    _install(
+        monkeypatch,
+        _Wire(poll_script=["both", "no_rows", "both", "new_only"]),
+    )
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "none"
+    assert run.measurements["coexistence_polls_not_answered"] == 1
+    assert run.measurements["coexistence_polls_answered"] == 3
+    # The interval survived the hole: the mark was set on poll 1, untouched on
+    # poll 2, set again on poll 3, and only poll 4 ended it.
+    assert run.measurements["coexistence_ms"] > 0.0
+    recorded = [o for o in run.observations if "coexistence_poll_not_answered" in o]
+    assert len(recorded) == 1
+    assert recorded[0]["coexistence_poll_not_answered"]["msg_cd"] == "KIOK0560"
+
+
+def test_a_poll_series_that_never_answers_reports_no_coexistence(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nothing came back ``rt_cd=0`` for the whole window. Before the change
+    that was ``coexistence_ms: 0.0`` with ``errors: []`` — "the replace was
+    atomic", observed by nothing."""
+    _install(monkeypatch, _Wire(poll_script=["no_rows"]))
+
+    run = probe_p8(_args(visibility_timeout_s=0.3))
+
+    assert run.measurements["stop_reason"] == "query_unanswered"
+    assert "coexistence_ms" not in run.measurements
+    assert "mode_determination" not in run.measurements
+    assert run.measurements["coexistence_polls_answered"] == 0
+    assert run.measurements["coexistence_polls_not_answered"] > 0
+    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == ["query_unanswered"]
 
 
 def test_a_transport_failure_on_the_quote_is_its_own_phase(
@@ -1232,6 +1299,7 @@ _TRANSPORT = "0|P8_STOP=transient:transport~P8_COEXISTENCE=not_measured"
 _LEDGER = "0|P8_STOP=transient:ledger_throttle~P8_COEXISTENCE=not_measured"
 _REJECTED = "0|P8_STOP=rejected~P8_COEXISTENCE=not_measured"
 _RATE_LIMITED = "0|P8_STOP=rate_limited~P8_COEXISTENCE=not_measured"
+_UNANSWERED = "0|P8_STOP=query_unanswered~P8_COEXISTENCE=not_measured"
 
 
 def _verdict(stdout: str) -> str:
@@ -1317,6 +1385,22 @@ def test_a_rate_limit_stop_still_ends_the_series(tmp_path: Path) -> None:
 
     assert len(invocations) == 2
     assert "rate_limit_stops=1" in _verdict(result.stdout)
+    assert result.returncode != 0
+
+
+def test_an_unanswered_poll_series_ends_the_series(tmp_path: Path) -> None:
+    """A surface that answered nothing for a whole window is not one to keep
+    ordering against, and it is counted in its own field — not as a broker
+    rejection and not as a transport stop."""
+    result, invocations, _evidence = _run_series(
+        tmp_path, script=[_OK, _UNANSWERED, _OK, _OK, _OK]
+    )
+
+    assert len(invocations) == 2
+    verdict = _verdict(result.stdout)
+    assert "query_unanswered_stops=1" in verdict
+    assert "broker_rejections=0" in verdict
+    assert "transport_stops=0" in verdict
     assert result.returncode != 0
 
 

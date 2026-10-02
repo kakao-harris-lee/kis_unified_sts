@@ -21,6 +21,9 @@
 #   * a RATE-LIMIT stop (P8_STOP=rate_limited) stops the series too. That one
 #     is OUR call rate, and "stop, never retry" is an account-protection rule
 #     (plan §3, unchanged).
+#   * an UNANSWERED poll series (P8_STOP=query_unanswered) stops the series:
+#     nothing came back rt_cd=0 for a whole window, and the next trial is
+#     another walk down the same path.
 #   * a TRANSPORT stop (P8_STOP=transient:*) does NOT. The probe already waited
 #     a whole poll interval and tried again; the series continues until
 #     P8_MAX_TRANSIENT_STOPS of them, because a link that keeps dropping is a
@@ -151,6 +154,7 @@ copy_trial_artifact() {
 MEASURED=0
 REJECTIONS=0
 RATE_LIMIT_STOPS=0
+QUERY_UNANSWERED=0
 TRANSPORT_STOPS=0
 TRIALS_RUN=0
 VERDICT=
@@ -211,6 +215,11 @@ while [ "$trial" -le "$P8_TRIALS" ]; do
     VERDICT="STOP: trial $trial was rate-limited (HTTP 429 / EGW00201) — that is OUR call rate, and it stays a no-retry stop"
     break
     ;;
+  query_unanswered)
+    QUERY_UNANSWERED=$((QUERY_UNANSWERED + 1))
+    VERDICT="STOP: trial $trial got no rt_cd=0 answer out of the open-order surface in its whole window — the surface is not answering, and the next trial is another walk down the same path"
+    break
+    ;;
   *)
     # Includes an EMPTY token. A missing line is what a probe that crashed
     # before its finally block looks like from here, and an unknown one is a
@@ -238,7 +247,7 @@ fi
 
 # The counts are separate fields, never a sum. "오류 1건(브로커 거부 포함)" is
 # the exact sentence this line exists to make unwriteable.
-log "VERDICT: $VERDICT | trials_run=$TRIALS_RUN/$P8_TRIALS measured=$MEASURED broker_rejections=$REJECTIONS rate_limit_stops=$RATE_LIMIT_STOPS transport_stops=$TRANSPORT_STOPS"
+log "VERDICT: $VERDICT | trials_run=$TRIALS_RUN/$P8_TRIALS measured=$MEASURED broker_rejections=$REJECTIONS rate_limit_stops=$RATE_LIMIT_STOPS query_unanswered_stops=$QUERY_UNANSWERED transport_stops=$TRANSPORT_STOPS"
 if [ "$MEASURED" -ge 5 ]; then
   log "mode_determination: $MEASURED measured trial(s) — N>=5 is met; map to ReplaceSemantics only if they AGREE"
 else
