@@ -14,9 +14,9 @@ from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from dotenv import load_dotenv
+from shared.config.dotenv_guard import load_project_dotenv
 
-load_dotenv()
+load_project_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)

@@ -36,7 +36,16 @@ import matplotlib.pyplot as plt
 
 
 def _load_env_file(path: str = ".env") -> None:
-    """Best-effort .env loader without external dependency."""
+    """Best-effort .env loader without external dependency.
+
+    Hand-rolled, so the pytest session's dotenv guard cannot see it — the
+    hermetic switch is what stops a test process reading real credentials
+    here (#698).
+    """
+    from shared.config.dotenv_guard import hermetic_mode_enabled
+
+    if hermetic_mode_enabled():
+        return
     p = Path(path)
     if not p.exists():
         return

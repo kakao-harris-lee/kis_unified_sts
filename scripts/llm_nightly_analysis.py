@@ -16,9 +16,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 
-from dotenv import load_dotenv
+from shared.config.dotenv_guard import load_project_dotenv
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_project_dotenv()
 
 from shared.llm.llm_analyzer import run_unified_analysis
 

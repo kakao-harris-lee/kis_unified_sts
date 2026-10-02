@@ -10,10 +10,10 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
-from dotenv import load_dotenv
 
 from shared.collector.historical.backfill import fetch_minute_async, parse_ohlcv
 from shared.collector.historical.calendar import get_trading_days_range
+from shared.config.dotenv_guard import load_project_dotenv
 
 
 async def _probe(code: str, start: str, end: str, max_pages: int) -> pd.DataFrame:
@@ -90,8 +90,9 @@ def main() -> int:
     parser.add_argument("--output-csv", default="")
     args = parser.parse_args()
 
-    # Reuse local env for KIS credentials.
-    load_dotenv("/home/deploy/project/kis_unified_sts/.env")
+    # Reuse this checkout's .env for KIS credentials (#698: never the
+    # primary checkout's — a worktree must not read the main .env).
+    load_project_dotenv()
 
     df = asyncio.run(_probe(args.code, args.start, args.end, args.max_pages))
     if df.empty:

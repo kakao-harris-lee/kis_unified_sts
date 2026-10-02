@@ -15,9 +15,9 @@ import sys
 # Add project root to path, then load env BEFORE importing shared modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dotenv import load_dotenv  # noqa: E402
+from shared.config.dotenv_guard import load_project_dotenv
 
-load_dotenv()
+load_project_dotenv()
 
 from shared.llm.llm_analyzer import run_unified_analysis  # noqa: E402
 

@@ -42,10 +42,14 @@ _MIN_INTERVAL = 1.0 / RPS_CEIL
 
 
 def _load_credentials() -> tuple[str, str]:
+    from shared.config.dotenv_guard import hermetic_mode_enabled
+
     app_key = os.environ.get("KIS_FUTURES_APP_KEY", "")
     app_secret = os.environ.get("KIS_FUTURES_APP_SECRET", "")
-    if not app_key or not app_secret:
-        # Try loading from .env directly
+    if (not app_key or not app_secret) and not hermetic_mode_enabled():
+        # Try loading from .env directly. Hand-rolled, so the pytest session's
+        # dotenv guard cannot see it — the hermetic switch is what stops a test
+        # process reading real credentials here (#698).
         env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
         if os.path.exists(env_path):
             with open(env_path) as f:

@@ -180,7 +180,16 @@ def _load_repo_env() -> None:
     same credentials/config without requiring the operator to export variables.
     Existing environment values win, matching python-dotenv's default
     ``override=False`` behavior.
+
+    Does nothing while ``KIS_TEST_HERMETIC`` is set. A test process must never
+    read the checkout's real .env, and the hand-rolled fallback below would
+    walk straight past the pytest session's dotenv guard (#698).
     """
+    from shared.config.dotenv_guard import hermetic_mode_enabled
+
+    if hermetic_mode_enabled():
+        return
+
     env_path = _REPO_ROOT / ".env"
     if not env_path.exists():
         return

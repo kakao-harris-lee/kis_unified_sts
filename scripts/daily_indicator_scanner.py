@@ -22,12 +22,10 @@ import os
 import sys
 from collections.abc import Iterable
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
 
 from shared.collector.historical.calendar import (
     get_previous_trading_day,
@@ -40,6 +38,7 @@ from shared.collector.historical.daily_quality import (
     quality_fetch_limit,
 )
 from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+from shared.config.dotenv_guard import load_project_dotenv
 from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
@@ -50,7 +49,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("daily_indicator_scanner")
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 
@@ -102,8 +100,14 @@ def _load_dynamic_only_strategies() -> frozenset[str]:
 
 
 def _load_repo_env() -> None:
-    """Load repo-local .env for standalone cron/manual runs."""
-    load_dotenv(_REPO_ROOT / ".env", override=False)
+    """Load repo-local .env for standalone cron/manual runs.
+
+    Routed through the shared loader so the file stays inside this checkout
+    and so a pytest session reads nothing: ``backfill_missing_candidate_candles``
+    is exercised by a unit test, which therefore used to pull the operator's
+    real .env into the test process (#698).
+    """
+    load_project_dotenv()
 
 
 def _env_flag(name: str, default: bool) -> bool:

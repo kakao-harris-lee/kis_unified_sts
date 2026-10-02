@@ -10,14 +10,14 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 # Add repo root to path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 # Load environment
-load_dotenv(REPO_ROOT / ".env")
+from shared.config.dotenv_guard import load_project_dotenv
+
+load_project_dotenv()
 
 from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 from shared.storage.config import StorageConfig
