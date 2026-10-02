@@ -1,0 +1,154 @@
+name: performance-baseline
+
+# Manual-only: measure tests/performance/ N times ON A CI RUNNER and publish a
+# baseline candidate as an artifact. Nothing is committed here — a human opens
+# the PR that replaces tests/performance/baselines.json, quoting the provenance
+# the candidate carries (runner, commit, date, rounds, per-benchmark
+# n/median/min/max/sd).
+#
+# Why this exists (#768 / #796): the committed baseline is a SINGLE sample taken
+# on 2026-05-30, with no recorded spread, so whatever offset it carries is
+# arbitrary. It is not currently producing a false regression — with medians of
+# 5 rounds the job is green against it — but nothing can tell a real shift from
+# where that one draw happened to land. A baseline must come from several
+# rounds on the hardware the check runs on, and regenerating one by hand from a
+# single local run must not be the easy path; this workflow is the easy path.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: 'Measurement rounds (minimum 5; more is better)'
+        required: false
+        default: '7'
+      note:
+        description: 'Why this baseline is being regenerated (stored in provenance)'
+        required: false
+        default: ''
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # Same single source as .github/workflows/test.yml::performance, so the
+      # candidate is judged against the thresholds the gate actually uses. The
+      # minimum round count is NOT repeated here: check_regression.py's
+      # --min-baseline-rounds default is the one place it is defined.
+      PERF_WARNING_THRESHOLD: '1.5'
+      PERF_ERROR_THRESHOLD: '2.0'
+      PERF_MIN_DURATION: '0.05'
+      PERF_COMMIT_SHA: ${{ github.sha }}
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install prometheus-client pytest-json-report
+
+      - name: Measure the performance suite
+        # Inputs are passed through env, never interpolated into the script: a
+        # workflow_dispatch input is attacker-controllable text.
+        env:
+          ROUNDS: ${{ inputs.rounds }}
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: test
+        run: |
+          set -euo pipefail
+          case "$ROUNDS" in
+            ''|*[!0-9]*) echo "rounds must be a positive integer, got '$ROUNDS'"; exit 1 ;;
+          esac
+          # The floor lives in check_regression.py (--min-baseline-rounds); the
+          # write step below refuses a thin candidate and names the short
+          # benchmarks. Repeating the number here would be a second place to
+          # change it, and the two would drift.
+          mkdir -p tests/performance/rounds
+          # A failing round only costs that round's sample. The write step
+          # refuses an under-sampled baseline and names the short benchmarks,
+          # which is the gate that matters here.
+          set +e
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "::group::baseline round $round/$ROUNDS"
+            pytest tests/performance/ -q -s \
+              --json-report \
+              --json-report-file="tests/performance/rounds/round-$round.json" \
+              || echo "::warning::baseline round $round had a test failure"
+            echo "::endgroup::"
+          done
+          set -e
+          ls tests/performance/rounds/round-*.json >/dev/null
+
+      - name: Write the baseline candidate
+        env:
+          NOTE: ${{ inputs.note }}
+        run: |
+          set -euo pipefail
+          python scripts/performance/check_regression.py \
+            --current tests/performance/rounds/round-*.json \
+            --write-samples tests/performance/current.json \
+            --write-baseline tests/performance/baselines.candidate.json \
+            --provenance-note "$NOTE" \
+            | tee baseline-candidate.log
+
+      - name: Compare the candidate against the committed baseline
+        # Informational only. A large difference here is the measurement this
+        # workflow exists to produce, not a failure.
+        continue-on-error: true
+        run: |
+          python scripts/performance/check_regression.py \
+            --baseline tests/performance/baselines.json \
+            --current tests/performance/current.json \
+            --markdown-summary "$GITHUB_STEP_SUMMARY" \
+            --warning-threshold "$PERF_WARNING_THRESHOLD" \
+            --error-threshold "$PERF_ERROR_THRESHOLD" \
+            --min-duration "$PERF_MIN_DURATION" || true
+
+      - name: Explain what to do with the artifact
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "### Baseline candidate"
+            echo ""
+            echo "Download the \`performance-baseline-candidate\` artifact, then in a PR:"
+            echo ""
+            echo '```'
+            echo "cp baselines.candidate.json tests/performance/baselines.json"
+            echo '```'
+            echo ""
+            echo "Quote the candidate's \`provenance\` block (runner, commit, date, rounds)"
+            echo "and the per-benchmark n/median/min/max/sd in the PR body."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the baseline candidate
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-baseline-candidate
+          path: |
+            tests/performance/baselines.candidate.json
+            tests/performance/current.json
+            tests/performance/rounds/
+            baseline-candidate.log
+          retention-days: 90

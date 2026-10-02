@@ -16,6 +16,9 @@ import pytest
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
+# Imported AFTER project_root lands on sys.path — `tests` is a namespace package.
+from tests.support import git_env  # noqa: E402
+
 _LIVE_INFRA_TEST_PATHS = {
     # These tests connect to real Redis DB 1. Some of them
     # write/delete runtime-shaped keys such as trading:{asset}:positions and
@@ -244,3 +247,24 @@ def _reset_futures_open_cache():
     yield
     if _clear is not None:
         _clear()
+
+
+@pytest.fixture(scope="session")
+def requires_repo_checkout():
+    """Precondition for a test that clones THIS repository.
+
+    Request it from any test that runs ``git clone <repo root>``. It skips in exactly one
+    place — the ``Dockerfile.test`` image, which sets
+    ``KIS_TEST_IMAGE_NO_GIT_METADATA`` because ``.dockerignore`` excludes ``.git`` — and
+    nowhere else. With no repository and no marker the test is allowed to run and fail
+    loudly, so a broken checkout on a real gate never reads as a green skip (#835).
+
+    The probe runs lazily, once per session, and raises rather than skipping when git fails
+    for a reason other than "no repository here" (dubious ownership and friends).
+    """
+    reason = git_env.repo_checkout_skip_reason(
+        git_env.repo_checkout_state(project_root),
+        os.environ.get(git_env.NO_GIT_METADATA_ENV),
+    )
+    if reason is not None:
+        pytest.skip(reason)

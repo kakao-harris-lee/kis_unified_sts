@@ -134,3 +134,10 @@ config/strategies/built/*.yaml
 # `.worktrees/` is ignored above, so worktree CLAUDE.md files stay excluded.
 !CLAUDE.md
 !**/CLAUDE.md
+
+# Performance measurement scratch: the `performance` CI job writes one
+# pytest-json-report per round plus the aggregated samples file. Only
+# tests/performance/baselines.json is tracked.
+tests/performance/rounds/
+tests/performance/current.json
+tests/performance/baselines.candidate.json
