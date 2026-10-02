@@ -454,6 +454,14 @@ def is_rate_limited(status: int, parsed: dict[str, Any], text: str) -> bool:
 # answer carrying BOTH a 429 and ``EGW00215`` bought a retry on one path and
 # stopped the run at once on the other (#825 independent review F4).
 
+#: ``retry_evidence.not_retried_because`` — why a transient bought no retry.
+#: Two different facts: the broker failed twice, or it failed once after the
+#: caller's window had already closed. The second says nothing about the
+#: link's health, and a reader counting "unhealthy" transients must not add
+#: them together.
+REFUSED_SECOND_CONSECUTIVE = "second_consecutive_transient"
+REFUSED_WINDOW_CLOSED = "window_already_closed"
+
 #: The two transient sub-kinds, as they appear in ``measurements.retries`` and
 #: in every ``retry_evidence`` record.
 TRANSIENT_TRANSPORT = "transport"
@@ -602,6 +610,20 @@ def classify_answer(http_status: int, parsed: dict[str, Any], text: str) -> str 
 BODY_EXCERPT_MAX_CHARS = 300
 
 
+def rt_cd_of(parsed: dict[str, Any]) -> str:
+    """``rt_cd`` as a comparable string, or ``""`` when the body carries none.
+
+    The ONE reader, because the obvious spelling is wrong in a way that only
+    shows up on one input: ``str(parsed.get("rt_cd") or "")`` turns the JSON
+    NUMBER ``0`` into ``""`` — ``0`` is falsy — so a successful body reads as
+    a failed one. ``call_evidence``'s payload gate was written around that
+    trap; every other ``rt_cd`` comparison has to use the same reader or the
+    trap simply moves.
+    """
+    raw = parsed.get("rt_cd")
+    return "" if raw is None else str(raw).strip()
+
+
 def call_evidence(
     *, status_kind: str, http_status: int, parsed: dict[str, Any], text: str
 ) -> dict[str, Any]:
@@ -622,8 +644,7 @@ def call_evidence(
     exactly the body an ``rt_cd``-only gate lets through
     (:data:`BODY_EXCERPT_MAX_CHARS`).
     """
-    raw = parsed.get("rt_cd")
-    rt_cd = "" if raw is None else str(raw).strip()
+    rt_cd = rt_cd_of(parsed)
     carries_payload = any(bool(parsed.get(k)) for k in ("output1", "output2"))
     return {
         "status_kind": status_kind,
@@ -649,6 +670,7 @@ def retry_evidence(
     text: str,
     poll_index: int | None,
     retried: bool,
+    not_retried_because: str | None = None,
 ) -> dict[str, Any]:
     """The record written for EVERY transient, retried or not.
 
@@ -656,8 +678,13 @@ def retry_evidence(
     phase it happened in, which poll (when there was one), and whether a retry
     followed. A run must be reconstructible down to "when, and how many times",
     which is the whole reason the retry is capped at one — and ``retried: false``
-    is how the two refusals are told apart from a retry: the second consecutive
-    transient, and a transient that surfaced after the window had elapsed.
+    is how a refusal is told apart from a retry — and ``not_retried_because``
+    says WHICH refusal it was. The two are different facts and were
+    indistinguishable while both only carried ``retried: false``: the second
+    consecutive transient means the broker failed twice, while
+    :data:`REFUSED_WINDOW_CLOSED` means it failed once and the window had
+    already run out, so the trial spent its whole window and this transient is
+    not evidence of an unhealthy link.
 
     The key this lands under is ``retry_evidence``, never a phase-specific one:
     several phases can write one, and a harvester filtering on a poll-shaped key
@@ -668,6 +695,8 @@ def retry_evidence(
         "transient_kind": kind,
         "retried": retried,
     }
+    if not retried and not_retried_because is not None:
+        record["not_retried_because"] = not_retried_because
     if poll_index is not None:
         record["poll_index"] = poll_index
     record.update(
@@ -840,7 +869,16 @@ def retry_once(
         kind = transient_kind(outcome.kind)
         if kind is None:
             return outcome, attempts, attempts > 1
-        retrying = attempts < 2 and (can_retry is None or can_retry())
+        # Asked BEFORE the attempt count is consulted, so the reason recorded
+        # is the one that actually applied: a window that has closed is not a
+        # "second consecutive" refusal even on the second attempt.
+        window_open = can_retry is None or can_retry()
+        retrying = attempts < 2 and window_open
+        refusal = None
+        if not retrying:
+            refusal = (
+                REFUSED_WINDOW_CLOSED if not window_open else REFUSED_SECOND_CONSECUTIVE
+            )
         on_transient(
             retry_evidence(
                 phase=phase,
@@ -853,6 +891,7 @@ def retry_once(
                     None if poll_index_base is None else poll_index_base + attempts
                 ),
                 retried=retrying,
+                not_retried_because=refusal,
             ),
             kind,
         )
