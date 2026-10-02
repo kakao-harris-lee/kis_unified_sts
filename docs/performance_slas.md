@@ -39,7 +39,9 @@ process per round, and compares the **median** of each benchmark against the
 median of the baseline's rounds.
 
 ```bash
-# What CI runs
+# What CI runs (the measure step also sets, see "What CI measures" below:
+#   KIS_RUN_LIVE_INFRA_TESTS=1
+#   REDIS_HOST=localhost REDIS_PORT=6379 REDIS_DB=1)
 for round in $(seq 1 5); do
   pytest tests/performance/ -q -s --json-report \
     --json-report-file="tests/performance/rounds/round-$round.json"
@@ -69,7 +71,7 @@ four. The checker counts outcomes per benchmark instead:
 | --- | --- |
 | minority (1 of 5) | ⚠️ warning, job stays green |
 | majority (3 of 5) | 🔴 error, job red |
-| skipped in every round | not a failure — reported as `Test not found` |
+| skipped in every round | 🔴 error — `NOT MEASURED`, unless the baseline excludes it |
 
 The reason is the same one the whole check is about. A benchmark assertion like
 `test_exit_path_50_symbols`'s `improvement_pct >= -40` is itself a
@@ -105,13 +107,80 @@ loop swallows that exit, so the property had to move into the checker.
 **The job is not a required check.** A red `performance` does not block a merge;
 `test` is the only real gate (see `CLAUDE.md`).
 
-**The job measures 13 of the 25 benchmarks.** `test_redis_load.py` and
-`test_websocket_load.py` skip unless `KIS_RUN_LIVE_INFRA_TESTS` is set, which
-the job does not set (their skip reason says "Redis not available", but the
-Redis service is up — it is the flag). Those 12 appear in the report as
-`Test not found in current results`, a non-fatal warning. This predates the
-median-of-N change and is why the baseline has not been regenerated: a baseline
-taken today would simply drop them.
+### What CI measures, and what it does not
+
+**All 25 benchmarks are measured.** The job runs a `redis:7-alpine` service
+container and the measure step sets:
+
+| variable | value | why |
+| --- | --- | --- |
+| `KIS_RUN_LIVE_INFRA_TESTS` | `1` | opts the 12 Redis benchmarks in |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | `localhost` / `6379` / `1` | what `RedisClient` actually reads |
+| `REDIS_URL` | `redis://localhost:6379/1` | not read on this path; kept correct for anything that does |
+
+Until 2026-10 the job measured **13 of 25**. `test_redis_load.py` and
+`test_websocket_load.py` skip unless `KIS_RUN_LIVE_INFRA_TESTS` is set and the
+job did not set it, so their 12 benchmarks produced 12 non-fatal
+`Test not found` warnings per run and the check went green having measured half
+the suite. Two details made that hard to see:
+
+- Their skip reason said *"Redis not available (start with: docker-compose up -d
+  redis)"*. The Redis service container was up the whole time. The reason was a
+  guess, not a check, and it was wrong every time.
+- The workflow set only `REDIS_URL`, which
+  `shared/streaming/client.py::RedisClient` does not read — it reads
+  `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB`. Correcting `REDIS_URL` alone would
+  have changed nothing.
+
+The opt-in exists because the deploy host's paper runtime and the suite share
+Redis DB 1, and these tests write runtime-shaped keys
+(`trading:{asset}:positions`). It stays off by default everywhere else; a CI
+runner's throwaway service container is the one place it is safe. Neither
+module reaches a KIS endpoint — `test_websocket_load.py` is named for what the
+Redis Streams it measures carry, not for a KIS WebSocket connection.
+
+**Redis unreachable is now loud.** With the flag set, `tests/support/live_infra.py`
+raises during collection instead of skipping, pytest exits 2, and the checker
+reports the round as an invalid measurement. A skip would leave the baseline's
+Redis entries unmeasured and the job green, which is the defect, not the
+fallback.
+
+### Measured, excluded, or an error
+
+A baseline entry has exactly two legitimate states in a run:
+
+| state | verdict |
+| --- | --- |
+| produced samples | compared against the baseline median |
+| listed in the baseline's `excluded` map, no samples | no comparison, no warning; listed in the report with its reason |
+| neither | 🔴 `NOT MEASURED` — error, exit 2 |
+| listed in `excluded` **and** produced samples | 🔴 stale exclusion — error, exit 2 |
+
+The third row is what the twelve warnings used to be. Making it an error is
+what gives the exclusion list teeth: with `excluded` empty, all 25 benchmarks
+have to run or the check fails.
+
+The fourth row is the anti-rot rule. An exclusion whose reason has stopped
+being true would otherwise go on suppressing a benchmark that is running again,
+and a regression in it would be invisible for as long as nobody rereads the
+file.
+
+```json
+"excluded": {
+  "tests/performance/test_x.py::TestX::test_y": "why this is not measured here"
+}
+```
+
+An entry without a written reason is rejected at load, as is a name that
+appears in both `excluded` and `benchmarks`. **`excluded` is currently empty**:
+every benchmark in `tests/performance/` runs on a CI runner with a Redis
+service container, measured 2026-10-02. Nothing in the suite needs a live KIS
+endpoint.
+
+To regenerate a baseline while keeping its exclusions, pass
+`--exclusions-from <the current baseline>`; `performance-baseline.yml` does
+this. A comparison takes its exclusions from the baseline it is comparing
+against.
 
 ### Why medians of N rounds (#768, #796)
 
@@ -224,6 +293,7 @@ as n=1, and the report then prints a `SINGLE-SAMPLE BASELINE` warning) or a
     "commit": "...",
     "workflow_run": "https://github.com/.../actions/runs/..."
   },
+  "excluded": {},
   "benchmarks": {
     "tests/performance/...::test_x": {
       "n": 7, "median": 0.27, "min": 0.12, "max": 0.38,
@@ -262,8 +332,15 @@ To build a candidate from samples you already have:
 ```bash
 python scripts/performance/check_regression.py \
   --current tests/performance/current.json \
+  --exclusions-from tests/performance/baselines.json \
   --write-baseline tests/performance/baselines.json
 ```
+
+Leave `--exclusions-from` out and the new baseline declares nothing excluded,
+so every previously excluded benchmark becomes a `NOT MEASURED` error on the
+next run. The checker refuses to write a baseline whose carried exclusions name
+a benchmark its own samples contain; `--force-baseline` does not override that,
+because the result would be rejected on the next read anyway.
 
 **Order matters.** Do not regenerate a baseline to silence a red check before
 ruling out a real regression — once absorbed, a genuine slowdown is invisible
@@ -274,7 +351,10 @@ region (an unused import, and f-strings in `print` calls). The benchmarked code
 is byte-identical, so no code regression is possible there. Benchmarks that do
 import `shared/` (`test_orchestrator_scalability.py`, `test_redis_load.py`,
 `test_websocket_load.py`) carry no such guarantee and need the question asked
-separately.
+separately. For the twelve Redis benchmarks there is no "before" to compare
+against yet: the committed 2026-05-30 baseline does contain them, but they have
+not been measured in CI since, so their first regenerated values are a fresh
+starting point, not evidence of stability.
 
 ## Monitoring Notes
 
