@@ -30,47 +30,25 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import os
 import statistics
 import time
 from datetime import datetime
 from typing import Any
 
 import pytest
-import redis
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.streaming.client import RedisClient
 
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
-
-
-def _live_infra_enabled() -> bool:
-    """Return whether live Redis tests may touch infrastructure."""
-    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _is_redis_available() -> bool:
-    """Check if Redis is available for testing."""
-    if not _live_infra_enabled():
-        return False
-
-    try:
-        client = RedisClient.get_client()
-        client.ping()
-        return True
-    except (redis.ConnectionError, redis.TimeoutError, OSError):
-        return False
-
-
-# Skip all tests if Redis is not available
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not _is_redis_available(),
-        reason="Redis not available (start with: docker-compose up -d redis)"
-    ),
-]
+# The live-infra gate for this module lives in tests/conftest.py, which already
+# lists this path in `_LIVE_INFRA_TEST_PATHS`: not opted in -> skipped there;
+# opted in but Redis unreachable -> failed there, per test. There is
+# deliberately no second gate here. The old module-level
+# `skipif(not _is_redis_available())` collapsed the two cases into one silent
+# skip whose reason ("Redis not available") was false whenever the flag was
+# merely unset — which is why the CI `performance` job reported green for four
+# months while measuring 13 of its 25 benchmarks.
+pytestmark = [pytest.mark.integration]
 
 
 def _create_test_position(position_id: str, code: str = "005930") -> Position:

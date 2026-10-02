@@ -44,35 +44,13 @@ from shared.streaming.client import RedisClient
 from shared.streaming.message import StreamMessage
 from shared.streaming.publisher import StreamPublisher
 
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
-
-
-def _live_infra_enabled() -> bool:
-    """Return whether live Redis tests may touch infrastructure."""
-    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _is_redis_available() -> bool:
-    """Check if Redis is available for testing."""
-    if not _live_infra_enabled():
-        return False
-
-    try:
-        client = RedisClient.get_client()
-        client.ping()
-        return True
-    except (redis.ConnectionError, redis.TimeoutError, OSError):
-        return False
-
-
-# Skip all tests if Redis is not available
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not _is_redis_available(),
-        reason="Redis not available (start with: docker-compose up -d redis)"
-    ),
-]
+# Despite the module name, nothing here talks to a KIS WebSocket endpoint: the
+# subject is the Redis Stream layer that carries market data between services
+# (see the module docstring). These benchmarks are runnable in CI with a Redis
+# service container, and the only thing that kept them out was the unset opt-in
+# flag. The gate itself lives once in tests/conftest.py — see the note in
+# test_redis_load.py.
+pytestmark = [pytest.mark.integration]
 
 
 def _calculate_percentiles(latencies: list[float]) -> dict[str, float]:

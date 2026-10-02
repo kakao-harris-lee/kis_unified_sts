@@ -72,7 +72,15 @@ jobs:
         # workflow_dispatch input is attacker-controllable text.
         env:
           ROUNDS: ${{ inputs.rounds }}
-          REDIS_URL: redis://localhost:6379/0
+          # Same gate and same reasoning as test.yml::performance: without the
+          # opt-in the twelve Redis benchmarks skip, and a baseline regenerated
+          # here would simply not contain them. See the comment there.
+          KIS_RUN_LIVE_INFRA_TESTS: '1'
+          # RedisClient reads HOST/PORT/DB, not REDIS_URL. DB 1 per CLAUDE.md.
+          REDIS_HOST: localhost
+          REDIS_PORT: '6379'
+          REDIS_DB: '1'
+          REDIS_URL: redis://localhost:6379/1
           ENVIRONMENT: test
         run: |
           set -euo pipefail
@@ -104,8 +112,14 @@ jobs:
           NOTE: ${{ inputs.note }}
         run: |
           set -euo pipefail
+          # --exclusions-from carries the committed baseline's `excluded` map
+          # into the candidate. Without it a regeneration would silently drop
+          # every declared exclusion, and the next run would report each one
+          # as an unmeasured benchmark (an error) with no record of why it was
+          # excluded in the first place.
           python scripts/performance/check_regression.py \
             --current tests/performance/rounds/round-*.json \
+            --exclusions-from tests/performance/baselines.json \
             --write-samples tests/performance/current.json \
             --write-baseline tests/performance/baselines.candidate.json \
             --provenance-note "$NOTE" \
