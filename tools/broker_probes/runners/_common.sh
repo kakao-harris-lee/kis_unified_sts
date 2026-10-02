@@ -19,19 +19,31 @@
 #
 # Globals this file sets, deliberately and by name (bash has no better way to
 # hand several values back): REPO, MODULE_PATH, MODULE_POLICY, CRED_FILE,
-# KEY_FP, ACCOUNT_FP. PROBE_LOG_FILE is set BY the caller, before the first
-# log() call, and is the only global this file reads.
+# KEY_FP, ACCOUNT_FP. It reads none of the caller's.
 
-#: Where log() tees to, "" until the caller knows. Set it from the runner's own
-#: log variable immediately after sourcing, so even the first guard's ABORT
-#: lands in the file an operator will go looking in.
-PROBE_LOG_FILE=""
+#: Where log() tees to, "" until the caller says. Only this file touches it.
+_PROBE_LOG_FILE=""
+
+# $1 the runner's log path (may be empty — log() then only prints).
+#
+# A function rather than "assign the global yourself", because the assignment
+# is READ here and WRITTEN there: shellcheck analysing a runner on its own
+# cannot see the read and reports the write as unused (SC2034) — which is
+# exactly what CI caught, while a local run that passed BOTH files resolved it
+# and stayed green. A gate whose verdict depends on how many files you hand it
+# is not a gate. With a setter there is no cross-file variable at all.
+#
+# Call it immediately after sourcing, before the first log() call, so even the
+# first guard's ABORT lands in the file an operator will go looking in.
+set_log_file() {
+  _PROBE_LOG_FILE=$1
+}
 
 log() {
   _line="$(TZ=Asia/Seoul date '+%F %T') $*"
   printf '%s\n' "$_line"
-  if [ -n "$PROBE_LOG_FILE" ]; then
-    printf '%s\n' "$_line" >>"$PROBE_LOG_FILE"
+  if [ -n "$_PROBE_LOG_FILE" ]; then
+    printf '%s\n' "$_line" >>"$_PROBE_LOG_FILE"
   fi
   return 0
 }

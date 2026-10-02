@@ -1004,12 +1004,17 @@ def test_runner_template_parses() -> None:
 
 
 def test_runner_template_passes_shellcheck() -> None:
-    """On CI a missing shellcheck is a FAILURE, not a skip.
+    """On CI a missing shellcheck is a FAILURE, not a skip — and each file is
+    checked ON ITS OWN.
 
-    The P-CA template's lint gate skipped on every developer host and its first
-    real run was the CI job that failed the branch (plan §7.10). The gate has
-    to run somewhere, and that somewhere is the only machine guaranteed to have
-    the tool.
+    Two lessons, both paid for. The P-CA template's lint gate skipped on every
+    developer host and its first real run was the CI job that failed the
+    branch (plan §7.10). Then this gate passed locally on three files handed
+    to shellcheck TOGETHER and failed on CI, which checked one: with several
+    inputs shellcheck resolved a variable written in a runner and read in
+    ``_common.sh``, and with one input it reported SC2034. A gate whose
+    verdict depends on how many files you hand it is not a gate, so each file
+    is checked alone AND the set is checked together.
     """
     shellcheck = shutil.which("shellcheck")
     if shellcheck is None:
@@ -1019,12 +1024,15 @@ def test_runner_template_passes_shellcheck() -> None:
                 "add it to the workflow rather than letting the check vanish"
             )
         pytest.skip("shellcheck is not installed locally — CI runs this gate")
-    result = subprocess.run(
-        [shellcheck, "--severity=warning", str(_RUNNER)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    for argv in ([_RUNNER], [_RUNNER_COMMON], [_RUNNER, _RUNNER_COMMON]):
+        result = subprocess.run(
+            [shellcheck, "--severity=warning", *(str(f) for f in argv)],
+            capture_output=True,
+            text=True,
+        )
+        assert (
+            result.returncode == 0
+        ), f"{[f.name for f in argv]}: {result.stdout}{result.stderr}"
 
 
 def test_runner_template_carries_no_instance_defaults() -> None:

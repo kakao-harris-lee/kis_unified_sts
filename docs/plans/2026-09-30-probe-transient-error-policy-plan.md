@@ -839,7 +839,7 @@ ruff check tools/broker_probes tests/tools          → All checks passed!
 black --check (변경 .py 전부)                        → unchanged
 bash -n run_p8.sh / run_p_ca.sh / _common.sh         → OK
 docker koalaman/shellcheck:stable --severity=warning
-  run_p8.sh run_p_ca.sh _common.sh                   → rc 0
+  다섯 조합(각 파일 단독 3 + 러너별 쌍 2)             → 전부 rc 0  (§7.15.10)
 ```
 
 #### 7.15.9 남은 것
@@ -863,3 +863,42 @@ docker koalaman/shellcheck:stable --severity=warning
   `#732` 이전이라 `None`). (b) 새 코드는 멈춘 폴에 값을 쓰지 않고
   `coexistence_polls_used` 를 남기므로, **재개 실측부터는 아티팩트만으로 판정된다**.
   과거 10건의 전수 재판정은 이 PR 범위 밖이며, N≥5 는 어차피 재개 실측으로 채워진다.
+
+#### 7.15.10 CI red 처분 (`test` 잡, run 36953671524)
+
+**원인 1건, 그리고 그것이 드러낸 게이트 결함 1건.** 실패한 테스트는 하나뿐이었다 —
+`test_runner_template_passes_shellcheck`, 사유 SC2034:
+
+```
+run_p8.sh line 51:
+PROBE_LOG_FILE=${P8_LOG:-}
+^------------^ SC2034 (warning): PROBE_LOG_FILE appears unused.
+```
+
+러너가 **쓰고** `_common.sh` 의 `log()` 가 **읽는** 변수다. shellcheck 는 `source` 를
+따라가지 않으므로 러너를 혼자 분석하면 읽는 쪽을 못 보고 쓰기를 미사용으로 신고한다.
+
+**게이트 결함이 더 중요하다.** 로컬에서 나는 세 파일을 **한꺼번에** 넘겨 rc 0 을 받았고,
+CI 의 P-8 테스트는 **한 파일**만 넘겨 red 가 됐다. 실측해 보니 `run_p_ca.sh` 도 혼자
+돌리면 같은 SC2034 로 red 였다 — P-CA 테스트가 두 파일을 함께 넘기고 있어서 가려져
+있었을 뿐이다. **입력 파일 수에 따라 판정이 달라지는 것은 게이트가 아니다.**
+
+처분 둘:
+
+1. **교차 파일 변수를 없앴다.** `_common.sh` 가 `set_log_file()` 세터를 제공하고
+   전역은 `_PROBE_LOG_FILE` 로 자기 파일 안에만 산다. 억제(`disable=SC2034`)가 아니라
+   결합 자체를 제거한 것이고, 결과적으로 「러너가 공유 파일의 전역을 직접 쓴다」는
+   숨은 계약도 사라진다.
+2. **두 테스트 모두 파일을 하나씩 **그리고** 함께 검사한다**(세 조합). 컨테이너로
+   다섯 조합 전부 rc 0 을 실측했다: `run_p8.sh` 단독 · `_common.sh` 단독 · 둘 함께 ·
+   `run_p_ca.sh` 단독 · `run_p_ca.sh`+`_common.sh`.
+
+**`performance` fail 은 이 PR 과 무관하다.** 유일한 error 는
+`test_orchestrator_hot_path_benchmark.py::test_entry_path_100_symbols`
+(baseline 0.1329 s → current 0.3055 s, 정규화 +112.7 %). 그 파일의 import 는
+`time`·`sys`·`pytest` 뿐이고 `tests/performance/`·`scripts/performance/` 어디에도
+`broker_probes` 참조는 **0건**이며, 이 PR 의 변경 파일은 전부
+`tools/broker_probes/**`·`tests/tools/**`·`docs/**` 다. 같은 잡이 #825(§7.13)·
+#831(§7.14.4)에서도 같은 사유로 fail 했고, main 에서는 아예 **skip** 된다(잡 조건이
+PR 또는 schedule). 메모리 `ci-gating-reality` 의 경고대로 **baseline 재생성은 하지
+않는다** — 먼저 재생성하면 진짜 회귀가 영구히 안 보이게 된다.

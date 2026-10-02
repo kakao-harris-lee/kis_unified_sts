@@ -50,7 +50,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
 # Before the first log() call, so even step 1's ABORT lands in the operator's
 # log file. PCA_LOG is only PROVEN usable in step 3; this is the same "tee if
 # set" behaviour the runner has always had.
-PROBE_LOG_FILE=${PCA_LOG:-}
+set_log_file "${PCA_LOG:-}"
 
 # --- 1. the checkout -------------------------------------------------------
 

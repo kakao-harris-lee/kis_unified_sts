@@ -48,7 +48,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
 . "$SCRIPT_DIR/_common.sh"
 # Before the first log() call, so even step 1's ABORT lands in the operator's
 # log file. P8_LOG is only PROVEN usable in step 3.
-PROBE_LOG_FILE=${P8_LOG:-}
+set_log_file "${P8_LOG:-}"
 
 # --- 1. the checkout -------------------------------------------------------
 
