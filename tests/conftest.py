@@ -89,6 +89,15 @@ def _apply_hermetic_pins() -> None:
     to the operator. Tests that exercise Telegram routing self-provision
     credentials via monkeypatch, which auto-restores per test.
     """
+    if TOKEN_CACHE_DIR is None:
+        # Without this, the pin below writes the string "None" and every token
+        # cache lands in a directory called None next to the working
+        # directory — a silent failure that looks exactly like a pinned cache.
+        raise RuntimeError(
+            "_apply_hermetic_pins() called before TOKEN_CACHE_DIR was created; "
+            "it is only valid in a hermetic session (#698)"
+        )
+
     os.environ[hermetic_env.HERMETIC_ENV] = "1"
     hermetic_env.scrub_broker_env()
     # Pin the config directory to THIS checkout. A worktree then reads its own
