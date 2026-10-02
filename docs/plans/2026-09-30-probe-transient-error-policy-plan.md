@@ -614,3 +614,193 @@ docker koalaman/shellcheck:stable --severity=warning → rc 0
 `type-check`·`backtest-extra` pass · `performance` fail — 메모리 `ci-gating-reality` 의
 기존 baseline 미갱신 건이고 이 PR 은 `tools/broker_probes/**`·`tests/tools/**` 밖을 건드리지
 않는다. **baseline 재생성 안 함.**
+
+### 7.15 후속 착지 — P-8 의 전송 오류/브로커 거부 분리와 추적 러너 (PR #NNN, 2026-10-02)
+
+§4 가 「범위 밖」으로 남긴 단 하나의 항목이자 README 가 **P-8 3~5회차 재개의 선결
+조건**으로 적어둔 것이다(캠페인 README 09-30·10-01 블록). 이 절이 그 착지 기록이다.
+
+#### 7.15.1 무엇이 트라이얼 3~5 를 죽였나
+
+2026-09-28 09:05 KST 호스트 cron, 분리 워크트리(`repo_commit=ac2efb0f`). 1회차는
+MEASURED(`P-8-20260928T000506Z`). 2회차는 제출·정정이 **둘 다 통과**했고(ODNO 558 →
+560, `amend_rt_cd=0`) 공존 폴링도 최소 1회 돌았는데 그 폴에서
+
+```
+ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed
+connection without response'))
+```
+
+가 나 예외가 `probe_p8` 밖으로 탈출했다. `run.py` 가 부분 run 을 salvage 해 rc 5 로
+끝냈고, `P-8-20260928T000658Z` 에는 `coexistence_ms`·`replace_issues_new_odno`·
+`poll_granularity_ms` 가 **없다**. 전송은 수 초 만에 회복했다 — 바로 뒤 `finally` 의
+정리 취소가 `rt_cd=0` 으로 성공했다. 그런데 러너는 이렇게 적었다.
+
+```
+VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 중단(재시도 금지)
+```
+
+거부된 것은 아무것도 없었다. **3~5회차는 브로커가 막아서가 아니라 러너가 전송 오류를
+브로커 거부와 한데 묶어서 실행되지 않았고**, `capabilities.replace_semantics.mode` 는
+아직도 N≥5 가 없다. 같은 캠페인 09-23 절은 `ReadTimeout` 을 정반대로 분류했다.
+
+#### 7.15.2 조사 중 드러난 더 나쁜 것 — 폴 루프가 값을 **만들어내고 있었다**
+
+수정 전 공존 폴 루프는 `rt_cd` 를 **전혀 보지 않았다**. 거부 응답에는 `output1` 이
+없으므로 `rows=[]` → `live=∅` → `both=False` 가 되고, 그것은 이 루프에서 「공존이
+끝났다」는 신호다. `origin/main` 판으로 실측한 결과:
+
+| 폴 #2 의 응답 | 수정 전 결과 |
+|---|---|
+| HTTP 429 | `coexistence_ms: 0.17` · `errors: []` · `provenance_class: MEASURED` |
+| `EGW00201` | `coexistence_ms: 0.16` · 같음 |
+| `EGW00215` | `coexistence_ms: 0.29` · 같음 |
+
+즉 **거부·스로틀 응답 하나가 「공존 구간이 끝났다」로 읽혀 아무도 관측하지 않은
+`coexistence_ms` 를 MEASURED 아티팩트에 써 넣고 있었다.** 방향은 작은 값 = 「원자적
+교체」 쪽이고, 그것이 `B_protective_request_complete` 에 대해 fail-open 이다. 계획에
+없던 발견이며, 이 PR 이 함께 닫는다(폴은 이제 분류하고 멈추며, 멈춘 폴은 측정을 쓰지
+않는다). `tests/tools/test_broker_probes_p8_transient.py` 의 429/`EGW00201`/`EGW00215`
+테스트가 `"coexistence_ms" not in run.measurements` 로 고정한다.
+
+#### 7.15.3 바뀐 파일
+
+| 파일 | 무엇 |
+|---|---|
+| `tools/broker_probes/common.py` | 일시 오류 정책 **한 벌**: `TRANSIENT_*`/`STATUS_*` · `is_ledger_throttled` · `transport_transient_types` · `transport_excerpt` · `transient_kind` · `classify_answer` · `call_evidence` · `retry_evidence` · `Outcome` · `Pacer`(`wait`+`defer`) · `Retries` · `record_retry` · `retry_once` |
+| `tools/broker_probes/probes_ca.py` | 그 한 벌을 **쓴다**. 로컬 이름은 전부 별칭(`_retry_once = retry_once` …)이라 6-튜플 시그니처와 기존 테스트 전부 그대로 |
+| `tools/broker_probes/probes_order.py` | `POLICY_VERSION` · `_CallPacer(Pacer)` · `inquire_futures_classified` · `_poll_coexistence`(재시도·창 마감·분류) · 제출/정정의 전송 오류 분류(재시도 없음) · `_live_odno_keys` 재시도 · `P8_STOP=`/`P8_COEXISTENCE=` 앵커 줄 · `measurements.stop_reason`·`coexistence_polls_used` |
+| `tools/broker_probes/runners/_common.sh` | 두 러너가 **source** 하는 공유 가드(신규) |
+| `tools/broker_probes/runners/run_p_ca.sh` | 그 가드를 쓰도록 축약. 로그 문구는 한 글자도 바꾸지 않았다 |
+| `tools/broker_probes/runners/run_p8.sh` | 추적되는 P-8 러너 템플릿(신규) |
+| `tools/broker_probes/runners/README.md` | `_common.sh` · `run_p8.sh` 인스턴스화 레시피와 STOP 규칙 표 |
+| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 53건(+shellcheck 미설치 시 skip 1건) |
+| `tests/tools/test_broker_probes_ca.py` · `test_broker_probes_pacing.py` | 공유 파일을 따라가는 수정(아래 7.15.6) |
+
+#### 7.15.4 정책 — P-CA 와 같은 것, 그리고 다른 것
+
+**같은 것.** 분류 우선순위 ①응답 없음 ⇒ 일시 · ②`is_rate_limited`(429·`EGW00201`)
+⇒ 중단, 재시도 없음 · ③`EGW00215` ⇒ 일시. ②가 ③보다 앞인 것까지 그대로다. 재시도는
+**한 번**, **한 폴링 간격**(`effective_interval_ms(--poll-ms, --pace-s)`) 뒤이며
+`Pacer.defer` 로 지금부터 다시 잰다. 창이 이미 지났으면 재시도를 거부한다(`can_retry`).
+모든 일시 오류는 `retry_evidence` 에 남고(`phase`·`retried`), `measurements.retries` 는
+**실제로 쓴 재시도**만 센다.
+
+**다른 것 셋.**
+
+1. **주문 계열 호출(POST)은 분류만 하고 재시도하지 않는다.** 제출을 다시 보내는 것은
+   P-2 가 측정하는 바로 그 중복주문 위험이고, 정정을 다시 보내면 수량을 두 번 먹을 수
+   있다. 그래서 `_record_write_transport_stop` 은 `retry_evidence(retried=False)` 를
+   남기고 `transient:transport` 로 끝낸다 — **분류는 러너가 필요로 하는 것이고,
+   09-28 에 없던 것도 그것**이다.
+2. **일시 중단은 `run.error` 를 남긴다**(P-CA 는 `run.skip` 만 남긴다). 이유: P-8
+   아티팩트의 소비자는 `coexistence_ms` 를 읽는데, `provenance_class: MEASURED` 인
+   아티팩트에서 그 키가 **없는** 것을 `.get(key, 0.0)` 으로 읽으면 0.0 = 「원자적
+   교체」가 된다 — 7.15.2 가 보여준 그 fail-open 방향이다. 09-28 2회차도 NOT_MEASURED
+   였으므로 이 PR 은 그 판정을 바꾸지 않는다. `run.skip` 도 함께 남겨 「왜 없는지」를
+   적는다.
+3. **앵커 줄 2개**(`P8_STOP=`·`P8_COEXISTENCE=`). P-CA 는 러너가 아티팩트 JSON 을
+   파싱하지 않는다는 규율을 `HELD=`·`REFERENCE_ROW=` 로 세웠고, P-8 도 같다.
+   `finally` 안에서 찍으므로 예외가 빠져나가는 경로에도 반드시 한 줄씩 나온다.
+   기본값은 `unknown` — 분류하지 못한 경로는 러너가 **멈춘다**(fail-closed).
+
+#### 7.15.5 러너 — 두 수를 절대 더하지 않는다
+
+`run_p8.sh` 의 VERDICT 는 네 개의 **별도 필드**다. 09-28 의 「오류 1건(브로커 거부
+포함)」이라는 문장을 쓸 수 있는 필드가 존재하지 않는다.
+
+```
+VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n transport_stops=n
+```
+
+- `rejected` · `rate_limited` · rc≠0 · 분류 불가(줄 없음 포함) ⇒ **시리즈 중단**.
+- `transient:*` ⇒ **계속**. `P8_MAX_TRANSIENT_STOPS`(기본값 없는 필수 env)를 넘으면
+  그때 멈추고, 그 문구는 「링크가 측정할 만큼 건강하지 않다」이지 「발견」이 아니다.
+- `none` + `not_measured` 는 중단도 표본도 **아니다** — WARN 한 줄로 말한다. 그걸
+  표본으로 세는 것이 N≥5 게이트를 네 번으로 통과시키는 방법이다.
+- 끝에 N≥5 충족 여부를 명시한다. 러너만이 그 슬롯의 개수를 안다.
+
+#### 7.15.6 `_common.sh` — 공유로 간 이유와 그 대가
+
+가드를 복제하지 않은 이유는 이 저장소가 이미 한 번 값을 치렀기 때문이다. 일시 오류
+우선순위가 두 벌이던 동안 둘은 **이미 갈라져 있었다**(§7.6 F4). 러너 가드도 같은
+종류의 정책이다. `_common.sh` 는 `PCA_*`·`P8_*` 를 **한 글자도 읽지 않는다** —
+인스턴스 값은 전부 인자로 받고, 메시지가 인용할 변수 **이름**까지 인자다. 테스트가
+그 속성을 고정한다(`_common.sh` 에 `PCA_|P8_` 가 나타나면 red).
+
+대가 셋, 전부 테스트로 메웠다.
+
+- `run_p_ca.sh` 를 축약했다. **로그 문구는 한 글자도 바꾸지 않았고** P-CA 테스트
+  전부(295건) 그대로 green 이다. 캠페인 README 가 축자 인용하는 문구가 있다.
+- P-CA 의 임시 체크아웃 픽스처 2개가 `_common.sh` 도 복사해야 한다(`_runner_repo`,
+  `_worktree_pair`). 복사하지 않으면 함수가 없어 `set -u` 가 엉뚱한 줄에서 죽는다 —
+  실제로 그렇게 죽는 것을 보고 고쳤다.
+- 자기삭제 가드가 **sourced 파일에도** 걸려야 한다. 거기 있는 파괴적 명령은 러너의
+  프로세스에서 돌고, 파일별 검사는 그것을 보지 못한다. `_common.sh` 쪽은 `$0` 이
+  awk 줄 하나뿐임을 함께 고정한다(sourced 파일에는 지킬 자기 경로가 없다).
+- `_CallPacer` 가 `common.Pacer` 를 상속하면서 페이서의 시계가 `common` 으로 옮겨갔고,
+  `test_broker_probes_pacing.py` 의 가짜 시계는 `probes_order` 만 패치하고 있었다.
+  **조용히 틀렸다**: 페이서가 진짜 시계를 쓰는 바람에 레이턴시 단언이 아홉 자리 음수가
+  됐다. 픽스처가 `common` 도 패치하도록 고치고, 그 이유를 독스트링에 적었다.
+
+#### 7.15.7 수정 전 red 증명
+
+`git archive origin/main` 으로 깨끗한 main 트리를 뽑고 새 테스트 파일만 얹어 돌렸다
+(워크트리는 건드리지 않는다). **54건 중 53건 red, pass 0건, skip 1건**(로컬 shellcheck
+없음).
+
+⚠ **한 가지 밝혀둘 것**: main 에는 `_P8_STOP_PREFIX`·`_P8_COEXISTENCE_PREFIX`·
+`POLICY_VERSION` 이 없어 **import 자체가 수집 오류**가 되고, 그러면 파일 전체가 죽어
+아무것도 증명하지 못한다(§7.14.1 이 겪은 그 형태). 그래서 red 측정판에서는 그 세
+이름만 `getattr(..., <수정 후 값>)` 으로 바꿨다. 그 외에는 커밋된 파일과 동일하다.
+
+대표적인 red 사유:
+
+| 테스트 | 수정 전 실패 |
+|---|---|
+| 전송 오류 1회 → 재시도 → 완료 | `requests.exceptions.ReadTimeout` 이 프로브 밖으로 탈출 |
+| 전송 오류 2연속 → `transient:transport` | `ConnectionError` 탈출 |
+| 제출의 전송 오류는 분류하되 재전송 않음 | `ConnectionError` 탈출(그리고 메시지에 `CANO=1234567890`) |
+| 정리 liveness 걷기가 전송 오류 1회를 견딘다 | `assert [] == [True]` — 재시도 기록 0 |
+| 429/`EGW00201` 는 여전히 즉시 중단 | `KeyError: 'stop_reason'` + (위 7.15.2 의) 만들어낸 `coexistence_ms` |
+| `EGW00215` 2연속 → `transient:ledger_throttle` | `KeyError: 'stop_reason'` + 같은 제조된 값 |
+| 창이 지난 뒤의 일시 오류는 재시도 없음 | `KeyError: 'retries'` |
+| dry-run 이 자기를 이름 붙인다 | `assert [] == ['dry_run']` |
+| 러너 템플릿·시리즈 STOP 규칙 23건 | 파일 부재(`FileNotFoundError`) |
+
+**정직하게**: 429/`EGW00201`·제출 거부 테스트가 red 인 1차 사유는 `stop_reason` 키
+부재이고, 「재시도하지 않는다」·「거부는 거부다」라는 **행동 자체는 수정 전에도
+옳았다**. 그 두 건은 바뀌지 말아야 할 것을 고정하는 핀이다 — 다만 7.15.2 때문에
+완전한 핀은 아니다: `"coexistence_ms" not in measurements` 단언은 실제 결함을 잡는다.
+
+#### 7.15.8 게이트
+
+```
+.venv/bin/pytest tests/tools/test_broker_probes_p8_transient.py \
+  tests/tools/test_broker_probes_p8_cleanup.py \
+  tests/tools/test_broker_probes_ca.py tests/tools/test_broker_probes_pacing.py \
+  tests/tools/test_broker_probes_balance.py tests/tools/test_broker_probes_odno.py \
+  tests/tools/test_broker_probes_p11_fill.py tests/tools/test_broker_probes_nmpr.py \
+  tests/tools/test_broker_probes_tick.py tests/tools/test_broker_probes_real_order.py \
+  tests/tools/test_broker_probes_n15_blackout.py \
+  tests/tools/test_broker_probes_nontrade_registry.py \
+  tests/tools/test_broker_probes_token_cache.py -p no:cacheprovider
+  → 672 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+
+ruff check tools/broker_probes tests/tools          → All checks passed!
+black --check (변경 .py 전부)                        → unchanged
+bash -n run_p8.sh / run_p_ca.sh / _common.sh         → OK
+docker koalaman/shellcheck:stable --severity=warning
+  run_p8.sh run_p_ca.sh _common.sh                   → rc 0
+```
+
+#### 7.15.9 남은 것
+
+- **P-8 3~5회차는 이제 선결 조건을 만족한다.** 이 PR 은 **돌리지 않는다** — 실행은
+  운영자 결정이고, `P8_SYMBOL` 은 돌리는 날의 근월물이어야 한다.
+- `EGW00215` 의 원인(모의 서버 공용 스로틀 가설)은 여전히 관측만 있고 단정하지 않는다.
+- 7.15.2 의 제조된 `coexistence_ms` 는 **과거 아티팩트에도 있을 수 있다**. 다만
+  2026-07-31 wave-3 5건과 09-28 1회차는 폴 응답이 전부 `rt_cd=0` 이었으므로 해당하지
+  않는다(아티팩트의 `odno_wire_format.query_row_samples` 가 정상 행을 담고 있다).
+  과거 P-8 아티팩트의 전수 재검토는 이 PR 범위 밖이고, 재개 실측이 새 코드로
+  이뤄지므로 급하지 않다.
