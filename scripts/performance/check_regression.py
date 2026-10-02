@@ -90,6 +90,31 @@ The factor is estimated from the same noisy samples it corrects, so at n=1 per
 benchmark it injects variance of its own. Medians of N rounds are what damp
 that; the factor is kept because the common-mode effect it targets is real.
 
+Measured, excluded, or an error (2026-10-02, issues #768 / #796 / #679)
+----------------------------------------------------------------------
+A baseline entry has exactly two legitimate states in a given run: it produced
+samples, or the baseline's ``excluded`` map says why it did not. Anything else
+is an error.
+
+Before this, "absent from the current run" was a non-fatal warning. That is how
+``tests/performance/test_redis_load.py`` and ``test_websocket_load.py`` -- 12 of
+the 25 benchmarks -- went unmeasured in CI from 2026-05 to 2026-10 while the job
+stayed green: they skip unless ``KIS_RUN_LIVE_INFRA_TESTS`` is set, the job did
+not set it, and the resulting twelve `Test not found` warnings were indis-
+tinguishable from ordinary noise. (Their skip reason said "Redis not available",
+which was false: the Redis service container was up. It was the flag.)
+
+So:
+
+* measured          -> compared, as before
+* in ``excluded``   -> no comparison, no warning, listed in the report with its
+                       reason
+* neither           -> ERROR, naming both ways out
+
+and, symmetrically, an ``excluded`` entry that DID produce samples is an error
+too (``exclusion_problems``), so the list cannot quietly suppress a benchmark
+that has started running again.
+
 Usage:
     # Compare 5 in-job rounds against the committed baseline
     python scripts/performance/check_regression.py \
@@ -132,6 +157,16 @@ DEFAULT_MIN_BASELINE_ROUNDS = 5
 
 # Schema marker for the multi-sample format this script reads and writes.
 SAMPLES_SCHEMA = "kis-perf-samples/v1"
+
+# Top-level key holding ``{benchmark nodeid: reason}`` for benchmarks that are
+# deliberately NOT measured where this baseline is used. An excluded benchmark
+# is absent from ``benchmarks`` and produces neither a comparison nor a
+# "Test not found" warning -- that warning is what a permanent, intentional
+# exclusion was previously reduced to, once per benchmark per run, which is
+# noise nobody reads. It is not a way to hide a benchmark that is failing or
+# slow: see ``exclusion_problems`` for the two conditions that make an
+# exclusion an ERROR rather than a silence.
+EXCLUDED_KEY = "excluded"
 
 # Provenance fields that describe WHERE a measurement was taken. When samples
 # are re-aggregated on a different machine (the usual case: CI runner measures,
@@ -431,6 +466,57 @@ class RegressionChecker:
             for name, value in self.extract_test_durations(metrics).items()
         }
 
+    def extract_exclusions(self, metrics: dict[str, Any]) -> dict[str, str]:
+        """Read the ``excluded`` map from a samples document.
+
+        A legacy pytest-json-report has no such key and yields ``{}``. The two
+        shapes accepted are ``{nodeid: reason}`` and, for a caller that wants
+        more structure, ``{nodeid: {"reason": ...}}``; anything else is a
+        malformed baseline and raises rather than silently excluding nothing.
+        """
+        if not isinstance(metrics, dict):
+            return {}
+        raw = metrics.get(EXCLUDED_KEY)
+        if raw in (None, {}):
+            return {}
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"'{EXCLUDED_KEY}' must be a mapping of benchmark id -> reason, "
+                f"got {type(raw).__name__}"
+            )
+
+        exclusions: dict[str, str] = {}
+        for name, value in raw.items():
+            if isinstance(value, dict):
+                reason = value.get("reason", "")
+            else:
+                reason = value
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError(
+                    f"'{EXCLUDED_KEY}' entry '{name}' has no reason. An "
+                    "exclusion without a written reason is indistinguishable "
+                    "from a benchmark someone quietly dropped."
+                )
+            exclusions[name] = reason.strip()
+
+        measured = set((metrics.get("benchmarks") or {}).keys())
+        both = sorted(measured & set(exclusions))
+        if both:
+            raise ValueError(
+                f"{len(both)} benchmark(s) are both measured and listed in "
+                f"'{EXCLUDED_KEY}': {', '.join(both[:5])}"
+                + (f" (+{len(both) - 5} more)" if len(both) > 5 else "")
+                + ". A baseline cannot say both at once."
+            )
+        return exclusions
+
+    def load_exclusions(self, paths: Sequence[Path]) -> dict[str, str]:
+        """Merge the ``excluded`` maps of the given baseline documents."""
+        merged: dict[str, str] = {}
+        for path in paths:
+            merged.update(self.extract_exclusions(self.load_metrics(path)))
+        return merged
+
     def load_sample_sets(
         self, paths: Sequence[Path]
     ) -> tuple[dict[str, BenchmarkStats], list[SampleSource], dict[str, RoundOutcomes]]:
@@ -526,6 +612,37 @@ class RegressionChecker:
             )
         return problems
 
+    @staticmethod
+    def exclusion_problems(
+        exclusions: dict[str, str],
+        stats: dict[str, BenchmarkStats],
+    ) -> list[str]:
+        """Reasons an exclusion has gone stale, as opposed to a regression.
+
+        An exclusion says "this benchmark is not measured here, and here is
+        why". The failure mode of any such list is that it rots: the reason
+        stops being true, the benchmark starts running again, and the list goes
+        on silently suppressing it — so a real regression in it is invisible
+        for as long as nobody rereads the file.
+
+        The concrete input that trips this: a baseline listing
+        ``test_publish_throughput_100_messages`` as excluded ("needs a live KIS
+        endpoint"), and a current run in which that benchmark produced samples.
+        It is an ERROR, not a warning, because the alternative is the exact
+        thing the exclusion mechanism is supposed to prevent: a benchmark that
+        is measured and not checked.
+        """
+        problems = []
+        for name in sorted(set(exclusions) & set(stats)):
+            problems.append(
+                f"{name}: listed in '{EXCLUDED_KEY}' "
+                f'("{exclusions[name]}") but it produced '
+                f"{stats[name].n} sample(s) in this run — the exclusion is "
+                "stale. Remove it from the baseline's exclusion list and "
+                "regenerate the baseline so the benchmark is checked again."
+            )
+        return problems
+
     # ------------------------------------------------------------------
     # Comparison
     # ------------------------------------------------------------------
@@ -583,6 +700,7 @@ class RegressionChecker:
         baseline_metrics: dict[str, Any],
         current_metrics: dict[str, Any],
         runner_factor: float = 1.0,
+        exclusions: dict[str, str] | None = None,
     ) -> list[MetricComparison]:
         """
         Compare baseline and current metrics, median against median.
@@ -593,20 +711,34 @@ class RegressionChecker:
             runner_factor: Common-mode runner-speed ratio to divide out before
                 applying thresholds (see ``runner_speed_factor``). 1.0 disables
                 normalization.
+            exclusions: Benchmarks the baseline declares unmeasured here, with
+                the reason. They yield no comparison at all -- not a pass and
+                not a "Test not found" warning. An excluded benchmark that DID
+                produce samples is caught by ``exclusion_problems``, not
+                swallowed here.
 
         Returns:
             List of metric comparisons
         """
         baseline = _as_stats_map(baseline_metrics)
         current = _as_stats_map(current_metrics)
+        excluded = set(exclusions or {})
         comparisons = []
 
         # Check all baseline tests
         for test_name, base in baseline.items():
+            if test_name in excluded:
+                continue
             baseline_value = base.median
 
             if test_name not in current:
-                # Test missing in current run
+                # Measured by the baseline, not measured now, and not declared
+                # excluded. This used to be a non-fatal warning, which is how
+                # twelve of twenty-five benchmarks went unmeasured in CI for
+                # four months while the job reported green (#768 / #796 /
+                # #679). Every baseline entry must now either produce a sample
+                # or be named in the baseline's `excluded` map with a reason;
+                # there is no third, silent state.
                 comparisons.append(
                     MetricComparison(
                         test_name=test_name,
@@ -614,8 +746,15 @@ class RegressionChecker:
                         baseline_value=baseline_value,
                         current_value=0.0,
                         change_percent=0.0,
-                        status="warning",
-                        message="Test not found in current results",
+                        status="error",
+                        message=(
+                            "NOT MEASURED: in the baseline, absent from this "
+                            f"run, and not listed in '{EXCLUDED_KEY}'. It "
+                            "failed or was skipped in every round, or it no "
+                            "longer exists and the baseline is stale. Measure "
+                            "it, or declare it in the baseline's "
+                            f"'{EXCLUDED_KEY}' map with a reason."
+                        ),
                         baseline_n=base.n,
                         current_n=0,
                         baseline_min=base.minimum,
@@ -716,6 +855,10 @@ class RegressionChecker:
 
         # Check for new tests in current run
         for test_name, cur in current.items():
+            if test_name in excluded:
+                # Reported by exclusion_problems as a stale exclusion, not here
+                # as a cheerful "New test".
+                continue
             if test_name not in baseline:
                 comparisons.append(
                     MetricComparison(
@@ -766,6 +909,8 @@ class RegressionChecker:
         runner_factor: float = 1.0,
         outcomes: dict[str, RoundOutcomes] | None = None,
         session_problems: Sequence[str] = (),
+        exclusions: dict[str, str] | None = None,
+        exclusion_problems: Sequence[str] = (),
     ) -> tuple[int, int, int]:
         """
         Print detailed regression report and return the whole verdict.
@@ -780,6 +925,9 @@ class RegressionChecker:
                 (shown in the header when it deviates from 1.0).
             outcomes: Per-benchmark pass/fail/skip tallies across the rounds.
             session_problems: Reasons the measurement itself is invalid.
+            exclusions: Benchmarks the baseline declares unmeasured, with the
+                reason. Listed so a reader can see what is NOT being checked.
+            exclusion_problems: Stale exclusions (excluded yet measured).
 
         Returns:
             Tuple of (num_errors, num_warnings, num_passed)
@@ -788,7 +936,7 @@ class RegressionChecker:
         num_warnings = sum(1 for c in comparisons if c.status == "warning")
         num_passed = sum(1 for c in comparisons if c.status == "pass")
         outcome_errors, outcome_warnings = self.round_outcome_verdict(outcomes or {})
-        num_errors += outcome_errors + len(session_problems)
+        num_errors += outcome_errors + len(session_problems) + len(exclusion_problems)
         num_warnings += outcome_warnings
 
         baseline_rounds = sorted({c.baseline_n for c in comparisons if c.baseline_n})
@@ -851,7 +999,7 @@ class RegressionChecker:
 
         # Print errors first
         if errors:
-            print("\n🔴 ERRORS (Performance Regression):")
+            print("\n🔴 ERRORS (regression, or a baseline entry not measured):")
             print("-" * 80)
             for comp in sorted(errors, key=lambda x: x.change_percent, reverse=True):
                 _print_comparison(comp)
@@ -875,6 +1023,18 @@ class RegressionChecker:
             print(f"\n📊 STABLE: {len(stable)} tests with no significant change")
 
         self.print_round_outcomes(outcomes or {})
+        if exclusions:
+            print(f"\n🚫 EXCLUDED ({len(exclusions)} not measured here):")
+            print("-" * 80)
+            for name, reason in sorted(exclusions.items()):
+                print(f"  {name}")
+                print(f"     {reason}")
+        if exclusion_problems:
+            print("\n🔴 STALE EXCLUSION:")
+            print("-" * 80)
+            for problem in exclusion_problems:
+                print(f"  {problem}")
+                self.logger.error("Stale exclusion: %s", problem)
         if session_problems:
             print("\n🔴 MEASUREMENT INVALID:")
             print("-" * 80)
@@ -890,7 +1050,14 @@ class RegressionChecker:
         )
 
         if num_errors > 0:
-            print(f"❌ FAILED: {num_errors} performance regression(s) detected")
+            # Not all of these are regressions: an unmeasured baseline entry,
+            # a stale exclusion and an aborted session all count here, and
+            # calling them "regressions" sends the reader looking for a
+            # slowdown that is not there.
+            print(
+                f"❌ FAILED: {num_errors} error(s) — regressions, unmeasured "
+                "baseline entries, stale exclusions, or an invalid measurement"
+            )
             return num_errors, num_warnings, num_passed
         elif num_warnings > 0:
             print(f"⚠️  WARNING: {num_warnings} performance degradation(s) detected")
@@ -951,6 +1118,8 @@ class RegressionChecker:
         runner_factor: float = 1.0,
         outcomes: dict[str, RoundOutcomes] | None = None,
         session_problems: Sequence[str] = (),
+        exclusions: dict[str, str] | None = None,
+        exclusion_problems: Sequence[str] = (),
     ) -> str:
         """Render the comparison as a Markdown table (for $GITHUB_STEP_SUMMARY).
 
@@ -1010,6 +1179,22 @@ class RegressionChecker:
                     f"- {icon} `{name.replace('tests/performance/', '')}` failed in "
                     f"{o.failed} of {o.decided} rounds ({verdict})"
                 )
+        if exclusions:
+            lines += [
+                "",
+                f"**Excluded from this check ({len(exclusions)})** — declared "
+                "in the baseline, not measured here",
+                "",
+                "| Benchmark | Reason |",
+                "| --- | --- |",
+            ]
+            lines += [
+                f"| `{name.replace('tests/performance/', '')}` | {reason} |"
+                for name, reason in sorted(exclusions.items())
+            ]
+        if exclusion_problems:
+            lines += ["", "**🔴 Stale exclusion**", ""]
+            lines += [f"- {problem}" for problem in exclusion_problems]
         if session_problems:
             lines += ["", "**🔴 Measurement invalid**", ""]
             lines += [f"- {problem}" for problem in session_problems]
@@ -1029,11 +1214,19 @@ class RegressionChecker:
         self,
         stats: dict[str, BenchmarkStats],
         provenance: dict[str, Any],
+        exclusions: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Assemble a ``kis-perf-samples/v1`` document."""
+        """Assemble a ``kis-perf-samples/v1`` document.
+
+        ``excluded`` is always written, empty map included. An absent key and
+        an empty map mean the same thing to the reader, but writing it makes
+        the section discoverable in the file itself rather than only in the
+        docs.
+        """
         return {
             "schema": SAMPLES_SCHEMA,
             "provenance": provenance,
+            EXCLUDED_KEY: dict(sorted((exclusions or {}).items())),
             "benchmarks": {name: s.as_dict() for name, s in sorted(stats.items())},
         }
 
@@ -1045,6 +1238,7 @@ class RegressionChecker:
         note: str = "",
         sources: Sequence[SampleSource] | None = None,
         measured_provenance: dict[str, Any] | None = None,
+        exclusions: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Write the aggregated samples (with provenance) to ``path``.
 
@@ -1083,7 +1277,7 @@ class RegressionChecker:
             # Inherited last: rounds/sources from the original measurement win
             # over the single samples file this aggregation happened to read.
             provenance.update(inherited)
-        document = self.build_samples_document(stats, provenance)
+        document = self.build_samples_document(stats, provenance, exclusions)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(document, f, indent=2)
@@ -1106,16 +1300,34 @@ class RegressionChecker:
         note: str = "",
         sources: Sequence[SampleSource] | None = None,
         measured_provenance: dict[str, Any] | None = None,
+        exclusions: dict[str, str] | None = None,
     ) -> bool:
         """Write a new baseline, refusing one that is too thinly sampled.
 
         Returns True when the baseline was written. A baseline built from fewer
         than ``min_rounds`` rounds is the exact defect #768 traced, so it is
         refused unless ``force`` is set (and the file then records that).
+
+        An exclusion carried into a baseline whose own samples contain that
+        benchmark is refused outright -- ``--force-baseline`` does not cover
+        it, because it is not an under-sampling judgement call but a
+        self-contradictory file: ``extract_exclusions`` would reject the result
+        on the next read anyway.
         """
         if not stats:
             print("\n❌ ERROR: refusing to write an empty baseline (no benchmarks)")
             self.logger.error("Refusing to write an empty baseline")
+            return False
+
+        stale = self.exclusion_problems(exclusions or {}, stats)
+        if stale:
+            print(
+                f"\n❌ ERROR: refusing to write a baseline whose "
+                f"'{EXCLUDED_KEY}' list contradicts its own samples:"
+            )
+            for problem in stale:
+                print(f"   {problem}")
+                self.logger.error("Refusing to write baseline: %s", problem)
             return False
 
         rounds = min(s.n for s in stats.values())
@@ -1165,8 +1377,13 @@ class RegressionChecker:
             note=full_note,
             sources=sources,
             measured_provenance=measured_provenance,
+            exclusions=exclusions,
         )
         print(f"\n📝 Baseline written to {path} (rounds={rounds})")
+        if exclusions:
+            print(f"   Carried {len(exclusions)} exclusion(s):")
+            for name, reason in sorted(exclusions.items()):
+                print(f"     {name}: {reason}")
         print("   Per-benchmark statistics (paste into the PR body):")
         for name, s in sorted(stats.items()):
             print(
@@ -1190,6 +1407,7 @@ class RegressionChecker:
         force_baseline: bool = False,
         provenance_note: str = "",
         markdown_summary: Path | None = None,
+        exclusions_from: Path | Sequence[Path] | None = None,
     ) -> int:
         """
         Check for performance regressions.
@@ -1206,6 +1424,11 @@ class RegressionChecker:
             force_baseline: Write an under-sampled baseline anyway.
             provenance_note: Free-text note stored in written files.
             markdown_summary: Append a Markdown table of the comparison here.
+            exclusions_from: Document(s) whose ``excluded`` map is stamped into
+                a baseline written by ``--write-baseline``. The comparison
+                takes its exclusions from ``baseline_path`` instead: the
+                baseline being compared against is what declares what it does
+                not measure.
 
         Returns:
             Exit code (0 = pass, 1 = warning, 2 = error)
@@ -1224,6 +1447,17 @@ class RegressionChecker:
             if len(current_sources) == 1 and current_sources[0].kind == "samples":
                 measured_provenance = current_sources[0].provenance or None
 
+            # Exclusions to stamp into anything written. They come from an
+            # explicit --exclusions-from, falling back to the baseline being
+            # compared against, so `--baseline X --write-baseline X` (the
+            # regenerate-in-place flow) keeps X's exclusions instead of
+            # silently dropping them.
+            carried_exclusions: dict[str, str] = {}
+            if exclusions_from is not None:
+                carried_exclusions = self.load_exclusions(_as_paths(exclusions_from))
+            elif baseline_path is not None:
+                carried_exclusions = self.load_exclusions(_as_paths(baseline_path))
+
             if write_samples is not None:
                 self.write_samples(
                     write_samples,
@@ -1232,6 +1466,7 @@ class RegressionChecker:
                     note=provenance_note,
                     sources=current_sources,
                     measured_provenance=measured_provenance,
+                    exclusions=carried_exclusions,
                 )
 
             if write_baseline is not None:
@@ -1243,6 +1478,7 @@ class RegressionChecker:
                     note=provenance_note,
                     sources=current_sources,
                     measured_provenance=measured_provenance,
+                    exclusions=carried_exclusions,
                 )
                 if not written:
                     return 2
@@ -1270,7 +1506,15 @@ class RegressionChecker:
                 self.logger.info("No baseline given; skipping comparison")
                 return 0
 
-            baseline_stats, _, _ = self.load_sample_sets(_as_paths(baseline_path))
+            baseline_paths = _as_paths(baseline_path)
+            baseline_stats, _, _ = self.load_sample_sets(baseline_paths)
+            exclusions = self.load_exclusions(baseline_paths)
+            stale_exclusions = self.exclusion_problems(exclusions, current_stats)
+            if exclusions:
+                self.logger.info(
+                    "Baseline excludes %d benchmark(s) from the check",
+                    len(exclusions),
+                )
 
             self.logger.info(
                 "Comparing %d baseline tests vs %d current tests",
@@ -1285,14 +1529,18 @@ class RegressionChecker:
 
             # Compare metrics
             comparisons = self.compare_metrics(
-                baseline_stats, current_stats, runner_factor
+                baseline_stats, current_stats, runner_factor, exclusions=exclusions
             )
 
             # One verdict: the comparison, the per-benchmark round outcomes
             # (a majority of failing rounds is a test failure) and any session
             # problem are counted together, before the verdict line is printed.
             num_errors, num_warnings, num_passed = self.print_report(
-                comparisons, runner_factor, outcomes=current_outcomes
+                comparisons,
+                runner_factor,
+                outcomes=current_outcomes,
+                exclusions=exclusions,
+                exclusion_problems=stale_exclusions,
             )
 
             if markdown_summary is not None:
@@ -1300,7 +1548,11 @@ class RegressionChecker:
                 with open(markdown_summary, "a") as f:
                     f.write(
                         self.markdown_summary(
-                            comparisons, runner_factor, outcomes=current_outcomes
+                            comparisons,
+                            runner_factor,
+                            outcomes=current_outcomes,
+                            exclusions=exclusions,
+                            exclusion_problems=stale_exclusions,
                         )
                     )
 
@@ -1564,6 +1816,19 @@ Exit Codes:
     )
 
     parser.add_argument(
+        "--exclusions-from",
+        type=_optional_path,
+        nargs="+",
+        action="extend",
+        default=None,
+        help=(
+            "Document(s) whose 'excluded' map is stamped into a baseline "
+            "written with --write-baseline. Defaults to --baseline when that "
+            "is given, so regenerating in place keeps the exclusions."
+        ),
+    )
+
+    parser.add_argument(
         "--min-baseline-rounds",
         type=int,
         default=DEFAULT_MIN_BASELINE_ROUNDS,
@@ -1658,6 +1923,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         force_baseline=args.force_baseline,
         provenance_note=args.provenance_note,
         markdown_summary=args.markdown_summary,
+        exclusions_from=args.exclusions_from,
     )
     if exit_code == 1 and not args.fail_on_warning:
         return 0
