@@ -307,6 +307,22 @@ Provenance names the machine that **measured**, not the one that wrote the file.
 When a CI samples file is re-aggregated on a laptop, the runner/commit/python
 fields are inherited from it and the laptop is recorded under `aggregated_on`.
 
+### The baseline in force
+
+| | |
+| --- | --- |
+| taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) |
+| runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 |
+| commit | `16d7101e` (PR #845) |
+| rounds | 9 — all 25 benchmarks have n=9, no round failed |
+| excluded | none |
+
+It replaces the 2026-05-30 single-sample file. Checked against that file
+before replacing it: 0 errors, 0 warnings, 25 pass (runner factor x1.12), so
+the regeneration is not absorbing a real slowdown. The twelve Redis benchmarks
+have no "before" — they were last measured in CI on 2026-05-30 — so their
+values are a starting point, not evidence of stability.
+
 ### Regenerating the baseline
 
 A baseline must come from **>= 5 rounds on the hardware the check runs on**.
