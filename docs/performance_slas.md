@@ -1,7 +1,7 @@
 # Performance Service Level Agreements (SLAs)
 
 **Version:** 2.0
-**Last Updated:** 2026-06-25
+**Last Updated:** 2026-10-02
 **Status:** Current
 
 This document tracks current runtime performance targets for the KIS Unified STS
@@ -24,16 +24,158 @@ is archived at
 
 ## Regression Checks
 
-Use the existing targeted performance and smoke suites:
+Frontend and smoke gates:
 
 ```bash
-pytest tests/performance/ -v
-python scripts/performance/check_regression.py \
-  --baseline tests/performance/baselines.json \
-  --current tests/performance/baselines.json
 npm --prefix strategy-builder-ui run build
 npm --prefix strategy-builder-ui run lint
 ```
+
+### The CI `performance` job
+
+`.github/workflows/test.yml::performance` runs on PRs to `main` and weekly. It
+measures `tests/performance/` **`PERF_ROUNDS` times (default 5)**, one pytest
+process per round, and compares the **median** of each benchmark against the
+median of the baseline's rounds.
+
+```bash
+# What CI runs
+for round in $(seq 1 5); do
+  pytest tests/performance/ -q -s --json-report \
+    --json-report-file="tests/performance/rounds/round-$round.json"
+done
+
+python scripts/performance/check_regression.py \
+  --baseline tests/performance/baselines.json \
+  --current tests/performance/rounds/round-*.json \
+  --write-samples tests/performance/current.json \
+  --markdown-summary "$GITHUB_STEP_SUMMARY" \
+  --warning-threshold 1.5 --error-threshold 2.0 --min-duration 0.05
+```
+
+Thresholds are unchanged: `>=2x` fails, `1.5x-2x` is a non-fatal warning, and
+benchmarks whose baseline median is under 50 ms are exempt because their
+wall-clock ratios are noise. Exit codes: `0` pass, `1` warning (not fatal unless
+`--fail-on-warning`), `2` regression.
+
+**The job is not a required check.** A red `performance` does not block a merge;
+`test` is the only real gate (see `CLAUDE.md`).
+
+### Why medians of N rounds (#768, #796)
+
+The check used to compare one sample against one committed sample. Re-running
+the job 10x on a fixed head, with byte-identical code, gave
+`test_entry_path_100_symbols`:
+
+| | value |
+| --- | ---: |
+| n (usable) | 7 |
+| min | 0.1217 s |
+| median | 0.2755 s |
+| max | 0.3800 s |
+| sd (sample) | 0.0842 s |
+| committed baseline (2026-05-30) | 0.1329 s |
+
+That is a 3.1x spread and 3 of 10 jobs red for no reason. Two separate defects
+produced it, and **fixing either one alone does not fix the check**:
+
+1. The *current* value was one draw from a wide distribution — so the verdict
+   was a coin flip. Medians of N rounds fix this.
+2. The *baseline* was also one draw, and it landed near the bottom of the same
+   distribution — so the median run reads as +107%. Only regenerating the
+   baseline from several rounds fixes this. With the old single-sample baseline
+   kept, median-of-N turns an intermittent red into a **permanent** red.
+
+Repeating inside one job shrinks only the *within-job* noise, by roughly
+`sqrt(N)`. All N rounds share one runner, so a globally slow runner still shifts
+them together; that component is what the runner-speed factor targets.
+
+### Runner-speed normalization and its measured limit
+
+`runner_speed_factor()` (#397) divides every ratio by the median
+current/baseline ratio across all comparable benchmarks, so a uniformly slow
+runner does not read as a per-test regression. The direction is right. The
+magnitude is not reliable at n=1, because the factor is estimated from the same
+noisy samples it corrects. Measured 2026-10-01, two runs with nearly identical
+raw values landed 63 points apart after correction:
+
+| run | raw | runner factor | after correction |
+| --- | ---: | ---: | ---: |
+| 36868546962 | +152.3% | x1.12 | +126.0% |
+| 36876551928 | +153.9% | x0.88 | +189.6% |
+
+It is kept because the common-mode effect is real; medians are what damp the
+estimator's own variance.
+
+### Baseline format and provenance
+
+`tests/performance/baselines.json` is either a legacy pytest-json-report (read
+as n=1, and the report then prints a `SINGLE-SAMPLE BASELINE` warning) or a
+`kis-perf-samples/v1` document:
+
+```json
+{
+  "schema": "kis-perf-samples/v1",
+  "provenance": {
+    "generated_at": "2026-10-02T11:00:00+09:00",
+    "role": "baseline",
+    "rounds": 7,
+    "runner": "github-actions-ubuntu24-X64",
+    "python": "3.11.9",
+    "commit": "...",
+    "workflow_run": "https://github.com/.../actions/runs/..."
+  },
+  "benchmarks": {
+    "tests/performance/...::test_x": {
+      "n": 7, "median": 0.27, "min": 0.12, "max": 0.38,
+      "mean": 0.25, "sd": 0.08, "samples": [0.27, 0.17, ...]
+    }
+  }
+}
+```
+
+Provenance names the machine that **measured**, not the one that wrote the file.
+When a CI samples file is re-aggregated on a laptop, the runner/commit/python
+fields are inherited from it and the laptop is recorded under `aggregated_on`.
+
+### Regenerating the baseline
+
+A baseline must come from **>= 5 rounds on the hardware the check runs on**.
+`check_regression.py` refuses fewer (`--force-baseline` overrides and stamps
+`UNDER-SAMPLED` into the file's note).
+
+1. Run the **`performance-baseline`** workflow
+   (`.github/workflows/performance-baseline.yml`) from the Actions tab,
+   `rounds` >= 5, with a note saying why.
+2. Download the `performance-baseline-candidate` artifact.
+3. Commit it in a PR:
+
+   ```bash
+   cp baselines.candidate.json tests/performance/baselines.json
+   ```
+
+4. Quote the artifact's `provenance` block and the per-benchmark
+   `n / median / min / max / sd` in the PR body. A baseline whose origin is not
+   written down is how #768 went four months undiagnosed.
+
+To build a candidate from samples you already have:
+
+```bash
+python scripts/performance/check_regression.py \
+  --current tests/performance/current.json \
+  --write-baseline tests/performance/baselines.json
+```
+
+**Order matters.** Do not regenerate a baseline to silence a red check before
+ruling out a real regression — once absorbed, a genuine slowdown is invisible
+forever. For `test_entry_path_100_symbols` the ruling-out is structural: it
+times only `_simulate_*` helpers defined inside its own test module, and every
+change to that file since the baseline commit (`f68c2c3a`) is outside the timed
+region (an unused import, and f-strings in `print` calls). The benchmarked code
+is byte-identical, so no code regression is possible there. Benchmarks that do
+import `shared/` (`test_orchestrator_scalability.py`, `test_redis_load.py`,
+`test_websocket_load.py`) carry no such guarantee and need the question asked
+separately.
 
 ## Monitoring Notes
 
