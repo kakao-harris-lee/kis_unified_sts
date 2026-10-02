@@ -2,12 +2,12 @@
 
 Adds project root to sys.path for module imports.
 
-The session is hermetic by default: no ``.env`` is loaded, the whole ``KIS_*``
-and ``TELEGRAM_*`` namespace is emptied, and the config and token-cache
-directories are pinned to this checkout and a temp dir. Set
-``KIS_RUN_LIVE_INFRA_TESTS=1`` to opt back into real infrastructure
-credentials — the same switch that un-skips the ``live_infra`` tests. See
-``docs/CI_PARALLEL_NOTES.md`` and #698.
+The session is hermetic, unconditionally: no ``.env`` is loaded, the whole
+``KIS_*`` and ``TELEGRAM_*`` namespace is emptied, and the config and
+token-cache directories are pinned to this checkout and a temp dir.
+``KIS_RUN_LIVE_INFRA_TESTS=1`` lifts the **Redis gate** only — it un-skips the
+``live_infra`` tests and lets ``pytest_runtest_setup`` ping Redis — and
+changes none of the above. See ``docs/CI_PARALLEL_NOTES.md`` and #698.
 """
 
 import atexit
@@ -61,20 +61,26 @@ _LIVE_INFRA_TEST_PATHS = {
 # stop that; `_hermetic_broker_env` below re-asserts the same invariants once
 # the session starts.
 #
-# Opting into live infrastructure restores the previous behavior: this
-# checkout's .env is loaded exactly as the runtime loads it.
+# Unconditional, with no opt-out. Hermeticity and the live-infra gate answer
+# different questions and used to share one switch:
 #
-# `live_infra_enabled()` decides — not a second reading of the same variable —
-# so hermeticity is the exact negation of the live-infra gate (#845/#698). A
-# duplicate predicate with its own truthy set would let
-# KIS_RUN_LIVE_INFRA_TESTS=on drop hermeticity while leaving every live_infra
-# test skipped: credentials loaded, nothing gained, and silently. Sharing the
-# function is also what keeps `pytest_runtest_setup`'s Redis ping out of a
-# hermetic session, because that hook asks the same question.
-HERMETIC_SESSION = not live_infra_enabled()
+#   "may a test talk to real Redis?"        -> live_infra_enabled()
+#   "may this process hold real broker      -> was the same flag, now always no
+#    credentials and read a .env?"
+#
+# Tying them together made the one CI job that always opts in (`performance`,
+# which injects KIS_RUN_LIVE_INFRA_TESTS=1) the only job with no scrub, no
+# dotenv guard and no token-cache pin. Nothing in this test tree needs real
+# broker credentials — the probe harness that does lives in tools/, not here —
+# so there is no third mode to support. Redis settings are unaffected: the
+# scrub touches only KIS_*/TELEGRAM_*, and REDIS_HOST/PORT/DB come from the
+# environment (CI injects them; their defaults already match this host).
+#: Always true. Kept as a name because the session-state fixture and the
+#: guard tests assert on it, and because a future third mode would land here.
+HERMETIC_SESSION = True
 
-#: The throwaway directory every token cache is pinned to, or ``None`` under
-#: the live-infra opt-in. One per process, so xdist workers do not share it.
+#: The throwaway directory this process's token caches are pinned to: the
+#: shared root in the controller, a subdirectory of it in an xdist worker.
 TOKEN_CACHE_DIR: Path | None = None
 
 #: What the stray-token-cache witnesses looked like before any test ran.
@@ -125,54 +131,36 @@ def _apply_hermetic_pins() -> None:
 
 
 #: The shared root, created by the controller and inherited by xdist workers.
-#: ``None`` outside a hermetic session.
 TOKEN_CACHE_BASE: Path | None = None
 
-if HERMETIC_SESSION:
-    # One root per *session*, not per process. xdist workers inherit it
-    # through the environment and take a subdirectory of it, so the
-    # controller — whose pytest_sessionfinish runs last — can see a token any
-    # worker wrote. Read before the scrub, which empties the KIS_ namespace.
-    _inherited_base = os.environ.get(hermetic_env.TOKEN_CACHE_BASE_ENV)
-    _xdist_worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-    if _xdist_worker_id and _inherited_base:
-        # Only a worker inherits. A bare run that found the variable in the
-        # ambient environment would adopt some earlier run's directory and,
-        # having not created it, never clean it up.
-        TOKEN_CACHE_BASE = Path(_inherited_base)
-    else:
-        TOKEN_CACHE_BASE = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
-        atexit.register(shutil.rmtree, TOKEN_CACHE_BASE, True)
-
-    TOKEN_CACHE_DIR = (
-        TOKEN_CACHE_BASE / _xdist_worker_id if _xdist_worker_id else TOKEN_CACHE_BASE
-    )
-    TOKEN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    _apply_hermetic_pins()
-
-    # Turn any remaining .env read into a named failure instead of a silent
-    # credential injection — including from a caller added after #698.
-    hermetic_env.install_dotenv_guard()
-
-    TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
-        hermetic_env.token_cache_witnesses(project_root)
-    )
+# One root per *session*, not per process. xdist workers inherit it through
+# the environment and take a subdirectory of it, so the controller — whose
+# pytest_sessionfinish runs last — can see a token any worker wrote. Read
+# before the scrub, which empties the KIS_ namespace.
+_inherited_base = os.environ.get(hermetic_env.TOKEN_CACHE_BASE_ENV)
+_xdist_worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+if _xdist_worker_id and _inherited_base:
+    # Only a worker inherits. A bare run that found the variable in the
+    # ambient environment would adopt some earlier run's directory and,
+    # having not created it, never clean it up.
+    TOKEN_CACHE_BASE = Path(_inherited_base)
 else:
-    # Live-infra opt-in: the operator asked for real Redis and friends, so this
-    # checkout's .env is loaded exactly as the runtime loads it. Telegram stays
-    # scrubbed even here — a live-infra run must still not message the operator
-    # from a test (the pre-#698 behavior, kept).
-    os.environ.pop(hermetic_env.HERMETIC_ENV, None)
+    TOKEN_CACHE_BASE = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
+    atexit.register(shutil.rmtree, TOKEN_CACHE_BASE, True)
 
-    with suppress(ImportError):
-        # python-dotenv is a runtime dependency, but the tos-firewall job
-        # installs the root project with --no-deps.
-        from shared.config.dotenv_guard import load_project_dotenv  # noqa: E402
+TOKEN_CACHE_DIR = (
+    TOKEN_CACHE_BASE / _xdist_worker_id if _xdist_worker_id else TOKEN_CACHE_BASE
+)
+TOKEN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_apply_hermetic_pins()
 
-        load_project_dotenv()
+# Turn any remaining .env read into a named failure instead of a silent
+# credential injection — including from a caller added after #698.
+hermetic_env.install_dotenv_guard()
 
-    for _tg_key in [key for key in list(os.environ) if key.startswith("TELEGRAM_")]:
-        del os.environ[_tg_key]
+TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
+    hermetic_env.token_cache_witnesses(project_root)
+)
 
 # Cap MLflow's HTTP retry budget for tests so dashboard tests don't spend
 # 4+ minutes retrying against an unreachable tracking server. Default is 7
@@ -265,7 +253,7 @@ def pytest_sessionfinish(session, exitstatus):
     and ``.kis_token_mock`` (2026-06-09) from ordinary host ``sts`` runs,
     because the default cache directory is ``Path.cwd()`` (#698).
     """
-    if not HERMETIC_SESSION or not TOKEN_CACHE_SNAPSHOT:
+    if not TOKEN_CACHE_SNAPSHOT:
         return
 
     touched = hermetic_env.token_caches_touched_since(TOKEN_CACHE_SNAPSHOT)
@@ -321,13 +309,10 @@ def _hermetic_broker_env():
     assertions live in ``tests/unit/config/test_dotenv_hermeticity.py``, which
     fails loudly and names itself.
 
-    Skipped entirely under ``KIS_RUN_LIVE_INFRA_TESTS=1``, where the operator
-    has asked for real infrastructure credentials on purpose.
+    Runs for every session. The live-infra opt-in lifts the Redis gate, not
+    these invariants — nothing in this test tree needs real broker
+    credentials.
     """
-    if not HERMETIC_SESSION:
-        yield
-        return
-
     _apply_hermetic_pins()
     yield
 

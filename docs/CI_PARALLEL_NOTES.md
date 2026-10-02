@@ -131,12 +131,29 @@ Use the `config_dir` fixture in `tests/conftest.py`, which sets both and
 restores the loader at teardown. `test_loader_env_vars`, `test_loader_security`,
 `test_loader_thread_safety` and `test_config_yaml_loading` use it.
 
-### Opting out
+### There is no opt-out
 
-`KIS_RUN_LIVE_INFRA_TESTS=1` — the switch that un-skips the `live_infra` tests
-— makes the session non-hermetic and loads this checkout's `.env`, the
-pre-#698 behavior. `TELEGRAM_*` stays scrubbed even then, so a live-infra run
-still cannot message the operator from a test.
+Hermeticity is unconditional. `KIS_RUN_LIVE_INFRA_TESTS=1` lifts the **Redis
+gate** and nothing else: it un-skips the `live_infra` tests and lets
+`pytest_runtest_setup` ping Redis. It does not load a `.env`, does not restore
+`KIS_*`/`TELEGRAM_*`, and does not unpin the config or token-cache directories.
+
+The two used to share one switch, and that made the one CI job which always
+opts in — `performance`, which injects `KIS_RUN_LIVE_INFRA_TESTS=1` — the only
+job running with no scrub, no dotenv guard and no token-cache pin. They answer
+different questions:
+
+| question | answered by |
+| --- | --- |
+| may a test talk to real Redis? | `live_infra_enabled()` |
+| may this process hold real broker credentials? | always no |
+
+Nothing in `tests/` needs real broker credentials; the probe harness that does
+live KIS calls is under `tools/`, outside the pytest tree, so there is no
+third mode to support. Redis settings are unaffected by the scrub, which
+touches only `KIS_*` and `TELEGRAM_*`: CI injects `REDIS_HOST`/`PORT`/`DB`
+explicitly, and their defaults (`localhost:6379` db 1, no password) already
+match this host.
 
 `tests/unit/config/test_dotenv_hermeticity.py` asserts all of the above, and
 proves the loader half in subprocesses with the switch *off*, so it still

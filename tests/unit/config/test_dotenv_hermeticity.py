@@ -37,15 +37,6 @@ from tests.support.live_infra import live_infra_enabled
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-#: The session-layer assertions describe the hermetic default. The
-#: live-infra opt-in deliberately loads .env, so they do not apply there.
-requires_hermetic_session = pytest.mark.skipif(
-    hermetic_env.live_infra_enabled(),
-    reason=(
-        "session is non-hermetic by operator opt-in "
-        f"({hermetic_env.LIVE_INFRA_ENV}=1)"
-    ),
-)
 
 CANARY_APP_KEY = "CANARY-APP-KEY-MUST-NEVER-BE-LOADED"
 CANARY_PORT = "4111"
@@ -282,7 +273,6 @@ def test_hermetic_flag_disables_every_load(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@requires_hermetic_session
 def test_session_carries_no_broker_credentials():
     """No KIS_*/TELEGRAM_* value survives into the session but the switches."""
     leaked = sorted(
@@ -295,7 +285,6 @@ def test_session_carries_no_broker_credentials():
     assert leaked == []
 
 
-@requires_hermetic_session
 def test_kis_auth_config_sees_no_credentials():
     """A KISAuthManager built mid-session cannot authenticate against KIS."""
     from shared.kis.auth import KISAuthConfig
@@ -306,7 +295,6 @@ def test_kis_auth_config_sees_no_credentials():
     assert config.app_secret == ""
 
 
-@requires_hermetic_session
 def test_token_cache_is_pinned_outside_the_checkout_and_home():
     """The default cache directory is cwd — which is how #698 wrote a token."""
     from shared.kis.auth import KISAuthConfig
@@ -322,7 +310,6 @@ def test_token_cache_is_pinned_outside_the_checkout_and_home():
         assert Path.home() not in path.parents
 
 
-@requires_hermetic_session
 def test_no_token_cache_was_created_or_rewritten_by_this_session(
     token_cache_snapshot,
 ):
@@ -343,7 +330,6 @@ def test_no_token_cache_was_created_or_rewritten_by_this_session(
     )
 
 
-@requires_hermetic_session
 def test_token_cache_witnesses_cover_the_checkout_cwd_and_home(
     token_cache_snapshot,
 ):
@@ -356,7 +342,6 @@ def test_token_cache_witnesses_cover_the_checkout_cwd_and_home(
     assert set(token_cache_snapshot) >= witnesses
 
 
-@requires_hermetic_session
 def test_token_cache_snapshot_reports_only_what_changed(tmp_path):
     """A pre-existing, untouched file is not reported; a rewrite is."""
     stale = tmp_path / ".kis_token_real"
@@ -376,7 +361,6 @@ def test_token_cache_snapshot_reports_only_what_changed(tmp_path):
     )
 
 
-@requires_hermetic_session
 def test_config_dir_is_pinned_to_this_checkout(reset_config_loader):
     """A worktree reads its own config/, never the primary checkout's."""
     from shared.config.loader import ConfigLoader
@@ -387,7 +371,6 @@ def test_config_dir_is_pinned_to_this_checkout(reset_config_loader):
     assert ConfigLoader.get_config_dir() == REPO_ROOT / "config"
 
 
-@requires_hermetic_session
 def test_hermetic_switch_is_one_name_shared_with_the_runtime_loader():
     """conftest and the loader must never read different variables.
 
@@ -400,14 +383,12 @@ def test_hermetic_switch_is_one_name_shared_with_the_runtime_loader():
     assert hermetic_env.env_flag is dotenv_guard.env_flag
 
 
-@requires_hermetic_session
 def test_argument_less_load_dotenv_is_refused():
     """The exact call that caused #698 now fails loudly instead of leaking."""
     with pytest.raises(hermetic_env.HermeticDotenvViolation, match="find_dotenv"):
         dotenv.load_dotenv()
 
 
-@requires_hermetic_session
 @pytest.mark.parametrize("reader", ["load_dotenv", "dotenv_values"])
 def test_argument_less_readers_are_all_refused(reader):
     """Guarding load_dotenv alone left dotenv_values free to do the same walk."""
@@ -415,7 +396,6 @@ def test_argument_less_readers_are_all_refused(reader):
         getattr(dotenv, reader)()
 
 
-@requires_hermetic_session
 def test_find_dotenv_may_not_hand_back_a_real_env(tmp_path, monkeypatch):
     """The walk itself is fine; returning a real file outside the sandbox is not."""
     inside = tmp_path / "inside"
@@ -430,7 +410,6 @@ def test_find_dotenv_may_not_hand_back_a_real_env(tmp_path, monkeypatch):
         dotenv.find_dotenv(usecwd=True)
 
 
-@requires_hermetic_session
 def test_find_dotenv_returns_nothing_when_there_is_nothing(tmp_path, monkeypatch):
     """A walk that finds no file is not an error — that is every CI checkout."""
     monkeypatch.chdir(tmp_path)
@@ -438,7 +417,6 @@ def test_find_dotenv_returns_nothing_when_there_is_nothing(tmp_path, monkeypatch
     assert dotenv.find_dotenv(usecwd=True) == ""
 
 
-@requires_hermetic_session
 @pytest.mark.parametrize("reader", ["load_dotenv", "dotenv_values"])
 def test_every_reader_refuses_a_real_env_outside_the_sandbox(
     reader, tmp_path, monkeypatch
@@ -457,7 +435,6 @@ def test_every_reader_refuses_a_real_env_outside_the_sandbox(
     assert os.environ.get("KIS_APP_KEY") is None
 
 
-@requires_hermetic_session
 def test_existing_dotenv_outside_the_sandbox_is_refused(tmp_path, monkeypatch):
     """A real .env outside the sandbox is refused even with an explicit path."""
     inside = tmp_path / "inside"
@@ -473,7 +450,6 @@ def test_existing_dotenv_outside_the_sandbox_is_refused(tmp_path, monkeypatch):
     assert os.environ.get("KIS_APP_KEY") is None
 
 
-@requires_hermetic_session
 def test_dotenv_inside_the_sandbox_is_allowed(tmp_path, monkeypatch):
     """pytest's own tmp_path stays usable — the guard is not a blanket ban."""
     probe = "KIS_TEST_HERMETICITY_PROBE"
@@ -488,13 +464,11 @@ def test_dotenv_inside_the_sandbox_is_allowed(tmp_path, monkeypatch):
     assert os.environ[probe] == "inside-sandbox"
 
 
-@requires_hermetic_session
 def test_missing_dotenv_path_is_allowed(tmp_path):
     """A path that does not exist loads nothing, so it needs no refusal."""
     assert dotenv.load_dotenv(tmp_path / "does-not-exist" / ".env") is False
 
 
-@requires_hermetic_session
 def test_guard_installs_once():
     """Re-installing the guard does not stack wrappers."""
     first = dotenv.load_dotenv
@@ -523,34 +497,47 @@ def test_guard_installs_without_python_dotenv(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_hermeticity_is_the_exact_negation_of_the_live_infra_gate(
+def test_hermeticity_does_not_depend_on_the_live_infra_gate(
     hermetic_session_state,
 ):
-    """One predicate decides both, so no env value can split them.
+    """Hermeticity is unconditional; the opt-in lifts the Redis gate only.
 
-    Two readings of ``KIS_RUN_LIVE_INFRA_TESTS`` with different truthy sets —
-    ``live_infra.py`` accepts 1/true/yes, ``dotenv_guard`` also accepts "on" —
-    would let ``=on`` drop hermeticity while leaving every live_infra test
-    skipped: credentials loaded, nothing gained, and silently (#845/#698).
+    The two answer different questions — "may a test talk to real Redis?" and
+    "may this process hold real broker credentials?" — and sharing one switch
+    made the one CI job that always opts in (``performance``) the only job
+    with no scrub, no dotenv guard and no token-cache pin. Nothing in this
+    test tree needs real broker credentials; the probe harness that does
+    lives in ``tools/``.
     """
-    assert hermetic_session_state.hermetic is not (
-        hermetic_session_state.live_infra_enabled
-    )
+    assert hermetic_session_state.hermetic is True
+    assert os.environ[hermetic_env.HERMETIC_ENV] == "1"
     assert hermetic_session_state.live_infra_enabled is live_infra_enabled()
 
+    # Whatever the gate says, the credential namespace stays empty.
+    leaked = [
+        key
+        for key in os.environ
+        if key.startswith(hermetic_env.SCRUBBED_PREFIXES)
+        and key not in hermetic_env.PRESERVED_ENV
+        and key not in {"KIS_CONFIG_DIR", "KIS_TOKEN_CACHE_DIR"}
+    ]
+    assert leaked == []
 
-@requires_hermetic_session
-def test_live_infra_gate_never_pings_redis_in_a_hermetic_session(
+
+def test_redis_is_not_pinged_unless_the_live_infra_gate_is_open(
     hermetic_session_state,
 ):
-    """The gate's one-ping-per-process must not fire when nobody opted in.
+    """No real socket to Redis DB 1 — which the paper runtime shares — unless
+    the operator opted in.
 
     ``pytest_runtest_setup`` reaches ``redis_failure()`` only for an item
-    marked ``live_infra`` *and* ``live_infra_enabled()``. A hermetic session is
-    by definition the second one being false, so the ping — a real socket to
-    Redis DB 1, which the paper runtime shares — cannot happen here.
+    marked ``live_infra`` *and* ``live_infra_enabled()``. This is now the only
+    thing the opt-in controls, so it is the only thing worth pinning: with the
+    gate shut, nothing in the process has probed Redis.
     """
-    assert hermetic_session_state.live_infra_enabled is False
+    if hermetic_session_state.live_infra_enabled:
+        pytest.skip("the operator opened the gate; probing is the point")
+
     assert hermetic_session_state.redis_probed() is False
 
 
@@ -559,7 +546,6 @@ def test_live_infra_gate_never_pings_redis_in_a_hermetic_session(
 # ---------------------------------------------------------------------------
 
 
-@requires_hermetic_session
 def test_basetemp_outside_the_system_temp_dir_must_be_registered(tmp_path, monkeypatch):
     """A relocated basetemp is not sandboxed until the session registers it.
 
@@ -594,7 +580,6 @@ def test_basetemp_outside_the_system_temp_dir_must_be_registered(tmp_path, monke
     assert relocated.resolve() in hermetic_env.sandbox_roots()
 
 
-@requires_hermetic_session
 def test_register_sandbox_root_ignores_none_and_deduplicates(monkeypatch):
     """`pytest_configure` passes `--basetemp` straight through, usually None."""
     monkeypatch.setattr(hermetic_env, "_REGISTERED_SANDBOX_ROOTS", [])
@@ -607,7 +592,6 @@ def test_register_sandbox_root_ignores_none_and_deduplicates(monkeypatch):
     assert len(hermetic_env._REGISTERED_SANDBOX_ROOTS) == 1
 
 
-@requires_hermetic_session
 def test_this_session_registered_its_basetemp(request):
     """When this run uses --basetemp, the session must have registered it."""
     basetemp = getattr(request.config.option, "basetemp", None)
@@ -617,7 +601,6 @@ def test_this_session_registered_its_basetemp(request):
     assert hermetic_env.is_sandboxed(Path(basetemp))
 
 
-@requires_hermetic_session
 def test_pinned_token_cache_is_under_one_session_wide_root(hermetic_session_state):
     """Every process's pin lives under a root the controller can scan.
 
