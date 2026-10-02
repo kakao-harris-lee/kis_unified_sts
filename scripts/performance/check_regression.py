@@ -247,6 +247,30 @@ class MetricComparison:
 
 
 @dataclass
+class RoundOutcomes:
+    """How a single benchmark fared across the measured rounds.
+
+    A benchmark assertion like ``improvement_pct >= -40`` is itself a
+    single-sample timing comparison, so it can fail in one round and pass in the
+    next four. Failing the job on that reproduces #768 one level down. Counted
+    here so a MINORITY of failing rounds is reported and a MAJORITY fails.
+    """
+
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+
+    @property
+    def decided(self) -> int:
+        """Rounds where the benchmark actually ran (passed or failed)."""
+        return self.passed + self.failed
+
+    @property
+    def is_majority_failure(self) -> bool:
+        return self.failed > 0 and self.failed * 2 > self.decided
+
+
+@dataclass
 class SampleSource:
     """Where one loaded sample file came from, for provenance reporting."""
 
@@ -414,6 +438,34 @@ class RegressionChecker:
 
         stats = {name: BenchmarkStats.from_values(v) for name, v in merged.items()}
         return stats, sources
+
+    def load_round_outcomes(self, paths: Sequence[Path]) -> dict[str, RoundOutcomes]:
+        """Tally pass/fail/skip per benchmark across the per-round reports.
+
+        Samples files carry no outcomes (only durations of passing runs), so
+        they contribute nothing here and the tally is simply empty for them.
+        """
+        tally: dict[str, RoundOutcomes] = {}
+        for path in paths:
+            if not path.exists():
+                continue
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("schema") == SAMPLES_SCHEMA:
+                continue
+            for test in data.get("tests", []):
+                nodeid = test.get("nodeid", "")
+                if not nodeid:
+                    continue
+                entry = tally.setdefault(nodeid, RoundOutcomes())
+                outcome = test.get("outcome")
+                if outcome == "passed":
+                    entry.passed += 1
+                elif outcome == "skipped":
+                    entry.skipped += 1
+                else:
+                    entry.failed += 1
+        return tally
 
     # ------------------------------------------------------------------
     # Comparison
@@ -762,6 +814,44 @@ class RegressionChecker:
             print("✅ PASSED: No performance regressions detected")
             return num_errors, num_warnings, num_passed
 
+    def print_round_outcomes(
+        self, outcomes: dict[str, RoundOutcomes]
+    ) -> tuple[int, int]:
+        """Report benchmarks that failed in some rounds.
+
+        Returns (num_errors, num_warnings): a benchmark that failed in a
+        MAJORITY of the rounds it ran in is an error; a minority is a warning,
+        because a single failing round of a timing assertion is one noisy
+        sample, which is the whole subject of #768.
+        """
+        flaky = {name: o for name, o in outcomes.items() if o.failed > 0}
+        if not flaky:
+            return 0, 0
+
+        errors = {n: o for n, o in flaky.items() if o.is_majority_failure}
+        warnings = {n: o for n, o in flaky.items() if not o.is_majority_failure}
+
+        print("\n" + "=" * 80)
+        print("TEST OUTCOMES ACROSS ROUNDS")
+        print("=" * 80)
+        for name, o in sorted(errors.items()):
+            print(f"  🔴 {name}")
+            print(
+                f"     FAILED in {o.failed} of {o.decided} rounds it ran in "
+                f"(majority) — this is a test failure, not noise"
+            )
+            self.logger.error("%s failed in %d of %d rounds", name, o.failed, o.decided)
+        for name, o in sorted(warnings.items()):
+            print(f"  ⚠️  {name}")
+            print(
+                f"     failed in {o.failed} of {o.decided} rounds "
+                f"(minority) — one noisy round, measurement kept from the rest"
+            )
+            self.logger.warning(
+                "%s failed in %d of %d rounds (minority)", name, o.failed, o.decided
+            )
+        return len(errors), len(warnings)
+
     def markdown_summary(
         self,
         comparisons: Sequence[MetricComparison],
@@ -1054,6 +1144,15 @@ class RegressionChecker:
             num_errors, num_warnings, num_passed = self.print_report(
                 comparisons, runner_factor
             )
+
+            # A benchmark that FAILED its own assertion in a majority of rounds
+            # is a test failure and must fail the job, even when the surviving
+            # rounds' median looks fine.
+            outcome_errors, outcome_warnings = self.print_round_outcomes(
+                self.load_round_outcomes(current_paths)
+            )
+            num_errors += outcome_errors
+            num_warnings += outcome_warnings
 
             if markdown_summary is not None:
                 markdown_summary.parent.mkdir(parents=True, exist_ok=True)

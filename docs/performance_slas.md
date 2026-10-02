@@ -53,12 +53,23 @@ python scripts/performance/check_regression.py \
   --warning-threshold 1.5 --error-threshold 2.0 --min-duration 0.05
 ```
 
-A round that FAILS a test does not stop the loop. Running N rounds multiplies
-the chance of hitting a flaky assertion by N, and a failure in round 3 must not
-throw away the measurement from the other four — the checker handles a benchmark
-with fewer samples and prints the reduced `n` (`current n=4-5`). The job still
-goes red, in a final step that runs after the report and the artifact exist. A
-failing performance test is a test failure, not a measurement.
+A round that FAILS a test does not stop the loop, and does not by itself fail
+the job. Running N rounds multiplies the chance of hitting a flaky assertion by
+N, and a failure in round 3 must not throw away the measurement from the other
+four. The checker counts outcomes per benchmark instead:
+
+| failing rounds | verdict |
+| --- | --- |
+| minority (1 of 5) | ⚠️ warning, job stays green |
+| majority (3 of 5) | 🔴 error, job red |
+| skipped in every round | not a failure — reported as `Test not found` |
+
+The reason is the same one the whole check is about. A benchmark assertion like
+`test_exit_path_50_symbols`'s `improvement_pct >= -40` is itself a
+single-sample timing comparison: on run 36954483251 it produced −41.8% in one
+round of five and passed in the other four. Failing the build on that
+reproduces #768 one level down. A test that fails in most rounds is a test
+failure and does fail the build.
 
 Thresholds are unchanged: `>=2x` fails, `1.5x-2x` is a non-fatal warning, and
 benchmarks whose baseline median is under 50 ms are exempt because their

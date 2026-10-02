@@ -141,4 +141,3 @@ config/strategies/built/*.yaml
 tests/performance/rounds/
 tests/performance/current.json
 tests/performance/baselines.candidate.json
-tests/performance/round-failures.txt

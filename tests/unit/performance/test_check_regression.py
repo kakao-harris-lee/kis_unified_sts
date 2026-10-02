@@ -815,3 +815,120 @@ class TestEmptyPathArguments:
             )
             == 0
         )
+
+
+def _report_with_outcomes(entries: dict[str, tuple[str, float]]) -> dict:
+    """pytest-json-report where each test carries an explicit outcome."""
+    return {
+        "summary": {"total": len(entries)},
+        "tests": [
+            {
+                "nodeid": nodeid,
+                "outcome": outcome,
+                "setup": {"duration": 0.0},
+                "call": {"duration": duration},
+                "teardown": {"duration": 0.0},
+            }
+            for nodeid, (outcome, duration) in entries.items()
+        ],
+    }
+
+
+class TestRoundOutcomes:
+    """A benchmark's own assertion is a single-sample timing comparison.
+
+    `test_exit_path_50_symbols` asserts `improvement_pct >= -40` on one
+    measurement; observed on CI run 36954483251 it produced -41.8% in one round
+    of five and passed in the others. Failing the job on that reproduces #768
+    one level down, so a minority of failing rounds is a warning and a majority
+    is an error.
+    """
+
+    def _rounds(self, tmp_path, failing: int, total: int = 5):
+        paths = []
+        for i in range(1, total + 1):
+            entries = {f"t{j}": ("passed", 0.10) for j in range(5)}
+            entries["flaky"] = ("failed", 0.10) if i <= failing else ("passed", 0.10)
+            paths.append(
+                _write_json(
+                    tmp_path / f"round-{i}.json", _report_with_outcomes(entries)
+                )
+            )
+        return paths
+
+    def test_minority_failure_is_a_warning_not_a_job_failure(self, tmp_path, capsys):
+        checker = _checker()
+        tally = checker.load_round_outcomes(self._rounds(tmp_path, failing=1))
+        assert tally["flaky"].failed == 1
+        assert tally["flaky"].passed == 4
+        assert tally["flaky"].is_majority_failure is False
+
+        errors, warnings = checker.print_round_outcomes(tally)
+        assert (errors, warnings) == (0, 1)
+        out = capsys.readouterr().out
+        assert "failed in 1 of 5 rounds" in out
+        assert "minority" in out
+
+    def test_majority_failure_is_an_error(self, tmp_path, capsys):
+        checker = _checker()
+        tally = checker.load_round_outcomes(self._rounds(tmp_path, failing=3))
+        assert tally["flaky"].is_majority_failure is True
+
+        errors, warnings = checker.print_round_outcomes(tally)
+        assert (errors, warnings) == (1, 0)
+        assert "FAILED in 3 of 5 rounds" in capsys.readouterr().out
+
+    def test_exactly_half_is_not_a_majority(self, tmp_path):
+        checker = _checker()
+        tally = checker.load_round_outcomes(self._rounds(tmp_path, failing=2, total=4))
+        assert tally["flaky"].failed == 2
+        assert tally["flaky"].decided == 4
+        assert tally["flaky"].is_majority_failure is False
+
+    def test_a_test_skipped_in_every_round_is_not_a_failure(self, tmp_path, capsys):
+        """The 12 redis/websocket benchmarks skip in CI. They are missing, not failing."""
+        checker = _checker()
+        paths = [
+            _write_json(
+                tmp_path / f"round-{i}.json",
+                _report_with_outcomes({"redis_bench": ("skipped", 0.0)}),
+            )
+            for i in range(1, 6)
+        ]
+        tally = checker.load_round_outcomes(paths)
+        assert tally["redis_bench"].skipped == 5
+        assert tally["redis_bench"].failed == 0
+        assert checker.print_round_outcomes(tally) == (0, 0)
+        assert capsys.readouterr().out == ""
+
+    def test_samples_files_carry_no_outcomes(self, tmp_path):
+        checker = _checker()
+        doc = checker.build_samples_document(
+            {"a": _stats(MEASURED_ROUNDS)}, collect_provenance(rounds=7)
+        )
+        path = _write_json(tmp_path / "current.json", doc)
+        assert checker.load_round_outcomes([path]) == {}
+
+
+class TestRoundOutcomesChangeTheExitCode:
+    def _cli(self, tmp_path, failing: int):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _report({**{f"t{j}": 0.10 for j in range(5)}, "flaky": 0.10}),
+        )
+        rounds = []
+        for i in range(1, 6):
+            entries = {f"t{j}": ("passed", 0.10) for j in range(5)}
+            entries["flaky"] = ("failed", 0.10) if i <= failing else ("passed", 0.10)
+            rounds.append(
+                _write_json(
+                    tmp_path / f"round-{i}.json", _report_with_outcomes(entries)
+                )
+            )
+        return ["--baseline", str(baseline), "--current", *[str(p) for p in rounds]]
+
+    def test_one_flaky_round_keeps_the_job_green(self, tmp_path):
+        assert _crmod.main(self._cli(tmp_path, failing=1)) == 0
+
+    def test_a_majority_of_failing_rounds_exits_two(self, tmp_path):
+        assert _crmod.main(self._cli(tmp_path, failing=3)) == 2
