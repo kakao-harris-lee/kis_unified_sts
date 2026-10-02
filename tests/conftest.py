@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 
 # Imported AFTER project_root lands on sys.path — `tests` is a namespace package.
 from tests.support import git_env  # noqa: E402
+from tests.support.live_infra import LIVE_INFRA_ENV, live_infra_enabled  # noqa: E402
 
 _LIVE_INFRA_TEST_PATHS = {
     # These tests connect to real Redis DB 1. Some of them
@@ -35,7 +36,9 @@ _LIVE_INFRA_TEST_PATHS = {
     "tests/shared/risk/test_persistence.py",
 }
 
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+# One definition of the flag and of what counts as truthy, shared with the
+# per-module gates in tests/performance/ (tests/support/live_infra.py).
+_LIVE_INFRA_ENV = LIVE_INFRA_ENV
 
 # Load .env so tests can access infrastructure credentials (Redis, etc.)
 _env_file = project_root / ".env"
@@ -148,11 +151,7 @@ def pytest_collection_modifyitems(config, items):
     policy. Skipping these tests by default prevents accidental deletion or
     overwrite of active paper-trading keys during ordinary local test runs.
     """
-    allow_live_infra = os.getenv(_LIVE_INFRA_ENV, "").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    allow_live_infra = live_infra_enabled()
     skip_live_infra = pytest.mark.skip(
         reason=(
             "live Redis test skipped by default; set "

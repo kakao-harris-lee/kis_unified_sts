@@ -43,35 +43,19 @@ import redis
 from shared.streaming.client import RedisClient
 from shared.streaming.message import StreamMessage
 from shared.streaming.publisher import StreamPublisher
+from tests.support.live_infra import live_infra_enabled, require_redis, skip_reason
 
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+# Despite the module name, nothing here talks to a KIS WebSocket endpoint: the
+# subject is the Redis Stream layer that carries market data between services
+# (see the module docstring). These benchmarks are therefore runnable in CI
+# with a Redis service container, and the only thing that kept them out was the
+# unset opt-in flag. Same two-case split as test_redis_load.py: opted out ->
+# skip; opted in with Redis unreachable -> fail collection loudly.
+require_redis(__name__)
 
-
-def _live_infra_enabled() -> bool:
-    """Return whether live Redis tests may touch infrastructure."""
-    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _is_redis_available() -> bool:
-    """Check if Redis is available for testing."""
-    if not _live_infra_enabled():
-        return False
-
-    try:
-        client = RedisClient.get_client()
-        client.ping()
-        return True
-    except (redis.ConnectionError, redis.TimeoutError, OSError):
-        return False
-
-
-# Skip all tests if Redis is not available
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        not _is_redis_available(),
-        reason="Redis not available (start with: docker-compose up -d redis)"
-    ),
+    pytest.mark.skipif(not live_infra_enabled(), reason=skip_reason()),
 ]
 
 

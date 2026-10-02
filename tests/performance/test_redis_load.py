@@ -30,46 +30,29 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import os
 import statistics
 import time
 from datetime import datetime
 from typing import Any
 
 import pytest
-import redis
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.streaming.client import RedisClient
+from tests.support.live_infra import live_infra_enabled, require_redis, skip_reason
 
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+# Opted out -> skip, with a reason that names the flag instead of guessing at
+# Redis. Opted in but Redis unreachable -> raise here, during collection.
+# The old code collapsed both into one `skipif(not _is_redis_available())`, so
+# the CI `performance` job skipped these six benchmarks for four months with
+# the reason "Redis not available" while its Redis service container was up and
+# healthy; the real cause was the unset flag. A silent skip also leaves the
+# baseline entry unmeasured and the job green, which is the #768 failure mode.
+require_redis(__name__)
 
-
-def _live_infra_enabled() -> bool:
-    """Return whether live Redis tests may touch infrastructure."""
-    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _is_redis_available() -> bool:
-    """Check if Redis is available for testing."""
-    if not _live_infra_enabled():
-        return False
-
-    try:
-        client = RedisClient.get_client()
-        client.ping()
-        return True
-    except (redis.ConnectionError, redis.TimeoutError, OSError):
-        return False
-
-
-# Skip all tests if Redis is not available
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        not _is_redis_available(),
-        reason="Redis not available (start with: docker-compose up -d redis)"
-    ),
+    pytest.mark.skipif(not live_infra_enabled(), reason=skip_reason()),
 ]
 
 
