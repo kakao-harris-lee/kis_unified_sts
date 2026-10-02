@@ -49,6 +49,8 @@ from tests.support.live_infra import LIVE_INFRA_ENV, live_infra_enabled
 __all__ = [
     "HERMETIC_ENV",
     "HOME_TOKEN_CACHE_NAMES",
+    "TOKEN_CACHE_BASE_ENV",
+    "new_token_caches_under",
     "LIVE_INFRA_ENV",
     "live_infra_enabled",
     "PRESERVED_ENV",
@@ -67,6 +69,13 @@ __all__ = [
     "token_caches_touched_since",
 ]
 
+#: The session-wide root every process's token-cache pin lives under. The
+#: controller creates it and xdist workers inherit it through the environment,
+#: so one process — the controller, whose ``pytest_sessionfinish`` runs last —
+#: sees tokens any worker wrote. A per-process ``mkdtemp`` cannot be checked
+#: that way: a worker's verdict never reaches the run's exit code.
+TOKEN_CACHE_BASE_ENV = "KIS_TEST_TOKEN_CACHE_BASE"
+
 #: Every variable in these namespaces is removed from a hermetic session. Both
 #: carry broker or operator credentials (``KIS_*_APP_KEY``, ``KIS_*_ACCOUNT_NO``,
 #: ``TELEGRAM_*_BOT_TOKEN``) and both are populated by the deploy host's ``.env``.
@@ -78,6 +87,7 @@ PRESERVED_ENV = frozenset(
     {
         HERMETIC_ENV,
         LIVE_INFRA_ENV,
+        TOKEN_CACHE_BASE_ENV,
         "KIS_TEST_IMAGE_NO_GIT_METADATA",
     }
 )
@@ -125,22 +135,18 @@ def scrub_broker_env(
 # ---------------------------------------------------------------------------
 
 
-def token_cache_witnesses(
-    project_root: Path, token_cache_dir: Path | None = None
-) -> tuple[Path, ...]:
-    """Every place a KIS token cache could land during a test run.
+def token_cache_witnesses(project_root: Path) -> tuple[Path, ...]:
+    """Fixed paths where a KIS token cache could land during a test run.
 
     The checkout root and the working directory because
     ``KISAuthConfig.token_cache_path`` defaults to ``Path.cwd()``; the home
-    cache because two collectors hardcode ``~/.cache/kis_token_*.json``; and
-    the session's pinned ``KIS_TOKEN_CACHE_DIR``, because pinning decides
-    *where* a token lands, not whether one is issued — a test that reaches the
-    KIS token endpoint is the thing #698 is about, and it would otherwise
-    write there unobserved.
+    cache because two collectors hardcode ``~/.cache/kis_token_*.json``.
+
+    The session's pinned cache root is *not* here: its per-worker
+    subdirectories are not known in advance, so it is scanned as a tree by
+    :func:`new_token_caches_under` instead.
     """
     roots = [project_root]
-    if token_cache_dir is not None:
-        roots.append(token_cache_dir)
     try:
         cwd = Path.cwd()
     except OSError:  # pragma: no cover - cwd deleted under us
@@ -165,6 +171,22 @@ def _stat_or_none(path: Path) -> _Stat:
 def snapshot_token_caches(paths: Iterable[Path]) -> TokenCacheSnapshot:
     """Record what each witness looked like before any test ran."""
     return {path: _stat_or_none(path) for path in paths}
+
+
+def new_token_caches_under(root: Path | None) -> list[Path]:
+    """Any ``.kis_token_*`` anywhere under the session's pinned cache root.
+
+    Pinning decides *where* a token lands, not whether one is issued — and a
+    test reaching the KIS token endpoint is what #698 is about. The root
+    starts empty and nothing legitimate writes there, so every hit is new and
+    no snapshot is needed.
+    """
+    if root is None:
+        return []
+    try:
+        return sorted(path for path in root.rglob(".kis_token_*") if path.is_file())
+    except OSError:  # pragma: no cover - root removed mid-run
+        return []
 
 
 def token_caches_touched_since(snapshot: TokenCacheSnapshot) -> list[Path]:

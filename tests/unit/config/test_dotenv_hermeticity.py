@@ -615,3 +615,25 @@ def test_this_session_registered_its_basetemp(request):
         pytest.skip("this run did not pass --basetemp")
 
     assert hermetic_env.is_sandboxed(Path(basetemp))
+
+
+@requires_hermetic_session
+def test_pinned_token_cache_is_under_one_session_wide_root(hermetic_session_state):
+    """Every process's pin lives under a root the controller can scan.
+
+    A per-process ``mkdtemp`` would be invisible to the run's verdict: under
+    ``-n auto`` a worker's ``pytest_sessionfinish`` sets only its own exit
+    status, which xdist does not propagate, so a token written there would be
+    printed and then ignored. Sharing the root is what makes
+    ``new_token_caches_under`` cover the whole run (#698).
+    """
+    base = hermetic_session_state.token_cache_base
+    pinned = hermetic_session_state.token_cache_dir
+
+    assert base is not None
+    assert os.environ[hermetic_env.TOKEN_CACHE_BASE_ENV] == str(base)
+    assert pinned == base or base in pinned.parents
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker:
+        assert pinned.name == worker

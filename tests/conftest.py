@@ -121,11 +121,30 @@ def _apply_hermetic_pins() -> None:
     # which is how a real .kis_token_real landed in a worktree root on
     # 2026-09-15.
     os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
+    os.environ[hermetic_env.TOKEN_CACHE_BASE_ENV] = str(TOKEN_CACHE_BASE)
 
+
+#: The shared root, created by the controller and inherited by xdist workers.
+#: ``None`` outside a hermetic session.
+TOKEN_CACHE_BASE: Path | None = None
 
 if HERMETIC_SESSION:
-    TOKEN_CACHE_DIR = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
-    atexit.register(shutil.rmtree, TOKEN_CACHE_DIR, True)
+    # One root per *session*, not per process. xdist workers inherit it
+    # through the environment and take a subdirectory of it, so the
+    # controller — whose pytest_sessionfinish runs last — can see a token any
+    # worker wrote. Read before the scrub, which empties the KIS_ namespace.
+    _inherited_base = os.environ.get(hermetic_env.TOKEN_CACHE_BASE_ENV)
+    _xdist_worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if _inherited_base:
+        TOKEN_CACHE_BASE = Path(_inherited_base)
+    else:
+        TOKEN_CACHE_BASE = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
+        atexit.register(shutil.rmtree, TOKEN_CACHE_BASE, True)
+
+    TOKEN_CACHE_DIR = (
+        TOKEN_CACHE_BASE / _xdist_worker_id if _xdist_worker_id else TOKEN_CACHE_BASE
+    )
+    TOKEN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _apply_hermetic_pins()
 
     # Turn any remaining .env read into a named failure instead of a silent
@@ -133,7 +152,7 @@ if HERMETIC_SESSION:
     hermetic_env.install_dotenv_guard()
 
     TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
-        hermetic_env.token_cache_witnesses(project_root, TOKEN_CACHE_DIR)
+        hermetic_env.token_cache_witnesses(project_root)
     )
 else:
     # Live-infra opt-in: the operator asked for real Redis and friends, so this
@@ -247,6 +266,7 @@ def pytest_sessionfinish(session, exitstatus):
         return
 
     touched = hermetic_env.token_caches_touched_since(TOKEN_CACHE_SNAPSHOT)
+    touched += hermetic_env.new_token_caches_under(TOKEN_CACHE_BASE)
     if not touched:
         return
 
@@ -371,6 +391,7 @@ def hermetic_session_state():
         hermetic=HERMETIC_SESSION,
         live_infra_enabled=live_infra_enabled(),
         token_cache_dir=TOKEN_CACHE_DIR,
+        token_cache_base=TOKEN_CACHE_BASE,
         redis_probed=lambda: _REDIS_PROBE is not None,
     )
 
