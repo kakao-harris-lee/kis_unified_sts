@@ -2130,7 +2130,7 @@ PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이�
 | `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
 | `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
 | `1670d7f8` | 이 착지 기록 (§7.1.17) + INDEX 행 |
-| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `0e76c127…` |
+| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `e3fc3b7b…` |
 
 ##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
 
@@ -2233,7 +2233,7 @@ mypy: 커널 `Success (266 files)`. 런타임은 **27 errors in 18 files** 인�
 
 digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
 `d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835` →
-`0e76c127c52949848a0e2331e624286ad85f7e97468ff9a1ddc98483f3afeca1`(아래 자기점검).
+`e3fc3b7baa9456e7367003f4ac4c186ed43d2f1357ea29c50179905511f0d1a1`(아래 자기점검).
 `print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. 핀 **두 곳 모두** 갱신.
 `expected_dependency_set_digest` 불변.
 
@@ -2250,6 +2250,15 @@ digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
 이고 공개 핸들이 없다 — 「반복할 수 없다」가 읽어야 하는 지시가 아니라 **모듈 표면의
 사실**이 됐다. 확인: `grep -c "conn.execute(_SCHEMA_LEDGER_TABLE_SQL)"` = **1**,
 `SCHEMA_LEDGER_TABLE_SQL` 을 import 하는 코드 **0 건**.
+
+같은 점검에서 하나 더 **적었다**(고치지 않고). `create_schema_ledger_objects` 는 자기
+트랜잭션을 열지 **않는다** — 열 수 없다: 제네시스 경로는 이미 `BEGIN IMMEDIATE` 안에서
+부르고(중첩 `BEGIN` 은 예외), `apply_migrations` · `ensure_schema_current` 는 autocommit
+에서 부른다. 그래서 후자 둘에서는 세 문장이 **원자적이지 않다**: `CREATE TABLE` 과 두
+번째 `CREATE TRIGGER` 사이에 I/O 오류가 나면 트리거가 하나이거나 없는 — 바로 그 나쁜
+상태가 남는다. 창은 **실재하지만 유계이고 스스로 닫힌다**: 다음 `migrate` 가 멱등하게
+복구하고, 반환값이 그 복구를 **보이게** 만든다. 함수 독스트링에 그대로 적었다 —
+**말해지지 않은 창이 원래 결함이 살아남은 방식**이기 때문이다.
 
 ##### 운영자 행동
 

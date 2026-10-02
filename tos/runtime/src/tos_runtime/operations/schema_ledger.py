@@ -175,6 +175,18 @@ def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
     triggers. The two paths are supposed to converge on one schema; they did not, and the
     difference was invisible to every check in this package.
 
+    **This function does NOT open a transaction of its own, and its three statements are
+    therefore not atomic at two of its three call sites.** It cannot: :func:`open_or_create
+    _schema` already calls it inside ``BEGIN IMMEDIATE`` (so a nested ``BEGIN`` would raise),
+    while :func:`~tos_runtime.operations.schema_migrations.apply_migrations` and
+    :func:`ensure_schema_current` call it in autocommit, where each DDL statement commits on
+    its own. The window that leaves is real but bounded and self-healing: an I/O failure
+    between the ``CREATE TABLE`` and the second ``CREATE TRIGGER`` leaves a table with one or
+    neither trigger — exactly the bad state above — and the NEXT ``migrate`` closes it, because
+    this function is idempotent and its return value makes the repair visible instead of
+    silent. Stated here rather than left implicit: an unstated window is how the original
+    defect survived.
+
     Returns:
         The names of the triggers this call actually had to create — empty on a healthy file.
         A non-empty result means the ledger was running unprotected until now, which the caller
