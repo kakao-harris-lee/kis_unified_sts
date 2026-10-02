@@ -2262,3 +2262,68 @@ CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
 ⚠ **A2 레인(§7.1.17)이 뒤에 머지되면 그쪽이 다시 도출해야 한다** — #814 가 main 을 stale 로
 만든 전례가 있고, CI 는 그것을 잡지 않는다.
+
+#### 7.1.19 독립 리뷰 #840 처분 (2026-10-02)
+
+리뷰 레인은 저자와 다른 패스이지만 **같은 계열(Claude)** 이다 — 운영자는 이 PR 에 Codex
+심사를 붙이지 않았다(CLAUDE.md 2026-09-11 은 되돌리기 어려운 경로를 대상으로 «할 수 있다»로
+열어 두었을 뿐, 범위·비용 승인이 있을 때만이다). 따라서 이 라운드의 교차모델 독립성은
+**없다** — 판정의 일부로 적는다.
+
+판정 **needs-attention**, 9건 전건 처분. **1~3 은 이 PR 의 목적 자체를 깨고 있었다**:
+「무인 실행이 가능하게 만든 문」이라고 적어 놓고, 무인 실행이 실제로 만날 세 가지 상황에서
+각각 영구 정지 · traceback · 감시 공백이었다.
+
+| # | 지적 | 조치 |
+|---|---|---|
+| F1 | **한 번의 실패가 이후 모든 실행을 영구히 막는다.** 매니페스트는 **마지막에** 쓰이므로 중도 사망은 매니페스트 없는 `gen{N}/` 를 남기는데, 세대 할당이 매니페스트만 셌다 → 매일 밤 같은 N → `FileExistsError` → 사람이 손으로 지울 때까지 백업 0 | `next_generation` 이 **시도된** 세대(디렉터리)도 센다. **아무것도 지우지 않는다** — 부분 디렉터리는 그 자리에 남고 번호만 건너뛴다. 손으로 같은 번호를 쓰는 경로의 `FileExistsError` 는 이름 붙은 거부로 |
+| F2 | **cron 이 실제로 만날 실패가 전부 traceback.** Refused 셋만 잡고 있어 `database is locked`(런타임이 떠 있을 때) · ENOSPC · 커스터디 · 깨진 매니페스트가 스택트레이스로 나갔다 — 런북 §5 가 약속한 「한 줄」이 **정확히 그 경우들에서 거짓** | 단계 태그 `ColdBackupFailed`(원인은 `__cause__`) + `_run_dispatch` 와 같은 형태의 broad catch. **`refused`(규칙이 아니라고 함)와 `failed`(환경이 무너짐)를 섞지 않는다** — 다음 행동이 다르다 |
+| F3 | **용량 경보가 가장 빨리 자라는 트리를 안 봤다.** `archive_dir` 만 쟀는데 비압축 세대가 쌓이는 `backup_root` 가 큰 쪽이고, 런북은 둘을 **다른 매체**에 두라고 한다 | 세 루트 전부 측정 · `st_dev` 로 묶어 한 번씩. 보고서도 파일시스템 단위(`free_space_before/after`) |
+| F4 | `minimum_free_bytes: 0` 이 통과했다 — null 을 거부한 바로 그 이유(조용한 비활성화)를 그대로 허용 | `<= 0` 거부 |
+| F5 | 독스트링이 「세 경로를 서로 대조한다」고 **주장만** 했다(검사 없음) | 주장을 지우는 쪽이 아니라 **검사를 구현**했다 — 동일·중첩 거부(같은 부모 공유는 허용) |
+| F6 | 런북의 cron 이 **공용 체크아웃**에서 돈다 — 17:50 에 레인이 브랜치를 바꾸면 18:00 의 무인 실행이 리뷰 전 코드로 실 데이터를 건드린다(#793 과 같은 노출) | 분리 워크트리(detached `origin/main`) + 가드 래퍼: 브랜치 위면 거부 · 더티면 거부 · `PYTHONPATH` 절대경로로 **검증한 트리의 코드가 실제로 실행되게** 강제(`run_p_ca.sh` 가 같은 함정을 이미 다룬다) |
+| F7 | `manifest_path_for` 를 추가해 놓고 **아무 데서도 안 썼다** | 두 호출부에서 사용 + 관측기는 스캔이라 경로가 아니라 접미사가 필요하므로 `MANIFEST_SUFFIX` 공개. 철자 넷 → 하나 |
+| F8 | 「`run` 은 운영 함수에 닿지 않는다」 센티널이 새로 닿을 수 있게 된 `cold_backup` 을 안 든다 | 추가 |
+| F9 | union 멤버 중복 | 제거 |
+
+##### 곁가지로 잡힌 것
+
+보관 경로 자리에 **파일**이 있으면(오타) 여유 공간은 상위 디렉터리로 해소돼 프리플라이트를
+통과하고, durable set 을 전부 복사한 **뒤** 아카이브의 `mkdir` 에서 터졌다. 착수 전 거부로
+옮겼다.
+
+##### ⚠ 테스트 하나가 자기 이유로 실패할 수 없었다
+
+F3 의 변이(바닥을 `archive_dir` 만 측정)가 **1차 시도에서 green** 이었다. 스텁이 받은
+`roots` 인자를 무시하고 어떤 루트를 재든 같은 낮은 값을 돌려줬기 때문이다 — 검사가 좁아져도
+거부는 그대로 났고 테스트는 통과했다. 스텁이 `roots` 를 읽도록 고친 뒤에야 red 가 됐다.
+프로젝트 메모리 `guards-that-admit-what-they-name` 의 교훈이 **테스트 더블에도** 적용된다:
+「이것이 실패하는 구체적 입력」을 못 쓰면 그 테스트는 아무것도 막지 않는다.
+
+##### 변이로 red 확인 6건
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 할당기가 디렉터리를 무시 | `test_next_generation_steps_past_…` · `…takes_the_higher_of…` · `test_a_leftover_generation_directory_does_not_wedge_the_next_run` |
+| 단계 래퍼 제거 | 단계 실패 4건(ops 2 · CLI 2) |
+| 바닥을 `archive_dir` 만 측정 | `test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage` (스텁 수정 **후**) |
+| 중첩 검사 제거 | 동일·중첩 3건 |
+| 0 바닥 허용 | `test_a_malformed_free_space_floor_is_refused[0]` |
+| 파일-디렉터리 가드 제거 | `test_a_destination_that_is_a_file_is_refused_before_the_snapshot` |
+
+새 테스트 합계 **61건**(`tests/operations/test_cold_backup.py` 48 ·
+`tests/compose/test_cold_backup_cli.py` 13).
+
+##### 범위 밖으로 남긴 것
+
+`backup_set` 이 실패 시 `gen_dir` 을 **지우도록** 하는 쪽(F1 의 다른 선택지)은 택하지
+않았다. 이 모듈의 계약은 「Never deleted, never overwritten」이고, 부분 사본이라도 증거의
+사본이다 — 번호를 건너뛰는 쪽이 같은 결과(무인 실행 지속)를 **삭제 없이** 낸다.
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · size budget PASS(0 violations · `backup_set` 101 줄 초과는 예외 등재가
+아니라 `_create_generation_dir` 분해로 해소) · named-TBD PASS · black/ruff 통과.
+mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
+`cd tos && mypy src`(266) · `tos/tests`(587).
