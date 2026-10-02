@@ -101,7 +101,6 @@ from typing import NoReturn, Protocol
 _LOG = logging.getLogger(__name__)
 
 __all__ = [
-    "SCHEMA_LEDGER_TABLE_SQL",
     "SCHEMA_LEDGER_TRIGGER_NAMES",
     "JournalModeRefused",
     "closing_on_failure",
@@ -116,7 +115,7 @@ __all__ = [
     "user_tables",
 ]
 
-SCHEMA_LEDGER_TABLE_SQL = """
+_SCHEMA_LEDGER_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS schema_ledger (
     version INTEGER PRIMARY KEY,
     applied_at_monotonic_ns INTEGER NOT NULL,
@@ -158,8 +157,12 @@ def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
     the table and the triggers are one object, not three: "append-only" is not a property of the
     ``CREATE TABLE`` — ``version`` being a PRIMARY KEY stops only a duplicate INSERT — it is a
     property of the two ``BEFORE UPDATE``/``BEFORE DELETE`` triggers beside it. A call site that
-    runs :data:`SCHEMA_LEDGER_TABLE_SQL` alone produces a ledger whose rows can be silently
-    rewritten or deleted, and nothing detects that afterwards:
+    runs :data:`_SCHEMA_LEDGER_TABLE_SQL` alone produces a ledger whose rows can be silently
+    rewritten or deleted — which is why that constant is PRIVATE and unexported, and why this
+    function is its ONLY executor in the package. "A future call site cannot repeat the
+    omission" is a claim about the module's surface, not an instruction someone has to read, so
+    it is kept true by there being no public handle to misuse. Nothing detects the bad state
+    afterwards:
     :func:`compute_schema_shape_digest` reads ``PRAGMA table_info``, which is blind to triggers,
     and :func:`open_or_create_schema`'s steady-state fast path returns on
     ``user_version``-matches-plus-``schema_ledger``-table-exists, so a later boot never re-runs
@@ -177,7 +180,7 @@ def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
         A non-empty result means the ledger was running unprotected until now, which the caller
         reports rather than repairing silently.
     """
-    conn.execute(SCHEMA_LEDGER_TABLE_SQL)
+    conn.execute(_SCHEMA_LEDGER_TABLE_SQL)
     before = _trigger_names(conn)
     conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
     conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
@@ -471,7 +474,7 @@ def file_is_fresh(conn: sqlite3.Connection) -> bool:
     """``True`` iff ``conn`` has no user tables yet.
 
     **Must be called BEFORE the caller's own ``CREATE TABLE`` DDL runs** (including before this
-    module's own :data:`SCHEMA_LEDGER_TABLE_SQL`) — otherwise a genuinely fresh file looks
+    module's own :data:`_SCHEMA_LEDGER_TABLE_SQL`) — otherwise a genuinely fresh file looks
     identical to one this very call already populated.
 
     :func:`open_or_create_schema` calls this INSIDE its own ``BEGIN IMMEDIATE``, which is what

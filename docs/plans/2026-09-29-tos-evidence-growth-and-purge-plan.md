@@ -2129,11 +2129,13 @@ PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이�
 | `286aa14f` | `schema_ledger` append-only 트리거를 `migrate` 경로에서도 만든다 + 테스트 3건 |
 | `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
 | `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
+| `1670d7f8` | 이 착지 기록 (§7.1.17) + INDEX 행 |
+| (다음) | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `0e76c127…` |
 
 ##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
 
 `apply_migrations` 는 대장 이전 파일을 위해 `schema_ledger` 를 **직접 만들 수 있어야**
-하고(그 파일에는 대장이 없다), `SCHEMA_LEDGER_TABLE_SQL` **만** 돌렸다. 제네시스 경로가
+하고(그 파일에는 대장이 없다), `_SCHEMA_LEDGER_TABLE_SQL`(당시 공개 이름 `SCHEMA_LEDGER_TABLE_SQL`) **만** 돌렸다. 제네시스 경로가
 그 옆에서 만드는 트리거 둘이 빠진다. `version` 이 PRIMARY KEY 라는 것은 **중복 INSERT**
 만 막는다 — UPDATE · DELETE 를 막는 것은 트리거다.
 
@@ -2230,9 +2232,24 @@ mypy: 커널 `Success (266 files)`. 런타임은 **27 errors in 18 files** 인�
 돌려 대조했다. 이 PR 이 들여온 것이 아니다.
 
 digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
-`d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835`.
+`d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835` →
+`0e76c127c52949848a0e2331e624286ad85f7e97468ff9a1ddc98483f3afeca1`(아래 자기점검).
 `print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. 핀 **두 곳 모두** 갱신.
 `expected_dependency_set_digest` 불변.
+
+##### 자기점검에서 한 건 더 — 이 PR 이 같은 형태를 저지르고 있었다
+
+첫 커밋의 주장은 「세 호출부를 한 헬퍼로 모았으므로 **네 번째 호출부가 같은 누락을
+반복할 수 없다**」였다. 그런데 `SCHEMA_LEDGER_TABLE_SQL` 은 **그대로 공개**였고
+`__all__` 에도 남아 있었다 — 즉 누구든 그 상수를 import 해 혼자 실행하면 정확히 같은
+무방비 대장을 다시 만들 수 있었다. **주장이 자기가 막는다고 말한 것을 허용하고 있었다**,
+이 PR 이 다루는 바로 그 형태로.
+
+처분: 상수를 `_SCHEMA_LEDGER_TABLE_SQL` 로 **비공개화**하고 `__all__` 에서 뺐다.
+이제 패키지 전체에서 그 상수를 **실행하는 자리가 한 곳**(`create_schema_ledger_objects`)
+이고 공개 핸들이 없다 — 「반복할 수 없다」가 읽어야 하는 지시가 아니라 **모듈 표면의
+사실**이 됐다. 확인: `grep -c "conn.execute(_SCHEMA_LEDGER_TABLE_SQL)"` = **1**,
+`SCHEMA_LEDGER_TABLE_SQL` 을 import 하는 코드 **0 건**.
 
 ##### 운영자 행동
 
