@@ -76,6 +76,20 @@ module's own expected column set before running anything — a mismatch refuses
 (:class:`SchemaMigrationRefused`) rather than silently running ``CREATE TABLE IF NOT EXISTS``
 over a table whose shape this code does not actually recognize.
 
+**The ledger this function creates is append-only, which it was not.** ``apply_migrations`` has
+to be able to create a ``schema_ledger`` itself (a pre-ledger file has none), and it used to do
+that with :data:`~tos_runtime.operations.schema_ledger.SCHEMA_LEDGER_TABLE_SQL` alone — the
+table, without the two ``BEFORE UPDATE``/``BEFORE DELETE`` triggers the genesis path creates
+beside it. Every pre-ledger file brought up by ``migrate`` therefore ended with a ledger whose
+rows could be rewritten or deleted, PERMANENTLY: the version stamp and the table both exist, so
+:func:`~tos_runtime.operations.schema_ledger.open_or_create_schema`'s steady-state fast path
+returns before any DDL runs and no later boot repairs them. Both paths now go through
+:func:`~tos_runtime.operations.schema_ledger.create_schema_ledger_objects`, so a genesis-created
+and a migrated file of the same version converge on one ``sqlite_master`` — asserted, not
+argued, by ``test_a_migrated_file_converges_on_the_genesis_schema``. A ``migrate`` that has to
+rebuild a missing trigger names it in :attr:`MigrationOutcome.repaired` rather than fixing it
+silently, the same discipline the dropped-index repair follows.
+
 Firewall: stdlib (``sqlite3``, ``hashlib``, ``time``) only.
 """
 
@@ -90,7 +104,7 @@ from pathlib import Path
 
 from tos_runtime.operations.schema_ledger import (
     MIGRATE_APPLIED_BY,
-    SCHEMA_LEDGER_TABLE_SQL,
+    create_schema_ledger_objects,
     read_schema_version,
 )
 
@@ -130,7 +144,10 @@ class MigrationOutcome:
         ledgered: The subset of :attr:`applied` that also wrote a ``schema_ledger`` row. A
             version can be applied WITHOUT being ledgered when its row already survived from an
             earlier run (the ledger is append-only, so a re-applied step is never re-recorded).
-        repaired: Names of auxiliary structures rebuilt at an already-current version.
+        repaired: Names of auxiliary structures this call had to rebuild — a dropped index at an
+            already-current version, and/or a missing ``schema_ledger`` append-only trigger. The
+            trigger half is reported at ANY version, not only at the current one, because a
+            ledger without its triggers is unprotected whatever version it is stamped at.
     """
 
     store_name: str
@@ -662,7 +679,7 @@ def apply_migrations(
 
     conn = sqlite3.connect(str(path))
     try:
-        conn.execute(SCHEMA_LEDGER_TABLE_SQL)
+        ledger_repaired = create_schema_ledger_objects(conn)
         current_version = read_schema_version(conn)
         target_version = migrations[-1].version
         if current_version > target_version:
@@ -707,9 +724,9 @@ def apply_migrations(
                 ledgered.append(migration.version)
             current_version = migration.version
 
-        repaired: tuple[str, ...] = ()
+        repaired: tuple[str, ...] = ledger_repaired
         if not applied and current_version == target_version:
-            repaired = _repair_at_current_version(conn, migrations[-1])
+            repaired += _repair_at_current_version(conn, migrations[-1])
         return MigrationOutcome(
             store_name=store_name,
             from_version=from_version,

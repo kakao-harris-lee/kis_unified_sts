@@ -102,10 +102,12 @@ _LOG = logging.getLogger(__name__)
 
 __all__ = [
     "SCHEMA_LEDGER_TABLE_SQL",
+    "SCHEMA_LEDGER_TRIGGER_NAMES",
     "JournalModeRefused",
     "closing_on_failure",
     "SchemaVersionRefused",
     "compute_schema_shape_digest",
+    "create_schema_ledger_objects",
     "enable_wal_journal",
     "ensure_schema_current",
     "file_is_fresh",
@@ -138,6 +140,57 @@ BEGIN
     SELECT RAISE(ABORT, 'tos_runtime schema ledger: schema_ledger is append-only — DELETE forbidden');
 END
 """
+
+#: The two triggers that make ``schema_ledger``'s name true. Named here so a caller can report
+#: which of them it had to rebuild, and so "the ledger's objects" is one list rather than a
+#: sequence every call site re-types (the omission that :func:`create_schema_ledger_objects`
+#: exists to make impossible).
+SCHEMA_LEDGER_TRIGGER_NAMES: tuple[str, ...] = (
+    "schema_ledger_no_update",
+    "schema_ledger_no_delete",
+)
+
+
+def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """Create the ``schema_ledger`` table AND its two append-only triggers, idempotently.
+
+    **Every** path that can bring a ``schema_ledger`` into existence goes through here, because
+    the table and the triggers are one object, not three: "append-only" is not a property of the
+    ``CREATE TABLE`` — ``version`` being a PRIMARY KEY stops only a duplicate INSERT — it is a
+    property of the two ``BEFORE UPDATE``/``BEFORE DELETE`` triggers beside it. A call site that
+    runs :data:`SCHEMA_LEDGER_TABLE_SQL` alone produces a ledger whose rows can be silently
+    rewritten or deleted, and nothing detects that afterwards:
+    :func:`compute_schema_shape_digest` reads ``PRAGMA table_info``, which is blind to triggers,
+    and :func:`open_or_create_schema`'s steady-state fast path returns on
+    ``user_version``-matches-plus-``schema_ledger``-table-exists, so a later boot never re-runs
+    any DDL that could repair them.
+
+    That is not hypothetical: :func:`~tos_runtime.operations.schema_migrations.apply_migrations`
+    did exactly that until this helper existed, so every pre-ledger file an operator brought up
+    with ``migrate`` — the documented upgrade path for a real paper ``data_dir`` — ended with a
+    PERMANENTLY unprotected ledger, while a genesis-created file of the same version had both
+    triggers. The two paths are supposed to converge on one schema; they did not, and the
+    difference was invisible to every check in this package.
+
+    Returns:
+        The names of the triggers this call actually had to create — empty on a healthy file.
+        A non-empty result means the ledger was running unprotected until now, which the caller
+        reports rather than repairing silently.
+    """
+    conn.execute(SCHEMA_LEDGER_TABLE_SQL)
+    before = _trigger_names(conn)
+    conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
+    conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+    return tuple(name for name in SCHEMA_LEDGER_TRIGGER_NAMES if name not in before)
+
+
+def _trigger_names(conn: sqlite3.Connection) -> frozenset[str]:
+    """Every trigger currently defined on this file."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IS NOT NULL"
+    ).fetchall()
+    return frozenset(str(row[0]) for row in rows)
+
 
 #: The ``applied_by`` value :func:`ensure_schema_current` writes for a genesis stamp — never a
 #: migration (case 1 above).
@@ -518,9 +571,7 @@ def _run_genesis_transaction(
     try:
         fresh = file_is_fresh(conn)
         create_ddl(conn, fresh)
-        conn.execute(SCHEMA_LEDGER_TABLE_SQL)
-        conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
-        conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+        create_schema_ledger_objects(conn)
         if fresh:
             conn.execute(f"PRAGMA user_version = {int(schema_version)}")
             conn.execute(
@@ -672,9 +723,7 @@ def ensure_schema_current(
         SchemaVersionRefused: On-disk ``user_version`` is behind OR ahead of ``schema_version``
             for a non-fresh file (module docstring cases 3/4).
     """
-    conn.execute(SCHEMA_LEDGER_TABLE_SQL)
-    conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
-    conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+    create_schema_ledger_objects(conn)
     current = read_schema_version(conn)
     if was_fresh:
         conn.execute("BEGIN IMMEDIATE")
