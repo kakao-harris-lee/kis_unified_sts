@@ -62,12 +62,18 @@ time as everything else changed.
 
 What repetition does and does not fix
 -------------------------------------
-Repeating inside one job shrinks the *within-job* component of the noise (the
-cold round above, an unlucky GC, a scheduler hiccup). It does NOT shrink the
-*between-runner* component: all N rounds share one runner, so a globally slow
-runner shifts all of them together. That component is what
-``runner_speed_factor`` targets, and what a multi-sample baseline keeps from
-being an arbitrary offset.
+The mechanism is not averaging-down of noise. The within-job distribution is
+bimodal -- one cold round and N-1 warm ones -- and the median of N simply
+excludes the cold round as long as fewer than half the rounds are cold. That is
+why N=5 suffices and why raising N further buys almost nothing: the second
+round is already warm. (An earlier draft claimed a sqrt(N) reduction. That is
+the standard-error law for the MEAN of independent samples and describes
+neither the median nor this distribution.)
+
+It does NOT shrink the *between-runner* component: all N rounds share one
+runner, so a globally slow runner shifts all of them together. That component is
+what ``runner_speed_factor`` targets, and what a multi-sample baseline keeps
+from being an arbitrary offset.
 
 Runner-speed normalization (#397) and its measured limit
 --------------------------------------------------------
@@ -139,8 +145,14 @@ MEASUREMENT_PROVENANCE_KEYS = (
     "python",
     "platform",
     "commit",
+    "github_event",
     "repository",
     "workflow_run",
+    # Both describe the measurement, not the aggregation: "rounds" is how many
+    # pytest sessions produced it and "sources" names them. Re-aggregating a
+    # samples file must not relabel it as one round from one file.
+    "rounds",
+    "sources",
 )
 
 # Project rule: timestamps are KST-native (CLAUDE.md, "Timezone: KST ONLY").
@@ -272,12 +284,21 @@ class RoundOutcomes:
 
 @dataclass
 class SampleSource:
-    """Where one loaded sample file came from, for provenance reporting."""
+    """Where one loaded sample file came from, for provenance reporting.
+
+    ``exitcode`` and ``failed_collectors`` are how a round that never ran is
+    told apart from a round that ran and measured nothing. pytest-json-report
+    writes a report even when collection aborts, so the file's existence proves
+    nothing on its own.
+    """
 
     path: Path
     kind: str  # "pytest-json-report" or "samples"
     rounds: int
     provenance: dict[str, Any] = field(default_factory=dict)
+    exitcode: int | None = None
+    failed_collectors: tuple[str, ...] = ()
+    tests_reported: int = 0
 
 
 class RegressionChecker:
@@ -412,14 +433,17 @@ class RegressionChecker:
 
     def load_sample_sets(
         self, paths: Sequence[Path]
-    ) -> tuple[dict[str, BenchmarkStats], list[SampleSource]]:
-        """Load and merge one or more report/samples files into sample arrays.
+    ) -> tuple[dict[str, BenchmarkStats], list[SampleSource], dict[str, RoundOutcomes]]:
+        """Load and merge report/samples files into sample arrays and outcomes.
 
         Several ``--current round-1.json round-2.json ...`` files merge into one
-        sample array per benchmark; a single samples file is used as-is.
+        sample array per benchmark; a single samples file is used as-is. This is
+        the only place a report is parsed, so the session checks (``exitcode``,
+        failed collectors) cannot drift away from the duration extraction.
         """
         merged: dict[str, list[float]] = {}
         sources: list[SampleSource] = []
+        outcomes: dict[str, RoundOutcomes] = {}
 
         for path in paths:
             data = self.load_metrics(path)
@@ -427,45 +451,80 @@ class RegressionChecker:
             per_file = self.extract_samples(data)
             for name, values in per_file.items():
                 merged.setdefault(name, []).extend(values)
-            sources.append(
-                SampleSource(
-                    path=path,
-                    kind="samples" if is_samples else "pytest-json-report",
-                    rounds=max((len(v) for v in per_file.values()), default=0),
-                    provenance=data.get("provenance", {}) if is_samples else {},
-                )
+
+            source = SampleSource(
+                path=path,
+                kind="samples" if is_samples else "pytest-json-report",
+                rounds=max((len(v) for v in per_file.values()), default=0),
+                provenance=data.get("provenance", {}) if is_samples else {},
             )
+            if not is_samples:
+                source.exitcode = data.get("exitcode")
+                source.failed_collectors = tuple(
+                    c.get("nodeid") or "<root>"
+                    for c in data.get("collectors", [])
+                    if c.get("outcome") not in (None, "passed")
+                )
+                tests = data.get("tests", [])
+                source.tests_reported = len(tests)
+                for test in tests:
+                    nodeid = test.get("nodeid", "")
+                    if not nodeid:
+                        continue
+                    entry = outcomes.setdefault(nodeid, RoundOutcomes())
+                    outcome = test.get("outcome")
+                    if outcome == "passed":
+                        entry.passed += 1
+                    elif outcome == "skipped":
+                        entry.skipped += 1
+                    else:
+                        entry.failed += 1
+            sources.append(source)
 
         stats = {name: BenchmarkStats.from_values(v) for name, v in merged.items()}
-        return stats, sources
+        return stats, sources, outcomes
 
-    def load_round_outcomes(self, paths: Sequence[Path]) -> dict[str, RoundOutcomes]:
-        """Tally pass/fail/skip per benchmark across the per-round reports.
+    def session_problems(
+        self,
+        sources: Sequence[SampleSource],
+        stats: dict[str, BenchmarkStats],
+    ) -> list[str]:
+        """Reasons the measurement itself is invalid, as opposed to a regression.
 
-        Samples files carry no outcomes (only durations of passing runs), so
-        they contribute nothing here and the tally is simply empty for them.
+        pytest writes a json report even when the session aborts, so a round
+        file can exist while nothing ran. Exit codes 0 and 1 mean the session
+        completed (1 = some test failed, which the majority rule judges);
+        anything else — 2 interrupted, 3 internal error, 4 usage error, 5 no
+        tests collected — means the round measured nothing. A suite that never
+        ran must not report green: before this PR a non-zero pytest exit failed
+        the step directly, and that property has to survive the loop.
         """
-        tally: dict[str, RoundOutcomes] = {}
-        for path in paths:
-            if not path.exists():
+        problems: list[str] = []
+        for source in sources:
+            if source.kind != "pytest-json-report":
                 continue
-            with open(path) as f:
-                data = json.load(f)
-            if isinstance(data, dict) and data.get("schema") == SAMPLES_SCHEMA:
-                continue
-            for test in data.get("tests", []):
-                nodeid = test.get("nodeid", "")
-                if not nodeid:
-                    continue
-                entry = tally.setdefault(nodeid, RoundOutcomes())
-                outcome = test.get("outcome")
-                if outcome == "passed":
-                    entry.passed += 1
-                elif outcome == "skipped":
-                    entry.skipped += 1
-                else:
-                    entry.failed += 1
-        return tally
+            if source.exitcode is not None and source.exitcode not in (0, 1):
+                problems.append(
+                    f"{source.path.name}: pytest exited {source.exitcode} — the "
+                    f"session aborted, so this round measured nothing "
+                    f"({source.tests_reported} tests in the report)"
+                )
+            if source.failed_collectors:
+                shown = ", ".join(source.failed_collectors[:3])
+                more = (
+                    f" (+{len(source.failed_collectors) - 3} more)"
+                    if len(source.failed_collectors) > 3
+                    else ""
+                )
+                problems.append(
+                    f"{source.path.name}: collection failed for {shown}{more}"
+                )
+        if not stats:
+            problems.append(
+                "no benchmark produced a single passing sample — there is "
+                "nothing to compare"
+            )
+        return problems
 
     # ------------------------------------------------------------------
     # Comparison
@@ -687,10 +746,17 @@ class RegressionChecker:
     ) -> list[MetricComparison]:
         """Comparisons whose BASELINE is a single sample (n=1).
 
-        A one-shot baseline is one draw from the runner's distribution. #768
-        measured what that costs: the committed 2026-05-30 baseline (0.1329s)
-        sits near the bottom of the same runner's present-day distribution
-        (median 0.2755s), so a median run reads as +107% with no code change.
+        A one-shot baseline is one draw with no recorded spread, so whatever
+        offset it carries is arbitrary and nothing downstream can tell a real
+        shift from where that draw happened to land.
+
+        It is NOT currently producing a false regression: measured on this
+        change's own CI (runs 36953158113 / 36954483251 / 36955251598), the
+        median of 5 rounds reads -4.7% / -18.4% / -3.0% against the committed
+        2026-05-30 value and the job is green. An earlier draft of this file
+        claimed a median run reads +107% against it; that came from treating
+        #768's ten single cold-inclusive samples as if they were rounds within
+        one job, and the measurement refuted it.
         """
         return [c for c in comparisons if c.baseline_n == 1 and c.baseline_value > 0]
 
@@ -698,14 +764,22 @@ class RegressionChecker:
         self,
         comparisons: list[MetricComparison],
         runner_factor: float = 1.0,
+        outcomes: dict[str, RoundOutcomes] | None = None,
+        session_problems: Sequence[str] = (),
     ) -> tuple[int, int, int]:
         """
-        Print detailed regression report.
+        Print detailed regression report and return the whole verdict.
+
+        Every error source is counted here, so the printed verdict line and the
+        exit code cannot disagree: a round-outcome error or an aborted session
+        must not arrive after "✅ PASSED" has already been printed.
 
         Args:
             comparisons: List of metric comparisons
             runner_factor: Common-mode runner-speed ratio that was divided out
                 (shown in the header when it deviates from 1.0).
+            outcomes: Per-benchmark pass/fail/skip tallies across the rounds.
+            session_problems: Reasons the measurement itself is invalid.
 
         Returns:
             Tuple of (num_errors, num_warnings, num_passed)
@@ -713,6 +787,9 @@ class RegressionChecker:
         num_errors = sum(1 for c in comparisons if c.status == "error")
         num_warnings = sum(1 for c in comparisons if c.status == "warning")
         num_passed = sum(1 for c in comparisons if c.status == "pass")
+        outcome_errors, outcome_warnings = self.round_outcome_verdict(outcomes or {})
+        num_errors += outcome_errors + len(session_problems)
+        num_warnings += outcome_warnings
 
         baseline_rounds = sorted({c.baseline_n for c in comparisons if c.baseline_n})
         current_rounds = sorted({c.current_n for c in comparisons if c.current_n})
@@ -797,6 +874,14 @@ class RegressionChecker:
         if stable:
             print(f"\n📊 STABLE: {len(stable)} tests with no significant change")
 
+        self.print_round_outcomes(outcomes or {})
+        if session_problems:
+            print("\n🔴 MEASUREMENT INVALID:")
+            print("-" * 80)
+            for problem in session_problems:
+                print(f"  {problem}")
+                self.logger.error("Measurement invalid: %s", problem)
+
         print("\n" + "=" * 80)
         print("SUMMARY")
         print("=" * 80)
@@ -814,16 +899,24 @@ class RegressionChecker:
             print("✅ PASSED: No performance regressions detected")
             return num_errors, num_warnings, num_passed
 
+    @staticmethod
+    def round_outcome_verdict(
+        outcomes: dict[str, RoundOutcomes],
+    ) -> tuple[int, int]:
+        """Count benchmarks whose round failures are errors vs warnings.
+
+        A benchmark that failed in a MAJORITY of the rounds it ran in is an
+        error; a minority is a warning, because a single failing round of a
+        timing assertion is one noisy sample — the whole subject of #768.
+        """
+        flaky = [o for o in outcomes.values() if o.failed > 0]
+        errors = sum(1 for o in flaky if o.is_majority_failure)
+        return errors, len(flaky) - errors
+
     def print_round_outcomes(
         self, outcomes: dict[str, RoundOutcomes]
     ) -> tuple[int, int]:
-        """Report benchmarks that failed in some rounds.
-
-        Returns (num_errors, num_warnings): a benchmark that failed in a
-        MAJORITY of the rounds it ran in is an error; a minority is a warning,
-        because a single failing round of a timing assertion is one noisy
-        sample, which is the whole subject of #768.
-        """
+        """Print the per-benchmark round outcomes; returns the same verdict."""
         flaky = {name: o for name, o in outcomes.items() if o.failed > 0}
         if not flaky:
             return 0, 0
@@ -856,6 +949,8 @@ class RegressionChecker:
         self,
         comparisons: Sequence[MetricComparison],
         runner_factor: float = 1.0,
+        outcomes: dict[str, RoundOutcomes] | None = None,
+        session_problems: Sequence[str] = (),
     ) -> str:
         """Render the comparison as a Markdown table (for $GITHUB_STEP_SUMMARY).
 
@@ -901,6 +996,23 @@ class RegressionChecker:
                 f"{comp.current_sd:.4f}s | "
                 f"{comp.change_percent:+.1f}% ({comp.normalized_change_percent:+.1f}%) |"
             )
+        flaky = {n: o for n, o in (outcomes or {}).items() if o.failed > 0}
+        if flaky:
+            lines += ["", "**Test outcomes across rounds**", ""]
+            for name, o in sorted(flaky.items()):
+                icon = "🔴" if o.is_majority_failure else "⚠️"
+                verdict = (
+                    "majority — test failure"
+                    if o.is_majority_failure
+                    else "minority — noise"
+                )
+                lines.append(
+                    f"- {icon} `{name.replace('tests/performance/', '')}` failed in "
+                    f"{o.failed} of {o.decided} rounds ({verdict})"
+                )
+        if session_problems:
+            lines += ["", "**🔴 Measurement invalid**", ""]
+            lines += [f"- {problem}" for problem in session_problems]
         if self.single_sample_baselines(comparisons):
             lines += [
                 "",
@@ -942,8 +1054,21 @@ class RegressionChecker:
         name the wrong machine -- and a baseline that misattributes its hardware
         is how #768 stayed undiagnosed for four months.
         """
-        rounds = min((s.n for s in stats.values()), default=0)
+        # Rounds = how many pytest sessions were measured, NOT the smallest
+        # per-benchmark n. A benchmark that failed one round has fewer samples
+        # than the session count, and its own `n` records that; labelling the
+        # whole file "rounds: 6" because of it is simply wrong.
+        round_files = [
+            src for src in (sources or []) if src.kind == "pytest-json-report"
+        ]
+        rounds = (
+            len(round_files)
+            if round_files
+            else min((st.n for st in stats.values()), default=0)
+        )
         provenance = collect_provenance(rounds=rounds, role=role, note=note)
+        if sources:
+            provenance["sources"] = [src.path.name for src in sources]
         if measured_provenance:
             inherited = {
                 key: measured_provenance[key]
@@ -953,10 +1078,11 @@ class RegressionChecker:
             provenance["aggregated_on"] = {
                 "runner": provenance["runner"],
                 "at": provenance["generated_at"],
+                "from": [src.path.name for src in (sources or [])],
             }
+            # Inherited last: rounds/sources from the original measurement win
+            # over the single samples file this aggregation happened to read.
             provenance.update(inherited)
-        if sources:
-            provenance["sources"] = [s.path.name for s in sources]
         document = self.build_samples_document(stats, provenance)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
@@ -1086,7 +1212,10 @@ class RegressionChecker:
         """
         try:
             current_paths = _as_paths(current_path)
-            current_stats, current_sources = self.load_sample_sets(current_paths)
+            current_stats, current_sources, current_outcomes = self.load_sample_sets(
+                current_paths
+            )
+            problems = self.session_problems(current_sources, current_stats)
 
             # Only a single already-aggregated samples file carries an
             # unambiguous measurement machine. Merging several of them (possibly
@@ -1118,11 +1247,30 @@ class RegressionChecker:
                 if not written:
                     return 2
 
+            if problems:
+                # Nothing below is meaningful if the rounds never ran. Reported
+                # here rather than silently as "Test not found" warnings.
+                print("\n" + "=" * 80)
+                print("🔴 MEASUREMENT INVALID — the performance session did not run")
+                print("=" * 80)
+                for problem in problems:
+                    print(f"  {problem}")
+                    self.logger.error("Measurement invalid: %s", problem)
+                if markdown_summary is not None:
+                    markdown_summary.parent.mkdir(parents=True, exist_ok=True)
+                    with open(markdown_summary, "a") as f:
+                        f.write(
+                            "### Performance regression check\n\n"
+                            "**🔴 Measurement invalid** — the performance session "
+                            "did not run.\n\n" + "".join(f"- {p}\n" for p in problems)
+                        )
+                return 2
+
             if baseline_path is None:
                 self.logger.info("No baseline given; skipping comparison")
                 return 0
 
-            baseline_stats, _ = self.load_sample_sets(_as_paths(baseline_path))
+            baseline_stats, _, _ = self.load_sample_sets(_as_paths(baseline_path))
 
             self.logger.info(
                 "Comparing %d baseline tests vs %d current tests",
@@ -1140,24 +1288,21 @@ class RegressionChecker:
                 baseline_stats, current_stats, runner_factor
             )
 
-            # Print report
+            # One verdict: the comparison, the per-benchmark round outcomes
+            # (a majority of failing rounds is a test failure) and any session
+            # problem are counted together, before the verdict line is printed.
             num_errors, num_warnings, num_passed = self.print_report(
-                comparisons, runner_factor
+                comparisons, runner_factor, outcomes=current_outcomes
             )
-
-            # A benchmark that FAILED its own assertion in a majority of rounds
-            # is a test failure and must fail the job, even when the surviving
-            # rounds' median looks fine.
-            outcome_errors, outcome_warnings = self.print_round_outcomes(
-                self.load_round_outcomes(current_paths)
-            )
-            num_errors += outcome_errors
-            num_warnings += outcome_warnings
 
             if markdown_summary is not None:
                 markdown_summary.parent.mkdir(parents=True, exist_ok=True)
                 with open(markdown_summary, "a") as f:
-                    f.write(self.markdown_summary(comparisons, runner_factor))
+                    f.write(
+                        self.markdown_summary(
+                            comparisons, runner_factor, outcomes=current_outcomes
+                        )
+                    )
 
             # Determine exit code
             if num_errors > 0:
@@ -1292,7 +1437,16 @@ def collect_provenance(
         "cpu_count": os.cpu_count(),
         "python": platform.python_version(),
         "platform": platform.platform(),
-        "commit": os.environ.get("GITHUB_SHA") or _git_head(),
+        # On a pull_request event GITHUB_SHA is the ephemeral refs/pull/N/merge
+        # commit, which is garbage-collected after the merge — a baseline
+        # attributed to it cannot be traced back to any code. The workflows pass
+        # the real head through PERF_COMMIT_SHA.
+        "commit": (
+            os.environ.get("PERF_COMMIT_SHA")
+            or os.environ.get("GITHUB_SHA")
+            or _git_head()
+        ),
+        "github_event": os.environ.get("GITHUB_EVENT_NAME", ""),
         "repository": os.environ.get("GITHUB_REPOSITORY", ""),
         "workflow_run": _workflow_run_url(),
         "note": note,
