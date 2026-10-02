@@ -51,7 +51,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 from tos_runtime._named_tbd import reject_named_tbd
-from tos_runtime.evidence.store import KeyProvider
+from tos_runtime.custody.ports import CustodyError
+from tos_runtime.evidence.store import EvidenceCorruption, KeyProvider
 from tos_runtime.operations.backup_archive import (
     DEFAULT_XZ_PRESET,
     BackupArchiveRefused,
@@ -61,9 +62,11 @@ from tos_runtime.operations.backup_set import (
     BackupSetRefused,
     DurableSetPaths,
     backup_set,
+    generation_number,
     manifest_path_for,
     next_generation,
 )
+from tos_runtime.operations.key_rotation import KeyContinuityRefused
 
 __all__ = [
     "COLD_BACKUP_CONFIG_NAME",
@@ -353,10 +356,6 @@ def load_cold_backup_config(path: Path) -> ColdBackupConfig:
     )
 
 
-def _is_within(child: Path, parent: Path) -> bool:
-    return child == parent or parent in child.parents
-
-
 def _enclosing_worktree(path: Path) -> Path | None:
     """The nearest ancestor of ``path`` (itself included) holding a ``.git`` entry, or ``None``.
 
@@ -393,12 +392,12 @@ def _refuse_unsafe_destination(path: Path, *, label: str, data_dir: Path) -> Non
     """
     resolved = path.resolve()
     live = data_dir.resolve()
-    if _is_within(resolved, live):
+    if resolved.is_relative_to(live):
         raise ColdBackupRefused(
             f"cold_backup: {label} {resolved} is inside the live data directory {live} — "
             "refused. A cold copy that lives in the directory it copies is not a cold copy"
         )
-    if _is_within(live, resolved):
+    if live.is_relative_to(resolved):
         raise ColdBackupRefused(
             f"cold_backup: {label} {resolved} CONTAINS the live data directory {live} — "
             "refused. Cold storage grows without bound (this module has no retention), and "
@@ -445,7 +444,7 @@ def _refuse_overlapping_destinations(roots: Mapping[str, Path]) -> None:
                     f"({resolved[left]}) — refused"
                 )
             for inner, outer in ((left, right), (right, left)):
-                if _is_within(resolved[inner], resolved[outer]):
+                if resolved[inner].is_relative_to(resolved[outer]):
                     raise ColdBackupRefused(
                         f"cold_backup: {inner} {resolved[inner]} is inside {outer} "
                         f"{resolved[outer]} — refused. The three trees are kept apart on "
@@ -500,25 +499,161 @@ def _free_space(roots: Mapping[str, Path]) -> tuple[FilesystemFreeSpace, ...]:
     )
 
 
-def _refuse_below_floor(
+def _below_floor(
     free_space: tuple[FilesystemFreeSpace, ...], minimum_free_bytes: int
 ) -> tuple[FilesystemFreeSpace, ...]:
-    """The measured filesystems that are below ``minimum_free_bytes`` (empty when all pass)."""
+    """The measured filesystems below ``minimum_free_bytes`` (empty when all pass).
+
+    Named for what it computes, not ``_refuse_*`` like the guards around it: **this raises
+    nothing.** One of its two callers turns a non-empty result into the preflight refusal;
+    the other uses it as the report's after-the-fact alarm flag, which deliberately does NOT
+    abort a backup that already verified. A ``_refuse_`` name here would promise the second
+    caller aborts (review round 2, F8).
+    """
     return tuple(entry for entry in free_space if entry.free_bytes < minimum_free_bytes)
 
 
-def _stage(stage: str, action: Callable[[], _T]) -> _T:
-    """Run ``action``, letting this module's own refusals through and wrapping anything else
-    as :class:`ColdBackupFailed` tagged with ``stage``.
+#: The per-generation artifacts this module writes OUTSIDE ``backup_root``: the archive and
+#: the report in ``archive_dir``, the scratch directory under ``verify_root``. Named once,
+#: because both the allocator and the preflight have to agree on the full set.
+_ARCHIVE_SUFFIX = ".set.tar.xz"
 
-    The refusal types pass untouched because each already says exactly what was wrong and
-    which layer said so. Everything else is an environment fault with no common base class
+
+def _cold_artifacts(
+    config: ColdBackupConfig, generation: int
+) -> tuple[tuple[str, Path], ...]:
+    """``(label, path)`` for every generation-scoped artifact outside ``backup_root``."""
+    return (
+        ("archive", config.archive_dir / f"gen{generation}{_ARCHIVE_SUFFIX}"),
+        ("report", config.archive_dir / f"gen{generation}{_REPORT_SUFFIX}"),
+        ("verify scratch", config.verify_root / f"gen{generation}.verify"),
+    )
+
+
+def _highest_cold_generation(config: ColdBackupConfig) -> int | None:
+    """The highest generation COLD STORAGE already holds, or ``None``.
+
+    The allocator cannot read ``backup_root`` alone. Cold storage is the tree an operator is
+    told to prune by moving old archives elsewhere (runbook §6), and ``backup_root`` is the
+    one that actually grows — so "backup_root emptied or recreated while archive_dir still
+    holds gen1..genK" is an ordinary consequence of following the runbook, not an exotic
+    state. Allocating from ``backup_root`` alone then picks ``1``, copies the entire durable
+    set, and only then refuses on the existing ``gen1.set.tar.xz`` — every night, for K
+    nights: the same "one event wedges the schedule" shape the directory-counting fix closed
+    one layer down (review round 2, F2).
+    """
+    generations: list[int] = []
+    for directory, suffixes, want_dir in (
+        (config.archive_dir, (_ARCHIVE_SUFFIX, _REPORT_SUFFIX), False),
+        (config.verify_root, (".verify",), True),
+    ):
+        if not directory.is_dir():
+            continue
+        for child in directory.iterdir():
+            if child.is_dir() is not want_dir:
+                continue
+            for suffix in suffixes:
+                found = generation_number(child.name, suffix)
+                if found is not None:
+                    generations.append(found)
+                    break
+    return max(generations) if generations else None
+
+
+def _refuse_existing_artifacts(config: ColdBackupConfig, generation: int) -> None:
+    """Refuse before the snapshot if anything for ``generation`` is already on disk.
+
+    After :func:`_highest_cold_generation` this should be unreachable; it is written anyway
+    because the cost of being wrong is a full durable-set copy thrown away, and because the
+    report used to be written with a plain ``write_text`` that would have overwritten an
+    existing one without a word.
+    """
+    for label, path in _cold_artifacts(config, generation):
+        if path.exists():
+            raise ColdBackupRefused(
+                f"cold_backup: the {label} for generation {generation} already exists at "
+                f"{path} — refused before anything is written. Nothing here overwrites a "
+                "cold copy or its report; move it aside, or let the next run take a higher "
+                "generation"
+            )
+
+
+#: Exceptions that are VERDICTS, not environment faults, and therefore pass through
+#: :func:`_stage` with their own types intact.
+#:
+#: The last three are the ones this wave had to add. The archive's third check re-verifies
+#: the evidence chain out of the decompressed copy, and when that fails the fact is "**do
+#: not trust this copy**" — the most serious thing this command can discover. Wrapping it as
+#: a stage failure filed it under "the host broke, fix it and re-run", which is the wrong
+#: instruction in the one case where re-running is not the answer (review round 2, F1).
+#: ``CustodyError`` and ``KeyContinuityRefused`` are the same shape one layer out: keys that
+#: cannot be loaded, or a generation the chain does not continue from.
+_PASSTHROUGH_REFUSALS: tuple[type[BaseException], ...] = (
+    ColdBackupRefused,
+    BackupSetRefused,
+    BackupArchiveRefused,
+    EvidenceCorruption,
+    KeyContinuityRefused,
+    CustodyError,
+)
+
+
+def _preflight_destinations(
+    config: ColdBackupConfig, data_dir: Path
+) -> dict[str, Path]:
+    """Check every destination, and return the ``label -> root`` map the rest of the run uses.
+
+    Split out of :func:`cold_backup` for the 100-line function budget
+    (``tools/tos_size_budget.py``); no behaviour difference from having it inline.
+    """
+    roots = {
+        "archive_dir": config.archive_dir,
+        "backup_root": config.backup_root,
+        "verify_root": config.verify_root,
+    }
+    for label, destination in roots.items():
+        _refuse_unsafe_destination(destination, label=label, data_dir=data_dir)
+    _refuse_overlapping_destinations(roots)
+    return roots
+
+
+def _preflight_free_space(
+    roots: Mapping[str, Path], minimum_free_bytes: int
+) -> tuple[FilesystemFreeSpace, ...]:
+    """Measure every filesystem the run writes to and refuse if any is below the floor.
+
+    Split out of :func:`cold_backup` for the 100-line function budget; returns the readings
+    so the report can record what the preflight actually saw rather than measuring twice.
+    """
+    free_before = _free_space(roots)
+    below = _below_floor(free_before, minimum_free_bytes)
+    if below:
+        detail = "; ".join(
+            f"{'+'.join(entry.roots)} at {entry.measured_path} has {entry.free_bytes} bytes "
+            "free"
+            for entry in below
+        )
+        raise ColdBackupRefused(
+            f"cold_backup: {detail} — below the configured floor of {minimum_free_bytes}; "
+            "refused before anything is written. This module has no retention and never "
+            "deletes a cold copy (pruning verified copies is Track B, ADR-002-016 §17): add "
+            "storage, or move existing archives to another medium"
+        )
+    return free_before
+
+
+def _stage(stage: str, action: Callable[[], _T]) -> _T:
+    """Run ``action``, letting :data:`_PASSTHROUGH_REFUSALS` through and wrapping anything
+    else as :class:`ColdBackupFailed` tagged with ``stage``.
+
+    Those types pass untouched because each already says exactly what was wrong and which
+    layer said so. Everything else is an environment fault with no common base class
     (:class:`ColdBackupFailed`'s own docstring), and wrapping it here is what lets the CLI
     print one line naming the stage instead of a traceback.
     """
     try:
         return action()
-    except (ColdBackupRefused, BackupSetRefused, BackupArchiveRefused):
+    except _PASSTHROUGH_REFUSALS:
         raise
     except (
         Exception
@@ -556,40 +691,35 @@ def cold_backup(
         The :class:`ColdBackupReport` — only on a fully verified run.
 
     Raises:
-        ColdBackupRefused: A destination is refused, or free space is below the floor.
+        ColdBackupRefused: A destination is refused, free space is below the floor, or an
+            artifact for the chosen generation already exists.
         tos_runtime.operations.backup_set.BackupSetRefused: The snapshot itself refused.
         tos_runtime.operations.backup_archive.BackupArchiveRefused: The archive could not be
             written, read back, or did not hold what the manifest attests.
+        tos_runtime.evidence.store.EvidenceCorruption: The archived chain did not
+            re-verify — propagated unchanged (:data:`_PASSTHROUGH_REFUSALS`), because "do not
+            trust this copy" is a verdict, not a host fault.
+        tos_runtime.custody.ports.CustodyError: Custody could not be loaded. Raised from the
+            PREFLIGHT, before anything is copied.
         ColdBackupFailed: Anything underneath broke — a held sqlite handle, a full disk,
-            unreadable custody, an unparseable manifest. Carries the stage and the original
-            exception as ``__cause__``.
+            an unparseable manifest. Carries the stage and the original exception as
+            ``__cause__``.
     """
-    roots = {
-        "archive_dir": config.archive_dir,
-        "backup_root": config.backup_root,
-        "verify_root": config.verify_root,
-    }
-    for label, destination in roots.items():
-        _refuse_unsafe_destination(destination, label=label, data_dir=data_dir)
-    _refuse_overlapping_destinations(roots)
+    roots = _preflight_destinations(config, data_dir)
+    free_before = _preflight_free_space(roots, config.minimum_free_bytes)
 
-    free_before = _free_space(roots)
-    below = _refuse_below_floor(free_before, config.minimum_free_bytes)
-    if below:
-        detail = "; ".join(
-            f"{'+'.join(entry.roots)} at {entry.measured_path} has {entry.free_bytes} bytes "
-            "free"
-            for entry in below
-        )
-        raise ColdBackupRefused(
-            f"cold_backup: {detail} — below the configured floor of "
-            f"{config.minimum_free_bytes}; refused before anything is written. This module "
-            "has no retention and never deletes a cold copy (pruning verified copies is "
-            "Track B, ADR-002-016 §17): add storage, or move existing archives to another "
-            "medium"
-        )
+    # Custody BEFORE the snapshot. `FileKeyProvider.__init__` only stores fields, so a wrong
+    # or unreadable custody root was previously discovered by the archive's chain check —
+    # after the whole durable set had been copied and compressed — and arrived labelled as an
+    # archive-stage fault. The CLI's "custody failed" branch named a case it could not catch
+    # (review round 2, F3).
+    _stage("custody", key_provider.current)
 
-    generation = _stage("snapshot", lambda: next_generation(config.backup_root))
+    generation = max(
+        _stage("snapshot", lambda: next_generation(config.backup_root)),
+        (_highest_cold_generation(config) or 0) + 1,
+    )
+    _refuse_existing_artifacts(config, generation)
     paths = DurableSetPaths.from_data_dir(data_dir)
     _stage("snapshot", lambda: backup_set(paths, config.backup_root, generation))
     manifest_path = manifest_path_for(config.backup_root, generation)
@@ -598,14 +728,14 @@ def cold_backup(
         lambda: archive_backup_set(
             manifest_path,
             config.archive_dir,
-            config.verify_root / f"gen{generation}.verify",
+            _cold_artifacts(config, generation)[2][1],
             key_provider=key_provider,
             preset=config.xz_preset,
         ),
     )
 
     free_after = _free_space(roots)
-    report_path = config.archive_dir / f"gen{generation}{_REPORT_SUFFIX}"
+    report_path = _cold_artifacts(config, generation)[1][1]
     report = ColdBackupReport(
         generation=generation,
         manifest_path=str(manifest_path),
@@ -618,7 +748,7 @@ def cold_backup(
         free_space_after=free_after,
         minimum_free_bytes=config.minimum_free_bytes,
         free_bytes_below_minimum_after=bool(
-            _refuse_below_floor(free_after, config.minimum_free_bytes)
+            _below_floor(free_after, config.minimum_free_bytes)
         ),
     )
     _stage("report", lambda: report_path.write_text(report.model_dump_json(indent=2)))

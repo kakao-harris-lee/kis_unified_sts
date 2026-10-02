@@ -76,7 +76,11 @@ from typing import Any
 
 from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 from tos_runtime.compose._types import ComposedRuntime, OperationsFacts
-from tos_runtime.operations.backup_set import MANIFEST_SUFFIX, BackupSetManifest
+from tos_runtime.operations.backup_set import (
+    MANIFEST_SUFFIX,
+    BackupSetManifest,
+    generation_number,
+)
 from tos_runtime.operations.schema_migrations import schema_version
 from tos_runtime.operator.export import ProjectionExporter
 from tos_runtime.operator.projection import (
@@ -129,11 +133,13 @@ _SAFETY_MESH_IDENTITY_TO_KEY: dict[str, str] = {
 
 def _highest_generation_manifest(backup_root: Path | None) -> BackupSetManifest | None:
     """The highest ``gen{N}{_MANIFEST_SUFFIX}`` manifest directly under ``backup_root``, or
-    ``None`` when ``backup_root`` is ``None``, does not exist, or holds no manifest — mirrors
-    :func:`tos_runtime.operations.backup_set._highest_existing_generation`'s own scan logic
-    (re-implemented here rather than imported: that helper is a private, leading-underscore
-    name — see this module's own docstring on why literals are duplicated rather than reaching
-    into another module's private surface)."""
+    ``None`` when ``backup_root`` is ``None``, does not exist, or holds no manifest.
+
+    The scan itself is :func:`tos_runtime.operations.backup_set.generation_number` — public
+    and shared as of the cold-backup wave, so the ``gen{N}`` naming is parsed in ONE place.
+    This function used to re-implement it (the helper it mirrored was private); a renaming of
+    the scheme would then have been silent here, and a scan that recognizes nothing reports
+    "no backup" rather than failing (review round 2, F6)."""
     if backup_root is None or not backup_root.is_dir():
         return None
     best_generation: int | None = None
@@ -141,13 +147,9 @@ def _highest_generation_manifest(backup_root: Path | None) -> BackupSetManifest 
     for child in backup_root.iterdir():
         if not child.is_file():
             continue
-        name = child.name
-        if not (name.startswith("gen") and name.endswith(_MANIFEST_SUFFIX)):
+        generation = generation_number(child.name, _MANIFEST_SUFFIX)
+        if generation is None:
             continue
-        middle = name[len("gen") : -len(_MANIFEST_SUFFIX)]
-        if not middle.isdigit():
-            continue
-        generation = int(middle)
         if best_generation is None or generation > best_generation:
             best_generation, best_path = generation, child
     if best_path is None:

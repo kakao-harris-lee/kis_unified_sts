@@ -21,8 +21,12 @@ from pathlib import Path
 
 import pytest
 from tos_runtime.compose import _backup_dispatch, cli
+from tos_runtime.custody.ports import CustodyLoadRefused
+from tos_runtime.evidence.store import EvidenceCorruption
 from tos_runtime.operations import cold_backup as cold_backup_module
+from tos_runtime.operations.backup_archive import BackupArchiveRefused
 from tos_runtime.operations.cold_backup import FilesystemFreeSpace
+from tos_runtime.operations.key_rotation import KeyContinuityRefused
 
 from ..engine.conftest import FixedKeyProvider
 from ..operations.test_backup_set import _build_live_set
@@ -39,10 +43,17 @@ xz_preset: 1
 
 
 def _prepare(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, floor: int = 1024
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    floor: int = 1024,
+    *,
+    patch_key_provider: bool = True,
 ) -> Path:
-    """A live set, a filled config directory, and a stand-in key provider. Returns the live
-    data directory."""
+    """A live set, a filled config directory, and (by default) a stand-in key provider.
+
+    ``patch_key_provider=False`` leaves the REAL ``FileKeyProvider`` in place, for the one
+    test that needs a genuine custody failure rather than a simulated one.
+    """
     live_dir = tmp_path / "live"
     live_dir.mkdir()
     _build_live_set(live_dir, with_marketfeed=True)
@@ -56,9 +67,10 @@ def _prepare(
             floor=floor,
         )
     )
-    monkeypatch.setattr(
-        _backup_dispatch, "FileKeyProvider", lambda _root, **_kw: FixedKeyProvider()
-    )
+    if patch_key_provider:
+        monkeypatch.setattr(
+            _backup_dispatch, "FileKeyProvider", lambda _root, **_kw: FixedKeyProvider()
+        )
     return live_dir
 
 
@@ -142,18 +154,51 @@ def test_an_unfilled_config_exits_one_rather_than_backing_up_somewhere_invented(
     assert "still null (named-TBD)" in capsys.readouterr().err
 
 
-def test_an_archive_refusal_keeps_its_own_prefix_and_leaves_the_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("refusal", "expected_prefix"),
+    [
+        (
+            BackupArchiveRefused("the archive does not hold what it claims to"),
+            "cold-backup: archive refused —",
+        ),
+        (
+            EvidenceCorruption("chain digest mismatch at seq 7"),
+            "cold-backup: integrity refused —",
+        ),
+        (
+            CustodyLoadRefused("no evidence.key.<generation> files found"),
+            "cold-backup: custody refused —",
+        ),
+        (
+            KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
+            "cold-backup: custody refused —",
+        ),
+    ],
+)
+def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    refusal: Exception,
+    expected_prefix: str,
 ) -> None:
-    """Three refusal families, three prefixes — a cron mail says which layer refused rather
-    than flattening them into one word."""
+    """Five refusal families, five prefixes — a cron mail says which layer decided and the
+    runbook §5 table routes by that word. ``integrity refused`` especially must not read as
+    ``failed``: "do not trust this copy" is not "re-run it"."""
     live_dir = _prepare(tmp_path, monkeypatch)
-    (tmp_path / "verify" / "gen1.verify").mkdir(parents=True)
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(cold_backup_module, "archive_backup_set", _raise)
 
     exit_code = cli.main(_argv(tmp_path, live_dir))
 
     assert exit_code == 1
-    assert capsys.readouterr().err.startswith("cold-backup: archive refused —")
+    err = capsys.readouterr().err
+    assert err.startswith(expected_prefix)
+    assert "failed —" not in err
+    assert "Traceback" not in err
     assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
 
@@ -256,23 +301,25 @@ def test_an_environment_fault_prints_one_line_naming_the_stage(
     assert len(err.strip().splitlines()) == 1
 
 
-def test_an_unreadable_custody_root_prints_one_line_and_exits_one(
+def test_a_real_unusable_custody_root_is_refused_before_the_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    live_dir = _prepare(tmp_path, monkeypatch)
-
-    def _no_custody(*_args: object, **_kwargs: object) -> None:
-        raise FileNotFoundError("custody.manifest.yaml")
-
-    monkeypatch.setattr(_backup_dispatch, "FileKeyProvider", _no_custody)
+    """The REAL `FileKeyProvider`, over a custody root holding no keys — not a monkeypatched
+    constructor. The previous version patched `FileKeyProvider` to raise, which the real
+    constructor never does (it only stores fields), so it proved a branch that could not
+    fire while the actual failure arrived after the whole set had been copied."""
+    live_dir = _prepare(tmp_path, monkeypatch, patch_key_provider=False)
+    (tmp_path / "custody").mkdir()
 
     exit_code = cli.main(_argv(tmp_path, live_dir))
 
     assert exit_code == 1
     err = capsys.readouterr().err
-    assert err.startswith("cold-backup: custody failed — FileNotFoundError:")
-    # Refused before the snapshot: custody is read before anything is written.
+    assert err.startswith("cold-backup: custody refused —")
+    assert "Traceback" not in err
+    # Before the snapshot: nothing was copied.
     assert not (tmp_path / "backups").exists()
+    assert not (tmp_path / "cold").exists()
 
 
 def test_an_unparseable_config_prints_one_line_and_exits_one(

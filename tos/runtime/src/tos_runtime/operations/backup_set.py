@@ -99,6 +99,7 @@ __all__ = [
     "RestoreRefused",
     "RestoredSet",
     "backup_set",
+    "generation_number",
     "manifest_path_for",
     "next_generation",
     "restore_drill",
@@ -139,6 +140,10 @@ MANIFEST_SUFFIX = ".set.manifest.json"
 
 #: Pre-existing private alias, kept so the long-standing uses below read unchanged.
 _MANIFEST_SUFFIX = MANIFEST_SUFFIX
+
+#: What every generation-scoped artifact name starts with, in this module and in the two
+#: that scan alongside it (:func:`generation_number`).
+_GEN_PREFIX = "gen"
 
 _LIVE_ENVIRONMENT_LABELS = frozenset({"paper", "restricted-live", "production"})
 
@@ -367,18 +372,45 @@ def _read_inbox_facts(inbox_backup_path: Path) -> InboxBackupFacts:
     return InboxBackupFacts(last_seq=last_seq, unconsumed_count=int(unconsumed_count))
 
 
+def generation_number(name: str, suffix: str) -> int | None:
+    """``N`` from a ``gen{N}{suffix}`` filename, or ``None`` if ``name`` is not one.
+
+    PUBLIC and shared, because this prefix is now parsed in four places — the two scans
+    below, :func:`tos_runtime.compose._operations_wiring._highest_generation_manifest`, and
+    :mod:`tos_runtime.operations.cold_backup`'s scan of cold storage. Exporting
+    :data:`MANIFEST_SUFFIX` stopped the SUFFIX drifting between them; a fourth hand-rolled
+    copy of the ``gen``-prefix parse would have left the naming itself free to drift, and the
+    failure would be silent: a scan that recognizes nothing simply reports no generations and
+    the allocator hands back ``1`` forever.
+
+    Args:
+        name: A directory or file name (not a path).
+        suffix: What follows the number — :data:`MANIFEST_SUFFIX`, ``".set.tar.xz"``, or
+            ``""`` for a bare ``gen{N}`` directory.
+
+    Returns:
+        The generation, or ``None`` when the prefix, the suffix, or the digits do not match.
+    """
+    if not name.startswith(_GEN_PREFIX) or not name.endswith(suffix):
+        return None
+    middle = (
+        name[len(_GEN_PREFIX) : len(name) - len(suffix)]
+        if suffix
+        else name[len(_GEN_PREFIX) :]
+    )
+    return int(middle) if middle.isdigit() else None
+
+
 def _highest_existing_generation(dest_dir: Path) -> int | None:
     if not dest_dir.is_dir():
         return None
-    generations: list[int] = []
-    for child in dest_dir.iterdir():
-        if not child.is_file():
-            continue
-        name = child.name
-        if name.startswith("gen") and name.endswith(_MANIFEST_SUFFIX):
-            middle = name[len("gen") : -len(_MANIFEST_SUFFIX)]
-            if middle.isdigit():
-                generations.append(int(middle))
+    generations = [
+        found
+        for child in dest_dir.iterdir()
+        if child.is_file()
+        for found in (generation_number(child.name, _MANIFEST_SUFFIX),)
+        if found is not None
+    ]
     return max(generations) if generations else None
 
 
@@ -433,11 +465,11 @@ def _highest_attempted_generation(dest_dir: Path) -> int | None:
     if not dest_dir.is_dir():
         return None
     generations = [
-        int(child.name[len("gen") :])
+        found
         for child in dest_dir.iterdir()
         if child.is_dir()
-        and child.name.startswith("gen")
-        and child.name[len("gen") :].isdigit()
+        for found in (generation_number(child.name, ""),)
+        if found is not None
     ]
     return max(generations) if generations else None
 
@@ -573,9 +605,11 @@ def backup_set(
 
 
 def _resolves_inside_or_equal(dest_dir: Path, source_dir: Path) -> bool:
-    dest_resolved = dest_dir.resolve()
-    source_resolved = source_dir.resolve()
-    return dest_resolved == source_resolved or source_resolved in dest_resolved.parents
+    # `Path.is_relative_to` IS this predicate (stdlib, 3.9+); the hand-rolled
+    # `child == parent or parent in child.parents` it used to spell lived in three places
+    # across this package by the time the cold-backup wave added its own, which is one
+    # symlink/edge fix away from drifting apart (review round 2, F5).
+    return dest_dir.resolve().is_relative_to(source_dir.resolve())
 
 
 class RestoredSet(BaseModel):

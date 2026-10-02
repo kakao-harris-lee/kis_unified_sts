@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tos_runtime.custody.key_provider import FileKeyProvider
+from tos_runtime.custody.ports import CustodyError
+from tos_runtime.evidence.store import EvidenceCorruption
 from tos_runtime.operations.backup_archive import (
     BackupArchiveRefused,
     archive_backup_set,
@@ -52,6 +54,7 @@ from tos_runtime.operations.cold_backup import (
     cold_backup,
     load_cold_backup_config,
 )
+from tos_runtime.operations.key_rotation import KeyContinuityRefused
 
 if TYPE_CHECKING:
     # TYPE_CHECKING-only: `cli.py` imports THIS module, so a top-level import of its
@@ -111,17 +114,49 @@ def cold_backup_args(namespace: argparse.Namespace) -> ColdBackupArgs:
     )
 
 
+#: ``(exception type, operator-facing prefix)``, most specific first. A VERDICT gets a
+#: prefix naming which layer reached it, so the runbook's §5 table can route the operator by
+#: that one word; anything not listed is an environment fault and falls through to
+#: ``failed``. ``integrity refused`` is the one that matters most: a chain that does not
+#: re-verify means "do not trust this copy", and filing it under "the host broke, re-run"
+#: was the wrong instruction in the single case where re-running is not the answer (review
+#: round 2, F1).
+_REFUSAL_PREFIXES: tuple[tuple[type[BaseException], str], ...] = (
+    (ColdBackupRefused, "refused"),
+    (BackupSetRefused, "snapshot refused"),
+    (BackupArchiveRefused, "archive refused"),
+    (EvidenceCorruption, "integrity refused"),
+    (KeyContinuityRefused, "custody refused"),
+    (CustodyError, "custody refused"),
+)
+
+
+def _refusal_line(exc: BaseException) -> str:
+    """The stderr line body for ``exc`` — a named refusal, or the generic failure form.
+
+    Data-driven rather than a stack of ``except`` branches so that "which prefix for which
+    exception" is one table a test can read, and so this stays inside the 100-line budget as
+    the list grows.
+    """
+    for exc_type, prefix in _REFUSAL_PREFIXES:
+        if isinstance(exc, exc_type):
+            return f"{prefix} — {exc}"
+    return f"failed — {type(exc).__name__}: {exc}"
+
+
 def dispatch_cold_backup(args: ColdBackupArgs) -> int:
     """Run one cold backup and report it; **nothing reaches the caller as a traceback.**
 
     Two kinds of bad outcome, kept apart because the operator's next action differs:
 
-    * **Refused** — a rule said no and nothing was written. The three refusal types keep
-      distinct prefixes (``refused`` / ``snapshot refused`` / ``archive refused``) so the one
-      line says which layer decided.
+    * **Refused** — a verdict. :data:`_REFUSAL_PREFIXES` gives each type its own prefix
+      (``refused`` / ``snapshot refused`` / ``archive refused`` / ``integrity refused`` /
+      ``custody refused``) so the one line says which layer decided, and the runbook's §5
+      table routes by that word. ``integrity refused`` is NOT a re-run: it means the
+      archived evidence chain did not verify.
     * **Failed** — the run was admissible and the environment broke underneath it: the
       runtime still holding a sqlite handle (the precondition no code can check), a disk
-      filling mid-copy, unreadable custody, an unparseable manifest. Those arrive as
+      filling mid-copy, an unparseable manifest. Those arrive as
       :class:`~tos_runtime.operations.cold_backup.ColdBackupFailed` carrying the stage, and
       print as ``cold-backup: <stage> failed — <ExcType>: <message>``.
 
@@ -148,33 +183,18 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
         )
         return 1
 
-    try:
-        key_provider = FileKeyProvider(
-            args.custody_root, expected_owner_uid=os.getuid()
-        )
-    except Exception as exc:  # noqa: BLE001 - see docstring: no common base exists
-        print(
-            f"cold-backup: custody failed — {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
-        return 1
+    # No try/except around the constructor: `FileKeyProvider.__init__` only stores fields, so
+    # a branch here would name a case it cannot catch. Custody is actually exercised by
+    # `cold_backup`'s preflight (`key_provider.current()`), before anything is copied.
+    key_provider = FileKeyProvider(args.custody_root, expected_owner_uid=os.getuid())
 
     try:
         report = cold_backup(args.data_dir, config, key_provider=key_provider)
-    except ColdBackupRefused as refusal:
-        print(f"cold-backup: refused — {refusal}", file=sys.stderr)
-        return 1
-    except BackupSetRefused as refusal:
-        print(f"cold-backup: snapshot refused — {refusal}", file=sys.stderr)
-        return 1
-    except BackupArchiveRefused as refusal:
-        print(f"cold-backup: archive refused — {refusal}", file=sys.stderr)
-        return 1
     except ColdBackupFailed as failure:
         print(f"cold-backup: {failure}", file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 - see docstring: no common base exists
-        print(f"cold-backup: failed — {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"cold-backup: {_refusal_line(exc)}", file=sys.stderr)
         return 1
 
     print(

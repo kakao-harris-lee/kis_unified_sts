@@ -19,11 +19,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
+from tos_runtime.custody.key_provider import FileKeyProvider
+from tos_runtime.custody.ports import CustodyLoadRefused
+from tos_runtime.evidence.store import EvidenceCorruption
 from tos_runtime.operations import cold_backup as cold_backup_module
 from tos_runtime.operations.backup_archive import BackupArchiveRefused, verify_archive
 from tos_runtime.operations.backup_set import next_generation
@@ -36,6 +41,7 @@ from tos_runtime.operations.cold_backup import (
     cold_backup,
     load_cold_backup_config,
 )
+from tos_runtime.operations.key_rotation import KeyContinuityRefused
 
 from .conftest import FixedKeyProvider
 from .test_backup_set import _build_live_set
@@ -192,13 +198,17 @@ def test_a_stored_cold_copy_that_rotted_is_refused_when_re_verified(
     assert "could not be read back" in str(refusal.value)
 
 
-def test_an_unverifiable_archive_leaves_no_report(tmp_path: Path) -> None:
+def test_an_unverifiable_archive_leaves_no_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A report exists only for a run that fully verified — and the archive layer's refusal
     keeps its own type rather than being flattened into :class:`ColdBackupRefused`."""
     live_dir = _live(tmp_path)
-    # A pre-existing scratch directory is refused by `archive_backup_set` itself: a directory
-    # it did not create could hide a missing member behind a stale file.
-    (tmp_path / "verify" / "gen1.verify").mkdir(parents=True)
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise BackupArchiveRefused("decompressed 'evidence' digests abc")
+
+    monkeypatch.setattr(cold_backup_module, "archive_backup_set", _refuse)
 
     with pytest.raises(BackupArchiveRefused):
         _run(tmp_path, live_dir)
@@ -476,14 +486,35 @@ def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
 
 
-def test_a_refusal_is_never_rewrapped_as_a_failure(tmp_path: Path) -> None:
-    """ "Refused" and "failed" are different facts for the operator: a rule said no, versus
-    the host broke. The stage wrapper lets all three refusal types through untouched."""
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        BackupArchiveRefused("the archive does not hold what it claims to"),
+        EvidenceCorruption("chain digest mismatch at seq 7"),
+        CustodyLoadRefused("no evidence.key.<generation> files found"),
+        KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
+    ],
+)
+def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: Exception
+) -> None:
+    """ "Refused" and "failed" are different facts, and the most serious verdict this command
+    can reach is the chain failing to re-verify out of the archive — "**do not trust this
+    copy**". Wrapping that as a stage failure filed it under "the host broke, fix it and
+    re-run", the wrong instruction in the one case where re-running is not the answer.
+    """
     live_dir = _live(tmp_path)
-    (tmp_path / "verify" / "gen1.verify").mkdir(parents=True)
 
-    with pytest.raises(BackupArchiveRefused):
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(cold_backup_module, "archive_backup_set", _raise)
+
+    with pytest.raises(type(refusal)) as raised:
         _run(tmp_path, live_dir)
+
+    assert raised.value is refusal
+    assert not isinstance(raised.value, ColdBackupFailed)
 
 
 def test_a_destination_that_is_a_file_is_refused_before_the_snapshot(
@@ -539,6 +570,94 @@ def test_one_root_nested_inside_another_is_refused(
     message = str(refusal.value)
     assert f"{inner} " in message
     assert f"is inside {outer} " in message
+
+
+# -- cold storage is part of the allocation (review round 2, F2) --------------
+
+
+def test_a_backup_root_that_was_emptied_does_not_collide_with_cold_storage(
+    tmp_path: Path,
+) -> None:
+    """Runbook §6 tells the operator to move OLD ARCHIVES elsewhere when the floor fires, and
+    `backup_root` is the tree that actually grows — so "backup_root emptied or recreated
+    while archive_dir still holds gen1..genK" is an ordinary consequence of following the
+    runbook. Allocating from `backup_root` alone picked 1, copied the whole durable set, and
+    only then refused on the existing archive — every night, for K nights."""
+    live_dir = _live(tmp_path)
+    first = _run(tmp_path, live_dir)
+    assert first.generation == 1
+
+    # The operator clears the warm tree (a new disk, a move, a cleanup) and leaves cold
+    # storage exactly as it is.
+    shutil.rmtree(tmp_path / "backups")
+
+    second = _run(tmp_path, live_dir)
+
+    assert second.generation == 2
+    assert Path(second.archive_path).is_file()
+    # gen1's cold copy and report are untouched.
+    assert (tmp_path / "cold" / "gen1.set.tar.xz").is_file()
+    assert (tmp_path / "cold" / "gen1.cold-backup.report.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "existing",
+    ["cold/gen1.set.tar.xz", "cold/gen1.cold-backup.report.json", "verify/gen1.verify"],
+)
+def test_an_existing_artifact_for_the_chosen_generation_is_refused_before_the_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: str
+) -> None:
+    """Belt and braces behind the allocator: if the chosen generation already has ANY of its
+    three artifacts on disk, refuse before copying rather than after. The report in
+    particular used to be written with a plain ``write_text`` that would have overwritten an
+    existing one without a word."""
+    live_dir = _live(tmp_path)
+    # Pin the allocator so the collision is actually reached (otherwise it steps past).
+    monkeypatch.setattr(cold_backup_module, "_highest_cold_generation", lambda _c: None)
+    path = tmp_path / existing
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if existing.endswith(".verify"):
+        path.mkdir()
+    else:
+        path.write_text("previous")
+
+    with pytest.raises(ColdBackupRefused) as refusal:
+        _run(tmp_path, live_dir)
+
+    assert "already exists" in str(refusal.value)
+    assert not (tmp_path / "backups").exists()
+    # Untouched.
+    if not existing.endswith(".verify"):
+        assert path.read_text() == "previous"
+
+
+# -- custody is exercised before anything is copied (review round 2, F3) ------
+
+
+def test_an_unusable_custody_root_is_refused_before_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A REAL custody failure, not a monkeypatched constructor.
+
+    ``FileKeyProvider.__init__`` only stores fields, so the previous test for this named a
+    case the real constructor cannot produce. An empty custody root is the genuine article:
+    nothing raises until ``current()`` is called, which is exactly why the preflight now
+    calls it — otherwise the whole durable set is copied and compressed first and the
+    failure arrives labelled as an archive-stage fault.
+    """
+    live_dir = _live(tmp_path)
+    empty_custody = tmp_path / "no-keys"
+    empty_custody.mkdir()
+
+    with pytest.raises(CustodyLoadRefused):
+        cold_backup(
+            live_dir,
+            _config(tmp_path),
+            key_provider=FileKeyProvider(empty_custody, expected_owner_uid=os.getuid()),
+        )
+
+    assert not (tmp_path / "backups").exists()
+    assert not (tmp_path / "cold").exists()
 
 
 # -- the loader ---------------------------------------------------------------

@@ -31,6 +31,8 @@
 2. **커스터디 루트.** 아카이브의 증거 체인 재검증이 서명 키를 읽는다. 준비는
    `tos-paper-boot.md` §1 과 동일하다.
 3. **설정 파일 하나**(§2).
+4. **분리 워크트리와 래퍼**(§4-2 · §4-3). 손으로 한 번 돌릴 때도 필요하다 — 이 명령은
+   공용 체크아웃에서 돌리지 않는다(§4-1). 번호가 뒤에 있을 뿐 §3 보다 **먼저** 만든다.
 
 ## 2. 설정 — `evidence_cold_backup.yaml`
 
@@ -73,16 +75,33 @@ YAML
 
 ## 3. 실행
 
-```bash
-cd /home/deploy/project/kis_unified_sts
-DATA=~/.local/state/tos/paper-data        # 라이브 durable set
-CUSTODY=~/.local/state/tos/paper-custody
-OPS=~/.local/state/tos/paper-ops
+⛔ **공용 체크아웃(`/home/deploy/project/kis_unified_sts`)에서 돌리지 않는다.** 손으로 한 번
+돌릴 때도 마찬가지다 — 병렬 레인이 그 체크아웃의 브랜치를 수시로 바꾸므로, 실 paper durable
+set 과 커스터디 키를 **리뷰 전 코드**로 건드리게 된다(이유는 §4-1, 선례는 #793). 먼저 §4-2 의
+분리 워크트리를 만들고, 그 다음 **§4-3 의 래퍼를 직접 실행**한다:
 
-PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
-  'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
-  cold-backup --data-dir "$DATA" --config-dir "$OPS" --custody-root "$CUSTODY"
+```bash
+~/.local/state/tos/ops/cold-backup.sh
 ```
+
+래퍼가 워크트리의 detached·clean 상태를 확인하고 커밋 SHA 를 찍은 뒤 실제 명령을 돈다.
+좌표를 바꿔 한 번만 다르게 돌려야 한다면 래퍼를 복사해 고치고, **`cd` 대상은 여전히
+워크트리**로 둔다:
+
+```bash
+WT=~/.local/state/tos/ops-worktree
+cd "$WT"
+PYTHONPATH="$WT/tos/src:$WT/tos/runtime/src" \
+  /home/deploy/project/kis_unified_sts/.venv/bin/python -c \
+  'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
+  cold-backup \
+  --data-dir ~/.local/state/tos/paper-data \
+  --config-dir ~/.local/state/tos/paper-ops \
+  --custody-root ~/.local/state/tos/paper-custody
+```
+
+(인터프리터는 기본 체크아웃의 `.venv` 지만 `PYTHONPATH` 가 **절대경로로 워크트리**를 가리킨다
+— 그러지 않으면 코드가 어느 트리에서 왔는지 알 수 없다.)
 
 성공 출력은 stdout 한 줄이고 **모양**은 이렇다 — 아래 숫자와 멤버 수는 **실측이 아니라
 자리표시자**다(바이트는 데이터에, 멤버 수는 그 data dir 에 `composite_state`/`marketfeed` 가
@@ -199,17 +218,20 @@ CRON_TZ=Asia/Seoul
 |---|---|---|
 | `cold-backup: refused — … does not exist` | 설정 파일이 없다 | §2 로 만든다. `--config-dir` 가 **디렉터리**인지 확인(파일 경로가 아니다) |
 | `… is still null (named-TBD)` | 설정이 안 채워졌다 | 호스트 좌표 셋 + 용량 바닥을 채운다. 저장소의 paper 사본은 원래 null 이다 |
-| `… is not an absolute path` | `~` 나 상대경로를 적었다 | 실제 절대경로로 바꾼다 |
+| `… starts with '~' … no tilde expansion` | `~` 로 시작하는 경로를 적었다 | 실제 절대경로로 바꾼다. 이 로더는 `~` 를 전개하지 않는다 |
+| `… is not an absolute path` | 상대경로를 적었다 | 절대경로로 바꾼다 |
 | `… is inside the live data directory` / `CONTAINS the live data directory` / `is inside the git worktree` | 보관 경로가 있어서는 안 되는 자리다 | §2 의 경로 규칙대로 옮긴다 |
 | `… below the configured floor` | 용량 바닥 미만 — **아무것도 쓰지 않았다** | §6 |
 | `cold-backup: snapshot refused — …` | durable set 자체 문제(파일 부재 · 세대 역행) | `backup_root` 가 맞는 트리인지, `evidence`/`rcl`/`inbox` 가 있는지 확인 |
 | `… is inside <other root>` / `are the same directory` | 세 트리가 겹친다 | §2 — 셋은 일부러 떼어 둔다 |
 | `… exists and is not a directory` | 보관 경로 자리에 **파일**이 있다(오타) | 경로를 고친다. 스냅숏 전에 잡힌다 |
+| `… the archive/report/verify scratch for generation N already exists` | 그 세대의 산출물이 이미 있다 | 보통은 일어나지 않는다(할당기가 콜드 보관소도 센다). 일어났다면 그 파일을 옮기거나 지우지 말고 **왜 있는지** 먼저 본다 |
 | `cold-backup: archive refused — …` | 압축본이 되읽히지 않았다 **또는 검증 디렉터리가 이미 있다** | 아래 |
+| `cold-backup: integrity refused — …` | ⛔ **아카이브의 증거 체인이 재검증되지 않았다** | **재실행이 답이 아니다** — 아래 「압축본을 신뢰하지 않는다」 |
+| `cold-backup: custody refused — …` | 커스터디 키를 읽을 수 없거나 세대가 이어지지 않는다 | 경로·소유자·0600 모드·`evidence.key.<generation>` 존재 확인(§1). **스냅숏 전에** 잡힌다 |
 | `cold-backup: snapshot failed — OperationalError: database is locked` | **런타임이 아직 떠 있다** — §1 전제 1 위반 | 런타임을 멈추고 다시 돌린다. cron 시각을 당겼는지 본다 |
 | `cold-backup: snapshot failed — OSError: … No space left …` | 복사 도중 디스크가 찼다 | §6. 남은 `gen{N}/` 는 **지우지 않는다** — 다음 실행은 그 번호를 건너뛴다 |
 | `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다) |
-| `cold-backup: custody failed — …` | 커스터디 루트를 못 읽는다 | 경로·소유자·0600 모드 확인(§1). 스냅숏 전에 잡힌다 |
 | `cold-backup: config failed — …` | 설정 로더가 이 모듈이 모르는 방식으로 깨졌다 | 메시지의 예외 타입을 그대로 보고한다 — 결함일 수 있다 |
 
 `archive refused` 일 때:
@@ -219,8 +241,10 @@ CRON_TZ=Asia/Seoul
   (그 안의 압축 해제 사본이 **실패 원인의 증거**다) 치운 뒤 다시 돌린다. 이미 있는
   디렉터리로 읽어 들이기를 거부하는 이유는, 빠진 멤버를 오래된 파일이 가려 검증을 통과시킬
   수 있기 때문이다.
-- digest 불일치·체인 실패면 그 세대의 **압축본을 신뢰하지 않는다**. 비압축 사본으로
-  `restore-drill` 을 돌려 원본 쪽이 멀쩡한지 먼저 가린다.
+- digest 불일치(`archive refused`)·체인 실패(`integrity refused`)면 그 세대의 **압축본을
+  신뢰하지 않는다**. 비압축 사본으로 `restore-drill` 을 돌려 원본 쪽이 멀쩡한지 먼저 가린다.
+  **`integrity refused` 는 특히 재실행으로 지나가지 말 것** — 라이브 체인 자체가 의심된다는
+  뜻일 수 있다.
 - 같은 세대의 `.tar.xz` 가 이미 있으면 덮어쓰지 않고 거부한다. 재시도는 그 파일을 치우거나
   다음 세대로 간다.
 
