@@ -809,6 +809,10 @@ def test_active_verdict_still_fails_operational_gates():
 def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
     tmp_path, monkeypatch
 ):
+    # The helper is a no-op during a hermetic pytest session (#698). This test
+    # covers the standalone-run path instead, so it turns the switch off and
+    # points the repo root at a temp dir the session's dotenv guard allows.
+    monkeypatch.delenv("KIS_TEST_HERMETIC", raising=False)
     monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
     monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH", raising=False)
     monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "already-set")

@@ -319,8 +319,8 @@ def test_publish_to_redis_ignores_stale_strategy_watchlist():
 def test_get_market_data_store_loads_repo_env(tmp_path, monkeypatch):
     calls = {}
 
-    def fake_load_dotenv(path, override=False):
-        calls["dotenv"] = (path, override)
+    def fake_load_project_dotenv():
+        calls["dotenv"] = True
 
     def fake_load_or_default():
         calls["storage"] = True
@@ -328,13 +328,16 @@ def test_get_market_data_store_loads_repo_env(tmp_path, monkeypatch):
             market_data=SimpleNamespace(parquet=SimpleNamespace(root=str(tmp_path)))
         )
 
-    monkeypatch.setattr(scanner, "_REPO_ROOT", tmp_path)
-    monkeypatch.setattr(scanner, "load_dotenv", fake_load_dotenv)
+    # Which file the loader picks, and that it picks none during tests, is
+    # covered by tests/unit/config/test_dotenv_hermeticity.py (#698). What
+    # matters here is only that the env is loaded before the storage config
+    # is read.
+    monkeypatch.setattr(scanner, "load_project_dotenv", fake_load_project_dotenv)
     monkeypatch.setattr(scanner.StorageConfig, "load_or_default", fake_load_or_default)
 
     store = get_market_data_store()
 
-    assert calls["dotenv"] == (tmp_path / ".env", False)
+    assert calls["dotenv"] is True
     assert calls["storage"] is True
     assert str(store.root) == str(tmp_path)
 

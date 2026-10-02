@@ -1,11 +1,20 @@
 """Pytest configuration for test discovery and fixtures.
 
 Adds project root to sys.path for module imports.
-Loads .env for integration tests that need infrastructure credentials.
+
+The session is hermetic by default: no ``.env`` is loaded, the whole ``KIS_*``
+and ``TELEGRAM_*`` namespace is emptied, and the config and token-cache
+directories are pinned to this checkout and a temp dir. Set
+``KIS_RUN_LIVE_INFRA_TESTS=1`` to opt back into real infrastructure
+credentials — the same switch that un-skips the ``live_infra`` tests. See
+``docs/CI_PARALLEL_NOTES.md`` and #698.
 """
 
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 from unittest import mock
@@ -17,7 +26,7 @@ project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
 # Imported AFTER project_root lands on sys.path — `tests` is a namespace package.
-from tests.support import git_env  # noqa: E402
+from tests.support import git_env, hermetic_env  # noqa: E402
 
 _LIVE_INFRA_TEST_PATHS = {
     # These tests connect to real Redis DB 1. Some of them
@@ -35,39 +44,67 @@ _LIVE_INFRA_TEST_PATHS = {
     "tests/shared/risk/test_persistence.py",
 }
 
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+_LIVE_INFRA_ENV = hermetic_env.LIVE_INFRA_ENV
 
-# Load .env so tests can access infrastructure credentials (Redis, etc.)
-_env_file = project_root / ".env"
-if _env_file.exists():
-    try:
-        from dotenv import load_dotenv
+# --- Hermetic session --------------------------------------------------------
+# Everything below runs at conftest *import* time, before collection, because
+# the leak this closes happens at import time: a test module that imports
+# `cli.commands.common` (or any script entrypoint) used to run an
+# argument-less load_dotenv() during collection, which walked out of a nested
+# worktree into the primary checkout's real .env. A fixture runs too late to
+# stop that; `_hermetic_broker_env` below re-asserts the same invariants once
+# the session starts.
+#
+# Opting into live infrastructure (KIS_RUN_LIVE_INFRA_TESTS=1, the same switch
+# that un-skips the live_infra tests) restores the previous behavior: this
+# checkout's .env is loaded exactly as the runtime loads it.
+HERMETIC_SESSION = not hermetic_env.env_flag(_LIVE_INFRA_ENV)
 
-        load_dotenv(_env_file, override=False)
-    except ImportError:
-        pass
+if HERMETIC_SESSION:
+    os.environ[hermetic_env.HERMETIC_ENV] = "1"
 
-# Scrub Telegram credentials for the whole pytest session. The .env loaded
-# above carries the operator's real TELEGRAM_*_BOT_TOKEN/CHAT_ID (on the
-# paper/live host), and tests that start a real TradingOrchestrator without
-# mocking `_notify` (e.g. test_orchestrator_lifecycle) would otherwise send
-# real "🚀 Trading Started" / "🛑 Trading Stopped" messages to the operator's
-# Telegram during a test run. Blanking the credentials makes orchestrator
-# `_notify`/`resolve_domain_credentials` short-circuit ("Telegram not
-# configured") instead of hitting the network. Tests that exercise Telegram
-# routing self-provision credentials via monkeypatch, which auto-restores
-# per test and is unaffected by this session-level scrub.
-for _tg_key in (
-    "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_CHAT_ID",
-    "TELEGRAM_STOCK_BOT_TOKEN",
-    "TELEGRAM_STOCK_CHAT_ID",
-    "TELEGRAM_FUTURES_BOT_TOKEN",
-    "TELEGRAM_FUTURES_CHAT_ID",
-    "TELEGRAM_BRIEFING_BOT_TOKEN",
-    "TELEGRAM_BRIEFING_CHAT_ID",
-):
-    os.environ.pop(_tg_key, None)
+    # Empty the whole KIS_*/TELEGRAM_* namespace, whatever its source — a .env
+    # already loaded by a plugin, or variables exported in the operator's
+    # shell. Credentials aside, this is also what keeps a local run honest:
+    # CI sets none of these, so a test that silently depended on one passed
+    # locally and failed in CI. Notably it blanks TELEGRAM_*_BOT_TOKEN, without
+    # which a test that starts a real TradingOrchestrator and does not mock
+    # `_notify` (e.g. test_orchestrator_lifecycle) sends real
+    # "🚀 Trading Started" messages to the operator. Tests that exercise
+    # Telegram routing self-provision credentials via monkeypatch, which
+    # auto-restores per test.
+    SCRUBBED_ENV = hermetic_env.scrub_broker_env()
+
+    # Turn any remaining .env read into a named failure instead of a silent
+    # credential injection — including from a caller added after #698.
+    hermetic_env.install_dotenv_guard()
+
+    # Pin the config directory to THIS checkout. A worktree then reads its own
+    # config/, never the primary checkout's, and the value no longer depends
+    # on whether the operator exported KIS_CONFIG_DIR.
+    os.environ["KIS_CONFIG_DIR"] = str(project_root / "config")
+
+    # Send token caches to a throwaway directory. The default is Path.cwd(),
+    # which is how a real .kis_token_real landed in a worktree root on
+    # 2026-09-15. One directory per process, so xdist workers do not share it.
+    TOKEN_CACHE_DIR = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
+    os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
+    atexit.register(shutil.rmtree, TOKEN_CACHE_DIR, True)
+else:
+    # Live-infra opt-in: the operator asked for real Redis and friends, so this
+    # checkout's .env is loaded exactly as the runtime loads it. Telegram stays
+    # scrubbed even here — a live-infra run must still not message the operator
+    # from a test (the pre-#698 behavior, kept).
+    os.environ.pop(hermetic_env.HERMETIC_ENV, None)
+    TOKEN_CACHE_DIR = None  # type: ignore[assignment]
+
+    from shared.config.dotenv_guard import load_project_dotenv  # noqa: E402
+
+    load_project_dotenv()
+    SCRUBBED_ENV = [key for key in list(os.environ) if key.startswith("TELEGRAM_")]
+    for _tg_key in SCRUBBED_ENV:
+        del os.environ[_tg_key]
+    SCRUBBED_ENV.sort()
 
 # Cap MLflow's HTTP retry budget for tests so dashboard tests don't spend
 # 4+ minutes retrying against an unreachable tracking server. Default is 7
@@ -171,6 +208,32 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.live_infra)
             if not allow_live_infra:
                 item.add_marker(skip_live_infra)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _hermetic_broker_env():
+    """Re-assert the hermetic invariants once the session starts.
+
+    The import-time block at the top of this file is what actually makes
+    collection safe. This fixture is the backstop for anything that ran
+    *during* collection and re-introduced a credential — a plugin, a module
+    that reads a file at import, a conftest further down the tree. It re-scrubs
+    rather than failing, so the session gets the safe state either way; the
+    assertions live in ``tests/unit/config/test_dotenv_hermeticity.py``, which
+    fails loudly and names itself.
+
+    Skipped entirely under ``KIS_RUN_LIVE_INFRA_TESTS=1``, where the operator
+    has asked for real infrastructure credentials on purpose.
+    """
+    if not HERMETIC_SESSION:
+        yield
+        return
+
+    os.environ[hermetic_env.HERMETIC_ENV] = "1"
+    hermetic_env.scrub_broker_env()
+    os.environ["KIS_CONFIG_DIR"] = str(project_root / "config")
+    os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
+    yield
 
 
 @pytest.fixture(autouse=True)
