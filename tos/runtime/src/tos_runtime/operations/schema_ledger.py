@@ -88,7 +88,7 @@ import hashlib
 import json
 import logging
 import sqlite3
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import NoReturn, Protocol
 
 #: The FIRST logger in ``tos_runtime`` (review round-2 F6). Nothing in this package logged before,
@@ -101,11 +101,13 @@ from typing import NoReturn, Protocol
 _LOG = logging.getLogger(__name__)
 
 __all__ = [
-    "SCHEMA_LEDGER_TABLE_SQL",
+    "SCHEMA_LEDGER_TRIGGER_NAMES",
     "JournalModeRefused",
+    "SchemaLedgerUnprotected",
     "closing_on_failure",
     "SchemaVersionRefused",
     "compute_schema_shape_digest",
+    "create_schema_ledger_objects",
     "enable_wal_journal",
     "ensure_schema_current",
     "file_is_fresh",
@@ -114,7 +116,7 @@ __all__ = [
     "user_tables",
 ]
 
-SCHEMA_LEDGER_TABLE_SQL = """
+_SCHEMA_LEDGER_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS schema_ledger (
     version INTEGER PRIMARY KEY,
     applied_at_monotonic_ns INTEGER NOT NULL,
@@ -138,6 +140,166 @@ BEGIN
     SELECT RAISE(ABORT, 'tos_runtime schema ledger: schema_ledger is append-only — DELETE forbidden');
 END
 """
+
+#: The one table these objects belong to. Named rather than repeated as a literal because the
+#: ownership check below is the whole point of :func:`_refuse_foreign_trigger_names`.
+_SCHEMA_LEDGER_TABLE_NAME = "schema_ledger"
+
+
+class SchemaLedgerUnprotected(RuntimeError):
+    """The ``schema_ledger`` cannot be shown to be append-only, so nothing claims it is.
+
+    Raised by :func:`create_schema_ledger_objects` when one of the two reserved trigger names
+    is attached to a different table (sqlite's trigger namespace is per-database, so
+    ``CREATE TRIGGER IF NOT EXISTS`` would no-op and the ledger would stay writable), or when
+    the two triggers are not both on ``schema_ledger`` once creation has run. Fails closed:
+    the alternative is reporting protection that does not exist, which is the defect class
+    this module was changed to close.
+    """
+
+
+#: The two triggers that make ``schema_ledger``'s name true. Named here so a caller can report
+#: which of them it had to rebuild, and so "the ledger's objects" is one list rather than a
+#: sequence every call site re-types (the omission that :func:`create_schema_ledger_objects`
+#: exists to make impossible).
+SCHEMA_LEDGER_TRIGGER_NAMES: tuple[str, ...] = (
+    "schema_ledger_no_update",
+    "schema_ledger_no_delete",
+)
+
+
+def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """Create the ``schema_ledger`` table AND its two append-only triggers, idempotently.
+
+    **Every** path that can bring a ``schema_ledger`` into existence goes through here, because
+    the table and the triggers are one object, not three: "append-only" is not a property of the
+    ``CREATE TABLE`` — ``version`` being a PRIMARY KEY stops only a duplicate INSERT — it is a
+    property of the two ``BEFORE UPDATE``/``BEFORE DELETE`` triggers beside it. A call site that
+    runs :data:`_SCHEMA_LEDGER_TABLE_SQL` alone produces a ledger whose rows can be silently
+    rewritten or deleted — which is why that constant is PRIVATE and unexported, and why this
+    function is its ONLY executor in the package. "A future call site cannot repeat the
+    omission" is a claim about the module's surface, not an instruction someone has to read, so
+    it is kept true by there being no public handle to misuse. Nothing detects the bad state
+    afterwards:
+    :func:`compute_schema_shape_digest` reads ``PRAGMA table_info``, which is blind to triggers,
+    and :func:`open_or_create_schema`'s steady-state fast path returns on
+    ``user_version``-matches-plus-``schema_ledger``-table-exists, so a later boot never re-runs
+    any DDL that could repair them.
+
+    That is not hypothetical: :func:`~tos_runtime.operations.schema_migrations.apply_migrations`
+    did exactly that until this helper existed, so every pre-ledger file an operator brought up
+    with ``migrate`` — the documented upgrade path for a real paper ``data_dir`` — ended with a
+    PERMANENTLY unprotected ledger, while a genesis-created file of the same version had both
+    triggers. The two paths are supposed to converge on one schema; they did not, and the
+    difference was invisible to every check in this package.
+
+    **Atomic at every call site, via SAVEPOINT rather than BEGIN** (Codex review MEDIUM-2).
+    A plain ``BEGIN`` is not available here: :func:`open_or_create_schema` already calls this
+    inside ``BEGIN IMMEDIATE``, so a nested ``BEGIN`` would raise, while
+    :func:`~tos_runtime.operations.schema_migrations.apply_migrations` and
+    :func:`ensure_schema_current` call it in autocommit. A ``SAVEPOINT`` nests in the first
+    case and opens a transaction in the second, so the table and both triggers land together
+    or not at all. Without it, an I/O failure between the ``CREATE TABLE`` and the second
+    ``CREATE TRIGGER`` left a table with one or neither trigger — the exact bad state above,
+    and one that the boot fast path then waves through until someone happens to run ``migrate``
+    again. "Documented as self-healing" was not good enough: the healing needed an operator to
+    decide to run a tool.
+
+    **A same-named trigger on a DIFFERENT table is refused, not silently accepted** (Codex
+    review MEDIUM-3). Trigger names are global in sqlite, so if ``schema_ledger_no_update``
+    already exists attached to some other table, ``CREATE TRIGGER IF NOT EXISTS`` is a no-op
+    and this function would otherwise return ``()`` — reporting "nothing needed repair" over a
+    ledger that is in fact unprotected. That is precisely the defect class this whole function
+    exists to close, so it fails closed with :class:`SchemaLedgerUnprotected` instead.
+
+    Returns:
+        The names of the triggers this call had to REBUILD on a ledger that already existed —
+        empty on a healthy file, and empty when this call created the ledger itself. A
+        non-empty result therefore means exactly one thing: that ledger was running
+        unprotected, which the caller reports rather than fixing silently. Creating a brand-new
+        ledger is not a repair and must not be reported as one — the plan points operators at
+        this signal, so a version of it that also fires on healthy genesis is worth nothing.
+
+    Raises:
+        SchemaLedgerUnprotected: A trigger of one of the two reserved names exists on another
+            table, or the two triggers are not both present on ``schema_ledger`` afterwards.
+    """
+    conn.execute("SAVEPOINT tos_schema_ledger_objects")
+    try:
+        # Freshness is decided BEFORE the CREATE TABLE, inside the savepoint (Claude-lane
+        # review MEDIUM-1). Asking afterwards cannot distinguish "this ledger was running
+        # unprotected" from "there was no ledger a moment ago and I just made one", so every
+        # first `migrate` on every store reported a repair that never happened — the operator
+        # signal the plan tells people to watch for, firing on healthy genesis.
+        pre_existing = _schema_ledger_exists(conn)
+        conn.execute(_SCHEMA_LEDGER_TABLE_SQL)
+        before = _ledger_trigger_owners(conn)
+        _refuse_foreign_trigger_names(before)
+        conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
+        conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+        _refuse_unless_protected(_ledger_trigger_owners(conn))
+    except BaseException:
+        conn.execute("ROLLBACK TO tos_schema_ledger_objects")
+        conn.execute("RELEASE tos_schema_ledger_objects")
+        raise
+    conn.execute("RELEASE tos_schema_ledger_objects")
+    if not pre_existing:
+        return ()
+    return tuple(name for name in SCHEMA_LEDGER_TRIGGER_NAMES if name not in before)
+
+
+def _ledger_trigger_owners(conn: sqlite3.Connection) -> dict[str, str]:
+    """``{trigger name: the table it is attached to}`` for the two reserved ledger names.
+
+    The OWNER matters, not merely the name: sqlite's trigger namespace is per-database, not
+    per-table, so presence alone does not mean the ledger is protected.
+    """
+    placeholders = ", ".join("?" for _ in SCHEMA_LEDGER_TRIGGER_NAMES)
+    rows = conn.execute(
+        "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' "
+        f"AND name IN ({placeholders})",
+        SCHEMA_LEDGER_TRIGGER_NAMES,
+    ).fetchall()
+    return {str(row[0]): str(row[1]) for row in rows}
+
+
+def _refuse_foreign_trigger_names(owners: Mapping[str, str]) -> None:
+    """Refuse when a reserved trigger name is already taken by another table."""
+    foreign = {
+        name: table
+        for name, table in owners.items()
+        if table != _SCHEMA_LEDGER_TABLE_NAME
+    }
+    if foreign:
+        raise SchemaLedgerUnprotected(
+            f"schema ledger: trigger name(s) {sorted(foreign)} already exist attached to "
+            f"{sorted(set(foreign.values()))}, not to {_SCHEMA_LEDGER_TABLE_NAME!r} — "
+            "`CREATE TRIGGER IF NOT EXISTS` would silently no-op and leave the ledger "
+            "writable while reporting that nothing needed repair; refusing instead"
+        )
+
+
+def _refuse_unless_protected(owners: Mapping[str, str]) -> None:
+    """Refuse unless BOTH reserved triggers now sit on ``schema_ledger``."""
+    missing = [
+        name
+        for name in SCHEMA_LEDGER_TRIGGER_NAMES
+        if owners.get(name) != _SCHEMA_LEDGER_TABLE_NAME
+    ]
+    if missing:
+        raise SchemaLedgerUnprotected(
+            f"schema ledger: {missing} still not attached to {_SCHEMA_LEDGER_TABLE_NAME!r} "
+            "after creating them — refusing to report the ledger as protected"
+        )
+
+
+def _trigger_names(conn: sqlite3.Connection) -> frozenset[str]:
+    """Every trigger currently defined on this file."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IS NOT NULL"
+    ).fetchall()
+    return frozenset(str(row[0]) for row in rows)
+
 
 #: The ``applied_by`` value :func:`ensure_schema_current` writes for a genesis stamp — never a
 #: migration (case 1 above).
@@ -418,7 +580,7 @@ def file_is_fresh(conn: sqlite3.Connection) -> bool:
     """``True`` iff ``conn`` has no user tables yet.
 
     **Must be called BEFORE the caller's own ``CREATE TABLE`` DDL runs** (including before this
-    module's own :data:`SCHEMA_LEDGER_TABLE_SQL`) — otherwise a genuinely fresh file looks
+    module's own :data:`_SCHEMA_LEDGER_TABLE_SQL`) — otherwise a genuinely fresh file looks
     identical to one this very call already populated.
 
     :func:`open_or_create_schema` calls this INSIDE its own ``BEGIN IMMEDIATE``, which is what
@@ -518,9 +680,7 @@ def _run_genesis_transaction(
     try:
         fresh = file_is_fresh(conn)
         create_ddl(conn, fresh)
-        conn.execute(SCHEMA_LEDGER_TABLE_SQL)
-        conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
-        conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+        create_schema_ledger_objects(conn)
         if fresh:
             conn.execute(f"PRAGMA user_version = {int(schema_version)}")
             conn.execute(
@@ -672,9 +832,7 @@ def ensure_schema_current(
         SchemaVersionRefused: On-disk ``user_version`` is behind OR ahead of ``schema_version``
             for a non-fresh file (module docstring cases 3/4).
     """
-    conn.execute(SCHEMA_LEDGER_TABLE_SQL)
-    conn.execute(_SCHEMA_LEDGER_NO_UPDATE_TRIGGER_SQL)
-    conn.execute(_SCHEMA_LEDGER_NO_DELETE_TRIGGER_SQL)
+    create_schema_ledger_objects(conn)
     current = read_schema_version(conn)
     if was_fresh:
         conn.execute("BEGIN IMMEDIATE")

@@ -840,6 +840,10 @@ def _migrate_report(outcome: MigrationOutcome) -> str:
     "is current" used to be printed for three materially different outcomes — nothing to do,
     versions applied, and an index rebuilt — which made a repair indistinguishable from a no-op
     in the one place an operator looks (review L3).
+
+    ``repaired`` can now name a ``schema_ledger`` append-only trigger as well as an index, so
+    the repair line says what was missing rather than asserting "unindexed" over a file whose
+    actual defect was an unprotected ledger.
     """
     if outcome.applied:
         parts = [
@@ -858,7 +862,7 @@ def _migrate_report(outcome: MigrationOutcome) -> str:
     if outcome.repaired:
         return (
             f"already at v{outcome.to_version}, but REBUILT missing "
-            f"{', '.join(outcome.repaired)} — the file was running unindexed"
+            f"{', '.join(outcome.repaired)} — the file was running without it"
         )
     return f"already at v{outcome.to_version}, nothing to do"
 

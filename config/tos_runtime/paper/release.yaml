@@ -616,6 +616,53 @@
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
 #
+#   36차 재측정(2026-10-02, 브랜치 feat/tos-evidence-kind-index-migration · 분기점
+#   origin/main f219305f · 증거 성장 계획 §7.1.17):
+#   ⚠ 이 레인은 처음 33차로 번호를 잡았는데, 그 사이 PR #840 이 33·34·35 를 먼저 썼다.
+#   머지하면서 **36 으로 다시 번호를 매긴다** — 번호는 이 파일 안에서 유일해야 한다.
+#   아래 서술: 런타임 `*.py` 셋이 바뀌었다 —
+#   `operations/schema_ledger.py`(새 공개 헬퍼 `create_schema_ledger_objects` + 기존 두
+#   호출부를 그 헬퍼로) · `operations/schema_migrations.py`(`apply_migrations` 가 대장
+#   테이블만이 아니라 **트리거까지** 만들고, 복구한 트리거를 `MigrationOutcome.repaired`
+#   로 보고) · `compose/cli.py`(복구 줄의 꼬리말이 인덱스를 가정하지 않도록). 이유는
+#   A2 의 「제네시스 경로와 마이그레이션 경로가 같은 스키마로 수렴한다」가 **실제로는
+#   거짓**이었기 때문이다(계획 §7.1.17 의 red 증거). 이전 값
+#   df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0 은 32차 측정치
+#   (브랜치 perf/tos-flow-observation-pk-lookup · PR #832 · main d7ce609b).
+#
+#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `38d85110…`(아래 값).
+#   `SCHEMA_LEDGER_TABLE_SQL` 을 **비공개**(`_` 접두)로 바꾸고 `__all__` 에서 뺐다.
+#   첫 커밋의 「네 번째 호출부가 같은 누락을 반복할 수 없다」가 **공개 상수가 남아 있는
+#   한 참이 아니었기** 때문이다 — 이 PR 이 다루는 결함 형태(가드가 자기가 막는다고 말한
+#   것을 허용한다)를 PR 자신이 저지르는 꼴이었다. 지금은 그 상수를 실행하는 자리가
+#   패키지 전체에서 `create_schema_ledger_objects` **한 곳**이고, 공개 핸들이 없다.
+#   ⚠ **세 번째로 움직였다**: Codex 교차모델 심사(needs-attention, MEDIUM 3 · LOW 1)를
+#   전건 수용해 `apply_migrations` 의 AHEAD 거부를 DDL 앞으로 옮기고(M1), 대장 객체 생성을
+#   `SAVEPOINT` 로 원자화하고(M2 — 바로 앞 커밋에서 「문서화로 갈음」했던 바로 그 창),
+#   예약 트리거 이름이 다른 테이블에 붙어 있으면 `SchemaLedgerUnprotected` 로 fail-closed
+#   하게 했다(M3). 계획 §7.1.17 「Codex 교차모델 심사 처분」에 표로 적었다.
+#   ⚠ **네 번째로 움직였다**: Claude 레인 + 적대적 패스의 지적 10건을 전건 처분하면서
+#   `schema_ledger.py`(대장 생성과 복구를 구분 — `_schema_ledger_exists` 를 `CREATE TABLE`
+#   **앞**에서 물어, 자기가 방금 만든 대장을 「rebuilt」 로 보고하지 않는다) 와
+#   `schema_migrations.py`(죽은 상호참조 · Args 의 스토어 넷) 가 바뀌었다. 계획 §7.1.17
+#   「Claude 레인 · 적대적 패스 처분」에 표로 적었다.
+#   ⚠ **origin/main 머지(2b69b8b5 — PR #840 A3 무인화)로 다시 도출했다.** #840 이
+#   `compose/cli.py` · `compose/_operations_wiring.py` · `operations/backup_set.py` 와 새
+#   모듈 둘(`_backup_dispatch.py` · `cold_backup.py`)을 들여왔으므로 양쪽 소스가 섞였다.
+#   #840 의 §7.1.18 이 「A2 레인이 뒤에 머지되면 그쪽이 다시 도출해야 한다」고 적어 둔
+#   바로 그 경우다(#814 가 main 을 stale 로 만든 전례). 머지 전 이 레인의 값은
+#   83a970e9… 였고, 머지 뒤 실측이 38d85110… 다.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 38d85110…).
+#
+#   ⚠ **두 번째 origin/main 머지(62737d08 — #841 프로브 transient 정책)는 이 값에 영향이
+#   없다.** 가져온 것은 `tools/broker_probes/**` · `tests/tools/**` · `docs/**` 열두 파일이고
+#   `tos/src`·`tos/runtime/src` 는 **한 건도 없다**(`git diff --name-only c7c2be3c HEAD --
+#   tos/src tos/runtime/src` 가 비어 있다). **그래도 머지 뒤에 다시 찍어 숫자로 확인했다**:
+#   두 경로 모두 38d85110… 그대로이고 핀 두 곳과 일치한다. 「소스를 안 건드렸으니 같을
+#   것」이 아니라 **「같은 것을 쟀다」**로 남긴다 — #814 이후 이 파일의 규율이다.
+#   `expected_dependency_set_digest` 는 서른세 번 모두 바뀌지 않았다 — 같은 배포 호스트
+#   루트 `.venv`(python 3.12.12 / sqlite 3.45.1).
+#
 # **두 값의 유효 범위가 서로 다르다 — 갱신 규율도 다르다.**
 #   * `expected_code_digest` 는 설치된 `tos`/`tos_runtime` **패키지 트리의
 #     `*.py` 내용**만 접는다(`operations/dependency_admission.py:60-89`,
@@ -633,7 +680,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "7460d4f386bcf7d71f995078f5beb68aa64ba653e9d06bb0ae72f60ec3fd1de9"
+expected_code_digest: "38d85110211cf6836e5806c81547c075f8d3a926bb0cf107cb7afc77871065e3"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

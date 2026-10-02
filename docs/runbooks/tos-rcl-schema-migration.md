@@ -111,10 +111,14 @@ sys.exit(main(['migrate', '--data-dir', '<data_dir>', '--store', 'rcl']))
 ```
 
 ```
-migrate: rcl at <data_dir>/rcl.sqlite3 is current
+migrate: rcl at <data_dir>/rcl.sqlite3 — already at v2, nothing to do
 ```
 
 exit code `0`. `--store`를 생략하면 이 줄이 등록된 스토어 수만큼(현재 4줄) 반복 출력된다.
+
+⚠ **이 줄은 예전에 `"is current"` 였다.** 리뷰 L3 이후 `migrate` 는 서로 다른 세 결과를
+구분해 출력한다(아무것도 안 함 · 버전 적용 · 보조 구조 복구 —
+`compose/cli.py::_migrate_report`). `"is current"` 를 기대하는 스크립트·grep 은 맞지 않는다.
 
 ## 3. 승격을 실제로 해봤다 — 기존 행 보존 확인
 

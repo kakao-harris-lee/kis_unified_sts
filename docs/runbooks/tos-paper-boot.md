@@ -179,17 +179,57 @@ evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 �
 operator `migrate` CLI ... before booting; boot never auto-applies a migration
 ```
 
-순서는 **반드시** (1) 구 코드 프로세스 전부 정지 → (2) `migrate` → (3) 신 코드 기동이다.
-`migrate` 를 먼저 돌리면 아직 살아 있는 v1 프로세스가 다음 open 에서 거부된다.
+순서는 **반드시** (0) `backup-set` → (1) 구 코드 프로세스 전부 정지 → (2) `migrate` →
+(3) 신 코드 기동이다. `migrate` 를 먼저 돌리면 아직 살아 있는 v1 프로세스가 다음 open 에서
+거부된다.
+
+**(0) 먼저 백업 세대를 뜬다.** RCL v2 와 달리 이 마이그레이션의 롤백에는 백업 복원이
+**필요 없다**(아래 「롤백」 — 인덱스는 보조 구조다). 그래도 세대를 먼저 뜨는 이유는 롤백
+수단이어서가 아니라, 되돌리기 어려운 경로를 건드리기 전의 일반 배포 위생이기 때문이다 —
+선례와 절차는 `docs/runbooks/tos-rcl-schema-migration.md` §4 다. `--archive-dir` 을 주면
+압축본을 쓰고 **되읽어 검증**한다(`operations/backup_archive.verify_archive` — 계획 §2 A3).
+`backup-set` 도 런타임이 정지해 있어야 한다.
 
 ```bash
 PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
   'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
   migrate --data-dir "$DATA" --store evidence
-# migrate: evidence at .../evidence.sqlite3 is current
-sqlite3 "$DATA/evidence.sqlite3" "SELECT name FROM sqlite_master WHERE type='index';"
-# entries_kind_seq
+# v1 파일을 올릴 때:
+#   migrate: evidence at .../evidence.sqlite3 — applied v1 -> v2 (v2)
+# 이미 v2 인 파일에 다시 돌렸을 때:
+#   migrate: evidence at .../evidence.sqlite3 — already at v2, nothing to do
 ```
+
+⚠ 이 줄은 예전에 `"is current"` 였다. 리뷰 L3 이후 `migrate` 는 **서로 다른 세 결과**를
+구분해 출력한다 — `compose/cli.py::_migrate_report`. 아래 「롤포워드」의 출력 목록이 전부다.
+
+**검증은 세 가지를 모두 본다.** 인덱스 이름 하나만 보는 것으로는 부족하다 —
+`user_version` 이 안 올라갔으면 다음 부팅이 거부되고, 대장 행이 없으면 「언제 적용됐나」가
+남지 않는다:
+
+```bash
+sqlite3 "$DATA/evidence.sqlite3" "PRAGMA user_version;"
+# 2
+sqlite3 "$DATA/evidence.sqlite3" "SELECT version, applied_by FROM schema_ledger ORDER BY version;"
+# 1|CREATED   (또는 1|MIGRATE — 대장 이전 파일을 올린 경우)
+# 2|MIGRATE
+sqlite3 "$DATA/evidence.sqlite3" "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name;"
+# index|entries_kind_seq
+# table|entries
+# table|outbox
+# table|schema_ledger
+# trigger|entries_no_delete
+# trigger|entries_no_update
+# trigger|schema_ledger_no_delete
+# trigger|schema_ledger_no_update
+```
+
+세 번째 목록은 **genesis 로 만들어진 v2 파일과 글자 그대로 같아야 한다**. 같다는 것이
+테스트로 고정돼 있다(`test_a_migrated_file_converges_on_the_genesis_schema`). ⚠ 2026-10-02
+이전의 `migrate` 는 `schema_ledger` 의 append-only 트리거 **둘을 만들지 않았다** — 대장
+이전 파일을 `migrate` 로 올렸다면 그 파일의 대장은 지금도 UPDATE·DELETE 가 가능하다.
+위 목록에 `schema_ledger_no_*` 가 없으면 `migrate` 를 한 번 더 돌린다(복구 패스가 다시
+만들고, 무엇을 만들었는지 출력한다).
 
 v2 가 더하는 것은 **인덱스 하나뿐**이다. 행 바이트·`entry_digest`·`chain_digest` 는 움직이지
 않고 체인 검증 결과도 그대로다(`tests/operations/test_schema_ledger.py
@@ -220,9 +260,31 @@ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
 
 ```
 migrate: evidence at ... — already at v2, nothing to do
+migrate: evidence at ... — applied v1 -> v2 (v2)
+migrate: evidence at ... — applied v0 -> v2 (v1, v2)
 migrate: evidence at ... — applied v1 -> v2 (v2); ledger row(s) already present for v2, not re-recorded (append-only)
-migrate: evidence at ... — already at v2, but REBUILT missing entries_kind_seq — the file was running unindexed
+migrate: evidence at ... — already at v2, but REBUILT missing entries_kind_seq — the file was running without it
+migrate: evidence at ... — already at v2, but REBUILT missing schema_ledger_no_update, schema_ledger_no_delete — the file was running without it
+migrate: evidence at ... — applied v1 -> v2 (v2); rebuilt schema_ledger_no_update, schema_ledger_no_delete
 ```
+
+**일곱** 형태 전부를 실제로 실행해서 받은 문자열이다(리뷰 MEDIUM-2: 이 목록이 「전부」라고 적혀
+있었는데 **대장 이전 파일이 실제로 내는 줄이 빠져 있었다**). 3번째가 그 줄이다 — 대장 이전
+data dir 은 v0 에서 출발하므로 `applied v0 -> v2 (v1, v2)` 다. 마지막 줄은 버전도 뒤처지고
+대장 트리거도 없는 파일로, 적용과 복구가 **한 줄에 같이** 나온다.
+
+⚠ **「rebuilt …」 는 대장이 «이미 있었는데» 트리거가 없었을 때만 나온다.** `migrate` 가
+대장을 처음 만드는 경우(신규 배포 · 대장 이전 파일)는 복구가 아니므로 **적히지 않는다** —
+리뷰 MEDIUM-1 전에는 여기서도 「rebuilt」 를 찍어서, 멀쩡한 제네시스에도 경고가 울렸다.
+그래서 이 줄을 보면 **실제로 무방비였던 파일**이라고 읽어도 된다.
+
+2026-10-02 에 추가된 복구의 배경: `migrate` 가 대장을 직접 만들어야 했던 파일은 테이블만
+받고 append-only 트리거 둘을 받지 못했고, 그 상태는 스스로 낫지 않았다 —
+`open_or_create_schema` 의 정상 부팅 빠른 경로가 「버전 일치 + 대장 테이블 존재」에서
+DDL 을 돌리기 전에 반환하기 때문이다. 지금은 양쪽 경로가 `create_schema_ledger_objects`
+하나를 지나므로 genesis 파일과 마이그레이션 파일의 `sqlite_master` 가 같다(evidence ·
+inbox · marketfeed. `rcl` 은 v2 가 `ALTER TABLE ADD COLUMN` 이라 **표 본문 텍스트**만
+sqlite 내부 공백이 다르고 `PRAGMA table_info` 는 동일 — 테스트가 그렇게 고정한다).
 
 `schema_ledger` 는 append-only 이고 `version` 이 PK 라서 롤백 뒤에도 v2 행이 남는다. 그래서
 재적용은 대장 행을 다시 쓰지 않는다(대장은 「언제 처음 적용됐나」의 기록이지 실행 횟수가

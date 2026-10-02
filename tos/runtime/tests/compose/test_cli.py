@@ -702,6 +702,27 @@ def test_restore_drill_dispatches_to_restore_set_for_a_non_live_label(
             MigrationOutcome("evidence", 1, 2, (2,), (), ()),
             "not re-recorded (append-only)",
         ),
+        # The repair suffix itself, pinned. It used to read "the file was running unindexed",
+        # which became false once `repaired` could also name a schema_ledger trigger; with no
+        # case on it the wording could be reverted and the suite would stay green (LOW-4).
+        (
+            MigrationOutcome("evidence", 2, 2, (), (), ("entries_kind_seq",)),
+            "the file was running without it",
+        ),
+        # `applied` AND `repaired` together — unreachable before the ledger-trigger repair
+        # existed, because `repaired` was assigned only inside `if not applied`. It is a real
+        # outcome now: a ledger that lost its triggers on a file also behind on versions.
+        (
+            MigrationOutcome(
+                "evidence",
+                1,
+                2,
+                (2,),
+                (2,),
+                ("schema_ledger_no_update", "schema_ledger_no_delete"),
+            ),
+            "rebuilt schema_ledger_no_update, schema_ledger_no_delete",
+        ),
     ],
 )
 def test_migrate_report_names_what_it_did(
