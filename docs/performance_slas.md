@@ -139,11 +139,17 @@ runner's throwaway service container is the one place it is safe. Neither
 module reaches a KIS endpoint — `test_websocket_load.py` is named for what the
 Redis Streams it measures carry, not for a KIS WebSocket connection.
 
-**Redis unreachable is now loud.** With the flag set, `tests/support/live_infra.py`
-raises during collection instead of skipping, pytest exits 2, and the checker
-reports the round as an invalid measurement. A skip would leave the baseline's
-Redis entries unmeasured and the job green, which is the defect, not the
-fallback.
+**Redis unreachable is now loud.** The gate lives in one place,
+`tests/conftest.py`, which already owns the list of live-infra modules. Not
+opted in, the item is skipped with a reason that names the flag. Opted in with
+Redis unreachable, the item **fails at setup** — the twelve benchmarks error,
+the other thirteen still run, and the checker turns the missing samples into
+`NOT MEASURED` errors. A skip would leave those baseline entries unmeasured and
+the job green, which is the defect, not the fallback. Failing per item rather
+than raising at import time keeps the blast radius to the gated tests: an
+import-time raise aborts collection and runs zero tests, and it would cover
+only the two performance modules instead of all nine in
+`_LIVE_INFRA_TEST_PATHS`.
 
 ### Measured, excluded, or an error
 
