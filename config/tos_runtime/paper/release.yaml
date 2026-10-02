@@ -574,13 +574,18 @@
 #   df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0 은 32차 측정치
 #   (브랜치 perf/tos-flow-observation-pk-lookup · PR #832 · main d7ce609b).
 #
-#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `e3fc3b7b…`(아래 값).
+#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `6e22064d…`(아래 값).
 #   `SCHEMA_LEDGER_TABLE_SQL` 을 **비공개**(`_` 접두)로 바꾸고 `__all__` 에서 뺐다.
 #   첫 커밋의 「네 번째 호출부가 같은 누락을 반복할 수 없다」가 **공개 상수가 남아 있는
 #   한 참이 아니었기** 때문이다 — 이 PR 이 다루는 결함 형태(가드가 자기가 막는다고 말한
 #   것을 허용한다)를 PR 자신이 저지르는 꼴이었다. 지금은 그 상수를 실행하는 자리가
 #   패키지 전체에서 `create_schema_ledger_objects` **한 곳**이고, 공개 핸들이 없다.
-#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 e3fc3b7b…).
+#   ⚠ **세 번째로 움직였다**: Codex 교차모델 심사(needs-attention, MEDIUM 3 · LOW 1)를
+#   전건 수용해 `apply_migrations` 의 AHEAD 거부를 DDL 앞으로 옮기고(M1), 대장 객체 생성을
+#   `SAVEPOINT` 로 원자화하고(M2 — 바로 앞 커밋에서 「문서화로 갈음」했던 바로 그 창),
+#   예약 트리거 이름이 다른 테이블에 붙어 있으면 `SchemaLedgerUnprotected` 로 fail-closed
+#   하게 했다(M3). 계획 §7.1.17 「Codex 교차모델 심사 처분」에 표로 적었다.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 6e22064d…).
 #   `expected_dependency_set_digest` 는 서른세 번 모두 바뀌지 않았다 — 같은 배포 호스트
 #   루트 `.venv`(python 3.12.12 / sqlite 3.45.1).
 #
@@ -601,7 +606,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "e3fc3b7baa9456e7367003f4ac4c186ed43d2f1357ea29c50179905511f0d1a1"
+expected_code_digest: "6e22064dd63e52f138591dcfccc21693bf78e224c74f9cdd27c64a187f55e608"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

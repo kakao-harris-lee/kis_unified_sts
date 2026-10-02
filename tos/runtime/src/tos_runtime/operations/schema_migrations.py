@@ -679,7 +679,10 @@ def apply_migrations(
 
     conn = sqlite3.connect(str(path))
     try:
-        ledger_repaired = create_schema_ledger_objects(conn)
+        # Version FIRST, DDL second (Codex review MEDIUM-1). `read_schema_version` is a bare
+        # PRAGMA and needs no ledger table, so the AHEAD refusal happens before this function
+        # writes anything: a file from a FUTURE release comes back byte-identical instead of
+        # quietly acquiring objects from an older tool that just said it refused to touch it.
         current_version = read_schema_version(conn)
         target_version = migrations[-1].version
         if current_version > target_version:
@@ -687,6 +690,7 @@ def apply_migrations(
                 f"{store_name}: on-disk user_version={current_version} is already AHEAD of "
                 f"the newest known migration ({target_version}) — refusing"
             )
+        ledger_repaired = create_schema_ledger_objects(conn)
         from_version = current_version
         applied: list[int] = []
         ledgered: list[int] = []

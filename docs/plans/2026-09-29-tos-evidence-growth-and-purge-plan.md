@@ -2130,7 +2130,7 @@ PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이�
 | `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
 | `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
 | `1670d7f8` | 이 착지 기록 (§7.1.17) + INDEX 행 |
-| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `e3fc3b7b…` |
+| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `6e22064d…` |
 
 ##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
 
@@ -2233,7 +2233,7 @@ mypy: 커널 `Success (266 files)`. 런타임은 **27 errors in 18 files** 인�
 
 digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
 `d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835` →
-`e3fc3b7baa9456e7367003f4ac4c186ed43d2f1357ea29c50179905511f0d1a1`(아래 자기점검).
+`6e22064dd63e52f138591dcfccc21693bf78e224c74f9cdd27c64a187f55e608`(아래 자기점검).
 `print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. 핀 **두 곳 모두** 갱신.
 `expected_dependency_set_digest` 불변.
 
@@ -2259,6 +2259,43 @@ digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
 상태가 남는다. 창은 **실재하지만 유계이고 스스로 닫힌다**: 다음 `migrate` 가 멱등하게
 복구하고, 반환값이 그 복구를 **보이게** 만든다. 함수 독스트링에 그대로 적었다 —
 **말해지지 않은 창이 원래 결함이 살아남은 방식**이기 때문이다.
+
+##### Codex 교차모델 심사 처분 (2026-10-02) — **needs-attention 4건 전건 수용**
+
+운영자 승인 범위(되돌리기 어려운 경로 = DB 마이그레이션)로 Codex CLI 0.156.1 에 diff 를
+넘겼다. **판정 `needs-attention`**, MEDIUM 3 · LOW 1. **네 건 모두 수용·수정했고, 셋은
+수정 전 상태에서 red 로 재현된다.** 이 PR 이 「검증된 적 없는 수용 기준을 실행한다」를
+주제로 하면서 정작 자기 수정은 교차 심사 없이 끝낼 뻔했다는 점에서, 이 라운드가 §7.1.17
+전체에서 가장 값이 컸다.
+
+| # | Codex 지적 | 처분 |
+|---|---|---|
+| **M1** | `schema_migrations.py` — `user_version=999` 인 파일이 `SchemaMigrationRefused` **전에** 트리거를 영구 커밋받는다. 「거부」가 파일을 바꾼다 | **수용 · 수정.** 버전 읽기와 AHEAD 거부를 DDL **앞으로** 옮겼다(`read_schema_version` 은 맨 PRAGMA 라 대장 테이블이 필요 없다). 미래 릴리스 파일은 이제 **바이트 동일**하게 돌아온다 — 회귀 테스트가 `path.read_bytes()` 를 대조한다 |
+| **M2** | `schema_ledger.py` — `CREATE TABLE` 뒤 중단되면 트리거 없는 대장이 남고 **부팅 빠른 경로가 통과시킨다**. 문서화는 복구를 자동으로 만들지 않는다. **`SAVEPOINT` 면 중첩 `BEGIN` 없이 닫을 수 있다** | **수용 · 수정.** 바로 앞 커밋에서 내가 「고치지 않고 적는다」로 처분한 바로 그 창이다 — Codex 가 제시한 `SAVEPOINT` 가 내가 놓친 수단이었고, 그것이면 세 호출부 **전부**에서 원자적이다(제네시스의 `BEGIN IMMEDIATE` 안에서는 중첩, autocommit 에서는 트랜잭션 개시). **「문서화로 갈음」이 틀린 처분이었다** |
+| **M3** | `schema_ledger.py` — 같은 이름의 트리거가 **다른 테이블**에 붙어 있으면 `CREATE TRIGGER IF NOT EXISTS` 가 no-op 이고 헬퍼가 `()` 를 반환한다 — 즉 **무방비인데 「복구할 것 없음」이라고 보고**한다. 재현됨 | **수용 · 수정.** sqlite 트리거 이름공간은 **DB 단위**이지 테이블 단위가 아니다. `sqlite_master.tbl_name` 으로 소유자를 확인하고, 예약 이름이 남의 테이블에 있으면 `SchemaLedgerUnprotected` 로 **fail-closed**. 생성 뒤에도 둘 다 `schema_ledger` 에 붙었는지 재확인한다. ⚠ **이것이 이 PR 이 고치려던 결함 형태 그 자체다 — 수정본이 같은 형태를 다시 품고 있었다** |
+| **L1** | 수렴 테스트의 공백 정규화가 `DEFAULT 'a  b'` 와 `DEFAULT 'a b'` 를 같게 만든다 — 객체 **누락**은 여전히 잡지만 의미적 동등성의 증명은 아니다 | **수용 · 강화.** `type` · `name` · **`tbl_name`** 을 **정확 비교**로 올리고 공백 정규화는 `sql` 본문에만 남겼다. 보호 여부를 결정하는 구조적 사실은 이제 정규화기를 **지나지 않는다** |
+
+red 증거(수정 전 `07c6f4e4`, 사전 API 만으로):
+
+```
+RED — 3 propert(ies) violated:
+  FAIL M1: refused AHEAD file was MODIFIED (bytes changed) by the refusal
+  FAIL M3: helper returned ('schema_ledger_no_delete',) and claimed success, but
+           UPDATE schema_ledger SUCCEEDED (ledger unprotected)
+  FAIL M2: a half-built, TRIGGERLESS schema_ledger survived the failure
+```
+
+수정 후 셋 다 통과, 그리고 **원래 세 성질도 그대로 통과**한다(회귀 없음).
+회귀 테스트 3건 추가: `test_migrate_refuses_an_ahead_file_without_writing_to_it` ·
+`test_a_reserved_trigger_name_owned_by_another_table_is_refused` ·
+`test_the_ledger_objects_land_atomically`.
+
+**이 라운드의 교훈.** M2 는 **내가 바로 앞 커밋에서 「고치지 않고 적는다」로 닫은 항목**이다.
+그 판단의 근거는 「조건부 트랜잭션 분기가 더 위험하다」였는데, `SAVEPOINT` 라는 제3의
+수단을 몰랐기 때문에 선택지가 둘뿐이라고 믿은 것이다. **「고치지 않고 적는다」를 고를 때는
+«내가 아는 수단이 전부인가»를 먼저 의심해야 한다** — 교차모델 심사가 값을 낸 지점이
+정확히 거기다. M3 는 더 날카롭다: 이 PR 의 주제가 「가드가 자기가 막는다고 말한 것을
+허용한다」인데, 그 가드를 고친 코드가 **같은 형태를 다시 품고** 있었다.
 
 ##### 운영자 행동
 

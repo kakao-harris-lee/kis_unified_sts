@@ -20,6 +20,7 @@ from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION, SqliteEvidenceSt
 from tos_runtime.marketfeed.store import MARKETFEED_SCHEMA_VERSION, SqliteSnapshotStore
 from tos_runtime.operations.schema_ledger import (
     SCHEMA_LEDGER_TRIGGER_NAMES,
+    SchemaLedgerUnprotected,
     SchemaVersionRefused,
     compute_schema_shape_digest,
     create_schema_ledger_objects,
@@ -1408,19 +1409,26 @@ def test_migrate_on_a_healthy_file_reports_no_change(tmp_path: Path) -> None:
 # of the same version are the same schema, and the ledger is append-only on BOTH.
 
 
-def _normalized_sqlite_objects(path: Path) -> list[tuple[str, str, str]]:
-    """Every schema object, with SQL whitespace collapsed.
+def _normalized_sqlite_objects(path: Path) -> list[tuple[str, str, str, str]]:
+    """Every schema object as ``(type, name, tbl_name, sql)``, SQL whitespace collapsed.
 
-    Whitespace is not schema: the same ``CREATE INDEX`` reaches sqlite indented differently
-    from the store's own constant than from the migration's, and comparing raw text would fail
-    on the indentation rather than on the schema this test is about.
+    Whitespace is collapsed in the SQL ONLY: the same ``CREATE INDEX`` reaches sqlite indented
+    differently from the store's own constant than from the migration's, so comparing raw text
+    would fail on indentation rather than on the schema this test is about.
+
+    ``type``, ``name`` and ``tbl_name`` are compared EXACTLY, which is what keeps that
+    normalization honest (Codex review LOW): collapsing runs of whitespace could in principle
+    conflate two different SQL texts (``DEFAULT 'a  b'`` versus ``DEFAULT 'a b'``), so the
+    structural facts that actually decide whether the ledger is protected — does this trigger
+    exist, and is it attached to ``schema_ledger`` — never pass through the normalizer.
     """
     conn = sqlite3.connect(str(path))
     try:
         return sorted(
-            (str(row[0]), str(row[1]), " ".join((row[2] or "").split()))
+            (str(row[0]), str(row[1]), str(row[2]), " ".join((row[3] or "").split()))
             for row in conn.execute(
-                "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+                "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                "WHERE name NOT LIKE 'sqlite_%'"
             )
         )
     finally:
@@ -1522,6 +1530,106 @@ def test_migrate_rebuilds_dropped_schema_ledger_triggers_and_says_so(
         assert conn.execute("SELECT COUNT(*) FROM schema_ledger").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+# -- Codex review (2026-10-02): three ways the fix above still admitted what it names ---------
+
+
+def test_migrate_refuses_an_ahead_file_without_writing_to_it(tmp_path: Path) -> None:
+    """A file from a FUTURE release comes back BYTE-IDENTICAL from a refused ``migrate``.
+
+    Codex review MEDIUM-1. The ledger DDL used to run before the AHEAD check, so an older tool
+    told the operator it refused to touch the file and then left new objects in it. "Refused"
+    has to mean nothing was written, or the word is doing no work.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    conn = sqlite3.connect(str(path))
+    try:
+        for name in SCHEMA_LEDGER_TRIGGER_NAMES:
+            conn.execute(f"DROP TRIGGER {name}")
+        conn.execute("PRAGMA user_version = 999")
+        conn.commit()
+    finally:
+        conn.close()
+    before_bytes = path.read_bytes()
+    before_objects = _normalized_sqlite_objects(path)
+
+    with pytest.raises(SchemaMigrationRefused, match="AHEAD"):
+        apply_migrations(path, "evidence")
+
+    assert path.read_bytes() == before_bytes
+    assert _normalized_sqlite_objects(path) == before_objects
+
+
+def test_a_reserved_trigger_name_owned_by_another_table_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Sqlite trigger names are per-DATABASE, so presence is not protection.
+
+    Codex review MEDIUM-3. With ``schema_ledger_no_update`` already attached to some other
+    table, ``CREATE TRIGGER IF NOT EXISTS`` is a no-op and the helper would have returned ``()``
+    — "nothing needed repair" — over a ledger that is still freely writable. Exactly the defect
+    class this helper exists to close, so it fails closed instead.
+    """
+    path = tmp_path / "evidence.sqlite3"
+    _seed_evidence(path)
+    conn = sqlite3.connect(str(path))
+    try:
+        for name in SCHEMA_LEDGER_TRIGGER_NAMES:
+            conn.execute(f"DROP TRIGGER {name}")
+        conn.execute("CREATE TABLE decoy (x INTEGER)")
+        conn.execute(
+            "CREATE TRIGGER schema_ledger_no_update BEFORE UPDATE ON decoy "
+            "BEGIN SELECT RAISE(ABORT, 'not the ledger'); END"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(SchemaLedgerUnprotected, match="schema_ledger_no_update"):
+        create_schema_ledger_objects(sqlite3.connect(str(path)))
+
+
+def test_the_ledger_objects_land_atomically(tmp_path: Path) -> None:
+    """Table and both triggers commit together, or not at all.
+
+    Codex review MEDIUM-2. The three statements used to autocommit one at a time outside the
+    genesis transaction, so a failure between them left a table with one or neither trigger —
+    the unprotected state — which the boot fast path then waves through. The SAVEPOINT makes
+    the partial state unreachable: here the second trigger's creation is made to fail, and the
+    whole thing must roll back rather than leave a bare table behind.
+    """
+    path = tmp_path / "fresh.sqlite3"
+
+    class _FailsOnSecondTrigger(sqlite3.Connection):
+        """Real connection; the second ``CREATE TRIGGER`` raises as a disk error would.
+
+        A subclass via ``factory`` rather than monkeypatching, because
+        ``sqlite3.Connection.execute`` is read-only — and because the rollback under test is
+        sqlite's own, so it must be a genuine connection doing genuine work.
+        """
+
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:  # type: ignore[override]
+            if sql.lstrip().upper().startswith("CREATE") and (
+                "schema_ledger_no_delete" in sql
+            ):
+                raise sqlite3.OperationalError("disk I/O error (injected)")
+            return super().execute(sql, *args)
+
+    conn = sqlite3.connect(str(path), factory=_FailsOnSecondTrigger)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="injected"):
+            create_schema_ledger_objects(conn)
+    finally:
+        conn.close()
+
+    # Nothing survived: no half-built, unprotected ledger for the fast path to wave through.
+    verify = sqlite3.connect(str(path))
+    try:
+        assert "schema_ledger" not in user_tables(verify)
+    finally:
+        verify.close()
 
 
 def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
