@@ -715,3 +715,56 @@ class TestUnderSampledReporting:
         markdown = checker.markdown_summary(checker.compare_metrics(baseline, current))
         row = [line for line in markdown.splitlines() if "`brand_new`" in line][0]
         assert "| new |" in row
+
+
+class TestEmptyPathArguments:
+    """`--markdown-summary "$GITHUB_STEP_SUMMARY"` with the variable unset.
+
+    The documented CI command is meant to be copy-pasteable. An unset shell
+    variable must not turn a passing regression check into exit 2.
+    """
+
+    def _files(self, tmp_path):
+        return (
+            _write_json(
+                tmp_path / "baselines.json", _report({f"t{i}": 0.10 for i in range(5)})
+            ),
+            _write_json(
+                tmp_path / "current.json", _report({f"t{i}": 0.10 for i in range(5)})
+            ),
+        )
+
+    def test_empty_markdown_summary_is_ignored(self, tmp_path):
+        baseline, current = self._files(tmp_path)
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--markdown-summary",
+                    "",
+                ]
+            )
+            == 0
+        )
+        assert not (tmp_path / ".").joinpath("summary.md").exists()
+
+    def test_empty_write_paths_are_ignored(self, tmp_path):
+        baseline, current = self._files(tmp_path)
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--write-samples",
+                    "",
+                    "--write-baseline",
+                    "   ",
+                ]
+            )
+            == 0
+        )

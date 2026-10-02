@@ -1086,6 +1086,19 @@ class RegressionChecker:
 # ----------------------------------------------------------------------
 
 
+def _optional_path(value: str) -> Path | None:
+    """Treat an empty argument as absent.
+
+    The documented CI command passes ``--markdown-summary "$GITHUB_STEP_SUMMARY"``.
+    Copied into a local shell that variable is unset, and ``Path("")`` is
+    ``Path(".")`` -- a directory, so writing to it raises and the whole check
+    exits 2. Failing a regression check over a missing summary file is a
+    papercut, not a signal.
+    """
+    value = value.strip()
+    return Path(value) if value else None
+
+
 def _as_paths(value: Path | Sequence[Path]) -> list[Path]:
     if isinstance(value, (str, Path)):
         return [Path(value)]
@@ -1279,7 +1292,7 @@ Exit Codes:
 
     parser.add_argument(
         "--write-samples",
-        type=Path,
+        type=_optional_path,
         default=None,
         help=(
             "Write the aggregated current samples (n/median/min/max/sd + "
@@ -1289,7 +1302,7 @@ Exit Codes:
 
     parser.add_argument(
         "--write-baseline",
-        type=Path,
+        type=_optional_path,
         default=None,
         help=(
             "Write the aggregated current samples to this path as a new "
@@ -1325,7 +1338,7 @@ Exit Codes:
 
     parser.add_argument(
         "--markdown-summary",
-        type=Path,
+        type=_optional_path,
         default=None,
         help=(
             "Append a Markdown table of the comparison to this file "
