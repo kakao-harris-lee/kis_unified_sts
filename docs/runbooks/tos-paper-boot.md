@@ -249,8 +249,8 @@ fi
 #   migrate: evidence at .../evidence.sqlite3 — already at v2, nothing to do
 ```
 
-아래 §4-A 의 나머지 `sqlite3 "$DATA/evidence.sqlite3" …` 확인 명령도 **같은 `$CORPUS`** 를
-가리켜 읽는다(읽기 전용 관용구는 §4-A-1).
+§4-A 안의 확인·롤백 명령은 **전부 같은 `$CORPUS`** 를 가리킨다(읽기 전용 관용구는
+§4-A-1). §3 의 `$DATA` 는 여기서 쓰지 않는다.
 
 ⚠ 이 줄은 예전에 `"is current"` 였다. 리뷰 L3 이후 `migrate` 는 **서로 다른 세 결과**를
 구분해 출력한다 — `compose/cli.py::_migrate_report`. 아래 「롤포워드」의 목록은 **`evidence`
@@ -264,12 +264,12 @@ fi
 남지 않는다:
 
 ```bash
-sqlite3 "$DATA/evidence.sqlite3" "PRAGMA user_version;"
+sqlite3 "$CORPUS/evidence.sqlite3" "PRAGMA user_version;"
 # 2
-sqlite3 "$DATA/evidence.sqlite3" "SELECT version, applied_by FROM schema_ledger ORDER BY version;"
+sqlite3 "$CORPUS/evidence.sqlite3" "SELECT version, applied_by FROM schema_ledger ORDER BY version;"
 # 1|CREATED   (또는 1|MIGRATE — 대장 이전 파일을 올린 경우)
 # 2|MIGRATE
-sqlite3 "$DATA/evidence.sqlite3" "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name;"
+sqlite3 "$CORPUS/evidence.sqlite3" "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name;"
 # index|entries_kind_seq
 # table|entries
 # table|outbox
@@ -295,7 +295,7 @@ v2 가 더하는 것은 **인덱스 하나뿐**이다. 행 바이트·`entry_dig
 지원되는 절차는 **하나뿐이고, 두 문장을 반드시 함께** 실행한다:
 
 ```bash
-sqlite3 "$DATA/evidence.sqlite3" "DROP INDEX IF EXISTS entries_kind_seq; PRAGMA user_version = 1;"
+sqlite3 "$CORPUS/evidence.sqlite3" "DROP INDEX IF EXISTS entries_kind_seq; PRAGMA user_version = 1;"
 ```
 
 ⚠ **`user_version` 을 2 로 둔 채 인덱스만 지우는 것은 롤백이 아니다.** 그 상태는 v2 코드가
@@ -308,7 +308,7 @@ sqlite3 "$DATA/evidence.sqlite3" "DROP INDEX IF EXISTS entries_kind_seq; PRAGMA 
 ```bash
 PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
   'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
-  migrate --data-dir "$DATA" --store evidence
+  migrate --data-dir "$CORPUS" --store evidence
 ```
 
 `migrate` 는 두 반쪽 상태를 모두 복구한다 — `user_version=1` 이면 v2 를 다시 적용하고,
