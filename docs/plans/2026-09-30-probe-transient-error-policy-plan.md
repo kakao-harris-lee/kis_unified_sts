@@ -684,6 +684,23 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 run.measurements` · `no_rows` 한 번은 구간을 **끊지 않는다**(`coexistence_ms > 0`,
 `polls_not_answered == 1`) · 전부 `no_rows` 면 `query_unanswered` 이고 측정 없음.
 
+**이 수정을 실측하다 결함 둘이 더 나왔고, 같이 고쳤다.**
+
+1. **멈춤 사유 문구가 거짓을 말했다.** 2분기 삼항식이라 `query_unanswered` 에
+   「The stop is our own call rate (HTTP 429 / EGW00201)」가 붙었다 — 일어나지
+   않은 원인을 지목하는 문장이고, 이 하네스가 반복해서 값을 치르는 바로 그
+   형태다. 그리고 skip 사유는 `--visibility-timeout-s …s did NOT elapse` 라고
+   적었는데 **`query_unanswered` 는 창을 끝까지 쓴다**(표면이 답하지 않았을 뿐).
+   창이 흘렀는데 안 흘렀다고 적는 것은 2026-09-17 P-CA 오류 그 자체다. 처분:
+   `_P8_STOP_NARRATION` 조회표 — 사유별로 (문구, 창 문구) 쌍을 명시하고,
+   「다른 게 아니니까」로 추론하지 않는다. 세 사유가 다 들어 있는지 테스트가
+   고정한다(없는 키는 `KeyError` 다).
+2. **답하지 않은 폴의 증거가 무한했다.** 실측: `--pace-s 0` · 0.3 s 창에서
+   **폴 12,265회**, 관측 12,268건. 그만한 리스트가 커밋되는 아티팩트에 들어간다.
+   처분: **distinct `msg_cd` 당 축자 기록 1건**, 횟수는 전부
+   `coexistence_not_answered_codes` 에 센다. 반복은 첫 건이 담지 않은 정보를
+   담지 않는다.
+
 #### 7.15.3 바뀐 파일
 
 | 파일 | 무엇 |
@@ -695,7 +712,7 @@ run.measurements` · `no_rows` 한 번은 구간을 **끊지 않는다**(`coexis
 | `tools/broker_probes/runners/run_p_ca.sh` | 그 가드를 쓰도록 축약. 로그 문구는 한 글자도 바꾸지 않았다 |
 | `tools/broker_probes/runners/run_p8.sh` | 추적되는 P-8 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | `_common.sh` · `run_p8.sh` 인스턴스화 레시피와 STOP 규칙 표 |
-| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 58건(+shellcheck 미설치 시 skip 1건) |
+| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 60건(+shellcheck 미설치 시 skip 1건) |
 | `tests/tools/test_broker_probes_ca.py` · `test_broker_probes_pacing.py` | 공유 파일을 따라가는 수정(아래 7.15.6) |
 
 #### 7.15.4 정책 — P-CA 와 같은 것, 그리고 다른 것
@@ -810,7 +827,7 @@ VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_sto
   tests/tools/test_broker_probes_n15_blackout.py \
   tests/tools/test_broker_probes_nontrade_registry.py \
   tests/tools/test_broker_probes_token_cache.py -p no:cacheprovider
-  → 677 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+  → 679 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
 
 ruff check tools/broker_probes tests/tools          → All checks passed!
 black --check (변경 .py 전부)                        → unchanged

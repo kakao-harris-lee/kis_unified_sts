@@ -2085,6 +2085,38 @@ def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) 
     return f"{_P8_STOP_TRANSIENT}:{TRANSIENT_TRANSPORT}"
 
 
+#: ``stop_reason`` prefix -> (what to say in the error, what to say about the
+#: window) for a poll that produced no sample.
+#:
+#: Both halves are facts a reader checks against the artifact, so neither may
+#: be guessed from "it was not the other one". The window half matters most:
+#: a ``query_unanswered`` stop ran the window to its END — the surface simply
+#: never answered — while the other two stopped it short, and claiming a
+#: window did not elapse when it did is the 2026-09-17 P-CA error exactly.
+_P8_STOP_NARRATION: dict[str, tuple[str, str]] = {
+    _P8_STOP_TRANSIENT: (
+        "This is NOT a broker rejection: the submit and the amend were both "
+        "answered, and the series stop condition is a refused order. See the "
+        "retry_evidence observations for the broker's verbatim response.",
+        "Polling stopped early, so --visibility-timeout-s={window}s did NOT " "elapse.",
+    ),
+    _P8_STOP_RATE_LIMITED: (
+        "The stop is our own call rate (HTTP 429 / EGW00201), which stays a "
+        "no-retry stop and does end the series. See the retry_evidence "
+        "observations for the broker's verbatim response.",
+        "Polling stopped early, so --visibility-timeout-s={window}s did NOT " "elapse.",
+    ),
+    _P8_STOP_QUERY_UNANSWERED: (
+        "The broker refused no order and our call rate was not the problem: "
+        "the open-order surface answered rt_cd!=0 to every poll. See the "
+        "coexistence_poll_not_answered observations and "
+        "coexistence_not_answered_codes.",
+        "--visibility-timeout-s={window}s DID elapse — the window was spent "
+        "in full and nothing in it answered.",
+    ),
+}
+
+
 def _poll_coexistence(
     run: ProbeRun,
     client: MockTradingClient,
@@ -2115,6 +2147,8 @@ def _poll_coexistence(
     coexist_last: float | None = None
     answered = 0
     unanswered = 0
+    not_answered_codes: dict[str, int] = {}
+    recorded_codes: set[str] = set()
     deadline = time.monotonic() + args.visibility_timeout_s
     # The EFFECTIVE interval, not the requested one: the pacer will not release
     # two calls closer together than --pace-s, so this is the gap the retry
@@ -2154,15 +2188,27 @@ def _poll_coexistence(
                 # (:data:`_P8_STOP_QUERY_UNANSWERED`). Recorded, then skipped:
                 # the mark is neither set nor cleared.
                 unanswered += 1
-                run.observe(
-                    coexistence_poll_not_answered=call_evidence(
-                        status_kind="QUERY_REJECTED",
-                        http_status=outcome.http_status,
-                        parsed=outcome.parsed,
-                        text=outcome.text,
-                    ),
-                    poll_index=polls,
-                )
+                code = str(outcome.parsed.get("msg_cd") or "").strip() or "<no msg_cd>"
+                not_answered_codes[code] = not_answered_codes.get(code, 0) + 1
+                # ONE verbatim record per distinct code, not per poll. With
+                # --pace-s 0 this loop runs tens of thousands of times a
+                # second (measured: 12,265 polls in a 0.3s window), and an
+                # observation per poll would put a list that size into a
+                # committed artifact. The repeats carry no information the
+                # first one does not; the COUNTS are kept in full, below.
+                if code not in recorded_codes:
+                    recorded_codes.add(code)
+                    run.observe(
+                        coexistence_poll_not_answered=call_evidence(
+                            status_kind="QUERY_REJECTED",
+                            http_status=outcome.http_status,
+                            parsed=outcome.parsed,
+                            text=outcome.text,
+                        ),
+                        poll_index=polls,
+                        reading="first poll with this msg_cd; later ones are "
+                        "counted in coexistence_not_answered_codes",
+                    )
                 time.sleep(args.poll_ms / 1000.0)
                 continue
             answered += 1
@@ -2194,6 +2240,8 @@ def _poll_coexistence(
         run.measure("coexistence_polls_used", polls)
         run.measure("coexistence_polls_answered", answered)
         run.measure("coexistence_polls_not_answered", unanswered)
+        if not_answered_codes:
+            run.measure("coexistence_not_answered_codes", dict(not_answered_codes))
     if answered == 0 and unanswered > 0:
         # Every poll the window had room for was a rejection. coexist_last is
         # None by construction, and before this change that became
@@ -2360,28 +2408,26 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
                     "loop stopped; the interval was never bounded, so no "
                     "coexistence_ms is reported",
                 )
-            detail = (
-                "This is NOT a broker rejection: the submit and the amend were "
-                "both answered, and the series stop condition is a refused "
-                "order."
-                if stop.startswith(_P8_STOP_TRANSIENT)
-                else "The stop is our own call rate (HTTP 429 / EGW00201), "
-                "which stays a no-retry stop and does end the series."
-            )
+            # One message per stop reason, chosen by LOOKUP. A two-way
+            # ternary here wrote "the stop is our own call rate (HTTP 429 /
+            # EGW00201)" over a query_unanswered stop — a sentence naming a
+            # cause that had not happened, which is the failure mode this
+            # harness keeps paying for.
+            detail, window_note = _P8_STOP_NARRATION[stop.split(":", 1)[0]]
             run.error(
                 f"POLLING STOPPED EARLY (stop_reason={stop}) — no coexistence "
-                f"sample. {detail} See the retry_evidence observations for the "
-                "broker's verbatim response."
+                f"sample. {detail}"
             )
             run.skip(
                 "measurements.coexistence_ms",
-                f"ABORTED — the coexistence poll stopped early (stop_reason="
-                f"{stop}) after "
+                f"ABORTED — the coexistence poll produced no usable sample "
+                f"(stop_reason={stop}) after "
                 f"{run.measurements.get('coexistence_polls_used')} poll "
-                f"attempt(s), so --visibility-timeout-s="
-                f"{args.visibility_timeout_s}s did NOT elapse. Nothing is "
-                "asserted about the replace interval: an unobserved interval "
-                "is not a zero one (VP-002:772 'observed 0 != 0').",
+                f"attempt(s), of which "
+                f"{run.measurements.get('coexistence_polls_answered')} "
+                f"answered. {window_note.format(window=args.visibility_timeout_s)} "
+                "Nothing is asserted about the replace interval: an unobserved "
+                "interval is not a zero one (VP-002:772 'observed 0 != 0').",
             )
             return run
 

@@ -506,6 +506,9 @@ def test_a_stopped_poll_reports_no_coexistence_and_says_why(
     skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
     assert skipped and "ABORTED" in skipped[0]["reason"]
     assert "stop_reason=transient:transport" in skipped[0]["reason"]
+    # This one DID stop short, and says so — the other half of the pair.
+    assert "did NOT elapse" in skipped[0]["reason"]
+    assert any("NOT a broker rejection" in e for e in run.errors)
     # The partial sighting is kept as an observation, not promoted.
     assert any(o.get("coexistence_seen_before_stop") for o in run.observations)
 
@@ -731,8 +734,52 @@ def test_a_poll_series_that_never_answers_reports_no_coexistence(
     assert "coexistence_ms" not in run.measurements
     assert "mode_determination" not in run.measurements
     assert run.measurements["coexistence_polls_answered"] == 0
-    assert run.measurements["coexistence_polls_not_answered"] > 0
-    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == ["query_unanswered"]
+    polls = run.measurements["coexistence_polls_not_answered"]
+    assert polls > 0
+    assert run.measurements["coexistence_not_answered_codes"] == {"KIOK0560": polls}
+    out = capsys.readouterr().out
+    assert _anchored(out, _P8_STOP_PREFIX) == ["query_unanswered"]
+    # The window DID elapse here — nothing in it answered. Saying it did not
+    # is the 2026-09-17 P-CA error, and the two-way ternary this replaced said
+    # exactly that, plus "the stop is our own call rate", over a stop that was
+    # neither.
+    skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
+    assert skipped and "DID elapse" in skipped[0]["reason"]
+    assert "did NOT elapse" not in skipped[0]["reason"]
+    # The false sentence, verbatim as the old ternary emitted it. (The real
+    # message does mention the call rate — to say it was NOT the problem.)
+    assert not any("The stop is our own call rate" in e for e in run.errors)
+    assert any("answered rt_cd!=0 to every poll" in e for e in run.errors)
+
+
+def test_the_unanswered_evidence_is_bounded_by_distinct_codes_not_by_polls(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """With ``--pace-s 0`` this loop runs tens of thousands of times a second
+    — measured at 12,265 polls in a 0.3 s window — and one observation per
+    poll would put a list that size into a committed artifact.
+
+    One verbatim record per distinct ``msg_cd``; the counts are kept in full.
+    """
+    _install(monkeypatch, _Wire(poll_script=["no_rows"]))
+
+    run = probe_p8(_args(visibility_timeout_s=0.3))
+
+    recorded = [o for o in run.observations if "coexistence_poll_not_answered" in o]
+    assert len(recorded) == 1
+    polls = run.measurements["coexistence_polls_not_answered"]
+    assert polls > 100, polls  # the loop really did spin
+    assert run.measurements["coexistence_not_answered_codes"]["KIOK0560"] == polls
+
+
+def test_a_stop_narration_exists_for_every_stop_the_poll_can_report() -> None:
+    """A lookup with a missing key is a KeyError inside the ``finally``'s
+    sibling path. Pin the three prefixes the loop can actually return."""
+    assert set(probes_order._P8_STOP_NARRATION) == {
+        probes_order._P8_STOP_TRANSIENT,
+        probes_order._P8_STOP_RATE_LIMITED,
+        probes_order._P8_STOP_QUERY_UNANSWERED,
+    }
 
 
 def test_a_transport_failure_on_the_quote_is_its_own_phase(
