@@ -213,9 +213,12 @@ def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
     exists to close, so it fails closed with :class:`SchemaLedgerUnprotected` instead.
 
     Returns:
-        The names of the triggers this call actually had to create — empty on a healthy file.
-        A non-empty result means the ledger was running unprotected until now, which the caller
-        reports rather than repairing silently.
+        The names of the triggers this call had to REBUILD on a ledger that already existed —
+        empty on a healthy file, and empty when this call created the ledger itself. A
+        non-empty result therefore means exactly one thing: that ledger was running
+        unprotected, which the caller reports rather than fixing silently. Creating a brand-new
+        ledger is not a repair and must not be reported as one — the plan points operators at
+        this signal, so a version of it that also fires on healthy genesis is worth nothing.
 
     Raises:
         SchemaLedgerUnprotected: A trigger of one of the two reserved names exists on another
@@ -223,6 +226,12 @@ def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
     """
     conn.execute("SAVEPOINT tos_schema_ledger_objects")
     try:
+        # Freshness is decided BEFORE the CREATE TABLE, inside the savepoint (Claude-lane
+        # review MEDIUM-1). Asking afterwards cannot distinguish "this ledger was running
+        # unprotected" from "there was no ledger a moment ago and I just made one", so every
+        # first `migrate` on every store reported a repair that never happened — the operator
+        # signal the plan tells people to watch for, firing on healthy genesis.
+        pre_existing = _schema_ledger_exists(conn)
         conn.execute(_SCHEMA_LEDGER_TABLE_SQL)
         before = _ledger_trigger_owners(conn)
         _refuse_foreign_trigger_names(before)
@@ -234,6 +243,8 @@ def create_schema_ledger_objects(conn: sqlite3.Connection) -> tuple[str, ...]:
         conn.execute("RELEASE tos_schema_ledger_objects")
         raise
     conn.execute("RELEASE tos_schema_ledger_objects")
+    if not pre_existing:
+        return ()
     return tuple(name for name in SCHEMA_LEDGER_TRIGGER_NAMES if name not in before)
 
 

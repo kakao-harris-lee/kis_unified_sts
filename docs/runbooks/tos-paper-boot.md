@@ -261,17 +261,30 @@ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
 ```
 migrate: evidence at ... — already at v2, nothing to do
 migrate: evidence at ... — applied v1 -> v2 (v2)
+migrate: evidence at ... — applied v0 -> v2 (v1, v2)
 migrate: evidence at ... — applied v1 -> v2 (v2); ledger row(s) already present for v2, not re-recorded (append-only)
 migrate: evidence at ... — already at v2, but REBUILT missing entries_kind_seq — the file was running without it
 migrate: evidence at ... — already at v2, but REBUILT missing schema_ledger_no_update, schema_ledger_no_delete — the file was running without it
+migrate: evidence at ... — applied v1 -> v2 (v2); rebuilt schema_ledger_no_update, schema_ledger_no_delete
 ```
 
-마지막 줄이 2026-10-02 에 추가된 복구다. `migrate` 가 대장을 **직접 만들어야 했던** 파일
-(대장 이전 data dir)은 테이블만 받고 append-only 트리거 둘을 받지 못했고, 그 상태는
-스스로 낫지 않았다 — `open_or_create_schema` 의 정상 부팅 빠른 경로가
-「버전 일치 + 대장 테이블 존재」에서 DDL 을 돌리기 전에 반환하기 때문이다. 지금은 양쪽 경로가
-`create_schema_ledger_objects` 하나를 지나므로 genesis 파일과 마이그레이션 파일의
-`sqlite_master` 가 같다.
+**일곱** 형태 전부를 실제로 실행해서 받은 문자열이다(리뷰 MEDIUM-2: 이 목록이 「전부」라고 적혀
+있었는데 **대장 이전 파일이 실제로 내는 줄이 빠져 있었다**). 3번째가 그 줄이다 — 대장 이전
+data dir 은 v0 에서 출발하므로 `applied v0 -> v2 (v1, v2)` 다. 마지막 줄은 버전도 뒤처지고
+대장 트리거도 없는 파일로, 적용과 복구가 **한 줄에 같이** 나온다.
+
+⚠ **「rebuilt …」 는 대장이 «이미 있었는데» 트리거가 없었을 때만 나온다.** `migrate` 가
+대장을 처음 만드는 경우(신규 배포 · 대장 이전 파일)는 복구가 아니므로 **적히지 않는다** —
+리뷰 MEDIUM-1 전에는 여기서도 「rebuilt」 를 찍어서, 멀쩡한 제네시스에도 경고가 울렸다.
+그래서 이 줄을 보면 **실제로 무방비였던 파일**이라고 읽어도 된다.
+
+2026-10-02 에 추가된 복구의 배경: `migrate` 가 대장을 직접 만들어야 했던 파일은 테이블만
+받고 append-only 트리거 둘을 받지 못했고, 그 상태는 스스로 낫지 않았다 —
+`open_or_create_schema` 의 정상 부팅 빠른 경로가 「버전 일치 + 대장 테이블 존재」에서
+DDL 을 돌리기 전에 반환하기 때문이다. 지금은 양쪽 경로가 `create_schema_ledger_objects`
+하나를 지나므로 genesis 파일과 마이그레이션 파일의 `sqlite_master` 가 같다(evidence ·
+inbox · marketfeed. `rcl` 은 v2 가 `ALTER TABLE ADD COLUMN` 이라 **표 본문 텍스트**만
+sqlite 내부 공백이 다르고 `PRAGMA table_info` 는 동일 — 테스트가 그렇게 고정한다).
 
 `schema_ledger` 는 append-only 이고 `version` 이 PK 라서 롤백 뒤에도 v2 행이 남는다. 그래서
 재적용은 대장 행을 다시 쓰지 않는다(대장은 「언제 처음 적용됐나」의 기록이지 실행 횟수가

@@ -2159,7 +2159,7 @@ PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이�
 | `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
 | `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
 | `1670d7f8` | 이 착지 기록 (§7.1.17) + INDEX 행 |
-| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `6e22064d…` |
+| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `83a970e9…` |
 
 ##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
 
@@ -2223,12 +2223,23 @@ RED — 5 propert(ies) violated:
 | unindexed | 1,998.2 | 1,974.3 | 3,085.4 | 1,111.0 |
 | indexed | 1,745.6 | 1,578.9 | 2,117.4 | 538.4 |
 
-중앙값 차는 **−252.6 µs/append** 로 **부호가 반대이고 반복 폭(1,111.0)보다 작다**.
-읽는 법: 「인덱스가 더 빠르다」가 **아니라** 「인덱스의 쓰기 비용이 이 규모에서 **측정되지
-않는다**」다 — append 당 비용을 `synchronous=FULL` 의 fsync(≈1.7–2.0 ms)가 지배한다.
-⚠ 이 값으로 「쓰기 비용 없음」을 주장하지 말 것. 1,000 행은 실 저장소(14.2 M 행)보다
-네 자리 작고, 인덱스 갱신 비용은 트리 깊이와 함께 자란다. 여기서 말할 수 있는 것은
-**이 규모에서 fsync 아래 묻힌다**까지다.
+중앙값 차는 **−252.6 µs/append**, 부호가 **반대**다(인덱스 쪽이 더 빠르게 나왔다).
+
+⚠ **초판은 이것을 「반복 폭(1,111.0)보다 작으니 잡음」으로 읽었다 — 그 논증은 틀렸다**
+(리뷰 LOW-5). 잡음은 시간을 **더하지**, 남의 바닥을 **내리지 못한다**. 그런데 두 arm 의
+**최솟값**이 1,974.3 대 **1,578.9 µs** 로 20 % 벌어져 있다. 두 arm 은 가설과 **반대
+방향으로 체계적으로** 다르다 — 「잡음에 묻혔다」가 아니라 **하네스에 통제되지 않은
+교란이 있다**(arm 순서 · 파일 크기 차 · 페이지 캐시가 후보다. 이 측정은 arm 을 교대했을
+뿐 순서를 무작위화하지도, 캐시를 비우지도 않았다).
+
+**그래서 이 표가 지지하는 결론은 하나뿐이다: 인덱스의 쓰기 비용은 이 하네스로 측정되지
+않았다.** 「인덱스가 더 빠르다」도, 「fsync(≈1.7–2.0 ms) 아래 묻혔다」도 이 데이터가
+뒷받침하지 않는다 — 후자는 그럴듯하지만 최솟값 차가 그것과 맞지 않는다. 제대로 재려면
+arm 순서 무작위화 · 페이지 캐시 통제 · 실 규모에 가까운 행 수가 필요하고, 그것은 이 PR
+범위가 아니다.
+
+⚠ 어느 쪽이든 「쓰기 비용 없음」을 주장하지 말 것. 1,000 행은 실 저장소(14.2 M 행)보다
+네 자리 작고, 인덱스 갱신 비용은 트리 깊이와 함께 자란다.
 
 저장 비용은 이미 실측돼 있다 — 180 일치 **+1.8256 %**(§7.1.15 「인덱스 뒤 파일 크기」).
 **수치는 거기 한 곳에 둔다**, 여기서 되풀이하지 않는다.
@@ -2262,7 +2273,7 @@ mypy: 커널 `Success (266 files)`. 런타임은 **27 errors in 18 files** 인�
 
 digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
 `d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835` →
-`6e22064dd63e52f138591dcfccc21693bf78e224c74f9cdd27c64a187f55e608`(아래 자기점검).
+`83a970e98fef29b36624e054d8d120678f5fb2f5bdd703a976bdd942a13c5555`(아래 자기점검).
 `print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. 핀 **두 곳 모두** 갱신.
 `expected_dependency_set_digest` 불변.
 
@@ -2330,6 +2341,57 @@ RED — 3 propert(ies) violated:
 «내가 아는 수단이 전부인가»를 먼저 의심해야 한다** — 교차모델 심사가 값을 낸 지점이
 정확히 거기다. M3 는 더 날카롭다: 이 PR 의 주제가 「가드가 자기가 막는다고 말한 것을
 허용한다」인데, 그 가드를 고친 코드가 **같은 형태를 다시 품고** 있었다.
+
+##### Claude 레인 · 적대적 패스 처분 (2026-10-02) — 7 + 3 건, **전건 처분**
+
+Codex 와 **별개로** Claude 측 두 패스가 같은 diff(당시 tip `d9fdd1f8`)를 봤다. 판정은 둘 다
+`needs-attention`(0 HIGH · 2 MEDIUM · 5 LOW / 4 MEDIUM · 4 LOW)이고 상당 부분 겹친다.
+**둘이 독립적으로 같은 MEDIUM 두 건을 집었다** — 그 둘이 이 라운드의 본론이다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **M1** (양쪽) | `create_schema_ledger_objects` 가 freshness 를 `CREATE TABLE` **뒤에** 물어서, 대장이 **없던** 파일에도 트리거 두 개를 `repaired` 로 반환한다 → `migrate` 가 **자기가 방금 만든** 파일에 「rebuilt …」 를 찍는다. 네 스토어 **전부**, 모든 첫 `migrate` 에서 | **수용 · 수정.** freshness 를 `CREATE TABLE` **앞**(savepoint 안)에서 `_schema_ledger_exists` 로 판정하고, 대장이 없었으면 `()` 를 반환한다. **이것이 이 라운드에서 가장 중요한 건이다** — `repaired` 는 §7.1.17 「운영자 행동」이 「당신 대장이 무방비였다」의 **유일한 신호**로 지목한 값인데, 멀쩡한 제네시스에도 울리면 **신호로서 가치가 0** 이다. 또 하나의 「가드가 자기가 막는다고 말한 것을 허용한다」 |
+| **M2** (양쪽) | 런북 §4-A 가 롤포워드 출력 목록을 「전부」라고 선언해 놓고 **대장 이전 파일이 실제로 내는 줄을 빠뜨렸다** | **수용 · 수정.** M1 을 고치자 그 줄은 `applied v0 -> v2 (v1, v2)` 가 됐다. **일곱 형태 전부를 실행해서** 받은 문자열로 목록을 다시 썼고(아래), 「rebuilt 는 대장이 **이미 있었을 때만** 나온다」를 명시했다 |
+| **(a)** (적대적) | `_build_pre_ledger_evidence_file` 이 `entries`/`outbox` 를 **지우지 않아서**, 수렴 테스트의 양쪽이 표 SQL 을 **똑같이 제네시스에서** 받는다 → 베이스라인 문장과 스토어 DDL 리터럴의 drift 를 **볼 수 없다** | **수용 · 보강.** **빈 파일**에서 출발하는 arm 을 네 스토어 전부에 추가했다(`test_every_store_converges_from_a_truly_empty_file`). 그러면 `apply_migrations` 가 모든 객체를 자기가 만들므로 두 DDL 이 실제로 대조된다 |
+| **LOW-3** (Claude 레인) | 수렴이 `evidence` 한 스토어에만 핀돼 있는데 런북은 일반론처럼 적는다. `rcl` 은 실제로 `sqlite_master.sql` 텍스트가 다르다 | **수용 · 보강 + 문구 한정.** 위 arm 이 네 스토어를 덮는다. `rcl` 은 `PRAGMA table_info` 동등으로 비교하고 **왜** 그런지(v2 가 `ALTER TABLE ADD COLUMN` 이라 sqlite 가 표 텍스트를 다른 공백으로 다시 쓴다 — 열·타입·순서는 동일) 테스트 독스트링과 런북에 적었다. **텍스트를 핀하면 스키마가 아니라 sqlite 아티팩트를 핀하게 된다** |
+| **LOW-4** (Claude 레인) | 새로 살아난 CLI 분기(`applied` 와 `repaired` 동시)와 바뀐 꼬리말이 **무테스트**. 꼬리말을 되돌려도 스위트가 초록 | **수용 · 테스트 2건 추가**(`test_cli.py`): 꼬리말 「the file was running without it」 자체와 `applied`+`repaired` 조합 |
+| **(b)** (적대적) | `schema_migrations.py` 독스트링이 **비공개화된** `SCHEMA_LEDGER_TABLE_SQL` 을 아직 이름으로 참조 | **수용 · 수정.** 죽은 상호참조를 지웠다 |
+| **(c)** (적대적) | `apply_migrations` Args 가 스토어를 **셋**만 적는데 `STORE_MIGRATIONS` 에는 **넷** | **수용 · 수정.** `marketfeed` 추가 |
+| **LOW-5** (Claude 레인) | 쓰기 경로 표의 「반복 폭보다 작으니 잡음」 논증이 **arm 최솟값과 모순**(1,974.3 대 1,578.9 µs, 20 %) | **수용 · 논증 교체.** 잡음은 시간을 더하지 남의 **바닥을 내리지 못한다** → 체계적 교란이다. 결론을 「fsync 아래 묻혔다」에서 **「이 하네스로는 측정되지 않았다」**로 낮추고 교란 후보(arm 순서 · 파일 크기 · 페이지 캐시)와 제대로 재는 조건을 적었다 |
+| **LOW-1 · LOW-2** (Claude 레인) | AHEAD 거부 전 쓰기 · 세 문장 비원자성 | **이미 닫혀 있었다.** 두 패스는 `d9fdd1f8` 를 봤고, Codex 처분(`030592b4`)이 그 둘을 먼저 고쳤다(M1 → 버전 먼저, M2 → `SAVEPOINT`). 현 tip 에서 재확인: AHEAD 파일은 **바이트 불변**으로 거부된다 |
+
+**red 증거(M1)**: `pre_existing = _schema_ledger_exists(conn)` 한 줄을 `True` 로 되돌리면
+`test_creating_a_ledger_is_not_reported_as_a_repair` 가
+`assert ('schema_ledger_no_update','schema_ledger_no_delete') == ()` 로 **red**.
+
+##### `migrate` 출력 일곱 형태 — 전부 실행해서 받았다
+
+```
+already at v2, nothing to do
+applied v1 -> v2 (v2)
+applied v0 -> v2 (v1, v2)
+applied v1 -> v2 (v2); ledger row(s) already present for v2, not re-recorded (append-only)
+already at v2, but REBUILT missing entries_kind_seq — the file was running without it
+already at v2, but REBUILT missing schema_ledger_no_update, schema_ledger_no_delete — the file was running without it
+applied v1 -> v2 (v2); rebuilt schema_ledger_no_update, schema_ledger_no_delete
+```
+
+##### ✅ 이 호스트의 실 data dir 은 **전부 무사하다** (2026-10-02 읽기 전용 실측)
+
+운영자 질문에 답한다. `/home/deploy/.local/state/tos/**` 의 스토어 파일 **48 개**를
+읽기 전용(`file:...?mode=ro`)으로 전수 조사했다:
+
+| 항목 | 값 |
+|---|---|
+| 조사한 스토어 파일 | **48** |
+| `schema_ledger` 에 `applied_by='MIGRATE'` 행이 있는 파일 | **0** |
+| append-only 트리거가 둘 미만인 파일 | **0** |
+
+즉 이 호스트의 data dir 은 **전부 제네시스로 만들어졌고**(`CREATED` 행 하나씩) 네 스토어
+모두 트리거 둘을 갖고 있다. **`migrate` 로 올라온 파일이 하나도 없으므로 이 결함에 노출된
+파일도 없다.** 「미확인」이 아니라 **확인됐고 음성**이다. (참고: 실 paper 산출물의
+`evidence` 는 아직 `user_version=1` 이라 v2 코드로 부팅하려면 §4-A 의 `migrate` 가
+필요하고, 그때는 위 M1 수정 덕분에 「rebuilt」 가 아니라 `applied v1 -> v2 (v2)` 가 찍힌다.)
 
 ##### 운영자 행동
 

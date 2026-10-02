@@ -574,7 +574,7 @@
 #   df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0 은 32차 측정치
 #   (브랜치 perf/tos-flow-observation-pk-lookup · PR #832 · main d7ce609b).
 #
-#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `6e22064d…`(아래 값).
+#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `83a970e9…`(아래 값).
 #   `SCHEMA_LEDGER_TABLE_SQL` 을 **비공개**(`_` 접두)로 바꾸고 `__all__` 에서 뺐다.
 #   첫 커밋의 「네 번째 호출부가 같은 누락을 반복할 수 없다」가 **공개 상수가 남아 있는
 #   한 참이 아니었기** 때문이다 — 이 PR 이 다루는 결함 형태(가드가 자기가 막는다고 말한
@@ -585,7 +585,12 @@
 #   `SAVEPOINT` 로 원자화하고(M2 — 바로 앞 커밋에서 「문서화로 갈음」했던 바로 그 창),
 #   예약 트리거 이름이 다른 테이블에 붙어 있으면 `SchemaLedgerUnprotected` 로 fail-closed
 #   하게 했다(M3). 계획 §7.1.17 「Codex 교차모델 심사 처분」에 표로 적었다.
-#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 6e22064d…).
+#   ⚠ **네 번째로 움직였다**: Claude 레인 + 적대적 패스의 지적 10건을 전건 처분하면서
+#   `schema_ledger.py`(대장 생성과 복구를 구분 — `_schema_ledger_exists` 를 `CREATE TABLE`
+#   **앞**에서 물어, 자기가 방금 만든 대장을 「rebuilt」 로 보고하지 않는다) 와
+#   `schema_migrations.py`(죽은 상호참조 · Args 의 스토어 넷) 가 바뀌었다. 계획 §7.1.17
+#   「Claude 레인 · 적대적 패스 처분」에 표로 적었다.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 83a970e9…).
 #   `expected_dependency_set_digest` 는 서른세 번 모두 바뀌지 않았다 — 같은 배포 호스트
 #   루트 `.venv`(python 3.12.12 / sqlite 3.45.1).
 #
@@ -606,7 +611,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "6e22064dd63e52f138591dcfccc21693bf78e224c74f9cdd27c64a187f55e608"
+expected_code_digest: "83a970e98fef29b36624e054d8d120678f5fb2f5bdd703a976bdd942a13c5555"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

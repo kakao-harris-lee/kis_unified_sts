@@ -1533,6 +1533,108 @@ def test_migrate_rebuilds_dropped_schema_ledger_triggers_and_says_so(
         conn.close()
 
 
+# -- Claude-lane review (2026-10-02): creating a ledger is not repairing one ------------------
+
+
+def test_creating_a_ledger_is_not_reported_as_a_repair(tmp_path: Path) -> None:
+    """A file that had NO ``schema_ledger`` reports ``repaired == ()``.
+
+    Claude-lane review MEDIUM-1. ``repaired`` is the operator's one signal that a ledger was
+    running unprotected, and plan §7.1.17 points at it by name. Deciding freshness AFTER the
+    ``CREATE TABLE`` made that signal fire on every first ``migrate`` of every store — the CLI
+    printed ``rebuilt schema_ledger_no_update, schema_ledger_no_delete`` over a file it had
+    just created. A warning that also fires on healthy genesis is worth nothing.
+    """
+    # (a) a truly empty file — the fresh-deploy path
+    empty = tmp_path / "evidence.sqlite3"
+    empty.touch()
+    assert apply_migrations(empty, "evidence").repaired == ()
+
+    # (b) a real pre-ledger file with rows in it — the documented upgrade path
+    pre = tmp_path / "pre.sqlite3"
+    _build_pre_ledger_evidence_file(pre)
+    outcome = apply_migrations(pre, "evidence")
+    assert outcome.applied == (1, 2)
+    assert outcome.repaired == ()
+
+    # Both are nonetheless protected — "not reported" must not become "not created".
+    for path in (empty, pre):
+        conn = sqlite3.connect(str(path))
+        try:
+            with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+                conn.execute("DELETE FROM schema_ledger")
+        finally:
+            conn.close()
+
+
+def _table_columns(path: Path) -> dict[str, list[tuple[str, str]]]:
+    """``{table: [(column, declared type), ...]}`` in declaration order."""
+    conn = sqlite3.connect(str(path))
+    try:
+        tables = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        return {
+            table: [
+                (str(row[1]), str(row[2]))
+                for row in conn.execute(f"PRAGMA table_info({table})")
+            ]
+            for table in tables
+        }
+    finally:
+        conn.close()
+
+
+def _non_table_objects(path: Path) -> list[tuple[str, str, str, str]]:
+    return [row for row in _normalized_sqlite_objects(path) if row[0] != "table"]
+
+
+@pytest.mark.parametrize("store", ["evidence", "inbox", "marketfeed", "rcl"])
+def test_every_store_converges_from_a_truly_empty_file(
+    store: str, tmp_path: Path
+) -> None:
+    """Genesis and ``migrate``-from-empty agree, for ALL FOUR stores.
+
+    Two gaps this closes (adversarial review (a), Claude-lane LOW-3). First,
+    :func:`_build_pre_ledger_evidence_file` keeps the store's own ``entries``/``outbox``, so
+    both sides of :func:`test_a_migrated_file_converges_on_the_genesis_schema` take their
+    TABLE sql from genesis — drift between ``_EVIDENCE_BASELINE_STATEMENTS`` and the store's
+    own ``CREATE TABLE`` literals is invisible to it. Starting from an EMPTY file makes
+    ``apply_migrations`` produce every object itself, so the baseline statements really are
+    compared against the store's. Second, nothing pinned convergence for the other three
+    stores at all.
+
+    ``rcl`` is compared by ``PRAGMA table_info`` instead of ``sqlite_master.sql``: its v2 is an
+    ``ALTER TABLE ... ADD COLUMN``, and sqlite stores the post-ALTER text with different
+    internal spacing than the genesis ``CREATE TABLE`` while columns, declared types and order
+    stay identical. Pinning the text there would pin a sqlite artefact, not the schema.
+    """
+    genesis_dir = tmp_path / "genesis"
+    genesis_dir.mkdir()
+    genesis = _build_fresh_store(store, genesis_dir)
+
+    migrated_dir = tmp_path / "migrated"
+    migrated_dir.mkdir()
+    migrated = migrated_dir / f"{store}.sqlite3"
+    migrated.touch()
+
+    apply_migrations(migrated, store)
+
+    assert schema_version(migrated) == schema_version(genesis)
+    assert _table_columns(migrated) == _table_columns(genesis)
+    if store == "rcl":
+        # Index/trigger objects must still match exactly; only the table text differs.
+        assert _non_table_objects(migrated) == _non_table_objects(genesis)
+    else:
+        assert _normalized_sqlite_objects(migrated) == _normalized_sqlite_objects(
+            genesis
+        )
+
+
 # -- Codex review (2026-10-02): three ways the fix above still admitted what it names ---------
 
 

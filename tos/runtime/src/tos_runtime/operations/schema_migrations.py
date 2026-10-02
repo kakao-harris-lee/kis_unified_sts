@@ -78,7 +78,8 @@ over a table whose shape this code does not actually recognize.
 
 **The ledger this function creates is append-only, which it was not.** ``apply_migrations`` has
 to be able to create a ``schema_ledger`` itself (a pre-ledger file has none), and it used to do
-that with :data:`~tos_runtime.operations.schema_ledger.SCHEMA_LEDGER_TABLE_SQL` alone — the
+that with that module's ``CREATE TABLE`` constant alone (now private, and reachable only
+through the helper named below) — the
 table, without the two ``BEFORE UPDATE``/``BEFORE DELETE`` triggers the genesis path creates
 beside it. Every pre-ledger file brought up by ``migrate`` therefore ended with a ledger whose
 rows could be rewritten or deleted, PERMANENTLY: the version stamp and the table both exist, so
@@ -660,7 +661,7 @@ def apply_migrations(
     Args:
         path: The sqlite file to migrate in place.
         store_name: One of :data:`STORE_MIGRATIONS`'s keys (``"evidence"`` / ``"rcl"`` /
-            ``"inbox"``).
+            ``"inbox"`` / ``"marketfeed"``).
         monotonic_ns: Injected monotonic-clock callable for the ledger row's
             ``applied_at_monotonic_ns``.
 
