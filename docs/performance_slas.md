@@ -61,6 +61,14 @@ wall-clock ratios are noise. Exit codes: `0` pass, `1` warning (not fatal unless
 **The job is not a required check.** A red `performance` does not block a merge;
 `test` is the only real gate (see `CLAUDE.md`).
 
+**The job measures 13 of the 25 benchmarks.** `test_redis_load.py` and
+`test_websocket_load.py` skip unless `KIS_RUN_LIVE_INFRA_TESTS` is set, which
+the job does not set (their skip reason says "Redis not available", but the
+Redis service is up — it is the flag). Those 12 appear in the report as
+`Test not found in current results`, a non-fatal warning. This predates the
+median-of-N change and is why the baseline has not been regenerated: a baseline
+taken today would simply drop them.
+
 ### Why medians of N rounds (#768, #796)
 
 The check used to compare one sample against one committed sample. Re-running
@@ -85,6 +93,38 @@ produced it, and **fixing either one alone does not fix the check**:
    distribution — so the median run reads as +107%. Only regenerating the
    baseline from several rounds fixes this. With the old single-sample baseline
    kept, median-of-N turns an intermittent red into a **permanent** red.
+
+### What the spread actually was
+
+Measured on this change's own CI run (36953158113), five rounds in one job, per
+phase, for `test_entry_path_100_symbols`:
+
+| round | setup | call | total |
+| --- | ---: | ---: | ---: |
+| 1 (cold) | **0.2138 s** | 0.1102 s | 0.3241 s |
+| 2 | 0.0182 s | 0.1087 s | 0.1271 s |
+| 3 | 0.0180 s | 0.1085 s | 0.1266 s |
+| 4 | 0.0180 s | 0.1072 s | 0.1254 s |
+| 5 | 0.0182 s | 0.1063 s | 0.1248 s |
+| baseline 2026-05-30 | 0.0315 s | 0.1012 s | 0.1329 s |
+
+`call` — the part that runs the benchmark — spans 3.7%. The entire spread is in
+`setup`, 12x between the first round and the rest. This test is the first of the
+session, so it absorbs one-time process warm-up in its own setup phase, and the
+checker sums setup + call + teardown. The old check ran pytest once, so it
+bought that cold setup every time; how expensive it is varies by runner (0.0315 s
+on the baseline runner, 0.2138 s here). **#768's 3.1x was cold-start variance,
+not benchmark variance.**
+
+Medians push the cold round to 1-in-N and drop it. Against the same 2026-05-30
+single-sample baseline, the median of 5 rounds reads −4.7% and the job is green.
+Comparing `call` only would remove the component at its source; that is a
+candidate follow-up, deliberately not bundled here because it would invalidate
+every existing baseline entry at the same time as everything else changed.
+
+It also settles the regression question numerically: `call` alone is 0.1085 s
+today versus 0.1012 s on 2026-05-30, **+7.2%** across four months and a runner
+generation.
 
 Repeating inside one job shrinks only the *within-job* noise, by roughly
 `sqrt(N)`. All N rounds share one runner, so a globally slow runner still shifts

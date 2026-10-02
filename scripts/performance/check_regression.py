@@ -27,10 +27,39 @@ instead of guessing at it. Both input shapes are accepted (``extract_samples``):
 a legacy single-run pytest-json-report still works, read as n=1, and the report
 then carries an explicit single-sample warning.
 
+What the spread actually was (measured 2026-10-02, PR #842 CI run 36953158113)
+------------------------------------------------------------------------------
+Five rounds in one job, per phase, for ``test_entry_path_100_symbols``:
+
+    round   setup     call      total
+    1       0.2138s   0.1102s   0.3241s   <- cold
+    2       0.0182s   0.1087s   0.1271s
+    3       0.0180s   0.1085s   0.1266s
+    4       0.0180s   0.1072s   0.1254s
+    5       0.0182s   0.1063s   0.1248s
+
+``call`` -- the part that actually runs the benchmark -- spans 3.7%. The whole
+spread is in ``setup``: 12x between the first round and the rest. This test is
+the first of the session, so it absorbs one-time process warm-up in its own
+setup phase, and ``extract_test_durations`` SUMS setup + call + teardown. The
+old check ran pytest once, so it bought that cold setup every single time, and
+how expensive the cold setup is varies by runner (0.03s on the 2026-05-30
+baseline runner, 0.21s here). That is where #768's 3.1x came from: cold-start
+variance, not benchmark variance.
+
+Taking the median of N rounds pushes the cold round to 1-in-N and drops it.
+Measured consequence: with the SAME 2026-05-30 single-sample baseline, the
+median of 5 rounds reads -4.7%, and the job is green.
+
+Comparing call-only would remove the cold-start component at the source. It is
+deliberately not done here: the median already removes the symptom, and
+changing the metric would invalidate every existing baseline entry at the same
+time as everything else changed.
+
 What repetition does and does not fix
 -------------------------------------
-Repeating inside one job shrinks the *within-job* component of the noise (one
-unlucky GC, a scheduler hiccup) by roughly sqrt(N). It does NOT shrink the
+Repeating inside one job shrinks the *within-job* component of the noise (the
+cold round above, an unlucky GC, a scheduler hiccup). It does NOT shrink the
 *between-runner* component: all N rounds share one runner, so a globally slow
 runner shifts all of them together. That component is what
 ``runner_speed_factor`` targets, and what a multi-sample baseline keeps from
