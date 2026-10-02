@@ -510,12 +510,51 @@ class RegressionChecker:
             )
         return exclusions
 
+    def load_documents(
+        self, paths: Sequence[Path]
+    ) -> list[tuple[Path, dict[str, Any]]]:
+        """Read each path once, paired with its path.
+
+        The caller then derives samples and exclusions from the SAME parse. The
+        earlier code called ``load_metrics`` once per derived thing, so a normal
+        CI invocation read and JSON-parsed the baseline three times and logged
+        three identical "Loaded ..." lines.
+        """
+        return [(path, self.load_metrics(path)) for path in paths]
+
+    def exclusions_from_documents(
+        self, documents: Sequence[tuple[Path, dict[str, Any]]]
+    ) -> dict[str, str]:
+        """Merge the ``excluded`` maps of already-parsed documents."""
+        merged: dict[str, str] = {}
+        for _path, document in documents:
+            merged.update(self.extract_exclusions(document))
+        return merged
+
     def load_exclusions(self, paths: Sequence[Path]) -> dict[str, str]:
         """Merge the ``excluded`` maps of the given baseline documents."""
-        merged: dict[str, str] = {}
-        for path in paths:
-            merged.update(self.extract_exclusions(self.load_metrics(path)))
-        return merged
+        return self.exclusions_from_documents(self.load_documents(paths))
+
+    @staticmethod
+    def merged_exclusion_conflicts(
+        exclusions: dict[str, str],
+        stats: dict[str, BenchmarkStats],
+    ) -> list[str]:
+        """Names a document set both measures and excludes, after merging.
+
+        ``extract_exclusions`` rejects a SINGLE document that says both, which
+        is not enough: ``--baseline old.json new.json`` where ``old.json``
+        measures X and ``new.json`` excludes X passes both per-document checks,
+        and X is then dropped from the comparison with no error -- the
+        "measured and not checked" state the whole mechanism exists to forbid.
+        The check has to run on the merge.
+        """
+        return [
+            f"{name}: excluded by one baseline document and measured "
+            f'(n={stats[name].n}) by another ("{exclusions[name]}"). '
+            "A baseline set cannot say both at once; reconcile the documents."
+            for name in sorted(set(exclusions) & set(stats))
+        ]
 
     def load_sample_sets(
         self, paths: Sequence[Path]
@@ -527,12 +566,17 @@ class RegressionChecker:
         the only place a report is parsed, so the session checks (``exitcode``,
         failed collectors) cannot drift away from the duration extraction.
         """
+        return self.sample_sets_from(self.load_documents(paths))
+
+    def sample_sets_from(
+        self, documents: Sequence[tuple[Path, dict[str, Any]]]
+    ) -> tuple[dict[str, BenchmarkStats], list[SampleSource], dict[str, RoundOutcomes]]:
+        """Same as ``load_sample_sets`` for documents that are already parsed."""
         merged: dict[str, list[float]] = {}
         sources: list[SampleSource] = []
         outcomes: dict[str, RoundOutcomes] = {}
 
-        for path in paths:
-            data = self.load_metrics(path)
+        for path, data in documents:
             is_samples = isinstance(data, dict) and data.get("schema") == SAMPLES_SCHEMA
             per_file = self.extract_samples(data)
             for name, values in per_file.items():
@@ -1189,7 +1233,8 @@ class RegressionChecker:
                 "| --- | --- |",
             ]
             lines += [
-                f"| `{name.replace('tests/performance/', '')}` | {reason} |"
+                f"| `{_md_cell(name.replace('tests/performance/', ''))}` | "
+                f"{_md_cell(reason)} |"
                 for name, reason in sorted(exclusions.items())
             ]
         if exclusion_problems:
@@ -1277,7 +1322,27 @@ class RegressionChecker:
             # Inherited last: rounds/sources from the original measurement win
             # over the single samples file this aggregation happened to read.
             provenance.update(inherited)
-        document = self.build_samples_document(stats, provenance, exclusions)
+        # A document that both measures a benchmark and lists it as excluded is
+        # rejected by extract_exclusions on the next read, so stamping one here
+        # would hand the operator an artifact the script itself refuses. The
+        # measured names are dropped (and named in the log); the stale
+        # exclusion is still reported as an ERROR by the comparison, so this
+        # drops noise from the file, not the verdict. write_baseline refuses
+        # outright instead -- a baseline is the durable record, and silently
+        # shrinking its exclusion list would lose the reason.
+        stamped = dict(exclusions or {})
+        contradicted = sorted(set(stamped) & set(stats))
+        for name in contradicted:
+            del stamped[name]
+        if contradicted:
+            self.logger.warning(
+                "Not stamping %d exclusion(s) into %s: measured in this run (%s)",
+                len(contradicted),
+                path,
+                ", ".join(contradicted[:3]),
+            )
+
+        document = self.build_samples_document(stats, provenance, stamped)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(document, f, indent=2)
@@ -1447,16 +1512,42 @@ class RegressionChecker:
             if len(current_sources) == 1 and current_sources[0].kind == "samples":
                 measured_provenance = current_sources[0].provenance or None
 
+            # The baseline document set, parsed ONCE: both the exclusions
+            # stamped into written files and the comparison below read it.
+            #
+            # Parsing is deferred, and a failure here does not return early.
+            # --write-samples is what preserves this run's measurement as a CI
+            # artifact, and before this the carried-exclusion read happened
+            # first, so an absent or malformed baseline threw the measurement
+            # away on the way to reporting the baseline's own problem. The
+            # error is held and raised after the writes, which is where it was
+            # raised before exclusions existed.
+            baseline_paths = (
+                _as_paths(baseline_path) if baseline_path is not None else []
+            )
+            baseline_error: str | None = None
+            baseline_docs: list[tuple[Path, dict[str, Any]]] = []
+            try:
+                baseline_docs = self.load_documents(baseline_paths)
+            except Exception as exc:  # noqa: BLE001 - re-raised after the writes
+                baseline_error = f"{type(exc).__name__}: {exc}"
+
             # Exclusions to stamp into anything written. They come from an
             # explicit --exclusions-from, falling back to the baseline being
             # compared against, so `--baseline X --write-baseline X` (the
             # regenerate-in-place flow) keeps X's exclusions instead of
             # silently dropping them.
             carried_exclusions: dict[str, str] = {}
-            if exclusions_from is not None:
-                carried_exclusions = self.load_exclusions(_as_paths(exclusions_from))
-            elif baseline_path is not None:
-                carried_exclusions = self.load_exclusions(_as_paths(baseline_path))
+            try:
+                if exclusions_from is not None:
+                    carried_exclusions = self.load_exclusions(
+                        _as_paths(exclusions_from)
+                    )
+                elif baseline_docs:
+                    carried_exclusions = self.exclusions_from_documents(baseline_docs)
+            except Exception as exc:  # noqa: BLE001 - re-raised after the writes
+                baseline_error = baseline_error or f"{type(exc).__name__}: {exc}"
+                carried_exclusions = {}
 
             if write_samples is not None:
                 self.write_samples(
@@ -1502,13 +1593,40 @@ class RegressionChecker:
                         )
                 return 2
 
+            if baseline_error is not None:
+                # Held from above so the writes happened first. Same verdict
+                # the broad except would have produced, same exit code.
+                print("\n" + "=" * 80)
+                print("🔴 BASELINE UNREADABLE")
+                print("=" * 80)
+                print(f"  {baseline_error}")
+                self.logger.error("Baseline unreadable: %s", baseline_error)
+                if write_samples is not None:
+                    print(
+                        f"  (the current run's samples were still written to "
+                        f"{write_samples})"
+                    )
+                return 2
+
             if baseline_path is None:
                 self.logger.info("No baseline given; skipping comparison")
                 return 0
 
-            baseline_paths = _as_paths(baseline_path)
-            baseline_stats, _, _ = self.load_sample_sets(baseline_paths)
-            exclusions = self.load_exclusions(baseline_paths)
+            baseline_stats, _, _ = self.sample_sets_from(baseline_docs)
+            exclusions = (
+                carried_exclusions
+                if exclusions_from is None
+                else (self.exclusions_from_documents(baseline_docs))
+            )
+            conflicts = self.merged_exclusion_conflicts(exclusions, baseline_stats)
+            if conflicts:
+                print("\n" + "=" * 80)
+                print("🔴 BASELINE SET CONTRADICTS ITSELF")
+                print("=" * 80)
+                for conflict in conflicts:
+                    print(f"  {conflict}")
+                    self.logger.error("Baseline conflict: %s", conflict)
+                return 2
             stale_exclusions = self.exclusion_problems(exclusions, current_stats)
             if exclusions:
                 self.logger.info(
@@ -1593,6 +1711,24 @@ def _optional_path(value: str) -> Path | None:
     """
     value = value.strip()
     return Path(value) if value else None
+
+
+def _md_cell(text: str) -> str:
+    """Make a string safe to drop into one Markdown table cell.
+
+    A pipe ends the cell and a newline ends the row, so an exclusion reason
+    containing either silently reshapes the table in $GITHUB_STEP_SUMMARY --
+    and the reason is free text an operator writes, so it will eventually
+    contain one ("needs live KIS | see #679").
+    """
+    return (
+        str(text)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
 
 
 def _as_paths(value: Path | Sequence[Path]) -> list[Path]:
@@ -1817,6 +1953,11 @@ Exit Codes:
 
     parser.add_argument(
         "--exclusions-from",
+        # _optional_path maps an empty argument to None so that an unset shell
+        # variable is a no-op rather than Path("") == Path("."). With
+        # nargs="+" that None lands INSIDE the list, and `[None] is not None`
+        # is true, so the no-op turned into Path(None) -> TypeError. The Nones
+        # are stripped in parse_args below, and an all-empty list becomes None.
         type=_optional_path,
         nargs="+",
         action="extend",
@@ -1824,7 +1965,8 @@ Exit Codes:
         help=(
             "Document(s) whose 'excluded' map is stamped into a baseline "
             "written with --write-baseline. Defaults to --baseline when that "
-            "is given, so regenerating in place keeps the exclusions."
+            "is given, so regenerating in place keeps the exclusions. An "
+            "empty argument is treated as absent."
         ),
     )
 
@@ -1881,7 +2023,15 @@ Exit Codes:
         help="Enable verbose logging",
     )
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    # Strip the Nones that _optional_path puts into the nargs="+" list for
+    # empty arguments, and collapse an entirely empty list to "not given".
+    if args.exclusions_from is not None:
+        kept = [path for path in args.exclusions_from if path is not None]
+        args.exclusions_from = kept or None
+
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
