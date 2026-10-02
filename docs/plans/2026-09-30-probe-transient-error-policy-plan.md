@@ -677,7 +677,7 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 | `tools/broker_probes/runners/run_p_ca.sh` | 그 가드를 쓰도록 축약. 로그 문구는 한 글자도 바꾸지 않았다 |
 | `tools/broker_probes/runners/run_p8.sh` | 추적되는 P-8 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | `_common.sh` · `run_p8.sh` 인스턴스화 레시피와 STOP 규칙 표 |
-| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 54건(+shellcheck 미설치 시 skip 1건) |
+| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 55건(+shellcheck 미설치 시 skip 1건) |
 | `tests/tools/test_broker_probes_ca.py` · `test_broker_probes_pacing.py` | 공유 파일을 따라가는 수정(아래 7.15.6) |
 
 #### 7.15.4 정책 — P-CA 와 같은 것, 그리고 다른 것
@@ -752,7 +752,7 @@ VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_sto
 #### 7.15.7 수정 전 red 증명
 
 `git archive origin/main` 으로 깨끗한 main 트리를 뽑고 새 테스트 파일만 얹어 돌렸다
-(워크트리는 건드리지 않는다). **54건 중 53건 red, pass 0건, skip 1건**(로컬 shellcheck
+(워크트리는 건드리지 않는다). **(측정 시점 54건) 중 53건 red, pass 0건, skip 1건**(로컬 shellcheck
 없음).
 
 ⚠ **한 가지 밝혀둘 것**: main 에는 `_P8_STOP_PREFIX`·`_P8_COEXISTENCE_PREFIX`·
@@ -791,7 +791,7 @@ VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_sto
   tests/tools/test_broker_probes_n15_blackout.py \
   tests/tools/test_broker_probes_nontrade_registry.py \
   tests/tools/test_broker_probes_token_cache.py -p no:cacheprovider
-  → 673 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+  → 674 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
 
 ruff check tools/broker_probes tests/tools          → All checks passed!
 black --check (변경 .py 전부)                        → unchanged

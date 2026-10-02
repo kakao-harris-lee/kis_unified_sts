@@ -1417,6 +1417,31 @@ def test_the_probe_argv_carries_the_instance_values_as_single_words(
     assert argv[argv.index("--visibility-timeout-s") + 1] == "30"
 
 
+def test_a_copy_that_fails_warns_instead_of_vanishing(tmp_path: Path) -> None:
+    """#831 F10, in P-8's shape: a copy that silently did nothing left the
+    evidence only in the gitignored results directory, with no line saying so
+    — and the next trial was told this one was already secured."""
+    evidence = tmp_path / "locked"
+    evidence.mkdir()
+    evidence.chmod(0o500)
+    try:
+        result, invocations, _e = _run_series(
+            tmp_path,
+            script=[_OK, _OK],
+            P8_TRIALS="2",
+            P8_EVIDENCE_DIR=str(evidence),
+        )
+    finally:
+        evidence.chmod(0o700)
+
+    # The series is NOT stopped by a copy failure — the measurement happened.
+    assert len(invocations) == 2
+    warns = [ln for ln in result.stdout.splitlines() if "could NOT copy" in ln]
+    assert len(warns) == 2, result.stdout
+    assert "this trial's evidence is only in" in warns[0]
+    assert "COMPLETE" in _verdict(result.stdout)
+
+
 def test_runner_aborts_when_the_probe_reports_a_different_policy_version(
     tmp_path: Path,
 ) -> None:
