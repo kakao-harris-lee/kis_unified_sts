@@ -11,15 +11,19 @@ The original check compared ONE sample of each benchmark against ONE committed
 baseline sample. Re-running the `performance` job 10x on a fixed head (identical
 code) gave, for ``test_entry_path_100_symbols``:
 
-    n=7 usable | min 0.1217s | median 0.2755s | max 0.3800s | sd 0.078s
+    n=7 usable | min 0.1217s | median 0.2755s | max 0.3800s | sd 0.0842s
     baseline (2026-05-30, a single sample): 0.1329s
     -> 3.1x spread; 3 of 10 jobs red with byte-identical code.
 
-Two independent defects produce that:
+(#768's comment quotes sd 0.078 for the same seven points: that is the
+population sd. This file reports the sample sd, ``statistics.stdev``.)
 
-1. The *current* value is one draw from a wide distribution.
-2. The *baseline* is also one draw -- and it sits near the bottom of today's
-   distribution, so a median run reads as +107% with no code change at all.
+Two things are wrong, and they are not the same thing:
+
+1. The *current* value was one draw, and that draw always carried the cold first
+   round (see the phase table below).
+2. The *baseline* is also one draw, with no recorded spread, so whatever offset
+   it carries is arbitrary.
 
 So this script compares the MEDIAN of N current rounds against the MEDIAN of the
 baseline's rounds, and records n/min/max/sd so a reader can see the spread

@@ -84,15 +84,23 @@ the job 10x on a fixed head, with byte-identical code, gave
 | sd (sample) | 0.0842 s |
 | committed baseline (2026-05-30) | 0.1329 s |
 
-That is a 3.1x spread and 3 of 10 jobs red for no reason. Two separate defects
-produced it, and **fixing either one alone does not fix the check**:
+That is a 3.1x spread and 3 of 10 jobs red for no reason. Two things are wrong,
+and they are not the same thing:
 
-1. The *current* value was one draw from a wide distribution — so the verdict
-   was a coin flip. Medians of N rounds fix this.
-2. The *baseline* was also one draw, and it landed near the bottom of the same
-   distribution — so the median run reads as +107%. Only regenerating the
-   baseline from several rounds fixes this. With the old single-sample baseline
-   kept, median-of-N turns an intermittent red into a **permanent** red.
+1. The *current* value was one draw, and that draw always carried the cold first
+   round (see below) — so the verdict was a coin flip. Medians of N rounds fix
+   this, measurably: on this change's own CI run the same benchmark reads −4.7%
+   against the unchanged baseline and the job is green.
+2. The *baseline* is still one draw with no recorded spread, so whatever offset
+   it carries is arbitrary. That is why the checker warns on it, why the format
+   carries n and provenance, and why the regeneration workflow exists.
+
+It was predicted that keeping (2) would turn the intermittent red into a
+**permanent** red once medians were compared. **The measurement refuted that**,
+and the mistake is worth recording: the ten #768 values were ten single
+cold-inclusive samples from ten different jobs, not ten rounds within one job.
+Treating one distribution as the other is the same over-reach #768's own
+comment history records twice.
 
 ### What the spread actually was
 
