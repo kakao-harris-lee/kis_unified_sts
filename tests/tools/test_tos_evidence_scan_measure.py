@@ -26,6 +26,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -50,34 +51,37 @@ bench = _load("tos_evidence_scan_bench_for_tests", _BENCH_PATH)
 
 _GB = 1024**3
 
+#: One fabricated competing driver's command line, shared by several tests below.
+_A_SECOND_DRIVER = "/usr/bin/python tools/tos_evidence_scan_measure.py run --days 90"
+
 
 # ---------------------------------------------------------------------------------------
 # Fabricated processes (#848)
 # ---------------------------------------------------------------------------------------
 #
-# A test that invents a competing process has to invent its ``/proc`` entry too. The driver
-# does not take a ``pgrep`` line at face value: it drops lines whose PID is its own, is one
-# of its own ancestors or descendants, or has a ``pytest`` ancestor (round-2 F2) — and
-# every one of those questions is answered by READING ``/proc``. Point the reader at the
-# real ``/proc`` while handing it a made-up PID and the fabrication is judged against
-# whatever that PID happens to BE on the runner. On tos-firewall run 36997189121 the
-# hardcoded ``5150`` was a live pytest descendant, the driver dropped the only injected
-# line as a colleague's test run, and a refusal test silently read
-# ``assert 'ok' == 'refused'`` (#848).
+# A test that invents a competing process has to invent the whole world that process lives
+# in. The driver does not take a ``pgrep`` line at face value: it drops lines whose PID is
+# its own, is one of its own ancestors or descendants, or has a ``pytest`` ancestor
+# (round-2 F2). Every one of those questions is answered by reading ``/proc`` and by
+# asking the OS which PID the driver is. Leave either of those pointed at the real host
+# and the fabrication is judged against whatever the runner happened to allocate: on
+# tos-firewall run 36997189121 the hardcoded ``5150`` was a live pytest descendant, the
+# driver dropped the only injected line as a colleague's test run, and a refusal test
+# silently read ``assert 'ok' == 'refused'`` (#848).
 #
-# Two measures close that, and neither is enough on its own:
+# So a fabricated process table comes with both halves of that world:
 #
-# * every fabricated PID is ``_fake_pid(n)``, at or above the kernel's PID ceiling, so no
-#   live process can ever carry it. This is what keeps a fabrication away from
-#   ``os.getpid()``, which ``_self_pid_chain`` asks the OS for and which no ``proc_root``
-#   can redirect;
-# * a reader handed a fabricated process table is pointed at a fabricated ``/proc`` built
-#   from that same table, so the ancestry rules read the tree the test described rather
-#   than the runner's.
+# * a fake ``/proc`` built from the SAME table (:func:`_fake_proc_for`), so the ancestry
+#   rules read the tree the test described;
+# * a ``self_pid`` that is part of the fabrication too. ``HostReader.self_pid`` exists for
+#   this (review F5): without it ``_self_pid_chain`` starts at the runner's ``os.getpid()``
+#   and no ``proc_root`` can redirect it.
 #
-# Both halves are held in place by tests rather than by this comment:
-# ``test_no_fabricated_pid_can_belong_to_a_live_process`` and
-# ``test_a_fabricated_competitor_is_read_from_the_fabricated_proc_not_the_runners``.
+# :func:`_fake_pid` keeps every invented PID above the kernel's ceiling on top of that.
+# That is hygiene for the fabricated trees, and it is load-bearing for exactly one reader:
+# :func:`_reader_that_reports_a_build_once` watches a REAL bench child, so it must read the
+# real ``/proc``, and an unassignable PID is what makes its one invented process invisible
+# there (review F4).
 
 
 def _pid_ceiling() -> int:
@@ -108,6 +112,26 @@ def _fake_pid(n: int) -> int:
     return _FAKE_PID_BASE + 1 + n
 
 
+def _real_self_cmdline() -> str:
+    """This process's real command line, in the shape ``/proc/<pid>/cmdline`` has it."""
+    return (
+        Path("/proc/self/cmdline")
+        .read_bytes()
+        .replace(b"\0", b" ")
+        .decode("utf-8", "replace")
+    )
+
+
+def _proc_table(processes: Sequence[tuple[int, str]]) -> str:
+    """``pgrep -af`` text for these processes.
+
+    The ONE place a ``(pid, args)`` pair becomes a line, so the table a test feeds to
+    ``pgrep`` and the ``/proc`` it feeds to the ancestry walk cannot describe different
+    hosts (review F7).
+    """
+    return "".join(f"{pid} {args}\n" for pid, args in processes)
+
+
 def _fake_proc(root: Path, tree: dict[int, tuple[int, str]]) -> Path:
     """A `/proc` with just the two files the ancestry walk reads: `status` (PPid) and
     `cmdline`."""
@@ -119,18 +143,32 @@ def _fake_proc(root: Path, tree: dict[int, tuple[int, str]]) -> Path:
     return root
 
 
-def _fake_proc_for(root: Path, pgrep_output: str) -> Path:
+def _fake_proc_for(
+    root: Path, processes: Sequence[tuple[int, str]], *, self_pid: int
+) -> Path:
     """The ``/proc`` that belongs with a fabricated ``pgrep`` table.
 
-    Every PID the table names becomes a child of :data:`_FAKE_INIT_PID`, so it is neither
-    an ancestor, a descendant nor a pytest child of anything really running on this host —
-    whatever the runner happened to allocate.
+    Three rules, each closing a way the fabrication could still be judged against the real
+    host:
+
+    * a fabricated process is a child of :data:`_FAKE_INIT_PID`, never of real pid 1;
+    * the reader's own PID is a PARENTLESS root. The driver is the root of the fabricated
+      world, and handing it the fabricated init as a parent would let the descendant rule
+      drop the very lines ``pid in mine`` is there to drop — which is how the first
+      version of the self-PID test passed without pinning anything (review F1);
+    * the real ``os.getpid()`` appears with its real command line whenever it is not
+      itself one of the fabricated processes. ``preflight`` reads the output-directory
+      lock through this same tree, and a lock whose ``/proc/<pid>/cmdline`` is missing is
+      reported as stale rather than held — so without this entry ``output_dir_unlocked``
+      could never refuse in any test that fabricates processes (review F3).
     """
     tree: dict[int, tuple[int, str]] = {_FAKE_INIT_PID: (0, "/sbin/init")}
-    for line in pgrep_output.splitlines():
-        pid_text, _, args = line.strip().partition(" ")
-        if pid_text.isdigit():
-            tree[int(pid_text)] = (_FAKE_INIT_PID, args)
+    for pid, args in processes:
+        tree[pid] = (0 if pid == self_pid else _FAKE_INIT_PID, args)
+    if os.getpid() not in tree:
+        tree[os.getpid()] = (0, _real_self_cmdline())
+    if self_pid not in tree:
+        tree[self_pid] = (0, "/usr/bin/python tools/tos_evidence_scan_measure.py run")
     return _fake_proc(root, tree)
 
 
@@ -158,20 +196,20 @@ def _reader(
     *,
     available_gb: float = 12.0,
     swap_free_gb: float = 5.0,
-    pgrep_output: str = "",
+    processes: Sequence[tuple[int, str]] = (),
+    self_pid: int | None = None,
     proc_root: Path | None = None,
-):
+) -> Any:
     """A real :class:`HostReader` pointed at fake inputs.
 
-    ``pgrep`` is replaced by ``/bin/echo -n <output>``, which is a real process producing
-    real stdout — the reader's parsing, self-exclusion and search-command filtering all run
-    for real. Nothing is monkeypatched.
+    ``pgrep`` is replaced by a real process producing real stdout — the reader's parsing,
+    self-exclusion and search-command filtering all run for real. Nothing is monkeypatched.
 
-    A fabricated process table brings a fabricated ``/proc`` with it (#848): the driver's
-    exclusion rules have to read the tree this table describes, not the runner's. A reader
-    with no table keeps the real ``/proc``, because the output-directory lock check looks
-    up real PIDs there. ``proc_root`` is overridable for one purpose only — so the
-    regression test can point a fabrication back at the real ``/proc`` and show the
+    ``processes`` is the whole fabrication: the ``pgrep`` table, the ``/proc`` tree and the
+    reader's own identity are all derived from it, so they cannot disagree (#848). A reader
+    with no fabricated process keeps the real ``/proc``, which is what the output-directory
+    lock check needs for real PIDs. ``proc_root`` is overridable for one purpose only — so
+    the regression test can point a fabrication back at the real ``/proc`` and show the
     failure this seam exists to prevent.
     """
     meminfo = _meminfo(
@@ -179,29 +217,34 @@ def _reader(
         available_gb=available_gb,
         swap_free_gb=swap_free_gb,
     )
-    if not pgrep_output:
+    whoami = os.getpid() if self_pid is None else self_pid
+    if not processes:
         return driver.HostReader(
             meminfo_path=meminfo,
             pgrep_argv=("/bin/true",),
             proc_root=Path("/proc") if proc_root is None else proc_root,
+            self_pid=whoami,
         )
     # A faithful `pgrep -af`: a fixed process table, matched with the SAME extended regex
     # the real binary would apply. Echoing the lines back unconditionally would test the
     # reader's parsing while leaving the patterns themselves unexercised — and the patterns
     # are where review F3 found the bug.
-    table = tmp_path / f"proc-table-{abs(hash(pgrep_output))}"
-    table.write_text(pgrep_output)
-    fake = tmp_path / f"fake-pgrep-{abs(hash(pgrep_output))}.sh"
+    text = _proc_table(processes)
+    stamp = abs(hash(text))
+    table = tmp_path / f"proc-table-{stamp}"
+    table.write_text(text)
+    fake = tmp_path / f"fake-pgrep-{stamp}.sh"
     fake.write_text(f'#!/bin/sh\ngrep -E -- "$1" "{table}" || true\nexit 0\n')
     fake.chmod(0o755)
     return driver.HostReader(
         meminfo_path=meminfo,
         pgrep_argv=(str(fake),),
         proc_root=(
-            _fake_proc_for(tmp_path / f"proc-{abs(hash(pgrep_output))}", pgrep_output)
+            _fake_proc_for(tmp_path / f"proc-{stamp}", processes, self_pid=whoami)
             if proc_root is None
             else proc_root
         ),
+        self_pid=whoami,
     )
 
 
@@ -211,8 +254,14 @@ def _reader_that_reports_a_build_once(tmp_path: Path, *, gate: Path) -> Any:
 
     Three watchdog tests need the same thing: an abort at a known point in the run rather
     than after some number of samples. Tying the daemon's appearance to a file the run
-    itself creates keeps that deterministic. The daemon is fabricated, so the reader gets a
-    fabricated ``/proc`` to match (#848).
+    itself creates keeps that deterministic.
+
+    This one keeps the REAL ``/proc``, deliberately (review F4). These are the only tests
+    that run a real bench child, and the sampler reads that child's ``status`` and ``io``
+    through this same ``proc_root``; a fabricated tree would answer "no such process" for
+    it and quietly stop exercising the per-child sampling path. Reading the real tree is
+    safe here because the one process this reader invents carries a PID the kernel cannot
+    assign, so the ancestry rules can never find anything under it.
     """
     daemon = _fake_pid(0)
     fake_pgrep = tmp_path / "fake-pgrep.sh"
@@ -225,13 +274,6 @@ def _reader_that_reports_a_build_once(tmp_path: Path, *, gate: Path) -> Any:
     return driver.HostReader(
         meminfo_path=_meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0),
         pgrep_argv=(str(fake_pgrep),),
-        proc_root=_fake_proc(
-            tmp_path / "fake-proc",
-            {
-                _FAKE_INIT_PID: (0, "/sbin/init"),
-                daemon: (_FAKE_INIT_PID, "/usr/bin/java GradleDaemon"),
-            },
-        ),
     )
 
 
@@ -571,10 +613,13 @@ def test_preflight_refuses_when_a_gradle_build_is_running(tmp_path: Path) -> Non
     daemon = _fake_pid(0)
     reader = _reader(
         tmp_path,
-        pgrep_output=(
-            f"{daemon} /usr/lib/jvm/java-21-openjdk-amd64/bin/java -Xmx2g "
-            "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.6.1\n"
-        ),
+        processes=[
+            (
+                daemon,
+                "/usr/lib/jvm/java-21-openjdk-amd64/bin/java -Xmx2g "
+                "org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.6.1",
+            )
+        ],
     )
     record = _preflight(tmp_path, reader)
 
@@ -588,17 +633,19 @@ def test_preflight_refuses_when_another_measurement_driver_is_running(
     tmp_path: Path,
 ) -> None:
     second_driver = _fake_pid(0)
-    reader = _reader(
-        tmp_path,
-        pgrep_output=(
-            f"{second_driver} /usr/bin/python tools/tos_evidence_scan_measure.py "
-            "run --days 90\n"
-        ),
-    )
+    reader = _reader(tmp_path, processes=[(second_driver, _A_SECOND_DRIVER)])
     record = _preflight(tmp_path, reader)
 
     assert record.verdict == "refused"
     assert str(second_driver) in _failed(record)["competing_measurement"]
+
+
+def _case_dir(tmp_path: Path, name: str, reference: Path) -> Path:
+    """A fresh preflight directory that reuses one already-built reference DB."""
+    case = tmp_path / name
+    case.mkdir()
+    (case / "evidence.sqlite3").write_bytes(reference.read_bytes())
+    return case
 
 
 def test_a_fabricated_competitor_is_read_from_the_fabricated_proc_not_the_runners(
@@ -610,52 +657,51 @@ def test_a_fabricated_competitor_is_read_from_the_fabricated_proc_not_the_runner
     ``assert 'ok' == 'refused'`` — nothing about the code had changed, the runner had
     simply allocated the hardcoded ``5150`` to a live pytest descendant, so the driver
     dropped the only injected line and the refusal evaporated. Waiting for that collision
-    again is not a test, so both collisions are CONSTRUCTED here out of PIDs this process
-    can name with certainty:
-
-    * ``os.getppid()`` — in the driver's own ancestor chain on the real ``/proc``, which
-      is the branch the issue's reproduction forced by faking ``os.getpid()``;
-    * a real child of this process — a descendant, and (under pytest) a pytest descendant
-      too.
+    again is not a test, so it is CONSTRUCTED here out of PIDs this process can name with
+    certainty: its own parent (an ancestor, the branch the issue's reproduction forced by
+    faking ``os.getpid()``) and a live child of its own (a descendant, and under pytest a
+    pytest descendant too).
 
     Each is checked both ways round. Pointed at the real ``/proc`` the fabrication is
     dropped and the verdict is ``ok``: that half is the old failure, on demand, and it
     fails if the seam ever stops being the thing that saves the test. Pointed at the fake
     tree the line was fabricated in, it is a competitor and the run is refused.
     """
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    real = driver.HostReader()
+
+    def both_ways(label: str, pid: int) -> None:
+        processes = [(pid, _A_SECOND_DRIVER)]
+        leaky = _case_dir(tmp_path, f"real-proc-{pid}", reference)
+        assert (
+            _preflight(
+                leaky, _reader(leaky, processes=processes, proc_root=Path("/proc"))
+            ).verdict
+            == "ok"
+        ), f"the shape of #848: the real /proc answers for {label}"
+
+        fake = _case_dir(tmp_path, f"fake-proc-{pid}", reference)
+        record = _preflight(fake, _reader(fake, processes=processes))
+
+        assert record.verdict == "refused", label
+        assert str(pid) in _failed(record)["competing_measurement"], label
+
+    # The ancestor half needs an ancestor to exist. It does not when pytest is itself pid
+    # 1 — the container case this module's fabricated init guards against — and asserting
+    # `os.getppid()` is in the chain would then fail for a reason that is not the bug
+    # (review F2). The descendant half below covers the same mechanism either way.
+    parent = real._parent_pid(os.getpid())
+    if parent is not None and parent > 0:
+        assert parent in real._self_pid_chain(), "precondition: a real ancestor"
+        both_ways("this test process's own parent", parent)
+
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
     try:
-        real = driver.HostReader()
-        assert os.getppid() in real._self_pid_chain(), "precondition: a real ancestor"
         assert real._is_descendant_of(
             child.pid, frozenset({os.getpid()})
         ), "precondition: a real descendant"
-
-        for why, pid in (
-            ("this test process's own parent", os.getppid()),
-            ("a live child of this test process", child.pid),
-        ):
-            line = (
-                f"{pid} /usr/bin/python tools/tos_evidence_scan_measure.py "
-                "run --days 90\n"
-            )
-
-            leaky = tmp_path / f"real-proc-{pid}"
-            leaky.mkdir()
-            assert (
-                _preflight(
-                    leaky,
-                    _reader(leaky, pgrep_output=line, proc_root=Path("/proc")),
-                ).verdict
-                == "ok"
-            ), f"the shape of #848: the real /proc answers for {why}"
-
-            fake = tmp_path / f"fake-proc-{pid}"
-            fake.mkdir()
-            record = _preflight(fake, _reader(fake, pgrep_output=line))
-
-            assert record.verdict == "refused", why
-            assert str(pid) in _failed(record)["competing_measurement"], why
+        both_ways("a live child of this test process", child.pid)
     finally:
         child.kill()
         child.wait()
@@ -666,26 +712,65 @@ def test_the_drivers_own_pid_is_never_read_as_a_competing_driver(
 ) -> None:
     """The branch #848 tripped over, pinned as intended instead of left ambiguous.
 
-    ``_self_pid_chain`` starts at ``os.getpid()``, which the OS answers and which no
-    ``proc_root`` can redirect, so a line carrying this process's own PID is dropped
-    whatever ``/proc`` the reader reads. That is correct — a driver must not refuse to run
-    because it can see itself — and it is exactly why a fabricated PID has to be one the
-    kernel cannot assign rather than merely one that looks unlikely.
+    A driver must not refuse to run because it can see itself, so ``scan`` drops a line
+    whose PID is in its own chain. The fabricated driver here has NO parent, which is what
+    makes this test able to fail: ``pid in mine`` is then the only rule that can drop the
+    line, and deleting that clause from ``HostReader.scan`` turns this red. The first
+    version of this test parented the self PID to the fabricated init, so the descendant
+    rule dropped the same line and the test would have stayed green with the branch gone
+    (review F1) — the "guard that admits what it names" shape.
     """
-    line = (
-        f"{os.getpid()} /usr/bin/python tools/tos_evidence_scan_measure.py "
-        "run --days 90\n"
+    the_driver = _fake_pid(0)
+    reader = _reader(
+        tmp_path, processes=[(the_driver, _A_SECOND_DRIVER)], self_pid=the_driver
     )
 
-    assert _preflight(tmp_path, _reader(tmp_path, pgrep_output=line)).verdict == "ok"
+    assert reader._self_pid_chain() == frozenset({the_driver}), "no other rule applies"
+    assert _preflight(tmp_path, reader).verdict == "ok"
+
+
+def test_a_fabricated_process_table_does_not_blind_the_output_directory_lock(
+    tmp_path: Path,
+) -> None:
+    """Review F3. A fake ``/proc`` must not quietly answer "owner gone" for a real lock.
+
+    ``preflight`` reads the output-directory lock through the SAME ``proc_root`` as the
+    process rules, and :func:`read_lock` treats a lock whose ``/proc/<pid>/cmdline`` it
+    cannot read as stale. A fabricated tree holding only the fabricated processes would
+    therefore leave ``output_dir_unlocked`` unable to refuse in every test that fabricates
+    a process table — a check that cannot fail, which is the thing this module exists to
+    catch.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / driver.LOCK_NAME).write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "argv0": _real_self_cmdline().split(" ")[0],
+                "run_id": "somebody-elses-run",
+            }
+        )
+    )
+
+    record = _preflight(
+        tmp_path, _reader(tmp_path, processes=[(_fake_pid(0), _A_SECOND_DRIVER)])
+    )
+
+    assert record.verdict == "refused"
+    failed = _failed(record)
+    # Both, so that neither check can stand in for the other.
+    assert "output_dir_unlocked" in failed
+    assert "competing_measurement" in failed
 
 
 def test_no_fabricated_pid_can_belong_to_a_live_process() -> None:
-    """The other half of the #848 fix: ``_fake_pid`` is unassignable, not just unlikely.
+    """``_fake_pid`` is unassignable, not merely unlikely.
 
-    ``/proc/sys/kernel/pid_max`` is one greater than the largest PID the kernel will hand
-    out, so every ``_FAKE_PID_BASE + n`` is beyond reach — including the one PID no
-    ``proc_root`` can stand in for, ``os.getpid()``.
+    Every fabricated tree reads better for it, and one reader depends on it outright:
+    :func:`_reader_that_reports_a_build_once` reads the REAL ``/proc`` so that the
+    per-child sampling path stays exercised, and only an unassignable PID keeps its
+    invented Gradle daemon invisible there.
     """
     ceiling = int(Path("/proc/sys/kernel/pid_max").read_text().strip())
     fabricated = (_FAKE_INIT_PID, *(_fake_pid(n) for n in range(8)))
@@ -706,19 +791,25 @@ def test_a_process_merely_searching_for_the_marker_is_not_a_competing_build(
     """
     searching = _reader(
         tmp_path,
-        pgrep_output=(
-            f"{_fake_pid(0)} /bin/bash -c eval "
-            "'if ! pgrep -f GradleWrapperMain; then echo idle; fi'\n"
-        ),
+        processes=[
+            (
+                _fake_pid(0),
+                "/bin/bash -c eval "
+                "'if ! pgrep -f GradleWrapperMain; then echo idle; fi'",
+            )
+        ],
     )
     assert _preflight(tmp_path, searching).verdict == "ok"
 
     building = _reader(
         tmp_path,
-        pgrep_output=(
-            f"{_fake_pid(1)} /usr/lib/jvm/java-21/bin/java "
-            "worker.org.gradle.process.internal.worker.GradleWorkerMain\n"
-        ),
+        processes=[
+            (
+                _fake_pid(1),
+                "/usr/lib/jvm/java-21/bin/java "
+                "worker.org.gradle.process.internal.worker.GradleWorkerMain",
+            )
+        ],
     )
     assert _preflight(tmp_path, building).verdict == "refused"
 
@@ -1517,8 +1608,25 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
     aborted = sorted(out_dir.glob("ABORTED-*-1d.json"))
     assert aborted, "an abort must never be silent"
     assert aborted[0].name == "ABORTED-before-1d.json"
-    assert json.loads(aborted[0].read_text())["check"] == "competing_build"
+    record = json.loads(aborted[0].read_text())
+    assert record["check"] == "competing_build"
     assert synthetic.exists(), "the aborted run deleted the build it had just paid for"
+
+    # This reader keeps the REAL `/proc`, so the per-child sampling really ran (review
+    # F4). Point it at a fabricated tree instead and both of these go empty — the live
+    # bench child is simply not in it — which would retire the whole per-child read from
+    # the only tests that exercise it against a real process.
+    assert record["partial_resource"][
+        "proc_io"
+    ], "the child's /proc/<pid>/io never read"
+    watchdog = [
+        json.loads(line)
+        for line in (out_dir / "watchdog.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert any(
+        row.get("child_peak_rss_bytes") for row in watchdog
+    ), "the child's VmHWM was never sampled"
     log = (out_dir / "measure-1d.log").read_text()
     assert "KEPT synthetic" in log
     assert "--steps before,after" in log, "the log must say how to resume"
@@ -1733,8 +1841,8 @@ def test_f3_editing_or_testing_this_tool_is_not_a_competing_measurement(
     test_tos_evidence_scan_measure.py`, `mypy tools/…`, `vim tools/…` and `git show
     main:tools/…` all counted — editing this tool during a multi-hour run killed the run.
     """
-    innocent = "".join(
-        f"{_fake_pid(i)} {args}\n"
+    innocent = [
+        (_fake_pid(i), args)
         for i, args in enumerate(
             (
                 "/usr/bin/python -m pytest tests/tools/test_tos_evidence_scan_measure.py -q",
@@ -1744,10 +1852,8 @@ def test_f3_editing_or_testing_this_tool_is_not_a_competing_measurement(
                 "/usr/bin/black tools/tos_evidence_scan_measure.py",
             )
         )
-    )
-    assert (
-        _preflight(tmp_path, _reader(tmp_path, pgrep_output=innocent)).verdict == "ok"
-    )
+    ]
+    assert _preflight(tmp_path, _reader(tmp_path, processes=innocent)).verdict == "ok"
 
 
 def test_f3_a_real_second_driver_invocation_is_still_caught(tmp_path: Path) -> None:
@@ -1759,22 +1865,23 @@ def test_f3_a_real_second_driver_invocation_is_still_caught(tmp_path: Path) -> N
             "/usr/bin/python /opt/x/tos_evidence_scan_bench.py measure --db /tmp/s",
         )
     ):
-        line = f"{_fake_pid(i)} {args}"
-        record = _preflight(tmp_path, _reader(tmp_path, pgrep_output=line + "\n"))
-        assert record.verdict == "refused", line
-        assert "competing_measurement" in _failed(record), line
+        record = _preflight(
+            tmp_path, _reader(tmp_path, processes=[(_fake_pid(i), args)])
+        )
+        assert record.verdict == "refused", args
+        assert "competing_measurement" in _failed(record), args
 
     # `profile` reads a 5 MB file and `preflight` starts no child: neither competes, and
     # killing a six-hour run for one of them is a real loss (round-2 F2).
-    for harmless in (
-        f"{_fake_pid(3)} /usr/bin/python tools/tos_evidence_scan_bench.py "
-        "profile --reference /x",
-        f"{_fake_pid(4)} /usr/bin/python tools/tos_evidence_scan_measure.py "
-        "preflight --days 30",
+    for i, harmless in enumerate(
+        (
+            "/usr/bin/python tools/tos_evidence_scan_bench.py profile --reference /x",
+            "/usr/bin/python tools/tos_evidence_scan_measure.py preflight --days 30",
+        )
     ):
         assert (
             _preflight(
-                tmp_path, _reader(tmp_path, pgrep_output=harmless + "\n")
+                tmp_path, _reader(tmp_path, processes=[(_fake_pid(3 + i), harmless)])
             ).verdict
             == "ok"
         ), harmless
@@ -1887,34 +1994,35 @@ def test_f2_the_descendant_rule_is_live_in_scan_not_just_available(
     the_driver = _fake_pid(0)
     its_bench_child = _fake_pid(1)
     an_unrelated_run = _fake_pid(2)
-    root = _fake_proc(
-        tmp_path / "proc",
-        {
-            _FAKE_INIT_PID: (0, "/sbin/init"),
-            the_driver: (_FAKE_INIT_PID, "/bin/bash -l"),
-            its_bench_child: (
-                the_driver,
-                "/usr/bin/python tools/tos_evidence_scan_bench.py build --days 1",
-            ),
-            an_unrelated_run: (
-                _FAKE_INIT_PID,
-                "/usr/bin/python tools/tos_evidence_scan_bench.py build --days 90",
-            ),
-        },
-    )
+    # The driver is a parentless root: give it the fabricated init as a parent and every
+    # other fabricated process becomes its "descendant".
+    tree = {
+        _FAKE_INIT_PID: (0, "/sbin/init"),
+        the_driver: (0, "/bin/bash -l"),
+        its_bench_child: (
+            the_driver,
+            "/usr/bin/python tools/tos_evidence_scan_bench.py build --days 1",
+        ),
+        an_unrelated_run: (
+            _FAKE_INIT_PID,
+            "/usr/bin/python tools/tos_evidence_scan_bench.py build --days 90",
+        ),
+    }
+    root = _fake_proc(tmp_path / "proc", tree)
     table = tmp_path / "table"
+    # The visible half of the same tree — one source for both views (review F7).
     table.write_text(
-        f"{its_bench_child} /usr/bin/python tools/tos_evidence_scan_bench.py "
-        "build --days 1\n"
-        f"{an_unrelated_run} /usr/bin/python tools/tos_evidence_scan_bench.py "
-        "build --days 90\n"
+        _proc_table(
+            [(pid, tree[pid][1]) for pid in (its_bench_child, an_unrelated_run)]
+        )
     )
     fake = tmp_path / "fake-pgrep.sh"
     fake.write_text(f'#!/bin/sh\ngrep -E -- "$1" "{table}" || true\nexit 0\n')
     fake.chmod(0o755)
-    reader = driver.HostReader(proc_root=root, pgrep_argv=(str(fake),))
-    # Stand in for the driver by seeding the documented memo for the self chain.
-    reader._cache["self_pid_chain"] = frozenset({the_driver})
+    # `self_pid` is the driver's own identity seam — no reaching into the private memo.
+    reader = driver.HostReader(
+        proc_root=root, pgrep_argv=(str(fake),), self_pid=the_driver
+    )
 
     found = {p.pid for p in reader.scan({"m": driver.COMPETING_MEASURE_PATTERN})["m"]}
 
