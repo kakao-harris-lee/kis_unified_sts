@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -620,3 +621,121 @@ def test_pinned_token_cache_is_under_one_session_wide_root(hermetic_session_stat
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     if worker:
         assert pinned.name == worker
+
+
+# ---------------------------------------------------------------------------
+# The scrub must not take the live-infra gate's own inputs with it
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_keeps_redis_connection_variables():
+    """``REDIS_*`` survives the scrub, which touches only KIS_*/TELEGRAM_*.
+
+    The live-infra tests reach Redis through
+    ``shared.streaming.client.RedisClient``, which reads
+    ``REDIS_HOST``/``REDIS_PORT``/``REDIS_DB``/``REDIS_PASSWORD``. The CI
+    ``performance`` job injects the first three. Scrubbing them would leave
+    the gate open and every gated benchmark unmeasured — which that job
+    reports as an error, not a skip (#845).
+    """
+    environ = {
+        "REDIS_HOST": "redis.example",
+        "REDIS_PORT": "6399",
+        "REDIS_DB": "1",
+        "REDIS_PASSWORD": "secret",
+        "REDIS_URL": "redis://redis.example:6399/1",
+        "KIS_STOCK_APP_KEY": "must-go",
+        "TELEGRAM_BOT_TOKEN": "must-go",
+        hermetic_env.LIVE_INFRA_ENV: "1",
+    }
+
+    removed = hermetic_env.scrub_broker_env(environ)
+
+    assert removed == ["KIS_STOCK_APP_KEY", "TELEGRAM_BOT_TOKEN"]
+    assert environ == {
+        "REDIS_HOST": "redis.example",
+        "REDIS_PORT": "6399",
+        "REDIS_DB": "1",
+        "REDIS_PASSWORD": "secret",
+        "REDIS_URL": "redis://redis.example:6399/1",
+        hermetic_env.LIVE_INFRA_ENV: "1",
+    }
+
+
+#: A gated module from ``_LIVE_INFRA_TEST_PATHS``. Pointed at a closed port on
+#: purpose: both gate states are observable without ever reaching a real
+#: Redis, and this host's DB 1 is shared with the paper runtime.
+_GATED_MODULE = "tests/integration/test_rate_limiter_redis.py"
+
+
+def _run_gated_module(*, flag: str | None, args: tuple[str, ...] = ()) -> str:
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "REDIS_HOST": "127.0.0.1",
+        "REDIS_PORT": "1",
+        "REDIS_DB": "1",
+    }
+    if flag is not None:
+        env[hermetic_env.LIVE_INFRA_ENV] = flag
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            _GATED_MODULE,
+            "-x",
+            "-q",
+            "-rsf",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:warnings",
+            "-p",
+            "no:randomly",
+            *args,
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    return result.stdout + result.stderr
+
+
+def test_live_infra_item_skips_without_the_flag():
+    """The default session must not touch Redis DB 1, which paper shares."""
+    collected = _run_gated_module(
+        flag=None, args=("--collect-only", "-m", "live_infra")
+    )
+    # The live_infra marker is applied by tests/conftest.py, so selecting on
+    # it pins that the item is gated by *us* — the skip below is not merely
+    # the module's own "Redis not available" guard.
+    selected = re.search(rf"{re.escape(_GATED_MODULE)}: (\d+)", collected)
+    assert selected is not None, collected
+    assert int(selected.group(1)) > 0
+
+    output = _run_gated_module(flag=None)
+
+    assert "SKIPPED" in output
+    assert "is unreachable" not in output
+
+
+def test_live_infra_item_runs_when_the_flag_is_set():
+    """With the flag set the item RUNS — the hermetic session must not close
+    the gate as a side effect.
+
+    "It ran" shows up as #845's reachability failure, because the port is
+    closed. A skip here would be the regression: the CI ``performance`` job
+    would leave six baseline entries unmeasured, which it reports as an error
+    rather than silence.
+    """
+    output = _run_gated_module(flag="1")
+
+    assert f"{hermetic_env.LIVE_INFRA_ENV} is set" in output
+    assert "is unreachable" in output
+    assert "SKIPPED" not in output
