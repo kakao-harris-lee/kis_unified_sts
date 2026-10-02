@@ -809,6 +809,30 @@ def test_a_transport_failure_on_the_quote_is_its_own_phase(
     # No order was placed, so there is nothing to clean up and no disposition.
     assert [c for c in wire.calls if c["url"].endswith("trading/order")] == []
     assert "cleanup_dispositions" not in run.measurements
+    # And the reason given is the QUOTE's reason. Saying "an order-mutating
+    # call is never retried" about a GET is the same false-sentence shape as
+    # the stop narration.
+    errors = " ".join(run.errors)
+    assert "price lookup" in errors
+    assert "duplicate-order hazard" not in errors
+
+
+def test_each_unretried_phase_gives_its_own_reason(
+    monkeypatch: pytest.MonkeyPatch, futures_env: None
+) -> None:
+    """Three phases, three reasons, no shared sentence that is false for one
+    of them. A missing key would fall back to a generic line, so the mapping
+    is pinned to the phases that use it."""
+    assert set(probes_order._P8_NO_RETRY_REASON) == {"quote", "submit", "amend"}
+    _install(
+        monkeypatch,
+        _Wire(amend_raises=requests.exceptions.ReadTimeout("read timeout=15.0")),
+    )
+
+    run = probe_p8(_args())
+
+    assert any("consume the original's quantity twice" in e for e in run.errors)
+    assert not any("price lookup" in e for e in run.errors)
 
 
 def test_a_rejected_submit_is_still_a_rejection(

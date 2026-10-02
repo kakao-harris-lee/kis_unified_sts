@@ -2046,6 +2046,19 @@ def _print_p8_verdict(stop: str, measured: bool) -> None:
     )
 
 
+#: Phase -> why that call gets no second attempt. Stated per phase because
+#: they differ: two are POSTs, one is a GET that is simply not worth repeating.
+_P8_NO_RETRY_REASON: dict[str, str] = {
+    "quote": (
+        "retrying a price lookup only moves the trial's clock — nothing is "
+        "resting yet, and a broker that cannot answer a price query is not "
+        "one to start placing orders against"
+    ),
+    "submit": ("a resent submit is the duplicate-order hazard P-2 exists to measure"),
+    "amend": "a resent amend could consume the original's quantity twice",
+}
+
+
 def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) -> str:
     """Classify a transport failure on a single-shot call, without retrying.
 
@@ -2075,12 +2088,17 @@ def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) 
             retried=False,
         )
     )
+    # Why THIS phase was not retried, not why "a POST" is not: the quote is a
+    # GET, and telling a reader it is an order-mutating call is the same kind
+    # of false sentence as the stop narration this harness just had to fix.
+    why = _P8_NO_RETRY_REASON.get(
+        phase, "it is a single-shot call with no safe second attempt"
+    )
     run.error(
         f"TRANSPORT STOP ({phase}) — {excerpt}. No answer arrived, so this "
-        "trial produced no coexistence sample. It is NOT a broker rejection: "
-        "nothing was refused, and an order-mutating call is never retried "
-        "(a resent submit is the duplicate-order hazard P-2 measures). The "
-        "series stop condition is a broker rejection; this is not one."
+        f"trial produced no coexistence sample. It was not retried because "
+        f"{why}. It is NOT a broker rejection: nothing was refused, and the "
+        "series stop condition is a refused order."
     )
     return f"{_P8_STOP_TRANSIENT}:{TRANSIENT_TRANSPORT}"
 

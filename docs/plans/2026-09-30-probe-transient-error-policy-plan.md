@@ -700,6 +700,11 @@ run.measurements` · `no_rows` 한 번은 구간을 **끊지 않는다**(`coexis
    처분: **distinct `msg_cd` 당 축자 기록 1건**, 횟수는 전부
    `coexistence_not_answered_codes` 에 센다. 반복은 첫 건이 담지 않은 정보를
    담지 않는다.
+3. **같은 형태가 한 군데 더 있었다.** 전송 중단 메시지가 세 phase 에 공통
+   문장 하나를 썼는데 — 「an order-mutating call is never retried (a resent
+   submit is the duplicate-order hazard P-2 measures)」 — `quote` 는 GET 이다.
+   `_P8_NO_RETRY_REASON` 으로 phase 별 사유를 적는다. 이 셋은 전부 「다른 게
+   아니니까 이것」으로 문장을 고르던 자리였고, 조회표가 그 추론을 없앤다.
 
 #### 7.15.3 바뀐 파일
 
@@ -712,7 +717,7 @@ run.measurements` · `no_rows` 한 번은 구간을 **끊지 않는다**(`coexis
 | `tools/broker_probes/runners/run_p_ca.sh` | 그 가드를 쓰도록 축약. 로그 문구는 한 글자도 바꾸지 않았다 |
 | `tools/broker_probes/runners/run_p8.sh` | 추적되는 P-8 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | `_common.sh` · `run_p8.sh` 인스턴스화 레시피와 STOP 규칙 표 |
-| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 60건(+shellcheck 미설치 시 skip 1건) |
+| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 61건(+shellcheck 미설치 시 skip 1건) |
 | `tests/tools/test_broker_probes_ca.py` · `test_broker_probes_pacing.py` | 공유 파일을 따라가는 수정(아래 7.15.6) |
 
 #### 7.15.4 정책 — P-CA 와 같은 것, 그리고 다른 것
@@ -827,7 +832,7 @@ VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_sto
   tests/tools/test_broker_probes_n15_blackout.py \
   tests/tools/test_broker_probes_nontrade_registry.py \
   tests/tools/test_broker_probes_token_cache.py -p no:cacheprovider
-  → 679 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+  → 680 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
 
 ruff check tools/broker_probes tests/tools          → All checks passed!
 black --check (변경 .py 전부)                        → unchanged
