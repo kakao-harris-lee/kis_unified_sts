@@ -114,6 +114,118 @@ def _guard(**overrides):
     return driver.GuardConfig.validated(**kwargs)
 
 
+# ---------------------------------------------------------------------------------------
+# Checkout fixtures — REAL git repositories, in each shape the guard has to refuse
+# ---------------------------------------------------------------------------------------
+#
+# Real `git init`, not a stub binary: the guard asks git four questions (toplevel, HEAD,
+# `status --porcelain`, `merge-base --is-ancestor`) and a fake would only prove the fake
+# answers them. Each repo is two files and lives under `tmp_path`, so it is cheap and
+# hermetic. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` are pinned to /dev/null so the
+# developer's own git config (hooks, templates, signing, `init.defaultBranch`) cannot
+# change what these tests measure.
+
+_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_AUTHOR_NAME": "tos tests",
+    "GIT_AUTHOR_EMAIL": "tos-tests@example.invalid",
+    "GIT_COMMITTER_NAME": "tos tests",
+    "GIT_COMMITTER_EMAIL": "tos-tests@example.invalid",
+}
+
+
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_GIT_ENV,
+    )
+    return completed.stdout.strip()
+
+
+def _make_checkout(
+    root: Path,
+    *,
+    detached: bool = True,
+    dirty: bool = False,
+    ancestor: bool = True,
+    origin_main: bool = True,
+    bench_ignored: bool = False,
+) -> Path:
+    """A git checkout holding stand-ins for the driver and the bench, in the asked shape.
+
+    The two files only have to exist and be hashable — the guard reads git about the tree
+    and sha256 about the bench, never the Python inside either.
+
+    ``bench_ignored`` puts the bench in ``.gitignore``. That is the one shape in which a
+    bench can change while ``git status --porcelain`` stays empty, which is why the digest
+    is checked next to cleanliness rather than instead of it.
+    """
+    repo = root / "checkout"
+    (repo / "tools").mkdir(parents=True)
+    (repo / "tools" / "tos_evidence_scan_measure.py").write_text("# driver stand-in\n")
+    (repo / "tools" / "tos_evidence_scan_bench.py").write_text("# bench stand-in\n")
+    if bench_ignored:
+        (repo / ".gitignore").write_text("tools/tos_evidence_scan_bench.py\n")
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(repo)],
+        check=True,
+        capture_output=True,
+        env=_GIT_ENV,
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    if origin_main:
+        _git(repo, "update-ref", "refs/remotes/origin/main", base)
+    head = base
+    if not ancestor:
+        # One commit past origin/main: present in the tree, not in the published history.
+        (repo / "tools" / "unmerged.txt").write_text("not on origin/main\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "unmerged")
+        head = _git(repo, "rev-parse", "HEAD")
+    if detached:
+        _git(repo, "checkout", "-q", "--detach", head)
+    if dirty:
+        (repo / "tools" / "scratch.txt").write_text("uncommitted\n")
+    return repo
+
+
+def _checkout(repo: Path, *, enforced: bool = True, bench: Path | None = None):
+    """A :class:`CheckoutGuard` over ``repo``, with its baseline already read."""
+    return driver.CheckoutGuard(
+        driver_path=repo / "tools" / "tos_evidence_scan_measure.py",
+        bench_path=(
+            bench
+            if bench is not None
+            else repo / "tools" / "tos_evidence_scan_bench.py"
+        ),
+        enforced=enforced,
+    ).with_baseline()
+
+
+#: One clean detached checkout for the whole session, so the ~45 tests that merely need a
+#: passing guard do not each pay for a `git init`. Tests that MOVE the tree build their own
+#: under their own ``tmp_path``.
+_SHARED: dict[str, Path] = {}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _shared_clean_checkout(tmp_path_factory):
+    _SHARED["repo"] = _make_checkout(tmp_path_factory.mktemp("clean-checkout"))
+    yield
+    _SHARED.clear()
+
+
+def _clean_checkout(**kwargs):
+    return _checkout(_SHARED["repo"], **kwargs)
+
+
 def _write_reference(path: Path, *, hot_rows: int = 20) -> None:
     """A miniature stand-in for a real ``evidence.sqlite3`` — the same shape the bench's own
     test uses, so the two suites agree on what a reference looks like."""
@@ -185,7 +297,14 @@ def _stub_bench(
 
 
 def _preflight(
-    tmp_path: Path, reader, *, guard=None, days: int = 1, expect_gb=None, steps=None
+    tmp_path: Path,
+    reader,
+    *,
+    guard=None,
+    days: int = 1,
+    expect_gb=None,
+    steps=None,
+    checkout=None,
 ):
     reference = tmp_path / "evidence.sqlite3"
     if not reference.exists():
@@ -220,6 +339,7 @@ def _preflight(
     return driver.preflight(
         run_id="testrun",
         guard=guard or _guard(),
+        checkout=checkout if checkout is not None else _clean_checkout(),
         reader=reader,
         out_dir=out_dir,
         days=days,
@@ -252,6 +372,7 @@ def test_preflight_passes_on_a_healthy_host_and_records_the_context(
     assert record.verdict == "ok"
     assert record.refusal is None
     assert {c.check for c in record.checks} == {
+        "checkout_detached_and_clean",
         "mem_available",
         "swap_free",
         "competing_build",
@@ -264,6 +385,15 @@ def test_preflight_passes_on_a_healthy_host_and_records_the_context(
     # gated, and a run must be readable afterwards next to what else was resident.
     assert record.top_rss
     assert record.watchdog_enabled is True
+    # The tree is recorded whatever the verdict (plan §2 A1-c): the 180-day run had to be
+    # reconstructed from a reflog afterwards because the driver wrote none of this.
+    assert record.checkout["detached"] is True
+    assert record.checkout["clean"] is True
+    assert record.checkout["ancestor_of_origin_main"] is True
+    assert len(str(record.checkout["repo_commit"])) == 40
+    assert record.checkout["repo_path"]
+    assert len(str(record.checkout["bench_sha256"])) == 64
+    assert record.checkout["allow_shared_checkout"] is False
 
 
 def test_preflight_refuses_when_mem_available_is_below_the_start_floor(
@@ -537,6 +667,7 @@ def test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_art
         driver.run_step(
             step,
             guard=_guard(),
+            checkout=_clean_checkout(),
             reader=driver.HostReader(),
             run_id="abortrun",
             days=90,
@@ -575,6 +706,7 @@ def test_the_watchdog_aborts_on_low_swap_alone(tmp_path: Path) -> None:
         driver.run_step(
             _sleep_step(tmp_path, seconds=120),
             guard=_guard(),
+            checkout=_clean_checkout(),
             reader=driver.HostReader(),
             run_id="swaprun",
             days=30,
@@ -619,6 +751,7 @@ def test_the_watchdog_aborts_when_a_competing_build_appears_mid_run(
         driver.run_step(
             _sleep_step(tmp_path, seconds=120),
             guard=_guard(),
+            checkout=_clean_checkout(),
             reader=driver.HostReader(),
             run_id="cotenant",
             days=30,
@@ -667,6 +800,7 @@ def test_a_child_that_ignores_sigterm_is_escalated_to_sigkill(tmp_path: Path) ->
         driver.run_step(
             step,
             guard=_guard(term_grace_s=0.3),
+            checkout=_clean_checkout(),
             reader=driver.HostReader(),
             run_id="stubborn",
             days=30,
@@ -695,6 +829,7 @@ def test_the_watchdog_can_be_turned_off_but_the_run_says_so(tmp_path: Path) -> N
             stderr_path=tmp_path / "n.err",
         ),
         guard=guard,
+        checkout=_clean_checkout(),
         reader=driver.HostReader(),
         run_id="nowatch",
         days=1,
@@ -737,6 +872,7 @@ def test_a_step_records_wall_clock_max_rss_and_the_children_io_counters(
     result = driver.run_step(
         step,
         guard=_guard(),
+        checkout=_clean_checkout(),
         reader=driver.HostReader(),
         run_id="resource",
         days=1,
@@ -778,6 +914,7 @@ def test_a_failing_child_is_reported_with_its_exit_status(tmp_path: Path) -> Non
             stderr_path=tmp_path / "f.err",
         ),
         guard=_guard(),
+        checkout=_clean_checkout(),
         reader=driver.HostReader(),
         run_id="failing",
         days=1,
@@ -876,6 +1013,7 @@ def test_the_whole_driver_runs_build_before_and_after_end_to_end(
             "0.05",
             "--poll-interval-s",
             "0.01",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -947,6 +1085,7 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
                 "--poll-interval-s",
                 "0.01",
                 "--keep-synthetic",
+                "--allow-shared-checkout",
                 "--bench",
                 str(_BENCH_PATH),
             ],
@@ -984,6 +1123,7 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
                 "0.05",
                 "--poll-interval-s",
                 "0.01",
+                "--allow-shared-checkout",
                 "--bench",
                 str(_BENCH_PATH),
             ],
@@ -1023,6 +1163,7 @@ def test_the_cli_reports_a_refusal_as_exit_one_and_starts_nothing(
             "0",
             "--abort-swap-free-gb",
             "0",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -1127,6 +1268,7 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
             "0.05",
             "--poll-interval-s",
             "0.01",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -1218,6 +1360,7 @@ def _cli(
             "0.05",
             "--poll-interval-s",
             "0.01",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
             *extra,
@@ -1294,6 +1437,7 @@ def test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact(
         driver.run_step(
             _sleep_step(tmp_path, seconds=120),
             guard=_guard(host_read_retries=1),
+            checkout=_clean_checkout(),
             reader=driver.HostReader(),
             run_id="hostread",
             days=90,
@@ -1331,6 +1475,7 @@ def test_f2_an_unexpected_driver_error_still_writes_an_abort_artifact(
         driver.run_step(
             _sleep_step(tmp_path, seconds=120),
             guard=_guard(),
+            checkout=_clean_checkout(),
             reader=driver.HostReader(),
             run_id="enospc",
             days=365,
@@ -1691,6 +1836,7 @@ def test_f6_wall_clock_is_not_rounded_up_to_the_host_sample_interval(
         step,
         # A deliberately coarse host cadence next to a fine reap cadence.
         guard=_guard(watch_interval_s=5.0, poll_interval_s=0.02),
+        checkout=_clean_checkout(),
         reader=driver.HostReader(),
         run_id="cadence",
         days=1,
@@ -1753,6 +1899,7 @@ def test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort(
     result = driver.run_step(
         step,
         guard=_guard(),
+        checkout=_clean_checkout(),
         reader=driver.HostReader(),
         run_id="race",
         days=1,
@@ -1831,6 +1978,7 @@ def test_f8_a_swapless_host_runs_end_to_end_with_one_flag(tmp_path: Path) -> Non
             "0.05",
             "--poll-interval-s",
             "0.01",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -1926,6 +2074,10 @@ def test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact(
             "0.01",
             "--term-grace-s",
             "1",
+            # The stub bench lives under tmp_path, outside the checkout, and the real
+            # checkout is a branch: both are exactly what the A1-c guard refuses, and
+            # this test is about SIGTERM.
+            "--allow-shared-checkout",
             "--bench",
             str(slow),
         ],
@@ -2014,6 +2166,7 @@ def test_r2_f4_with_the_watchdog_off_a_host_read_failure_is_recorded_not_fatal(
             stderr_path=tmp_path / "n.err",
         ),
         guard=_guard(watchdog_enabled=False),
+        checkout=_clean_checkout(),
         reader=driver.HostReader(),
         run_id="nowatch",
         days=1,
@@ -2179,6 +2332,7 @@ def test_r2_f10_a_measure_only_resume_needs_no_reference_at_all(
             "0.05",
             "--poll-interval-s",
             "0.01",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -2201,6 +2355,7 @@ def test_r2_f10_a_build_without_a_reference_is_refused_with_a_clear_reason(
             str(tmp_path / "out"),
             "--days",
             "1",
+            "--allow-shared-checkout",
             "--bench",
             str(_BENCH_PATH),
         ],
@@ -2234,3 +2389,456 @@ def test_every_check_is_evaluated_on_a_healthy_host(tmp_path: Path) -> None:
 
     assert record.verdict == "ok"
     assert all(c.evaluated for c in record.checks)
+
+
+# ---------------------------------------------------------------------------------------
+# A1-c — the measurement runs from a detached worktree, and the tree may not move under it
+# ---------------------------------------------------------------------------------------
+#
+# Plan §2 A1-c, registered by the §7.1.16 F6 disposition. The 365-day and 180-day
+# measurements both ran from the shared checkout and the tree moved under both of them
+# mid-run. Each test below names the shape that would have let that happen again.
+
+
+def test_a1c_preflight_refuses_a_checkout_attached_to_a_branch(tmp_path: Path) -> None:
+    """The shape both earlier runs had: a branch another lane can move under the run."""
+    repo = _make_checkout(tmp_path, detached=False)
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False
+    assert check.evaluated is True
+    assert "on branch main" in check.measured
+    assert "HEAD is attached to branch 'main'" in check.detail
+    assert "checkout_detached_and_clean" in (record.refusal or "")
+    assert record.checkout["detached"] is False
+
+
+def test_a1c_preflight_refuses_a_dirty_checkout(tmp_path: Path) -> None:
+    """Detached is not enough: an uncommitted edit means the bench that runs is not the
+    bench any commit names."""
+    repo = _make_checkout(tmp_path, dirty=True)
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False
+    assert "DIRTY" in check.measured
+    assert "the tree is dirty" in check.detail
+    assert "scratch.txt" in check.detail
+    assert record.checkout["clean"] is False
+
+
+def test_a1c_preflight_refuses_a_head_that_is_not_an_ancestor_of_origin_main(
+    tmp_path: Path,
+) -> None:
+    """Clean and detached, but at a commit that was never published: a measurement is
+    evidence, and evidence is produced by merged code (#793)."""
+    repo = _make_checkout(tmp_path, ancestor=False)
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False
+    assert "NOT an ancestor of origin/main" in check.measured
+    assert "is not an ancestor of origin/main" in check.detail
+    assert record.checkout["ancestor_of_origin_main"] is False
+    assert record.checkout["origin_main_present"] is True
+
+
+def test_a1c_preflight_refuses_when_origin_main_is_absent_and_says_to_fetch(
+    tmp_path: Path,
+) -> None:
+    """The driver does not fetch — a measurement must not reach the network, and a tool
+    that moved a remote ref would be changing the answer to its own question. So a missing
+    origin/main is a refusal that says what to run, not a pass."""
+    repo = _make_checkout(tmp_path, origin_main=False)
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False
+    assert "git fetch origin" in check.detail
+    assert record.checkout["origin_main_present"] is False
+
+
+def test_a1c_preflight_refuses_a_bench_from_outside_the_checkout(
+    tmp_path: Path,
+) -> None:
+    """run_p_ca.sh's module-provenance check, in Python. --python is deliberately the
+    SHARED checkout's venv, so the interpreter vouches for nothing; if --bench may point
+    anywhere, the three git checks above vouch for code that never runs."""
+    repo = _make_checkout(tmp_path)
+    stranger = tmp_path / "elsewhere" / "tos_evidence_scan_bench.py"
+    stranger.parent.mkdir()
+    stranger.write_text("# a bench from some other tree\n")
+
+    record = _preflight(
+        tmp_path, _reader(tmp_path), checkout=_checkout(repo, bench=stranger)
+    )
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False
+    assert "resolves OUTSIDE the checkout" in check.detail
+    assert record.checkout["bench_in_repo"] is False
+    # Recorded even so: the digest is how a reader finds out WHICH stranger it was.
+    assert len(str(record.checkout["bench_sha256"])) == 64
+
+
+def test_a1c_a_directory_outside_any_git_checkout_is_refused_not_assumed_fine(
+    tmp_path: Path,
+) -> None:
+    """Fail closed. A question git cannot answer has not been answered."""
+    loose = tmp_path / "loose"
+    (loose / "tools").mkdir(parents=True)
+    (loose / "tools" / "tos_evidence_scan_measure.py").write_text("# no repo here\n")
+    (loose / "tools" / "tos_evidence_scan_bench.py").write_text("# nor here\n")
+
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(loose))
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False
+    assert "not inside a git checkout" in check.measured
+
+
+def test_a1c_a_missing_git_binary_is_refused_rather_than_skipped(
+    tmp_path: Path,
+) -> None:
+    """The same fail-closed rule for the tool itself."""
+    repo = _make_checkout(tmp_path)
+    guard = driver.CheckoutGuard(
+        driver_path=repo / "tools" / "tos_evidence_scan_measure.py",
+        bench_path=repo / "tools" / "tos_evidence_scan_bench.py",
+        git=(str(tmp_path / "no-such-git"),),
+    ).with_baseline()
+
+    assert guard.baseline.ok is False
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=guard)
+    assert record.verdict == "refused"
+    assert "checkout_detached_and_clean" in (record.refusal or "")
+
+
+def test_a1c_the_refusal_names_every_reason_not_only_the_first(
+    tmp_path: Path,
+) -> None:
+    """An operator who has to fix one refusal at a time learns about the dirty tree only
+    after fixing the branch — the same rule the rest of this preflight already follows.
+    """
+    repo = _make_checkout(tmp_path, detached=False, dirty=True, ancestor=False)
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert "HEAD is attached" in check.detail
+    assert "the tree is dirty" in check.detail
+    assert "is not an ancestor of origin/main" in check.detail
+
+
+def test_a1c_a_bad_checkout_stops_the_run_before_the_reference_is_scanned(
+    tmp_path: Path,
+) -> None:
+    """Sizing the run means a GROUP BY over the whole reference. Doing that for a run that
+    cannot start is work for nothing — the same reason the disk check is skipped when
+    memory already failed (round-2 F10)."""
+    repo = _make_checkout(tmp_path, detached=False)
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    assert record.estimate is None
+    disk = next(c for c in record.checks if c.check == "disk_free")
+    assert disk.evaluated is False
+    assert "checkout_detached_and_clean" in disk.floor
+
+
+def test_a1c_the_escape_hatch_records_the_warning_and_does_not_refuse(
+    tmp_path: Path,
+) -> None:
+    """--allow-shared-checkout is needed by this suite and by a deliberate operator run.
+    It turns the refusal off; it does not turn the RECORD off, so a run made with the
+    hatch open cannot be mistaken for a clean one afterwards."""
+    repo = _make_checkout(tmp_path, detached=False, dirty=True)
+    (tmp_path / "synth.sqlite3").write_bytes(b"")  # nothing else may refuse this run
+    record = driver.preflight(
+        run_id="hatch",
+        guard=_guard(),
+        checkout=_checkout(repo, enforced=False),
+        reader=_reader(tmp_path),
+        out_dir=tmp_path / "out",
+        days=1,
+        estimator=None,
+        expect_bytes=0,
+        disk_headroom_ratio=1.0,
+        index_growth_ratio=0.0,
+        steps=(),
+        argv=["run"],
+        synthetic=tmp_path / "synth.sqlite3",
+        warnings=[driver.ALLOW_SHARED_CHECKOUT_WARNING],
+    )
+
+    assert record.verdict == "ok"
+    check = next(c for c in record.checks if c.check == "checkout_detached_and_clean")
+    assert check.ok is False, "the facts are still measured honestly"
+    assert check.evaluated is False, "and visibly not gating"
+    assert "SKIPPED by --allow-shared-checkout" in check.floor
+    assert record.checkout["allow_shared_checkout"] is True
+    assert record.checkout["detached"] is False
+    assert record.checkout["clean"] is False
+    assert any("--allow-shared-checkout" in w for w in record.warnings)
+    # And on disk, not only in the returned object.
+    payload = json.loads((tmp_path / "out" / "preflight.json").read_text())
+    assert payload["checkout"]["allow_shared_checkout"] is True
+    assert any("--allow-shared-checkout" in w for w in payload["warnings"])
+
+
+def test_a1c_the_cli_warns_on_stderr_when_the_hatch_is_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _cli(tmp_path)
+    assert "--allow-shared-checkout" in capsys.readouterr().err
+
+
+def test_a1c_the_guard_follows_the_drivers_own_file_not_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production resolves the repo from ``__file__``, so running the driver from
+    somewhere else does not point the guard at a different tree. ``preflight`` starts no
+    child, and the verdict is left alone: on a developer branch it refuses, in CI's
+    detached checkout it may not, and neither says anything about this property."""
+    monkeypatch.chdir(tmp_path)
+    out_dir = tmp_path / "out"
+    driver.main(
+        [
+            "preflight",
+            "--synthetic",
+            str(tmp_path / "synth.sqlite3"),
+            "--out-dir",
+            str(out_dir),
+            "--days",
+            "1",
+            "--steps",
+            "before",
+            "--min-available-gb",
+            "0",
+            "--min-swap-free-gb",
+            "0",
+        ],
+        reader=_reader(tmp_path),
+    )
+
+    payload = json.loads((out_dir / "preflight.json").read_text())
+    assert payload["checkout"]["repo_path"] == str(_REPO_ROOT)
+    assert payload["checkout"]["driver_path"] == str(_MODULE_PATH)
+    assert payload["checkout"]["bench_path"] == str(_BENCH_PATH)
+    assert payload["checkout"]["bench_in_repo"] is True
+
+
+# -- the run-time guard: the property the SHA line could only document -------------------
+
+
+def _trivial_step(tmp_path: Path, name: str = "before"):
+    return driver.Step(
+        name=name,
+        argv=(sys.executable, "-c", "pass"),
+        stdout_path=tmp_path / f"{name}.out",
+        stderr_path=tmp_path / f"{name}.err",
+    )
+
+
+def _run_with(checkout, tmp_path: Path, *, out_dir: Path, name: str = "before"):
+    return driver.run_step(
+        _trivial_step(tmp_path, name),
+        guard=_guard(),
+        checkout=checkout,
+        reader=driver.HostReader(),
+        run_id="driftrun",
+        days=7,
+        out_dir=out_dir,
+        log=lambda _m: None,
+        sampler=_healthy(),
+    )
+
+
+def test_a1c_a_commit_that_moves_between_steps_aborts_before_the_child_starts(
+    tmp_path: Path,
+) -> None:
+    """THE property. The preflight runs once; `before` and `after` do not — at 180 days
+    they started 1 h 39 m apart. A SHA written into the artifact proves afterwards that
+    the tree moved; this stops the second child from running at all."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    # Step one runs against the tree the preflight approved.
+    first = _run_with(checkout, tmp_path, out_dir=out_dir, name="build")
+    assert first.returncode == 0
+
+    # …and then the tree moves, exactly as it did under both earlier measurements.
+    moved_from = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "a parallel lane lands something")
+    moved_to = _git(repo, "rev-parse", "HEAD")
+    assert moved_from != moved_to
+
+    with pytest.raises(driver.MeasureAborted, match="HEAD moved from"):
+        _run_with(checkout, tmp_path, out_dir=out_dir, name="before")
+
+    record = json.loads((out_dir / "ABORTED-before-7d.json").read_text())
+    assert record["check"] == "checkout_drift"
+    assert moved_from in record["reason"] and moved_to in record["reason"]
+    # No child was started, and the record says so instead of printing a 0 that would read
+    # as "the child exited cleanly".
+    assert record["returncode"] is None
+    assert record["partial_resource"] == {}
+    assert record["signal_sent"].startswith("none")
+    assert record["checkout"]["repo_commit"] == moved_to
+    assert record["checkout"]["baseline_commit"] == moved_from
+    assert not (tmp_path / "before.out").exists(), "the child must never have run"
+
+
+def test_a1c_a_tree_that_goes_dirty_between_steps_aborts(tmp_path: Path) -> None:
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    assert _run_with(checkout, tmp_path, out_dir=out_dir, name="build").returncode == 0
+
+    (repo / "tools" / "edited-mid-run.txt").write_text("someone is working in here\n")
+
+    with pytest.raises(driver.MeasureAborted, match="went dirty"):
+        _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
+    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    assert record["check"] == "checkout_drift"
+    assert record["checkout"]["clean"] is False
+
+
+def test_a1c_a_bench_edited_between_steps_aborts_even_with_a_clean_tree(
+    tmp_path: Path,
+) -> None:
+    """Why the digest is checked next to cleanliness rather than behind it: an IGNORED
+    bench can change while `git status --porcelain` stays empty and HEAD stays put. That
+    is the one case where the two git answers are both "nothing moved" and the two passes
+    were still measured with different benches."""
+    repo = _make_checkout(tmp_path, bench_ignored=True)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    before_digest = checkout.baseline.bench_sha256
+    assert _run_with(checkout, tmp_path, out_dir=out_dir, name="build").returncode == 0
+
+    (repo / "tools" / "tos_evidence_scan_bench.py").write_text("# a different bench\n")
+    assert (
+        _git(repo, "status", "--porcelain") == ""
+    ), "git sees nothing — that is the point"
+
+    with pytest.raises(driver.MeasureAborted, match="the bench .* changed"):
+        _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
+    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    assert record["check"] == "checkout_drift"
+    assert record["checkout"]["clean"] is True
+    assert record["checkout"]["baseline_bench_sha256"] == before_digest
+    assert record["checkout"]["bench_sha256"] != before_digest
+
+
+def test_a1c_every_step_artifact_carries_the_commit_and_the_bench_digest(
+    tmp_path: Path,
+) -> None:
+    """Requirement 3: a changed bench stays detectable even when the guard is bypassed,
+    because each step's own artifact says which bench produced it."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    result = _run_with(checkout, tmp_path, out_dir=out_dir, name="before")
+
+    head = _git(repo, "rev-parse", "HEAD")
+    digest = hashlib.sha256(
+        (repo / "tools" / "tos_evidence_scan_bench.py").read_bytes()
+    ).hexdigest()
+    assert result.checkout["repo_commit"] == head
+    assert result.checkout["bench_sha256"] == digest
+
+    payload = json.loads((out_dir / "before-7d.resource.json").read_text())
+    for key in (
+        "repo_commit",
+        "repo_path",
+        "detached",
+        "clean",
+        "ancestor_of_origin_main",
+    ):
+        assert key in payload["checkout"], key
+    assert payload["checkout"]["bench_sha256"] == digest
+
+    # The .time file carries the same two facts as COMMENTS, so §7.1.2's grep for
+    # `File system inputs` keeps working unchanged.
+    timing = (out_dir / "before-7d.time").read_text()
+    assert f"# repo_commit: {head}" in timing
+    assert f"# bench sha256: {digest}" in timing
+    assert "\tFile system inputs: " in timing
+
+
+def test_a1c_with_the_hatch_open_drift_is_recorded_but_does_not_abort(
+    tmp_path: Path,
+) -> None:
+    """The deliberate operator run: nothing is blocked, and the step artifact still shows
+    the tree moved — baseline_commit next to repo_commit, in the file itself."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo, enforced=False)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    baseline = checkout.baseline.repo_commit
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "moved under an allowed run")
+
+    result = _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
+
+    assert result.returncode == 0
+    assert not (out_dir / "ABORTED-after-7d.json").exists()
+    assert result.checkout["baseline_commit"] == baseline
+    assert result.checkout["repo_commit"] != baseline
+    assert result.checkout["allow_shared_checkout"] is True
+
+
+def test_a1c_a_checkout_that_stays_put_is_not_an_abort(tmp_path: Path) -> None:
+    """The other direction, because a guard that is too eager is the same bug as no guard:
+    three steps in a row against an unmoving tree all run."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    for name in ("build", "before", "after"):
+        assert _run_with(checkout, tmp_path, out_dir=out_dir, name=name).returncode == 0
+    assert not list(out_dir.glob("ABORTED-*"))
+
+
+def test_a1c_a_state_that_errored_is_never_ok_however_good_the_rest_looks() -> None:
+    """The fail-closed clause, given the concrete input it refuses.
+
+    It needs its own test. Through :func:`read_checkout` the clause is MASKED: every
+    error path returns before the four git answers are filled in, so they are all False
+    and ``ok`` would already be False without it — deleting ``not self.error`` leaves the
+    refusal tests above green. A clause nothing can fail is a clause that blocks nothing
+    (`MEMORY.md`, "가드가 자기가 막는다고 말한 것을 허용한다"), so here is the state it
+    exists for: a reader that learns the four answers and THEN fails.
+    """
+    state = driver.CheckoutState(
+        at_kst="2026-10-02T12:00:00.000+09:00",
+        repo_path="/somewhere",
+        repo_commit="0" * 40,
+        branch="HEAD",
+        detached=True,
+        clean=True,
+        ancestor_of_origin_main=True,
+        origin_main_present=True,
+        origin_main_commit="0" * 40,
+        dirty_sample="",
+        driver_path="/somewhere/tools/tos_evidence_scan_measure.py",
+        bench_path="/somewhere/tools/tos_evidence_scan_bench.py",
+        bench_sha256="f" * 64,
+        bench_in_repo=True,
+        error="git exited 128 halfway through",
+    )
+
+    assert state.ok is False
+    assert state.failures() == ("git exited 128 halfway through",)
+    assert "unreadable" in state.summary()

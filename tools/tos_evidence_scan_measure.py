@@ -57,6 +57,37 @@ reaching in. It does load its sibling bench module by path, which is not a firew
 (``tools`` importing ``tools``) and is what keeps the disk estimate below tied to the bench's
 own ``profile_kinds`` and drift guard instead of a second copy of the ``entries`` DDL.
 
+**It runs from a detached worktree, and refuses otherwise** (plan §2 A1-c, registered by
+the §7.1.16 F6 disposition). The 365-day and the 180-day measurements were both launched
+from the shared checkout and the tree moved under both of them mid-run (``32539e07`` →
+``f23bb4c3``; ``a0578bf9`` → ``1024bcce`` → ``d7ce609b``). Both turned out harmless, but
+that was established by a byte diff AFTERWARDS — it was never prevented. Writing ``git
+rev-parse HEAD`` into the artifact does not prevent it either: ``before`` and ``after``
+start hours apart (1 h 39 m at 180 days), so a bench edited in between measures the two
+passes with two different benches, and the SHA line proves the contamination rather than
+stopping it. So:
+
+* the ``checkout_detached_and_clean`` preflight refuses a checkout that is attached to a
+  branch, dirty, or not an ancestor of ``origin/main`` — and refuses a ``--bench`` that
+  resolves outside that same checkout;
+* the same facts are re-read **before every child is spawned**, and a run whose ``HEAD``
+  moved, whose tree went dirty, or whose bench changed between two steps aborts with an
+  artifact naming the drift. This is the part that matters: the preflight runs once, the
+  children do not;
+* ``repo_commit`` / ``repo_path`` / ``detached`` / ``clean`` / ``ancestor_of_origin_main``
+  and the bench file's own sha256 are recorded in ``preflight.json``, in every step
+  artifact and in an ``ABORTED-…`` artifact, so a measurement describes the tree it came
+  from without anyone having to reconstruct it from a reflog afterwards.
+
+The driver does NOT fetch: ``origin/main`` is read as it stands in that checkout, and a
+missing one is a refusal that says so. The escape hatch is ``--allow-shared-checkout``,
+logged as a warning and recorded in every artifact. The precedent is
+``tools/broker_probes/runners/run_p_ca.sh`` (#793) and ``MEMORY.md`` "프로브는 분리
+워크트리(origin/main)에서만" — this is the same discipline in Python, including that
+runner's module-provenance check (there, the probe module must resolve inside the checkout;
+here, the bench must, because ``--python`` is deliberately the SHARED checkout's venv and
+therefore vouches for nothing).
+
 Every threshold is an argument. The two that gate the START of a run come from the operator's
 global rule; the rest are named below with their actual source, including the ones this
 driver chose itself.
@@ -65,6 +96,7 @@ driver chose itself.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -76,7 +108,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -84,6 +116,8 @@ from zoneinfo import ZoneInfo
 
 __all__ = [
     "AbortRecord",
+    "CheckoutGuard",
+    "CheckoutState",
     "GuardConfig",
     "HostReader",
     "HostSample",
@@ -94,6 +128,7 @@ __all__ = [
     "PreflightCheck",
     "PreflightRecord",
     "SizeEstimate",
+    "read_checkout",
     "Step",
     "SyntheticDisposition",
     "StepResult",
@@ -693,6 +728,316 @@ class HostReader:
 
 
 # --------------------------------------------------------------------------------------
+# Checkout provenance — the tree the driver and the bench are read from (plan §2 A1-c)
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CheckoutState:
+    """What git says about the tree this driver and its bench were loaded from.
+
+    One read, four questions, and every answer is recorded whether it passed or not:
+    *is it a worktree at all*, *is ``HEAD`` detached*, *is the tree clean*, *is ``HEAD`` an
+    ancestor of ``origin/main``* — plus the module-provenance question
+    ``run_p_ca.sh`` asks of its probe module and this driver asks of its bench: *does the
+    file the children will execute live inside that same checkout*.
+
+    ``origin/main`` is read AS IT STANDS. The driver never fetches: a measurement must not
+    reach the network, and a tool that silently updated a remote ref would change the
+    answer to its own question. A missing ``origin/main`` is therefore a refusal whose
+    message says to fetch, not a pass.
+    """
+
+    at_kst: str
+    repo_path: str
+    repo_commit: str
+    branch: str
+    detached: bool
+    clean: bool
+    ancestor_of_origin_main: bool
+    origin_main_present: bool
+    origin_main_commit: str
+    dirty_sample: str
+    driver_path: str
+    bench_path: str
+    bench_sha256: str
+    bench_in_repo: bool
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return (
+            not self.error
+            and self.detached
+            and self.clean
+            and self.ancestor_of_origin_main
+            and self.bench_in_repo
+        )
+
+    def failures(self) -> tuple[str, ...]:
+        """Every reason this state is not acceptable, each naming what was measured.
+
+        All of them, not the first: an operator who has to fix one refusal at a time
+        learns about the dirty tree only after fixing the branch.
+        """
+        if self.error:
+            return (self.error,)
+        reasons: list[str] = []
+        if not self.detached:
+            reasons.append(
+                f"HEAD is attached to branch {self.branch!r} — a parallel lane can move it "
+                "under a running measurement (plan §2 A1-c: it did, twice)"
+            )
+        if not self.clean:
+            reasons.append(
+                f"the tree is dirty (first line: {self.dirty_sample}) — the bench that runs "
+                "would not be the bench any commit names"
+            )
+        if not self.origin_main_present:
+            reasons.append(
+                "origin/main is not present in this checkout — run 'git fetch origin' "
+                "first; this driver does not fetch"
+            )
+        elif not self.ancestor_of_origin_main:
+            reasons.append(
+                f"HEAD ({self.repo_commit[:12]}) is not an ancestor of origin/main "
+                f"({self.origin_main_commit[:12]}) — a measurement is evidence, and "
+                "evidence is produced by merged code"
+            )
+        if not self.bench_in_repo:
+            reasons.append(
+                f"--bench {self.bench_path} resolves OUTSIDE the checkout {self.repo_path} "
+                "— the checks above would then vouch for code that never ran"
+            )
+        return tuple(reasons)
+
+    def summary(self) -> str:
+        if self.error:
+            return f"unreadable: {self.error}"
+        return (
+            f"{self.repo_path} at {self.repo_commit[:12]} "
+            f"({'detached' if self.detached else f'on branch {self.branch}'}, "
+            f"{'clean' if self.clean else 'DIRTY'}, "
+            f"{'ancestor of' if self.ancestor_of_origin_main else 'NOT an ancestor of'} "
+            f"origin/main)"
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def _sha256_of(path: Path) -> str:
+    """The file's digest, or ``""`` when it cannot be read.
+
+    Empty rather than an exception: this is a RECORD, and a bench that cannot be hashed is
+    already caught as a failing check by whoever needed it to exist.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def read_checkout(
+    *,
+    driver_path: Path,
+    bench_path: Path,
+    git: Sequence[str] = ("git",),
+) -> CheckoutState:
+    """Ask git about the tree ``driver_path`` sits in, and hash ``bench_path``.
+
+    Fails closed in one direction only: every git failure lands in
+    :attr:`CheckoutState.error`, which makes :attr:`CheckoutState.ok` false. There is no
+    path on which an unanswerable question counts as answered — and a half-read state is
+    still RETURNED (with everything it did learn) rather than raised, so the preflight
+    writes its artifact instead of dying before it.
+    """
+    at_kst = _now_kst()
+    bench_digest = _sha256_of(bench_path)
+    repo_path = ""
+    repo_commit = ""
+    branch = ""
+    detached = False
+    clean = False
+    ancestor = False
+    origin_present = False
+    origin_commit = ""
+    dirty_sample = ""
+    bench_in_repo = False
+
+    def state(error: str = "") -> CheckoutState:
+        return CheckoutState(
+            at_kst=at_kst,
+            repo_path=repo_path,
+            repo_commit=repo_commit,
+            branch=branch,
+            detached=detached,
+            clean=clean,
+            ancestor_of_origin_main=ancestor,
+            origin_main_present=origin_present,
+            origin_main_commit=origin_commit,
+            dirty_sample=dirty_sample,
+            driver_path=str(driver_path),
+            bench_path=str(bench_path),
+            bench_sha256=bench_digest,
+            bench_in_repo=bench_in_repo,
+            error=error,
+        )
+
+    start = driver_path.parent if driver_path.is_file() else driver_path
+
+    def run(*args: str, cwd: str = "") -> subprocess.CompletedProcess[str]:
+        # argv is constructed, never a shell string.
+        return subprocess.run(
+            [*git, "-C", cwd or str(start), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    try:
+        toplevel = run("rev-parse", "--show-toplevel")
+    except OSError as exc:
+        return state(f"cannot run {git[0]}: {exc}")
+    if toplevel.returncode != 0:
+        return state(
+            f"{start} is not inside a git checkout: "
+            f"{toplevel.stderr.strip() or '(no stderr)'}"
+        )
+    repo_path = toplevel.stdout.strip()
+
+    head = run("rev-parse", "HEAD", cwd=repo_path)
+    if head.returncode != 0:
+        return state(
+            f"cannot read HEAD in {repo_path}: {head.stderr.strip() or '(no stderr)'}"
+        )
+    repo_commit = head.stdout.strip()
+
+    status = run("status", "--porcelain", cwd=repo_path)
+    if status.returncode != 0:
+        return state(
+            f"cannot read the working tree state in {repo_path}: "
+            f"{status.stderr.strip() or '(no stderr)'}"
+        )
+    dirty_lines = [line for line in status.stdout.splitlines() if line.strip()]
+    clean = not dirty_lines
+    dirty_sample = dirty_lines[0].strip() if dirty_lines else ""
+
+    named = run("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_path)
+    if named.returncode != 0:
+        return state(
+            f"cannot read the branch name in {repo_path}: "
+            f"{named.stderr.strip() or '(no stderr)'}"
+        )
+    # `git rev-parse --abbrev-ref HEAD` prints the literal "HEAD" exactly when HEAD is
+    # detached — the same test run_p_ca.sh makes.
+    branch = named.stdout.strip()
+    detached = branch == "HEAD"
+
+    origin = run("rev-parse", "--verify", "--quiet", "origin/main", cwd=repo_path)
+    origin_present = origin.returncode == 0
+    origin_commit = origin.stdout.strip()
+    if origin_present:
+        # Exit 0 means ancestor, 1 means not. Anything else is git failing, and a failed
+        # check has not passed.
+        ancestor = (
+            run(
+                "merge-base", "--is-ancestor", "HEAD", "origin/main", cwd=repo_path
+            ).returncode
+            == 0
+        )
+
+    try:
+        bench_in_repo = bench_path.resolve().is_relative_to(Path(repo_path).resolve())
+    except OSError:
+        bench_in_repo = False
+    return state()
+
+
+@dataclass(frozen=True)
+class CheckoutGuard:
+    """The preflight check and the per-child re-check, over one :class:`CheckoutState`.
+
+    ``baseline`` is the state the preflight recorded. :meth:`drift` compares a fresh read
+    against it before each child is spawned, because that is the window the SHA line could
+    only document: at 180 days ``before`` and ``after`` started 1 h 39 m apart.
+
+    ``enforced`` is ``False`` under ``--allow-shared-checkout``. Then nothing refuses and
+    nothing aborts — but every fact is still read and still recorded, so a run made with
+    the hatch open says so in each of its artifacts rather than looking like a clean one.
+    """
+
+    driver_path: Path
+    bench_path: Path
+    enforced: bool = True
+    git: tuple[str, ...] = ("git",)
+    baseline: CheckoutState | None = None
+
+    def read(self) -> CheckoutState:
+        return read_checkout(
+            driver_path=self.driver_path, bench_path=self.bench_path, git=self.git
+        )
+
+    def with_baseline(self, state: CheckoutState | None = None) -> CheckoutGuard:
+        """This guard with its baseline pinned — read now unless one is handed in."""
+        return replace(self, baseline=state if state is not None else self.read())
+
+    def drift(self, current: CheckoutState) -> str | None:
+        """Why ``current`` is not the tree the baseline described, or ``None``.
+
+        Three things can move between two children: the commit, the cleanliness of the
+        tree, and the bench file's own bytes. The third is redundant while the first two
+        hold (a changed tracked file makes the tree dirty) and is checked anyway, because
+        it is the one that directly invalidates a measurement and it costs one hash.
+        """
+        if not self.enforced or self.baseline is None:
+            return None
+        if current.error:
+            return f"the checkout could not be re-read: {current.error}"
+        if current.repo_commit != self.baseline.repo_commit:
+            return (
+                f"HEAD moved from {self.baseline.repo_commit} to {current.repo_commit} "
+                f"in {current.repo_path} while this measurement was running"
+            )
+        if not current.clean:
+            return (
+                f"the checkout {current.repo_path} went dirty while this measurement was "
+                f"running (first line: {current.dirty_sample})"
+            )
+        if current.bench_sha256 != self.baseline.bench_sha256:
+            return (
+                f"the bench {current.bench_path} changed while this measurement was "
+                f"running: sha256 {self.baseline.bench_sha256[:12]} -> "
+                f"{current.bench_sha256[:12]}"
+            )
+        return None
+
+    def record(self, current: CheckoutState) -> dict[str, object]:
+        """The provenance block stamped into ``preflight.json``, every step artifact and
+        every ``ABORTED-…`` artifact."""
+        data = current.as_dict()
+        data["enforced"] = self.enforced
+        data["allow_shared_checkout"] = not self.enforced
+        data["baseline_commit"] = (
+            self.baseline.repo_commit if self.baseline is not None else ""
+        )
+        data["baseline_bench_sha256"] = (
+            self.baseline.bench_sha256 if self.baseline is not None else ""
+        )
+        return data
+
+
+#: What ``--allow-shared-checkout`` is recorded as. Named so the warning text and the test
+#: that asserts it cannot drift apart.
+ALLOW_SHARED_CHECKOUT_WARNING = (
+    "--allow-shared-checkout: the detached / clean / ancestor-of-origin-main guard is OFF "
+    "for this run, and so is the per-child re-check. Plan §2 A1-c exists because the 365- "
+    "and 180-day measurements both ran from a shared checkout and the tree moved under "
+    "both of them."
+)
+
+
+# --------------------------------------------------------------------------------------
 # Guards
 # --------------------------------------------------------------------------------------
 
@@ -1096,6 +1441,12 @@ class StepResult:
     proc_io: dict[str, int]
     proc_io_sample_age_seconds: float | None
     samples_taken: int
+    #: The tree this child was spawned from, re-read immediately BEFORE the spawn:
+    #: ``repo_commit`` / ``repo_path`` / ``detached`` / ``clean`` /
+    #: ``ancestor_of_origin_main`` plus the bench's own sha256 (plan §2 A1-c). Per step
+    #: rather than per run, because ``before`` and ``after`` start hours apart — this is
+    #: what lets a pair of measurements say by themselves whether one bench produced both.
+    checkout: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         data = asdict(self)
@@ -1117,11 +1468,17 @@ class AbortRecord:
     elapsed_seconds: float
     signal_sent: str
     escalated_to_sigkill: bool
-    returncode: int
+    #: ``None`` when no child was ever started — a ``checkout_drift`` abort fires BEFORE
+    #: the spawn. A 0 there would read as "the child exited cleanly", which is the kind of
+    #: number that means "not measured" and that this plan has already had to withdraw once.
+    returncode: int | None
     #: How far the stopped child actually got — the numbers plan §7.1.2 could not cite for
-    #: the aborted 365-day pass because nothing recorded them.
+    #: the aborted 365-day pass because nothing recorded them. Empty for a pre-spawn abort.
     partial_resource: dict[str, object]
     last_samples: tuple[dict[str, object], ...]
+    #: The same provenance block :class:`StepResult` carries, so an abort says which tree
+    #: it was looking at when it stopped.
+    checkout: dict[str, object] = field(default_factory=dict)
 
 
 def _spawn(argv: Sequence[str], stdout_path: Path, stderr_path: Path) -> int:
@@ -1188,6 +1545,7 @@ def run_step(
     step: Step,
     *,
     guard: GuardConfig,
+    checkout: CheckoutGuard,
     reader: HostReader,
     run_id: str,
     days: int,
@@ -1214,16 +1572,27 @@ def run_step(
     is nothing to kill; killing a zombie and writing an ``ABORTED`` artifact next to a
     complete ``<step>-Nd.json`` would make the next resume unrunnable (review F7).
 
+    **The checkout is re-read before the spawn, every time** (plan §2 A1-c). The preflight
+    runs once and the children do not: at 180 days ``before`` and ``after`` started 1 h
+    39 m apart, and anything that moved the tree in between would have been recorded by a
+    SHA line and stopped by nothing. A commit that moved, a tree that went dirty or a bench
+    whose bytes changed aborts the step HERE, with no child started — so the
+    ``ABORTED-<step>-<days>d.json`` for that case carries no resource numbers and
+    ``returncode: null``, which is the honest shape for "nothing ran".
+
     Args:
+        checkout: The provenance guard. Its baseline is what the preflight recorded; its
+            fresh read is stamped into this step's artifacts whether or not it is enforced.
         sampler: Overrides how a sample is taken, for tests that need a specific series.
             Production passes ``None`` and the injected :class:`HostReader` is used.
 
     Raises:
-        MeasureAborted: a floor was crossed, a competing build appeared, the host could not
-            be read for ``--host-read-retries`` + 1 consecutive samples, or the driver hit
-            an unexpected error. In every one of those cases the child is terminated and
-            ``ABORTED-<step>-<days>d.json`` is written BEFORE this is raised — an abort is
-            never silent, whatever caused it (review F2).
+        MeasureAborted: the tree moved under the run, a floor was crossed, a competing
+            build appeared, the host could not be read for ``--host-read-retries`` + 1
+            consecutive samples, or the driver hit an unexpected error. In every one of
+            those cases ``ABORTED-<step>-<days>d.json`` is written BEFORE this is raised,
+            and any child that had been started is terminated first — an abort is never
+            silent, whatever caused it (review F2).
     """
     take = sampler or (lambda pid: reader.sample(child_pid=pid))
     watchdog_path = out_dir / "watchdog.jsonl"
@@ -1234,6 +1603,44 @@ def run_step(
 
     log(f"########## days={days} {step.name}")
     log(f"argv: {' '.join(step.argv)}")
+
+    current_checkout = checkout.read()
+    checkout_record = checkout.record(current_checkout)
+    drifted = checkout.drift(current_checkout)
+    if drifted is not None:
+        log(f"ABORT ({step.name}): {drifted}")
+        aborted_path = out_dir / f"ABORTED-{step.name}-{days}d.json"
+        aborted_path.write_text(
+            json.dumps(
+                asdict(
+                    AbortRecord(
+                        run_id=run_id,
+                        step=step.name,
+                        days=days,
+                        check="checkout_drift",
+                        reason=drifted,
+                        at_kst=_now_kst(),
+                        elapsed_seconds=0.0,
+                        signal_sent="none — the child was never started",
+                        escalated_to_sigkill=False,
+                        returncode=None,
+                        partial_resource={},
+                        last_samples=(),
+                        checkout=checkout_record,
+                    )
+                ),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        log(f"wrote {aborted_path}")
+        raise MeasureAborted(drifted)
+    log(
+        f"checkout ok: {current_checkout.repo_path} at "
+        f"{current_checkout.repo_commit[:12]} · bench sha256 "
+        f"{current_checkout.bench_sha256[:12]}"
+    )
+
     started_wall = time.monotonic()
     started_at = _now_kst()
     pid = _spawn(step.argv, step.stdout_path, step.stderr_path)
@@ -1296,6 +1703,7 @@ def run_step(
                 ),
             },
             last_samples=tuple(samples[-_ABORT_SAMPLE_TAIL:]),
+            checkout=checkout_record,
         )
         path = out_dir / f"ABORTED-{step.name}-{days}d.json"
         path.write_text(json.dumps(asdict(record_out), indent=2), encoding="utf-8")
@@ -1437,6 +1845,7 @@ def run_step(
             round(time.monotonic() - last_io_at, 3) if last_io_at is not None else None
         ),
         samples_taken=len(samples),
+        checkout=checkout_record,
     )
     _write_resource_artifacts(result, out_dir=out_dir, days=days)
     log(
@@ -1475,6 +1884,13 @@ def _write_resource_artifacts(result: StepResult, *, out_dir: Path, days: int) -
     lines = [
         "# produced by tools/tos_evidence_scan_measure.py from os.wait4() rusage of this",
         "# child — GNU `time -v` field names, fields wait4 does not supply are omitted.",
+        # COMMENT lines, so the grep plan §7.1.2 runs for `File system inputs` is
+        # untouched. The same two facts are machine-readable next door in
+        # `<step>-Nd.resource.json`; they are here because a reader who opens the `.time`
+        # file should not have to ask a second file which tree produced it.
+        f"# repo_commit: {result.checkout.get('repo_commit', '')} "
+        f"({result.checkout.get('repo_path', '')})",
+        f"# bench sha256: {result.checkout.get('bench_sha256', '')}",
         f'\tCommand being timed: "{" ".join(result.argv)}"',
         f"\tUser time (seconds): {result.user_seconds:.2f}",
         f"\tSystem time (seconds): {result.system_seconds:.2f}",
@@ -1543,6 +1959,10 @@ class PreflightRecord:
     watchdog_enabled: bool
     warnings: tuple[str, ...]
     steps_planned: tuple[str, ...]
+    #: The tree this run was planned from (plan §2 A1-c): ``repo_commit`` / ``repo_path`` /
+    #: ``detached`` / ``clean`` / ``ancestor_of_origin_main``, the bench's sha256, and
+    #: whether the guard was enforced. Recorded on a refusal too.
+    checkout: dict[str, object] = field(default_factory=dict)
     refusal: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -1684,6 +2104,7 @@ def preflight(
     *,
     run_id: str,
     guard: GuardConfig,
+    checkout: CheckoutGuard,
     reader: HostReader,
     out_dir: Path,
     days: int,
@@ -1706,6 +2127,39 @@ def preflight(
     checks: list[PreflightCheck] = []
     build_planned = any(step.name == "build" for step in steps)
     synthetic_present = synthetic.exists()
+
+    # FIRST, because it is the cheapest and the most fundamental: if the tree is wrong,
+    # nothing measured from it is worth the hours it would take, and the expensive
+    # reference scan below is skipped for the same reason a failing memory check skips it.
+    checkout_state = (
+        checkout.baseline if checkout.baseline is not None else checkout.read()
+    )
+    checkout_record = checkout.record(checkout_state)
+    checks.append(
+        PreflightCheck(
+            check="checkout_detached_and_clean",
+            ok=checkout_state.ok,
+            evaluated=checkout.enforced,
+            measured=checkout_state.summary(),
+            floor=(
+                "a clean, detached worktree whose HEAD is an ancestor of origin/main, "
+                "holding the --bench that will run"
+                if checkout.enforced
+                else "SKIPPED by --allow-shared-checkout"
+            ),
+            source=(
+                "plan §2 A1-c (§7.1.16 F6): the 365- and 180-day runs both moved under "
+                "themselves. Same discipline as tools/broker_probes/runners/run_p_ca.sh "
+                "(#793). This driver never fetches — origin/main is read as it stands"
+            ),
+            detail=(
+                "; ".join(checkout_state.failures())
+                if checkout_state.failures()
+                else f"bench {checkout_state.bench_path} sha256 "
+                f"{checkout_state.bench_sha256[:12]}"
+            ),
+        )
+    )
 
     # Reader failures become FAILED CHECKS, not exceptions. Raising here skipped
     # preflight.json entirely, so a host with no SwapFree line or a broken pgrep produced
@@ -1983,6 +2437,7 @@ def preflight(
         watchdog_enabled=guard.watchdog_enabled,
         warnings=tuple(warnings),
         steps_planned=tuple(s.name for s in steps),
+        checkout=checkout_record,
         refusal=refusal,
     )
     payload = record.as_dict()
@@ -2066,6 +2521,15 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
             "Run WITHOUT the in-run guard. Preflight still runs. Recorded as a warning in "
             "preflight.json and printed on stderr — the 2026-09-30 00:24 incident is what "
             "this flag turns off."
+        ),
+    )
+    parser.add_argument(
+        "--allow-shared-checkout",
+        action="store_true",
+        help=(
+            "Run from a checkout that is NOT a clean detached worktree at an "
+            "origin/main ancestor, and skip the per-child re-check. Everything is still "
+            "measured and recorded. Plan §2 A1-c is what this flag turns off."
         ),
     )
     parser.add_argument(
@@ -2224,7 +2688,16 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             host_read_retries=args.host_read_retries,
             watchdog_enabled=not args.no_watchdog,
         )
+        checkout = CheckoutGuard(
+            driver_path=Path(__file__).resolve(),
+            bench_path=args.bench.resolve(),
+            enforced=not args.allow_shared_checkout,
+        ).with_baseline()
+
         warnings: list[str] = list(guard.derivations)
+        if args.allow_shared_checkout:
+            warnings.append(ALLOW_SHARED_CHECKOUT_WARNING)
+            print(f"WARNING: {warnings[-1]}", file=sys.stderr)
         if not guard.watchdog_enabled:
             warnings.append(
                 "--no-watchdog: the in-run memory/swap/co-tenant guard is OFF for this run. "
@@ -2270,6 +2743,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         record = preflight(
             run_id=run_id,
             guard=guard,
+            checkout=checkout,
             reader=reader,
             out_dir=out_dir,
             days=args.days,
@@ -2297,6 +2771,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 result = run_step(
                     step,
                     guard=guard,
+                    checkout=checkout,
                     reader=reader,
                     run_id=run_id,
                     days=args.days,
