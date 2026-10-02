@@ -16,6 +16,7 @@ processes started are ``sleep``/``python -c`` children of the test itself.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -26,6 +27,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -209,21 +211,27 @@ def _checkout(repo: Path, *, enforced: bool = True, bench: Path | None = None):
     ).with_baseline()
 
 
-#: One clean detached checkout for the whole session, so the ~45 tests that merely need a
-#: passing guard do not each pay for a `git init`. Tests that MOVE the tree build their own
-#: under their own ``tmp_path``.
-_SHARED: dict[str, Path] = {}
+#: One clean detached checkout for the whole session, AND one guard over it with its
+#: baseline already read. Both are built once: the ~50 tests that merely need a passing
+#: guard should not each pay for a `git init`, nor for the five `git` subprocesses
+#: `with_baseline()` costs — the shared repo never changes under them (review F10). A
+#: test that MOVES the tree builds its own repo and its own guard under its ``tmp_path``.
+_SHARED: dict[str, Any] = {}
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _shared_clean_checkout(tmp_path_factory):
-    _SHARED["repo"] = _make_checkout(tmp_path_factory.mktemp("clean-checkout"))
+    repo = _make_checkout(tmp_path_factory.mktemp("clean-checkout"))
+    _SHARED["repo"] = repo
+    _SHARED["guard"] = _checkout(repo)
     yield
     _SHARED.clear()
 
 
-def _clean_checkout(**kwargs):
-    return _checkout(_SHARED["repo"], **kwargs)
+def _clean_checkout(*, enforced: bool = True):
+    """The session guard, or a non-enforcing view of it. No git runs here."""
+    guard = _SHARED["guard"]
+    return guard if enforced else dataclasses.replace(guard, enforced=False)
 
 
 def _write_reference(path: Path, *, hot_rows: int = 20) -> None:
@@ -373,6 +381,8 @@ def test_preflight_passes_on_a_healthy_host_and_records_the_context(
     assert record.refusal is None
     assert {c.check for c in record.checks} == {
         "checkout_detached_and_clean",
+        "matches_earlier_steps",
+        "outputs_outside_the_checkout",
         "mem_available",
         "swap_free",
         "competing_build",
@@ -2845,3 +2855,534 @@ def test_a1c_a_state_that_errored_is_never_ok_however_good_the_rest_looks() -> N
     assert state.ok is False
     assert state.failures() == ("git exited 128 halfway through",)
     assert "unreadable" in state.summary()
+
+
+# ---------------------------------------------------------------------------------------
+# Review #838 findings — each with the scenario the reviewer named
+# ---------------------------------------------------------------------------------------
+
+
+def _resource_artifact(
+    out_dir: Path, step: str, days: int, *, commit: str, digest: str
+) -> Path:
+    """A finished step's artifact as the driver writes it, with chosen provenance."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{step}-{days}d.resource.json"
+    path.write_text(
+        json.dumps(
+            {"name": step, "checkout": {"repo_commit": commit, "bench_sha256": digest}}
+        )
+    )
+    return path
+
+
+def test_f1_a_resume_at_a_different_commit_is_refused(tmp_path: Path) -> None:
+    """F1, the hole the in-process baseline could not see. `before` today and `after`
+    next week are two PROCESSES: each is internally consistent, and together they are a
+    pair measured with two different trees. Nothing read what the first one wrote down.
+    """
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    _resource_artifact(
+        out_dir, "before", 1, commit="0" * 40, digest="1" * 64
+    )  # measured at X / S1
+
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=checkout, steps=["after"])
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "matches_earlier_steps")
+    assert check.ok is False
+    assert "before was measured at 000000000000" in check.detail
+    assert "would not come from one tree" in check.detail
+    assert "matches_earlier_steps" in (record.refusal or "")
+
+
+def test_f1_a_resume_from_the_same_tree_is_allowed(tmp_path: Path) -> None:
+    """The other direction: the documented resume must still work when nothing moved."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    (tmp_path / "synth").mkdir()
+    (tmp_path / "synth" / "synth-1d.sqlite3").write_bytes(b"")
+    _resource_artifact(
+        out_dir,
+        "before",
+        1,
+        commit=checkout.baseline.repo_commit,
+        digest=checkout.baseline.bench_sha256,
+    )
+
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=checkout, steps=["after"])
+
+    assert record.verdict == "ok", record.refusal
+    check = next(c for c in record.checks if c.check == "matches_earlier_steps")
+    assert check.ok is True
+    assert "before at" in check.measured
+
+
+def test_f1_a_resume_onto_an_artifact_with_no_provenance_is_refused(
+    tmp_path: Path,
+) -> None:
+    """An artifact written before A1-c carries no `checkout` block. That is not a pass:
+    "which tree measured this" is exactly the question, and the artifact cannot answer.
+    """
+    repo = _make_checkout(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True)
+    (out_dir / "before-1d.resource.json").write_text(json.dumps({"name": "before"}))
+
+    record = _preflight(
+        tmp_path, _reader(tmp_path), checkout=_checkout(repo), steps=["after"]
+    )
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "matches_earlier_steps")
+    assert "records no checkout provenance" in check.detail
+    assert "produced before A1-c" in check.detail
+
+
+def test_f1_a_different_size_in_the_same_out_dir_is_not_compared(
+    tmp_path: Path,
+) -> None:
+    """One output directory holds every size (the existing `a1/` does). A 365-day run
+    months ago is a DIFFERENT measurement and may legitimately be at another commit —
+    comparing it would refuse every real campaign."""
+    repo = _make_checkout(tmp_path)
+    out_dir = tmp_path / "out"
+    _resource_artifact(out_dir, "before", 365, commit="9" * 40, digest="8" * 64)
+    (tmp_path / "synth").mkdir()
+    (tmp_path / "synth" / "synth-1d.sqlite3").write_bytes(b"")
+
+    record = _preflight(
+        tmp_path, _reader(tmp_path), checkout=_checkout(repo), steps=["after"]
+    )
+
+    assert record.verdict == "ok", record.refusal
+
+
+def test_f2_an_untracked_file_hidden_by_the_operators_git_config_is_still_dirty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2. `status.showUntrackedFiles = no` is a common personal setting, and under the
+    plain `--porcelain` this shipped with it made an untracked bench INVISIBLE — the tree
+    read clean and both the preflight and the per-step re-check passed."""
+    repo = _make_checkout(tmp_path)
+    (repo / "tools" / "stray_bench.py").write_text("# nobody committed me\n")
+    config = tmp_path / "gitconfig"
+    config.write_text("[status]\n\tshowUntrackedFiles = no\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    # The premise, measured rather than assumed: plain --porcelain really does hide it.
+    plain = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert plain.stdout.strip() == "", "the config is not actually hiding anything"
+
+    state = driver.read_checkout(
+        driver_path=repo / "tools" / "tos_evidence_scan_measure.py",
+        bench_path=repo / "tools" / "tos_evidence_scan_bench.py",
+    )
+
+    assert state.clean is False
+    assert "stray_bench.py" in state.dirty_sample
+    assert state.ok is False
+
+
+def test_f2_a_clean_tree_is_still_clean_under_the_same_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both directions: a filter that calls everything dirty is the same bug as no
+    filter."""
+    repo = _make_checkout(tmp_path)
+    config = tmp_path / "gitconfig"
+    config.write_text("[status]\n\tshowUntrackedFiles = no\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    state = driver.read_checkout(
+        driver_path=repo / "tools" / "tos_evidence_scan_measure.py",
+        bench_path=repo / "tools" / "tos_evidence_scan_bench.py",
+    )
+
+    assert state.clean is True
+    assert state.ok is True
+
+
+def _fake_git(tmp_path: Path, body: str, name: str = "fake-git.sh") -> Path:
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o755)
+    return path
+
+
+def test_f4_a_git_that_never_answers_is_an_error_not_a_pass(tmp_path: Path) -> None:
+    """F4. A `git status` behind somebody's index.lock used to stall the per-child
+    re-check forever: no watchdog is watching the driver, and no artifact is written."""
+    repo = _make_checkout(tmp_path)
+    slow = _fake_git(tmp_path, "sleep 30\nexit 0\n")
+
+    state = driver.read_checkout(
+        driver_path=repo / "tools" / "tos_evidence_scan_measure.py",
+        bench_path=repo / "tools" / "tos_evidence_scan_bench.py",
+        git=(str(slow),),
+        timeout_s=0.5,
+    )
+
+    assert state.ok is False
+    assert "did not answer within 0.5 s" in state.error
+
+
+def test_f4_a_hung_git_at_the_per_child_recheck_aborts_with_an_artifact(
+    tmp_path: Path,
+) -> None:
+    """And the consequence that matters: it stops the run and says so in a file."""
+    repo = _make_checkout(tmp_path)
+    good = _checkout(repo)
+    slow = _fake_git(tmp_path, "sleep 30\nexit 0\n")
+    # Baseline from the real git, re-check through the hung one — the shape of a lock
+    # taken by someone else after the run started.
+    stalled = dataclasses.replace(good, git=(str(slow),), timeout_s=0.5)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    with pytest.raises(driver.MeasureAborted, match="could not be re-read"):
+        _run_with(stalled, tmp_path, out_dir=out_dir, name="after")
+
+    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    assert record["check"] == "checkout_drift"
+    assert "did not answer within" in record["reason"]
+    assert record["returncode"] is None
+
+
+def test_f3_a_signal_during_the_pre_spawn_recheck_still_leaves_an_artifact(
+    tmp_path: Path,
+) -> None:
+    """F3. The five git calls take real time and run hours into a measurement. A SIGTERM
+    landing in the middle of them escaped with NO artifact — past the handler whose
+    docstring says an abort is never silent, whatever caused it."""
+
+    class SignalledCheckout:
+        """The guard seam with a signal arriving where the five git calls would be.
+
+        Duck-typed rather than a subclass: `run_step` asks a checkout for exactly
+        `read`/`record`/`drift`, and `driver` is loaded by path so its classes are not
+        names a type checker can subclass.
+        """
+
+        def read(self):
+            raise driver.MeasureSignalled("received SIGTERM — terminating the child")
+
+        def record(self, current):
+            return {}
+
+        def drift(self, current):
+            return None
+
+    guard = SignalledCheckout()
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    with pytest.raises(driver.MeasureSignalled):
+        _run_with(guard, tmp_path, out_dir=out_dir, name="after")
+
+    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    assert record["check"] == "driver_signalled"
+    assert "SIGTERM" in record["reason"]
+    assert record["returncode"] is None
+    assert not (tmp_path / "after.out").exists(), "no child should have been started"
+
+
+def test_f5_output_written_into_the_checkout_is_refused_up_front(
+    tmp_path: Path,
+) -> None:
+    """F5. `--synthetic ./synth-365d.sqlite3` inside the worktree used to pass, then
+    `build` spent six minutes and 53 GB, and only then did the `before` re-check abort
+    the run blaming "someone working in the tree"."""
+    repo = _make_checkout(tmp_path)
+    inside = repo / "synth-1d.sqlite3"
+
+    record = driver.preflight(
+        run_id="f5",
+        guard=_guard(),
+        checkout=_checkout(repo),
+        reader=_reader(tmp_path),
+        out_dir=tmp_path / "out",
+        days=1,
+        estimator=None,
+        expect_bytes=0,
+        disk_headroom_ratio=1.0,
+        index_growth_ratio=0.0,
+        steps=(),
+        argv=["run"],
+        synthetic=inside,
+    )
+
+    assert record.verdict == "refused"
+    check = next(c for c in record.checks if c.check == "outputs_outside_the_checkout")
+    assert check.ok is False
+    assert "--synthetic" in check.measured
+    assert "NOT gitignored" in check.measured
+    # And the stderr-bound refusal says it too, not only the stdout detail line (F8).
+    assert "NOT gitignored" in (record.refusal or "")
+
+
+def test_f5_a_gitignored_path_inside_the_checkout_is_allowed(tmp_path: Path) -> None:
+    """Ignored is the one safe way to be inside: it cannot dirty the tree, and
+    `git add -A` will not stage it."""
+    repo = _make_checkout(tmp_path)
+    (repo / ".gitignore").write_text("synth-*.sqlite3\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore the synthetic")
+    _git(repo, "checkout", "-q", "--detach", "HEAD")
+    _git(
+        repo, "update-ref", "refs/remotes/origin/main", _git(repo, "rev-parse", "HEAD")
+    )
+    inside = repo / "synth-1d.sqlite3"
+    inside.write_bytes(b"")
+
+    record = driver.preflight(
+        run_id="f5ok",
+        guard=_guard(),
+        checkout=_checkout(repo),
+        reader=_reader(tmp_path),
+        out_dir=tmp_path / "out",
+        days=1,
+        estimator=None,
+        expect_bytes=0,
+        disk_headroom_ratio=1.0,
+        index_growth_ratio=0.0,
+        steps=(),
+        argv=["run"],
+        synthetic=inside,
+    )
+
+    check = next(c for c in record.checks if c.check == "outputs_outside_the_checkout")
+    assert check.ok is True, check.measured
+    assert record.verdict == "ok", record.refusal
+
+
+def test_f5_the_output_check_is_not_released_by_the_shared_checkout_hatch(
+    tmp_path: Path,
+) -> None:
+    """Unlike the rest of the guard. The hatch is a choice about where the CODE comes
+    from, not a licence to drop a 53 GB file into the repository — the same line
+    run_p_ca.sh draws around its own override."""
+    repo = _make_checkout(tmp_path)
+
+    record = driver.preflight(
+        run_id="f5hatch",
+        guard=_guard(),
+        checkout=_checkout(repo, enforced=False),
+        reader=_reader(tmp_path),
+        out_dir=repo / "measure-out",
+        days=1,
+        estimator=None,
+        expect_bytes=0,
+        disk_headroom_ratio=1.0,
+        index_growth_ratio=0.0,
+        steps=(),
+        argv=["run"],
+        synthetic=tmp_path / "synth.sqlite3",
+    )
+
+    check = next(c for c in record.checks if c.check == "outputs_outside_the_checkout")
+    assert check.evaluated is True
+    assert check.ok is False
+    assert "--out-dir" in check.measured
+    assert record.verdict == "refused"
+
+
+def test_f6_a_branch_created_between_steps_aborts_even_at_the_same_commit(
+    tmp_path: Path,
+) -> None:
+    """F6. `git switch -c scratch` leaves the commit and the tree exactly as they were,
+    so the first revision's three comparisons all passed — and the next child ran from a
+    branch a parallel lane can advance, the very state the preflight refuses."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    assert _run_with(checkout, tmp_path, out_dir=out_dir, name="build").returncode == 0
+
+    _git(repo, "checkout", "-q", "-b", "scratch")
+    assert _git(repo, "rev-parse", "HEAD") == checkout.baseline.repo_commit
+    assert _git(repo, "status", "--porcelain") == ""
+
+    with pytest.raises(driver.MeasureAborted, match="no longer satisfies"):
+        _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
+    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    assert record["checkout"]["detached"] is False
+    assert "HEAD is attached to branch 'scratch'" in record["reason"]
+
+
+def test_f6_origin_main_moving_away_between_steps_aborts(tmp_path: Path) -> None:
+    """The other condition the first revision re-read and never compared."""
+    repo = _make_checkout(tmp_path)
+    checkout = _checkout(repo)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    assert _run_with(checkout, tmp_path, out_dir=out_dir, name="build").returncode == 0
+
+    # A fetch lands while the measurement runs and origin/main diverges from HEAD.
+    _git(repo, "checkout", "-q", "-B", "side", "HEAD")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "published elsewhere")
+    _git(
+        repo, "update-ref", "refs/remotes/origin/main", _git(repo, "rev-parse", "HEAD")
+    )
+    _git(repo, "checkout", "-q", "--detach", checkout.baseline.repo_commit)
+    _git(repo, "branch", "-q", "-D", "side")
+    assert _git(repo, "rev-parse", "HEAD") == checkout.baseline.repo_commit
+
+    # HEAD is still an ancestor here, so this must NOT abort — the ancestor relation is
+    # what the check cares about, not equality with origin/main.
+    assert _run_with(checkout, tmp_path, out_dir=out_dir, name="before").returncode == 0
+
+    # Now rewind origin/main behind HEAD: the ancestor relation really is broken.
+    _git(repo, "update-ref", "refs/remotes/origin/main", "0" * 40)
+    with pytest.raises(driver.MeasureAborted, match="no longer satisfies"):
+        _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
+
+
+def test_f7_a_merge_base_that_fails_is_an_error_not_a_verdict(tmp_path: Path) -> None:
+    """F7. Exit 0 is "ancestor" and 1 is "not"; 128 is git failing. Reporting it as
+    "not an ancestor" tells the operator to merge code that is already merged."""
+    repo = _make_checkout(tmp_path)
+    broken = _fake_git(
+        tmp_path,
+        'for a in "$@"; do\n'
+        '  if [ "$a" = "merge-base" ]; then\n'
+        '    echo "fatal: bad object origin/main" >&2\n'
+        "    exit 128\n"
+        "  fi\n"
+        "done\n"
+        'exec git "$@"\n',
+    )
+
+    state = driver.read_checkout(
+        driver_path=repo / "tools" / "tos_evidence_scan_measure.py",
+        bench_path=repo / "tools" / "tos_evidence_scan_bench.py",
+        git=(str(broken),),
+    )
+
+    assert state.ok is False
+    assert "merge-base exited 128" in state.error
+    assert "bad object" in state.error
+    # And it must NOT claim the wrong cause.
+    assert "is not an ancestor of origin/main" not in "; ".join(state.failures())
+
+
+def test_f8_the_refusal_names_the_actionable_cause_not_only_the_summary(
+    tmp_path: Path,
+) -> None:
+    """F8. `summary()` for a worktree with no origin/main reads perfectly healthy
+    ("detached, clean"), so the operator saw a refusal whose text never said to fetch.
+    """
+    repo = _make_checkout(tmp_path, origin_main=False)
+
+    record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
+
+    assert record.verdict == "refused"
+    assert "git fetch origin" in (record.refusal or "")
+
+
+def test_f8_the_cli_refusal_on_stderr_carries_the_cause(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The place the operator actually reads."""
+    rc = _cli(tmp_path, "--expect-gb", "10000000")
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "disk_free" in err
+    assert "predicted" in err, "the refusal must carry the detail, not only the floor"
+
+
+def test_f9_children_cannot_import_from_the_shared_checkout(tmp_path: Path) -> None:
+    """F9. `--python` is the SHARED checkout's venv by design, and on this host that venv
+    carries an editable-install `.pth` putting the shared tree on `sys.path`. Measured:
+    `-I` alone does NOT remove it — a child run with `-I` still imported `tools.*` from
+    the shared tree while every provenance field described the worktree. `-S` is what
+    closes it, and `-I` closes PYTHONPATH and user-site next to it."""
+    repo = _make_checkout(tmp_path)
+    injected = tmp_path / "injected"
+    (injected / "smuggled").mkdir(parents=True)
+    (injected / "smuggled" / "__init__.py").write_text(
+        "VALUE = 'from the other tree'\n"
+    )
+    report = tmp_path / "child-report.json"
+    probe = _stub_bench(
+        tmp_path,
+        "    import json, sys\n"
+        "    try:\n"
+        "        import smuggled\n"
+        "        smuggled_from = smuggled.__file__\n"
+        "    except ImportError:\n"
+        "        smuggled_from = None\n"
+        f"    pathlib.Path({str(report)!r}).write_text(json.dumps({{\n"
+        '        "isolated": sys.flags.isolated,\n'
+        '        "no_site": sys.flags.no_site,\n'
+        '        "smuggled_from": smuggled_from,\n'
+        '        "sys_path": sys.path,\n'
+        "    }))\n",
+    )
+    steps = driver.plan_steps(
+        names=["build"],
+        python=sys.executable,
+        bench_path=probe,
+        reference=tmp_path / "ref.sqlite3",
+        synthetic=tmp_path / "s.sqlite3",
+        out_dir=tmp_path,
+        days=1,
+        repeats=1,
+        session_hours=7.0,
+        reference_minutes=15.0,
+        boot_once_max_rows=1,
+        batch_rows=10,
+    )
+    assert steps[0].argv[1:3] == driver.CHILD_PYTHON_FLAGS
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    env_before = os.environ.get("PYTHONPATH")
+    os.environ["PYTHONPATH"] = str(injected)
+    try:
+        result = driver.run_step(
+            steps[0],
+            guard=_guard(),
+            checkout=_checkout(repo),
+            reader=driver.HostReader(),
+            run_id="isolation",
+            days=1,
+            out_dir=out_dir,
+            log=lambda _m: None,
+            sampler=_healthy(),
+        )
+    finally:
+        if env_before is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = env_before
+
+    assert result.returncode == 0, (tmp_path / "build.err").read_text()
+    payload = json.loads(report.read_text())
+    assert payload["isolated"] == 1
+    assert payload["no_site"] == 1
+    assert payload["smuggled_from"] is None, "PYTHONPATH reached the child"
+    assert str(injected) not in payload["sys_path"]
+    # And the artifact says which flags were in force, so the question is answerable
+    # afterwards from the file rather than from this test.
+    assert result.checkout["child_python_flags"] == list(driver.CHILD_PYTHON_FLAGS)
+
+
+def test_f10_the_shared_guard_is_built_once_not_per_test() -> None:
+    """F10. `_clean_checkout()` used to re-run `with_baseline()` — five git subprocesses
+    — on every one of ~50 tests, over a repo that never changes."""
+    first = _clean_checkout()
+    second = _clean_checkout()
+
+    assert first is second
+    assert first.baseline is not None
+    # The non-enforcing view is the same baseline, not a second read.
+    assert _clean_checkout(enforced=False).baseline is first.baseline
