@@ -598,6 +598,49 @@ class TestCli:
         assert "Performance regression check" in text
 
 
+# Environment variables that make _runner_label() report a GitHub runner.
+_GITHUB_ENV_VARS = (
+    "GITHUB_ACTIONS",
+    "ImageOS",
+    "RUNNER_OS",
+    "RUNNER_ARCH",
+    "GITHUB_SHA",
+    "GITHUB_REPOSITORY",
+    "GITHUB_SERVER_URL",
+    "GITHUB_RUN_ID",
+)
+
+
+@pytest.fixture
+def local_machine(monkeypatch):
+    """Force the local-machine branch of ``_runner_label()``.
+
+    Without this the assertions below depend on where the suite happens to run:
+    they passed locally and failed on CI, where GITHUB_ACTIONS is set. A test of
+    provenance must not read its expected value from the ambient environment.
+    """
+    for var in _GITHUB_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+class TestRunnerLabel:
+    def test_names_the_github_runner_image_in_actions(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.setenv("ImageOS", "ubuntu24")
+        monkeypatch.setenv("RUNNER_ARCH", "X64")
+        assert _crmod._runner_label() == "github-actions-ubuntu24-X64"
+
+    def test_falls_back_to_runner_os_without_image_os(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.delenv("ImageOS", raising=False)
+        monkeypatch.setenv("RUNNER_OS", "Linux")
+        monkeypatch.setenv("RUNNER_ARCH", "X64")
+        assert _crmod._runner_label() == "github-actions-Linux-X64"
+
+    def test_names_the_host_off_actions(self, local_machine):
+        assert _crmod._runner_label().startswith("local-")
+
+
 class TestProvenanceFollowsTheMeasuringMachine:
     """A baseline must name the machine that produced the numbers.
 
@@ -628,7 +671,7 @@ class TestProvenanceFollowsTheMeasuringMachine:
         )
         return _write_json(tmp_path / "ci-current.json", document)
 
-    def test_baseline_inherits_the_runner_that_measured(self, tmp_path):
+    def test_baseline_inherits_the_runner_that_measured(self, tmp_path, local_machine):
         current = self._ci_samples_file(tmp_path)
         out = tmp_path / "baselines.json"
         assert (
@@ -644,7 +687,9 @@ class TestProvenanceFollowsTheMeasuringMachine:
         # The aggregating machine is recorded separately, not as the measurer.
         assert provenance["aggregated_on"]["runner"].startswith("local-")
 
-    def test_freshly_measured_rounds_describe_this_machine(self, tmp_path):
+    def test_freshly_measured_rounds_describe_this_machine(
+        self, tmp_path, local_machine
+    ):
         rounds = _write_rounds(tmp_path, [{"a": v} for v in MEASURED_ROUNDS[:5]])
         out = tmp_path / "baselines.json"
         assert (
@@ -657,7 +702,9 @@ class TestProvenanceFollowsTheMeasuringMachine:
         assert "aggregated_on" not in provenance
         assert provenance["runner"].startswith("local-")
 
-    def test_merging_several_samples_files_inherits_nothing(self, tmp_path):
+    def test_merging_several_samples_files_inherits_nothing(
+        self, tmp_path, local_machine
+    ):
         """Two samples files may come from different runners — neither wins."""
         checker = _checker()
         first = self._ci_samples_file(tmp_path)
