@@ -2153,7 +2153,10 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 |---|---|
 | `c79a9e40` | `checkout_detached_and_clean` 프리플라이트 · 자식마다의 재검사 · 출처 기록 + 테스트 19 건 |
 | `e15a027c` | 이 절(§7.1.19) 자체 · §2 A1-c 를 「구현」으로 · §7.1.9 실행 명령을 분리 워크트리 레시피로 · §7.1.15/§7.1.16 세 등재의 착지 포인터 · INDEX |
-| (이 행) | 위 두 SHA 를 표에 적는다 — §7.1.9 의 리뷰 F10 이 「표가 브랜치와 어긋나는 것은 사소한 누락이 아니다」라고 적은 그 규율 |
+| `57c5d472` | 위 두 SHA 를 표에 적는다 — §7.1.9 의 리뷰 F10 이 「표가 브랜치와 어긋나는 것은 사소한 누락이 아니다」라고 적은 그 규율 |
+| `5e434649` | 저장소 경로 단언을 양쪽 resolve 로 (심볼릭 링크를 거친 CI 체크아웃) |
+| `74450de4` | 독립 리뷰 #838 지적 F1~F10 |
+| (이 행) | 리뷰 처분 §7.1.20 · 이 표 |
 
 **무엇이 들어왔나 — 셋이고, 그 중 둘이 방지다.**
 
@@ -2271,3 +2274,65 @@ stderr 경고 · `preflight.json` 의 `warnings` · 모든 아티팩트의
 **이 착지가 바꾸지 않는 것.** §7.1.15 「답하지 못한 것」 1(1.14–2.31 배 사이의 열린 관측)
 과 **270 일치 한 점**의 등재는 그대로다. 바뀐 것은 **그 점을 어떻게 도는가** 하나다 —
 이제 §7.1.9 의 분리 워크트리 레시피로 돌고, 트리가 움직이면 멈춘다.
+
+#### 7.1.20 독립 리뷰 #838 처분 (2026-10-02)
+
+열 건 전부 수용했다, 기각 0. 리뷰 레인은 **저자와 다른 패스**였다. 교차모델 독립성은
+**없다**(§7.1.6 · §7.1.10 · §7.1.16 과 같은 상태 — Codex 미사용).
+
+**이 라운드의 요지 — 가드가 한 번의 실행만 묶고 있었다.** §7.1.19 는 「프리플라이트는 한
+번 돌고 자식들은 그렇지 않다」를 핵심 성질로 적었는데, 같은 문장이 한 겹 더 바깥에서
+참이었다: **`before` 와 `after` 는 서로 다른 프로세스일 수도 있다.** 계획이 §7.1.15 에서
+실제로 그렇게 했다(1차 중단 → `--steps before,after` 재개). 자식마다의 재검사는 그
+경로를 전혀 보지 않았고, 각 프로세스는 내부적으로 완벽히 일관됐다 — **「검사는 존재하는데
+그 경우를 검사하지 않는다」**(`MEMORY.md` 의 반복 결함 형태).
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **F1** | 드리프트 가드가 **프로세스 안의** 베이스라인만 본다 — 문서화된 재개(`--steps after`)는 오늘 X, 다음 주 Y 로 돌아도 통과한다. 이미 끝난 단계의 `checkout` 블록을 아무도 읽지 않는다 | **수용 · 수정.** 새 체크 `matches_earlier_steps`: 같은 `--days` 의 끝난 단계 아티팩트에서 `repo_commit`·`bench_sha256` 을 읽어 대조하고 어긋나면 거부. **출처 블록이 없는**(A1-c 이전 드라이버가 쓴) 아티팩트도 거부 — 「어느 트리였나」가 바로 그 질문이고, 답할 수 없는 아티팩트는 통과가 아니다. ⚠ **다른 `--days` 는 비교하지 않는다**: 한 출력 디렉터리가 모든 크기를 들고 있고(기존 `a1/` 이 그렇다) 30 일치와 365 일치는 몇 달·몇 커밋 떨어진 **다른 측정**이다 |
+| **F2** | `git status --porcelain` 이 운영자의 `status.showUntrackedFiles` 를 물려받는다 — `no` 면 추적되지 않는 벤치가 **보이지 않고** 트리가 clean 으로 읽힌다 | **수용 · 수정.** `--porcelain=v1 -z -uall`. 플래그는 `tools/tos_evidence_run.py::parse_porcelain` 에서 가져왔고 그 모듈을 **import 하지는 않았다** — `yaml` 과 `tools.tos_profile_census` 를 끌어오는데 이 드라이버는 설계상 stdlib 전용이다(`test_the_driver_is_stdlib_only_…`). ⚠ 같이 제안된 `-c status.showUntrackedFiles=all` 은 **일부러 넣지 않았다** — 실측 결과 **둘 중 하나만으로도** 항목이 복원되므로 둘을 다 두면 어느 쪽도 red 로 증명할 수 없다. 이 PR 1 라운드가 겪은 「가려진 절」을 또 만들지 않는다 |
+| **F3** | 자식 이전의 재검사와 `ABORTED` 쓰기가 `run_step` 의 아티팩트 핸들러 **밖**에 있다 — 그 다섯 번의 git 사이에 SIGTERM 이 닿으면 아티팩트 **없이** 빠져나간다. 「중단은 결코 조용하지 않다」는 그 함수 자신의 독스트링과 모순 | **수용 · 수정.** 그 창을 자기 핸들러로 감쌌다(자식의 핸들러를 공유할 수 없다 — 아직 죽일 자식이 없다). `write_prespawn_abort` 는 자기 쓰기 실패도 삼키지 않고 로그로 남긴다(ENOSPC 가 원래 이유를 IOError 로 바꾸지 않게) |
+| **F4** | `read_checkout` 의 어떤 git 호출에도 `timeout=` 이 없다 — 남이 쥔 `index.lock` 뒤에서 멈추면 워치독도 아티팩트도 없이 영원히 선다. `tos_completion_status.py` 는 같은 호출을 `_GIT_TIMEOUT` 아래서 돈다 | **수용 · 수정.** 모든 호출에 `timeout=`(기본 **30 s**, 그 모듈과 **같은 값**, `--git-timeout-s` 로 노출). `TimeoutExpired` → `CheckoutState.error` → 자식 이전 중단 + 아티팩트. `--no-optional-locks` 도 붙였다 — 이 읽기 자신이 남이 기다리는 lock 이 되지 않게 |
+| **F5** | 베이스라인이 `out_dir.mkdir()` 보다 먼저 읽히고, `--out-dir`/`--synthetic` 이 체크아웃 안인지 아무도 보지 않는다 — 드라이버 자신의 출력이 **비싼 빌드 뒤에** 자기 dirty 가드를 때린다 | **수용 · 수정.** 새 체크 `outputs_outside_the_checkout`: 체크아웃 안이면서 `git check-ignore` 되지 않으면 거부. ⚠ **이 체크만 `--allow-shared-checkout` 로 풀리지 않는다.** 선례는 `run_p_ca.sh` — 「`git add -A` 가 staging 할 자리에 파일을 두지 않는다」는 거부가 그 러너의 override **밖**에 있다. 공용 체크아웃 탈출구는 **코드가 어디서 오는가**에 대한 선택이지 저장소에 53 GB 를 떨어뜨릴 면허가 아니다 |
+| **F6** | 드리프트가 `detached`·`ancestor_of_origin_main` 을 **다시 읽고도 비교하지 않는다** — `git switch -c scratch`(같은 커밋 · clean) 는 통과하는데 그것은 프리플라이트가 거부하는 바로 그 상태다 | **수용 · 수정.** 조건을 여기서 **다시 나열하지 않는다** — 그게 두 목록이 벌어지는 방식이다. 규칙을 한 번만 적었다: **「프리플라이트가 착수에 요구한 것은 계속 성립해야 한다」** = `current.ok`. 구체적 비교(커밋 이동 · 더티)는 메시지를 위해 그 앞에 둔다 |
+| **F7** | `merge-base --is-ancestor` 가 0/1 이 아닌 코드로 죽으면 `ancestor=False` 로 기록돼 「조상이 아님」이라고 **틀린 원인**을 말한다 | **수용 · 수정.** 0 은 조상, 1 은 아님, **그 밖은 git 실패**이고 stderr 와 함께 `error` 가 된다. 그러지 않으면 이미 머지된 코드를 머지하라고 운영자에게 말하게 된다 |
+| **F8** | stderr 로 가는 거부 문자열이 `measured`/`floor` 만 들고 있다 — `origin/main` 부재나 「벤치가 체크아웃 밖」에서는 요약이 **건강하게 읽히고**(「detached, clean」) 실행 가능한 이유는 stdout 한 줄에만 남는다 | **수용 · 수정.** 이 체크만이 아니라 **모든 체크**의 `detail` 을 거부에 포함한다 — 자기 원인을 숨기는 거부는 어느 체크에서든 같은 결함이다 |
+| **F9** | 벤치의 sha256 이 「돈 코드」를 보증하는 것처럼 적혀 있지만, 자식은 **공유 체크아웃의 venv** 로 뜨고 그 `.pth` 가 공유 트리를 `sys.path` 에 올린다 | **수용 · 수정, 다만 제안된 처방으로는 닫히지 않았다.** 실측: `-I` 도 `-P -s` 도 `.pth` 항목을 **지우지 못하고**, 그렇게 띄운 자식이 `tools.tos_evidence_run` 을 **공유 트리에서** import 했다(세 경우 모두). 닫는 것은 `-S` 다. 그래서 `-I -S`(=`-E -P -s -S`)로 띄우고 플래그를 아티팩트에 적는다. 벤치는 stdlib 전용이라 비용이 0 이고, 미래의 벤치가 서드파티를 쓰면 **조용히 아무 트리에서나 해결되는 대신 시끄럽게 실패**한다 |
+| **F10** | 세션 fixture 의 가드를 테스트마다 `with_baseline()`(git 5 회) 다시 만든다 | **수용 · 수정.** fixture 에서 한 번 만들어 넘긴다. ⚠ 이건 가드가 아니라 **정리**라 red 증명이 없다 — 그 사실을 적는다 |
+
+**테스트.** 101(측정, +19) + 18(벤치) = **119 passed**.
+`.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`.
+
+**가드 레드 증명 — 신규 9/9(F10 은 가드가 아님), 1 라운드 13 건도 재확인 13/13.**
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| F1 `earlier_step_mismatches` | `..._a_resume_at_a_different_commit_is_refused` · `..._onto_an_artifact_with_no_provenance_is_refused` |
+| F2 status 의 `-uall` | `..._an_untracked_file_hidden_by_the_operators_git_config_is_still_dirty` |
+| F3 자식 이전 중단 핸들러 | `..._a_signal_during_the_pre_spawn_recheck_still_leaves_an_artifact` |
+| F4 `TimeoutExpired` → error 변환 | `..._a_git_that_never_answers_is_an_error_not_a_pass` · `..._a_hung_git_at_the_per_child_recheck_aborts_with_an_artifact` |
+| F5 `output_conflicts` | `..._output_written_into_the_checkout_is_refused_up_front` · `..._is_not_released_by_the_shared_checkout_hatch` |
+| F6 드리프트의 `current.ok` 가지 | `..._a_branch_created_between_steps_aborts_even_at_the_same_commit` · `..._origin_main_moving_away_between_steps_aborts` |
+| F7 merge-base 종료코드 판정 | `..._a_merge_base_that_fails_is_an_error_not_a_verdict` |
+| F8 거부 문자열의 `detail` | `..._the_refusal_names_the_actionable_cause_not_only_the_summary` · `..._the_cli_refusal_on_stderr_carries_the_cause` |
+| F9 `CHILD_PYTHON_FLAGS` | `..._children_cannot_import_from_the_shared_checkout` |
+
+**실호스트 재실측 3 건.** 분리 클론에서 3 단계 완주 rc=0 이고 단계마다
+`checkout ok: … · python flags -I -S`; 같은 출력 디렉터리에 `--steps after` 로 재개하되
+HEAD 를 옮기면 `matches_earlier_steps` 가 두 단계를 모두 대며 rc=1; 체크아웃 안쪽
+`--synthetic` 은 `outputs_outside_the_checkout` 로 rc=1.
+
+**게이트.** `ruff check .` 통과 · `black --check`(CI 글롭 1,306 파일) 통과 ·
+`mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports` 클린 ·
+`mypy tests/… --disable-error-code=no-untyped-def` 클린 ·
+`tos_firewall_check.py` PASS · `tos_contract_check.py` PASS ·
+`tos_completion_status --check` GREEN(0) · `tos_spec_status --check` PASS ·
+`tos_size_budget --check` PASS(0). tos 소스 무변경 — **digest 재도출 없음**.
+
+**이 라운드의 교훈 — 「한 번의 실행」이라는 범위를 스스로 좁게 잡았다.**
+§7.1.19 가 자랑한 성질(「프리플라이트는 한 번 돌고 자식들은 그렇지 않다」)은 맞았지만,
+**같은 논리가 한 겹 바깥에도 적용된다는 것**을 보지 못했다 — 그리고 그 바깥 경로를
+쓴 것은 다른 누구도 아닌 §7.1.15 의 재개였다. 가드를 쓸 때 묻는 질문은 「무엇이
+이것을 통과하는가」만이 아니라 **「내가 보호한다고 말한 단위가 실제 운용 단위와 같은가」**
+다. 그리고 F9 는 **제안된 처방을 그대로 적용했으면 닫히지 않았다** — 실측이 아니었으면
+`-I` 를 붙이고 「닫혔다」고 적었을 것이다.
