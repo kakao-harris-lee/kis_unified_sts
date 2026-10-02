@@ -79,12 +79,15 @@ PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
   cold-backup --data-dir "$DATA" --config-dir "$OPS" --custody-root "$CUSTODY"
 ```
 
-성공 출력(stdout 한 줄):
+성공 출력은 stdout 한 줄이고 **모양**은 이렇다 — 아래 숫자와 멤버 수는 **실측이 아니라
+자리표시자**다(바이트는 데이터에, 멤버 수는 그 data dir 에 `composite_state`/`marketfeed` 가
+있는지에 달린다. §7.1.4 의 실 커스터디 왕복에서는 멤버가 **4** 였다 — 그 런타임이 composite 를
+한 번도 쓰지 않았기 때문이다):
 
 ```
-cold-backup: archived gen1 to /home/.../paper-cold/gen1.set.tar.xz (7449088 -> 512000 bytes),
-             read back and verified: 5 file digest(s) + evidence chain; report at
-             /home/.../paper-cold/gen1.cold-backup.report.json
+cold-backup: archived gen1 to <archive_dir>/gen1.set.tar.xz (<N> -> <M> bytes),
+             read back and verified: <K> file digest(s) + evidence chain; report at
+             <archive_dir>/gen1.cold-backup.report.json
 ```
 
 - **세대는 자동이다.** `backup_root` 의 최고 세대 다음을 쓴다. 그래서 N 번째 cron 실행의

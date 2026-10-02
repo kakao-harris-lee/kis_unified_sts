@@ -2209,17 +2209,30 @@ kind 가 필요하고, 그것은 A3 가 아니라 별도 결정이다.
 |---|---|---|
 | 1 | 「그 결과를 **증거로** 남긴다」를 증거 행이 아니라 JSON 보고서로 | 위 「양립하지 않는 셋」. 후속(부팅 관측 확장)을 등재했다 |
 | 2 | `backup-set` 의 디스패치를 **함께 이동**(`compose/_backup_dispatch.py`) — A3 자체와 무관한 이동 | `cold-backup` 배선만으로 `cli.py` 가 972 → **995/1000** 이 됐다. 그것은 §7.1.7 편차 1 이 `backup_set.py`(992/1000)에 대해 이름 붙인 바로 그 조건 — 「평범한 수정 한 번이면 게이트가 빨개진다」. 두 백업 하위 명령은 어차피 한 집이고, 이동이 그 여유를 산다(943 줄). 디스패치 본문은 **한 줄도 바꾸지 않았다**; 바뀐 것은 기존 CLI 테스트 12곳의 monkeypatch **위치**뿐이고 단정은 그대로다 |
-| 3 | `backup_set.py` 에 공개 `next_generation`/`manifest_path_for` 추가 | 세대 산술과 매니페스트 파일명이 이미 **세 곳에 따로** 적혀 있었다(`cli.py` · `_operations_wiring.py` · 새 호출부). 네 번째를 만들지 않는다. `next_generation` 은 **할당도 예약도 아니다** — W4 결정 1 「세대는 호출자 지정」은 그대로이고, 경합 시 두 번째 `backup_set` 이 거부하는 것이 여전히 인터록이다 |
+| 3 | `backup_set.py` 에 공개 `next_generation`/`manifest_path_for` 추가 | 매니페스트 파일명 리터럴이 이미 **두 곳에 따로** 적혀 있다(`backup-set` 디스패치 · `_operations_wiring.py` 의 중복 상수). 새 호출부가 **세 번째**가 되지 않도록 공개 헬퍼를 둔다. ⚠ **기존 둘은 그대로 남겼다** — 디스패치를 바이트 그대로 옮긴다는 편차 2 의 약속과 바꿀 수 없어서이고, 그래서 중복은 둘에서 둘이지 하나로 줄지 않았다(등재). `next_generation` 은 **할당도 예약도 아니다** — W4 결정 1 「세대는 호출자 지정」은 그대로이고, 경합 시 두 번째 `backup_set` 이 거부하는 것이 여전히 인터록이다 |
 | 4 | 용량 바닥을 지난 **실행 중** 경우에 거부하지 않고 경고 후 0 | 검증까지 끝난 백업을 경보 때문에 되돌리는 것은 손해다. 보고서에 `free_bytes_below_minimum_after=true` 가 남고 **다음 실행이 거부**한다 — 경보는 래칫이지 롤백이 아니다 |
 | 5 | 보존 손잡이 없음 | 위 「보존 손잡이는 넣지 않았다」. 계획 §2 A3 도 보존을 요구하지 않는다 |
 
+##### 자체 점검이 잡은 결함 1건 (저자 패스, 리뷰 전)
+
+`_require_absolute_path` 초판이 **절대경로 검사를 먼저** 하고 틸드 검사를 그 뒤에 뒀다.
+`Path("~/cold").is_absolute()` 는 **False** 이므로 틸드 가지는 **절대로 실행되지 않는다** —
+자기가 이름 붙인 경우를 한 번도 잡을 수 없는 가드다(프로젝트 메모리
+`guards-that-admit-what-they-name` 의 네 형태 중 「상위 가드에 기대던 문구」). 초판 테스트도
+그 사실을 가리고 있었다: `["relative/cold", "~/cold"]` 를 한 파라미터로 묶고 **둘 다**
+「not an absolute path」를 단정했으니, 틸드 메시지가 존재하지 않아도 green 이었다.
+
+고친 자리는 **순서**이고, 그것을 드는 테스트를 따로 세웠다
+(`test_a_tilde_path_is_refused_as_a_tilde_path` — 틸드 전용 문구를 단정하고 「not an absolute
+path」가 **아님**을 함께 단정한다). 두 가지를 순서가 뒤집힌 상태에서 red 로 확인했다.
+
 ##### 테스트
 
-새 테스트 **45건**(`tests/operations/test_cold_backup.py` 36 · `tests/compose/test_cold_backup_cli.py` 9).
+새 테스트 **46건**(`tests/operations/test_cold_backup.py` 37 · `tests/compose/test_cold_backup_cli.py` 9).
 실제 durable set 픽스처(`_build_live_set`)에 대해 진짜 실행하고, CLI 쪽이 대체하는 것은
 커스터디 키 공급자 하나다.
 
-**변이로 red 확인 4건** (고치기 전 red 를 실제로 봤다 — 「새 가드에 《이것이 실패하는 구체적
+**변이로 red 확인 5건** (고치기 전 red 를 실제로 봤다 — 「새 가드에 《이것이 실패하는 구체적
 입력》을 못 쓰면 아무것도 막지 않는 것」):
 
 | 변이 | red 가 된 테스트 |
@@ -2228,6 +2241,7 @@ kind 가 필요하고, 그것은 A3 가 아니라 별도 결정이다.
 | 용량 프리플라이트 제거 | `test_free_space_below_the_floor_refuses_before_anything_is_written` — DID NOT RAISE |
 | `.git` 를 `exists()` → `is_dir()` | `test_a_destination_inside_a_git_worktree_is_refused` 3건 전부 |
 | `next_generation` 의 `+1` 제거 | `test_consecutive_runs_take_consecutive_generations` — `BackupSetRefused` |
+| 틸드 가지 제거(순서 역전과 동치) | `test_a_tilde_path_is_refused_as_a_tilde_path` 2건 |
 
 템플릿↔로더 드리프트는 `example_integrity_registry` 등재(필수 키 4 · 터치포인트 1 · 로더)와
 `test_the_shipped_example_config_is_the_shape_this_loader_reads` 가 양방향으로 잡는다.
@@ -2242,7 +2256,7 @@ PASS(0 violations) · black/ruff 전부 통과.
 CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
 `tos/runtime/tests`(241) · `cd tos && mypy src`(266) · `tos/tests`(587).
 
-`expected_code_digest`: `df25a550…` → **`9cc89a75…`**(33차 측정 · 이 계획의 17번째 런타임 변경 PR). `expected_dependency_set_digest`
+`expected_code_digest`: `df25a550…` → **`1685714e…`**(`release.yaml` 측정 이력 기준 33차). `expected_dependency_set_digest`
 불변(`20559763…`, 같은 배포 호스트 루트 `.venv`). 갱신은 두 곳 —
 `config/tos_runtime/paper/release.yaml` 과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.

@@ -392,16 +392,34 @@ def test_the_named_tbd_placeholder_string_is_refused(tmp_path: Path) -> None:
     assert "template placeholder" in str(refusal.value)
 
 
-@pytest.mark.parametrize("value", ["relative/cold", "~/cold"])
-def test_a_non_absolute_path_is_refused(tmp_path: Path, value: str) -> None:
-    """No ``~`` expansion and no relative resolution: both would make the destination depend on
-    who happened to run the cron line."""
-    body = _FILLED.replace("/srv/tos/cold", value)
+def test_a_relative_path_is_refused(tmp_path: Path) -> None:
+    """A relative destination depends on the cron line's working directory."""
+    body = _FILLED.replace("/srv/tos/cold", "relative/cold")
 
     with pytest.raises(ColdBackupRefused) as refusal:
         load_cold_backup_config(_write_config(tmp_path, body))
 
     assert "not an absolute path" in str(refusal.value)
+
+
+@pytest.mark.parametrize("value", ["~/cold", "~deploy/cold"])
+def test_a_tilde_path_is_refused_as_a_tilde_path(tmp_path: Path, value: str) -> None:
+    """And it says ``~``, not merely "not absolute".
+
+    This is the distinction worth a test of its own: a tilde path is ALREADY non-absolute, so
+    an ``is_absolute()`` check placed first would catch it and the tilde branch behind it
+    could never fire — a guard naming a case it cannot reach. Ordering it first is what makes
+    the specific message real, and this test is what holds the ordering (reverse the two
+    branches and it goes red).
+    """
+    body = _FILLED.replace("/srv/tos/cold", value)
+
+    with pytest.raises(ColdBackupRefused) as refusal:
+        load_cold_backup_config(_write_config(tmp_path, body))
+
+    message = str(refusal.value)
+    assert "no tilde expansion" in message
+    assert "not an absolute path" not in message
 
 
 @pytest.mark.parametrize(

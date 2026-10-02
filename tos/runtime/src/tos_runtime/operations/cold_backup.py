@@ -209,16 +209,20 @@ def _require_absolute_path(raw: Mapping[str, object], key: str, path: Path) -> P
             f"(got {type(value).__name__}) — refused"
         )
     candidate = Path(value)
+    # Tilde FIRST, and not as a second clause after the is_absolute() check: a path starting
+    # with "~" is never absolute, so an is_absolute() refusal would reach it first and this
+    # branch would be unreachable — a guard that names a case it can never actually catch.
+    if candidate.parts and candidate.parts[0].startswith("~"):
+        raise ColdBackupRefused(
+            f"load_cold_backup_config: {key!r} in {path} starts with {candidate.parts[0]!r} — "
+            "refused. This loader performs no tilde expansion, so the path would be taken "
+            "literally; write the real absolute path"
+        )
     if not candidate.is_absolute():
         raise ColdBackupRefused(
             f"load_cold_backup_config: {key!r} in {path} is {value!r}, which is not an "
-            "absolute path — refused. A cold backup resolves no '~' and no relative path: "
-            "both depend on who happened to run the cron line"
-        )
-    if "~" in candidate.parts[0]:
-        raise ColdBackupRefused(
-            f"load_cold_backup_config: {key!r} in {path} starts with {candidate.parts[0]!r} — "
-            "refused. This loader performs no tilde expansion; write the real absolute path"
+            "absolute path — refused. A relative destination depends on the working directory "
+            "of whoever happened to run the cron line"
         )
     return candidate
 
