@@ -2130,7 +2130,7 @@ PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이�
 | `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
 | `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
 | `1670d7f8` | 이 착지 기록 (§7.1.17) + INDEX 행 |
-| (다음) | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `0e76c127…` |
+| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `0e76c127…` |
 
 ##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
 
