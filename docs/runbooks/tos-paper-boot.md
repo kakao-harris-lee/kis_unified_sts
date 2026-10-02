@@ -170,6 +170,16 @@ sqlite3 "$DATA/evidence.sqlite3" "SELECT COUNT(*) FROM entries WHERE kind='TIME_
 
 ## 4-A. 스키마 마이그레이션 — 증거 저장소 v1 → v2 (`entries_kind_seq`)
 
+> **적용 범위 — 이 호스트에는 상주 paper data dir 이 없다 (2026-10-02 실측).** 위 §3 이
+> 예시로 쓰는 `~/.local/state/tos/paper-data` 는 **존재하지 않고**, 렌더된 설정
+> (`~/.config/tos/paper-config`)에는 data dir 키가 **아예 없다** — 그 경로는 `run --data-dir`
+> 인자일 뿐이라 설정에서 읽어 낼 것이 없다(`RENDERED.json` 도 좌표·digest 만 적는다).
+> 디스크에 실재하는 durable set 은 2026-09-27/28 부팅증명 캠페인이 만든 1회성 디렉터리
+> (`~/.local/state/tos/{realclock,t3}-*/data`)뿐이고, 그 뒤로 부팅된 적이 없다.
+> **새 `run` 은 genesis 로 곧장 v2 증거 저장소를 만든다.** 그러므로 이 절은 「새 배포」의
+> 절차가 아니라 **예전 corpus 를 지금 코드로 다시 부팅할 때**의 절차다. 대상 디렉터리를
+> 짐작하지 말 것 — 어느 corpus 를 올릴지는 운영자가 이름으로 지정한다.
+
 증거 성장 계획(`docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md` §2 A2) 이후
 `EVIDENCE_SCHEMA_VERSION` 은 **2** 다. **이 커밋 이전에 만들어진 data dir 은 부팅이 거부된다** —
 자동 적용은 없다(`operations/schema_ledger` 의 「부팅 시 자동 적용 0」):
@@ -273,6 +283,13 @@ migrate: evidence at ... — applied v1 -> v2 (v2); rebuilt schema_ledger_no_upd
 data dir 은 v0 에서 출발하므로 `applied v0 -> v2 (v1, v2)` 다. 마지막 줄은 버전도 뒤처지고
 대장 트리거도 없는 파일로, 적용과 복구가 **한 줄에 같이** 나온다.
 
+⚠ **위 일곱 줄은 전부 `evidence`(목표 v2) 로 적혀 있다 — 「nothing to do」 줄의 버전 숫자는
+스토어마다 다르다.** `--store` 를 생략하면 `STORE_MIGRATIONS` 에 등록된 네 스토어가 모두
+돌고, `inbox` 와 `marketfeed` 는 **등록된 최신이 v1** 이라 `already at v1, nothing to do` 를
+낸다(`rcl` 은 v2). 새 형태가 아니라 첫 번째 템플릿의 **버전 자리**가 다른 것뿐이지만,
+**`"already at v2"` 를 리터럴로 grep 하는 스크립트·점검은 이 줄을 놓친다.** 네 스토어를 한
+번에 돌린 실측 출력은 아래 §4-A-1 에 있다.
+
 ⚠ **「rebuilt …」 는 대장이 «이미 있었는데» 트리거가 없었을 때만 나온다.** `migrate` 가
 대장을 처음 만드는 경우(신규 배포 · 대장 이전 파일)는 복구가 아니므로 **적히지 않는다** —
 리뷰 MEDIUM-1 전에는 여기서도 「rebuilt」 를 찍어서, 멀쩡한 제네시스에도 경고가 울렸다.
@@ -290,6 +307,50 @@ sqlite 내부 공백이 다르고 `PRAGMA table_info` 는 동일 — 테스트�
 재적용은 대장 행을 다시 쓰지 않는다(대장은 「언제 처음 적용됐나」의 기록이지 실행 횟수가
 아니다). 부팅은 이 인덱스를 **절대 만들지 않는다** — 생성은 신규 파일의 genesis 와 `migrate`
 뿐이라, 위 롤백이 다음 부팅에 조용히 덮이지 않는다.
+
+### 4-A-1. 실행 기록 — 2026-10-02 dry-run (실 저장소 미변경)
+
+운영자 판정은 **「마이그레이션할 대상이 없다」** 였다(위 「적용 범위」). 그래서 실 durable
+set 은 **한 바이트도 건드리지 않았다.** 대신 가장 최근 부팅증명 corpus
+(`~/.local/state/tos/realclock-20260928T110001-LONG/data`, 2026-09-28 11:15 KST)의 **사본**에
+실제 `migrate` 를 돌려 이 절의 절차와 판정 기준을 검증했다. 실행은 분리 워크트리
+(`origin/main` `ef4009a51d21`)에서 했고 종료코드는 `0` 이다.
+
+`--store` 없이 돌린 stdout 전문(경로만 `<copy>` 로 줄였다):
+
+```
+migrate: evidence at <copy>/evidence.sqlite3 — applied v1 -> v2 (v2)
+migrate: rcl at <copy>/rcl.sqlite3 — already at v2, nothing to do
+migrate: inbox at <copy>/inbox.sqlite3 — already at v1, nothing to do
+migrate: marketfeed at <copy>/marketfeed.sqlite3 — already at v1, nothing to do
+```
+
+증거 저장소의 전후는 이렇다(나머지 셋은 이미 최신이라 변화 없음):
+
+| 항목 | 전 | 후 |
+| --- | --- | --- |
+| `PRAGMA user_version` | 1 | **2** |
+| `schema_ledger` | `1\|CREATED` | `1\|CREATED` · **`2\|MIGRATE`** |
+| `entries` 행 수 | 2824 | 2824 (불변) |
+| 마지막 `chain_digest` | `f324e7eb…5daa1569` | `f324e7eb…5daa1569` (**동일**) |
+| `entries_kind_seq` | 없음 | **있음** |
+| `PRAGMA integrity_check` | — | `ok` |
+| 파일 크기 | 5332992 B | 5427200 B (+94208) |
+
+`sqlite_master` 는 위 기대 목록 8개와 **글자 그대로 일치**했다. append-only 트리거 네 개는
+**전후 모두** 있었고, 그래서 `rebuilt …` 줄이 나오지 않았다 — 이 corpus 는 2026-10-02 이전
+`migrate` 가 남긴 「대장은 있는데 트리거가 없는」 파일이 **아니다**.
+
+**백업 세대는 뜨지 않았다** — 실 파일을 바꾸지 않았으므로 (0) 단계가 성립하지 않는다. 다만
+그 과정에서 확인해 둘 것이 하나 나왔다: **`cold-backup` 은 지금 이 호스트에서 쓸 수 없고,
+쓸 수 있게 만드는 것은 두 줄짜리 YAML 변경이 아니다.** 채워진 `evidence_cold_backup.yaml`
+이 없고(`~/.local/state/tos/paper-ops` 자체가 없다), 로더는 `minimum_free_bytes` 의 null 을
+**거부**한다. 콜드 백업 런북 §2 는 기본값이 없는 것이 **결정**이라고 못박는다 — 「승인되지
+않은 한도를 결정된 값처럼 적지 않는다」. 즉 그 숫자는 **운영자가 정하는 값**이고, 에이전트가
+호스트 여유 공간을 보고 채워 넣을 자리가 아니다. 설정 없이 지금 당장 쓸 수 있는 백업 경로는
+§4-B 의 `backup-set --archive-dir --verify-dir --custody-root` 이며(쓰고 나서 되읽어 검증),
+이 플래그 셋은 현재 CLI 에 실재한다(`tos/runtime/src/tos_runtime/compose/cli.py` 의
+`backup-set` 파서).
 
 ## 4-B. 장 마감 뒤 압축 백업
 
