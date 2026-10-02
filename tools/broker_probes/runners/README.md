@@ -268,7 +268,7 @@ export P8_PRICE_OFFSET_PCT=10.0       # far from the touch: the order must REST
 export P8_POLL_MS=200
 export P8_PACE_S=1.1
 export P8_VISIBILITY_TIMEOUT_S=30
-export P8_INTER_TRIAL_S=1
+export P8_INTER_TRIAL_S=1            # seconds; digits and at most one '.'
 export P8_MAX_TRANSIENT_STOPS=2       # transport stops tolerated before giving up
 export P8_EXPECT_KEY_FP=<sha256(futures app key)[:12]>
 export P8_EXPECT_ACCOUNT_FP=<account_fingerprint(futures account no)>
@@ -297,12 +297,24 @@ P8_COEXISTENCE=<measured | not_measured>
 | token | what happened | the series |
 | --- | --- | --- |
 | `none` | the trial ran to its end (a REJECTED AMEND lands here — that is a replace-semantics observation) | continues |
-| `transient:transport` | two consecutive transport failures on the order-status GET, after one retry a whole poll interval apart | **continues**, up to `P8_MAX_TRANSIENT_STOPS` |
+| `transient:transport` | two consecutive transport failures on the **poll** GET (or a lost quote), after one retry a whole poll interval apart | **continues**, up to `P8_MAX_TRANSIENT_STOPS` |
 | `transient:ledger_throttle` | the same, for two consecutive `EGW00215` | **continues**, same budget |
+| `order_state_unknown` | a transport failure on the **submit or amend** — whether the broker accepted it is unknown | stops |
 | `rate_limited` | HTTP 429 or `EGW00201` — OUR call rate | stops |
 | `query_unanswered` | the open-order surface returned no `rt_cd=0` answer for the whole window | stops |
 | `rejected` | the broker refused the SUBMIT | stops |
 | anything else, or no line at all | a state the probe did not name | stops |
+
+The line between the first group and `order_state_unknown` is **"is an
+order's state unknown"**, not "was it a POST". A lost quote leaves nothing
+resting, so the next trial starts from a clean account. A lost submit or
+amend may have been accepted and be resting right now under an ODNO the probe
+never saw: before stopping, the probe walks the whole book and cancels
+anything live it cannot account for, recording the result in
+`measurements.unaccounted_live_orders` as `FOUND`, `NONE_FOUND` or
+`UNDETERMINED`. **Read that field before scheduling P-8 again** — the runner
+says so on its last line whenever such a stop happened. A walk that cannot
+answer cancels nothing and tells you to check by hand.
 
 A non-zero exit stops the series too, before the token is believed: the probe
 can print a clean verdict and still die writing the artifact, and then an
@@ -322,8 +334,14 @@ separate fields, so there is no field in which a transport stop and a
 rejection can be added together:
 
 ```
-VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n query_unanswered_stops=n transport_stops=n
+VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_stops=n query_unanswered_stops=n order_state_unknown_stops=n transport_stops=n
 ```
+
+`measured=n` counts only trials that actually produced a `coexistence_ms`. A
+trial whose amend was rejected, whose amend issued no new ODNO, or whose poll
+loop never got one `rt_cd=0` answer measured **nothing** — it prints
+`P8_COEXISTENCE=not_measured` and does not count toward N≥5, even though it
+did not stop.
 
 It then says in so many words whether `N>=5` was reached, because
 `capabilities.replace_semantics.mode` stays unwritten until five trials both

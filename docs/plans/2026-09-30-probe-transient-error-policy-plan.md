@@ -912,3 +912,86 @@ CI 의 P-8 테스트는 **한 파일**만 넘겨 red 가 됐다. 실측해 보�
 
 **최종 CI (`60378385`)**: `test` · `tos-gate` · `tos-firewall` · `ruff` · `lint` ·
 `type-check` · `backtest-extra` · `performance` — **8개 전부 pass**.
+
+#### 7.15.11 리뷰 처분 (PR #841 라운드 1 · 7건 · 기각 0)
+
+| # | 지적 | 처분 |
+|---|---|---|
+| F1 | 제출·정정 POST 의 전송 실패를 `transient:transport`(시리즈 계속)로 분류하는데 **주문 상태는 알 수 없다**. 책 조사도 없고 `_cleanup` 은 프로브가 본 ODNO 만 취소하므로, 브로커가 실제로 접수한 주문이 고아로 남은 채 러너가 계속 주문을 넣는다 | **수정.** 새 토큰 `order_state_unknown` 으로 **시리즈 중단** + 중단 전 책 전체 조사·미식별 live 행 취소 |
+| F2 | 폴이 **0회**인 창도 `stop=none`·`measured=True`·`coexistence_ms: 0.0` 으로 끝난다 — 이 PR 이 닫았다고 말한 바로 그 제조된 0 | **수정.** 측정 게이트를 `answered > 0` 으로 |
+| F3 | 정정이 **거부**돼도(새 ODNO 없음) `measured=True`·`coexistence_ms: 0.0` 이고 러너가 N≥5 에 센다 | **수정.** `replace_rejected` 또는 새 ODNO 없음이면 측정 없음·`measured=False` |
+| F4 | `transient` 서술이 「창이 안 흘렀다」고 단정하는데 **`can_retry` 가 존재하는 이유인 늦은 전송 오류**에서는 거짓이고, 커밋된 테스트는 그 경로를 타지 않는다(창 0 s) | **수정.** 창 문구를 **사실**에서 뽑고, `not_retried_because` 로 두 거절을 가르고, 실제 늦은-창 테스트 추가 |
+| F5 | 레이트리밋 중단은 브로커 증거를 **하나도** 안 남기는데 서술은 「retry_evidence 를 보라」고 한다. `_live_odno_keys` 도 같은 회귀 | **수정.** `coexistence_poll_rate_limited` 기록 + 걷기 증거에 `rt_cd`/`msg_cd`/`msg1`/`http_status` 복원 |
+| F6 | 새 폴 루프의 `rt_cd` 검사가 `str(x or '')` — 같은 PR 의 `call_evidence` 가 명시적으로 피한 falsy-zero 오분류 | **수정.** `common.rt_cd_of()` 한 벌, `call_evidence` 도 그것을 쓴다 |
+| F7 | `P8_INTER_TRIAL_S` 만 검증되지 않아 나쁜 값이면 `sleep` 이 실패하고 다음 트라이얼이 간격 없이 바로 나간다 | **수정.** 다른 수치와 같은 자리에서 검증 |
+
+**F1 이 가장 위험했고, 지적이 옳았다.** 수정 전 코드는 「POST 는 재시도하지 않는다」를
+**안전 조치**로 적었는데, 재시도하지 않는 것과 **결과를 모르는 것**은 다른 문제였다.
+`ReadTimeout` 이 말하는 것은 답이 오지 않았다는 것뿐이고, 브로커는 주문을 접수해 지금
+걸어두고 있을 수 있다 — 프로브가 본 적 없는 ODNO 로. 그러면 `odnos` 는 비어 있고
+`_cleanup` 은 아무것도 취소하지 않으며, 러너는 `transient:transport` 를 읽고 그 위에
+다음 주문을 올린다. **이 PR 이전에는 예외가 새어 rc 5 로 시리즈가 멈췄으므로, 이
+지점에 한해 내 수정이 원래 코드보다 느슨했다.**
+
+경계는 「POST 인가」가 아니라 **「주문의 상태를 모르는가」**다. 시세 조회는 GET 이고
+그 시점엔 아무것도 걸려 있지 않으므로 여전히 `transient:transport`(계속)다. 제출·정정은
+`order_state_unknown`(중단) 이고, 중단 **전에** `_cleanup_unaccounted` 가 `_cleanup`
+뒤에 돌아 책 전체를 걷고 이 시행이 설명할 수 없는 live 행을 취소한다. 세 결과를 전부
+`measurements.unaccounted_live_orders` 에 적는다 — `FOUND` · `NONE_FOUND` ·
+`UNDETERMINED`. 「걷기가 돌았고 책이 깨끗했다」와 「걷기가 없었다」는 다른 사실이고,
+전자만이 운영자에게 그만 찾아도 된다고 말한다. 답하지 못한 걷기는 **아무것도 취소하지
+않는다**(`_CLEANUP_LIVENESS_NOTE` 와 같은 극성).
+
+**F1 이 끌고 나온 것 하나 더 — 취소 ODNO 의 형태.** 고아 행은 **조회 표면**에서만
+보이는데, 조회는 공백 패딩이고 취소가 받아들여진 것으로 **측정된** 형태는 접수 응답의
+0 패딩이다(`P-8-20260928T000506Z:odno_wire_format`, 양쪽 길이 10). 접수 응답이 없는
+행이므로 `_cancellable_odno()` 가 행의 폭에 맞춰 0 으로 **재구성**하고, 관측된 형태와
+보낸 형태를 **둘 다** 아티팩트에 적는다 — 재구성이지 관측이 아니기 때문이다. 틀리면
+`_cancel_one` 이 `REJECTED_AND_STILL_LIVE` 로 시끄럽게 실패한다. ⚠ 이 과정에서
+**테스트 fake 가 조회 행을 11자로 패딩하고 있던 것**을 발견해 아티팩트대로 10자로
+고쳤다 — 폭이 틀린 fake 위에서는 재구성이 통과해도 아무것도 증명하지 못한다.
+
+**F2·F3 은 같은 구멍의 두 입구다.** 「멈추지 않았다」를 「측정했다」로 읽고 있었다.
+이제 셋 중 하나라도 해당하면 측정을 쓰지 않는다: 정정 거부 · 새 ODNO 없음 ·
+`answered == 0`. 그리고 셋 다 `stop=none` 이므로 **시리즈는 계속**한다 — 멈출 이유는
+아니고, 셀 이유도 아니다. 러너는 이미 `none`+`not_measured` 를 WARN 으로 말한다.
+
+**F4 는 §7.15.10 이 고친 것과 같은 형태가 한 겹 아래 남아 있던 것이다.** 창 문구를
+사유별 상수로 묶었더니 **같은 사유 안에서 사실이 갈리는 경우**를 놓쳤다. 이제 창 문구는
+`_window_note(elapsed, window_s)` 가 **런타임 사실**에서 뽑는다. 덤으로 `retry_once` 가
+`not_retried_because` 를 남겨 「두 번 연속 실패」와 「창이 이미 닫혀 거절」을 가른다 —
+둘 다 `retried: false` 였고, 링크 건강도를 세는 판독자가 그 둘을 더하면 안 된다.
+
+**수정 전 red 증명.** 리뷰 시점 HEAD(`a3f39ede`)에 새 테스트 파일만 얹어 돌렸다:
+**18건 red**. 일곱 지적 전부 최소 1건씩 덮는다.
+
+| 테스트 | `a3f39ede` 에서의 실패 |
+|---|---|
+| 잃어버린 제출이 시리즈를 멈추고 고아를 취소한다 | `assert 'transient:transport' == 'order_state_unknown'` |
+| 잃어버린 정정이 알려진 원본을 고아로 세지 않는다 | 같음 |
+| 답 못한 걷기는 취소 0 + 「손으로 확인」 | `KeyError: 'unaccounted_live_orders'` |
+| 열리지 않은 창은 아무것도 측정하지 않는다 | `assert 'coexistence_ms' not in {…}` |
+| 거부된 정정은 공존을 측정하지 않는다 | 같음 |
+| 늦은 전송 오류는 「창이 흘렀다」고 적는다 | skip 사유가 `did NOT elapse` |
+| 레이트리밋 중단이 가리키는 봉투를 남긴다 | `assert 0 == 1`(기록 0건) |
+| 숫자 `0` 인 `rt_cd` 는 건강한 답이다 | `assert 1 == 0`(답을 거부로 셈) |
+| `order_state_unknown` 이 시리즈를 멈춘다 | VERDICT 에 그 필드 없음 |
+| `P8_INTER_TRIAL_S` 검증 4건 | 가드 부재 |
+
+red 가 **아닌** 것 둘과 이유: `test_the_quote_phase_still_continues_because_nothing_is_resting`
+(시세 경로는 의도적으로 안 바뀐다 — 경계가 「POST 인가」가 아님을 고정하는 핀) ·
+`test_runner_accepts_a_plain_inter_trial_gap`(가드가 정상 값을 막지 않는지 보는 역방향).
+`test_a_transport_stop_is_still_the_one_that_continues` 는 red 지만 사유는 새 VERDICT
+필드의 부재이고, **「폴 전송 중단은 계속한다」는 행동 자체는 수정 전에도 옳았다** —
+F1 이 그것을 삼키지 않았는지 보는 핀이다.
+
+**라운드 1 게이트.**
+
+```
+.venv/bin/pytest (브로커 프로브 13파일) -p no:cacheprovider
+  → 701 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+ruff check tools/broker_probes tests/tools → All checks passed!
+black --check                              → unchanged
+bash -n ×3                                 → OK
+docker koalaman/shellcheck:stable --severity=warning, 각 파일 단독 3 + 쌍 2 → 전부 rc 0
+```
