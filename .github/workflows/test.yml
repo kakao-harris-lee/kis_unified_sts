@@ -215,6 +215,29 @@ jobs:
     runs-on: ubuntu-latest
     # Run on PRs to main and weekly schedule
     if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    # Backstop so a hung round cannot burn the 6h default. Measured on run
+    # 36953158113: the whole 5-round loop takes ~8s (round 1 ~3.1s cold, rounds
+    # 2-5 ~1.3s each), and the job end to end takes 92s including install.
+    timeout-minutes: 20
+
+    env:
+      # Each benchmark is measured PERF_ROUNDS times and the MEDIAN is compared,
+      # because one sample of this suite is not a measurement: re-running the
+      # job 10x on a fixed head gave test_entry_path_100_symbols a 3.1x spread
+      # (min 0.1217s / median 0.2755s / max 0.3800s) and 3 reds with identical
+      # code (#768). Almost all of that spread is the cold first round's setup
+      # phase, which the median drops. Raising this costs ~1.3s per extra round
+      # and shrinks only the within-job noise — all rounds share one runner.
+      PERF_ROUNDS: '5'
+      # Single source for the thresholds, so they are not copied between this
+      # job, the baseline workflow and the docs.
+      PERF_WARNING_THRESHOLD: '1.5'
+      PERF_ERROR_THRESHOLD: '2.0'
+      PERF_MIN_DURATION: '0.05'
+      # On a pull_request event github.sha is the ephemeral refs/pull/N/merge
+      # commit, which is garbage-collected after the merge. Provenance has to
+      # name a commit that still exists.
+      PERF_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     services:
       redis:
@@ -243,25 +266,66 @@ jobs:
           pip install -e ".[dev]"
           pip install prometheus-client pytest-json-report
 
-      - name: Run performance tests
+      - name: Run performance tests (${{ env.PERF_ROUNDS }} rounds)
+        # One pytest process per round: separate processes keep per-round state
+        # (import caches, allocator arenas) from making later rounds look faster
+        # than earlier ones, which would bias the median.
+        #
+        # A failing round does NOT stop the loop. Running N rounds multiplies the
+        # chance of hitting a flaky assertion by N, and a failure in round 3 must
+        # not throw away the measurement from rounds 1, 2, 4 and 5. The verdict
+        # on those failures belongs to the checker, which counts them per
+        # benchmark: a minority of failing rounds is a warning (one noisy sample
+        # of a timing assertion — the subject of #768), a majority is an error.
         run: |
-          pytest tests/performance/ -v -s --json-report --json-report-file=tests/performance/current.json
+          set -uo pipefail
+          mkdir -p tests/performance/rounds || exit 1
+          for round in $(seq 1 "$PERF_ROUNDS"); do
+            echo "::group::performance round $round/$PERF_ROUNDS"
+            pytest tests/performance/ -q -s \
+              --json-report \
+              --json-report-file="tests/performance/rounds/round-$round.json" \
+              || echo "::warning::performance round $round had a test failure"
+            echo "::endgroup::"
+          done
+          produced=$(ls tests/performance/rounds/round-*.json 2>/dev/null | wc -l)
+          echo "rounds with a report: $produced of $PERF_ROUNDS"
+          # pytest-json-report writes a report on every normal exit, collection
+          # errors included, so a MISSING file means the process died (OOM,
+          # segfault, timeout). That is a broken measurement, not a slow one.
+          # A report that exists but records an aborted session is caught by the
+          # checker, which reads pytest's exitcode and collectors.
+          if [ "$produced" -lt "$PERF_ROUNDS" ]; then
+            echo "only $produced of $PERF_ROUNDS rounds produced a report —"
+            echo "a round died before writing one; the measurement is incomplete"
+            exit 1
+          fi
         env:
           REDIS_URL: redis://localhost:6379/0
           ENVIRONMENT: test
 
       - name: Check for performance regressions
-        # Thresholds tuned for shared GitHub-hosted runner variance: only a
-        # >=2x slowdown fails the build; 1.5x-2x is an informational warning
-        # (non-fatal); tests under 50ms are exempt (their wall-clock ratios are
-        # noise-dominated). Baseline is regenerated on ubuntu-latest hardware.
+        # Thresholds tuned for shared GitHub-hosted runner variance and set in
+        # this job's env above: PERF_ERROR_THRESHOLD fails the build,
+        # PERF_WARNING_THRESHOLD is an informational warning (non-fatal), and a
+        # benchmark whose baseline median is below PERF_MIN_DURATION is exempt
+        # because its wall-clock ratio is noise-dominated. Exit 2 also covers a session that never ran: the
+        # checker reads each round report's pytest exitcode and collectors, so a
+        # collection error that writes `tests: []` in every round fails here
+        # instead of reporting 25 "Test not found" warnings and going green.
+        # The comparison is MEDIAN of PERF_ROUNDS rounds
+        # against the median of the baseline's rounds; --write-samples emits the
+        # aggregated sample arrays (n/median/min/max/sd + provenance) that the
+        # upload step publishes and that --write-baseline consumes.
         run: |
           python scripts/performance/check_regression.py \
             --baseline tests/performance/baselines.json \
-            --current tests/performance/current.json \
-            --warning-threshold 1.5 \
-            --error-threshold 2.0 \
-            --min-duration 0.05
+            --current tests/performance/rounds/round-*.json \
+            --write-samples tests/performance/current.json \
+            --markdown-summary "$GITHUB_STEP_SUMMARY" \
+            --warning-threshold "$PERF_WARNING_THRESHOLD" \
+            --error-threshold "$PERF_ERROR_THRESHOLD" \
+            --min-duration "$PERF_MIN_DURATION"
         continue-on-error: false
 
       - name: Upload performance report
@@ -269,5 +333,11 @@ jobs:
         if: always()
         with:
           name: performance-report
-          path: tests/performance/current.json
+          # current.json is the aggregated samples file; rounds/ holds the raw
+          # per-round pytest reports it was built from. Feed current.json to
+          # `check_regression.py --write-baseline` to propose a new baseline.
+          path: |
+            tests/performance/current.json
+            tests/performance/rounds/
           retention-days: 30
+

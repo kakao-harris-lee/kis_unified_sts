@@ -372,7 +372,9 @@ def test_guard_output_directory_that_is_not_ours_refuses(tmp_path: Path) -> None
         _render(out)
 
 
-def test_guard_render_leaves_the_repository_byte_identical(tmp_path: Path) -> None:
+def test_guard_render_leaves_the_repository_byte_identical(
+    tmp_path: Path, requires_repo_checkout: None
+) -> None:
     """Guard "렌더가 저장소에 아무것도 남기지 않는다" (design §2, review-795 HIGH-3).
 
     Runs the REAL CLI inside a throwaway ``git clone`` of this repository and asserts
@@ -382,6 +384,11 @@ def test_guard_render_leaves_the_repository_byte_identical(tmp_path: Path) -> No
 
     A mutation that removes the output-path check, or points the output inside the repo, makes
     new files appear here and turns this RED. The account used is the fake ``9999999999``.
+
+    ``requires_repo_checkout`` (``tests/conftest.py``) is the precondition: this needs a
+    clonable work tree, and the ``Dockerfile.test`` image deliberately has none. It skips
+    there and ONLY there — see ``tests/support/git_env.py`` for why a bare "no repo -> skip"
+    would have been a hole on the real gates (#835).
     """
     clone = tmp_path / "clone"
     subprocess.run(
