@@ -126,8 +126,13 @@ cd /home/deploy/project/kis_unified_sts
 
 ## 3. 부팅
 
+`$DATA` 는 **새 부팅이 처음부터 만드는** 디렉터리다(비어 있어도 된다 — `run` 이
+genesis 로 네 스토어를 만든다). **§4-A 는 이 변수를 쓰지 않는다** — 거기서는 이미 스토어가
+들어 있는 기존 corpus 를 운영자가 이름으로 지정하고, §4-A 가 자기 변수(`CORPUS`)를 따로
+묶는다. 비어 있는 디렉터리에 `migrate` 를 겨누면 **스토어가 새로 만들어진다**(§4-A 전제).
+
 ```bash
-DATA=~/.local/state/tos/paper-data          # 저장소 밖
+DATA=~/.local/state/tos/paper-data          # 저장소 밖 · 새 부팅용 (아직 없으면 만들어진다)
 mkdir -p "$DATA"
 PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
   'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
@@ -173,7 +178,12 @@ sqlite3 "$DATA/evidence.sqlite3" "SELECT COUNT(*) FROM entries WHERE kind='TIME_
 > **적용 범위 — 이 호스트에는 상주 paper data dir 이 없다 (2026-10-02 실측).** 위 §3 이
 > 예시로 쓰는 `~/.local/state/tos/paper-data` 는 **존재하지 않고**, 렌더된 설정
 > (`~/.config/tos/paper-config`)에는 data dir 키가 **아예 없다** — 그 경로는 `run --data-dir`
-> 인자일 뿐이라 설정에서 읽어 낼 것이 없다(`RENDERED.json` 도 좌표·digest 만 적는다).
+> 인자일 뿐이라 설정에서 읽어 낼 것이 없다. `RENDERED.json` 에도 **data dir 키가 없다** —
+> 거기 있는 키는 `account_fingerprint` · `activation_check` · `direction` · `instrument` ·
+> `journal_as_of_ms` · `journal_path` · `note` · `policy_digests` · `rendered_at_kst` ·
+> `rendered_keys` · `source_dir` · `source_revision` 이다. ⚠ 그중 `journal_path` 와
+> `source_dir` 는 **경로**지만 둘 다 상태 루트가 아니다(각각 렌더된 부팅증명 저널과 설정
+> 원본 디렉터리다) — data dir 로 오인하지 말 것.
 > 디스크에 실재하는 durable set 은 2026-09-27/28 부팅증명 캠페인이 만든 1회성 디렉터리
 > (`~/.local/state/tos/{realclock,t3}-*/data`)뿐이고, 그 뒤로 부팅된 적이 없다.
 > **새 `run` 은 genesis 로 곧장 v2 증거 저장소를 만든다.** 그러므로 이 절은 「새 배포」의
@@ -200,18 +210,54 @@ operator `migrate` CLI ... before booting; boot never auto-applies a migration
 압축본을 쓰고 **되읽어 검증**한다(`operations/backup_archive.verify_archive` — 계획 §2 A3).
 `backup-set` 도 런타임이 정지해 있어야 한다.
 
+⛔ **`migrate` 를 겨누기 전에 네 파일이 「이미」 있는지 확인한다 — 이것이 전제다.**
+`apply_migrations` 는 **존재 검사를 하지 않는다**: 바로 `sqlite3.connect(str(path))` 를
+부르므로 **없는 파일은 만들어진다**(`operations/schema_migrations.py`). 그래서 빈 디렉터리를
+가리키면 조용히 스토어 넷이 새로 생기고 **종료코드 0** 으로 끝난다. 실측(2026-10-02, 빈
+디렉터리):
+
+```
+migrate: evidence at <EMPTYDIR>/evidence.sqlite3 — applied v0 -> v2 (v1, v2)
+migrate: rcl at <EMPTYDIR>/rcl.sqlite3 — applied v0 -> v2 (v1, v2)
+migrate: inbox at <EMPTYDIR>/inbox.sqlite3 — applied v0 -> v1 (v1)
+migrate: marketfeed at <EMPTYDIR>/marketfeed.sqlite3 — applied v0 -> v1 (v1)
+```
+
+첫 줄은 이 절이 **「대장 이전 파일」의 서명**이라고 설명하는 바로 그 줄이다. 즉 **아무것도
+없는 곳에 만든 빈 스토어가 「마이그레이션된 예전 corpus」처럼 보인다** — 키도 세그먼트도
+증거도 없이. 그래서 대상은 §3 의 `$DATA`(새 부팅용, 비어 있을 수 있다)가 **아니라**
+운영자가 이름으로 지정한 **기존 corpus** 이고, 전제 검사를 먼저 돌린다:
+
 ```bash
-PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
-  'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
-  migrate --data-dir "$DATA" --store evidence
+# 운영자가 이름으로 지정한다 — 짐작하지 않는다 (위 「적용 범위」)
+CORPUS=/home/deploy/.local/state/tos/<operator-named-run>/data
+
+missing=""
+for f in evidence rcl inbox marketfeed; do
+  [ -s "$CORPUS/$f.sqlite3" ] || missing="$missing $f"
+done
+if [ -n "$missing" ]; then
+  echo "ABORT: $CORPUS 에 없는 스토어:$missing — migrate 를 돌리지 말 것" >&2
+else
+  PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c \
+    'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
+    migrate --data-dir "$CORPUS" --store evidence
+fi
 # v1 파일을 올릴 때:
 #   migrate: evidence at .../evidence.sqlite3 — applied v1 -> v2 (v2)
 # 이미 v2 인 파일에 다시 돌렸을 때:
 #   migrate: evidence at .../evidence.sqlite3 — already at v2, nothing to do
 ```
 
+아래 §4-A 의 나머지 `sqlite3 "$DATA/evidence.sqlite3" …` 확인 명령도 **같은 `$CORPUS`** 를
+가리켜 읽는다(읽기 전용 관용구는 §4-A-1).
+
 ⚠ 이 줄은 예전에 `"is current"` 였다. 리뷰 L3 이후 `migrate` 는 **서로 다른 세 결과**를
-구분해 출력한다 — `compose/cli.py::_migrate_report`. 아래 「롤포워드」의 출력 목록이 전부다.
+구분해 출력한다 — `compose/cli.py::_migrate_report`. 아래 「롤포워드」의 목록은 **`evidence`
+(목표 v2) 가 낼 수 있는 줄의 전부**이지, 명령 전체가 낼 수 있는 줄의 전부가 아니다 —
+`--store` 를 생략하면 스토어마다 **목표 버전이 달라서** 같은 템플릿의 숫자가 바뀐다
+(`inbox`·`marketfeed` 는 목표가 v1 이다). 스토어별 실측 출력은 §4-A-1 에 있다.
+**그러므로 그 일곱 줄을 리터럴로 비교하는 점검을 쓰지 말 것** — 템플릿으로 읽는다.
 
 **검증은 세 가지를 모두 본다.** 인덱스 이름 하나만 보는 것으로는 부족하다 —
 `user_version` 이 안 올라갔으면 다음 부팅이 거부되고, 대장 행이 없으면 「언제 적용됐나」가
@@ -308,13 +354,32 @@ sqlite 내부 공백이 다르고 `PRAGMA table_info` 는 동일 — 테스트�
 아니다). 부팅은 이 인덱스를 **절대 만들지 않는다** — 생성은 신규 파일의 genesis 와 `migrate`
 뿐이라, 위 롤백이 다음 부팅에 조용히 덮이지 않는다.
 
-### 4-A-1. 실행 기록 — 2026-10-02 dry-run (실 저장소 미변경)
+### 4-A-1. 실행 기록 — 2026-10-02 dry-run (사본에서 실행 · 실 corpus 본체 불변)
 
-운영자 판정은 **「마이그레이션할 대상이 없다」** 였다(위 「적용 범위」). 그래서 실 durable
-set 은 **한 바이트도 건드리지 않았다.** 대신 가장 최근 부팅증명 corpus
-(`~/.local/state/tos/realclock-20260928T110001-LONG/data`, 2026-09-28 11:15 KST)의 **사본**에
-실제 `migrate` 를 돌려 이 절의 절차와 판정 기준을 검증했다. 실행은 분리 워크트리
-(`origin/main` `ef4009a51d21`)에서 했고 종료코드는 `0` 이다.
+운영자 판정은 **「마이그레이션할 대상이 없다」** 였다(위 「적용 범위」). 그래서 실 corpus 에는
+`migrate` 를 돌리지 않았고, 대신 **사본**에 돌려 이 절의 절차와 판정 기준을 검증했다. 실행은
+분리 워크트리(`origin/main` `ef4009a51d21`)에서 했고 종료코드는 `0` 이다.
+
+**대상 corpus.** `~/.local/state/tos/realclock-20260928T110001-LONG/data` —
+**부팅 2026-09-28 11:00:01 KST · 정지 11:15:04 KST**(같은 디렉터리의 `report.json` 의
+`started_kst`/`ended_kst`. 디렉터리 이름의 숫자는 **부팅 시각**이고, 파일 mtime 은 **정지
+시각**이다 — 한 값으로 뭉치면 다른 런으로 오인된다).
+⚠ **이 corpus 는 지금 A1 증거 스캔 캠페인의 살아 있는 `--reference` 파일이다**
+(`tools/tos_evidence_scan_bench.py`). 언젠가 이것을 **실제로** 마이그레이션한다면 — §4-A 가
+이제 바로 그 경우를 위한 절차라고 적고 있으므로 — 그 리더가 멎은 뒤에 해야 한다.
+§4-A 의 「구 코드 프로세스 전부 정지」 전제는 `backup-set` 이 **기계적으로 탐지하지 못하는**
+전제다(그 함수의 문서화된 한계). 확인은 손으로 한다: `fuser -v <corpus>/*.sqlite3`.
+
+**사본 뜨는 법 (WAL 이라서 중요하다).** 여기서는 `cp` 로 네 파일을 떴고, 그게 안전했던 이유는
+**이 corpus 의 `-wal` 이 전부 0 바이트**였기 때문이다 — 그 조건이 아니면 `cp evidence.sqlite3`
+는 **커밋된 행을 조용히 흘린다**(WAL 에만 있고 본체에 아직 없는 꼬리). 그러면 사본끼리는
+`COUNT(*)` 도 `chain_digest` 도 서로 일치하므로 **표가 맞아 보이는데 원본과 다르다**. 조건에
+기대지 않는 관용구를 쓴다:
+
+```bash
+sqlite3 "file:$CORPUS/evidence.sqlite3?mode=ro" ".backup '$COPY/evidence.sqlite3'"
+# 또는: 본체와 함께 -wal 도 같이 복사한다 (-shm 은 재생성되므로 불필요)
+```
 
 `--store` 없이 돌린 stdout 전문(경로만 `<copy>` 로 줄였다):
 
@@ -340,6 +405,54 @@ migrate: marketfeed at <copy>/marketfeed.sqlite3 — already at v1, nothing to d
 `sqlite_master` 는 위 기대 목록 8개와 **글자 그대로 일치**했다. append-only 트리거 네 개는
 **전후 모두** 있었고, 그래서 `rebuilt …` 줄이 나오지 않았다 — 이 corpus 는 2026-10-02 이전
 `migrate` 가 남긴 「대장은 있는데 트리거가 없는」 파일이 **아니다**.
+
+#### 조사가 실 corpus 에 남긴 것 — 「한 바이트도 안 건드렸다」는 틀렸다
+
+이 기록의 1차 판은 실 durable set 을 **「한 바이트도 건드리지 않았다」**고 적었다. **그 문장은
+거짓이었다.** 어느 corpus 가 v1 인지 세는 조사 자체가 **라이브 파일을 열었고**, 열린 흔적이
+남았다. 정정해서 적는다 — 무엇이 불변이고 무엇이 아닌지 따로.
+
+**본체 네 파일은 바뀌지 않았다.** 열두 corpus 전부 `*.sqlite3` 의 **mtime 과 크기가
+2026-09-27/28 그대로**다. 독립 대조도 있다: 이 corpus 의 `report.json` 이 **2026-09-28 정지
+시점에** 적어 둔 `evidence_by_kind` 의 합이 **2824** 이고, 오늘 센 `COUNT(*)` 와 같다 —
+조사보다 먼저 쓰인 기록이라 조사의 영향을 받지 않는다. ⚠ 다만 **조사 전 sha256 기준선은
+뜨지 않았다**. 그래서 바이트 동일성은 해시로 **증명된 것이 아니라** mtime·크기·행 수·
+`chain_digest` 네 가지가 일치한다는 **정황**이다. 다음 조사는 먼저 해시를 뜬다.
+
+**사이드카는 생겼다.** `-shm` 의 mtime 이 조사 루프 두 번과 초 단위로 맞는다 —
+`inbox`/`marketfeed`/`rcl` 은 **15:48:02**, `evidence` 는 **15:55:17**(둘 다 2026-10-02 KST,
+열두 디렉터리를 훑은 두 루프). `-wal` 의 mtime 은 원래 런(2026-09-27/28) 아니면 **13:05**
+이고 **조사보다 앞선다** — 그 시각의 접근은 이 조사가 아니다. 즉 이 조사가 확실히 쓴 것은
+**`-shm`** 이고, 사이드카가 **없던** 디렉터리였다면 **만들었을 것**이다(아래 실측).
+
+⚠ **`mode=ro` 로는 부족하다. 조사는 이미 `mode=ro` 를 쓰고 있었다.** 읽기 전용 연결도 WAL
+인덱스를 쓰기로 열기 때문에 `-shm` 이 생긴다. 2026-10-02 실측(사이드카 없는 사본):
+
+```bash
+sqlite3 "file:$P?mode=ro"               "PRAGMA user_version;"   # → .sqlite3-shm, -wal 생성됨
+sqlite3 "file:$P?mode=ro&immutable=1"   "PRAGMA user_version;"   # → 아무것도 생기지 않음
+```
+
+**그러므로 실 corpus 를 조사할 때의 관용구는 `immutable=1` 이다:**
+
+```bash
+for d in ~/.local/state/tos/*/data; do
+  for f in evidence inbox marketfeed rcl; do
+    [ -f "$d/$f.sqlite3" ] || continue
+    printf '%s %s=' "$(basename "$(dirname "$d")")" "$f"
+    sqlite3 "file:$d/$f.sqlite3?mode=ro&immutable=1" "PRAGMA user_version;"
+  done
+done
+```
+
+`immutable=1` 은 **파일이 바뀌지 않는다고 sqlite 에 약속하는 것**이므로, 쓰고 있는 런타임이
+붙어 있는 파일에는 쓰지 않는다(그때는 애초에 조사할 때가 아니다 — §4-A 전제).
+
+**남은 사이드카는 치우지 않았다.** `-shm` 은 32768 B 라 「빈 파일」이 아니고, 0 B 인 `-wal`
+은 **이 조사보다 먼저 있던 것**이다. 즉 지울 자격이 있는 파일과 이 조사가 만든 파일이
+서로 다르다. 무해하지만(둘 다 캐시·저널이고 다음 open 이 재생성한다) 실 paper 상태를
+건드리는 삭제라, **운영자 지시 없이는 하지 않는다.** 치울 때의 조건은 하나다 —
+`fuser -v <corpus>/*.sqlite3` 가 비어 있을 것.
 
 **백업 세대는 뜨지 않았다** — 실 파일을 바꾸지 않았으므로 (0) 단계가 성립하지 않는다. 다만
 그 과정에서 확인해 둘 것이 하나 나왔다: **`cold-backup` 은 지금 이 호스트에서 쓸 수 없고,
