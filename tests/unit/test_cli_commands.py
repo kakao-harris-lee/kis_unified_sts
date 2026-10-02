@@ -737,30 +737,24 @@ class TestHealthCommand:
         # Should show connection error or not installed
         assert result.exit_code in (0, 1)
 
-    def test_dotenv_dashboard_port_is_loaded_before_cli_defaults(self, tmp_path):
-        """Dashboard URL defaults honor DASHBOARD_HOST_PORT from ``.env``.
-
-        The invariant is ordering: ``cli/commands/common.py`` must load
-        ``.env`` *before* the command modules capture ``DEFAULT_DASHBOARD_URL``
-        as a Click default. Move the load below the capture and every default
-        here falls back to 5081 while the ``.env`` says 5999.
-
-        The ``.env`` goes in the working directory, which
-        ``load_project_dotenv`` prefers over the checkout's, so the test reads
-        the same file whether or not the checkout running it has one of its
-        own (#698).
-        """
-        (tmp_path / ".env").write_text("DASHBOARD_HOST_PORT=5999\n")
-
-        defaults = _url_defaults(tmp_path, hermetic=False)
-
-        assert set(defaults.values()) == {"http://localhost:5999"}
-
     def test_hermetic_session_leaves_cli_defaults_at_the_static_port(self, tmp_path):
         """The hermetic switch reaches the real CLI, not just the loader.
 
-        Same layout as the test above, with ``KIS_TEST_HERMETIC`` set: the
-        ``.env`` is right there and no part of it reaches the Click defaults.
+        A canary ``.env`` sits in the subprocess's working directory — one of
+        the two paths ``load_project_dotenv`` reads — and
+        ``KIS_TEST_HERMETIC`` is set: nothing from it reaches the Click
+        defaults. Host-independent in both directions, because the switch
+        makes the loader read nothing at all, so it does not matter whether
+        the checkout running the suite has a ``.env`` of its own.
+
+        The ordering half of the invariant — ``.env`` read *before* the
+        command modules capture ``DEFAULT_DASHBOARD_URL`` — is proven against
+        a temp checkout the test fully controls, in
+        ``tests/unit/config/test_dotenv_hermeticity.py``
+        (``test_checkout_dotenv_still_loads_outside_tests``). It cannot be
+        proven here: the real ``cli.main``'s checkout is this repository, and
+        the checkout's ``.env`` wins, so no test can put a known file where
+        this loader will prefer it (#698).
         """
         (tmp_path / ".env").write_text("DASHBOARD_HOST_PORT=5999\n")
 

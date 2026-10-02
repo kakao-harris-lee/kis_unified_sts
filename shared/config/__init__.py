@@ -13,6 +13,13 @@ Usage:
 """
 
 from shared.config.base import ServiceConfigBase
+from shared.config.dotenv_guard import (
+    HERMETIC_ENV,
+    TRUTHY_VALUES,
+    env_flag,
+    hermetic_mode_enabled,
+    load_project_dotenv,
+)
 from shared.config.loader import (
     ConfigError,
     ConfigLoader,
@@ -29,6 +36,12 @@ from shared.config.secrets import SecretsManager, require_secret
 __all__ = [
     # Base
     "ServiceConfigBase",
+    # .env loading (single truthy set for every env flag — #698)
+    "HERMETIC_ENV",
+    "TRUTHY_VALUES",
+    "env_flag",
+    "hermetic_mode_enabled",
+    "load_project_dotenv",
     # Loader
     "ConfigLoader",
     "ConfigError",

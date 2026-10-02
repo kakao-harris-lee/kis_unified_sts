@@ -31,19 +31,14 @@ class TestPathTraversalPrevention:
         with pytest.raises(ConfigError, match="Path traversal"):
             ConfigLoader.load("%2E%2E%2F%2E%2E%2Fetc/passwd")
 
-    def test_valid_nested_path_allowed(self, tmp_path):
+    def test_valid_nested_path_allowed(self, config_dir):
         """정상적인 중첩 경로는 허용"""
-        # 임시 테스트 설정 디렉토리 생성
-        config_dir = tmp_path / "config"
         strategies_dir = config_dir / "strategies" / "stock"
         strategies_dir.mkdir(parents=True)
 
         # 테스트 YAML 파일 생성
         test_file = strategies_dir / "test.yaml"
         test_file.write_text("strategy:\n  name: test\n  enabled: true\n")
-
-        # ConfigLoader 설정 디렉토리 변경
-        ConfigLoader.set_config_dir(config_dir)
 
         # Path traversal 에러가 발생하지 않아야 함
         try:
@@ -92,10 +87,8 @@ class TestExistsPathTraversal:
         result = ConfigLoader.exists("/etc/passwd")
         assert result is False
 
-    def test_exists_valid_path_allowed(self, tmp_path):
+    def test_exists_valid_path_allowed(self, config_dir):
         """exists() should allow valid nested paths"""
-        # 임시 테스트 설정 디렉토리 생성
-        config_dir = tmp_path / "config"
         strategies_dir = config_dir / "strategies" / "stock"
         strategies_dir.mkdir(parents=True)
 
@@ -103,20 +96,12 @@ class TestExistsPathTraversal:
         test_file = strategies_dir / "test.yaml"
         test_file.write_text("strategy:\n  name: test\n")
 
-        # ConfigLoader 설정 디렉토리 변경
-        ConfigLoader.set_config_dir(config_dir)
-
         # 정상 경로는 True 반환
         result = ConfigLoader.exists("strategies/stock/test.yaml")
         assert result is True
 
-    def test_exists_nonexistent_valid_path(self, tmp_path):
+    def test_exists_nonexistent_valid_path(self, config_dir):
         """exists() should return False for valid but nonexistent paths"""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir(parents=True)
-
-        ConfigLoader.set_config_dir(config_dir)
-
         # 존재하지 않지만 유효한 경로는 False 반환
         result = ConfigLoader.exists("strategies/nonexistent.yaml")
         assert result is False

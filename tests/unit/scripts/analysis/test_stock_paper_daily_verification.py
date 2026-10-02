@@ -809,12 +809,16 @@ def test_active_verdict_still_fails_operational_gates():
 def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
     tmp_path, monkeypatch
 ):
-    # The helper is a no-op during a hermetic pytest session (#698). This test
-    # covers the standalone-run path instead, so it turns the switch off and
-    # runs from a temp working directory, which the bounded loader prefers
-    # over the checkout's own .env and the session's dotenv guard allows.
+    # The helper is a no-op during a hermetic pytest session (#698). This
+    # test covers the standalone-run path instead, so it turns the switch off
+    # and makes tmp_path the loader's checkout. Pointing the *working
+    # directory* at tmp_path would not do: the checkout's own .env wins, so on
+    # a checkout that has one (the deploy host) this would read that file
+    # instead and the test would depend on which machine ran it.
+    from shared.config import dotenv_guard
+
     monkeypatch.delenv("KIS_TEST_HERMETIC", raising=False)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(dotenv_guard, "_CHECKOUT_ROOT", tmp_path)
     # setenv first so monkeypatch records the variable and removes it at
     # teardown; a bare delenv of an unset name records nothing, and the value
     # the loader writes below would outlive the test.

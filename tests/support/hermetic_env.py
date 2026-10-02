@@ -61,6 +61,7 @@ __all__ = [
     "is_sandboxed",
     "sandbox_roots",
     "scrub_broker_env",
+    "register_sandbox_root",
     "snapshot_token_caches",
     "token_cache_witnesses",
     "token_caches_touched_since",
@@ -124,14 +125,22 @@ def scrub_broker_env(
 # ---------------------------------------------------------------------------
 
 
-def token_cache_witnesses(project_root: Path) -> tuple[Path, ...]:
-    """Every place a stray KIS token cache could land during a test run.
+def token_cache_witnesses(
+    project_root: Path, token_cache_dir: Path | None = None
+) -> tuple[Path, ...]:
+    """Every place a KIS token cache could land during a test run.
 
     The checkout root and the working directory because
     ``KISAuthConfig.token_cache_path`` defaults to ``Path.cwd()``; the home
-    cache because two collectors hardcode ``~/.cache/kis_token_*.json``.
+    cache because two collectors hardcode ``~/.cache/kis_token_*.json``; and
+    the session's pinned ``KIS_TOKEN_CACHE_DIR``, because pinning decides
+    *where* a token lands, not whether one is issued — a test that reaches the
+    KIS token endpoint is the thing #698 is about, and it would otherwise
+    write there unobserved.
     """
     roots = [project_root]
+    if token_cache_dir is not None:
+        roots.append(token_cache_dir)
     try:
         cwd = Path.cwd()
     except OSError:  # pragma: no cover - cwd deleted under us
@@ -173,12 +182,37 @@ def token_caches_touched_since(snapshot: TokenCacheSnapshot) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+#: Extra roots registered once pytest's config exists. The guard is installed
+#: at conftest *import* time, before `--basetemp` has been parsed, so the set
+#: is read lazily on every check rather than frozen at install.
+_REGISTERED_SANDBOX_ROOTS: list[Path] = []
+
+
+def register_sandbox_root(path: Path | str | None) -> None:
+    """Add a directory the session may read a ``.env`` from.
+
+    ``tests/conftest.py`` calls this from ``pytest_configure`` with
+    ``--basetemp``. Without it, ``pytest --basetemp=./.pytest-tmp`` (common
+    when inspecting outputs) puts every ``tmp_path`` inside the checkout, and
+    the guard then refuses the suite's own fixture files.
+    """
+    if path is None:
+        return
+    candidate = Path(path)
+    try:
+        resolved = candidate.resolve()
+    except OSError:  # pragma: no cover - unreadable path
+        return
+    if resolved not in _REGISTERED_SANDBOX_ROOTS:
+        _REGISTERED_SANDBOX_ROOTS.append(resolved)
+
+
 def sandbox_roots() -> tuple[Path, ...]:
     """Directories a hermetic test session may read a ``.env`` from.
 
     The system temp directory covers pytest's ``tmp_path``/``tmp_path_factory``
-    and the session's own scratch dirs. ``PYTEST_DEBUG_TEMPROOT`` is honoured
-    because it relocates exactly those.
+    in its default location; ``PYTEST_DEBUG_TEMPROOT`` and anything passed to
+    :func:`register_sandbox_root` cover the relocated ones.
     """
     roots = [Path(tempfile.gettempdir())]
     debug_temproot = os.environ.get("PYTEST_DEBUG_TEMPROOT")
@@ -190,7 +224,8 @@ def sandbox_roots() -> tuple[Path, ...]:
             resolved.append(root.resolve())
         except OSError:  # pragma: no cover - unreadable temp root
             continue
-    return tuple(resolved)
+    resolved.extend(_REGISTERED_SANDBOX_ROOTS)
+    return tuple(dict.fromkeys(resolved))
 
 
 def is_sandboxed(path: Path) -> bool:
@@ -276,14 +311,25 @@ def _rebind_early_importers(
     raw one. Sweeping ``sys.modules`` once catches those bindings.
     """
     for module in list(sys.modules.values()):
-        if module is None or getattr(module, "__name__", "").startswith("dotenv"):
+        if module is None:
+            continue
+        try:
+            namespace = vars(module)
+        except TypeError:  # pragma: no cover - exotic module object
+            continue
+        if str(namespace.get("__name__", "")).startswith("dotenv"):
             continue
         for name, original in originals.items():
-            try:
-                if getattr(module, name, None) is original:
+            # `name in vars(module)` rather than getattr: a package with a
+            # module-level __getattr__ (lazy_loader, scipy/numpy shims,
+            # six.moves) would otherwise run its import path three times per
+            # module, during conftest import, with the cost hidden by the
+            # except below.
+            if name in namespace and namespace[name] is original:
+                try:
                     setattr(module, name, guards[name])
-            except Exception:  # pragma: no cover - exotic module __getattr__
-                continue
+                except Exception:  # pragma: no cover - read-only module
+                    continue
 
 
 def install_dotenv_guard() -> Callable[[], None]:

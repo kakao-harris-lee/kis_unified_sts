@@ -189,8 +189,8 @@ def test_nested_checkout_never_reads_the_outer_env(tmp_path):
     assert seen["dashboard_url"] == "http://localhost:5081"
 
 
-def test_candidates_are_only_the_working_directory_and_the_checkout(tmp_path):
-    """Nothing above either directory is ever a candidate."""
+def test_candidates_are_only_the_checkout_and_the_working_directory(tmp_path):
+    """Nothing above either directory is ever a candidate, checkout first."""
     outer = tmp_path / "primary"
     _write_canary_env(outer / ".env", CANARY_PORT)
     checkout = _make_checkout(outer / "worktree")
@@ -200,8 +200,8 @@ def test_candidates_are_only_the_working_directory_and_the_checkout(tmp_path):
     seen = _run_probe(checkout, cwd=workdir)
 
     assert seen["candidates"] == [
-        str(workdir / ".env"),
         str(checkout / ".env"),
+        str(workdir / ".env"),
     ]
 
 
@@ -228,15 +228,30 @@ def test_checkout_dotenv_still_loads_outside_tests(tmp_path):
     assert seen["KIS_APP_KEY"] is None
 
 
-def test_working_directory_dotenv_wins_over_the_checkout(tmp_path):
-    """Running from a directory with its own .env keeps working.
+def test_checkout_dotenv_wins_over_the_working_directory(tmp_path):
+    """Another project's directory must not supply this project's config.
 
-    This is the pre-#698 ``python -c`` behavior, and it is what lets the
-    CLI tests below fix which file the loader reads without depending on
-    whether the checkout running the suite has a ``.env`` of its own.
+    Thirteen scripts replaced in #698 called ``load_dotenv(REPO_ROOT/".env")``
+    — cwd-independent by construction. Running one of them from another
+    project's directory on this host must still load *this* checkout's file,
+    not that project's.
     """
     checkout = _make_checkout(tmp_path / "checkout")
-    (checkout / ".env").write_text(f"DASHBOARD_HOST_PORT={CANARY_PORT}\n")
+    (checkout / ".env").write_text(f"DASHBOARD_HOST_PORT={CHECKOUT_PORT}\n")
+    foreign = tmp_path / "other-project"
+    foreign.mkdir()
+    _write_canary_env(foreign / ".env", CANARY_PORT)
+
+    seen = _run_probe(checkout, cwd=foreign)
+
+    assert seen["loaded"] == str(checkout / ".env")
+    assert seen["dashboard_url"] == f"http://localhost:{CHECKOUT_PORT}"
+    assert seen["KIS_APP_KEY"] is None
+
+
+def test_working_directory_dotenv_loads_when_the_checkout_has_none(tmp_path):
+    """The working directory is a fallback, not a loss of function."""
+    checkout = _make_checkout(tmp_path / "checkout")
     workdir = tmp_path / "workdir"
     workdir.mkdir()
     (workdir / ".env").write_text(f"DASHBOARD_HOST_PORT={CHECKOUT_PORT}\n")
@@ -537,3 +552,66 @@ def test_live_infra_gate_never_pings_redis_in_a_hermetic_session(
     """
     assert hermetic_session_state.live_infra_enabled is False
     assert hermetic_session_state.redis_probed() is False
+
+
+# ---------------------------------------------------------------------------
+# --basetemp: the sandbox is where pytest actually puts tmp_path
+# ---------------------------------------------------------------------------
+
+
+@requires_hermetic_session
+def test_basetemp_outside_the_system_temp_dir_must_be_registered(tmp_path, monkeypatch):
+    """A relocated basetemp is not sandboxed until the session registers it.
+
+    ``pytest --basetemp=./.pytest-tmp`` puts every ``tmp_path`` inside the
+    checkout. Without registration the guard then refuses the suite's own
+    fixture files — the dotenv tests below, and
+    ``test_load_repo_env_uses_repo_dotenv_without_overriding_existing``.
+
+    The system temp dir is faked so the assertion is not vacuous: under the
+    real one, ``tmp_path`` is already sandboxed and this would pass without
+    testing anything.
+    """
+    fake_system_tmp = tmp_path / "system-tmp"
+    fake_system_tmp.mkdir()
+    monkeypatch.setattr(
+        hermetic_env.tempfile, "gettempdir", lambda: str(fake_system_tmp)
+    )
+    monkeypatch.setattr(hermetic_env, "_REGISTERED_SANDBOX_ROOTS", [])
+    monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+
+    relocated = tmp_path / "in-checkout-basetemp"
+    relocated.mkdir()
+    env_file = relocated / "sub" / ".env"
+    env_file.parent.mkdir()
+    env_file.write_text("KIS_TEST_BASETEMP_PROBE=1\n")
+
+    assert hermetic_env.is_sandboxed(env_file) is False
+
+    hermetic_env.register_sandbox_root(relocated)
+
+    assert hermetic_env.is_sandboxed(env_file) is True
+    assert relocated.resolve() in hermetic_env.sandbox_roots()
+
+
+@requires_hermetic_session
+def test_register_sandbox_root_ignores_none_and_deduplicates(monkeypatch):
+    """`pytest_configure` passes `--basetemp` straight through, usually None."""
+    monkeypatch.setattr(hermetic_env, "_REGISTERED_SANDBOX_ROOTS", [])
+
+    hermetic_env.register_sandbox_root(None)
+    assert hermetic_env._REGISTERED_SANDBOX_ROOTS == []
+
+    hermetic_env.register_sandbox_root("/")
+    hermetic_env.register_sandbox_root("/")
+    assert len(hermetic_env._REGISTERED_SANDBOX_ROOTS) == 1
+
+
+@requires_hermetic_session
+def test_this_session_registered_its_basetemp(request):
+    """When this run uses --basetemp, the session must have registered it."""
+    basetemp = getattr(request.config.option, "basetemp", None)
+    if basetemp is None:
+        pytest.skip("this run did not pass --basetemp")
+
+    assert hermetic_env.is_sandboxed(Path(basetemp))

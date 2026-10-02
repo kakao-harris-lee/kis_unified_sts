@@ -133,7 +133,7 @@ if HERMETIC_SESSION:
     hermetic_env.install_dotenv_guard()
 
     TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
-        hermetic_env.token_cache_witnesses(project_root)
+        hermetic_env.token_cache_witnesses(project_root, TOKEN_CACHE_DIR)
     )
 else:
     # Live-infra opt-in: the operator asked for real Redis and friends, so this
@@ -222,6 +222,44 @@ def pytest_configure(config):
     if project_root_str in sys.path:
         sys.path.remove(project_root_str)
     sys.path.insert(0, project_root_str)
+
+    # The dotenv guard is installed at import time, before --basetemp has been
+    # parsed, so tell it now where tmp_path actually lives. Without this,
+    # `pytest --basetemp=./.pytest-tmp` puts every fixture file inside the
+    # checkout and the guard refuses the suite's own .env fixtures (#698).
+    hermetic_env.register_sandbox_root(getattr(config.option, "basetemp", None))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the session if any test issued or rewrote a KIS token cache.
+
+    A plain test only observes files touched before it happens to run, and
+    under ``-n auto`` it lands mid-session on one worker — every test
+    scheduled after it goes unchecked. The verdict therefore belongs here,
+    after the last item on this worker, where it covers the whole run.
+
+    Comparison against the session-start snapshot, never an absence check:
+    the primary checkout legitimately holds ``.kis_token_real`` (2026-07-08)
+    and ``.kis_token_mock`` (2026-06-09) from ordinary host ``sts`` runs,
+    because the default cache directory is ``Path.cwd()`` (#698).
+    """
+    if not HERMETIC_SESSION or not TOKEN_CACHE_SNAPSHOT:
+        return
+
+    touched = hermetic_env.token_caches_touched_since(TOKEN_CACHE_SNAPSHOT)
+    if not touched:
+        return
+
+    message = (
+        "KIS token cache written during the test session: "
+        + ", ".join(str(path) for path in touched)
+        + " — a test reached the KIS token endpoint, or wrote a cache where "
+        "nothing should (#698)."
+    )
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:  # pragma: no branch - always present in practice
+        reporter.write_line(f"ERROR: {message}", red=True)
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_collection_modifyitems(config, items):
@@ -369,6 +407,35 @@ def _clean_prometheus_registry():
             if id(collector) in collectors_to_remove:
                 with suppress(Exception):
                     REGISTRY.unregister(collector)
+
+
+@pytest.fixture
+def config_dir(tmp_path, monkeypatch):
+    """A temp config directory that BOTH the loader and the env var name.
+
+    Setting only ``ConfigLoader.set_config_dir(tmp)`` is no longer enough.
+    The hermetic session pins ``KIS_CONFIG_DIR`` to ``<checkout>/config``, and
+    ``ServiceConfigBase.from_yaml`` snaps the loader back to that env var
+    whenever the two disagree (``shared/config/base.py``). A test that sets
+    only the programmatic half therefore reads the real ``config/foo.yaml``
+    instead of its own fixture — passing or failing for the wrong reason.
+    Before the pin, ``KIS_CONFIG_DIR`` was unset in CI and the programmatic
+    dir won, so the two halves agreed by accident (#698 round-2 review).
+
+    Yields the directory, already created.
+    """
+    from shared.config.loader import ConfigLoader
+
+    path = tmp_path / "config"
+    path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KIS_CONFIG_DIR", str(path))
+    ConfigLoader.set_config_dir(path)
+
+    yield path
+
+    ConfigLoader._instance = None
+    ConfigLoader._config_dir = None
+    ConfigLoader._cache.clear()
 
 
 @pytest.fixture(autouse=True)

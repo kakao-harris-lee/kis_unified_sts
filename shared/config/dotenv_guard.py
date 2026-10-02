@@ -15,8 +15,8 @@ token being issued and cached as ``.kis_token_real`` inside the worktree
 Two rules close that hole, and both live here so every entrypoint gets them:
 
 1. **Never walk above the checkout.** :func:`load_project_dotenv` looks at
-   exactly two paths — ``<cwd>/.env`` and ``<checkout>/.env`` — and loads the
-   first that exists. Neither can escape into a parent checkout.
+   exactly two paths — ``<checkout>/.env`` first, then ``<cwd>/.env`` — and
+   loads the first that exists. Neither can escape into a parent checkout.
 2. **Honour the hermetic switch.** While :data:`HERMETIC_ENV` is set to a
    truthy value this module loads nothing at all. ``tests/conftest.py`` sets it
    for the whole pytest session, so a test process never injects a ``.env``
@@ -84,26 +84,24 @@ def project_root() -> Path:
 def project_dotenv_candidates() -> tuple[Path, ...]:
     """The only files :func:`load_project_dotenv` will ever read, in order.
 
-    The working directory's ``.env`` wins over the checkout's, and no ancestor
-    directory is consulted at all.
+    **The checkout's own ``.env`` wins**, and the working directory's is a
+    fallback for when the checkout has none. No ancestor directory is
+    consulted at all.
 
-    Both orders existed before #698, chosen by invocation style:
-    ``find_dotenv()`` walked from the *calling file* for a normal script run
-    (reaching the checkout) and from the *working directory* under ``python
-    -c`` / a REPL / a debugger. Every real invocation runs from the checkout
-    root — compose sets ``working_dir`` to it, the cron wrappers ``cd`` to it —
-    so the two candidates are the same file there and the order is only
-    visible when someone runs the CLI from somewhere else with a ``.env`` of
-    their own. Preferring that file keeps the pre-#698 ``python -c`` behavior
-    and, unlike the reverse, lets a test fix which file the loader reads
-    without depending on whether the checkout running it has a ``.env``.
+    The order is not arbitrary. Thirteen scripts replaced in #698 previously
+    called ``load_dotenv(REPO_ROOT / ".env")`` — one file, chosen without
+    reference to the working directory. Preferring the working directory would
+    silently change them: running ``python scripts/verify_backtest_data.py``
+    from another project's directory on this host would load *that* project's
+    ``.env`` and skip this checkout's entirely, so the script would run with
+    missing or wrong credentials rather than its own. The checkout is the one
+    thing that identifies which project's code is executing, so it decides.
     """
-    candidates = []
+    candidates = [_CHECKOUT_ROOT / ".env"]
     with suppress(OSError):
-        candidates.append(Path.cwd() / ".env")
-    checkout_env = _CHECKOUT_ROOT / ".env"
-    if checkout_env not in candidates:
-        candidates.append(checkout_env)
+        cwd_env = Path.cwd() / ".env"
+        if cwd_env != candidates[0]:
+            candidates.append(cwd_env)
     return tuple(candidates)
 
 
