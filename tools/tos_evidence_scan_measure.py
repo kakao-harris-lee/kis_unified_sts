@@ -491,15 +491,22 @@ class HostSample:
 class HostReader:
     """Everything this driver knows about the machine, behind one injectable seam.
 
-    The paths and command lines are constructor arguments so a test can point the reader at
-    a fake ``/proc/meminfo`` and a fake ``pgrep`` and exercise each refusal for real, instead
-    of patching module globals and proving only that the patch worked.
+    The paths, command lines and the PID this reader calls its own are constructor
+    arguments so a test can point the reader at a fake ``/proc/meminfo``, a fake ``pgrep``
+    and a fake ``/proc`` and exercise each refusal for real, instead of patching module
+    globals and proving only that the patch worked.
     """
 
     meminfo_path: Path = Path("/proc/meminfo")
     pgrep_argv: tuple[str, ...] = ("pgrep", "-af")
     ps_argv: tuple[str, ...] = ("ps", "-eo", "pid,rss,args", "--sort=-rss")
     proc_root: Path = Path("/proc")
+    #: Whose work this reader treats as its own — this process, unless a test says
+    #: otherwise. :meth:`_self_pid_chain` starts here, and it is the one input
+    #: ``proc_root`` cannot stand in for: a test that builds a process tree out of nothing
+    #: still had the OS answer "who am I?", so the fabrication was judged half against the
+    #: tree and half against the runner (#848).
+    self_pid: int = field(default_factory=os.getpid)
     #: Memo for things that cannot change during a run. A six-hour measurement takes ~4,300
     #: samples, and rebuilding the driver's own ancestor chain from ``/proc`` on each of
     #: them was pure overhead on a host this tool exists to keep quiet (round-2 review F9).
@@ -662,8 +669,8 @@ class HostReader:
         cached = self._cache.get("self_pid_chain")
         if isinstance(cached, frozenset):
             return cached
-        chain = {os.getpid()}
-        pid = os.getpid()
+        chain = {self.self_pid}
+        pid = self.self_pid
         for _ in range(64):  # bounded: a runaway /proc must not hang the preflight
             ppid = self._parent_pid(pid)
             if ppid is None or ppid in chain or ppid <= 0:
