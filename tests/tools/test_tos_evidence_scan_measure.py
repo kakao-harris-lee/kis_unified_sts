@@ -2627,7 +2627,10 @@ def test_a1c_the_guard_follows_the_drivers_own_file_not_the_working_directory(
     )
 
     payload = json.loads((out_dir / "preflight.json").read_text())
-    assert payload["checkout"]["repo_path"] == str(_REPO_ROOT)
+    # Resolved on both sides: `git rev-parse --show-toplevel` answers with the path as
+    # git knows it, which need not be the resolved one on a checkout reached through a
+    # symlink. The property under test is "the driver's own tree", not its spelling.
+    assert Path(str(payload["checkout"]["repo_path"])).resolve() == _REPO_ROOT
     assert payload["checkout"]["driver_path"] == str(_MODULE_PATH)
     assert payload["checkout"]["bench_path"] == str(_BENCH_PATH)
     assert payload["checkout"]["bench_in_repo"] is True
