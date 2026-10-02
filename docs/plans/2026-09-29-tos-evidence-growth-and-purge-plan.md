@@ -2285,7 +2285,7 @@ PASS(0 violations) · black/ruff 전부 통과.
 CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
 `tos/runtime/tests`(241) · `cd tos && mypy src`(266) · `tos/tests`(587).
 
-`expected_code_digest`: `df25a550…` → `1685714e…`(33차) → **`e3102d5b…`**(34차, 리뷰 처분 + main 머지 반영). `expected_dependency_set_digest`
+`expected_code_digest`: `df25a550…` → `1685714e…`(33차) → `e3102d5b…`(34차) → **`7460d4f3…`**(35차, 2차 리뷰 처분 — §7.1.22). `expected_dependency_set_digest`
 불변(`20559763…`, 같은 배포 호스트 루트 `.venv`). 갱신은 두 곳 —
 `config/tos_runtime/paper/release.yaml` 과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
@@ -2604,3 +2604,6 @@ F3 의 테스트(생성자 monkeypatch), 1차 F3 의 스텁(인자 무시), 1차
 named-TBD PASS · completion GREEN · citation PASS · black/ruff 통과.
 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
 `cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `e3102d5b…`(34차) → **`7460d4f3…`**(35차). 두 경로 일치.
+`expected_dependency_set_digest` 불변(`20559763…`).

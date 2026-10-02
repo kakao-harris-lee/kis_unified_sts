@@ -585,6 +585,19 @@
 #   이전 값 1685714e0dc41aea79980ec159bb2546d414e73719234d3cff103c6d4e37e410 은 33차.
 #   두 경로 일치(둘 다 e3102d5b…). `expected_dependency_set_digest` 는 서른네 번 모두 불변.
 #
+#   35차 재측정(2026-10-02, 같은 브랜치 · PR #840 2차 리뷰 8건 처분 — §7.1.22): 런타임
+#   파일 넷이 또 바뀐다(커널 불변). 동작 변경 셋 — F1: `EvidenceCorruption`/`CustodyError`/
+#   `KeyContinuityRefused` 가 단계 래퍼를 **통과**해 `integrity refused`/`custody refused`
+#   로 보고된다(전에는 `archive failed` 로 분류돼 런북이 「다시 돌려라」를 안내했다 —
+#   재실행이 답이 아닌 유일한 경우에) · F2: 세대 할당이 콜드 보관소(아카이브·보고서·검증
+#   스크래치)도 세고, 선택된 세대의 산출물이 이미 있으면 스냅숏 전에 거부한다 · F3:
+#   프리플라이트가 `key_provider.current()` 를 불러 커스터디를 **복사 전에** 확인한다.
+#   그 밖에 `Path.is_relative_to` 로 포함 판정 통일 · 공개 `generation_number` 로 `gen{N}`
+#   파서 넷→하나 · `_below_floor` 개명 · `cold_backup` 프리플라이트 분해(size budget).
+#   **라이브 증거 저장소에 쓰는 코드는 여전히 0 이다.**
+#   이전 값 e3102d5b63b78d350fdf79dab7f8c0e229caf3a4e7475bd69b60cef14e72802f 은 34차.
+#   두 경로 일치(둘 다 7460d4f3…). `expected_dependency_set_digest` 는 서른다섯 번 모두 불변.
+#
 #   ⚠ **origin/main 머지(5e7a195c — #842 CI performance median-of-n · #837 · #838)도
 #   이 값에 영향이 없다** — 가져온 것은 `.github/**` · `scripts/performance/**` ·
 #   `docs/**` 이고 `tos/src/**.py`·`tos/runtime/src/**.py` 는 한 건도 없다. 그래도 머지
@@ -620,7 +633,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "e3102d5b63b78d350fdf79dab7f8c0e229caf3a4e7475bd69b60cef14e72802f"
+expected_code_digest: "7460d4f386bcf7d71f995078f5beb68aa64ba653e9d06bb0ae72f60ec3fd1de9"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
