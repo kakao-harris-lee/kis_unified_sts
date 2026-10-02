@@ -2954,13 +2954,16 @@ def test_defer_re_arms_the_gap_from_now_and_never_shortens_it(
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-_RUNNER = (
-    Path(__file__).resolve().parents[2]
-    / "tools"
-    / "broker_probes"
-    / "runners"
-    / "run_p_ca.sh"
+_RUNNERS_DIR = (
+    Path(__file__).resolve().parents[2] / "tools" / "broker_probes" / "runners"
 )
+_RUNNER = _RUNNERS_DIR / "run_p_ca.sh"
+
+#: The guards this template shares with ``run_p8.sh``. Sourced, so it has to be
+#: copied into every throwaway checkout these tests build — and checked by the
+#: same template properties, because moving a guard into a shared file is
+#: exactly how a guard stops being checked.
+_RUNNER_COMMON = _RUNNERS_DIR / "_common.sh"
 
 #: Sourcing this would print the sentinel. A guard that fires "before any
 #: credential sourcing" is only worth the words if its absence is observable.
@@ -2979,10 +2982,11 @@ def test_runner_template_is_tracked_and_executable() -> None:
 def test_runner_template_parses() -> None:
     import subprocess
 
-    result = subprocess.run(
-        ["bash", "-n", str(_RUNNER)], capture_output=True, text=True
-    )
-    assert result.returncode == 0, result.stderr
+    for script in (_RUNNER, _RUNNER_COMMON):
+        result = subprocess.run(
+            ["bash", "-n", str(script)], capture_output=True, text=True
+        )
+        assert result.returncode == 0, f"{script}: {result.stderr}"
 
 
 def test_runner_template_passes_shellcheck() -> None:
@@ -3007,7 +3011,7 @@ def test_runner_template_passes_shellcheck() -> None:
             )
         pytest.skip("shellcheck is not installed locally — CI runs this gate")
     result = subprocess.run(
-        [shellcheck, "--severity=warning", str(_RUNNER)],
+        [shellcheck, "--severity=warning", str(_RUNNER), str(_RUNNER_COMMON)],
         capture_output=True,
         text=True,
     )
@@ -3020,6 +3024,13 @@ def test_runner_template_carries_no_instance_defaults() -> None:
     becomes the next trial's."""
     text = _RUNNER.read_text(encoding="utf-8")
     pairs = set(re.findall(r"\$\{(PCA_[A-Z_]+):-([^}]*)\}", text))
+    # The shared helpers must carry NO instance name at all — not even a
+    # defaulted one. They are prefix-free by construction (every value arrives
+    # as an argument), and this is what keeps them that way: a PCA_/P8_ name
+    # creeping into _common.sh is one runner reading the other's environment.
+    assert not re.findall(
+        r"\b(?:PCA|P8)_[A-Z_]+", _RUNNER_COMMON.read_text(encoding="utf-8")
+    )
     # The property that matters, stated directly rather than as a name list: a
     # default may only be "off" (empty, or the literal 0). A NON-EMPTY default
     # is how one trial's symbol, window or fingerprint silently becomes the
@@ -3092,6 +3103,30 @@ def test_runner_template_never_removes_itself() -> None:
     _assert_no_self_deletion(_RUNNER.read_text(encoding="utf-8"))
 
 
+def test_the_shared_helpers_delete_nothing_either() -> None:
+    """The guard applies to the file the runner SOURCES too: a destructive
+    command there runs in the runner's own process, and the per-file check
+    would never see it.
+
+    ``_common.sh`` has no ``$0`` line of its own — ``$0`` inside a sourced file
+    is still the caller's — so only the destructive-verb half applies here.
+    """
+    text = _RUNNER_COMMON.read_text(encoding="utf-8")
+    destructive = re.search(
+        r"(?<![\w-])(rm|unlink|mv|shred|truncate)(?![\w-])|:\s*>[^>]", text
+    )
+    assert (
+        destructive is None
+    ), f"the shared helpers run a destructive command: {destructive}"
+    # Same exclusion the per-runner guard makes, for the same reason: awk's
+    # ``$0`` is the whole input record of a different language and names no
+    # file. It is the ONLY ``$0`` allowed here, because a sourced file has no
+    # script path of its own to defend.
+    assert [
+        line for line in text.splitlines() if "$0" in line and "awk" not in line
+    ] == []
+
+
 def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
     """A throwaway git checkout holding a copy of the template, so the guards
     can be exercised against a real ``git`` rather than a stubbed one."""
@@ -3101,6 +3136,7 @@ def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
     repo = tmp_path / "repo"
     (repo / "tools" / "broker_probes" / "runners").mkdir(parents=True)
     shutil.copy2(_RUNNER, repo / "tools/broker_probes/runners/run_p_ca.sh")
+    shutil.copy2(_RUNNER_COMMON, repo / "tools/broker_probes/runners/_common.sh")
     (repo / "tools/broker_probes/probes_ca.py").write_text(
         "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
     )
@@ -4453,6 +4489,7 @@ def _worktree_pair(
     primary = tmp_path / "primary"
     (primary / "tools" / "broker_probes" / "runners").mkdir(parents=True)
     shutil.copy2(_RUNNER, primary / "tools/broker_probes/runners/run_p_ca.sh")
+    shutil.copy2(_RUNNER_COMMON, primary / "tools/broker_probes/runners/_common.sh")
     (primary / "tools/broker_probes/probes_ca.py").write_text(
         "pacer.derive(  _BAL_TRANSIENT\n", encoding="utf-8"
     )
