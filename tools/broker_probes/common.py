@@ -57,6 +57,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -424,6 +425,440 @@ def is_rate_limited(status: int, parsed: dict[str, Any], text: str) -> bool:
         return True
     blob = f"{parsed.get('msg_cd', '')} {parsed.get('msg1', '')} {text}"
     return "EGW00201" in blob
+
+
+# ---------------------------------------------------------------------------
+# Transient-error policy — ONE copy, shared by every probe that polls
+# ---------------------------------------------------------------------------
+#
+# A broker call can fail for a reason that is NOT attributable to this harness's
+# own call rate, and such a failure is worth exactly ONE retry one interval
+# later. Two campaigns measured the cost of not having that rule:
+#
+# * 2026-09-30 P-CA (000660 cash dividend): four attempts, four stops, zero
+#   cash-leg observations — two transport read timeouts, one ``EGW00215``
+#   ledger throttle, one runner guard defect. Fixed for P-CA in #825.
+# * 2026-09-28 P-8 (new 모의 futures account): trial 2 of 5 died mid-poll on a
+#   ``ConnectionError`` that escaped the probe entirely (``run.py`` rc 5), and
+#   the runner's STOP rule counted it as a broker rejection — "오류 1건(브로커
+#   거부 포함)" — so trials 3, 4 and 5 never ran. The transport recovered
+#   within seconds; the cleanup cancel issued right afterwards succeeded.
+#
+# The "stop at once, never retry" rule those fell under was written for
+# 2026-09-17, whose cause WAS our own pacing (``EGW00201``). That rule is an
+# account-protection device and stays exactly as it is
+# (:func:`is_rate_limited`); only the two kinds below buy a retry.
+#
+# This block lives in ``common.py`` rather than in each probe module because
+# the policy had already drifted once while there were two copies of it: an
+# answer carrying BOTH a 429 and ``EGW00215`` bought a retry on one path and
+# stopped the run at once on the other (#825 independent review F4).
+
+#: The two transient sub-kinds, as they appear in ``measurements.retries`` and
+#: in every ``retry_evidence`` record.
+TRANSIENT_TRANSPORT = "transport"
+TRANSIENT_LEDGER_THROTTLE = "ledger_throttle"
+
+#: Status strings :func:`classify_answer` returns. Prefixed so a caller can test
+#: for "transient" without enumerating the kinds, and carried as plain strings
+#: rather than as an extra tuple element so that existing call signatures and
+#: the tests pinned to them keep their arity.
+STATUS_TRANSIENT = "TRANSIENT"
+STATUS_TRANSIENT_TRANSPORT = f"{STATUS_TRANSIENT}:{TRANSIENT_TRANSPORT}"
+STATUS_TRANSIENT_LEDGER_THROTTLE = f"{STATUS_TRANSIENT}:{TRANSIENT_LEDGER_THROTTLE}"
+STATUS_RATE_LIMITED = "RATE_LIMITED"
+
+_TRANSIENT_KINDS: dict[str, str] = {
+    STATUS_TRANSIENT_TRANSPORT: TRANSIENT_TRANSPORT,
+    STATUS_TRANSIENT_LEDGER_THROTTLE: TRANSIENT_LEDGER_THROTTLE,
+}
+
+#: 원장에서 허용 가능한 초당 거래건수를 초과하였습니다 — the LEDGER-side throttle,
+#: which the mock server answers with HTTP 500 and ``rt_cd='1'``
+#: (``P-CA-20260930T015946Z.json`` poll #14, verbatim). It is NOT ``EGW00201``:
+#: :func:`is_rate_limited` never sees it, so before #825 it fell through to the
+#: caller's rejection arm and stopped the run on the spot.
+LEDGER_THROTTLE_MSG_CD = "EGW00215"
+
+
+def is_ledger_throttled(parsed: dict[str, Any]) -> bool:
+    """``msg_cd`` is exactly :data:`LEDGER_THROTTLE_MSG_CD`.
+
+    Field-exact, deliberately not the substring sweep over
+    ``msg_cd``/``msg1``/raw body that :func:`is_rate_limited` does for
+    ``EGW00201``: the ledger throttle is worth a retry, so a body that merely
+    MENTIONS the code (an operator note echoed back, a future envelope that
+    quotes it) must not buy one.
+    """
+    return str(parsed.get("msg_cd") or "").strip() == LEDGER_THROTTLE_MSG_CD
+
+
+def transport_transient_types() -> tuple[type[BaseException], ...]:
+    """The exception types the probe transports actually raise for a timeout or
+    a failed connection — and ONLY those.
+
+    The line is "no intact answer arrived, and our call rate is not why". Both
+    :func:`http_json` and ``probes_ca._get`` raise from TWO places, and both are
+    in the set:
+
+    * ``session.request`` — ``Timeout`` (covers ``ReadTimeout``, which the
+      2026-09-30 P-CA trials 3 and 4 died on, and ``ConnectTimeout``) and
+      ``ConnectionError`` (covers ``SSLError``, ``ProxyError``, and the
+      ``RemoteDisconnected`` form the 2026-09-28 P-8 trial 2 died on).
+    * ``response.text`` — the body is streamed, so a connection cut or a corrupt
+      encoding surfaces only when the body is READ, as ``ChunkedEncodingError``
+      (a chunked body cut before its terminating chunk) or
+      ``ContentDecodingError`` (a gzip body that will not decode). Both mean a
+      truncated transfer, which is the same failure as a read timeout arriving a
+      few bytes later; neither is a misconfiguration.
+
+    Everything else ``requests`` can raise — ``TooManyRedirects``,
+    ``InvalidURL``, ``MissingSchema``, ``URLRequired`` — is a defect in the
+    probe or its configuration. Retrying one produces the identical failure
+    twice and hides it behind a doubled stop reason, so those still surface as a
+    failed run.
+
+    Imported lazily for the same reason the probe modules import ``requests``
+    lazily: ``--list``/``--dry-run`` and the registry import them and must not
+    pay for (or require) the HTTP stack.
+    """
+    import requests
+
+    return (
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.ContentDecodingError,
+    )
+
+
+#: Anything from ``?`` to the next whitespace in a transport exception message.
+#: ``requests``' ``ConnectionError`` renders the URL it failed on IN FULL —
+#: "Max retries exceeded with url: /uapi/...?CANO=12345678&ACNT_PRDT_CD=01..." —
+#: and these artifacts are committed under ``docs/broker-profiles/evidence/``.
+#: :func:`redact` keys on field NAMES and cannot reach inside a raw string leaf,
+#: and :func:`call_evidence`'s excerpt cap only bounds the length, so without
+#: this the account number would reach the corpus through the one field that
+#: carries a broker string verbatim. Over-redaction is the safe direction: the
+#: diagnosis a reader needs is the exception CLASS and the timeout value, both
+#: of which sit before the ``?``.
+_QUERY_STRING_IN_MESSAGE = re.compile(r"\?\S*")
+
+
+def transport_excerpt(exc: BaseException) -> str:
+    """One transport exception rendered for the artifact, query string removed."""
+    return _QUERY_STRING_IN_MESSAGE.sub("?<redacted>", f"{type(exc).__name__}: {exc}")
+
+
+def transient_kind(status: str | None) -> str | None:
+    """``"transport"``/``"ledger_throttle"`` for a transient status, else ``None``."""
+    return _TRANSIENT_KINDS.get(status or "")
+
+
+def classify_answer(http_status: int, parsed: dict[str, Any], text: str) -> str | None:
+    """The ONLY copy of the retry/no-retry precedence, for an answer that ARRIVED.
+
+    Returns :data:`STATUS_RATE_LIMITED`, :data:`STATUS_TRANSIENT_LEDGER_THROTTLE`,
+    or ``None`` when the answer came back intact and the CALLER has to interpret
+    it (``rt_cd``, pagination, rows). A call that raised instead of answering is
+    :data:`STATUS_TRANSIENT_TRANSPORT`, which the caller assigns around its own
+    transport (the two transports differ; the precedence does not).
+
+    The ORDER is the policy:
+
+    1. no answer at all ⇒ transient (retry once) — the caller's ``except``;
+    2. :func:`is_rate_limited` — HTTP 429 or ``EGW00201`` ⇒ WE called too fast,
+       the 2026-09-17 cause; stop, never retry;
+    3. ``EGW00215`` ⇒ the LEDGER-side throttle, not our rate ⇒ transient.
+
+    2 before 3 is load-bearing: a body can carry both signals, and the
+    account-protection rule has to win.
+    """
+    if is_rate_limited(http_status, parsed, text):
+        return STATUS_RATE_LIMITED
+    if is_ledger_throttled(parsed):
+        return STATUS_TRANSIENT_LEDGER_THROTTLE
+    return None
+
+
+#: Cap on the verbatim broker body carried by a FAILED call's evidence record.
+#: The excerpt is GATED first (:func:`call_evidence`), and the gate is PAYLOAD-
+#: BASED and FAIL-CLOSED: the body is recorded only when the call both failed
+#: (``rt_cd != '0'``) AND carries no ``output1``/``output2``. Asking only "did
+#: the broker say success?" recorded the body on every OTHER answer, so a body
+#: the probe MISCLASSIFIES still reached the artifact — ``rt_cd`` absent or
+#: ``null``, or ``rt_cd`` as the JSON number ``0`` (``str(0 or '')`` is ``''``,
+#: not ``'0'``, because ``0`` is falsy), each wrote holdings plus the raw
+#: ``ctx_area_*`` cursors into a committed artifact. Keying on the payload
+#: instead is safe in BOTH directions: a body carrying rows is never diagnostic
+#: (it is the success page, not the signal that stopped the run), and the
+#: failures worth recording — HTTP 429, ``EGW00201``, ``APBK0919``, an HTML
+#: gateway page — carry no ``output1``/``output2`` at all. Verified against the
+#: committed corpus: EVERY non-empty ``raw_excerpt`` under
+#: ``docs/broker-profiles/evidence/`` is a bare ``rt_cd``/``msg_cd``/``msg1`` or
+#: ``error_code`` envelope, none with a non-empty ``output1``/``output2``.
+#: 300 chars is the cap the sibling probes already use
+#: (``probes_balance.py:749``, ``probes_real.py:232,315,389,490``).
+BODY_EXCERPT_MAX_CHARS = 300
+
+
+def call_evidence(
+    *, status_kind: str, http_status: int, parsed: dict[str, Any], text: str
+) -> dict[str, Any]:
+    """Verbatim broker evidence for one failed call, for the artifact.
+
+    :func:`is_rate_limited` fires on EITHER HTTP 429 OR ``EGW00201`` in the body,
+    so a bare "rate-limited" string cannot be diagnosed after the fact; this
+    record carries both signals plus the rejection envelope (2026-09-17
+    incident).
+
+    The gate is the point: a SUCCESSFUL body carries rows, and on the balance
+    surface that means holdings (``pdno``, ``pchs_avg_pric``, ``evlu_amt``), the
+    account cash total (``dnca_tot_amt``) and the raw
+    ``ctx_area_fk100``/``ctx_area_nk100`` cursors — and these artifacts are
+    committed under ``docs/broker-profiles/evidence/``. It fails closed on the
+    PAYLOAD rather than trusting ``rt_cd`` alone, because a body the probe
+    MISCLASSIFIES (``rt_cd`` absent/``null``, or the JSON number ``0``) is
+    exactly the body an ``rt_cd``-only gate lets through
+    (:data:`BODY_EXCERPT_MAX_CHARS`).
+    """
+    raw = parsed.get("rt_cd")
+    rt_cd = "" if raw is None else str(raw).strip()
+    carries_payload = any(bool(parsed.get(k)) for k in ("output1", "output2"))
+    return {
+        "status_kind": status_kind,
+        "http_status": http_status,
+        "rt_cd": parsed.get("rt_cd"),
+        "msg_cd": parsed.get("msg_cd"),
+        "msg1": parsed.get("msg1"),
+        "body_excerpt": (
+            ""
+            if rt_cd == "0" or carries_payload
+            else (text or "")[:BODY_EXCERPT_MAX_CHARS]
+        ),
+    }
+
+
+def retry_evidence(
+    *,
+    phase: str,
+    kind: str,
+    status: str,
+    http_status: int,
+    parsed: dict[str, Any],
+    text: str,
+    poll_index: int | None,
+    retried: bool,
+) -> dict[str, Any]:
+    """The record written for EVERY transient, retried or not.
+
+    Same shape and the same payload gate as :func:`call_evidence`, plus which
+    phase it happened in, which poll (when there was one), and whether a retry
+    followed. A run must be reconstructible down to "when, and how many times",
+    which is the whole reason the retry is capped at one — and ``retried: false``
+    is how the two refusals are told apart from a retry: the second consecutive
+    transient, and a transient that surfaced after the window had elapsed.
+
+    The key this lands under is ``retry_evidence``, never a phase-specific one:
+    several phases can write one, and a harvester filtering on a poll-shaped key
+    would have miscounted the others (#825 independent review F8).
+    """
+    record: dict[str, Any] = {
+        "phase": phase,
+        "transient_kind": kind,
+        "retried": retried,
+    }
+    if poll_index is not None:
+        record["poll_index"] = poll_index
+    record.update(
+        call_evidence(
+            status_kind=status, http_status=http_status, parsed=parsed, text=text
+        )
+    )
+    return record
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """One broker call, already run through the transient classification.
+
+    ``kind`` is the status the retry policy reads: ``None`` means "the caller
+    interprets this" (a walk's own OK/REJECTED/CAPPED verdicts reuse the field,
+    since they are equally "not transient"). ``payload`` carries whatever the
+    phase needs beyond the envelope — ``(qty, cash)`` for a balance read, the
+    parsed rows for an open-order listing, nothing for a bare lookup.
+    """
+
+    kind: str | None
+    http_status: int
+    parsed: dict[str, Any]
+    text: str
+    payload: Any = None
+
+
+class Pacer:
+    """Minimum-interval gate in front of a probe client's only socket.
+
+    Contract: :meth:`wait` blocks until the next call is permitted and returns
+    the instant it was released. The first call is never delayed — an empty
+    pacer has no previous call to be too close to.
+
+    The released instant is the *only* honest t0 for a latency measurement. A
+    timestamp taken before the gate would include the pacing sleep and charge it
+    to the broker; on a 1.1 s pace that inflates every accept-to-visible sample
+    by roughly 1100 ms, which for a ``hard_maximum`` bound propagates straight
+    into an over-wide approved value.
+    """
+
+    def __init__(self, interval_s: float) -> None:
+        self.interval_s = max(0.0, float(interval_s))
+        self._next_allowed_at: float | None = None
+
+    def wait(self) -> float:
+        """Block out the remainder of the interval; return the release instant."""
+        now = time.monotonic()
+        if self._next_allowed_at is not None and now < self._next_allowed_at:
+            # Sleep the REMAINDER only. A fixed per-call sleep would also charge
+            # the probe for time already spent in the previous request.
+            time.sleep(self._next_allowed_at - now)
+            now = time.monotonic()
+        self._next_allowed_at = now + self.interval_s
+        return now
+
+    def defer(self, seconds: float) -> None:
+        """Push the next allowed call ``seconds`` out from NOW.
+
+        The transient-error retry (:func:`retry_once`) has to wait a WHOLE
+        interval before trying again, and ``wait()`` alone does not give that:
+        the failed attempt already armed the gap before it went out, so by the
+        time a 20 s read timeout surfaces, ``wait()`` owes only the remainder
+        (10 s of a 30 s interval — the 2026-09-30 P-CA trial-3 shape). Deferring
+        from NOW makes the following ``wait()`` sleep the full interval, which is
+        where the wait lives — this method never sleeps itself, so there is
+        exactly one sleep site per call.
+
+        It never SHORTENS an outstanding gap: a longer pending interval wins.
+        """
+        target = time.monotonic() + max(0.0, float(seconds))
+        if self._next_allowed_at is None or target > self._next_allowed_at:
+            self._next_allowed_at = target
+
+
+class Retries:
+    """Counts the retries a run spent, and keeps ``measurements.retries``
+    current at EVERY exit path.
+
+    A run that retried is labelled exactly as before — the retry changes no
+    verdict. What it changes is the timing a reader reconstructs from the
+    artifact, by up to one interval per retry, so the count has to be in the
+    artifact whatever happens: it is published on construction (all zeros, so
+    "no retries" is stated rather than inferred from a missing key) and
+    republished on every increment, because a phase can stop the run long before
+    the probe's own finalisation would get to write anything.
+    """
+
+    def __init__(self, run: ProbeRun) -> None:
+        self._run = run
+        self._counts: dict[str, int] = {
+            TRANSIENT_TRANSPORT: 0,
+            TRANSIENT_LEDGER_THROTTLE: 0,
+        }
+        self._publish()
+
+    def bump(self, kind: str) -> None:
+        self._counts[kind] = self._counts.get(kind, 0) + 1
+        self._publish()
+
+    def as_dict(self) -> dict[str, int]:
+        return dict(self._counts)
+
+    def _publish(self) -> None:
+        self._run.measure("retries", self.as_dict())
+
+
+def record_retry(
+    run: ProbeRun, retries: Retries
+) -> Callable[[dict[str, Any], str], None]:
+    """The standard ``on_transient``: observe EVERY transient, count the RETRIES.
+
+    The two differ, and conflating them is how a counter stops meaning anything:
+    ``measurements.retries`` answers "how much extra waiting did this run
+    spend", which a transient that bought no retry did not.
+    """
+
+    def _record(evidence: dict[str, Any], kind: str) -> None:
+        run.observe(retry_evidence=evidence)
+        if evidence.get("retried"):
+            retries.bump(kind)
+
+    return _record
+
+
+def retry_once(
+    call: Callable[[], Outcome],
+    on_transient: Callable[[dict[str, Any], str], None],
+    pacer: Pacer,
+    *,
+    wait_s: float,
+    phase: str,
+    poll_index_base: int | None = None,
+    can_retry: Callable[[], bool] | None = None,
+) -> tuple[Outcome, int, bool]:
+    """Run ``call``; on a transient outcome wait one whole interval and run it
+    exactly once more. Returns ``(outcome, attempts, retried)`` — ``attempts`` is
+    1 or 2, and ``retried`` says whether a second attempt was actually made.
+
+    ``can_retry`` lets a caller REFUSE the retry for a reason of its own. A poll
+    loop passes its window deadline: a transient surfacing after the window has
+    elapsed must not buy another interval of waiting plus another call, or a
+    verdict ends up resting on a poll made outside the window it claims to cover
+    (#825 independent review F5 — window 60 s, poll at 58 s, 20 s timeout, 30 s
+    defer, retry at 108 s).
+
+    The caller sees a transient ``kind`` back only when BOTH attempts were
+    transient — the "second consecutive transient" stop.
+
+    Exactly one retry, exactly one interval apart (:meth:`Pacer.defer`). No
+    backoff, no tunable attempt count: each of the 2026-09-30 P-CA stops and the
+    2026-09-28 P-8 stop was a SINGLE failure, so one retry would have carried all
+    of them, and every extra knob blurs the "when, and how many times" the
+    artifact has to answer.
+
+    ``on_transient`` receives ``(evidence, kind)`` for EVERY transient — the
+    retried one and the one that ends the phase — so the phase decides where that
+    goes. Recording both is the point: a transient that bought no retry is
+    exactly the case a reader needs to see.
+
+    ``call`` must be safe to run twice. Every site that uses this is a GET; an
+    order POST is not retried here, because a resent submit is the duplicate-order
+    hazard P-2 exists to measure.
+    """
+    attempts = 0
+    while True:
+        attempts += 1
+        outcome = call()
+        kind = transient_kind(outcome.kind)
+        if kind is None:
+            return outcome, attempts, attempts > 1
+        retrying = attempts < 2 and (can_retry is None or can_retry())
+        on_transient(
+            retry_evidence(
+                phase=phase,
+                kind=kind,
+                status=outcome.kind or "",
+                http_status=outcome.http_status,
+                parsed=outcome.parsed,
+                text=outcome.text,
+                poll_index=(
+                    None if poll_index_base is None else poll_index_base + attempts
+                ),
+                retried=retrying,
+            ),
+            kind,
+        )
+        if not retrying:
+            return outcome, attempts, attempts > 1
+        pacer.defer(wait_s)
 
 
 # ---------------------------------------------------------------------------
