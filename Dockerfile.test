@@ -22,7 +22,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     ENVIRONMENT=test \
-    REDIS_URL=redis://localhost:6379/1
+    REDIS_URL=redis://localhost:6379/1 \
+    KIS_TEST_IMAGE_NO_GIT_METADATA=1
 
 # git: required by the ops preflight/promote tests (they `git init`/`clone`
 # throwaway repos under tmp_path). CI's ubuntu runner ships git; slim does not.
@@ -43,13 +44,15 @@ RUN pip install --upgrade pip && pip install ".[dev]" prometheus-client
 # ⚠ `.git` is excluded ON PURPOSE (80MB of history this image never reads), so /app is a
 # plain directory, NOT a repository. Two consequences, both deliberate:
 #   - shared/backtest/mlflow_tracker._get_git_sha swallows the error and returns "unknown";
-#   - a test that clones the repo ITSELF cannot run here. Exactly one does
-#     (tests/unit/scripts/test_render_paper_config.py::
-#      test_guard_render_leaves_the_repository_byte_identical) and it skips on a measured
-#     precondition rather than dying on `fatal: repository '/app' does not exist` (#835).
-#     Its real gate is the host `test` workflow, which runs on a full checkout.
-# A NEW test that clones /app will skip here too — if it must run in this image, give the
-# image the metadata instead of weakening the test.
+#   - `git clone /app` is `fatal: repository '/app' does not exist`, exit 128 (#835).
+#
+# A test that clones THIS repository therefore cannot run here. The skip is NOT automatic:
+# it is opt-in per test, by requesting the `requires_repo_checkout` fixture
+# (tests/conftest.py). A new self-cloning test that does not request it will fail here,
+# loudly — which is the intended outcome, because that failure is also what a genuinely
+# broken checkout looks like on the host `test` job. `KIS_TEST_IMAGE_NO_GIT_METADATA=1`
+# above is the marker that fixture looks for; it is set in this image and nowhere else, so
+# the same missing repository stays a hard failure everywhere a repository is expected.
 COPY . .
 
 # Non-root (uid 1000), matching the runtime image's appuser and CI's runner.

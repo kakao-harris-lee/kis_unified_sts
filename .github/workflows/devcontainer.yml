@@ -30,6 +30,8 @@ on:
   # Backstop for the path gate above (schedule ignores `paths`): run on main weekly so
   # drift surfaces within 7 days instead of at the next config PR. Monday 19:00 UTC =
   # Tuesday 04:00 KST — off test.yml's Monday 00:00 UTC performance sweep.
+  # A scheduled red is reported by the notify job below: it appears on no PR and is not a
+  # required check, so without that it would be exactly as quiet as the gap it backstops.
   schedule:
     - cron: '0 19 * * 1'
   workflow_dispatch:
@@ -64,3 +66,36 @@ jobs:
             bash -lc "\
               pytest tests/unit -n auto -m 'not serial' --timeout=180 --timeout-method=thread -q && \
               pytest tests/unit -m serial --timeout=180 --timeout-method=thread -q"
+
+  # A weekly failure nobody sees is the same silence this schedule was added to end. Open
+  # one tracking issue and keep commenting on it, so a red week is a notification and a red
+  # month is one thread rather than four issues. PR runs are excluded: those are already
+  # visible as a red check on the PR.
+  notify-scheduled-failure:
+    name: Report a red scheduled run
+    needs: [docker-test-profile, devcontainer]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='ci: weekly Dev/Test Containers run is red'
+          body="주간 백스톱 실행이 실패했다 (${RUN_URL}).
+
+          이 워크플로는 경로 게이팅되어 clone-and-go 설정 PR 에서만 돌지만, 두 잡은
+          \`tests/unit\` 을 실행하므로 게이트가 보지 않는 변경이 깨뜨릴 수 있다 (#835).
+          해당 실행의 로그를 확인할 것."
+          number=$(gh issue list --repo "$REPO" --state open --limit 50 \
+            --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
