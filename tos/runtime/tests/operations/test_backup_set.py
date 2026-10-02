@@ -27,6 +27,7 @@ from tos_runtime.operations.backup_set import (
     DurableSetPaths,
     RestoreRefused,
     backup_set,
+    next_generation,
     restore_set,
 )
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -189,10 +190,53 @@ def test_backup_set_never_deletes_an_existing_generation_directory(
 
     # Tamper with the manifest file name so _highest_existing_generation no longer sees gen1,
     # then try to reuse generation=1 — the pre-existing gen1/ directory must not be silently
-    # overwritten; mkdir(exist_ok=False) refuses it.
+    # overwritten. The refusal is NAMED now (it used to be a bare FileExistsError out of
+    # `mkdir(exist_ok=False)`): the same invariant, said in words, because the caller that
+    # hits this shape in production is an unattended one and a traceback told it nothing.
     (backups_dir / "gen1.set.manifest.json").unlink()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(BackupSetRefused) as refusal:
         backup_set(paths, backups_dir, generation=1)
+    assert "already exists" in str(refusal.value)
+    assert "died part-way" in str(refusal.value)
+    # And it really did not delete or overwrite it.
+    assert (backups_dir / "gen1" / "evidence.sqlite3").is_file()
+
+
+def test_next_generation_steps_past_a_generation_that_was_attempted_but_never_finished(
+    tmp_path: Path,
+) -> None:
+    """The manifest is written LAST, so a run that died mid-copy leaves a ``gen{N}/`` with no
+    manifest. Counting manifests alone would hand that same N back to the next unattended run
+    forever (and `backup_set` would refuse it, every time) — one transient fault becoming a
+    permanent outage of the backup. Nothing is deleted; the number is skipped."""
+    backups_dir = tmp_path / "backups"
+    (backups_dir / "gen7").mkdir(parents=True)
+
+    assert next_generation(backups_dir) == 8
+    # The leftover is still there for an operator to look at.
+    assert (backups_dir / "gen7").is_dir()
+
+
+def test_next_generation_takes_the_higher_of_manifest_and_directory(
+    tmp_path: Path,
+) -> None:
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    paths = _build_live_set(live_dir)
+    backups_dir = tmp_path / "backups"
+    backup_set(paths, backups_dir, generation=3)
+    assert next_generation(backups_dir) == 4
+
+    (backups_dir / "gen9").mkdir()
+    assert next_generation(backups_dir) == 10
+
+
+def test_next_generation_is_one_for_an_absent_or_empty_directory(
+    tmp_path: Path,
+) -> None:
+    assert next_generation(tmp_path / "nothing-here") == 1
+    (tmp_path / "empty").mkdir()
+    assert next_generation(tmp_path / "empty") == 1
 
 
 # -- restore_set --------------------------------------------------------------------------------
