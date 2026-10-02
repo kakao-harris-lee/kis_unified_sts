@@ -864,7 +864,7 @@ docker koalaman/shellcheck:stable --severity=warning
   `coexistence_polls_used` 를 남기므로, **재개 실측부터는 아티팩트만으로 판정된다**.
   과거 10건의 전수 재판정은 이 PR 범위 밖이며, N≥5 는 어차피 재개 실측으로 채워진다.
 
-#### 7.15.10 CI red 처분 (`test` 잡, run 36953671524)
+#### 7.15.10 CI red 처분 (`test` 잡, run 36953671524) — 그리고 재실행 전원 green
 
 **원인 1건, 그리고 그것이 드러낸 게이트 결함 1건.** 실패한 테스트는 하나뿐이었다 —
 `test_runner_template_passes_shellcheck`, 사유 SC2034:
@@ -893,12 +893,22 @@ CI 의 P-8 테스트는 **한 파일**만 넘겨 red 가 됐다. 실측해 보�
    다섯 조합 전부 rc 0 을 실측했다: `run_p8.sh` 단독 · `_common.sh` 단독 · 둘 함께 ·
    `run_p_ca.sh` 단독 · `run_p_ca.sh`+`_common.sh`.
 
-**`performance` fail 은 이 PR 과 무관하다.** 유일한 error 는
-`test_orchestrator_hot_path_benchmark.py::test_entry_path_100_symbols`
-(baseline 0.1329 s → current 0.3055 s, 정규화 +112.7 %). 그 파일의 import 는
-`time`·`sys`·`pytest` 뿐이고 `tests/performance/`·`scripts/performance/` 어디에도
-`broker_probes` 참조는 **0건**이며, 이 PR 의 변경 파일은 전부
-`tools/broker_probes/**`·`tests/tools/**`·`docs/**` 다. 같은 잡이 #825(§7.13)·
-#831(§7.14.4)에서도 같은 사유로 fail 했고, main 에서는 아예 **skip** 된다(잡 조건이
-PR 또는 schedule). 메모리 `ci-gating-reality` 의 경고대로 **baseline 재생성은 하지
-않는다** — 먼저 재생성하면 진짜 회귀가 영구히 안 보이게 된다.
+**같은 실행의 `performance` fail 은 이 PR 과 무관했고, 재실행에서 pass 했다.**
+유일한 error 는 `test_orchestrator_hot_path_benchmark.py::test_entry_path_100_symbols`
+(baseline 0.1329 s → current 0.3055 s, 정규화 +112.7 %). 근거 셋:
+
+1. 그 파일의 import 는 `time`·`sys`·`pytest` 뿐이고, `tests/performance/` ·
+   `scripts/performance/` 어디에도 `broker_probes` 참조는 **0건**이다. 이 PR 의 변경
+   파일은 전부 `tools/broker_probes/**` · `tests/tools/**` · `docs/**` 다.
+2. 같은 잡이 #825(§7.13) · #831(§7.14.4)에서도 fail 했고, main 에서는 아예 **skip**
+   된다(잡 조건이 PR 또는 schedule).
+3. 결정적으로, **셸 수정만 담은 다음 푸시의 재실행에서 같은 잡이 pass 했다** —
+   그 사이 `tests/performance/` 도 `shared/` 도 한 줄 바뀌지 않았다. 즉 이 임계값은
+   공유 러너의 편차 안에 있다.
+
+메모리 `ci-gating-reality` 의 경고대로 **baseline 재생성은 하지 않는다** — 먼저
+재생성하면 진짜 회귀가 영구히 안 보이게 된다. 3의 「한 번 fail 한 번 pass」는 baseline
+이 현재 러너 편차보다 빡빡하다는 관측이지 회귀의 부재 증명이 아니다.
+
+**최종 CI (`60378385`)**: `test` · `tos-gate` · `tos-firewall` · `ruff` · `lint` ·
+`type-check` · `backtest-extra` · `performance` — **8개 전부 pass**.
