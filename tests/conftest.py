@@ -60,43 +60,65 @@ _LIVE_INFRA_ENV = hermetic_env.LIVE_INFRA_ENV
 # checkout's .env is loaded exactly as the runtime loads it.
 HERMETIC_SESSION = not hermetic_env.env_flag(_LIVE_INFRA_ENV)
 
-if HERMETIC_SESSION:
-    os.environ[hermetic_env.HERMETIC_ENV] = "1"
+#: The throwaway directory every token cache is pinned to, or ``None`` under
+#: the live-infra opt-in. One per process, so xdist workers do not share it.
+TOKEN_CACHE_DIR: Path | None = None
 
-    # Empty the whole KIS_*/TELEGRAM_* namespace, whatever its source — a .env
-    # already loaded by a plugin, or variables exported in the operator's
-    # shell. Credentials aside, this is also what keeps a local run honest:
-    # CI sets none of these, so a test that silently depended on one passed
-    # locally and failed in CI. Notably it blanks TELEGRAM_*_BOT_TOKEN, without
-    # which a test that starts a real TradingOrchestrator and does not mock
-    # `_notify` (e.g. test_orchestrator_lifecycle) sends real
-    # "🚀 Trading Started" messages to the operator. Tests that exercise
-    # Telegram routing self-provision credentials via monkeypatch, which
-    # auto-restores per test.
-    SCRUBBED_ENV = hermetic_env.scrub_broker_env()
+#: What the stray-token-cache witnesses looked like before any test ran.
+#: Compared against, not asserted absent: the primary checkout legitimately
+#: holds ``.kis_token_real`` from ordinary host ``sts`` runs, and blaming the
+#: test run for a file written months earlier is a false accusation (#698).
+TOKEN_CACHE_SNAPSHOT: hermetic_env.TokenCacheSnapshot = {}
+
+
+def _apply_hermetic_pins() -> None:
+    """Write every hermetic invariant into ``os.environ``.
+
+    One function, called from the import-time block below *and* from the
+    session fixture, so a pin added to one is never missing from the other —
+    re-asserting a subset would quietly defeat the fixture's whole purpose.
+
+    The scrub empties the entire ``KIS_*``/``TELEGRAM_*`` namespace whatever
+    its source: a ``.env`` already loaded by a plugin, or variables exported in
+    the operator's shell. Credentials aside, that is also what keeps a local
+    run honest, because CI sets none of them and a test that quietly depended
+    on one used to pass locally and fail in CI. Notably it blanks
+    ``TELEGRAM_*_BOT_TOKEN``, without which a test that starts a real
+    ``TradingOrchestrator`` and does not mock ``_notify`` (e.g.
+    ``test_orchestrator_lifecycle``) sends real "🚀 Trading Started" messages
+    to the operator. Tests that exercise Telegram routing self-provision
+    credentials via monkeypatch, which auto-restores per test.
+    """
+    os.environ[hermetic_env.HERMETIC_ENV] = "1"
+    hermetic_env.scrub_broker_env()
+    # Pin the config directory to THIS checkout. A worktree then reads its own
+    # config/, never the primary checkout's, and the value no longer depends
+    # on whether the operator exported KIS_CONFIG_DIR.
+    os.environ["KIS_CONFIG_DIR"] = str(project_root / "config")
+    # Send token caches to a throwaway directory. The default is Path.cwd(),
+    # which is how a real .kis_token_real landed in a worktree root on
+    # 2026-09-15.
+    os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
+
+
+if HERMETIC_SESSION:
+    TOKEN_CACHE_DIR = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
+    atexit.register(shutil.rmtree, TOKEN_CACHE_DIR, True)
+    _apply_hermetic_pins()
 
     # Turn any remaining .env read into a named failure instead of a silent
     # credential injection — including from a caller added after #698.
     hermetic_env.install_dotenv_guard()
 
-    # Pin the config directory to THIS checkout. A worktree then reads its own
-    # config/, never the primary checkout's, and the value no longer depends
-    # on whether the operator exported KIS_CONFIG_DIR.
-    os.environ["KIS_CONFIG_DIR"] = str(project_root / "config")
-
-    # Send token caches to a throwaway directory. The default is Path.cwd(),
-    # which is how a real .kis_token_real landed in a worktree root on
-    # 2026-09-15. One directory per process, so xdist workers do not share it.
-    TOKEN_CACHE_DIR = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
-    os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
-    atexit.register(shutil.rmtree, TOKEN_CACHE_DIR, True)
+    TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
+        hermetic_env.token_cache_witnesses(project_root)
+    )
 else:
     # Live-infra opt-in: the operator asked for real Redis and friends, so this
     # checkout's .env is loaded exactly as the runtime loads it. Telegram stays
     # scrubbed even here — a live-infra run must still not message the operator
     # from a test (the pre-#698 behavior, kept).
     os.environ.pop(hermetic_env.HERMETIC_ENV, None)
-    TOKEN_CACHE_DIR = None  # type: ignore[assignment]
 
     with suppress(ImportError):
         # python-dotenv is a runtime dependency, but the tos-firewall job
@@ -105,10 +127,8 @@ else:
 
         load_project_dotenv()
 
-    SCRUBBED_ENV = [key for key in list(os.environ) if key.startswith("TELEGRAM_")]
-    for _tg_key in SCRUBBED_ENV:
+    for _tg_key in [key for key in list(os.environ) if key.startswith("TELEGRAM_")]:
         del os.environ[_tg_key]
-    SCRUBBED_ENV.sort()
 
 # Cap MLflow's HTTP retry budget for tests so dashboard tests don't spend
 # 4+ minutes retrying against an unreachable tracking server. Default is 7
@@ -233,11 +253,20 @@ def _hermetic_broker_env():
         yield
         return
 
-    os.environ[hermetic_env.HERMETIC_ENV] = "1"
-    hermetic_env.scrub_broker_env()
-    os.environ["KIS_CONFIG_DIR"] = str(project_root / "config")
-    os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
+    _apply_hermetic_pins()
     yield
+
+
+@pytest.fixture(scope="session")
+def token_cache_snapshot():
+    """What every stray-token-cache witness looked like before any test ran.
+
+    Requested by the guard test that asserts no test issued a KIS token. It is
+    a snapshot rather than an absence check because the primary checkout
+    legitimately holds ``.kis_token_real``/``.kis_token_mock`` from host
+    ``sts`` runs (#698).
+    """
+    return TOKEN_CACHE_SNAPSHOT
 
 
 @pytest.fixture(autouse=True)

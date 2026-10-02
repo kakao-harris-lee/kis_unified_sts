@@ -1,7 +1,67 @@
 """Test CLI commands."""
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from click.testing import CliRunner
+
+from tests.support import hermetic_env
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: Reports the Click ``--url`` defaults captured at import time. Run in a
+#: subprocess because that capture happens once, when ``cli.main`` is first
+#: imported, and this session already imported it hermetically.
+_URL_DEFAULTS_PROBE = """
+import json
+import cli.main as main
+
+
+def option_default(command, name):
+    return next(p.default for p in command.params if p.name == name)
+
+
+print(json.dumps({
+    "module": main.DEFAULT_DASHBOARD_URL,
+    "health": option_default(main.health, "url"),
+    "trade_status": option_default(main.trade_status, "url"),
+    "trade_stop": option_default(main.trade_stop, "url"),
+    "paper_status": option_default(main.paper_status, "url"),
+    "paper_stop": option_default(main.paper_stop, "url"),
+}))
+"""
+
+
+def _url_defaults(cwd, *, hermetic):
+    """Import the real ``cli.main`` in a clean process and report its defaults.
+
+    The environment is built from scratch rather than inherited, so the result
+    reflects the CLI's own behavior and not this session's hermetic scrub.
+    """
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    if hermetic:
+        env[hermetic_env.HERMETIC_ENV] = "1"
+
+    result = subprocess.run(
+        [sys.executable, "-c", _URL_DEFAULTS_PROBE],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
 
 
 @pytest.fixture
@@ -677,17 +737,44 @@ class TestHealthCommand:
         # Should show connection error or not installed
         assert result.exit_code in (0, 1)
 
+    def test_dotenv_dashboard_port_is_loaded_before_cli_defaults(self, tmp_path):
+        """Dashboard URL defaults honor DASHBOARD_HOST_PORT from ``.env``.
+
+        The invariant is ordering: ``cli/commands/common.py`` must load
+        ``.env`` *before* the command modules capture ``DEFAULT_DASHBOARD_URL``
+        as a Click default. Move the load below the capture and every default
+        here falls back to 5081 while the ``.env`` says 5999.
+
+        The ``.env`` goes in the working directory, which
+        ``load_project_dotenv`` prefers over the checkout's, so the test reads
+        the same file whether or not the checkout running it has one of its
+        own (#698).
+        """
+        (tmp_path / ".env").write_text("DASHBOARD_HOST_PORT=5999\n")
+
+        defaults = _url_defaults(tmp_path, hermetic=False)
+
+        assert set(defaults.values()) == {"http://localhost:5999"}
+
+    def test_hermetic_session_leaves_cli_defaults_at_the_static_port(self, tmp_path):
+        """The hermetic switch reaches the real CLI, not just the loader.
+
+        Same layout as the test above, with ``KIS_TEST_HERMETIC`` set: the
+        ``.env`` is right there and no part of it reaches the Click defaults.
+        """
+        (tmp_path / ".env").write_text("DASHBOARD_HOST_PORT=5999\n")
+
+        defaults = _url_defaults(tmp_path, hermetic=True)
+
+        assert set(defaults.values()) == {"http://localhost:5081"}
+
     def test_every_url_default_tracks_the_dotenv_backed_module_default(self):
         """Every ``--url`` default is the one value ``.env`` can move.
 
-        ``cli/commands/common.py`` loads ``.env`` and derives
-        ``DEFAULT_DASHBOARD_URL`` at import time, before the command modules
-        capture it as a Click default. This half asserts the capture; the
-        ``.env`` half is
-        ``tests/unit/config/test_dotenv_hermeticity.py::test_checkout_dotenv_still_loads_outside_tests``.
-        Split in two because the old single subprocess check wrote ``.env``
-        into its working directory and so silently depended on the checkout
-        running the suite having none of its own (#698).
+        In-process companion to the two subprocess tests above: it names each
+        command whose default must follow ``DEFAULT_DASHBOARD_URL``, so a
+        newly added command that hardcodes a URL is caught here rather than
+        only when someone notices the port is wrong.
         """
         import cli.main as main
 

@@ -31,6 +31,7 @@ from pathlib import Path
 import dotenv
 import pytest
 
+from shared.config import dotenv_guard
 from tests.support import hermetic_env
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -134,6 +135,33 @@ def _run_probe(checkout: Path, cwd: Path, *, hermetic: bool = False) -> dict:
     return json.loads(result.stdout)
 
 
+@pytest.fixture
+def reset_config_loader():
+    """Hand back a ConfigLoader reset that is undone at teardown.
+
+    The singleton is class state shared by every test in the worker, so
+    clearing it inline leaks a re-resolved loader into whatever runs next
+    under ``-n auto``.
+    """
+    from shared.config.loader import ConfigLoader
+
+    saved_instance = ConfigLoader._instance
+    saved_dir = ConfigLoader._config_dir
+    saved_cache = dict(ConfigLoader._cache)
+
+    def _reset():
+        ConfigLoader._instance = None
+        ConfigLoader._config_dir = None
+        ConfigLoader._cache.clear()
+
+    yield _reset
+
+    ConfigLoader._instance = saved_instance
+    ConfigLoader._config_dir = saved_dir
+    ConfigLoader._cache.clear()
+    ConfigLoader._cache.update(saved_cache)
+
+
 # ---------------------------------------------------------------------------
 # The code layer: load_project_dotenv never walks out of its own checkout
 # ---------------------------------------------------------------------------
@@ -160,7 +188,7 @@ def test_nested_checkout_never_reads_the_outer_env(tmp_path):
     assert seen["dashboard_url"] == "http://localhost:5081"
 
 
-def test_candidates_are_only_the_checkout_and_the_working_directory(tmp_path):
+def test_candidates_are_only_the_working_directory_and_the_checkout(tmp_path):
     """Nothing above either directory is ever a candidate."""
     outer = tmp_path / "primary"
     _write_canary_env(outer / ".env", CANARY_PORT)
@@ -171,8 +199,8 @@ def test_candidates_are_only_the_checkout_and_the_working_directory(tmp_path):
     seen = _run_probe(checkout, cwd=workdir)
 
     assert seen["candidates"] == [
-        str(checkout / ".env"),
         str(workdir / ".env"),
+        str(checkout / ".env"),
     ]
 
 
@@ -199,9 +227,15 @@ def test_checkout_dotenv_still_loads_outside_tests(tmp_path):
     assert seen["KIS_APP_KEY"] is None
 
 
-def test_working_directory_dotenv_loads_when_the_checkout_has_none(tmp_path):
-    """Running from a directory with its own .env keeps working."""
+def test_working_directory_dotenv_wins_over_the_checkout(tmp_path):
+    """Running from a directory with its own .env keeps working.
+
+    This is the pre-#698 ``python -c`` behavior, and it is what lets the
+    CLI tests below fix which file the loader reads without depending on
+    whether the checkout running the suite has a ``.env`` of its own.
+    """
     checkout = _make_checkout(tmp_path / "checkout")
+    (checkout / ".env").write_text(f"DASHBOARD_HOST_PORT={CANARY_PORT}\n")
     workdir = tmp_path / "workdir"
     workdir.mkdir()
     (workdir / ".env").write_text(f"DASHBOARD_HOST_PORT={CHECKOUT_PORT}\n")
@@ -257,7 +291,7 @@ def test_kis_auth_config_sees_no_credentials():
 
 
 @requires_hermetic_session
-def test_token_cache_never_lands_in_the_checkout_or_home():
+def test_token_cache_is_pinned_outside_the_checkout_and_home():
     """The default cache directory is cwd — which is how #698 wrote a token."""
     from shared.kis.auth import KISAuthConfig
 
@@ -271,22 +305,83 @@ def test_token_cache_never_lands_in_the_checkout_or_home():
         assert REPO_ROOT not in path.parents
         assert Path.home() not in path.parents
 
-    for name in (".kis_token_real", ".kis_token_mock"):
-        assert not (
-            REPO_ROOT / name
-        ).exists(), f"{name} was written into the checkout during a test run (#698)"
+
+@requires_hermetic_session
+def test_no_token_cache_was_created_or_rewritten_by_this_session(
+    token_cache_snapshot,
+):
+    """No stray ``.kis_token_*`` appeared where the pin cannot reach.
+
+    Compared against a snapshot taken before any test ran, never asserted
+    absent. The primary checkout holds ``.kis_token_real`` (2026-07-08) and
+    ``.kis_token_mock`` (2026-06-09) from ordinary host ``sts`` runs, because
+    the default cache directory is ``Path.cwd()``; an existence check would
+    fail there forever and blame this run for files written months earlier.
+    """
+    touched = hermetic_env.token_caches_touched_since(token_cache_snapshot)
+
+    assert touched == [], (
+        "a KIS token cache was created or rewritten during the test session: "
+        + ", ".join(str(path) for path in touched)
+        + " (#698)"
+    )
 
 
 @requires_hermetic_session
-def test_config_dir_is_pinned_to_this_checkout():
+def test_token_cache_witnesses_cover_the_checkout_cwd_and_home(
+    token_cache_snapshot,
+):
+    """The snapshot watches the three places a stray token can land."""
+    witnesses = set(hermetic_env.token_cache_witnesses(REPO_ROOT))
+
+    assert REPO_ROOT / ".kis_token_real" in witnesses
+    assert REPO_ROOT / ".kis_token_mock" in witnesses
+    assert Path.home() / ".cache" / "kis_token_stock.json" in witnesses
+    assert set(token_cache_snapshot) >= witnesses
+
+
+@requires_hermetic_session
+def test_token_cache_snapshot_reports_only_what_changed(tmp_path):
+    """A pre-existing, untouched file is not reported; a rewrite is."""
+    stale = tmp_path / ".kis_token_real"
+    stale.write_text("written long before this session")
+    snapshot = hermetic_env.snapshot_token_caches([stale, tmp_path / ".kis_token_mock"])
+
+    assert hermetic_env.token_caches_touched_since(snapshot) == []
+
+    (tmp_path / ".kis_token_mock").write_text("issued by a test")
+    assert hermetic_env.token_caches_touched_since(snapshot) == [
+        tmp_path / ".kis_token_mock"
+    ]
+
+    stale.write_text("rewritten by a test, same length...")
+    assert sorted(hermetic_env.token_caches_touched_since(snapshot)) == sorted(
+        [stale, tmp_path / ".kis_token_mock"]
+    )
+
+
+@requires_hermetic_session
+def test_config_dir_is_pinned_to_this_checkout(reset_config_loader):
     """A worktree reads its own config/, never the primary checkout's."""
     from shared.config.loader import ConfigLoader
 
     assert os.environ["KIS_CONFIG_DIR"] == str(REPO_ROOT / "config")
 
-    ConfigLoader._instance = None
-    ConfigLoader._config_dir = None
+    reset_config_loader()
     assert ConfigLoader.get_config_dir() == REPO_ROOT / "config"
+
+
+@requires_hermetic_session
+def test_hermetic_switch_is_one_name_shared_with_the_runtime_loader():
+    """conftest and the loader must never read different variables.
+
+    They import the same constant, so this pins the literal the docs and the
+    runbook name — a rename stays a deliberate, visible change.
+    """
+    assert dotenv_guard.HERMETIC_ENV == "KIS_TEST_HERMETIC"
+    assert hermetic_env.HERMETIC_ENV is dotenv_guard.HERMETIC_ENV
+    assert hermetic_env.TRUTHY_VALUES is dotenv_guard.TRUTHY_VALUES
+    assert hermetic_env.env_flag is dotenv_guard.env_flag
 
 
 @requires_hermetic_session
@@ -294,6 +389,56 @@ def test_argument_less_load_dotenv_is_refused():
     """The exact call that caused #698 now fails loudly instead of leaking."""
     with pytest.raises(hermetic_env.HermeticDotenvViolation, match="find_dotenv"):
         dotenv.load_dotenv()
+
+
+@requires_hermetic_session
+@pytest.mark.parametrize("reader", ["load_dotenv", "dotenv_values"])
+def test_argument_less_readers_are_all_refused(reader):
+    """Guarding load_dotenv alone left dotenv_values free to do the same walk."""
+    with pytest.raises(hermetic_env.HermeticDotenvViolation, match="find_dotenv"):
+        getattr(dotenv, reader)()
+
+
+@requires_hermetic_session
+def test_find_dotenv_may_not_hand_back_a_real_env(tmp_path, monkeypatch):
+    """The walk itself is fine; returning a real file outside the sandbox is not."""
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_canary_env(outside / ".env", CANARY_PORT)
+    monkeypatch.setattr(hermetic_env, "sandbox_roots", lambda: (inside,))
+    monkeypatch.chdir(outside)
+
+    with pytest.raises(hermetic_env.HermeticDotenvViolation, match="refusing to load"):
+        dotenv.find_dotenv(usecwd=True)
+
+
+@requires_hermetic_session
+def test_find_dotenv_returns_nothing_when_there_is_nothing(tmp_path, monkeypatch):
+    """A walk that finds no file is not an error — that is every CI checkout."""
+    monkeypatch.chdir(tmp_path)
+
+    assert dotenv.find_dotenv(usecwd=True) == ""
+
+
+@requires_hermetic_session
+@pytest.mark.parametrize("reader", ["load_dotenv", "dotenv_values"])
+def test_every_reader_refuses_a_real_env_outside_the_sandbox(
+    reader, tmp_path, monkeypatch
+):
+    """The refusal is per-reader, not only on the one that caused #698."""
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_canary_env(outside / ".env", CANARY_PORT)
+    monkeypatch.setattr(hermetic_env, "sandbox_roots", lambda: (inside,))
+
+    with pytest.raises(hermetic_env.HermeticDotenvViolation, match="refusing to load"):
+        getattr(dotenv, reader)(outside / ".env")
+
+    assert os.environ.get("KIS_APP_KEY") is None
 
 
 @requires_hermetic_session

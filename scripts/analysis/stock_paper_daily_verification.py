@@ -181,25 +181,32 @@ def _load_repo_env() -> None:
     Existing environment values win, matching python-dotenv's default
     ``override=False`` behavior.
 
-    Does nothing while ``KIS_TEST_HERMETIC`` is set. A test process must never
-    read the checkout's real .env, and the hand-rolled fallback below would
-    walk straight past the pytest session's dotenv guard (#698).
+    Delegates to the one bounded loader, and falls back to the hand-rolled
+    parser below only when python-dotenv is missing. Does nothing while
+    ``KIS_TEST_HERMETIC`` is set: a test process must never read the
+    checkout's real .env, and that fallback walks straight past the pytest
+    session's dotenv guard, which can only wrap python-dotenv itself (#698).
     """
-    from shared.config.dotenv_guard import hermetic_mode_enabled
+    from shared.config.dotenv_guard import (
+        hermetic_mode_enabled,
+        load_project_dotenv,
+        project_dotenv_candidates,
+    )
 
     if hermetic_mode_enabled():
         return
 
-    env_path = _REPO_ROOT / ".env"
-    if not env_path.exists():
-        return
     try:
-        from dotenv import load_dotenv
-
-        load_dotenv(env_path, override=False)
+        load_project_dotenv()
         return
     except ImportError:
         pass
+
+    env_path = next(
+        (path for path in project_dotenv_candidates() if path.is_file()), None
+    )
+    if env_path is None:
+        return
 
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()

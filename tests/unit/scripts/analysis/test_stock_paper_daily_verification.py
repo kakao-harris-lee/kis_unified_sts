@@ -811,10 +811,15 @@ def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
 ):
     # The helper is a no-op during a hermetic pytest session (#698). This test
     # covers the standalone-run path instead, so it turns the switch off and
-    # points the repo root at a temp dir the session's dotenv guard allows.
+    # runs from a temp working directory, which the bounded loader prefers
+    # over the checkout's own .env and the session's dotenv guard allows.
     monkeypatch.delenv("KIS_TEST_HERMETIC", raising=False)
-    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
-    monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    # setenv first so monkeypatch records the variable and removes it at
+    # teardown; a bare delenv of an unset name records nothing, and the value
+    # the loader writes below would outlive the test.
+    monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", "placeholder")
+    monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH")
     monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "already-set")
     (tmp_path / ".env").write_text(
         "RUNTIME_STORAGE_SQLITE_PATH='data/runtime/paper/runtime.db'\n"

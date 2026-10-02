@@ -10,9 +10,9 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 
 import httpx
-from dotenv import load_dotenv
 
 from shared.collector.historical.backfill import fetch_minute_async, parse_ohlcv
+from shared.config.dotenv_guard import load_project_dotenv
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 
@@ -165,7 +165,7 @@ async def _run_for_codes(
 
 
 def main() -> int:
-    load_dotenv(".env")
+    load_project_dotenv()
 
     parser = argparse.ArgumentParser(
         description="Check KIS vs Parquet backfill integrity"

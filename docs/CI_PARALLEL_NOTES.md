@@ -48,15 +48,28 @@ filesystem root, reached by an argument-less `load_dotenv()` in
 
 ### The rules
 
-- **Entrypoints never walk.** Every `.env` load in `cli/` and `scripts/` goes
-  through `shared.config.dotenv_guard.load_project_dotenv()`, which reads at
-  most `<checkout>/.env` and then `<cwd>/.env`. No ancestor directory is ever
-  consulted, so a nested worktree cannot reach the checkout above it. Do not
-  call `load_dotenv()` directly from a module an entrypoint imports.
+- **Entrypoints never walk.** Every `.env` load goes through
+  `shared.config.dotenv_guard.load_project_dotenv()`, which reads at most
+  `<cwd>/.env` and then `<checkout>/.env`. No ancestor directory is ever
+  consulted, so a nested worktree cannot reach the checkout above it. Both
+  orders existed before #698, chosen by invocation style, and every real
+  invocation runs from the checkout root, where the two candidates are the
+  same file.
+- **The rule is enforced, not just written here.**
+  `tests/unit/config/test_dotenv_call_gate.py` walks the AST of every `.py`
+  file in the repository and rejects a call to or import of `load_dotenv`,
+  `dotenv_values` or `find_dotenv` outside a four-entry allowlist. The runtime
+  guard below only fires for modules a test imports, which is almost no script
+  under `scripts/analysis/`; the gate covers the rest. Three helpers parse
+  `.env` with their own line loop where no dotenv-shaped check can see them —
+  each is registered in the same file with a reason, and the gate verifies
+  each still consults `hermetic_mode_enabled`.
 - **`KIS_TEST_HERMETIC` switches the loader off.** `tests/conftest.py` sets it
   at import time, before collection. It is the only knob this adds, it is a
   test switch rather than a configuration surface, and the paper/live runtime
-  never sets it — with it unset the entrypoints behave exactly as before.
+  never sets it — with it unset the entrypoints behave exactly as before. The
+  name and its truthy values live in `dotenv_guard` and are imported by the
+  test-side helper, so the two halves of the switch cannot drift apart.
 - **The credential namespace is emptied.** The whole `KIS_*` and `TELEGRAM_*`
   space is removed from `os.environ`, whatever its source — a `.env` already
   loaded, or variables exported in the operator's shell. Only the test switches
@@ -67,12 +80,26 @@ filesystem root, reached by an argument-less `load_dotenv()` in
 - **Config and token caches are pinned.** `KIS_CONFIG_DIR` points at *this*
   checkout's `config/`, and `KIS_TOKEN_CACHE_DIR` at a per-process temp
   directory, so a `.kis_token_*` can no longer land in a repository root (the
-  default is `Path.cwd()`).
-- **A leftover `.env` read fails loudly.** `dotenv.load_dotenv` is wrapped for
-  the session: an argument-less call is refused outright, and an explicit path
-  that *exists* outside the temp sandbox is refused by name. A path that does
-  not exist passes through, so CI — which has no `.env` anywhere — is
-  unaffected and the guard only speaks when there is something real to read.
+  default is `Path.cwd()`). Both pins, the scrub and the switch are written by
+  one `_apply_hermetic_pins()` called from the import-time block and again
+  from the session fixture, so a pin added to one is never missing from the
+  other.
+- **A stray token cache is detected by comparison, not by absence.** The
+  session snapshots size and mtime of every place a token can land — the
+  checkout root, the working directory, and `~/.cache/kis_token_*.json`, which
+  two collectors hardcode — and the guard test fails only on a file this
+  session created or rewrote. An absence check would fail forever on the
+  primary checkout, which legitimately holds `.kis_token_real` (2026-07-08)
+  and `.kis_token_mock` (2026-06-09) from ordinary host `sts` runs.
+- **A leftover `.env` read fails loudly.** All three python-dotenv readers
+  (`load_dotenv`, `dotenv_values`, `find_dotenv`) are wrapped for the session:
+  an argument-less call is refused outright, a path that *exists* outside the
+  temp sandbox is refused by name, and `find_dotenv` may walk but may not hand
+  back a real file from outside it. A path that does not exist passes through,
+  so CI — which has no `.env` anywhere — is unaffected and the guard only
+  speaks when there is something real to read. Installing the guard also
+  sweeps `sys.modules` to rebind names a plugin or `sitecustomize` imported
+  with `from dotenv import load_dotenv` before `tests/conftest.py` ran.
 
 ### Opting out
 
@@ -84,6 +111,9 @@ still cannot message the operator from a test.
 `tests/unit/config/test_dotenv_hermeticity.py` asserts all of the above, and
 proves the loader half in subprocesses with the switch *off*, so it still
 catches a regression in the entrypoints if the session guard is ever removed.
+`tests/unit/test_cli_commands.py` covers the ordering the loader depends on:
+`.env` must be read before the command modules capture `DEFAULT_DASHBOARD_URL`
+as a Click default.
 
 ### Original (2026-05-09) analysis below
 
