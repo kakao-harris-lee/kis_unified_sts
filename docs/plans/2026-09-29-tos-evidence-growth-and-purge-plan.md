@@ -144,13 +144,22 @@
   (`seq` 가 이미 PK 다). 회귀 테스트는 **질의계획을 핀**한다 — 동치성만으로는 스캔 재발을
   못 잡기 때문이다(걷기도 답은 맞다).
 
-### A3. 압축 콜드 백업 (기존 `backup()` 재사용)
+### A3. 압축 콜드 백업 (기존 `backup()` 재사용) (**구현 — PR #816(압축·검증) · PR #840(무인 실행·용량 경보)**)
 
 - 이미 있는 세대 스탬프 백업(`evidence/backup.py` — `sqlite3.backup()` + 매니페스트 + 복원 시 독립 재검증)을
   **장 마감 뒤** 돌리고, 결과를 xz 로 압축해 저장소 밖 보관 디렉터리에 둔다(경로는 설정).
 - 매 백업마다: 압축 해제 → digest 일치 → `verify_or_raise` 까지 확인하고 그 결과를 증거로 남긴다.
 - **라이브 파일은 건드리지 않는다.** 디스크는 줄지 않는다. 트랙 B 가 언젠가 지울 때 쓸 **검증된 원본 사본**을
   미리 쌓아 두는 것이다(ADR §17 「independently verified snapshot … raw material」의 준비).
+- **착지는 두 PR 로 나뉘었다.** #816(§7.1.4)이 압축과 되읽기 검증을 `backup-set --archive-dir`
+  뒤에 올렸고, 그 처분(§7.1.6 「범위 밖으로 남긴 것」)이 **보관 경로 용량 경보와 스케줄링을
+  이월**했다. #840(§7.1.18)이 그 둘과, 무인 실행을 막고 있던 세 번째 것(손으로 올리는
+  `--generation`)을 닫는다 — 설정 기반 좌표 · 자동 세대 · 용량 바닥 · JSON 보고서를 묶은
+  `cold-backup` 하위 명령과 cron 한 줄(런북 `docs/runbooks/tos-evidence-cold-backup.md`).
+- ⚠ **「그 결과를 증거로 남긴다」의 실제 모양은 증거 행이 아니라 아카이브 옆의 JSON 이다.**
+  이 계획 문언이 쓰일 때 전제한 「증거」가 증거 저장소 행이었다면, 그것은 **이 작업과 양립하지
+  않는다** — 콜드 백업은 런타임이 정지한 상태에서 돌고, append 는 방금 복사했다고 증명한 바로
+  그 바이트를 움직인다. 근거와 후속은 §7.1.18 에 적는다.
 
 ### 트랙 A 에서 하지 않는 것
 
@@ -2159,7 +2168,7 @@ PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이�
 | `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
 | `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
 | `1670d7f8` | 이 착지 기록 (§7.1.17) + INDEX 행 |
-| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `83a970e9…` |
+| `ec058a03` | `SCHEMA_LEDGER_TABLE_SQL` 비공개화 + digest `d9fdd1f8…` → `38d85110…` |
 
 ##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
 
@@ -2273,7 +2282,7 @@ mypy: 커널 `Success (266 files)`. 런타임은 **27 errors in 18 files** 인�
 
 digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
 `d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835` →
-`83a970e98fef29b36624e054d8d120678f5fb2f5bdd703a976bdd942a13c5555`(아래 자기점검).
+`38d85110211cf6836e5806c81547c075f8d3a926bb0cf107cb7afc77871065e3`(아래 자기점검).
 `print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. 핀 **두 곳 모두** 갱신.
 `expected_dependency_set_digest` 불변.
 
@@ -2407,6 +2416,142 @@ applied v1 -> v2 (v2); rebuilt schema_ledger_no_update, schema_ledger_no_delete
 그 토대 자체는 **검증 대상 목록에 없었다**. 바이트 불변은 실 데이터로 확인됐는데(§7.1.3)
 스키마 동일성은 확인되지 않았다 — 더 검증하기 쉬운 쪽이 빠져 있었다.
 
+
+#### 7.1.18 A3 무인화 착지 — PR #840 (2026-10-02, 분기점 main `f219305f`) — §7.1 과 별개 PR
+
+§7.1.6 이 「범위 밖으로 남긴 것」에 적은 두 줄 — **보관 경로 용량 경보**와 **스케줄링** — 을
+닫는다. 닫다 보니 셋이었다: 무인 실행을 실제로 막고 있던 세 번째가 **손으로 올리는
+`--generation`** 이었다. 세대를 사람이 타이핑하는 한 cron 줄은 쓸 수 없다.
+
+**새 백업·압축·검증 기계는 하나도 만들지 않았다.** `operations/cold_backup.py` 는 이미 있는
+셋 위의 진입점이다: `next_generation` → `backup_set` → `archive_backup_set`(되읽기 검증
+포함) → JSON 보고서.
+
+| 더한 것 | 어디 | 왜 |
+|---|---|---|
+| 설정 기반 보관 좌표 `evidence_cold_backup.yaml` | `operations/cold_backup.py::load_cold_backup_config` | 좌표가 명령줄에 있으면 cron 줄이 호스트 지식을 품는다 |
+| 자동 세대 | `operations/backup_set.py::next_generation` | N 번째 실행의 명령줄이 첫 번째와 글자 그대로 같아야 한다 |
+| 용량 바닥 `minimum_free_bytes` | `cold_backup()` 프리플라이트 | 계획 §5 이월 |
+| 실행 기록 `gen{N}.cold-backup.report.json` | `ColdBackupReport` | 「그 결과를 … 남긴다」(§2 A3) |
+| cron 한 줄(데몬 0) | `docs/runbooks/tos-evidence-cold-backup.md` §4 | §7.1.6 이월 |
+
+**보존(retention) 손잡이는 넣지 않았다 — 누락이 아니라 결정이다.** `backup_set` 은 삭제하지
+않고(「Never deleted, never overwritten」) 아카이브는 추가이며, 검증된 콜드 사본의 파기는
+**ADR-002-016 §17 이 규율하는 트랙 B** 다(계획 §4 — 전제 B-1…B-5 전부 미충족). 그 옆에 더
+좁은 삭제 정책을 따로 만들면 그것이 바로 §17 이 요구하는 승인·이중 통제·범위 증명을
+우회하는 길이다. 사본은 압축 뒤 ≈13 MB/일로 쌓이고(§1), 용량 바닥은 그것을 **보이게** 하는
+장치다. 경보의 답은 저장공간이고, 거부 메시지가 그렇게 말한다.
+
+##### 「결과를 증거로 남긴다」를 증거 행으로 하지 않은 이유
+
+계획 §2 A3 의 그 문언을 **증거 저장소 행으로 읽으면 이 작업과 양립하지 않는다.** 셋이
+동시에 참일 수 없다:
+
+1. 콜드 백업은 **런타임이 정지한 상태**에서 돈다 — `backup_set` 의 문서화된(그리고 기계적으로
+   탐지 불가능한) 전제다.
+2. 같은 계획 §2 A3 이 **「라이브 파일은 건드리지 않는다」** 고 적는다.
+3. append 는 **방금 복사했다고 증명한 바로 그 바이트**를 움직인다.
+
+그리고 이 저장소에 **이미 있는** 운영→증거 경로는 append 가 아니다:
+`compose/_operations_wiring._observe_backup` 이 **부팅 때** `backup_root` 의 최고 세대
+매니페스트를 읽어 `BACKUP_SET_OBSERVED` 를 남긴다 — 런타임이 다음 부팅에 운영 산출물을
+**관측**하는 모양이지, 운영 CLI 가 체인에 쓰는 모양이 아니다. 그래서 기록은 아카이브 옆의
+`gen{N}.cold-backup.report.json` 이고, 테스트가 라이브 집합의 **바이트와 mtime 양쪽**이
+불변임을 고정한다(digest 만으로는 같은 바이트를 재생산하는 재기록을 통과시킨다).
+
+**후속 등재(이 PR 범위 밖, 구현하지 않음)**: 그 부팅 관측기가 이 보고서까지 읽어
+「마지막 콜드 사본이 언제 검증됐는가」를 부팅 사실로 남기게 하는 것. compose 배선 + 새 증거
+kind 가 필요하고, 그것은 A3 가 아니라 별도 결정이다.
+
+##### 보관 경로 거부 셋
+
+`archive_dir`·`backup_root`·`verify_root` 전부에 적용한다.
+
+| 거부 | 이유 |
+|---|---|
+| 라이브 `data_dir` **안**(또는 같음) | 사본이 자기가 복사하는 디렉터리를 키운다 |
+| 라이브 `data_dir` 을 **포함** | 콜드 보관소는 무한히 자라는데(보존 없음) 라이브 런타임과 서브트리를 공유하면 보관소가 차는 순간 런타임이 같이 죽는다 |
+| **git 워크트리 안** | `.gitignore` 한 줄 빠지면 증거 체인 수 GB 가 커밋 한 번 거리다 |
+
+세 번째는 `scripts/tos/render_paper_config.py::_refuse_output_inside_repo` 와 같은 가드이되
+**`git rev-parse` 가 아니라 조상 탐색**이다 — 런타임 스코프에서 `subprocess` 는 방화벽
+금지(R1)라 그 선례를 그대로 쓸 수 없다. `.git` 를 `is_dir()` 가 아니라 `exists()` 로 보는
+것은 **링크된 워크트리의 `.git` 가 파일**이기 때문이고, 이 저장소의 병렬 레인이 작업하는
+체크아웃이 정확히 그것이다. 변이(`exists()` → `is_dir()`)로 red 를 확인했다.
+
+##### 설정은 null 로 출고한다
+
+`config/tos_runtime/paper/evidence_cold_backup.yaml` 의 네 값(경로 셋 + 용량 바닥)은
+**전부 `null`** 이다. 경로는 호스트 좌표라 저장소가 알 수 없고, 바닥은 운영자 승인값이다.
+로더는 null 을 기본값으로 메우지 않고 **거부한다** — 짐작한 보관 경로는 콜드 백업이 없는
+것보다 나쁘다. 있는 것처럼 보이기 때문이다. 채운 파일은 **렌더된 설정 디렉터리가 아니라**
+커스터디 옆 운영 디렉터리에 둔다(런북 §2): `render_paper_config.py` 는 재렌더 때 출력
+디렉터리를 저장소 사본으로 다시 만들어 손으로 채운 값을 지운다.
+
+`xz_preset` 만 **선택**이다(생략 = `DEFAULT_XZ_PRESET`). 비대칭의 근거: 빠진 압축률에는 이
+저장소가 이미 이름 붙인 정답이 있지만, 빠진 보관 경로·용량 바닥에는 없다. 키를 적고 null 로
+둔 경우는 **거부**한다 — 반쯤 채운 파일이 완성된 것처럼 보이면 안 된다.
+
+##### 계획 대비 편차
+
+| # | 편차 | 이유 |
+|---|---|---|
+| 1 | 「그 결과를 **증거로** 남긴다」를 증거 행이 아니라 JSON 보고서로 | 위 「양립하지 않는 셋」. 후속(부팅 관측 확장)을 등재했다 |
+| 2 | `backup-set` 의 디스패치를 **함께 이동**(`compose/_backup_dispatch.py`) — A3 자체와 무관한 이동 | `cold-backup` 배선만으로 `cli.py` 가 972 → **995/1000** 이 됐다. 그것은 §7.1.7 편차 1 이 `backup_set.py`(992/1000)에 대해 이름 붙인 바로 그 조건 — 「평범한 수정 한 번이면 게이트가 빨개진다」. 두 백업 하위 명령은 어차피 한 집이고, 이동이 그 여유를 산다(943 줄). 디스패치 본문은 **한 줄도 바꾸지 않았다**; 바뀐 것은 기존 CLI 테스트 12곳의 monkeypatch **위치**뿐이고 단정은 그대로다 |
+| 3 | `backup_set.py` 에 공개 `next_generation`/`manifest_path_for` 추가 | 매니페스트 파일명 리터럴이 이미 **두 곳에 따로** 적혀 있다(`backup-set` 디스패치 · `_operations_wiring.py` 의 중복 상수). 새 호출부가 **세 번째**가 되지 않도록 공개 헬퍼를 둔다. ⚠ **기존 둘은 그대로 남겼다** — 디스패치를 바이트 그대로 옮긴다는 편차 2 의 약속과 바꿀 수 없어서이고, 그래서 중복은 둘에서 둘이지 하나로 줄지 않았다(등재). `next_generation` 은 **할당도 예약도 아니다** — W4 결정 1 「세대는 호출자 지정」은 그대로이고, 경합 시 두 번째 `backup_set` 이 거부하는 것이 여전히 인터록이다 |
+| 4 | 용량 바닥을 지난 **실행 중** 경우에 거부하지 않고 경고 후 0 | 검증까지 끝난 백업을 경보 때문에 되돌리는 것은 손해다. 보고서에 `free_bytes_below_minimum_after=true` 가 남고 **다음 실행이 거부**한다 — 경보는 래칫이지 롤백이 아니다 |
+| 5 | 보존 손잡이 없음 | 위 「보존 손잡이는 넣지 않았다」. 계획 §2 A3 도 보존을 요구하지 않는다 |
+
+##### 자체 점검이 잡은 결함 1건 (저자 패스, 리뷰 전)
+
+`_require_absolute_path` 초판이 **절대경로 검사를 먼저** 하고 틸드 검사를 그 뒤에 뒀다.
+`Path("~/cold").is_absolute()` 는 **False** 이므로 틸드 가지는 **절대로 실행되지 않는다** —
+자기가 이름 붙인 경우를 한 번도 잡을 수 없는 가드다(프로젝트 메모리
+`guards-that-admit-what-they-name` 의 네 형태 중 「상위 가드에 기대던 문구」). 초판 테스트도
+그 사실을 가리고 있었다: `["relative/cold", "~/cold"]` 를 한 파라미터로 묶고 **둘 다**
+「not an absolute path」를 단정했으니, 틸드 메시지가 존재하지 않아도 green 이었다.
+
+고친 자리는 **순서**이고, 그것을 드는 테스트를 따로 세웠다
+(`test_a_tilde_path_is_refused_as_a_tilde_path` — 틸드 전용 문구를 단정하고 「not an absolute
+path」가 **아님**을 함께 단정한다). 두 가지를 순서가 뒤집힌 상태에서 red 로 확인했다.
+
+##### 테스트
+
+새 테스트 **46건**(`tests/operations/test_cold_backup.py` 37 · `tests/compose/test_cold_backup_cli.py` 9).
+실제 durable set 픽스처(`_build_live_set`)에 대해 진짜 실행하고, CLI 쪽이 대체하는 것은
+커스터디 키 공급자 하나다.
+
+**변이로 red 확인 5건** (고치기 전 red 를 실제로 봤다 — 「새 가드에 《이것이 실패하는 구체적
+입력》을 못 쓰면 아무것도 막지 않는 것」):
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 역방향 포함 가드 제거 | `..._that_contains_the_live_data_dir_is_refused` — DID NOT RAISE |
+| 용량 프리플라이트 제거 | `test_free_space_below_the_floor_refuses_before_anything_is_written` — DID NOT RAISE |
+| `.git` 를 `exists()` → `is_dir()` | `test_a_destination_inside_a_git_worktree_is_refused` 3건 전부 |
+| `next_generation` 의 `+1` 제거 | `test_consecutive_runs_take_consecutive_generations` — `BackupSetRefused` |
+| 틸드 가지 제거(순서 역전과 동치) | `test_a_tilde_path_is_refused_as_a_tilde_path` 2건 |
+
+템플릿↔로더 드리프트는 `example_integrity_registry` 등재(필수 키 4 · 터치포인트 1 · 로더)와
+`test_the_shipped_example_config_is_the_shape_this_loader_reads` 가 양방향으로 잡는다.
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · completion GREEN · spec PASS · contract PASS + self-test PASS(뮤테이션
+145종) · citation PASS(175 citations / 3 README) · named-TBD PASS(47 files, 0) · size budget
+PASS(0 violations) · black/ruff 전부 통과.
+
+CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
+`tos/runtime/tests`(241) · `cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `df25a550…` → `1685714e…`(33차) → `e3102d5b…`(34차) → **`7460d4f3…`**(35차, 2차 리뷰 처분 — §7.1.22). `expected_dependency_set_digest`
+불변(`20559763…`, 같은 배포 호스트 루트 `.venv`). 갱신은 두 곳 —
+`config/tos_runtime/paper/release.yaml` 과
+`tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
+리뷰 처분은 **§7.1.21** 이다(§7.1.19·§7.1.20 은 그 사이에 머지된 A1-c 레인이 가져갔다).
+⚠ **A2 레인(§7.1.17)이 뒤에 머지되면 그쪽이 다시 도출해야 한다** — #814 가 main 을 stale 로
+만든 전례가 있고, CI 는 그것을 잡지 않는다.
 
 #### 7.1.19 A1-c 착지 — PR #838 (2026-10-02, 분기점 main `f219305f`) — §7.1 과 별개 PR
 
@@ -2603,3 +2748,122 @@ HEAD 를 옮기면 `matches_earlier_steps` 가 두 단계를 모두 대며 rc=1;
 이것을 통과하는가」만이 아니라 **「내가 보호한다고 말한 단위가 실제 운용 단위와 같은가」**
 다. 그리고 F9 는 **제안된 처방을 그대로 적용했으면 닫히지 않았다** — 실측이 아니었으면
 `-I` 를 붙이고 「닫혔다」고 적었을 것이다.
+
+#### 7.1.21 독립 리뷰 #840 처분 (2026-10-02)
+
+리뷰 레인은 저자와 다른 패스이지만 **같은 계열(Claude)** 이다 — 운영자는 이 PR 에 Codex
+심사를 붙이지 않았다(CLAUDE.md 2026-09-11 은 되돌리기 어려운 경로를 대상으로 «할 수 있다»로
+열어 두었을 뿐, 범위·비용 승인이 있을 때만이다). 따라서 이 라운드의 교차모델 독립성은
+**없다** — 판정의 일부로 적는다.
+
+판정 **needs-attention**, 9건 전건 처분. **1~3 은 이 PR 의 목적 자체를 깨고 있었다**:
+「무인 실행이 가능하게 만든 문」이라고 적어 놓고, 무인 실행이 실제로 만날 세 가지 상황에서
+각각 영구 정지 · traceback · 감시 공백이었다.
+
+| # | 지적 | 조치 |
+|---|---|---|
+| F1 | **한 번의 실패가 이후 모든 실행을 영구히 막는다.** 매니페스트는 **마지막에** 쓰이므로 중도 사망은 매니페스트 없는 `gen{N}/` 를 남기는데, 세대 할당이 매니페스트만 셌다 → 매일 밤 같은 N → `FileExistsError` → 사람이 손으로 지울 때까지 백업 0 | `next_generation` 이 **시도된** 세대(디렉터리)도 센다. **아무것도 지우지 않는다** — 부분 디렉터리는 그 자리에 남고 번호만 건너뛴다. 손으로 같은 번호를 쓰는 경로의 `FileExistsError` 는 이름 붙은 거부로 |
+| F2 | **cron 이 실제로 만날 실패가 전부 traceback.** Refused 셋만 잡고 있어 `database is locked`(런타임이 떠 있을 때) · ENOSPC · 커스터디 · 깨진 매니페스트가 스택트레이스로 나갔다 — 런북 §5 가 약속한 「한 줄」이 **정확히 그 경우들에서 거짓** | 단계 태그 `ColdBackupFailed`(원인은 `__cause__`) + `_run_dispatch` 와 같은 형태의 broad catch. **`refused`(규칙이 아니라고 함)와 `failed`(환경이 무너짐)를 섞지 않는다** — 다음 행동이 다르다 |
+| F3 | **용량 경보가 가장 빨리 자라는 트리를 안 봤다.** `archive_dir` 만 쟀는데 비압축 세대가 쌓이는 `backup_root` 가 큰 쪽이고, 런북은 둘을 **다른 매체**에 두라고 한다 | 세 루트 전부 측정 · `st_dev` 로 묶어 한 번씩. 보고서도 파일시스템 단위(`free_space_before/after`) |
+| F4 | `minimum_free_bytes: 0` 이 통과했다 — null 을 거부한 바로 그 이유(조용한 비활성화)를 그대로 허용 | `<= 0` 거부 |
+| F5 | 독스트링이 「세 경로를 서로 대조한다」고 **주장만** 했다(검사 없음) | 주장을 지우는 쪽이 아니라 **검사를 구현**했다 — 동일·중첩 거부(같은 부모 공유는 허용) |
+| F6 | 런북의 cron 이 **공용 체크아웃**에서 돈다 — 17:50 에 레인이 브랜치를 바꾸면 18:00 의 무인 실행이 리뷰 전 코드로 실 데이터를 건드린다(#793 과 같은 노출) | 분리 워크트리(detached `origin/main`) + 가드 래퍼: 브랜치 위면 거부 · 더티면 거부 · `PYTHONPATH` 절대경로로 **검증한 트리의 코드가 실제로 실행되게** 강제(`run_p_ca.sh` 가 같은 함정을 이미 다룬다) |
+| F7 | `manifest_path_for` 를 추가해 놓고 **아무 데서도 안 썼다** | 두 호출부에서 사용 + 관측기는 스캔이라 경로가 아니라 접미사가 필요하므로 `MANIFEST_SUFFIX` 공개. 철자 넷 → 하나 |
+| F8 | 「`run` 은 운영 함수에 닿지 않는다」 센티널이 새로 닿을 수 있게 된 `cold_backup` 을 안 든다 | 추가 |
+| F9 | union 멤버 중복 | 제거 |
+
+##### 곁가지로 잡힌 것
+
+보관 경로 자리에 **파일**이 있으면(오타) 여유 공간은 상위 디렉터리로 해소돼 프리플라이트를
+통과하고, durable set 을 전부 복사한 **뒤** 아카이브의 `mkdir` 에서 터졌다. 착수 전 거부로
+옮겼다.
+
+##### ⚠ 테스트 하나가 자기 이유로 실패할 수 없었다
+
+F3 의 변이(바닥을 `archive_dir` 만 측정)가 **1차 시도에서 green** 이었다. 스텁이 받은
+`roots` 인자를 무시하고 어떤 루트를 재든 같은 낮은 값을 돌려줬기 때문이다 — 검사가 좁아져도
+거부는 그대로 났고 테스트는 통과했다. 스텁이 `roots` 를 읽도록 고친 뒤에야 red 가 됐다.
+프로젝트 메모리 `guards-that-admit-what-they-name` 의 교훈이 **테스트 더블에도** 적용된다:
+「이것이 실패하는 구체적 입력」을 못 쓰면 그 테스트는 아무것도 막지 않는다.
+
+##### 변이로 red 확인 6건
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 할당기가 디렉터리를 무시 | `test_next_generation_steps_past_…` · `…takes_the_higher_of…` · `test_a_leftover_generation_directory_does_not_wedge_the_next_run` |
+| 단계 래퍼 제거 | 단계 실패 4건(ops 2 · CLI 2) |
+| 바닥을 `archive_dir` 만 측정 | `test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage` (스텁 수정 **후**) |
+| 중첩 검사 제거 | 동일·중첩 3건 |
+| 0 바닥 허용 | `test_a_malformed_free_space_floor_is_refused[0]` |
+| 파일-디렉터리 가드 제거 | `test_a_destination_that_is_a_file_is_refused_before_the_snapshot` |
+
+새 테스트 합계 **61건**(`tests/operations/test_cold_backup.py` 48 ·
+`tests/compose/test_cold_backup_cli.py` 13).
+
+##### 범위 밖으로 남긴 것
+
+`backup_set` 이 실패 시 `gen_dir` 을 **지우도록** 하는 쪽(F1 의 다른 선택지)은 택하지
+않았다. 이 모듈의 계약은 「Never deleted, never overwritten」이고, 부분 사본이라도 증거의
+사본이다 — 번호를 건너뛰는 쪽이 같은 결과(무인 실행 지속)를 **삭제 없이** 낸다.
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · size budget PASS(0 violations · `backup_set` 101 줄 초과는 예외 등재가
+아니라 `_create_generation_dir` 분해로 해소) · named-TBD PASS · black/ruff 통과.
+mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
+`cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `1685714e…`(33차) → **`e3102d5b…`**(34차). 이 라운드에서
+`origin/main`(`5e7a195c` — #842 · #838 · #837)을 머지했고, 가져온 파일에 `tos/**.py` 는
+없지만 **머지 뒤에 다시 찍어 숫자로 확인**했다. §7.1.18 의 경고는 그대로다 — A2 레인이
+뒤에 머지되면 그쪽이 또 도출해야 한다.
+
+#### 7.1.22 독립 리뷰 #840 2회차 처분 (2026-10-02)
+
+같은 레인(저자와 다른 패스, 같은 계열)이다 — 교차모델 독립성은 이 라운드에도 **없다**.
+판정 **needs-attention**, 8건 전건 처분. 1차(§7.1.21)가 「무인 실행이 실제로 만날 상황」을
+닫았다면, 2차가 찾은 것은 그보다 더 나쁜 축이다: **잡아낸 사실을 잘못된 이름으로 보고하고
+있었다.**
+
+| # | 지적 | 조치 |
+|---|---|---|
+| **F1** | 이 명령이 내릴 수 있는 **가장 무거운 판정**이 일시적 호스트 문제로 분류됐다. 아카이브 3번 검사(압축 해제본의 체인 재검증)가 내는 `EvidenceCorruption` 이 `_stage` 통과 목록에 없어 `ColdBackupFailed('archive')` 로 감싸였고, cron 메일의 `archive failed` 를 런북 §5 가 「환경이 무너졌다 · 고치고 다시 돌린다」로 안내했다 — **재실행이 답이 아닌 유일한 경우에** | `EvidenceCorruption` · `CustodyError` · `KeyContinuityRefused` 를 통과 목록에. 디스패치에 `integrity refused` · `custody refused` 접두 추가, 런북 §5 에 「재실행이 답이 아니다」 행 |
+| **F2** | 콜드 보관소 충돌이 또 하나의 「매일 밤 거부」 — 할당이 `backup_root` 만 봤는데, 런북 §6 이 권하는 조치가 「오래된 아카이브를 다른 매체로」이고 자라는 쪽은 `backup_root` 다. 즉 「backup_root 는 비었고 archive_dir 엔 gen1..genK」는 **런북을 따른 결과**다. 그 상태에서 할당은 1 → durable set 전부 복사 → 기존 아카이브에 걸려 거부, K 일 밤 | 할당이 콜드 보관소(아카이브·보고서·검증 스크래치)도 센다. 더해 선택된 세대의 산출물 셋이 이미 있으면 **스냅숏 전에** 이름 붙여 거부(보고서의 조용한 덮어쓰기도 같이 닫힘) |
+| **F3** | 「스냅숏 전에 잡힌다」가 **거짓**이었다. `FileKeyProvider.__init__` 은 필드만 저장하므로 잘못된 커스터디는 아카이브 체인 검사에서야 드러났다 — 전부 복사·압축한 뒤, `archive failed` 라는 이름으로. 그것을 증명하던 테스트는 **생성자를 monkeypatch 해 raise** 시키고 있었다 | 프리플라이트가 `key_provider.current()` 를 부른다. 테스트는 **진짜** 빈 커스터디 루트 |
+| **F4** | 런북 틸드 행이 이 브랜치가 바꾼 뒤로는 **나올 수 없는** 메시지를 달고 있었다 | 실제 문구로 교체 + 상대경로 행 분리 |
+| **F5** | 포함 판정 철자가 셋 | `Path.is_relative_to`(stdlib) 하나로. `backup_set` 쪽도 함께 |
+| **F6** | `gen{N}` 파서가 넷 — `MANIFEST_SUFFIX` 를 공개해 접미사 드리프트를 막아 놓고 **접두/숫자 파싱은 새 사본을 추가**했다 | 공개 `generation_number(name, suffix)` 하나로(관측기 포함). 드리프트의 실패 모드가 **조용함**이라 특히 그렇다 — 아무것도 못 알아본 스캔은 「세대 없음」을 보고한다 |
+| **F7** | §3 의 수동 실행이 §4-1 이 **금지한** 공용 체크아웃을 그대로 쓴다 | 분리 워크트리/래퍼로. 전제 4번으로도 올렸다 |
+| **F8** | `_refuse_below_floor` 는 아무것도 refuse 하지 않는다(두 호출부 중 하나만 raise) | `_below_floor` 로 개명 + 왜 `_refuse_` 가 아닌지 독스트링에 |
+
+##### 두 라운드에서 같은 형태가 세 번 나왔다
+
+F3 의 테스트(생성자 monkeypatch), 1차 F3 의 스텁(인자 무시), 1차 F5 의 독스트링(검사 없는
+주장) — 전부 **자기가 이름 붙인 경우를 잡을 수 없는 가드**다. 프로젝트 메모리
+`guards-that-admit-what-they-name` 가 적은 네 형태에 **「테스트 더블이 실물이 낼 수 없는
+예외를 낸다」** 를 더해 둘 값이 있다. 셋 다 자동 검사로는 잡히지 않았다.
+
+##### 변이로 red 확인 4건
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 통과 목록에서 세 타입 제거 | `test_a_verdict_is_never_rewrapped_as_an_environment_failure` 3건 |
+| 할당이 콜드 보관소 무시 | `test_a_backup_root_that_was_emptied_does_not_collide_with_cold_storage` |
+| 커스터디 프리플라이트 제거 | 실 커스터디 2건(ops · CLI) |
+| 산출물 프리플라이트 제거 | `…existing_artifact_for_the_chosen_generation…` 3건 |
+
+새 테스트 합계 **72건**(`tests/operations/test_cold_backup.py` 56 ·
+`tests/compose/test_cold_backup_cli.py` 16).
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · size budget PASS(0 violations — `cold_backup` 이 다시 100 줄을 넘어
+`_preflight_destinations`/`_preflight_free_space` 로 분해했다. 예외 등재 아님) ·
+named-TBD PASS · completion GREEN · citation PASS · black/ruff 통과.
+mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
+`cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `e3102d5b…`(34차) → **`7460d4f3…`**(35차). 두 경로 일치.
+`expected_dependency_set_digest` 불변(`20559763…`).

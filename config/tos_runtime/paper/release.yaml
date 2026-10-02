@@ -552,6 +552,59 @@
 #   아니라 「같은 것을 쟀다」로 남긴다(#814 이후 이 파일의 규율 — 위 32539e07 머지와 같은
 #   형태).
 #
+#   33차 재측정(2026-10-02, 브랜치 `feat/tos-evidence-cold-backup` · PR #840 — 증거 증가
+#   대응 계획 §2 A3 의 무인화, 착지 §7.1.18): 런타임 소스가 **넷** 바뀐다. 커널은 그대로다.
+#   신규 둘 — `operations/cold_backup.py`(설정 기반 콜드 백업 진입점: 다음 세대 → 스냅숏 →
+#   아카이브+되읽기 검증 → JSON 보고서 · 보관 경로 거부 셋 · 용량 바닥) ·
+#   `compose/_backup_dispatch.py`(`backup-set`/`cold-backup` 두 하위 명령의 파서·args·디스패치).
+#   수정 둘 — `operations/backup_set.py`(공개 `next_generation`/`manifest_path_for` 추가;
+#   기존 함수 동작 불변) · `compose/cli.py`(`cold-backup` 배선 + `backup-set` 디스패치를
+#   `_backup_dispatch` 로 **이동**).
+#   ⚠ 그 이동은 A3 와 무관한 구조 변경이고, 이유는 크기 예산이다 — `cold-backup` 배선만으로
+#   `cli.py` 가 972 → **995/1000** 이 됐다(§7.1.7 편차 1 이 `backup_set.py` 992/1000 에 대해
+#   이름 붙인 그 조건). 이동 뒤 943 줄. 디스패치 본문은 한 줄도 바꾸지 않았다.
+#   **라이브 증거 저장소에 쓰는 코드는 이 PR 에 한 줄도 없다** — 콜드 백업은 런타임이 정지한
+#   상태에서 돌고, 실행 기록은 증거 행이 아니라 아카이브 옆 JSON 이다(§7.1.18 「양립하지
+#   않는 셋」). append-only 트리거도 보존 정책도 건드리지 않았다.
+#   ⚠ 이 값은 저자 자체 점검이 잡은 결함 하나(`cold_backup.py` 의 틸드 거부가 절대경로 검사
+#   뒤에 있어 **도달 불가**였다 — 순서를 뒤집었다)를 **고친 뒤에** 쟀다. 중간값
+#   9cc89a756f444cc248fd2334adb384ae5038a3d919848518c892120d05a8df08 은 그 수정 전의
+#   측정이고 브랜치에 커밋되지 않았다.
+#   이전 값 df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0 은 32차 측정치.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 1685714e…).
+#
+#   34차 재측정(2026-10-02, 같은 브랜치 · PR #840 독립 리뷰 9건 처분 — §7.1.21): 같은
+#   런타임 파일 넷이 다시 바뀐다(커널은 그대로). 동작 변경 셋 — F1: 세대 할당이 매니페스트
+#   뿐 아니라 **시도된 세대 디렉터리**도 센다(중도 사망이 남긴 `gen{N}/` 가 무인 실행을
+#   영구히 막던 것을 끊는다. 삭제는 하지 않는다 — 번호만 건너뛴다) · F2: 디스패치가 단계
+#   태그 `ColdBackupFailed` 와 broad catch 로 모든 환경 결함을 **한 줄**로 바꾼다 ·
+#   F3: 용량 바닥을 세 루트 전부에 대해(장치 단위로 묶어) 잰다. 그 밖에 0 바닥 거부 ·
+#   경로 상호 중첩 거부 · 파일-디렉터리 거부 · `manifest_path_for`/`MANIFEST_SUFFIX` 사용 ·
+#   `_create_generation_dir` 분해(size budget).
+#   **라이브 증거 저장소에 쓰는 코드는 여전히 0 이다.**
+#   이전 값 1685714e0dc41aea79980ec159bb2546d414e73719234d3cff103c6d4e37e410 은 33차.
+#   두 경로 일치(둘 다 e3102d5b…). `expected_dependency_set_digest` 는 서른네 번 모두 불변.
+#
+#   35차 재측정(2026-10-02, 같은 브랜치 · PR #840 2차 리뷰 8건 처분 — §7.1.22): 런타임
+#   파일 넷이 또 바뀐다(커널 불변). 동작 변경 셋 — F1: `EvidenceCorruption`/`CustodyError`/
+#   `KeyContinuityRefused` 가 단계 래퍼를 **통과**해 `integrity refused`/`custody refused`
+#   로 보고된다(전에는 `archive failed` 로 분류돼 런북이 「다시 돌려라」를 안내했다 —
+#   재실행이 답이 아닌 유일한 경우에) · F2: 세대 할당이 콜드 보관소(아카이브·보고서·검증
+#   스크래치)도 세고, 선택된 세대의 산출물이 이미 있으면 스냅숏 전에 거부한다 · F3:
+#   프리플라이트가 `key_provider.current()` 를 불러 커스터디를 **복사 전에** 확인한다.
+#   그 밖에 `Path.is_relative_to` 로 포함 판정 통일 · 공개 `generation_number` 로 `gen{N}`
+#   파서 넷→하나 · `_below_floor` 개명 · `cold_backup` 프리플라이트 분해(size budget).
+#   **라이브 증거 저장소에 쓰는 코드는 여전히 0 이다.**
+#   이전 값 e3102d5b63b78d350fdf79dab7f8c0e229caf3a4e7475bd69b60cef14e72802f 은 34차.
+#   두 경로 일치(둘 다 7460d4f3…). `expected_dependency_set_digest` 는 서른다섯 번 모두 불변.
+#
+#   ⚠ **origin/main 머지(5e7a195c — #842 CI performance median-of-n · #837 · #838)도
+#   이 값에 영향이 없다** — 가져온 것은 `.github/**` · `scripts/performance/**` ·
+#   `docs/**` 이고 `tos/src/**.py`·`tos/runtime/src/**.py` 는 한 건도 없다. 그래도 머지
+#   **뒤에** 다시 찍어 숫자로 확인했다(이 파일의 #814 이후 규율).
+#   `expected_dependency_set_digest` 는 서른세 번 모두 바뀌지 않았다 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1).
+#
 #   ⚠ **두 번째 origin/main 머지(d7ce609b — #831 P-CA 프로브)도 영향이 없다** — 가져온 것은
 #   `tools/broker_probes/**` · `tests/tools/**` · `docs/**` 여덟 파일이고 `tos/` 아래는
 #   한 건도 없다. 두 경로 모두 df25a550… 그대로다. (이 머지 자체는 이 레인이 만들지
@@ -563,8 +616,11 @@
 #     PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python \
 #       -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' print-digests
 #
-#   33차 재측정(2026-10-02, 브랜치 feat/tos-evidence-kind-index-migration · 분기점
-#   origin/main f219305f · 증거 성장 계획 §7.1.17): 런타임 `*.py` 셋이 바뀌었다 —
+#   36차 재측정(2026-10-02, 브랜치 feat/tos-evidence-kind-index-migration · 분기점
+#   origin/main f219305f · 증거 성장 계획 §7.1.17):
+#   ⚠ 이 레인은 처음 33차로 번호를 잡았는데, 그 사이 PR #840 이 33·34·35 를 먼저 썼다.
+#   머지하면서 **36 으로 다시 번호를 매긴다** — 번호는 이 파일 안에서 유일해야 한다.
+#   아래 서술: 런타임 `*.py` 셋이 바뀌었다 —
 #   `operations/schema_ledger.py`(새 공개 헬퍼 `create_schema_ledger_objects` + 기존 두
 #   호출부를 그 헬퍼로) · `operations/schema_migrations.py`(`apply_migrations` 가 대장
 #   테이블만이 아니라 **트리거까지** 만들고, 복구한 트리거를 `MigrationOutcome.repaired`
@@ -574,7 +630,7 @@
 #   df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0 은 32차 측정치
 #   (브랜치 perf/tos-flow-observation-pk-lookup · PR #832 · main d7ce609b).
 #
-#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `83a970e9…`(아래 값).
+#   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `38d85110…`(아래 값).
 #   `SCHEMA_LEDGER_TABLE_SQL` 을 **비공개**(`_` 접두)로 바꾸고 `__all__` 에서 뺐다.
 #   첫 커밋의 「네 번째 호출부가 같은 누락을 반복할 수 없다」가 **공개 상수가 남아 있는
 #   한 참이 아니었기** 때문이다 — 이 PR 이 다루는 결함 형태(가드가 자기가 막는다고 말한
@@ -590,7 +646,13 @@
 #   **앞**에서 물어, 자기가 방금 만든 대장을 「rebuilt」 로 보고하지 않는다) 와
 #   `schema_migrations.py`(죽은 상호참조 · Args 의 스토어 넷) 가 바뀌었다. 계획 §7.1.17
 #   「Claude 레인 · 적대적 패스 처분」에 표로 적었다.
-#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 83a970e9…).
+#   ⚠ **origin/main 머지(2b69b8b5 — PR #840 A3 무인화)로 다시 도출했다.** #840 이
+#   `compose/cli.py` · `compose/_operations_wiring.py` · `operations/backup_set.py` 와 새
+#   모듈 둘(`_backup_dispatch.py` · `cold_backup.py`)을 들여왔으므로 양쪽 소스가 섞였다.
+#   #840 의 §7.1.18 이 「A2 레인이 뒤에 머지되면 그쪽이 다시 도출해야 한다」고 적어 둔
+#   바로 그 경우다(#814 가 main 을 stale 로 만든 전례). 머지 전 이 레인의 값은
+#   83a970e9… 였고, 머지 뒤 실측이 38d85110… 다.
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 38d85110…).
 #   `expected_dependency_set_digest` 는 서른세 번 모두 바뀌지 않았다 — 같은 배포 호스트
 #   루트 `.venv`(python 3.12.12 / sqlite 3.45.1).
 #
@@ -611,7 +673,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "83a970e98fef29b36624e054d8d120678f5fb2f5bdd703a976bdd942a13c5555"
+expected_code_digest: "38d85110211cf6836e5806c81547c075f8d3a926bb0cf107cb7afc77871065e3"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
