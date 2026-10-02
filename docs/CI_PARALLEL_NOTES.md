@@ -36,6 +36,55 @@ are documented in [`performance_slas.md`](performance_slas.md#the-ci-performance
 Validated: full suite at `-n auto` (16 workers, the worst-case contention,
 ≥ CI's 2–4) — parallel pass 0 failures, serial pass 0 failures.
 
+## Update 2026-10-02 — the session is hermetic by construction (#698)
+
+A pytest process must never reach a real `.env`, a real broker credential or a
+real token cache. On 2026-09-15 it did: a unit run inside a worktree under
+`<repo>/.claude/worktrees/<name>/` loaded the **primary** checkout's `.env` and
+had a real KIS token issued and written to `.kis_token_real`. The mechanism was
+python-dotenv's `find_dotenv()`, which walks from the calling file up to the
+filesystem root, reached by an argument-less `load_dotenv()` in
+`cli/commands/common.py` that ran during collection.
+
+### The rules
+
+- **Entrypoints never walk.** Every `.env` load in `cli/` and `scripts/` goes
+  through `shared.config.dotenv_guard.load_project_dotenv()`, which reads at
+  most `<checkout>/.env` and then `<cwd>/.env`. No ancestor directory is ever
+  consulted, so a nested worktree cannot reach the checkout above it. Do not
+  call `load_dotenv()` directly from a module an entrypoint imports.
+- **`KIS_TEST_HERMETIC` switches the loader off.** `tests/conftest.py` sets it
+  at import time, before collection. It is the only knob this adds, it is a
+  test switch rather than a configuration surface, and the paper/live runtime
+  never sets it — with it unset the entrypoints behave exactly as before.
+- **The credential namespace is emptied.** The whole `KIS_*` and `TELEGRAM_*`
+  space is removed from `os.environ`, whatever its source — a `.env` already
+  loaded, or variables exported in the operator's shell. Only the test switches
+  survive (`KIS_TEST_HERMETIC`, `KIS_RUN_LIVE_INFRA_TESTS`,
+  `KIS_TEST_IMAGE_NO_GIT_METADATA`). This also keeps local runs honest: CI sets
+  none of these, so a test that quietly depended on one used to pass locally
+  and fail in CI.
+- **Config and token caches are pinned.** `KIS_CONFIG_DIR` points at *this*
+  checkout's `config/`, and `KIS_TOKEN_CACHE_DIR` at a per-process temp
+  directory, so a `.kis_token_*` can no longer land in a repository root (the
+  default is `Path.cwd()`).
+- **A leftover `.env` read fails loudly.** `dotenv.load_dotenv` is wrapped for
+  the session: an argument-less call is refused outright, and an explicit path
+  that *exists* outside the temp sandbox is refused by name. A path that does
+  not exist passes through, so CI — which has no `.env` anywhere — is
+  unaffected and the guard only speaks when there is something real to read.
+
+### Opting out
+
+`KIS_RUN_LIVE_INFRA_TESTS=1` — the switch that un-skips the `live_infra` tests
+— makes the session non-hermetic and loads this checkout's `.env`, the
+pre-#698 behavior. `TELEGRAM_*` stays scrubbed even then, so a live-infra run
+still cannot message the operator from a test.
+
+`tests/unit/config/test_dotenv_hermeticity.py` asserts all of the above, and
+proves the loader half in subprocesses with the switch *off*, so it still
+catches a regression in the entrypoints if the session guard is ever removed.
+
 ### Original (2026-05-09) analysis below
 
 ## TL;DR
