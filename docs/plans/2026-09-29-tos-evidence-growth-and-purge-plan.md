@@ -2559,3 +2559,48 @@ mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241
 없지만 **머지 뒤에 다시 찍어 숫자로 확인**했다. §7.1.18 의 경고는 그대로다 — A2 레인이
 뒤에 머지되면 그쪽이 또 도출해야 한다.
 
+#### 7.1.22 독립 리뷰 #840 2회차 처분 (2026-10-02)
+
+같은 레인(저자와 다른 패스, 같은 계열)이다 — 교차모델 독립성은 이 라운드에도 **없다**.
+판정 **needs-attention**, 8건 전건 처분. 1차(§7.1.21)가 「무인 실행이 실제로 만날 상황」을
+닫았다면, 2차가 찾은 것은 그보다 더 나쁜 축이다: **잡아낸 사실을 잘못된 이름으로 보고하고
+있었다.**
+
+| # | 지적 | 조치 |
+|---|---|---|
+| **F1** | 이 명령이 내릴 수 있는 **가장 무거운 판정**이 일시적 호스트 문제로 분류됐다. 아카이브 3번 검사(압축 해제본의 체인 재검증)가 내는 `EvidenceCorruption` 이 `_stage` 통과 목록에 없어 `ColdBackupFailed('archive')` 로 감싸였고, cron 메일의 `archive failed` 를 런북 §5 가 「환경이 무너졌다 · 고치고 다시 돌린다」로 안내했다 — **재실행이 답이 아닌 유일한 경우에** | `EvidenceCorruption` · `CustodyError` · `KeyContinuityRefused` 를 통과 목록에. 디스패치에 `integrity refused` · `custody refused` 접두 추가, 런북 §5 에 「재실행이 답이 아니다」 행 |
+| **F2** | 콜드 보관소 충돌이 또 하나의 「매일 밤 거부」 — 할당이 `backup_root` 만 봤는데, 런북 §6 이 권하는 조치가 「오래된 아카이브를 다른 매체로」이고 자라는 쪽은 `backup_root` 다. 즉 「backup_root 는 비었고 archive_dir 엔 gen1..genK」는 **런북을 따른 결과**다. 그 상태에서 할당은 1 → durable set 전부 복사 → 기존 아카이브에 걸려 거부, K 일 밤 | 할당이 콜드 보관소(아카이브·보고서·검증 스크래치)도 센다. 더해 선택된 세대의 산출물 셋이 이미 있으면 **스냅숏 전에** 이름 붙여 거부(보고서의 조용한 덮어쓰기도 같이 닫힘) |
+| **F3** | 「스냅숏 전에 잡힌다」가 **거짓**이었다. `FileKeyProvider.__init__` 은 필드만 저장하므로 잘못된 커스터디는 아카이브 체인 검사에서야 드러났다 — 전부 복사·압축한 뒤, `archive failed` 라는 이름으로. 그것을 증명하던 테스트는 **생성자를 monkeypatch 해 raise** 시키고 있었다 | 프리플라이트가 `key_provider.current()` 를 부른다. 테스트는 **진짜** 빈 커스터디 루트 |
+| **F4** | 런북 틸드 행이 이 브랜치가 바꾼 뒤로는 **나올 수 없는** 메시지를 달고 있었다 | 실제 문구로 교체 + 상대경로 행 분리 |
+| **F5** | 포함 판정 철자가 셋 | `Path.is_relative_to`(stdlib) 하나로. `backup_set` 쪽도 함께 |
+| **F6** | `gen{N}` 파서가 넷 — `MANIFEST_SUFFIX` 를 공개해 접미사 드리프트를 막아 놓고 **접두/숫자 파싱은 새 사본을 추가**했다 | 공개 `generation_number(name, suffix)` 하나로(관측기 포함). 드리프트의 실패 모드가 **조용함**이라 특히 그렇다 — 아무것도 못 알아본 스캔은 「세대 없음」을 보고한다 |
+| **F7** | §3 의 수동 실행이 §4-1 이 **금지한** 공용 체크아웃을 그대로 쓴다 | 분리 워크트리/래퍼로. 전제 4번으로도 올렸다 |
+| **F8** | `_refuse_below_floor` 는 아무것도 refuse 하지 않는다(두 호출부 중 하나만 raise) | `_below_floor` 로 개명 + 왜 `_refuse_` 가 아닌지 독스트링에 |
+
+##### 두 라운드에서 같은 형태가 세 번 나왔다
+
+F3 의 테스트(생성자 monkeypatch), 1차 F3 의 스텁(인자 무시), 1차 F5 의 독스트링(검사 없는
+주장) — 전부 **자기가 이름 붙인 경우를 잡을 수 없는 가드**다. 프로젝트 메모리
+`guards-that-admit-what-they-name` 가 적은 네 형태에 **「테스트 더블이 실물이 낼 수 없는
+예외를 낸다」** 를 더해 둘 값이 있다. 셋 다 자동 검사로는 잡히지 않았다.
+
+##### 변이로 red 확인 4건
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 통과 목록에서 세 타입 제거 | `test_a_verdict_is_never_rewrapped_as_an_environment_failure` 3건 |
+| 할당이 콜드 보관소 무시 | `test_a_backup_root_that_was_emptied_does_not_collide_with_cold_storage` |
+| 커스터디 프리플라이트 제거 | 실 커스터디 2건(ops · CLI) |
+| 산출물 프리플라이트 제거 | `…existing_artifact_for_the_chosen_generation…` 3건 |
+
+새 테스트 합계 **72건**(`tests/operations/test_cold_backup.py` 56 ·
+`tests/compose/test_cold_backup_cli.py` 16).
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · size budget PASS(0 violations — `cold_backup` 이 다시 100 줄을 넘어
+`_preflight_destinations`/`_preflight_free_space` 로 분해했다. 예외 등재 아님) ·
+named-TBD PASS · completion GREEN · citation PASS · black/ruff 통과.
+mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
+`cd tos && mypy src`(266) · `tos/tests`(587).
