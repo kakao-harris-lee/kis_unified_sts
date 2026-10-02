@@ -11,7 +11,10 @@
 #
 # Paths must be ABSOLUTE and are used verbatim: no `~` expansion, no relative
 # resolution, no environment variables. All three are refused if they sit inside
-# a git worktree, inside the live `--data-dir`, or anywhere above it.
+# a git worktree, inside the live `--data-dir`, anywhere above it, or inside one
+# another (sharing a parent is fine; nesting silently undoes the separation the
+# three trees exist for). A path that exists and is not a directory is refused
+# before anything is written.
 #
 # NOTHING HERE PRUNES ANYTHING. There is no retention knob, by decision, not by
 # omission: `backup_set` never deletes ("Never deleted, never overwritten"), an
@@ -39,11 +42,19 @@ archive_dir: null
 # message names it.
 verify_root: null
 
-# Capacity alarm (plan §5). A run refuses BEFORE writing anything when
-# `archive_dir`'s filesystem has fewer than this many bytes free, and a run that
-# completes below it warns on stderr. There is no default: an unapproved floor
-# would state an operational bound as decided. Fill it from this host's actual
-# storage and the daily growth above — e.g. 53687091200 for 50 GiB.
+# Capacity alarm (plan §5). A run refuses BEFORE writing anything when ANY of the
+# three roots above is on a filesystem with fewer than this many bytes free
+# (roots sharing a device are counted once), and a run that completes below it
+# warns on stderr. All three and not just cold storage: `backup_root` holds the
+# UNCOMPRESSED generations and is the fastest-growing tree this command writes,
+# so watching only `archive_dir` watches the wrong disk as soon as the advice
+# above about separate media is followed.
+#
+# There is no default: an unapproved floor would state an operational bound as
+# decided. Zero and negative are REFUSED, not accepted as "no alarm" — `free < 0`
+# is never true, so a zero here would leave the alarm off while this file looked
+# filled in. Fill it from this host's actual storage and the daily growth above —
+# e.g. 53687091200 for 50 GiB.
 minimum_free_bytes: null
 
 # OPTIONAL, unlike the four above. Absent means stdlib lzma's own preset 6

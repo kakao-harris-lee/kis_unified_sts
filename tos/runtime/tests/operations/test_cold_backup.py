@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -27,8 +29,10 @@ from tos_runtime.operations.backup_archive import BackupArchiveRefused, verify_a
 from tos_runtime.operations.backup_set import next_generation
 from tos_runtime.operations.cold_backup import (
     ColdBackupConfig,
+    ColdBackupFailed,
     ColdBackupRefused,
     ColdBackupReport,
+    FilesystemFreeSpace,
     cold_backup,
     load_cold_backup_config,
 )
@@ -259,11 +263,50 @@ def test_a_destination_inside_a_git_worktree_is_refused(
 # -- the capacity floor (plan §5) ---------------------------------------------
 
 
+def _free_space_stub(
+    free_by_root: Mapping[str, int],
+) -> Callable[[Mapping[str, Path]], tuple[FilesystemFreeSpace, ...]]:
+    """A ``_free_space`` replacement that answers for **the roots it is actually given**.
+
+    Deliberately not a fixed reading: a stub that ignored its argument would return the same
+    low number however few roots the caller measured, so a regression narrowing the check
+    back to ``archive_dir`` alone would still see a refusal and the test would stay green —
+    a test that cannot fail for the reason it exists. Reading ``roots`` is what makes
+    ``test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage`` real; a root the
+    caller asks about and this mapping does not model raises ``KeyError``, which is also a
+    signal worth having.
+    """
+
+    def _stub(roots: Mapping[str, Path]) -> tuple[FilesystemFreeSpace, ...]:
+        return tuple(
+            FilesystemFreeSpace(
+                roots=(label,),
+                measured_path=f"/fake/{label}",
+                free_bytes=free_by_root[label],
+            )
+            for label in roots
+        )
+
+    return _stub
+
+
+#: Every root comfortably above any floor these tests use.
+_ROOMY: Mapping[str, int] = {
+    "archive_dir": 10**12,
+    "backup_root": 10**12,
+    "verify_root": 10**12,
+}
+
+
 def test_free_space_below_the_floor_refuses_before_anything_is_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     live_dir = _live(tmp_path)
-    monkeypatch.setattr(cold_backup_module, "_free_bytes", lambda _path: 10)
+    monkeypatch.setattr(
+        cold_backup_module,
+        "_free_space",
+        _free_space_stub(dict.fromkeys(_ROOMY, 10)),
+    )
 
     with pytest.raises(ColdBackupRefused) as refusal:
         _run(tmp_path, live_dir, minimum_free_bytes=1_000_000)
@@ -276,32 +319,226 @@ def test_free_space_below_the_floor_refuses_before_anything_is_written(
     assert not (tmp_path / "cold").exists()
 
 
+def test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``backup_root`` holds the UNCOMPRESSED generations — the fastest-growing tree this
+    command writes, and on a different medium from ``archive_dir`` whenever the runbook's own
+    advice is followed. Measuring only cold storage would watch the wrong disk, and the
+    failure would arrive as a mid-copy error rather than as this refusal."""
+    live_dir = _live(tmp_path)
+    monkeypatch.setattr(
+        cold_backup_module,
+        "_free_space",
+        _free_space_stub({**_ROOMY, "backup_root": 10}),
+    )
+
+    with pytest.raises(ColdBackupRefused) as refusal:
+        _run(tmp_path, live_dir, minimum_free_bytes=1_000_000)
+
+    message = str(refusal.value)
+    assert "backup_root at /fake/backup_root has 10 bytes free" in message
+    assert "below the configured floor" in message
+    # Cold storage is roomy, so narrowing the check back to it would see nothing.
+    assert "archive_dir" not in message
+    assert not (tmp_path / "backups").exists()
+
+
+def test_free_space_reports_one_entry_per_filesystem_not_per_root(
+    tmp_path: Path,
+) -> None:
+    """Three roots on one disk are ONE headroom. Reporting it three times would read as
+    three numbers that could be spent independently."""
+    measured = cold_backup_module._free_space(
+        {
+            "archive_dir": tmp_path / "cold",
+            "backup_root": tmp_path / "backups",
+            "verify_root": tmp_path / "verify",
+        }
+    )
+
+    assert len(measured) == 1
+    assert measured[0].roots == ("archive_dir", "backup_root", "verify_root")
+    # None of the three exists yet — the nearest existing ancestor is what was measured.
+    assert measured[0].measured_path == str(tmp_path)
+    assert measured[0].free_bytes > 0
+
+
 def test_a_run_that_ends_below_the_floor_completes_and_flags_the_alarm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The alarm never retracts a verified backup. The run that CROSSES the floor finishes and
     records that it did; the next one is the one that refuses."""
     live_dir = _live(tmp_path)
-    readings = iter([5_000_000, 10])
-    monkeypatch.setattr(cold_backup_module, "_free_bytes", lambda _path: next(readings))
+    readings = iter(
+        [
+            _free_space_stub(dict.fromkeys(_ROOMY, 5_000_000)),
+            _free_space_stub(dict.fromkeys(_ROOMY, 10)),
+        ]
+    )
+    monkeypatch.setattr(
+        cold_backup_module, "_free_space", lambda roots: next(readings)(roots)
+    )
 
     report = _run(tmp_path, live_dir, minimum_free_bytes=1_000_000)
 
     assert report.chain_verified is True
-    assert (report.free_bytes_before, report.free_bytes_after) == (5_000_000, 10)
+    assert {entry.free_bytes for entry in report.free_space_before} == {5_000_000}
+    assert {entry.free_bytes for entry in report.free_space_after} == {10}
     assert report.free_bytes_below_minimum_after is True
     assert Path(report.archive_path).is_file()
 
 
-def test_free_bytes_measures_the_nearest_existing_ancestor(tmp_path: Path) -> None:
-    """``archive_dir`` does not exist before the first run, so the floor is checked against the
+def test_the_measured_ancestor_is_the_nearest_existing_directory(
+    tmp_path: Path,
+) -> None:
+    """A root does not exist before the first run, so the floor is checked against the
     filesystem that will hold it rather than skipped."""
     deep = tmp_path / "a" / "b" / "c"
 
-    measured = cold_backup_module._free_bytes(deep)
-
-    assert measured > 0
+    assert cold_backup_module._measurable_ancestor(deep) == tmp_path
     assert not deep.exists()
+
+
+# -- a failed run must not wedge the next one (review F1) ---------------------
+
+
+def test_a_leftover_generation_directory_does_not_wedge_the_next_run(
+    tmp_path: Path,
+) -> None:
+    """The failure this guards is a permanent outage from one transient fault.
+
+    `backup_set` creates `gen{N}/` and writes the manifest LAST, so a run that dies in
+    between (the runtime still holding a handle, the disk full mid-copy) leaves a
+    manifest-less directory. If the allocator counted manifests only it would hand back the
+    same N every night and `backup_set` would refuse it every night — forever, unattended,
+    until someone deleted the directory by hand.
+    """
+    live_dir = _live(tmp_path)
+    # Exactly what a died-part-way run leaves behind.
+    (tmp_path / "backups" / "gen1").mkdir(parents=True)
+    (tmp_path / "backups" / "gen1" / "evidence.sqlite3").write_bytes(b"partial")
+
+    report = _run(tmp_path, live_dir)
+
+    assert report.generation == 2
+    assert Path(report.archive_path).is_file()
+    # Nothing was deleted: the partial directory is still there, byte for byte.
+    assert (
+        tmp_path / "backups" / "gen1" / "evidence.sqlite3"
+    ).read_bytes() == b"partial"
+    # And the run after that keeps stepping forward.
+    assert _run(tmp_path, live_dir).generation == 3
+
+
+# -- unattended failures are reported, never raised (review F2) ---------------
+
+
+def test_a_held_sqlite_handle_surfaces_as_a_named_snapshot_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The precondition no code can check — the runtime still running — is the single most
+    likely cron-time fault, and it arrives from sqlite as an `OperationalError`. It must come
+    out tagged with the stage, not as a bare sqlite exception."""
+    live_dir = _live(tmp_path)
+
+    def _locked(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(cold_backup_module, "backup_set", _locked)
+
+    with pytest.raises(ColdBackupFailed) as failure:
+        _run(tmp_path, live_dir)
+
+    assert failure.value.stage == "snapshot"
+    assert "OperationalError" in str(failure.value)
+    assert "database is locked" in str(failure.value)
+    assert isinstance(failure.value.__cause__, sqlite3.OperationalError)
+
+
+def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live_dir = _live(tmp_path)
+
+    def _enospc(*_args: object, **_kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(cold_backup_module, "archive_backup_set", _enospc)
+
+    with pytest.raises(ColdBackupFailed) as failure:
+        _run(tmp_path, live_dir)
+
+    assert failure.value.stage == "archive"
+    assert "No space left on device" in str(failure.value)
+    # The snapshot itself still stands — a failed archive never retracts a good snapshot.
+    assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
+    assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
+
+
+def test_a_refusal_is_never_rewrapped_as_a_failure(tmp_path: Path) -> None:
+    """ "Refused" and "failed" are different facts for the operator: a rule said no, versus
+    the host broke. The stage wrapper lets all three refusal types through untouched."""
+    live_dir = _live(tmp_path)
+    (tmp_path / "verify" / "gen1.verify").mkdir(parents=True)
+
+    with pytest.raises(BackupArchiveRefused):
+        _run(tmp_path, live_dir)
+
+
+def test_a_destination_that_is_a_file_is_refused_before_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    """Free space resolves to the nearest existing ancestor, so a file where a directory
+    belongs sails through the preflight and is only discovered by the archive step's own
+    mkdir — after a whole durable set has been copied. Caught here instead."""
+    live_dir = _live(tmp_path)
+    (tmp_path / "cold-file").write_text("not a directory")
+
+    with pytest.raises(ColdBackupRefused) as refusal:
+        _run(tmp_path, live_dir, archive_dir=tmp_path / "cold-file")
+
+    assert "exists and is not a directory" in str(refusal.value)
+    assert not (tmp_path / "backups").exists()
+
+
+# -- the three roots are kept apart (review F5) -------------------------------
+
+
+def test_two_roots_pointing_at_the_same_directory_are_refused(tmp_path: Path) -> None:
+    live_dir = _live(tmp_path)
+
+    with pytest.raises(ColdBackupRefused) as refusal:
+        _run(tmp_path, live_dir, verify_root=tmp_path / "cold")
+
+    assert "are the same directory" in str(refusal.value)
+    assert not (tmp_path / "backups").exists()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "inner", "outer"),
+    [
+        ({"verify_root": "cold/scratch"}, "verify_root", "archive_dir"),
+        ({"archive_dir": "backups/cold"}, "archive_dir", "backup_root"),
+    ],
+)
+def test_one_root_nested_inside_another_is_refused(
+    tmp_path: Path, overrides: dict[str, str], inner: str, outer: str
+) -> None:
+    """Merely sharing a parent is fine and ordinary; containment is not — it silently undoes
+    the separate-medium arrangement the example config asks for."""
+    live_dir = _live(tmp_path)
+
+    with pytest.raises(ColdBackupRefused) as refusal:
+        _run(
+            tmp_path,
+            live_dir,
+            **{key: tmp_path / value for key, value in overrides.items()},
+        )
+
+    message = str(refusal.value)
+    assert f"{inner} " in message
+    assert f"is inside {outer} " in message
 
 
 # -- the loader ---------------------------------------------------------------
@@ -427,7 +664,8 @@ def test_a_tilde_path_is_refused_as_a_tilde_path(tmp_path: Path, value: str) -> 
     [
         ("minimum_free_bytes: 'lots'", "must be an integer number of bytes"),
         ("minimum_free_bytes: true", "must be an integer number of bytes"),
-        ("minimum_free_bytes: -1", "which is negative"),
+        ("minimum_free_bytes: -1", "Zero and negative are not floors"),
+        ("minimum_free_bytes: 0", "Zero and negative are not floors"),
     ],
 )
 def test_a_malformed_free_space_floor_is_refused(

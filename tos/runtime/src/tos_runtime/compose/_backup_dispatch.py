@@ -43,9 +43,11 @@ from tos_runtime.operations.backup_set import (
     BackupSetRefused,
     DurableSetPaths,
     backup_set,
+    manifest_path_for,
 )
 from tos_runtime.operations.cold_backup import (
     COLD_BACKUP_CONFIG_NAME,
+    ColdBackupFailed,
     ColdBackupRefused,
     cold_backup,
     load_cold_backup_config,
@@ -110,28 +112,55 @@ def cold_backup_args(namespace: argparse.Namespace) -> ColdBackupArgs:
 
 
 def dispatch_cold_backup(args: ColdBackupArgs) -> int:
-    """Run one cold backup and report it; never raises a refusal at an operator.
+    """Run one cold backup and report it; **nothing reaches the caller as a traceback.**
 
-    Every refusal — config, destination, free space, snapshot, archive — is printed to stderr
-    and reported as exit 1, because the caller is usually ``cron`` and a traceback in a mail
-    body is a worse report than one line naming what was refused. The three refusal types stay
-    distinct in the message prefix rather than being flattened into one.
+    Two kinds of bad outcome, kept apart because the operator's next action differs:
+
+    * **Refused** — a rule said no and nothing was written. The three refusal types keep
+      distinct prefixes (``refused`` / ``snapshot refused`` / ``archive refused``) so the one
+      line says which layer decided.
+    * **Failed** — the run was admissible and the environment broke underneath it: the
+      runtime still holding a sqlite handle (the precondition no code can check), a disk
+      filling mid-copy, unreadable custody, an unparseable manifest. Those arrive as
+      :class:`~tos_runtime.operations.cold_backup.ColdBackupFailed` carrying the stage, and
+      print as ``cold-backup: <stage> failed — <ExcType>: <message>``.
+
+    Both exit ``1``. The catch-all at the end exists because ``cron`` is the primary caller
+    and a Python traceback in a mail body is a worse report than one line — the same
+    deliberate broad catch :func:`~tos_runtime.compose._run_dispatch.dispatch_run` documents
+    for ``compose_paper_runtime``, and for the same stated reason: no common base class
+    narrower than ``Exception`` exists across the loaders and adapters underneath.
 
     Exit ``0`` means the archive exists, was read back, every member digest matched the
-    manifest and the evidence chain re-verified. A run that completes but leaves cold storage
+    manifest and the evidence chain re-verified. A run that completes but leaves a filesystem
     below its configured floor still exits ``0`` — that backup IS verified — and prints the
     capacity alarm to stderr, which is what the NEXT run will refuse on.
     """
     config_path = args.config_dir / COLD_BACKUP_CONFIG_NAME
     try:
         config = load_cold_backup_config(config_path)
-        report = cold_backup(
-            args.data_dir,
-            config,
-            key_provider=FileKeyProvider(
-                args.custody_root, expected_owner_uid=os.getuid()
-            ),
+    except ColdBackupRefused as refusal:
+        print(f"cold-backup: refused — {refusal}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - see docstring: no common base exists
+        print(
+            f"cold-backup: config failed — {type(exc).__name__}: {exc}", file=sys.stderr
         )
+        return 1
+
+    try:
+        key_provider = FileKeyProvider(
+            args.custody_root, expected_owner_uid=os.getuid()
+        )
+    except Exception as exc:  # noqa: BLE001 - see docstring: no common base exists
+        print(
+            f"cold-backup: custody failed — {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        report = cold_backup(args.data_dir, config, key_provider=key_provider)
     except ColdBackupRefused as refusal:
         print(f"cold-backup: refused — {refusal}", file=sys.stderr)
         return 1
@@ -141,6 +170,12 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
     except BackupArchiveRefused as refusal:
         print(f"cold-backup: archive refused — {refusal}", file=sys.stderr)
         return 1
+    except ColdBackupFailed as failure:
+        print(f"cold-backup: {failure}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - see docstring: no common base exists
+        print(f"cold-backup: failed — {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
 
     print(
         f"cold-backup: archived gen{report.generation} to {report.archive_path} "
@@ -149,11 +184,16 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
         f"{report.report_path}"
     )
     if report.free_bytes_below_minimum_after:
+        low = "; ".join(
+            f"{'+'.join(entry.roots)} at {entry.measured_path}: {entry.free_bytes} bytes free"
+            for entry in report.free_space_after
+            if entry.free_bytes < report.minimum_free_bytes
+        )
         print(
-            f"cold-backup: WARNING — cold storage now has {report.free_bytes_after} bytes "
-            f"free, below the configured floor of {report.minimum_free_bytes}. This backup is "
-            "verified; the NEXT run will refuse. Nothing here deletes a cold copy (that is "
-            "Track B, ADR-002-016 §17) — add storage or move archives to another medium",
+            f"cold-backup: WARNING — {low} (configured floor {report.minimum_free_bytes}). "
+            "This backup is verified; the NEXT run will refuse. Nothing here deletes a cold "
+            "copy (that is Track B, ADR-002-016 §17) — add storage or move archives to "
+            "another medium",
             file=sys.stderr,
         )
     return 0
@@ -174,7 +214,7 @@ def dispatch_backup_set(args: BackupSetArgs) -> int:
         args.generation,
         readiness_verdict_at_backup=args.readiness_verdict,
     )
-    manifest_path = args.dest / f"gen{manifest.generation}.set.manifest.json"
+    manifest_path = manifest_path_for(args.dest, manifest.generation)
     print(f"backup-set: wrote gen{manifest.generation} manifest under {args.dest}")
     if args.archive_dir is None:
         return 0

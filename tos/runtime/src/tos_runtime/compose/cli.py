@@ -573,7 +573,6 @@ def parse_args(
     | RearmArgs
     | AckAlertArgs
     | NontradeEvalArgs
-    | ColdBackupArgs
 ):
     """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever
     subcommand was named (or ``run``, implicitly — module docstring).

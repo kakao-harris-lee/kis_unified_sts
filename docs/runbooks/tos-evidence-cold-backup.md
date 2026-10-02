@@ -63,8 +63,13 @@ YAML
   서브트리를 쓰면 보관소가 차는 순간 런타임까지 같이 죽는다.
 - `backup_root` 는 `backup-set --dest` 가 쓰고 `run --backup-root` 가 부팅 때 관측하는 그
   트리와 **같은 디렉터리**를 가리켜야 한다 — 세대 번호를 거기서 읽는다.
-- `minimum_free_bytes` 는 **용량 경보**(계획 §5)다. 기본값이 없다 — 승인되지 않은 한도를
-  결정된 값처럼 적지 않는다. 증가율은 계획 §1 실측으로 압축 뒤 **≈13 MB/일**이다.
+- 세 경로는 서로 **같거나 중첩될 수 없다**(같은 부모를 공유하는 것은 괜찮다). 중첩하면
+  매체 분리가 조용히 무효가 되기 때문이다.
+- `minimum_free_bytes` 는 **용량 경보**(계획 §5)다. **셋 모두**에 적용된다 — 같은 장치에
+  얹힌 경로는 하나로 묶어 한 번만 센다. `archive_dir` 만 보면 **가장 빨리 자라는 트리**
+  (`backup_root`, 비압축)를 놓친다. 기본값이 없다 — 승인되지 않은 한도를 결정된 값처럼
+  적지 않는다. 0 도 거부한다(바닥이 아니라 경보를 끄는 값이다). 증가율은 계획 §1 실측으로
+  원본 ≈200 MB/일 · 압축 뒤 ≈13 MB/일이다.
 
 ## 3. 실행
 
@@ -93,32 +98,102 @@ cold-backup: archived gen1 to <archive_dir>/gen1.set.tar.xz (<N> -> <M> bytes),
 - **세대는 자동이다.** `backup_root` 의 최고 세대 다음을 쓴다. 그래서 N 번째 cron 실행의
   명령줄이 첫 번째와 **글자 그대로 같다**(`backup-set` 은 `--generation` 을 손으로 올려야 했다).
 - 보고서 `gen{N}.cold-backup.report.json` 이 아카이브 옆에 남는다. 세대·경로·압축 전후
-  바이트·검증된 멤버 목록·체인 검증 여부·여유 공간(전/후)·용량 바닥·바닥 미만 여부를 적는다.
+  바이트·검증된 멤버 목록·체인 검증 여부·**파일시스템별 여유 공간(전/후, 장치 단위로 묶음)**·
+  용량 바닥·바닥 미만 여부를 적는다.
 - **보고서는 증거 행이 아니다.** 라이브 저장소는 닫혀 있어야 하고 바이트가 움직이면 안 되므로
   이 명령은 증거 체인에 append 하지 않는다. 운영 사실이 증거로 들어가는 기존 경로는
   **부팅 시 관측**(`compose/_operations_wiring._observe_backup` → `BACKUP_SET_OBSERVED`)
   하나뿐이고, 그 관측기에게 이 보고서까지 읽히는 것은 후속 과제로 등재했다(계획 §7.1.18).
 
-## 4. 예약 — cron (데몬 없음)
+## 4. 예약 — cron (데몬 없음 · **분리 워크트리에서만**)
 
 데몬을 추가하지 않았다. 이 명령은 라이브 디렉터리에서 아무것도 열지 않고, 아무것도 붙들지
-않으며, 끝나면 종료한다. 운영자 crontab 한 줄이면 된다:
+않으며, 끝나면 종료한다. 필요한 것은 crontab 한 줄이다 — 다만 **공용 체크아웃에서 돌리면
+안 된다.**
+
+### 4-1. 왜 공용 체크아웃이면 안 되는가
+
+이 호스트의 공용 체크아웃(`/home/deploy/project/kis_unified_sts`)은 **병렬 레인이 수시로
+브랜치를 바꾼다.** 17:50 에 어떤 레인이 피처 브랜치로 바꿔 두면 18:00 의 cron 은 **그
+브랜치의 리뷰 전 코드**로 실 paper durable set 과 커스터디 키를 건드린다. 같은 규칙이 이미
+프로브에 적용돼 있다 — `tools/broker_probes/runners/run_p_ca.sh` 와 프로젝트 메모리
+「프로브는 분리 워크트리(origin/main)에서만」(#793 HIGH). 무인 실행은 프로브보다 더
+그렇다: 아무도 보고 있지 않다.
+
+### 4-2. 운영 워크트리 하나 만들기 (1회)
+
+```bash
+WT=~/.local/state/tos/ops-worktree
+git -C /home/deploy/project/kis_unified_sts fetch -q origin
+git -C /home/deploy/project/kis_unified_sts worktree add --detach "$WT" origin/main
+```
+
+- **detach 다.** 브랜치가 아니므로 누가 체크아웃을 옮겨도 이 트리는 움직이지 않는다.
+- **`.venv` 는 만들지 않는다.** 분리 워크트리에 설치하지 않는 것이 이 저장소의 규율이고,
+  인터프리터는 기본 체크아웃의 `.venv` 를 쓴다(아래 래퍼가 `PYTHONPATH` 로 **코드는
+  워크트리에서** 읽게 강제한다 — 같은 함정을 `run_p_ca.sh` 가 이미 다룬다).
+- 갱신은 **의도적으로만**: `git -C "$WT" fetch -q origin && git -C "$WT" checkout -q --detach origin/main`.
+  오래된 채로 두는 것은 결함이 아니다 — 무인 작업이 리뷰된 코드에 고정돼 있다는 뜻이다.
+
+### 4-3. 래퍼 (가드가 cron 줄이 아니라 여기에 있다)
+
+```bash
+cat > ~/.local/state/tos/ops/cold-backup.sh <<'SH'
+#!/bin/sh
+set -eu
+WT=$HOME/.local/state/tos/ops-worktree
+PY=/home/deploy/project/kis_unified_sts/.venv/bin/python   # 기본 체크아웃의 인터프리터
+
+# 분리 상태가 아니면(= 브랜치 위면) 돌지 않는다. `symbolic-ref -q HEAD` 는 브랜치에서
+# 성공하고 detached 에서 실패한다.
+if git -C "$WT" symbolic-ref -q HEAD >/dev/null; then
+  echo "cold-backup: refusing — $WT is on a branch, not detached" >&2; exit 1
+fi
+if [ -n "$(git -C "$WT" status --short)" ]; then
+  echo "cold-backup: refusing — $WT is dirty" >&2; exit 1
+fi
+echo "cold-backup: worktree $WT at $(git -C "$WT" rev-parse HEAD)"
+
+cd "$WT"
+PYTHONPATH="$WT/tos/src:$WT/tos/runtime/src" "$PY" -c \
+  'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' \
+  cold-backup \
+  --data-dir "$HOME/.local/state/tos/paper-data" \
+  --config-dir "$HOME/.local/state/tos/paper-ops" \
+  --custody-root "$HOME/.local/state/tos/paper-custody"
+SH
+chmod 700 ~/.local/state/tos/ops/cold-backup.sh
+```
+
+`PYTHONPATH` 가 **절대경로로 워크트리를 가리킨다** — 인터프리터는 다른 트리에서 오므로,
+그러지 않으면 가드가 「검증한」 트리와 **실제로 실행된 코드**가 달라질 수 있다
+(`run_p_ca.sh` 의 같은 함정 주석 참조). 워크트리 커밋 SHA 를 매 실행 첫 줄에 찍는 것은
+**기록**이고, 앞의 두 거부가 **방지**다.
+
+### 4-4. crontab
 
 ```cron
 CRON_TZ=Asia/Seoul
 # 평일 18:00 KST — 런타임을 정지시킨 뒤에 돈다(§1 전제 1).
-0 18 * * 1-5 cd /home/deploy/project/kis_unified_sts && PYTHONPATH=tos/src:tos/runtime/src .venv/bin/python -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' cold-backup --data-dir "$HOME/.local/state/tos/paper-data" --config-dir "$HOME/.local/state/tos/paper-ops" --custody-root "$HOME/.local/state/tos/paper-custody" >> "$HOME/.local/state/tos/cold-backup.log" 2>&1
+0 18 * * 1-5 $HOME/.local/state/tos/ops/cold-backup.sh >> $HOME/.local/state/tos/cold-backup.log 2>&1
 ```
 
 - `CRON_TZ=Asia/Seoul` 는 이 저장소의 비협상 규칙이다(전역 메모리 「Cron 은 CRON_TZ=Asia/Seoul」).
 - **시각은 「장 마감 뒤」가 아니라 「런타임 정지 뒤」로 고른다.** 선물 주간 세션은 15:45 KST 에
   끝나지만, 중요한 것은 sqlite 핸들이 전부 닫혔는가다. 18:00 은 그 여유를 둔 값이고,
-  정지 절차가 바뀌면 이 줄도 같이 바꾼다.
+  정지 절차가 바뀌면 이 줄도 같이 바꾼다. 런타임이 아직 떠 있으면 스냅숏이
+  `snapshot failed — OperationalError: database is locked` 한 줄로 끝난다(§5) — 조용히
+  반쪽짜리 백업을 만들지 않는다.
 - 종료코드 0 = 아카이브가 존재하고 되읽혔고 전 멤버 digest 가 매니페스트와 일치했고 증거
-  체인이 재검증됐다. 그 밖은 1 이고 stderr 한 줄이 **어느 층이 거부했는지**를 말한다
-  (`refused` = 설정·보관 경로·용량 / `snapshot refused` = 스냅숏 / `archive refused` = 아카이브).
+  체인이 재검증됐다. 그 밖은 1 이고 stderr **한 줄**이 어느 단계에서 무엇이 일어났는지
+  말한다(§5). **traceback 은 나오지 않는다.**
 
-## 5. 거부되면 무엇을 하는가
+## 5. 거부되거나 실패하면 무엇을 하는가
+
+**두 가지를 구분해 적는다.** `refused` = **규칙이 아니라고 했고 아무것도 쓰지 않았다**.
+`failed` = 실행은 적법했는데 **환경이 무너졌다**(런타임이 아직 핸들을 들고 있다 · 디스크가
+찼다 · 커스터디를 못 읽는다 · 매니페스트가 안 열린다). 다음 조치가 다르기 때문에 한 단어로
+뭉개지 않는다. 어느 쪽이든 **종료코드 1 · stderr 한 줄 · traceback 없음**이다.
 
 | stderr 접두 | 뜻 | 조치 |
 |---|---|---|
@@ -128,7 +203,14 @@ CRON_TZ=Asia/Seoul
 | `… is inside the live data directory` / `CONTAINS the live data directory` / `is inside the git worktree` | 보관 경로가 있어서는 안 되는 자리다 | §2 의 경로 규칙대로 옮긴다 |
 | `… below the configured floor` | 용량 바닥 미만 — **아무것도 쓰지 않았다** | §6 |
 | `cold-backup: snapshot refused — …` | durable set 자체 문제(파일 부재 · 세대 역행) | `backup_root` 가 맞는 트리인지, `evidence`/`rcl`/`inbox` 가 있는지 확인 |
+| `… is inside <other root>` / `are the same directory` | 세 트리가 겹친다 | §2 — 셋은 일부러 떼어 둔다 |
+| `… exists and is not a directory` | 보관 경로 자리에 **파일**이 있다(오타) | 경로를 고친다. 스냅숏 전에 잡힌다 |
 | `cold-backup: archive refused — …` | 압축본이 되읽히지 않았다 **또는 검증 디렉터리가 이미 있다** | 아래 |
+| `cold-backup: snapshot failed — OperationalError: database is locked` | **런타임이 아직 떠 있다** — §1 전제 1 위반 | 런타임을 멈추고 다시 돌린다. cron 시각을 당겼는지 본다 |
+| `cold-backup: snapshot failed — OSError: … No space left …` | 복사 도중 디스크가 찼다 | §6. 남은 `gen{N}/` 는 **지우지 않는다** — 다음 실행은 그 번호를 건너뛴다 |
+| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다) |
+| `cold-backup: custody failed — …` | 커스터디 루트를 못 읽는다 | 경로·소유자·0600 모드 확인(§1). 스냅숏 전에 잡힌다 |
+| `cold-backup: config failed — …` | 설정 로더가 이 모듈이 모르는 방식으로 깨졌다 | 메시지의 예외 타입을 그대로 보고한다 — 결함일 수 있다 |
 
 `archive refused` 일 때:
 
@@ -141,6 +223,14 @@ CRON_TZ=Asia/Seoul
   `restore-drill` 을 돌려 원본 쪽이 멀쩡한지 먼저 가린다.
 - 같은 세대의 `.tar.xz` 가 이미 있으면 덮어쓰지 않고 거부한다. 재시도는 그 파일을 치우거나
   다음 세대로 간다.
+
+**반쯤 쓰다 만 `gen{N}/` 를 발견했을 때** (스냅숏이 죽은 자리):
+
+- **지우지 않는다.** 다음 실행은 그 번호를 **건너뛴다** — 세대 할당이 매니페스트뿐 아니라
+  디렉터리도 센다. 한 번의 일시적 고장이 매일 밤 반복되는 거부로 굳는 일은 없다.
+- 손으로 같은 번호를 다시 쓰려 하면(`backup-set --generation N`) 이름 붙은 거부가 나온다:
+  `backup_set: … already exists … died part-way`. 내용을 확인한 뒤 **dest_dir 밖으로**
+  옮기거나 그대로 둔다.
 
 ## 6. 용량 경보가 울리면
 

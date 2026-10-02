@@ -76,7 +76,7 @@ from typing import Any
 
 from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 from tos_runtime.compose._types import ComposedRuntime, OperationsFacts
-from tos_runtime.operations.backup_set import BackupSetManifest
+from tos_runtime.operations.backup_set import MANIFEST_SUFFIX, BackupSetManifest
 from tos_runtime.operations.schema_migrations import schema_version
 from tos_runtime.operator.export import ProjectionExporter
 from tos_runtime.operator.projection import (
@@ -86,11 +86,11 @@ from tos_runtime.operator.projection import (
 
 __all__ = ["apply_operations_wiring"]
 
-#: Duplicated from :mod:`tos_runtime.operations.backup_set` (a private module constant there,
-#: not exported) — the SAME "duplicate the literal, do not import a leading-underscore name"
-#: discipline that module's own docstring already applies to filenames shared with
-#: ``tos_runtime.compose``/``tos_runtime.recovery``.
-_MANIFEST_SUFFIX = ".set.manifest.json"
+#: Imported, no longer duplicated: :mod:`tos_runtime.operations.backup_set` exports
+#: ``MANIFEST_SUFFIX`` as of the cold-backup wave, so the reason the literal used to be copied
+#: here ("do not import a leading-underscore name") no longer applies. The writer and this
+#: boot-time observer now read one constant, which is what a suffix change needs them to do.
+_MANIFEST_SUFFIX = MANIFEST_SUFFIX
 
 #: Duplicated from :mod:`tos_runtime.compose._safety_wiring` (a private module constant there) —
 #: the evidence ``kind`` :class:`~tos_runtime.safety.monitoring.MonitoringService` emits, which

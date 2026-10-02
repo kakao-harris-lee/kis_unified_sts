@@ -86,6 +86,7 @@ from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME
 
 __all__ = [
+    "MANIFEST_SUFFIX",
     "BackupSetManifest",
     "BackupSetRefused",
     "ComposeForDrill",
@@ -129,7 +130,15 @@ _CHAIN_GENESIS = ""
 #: reads this set instead, so a future optional member is added in ONE place, not N.
 _OPTIONAL_FILES: frozenset[str] = frozenset({"composite_state", "marketfeed"})
 
-_MANIFEST_SUFFIX = ".set.manifest.json"
+#: The manifest filename suffix :func:`backup_set` writes. PUBLIC because
+#: :mod:`tos_runtime.compose._operations_wiring` SCANS for manifests rather than building one
+#: path, so :func:`manifest_path_for` cannot serve it — before this was exported, that module
+#: duplicated the literal and a suffix change would have drifted between the writer and the
+#: boot-time observer that reads what it wrote.
+MANIFEST_SUFFIX = ".set.manifest.json"
+
+#: Pre-existing private alias, kept so the long-standing uses below read unchanged.
+_MANIFEST_SUFFIX = MANIFEST_SUFFIX
 
 _LIVE_ENVIRONMENT_LABELS = frozenset({"paper", "restricted-live", "production"})
 
@@ -373,6 +382,34 @@ def _highest_existing_generation(dest_dir: Path) -> int | None:
     return max(generations) if generations else None
 
 
+def _create_generation_dir(dest_dir: Path, generation: int) -> Path:
+    """Create ``dest_dir/gen{generation}/``, refusing by name if it is already there.
+
+    Split out of :func:`backup_set` for the 100-line function budget
+    (``tools/tos_size_budget.py``); no behaviour difference from having it inline.
+
+    Still a refusal, never an overwrite — but a NAMED one. The bare ``FileExistsError`` that
+    ``mkdir(exist_ok=False)`` used to raise reached an unattended caller as a traceback with
+    no statement of what to do, and the shape it reports is a real one: :func:`backup_set`
+    writes the manifest LAST, so a run that died in between leaves a manifest-less
+    ``gen{N}/``. :func:`next_generation` counts directories as well as manifests, so an
+    unattended caller steps PAST such a leftover instead of re-picking its number forever;
+    this message is for the caller that passes the number by hand.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    gen_dir = dest_dir / f"gen{generation}"
+    if gen_dir.exists():
+        raise BackupSetRefused(
+            f"backup_set: {gen_dir} already exists — refusing to write into, or over, a "
+            "generation directory this call did not create. A directory with no "
+            f"gen{generation}{_MANIFEST_SUFFIX} beside it is the remains of a run that died "
+            "part-way: inspect it, then move it aside (never into dest_dir) or pass a higher "
+            "--generation. Nothing in this module deletes it for you"
+        )
+    gen_dir.mkdir(parents=False, exist_ok=False)
+    return gen_dir
+
+
 def manifest_path_for(dest_dir: Path, generation: int) -> Path:
     """The manifest path :func:`backup_set` writes for ``generation`` under ``dest_dir``.
 
@@ -384,11 +421,42 @@ def manifest_path_for(dest_dir: Path, generation: int) -> Path:
     return dest_dir / f"gen{generation}{_MANIFEST_SUFFIX}"
 
 
+def _highest_attempted_generation(dest_dir: Path) -> int | None:
+    """The highest ``gen{N}`` **directory** under ``dest_dir``, or ``None``.
+
+    Counterpart to :func:`_highest_existing_generation`, which counts MANIFESTS. The two
+    answer different questions and :func:`next_generation` needs both: a manifest means a
+    generation COMPLETED, a directory means one was ATTEMPTED. A run that died between
+    :func:`backup_set`'s ``gen_dir.mkdir`` and its manifest write leaves the second without
+    the first.
+    """
+    if not dest_dir.is_dir():
+        return None
+    generations = [
+        int(child.name[len("gen") :])
+        for child in dest_dir.iterdir()
+        if child.is_dir()
+        and child.name.startswith("gen")
+        and child.name[len("gen") :].isdigit()
+    ]
+    return max(generations) if generations else None
+
+
 def next_generation(dest_dir: Path) -> int:
     """The lowest generation :func:`backup_set` would accept for ``dest_dir``.
 
-    ``1`` for a directory holding no manifest (including one that does not exist yet),
-    otherwise one past the highest ``gen{N}`` manifest already there.
+    ``1`` for an empty (or absent) directory, otherwise one past the highest generation
+    already **attempted** there — the higher of the highest manifest and the highest
+    ``gen{N}`` directory.
+
+    **Counting directories too is what keeps an unattended caller from wedging.** The manifest
+    is written LAST, so a run that died part-way (the runtime still holding a sqlite handle,
+    the disk full mid-copy) leaves a ``gen{N}/`` with no manifest beside it. Counting
+    manifests alone would return that same ``N`` the next night, and every night after, and
+    :func:`backup_set` would refuse each time — a single transient fault becoming a permanent
+    outage of the backup itself. Stepping past the leftover costs one skipped generation
+    number and **deletes nothing**: the partial directory stays exactly where it fell, for an
+    operator to inspect.
 
     **This allocates nothing and reserves nothing.** Decision 1 of the TOS Phase 5 W4 plan
     ("세대는 호출자 지정") stands: :func:`backup_set` still takes the generation as an
@@ -398,8 +466,15 @@ def next_generation(dest_dir: Path) -> int:
     caller would otherwise do by hand (and, before
     :mod:`tos_runtime.operations.cold_backup`, an operator typed into ``--generation``).
     """
-    existing = _highest_existing_generation(dest_dir)
-    return 1 if existing is None else existing + 1
+    candidates = [
+        found
+        for found in (
+            _highest_existing_generation(dest_dir),
+            _highest_attempted_generation(dest_dir),
+        )
+        if found is not None
+    ]
+    return max(candidates) + 1 if candidates else 1
 
 
 def backup_set(
@@ -465,9 +540,7 @@ def backup_set(
                 "refusing rather than silently creating an empty backup"
             )
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    gen_dir = dest_dir / f"gen{generation}"
-    gen_dir.mkdir(parents=False, exist_ok=False)
+    gen_dir = _create_generation_dir(dest_dir, generation)
 
     files: dict[str, FileBackupEntry | None] = {}
     for name, source_path in file_specs.items():
@@ -494,7 +567,7 @@ def backup_set(
         runtime_identity=runtime_identity,
         readiness_verdict_at_backup=readiness_verdict_at_backup,
     )
-    manifest_path = dest_dir / f"gen{generation}{_MANIFEST_SUFFIX}"
+    manifest_path = manifest_path_for(dest_dir, generation)
     manifest_path.write_text(manifest.model_dump_json(indent=2))
     return manifest
 

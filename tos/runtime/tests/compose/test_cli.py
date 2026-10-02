@@ -148,6 +148,10 @@ def test_run_main_refuses_without_construction_config_and_never_calls_an_operati
     # invariant this pins ("`run` reaches NO operations function") is unchanged.
     for module, name in (
         (_backup_dispatch, "backup_set"),
+        # `cold_backup` is reachable from this CLI as of the cold-backup wave, so the
+        # invariant has to cover it too — otherwise a future "back up on shutdown"
+        # convenience could route `run` straight into it and this test would stay green.
+        (_backup_dispatch, "cold_backup"),
         (cli, "restore_set"),
         (cli, "apply_migrations"),
         (cli, "observe_runtime_artifact"),

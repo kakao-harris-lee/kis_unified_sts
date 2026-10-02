@@ -15,11 +15,14 @@ already substitute ``FileKeyProvider``.
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
 from tos_runtime.compose import _backup_dispatch, cli
 from tos_runtime.operations import cold_backup as cold_backup_module
+from tos_runtime.operations.cold_backup import FilesystemFreeSpace
 
 from ..engine.conftest import FixedKeyProvider
 from ..operations.test_backup_set import _build_live_set
@@ -155,12 +158,29 @@ def test_an_archive_refusal_keeps_its_own_prefix_and_leaves_the_snapshot(
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
 
 
+def _free_space_stub(
+    free_bytes: int,
+) -> Callable[[Mapping[str, Path]], tuple[FilesystemFreeSpace, ...]]:
+    def _stub(_roots: Mapping[str, Path]) -> tuple[FilesystemFreeSpace, ...]:
+        return (
+            FilesystemFreeSpace(
+                roots=("archive_dir", "backup_root", "verify_root"),
+                measured_path="/fake/root",
+                free_bytes=free_bytes,
+            ),
+        )
+
+    return _stub
+
+
 def test_a_run_that_crosses_the_capacity_floor_warns_but_still_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     live_dir = _prepare(tmp_path, monkeypatch, floor=1_000_000)
-    readings = iter([5_000_000, 10])
-    monkeypatch.setattr(cold_backup_module, "_free_bytes", lambda _path: next(readings))
+    readings = iter([_free_space_stub(5_000_000), _free_space_stub(10)])
+    monkeypatch.setattr(
+        cold_backup_module, "_free_space", lambda roots: next(readings)(roots)
+    )
 
     exit_code = cli.main(_argv(tmp_path, live_dir))
 
@@ -176,7 +196,7 @@ def test_the_capacity_floor_refusal_exits_one_before_writing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     live_dir = _prepare(tmp_path, monkeypatch, floor=1_000_000)
-    monkeypatch.setattr(cold_backup_module, "_free_bytes", lambda _path: 10)
+    monkeypatch.setattr(cold_backup_module, "_free_space", _free_space_stub(10))
 
     exit_code = cli.main(_argv(tmp_path, live_dir))
 
@@ -185,6 +205,92 @@ def test_the_capacity_floor_refusal_exits_one_before_writing(
     assert err.startswith("cold-backup: refused —")
     assert "below the configured floor" in err
     assert not (tmp_path / "backups").exists()
+
+
+# -- the §5 contract: every unattended failure is ONE line, never a traceback -
+
+
+def _raise_locked(*_args: object, **_kwargs: object) -> None:
+    raise sqlite3.OperationalError("database is locked")
+
+
+def _raise_enospc(*_args: object, **_kwargs: object) -> None:
+    raise OSError(28, "No space left on device")
+
+
+@pytest.mark.parametrize(
+    ("patched", "raises", "expected_prefix"),
+    [
+        (
+            "backup_set",
+            _raise_locked,
+            "cold-backup: snapshot failed — OperationalError: database is locked",
+        ),
+        (
+            "archive_backup_set",
+            _raise_enospc,
+            "cold-backup: archive failed — OSError:",
+        ),
+    ],
+)
+def test_an_environment_fault_prints_one_line_naming_the_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patched: str,
+    raises: object,
+    expected_prefix: str,
+) -> None:
+    """The runbook §5 table promises the operator one line saying which layer stopped. Before
+    this, the likeliest cron-time faults — the runtime still up, the disk full — were the ones
+    that broke that promise, arriving as tracebacks."""
+    live_dir = _prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr(cold_backup_module, patched, raises)
+
+    exit_code = cli.main(_argv(tmp_path, live_dir))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(expected_prefix)
+    assert "Traceback" not in err
+    assert len(err.strip().splitlines()) == 1
+
+
+def test_an_unreadable_custody_root_prints_one_line_and_exits_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    live_dir = _prepare(tmp_path, monkeypatch)
+
+    def _no_custody(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("custody.manifest.yaml")
+
+    monkeypatch.setattr(_backup_dispatch, "FileKeyProvider", _no_custody)
+
+    exit_code = cli.main(_argv(tmp_path, live_dir))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("cold-backup: custody failed — FileNotFoundError:")
+    # Refused before the snapshot: custody is read before anything is written.
+    assert not (tmp_path / "backups").exists()
+
+
+def test_an_unparseable_config_prints_one_line_and_exits_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    live_dir = _prepare(tmp_path, monkeypatch)
+
+    def _boom(_path: Path) -> None:
+        raise RuntimeError("loader blew up in a way this module does not model")
+
+    monkeypatch.setattr(_backup_dispatch, "load_cold_backup_config", _boom)
+
+    exit_code = cli.main(_argv(tmp_path, live_dir))
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.startswith(
+        "cold-backup: config failed — RuntimeError:"
+    )
 
 
 def test_cold_backup_parses_into_its_own_args_object(tmp_path: Path) -> None:
