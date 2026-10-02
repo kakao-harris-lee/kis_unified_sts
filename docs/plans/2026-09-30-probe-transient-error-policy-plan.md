@@ -615,7 +615,7 @@ docker koalaman/shellcheck:stable --severity=warning → rc 0
 기존 baseline 미갱신 건이고 이 PR 은 `tools/broker_probes/**`·`tests/tools/**` 밖을 건드리지
 않는다. **baseline 재생성 안 함.**
 
-### 7.15 후속 착지 — P-8 의 전송 오류/브로커 거부 분리와 추적 러너 (PR #NNN, 2026-10-02)
+### 7.15 후속 착지 — P-8 의 전송 오류/브로커 거부 분리와 추적 러너 (PR #841, 2026-10-02)
 
 §4 가 「범위 밖」으로 남긴 단 하나의 항목이자 README 가 **P-8 3~5회차 재개의 선결
 조건**으로 적어둔 것이다(캠페인 README 09-30·10-01 블록). 이 절이 그 착지 기록이다.
