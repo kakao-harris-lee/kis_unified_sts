@@ -215,8 +215,9 @@ jobs:
     runs-on: ubuntu-latest
     # Run on PRs to main and weekly schedule
     if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-    # PERF_ROUNDS rounds of the suite (~25s each) plus install. The backstop
-    # keeps a hung round from burning the 6h default.
+    # Backstop so a hung round cannot burn the 6h default. Measured on run
+    # 36953158113: the whole 5-round loop takes ~8s (round 1 ~3.1s cold, rounds
+    # 2-5 ~1.3s each), and the job end to end takes 92s including install.
     timeout-minutes: 20
 
     env:
@@ -224,8 +225,9 @@ jobs:
       # because one sample of this suite is not a measurement: re-running the
       # job 10x on a fixed head gave test_entry_path_100_symbols a 3.1x spread
       # (min 0.1217s / median 0.2755s / max 0.3800s) and 3 reds with identical
-      # code (#768). Raising this costs ~25s per round and shrinks only the
-      # within-job noise — all rounds still share one runner.
+      # code (#768). Almost all of that spread is the cold first round's setup
+      # phase, which the median drops. Raising this costs ~1.3s per extra round
+      # and shrinks only the within-job noise — all rounds share one runner.
       PERF_ROUNDS: '5'
 
     services:
