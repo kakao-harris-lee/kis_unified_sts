@@ -135,7 +135,10 @@ if HERMETIC_SESSION:
     # worker wrote. Read before the scrub, which empties the KIS_ namespace.
     _inherited_base = os.environ.get(hermetic_env.TOKEN_CACHE_BASE_ENV)
     _xdist_worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-    if _inherited_base:
+    if _xdist_worker_id and _inherited_base:
+        # Only a worker inherits. A bare run that found the variable in the
+        # ambient environment would adopt some earlier run's directory and,
+        # having not created it, never clean it up.
         TOKEN_CACHE_BASE = Path(_inherited_base)
     else:
         TOKEN_CACHE_BASE = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
