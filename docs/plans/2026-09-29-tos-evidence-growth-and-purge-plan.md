@@ -94,15 +94,16 @@
 - **270 일치 한 점은 A1-c 다음이다** — §7.1.15 가 다음 측정으로 등재한 그 점을 공용
   체크아웃에서 또 돌리면 같은 노출을 세 번째로 받는다.
 
-### A2. `kind` 인덱스 (**구현 — PR #816**)
+### A2. `kind` 인덱스 (**구현 — PR #816**, 수렴 검증 **PR #839**)
 
 - `CREATE INDEX entries_kind_seq ON entries(kind, seq)` — 21 개 질의의 형태(`WHERE kind = ? [AND seq > ?] ORDER BY seq`)에 맞는다.
 - **이것은 DB 마이그레이션이다**(CLAUDE.md 의 되돌리기 어려운 경로). `schema_ledger` 로 버전을 올리고,
   기존 DB 에는 부팅 시 멱등 생성 · 행·체인·digest 는 **바이트 불변**(인덱스는 저장 표현이 아니라 보조 구조).
 - **착지: PR #816 (2026-09-30) — §7.1.3.** 실 paper 산출물 사본에서 바이트 불변을 확인했다.
   ⚠ 「제네시스 경로와 마이그레이션 경로가 같은 스키마로 수렴한다」는 이 절의 안전 논거는
-  **PR #816 시점에 참이 아니었다** — 그 주장이 처음 **검증**된 것이 §7.1.17(PR #837)이고,
-  검증하자마자 거짓으로 드러나 함께 고쳤다.
+  **PR #816 시점에 참이 아니었다** — 그 주장이 처음 **검증**된 것이 §7.1.17(PR #839)이고,
+  검증하자마자 거짓으로 드러나 함께 고쳤다(`migrate` 가 만든 `schema_ledger` 에
+  append-only 트리거 둘이 없었고, 빠른 경로 때문에 **영구적**이었다).
 - 기대 효과: 부팅 질의가 `TIME_HEALTH_SNAPSHOT` 75 % 를 건너뛴다 → 이력에 비례하던 비용이 해당 kind 행 수에 비례.
 - 대가: 쓰기마다 인덱스 갱신 · 파일 크기 소폭 증가(A1 에서 함께 잰다).
 - **365 일치 실측으로 강화됨(2026-10-01 · 28.7 M 행 · 53.226 GB).** **수치는 §7.1.12 「읽어야 할
@@ -2116,3 +2117,133 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 `tos_named_tbd_guard.py` **PASS (46 files, 0)** · `tos_evidence_citation_check.py`
 **PASS (175 citations / 3 READMEs)** · `tos_size_budget --check` **PASS (0 violations)**.
 마크다운 표 전부 열 수 일치. 문서 전용 — 런타임 `*.py` 변경 0, digest 재도출 없음.
+
+#### 7.1.17 A2 수렴 검증 — PR #839 (2026-10-02, 분기점 main `f219305f`) — §7.1 과 별개 PR
+
+§2 A2 의 수용 기준 중 **한 번도 검증된 적 없던 한 줄**을 검증했다. 그 한 줄은
+「**제네시스로 만든 파일과 `migrate` 로 올린 파일이 같은 스키마로 수렴한다**」이고,
+PR #816 이래 산문으로만 주장돼 있었다. 검증했더니 **거짓이었다.**
+
+| 커밋 | 내용 |
+|---|---|
+| `286aa14f` | `schema_ledger` append-only 트리거를 `migrate` 경로에서도 만든다 + 테스트 3건 |
+| `9f42ad60` | 런북 — 백업 순서 · 실제 `migrate` 출력 · 검증 세 가지 |
+| `f83938e2` | digest 재도출 (33차) `df25a550…` → `d9fdd1f8…` |
+
+##### 결함 — `migrate` 가 만든 대장은 append-only 가 아니었다
+
+`apply_migrations` 는 대장 이전 파일을 위해 `schema_ledger` 를 **직접 만들 수 있어야**
+하고(그 파일에는 대장이 없다), `SCHEMA_LEDGER_TABLE_SQL` **만** 돌렸다. 제네시스 경로가
+그 옆에서 만드는 트리거 둘이 빠진다. `version` 이 PRIMARY KEY 라는 것은 **중복 INSERT**
+만 막는다 — UPDATE · DELETE 를 막는 것은 트리거다.
+
+**그 상태는 스스로 낫지 않는다.** `open_or_create_schema` 의 정상 부팅 빠른 경로가
+「`user_version` 일치 **그리고** 대장 테이블 존재」 두 읽기만으로 반환하므로, 이후 어떤
+부팅도 DDL 을 돌리지 않는다. 그 빠른 경로의 대가는 이 모듈 독스트링에 이미 적혀 있었다 —
+「정상 부팅은 DDL 을 돌리지 않으므로 손으로 지워진 보조 구조를 다시 만들지 않는다」 —
+그런데 그 문장은 **인덱스**만 예로 들었고, 같은 논리가 대장 트리거에도 걸린다는 것은
+아무도 적지 않았다.
+
+##### 왜 아무것도 못 잡았나
+
+| 잡을 법한 것 | 왜 못 잡나 |
+|---|---|
+| `compute_schema_shape_digest` | `PRAGMA table_info` 를 읽는다 — 트리거를 **보지 못한다** |
+| 부팅 스키마 검사 | 빠른 경로가 테이블 **존재**만 본다 |
+| `test_schema_ledger_table_rejects_update_and_delete` | **제네시스 파일에만** 걸려 있다 — append-only 가 이미 보장된 곳에서만 검사하고 `migrate` 가 만든 곳에서는 검사하지 않는다 |
+| `_build_v1_evidence_file` 픽스처 | 그 자신이 트리거 없이 대장을 만들었다 — 결함을 **픽스처 아티팩트 뒤에 숨겼다** |
+
+`MEMORY.md` 「가드가 자기가 막는다고 말한 것을 허용한다」와 같은 형태다. 실패 모드가
+**침묵**이고, 자동 검사가 잡은 건 **0 건**이며, 잡은 것은 「수용 기준을 실제로 실행해 봤는가」
+뿐이었다.
+
+##### red 증거 (수정 전 main `f219305f`)
+
+신규 심볼에 의존하면 테스트 모듈이 **import 단계에서** 깨져 red 가 「결함」이 아니라
+「심볼 없음」을 뜻하게 된다. 그래서 사전 API 만으로 같은 세 성질을 검사했다:
+
+```
+RED — 5 propert(ies) violated:
+  FAIL 1 convergence: migrated schema != genesis schema; missing
+        [('trigger','schema_ledger_no_delete'), ('trigger','schema_ledger_no_update')]
+  FAIL 2 append-only: migrated ledger ALLOWED `UPDATE`
+  FAIL 2 append-only: migrated ledger ALLOWED `DELETE`
+  FAIL 3 repair: outcome.repaired == (), expected ('schema_ledger_no_delete', 'schema_ledger_no_update')
+  FAIL 3 repair: triggers still missing after migrate
+```
+
+수정 후 다섯 전부 통과. 「첫 부팅이 고쳐 주겠지」도 **실측으로 기각**했다 — 마이그레이션
+뒤 실제 스토어로 부팅시켜도 트리거는 돌아오지 않았고 DELETE 가 그대로 성공했다.
+
+##### 고친 자리
+
+`schema_ledger.create_schema_ledger_objects()` 하나가 테이블 + 트리거 둘을 함께 만들고,
+**세 호출부 전부**(제네시스 트랜잭션 · `ensure_schema_current` · `apply_migrations`)가 그것을
+지난다. 상수 셋을 호출부마다 다시 타이핑하는 형태를 없애는 것이 요점이다 — 네 번째 호출부가
+같은 누락을 반복할 수 없다. 복구한 트리거는 `MigrationOutcome.repaired` 로 **보고**한다
+(조용한 복구 금지 — 떨어진 인덱스 복구와 같은 규율, 리뷰 L3).
+
+##### 쓰기 경로 비용 (§2 A2 「대가: 쓰기마다 인덱스 갱신」의 수치)
+
+1,000 appends × 5 반복, 두 arm 교대 실행(드리프트 완화):
+
+| arm | median µs/append | min | max | 반복 폭 |
+|---|---|---|---|---|
+| unindexed | 1,998.2 | 1,974.3 | 3,085.4 | 1,111.0 |
+| indexed | 1,745.6 | 1,578.9 | 2,117.4 | 538.4 |
+
+중앙값 차는 **−252.6 µs/append** 로 **부호가 반대이고 반복 폭(1,111.0)보다 작다**.
+읽는 법: 「인덱스가 더 빠르다」가 **아니라** 「인덱스의 쓰기 비용이 이 규모에서 **측정되지
+않는다**」다 — append 당 비용을 `synchronous=FULL` 의 fsync(≈1.7–2.0 ms)가 지배한다.
+⚠ 이 값으로 「쓰기 비용 없음」을 주장하지 말 것. 1,000 행은 실 저장소(14.2 M 행)보다
+네 자리 작고, 인덱스 갱신 비용은 트리 깊이와 함께 자란다. 여기서 말할 수 있는 것은
+**이 규모에서 fsync 아래 묻힌다**까지다.
+
+저장 비용은 이미 실측돼 있다 — 180 일치 **+1.8256 %**(§7.1.15 「인덱스 뒤 파일 크기」).
+**수치는 거기 한 곳에 둔다**, 여기서 되풀이하지 않는다.
+
+##### 조정하지 않아도 됐던 것 (A2 수용 기준 6)
+
+- **EV-L3 게이트**(`tools/tos_evidence_run.py`)는 인덱스를 보지 않는다. 그 지속성 기판
+  검사는 `PERSISTENCE_REQUIRED_PRAGMAS = ("journal_mode=WAL", "synchronous=FULL")` 를
+  `tos/src/tos/staterestore/_wal.py` 의 **AST** 에서 구조적으로 확인하는 것이고, 증거
+  저장소의 스키마나 인덱스와 무관하다. 조정 불필요.
+- **벤치**(`tools/tos_evidence_scan_bench.py`)의 전/후 분리는 그대로 유효하다. `build` 는
+  실 스토어 생성자를 쓰지 않고 자체 DDL 복사본으로 합성 파일을 만들므로 제네시스의
+  인덱스를 받지 않고, `--with-index` 의 `KIND_SEQ_INDEX_SQL` 은 `IF NOT EXISTS` 라서
+  이미 있는 인덱스에도 안전하다. 벤치의 DDL 복사본을 스토어 리터럴에 묶는 테스트는
+  `_CREATE_ENTRIES_TABLE_SQL` 만 대조하고 인덱스는 그 리터럴의 일부가 아니다.
+  ⚠ 단, **마이그레이션된 실 저장소를 `--db` 로 주면 「전」 패스가 성립하지 않는다**
+  (이미 인덱스가 있다). 전/후 쌍은 합성 파일에서만 의미가 있고, 벤치는 그렇게 쓰도록
+  문서돼 있다(`--with-index` 가 「run it on a copy, never on live data」).
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · ruff PASS · black PASS ·
+`tos_firewall_check` PASS · `lint-imports` 3 kept / 0 broken · `tos_contract_check` PASS
+(+`--self-test` 뮤테이션 145종 전건) · `tos_completion_status --check` GREEN(violations=0) ·
+`tos_spec_status --check` PASS · `tos_size_budget --check` PASS(0 violations) ·
+`tos_evidence_citation_check` PASS(175) · `tos_named_tbd_guard` PASS(46 files, 0).
+
+mypy: 커널 `Success (266 files)`. 런타임은 **27 errors in 18 files** 인데 **수정 전 main 과
+같은 수**이고 이 PR 이 건드린 세 파일에는 **0 건**이다 — 같은 명령을 pristine main 에
+돌려 대조했다. 이 PR 이 들여온 것이 아니다.
+
+digest: `df25a5506881476965c59e929126b7b25256937af26a533e56110794b8cf17b0` →
+`d9fdd1f8d81afd692d6c996c1029ea0f30c92c2bae4a6c750bd88604482e9835`.
+`print-digests` 와 `observe_source_tree_digest()` 두 경로 일치. 핀 **두 곳 모두** 갱신.
+`expected_dependency_set_digest` 불변.
+
+##### 운영자 행동
+
+2026-10-02 이전에 `migrate` 로 올린 **대장 이전** data dir 이 있다면 그 파일의
+`schema_ledger` 는 **지금도 무방비**다. `migrate` 재실행이 복구하고 무엇을 복구했는지
+출력한다. 확인은 런북 §4-A 의 `sqlite_master` 목록 — `schema_ledger_no_update` ·
+`schema_ledger_no_delete` 둘이 있어야 한다.
+
+##### 이 라운드의 교훈
+
+**「두 경로가 수렴한다」는 주장은 두 경로를 나란히 놓고 비교하기 전까지는 주장일 뿐이다.**
+§2 A2 는 그 수렴을 안전 논거의 토대로 썼고(인덱스는 보조 구조이므로 바이트가 안 움직인다),
+그 토대 자체는 **검증 대상 목록에 없었다**. 바이트 불변은 실 데이터로 확인됐는데(§7.1.3)
+스키마 동일성은 확인되지 않았다 — 더 검증하기 쉬운 쪽이 빠져 있었다.
