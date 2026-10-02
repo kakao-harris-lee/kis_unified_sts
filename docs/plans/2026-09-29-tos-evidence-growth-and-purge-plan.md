@@ -75,7 +75,7 @@
 - 착지: `tools/tos_evidence_scan_measure.py` + `tests/tools/test_tos_evidence_scan_measure.py`
   (§7.1.9). 벤치는 무변경 — 드라이버가 벤치를 자식 프로세스로 몬다.
 
-### A1-c. 측정은 분리 워크트리에서만 (**후속 — 아직 구현 안 함**)
+### A1-c. 측정은 분리 워크트리에서만 (**구현 — PR #838**)
 
 - **두 번 연속으로 공용 체크아웃에서 돌았고 두 번 다 트리가 측정 도중에 움직였다.**
   365 일치는 `32539e07` → `f23bb4c3`(§7.1.12), 180 일치는 `a0578bf9` → `1024bcce` →
@@ -93,6 +93,10 @@
   「프로브는 분리 워크트리(origin/main)에서만」(#793 HIGH)이다.
 - **270 일치 한 점은 A1-c 다음이다** — §7.1.15 가 다음 측정으로 등재한 그 점을 공용
   체크아웃에서 또 돌리면 같은 노출을 세 번째로 받는다.
+- 착지: `tools/tos_evidence_scan_measure.py` 의 `checkout_detached_and_clean`
+  프리플라이트 + 자식마다의 재검사 + 세 아티팩트 계열의 출처 기록, 그리고
+  `tests/tools/test_tos_evidence_scan_measure.py` 의 실 git 저장소 테스트 19 건
+  (§7.1.19). 벤치는 무변경. **270 일치 한 점은 이제 §7.1.19 의 레시피로 돈다.**
 
 ### A2. `kind` 인덱스 (A1 이 필요를 보이면)
 
@@ -771,16 +775,36 @@ contract PASS · completion GREEN · spec PASS · `ruff check` 통과 · `black 
 설치돼 있지 않고(`Could not find package 'tos_runtime'`), 공유 루트 venv 에 설치하지 않는 규율이
 있다. CI 의 `tos-firewall` 잡이 설치 후 돌린다. 이 PR 은 import 를 하나도 추가하지 않는다.
 
-**365 일치 재실행 명령 (이 PR 에서 돌리지 않았다).** 호스트에 다른 프로젝트의 Gradle 빌드가 도는
-동안에는 이 드라이버가 **스스로 거부한다** — 그것이 의도된 동작이다. 빌드가 끝난 뒤:
+**실행 명령 (이 PR 에서 돌리지 않았다).** 호스트에 다른 프로젝트의 Gradle 빌드가 도는
+동안에는 이 드라이버가 **스스로 거부한다** — 그것이 의도된 동작이다.
+
+⚠ **2026-10-02 (A1-c · PR #838) 로 이 레시피가 바뀌었다.** 아래가 현행이고, 이전의
+「`cd <repo>` 뒤 공용 체크아웃에서 실행」은 **드라이버가 거부한다**(§7.1.19).
+측정은 **분리 워크트리**에서만 돈다. 인터프리터는 공용 체크아웃의 루트 `.venv` 를
+그대로 쓴다 — 새 워크트리에 venv 를 만들지 않고, 드라이버는 stdlib 만 쓴다.
+`--python` 은 기본값이 `sys.executable` 이므로 아래처럼 그 python 으로 드라이버를
+띄우면 명시하지 않아도 같은 값이 되지만, 자식이 무엇으로 뜨는지 아티팩트에서
+한눈에 보이도록 적어 둔다.
 
 ```bash
-cd <repo>
-.venv/bin/python tools/tos_evidence_scan_measure.py run \
+# 1. 분리 워크트리를 origin/main 에 만든다 (한 번)
+cd /home/deploy/project/kis_unified_sts
+git fetch origin
+git worktree add --detach ~/.local/state/tos/measure/wt-measure origin/main
+
+# 2. 그 워크트리 '안에서' 드라이버를 띄운다 (python 은 공용 체크아웃의 venv)
+cd ~/.local/state/tos/measure/wt-measure
+/home/deploy/project/kis_unified_sts/.venv/bin/python \
+  tools/tos_evidence_scan_measure.py run \
+  --python /home/deploy/project/kis_unified_sts/.venv/bin/python \
   --reference ~/.local/state/tos/realclock-20260928T110001-LONG/data/evidence.sqlite3 \
   --synthetic ~/.local/state/tos/measure/synth/synth-365d.sqlite3 \
   --out-dir   ~/.local/state/tos/measure/a1b \
   --days 365 --repeats 3
+
+# 3. 측정이 끝나면 워크트리를 치운다
+cd /home/deploy/project/kis_unified_sts
+git worktree remove ~/.local/state/tos/measure/wt-measure
 ```
 
 문턱은 전부 기본값(착수 6 GB / 2 GB · 진행 중 4 GB / 1 GB · 5 초 표본)이라 평시에는 아무 플래그도
@@ -1981,6 +2005,8 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 2–3 h 와 피크 디스크 ≈40 GB 다. **이 PR 에서 돌리지 않았다.**
 ⚠ **그리고 A1-c 보다 먼저 돌리지 않는다** — 365·180 일치가 두 번 연속 공용 체크아웃에서
 돌았고 두 번 다 트리가 측정 도중에 움직였다(아래 「답하지 못한 것」 4 · §2 A1-c).
+**2026-10-02 — A1-c 착지(PR #838 · §7.1.19).** 등재는 그대로이고 바뀐 것은 **어떻게
+도는가** 하나다: §7.1.9 의 분리 워크트리 레시피로 돌고, 트리가 움직이면 드라이버가 멈춘다.
 
 **2. 180 일치 부팅 질의 비용 — 인덱스 전 29.8–50.6 s, 인덱스 후 0.055–0.116 ms.**
 
@@ -2047,7 +2073,10 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
    한 줄은 **기록이지 방지가 아니다** — `before` 와 `after` 자식이 1 h 39 m 떨어져 뜨므로
    그 사이의 벤치 변경은 SHA 줄로 증명될 뿐 막히지 않는다. **후속 A1-c 로 등재했다**
    (§2 A1-c): 분리 워크트리에서만 띄우고 프리플라이트가 비-detached · 더티 체크아웃을
-   거부하게 한다. **270 일치는 그 다음이다.**
+   거부하게 한다. **270 일치는 그 다음이다.** — **2026-10-02 ✅ 해소: PR #838
+   (§7.1.19)** 가 그 셋(분리 워크트리 강제 · 프리플라이트 거부 · SHA 기록)에 더해
+   **자식마다의 재검사**를 넣었다. 「SHA 는 기록이지 방지가 아니다」가 가리키던
+   `before`↔`after` 사이의 창이 닫혔다. 270 일치는 이제 §7.1.9 의 레시피로 돈다.
 5. **180 일치 인덱스 생성이 365 일치보다 행당 비쌌던 이유.** 위 인덱스 표의 ⚠.
 6. **대조군이 패스 사이에 −22 % 움직인 이유.** 위 「잡음 바닥」. 네 크기 전부에서
    대조군이 패스 수준으로 움직인다는 사실만 적는다.
@@ -2098,7 +2127,7 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 | **F3** | 워치독 소제목이 「위반 0」인데 두 줄 아래 표가 **중단 문턱 위반 1 건**을 적는다 | **수용 · 수정.** 소제목을 「**착수 문턱 위반 0 · 진행 중 문턱 위반 1**(1차의 중단) · `competing` 0」으로 바꿨다. 절 전체의 주제가 바로 그 위반이므로 소제목이 0 이라고 말하면 안 된다 |
 | **F4** | 「전 패스 **87.1 %** 지점에서 중단」은 1차의 경과를 **2차의 벽시계**로 나눈 값이다 | **수용 · 수정.** 역방향 형태 1 회가 366–970 s 로 흔들리므로(이 절 「반복 폭」) 경과는 진행량이 아니다. 진행률을 **바이트로** 바꿨다 — **78.4 %**(논리) · **81.1 %**(물리). 중단 블록 소제목 · 표(경과 행은 남기되 「진행률로 읽지 않는다」 행을 붙임) · 편차 12 · **PR 본문**을 고쳤다 |
 | **F5** | 후-인덱스 파일 크기의 출처를 「mtime = 인덱스 생성 종료 **직후**」로 적었는데 **3.5 s** 어긋난다 | **수용 · 수정.** 등식을 **삭제**하고 간극을 적었다: 23:46:06.788 + 94.704 s = 23:47:41.49 대 mtime **23:47:37.96**, 차 **3.53 s**(마지막 데이터 쓰기 대 타이머 종료). 크기를 인덱스 단계에 묶는 근거는 mtime 이 아니라 **페이지 셈**(rootpage 6,408,135 = 인덱스 전 마지막 페이지 + 1)이라고 명시했다 |
-| **F6** | 또 공용 체크아웃에서 돌았고(HEAD 가 측정 도중 2 회 이동) 등재된 보완은 「SHA 한 줄」뿐 — **기록이지 방지가 아니다** | **수용 · 후속 등재.** **§2 A1-c** 를 새로 썼다: 드라이버를 **분리 워크트리**(detached `origin/main`)에서 띄우고 프리플라이트가 **비-detached · 더티 체크아웃을 거부**하며 `preflight.json` 에 SHA 를 적는다(앞의 둘이 방지, 셋째가 기록). **270 일치 한 점은 A1-c 다음**이라고 세 곳(§2 A1-c · 「읽어야 할 것」 1 · 「답하지 못한 것」 4)에 걸었다. 이 PR 은 문서 전용이라 구현하지 않는다 |
+| **F6** | 또 공용 체크아웃에서 돌았고(HEAD 가 측정 도중 2 회 이동) 등재된 보완은 「SHA 한 줄」뿐 — **기록이지 방지가 아니다** | **수용 · 후속 등재.** **§2 A1-c** 를 새로 썼다: 드라이버를 **분리 워크트리**(detached `origin/main`)에서 띄우고 프리플라이트가 **비-detached · 더티 체크아웃을 거부**하며 `preflight.json` 에 SHA 를 적는다(앞의 둘이 방지, 셋째가 기록). **270 일치 한 점은 A1-c 다음**이라고 세 곳(§2 A1-c · 「읽어야 할 것」 1 · 「답하지 못한 것」 4)에 걸었다. 이 PR 은 문서 전용이라 구현하지 않는다. **2026-10-02 — PR #838 이 구현했다(§7.1.19)**: 등재된 셋에 더해 **자식마다의 재검사**가 들어가, 이 지적이 가리킨 「기록이지 방지가 아니다」가 실제로 닫혔다 |
 
 **이 라운드의 교훈 — 자기가 쓴 경고를 자기가 어겼다.**
 이 절은 §7.1.12 에서 물려받은 규율 셋을 본문에 적어 두고 있었다: 「평균을 분포의 성질로
@@ -2112,3 +2141,132 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 `tos_named_tbd_guard.py` **PASS (46 files, 0)** · `tos_evidence_citation_check.py`
 **PASS (175 citations / 3 READMEs)** · `tos_size_budget --check` **PASS (0 violations)**.
 마크다운 표 전부 열 수 일치. 문서 전용 — 런타임 `*.py` 변경 0, digest 재도출 없음.
+
+#### 7.1.19 A1-c 착지 — PR #838 (2026-10-02, 분기점 main `f219305f`) — §7.1 과 별개 PR
+
+§7.1.16 **F6** 이 「기록이지 방지가 아니다」로 등재한 §2 A1-c 를 닫는다. **측정은 다시
+돌리지 않았다** — 이 PR 은 다음 실행이 받을 보호를 올릴 뿐이고, §7.1.2 · §7.1.12 ·
+§7.1.15 의 수치는 하나도 바뀌지 않는다. 벤치(`tools/tos_evidence_scan_bench.py`)는
+**한 줄도 바뀌지 않았다**. `tos/src` · `tos/runtime/src` 무변경이므로 **digest 재도출 없음**.
+
+| 커밋 | 내용 |
+|---|---|
+| `c79a9e40` | `checkout_detached_and_clean` 프리플라이트 · 자식마다의 재검사 · 출처 기록 + 테스트 19 건 |
+| (이 절) | 착지 기록 §7.1.19 · §2 A1-c 를 「구현」으로 · §7.1.9 실행 명령을 분리 워크트리 레시피로 · INDEX |
+
+**무엇이 들어왔나 — 셋이고, 그 중 둘이 방지다.**
+
+1. **프리플라이트 `checkout_detached_and_clean` (기본-on).** 드라이버가 사는 체크아웃이
+   **detached** · **clean** · **`origin/main` 의 조상**이어야 하고, `--bench` 가 **같은
+   체크아웃 안에서** 해석돼야 한다. 네 가지를 **한 번에** 보고하므로 운영자가 거부를
+   하나씩 고치며 재실행하지 않는다.
+2. **자식마다의 재검사(핵심).** `build` · `before` · `after` 를 띄우기 **직전마다**
+   commit · clean · 벤치 다이제스트를 다시 읽는다. 움직였으면 **자식을 띄우지 않고**
+   `ABORTED-<step>-<days>d.json` 을 쓰고 멈춘다. 프리플라이트는 한 번 돌고 자식들은
+   그렇지 않다 — 180 일치에서 `before` 와 `after` 는 **1 h 39 m** 떨어져 떴다.
+3. **출처 기록.** `repo_commit` · `repo_path` · `detached` · `clean` ·
+   `ancestor_of_origin_main` + 벤치 **sha256** 을 `preflight.json` · 각 단계의
+   `.resource.json` · `.time`(주석 두 줄) · 중단 아티팩트에 남긴다. §7.1.15 「답하지
+   못한 것」 4 가 「드라이버가 SHA 를 적지 않아 두 번째로 reflog 로 밖에서 확인했다」고
+   적은 그 구멍이다.
+
+**드라이버는 `fetch` 하지 않는다.** `origin/main` 은 그 체크아웃에 있는 그대로 읽고,
+없으면 「먼저 `git fetch origin`」이라고 말하는 **거부**다. 측정이 네트워크에 닿으면 안
+되고, 자기 질문의 답을 스스로 갱신하는 도구는 그 질문을 묻지 않는 것과 같다.
+
+**모듈 출처 검사는 `run_p_ca.sh` 에서 옮겨 왔다.** 그 러너가 「인터프리터는 메인
+체크아웃의 `.venv` 라 그것이 로드하는 코드가 이 체크아웃의 것임을 따로 증명해야 한다」고
+적은 바로 그 이유로, 여기서는 **`--bench` 가 체크아웃 안에 있어야 한다**. 분리
+워크트리에는 `.venv` 가 없고 만들지도 않으므로(공유 루트 venv 설치 금지 규율),
+`--python` 은 **의도적으로 공용 체크아웃의** venv 다 — 그러니 인터프리터는 아무것도
+보증하지 않는다. 앞의 세 git 검사는 **벤치가 이 트리의 것일 때만** 무언가를 보증한다.
+
+**탈출구 `--allow-shared-checkout`.** 거부와 진행 중 중단만 끄고 **기록은 끄지 않는다**:
+stderr 경고 · `preflight.json` 의 `warnings` · 모든 아티팩트의
+`allow_shared_checkout: true` · 그리고 드리프트가 일어나면 단계 아티팩트에
+`baseline_commit` 과 `repo_commit` 이 **서로 다른 값으로** 남는다. 이 스위치는 테스트
+스위트(저자 브랜치는 정의상 detached 가 아니다)와 의도적인 운영자 실행에 필요하다.
+
+**아티팩트 모양 — 중단에 `returncode: null`.** 드리프트 중단은 자식을 **띄우기 전에**
+난다. 그래서 그 레코드의 `returncode` 는 `null`, `partial_resource` 는 `{}`,
+`signal_sent` 은 `"none — the child was never started"` 다. 거기에 `0` 을 적으면
+「자식이 정상 종료했다」로 읽힌다 — 「측정 안 함」을 뜻하는 0 은 이 계획이 이미 한 번
+철회해야 했던 종류의 숫자다(§7.1.9 「`wait4` 가 주지 않는 필드는 0 으로 채우지 않고 뺀다」).
+
+**`.time` 은 주석으로만 늘었다.** `# repo_commit:` · `# bench sha256:` 두 줄이고 필드
+줄은 건드리지 않는다 — §7.1.2 가 인용하는 `File system inputs` grep 이 그대로 동작해야
+한다(§7.1.9 편차 c 와 같은 이유).
+
+**테스트 — 실제 `git init` 저장소다.** 가짜 git 바이너리는 **가짜가 답한다는 것만**
+증명한다. 그래서 모양마다 두 파일짜리 실 저장소를 만들어 검사한다: attached · dirty ·
+비-조상 · `origin/main` 없음 · 저장소 밖 벤치 · 저장소 아님 · `git` 없음 · **gitignore 된
+벤치가 바뀜**. 마지막 하나가 왜 다이제스트를 cleanliness **옆에** 두는지 보여준다 —
+무시된 파일은 바뀌어도 `git status --porcelain` 이 비어 있다.
+
+`.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`
+→ **100 passed**(측정 82 = 기존 63 + 신규 19, 벤치 18).
+
+**가드 레드 증명 — 13/13, 초록으로 남은 가드 0.**
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| 프리플라이트 체크 전체(`ok=True` 고정) | A1-c 거부 테스트 7 건 전부 |
+| `CheckoutState.ok` 의 `detached` 절 | `test_a1c_preflight_refuses_a_checkout_attached_to_a_branch` |
+| 같은 `clean` 절 | `test_a1c_preflight_refuses_a_dirty_checkout` |
+| 같은 `ancestor_of_origin_main` 절 | `..._refuses_a_head_that_is_not_an_ancestor_of_origin_main` · `..._refuses_when_origin_main_is_absent_and_says_to_fetch` |
+| 같은 `bench_in_repo` 절 | `test_a1c_preflight_refuses_a_bench_from_outside_the_checkout` |
+| 같은 `not self.error`(fail-closed) 절 | `test_a1c_a_state_that_errored_is_never_ok_however_good_the_rest_looks` |
+| 진행 중 `HEAD moved` 분기 | `..._a_commit_that_moves_between_steps_aborts_before_the_child_starts` |
+| 진행 중 `went dirty` 분기 | `test_a1c_a_tree_that_goes_dirty_between_steps_aborts` |
+| 진행 중 벤치 다이제스트 분기 | `..._a_bench_edited_between_steps_aborts_even_with_a_clean_tree` |
+| 탈출구의 `evaluated=enforced`(보이는 스킵) | `test_a1c_the_escape_hatch_records_the_warning_and_does_not_refuse` |
+| 단계 아티팩트의 출처 블록 | `..._every_step_artifact_carries_the_commit_and_the_bench_digest` |
+| 체크가 참조 스캔보다 **먼저**라는 순서 | `..._a_bad_checkout_stops_the_run_before_the_reference_is_scanned` |
+| 드리프트 중단의 아티팩트 쓰기 | `..._a_commit_that_moves_between_steps_aborts_before_the_child_starts` |
+
+⚠ **한 절은 처음에 초록으로 남았고, 그것을 적는다.** `CheckoutState.ok` 의
+`not self.error` 를 지워도 위 거부 테스트들이 **전부 초록이었다** — `read_checkout` 의
+모든 오류 경로가 네 git 답을 채우기 **전에** 반환하므로 나머지 네 절이 이미 거부한다.
+즉 통합 경로로는 그 절이 **가려져 있다**. 「실패하는 구체적 입력을 못 쓰는 가드는
+아무것도 막지 않는 것」(`MEMORY.md` 「가드가 자기가 막는다고 말한 것을 허용한다」)이므로
+`CheckoutState.ok` 를 **직접** 때리는 단위 테스트(네 답이 전부 참인데 `error` 가 찬
+상태)를 추가해 red 로 만들었다. 절을 지우는 선택지도 있었지만, 미래의 `read_checkout`
+이 오류를 **늦게** 설정하면 그때 거짓을 말하게 되므로 남기고 테스트를 붙였다.
+
+**실호스트 실측 2 건(합성 실행 아님).**
+
+1. **공용 체크아웃을 실제로 거부했다.** 이 작업 자체의 워크트리(브랜치
+   `feat/tos-evidence-measure-detached-worktree`, 편집 중이라 dirty)에서 `preflight` 를
+   돌리자 `checkout_detached_and_clean` 이
+   `… at f219305f19bb (on branch feat/…, DIRTY, ancestor of origin/main)` 로 rc=1,
+   detail 에 **두 이유를 모두** 적었다.
+2. **분리 체크아웃에서 3 단계를 완주했다.** 같은 커밋(`c79a9e40`)의 분리 클론에서
+   `run --days 1 --repeats 1` 이 rc=0, 단계마다
+   `checkout ok: … at c79a9e401f6c · bench sha256 33d64c173fe1` 가 찍혔고
+   `before-1d.resource.json` 의 `checkout` 블록과 `before-1d.time` 의 주석 두 줄이
+   같은 값을 들고 있다. (분리 **클론**인 이유는 이 PR 의 코드가 아직 `origin/main` 에
+   없기 때문이다 — 머지 뒤에는 §7.1.9 레시피 그대로 `git worktree add --detach … origin/main`
+   이 같은 결과를 낸다.)
+
+**계획 §2 A1-c 대비 편차.**
+
+| # | 편차 | 이유 |
+|---|---|---|
+| a | 지시에 없던 **벤치 저장소 소속** 검사를 넣었다 | `--python` 이 공용 체크아웃의 venv 라 인터프리터가 아무것도 보증하지 않는다. `--bench` 가 아무 데나 가리킬 수 있으면 세 git 검사가 **돌지 않은 코드**를 보증한다 — `run_p_ca.sh` 가 같은 이유로 들고 있는 검사다 |
+| b | 진행 중 재검사가 commit · clean 에 더해 **벤치 sha256** 도 본다 | 그 둘이 성립하는 한 중복이지만(추적 파일이 바뀌면 트리가 더티해진다), **무시된** 벤치는 둘 다 통과하면서 바뀐다. 해시 한 번 값이다 |
+| c | 탈출구가 프리플라이트 거부뿐 아니라 **진행 중 중단도** 끈다 | 반쪽 탈출구는 설명할 수 없다 — 「공용 체크아웃에서 돌되 트리가 움직이면 죽는다」는 운영자가 고를 만한 모드가 아니다. 기록은 양쪽 다 남는다 |
+| d | 거부된 체크아웃이 **참조 스캔보다 먼저** 걸린다 | 크기 추정은 참조 전체에 대한 `GROUP BY` 다. 시작할 수 없는 런을 위해 그것을 도는 것은 §7.1.9 round-2 F10 이 이미 닫은 낭비와 같은 모양 |
+
+**게이트.** `ruff check` 통과 · `black --check`(CI 글롭, 1,306 파일) 통과 ·
+`mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports` 클린 ·
+`mypy tests/… --disable-error-code=no-untyped-def` 클린 ·
+`tos_firewall_check.py` PASS · `tos_contract_check.py` PASS ·
+`tos_completion_status --check` GREEN(violations=0) · `tos_spec_status --check` PASS ·
+`tos_size_budget --check` PASS(0 violations).
+⚠ `lint-imports` 는 **로컬에서 돌지 않았다** — 루트 `.venv` 에 `tos_runtime` 이 editable
+설치돼 있지 않고 공유 루트 venv 설치 금지 규율이 있다(§7.1.9 와 같은 상태). CI 의
+`tos-firewall` 잡이 설치 후 돌린다. 이 PR 이 늘린 import 는 `hashlib` 하나(stdlib)다.
+
+**이 착지가 바꾸지 않는 것.** §7.1.15 「답하지 못한 것」 1(1.14–2.31 배 사이의 열린 관측)
+과 **270 일치 한 점**의 등재는 그대로다. 바뀐 것은 **그 점을 어떻게 도는가** 하나다 —
+이제 §7.1.9 의 분리 워크트리 레시피로 돌고, 트리가 움직이면 멈춘다.
