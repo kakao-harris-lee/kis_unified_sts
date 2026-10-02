@@ -12,6 +12,7 @@ import hashlib
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -1610,12 +1611,12 @@ def test_the_ledger_objects_land_atomically(tmp_path: Path) -> None:
         sqlite's own, so it must be a genuine connection doing genuine work.
         """
 
-        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:  # type: ignore[override]
+        def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
             if sql.lstrip().upper().startswith("CREATE") and (
                 "schema_ledger_no_delete" in sql
             ):
                 raise sqlite3.OperationalError("disk I/O error (injected)")
-            return super().execute(sql, *args)
+            return super().execute(sql, parameters)
 
     conn = sqlite3.connect(str(path), factory=_FailsOnSecondTrigger)
     try:
