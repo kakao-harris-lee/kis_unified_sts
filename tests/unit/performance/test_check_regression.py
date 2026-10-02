@@ -12,6 +12,8 @@ The script is not an importable package, so it is loaded by file path.
 from __future__ import annotations
 
 import importlib.util
+import json
+import statistics
 import sys
 from pathlib import Path
 
@@ -178,3 +180,980 @@ class TestExtractDurations:
         }
         durations = checker.extract_test_durations(metrics)
         assert durations == {"a": pytest.approx(0.12)}
+
+
+# ---------------------------------------------------------------------------
+# Median-of-N comparison, multi-sample baselines, provenance (#768, #796)
+#
+# The numbers below are the measured ones from #768: 10 re-runs of the
+# `performance` job on a fixed head gave min 0.1217s / median 0.2755s /
+# max 0.3800s for test_entry_path_100_symbols against a committed single-sample
+# baseline of 0.1329s. Every test here that uses those values is asserting
+# behaviour on the distribution that actually broke the check.
+# ---------------------------------------------------------------------------
+
+BenchmarkStats = _crmod.BenchmarkStats
+SAMPLES_SCHEMA = _crmod.SAMPLES_SCHEMA
+DEFAULT_MIN_BASELINE_ROUNDS = _crmod.DEFAULT_MIN_BASELINE_ROUNDS
+collect_provenance = _crmod.collect_provenance
+
+# Observed distribution of test_entry_path_100_symbols, run 10x on one head.
+MEASURED_ROUNDS = [0.2755, 0.1764, 0.1217, 0.3800, 0.2405, 0.2952, 0.2825]
+MEASURED_MEDIAN = 0.2755
+# Sample standard deviation (Bessel-corrected, what statistics.stdev returns).
+# #768's comment quotes 0.078 for the same seven points: that is the POPULATION
+# sd. The checker reports the sample sd because n is small and the quantity of
+# interest is the underlying measurement spread, not these seven points alone.
+MEASURED_SD = 0.0842
+LEGACY_BASELINE = 0.1329
+
+
+def _report(durations: dict[str, float]) -> dict:
+    """Build a minimal pytest-json-report document."""
+    return {
+        "created": 0.0,
+        "summary": {"total": len(durations), "passed": len(durations), "skipped": 0},
+        "tests": [
+            {
+                "nodeid": nodeid,
+                "outcome": "passed",
+                "setup": {"duration": 0.0},
+                "call": {"duration": duration},
+                "teardown": {"duration": 0.0},
+            }
+            for nodeid, duration in durations.items()
+        ],
+    }
+
+
+def _write_json(path: Path, payload: dict) -> Path:
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def _write_rounds(tmp_path: Path, per_round: list[dict[str, float]]) -> list[Path]:
+    return [
+        _write_json(tmp_path / f"round-{i}.json", _report(durations))
+        for i, durations in enumerate(per_round, start=1)
+    ]
+
+
+def _stats(samples) -> BenchmarkStats:
+    return BenchmarkStats.from_values(samples)
+
+
+class TestBenchmarkStats:
+    def test_summarises_a_sample_set(self):
+        stats = _stats(MEASURED_ROUNDS)
+        assert stats.n == 7
+        assert stats.median == pytest.approx(MEASURED_MEDIAN)
+        assert stats.minimum == pytest.approx(0.1217)
+        assert stats.maximum == pytest.approx(0.3800)
+        assert stats.mean == pytest.approx(0.253, abs=5e-4)
+        assert stats.stdev == pytest.approx(MEASURED_SD, abs=5e-4)
+
+    def test_single_sample_has_no_measurable_spread(self):
+        stats = _stats([LEGACY_BASELINE])
+        assert stats.n == 1
+        assert stats.median == pytest.approx(LEGACY_BASELINE)
+        assert stats.minimum == stats.maximum == pytest.approx(LEGACY_BASELINE)
+        # Not "stable" — unmeasurable. The report says so separately.
+        assert stats.stdev == 0.0
+
+    def test_as_dict_carries_every_statistic_and_the_raw_samples(self):
+        payload = _stats([0.1, 0.2, 0.3]).as_dict()
+        assert set(payload) == {"n", "median", "min", "max", "mean", "sd", "samples"}
+        assert payload["samples"] == [0.1, 0.2, 0.3]
+        assert payload["n"] == 3
+
+
+class TestSampleLoading:
+    def test_legacy_single_report_reads_as_one_round(self, tmp_path):
+        checker = _checker()
+        path = _write_json(tmp_path / "baselines.json", _report({"a": LEGACY_BASELINE}))
+        stats, sources, _ = checker.load_sample_sets([path])
+        assert stats["a"].n == 1
+        assert stats["a"].median == pytest.approx(LEGACY_BASELINE)
+        assert sources[0].kind == "pytest-json-report"
+        assert sources[0].rounds == 1
+
+    def test_several_round_reports_merge_into_one_sample_set(self, tmp_path):
+        checker = _checker()
+        paths = _write_rounds(tmp_path, [{"a": v} for v in MEASURED_ROUNDS])
+        stats, sources, _ = checker.load_sample_sets(paths)
+        assert stats["a"].n == 7
+        assert sorted(stats["a"].samples) == sorted(MEASURED_ROUNDS)
+        assert stats["a"].median == pytest.approx(MEASURED_MEDIAN)
+        assert len(sources) == 7
+
+    def test_samples_document_round_trips(self, tmp_path):
+        checker = _checker()
+        document = checker.build_samples_document(
+            {"a": _stats(MEASURED_ROUNDS)}, collect_provenance(rounds=7)
+        )
+        path = _write_json(tmp_path / "current.json", document)
+        stats, sources, _ = checker.load_sample_sets([path])
+        assert stats["a"].n == 7
+        assert stats["a"].median == pytest.approx(MEASURED_MEDIAN)
+        assert sources[0].kind == "samples"
+        assert sources[0].provenance["rounds"] == 7
+
+    def test_samples_entry_without_raw_samples_is_rejected(self, tmp_path):
+        """A stored median with no samples behind it cannot be re-aggregated."""
+        checker = _checker()
+        path = _write_json(
+            tmp_path / "bad.json",
+            {
+                "schema": SAMPLES_SCHEMA,
+                "provenance": {"rounds": 5},
+                "benchmarks": {"a": {"n": 5, "median": 0.2}},
+            },
+        )
+        with pytest.raises(ValueError, match="no 'samples' array"):
+            checker.load_sample_sets([path])
+
+
+class TestMedianComparison:
+    def test_one_outlier_round_does_not_trip_the_error_threshold(self):
+        """The defect #768 describes: a single unlucky draw failed the build.
+
+        Five rounds where one is 3x the rest have a median at the rest. The old
+        checker, handed that one round as the whole measurement, errored.
+        """
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10]) for i in range(5)}
+        current = {f"t{i}": _stats([0.10]) for i in range(5)}
+        current["t0"] = _stats([0.10, 0.10, 0.10, 0.11, 0.38])
+
+        comparisons = checker.compare_metrics(baseline, current)
+        assert _statuses(comparisons)["t0"] == "pass"
+        # The same sample set judged by its worst round would be an error.
+        worst_round_ratio = 0.38 / 0.10
+        assert worst_round_ratio >= checker.error_threshold
+
+    def test_median_not_mean_decides(self):
+        """A mean is not robust: one 100x round would drag it over the line."""
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10]) for i in range(5)}
+        current = {f"t{i}": _stats([0.10]) for i in range(5)}
+        current["t0"] = _stats([0.10, 0.10, 0.10, 0.10, 10.0])
+
+        comparisons = checker.compare_metrics(baseline, current)
+        assert _statuses(comparisons)["t0"] == "pass"
+        assert current["t0"].mean / 0.10 >= checker.error_threshold
+
+    def test_multi_sample_baseline_removes_the_lucky_draw_offset(self):
+        """#768's root offset: the baseline was the bottom of the distribution.
+
+        Against the 2026-05-30 single sample (0.1329s), today's median run
+        (0.2755s) reads as a +107% regression. Against a baseline that is the
+        median of the same distribution, it reads as no change.
+        """
+        checker = _checker()
+        names = [f"t{i}" for i in range(5)]
+        current = {n: _stats(MEASURED_ROUNDS) for n in names}
+
+        lucky_baseline = {n: _stats([LEGACY_BASELINE]) for n in names}
+        honest_baseline = {n: _stats(MEASURED_ROUNDS) for n in names}
+
+        # Runner normalization is deliberately disabled here (factor 1.0) so the
+        # comparison itself is under test, not the correction on top of it.
+        lucky = checker.compare_metrics(lucky_baseline, current, runner_factor=1.0)
+        honest = checker.compare_metrics(honest_baseline, current, runner_factor=1.0)
+
+        assert all(c.status == "error" for c in lucky)
+        assert all(c.status == "pass" for c in honest)
+        assert lucky[0].change_percent == pytest.approx(107.3, abs=0.5)
+        assert honest[0].change_percent == pytest.approx(0.0, abs=1e-9)
+
+    def test_a_real_regression_is_still_flagged(self):
+        """Medians must not blunt a genuine, sustained slowdown."""
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current["t0"] = _stats([0.30, 0.31, 0.29, 0.30, 0.32])
+
+        comparisons = checker.compare_metrics(baseline, current)
+        statuses = _statuses(comparisons)
+        assert statuses["t0"] == "error"
+        assert all(statuses[f"t{i}"] == "pass" for i in range(1, 5))
+
+    def test_comparison_records_the_spread(self):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current["t0"] = _stats(MEASURED_ROUNDS)
+
+        comp = {c.test_name: c for c in checker.compare_metrics(baseline, current)}[
+            "t0"
+        ]
+        assert comp.current_n == 7
+        assert comp.baseline_n == 5
+        assert comp.current_min == pytest.approx(0.1217)
+        assert comp.current_max == pytest.approx(0.3800)
+        assert comp.current_sd == pytest.approx(MEASURED_SD, abs=5e-4)
+
+
+class TestSingleSampleBaselineWarning:
+    def test_report_warns_when_the_baseline_is_one_draw(self, capsys):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10]) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+
+        comparisons = checker.compare_metrics(baseline, current)
+        assert len(checker.single_sample_baselines(comparisons)) == 5
+
+        checker.print_report(comparisons)
+        out = capsys.readouterr().out
+        assert "SINGLE-SAMPLE BASELINE" in out
+        assert "--write-baseline" in out
+
+    def test_no_warning_once_the_baseline_has_rounds(self, capsys):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+
+        checker.print_report(checker.compare_metrics(baseline, current))
+        out = capsys.readouterr().out
+        assert "SINGLE-SAMPLE BASELINE" not in out
+        assert "baseline n=5" in out
+
+    def test_single_sample_current_is_also_called_out(self, capsys):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10]) for i in range(5)}
+
+        checker.print_report(checker.compare_metrics(baseline, current))
+        assert "SINGLE-SAMPLE CURRENT" in capsys.readouterr().out
+
+
+class TestProvenance:
+    def test_records_machine_time_and_commit(self):
+        provenance = collect_provenance(rounds=5, role="baseline", note="hello")
+        assert provenance["rounds"] == 5
+        assert provenance["role"] == "baseline"
+        assert provenance["note"] == "hello"
+        assert provenance["timezone"] == "Asia/Seoul"
+        # KST-native timestamps (CLAUDE.md: KST only).
+        assert provenance["generated_at"].endswith("+09:00")
+        for key in ("runner", "python", "platform", "commit", "cpu_count"):
+            assert key in provenance
+
+    def test_written_samples_carry_provenance(self, tmp_path):
+        checker = _checker()
+        out = tmp_path / "current.json"
+        checker.write_samples(out, {"a": _stats(MEASURED_ROUNDS)}, role="current")
+        document = json.loads(out.read_text())
+        assert document["schema"] == SAMPLES_SCHEMA
+        assert document["provenance"]["role"] == "current"
+        assert document["provenance"]["rounds"] == 7
+        assert document["benchmarks"]["a"]["median"] == pytest.approx(MEASURED_MEDIAN)
+
+
+class TestBaselineWrite:
+    def test_refuses_a_single_sample_baseline(self, tmp_path, capsys):
+        checker = _checker()
+        out = tmp_path / "baselines.json"
+        written = checker.write_baseline(out, {"a": _stats([LEGACY_BASELINE])})
+        assert written is False
+        assert not out.exists()
+        assert "refusing to write a baseline from n=1" in capsys.readouterr().out
+
+    def test_refuses_an_empty_baseline(self, tmp_path):
+        checker = _checker()
+        out = tmp_path / "baselines.json"
+        assert checker.write_baseline(out, {}) is False
+        assert not out.exists()
+
+    def test_writes_once_there_are_enough_rounds(self, tmp_path, capsys):
+        checker = _checker()
+        out = tmp_path / "baselines.json"
+        samples = MEASURED_ROUNDS[:DEFAULT_MIN_BASELINE_ROUNDS]
+        assert checker.write_baseline(out, {"a": _stats(samples)}) is True
+
+        document = json.loads(out.read_text())
+        assert document["provenance"]["role"] == "baseline"
+        assert document["provenance"]["rounds"] == DEFAULT_MIN_BASELINE_ROUNDS
+        assert "UNDER-SAMPLED" not in document["provenance"]["note"]
+
+        # The stats a human pastes into the PR body are printed.
+        out_text = capsys.readouterr().out
+        assert f"n={DEFAULT_MIN_BASELINE_ROUNDS}" in out_text
+        assert "median=" in out_text
+
+        # And it reads back as a baseline with the same median.
+        stats, _, _ = checker.load_sample_sets([out])
+        assert stats["a"].median == pytest.approx(statistics.median(samples))
+
+    def test_force_records_that_the_baseline_is_under_sampled(self, tmp_path):
+        checker = _checker()
+        out = tmp_path / "baselines.json"
+        assert (
+            checker.write_baseline(out, {"a": _stats([0.2, 0.3])}, force=True) is True
+        )
+        note = json.loads(out.read_text())["provenance"]["note"]
+        assert "UNDER-SAMPLED" in note
+        assert "n=2" in note
+
+
+class TestMarkdownSummary:
+    def test_table_shows_n_median_spread_and_verdict(self):
+        checker = _checker()
+        baseline = {f"tests/performance/t{i}.py::t": _stats([0.10]) for i in range(5)}
+        current = {
+            f"tests/performance/t{i}.py::t": _stats([0.10] * 5) for i in range(5)
+        }
+        markdown = checker.markdown_summary(
+            checker.compare_metrics(baseline, current), runner_factor=1.0
+        )
+        assert "| --- |" in markdown
+        assert "t0.py::t" in markdown
+        assert "0.1000s (1)" in markdown  # baseline median (n)
+        assert "0.1000s (5)" in markdown  # current median (n)
+        assert "single sample" in markdown
+
+
+class TestCli:
+    def test_rounds_are_merged_and_written_as_samples(self, tmp_path, capsys):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _report({f"t{i}": 0.10 for i in range(5)}),
+        )
+        rounds = _write_rounds(
+            tmp_path, [{f"t{i}": v for i in range(5)} for v in MEASURED_ROUNDS]
+        )
+        samples_out = tmp_path / "current.json"
+
+        exit_code = _crmod.main(
+            [
+                "--baseline",
+                str(baseline),
+                "--current",
+                *[str(p) for p in rounds],
+                "--write-samples",
+                str(samples_out),
+                "--warning-threshold",
+                "1.5",
+                "--error-threshold",
+                "2.0",
+                "--min-duration",
+                "0.05",
+            ]
+        )
+
+        document = json.loads(samples_out.read_text())
+        assert document["benchmarks"]["t0"]["n"] == 7
+        assert document["benchmarks"]["t0"]["median"] == pytest.approx(MEASURED_MEDIAN)
+        # Every benchmark moved together, so runner normalization absorbs it.
+        assert exit_code == 0
+        assert "SINGLE-SAMPLE BASELINE" in capsys.readouterr().out
+
+    def test_write_baseline_needs_no_baseline_input(self, tmp_path):
+        current = _write_json(
+            tmp_path / "current.json",
+            _crmod.RegressionChecker().build_samples_document(
+                {"a": _stats(MEASURED_ROUNDS)}, collect_provenance(rounds=7)
+            ),
+        )
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(["--current", str(current), "--write-baseline", str(out)]) == 0
+        )
+        assert json.loads(out.read_text())["provenance"]["role"] == "baseline"
+
+    def test_write_baseline_from_too_few_rounds_exits_two(self, tmp_path):
+        current = _write_json(tmp_path / "current.json", _report({"a": 0.2}))
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(["--current", str(current), "--write-baseline", str(out)]) == 2
+        )
+        assert not out.exists()
+
+    def test_baseline_is_required_for_a_plain_comparison(self, tmp_path, capsys):
+        current = _write_json(tmp_path / "current.json", _report({"a": 0.2}))
+        assert _crmod.main(["--current", str(current)]) == 2
+        assert "--baseline is required" in capsys.readouterr().out
+
+    def test_markdown_summary_is_appended(self, tmp_path):
+        baseline = _write_json(
+            tmp_path / "baselines.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+        current = _write_json(
+            tmp_path / "current.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+        summary = tmp_path / "summary.md"
+        summary.write_text("existing\n")
+        _crmod.main(
+            [
+                "--baseline",
+                str(baseline),
+                "--current",
+                str(current),
+                "--markdown-summary",
+                str(summary),
+            ]
+        )
+        text = summary.read_text()
+        assert text.startswith("existing\n")
+        assert "Performance regression check" in text
+
+
+# Environment variables that make _runner_label() report a GitHub runner.
+_GITHUB_ENV_VARS = (
+    "GITHUB_ACTIONS",
+    "ImageOS",
+    "RUNNER_OS",
+    "RUNNER_ARCH",
+    "GITHUB_SHA",
+    "GITHUB_REPOSITORY",
+    "GITHUB_SERVER_URL",
+    "GITHUB_RUN_ID",
+)
+
+
+@pytest.fixture
+def local_machine(monkeypatch):
+    """Force the local-machine branch of ``_runner_label()``.
+
+    Without this the assertions below depend on where the suite happens to run:
+    they passed locally and failed on CI, where GITHUB_ACTIONS is set. A test of
+    provenance must not read its expected value from the ambient environment.
+    """
+    for var in _GITHUB_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+class TestRunnerLabel:
+    def test_names_the_github_runner_image_in_actions(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.setenv("ImageOS", "ubuntu24")
+        monkeypatch.setenv("RUNNER_ARCH", "X64")
+        assert _crmod._runner_label() == "github-actions-ubuntu24-X64"
+
+    def test_falls_back_to_runner_os_without_image_os(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.delenv("ImageOS", raising=False)
+        monkeypatch.setenv("RUNNER_OS", "Linux")
+        monkeypatch.setenv("RUNNER_ARCH", "X64")
+        assert _crmod._runner_label() == "github-actions-Linux-X64"
+
+    def test_names_the_host_off_actions(self, local_machine):
+        assert _crmod._runner_label().startswith("local-")
+
+
+class TestProvenanceFollowsTheMeasuringMachine:
+    """A baseline must name the machine that produced the numbers.
+
+    The documented workflow measures on a CI runner and writes the baseline from
+    a human's checkout. If the file recorded the writer's machine it would be
+    unusable as provenance — and provenance is the only reason #768 was
+    diagnosable at all.
+    """
+
+    CI_PROVENANCE = {
+        "generated_at": "2026-10-02T11:00:00+09:00",
+        "timezone": "Asia/Seoul",
+        "role": "current",
+        "rounds": 5,
+        "runner": "github-actions-ubuntu24-X64",
+        "cpu_count": 4,
+        "python": "3.11.9",
+        "platform": "Linux-6.11.0-1018-azure-x86_64",
+        "commit": "deadbeef",
+        "repository": "kakao-harris-lee/kis_unified_sts",
+        "workflow_run": "https://github.com/x/y/actions/runs/1",
+    }
+
+    def _ci_samples_file(self, tmp_path):
+        checker = _checker()
+        document = checker.build_samples_document(
+            {"a": _stats(MEASURED_ROUNDS[:5])}, dict(self.CI_PROVENANCE)
+        )
+        return _write_json(tmp_path / "ci-current.json", document)
+
+    def test_baseline_inherits_the_runner_that_measured(self, tmp_path, local_machine):
+        current = self._ci_samples_file(tmp_path)
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(["--current", str(current), "--write-baseline", str(out)]) == 0
+        )
+
+        provenance = json.loads(out.read_text())["provenance"]
+        assert provenance["runner"] == "github-actions-ubuntu24-X64"
+        assert provenance["commit"] == "deadbeef"
+        assert provenance["python"] == "3.11.9"
+        assert provenance["generated_at"] == "2026-10-02T11:00:00+09:00"
+        assert provenance["role"] == "baseline"
+        # The aggregating machine is recorded separately, not as the measurer.
+        assert provenance["aggregated_on"]["runner"].startswith("local-")
+
+    def test_freshly_measured_rounds_describe_this_machine(
+        self, tmp_path, local_machine
+    ):
+        rounds = _write_rounds(tmp_path, [{"a": v} for v in MEASURED_ROUNDS[:5]])
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(
+                ["--current", *[str(p) for p in rounds], "--write-baseline", str(out)]
+            )
+            == 0
+        )
+        provenance = json.loads(out.read_text())["provenance"]
+        assert "aggregated_on" not in provenance
+        assert provenance["runner"].startswith("local-")
+
+    def test_merging_several_samples_files_inherits_nothing(
+        self, tmp_path, local_machine
+    ):
+        """Two samples files may come from different runners — neither wins."""
+        checker = _checker()
+        first = self._ci_samples_file(tmp_path)
+        other = dict(self.CI_PROVENANCE, runner="github-actions-ubuntu22-X64")
+        second = _write_json(
+            tmp_path / "ci-current-2.json",
+            checker.build_samples_document({"a": _stats(MEASURED_ROUNDS[:5])}, other),
+        )
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(
+                ["--current", str(first), str(second), "--write-baseline", str(out)]
+            )
+            == 0
+        )
+        provenance = json.loads(out.read_text())["provenance"]
+        assert "aggregated_on" not in provenance
+        assert provenance["runner"].startswith("local-")
+        assert provenance["sources"] == ["ci-current.json", "ci-current-2.json"]
+        assert provenance["rounds"] == 10
+
+
+class TestUnderSampledReporting:
+    def test_refusal_names_the_under_sampled_benchmarks(self, tmp_path, capsys):
+        """A benchmark that failed in some rounds contributes fewer samples.
+
+        One flaky round then blocks the whole baseline, so the refusal has to
+        say which benchmark is short — otherwise the operator re-runs blind.
+        """
+        checker = _checker()
+        stats = {f"ok{i}": _stats([0.1] * 5) for i in range(3)}
+        stats["flaky"] = _stats([0.1, 0.1])
+        assert checker.write_baseline(tmp_path / "b.json", stats) is False
+
+        out = capsys.readouterr().out
+        assert "Under-sampled benchmarks (1 of 4)" in out
+        assert "n=2  flaky" in out
+        assert "ok0" not in out
+
+    def test_markdown_does_not_print_an_unmeasured_test_as_instant(self):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(1, 5)}
+        markdown = checker.markdown_summary(checker.compare_metrics(baseline, current))
+        missing = [line for line in markdown.splitlines() if "`t0`" in line]
+        assert len(missing) == 1
+        assert "not run" in missing[0]
+        assert "0.0000s (0)" not in missing[0]
+
+    def test_markdown_marks_a_new_benchmark_as_new(self):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = dict(baseline)
+        current["brand_new"] = _stats([0.10] * 5)
+        markdown = checker.markdown_summary(checker.compare_metrics(baseline, current))
+        row = [line for line in markdown.splitlines() if "`brand_new`" in line][0]
+        assert "| new |" in row
+
+
+class TestEmptyPathArguments:
+    """`--markdown-summary "$GITHUB_STEP_SUMMARY"` with the variable unset.
+
+    The documented CI command is meant to be copy-pasteable. An unset shell
+    variable must not turn a passing regression check into exit 2.
+    """
+
+    def _files(self, tmp_path):
+        return (
+            _write_json(
+                tmp_path / "baselines.json", _report({f"t{i}": 0.10 for i in range(5)})
+            ),
+            _write_json(
+                tmp_path / "current.json", _report({f"t{i}": 0.10 for i in range(5)})
+            ),
+        )
+
+    def test_empty_markdown_summary_is_ignored(self, tmp_path):
+        baseline, current = self._files(tmp_path)
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--markdown-summary",
+                    "",
+                ]
+            )
+            == 0
+        )
+        assert not (tmp_path / ".").joinpath("summary.md").exists()
+
+    def test_empty_write_paths_are_ignored(self, tmp_path):
+        baseline, current = self._files(tmp_path)
+        assert (
+            _crmod.main(
+                [
+                    "--baseline",
+                    str(baseline),
+                    "--current",
+                    str(current),
+                    "--write-samples",
+                    "",
+                    "--write-baseline",
+                    "   ",
+                ]
+            )
+            == 0
+        )
+
+
+def _outcomes(checker, paths):
+    """Per-benchmark round tally — the third element of load_sample_sets()."""
+    return checker.load_sample_sets(paths)[2]
+
+
+def _report_with_outcomes(entries: dict[str, tuple[str, float]]) -> dict:
+    """pytest-json-report where each test carries an explicit outcome."""
+    return {
+        "summary": {"total": len(entries)},
+        "tests": [
+            {
+                "nodeid": nodeid,
+                "outcome": outcome,
+                "setup": {"duration": 0.0},
+                "call": {"duration": duration},
+                "teardown": {"duration": 0.0},
+            }
+            for nodeid, (outcome, duration) in entries.items()
+        ],
+    }
+
+
+class TestRoundOutcomes:
+    """A benchmark's own assertion is a single-sample timing comparison.
+
+    `test_exit_path_50_symbols` asserts `improvement_pct >= -40` on one
+    measurement; observed on CI run 36954483251 it produced -41.8% in one round
+    of five and passed in the others. Failing the job on that reproduces #768
+    one level down, so a minority of failing rounds is a warning and a majority
+    is an error.
+    """
+
+    def _rounds(self, tmp_path, failing: int, total: int = 5):
+        paths = []
+        for i in range(1, total + 1):
+            entries = {f"t{j}": ("passed", 0.10) for j in range(5)}
+            entries["flaky"] = ("failed", 0.10) if i <= failing else ("passed", 0.10)
+            paths.append(
+                _write_json(
+                    tmp_path / f"round-{i}.json", _report_with_outcomes(entries)
+                )
+            )
+        return paths
+
+    def test_minority_failure_is_a_warning_not_a_job_failure(self, tmp_path, capsys):
+        checker = _checker()
+        tally = _outcomes(checker, self._rounds(tmp_path, failing=1))
+        assert tally["flaky"].failed == 1
+        assert tally["flaky"].passed == 4
+        assert tally["flaky"].is_majority_failure is False
+
+        errors, warnings = checker.print_round_outcomes(tally)
+        assert (errors, warnings) == (0, 1)
+        out = capsys.readouterr().out
+        assert "failed in 1 of 5 rounds" in out
+        assert "minority" in out
+
+    def test_majority_failure_is_an_error(self, tmp_path, capsys):
+        checker = _checker()
+        tally = _outcomes(checker, self._rounds(tmp_path, failing=3))
+        assert tally["flaky"].is_majority_failure is True
+
+        errors, warnings = checker.print_round_outcomes(tally)
+        assert (errors, warnings) == (1, 0)
+        assert "FAILED in 3 of 5 rounds" in capsys.readouterr().out
+
+    def test_exactly_half_is_not_a_majority(self, tmp_path):
+        checker = _checker()
+        tally = _outcomes(checker, self._rounds(tmp_path, failing=2, total=4))
+        assert tally["flaky"].failed == 2
+        assert tally["flaky"].decided == 4
+        assert tally["flaky"].is_majority_failure is False
+
+    def test_a_test_skipped_in_every_round_is_not_a_failure(self, tmp_path, capsys):
+        """The 12 redis/websocket benchmarks skip in CI. They are missing, not failing."""
+        checker = _checker()
+        paths = [
+            _write_json(
+                tmp_path / f"round-{i}.json",
+                _report_with_outcomes({"redis_bench": ("skipped", 0.0)}),
+            )
+            for i in range(1, 6)
+        ]
+        tally = _outcomes(checker, paths)
+        assert tally["redis_bench"].skipped == 5
+        assert tally["redis_bench"].failed == 0
+        assert checker.print_round_outcomes(tally) == (0, 0)
+        assert capsys.readouterr().out == ""
+
+    def test_samples_files_carry_no_outcomes(self, tmp_path):
+        checker = _checker()
+        doc = checker.build_samples_document(
+            {"a": _stats(MEASURED_ROUNDS)}, collect_provenance(rounds=7)
+        )
+        path = _write_json(tmp_path / "current.json", doc)
+        assert _outcomes(checker, [path]) == {}
+
+
+class TestRoundOutcomesChangeTheExitCode:
+    def _cli(self, tmp_path, failing: int):
+        baseline = _write_json(
+            tmp_path / "baselines.json",
+            _report({**{f"t{j}": 0.10 for j in range(5)}, "flaky": 0.10}),
+        )
+        rounds = []
+        for i in range(1, 6):
+            entries = {f"t{j}": ("passed", 0.10) for j in range(5)}
+            entries["flaky"] = ("failed", 0.10) if i <= failing else ("passed", 0.10)
+            rounds.append(
+                _write_json(
+                    tmp_path / f"round-{i}.json", _report_with_outcomes(entries)
+                )
+            )
+        return ["--baseline", str(baseline), "--current", *[str(p) for p in rounds]]
+
+    def test_one_flaky_round_keeps_the_job_green(self, tmp_path):
+        assert _crmod.main(self._cli(tmp_path, failing=1)) == 0
+
+    def test_a_majority_of_failing_rounds_exits_two(self, tmp_path):
+        assert _crmod.main(self._cli(tmp_path, failing=3)) == 2
+
+
+def _aborted_report(exitcode: int = 2, collectors=None, tests=None) -> dict:
+    """What pytest-json-report writes when the session aborts.
+
+    The file still exists and still parses — which is exactly why its existence
+    cannot be the check.
+    """
+    return {
+        "exitcode": exitcode,
+        "summary": {"total": 0},
+        "collectors": (
+            collectors
+            if collectors is not None
+            else [{"nodeid": "", "outcome": "passed", "result": []}]
+        ),
+        "tests": tests if tests is not None else [],
+    }
+
+
+class TestSessionProblems:
+    """A suite that never ran must not report green.
+
+    Before the N-round loop, a non-zero pytest exit failed the step directly.
+    The loop swallows that exit, so the checker has to read pytest's own
+    exitcode and collectors instead — otherwise an ImportError in one module
+    aborts collection in all 5 rounds, every baseline entry becomes a
+    non-fatal "Test not found" warning, and the job goes green having measured
+    nothing.
+    """
+
+    def _aborted_rounds(self, tmp_path, n=5, **kwargs):
+        return [
+            _write_json(tmp_path / f"round-{i}.json", _aborted_report(**kwargs))
+            for i in range(1, n + 1)
+        ]
+
+    def test_collection_abort_in_every_round_is_an_error(self, tmp_path):
+        checker = _checker()
+        paths = self._aborted_rounds(tmp_path)
+        stats, sources, _ = checker.load_sample_sets(paths)
+        assert stats == {}
+        problems = checker.session_problems(sources, stats)
+        assert len(problems) == 6  # one per round, plus "no benchmark"
+        assert "pytest exited 2" in problems[0]
+        assert "nothing to compare" in problems[-1]
+
+    def test_the_cli_exits_two_rather_than_green(self, tmp_path, capsys):
+        baseline = _write_json(
+            tmp_path / "baselines.json", _report({f"t{i}": 0.10 for i in range(5)})
+        )
+        rounds = self._aborted_rounds(tmp_path)
+        exit_code = _crmod.main(
+            ["--baseline", str(baseline), "--current", *[str(p) for p in rounds]]
+        )
+        assert exit_code == 2
+        out = capsys.readouterr().out
+        assert "MEASUREMENT INVALID" in out
+        # The old failure mode: 5 silent warnings and a green job.
+        assert "✅ PASSED" not in out
+
+    def test_a_failed_collector_is_an_error(self, tmp_path):
+        checker = _checker()
+        path = _write_json(
+            tmp_path / "round-1.json",
+            _aborted_report(
+                exitcode=2,
+                collectors=[
+                    {
+                        "nodeid": "tests/performance/test_redis_load.py",
+                        "outcome": "failed",
+                    }
+                ],
+            ),
+        )
+        stats, sources, _ = checker.load_sample_sets([path])
+        problems = checker.session_problems(sources, stats)
+        assert any(
+            "collection failed for tests/performance/test_redis_load.py" in p
+            for p in problems
+        )
+
+    def test_exitcode_one_is_a_completed_session_with_failures(self, tmp_path):
+        """Exit 1 means tests ran and some failed — the majority rule judges that."""
+        checker = _checker()
+        payload = _report_with_outcomes({"a": ("failed", 0.1), "b": ("passed", 0.1)})
+        payload["exitcode"] = 1
+        path = _write_json(tmp_path / "round-1.json", payload)
+        stats, sources, outcomes = checker.load_sample_sets([path])
+        assert checker.session_problems(sources, stats) == []
+        assert outcomes["a"].failed == 1
+
+    def test_a_samples_file_is_not_checked_for_an_exitcode(self, tmp_path):
+        checker = _checker()
+        doc = checker.build_samples_document(
+            {"a": _stats(MEASURED_ROUNDS)}, collect_provenance(rounds=7)
+        )
+        path = _write_json(tmp_path / "current.json", doc)
+        stats, sources, _ = checker.load_sample_sets([path])
+        assert checker.session_problems(sources, stats) == []
+
+    def test_zero_benchmarks_alone_is_an_error(self, tmp_path):
+        """A clean exit that collected nothing still measured nothing."""
+        checker = _checker()
+        payload = _report({})
+        payload["exitcode"] = 0
+        path = _write_json(tmp_path / "round-1.json", payload)
+        stats, sources, _ = checker.load_sample_sets([path])
+        assert checker.session_problems(sources, stats) == [
+            "no benchmark produced a single passing sample — there is nothing to compare"
+        ]
+
+
+class TestVerdictIsPrintedOnce:
+    """The printed verdict and the exit code must agree.
+
+    Round-outcome errors used to be added after print_report() had already
+    printed "✅ PASSED" and after markdown_summary() had been written, so the
+    console and the step summary said pass while the job exited 2.
+    """
+
+    def _majority_failure(self):
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        outcomes = {
+            "t0": _crmod.RoundOutcomes(passed=2, failed=3),
+        }
+        return baseline, current, outcomes
+
+    def test_console_verdict_reflects_a_round_outcome_error(self, capsys):
+        checker = _checker()
+        baseline, current, outcomes = self._majority_failure()
+        comparisons = checker.compare_metrics(baseline, current)
+        errors, _, _ = checker.print_report(comparisons, outcomes=outcomes)
+        out = capsys.readouterr().out
+        assert errors == 1
+        assert "❌ FAILED" in out
+        assert "✅ PASSED" not in out
+
+    def test_markdown_shows_the_round_outcome_error(self):
+        checker = _checker()
+        baseline, current, outcomes = self._majority_failure()
+        markdown = checker.markdown_summary(
+            checker.compare_metrics(baseline, current), outcomes=outcomes
+        )
+        assert "Test outcomes across rounds" in markdown
+        assert "🔴" in markdown
+        assert "failed in 3 of 5 rounds" in markdown
+
+    def test_session_problems_reach_both_outputs(self, capsys):
+        checker = _checker()
+        baseline = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        current = {f"t{i}": _stats([0.10] * 5) for i in range(5)}
+        comparisons = checker.compare_metrics(baseline, current)
+        errors, _, _ = checker.print_report(
+            comparisons, session_problems=["round-1.json: pytest exited 2"]
+        )
+        assert errors == 1
+        assert "MEASUREMENT INVALID" in capsys.readouterr().out
+        markdown = checker.markdown_summary(
+            comparisons, session_problems=["round-1.json: pytest exited 2"]
+        )
+        assert "Measurement invalid" in markdown
+
+
+class TestProvenanceRoundsAndSources:
+    def test_rounds_counts_sessions_not_the_thinnest_benchmark(self, tmp_path):
+        """One benchmark failing one round must not relabel the file 'rounds: 4'."""
+        checker = _checker()
+        paths = []
+        for i in range(1, 6):
+            entries = {"ok": ("passed", 0.10)}
+            entries["flaky"] = ("failed", 0.10) if i == 1 else ("passed", 0.10)
+            paths.append(
+                _write_json(
+                    tmp_path / f"round-{i}.json", _report_with_outcomes(entries)
+                )
+            )
+        stats, sources, _ = checker.load_sample_sets(paths)
+        out = tmp_path / "current.json"
+        checker.write_samples(out, stats, sources=sources)
+
+        document = json.loads(out.read_text())
+        assert document["provenance"]["rounds"] == 5
+        assert document["benchmarks"]["flaky"]["n"] == 4
+        assert document["benchmarks"]["ok"]["n"] == 5
+        assert len(document["provenance"]["sources"]) == 5
+
+    def test_reaggregation_keeps_the_original_round_chain(self, tmp_path):
+        checker = _checker()
+        rounds = _write_rounds(tmp_path, [{"a": v} for v in MEASURED_ROUNDS[:5]])
+        current = tmp_path / "current.json"
+        stats, sources, _ = checker.load_sample_sets(rounds)
+        checker.write_samples(current, stats, sources=sources)
+
+        out = tmp_path / "baselines.json"
+        assert (
+            _crmod.main(["--current", str(current), "--write-baseline", str(out)]) == 0
+        )
+        provenance = json.loads(out.read_text())["provenance"]
+        assert provenance["rounds"] == 5
+        assert provenance["sources"] == [f"round-{i}.json" for i in range(1, 6)]
+        assert provenance["aggregated_on"]["from"] == ["current.json"]
+
+
+class TestCommitProvenance:
+    def test_perf_commit_sha_beats_the_merge_commit(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_SHA", "e" * 40)  # refs/pull/N/merge
+        monkeypatch.setenv("PERF_COMMIT_SHA", "a" * 40)
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        provenance = collect_provenance(rounds=5)
+        assert provenance["commit"] == "a" * 40
+        assert provenance["github_event"] == "pull_request"
+
+    def test_falls_back_to_github_sha_then_git_head(self, monkeypatch):
+        monkeypatch.delenv("PERF_COMMIT_SHA", raising=False)
+        monkeypatch.setenv("GITHUB_SHA", "b" * 40)
+        assert collect_provenance(rounds=5)["commit"] == "b" * 40
+        monkeypatch.delenv("GITHUB_SHA", raising=False)
+        assert isinstance(collect_provenance(rounds=5)["commit"], str)

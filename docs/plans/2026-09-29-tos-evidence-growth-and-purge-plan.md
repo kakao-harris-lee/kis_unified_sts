@@ -75,7 +75,7 @@
 - 착지: `tools/tos_evidence_scan_measure.py` + `tests/tools/test_tos_evidence_scan_measure.py`
   (§7.1.9). 벤치는 무변경 — 드라이버가 벤치를 자식 프로세스로 몬다.
 
-### A1-c. 측정은 분리 워크트리에서만 (**후속 — 아직 구현 안 함**)
+### A1-c. 측정은 분리 워크트리에서만 (**구현 — PR #838**)
 
 - **두 번 연속으로 공용 체크아웃에서 돌았고 두 번 다 트리가 측정 도중에 움직였다.**
   365 일치는 `32539e07` → `f23bb4c3`(§7.1.12), 180 일치는 `a0578bf9` → `1024bcce` →
@@ -93,6 +93,10 @@
   「프로브는 분리 워크트리(origin/main)에서만」(#793 HIGH)이다.
 - **270 일치 한 점은 A1-c 다음이다** — §7.1.15 가 다음 측정으로 등재한 그 점을 공용
   체크아웃에서 또 돌리면 같은 노출을 세 번째로 받는다.
+- 착지: `tools/tos_evidence_scan_measure.py` 의 `checkout_detached_and_clean`
+  프리플라이트 + 자식마다의 재검사 + 세 아티팩트 계열의 출처 기록, 그리고
+  `tests/tools/test_tos_evidence_scan_measure.py` 의 실 git 저장소 테스트 19 건
+  (§7.1.19). 벤치는 무변경. **270 일치 한 점은 이제 §7.1.19 의 레시피로 돈다.**
 
 ### A2. `kind` 인덱스 (A1 이 필요를 보이면)
 
@@ -135,13 +139,22 @@
   (`seq` 가 이미 PK 다). 회귀 테스트는 **질의계획을 핀**한다 — 동치성만으로는 스캔 재발을
   못 잡기 때문이다(걷기도 답은 맞다).
 
-### A3. 압축 콜드 백업 (기존 `backup()` 재사용)
+### A3. 압축 콜드 백업 (기존 `backup()` 재사용) (**구현 — PR #816(압축·검증) · PR #840(무인 실행·용량 경보)**)
 
 - 이미 있는 세대 스탬프 백업(`evidence/backup.py` — `sqlite3.backup()` + 매니페스트 + 복원 시 독립 재검증)을
   **장 마감 뒤** 돌리고, 결과를 xz 로 압축해 저장소 밖 보관 디렉터리에 둔다(경로는 설정).
 - 매 백업마다: 압축 해제 → digest 일치 → `verify_or_raise` 까지 확인하고 그 결과를 증거로 남긴다.
 - **라이브 파일은 건드리지 않는다.** 디스크는 줄지 않는다. 트랙 B 가 언젠가 지울 때 쓸 **검증된 원본 사본**을
   미리 쌓아 두는 것이다(ADR §17 「independently verified snapshot … raw material」의 준비).
+- **착지는 두 PR 로 나뉘었다.** #816(§7.1.4)이 압축과 되읽기 검증을 `backup-set --archive-dir`
+  뒤에 올렸고, 그 처분(§7.1.6 「범위 밖으로 남긴 것」)이 **보관 경로 용량 경보와 스케줄링을
+  이월**했다. #840(§7.1.18)이 그 둘과, 무인 실행을 막고 있던 세 번째 것(손으로 올리는
+  `--generation`)을 닫는다 — 설정 기반 좌표 · 자동 세대 · 용량 바닥 · JSON 보고서를 묶은
+  `cold-backup` 하위 명령과 cron 한 줄(런북 `docs/runbooks/tos-evidence-cold-backup.md`).
+- ⚠ **「그 결과를 증거로 남긴다」의 실제 모양은 증거 행이 아니라 아카이브 옆의 JSON 이다.**
+  이 계획 문언이 쓰일 때 전제한 「증거」가 증거 저장소 행이었다면, 그것은 **이 작업과 양립하지
+  않는다** — 콜드 백업은 런타임이 정지한 상태에서 돌고, append 는 방금 복사했다고 증명한 바로
+  그 바이트를 움직인다. 근거와 후속은 §7.1.18 에 적는다.
 
 ### 트랙 A 에서 하지 않는 것
 
@@ -771,16 +784,36 @@ contract PASS · completion GREEN · spec PASS · `ruff check` 통과 · `black 
 설치돼 있지 않고(`Could not find package 'tos_runtime'`), 공유 루트 venv 에 설치하지 않는 규율이
 있다. CI 의 `tos-firewall` 잡이 설치 후 돌린다. 이 PR 은 import 를 하나도 추가하지 않는다.
 
-**365 일치 재실행 명령 (이 PR 에서 돌리지 않았다).** 호스트에 다른 프로젝트의 Gradle 빌드가 도는
-동안에는 이 드라이버가 **스스로 거부한다** — 그것이 의도된 동작이다. 빌드가 끝난 뒤:
+**실행 명령 (이 PR 에서 돌리지 않았다).** 호스트에 다른 프로젝트의 Gradle 빌드가 도는
+동안에는 이 드라이버가 **스스로 거부한다** — 그것이 의도된 동작이다.
+
+⚠ **2026-10-02 (A1-c · PR #838) 로 이 레시피가 바뀌었다.** 아래가 현행이고, 이전의
+「`cd <repo>` 뒤 공용 체크아웃에서 실행」은 **드라이버가 거부한다**(§7.1.19).
+측정은 **분리 워크트리**에서만 돈다. 인터프리터는 공용 체크아웃의 루트 `.venv` 를
+그대로 쓴다 — 새 워크트리에 venv 를 만들지 않고, 드라이버는 stdlib 만 쓴다.
+`--python` 은 기본값이 `sys.executable` 이므로 아래처럼 그 python 으로 드라이버를
+띄우면 명시하지 않아도 같은 값이 되지만, 자식이 무엇으로 뜨는지 아티팩트에서
+한눈에 보이도록 적어 둔다.
 
 ```bash
-cd <repo>
-.venv/bin/python tools/tos_evidence_scan_measure.py run \
+# 1. 분리 워크트리를 origin/main 에 만든다 (한 번)
+cd /home/deploy/project/kis_unified_sts
+git fetch origin
+git worktree add --detach ~/.local/state/tos/measure/wt-measure origin/main
+
+# 2. 그 워크트리 '안에서' 드라이버를 띄운다 (python 은 공용 체크아웃의 venv)
+cd ~/.local/state/tos/measure/wt-measure
+/home/deploy/project/kis_unified_sts/.venv/bin/python \
+  tools/tos_evidence_scan_measure.py run \
+  --python /home/deploy/project/kis_unified_sts/.venv/bin/python \
   --reference ~/.local/state/tos/realclock-20260928T110001-LONG/data/evidence.sqlite3 \
   --synthetic ~/.local/state/tos/measure/synth/synth-365d.sqlite3 \
   --out-dir   ~/.local/state/tos/measure/a1b \
   --days 365 --repeats 3
+
+# 3. 측정이 끝나면 워크트리를 치운다
+cd /home/deploy/project/kis_unified_sts
+git worktree remove ~/.local/state/tos/measure/wt-measure
 ```
 
 문턱은 전부 기본값(착수 6 GB / 2 GB · 진행 중 4 GB / 1 GB · 5 초 표본)이라 평시에는 아무 플래그도
@@ -1981,6 +2014,8 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 2–3 h 와 피크 디스크 ≈40 GB 다. **이 PR 에서 돌리지 않았다.**
 ⚠ **그리고 A1-c 보다 먼저 돌리지 않는다** — 365·180 일치가 두 번 연속 공용 체크아웃에서
 돌았고 두 번 다 트리가 측정 도중에 움직였다(아래 「답하지 못한 것」 4 · §2 A1-c).
+**2026-10-02 — A1-c 착지(PR #838 · §7.1.19).** 등재는 그대로이고 바뀐 것은 **어떻게
+도는가** 하나다: §7.1.9 의 분리 워크트리 레시피로 돌고, 트리가 움직이면 드라이버가 멈춘다.
 
 **2. 180 일치 부팅 질의 비용 — 인덱스 전 29.8–50.6 s, 인덱스 후 0.055–0.116 ms.**
 
@@ -2047,7 +2082,10 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
    한 줄은 **기록이지 방지가 아니다** — `before` 와 `after` 자식이 1 h 39 m 떨어져 뜨므로
    그 사이의 벤치 변경은 SHA 줄로 증명될 뿐 막히지 않는다. **후속 A1-c 로 등재했다**
    (§2 A1-c): 분리 워크트리에서만 띄우고 프리플라이트가 비-detached · 더티 체크아웃을
-   거부하게 한다. **270 일치는 그 다음이다.**
+   거부하게 한다. **270 일치는 그 다음이다.** — **2026-10-02 ✅ 해소: PR #838
+   (§7.1.19)** 가 그 셋(분리 워크트리 강제 · 프리플라이트 거부 · SHA 기록)에 더해
+   **자식마다의 재검사**를 넣었다. 「SHA 는 기록이지 방지가 아니다」가 가리키던
+   `before`↔`after` 사이의 창이 닫혔다. 270 일치는 이제 §7.1.9 의 레시피로 돈다.
 5. **180 일치 인덱스 생성이 365 일치보다 행당 비쌌던 이유.** 위 인덱스 표의 ⚠.
 6. **대조군이 패스 사이에 −22 % 움직인 이유.** 위 「잡음 바닥」. 네 크기 전부에서
    대조군이 패스 수준으로 움직인다는 사실만 적는다.
@@ -2098,7 +2136,7 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 | **F3** | 워치독 소제목이 「위반 0」인데 두 줄 아래 표가 **중단 문턱 위반 1 건**을 적는다 | **수용 · 수정.** 소제목을 「**착수 문턱 위반 0 · 진행 중 문턱 위반 1**(1차의 중단) · `competing` 0」으로 바꿨다. 절 전체의 주제가 바로 그 위반이므로 소제목이 0 이라고 말하면 안 된다 |
 | **F4** | 「전 패스 **87.1 %** 지점에서 중단」은 1차의 경과를 **2차의 벽시계**로 나눈 값이다 | **수용 · 수정.** 역방향 형태 1 회가 366–970 s 로 흔들리므로(이 절 「반복 폭」) 경과는 진행량이 아니다. 진행률을 **바이트로** 바꿨다 — **78.4 %**(논리) · **81.1 %**(물리). 중단 블록 소제목 · 표(경과 행은 남기되 「진행률로 읽지 않는다」 행을 붙임) · 편차 12 · **PR 본문**을 고쳤다 |
 | **F5** | 후-인덱스 파일 크기의 출처를 「mtime = 인덱스 생성 종료 **직후**」로 적었는데 **3.5 s** 어긋난다 | **수용 · 수정.** 등식을 **삭제**하고 간극을 적었다: 23:46:06.788 + 94.704 s = 23:47:41.49 대 mtime **23:47:37.96**, 차 **3.53 s**(마지막 데이터 쓰기 대 타이머 종료). 크기를 인덱스 단계에 묶는 근거는 mtime 이 아니라 **페이지 셈**(rootpage 6,408,135 = 인덱스 전 마지막 페이지 + 1)이라고 명시했다 |
-| **F6** | 또 공용 체크아웃에서 돌았고(HEAD 가 측정 도중 2 회 이동) 등재된 보완은 「SHA 한 줄」뿐 — **기록이지 방지가 아니다** | **수용 · 후속 등재.** **§2 A1-c** 를 새로 썼다: 드라이버를 **분리 워크트리**(detached `origin/main`)에서 띄우고 프리플라이트가 **비-detached · 더티 체크아웃을 거부**하며 `preflight.json` 에 SHA 를 적는다(앞의 둘이 방지, 셋째가 기록). **270 일치 한 점은 A1-c 다음**이라고 세 곳(§2 A1-c · 「읽어야 할 것」 1 · 「답하지 못한 것」 4)에 걸었다. 이 PR 은 문서 전용이라 구현하지 않는다 |
+| **F6** | 또 공용 체크아웃에서 돌았고(HEAD 가 측정 도중 2 회 이동) 등재된 보완은 「SHA 한 줄」뿐 — **기록이지 방지가 아니다** | **수용 · 후속 등재.** **§2 A1-c** 를 새로 썼다: 드라이버를 **분리 워크트리**(detached `origin/main`)에서 띄우고 프리플라이트가 **비-detached · 더티 체크아웃을 거부**하며 `preflight.json` 에 SHA 를 적는다(앞의 둘이 방지, 셋째가 기록). **270 일치 한 점은 A1-c 다음**이라고 세 곳(§2 A1-c · 「읽어야 할 것」 1 · 「답하지 못한 것」 4)에 걸었다. 이 PR 은 문서 전용이라 구현하지 않는다. **2026-10-02 — PR #838 이 구현했다(§7.1.19)**: 등재된 셋에 더해 **자식마다의 재검사**가 들어가, 이 지적이 가리킨 「기록이지 방지가 아니다」가 실제로 닫혔다 |
 
 **이 라운드의 교훈 — 자기가 쓴 경고를 자기가 어겼다.**
 이 절은 §7.1.12 에서 물려받은 규율 셋을 본문에 적어 두고 있었다: 「평균을 분포의 성질로
@@ -2112,3 +2150,460 @@ log-log 기울기도 두 구간에서 거의 같다: 90 → 180 **−2.11** · 1
 `tos_named_tbd_guard.py` **PASS (46 files, 0)** · `tos_evidence_citation_check.py`
 **PASS (175 citations / 3 READMEs)** · `tos_size_budget --check` **PASS (0 violations)**.
 마크다운 표 전부 열 수 일치. 문서 전용 — 런타임 `*.py` 변경 0, digest 재도출 없음.
+
+#### 7.1.17 (A2 인덱스 마이그레이션 레인 예약 — 이 번호는 비워 둔다)
+
+동시 진행 중인 A2 레인(`schema_migrations.py`/`store.py`)이 이 번호를 쓴다. 두 레인이
+같은 날 열려 있어 번호가 겹치지 않게 **미리 비워 둔 자리**이고, A2 가 먼저 머지되면 이
+문단은 그 착지 기록으로 대체된다. 뒤에 머지되는 쪽이 digest 를 다시 도출한다.
+
+#### 7.1.18 A3 무인화 착지 — PR #840 (2026-10-02, 분기점 main `f219305f`) — §7.1 과 별개 PR
+
+§7.1.6 이 「범위 밖으로 남긴 것」에 적은 두 줄 — **보관 경로 용량 경보**와 **스케줄링** — 을
+닫는다. 닫다 보니 셋이었다: 무인 실행을 실제로 막고 있던 세 번째가 **손으로 올리는
+`--generation`** 이었다. 세대를 사람이 타이핑하는 한 cron 줄은 쓸 수 없다.
+
+**새 백업·압축·검증 기계는 하나도 만들지 않았다.** `operations/cold_backup.py` 는 이미 있는
+셋 위의 진입점이다: `next_generation` → `backup_set` → `archive_backup_set`(되읽기 검증
+포함) → JSON 보고서.
+
+| 더한 것 | 어디 | 왜 |
+|---|---|---|
+| 설정 기반 보관 좌표 `evidence_cold_backup.yaml` | `operations/cold_backup.py::load_cold_backup_config` | 좌표가 명령줄에 있으면 cron 줄이 호스트 지식을 품는다 |
+| 자동 세대 | `operations/backup_set.py::next_generation` | N 번째 실행의 명령줄이 첫 번째와 글자 그대로 같아야 한다 |
+| 용량 바닥 `minimum_free_bytes` | `cold_backup()` 프리플라이트 | 계획 §5 이월 |
+| 실행 기록 `gen{N}.cold-backup.report.json` | `ColdBackupReport` | 「그 결과를 … 남긴다」(§2 A3) |
+| cron 한 줄(데몬 0) | `docs/runbooks/tos-evidence-cold-backup.md` §4 | §7.1.6 이월 |
+
+**보존(retention) 손잡이는 넣지 않았다 — 누락이 아니라 결정이다.** `backup_set` 은 삭제하지
+않고(「Never deleted, never overwritten」) 아카이브는 추가이며, 검증된 콜드 사본의 파기는
+**ADR-002-016 §17 이 규율하는 트랙 B** 다(계획 §4 — 전제 B-1…B-5 전부 미충족). 그 옆에 더
+좁은 삭제 정책을 따로 만들면 그것이 바로 §17 이 요구하는 승인·이중 통제·범위 증명을
+우회하는 길이다. 사본은 압축 뒤 ≈13 MB/일로 쌓이고(§1), 용량 바닥은 그것을 **보이게** 하는
+장치다. 경보의 답은 저장공간이고, 거부 메시지가 그렇게 말한다.
+
+##### 「결과를 증거로 남긴다」를 증거 행으로 하지 않은 이유
+
+계획 §2 A3 의 그 문언을 **증거 저장소 행으로 읽으면 이 작업과 양립하지 않는다.** 셋이
+동시에 참일 수 없다:
+
+1. 콜드 백업은 **런타임이 정지한 상태**에서 돈다 — `backup_set` 의 문서화된(그리고 기계적으로
+   탐지 불가능한) 전제다.
+2. 같은 계획 §2 A3 이 **「라이브 파일은 건드리지 않는다」** 고 적는다.
+3. append 는 **방금 복사했다고 증명한 바로 그 바이트**를 움직인다.
+
+그리고 이 저장소에 **이미 있는** 운영→증거 경로는 append 가 아니다:
+`compose/_operations_wiring._observe_backup` 이 **부팅 때** `backup_root` 의 최고 세대
+매니페스트를 읽어 `BACKUP_SET_OBSERVED` 를 남긴다 — 런타임이 다음 부팅에 운영 산출물을
+**관측**하는 모양이지, 운영 CLI 가 체인에 쓰는 모양이 아니다. 그래서 기록은 아카이브 옆의
+`gen{N}.cold-backup.report.json` 이고, 테스트가 라이브 집합의 **바이트와 mtime 양쪽**이
+불변임을 고정한다(digest 만으로는 같은 바이트를 재생산하는 재기록을 통과시킨다).
+
+**후속 등재(이 PR 범위 밖, 구현하지 않음)**: 그 부팅 관측기가 이 보고서까지 읽어
+「마지막 콜드 사본이 언제 검증됐는가」를 부팅 사실로 남기게 하는 것. compose 배선 + 새 증거
+kind 가 필요하고, 그것은 A3 가 아니라 별도 결정이다.
+
+##### 보관 경로 거부 셋
+
+`archive_dir`·`backup_root`·`verify_root` 전부에 적용한다.
+
+| 거부 | 이유 |
+|---|---|
+| 라이브 `data_dir` **안**(또는 같음) | 사본이 자기가 복사하는 디렉터리를 키운다 |
+| 라이브 `data_dir` 을 **포함** | 콜드 보관소는 무한히 자라는데(보존 없음) 라이브 런타임과 서브트리를 공유하면 보관소가 차는 순간 런타임이 같이 죽는다 |
+| **git 워크트리 안** | `.gitignore` 한 줄 빠지면 증거 체인 수 GB 가 커밋 한 번 거리다 |
+
+세 번째는 `scripts/tos/render_paper_config.py::_refuse_output_inside_repo` 와 같은 가드이되
+**`git rev-parse` 가 아니라 조상 탐색**이다 — 런타임 스코프에서 `subprocess` 는 방화벽
+금지(R1)라 그 선례를 그대로 쓸 수 없다. `.git` 를 `is_dir()` 가 아니라 `exists()` 로 보는
+것은 **링크된 워크트리의 `.git` 가 파일**이기 때문이고, 이 저장소의 병렬 레인이 작업하는
+체크아웃이 정확히 그것이다. 변이(`exists()` → `is_dir()`)로 red 를 확인했다.
+
+##### 설정은 null 로 출고한다
+
+`config/tos_runtime/paper/evidence_cold_backup.yaml` 의 네 값(경로 셋 + 용량 바닥)은
+**전부 `null`** 이다. 경로는 호스트 좌표라 저장소가 알 수 없고, 바닥은 운영자 승인값이다.
+로더는 null 을 기본값으로 메우지 않고 **거부한다** — 짐작한 보관 경로는 콜드 백업이 없는
+것보다 나쁘다. 있는 것처럼 보이기 때문이다. 채운 파일은 **렌더된 설정 디렉터리가 아니라**
+커스터디 옆 운영 디렉터리에 둔다(런북 §2): `render_paper_config.py` 는 재렌더 때 출력
+디렉터리를 저장소 사본으로 다시 만들어 손으로 채운 값을 지운다.
+
+`xz_preset` 만 **선택**이다(생략 = `DEFAULT_XZ_PRESET`). 비대칭의 근거: 빠진 압축률에는 이
+저장소가 이미 이름 붙인 정답이 있지만, 빠진 보관 경로·용량 바닥에는 없다. 키를 적고 null 로
+둔 경우는 **거부**한다 — 반쯤 채운 파일이 완성된 것처럼 보이면 안 된다.
+
+##### 계획 대비 편차
+
+| # | 편차 | 이유 |
+|---|---|---|
+| 1 | 「그 결과를 **증거로** 남긴다」를 증거 행이 아니라 JSON 보고서로 | 위 「양립하지 않는 셋」. 후속(부팅 관측 확장)을 등재했다 |
+| 2 | `backup-set` 의 디스패치를 **함께 이동**(`compose/_backup_dispatch.py`) — A3 자체와 무관한 이동 | `cold-backup` 배선만으로 `cli.py` 가 972 → **995/1000** 이 됐다. 그것은 §7.1.7 편차 1 이 `backup_set.py`(992/1000)에 대해 이름 붙인 바로 그 조건 — 「평범한 수정 한 번이면 게이트가 빨개진다」. 두 백업 하위 명령은 어차피 한 집이고, 이동이 그 여유를 산다(943 줄). 디스패치 본문은 **한 줄도 바꾸지 않았다**; 바뀐 것은 기존 CLI 테스트 12곳의 monkeypatch **위치**뿐이고 단정은 그대로다 |
+| 3 | `backup_set.py` 에 공개 `next_generation`/`manifest_path_for` 추가 | 매니페스트 파일명 리터럴이 이미 **두 곳에 따로** 적혀 있다(`backup-set` 디스패치 · `_operations_wiring.py` 의 중복 상수). 새 호출부가 **세 번째**가 되지 않도록 공개 헬퍼를 둔다. ⚠ **기존 둘은 그대로 남겼다** — 디스패치를 바이트 그대로 옮긴다는 편차 2 의 약속과 바꿀 수 없어서이고, 그래서 중복은 둘에서 둘이지 하나로 줄지 않았다(등재). `next_generation` 은 **할당도 예약도 아니다** — W4 결정 1 「세대는 호출자 지정」은 그대로이고, 경합 시 두 번째 `backup_set` 이 거부하는 것이 여전히 인터록이다 |
+| 4 | 용량 바닥을 지난 **실행 중** 경우에 거부하지 않고 경고 후 0 | 검증까지 끝난 백업을 경보 때문에 되돌리는 것은 손해다. 보고서에 `free_bytes_below_minimum_after=true` 가 남고 **다음 실행이 거부**한다 — 경보는 래칫이지 롤백이 아니다 |
+| 5 | 보존 손잡이 없음 | 위 「보존 손잡이는 넣지 않았다」. 계획 §2 A3 도 보존을 요구하지 않는다 |
+
+##### 자체 점검이 잡은 결함 1건 (저자 패스, 리뷰 전)
+
+`_require_absolute_path` 초판이 **절대경로 검사를 먼저** 하고 틸드 검사를 그 뒤에 뒀다.
+`Path("~/cold").is_absolute()` 는 **False** 이므로 틸드 가지는 **절대로 실행되지 않는다** —
+자기가 이름 붙인 경우를 한 번도 잡을 수 없는 가드다(프로젝트 메모리
+`guards-that-admit-what-they-name` 의 네 형태 중 「상위 가드에 기대던 문구」). 초판 테스트도
+그 사실을 가리고 있었다: `["relative/cold", "~/cold"]` 를 한 파라미터로 묶고 **둘 다**
+「not an absolute path」를 단정했으니, 틸드 메시지가 존재하지 않아도 green 이었다.
+
+고친 자리는 **순서**이고, 그것을 드는 테스트를 따로 세웠다
+(`test_a_tilde_path_is_refused_as_a_tilde_path` — 틸드 전용 문구를 단정하고 「not an absolute
+path」가 **아님**을 함께 단정한다). 두 가지를 순서가 뒤집힌 상태에서 red 로 확인했다.
+
+##### 테스트
+
+새 테스트 **46건**(`tests/operations/test_cold_backup.py` 37 · `tests/compose/test_cold_backup_cli.py` 9).
+실제 durable set 픽스처(`_build_live_set`)에 대해 진짜 실행하고, CLI 쪽이 대체하는 것은
+커스터디 키 공급자 하나다.
+
+**변이로 red 확인 5건** (고치기 전 red 를 실제로 봤다 — 「새 가드에 《이것이 실패하는 구체적
+입력》을 못 쓰면 아무것도 막지 않는 것」):
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 역방향 포함 가드 제거 | `..._that_contains_the_live_data_dir_is_refused` — DID NOT RAISE |
+| 용량 프리플라이트 제거 | `test_free_space_below_the_floor_refuses_before_anything_is_written` — DID NOT RAISE |
+| `.git` 를 `exists()` → `is_dir()` | `test_a_destination_inside_a_git_worktree_is_refused` 3건 전부 |
+| `next_generation` 의 `+1` 제거 | `test_consecutive_runs_take_consecutive_generations` — `BackupSetRefused` |
+| 틸드 가지 제거(순서 역전과 동치) | `test_a_tilde_path_is_refused_as_a_tilde_path` 2건 |
+
+템플릿↔로더 드리프트는 `example_integrity_registry` 등재(필수 키 4 · 터치포인트 1 · 로더)와
+`test_the_shipped_example_config_is_the_shape_this_loader_reads` 가 양방향으로 잡는다.
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · completion GREEN · spec PASS · contract PASS + self-test PASS(뮤테이션
+145종) · citation PASS(175 citations / 3 README) · named-TBD PASS(47 files, 0) · size budget
+PASS(0 violations) · black/ruff 전부 통과.
+
+CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
+`tos/runtime/tests`(241) · `cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `df25a550…` → `1685714e…`(33차) → `e3102d5b…`(34차) → **`7460d4f3…`**(35차, 2차 리뷰 처분 — §7.1.22). `expected_dependency_set_digest`
+불변(`20559763…`, 같은 배포 호스트 루트 `.venv`). 갱신은 두 곳 —
+`config/tos_runtime/paper/release.yaml` 과
+`tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
+리뷰 처분은 **§7.1.21** 이다(§7.1.19·§7.1.20 은 그 사이에 머지된 A1-c 레인이 가져갔다).
+⚠ **A2 레인(§7.1.17)이 뒤에 머지되면 그쪽이 다시 도출해야 한다** — #814 가 main 을 stale 로
+만든 전례가 있고, CI 는 그것을 잡지 않는다.
+
+#### 7.1.19 A1-c 착지 — PR #838 (2026-10-02, 분기점 main `f219305f`) — §7.1 과 별개 PR
+
+§7.1.16 **F6** 이 「기록이지 방지가 아니다」로 등재한 §2 A1-c 를 닫는다. **측정은 다시
+돌리지 않았다** — 이 PR 은 다음 실행이 받을 보호를 올릴 뿐이고, §7.1.2 · §7.1.12 ·
+§7.1.15 의 수치는 하나도 바뀌지 않는다. 벤치(`tools/tos_evidence_scan_bench.py`)는
+**한 줄도 바뀌지 않았다**. `tos/src` · `tos/runtime/src` 무변경이므로 **digest 재도출 없음**.
+
+| 커밋 | 내용 |
+|---|---|
+| `c79a9e40` | `checkout_detached_and_clean` 프리플라이트 · 자식마다의 재검사 · 출처 기록 + 테스트 19 건 |
+| `e15a027c` | 이 절(§7.1.19) 자체 · §2 A1-c 를 「구현」으로 · §7.1.9 실행 명령을 분리 워크트리 레시피로 · §7.1.15/§7.1.16 세 등재의 착지 포인터 · INDEX |
+| `57c5d472` | 위 두 SHA 를 표에 적는다 — §7.1.9 의 리뷰 F10 이 「표가 브랜치와 어긋나는 것은 사소한 누락이 아니다」라고 적은 그 규율 |
+| `5e434649` | 저장소 경로 단언을 양쪽 resolve 로 (심볼릭 링크를 거친 CI 체크아웃) |
+| `74450de4` | 독립 리뷰 #838 지적 F1~F10 |
+| `1cb910c2` | 리뷰 처분 §7.1.20 · 이 표 |
+| (이 행) | 위 SHA 를 적는다 |
+
+**무엇이 들어왔나 — 셋이고, 그 중 둘이 방지다.**
+
+1. **프리플라이트 `checkout_detached_and_clean` (기본-on).** 드라이버가 사는 체크아웃이
+   **detached** · **clean** · **`origin/main` 의 조상**이어야 하고, `--bench` 가 **같은
+   체크아웃 안에서** 해석돼야 한다. 네 가지를 **한 번에** 보고하므로 운영자가 거부를
+   하나씩 고치며 재실행하지 않는다.
+2. **자식마다의 재검사(핵심).** `build` · `before` · `after` 를 띄우기 **직전마다**
+   commit · clean · 벤치 다이제스트를 다시 읽는다. 움직였으면 **자식을 띄우지 않고**
+   `ABORTED-<step>-<days>d.json` 을 쓰고 멈춘다. 프리플라이트는 한 번 돌고 자식들은
+   그렇지 않다 — 180 일치에서 `before` 와 `after` 는 **1 h 39 m** 떨어져 떴다.
+3. **출처 기록.** `repo_commit` · `repo_path` · `detached` · `clean` ·
+   `ancestor_of_origin_main` + 벤치 **sha256** 을 `preflight.json` · 각 단계의
+   `.resource.json` · `.time`(주석 두 줄) · 중단 아티팩트에 남긴다. §7.1.15 「답하지
+   못한 것」 4 가 「드라이버가 SHA 를 적지 않아 두 번째로 reflog 로 밖에서 확인했다」고
+   적은 그 구멍이다.
+
+**드라이버는 `fetch` 하지 않는다.** `origin/main` 은 그 체크아웃에 있는 그대로 읽고,
+없으면 「먼저 `git fetch origin`」이라고 말하는 **거부**다. 측정이 네트워크에 닿으면 안
+되고, 자기 질문의 답을 스스로 갱신하는 도구는 그 질문을 묻지 않는 것과 같다.
+
+**모듈 출처 검사는 `run_p_ca.sh` 에서 옮겨 왔다.** 그 러너가 「인터프리터는 메인
+체크아웃의 `.venv` 라 그것이 로드하는 코드가 이 체크아웃의 것임을 따로 증명해야 한다」고
+적은 바로 그 이유로, 여기서는 **`--bench` 가 체크아웃 안에 있어야 한다**. 분리
+워크트리에는 `.venv` 가 없고 만들지도 않으므로(공유 루트 venv 설치 금지 규율),
+`--python` 은 **의도적으로 공용 체크아웃의** venv 다 — 그러니 인터프리터는 아무것도
+보증하지 않는다. 앞의 세 git 검사는 **벤치가 이 트리의 것일 때만** 무언가를 보증한다.
+
+**탈출구 `--allow-shared-checkout`.** 거부와 진행 중 중단만 끄고 **기록은 끄지 않는다**:
+stderr 경고 · `preflight.json` 의 `warnings` · 모든 아티팩트의
+`allow_shared_checkout: true` · 그리고 드리프트가 일어나면 단계 아티팩트에
+`baseline_commit` 과 `repo_commit` 이 **서로 다른 값으로** 남는다. 이 스위치는 테스트
+스위트(저자 브랜치는 정의상 detached 가 아니다)와 의도적인 운영자 실행에 필요하다.
+
+**아티팩트 모양 — 중단에 `returncode: null`.** 드리프트 중단은 자식을 **띄우기 전에**
+난다. 그래서 그 레코드의 `returncode` 는 `null`, `partial_resource` 는 `{}`,
+`signal_sent` 은 `"none — the child was never started"` 다. 거기에 `0` 을 적으면
+「자식이 정상 종료했다」로 읽힌다 — 「측정 안 함」을 뜻하는 0 은 이 계획이 이미 한 번
+철회해야 했던 종류의 숫자다(§7.1.9 「`wait4` 가 주지 않는 필드는 0 으로 채우지 않고 뺀다」).
+
+**`.time` 은 주석으로만 늘었다.** `# repo_commit:` · `# bench sha256:` 두 줄이고 필드
+줄은 건드리지 않는다 — §7.1.2 가 인용하는 `File system inputs` grep 이 그대로 동작해야
+한다(§7.1.9 편차 c 와 같은 이유).
+
+**테스트 — 실제 `git init` 저장소다.** 가짜 git 바이너리는 **가짜가 답한다는 것만**
+증명한다. 그래서 모양마다 두 파일짜리 실 저장소를 만들어 검사한다: attached · dirty ·
+비-조상 · `origin/main` 없음 · 저장소 밖 벤치 · 저장소 아님 · `git` 없음 · **gitignore 된
+벤치가 바뀜**. 마지막 하나가 왜 다이제스트를 cleanliness **옆에** 두는지 보여준다 —
+무시된 파일은 바뀌어도 `git status --porcelain` 이 비어 있다.
+
+`.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`
+→ **100 passed**(측정 82 = 기존 63 + 신규 19, 벤치 18).
+
+**가드 레드 증명 — 13/13, 초록으로 남은 가드 0.**
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| 프리플라이트 체크 전체(`ok=True` 고정) | A1-c 거부 테스트 7 건 전부 |
+| `CheckoutState.ok` 의 `detached` 절 | `test_a1c_preflight_refuses_a_checkout_attached_to_a_branch` |
+| 같은 `clean` 절 | `test_a1c_preflight_refuses_a_dirty_checkout` |
+| 같은 `ancestor_of_origin_main` 절 | `..._refuses_a_head_that_is_not_an_ancestor_of_origin_main` · `..._refuses_when_origin_main_is_absent_and_says_to_fetch` |
+| 같은 `bench_in_repo` 절 | `test_a1c_preflight_refuses_a_bench_from_outside_the_checkout` |
+| 같은 `not self.error`(fail-closed) 절 | `test_a1c_a_state_that_errored_is_never_ok_however_good_the_rest_looks` |
+| 진행 중 `HEAD moved` 분기 | `..._a_commit_that_moves_between_steps_aborts_before_the_child_starts` |
+| 진행 중 `went dirty` 분기 | `test_a1c_a_tree_that_goes_dirty_between_steps_aborts` |
+| 진행 중 벤치 다이제스트 분기 | `..._a_bench_edited_between_steps_aborts_even_with_a_clean_tree` |
+| 탈출구의 `evaluated=enforced`(보이는 스킵) | `test_a1c_the_escape_hatch_records_the_warning_and_does_not_refuse` |
+| 단계 아티팩트의 출처 블록 | `..._every_step_artifact_carries_the_commit_and_the_bench_digest` |
+| 체크가 참조 스캔보다 **먼저**라는 순서 | `..._a_bad_checkout_stops_the_run_before_the_reference_is_scanned` |
+| 드리프트 중단의 아티팩트 쓰기 | `..._a_commit_that_moves_between_steps_aborts_before_the_child_starts` |
+
+⚠ **한 절은 처음에 초록으로 남았고, 그것을 적는다.** `CheckoutState.ok` 의
+`not self.error` 를 지워도 위 거부 테스트들이 **전부 초록이었다** — `read_checkout` 의
+모든 오류 경로가 네 git 답을 채우기 **전에** 반환하므로 나머지 네 절이 이미 거부한다.
+즉 통합 경로로는 그 절이 **가려져 있다**. 「실패하는 구체적 입력을 못 쓰는 가드는
+아무것도 막지 않는 것」(`MEMORY.md` 「가드가 자기가 막는다고 말한 것을 허용한다」)이므로
+`CheckoutState.ok` 를 **직접** 때리는 단위 테스트(네 답이 전부 참인데 `error` 가 찬
+상태)를 추가해 red 로 만들었다. 절을 지우는 선택지도 있었지만, 미래의 `read_checkout`
+이 오류를 **늦게** 설정하면 그때 거짓을 말하게 되므로 남기고 테스트를 붙였다.
+
+**실호스트 실측 2 건(합성 실행 아님).**
+
+1. **공용 체크아웃을 실제로 거부했다.** 이 작업 자체의 워크트리(브랜치
+   `feat/tos-evidence-measure-detached-worktree`, 편집 중이라 dirty)에서 `preflight` 를
+   돌리자 `checkout_detached_and_clean` 이
+   `… at f219305f19bb (on branch feat/…, DIRTY, ancestor of origin/main)` 로 rc=1,
+   detail 에 **두 이유를 모두** 적었다.
+2. **분리 체크아웃에서 3 단계를 완주했다.** 같은 커밋(`c79a9e40`)의 분리 클론에서
+   `run --days 1 --repeats 1` 이 rc=0, 단계마다
+   `checkout ok: … at c79a9e401f6c · bench sha256 33d64c173fe1` 가 찍혔고
+   `before-1d.resource.json` 의 `checkout` 블록과 `before-1d.time` 의 주석 두 줄이
+   같은 값을 들고 있다. (분리 **클론**인 이유는 이 PR 의 코드가 아직 `origin/main` 에
+   없기 때문이다 — 머지 뒤에는 §7.1.9 레시피 그대로 `git worktree add --detach … origin/main`
+   이 같은 결과를 낸다.)
+
+**계획 §2 A1-c 대비 편차.**
+
+| # | 편차 | 이유 |
+|---|---|---|
+| a | 지시에 없던 **벤치 저장소 소속** 검사를 넣었다 | `--python` 이 공용 체크아웃의 venv 라 인터프리터가 아무것도 보증하지 않는다. `--bench` 가 아무 데나 가리킬 수 있으면 세 git 검사가 **돌지 않은 코드**를 보증한다 — `run_p_ca.sh` 가 같은 이유로 들고 있는 검사다 |
+| b | 진행 중 재검사가 commit · clean 에 더해 **벤치 sha256** 도 본다 | 그 둘이 성립하는 한 중복이지만(추적 파일이 바뀌면 트리가 더티해진다), **무시된** 벤치는 둘 다 통과하면서 바뀐다. 해시 한 번 값이다 |
+| c | 탈출구가 프리플라이트 거부뿐 아니라 **진행 중 중단도** 끈다 | 반쪽 탈출구는 설명할 수 없다 — 「공용 체크아웃에서 돌되 트리가 움직이면 죽는다」는 운영자가 고를 만한 모드가 아니다. 기록은 양쪽 다 남는다 |
+| d | 거부된 체크아웃이 **참조 스캔보다 먼저** 걸린다 | 크기 추정은 참조 전체에 대한 `GROUP BY` 다. 시작할 수 없는 런을 위해 그것을 도는 것은 §7.1.9 round-2 F10 이 이미 닫은 낭비와 같은 모양 |
+
+**게이트.** `ruff check` 통과 · `black --check`(CI 글롭, 1,306 파일) 통과 ·
+`mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports` 클린 ·
+`mypy tests/… --disable-error-code=no-untyped-def` 클린 ·
+`tos_firewall_check.py` PASS · `tos_contract_check.py` PASS ·
+`tos_completion_status --check` GREEN(violations=0) · `tos_spec_status --check` PASS ·
+`tos_size_budget --check` PASS(0 violations).
+⚠ `lint-imports` 는 **로컬에서 돌지 않았다** — 루트 `.venv` 에 `tos_runtime` 이 editable
+설치돼 있지 않고 공유 루트 venv 설치 금지 규율이 있다(§7.1.9 와 같은 상태). CI 의
+`tos-firewall` 잡이 설치 후 돌린다. 이 PR 이 늘린 import 는 `hashlib` 하나(stdlib)다.
+
+**이 착지가 바꾸지 않는 것.** §7.1.15 「답하지 못한 것」 1(1.14–2.31 배 사이의 열린 관측)
+과 **270 일치 한 점**의 등재는 그대로다. 바뀐 것은 **그 점을 어떻게 도는가** 하나다 —
+이제 §7.1.9 의 분리 워크트리 레시피로 돌고, 트리가 움직이면 멈춘다.
+
+#### 7.1.20 독립 리뷰 #838 처분 (2026-10-02)
+
+열 건 전부 수용했다, 기각 0. 리뷰 레인은 **저자와 다른 패스**였다. 교차모델 독립성은
+**없다**(§7.1.6 · §7.1.10 · §7.1.16 과 같은 상태 — Codex 미사용).
+
+**이 라운드의 요지 — 가드가 한 번의 실행만 묶고 있었다.** §7.1.19 는 「프리플라이트는 한
+번 돌고 자식들은 그렇지 않다」를 핵심 성질로 적었는데, 같은 문장이 한 겹 더 바깥에서
+참이었다: **`before` 와 `after` 는 서로 다른 프로세스일 수도 있다.** 계획이 §7.1.15 에서
+실제로 그렇게 했다(1차 중단 → `--steps before,after` 재개). 자식마다의 재검사는 그
+경로를 전혀 보지 않았고, 각 프로세스는 내부적으로 완벽히 일관됐다 — **「검사는 존재하는데
+그 경우를 검사하지 않는다」**(`MEMORY.md` 의 반복 결함 형태).
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **F1** | 드리프트 가드가 **프로세스 안의** 베이스라인만 본다 — 문서화된 재개(`--steps after`)는 오늘 X, 다음 주 Y 로 돌아도 통과한다. 이미 끝난 단계의 `checkout` 블록을 아무도 읽지 않는다 | **수용 · 수정.** 새 체크 `matches_earlier_steps`: 같은 `--days` 의 끝난 단계 아티팩트에서 `repo_commit`·`bench_sha256` 을 읽어 대조하고 어긋나면 거부. **출처 블록이 없는**(A1-c 이전 드라이버가 쓴) 아티팩트도 거부 — 「어느 트리였나」가 바로 그 질문이고, 답할 수 없는 아티팩트는 통과가 아니다. ⚠ **다른 `--days` 는 비교하지 않는다**: 한 출력 디렉터리가 모든 크기를 들고 있고(기존 `a1/` 이 그렇다) 30 일치와 365 일치는 몇 달·몇 커밋 떨어진 **다른 측정**이다 |
+| **F2** | `git status --porcelain` 이 운영자의 `status.showUntrackedFiles` 를 물려받는다 — `no` 면 추적되지 않는 벤치가 **보이지 않고** 트리가 clean 으로 읽힌다 | **수용 · 수정.** `--porcelain=v1 -z -uall`. 플래그는 `tools/tos_evidence_run.py::parse_porcelain` 에서 가져왔고 그 모듈을 **import 하지는 않았다** — `yaml` 과 `tools.tos_profile_census` 를 끌어오는데 이 드라이버는 설계상 stdlib 전용이다(`test_the_driver_is_stdlib_only_…`). ⚠ 같이 제안된 `-c status.showUntrackedFiles=all` 은 **일부러 넣지 않았다** — 실측 결과 **둘 중 하나만으로도** 항목이 복원되므로 둘을 다 두면 어느 쪽도 red 로 증명할 수 없다. 이 PR 1 라운드가 겪은 「가려진 절」을 또 만들지 않는다 |
+| **F3** | 자식 이전의 재검사와 `ABORTED` 쓰기가 `run_step` 의 아티팩트 핸들러 **밖**에 있다 — 그 다섯 번의 git 사이에 SIGTERM 이 닿으면 아티팩트 **없이** 빠져나간다. 「중단은 결코 조용하지 않다」는 그 함수 자신의 독스트링과 모순 | **수용 · 수정.** 그 창을 자기 핸들러로 감쌌다(자식의 핸들러를 공유할 수 없다 — 아직 죽일 자식이 없다). `write_prespawn_abort` 는 자기 쓰기 실패도 삼키지 않고 로그로 남긴다(ENOSPC 가 원래 이유를 IOError 로 바꾸지 않게) |
+| **F4** | `read_checkout` 의 어떤 git 호출에도 `timeout=` 이 없다 — 남이 쥔 `index.lock` 뒤에서 멈추면 워치독도 아티팩트도 없이 영원히 선다. `tos_completion_status.py` 는 같은 호출을 `_GIT_TIMEOUT` 아래서 돈다 | **수용 · 수정.** 모든 호출에 `timeout=`(기본 **30 s**, 그 모듈과 **같은 값**, `--git-timeout-s` 로 노출). `TimeoutExpired` → `CheckoutState.error` → 자식 이전 중단 + 아티팩트. `--no-optional-locks` 도 붙였다 — 이 읽기 자신이 남이 기다리는 lock 이 되지 않게 |
+| **F5** | 베이스라인이 `out_dir.mkdir()` 보다 먼저 읽히고, `--out-dir`/`--synthetic` 이 체크아웃 안인지 아무도 보지 않는다 — 드라이버 자신의 출력이 **비싼 빌드 뒤에** 자기 dirty 가드를 때린다 | **수용 · 수정.** 새 체크 `outputs_outside_the_checkout`: 체크아웃 안이면서 `git check-ignore` 되지 않으면 거부. ⚠ **이 체크만 `--allow-shared-checkout` 로 풀리지 않는다.** 선례는 `run_p_ca.sh` — 「`git add -A` 가 staging 할 자리에 파일을 두지 않는다」는 거부가 그 러너의 override **밖**에 있다. 공용 체크아웃 탈출구는 **코드가 어디서 오는가**에 대한 선택이지 저장소에 53 GB 를 떨어뜨릴 면허가 아니다 |
+| **F6** | 드리프트가 `detached`·`ancestor_of_origin_main` 을 **다시 읽고도 비교하지 않는다** — `git switch -c scratch`(같은 커밋 · clean) 는 통과하는데 그것은 프리플라이트가 거부하는 바로 그 상태다 | **수용 · 수정.** 조건을 여기서 **다시 나열하지 않는다** — 그게 두 목록이 벌어지는 방식이다. 규칙을 한 번만 적었다: **「프리플라이트가 착수에 요구한 것은 계속 성립해야 한다」** = `current.ok`. 구체적 비교(커밋 이동 · 더티)는 메시지를 위해 그 앞에 둔다 |
+| **F7** | `merge-base --is-ancestor` 가 0/1 이 아닌 코드로 죽으면 `ancestor=False` 로 기록돼 「조상이 아님」이라고 **틀린 원인**을 말한다 | **수용 · 수정.** 0 은 조상, 1 은 아님, **그 밖은 git 실패**이고 stderr 와 함께 `error` 가 된다. 그러지 않으면 이미 머지된 코드를 머지하라고 운영자에게 말하게 된다 |
+| **F8** | stderr 로 가는 거부 문자열이 `measured`/`floor` 만 들고 있다 — `origin/main` 부재나 「벤치가 체크아웃 밖」에서는 요약이 **건강하게 읽히고**(「detached, clean」) 실행 가능한 이유는 stdout 한 줄에만 남는다 | **수용 · 수정.** 이 체크만이 아니라 **모든 체크**의 `detail` 을 거부에 포함한다 — 자기 원인을 숨기는 거부는 어느 체크에서든 같은 결함이다 |
+| **F9** | 벤치의 sha256 이 「돈 코드」를 보증하는 것처럼 적혀 있지만, 자식은 **공유 체크아웃의 venv** 로 뜨고 그 `.pth` 가 공유 트리를 `sys.path` 에 올린다 | **수용 · 수정, 다만 제안된 처방으로는 닫히지 않았다.** 실측: `-I` 도 `-P -s` 도 `.pth` 항목을 **지우지 못하고**, 그렇게 띄운 자식이 `tools.tos_evidence_run` 을 **공유 트리에서** import 했다(세 경우 모두). 닫는 것은 `-S` 다. 그래서 `-I -S`(=`-E -P -s -S`)로 띄우고 플래그를 아티팩트에 적는다. 벤치는 stdlib 전용이라 비용이 0 이고, 미래의 벤치가 서드파티를 쓰면 **조용히 아무 트리에서나 해결되는 대신 시끄럽게 실패**한다 |
+| **F10** | 세션 fixture 의 가드를 테스트마다 `with_baseline()`(git 5 회) 다시 만든다 | **수용 · 수정.** fixture 에서 한 번 만들어 넘긴다. ⚠ 이건 가드가 아니라 **정리**라 red 증명이 없다 — 그 사실을 적는다 |
+
+**테스트.** 101(측정, +19) + 18(벤치) = **119 passed**.
+`.venv/bin/pytest tests/tools/test_tos_evidence_scan_measure.py tests/tools/test_tos_evidence_scan_bench.py -q -p no:cacheprovider`.
+
+**가드 레드 증명 — 신규 9/9(F10 은 가드가 아님), 1 라운드 13 건도 재확인 13/13.**
+
+| 무력화한 가드 | red 가 된 테스트 |
+|---|---|
+| F1 `earlier_step_mismatches` | `..._a_resume_at_a_different_commit_is_refused` · `..._onto_an_artifact_with_no_provenance_is_refused` |
+| F2 status 의 `-uall` | `..._an_untracked_file_hidden_by_the_operators_git_config_is_still_dirty` |
+| F3 자식 이전 중단 핸들러 | `..._a_signal_during_the_pre_spawn_recheck_still_leaves_an_artifact` |
+| F4 `TimeoutExpired` → error 변환 | `..._a_git_that_never_answers_is_an_error_not_a_pass` · `..._a_hung_git_at_the_per_child_recheck_aborts_with_an_artifact` |
+| F5 `output_conflicts` | `..._output_written_into_the_checkout_is_refused_up_front` · `..._is_not_released_by_the_shared_checkout_hatch` |
+| F6 드리프트의 `current.ok` 가지 | `..._a_branch_created_between_steps_aborts_even_at_the_same_commit` · `..._origin_main_moving_away_between_steps_aborts` |
+| F7 merge-base 종료코드 판정 | `..._a_merge_base_that_fails_is_an_error_not_a_verdict` |
+| F8 거부 문자열의 `detail` | `..._the_refusal_names_the_actionable_cause_not_only_the_summary` · `..._the_cli_refusal_on_stderr_carries_the_cause` |
+| F9 `CHILD_PYTHON_FLAGS` | `..._children_cannot_import_from_the_shared_checkout` |
+
+**실호스트 재실측 3 건.** 분리 클론에서 3 단계 완주 rc=0 이고 단계마다
+`checkout ok: … · python flags -I -S`; 같은 출력 디렉터리에 `--steps after` 로 재개하되
+HEAD 를 옮기면 `matches_earlier_steps` 가 두 단계를 모두 대며 rc=1; 체크아웃 안쪽
+`--synthetic` 은 `outputs_outside_the_checkout` 로 rc=1.
+
+**게이트.** `ruff check .` 통과 · `black --check`(CI 글롭 1,306 파일) 통과 ·
+`mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports` 클린 ·
+`mypy tests/… --disable-error-code=no-untyped-def` 클린 ·
+`tos_firewall_check.py` PASS · `tos_contract_check.py` PASS ·
+`tos_completion_status --check` GREEN(0) · `tos_spec_status --check` PASS ·
+`tos_size_budget --check` PASS(0). tos 소스 무변경 — **digest 재도출 없음**.
+
+**이 라운드의 교훈 — 「한 번의 실행」이라는 범위를 스스로 좁게 잡았다.**
+§7.1.19 가 자랑한 성질(「프리플라이트는 한 번 돌고 자식들은 그렇지 않다」)은 맞았지만,
+**같은 논리가 한 겹 바깥에도 적용된다는 것**을 보지 못했다 — 그리고 그 바깥 경로를
+쓴 것은 다른 누구도 아닌 §7.1.15 의 재개였다. 가드를 쓸 때 묻는 질문은 「무엇이
+이것을 통과하는가」만이 아니라 **「내가 보호한다고 말한 단위가 실제 운용 단위와 같은가」**
+다. 그리고 F9 는 **제안된 처방을 그대로 적용했으면 닫히지 않았다** — 실측이 아니었으면
+`-I` 를 붙이고 「닫혔다」고 적었을 것이다.
+
+#### 7.1.21 독립 리뷰 #840 처분 (2026-10-02)
+
+리뷰 레인은 저자와 다른 패스이지만 **같은 계열(Claude)** 이다 — 운영자는 이 PR 에 Codex
+심사를 붙이지 않았다(CLAUDE.md 2026-09-11 은 되돌리기 어려운 경로를 대상으로 «할 수 있다»로
+열어 두었을 뿐, 범위·비용 승인이 있을 때만이다). 따라서 이 라운드의 교차모델 독립성은
+**없다** — 판정의 일부로 적는다.
+
+판정 **needs-attention**, 9건 전건 처분. **1~3 은 이 PR 의 목적 자체를 깨고 있었다**:
+「무인 실행이 가능하게 만든 문」이라고 적어 놓고, 무인 실행이 실제로 만날 세 가지 상황에서
+각각 영구 정지 · traceback · 감시 공백이었다.
+
+| # | 지적 | 조치 |
+|---|---|---|
+| F1 | **한 번의 실패가 이후 모든 실행을 영구히 막는다.** 매니페스트는 **마지막에** 쓰이므로 중도 사망은 매니페스트 없는 `gen{N}/` 를 남기는데, 세대 할당이 매니페스트만 셌다 → 매일 밤 같은 N → `FileExistsError` → 사람이 손으로 지울 때까지 백업 0 | `next_generation` 이 **시도된** 세대(디렉터리)도 센다. **아무것도 지우지 않는다** — 부분 디렉터리는 그 자리에 남고 번호만 건너뛴다. 손으로 같은 번호를 쓰는 경로의 `FileExistsError` 는 이름 붙은 거부로 |
+| F2 | **cron 이 실제로 만날 실패가 전부 traceback.** Refused 셋만 잡고 있어 `database is locked`(런타임이 떠 있을 때) · ENOSPC · 커스터디 · 깨진 매니페스트가 스택트레이스로 나갔다 — 런북 §5 가 약속한 「한 줄」이 **정확히 그 경우들에서 거짓** | 단계 태그 `ColdBackupFailed`(원인은 `__cause__`) + `_run_dispatch` 와 같은 형태의 broad catch. **`refused`(규칙이 아니라고 함)와 `failed`(환경이 무너짐)를 섞지 않는다** — 다음 행동이 다르다 |
+| F3 | **용량 경보가 가장 빨리 자라는 트리를 안 봤다.** `archive_dir` 만 쟀는데 비압축 세대가 쌓이는 `backup_root` 가 큰 쪽이고, 런북은 둘을 **다른 매체**에 두라고 한다 | 세 루트 전부 측정 · `st_dev` 로 묶어 한 번씩. 보고서도 파일시스템 단위(`free_space_before/after`) |
+| F4 | `minimum_free_bytes: 0` 이 통과했다 — null 을 거부한 바로 그 이유(조용한 비활성화)를 그대로 허용 | `<= 0` 거부 |
+| F5 | 독스트링이 「세 경로를 서로 대조한다」고 **주장만** 했다(검사 없음) | 주장을 지우는 쪽이 아니라 **검사를 구현**했다 — 동일·중첩 거부(같은 부모 공유는 허용) |
+| F6 | 런북의 cron 이 **공용 체크아웃**에서 돈다 — 17:50 에 레인이 브랜치를 바꾸면 18:00 의 무인 실행이 리뷰 전 코드로 실 데이터를 건드린다(#793 과 같은 노출) | 분리 워크트리(detached `origin/main`) + 가드 래퍼: 브랜치 위면 거부 · 더티면 거부 · `PYTHONPATH` 절대경로로 **검증한 트리의 코드가 실제로 실행되게** 강제(`run_p_ca.sh` 가 같은 함정을 이미 다룬다) |
+| F7 | `manifest_path_for` 를 추가해 놓고 **아무 데서도 안 썼다** | 두 호출부에서 사용 + 관측기는 스캔이라 경로가 아니라 접미사가 필요하므로 `MANIFEST_SUFFIX` 공개. 철자 넷 → 하나 |
+| F8 | 「`run` 은 운영 함수에 닿지 않는다」 센티널이 새로 닿을 수 있게 된 `cold_backup` 을 안 든다 | 추가 |
+| F9 | union 멤버 중복 | 제거 |
+
+##### 곁가지로 잡힌 것
+
+보관 경로 자리에 **파일**이 있으면(오타) 여유 공간은 상위 디렉터리로 해소돼 프리플라이트를
+통과하고, durable set 을 전부 복사한 **뒤** 아카이브의 `mkdir` 에서 터졌다. 착수 전 거부로
+옮겼다.
+
+##### ⚠ 테스트 하나가 자기 이유로 실패할 수 없었다
+
+F3 의 변이(바닥을 `archive_dir` 만 측정)가 **1차 시도에서 green** 이었다. 스텁이 받은
+`roots` 인자를 무시하고 어떤 루트를 재든 같은 낮은 값을 돌려줬기 때문이다 — 검사가 좁아져도
+거부는 그대로 났고 테스트는 통과했다. 스텁이 `roots` 를 읽도록 고친 뒤에야 red 가 됐다.
+프로젝트 메모리 `guards-that-admit-what-they-name` 의 교훈이 **테스트 더블에도** 적용된다:
+「이것이 실패하는 구체적 입력」을 못 쓰면 그 테스트는 아무것도 막지 않는다.
+
+##### 변이로 red 확인 6건
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 할당기가 디렉터리를 무시 | `test_next_generation_steps_past_…` · `…takes_the_higher_of…` · `test_a_leftover_generation_directory_does_not_wedge_the_next_run` |
+| 단계 래퍼 제거 | 단계 실패 4건(ops 2 · CLI 2) |
+| 바닥을 `archive_dir` 만 측정 | `test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage` (스텁 수정 **후**) |
+| 중첩 검사 제거 | 동일·중첩 3건 |
+| 0 바닥 허용 | `test_a_malformed_free_space_floor_is_refused[0]` |
+| 파일-디렉터리 가드 제거 | `test_a_destination_that_is_a_file_is_refused_before_the_snapshot` |
+
+새 테스트 합계 **61건**(`tests/operations/test_cold_backup.py` 48 ·
+`tests/compose/test_cold_backup_cli.py` 13).
+
+##### 범위 밖으로 남긴 것
+
+`backup_set` 이 실패 시 `gen_dir` 을 **지우도록** 하는 쪽(F1 의 다른 선택지)은 택하지
+않았다. 이 모듈의 계약은 「Never deleted, never overwritten」이고, 부분 사본이라도 증거의
+사본이다 — 번호를 건너뛰는 쪽이 같은 결과(무인 실행 지속)를 **삭제 없이** 낸다.
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · size budget PASS(0 violations · `backup_set` 101 줄 초과는 예외 등재가
+아니라 `_create_generation_dir` 분해로 해소) · named-TBD PASS · black/ruff 통과.
+mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
+`cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `1685714e…`(33차) → **`e3102d5b…`**(34차). 이 라운드에서
+`origin/main`(`5e7a195c` — #842 · #838 · #837)을 머지했고, 가져온 파일에 `tos/**.py` 는
+없지만 **머지 뒤에 다시 찍어 숫자로 확인**했다. §7.1.18 의 경고는 그대로다 — A2 레인이
+뒤에 머지되면 그쪽이 또 도출해야 한다.
+
+#### 7.1.22 독립 리뷰 #840 2회차 처분 (2026-10-02)
+
+같은 레인(저자와 다른 패스, 같은 계열)이다 — 교차모델 독립성은 이 라운드에도 **없다**.
+판정 **needs-attention**, 8건 전건 처분. 1차(§7.1.21)가 「무인 실행이 실제로 만날 상황」을
+닫았다면, 2차가 찾은 것은 그보다 더 나쁜 축이다: **잡아낸 사실을 잘못된 이름으로 보고하고
+있었다.**
+
+| # | 지적 | 조치 |
+|---|---|---|
+| **F1** | 이 명령이 내릴 수 있는 **가장 무거운 판정**이 일시적 호스트 문제로 분류됐다. 아카이브 3번 검사(압축 해제본의 체인 재검증)가 내는 `EvidenceCorruption` 이 `_stage` 통과 목록에 없어 `ColdBackupFailed('archive')` 로 감싸였고, cron 메일의 `archive failed` 를 런북 §5 가 「환경이 무너졌다 · 고치고 다시 돌린다」로 안내했다 — **재실행이 답이 아닌 유일한 경우에** | `EvidenceCorruption` · `CustodyError` · `KeyContinuityRefused` 를 통과 목록에. 디스패치에 `integrity refused` · `custody refused` 접두 추가, 런북 §5 에 「재실행이 답이 아니다」 행 |
+| **F2** | 콜드 보관소 충돌이 또 하나의 「매일 밤 거부」 — 할당이 `backup_root` 만 봤는데, 런북 §6 이 권하는 조치가 「오래된 아카이브를 다른 매체로」이고 자라는 쪽은 `backup_root` 다. 즉 「backup_root 는 비었고 archive_dir 엔 gen1..genK」는 **런북을 따른 결과**다. 그 상태에서 할당은 1 → durable set 전부 복사 → 기존 아카이브에 걸려 거부, K 일 밤 | 할당이 콜드 보관소(아카이브·보고서·검증 스크래치)도 센다. 더해 선택된 세대의 산출물 셋이 이미 있으면 **스냅숏 전에** 이름 붙여 거부(보고서의 조용한 덮어쓰기도 같이 닫힘) |
+| **F3** | 「스냅숏 전에 잡힌다」가 **거짓**이었다. `FileKeyProvider.__init__` 은 필드만 저장하므로 잘못된 커스터디는 아카이브 체인 검사에서야 드러났다 — 전부 복사·압축한 뒤, `archive failed` 라는 이름으로. 그것을 증명하던 테스트는 **생성자를 monkeypatch 해 raise** 시키고 있었다 | 프리플라이트가 `key_provider.current()` 를 부른다. 테스트는 **진짜** 빈 커스터디 루트 |
+| **F4** | 런북 틸드 행이 이 브랜치가 바꾼 뒤로는 **나올 수 없는** 메시지를 달고 있었다 | 실제 문구로 교체 + 상대경로 행 분리 |
+| **F5** | 포함 판정 철자가 셋 | `Path.is_relative_to`(stdlib) 하나로. `backup_set` 쪽도 함께 |
+| **F6** | `gen{N}` 파서가 넷 — `MANIFEST_SUFFIX` 를 공개해 접미사 드리프트를 막아 놓고 **접두/숫자 파싱은 새 사본을 추가**했다 | 공개 `generation_number(name, suffix)` 하나로(관측기 포함). 드리프트의 실패 모드가 **조용함**이라 특히 그렇다 — 아무것도 못 알아본 스캔은 「세대 없음」을 보고한다 |
+| **F7** | §3 의 수동 실행이 §4-1 이 **금지한** 공용 체크아웃을 그대로 쓴다 | 분리 워크트리/래퍼로. 전제 4번으로도 올렸다 |
+| **F8** | `_refuse_below_floor` 는 아무것도 refuse 하지 않는다(두 호출부 중 하나만 raise) | `_below_floor` 로 개명 + 왜 `_refuse_` 가 아닌지 독스트링에 |
+
+##### 두 라운드에서 같은 형태가 세 번 나왔다
+
+F3 의 테스트(생성자 monkeypatch), 1차 F3 의 스텁(인자 무시), 1차 F5 의 독스트링(검사 없는
+주장) — 전부 **자기가 이름 붙인 경우를 잡을 수 없는 가드**다. 프로젝트 메모리
+`guards-that-admit-what-they-name` 가 적은 네 형태에 **「테스트 더블이 실물이 낼 수 없는
+예외를 낸다」** 를 더해 둘 값이 있다. 셋 다 자동 검사로는 잡히지 않았다.
+
+##### 변이로 red 확인 4건
+
+| 변이 | red 가 된 테스트 |
+|---|---|
+| 통과 목록에서 세 타입 제거 | `test_a_verdict_is_never_rewrapped_as_an_environment_failure` 3건 |
+| 할당이 콜드 보관소 무시 | `test_a_backup_root_that_was_emptied_does_not_collide_with_cold_storage` |
+| 커스터디 프리플라이트 제거 | 실 커스터디 2건(ops · CLI) |
+| 산출물 프리플라이트 제거 | `…existing_artifact_for_the_chosen_generation…` 3건 |
+
+새 테스트 합계 **72건**(`tests/operations/test_cold_backup.py` 56 ·
+`tests/compose/test_cold_backup_cli.py` 16).
+
+##### 게이트
+
+`tos/runtime/tests` PASS · `tos/tests` PASS · `tos-firewall` PASS · `lint-imports`
+(3 kept, 0 broken) · size budget PASS(0 violations — `cold_backup` 이 다시 100 줄을 넘어
+`_preflight_destinations`/`_preflight_free_space` 로 분해했다. 예외 등재 아님) ·
+named-TBD PASS · completion GREEN · citation PASS · black/ruff 통과.
+mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
+`cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `e3102d5b…`(34차) → **`7460d4f3…`**(35차). 두 경로 일치.
+`expected_dependency_set_digest` 불변(`20559763…`).

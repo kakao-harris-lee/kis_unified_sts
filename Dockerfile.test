@@ -6,9 +6,7 @@
 #   1. dev/test deps  -> pip install ".[dev]" (pytest, xdist, fakeredis, ...).
 #   2. the `git` CLI   -> tests/unit/ops/test_live_preflight.py and
 #                         test_promote_live.py shell out to git to build
-#                         throwaway repos under tmp_path. (The real .git is NOT
-#                         needed: shared/backtest/mlflow_tracker._get_git_sha
-#                         swallows the error and returns "unknown".)
+#                         throwaway repos under tmp_path.
 #   3. a non-root user -> tests that assert a path is *not* writable (e.g. the
 #                         recover_positions sentinel fallback) only hold for a
 #                         non-root user; root can mkdir/write anywhere.
@@ -24,7 +22,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     ENVIRONMENT=test \
-    REDIS_URL=redis://localhost:6379/1
+    REDIS_URL=redis://localhost:6379/1 \
+    KIS_TEST_IMAGE_NO_GIT_METADATA=1
 
 # git: required by the ops preflight/promote tests (they `git init`/`clone`
 # throwaway repos under tmp_path). CI's ubuntu runner ships git; slim does not.
@@ -41,6 +40,19 @@ COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip && pip install ".[dev]" prometheus-client
 
 # Application + tests. .dockerignore keeps out .venv/.git/data/node_modules/etc.
+#
+# ⚠ `.git` is excluded ON PURPOSE (80MB of history this image never reads), so /app is a
+# plain directory, NOT a repository. Two consequences, both deliberate:
+#   - shared/backtest/mlflow_tracker._get_git_sha swallows the error and returns "unknown";
+#   - `git clone /app` is `fatal: repository '/app' does not exist`, exit 128 (#835).
+#
+# A test that clones THIS repository therefore cannot run here. The skip is NOT automatic:
+# it is opt-in per test, by requesting the `requires_repo_checkout` fixture
+# (tests/conftest.py). A new self-cloning test that does not request it will fail here,
+# loudly — which is the intended outcome, because that failure is also what a genuinely
+# broken checkout looks like on the host `test` job. `KIS_TEST_IMAGE_NO_GIT_METADATA=1`
+# above is the marker that fixture looks for; it is set in this image and nowhere else, so
+# the same missing repository stays a hard failure everywhere a repository is expected.
 COPY . .
 
 # Non-root (uid 1000), matching the runtime image's appuser and CI's runner.

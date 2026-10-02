@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.support import git_env
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MODULE_PATH = _REPO_ROOT / "tools" / "tos_firewall_check.py"
@@ -371,7 +372,7 @@ def test_rule_r_root_tos_dir_not_scanned_by_reverse_rule(tmp_path):
 # of) this repo's own git state.
 # --------------------------------------------------------------------------
 
-_GIT_AVAILABLE = shutil.which("git") is not None
+_GIT_AVAILABLE = git_env.git_cli_available()
 
 
 def _git_init(repo: Path) -> None:
