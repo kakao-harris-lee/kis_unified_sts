@@ -2285,7 +2285,7 @@ PASS(0 violations) · black/ruff 전부 통과.
 CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
 `tos/runtime/tests`(241) · `cd tos && mypy src`(266) · `tos/tests`(587).
 
-`expected_code_digest`: `df25a550…` → **`1685714e…`**(`release.yaml` 측정 이력 기준 33차). `expected_dependency_set_digest`
+`expected_code_digest`: `df25a550…` → `1685714e…`(33차) → **`e3102d5b…`**(34차, 리뷰 처분 + main 머지 반영). `expected_dependency_set_digest`
 불변(`20559763…`, 같은 배포 호스트 루트 `.venv`). 갱신은 두 곳 —
 `config/tos_runtime/paper/release.yaml` 과
 `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS`.
@@ -2553,4 +2553,9 @@ F3 의 변이(바닥을 `archive_dir` 만 측정)가 **1차 시도에서 green**
 아니라 `_create_generation_dir` 분해로 해소) · named-TBD PASS · black/ruff 통과.
 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) · `tos/runtime/tests`(241) ·
 `cd tos && mypy src`(266) · `tos/tests`(587).
+
+`expected_code_digest`: `1685714e…`(33차) → **`e3102d5b…`**(34차). 이 라운드에서
+`origin/main`(`5e7a195c` — #842 · #838 · #837)을 머지했고, 가져온 파일에 `tos/**.py` 는
+없지만 **머지 뒤에 다시 찍어 숫자로 확인**했다. §7.1.18 의 경고는 그대로다 — A2 레인이
+뒤에 머지되면 그쪽이 또 도출해야 한다.
 
