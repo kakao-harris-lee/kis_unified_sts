@@ -4,6 +4,10 @@ No filesystem/network access needed here beyond ``tmp_path``-rooted ``Path`` obj
 never actually opened — every operations function this module dispatches to is monkeypatched, so
 these tests pin ARGUMENT PARSING and DISPATCH shape only, never the underlying operations'
 own behaviour (that is ``tests/operations/*``'s scope).
+
+The two backup subcommands' dispatch moved to
+:mod:`tos_runtime.compose._backup_dispatch` (``cli.py``'s own size budget — that module's
+docstring), so their fakes are installed THERE; everything else is still patched on ``cli``.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos_runtime.compose import _run_dispatch, cli
+from tos_runtime.compose import _backup_dispatch, _run_dispatch, cli
 from tos_runtime.compose._migrate_paths import MIGRATE_PATH_BY_STORE
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
@@ -139,14 +143,19 @@ def test_run_main_refuses_without_construction_config_and_never_calls_an_operati
     def _must_not_be_called(name: str, *_args: object, **_kwargs: object) -> None:
         raise AssertionError(f"{name} must not be called for `run`")
 
-    for name in (
-        "backup_set",
-        "restore_set",
-        "apply_migrations",
-        "observe_runtime_artifact",
+    # `backup_set` is reached through `_backup_dispatch` now (that module's own docstring —
+    # `cli.py`'s size budget), so the sentinel goes where the name actually lives; the
+    # invariant this pins ("`run` reaches NO operations function") is unchanged.
+    for module, name in (
+        (_backup_dispatch, "backup_set"),
+        (cli, "restore_set"),
+        (cli, "apply_migrations"),
+        (cli, "observe_runtime_artifact"),
     ):
         monkeypatch.setattr(
-            cli, name, lambda *a, _name=name, **k: _must_not_be_called(_name, *a, **k)
+            module,
+            name,
+            lambda *a, _name=name, **k: _must_not_be_called(_name, *a, **k),
         )
     exit_code = cli.main(
         [
@@ -354,7 +363,7 @@ def test_backup_set_dispatches_with_the_right_args(
         calls.append((paths, dest_dir, generation, readiness_verdict_at_backup))
         return _FakeManifest()
 
-    monkeypatch.setattr(cli, "backup_set", _fake_backup_set)
+    monkeypatch.setattr(_backup_dispatch, "backup_set", _fake_backup_set)
 
     data_dir = tmp_path / "data"
     dest = tmp_path / "backups"
@@ -393,7 +402,7 @@ def test_backup_set_forwards_readiness_verdict(
         calls.append(readiness_verdict_at_backup)
         return _FakeManifest()
 
-    monkeypatch.setattr(cli, "backup_set", _fake_backup_set)
+    monkeypatch.setattr(_backup_dispatch, "backup_set", _fake_backup_set)
 
     cli.main(
         [
@@ -421,12 +430,14 @@ def test_backup_set_without_archive_dir_never_reaches_the_archive_path(
     class _FakeManifest:
         generation = 1
 
-    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
+    monkeypatch.setattr(
+        _backup_dispatch, "backup_set", lambda *_a, **_kw: _FakeManifest()
+    )
 
     def _must_not_be_called(*args, **kwargs):
         raise AssertionError("archive_backup_set reached without --archive-dir")
 
-    monkeypatch.setattr(cli, "archive_backup_set", _must_not_be_called)
+    monkeypatch.setattr(_backup_dispatch, "archive_backup_set", _must_not_be_called)
 
     assert (
         cli.main(
@@ -459,14 +470,18 @@ def test_backup_set_archive_dir_forwards_manifest_path_and_preset(
         archive_bytes = 10
         files_verified = ("evidence", "rcl", "inbox")
 
-    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
-    monkeypatch.setattr(cli, "FileKeyProvider", lambda root, **_kw: ("keys", root))
+    monkeypatch.setattr(
+        _backup_dispatch, "backup_set", lambda *_a, **_kw: _FakeManifest()
+    )
+    monkeypatch.setattr(
+        _backup_dispatch, "FileKeyProvider", lambda root, **_kw: ("keys", root)
+    )
 
     def _fake_archive(manifest_path, archive_dir, verify_dir, *, key_provider, preset):
         calls.append((manifest_path, archive_dir, verify_dir, key_provider, preset))
         return _FakeVerification()
 
-    monkeypatch.setattr(cli, "archive_backup_set", _fake_archive)
+    monkeypatch.setattr(_backup_dispatch, "archive_backup_set", _fake_archive)
 
     dest = tmp_path / "backups"
     exit_code = cli.main(
@@ -520,12 +535,12 @@ def test_backup_set_archive_dir_without_its_companions_exits_nonzero(
         taken.append(1)
         return _FakeManifest()
 
-    monkeypatch.setattr(cli, "backup_set", _fake_backup_set)
+    monkeypatch.setattr(_backup_dispatch, "backup_set", _fake_backup_set)
 
     def _must_not_be_called(*args, **kwargs):
         raise AssertionError("archive_backup_set reached with incomplete arguments")
 
-    monkeypatch.setattr(cli, "archive_backup_set", _must_not_be_called)
+    monkeypatch.setattr(_backup_dispatch, "archive_backup_set", _must_not_be_called)
 
     argv = [
         "backup-set",
@@ -555,13 +570,17 @@ def test_backup_set_reports_an_archive_refusal_as_a_nonzero_exit(
     class _FakeManifest:
         generation = 2
 
-    monkeypatch.setattr(cli, "backup_set", lambda *_a, **_kw: _FakeManifest())
-    monkeypatch.setattr(cli, "FileKeyProvider", lambda _root, **_kw: None)
+    monkeypatch.setattr(
+        _backup_dispatch, "backup_set", lambda *_a, **_kw: _FakeManifest()
+    )
+    monkeypatch.setattr(_backup_dispatch, "FileKeyProvider", lambda _root, **_kw: None)
 
     def _refuse(*args, **kwargs):
-        raise cli.BackupArchiveRefused("decompressed 'evidence' digests abc")
+        raise _backup_dispatch.BackupArchiveRefused(
+            "decompressed 'evidence' digests abc"
+        )
 
-    monkeypatch.setattr(cli, "archive_backup_set", _refuse)
+    monkeypatch.setattr(_backup_dispatch, "archive_backup_set", _refuse)
 
     assert (
         cli.main(

@@ -1,0 +1,55 @@
+# tos_runtime verified compressed cold backup of the durable set
+# (evidence growth plan §2 A3,
+#  docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md;
+#  runbook docs/runbooks/tos-evidence-cold-backup.md).
+#
+# Read by `cold-backup --config-dir <dir>` as <dir>/evidence_cold_backup.yaml
+# (tos_runtime.operations.cold_backup.load_cold_backup_config). Every key below
+# is REQUIRED and must be FILLED except `xz_preset` — a `null` destination or a
+# `null` free-space floor refuses to load. The loader invents nothing: a guessed
+# destination is worse than no cold backup, because it looks like one.
+#
+# Paths must be ABSOLUTE and are used verbatim: no `~` expansion, no relative
+# resolution, no environment variables. All three are refused if they sit inside
+# a git worktree, inside the live `--data-dir`, or anywhere above it.
+#
+# NOTHING HERE PRUNES ANYTHING. There is no retention knob, by decision, not by
+# omission: `backup_set` never deletes ("Never deleted, never overwritten"), an
+# archive is an addition, and deleting verified cold copies is exactly the
+# Track B material ADR-002-016 §17 governs (plan §4 — five unmet preconditions).
+# Cold copies accumulate at roughly 13 MB per trading day (plan §1 measured:
+# ≈200 MB/day raw, 14-21× compressed). `minimum_free_bytes` is what makes that
+# visible; the answer when it fires is more storage, never a deletion job.
+
+# Where the UNCOMPRESSED gen{N}/ generations and their manifests are written.
+# This is the same tree `backup-set --dest` writes and `run --backup-root`
+# observes at boot; the generation number is read from here, so point every
+# caller at one directory.
+backup_root: null
+
+# Cold storage: gen{N}.set.tar.xz and gen{N}.cold-backup.report.json land here.
+# Put it on a different medium from `backup_root` where you can — a cold copy
+# sharing a disk with the warm one survives exactly the failures that do not
+# matter.
+archive_dir: null
+
+# Parent of the scratch directory each run decompresses into to verify the
+# archive it just wrote. The per-generation child must not already exist and is
+# removed when verification passes; on a refusal it is KEPT, and the refusal
+# message names it.
+verify_root: null
+
+# Capacity alarm (plan §5). A run refuses BEFORE writing anything when
+# `archive_dir`'s filesystem has fewer than this many bytes free, and a run that
+# completes below it warns on stderr. There is no default: an unapproved floor
+# would state an operational bound as decided. Fill it from this host's actual
+# storage and the daily growth above — e.g. 53687091200 for 50 GiB.
+minimum_free_bytes: null
+
+# OPTIONAL, unlike the four above. Absent means stdlib lzma's own preset 6
+# (tos_runtime.operations.backup_archive.DEFAULT_XZ_PRESET), which the plan's §1
+# measured at ≈14× on the evidence store. The asymmetry is deliberate: a missing
+# compression preset has a correct answer this codebase has already named, a
+# missing destination or capacity floor does not. Present-but-null still
+# refuses — a half-filled file should not look complete.
+# xz_preset: 6

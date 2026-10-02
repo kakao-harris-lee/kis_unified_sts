@@ -98,6 +98,8 @@ __all__ = [
     "RestoreRefused",
     "RestoredSet",
     "backup_set",
+    "manifest_path_for",
+    "next_generation",
     "restore_drill",
     "restore_set",
 ]
@@ -369,6 +371,35 @@ def _highest_existing_generation(dest_dir: Path) -> int | None:
             if middle.isdigit():
                 generations.append(int(middle))
     return max(generations) if generations else None
+
+
+def manifest_path_for(dest_dir: Path, generation: int) -> Path:
+    """The manifest path :func:`backup_set` writes for ``generation`` under ``dest_dir``.
+
+    Public so a caller composes the filename from this module rather than re-spelling
+    ``f"gen{N}.set.manifest.json"`` — :mod:`tos_runtime.compose.cli` and
+    :mod:`tos_runtime.compose._operations_wiring` had each already spelled it out separately
+    before an unattended caller (:mod:`tos_runtime.operations.cold_backup`) needed it too.
+    """
+    return dest_dir / f"gen{generation}{_MANIFEST_SUFFIX}"
+
+
+def next_generation(dest_dir: Path) -> int:
+    """The lowest generation :func:`backup_set` would accept for ``dest_dir``.
+
+    ``1`` for a directory holding no manifest (including one that does not exist yet),
+    otherwise one past the highest ``gen{N}`` manifest already there.
+
+    **This allocates nothing and reserves nothing.** Decision 1 of the TOS Phase 5 W4 plan
+    ("세대는 호출자 지정") stands: :func:`backup_set` still takes the generation as an
+    argument and still refuses a non-increasing one, so if two callers race on the same
+    ``dest_dir`` they both read the same answer here and the SECOND :func:`backup_set` is what
+    refuses. That refusal is the interlock; this function is only the arithmetic an unattended
+    caller would otherwise do by hand (and, before
+    :mod:`tos_runtime.operations.cold_backup`, an operator typed into ``--generation``).
+    """
+    existing = _highest_existing_generation(dest_dir)
+    return 1 if existing is None else existing + 1
 
 
 def backup_set(

@@ -63,6 +63,7 @@ from tos_runtime.custody.file_custody import CustodyManifest
 from tos_runtime.evidence.retention import RetentionPolicy
 from tos_runtime.marketfeed.policy import load_critical_input_policy
 from tos_runtime.nontrade.config import load_required_legs_config
+from tos_runtime.operations.cold_backup import load_cold_backup_config
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.recon.witness_kis_config import load_kis_witness_config
 from tos_runtime.release.config import load_release_config
@@ -184,6 +185,16 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
     ],
     "engine_driver": [
         ("replay_window_events",),
+    ],
+    # Every key tos_runtime.operations.cold_backup.load_cold_backup_config demands be
+    # PRESENT. `xz_preset` is deliberately absent from this list AND commented out in the
+    # example: it is the one optional key, and absent means the already-named
+    # backup_archive.DEFAULT_XZ_PRESET (that loader's own `_XZ_PRESET_KEY` comment).
+    "evidence_cold_backup": [
+        ("backup_root",),
+        ("archive_dir",),
+        ("verify_root",),
+        ("minimum_free_bytes",),
     ],
     "evidence_retention": [
         ("minimum_days_by_class",),
@@ -477,6 +488,9 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
     ),
     "engine": frozenset({"tos_runtime/compose/_finalize_wiring.py"}),
     "engine_driver": frozenset({"tos_runtime/compose/_engine_wiring.py"}),
+    # The defining module is the only file spelling the literal: compose/_backup_dispatch.py
+    # reaches the name through `COLD_BACKUP_CONFIG_NAME`, never as a second literal.
+    "evidence_cold_backup": frozenset({"tos_runtime/operations/cold_backup.py"}),
     # Not yet reachable from any tos_runtime.compose wiring path, and the
     # defining module (tos_runtime/evidence/retention.py) itself never spells
     # the literal "evidence_retention.yaml" either — RetentionPolicy.load
@@ -612,6 +626,7 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     ),
     "engine": (load_engine_config, {}),
     "engine_driver": (load_engine_driver_config, {}),
+    "evidence_cold_backup": (load_cold_backup_config, {}),
     "finality": (load_finality_config, {}),
     "kis_mock_transport": (
         load_kis_mock_transport_config,

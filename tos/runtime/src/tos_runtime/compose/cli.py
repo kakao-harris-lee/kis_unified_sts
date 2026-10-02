@@ -30,6 +30,13 @@ because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup
 :mod:`tos_runtime.operations.backup_set` / :mod:`tos_runtime.operations.schema_migrations` /
 :mod:`tos_runtime.operations.key_rotation` / :mod:`tos_runtime.operations.dependency_admission`.
 
+**``cold-backup --data-dir --config-dir --custody-root``** (evidence growth plan §2 A3) is the
+one unattended door onto what ``backup-set --archive-dir`` does interactively: destinations come
+from ``evidence_cold_backup.yaml`` and the generation from the backup root, so a cron line's Nth
+run is spelled exactly like its first. Parser/args/dispatch live in
+:mod:`~tos_runtime.compose._backup_dispatch` (that module's docstring; split for this one's
+size budget).
+
 **``print-policy-digests --config-dir`` (plan §2 decision 7)** follows the SAME bare-flags
 idiom: loads the governed policy YAMLs under ``--config-dir`` and prints each one's
 ``policy_id``/``policy_generation``/``canonical_digest`` to stdout, so an operator can copy
@@ -138,6 +145,13 @@ from pathlib import Path
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.workload import RuntimeIdentity
 
+from tos_runtime.compose._backup_dispatch import (
+    ColdBackupArgs,
+    add_cold_backup_subparser,
+    cold_backup_args,
+    dispatch_backup_set,
+    dispatch_cold_backup,
+)
 from tos_runtime.compose._cli_ops import (
     marketfeed_policy_digest_lines,
     rearm_and_clear,
@@ -153,12 +167,8 @@ from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityRefused, SqliteEvidenceStore
 from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
-from tos_runtime.operations.backup_archive import (
-    DEFAULT_XZ_PRESET,
-    BackupArchiveRefused,
-    archive_backup_set,
-)
-from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
+from tos_runtime.operations.backup_archive import DEFAULT_XZ_PRESET
+from tos_runtime.operations.backup_set import DurableSetPaths, restore_set
 from tos_runtime.operations.dependency_admission import (
     observe_runtime_artifact,
     print_digests_text,
@@ -190,6 +200,7 @@ __all__ = [
     "AckAlertArgs",
     "Args",
     "BackupSetArgs",
+    "ColdBackupArgs",
     "MigrateArgs",
     "NontradeEvalArgs",
     "PrintDigestsArgs",
@@ -206,6 +217,7 @@ __all__ = [
 _SUBCOMMANDS = (
     "run",
     "backup-set",
+    "cold-backup",
     "restore-drill",
     "migrate",
     "rotate-key",
@@ -492,6 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     policy_digests_parser.add_argument("--config-dir", required=True, type=Path)
 
+    add_cold_backup_subparser(subparsers)
     _add_rearm_ack_nontrade_subparsers(subparsers)
 
     return parser
@@ -551,6 +564,7 @@ def parse_args(
 ) -> (
     Args
     | BackupSetArgs
+    | ColdBackupArgs
     | RestoreDrillArgs
     | MigrateArgs
     | RotateKeyArgs
@@ -559,6 +573,7 @@ def parse_args(
     | RearmArgs
     | AckAlertArgs
     | NontradeEvalArgs
+    | ColdBackupArgs
 ):
     """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever
     subcommand was named (or ``run``, implicitly — module docstring).
@@ -601,6 +616,8 @@ def parse_args(
             custody_root=namespace.custody_root,
             xz_preset=namespace.xz_preset,
         )
+    if command == "cold-backup":
+        return cold_backup_args(namespace)
     if command == "restore-drill":
         return RestoreDrillArgs(
             manifest=namespace.manifest,
@@ -847,55 +864,6 @@ def _migrate_report(outcome: MigrationOutcome) -> str:
     return f"already at v{outcome.to_version}, nothing to do"
 
 
-def _dispatch_backup_set(args: BackupSetArgs) -> int:
-    """Take the durable-set snapshot, then — only when ``--archive-dir`` was given — compress
-    and verify it (evidence growth plan §2 A3).
-
-    The snapshot itself is never conditional on the archive step: a failed or refused archive
-    leaves the uncompressed generation exactly as ``backup_set`` wrote it, and is reported as a
-    non-zero exit with the refusal on stderr rather than as a silent partial success.
-    """
-    paths = DurableSetPaths.from_data_dir(args.data_dir)
-    manifest = backup_set(
-        paths,
-        args.dest,
-        args.generation,
-        readiness_verdict_at_backup=args.readiness_verdict,
-    )
-    manifest_path = args.dest / f"gen{manifest.generation}.set.manifest.json"
-    print(f"backup-set: wrote gen{manifest.generation} manifest under {args.dest}")
-    if args.archive_dir is None:
-        return 0
-    if args.verify_dir is None or args.custody_root is None:
-        print(
-            "backup-set: --archive-dir requires --verify-dir and --custody-root (the archive "
-            "is verified by reading it back, which needs a scratch directory and the evidence "
-            "chain keys) — the uncompressed snapshot above is complete and untouched",
-            file=sys.stderr,
-        )
-        return 1
-    try:
-        verification = archive_backup_set(
-            manifest_path,
-            args.archive_dir,
-            args.verify_dir,
-            key_provider=FileKeyProvider(
-                args.custody_root, expected_owner_uid=os.getuid()
-            ),
-            preset=args.xz_preset,
-        )
-    except BackupArchiveRefused as refusal:
-        print(f"backup-set: archive refused — {refusal}", file=sys.stderr)
-        return 1
-    print(
-        f"backup-set: archived gen{verification.generation} to "
-        f"{verification.archive_path} ({verification.source_bytes} -> "
-        f"{verification.archive_bytes} bytes), read back and verified: "
-        f"{len(verification.files_verified)} file digest(s) + evidence chain"
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     """Parse ``argv`` and dispatch to the right subcommand (module docstring).
 
@@ -916,7 +884,10 @@ def main(argv: list[str] | None = None) -> int:
         return _dispatch_run(args)
 
     if isinstance(args, BackupSetArgs):
-        return _dispatch_backup_set(args)
+        return dispatch_backup_set(args)
+
+    if isinstance(args, ColdBackupArgs):
+        return dispatch_cold_backup(args)
 
     if isinstance(args, RestoreDrillArgs):
         if args.environment_label in _LIVE_ENVIRONMENT_LABELS:
