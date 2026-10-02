@@ -668,6 +668,35 @@ def test_a_transport_failure_on_the_amend_is_classified_and_not_resent(
     ]
 
 
+def test_a_transport_failure_on_the_quote_is_its_own_phase(
+    monkeypatch: pytest.MonkeyPatch,
+    futures_env: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Nothing is resting yet, so this is a different fact from a failed
+    submit. A reader told "submit" would go looking for an order that was
+    never placed."""
+    wire = _install(monkeypatch, _Wire())
+    monkeypatch.setattr(
+        probes_order.MockTradingClient,
+        "futures_last_price",
+        lambda self, symbol: (_ for _ in ()).throw(
+            requests.exceptions.ReadTimeout("read timeout=15.0")
+        ),
+    )
+
+    run = probe_p8(_args())
+
+    assert run.measurements["stop_reason"] == "transient:transport"
+    assert [r["phase"] for r in _retry_records(run)] == ["quote"]
+    assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
+        "transient:transport"
+    ]
+    # No order was placed, so there is nothing to clean up and no disposition.
+    assert [c for c in wire.calls if c["url"].endswith("trading/order")] == []
+    assert "cleanup_dispositions" not in run.measurements
+
+
 def test_a_rejected_submit_is_still_a_rejection(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,

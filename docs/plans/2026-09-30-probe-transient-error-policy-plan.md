@@ -674,7 +674,7 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 | `tools/broker_probes/runners/run_p_ca.sh` | 그 가드를 쓰도록 축약. 로그 문구는 한 글자도 바꾸지 않았다 |
 | `tools/broker_probes/runners/run_p8.sh` | 추적되는 P-8 러너 템플릿(신규) |
 | `tools/broker_probes/runners/README.md` | `_common.sh` · `run_p8.sh` 인스턴스화 레시피와 STOP 규칙 표 |
-| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 53건(+shellcheck 미설치 시 skip 1건) |
+| `tests/tools/test_broker_probes_p8_transient.py` | 새 테스트 54건(+shellcheck 미설치 시 skip 1건) |
 | `tests/tools/test_broker_probes_ca.py` · `test_broker_probes_pacing.py` | 공유 파일을 따라가는 수정(아래 7.15.6) |
 
 #### 7.15.4 정책 — P-CA 와 같은 것, 그리고 다른 것
@@ -688,11 +688,14 @@ VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 �
 
 **다른 것 셋.**
 
-1. **주문 계열 호출(POST)은 분류만 하고 재시도하지 않는다.** 제출을 다시 보내는 것은
-   P-2 가 측정하는 바로 그 중복주문 위험이고, 정정을 다시 보내면 수량을 두 번 먹을 수
-   있다. 그래서 `_record_write_transport_stop` 은 `retry_evidence(retried=False)` 를
-   남기고 `transient:transport` 로 끝낸다 — **분류는 러너가 필요로 하는 것이고,
-   09-28 에 없던 것도 그것**이다.
+1. **단발 호출(`quote`·`submit`·`amend`)은 분류만 하고 재시도하지 않는다.** 제출을
+   다시 보내는 것은 P-2 가 측정하는 바로 그 중복주문 위험이고, 정정을 다시 보내면
+   수량을 두 번 먹을 수 있다. 시세 조회는 GET 이지만 재시도해 봐야 트라이얼의 시계만
+   밀 뿐이다 — 아직 아무것도 걸려 있지 않고, 가격 조회에 답하지 못하는 브로커에
+   주문을 넣기 시작할 이유가 없다. `_record_write_transport_stop` 이 셋 다
+   `retry_evidence(retried=False)` 를 남기고 `transient:transport` 로 끝낸다 —
+   **분류는 러너가 필요로 하는 것이고, 09-28 에 없던 것도 그것**이다. `phase` 는 셋을
+   구분한다: 시세 실패와 제출 실패는 「주문이 걸려 있는가」가 다르다.
 2. **일시 중단은 `run.error` 를 남긴다**(P-CA 는 `run.skip` 만 남긴다). 이유: P-8
    아티팩트의 소비자는 `coexistence_ms` 를 읽는데, `provenance_class: MEASURED` 인
    아티팩트에서 그 키가 **없는** 것을 `.get(key, 0.0)` 으로 읽으면 0.0 = 「원자적
@@ -785,7 +788,7 @@ VERDICT: <reason> | trials_run=n/N measured=n broker_rejections=n rate_limit_sto
   tests/tools/test_broker_probes_n15_blackout.py \
   tests/tools/test_broker_probes_nontrade_registry.py \
   tests/tools/test_broker_probes_token_cache.py -p no:cacheprovider
-  → 672 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
+  → 673 passed, 2 skipped (로컬 shellcheck 없음; CI 가 돌린다)
 
 ruff check tools/broker_probes tests/tools          → All checks passed!
 black --check (변경 .py 전부)                        → unchanged

@@ -2025,13 +2025,18 @@ def _print_p8_verdict(stop: str, measured: bool) -> None:
 
 
 def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) -> str:
-    """Classify a transport failure on an ORDER-MUTATING call, without retrying.
+    """Classify a transport failure on a single-shot call, without retrying.
 
-    The submit and the amend are POSTs. :func:`retry_once` is for GETs: a
-    resent submit is the duplicate-order hazard P-2 exists to measure, and a
-    resent amend could consume the quantity twice. So these get the
-    CLASSIFICATION — which is what the runner needs, and what was missing on
-    2026-09-28 — but never a second attempt.
+    Three phases use this: ``quote``, ``submit`` and ``amend``. The last two
+    are POSTs, and :func:`retry_once` is for GETs — a resent submit is the
+    duplicate-order hazard P-2 exists to measure, and a resent amend could
+    consume the quantity twice. The quote is a GET, but retrying it would only
+    move the trial's clock: it happens once, before anything is resting, and a
+    broker that cannot answer a price query is not one to start placing orders
+    against.
+
+    All three therefore get the CLASSIFICATION — which is what the runner
+    needs, and what was missing on 2026-09-28 — but never a second attempt.
 
     Returns the ``P8_STOP`` token.
     """
@@ -2228,8 +2233,16 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
     stop = _P8_STOP_UNKNOWN
     measured = False
     try:
+        # The quote is its OWN phase. It is a GET and nothing is resting yet, so
+        # a failure here is a different fact from a failure on the submit — and
+        # a reader of retry_evidence who is told "submit" would look for an
+        # order that was never placed.
         try:
             price, side = _resting_price(client, args)
+        except transport_transient_types() as exc:
+            stop = _record_write_transport_stop(run, "quote", exc)
+            return run
+        try:
             body = client.futures_order_body(args.symbol, args.quantity, price, side)
             placed, raw, _ms = client.submit_futures(body)
         except transport_transient_types() as exc:
