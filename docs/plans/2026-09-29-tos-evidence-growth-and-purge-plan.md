@@ -3801,7 +3801,7 @@ F3 은 §7.1.16 F1 이 세운 자기 규율과, F7 은 같은 절이 중단 2 �
 처음부터 green(그 검사는 중단 레코드를 세지 않는다 — 그래서 고정한다).
 
 **게이트.** `pytest tests/tools/test_tos_evidence_scan_measure.py
-tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(133 건) ·
+tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(134 건 = 116 + 18) ·
 `pytest tests/tools/test_tos_*.py` **green** · `ruff check .` **PASS** ·
 `black --check`(tos-firewall 의 그 명령, 1,310 파일) **PASS** ·
 `tos_firewall_check.py` **PASS** · `lint-imports` **3 contracts kept, 0 broken**
