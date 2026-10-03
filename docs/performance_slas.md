@@ -401,11 +401,46 @@ fields are inherited from it and the laptop is recorded under `aggregated_on`.
 
 | | |
 | --- | --- |
-| taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) |
-| runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 |
-| commit | `16d7101e` (PR #845) |
-| rounds | 9 — all 25 benchmarks have n=9, no round failed |
+| taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) — 19 of 25 entries |
+| re-measured | 2026-10-03, run [37120153137](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37120153137) at `d4e8a1cd` (PR #857) — the 6 entries of `test_orchestrator_scalability.py` |
+| runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 (both runs) |
+| commit | `16d7101e` (PR #845) for the 19, `d4e8a1cd` (PR #857) for the 6 |
+| rounds | 9 in both runs — all 25 benchmarks have n=9, no round failed |
 | excluded | none |
+
+**Why 6 entries were replaced and 19 were not.** PR #857 removed the
+`gc.collect()` calls from `_benchmark_orchestrator_cycle`, so every benchmark
+in `test_orchestrator_scalability.py` changed its measured window and its old
+entry describes code that no longer runs. The other 19 were left on the
+2026-10-02 anchor deliberately: re-anchoring them to one more runner adds an
+arbitrary offset this change has no reason to introduce. `provenance.
+partial_regeneration` in the file records which entries moved, from which run,
+and why. The re-measuring run is a representative runner, not a fast one — its
+19 unchanged benchmarks land within x0.99–x1.07 of the committed values.
+
+| benchmark | before | after |
+| --- | ---: | ---: |
+| `test_cycle_time_1_position` | 0.0259s | 0.0008s |
+| `test_cycle_time_5_positions` | 0.0202s | 0.0014s |
+| `test_cycle_time_10_positions` | 0.0211s | 0.0021s |
+| `test_cycle_time_20_positions` | 0.0223s | 0.0036s |
+| `test_memory_usage_scaling` | 0.0803s | 0.0062s |
+| `test_scalability_summary` | 0.0806s | 0.0063s |
+
+All nine rounds agree to within 0.0004s (`sd` <= 0.0001s for all six). The
+`gc.collect()` pair was **92%** of those two comparable benchmarks on a normal
+runner, and more on a slow one.
+
+**Consequence, stated rather than discovered later:** at 6.2–6.3 ms both
+formerly-compared benchmarks are now below `PERF_MIN_DURATION` (50 ms), so the
+checker exempts them from ratio comparison and the suite compares 14
+benchmarks instead of 16. They are not unguarded — each still asserts its own
+SLA inside the test (cycle time under 100/500/5000/10000 ms by position count,
+and scaling factor <= 20x), and a majority of rounds failing such an assertion
+is an error in the checker's round-outcome verdict. What is gone is the
+baseline-ratio check on a number that was 92% garbage collection. Removing
+them also narrows the runner-factor estimate: the same run reads a band of
+x0.99–x1.07 over 14 ratios where the old set spanned x0.99–x1.27.
 
 It replaces the 2026-05-30 single-sample file. Checked against that file
 before replacing it: 0 errors, 0 warnings, 25 pass (runner factor x1.12), so
