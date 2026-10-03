@@ -457,13 +457,20 @@ done
 **백업 세대는 뜨지 않았다** — 실 파일을 바꾸지 않았으므로 (0) 단계가 성립하지 않는다. 다만
 그 과정에서 확인해 둘 것이 하나 나왔다: **`cold-backup` 은 지금 이 호스트에서 쓸 수 없고,
 쓸 수 있게 만드는 것은 두 줄짜리 YAML 변경이 아니다.** 채워진 `evidence_cold_backup.yaml`
-이 없고(`~/.local/state/tos/paper-ops` 자체가 없다), 로더는 `minimum_free_bytes` 의 null 을
+이 없고, 로더는 `minimum_free_bytes` 의 null 을
 **거부**한다. 콜드 백업 런북 §2 는 기본값이 없는 것이 **결정**이라고 못박는다 — 「승인되지
 않은 한도를 결정된 값처럼 적지 않는다」. 즉 그 숫자는 **운영자가 정하는 값**이고, 에이전트가
 호스트 여유 공간을 보고 채워 넣을 자리가 아니다. 설정 없이 지금 당장 쓸 수 있는 백업 경로는
 §4-B 의 `backup-set --archive-dir --verify-dir --custody-root` 이며(쓰고 나서 되읽어 검증),
 이 플래그 셋은 현재 CLI 에 실재한다(`tos/runtime/src/tos_runtime/compose/cli.py` 의
 `backup-set` 파서).
+⚠ **2026-10-03 갱신:** `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 과 세 보관
+경로는 그 뒤로 **만들어졌고**, 야간 래퍼도 있다 — 다만 바닥은 여전히 `null` 이라 설정은
+**의도적으로 불활성**이고 crontab 에도 등록돼 있지 않다. 이 절의 판정(「지금 당장은 §4-B 를
+쓴다」)은 그대로다. 호스트에 무엇이 있고 무엇이 비어 있는지, 켜는 데 필요한 한 줄 편집은
+`docs/runbooks/tos-evidence-cold-backup.md` §4-5 에 있다. ⚠ 그 절이 함께 기록한 것:
+**이 호스트의 1회성 corpus 12개는 전부 증거 스키마 v1 이라, 콜드 백업 대상으로 고르려면
+먼저 위 §4-A 의 `migrate` 를 그 corpus 에 돌려야 한다.**
 
 ## 4-B. 장 마감 뒤 압축 백업
 
