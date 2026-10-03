@@ -80,9 +80,11 @@
   `reason`·`signal_sent`·`returncode`·`partial_resource` 가 소실됐다(§7.1.23 「답하지
   못한 것」 3). ② 재개가 끝나면 **자기가 빌드하지 않은** 합성 파일의 처분을 `rm` 명령과
   함께 명시적으로 말하고, `--delete-synthetic-on-success` 로 삭제를 옵트인할 수 있다 —
-  이전에는 한 마디도 없어 36–53 GB 삭제가 운영자 기억에 달려 있었다(§7.1.23 「뒤처리」).
-  새 아티팩트 `run-<run_id>.summary.json` 이 실행 단위로 그 둘을 기록한다. 벤치는 여전히
-  무변경.
+  이전에는 한 마디도 없어 **26–53 GB**(180 일치 26.73 · 270 일치 40.10 · 365 일치 53.23 GB,
+  십진) 삭제가 운영자 기억에 달려 있었다(§7.1.23 「뒤처리」). 새 아티팩트
+  `run-<days>d.<run_id>.summary.json` 이 실행 단위로 그 둘을 기록한다. 벤치는 여전히
+  무변경. **독립 리뷰 #853 처분은 §7.1.26** — 등재한 보호 둘이 실제로는 위치(`--steps` 에
+  그 글자가 있는가)를 봤고, 성질(「그 패스에 결과가 있는가」)로 바꿨다.
 
 ### A1-c. 측정은 분리 워크트리에서만 (**구현 — PR #838**)
 
@@ -719,6 +721,10 @@ predicts_the_real_row_count_exactly` 가 실제 합성 파일을 만들어 벤�
    시계열) · `<step>-Nd.resource.json` · `<step>-Nd.time`. 「프리플라이트 셋 다 `no competing
    build`」 같은 문장을 다음부터는 **파일로** 인용한다. 프리플라이트는 **거부할 때도** 쓴다 —
    아무것도 안 남기는 거부는 애초에 검사하지 않은 것과 구별되지 않는다.
+   ⚠ **2026-10-03 에 둘 늘었다 (§7.1.25)**: `run-<days>d.<run_id>.summary.json`(실행 하나가
+   어떻게 끝났는지 · 합성 파일 처분 · 그 실행이 쓴 중단 레코드 이름)과, 실행마다 하나인
+   `ABORTED-<step>-<days>d.<run_id>.json`. 요약은 **출력 디렉터리까지 간 실행**에만 남는다 —
+   인자 모순은 디렉터리가 생기기 전에 거부되고 아무것도 남기지 않는다(§7.1.26 F4).
 2. **물리 대 논리 읽기.** 자식의 `/proc/<pid>/io` 에서 `rchar`(프로세스가 요청한 바이트, 페이지
    캐시 포함) 옆에 `read_bytes`(블록 계층이 실제로 옮긴 바이트)를 남긴다. §7.1.2 가 90 일치에서
    논리 433 GB 대 물리 19.0 GB 로 **23 배** 벌어지는 것을 `File system inputs` 하나로 겨우 짚어낸
@@ -799,7 +805,7 @@ SIGKILL 승격 테스트는 자식이 **핸들러를 설치했다고 알린 뒤�
 | # | 편차 | 이유 |
 |---|---|---|
 | a | 자원 계측을 `getrusage(RUSAGE_CHILDREN)` 차분이 아니라 `os.wait4` 로 | 위 「자원 계측은 `os.wait4` 다」 — 차분은 최대값을 올리지 않은 단계에 대해 0 을 준다 |
-| b | 중단 아티팩트 이름이 `ABORTED-<step>.json` 이 아니라 `ABORTED-<step>-<days>d.json` | 출력 디렉터리 하나를 크기별로 공유한다(기존 `a1/` 가 그렇다). 다른 아티팩트가 전부 `-Nd` 를 달고 있는 이유와 같다 |
+| b | 중단 아티팩트 이름이 `ABORTED-<step>.json` 이 아니라 `ABORTED-<step>-<days>d.json` | 출력 디렉터리 하나를 크기별로 공유한다(기존 `a1/` 가 그렇다). 다른 아티팩트가 전부 `-Nd` 를 달고 있는 이유와 같다. ⚠ **2026-10-03 이후 `ABORTED-<step>-<days>d.<run_id>.json`** — 같은 디렉터리의 두 중단이 서로를 덮었다(§7.1.25) |
 | c | `.time` 텍스트와 `.resource.json` 을 **둘 다** 쓴다 | 지시는 「JSON 으로」였다. `.time` 을 JSON 으로 바꾸면 §7.1.2 의 `File system inputs` 인용과 같은 grep 이 죽는다 — 비교 가능성을 지키려고 둘을 쓴다 |
 | d | 호스트 판독기(`HostReader`)가 `main()` 의 **키워드 인자**이지 CLI 플래그가 아니다 | 테스트는 주입해야 하고, 운영자는 셸에서 더 관대한 `/proc` 을 가리킬 수 없어야 한다 |
 | e | 검색 명령 필터를 추가했다 | 위 실측 1 — 첫 실호스트 실행이 오탐을 냈다. 전역 규칙의 `grep -v pgrep` 을 일반화한 것이고 양방향으로 테스트했다 |
@@ -2611,7 +2617,8 @@ CI 와 같은 형태의 mypy 네 줄 전부 `Success`: `tos/runtime/src`(191) ·
    하나씩 고치며 재실행하지 않는다.
 2. **자식마다의 재검사(핵심).** `build` · `before` · `after` 를 띄우기 **직전마다**
    commit · clean · 벤치 다이제스트를 다시 읽는다. 움직였으면 **자식을 띄우지 않고**
-   `ABORTED-<step>-<days>d.json` 을 쓰고 멈춘다. 프리플라이트는 한 번 돌고 자식들은
+   `ABORTED-<step>-<days>d.json`(⚠ 2026-10-03 이후 `…-<days>d.<run_id>.json` — §7.1.25)
+   을 쓰고 멈춘다. 프리플라이트는 한 번 돌고 자식들은
    그렇지 않다 — 180 일치에서 `before` 와 `after` 는 **1 h 39 m** 떨어져 떴다.
 3. **출처 기록.** `repo_commit` · `repo_path` · `detached` · `clean` ·
    `ancestor_of_origin_main` + 벤치 **sha256** 을 `preflight.json` · 각 단계의
@@ -3297,8 +3304,10 @@ RSS 는 전·후 모두 **24.5 MiB** 로, 30·90 일치 21.9–22.5 MB · 180 �
 `SCAN entries USING COVERING INDEX entries_kind_seq`(1.00 s)다.
 
 ⚠ 이 수치는 드라이버 아티팩트가 아니라 **살아남은 합성 파일**에서 나온다 — 재개가
-`--steps before,after` 라 드라이버가 지우지 않았기 때문이고(자기가 빌드한 파일만 지운다),
-설계가 아니다. §7.1.15 「답하지 못한 것」 3(`after` 뒤 `st_size` 한 줄)은 **여전히 열려 있다.**
+`--steps before,after` 라 드라이버가 지우지 않았기 때문이고(**기본적으로** 자기가 빌드한
+파일만 지운다 — 2026-10-03 이후 `--delete-synthetic-on-success` 가 명시적 옵트인이다,
+§7.1.25), 설계가 아니다. §7.1.15 「답하지 못한 것」 3(`after` 뒤 `st_size` 한 줄)은
+**여전히 열려 있다**(⚠ 2026-10-03 절반 — §7.1.23 「답하지 못한 것」 4).
 
 **전·후 (ms, 각 3 회 중 최소)**
 
@@ -3653,8 +3662,9 @@ RAM 경계(23.086 GB)이고 그것은 **90 일치와 180 일치 사이**에 있�
 **뒤처리.** 합성 파일 `synth-270d.sqlite3`(40,099,414,016 B)에서 가져올 것은 **전부
 가져왔다**(위 「인덱스 뒤 파일 크기」의 파일 크기 · `PRAGMA` 셋 · `sqlite_master` ·
 `index_list`/`index_info` · `COUNT(*)`). 이 PR 이 머지될 때까지 호스트에 남긴다. 그 뒤에는
-손으로 지운다(`measure-270d.log` 의 보존 메시지가 지시하는 그대로 — 드라이버는 자기가
-빌드하지 않은 파일을 지우지 않는다). 측정 워크트리 `wt-measure` 도 그때 함께 치운다.
+손으로 지운다(`measure-270d.log` 의 보존 메시지가 지시하는 그대로 — 드라이버는 **기본적으로**
+자기가 빌드하지 않은 파일을 지우지 않는다; 2026-10-03 이후 `--delete-synthetic-on-success`
+가 명시적 옵트인이다, §7.1.25). 측정 워크트리 `wt-measure` 도 그때 함께 치운다.
 저장소에는 아무것도 복사하지 않았다.
 
 ⚠ **그 「보존 메시지」는 3차 실행의 것이 아니다.** 3차는 완주했고 합성 파일을 빌드하지
@@ -3716,8 +3726,10 @@ F3 은 §7.1.16 F1 이 세운 자기 규율과, F7 은 같은 절이 중단 2 �
 
 | 커밋 | 내용 |
 |---|---|
-| `6aa8e682` | 드라이버 + 테스트 — 실행별 중단 레코드 · 재개 처분 · `run-<run_id>.summary.json` |
-| (이 절) | 계획 §2 A1-b/A1-c · §7.1.23 의 등재 넷 · 이 절 · INDEX |
+| `6aa8e682` | 드라이버 + 테스트 — 실행별 중단 레코드 · 재개 처분 · 실행 요약 |
+| `edfb51b2` | 잔여 단계 목록을 한 번만 계산(같은 PR 이 넣은 `finally` 가 세 번 썼다) |
+| 2회차 | 독립 리뷰 #853 처분 — **§7.1.26** (요약 파일 이름이 `run-<days>d.<run_id>.summary.json` 로 바뀐 것도 거기다) |
+| (이 절) | 계획 §2 A1-b/A1-c · §7.1.9 아티팩트 목록 · §7.1.19 항목 2 · §7.1.23 의 등재 넷 · 이 절 · INDEX |
 
 **1. 중단 레코드는 실행마다 하나다.**
 
@@ -3761,16 +3773,18 @@ F3 은 §7.1.16 F1 이 세운 자기 규율과, F7 은 같은 절이 중단 2 �
   다른 사실이고, 둘을 같게 보는 순간 위 거부가 지키는 것을 함수가 스스로 어긴다
   (`MEMORY.md` 「가드가 자기가 막는다고 말한 것을 허용한다」).
 
-**3. 새 아티팩트 `run-<run_id>.summary.json` — 실행 하나가 어떻게 끝났는지.**
+**3. 새 아티팩트 `run-<days>d.<run_id>.summary.json` — 실행 하나가 어떻게 끝났는지.**
 
 로그 줄은 사람이 읽고 계획은 **필드**를 인용한다. 지금까지 합성 파일의 처분은
 `measure-<days>d.log` 의 문장으로만 존재했고, 성공한 재개에는 그 문장조차 없었다.
-담는 것: `outcome`(`ok`/`aborted`/`step-failed`/`signalled`/`refused`) ·
+담는 것: `outcome`(`ok`/`aborted`/`step-failed`/`signalled`/`refused`) · `refusal` ·
 `steps_planned`/`steps_completed`/`steps_remaining` · `synthetic`(`path` ·
 `created_by_this_run` · `exists_after_the_run` · `size_bytes` · `action` · `message` ·
 `delete_command`) · `abort_records`(그 실행이 쓴 레코드 이름) · `argv` · `run_id`.
 중단 레코드는 **이름으로만** 싣는다 — 그 자체가 실행별 아티팩트이고, 이 파일은 어느 실행이
-어느 레코드를 썼는지 말하는 색인이다.
+어느 레코드를 썼는지 말하는 색인이다. ⚠ **「모든 실행」이 아니다**: 출력 디렉터리까지 간
+실행에만 남고, 인자 모순은 그 전에 거부된다(§7.1.26 F4). `exists_after_the_run` 은
+`true`/`false`/**`null`**(알 수 없음) 셋이다 — I/O 오류를 「파일이 없다」로 적지 않는다.
 
 **부수로 절반 닫히는 것 — 인덱스 뒤 파일 크기.** `size_bytes` 는 **삭제 전에** 읽은
 `st_size` 다. 그래서 기본 실행(build → before → after → 삭제)에서도 **마지막 단계 뒤의
@@ -3797,10 +3811,13 @@ F3 은 §7.1.16 F1 이 세운 자기 규율과, F7 은 같은 절이 중단 2 �
 
 **수정 전 코드에서 red 를 확인했다**(덮어쓰기 케이스, 1 회): 같은 디렉터리에서 두 번
 중단시키면 `before-1d.*.aborted.out` 쌍은 **둘**, `ABORTED-*` 는 **하나**이고 그 하나의
-`run_id` 가 **2차 실행의 것**이다. 새 테스트 9 건이 red, `artifacts_absent` 불변식 1 건은
-처음부터 green(그 검사는 중단 레코드를 세지 않는다 — 그래서 고정한다).
+`run_id` 가 **2차 실행의 것**이다. 11 건 중 **10 건이 red**, `artifacts_absent` 불변식
+1 건만 처음부터 green(그 검사는 중단 레코드를 세지 않는다 — 그래서 고정한다). ⚠ 초판은
+이것을 「9 red + 1 green」으로 적어 **11 건 중 10 건만 셌다**; 독립 리뷰가 실측해 정정했다
+(§7.1.26 note c).
 
-**게이트.** `pytest tests/tools/test_tos_evidence_scan_measure.py
+**게이트**(1회차 시점의 수치 — 2회차 뒤의 것은 §7.1.26 에 있다).
+`pytest tests/tools/test_tos_evidence_scan_measure.py
 tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(134 건 = 116 + 18) ·
 `pytest tests/tools/test_tos_*.py` **green** · `ruff check .` **PASS** ·
 `black --check`(tos-firewall 의 그 명령, 1,310 파일) **PASS** ·
@@ -3817,5 +3834,63 @@ tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(134 건 = 11
    돌아오지 않는다.
 2. **인덱스 뒤 메타데이터의 나머지 절반.** 위 「부수로 절반」의 ⚠.
 3. **135 일치 측정.** §7.1.23 「답하지 못한 것」 1 의 다음 한 점은 그대로 열려 있다.
-4. **기본 동작 변경.** 자기가 빌드한 파일을 계획 단계가 전부 끝난 뒤 지우는 §7.1.2 규칙은
-   그대로다. 바뀐 것은 **빌드하지 않은 파일에 대해 말한다**는 것뿐이다.
+4. **말하기만 하는 것이 아니다 (2회차 정정).** 초판은 이 항목을 「바뀐 것은 빌드하지 않은
+   파일에 대해 **말한다**는 것뿐」이라고 적었는데, 같은 PR 이 `--delete-synthetic-on-success`
+   로 **지우기도** 한다. 정확히는: 기본은 말하고, **명시적 옵트인이 있으면 지운다.** 그리고
+   §7.1.2 의 삭제 규칙 자체도 2회차에서 좁아졌다 — 「계획 단계가 전부 끝남」만으로는 부족하고
+   **쌍의 두 반쪽에 결과가 있어야** 한다(§7.1.26 F1·F2).
+
+#### 7.1.26 독립 리뷰 #853 처분 (2026-10-03)
+
+일곱 건 전부 수용했다, 기각 0. 아래 노트 여덟 건도 전부 수정했다. 리뷰 레인은 **저자와
+다른 패스**였고 교차모델 독립성은 **없다**(§7.1.6 · §7.1.10 · §7.1.16 · §7.1.20 ·
+§7.1.24 와 같은 상태 — Codex 미사용).
+
+**이 라운드의 형태 — 일곱 중 둘이 「새로 넣은 가드가 자기가 막는다고 말한 것을 허용한다」.**
+§7.1.25 는 `--delete-synthetic-on-success` 의 거부가 「쌍이 측정되지 않은 채 지워지는 것」을
+막는다고 적었고, 그 거부는 실제로는 **`--steps` 문자열에 `after` 가 있는가**만 봤다.
+`--steps after` 하나로 통과하고, `before` 는 한 번도 돌지 않은 채 파일이 지워진다(F1).
+같은 구분을 생성 분기에서는 **읽지도 않아서** `--steps build` 가 방금 몇 시간을 들여 만든
+파일을 지웠다(F2) — 그 PR 자신의 픽스처가 `--keep-synthetic` 으로 그것을 우회하고 있었다.
+`MEMORY.md` 「가드가 자기가 막는다고 말한 것을 허용한다」의 **12·13 번째**이고, 하위형은
+**「위치를 보는 가드」**다: 「`--steps` 에 그 글자가 있는가」는 위치이고, 물어야 할 성질은
+**「그 패스에 결과가 있는가」**다.
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **F1** | `--delete-synthetic-on-success` 의 거부가 **위치**(`after` ∈ `--steps`)만 본다. `--steps after` 로 통과해 `before` 미측정인 채 삭제(2회 재현). `matches_earlier_steps` 는 선행 아티팩트가 없으면 **공허하게 통과**한다 | **수용 · 성질로 교체.** 새 `recorded_pass()` + `_measures_this_file()`: 한 패스가 「측정됐다」는 것은 **이 실행이 완료했거나**, 그 패스의 `<step>-<days>d.resource.json` 이 이미 있고 **그 `argv` 의 `--db` 가 이 `--synthetic` 을 가리킨다**는 뜻이다(출력 디렉터리는 재사용될 수 있으므로 존재만으로는 부족하다). 거부는 `before`·`after` **둘 다** 그 성질을 만족할 때만 통과시킨다. 같은 성질을 `before_measured`/`after_measured` 로 `decide_synthetic_disposition` 에 넣어 **함수가 거부와 어긋날 수 없게** 했다 — 「다른 가드가 돌았으니 성립한다」는 바로 이 지적이 가리킨 실패 모드다. 테스트 3 건(거부 · `before` 가 디스크에 있으면 허용 · **다른 `--db` 를 가리키는 레코드는 허용하지 않음`) |
+| **F2** | 생성 분기가 `after_measured` 를 **읽지 않는다** — `--steps build` / `build,before` 가 방금 만든 파일을 `removed synthetic <path>` 한 줄과 함께 지운다(재현). PR 자신의 픽스처가 `--keep-synthetic` 으로 우회 | **수용 · 양쪽 분기에 같은 불변식.** 「계획 단계가 전부 돌았다」와 「쌍이 측정됐다」를 가르고, 후자가 아니면 **어느 분기에서도** `keep-unmeasured` 로 남긴다(크기 · 빠진 패스 · `--steps <missing>` · `rm` 포함). 우회하던 픽스처 셋에서 `--keep-synthetic` 을 **뺐다** — 이제 드라이버가 스스로 남긴다. 테스트: 파라미터화 6 조합(생성 여부 × 빠진 패스 셋) × 플래그 2 = 12 케이스가 전부 `keep-unmeasured` 여야 한다 |
+| **F3** | 새 `finally` 안의 `stat()` 과 맨 `unlink()` 가 무방비다. `OSError` 가 `finally` 밖으로 나가 진행 중인 `MeasureAborted` 를 **대체**하고, 요약 · 닫는 줄 · `measure-<days>d.log` 추가(버퍼된 로그의 **유일한** 쓰기) · `release_lock` 을 전부 건너뛴다 | **수용 · 둘 다 가드.** `unlink` 실패는 새 처분 `delete-failed`(오류 문자열 + 「아직 호스트에 있다」 + `rm`)가 되고 실행은 계속된다. `stat` 실패는 `size_bytes=None` 이고, `exists_after_the_run` 은 `false` 가 아니라 **`null`** 이다 — I/O 오류를 「파일이 없다」로 적지 않는다(§7.1.2 가 한 번 철회해야 했던 종류의 수). 테스트 3 건: `unlink` 가 `PermissionError`(요약·로그·락 전부 남고 rc 0) · `stat` 이 실패해도 **원래 outcome(`step-failed`)이 유지** · `exists()` 와 `stat()` 사이에 파일이 사라지는 경합 |
+| **F4** | `_run_outcome` 은 `"refused" 는 프리플라이트`라고 적는데, 프리플라이트 거부는 전부 inner `try` **앞에서** 나므로 요약이 **아예 안 써진다**(재현). 모듈 docstring 의 「각 실행은 요약을 쓴다」와 §7.1.25 의 필드 목록은 과장 | **수용 · 바깥 핸들러로 올렸다.** 거부도 요약을 쓴다 — 단 **출력 디렉터리까지 간 실행만**. 인자 모순은 `out_dir.mkdir` **전에** 거부되므로(note e) 디렉터리조차 만들지 않고 아무것도 남기지 않는다 — `argparse` 오류와 같다. 그 한계를 모듈 docstring · `_run_outcome` docstring · §7.1.9 · §7.1.25 **네 곳에 전부** 적었다. `refusal` 필드 추가. 테스트: 프리플라이트 거부 → 요약(`outcome: refused` + 사유) · 인자 거부 → **디렉터리 자체가 없음** · 넷 각각의 `outcome` |
+| **F5** | `keep_requested` 가 `not created_by_this_run` 블록 **뒤에** 있어, 재개 + `--keep-synthetic` 이 `keep-not-ours` 를 내고 「`--delete-synthetic-on-success` 를 쓰라」고 권한다 — **착수 거부가 금지하는 바로 그 조합**. 요약에는 `--keep-synthetic` 흔적이 없다 | **수용 · 분기 순서 교체.** `keep_requested` 를 생성 여부 분기 **앞**(미완료 분기 뒤)에서 본다. 메시지는 출처(「not built by this run」)와 미측정 경고를 **그대로 담되** 금지된 플래그는 권하지 않는다. 테스트 2 건(순수 함수 · CLI 재개) |
+| **F6** | 운영자에게 건네고 `delete_command` 로 저장하는 `rm` 이 `shlex.quote` 되지 않는다 — 공백·`$` 가 든 경로면 26–53 GB 정리가 두-피연산자 `rm` 이 된다 | **수용 · `_rm_command()` 로 일원화**하고 전부 `shlex.quote`. 테스트 2 건: 공백 든 경로의 모든 메시지 · 아티팩트의 `delete_command` 를 `shlex.split` 하면 경로 **한 개**가 나온다 |
+| **F7** | 「36–53 GB」가 **기수를 섞고 실제 하단을 놓쳤다** — 36 은 270 일치의 인덱스 **전** build 를 GiB 로 읽은 것이고(36.67 GiB = 39.37 GB), 보존된 270 일치 파일은 40.10 GB, 180 일치 26.73, 365 일치 53.23 GB 다. 원인은 `_GB = 1024**3` 이라 새 메시지 넷이 GiB 를 「GB」로 찍는 것. #850 F4 와 같은 부류 | **수용 · 둘 다 고쳤다.** ① 문서: 「**26–53 GB**(26.73 · 40.10 · 53.23, 십진)」 — §2 A1-b · INDEX · 드라이버 주석. ② 코드: 처분 메시지 전용 `_decimal_gb()` 를 두고 **십진 GB** 로 찍는다. 계획 본문이 십진이고 이 메시지들은 그 옆에서 읽히기 때문이다. ⚠ **문턱 문자열은 손대지 않았다** — 그 텍스트가 §7.1.23 프리플라이트 표에 **그대로 인용돼 있고**, 다른 변경의 부수로 고쳐 쓰는 것이 바로 인용이 썩는 방식이다(#850 F5 가 세운 규율). 그 통일은 별도 후속이고, `_decimal_gb` 의 docstring 이 왜 두 기수가 공존하는지 적는다 |
+
+**노트 여덟 건 — 전부 수정, 기각 0.**
+
+| 노트 | 처분 |
+|---|---|
+| **a** `after_measured=True` / `=not remaining` 로 바꿔도 116 건이 전부 green — 그 절에 red 증명이 없다 | **수용 · 변이 배터리로 갚았다.** 이 PR 이 넣은 **절 22 개**를 하나씩 뒤집어 돌렸다: `after_measured`→`True` · →`not remaining` · `before_measured`→`True` · `_pass_is_recorded`→위치판정 · `keep-unmeasured` 분기 제거 · `keep_requested` 순서 되돌리기 · `shlex.quote` 제거 · 십진→GiB · `unlink`/`stat` 가드 제거 · 거부 셋 각각 제거 · `_measures_this_file`→항상 참 · 거부 요약 제거 · `step-failed`/`signalled`→`aborted` · 닫는 줄을 `else` 로 · 신호 보류 제거 · 중단 레코드 고정 이름 복귀 · 요약 이름에서 `-<days>d` 제거 · `null`→`false` · 기본 삭제 메시지의 크기 제거. **생존 0** |
+| **b** §2 A1-b 편차 행 b 와 §7.1.19 항목 2 가 고정 이름을 현행으로 적고, §7.1.9 아티팩트 목록에 요약이 없다 | **수용 · 세 곳 전부.** 앞 둘에 「⚠ 2026-10-03 이후 `…<run_id>.json`(§7.1.25)」, §7.1.9 에 요약과 중단 레코드를 추가하고 **요약이 남지 않는 경우**(인자 거부)까지 적었다 |
+| **c** §7.1.25 가 11 건을 「9 red + 1 green」으로 적었다(실측 10+1) · 커밋 표에 `edfb51b2` 누락 · 「하지 않는 것」 4 가 「말한다」뿐이라 함 · P:3300·P:3656 의 「자기가 빌드한 파일만 지운다」 | **수용 · 전부.** 「**10 건 red + 1 건 green**」으로 고치고 초판이 틀렸다는 것도 적었다. 커밋 표에 `edfb51b2` 와 2회차 행 추가. 「하지 않는 것」 4 를 「기본은 말하고, **명시적 옵트인이 있으면 지운다**」로 고쳤다. 두 문장에 **「기본적으로」**를 넣고 옵트인 포인터를 달았다 |
+| **d** `--delete-synthetic-on-success` + `build` ∈ `--steps` 는 무해한 no-op 으로 통과 | **수용 · 거부.** 다른 둘과 같은 자리에서 거부하고 help 에 적었다. 이유: 그 실행은 이미 쌍이 측정되면 지우므로, 플래그는 **하지 않는 일을 요구하는 것처럼 읽힌다.** 테스트 1 건 |
+| **e** `out_dir.mkdir` 가 「착수 전」 거부보다 **먼저**다 · `--steps` 를 두 번 파싱 · `steps_remaining` 재계산 · 결정 함수의 기본값이 **삭제 쪽으로** 기운다 | **수용 · 넷 전부.** 거부를 `mkdir` **위로** 올렸다(그래서 F4 의 「인자 거부는 아무것도 안 남긴다」가 성립한다). `step_names` 를 `plan_steps` 에 그대로 넘긴다. `remaining` 을 요약에 인자로 넘긴다. `created_by_this_run`·`before_measured`·`after_measured` 를 **기본값 없는 키워드 전용**으로 만들었다 — 기본값은 「잊은 호출자마다 삭제 쪽으로 결정한다」는 뜻이다. `TypeError` 를 거는 테스트 포함 |
+| **f** 닫는 `#####` 줄이 요약 쓰기의 `else` 안 · 기본 삭제만 크기가 없다 · docstring 「one file per run」(실제는 step+run) · 「latest 포인터 없음」 논거가 `preflight.json` 과 모순 · 요약 이름에 `-<days>d` 없음 · 동어반복 단언 1 건 | **수용 · 여섯 전부.** 닫는 줄을 `else` 밖으로(ENOSPC 하나가 로그의 닫는 줄까지 지우지 않게) · 기본 삭제 메시지에 크기 추가 · 「one file per **(step, run)**」 · 포인터 논거를 **범위 한정**했다: `preflight.json` 은 append-only `preflight.jsonl` 의 **마지막 줄 사본**이라 덮여도 잃는 것이 없고, 중단 레코드에는 그런 계열이 없어 포인터가 **유일한 사본**이 된다 — 그것이 이 이름이 고치는 바로 그 실패다 · 요약 이름 `run-<days>d.<run_id>.summary.json`(다른 아티팩트가 전부 `-Nd` 를 다는 이유와 같다) · 동어반복 단언을 실제 파일명 대조로 교체 |
+| **g** 길어진 `finally` 내내 신호 핸들러가 살아 있다 | **수용 · 블록.** `pthread_sigmask(SIG_BLOCK, {SIGTERM, SIGHUP})` 로 **보류**한다 — `SIG_IGN` 은 운영자의 중단 요청을 **버리고** `SIG_DFL` 은 그 자리에서 프로세스를 죽이므로(막으려던 바로 그것) 둘 다 아니다. 마스크는 `main` 끝에서, **핸들러를 되돌린 뒤** 복원하므로 보류된 중단은 전부 쓰고 나서 **그대로 전달된다**. 테스트 2 건: 헬퍼 직접(보류 중 `sigpending` 에 있고, 해제 시 `MeasureSignalled`) · 배선(보류/해제가 각 1 회, 실행 뒤 마스크가 깨끗) |
+| **h** 옵트인 삭제 대상의 출처 검사가 없다(`--synthetic` 이 `--reference` 와 같은지, 이 캠페인이 만든 것인지) | **수용 · 둘 다.** `--synthetic` 과 `--reference` 가 **해석된 경로로 같으면** 거부한다 — 플래그와 무관하게 항상(그 실행은 그 파일에 build 하거나 지울 수 있다). 그리고 F1 의 `_measures_this_file` 이 「이 캠페인이 만든 것인가」의 절반을 든다: 기록된 `before` 가 **이 `--synthetic` 을 `--db` 로 쟀어야** 한다. 테스트 2 건 |
+
+**게이트(2회차).** `pytest tests/tools/test_tos_evidence_scan_measure.py
+tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(158 건 = 140 + 18) ·
+변이 배터리 **22 변이 · 생존 0** · `pytest tests/tools/test_tos_*.py` green ·
+`ruff check .` PASS · `black --check`(tos-firewall 의 명령) PASS ·
+`tos_firewall_check.py` PASS · `lint-imports` 3 contracts kept ·
+`mypy tools/tos_evidence_scan_measure.py --ignore-missing-imports` 0 errors ·
+테스트 트리 mypy(CI 와 같은 `--disable-error-code=no-untyped-def`) 0 errors ·
+`tos_contract_check.py` · `tos_named_tbd_guard.py` · `tos_evidence_citation_check.py` ·
+`tos_size_budget --check` · `tos_completion_status --check` 전부 PASS/GREEN.
+**tos 소스 무변경 → digest 재도출 없음.**
+
+**남는 후속 하나 — 문턱 문자열의 기수.** F7 ②의 ⚠. `_GB = 1024**3` 으로 만든
+프리플라이트·워치독의 사람용 문자열은 여전히 GiB 를 「GB」로 찍는다. 이 PR 에서 고치지
+않은 이유는 그 텍스트가 §7.1.23 프리플라이트 표에 **그대로 인용돼 있기** 때문이다. 고칠
+때는 인용 쪽을 같은 커밋에서 갱신해야 한다.
