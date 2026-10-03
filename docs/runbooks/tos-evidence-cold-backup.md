@@ -288,8 +288,8 @@ crontab 한 줄(운영자)과 2026-10-06 genesis(ops-paper 레인). 이 절은 �
   축약된다(보고서의 `free_space_*` 항목이 하나뿐인 이유다). 세 개의 독립된 여유처럼
   읽지 말 것.
 - §6 이 권하는 조치 「오래된 아카이브를 **다른 매체로** 옮긴다」에 쓸 **매체가 지금은
-  없다.** 바닥이 울리면 이 호스트에서 할 수 있는 것은 저장공간을 늘리는 쪽뿐이고,
-  매체 분리는 미등재 이탈로 남는다.
+  없다.** 바닥이 울리면 이 호스트에서 할 수 있는 것은 저장공간을 늘리는 쪽뿐이다.
+  이 이탈은 계획 **§7.1.26 A3-F2** 에 등재했다.
 
 여유 공간(측정값은 명령과 시각을 붙여 적는다):
 
@@ -367,8 +367,8 @@ cold-backup: archive failed — SchemaVersionRefused: evidence: on-disk schema u
 ⚠ 위 줄에 대해 **두 가지를 기록해 둔다.** ① 접두가 `archive failed` 다 — 예외 이름이
 `SchemaVersionRefused` 인데도 `_PASSTHROUGH_REFUSALS` 에 없어 환경 고장으로 분류된다.
 조치(마이그레이션)는 §5 의 그 행이 가리키는 쪽과 같지만, 한 단어로는 「호스트가 깨졌다」로
-읽힌다. **분류를 고치는 것은 이 PR 의 범위 밖**이라 §5 에 포인터를 달고 계획 §7.1 에
-후속으로 등재했다. ② 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은 완전하고,
+읽힌다. **분류를 고치는 것은 이 PR 의 범위 밖**이라 §5 에 포인터를 달고 계획
+§7.1.26 A3-F1 로 후속 등재했다. ② 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은 완전하고,
 잃은 것은 압축본뿐이다. 실측에서 `gen1/` 과 매니페스트가 남았고 `.tar.xz` 는 없었으며
 `gen1.verify` 가 **남았다**(거부 원인의 증거). 다음 실행은 그 번호를 **건너뛰어** gen2 를
 썼다.
@@ -593,7 +593,7 @@ jq '{generation, archive_bytes, chain_verified, files_verified,
 | `cold-backup: custody refused — …` | 커스터디 키를 읽을 수 없거나 세대가 이어지지 않는다 | 경로·소유자·0600 모드·`evidence.key.<generation>` 존재 확인(§1). **스냅숏 전에** 잡힌다 |
 | `cold-backup: snapshot failed — OperationalError: database is locked` | **런타임이 아직 떠 있다** — §1 전제 1 위반 | 런타임을 멈추고 다시 돌린다. cron 시각을 당겼는지 본다 |
 | `cold-backup: snapshot failed — OSError: … No space left …` | 복사 도중 디스크가 찼다 | §6. 남은 `gen{N}/` 는 **지우지 않는다** — 다음 실행은 그 번호를 건너뛴다 |
-| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다). ⚠ `SchemaVersionRefused` 가 이 접두로 나온다 — 환경 고장이 아니라 **대상이 구 스키마**라는 판정이고, 조치는 재실행이 아니라 `tos-paper-boot.md` 의 `migrate` 다(§4-5-2 · 계획 §7.1 후속 등재) |
+| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다). ⚠ `SchemaVersionRefused` 가 이 접두로 나온다 — 환경 고장이 아니라 **대상이 구 스키마**라는 판정이고, 조치는 재실행이 아니라 `tos-paper-boot.md` 의 `migrate` 다(§4-5-2 · 계획 §7.1.26 A3-F1) |
 | `cold-backup: failed — <ExcType>: …` | 단계 이름이 없는 형태 — 디스패치가 분류표의 어느 접두에도 못 넣은 예외다 | 위 행들과 같은 「환경」 취급이되, **예외 타입을 그대로 보고한다**. 분류표에 빠진 판정일 수 있다 |
 | `cold-backup: config failed — …` | 설정 로더가 이 모듈이 모르는 방식으로 깨졌다 | 메시지의 예외 타입을 그대로 보고한다 — 결함일 수 있다 |
 
