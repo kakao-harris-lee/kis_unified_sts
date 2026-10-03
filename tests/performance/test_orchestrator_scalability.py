@@ -39,15 +39,33 @@ This allows us to identify orchestrator-specific bottlenecks.
 
 from __future__ import annotations
 
+import statistics
 import time
 
-# Cycles timed per measurement. 100 left the two sweep benchmarks at 6.2-6.3 ms
-# once PR #857 took the garbage collection out of the measured window -- below
-# the regression checker's 50 ms noise floor, which would have exempted them
-# from the baseline-ratio check entirely and left only the assertions below.
-# 2000 puts the real work at ~120 ms on a CI runner: comfortably over the floor,
-# and still a tenth of a second per benchmark.
-BENCHMARK_ITERATIONS = 2000
+# Position-cycles timed per measurement point, so every position count gets a
+# comparable wall-clock window: `iterations = BENCHMARK_CYCLE_BUDGET // count`.
+#
+# Two reasons it is a budget and not a fixed iteration count.
+#
+# 1. The scaling factor divides the 20-position time by the 1-position time. At
+#    a fixed 2000 iterations those two measurements take ~47 ms and ~4 ms, so a
+#    scheduler burst during the short one moves the ratio wholesale -- measured
+#    on the deploy host, the ratio ranged 8.8x to 29.9x across eight runs of
+#    this file and tripped the <= 20x assertion. Equal windows dilute a burst
+#    equally in numerator and denominator.
+# 2. 100 iterations left the two sweep benchmarks at 6.2-6.3 ms once PR #857
+#    took the garbage collection out of the measured window -- under the
+#    checker's 50 ms noise floor, which would have exempted them from the
+#    baseline-ratio check entirely.
+#
+# 20000 puts each point at ~25 ms and each four-point sweep at ~110 ms: over
+# the floor, and still a tenth of a second per benchmark.
+BENCHMARK_CYCLE_BUDGET = 20000
+
+
+def _iterations_for(position_count: int) -> int:
+    """Cycles to time at this position count, for a constant-size window."""
+    return max(1, BENCHMARK_CYCLE_BUDGET // position_count)
 
 # Wall-clock ceiling per cycle, by concurrent position count. One source: the
 # four single-count tests and the sweep in `test_scalability_summary` assert
@@ -246,8 +264,16 @@ def _benchmark_orchestrator_cycle(position_count: int, iterations: int = 100) ->
         position_count: Number of concurrent positions
         iterations: Number of cycles to run
 
+    The statistic is the MEDIAN cycle time, not the mean. The mean takes the
+    full weight of any interference -- one scheduler stall spread over the
+    sweep moved the 1->20 scaling factor from ~14x to 26.8x on the deploy host
+    and failed the assertion -- while the median ignores a minority of
+    disturbed cycles. Same reasoning as the regression checker's own medians
+    (#768/#842). It changes only the number this function returns, not the
+    wall time the checker measures, so baselines are unaffected.
+
     Returns:
-        Average cycle time in milliseconds.
+        Median cycle time in milliseconds.
     """
     # Setup: Create positions and market data
     positions = _create_test_positions(position_count)
@@ -269,8 +295,7 @@ def _benchmark_orchestrator_cycle(position_count: int, iterations: int = 100) ->
         cycle_time_ms = (end_time - start_time) * 1000
         cycle_times.append(cycle_time_ms)
 
-    # Calculate average cycle time
-    return sum(cycle_times) / len(cycle_times)
+    return statistics.median(cycle_times)
 
 
 class TestOrchestratorScalability:
@@ -283,21 +308,21 @@ class TestOrchestratorScalability:
         Expected: < 100ms per cycle (micro-benchmark, no I/O overhead).
         """
         position_count = 1
-        iterations = BENCHMARK_ITERATIONS
+        iterations = _iterations_for(position_count)
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
+        cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 1 Position (Baseline)")
         print(f"{'='*60}")
-        print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
+        print(f"Median cycle time: {cycle_time_ms:.2f} ms")
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
         ceiling = CYCLE_TIME_CEILINGS_MS[1]
-        assert avg_cycle_time_ms < ceiling, (
+        assert cycle_time_ms < ceiling, (
             f"{position_count}-position cycle time too slow: "
-            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
+            f"{cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_cycle_time_5_positions(self):
@@ -307,21 +332,21 @@ class TestOrchestratorScalability:
         Expected: < 500ms per cycle (5x baseline with some overhead).
         """
         position_count = 5
-        iterations = BENCHMARK_ITERATIONS
+        iterations = _iterations_for(position_count)
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
+        cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 5 Positions")
         print(f"{'='*60}")
-        print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
+        print(f"Median cycle time: {cycle_time_ms:.2f} ms")
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
         ceiling = CYCLE_TIME_CEILINGS_MS[5]
-        assert avg_cycle_time_ms < ceiling, (
+        assert cycle_time_ms < ceiling, (
             f"{position_count}-position cycle time too slow: "
-            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
+            f"{cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_cycle_time_10_positions(self):
@@ -333,24 +358,24 @@ class TestOrchestratorScalability:
         **SLA Requirement:** Orchestrator cycle time < 5s for 10 positions.
         """
         position_count = 10
-        iterations = BENCHMARK_ITERATIONS
+        iterations = _iterations_for(position_count)
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
+        cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 10 Positions (SLA Target)")
         print(f"{'='*60}")
-        print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
+        print(f"Median cycle time: {cycle_time_ms:.2f} ms")
         print(f"Iterations: {iterations}")
         ceiling = CYCLE_TIME_CEILINGS_MS[10]
         print(f"SLA Requirement: < {ceiling:.0f} ms")
-        print(f"SLA Status: {'✓ PASS' if avg_cycle_time_ms < ceiling else '✗ FAIL'}")
+        print(f"SLA Status: {'✓ PASS' if cycle_time_ms < ceiling else '✗ FAIL'}")
         print(f"{'='*60}\n")
 
         # SLA requirement: < 5 seconds for 10 positions
-        assert avg_cycle_time_ms < ceiling, (
+        assert cycle_time_ms < ceiling, (
             f"SLA violation: {position_count}-position cycle time "
-            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
+            f"{cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_cycle_time_20_positions(self):
@@ -360,21 +385,21 @@ class TestOrchestratorScalability:
         Expected: < 10000ms (10 seconds) - should maintain sub-linear scaling.
         """
         position_count = 20
-        iterations = BENCHMARK_ITERATIONS
+        iterations = _iterations_for(position_count)
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
+        cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 20 Positions (Stress Test)")
         print(f"{'='*60}")
-        print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
+        print(f"Median cycle time: {cycle_time_ms:.2f} ms")
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
         ceiling = CYCLE_TIME_CEILINGS_MS[20]
-        assert avg_cycle_time_ms < ceiling, (
+        assert cycle_time_ms < ceiling, (
             f"{position_count}-position cycle time too slow: "
-            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
+            f"{cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_memory_usage_scaling(self):
@@ -390,29 +415,27 @@ class TestOrchestratorScalability:
         docstring). The name is kept so the baseline entry stays matched.
         """
         position_counts = [1, 5, 10, 20]
-        iterations = BENCHMARK_ITERATIONS
 
-        results = []
+        results: list[tuple[int, float]] = []
 
         print(f"\n{'='*60}")
         print("Orchestrator Scalability Analysis")
         print(f"{'='*60}")
 
         for count in position_counts:
-            avg_cycle_time_ms = _benchmark_orchestrator_cycle(count, iterations)
-            results.append({
-                "positions": count,
-                "cycle_time_ms": avg_cycle_time_ms,
-            })
+            cycle_time_ms = _benchmark_orchestrator_cycle(
+                count, _iterations_for(count)
+            )
+            results.append((count, cycle_time_ms))
 
-            print(f"{count} positions: {avg_cycle_time_ms:.2f} ms cycle time")
+            print(f"{count} positions: {cycle_time_ms:.2f} ms cycle time")
 
         print(f"{'='*60}")
 
         # Verify linear scaling (not exponential)
         # Calculate scaling factor: cycle_time(20) / cycle_time(1) should be <= 20x
-        baseline_time = results[0]["cycle_time_ms"]
-        max_time = results[-1]["cycle_time_ms"]
+        baseline_time = results[0][1]
+        max_time = results[-1][1]
         scaling_factor = max_time / baseline_time if baseline_time > 0 else 0
 
         print("\nScalability Analysis:")
@@ -440,7 +463,6 @@ class TestOrchestratorScalability:
         ``MAX_SCALING_FACTOR``.
         """
         position_counts = [1, 5, 10, 20]
-        iterations = BENCHMARK_ITERATIONS
 
         print(f"\n{'='*70}")
         print("Orchestrator Scalability Summary Report")
@@ -448,22 +470,24 @@ class TestOrchestratorScalability:
         print(f"{'Positions':<12} {'Cycle Time (ms)':<20} {'Status':<15}")
         print(f"{'-'*70}")
 
-        results = []
+        # (position count, average cycle time in ms). A dict keyed by strings
+        # would type as dict[str, float] and make the count a float, which is
+        # not a valid key into CYCLE_TIME_CEILINGS_MS.
+        results: list[tuple[int, float]] = []
 
         for count in position_counts:
-            avg_cycle_time_ms = _benchmark_orchestrator_cycle(count, iterations)
+            cycle_time_ms = _benchmark_orchestrator_cycle(
+                count, _iterations_for(count)
+            )
 
             # Status comes from the same map the assertions below use, so the
             # printed verdict cannot disagree with the one that fails the test.
             ceiling = CYCLE_TIME_CEILINGS_MS[count]
-            status = "✓ OK" if avg_cycle_time_ms < ceiling else "✗ OVER"
+            status = "✓ OK" if cycle_time_ms < ceiling else "✗ OVER"
 
-            print(f"{count:<12} {avg_cycle_time_ms:<20.2f} {status:<15}")
+            print(f"{count:<12} {cycle_time_ms:<20.2f} {status:<15}")
 
-            results.append({
-                "positions": count,
-                "cycle_time_ms": avg_cycle_time_ms,
-            })
+            results.append((count, cycle_time_ms))
 
         print(f"{'-'*70}")
 
@@ -472,8 +496,8 @@ class TestOrchestratorScalability:
         # two entries would otherwise be a NameError instead of a clear skip.
         scaling_factor = 0.0
         if len(results) >= 2:
-            baseline_time = results[0]["cycle_time_ms"]
-            max_time = results[-1]["cycle_time_ms"]
+            baseline_time = results[0][1]
+            max_time = results[-1][1]
             scaling_factor = max_time / baseline_time if baseline_time > 0 else 0.0
 
             print("\nScalability Metrics:")
@@ -490,15 +514,13 @@ class TestOrchestratorScalability:
         print(f"{'='*70}\n")
 
         over = [
-            (r["positions"], r["cycle_time_ms"])
-            for r in results
-            if r["cycle_time_ms"] >= CYCLE_TIME_CEILINGS_MS[r["positions"]]
+            (count, ms) for count, ms in results if ms >= CYCLE_TIME_CEILINGS_MS[count]
         ]
         assert not over, "cycle time over its ceiling at " + ", ".join(
             f"{n} positions ({ms:.2f}ms >= {CYCLE_TIME_CEILINGS_MS[n]:.0f}ms)"
             for n, ms in over
         )
-        measured_counts = {r["positions"] for r in results}
+        measured_counts = {count for count, _ms in results}
         missing = [c for c in position_counts if c not in measured_counts]
         assert not missing, f"counts not measured: {missing}"
         assert scaling_factor <= MAX_SCALING_FACTOR, (
