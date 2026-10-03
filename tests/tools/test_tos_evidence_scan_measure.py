@@ -4732,3 +4732,83 @@ def test_a_file_that_vanishes_between_the_exists_and_the_stat_is_not_fatal(
         blob["synthetic"]["action"] is None
     ), "no disposition without a size to report"
     assert not (out_dir / driver.LOCK_NAME).exists()
+
+
+def test_n1_an_argument_contradiction_writes_nothing_into_a_directory_that_exists(
+    tmp_path: Path,
+) -> None:
+    """Round-2 N1. The claim "an argument contradiction is refused before anything is
+    created and leaves nothing behind" was gated on `out_dir.exists()`, so it held only
+    for the one input the first test used — a directory that was not there yet.
+
+    `--delete-synthetic-on-success` is a RESUME flag, so by the time anyone passes it the
+    output directory normally holds the earlier steps, and a contradiction was dropping a
+    `refused` summary into it.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+    before = {p.name for p in out_dir.iterdir()}
+    assert any(
+        n.startswith("run-1d.") for n in before
+    ), "the first run really wrote one"
+
+    rc = _cli(
+        tmp_path,
+        "--steps",
+        "before,after",
+        "--keep-synthetic",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=synthetic,
+    )
+
+    assert rc == 1
+    assert {
+        p.name for p in out_dir.iterdir()
+    } == before, "a refused argument wrote into a directory it does not own"
+
+
+def test_n2_a_refusal_raised_inside_the_run_carries_its_reason(tmp_path: Path) -> None:
+    """Round-2 N2. `MeasureRefused` also comes from inside the run — `_spawn` cannot find
+    the interpreter, the host reader gives up — and the summary was the only place that
+    would say why, with `refusal: null`."""
+    out_dir = tmp_path / "out"
+
+    rc = _cli(
+        tmp_path,
+        "--python",
+        "definitely-not-a-real-interpreter",
+        out_dir=out_dir,
+        synthetic=tmp_path / "synth" / "synth-1d.sqlite3",
+    )
+
+    assert rc == 1
+    summary = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert summary["outcome"] == "refused"
+    assert "definitely-not-a-real-interpreter" in str(summary["refusal"])
+    assert summary["steps_completed"] == []
+
+
+def test_n3_a_preflight_refusal_still_says_what_it_was_going_to_run(
+    tmp_path: Path,
+) -> None:
+    """Round-2 N3. `plan_steps` has already run by the time the preflight refuses, so
+    `steps_planned: []` said "nothing was planned" about a run with a full plan."""
+    out_dir = tmp_path / "out"
+
+    assert (
+        _cli(
+            tmp_path,
+            "--min-available-gb",
+            "999999",
+            out_dir=out_dir,
+            synthetic=tmp_path / "synth" / "synth-1d.sqlite3",
+        )
+        == 1
+    )
+
+    summary = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert summary["steps_planned"] == ["build", "before", "after"]
+    assert summary["steps_remaining"] == ["build", "before", "after"]
+    assert summary["steps_completed"] == []

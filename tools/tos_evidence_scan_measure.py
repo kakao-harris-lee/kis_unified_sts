@@ -3483,6 +3483,18 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         print(message, flush=True)
 
     summary_written = False
+    #: True once the run is past the pre-launch refusals and owns an output directory.
+    #: NOT "this call created the directory": a resume runs into a directory that already
+    #: holds the earlier steps, and gating on `out_dir.exists()` made "an argument
+    #: contradiction leaves nothing behind" true only for the one input the test used, a
+    #: directory that was not there yet (round-2 N1). `--delete-synthetic-on-success` is a
+    #: RESUME flag, so the directory normally does exist, and its contradictions were
+    #: writing a `refused` summary into someone else's directory.
+    out_dir_ready = False
+    #: The planned step names, once they are known. A preflight refusal happens after
+    #: `plan_steps` has run, so reporting `[]` there would say "nothing was planned" about
+    #: a run that had a full plan (round-2 N3).
+    planned_names: list[str] = []
 
     def emit_summary(
         *,
@@ -3502,7 +3514,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         refused before the output directory existed) or the write itself failed.
         """
         nonlocal summary_written
-        if summary_written or not out_dir.exists():
+        if summary_written or not out_dir_ready:
             return None
         try:
             path = write_run_summary(
@@ -3615,6 +3627,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                     "throws away the half the measurement still needs"
                 )
         out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir_ready = True
 
         def estimator() -> SizeEstimate:
             """Deferred so the reference is scanned only when `build` is planned AND the
@@ -3642,6 +3655,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             boot_once_max_rows=args.boot_once_max_rows,
             batch_rows=args.batch_rows,
         )
+        planned_names = [step.name for step in steps]
         reader = reader or HostReader()
         record = preflight(
             run_id=run_id,
@@ -3788,14 +3802,17 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 log(disposition.message)
             summary_path = emit_summary(
                 outcome=_run_outcome(failure),
-                planned=[s.name for s in steps],
+                planned=planned_names,
                 completed=completed,
                 remaining=remaining,
                 created_by_this_run=created_synthetic,
                 exists_after_the_run=synthetic_present,
                 size_bytes=synthetic_bytes,
                 disposition=disposition,
-                refusal=None,
+                # A refusal can also come from INSIDE the run — `_spawn` cannot find the
+                # interpreter, the host reader gives up — and then this is the only place
+                # that would say why (round-2 N2).
+                refusal=(str(failure) if isinstance(failure, MeasureRefused) else None),
             )
             # Outside the summary write's success path: a closing summary that an ENOSPC
             # on one artifact can delete from the run log is not a closing summary.
@@ -3835,9 +3852,9 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         # docstring says so rather than promising an artifact that cannot exist.
         emit_summary(
             outcome=_run_outcome(exc),
-            planned=[],
+            planned=planned_names,
             completed=[],
-            remaining=[],
+            remaining=list(planned_names),
             created_by_this_run=False,
             exists_after_the_run=_exists_or_unknown(args.synthetic),
             size_bytes=None,

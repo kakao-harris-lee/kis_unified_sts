@@ -3881,7 +3881,7 @@ tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(134 건 = 11
 | **F1** | `--delete-synthetic-on-success` 의 거부가 **위치**(`after` ∈ `--steps`)만 본다. `--steps after` 로 통과해 `before` 미측정인 채 삭제(2회 재현). `matches_earlier_steps` 는 선행 아티팩트가 없으면 **공허하게 통과**한다 | **수용 · 성질로 교체.** 새 `recorded_pass()` + `_measures_this_file()`: 한 패스가 「측정됐다」는 것은 **이 실행이 완료했거나**, 그 패스의 `<step>-<days>d.resource.json` 이 이미 있고 **그 `argv` 의 `--db` 가 이 `--synthetic` 을 가리킨다**는 뜻이다(출력 디렉터리는 재사용될 수 있으므로 존재만으로는 부족하다). 거부는 `before`·`after` **둘 다** 그 성질을 만족할 때만 통과시킨다. 같은 성질을 `before_measured`/`after_measured` 로 `decide_synthetic_disposition` 에 넣어 **함수가 거부와 어긋날 수 없게** 했다 — 「다른 가드가 돌았으니 성립한다」는 바로 이 지적이 가리킨 실패 모드다. 테스트 3 건(거부 · `before` 가 디스크에 있으면 허용 · **다른 `--db` 를 가리키는 레코드는 허용하지 않음`) |
 | **F2** | 생성 분기가 `after_measured` 를 **읽지 않는다** — `--steps build` / `build,before` 가 방금 만든 파일을 `removed synthetic <path>` 한 줄과 함께 지운다(재현). PR 자신의 픽스처가 `--keep-synthetic` 으로 우회 | **수용 · 양쪽 분기에 같은 불변식.** 「계획 단계가 전부 돌았다」와 「쌍이 측정됐다」를 가르고, 후자가 아니면 **어느 분기에서도** `keep-unmeasured` 로 남긴다(크기 · 빠진 패스 · `--steps <missing>` · `rm` 포함). 우회하던 픽스처 셋에서 `--keep-synthetic` 을 **뺐다** — 이제 드라이버가 스스로 남긴다. 테스트: 파라미터화 6 조합(생성 여부 × 빠진 패스 셋) × 플래그 2 = 12 케이스가 전부 `keep-unmeasured` 여야 한다 |
 | **F3** | 새 `finally` 안의 `stat()` 과 맨 `unlink()` 가 무방비다. `OSError` 가 `finally` 밖으로 나가 진행 중인 `MeasureAborted` 를 **대체**하고, 요약 · 닫는 줄 · `measure-<days>d.log` 추가(버퍼된 로그의 **유일한** 쓰기) · `release_lock` 을 전부 건너뛴다 | **수용 · 둘 다 가드.** `unlink` 실패는 새 처분 `delete-failed`(오류 문자열 + 「아직 호스트에 있다」 + `rm`)가 되고 실행은 계속된다. `stat` 실패는 `size_bytes=None` 이고, `exists_after_the_run` 은 `false` 가 아니라 **`null`** 이다 — I/O 오류를 「파일이 없다」로 적지 않는다(§7.1.2 가 한 번 철회해야 했던 종류의 수). 테스트 3 건: `unlink` 가 `PermissionError`(요약·로그·락 전부 남고 rc 0) · `stat` 이 실패해도 **원래 outcome(`step-failed`)이 유지** · `exists()` 와 `stat()` 사이에 파일이 사라지는 경합 |
-| **F4** | `_run_outcome` 은 `"refused" 는 프리플라이트`라고 적는데, 프리플라이트 거부는 전부 inner `try` **앞에서** 나므로 요약이 **아예 안 써진다**(재현). 모듈 docstring 의 「각 실행은 요약을 쓴다」와 §7.1.25 의 필드 목록은 과장 | **수용 · 바깥 핸들러로 올렸다.** 거부도 요약을 쓴다 — 단 **출력 디렉터리까지 간 실행만**. 인자 모순은 `out_dir.mkdir` **전에** 거부되므로(note e) 디렉터리조차 만들지 않고 아무것도 남기지 않는다 — `argparse` 오류와 같다. 그 한계를 모듈 docstring · `_run_outcome` docstring · §7.1.9 · §7.1.25 **네 곳에 전부** 적었다. `refusal` 필드 추가. 테스트: 프리플라이트 거부 → 요약(`outcome: refused` + 사유) · 인자 거부 → **디렉터리 자체가 없음** · 넷 각각의 `outcome` |
+| **F4** | `_run_outcome` 은 `"refused" 는 프리플라이트`라고 적는데, 프리플라이트 거부는 전부 inner `try` **앞에서** 나므로 요약이 **아예 안 써진다**(재현). 모듈 docstring 의 「각 실행은 요약을 쓴다」와 §7.1.25 의 필드 목록은 과장 | **수용 · 바깥 핸들러로 올렸다.** 거부도 요약을 쓴다 — 단 **출력 디렉터리까지 간 실행만**. 인자 모순은 `out_dir.mkdir` **전에** 거부되므로(note e) 디렉터리조차 만들지 않고 아무것도 남기지 않는다 — `argparse` 오류와 같다. 그 한계를 모듈 docstring · `_run_outcome` docstring · §7.1.9 · §7.1.25 **네 곳에 전부** 적었다. `refusal` 필드 추가. 테스트: 프리플라이트 거부 → 요약(`outcome: refused` + 사유) · 인자 거부 → **디렉터리 자체가 없음** · 넷 각각의 `outcome`. ⚠ **이 처분 자체가 결함을 하나 들여왔다 — 2회차 N1 에서 잡혔다**(아래) |
 | **F5** | `keep_requested` 가 `not created_by_this_run` 블록 **뒤에** 있어, 재개 + `--keep-synthetic` 이 `keep-not-ours` 를 내고 「`--delete-synthetic-on-success` 를 쓰라」고 권한다 — **착수 거부가 금지하는 바로 그 조합**. 요약에는 `--keep-synthetic` 흔적이 없다 | **수용 · 분기 순서 교체.** `keep_requested` 를 생성 여부 분기 **앞**(미완료 분기 뒤)에서 본다. 메시지는 출처(「not built by this run」)와 미측정 경고를 **그대로 담되** 금지된 플래그는 권하지 않는다. 테스트 2 건(순수 함수 · CLI 재개) |
 | **F6** | 운영자에게 건네고 `delete_command` 로 저장하는 `rm` 이 `shlex.quote` 되지 않는다 — 공백·`$` 가 든 경로면 26–53 GB 정리가 두-피연산자 `rm` 이 된다 | **수용 · `_rm_command()` 로 일원화**하고 전부 `shlex.quote`. 테스트 2 건: 공백 든 경로의 모든 메시지 · 아티팩트의 `delete_command` 를 `shlex.split` 하면 경로 **한 개**가 나온다 |
 | **F7** | 「36–53 GB」가 **기수를 섞고 실제 하단을 놓쳤다** — 36 은 270 일치의 인덱스 **전** build 를 GiB 로 읽은 것이고(36.67 GiB = 39.37 GB), 보존된 270 일치 파일은 40.10 GB, 180 일치 26.73, 365 일치 53.23 GB 다. 원인은 `_GB = 1024**3` 이라 새 메시지 넷이 GiB 를 「GB」로 찍는 것. #850 F4 와 같은 부류 | **수용 · 둘 다 고쳤다.** ① 문서: 「**26–53 GB**(26.73 · 40.10 · 53.23, 십진)」 — §2 A1-b · INDEX · 드라이버 주석. ② 코드: 처분 메시지 전용 `_decimal_gb()` 를 두고 **십진 GB** 로 찍는다. 계획 본문이 십진이고 이 메시지들은 그 옆에서 읽히기 때문이다. ⚠ **문턱 문자열은 손대지 않았다** — 그 텍스트가 §7.1.23 프리플라이트 표에 **그대로 인용돼 있고**, 다른 변경의 부수로 고쳐 쓰는 것이 바로 인용이 썩는 방식이다(#850 F5 가 세운 규율). 그 통일은 별도 후속이고, `_decimal_gb` 의 docstring 이 왜 두 기수가 공존하는지 적는다 |
@@ -3914,3 +3914,23 @@ tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(158 건 = 14
 프리플라이트·워치독의 사람용 문자열은 여전히 GiB 를 「GB」로 찍는다. 이 PR 에서 고치지
 않은 이유는 그 텍스트가 §7.1.23 프리플라이트 표에 **그대로 인용돼 있기** 때문이다. 고칠
 때는 인용 쪽을 같은 커밋에서 갱신해야 한다.
+
+**2회차 — 이 처분들에 대한 재심에서 셋 더 (2026-10-03, 머리 `26379bb6`).**
+일곱 건과 노트 여덟 건은 전부 **검증 통과**했다. 새로 나온 셋 중 하나는 **F4 처분이
+직접 들여온 결함**이고, 그것이 이 라운드의 사실이다 — **고치면서 넣은 것은 고친 것과
+같은 패스로 심사되지 않는다.**
+
+| # | 지적 | 처분 |
+|---|---|---|
+| **N1** (MEDIUM) | F4 처분의 게이트가 `out_dir.exists()` 였다. 그래서 「인자 모순은 아무것도 남기지 않는다」는 **디렉터리가 아직 없을 때만** 참이다 — 그런데 `--delete-synthetic-on-success` 는 **재개 플래그**라 그 디렉터리는 보통 **이미 있다**. 재현: `--steps build` 로 `out/` 을 만든 뒤 같은 `out/` 에 `--keep-synthetic --delete-synthetic-on-success` → rc 1 **이면서** 새 `run-1d.<id>.summary.json`(`outcome: refused`)이 남는다. 그 주장을 거는 테스트는 `never-created` 를 썼다 — **주장이 성립하는 유일한 입력** | **수용 · 존재가 아니라 도달을 추적한다.** `out_dir_ready` 를 두고 **`out_dir.mkdir` 직후에** 참으로 만든다. 뜻은 「이 호출이 디렉터리를 만들었다」가 아니라 **「착수 전 거부를 전부 지나 이 디렉터리를 이 실행이 가진다」**이고, 그래서 이름도 `out_dir_created` 가 아니라 `out_dir_ready` 다(재개는 남의 디렉터리로 들어간다). 다섯 곳의 문구는 **그대로 두고 코드를 고쳤다**. 테스트: 선행 실행이 있는 디렉터리에 같은 모순 → rc 1 이고 **디렉터리 내용이 바이트 그대로** |
+| **N2** (LOW) | 안쪽 `finally` 가 `refusal=None` 을 넘긴다. `MeasureRefused` 는 실행 **안에서도** 난다(`_spawn` 이 인터프리터를 못 찾음 · 호스트 판독 포기) | **수용.** `isinstance(failure, MeasureRefused)` 이면 `str(failure)` 를 넘긴다. 테스트: `--python definitely-not-a-real-interpreter` → 요약의 `refusal` 이 그 이름을 담는다 |
+| **N3** (LOW) | 프리플라이트 거부 요약이 `steps_planned: []` 라고 적는데 `plan_steps` 는 **이미 돌았다** | **수용.** `planned_names` 를 올려 `plan_steps` 직후에 채우고 바깥 핸들러가 그것을 넘긴다. 거부 요약의 `steps_remaining` 도 계획 전체다. 테스트: 프리플라이트 거부 → `["build","before","after"]` |
+
+**변이 배터리 2회차 — 27 변이, 생존 0.** 1회차의 22 개에 N1·N2·N3 의 다섯을 더했다
+(`out_dir.exists()` 로 되돌리기 · `out_dir_ready` 를 처음부터 참으로 · `refusal=None` ·
+거부 요약의 `planned=[]` · `planned_names` 를 끝내 안 채우기).
+
+**게이트(3회차).** 두 테스트 파일 **3 회 연속 green**(161 건 = 143 + 18) · 변이 27/생존 0 ·
+`pytest tests/tools/test_tos_*.py` green · `ruff check .` PASS · `black --check` PASS ·
+`tos_firewall_check.py` PASS · `lint-imports` 3 contracts kept · mypy 툴 0 · 테스트 트리
+mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → digest 재도출 없음.**
