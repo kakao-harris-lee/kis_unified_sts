@@ -1,7 +1,7 @@
 # Performance Service Level Agreements (SLAs)
 
 **Version:** 2.0
-**Last Updated:** 2026-10-02
+**Last Updated:** 2026-10-03
 **Status:** Current
 
 This document tracks current runtime performance targets for the KIS Unified STS
@@ -280,6 +280,55 @@ raw values landed 63 points apart after correction:
 
 It is kept because the common-mode effect is real; medians are what damp the
 estimator's own variance.
+
+### An error needs both ratios (2026-10-03)
+
+A factor **below** 1.0 divides a raw change **up**. While the threshold was
+applied to the normalized ratio alone, the normalizer could manufacture an
+error out of a benchmark that was inside the threshold on the wall clock.
+
+Measured on one commit — `586c7bc2` (PR #851: one config YAML plus four docs
+files, none of them imported by anything in `tests/performance/`) — as the two
+attempts of CI run `37101956657`, twelve minutes apart:
+
+| attempt | runner | benchmark | raw | normalized | old verdict |
+| ---: | ---: | --- | ---: | ---: | --- |
+| 1 | x1.066 | `test_scalability_summary` | +177.8% | +160.5% | error |
+| 1 | x1.066 | `test_memory_usage_scaling` | +159.1% | +143.0% | error |
+| 2 | x0.533 | `test_memory_usage_scaling` | +10.2% | +106.6% | **error** |
+| 2 | x0.533 | `test_scalability_summary` | +6.2% | +99.2% | warning |
+| 2 | x0.533 | `test_end_to_end_latency_100_msgs` | **-3.5%** | **+81.0%** | warning |
+
+Attempt 2's error is the defect in one line: +10.2% on the wall clock, failed
+as a +106.6% regression because the divisor was 0.533.
+
+And x0.533 was not a runner speed. The sixteen comparable raw ratios behind it
+spanned x0.39–x1.10 in at least three clusters — redis x0.39–x0.49,
+orchestrator hot path x0.53–x0.54, orchestrator scalability x1.06–x1.10 — and
+the median landed on the middle one. A median over a multi-modal set is not a
+common-mode estimate. The same shape is what turns a benchmark that ran 3.5%
+**faster** into a "+81.0% slower" warning.
+
+So the **error** verdict now requires the raw ratio **and** the normalized
+ratio to breach the error threshold. Either one alone is a warning, reported as
+`UNCONFIRMED REGRESSION` naming which one breached. The normalizer keeps the
+power it was added for — acquitting a uniformly slow runner, where raw breaches
+and normalized does not — and loses the power it was never meant to have. The
+rule is a no-op whenever the factor is 1.0, because the two ratios are then the
+same number.
+
+The report header now also prints the band of raw ratios the factor was taken
+over, so a reader can see a non-common-mode factor without deriving it from the
+per-benchmark rows.
+
+**What this gives up, deliberately:** the raw ratio is now a *necessary*
+condition, so a genuine regression smaller than the raw error threshold can
+never fail the build however fast the runner was — on a x0.5 runner a true 1.9x
+regression reads as a warning. Accepted, because the alternative is convicting
+on an estimator whose own spread inside a single run is the x0.39–x1.10 above.
+The **warning** path is unchanged: it still fires off the normalized ratio
+alone, so the "+81.0% slower" line above is still printed. Closing that is
+separate work.
 
 ### Baseline format and provenance
 
