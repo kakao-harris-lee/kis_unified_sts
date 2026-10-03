@@ -3958,5 +3958,29 @@ mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → 
 
 | # | 무엇 | 왜 여기서 고치지 않았나 |
 |---|---|---|
-| A3-F1 | **`SchemaVersionRefused` 가 `archive failed` 로 분류된다.** `_PASSTHROUGH_REFUSALS`(`cold_backup.py`)에 없어 환경 고장으로 포장되는데, 실제로는 「대상이 구 스키마」라는 **판정**이고 조치는 재실행이 아니라 `migrate` 다. #840 2차 리뷰 F1 이 `EvidenceCorruption`·`CustodyError`·`KeyContinuityRefused` 를 같은 이유로 통과 목록에 넣었으니 **같은 부류의 네 번째**로 보인다 | 런타임 코드 변경이고, 이 PR 은 문서·호스트 좌표 전용이다. 접두를 바꾸면 런북 §5 표와 래퍼 분류표가 함께 움직이므로 한 레인에서 같이 다루는 편이 낫다. 지금은 §5 의 `archive failed` 행에 포인터를 달고 런북 §4-5-2 에 실측 줄을 남겨 두었다 |
+| A3-F1 ✅ | **`SchemaVersionRefused` 가 `archive failed` 로 분류된다.** `_PASSTHROUGH_REFUSALS`(`cold_backup.py`)에 없어 환경 고장으로 포장되는데, 실제로는 「대상이 구 스키마」라는 **판정**이고 조치는 재실행이 아니라 `migrate` 다. #840 2차 리뷰 F1 이 `EvidenceCorruption`·`CustodyError`·`KeyContinuityRefused` 를 같은 이유로 통과 목록에 넣었으니 **같은 부류의 네 번째**로 보인다 | 런타임 코드 변경이고, 이 PR 은 문서·호스트 좌표 전용이다. 접두를 바꾸면 런북 §5 표와 래퍼 분류표가 함께 움직이므로 한 레인에서 같이 다루는 편이 낫다. 지금은 §5 의 `archive failed` 행에 포인터를 달고 런북 §4-5-2 에 실측 줄을 남겨 두었다. **→ 착지: PR #855 (2026-10-03), 아래**  |
 | A3-F2 | **단일 장치 배치** — 세 보관 경로와 (아직 없는) 라이브 data dir 이 전부 `/dev/sdd` 다. `_free_space` 의 `st_dev` 묶기가 세 루트의 바닥을 한 측정으로 축약하고, §6 이 권하는 「다른 매체로 옮긴다」에 쓸 매체가 **없다** | 저장장치 추가는 운영자 결정이고 코드 문제가 아니다. 런북 §4-5-1 에 이탈로 등재했다 |
+
+##### ✅ A3-F1 착지 — PR #855 (2026-10-03)
+
+**네 번째도 같은 기준으로 처분했다.** `SchemaVersionRefused` 를
+`_PASSTHROUGH_REFUSALS` 에 넣어 `_stage` 가 타입 그대로 통과시키고, 디스패치의
+`_REFUSAL_PREFIXES` 에 **`migrate refused`** 를 더했다. 접두를 층 이름이 아니라
+**조치**로 지은 이유: 여기 어느 층도 구 스키마를 고칠 수 없고, 푸는 것은 그
+`--data-dir` 에 대한 운영자의 `migrate` CLI 뿐이다(`docs/runbooks/tos-paper-boot.md`
+§4-A). 산출물 거동은 #840 이 남기던 그대로이며(비압축 스냅숏·매니페스트·`gen{N}.verify`
+는 남고 `.tar.xz` 와 보고서만 없다) 이제 테스트가 그것을 고정한다.
+
+red 증명은 **몽키패치가 아니라 실제 v1 저장소**다 — 살아 있는 세트의 증거 파일을
+`PRAGMA user_version = 1` 로 되돌리면 스냅숏은 통과하고(`backup_set` 은 맨
+`sqlite3.connect` 로 사실만 읽는다) 아카이브의 체인 재검증이 저장소를 **생성**하면서
+거부한다. 수정 전 그 CLI 가 낸 줄은 런북 §4-5-2 ② 가 호스트에서 실측한 바로 그 줄이다.
+변이 둘로 가드가 각각 무는 것을 확인했다: 접두 행만 지우면 `failed —`(CLI 2건),
+통과 목록에서만 빼면 `archive failed`(CLI 2건 + ops 1건).
+
+⚠ **저장소 밖에 한 줄이 남았다.** 호스트 래퍼
+`~/.config/kis-probes/cold-backup-nightly.sh` 의 `classify()` 는 일반 패턴이 아니라
+**접두 리터럴 다섯 개를 열거**한다. 새 줄을 그 함수에 직접 먹여 측정한 결과
+`migrate refused` 는 `refused` 가 아니라 **`unclassified`** 로 간다(종료코드 1 과
+텔레그램은 그대로 — 조용하지는 않지만 라우팅이 틀리다). 래퍼는 이 저장소 밖이라 PR
+#855 가 건드리지 않았다. 런북 §4-5-4 에 등재했고, 넣을 한 줄은 거기 적어 두었다.

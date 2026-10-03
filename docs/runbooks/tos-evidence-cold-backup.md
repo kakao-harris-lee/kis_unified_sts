@@ -365,20 +365,24 @@ fuser -v ~/.local/state/tos/paper-data/*.sqlite3     # 비어 있어야 한다
 거부한다:
 
 ```
-cold-backup: archive failed — SchemaVersionRefused: evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 — run the operator `migrate` CLI (tos_runtime.operations.schema_migrations.apply_migrations) before booting; boot never auto-applies a migration
+cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 — run the operator `migrate` CLI (tos_runtime.operations.schema_migrations.apply_migrations) before booting; boot never auto-applies a migration
 ```
 
 그 경우에는 `docs/runbooks/tos-paper-boot.md` 의 `migrate` 절차를 **그 corpus 에** 먼저
 돌려야 한다.
 
-⚠ 위 줄에 대해 **두 가지를 기록해 둔다.** ① 접두가 `archive failed` 다 — 예외 이름이
-`SchemaVersionRefused` 인데도 `_PASSTHROUGH_REFUSALS` 에 없어 환경 고장으로 분류된다.
-조치(마이그레이션)는 §5 의 그 행이 가리키는 쪽과 같지만, 한 단어로는 「호스트가 깨졌다」로
-읽힌다. **분류를 고치는 것은 이 PR 의 범위 밖**이라 §5 에 포인터를 달고 계획
-§7.1.27 A3-F1 로 후속 등재했다. ② 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은 완전하고,
+✅ **① 접두는 고쳤다 — PR #855 (2026-10-03, 계획 §7.1.27 A3-F1).** 실측 당시의 줄은
+`cold-backup: archive failed — SchemaVersionRefused: …` 였다. 예외 이름 자체가 판정인데도
+`_PASSTHROUGH_REFUSALS` 에 없어 환경 고장으로 포장됐고, 한 단어로는 「호스트가 깨졌다」로
+읽혔다 — §5 의 `archive failed` 행이 안내하는 「다시 돌린다」는 on-disk
+`PRAGMA user_version` 을 바꾸지 못한다. 이제 그 예외는 목록을 통과하고 디스패치가
+`migrate refused` 접두를 붙인다(§5 의 새 행). ⚠ **호스트 래퍼는 아직 이 접두를 모른다 —
+§4-5-4 의 경고를 볼 것.**
+
+② 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은 완전하고,
 잃은 것은 압축본뿐이다. 실측에서 `gen1/` 과 매니페스트가 남았고 `.tar.xz` 는 없었으며
 `gen1.verify` 가 **남았다**(거부 원인의 증거). 다음 실행은 그 번호를 **건너뛰어** gen2 를
-썼다.
+썼다. **이 거동은 PR #855 가 바꾸지 않았고, 이제 테스트가 고정한다.**
 
 ### 4-5-3. 남은 것은 둘 — crontab 한 줄과 genesis
 
@@ -464,6 +468,26 @@ CRON_TZ=Asia/Seoul
 | `failed` | 1 | `cold-backup: <stage> failed — …` | **보냄** | 실행은 적법했고 환경이 무너졌다. 호스트를 고친 뒤 다시 돈다(다음 세대로 간다) |
 | `unclassified` | 1 | 위 어느 형태도 아닌 줄 | **보냄** | 래퍼가 모르는 형태다. 못 알아본 줄을 깨끗한 분류로 접어 넣지 않는다 |
 | `ABORT` | **2** | 로그 디렉터리 생성 실패 · 락 파일 열기 실패 · 모르는 인자 · 인자 과다 · mktemp 실패 | ⛔ **못 보냄** | 통지 수단 자체를 세우지 못한 경우다. 앞의 넷은 **stderr 한 줄**뿐이고(로그 파일에도 안 남는다), mktemp 실패만 `log()` 를 거쳐 **래퍼 로그와 stdout 양쪽에** 남는다. 어느 쪽이든 cron 리다이렉트가 받는 곳은 `cold-backup.cron.log` 다 — **§4-5-6 의 아침 확인이 이것을 잡는 유일한 수단이다** |
+
+⚠ **래퍼의 `classify()` 는 일반 패턴이 아니라 접두 리터럴을 열거한다 (2026-10-03 실측,
+PR #855).** 위 `refused` 행의 `[<layer> ]refused` 는 **이상형**이고, 실제 코드는 다섯 줄
+(`refused` · `snapshot refused` · `archive refused` · `integrity refused` ·
+`custody refused`)을 그대로 적어 놓은 `case` 다. PR #855 가 더한 **여섯 번째 접두
+`migrate refused` 는 그 열거에 없어 `unclassified` 로 간다** — 그 줄을 `classify()` 에
+직접 먹여 확인했다(`integrity refused` → `refused` · `archive failed` → `failed` 와
+나란히). 종료코드 1 과 텔레그램 한 줄은 그대로 가고 「래퍼가 모르는 형태다」로 보고되므로
+**조용하지는 않지만 라우팅이 틀리다**: §5 가 「재실행이 답이 아니다」라고 적은 둘 중
+하나가 「호스트를 고쳐라」 쪽으로 읽힌다.
+
+래퍼는 이 저장소 밖에 있어 PR #855 가 건드리지 않았다. 남은 조치는 `classify()` 의
+`case` 에 한 줄을 더하는 것이고, **운영자가 넣는다**:
+
+```sh
+    "cold-backup: migrate refused — "*)   printf 'refused\n' ;;
+```
+
+그 줄을 넣기 전까지 이 접두는 `UNCLASSIFIED` 로 온다 — 받으면 §5 의 `migrate refused`
+행으로 간다.
 
 통지가 **빠질 수 있는** 두 경우도 적어 둔다: `.env` 의 briefing 두 줄이 없으면 실행은
 계속되고 로그에 `notify skipped: briefing credentials not found` 가 남는다. curl 이
@@ -626,9 +650,10 @@ jq '{generation, archive_bytes, chain_verified, files_verified,
 | `cold-backup: archive refused — …` | 압축본이 되읽히지 않았다 **또는 검증 디렉터리가 이미 있다** | 아래 |
 | `cold-backup: integrity refused — …` | ⛔ **아카이브의 증거 체인이 재검증되지 않았다** | **재실행이 답이 아니다** — 아래 「압축본을 신뢰하지 않는다」 |
 | `cold-backup: custody refused — …` | 커스터디 키를 읽을 수 없거나 세대가 이어지지 않는다 | 경로·소유자·0600 모드·`evidence.key.<generation>` 존재 확인(§1). **스냅숏 전에** 잡힌다 |
+| `cold-backup: migrate refused — …` | ⛔ **대상 저장소가 이 코드와 다른 스키마 버전이다**(보통 `BEHIND`) | **재실행이 답이 아니다** — 재실행은 on-disk `PRAGMA user_version` 을 바꾸지 못한다. `docs/runbooks/tos-paper-boot.md` §4-A 의 `migrate` 를 **그 `--data-dir` 에** 돌린 뒤 다시 돈다. 메시지가 조치를 그대로 말한다. 비압축 스냅숏·매니페스트·`gen{N}.verify` 는 **남는다**(없는 것은 압축본과 보고서뿐). ⚠ 래퍼 분류는 §4-5-4 |
 | `cold-backup: snapshot failed — OperationalError: database is locked` | **런타임이 아직 떠 있다** — §1 전제 1 위반 | 런타임을 멈추고 다시 돌린다. cron 시각을 당겼는지 본다 |
 | `cold-backup: snapshot failed — OSError: … No space left …` | 복사 도중 디스크가 찼다 | §6. 남은 `gen{N}/` 는 **지우지 않는다** — 다음 실행은 그 번호를 건너뛴다 |
-| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다). ⚠ `SchemaVersionRefused` 가 이 접두로 나온다 — 환경 고장이 아니라 **대상이 구 스키마**라는 판정이고, 조치는 재실행이 아니라 `tos-paper-boot.md` 의 `migrate` 다(§4-5-2 · 계획 §7.1.27 A3-F1) |
+| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다). ⚠ 2026-10-03 **이전에는** `SchemaVersionRefused` 도 이 접두로 나왔다 — 그것은 환경 고장이 아니라 판정이고, 지금은 위의 `migrate refused` 행이다(PR #855 · §4-5-2 ② · 계획 §7.1.27 A3-F1) |
 | `cold-backup: failed — <ExcType>: …` | 단계 이름이 없는 형태 — 디스패치가 분류표의 어느 접두에도 못 넣은 예외다 | 위 행들과 같은 「환경」 취급이되, **예외 타입을 그대로 보고한다**. 분류표에 빠진 판정일 수 있다 |
 | `cold-backup: config failed — …` | 설정 로더가 이 모듈이 모르는 방식으로 깨졌다 | 메시지의 예외 타입을 그대로 보고한다 — 결함일 수 있다 |
 
@@ -643,6 +668,9 @@ jq '{generation, archive_bytes, chain_verified, files_verified,
   신뢰하지 않는다**. 비압축 사본으로 `restore-drill` 을 돌려 원본 쪽이 멀쩡한지 먼저 가린다.
   **`integrity refused` 는 특히 재실행으로 지나가지 말 것** — 라이브 체인 자체가 의심된다는
   뜻일 수 있다.
+- **재실행이 답이 아닌 접두는 둘이다**: `integrity refused`(압축본을 신뢰하지 않는다)와
+  `migrate refused`(대상이 구 스키마 — `migrate` 를 먼저 돌린다). 나머지는 원인을 고치고
+  다음 밤으로 넘긴다.
 - 같은 세대의 `.tar.xz` 가 이미 있으면 덮어쓰지 않고 거부한다. 재시도는 그 파일을 치우거나
   다음 세대로 간다.
 
