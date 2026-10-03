@@ -707,8 +707,13 @@ jq '{generation, archive_bytes, chain_verified, files_verified,
 바닥 · 커스터디 · 산출물 충돌)는 정말로 아무것도 쓰지 않는다. 그러나 **아카이브 단계에서
 나오는 거부**(`archive refused` · `integrity refused` · `migrate refused` ·
 `schema refused`)는 스냅숏이 **이미 끝난 뒤**다 — 비압축 `gen{N}/` 과 매니페스트가 완전한
-채로 남고, `verify_root/gen{N}.verify` 도 거부 원인의 증거로 남는다(성공했을 때만 지운다).
-없는 것은 `.tar.xz` 와 보고서뿐이다.
+채로 남는다. 없는 것은 `.tar.xz` 와 보고서다.
+
+검증 스크래치 `verify_root/gen{N}.verify` 는 **압축 해제가 시작된 뒤의 거부에만** 남는다
+(성공했을 때만 지우므로): `integrity`·`migrate`·`schema` refused 는 셋 다 해제본 위에서
+저장소를 열다가 나오므로 항상 남고, `archive refused` 는 **경우가 갈린다** — xz 스트림
+자체가 깨진 경우는 해제 전에 끊기므로 아무것도 만들지 않는다(그 거부 문구가 경로를
+말하지 않는 것이 그 표시다).
 
 ⚠ **그래서 거부가 반복되면 디스크가 는다.** 다음 실행은 **다음 세대 번호**를 쓰므로,
 무인 레인을 거부하는 대상에 걸어 두면 **밤마다 비압축 사본이 하나씩 쌓인다**. 사람이
