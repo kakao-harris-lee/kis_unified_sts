@@ -168,30 +168,48 @@ _GB = 1024.0**3
 
 # --------------------------------------------------------------------------------------
 # Units in human-facing strings. One rule, decided by HOW the number was computed, not by
-# which function prints it (round-3 follow-up to review #853 F7, plan §7.1.26).
+# which function prints it. This is the follow-up review #853 F7 registered and plan
+# §7.1.26 「남는 후속 하나」 held open; review #858 then added the ``detail_bytes`` and
+# step-log halves below.
 #
 #   * Divided by ``_GB`` (1024**3) -> labelled **GiB**. Every such number here is a host
 #     quantity that is binary at the source: ``/proc/meminfo`` reports KiB, the operator's
-#     start floors ("available 6 GB / Swap free 2 GB", ~/.claude/CLAUDE.md) are the
-#     kernel's own base, and the disk check is sized off ``--expect-gb`` x ``_GB``. The
-#     VALUE does not move; only the label stops naming the wrong base.
+#     start floors ("available 6 GB / Swap free 2 GB", ~/.claude/CLAUDE.md) are read in
+#     that same binary base, and the disk check is sized off ``--expect-gb`` x ``_GB``.
+#     The VALUE does not move; only the label stops naming the wrong base.
 #   * A FILE SIZE in an operator-facing disposition message -> ``_decimal_gb`` and
 #     labelled **GB** (1e9), because it is read next to the growth plan's own file sizes
 #     (26.73 / 40.10 / 53.23 GB).
 #
-# What is deliberately NOT touched: the ``--*-gb`` flag spellings, their GiB semantics,
-# and the ``*_gb`` keys in ``preflight.json`` / ``watchdog.jsonl``. Those are the names
-# every artifact and plan citation already written is keyed by; the defect was the label
-# on a printed number, and that is all that changes.
+# What is deliberately NOT touched, because these are NAMES in machine-read artifacts
+# rather than labels on a printed number: the ``--*-gb`` flag spellings and their GiB
+# semantics; the ``*_gb`` keys in ``preflight.json``, ``watchdog.jsonl`` and
+# ``ABORTED-*.json`` (the last carries them inside ``last_samples``); and ``max_rss_mb``
+# in the resource artifacts, which is ``bytes / 1024**2`` — MiB under a ``_mb`` spelling,
+# the same shape of mismatch, kept because plan §7.1.15 and §7.1.23 already cite that
+# field. Every artifact and plan citation already written is keyed by these names.
 #
-# Enforcement is a property, not a list of places: ``test_units`` in
-# ``tests/tools/test_tos_evidence_scan_measure.py`` reads back every byte-valued string a
-# run produces and checks the number against the label's own base, so a new check that
-# prints "GB" off ``_GB`` fails without anyone having to remember this comment.
+# One carve-out, named rather than left to be noticed: ``disk_free`` prints a FILE size
+# (``predicted … GiB``) in the binary base, not through ``_decimal_gb``. Its three numbers
+# — free, needed, predicted — are read against each other in one row, and two of them come
+# from ``statvfs`` and ``--expect-gb`` x ``_GB``; rendering the third in a different base
+# would make that row arithmetic nobody can do by eye. One comparison, one base. The raw
+# bytes sit beside all three (``measured_bytes`` / ``floor_bytes`` / ``detail_bytes``), so
+# a reader who wants decimal GB divides, rather than trusting a mixed row.
 #
-# The strings below are quoted verbatim in plan §7.1.12 / §7.1.15 / §7.1.23 preflight
-# tables. Those quotations keep their 2026-10-02-and-earlier wording and carry a dated
-# annotation instead of being rewritten (the §7.1.24 F5 discipline).
+# Enforcement is a property, not a list of places, but the swept surface is finite and is
+# this: the ``PreflightCheck`` fields of a preflight record (``measured`` / ``floor`` /
+# ``detail``, each against its ``*_bytes`` companion), both ``in_run_breach`` reasons, the
+# per-step completion log line, ``--help``, and ``_decimal_gb``. Section "Units — a printed
+# byte quantity must name the base it was computed in" in
+# ``tests/tools/test_tos_evidence_scan_measure.py`` holds those five tests. NOT swept:
+# ``source`` strings, disposition message bodies (``decide_synthetic_disposition`` has its
+# own tests), and the prose in docstrings and comments.
+#
+# The threshold strings this rule governs were quoted verbatim in the plan §7.1.12 /
+# §7.1.15 / §7.1.23 preflight tables as they read before 2026-10-03. Those quotations
+# keep that wording and carry a dated annotation instead of being rewritten (the
+# §7.1.24 F5 discipline).
 # --------------------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------------------
@@ -2263,7 +2281,7 @@ def run_step(
     _write_resource_artifacts(result, out_dir=out_dir, days=days)
     log(
         f"{step.name}: rc={result.returncode} wall={result.wall_seconds:.2f}s "
-        f"maxrss={result.max_rss_bytes / (1024 * 1024):.1f}MB "
+        f"maxrss={result.max_rss_bytes / (1024 * 1024):.1f} MiB "
         f"fs_inputs={result.fs_inputs_blocks} blocks"
     )
     return result
@@ -2346,6 +2364,11 @@ class PreflightCheck:
     #: can be cited arithmetically instead of by re-parsing a formatted "12.00 GiB".
     measured_bytes: int | None = None
     floor_bytes: int | None = None
+    #: Same, for the one quantity ``detail`` carries where it carries exactly one. Without
+    #: it a ``detail`` string could be rebased to 1e9 under a "GiB" label and nothing would
+    #: notice — the units property test has no second number to check the division against
+    #: (review #858 F1). ``None`` where ``detail`` is prose or empty.
+    detail_bytes: int | None = None
     #: ``False`` when the check was SKIPPED because the run is already refused for another
     #: reason — never a quiet pass. A not-evaluated check is excluded from the refusal
     #: list (it would add a second, bogus reason) and visible in the record, and
@@ -2878,6 +2901,7 @@ def preflight(
                 floor_bytes=guard.min_swap_free_bytes,
                 source="same operator rule — the clause plan §7.1.7 deviation 11-b records as missing",
                 detail=f"SwapTotal {info['SwapTotal'] / _GB:.2f} GiB",
+                detail_bytes=info["SwapTotal"],
             )
         )
 
@@ -3028,6 +3052,9 @@ def preflight(
                         f"({estimate.predicted_rows} rows) from {estimate.reference}"
                     )
                 ),
+                detail_bytes=(
+                    None if estimate is None else estimate.predicted_file_bytes
+                ),
             )
         )
 
@@ -3143,8 +3170,8 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=DEFAULT_MIN_AVAILABLE_GB,
         help=(
-            "Start floor on MemAvailable, in GiB (1024**3 — the base /proc/meminfo "
-            "reports in). Default from the operator's global build rule."
+            "Start floor on MemAvailable, in GiB (1024**3; /proc/meminfo reports KiB, "
+            "the same binary base). Default from the operator's global build rule."
         ),
     )
     parser.add_argument(
