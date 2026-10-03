@@ -22,11 +22,12 @@ from pathlib import Path
 import pytest
 from tos_runtime.compose import _backup_dispatch, cli
 from tos_runtime.custody.ports import CustodyLoadRefused
-from tos_runtime.evidence.store import EvidenceCorruption
+from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION, EvidenceCorruption
 from tos_runtime.operations import cold_backup as cold_backup_module
 from tos_runtime.operations.backup_archive import BackupArchiveRefused
 from tos_runtime.operations.cold_backup import FilesystemFreeSpace
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 from ..engine.conftest import FixedKeyProvider
 from ..operations.test_backup_set import _build_live_set
@@ -173,6 +174,13 @@ def test_an_unfilled_config_exits_one_rather_than_backing_up_somewhere_invented(
             KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
             "cold-backup: custody refused —",
         ),
+        (
+            SchemaVersionRefused(
+                "evidence: on-disk schema user_version=1 is BEHIND this code's "
+                "schema_version=2"
+            ),
+            "cold-backup: migrate refused —",
+        ),
     ],
 )
 def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
@@ -182,9 +190,11 @@ def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
     refusal: Exception,
     expected_prefix: str,
 ) -> None:
-    """Five refusal families, five prefixes — a cron mail says which layer decided and the
+    """Six refusal families, five prefixes — a cron mail says which layer decided and the
     runbook §5 table routes by that word. ``integrity refused`` especially must not read as
-    ``failed``: "do not trust this copy" is not "re-run it"."""
+    ``failed``: "do not trust this copy" is not "re-run it". ``migrate refused`` is the same
+    shape one layer further out: the target is at an older schema, and the action is the
+    operator's ``migrate`` CLI, not another night of the same cron line."""
     live_dir = _prepare(tmp_path, monkeypatch)
 
     def _raise(*_args: object, **_kwargs: object) -> None:
@@ -200,6 +210,62 @@ def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
     assert "failed —" not in err
     assert "Traceback" not in err
     assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
+    assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
+
+
+def _stamp_evidence_schema_version(live_dir: Path, version: int) -> None:
+    """Put the live set's evidence file back at ``version`` on disk, nothing else.
+
+    ``backup_set`` reads its evidence facts with a bare ``sqlite3.connect`` and never
+    constructs a :class:`~tos_runtime.evidence.store.SqliteEvidenceStore`, so the snapshot
+    still succeeds against an older schema. The archive's third check does construct one, out
+    of the decompressed copy — which is where the refusal comes from, and why the whole
+    durable set has already been copied by the time it arrives.
+    """
+    conn = sqlite3.connect(str(live_dir / "evidence.sqlite3"))
+    try:
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_an_older_evidence_schema_is_a_migrate_verdict_not_an_archive_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real store one schema version behind, with nothing monkeypatched.
+
+    This is the state measured on the deploy host: every boot-proof corpus there is at
+    evidence schema v1 while ``EVIDENCE_SCHEMA_VERSION`` is 2 (runbook
+    ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2 ②, read-only survey 2026-10-03), and
+    the line it produced was ``cold-backup: archive failed — SchemaVersionRefused: …``. That
+    prefix sent the operator to the ``archive failed`` row of the runbook's §5 table — "the
+    host broke, fix it and re-run" — when re-running cannot change the on-disk schema. It is a
+    verdict by :data:`~tos_runtime.operations.cold_backup._PASSTHROUGH_REFUSALS`'s own
+    criterion, so it keeps its own prefix and the message names the action (plan §7.1.27
+    A3-F1).
+    """
+    live_dir = _prepare(tmp_path, monkeypatch)
+    _stamp_evidence_schema_version(live_dir, EVIDENCE_SCHEMA_VERSION - 1)
+
+    exit_code = cli.main(_argv(tmp_path, live_dir))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("cold-backup: migrate refused —")
+    assert "failed —" not in err
+    assert "Traceback" not in err
+    assert len(err.strip().splitlines()) == 1
+    # The message itself routes: the operator runs `migrate` on that data dir.
+    assert "is BEHIND this code's schema_version" in err
+    assert "`migrate` CLI" in err
+    # Unchanged by this wave, and stated rather than assumed: the uncompressed snapshot is
+    # already complete when the archive refuses, and the verify scratch is kept as the
+    # evidence of why (runbook §4-5-2 ②, measured on the host).
+    assert (tmp_path / "backups" / "gen1" / "evidence.sqlite3").is_file()
+    assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
+    assert (tmp_path / "verify" / "gen1.verify").is_dir()
+    assert not (tmp_path / "cold" / "gen1.set.tar.xz").exists()
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
 
 

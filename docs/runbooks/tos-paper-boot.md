@@ -476,8 +476,10 @@ done
 운영자 결정 둘이 들어와 `cold-backup` 은 **쓸 수 있는 상태**가 됐다:
 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 과 세 보관 경로가 만들어졌고,
 `minimum_free_bytes` 는 **53687091200**(50 GiB)으로 채워졌으며, 대상은 **상주 paper
-런타임의 `~/.local/state/tos/paper-data`** 다(2026-10-06 genesis 예정). 남은 것은
-crontab 한 줄(운영자)과 그 genesis(ops-paper 레인) 둘이다. 호스트에 무엇이 있고 켜는 데
+런타임의 `~/.local/state/tos/paper-data`** 다(2026-10-06 genesis 예정). 같은 날
+**16:13 KST 에 운영자가 crontab 줄도 넣었으므로**(`0 18 * * 1-5` · `CRON_TZ=Asia/Seoul`),
+**남은 것은 그 genesis 하나다**(ops-paper 레인). 이 문단은 한동안 「남은 것 둘」이라고
+적고 있었고 16:13 뒤로 거짓이었다 — PR #855 가 정정했다. 호스트에 무엇이 있고 켜는 데
 무엇이 남았는지는 `docs/runbooks/tos-evidence-cold-backup.md` §4-5 에 있다.
 
 ⚠ 그 절이 함께 기록한 것: **이 호스트의 1회성 corpus 12개는 전부 증거 스키마 v1 이라,

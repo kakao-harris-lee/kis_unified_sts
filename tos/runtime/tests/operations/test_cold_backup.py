@@ -42,6 +42,7 @@ from tos_runtime.operations.cold_backup import (
     load_cold_backup_config,
 )
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 from .conftest import FixedKeyProvider
 from .test_backup_set import _build_live_set
@@ -493,6 +494,9 @@ def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
         EvidenceCorruption("chain digest mismatch at seq 7"),
         CustodyLoadRefused("no evidence.key.<generation> files found"),
         KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
+        SchemaVersionRefused(
+            "evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2"
+        ),
     ],
 )
 def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
@@ -502,6 +506,11 @@ def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
     can reach is the chain failing to re-verify out of the archive — "**do not trust this
     copy**". Wrapping that as a stage failure filed it under "the host broke, fix it and
     re-run", the wrong instruction in the one case where re-running is not the answer.
+
+    :class:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused` is the same criterion
+    applied a fourth time (plan §7.1.27 A3-F1): the archive's chain re-verification constructs
+    a store out of the decompressed copy, and an older on-disk schema is a judgement about
+    the TARGET, not about the host. Re-running cannot change it; ``migrate`` can.
     """
     live_dir = _live(tmp_path)
 

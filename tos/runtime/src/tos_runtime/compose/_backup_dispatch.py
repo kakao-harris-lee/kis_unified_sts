@@ -55,6 +55,7 @@ from tos_runtime.operations.cold_backup import (
     load_cold_backup_config,
 )
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 if TYPE_CHECKING:
     # TYPE_CHECKING-only: `cli.py` imports THIS module, so a top-level import of its
@@ -121,6 +122,13 @@ def cold_backup_args(namespace: argparse.Namespace) -> ColdBackupArgs:
 #: re-verify means "do not trust this copy", and filing it under "the host broke, re-run"
 #: was the wrong instruction in the single case where re-running is not the answer (review
 #: round 2, F1).
+#:
+#: ``migrate refused`` names an ACTION rather than a layer, and deliberately: a store at an
+#: older schema is not something any layer here can fix, and the one thing that resolves it
+#: is the operator's ``migrate`` CLI run against that ``--data-dir``
+#: (``docs/runbooks/tos-paper-boot.md`` §4-A). It reached the host as ``archive failed``
+#: (plan §7.1.27 A3-F1, runbook ``tos-evidence-cold-backup.md`` §4-5-2 ②), which routed to
+#: "fix the host and re-run" — a re-run cannot change an on-disk ``PRAGMA user_version``.
 _REFUSAL_PREFIXES: tuple[tuple[type[BaseException], str], ...] = (
     (ColdBackupRefused, "refused"),
     (BackupSetRefused, "snapshot refused"),
@@ -128,6 +136,7 @@ _REFUSAL_PREFIXES: tuple[tuple[type[BaseException], str], ...] = (
     (EvidenceCorruption, "integrity refused"),
     (KeyContinuityRefused, "custody refused"),
     (CustodyError, "custody refused"),
+    (SchemaVersionRefused, "migrate refused"),
 )
 
 
@@ -151,9 +160,13 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
 
     * **Refused** — a verdict. :data:`_REFUSAL_PREFIXES` gives each type its own prefix
       (``refused`` / ``snapshot refused`` / ``archive refused`` / ``integrity refused`` /
-      ``custody refused``) so the one line says which layer decided, and the runbook's §5
-      table routes by that word. ``integrity refused`` is NOT a re-run: it means the
-      archived evidence chain did not verify.
+      ``custody refused`` / ``migrate refused``) so the one line says which layer decided —
+      or, for ``migrate refused``, what to do — and the runbook's §5 table routes by that
+      word. Two of them are NOT a re-run:
+      ``integrity refused`` means the archived evidence chain did not verify, and
+      ``migrate refused`` means the target is at an older schema — the operator runs the
+      ``migrate`` CLI on that ``--data-dir``. In the second case the uncompressed snapshot
+      is already complete and is left in place; only the compressed copy is missing.
     * **Failed** — the run was admissible and the environment broke underneath it: the
       runtime still holding a sqlite handle (the precondition no code can check), a disk
       filling mid-copy, an unparseable manifest. Those arrive as
