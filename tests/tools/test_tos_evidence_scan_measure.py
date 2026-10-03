@@ -4864,16 +4864,29 @@ def _unit_tokens(text: str) -> list[tuple[float, str]]:
     return [(float(number), unit) for number, unit in _UNIT_TOKEN.findall(text)]
 
 
-def _bases_disagree(raw: int, unit: str) -> bool:
-    """True when `raw` prints different digits in the binary and decimal base of `unit`.
+def _bases_disagree(raw: int, unit: str, *, places: int = 2) -> bool:
+    """True when `raw` prints different digits in the binary and decimal base of `unit`,
+    rounded to `places` decimals.
 
-    The anti-trivial check. Below roughly 0.07 of a unit the 7.4 % gap between the two
-    bases vanishes at two decimals, and an assertion about such a number proves nothing
-    about which base produced it.
+    The anti-trivial check: an assertion about a number that renders identically in both
+    bases proves nothing about which base produced it. How small "too small" is depends on
+    both the prefix and the precision, because the gap is `1024**e / 1000**e` — 2.4 % at
+    K, 4.9 % at M, 7.4 % at G. At two decimals the quantity has to clear roughly 0.21 KiB,
+    0.10 MiB or 0.07 GiB; at one decimal, ten times that.
+
+    `places` is not decoration. The step log prints peak RSS at `:.1f`, and a guard asked
+    at `:.2f` there would wave through a value the assertion beside it cannot tell apart —
+    half a MiB is `0.50` against `0.52` at two decimals and `0.5` against `0.5` at one
+    (#858 round 3 M2).
+
+    The two renderings are compared, not assigned to roles, so there is no binary/decimal
+    branch to get backwards: `GiB` and `GB` of the same byte count differ in exactly the
+    same way, whichever the label claims.
     """
-    binary, decimal = (1024, 1000) if unit.endswith("iB") else (1000, 1024)
     exponent = {"K": 1, "M": 2, "G": 3}[unit[0].upper()]
-    return f"{raw / binary**exponent:.2f}" != f"{raw / decimal**exponent:.2f}"
+    binary = f"{raw / 1024**exponent:.{places}f}"
+    decimal = f"{raw / 1000**exponent:.{places}f}"
+    return binary != decimal
 
 
 def test_every_byte_quantity_in_the_preflight_record_names_its_own_base(
@@ -5021,9 +5034,9 @@ def test_the_step_log_line_names_its_own_base(tmp_path: Path) -> None:
     assert len(tokens) == 1, line
     number, unit = tokens[0]
     assert unit == "MiB", line
-    assert _bases_disagree(result.max_rss_bytes, unit), (
+    assert _bases_disagree(result.max_rss_bytes, unit, places=1), (
         f"the child peaked at {result.max_rss_bytes} bytes, which prints the same "
-        "digits as MiB and MB — allocate more in the child"
+        "digits as MiB and MB at one decimal — allocate more in the child"
     )
     assert number == round(result.max_rss_bytes / _UNIT_BASE[unit], 1), line
 
@@ -5050,6 +5063,22 @@ def test_the_cli_help_does_not_label_a_gib_default_as_gb(
     assert units == {"GiB"}, units
     for flag in ("--min-available-gb", "--min-swap-free-gb", "--expect-gb"):
         assert flag in out
+
+
+def test_the_anti_trivial_guard_is_asked_at_the_precision_the_assertion_uses() -> None:
+    """`_bases_disagree` is what keeps the other tests from passing on a degenerate input,
+    so its own precision has to match theirs. Half a MiB is the witness: two decimals tell
+    the bases apart, one decimal does not, and the step log prints one (#858 round 3 M2).
+    """
+    half_mib = 1024 * 1024 // 2
+
+    assert _bases_disagree(half_mib, "MiB")
+    assert not _bases_disagree(half_mib, "MiB", places=1)
+    # Ten times the quantity clears one decimal too, which is the regime the step log runs
+    # in — a 40 MiB child is nowhere near the degenerate band.
+    assert _bases_disagree(10 * half_mib, "MiB", places=1)
+    # The label does not change the answer: it is one byte count rendered two ways.
+    assert _bases_disagree(half_mib, "MB") is _bases_disagree(half_mib, "MiB")
 
 
 def test_a_file_size_in_a_disposition_message_stays_decimal() -> None:

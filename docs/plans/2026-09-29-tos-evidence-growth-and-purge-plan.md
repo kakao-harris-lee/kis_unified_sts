@@ -3928,8 +3928,8 @@ tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(158 건 = 14
 않은 이유는 그 텍스트가 §7.1.23 프리플라이트 표에 **그대로 인용돼 있기** 때문이다. 고칠
 때는 인용 쪽을 같은 커밋에서 갱신해야 한다. **2026-10-03 — ✅ 착지 (PR #858, 아래).**
 
-**✅ 착지 — PR #858 (2026-10-03, 분기점 main `c2075e03`).** 조건 그대로 닫혔다. 워치독
-`GiB` 로 찍는 것 **열둘**: 워치독 중단 사유 둘 · 프리플라이트 `mem_available` 의
+**✅ 착지 — PR #858 (2026-10-03, 분기점 main `c2075e03`).** 조건 그대로 닫혔다.
+`GiB` 로 찍는 문자열 **열하나**: 워치독 중단 사유 둘 · 프리플라이트 `mem_available` 의
 `measured`/`floor` · `swap_free` 의 `measured`/`floor`/`detail`(`SwapTotal`) ·
 `disk_free` 의 `measured`/`floor`/`detail`(`predicted`) · `--help` 의 진행 중 스왑
 기본값. 더해 `--min-available-gb` · `--min-swap-free-gb` · `--abort-available-gb` ·
@@ -3962,15 +3962,21 @@ tests/tools/test_tos_evidence_scan_bench.py` **5 회 연속 green**(158 건 = 14
 검증은 **자리의 목록이 아니라 성질**이다 — 찍힌 수와 단위 토큰을 되읽어 그 토큰이
 말하는 기수로 나눈 바이트와 같은지 보고(라벨만 바꾸면 토큰 단언이, 기수만 바꾸면 산술
 단언이 걸린다), 입력은 두 기수가 자릿수에서 갈라지도록 골랐다. ⚠ **그 갈라짐을 저자의
-안목에 맡기지 않는다** — 각 테스트가 자기 입력에 대해 두 기수의 출력이 다름을 **먼저
-단언**한다(`_bases_disagree`). 1회차가 0 바이트 합성을 먹여 `disk_free` 단언이 공허했던
-것이 F2 다. 쓸어 보는 면은 유한하고 드라이버 주석이 같은 목록을 적는다: 프리플라이트
+안목에 맡기지 않는다** — 바이트를 입력으로 받는 **세 테스트**(프리플라이트 레코드 ·
+`in_run_breach` · 단계 로그)가 자기 입력에 대해 두 기수의 출력이 다름을 **먼저
+단언**한다(`_bases_disagree`; 나머지 둘은 바이트가 아니라 고정 문자열과 함수 반환을
+본다). 1회차가 0 바이트 합성을 먹여 `disk_free` 단언이 공허했던 것이 F2 다. ⚠ 그 가드를
+**쓰는 쪽의 소수 자릿수로** 물어야 한다는 것이 3회차 M2 다 — 단계 로그는 `:.1f` 로
+찍는데 가드는 `:.2f` 로 보고 있었다(`places` 인자 신설 · 0.5 MiB 가 증인).
+
+쓸어 보는 면은 유한하고 드라이버 주석이 같은 목록을 적는다: 프리플라이트
 레코드의 세 필드 × `*_bytes` · `in_run_breach` 둘 · 단계 로그 한 줄 · `--help` ·
 `_decimal_gb`. `origin/main` 드라이버에 대해 **8 건 red**(기존 5 · 신규 3) ·
-**변이 19 · 생존 0**(라벨 되돌리기 · 기수만 바꾸기 · `detail_bytes` 제거 · 공백 없는 옛
-`MB` 형태로 회귀 · 0 바이트 입력으로 회귀 · `COLUMNS` 핀 제거). 게이트: 두 테스트 파일
-**167 건** green · `pytest tests/tools/test_tos_*.py` green · ruff · black · mypy(툴·테스트)
-0 · `lint-imports` 3 contracts kept · 문서 게이트 다섯 전부 PASS/GREEN.
+**변이 22 · 생존 0**(라벨 되돌리기 · 기수만 바꾸기 · `detail_bytes` 제거 · 공백 없는 옛
+`MB` 형태로 회귀 · 0 바이트 입력으로 회귀 · `COLUMNS` 핀 제거 · 3회차의 셋: `places` 를
+무시하기 · 가드가 늘 참 · 가드가 늘 거짓). 게이트: 두 테스트 파일 **168 건** green ·
+`pytest tests/tools/test_tos_*.py` green · ruff · black · mypy(툴·테스트) 0 ·
+`lint-imports` 3 contracts kept · 문서 게이트 다섯 전부 PASS/GREEN.
 **tos 소스 무변경 → digest 재도출 없음.**
 
 **2회차 — 이 처분들에 대한 재심에서 셋 더 (2026-10-03, 머리 `26379bb6`).**

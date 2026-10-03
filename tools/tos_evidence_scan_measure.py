@@ -202,7 +202,8 @@ _GB = 1024.0**3
 # ``detail``, each against its ``*_bytes`` companion), both ``in_run_breach`` reasons, the
 # per-step completion log line, ``--help``, and ``_decimal_gb``. Section "Units — a printed
 # byte quantity must name the base it was computed in" in
-# ``tests/tools/test_tos_evidence_scan_measure.py`` holds those five tests. NOT swept:
+# ``tests/tools/test_tos_evidence_scan_measure.py`` holds one test per surface, plus a
+# contract test for the anti-trivial guard all of them lean on. NOT swept:
 # ``source`` strings, disposition message bodies (``decide_synthetic_disposition`` has its
 # own tests), and the prose in docstrings and comments.
 #
