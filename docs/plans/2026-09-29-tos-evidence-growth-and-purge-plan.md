@@ -3664,3 +3664,22 @@ F3 은 §7.1.16 F1 이 세운 자기 규율과, F7 은 같은 절이 중단 2 �
 **PASS (177 citations / 3 READMEs)** · `tos_size_budget --check` **PASS (0 violations)**.
 마크다운 표 **118 개 전부 열 수 일치**(이스케이프된 `\|` 제외 카운트). 문서 전용 —
 런타임 `*.py` 변경 0, digest 재도출 없음.
+
+#### 7.1.25 A3 활성화 준비 — PR #851 (2026-10-03, 분기점 main `aae1cec6`) — §7.1 과 별개 PR
+
+#840 이 만든 `cold-backup` 을 **이 호스트에서 켤 수 있는 상태**까지 가져다 둔 기록이다.
+코드 변경 0 — 저장소 쪽은 런북(`docs/runbooks/tos-evidence-cold-backup.md` §4-5 신설 ·
+§2/§4-2/§4-3/§4-4/§5 보정), `docs/runbooks/tos-paper-boot.md` 의 콜드 백업 문단 정정,
+그리고 `config/tos_runtime/paper/evidence_cold_backup.yaml` 의 **주석만** 고쳤다.
+
+**운영자 결정 둘(2026-10-03)**: `minimum_free_bytes` = 50 GB → `53687091200`(= 50 GiB;
+로더는 바이트 정수만 받는다) · 대상 `--data-dir` = `~/.local/state/tos/paper-data`
+(상주 paper 런타임, 2026-10-06 genesis 예정). 호스트 좌표·래퍼·증명은 저장소 밖에 있고
+§4-5 가 그것을 등재한다. 남은 것은 crontab 한 줄(운영자)과 그 genesis 다.
+
+**후속 과제 — 이 PR 의 범위 밖으로 남긴 것**:
+
+| # | 무엇 | 왜 여기서 고치지 않았나 |
+|---|---|---|
+| A3-F1 | **`SchemaVersionRefused` 가 `archive failed` 로 분류된다.** `_PASSTHROUGH_REFUSALS`(`cold_backup.py`)에 없어 환경 고장으로 포장되는데, 실제로는 「대상이 구 스키마」라는 **판정**이고 조치는 재실행이 아니라 `migrate` 다. #840 2차 리뷰 F1 이 `EvidenceCorruption`·`CustodyError`·`KeyContinuityRefused` 를 같은 이유로 통과 목록에 넣었으니 **같은 부류의 네 번째**로 보인다 | 런타임 코드 변경이고, 이 PR 은 문서·호스트 좌표 전용이다. 접두를 바꾸면 런북 §5 표와 래퍼 분류표가 함께 움직이므로 한 레인에서 같이 다루는 편이 낫다. 지금은 §5 의 `archive failed` 행에 포인터를 달고 런북 §4-5-2 에 실측 줄을 남겨 두었다 |
+| A3-F2 | **단일 장치 배치** — 세 보관 경로와 (아직 없는) 라이브 data dir 이 전부 `/dev/sdd` 다. `_free_space` 의 `st_dev` 묶기가 세 루트의 바닥을 한 측정으로 축약하고, §6 이 권하는 「다른 매체로 옮긴다」에 쓸 매체가 **없다** | 저장장치 추가는 운영자 결정이고 코드 문제가 아니다. 런북 §4-5-1 에 이탈로 등재했다 |
