@@ -1047,6 +1047,12 @@ CRON_TZ=Asia/Seoul
 | `N/A — 부팅 전 종료` | 렌더가 거부돼 부팅 자체가 없었다 | `render.log` |
 | `알 수 없음 … 드라이버는 살아 있다` | 630 s 안에 `bootproof.txt` 가 없고 드라이버는 산다 = **느린 부팅이지 거부가 아니다** | 세션 디렉터리를 다시 본다 |
 
+⚠ **2026-10-08(목)·10-09(금)에 볼 것 — 종목이 롤한다(§7.10 7).** 기동 줄 끝의 종목은
+10-06·10-07·**10-08 까지 `A05610`**(만기일 당일도 아직 구월물) 이고, **10-09(금)은 한글날이라
+텔레그램이 아예 없다**(SKIP — 로그 한 줄뿐, 이 절 1 의 결말 표 SKIP 행). `A05611` 이 처음 보이는 것은
+**10-12(월)** 이다. 10-08 세션 자체는 다른 날과 똑같다 — 15:45 정지까지 CONTINUOUS 이고,
+거부도 stage-deny 도 없다.
+
 **2. `report.json`** — `~/.local/state/tos/paper-sessions/<날짜>-*/report.json`:
 
 - `boot_proof_ok: true` · `verdict: "ok"` · `exit_code: 0`
@@ -1329,12 +1335,96 @@ data dir …/h1-data (genesis=yes) · 수집 5s · 정지 15:45 KST
    (핀과 코드가 함께 움직이면 늘 통과한다). 콜드 백업 런북은 반대로 자기 워크트리를
    「의도적으로만」 고정한다. 지금의 대응은 `report.json` 의 `worktree_commit` 뿐이다(§7.8 2).
    **코드를 고정할지(어느 커밋에?) 날마다 따라갈지는 운영자 결정이다.**
-7. **종목이 3일째에 롤한다.** 현재 근월물 `A05610` 의 만기는 **2026-10-08(목)** 이다
-   (`calendar.yaml::futures_expiry` = 둘째 목요일, 2026년 10월의 둘째 목요일이 10-08).
-   렌더는 **실행 당일** `get_front_month_code()` 로 종목을 다시 뽑으므로(§2), 상주 3일째
-   이후의 증거는 **다른 종목**을 달고 쌓인다. 한 코퍼스 안에 두 종목이 섞이는 것이 의도인지
-   (방향 섞임은 §7.10 3 에서 순도 위험으로 다루면서 종목 섞임은 아무 데도 적혀 있지 않다)
-   **운영자 확인이 필요하다.**
+7. **✅ 종목 롤 — 실측으로 닫았다(2026-10-03). 운영자 확인 대기 아님.** 현재 근월물
+   `A05610` 의 만기는 **2026-10-08(목)** 이다(`calendar.yaml::futures_expiry` = 둘째 목요일).
+   렌더가 **실행 당일** `get_front_month_code(product="mini")` 로 종목을 다시 뽑으므로(§2)
+   롤은 자동이고, 그래서 물어야 할 것은 셋이었다 — **(a) 어느 날 어떤 코드가 뽑히나 ·
+   (b) 만기일 세션은 무엇을 하나 · (c) 한 코퍼스에 두 종목이 섞여도 되나.** 셋 다 측정했다.
+
+   **(a) 렌더가 뽑는 코드.** `shared/instruments/futures.py::get_front_month_code` 는
+   `target_date > expiry` **일 때만** 다음 달로 넘어간다. 그러므로 **만기일 당일은 아직
+   구월물**이고, 새 코드가 처음 뽑히는 날은 만기 **다음 날**이다.
+
+   | 실행일 | 요일 | 뽑히는 코드 | 그날 부팅하나 |
+   | --- | --- | --- | --- |
+   | 2026-10-06 | 화 | `A05610` | 부팅 — 상주 1일째(genesis) |
+   | 2026-10-07 | 수 | `A05610` | 부팅 |
+   | 2026-10-08 | 목 | `A05610` | 부팅 — **만기일 당일** |
+   | 2026-10-09 | 금 | `A05611` | **부팅 안 함** — 한글날(휴장 · §7.3 4 · §7.9 가드 표) |
+   | 2026-10-12 | 월 | `A05611` | 부팅 — **새 종목의 첫 세션** |
+
+   ⚠ **「3일째에 롤한다」는 틀렸다**(이 항목의 1차 판이 그렇게 적었고, 그 문장이 이 조사의
+   출발점이었다). 10-08 은 아직 `A05610` 이고, `A05611` 로 렌더될 첫 세 날
+   (10-09 금 · 10-10 토 · 10-11 일)은 **한 번도 부팅하지 않는다.** 롤이 증거에 처음
+   나타나는 것은 **네 번째 상주 세션인 2026-10-12(월)** 이다.
+
+   **(b) 10-08 세션 — 평소처럼 부팅하고 장중 내내 거래 위상이다. 거부도 stage-deny 도 없다.**
+   `tos_runtime/calendar/phase.py::maturity_at` 은 만기일의 **마지막 정규(비자정넘김) 창이
+   끝난 뒤에야** `expired` 를 뒤집는다. `krx-index-futures` 의 창은 CONTINUOUS 08:45–15:45
+   이므로 경계는 **15:45:00** 이다. 배포된 `calendar.yaml` 로 실측(출력 전문은 아래 재도출):
+
+   ```text
+   instant (KST)        session_phase  effective_phase  expired  next expiry
+   2026-10-08 15:44:59  CONTINUOUS     CONTINUOUS       False    2026-10-08
+   2026-10-08 15:45:00  CLOSED         EXPIRED          True     2026-10-08
+   2026-10-09 10:00:00  CLOSED         CLOSED           False    2026-11-12
+   ```
+
+   정지 크론이 **바로 그 15:45** 에 SIGTERM 을 보내므로(§7.4) `EXPIRED` 토큰은 **정지까지의
+   몇 초**에만 닿을 수 있다. 닿든 안 닿든 **하류는 같다** — 틱 게이트가 보는 것은 위상
+   토큰이 아니라 `session_context.is_open` 이고
+   (`tos_runtime/marketfeed/scheduler.py::decide_tick`), `CLOSED` 와 `EXPIRED` 는 둘 다
+   `is_open=False` 라 그 몇 초의 틱은 다른 날과 똑같이 `SKIPPED_SESSION_CLOSED` 다.
+   유일한 차이는 `SESSION_FACTS_OBSERVED` 가 `phase: "EXPIRED"` · `expired: true` 로 **한 줄
+   더** 남을 수 있다는 것뿐이고(`calendar/owner.py::_maybe_record_observed` 는 위상이나
+   `expired` 가 **바뀔 때만** 적는다), **그 한 줄이 남는지는 정지와의 경합이라 보장되지
+   않는다.** 다른 날 같은 자리에 남는 줄은 `phase: "CLOSED"` 다.
+   10-09 는 애초에 부팅하지 않으므로 그날 증거는 **0 행**이고, 만기는 그날부터 다음 룰 월인
+   **2026-11-12** 로 넘어간다(클래스가 월말까지 EXPIRED 로 남던 결함은 #799 에서 닫혔다 — §5 ④).
+
+   **(c) 한 코퍼스에 두 종목 — 괜찮다. 방향 섞임(위 3)과 같은 문제가 아니다.**
+   3 의 위험은 §5 ⑤ 「활성화 기록은 **방향**을 결속하지 않는다」에서 온 것이다. 종목은
+   다르다 — **결정 계열 증거 행은 종목을 자기 안에 들고 있다.** 09-28 실측 코퍼스
+   (`~/.local/state/tos/realclock-20260928T100001-LONG/data/evidence.sqlite3`)의 **사본**을
+   질의한 결과(1,492 행 중 236 행):
+
+   | 종류 | 행 | `payload.instrument_key` |
+   | --- | --- | --- |
+   | `DECISION_OUTCOME_EMITTED` | 114 | ✅ `{account, instrument}` |
+   | `DECISION_WITHHELD` | 66 | ✅ |
+   | `FLOW_HALTED` | 56 | ✅ |
+   | `EVENT_CONSUMED` · `EVENT_HANDLING_STARTED` | 180 · 180 | ❌ |
+   | `TIME_HEALTH_SNAPSHOT` 외 15 종 | 896 | ❌ (종목과 무관한 런타임 상태) |
+
+   즉 **「어느 종목의 결정인가」는 나중에 행 단위로 갈라낼 수 있다** — 방향과 달리 투영이
+   아니라 필드다. 부팅 행도 **간접적으로는** 갈린다: 렌더가 종목을
+   `venue_constraint_policy.yaml::scope.instruments` 에 박으므로 `VENUE_POLICY_BOUND` 의
+   `canonical_digest` 가 종목마다 다르다(같은 문서에 종목만 바꿔 로더를 두 번 돌린 실측:
+   `a85def5d…` vs `3e9ea069…`). ⚠ **그 두 값은 자리표시 계좌로 뽑은 것이라 실제 부팅이 적을
+   값이 아니다 — 「다르다」만 읽을 것.** 그리고 ⚠ `VENUE_POLICY_BOUND` **본문에는 종목
+   문자열이 없다**(payload 는 `policy_id` · `policy_generation` · `canonical_digest` ·
+   `activated_member_digest` · `null_shape_bounds` 뿐). 종목으로 거를 때는 결정 계열 행을
+   보고, 부팅 단위로 가를 때는 digest 를 본다.
+
+   ⛔ **인용 금지.** 위 결정 행의 `instrument_key` 는 종목과 **계좌번호**를 함께 담는다.
+   §7.2 의 좌표 규율대로 증거 행을 PR·계획 문서·텔레그램에 그대로 옮겨 적지 않는다
+   (이 절의 표는 종류와 개수만이다).
+
+   **처분: 그대로 롤하게 둔다 — 코드·래퍼·설정 변경 없음.** 날마다 다시 뽑는 것이 이미
+   올바른 동작이고(만기 지난 종목을 달고 부팅하는 날이 하루도 없다), 증거는 종목을
+   행마다 들고 있다. 운영자가 대신 결정할 것이 남아 있다면 그것은 「섞을까 말까」가 아니라
+   **「10-12 부터 data dir 을 가를까」**이고, 가르지 않는 쪽이 기본이다.
+
+   **재도출.** (a)(b) 는 커밋된 테스트가 CI 에서 같은 사실을 고정한다 —
+   `tos/runtime/tests/compose/test_deploy_config.py` 의
+   `test_real_calendar_mini_october_expiry_day_before_and_after_close`(10-08 15시 CONTINUOUS /
+   16시 EXPIRED) · `test_real_calendar_day_after_mini_october_expiry_rolls_to_november`
+   (10-09 는 휴장 CLOSED · 다음 만기 2026-11-12) ·
+   `test_real_calendar_declares_every_month_a_rule_month`. 위 표를 손으로 다시 뽑는 스크립트와
+   출력은 `~/.local/state/tos/paper-sessions/` 에 있다(0600):
+   `2026-10-03-front-month-roll.py` / `.out`(a·b) ·
+   `2026-10-03-front-month-roll-digest.py` / `.out`(digest 분리) ·
+   `2026-10-03-front-month-roll-corpus.out`(c 의 질의와 출력).
 8. **달력은 2027년에 대해 fail-open 이다 — 방향을 분명히 적는다.** 두 파일 모두 2027년
    항목이 **0건**이므로(실측), 2027-01-01 이후 **모든 평일이 「거래일」로 판정된다** —
    건너뛰는 쪽이 아니라 **부팅하는 쪽으로 틀린다**. 또 `calendar.yaml:49` 는
