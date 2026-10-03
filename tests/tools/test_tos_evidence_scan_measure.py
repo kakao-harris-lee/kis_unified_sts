@@ -21,6 +21,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import signal
 import sqlite3
 import subprocess
@@ -540,6 +541,32 @@ def _failed(record) -> dict[str, str]:
     return {c.check: c.measured for c in record.checks if not c.ok}
 
 
+def _abort_records(out_dir: Path, name: str) -> list[Path]:
+    """Every ``ABORTED`` artifact for one ``<step>-<days>d``, sorted by name.
+
+    Deliberately NOT a plain ``out_dir / f"ABORTED-{name}.json"``: the fixed name is the
+    defect plan §7.1.23 registered — the 270-day campaign's second stop overwrote the
+    first one's record in place. The glob matches the run-id form only, so a regression
+    back to the fixed name reads as "no record" here rather than passing quietly.
+    """
+    return sorted(out_dir.glob(f"ABORTED-{name}.*.json"))
+
+
+def _summary_outcome(out_dir: Path) -> str:
+    """The `outcome` of the single run summary in ``out_dir``."""
+    (path,) = list(out_dir.glob("run-*.summary.json"))
+    outcome: str = json.loads(path.read_text())["outcome"]
+    return outcome
+
+
+def _abort_record(out_dir: Path, name: str) -> dict[str, Any]:
+    """The single abort record for ``<step>-<days>d``, parsed."""
+    found = _abort_records(out_dir, name)
+    assert len(found) == 1, f"expected one abort record for {name}, found {found}"
+    record: dict[str, Any] = json.loads(found[0].read_text())
+    return record
+
+
 # ---------------------------------------------------------------------------------------
 # Preflight refusals — one per threshold
 # ---------------------------------------------------------------------------------------
@@ -1015,7 +1042,7 @@ def test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_art
             sampler=sampler,
         )
 
-    record = json.loads((out_dir / "ABORTED-before-90d.json").read_text())
+    record = _abort_record(out_dir, "before-90d")
     assert record["check"] == "mem_available"
     assert "3.00 GB" in record["reason"]
     assert record["signal_sent"] == "SIGTERM"
@@ -1054,10 +1081,7 @@ def test_the_watchdog_aborts_on_low_swap_alone(tmp_path: Path) -> None:
             sampler=sampler,
         )
 
-    assert (
-        json.loads((out_dir / "ABORTED-before-30d.json").read_text())["check"]
-        == "swap_free"
-    )
+    assert _abort_record(out_dir, "before-30d")["check"] == "swap_free"
 
 
 def test_the_watchdog_aborts_when_a_competing_build_appears_mid_run(
@@ -1099,10 +1123,7 @@ def test_the_watchdog_aborts_when_a_competing_build_appears_mid_run(
             sampler=sampler,
         )
 
-    assert (
-        json.loads((out_dir / "ABORTED-before-30d.json").read_text())["check"]
-        == "competing_build"
-    )
+    assert _abort_record(out_dir, "before-30d")["check"] == "competing_build"
 
 
 def test_a_child_that_ignores_sigterm_is_escalated_to_sigkill(tmp_path: Path) -> None:
@@ -1148,7 +1169,7 @@ def test_a_child_that_ignores_sigterm_is_escalated_to_sigkill(tmp_path: Path) ->
             sampler=sampler,
         )
 
-    record = json.loads((out_dir / "ABORTED-build-30d.json").read_text())
+    record = _abort_record(out_dir, "build-30d")
     assert record["escalated_to_sigkill"] is True
     assert record["returncode"] == -9
 
@@ -1178,7 +1199,7 @@ def test_the_watchdog_can_be_turned_off_but_the_run_says_so(tmp_path: Path) -> N
     )
 
     assert result.returncode == 0
-    assert not (out_dir / "ABORTED-build-1d.json").exists()
+    assert not _abort_records(out_dir, "build-1d")
     # The samples are still recorded, flagged as unguarded.
     row = json.loads((out_dir / "watchdog.jsonl").read_text().strip().splitlines()[0])
     assert row["watchdog_enabled"] is False
@@ -1394,7 +1415,9 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     synthetic.parent.mkdir(parents=True)
 
-    # Build it first, keeping it, then measure against it in a second invocation.
+    # Build it first — `--steps build` leaves the pair unmeasured, so the driver keeps
+    # the file on its own and no --keep-synthetic workaround is needed (review #853
+    # finding 2) — then measure against it in a second invocation.
     assert (
         driver.main(
             [
@@ -1423,7 +1446,6 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
                 "0.05",
                 "--poll-interval-s",
                 "0.01",
-                "--keep-synthetic",
                 "--allow-shared-checkout",
                 "--bench",
                 str(_BENCH_PATH),
@@ -1605,10 +1627,11 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
 
     assert rc == 1
     # Whichever step the competing build lands in, the abort is recorded.
-    aborted = sorted(out_dir.glob("ABORTED-*-1d.json"))
-    assert aborted, "an abort must never be silent"
-    assert aborted[0].name == "ABORTED-before-1d.json"
-    record = json.loads(aborted[0].read_text())
+    (aborted,) = _abort_records(out_dir, "before-1d")
+    assert aborted.name.startswith(
+        "ABORTED-before-1d."
+    ), "an abort must never be silent"
+    record = json.loads(aborted.read_text())
     assert record["check"] == "competing_build"
     assert synthetic.exists(), "the aborted run deleted the build it had just paid for"
 
@@ -1640,22 +1663,47 @@ def test_the_synthetic_disposition_says_the_right_thing_for_each_outcome(
     file that must not be advertised as resumable)."""
     path = tmp_path / "synth-365d.sqlite3"
 
-    done = driver.decide_synthetic_disposition(path, remaining=[], size_bytes=53 * _GB)
+    done = driver.decide_synthetic_disposition(
+        path,
+        remaining=[],
+        size_bytes=53_230_000_000,
+        created_by_this_run=True,
+        before_measured=True,
+        after_measured=True,
+    )
     assert done.action == "delete"
+    assert "53.23 GB" in done.message, "the one message that used to carry no size"
 
     partial = driver.decide_synthetic_disposition(
-        path, remaining=["build", "before", "after"], size_bytes=7 * _GB
+        path,
+        remaining=["build", "before", "after"],
+        size_bytes=7_000_000_000,
+        created_by_this_run=True,
+        before_measured=False,
+        after_measured=False,
     )
     assert partial.action == "keep-partial"
     assert "INCOMPLETE" in partial.message
     assert "--steps" not in partial.message, "a partial file is not resumable"
 
     resumable = driver.decide_synthetic_disposition(
-        path, remaining=["before", "after"], size_bytes=53 * _GB
+        path,
+        remaining=["before", "after"],
+        size_bytes=53_230_000_000,
+        created_by_this_run=True,
+        before_measured=False,
+        after_measured=False,
     )
     assert resumable.action == "keep-resumable"
     assert "--steps before,after" in resumable.message
-    assert "53.00 GB" in resumable.message
+    assert "53.23 GB" in resumable.message
+
+    # The two measured flags have no defaults: a caller that forgets them must not get a
+    # decision that silently falls toward deletion.
+    with pytest.raises(TypeError):
+        driver.decide_synthetic_disposition(
+            path, remaining=[], size_bytes=1, created_by_this_run=True
+        )
 
 
 # ---------------------------------------------------------------------------------------
@@ -1791,7 +1839,7 @@ def test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact(
             sampler=sampler,
         )
 
-    record = json.loads((out_dir / "ABORTED-before-90d.json").read_text())
+    record = _abort_record(out_dir, "before-90d")
     assert record["check"] == "host_read"
     assert "pgrep exited 2" in record["reason"]
     # Retried once: the run survived the first failure and stopped on the second.
@@ -1829,7 +1877,7 @@ def test_f2_an_unexpected_driver_error_still_writes_an_abort_artifact(
             sampler=sampler,
         )
 
-    record = json.loads((out_dir / "ABORTED-before-365d.json").read_text())
+    record = _abort_record(out_dir, "before-365d")
     assert record["check"] == "driver_error"
     assert "No space left on device" in record["reason"]
 
@@ -2264,7 +2312,7 @@ def test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort(
 
     assert seen["reaped"], "the test did not reach the interleaving it is about"
     assert result.returncode == 0
-    assert not (out_dir / "ABORTED-build-1d.json").exists()
+    assert not _abort_records(out_dir, "build-1d")
     assert (out_dir / "build-1d.resource.json").is_file()
 
 
@@ -2460,7 +2508,7 @@ def test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact(
     assert proc.returncode == 1, proc.stderr
     # The child is gone, not orphaned.
     assert not _pid_alive(child_pid), "the bench child outlived the signalled driver"
-    record = json.loads((out_dir / "ABORTED-build-1d.json").read_text())
+    record = _abort_record(out_dir, "build-1d")
     assert record["check"] == "driver_signalled"
     assert "SIGTERM" in record["reason"]
     # And the lock the run took is released.
@@ -2530,7 +2578,7 @@ def test_r2_f4_with_the_watchdog_off_a_host_read_failure_is_recorded_not_fatal(
     )
 
     assert result.returncode == 0, "the child ran to completion"
-    assert not (out_dir / "ABORTED-build-1d.json").exists()
+    assert not _abort_records(out_dir, "build-1d")
     rows = [
         json.loads(line)
         for line in (out_dir / "watchdog.jsonl").read_text().splitlines()
@@ -3031,7 +3079,7 @@ def test_a1c_a_commit_that_moves_between_steps_aborts_before_the_child_starts(
     with pytest.raises(driver.MeasureAborted, match="HEAD moved from"):
         _run_with(checkout, tmp_path, out_dir=out_dir, name="before")
 
-    record = json.loads((out_dir / "ABORTED-before-7d.json").read_text())
+    record = _abort_record(out_dir, "before-7d")
     assert record["check"] == "checkout_drift"
     assert moved_from in record["reason"] and moved_to in record["reason"]
     # No child was started, and the record says so instead of printing a 0 that would read
@@ -3055,7 +3103,7 @@ def test_a1c_a_tree_that_goes_dirty_between_steps_aborts(tmp_path: Path) -> None
 
     with pytest.raises(driver.MeasureAborted, match="went dirty"):
         _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
-    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    record = _abort_record(out_dir, "after-7d")
     assert record["check"] == "checkout_drift"
     assert record["checkout"]["clean"] is False
 
@@ -3081,7 +3129,7 @@ def test_a1c_a_bench_edited_between_steps_aborts_even_with_a_clean_tree(
 
     with pytest.raises(driver.MeasureAborted, match="the bench .* changed"):
         _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
-    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    record = _abort_record(out_dir, "after-7d")
     assert record["check"] == "checkout_drift"
     assert record["checkout"]["clean"] is True
     assert record["checkout"]["baseline_bench_sha256"] == before_digest
@@ -3140,7 +3188,7 @@ def test_a1c_with_the_hatch_open_drift_is_recorded_but_does_not_abort(
     result = _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
 
     assert result.returncode == 0
-    assert not (out_dir / "ABORTED-after-7d.json").exists()
+    assert not _abort_records(out_dir, "after-7d")
     assert result.checkout["baseline_commit"] == baseline
     assert result.checkout["repo_commit"] != baseline
     assert result.checkout["allow_shared_checkout"] is True
@@ -3386,7 +3434,7 @@ def test_f4_a_hung_git_at_the_per_child_recheck_aborts_with_an_artifact(
     with pytest.raises(driver.MeasureAborted, match="could not be re-read"):
         _run_with(stalled, tmp_path, out_dir=out_dir, name="after")
 
-    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    record = _abort_record(out_dir, "after-7d")
     assert record["check"] == "checkout_drift"
     assert "did not answer within" in record["reason"]
     assert record["returncode"] is None
@@ -3423,7 +3471,7 @@ def test_f3_a_signal_during_the_pre_spawn_recheck_still_leaves_an_artifact(
     with pytest.raises(driver.MeasureSignalled):
         _run_with(guard, tmp_path, out_dir=out_dir, name="after")
 
-    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    record = _abort_record(out_dir, "after-7d")
     assert record["check"] == "driver_signalled"
     assert "SIGTERM" in record["reason"]
     assert record["returncode"] is None
@@ -3548,7 +3596,7 @@ def test_f6_a_branch_created_between_steps_aborts_even_at_the_same_commit(
 
     with pytest.raises(driver.MeasureAborted, match="no longer satisfies"):
         _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
-    record = json.loads((out_dir / "ABORTED-after-7d.json").read_text())
+    record = _abort_record(out_dir, "after-7d")
     assert record["checkout"]["detached"] is False
     assert "HEAD is attached to branch 'scratch'" in record["reason"]
 
@@ -3721,3 +3769,1046 @@ def test_f10_the_shared_guard_is_built_once_not_per_test() -> None:
     assert first.baseline is not None
     # The non-enforcing view is the same baseline, not a second read.
     assert _clean_checkout(enforced=False).baseline is first.baseline
+
+
+# ---------------------------------------------------------------------------------------
+# Plan §7.1.23 "답하지 못한 것" 3 and "계획에 바꾸는 것" 3 — the two follow-ups the
+# 270-day measurement registered against this driver
+# ---------------------------------------------------------------------------------------
+#
+# Both are about what a RESUME does to the previous attempt's evidence. The 270-day
+# campaign stopped twice in one output directory and finished on the third run, and both
+# defects only exist because that happened:
+#
+#   1. the abort record's name carried no run id, so the second stop silently overwrote
+#      the first one's `reason` / `signal_sent` / `returncode` / `partial_resource`;
+#   2. a resume that succeeds never says anything about the synthetic file, because the
+#      driver only disposes of a file it built in the same run — so 36-53 GB sat on the
+#      host with nothing in the log saying it was the operator's to remove.
+
+
+def test_two_stops_in_one_output_directory_leave_two_abort_records(
+    tmp_path: Path,
+) -> None:
+    """Plan §7.1.23: the 270-day run was stopped twice and only ONE record survived.
+
+    `.out`/`.err` were moved aside under their run id (both pairs are still on the host),
+    the JSON was not — so the plan had to cite the first stop's burned wall clock as "≥",
+    reconstructed from `watchdog.jsonl`, and its `reason` / `signal_sent` / `returncode` /
+    `partial_resource` are simply gone. Two stops, two records.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    aborting = _reader_that_reports_a_build_once(
+        tmp_path, gate=out_dir / "before-1d.out"
+    )
+
+    # First stop: build succeeds, `before` is aborted by the competing build.
+    assert _cli(tmp_path, out_dir=out_dir, synthetic=synthetic, reader=aborting) == 1
+    # Second stop: the documented resume, aborted at the same place by the same host.
+    assert (
+        _cli(
+            tmp_path,
+            "--steps",
+            "before,after",
+            out_dir=out_dir,
+            synthetic=synthetic,
+            reader=aborting,
+        )
+        == 1
+    )
+
+    records = _abort_records(out_dir, "before-1d")
+    assert len(records) == 2, (
+        "the second stop overwrote the first one's record — "
+        f"found {[p.name for p in records]}"
+    )
+    first, second = (json.loads(p.read_text()) for p in records)
+    assert first["run_id"] != second["run_id"]
+    # Each record is a whole record, not a pointer: the fields the plan lost are present
+    # in BOTH.
+    for record in (first, second):
+        assert record["check"] == "competing_build"
+        assert record["reason"]
+        assert record["signal_sent"] == "SIGTERM"
+        assert record["returncode"] is not None
+        assert record["partial_resource"]["proc_io"]
+    assert first != second
+
+    # And the moved-aside streams of both attempts are still next to them, which is the
+    # convention the JSON now follows.
+    assert len(list(out_dir.glob("before-1d.*.aborted.out"))) == 2
+
+
+def test_an_abort_record_names_the_run_that_wrote_it_in_the_file_and_inside(
+    tmp_path: Path,
+) -> None:
+    """The run id in the name is the same run id the record already carried.
+
+    A name that disagrees with the payload would be worse than the fixed name: it would
+    look like per-run evidence while attributing it to the wrong run.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    aborting = _reader_that_reports_a_build_once(
+        tmp_path, gate=out_dir / "before-1d.out"
+    )
+
+    assert _cli(tmp_path, out_dir=out_dir, synthetic=synthetic, reader=aborting) == 1
+
+    (path,) = _abort_records(out_dir, "before-1d")
+    record = json.loads(path.read_text())
+    assert path.name == f"ABORTED-before-1d.{record['run_id']}.json"
+    # The same run id is in the preflight record and in the watchdog series, so the three
+    # can be joined without guessing.
+    assert json.loads((out_dir / "preflight.json").read_text())["run_id"] == (
+        record["run_id"]
+    )
+    watchdog = [
+        json.loads(line)
+        for line in (out_dir / "watchdog.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert {row["run_id"] for row in watchdog} == {record["run_id"]}
+
+
+def test_the_preflight_accepts_an_output_directory_full_of_abort_records(
+    tmp_path: Path,
+) -> None:
+    """`artifacts_absent` guards the STEP artifacts, and an abort record is not one.
+
+    Written down because the run-id suffix changes those names: a check that started
+    counting them would refuse every resume after the second stop — exactly the directory
+    the 270-day measurement finished in.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    synthetic.parent.mkdir(parents=True)
+    synthetic.write_bytes(b"x" * 4096)
+    for run_id in ("e1a9dcb24f64", "9e41a6d809e6", "89841a926bd6"):
+        (out_dir / f"ABORTED-before-1d.{run_id}.json").write_text(
+            json.dumps({"run_id": run_id, "step": "before", "days": 1})
+        )
+    # The pre-run-id name too: a directory that predates this change still resumes.
+    (out_dir / "ABORTED-before-1d.json").write_text(json.dumps({"step": "before"}))
+
+    record = _preflight(tmp_path, _reader(tmp_path), steps=["before", "after"])
+
+    assert record.verdict == "ok", _failed(record)
+    assert (
+        next(c for c in record.checks if c.check == "artifacts_absent").measured
+        == "none present"
+    )
+
+
+def test_a_resume_that_finishes_says_the_synthetic_is_not_its_to_delete(
+    tmp_path: Path,
+) -> None:
+    """Plan §7.1.23 "뒤처리": 40 GB (36-53 GB across the campaign) stayed on the host and
+    the run that finished the measurement said nothing about it.
+
+    The driver disposes only of a file it built in the same run — correct, and the reason
+    the 180- and 270-day index sizes could be read at all — but silence is what made the
+    deletion a step the operator had to remember on their own.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+    assert synthetic.exists(), "`--steps build` leaves the pair unmeasured, so it stays"
+    assert (
+        "keep-unmeasured"
+        in json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())[
+            "synthetic"
+        ]["action"]
+    )
+
+    assert (
+        _cli(tmp_path, "--steps", "before,after", out_dir=out_dir, synthetic=synthetic)
+        == 0
+    )
+
+    assert synthetic.exists(), "a file this run did not build must survive by default"
+    log = (out_dir / "measure-1d.log").read_text()
+    assert "KEPT synthetic" in log
+    assert "not built by this run" in log
+    assert f"rm {synthetic}" in log, "the log must carry the exact command"
+    # Printed once where the decision is made and once in the closing summary, so a
+    # scrollback that lost the middle of a three-hour run still ends with it.
+    assert log.count(f"rm {synthetic}") >= 2
+
+
+def test_a_resume_can_opt_into_deleting_the_synthetic_it_did_not_build(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+
+    assert (
+        _cli(
+            tmp_path,
+            "--steps",
+            "before,after",
+            "--delete-synthetic-on-success",
+            out_dir=out_dir,
+            synthetic=synthetic,
+        )
+        == 0
+    )
+
+    assert not synthetic.exists()
+    assert "removed synthetic" in (out_dir / "measure-1d.log").read_text()
+
+
+def test_the_opt_in_delete_is_refused_when_the_pair_would_not_be_measured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--steps before --delete-synthetic-on-success` would throw the file away BETWEEN
+    the two halves of the pair — every planned step ran, and `after` still needs it."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    synthetic.parent.mkdir(parents=True)
+    synthetic.write_bytes(b"x" * 4096)
+
+    rc = _cli(
+        tmp_path,
+        "--steps",
+        "before",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=synthetic,
+    )
+
+    assert rc == 1
+    assert "--delete-synthetic-on-success" in capsys.readouterr().err
+    assert synthetic.exists()
+    assert not (out_dir / "before-1d.json").exists(), "nothing may have started"
+
+
+def test_the_opt_in_delete_and_keep_synthetic_cannot_both_be_asked_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+
+    rc = _cli(
+        tmp_path,
+        "--keep-synthetic",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=synthetic,
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "--keep-synthetic" in err and "--delete-synthetic-on-success" in err
+    assert not synthetic.exists(), "nothing may have been built"
+
+
+def test_the_disposition_covers_the_resume_cases_the_plan_hit(tmp_path: Path) -> None:
+    """The branches the CLI tests below reach, as the pure decision they come from."""
+    path = tmp_path / "synth-270d.sqlite3"
+    forty = 40_099_414_016  # the kept 270-day file, plan §7.1.23
+
+    kept = driver.decide_synthetic_disposition(
+        path,
+        remaining=[],
+        size_bytes=forty,
+        created_by_this_run=False,
+        before_measured=True,
+        after_measured=True,
+    )
+    assert kept.action == "keep-not-ours"
+    assert "not built by this run" in kept.message
+    assert f"rm {path}" in kept.message
+    assert "40.10 GB" in kept.message, "decimal GB, the base the plan is written in"
+
+    deleted = driver.decide_synthetic_disposition(
+        path,
+        remaining=[],
+        size_bytes=forty,
+        created_by_this_run=False,
+        before_measured=True,
+        after_measured=True,
+        delete_on_success=True,
+    )
+    assert deleted.action == "delete"
+
+    # An unfinished resume is never deleted, whatever the flag says.
+    aborted = driver.decide_synthetic_disposition(
+        path,
+        remaining=["after"],
+        size_bytes=forty,
+        created_by_this_run=False,
+        before_measured=True,
+        after_measured=False,
+        delete_on_success=True,
+    )
+    assert aborted.action == "keep-resumable"
+    assert "--steps after" in aborted.message
+
+
+@pytest.mark.parametrize("created_by_this_run", [True, False])
+@pytest.mark.parametrize(
+    ("before_measured", "after_measured", "missing"),
+    [(True, False, "after"), (False, True, "before"), (False, False, "before,after")],
+)
+def test_an_unmeasured_pair_is_never_deleted_on_either_branch(
+    tmp_path: Path,
+    created_by_this_run: bool,
+    before_measured: bool,
+    after_measured: bool,
+    missing: str,
+) -> None:
+    """Review #853 findings 1 and 2, as one property on both branches.
+
+    Finding 1: `--steps after --delete-synthetic-on-success` satisfied a POSITIONAL check
+    ("is the string `after` in --steps") and deleted a pair whose `before` had never run.
+    Finding 2: the created-by-this-run branch did not read the distinction at all, so
+    `--steps build` deleted the file it had just spent hours building, with the bare
+    message `removed synthetic <path>`.
+
+    Both are the same invariant — a pair that is not measured is not finished with — and
+    the flag must not be able to buy its way past it.
+    """
+    path = tmp_path / "synth-270d.sqlite3"
+    for delete_on_success in (False, True):
+        decision = driver.decide_synthetic_disposition(
+            path,
+            remaining=[],
+            size_bytes=40_099_414_016,
+            created_by_this_run=created_by_this_run,
+            before_measured=before_measured,
+            after_measured=after_measured,
+            delete_on_success=delete_on_success,
+        )
+        assert decision.action == "keep-unmeasured", (
+            f"deleted an unmeasured pair (missing {missing}, "
+            f"created={created_by_this_run}, flag={delete_on_success})"
+        )
+        assert f"--steps {missing}" in decision.message
+        assert "40.10 GB" in decision.message
+        assert f"rm {path}" in decision.message
+
+
+def test_keep_synthetic_is_answered_before_the_provenance_split(
+    tmp_path: Path,
+) -> None:
+    """Review #853 finding 5. On a resume `--keep-synthetic` fell through to the
+    not-ours branch, which recommends `--delete-synthetic-on-success` — the one flag the
+    startup refusal rejects next to `--keep-synthetic`."""
+    path = tmp_path / "synth-270d.sqlite3"
+
+    decision = driver.decide_synthetic_disposition(
+        path,
+        remaining=[],
+        size_bytes=40_099_414_016,
+        created_by_this_run=False,
+        before_measured=True,
+        after_measured=True,
+        keep_requested=True,
+    )
+
+    assert decision.action == "keep-requested"
+    assert "--keep-synthetic" in decision.message
+    assert (
+        "--delete-synthetic-on-success" not in decision.message
+    ), "recommended the flag that cannot be combined with the one that was passed"
+    assert "not built by this run" in decision.message, "the provenance is still said"
+    assert f"rm {path}" in decision.message
+
+
+def test_the_rm_command_is_quoted_for_a_path_a_shell_would_split(
+    tmp_path: Path,
+) -> None:
+    """Review #853 finding 6. `delete_command` is documented as paste-ready; an unquoted
+    path with a space is a two-operand `rm` against a 26-53 GB clean-up."""
+    path = tmp_path / "a dir with spaces" / "synth-270d.sqlite3"
+
+    for decision in (
+        driver.decide_synthetic_disposition(
+            path,
+            remaining=[],
+            size_bytes=40_099_414_016,
+            created_by_this_run=False,
+            before_measured=True,
+            after_measured=True,
+        ),
+        driver.decide_synthetic_disposition(
+            path,
+            remaining=["after"],
+            size_bytes=40_099_414_016,
+            created_by_this_run=True,
+            before_measured=True,
+            after_measured=False,
+        ),
+    ):
+        assert f"rm {shlex.quote(str(path))}" in decision.message
+        assert f"rm {path} " not in decision.message
+
+
+def test_the_run_summary_records_the_disposition_for_the_plan_to_cite(
+    tmp_path: Path,
+) -> None:
+    """A log line is for a human; the plan cites fields. The disposition is both."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+    assert (
+        _cli(tmp_path, "--steps", "before,after", out_dir=out_dir, synthetic=synthetic)
+        == 0
+    )
+
+    summaries = sorted(out_dir.glob("run-1d.*.summary.json"))
+    assert len(summaries) == 2, "one per run, named by run id like every other artifact"
+    resume = json.loads(summaries[-1].read_text())
+    build_run = json.loads(summaries[0].read_text())
+    if resume["steps_planned"] == ["build"]:  # glob order is by run id, not by time
+        resume, build_run = build_run, resume
+
+    assert resume["outcome"] == "ok"
+    assert resume["steps_planned"] == ["before", "after"]
+    assert resume["steps_completed"] == ["before", "after"]
+    assert resume["steps_remaining"] == []
+    assert f"run-1d.{resume['run_id']}.summary.json" in {p.name for p in summaries}
+    blob = resume["synthetic"]
+    assert blob["path"] == str(synthetic)
+    assert blob["created_by_this_run"] is False
+    assert blob["exists_after_the_run"] is True
+    assert blob["action"] == "keep-not-ours"
+    assert blob["delete_command"] == f"rm {synthetic}"
+    assert blob["size_bytes"] == synthetic.stat().st_size
+
+    assert build_run["synthetic"]["created_by_this_run"] is True
+    assert build_run["synthetic"]["action"] == "keep-unmeasured"
+
+
+def test_the_run_summary_is_written_when_the_run_is_aborted_too(
+    tmp_path: Path,
+) -> None:
+    """The summary is most useful on the run that did NOT finish — it is where the abort
+    record, the kept file and the resume command are named in one place."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    aborting = _reader_that_reports_a_build_once(
+        tmp_path, gate=out_dir / "before-1d.out"
+    )
+
+    assert _cli(tmp_path, out_dir=out_dir, synthetic=synthetic, reader=aborting) == 1
+
+    (summary_path,) = list(out_dir.glob("run-1d.*.summary.json"))
+    summary = json.loads(summary_path.read_text())
+    (abort_path,) = _abort_records(out_dir, "before-1d")
+    assert summary["outcome"] == "aborted"
+    assert summary["run_id"] == json.loads(abort_path.read_text())["run_id"]
+    assert summary["steps_completed"] == ["build"]
+    assert summary["steps_remaining"] == ["before", "after"]
+    assert summary["abort_records"] == [abort_path.name]
+    assert summary["synthetic"]["action"] == "keep-resumable"
+    assert summary["synthetic"]["created_by_this_run"] is True
+
+
+def test_the_summary_records_the_file_size_even_when_it_deletes_the_file(
+    tmp_path: Path,
+) -> None:
+    """§7.1.15 "답하지 못한 것" 3 / §7.1.23 4, partially: the size after the last step.
+
+    The size the plan wanted is the one AFTER `after` creates the index, and it was
+    readable only off a synthetic file that happened to survive — the default run deletes
+    it and recorded nothing. The number is read at disposition time, so it is in the
+    summary whichever way the file goes.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+
+    assert _cli(tmp_path, out_dir=out_dir, synthetic=synthetic) == 0
+
+    assert not synthetic.exists(), "the default run still deletes what it built"
+    (summary_path,) = list(out_dir.glob("run-1d.*.summary.json"))
+    blob = json.loads(summary_path.read_text())["synthetic"]
+    assert blob["action"] == "delete"
+    assert blob["exists_after_the_run"] is False
+    assert blob["delete_command"] is None
+    assert isinstance(blob["size_bytes"], int) and blob["size_bytes"] > 0
+
+
+# ---------------------------------------------------------------------------------------
+# Independent review #853 findings — each with the scenario the reviewer reproduced
+# ---------------------------------------------------------------------------------------
+
+
+def test_f1_the_opt_in_delete_is_refused_when_before_was_never_measured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F1. `--steps after --delete-synthetic-on-success` on a pre-built file satisfied the
+    positional check ("is `after` in --steps"), ran only `after`, and deleted the
+    synthetic with `before` never measured — the exact case the refusal's own message said
+    it existed to stop. `matches_earlier_steps` passes vacuously with no earlier artifact,
+    so nothing else caught it."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+    assert synthetic.exists()
+    capsys.readouterr()
+
+    rc = _cli(
+        tmp_path,
+        "--steps",
+        "after",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=synthetic,
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "UNMEASURED" in err and "before" in err
+    assert synthetic.exists(), "the unmeasured pair's file was deleted"
+    assert not (out_dir / "after-1d.json").exists(), "nothing may have started"
+
+
+def test_f1_the_opt_in_delete_is_allowed_once_before_is_on_disk_for_this_file(
+    tmp_path: Path,
+) -> None:
+    """The other direction of F1: the property is "is this pass recorded", so a `before`
+    that already ran in this directory against THIS file unlocks it."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert (
+        _cli(tmp_path, "--steps", "build,before", out_dir=out_dir, synthetic=synthetic)
+        == 0
+    )
+    assert (out_dir / "before-1d.resource.json").is_file()
+
+    rc = _cli(
+        tmp_path,
+        "--steps",
+        "after",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=synthetic,
+    )
+
+    assert rc == 0
+    assert not synthetic.exists(), "both halves are measured, so the opt-in applies"
+
+
+def test_f1_a_recorded_before_that_measured_a_different_file_does_not_unlock_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An output directory can be reused. A `before-1d.resource.json` naming a different
+    `--db` is evidence about a different file, and a positional "the artifact exists"
+    check would be the same shape of defect F1 is."""
+    out_dir = tmp_path / "out"
+    other = tmp_path / "synth" / "synth-other.sqlite3"
+    assert (
+        _cli(tmp_path, "--steps", "build,before", out_dir=out_dir, synthetic=other) == 0
+    )
+    assert (out_dir / "before-1d.resource.json").is_file()
+
+    wanted = tmp_path / "synth" / "synth-1d.sqlite3"
+    wanted.write_bytes(other.read_bytes())
+    capsys.readouterr()
+
+    rc = _cli(
+        tmp_path,
+        "--steps",
+        "after",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=wanted,
+    )
+
+    assert rc == 1
+    assert "names a different --db" in capsys.readouterr().err
+    assert wanted.exists()
+
+
+def test_f2_a_build_only_run_keeps_the_file_and_says_the_pair_is_unmeasured(
+    tmp_path: Path,
+) -> None:
+    """F2. `run --steps build` (and `build,before`) deleted the file it had just spent
+    hours building, with the bare message `removed synthetic <path>`."""
+    for steps, missing in (("build", "before,after"), ("build,before", "after")):
+        out_dir = tmp_path / f"out-{steps.replace(',', '-')}"
+        synthetic = tmp_path / "synth" / f"synth-{steps.replace(',', '-')}.sqlite3"
+
+        assert (
+            _cli(tmp_path, "--steps", steps, out_dir=out_dir, synthetic=synthetic) == 0
+        )
+
+        assert synthetic.exists(), f"--steps {steps} deleted an unmeasured pair"
+        log = (out_dir / "measure-1d.log").read_text()
+        assert "KEPT synthetic" in log and f"--steps {missing}" in log
+        blob = json.loads(
+            next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text()
+        )["synthetic"]
+        assert blob["action"] == "keep-unmeasured"
+        assert blob["exists_after_the_run"] is True
+
+
+def test_f3_an_unlink_that_fails_still_leaves_the_summary_log_and_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3. The `stat()` and the bare `unlink()` ran on every run including aborts, outside
+    any guard. An OSError there left the `finally` with an exception the outer handler
+    does not name: it replaced the in-flight failure and skipped the summary, the closing
+    lines, the `measure-<days>d.log` append — the ONLY write of the buffered log — and
+    `release_lock`."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    real_unlink = Path.unlink
+
+    def exploding_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+        if self == synthetic:
+            raise PermissionError(13, "Permission denied", str(self))
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", exploding_unlink)
+
+    rc = _cli(tmp_path, out_dir=out_dir, synthetic=synthetic)
+
+    assert rc == 0, "a clean-up that could not happen is not a failed measurement"
+    assert synthetic.exists(), "the file really is still there"
+    log = (out_dir / "measure-1d.log").read_text()
+    assert "COULD NOT remove synthetic" in log
+    assert "##### summary" in log, "the run log survived the failing unlink"
+    blob = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert blob["synthetic"]["action"] == "delete-failed"
+    assert "PermissionError" in blob["synthetic"]["message"]
+    assert blob["synthetic"]["delete_command"] == f"rm {synthetic}"
+    assert not (out_dir / driver.LOCK_NAME).exists(), "the lock was never released"
+
+
+def test_f3_a_stat_that_fails_does_not_replace_the_runs_real_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other unguarded call. The run here is already failing; the `stat` must not
+    overwrite why."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    real_stat = Path.stat
+
+    def exploding_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == synthetic:
+            raise OSError(5, "Input/output error", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    # Armed only once the steps are over, so the preflight's own reads are untouched and
+    # the failure lands exactly where the guard is. `--repeats 0` makes the bench refuse,
+    # so `before` exits 1 after `build` succeeded.
+    armed: list[bool] = []
+    real_run_step = driver.run_step
+
+    def arming_run_step(*args: Any, **kwargs: Any) -> Any:
+        result = real_run_step(*args, **kwargs)
+        armed.append(True)
+        return result
+
+    monkeypatch.setattr(driver, "run_step", arming_run_step)
+    monkeypatch.setattr(
+        Path,
+        "stat",
+        lambda self, *a, **k: (
+            exploding_stat(self, *a, **k) if armed else real_stat(self, *a, **k)
+        ),
+    )
+    rc = _cli(tmp_path, "--repeats", "0", out_dir=out_dir, synthetic=synthetic)
+
+    assert rc == 1
+    log = (out_dir / "measure-1d.log").read_text()
+    assert "could not tell whether" in log or "could not stat" in log
+    blob = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert blob["outcome"] == "step-failed", "the stat error replaced the real outcome"
+    assert blob["synthetic"]["size_bytes"] is None
+    assert (
+        blob["synthetic"]["exists_after_the_run"] is None
+    ), "an I/O error must not be recorded as 'the file is gone'"
+    assert not (out_dir / driver.LOCK_NAME).exists()
+
+
+def test_f4_a_preflight_refusal_writes_a_summary_and_an_argument_one_does_not(
+    tmp_path: Path,
+) -> None:
+    """F4. `_run_outcome` said `"refused" is the preflight`, but every preflight refusal
+    is raised before the inner `try` and wrote no summary at all — a documented artifact
+    state that could not occur."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+
+    assert (
+        _cli(
+            tmp_path,
+            "--min-available-gb",
+            "999999",
+            out_dir=out_dir,
+            synthetic=synthetic,
+        )
+        == 1
+    )
+
+    (summary_path,) = list(out_dir.glob("run-1d.*.summary.json"))
+    summary = json.loads(summary_path.read_text())
+    assert summary["outcome"] == "refused"
+    assert "mem_available" in str(summary["refusal"])
+    assert summary["steps_completed"] == []
+    assert summary["synthetic"]["exists_after_the_run"] is False
+
+    # An argument contradiction is refused before the output directory exists, so it
+    # leaves nothing — like any argparse error, and the docstrings now say so.
+    bare = tmp_path / "never-created"
+    assert (
+        _cli(
+            tmp_path,
+            "--keep-synthetic",
+            "--delete-synthetic-on-success",
+            out_dir=bare,
+            synthetic=tmp_path / "synth" / "synth-x.sqlite3",
+        )
+        == 1
+    )
+    assert not bare.exists(), "a refused argument must not leave a directory behind"
+
+
+def test_f4_the_outcome_names_which_of_the_four_stopped_the_run(
+    tmp_path: Path,
+) -> None:
+    """Collapsing `step-failed` / `signalled` / `aborted` to one word survived the first
+    revision's tests. Each is pinned here against the thing that produces it."""
+    failed_dir = tmp_path / "failed"
+    assert (
+        _cli(
+            tmp_path,
+            "--repeats",
+            "0",
+            out_dir=failed_dir,
+            synthetic=tmp_path / "synth" / "a.sqlite3",
+        )
+        == 1
+    )
+    assert _summary_outcome(failed_dir) == "step-failed"
+
+    aborted_dir = tmp_path / "aborted"
+    assert (
+        _cli(
+            tmp_path,
+            out_dir=aborted_dir,
+            synthetic=tmp_path / "synth" / "b.sqlite3",
+            reader=_reader_that_reports_a_build_once(
+                tmp_path, gate=aborted_dir / "before-1d.out"
+            ),
+        )
+        == 1
+    )
+    assert _summary_outcome(aborted_dir) == "aborted"
+
+    assert driver._run_outcome(driver.MeasureSignalled("SIGTERM")) == "signalled"
+    assert driver._run_outcome(driver.MeasureRefused("no")) == "refused"
+    assert driver._run_outcome(None) == "ok"
+    assert driver._run_outcome(RuntimeError("x")).startswith("error (")
+
+
+def test_f5_keep_synthetic_on_a_resume_is_recorded_and_recommends_nothing_it_refuses(
+    tmp_path: Path,
+) -> None:
+    """F5, through the CLI: `--steps before,after --keep-synthetic` on a resume yielded
+    `keep-not-ours` and told the operator to pass `--delete-synthetic-on-success`, which
+    the startup refusal rejects next to `--keep-synthetic`; `--keep-synthetic` left no
+    trace in the summary at all."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+
+    assert (
+        _cli(
+            tmp_path,
+            "--steps",
+            "before,after",
+            "--keep-synthetic",
+            out_dir=out_dir,
+            synthetic=synthetic,
+        )
+        == 0
+    )
+
+    assert synthetic.exists()
+    blob = json.loads(
+        sorted(out_dir.glob("run-1d.*.summary.json"), key=lambda p: p.stat().st_mtime)[
+            -1
+        ].read_text()
+    )["synthetic"]
+    assert blob["action"] == "keep-requested"
+    assert "--delete-synthetic-on-success" not in blob["message"]
+
+
+def test_f6_the_rm_command_in_the_artifact_is_quoted(tmp_path: Path) -> None:
+    """F6 through the CLI: `delete_command` is what the plan's clean-up paragraph pastes."""
+    out_dir = tmp_path / "an out dir with spaces"
+    synthetic = tmp_path / "synth dir" / "synth-1d.sqlite3"
+
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+
+    blob = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())[
+        "synthetic"
+    ]
+    assert blob["delete_command"] == f"rm {shlex.quote(str(synthetic))}"
+    assert shlex.split(blob["delete_command"])[1:] == [str(synthetic)]
+
+
+def test_the_opt_in_delete_is_refused_when_the_run_builds_the_file_itself(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Note d. The flag says RESUME; with `build` in --steps it was accepted as a no-op,
+    which reads as asking for something it is not doing."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+
+    rc = _cli(
+        tmp_path, "--delete-synthetic-on-success", out_dir=out_dir, synthetic=synthetic
+    )
+
+    assert rc == 1
+    assert "--steps includes build" in capsys.readouterr().err
+    assert not out_dir.exists()
+
+
+def test_the_synthetic_may_not_be_the_reference_itself(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Note h. The one file the driver must never build onto or delete is the real
+    evidence store it is replicating. Checked on resolved paths, not strings."""
+    reference = tmp_path / "evidence.sqlite3"
+    _write_reference(reference)
+    out_dir = tmp_path / "out"
+
+    rc = _cli(
+        tmp_path,
+        reference=reference,
+        out_dir=out_dir,
+        synthetic=tmp_path / "." / "evidence.sqlite3",
+    )
+
+    assert rc == 1
+    assert "--synthetic and --reference are the same file" in capsys.readouterr().err
+    assert reference.exists() and not out_dir.exists()
+
+
+@pytest.mark.serial
+def test_a_stop_signal_during_the_end_of_run_bookkeeping_is_deferred_not_lost(
+    tmp_path: Path,
+) -> None:
+    """Note g. The end-of-run block got longer in this revision, and every write in it is
+    the only write of what it writes. A SIGTERM landing inside used to raise straight out
+    of the `finally` and take the run log with it.
+
+    Blocked, not ignored: the operator's stop request is still delivered, after the
+    bookkeeping and after the handlers are restored.
+    """
+    previous = driver._install_signal_handlers()
+    held = None
+    try:
+        held = driver._hold_stop_signals()
+        assert held is not None, "this platform must be able to block SIGTERM"
+        os.kill(os.getpid(), signal.SIGTERM)
+        # Still running: the signal is pending, not delivered, so bookkeeping finishes.
+        marker = tmp_path / "written-while-held"
+        marker.write_text("the finally got to run")
+        assert marker.read_text() == "the finally got to run"
+        assert signal.SIGTERM in signal.sigpending()
+
+        with pytest.raises(driver.MeasureSignalled):
+            driver._release_stop_signals(held)
+        held = None
+    finally:
+        if held is not None:  # pragma: no cover - only on an unexpected failure above
+            driver._release_stop_signals(held)
+        driver._restore_signal_handlers(previous)
+
+
+def test_the_closing_summary_survives_a_summary_write_that_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `#####` lines sat in the `else` of the summary-write try, so one ENOSPC took
+    both the artifact and the closing lines out of the run log — the one place a reader
+    who lost the middle of a three-hour scrollback still looks."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Path:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(driver, "write_run_summary", refuse)
+
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+
+    log = (out_dir / "measure-1d.log").read_text()
+    assert not list(out_dir.glob("run-1d.*.summary.json")), "the write really failed"
+    assert "could not write the run summary" in log
+    assert "##### summary (run " in log
+    assert "##### synthetic: KEPT synthetic" in log
+
+
+def test_the_end_of_run_bookkeeping_runs_with_stop_signals_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hold is wired into the `finally`, and the mask is put back before main returns.
+
+    Without the second half a successful run would leave the caller's process unable to
+    receive SIGTERM at all.
+    """
+    calls: list[str] = []
+    real_hold = driver._hold_stop_signals
+    real_release = driver._release_stop_signals
+
+    def hold() -> Any:
+        calls.append("hold")
+        return real_hold()
+
+    def release(previous: Any) -> None:
+        calls.append("release")
+        real_release(previous)
+
+    monkeypatch.setattr(driver, "_hold_stop_signals", hold)
+    monkeypatch.setattr(driver, "_release_stop_signals", release)
+
+    assert (
+        _cli(
+            tmp_path,
+            "--steps",
+            "build",
+            out_dir=tmp_path / "out",
+            synthetic=tmp_path / "synth" / "synth-1d.sqlite3",
+        )
+        == 0
+    )
+
+    assert calls == ["hold", "release"], "the bookkeeping ran unprotected"
+    assert signal.SIGTERM not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+
+def test_a_file_that_vanishes_between_the_exists_and_the_stat_is_not_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second half of F3's guard: `exists()` then `stat()` is two syscalls, and the
+    file can go between them (another cleanup, a filling disk). The `stat` raising there
+    must not take the summary, the run log and the lock with it — and "I could not tell"
+    must not be written down as "it is gone"."""
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    armed: list[bool] = []
+    real_run_step = driver.run_step
+
+    def arming_run_step(*args: Any, **kwargs: Any) -> Any:
+        result = real_run_step(*args, **kwargs)
+        armed.append(True)
+        return result
+
+    monkeypatch.setattr(driver, "run_step", arming_run_step)
+    # The race, made deterministic: `exists()` says yes, and by the `stat()` it is gone.
+    monkeypatch.setattr(
+        driver, "_exists_or_unknown", lambda path: True if armed else path.exists()
+    )
+    real_stat = Path.stat
+
+    def vanished_stat(self: Path, *a: Any, **k: Any) -> Any:
+        if armed and self == synthetic:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", vanished_stat)
+
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+
+    log = (out_dir / "measure-1d.log").read_text()
+    assert "could not stat the synthetic file" in log
+    assert "##### summary" in log
+    blob = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert blob["synthetic"]["size_bytes"] is None
+    assert (
+        blob["synthetic"]["exists_after_the_run"] is None
+    ), "a stat that failed is 'cannot tell', not 'the file is gone'"
+    assert (
+        blob["synthetic"]["action"] is None
+    ), "no disposition without a size to report"
+    assert not (out_dir / driver.LOCK_NAME).exists()
+
+
+def test_n1_an_argument_contradiction_writes_nothing_into_a_directory_that_exists(
+    tmp_path: Path,
+) -> None:
+    """Round-2 N1. The claim "an argument contradiction is refused before anything is
+    created and leaves nothing behind" was gated on `out_dir.exists()`, so it held only
+    for the one input the first test used — a directory that was not there yet.
+
+    `--delete-synthetic-on-success` is a RESUME flag, so by the time anyone passes it the
+    output directory normally holds the earlier steps, and a contradiction was dropping a
+    `refused` summary into it.
+    """
+    out_dir = tmp_path / "out"
+    synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
+    assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
+    before = {p.name for p in out_dir.iterdir()}
+    assert any(
+        n.startswith("run-1d.") for n in before
+    ), "the first run really wrote one"
+
+    rc = _cli(
+        tmp_path,
+        "--steps",
+        "before,after",
+        "--keep-synthetic",
+        "--delete-synthetic-on-success",
+        out_dir=out_dir,
+        synthetic=synthetic,
+    )
+
+    assert rc == 1
+    assert {
+        p.name for p in out_dir.iterdir()
+    } == before, "a refused argument wrote into a directory it does not own"
+
+
+def test_n2_a_refusal_raised_inside_the_run_carries_its_reason(tmp_path: Path) -> None:
+    """Round-2 N2. `MeasureRefused` also comes from inside the run — `_spawn` cannot find
+    the interpreter, the host reader gives up — and the summary was the only place that
+    would say why, with `refusal: null`."""
+    out_dir = tmp_path / "out"
+
+    rc = _cli(
+        tmp_path,
+        "--python",
+        "definitely-not-a-real-interpreter",
+        out_dir=out_dir,
+        synthetic=tmp_path / "synth" / "synth-1d.sqlite3",
+    )
+
+    assert rc == 1
+    summary = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert summary["outcome"] == "refused"
+    assert "definitely-not-a-real-interpreter" in str(summary["refusal"])
+    assert summary["steps_completed"] == []
+
+
+def test_n3_a_preflight_refusal_still_says_what_it_was_going_to_run(
+    tmp_path: Path,
+) -> None:
+    """Round-2 N3. `plan_steps` has already run by the time the preflight refuses, so
+    `steps_planned: []` said "nothing was planned" about a run with a full plan."""
+    out_dir = tmp_path / "out"
+
+    assert (
+        _cli(
+            tmp_path,
+            "--min-available-gb",
+            "999999",
+            out_dir=out_dir,
+            synthetic=tmp_path / "synth" / "synth-1d.sqlite3",
+        )
+        == 1
+    )
+
+    summary = json.loads(next(iter(out_dir.glob("run-1d.*.summary.json"))).read_text())
+    assert summary["steps_planned"] == ["build", "before", "after"]
+    assert summary["steps_remaining"] == ["build", "before", "after"]
+    assert summary["steps_completed"] == []
