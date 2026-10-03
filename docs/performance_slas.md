@@ -80,10 +80,17 @@ round of five and passed in the other four. Failing the build on that
 reproduces #768 one level down. A test that fails in most rounds is a test
 failure and does fail the build.
 
-Thresholds are unchanged: `>=2x` fails, `1.5x-2x` is a non-fatal warning, and
-benchmarks whose baseline median is under 50 ms are exempt because their
-wall-clock ratios are noise. Exit codes: `0` pass, `1` warning (not fatal unless
-`--fail-on-warning`), `2` regression or invalid measurement.
+Threshold values are unchanged at `1.5` warn / `2.0` error, but what they are
+applied to is not (#857). A benchmark fails the build only when the **raw** and
+the **runner-normalized** ratio are both at or over `2.0`; normalized alone is
+a non-fatal `UNCONFIRMED REGRESSION` warning, raw alone falls through to the
+normalized warn/pass ladder, and anything at or over `1.5` normalized is a
+warning. The effective raw bar for an error is therefore `2.0 / runner factor`,
+which the report prints on every run. Benchmarks whose baseline median is under
+50 ms are exempt entirely, because their wall-clock ratios are noise; the
+report names them rather than folding them into the "STABLE" count. Exit codes:
+`0` pass, `1` warning (not fatal unless `--fail-on-warning`), `2` regression or
+invalid measurement.
 
 ### A session that never ran is an error, not a pass
 
@@ -413,9 +420,10 @@ fields are inherited from it and the laptop is recorded under `aggregated_on`.
 in `test_orchestrator_scalability.py` changed its measured window and its old
 entry describes code that no longer runs. The other 19 were left on the
 2026-10-02 anchor deliberately: re-anchoring them to one more runner adds an
-arbitrary offset this change has no reason to introduce. `provenance.
-partial_regeneration` in the file records which entries moved, from which run,
-and why. The re-measuring run is a representative runner, not a fast one — its
+arbitrary offset this change has no reason to introduce.
+`provenance.partial_regeneration` in the file records which entries moved,
+from which run, and why, and the report prints a `PARTIAL BASELINE` line so
+the split is visible without opening the file. The re-measuring run is a representative runner, not a fast one — its
 19 unchanged benchmarks land within x0.99–x1.07 of the committed values.
 
 | benchmark | before | after |

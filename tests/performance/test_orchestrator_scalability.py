@@ -1,13 +1,20 @@
 """Performance benchmarks for orchestrator scalability with varying position counts.
 
-This module benchmarks orchestrator cycle time and memory usage as the number of
-concurrent positions increases from 1 to 20. The goal is to verify linear (or better)
+This module benchmarks orchestrator CYCLE TIME as the number of concurrent
+positions increases from 1 to 20. The goal is to verify linear (or better)
 scaling and identify the maximum sustainable concurrent positions.
+
+Nothing here measures memory. It once appeared to: `_benchmark_orchestrator_cycle`
+returned a memory delta taken from a helper that returned a hardcoded `0.0`, so
+every reading was 0.00 MB and no test asserted on it. The helper, the delta and
+the two `gc.collect()` calls that bracketed it were removed in PR #857 (#768),
+where they turned out to be 92% of the measured duration of the two longest
+benchmarks here. `test_memory_usage_scaling` keeps its name for continuity with
+the baseline file; what it checks is cycle-time scaling, as its body always did.
 
 **Performance Goals:**
 - Cycle time for 10 positions: < 5 seconds (SLA requirement)
 - Scalability: Linear or sub-linear (cycle time shouldn't grow exponentially)
-- Memory: No memory leaks as position count increases
 - Maximum sustainable positions: >= 20 concurrent positions
 
 **Orchestrator Cycle Simulation:**
@@ -22,7 +29,7 @@ A trading cycle consists of:
 2. 5 positions (typical small portfolio) - normal small load
 3. 10 positions (normal load) - SLA target of < 5s cycle time
 4. 20 positions (stress test) - maximum sustainable load
-5. Memory usage scaling - verify no memory leaks across position counts
+5. Scalability sweep - cycle time across all four counts in one test
 
 **Why Micro-benchmarks Matter:**
 Unlike integration tests, these micro-benchmarks isolate core orchestrator logic
@@ -33,6 +40,24 @@ This allows us to identify orchestrator-specific bottlenecks.
 from __future__ import annotations
 
 import time
+
+# Cycles timed per measurement. 100 left the two sweep benchmarks at 6.2-6.3 ms
+# once PR #857 took the garbage collection out of the measured window -- below
+# the regression checker's 50 ms noise floor, which would have exempted them
+# from the baseline-ratio check entirely and left only the assertions below.
+# 2000 puts the real work at ~120 ms on a CI runner: comfortably over the floor,
+# and still a tenth of a second per benchmark.
+BENCHMARK_ITERATIONS = 2000
+
+# Wall-clock ceiling per cycle, by concurrent position count. One source: the
+# four single-count tests and the sweep in `test_scalability_summary` assert
+# the same numbers, and the summary's printed "SLA PASS"/"OK" is derived from
+# this map rather than restating it.
+CYCLE_TIME_CEILINGS_MS = {1: 100.0, 5: 500.0, 10: 5000.0, 20: 10000.0}
+
+# Cycle time at 20 positions over cycle time at 1 position. 20x is exactly
+# linear; above that, scaling is super-linear.
+MAX_SCALING_FACTOR = 20.0
 from datetime import datetime
 from typing import Any
 
@@ -258,11 +283,9 @@ class TestOrchestratorScalability:
         Expected: < 100ms per cycle (micro-benchmark, no I/O overhead).
         """
         position_count = 1
-        iterations = 100
+        iterations = BENCHMARK_ITERATIONS
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
-            position_count, iterations
-        )
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 1 Position (Baseline)")
@@ -271,9 +294,10 @@ class TestOrchestratorScalability:
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
-        # Baseline should be very fast (< 100ms for micro-benchmark)
-        assert avg_cycle_time_ms < 100.0, (
-            f"Baseline cycle time too slow: {avg_cycle_time_ms:.2f}ms > 100ms"
+        ceiling = CYCLE_TIME_CEILINGS_MS[1]
+        assert avg_cycle_time_ms < ceiling, (
+            f"{position_count}-position cycle time too slow: "
+            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_cycle_time_5_positions(self):
@@ -283,11 +307,9 @@ class TestOrchestratorScalability:
         Expected: < 500ms per cycle (5x baseline with some overhead).
         """
         position_count = 5
-        iterations = 100
+        iterations = BENCHMARK_ITERATIONS
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
-            position_count, iterations
-        )
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 5 Positions")
@@ -296,9 +318,10 @@ class TestOrchestratorScalability:
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
-        # 5 positions should scale roughly linearly (< 500ms)
-        assert avg_cycle_time_ms < 500.0, (
-            f"5-position cycle time too slow: {avg_cycle_time_ms:.2f}ms > 500ms"
+        ceiling = CYCLE_TIME_CEILINGS_MS[5]
+        assert avg_cycle_time_ms < ceiling, (
+            f"{position_count}-position cycle time too slow: "
+            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_cycle_time_10_positions(self):
@@ -310,24 +333,24 @@ class TestOrchestratorScalability:
         **SLA Requirement:** Orchestrator cycle time < 5s for 10 positions.
         """
         position_count = 10
-        iterations = 100
+        iterations = BENCHMARK_ITERATIONS
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
-            position_count, iterations
-        )
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 10 Positions (SLA Target)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
         print(f"Iterations: {iterations}")
-        print("SLA Requirement: < 5000 ms (5 seconds)")
-        print(f"SLA Status: {'✓ PASS' if avg_cycle_time_ms < 5000 else '✗ FAIL'}")
+        ceiling = CYCLE_TIME_CEILINGS_MS[10]
+        print(f"SLA Requirement: < {ceiling:.0f} ms")
+        print(f"SLA Status: {'✓ PASS' if avg_cycle_time_ms < ceiling else '✗ FAIL'}")
         print(f"{'='*60}\n")
 
         # SLA requirement: < 5 seconds for 10 positions
-        assert avg_cycle_time_ms < 5000.0, (
-            f"SLA violation: 10-position cycle time {avg_cycle_time_ms:.2f}ms > 5000ms"
+        assert avg_cycle_time_ms < ceiling, (
+            f"SLA violation: {position_count}-position cycle time "
+            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_cycle_time_20_positions(self):
@@ -337,11 +360,9 @@ class TestOrchestratorScalability:
         Expected: < 10000ms (10 seconds) - should maintain sub-linear scaling.
         """
         position_count = 20
-        iterations = 100
+        iterations = BENCHMARK_ITERATIONS
 
-        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
-            position_count, iterations
-        )
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(position_count, iterations)
 
         print(f"\n{'='*60}")
         print("Orchestrator Cycle Time - 20 Positions (Stress Test)")
@@ -350,22 +371,26 @@ class TestOrchestratorScalability:
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
-        # Stress test: should maintain sub-linear scaling (< 10 seconds)
-        assert avg_cycle_time_ms < 10000.0, (
-            f"20-position cycle time too slow: {avg_cycle_time_ms:.2f}ms > 10000ms"
+        ceiling = CYCLE_TIME_CEILINGS_MS[20]
+        assert avg_cycle_time_ms < ceiling, (
+            f"{position_count}-position cycle time too slow: "
+            f"{avg_cycle_time_ms:.2f}ms > {ceiling:.0f}ms"
         )
 
     def test_memory_usage_scaling(self):
         """Verify cycle time scaling as position count increases.
 
-        This benchmarks cycle time across all position counts to verify scalability.
-        Expected: Cycle time should grow linearly with position count, not exponentially.
+        This benchmarks cycle time across all position counts to verify
+        scalability. Expected: cycle time should grow linearly with position
+        count, not exponentially.
 
-        Note: Memory tracking requires psutil dependency. This test focuses on
-        cycle time scalability which is the primary performance metric.
+        The name is historical. Nothing here measures memory, and nothing did:
+        the memory delta this test once collected came from a helper that
+        returned a hardcoded 0.0 (removed in PR #857, see the module
+        docstring). The name is kept so the baseline entry stays matched.
         """
         position_counts = [1, 5, 10, 20]
-        iterations = 100
+        iterations = BENCHMARK_ITERATIONS
 
         results = []
 
@@ -399,17 +424,23 @@ class TestOrchestratorScalability:
         print(f"{'='*60}\n")
 
         # Verify linear or sub-linear scaling (not exponential)
-        assert scaling_factor <= 20.0, (
-            f"Scaling is super-linear: {scaling_factor:.2f}x > 20x (exponential growth detected)"
+        assert scaling_factor <= MAX_SCALING_FACTOR, (
+            f"Scaling is super-linear: {scaling_factor:.2f}x > "
+            f"{MAX_SCALING_FACTOR:.0f}x (exponential growth detected)"
         )
 
     def test_scalability_summary(self):
-        """Generate comprehensive scalability report across all position counts.
+        """Check every per-count ceiling and the scaling factor in one sweep.
 
-        This test provides a summary view of orchestrator scalability for documentation.
+        This used to end in ``assert True`` -- it printed "SLA PASS"/"SLA FAIL"
+        and passed either way, so the only thing watching it was the regression
+        checker's baseline ratio, and that ratio was 92% garbage collection
+        until PR #857 (#768). It now asserts what it prints: every count
+        against ``CYCLE_TIME_CEILINGS_MS`` and the 1->20 scaling factor against
+        ``MAX_SCALING_FACTOR``.
         """
         position_counts = [1, 5, 10, 20]
-        iterations = 100
+        iterations = BENCHMARK_ITERATIONS
 
         print(f"\n{'='*70}")
         print("Orchestrator Scalability Summary Report")
@@ -422,15 +453,10 @@ class TestOrchestratorScalability:
         for count in position_counts:
             avg_cycle_time_ms = _benchmark_orchestrator_cycle(count, iterations)
 
-            # Determine status based on position count
-            if count == 10:
-                # SLA requirement for 10 positions
-                status = "✓ SLA PASS" if avg_cycle_time_ms < 5000 else "✗ SLA FAIL"
-            elif count == 20:
-                # Stress test threshold
-                status = "✓ OK" if avg_cycle_time_ms < 10000 else "✗ SLOW"
-            else:
-                status = "✓ OK"
+            # Status comes from the same map the assertions below use, so the
+            # printed verdict cannot disagree with the one that fails the test.
+            ceiling = CYCLE_TIME_CEILINGS_MS[count]
+            status = "✓ OK" if avg_cycle_time_ms < ceiling else "✗ OVER"
 
             print(f"{count:<12} {avg_cycle_time_ms:<20.2f} {status:<15}")
 
@@ -441,11 +467,14 @@ class TestOrchestratorScalability:
 
         print(f"{'-'*70}")
 
-        # Calculate scalability metrics
+        # Calculate scalability metrics. Initialised before the branch: it is
+        # read unconditionally below, and `position_counts` having fewer than
+        # two entries would otherwise be a NameError instead of a clear skip.
+        scaling_factor = 0.0
         if len(results) >= 2:
             baseline_time = results[0]["cycle_time_ms"]
             max_time = results[-1]["cycle_time_ms"]
-            scaling_factor = max_time / baseline_time if baseline_time > 0 else 0
+            scaling_factor = max_time / baseline_time if baseline_time > 0 else 0.0
 
             print("\nScalability Metrics:")
             print(f"  Actual scaling factor: {scaling_factor:.2f}x")
@@ -453,11 +482,26 @@ class TestOrchestratorScalability:
             print(f"  Efficiency: {(20.0 / scaling_factor * 100) if scaling_factor > 0 else 0:.1f}% of linear scaling")
 
         print("\nPerformance Summary:")
-        print("  Maximum sustainable positions: >= 20")
-        print(f"  SLA compliance (10 pos < 5s): {'✓ PASS' if results[2]['cycle_time_ms'] < 5000 else '✗ FAIL'}")
-        print(f"  Stress test (20 pos < 10s): {'✓ PASS' if results[3]['cycle_time_ms'] < 10000 else '✗ FAIL'}")
-        print(f"  Scaling behavior: {'✓ Linear/Sub-linear' if scaling_factor <= 20 else '✗ Super-linear'}")
+        print(f"  Maximum sustainable positions: >= {max(position_counts)}")
+        print(
+            "  Scaling behavior: "
+            f"{'✓ Linear/Sub-linear' if scaling_factor <= MAX_SCALING_FACTOR else '✗ Super-linear'}"
+        )
         print(f"{'='*70}\n")
 
-        # This is a summary test - always passes, just reports
-        assert True
+        over = [
+            (r["positions"], r["cycle_time_ms"])
+            for r in results
+            if r["cycle_time_ms"] >= CYCLE_TIME_CEILINGS_MS[r["positions"]]
+        ]
+        assert not over, "cycle time over its ceiling at " + ", ".join(
+            f"{n} positions ({ms:.2f}ms >= {CYCLE_TIME_CEILINGS_MS[n]:.0f}ms)"
+            for n, ms in over
+        )
+        measured_counts = {r["positions"] for r in results}
+        missing = [c for c in position_counts if c not in measured_counts]
+        assert not missing, f"counts not measured: {missing}"
+        assert scaling_factor <= MAX_SCALING_FACTOR, (
+            f"Scaling is super-linear: {scaling_factor:.2f}x > "
+            f"{MAX_SCALING_FACTOR:.0f}x (exponential growth detected)"
+        )
