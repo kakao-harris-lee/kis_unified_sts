@@ -472,71 +472,79 @@ fields are inherited from it and the laptop is recorded under `aggregated_on`.
 | | |
 | --- | --- |
 | taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) — 19 of 25 entries |
-| re-measured | 2026-10-04 KST, run [37158102601](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37158102601) at `577a3e58` (PR #857) — the 6 entries of `test_orchestrator_scalability.py` |
+| re-measured | 2026-10-04 KST, run [37159332468](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37159332468) at `df430cc9` (PR #857) — the 6 entries of `test_orchestrator_scalability.py` |
 | runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 (both runs) |
-| commit | `16d7101e` (PR #845) for the 19, `577a3e58` (PR #857) for the 6 |
+| commit | `16d7101e` (PR #845) for the 19, `df430cc9` (PR #857) for the 6 |
 | rounds | 9 in both runs — all 25 benchmarks have n=9, no round failed |
 | excluded | none |
 
 **Why 6 entries were replaced and 19 were not.** PR #857 changed the measured
-window of every benchmark in `test_orchestrator_scalability.py`, twice: the
-`gc.collect()` calls came out of `_benchmark_orchestrator_cycle`, and
-`BENCHMARK_ITERATIONS` went from 100 to 2000 so that the remaining real work
-clears the 50 ms floor instead of being exempted from the ratio check. Their
-old entries describe code that no longer runs. The other 19 were left on the
+window of every benchmark in `test_orchestrator_scalability.py` twice over:
+the `gc.collect()` calls came out of `_benchmark_orchestrator_cycle`, and the
+fixed iteration count became a per-point `BENCHMARK_CYCLE_BUDGET` so that
+every position count gets an equal-length measurement window. Their old
+entries describe code that no longer runs. The other 19 were left on the
 2026-10-02 anchor deliberately: re-anchoring them to one more runner adds an
-arbitrary offset this change has no reason to introduce.
+offset this change has no reason to introduce.
 `provenance.partial_regeneration` in the file records which entries moved,
 from which run, and why, and the report prints a `PARTIAL BASELINE` line so
 the split is visible without opening the file.
 
-| benchmark | 2026-10-02 (gc, 100 iter) | gc removed, 100 iter | shipped (no gc, 2000 iter) | sd (n=9) |
+| benchmark | 2026-10-02 (gc, 100 iter) | gc removed, 100 iter | shipped (budget 20000) | sd (n=9) |
 | --- | ---: | ---: | ---: | ---: |
-| `test_cycle_time_1_position` | 0.0259s | 0.0008s | 0.0044s | 0.0001s |
-| `test_cycle_time_5_positions` | 0.0202s | 0.0014s | 0.0149s | 0.0001s |
-| `test_cycle_time_10_positions` | 0.0211s | 0.0021s | 0.0276s | 0.0003s |
-| `test_cycle_time_20_positions` | 0.0223s | 0.0036s | 0.0532s | 0.0006s |
-| `test_memory_usage_scaling` | 0.0803s | 0.0062s | 0.0981s | 0.0012s |
-| `test_scalability_summary` | 0.0806s | 0.0063s | 0.0973s | 0.0006s |
+| `test_cycle_time_1_position` | 0.0259s | 0.0008s | 0.0424s | 0.0006s |
+| `test_cycle_time_5_positions` | 0.0202s | 0.0014s | 0.0315s | 0.0004s |
+| `test_cycle_time_10_positions` | 0.0211s | 0.0021s | 0.0304s | 0.0008s |
+| `test_cycle_time_20_positions` | 0.0223s | 0.0036s | 0.0293s | 0.0005s |
+| `test_memory_usage_scaling` | 0.0803s | 0.0062s | 0.1309s | 0.0018s |
+| `test_scalability_summary` | 0.0806s | 0.0063s | 0.1317s | 0.0017s |
 
 The middle column is run
 [37120153137](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37120153137)
-and is kept here as the measurement, not as a shipped state: at 100 iterations
-with the collections gone, the two sweep benchmarks are 6.2–6.3 ms against
+and is kept as a measurement, not as a shipped state: at 100 iterations with
+the collections gone, the two sweep benchmarks are 6.2–6.3 ms against
 80.3–80.6 ms with them, so **`gc.collect()` was 92% of what those benchmarks
-measured**. The shipped column is run
-[37158102601](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37158102601)
-at 2000 iterations, which is what the baseline now contains.
+measured**. The four single-count entries now sit within 29–42 ms of each
+other because the budget gives them equal windows, where before they ranged
+over a factor of six.
 
-**Three of the six clear the 50 ms floor and are compared again** — the two
-sweeps at 97–98 ms and `test_cycle_time_20_positions` at 53.2 ms — so the
-suite compares 17 benchmarks where it compared 16 before this PR. The other
-three are below the floor and exempt, as they were before. The 20-position
-entry sits only just over the floor, so on a faster runner it will fall under
-it and be exempt there; exempt is a pass, so that costs coverage, not
-correctness.
+**Two of the six are compared, four are exempt.** The sweeps at 131 ms are
+over the 50 ms floor; the four single-count benchmarks at 29–42 ms are under
+it, as they were before this PR. The comparable set is 16, the same as before.
 
-**What guards a below-floor benchmark.** Not the baseline ratio — these three
-are exempt from it. `test_cycle_time_1_position`, `_5_positions` and
-`_10_positions` each assert their own entry in `CYCLE_TIME_CEILINGS_MS`
-(100 ms, 500 ms and 5000 ms per cycle), and a majority of rounds failing such
-an assertion is an error in the checker's round-outcome verdict, not a
-warning. `test_scalability_summary` used to be the exception that proved the
-rule: it printed "SLA PASS"/"SLA FAIL" and ended in `assert True`, so it could
-not fail for any timing reason at all. It now asserts all four ceilings and
-the 1→20 `scaling_factor` against `MAX_SCALING_FACTOR` (20x), the same two
-things `test_memory_usage_scaling` checks, and both read those numbers from
-the module constants rather than restating them — so the status the sweep
+**What guards a below-floor benchmark.** Not the baseline ratio — those four
+are exempt from it. `test_cycle_time_1_position`, `_5_positions`,
+`_10_positions` and `_20_positions` each assert their own entry in
+`CYCLE_TIME_CEILINGS_MS` (100, 500, 5000 and 10000 ms per cycle), and a
+majority of rounds failing such an assertion is an error in the checker's
+round-outcome verdict, not a warning. `test_scalability_summary` used to be
+the exception that proved the rule: it printed "SLA PASS"/"SLA FAIL" and ended
+in `assert True`, so no timing could fail it. It now asserts all four ceilings
+and the 1→20 `scaling_factor` against `MAX_SCALING_FACTOR` (20x) — the same
+two things `test_memory_usage_scaling` checks — and both read those numbers
+from the module constants rather than restating them, so the status the sweep
 prints and the condition that fails it cannot drift apart.
 
-**The offset the splice carries, stated.** Measured on the 14 unchanged
-comparable benchmarks, the run that produced the six read **x0.914** against
-the 2026-10-02 anchor (range x0.730–x1.009), so the six sit roughly 9% low
-relative to the other 19 and will read about +9% on a runner that matches the
-anchor. That is inside the run-to-run variation already documented above
-(factors from x0.43 to x1.13 within three days) and far inside the 50%
-warning threshold. It is the price of not re-anchoring 19 correct entries to
-one more runner, which would spread the same kind of offset across all 25.
+That scaling assertion is only meaningful because the measurement windows are
+equal. At a fixed 2000 iterations the 1-position point took ~4 ms against the
+20-position point's ~47 ms, so one scheduler burst moved the ratio wholesale:
+measured on the deploy host over twelve runs of the file, **8.83x to 29.88x**,
+tripping the 20x bound. With `BENCHMARK_CYCLE_BUDGET` the same twelve runs
+give **14.57x to 15.36x**. Taking the median rather than the mean of the
+timed cycles was tried first and is kept — the mean takes the full weight of
+one stall — but it does not fix this on its own, because the disturbance
+covers the whole short window rather than a minority of cycles within it.
+
+**Which candidate was used, and which was discarded.** Four
+`performance-baseline` runs were taken (the measured window changed twice,
+and one candidate was rejected on its runner). The shipped one is
+[37159332468](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37159332468):
+**x1.033** against the anchor on the 14 unchanged comparable benchmarks,
+range x0.990–x1.085, MAD 2% — inside the x0.90–x1.10 band required above.
+Run [37158999564](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37158999564)
+measured the same commit at **x0.741** (range x0.628–x0.986, MAD 14%) and was
+discarded: splicing from it would have left those six entries reading +35% on
+every future run, with nothing wrong.
 
 It replaces the 2026-05-30 single-sample file. Checked against that file
 before replacing it: 0 errors, 0 warnings, 25 pass (runner factor x1.12), so
@@ -576,7 +584,27 @@ been observed within three days. So:
    `tests/performance/baselines.json`, byte for byte.
 3. Add or update `provenance.partial_regeneration` (schema above) naming them,
    the run, and why.
-4. Run the checker with the spliced baseline against that same run's
+4. **Check the candidate's runner before splicing.** Compute the candidate's
+   factor against the committed baseline over the *unchanged* comparable
+   benchmarks only, and accept the candidate only if it lands within
+   **x0.90–x1.10**:
+
+   ```python
+   median(cand[n]["median"] / base[n]["median"]
+          for n in base
+          if n not in regenerated and base[n]["median"] >= 0.05)
+   ```
+
+   A spliced entry carries its measuring runner's speed with it forever, and
+   the runner-speed factor cannot remove it: the factor is a median over all
+   comparable benchmarks, so it tracks the majority group and the spliced
+   minority reads `1 / candidate factor` on *every* future run. Measured in
+   #857: a x0.914 candidate leaves them +9%, a x0.741 candidate leaves them
+   +35% — a third of the way to the warning threshold with nothing wrong. A
+   whole-file regeneration does not have this failure mode, because a uniform
+   offset is exactly what the factor removes; that is the trade the band
+   protects. Discard an out-of-band candidate and run the workflow again.
+5. Run the checker with the spliced baseline against that same run's
    `current.json` and quote the result in the PR.
 
 `excluded` is **not** an alternative to this. A benchmark that still produces
