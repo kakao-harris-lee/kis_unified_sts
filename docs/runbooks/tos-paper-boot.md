@@ -768,7 +768,7 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 > 배선이고, §3 과 다른 점은 단 하나다 — **data dir 이 영속**이다. 그 하나가 §4-A 의 적용
 > 범위, 증거 델타의 셈법, 콜드 백업의 전제를 전부 바꾼다.
 
-### 7.1 결정
+### 7.1 결정 — 무엇이 바뀌고 무엇이 그대로인가
 
 - **운영자 결정 2026-10-03**: TOS paper 런타임을 매 거래일 **상주**로 돌리고, 증거를
   **영속 data dir** 한 곳에 쌓는다. 첫 세션은 **2026-10-06(화)** 다 — 10-03(토)·10-05(대체휴일)
@@ -780,60 +780,129 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
   픽스처**다(§0). 상주로 돌린다고 해서 이것이 거래 전략이 되지 않는다. 상주의 목적은
   ① 매일 같은 코드가 실시계로 부팅한다는 증거를 쌓는 것, ② 증거량·부팅 비용의 실제 곡선을
   (합성 이력이 아니라) 실측으로 얻는 것이다.
+- ⚠ **바뀌는 것 (1) — 상주는 `LONG` **한 방향**으로만 돈다.** 이것은 §0 에서 바뀌는 점이다:
+  §0 은 「대칭을 좁히지 않았다는 증거로 **양쪽을 모두 부팅시킨다**」고 적고, 09-27/28
+  캠페인은 실제로 LONG·SHORT 를 각각 띄웠다. 상주 래퍼는 `TOS_PAPER_DIRECTION` 기본값이
+  `LONG` 이고, 한 data dir 에 두 방향을 섞는 경로는 설계에 없다(§7.10 3 — 섞으면 §5 ⑤ 때문에
+  나중에 digest 로 갈라낼 수 없다). 저장소 규칙 「Futures must preserve long/short symmetry」는
+  **전략 코드의 대칭**에 대한 것이고 이 배선은 그 코드를 바꾸지 않지만, **매일 쌓는 증거가
+  한 방향뿐**이라는 것은 그 자체로 기록할 변화다. **운영자 결정 자리다 — §7.10 3.**
+- ⚠ **바뀌는 것 (2) — 코드가 날마다 움직인다.** 래퍼는 매일 아침 `origin/main` 에서
+  워크트리를 새로 만든다. 그래서 **하나의 append-only 코퍼스가 여러 커널 리비전에 걸친다.**
+  §7.10 6 을 볼 것.
 
-### 7.2 경로
+### 7.2 경로 · 좌표 규율 · 환경 손잡이
 
 | 무엇 | 어디 | 비고 |
 | --- | --- | --- |
-| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) |
+| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · mode 0755(런타임 생성) |
 | 세션 래퍼 | `~/.config/kis-probes/tos-paper-session.sh` | mode 700 · 비커밋 |
 | 세션 드라이버 | `~/.config/kis-probes/tos_paper_session.py` | mode 700 · 비커밋 |
-| 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다** |
-| 렌더된 설정 | `~/.config/tos/paper-config` | 매일 부팅 **직전에** 다시 렌더(저널 신선도 §2) |
-| 커스터디 | `~/.local/state/tos/paper-custody` | §1 그대로 · `environment_label: "paper"` |
-| 일별 로그 | `~/.local/state/tos/paper-logs/<YYYY-MM-DD>.log` | 래퍼+드라이버 stdout/err |
-| 세션 아티팩트 | `~/.local/state/tos/paper-sessions/<date>-<HHMMSS>-<DIR>/` | `report.json` · `render.log` · `run.log` · `bootproof.txt` |
-| PID | `~/.local/state/tos/paper-ops/paper-session{,.driver}.pid` | 정지가 읽는다 |
-| flock | `~/.config/kis-probes/tos-paper-session.lock` | 기동만 잡는다(§7.4) |
+| 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다**(§7.3 3) |
+| 렌더된 설정 | `~/.config/tos/paper-config` | mode 700 · 매일 부팅 **직전에** 다시 렌더(저널 신선도 §2) |
+| 커스터디 | `~/.local/state/tos/paper-custody` | mode 700 · §1 그대로 · `environment_label: "paper"` |
+| 일별 로그 | `~/.local/state/tos/paper-logs/<YYYY-MM-DD>.log` | mode 700 디렉터리 · 래퍼+드라이버 stdout/err |
+| cron stdout | `~/.local/state/tos/paper-logs/cron.log` | ⚠ **로테이션 없음** — 분기마다 손으로 자른다 |
+| 세션 아티팩트 | `~/.local/state/tos/paper-sessions/<date>-<HHMMSS>-<DIR>/` | mode 700 · `report.json` · `render.log` · `run.log` · `bootproof.txt` |
+| PID | `~/.local/state/tos/paper-ops/paper-session{,.driver}.pid` | ⚠ **이 디렉터리는 콜드 백업의 `--config-dir` 이기도 하다**(`evidence_cold_backup.yaml` 이 여기 산다). 둘을 가르려면 PID 를 `~/.local/state/tos/paper-run/` 으로 옮긴다 — 지금은 옮기지 않았다 |
+| flock | `~/.config/kis-probes/tos-paper-session.lock` | **기동만** 잡는다(§7.4) |
 
-### 7.3 래퍼가 하는 일 (순서가 전부다)
+**좌표 규율 (§2·§6 의 연장 — 이 절에도 그대로 적용된다).**
+`render.log` 는 **계좌 지문**을 찍는다. §2 가 못박듯 그 지문은 마스킹이 아니라 상관자이고
+**유출된 지문은 유출된 계좌번호로 취급한다.** 그러므로: 위 네 트리(`paper-data` 제외 전부)는
+저장소 밖 0700 이고, **`render.log` · 증거 행 · 질의 결과를 PR·계획 문서·텔레그램으로 옮겨
+적지 않는다**(이 런북의 인용은 전부 지문·계좌가 없는 줄만 고른 것이다). `.env.mock` 은
+`$MAIN` 의 것을 **절대경로로 넘긴다 — 워크트리로 복사하지 않는다**(§7.3 1). 텔레그램 토큰은
+`$MAIN/.env` 의 두 줄만 `grep` 으로 읽고 로그에 내보내지 않는다.
 
-1. **flock** — 두 기동이 겹치지 않는다. 겹치면 뒤에 온 쪽이 **기다리지 않고 비켜난다**(`-n`).
-2. 호스트 여유(`MemAvailable`·`SwapFree`·디스크)를 로그에 남기고, **디스크 5 GB 미만이면 거부**한다
-   (증거가 하루 ≈ 200 MB 쌓인다 — 증거 성장 계획 §1).
-3. `git fetch` → `~/.local/state/tos/measure/wt-paper` 를 **지우고 다시** `origin/main` 에
-   detached 로 만든다. 공유 체크아웃에서 돌리지 않는 이유는 `MEMORY.md`
-   「프로브는 분리 워크트리(origin/main)에서만」(#793 HIGH)과 같다 — 병렬 레인이 브랜치를 바꾼다.
+**환경 손잡이 (전부 열 개 + 플래그 하나).** ⛔ 표시는 **드라이런 전용이고 cron 줄에 절대
+넣지 않는다** — 셋 다 무인 레인의 안전장치를 끈다.
+
+| 손잡이 | 기본값 | 무엇을 하나 |
+| --- | --- | --- |
+| `TOS_PAPER_DATA_DIR` | `~/.local/state/tos/paper-data` | 상주 durable set |
+| `TOS_PAPER_STOP_HHMM` | `15:45` | 정지 시각(KST). 안전망 마감 계산의 기준 |
+| `TOS_PAPER_APPEND_EVERY_S` | `5` | 관측 수집 주기(초). `0` 이면 수집기 OFF(§7.3) |
+| `TOS_PAPER_DIRECTION` | `LONG` | `LONG`\|`SHORT`. 그 밖의 값은 ABORT |
+| `TOS_PAPER_NOTIFY` | `1` | `0` 이면 텔레그램을 보내지 않고 **보낼 본문을 로그에 적는다** |
+| `TOS_PAPER_WT` | `~/.local/state/tos/measure/wt-paper` | 분리 워크트리 경로 |
+| `TOS_PAPER_BOOTPROOF_CEILING_S` | `600` | 부팅 증명 천장. 래퍼는 여기에 +30 s 를 기다린다(§7.3 7) |
+| ⛔ `TOS_PAPER_IGNORE_CALENDAR` | (없음) | `1` 이면 **휴장·주말 검사를 통째로 끈다** |
+| ⛔ `TOS_PAPER_FAKE_DATE` | (없음) | 달력 검사만 이 날짜로 본다 |
+| ⛔ `TOS_PAPER_MINUTES` | (없음) | 안전망 마감을 직접 준다 — **§7.3 6 의 「마감이 지났다」 검사를 건너뛴다** |
+| `--selftest` (플래그) | — | 텔레그램 줄에 `[SELFTEST] ` 접두 |
+
+### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
+
+0. **전제 좌표** — 인터프리터(`$MAIN/.venv/bin/python`) · 드라이버 · `$MAIN/.env.mock` ·
+   커스터디 루트와 매니페스트가 있고, 매니페스트의 `environment_label` 이 부팅 라벨과
+   **바이트 일치**하며(§1), `TOS_PAPER_DIRECTION` 이 `LONG`/`SHORT` 이고, **살아 있는
+   드라이버가 없을 것**. 하나라도 어긋나면 **ABORT rc 2** 이고 텔레그램 ABORT 줄이 나간다.
+   ⚠ 이것은 바로 아래 flock 의 **SKIP rc 0** 과 다른 사건이다 — SKIP 은 조용하고(텔레그램 없음)
+   ABORT 는 시끄럽다.
+1. **flock** — 두 기동이 겹치지 않는다. 겹치면 뒤에 온 쪽이 **기다리지 않고 비켜난다**(`-n`,
+   rc 0, 텔레그램 없음).
+2. 호스트 여유를 로그에 남긴다. ⚠ **메모리·스왑은 기록만 하고 게이트하지 않는다** — 전역
+   `CLAUDE.md` 의 착수 문턱은 무거운 빌드용이고 이 세션은 파이썬 프로세스 하나다.
+   **게이트는 디스크 하나**이고 5 GB 미만이면 ABORT 한다(증거가 하루 ≈ 200 MB 쌓인다,
+   수집기 on 기준 — §7.8 3).
+3. `git fetch`(실패하면 **ABORT**) → 분리 워크트리를 `origin/main` 에 **다시 만든다.**
+   공유 체크아웃에서 돌리지 않는 이유는 `MEMORY.md` 「프로브는 분리 워크트리(origin/main)
+   에서만」(#793 HIGH)과 같다 — 병렬 레인이 브랜치를 바꾼다.
+   ⛔ **「지우고 다시 만든다」를 조건 없이 하지 않는다.** `$WT` 는 환경변수로 바뀌고 그 부모
+   디렉터리에는 **다른 레인의 워크트리와 재실행 금지 A1 코퍼스**가 산다. 그래서 (a) 경로가
+   존재하면 **이 저장소에 등록된 워크트리일 때만** 지우고 아니면 ABORT, (b) `rm -rf` 폴백은
+   **없다**, (c) 살아 있는 드라이버가 그 트리에서 돌면 `--force` 하지 않고 ABORT 한다.
+   ⚠ **복구 절차 — `worktree prune` 은 선택이 아니라 매일 돈다.** `worktree remove` 는
+   `.git/worktrees` 의 관리 항목을 남길 수 있고, 그러면 다음 `worktree add` 가
+   `fatal: … is a missing but already registered worktree` 로 죽는다(실측 §7.9 S1-b).
+   래퍼는 `add` 직전에 **항상** `prune` 을 돌린다. 손으로 고칠 때도 같은 명령이다:
+   `git -C <repo> worktree prune`.
 4. **달력** — `config/market_schedule.yaml` 과 `config/tos_runtime/paper/calendar.yaml` 을
    **둘 다** 본다. 앞의 것은 운영자가 지목한 정본이고, **뒤의 것이 런타임이 실제로 게이트하는
    파일**이다. 한쪽만 보면 「휴장이라고 적힌 날에 부팅」이 조용히 가능하다. 둘이 갈리면
-   **보수적으로 건너뛰고** 그 사실을 로그에 남긴다. 휴장·주말이면 `exit 0` 에 로그 한 줄이고,
-   **아무것도 부팅하지 않는다.**
+   **보수적으로 건너뛰고** 그 사실을 로그에 남긴다. 휴장·주말이면 **rc 0 · 로그 한 줄 ·
+   텔레그램 없음**이고, 아무것도 부팅하지 않는다.
    ⛔ 두 달력 파일 중 하나라도 **없으면 건너뛰기가 아니라 ABORT** 다. 없는 파일에 grep 을
    걸고 결과를 0 으로 읽으면 「달력이 사라졌다」가 「거래일이다」로 접힌다.
+   ⚠ grep 은 `- "YYYY-MM-DD"` 라는 **따옴표 있는 형태**를 찾는다. 두 파일의 현 표기가 그것이다.
 5. **digest 입장 검사** — 워크트리에서 `print-digests` 를 돌려 같은 워크트리의
    `release.yaml::expected_{code,dependency_set}_digest` 와 대조한다. 다르면 **부팅하지 않고
    거부**한다. 어차피 Stage A 가 `ReleaseAdmissionRefused` 로 거부할 것을, 여기서 **왜**
    거부되는지와 함께 먼저 잡는 것이다(§5 ① ⚠ — 커널 소스를 바꾸면 이 핀을 재도출해야 한다).
    ⚠ **빈 값끼리의 일치는 일치가 아니다.** `print-digests` 가 죽거나 `release.yaml` 의 키
    이름이 바뀌면 비교할 네 값이 모두 빈 문자열이 되고, 그러면 `"" != ""` 가 거짓이라 가드가
-   **조용히 통과한다**. 그래서 비교 전에 **넷 모두 64 hex 인지** 먼저 본다. 실패 입력:
-   `print-digests` 가 예외로 죽은 출력 → `digest guard cannot run — CODE_NOW is not a hex
-   digest (got '<empty>')`.
+   **조용히 통과한다**. 그래서 비교 전에 **넷 모두 64자 소문자 hex 인지** 본다 —
+   `case "$_v" in ""|*[!0-9a-f]*)` 로 **전 글자**를 보고 길이도 64 로 고정한다. 접두 몇 글자만
+   보는 패턴은 「64 hex」가 아니다(실측 §7.9 E3 `len64`).
 6. **안전망 마감** — 정지 크론이 죽어도 세션이 영원히 돌지 않도록 `--max-minutes` 를
    「지금 → 정지 시각 + 15 분」으로 계산해 드라이버에 넘긴다.
    ⚠ **남은 시간을 먼저 보고 나서 15 분을 더한다.** 더한 뒤에 양수인지 보면 마감 5 분
-   **뒤**에 뜬 기동이 「10 분 남았다」로 통과해 장 마감 뒤에 세션을 연다. 실패 입력:
-   `TOS_PAPER_STOP_HHMM` 이 이미 지난 시각 → `ABORT — stop time 13:00 KST already passed`.
+   **뒤**에 뜬 기동이 「10 분 남았다」로 통과해 장 마감 뒤에 세션을 연다.
 7. 드라이버를 띄우고, **부팅 증명이 날 때까지 기다렸다가** 텔레그램 기동 줄을 보내고,
    끝날 때까지 `wait` 한다.
-   ⚠ **기동 줄을 드라이버보다 먼저 보내면 그 줄에 적을 것이 없다** — 증명은 부팅 2 초
-   뒤에야 안다. 그래서 드라이버가 증명 직후 `bootproof.txt` 를 쓰고 래퍼가 그것을
-   최대 90 s 기다린다. 드라이버가 증명 전에 죽으면(렌더 거부 등) 기동 줄이 그렇게 적는다 —
-   **파일이 없는 것과 「MISSING」 이라고 적힌 것은 다른 사건이다.**
+   ⚠ **기동 줄을 드라이버보다 먼저 보내면 그 줄에 적을 것이 없다** — 증명은 부팅 몇 초
+   뒤에야 안다(2026-10-03 genesis 실측 **2.0 s**). 그래서 드라이버가 증명 직후
+   `bootproof.txt` 를 쓰고 래퍼가 그것을 기다린다.
+   ⚠ **래퍼의 대기와 드라이버의 천장은 같은 숫자에서 나온다** — `BOOTPROOF_CEILING_S`(600 s)
+   하나를 드라이버에 `--boot-proof-timeout-s` 로 넘기고 래퍼는 거기에 +30 s 를 기다린다.
+   두 숫자를 따로 두면 어긋나고, **짧은 쪽이 느린 부팅을 「거부」라고 보고한다**(초판이 90 s
+   대 600 s 였다). 드라이버가 증명 전에 죽으면(렌더 거부 등) 기동 줄이 그렇게 적는다 —
+   **파일이 없는 것과 「MISSING」 이라고 적힌 것은 다른 사건이다**(§7.8 1).
 
 드라이버(`tos_paper_session.py`)가 하는 일은 §2–§4 그대로다: **렌더 → 부팅 → 관측 수집 →
-SIGTERM → 보고서**. 상주용으로 다른 것 셋:
+SIGTERM → 보고서**.
+
+**출처.** 이 드라이버는 2026-09-27/28 부팅증명 캠페인의 측정 스크립트
+(`~/.local/state/tos/measure/tos_realclock_measure.py`)에서 갈라져 나왔다. §7.8 2 가
+STALE·소비를 그 캠페인의 실측과 비교하므로, **무엇이 같고 무엇이 다른지**를 적어 둔다.
+같은 것: 합성 밴드 상수(`LOWER`/`UPPER`/`CLOSES` — 렌더의 `_JOURNAL_*` 와 같은 값),
+`as_of = 지금 − 200 ms`, 원자적 전체 파일 교체, 필드 이름 여섯 개.
+다른 것: `source_id` (`tos-paper-realclock-measure` → `tos-paper-resident-session`),
+`raw_event_id` 접두 (`realclock-N` → `resident-N`), **모든 집계가 기준선 델타**,
+**SIGTERM/SIGINT 처리**(측정본은 자기 시간이 끝나면 스스로 멎었다), 그리고 아래 세 가지.
+
+상주용으로 다른 셋:
 
 - **모든 집계가 델타다.** 부팅 직전의 `MAX(seq)` 를 기준선으로 잡고 그 **뒤**의 행만 센다.
   누적으로 세면 「오늘 부팅이 증거를 남겼다」가 **어제의 행으로 통과한다**.
@@ -841,28 +910,26 @@ SIGTERM → 보고서**. 상주용으로 다른 것 셋:
   `TIME_SERVICE_STARTUP`). 그래서 「행이 하나도 없다」의 기준선은 0 이 아니라 **−1** 이다.
   0 으로 두면 genesis 부팅의 **첫 행이 모든 델타에서 조용히 빠진다** — 초판이 실제로 그랬고,
   드라이런이 「store 19 행인데 델타 18 행」으로 잡아냈다.
-- **부팅 증명을 기계적으로 확인한다.** 기준선 **뒤에** 정책 결속 다섯 행
+- **부팅 증명을 기계적으로 확인한다.** 기준선 **뒤에** 정책 결속 **다섯 종류**
   (`VENUE_POLICY_BOUND` · `ORDER_CONSTRUCTION_POLICY_BOUND` · `AGGREGATE_RISK_POLICY_BOUND` ·
-  `ACTION_FLOW_POLICY_BOUND` · `AUTHORITY_EPOCH_TRANSITION`)이 실제로 생겼는지 본다.
-  **이 검사가 실패하는 구체적 입력**: 거부된 부팅(`run` 이 `ReleaseAdmissionRefused` 등으로
-  즉시 rc=1 로 죽는 경우) — 스토어에 새 행이 하나도 안 생기고, 드라이버는 rc=1 과
-  `verdict: boot_proof_missing` 으로 끝난다. 누적으로 셌다면 **어제의 다섯 행이 이것을
-  통과시킨다**.
-  ⚠ **증명을 기다리는 천장은 600 s 이고, 이것은 튜닝 손잡이가 아니다.** 정책 결속 행은
-  부팅 **리플레이 뒤에** 쓰이고(실측 seq 순서: … 12 `REPLAY_VERDICT_IDENTICAL` → 13·14 정책
-  결속), 리플레이 비용은 이력에 비례해 커진다(증거 성장 계획 §1 3항). 그러므로 짧은 천장은
-  「상주가 오래될수록 **멀쩡한 부팅을 MISSING 으로 죽이는**」 가드가 된다. 2026-10-03
-  genesis 실측은 **2.0 s** 다. 이 값에 가까워지는 날이 오면 그것은 조이거나 늘릴 값이 아니라
-  **보고할 소견**이다(§7.8 2 의 `boot_seconds` 추이).
-- **정지가 밖에서 온다.** SIGTERM/SIGINT 를 받으면 자식(`run`)에게 그대로 넘기고 기다렸다가
-  `report.json` 을 쓴다.
+  `ACTION_FLOW_POLICY_BOUND` · `AUTHORITY_EPOCH_TRANSITION`)가 실제로 생겼는지 본다.
+  **이 검사가 실패하는 구체적 입력**: 빈 커스터디 루트 → `KeyContinuityRefused` 로 `run` 이
+  즉시 rc 1 (실측 §7.9 E4). 누적으로 셌다면 **어제의 다섯 행이 이것을 통과시킨다**.
+  ⚠ **천장은 600 s 이고 튜닝 손잡이가 아니다.** 정책 결속 행은 부팅 **리플레이 뒤에** 쓰이고
+  (실측 seq 순서: … 12 `REPLAY_VERDICT_IDENTICAL` → 13·14 정책 결속), 리플레이 비용은 이력에
+  비례해 커진다(증거 증가 대응 계획 §0 3 —
+  `docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`). 그러므로 짧은 천장은
+  「상주가 오래될수록 **멀쩡한 부팅을 MISSING 으로 죽이는**」 가드가 된다. 이 값에
+  가까워지는 날이 오면 그것은 조이거나 늘릴 값이 아니라 **보고할 소견**이다(§7.8 2).
+- **정지가 밖에서 온다.** SIGTERM/SIGINT 를 받으면 자식(`run`)에게 그대로 넘기고
+  **120 s** 기다렸다가(그 뒤 `SIGKILL`; 두 경로가 같은 값을 쓴다) `report.json` 을 쓴다.
+  부팅 증명을 기다리는 루프도 정지 신호를 본다 — 보지 않으면 느린 부팅 중의 SIGTERM 이
+  최대 10 분 무시되고 래퍼의 180 s 정지 경보가 멀쩡한 세션에 울린다.
 
-**관측 수집기(`TOS_PAPER_APPEND_EVERY_S`, 기본 5 s)** 는 2026-09-27/28 부팅증명 캠페인이 쓴
-것과 **같은 합성 밴드**(`scripts/tos/render_paper_config.py` 의 `_JOURNAL_*`)로 저널에 관측을
-덧붙인다 — 원자적 전체 파일 교체(`marketfeed/journal.py` 의 수집기 규약). 이것을 기본 on 으로
-둔 이유는 **없으면 저널에 렌더의 부팅증명 1건뿐이라 소비도 결정도 0 이고**, 증거 성장 계획
-§1 의 「≈ 200 MB/일」 기준선이 바로 이 조건에서 나온 값이기 때문이다. 끄려면 `0` 을 준다
-(그러면 하루 ≈ 115 MB, 전부 `TIME_HEALTH_SNAPSHOT`). ⚠ **이것은 운영자 결정이 아직 없는
+**관측 수집기(`TOS_PAPER_APPEND_EVERY_S`, 기본 5 s)** 는 위 합성 밴드로 저널에 관측을
+덧붙인다. 기본 on 으로 둔 이유는 **없으면 저널에 렌더의 부팅증명 1건뿐이라 소비도 결정도
+0 이고**, 증거 증가 대응 계획 §1 의 「≈ 200 MB/일」 기준선이 바로 이 조건에서 나온 값이기
+때문이다. 끄면 하루 ≈ **112 MB**(유도값 — §7.8 3). ⚠ **이것은 운영자 결정이 아직 없는
 자리다 — §7.10 1.**
 
 ### 7.4 cron 두 줄 — **아직 설치되어 있지 않다**
@@ -876,6 +943,9 @@ CRON_TZ=Asia/Seoul
 45 15 * * 1-5 /bin/bash /home/deploy/.config/kis-probes/tos-paper-session.sh stop  >> /home/deploy/.local/state/tos/paper-logs/cron.log 2>&1 # tos-paper-session
 ```
 
+- ⚠ **이 블록은 crontab 의 끝에 붙인다.** `CRON_TZ` 는 **그 뒤에 오는 줄에만** 적용된다.
+  이 crontab 에는 이미 `CRON_TZ=Asia/Seoul` 선언이 두 개 있으므로, 중간에 끼워 넣으면
+  아래쪽 남의 줄의 시간대까지 바꾼다.
 - 시각은 `calendar.yaml` 의 `krx-index-futures` **CONTINUOUS 08:45–15:45 KST MON–FRI** 에
   맞췄다(§5 ④). 런타임은 **마감에 스스로 멎지 않는다** — 세션이 닫히면 틱이
   `SKIPPED_SESSION_CLOSED` 가 될 뿐 `run_forever` 는 계속 돈다. 그래서 정지는 밖에서 온다.
@@ -885,18 +955,20 @@ CRON_TZ=Asia/Seoul
   기동 줄은 장중 내내(≈ 7 h) 살아 있으므로, 같은 lock 파일을 정지 줄에도 붙이면 **정지가
   기동의 lock 에 막혀 영영 돌지 않는다.** 중복 기동 방지는 래퍼가 자기 lock 으로 이미 한다.
 - 기동 줄의 cron 자식은 장중 내내 떠 있다. 이것은 정상이다(`wait`).
+- ⛔ §7.2 의 ⛔ 손잡이 셋은 이 줄에 **절대** 넣지 않는다.
 
 ### 7.5 정지 의미론
 
 - 정지는 **드라이버에게** `SIGTERM` 을 보낸다. 드라이버가 그것을 `run` 에게 넘기고
   (= §4 의 문서화된 우아한 정지: `install_run_stop_signal_handlers`, 종료코드 0,
-  stdout 에 `run: stopped (signal received).`) 종료를 기다린 뒤 `report.json` 을 쓰고
-  텔레그램 종료 줄을 보낸다.
-- ⚠ `run` 에 **직접** 보내면 런타임은 멎지만 **보고서도 텔레그램 줄도 나오지 않는다.**
+  stdout 에 `run: stopped (signal received).`) 종료를 기다린 뒤 `report.json` 을 쓴다.
+  ⚠ **텔레그램 종료 줄을 보내는 것은 드라이버가 아니라 기동 프로세스다** — `wait` 에서
+  깨어나 `report.json` 을 읽고 보낸다. 그래서 기동 프로세스가 죽어 있으면(cron 자식이
+  kill 됐다면) 보고서는 남고 **종료 줄만 없다**.
+- ⚠ `run` 에 **직접** SIGTERM 을 보내면 런타임은 멎지만 보고서도 텔레그램 줄도 나오지 않는다.
 - 드라이버가 SIGTERM 180 s 뒤에도 살아 있으면 정지 경로는 **에스컬레이션하지 않는다** —
-  `SIGKILL` 하지 않고, 지연 사실을 텔레그램으로 알리고 rc=1 로 끝낸다. 열린 sqlite 핸들을
-  강제 종료로 끊는 것보다 **사람이 보는 편이 낫다.** (드라이버 자신은 `run` 이 SIGTERM
-  120 s 안에 안 멎으면 `SIGKILL` 한다 — 그쪽은 이미 보고서를 쓸 수 있는 상태다.)
+  `SIGKILL` 하지 않고, 지연 사실을 텔레그램으로 알리고 rc 1 로 끝낸다. 열린 sqlite 핸들을
+  강제 종료로 끊는 것보다 **사람이 보는 편이 낫다.**
 - 안전망: 정지 크론이 죽어도 드라이버는 `--max-minutes`(= 정지 시각 + 15 분, 즉 **16:00 KST**)
   마감에 스스로 같은 경로로 멎는다.
 
@@ -905,8 +977,7 @@ CRON_TZ=Asia/Seoul
 - 2026-10-03 현재 `~/.local/state/tos/paper-data` 는 **존재하지 않는다**(실측). 손으로
   만들지 않는다 — **첫 부팅의 genesis 가 네 스토어를 만든다.**
 - 그러므로 §4-A(v1 → v2 마이그레이션)는 이 디렉터리에 **적용되지 않는다.** genesis 는 곧장
-  v2 를 만든다(드라이런 실측: `user_version=2`, `schema_ledger` = `2|CREATED`,
-  `entries_kind_seq` 와 append-only 트리거 넷 포함 — PR #839 의 수렴 수정).
+  v2 를 만든다(드라이런 실측 §7.9 ①).
 - ⛔ **`migrate --data-dir ~/.local/state/tos/paper-data` 를 10-06 전에 돌리지 말 것.**
   `apply_migrations` 는 존재 검사를 하지 않으므로 **빈 디렉터리에 스토어 넷을 새로 만들고
   종료코드 0 으로 끝난다**(§4-A ⛔). 그러면 키도 세그먼트도 증거도 없는 빈 스토어가
@@ -916,46 +987,108 @@ CRON_TZ=Asia/Seoul
 
 ### 7.7 콜드 백업과의 시간 관계
 
-- 야간 콜드 백업(`docs/runbooks/tos-evidence-cold-backup.md` · `~/.config/kis-probes/cold-backup-nightly.sh`)
-  의 대상은 **같은** `~/.local/state/tos/paper-data` 이고 예정 시각은 **18:00 KST** 다.
+- 야간 콜드 백업(`docs/runbooks/tos-evidence-cold-backup.md` ·
+  `~/.config/kis-probes/cold-backup-nightly.sh`)의 대상은 **같은**
+  `~/.local/state/tos/paper-data` 이고 예정 시각은 **18:00 KST** 다.
+  ⚠ **그 cron 줄도 아직 설치되어 있지 않다**(PR #851). 두 줄을 같이 넣든 따로 넣든,
+  **백업만 먼저 넣는 것은 의미가 없다**(대상이 아직 없다).
 - `backup-set`/`cold-backup` 은 **런타임이 정지해 있을 것**을 전제하고, 그 전제를
   **기계적으로 확인하지 못한다**(그 함수의 문서화된 한계). 그래서 시간으로 벌려 둔다:
-  정지 15:45 → 안전망 마감 16:00 → 백업 18:00. **최소 2 h 15 m 의 여유**다.
-- 정지가 지연되면(§7.5) 텔레그램에 그 사실과 함께 **「스토어가 열려 있으면 백업이 뜨지
+
+| 경로 | 정지 시각 | 18:00 까지 여유 |
+| --- | --- | --- |
+| 정상 (정지 크론이 15:45 에 돈다) | 15:45 + 정지 대기 | **2 h 15 m — 이것이 최대값이다** |
+| 안전망 (정지 크론이 안 돌았다) | 16:00 + 렌더·부팅 시간 | **≈ 2 h 00 m** |
+| 정지 지연 (§7.5 — 에스컬레이션 없음) | **상한 없음** | **보장 없음** |
+
+- 정지가 지연되면 텔레그램에 그 사실과 함께 **「스토어가 열려 있으면 백업이 뜨지
   않는다」**가 함께 나간다. 그때의 확인은 `fuser -v ~/.local/state/tos/paper-data/*.sqlite3` 다.
 
 ### 7.8 다음 날 아침에 볼 것 (5 분)
 
-1. **텔레그램 두 줄** — 기동과 종료. 둘 중 하나라도 없으면 그날은 돌지 않았다.
-   기동 줄의 머리가 `boot proof: OK · boot <N>s · genesis=… · rev … · <종목>` 이다.
-   `MISSING` 이면 부팅이 거부됐고(그날 증거 0), 「없음」이면 렌더가 거부됐다.
-2. **`report.json`** — `~/.local/state/tos/paper-sessions/<날짜>-*/report.json`:
-   - `boot_proof_ok: true` · `verdict: "ok"` · `exit_code: 0` · `stop_reason: "signal"`
-     (`"deadline"` 이면 **정지 크론이 안 돌았다**)
-   - `boot_seconds` — **이 값이 날마다 커지는지 본다.** 부팅은 이력을 리플레이하므로 증거가
-     쌓일수록 느려진다. 증거 성장 계획 §1 3항의 「실제로 커지는 위험은 부팅·복구 시간」이
-     여기서 실측으로 나타난다.
-   - `events_consumed` · `stale_ratio` — 2026-09-28 실측 기준선은 **STALE 1 건
-     (= 렌더 부팅증명 관측 1건, 고칠 수 없음 §5 ④ ⚠)**, 나머지 전건 신선이다. STALE 비율이
-     올라갔으면 poll/신선도 예산이 어긋난 것이다(#807 형태).
-   - `evidence_schema_after.user_version == 2` · `matches_expected_v2: true`
-3. **data dir 성장** — `du -sb ~/.local/state/tos/paper-data`. 기대치는 **≈ 200 MB/일**
-   (poll 400 · 5 s 수집, 증거 성장 계획 §1). 크게 어긋나면 수집기가 멎었거나 세션이 짧았다.
-4. **콜드 백업 결과** — 전날 18:00 의 텔레그램 줄(`verdict`/`refused`/`failed`)과
-   `~/.local/state/tos/cold-backup.log`.
+**0. 텔레그램이 아무것도 없으면 로그에서 가른다.** 침묵에는 여러 뜻이 있다(아래 1).
+`~/.local/state/tos/paper-logs/cron.log`(cron 이 돌기는 했나)와 같은 날짜의
+`<date>.log`(래퍼가 어디까지 갔나)를 본다.
+
+**1. 텔레그램 — 결말은 네 가지이고 「두 줄」이 전부가 아니다.** 채널은 briefing 이고
+자격증명은 `$MAIN/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN`/`_CHAT_ID` 두 줄이다.
+
+| 결말 | 텔레그램 | 종료코드 |
+| --- | --- | --- |
+| 정상 | 기동 + 종료, **두 줄** | 0 |
+| ABORT (전제·달력 파일 부재·digest·마감 지남·워크트리) | ABORT **한 줄** | 2 |
+| SKIP (휴장·주말·flock 중복) | **없음** — 로그 한 줄뿐 | 0 |
+| `stop` 인데 돌던 세션이 없음 | **없음** — 로그 한 줄뿐 | 0 |
+
+⚠ 침묵의 다른 원인: `curl` 실패(로그에 `telegram notify FAILED`, **재시도 없음**),
+`TOS_PAPER_NOTIFY=0`, `$MAIN/.env` 에서 자격증명을 못 찾음. **그래서 텔레그램 부재를
+「안 돌았다」로 읽지 말고 0 번으로 간다.**
+
+기동 줄의 머리는 `boot proof: OK · boot <N>s · genesis=… · rev … · <종목>` 이다. 세 값이 있다:
+
+| 머리 | 뜻 | 가르는 법 |
+| --- | --- | --- |
+| `OK` | 기준선 뒤에 정책 결속 다섯 종류가 생겼다 | — |
+| `MISSING` | ① 부팅 거부(증거 0) · ② 600 s 천장 초과(느린 부팅) · ③ 스토어 판독 실패 | `boot_seconds` 가 천장 근처면 ②, `run_log_tail` 에 `run: refused —` 가 있으면 ① |
+| `N/A — 부팅 전 종료` | 렌더가 거부돼 부팅 자체가 없었다 | `render.log` |
+| `알 수 없음 … 드라이버는 살아 있다` | 630 s 안에 `bootproof.txt` 가 없고 드라이버는 산다 = **느린 부팅이지 거부가 아니다** | 세션 디렉터리를 다시 본다 |
+
+**2. `report.json`** — `~/.local/state/tos/paper-sessions/<날짜>-*/report.json`:
+
+- `boot_proof_ok: true` · `verdict: "ok"` · `exit_code: 0`
+- `stop_reason` 은 **셋**이다: `signal`(정상 — 정지 크론) · `deadline`(**정지 크론이 안 돌았다**) ·
+  `child_exited`(**`run` 이 스스로 죽었다** — `run_log_tail` 을 본다).
+- `boot_seconds` — **이 값이 날마다 커지는지 본다.** 부팅은 이력을 리플레이하므로 증거가
+  쌓일수록 느려진다(증거 증가 대응 계획 §0 3). 2026-10-03 genesis 기준선은 **2.0 s**.
+- `worktree_commit` — **그날 어느 커널 리비전이 썼는지.** 코퍼스가 리비전을 가로지른다(§7.10 6).
+- `events_consumed` · `stale_withheld` — 2026-09-28 실측 기준선은 **15 분 180 건 소비 중
+  STALE 1 건**(= 렌더 부팅증명 관측 1건, 고칠 수 없음 §5 ④ ⚠)이다. 이것은 **개수**이고
+  장중 전체(≈ 5,000 건 예상)의 비율로 옮겨 쓸 수 있는 값이 아니다 — 그 비율의 첫 실측이
+  10-06 이다. 기대는 「STALE 은 부팅당 1 건」이고, 더 많으면 poll/신선도 예산이 어긋난
+  것이다(#807 형태).
+- `append_errors` — 0 이 아니면 저널 쓰기가 실패하고 있다(보고서는 그래도 남는다).
+- `evidence_schema_after.user_version == 2` · `matches_expected_v2: true`
+- ⚠ **`report.json` 이 없어도 증거는 남아 있다.** 보고서는 드라이버가 마지막에 쓰는 파일이고,
+  증거는 런타임이 그 전에 이미 커밋했다. 확인은 sqlite 로 직접 센다:
+  `sqlite3 "file:$DATA/evidence.sqlite3?mode=ro" "SELECT COUNT(*), MAX(seq) FROM entries;"`.
+
+**3. data dir 성장** — `du -sb ~/.local/state/tos/paper-data`.
+
+| 숫자 | 출처 | 성격 |
+| --- | --- | --- |
+| ≈ **200 MB/일** (수집기 5 s) | 2026-09-28 15 분 실측 7.2 MB **× 28 환산** (증거 증가 대응 계획 §1) | **환산값 — 전 세션 실측 없음.** 10-06 이 첫 실측 |
+| 기대 폭 | — | 장 길이·수집기 지연·휴장 반일 등으로 **150–250 MB** 를 정상으로 본다 |
+| ≈ **112 MB/일** (수집기 off) | `TIME_HEALTH_SNAPSHOT` 이 증거 바이트의 75 %(3.99/5.33 MB) → 3.99 × 28 | **유도값 — 측정한 적 없다** |
+
+**4. 콜드 백업 결과** — 전날 18:00 의 텔레그램 줄(`verdict`/`refused`/`failed`)과
+`~/.local/state/tos/cold-backup.log`. **그 cron 도 아직 미설치다**(§7.7).
 
 ### 7.9 드라이런 기록 — 2026-10-03 (장 마감일 · 스크래치 data dir)
 
 운영자 검토 전이라 cron 은 설치하지 않았고, 상주 data dir 은 건드리지 않았다(§7.6 — 지금도
-없다). 대신 **스크래치 data dir** 에 세 번 돌려 경로를 확인했다. 워크트리는
-`origin/main` `aae1cec6e73b`, 종료코드는 세 번 모두 `0`.
+없다). 아티팩트는 **`~/.local/state/tos/paper-sessions/2026-10-03-*/`** 와 날짜 로그
+**`~/.local/state/tos/paper-logs/2026-10-03.log`** 에 있다.
 
-**① genesis + 마감 정지 (90 s)**
+**범위.** 그날 래퍼 `start` 는 **16 회** 돌았고(그중 4 회는 SKIP·ABORT 로 부팅 전에 끝났다),
+부팅까지 간 **12 세션 전부 `verdict: ok` · rc 0** 이다. 래퍼는 리뷰 대응 중에 바뀌었으므로
+**다섯 리비전**이 로그에 찍혀 있다(`=== tos-paper-session start … sha256=` 줄).
+**아래 ①–③ 과 E1–E5 는 전부 출하본 두 개로 다시 돌린 것이다:**
 
 ```text
-2026-10-03 13:31:32 digests: match release.yaml (code 38d85110211c… deps 20559763a113…)
-boot proof: OK · boot 2.0s · genesis=True · rev aae1cec6e73b · A05610
-verdict ok rc=0 stop=deadline (13:31:32→13:33:06 KST)
+tos-paper-session.sh  f452ee0be74a9bc42fc461ba6aba2a565c214e0095462e7e8fe95c43a43be11f
+tos_paper_session.py  b28c188fc708ff2126804cee26c35ab75e3b8b4c9ddb73451766a5cf2a6e0ffa
+```
+
+워크트리는 `origin/main` `36c2a7ccb6b3`(그날 main 이 `aae1cec6` 에서 움직였다).
+
+**① genesis + 마감 정지** — `2026-10-03-142657-LONG/`
+
+```text
+2026-10-03 14:26:55 worktree …/wt-paper @ 36c2a7ccb6b3 (detached origin/main)
+2026-10-03 14:26:55 calendar: 2026-10-06 is a trading day (both files agree)
+2026-10-03 14:26:57 digests: match release.yaml (code 38d85110211c… deps 20559763a113…)
+boot proof: OK · boot 2.0s · genesis=True · rev 36c2a7ccb6b3 · A05610
+verdict ok rc=0 stop=deadline (14:26:57→14:27:38 KST)
 evidence schema user_version=2 v2-shape=True
 run.log tail: run: stopped (signal received).
 ```
@@ -971,32 +1104,116 @@ run.log tail: run: stopped (signal received).
 ```
 
 네 스토어의 `user_version` 은 `evidence=2 · rcl=2 · inbox=1 · marketfeed=1` 이다(§4-A ⚠ —
-스토어마다 목표 버전이 다르다).
+스토어마다 목표 버전이 다르다). `TOS_PAPER_FAKE_DATE=2026-10-06` 을 썼다(장 마감일이라
+10-06 의 달력 경로를 보려고). 수집기 5 s, `TOS_PAPER_MINUTES=0.6`.
 
-**② 재부팅(같은 디렉터리) + 밖에서 온 정지** — **상주의 둘째 날 경로**가 이것이다.
+**② 재부팅(같은 디렉터리) + 밖에서 온 정지 + 계산된 마감** — `2026-10-03-142755-LONG/`.
+**상주의 둘째 날 경로**가 이것이다. 여기서는 `TOS_PAPER_MINUTES` 를 **주지 않았다** —
+마감을 래퍼가 15:45 에서 계산한다(E5).
 
 ```text
-data dir … (genesis=no) · session dir … · append_every_s=5
-driver: boot proof OK — rev=aae1cec6e73b instrument=A05610
-  activation=ACTIVATED 5 (re-derived in a fresh process) genesis=False baseline_seq=18 boot_s=2.0
---- status while running ---
-running: driver pid=3689148  run pid=3690549  data=…
-2026-10-03 13:34:52 stop: SIGTERM -> driver pid=3689148 (it forwards SIGTERM to run and waits)
-2026-10-03 13:34:53 === driver exited rc=0
-2026-10-03 13:34:54 stop: driver exited
+2026-10-03 14:27:55 safety deadline: 92 min (stop cron 는 15:45 KST · 마감은 그보다 뒤)
+driver: boot proof OK — rev=36c2a7ccb6b3 instrument=A05610
+  activation=ACTIVATED 5 (re-derived in a fresh process) genesis=False baseline_seq=17 boot_s=2.0
+--- status ---
+running: driver pid=16147  run pid=16653  data=…/e1-data
+2026-10-03 14:28:55 stop: SIGTERM -> driver pid=16147 (it forwards SIGTERM to run and waits)
+2026-10-03 14:29:00 === driver exited rc=0
+verdict ok rc=0 stop=signal (14:27:55→14:29:00 KST)
+관측 덧붙임 11 · 소비 0 · 스냅샷 +0 · STALE 0 (n/a)  · 증거행 +19
+2026-10-03 14:29:01 stop: driver exited
 ```
 
-기준선 `seq=18` **뒤에** 정책 결속 다섯 행이 다시 생겼고(`REPLAY_VERDICT_IDENTICAL` ·
-`RECOVERY_BARRIER` 포함 — 기존 이력에 대한 리플레이가 돈다), 정지는 SIGTERM **1 초** 만에
-끝났다. 텔레그램 기동·종료 줄이 `[SELFTEST]` 접두로 **각 1회** 나갔다.
+`genesis=False`, 기준선 `seq=17`(①이 18 행 = seq 0–17 을 남겼다), 그 **뒤에** 정책 결속
+다섯 종류가 다시 생겼고(`REPLAY_VERDICT_IDENTICAL` · `RECOVERY_BARRIER` 포함 — 기존 이력에
+대한 리플레이가 돈다), 정지는 SIGTERM **5 초** 만에 끝났다. 92 분은 `14:27:55 → 15:45 + 15`
+와 맞는다. 두 부팅 뒤 스크래치 data dir 은 **229,376 B** 였다(지웠다).
 
-**③ 기준선 −1 수정 재확인** — ①에서 `store 19 행 / 델타 18 행`이 나온 것을 고친 뒤
-다시 genesis 를 뜨니 `baseline_evidence_seq: -1` · 델타 **18** = store **18** 로 맞았다.
+**③ 기준선 −1 (genesis 의 첫 행)** — `2026-10-03-143053-LONG/` 외 다수.
+초판은 「행 없음」의 기준선을 0 으로 뒀고, `entries.seq` 가 0 부터 시작하므로 genesis 의
+**첫 행(`seq=0` `TIME_SERVICE_STARTUP`)이 델타에서 빠졌다** — `store 19 행 / 델타 18 행`.
+수정 뒤 모든 genesis 세션이 `baseline_evidence_seq: -1` 이고 델타 = store 다.
+⚠ 세션마다 증거행 수가 조금씩 다른 것은(18 · 19) **실행 길이 차이**다 —
+`TIME_HEALTH_SNAPSHOT` 이 닫힌 세션에서 60 s 마다 1 행 늘기 때문이다.
+
+**E4 — 부팅 증명 가드의 실패 입력 (빈 커스터디 루트)** —
+`2026-10-03-E4-bootproof-missing/`. 출하본 드라이버를 직접 구동했다
+(`--custody-root <빈 디렉터리>`):
+
+```text
+driver: boot proof MISSING — the boot left no policy-binding row past the baseline seq -1.
+run.log: run: refused — compose_paper_runtime raised KeyContinuityRefused: SqliteEvidenceStore:
+         key generation continuity refused (HISTORY_UNVERIFIABLE) …
+report.json: verdict=boot_proof_missing · boot_proof_ok=false · boot_proof={} · exit_code=1
+driver rc=1
+```
+
+⚠ 이것은 §7.10 의 예전 주장 — 「digest 가드가 먼저 잡으므로 부팅 증명 가드만 따로 시험할 수
+없다」 — 이 **거짓**임을 보인다. `release.yaml` 을 전혀 건드리지 않는 부팅 거부가 있고(§1 의
+`KeyContinuityRefused`, 라벨 불일치 등), 두 가드는 **다른 프로세스**에 산다(digest 는 래퍼,
+부팅 증명은 드라이버).
+
+**S2 — 요약기의 거짓 초록** — `2026-10-03-S2-render-refused/`. 없는 `.env.mock` 을 주어
+**진짜** `render_refused` 보고서를 만들었다(키 14개 · `boot_proof_ok` 없음 · `stale_ratio` 없음):
+
+```text
+출하본:  boot proof: N/A — 부팅 전 종료 · boot ?s · genesis=True · rev 36c2a7ccb6b3 · ?
+         verdict render_refused rc=? stop=? …                       (요약기 rc=0)
+수정 전: bp = OK                                       ← 거짓 초록
+수정 전: sr 포맷에서 ValueError: Unknown format code '%' for object of type 'str'
+         → 래퍼가 「요약 실패」로 떨어져 위의 거짓 OK 를 가렸다
+```
+
+**두 결함은 한 번에 고쳐야 했다** — 포맷 예외를 먼저 고쳤다면 거짓 초록이 그대로 켜졌다.
+
+**S1 — 워크트리 재생성 가드** (출하본 래퍼, 로그 `2026-10-03.log` 14:30 대):
+
+```text
+(a) $WT 가 등록된 워크트리가 아닐 때
+2026-10-03 14:30:47 ABORT — refusing to touch …/wt-empty — it exists but is NOT a registered
+                    worktree of /home/deploy/project/kis_unified_sts.                 rc=2
+(b) 관리 항목만 남은 상태 — 맨손 add 는 죽는다
+fatal: '…/wt-stale' is a missing but already registered worktree;
+use 'add -f' to override, or 'prune' or 'remove' to clear                             rc=128
+(b) 같은 상태에서 출하본 래퍼는 prune 으로 복구한다
+2026-10-03 14:30:51 worktree …/wt-stale @ 36c2a7ccb6b3 (detached origin/main)
+verdict ok rc=0 stop=deadline (14:30:53→14:31:16 KST)
+```
+
+**E2·E3 — 달력·digest 가드의 실패 입력.**
+⚠ **이 둘은 `start` 를 통해 바깥에서 주입할 수 없다.** `start` 는 달력과 digest 를 읽기
+**직전에** 워크트리를 `origin/main` 에서 새로 만들고, 거기서는 두 달력이 다 있고 서로 맞으며
+digest 가 핀과 맞는다. 즉 그 가드들이 지키는 것은 **미래의 `origin/main` 과 깨진 워크트리
+생성**이지 오늘 주입할 수 있는 상태가 아니다. 그래서 입력은 **함수에** 먹였다. 대신 함수
+본문은 베끼지 않고 출하본에서 **그대로 떼어내** 돌렸다 —
+`~/.local/state/tos/paper-sessions/2026-10-03-guard-harness.sh`(추출 조각의 sha256 을 찍는다)
+와 그 로그 `2026-10-03-guard-harness.log`. 따라서 아래 문자열은 **출하본 `abort()`/`log()` 의
+출력**이다.
+
+| 가드 | 입력 | 출력 |
+| --- | --- | --- |
+| 달력 | 2026-10-03 (실제 그날, 토) | `calendar: 2026-10-03 is a weekend (dow=6)` → rc 1 |
+| 달력 | 2026-10-09 (금, 한글날) | `calendar: 2026-10-09 is a listed holiday (both files)` → rc 1 |
+| 달력 | 2026-10-06 (화) | `calendar: 2026-10-06 is a trading day (both files agree)` → rc 0 |
+| 달력 | 달력 파일 부재 | `ABORT — calendar file missing in the worktree: …/market_schedule.yaml` rc 2 |
+| 달력 | 인위적 불일치(한쪽에만 10-06) | `calendar: ⚠ DIVERGENCE for 2026-10-06 — market_schedule.yaml=1 tos calendar.yaml=0; treating as a holiday (conservative)` → rc 1 |
+| digest | `print-digests` 가 예외로 죽은 출력 | `ABORT — digest guard cannot run — CODE_NOW is not a 64-char lowercase hex digest (got '<empty>').` |
+| digest | **64자인데 hex 가 아님**(`38d85110zzzz…`) | 같은 ABORT. ⚠ **옛 접두 패턴은 이것을 통과시켰다** |
+| digest | 넷 다 64 hex 인데 값 불일치 | 모양 검사 통과 → 값 비교에서 ABORT (출하본 §7.3 5 경로) |
+| 부팅 증명 | 빈 커스터디 루트 | 위 **E4** |
+
+달력 네 줄 중 ①②의 두 날짜는 실제 날짜이고, 나머지는 `TOS_PAPER_FAKE_DATE` 로 날짜만
+바꾼 것이다(§7.2 ⛔).
+
+**장이 닫혀 있었으므로 틱은 소비되지 않았다** — `snapshots +0` · `events_consumed 0` ·
+`stale_ratio n/a` 다. 이것은 결함이 아니라 §5 ④ 의 세션 게이트이고, **드라이런이 증명한
+것은 체인의 소비 쪽이 아니라 부팅·스키마·정지·보고·달력·가드**다. 소비·결정·STALE 의
+첫 상주 실측은 **10-06 장중**에 나온다.
 
 **기동 줄** — 부팅 증명을 기다렸다가 보낸 실제 본문(계좌 좌표 없음):
 
 ```text
-TOS paper 상주 세션 기동 (2026-10-03 LONG)
+[SELFTEST] TOS paper 상주 세션 기동 (2026-10-03 LONG)
 boot proof: OK · boot 2.0s · genesis=True · rev aae1cec6e73b · A05610
 activation ACTIVATED 5 (re-derived in a fresh process)
 evidence schema user_version=2 v2-shape=True · baseline_seq=-1
@@ -1005,51 +1222,43 @@ data dir … (genesis=yes) · 수집 5s · 정지 15:45 KST
 실주문 0 (SYNTHETIC_FUTURES_ORDER · 모의 계좌 좌표). 로그 …
 ```
 
-**가드 경로** — 세 가드의 **실패 입력**을 실제로 먹여 봤다:
-
-| 가드 | 입력 | 결과 |
-| --- | --- | --- |
-| digest 입장 | `print-digests` 출력이 예외 문자열 | `ABORT — digest guard cannot run — CODE_NOW is not a hex digest (got '<empty>')` |
-| 안전망 마감 | `TOS_PAPER_STOP_HHMM=13:00` (현재 13:44) | `ABORT — stop time 13:00 KST already passed (13:44:14) — 기동하지 않는다`, rc=2 |
-| 부팅 증명 | — (거부된 부팅은 이번에 재현하지 않았다 — §7.10 4) | — |
-
-**달력 경로** — 다섯 입력 전부 실제로 돌려 봤다:
-
-| 입력 | 결과 |
-| --- | --- |
-| 2026-10-03 (실제 오늘, 토) | `calendar: 2026-10-03 is a weekend (dow=6)` → SKIP rc=0, 부팅 0 |
-| 2026-10-09 (금, 한글날) | `calendar: 2026-10-09 is a listed holiday (both files)` → SKIP rc=0 |
-| 2026-10-06 (화) | `calendar: 2026-10-06 is a trading day (both files agree)` → 진행 |
-| 달력 파일 부재 | `ABORT: calendar file missing in the worktree: …` (건너뛰기가 **아니다**) |
-| 두 달력 불일치(인위적) | `⚠ DIVERGENCE … treating as a holiday (conservative)` → SKIP |
-
-**장이 닫혀 있었으므로 틱은 소비되지 않았다** — `snapshots +0` · `events_consumed 0` ·
-`stale_ratio n/a` 다. 이것은 결함이 아니라 §5 ④ 의 세션 게이트이고, **드라이런이 증명한
-것은 체인의 소비 쪽이 아니라 부팅·스키마·정지·보고·달력**이다. 소비·결정·STALE 비율의
-첫 상주 실측은 **10-06 장중**에 나온다.
-
-스크래치 data dir 은 지우고 크기를 적었다: ①+② 두 부팅 뒤 **233,472 B**, ③ 한 부팅 뒤
-**208,896 B**. (장이 닫혀 있어 `TIME_HEALTH_SNAPSHOT` 이 60 s 마다 1 행뿐이다 — 장중의
-≈ 2.4 행/초와 비교하지 말 것.)
+(이 본문은 `--selftest` 로 실제 briefing 채널에 나간 13:52 실행의 것이다 — 그래서 `rev` 가
+그 시점의 `aae1cec6` 다. 출하본 리비전에서는 텔레그램을 끄고 돌렸다.)
 
 ### 7.10 이 런북이 답하지 못한 것
 
 1. **관측 수집기를 상주에서 계속 돌릴 것인가 — 운영자 결정이 없다.** §7.3 은 기본 on(5 s)
-   으로 두었고 그 근거는 ① 없으면 소비·결정이 0 이고 ② 증거 성장 계획 §1 의 200 MB/일
+   으로 두었고 그 근거는 ① 없으면 소비·결정이 0 이고 ② 증거 증가 대응 계획 §1 의 200 MB/일
    기준선이 이 조건의 값이라는 것뿐이다. 그 관측은 **합성 밴드**이고 시장 데이터가 아니다.
-   끄면 하루 ≈ 115 MB 에 `TIME_HEALTH_SNAPSHOT` 만 쌓인다. **운영자가 정할 자리다.**
-2. **언제까지 쌓을 것인가.** 퍼지는 트랙 B 이고 전제 다섯이 비어 있다(증거 성장 계획 §4).
-   디스크로는 333 GB 여유 ÷ 200 MB/일 ≈ **4.5 년**이지만, 먼저 걸리는 것은 디스크가 아니라
-   **부팅 리플레이 시간**이다(§7.8 2). 그 곡선의 첫 실측이 `boot_seconds` 다.
-3. **방향.** 상주는 `LONG` 하나로 돈다(`TOS_PAPER_DIRECTION`). LONG/SHORT 를 **같은 날**
-   돌리려면 두 번째 data dir 과 두 번째 설정(`paper-config-short`)이 필요하다 — 한 디렉터리에
-   두 방향을 섞는 경로는 설계에 없다. §5 ⑤ 가 적듯 **활성화 기록은 방향을 결속하지 않으므로**
-   섞인 corpus 는 나중에 digest 로 갈라낼 수 없다.
-4. **부팅 증명 가드의 실패 입력은 아직 실제로 먹여 보지 않았다.** 논리적으로는 거부된
-   부팅(`run` 이 즉시 rc=1)이지만, 그 상태를 이 호스트에서 인위적으로 만들려면
-   `release.yaml` 의 핀을 어긋나게 해야 하고 그것은 digest 가드가 **먼저** 잡는다. 즉
-   두 가드가 직렬이라 뒤의 것만 단독으로 시험하기 어렵다. 10-06 이후 실제 거부가 한 번
-   나면 그때 기록한다.
-5. **DST/시각 변경.** KST 는 DST 가 없고 cron 은 `CRON_TZ=Asia/Seoul` 이다. 다만 **휴장일
-   목록은 손으로 갱신되는 표**이고(두 파일), 2027년치가 들어올 때까지는 2027-01-01 이후의
-   판정을 믿을 수 없다.
+   끄면 하루 ≈ 112 MB(유도값)에 `TIME_HEALTH_SNAPSHOT` 만 쌓인다. **운영자가 정할 자리다.**
+2. **언제까지 쌓을 것인가.** 퍼지는 트랙 B 이고 전제 다섯이 비어 있다(증거 증가 대응 계획 §4).
+   디스크로는 333 GB 여유 ÷ 200 MB/일 ≈ **1,665 거래일 ≈ 6.8 년**(거래일 기준 — 달력 날짜가
+   아니다)이지만, 그 파일시스템은 콜드 백업·측정 아티팩트와 **공유**이고, 먼저 걸리는 것은
+   디스크가 아니라 **부팅 리플레이 시간**이다(§7.8 2). 그 곡선의 첫 실측이 `boot_seconds` 다.
+3. **방향 — LONG 하나로 돈다. 운영자 결정 자리다(§7.1 ⚠).** §0 은 대칭의 증거로 양쪽을
+   부팅시킨다고 적는데 상주는 한쪽만 쌓는다. LONG/SHORT 를 **같은 날** 돌리려면 두 번째
+   data dir 과 두 번째 설정(`paper-config-short`)이 필요하다 — 한 디렉터리에 두 방향을 섞는
+   경로는 설계에 없고, §5 ⑤ 가 적듯 **활성화 기록은 방향을 결속하지 않으므로** 섞인 corpus 는
+   나중에 digest 로 갈라낼 수 없다.
+4. **부팅 증명 가드는 이제 시험했다 (§7.9 E4) — 대신 남은 것은 ② 「천장 초과」 가지다.**
+   600 s 를 넘겨 MISSING 이 되는 경로는 이력이 충분히 길어야 재현되므로 오늘 만들 수 없다.
+   `boot_seconds` 추이가 그 전조다(§7.8 2).
+5. **DST/시각 변경.** KST 는 DST 가 없고 cron 은 `CRON_TZ=Asia/Seoul` 이다.
+6. **코퍼스가 커널 리비전을 가로지른다.** 래퍼는 매일 `origin/main` 에서 워크트리를 새로
+   만들므로, 하루치마다 **다른 커널 바이트**가 같은 append-only 코퍼스에 쓸 수 있다.
+   digest 가드는 **같은 워크트리 안의** `release.yaml` 과 대조하므로 이 변화를 **보지 못한다**
+   (핀과 코드가 함께 움직이면 늘 통과한다). 콜드 백업 런북은 반대로 자기 워크트리를
+   「의도적으로만」 고정한다. 지금의 대응은 `report.json` 의 `worktree_commit` 뿐이다(§7.8 2).
+   **코드를 고정할지(어느 커밋에?) 날마다 따라갈지는 운영자 결정이다.**
+7. **종목이 3일째에 롤한다.** 현재 근월물 `A05610` 의 만기는 **2026-10-08(목)** 이다
+   (`calendar.yaml::futures_expiry` = 둘째 목요일, 2026년 10월의 둘째 목요일이 10-08).
+   렌더는 **실행 당일** `get_front_month_code()` 로 종목을 다시 뽑으므로(§2), 상주 3일째
+   이후의 증거는 **다른 종목**을 달고 쌓인다. 한 코퍼스 안에 두 종목이 섞이는 것이 의도인지
+   (방향 섞임은 §7.10 3 에서 순도 위험으로 다루면서 종목 섞임은 아무 데도 적혀 있지 않다)
+   **운영자 확인이 필요하다.**
+8. **달력은 2027년에 대해 fail-open 이다 — 방향을 분명히 적는다.** 두 파일 모두 2027년
+   항목이 **0건**이므로(실측), 2027-01-01 이후 **모든 평일이 「거래일」로 판정된다** —
+   건너뛰는 쪽이 아니라 **부팅하는 쪽으로 틀린다**. 또 `calendar.yaml:49` 는
+   **2026-12-31(KRX 연말 휴장)** 을 「운영자 검토 후보 · 정본 파일에 없음」으로 적어 두었고
+   두 휴장 목록 어디에도 없다 — 그날도 부팅한다. 둘 다 **휴장일 목록을 먼저 고치는 것**이
+   해결이고, 래퍼가 손댈 일이 아니다.
