@@ -3462,6 +3462,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             # because the watchdog fires over MEMORY and throwing away a 53 GB / 366 s
             # build does nothing for that.
             disposition: SyntheticDisposition | None = None
+            remaining = [s.name for s in steps if s.name not in completed]
             # Read BEFORE any delete: this is the file size after the last step that ran,
             # which for a finished pair is the size after `after` created the index — the
             # number §7.1.15 "답하지 못한 것" 3 and §7.1.23 4 say the driver never wrote
@@ -3472,7 +3473,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             if synthetic_bytes is not None:
                 disposition = decide_synthetic_disposition(
                     args.synthetic,
-                    remaining=[s.name for s in steps if s.name not in completed],
+                    remaining=remaining,
                     size_bytes=synthetic_bytes,
                     created_by_this_run=created_synthetic,
                     after_measured="after" in completed,
@@ -3504,7 +3505,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 log(
                     f"##### summary (run {run_id}): {_run_outcome(failure)} · "
                     f"completed {','.join(completed) or 'none'} · "
-                    f"remaining {','.join(s.name for s in steps if s.name not in completed) or 'none'}"
+                    f"remaining {','.join(remaining) or 'none'}"
                 )
                 if disposition is not None:
                     log(f"##### synthetic: {disposition.message}")
