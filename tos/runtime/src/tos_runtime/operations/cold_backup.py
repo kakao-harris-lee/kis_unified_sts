@@ -592,12 +592,14 @@ def _refuse_existing_artifacts(config: ColdBackupConfig, generation: int) -> Non
 #: continue from.
 #:
 #: ``SchemaVersionRefused`` is the fourth application of the same criterion (plan §7.1.27
-#: A3-F1). The store this list's third check constructs refuses to open when the on-disk
-#: ``PRAGMA user_version`` is not this code's — a judgement about the TARGET, reached before
-#: a single row is read. Measured on the deploy host, where every boot-proof corpus is at
-#: evidence schema v1 (runbook ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2 ②): it
-#: came out as ``archive failed``, and the operator's next action is not another night of the
-#: same cron line, it is the ``migrate`` CLI on that data directory.
+#: A3-F1). It comes from the same archive check as ``EvidenceCorruption``, one step earlier:
+#: that check CONSTRUCTS a store over the decompressed copy, and the constructor refuses when
+#: the on-disk ``PRAGMA user_version`` is not this code's — before a single chain row is read.
+#: So it is a judgement about the TARGET, inherited byte-for-byte from the source data
+#: directory. Measured on the deploy host, where every boot-proof corpus is at evidence schema
+#: v1 (runbook ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2 ②): it came out as
+#: ``archive failed``, and the operator's next action is not another night of the same cron
+#: line, it is the ``migrate`` CLI on that data directory.
 _PASSTHROUGH_REFUSALS: tuple[type[BaseException], ...] = (
     ColdBackupRefused,
     BackupSetRefused,

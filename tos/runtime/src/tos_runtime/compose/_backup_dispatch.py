@@ -160,8 +160,9 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
 
     * **Refused** — a verdict. :data:`_REFUSAL_PREFIXES` gives each type its own prefix
       (``refused`` / ``snapshot refused`` / ``archive refused`` / ``integrity refused`` /
-      ``custody refused`` / ``migrate refused``) so the one line says which layer decided,
-      and the runbook's §5 table routes by that word. Two of them are NOT a re-run:
+      ``custody refused`` / ``migrate refused``) so the one line says which layer decided —
+      or, for ``migrate refused``, what to do — and the runbook's §5 table routes by that
+      word. Two of them are NOT a re-run:
       ``integrity refused`` means the archived evidence chain did not verify, and
       ``migrate refused`` means the target is at an older schema — the operator runs the
       ``migrate`` CLI on that ``--data-dir``. In the second case the uncompressed snapshot

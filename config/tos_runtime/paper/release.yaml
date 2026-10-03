@@ -631,7 +631,7 @@
 #   (브랜치 perf/tos-flow-observation-pk-lookup · PR #832 · main d7ce609b).
 #
 #   ⚠ **같은 브랜치에서 한 번 더 움직였다**: `d9fdd1f8…` → `38d85110…`
-#   (당시의 아래 값. 지금은 PR #855 가 `fe39bf6c…` 로 옮겼다 — 이 절 끝).
+#   (당시의 아래 값. 지금은 PR #855 가 `f44ce497…` 로 옮겼다 — 이 절 끝).
 #   `SCHEMA_LEDGER_TABLE_SQL` 을 **비공개**(`_` 접두)로 바꾸고 `__all__` 에서 뺐다.
 #   첫 커밋의 「네 번째 호출부가 같은 누락을 반복할 수 없다」가 **공개 상수가 남아 있는
 #   한 참이 아니었기** 때문이다 — 이 PR 이 다루는 결함 형태(가드가 자기가 막는다고 말한
@@ -667,8 +667,10 @@
 #   ⚠ **PR #855 에서 다시 도출했다(A3-F1, `migrate refused`).** 이 레인이
 #   `operations/cold_backup.py`(통과 목록에 `SchemaVersionRefused` 추가)와
 #   `compose/_backup_dispatch.py`(접두 표에 `migrate refused` 추가)를 바꿨으므로 값이
-#   움직인다: 38d85110… → **fe39bf6c…**.
-#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 fe39bf6c…).
+#   움직인다: 38d85110… → fe39bf6c… → **f44ce497…**. (두 번 움직였다: 같은 브랜치의
+#   리뷰 패스가 그 두 파일의 **주석만** 고쳤는데, 이 digest 는 `*.py` **바이트**를 접으므로
+#   주석도 값을 바꾼다 — 이 파일 위쪽의 #814 교훈 그대로다.)
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 f44ce497…).
 #   `expected_dependency_set_digest` 는 그대로다 — 같은 배포 호스트 루트 `.venv`.
 #
 # **두 값의 유효 범위가 서로 다르다 — 갱신 규율도 다르다.**
@@ -688,7 +690,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "fe39bf6cba1cf86b9ea210be1c64c82f9b63e5350ae94d465aa0cb5b7e20a4cb"
+expected_code_digest: "f44ce497a6f21ec4c7640319061495e737ceb95c70764fe581365f95f98d5c73"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
