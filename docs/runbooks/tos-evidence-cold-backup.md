@@ -211,26 +211,28 @@ CRON_TZ=Asia/Seoul
 
 ## 4-5. 활성화 준비 상태 — 2026-10-03
 
-A3 를 **한 줄 편집으로 켤 수 있는 상태**까지만 만들어 두고 멈춘 기록이다. 운영자 결정
-두 개(용량 바닥 · 대상 data dir)가 열려 있는 동안에는 켜지 않는다. 아래 「무엇이 있나」는
-이 호스트에 **실재**하고, 「무엇이 비어 있나」는 **일부러** 비어 있다.
+운영자 결정 두 개(용량 바닥 · 대상 data dir)가 **2026-10-03 에 들어왔다**. 남은 것은
+crontab 한 줄이고, 그것은 리뷰 뒤 운영자가 넣는다. 이 절은 호스트에 무엇이 있고, 켜는 데
+무엇이 남았고, 사본에서 무엇을 확인했는지의 기록이다.
 
 ### 4-5-1. 호스트에 있는 것
 
 | 무엇 | 경로 | 모드 | 상태 |
 |---|---|---|---|
-| 인스턴스 설정 | `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` | `600` | 세 경로 채움 · 바닥 **null**(의도적 불활성) |
+| 인스턴스 설정 | `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` | `600` | 세 경로 + **바닥 채움**(53687091200) |
 | 비압축 세대 | `~/.local/state/tos/paper-cold/backups` | `700` | 빈 디렉터리 |
 | 콜드 보관소 | `~/.local/state/tos/paper-cold/archives` | `700` | 빈 디렉터리 |
 | 검증 스크래치 | `~/.local/state/tos/paper-cold/verify` | `700` | 빈 디렉터리 |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 에 없음** |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 미등재** |
 | 실행 로그(기본) | `~/.local/state/tos/cold-backup.log` | — | 아직 없음 |
+| 대상 data dir | `~/.local/state/tos/paper-data` | — | **아직 없다** — 2026-10-06 genesis 예정 |
 
-⛔ **설정은 `~/.config/tos/paper-config` 에 두지 않았다.** §2 가 이미 권고한 바이고,
-#840 이후로는 근거가 하나 더 구체적이다 — `evidence_cold_backup.yaml` 이 이제
-`scripts/tos/render_paper_config.py` 의 **원본 트리**(`config/tos_runtime/paper/`)에 있다.
-그래서 그 디렉터리에 손으로 채운 파일을 두면 두 가지가 **조용히** 일어난다:
+⛔ **설정은 `~/.config/tos/paper-config` 에 두지 않았다 — 인스턴스를 2026-10-03 에 여기
+둔 이유가 그것이다.** §2 가 이미 권고한 바이고, #840 이후로는 근거가 하나 더 구체적이다 —
+`evidence_cold_backup.yaml` 이 이제 `scripts/tos/render_paper_config.py` 의 **원본 트리**
+(`config/tos_runtime/paper/`)에 있다. 그래서 그 디렉터리에 손으로 채운 파일을 두면 두 가지가
+**조용히** 일어난다:
 
 1. 재렌더가 디렉터리를 통째로 갈아끼운다(`_publish` 가 이전 렌더를 옆으로 옮긴 뒤
    `rmtree` 한다). 채운 값이 저장소의 all-null 사본으로 **되돌아가고**, 그 다음 cron 은
@@ -240,85 +242,77 @@ A3 를 **한 줄 편집으로 켤 수 있는 상태**까지만 만들어 두고 
    「changed line is not a registered coordinate slot」이 뜬다.
 
 로더는 어느 경로도 하드코딩하지 않는다 — `<--config-dir>/evidence_cold_backup.yaml` 을
-읽을 뿐이므로 위치는 순전히 래퍼의 인자다.
+읽을 뿐이므로 위치는 순전히 래퍼의 인자이고, 래퍼의 `COLD_CONFIG_DIR` 기본값이 위
+운영 디렉터리를 가리킨다.
 
-### 4-5-2. 비어 있는 것 (운영자 결정 둘)
+### 4-5-2. 운영자 결정 둘 — 2026-10-03 확정
 
-**(1) `minimum_free_bytes` — 값 미정.** 설정 파일에 `null` 로 남아 있고 로더가 거부한다.
-기본값이 없는 것은 결정이다(§2). 지금 상태에서 래퍼를 돌리면 **정확히 이 줄**이 나온다:
+**(1) `minimum_free_bytes` = 50 GB → `53687091200`.**
 
-```
-cold-backup: refused — load_cold_backup_config: 'minimum_free_bytes' in /home/deploy/.local/state/tos/paper-ops/evidence_cold_backup.yaml is still null (named-TBD) — operator-fill it before scheduling a cold backup; this loader never invents a destination or a free-space floor
-```
+**단위 규약: 로더는 바이트 정수만 받는다.** `_require_free_bytes` 는 `int` 가 아니면
+거부하고(`bool` 도 거부), 값을 `shutil.disk_usage(...).free` 와 **그대로** 비교한다.
+접미사도, 단위 문자열도, 실수도 없다. 적힌 `53687091200` 은 **50 GiB**(50 × 1024³)이고
+십진 GB 로는 53.69 GB 다 — 운영자 표기 「50 GB」를 GiB 기준으로 적으라는 지시에 따른
+것이라 두 수를 설정 파일에도 함께 적어 두었다.
 
-참고 수치(2026-10-03 실측): 이 호스트 `/` 여유 **357,771,644,928 B ≈ 333 GiB**.
-계획 §1 실측 증가율은 원본 ≈200 MB/일 · 압축 뒤 ≈13 MB/일. 아래 사본 실측으로는
-**한 번의 실행이 7,630,848 B** 를 쓴다(비압축 세대 + 아카이브 + 보고서, 7 MB 코퍼스 기준).
-
-**(2) 대상 `--data-dir` — 미정이고, 지금은 고를 수 있는 것이 1회성 corpus 뿐이다.**
-이 호스트에는 **상주 paper data dir 이 없다**(`docs/runbooks/tos-paper-boot.md` §4-A 적용
-범위, 2026-10-02 실측). 디스크에 있는 durable set 은 2026-09-27/28 부팅증명 캠페인이
-남긴 1회성 디렉터리 12개(`~/.local/state/tos/{realclock,t3}-*/data`)가 전부다. 즉
-**대상은 상주 런타임이 한 번 돌아야 비로소 생긴다**; 그 전까지 고를 수 있는 것은 그
-12개뿐이고, 어느 것을 쓸지는 운영자가 **이름으로** 지정한다(짐작 금지 — §4-A 와 같은 규칙).
-
-⚠ **그리고 그 12개는 지금 코드로 콜드 백업할 수 없다 — 전부 증거 스키마 v1 이다.**
-2026-10-03 읽기 전용 전수 조사(`mode=ro&immutable=1`):
+로드된 값 (2026-10-03, `load_cold_backup_config` 실행):
 
 ```
-realclock-20260927T123127-LONG   evidence=1      realclock-20260928T102001-SHORT  evidence=1
-realclock-20260927T123909-SHORT  evidence=1      realclock-20260928T104001-LONG   evidence=1
-realclock-20260927T155444-LONG   evidence=1      realclock-20260928T110001-LONG   evidence=1
-realclock-20260927T225742-LONG   evidence=1      t3-20260927T145001               evidence=1
-realclock-20260928T100001-LONG   evidence=1      t3-20260927T145237               evidence=1
-t3-809-new-20260927T191215       evidence=1      t3-809-old-20260927T191029       evidence=1
+backup_root        : /home/deploy/.local/state/tos/paper-cold/backups
+archive_dir        : /home/deploy/.local/state/tos/paper-cold/archives
+verify_root        : /home/deploy/.local/state/tos/paper-cold/verify
+minimum_free_bytes : 53687091200 B  = 50.0 GiB / 53.6870912 GB (decimal)   [type: int]
+xz_preset          : 6 (파일에 없음 -> DEFAULT_XZ_PRESET)
 ```
 
-`EVIDENCE_SCHEMA_VERSION` 은 **2** 이므로(계획 §2 A2), 아카이브의 증거 체인 재검증이
-v1 파일을 열다 거부한다. 사본에서 실측한 줄은 이렇다:
+이 호스트 `/` 여유는 357,771,644,928 B ≈ 333 GiB 이므로 바닥까지의 여유는 ≈283 GiB 다.
+압축 뒤 ≈13 MB/일(계획 §1)로 쌓는다면 수십 년치이고, **비압축 세대까지 함께 쌓는**
+`backup_root` 기준(≈200 MB/일)으로도 ≈4 년치다. 바닥은 그 전에 울린다.
+
+**(2) 대상 `--data-dir` = `~/.local/state/tos/paper-data` — 상주 paper 런타임.**
+
+그 디렉터리는 **첫 상주 세션의 genesis 가 만든다**(2026-10-06 화 예정, `ops-paper` 레인).
+런타임은 15:45 KST 경에 멎으므로 18:00 KST 야간 실행은 §1 전제 1(스토어가 닫혀 있을 것)을
+만족한다. genesis 가 증거 저장소를 **곧장 v2 로** 만들기 때문에, 아래 v1 전제는 이 대상에
+해당하지 않는다.
+
+⚠ **1회성 corpus 를 대상으로 고를 때만 해당하는 전제 — 그대로 남겨 둔다.** 이 호스트의
+부팅증명 corpus 12개는 **전부 증거 스키마 v1** 이다(2026-10-03 읽기 전용 전수 조사,
+`mode=ro&immutable=1`). `EVIDENCE_SCHEMA_VERSION` 이 2 이므로 아카이브의 체인 재검증이
+거부한다:
 
 ```
 cold-backup: archive failed — SchemaVersionRefused: evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 — run the operator `migrate` CLI (tos_runtime.operations.schema_migrations.apply_migrations) before booting; boot never auto-applies a migration
 ```
 
-**그러므로 대상 결정에는 순서가 딸려 온다**: 1회성 corpus 를 대상으로 고른다면 먼저
-`tos-paper-boot.md` §4-A 의 `migrate` 를 **그 corpus 에** 돌려야 한다. 새로 부팅하는
-상주 런타임을 대상으로 고른다면 genesis 가 곧장 v2 를 만들므로 이 단계가 없다.
+그 경우에는 `tos-paper-boot.md` §4-A 의 `migrate` 를 **그 corpus 에** 먼저 돌려야 한다.
 
 ⚠ 위 줄에 대해 **두 가지를 기록해 둔다.** ① 접두가 `archive failed` 다 — 예외 이름이
 `SchemaVersionRefused` 인데도 `_PASSTHROUGH_REFUSALS` 에 없어 환경 고장으로 분류된다.
 §5 의 `archive failed` 행이 안내하는 「원인을 고치고 다시 돌린다(다음 세대로 간다)」는 이
 경우에 **맞는** 조치지만(마이그레이션이 곧 「원인을 고치는」 것이다), 한 단어로는
 「호스트가 깨졌다」로 읽힌다. ② 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은
-완전하고, 잃은 것은 압축본뿐이다(§5 의 `archive refused` 항목과 같은 성질). 실측에서
-`gen1/` 와 `gen1.set.manifest.json` 이 남았고 `.tar.xz` 는 없었으며 `gen1.verify` 가
-**남았다**(거부 원인의 증거). 다음 실행은 그 번호를 **건너뛰어** gen2 를 썼다.
+완전하고, 잃은 것은 압축본뿐이다. 실측에서 `gen1/` 과 매니페스트가 남았고 `.tar.xz` 는
+없었으며 `gen1.verify` 가 **남았다**(거부 원인의 증거). 다음 실행은 그 번호를 **건너뛰어**
+gen2 를 썼다.
 
-### 4-5-3. 활성화 — 한 줄 편집 + 한 줄 cron
+### 4-5-3. 남은 것은 crontab 한 줄이다
 
-**(1) 바닥 한 줄.** `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 의 마지막
-값만 바꾼다. 다른 줄은 손대지 않는다:
-
-```diff
--minimum_free_bytes: null
-+minimum_free_bytes: 53687091200     # 50 GiB — 운영자 승인값으로 대체할 것
-```
-
-**(2) 대상 한 줄.** cron 줄의 `COLD_DATA_DIR` 에 운영자가 **이름으로 지정한** 디렉터리를
-적는다. 기본값은 일부러 없다 — 짐작한 대상은 「백업이 돌고 있다」처럼 보이면서 엉뚱한
-트리를 뜬다.
-
-**(3) crontab 한 줄.** 아래를 `crontab -e` 로 넣는다. **이 런북은 crontab 을 건드리지
-않았다** — 등록은 운영자의 결정이다.
+설정의 한 줄 편집은 **끝났다**(§4-5-2). 대상도 래퍼의 기본값으로 들어갔다. 켜는 데 남은
+것은 아래 한 줄이고, **이 작업은 crontab 을 건드리지 않았다** — 리뷰 뒤 운영자가 넣는다.
 
 ```cron
 CRON_TZ=Asia/Seoul
-# 평일 18:00 KST — 런타임을 정지시킨 뒤에 돈다(§1 전제 1). COLD_DATA_DIR 은 필수다.
-0 18 * * 1-5 COLD_DATA_DIR=/home/deploy/.local/state/tos/<operator-named>/data $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.log 2>&1
+# 평일 18:00 KST — 상주 런타임이 15:45 경 멎은 뒤에 돈다(§1 전제 1).
+0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.log 2>&1
 ```
 
-§4-4 의 cron 줄과 다른 점은 둘뿐이다: 래퍼 경로가 `~/.config/kis-probes/` 이고(이 호스트의
-무인 러너들이 모여 있는 자리 — `run-p8-*.sh` 와 같다), 대상 data dir 이 **환경변수**다.
+- 대상이 래퍼의 기본값이라 cron 줄에 `COLD_DATA_DIR` 을 적지 않는다. 다른 트리를 한 번만
+  겨눠야 한다면 그때만 줄 앞에 붙인다.
+- **2026-10-06 전에 넣어도 된다.** 대상이 아직 없는 날의 실행은 한 줄을 보내고 **종료코드
+  0** 으로 끝난다(§4-5-4) — 실패 메일이 쌓이지 않는다.
+- §4-4 의 cron 줄과 다른 점은 래퍼 경로뿐이다(`~/.config/kis-probes/` — 이 호스트의 무인
+  러너들이 모여 있는 자리, `run-p8-*.sh` 와 같다).
 
 ### 4-5-4. 래퍼가 하는 일 (`~/.config/kis-probes/cold-backup-nightly.sh`)
 
@@ -326,13 +320,20 @@ CRON_TZ=Asia/Seoul
   할당받아 하나가 산출물 충돌로 거부된다). 실측: `SKIP — another cold-backup run holds …`.
 - `git fetch` 뒤 `~/.local/state/tos/measure/wt-cold` 를 **detached `origin/main`** 으로
   맞춘다. 갈아타기 **전에** 브랜치 위인지·더티인지 보고(둘 다 거부), 갈아탄 **뒤에** 다시
-  본다. 매 실행 첫 줄에 **래퍼 자신의 sha256**, 둘째 줄에
-  **워크트리 커밋 SHA** 를 찍는다 — 앞은 「호스트 파일이 이 문서와 같은가」, 뒤는
-  「어느 코드가 돌았는가」에 답한다. 인터프리터는 주 체크아웃의 `.venv` 지만
-  `PYTHONPATH` 가 절대경로로 워크트리를 가리킨다(§4-3 의 같은 함정).
+  본다. 매 실행 첫 줄에 **래퍼 자신의 sha256**, 둘째 줄에 **워크트리 커밋 SHA** 를 찍는다
+  — 앞은 「호스트 파일이 이 문서와 같은가」, 뒤는 「어느 코드가 돌았는가」에 답한다.
+  인터프리터는 주 체크아웃의 `.venv` 지만 `PYTHONPATH` 가 절대경로로 워크트리를 가리킨다
+  (§4-3 의 같은 함정).
   ⚠ §4-2 는 워크트리 갱신을 「의도적으로만」 하라고 적는다. 이 래퍼는 매 실행 `origin/main`
   으로 맞춘다 — 지키려는 것(무인 실행이 리뷰 전 코드에 닿지 않는다)은 같고, `origin/main`
   을 **명시적으로** 체크아웃하는 쪽이 오래된 채 두는 것보다 강한 보장이다.
+- **대상이 아직 없는 창**: `COLD_DATA_DIR`(기본 `~/.local/state/tos/paper-data`)이 없고
+  오늘이 `COLD_TARGET_BORN_ON`(기본 `2026-10-06`, KST) **전**이면 한 줄을 보내고
+  **종료코드 0** 으로 끝난다 — 10-06 전에 cron 을 넣어도 실패 메일이 쌓이지 않게 하려는
+  것이다. ⚠ **그 날부터는 같은 부재가 `refused`(종료코드 1)다.** 날짜 경계를 둔 이유가
+  이것이다: 「없으면 조용히 0」을 날짜 없이 두면, genesis 이후 대상이 **사라진** 날에도
+  영원히 초록으로 끝나 백업이 멈춘 것을 아무도 모른다. 조용한 성공이 이 래퍼가 낼 수 있는
+  가장 나쁜 결말이다.
 - **세 결말을 한 줄씩** 텔레그램 briefing 채널로 보낸다(`.env` 에서 `TELEGRAM_BRIEFING_*`
   **두 줄만** 읽는다; 전체 소싱도, 토큰 로깅도 없다). 분류는 #840 의 계약 그대로다:
 
@@ -343,10 +344,8 @@ CRON_TZ=Asia/Seoul
   | `failed` | `cold-backup: <stage> failed — …` | 실행은 적법했고 환경이 무너졌다. 호스트를 고친 뒤 다시 돈다(다음 세대로 간다) |
 
   둘 다 아닌 줄은 `unclassified` 로 보고한다 — 못 알아본 줄을 깨끗한 분류로 접어 넣지
-  않는다.
+  않는다. 대상 부재의 두 결말(PRE-GENESIS / refused)은 위 창 규칙이 가른다.
 - **자기 자신을 지우지 않고 crontab 에도 손대지 않는다.** 반복 일정이라 disarm 이 없다.
-- `COLD_DATA_DIR` 은 **필수**(기본값 없음). 없으면 래퍼 자신의 `refused` 로 끝난다:
-  `REFUSED (wrapper) — COLD_DATA_DIR is unset — this wrapper has no default live data directory by decision`.
 - `COLD_NOTIFY=0` 은 **손으로 돌려 보는 dry 실행 전용**이다. 전송을 건너뛸 때마다 로그에
   한 줄을 남긴다 — 알림이 조용한 이유가 「설정이 껐다」인지 「아무도 안 돌았다」인지
   나중에 구분할 수 있어야 하기 때문이다. cron 줄은 이것을 설정하지 않는다.
@@ -361,26 +360,26 @@ CRON_TZ=Asia/Seoul
 sqlite3 "file:$CORPUS/$f.sqlite3?mode=ro" ".backup '$COPY/$f.sqlite3'"
 ```
 
-§4-A-1 이 남긴 교훈(「다음 조사는 먼저 해시를 뜬다」)대로 **복사 전후로 본체 네 파일의
-sha256 을 떴고 네 개 모두 같았다** — 정황이 아니라 해시로 확인한 불변이다:
+§4-A-1 이 남긴 교훈(「다음 조사는 먼저 해시를 뜬다」)대로 **두 라운드 모두 복사 전후로
+본체 네 파일의 sha256 을 떴고 네 개 모두 같았다** — 정황이 아니라 해시로 확인한 불변이다:
 
 ```
-241d79d5…fd353b  evidence.sqlite3      36ea8ae7…d2b59a  inbox.sqlite3
-21b3d222…9314d6  rcl.sqlite3           4efbae27…985d85  marketfeed.sqlite3
+241d79d5…  evidence.sqlite3      36ea8ae7…  inbox.sqlite3
+21b3d222…  rcl.sqlite3           4efbae27…  marketfeed.sqlite3
 ```
 
-스크래치 설정은 **테스트 전용 바닥 1 GiB**(`minimum_free_bytes: 1073741824`)와 스크래치
-세 경로를 썼다. 그 숫자는 승인된 운영 바닥이 아니며 실 설정으로 옮기지 않았다.
+**1라운드 — 분류와 경로 전수 (테스트 전용 바닥 1 GiB · 스크래치 세 경로).** 그 숫자는
+승인된 운영 바닥이 아니며 실 설정으로 옮기지 않았다.
 
-| 실행 | 설정 | 결과 | 줄 |
-|---|---|---|---|
-| 1 | 바닥 1 GiB, **v1 corpus** | `failed` · rc=1 | `cold-backup: archive failed — SchemaVersionRefused: … user_version=1 is BEHIND … schema_version=2` |
-| — | — | 사본에 `migrate` | `migrate: evidence … — applied v1 -> v2 (v2)` (나머지 셋은 `nothing to do`) |
-| 2 | 바닥 1 GiB | `verdict` · rc=0 · **gen2**(죽은 gen1 을 건너뜀) | `cold-backup: archived gen2 … (7195071 -> 427108 bytes), read back and verified: 4 file digest(s) + evidence chain` |
-| 3 | 바닥 1 GiB | `verdict` · rc=0 · **gen3** | `cold-backup: archived gen3 … (7195071 -> 429432 bytes) … 4 file digest(s) + evidence chain` |
-| 4 | 바닥 **900 TiB** | `refused` · rc=1 · **아무것도 쓰지 않음** | `cold-backup: refused — cold_backup: archive_dir+backup_root+verify_root at … has 357670219776 bytes free — below the configured floor of 989560464998400; refused before anything is written` |
-| 5 | 바닥 = 측정 여유 − 3 MB | `verdict` · rc=0 · **gen4 + 바닥 경고** | 아래 |
-| 6 | **실 호스트 설정**(바닥 null) | `refused` · rc=1 | §4-5-2 의 그 줄. 실 세 트리는 **그대로 비어 있었다** |
+| 실행 | 설정 | 결과 |
+|---|---|---|
+| 1 | 바닥 1 GiB, **v1 corpus** | `failed` rc=1 — `archive failed — SchemaVersionRefused` (§4-5-2) |
+| — | 사본에 `migrate` | `migrate: evidence … — applied v1 -> v2 (v2)`, 나머지 셋 `nothing to do` |
+| 2 | 바닥 1 GiB | `verdict` rc=0 · **gen2**(죽은 gen1 을 건너뜀) · 7,195,071 → 427,108 B (16.8×) · 멤버 4 + 체인 재검증 |
+| 3 | 바닥 1 GiB | `verdict` rc=0 · **gen3** · 429,432 B (16.8×) |
+| 4 | 바닥 **900 TiB** | `refused` rc=1 — `below the configured floor … refused before anything is written`, **아무것도 쓰지 않음** |
+| 5 | 바닥 = 측정 여유 − 3 MB | `verdict` rc=0 · **gen4 + 바닥 경고** |
+| 6 | **실 호스트 설정**(당시 바닥 null) | `refused` rc=1 · 실 세 트리는 **그대로 비어 있었다** |
 
 4번은 「바닥을 터무니없이 높이면」 **프리플라이트 거부**(아무것도 안 씀)라는 것을 보이고,
 경고 경로는 그것과 다르다 — 바닥이 실행 **전** 여유보다는 낮고 실행 **후** 여유보다는
@@ -395,25 +394,38 @@ cold-backup: WARNING — archive_dir+backup_root+verify_root at …: 35766723788
 종료코드는 **0** 이고 보고서에 `"free_bytes_below_minimum_after": true` 가 남았다 —
 검증된 백업을 경보 때문에 되돌리지 않는다(§6).
 
-**산출물과 압축비** (원본 7,195,071 B · 멤버 4 — 이 corpus 에 `composite_state` 가 없어
+**2라운드 — 운영자 결정이 들어온 뒤 (실 바닥 53687091200 · 새 사본).**
+
+| 실행 | 무엇을 겨눴나 | 결과 |
+|---|---|---|
+| 7 | 대상 부재 · 오늘(10-03) < `BORN_ON`(10-06) | `PRE-GENESIS` · **rc=0** · 한 줄 통지 · 실 세 트리 불변 |
+| 8 | 같은 부재 · `BORN_ON=2026-10-01`(이미 지남) | `REFUSED (wrapper)` · **rc=1** — `…is on/after the configured genesis date … it is a missing target` |
+| 9 | 새 사본(migrate 뒤) · **실 바닥 53687091200** | `verdict` rc=0 · **gen1** · 7,195,080 → 428,332 B (16.8×) · 멤버 4 + 체인 재검증 · 검증 디렉터리 삭제됨 |
+
+9번 보고서: `minimum_free_bytes 53687091200` · `free_bytes_below_minimum_after false` ·
+여유 357,202,358,272 → 357,194,362,880 B. **결정된 바닥이 이 호스트에서 프리플라이트를
+통과한다**는 것이 이 줄이다.
+
+**산출물과 압축비** (원본 ≈7,195,07x B · 멤버 4 — 이 corpus 에 `composite_state` 가 없어
 §7.1.4 의 실 왕복과 같은 4 다):
 
 | 세대 | `.tar.xz` | 압축비 | 보고서 | `below_floor_after` |
 |---|---|---|---|---|
-| gen2 | 427,108 B | 16.8× | 1,408 B | `false` |
-| gen3 | 429,432 B | 16.8× | 1,408 B | `false` |
-| gen4 | 427,784 B | 16.8× | 1,409 B | **`true`** |
+| 1라운드 gen2 | 427,108 B | 16.8× | 1,408 B | `false` |
+| 1라운드 gen3 | 429,432 B | 16.8× | 1,408 B | `false` |
+| 1라운드 gen4 | 427,784 B | 16.8× | 1,409 B | **`true`** |
+| 2라운드 gen1 | 428,332 B | 16.8× | 1,408 B | `false` |
 
-**보관본 재검사(§7)도 돌렸다** — 새 압축 없이 `verify_archive` 로 gen2 를 왕복시켰고,
-통과했으며 검증 디렉터리는 지워졌다:
+**보관본 재검사(§7)도 돌렸다** — 새 압축 없이 `verify_archive` 로 1라운드 gen2 를
+왕복시켰고, 통과했으며 검증 디렉터리는 지워졌다:
 
 ```
 generation 2 · 7195071 -> 427108 bytes (16.8x) · files_verified ('evidence','rcl','inbox','marketfeed') · verify dir left? False
 ```
 
-**텔레그램**은 `[SELFTEST]` 접두로 **한 번만** 보냈다(1번 실행). 그 한 줄이 `failed` 분류를
-실어 간 것은 위 v1 발견 때문이고, 나머지 실행은 `COLD_NOTIFY=0` 으로 전송을 건너뛰면서
-보낼 내용을 로그에 그대로 남겼다. `verdict` 분류의 줄은 이 모양이다:
+**텔레그램**은 `[SELFTEST]` 접두로 **한 번만** 보냈다(1라운드 1번 실행). 그 한 줄이
+`failed` 분류를 실어 간 것은 위 v1 발견 때문이고, 나머지 실행은 `COLD_NOTIFY=0` 으로
+전송을 건너뛰면서 보낼 내용을 로그에 그대로 남겼다. `verdict` 분류의 줄은 이 모양이다:
 
 ```
 [SELFTEST] TOS cold-backup OK — cold-backup: archived gen4 … (7195071 -> 427784 bytes), read back and verified: 4 file digest(s) + evidence chain; report at …
@@ -421,10 +433,11 @@ generation 2 · 7195071 -> 427108 bytes (16.8x) · files_verified ('evidence','r
 worktree /home/deploy/.local/state/tos/measure/wt-cold @ aae1cec6e73b · data-dir … · 로그 …
 ```
 
-사본·스크래치 아카이브는 증명을 적은 뒤 **지웠다** — 합계 **44,270,537 B**(사본
-7,192,576 B · 콜드 트리 37,075,488 B · 스크래치 설정 셋 2,473 B). 실행 로그
-15,512 B 는 사본도 아카이브도 아니라 세션 스크래치에 남겼다. 실 세 트리와 실 corpus 는
-손대지 않았고, 실 corpus 본체 네 파일의 sha256 은 작업 전후로 같았다.
+사본·스크래치 아카이브는 증명을 적은 뒤 **지웠다** — 1라운드 44,270,537 B(사본
+7,192,576 B · 콜드 트리 37,075,488 B · 설정 셋 2,473 B) + 2라운드 14,817,944 B(사본
+7,192,576 B · 콜드 트리 7,624,826 B · 설정 542 B). 실행 로그는 사본도 아카이브도 아니라
+세션 스크래치에 남겼다. 실 세 트리와 실 corpus 는 손대지 않았고, 실 corpus 본체 네 파일의
+sha256 은 작업 전후로 같았다.
 
 ## 5. 거부되거나 실패하면 무엇을 하는가
 

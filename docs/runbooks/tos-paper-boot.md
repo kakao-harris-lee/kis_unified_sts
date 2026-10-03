@@ -464,13 +464,15 @@ done
 §4-B 의 `backup-set --archive-dir --verify-dir --custody-root` 이며(쓰고 나서 되읽어 검증),
 이 플래그 셋은 현재 CLI 에 실재한다(`tos/runtime/src/tos_runtime/compose/cli.py` 의
 `backup-set` 파서).
-⚠ **2026-10-03 갱신:** `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 과 세 보관
-경로는 그 뒤로 **만들어졌고**, 야간 래퍼도 있다 — 다만 바닥은 여전히 `null` 이라 설정은
-**의도적으로 불활성**이고 crontab 에도 등록돼 있지 않다. 이 절의 판정(「지금 당장은 §4-B 를
-쓴다」)은 그대로다. 호스트에 무엇이 있고 무엇이 비어 있는지, 켜는 데 필요한 한 줄 편집은
-`docs/runbooks/tos-evidence-cold-backup.md` §4-5 에 있다. ⚠ 그 절이 함께 기록한 것:
-**이 호스트의 1회성 corpus 12개는 전부 증거 스키마 v1 이라, 콜드 백업 대상으로 고르려면
-먼저 위 §4-A 의 `migrate` 를 그 corpus 에 돌려야 한다.**
+⚠ **2026-10-03 갱신 — 위 문단은 그날 오전까지의 상태다.** 그 뒤 운영자 결정 둘이 들어와
+`cold-backup` 은 **쓸 수 있는 상태**가 됐다: `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml`
+과 세 보관 경로가 만들어졌고, `minimum_free_bytes` 는 **53687091200**(50 GiB)으로 채워졌으며,
+대상은 **상주 paper 런타임의 `~/.local/state/tos/paper-data`** 다(2026-10-06 genesis 예정).
+남은 것은 crontab 한 줄이고 그것은 운영자가 넣는다. 호스트에 무엇이 있고 켜는 데 무엇이
+남았는지는 `docs/runbooks/tos-evidence-cold-backup.md` §4-5 에 있다.
+⚠ 그 절이 함께 기록한 것: **이 호스트의 1회성 corpus 12개는 전부 증거 스키마 v1 이라,
+그중 하나를 콜드 백업 대상으로 고른다면 먼저 위 §4-A 의 `migrate` 를 그 corpus 에 돌려야
+한다.** 선택된 대상(상주 런타임)에는 해당하지 않는다 — genesis 가 곧장 v2 를 만든다.
 
 ## 4-B. 장 마감 뒤 압축 백업
 
