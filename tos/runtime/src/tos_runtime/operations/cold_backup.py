@@ -591,15 +591,21 @@ def _refuse_existing_artifacts(config: ColdBackupConfig, generation: int) -> Non
 #: shape one layer out: keys that cannot be loaded, or a generation the chain does not
 #: continue from.
 #:
-#: ``SchemaVersionRefused`` is the fourth application of the same criterion (plan §7.1.27
-#: A3-F1). It comes from the same archive check as ``EvidenceCorruption``, one step earlier:
-#: that check CONSTRUCTS a store over the decompressed copy, and the constructor refuses when
-#: the on-disk ``PRAGMA user_version`` is not this code's — before a single chain row is read.
-#: So it is a judgement about the TARGET, inherited byte-for-byte from the source data
-#: directory. Measured on the deploy host, where every boot-proof corpus is at evidence schema
-#: v1 (runbook ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2 ②): it came out as
-#: ``archive failed``, and the operator's next action is not another night of the same cron
-#: line, it is the ``migrate`` CLI on that data directory.
+#: ``SchemaVersionRefused`` is the fourth application of the same criterion (plan §7.1.28).
+#: It comes from the same archive check as ``EvidenceCorruption``, one step earlier: that check
+#: CONSTRUCTS a store over the decompressed copy, and the constructor refuses when the on-disk
+#: ``PRAGMA user_version`` is not this code's — before a single chain row is read. So it is a
+#: judgement about the TARGET, inherited byte-for-byte from the source data directory.
+#:
+#: **Both directions pass through, and they are not the same verdict.** BEHIND (the measured
+#: case on the deploy host, where every boot-proof corpus is at evidence schema v1 — runbook
+#: ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2) is fixed by the ``migrate`` CLI on
+#: that data directory. AHEAD is not: ``apply_migrations`` refuses an AHEAD store too, so the
+#: resolution is to run the code that wrote it or to stop the lane. What they share, and the
+#: reason both belong here rather than under ``ColdBackupFailed``, is that **neither is fixed
+#: by running again**, which is exactly what ``archive failed`` told the operator to do.
+#: The dispatch splits them by
+#: :attr:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused.direction`.
 _PASSTHROUGH_REFUSALS: tuple[type[BaseException], ...] = (
     ColdBackupRefused,
     BackupSetRefused,
@@ -716,9 +722,12 @@ def cold_backup(
             PREFLIGHT, before anything is copied.
         tos_runtime.operations.schema_ledger.SchemaVersionRefused: The archived store is at a
             different schema version than this code — propagated unchanged
-            (:data:`_PASSTHROUGH_REFUSALS`), because the fix is the ``migrate`` CLI on the
-            source data directory, not a re-run. The uncompressed snapshot is already complete
-            when this arrives.
+            (:data:`_PASSTHROUGH_REFUSALS`), because no re-run changes an on-disk
+            ``PRAGMA user_version``. The fix depends on ``direction``: BEHIND wants the
+            ``migrate`` CLI on the source data directory, AHEAD wants the code version that
+            wrote the store (``migrate`` refuses AHEAD as well). Either way the uncompressed
+            snapshot is already complete when this arrives, and the next run takes the NEXT
+            generation.
         ColdBackupFailed: Anything underneath broke — a held sqlite handle, a full disk,
             an unparseable manifest. Carries the stage and the original exception as
             ``__cause__``.

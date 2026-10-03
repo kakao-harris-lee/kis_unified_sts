@@ -495,7 +495,12 @@ def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
         CustodyLoadRefused("no evidence.key.<generation> files found"),
         KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
         SchemaVersionRefused(
-            "evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2"
+            "evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2",
+            direction="BEHIND",
+        ),
+        SchemaVersionRefused(
+            "evidence: on-disk schema user_version=3 is AHEAD of this code's schema_version=2",
+            direction="AHEAD",
         ),
     ],
 )
@@ -508,9 +513,11 @@ def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
     re-run", the wrong instruction in the one case where re-running is not the answer.
 
     :class:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused` is the same criterion
-    applied a fourth time (plan §7.1.27 A3-F1): the archive's chain re-verification constructs
+    applied a fourth time (plan §7.1.28): the archive's chain re-verification constructs
     a store out of the decompressed copy, and an older on-disk schema is a judgement about
-    the TARGET, not about the host. Re-running cannot change it; ``migrate`` can.
+    the TARGET, not about the host. Re-running cannot change it. BEHIND is fixed by
+    ``migrate``; AHEAD is not (``apply_migrations`` refuses that too), which is why the
+    dispatch splits the two by ``direction`` even though one type passes through here.
     """
     live_dir = _live(tmp_path)
 

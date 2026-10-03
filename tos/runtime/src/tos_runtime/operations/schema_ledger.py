@@ -89,7 +89,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import NoReturn, Protocol
+from typing import Literal, NoReturn, Protocol
 
 #: The FIRST logger in ``tos_runtime`` (review round-2 F6). Nothing in this package logged before,
 #: and nothing else does now — this one line exists because :func:`enable_wal_journal` can block
@@ -105,6 +105,7 @@ __all__ = [
     "JournalModeRefused",
     "SchemaLedgerUnprotected",
     "closing_on_failure",
+    "SchemaVersionDirection",
     "SchemaVersionRefused",
     "compute_schema_shape_digest",
     "create_schema_ledger_objects",
@@ -310,10 +311,32 @@ CREATED_APPLIED_BY = "CREATED"
 MIGRATE_APPLIED_BY = "MIGRATE"
 
 
+#: Which way the on-disk version disagrees. The two are NOT interchangeable for an operator:
+#: ``BEHIND`` has one fix (the ``migrate`` CLI), ``AHEAD`` has a different one (run the code
+#: that wrote the file, or stop the lane) and ``migrate`` REFUSES it as well
+#: (:func:`~tos_runtime.operations.schema_migrations.apply_migrations`'s own AHEAD guard).
+SchemaVersionDirection = Literal["BEHIND", "AHEAD"]
+
+
 class SchemaVersionRefused(RuntimeError):
     """Raised at store construction (or by ``apply_migrations``) when the on-disk
     ``PRAGMA user_version`` disagrees with what this code expects — a boot refusal, never an
-    auto-applied fix (module docstring cases 3/4)."""
+    auto-applied fix (module docstring cases 3/4).
+
+    Carries :attr:`direction` because the two cases need DIFFERENT operator actions and a
+    caller must be able to tell them apart **without parsing the message**. The cold-backup
+    dispatch does exactly that to choose its stderr prefix
+    (``tos_runtime.compose._backup_dispatch``): message sniffing would couple that routing to
+    this wording, which is quoted verbatim in operator runbooks.
+
+    It is a required keyword, not a default, so a new raise site cannot silently inherit
+    whichever direction happened to be written first.
+    """
+
+    def __init__(self, message: str, *, direction: SchemaVersionDirection) -> None:
+        """Refuse ``message``; ``direction`` says which way the disagreement runs."""
+        super().__init__(message)
+        self.direction: SchemaVersionDirection = direction
 
 
 #: The journal mode every runtime-owned durable store must end up in. Compared against what
@@ -644,12 +667,14 @@ def _refuse_version(store_name: str, current: int, schema_version: int) -> NoRet
             f"{store_name}: on-disk schema user_version={current} is BEHIND this code's "
             f"schema_version={schema_version} — run the operator `migrate` CLI "
             "(tos_runtime.operations.schema_migrations.apply_migrations) before booting; "
-            "boot never auto-applies a migration"
+            "boot never auto-applies a migration",
+            direction="BEHIND",
         )
     raise SchemaVersionRefused(
         f"{store_name}: on-disk schema user_version={current} is AHEAD of this code's "
         f"schema_version={schema_version} — this file was created or migrated by newer code "
-        "than what is running now"
+        "than what is running now",
+        direction="AHEAD",
     )
 
 
