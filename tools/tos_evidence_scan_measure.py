@@ -35,6 +35,15 @@ the index build time is reported by the child on its own stdout and captured in
 so an existing citation like "``before-90d.time`` の ``File system inputs``" keeps working) and
 ``<step>-Nd.resource.json`` (the same numbers structured, plus the child's ``/proc/<pid>/io``).
 
+**Per run, not per directory** (plan §7.1.23). One output directory holds every attempt at
+one size: the 270-day measurement was stopped twice and finished on the third run in
+``a1b-270/``. So each run writes ``run-<run_id>.summary.json`` (how it ended, which steps
+ran, what happened to the synthetic file, which abort records it wrote), and a stop writes
+``ABORTED-<step>-<days>d.<run_id>.json`` — the run id is in the name because the fixed name
+let the second stop overwrite the first one's ``reason`` / ``signal_sent`` / ``returncode`` /
+``partial_resource``, which the plan then had to reconstruct from ``watchdog.jsonl`` and
+cite as "≥".
+
 **Resource capture uses** ``os.wait4`` **, not** ``getrusage(RUSAGE_CHILDREN)`` **deltas.**
 ``RUSAGE_CHILDREN.ru_maxrss`` is a running maximum over every child reaped so far, so a
 before/after difference attributes a step's peak RSS exactly only when that step raised the
@@ -135,12 +144,14 @@ __all__ = [
     "Step",
     "SyntheticDisposition",
     "StepResult",
+    "abort_record_path",
     "decide_synthetic_disposition",
     "estimate_synthetic_size",
     "read_lock",
     "release_lock",
     "step_artifact_paths",
     "write_lock",
+    "write_run_summary",
     "main",
     "move_step_artifacts_aside",
     "plan_steps",
@@ -345,7 +356,7 @@ class MeasureRefused(RuntimeError):
 
 class MeasureAborted(RuntimeError):
     """A guard fired while a child was running. The child was terminated and an
-    ``ABORTED-<step>-<days>d.json`` artifact was written."""
+    ``ABORTED-<step>-<days>d.<run_id>.json`` artifact was written."""
 
 
 class MeasureSignalled(RuntimeError):
@@ -1706,6 +1717,31 @@ def earlier_step_mismatches(
     return tuple(reasons)
 
 
+def abort_record_path(out_dir: Path, *, step: str, days: int, run_id: str) -> Path:
+    """Where one stop's ``ABORTED`` artifact goes — one file per RUN, not per step.
+
+    The 270-day measurement was stopped twice and finished on the third run, all in one
+    output directory. The stopped step's ``.out``/``.err`` were moved aside under their
+    run id, so both attempts' streams are still on the host; the JSON was written to the
+    fixed ``ABORTED-before-270d.json`` by both, so the second stop OVERWROTE the first
+    and its ``reason``, ``signal_sent``, ``escalated_to_sigkill``, ``returncode`` and
+    ``partial_resource`` are gone. Plan §7.1.23 had to cite that run's burned wall clock
+    as "≥ 6,904.445 s", recovered from the surviving ``watchdog.jsonl`` series, and
+    registered the gap as "답하지 못한 것" 3. The run id in the name is what stops a
+    second attempt erasing the first, and it matches the convention
+    :func:`move_step_artifacts_aside` already used for the streams.
+
+    **No un-suffixed "latest" pointer is written alongside.** Nothing reads
+    ``ABORTED-<step>-<days>d.json``: not :func:`read_earlier_steps`, not the
+    ``artifacts_absent`` preflight (which lists :func:`step_artifact_paths` only), not any
+    other tool in this repo — a pointer would be a second copy needing the same rotation,
+    or it reintroduces exactly the overwrite it is meant to survive. The records are found
+    with ``glob("ABORTED-<step>-<days>d.*.json")``; each one carries its own ``run_id``
+    field, which equals the one in its name.
+    """
+    return out_dir / f"ABORTED-{step}-{days}d.{run_id}.json"
+
+
 def move_step_artifacts_aside(
     step: Step, *, out_dir: Path, days: int, run_id: str
 ) -> list[Path]:
@@ -1763,7 +1799,9 @@ class StepResult:
 
 @dataclass(frozen=True)
 class AbortRecord:
-    """What an ``ABORTED-<step>-<days>d.json`` holds. A mid-run stop is never silent."""
+    """What an ``ABORTED-<step>-<days>d.<run_id>.json`` holds — one per run, so a second
+    stop in the same output directory cannot erase the first (plan §7.1.23). A mid-run stop
+    is never silent."""
 
     run_id: str
     step: str
@@ -1883,7 +1921,7 @@ def run_step(
     39 m apart, and anything that moved the tree in between would have been recorded by a
     SHA line and stopped by nothing. A commit that moved, a tree that went dirty or a bench
     whose bytes changed aborts the step HERE, with no child started — so the
-    ``ABORTED-<step>-<days>d.json`` for that case carries no resource numbers and
+    ``ABORTED-<step>-<days>d.<run_id>.json`` for that case carries no resource numbers and
     ``returncode: null``, which is the honest shape for "nothing ran".
 
     Args:
@@ -1896,7 +1934,8 @@ def run_step(
         MeasureAborted: the tree moved under the run, a floor was crossed, a competing
             build appeared, the host could not be read for ``--host-read-retries`` + 1
             consecutive samples, or the driver hit an unexpected error. In every one of
-            those cases ``ABORTED-<step>-<days>d.json`` is written BEFORE this is raised,
+            those cases ``ABORTED-<step>-<days>d.<run_id>.json`` is written BEFORE this is
+            raised,
             and any child that had been started is terminated first — an abort is never
             silent, whatever caused it (review F2).
     """
@@ -1918,7 +1957,7 @@ def run_step(
         Defensive on its own failure: a write that cannot happen (ENOSPC) must not
         replace the original reason with an IOError traceback.
         """
-        path = out_dir / f"ABORTED-{step.name}-{days}d.json"
+        path = abort_record_path(out_dir, step=step.name, days=days, run_id=run_id)
         try:
             path.write_text(
                 json.dumps(
@@ -2044,7 +2083,7 @@ def run_step(
             last_samples=tuple(samples[-_ABORT_SAMPLE_TAIL:]),
             checkout=checkout_record,
         )
-        path = out_dir / f"ABORTED-{step.name}-{days}d.json"
+        path = abort_record_path(out_dir, step=step.name, days=days, run_id=run_id)
         path.write_text(json.dumps(asdict(record_out), indent=2), encoding="utf-8")
         log(f"wrote {path}")
         # The step's own files are moved aside so the documented resume is not refused by
@@ -2312,9 +2351,11 @@ class PreflightRecord:
 
 @dataclass(frozen=True)
 class SyntheticDisposition:
-    """What to do with the synthetic file this run created, and what to tell the operator.
+    """What to do with the synthetic file at the end of a run, and what to tell the
+    operator.
 
-    ``action`` is one of ``delete`` / ``keep-partial`` / ``keep-resumable``.
+    ``action`` is one of ``delete`` / ``keep-partial`` / ``keep-resumable`` /
+    ``keep-not-ours`` / ``keep-requested``.
     """
 
     action: str
@@ -2322,40 +2363,159 @@ class SyntheticDisposition:
 
 
 def decide_synthetic_disposition(
-    path: Path, *, remaining: Sequence[str], size_bytes: int
+    path: Path,
+    *,
+    remaining: Sequence[str],
+    size_bytes: int,
+    created_by_this_run: bool = True,
+    after_measured: bool = True,
+    keep_requested: bool = False,
+    delete_on_success: bool = False,
 ) -> SyntheticDisposition:
-    """Delete the synthetic file only when every planned step actually ran.
+    """Decide the fate of the synthetic file, and say it out loud in every case.
 
     Plan §7.1.2 keeps peak disk at one file by deleting each size's synthetic DB once its
-    before/after pair is done. An abort is exactly when NOT to apply that: the watchdog
-    fires because the host is short of MEMORY, and deleting a 53 GB file does nothing for
-    memory while costing the operator the whole build (366 s at 365 days).
+    before/after pair is done. Two situations are exactly when NOT to apply that, and one
+    of them used to be silent:
 
-    Two unfinished cases, because they need different advice:
+    * **An abort.** The watchdog fires because the host is short of MEMORY, and deleting a
+      53 GB file does nothing for memory while costing the operator the whole build (366 s
+      at 365 days). Two unfinished shapes, because they need different advice —
+      ``build`` still in ``remaining`` means a PARTIAL write that the bench will refuse to
+      overwrite, so the honest instruction is "delete it before rebuilding", not a resume
+      that cannot work; ``build`` done with a measure step left means the file is complete
+      and the run really is resumable with ``--steps``.
+    * **A resume that succeeds.** ``created_by_this_run`` is false, so the file is not
+      this run's to delete — and that is deliberate: it is why the 180- and 270-day
+      index-time file sizes could be read at all (§7.1.15 · §7.1.23 "답하지 못한 것" 4).
+      But the run that FINISHED the measurement used to say nothing whatsoever about a
+      36-53 GB file, so "delete it now" was a step the operator had to remember on their
+      own (§7.1.23 "뒤처리"). It now says so, with the exact command, and
+      ``--delete-synthetic-on-success`` opts into having the driver do it.
 
-    * ``build`` still in ``remaining`` — the file is a PARTIAL write. It is not measurable
-      and the bench refuses to overwrite an existing ``--out``, so the honest instruction is
-      "delete it before rebuilding", not a resume that cannot work.
-    * ``build`` done, a measure step left — the file is complete and the run really is
-      resumable with ``--steps``.
+    ``after_measured`` is read only on the resume branch, and it is passed rather than
+    inferred from an empty ``remaining``: "every planned step ran" and "the pair is
+    measured" are different facts. A ``--steps before`` run satisfies the first and not
+    the second, and telling that operator the measurement is recorded would invite them to
+    delete the file ``after`` still needs.
     """
     size_gb = size_bytes / _GB
-    if not remaining:
-        return SyntheticDisposition("delete", f"removed synthetic {path}")
-    if "build" in remaining:
-        return SyntheticDisposition(
-            "keep-partial",
-            f"KEPT synthetic {path} ({size_gb:.2f} GB) — INCOMPLETE: the build step did not "
-            "finish, so this file is a partial write, not a measurable one. It is kept so "
-            "nothing is deleted behind your back; delete it before rebuilding (the bench "
-            "refuses to overwrite an existing --out).",
+    rm = f"rm {path}"
+
+    if remaining:
+        # Unfinished, whatever the flags say: an incomplete run never deletes.
+        if "build" in remaining:
+            return SyntheticDisposition(
+                "keep-partial",
+                f"KEPT synthetic {path} ({size_gb:.2f} GB) — INCOMPLETE: the build step "
+                "did not finish, so this file is a partial write, not a measurable one. "
+                "It is kept so nothing is deleted behind your back; delete it before "
+                "rebuilding (the bench refuses to overwrite an existing --out).",
+            )
+        built = (
+            "the build it already paid for is not thrown away"
+            if created_by_this_run
+            else "this run did not build it either"
         )
-    return SyntheticDisposition(
-        "keep-resumable",
-        f"KEPT synthetic {path} ({size_gb:.2f} GB) — the run did not finish, so the build "
-        "it already paid for is not thrown away. Once the host recovers, resume with "
-        f"--steps {','.join(remaining)}, then delete the file by hand.",
-    )
+        return SyntheticDisposition(
+            "keep-resumable",
+            f"KEPT synthetic {path} ({size_gb:.2f} GB) — the run did not finish, so "
+            f"{built}. Once the host recovers, resume with "
+            f"--steps {','.join(remaining)}, then delete the file by hand: {rm}",
+        )
+
+    if not created_by_this_run:
+        if not after_measured:
+            return SyntheticDisposition(
+                "keep-not-ours",
+                f"KEPT synthetic {path} ({size_gb:.2f} GB) — not built by this run, and "
+                "the pair is not measured yet: `after` has not run. Measure it with "
+                f"--steps after, then delete the file by hand: {rm}",
+            )
+        if delete_on_success:
+            return SyntheticDisposition(
+                "delete",
+                f"removed synthetic {path} ({size_gb:.2f} GB) — "
+                "--delete-synthetic-on-success, although this run did not build it",
+            )
+        return SyntheticDisposition(
+            "keep-not-ours",
+            f"KEPT synthetic {path} — not built by this run; delete it yourself when the "
+            f"measurement is recorded: {rm} ({size_gb:.2f} GB). Pass "
+            "--delete-synthetic-on-success to have the driver do it.",
+        )
+
+    if keep_requested:
+        return SyntheticDisposition(
+            "keep-requested",
+            f"KEPT synthetic {path} ({size_gb:.2f} GB) — --keep-synthetic. Delete it by "
+            f"hand when you are done with it: {rm}",
+        )
+    return SyntheticDisposition("delete", f"removed synthetic {path}")
+
+
+def write_run_summary(
+    out_dir: Path,
+    *,
+    run_id: str,
+    days: int,
+    argv: Sequence[str],
+    planned: Sequence[str],
+    completed: Sequence[str],
+    outcome: str,
+    synthetic: Path,
+    created_by_this_run: bool,
+    size_bytes: int | None,
+    disposition: SyntheticDisposition | None,
+) -> Path:
+    """``run-<run_id>.summary.json`` — how this one run ended, in fields.
+
+    The run log is for a human reading a scrollback; a plan section cites fields. Until
+    now the disposition of the synthetic file existed only as a sentence in
+    ``measure-<days>d.log`` — and on a successful resume not even that, which is the half
+    of plan §7.1.23 "뒤처리" that nothing recorded. ``delete_command`` is the exact string
+    an operator (or the plan's clean-up paragraph) can quote for a file that is still on
+    the host.
+
+    The abort records are listed by name rather than inlined: they are whole artifacts of
+    their own, one per run, and this file is the index that says which run wrote which.
+
+    ``size_bytes`` is the size read at DISPOSITION time — after the last step, before any
+    deletion — not a fresh ``stat`` here, so it survives the default run that removes the
+    file. That is a partial answer to §7.1.15 "답하지 못한 것" 3 / §7.1.23 4 (the driver
+    never recorded the file size after the index step): the number is now in an artifact
+    for every run instead of only for the runs whose file happened to survive. It is
+    ``st_size`` and nothing more — the ``PRAGMA`` / ``sqlite_master`` / ``index_list``
+    detail those sections read off the surviving file is still read off the file.
+    """
+    still_there = synthetic.exists()
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "at_kst": _now_kst(),
+        "tool": "tools/tos_evidence_scan_measure.py",
+        "days": days,
+        "argv": list(argv),
+        "outcome": outcome,
+        "steps_planned": list(planned),
+        "steps_completed": list(completed),
+        "steps_remaining": [name for name in planned if name not in completed],
+        "synthetic": {
+            "path": str(synthetic),
+            "created_by_this_run": created_by_this_run,
+            "exists_after_the_run": still_there,
+            "size_bytes": size_bytes,
+            "action": None if disposition is None else disposition.action,
+            "message": None if disposition is None else disposition.message,
+            "delete_command": f"rm {synthetic}" if still_there else None,
+        },
+        "abort_records": sorted(
+            path.name for path in out_dir.glob(f"ABORTED-*-{days}d.{run_id}.json")
+        ),
+        "log": f"measure-{days}d.log",
+    }
+    path = out_dir / f"run-{run_id}.summary.json"
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
 
 
 LOCK_NAME = ".measure.lock"
@@ -3028,6 +3188,18 @@ def build_parser() -> argparse.ArgumentParser:
             "stays one file (plan §7.1.2); only a file this run created is ever deleted."
         ),
     )
+    run_parser.add_argument(
+        "--delete-synthetic-on-success",
+        action="store_true",
+        help=(
+            "On a RESUME (--steps without build), delete the synthetic file too once "
+            "every planned step has run. Default is to keep it and print the rm command: "
+            "the file this run did not build may be the operator's only copy, and the "
+            "180- and 270-day index-time file sizes are readable only because it "
+            "survived (plan §7.1.15 · §7.1.23). Requires `after` in --steps and is "
+            "incompatible with --keep-synthetic."
+        ),
+    )
 
     pre_parser = sub.add_parser(
         "preflight", help="Run only the preflight and report — starts no child."
@@ -3083,6 +3255,28 @@ def _print_preflight(record: PreflightRecord, *, log: Callable[[str], None]) -> 
         log(f"top-rss {row}")
     for warning in record.warnings:
         log(f"WARNING: {warning}")
+
+
+def _run_outcome(failure: BaseException | None) -> str:
+    """How a run ended, as one word for ``run-<run_id>.summary.json``.
+
+    The four named exceptions are the four things that stop this driver, and they are not
+    interchangeable: "aborted" is a guard that fired, "step-failed" is a child that exited
+    non-zero, "signalled" is something outside the run killing it, "refused" is the
+    preflight. A single "failed" would make the summary unable to answer the first
+    question anyone asks of a stopped measurement.
+    """
+    if failure is None:
+        return "ok"
+    for kind, name in (
+        (MeasureAborted, "aborted"),
+        (MeasureStepFailed, "step-failed"),
+        (MeasureSignalled, "signalled"),
+        (MeasureRefused, "refused"),
+    ):
+        if isinstance(failure, kind):
+            return name
+    return f"error ({type(failure).__name__})"
 
 
 def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> int:
@@ -3147,6 +3341,23 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 "--reference is required when --steps includes build (it is the "
                 "distribution the synthetic file replicates)"
             )
+        if args.command == "run" and args.delete_synthetic_on_success:
+            # Refused here rather than reconciled later: a flag pair that contradicts
+            # itself has no defensible winner, and a delete that lands between the two
+            # halves of the pair destroys the file `after` is about to measure. Both are
+            # cheap to say now and expensive to discover after a three-hour `before`.
+            if args.keep_synthetic:
+                raise MeasureRefused(
+                    "--keep-synthetic and --delete-synthetic-on-success ask for opposite "
+                    "things; pass one"
+                )
+            if "after" not in step_names:
+                raise MeasureRefused(
+                    "--delete-synthetic-on-success needs `after` in --steps (got "
+                    f"--steps {args.steps}): without it every planned step can finish "
+                    "while the pair is still unmeasured, and deleting the file then "
+                    "throws away the half the measurement still needs"
+                )
 
         def estimator() -> SizeEstimate:
             """Deferred so the reference is scanned only when `build` is planned AND the
@@ -3200,6 +3411,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
 
         created_synthetic = not args.synthetic.exists()
         completed: list[str] = []
+        failure: BaseException | None = None
         try:
             write_lock(out_dir, run_id=run_id, argv=raw)
             for step in steps:
@@ -3235,24 +3447,68 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                         f"step {step.name!r} exited {result.returncode}; see {stderr_note}"
                     )
                 completed.append(step.name)
+        except BaseException as exc:
+            # Recorded, then re-raised untouched: the summary below has to be able to say
+            # HOW the run ended, and `finally` alone cannot tell "finished" from "stopped".
+            failure = exc
+            raise
         finally:
-            # Deleted only after every planned step actually ran (plan §7.1.2: peak disk is
-            # one file). An abort is exactly when NOT to delete it: the watchdog fires
-            # because the host is short of MEMORY, which throwing away a 53 GB / 366 s build
-            # does nothing for.
-            if (
-                created_synthetic
-                and not args.keep_synthetic
-                and args.synthetic.exists()
-            ):
+            # The file is disposed of in every case, and the decision is always said out
+            # loud — including the one the first revision passed over in silence, a resume
+            # that succeeds against a file it did not build (plan §7.1.23 "뒤처리": the
+            # operator was left to remember a 36-53 GB deletion with nothing in the log).
+            # Deletion still happens only when every planned step actually ran (plan
+            # §7.1.2: peak disk is one file); an abort is exactly when NOT to delete,
+            # because the watchdog fires over MEMORY and throwing away a 53 GB / 366 s
+            # build does nothing for that.
+            disposition: SyntheticDisposition | None = None
+            # Read BEFORE any delete: this is the file size after the last step that ran,
+            # which for a finished pair is the size after `after` created the index — the
+            # number §7.1.15 "답하지 못한 것" 3 and §7.1.23 4 say the driver never wrote
+            # down, readable until now only off a file that happened to survive.
+            synthetic_bytes = (
+                args.synthetic.stat().st_size if args.synthetic.exists() else None
+            )
+            if synthetic_bytes is not None:
                 disposition = decide_synthetic_disposition(
                     args.synthetic,
                     remaining=[s.name for s in steps if s.name not in completed],
-                    size_bytes=args.synthetic.stat().st_size,
+                    size_bytes=synthetic_bytes,
+                    created_by_this_run=created_synthetic,
+                    after_measured="after" in completed,
+                    keep_requested=args.keep_synthetic,
+                    delete_on_success=args.delete_synthetic_on_success,
                 )
                 if disposition.action == "delete":
                     args.synthetic.unlink()
                 log(disposition.message)
+            try:
+                summary_path = write_run_summary(
+                    out_dir,
+                    run_id=run_id,
+                    days=args.days,
+                    argv=raw,
+                    planned=[s.name for s in steps],
+                    completed=completed,
+                    outcome=_run_outcome(failure),
+                    synthetic=args.synthetic,
+                    created_by_this_run=created_synthetic,
+                    size_bytes=synthetic_bytes,
+                    disposition=disposition,
+                )
+            except Exception as summary_exc:  # never mask the original failure
+                log(f"could not write the run summary: {summary_exc!r}")
+            else:
+                # The closing summary, so a scrollback that lost the middle of a
+                # three-hour run still ends with what happened and what is left on disk.
+                log(
+                    f"##### summary (run {run_id}): {_run_outcome(failure)} · "
+                    f"completed {','.join(completed) or 'none'} · "
+                    f"remaining {','.join(s.name for s in steps if s.name not in completed) or 'none'}"
+                )
+                if disposition is not None:
+                    log(f"##### synthetic: {disposition.message}")
+                log(f"wrote {summary_path}")
             # APPENDED, with a run header. `write_text` meant the documented resume
             # (same --days, same --out-dir) replaced the aborted run's log wholesale,
             # including the ABORT line and the disposition message — the human-readable
