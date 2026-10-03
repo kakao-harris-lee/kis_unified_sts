@@ -330,6 +330,41 @@ The **warning** path is unchanged: it still fires off the normalized ratio
 alone, so the "+81.0% slower" line above is still printed. Closing that is
 separate work.
 
+### A timed region containing `gc.collect()` measures the process heap
+
+`check_regression.py` compares pytest's **setup + call + teardown** wall time.
+Everything a benchmark does lands in that number, so a benchmark that calls
+`gc.collect()` inside itself is timing a full walk of the whole pytest
+process's live object graph — set by what the session imported and what earlier
+tests left allocated, and not by the code under test. Measured 2026-10-03 on
+the deploy host:
+
+| extra tracked objects | 8x `gc.collect()` |
+| ---: | ---: |
+| 0 (bare process, 5,240 tracked) | 2.0 ms |
+| 200,000 | 184.7 ms |
+| 600,000 | 582.9 ms |
+| 1,200,000 | 1197.9 ms |
+
+That is linear, and it is also memory-latency bound rather than CPU bound, so
+it moves **opposite** to the rest of the suite when the runner changes. In run
+`37115379025` the six pure-CPU hot-path benchmarks ran 42-45% faster in the
+same job where `test_scalability_summary` and `test_memory_usage_scaling` read
++248.5% and +228.8%. Those two spent 101-281 ms per round of which their own
+timed loop, which they print, was 4-6 ms.
+
+`_benchmark_orchestrator_cycle` called `gc.collect()` twice per call to bracket
+a memory delta taken from `_get_process_memory_mb()`, which returned a
+hardcoded `0.0`. The reading was always 0.00 MB and nothing asserted on it.
+Both collections and the dead reading were removed in #857; the cycle-time SLA
+assertions are untouched.
+
+**The rule for a new benchmark:** nothing in the test body may have a cost
+proportional to the whole process rather than to the work being measured —
+`gc.collect()`, `gc.get_objects()`, a full `tracemalloc` snapshot, an
+`importlib` sweep. Measure the work, and if a memory figure is genuinely
+wanted, assert it somewhere the checker does not time.
+
 ### Baseline format and provenance
 
 `tests/performance/baselines.json` is either a legacy pytest-json-report (read
