@@ -793,14 +793,20 @@ class RegressionChecker:
         see that the "common-mode" correction was not common-mode, instead of
         inferring it from the per-benchmark rows.
 
-        Returns ``None`` when nothing was comparable (same membership rule as
-        ``runner_speed_factor``: measured in both runs, baseline at or above
-        the noise floor).
+        Returns ``None`` when nothing was comparable. The membership rule is
+        ``runner_speed_factor``'s, condition for condition -- measured in both
+        runs, baseline at or above the noise floor, and both medians positive
+        -- because a band over a different set than the median it annotates
+        would misdescribe exactly the thing it exists to show.
         """
         ratios = [
             1.0 + c.change_percent / 100
             for c in comparisons
-            if c.baseline_n and c.current_n and c.baseline_value >= self.min_duration
+            if c.baseline_n
+            and c.current_n
+            and c.baseline_value >= self.min_duration
+            and c.baseline_value > 0
+            and c.current_value > 0
         ]
         if not ratios:
             return None

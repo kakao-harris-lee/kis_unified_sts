@@ -400,6 +400,23 @@ class TestComparableRatioBand:
     def test_band_is_none_without_comparable_benchmarks(self):
         assert _checker().comparable_ratio_band([]) is None
 
+    def test_band_covers_exactly_what_the_factor_was_taken_over(self):
+        """A zero-duration current median is dropped by both, or by neither.
+
+        ``runner_speed_factor`` skips a benchmark whose current median is 0;
+        if the band kept it the band would report x0.00 as the low end of a
+        median that never saw it.
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(6)}
+        current = {f"t{i}": 0.10 for i in range(6)}
+        current["t0"] = 0.0
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.0)
+        comps = checker.compare_metrics(baseline, current, factor)
+        low, high, count = checker.comparable_ratio_band(comps)
+        assert (count, low, high) == (5, 1.0, 1.0)
+
 
 class TestExtractDurations:
     def test_sums_phases_for_passed_tests_only(self):
