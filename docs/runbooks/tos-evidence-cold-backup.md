@@ -241,9 +241,13 @@ CRON_TZ=Asia/Seoul
 
 ## 4-5. 활성화 준비 상태 — 2026-10-03
 
-운영자 결정 두 개(용량 바닥 · 대상 data dir)가 2026-10-03 에 들어왔다. **남은 것은 둘이다** —
-crontab 한 줄(운영자)과 2026-10-06 genesis(ops-paper 레인). 이 절은 호스트에 무엇이 있고,
-켜는 데 무엇이 남았고, 사본에서 무엇을 확인했는지의 기록이다.
+운영자 결정 두 개(용량 바닥 · 대상 data dir)가 2026-10-03 에 들어왔다. 같은 날
+**16:13 KST 에 운영자가 crontab 줄까지 넣었으므로, 남은 것은 하나다** — 2026-10-06
+genesis(ops-paper 레인). 이 절은 호스트에 무엇이 있고, 켜는 데 무엇이 남았고, 사본에서
+무엇을 확인했는지의 기록이다.
+
+⚠ 이 절은 그날 오전에 쓰였고 한동안 「남은 것은 둘」이라고 적고 있었다. cron 줄이 들어간
+16:13 뒤로 **거짓**이었고, PR #855 가 발견해 정정했다(§4-5-3).
 
 ### 4-5-1. 호스트에 있는 것
 
@@ -257,8 +261,9 @@ crontab 한 줄(운영자)과 2026-10-06 genesis(ops-paper 레인). 이 절은 �
 | **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
 | **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨** — 운영자가 2026-10-03 에 `0 18 * * 1-5` · `CRON_TZ=Asia/Seoul` 로 넣었다(§4-5-3). sha256 `142d8c123c7ba91f864bc2a23288da065976e5685a7e2e6dc3b48030d26d88c9`(PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다 — §4-5-4) |
-| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | 존재(743 B) — PR #855 의 `--selftest` 실행 한 블록(PRE-GENESIS rc 0). 래퍼가 소유한다 |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 `db631435d1615848c743ecf4d65f89b4578a931ed0f883b8c719d3a51612228a` — PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다(§4-5-4) |
+| **cron 등재** | 운영자 crontab (`crontab -l` 220-222행) | — | **설치됨 2026-10-03 16:13 KST**(운영자). 줄 그대로: `0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly`, 바로 위에 `CRON_TZ=Asia/Seoul` 과 머리 주석 한 줄(§4-5-3 에 셋 다 그대로). 설치 **직전** 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`(15401 B, mtime 16:13:32) — 그 파일과 현재 crontab 의 차이는 **이 세 줄뿐**이다(실측 `diff`). 첫 발화 2026-10-05(월) 18:00 KST |
+| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | 존재(1486 B) — PR #855 의 `--selftest` **두 블록**(20:34 중간판 · 21:04 최종판, 둘 다 PRE-GENESIS rc 0). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍혀 있고, **21:04 블록의 값이 위 행과 같다**. 래퍼가 소유한다 |
 | cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | — | 아직 없음. **비어 있는 것이 정상**(§4-5-3) |
 | 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5) |
 | 대상 data dir | `~/.local/state/tos/paper-data` | — | **아직 없다** — 2026-10-06 genesis 예정 |
@@ -388,10 +393,11 @@ cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHI
 
 설정의 한 줄 편집은 **끝났다**(§4-5-2). 대상도 래퍼의 기본값으로 들어갔다.
 
-1. ✅ **crontab 한 줄 — 운영자가 2026-10-03 에 넣었다.** 이 절은 그 전까지 「남은 것
-   둘」이라고 적고 있었고, 줄이 들어간 뒤로 **거짓**이었다(PR #855 에서 발견·정정).
-   **PR #855 도 crontab 을 건드리지 않았다** — 넣는 것도 빼는 것도 운영자가 한다.
-   실측한 등재 내용을 **그대로** 옮긴다(`crontab -l`, 2026-10-03):
+1. ✅ **crontab 한 줄 — 운영자가 2026-10-03 16:13 KST 에 넣었다**(#851 머지 뒤).
+   이 절은 그 전까지 「남은 것 둘」이라고 적고 있었고, 줄이 들어간 16:13 뒤로
+   **거짓**이었다(PR #855 에서 발견·정정). **PR #855 도 crontab 을 건드리지 않았다** —
+   넣는 것도 빼는 것도 운영자가 한다. 실측한 등재 내용을 **그대로** 옮긴다
+   (`crontab -l`, 2026-10-03):
 
    ```cron
    # A3 콜드 백업 야간 (운영자 결정 2026-10-03 · 바닥 50 GiB · 대상 paper-data, 10-06 genesis 전엔 PRE-GENESIS rc=0 · 런북 tos-evidence-cold-backup.md §4-5-3)
@@ -402,6 +408,11 @@ cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHI
    ⚠ 아래 권장 블록과 **글자 그대로 같지는 않다**: 일정·스크립트 경로·리다이렉트 대상은
    같고, 설치본에는 다른 머리 주석과 끝의 `# cold-backup-nightly` 태그가 붙어 있다.
    그 태그는 이 호스트의 다른 cron 줄들이 쓰는 식별 관례다.
+
+   **되돌리는 법**: 설치 직전 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`
+   (15401 B · mtime 2026-10-03 16:13:32 KST)에 있다. 그 파일과 현재 crontab 의 차이는
+   **위 세 줄뿐**임을 `diff` 로 확인했다 — 즉 그 스냅숏은 **줄이 들어가기 전**의 상태이고,
+   `crontab <그 파일>` 이 등재를 되돌린다. 되돌리는 것도 운영자의 결정이다.
 2. **2026-10-06 genesis** — `ops-paper` 레인의 첫 상주 세션이 대상 디렉터리를 만든다.
    **이것만 남았다.**
 
@@ -495,8 +506,9 @@ PR #855 가 디스패치에 더한 여섯 번째 접두 `migrate refused` 는 **
     "cold-backup: migrate refused — "*)   printf 'refused\n' ;;
 ```
 
-이제 여섯 접두가 모두 `refused` 다. 래퍼 sha256 이 `d7e52b2f…` → `142d8c12…` 로
-움직였고 §4-5-1 표의 값이 그것이다. **crontab 은 건드리지 않았다.**
+이제 여섯 접두가 모두 `refused` 다. 래퍼 sha256 이 `d7e52b2f…` → `db631435…` 로
+움직였고 §4-5-1 표의 값이 그것이다. 움직인 것은 세 군데다 — `classify()` 의 가지 한 줄,
+그 위 범례 주석, 그리고 머리말의 crontab 정정. **crontab 자체는 건드리지 않았다.**
 
 ⚠ **가지를 더하는 변경이 기존 분류를 바꾸지 않았다는 것은 주장이 아니라 측정이다.**
 `classify()` 를 옛 판과 새 판에서 각각 떼어 내 **같은 14줄**(여섯 접두 · `snapshot/
@@ -506,9 +518,12 @@ archive/report/config failed` · 접두 없는 `failed` · 모르는 줄 · 빈 
 `case` 는 순서가 있는 구조라 새 가지가 뒤 가지를 가릴 수 있는데, 그러지 않았음을
 그 대조가 보인다.
 
-그 뒤 래퍼를 호스트에서 `--selftest` 로 한 번 돌렸다(2026-10-03 20:34:57 KST):
-파싱·실행되고 `PRE-GENESIS` rc 0 로 끝났으며 텔레그램 한 줄이 `[SELFTEST]` 태그로
-나갔다. 그 블록이 `~/.local/state/tos/cold-backup.log` 의 첫 내용이다.
+그 뒤 래퍼를 호스트에서 `--selftest` 로 돌렸다. **기록한 sha 와 실제로 돌린 sha 가 같아야
+하므로**(§4-5-5 의 그 규율) 기준은 최종판 실행이다 — 2026-10-03 **21:04:31 KST**, 로그
+머리의 `sha256=db631435…`: 파싱·실행되고 `PRE-GENESIS` rc 0 로 끝났으며 텔레그램 한 줄이
+`[SELFTEST]` 태그로 나갔다. `bash -n` 으로 **파일 전체**도 파싱된다(실행 경로만이 아니다).
+`~/.local/state/tos/cold-backup.log` 에는 20:34(중간판)과 21:04(최종판) 두 블록이 있고,
+**뒤엣것이 §4-5-1 의 값과 짝이다.**
 
 통지가 **빠질 수 있는** 두 경우도 적어 둔다: `.env` 의 briefing 두 줄이 없으면 실행은
 계속되고 로그에 `notify skipped: briefing credentials not found` 가 남는다. curl 이
@@ -530,7 +545,7 @@ archive/report/config failed` · 접두 없는 `failed` · 모르는 줄 · 빈 
 
 ⚠⚠ **이 로그의 sha256 은 이제 §4-5-1 표의 값과 다르다 — 그리고 이번에는 전 구간을 다시
 돌리지 않았다.** PR #855 이 `classify()` 에 가지를 하나 더해 래퍼가 `d7e52b2f…` →
-`142d8c12…` 로 움직였다. 바로 위 문단의 규율(「어긋나면 다시 돌린다」)을 그대로 적용하지
+`db631435…` 로 움직였다. 바로 위 문단의 규율(「어긋나면 다시 돌린다」)을 그대로 적용하지
 않은 이유를 적는다: 그때 어긋나게 만든 변경은 **종료코드 범례 주석**이라 어느 결말이
 바뀌었는지 문서만 보고는 알 수 없었고, 이번 변경은 `classify()` **자체**라서 무엇이
 바뀌는지 직접 잴 수 있다. 그래서 전 구간 재실행 대신 **옛 판과 새 판의 `classify()` 를
