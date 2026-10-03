@@ -37,12 +37,14 @@ so an existing citation like "``before-90d.time`` の ``File system inputs``" ke
 
 **Per run, not per directory** (plan §7.1.23). One output directory holds every attempt at
 one size: the 270-day measurement was stopped twice and finished on the third run in
-``a1b-270/``. So each run writes ``run-<run_id>.summary.json`` (how it ended, which steps
-ran, what happened to the synthetic file, which abort records it wrote), and a stop writes
-``ABORTED-<step>-<days>d.<run_id>.json`` — the run id is in the name because the fixed name
-let the second stop overwrite the first one's ``reason`` / ``signal_sent`` / ``returncode`` /
-``partial_resource``, which the plan then had to reconstruct from ``watchdog.jsonl`` and
-cite as "≥".
+``a1b-270/``. So a run writes ``run-<days>d.<run_id>.summary.json`` (how it ended, which
+steps ran, what happened to the synthetic file, which abort records it wrote), and a stop
+writes ``ABORTED-<step>-<days>d.<run_id>.json`` — the run id is in the name because the
+fixed name let the second stop overwrite the first one's ``reason`` / ``signal_sent`` /
+``returncode`` / ``partial_resource``, which the plan then had to reconstruct from
+``watchdog.jsonl`` and cite as "≥". ⚠ The summary exists for every run that reaches an
+output directory, which includes a preflight refusal but NOT an argument contradiction:
+those are refused before anything is created, like an ``argparse`` error.
 
 **Resource capture uses** ``os.wait4`` **, not** ``getrusage(RUSAGE_CHILDREN)`` **deltas.**
 ``RUSAGE_CHILDREN.ru_maxrss`` is a running maximum over every child reaped so far, so a
@@ -110,6 +112,7 @@ import json
 import os
 import re
 import resource
+import shlex
 import shutil
 import signal
 import subprocess
@@ -148,6 +151,7 @@ __all__ = [
     "decide_synthetic_disposition",
     "estimate_synthetic_size",
     "read_lock",
+    "recorded_pass",
     "release_lock",
     "step_artifact_paths",
     "write_lock",
@@ -1718,7 +1722,7 @@ def earlier_step_mismatches(
 
 
 def abort_record_path(out_dir: Path, *, step: str, days: int, run_id: str) -> Path:
-    """Where one stop's ``ABORTED`` artifact goes — one file per RUN, not per step.
+    """Where one stop's ``ABORTED`` artifact goes — one file per (step, run).
 
     The 270-day measurement was stopped twice and finished on the third run, all in one
     output directory. The stopped step's ``.out``/``.err`` were moved aside under their
@@ -1734,10 +1738,13 @@ def abort_record_path(out_dir: Path, *, step: str, days: int, run_id: str) -> Pa
     **No un-suffixed "latest" pointer is written alongside.** Nothing reads
     ``ABORTED-<step>-<days>d.json``: not :func:`read_earlier_steps`, not the
     ``artifacts_absent`` preflight (which lists :func:`step_artifact_paths` only), not any
-    other tool in this repo — a pointer would be a second copy needing the same rotation,
-    or it reintroduces exactly the overwrite it is meant to survive. The records are found
-    with ``glob("ABORTED-<step>-<days>d.*.json")``; each one carries its own ``run_id``
-    field, which equals the one in its name.
+    other tool in this repo. ``preflight.json`` next to ``preflight.jsonl`` is NOT a
+    counter-example and the difference is the whole point: there the pointer is a copy of
+    the last line of an append-only series, so overwriting it loses nothing. An abort
+    record has no such series — the pointer would be the only copy of that run's record,
+    which is precisely the failure this name fixes. The records are found with
+    ``glob("ABORTED-<step>-<days>d.*.json")``; each one carries its own ``run_id`` field,
+    which equals the one in its name.
     """
     return out_dir / f"ABORTED-{step}-{days}d.{run_id}.json"
 
@@ -2354,12 +2361,37 @@ class SyntheticDisposition:
     """What to do with the synthetic file at the end of a run, and what to tell the
     operator.
 
-    ``action`` is one of ``delete`` / ``keep-partial`` / ``keep-resumable`` /
-    ``keep-not-ours`` / ``keep-requested``.
+    ``action`` is one of ``delete`` / ``delete-failed`` / ``keep-partial`` /
+    ``keep-resumable`` / ``keep-unmeasured`` / ``keep-not-ours`` / ``keep-requested``.
     """
 
     action: str
     message: str
+
+
+def _decimal_gb(size_bytes: int) -> str:
+    """``size_bytes`` as decimal GB, which is the unit the growth plan is written in.
+
+    This file's ``_GB`` is ``1024**3`` and the threshold strings built from it are
+    labelled "GB" while carrying GiB — a wart plan §7.1.23 already registered ("⚠ 드라이버의
+    사람용 문자열은 `_GB = 1024**3`(GiB)인데 라벨이 `GB` 다"), and the same class of mixed
+    base that independent review #850 F4 caught in the plan itself. The disposition
+    messages below are read next to the plan's own file sizes (26.73 / 40.10 / 53.23 GB),
+    so they use the plan's base and say so. Unifying the threshold strings is a separate
+    change: their current text is quoted verbatim in §7.1.23's preflight table, and
+    rewriting it as a side effect of this one is how citations rot.
+    """
+    return f"{size_bytes / 1_000_000_000.0:.2f} GB"
+
+
+def _rm_command(path: Path) -> str:
+    """The deletion command, safe to paste.
+
+    ``shlex.quote`` because this string is handed to an operator and stored as
+    ``delete_command``: an unquoted path with a space turns a 26-53 GB clean-up into a
+    two-operand ``rm`` that removes the wrong thing or nothing.
+    """
+    return f"rm {shlex.quote(str(path))}"
 
 
 def decide_synthetic_disposition(
@@ -2367,16 +2399,16 @@ def decide_synthetic_disposition(
     *,
     remaining: Sequence[str],
     size_bytes: int,
-    created_by_this_run: bool = True,
-    after_measured: bool = True,
+    created_by_this_run: bool,
+    before_measured: bool,
+    after_measured: bool,
     keep_requested: bool = False,
     delete_on_success: bool = False,
 ) -> SyntheticDisposition:
     """Decide the fate of the synthetic file, and say it out loud in every case.
 
     Plan §7.1.2 keeps peak disk at one file by deleting each size's synthetic DB once its
-    before/after pair is done. Two situations are exactly when NOT to apply that, and one
-    of them used to be silent:
+    before/after pair is done. Three situations are exactly when NOT to apply that:
 
     * **An abort.** The watchdog fires because the host is short of MEMORY, and deleting a
       53 GB file does nothing for memory while costing the operator the whole build (366 s
@@ -2385,32 +2417,48 @@ def decide_synthetic_disposition(
       overwrite, so the honest instruction is "delete it before rebuilding", not a resume
       that cannot work; ``build`` done with a measure step left means the file is complete
       and the run really is resumable with ``--steps``.
+    * **A pair that is not measured yet.** Every planned step can finish with the
+      measurement still half-done: ``--steps build`` builds and stops, ``--steps after``
+      on a pre-built file measures one half. Deleting then throws away the file the other
+      pass needs. ``before_measured`` / ``after_measured`` are what this reads, and they
+      are REQUIRED keyword arguments with no defaults — a default here would decide, for
+      every future caller that forgets them, in the direction of deletion.
     * **A resume that succeeds.** ``created_by_this_run`` is false, so the file is not
       this run's to delete — and that is deliberate: it is why the 180- and 270-day
       index-time file sizes could be read at all (§7.1.15 · §7.1.23 "답하지 못한 것" 4).
       But the run that FINISHED the measurement used to say nothing whatsoever about a
-      36-53 GB file, so "delete it now" was a step the operator had to remember on their
+      26-53 GB file, so "delete it now" was a step the operator had to remember on their
       own (§7.1.23 "뒤처리"). It now says so, with the exact command, and
       ``--delete-synthetic-on-success`` opts into having the driver do it.
 
-    ``after_measured`` is read only on the resume branch, and it is passed rather than
-    inferred from an empty ``remaining``: "every planned step ran" and "the pair is
-    measured" are different facts. A ``--steps before`` run satisfies the first and not
-    the second, and telling that operator the measurement is recorded would invite them to
-    delete the file ``after`` still needs.
+    The two measured flags are a PROPERTY of the output directory, not a reading of
+    ``--steps``: a pass counts as measured when this run completed it or when its
+    ``<step>-<days>d.resource.json`` is already there. The CLI refuses
+    ``--delete-synthetic-on-success`` on the same property, and this function re-derives
+    the verdict from the flags rather than trusting that refusal — a guard that holds only
+    because a different guard ran is the failure mode ``MEMORY.md`` records as "가드가
+    자기가 막는다고 말한 것을 허용한다", and independent review #853 found exactly that in
+    the first revision (``--steps after`` passed a positional check and deleted an
+    unmeasured pair).
     """
-    size_gb = size_bytes / _GB
-    rm = f"rm {path}"
+    size = _decimal_gb(size_bytes)
+    rm = _rm_command(path)
+    missing = [
+        name
+        for name, measured in (("before", before_measured), ("after", after_measured))
+        if not measured
+    ]
+    not_ours = "" if created_by_this_run else " It was not built by this run."
 
     if remaining:
         # Unfinished, whatever the flags say: an incomplete run never deletes.
         if "build" in remaining:
             return SyntheticDisposition(
                 "keep-partial",
-                f"KEPT synthetic {path} ({size_gb:.2f} GB) — INCOMPLETE: the build step "
-                "did not finish, so this file is a partial write, not a measurable one. "
-                "It is kept so nothing is deleted behind your back; delete it before "
-                "rebuilding (the bench refuses to overwrite an existing --out).",
+                f"KEPT synthetic {path} ({size}) — INCOMPLETE: the build step did not "
+                "finish, so this file is a partial write, not a measurable one. It is "
+                "kept so nothing is deleted behind your back; delete it before rebuilding "
+                "(the bench refuses to overwrite an existing --out).",
             )
         built = (
             "the build it already paid for is not thrown away"
@@ -2419,39 +2467,52 @@ def decide_synthetic_disposition(
         )
         return SyntheticDisposition(
             "keep-resumable",
-            f"KEPT synthetic {path} ({size_gb:.2f} GB) — the run did not finish, so "
-            f"{built}. Once the host recovers, resume with "
-            f"--steps {','.join(remaining)}, then delete the file by hand: {rm}",
+            f"KEPT synthetic {path} ({size}) — the run did not finish, so {built}. Once "
+            f"the host recovers, resume with --steps {','.join(remaining)}, then delete "
+            f"the file by hand: {rm}",
+        )
+
+    if keep_requested:
+        # Checked before the created/not-created split: on a resume the first revision
+        # fell through to the not-ours branch and recommended
+        # --delete-synthetic-on-success, the one flag the startup refusal rejects next to
+        # --keep-synthetic (review #853 finding 5).
+        unmeasured = (
+            ""
+            if not missing
+            else f" ⚠ the pair is not measured yet — --steps {','.join(missing)} is still "
+            "to run."
+        )
+        return SyntheticDisposition(
+            "keep-requested",
+            f"KEPT synthetic {path} ({size}) — --keep-synthetic.{not_ours}{unmeasured} "
+            f"Delete it by hand when you are done with it: {rm}",
+        )
+
+    if missing:
+        return SyntheticDisposition(
+            "keep-unmeasured",
+            f"KEPT synthetic {path} ({size}) — every planned step ran, but the pair is "
+            f"NOT measured: --steps {','.join(missing)} has no result in this output "
+            f"directory.{not_ours} Measure it with --steps {','.join(missing)}, then "
+            f"delete the file by hand: {rm}",
         )
 
     if not created_by_this_run:
-        if not after_measured:
-            return SyntheticDisposition(
-                "keep-not-ours",
-                f"KEPT synthetic {path} ({size_gb:.2f} GB) — not built by this run, and "
-                "the pair is not measured yet: `after` has not run. Measure it with "
-                f"--steps after, then delete the file by hand: {rm}",
-            )
         if delete_on_success:
             return SyntheticDisposition(
                 "delete",
-                f"removed synthetic {path} ({size_gb:.2f} GB) — "
-                "--delete-synthetic-on-success, although this run did not build it",
+                f"removed synthetic {path} ({size}) — --delete-synthetic-on-success, "
+                "although this run did not build it",
             )
         return SyntheticDisposition(
             "keep-not-ours",
             f"KEPT synthetic {path} — not built by this run; delete it yourself when the "
-            f"measurement is recorded: {rm} ({size_gb:.2f} GB). Pass "
+            f"measurement is recorded: {rm} ({size}). Pass "
             "--delete-synthetic-on-success to have the driver do it.",
         )
 
-    if keep_requested:
-        return SyntheticDisposition(
-            "keep-requested",
-            f"KEPT synthetic {path} ({size_gb:.2f} GB) — --keep-synthetic. Delete it by "
-            f"hand when you are done with it: {rm}",
-        )
-    return SyntheticDisposition("delete", f"removed synthetic {path}")
+    return SyntheticDisposition("delete", f"removed synthetic {path} ({size})")
 
 
 def write_run_summary(
@@ -2462,33 +2523,43 @@ def write_run_summary(
     argv: Sequence[str],
     planned: Sequence[str],
     completed: Sequence[str],
+    remaining: Sequence[str],
     outcome: str,
     synthetic: Path,
     created_by_this_run: bool,
+    exists_after_the_run: bool | None,
     size_bytes: int | None,
     disposition: SyntheticDisposition | None,
+    refusal: str | None = None,
 ) -> Path:
-    """``run-<run_id>.summary.json`` — how this one run ended, in fields.
+    """``run-<days>d.<run_id>.summary.json`` — how this one run ended, in fields.
 
     The run log is for a human reading a scrollback; a plan section cites fields. Until
     now the disposition of the synthetic file existed only as a sentence in
     ``measure-<days>d.log`` — and on a successful resume not even that, which is the half
     of plan §7.1.23 "뒤처리" that nothing recorded. ``delete_command`` is the exact string
-    an operator (or the plan's clean-up paragraph) can quote for a file that is still on
-    the host.
+    an operator (or the plan's clean-up paragraph) can paste for a file that is still on
+    the host; it is ``shlex.quote``d.
+
+    ``-<days>d`` is in the name for the same reason every other artifact carries it: one
+    output directory holds every size (the existing ``a1/`` does).
 
     The abort records are listed by name rather than inlined: they are whole artifacts of
-    their own, one per run, and this file is the index that says which run wrote which.
+    their own, one per (step, run), and this file is the index that says which run wrote
+    which.
 
     ``size_bytes`` is the size read at DISPOSITION time — after the last step, before any
     deletion — not a fresh ``stat`` here, so it survives the default run that removes the
     file. That is a partial answer to §7.1.15 "답하지 못한 것" 3 / §7.1.23 4 (the driver
     never recorded the file size after the index step): the number is now in an artifact
-    for every run instead of only for the runs whose file happened to survive. It is
-    ``st_size`` and nothing more — the ``PRAGMA`` / ``sqlite_master`` / ``index_list``
-    detail those sections read off the surviving file is still read off the file.
+    for every run that reaches its steps, instead of only for the runs whose file happened
+    to survive. It is ``st_size`` and nothing more — the ``PRAGMA`` / ``sqlite_master`` /
+    ``index_list`` detail those sections read off the surviving file is still read off the
+    file. ``None`` means the file was not there, or could not be stat'd, when the run
+    ended — which ``exists_after_the_run`` tells apart: it is ``None`` when the driver
+    could not find out, never ``False`` on the strength of an I/O error.
     """
-    still_there = synthetic.exists()
+    still_there = exists_after_the_run
     payload: dict[str, object] = {
         "run_id": run_id,
         "at_kst": _now_kst(),
@@ -2496,9 +2567,10 @@ def write_run_summary(
         "days": days,
         "argv": list(argv),
         "outcome": outcome,
+        "refusal": refusal,
         "steps_planned": list(planned),
         "steps_completed": list(completed),
-        "steps_remaining": [name for name in planned if name not in completed],
+        "steps_remaining": list(remaining),
         "synthetic": {
             "path": str(synthetic),
             "created_by_this_run": created_by_this_run,
@@ -2506,14 +2578,16 @@ def write_run_summary(
             "size_bytes": size_bytes,
             "action": None if disposition is None else disposition.action,
             "message": None if disposition is None else disposition.message,
-            "delete_command": f"rm {synthetic}" if still_there else None,
+            "delete_command": (
+                _rm_command(synthetic) if still_there is not False else None
+            ),
         },
         "abort_records": sorted(
             path.name for path in out_dir.glob(f"ABORTED-*-{days}d.{run_id}.json")
         ),
         "log": f"measure-{days}d.log",
     }
-    path = out_dir / f"run-{run_id}.summary.json"
+    path = out_dir / f"run-{days}d.{run_id}.summary.json"
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 
@@ -3185,19 +3259,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Keep the synthetic file after the run. Default is to delete it so peak disk "
-            "stays one file (plan §7.1.2); only a file this run created is ever deleted."
+            "stays one file (plan §7.1.2), but only when this run built it AND both "
+            "halves of the pair have a recorded result; otherwise it is kept and the run "
+            "says why. Incompatible with --delete-synthetic-on-success."
         ),
     )
     run_parser.add_argument(
         "--delete-synthetic-on-success",
         action="store_true",
         help=(
-            "On a RESUME (--steps without build), delete the synthetic file too once "
-            "every planned step has run. Default is to keep it and print the rm command: "
-            "the file this run did not build may be the operator's only copy, and the "
-            "180- and 270-day index-time file sizes are readable only because it "
-            "survived (plan §7.1.15 · §7.1.23). Requires `after` in --steps and is "
-            "incompatible with --keep-synthetic."
+            "On a RESUME, delete the synthetic file this run did not build, once every "
+            "planned step has run. Default is to keep it and print the rm command: the "
+            "file may be the operator's only copy, and the 180- and 270-day index-time "
+            "file sizes are readable only because it survived (plan §7.1.15 · §7.1.23). "
+            "Refused up front when --steps includes build, when --keep-synthetic is also "
+            "passed, or when either half of the pair would be left unmeasured — that is, "
+            "unless `before` and `after` are each in --steps or already have a "
+            "<step>-<days>d.resource.json in --out-dir naming this same --synthetic."
         ),
     )
 
@@ -3257,14 +3335,120 @@ def _print_preflight(record: PreflightRecord, *, log: Callable[[str], None]) -> 
         log(f"WARNING: {warning}")
 
 
+def _exists_or_unknown(path: Path) -> bool | None:
+    """``True`` / ``False`` / ``None`` for "it is there" / "it is not" / "cannot tell".
+
+    ``Path.exists()`` re-raises an ``OSError`` that is not one of the "this just means
+    absent" errnos (``EIO`` on a failing disk, ``EACCES`` on a directory that became
+    unreadable). Reporting that as ``False`` would put "the synthetic file is gone" in an
+    artifact on the strength of an I/O error, which is the kind of number plan §7.1.2 has
+    already had to withdraw once.
+    """
+    try:
+        return path.exists()
+    except OSError:
+        return None
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    """Whether two paths name the same file, symlinks and ``..`` resolved.
+
+    A string compare would miss ``./evidence.sqlite3`` against an absolute path, and the
+    one thing this is asked about is whether a run is pointed at its own reference.
+    """
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:  # pragma: no cover - resolve() on an unreadable parent
+        return str(left) == str(right)
+
+
+def recorded_pass(out_dir: Path, *, step: str, days: int) -> Path | None:
+    """The finished ``<step>-<days>d.resource.json`` in ``out_dir``, or ``None``.
+
+    "Has this pass been measured?" is a question about the OUTPUT DIRECTORY, not about
+    ``--steps``. The first revision answered it positionally — "is the literal string
+    ``after`` in ``--steps``" — and independent review #853 showed what that admits:
+    ``run --steps after --delete-synthetic-on-success`` against a pre-built file passes
+    the check, measures one half of the pair and deletes the file the other half needs.
+    The refusal's own message said it existed to stop that.
+    """
+    path = out_dir / f"{step}-{days}d.resource.json"
+    return path if path.exists() else None
+
+
+def _measures_this_file(resource_path: Path, synthetic: Path) -> bool:
+    """Whether that recorded pass was measured against THIS synthetic file.
+
+    An output directory can be reused, and a resource artifact naming a different ``--db``
+    is evidence about a different file. Read from the child's own ``argv`` rather than
+    assumed, and a record that cannot be read vouches for nothing.
+    """
+    try:
+        payload = json.loads(resource_path.read_text())
+    except (OSError, ValueError):
+        return False
+    argv = payload.get("argv") if isinstance(payload, dict) else None
+    if not isinstance(argv, list) or "--db" not in argv:
+        return False
+    try:
+        measured = Path(str(argv[argv.index("--db") + 1])).resolve()
+    except (IndexError, OSError, ValueError):
+        return False
+    try:
+        return measured == synthetic.resolve()
+    except OSError:  # pragma: no cover - resolve() on a vanished parent
+        return False
+
+
+def _hold_stop_signals() -> frozenset[int] | None:
+    """Block ``SIGTERM``/``SIGHUP`` for the duration of the end-of-run bookkeeping.
+
+    That bookkeeping got longer in this revision — dispose of the synthetic file, write
+    ``run-<days>d.<run_id>.summary.json``, append the buffered log, release the lock — and
+    every one of those is the ONLY write of what it writes. A stop signal landing inside
+    it raises :class:`MeasureSignalled` out of a ``finally`` and the rest never happens:
+    the run log, which is the human-readable timeline the plan says it will cite instead
+    of session memory, would be lost in its entirety.
+
+    Blocked, not ignored and not reset to the default: ``SIG_IGN`` discards the operator's
+    stop request and ``SIG_DFL`` kills the process on the spot, which is the thing being
+    prevented. A blocked signal stays PENDING and is delivered when the mask is restored
+    at the end of :func:`main` — after the handlers have been put back, so a driver that
+    was told to stop still stops, having finished writing first.
+
+    Returns the previous mask, or ``None`` where the platform or thread cannot do this
+    (the same tolerance :func:`_install_signal_handlers` already has).
+    """
+    try:
+        return frozenset(signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS))
+    except (AttributeError, ValueError, OSError):
+        return None
+
+
+def _release_stop_signals(previous: frozenset[int] | None) -> None:
+    """Put back the mask :func:`_hold_stop_signals` replaced, delivering anything pending."""
+    if previous is None:
+        return
+    try:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+    except (ValueError, OSError):  # pragma: no cover - same tolerance as the block
+        pass
+
+
 def _run_outcome(failure: BaseException | None) -> str:
-    """How a run ended, as one word for ``run-<run_id>.summary.json``.
+    """How a run ended, as one word for ``run-<days>d.<run_id>.summary.json``.
 
     The four named exceptions are the four things that stop this driver, and they are not
-    interchangeable: "aborted" is a guard that fired, "step-failed" is a child that exited
-    non-zero, "signalled" is something outside the run killing it, "refused" is the
-    preflight. A single "failed" would make the summary unable to answer the first
-    question anyone asks of a stopped measurement.
+    interchangeable: "aborted" is a guard that fired mid-step, "step-failed" is a child
+    that exited non-zero, "signalled" is something outside the run killing it, and
+    "refused" is the preflight or an argument the driver would not run with. A single
+    "failed" would make the summary unable to answer the first question anyone asks of a
+    stopped measurement.
+
+    ⚠ A "refused" summary only exists when the refusal happened after the output
+    directory did. An argument contradiction is refused before anything is created and
+    leaves no artifact at all, exactly like an ``argparse`` error; the preflight's own
+    refusals are in ``preflight.json`` / ``preflight.jsonl`` as well.
     """
     if failure is None:
         return "ok"
@@ -3298,7 +3482,53 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         log_lines.append(message)
         print(message, flush=True)
 
+    summary_written = False
+
+    def emit_summary(
+        *,
+        outcome: str,
+        planned: Sequence[str],
+        completed: Sequence[str],
+        remaining: Sequence[str],
+        created_by_this_run: bool,
+        exists_after_the_run: bool | None,
+        size_bytes: int | None,
+        disposition: SyntheticDisposition | None,
+        refusal: str | None,
+    ) -> Path | None:
+        """Write this run's summary once, and never let that write mask a real failure.
+
+        Returns the path, or ``None`` when there was nothing to write into (an argument
+        refused before the output directory existed) or the write itself failed.
+        """
+        nonlocal summary_written
+        if summary_written or not out_dir.exists():
+            return None
+        try:
+            path = write_run_summary(
+                out_dir,
+                run_id=run_id,
+                days=args.days,
+                argv=raw,
+                planned=planned,
+                completed=completed,
+                remaining=remaining,
+                outcome=outcome,
+                synthetic=args.synthetic,
+                created_by_this_run=created_by_this_run,
+                exists_after_the_run=exists_after_the_run,
+                size_bytes=size_bytes,
+                disposition=disposition,
+                refusal=refusal,
+            )
+        except Exception as summary_exc:  # never mask the original failure
+            log(f"could not write the run summary: {summary_exc!r}")
+            return None
+        summary_written = True
+        return path
+
     previous_handlers = _install_signal_handlers()
+    held_signals: frozenset[int] | None = None
     try:
         guard = GuardConfig.validated(
             min_available_gb=args.min_available_gb,
@@ -3334,30 +3564,57 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             )
             print(f"WARNING: {warnings[-1]}", file=sys.stderr)
 
-        out_dir.mkdir(parents=True, exist_ok=True)
+        # BEFORE out_dir.mkdir: an argument the driver will not run with must not leave a
+        # directory behind as its only trace. Everything below reads paths, never creates
+        # them (`exists()` on a path under a missing parent is simply False).
         step_names = [s.strip() for s in args.steps.split(",") if s.strip()]
         if "build" in step_names and args.reference is None:
             raise MeasureRefused(
                 "--reference is required when --steps includes build (it is the "
                 "distribution the synthetic file replicates)"
             )
+        if args.reference is not None and _same_path(args.synthetic, args.reference):
+            raise MeasureRefused(
+                f"--synthetic and --reference are the same file ({args.synthetic}): the "
+                "synthetic file is a disposable replica of the reference, and this run "
+                "may build onto it or delete it"
+            )
         if args.command == "run" and args.delete_synthetic_on_success:
-            # Refused here rather than reconciled later: a flag pair that contradicts
+            # Refused up front rather than reconciled later. A flag pair that contradicts
             # itself has no defensible winner, and a delete that lands between the two
-            # halves of the pair destroys the file `after` is about to measure. Both are
-            # cheap to say now and expensive to discover after a three-hour `before`.
+            # halves of the pair destroys the file the other half needs — cheap to say
+            # now, expensive to discover after a three-hour `before`.
             if args.keep_synthetic:
                 raise MeasureRefused(
                     "--keep-synthetic and --delete-synthetic-on-success ask for opposite "
                     "things; pass one"
                 )
-            if "after" not in step_names:
+            if "build" in step_names:
                 raise MeasureRefused(
-                    "--delete-synthetic-on-success needs `after` in --steps (got "
-                    f"--steps {args.steps}): without it every planned step can finish "
-                    "while the pair is still unmeasured, and deleting the file then "
+                    "--delete-synthetic-on-success is for a RESUME and --steps includes "
+                    f"build (got --steps {args.steps}): a run that builds the file "
+                    "already deletes it when the pair is measured, so the flag only "
+                    "reads as asking for something it is not doing"
+                )
+            unmeasured = [
+                name
+                for name in ("before", "after")
+                if name not in step_names
+                and not (
+                    (recorded := recorded_pass(out_dir, step=name, days=args.days))
+                    and _measures_this_file(recorded, args.synthetic)
+                )
+            ]
+            if unmeasured:
+                raise MeasureRefused(
+                    "--delete-synthetic-on-success would delete an UNMEASURED pair: "
+                    f"{' and '.join(unmeasured)} is neither in --steps {args.steps} nor "
+                    f"already recorded for this file in {out_dir} "
+                    f"({', '.join(f'{n}-{args.days}d.resource.json' for n in unmeasured)}"
+                    " is absent, unreadable, or names a different --db). Deleting then "
                     "throws away the half the measurement still needs"
                 )
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         def estimator() -> SizeEstimate:
             """Deferred so the reference is scanned only when `build` is planned AND the
@@ -3372,7 +3629,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             )
 
         steps = plan_steps(
-            names=[s.strip() for s in args.steps.split(",") if s.strip()],
+            names=step_names,
             python=args.python,
             bench_path=args.bench,
             reference=args.reference,
@@ -3412,6 +3669,20 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         created_synthetic = not args.synthetic.exists()
         completed: list[str] = []
         failure: BaseException | None = None
+
+        def _pass_is_recorded(step: str) -> bool:
+            """Whether ``step`` has a result for THIS synthetic file in this directory.
+
+            The property the deletion refusal is written on, re-derived here so the
+            disposition cannot disagree with it.
+            """
+            if step in completed:
+                return True
+            recorded = recorded_pass(out_dir, step=step, days=args.days)
+            return recorded is not None and _measures_this_file(
+                recorded, args.synthetic
+            )
+
         try:
             write_lock(out_dir, run_id=run_id, argv=raw)
             for step in steps:
@@ -3453,62 +3724,89 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             failure = exc
             raise
         finally:
+            # Stop signals are held for the whole of this block: every write below is the
+            # ONLY write of what it writes, and a SIGTERM landing in the middle used to
+            # take the run log with it (review #853 finding 3's neighbour). The mask is
+            # restored at the very end of main(), so a pending stop is delivered then.
+            held_signals = _hold_stop_signals()
             # The file is disposed of in every case, and the decision is always said out
             # loud — including the one the first revision passed over in silence, a resume
             # that succeeds against a file it did not build (plan §7.1.23 "뒤처리": the
-            # operator was left to remember a 36-53 GB deletion with nothing in the log).
-            # Deletion still happens only when every planned step actually ran (plan
-            # §7.1.2: peak disk is one file); an abort is exactly when NOT to delete,
-            # because the watchdog fires over MEMORY and throwing away a 53 GB / 366 s
-            # build does nothing for that.
-            disposition: SyntheticDisposition | None = None
+            # operator was left to remember a 26-53 GB deletion with nothing in the log).
+            # Deletion still happens only when every planned step ran AND both halves of
+            # the pair have a recorded result (plan §7.1.2: peak disk is one file); an
+            # abort is exactly when NOT to delete, because the watchdog fires over MEMORY
+            # and throwing away a 53 GB / 366 s build does nothing for that.
+            disposition = None
             remaining = [s.name for s in steps if s.name not in completed]
             # Read BEFORE any delete: this is the file size after the last step that ran,
             # which for a finished pair is the size after `after` created the index — the
             # number §7.1.15 "답하지 못한 것" 3 and §7.1.23 4 say the driver never wrote
             # down, readable until now only off a file that happened to survive.
-            synthetic_bytes = (
-                args.synthetic.stat().st_size if args.synthetic.exists() else None
-            )
+            #
+            # Guarded, like the summary write below and for the same reason: an OSError
+            # here (the file vanished, EACCES, a path that is a directory) would leave the
+            # `finally` with an exception the outer handler does not name, replacing an
+            # in-flight MeasureAborted and skipping the summary, the run log and the lock
+            # release (review #853 finding 3).
+            synthetic_present = _exists_or_unknown(args.synthetic)
+            synthetic_bytes: int | None = None
+            if synthetic_present:
+                try:
+                    synthetic_bytes = args.synthetic.stat().st_size
+                except OSError as stat_exc:
+                    synthetic_present = None
+                    log(f"could not stat the synthetic file: {stat_exc!r}")
+            elif synthetic_present is None:
+                log(f"could not tell whether {args.synthetic} is still there")
             if synthetic_bytes is not None:
                 disposition = decide_synthetic_disposition(
                     args.synthetic,
                     remaining=remaining,
                     size_bytes=synthetic_bytes,
                     created_by_this_run=created_synthetic,
-                    after_measured="after" in completed,
+                    before_measured=_pass_is_recorded("before"),
+                    after_measured=_pass_is_recorded("after"),
                     keep_requested=args.keep_synthetic,
                     delete_on_success=args.delete_synthetic_on_success,
                 )
                 if disposition.action == "delete":
-                    args.synthetic.unlink()
+                    try:
+                        args.synthetic.unlink(missing_ok=True)
+                        synthetic_present = False
+                    except OSError as unlink_exc:
+                        # Reported as its own disposition rather than swallowed: the
+                        # operator has to know the file is still there, and the summary
+                        # has to say so too.
+                        disposition = SyntheticDisposition(
+                            "delete-failed",
+                            f"COULD NOT remove synthetic {args.synthetic} "
+                            f"({_decimal_gb(synthetic_bytes)}): {unlink_exc!r}. It is "
+                            f"still on the host — delete it by hand: "
+                            f"{_rm_command(args.synthetic)}",
+                        )
                 log(disposition.message)
-            try:
-                summary_path = write_run_summary(
-                    out_dir,
-                    run_id=run_id,
-                    days=args.days,
-                    argv=raw,
-                    planned=[s.name for s in steps],
-                    completed=completed,
-                    outcome=_run_outcome(failure),
-                    synthetic=args.synthetic,
-                    created_by_this_run=created_synthetic,
-                    size_bytes=synthetic_bytes,
-                    disposition=disposition,
-                )
-            except Exception as summary_exc:  # never mask the original failure
-                log(f"could not write the run summary: {summary_exc!r}")
-            else:
-                # The closing summary, so a scrollback that lost the middle of a
-                # three-hour run still ends with what happened and what is left on disk.
-                log(
-                    f"##### summary (run {run_id}): {_run_outcome(failure)} · "
-                    f"completed {','.join(completed) or 'none'} · "
-                    f"remaining {','.join(remaining) or 'none'}"
-                )
-                if disposition is not None:
-                    log(f"##### synthetic: {disposition.message}")
+            summary_path = emit_summary(
+                outcome=_run_outcome(failure),
+                planned=[s.name for s in steps],
+                completed=completed,
+                remaining=remaining,
+                created_by_this_run=created_synthetic,
+                exists_after_the_run=synthetic_present,
+                size_bytes=synthetic_bytes,
+                disposition=disposition,
+                refusal=None,
+            )
+            # Outside the summary write's success path: a closing summary that an ENOSPC
+            # on one artifact can delete from the run log is not a closing summary.
+            log(
+                f"##### summary (run {run_id}): {_run_outcome(failure)} · "
+                f"completed {','.join(completed) or 'none'} · "
+                f"remaining {','.join(remaining) or 'none'}"
+            )
+            if disposition is not None:
+                log(f"##### synthetic: {disposition.message}")
+            if summary_path is not None:
                 log(f"wrote {summary_path}")
             # APPENDED, with a run header. `write_text` meant the documented resume
             # (same --days, same --out-dir) replaced the aborted run's log wholesale,
@@ -3530,10 +3828,29 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         MeasureStepFailed,
         MeasureSignalled,
     ) as exc:
+        # A refusal that got as far as an output directory says so there too, so the
+        # question "what happened to run <id>" has one answer in one place. A refusal
+        # that happened BEFORE the directory existed — an argument contradiction — leaves
+        # nothing, like any argparse error; `emit_summary` returns None and the module
+        # docstring says so rather than promising an artifact that cannot exist.
+        emit_summary(
+            outcome=_run_outcome(exc),
+            planned=[],
+            completed=[],
+            remaining=[],
+            created_by_this_run=False,
+            exists_after_the_run=_exists_or_unknown(args.synthetic),
+            size_bytes=None,
+            disposition=None,
+            refusal=str(exc),
+        )
         print(f"tos_evidence_scan_measure: {exc}", file=sys.stderr)
         return 1
     finally:
         _restore_signal_handlers(previous_handlers)
+        # Last, and after the handlers are back: anything held through the end-of-run
+        # bookkeeping is delivered now, to whatever disposition the caller had.
+        _release_stop_signals(held_signals)
 
 
 if __name__ == "__main__":
