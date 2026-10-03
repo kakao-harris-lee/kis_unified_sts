@@ -1,7 +1,7 @@
 # Performance Service Level Agreements (SLAs)
 
 **Version:** 2.0
-**Last Updated:** 2026-10-03
+**Last Updated:** 2026-10-04
 **Status:** Current
 
 This document tracks current runtime performance targets for the KIS Unified STS
@@ -294,8 +294,9 @@ A factor **below** 1.0 divides a raw change **up**. While the threshold was
 applied to the normalized ratio alone, the normalizer could manufacture an
 error out of a benchmark that was inside the threshold on the wall clock.
 
-Measured on one commit — `586c7bc2` (PR #851: one config YAML plus four docs
-files, none of them imported by anything in `tests/performance/`) — as the two
+Measured on one commit — `586c7bc2`, where PR #851's diff is one config YAML
+plus four docs files, none of them imported by anything in
+`tests/performance/` — as the two
 attempts of CI run `37101956657`, twelve minutes apart:
 
 | attempt | runner | benchmark | raw | normalized | old verdict |
@@ -317,60 +318,104 @@ common-mode estimate. The same shape is what turns a benchmark that ran 3.5%
 **faster** into a "+81.0% slower" warning.
 
 So the **error** verdict now requires the raw ratio **and** the normalized
-ratio to breach the error threshold. Either one alone is a warning, reported as
-`UNCONFIRMED REGRESSION` naming which one breached. The normalizer keeps the
-power it was added for — acquitting a uniformly slow runner, where raw breaches
-and normalized does not — and loses the power it was never meant to have. The
-rule is a no-op whenever the factor is 1.0, because the two ratios are then the
-same number.
+ratio to breach the error threshold. Exactly one of the two disagreeing cases
+gets a branch of its own:
 
-The report header now also prints the band of raw ratios the factor was taken
-over, so a reader can see a non-common-mode factor without deriving it from the
-per-benchmark rows.
+| raw | normalized | verdict |
+| --- | --- | --- |
+| over | over | **error** |
+| under | over | warning, `UNCONFIRMED REGRESSION` |
+| over | under | no branch — falls through to the normalized warn/pass ladder |
+| under | under | the ladder, as before |
+
+Raw-alone is what a uniformly slow runner looks like, and acquitting that is
+the whole reason normalization exists, so it is left to the ordinary ladder
+and lands exactly where it did before this rule: at a uniform x2.5 every
+normalized ratio is 1.0 and every benchmark **passes**. The normalizer keeps
+the power it was added for and loses the power it was never meant to have. The
+rule is a no-op whenever the run is not normalized — the factor within
+`NORMALIZATION_EPSILON` (0.001) of 1.0 — because the two ratios are then the
+same number and cannot disagree. One constant decides both the verdict and
+whether the message mentions a runner, so a message cannot contradict the
+verdict it explains.
+
+The report header also prints the ratios behind the factor: their endpoints,
+and the **median absolute deviation** from the factor as a fraction of it.
+Endpoints alone do not say what the caption claims — attempt 1 spans x2.75 and
+attempt 2 spans x2.80 — but the MAD does, because a couple of outliers cannot
+move it: 3.5% on attempt 1 (one cluster plus two outliers) against 23.0% on
+attempt 2 (three clusters).
 
 **What this gives up, deliberately:** the raw ratio is now a *necessary*
-condition, so a genuine regression smaller than the raw error threshold can
-never fail the build however fast the runner was — on a x0.5 runner a true 1.9x
-regression reads as a warning. Accepted, because the alternative is convicting
-on an estimator whose own spread inside a single run is the x0.39–x1.10 above.
-The **warning** path is unchanged: it still fires off the normalized ratio
-alone, so the "+81.0% slower" line above is still printed. Closing that is
-separate work.
+condition, so the effective raw bar for an error is
+`error threshold / runner factor` — **+275% at x0.533**, against the nominal
++100%. A genuine regression under that bar cannot fail the build however fast
+the runner was: on a x0.5 runner a true 1.9x regression reads as a warning.
+Accepted, because the alternative is convicting on an estimator whose own
+dispersion inside a single run is the 23.0% MAD above. The report states the
+effective bar on every run rather than leaving it to be derived. The
+**warning** path is unchanged in both directions: it still fires off the
+normalized ratio alone, so the "+81.0% slower" line above — a benchmark that
+ran 3.5% faster — is still printed. Closing that is separate work.
 
 ### A timed region containing `gc.collect()` measures the process heap
 
 `check_regression.py` compares pytest's **setup + call + teardown** wall time.
 Everything a benchmark does lands in that number, so a benchmark that calls
 `gc.collect()` inside itself is timing a full walk of the whole pytest
-process's live object graph — set by what the session imported and what earlier
-tests left allocated, and not by the code under test. Measured 2026-10-03 on
-the deploy host:
+process's live object graph — set by what the session imported and what
+earlier tests left allocated, and not by the code under test.
 
-| extra tracked objects | 8x `gc.collect()` |
+Measured 2026-10-03, deploy host, CPython 3.12.12 on
+`Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39`. The allocation
+is one `{"a": [1, 2, 3], "b": (4, 5)}` per unit, i.e. four tracked containers
+each, held in a list for the duration:
+
+```python
+import gc, platform, time
+
+def cost8():
+    gc.collect()
+    t = time.perf_counter()
+    for _ in range(8):
+        gc.collect()
+    return (time.perf_counter() - t) * 1000
+
+print(platform.python_version())
+keep = []
+print(0, cost8())
+for add in (200_000, 400_000, 600_000):
+    keep.extend({"a": [1, 2, 3], "b": (4, 5)} for _ in range(add))
+    print(len(keep), cost8())
+```
+
+| extra allocations held | 8x `gc.collect()` |
 | ---: | ---: |
-| 0 (bare process, 5,240 tracked) | 2.0 ms |
-| 200,000 | 184.7 ms |
-| 600,000 | 582.9 ms |
-| 1,200,000 | 1197.9 ms |
+| 0 (bare process) | 4.2 ms |
+| 200,000 | 231.8 ms |
+| 600,000 | 654.7 ms |
+| 1,200,000 | 1251.7 ms |
 
-That is linear, and it is also memory-latency bound rather than CPU bound, so
-it moves **opposite** to the rest of the suite when the runner changes. In run
-`37115379025` the six pure-CPU hot-path benchmarks ran 42-45% faster in the
-same job where `test_scalability_summary` and `test_memory_usage_scaling` read
-+248.5% and +228.8%. Those two spent 101-281 ms per round of which their own
-timed loop, which they print, was 4-6 ms.
+(CI runs 3.11.16, so these are the shape of the effect, not CI timings.) It is
+linear, and it is memory-latency bound rather than CPU bound, so it moves
+**opposite** to the rest of the suite when the runner changes. In job
+`111181087989` of run `37115379025` the **seven** pure-CPU hot-path benchmarks
+ran **26% to 45% faster** in the same job where `test_scalability_summary` and
+`test_memory_usage_scaling` read +248.5% and +228.8%. Those two took
+**262–286 ms per round** there, of which their own timed loop — the per-cycle
+figures they print, summed over 100 iterations and four position counts — was
+**about 2 ms** (the printed figures are rounded to 0.01 ms, so 2–3 ms).
 
 `_benchmark_orchestrator_cycle` called `gc.collect()` twice per call to bracket
 a memory delta taken from `_get_process_memory_mb()`, which returned a
 hardcoded `0.0`. The reading was always 0.00 MB and nothing asserted on it.
-Both collections and the dead reading were removed in #857; the cycle-time SLA
-assertions are untouched.
+Both collections and the dead reading were removed in #857.
 
 **The rule for a new benchmark:** nothing in the test body may have a cost
 proportional to the whole process rather than to the work being measured —
 `gc.collect()`, `gc.get_objects()`, a full `tracemalloc` snapshot, an
 `importlib` sweep. Measure the work, and if a memory figure is genuinely
-wanted, assert it somewhere the checker does not time.
+wanted, take it somewhere the checker does not time.
 
 ### Baseline format and provenance
 
@@ -400,6 +445,24 @@ as n=1, and the report then prints a `SINGLE-SAMPLE BASELINE` warning) or a
 }
 ```
 
+`provenance` may also carry `partial_regeneration`, written by hand when only
+some entries were re-measured (see below). The top-level fields then describe
+the **rest** of the file, not all of it:
+
+```json
+"partial_regeneration": {
+  "regenerated": ["tests/performance/...::test_x", "..."],
+  "reason": "why these entries alone no longer describe the code",
+  "measured_at": "...", "runner": "...", "commit": "...",
+  "rounds": 9, "workflow_run": "https://github.com/.../actions/runs/..."
+}
+```
+
+The checker only reports it (a `PARTIAL BASELINE` line in the console report
+and the step summary); the comparison itself is unaffected. A unit test
+asserts every name under `regenerated` is a benchmark the file actually
+contains, so a rename cannot leave the claim dangling.
+
 Provenance names the machine that **measured**, not the one that wrote the file.
 When a CI samples file is re-aggregated on a laptop, the runner/commit/python
 fields are inherited from it and the laptop is recorded under `aggregated_on`.
@@ -409,46 +472,71 @@ fields are inherited from it and the laptop is recorded under `aggregated_on`.
 | | |
 | --- | --- |
 | taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) — 19 of 25 entries |
-| re-measured | 2026-10-03, run [37120153137](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37120153137) at `d4e8a1cd` (PR #857) — the 6 entries of `test_orchestrator_scalability.py` |
+| re-measured | 2026-10-04 KST, run [37158102601](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37158102601) at `577a3e58` (PR #857) — the 6 entries of `test_orchestrator_scalability.py` |
 | runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 (both runs) |
-| commit | `16d7101e` (PR #845) for the 19, `d4e8a1cd` (PR #857) for the 6 |
+| commit | `16d7101e` (PR #845) for the 19, `577a3e58` (PR #857) for the 6 |
 | rounds | 9 in both runs — all 25 benchmarks have n=9, no round failed |
 | excluded | none |
 
-**Why 6 entries were replaced and 19 were not.** PR #857 removed the
-`gc.collect()` calls from `_benchmark_orchestrator_cycle`, so every benchmark
-in `test_orchestrator_scalability.py` changed its measured window and its old
-entry describes code that no longer runs. The other 19 were left on the
+**Why 6 entries were replaced and 19 were not.** PR #857 changed the measured
+window of every benchmark in `test_orchestrator_scalability.py`, twice: the
+`gc.collect()` calls came out of `_benchmark_orchestrator_cycle`, and
+`BENCHMARK_ITERATIONS` went from 100 to 2000 so that the remaining real work
+clears the 50 ms floor instead of being exempted from the ratio check. Their
+old entries describe code that no longer runs. The other 19 were left on the
 2026-10-02 anchor deliberately: re-anchoring them to one more runner adds an
 arbitrary offset this change has no reason to introduce.
 `provenance.partial_regeneration` in the file records which entries moved,
 from which run, and why, and the report prints a `PARTIAL BASELINE` line so
-the split is visible without opening the file. The re-measuring run is a representative runner, not a fast one — its
-19 unchanged benchmarks land within x0.99–x1.07 of the committed values.
+the split is visible without opening the file.
 
-| benchmark | before | after |
-| --- | ---: | ---: |
-| `test_cycle_time_1_position` | 0.0259s | 0.0008s |
-| `test_cycle_time_5_positions` | 0.0202s | 0.0014s |
-| `test_cycle_time_10_positions` | 0.0211s | 0.0021s |
-| `test_cycle_time_20_positions` | 0.0223s | 0.0036s |
-| `test_memory_usage_scaling` | 0.0803s | 0.0062s |
-| `test_scalability_summary` | 0.0806s | 0.0063s |
+| benchmark | 2026-10-02 (gc, 100 iter) | gc removed, 100 iter | shipped (no gc, 2000 iter) | sd (n=9) |
+| --- | ---: | ---: | ---: | ---: |
+| `test_cycle_time_1_position` | 0.0259s | 0.0008s | 0.0044s | 0.0001s |
+| `test_cycle_time_5_positions` | 0.0202s | 0.0014s | 0.0149s | 0.0001s |
+| `test_cycle_time_10_positions` | 0.0211s | 0.0021s | 0.0276s | 0.0003s |
+| `test_cycle_time_20_positions` | 0.0223s | 0.0036s | 0.0532s | 0.0006s |
+| `test_memory_usage_scaling` | 0.0803s | 0.0062s | 0.0981s | 0.0012s |
+| `test_scalability_summary` | 0.0806s | 0.0063s | 0.0973s | 0.0006s |
 
-All nine rounds agree to within 0.0004s (`sd` <= 0.0001s for all six). The
-`gc.collect()` pair was **92%** of those two comparable benchmarks on a normal
-runner, and more on a slow one.
+The middle column is run
+[37120153137](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37120153137)
+and is kept here as the measurement, not as a shipped state: at 100 iterations
+with the collections gone, the two sweep benchmarks are 6.2–6.3 ms against
+80.3–80.6 ms with them, so **`gc.collect()` was 92% of what those benchmarks
+measured**. The shipped column is run
+[37158102601](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37158102601)
+at 2000 iterations, which is what the baseline now contains.
 
-**Consequence, stated rather than discovered later:** at 6.2–6.3 ms both
-formerly-compared benchmarks are now below `PERF_MIN_DURATION` (50 ms), so the
-checker exempts them from ratio comparison and the suite compares 14
-benchmarks instead of 16. They are not unguarded — each still asserts its own
-SLA inside the test (cycle time under 100/500/5000/10000 ms by position count,
-and scaling factor <= 20x), and a majority of rounds failing such an assertion
-is an error in the checker's round-outcome verdict. What is gone is the
-baseline-ratio check on a number that was 92% garbage collection. Removing
-them also narrows the runner-factor estimate: the same run reads a band of
-x0.99–x1.07 over 14 ratios where the old set spanned x0.99–x1.27.
+**Three of the six clear the 50 ms floor and are compared again** — the two
+sweeps at 97–98 ms and `test_cycle_time_20_positions` at 53.2 ms — so the
+suite compares 17 benchmarks where it compared 16 before this PR. The other
+three are below the floor and exempt, as they were before. The 20-position
+entry sits only just over the floor, so on a faster runner it will fall under
+it and be exempt there; exempt is a pass, so that costs coverage, not
+correctness.
+
+**What guards a below-floor benchmark.** Not the baseline ratio — these three
+are exempt from it. `test_cycle_time_1_position`, `_5_positions` and
+`_10_positions` each assert their own entry in `CYCLE_TIME_CEILINGS_MS`
+(100 ms, 500 ms and 5000 ms per cycle), and a majority of rounds failing such
+an assertion is an error in the checker's round-outcome verdict, not a
+warning. `test_scalability_summary` used to be the exception that proved the
+rule: it printed "SLA PASS"/"SLA FAIL" and ended in `assert True`, so it could
+not fail for any timing reason at all. It now asserts all four ceilings and
+the 1→20 `scaling_factor` against `MAX_SCALING_FACTOR` (20x), the same two
+things `test_memory_usage_scaling` checks, and both read those numbers from
+the module constants rather than restating them — so the status the sweep
+prints and the condition that fails it cannot drift apart.
+
+**The offset the splice carries, stated.** Measured on the 14 unchanged
+comparable benchmarks, the run that produced the six read **x0.914** against
+the 2026-10-02 anchor (range x0.730–x1.009), so the six sit roughly 9% low
+relative to the other 19 and will read about +9% on a runner that matches the
+anchor. That is inside the run-to-run variation already documented above
+(factors from x0.43 to x1.13 within three days) and far inside the 50%
+warning threshold. It is the price of not re-anchoring 19 correct entries to
+one more runner, which would spread the same kind of offset across all 25.
 
 It replaces the 2026-05-30 single-sample file. Checked against that file
 before replacing it: 0 errors, 0 warnings, 25 pass (runner factor x1.12), so
@@ -475,6 +563,32 @@ A baseline must come from **>= 5 rounds on the hardware the check runs on**.
 4. Quote the artifact's `provenance` block and the per-benchmark
    `n / median / min / max / sd` in the PR body. A baseline whose origin is not
    written down is how #768 went four months undiagnosed.
+
+**When only some entries changed.** A benchmark whose measured window changed
+makes its own entry stale and leaves the others correct. Regenerating the whole
+file would re-anchor 19 correct entries to one more runner, which adds an
+arbitrary offset for no reason — runner factors between x0.43 and x1.13 have
+been observed within three days. So:
+
+1. Run the workflow as above, **from the branch that contains the change**, so
+   the candidate measures the new code.
+2. Copy only the changed entries out of `baselines.candidate.json` into
+   `tests/performance/baselines.json`, byte for byte.
+3. Add or update `provenance.partial_regeneration` (schema above) naming them,
+   the run, and why.
+4. Run the checker with the spliced baseline against that same run's
+   `current.json` and quote the result in the PR.
+
+`excluded` is **not** an alternative to this. A benchmark that still produces
+samples and is listed as excluded is a stale exclusion, which the checker
+reports as an error — correctly, since the alternative is a benchmark that is
+measured and not checked.
+
+**A later whole-file regeneration drops `partial_regeneration`**, because the
+writer emits its own provenance and nothing carries that key across. That is
+the right outcome — after a whole-file run every entry does come from that one
+run — but it means the key is not a permanent record. Keep the reasoning in
+this document, as above, not only in the JSON.
 
 To build a candidate from samples you already have:
 
