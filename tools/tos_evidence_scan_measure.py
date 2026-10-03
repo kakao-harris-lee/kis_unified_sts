@@ -167,6 +167,34 @@ _KST = ZoneInfo("Asia/Seoul")
 _GB = 1024.0**3
 
 # --------------------------------------------------------------------------------------
+# Units in human-facing strings. One rule, decided by HOW the number was computed, not by
+# which function prints it (round-3 follow-up to review #853 F7, plan §7.1.26).
+#
+#   * Divided by ``_GB`` (1024**3) -> labelled **GiB**. Every such number here is a host
+#     quantity that is binary at the source: ``/proc/meminfo`` reports KiB, the operator's
+#     start floors ("available 6 GB / Swap free 2 GB", ~/.claude/CLAUDE.md) are the
+#     kernel's own base, and the disk check is sized off ``--expect-gb`` x ``_GB``. The
+#     VALUE does not move; only the label stops naming the wrong base.
+#   * A FILE SIZE in an operator-facing disposition message -> ``_decimal_gb`` and
+#     labelled **GB** (1e9), because it is read next to the growth plan's own file sizes
+#     (26.73 / 40.10 / 53.23 GB).
+#
+# What is deliberately NOT touched: the ``--*-gb`` flag spellings, their GiB semantics,
+# and the ``*_gb`` keys in ``preflight.json`` / ``watchdog.jsonl``. Those are the names
+# every artifact and plan citation already written is keyed by; the defect was the label
+# on a printed number, and that is all that changes.
+#
+# Enforcement is a property, not a list of places: ``test_units`` in
+# ``tests/tools/test_tos_evidence_scan_measure.py`` reads back every byte-valued string a
+# run produces and checks the number against the label's own base, so a new check that
+# prints "GB" off ``_GB`` fails without anyone having to remember this comment.
+#
+# The strings below are quoted verbatim in plan §7.1.12 / §7.1.15 / §7.1.23 preflight
+# tables. Those quotations keep their 2026-10-02-and-earlier wording and carry a dated
+# annotation instead of being rewritten (the §7.1.24 F5 discipline).
+# --------------------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------------------
 # Thresholds. Each default names where it comes from — an operator rule, a measurement in
 # the plan, or this driver's own judgement. None of them is a bare literal in a branch.
 # --------------------------------------------------------------------------------------
@@ -1371,14 +1399,14 @@ class GuardConfig:
         if sample.mem_available_bytes < self.abort_available_bytes:
             return (
                 "mem_available",
-                f"MemAvailable {sample.mem_available_bytes / _GB:.2f} GB is below the "
-                f"in-run floor {self.abort_available_bytes / _GB:.2f} GB",
+                f"MemAvailable {sample.mem_available_bytes / _GB:.2f} GiB is below "
+                f"the in-run floor {self.abort_available_bytes / _GB:.2f} GiB",
             )
         if sample.swap_free_bytes < self.abort_swap_free_bytes:
             return (
                 "swap_free",
-                f"SwapFree {sample.swap_free_bytes / _GB:.2f} GB is below the in-run floor "
-                f"{self.abort_swap_free_bytes / _GB:.2f} GB",
+                f"SwapFree {sample.swap_free_bytes / _GB:.2f} GiB is below the in-run "
+                f"floor {self.abort_swap_free_bytes / _GB:.2f} GiB",
             )
         if sample.competing:
             first = sample.competing[0]
@@ -2315,7 +2343,7 @@ class PreflightCheck:
     source: str
     detail: str = ""
     #: The same two values as raw bytes where the check is numeric, so ``preflight.json``
-    #: can be cited arithmetically instead of by re-parsing a formatted "12.00 GB".
+    #: can be cited arithmetically instead of by re-parsing a formatted "12.00 GiB".
     measured_bytes: int | None = None
     floor_bytes: int | None = None
     #: ``False`` when the check was SKIPPED because the run is already refused for another
@@ -2372,14 +2400,17 @@ class SyntheticDisposition:
 def _decimal_gb(size_bytes: int) -> str:
     """``size_bytes`` as decimal GB, which is the unit the growth plan is written in.
 
-    This file's ``_GB`` is ``1024**3`` and the threshold strings built from it are
-    labelled "GB" while carrying GiB — a wart plan §7.1.23 already registered ("⚠ 드라이버의
-    사람용 문자열은 `_GB = 1024**3`(GiB)인데 라벨이 `GB` 다"), and the same class of mixed
-    base that independent review #850 F4 caught in the plan itself. The disposition
-    messages below are read next to the plan's own file sizes (26.73 / 40.10 / 53.23 GB),
-    so they use the plan's base and say so. Unifying the threshold strings is a separate
-    change: their current text is quoted verbatim in §7.1.23's preflight table, and
-    rewriting it as a side effect of this one is how citations rot.
+    This is the **GB** half of the units rule stated at the top of the module: a file size
+    in an operator-facing disposition message is read next to the plan's own file sizes
+    (26.73 / 40.10 / 53.23 GB), so it uses the plan's base and says so. Everything derived
+    from ``_GB`` (``1024**3``) is a host quantity and is labelled **GiB** instead.
+
+    History, because the two halves landed apart. #853 F7 introduced this function while
+    deliberately leaving the threshold strings mislabelled ("GB" on a GiB value — the wart
+    plan §7.1.23 registered), since those strings are quoted verbatim in the §7.1.12 /
+    §7.1.15 / §7.1.23 preflight tables and rewriting them as a side effect of another
+    change is how citations rot. The follow-up closed that: the labels moved and the
+    quoting passages were annotated in the same commit (plan §7.1.26 「남는 후속 하나」).
     """
     return f"{size_bytes / 1_000_000_000.0:.2f} GB"
 
@@ -2830,8 +2861,8 @@ def preflight(
             PreflightCheck(
                 check="mem_available",
                 ok=info["MemAvailable"] >= guard.min_available_bytes,
-                measured=f"{info['MemAvailable'] / _GB:.2f} GB",
-                floor=f"{guard.min_available_bytes / _GB:.2f} GB",
+                measured=f"{info['MemAvailable'] / _GB:.2f} GiB",
+                floor=f"{guard.min_available_bytes / _GB:.2f} GiB",
                 measured_bytes=info["MemAvailable"],
                 floor_bytes=guard.min_available_bytes,
                 source="operator rule ~/.claude/CLAUDE.md 로컬 빌드 동시 실행 제한 (2026-09-25)",
@@ -2841,12 +2872,12 @@ def preflight(
             PreflightCheck(
                 check="swap_free",
                 ok=info["SwapFree"] >= guard.min_swap_free_bytes,
-                measured=f"{info['SwapFree'] / _GB:.2f} GB",
-                floor=f"{guard.min_swap_free_bytes / _GB:.2f} GB",
+                measured=f"{info['SwapFree'] / _GB:.2f} GiB",
+                floor=f"{guard.min_swap_free_bytes / _GB:.2f} GiB",
                 measured_bytes=info["SwapFree"],
                 floor_bytes=guard.min_swap_free_bytes,
                 source="same operator rule — the clause plan §7.1.7 deviation 11-b records as missing",
-                detail=f"SwapTotal {info['SwapTotal'] / _GB:.2f} GB",
+                detail=f"SwapTotal {info['SwapTotal'] / _GB:.2f} GiB",
             )
         )
 
@@ -2984,8 +3015,8 @@ def preflight(
             PreflightCheck(
                 check="disk_free",
                 ok=worst_free >= required_bytes,
-                measured=f"{worst_free / _GB:.2f} GB free",
-                floor=f"{required_bytes / _GB:.2f} GB needed",
+                measured=f"{worst_free / _GB:.2f} GiB free",
+                floor=f"{required_bytes / _GB:.2f} GiB needed",
                 measured_bytes=worst_free,
                 floor_bytes=required_bytes,
                 source=basis,
@@ -2993,7 +3024,7 @@ def preflight(
                     ""
                     if estimate is None
                     else (
-                        f"predicted {estimate.predicted_file_bytes / _GB:.2f} GB "
+                        f"predicted {estimate.predicted_file_bytes / _GB:.2f} GiB "
                         f"({estimate.predicted_rows} rows) from {estimate.reference}"
                     )
                 ),
@@ -3111,17 +3142,20 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
         "--min-available-gb",
         type=float,
         default=DEFAULT_MIN_AVAILABLE_GB,
-        help="Start floor on MemAvailable (default from the operator's global build rule).",
+        help=(
+            "Start floor on MemAvailable, in GiB (1024**3 — the base /proc/meminfo "
+            "reports in). Default from the operator's global build rule."
+        ),
     )
     parser.add_argument(
         "--min-swap-free-gb",
         type=float,
         default=DEFAULT_MIN_SWAP_FREE_GB,
         help=(
-            "Start floor on SwapFree (same rule). 0 opts out explicitly, e.g. a swapless "
-            f"host — the in-run floor then follows it down on its own (default "
-            f"{DEFAULT_ABORT_SWAP_FREE_GB} GB, capped at whatever you set here), so no "
-            "second flag is needed."
+            "Start floor on SwapFree, in GiB (same rule, same base). 0 opts out "
+            "explicitly, e.g. a swapless host — the in-run floor then follows it down on "
+            f"its own (default {DEFAULT_ABORT_SWAP_FREE_GB} GiB, capped at whatever you "
+            "set here), so no second flag is needed."
         ),
     )
     parser.add_argument(
@@ -3129,7 +3163,7 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=None,
         help=(
-            "In-run abort floor on MemAvailable. Unset, it is "
+            "In-run abort floor on MemAvailable, in GiB. Unset, it is "
             f"min({DEFAULT_ABORT_AVAILABLE_GB}, --min-available-gb) — the 2026-09-30 run's "
             "value (plan §7.1.2), never above the start floor."
         ),
@@ -3139,7 +3173,7 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=None,
         help=(
-            "In-run abort floor on SwapFree. Unset, it is "
+            "In-run abort floor on SwapFree, in GiB. Unset, it is "
             f"min({DEFAULT_ABORT_SWAP_FREE_GB}, --min-swap-free-gb). No external rule sets "
             "an in-run swap floor; this default is this driver's own."
         ),
@@ -3211,7 +3245,10 @@ def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
         "--expect-gb",
         type=float,
         default=None,
-        help="Override the derived disk estimate with an explicit figure.",
+        help=(
+            "Override the derived disk estimate with an explicit figure, in GiB "
+            "(1024**3 — the same base the disk check prints in)."
+        ),
     )
 
 

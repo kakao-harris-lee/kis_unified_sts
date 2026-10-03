@@ -21,6 +21,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shlex
 import signal
 import sqlite3
@@ -615,7 +616,7 @@ def test_preflight_refuses_when_mem_available_is_below_the_start_floor(
 
     assert record.verdict == "refused"
     assert "mem_available" in _failed(record)
-    assert "5.50 GB" in _failed(record)["mem_available"]
+    assert "5.50 GiB" in _failed(record)["mem_available"]
     assert "mem_available" in (record.refusal or "")
 
 
@@ -631,7 +632,7 @@ def test_preflight_refuses_when_swap_free_is_below_the_start_floor(
     assert record.verdict == "refused"
     failed = _failed(record)
     assert "swap_free" in failed
-    assert "1.50 GB" in failed["swap_free"]
+    assert "1.50 GiB" in failed["swap_free"]
     # Memory alone would have let this run start — which is exactly how the hole survived.
     assert "mem_available" not in failed
 
@@ -877,8 +878,8 @@ def test_preflight_writes_its_artifact_even_when_it_refuses(tmp_path: Path) -> N
     assert checks["mem_available"]["ok"] is False
     assert checks["swap_free"]["ok"] is False
     # Every refusal names the failing check AND the measured value.
-    assert "1.00 GB" in checks["mem_available"]["measured"]
-    assert "0.10 GB" in checks["swap_free"]["measured"]
+    assert "1.00 GiB" in checks["mem_available"]["measured"]
+    assert "0.10 GiB" in checks["swap_free"]["measured"]
     # The append-only history keeps an earlier refusal when a later run overwrites the .json.
     assert (tmp_path / "out" / "preflight.jsonl").read_text().count("\n") == 1
 
@@ -1029,7 +1030,7 @@ def test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_art
     step = _sleep_step(tmp_path, seconds=120)
     sampler = _series(driver.HostReader(), [(12.0, 5.0), (12.0, 5.0), (3.0, 5.0)])
 
-    with pytest.raises(driver.MeasureAborted, match="MemAvailable 3.00 GB"):
+    with pytest.raises(driver.MeasureAborted, match="MemAvailable 3.00 GiB"):
         driver.run_step(
             step,
             guard=_guard(),
@@ -1044,7 +1045,7 @@ def test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_art
 
     record = _abort_record(out_dir, "before-90d")
     assert record["check"] == "mem_available"
-    assert "3.00 GB" in record["reason"]
+    assert "3.00 GiB" in record["reason"]
     assert record["signal_sent"] == "SIGTERM"
     assert record["returncode"] != 0
     assert record["last_samples"], "the abort record must carry the samples it acted on"
@@ -1068,7 +1069,7 @@ def test_the_watchdog_aborts_on_low_swap_alone(tmp_path: Path) -> None:
     out_dir.mkdir()
     sampler = _series(driver.HostReader(), [(12.0, 5.0), (12.0, 0.2)])
 
-    with pytest.raises(driver.MeasureAborted, match="SwapFree 0.20 GB"):
+    with pytest.raises(driver.MeasureAborted, match="SwapFree 0.20 GiB"):
         driver.run_step(
             _sleep_step(tmp_path, seconds=120),
             guard=_guard(),
@@ -4812,3 +4813,145 @@ def test_n3_a_preflight_refusal_still_says_what_it_was_going_to_run(
     assert summary["steps_planned"] == ["build", "before", "after"]
     assert summary["steps_remaining"] == ["build", "before", "after"]
     assert summary["steps_completed"] == []
+
+
+# ---------------------------------------------------------------------------------------
+# Units — a printed byte quantity must name the base it was computed in
+# ---------------------------------------------------------------------------------------
+#
+# Plan §7.1.26 「남는 후속 하나 — 문턱 문자열의 기수」. `_GB` is `1024**3`, and every human
+# string built from it used to be labelled "GB", so `36.67 GiB` was read back out of the
+# logs as 36.67 GB and the plan's "36-53 GB" range was wrong at both ends (#853 F7).
+#
+# These are deliberately NOT a list of the places that were fixed. A list of places is a
+# guard that only knows about the strings somebody already remembered, and the next check
+# someone adds walks straight past it. They ask the property instead: read the number and
+# the unit token back out of what the driver printed, and require the number to equal the
+# bytes divided by the base THE TOKEN NAMES. Both halves then have to hold — relabel
+# without rebasing and the token assertion fires, rebase without relabelling and the
+# arithmetic one does. The inputs make the two bases disagree in the printed digits
+# (12 GiB is "12.00" binary and "12.88" decimal), because a test fed 0 bytes passes either
+# way.
+
+#: `12.00 GiB`, `0.55 GiB needed`, `3.22 GB` — a number followed by a unit token.
+_UNIT_TOKEN = re.compile(r"(\d+\.\d+)\s+(GiB|GB|MiB|MB|KiB|kB)\b")
+
+#: How many bytes each token claims its number is counting.
+_UNIT_BASE = {
+    "GiB": 1024**3,
+    "GB": 10**9,
+    "MiB": 1024**2,
+    "MB": 10**6,
+    "KiB": 1024,
+    "kB": 1000,
+}
+
+
+def _unit_tokens(text: str) -> list[tuple[float, str]]:
+    return [(float(number), unit) for number, unit in _UNIT_TOKEN.findall(text)]
+
+
+def test_every_byte_quantity_in_the_preflight_record_names_its_own_base(
+    tmp_path: Path,
+) -> None:
+    """Every `measured`/`floor`/`detail` in the record is computed with `_GB`, so every
+    unit token in one has to be `GiB` — and where the raw bytes are recorded next to the
+    string, the printed number has to be those bytes over the base the token names."""
+    record = _preflight(
+        tmp_path, _reader(tmp_path, available_gb=12.0, swap_free_gb=5.0)
+    )
+    assert record.verdict == "ok", _failed(record)
+
+    carrying_units: set[tuple[str, str]] = set()
+    for check in record.checks:
+        for field_name in ("measured", "floor", "detail"):
+            text = getattr(check, field_name)
+            for number, unit in _unit_tokens(text):
+                carrying_units.add((check.check, field_name))
+                assert unit == "GiB", (
+                    f"{check.check}.{field_name} says {number} {unit}; it is computed "
+                    "with _GB = 1024**3, so the only honest token is GiB"
+                )
+            # `measured`/`floor` also carry the raw bytes, so the division itself is
+            # checkable: a label alone cannot say which base produced the digits.
+            raw = getattr(check, f"{field_name}_bytes", None)
+            if raw is None:
+                continue
+            tokens = _unit_tokens(text)
+            assert len(tokens) == 1, f"{check.check}.{field_name} = {text!r}"
+            number, unit = tokens[0]
+            assert number == round(raw / _UNIT_BASE[unit], 2), (
+                f"{check.check}.{field_name} prints {number} {unit} for {raw} bytes, "
+                f"which is {raw / _UNIT_BASE[unit]:.2f} {unit}"
+            )
+
+    # A property test that found nothing to look at is a test that passes for free.
+    assert carrying_units >= {
+        ("mem_available", "measured"),
+        ("mem_available", "floor"),
+        ("swap_free", "measured"),
+        ("swap_free", "floor"),
+        ("swap_free", "detail"),
+        ("disk_free", "measured"),
+        ("disk_free", "floor"),
+        ("disk_free", "detail"),
+    }, carrying_units
+    measured = {c.check: c.measured for c in record.checks}
+    assert measured["mem_available"] == "12.00 GiB"
+    assert measured["swap_free"] == "5.00 GiB"
+
+
+def test_the_watchdog_abort_reason_names_its_own_base() -> None:
+    """The same property for the two strings the preflight never writes: the in-run breach
+    reasons, which are what `ABORTED-*.json` carries and what plan §7.1.15 and §7.1.23
+    quote (`SwapFree 0.98 GB is below the in-run floor 1.00 GB`).
+
+    3 GiB is "3.00" binary and "3.22" decimal; 0.25 GiB is "0.25" and "0.27"."""
+    guard = _guard()
+
+    def sample(available_bytes: int, swap_bytes: int):
+        return driver.HostSample(
+            at_kst="2026-10-03T12:00:00.000+09:00",
+            mem_available_bytes=available_bytes,
+            swap_free_bytes=swap_bytes,
+            swap_total_bytes=8 * _GB,
+        )
+
+    breach = guard.in_run_breach(sample(3 * _GB, 5 * _GB))
+    assert breach is not None
+    check, reason = breach
+    assert check == "mem_available"
+    assert reason == "MemAvailable 3.00 GiB is below the in-run floor 4.00 GiB"
+    assert [unit for _n, unit in _unit_tokens(reason)] == ["GiB", "GiB"]
+
+    breach = guard.in_run_breach(sample(12 * _GB, _GB // 4))
+    assert breach is not None
+    check, reason = breach
+    assert check == "swap_free"
+    assert reason == "SwapFree 0.25 GiB is below the in-run floor 1.00 GiB"
+    assert [unit for _n, unit in _unit_tokens(reason)] == ["GiB", "GiB"]
+
+
+def test_the_cli_help_does_not_label_a_gib_default_as_gb(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--help` prints the in-run swap default, and the flags are read in GiB. The flag
+    NAMES stay `--*-gb`: they are what every recorded invocation and every plan citation
+    uses, and renaming them would break those to fix a label."""
+    with pytest.raises(SystemExit):
+        driver.main(["run", "--help"])
+    out = capsys.readouterr().out
+
+    assert "1.0 GiB" in out, "the printed in-run swap default"
+    assert [unit for _n, unit in _unit_tokens(out)] == ["GiB"]
+    for flag in ("--min-available-gb", "--min-swap-free-gb", "--expect-gb"):
+        assert flag in out
+
+
+def test_a_file_size_in_a_disposition_message_stays_decimal() -> None:
+    """The other half of the rule, pinned from the other side. Disposition messages are
+    read next to the growth plan's own file sizes (26.73 / 40.10 / 53.23 GB), so they are
+    decimal and say "GB". A later tidy-up that "unifies" them onto `_GB` fails here: 40
+    GiB of bytes is 42.95 GB, not 40.00."""
+    assert driver._decimal_gb(40 * 1024**3) == "42.95 GB"
+    assert driver._decimal_gb(40_000_000_000) == "40.00 GB"
