@@ -819,7 +819,7 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 
 | 무엇 | 어디 | 비고 |
 | --- | --- | --- |
-| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · ⚠ **0700 이어야 한다 — 아직 아니다(§7.2-a)** |
+| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · **0700**(디렉터리) · **0600**(스토어 넷) — 기동 시 `umask 077` + 종료 뒤 `chmod 700` 으로 보장한다(✅ 2026-10-04 적용 · 실측 §7.2-a). 결정 레코드가 계좌번호를 평문으로 싣기 때문이다 |
 | 세션 래퍼 | `~/.config/kis-probes/tos-paper-session.sh` | mode 700 · 비커밋 |
 | 세션 드라이버 | `~/.config/kis-probes/tos_paper_session.py` | mode 700 · 비커밋 |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다**(§7.3 3) · **0755** — 좌표를 담지 않는 공개 `origin/main` 내용이라 0700 대상이 아니다 |
@@ -858,7 +858,7 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 | ⛔ `TOS_PAPER_MINUTES` | (없음) | 안전망 마감을 직접 준다 — **§7.3 6 의 「마감이 지났다」 검사를 건너뛴다** |
 | `--selftest` (플래그) | — | 텔레그램 줄에 `[SELFTEST] ` 접두 |
 
-#### 7.2-a ⚠ 상주 data dir 은 0700 이어야 한다 — 아직 아니다 (실측 2026-10-03)
+#### 7.2-a ✅ 상주 data dir 은 0700 이다 — 적용·실측 2026-10-04 07:08 KST
 
 이 표의 1차 판은 상주 data dir 을 **0755 로 두어도 된다**고 적고 그 근거로 「증거는 계좌
 지문을 담지 않는다」를 들었다. **그 근거는 틀렸다.** 증거가 담지 않는 것은 *지문*이고,
@@ -870,48 +870,72 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 - 즉 지문보다 **나쁘다.** §2 는 지문을 두고 「유출된 지문은 유출된 계좌번호로 취급한다」고
   적는데, 여기 있는 것은 취급의 문제가 아니라 **계좌번호 그 자체**다.
 - 그러므로 상주 data dir 은 §7.2 의 **좌표를 담는 트리**이고, 다른 다섯과 같은 **0700** 이어야
-  한다. 「공유 호스트이므로 운영자가 좁힐 수 있다」는 선택이 아니라 **요건**이다.
+  한다. 「공유 호스트이므로 운영자가 좁힐 수 있다」는 선택이 아니라 **요건**이었다.
 
-**현재 상태: 고쳐지지 않았다.** 런타임은 디렉터리를 만들 때 모드를 지정하지 않고
+**왜 umask 인가.** 런타임은 디렉터리를 만들 때 모드를 지정하지 않고
 (`tos_runtime/operations/*.py` 의 `mkdir` 전부 모드 인자 없음) sqlite 도 마찬가지라,
-**실제 모드는 프로세스 umask 가 정한다.** 09-27/28 코퍼스 열두 개의 실측이 그 증거다 —
-디렉터리 `drwxrwxr-x`(0775) · 본체 `-rw-r--r--`(0644), 곧 당시 umask 002 다. 상주 세션도
-같은 경로로 만들어지므로 **10-06 genesis 는 0755/0644 로 나온다.**
+**실제 모드는 프로세스 umask 가 정한다.** 09-27/28 코퍼스 열두 개가 그 증거다 —
+디렉터리 `drwxrwxr-x`(0775) · 본체 `-rw-r--r--`(0644), 곧 당시 umask 002 다.
 
-📌 **TODO(운영자 · 10-06 genesis 전) — 호스트 래퍼 두 줄.** 저장소 파일이 아니라
-`~/.config/kis-probes/tos-paper-session.sh`(비커밋 · mode 700) 의 변경이고, 이 PR 의
-에이전트 레인은 그 디렉터리에 **쓰기 권한이 없어 적용하지 못했다**(권한 거부 — 적용은
-운영자). 적용할 변경은 둘:
+**적용된 변경 (운영자 승인 2026-10-04).** 저장소 파일이 아니라
+`~/.config/kis-probes/tos-paper-session.sh`(비커밋 · mode 700) 두 곳이다. 이전 판 백업은
+`~/.config/kis-probes/tos-paper-session.sh.bak.e169e23d`, 새 sha256 은
+**`a898e6cb1f2f75d078d91a4cc53ebd0054fa5056316fe073f293da995ce74a8f`**(§7.9 머리 ⚠).
 
-1. **드라이버 기동만** `umask 077` 로 감싼다. 전역으로 걸지 **말 것** — `$WT` 분리
+1. **드라이버 기동만** `umask 077` 로 감쌌다. ⛔ **전역으로 걸지 않는다** — `$WT` 분리
    워크트리는 이 표가 **의도적으로 0755** 라고 적은 공개 트리다(좌표를 담지 않는
-   `origin/main` 내용). 서브셸 + `exec` 로 묶으면 `$!` 가 그대로 드라이버 PID 라
-   `wait`/`kill` 경로가 바뀌지 않는다:
+   `origin/main` 내용). 서브셸 + `exec` 라 `$!` 가 그대로 드라이버 PID 이고
+   `wait`/`kill`/pidfile 경로가 **바뀌지 않는다**:
 
    ```bash
    ( umask 077; exec "$PY" "$DRIVER" \
        --worktree "$WT" --main-repo "$MAIN" \
-       ... ) >>"$LOG" 2>&1 &
+       ... \
+       --pidfile "$PIDFILE" ) >>"$LOG" 2>&1 &
    DRV=$!
    ```
 
 2. 드라이버가 끝난 뒤(`log "=== driver exited rc=$rc"` 바로 다음) 멱등하게 조인다 —
-   만들지는 **않는다**:
+   **만들지는 않는다**(genesis 전에 디렉터리를 만들면 §4-A 의 「빈 스토어 넷」 사고가 된다):
 
    ```bash
    [ -d "$DATA" ] && chmod 700 "$DATA" 2>/dev/null || true
    ```
 
-   ⚠ 이 두 번째 줄은 **디렉터리만** 조인다. genesis 가 이 변경보다 먼저 일어나 버리면
-   안의 파일은 0644 로 남는데, 공유 호스트에서 실질 차단은 **디렉터리 traversal** 이라
-   그래도 막힌다. 그 경우까지 되돌리려면 운영자가 한 번
-   `chmod 600 ~/.local/state/tos/paper-data/*` 를 손으로 돌린다.
+**실측 (스크래치 data dir · 세션 `2026-10-04-071204-LONG` · `verdict ok` rc 0 · genesis=True).**
+출하본 `a898e6cb…` 을 `TOS_PAPER_DATA_DIR=<스크래치> TOS_PAPER_MINUTES=1
+TOS_PAPER_IGNORE_CALENDAR=1 TOS_PAPER_NOTIFY=0 … start --selftest` 로 돌린 뒤
+`stat -c '%a %n'`(경로만 `<scratch>` 로 줄였다):
 
-⚠ **검증은 적용한 사람이 한다.** 스크래치 data dir 로 한 세션
-(`TOS_PAPER_DATA_DIR=<스크래치> TOS_PAPER_FAKE_DATE=2026-10-06 TOS_PAPER_MINUTES=1
-TOS_PAPER_NOTIFY=0 … start`) 을 돌린 뒤 `stat -c '%a %n' <스크래치> <스크래치>/*` 가
-`700` 과 `600` 만 찍는지 본다. **이 런북은 아직 그 출력을 싣지 않았다 — 실었다면 돌렸다는
-뜻이고, 돌리지 않았으므로 싣지 않는다.**
+```text
+700 <scratch>/data
+600 <scratch>/data/evidence.sqlite3
+600 <scratch>/data/evidence.sqlite3-shm
+600 <scratch>/data/evidence.sqlite3-wal
+600 <scratch>/data/inbox.sqlite3
+600 <scratch>/data/marketfeed.sqlite3
+600 <scratch>/data/marketfeed.sqlite3-shm
+600 <scratch>/data/marketfeed.sqlite3-wal
+600 <scratch>/data/rcl.sqlite3
+```
+
+**부수 효과 — 세션 아티팩트도 0600 이 됐다.** 드라이버가 같은 umask 아래 돌므로
+`$SESSION_DIR` 의 네 파일도 함께 조여졌다. 같은 호스트의 전후 대조(패치 전 10-03 · 후 10-04):
+
+```text
+644 …/2026-10-03-145743-LONG/render.log      (패치 전)
+600 …/2026-10-04-071204-LONG/render.log      (패치 후)
+```
+
+§7.2 가 「`render.log` 는 계좌 지문을 찍는다」고 적는 바로 그 파일이므로, 이것은 덤이 아니라
+같은 결함의 두 번째 면이다(디렉터리는 이미 `chmod 700` 이었고 **안의 파일이 0644 였다**).
+
+⚠ **남은 경계 하나.** 2 의 `chmod` 는 **디렉터리만** 조인다. 이 패치보다 **먼저** genesis 가
+일어났다면 안의 파일은 0644 로 남는다 — 공유 호스트에서 실질 차단은 디렉터리 traversal 이라
+그래도 막히지만, 되돌리려면 운영자가 한 번
+`chmod 600 ~/.local/state/tos/paper-data/*` 를 손으로 돌린다. **이번에는 해당하지 않는다**:
+`~/.local/state/tos/paper-data` 는 2026-10-04 현재 **아직 없고**(실측) genesis 는 10-06 이라
+패치가 먼저다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
@@ -1191,6 +1215,16 @@ CRON_TZ=Asia/Seoul
 tos-paper-session.sh  e169e23d4ee190a5c42120d825922b098f5c1868ec8a22163dc35d385a5b86b8
 tos_paper_session.py  995ada06d795ba1fd7d988e6b2c83793c1173c3adeeb85a59d33e379d85179b2
 ```
+
+⚠ **래퍼는 그 뒤 한 번 더 바뀌었다 — 지금 출하본은 `a898e6cb1f2f75d078d91a4cc53ebd0054fa5056316fe073f293da995ce74a8f`**
+(2026-10-04 07:08 KST · §7.2-a 0700 패치 · 이전 판 백업
+`~/.config/kis-probes/tos-paper-session.sh.bak.e169e23d`). **아래 ①–③·E1–E5·S1–S6 은 전부
+`e169e23d…`(또는 그 직전 두 판)에서 돈 기록이다.** 두 판의 차이는 `diff` 로 확인한 **셋뿐**이고
+— ① 드라이버 기동을 `( umask 077; exec … )` 서브셸로 감싼 것, ② 종료 뒤
+`[ -d "$DATA" ] && chmod 700 "$DATA"` 한 줄, ③ 그 둘을 설명하는 주석 블록 둘 — **달력·digest·
+부팅증명·정지·보고 경로는 한 글자도 바뀌지 않았다.** 그러므로 아래 기록은 그대로 유효하다.
+`a898e6cb…` 에서 다시 돈 것은 §7.2-a 의 모드 실측 한 세션(`2026-10-04-071204-LONG`)이다.
+`tos_paper_session.py` 는 불변(`995ada06…`).
 
 ⚠ **①②·E4·S2·S1 은 그 직전 리비전**(`f452ee0b…` / `b28c188f…`)**에서 돌았다.** 그 뒤의 변경은
 텔레그램 본문 로깅(H1) · 헤더 한 줄 · `grep -qxF` · 주석 하나 · 드라이버의 `except` 한 줄이고,
