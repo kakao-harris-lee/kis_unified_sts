@@ -795,10 +795,10 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 
 | 무엇 | 어디 | 비고 |
 | --- | --- | --- |
-| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · mode 0755(런타임 생성) |
+| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · mode 0755(런타임이 만든다) — 증거는 계좌 지문을 담지 않지만 공유 호스트이므로 운영자가 좁힐 수 있다 |
 | 세션 래퍼 | `~/.config/kis-probes/tos-paper-session.sh` | mode 700 · 비커밋 |
 | 세션 드라이버 | `~/.config/kis-probes/tos_paper_session.py` | mode 700 · 비커밋 |
-| 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다**(§7.3 3) |
+| 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다**(§7.3 3) · **0755** — 좌표를 담지 않는 공개 `origin/main` 내용이라 0700 대상이 아니다 |
 | 렌더된 설정 | `~/.config/tos/paper-config` | mode 700 · 매일 부팅 **직전에** 다시 렌더(저널 신선도 §2) |
 | 커스터디 | `~/.local/state/tos/paper-custody` | mode 700 · §1 그대로 · `environment_label: "paper"` |
 | 일별 로그 | `~/.local/state/tos/paper-logs/<YYYY-MM-DD>.log` | mode 700 디렉터리 · 래퍼+드라이버 stdout/err |
@@ -809,8 +809,10 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 
 **좌표 규율 (§2·§6 의 연장 — 이 절에도 그대로 적용된다).**
 `render.log` 는 **계좌 지문**을 찍는다. §2 가 못박듯 그 지문은 마스킹이 아니라 상관자이고
-**유출된 지문은 유출된 계좌번호로 취급한다.** 그러므로: 위 네 트리(`paper-data` 제외 전부)는
-저장소 밖 0700 이고, **`render.log` · 증거 행 · 질의 결과를 PR·계획 문서·텔레그램으로 옮겨
+**유출된 지문은 유출된 계좌번호로 취급한다.** 그러므로 **좌표를 담는 다섯 트리**
+— `~/.config/tos/paper-config`(렌더 산출물) · `~/.local/state/tos/paper-custody`(자격증명) ·
+`~/.local/state/tos/paper-sessions`(`render.log`) · `~/.local/state/tos/paper-logs`(래퍼 로그) ·
+`~/.local/state/tos/paper-ops`(PID·백업 설정) — 는 전부 저장소 밖 **0700**(실측)이고, **`render.log` · 증거 행 · 질의 결과를 PR·계획 문서·텔레그램으로 옮겨
 적지 않는다**(이 런북의 인용은 전부 지문·계좌가 없는 줄만 고른 것이다). `.env.mock` 은
 `$MAIN` 의 것을 **절대경로로 넘긴다 — 워크트리로 복사하지 않는다**(§7.3 1). 텔레그램 토큰은
 `$MAIN/.env` 의 두 줄만 `grep` 으로 읽고 로그에 내보내지 않는다.
@@ -1024,7 +1026,7 @@ CRON_TZ=Asia/Seoul
 `TOS_PAPER_NOTIFY=0`, `$MAIN/.env` 에서 자격증명을 못 찾음. **그래서 텔레그램 부재를
 「안 돌았다」로 읽지 말고 0 번으로 간다.**
 
-기동 줄의 머리는 `boot proof: OK · boot <N>s · genesis=… · rev … · <종목>` 이다. 세 값이 있다:
+기동 줄의 머리는 `boot proof: OK · boot <N>s · genesis=… · rev … · <종목>` 이다. **네 값**이 있다:
 
 | 머리 | 뜻 | 가르는 법 |
 | --- | --- | --- |
@@ -1047,6 +1049,11 @@ CRON_TZ=Asia/Seoul
   10-06 이다. 기대는 「STALE 은 부팅당 1 건」이고, 더 많으면 poll/신선도 예산이 어긋난
   것이다(#807 형태).
 - `append_errors` — 0 이 아니면 저널 쓰기가 실패하고 있다(보고서는 그래도 남는다).
+- ⚠ **`baseline_evidence_seq: -1` 과 `genesis: false` 가 함께 나오면 genesis 가 아니다.**
+  드라이버의 기준선 조회는 **DB 부재 · 빈 테이블 · `DatabaseError` 셋 다**에서 −1 을 돌려주는데,
+  `genesis` 는 파일 존재만 본다. 둘이 어긋났다는 것은 **파일은 있는데 읽히지 않았다**는 뜻이고,
+  그 상태에서는 그날 델타가 「전부 새 행」으로 보인다. 손으로 센다:
+  `sqlite3 "file:$DATA/evidence.sqlite3?mode=ro" "SELECT COUNT(*), MAX(seq) FROM entries;"`.
 - `evidence_schema_after.user_version == 2` · `matches_expected_v2: true`
 - ⚠ **`report.json` 이 없어도 증거는 남아 있다.** 보고서는 드라이버가 마지막에 쓰는 파일이고,
   증거는 런타임이 그 전에 이미 커밋했다. 확인은 sqlite 로 직접 센다:
@@ -1056,9 +1063,9 @@ CRON_TZ=Asia/Seoul
 
 | 숫자 | 출처 | 성격 |
 | --- | --- | --- |
-| ≈ **200 MB/일** (수집기 5 s) | 2026-09-28 15 분 실측 7.2 MB **× 28 환산** (증거 증가 대응 계획 §1) | **환산값 — 전 세션 실측 없음.** 10-06 이 첫 실측 |
+| ≈ **200 MB/일** (수집기 5 s) | 2026-09-28 15 분 실측을 **× 28 환산**. 세 파일 합 **7.1 MB**(증거 증가 대응 계획 §1 의 표) · data dir 전체 **7.2 MB**(이 런북 §5 ④) — 둘 다 ≈ 200 | **환산값 — 전 세션 실측 없음.** 10-06 이 첫 실측 |
 | 기대 폭 | — | 장 길이·수집기 지연·휴장 반일 등으로 **150–250 MB** 를 정상으로 본다 |
-| ≈ **112 MB/일** (수집기 off) | `TIME_HEALTH_SNAPSHOT` 이 증거 바이트의 75 %(3.99/5.33 MB) → 3.99 × 28 | **유도값 — 측정한 적 없다** |
+| ≈ **112 MB/일** (수집기 off) | `TIME_HEALTH_SNAPSHOT` 이 증거 바이트의 75 %(3.99/5.33 MB, 계획 §1) → 3.99 × 28 | **유도값 — 측정한 적 없다** |
 
 **4. 콜드 백업 결과** — 전날 18:00 의 텔레그램 줄(`verdict`/`refused`/`failed`)과
 `~/.local/state/tos/cold-backup.log`. **그 cron 도 아직 미설치다**(§7.7).
@@ -1072,16 +1079,24 @@ CRON_TZ=Asia/Seoul
 **범위.** 그날 래퍼 `start` 는 **16 회** 돌았고(그중 4 회는 SKIP·ABORT 로 부팅 전에 끝났다),
 부팅까지 간 **12 세션 전부 `verdict: ok` · rc 0** 이다. 래퍼는 리뷰 대응 중에 바뀌었으므로
 **다섯 리비전**이 로그에 찍혀 있다(`=== tos-paper-session start … sha256=` 줄).
-**아래 ①–③ 과 E1–E5 는 전부 출하본 두 개로 다시 돌린 것이다:**
+**아래 ①–③ · E4 · S1 · S2 · E2 · E3 가 그 재측정이다.** 라벨은 처분 항목과 1:1 이 아니다 —
+①=E1 의 1차 부팅, ②=E1 의 2차 부팅 + E5(계산된 마감), ③=기준선 −1 확인이다. 처분 **S3–S6**
+(천장 통합 · 드라이버 예외/신호 · digest 패턴 · 방향 검증)은 별도 실행이 없고 ①②와 E3 의
+경로 안에서 함께 돈다. 출하본 두 개:
 
 ```text
-tos-paper-session.sh  f452ee0be74a9bc42fc461ba6aba2a565c214e0095462e7e8fe95c43a43be11f
-tos_paper_session.py  b28c188fc708ff2126804cee26c35ab75e3b8b4c9ddb73451766a5cf2a6e0ffa
+tos-paper-session.sh  e169e23d4ee190a5c42120d825922b098f5c1868ec8a22163dc35d385a5b86b8
+tos_paper_session.py  995ada06d795ba1fd7d988e6b2c83793c1173c3adeeb85a59d33e379d85179b2
 ```
+
+⚠ **①②·E4·S2·S1 은 그 직전 리비전**(`f452ee0b…` / `b28c188f…`)**에서 돌았다.** 그 뒤의 변경은
+텔레그램 본문 로깅(H1) · 헤더 한 줄 · `grep -qxF` · 주석 하나 · 드라이버의 `except` 한 줄이고,
+**부팅·정지·스키마·델타 경로를 건드리지 않는다.** 그 리비전들에서 다시 돈 것은 **H1 재실행**과
+**E2·E3** 다(아래). 두 리비전의 차이는 `diff` 로 확인할 수 있다.
 
 워크트리는 `origin/main` `36c2a7ccb6b3`(그날 main 이 `aae1cec6` 에서 움직였다).
 
-**① genesis + 마감 정지** — `2026-10-03-142657-LONG/`
+**① (=E1 1차) genesis + 마감 정지** — `2026-10-03-142657-LONG/`
 
 ```text
 2026-10-03 14:26:55 worktree …/wt-paper @ 36c2a7ccb6b3 (detached origin/main)
@@ -1107,21 +1122,39 @@ run.log tail: run: stopped (signal received).
 스토어마다 목표 버전이 다르다). `TOS_PAPER_FAKE_DATE=2026-10-06` 을 썼다(장 마감일이라
 10-06 의 달력 경로를 보려고). 수집기 5 s, `TOS_PAPER_MINUTES=0.6`.
 
-**② 재부팅(같은 디렉터리) + 밖에서 온 정지 + 계산된 마감** — `2026-10-03-142755-LONG/`.
+**② (=E1 2차 + E5) 재부팅(같은 디렉터리) + 밖에서 온 정지 + 계산된 마감** — `2026-10-03-142755-LONG/`.
 **상주의 둘째 날 경로**가 이것이다. 여기서는 `TOS_PAPER_MINUTES` 를 **주지 않았다** —
-마감을 래퍼가 15:45 에서 계산한다(E5).
+마감을 래퍼가 15:45 에서 계산한다(**E5**).
+
+아래는 날짜 로그에서 **발췌**한 것이다(중간 줄 생략 `…`, 줄 병합 없음).
+`--- status ---` 두 줄만은 날짜 로그가 아니라 **드라이런 스크립트의 stdout**
+(`status` 하위 명령은 `log()` 를 쓰지 않고 표준출력에 찍는다)이고, 그 전문은 작업 기록
+`/tmp/…/scratchpad/ops-paper/e1b.sh` 의 실행 출력에 있다.
 
 ```text
 2026-10-03 14:27:55 safety deadline: 92 min (stop cron 는 15:45 KST · 마감은 그보다 뒤)
+2026-10-03 14:27:55 driver pid=16147
 driver: boot proof OK — rev=36c2a7ccb6b3 instrument=A05610
   activation=ACTIVATED 5 (re-derived in a fresh process) genesis=False baseline_seq=17 boot_s=2.0
---- status ---
-running: driver pid=16147  run pid=16653  data=…/e1-data
+…
 2026-10-03 14:28:55 stop: SIGTERM -> driver pid=16147 (it forwards SIGTERM to run and waits)
 2026-10-03 14:29:00 === driver exited rc=0
+2026-10-03 14:29:00 notify SUPPRESSED by TOS_PAPER_NOTIFY=0 — 보낼 내용은 아래 로그에 그대로 있다
+2026-10-03 14:29:00 notify-body: TOS paper 상주 세션 종료 (2026-10-03 LONG) rc=0
+boot proof: OK · boot 2.0s · genesis=False · rev 36c2a7ccb6b3 · A05610
 verdict ok rc=0 stop=signal (14:27:55→14:29:00 KST)
-관측 덧붙임 11 · 소비 0 · 스냅샷 +0 · STALE 0 (n/a)  · 증거행 +19
+관측 덧붙임 11 · 소비 0 · 스냅샷 +0 · STALE 0 (n/a)
+결정 none · 증거행 +19
+evidence schema user_version=2 v2-shape=True
+data dir 0.2 MB (+0.0 MB today)
 2026-10-03 14:29:01 stop: driver exited
+```
+
+(stdout 쪽)
+
+```text
+--- status ---
+running: driver pid=16147  run pid=16653  data=…/e1-data
 ```
 
 `genesis=False`, 기준선 `seq=17`(①이 18 행 = seq 0–17 을 남겼다), 그 **뒤에** 정책 결속
@@ -1185,10 +1218,25 @@ verdict ok rc=0 stop=deadline (14:30:53→14:31:16 KST)
 **직전에** 워크트리를 `origin/main` 에서 새로 만들고, 거기서는 두 달력이 다 있고 서로 맞으며
 digest 가 핀과 맞는다. 즉 그 가드들이 지키는 것은 **미래의 `origin/main` 과 깨진 워크트리
 생성**이지 오늘 주입할 수 있는 상태가 아니다. 그래서 입력은 **함수에** 먹였다. 대신 함수
-본문은 베끼지 않고 출하본에서 **그대로 떼어내** 돌렸다 —
-`~/.local/state/tos/paper-sessions/2026-10-03-guard-harness.sh`(추출 조각의 sha256 을 찍는다)
-와 그 로그 `2026-10-03-guard-harness.log`. 따라서 아래 문자열은 **출하본 `abort()`/`log()` 의
-출력**이다.
+본문은 베끼지 않고 출하본에서 `sed` 로 **그대로 떼어내** 돌렸다 —
+`~/.local/state/tos/paper-sessions/2026-10-03-guard-harness.sh` 와 그 로그
+`2026-10-03-guard-harness.log`. 따라서 아래 문자열은 **출하본 `abort()`/`log()` 의 출력**이다.
+
+떼어낸 조각의 sha256 은 **그 로그에 함께** 적힌다(stdout 에만 찍으면 아카이브에 안 남는다):
+
+```text
+026fb6e1a835cd7c6bdd30739d44bde1f161a6ee5b0f583ed8606fe9f67044fd  _log.sh
+06f5f581b8f4bfbbb88ff096bb8dffa35793e8160c9dc34c04ca4814545c74c6  _notify.sh
+8d33e28266b07c3ef7227e7b880bbf9192e16c2107547a96cc3e18aa0c4318c8  _abort.sh
+e1fb4f0162d59fec4fe0c0211b9c274d208509f84ddd48888ee95ae12fa05fb0  _cal.sh
+691a782ed800050e6b6aaa8fae7743ea3516e0ad15688e6537d0ff79e67e1416  _digest.sh
+```
+
+`_digest.sh` 는 모양 검사뿐 아니라 **값 비교와 `abort` 까지** 포함한다 — 비교를 하네스가 다시
+타이핑하면 「출하본이 여기서 abort 한다」가 재구성이 되고 아카이브에 실제 ABORT 줄이 남지
+않는다. ⚠ `_log.sh` 의 범위는 한 번 틀렸었다: `log()` 가 **한 줄짜리** 함수라
+`/^log() {/,/^}/` 가 다음 함수까지 삼켰고, 그래서 `notify()` 를 고칠 때마다 `_log.sh` 의
+digest 가 바뀌었다. 지금 범위는 한 줄이다.
 
 | 가드 | 입력 | 출력 |
 | --- | --- | --- |
@@ -1199,31 +1247,50 @@ digest 가 핀과 맞는다. 즉 그 가드들이 지키는 것은 **미래의 `
 | 달력 | 인위적 불일치(한쪽에만 10-06) | `calendar: ⚠ DIVERGENCE for 2026-10-06 — market_schedule.yaml=1 tos calendar.yaml=0; treating as a holiday (conservative)` → rc 1 |
 | digest | `print-digests` 가 예외로 죽은 출력 | `ABORT — digest guard cannot run — CODE_NOW is not a 64-char lowercase hex digest (got '<empty>').` |
 | digest | **64자인데 hex 가 아님**(`38d85110zzzz…`) | 같은 ABORT. ⚠ **옛 접두 패턴은 이것을 통과시켰다** |
-| digest | 넷 다 64 hex 인데 값 불일치 | 모양 검사 통과 → 값 비교에서 ABORT (출하본 §7.3 5 경로) |
+| digest | 넷 다 64 hex 인데 값 불일치 | `ABORT — digest mismatch — boot would be refused (ReleaseAdmissionRefused).` rc 2 |
 | 부팅 증명 | 빈 커스터디 루트 | 위 **E4** |
 
-달력 네 줄 중 ①②의 두 날짜는 실제 날짜이고, 나머지는 `TOS_PAPER_FAKE_DATE` 로 날짜만
-바꾼 것이다(§7.2 ⛔).
+⚠ **날짜의 출처를 섞지 말 것.** 위 표의 달력 다섯 행은 **하네스**가 날짜를
+`is_trading_day` 에 **위치 인자**로 넘긴 것이고 `TOS_PAPER_FAKE_DATE` 를 **읽지 않는다**.
+다섯 중 **실제 그날은 2026-10-03 하나뿐**이다. `TOS_PAPER_FAKE_DATE` 를 쓴 것은 위 ①②
+**실제 `start` 실행**이고(둘 다 `2026-10-06`), 그 사실은 로그에 ⚠ 줄로 남는다(§7.2 ⛔).
 
 **장이 닫혀 있었으므로 틱은 소비되지 않았다** — `snapshots +0` · `events_consumed 0` ·
 `stale_ratio n/a` 다. 이것은 결함이 아니라 §5 ④ 의 세션 게이트이고, **드라이런이 증명한
 것은 체인의 소비 쪽이 아니라 부팅·스키마·정지·보고·달력·가드**다. 소비·결정·STALE 의
 첫 상주 실측은 **10-06 장중**에 나온다.
 
-**기동 줄** — 부팅 증명을 기다렸다가 보낸 실제 본문(계좌 좌표 없음):
+**기동 줄 — 실제로 전달되고 로그에 남은 본문** (`2026-10-03-145743-LONG`, `--selftest`,
+출하본 `e169e23d…`). 아래 두 줄은 날짜 로그의 **연속된 두 항목**이다: 보내기 직전에 찍은 본문과
+그 결과.
 
 ```text
-[SELFTEST] TOS paper 상주 세션 기동 (2026-10-03 LONG)
-boot proof: OK · boot 2.0s · genesis=True · rev aae1cec6e73b · A05610
+2026-10-03 14:57:48 notify-body(sending): [SELFTEST] TOS paper 상주 세션 기동 (2026-10-03 LONG)
+boot proof: OK · boot 2.0s · genesis=True · rev 36c2a7ccb6b3 · A05610
 activation ACTIVATED 5 (re-derived in a fresh process)
 evidence schema user_version=2 v2-shape=True · baseline_seq=-1
-worktree aae1cec6e73b · digests match release.yaml
-data dir … (genesis=yes) · 수집 5s · 정지 15:45 KST
-실주문 0 (SYNTHETIC_FUTURES_ORDER · 모의 계좌 좌표). 로그 …
+worktree 36c2a7ccb6b3 · digests match release.yaml
+data dir …/h1-data (genesis=yes) · 수집 5s · 정지 15:45 KST
+실주문 0 (SYNTHETIC_FUTURES_ORDER · 모의 계좌 좌표). 로그 …/paper-logs/2026-10-03.log
+2026-10-03 14:57:49 telegram notified
 ```
 
-(이 본문은 `--selftest` 로 실제 briefing 채널에 나간 13:52 실행의 것이다 — 그래서 `rev` 가
-그 시점의 `aae1cec6` 다. 출하본 리비전에서는 텔레그램을 끄고 돌렸다.)
+⛔ **이 줄이 이렇게 남는 것 자체가 리뷰 H1 의 처분이다.** 이 절의 1차 판은 같은 자리에
+「실제 briefing 채널에 나간 본문」이라며 블록 하나를 실었는데, **그것은 전달된 본문이 아니었다.**
+출처로 적은 13:52 실행(`2026-10-03-135155-LONG`)은 `TOS_PAPER_NOTIFY=0` 이라
+`notify SUPPRESSED` 였고(날짜 로그), 그 억제 사본에는 `[SELFTEST] ` 접두가 **없다** — 접두는
+문서를 쓰면서 **손으로 붙인 것**이다. 그날 실제로 전달된 네 줄(13:33:43 · 13:34:54 ·
+13:56:00 · 13:56:36)은 `telegram notified` **라는 사실만** 남기고 **본문을 어디에도 남기지
+않았다.** 즉 인용할 수 있는 전달 본문이 애초에 없었고, 그 공백을 조립으로 메운 것이다.
+
+처분은 둘이다. (a) 래퍼가 **보내기 직전에 본문을 로그에 찍는다**(`notify-body(sending):`) —
+그래서 다음부터는 전달된 줄을 **인용**할 수 있고 조립할 이유가 없다. (b) 그 변경을 담은
+출하본으로 `--selftest` 를 **다시 돌려** 위 블록을 얻었다. 13:56 실행은 이제 **전달이
+일어났다는 사실**의 근거로만 쓰고 본문은 인용하지 않는다.
+
+억제된 사본은 억제된 사본이라고 적을 때에만 쓸모가 있다. 예컨대 13:52:00 의 것은 접두 없이
+`TOS paper 상주 세션 기동 (2026-10-03 LONG)` 으로 시작하고, 그것이 `TOS_PAPER_NOTIFY=0`
+경로가 로그에 남기는 모양이다.
 
 ### 7.10 이 런북이 답하지 못한 것
 
