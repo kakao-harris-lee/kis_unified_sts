@@ -815,8 +815,16 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
    `release.yaml::expected_{code,dependency_set}_digest` 와 대조한다. 다르면 **부팅하지 않고
    거부**한다. 어차피 Stage A 가 `ReleaseAdmissionRefused` 로 거부할 것을, 여기서 **왜**
    거부되는지와 함께 먼저 잡는 것이다(§5 ① ⚠ — 커널 소스를 바꾸면 이 핀을 재도출해야 한다).
+   ⚠ **빈 값끼리의 일치는 일치가 아니다.** `print-digests` 가 죽거나 `release.yaml` 의 키
+   이름이 바뀌면 비교할 네 값이 모두 빈 문자열이 되고, 그러면 `"" != ""` 가 거짓이라 가드가
+   **조용히 통과한다**. 그래서 비교 전에 **넷 모두 64 hex 인지** 먼저 본다. 실패 입력:
+   `print-digests` 가 예외로 죽은 출력 → `digest guard cannot run — CODE_NOW is not a hex
+   digest (got '<empty>')`.
 6. **안전망 마감** — 정지 크론이 죽어도 세션이 영원히 돌지 않도록 `--max-minutes` 를
    「지금 → 정지 시각 + 15 분」으로 계산해 드라이버에 넘긴다.
+   ⚠ **남은 시간을 먼저 보고 나서 15 분을 더한다.** 더한 뒤에 양수인지 보면 마감 5 분
+   **뒤**에 뜬 기동이 「10 분 남았다」로 통과해 장 마감 뒤에 세션을 연다. 실패 입력:
+   `TOS_PAPER_STOP_HHMM` 이 이미 지난 시각 → `ABORT — stop time 13:00 KST already passed`.
 7. 텔레그램 briefing 채널에 기동 줄을 보내고, 드라이버를 띄우고, 끝날 때까지 `wait` 한다.
 
 드라이버(`tos_paper_session.py`)가 하는 일은 §2–§4 그대로다: **렌더 → 부팅 → 관측 수집 →
@@ -972,7 +980,15 @@ running: driver pid=3689148  run pid=3690549  data=…
 **③ 기준선 −1 수정 재확인** — ①에서 `store 19 행 / 델타 18 행`이 나온 것을 고친 뒤
 다시 genesis 를 뜨니 `baseline_evidence_seq: -1` · 델타 **18** = store **18** 로 맞았다.
 
-**달력 경로** — 세 입력 전부 실제로 돌려 봤다:
+**가드 경로** — 세 가드의 **실패 입력**을 실제로 먹여 봤다:
+
+| 가드 | 입력 | 결과 |
+| --- | --- | --- |
+| digest 입장 | `print-digests` 출력이 예외 문자열 | `ABORT — digest guard cannot run — CODE_NOW is not a hex digest (got '<empty>')` |
+| 안전망 마감 | `TOS_PAPER_STOP_HHMM=13:00` (현재 13:44) | `ABORT — stop time 13:00 KST already passed (13:44:14) — 기동하지 않는다`, rc=2 |
+| 부팅 증명 | — (거부된 부팅은 이번에 재현하지 않았다 — §7.10 4) | — |
+
+**달력 경로** — 다섯 입력 전부 실제로 돌려 봤다:
 
 | 입력 | 결과 |
 | --- | --- |
@@ -1004,6 +1020,11 @@ running: driver pid=3689148  run pid=3690549  data=…
    돌리려면 두 번째 data dir 과 두 번째 설정(`paper-config-short`)이 필요하다 — 한 디렉터리에
    두 방향을 섞는 경로는 설계에 없다. §5 ⑤ 가 적듯 **활성화 기록은 방향을 결속하지 않으므로**
    섞인 corpus 는 나중에 digest 로 갈라낼 수 없다.
-4. **DST/시각 변경.** KST 는 DST 가 없고 cron 은 `CRON_TZ=Asia/Seoul` 이다. 다만 **휴장일
+4. **부팅 증명 가드의 실패 입력은 아직 실제로 먹여 보지 않았다.** 논리적으로는 거부된
+   부팅(`run` 이 즉시 rc=1)이지만, 그 상태를 이 호스트에서 인위적으로 만들려면
+   `release.yaml` 의 핀을 어긋나게 해야 하고 그것은 digest 가드가 **먼저** 잡는다. 즉
+   두 가드가 직렬이라 뒤의 것만 단독으로 시험하기 어렵다. 10-06 이후 실제 거부가 한 번
+   나면 그때 기록한다.
+5. **DST/시각 변경.** KST 는 DST 가 없고 cron 은 `CRON_TZ=Asia/Seoul` 이다. 다만 **휴장일
    목록은 손으로 갱신되는 표**이고(두 파일), 2027년치가 들어올 때까지는 2027-01-01 이후의
    판정을 믿을 수 없다.
