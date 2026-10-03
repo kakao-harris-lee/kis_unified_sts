@@ -792,7 +792,7 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 | 렌더된 설정 | `~/.config/tos/paper-config` | 매일 부팅 **직전에** 다시 렌더(저널 신선도 §2) |
 | 커스터디 | `~/.local/state/tos/paper-custody` | §1 그대로 · `environment_label: "paper"` |
 | 일별 로그 | `~/.local/state/tos/paper-logs/<YYYY-MM-DD>.log` | 래퍼+드라이버 stdout/err |
-| 세션 아티팩트 | `~/.local/state/tos/paper-sessions/<date>-<HHMMSS>-<DIR>/` | `report.json` · `render.log` · `run.log` |
+| 세션 아티팩트 | `~/.local/state/tos/paper-sessions/<date>-<HHMMSS>-<DIR>/` | `report.json` · `render.log` · `run.log` · `bootproof.txt` |
 | PID | `~/.local/state/tos/paper-ops/paper-session{,.driver}.pid` | 정지가 읽는다 |
 | flock | `~/.config/kis-probes/tos-paper-session.lock` | 기동만 잡는다(§7.4) |
 
@@ -825,7 +825,12 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
    ⚠ **남은 시간을 먼저 보고 나서 15 분을 더한다.** 더한 뒤에 양수인지 보면 마감 5 분
    **뒤**에 뜬 기동이 「10 분 남았다」로 통과해 장 마감 뒤에 세션을 연다. 실패 입력:
    `TOS_PAPER_STOP_HHMM` 이 이미 지난 시각 → `ABORT — stop time 13:00 KST already passed`.
-7. 텔레그램 briefing 채널에 기동 줄을 보내고, 드라이버를 띄우고, 끝날 때까지 `wait` 한다.
+7. 드라이버를 띄우고, **부팅 증명이 날 때까지 기다렸다가** 텔레그램 기동 줄을 보내고,
+   끝날 때까지 `wait` 한다.
+   ⚠ **기동 줄을 드라이버보다 먼저 보내면 그 줄에 적을 것이 없다** — 증명은 부팅 2 초
+   뒤에야 안다. 그래서 드라이버가 증명 직후 `bootproof.txt` 를 쓰고 래퍼가 그것을
+   최대 90 s 기다린다. 드라이버가 증명 전에 죽으면(렌더 거부 등) 기동 줄이 그렇게 적는다 —
+   **파일이 없는 것과 「MISSING」 이라고 적힌 것은 다른 사건이다.**
 
 드라이버(`tos_paper_session.py`)가 하는 일은 §2–§4 그대로다: **렌더 → 부팅 → 관측 수집 →
 SIGTERM → 보고서**. 상주용으로 다른 것 셋:
@@ -915,7 +920,9 @@ CRON_TZ=Asia/Seoul
 
 ### 7.8 다음 날 아침에 볼 것 (5 분)
 
-1. **텔레그램 두 줄** — 기동(`boot proof: …`)과 종료. 둘 중 하나라도 없으면 그날은 돌지 않았다.
+1. **텔레그램 두 줄** — 기동과 종료. 둘 중 하나라도 없으면 그날은 돌지 않았다.
+   기동 줄의 머리가 `boot proof: OK · boot <N>s · genesis=… · rev … · <종목>` 이다.
+   `MISSING` 이면 부팅이 거부됐고(그날 증거 0), 「없음」이면 렌더가 거부됐다.
 2. **`report.json`** — `~/.local/state/tos/paper-sessions/<날짜>-*/report.json`:
    - `boot_proof_ok: true` · `verdict: "ok"` · `exit_code: 0` · `stop_reason: "signal"`
      (`"deadline"` 이면 **정지 크론이 안 돌았다**)
@@ -979,6 +986,18 @@ running: driver pid=3689148  run pid=3690549  data=…
 
 **③ 기준선 −1 수정 재확인** — ①에서 `store 19 행 / 델타 18 행`이 나온 것을 고친 뒤
 다시 genesis 를 뜨니 `baseline_evidence_seq: -1` · 델타 **18** = store **18** 로 맞았다.
+
+**기동 줄** — 부팅 증명을 기다렸다가 보낸 실제 본문(계좌 좌표 없음):
+
+```text
+TOS paper 상주 세션 기동 (2026-10-03 LONG)
+boot proof: OK · boot 2.0s · genesis=True · rev aae1cec6e73b · A05610
+activation ACTIVATED 5 (re-derived in a fresh process)
+evidence schema user_version=2 v2-shape=True · baseline_seq=-1
+worktree aae1cec6e73b · digests match release.yaml
+data dir … (genesis=yes) · 수집 5s · 정지 15:45 KST
+실주문 0 (SYNTHETIC_FUTURES_ORDER · 모의 계좌 좌표). 로그 …
+```
 
 **가드 경로** — 세 가드의 **실패 입력**을 실제로 먹여 봤다:
 
