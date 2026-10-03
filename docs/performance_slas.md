@@ -1,7 +1,7 @@
 # Performance Service Level Agreements (SLAs)
 
 **Version:** 2.0
-**Last Updated:** 2026-10-02
+**Last Updated:** 2026-10-03
 **Status:** Current
 
 This document tracks current runtime performance targets for the KIS Unified STS
@@ -281,6 +281,90 @@ raw values landed 63 points apart after correction:
 It is kept because the common-mode effect is real; medians are what damp the
 estimator's own variance.
 
+### An error needs both ratios (2026-10-03)
+
+A factor **below** 1.0 divides a raw change **up**. While the threshold was
+applied to the normalized ratio alone, the normalizer could manufacture an
+error out of a benchmark that was inside the threshold on the wall clock.
+
+Measured on one commit — `586c7bc2` (PR #851: one config YAML plus four docs
+files, none of them imported by anything in `tests/performance/`) — as the two
+attempts of CI run `37101956657`, twelve minutes apart:
+
+| attempt | runner | benchmark | raw | normalized | old verdict |
+| ---: | ---: | --- | ---: | ---: | --- |
+| 1 | x1.066 | `test_scalability_summary` | +177.8% | +160.5% | error |
+| 1 | x1.066 | `test_memory_usage_scaling` | +159.1% | +143.0% | error |
+| 2 | x0.533 | `test_memory_usage_scaling` | +10.2% | +106.6% | **error** |
+| 2 | x0.533 | `test_scalability_summary` | +6.2% | +99.2% | warning |
+| 2 | x0.533 | `test_end_to_end_latency_100_msgs` | **-3.5%** | **+81.0%** | warning |
+
+Attempt 2's error is the defect in one line: +10.2% on the wall clock, failed
+as a +106.6% regression because the divisor was 0.533.
+
+And x0.533 was not a runner speed. The sixteen comparable raw ratios behind it
+spanned x0.39–x1.10 in at least three clusters — redis x0.39–x0.49,
+orchestrator hot path x0.53–x0.54, orchestrator scalability x1.06–x1.10 — and
+the median landed on the middle one. A median over a multi-modal set is not a
+common-mode estimate. The same shape is what turns a benchmark that ran 3.5%
+**faster** into a "+81.0% slower" warning.
+
+So the **error** verdict now requires the raw ratio **and** the normalized
+ratio to breach the error threshold. Either one alone is a warning, reported as
+`UNCONFIRMED REGRESSION` naming which one breached. The normalizer keeps the
+power it was added for — acquitting a uniformly slow runner, where raw breaches
+and normalized does not — and loses the power it was never meant to have. The
+rule is a no-op whenever the factor is 1.0, because the two ratios are then the
+same number.
+
+The report header now also prints the band of raw ratios the factor was taken
+over, so a reader can see a non-common-mode factor without deriving it from the
+per-benchmark rows.
+
+**What this gives up, deliberately:** the raw ratio is now a *necessary*
+condition, so a genuine regression smaller than the raw error threshold can
+never fail the build however fast the runner was — on a x0.5 runner a true 1.9x
+regression reads as a warning. Accepted, because the alternative is convicting
+on an estimator whose own spread inside a single run is the x0.39–x1.10 above.
+The **warning** path is unchanged: it still fires off the normalized ratio
+alone, so the "+81.0% slower" line above is still printed. Closing that is
+separate work.
+
+### A timed region containing `gc.collect()` measures the process heap
+
+`check_regression.py` compares pytest's **setup + call + teardown** wall time.
+Everything a benchmark does lands in that number, so a benchmark that calls
+`gc.collect()` inside itself is timing a full walk of the whole pytest
+process's live object graph — set by what the session imported and what earlier
+tests left allocated, and not by the code under test. Measured 2026-10-03 on
+the deploy host:
+
+| extra tracked objects | 8x `gc.collect()` |
+| ---: | ---: |
+| 0 (bare process, 5,240 tracked) | 2.0 ms |
+| 200,000 | 184.7 ms |
+| 600,000 | 582.9 ms |
+| 1,200,000 | 1197.9 ms |
+
+That is linear, and it is also memory-latency bound rather than CPU bound, so
+it moves **opposite** to the rest of the suite when the runner changes. In run
+`37115379025` the six pure-CPU hot-path benchmarks ran 42-45% faster in the
+same job where `test_scalability_summary` and `test_memory_usage_scaling` read
++248.5% and +228.8%. Those two spent 101-281 ms per round of which their own
+timed loop, which they print, was 4-6 ms.
+
+`_benchmark_orchestrator_cycle` called `gc.collect()` twice per call to bracket
+a memory delta taken from `_get_process_memory_mb()`, which returned a
+hardcoded `0.0`. The reading was always 0.00 MB and nothing asserted on it.
+Both collections and the dead reading were removed in #857; the cycle-time SLA
+assertions are untouched.
+
+**The rule for a new benchmark:** nothing in the test body may have a cost
+proportional to the whole process rather than to the work being measured —
+`gc.collect()`, `gc.get_objects()`, a full `tracemalloc` snapshot, an
+`importlib` sweep. Measure the work, and if a memory figure is genuinely
+wanted, assert it somewhere the checker does not time.
+
 ### Baseline format and provenance
 
 `tests/performance/baselines.json` is either a legacy pytest-json-report (read
@@ -317,11 +401,46 @@ fields are inherited from it and the laptop is recorded under `aggregated_on`.
 
 | | |
 | --- | --- |
-| taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) |
-| runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 |
-| commit | `16d7101e` (PR #845) |
-| rounds | 9 — all 25 benchmarks have n=9, no round failed |
+| taken | 2026-10-02, `performance-baseline` run [36976948070](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/36976948070) — 19 of 25 entries |
+| re-measured | 2026-10-03, run [37120153137](https://github.com/kakao-harris-lee/kis_unified_sts/actions/runs/37120153137) at `d4e8a1cd` (PR #857) — the 6 entries of `test_orchestrator_scalability.py` |
+| runner | `github-actions-ubuntu24-X64`, 4 vCPU, Python 3.11.16 (both runs) |
+| commit | `16d7101e` (PR #845) for the 19, `d4e8a1cd` (PR #857) for the 6 |
+| rounds | 9 in both runs — all 25 benchmarks have n=9, no round failed |
 | excluded | none |
+
+**Why 6 entries were replaced and 19 were not.** PR #857 removed the
+`gc.collect()` calls from `_benchmark_orchestrator_cycle`, so every benchmark
+in `test_orchestrator_scalability.py` changed its measured window and its old
+entry describes code that no longer runs. The other 19 were left on the
+2026-10-02 anchor deliberately: re-anchoring them to one more runner adds an
+arbitrary offset this change has no reason to introduce. `provenance.
+partial_regeneration` in the file records which entries moved, from which run,
+and why. The re-measuring run is a representative runner, not a fast one — its
+19 unchanged benchmarks land within x0.99–x1.07 of the committed values.
+
+| benchmark | before | after |
+| --- | ---: | ---: |
+| `test_cycle_time_1_position` | 0.0259s | 0.0008s |
+| `test_cycle_time_5_positions` | 0.0202s | 0.0014s |
+| `test_cycle_time_10_positions` | 0.0211s | 0.0021s |
+| `test_cycle_time_20_positions` | 0.0223s | 0.0036s |
+| `test_memory_usage_scaling` | 0.0803s | 0.0062s |
+| `test_scalability_summary` | 0.0806s | 0.0063s |
+
+All nine rounds agree to within 0.0004s (`sd` <= 0.0001s for all six). The
+`gc.collect()` pair was **92%** of those two comparable benchmarks on a normal
+runner, and more on a slow one.
+
+**Consequence, stated rather than discovered later:** at 6.2–6.3 ms both
+formerly-compared benchmarks are now below `PERF_MIN_DURATION` (50 ms), so the
+checker exempts them from ratio comparison and the suite compares 14
+benchmarks instead of 16. They are not unguarded — each still asserts its own
+SLA inside the test (cycle time under 100/500/5000/10000 ms by position count,
+and scaling factor <= 20x), and a majority of rounds failing such an assertion
+is an error in the checker's round-outcome verdict. What is gone is the
+baseline-ratio check on a number that was 92% garbage collection. Removing
+them also narrows the runner-factor estimate: the same run reads a band of
+x0.99–x1.07 over 14 ratios where the old set spanned x0.99–x1.27.
 
 It replaces the 2026-05-30 single-sample file. Checked against that file
 before replacing it: 0 errors, 0 warnings, 25 pass (runner factor x1.12), so

@@ -32,23 +32,11 @@ This allows us to identify orchestrator-specific bottlenecks.
 
 from __future__ import annotations
 
-import gc
 import time
 from datetime import datetime
 from typing import Any
 
 from shared.models.position import Position, PositionSide, PositionState
-
-
-def _get_process_memory_mb() -> float:
-    """Get approximate process memory usage in MB.
-
-    Uses sys.getsizeof for approximate memory measurement without psutil dependency.
-    Note: This is a rough estimate, not precise process memory.
-    """
-    # Return 0 as placeholder - memory tracking is optional for this benchmark
-    # The primary metric is cycle time, memory is secondary
-    return 0.0
 
 
 def _create_test_positions(count: int) -> list[Position]:
@@ -209,24 +197,37 @@ def _simulate_position_update_cycle(positions: list[Position]) -> None:
             position.state = PositionState.MAXIMIZE
 
 
-def _benchmark_orchestrator_cycle(position_count: int, iterations: int = 100) -> tuple[float, float]:
+def _benchmark_orchestrator_cycle(position_count: int, iterations: int = 100) -> float:
     """Benchmark a full orchestrator cycle with N positions.
+
+    No ``gc.collect()`` here. It used to bracket the loop, twice per call, to
+    take a memory delta either side -- from ``_get_process_memory_mb()``, which
+    returned a hardcoded ``0.0``. The delta was always 0.00 MB, no test
+    asserted on it, and those two full collections were nearly the whole cost
+    of this benchmark as the regression checker measures it.
+
+    The checker sums pytest's setup+call+teardown wall time, so anything this
+    function does lands in the number. A full collection walks the entire live
+    object graph of the pytest process -- set by what the session imported and
+    what earlier tests left allocated, not by the code under test. Measured
+    2026-10-03 (#768): 8 collections cost 2.0 ms in a bare process and 1198 ms
+    with 1.2M extra tracked objects. In CI that made ``test_scalability_summary``
+    and ``test_memory_usage_scaling`` 101-281 ms per round whose own timed loop,
+    printed by the callers, summed to 4-6 ms. They were measuring the heap: in
+    run 37115379025 they read +249% and +229% in the same job where the
+    pure-CPU hot-path benchmarks ran 44% faster.
 
     Args:
         position_count: Number of concurrent positions
         iterations: Number of cycles to run
 
     Returns:
-        tuple: (average_cycle_time_ms, memory_usage_mb)
+        Average cycle time in milliseconds.
     """
     # Setup: Create positions and market data
     positions = _create_test_positions(position_count)
     symbols = [f"{i:06d}" for i in range(position_count * 5)]  # 5x symbols for entry scanning
     market_data = _create_test_market_data(symbols)
-
-    # Measure initial memory
-    gc.collect()
-    initial_memory_mb = _get_process_memory_mb()
 
     # Benchmark cycle time
     cycle_times = []
@@ -243,15 +244,8 @@ def _benchmark_orchestrator_cycle(position_count: int, iterations: int = 100) ->
         cycle_time_ms = (end_time - start_time) * 1000
         cycle_times.append(cycle_time_ms)
 
-    # Measure final memory
-    gc.collect()
-    final_memory_mb = _get_process_memory_mb()
-    memory_delta_mb = final_memory_mb - initial_memory_mb
-
     # Calculate average cycle time
-    avg_cycle_time_ms = sum(cycle_times) / len(cycle_times)
-
-    return avg_cycle_time_ms, memory_delta_mb
+    return sum(cycle_times) / len(cycle_times)
 
 
 class TestOrchestratorScalability:
@@ -266,7 +260,7 @@ class TestOrchestratorScalability:
         position_count = 1
         iterations = 100
 
-        avg_cycle_time_ms, memory_delta_mb = _benchmark_orchestrator_cycle(
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
             position_count, iterations
         )
 
@@ -274,7 +268,6 @@ class TestOrchestratorScalability:
         print("Orchestrator Cycle Time - 1 Position (Baseline)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
-        print(f"Memory delta: {memory_delta_mb:.2f} MB")
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
@@ -292,7 +285,7 @@ class TestOrchestratorScalability:
         position_count = 5
         iterations = 100
 
-        avg_cycle_time_ms, memory_delta_mb = _benchmark_orchestrator_cycle(
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
             position_count, iterations
         )
 
@@ -300,7 +293,6 @@ class TestOrchestratorScalability:
         print("Orchestrator Cycle Time - 5 Positions")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
-        print(f"Memory delta: {memory_delta_mb:.2f} MB")
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
@@ -320,7 +312,7 @@ class TestOrchestratorScalability:
         position_count = 10
         iterations = 100
 
-        avg_cycle_time_ms, memory_delta_mb = _benchmark_orchestrator_cycle(
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
             position_count, iterations
         )
 
@@ -328,7 +320,6 @@ class TestOrchestratorScalability:
         print("Orchestrator Cycle Time - 10 Positions (SLA Target)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
-        print(f"Memory delta: {memory_delta_mb:.2f} MB")
         print(f"Iterations: {iterations}")
         print("SLA Requirement: < 5000 ms (5 seconds)")
         print(f"SLA Status: {'✓ PASS' if avg_cycle_time_ms < 5000 else '✗ FAIL'}")
@@ -348,7 +339,7 @@ class TestOrchestratorScalability:
         position_count = 20
         iterations = 100
 
-        avg_cycle_time_ms, memory_delta_mb = _benchmark_orchestrator_cycle(
+        avg_cycle_time_ms = _benchmark_orchestrator_cycle(
             position_count, iterations
         )
 
@@ -356,7 +347,6 @@ class TestOrchestratorScalability:
         print("Orchestrator Cycle Time - 20 Positions (Stress Test)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
-        print(f"Memory delta: {memory_delta_mb:.2f} MB")
         print(f"Iterations: {iterations}")
         print(f"{'='*60}\n")
 
@@ -384,11 +374,10 @@ class TestOrchestratorScalability:
         print(f"{'='*60}")
 
         for count in position_counts:
-            avg_cycle_time_ms, memory_delta_mb = _benchmark_orchestrator_cycle(count, iterations)
+            avg_cycle_time_ms = _benchmark_orchestrator_cycle(count, iterations)
             results.append({
                 "positions": count,
                 "cycle_time_ms": avg_cycle_time_ms,
-                "memory_delta_mb": memory_delta_mb,
             })
 
             print(f"{count} positions: {avg_cycle_time_ms:.2f} ms cycle time")
@@ -431,7 +420,7 @@ class TestOrchestratorScalability:
         results = []
 
         for count in position_counts:
-            avg_cycle_time_ms, memory_delta_mb = _benchmark_orchestrator_cycle(count, iterations)
+            avg_cycle_time_ms = _benchmark_orchestrator_cycle(count, iterations)
 
             # Determine status based on position count
             if count == 10:
@@ -448,7 +437,6 @@ class TestOrchestratorScalability:
             results.append({
                 "positions": count,
                 "cycle_time_ms": avg_cycle_time_ms,
-                "memory_delta_mb": memory_delta_mb,
             })
 
         print(f"{'-'*70}")

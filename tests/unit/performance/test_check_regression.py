@@ -162,6 +162,262 @@ class TestNormalizedRegressionGate:
         assert "BELOW FLOOR" in tiny.message
 
 
+# Two real measurements of ONE commit (586c7bc2 on PR #851 -- a config YAML plus
+# four docs files, none of them imported by anything in tests/performance/),
+# taken as attempt 1 and attempt 2 of CI run 37101956657, twelve minutes apart.
+# Every pair is (baseline median, current median) in seconds for the benchmarks
+# that clear the 0.05s noise floor, read from each attempt's uploaded
+# performance-report artifact against tests/performance/baselines.json. The
+# runner factor is NOT hardcoded in these tests: these numbers produce it.
+_HOT = (
+    "tests/performance/test_orchestrator_hot_path_benchmark.py"
+    "::TestOrchestratorHotPathBenchmark"
+)
+_SCAL = (
+    "tests/performance/test_orchestrator_scalability.py" "::TestOrchestratorScalability"
+)
+_REDIS = "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD"
+_WS = "tests/performance/test_websocket_load.py::TestWebSocketLoad"
+
+# Attempt 1: fourteen of the sixteen ratios sit in x1.01-x1.13 and the
+# orchestrator scalability pair sits at x2.59/x2.78; factor x1.066.
+PERF_RUN_37101956657_ATTEMPT_1 = {
+    f"{_HOT}::test_entry_path_scalability_200_symbols": (0.1085, 0.1095),
+    f"{_HOT}::test_aggregate_cost_reduction": (0.1080, 0.1092),
+    f"{_HOT}::test_entry_path_100_symbols": (0.1260, 0.1281),
+    f"{_WS}::test_sustained_load_5000_msgs": (14.1957, 14.6135),
+    f"{_WS}::test_end_to_end_latency_100_msgs": (1.0798, 1.1132),
+    f"{_WS}::test_end_to_end_latency_500_msgs": (1.4172, 1.4637),
+    f"{_WS}::test_peak_load_1000_msgs": (1.7524, 1.8276),
+    f"{_WS}::test_publish_throughput_1000_messages": (0.4360, 0.4711),
+    f"{_REDIS}::test_position_read_all_throughput": (0.5294, 0.5570),
+    f"{_REDIS}::test_concurrent_access_10_workers": (0.4245, 0.4591),
+    f"{_REDIS}::test_position_write_throughput": (2.1525, 2.3590),
+    f"{_REDIS}::test_position_read_throughput": (2.0181, 2.2257),
+    f"{_REDIS}::test_concurrent_access_50_workers": (1.0515, 1.1668),
+    f"{_REDIS}::test_latency_percentiles": (0.4076, 0.4599),
+    f"{_SCAL}::test_memory_usage_scaling": (0.0803, 0.2081),  # x2.591
+    f"{_SCAL}::test_scalability_summary": (0.0806, 0.2239),  # x2.778
+}
+
+# Attempt 2, same commit: the ratios span x0.39-x1.10 in at least three
+# clusters (redis x0.39-x0.49, hot path x0.53-x0.54, scalability x1.06-x1.10)
+# and the median lands on the middle one; factor x0.533. The same two
+# orchestrator benchmarks that read x2.59/x2.78 above read x1.10/x1.06 here,
+# on byte-identical code.
+PERF_RUN_37101956657_ATTEMPT_2 = {
+    f"{_HOT}::test_entry_path_scalability_200_symbols": (0.1085, 0.0579),
+    f"{_HOT}::test_aggregate_cost_reduction": (0.1080, 0.0576),
+    f"{_HOT}::test_entry_path_100_symbols": (0.1260, 0.0686),
+    f"{_WS}::test_sustained_load_5000_msgs": (14.1957, 11.8334),
+    f"{_WS}::test_end_to_end_latency_100_msgs": (1.0798, 1.0423),  # x0.965
+    f"{_WS}::test_end_to_end_latency_500_msgs": (1.4172, 1.1816),
+    f"{_WS}::test_peak_load_1000_msgs": (1.7524, 1.3493),
+    f"{_WS}::test_publish_throughput_1000_messages": (0.4360, 0.1837),
+    f"{_REDIS}::test_position_read_all_throughput": (0.5294, 0.2616),
+    f"{_REDIS}::test_concurrent_access_10_workers": (0.4245, 0.1974),
+    f"{_REDIS}::test_position_write_throughput": (2.1525, 0.8682),
+    f"{_REDIS}::test_position_read_throughput": (2.0181, 0.8456),
+    f"{_REDIS}::test_concurrent_access_50_workers": (1.0515, 0.4873),
+    f"{_REDIS}::test_latency_percentiles": (0.4076, 0.1602),  # x0.393
+    f"{_SCAL}::test_memory_usage_scaling": (0.0803, 0.0885),  # x1.102
+    f"{_SCAL}::test_scalability_summary": (0.0806, 0.0856),  # x1.062
+}
+
+_SCALING = f"{_SCAL}::test_memory_usage_scaling"
+_SUMMARY = f"{_SCAL}::test_scalability_summary"
+_WS_100 = f"{_WS}::test_end_to_end_latency_100_msgs"
+
+
+def _split(fixture: dict[str, tuple[float, float]]):
+    """(baseline map, current map) from a (baseline, current) fixture."""
+    return (
+        {k: v[0] for k, v in fixture.items()},
+        {k: v[1] for k, v in fixture.items()},
+    )
+
+
+def _judge(fixture: dict[str, tuple[float, float]]):
+    """Run the real checker over a fixture: (statuses, comparisons, factor)."""
+    checker = _checker()
+    baseline, current = _split(fixture)
+    factor = checker.runner_speed_factor(baseline, current)
+    comps = checker.compare_metrics(baseline, current, factor)
+    return _statuses(comps), comps, factor
+
+
+class TestErrorNeedsBothRatios:
+    """An error needs the raw AND the normalized ratio over the threshold.
+
+    A runner factor below 1.0 divides a small raw change UP, so thresholding
+    the normalized ratio alone let the normalizer manufacture an error out of a
+    benchmark that was inside the threshold on the wall clock. Both fixtures
+    here are one commit measured twice (CI run 37101956657).
+    """
+
+    def test_attempt_2_reaches_the_old_rules_error_branch(self):
+        """Red proof: the fixture must still trip the rule being replaced.
+
+        Without this, ``test_attempt_2_is_a_warning_not_an_error`` below could
+        pass because the fixture stopped being a counterexample -- a changed
+        baseline, noise floor or factor -- rather than because the new rule
+        works.
+        """
+        checker = _checker()
+        baseline, current = _split(PERF_RUN_37101956657_ATTEMPT_2)
+        factor = checker.runner_speed_factor(baseline, current)
+        raw = current[_SCALING] / baseline[_SCALING]
+        normalized = raw / factor
+
+        assert factor == pytest.approx(0.533, abs=0.005)
+        # The old rule thresholded this number alone -> error.
+        assert normalized >= checker.error_threshold
+        assert normalized == pytest.approx(2.066, abs=0.01)
+        # The wall clock never came close to it.
+        assert raw < checker.error_threshold
+        assert raw == pytest.approx(1.102, abs=0.005)
+
+    def test_attempt_2_is_a_warning_not_an_error(self):
+        """raw +10.2% / normalized +106.6% on a x0.53 factor -> warning."""
+        statuses, _, factor = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        assert factor == pytest.approx(0.533, abs=0.005)
+        assert statuses[_SCALING] == "warning"
+        assert "error" not in statuses.values()
+
+    def test_attempt_1_still_errors_because_both_ratios_breach(self):
+        """raw +177.8% / normalized +160.5% on a x1.07 factor -> still error.
+
+        The new rule must not acquit this one: the pair is 2.6x the baseline on
+        the wall clock while the other fourteen comparable ratios sit inside
+        x1.01-x1.13.
+        """
+        statuses, _, factor = _judge(PERF_RUN_37101956657_ATTEMPT_1)
+        assert factor == pytest.approx(1.066, abs=0.005)
+        assert statuses[_SUMMARY] == "error"
+        assert statuses[_SCALING] == "error"
+        assert sorted(n for n, s in statuses.items() if s == "error") == sorted(
+            [_SCALING, _SUMMARY]
+        )
+
+    def test_the_normalized_only_warning_path_is_unchanged(self):
+        """Not fixed here: a benchmark 3.5% FASTER still warns at "+81.0%".
+
+        The warning path still fires off the normalized ratio alone. Pinned so
+        the next reader sees the remaining defect instead of assuming this
+        change closed it.
+        """
+        statuses, comps, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        ws = next(c for c in comps if c.test_name == _WS_100)
+        assert ws.change_percent == pytest.approx(-3.5, abs=0.1)
+        assert ws.normalized_change_percent == pytest.approx(81.0, abs=0.5)
+        assert statuses[_WS_100] == "warning"
+
+    def test_message_names_the_ratio_that_breached_alone(self):
+        _, comps, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        message = next(c for c in comps if c.test_name == _SCALING).message
+        assert "UNCONFIRMED REGRESSION" in message
+        assert "only the normalized ratio" in message
+        assert "+10.2%" in message and "+106.6%" in message
+
+    def test_a_slow_runner_breaching_on_raw_alone_is_also_a_warning(self):
+        """The other half of "one alone": raw over, normalized under.
+
+        Eight benchmarks 2.5x slower together is one slow runner, not eight
+        regressions, so the factor is 2.5 and every normalized ratio is 1.0.
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.25 for i in range(8)}
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(2.5)
+        comps = checker.compare_metrics(baseline, current, factor)
+        assert {c.status for c in comps} == {"warning"}
+        assert all("only the raw ratio" in c.message for c in comps)
+
+    def test_rule_is_a_no_op_when_nothing_is_normalized(self):
+        """factor 1.0 -> the two ratios are one number -> the old verdict."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.10 for i in range(8)}
+        current["t3"] = 0.22
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.0)
+        statuses = _statuses(checker.compare_metrics(baseline, current, factor))
+        assert statuses["t3"] == "error"
+
+    def test_a_real_regression_under_the_raw_threshold_can_only_warn(self):
+        """The cost of the rule, pinned so it is not discovered by surprise.
+
+        The raw ratio is now NECESSARY, so on a runner twice as fast as the
+        baseline's a genuine 1.9x regression is a warning and the build stays
+        green. Accepted: the alternative is convicting on an estimator whose
+        own spread inside one run is x0.39-x1.10 (attempt 2 above).
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.05 for i in range(8)}
+        current["t3"] = 0.19  # 1.9x raw, 3.8x once normalized
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(0.5)
+        comp = next(
+            c
+            for c in checker.compare_metrics(baseline, current, factor)
+            if c.test_name == "t3"
+        )
+        assert comp.normalized_change_percent == pytest.approx(280.0, abs=0.5)
+        assert comp.status == "warning"
+
+
+class TestComparableRatioBand:
+    def test_band_shows_the_factor_was_not_common_mode(self):
+        """Attempt 2's ratios span 2.8x, so its median is not a runner speed."""
+        checker = _checker()
+        _, comps, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        low, high, count = checker.comparable_ratio_band(comps)
+        assert count == 16
+        assert low == pytest.approx(0.393, abs=0.005)
+        assert high == pytest.approx(1.102, abs=0.005)
+
+    def test_band_is_tight_when_the_factor_is_common_mode(self):
+        """Attempt 1: fourteen of sixteen inside x1.01-x1.13, two outliers."""
+        checker = _checker()
+        _, comps, _ = _judge(PERF_RUN_37101956657_ATTEMPT_1)
+        low, high, count = checker.comparable_ratio_band(comps)
+        assert count == 16
+        assert low == pytest.approx(1.009, abs=0.005)
+        assert high == pytest.approx(2.778, abs=0.005)
+
+    def test_band_excludes_subfloor_benchmarks(self):
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(5)}
+        baseline["tiny"] = 0.001
+        current = {f"t{i}": 0.10 for i in range(5)}
+        current["tiny"] = 0.05  # 50x, below the floor
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        low, high, count = checker.comparable_ratio_band(comps)
+        assert (count, low, high) == (5, 1.0, 1.0)
+
+    def test_band_is_none_without_comparable_benchmarks(self):
+        assert _checker().comparable_ratio_band([]) is None
+
+    def test_band_covers_exactly_what_the_factor_was_taken_over(self):
+        """A zero-duration current median is dropped by both, or by neither.
+
+        ``runner_speed_factor`` skips a benchmark whose current median is 0;
+        if the band kept it the band would report x0.00 as the low end of a
+        median that never saw it.
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(6)}
+        current = {f"t{i}": 0.10 for i in range(6)}
+        current["t0"] = 0.0
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.0)
+        comps = checker.compare_metrics(baseline, current, factor)
+        low, high, count = checker.comparable_ratio_band(comps)
+        assert (count, low, high) == (5, 1.0, 1.0)
+
+
 class TestExtractDurations:
     def test_sums_phases_for_passed_tests_only(self):
         checker = _checker()
