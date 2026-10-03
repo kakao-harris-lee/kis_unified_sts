@@ -257,8 +257,8 @@ crontab 한 줄(운영자)과 2026-10-06 genesis(ops-paper 레인). 이 절은 �
 | **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
 | **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 미등재** · sha256 `d7e52b2f7f34ba72cb927341848c600e1bc99172975b70f9bd64641ab49be1f0` |
-| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | — | 아직 없음(래퍼가 소유) |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨** — 운영자가 2026-10-03 에 `0 18 * * 1-5` · `CRON_TZ=Asia/Seoul` 로 넣었다(§4-5-3). sha256 `142d8c123c7ba91f864bc2a23288da065976e5685a7e2e6dc3b48030d26d88c9`(PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다 — §4-5-4) |
+| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | 존재(743 B) — PR #855 의 `--selftest` 실행 한 블록(PRE-GENESIS rc 0). 래퍼가 소유한다 |
 | cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | — | 아직 없음. **비어 있는 것이 정상**(§4-5-3) |
 | 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5) |
 | 대상 data dir | `~/.local/state/tos/paper-data` | — | **아직 없다** — 2026-10-06 genesis 예정 |
@@ -384,15 +384,21 @@ cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHI
 `gen1.verify` 가 **남았다**(거부 원인의 증거). 다음 실행은 그 번호를 **건너뛰어** gen2 를
 썼다. **이 거동은 PR #855 가 바꾸지 않았고, 이제 테스트가 고정한다.**
 
-### 4-5-3. 남은 것은 둘 — crontab 한 줄과 genesis
+### 4-5-3. 남은 것은 하나 — genesis (cron 은 2026-10-03 에 등재됐다)
 
-설정의 한 줄 편집은 **끝났다**(§4-5-2). 대상도 래퍼의 기본값으로 들어갔다. 남은 것은:
+설정의 한 줄 편집은 **끝났다**(§4-5-2). 대상도 래퍼의 기본값으로 들어갔다.
 
-1. **crontab 한 줄** — 운영자가 넣는다. **이 작업은 crontab 을 건드리지 않았다.**
+1. ✅ **crontab 한 줄 — 운영자가 2026-10-03 에 넣었다.** 이 절은 그 전까지 「남은 것
+   둘」이라고 적고 있었고, 줄이 들어간 뒤로 **거짓**이었다(PR #855 에서 발견·정정).
+   실측한 등재 내용은 아래 블록 그대로이고, **PR #855 도 crontab 을 건드리지 않았다** —
+   넣는 것도 빼는 것도 운영자가 한다.
 2. **2026-10-06 genesis** — `ops-paper` 레인의 첫 상주 세션이 대상 디렉터리를 만든다.
+   **이것만 남았다.**
 
-둘이 다 되면 **첫 실제 아카이브는 2026-10-06(화) 저녁 18:00 KST 실행**에서 나온다.
-그 전까지 cron 을 넣어 두어도 되고, 그 밤들은 `PRE-GENESIS` 로 끝난다(§4-5-4).
+아직 한 번도 발화하지 않았다(2026-10-03 토요일 20:3x KST 기준 `cold-backup.cron.log`
+부재). 결함이 아니라 요일이다 — 스펙이 `1-5`(월–금)이므로 토요일에는 돌지 않는다.
+**첫 발화는 2026-10-05(월) 18:00 KST** 이고 genesis 하루 전이라 `PRE-GENESIS` rc 0 로
+끝난다(§4-5-4). **첫 실제 아카이브는 2026-10-06(화) 18:00 KST** 실행에서 나온다.
 
 ```cron
 CRON_TZ=Asia/Seoul
@@ -469,25 +475,30 @@ CRON_TZ=Asia/Seoul
 | `unclassified` | 1 | 위 어느 형태도 아닌 줄 | **보냄** | 래퍼가 모르는 형태다. 못 알아본 줄을 깨끗한 분류로 접어 넣지 않는다 |
 | `ABORT` | **2** | 로그 디렉터리 생성 실패 · 락 파일 열기 실패 · 모르는 인자 · 인자 과다 · mktemp 실패 | ⛔ **못 보냄** | 통지 수단 자체를 세우지 못한 경우다. 앞의 넷은 **stderr 한 줄**뿐이고(로그 파일에도 안 남는다), mktemp 실패만 `log()` 를 거쳐 **래퍼 로그와 stdout 양쪽에** 남는다. 어느 쪽이든 cron 리다이렉트가 받는 곳은 `cold-backup.cron.log` 다 — **§4-5-6 의 아침 확인이 이것을 잡는 유일한 수단이다** |
 
-⚠ **래퍼의 `classify()` 는 일반 패턴이 아니라 접두 리터럴을 열거한다 (2026-10-03 실측,
-PR #855).** 위 `refused` 행의 `[<layer> ]refused` 는 **이상형**이고, 실제 코드는 다섯 줄
-(`refused` · `snapshot refused` · `archive refused` · `integrity refused` ·
-`custody refused`)을 그대로 적어 놓은 `case` 다. PR #855 가 더한 **여섯 번째 접두
-`migrate refused` 는 그 열거에 없어 `unclassified` 로 간다** — 그 줄을 `classify()` 에
-직접 먹여 확인했다(`integrity refused` → `refused` · `archive failed` → `failed` 와
-나란히). 종료코드 1 과 텔레그램 한 줄은 그대로 가고 「래퍼가 모르는 형태다」로 보고되므로
-**조용하지는 않지만 라우팅이 틀리다**: §5 가 「재실행이 답이 아니다」라고 적은 둘 중
-하나가 「호스트를 고쳐라」 쪽으로 읽힌다.
-
-래퍼는 이 저장소 밖에 있어 PR #855 가 건드리지 않았다. 남은 조치는 `classify()` 의
-`case` 에 한 줄을 더하는 것이고, **운영자가 넣는다**:
+✅ **래퍼의 `classify()` 는 일반 패턴이 아니라 접두 리터럴을 열거한다 — 그래서 새 접두는
+가지를 하나 더해야 했다 (PR #855 에서 닫았다, 2026-10-03).** 위 `refused` 행의
+`[<layer> ]refused` 는 **이상형**이고, 실제 코드는 접두를 그대로 적어 놓은 `case` 다.
+PR #855 가 디스패치에 더한 여섯 번째 접두 `migrate refused` 는 **그 열거에 없어
+`unclassified` 로 갔다** — 실측으로 확인한 뒤, 같은 PR 에서 래퍼에 가지를 더했다:
 
 ```sh
     "cold-backup: migrate refused — "*)   printf 'refused\n' ;;
 ```
 
-그 줄을 넣기 전까지 이 접두는 `UNCLASSIFIED` 로 온다 — 받으면 §5 의 `migrate refused`
-행으로 간다.
+이제 여섯 접두가 모두 `refused` 다. 래퍼 sha256 이 `d7e52b2f…` → `142d8c12…` 로
+움직였고 §4-5-1 표의 값이 그것이다. **crontab 은 건드리지 않았다.**
+
+⚠ **가지를 더하는 변경이 기존 분류를 바꾸지 않았다는 것은 주장이 아니라 측정이다.**
+`classify()` 를 옛 판과 새 판에서 각각 떼어 내 **같은 14줄**(여섯 접두 · `snapshot/
+archive/report/config failed` · 접두 없는 `failed` · 모르는 줄 · 빈 stderr · rc 0)에
+먹이고 출력을 비교했다. **다른 줄은 정확히 하나** — `migrate refused` 가
+`unclassified` → `refused` 로 뒤집힌 것뿐이고, 나머지 열셋은 바이트까지 같다.
+`case` 는 순서가 있는 구조라 새 가지가 뒤 가지를 가릴 수 있는데, 그러지 않았음을
+그 대조가 보인다.
+
+그 뒤 래퍼를 호스트에서 `--selftest` 로 한 번 돌렸다(2026-10-03 20:34:57 KST):
+파싱·실행되고 `PRE-GENESIS` rc 0 로 끝났으며 텔레그램 한 줄이 `[SELFTEST]` 태그로
+나갔다. 그 블록이 `~/.local/state/tos/cold-backup.log` 의 첫 내용이다.
 
 통지가 **빠질 수 있는** 두 경우도 적어 둔다: `.env` 의 briefing 두 줄이 없으면 실행은
 계속되고 로그에 `notify skipped: briefing credentials not found` 가 남는다. curl 이
@@ -506,6 +517,16 @@ PR #855).** 위 `refused` 행의 `[<layer> ]refused` 는 **이상형**이고, �
 표의 값과 로그에 찍힌 값이 어긋난다 — 그 대조가 이 줄의 존재 이유이므로 **전 구간을 다시
 돌렸다**. 앞 래퍼판의 로그는 `selftest-20261003.round1.log` 로 **남겨 두었다**(지우지
 않는다). 두 판의 차이는 주석 블록 하나뿐이고 모든 결말이 같다.
+
+⚠⚠ **이 로그의 sha256 은 이제 §4-5-1 표의 값과 다르다 — 그리고 이번에는 전 구간을 다시
+돌리지 않았다.** PR #855 이 `classify()` 에 가지를 하나 더해 래퍼가 `d7e52b2f…` →
+`142d8c12…` 로 움직였다. 바로 위 문단의 규율(「어긋나면 다시 돌린다」)을 그대로 적용하지
+않은 이유를 적는다: 그때 어긋나게 만든 변경은 **종료코드 범례 주석**이라 어느 결말이
+바뀌었는지 문서만 보고는 알 수 없었고, 이번 변경은 `classify()` **자체**라서 무엇이
+바뀌는지 직접 잴 수 있다. 그래서 전 구간 재실행 대신 **옛 판과 새 판의 `classify()` 를
+같은 14줄에 먹여 출력을 대조했다**: 다른 줄은 `migrate refused` 하나뿐이고 나머지
+열셋은 같다(§4-5-4). 이 로그가 증명한 R1-R11 중 `migrate refused` 를 낸 것은 **없으므로**
+열한 결말은 그대로다. 더 강한 증거를 원하면 전 구간 재실행이 답이고, 그것은 하지 않았다.
 
 ⚠ **스스로 적발한 하네스 결함 둘 — 적어 둔다.** ① 다시 돌린 1차에서 R7-R11 을
 `"$W" … || true` 로 감쌌더니 `$?` 가 `true` 의 종료코드가 되어 **모든 실행이 `exit=0` 으로
