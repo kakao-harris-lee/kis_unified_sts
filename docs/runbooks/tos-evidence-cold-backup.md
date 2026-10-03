@@ -390,8 +390,18 @@ cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHI
 
 1. ✅ **crontab 한 줄 — 운영자가 2026-10-03 에 넣었다.** 이 절은 그 전까지 「남은 것
    둘」이라고 적고 있었고, 줄이 들어간 뒤로 **거짓**이었다(PR #855 에서 발견·정정).
-   실측한 등재 내용은 아래 블록 그대로이고, **PR #855 도 crontab 을 건드리지 않았다** —
-   넣는 것도 빼는 것도 운영자가 한다.
+   **PR #855 도 crontab 을 건드리지 않았다** — 넣는 것도 빼는 것도 운영자가 한다.
+   실측한 등재 내용을 **그대로** 옮긴다(`crontab -l`, 2026-10-03):
+
+   ```cron
+   # A3 콜드 백업 야간 (운영자 결정 2026-10-03 · 바닥 50 GiB · 대상 paper-data, 10-06 genesis 전엔 PRE-GENESIS rc=0 · 런북 tos-evidence-cold-backup.md §4-5-3)
+   CRON_TZ=Asia/Seoul
+   0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly
+   ```
+
+   ⚠ 아래 권장 블록과 **글자 그대로 같지는 않다**: 일정·스크립트 경로·리다이렉트 대상은
+   같고, 설치본에는 다른 머리 주석과 끝의 `# cold-backup-nightly` 태그가 붙어 있다.
+   그 태그는 이 호스트의 다른 cron 줄들이 쓰는 식별 관례다.
 2. **2026-10-06 genesis** — `ops-paper` 레인의 첫 상주 세션이 대상 디렉터리를 만든다.
    **이것만 남았다.**
 
