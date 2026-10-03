@@ -819,7 +819,7 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 
 | 무엇 | 어디 | 비고 |
 | --- | --- | --- |
-| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · mode 0755(런타임이 만든다) — 증거는 계좌 지문을 담지 않지만 공유 호스트이므로 운영자가 좁힐 수 있다 |
+| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · ⚠ **0700 이어야 한다 — 아직 아니다(§7.2-a)** |
 | 세션 래퍼 | `~/.config/kis-probes/tos-paper-session.sh` | mode 700 · 비커밋 |
 | 세션 드라이버 | `~/.config/kis-probes/tos_paper_session.py` | mode 700 · 비커밋 |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다**(§7.3 3) · **0755** — 좌표를 담지 않는 공개 `origin/main` 내용이라 0700 대상이 아니다 |
@@ -857,6 +857,61 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 | ⛔ `TOS_PAPER_FAKE_DATE` | (없음) | 달력 검사만 이 날짜로 본다 |
 | ⛔ `TOS_PAPER_MINUTES` | (없음) | 안전망 마감을 직접 준다 — **§7.3 6 의 「마감이 지났다」 검사를 건너뛴다** |
 | `--selftest` (플래그) | — | 텔레그램 줄에 `[SELFTEST] ` 접두 |
+
+#### 7.2-a ⚠ 상주 data dir 은 0700 이어야 한다 — 아직 아니다 (실측 2026-10-03)
+
+이 표의 1차 판은 상주 data dir 을 **0755 로 두어도 된다**고 적고 그 근거로 「증거는 계좌
+지문을 담지 않는다」를 들었다. **그 근거는 틀렸다.** 증거가 담지 않는 것은 *지문*이고,
+**결정 계열 행은 계좌번호를 평문으로 담는다**:
+
+- `DECISION_OUTCOME_EMITTED` · `DECISION_WITHHELD` · `FLOW_HALTED` 의 payload 에
+  `instrument_key: {account, instrument}` 가 있다(09-28 코퍼스 실측 — 1,492 행 중 236 행.
+  질의와 개수는 §7.10 7 (c)).
+- 즉 지문보다 **나쁘다.** §2 는 지문을 두고 「유출된 지문은 유출된 계좌번호로 취급한다」고
+  적는데, 여기 있는 것은 취급의 문제가 아니라 **계좌번호 그 자체**다.
+- 그러므로 상주 data dir 은 §7.2 의 **좌표를 담는 트리**이고, 다른 다섯과 같은 **0700** 이어야
+  한다. 「공유 호스트이므로 운영자가 좁힐 수 있다」는 선택이 아니라 **요건**이다.
+
+**현재 상태: 고쳐지지 않았다.** 런타임은 디렉터리를 만들 때 모드를 지정하지 않고
+(`tos_runtime/operations/*.py` 의 `mkdir` 전부 모드 인자 없음) sqlite 도 마찬가지라,
+**실제 모드는 프로세스 umask 가 정한다.** 09-27/28 코퍼스 열두 개의 실측이 그 증거다 —
+디렉터리 `drwxrwxr-x`(0775) · 본체 `-rw-r--r--`(0644), 곧 당시 umask 002 다. 상주 세션도
+같은 경로로 만들어지므로 **10-06 genesis 는 0755/0644 로 나온다.**
+
+📌 **TODO(운영자 · 10-06 genesis 전) — 호스트 래퍼 두 줄.** 저장소 파일이 아니라
+`~/.config/kis-probes/tos-paper-session.sh`(비커밋 · mode 700) 의 변경이고, 이 PR 의
+에이전트 레인은 그 디렉터리에 **쓰기 권한이 없어 적용하지 못했다**(권한 거부 — 적용은
+운영자). 적용할 변경은 둘:
+
+1. **드라이버 기동만** `umask 077` 로 감싼다. 전역으로 걸지 **말 것** — `$WT` 분리
+   워크트리는 이 표가 **의도적으로 0755** 라고 적은 공개 트리다(좌표를 담지 않는
+   `origin/main` 내용). 서브셸 + `exec` 로 묶으면 `$!` 가 그대로 드라이버 PID 라
+   `wait`/`kill` 경로가 바뀌지 않는다:
+
+   ```bash
+   ( umask 077; exec "$PY" "$DRIVER" \
+       --worktree "$WT" --main-repo "$MAIN" \
+       ... ) >>"$LOG" 2>&1 &
+   DRV=$!
+   ```
+
+2. 드라이버가 끝난 뒤(`log "=== driver exited rc=$rc"` 바로 다음) 멱등하게 조인다 —
+   만들지는 **않는다**:
+
+   ```bash
+   [ -d "$DATA" ] && chmod 700 "$DATA" 2>/dev/null || true
+   ```
+
+   ⚠ 이 두 번째 줄은 **디렉터리만** 조인다. genesis 가 이 변경보다 먼저 일어나 버리면
+   안의 파일은 0644 로 남는데, 공유 호스트에서 실질 차단은 **디렉터리 traversal** 이라
+   그래도 막힌다. 그 경우까지 되돌리려면 운영자가 한 번
+   `chmod 600 ~/.local/state/tos/paper-data/*` 를 손으로 돌린다.
+
+⚠ **검증은 적용한 사람이 한다.** 스크래치 data dir 로 한 세션
+(`TOS_PAPER_DATA_DIR=<스크래치> TOS_PAPER_FAKE_DATE=2026-10-06 TOS_PAPER_MINUTES=1
+TOS_PAPER_NOTIFY=0 … start`) 을 돌린 뒤 `stat -c '%a %n' <스크래치> <스크래치>/*` 가
+`700` 과 `600` 만 찍는지 본다. **이 런북은 아직 그 출력을 싣지 않았다 — 실었다면 돌렸다는
+뜻이고, 돌리지 않았으므로 싣지 않는다.**
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
@@ -958,10 +1013,21 @@ STALE·소비를 그 캠페인의 실측과 비교하므로, **무엇이 같고 
 때문이다. 끄면 하루 ≈ **112 MB**(유도값 — §7.8 3). ⚠ **운영자 결정 2026-10-03 으로 닫혔다 —
 `on`, 5 s 유지(§7.10 1). 이 기본값은 이제 결정된 값이다.**
 
-### 7.4 cron 두 줄 — **아직 설치되어 있지 않다**
+### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
 
-설치는 운영자가 한다. 래퍼는 crontab 에 손대지 않고 자기 자신을 지우지도 않는다
+운영자가 넣었다. 래퍼는 crontab 에 손대지 않고 자기 자신을 지우지도 않는다
 (날짜 슬롯이 아니라 반복 일정이다).
+
+- **설치 시각** 2026-10-03 **15:43 KST** · **백업**
+  `~/.config/kis-probes/crontab.bak.20261003T154351`(설치 직전 crontab 전문).
+- **위치**: 자기 `CRON_TZ=Asia/Seoul` 과 함께 **crontab 의 끝**에 덧붙였다(아래 ⚠ 그대로).
+- **확인 한 줄** — `crontab -l | grep -c tos-paper-session` 가 **`2`** 여야 한다(실측 2026-10-03: `2`).
+- **첫 발화는 2026-10-05(월) 08:45** 이고 그날은 **대체휴일**이라 래퍼가 **SKIP** 한다
+  (rc 0 · 로그 한 줄 · 텔레그램 없음 — §7.3 4 · §7.8 1 의 결말 표). **첫 부팅은
+  2026-10-06(화) 08:45** 이고 그것이 genesis 다(§7.6).
+  ⚠ 그러므로 **10-05 에 텔레그램이 없는 것은 정상이고 고장이 아니다.**
+
+설치된 줄은 이것이다(원문 그대로):
 
 ```cron
 CRON_TZ=Asia/Seoul
@@ -1016,8 +1082,13 @@ CRON_TZ=Asia/Seoul
 - 야간 콜드 백업(`docs/runbooks/tos-evidence-cold-backup.md` ·
   `~/.config/kis-probes/cold-backup-nightly.sh`)의 대상은 **같은**
   `~/.local/state/tos/paper-data` 이고 예정 시각은 **18:00 KST** 다.
-  ⚠ **그 cron 줄도 아직 설치되어 있지 않다**(PR #851). 두 줄을 같이 넣든 따로 넣든,
-  **백업만 먼저 넣는 것은 의미가 없다**(대상이 아직 없다).
+  ✅ **그 cron 줄도 설치됐다 — 운영자 2026-10-03 16:13 KST**(백업
+  `~/.config/kis-probes/crontab.bak.20261003T161332`), 역시 자기 `CRON_TZ` 와 함께 crontab
+  끝에 `0 18 * * 1-5 … cold-backup-nightly.sh` 한 줄이다. 대상이 아직 없는 동안(10-06
+  genesis 전)의 실행은 **`PRE-GENESIS` rc 0** 으로 조용히 끝난다
+  (`docs/runbooks/tos-evidence-cold-backup.md` §4-5-3 · §4-5-5 R1) — 그래서 백업 줄을 먼저
+  넣어도 무해하다. 1차 판은 「백업만 먼저 넣는 것은 의미가 없다(대상이 아직 없다)」고
+  적었는데, **`PRE-GENESIS` 분기가 생긴 뒤로는 그 말이 더 이상 맞지 않는다.**
 - `backup-set`/`cold-backup` 은 **런타임이 정지해 있을 것**을 전제하고, 그 전제를
   **기계적으로 확인하지 못한다**(그 함수의 문서화된 한계). 그래서 시간으로 벌려 둔다:
 
@@ -1098,12 +1169,14 @@ CRON_TZ=Asia/Seoul
 | ≈ **112 MB/일** (수집기 off) | `TIME_HEALTH_SNAPSHOT` 이 증거 바이트의 75 %(3.99/5.33 MB, 계획 §1) → 3.99 × 28 | **유도값 — 측정한 적 없다** |
 
 **4. 콜드 백업 결과** — 전날 18:00 의 텔레그램 줄(`verdict`/`refused`/`failed`)과
-`~/.local/state/tos/cold-backup.log`. **그 cron 도 아직 미설치다**(§7.7).
+`~/.local/state/tos/cold-backup.log`. ✅ **그 cron 도 설치됐다**(운영자 2026-10-03 16:13 ·
+§7.7). 10-06 genesis 전의 실행은 `PRE-GENESIS` rc 0 이므로, **10-05 저녁에 백업 결과가
+없는 것은 정상**이다.
 
 ### 7.9 드라이런 기록 — 2026-10-03 (장 마감일 · 스크래치 data dir)
 
-운영자 검토 전이라 cron 은 설치하지 않았고, 상주 data dir 은 건드리지 않았다(§7.6 — 지금도
-없다). 아티팩트는 **`~/.local/state/tos/paper-sessions/2026-10-03-*/`** 와 날짜 로그
+드라이런 시점에는 cron 이 아직 없었고(그날 **15:43**·**16:13** 에 설치됐다 — §7.4 · §7.7),
+상주 data dir 은 건드리지 않았다(§7.6 — 지금도 없다). 아티팩트는 **`~/.local/state/tos/paper-sessions/2026-10-03-*/`** 와 날짜 로그
 **`~/.local/state/tos/paper-logs/2026-10-03.log`** 에 있다.
 
 **범위.** 그날 래퍼 `start` 는 **16 회** 돌았고(그중 4 회는 SKIP·ABORT 로 부팅 전에 끝났다),
