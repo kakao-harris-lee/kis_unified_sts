@@ -665,8 +665,14 @@ def _stage(stage: str, action: Callable[[], _T]) -> _T:
     """Run ``action``, letting :data:`_PASSTHROUGH_REFUSALS` through and wrapping anything
     else as :class:`ColdBackupFailed` tagged with ``stage``.
 
-    Those types pass untouched because each already says exactly what was wrong and which
-    layer said so. Everything else is an environment fault with no common base class
+    Those types pass untouched because each already says exactly what was wrong, and the
+    dispatch can name it in one word: the LAYER that decided, the ACTION the target needs
+    (``migrate``), or the SUBJECT that is wrong where no single action can be named
+    (``schema``) — the ``[<layer>|<action>|<subject> ]refused`` shape
+    :data:`~tos_runtime.compose._backup_dispatch._REFUSAL_PREFIXES` spells out. "Which layer
+    said so" was true of this list until ``SchemaVersionRefused`` joined it: that one is a
+    judgement about the TARGET, which no layer here owns. Everything else is an environment
+    fault with no common base class
     (:class:`ColdBackupFailed`'s own docstring), and wrapping it here is what lets the CLI
     print one line naming the stage instead of a traceback.
     """

@@ -261,11 +261,11 @@ genesis(ops-paper 레인). 이 절은 호스트에 무엇이 있고, 켜는 데 
 | **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
 | **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 `fc0cd225caeb51d2c86f200b79229b9c9d83f610021c190b1e1635baab716f33` — PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다(§4-5-4) |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 `6b6f5766a6f06dc6c8299957767d270724a25fd8be60fe44ec17a81684c04a65` — PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다(§4-5-4) |
 | **cron 등재** | 운영자 crontab (`crontab -l` 220-222행) | — | **설치됨 2026-10-03 16:13 KST**(운영자). 줄 그대로: `0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly`, 바로 위에 `CRON_TZ=Asia/Seoul` 과 머리 주석 한 줄(§4-5-3 에 셋 다 그대로). 설치 **직전** 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`(15401 B, mtime 16:13:32) — 그 파일과 현재 crontab 의 차이는 **이 세 줄뿐**이다(실측 `diff`). 첫 발화 2026-10-05(월) 18:00 KST |
-| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | 존재(2229 B) — PR #855 의 `--selftest` **세 블록**(10-03 20:34 · 10-03 21:04 · 10-04 07:24, 전부 PRE-GENESIS rc 0). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍혀 있고, **마지막 블록(`fc0cd225…`)이 위 행과 같다**. 래퍼가 소유한다 |
+| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | 존재(2972 B) — PR #855 의 `--selftest` **네 블록**(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33, 전부 PRE-GENESIS rc 0). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍혀 있고, **마지막 블록(`6b6f5766…`)이 위 행과 같다**. 래퍼가 소유한다 |
 | cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | — | 아직 없음. **비어 있는 것이 정상**(§4-5-3) |
-| 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5). **PR #855 이 더한 것**: `classify-diff-20261004.{in,out.before,out.after,diff}`(분류 대조 실측, §4-5-4) · 래퍼 판본 사본 `cold-backup-nightly.d7e52b2f7f34.sh` 와 `cold-backup-nightly.fc0cd225caeb.sh`(`600`) |
+| 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5). **PR #855 이 더한 것**: `classify-diff-20261004.{in,out.before,out.after,diff}`(분류 대조 실측, §4-5-4) · 래퍼 판본 사본 `cold-backup-nightly.d7e52b2f7f34.sh` 와 `cold-backup-nightly.fc0cd225caeb.sh` · `cold-backup-nightly.6b6f5766a6f0.sh`(전부 `600`) |
 | 대상 data dir | `~/.local/state/tos/paper-data` | — | **아직 없다** — 2026-10-06 genesis 예정 |
 | ⛔ **이것이 아니다** | `~/.config/tos/paper-config/evidence_cold_backup.yaml` | `644` | 렌더가 만든 **all-null 쌍둥이**. **`origin/main` 의 저장소 템플릿(이 PR 머지 전 기준)과 바이트 동일**이고, ops-paper 가 매일 재렌더하므로(최근 2026-10-03 14:30) **이 PR 의 주석본은 다음 렌더가 가져간다** — 값은 그때도 all-null 이다. 로더가 둘을 구별하는 수단은 **`--config-dir` 하나뿐**이다 |
 
@@ -494,14 +494,16 @@ CRON_TZ=Asia/Seoul
 | `verdict` | 0 | CLI 가 0 | **보냄** | 아카이브가 존재·되읽힘·전 멤버 digest 일치·체인 재검증. 바닥 경고가 붙어도 **이 백업은 검증됐다** |
 | `PRE-GENESIS` | 0 | 대상 부재 · `BORN_ON` 전 | **보냄** | 백업할 것이 없다. 결함이 아니라 일정 |
 | `SKIP` | 0 | 락을 다른 실행이 보유 | **보냄** | **이 밤의 백업은 돌지 않았다.** 앞 실행이 매달렸는지 본다 |
-| `refused` | 1 | `cold-backup: [<layer>\|<대상> ]refused — …` 또는 래퍼 자신의 거부 | **보냄** | 규칙이 아니라고 했다. 접두 단어로 §5 를 찾는다. ⚠ **「아무것도 쓰지 않았다」는 착수 전 거부에만 해당한다** — 아카이브 단계의 넷(`archive`·`integrity`·`migrate`·`schema`)은 비압축 세대·매니페스트·`gen{N}.verify` 를 남긴다(§5 머리말). ⛔ 「내일 다시」라고 적지 않는다 — 재실행이 답이 **아닌** 것이 셋이다: `integrity refused` · `migrate refused` · `schema refused`. 그 셋에서는 밤마다 세대가 하나씩 는다 |
+| `refused` | 1 | `cold-backup: [<layer>\|<조치>\|<대상> ]refused — …` 또는 래퍼 자신의 거부 | **보냄** | 규칙이 아니라고 했다. 접두 단어로 §5 를 찾는다. ⚠ **「아무것도 쓰지 않았다」는 착수 전 거부에만 해당한다** — 아카이브 단계의 넷(`archive`·`integrity`·`migrate`·`schema`)은 비압축 세대·매니페스트·`gen{N}.verify` 를 남긴다(§5 머리말). ⛔ 「내일 다시」라고 적지 않는다 — 재실행이 답이 **아닌** 것이 셋이다: `integrity refused` · `migrate refused` · `schema refused`. 그 셋에서는 밤마다 세대가 하나씩 는다 |
 | `failed` | 1 | `cold-backup: <stage> failed — …` | **보냄** | 실행은 적법했고 환경이 무너졌다. 호스트를 고친 뒤 다시 돈다(다음 세대로 간다) |
 | `unclassified` | 1 | 위 어느 형태도 아닌 줄 | **보냄** | 래퍼가 모르는 형태다. 못 알아본 줄을 깨끗한 분류로 접어 넣지 않는다 |
 | `ABORT` | **2** | 로그 디렉터리 생성 실패 · 락 파일 열기 실패 · 모르는 인자 · 인자 과다 · mktemp 실패 | ⛔ **못 보냄** | 통지 수단 자체를 세우지 못한 경우다. 앞의 넷은 **stderr 한 줄**뿐이고(로그 파일에도 안 남는다), mktemp 실패만 `log()` 를 거쳐 **래퍼 로그와 stdout 양쪽에** 남는다. 어느 쪽이든 cron 리다이렉트가 받는 곳은 `cold-backup.cron.log` 다 — **§4-5-6 의 아침 확인이 이것을 잡는 유일한 수단이다** |
 
 ✅ **래퍼의 `classify()` 는 일반 패턴이 아니라 접두 리터럴을 열거한다 — 그래서 새 접두마다
-가지를 더해야 한다 (PR #855 에서 닫았다).** 위 `refused` 행의 `[<layer>|<대상> ]refused` 는
-**이상형**이고, 실제 코드는 접두를 그대로 적어 놓은 `case` 다. PR #855 가 디스패치에 더한
+가지를 더해야 한다 (PR #855 에서 닫았다).** 위 `refused` 행의
+`[<layer>|<조치>|<대상> ]refused` 는 **이상형**이고(접두가 셋 중 무엇을 이름으로 쓰는지는
+`_backup_dispatch.py` 의 `_schema_version_prefix` 가 적어 둔 그대로다 — 층 다섯 ·
+조치 하나 `migrate` · 대상 하나 `schema`), 실제 코드는 접두를 그대로 적어 놓은 `case` 다. PR #855 가 디스패치에 더한
 두 접두는 그 열거에 없어 **둘 다 `unclassified` 로 갔다** — 실측으로 확인한 뒤 가지 둘을
 더했다:
 
@@ -510,8 +512,12 @@ CRON_TZ=Asia/Seoul
     "cold-backup: schema refused — "*)    printf 'refused\n' ;;
 ```
 
-이제 일곱 접두가 모두 `refused` 다. 래퍼 sha256 이 `d7e52b2f…` → `fc0cd225…` 로
+이제 일곱 접두가 모두 `refused` 다. 래퍼 sha256 이 `d7e52b2f…` → `6b6f5766…` 로
 움직였고 §4-5-1 표의 값이 그것이다. **crontab 자체는 건드리지 않았다.**
+
+⚠ **`classify()` 자체는 중간판(`fc0cd225…`) 이후 한 바이트도 안 바뀌었다**(두 사본에서
+함수를 떼어 `diff` — 동일). 그 뒤 움직인 것은 텔레그램 본문과 범례 주석이다(아래). 아래
+대조 아티팩트의 `out.after` 는 **출하본으로 다시 돌려** 받은 것이라 §4-5-1 의 sha 와 짝이다.
 
 ⚠ **가지를 더하는 변경이 기존 분류를 바꾸지 않았다는 것은 주장이 아니라 측정이고, 이제
 파일로 남아 있다.** `classify()` 를 옛 판과 새 판에서 각각 떼어 내 **같은 15줄**(일곱 접두 ·
@@ -522,7 +528,7 @@ rc 0)에 먹이고 출력을 비교했다:
 |---|---|
 | `~/.local/state/tos/measure/cold-a3/classify-diff-20261004.in` | 먹인 15줄(`rc\|line`) |
 | `…/classify-diff-20261004.out.before` | 옛 판(`d7e52b2f…`)의 분류 |
-| `…/classify-diff-20261004.out.after` | 새 판(`fc0cd225…`)의 분류 |
+| `…/classify-diff-20261004.out.after` | 새 판(출하본 `6b6f5766…`)의 분류 |
 | `…/classify-diff-20261004.diff` | 둘의 `diff -u` |
 
 **다른 줄은 정확히 둘** — `migrate refused` 와 `schema refused` 가 `unclassified` →
@@ -532,13 +538,14 @@ rc 0)에 먹이고 출력을 비교했다:
 것이라 최종판으로 다시 돌렸고, 남기는 것은 최종판 쪽이다.)
 
 **래퍼 판본은 이제 사본으로 남긴다.** 같은 디렉터리에
-`cold-backup-nightly.<sha12>.sh` 로 각 판을 둔다 — 지금은 `…d7e52b2f7f34.sh`(PR 이전)와
-`…fc0cd225caeb.sh`(현재). sha 가 움직였을 때 **무엇이 바뀌었는지 대조할 수 있게** 하려는
-것이다. 지금까지는 그것이 불가능해 주장으로만 남았다.
+`cold-backup-nightly.<sha12>.sh` 로 각 판을 둔다 — 지금은 `…d7e52b2f7f34.sh`(PR 이전) ·
+`…fc0cd225caeb.sh`(1차 처분) · `…6b6f5766a6f0.sh`(**현재**). sha 가 움직였을 때 **무엇이
+바뀌었는지 대조할 수 있게** 하려는 것이다. 지금까지는 그것이 불가능해 주장으로만 남았다 —
+바로 위 「`classify()` 는 안 바뀌었다」가 그 사본들 덕에 **잴 수 있는 문장**이 됐다.
 
 그 뒤 래퍼를 호스트에서 `--selftest` 로 돌렸다. **기록한 sha 와 실제로 돌린 sha 가 같아야
-하므로**(§4-5-5 의 그 규율) 기준은 **최종판** 실행이다 — 2026-10-04 **07:24:37 KST**, 로그
-머리의 `sha256=fc0cd225…`: 파싱·실행되고 `PRE-GENESIS` rc 0 로 끝났으며 텔레그램 한 줄이
+하므로**(§4-5-5 의 그 규율) 기준은 **최종판** 실행이다 — 2026-10-04 **08:33:47 KST**, 로그
+머리의 `sha256=6b6f5766…`: 파싱·실행되고 `PRE-GENESIS` rc 0 로 끝났으며 텔레그램 한 줄이
 `[SELFTEST]` 태그로 나갔다. `bash -n` 으로 **파일 전체**도 파싱된다(실행 경로만이 아니다).
 `~/.local/state/tos/cold-backup.log` 에 중간판 블록들이 함께 남아 있고, **마지막 블록이
 §4-5-1 의 값과 짝이다.**
@@ -562,10 +569,12 @@ rc 0)에 먹이고 출력을 비교했다:
 않는다). 두 판의 차이는 주석 블록 하나뿐이고 모든 결말이 같다.
 
 ⚠⚠ **이 로그의 sha256 은 이제 §4-5-1 표의 값과 다르다 — 그리고 이번에는 전 구간을 다시
-돌리지 않았다.** PR #855 이 래퍼를 `d7e52b2f…` → `fc0cd225…` 로 옮겼다. 바뀐 것은
-**네 군데**이고, 실행 경로에 닿는 것은 둘뿐이다: ① `classify()` 의 `case` 에 더한
+돌리지 않았다.** PR #855 이 래퍼를 `d7e52b2f…` → `6b6f5766…` 로 옮겼다. 바뀐 것은
+**다섯 군데**이고 **분류에 닿는 것은 둘뿐이다**: ① `classify()` 의 `case` 에 더한
 `migrate refused` 가지 · ② 같은 자리의 `schema refused` 가지 · ③ 그 위 범례 주석 ·
-④ 머리말의 crontab 정정(뒤의 둘은 주석이라 닿지 않는다). 바로 위 문단의 규율(「어긋나면
+④ 머리말의 crontab 정정 · ⑤ `refused` 텔레그램 본문(③~⑤ 는 분류 로직 밖이다 — ⑤ 는
+사람이 읽는 문구라 **거짓이면 해롭지만** `classify()` 의 출력은 바꾸지 않는다).
+바로 위 문단의 규율(「어긋나면
 다시 돌린다」)을 그대로 적용하지 않은 이유를 적는다: 그때 어긋나게 만든 변경은
 **종료코드 범례 주석**이라 어느 결말이 바뀌었는지 문서만 보고는 알 수 없었고, 이번에
 실행 경로에 닿는 변경은 `classify()` **자체**라서 무엇이 바뀌는지 직접 잴 수 있다.

@@ -3972,7 +3972,9 @@ mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → 
 
 ⚠ **숫자는 여기에 다시 적지 않는다.** 래퍼 sha · 분류 대조 · selftest 시각은 런북
 §4-5-4(분류 종결 · 대조 아티팩트 표)와 §4-5-1(재고 행)이 단일 출처다. 이 절이 그것을
-옮겨 적으면 두 곳이 어긋나는 것은 시간문제다(이 PR 안에서만 래퍼 sha 가 세 번 움직였다).
+옮겨 적으면 두 곳이 어긋나는 것은 시간문제다 — 이 PR 안에서만 래퍼 sha 가 거듭
+움직였고, **몇 번인지조차 여기 적지 않는다**(그 수 자체가 런북 §4-5-4 의 사본 목록에
+딸린 값이라 여기 적는 순간 같은 이유로 낡는다).
 
 **무엇을 고쳤나.** `SchemaVersionRefused` 를 `_PASSTHROUGH_REFUSALS` 에 넣어 `_stage` 가
 타입 그대로 통과시키고, 디스패치의 `_REFUSAL_PREFIXES` 가 **방향으로 갈라** 접두를 준다 —
@@ -4004,20 +4006,28 @@ mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → 
 
 **노트 9건** — 전부 수정: 대조 입력·두 출력·diff 를 `~/.local/state/tos/measure/cold-a3/
 classify-diff-20261004.*` 로 저장(날짜는 **실측일**이라 리뷰가 적은 10-03 이 아니다) ·
-래퍼 판본 사본 `cold-backup-nightly.<sha12>.sh` 둘 보관 시작 · 이 절로 승격(위) ·
+래퍼 판본 사본 `cold-backup-nightly.<sha12>.sh` 보관 시작(어느 판이 남아 있는지는
+런북 §4-5-4 가 단일 출처다) · 이 절로 승격(위) ·
 「Six refusal families, five prefixes」→ 실제 수 · 「압축본만 없다」→ 보고서도 ·
 `§4-5-2 ②` 인용 셋 → ⚠ 문단/① · `dispatch_backup_set` 가 `_refusal_line` 재사용
 (표의 타입을 `except` 로 도출하므로 새 행이 자동으로 양쪽 문에 걸린다) ·
-`[<layer>|<대상> ]refused` · §4-5-3 에 `CRON_TZ` 와 **순서** 조항(뒤집히면 KST 가 아니다).
+`[<layer>|<조치>|<대상> ]refused` · §4-5-3 에 `CRON_TZ` 와 **순서** 조항(뒤집히면 KST 가 아니다).
 
-**변이로 red 확인 4건**(모두 실측):
+**변이로 red 확인 6건** — 전부 **최종 head 에서 다시 측정**했다(1회차 표는 중간 head 의
+것이었고 「+3건」 같은 센 적이 모호했다 — 2회차 L2).
 
-| 변이 | red |
-|---|---|
-| `_REFUSAL_PREFIXES` 에서 `SchemaVersionRefused` 행 제거 | 접두 케이스 1 + 전 구간 3 |
-| `_PASSTHROUGH_REFUSALS` 에만 타입 추가 | `test_every_passthrough_verdict_has_a_dispatch_prefix` |
-| 표 맨 위에 `(RuntimeError, …)` 삽입(진짜 가림) | `test_every_dispatch_row_has_a_case` + 5건 |
-| 방향 분리를 한 접두로 되돌림 | AHEAD 전 구간 + 접두 케이스 |
+**세는 단위**: `red` 는 `(파라미터까지 센 테스트 수 / 서로 다른 함수 수)`. M1~M4 는
+`tests/compose/test_cold_backup_cli.py` + `tests/operations/test_cold_backup.py` 두 모듈을,
+M5~M6 는 `tests/operations/test_schema_ledger.py` 를 돌린 결과다.
+
+| # | 변이 | red | 어느 함수 |
+|---|---|---|---|
+| M1 | `_REFUSAL_PREFIXES` 에서 `SchemaVersionRefused` 행 제거 | **7 / 6** | `…prefix_and_leaves_the_snapshot` · `…older_evidence_schema…` · `…newer_evidence_schema…` · `…one_full_generation_per_night` · `test_every_dispatch_row_has_a_case` · `test_every_passthrough_verdict_has_a_dispatch_prefix` |
+| M2 | `_PASSTHROUGH_REFUSALS` 에만 타입 추가 | **1 / 1** | `test_every_passthrough_verdict_has_a_dispatch_prefix` |
+| M3 | 표 맨 위에 `(RuntimeError, …)` 삽입 — **진짜 가림** | **13 / 7** | M1 의 여섯 + `test_a_real_unusable_custody_root_is_refused_before_the_snapshot` |
+| M4 | 방향 분리를 한 접두로 되돌림 | **2 / 2** | `…newer_evidence_schema…` · `…prefix_and_leaves_the_snapshot` |
+| M5 | `SchemaVersionRefused.__reduce__` 제거 | **2 / 1** | `test_a_version_refusal_survives_pickle_and_copy[BEHIND\|AHEAD]` |
+| M6 | `EVIDENCE_SCHEMA_VERSION` 2 → 1(마이그레이션이 상수보다 새로워진다) | **16 / 16** | `test_no_store_has_a_migration_newer_than_its_own_schema_version` 포함. ⚠ **무딘 변이다** — 그 상수를 쓰는 다른 가드 열다섯이 함께 red 다. 그 테스트만 돌려 단독으로도 red 임을 따로 확인했다 |
 
 ⚠ **헛다리 하나를 적어 둔다.** 가림(shadowing)을 재현하려고 처음에 `KeyContinuityRefused`
 와 `CustodyError` 의 순서를 바꿨는데 **green** 이었다. 둘은 상속 관계가 **아니므로** 그

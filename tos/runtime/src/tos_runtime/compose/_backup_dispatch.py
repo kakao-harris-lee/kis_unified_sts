@@ -141,8 +141,12 @@ def _schema_version_prefix(exc: SchemaVersionRefused) -> str:
 
 #: ``(exception type, prefix)``, most specific first — where ``prefix`` is either the literal
 #: or, for a type whose action depends on HOW it refused, a function of the exception. A
-#: VERDICT gets a prefix naming which layer reached it (or which action it needs), so the
-#: runbook's §5 table can route the operator by that one word; anything not listed is an
+#: VERDICT gets a prefix of the form ``[<layer>|<action>|<subject> ]refused`` — naming the
+#: LAYER that reached the verdict (the five literals below), or the ACTION the target needs
+#: (``migrate``), or the SUBJECT that is wrong when no single action can be named
+#: (``schema``) — so the runbook's §5 table can route the operator by that one word and the
+#: host wrapper's ``classify()`` legend can enumerate the same three forms; anything not
+#: listed is an
 #: environment fault and falls through to ``failed``. ``integrity refused`` is the one that
 #: matters most: a chain that does not re-verify means "do not trust this copy", and filing
 #: it under "the host broke, re-run" was the wrong instruction in the single case where
@@ -198,7 +202,10 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
     * **Refused** — a verdict. :data:`_REFUSAL_PREFIXES` gives each type its own prefix
       (``refused`` / ``snapshot refused`` / ``archive refused`` / ``integrity refused`` /
       ``custody refused`` / ``migrate refused`` / ``schema refused``) so the one line says
-      which layer decided — or, for the last two, what the target needs — and the runbook's
+      which layer decided — or, for the last two, the ACTION the target needs (``migrate``)
+      and the SUBJECT that is wrong where two actions are admissible and this command cannot
+      choose (``schema``), the ``[<layer>|<action>|<subject> ]refused`` shape the runbook's
+      §4-5-4 cell and the host wrapper's legend both spell out — and the runbook's
       §5 table routes by that word. **Three of them are NOT a re-run**:
       ``integrity refused`` (the archived evidence chain did not verify), ``migrate refused``
       (the target is BEHIND this code's schema: the operator runs the ``migrate`` CLI on that
