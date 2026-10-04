@@ -90,6 +90,61 @@ The factor is estimated from the same noisy samples it corrects, so at n=1 per
 benchmark it injects variance of its own. Medians of N rounds are what damp
 that; the factor is kept because the common-mode effect it targets is real.
 
+Why an error needs both ratios (2026-10-03, run 37101956657)
+------------------------------------------------------------
+``runner_factor`` below 1.0 divides a small raw change UP. The threshold was
+applied to the normalized ratio alone, so the normalizer could manufacture an
+error out of a benchmark that was within the threshold on the wall clock.
+
+Measured on one commit (586c7bc2; PR #851's diff there is one config YAML and
+four docs files, none of them imported by anything ``tests/performance/``
+runs), two attempts of the same run:
+
+    attempt   runner   benchmark                   raw        normalized
+    1         x1.066   test_scalability_summary    +177.8%    +160.5%   error
+    1         x1.066   test_memory_usage_scaling   +159.1%    +143.0%   error
+    2         x0.533   test_memory_usage_scaling    +10.2%    +106.6%   error
+    2         x0.533   test_scalability_summary      +6.2%     +99.2%   warning
+    2         x0.533   test_end_to_end_latency_100   -3.5%     +81.0%   warning
+
+Attempt 2's error is the whole defect in one line: +10.2% on the wall clock,
+failed as a +106.6% regression because the divisor was 0.533. And x0.533 was
+not a runner speed. The 16 comparable raw ratios that attempt ran over were
+x0.39-x1.10 in at least three clusters (redis x0.39-x0.49, orchestrator hot
+path x0.53-x0.54, orchestrator scalability x1.06-x1.10); the median landed on
+the middle one. A median over a multi-modal set is not a common-mode estimate,
+and the same shape turns a benchmark that got 3.5% FASTER into "+81.0% slower".
+
+So the error verdict now requires the raw ratio AND the normalized ratio to
+breach the error threshold. Exactly one case gets a branch of its own:
+
+* normalized breaches, raw does not -> warning, "UNCONFIRMED REGRESSION".
+  This is the attempt-2 line above, and the only shape the old rule got wrong.
+* raw breaches, normalized does not -> NO branch. This is what a uniformly
+  slow runner looks like, which is the case normalization exists to acquit, so
+  it falls through to the ordinary ladder and lands on warning or pass by the
+  normalized ratio exactly as it did before this rule existed. At a uniform
+  x2.5 every normalized ratio is 1.0 and every benchmark passes.
+
+So the normalizer keeps the power it was added for and loses the power it was
+never meant to have, and the warning path is untouched in both directions --
+it still fires off the normalized ratio alone, so the "+81.0% slower" line
+above (a benchmark that ran 3.5% FASTER) is still printed. Closing that is
+separate work.
+
+What this deliberately gives up: the raw ratio is now a NECESSARY condition for
+an error, so the effective raw bar is ``error_threshold / runner_factor`` --
++275% at x0.533, against the nominal +100%. A genuine regression under that bar
+cannot fail the build however fast the runner was: on a x0.5 runner a true 1.9x
+regression reads as a warning. Accepted, because the alternative is convicting
+on an estimator whose own dispersion is measured above, and the warning is
+still printed. ``print_report`` states the effective bar on every run rather
+than leaving it to be derived.
+
+The rule is a no-op whenever the run is not normalized (``runner_factor``
+within ``NORMALIZATION_EPSILON`` of 1.0): the two ratios are then the same
+number, so they cannot disagree.
+
 Measured, excluded, or an error (2026-10-02, issues #768 / #796 / #679)
 ----------------------------------------------------------------------
 A baseline entry has exactly two legitimate states in a given run: it produced
@@ -150,6 +205,11 @@ from zoneinfo import ZoneInfo
 # so we fall back to raw ratios (factor 1.0).
 MIN_NORMALIZATION_SAMPLES = 5
 
+# How far ``runner_speed_factor`` must sit from 1.0 before a run counts as
+# normalized. One constant for the wording and the verdict both: see the
+# comment at its use in ``compare_metrics``.
+NORMALIZATION_EPSILON = 0.001
+
 # Minimum rounds a baseline must be built from. A single-sample baseline is one
 # draw from a wide distribution -- exactly the defect #768 traced -- so writing
 # one requires --force-baseline and says so in the file's provenance.
@@ -192,6 +252,22 @@ MEASUREMENT_PROVENANCE_KEYS = (
 
 # Project rule: timestamps are KST-native (CLAUDE.md, "Timezone: KST ONLY").
 KST = ZoneInfo("Asia/Seoul")
+
+
+@dataclass(frozen=True)
+class RatioBand:
+    """Dispersion of the raw ratios ``runner_speed_factor`` took its median of.
+
+    ``mad_fraction`` is the median absolute deviation from that median, as a
+    fraction of it: small means one cluster (the factor means something),
+    large means several (it does not). See ``comparable_ratio_band``.
+    """
+
+    low: float
+    high: float
+    mad: float
+    mad_fraction: float
+    n: int
 
 
 @dataclass(frozen=True)
@@ -739,6 +815,55 @@ class RegressionChecker:
             return 1.0
         return statistics.median(ratios)
 
+    def comparable_ratio_band(
+        self, comparisons: Sequence[MetricComparison]
+    ) -> RatioBand | None:
+        """How dispersed the raw ratios behind the runner factor are.
+
+        The factor is a MEDIAN, and a median says nothing about whether the
+        ratios under it form one cluster. On run 37101956657 attempt 2 they did
+        not: redis sat at x0.39-x0.49, the orchestrator hot path at x0.53, the
+        orchestrator scalability pair at x1.06-x1.10, and the median landed on
+        the middle cluster.
+
+        ``low``/``high`` alone do not separate that from a healthy run with a
+        real regression in it -- attempt 1's endpoints span x2.75 and attempt
+        2's x2.80, and only one of the two has a meaningless factor. What
+        separates them is the MEDIAN ABSOLUTE DEVIATION from the factor, which
+        a couple of outliers cannot move: 3.5% of the factor on attempt 1 (one
+        cluster plus two outliers) against 23.0% on attempt 2 (three
+        clusters). ``mad_fraction`` is that, relative to the factor, so it is
+        comparable between runs with different factors.
+
+        Returns ``None`` when the factor was not estimated from these ratios at
+        all: the membership rule is ``runner_speed_factor``'s, condition for
+        condition -- measured in both runs, baseline at or above the noise
+        floor, both medians positive, and at least
+        ``MIN_NORMALIZATION_SAMPLES`` of them, below which that method returns
+        1.0 without consulting any ratio. Benchmarks the baseline excludes
+        never reach ``comparisons``, so they are out of both by construction.
+        """
+        ratios = sorted(
+            1.0 + c.change_percent / 100
+            for c in comparisons
+            if c.baseline_n
+            and c.current_n
+            and c.baseline_value >= self.min_duration
+            and c.baseline_value > 0
+            and c.current_value > 0
+        )
+        if len(ratios) < MIN_NORMALIZATION_SAMPLES:
+            return None
+        factor = statistics.median(ratios)
+        mad = statistics.median(abs(r - factor) for r in ratios)
+        return RatioBand(
+            low=ratios[0],
+            high=ratios[-1],
+            mad=mad,
+            mad_fraction=(mad / factor if factor > 0 else 0.0),
+            n=len(ratios),
+        )
+
     def compare_metrics(
         self,
         baseline_metrics: dict[str, Any],
@@ -853,22 +978,50 @@ class RegressionChecker:
             # Divide out the runner's common-mode speed before thresholding, so a
             # globally slow runner (every ratio shifted up together) does not
             # masquerade as a per-test regression.
-            norm_ratio = ratio / runner_factor if runner_factor > 0 else ratio
+            # One epsilon decides both the wording and the verdict, here and
+            # in ``print_report``. Comparing the breaches at full precision
+            # while calling the run "not normalized" below
+            # NORMALIZATION_EPSILON would let a factor of x1.0005 print
+            # "raw +99.9%" with no runner shown and still take the normalized
+            # branch -- a verdict whose own message contradicts it.
+            normalized = abs(runner_factor - 1.0) >= NORMALIZATION_EPSILON
+            if normalized and runner_factor > 0:
+                norm_ratio = ratio / runner_factor
+            else:
+                norm_ratio = ratio
             norm_change = (norm_ratio - 1.0) * 100
-            normalized = abs(runner_factor - 1.0) >= 0.001
             suffix = (
                 f" (raw {change_percent:+.1f}%, runner x{runner_factor:.2f})"
                 if normalized
                 else ""
             )
 
-            # Determine status (thresholds apply to the runner-normalized ratio
-            # of medians)
-            if norm_ratio >= self.error_threshold:
+            # An ERROR needs BOTH the raw and the runner-normalized ratio over
+            # the error threshold -- the normalizer may acquit but not convict.
+            # See "Why an error needs both ratios" in the module docstring.
+            #
+            # Only the normalized-alone case gets its own branch. Raw-alone is
+            # what a uniformly slow runner looks like, which is the case
+            # normalization exists to acquit, so it falls through to the
+            # ordinary ladder below and lands on warning or pass by the
+            # normalized ratio exactly as before this rule existed.
+            raw_breach = ratio >= self.error_threshold
+            norm_breach = norm_ratio >= self.error_threshold
+            error_pct = (self.error_threshold - 1) * 100
+
+            if raw_breach and norm_breach:
                 status = "error"
                 message = (
                     f"REGRESSION: {norm_change:+.1f}% slower "
-                    f"(threshold: {(self.error_threshold - 1) * 100:.0f}%){suffix}"
+                    f"(threshold: {error_pct:.0f}%){suffix}"
+                )
+            elif norm_breach and not raw_breach:
+                status = "warning"
+                message = (
+                    "UNCONFIRMED REGRESSION: only the normalized ratio is over "
+                    f"the error threshold ({error_pct:.0f}%) -- raw "
+                    f"{change_percent:+.1f}%, normalized {norm_change:+.1f}%, "
+                    f"runner x{runner_factor:.2f}. An error needs both."
                 )
             elif norm_ratio >= self.warning_threshold:
                 status = "warning"
@@ -955,6 +1108,7 @@ class RegressionChecker:
         session_problems: Sequence[str] = (),
         exclusions: dict[str, str] | None = None,
         exclusion_problems: Sequence[str] = (),
+        provenance: dict[str, Any] | None = None,
     ) -> tuple[int, int, int]:
         """
         Print detailed regression report and return the whole verdict.
@@ -972,6 +1126,9 @@ class RegressionChecker:
             exclusions: Benchmarks the baseline declares unmeasured, with the
                 reason. Listed so a reader can see what is NOT being checked.
             exclusion_problems: Stale exclusions (excluded yet measured).
+            provenance: The baseline's provenance block, so a baseline whose
+                entries were re-measured in separate runs says so instead of
+                leaving one date and one commit to speak for all of them.
 
         Returns:
             Tuple of (num_errors, num_warnings, num_passed)
@@ -998,11 +1155,43 @@ class RegressionChecker:
             f"current n={_fmt_rounds(current_rounds)} "
             f"(medians are compared)"
         )
-        if abs(runner_factor - 1.0) >= 0.001:
+        # ONE epsilon for the wording and the verdict. ``compare_metrics``
+        # decides "normalized" with ``NORMALIZATION_EPSILON``; a second literal
+        # here could describe a run the verdict treated the other way.
+        if abs(runner_factor - 1.0) >= NORMALIZATION_EPSILON:
             print(
                 f"Runner speed factor: x{runner_factor:.2f} "
                 f"(durations normalized to this before thresholding)"
             )
+        else:
+            print(
+                f"Runner speed factor: x{runner_factor:.2f} "
+                f"(within {NORMALIZATION_EPSILON} of 1.0; durations not "
+                "normalized, so raw and normalized are one number)"
+            )
+        # Band and effective bar print on EVERY run, normalized or not, which
+        # is what ``markdown_summary`` does and what this module's docstring
+        # and docs/performance_slas.md both claim. A reader comparing the two
+        # renderings of one run must not find the band in one and not the
+        # other. The band's own membership rule (``comparable_ratio_band``)
+        # decides whether there is a band at all.
+        band = self.comparable_ratio_band(comparisons)
+        if band is not None:
+            print(
+                f"    median of {band.n} raw ratios spanning "
+                f"x{band.low:.2f}-x{band.high:.2f}, MAD "
+                f"{band.mad_fraction * 100:.0f}% of the factor "
+                "(a large MAD means several clusters, so the factor is "
+                "not one common-mode speed; endpoints alone cannot tell "
+                "that from a real regression)"
+            )
+        print(
+            "    an error needs BOTH raw and normalized over "
+            f"{(self.error_threshold - 1) * 100:.0f}%; normalized alone is "
+            "a warning. Effective raw bar for an error: "
+            f"{(self.error_threshold / runner_factor - 1) * 100:+.0f}% "
+            f"(error threshold / runner factor)"
+        )
 
         single = self.single_sample_baselines(comparisons)
         if single:
@@ -1029,6 +1218,31 @@ class RegressionChecker:
                 f"⚠️  SINGLE-SAMPLE CURRENT: n=1 for {len(single_current)} "
                 f"benchmarks — pass several rounds to --current."
             )
+        below_floor = sorted(
+            c.test_name for c in comparisons if "BELOW FLOOR" in c.message
+        )
+        if below_floor:
+            print("-" * 80)
+            print(
+                f"📏 BELOW FLOOR ({self.min_duration * 1000:.0f}ms): "
+                f"{len(below_floor)} of {len(comparisons)} benchmarks are "
+                "exempt from the ratio check — named here because "
+                '"STABLE: N tests" counts them as if they had been compared:'
+            )
+            for name in below_floor:
+                print(f"    {name.replace('tests/performance/', '')}")
+
+        partial = (provenance or {}).get("partial_regeneration")
+        if isinstance(partial, dict) and partial.get("regenerated"):
+            print("-" * 80)
+            print(
+                f"🧩 PARTIAL BASELINE: {len(partial['regenerated'])} of "
+                f"{len(comparisons)} entries were re-measured separately "
+                f"(run {partial.get('workflow_run', '?')}, commit "
+                f"{str(partial.get('commit', '?'))[:8]}); the rest come from "
+                "the top-level provenance."
+            )
+
         print("=" * 80)
 
         # Group by status
@@ -1164,6 +1378,7 @@ class RegressionChecker:
         session_problems: Sequence[str] = (),
         exclusions: dict[str, str] | None = None,
         exclusion_problems: Sequence[str] = (),
+        provenance: dict[str, Any] | None = None,
     ) -> str:
         """Render the comparison as a Markdown table (for $GITHUB_STEP_SUMMARY).
 
@@ -1177,8 +1392,33 @@ class RegressionChecker:
             "",
             f"Runner speed factor: `x{runner_factor:.2f}` · "
             f"thresholds warn `{(self.warning_threshold - 1) * 100:.0f}%` / "
-            f"error `{(self.error_threshold - 1) * 100:.0f}%` · medians compared",
+            f"error `{(self.error_threshold - 1) * 100:.0f}%` · medians "
+            "compared · an error needs the raw **and** the normalized change "
+            "over the error threshold; normalized alone is a warning "
+            "(`UNCONFIRMED REGRESSION`), so the effective raw bar for an "
+            f"error is `{(self.error_threshold / runner_factor - 1) * 100:+.0f}%` "
+            "(error threshold / runner factor)",
             "",
+        ]
+        band = self.comparable_ratio_band(comparisons)
+        if band is not None:
+            lines += [
+                f"Factor is the median of {band.n} raw ratios spanning "
+                f"`x{band.low:.2f}`–`x{band.high:.2f}`, MAD "
+                f"`{band.mad_fraction * 100:.0f}%` of the factor — a large MAD "
+                "means several clusters, so the factor is not one common-mode "
+                "speed.",
+                "",
+            ]
+        partial = (provenance or {}).get("partial_regeneration")
+        if isinstance(partial, dict) and partial.get("regenerated"):
+            lines += [
+                f"Partial baseline: {len(partial['regenerated'])} of "
+                f"{len(comparisons)} entries were re-measured separately "
+                f"(run {partial.get('workflow_run', '?')}).",
+                "",
+            ]
+        lines += [
             "| | Benchmark | base median (n) | cur median (n) | cur min–max | cur sd | change (norm) |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
         ]
@@ -1613,6 +1853,19 @@ class RegressionChecker:
                 return 0
 
             baseline_stats, _, _ = self.sample_sets_from(baseline_docs)
+            # Whichever baseline document carries provenance speaks for the
+            # file. Only used for reporting -- a baseline whose entries were
+            # re-measured in separate runs must say so rather than let one
+            # date and one commit stand for all of them.
+            baseline_provenance: dict[str, Any] = next(
+                (
+                    document["provenance"]
+                    for _path, document in baseline_docs
+                    if isinstance(document, dict)
+                    and isinstance(document.get("provenance"), dict)
+                ),
+                {},
+            )
             exclusions = (
                 carried_exclusions
                 if exclusions_from is None
@@ -1659,6 +1912,7 @@ class RegressionChecker:
                 outcomes=current_outcomes,
                 exclusions=exclusions,
                 exclusion_problems=stale_exclusions,
+                provenance=baseline_provenance,
             )
 
             if markdown_summary is not None:
@@ -1671,6 +1925,7 @@ class RegressionChecker:
                             outcomes=current_outcomes,
                             exclusions=exclusions,
                             exclusion_problems=stale_exclusions,
+                            provenance=baseline_provenance,
                         )
                     )
 
@@ -1917,7 +2172,12 @@ Exit Codes:
         "--error-threshold",
         type=float,
         default=1.5,
-        help="Error threshold multiplier (default: 1.5 = 50%% degradation)",
+        help=(
+            "Error threshold multiplier (default: 1.5 = 50%% degradation). An "
+            "error needs the RAW and the runner-normalized ratio both over "
+            "this; normalized alone is a warning, so the effective raw bar is "
+            "this divided by the runner factor"
+        ),
     )
 
     parser.add_argument(
