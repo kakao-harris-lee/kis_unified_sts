@@ -14,7 +14,7 @@ import pickle
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -24,6 +24,7 @@ from tos_runtime.marketfeed.store import MARKETFEED_SCHEMA_VERSION, SqliteSnapsh
 from tos_runtime.operations.schema_ledger import (
     SCHEMA_LEDGER_TRIGGER_NAMES,
     SchemaLedgerUnprotected,
+    SchemaVersionDirection,
     SchemaVersionRefused,
     compute_schema_shape_digest,
     create_schema_ledger_objects,
@@ -1765,8 +1766,10 @@ def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
 # -- SchemaVersionRefused carries its direction across a process boundary -----
 
 
-@pytest.mark.parametrize("direction", ["BEHIND", "AHEAD"])
-def test_a_version_refusal_survives_pickle_and_copy(direction: str) -> None:
+@pytest.mark.parametrize("direction", get_args(SchemaVersionDirection))
+def test_a_version_refusal_survives_pickle_and_copy(
+    direction: SchemaVersionDirection,
+) -> None:
     """The refusal rebuilds with BOTH halves intact — message and ``direction``.
 
     ``direction`` is a REQUIRED keyword-only argument, and ``BaseException.__reduce__``
@@ -1783,6 +1786,10 @@ def test_a_version_refusal_survives_pickle_and_copy(direction: str) -> None:
     dispatch chooses ``migrate refused`` vs ``schema refused`` from that attribute, so an
     exception that survives serialization with the attribute dropped would route a verdict
     to the wrong runbook row — worse than failing to serialize at all.
+
+    The cases are derived from :data:`SchemaVersionDirection` itself rather than copied,
+    so a third direction added to that Literal is covered here without anyone remembering
+    to extend a list — the hand-synced-table shape this PR exists to close.
     """
     original = SchemaVersionRefused(
         f"evidence: {direction} something", direction=direction
