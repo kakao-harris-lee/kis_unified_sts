@@ -261,9 +261,9 @@ genesis(ops-paper 레인). 이 절은 호스트에 무엇이 있고, 켜는 데 
 | **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
 | **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 `6b6f5766a6f06dc6c8299957767d270724a25fd8be60fe44ec17a81684c04a65` — PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다(§4-5-4) |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 `6b6f5766a6f06dc6c8299957767d270724a25fd8be60fe44ec17a81684c04a65` — PR #855 에서 `classify()` 에 `migrate refused` 가지를 더해 `d7e52b2f…` 에서 옮겼다(§4-5-4). ⚠ **호스트는 그 뒤 또 움직였다 — 2026-10-04 19:19 KST 에 `c38078fc…`(잎 순회) 가 설치됐다.** 이 행은 **고치지 않는다**: §4-5 를 잎 순회로 다시 등재하는 것은 그 변경을 들여오는 PR 의 일이고, 이 PR 이 먼저 옮기면 두 PR 이 같은 표를 두 방향으로 쓴다. ✅ 다만 **`classify()` 는 그 이동에 포함되지 않았다** — `fc0cd225…`·`6b6f5766…`·`c38078fc…`(현 호스트 파일) 세 판에서 함수를 떼어 낸 추출물이 **sha256 까지 같다**(`7c306195…`, 실측). 네 번째 사본 `d7e52b2f…`(PR 이전)만 다르고, 그 차이는 이 PR 이 더한 **두 줄 그대로**다 |
 | **cron 등재** | 운영자 crontab (`crontab -l` 220-222행) | — | **설치됨 2026-10-03 16:13 KST**(운영자). 줄 그대로: `0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly`, 바로 위에 `CRON_TZ=Asia/Seoul` 과 머리 주석 한 줄(§4-5-3 에 셋 다 그대로). 설치 **직전** 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`(15401 B, mtime 16:13:32) — 그 파일과 현재 crontab 의 차이는 **이 세 줄뿐**이다(실측 `diff`). 첫 발화 2026-10-05(월) 18:00 KST |
-| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | 존재(2972 B) — PR #855 의 `--selftest` **네 블록**(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33, 전부 PRE-GENESIS rc 0). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍혀 있고, **마지막 블록(`6b6f5766…`)이 위 행과 같다**. 래퍼가 소유한다 |
+| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | PR #855 의 `--selftest` **네 블록**(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33, 전부 PRE-GENESIS rc 0). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍혀 있다. ⚠ **「마지막 블록이 위 행과 같다」는 2026-10-04 19:19 이후 더는 참이 아니다** — 그 뒤 `c38078fc…` 의 블록이 하나 더 붙어 **다섯 블록**이고 마지막은 그쪽이다(19:20:06 PRE-GENESIS rc 0, 실측). 위 래퍼 행과 함께 그 PR 이 다시 등재한다. 래퍼가 소유한다 |
 | cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | — | 아직 없음. **비어 있는 것이 정상**(§4-5-3) |
 | 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5). **PR #855 이 더한 것**: `classify-diff-20261004.{in,out.before,out.after,diff}`(분류 대조 실측, §4-5-4) · 래퍼 판본 사본 `cold-backup-nightly.d7e52b2f7f34.sh` 와 `cold-backup-nightly.fc0cd225caeb.sh` · `cold-backup-nightly.6b6f5766a6f0.sh`(전부 `600`) |
 | 대상 data dir | `~/.local/state/tos/paper-data` | — | **아직 없다** — 2026-10-06 genesis 예정 |
@@ -367,7 +367,12 @@ fuser -v ~/.local/state/tos/paper-data/*.sqlite3     # 비어 있어야 한다
 ⚠ **1회성 corpus 를 대상으로 고를 때만 해당하는 전제 — 그대로 남겨 둔다.** 이 호스트의
 부팅증명 corpus 12개는 **전부 증거 스키마 v1** 이다(2026-10-03 읽기 전용 전수 조사,
 `mode=ro&immutable=1`). `EVIDENCE_SCHEMA_VERSION` 이 2 이므로 아카이브의 체인 재검증이
-거부한다:
+거부한다.
+
+⚠ **아래 블록은 실측 전사가 아니라 「현 코드가 내는 줄」(조립)이다**(리뷰 #855 2회차 노트 f).
+2026-10-03 전수 조사가 실제로 본 줄은 접두가 `archive failed` 인 **옛 모양**이었고(§4-5-2 ①
+이 그 전후를 적는다), 이 PR 이 그 접두를 `migrate refused` 로 옮겼다. 메시지 본문은 그때와
+같고 접두만 다르다 — 그래서 현 코드로 다시 돌리면 아래와 같은 줄이 나온다:
 
 ```
 cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 — run the operator `migrate` CLI (tos_runtime.operations.schema_migrations.apply_migrations) before booting; boot never auto-applies a migration
@@ -494,7 +499,7 @@ CRON_TZ=Asia/Seoul
 | `verdict` | 0 | CLI 가 0 | **보냄** | 아카이브가 존재·되읽힘·전 멤버 digest 일치·체인 재검증. 바닥 경고가 붙어도 **이 백업은 검증됐다** |
 | `PRE-GENESIS` | 0 | 대상 부재 · `BORN_ON` 전 | **보냄** | 백업할 것이 없다. 결함이 아니라 일정 |
 | `SKIP` | 0 | 락을 다른 실행이 보유 | **보냄** | **이 밤의 백업은 돌지 않았다.** 앞 실행이 매달렸는지 본다 |
-| `refused` | 1 | `cold-backup: [<layer>\|<조치>\|<대상> ]refused — …` 또는 래퍼 자신의 거부 | **보냄** | 규칙이 아니라고 했다. 접두 단어로 §5 를 찾는다. ⚠ **「아무것도 쓰지 않았다」는 착수 전 거부에만 해당한다** — 아카이브 단계의 넷(`archive`·`integrity`·`migrate`·`schema`)은 비압축 세대·매니페스트·`gen{N}.verify` 를 남긴다(§5 머리말). ⛔ 「내일 다시」라고 적지 않는다 — 재실행이 답이 **아닌** 것이 셋이다: `integrity refused` · `migrate refused` · `schema refused`. 그 셋에서는 밤마다 세대가 하나씩 는다 |
+| `refused` | 1 | `cold-backup: [<layer>\|<조치>\|<대상> ]refused — …` 또는 래퍼 자신의 거부 | **보냄** | 규칙이 아니라고 했다. 접두 단어로 §5 를 찾는다. ⚠ **「아무것도 쓰지 않았다」는 착수 전 거부에만 해당한다** — 아카이브 단계의 넷(`archive`·`integrity`·`migrate`·`schema`)은 비압축 세대·매니페스트·`gen{N}.verify` 를 남긴다(§5 머리말). `custody refused` 는 **양쪽에 다 있다**: 프리플라이트에서 나오면 아무것도 안 남고, 체인 연속성(`KeyContinuityRefused`)에서 나오면 남는다 — §5 머리말이 가른다. ⛔ 「내일 다시」라고 적지 않는다 — 재실행이 답이 **아닌** 것이 셋이다: `integrity refused` · `migrate refused` · `schema refused`. 그 셋에서는 밤마다 세대가 하나씩 는다 |
 | `failed` | 1 | `cold-backup: <stage> failed — …` | **보냄** | 실행은 적법했고 환경이 무너졌다. 호스트를 고친 뒤 다시 돈다(다음 세대로 간다) |
 | `unclassified` | 1 | 위 어느 형태도 아닌 줄 | **보냄** | 래퍼가 모르는 형태다. 못 알아본 줄을 깨끗한 분류로 접어 넣지 않는다 |
 | `ABORT` | **2** | 로그 디렉터리 생성 실패 · 락 파일 열기 실패 · 모르는 인자 · 인자 과다 · mktemp 실패 | ⛔ **못 보냄** | 통지 수단 자체를 세우지 못한 경우다. 앞의 넷은 **stderr 한 줄**뿐이고(로그 파일에도 안 남는다), mktemp 실패만 `log()` 를 거쳐 **래퍼 로그와 stdout 양쪽에** 남는다. 어느 쪽이든 cron 리다이렉트가 받는 곳은 `cold-backup.cron.log` 다 — **§4-5-6 의 아침 확인이 이것을 잡는 유일한 수단이다** |
@@ -502,8 +507,13 @@ CRON_TZ=Asia/Seoul
 ✅ **래퍼의 `classify()` 는 일반 패턴이 아니라 접두 리터럴을 열거한다 — 그래서 새 접두마다
 가지를 더해야 한다 (PR #855 에서 닫았다).** 위 `refused` 행의
 `[<layer>|<조치>|<대상> ]refused` 는 **이상형**이고(접두가 셋 중 무엇을 이름으로 쓰는지는
-`_backup_dispatch.py` 의 `_schema_version_prefix` 가 적어 둔 그대로다 — 층 다섯 ·
-조치 하나 `migrate` · 대상 하나 `schema`), 실제 코드는 접두를 그대로 적어 놓은 `case` 다. PR #855 가 디스패치에 더한
+`_backup_dispatch.py` 의 **`_REFUSAL_PREFIXES` 블록 주석**이 적어 둔 그대로다 — 여섯 행에
+리터럴 **다섯**, 그중 **층을 말하는 것은 넷**(`snapshot`·`archive`·`integrity`·`custody`) ·
+조치 하나 `migrate` · 대상 하나 `schema`. ⚠ 나머지 한 리터럴인 **맨 `refused` 는 층을
+말하지 않는다** — 어느 층에 들어가기도 전에 이 명령 자신이 거부한 것이라 안쪽에 이름 붙일
+층이 없다. 이 문단은 그 하나를 세면서 「층 다섯」이라 적었고, 출처도 방향 전용 함수인
+`_schema_version_prefix` 를 가리키고 있었다 — 리뷰 #855 2회차 노트 j), 실제 코드는 접두를
+그대로 적어 놓은 `case` 다. PR #855 가 디스패치에 더한
 두 접두는 그 열거에 없어 **둘 다 `unclassified` 로 갔다** — 실측으로 확인한 뒤 가지 둘을
 더했다:
 
@@ -547,8 +557,10 @@ rc 0)에 먹이고 출력을 비교했다:
 하므로**(§4-5-5 의 그 규율) 기준은 **최종판** 실행이다 — 2026-10-04 **08:33:47 KST**, 로그
 머리의 `sha256=6b6f5766…`: 파싱·실행되고 `PRE-GENESIS` rc 0 로 끝났으며 텔레그램 한 줄이
 `[SELFTEST]` 태그로 나갔다. `bash -n` 으로 **파일 전체**도 파싱된다(실행 경로만이 아니다).
-`~/.local/state/tos/cold-backup.log` 에 중간판 블록들이 함께 남아 있고, **마지막 블록이
-§4-5-1 의 값과 짝이다.**
+`~/.local/state/tos/cold-backup.log` 에 중간판 블록들이 함께 남아 있다. ⚠ **「마지막 블록이
+§4-5-1 의 값과 짝이다」는 2026-10-04 19:19 부터 거짓이다** — 호스트가 `c38078fc…`(잎 순회)로
+옮겨 가 블록이 하나 더 붙었다. 짝이 되는 것은 **이 PR 이 등재한 판의 블록**이고, 마지막
+블록은 그다음 판의 것이다(§4-5-1 의 같은 주의).
 
 통지가 **빠질 수 있는** 두 경우도 적어 둔다: `.env` 의 briefing 두 줄이 없으면 실행은
 계속되고 로그에 `notify skipped: briefing credentials not found` 가 남는다. curl 이
@@ -713,10 +725,26 @@ jq '{generation, archive_bytes, chain_verified, files_verified,
 어느 쪽이든 **종료코드 1 · stderr 한 줄 · traceback 없음**이다.
 
 ⚠ **「refused = 아무것도 쓰지 않았다」는 절반만 참이다.** 착수 전 거부(설정 · 경로 · 용량
-바닥 · 커스터디 · 산출물 충돌)는 정말로 아무것도 쓰지 않는다. 그러나 **아카이브 단계에서
+바닥 · 산출물 충돌)는 정말로 아무것도 쓰지 않는다. 그러나 **아카이브 단계에서
 나오는 거부**(`archive refused` · `integrity refused` · `migrate refused` ·
 `schema refused`)는 스냅숏이 **이미 끝난 뒤**다 — 비압축 `gen{N}/` 과 매니페스트가 완전한
 채로 남는다. 없는 것은 `.tar.xz` 와 보고서다.
+
+⚠⚠ **`custody refused` 는 어느 쪽인지 접두만으로 갈리지 않는다 — 발생지가 둘이다**
+(리뷰 #855 2회차 노트 a).
+
+- **프리플라이트 커스터디 — 아무것도 쓰지 않는다.** 스냅숏 **앞**에서 커스터디를 한 번
+  읽어 본다(`cold_backup.py` 의 `_stage("custody", key_provider.current)`). 커스터디 루트가
+  없거나 못 읽히면 `CustodyError`/`CustodyLoadRefused` 가 여기서 나오고, 그때는 세대
+  디렉터리도 매니페스트도 생기지 않았다.
+- **아카이브 단계의 체인 연속성 — 산출물이 남는다.** `KeyContinuityRefused` 는
+  `SqliteEvidenceStore` 를 **열 때** 나오고, `verify_archive` 가 압축을 풀어 놓은 사본
+  위에서 바로 그 스토어를 연다. 그 거부는 위 넷과 같은 자리에서 나오므로 비압축 세대 ·
+  매니페스트 · `gen{N}.verify` 가 **남는다**.
+
+접두를 둘로 쪼개지 않는 이유: 운영자의 다음 조치는 양쪽 다 **커스터디를 고치는 것**이고,
+남은 산출물을 어떻게 할지는 아래 문단이 접두와 무관하게 말한다. 갈라야 하는 것은 조치가
+아니라 **서술**이다.
 
 검증 스크래치 `verify_root/gen{N}.verify` 는 **압축 해제가 시작된 뒤의 거부에만** 남는다
 (성공했을 때만 지우므로): `integrity`·`migrate`·`schema` refused 는 셋 다 해제본 위에서
@@ -764,9 +792,13 @@ jq '{generation, archive_bytes, chain_verified, files_verified,
   신뢰하지 않는다**. 비압축 사본으로 `restore-drill` 을 돌려 원본 쪽이 멀쩡한지 먼저 가린다.
   **`integrity refused` 는 특히 재실행으로 지나가지 말 것** — 라이브 체인 자체가 의심된다는
   뜻일 수 있다.
-- **재실행이 답이 아닌 접두는 둘이다**: `integrity refused`(압축본을 신뢰하지 않는다)와
-  `migrate refused`(대상이 구 스키마 — `migrate` 를 먼저 돌린다). 나머지는 원인을 고치고
-  다음 밤으로 넘긴다.
+- **재실행이 답이 아닌 접두는 셋이다**: `integrity refused`(압축본을 신뢰하지 않는다) ·
+  `migrate refused`(대상이 구 스키마 — `migrate` 를 먼저 돌린다) · `schema refused`(대상이
+  **이 코드보다 새 스키마**(AHEAD) — `migrate` 는 **이쪽도 거부한다**. 조치는 그 파일을 쓴
+  **코드 판으로 올리거나** 이 레인을 멈추는 것이고, 둘 중 무엇인지는 이 명령이 고를 수
+  없다). 나머지는 원인을 고치고 다음 밤으로 넘긴다. ⚠ 이 문장은 `schema refused` 가 생긴
+  뒤에도 「둘」로 남아 있었다 — §4-5-4 의 거동표는 셋으로 고쳐졌는데 여기가 따라오지
+  않았다(리뷰 #855 2회차 지적 4).
 - 같은 세대의 `.tar.xz` 가 이미 있으면 덮어쓰지 않고 거부한다. 재시도는 그 파일을 치우거나
   다음 세대로 간다.
 
