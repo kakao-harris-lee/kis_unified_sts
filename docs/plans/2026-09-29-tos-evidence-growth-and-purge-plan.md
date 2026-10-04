@@ -4020,6 +4020,13 @@ mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → 
 **→ 정정(PR #855): crontab 한 줄은 운영자가 그날 16:13 KST 에 넣었다**(#851 머지 뒤 ·
 `0 18 * * 1-5` · `CRON_TZ=Asia/Seoul` · 설치 직전 스냅숏
 `~/.config/kis-probes/crontab.bak.20261003T161332`). 남은 것은 genesis 하나다 — 런북 §4-5-3.
+**→ 개정(PR #859, 2026-10-04)**: 운영자 결정 「계약월마다 durable set 하나」
+(`docs/runbooks/tos-paper-boot.md` §7.10 7 (c) — 같은 data dir 위의 종목 롤은 부팅 리플레이를
+영구 발산시킨다, 실측)로 대상 `~/.local/state/tos/paper-data` 는 **부모**가 되고 야간 래퍼가
+밑의 계약월 잎(`<종목>`)을 **순회**한다 — 잎마다 보관소 `paper-cold/<잎>/…` 와 파생 설정,
+한 통에 잎마다 한 줄, 종료코드는 가장 나쁜 잎. 래퍼 sha·증명 아티팩트는 런북 §4-5-1·§4-5-4
+가 단일 출처다(여기 적지 않는다). 2026-10-03 에 손으로 만든 평면 세 루트는 비어 있고 더
+쓰이지 않는다. 레드 증명 테스트 `tos/runtime/tests/compose/test_contract_roll_replay.py`.
 
 **후속 과제 — 이 PR 의 범위 밖으로 남긴 것**:
 
