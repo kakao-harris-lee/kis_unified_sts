@@ -4,7 +4,8 @@ The resident TOS paper session renders its config with
 ``shared.instruments.futures.get_front_month_code(product="mini")`` for the day, so the
 instrument coordinate CHANGES by itself the first trading day after expiry — no edit, no
 decision, nothing to review. For the 2026-10 contract that is ``A05610`` through
-2026-10-08 (expiry) and ``A05611`` from 2026-10-09 on.
+2026-10-08 (expiry) and ``A05611`` from 2026-10-09 on — a mapping pinned OUTSIDE this
+kernel, not here; see ``FRONT_MONTH`` below for where.
 
 Boot-time replay re-runs every durable inbox event against **today's** instrument-keyed
 ``StrategyRegistry`` (``tos/engine/registry.py`` keys on ``(account, instrument)``). Replaying
@@ -13,7 +14,8 @@ on the NEW instrument resolves nothing, so the replayed outcome digest is ``None
 is ``INCONCLUSIVE``, and :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` is
 raised. The damage is permanent: the ``REPLAY_DIVERGED`` evidence row is written durably before
 the raise, so reverting the config does not clear it
-(``tos_runtime.recovery.barrier``'s ``_replay_verdict_ok`` requires zero such rows).
+(``tos_runtime.recovery.inputs``'s ``_replay_verdict_ok`` requires zero such rows;
+``recovery/barrier.py`` only restates that rule when it checks the obligation).
 
 Both halves are asserted here, because only the pair carries the decision:
 
@@ -50,7 +52,17 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 #: KOSPI200 mini, October 2026 — what ``get_front_month_code(product="mini")`` returns through
 #: 2026-10-08 (that contract's second-Thursday expiry).
 FRONT_MONTH = "A05610"
-#: …and what it returns from 2026-10-09 on. Measured, not assumed — see the module docstring.
+#: …and what it returns from 2026-10-09 on.
+#:
+#: Neither value is derived here, and nothing inside ``tos/`` could derive it: the import
+#: firewall denies ``shared.instruments``. The mapping is pinned OUTSIDE the firewall — the
+#: code strings by ``shared/instruments/futures.py::get_front_month_code``, and the 2026-10
+#: boundary those strings turn on by the real-calendar tests named in
+#: ``docs/runbooks/tos-paper-boot.md`` §7.10 7 「재도출」:
+#: ``test_deploy_config.py::test_real_calendar_mini_october_expiry_day_before_and_after_close``
+#: (2026-10-08 expiry) and ``::test_real_calendar_day_after_mini_october_expiry_rolls_to_november``
+#: (the next day rolls to November). This suite needs neither fact: it uses the two values only
+#: as two DISTINCT OPAQUE STRINGS, and would assert exactly the same thing under any other pair.
 NEXT_MONTH = "A05611"
 
 
@@ -63,6 +75,12 @@ def _config_for(monkeypatch: pytest.MonkeyPatch, instrument: str, root: Path) ->
     fixtures ``_compose`` itself reads (``fx.construction_config()``) and the crossing event, so
     both are repointed together — leaving one behind would compose a runtime whose config and
     whose events disagree, which is a different bug than the one under test.
+
+    Assumption the monkeypatch rests on: every read of ``fx.INSTRUMENT`` and of
+    ``cf._VENUE_POLICY_INSTRUMENT`` happens inside a function body, so rebinding the module
+    attribute is what later calls see. A module-level constant in either module derived from
+    them would be computed once at import, before this runs, and would silently defeat the
+    repoint — day 2 would compose day 1's instrument and both tests would pass vacuously.
     """
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fx, "INSTRUMENT", instrument)
@@ -104,7 +122,14 @@ def _drive_one_real_hand_off(
 
 def _recorded_outcome_digests(data_dir: Path) -> list[object]:
     """Every ``EVENT_CONSUMED`` receipt's recorded ``outcome_digest`` in ``data_dir``'s evidence
-    store, read through a read-only connection (never ``immutable=1``)."""
+    store.
+
+    Read through ``mode=ro`` and deliberately NOT ``immutable=1``: this file was written moments
+    ago by a compose in this same test, so the newest rows may still live in its WAL.
+    ``immutable=1`` promises sqlite that nobody is writing and lets it skip the WAL, which would
+    read stale pages here; plain ``mode=ro`` re-reads the database correctly. The runbook's
+    ``immutable=1`` idiom is for inspecting a finished corpus no process is writing.
+    """
     connection = sqlite3.connect(
         f"file:{data_dir / 'evidence.sqlite3'}?mode=ro", uri=True
     )
@@ -184,8 +209,12 @@ def test_rolled_instrument_into_its_own_data_dir_boots_clean(
     leaf is genesis v2. Then day 1's leaf is re-booted under its own instrument to show the
     roll left it bootable: per-contract dirs must not cost the previous month's recoverability.
 
-    Red proof: point ``rolled_data_dir`` at ``data_dir`` (the flat layout) and this test fails
-    with ``EngineReplayDiverged``.
+    Red proof: point ``rolled_data_dir`` at ``data_dir`` (the flat layout) AND drop the
+    ``rolled_data_dir != data_dir`` guard assert below — on equal paths that assert trips first,
+    so leaving it in proves only that the two paths are equal. Without it the failure lands
+    where the fix lives: the rolled ``_compose`` raises ``EngineReplayDiverged``, uncaught (the
+    hazard the test above catches on purpose). The guard itself stays in the green test: it is
+    what makes "its own data dir" a checked fact rather than a naming convention.
     """
     data_dir = call_wrapped_fixture(cf.data_dir, tmp_path)
     custody_root = call_wrapped_fixture(cf.custody_root, tmp_path)
