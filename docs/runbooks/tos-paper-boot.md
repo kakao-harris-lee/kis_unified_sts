@@ -28,6 +28,8 @@
 - 전략·construction·marketfeed·critical-input 파일은 **부팅 증명 픽스처**이지 거래 전략이
   아니다. 각 파일 머리에 그렇게 적혀 있다. 커밋된 방향은 LONG 하나뿐이고, SHORT 는
   렌더 플래그로 만든다 — **대칭을 좁히지 않았다는 증거로 양쪽을 모두 부팅시킨다.**
+  ⚠ **상주(§7)에서는 이 문장이 그대로 적용되지 않는다.** 운영자 결정 2026-10-03 으로
+  상주는 **LONG 매일 + SHORT 분기 1회**다(§7.10 3). 이 절은 1회성 부팅의 규율이다.
 - **실전 `.env` 는 좌표 원천이 아니다.** 그 파일의 선물 계좌는 실전 계좌이고, 비협상 규칙상
   절대 주문 경로에 오르지 않는다. 렌더 CLI 는 이름이 정확히 `.env.mock` 인 파일만 받는다.
 
@@ -361,7 +363,7 @@ sqlite 내부 공백이 다르고 `PRAGMA table_info` 는 동일 — 테스트�
 아니다). 부팅은 이 인덱스를 **절대 만들지 않는다** — 생성은 신규 파일의 genesis 와 `migrate`
 뿐이라, 위 롤백이 다음 부팅에 조용히 덮이지 않는다.
 
-### 4-A-1. 실행 기록 — 2026-10-02 dry-run (사본에서 실행 · 실 corpus 본체 불변)
+### 4-A-1. 실행 기록 — 2026-10-02 dry-run, 이후 사이드카 추가 기록 10-03·10-04 (사본에서 실행 · 실 corpus 본체 불변)
 
 운영자 판정은 **「마이그레이션할 대상이 없다」** 였다(위 「적용 범위」). 그래서 실 corpus 에는
 `migrate` 를 돌리지 않았고, 대신 **사본**에 돌려 이 절의 절차와 판정 기준을 검증했다. 실행은
@@ -431,6 +433,10 @@ migrate: marketfeed at <copy>/marketfeed.sqlite3 — already at v1, nothing to d
 열두 디렉터리를 훑은 두 루프). `-wal` 의 mtime 은 원래 런(2026-09-27/28) 아니면 **13:05**
 이고 **조사보다 앞선다** — 그 시각의 접근은 이 조사가 아니다. 즉 이 조사가 확실히 쓴 것은
 **`-shm`** 이고, 사이드카가 **없던** 디렉터리였다면 **만들었을 것**이다(아래 실측).
+⚠ **위 네 시각은 2026-10-02 당시의 값이고 지금은 더 이상 현재값이 아니다.** 같은 사이드카가
+그 뒤 두 번 더 쓰였다 — 10-03 콜드 백업 증명(아래 ✅ 문단)과 10-04 리뷰(같은 문단 끝).
+**mtime 은 누적 기록이 아니라 마지막 접근만 남긴다**; 어느 작업이 언제 썼는지는 시각이
+아니라 그 작업의 기록으로 짚어야 한다.
 
 ⚠ **`mode=ro` 로는 부족하다. 조사는 이미 `mode=ro` 를 쓰고 있었다.** 읽기 전용 연결도 WAL
 인덱스를 쓰기로 열기 때문에 `-shm` 이 생긴다. 2026-10-02 실측(사이드카 없는 사본):
@@ -461,6 +467,31 @@ done
 건드리는 삭제라, **운영자 지시 없이는 하지 않는다.** 치울 때의 조건은 하나다 —
 `fuser -v <corpus>/*.sqlite3` 가 비어 있을 것.
 
+✅ **운영자 결정 2026-10-03 — 사이드카는 그대로 둔다. 이 항목은 닫혔다.** 그 뒤 콜드 백업
+증명이 같은 방식으로 `-shm` 을 한 번 더 썼다: A1 기준 corpus
+`~/.local/state/tos/realclock-20260928T110001-LONG/data` 의 네 `-shm` 이 **2026-10-03
+14:46:57–58** 로 갱신됐고(`mode=ro` 의 `.backup` 사본 뜨기 — `immutable=1` 이 아니라 위
+실측 그대로다), **본체 네 파일은 복사 전후 sha256 이 같았으며 `-wal` 은 건드리지 않았다**.
+⚠ 이 네 시각과 해시는 **콜드 백업 런북 §4-5-5 의 기록을 옮겨 적은 것**이고 그 절이 정본이다
+(해시 전문과 로그 줄 번호가 거기 있다) — 두 곳이 갈리면 §4-5-5 를 믿는다.
+운영자 결정은 **그 네 사이드카를 지우지 않고 그대로 둔다**는 것이다 — 다음 조사가 이
+mtime 을 보고 이 항목을 다시 열지 않도록 여기에 적는다.
+⚠ **2026-10-04 추가 — 세 번째 작업이 또 사이드카를 썼다. 이번엔 런타임이 아니라 리뷰다.**
+PR #856 리뷰 중 한 렌즈가 `~/.local/state/tos/realclock-20260928T100001-LONG/data`
+(09-28 **10:00** 세션 코퍼스 — 이 절이 다루는 11:00 세션 코퍼스와 **다른 디렉터리**다)를 열어
+`-shm` **둘**(`evidence` · `inbox`)을 다시 썼다. 실측 mtime **2026-10-04 07:39:35**
+(리뷰가 보고한 07:36:07 보다 뒤다 — 같은 리뷰 안의 더 나중 접근으로 보이며, **이 런북은
+직접 잰 값을 적는다**). **본체 네 파일은 불변**(mtime 2026-09-28 10:15 · 크기 그대로),
+`-wal` 도 불변, `marketfeed`/`rcl` 의 `-shm` 은 10-02 값 그대로다.
+⛔ **이것은 이 절이 금지한 바로 그 접근이다** — `immutable=1` 없이 열면 읽기만 해도
+`-shm` 을 쓴다. 런타임이 아니라 **조사·리뷰 과정**이 위반했고, 다음 조사가 이 mtime 을
+보고 「런타임이 건드렸다」로 읽지 않도록 여기에 적는다. **사이드카는 그대로 둔다**
+(운영자 결정 2026-10-03 과 같은 처분).
+⚠ 날짜만 보고 주인을 짐작하지 말 것(`MEMORY.md` 의 earlyoom 교훈과 같은 형태): 10-02
+15:48·15:55 는 v1 조사, 10-03 14:46 은 콜드 백업 증명(09-28 **11:00** 세션 코퍼스),
+10-04 07:39 는 PR #856 리뷰(09-28 **10:00** 세션 코퍼스)다 — **셋 다 다른 작업이고 두
+코퍼스는 서로 다른 디렉터리다.**
+
 **백업 세대는 뜨지 않았다** — 실 파일을 바꾸지 않았으므로 (0) 단계가 성립하지 않는다. 다만
 그 과정에서 확인해 둘 것이 하나 나왔다: **`cold-backup` 은 지금 이 호스트에서 쓸 수 없고,
 쓸 수 있게 만드는 것은 두 줄짜리 YAML 변경이 아니다.** 채워진 `evidence_cold_backup.yaml`
@@ -477,9 +508,9 @@ done
 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 과 세 보관 경로가 만들어졌고,
 `minimum_free_bytes` 는 **53687091200**(50 GiB)으로 채워졌으며, 대상은 **상주 paper
 런타임의 `~/.local/state/tos/paper-data`** 다(2026-10-06 genesis 예정). 같은 날
-**16:13 KST 에 운영자가 crontab 줄도 넣었으므로**(`0 18 * * 1-5` · `CRON_TZ=Asia/Seoul`),
-**남은 것은 그 genesis 하나다**(ops-paper 레인). 이 문단은 한동안 「남은 것 둘」이라고
-적고 있었고 16:13 뒤로 거짓이었다 — PR #855 가 정정했다. 호스트에 무엇이 있고 켜는 데
+**16:13 KST 에 운영자가 crontab 줄도 넣었으므로**(`0 18 * * 1-5` · `CRON_TZ=Asia/Seoul` ·
+§7.7), **남은 것은 그 genesis(10-06) 하나다**(ops-paper 레인). 이 문단은 한동안 「남은 것
+둘」이라고 적고 있었고 16:13 뒤로 거짓이었다 — PR #855 가 정정했다. 호스트에 무엇이 있고 켜는 데
 무엇이 남았는지는 `docs/runbooks/tos-evidence-cold-backup.md` §4-5 에 있다.
 
 ⚠ 그 절이 함께 기록한 것: **이 호스트의 1회성 corpus 12개는 전부 증거 스키마 v1 이라,
@@ -800,7 +831,8 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
   `LONG` 이고, 한 data dir 에 두 방향을 섞는 경로는 설계에 없다(§7.10 3 — 섞으면 §5 ⑤ 때문에
   나중에 digest 로 갈라낼 수 없다). 저장소 규칙 「Futures must preserve long/short symmetry」는
   **전략 코드의 대칭**에 대한 것이고 이 배선은 그 코드를 바꾸지 않지만, **매일 쌓는 증거가
-  한 방향뿐**이라는 것은 그 자체로 기록할 변화다. **운영자 결정 자리다 — §7.10 3.**
+  한 방향뿐**이라는 것은 그 자체로 기록할 변화다. **운영자 결정 2026-10-03 으로 닫혔다 —
+  LONG 단독 유지 + SHORT 부팅증명 분기 1회(§7.10 3).**
 - ⚠ **바뀌는 것 (2) — 코드가 날마다 움직인다.** 래퍼는 매일 아침 `origin/main` 에서
   워크트리를 새로 만든다. 그래서 **하나의 append-only 코퍼스가 여러 커널 리비전에 걸친다.**
   §7.10 6 을 볼 것.
@@ -809,7 +841,7 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 
 | 무엇 | 어디 | 비고 |
 | --- | --- | --- |
-| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · mode 0755(런타임이 만든다) — 증거는 계좌 지문을 담지 않지만 공유 호스트이므로 운영자가 좁힐 수 있다 |
+| 상주 durable set | `~/.local/state/tos/paper-data` | **10-06 genesis 가 만든다**(§7.6) · **0700**(디렉터리) · **0600**(스토어 넷) — 기동 시 `umask 077` + 종료 뒤 `chmod 700` 으로 보장한다(✅ 2026-10-04 적용 · 실측 §7.2-a). 결정 레코드가 계좌번호를 평문으로 싣기 때문이다 |
 | 세션 래퍼 | `~/.config/kis-probes/tos-paper-session.sh` | mode 700 · 비커밋 |
 | 세션 드라이버 | `~/.config/kis-probes/tos_paper_session.py` | mode 700 · 비커밋 |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-paper` | 매일 `origin/main` 에서 **다시 만든다**(§7.3 3) · **0755** — 좌표를 담지 않는 공개 `origin/main` 내용이라 0700 대상이 아니다 |
@@ -823,10 +855,11 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 
 **좌표 규율 (§2·§6 의 연장 — 이 절에도 그대로 적용된다).**
 `render.log` 는 **계좌 지문**을 찍는다. §2 가 못박듯 그 지문은 마스킹이 아니라 상관자이고
-**유출된 지문은 유출된 계좌번호로 취급한다.** 그러므로 **좌표를 담는 다섯 트리**
+**유출된 지문은 유출된 계좌번호로 취급한다.** 그러므로 **좌표를 담는 여섯 트리**
 — `~/.config/tos/paper-config`(렌더 산출물) · `~/.local/state/tos/paper-custody`(자격증명) ·
 `~/.local/state/tos/paper-sessions`(`render.log`) · `~/.local/state/tos/paper-logs`(래퍼 로그) ·
-`~/.local/state/tos/paper-ops`(PID·백업 설정) — 는 전부 저장소 밖 **0700**(실측)이고, **`render.log` · 증거 행 · 질의 결과를 PR·계획 문서·텔레그램으로 옮겨
+`~/.local/state/tos/paper-ops`(PID·백업 설정) · **`~/.local/state/tos/paper-data`(증거 —
+결정 행이 계좌번호를 평문으로 싣는다, §7.2-a)** — 는 전부 저장소 밖 **0700**(실측)이고, **`render.log` · 증거 행 · 질의 결과를 PR·계획 문서·텔레그램으로 옮겨
 적지 않는다**(이 런북의 인용은 전부 지문·계좌가 없는 줄만 고른 것이다). `.env.mock` 은
 `$MAIN` 의 것을 **절대경로로 넘긴다 — 워크트리로 복사하지 않는다**(§7.3 1). 텔레그램 토큰은
 `$MAIN/.env` 의 두 줄만 `grep` 으로 읽고 로그에 내보내지 않는다.
@@ -847,6 +880,109 @@ OCP 의 정본 covered content **밖**이기 때문이다(DR-0002 §2.3 이 dige
 | ⛔ `TOS_PAPER_FAKE_DATE` | (없음) | 달력 검사만 이 날짜로 본다 |
 | ⛔ `TOS_PAPER_MINUTES` | (없음) | 안전망 마감을 직접 준다 — **§7.3 6 의 「마감이 지났다」 검사를 건너뛴다** |
 | `--selftest` (플래그) | — | 텔레그램 줄에 `[SELFTEST] ` 접두 |
+
+#### 7.2-a ✅ 상주 data dir 은 0700 이다 — 패치 2026-10-04 07:08 · 실측 07:12 KST
+
+이 표의 1차 판은 상주 data dir 을 **0755 로 두어도 된다**고 적고 그 근거로 「증거는 계좌
+지문을 담지 않는다」를 들었다. **그 근거는 틀렸다.** 증거가 담지 않는 것은 *지문*이고,
+**결정 계열 행은 계좌번호를 평문으로 담는다**:
+
+- `DECISION_OUTCOME_EMITTED` · `DECISION_WITHHELD` · `FLOW_HALTED` 의 payload 에
+  `instrument_key: {account, instrument}` 가 있다(09-28 **10:00 세션** 코퍼스 실측 —
+  1,492 행 중 236 행. ⚠ 같은 날 **11:00 세션** 코퍼스(§4-A-1 의 A1 기준 corpus)와 다른
+  디렉터리다 — 둘 다 「09-28 코퍼스」로 부르면 행 수가 안 맞는다.
+  질의와 개수는 §7.10 7 (c)).
+- 즉 지문보다 **나쁘다.** §2 는 지문을 두고 「유출된 지문은 유출된 계좌번호로 취급한다」고
+  적는데, 여기 있는 것은 취급의 문제가 아니라 **계좌번호 그 자체**다.
+- 그러므로 상주 data dir 은 §7.2 의 **좌표를 담는 트리**이고, 다른 다섯과 같은 **0700** 이어야
+  한다. 「공유 호스트이므로 운영자가 좁힐 수 있다」는 선택이 아니라 **요건**이었다.
+
+**왜 umask 인가.** 런타임은 디렉터리를 만들 때 모드를 지정하지 않고
+(`tos_runtime/operations/*.py` 의 `mkdir` 전부 모드 인자 없음) sqlite 도 마찬가지라,
+**실제 모드는 프로세스 umask 가 정한다.** 09-27/28 코퍼스 열두 개가 그 증거다 —
+디렉터리 `drwxrwxr-x`(0775) · 본체 `-rw-r--r--`(0644), 곧 당시 umask 002 다.
+
+**적용된 변경 (운영자 승인 2026-10-04).** 저장소 파일이 아니라
+`~/.config/kis-probes/tos-paper-session.sh`(비커밋 · mode 700) 두 곳이다. 이전 판 백업은
+`~/.config/kis-probes/tos-paper-session.sh.bak.e169e23d`, 새 sha256 은
+**`a898e6cb1f2f75d078d91a4cc53ebd0054fa5056316fe073f293da995ce74a8f`**(§7.9 머리 ⚠).
+
+1. **드라이버 기동만** `umask 077` 로 감쌌다. ⛔ **전역으로 걸지 않는다** — `$WT` 분리
+   워크트리는 이 표가 **의도적으로 0755** 라고 적은 공개 트리다(좌표를 담지 않는
+   `origin/main` 내용). 서브셸 + `exec` 라 `$!` 가 그대로 드라이버 PID 이고
+   `wait`/`kill`/pidfile 경로가 **바뀌지 않는다**:
+
+   ```bash
+   ( umask 077; exec "$PY" "$DRIVER" \
+       --worktree "$WT" --main-repo "$MAIN" \
+       ... \
+       --pidfile "$PIDFILE" ) >>"$LOG" 2>&1 &
+   DRV=$!
+   ```
+
+   ⚠ **「`$WT` 는 0755 로 남는다」는 체크아웃 디렉터리에 대해서만 참이다.** `git worktree
+   add` 는 래퍼 본체(umask 밖)가 돌리므로 `$WT` 자신은 **0755** 그대로지만, 그 **안에서
+   드라이버가 새로 만드는 것**은 umask 를 탄다 — 실측(2026-10-04 07:12): `$WT` 는 `755`,
+   그 아래 드라이버가 만든 `__pycache__` 셋은 **`700`**. 공개 트리의 모드는 지켜졌고
+   드라이버 산출물만 좁혀졌으니 의도대로지만, **「워크트리는 전혀 손대지 않는다」로 읽으면
+   틀린다.**
+
+2. 드라이버가 끝난 뒤(`log "=== driver exited rc=$rc"` 바로 다음) 멱등하게 조인다 —
+   **만들지는 않는다**(genesis 전에 디렉터리를 만들면 §4-A 의 「빈 스토어 넷」 사고가 된다):
+
+   ```bash
+   [ -d "$DATA" ] && chmod 700 "$DATA" 2>/dev/null || true
+   ```
+
+**실측 (스크래치 data dir · 세션 `2026-10-04-071204-LONG` · `verdict ok` rc 0 · genesis=True).**
+출하본 `a898e6cb…` 을 `TOS_PAPER_DATA_DIR=<scratch>/data TOS_PAPER_MINUTES=1
+TOS_PAPER_IGNORE_CALENDAR=1 TOS_PAPER_NOTIFY=0 … start --selftest` 로 돌린 뒤
+`stat -c '%a %n'` — 넘긴 값이 아래 표의 `<scratch>/data` **바로 그 디렉터리**다(경로만
+줄였다). **아티팩트**: `~/.local/state/tos/paper-sessions/2026-10-04-071204-LONG/modes.out`
+(0600 · 아래 두 블록의 출처):
+
+```text
+700 <scratch>/data
+600 <scratch>/data/evidence.sqlite3
+600 <scratch>/data/evidence.sqlite3-shm
+600 <scratch>/data/evidence.sqlite3-wal
+600 <scratch>/data/inbox.sqlite3
+600 <scratch>/data/marketfeed.sqlite3
+600 <scratch>/data/marketfeed.sqlite3-shm
+600 <scratch>/data/marketfeed.sqlite3-wal
+600 <scratch>/data/rcl.sqlite3
+```
+
+**부수 효과 — 세션 아티팩트도 0600 이 됐다.** 드라이버가 같은 umask 아래 돌므로
+`$SESSION_DIR` 의 네 파일도 함께 조여졌다. 같은 호스트의 전후 대조(패치 전 10-03 · 후 10-04):
+
+```text
+644 …/2026-10-03-145743-LONG/render.log      (패치 전)
+600 …/2026-10-04-071204-LONG/render.log      (패치 후)
+```
+
+§7.2 가 「`render.log` 는 계좌 지문을 찍는다」고 적는 바로 그 파일이므로, 이것은 덤이 아니라
+같은 결함의 두 번째 면이다(디렉터리는 이미 `chmod 700` 이었고 **안의 파일이 0644 였다**).
+
+⚠ **그리고 패치는 과거를 고치지 않는다.** 2026-10-04 현재 `paper-sessions` 아래
+`render.log` 는 **0600 두 개 · 0644 열다섯 개**다(실측) — 열다섯은 패치 전 세션들이고
+**그대로 0644 로 남아 있다.** 상위 디렉터리가 0700 이라 다른 사용자는 traversal 로 막히지만,
+모드 자체를 맞추려면 한 번 돌린다:
+
+```bash
+chmod 600 ~/.local/state/tos/paper-sessions/*/render.log
+# 확인: 0644 가 0건이어야 한다
+find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
+```
+
+운영자 판단 자리라 이 레인은 돌리지 않았다(남의 세션 아티팩트의 모드를 바꾸는 일이다).
+
+⚠ **남은 경계 하나.** 2 의 `chmod` 는 **디렉터리만** 조인다. 이 패치보다 **먼저** genesis 가
+일어났다면 안의 파일은 0644 로 남는다 — 공유 호스트에서 실질 차단은 디렉터리 traversal 이라
+그래도 막히지만, 되돌리려면 운영자가 한 번
+`chmod 600 ~/.local/state/tos/paper-data/*` 를 손으로 돌린다. **이번에는 해당하지 않는다**:
+`~/.local/state/tos/paper-data` 는 2026-10-04 현재 **아직 없고**(실측) genesis 는 10-06 이라
+패치가 먼저다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
@@ -945,15 +1081,27 @@ STALE·소비를 그 캠페인의 실측과 비교하므로, **무엇이 같고 
 **관측 수집기(`TOS_PAPER_APPEND_EVERY_S`, 기본 5 s)** 는 위 합성 밴드로 저널에 관측을
 덧붙인다. 기본 on 으로 둔 이유는 **없으면 저널에 렌더의 부팅증명 1건뿐이라 소비도 결정도
 0 이고**, 증거 증가 대응 계획 §1 의 「≈ 200 MB/일」 기준선이 바로 이 조건에서 나온 값이기
-때문이다. 끄면 하루 ≈ **112 MB**(유도값 — §7.8 3). ⚠ **이것은 운영자 결정이 아직 없는
-자리다 — §7.10 1.**
+때문이다. 끄면 하루 ≈ **112 MB**(유도값 — §7.8 3). ⚠ **운영자 결정 2026-10-03 으로 닫혔다 —
+`on`, 5 s 유지(§7.10 1). 이 기본값은 이제 결정된 값이다.**
 
-### 7.4 cron 두 줄 — **아직 설치되어 있지 않다**
+### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
 
-설치는 운영자가 한다. 래퍼는 crontab 에 손대지 않고 자기 자신을 지우지도 않는다
+운영자가 넣었다. 래퍼는 crontab 에 손대지 않고 자기 자신을 지우지도 않는다
 (날짜 슬롯이 아니라 반복 일정이다).
 
+- **설치 시각** 2026-10-03 **15:43 KST** · **백업**
+  `~/.config/kis-probes/crontab.bak.20261003T154351`(설치 직전 crontab 전문).
+- **위치**: 자기 `CRON_TZ=Asia/Seoul` 과 함께 **crontab 의 끝**에 덧붙였다(아래 ⚠ 그대로).
+- **확인 한 줄** — `crontab -l | grep -c tos-paper-session` 가 **`2`** 여야 한다(실측 2026-10-03: `2`).
+- **첫 발화는 2026-10-05(월) 08:45** 이고 그날은 **대체휴일**이라 래퍼가 **SKIP** 한다
+  (rc 0 · 로그 한 줄 · 텔레그램 없음 — §7.3 4 · §7.8 1 의 결말 표). **첫 부팅은
+  2026-10-06(화) 08:45** 이고 그것이 genesis 다(§7.6).
+  ⚠ 그러므로 **10-05 에 텔레그램이 없는 것은 정상이고 고장이 아니다.**
+
+설치된 줄은 이것이다(설치된 블록 그대로 — 주석 머리 한 줄 포함):
+
 ```cron
+# TOS paper 상주 세션 (운영자 결정 2026-10-03 · 첫 세션 2026-10-06 · 런북 tos-paper-boot.md §7.4; 크론 끝에 둔다 — CRON_TZ 는 아래 줄에만 적용)
 CRON_TZ=Asia/Seoul
 45 8  * * 1-5 /bin/bash /home/deploy/.config/kis-probes/tos-paper-session.sh start >> /home/deploy/.local/state/tos/paper-logs/cron.log 2>&1 # tos-paper-session
 45 15 * * 1-5 /bin/bash /home/deploy/.config/kis-probes/tos-paper-session.sh stop  >> /home/deploy/.local/state/tos/paper-logs/cron.log 2>&1 # tos-paper-session
@@ -1006,8 +1154,19 @@ CRON_TZ=Asia/Seoul
 - 야간 콜드 백업(`docs/runbooks/tos-evidence-cold-backup.md` ·
   `~/.config/kis-probes/cold-backup-nightly.sh`)의 대상은 **같은**
   `~/.local/state/tos/paper-data` 이고 예정 시각은 **18:00 KST** 다.
-  ⚠ **그 cron 줄도 아직 설치되어 있지 않다**(PR #851). 두 줄을 같이 넣든 따로 넣든,
-  **백업만 먼저 넣는 것은 의미가 없다**(대상이 아직 없다).
+  ✅ **그 cron 줄도 설치됐다 — 운영자 2026-10-03 16:13 KST**(백업
+  `~/.config/kis-probes/crontab.bak.20261003T161332`), 역시 자기 `CRON_TZ` 와 함께 crontab
+  끝에 `0 18 * * 1-5 … cold-backup-nightly.sh` 한 줄이다. 대상이 아직 없는 동안(10-06
+  genesis 전)의 실행은 **`PRE-GENESIS` rc 0** 으로 끝난다
+  (`docs/runbooks/tos-evidence-cold-backup.md` §4-5-3 · §4-5-5 R1) — 그래서 백업 줄을 먼저
+  넣어도 무해하다. 1차 판은 「백업만 먼저 넣는 것은 의미가 없다(대상이 아직 없다)」고
+  적었는데, **`PRE-GENESIS` 분기가 생긴 뒤로는 그 말이 더 이상 맞지 않는다.**
+  ⚠⚠ **「조용히」가 아니다 — `PRE-GENESIS` 는 텔레그램을 보낸다.** 콜드 백업 런북의 결말
+  표가 그 칸을 **「보냄」**으로 적고(§4-5 표), 래퍼도 그 분기에서 `notify` 를 호출한다
+  (`cold-backup-nightly.sh` · `COLD_NOTIFY` 기본값 1 이고 **cron 줄은 그것을 끄지 않는다**).
+  그러므로 **10-05(월) 저녁 18:00 에는 `PRE-GENESIS` 한 줄이 반드시 와야 한다.**
+  그날 저녁이 조용하면 그것은 「아직 대상이 없어서」가 아니라 **통지 경로가 깨진 것**이다.
+  ⚠ 10-06 **당일부터는** 같은 부재가 `refused` **rc 1** 이다(래퍼의 같은 분기).
 - `backup-set`/`cold-backup` 은 **런타임이 정지해 있을 것**을 전제하고, 그 전제를
   **기계적으로 확인하지 못한다**(그 함수의 문서화된 한계). 그래서 시간으로 벌려 둔다:
 
@@ -1049,6 +1208,15 @@ CRON_TZ=Asia/Seoul
 | `N/A — 부팅 전 종료` | 렌더가 거부돼 부팅 자체가 없었다 | `render.log` |
 | `알 수 없음 … 드라이버는 살아 있다` | 630 s 안에 `bootproof.txt` 가 없고 드라이버는 산다 = **느린 부팅이지 거부가 아니다** | 세션 디렉터리를 다시 본다 |
 
+⛔ **2026-10-12(월)에 볼 것 — 그날이 종목이 바뀌는 첫 세션이고, 지금 상태로는 부팅이
+위험하다(§7.10 7, REOPENED).** 기동 줄 끝의 종목은 10-06·10-07·**10-08 까지 `A05610`**
+(만기일 당일도 아직 구월물)이고, 10-09(금)은 한글날이라 **텔레그램이 아예 없다**
+(SKIP — 이 절 1 의 결말 표 SKIP 행). **아무것도 10-12 전에는 롤하지 않는다.**
+10-08 세션 자체는 다른 날과 똑같다 — 15:45 정지까지 CONTINUOUS, 거부도 stage-deny 도 없다.
+⚠ 위험한 날은 10-08 이 아니라 **10-12** 다: 같은 data dir 에 `A05611` 로 부팅하면 리플레이가
+어긋나 런타임이 **held** 로 떨어진다(실측 — §7.10 7 (c)). 그 아침의 증상은 §7.9 「held」 절에
+있다. **결정이 나오기 전에는 10-12 기동 전에 §7.10 7 (c) 를 먼저 읽는다.**
+
 **2. `report.json`** — `~/.local/state/tos/paper-sessions/<날짜>-*/report.json`:
 
 - `boot_proof_ok: true` · `verdict: "ok"` · `exit_code: 0`
@@ -1063,6 +1231,10 @@ CRON_TZ=Asia/Seoul
   10-06 이다. 기대는 「STALE 은 부팅당 1 건」이고, 더 많으면 poll/신선도 예산이 어긋난
   것이다(#807 형태).
 - `append_errors` — 0 이 아니면 저널 쓰기가 실패하고 있다(보고서는 그래도 남는다).
+- ⛔ **`events_consumed` 가 0 인데 `observations_appended` 는 > 0 이고 그날이 거래일이면
+  held 런타임을 의심한다** — 부팅은 `OK` 라고 말하는데 틱이 하나도 처리되지 않는 모양이다.
+  휴장·장외에는 같은 값이 정상이므로 **장중에만** 신호다. 확정 질의는 **§7.9-held**.
+  10-12(월) 첫 롤 세션에서 가장 먼저 볼 값이다(§7.10 7 (c)).
 - ⚠ **`baseline_evidence_seq: -1` 과 `genesis: false` 가 함께 나오면 genesis 가 아니다.**
   드라이버의 기준선 조회는 **DB 부재 · 빈 테이블 · `DatabaseError` 셋 다**에서 −1 을 돌려주는데,
   `genesis` 는 파일 존재만 본다. 둘이 어긋났다는 것은 **파일은 있는데 읽히지 않았다**는 뜻이고,
@@ -1081,13 +1253,28 @@ CRON_TZ=Asia/Seoul
 | 기대 폭 | — | 장 길이·수집기 지연·휴장 반일 등으로 **150–250 MB** 를 정상으로 본다 |
 | ≈ **112 MB/일** (수집기 off) | `TIME_HEALTH_SNAPSHOT` 이 증거 바이트의 75 %(3.99/5.33 MB, 계획 §1) → 3.99 × 28 | **유도값 — 측정한 적 없다** |
 
-**4. 콜드 백업 결과** — 전날 18:00 의 텔레그램 줄(`verdict`/`refused`/`failed`)과
-`~/.local/state/tos/cold-backup.log`. **그 cron 도 아직 미설치다**(§7.7).
+**4. 콜드 백업 결과** — 전날 18:00 의 텔레그램 줄과 `~/.local/state/tos/cold-backup.log`.
+✅ **그 cron 도 설치됐다**(운영자 2026-10-03 16:13 · §7.7).
+
+| 텔레그램 머리 | rc | 뜻 |
+| --- | --- | --- |
+| `verdict` | 0 | 백업이 떠서 되읽기 검증까지 끝났다 |
+| `PRE-GENESIS` | 0 | 대상이 아직 없다(`BORN_ON` 전). **10-05 저녁의 정상값** |
+| `SKIP` | 0 | 다른 실행이 락을 쥐고 있다 |
+| `refused` · `failed` · `unclassified` | 1 | 셋 다 **한 줄을 보낸다** |
+| `ABORT` | 2 | **텔레그램이 못 간다** — 통지 수단을 세우기 전에 끝났다 |
+
+⚠ **10-05(월) 저녁에 아무것도 오지 않는 것은 정상이 아니다.** 이 줄의 1차 판은 그 반대로
+적었는데 **틀렸다** — `PRE-GENESIS` 는 **보냄**이다(§7.7 ⚠⚠). 침묵의 뜻은 둘뿐이다:
+통지 경로가 깨졌거나, cron 이 아예 안 돌았거나.
+⚠ **rc 2(ABORT)는 텔레그램에도 `cold-backup.log` 에도 남지 않는다.** 그 경우를 잡는
+유일한 자리는 cron 리다이렉트가 받는 **`~/.local/state/tos/cold-backup.cron.log`** 다
+(콜드 백업 런북 §4-5-6). 침묵을 만나면 거기부터 본다.
 
 ### 7.9 드라이런 기록 — 2026-10-03 (장 마감일 · 스크래치 data dir)
 
-운영자 검토 전이라 cron 은 설치하지 않았고, 상주 data dir 은 건드리지 않았다(§7.6 — 지금도
-없다). 아티팩트는 **`~/.local/state/tos/paper-sessions/2026-10-03-*/`** 와 날짜 로그
+드라이런 시점에는 cron 이 아직 없었고(그날 **15:43**·**16:13** 에 설치됐다 — §7.4 · §7.7),
+상주 data dir 은 건드리지 않았다(§7.6 — 지금도 없다). 아티팩트는 **`~/.local/state/tos/paper-sessions/2026-10-03-*/`** 와 날짜 로그
 **`~/.local/state/tos/paper-logs/2026-10-03.log`** 에 있다.
 
 **범위.** 그날 래퍼 `start` 는 **16 회** 돌았고(그중 4 회는 SKIP·ABORT 로 부팅 전에 끝났다),
@@ -1102,6 +1289,18 @@ CRON_TZ=Asia/Seoul
 tos-paper-session.sh  e169e23d4ee190a5c42120d825922b098f5c1868ec8a22163dc35d385a5b86b8
 tos_paper_session.py  995ada06d795ba1fd7d988e6b2c83793c1173c3adeeb85a59d33e379d85179b2
 ```
+
+⚠ **래퍼는 그 뒤 한 번 더 바뀌었다 — 지금 출하본은 `a898e6cb1f2f75d078d91a4cc53ebd0054fa5056316fe073f293da995ce74a8f`**
+(2026-10-04 07:08 KST · §7.2-a 0700 패치 · 이전 판 백업
+`~/.config/kis-probes/tos-paper-session.sh.bak.e169e23d`). **아래 ①–③·E1–E5·S1–S6 은 전부
+`e169e23d…` 또는 그 직전 두 판(`f452ee0b…`/`b28c188f…`)에서 돈 기록이다** — 어느 실행이 어느 판인지는 바로 아래 ⚠ 문단이 이름으로 가른다. 두 판의 차이는 `diff` 로 확인한 **셋뿐**이고
+— ① 드라이버 기동을 `( umask 077; exec … )` 서브셸로 감싼 것, ② 종료 뒤
+`[ -d "$DATA" ] && chmod 700 "$DATA"` 한 줄, ③ 그 둘을 설명하는 주석 블록 둘 — **달력·digest·
+부팅증명·정지·보고 경로는 한 글자도 바뀌지 않았다.** 그러므로 아래 기록은 그대로 유효하다.
+`a898e6cb…` 에서 돈 것은 **두 세션**이다 — 패치 직후 적용 쪽이 돌린
+`2026-10-04-070746-LONG`(그 스크래치 data dir 은 이미 지워졌다)과, 이 레인이 독립
+재측정으로 돌린 `2026-10-04-071204-LONG`(§7.2-a 의 출력이 이쪽 것이다).
+`tos_paper_session.py` 는 불변(`995ada06…`).
 
 ⚠ **①②·E4·S2·S1 은 그 직전 리비전**(`f452ee0b…` / `b28c188f…`)**에서 돌았다.** 그 뒤의 변경은
 텔레그램 본문 로깅(H1) · 헤더 한 줄 · `grep -qxF` · 주석 하나 · 드라이버의 `except` 한 줄이고,
@@ -1255,7 +1454,7 @@ digest 가 바뀌었다. 지금 범위는 한 줄이다.
 | 가드 | 입력 | 출력 |
 | --- | --- | --- |
 | 달력 | 2026-10-03 (실제 그날, 토) | `calendar: 2026-10-03 is a weekend (dow=6)` → rc 1 |
-| 달력 | 2026-10-09 (금, 한글날) | `calendar: 2026-10-09 is a listed holiday (both files)` → rc 1 |
+| 달력 | 2026-10-09 (금, 한글날) | `calendar: 2026-10-09 is a listed holiday (both files)` → **`is_trading_day` rc 1** |
 | 달력 | 2026-10-06 (화) | `calendar: 2026-10-06 is a trading day (both files agree)` → rc 0 |
 | 달력 | 달력 파일 부재 | `ABORT — calendar file missing in the worktree: …/market_schedule.yaml` rc 2 |
 | 달력 | 인위적 불일치(한쪽에만 10-06) | `calendar: ⚠ DIVERGENCE for 2026-10-06 — market_schedule.yaml=1 tos calendar.yaml=0; treating as a holiday (conservative)` → rc 1 |
@@ -1264,6 +1463,9 @@ digest 가 바뀌었다. 지금 범위는 한 줄이다.
 | digest | 넷 다 64 hex 인데 값 불일치 | `ABORT — digest mismatch — boot would be refused (ReleaseAdmissionRefused).` rc 2 |
 | 부팅 증명 | 빈 커스터디 루트 | 위 **E4** |
 
+⚠ **위 달력 행의 rc 는 `is_trading_day` 함수의 반환값이지 래퍼의 종료코드가 아니다.**
+`rc 1` = 「거래일이 아니다」이고, 그것을 받은 래퍼 `start` 는 **SKIP 으로 rc 0** 에 끝난다
+(§7.4 · §7.8 1 의 결말 표). 두 숫자를 같은 축으로 읽으면 「휴장일에 래퍼가 실패한다」가 된다.
 ⚠ **날짜의 출처를 섞지 말 것.** 위 표의 달력 다섯 행은 **하네스**가 날짜를
 `is_trading_day` 에 **위치 인자**로 넘긴 것이고 `TOS_PAPER_FAKE_DATE` 를 **읽지 않는다**.
 다섯 중 **실제 그날은 2026-10-03 하나뿐**이다. `TOS_PAPER_FAKE_DATE` 를 쓴 것은 위 ①②
@@ -1306,21 +1508,94 @@ data dir …/h1-data (genesis=yes) · 수집 5s · 정지 15:45 KST
 `TOS paper 상주 세션 기동 (2026-10-03 LONG)` 으로 시작하고, 그것이 `TOS_PAPER_NOTIFY=0`
 경로가 로그에 남기는 모양이다.
 
-### 7.10 이 런북이 답하지 못한 것
+#### 7.9-held ⛔ 「부팅은 OK 인데 아무것도 처리되지 않는다」 — held 런타임 (실측 2026-10-04)
 
-1. **관측 수집기를 상주에서 계속 돌릴 것인가 — 운영자 결정이 없다.** §7.3 은 기본 on(5 s)
-   으로 두었고 그 근거는 ① 없으면 소비·결정이 0 이고 ② 증거 증가 대응 계획 §1 의 200 MB/일
-   기준선이 이 조건의 값이라는 것뿐이다. 그 관측은 **합성 밴드**이고 시장 데이터가 아니다.
-   끄면 하루 ≈ 112 MB(유도값)에 `TIME_HEALTH_SNAPSHOT` 만 쌓인다. **운영자가 정할 자리다.**
+§7.9 의 가드 표는 **부팅이 거부되는** 결말만 이름 붙인다(`MISSING` · `N/A` · ABORT).
+**거부되지 않는 고장**이 하나 더 있고, 그것이 종목 롤이 만드는 모양이다(§7.10 7 (c) ③).
+
+**증상.** 복구 배리어가 걸리면 `compose_paper_runtime` 은 **정상 종료한다** — rc 0 ·
+정책 결속 다섯 줄 생김 · 증거 쌓임 · 기동 텔레그램 `boot proof: OK`. 그런데 엔진 드라이버가
+붙지 않아(`driver is None`) **틱이 하나도 처리되지 않고** 전부
+`MARKETFEED_QUEUED_UNTIL_RECOVERY` 로 쌓인다
+(`tos_runtime/marketfeed/scheduler.py:271` · `513-517`).
+
+**판별 — `report.json` 두 값의 조합으로 본다.**
+
+| 신호 | held | 정상 장중 | 정상 휴장/장외 |
+| --- | --- | --- | --- |
+| `observations_appended` | > 0 | > 0 | > 0 |
+| `events_consumed` | **0** | > 0 | **0** |
+| `evidence_by_kind_delta` 의 `MARKETFEED_QUEUED_UNTIL_RECOVERY` | **> 0** | 없음 | 없음 |
+| 증거의 `REPLAY_DIVERGED` 행 | **>= 1** | 0 | 0 |
+
+⚠⚠ **「`events_consumed` 0 + `observations_appended` > 0」만으로는 판별이 안 된다** —
+세션이 닫혀 있을 때의 정상값과 **같은 모양**이기 때문이다(실측: 2026-10-04 07:12 의 주말
+세션이 바로 그 값이다 — 12 / 0 인데 멀쩡하다). **장중에** 그 조합이면 의심하고, 확정은
+아래 두 줄로 한다. 소비 0 을 그 자체로 고장이라고 읽으면 토·일·휴장일마다 거짓 경보가 난다.
+
+```bash
+# (1) 결정적 신호 — 이 행이 하나라도 있으면 그 코퍼스는 held 다
+sqlite3 "file:$DATA/evidence.sqlite3?mode=ro&immutable=1" \
+  "SELECT COUNT(*) FROM entries WHERE kind='REPLAY_DIVERGED';"
+# (2) 그날 큐에만 쌓였는지
+sqlite3 "file:$DATA/evidence.sqlite3?mode=ro&immutable=1" \
+  "SELECT COUNT(*) FROM entries WHERE kind='MARKETFEED_QUEUED_UNTIL_RECOVERY';"
+```
+
+(⚠ `immutable=1` — §4-A-1 의 관용구다. `mode=ro` 만으로는 `-shm` 을 쓴다.)
+
+**되돌릴 수 없다.** `REPLAY_DIVERGED` 행은 예외보다 **먼저** 내구 저장되고
+`_replay_verdict_ok`(`recovery/inputs.py:89-107`)는 그 행이 **0 개**일 것을 요구한다 —
+설정을 되돌려도 배리어는 그대로 걸려 있다(실측 §7.10 7 (c) ③). 즉 **이것은 아침에 고칠 수
+있는 고장이 아니라, 일어나기 전에 막아야 하는 고장이다.**
+
+### 7.10 이 런북이 답하지 못한 것 (✅ 닫힘 · ⛔ 열림/재개 · 표시 없음 = 질문이 아니라 사실)
+
+> 범례: **✅** 는 결정이나 측정으로 닫힌 항목, **⛔** 는 열려 있거나 다시 열린 항목이다.
+> 표시가 없는 항목(2 · 5)은 **열린 질문이 아니라** 그냥 적어 둘 사실이다 — 5(DST)는
+> 물을 것이 없고, 2 는 수치가 계속 갱신되는 관측 항목이다.
+
+1. **✅ 관측 수집기 — 운영자 결정 2026-10-03: `on`, 5 s(기본값 유지).**
+   (원 질문) §7.3 은 기본 on(5 s)으로 두었고 그 근거는 ① 없으면 소비·결정이 0 이고
+   ② 증거 증가 대응 계획 §1 의 200 MB/일 기준선이 이 조건의 값이라는 것뿐이다. 그 관측은
+   **합성 밴드**이고 시장 데이터가 아니다. 끄면 하루 ≈ 112 MB(유도값)에
+   `TIME_HEALTH_SNAPSHOT` 만 쌓인다.
+   **결정 사유**: 커널에는 아직 실브로커 피드가 없다. 합성 밴드를 끄면 하루치가
+   TIME_HEALTH 하트비트뿐이고 **소비 → 결정 → 거부 체인이 한 번도 돌지 않는다.**
+   밴드가 합성이라는 사실은 증거에 **라벨로 남는다**(`source_id`
+   `tos-paper-resident-session` — §7.3 「출처」). ≈ 200 MB/일 은 계속 **계획용 추정치**다
+   (첫 실측은 10-06 — §7.8 3).
+   ⚠ 그러므로 `TOS_PAPER_APPEND_EVERY_S` 는 **결정된 값**이다. 바꾸려면 이 줄을 먼저 고친다.
 2. **언제까지 쌓을 것인가.** 퍼지는 트랙 B 이고 전제 다섯이 비어 있다(증거 증가 대응 계획 §4).
    디스크로는 333 GB 여유 ÷ 200 MB/일 ≈ **1,665 거래일 ≈ 6.8 년**(거래일 기준 — 달력 날짜가
    아니다)이지만, 그 파일시스템은 콜드 백업·측정 아티팩트와 **공유**이고, 먼저 걸리는 것은
    디스크가 아니라 **부팅 리플레이 시간**이다(§7.8 2). 그 곡선의 첫 실측이 `boot_seconds` 다.
-3. **방향 — LONG 하나로 돈다. 운영자 결정 자리다(§7.1 ⚠).** §0 은 대칭의 증거로 양쪽을
-   부팅시킨다고 적는데 상주는 한쪽만 쌓는다. LONG/SHORT 를 **같은 날** 돌리려면 두 번째
-   data dir 과 두 번째 설정(`paper-config-short`)이 필요하다 — 한 디렉터리에 두 방향을 섞는
-   경로는 설계에 없고, §5 ⑤ 가 적듯 **활성화 기록은 방향을 결속하지 않으므로** 섞인 corpus 는
-   나중에 digest 로 갈라낼 수 없다.
+3. **✅ 방향 — 운영자 결정 2026-10-03: 상주는 `LONG` 단독 유지. 보완으로 SHORT 부팅증명을
+   분기 1회 손으로 돌린다.**
+   (원 질문) §0 은 대칭의 증거로 양쪽을 부팅시킨다고 적는데 상주는 한쪽만 쌓는다.
+   LONG/SHORT 를 **같은 날** 돌리려면 두 번째 data dir 과 두 번째 설정
+   (`paper-config-short`)이 필요하다 — 한 디렉터리에 두 방향을 섞는 경로는 설계에 없고,
+   §5 ⑤ 가 적듯 **활성화 기록은 방향을 결속하지 않으므로** 섞인 corpus 는 나중에 digest 로
+   갈라낼 수 없다.
+   **결정**: 상주 코퍼스는 `TOS_PAPER_DIRECTION=LONG` 하나로 쌓는다. 그러므로 **§0 의
+   「매일 양방향」은 「LONG 매일 + SHORT 분기 1회」로 대체된다** — 대칭의 증거를 버리는 것이
+   아니라 **빈도를 낮춰 한 코퍼스의 순도를 사는 것**이다. 어느 쪽이든 **실주문은 0**
+   (`SYNTHETIC_FUTURES_ORDER` · 모의 계좌 좌표 — §0).
+   **SHORT 보완 실행의 형태**: §3 의 1회성 절차 그대로, **스크래치 data dir** 에 **한 세션**.
+   상주 data dir(`~/.local/state/tos/paper-data`)에는 **절대 섞지 않는다.** 운영자가 손으로
+   돌리며 cron 에 넣지 않는다(분기 1회짜리를 반복 일정으로 두지 않는다 — §7.4 와 같은 이유).
+   **분기 1회인 이유**: 이 부팅은 **전략 성과가 아니라 대칭을 재는 것**이고, 대칭이 깨지는
+   계기는 날짜가 아니라 **코드 변경**이다(`construction.yaml::action_class`/`outbound_side` ·
+   `order_construction_policy.yaml` 의 DIRECTION 축 · 전략 파일의 `direction`). 매일 돌리면
+   같은 사실을 매일 다시 사면서 코퍼스 순도만 잃고, 1년에 한 번이면 그 사이 변경을 놓친다.
+   분기는 그 사이의 타협이다. ⚠ **그러므로 분기를 기다리지 않는 계기가 하나 있다** —
+   위 네 자리 중 하나라도 바뀌면 **그 PR 에서** SHORT 를 한 번 돌린다.
+   📌 **TODO(운영자 · 첫 회 마감 2026-10-16(금))** — SHORT 부팅증명 1 세션.
+   10-06 주는 상주 **첫 주**이고 세션이 셋뿐이라(10-06·10-07·10-08) 「자리잡은 뒤」가 그 주
+   안에 성립하지 않는다. 그래서 **둘째 주 끝**을 마감으로 둔다. 이후 분기마다 반복
+   (다음 마감 2027-01-15 · 이하 같은 방식).
+   ⚠ **2026-10-16 이 지나도 §7.9 식 실행 기록이 없으면 「돌았는데 안 적었다」가 아니라
+   「안 돌았다」로 읽는다.** 기록이 곧 실행의 정의다.
 4. **부팅 증명 가드는 이제 시험했다 (§7.9 E4) — 대신 남은 것은 ② 「천장 초과」 가지다.**
    600 s 를 넘겨 MISSING 이 되는 경로는 이력이 충분히 길어야 재현되므로 오늘 만들 수 없다.
    `boot_seconds` 추이가 그 전조다(§7.8 2).
@@ -1331,12 +1606,203 @@ data dir …/h1-data (genesis=yes) · 수집 5s · 정지 15:45 KST
    (핀과 코드가 함께 움직이면 늘 통과한다). 콜드 백업 런북은 반대로 자기 워크트리를
    「의도적으로만」 고정한다. 지금의 대응은 `report.json` 의 `worktree_commit` 뿐이다(§7.8 2).
    **코드를 고정할지(어느 커밋에?) 날마다 따라갈지는 운영자 결정이다.**
-7. **종목이 3일째에 롤한다.** 현재 근월물 `A05610` 의 만기는 **2026-10-08(목)** 이다
-   (`calendar.yaml::futures_expiry` = 둘째 목요일, 2026년 10월의 둘째 목요일이 10-08).
-   렌더는 **실행 당일** `get_front_month_code()` 로 종목을 다시 뽑으므로(§2), 상주 3일째
-   이후의 증거는 **다른 종목**을 달고 쌓인다. 한 코퍼스 안에 두 종목이 섞이는 것이 의도인지
-   (방향 섞임은 §7.10 3 에서 순도 위험으로 다루면서 종목 섞임은 아무 데도 적혀 있지 않다)
-   **운영자 확인이 필요하다.**
+   ⚠ **이 항목은 출처 표시에서 멈춰 있는데, 같은 위험의 실제 피해가 7 (c) 에서 측정됐다.**
+   부팅은 예전 이벤트를 **그날의 배선**으로 다시 돌려 예전 영수증과 대조한다
+   (`compose/_finalize_wiring.py:114-123`). 그러므로 **어제의 증거를 오늘의 코드로 재해석할
+   수 없게 만드는 변경**은 전부 같은 모양으로 터진다 — 종목(7 (c) · 실측)뿐 아니라 전략
+   레지스트리 키·스테이지 구성·정책 스코프가 그렇다. 「리비전이 섞여도 `worktree_commit`
+   만 남기면 된다」는 **출처에는 참이고 부팅 가능성에는 거짓이다.**
+7. **⛔ 종목 롤 — (a)(b) 는 닫혔고 (c) 는 2026-10-04 REOPENED.** 현재 근월물
+   `A05610` 의 만기는 **2026-10-08(목)** 이다(`calendar.yaml::futures_expiry` = 둘째 목요일).
+   렌더가 **실행 당일** `get_front_month_code(product="mini")` 로 종목을 다시 뽑으므로(§2)
+   롤은 자동이고, 그래서 물어야 할 것은 셋이었다 — **(a) 어느 날 어떤 코드가 뽑히나 ·
+   (b) 만기일 세션은 무엇을 하나 · (c) 한 코퍼스에 두 종목이 섞여도 되나.** 셋 다 측정했고,
+   **(a)(b) 는 닫혔다(✅). (c) 는 1차 답이 틀려서 2026-10-04 에 다시 열렸다(⛔)** — 리뷰가
+   같은 질문을 **부팅 리플레이** 쪽에서 다시 물어 반증했다. 아래 (c) 를 볼 것.
+
+   **(a) 렌더가 뽑는 코드.** `shared/instruments/futures.py::get_front_month_code` 는
+   `target_date > expiry` **일 때만** 다음 달로 넘어간다. 그러므로 **만기일 당일은 아직
+   구월물**이고, 새 코드가 처음 뽑히는 날은 만기 **다음 날**이다.
+
+   | 실행일 | 요일 | 뽑히는 코드 | 그날 부팅하나 |
+   | --- | --- | --- | --- |
+   | 2026-10-05 | 월 | `A05610` | **안 함** — 대체휴일. 크론의 **첫 발화**다(§7.4) |
+   | 2026-10-06 | 화 | `A05610` | 부팅 — 상주 1일째(genesis) |
+   | 2026-10-07 | 수 | `A05610` | 부팅 |
+   | 2026-10-08 | 목 | `A05610` | 부팅 — **만기일 당일** |
+   | 2026-10-09 | 금 | `A05611` | **부팅 안 함** — 한글날(휴장 · §7.3 4 · §7.9 가드 표) |
+   | 2026-10-12 | 월 | `A05611` | 부팅 — **새 종목의 첫 세션** |
+
+   ⚠ **「3일째에 롤한다」는 틀렸다**(이 항목의 1차 판이 그렇게 적었고, 그 문장이 이 조사의
+   출발점이었다). 10-08 은 아직 `A05610` 이고, `A05611` 로 렌더될 첫 세 날
+   (10-09 금 · 10-10 토 · 10-11 일)은 **한 번도 부팅하지 않는다.** 롤이 증거에 처음
+   나타나는 것은 **네 번째 상주 세션인 2026-10-12(월)** 이다.
+
+   **(b) 10-08 세션 — 평소처럼 부팅하고 장중 내내 거래 위상이다. 거부도 stage-deny 도 없다.**
+   `tos_runtime/calendar/phase.py::maturity_at` 은 만기일의 **마지막 정규(비자정넘김) 창이
+   끝난 뒤에야** `expired` 를 뒤집는다. `krx-index-futures` 의 창은 CONTINUOUS 08:45–15:45
+   이므로 경계는 **15:45:00** 이다. 배포된 `calendar.yaml` 로 실측(출력 전문은 아래 재도출):
+
+   ```text
+   instant (KST)        session_phase  effective_phase  expired  next expiry
+   2026-10-08 15:44:59  CONTINUOUS     CONTINUOUS       False    2026-10-08
+   2026-10-08 15:45:00  CLOSED         EXPIRED          True     2026-10-08
+   2026-10-09 10:00:00  CLOSED         CLOSED           False    2026-11-12
+   ```
+
+   (아티팩트 `…/2026-10-03-front-month-roll.out` 에서 **발췌**한 세 줄이다 — 전문은 다섯
+   날짜 × 일곱 시각이다. ⚠ 이 블록의 1차 판에는 **아티팩트에 없는 줄**이 하나 있었다:
+   10-09 10:00 행은 사실로는 맞지만 당시 스크립트 격자에 10:00 이 없었다. 조립한 줄을
+   「실측」 블록에 넣는 것은 #854 H1 과 같은 형태이므로, 격자에 10:00 을 넣어 **다시 돌리고**
+   아티팩트를 교체했다. 인용은 이제 출력에 그대로 있는 줄이다.)
+
+   정지 크론이 **바로 그 15:45** 에 SIGTERM 을 보내므로(§7.4) `EXPIRED` 토큰은 **정지까지의
+   몇 초**에만 닿을 수 있다. 닿든 안 닿든 **하류는 같다** — 틱 게이트가 보는 것은 위상
+   토큰이 아니라 `session_context.is_open` 이고
+   (`tos_runtime/marketfeed/scheduler.py::decide_tick`), `CLOSED` 와 `EXPIRED` 는 둘 다
+   `is_open=False` 라 그 몇 초의 틱은 다른 날과 똑같이 `SKIPPED_SESSION_CLOSED` 다.
+   ⚠ **설령 그 게이트를 지나더라도 두 번째 방어가 있다**: 배포된
+   `venue_constraint_policy.yaml` 의 `admitting_phase_rules` 는 세 액션 모두
+   `admitting_phases: ["CONTINUOUS"]` 이므로, 커널의 `session_phase_admits` 가 `EXPIRED`
+   를 **집합 밖**으로 보고 INADMISSIBLE 을 돌려준다(송신 0). 런타임이 「만기니까 거부」라고
+   판정하는 것이 아니라 **커널이 이미 아는 토큰을 건네줄 뿐**이다.
+   유일한 차이는 그 한 줄의 **내용**이다 — 다른 날에는 `phase: "CLOSED"` 로 남는 자리가
+   10-08 에는 `phase: "EXPIRED"` · `expired: true` 로 남는다. **줄이 하나 늘어나는 것이
+   아니다**(`calendar/owner.py::_maybe_record_observed` 는 위상이나 `expired` 가 **바뀔 때만**
+   적으므로, 어느 날이든 15:45 경계에서 한 줄이다). ⚠ **그 줄이 남는지 자체는 정지와의
+   경합이라 보장되지 않는다.**
+   10-09 는 애초에 부팅하지 않으므로 그날 증거는 **0 행**이고, 만기는 그날부터 다음 룰 월인
+   **2026-11-12** 로 넘어간다(클래스가 월말까지 EXPIRED 로 남던 결함은 #799 에서 닫혔다 — §5 ④).
+
+   **(c) ⛔ 한 코퍼스에 두 종목 — REOPENED 2026-10-04. 1차 답(「괜찮다」)은 틀렸다.**
+   아래 ①이 1차 답이고 **그 자체는 지금도 참**이다. 틀린 것은 ①에서 「그러므로 섞어도
+   된다」로 건너뛴 것이다 — ①은 **사후에 갈라낼 수 있나**에 답하고, 정작 물었어야 할 것은
+   **애초에 두 번째 부팅이 되나**였다. ②가 그 답이고, **안 된다**.
+
+   **① 사후 분리는 된다(1차 답 · 유효).** 3 의 위험은 §5 ⑤ 「활성화 기록은 **방향**을
+   결속하지 않는다」에서 온 것이다. 종목은 다르다 — **결정 계열 증거 행은 종목을 자기 안에
+   들고 있다.** 09-28 10:00 세션 코퍼스
+   (`~/.local/state/tos/realclock-20260928T100001-LONG/data/evidence.sqlite3` — ⚠ 같은 날
+   11:00 세션의 코퍼스와 **다른 디렉터리**다)의 **사본**을 질의한 결과(1,492 행 중 236 행):
+
+   | 종류 | 행 | `payload_json → $.instrument_key` |
+   | --- | --- | --- |
+   | `DECISION_OUTCOME_EMITTED` | 114 | ✅ `{account, instrument}` |
+   | `DECISION_WITHHELD` | 66 | ✅ |
+   | `FLOW_HALTED` | 56 | ✅ |
+   | `EVENT_CONSUMED` · `EVENT_HANDLING_STARTED` | 180 · 180 | ❌ |
+   | `TIME_HEALTH_SNAPSHOT` 외 15 종 | 896 | ❌ (종목과 무관한 런타임 상태) |
+
+   부팅 행도 **간접적으로** 갈린다: 렌더가 종목을
+   `venue_constraint_policy.yaml::scope.instruments` 에 박으므로 `VENUE_POLICY_BOUND` 의
+   `canonical_digest` 가 종목마다 다르다(종목만 바꿔 로더를 두 번 돌린 실측:
+   `a85def5d…` vs `3e9ea069…`). ⚠ 그 두 값은 **자리표시 계좌**로 뽑은 것이라 실제 부팅이
+   적을 값이 아니다 — 「다르다」만 읽을 것. ⚠ `VENUE_POLICY_BOUND` **본문에는 종목 문자열이
+   없다**(payload 는 `policy_id` · `policy_generation` · `canonical_digest` ·
+   `activated_member_digest` · `null_shape_bounds` 뿐).
+
+   **② ⛔ 그런데 두 번째 부팅이 안 된다 — 부팅 리플레이가 어긋난다(실측 2026-10-04).**
+   `run` 은 부팅할 때마다 durable inbox 의 이벤트를 **그날의** 레지스트리로 **다시 돌려**
+   예전 영수증과 대조한다(`compose/_finalize_wiring.py:114-123` → `verify_replay_or_halt`).
+   그 레지스트리는 **`(account, instrument)` 로 키가 잡힌다**
+   (`tos/src/tos/engine/registry.py:71` `_key_tuple`). 그래서 종목이 롤한 날:
+
+   1. 렌더가 `A05611` 로 설정을 깐다 → 레지스트리 키가 `(…, A05611)` 뿐이다.
+   2. 리플레이가 `A05610` 시절의 `EVENT_CONSUMED` 영수증을 돌린다 → 그 키가 없어
+      `REGISTRY_MISSING` 으로 멎는다(`tos_runtime/engine/replay.py:100` 의
+      `_PIPELINE_NEVER_RAN_HALT_REASONS`).
+   3. 그런데 **그 영수증은 실제 `outcome_digest` 를 갖고 있다**(그날 체결 경로가 끝까지
+      돌았으므로). 「영수증엔 digest 가 있는데 재실행은 파이프라인 전에 멎었다」는
+      일치가 아니다 → `INCONCLUSIVE` → `REPLAY_DIVERGED`
+      (`replay.py:316-375` — `expected_digest` 대 `actual_digest` 비교와
+      `_record_divergence_halt`).
+   4. `_boot_integrity.py:155-160` 이 `EngineReplayDiverged` 를 던진다.
+
+   실측(출하 코드 그대로 `compose_paper_runtime` 두 번 — 아티팩트는 아래 재도출):
+
+   ```text
+   BOOT1 instrument: A05610 | pipeline digest: 2cbdf3b7424cf64c ...
+   BOOT1 EVENT_CONSUMED receipts: 1 | with real digest: 1
+   CONTROL  (A05610 again): BOOT OK
+   ROLLED   (A05611):        EngineReplayDiverged -> engine replay diverged for 1 of 1 compared events: ('event-75b5cb57ff2c21720cc0e51aea32d431df7b34641b516ea20ee8c6ad3979afcd',)
+     evidence rows REPLAY_VERDICT_IDENTICAL: 2
+     evidence rows REPLAY_DIVERGED: 1
+   ```
+
+   **대조군이 핵심이다** — 같은 data dir 에 **같은 종목**으로 다시 부팅하면 `BOOT OK` 다.
+   어긋나게 만드는 것은 두 번째 부팅도, 코퍼스 크기도 아니라 **종목이 바뀐 것** 하나다.
+   ⚠ 리플레이 창(`replay_window_events` = 1,000,000)으로는 벗어나지 못한다 — 하루 ≈ 5,000
+   건이라 롤 시점의 영수증이 창 안에 한참 남아 있다.
+
+   **③ ⛔ 그리고 되돌려도 안 풀린다 — 피해가 영구적이다(실측).** `REPLAY_DIVERGED` 행은
+   예외를 던지기 **전에** 내구 저장된다. 복구 배리어의 `_replay_verdict_ok`
+   (`recovery/inputs.py:89-107`)는 **`REPLAY_DIVERGED` 가 0 행일 것**을 요구하므로, 설정을
+   `A05610` 으로 **되돌려 부팅해도** 배리어가 런타임을 잡아 둔다:
+
+   ```text
+   REVERTED (A05610):        BOOT OK
+     recovery barrier driver is None (held runtime)? True
+     _replay_verdict_ok(evidence store): False
+   ```
+
+   ⚠⚠ **이 모양이 가장 위험하다 — 부팅은 「성공」이라고 말한다.** rc 0 이고 부팅 증명 다섯
+   줄도 생기고 증거도 쌓인다. 그런데 `driver is None` 이라 **틱이 하나도 처리되지 않고**
+   전부 `MARKETFEED_QUEUED_UNTIL_RECOVERY` 로 쌓인다(§7.3 의 「held 런타임」 분기).
+   §7.9 의 가드 표에 **이 결말의 이름이 없다** — 증상과 판별은 §7.9 끝 「held」 절에 넣었다.
+
+   ⛔ **그러므로 이 항목의 1차 판이 적은 닫는 말(「가르지 않는 쪽이 기본이다」)은 뒤집힌다.**
+   **가르지 않기는 코드 변경 없이는 실패한다 — 측정됐다.** 지금 상태로 10-12 에 그대로
+   부팅하면 상주 코퍼스는 첫 롤에서 held 로 떨어진다.
+
+   **처분 방향은 정해졌다 — 운영자 결정 2026-10-04: 계약월마다 durable set 을 가른다**
+   (`~/.local/state/tos/paper-data/<종목>`). 롤하는 날은 **그냥 genesis 부팅**이 되므로 위
+   ②③ 의 경로에 애초에 들어가지 않고, **커널 바이트는 건드리지 않는다.** 함께 기각된 셋과
+   그 이유:
+
+   | 기각된 안 | 이유 |
+   | --- | --- |
+   | 리플레이 범위 축소 | 완결성 공백 — `ERI-INV-007` |
+   | 지난 달 종목을 레지스트리에 존치 | **세 번째 롤부터 부족하다**(한 달치만 남겨서는 모자람) |
+   | 이벤트마다 레지스트리 재해석 | 커널 변경이 크다 |
+
+   📌 **TODO(2026-10-12 이전 · 구현·증명 대기: `exec-rollfix` 레인)** — 이 항목은 **결정이
+   없어서가 아니라 배선과 레드 증명이 아직 없어서** 열려 있다. 들어와야 닫히는 것 셋:
+   ⓐ 래퍼가 종목을 **한 번** 계산해 렌더(`--instrument`)와 `--data-dir` 에 **같은 값**으로
+   넘기는 변경(새 sha256) · ⓑ 콜드 백업이 **잎 디렉터리를 순회**하도록 하는 변경 ·
+   ⓒ 커밋된 **두 번 부팅 레드 증명** 테스트(위 ②가 다시 생기면 CI 에서 먼저 깨지도록).
+   그 셋이 오기 전에는 **이 항목은 ✅ 가 아니고**, §7.2 경로표·§7.6 genesis·§7.8 아침
+   확인도 **옛 단일 디렉터리 기준 그대로**다 — 아직 일어나지 않은 배선을 미리 적지 않는다.
+   ⚠ 10-12 는 **월요일**이다. 그 전 거래일은 10-08(목)이고 그 뒤 사흘이 비거래일이므로,
+   **실질 마감은 10-08 장 마감이 아니라 10-09~10-11 사흘**이다.
+
+   ⛔ **인용 금지.** 위 결정 행의 `instrument_key` 는 종목과 **계좌번호**를 함께 담는다.
+   §7.2 의 좌표 규율대로 증거 행을 PR·계획 문서·텔레그램에 그대로 옮겨 적지 않는다
+   (이 절의 표는 종류와 개수만이다).
+
+
+   **재도출.** (a)(b) 는 커밋된 테스트가 CI 에서 같은 사실을 고정한다 —
+   `tos/runtime/tests/compose/test_deploy_config.py` 의
+   `test_real_calendar_mini_october_expiry_day_before_and_after_close`(10-08 15시 CONTINUOUS /
+   16시 EXPIRED) · `test_real_calendar_day_after_mini_october_expiry_rolls_to_november`
+   (10-09 는 휴장 CLOSED · 다음 만기 2026-11-12) ·
+   `test_real_calendar_declares_every_month_a_rule_month`. 위 표를 손으로 다시 뽑는 스크립트와
+   출력은 `~/.local/state/tos/paper-sessions/` 에 있다(0600):
+   `2026-10-03-front-month-roll.py` / `.out`(a·b) ·
+   `2026-10-03-front-month-roll-digest.py` / `.out`(digest 분리) ·
+   `2026-10-03-front-month-roll-corpus.out`(c ①의 질의와 출력).
+   **(c) ②③ 의 두 보기**는 `~/.local/state/tos/paper-sessions/2026-10-04-roll-replay-probe/`
+   에 있다(0600): `roll_twoboot_probe.py` / `.out`(②) ·
+   `roll_permanence_probe.py` / `.out`(③) · `roll_replay_probe.py` ·
+   `roll_control_driver.py`(앞선 두 단계). 저장소 테스트 픽스처
+   (`tos/runtime/tests/compose`)를 그대로 쓰므로 스크래치 디렉터리 밖에는 쓰지 않는다:
+
+   ```bash
+   cd <워크트리> && PYTHONPATH=tos/runtime:tos/runtime/src:tos/src \
+     .venv/bin/python <그 디렉터리>/roll_twoboot_probe.py
+   ```
+
+   ⚠ `roll_permanence_probe.py` 는 **두 보기를 이어서** 돌려야 한다 — 앞 probe 가 만든
+   `twoboot/day1` 코퍼스를 그대로 쓴다.
 8. **달력은 2027년에 대해 fail-open 이다 — 방향을 분명히 적는다.** 두 파일 모두 2027년
    항목이 **0건**이므로(실측), 2027-01-01 이후 **모든 평일이 「거래일」로 판정된다** —
    건너뛰는 쪽이 아니라 **부팅하는 쪽으로 틀린다**. 또 `calendar.yaml:49` 는
