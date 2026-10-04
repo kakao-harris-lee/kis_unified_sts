@@ -338,6 +338,41 @@ class SchemaVersionRefused(RuntimeError):
         super().__init__(message)
         self.direction: SchemaVersionDirection = direction
 
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[..., SchemaVersionRefused], tuple[str, SchemaVersionDirection]]:
+        """Rebuild through :func:`_rebuild_schema_version_refused` instead of ``cls(*args)``.
+
+        ``BaseException.__reduce__`` returns ``(cls, self.args)``, and ``args`` holds only
+        the message — so a KEYWORD-ONLY required ``direction`` makes the default path raise
+        ``TypeError: missing 1 required keyword-only argument`` on ``pickle``, ``copy`` and
+        ``deepcopy`` alike. That breaks the one place exceptions routinely get serialized:
+        crossing a process boundary. Nothing in this repo pickles it today — the
+        multiprocessing fixture in ``tests/operations/test_schema_genesis_concurrency.py``
+        stringifies before it queues (``f"{type(exc).__name__}: {exc}"``) — so this is a
+        latent break, not a live one. It is fixed here rather than left because the required
+        keyword was chosen deliberately (see the class docstring) and this is its one cost.
+
+        Returning ``direction`` positionally to the factory keeps the round trip total: the
+        rebuilt exception carries the same message AND the same direction, so routing
+        survives serialization.
+        """
+        return (_rebuild_schema_version_refused, (self.args[0], self.direction))
+
+
+def _rebuild_schema_version_refused(
+    message: str, direction: SchemaVersionDirection
+) -> SchemaVersionRefused:
+    """Reconstruct a :class:`SchemaVersionRefused` from its two parts.
+
+    Module level because pickle stores a QUALIFIED NAME and re-imports it; a lambda or a
+    bound method could not be referenced. Takes ``direction`` positionally for the same
+    reason the constructor takes it by keyword: here the single caller is
+    :meth:`SchemaVersionRefused.__reduce__`, so there is no call site to protect from
+    mixing the two strings up.
+    """
+    return SchemaVersionRefused(message, direction=direction)
+
 
 #: The journal mode every runtime-owned durable store must end up in. Compared against what
 #: sqlite actually reports, never assumed — see :func:`enable_wal_journal`.

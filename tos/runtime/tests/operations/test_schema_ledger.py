@@ -8,7 +8,9 @@ call site is caught here, not just a regression in the shared helper.
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import pickle
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -34,6 +36,7 @@ from tos_runtime.operations.schema_migrations import (
     EVIDENCE_MIGRATIONS,
     MARKETFEED_MIGRATIONS,
     RCL_MIGRATIONS,
+    STORE_MIGRATIONS,
     SchemaMigrationRefused,
     apply_migrations,
     schema_version,
@@ -1757,3 +1760,68 @@ def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
 
     assert first.changed is False
     assert second.changed is False
+
+
+# -- SchemaVersionRefused carries its direction across a process boundary -----
+
+
+@pytest.mark.parametrize("direction", ["BEHIND", "AHEAD"])
+def test_a_version_refusal_survives_pickle_and_copy(direction: str) -> None:
+    """The refusal rebuilds with BOTH halves intact — message and ``direction``.
+
+    ``direction`` is a REQUIRED keyword-only argument, and ``BaseException.__reduce__``
+    rebuilds as ``cls(*self.args)`` with ``args`` holding only the message. Without the
+    ``__reduce__`` override this raises ``TypeError: missing 1 required keyword-only
+    argument: 'direction'`` on all three of ``pickle``, ``copy`` and ``deepcopy``
+    (measured). That is the shape that bites when an exception crosses a process boundary,
+    which this package already does elsewhere
+    (``test_schema_genesis_concurrency`` runs N processes against one file; it happens to
+    stringify before queueing, so nothing is broken today — this keeps it that way by
+    construction rather than by luck).
+
+    The round trip must preserve ``direction``, not merely succeed: the cold-backup
+    dispatch chooses ``migrate refused`` vs ``schema refused`` from that attribute, so an
+    exception that survives serialization with the attribute dropped would route a verdict
+    to the wrong runbook row — worse than failing to serialize at all.
+    """
+    original = SchemaVersionRefused(
+        f"evidence: {direction} something", direction=direction
+    )
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert type(rebuilt) is SchemaVersionRefused
+        assert str(rebuilt) == str(original)
+        assert rebuilt.direction == direction
+
+
+def test_no_store_has_a_migration_newer_than_its_own_schema_version() -> None:
+    """``newest migration version <= SCHEMA_VERSION``, per store.
+
+    This is what makes the runbook's ``schema refused`` row true. That row tells the
+    operator that ``migrate`` is NOT the fix for an AHEAD store, and ``apply_migrations``
+    delivers that by refusing when ``current_version > migrations[-1].version``. If some
+    store ever shipped a migration NEWER than the constant its own boot check compares
+    against, a file at ``SCHEMA_VERSION + 1`` would be AHEAD for the boot check and yet
+    within range for ``apply_migrations`` — the advice would be wrong for that store, and
+    nothing else would notice.
+    """
+    expected = {
+        "evidence": EVIDENCE_SCHEMA_VERSION,
+        "rcl": RCL_SCHEMA_VERSION,
+        "inbox": INBOX_SCHEMA_VERSION,
+        "marketfeed": MARKETFEED_SCHEMA_VERSION,
+    }
+
+    assert set(expected) == set(
+        STORE_MIGRATIONS
+    ), "a store joined without a version here"
+    for store_name, migrations in STORE_MIGRATIONS.items():
+        newest = migrations[-1].version
+        assert newest <= expected[store_name], (
+            f"{store_name}: newest migration v{newest} is ahead of SCHEMA_VERSION "
+            f"{expected[store_name]} — the `schema refused` runbook row would be wrong"
+        )
