@@ -22,11 +22,13 @@ from pathlib import Path
 import pytest
 from tos_runtime.compose import _backup_dispatch, cli
 from tos_runtime.custody.ports import CustodyLoadRefused
-from tos_runtime.evidence.store import EvidenceCorruption
+from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION, EvidenceCorruption
 from tos_runtime.operations import cold_backup as cold_backup_module
 from tos_runtime.operations.backup_archive import BackupArchiveRefused
-from tos_runtime.operations.cold_backup import FilesystemFreeSpace
+from tos_runtime.operations.backup_set import BackupSetRefused
+from tos_runtime.operations.cold_backup import ColdBackupRefused, FilesystemFreeSpace
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 from ..engine.conftest import FixedKeyProvider
 from ..operations.test_backup_set import _build_live_set
@@ -154,27 +156,206 @@ def test_an_unfilled_config_exits_one_rather_than_backing_up_somewhere_invented(
     assert "still null (named-TBD)" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(
-    ("refusal", "expected_prefix"),
-    [
-        (
-            BackupArchiveRefused("the archive does not hold what it claims to"),
-            "cold-backup: archive refused —",
+#: One exemplar per LINE :data:`~tos_runtime.compose._backup_dispatch._REFUSAL_PREFIXES` can
+#: produce. Seven types, seven prefixes (``custody refused`` is shared by two types, and
+#: ``SchemaVersionRefused`` splits into two by ``direction``).
+#:
+#: The cases below are NOT a hand-kept parallel list: ``test_every_dispatch_row_has_a_case``
+#: asserts this covers every row of that table, so adding a row without adding a case here is
+#: red. The expected prefix stays a LITERAL on purpose — deriving it from the table too would
+#: make the test agree with the code by construction and assert nothing.
+_PREFIX_CASES: tuple[tuple[Exception, str], ...] = (
+    (
+        ColdBackupRefused("a destination is not somewhere a cold copy may live"),
+        "cold-backup: refused —",
+    ),
+    (
+        BackupSetRefused("a source file is absent"),
+        "cold-backup: snapshot refused —",
+    ),
+    (
+        BackupArchiveRefused("the archive does not hold what it claims to"),
+        "cold-backup: archive refused —",
+    ),
+    (
+        EvidenceCorruption("chain digest mismatch at seq 7"),
+        "cold-backup: integrity refused —",
+    ),
+    (
+        CustodyLoadRefused("no evidence.key.<generation> files found"),
+        "cold-backup: custody refused —",
+    ),
+    (
+        KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
+        "cold-backup: custody refused —",
+    ),
+    (
+        SchemaVersionRefused(
+            "evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2",
+            direction="BEHIND",
         ),
-        (
-            EvidenceCorruption("chain digest mismatch at seq 7"),
-            "cold-backup: integrity refused —",
+        "cold-backup: migrate refused —",
+    ),
+    (
+        SchemaVersionRefused(
+            "evidence: on-disk schema user_version=3 is AHEAD of this code's schema_version=2",
+            direction="AHEAD",
         ),
-        (
-            CustodyLoadRefused("no evidence.key.<generation> files found"),
-            "cold-backup: custody refused —",
-        ),
-        (
-            KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
-            "cold-backup: custody refused —",
-        ),
-    ],
+        "cold-backup: schema refused —",
+    ),
 )
+
+
+def test_every_passthrough_verdict_has_a_dispatch_prefix() -> None:
+    """The two tables must name the SAME types, and nothing enforced that before.
+
+    A type added to ``_PASSTHROUGH_REFUSALS`` without a row in ``_REFUSAL_PREFIXES`` passes
+    the whole suite and ships as ``cold-backup: failed — <ExcType>: …``: the verdict survives
+    ``_stage`` intact and is then printed by the generic fallback, so the operator is sent to
+    the "the host broke, re-run" row for something a re-run cannot fix. That is the exact
+    live failure mode this PR was opened to remove, and it had been hand-synced four times
+    (review round 2 F1 added three, this wave a fourth).
+
+    Equality rather than ``<=``: today every routed type is also a passthrough type. If a
+    verdict ever needs a prefix for the ``backup-set`` door only, split this into two
+    assertions — do not delete it.
+    """
+    passthrough = set(cold_backup_module._PASSTHROUGH_REFUSALS)
+    routed = {exc_type for exc_type, _ in _backup_dispatch._REFUSAL_PREFIXES}
+
+    assert passthrough == routed
+
+
+def _row_reached_by(exc: BaseException) -> type[BaseException] | None:
+    """The row ``_refusal_line`` would actually use for ``exc`` — the FIRST isinstance match.
+
+    Not ``type(exc)``: the table is matched by ``isinstance`` and two of its types are
+    related (``CustodyLoadRefused`` is a ``CustodyError``), so an exemplar's own class is not
+    the row it lands on.
+    """
+    for exc_type, _ in _backup_dispatch._REFUSAL_PREFIXES:
+        if isinstance(exc, exc_type):
+            return exc_type
+    return None
+
+
+def test_every_dispatch_row_has_a_case() -> None:
+    """Every row of the dispatch table is REACHED by some case in :data:`_PREFIX_CASES`.
+
+    Two defects at once, both silent. A row added without a case here means the parametrized
+    test below quietly stops covering it. And a row that no exemplar can reach is a SHADOWED
+    row — ``isinstance`` matching is ordered, so putting a base class above its subclass
+    makes the lower one dead, and the operator gets the base class's prefix for a verdict
+    that was given its own. Comparing reached-rows against the table catches both; comparing
+    ``type(exc)`` would catch neither, and would itself be wrong here because
+    ``CustodyLoadRefused`` lands on the ``CustodyError`` row.
+
+    The input that makes this test fail, written down so the claim above is checkable:
+    insert ``(RuntimeError, "refused")`` at the top of the table — every exemplar then
+    reaches that one row and ``reached`` collapses to a single element (measured red). And
+    what does NOT fail it: swapping ``KeyContinuityRefused`` and ``CustodyError``, because
+    those two are unrelated classes (measured green) so that order shadows nothing. A test
+    that went red on a harmless reorder would be pinning the table's spelling, not its
+    meaning.
+    """
+    reached = {_row_reached_by(exc) for exc, _ in _PREFIX_CASES}
+    routed = {exc_type for exc_type, _ in _backup_dispatch._REFUSAL_PREFIXES}
+
+    assert reached == routed
+
+
+#: The same exemplars, behind the OTHER door. Derived from :data:`_PREFIX_CASES` rather than
+#: retyped: the property under test is that ``backup-set`` prints the SAME body as
+#: ``cold-backup`` for the same verdict, so a second hand-kept list would be free to drift
+#: into agreeing with nothing. Only the command name differs.
+_BACKUP_SET_PREFIX_CASES: tuple[tuple[Exception, str], ...] = tuple(
+    (refusal, expected.replace("cold-backup: ", "backup-set: ", 1))
+    for refusal, expected in _PREFIX_CASES
+)
+
+
+@pytest.mark.parametrize(("refusal", "expected_prefix"), _BACKUP_SET_PREFIX_CASES)
+def test_the_backup_set_door_routes_every_verdict_by_the_same_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    refusal: Exception,
+    expected_prefix: str,
+) -> None:
+    """``backup-set --archive-dir`` reaches the same archive step, so it owes the same line.
+
+    This door had NO stderr test at all (review round 2 finding 5). It was widened from
+    ``except BackupArchiveRefused`` to the whole table, and nothing held that open: narrowing
+    it back is invisible to the suite while the operator gets a traceback from one command
+    and a routed one-line verdict from the other for the identical refusal.
+
+    The input that makes this fail, so the claim is checkable: put ``BackupArchiveRefused``
+    back as the sole ``except`` type in ``dispatch_backup_set`` — every other case then
+    escapes as a traceback instead of a line (measured red).
+
+    ``SchemaVersionRefused`` is covered in BOTH directions because this is the door where the
+    two prescriptions differ and neither has an inner layer to name.
+    """
+
+    class _FakeManifest:
+        generation = 1
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(
+        _backup_dispatch, "backup_set", lambda *_a, **_kw: _FakeManifest()
+    )
+    monkeypatch.setattr(
+        _backup_dispatch, "FileKeyProvider", lambda root, **_kw: ("keys", root)
+    )
+    monkeypatch.setattr(_backup_dispatch, "archive_backup_set", _raise)
+
+    exit_code = cli.main(
+        [
+            "backup-set",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--dest",
+            str(tmp_path / "backups"),
+            "--generation",
+            "1",
+            "--archive-dir",
+            str(tmp_path / "cold"),
+            "--verify-dir",
+            str(tmp_path / "verify"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+        ]
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(expected_prefix)
+    assert "failed —" not in err
+    assert "Traceback" not in err
+
+
+def test_an_unclassified_direction_is_refused_rather_than_routed_to_ahead() -> None:
+    """A direction nobody classified must stop, not quietly take the AHEAD row.
+
+    The prefix used to be ``"migrate refused" if direction == "BEHIND" else "schema
+    refused"``, so any third member of ``SchemaVersionDirection`` would have been prescribed
+    "run the newer code or stop the lane" without anyone deciding that was right. The
+    exhaustive ``match`` makes mypy reject an unhandled member at the gate; this test pins
+    the RUNTIME half, which a type checker cannot reach — a value constructed past the
+    annotation, which is exactly how such a value would arrive in practice.
+    """
+    unclassified = SchemaVersionRefused(
+        "evidence: on-disk schema is SIDEWAYS of this code's schema_version=2",
+        direction="SIDEWAYS",  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(AssertionError):
+        _backup_dispatch._schema_version_prefix(unclassified)
+
+
+@pytest.mark.parametrize(("refusal", "expected_prefix"), _PREFIX_CASES)
 def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -182,9 +363,12 @@ def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
     refusal: Exception,
     expected_prefix: str,
 ) -> None:
-    """Five refusal families, five prefixes — a cron mail says which layer decided and the
-    runbook §5 table routes by that word. ``integrity refused`` especially must not read as
-    ``failed``: "do not trust this copy" is not "re-run it"."""
+    """Seven verdict types, seven prefixes — a cron mail says which layer decided, or what the
+    target needs, and the runbook §5 table routes by that word. ``integrity refused``
+    especially must not read as ``failed``: "do not trust this copy" is not "re-run it".
+    ``migrate refused`` and ``schema refused`` are the same shape one layer further out: the
+    target disagrees about the schema, and no night of the same cron line changes that.
+    """
     live_dir = _prepare(tmp_path, monkeypatch)
 
     def _raise(*_args: object, **_kwargs: object) -> None:
@@ -201,6 +385,120 @@ def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
     assert "Traceback" not in err
     assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
+
+
+def _stamp_evidence_schema_version(live_dir: Path, version: int) -> None:
+    """Put the live set's evidence file back at ``version`` on disk, nothing else.
+
+    ``backup_set`` reads its evidence facts with a bare ``sqlite3.connect`` and never
+    constructs a :class:`~tos_runtime.evidence.store.SqliteEvidenceStore`, so the snapshot
+    still succeeds against an older schema. The archive's third check does construct one, out
+    of the decompressed copy — which is where the refusal comes from, and why the whole
+    durable set has already been copied by the time it arrives.
+    """
+    conn = sqlite3.connect(str(live_dir / "evidence.sqlite3"))
+    try:
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_an_older_evidence_schema_is_a_migrate_verdict_not_an_archive_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real store one schema version behind, with nothing monkeypatched.
+
+    This is the state measured on the deploy host: every boot-proof corpus there is at
+    evidence schema v1 while ``EVIDENCE_SCHEMA_VERSION`` is 2 (runbook
+    ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2, the ⚠ paragraph, read-only survey
+    2026-10-03), and
+    the line it produced was ``cold-backup: archive failed — SchemaVersionRefused: …``. That
+    prefix sent the operator to the ``archive failed`` row of the runbook's §5 table — "the
+    host broke, fix it and re-run" — when re-running cannot change the on-disk schema. It is a
+    verdict by :data:`~tos_runtime.operations.cold_backup._PASSTHROUGH_REFUSALS`'s own
+    criterion, so it keeps its own prefix and the message names the action (plan §7.1.27
+    A3-F1).
+    """
+    live_dir = _prepare(tmp_path, monkeypatch)
+    _stamp_evidence_schema_version(live_dir, EVIDENCE_SCHEMA_VERSION - 1)
+
+    exit_code = cli.main(_argv(tmp_path, live_dir))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("cold-backup: migrate refused —")
+    assert "failed —" not in err
+    assert "Traceback" not in err
+    assert len(err.strip().splitlines()) == 1
+    # The message itself routes: the operator runs `migrate` on that data dir.
+    assert "is BEHIND this code's schema_version" in err
+    assert "`migrate` CLI" in err
+    # Unchanged by this wave, and stated rather than assumed: the uncompressed snapshot is
+    # already complete when the archive refuses, and the verify scratch is kept as the
+    # evidence of why (runbook §4-5-2, the ⚠ paragraph and ①, measured on the host).
+    assert (tmp_path / "backups" / "gen1" / "evidence.sqlite3").is_file()
+    assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
+    assert (tmp_path / "verify" / "gen1.verify").is_dir()
+    assert not (tmp_path / "cold" / "gen1.set.tar.xz").exists()
+    assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
+
+
+def test_a_newer_evidence_schema_is_a_schema_verdict_not_a_migrate_instruction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The OTHER direction, end to end, with nothing monkeypatched.
+
+    A store written by newer code than this runtime. It reaches the same exception type as
+    the BEHIND case and used to reach the same prefix, which told the operator to run
+    ``migrate`` — and ``apply_migrations`` refuses an AHEAD store before it writes anything
+    (its own AHEAD guard in ``operations/schema_migrations.py``). So the instruction produced
+    a second refusal every night, for ever. It is a verdict either way, which is why the type
+    stays in the passthrough list, but it is NOT the same verdict, which is why the prefix
+    now splits on ``direction``.
+    """
+    live_dir = _prepare(tmp_path, monkeypatch)
+    _stamp_evidence_schema_version(live_dir, EVIDENCE_SCHEMA_VERSION + 1)
+
+    exit_code = cli.main(_argv(tmp_path, live_dir))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("cold-backup: schema refused —")
+    # The BEHIND instruction must NOT appear: running `migrate` here is refused as well.
+    assert "`migrate` CLI" not in err
+    assert "is AHEAD of this code's schema_version" in err
+    assert "failed —" not in err
+    assert "Traceback" not in err
+    assert len(err.strip().splitlines()) == 1
+    # Same artifact retention as the BEHIND arm: the snapshot stage already finished.
+    assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
+    assert (tmp_path / "verify" / "gen1.verify").is_dir()
+    assert not (tmp_path / "cold" / "gen1.set.tar.xz").exists()
+    assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
+
+
+def test_a_refusing_target_costs_one_full_generation_per_night(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What an unattended lane actually accumulates while nobody acts on the verdict.
+
+    The runbook says a refused night leaves the uncompressed generation behind and the next
+    run takes the NEXT number. Stated in prose that is easy to believe and easy to be wrong
+    about, so it is measured: two runs against the same stale target leave gen1 AND gen2, and
+    neither produces an archive.
+    """
+    live_dir = _prepare(tmp_path, monkeypatch)
+    _stamp_evidence_schema_version(live_dir, EVIDENCE_SCHEMA_VERSION - 1)
+
+    assert cli.main(_argv(tmp_path, live_dir)) == 1
+    assert cli.main(_argv(tmp_path, live_dir)) == 1
+
+    assert (tmp_path / "backups" / "gen1" / "evidence.sqlite3").is_file()
+    assert (tmp_path / "backups" / "gen2" / "evidence.sqlite3").is_file()
+    assert sorted(p.name for p in (tmp_path / "cold").iterdir()) == []
+    err = capsys.readouterr().err
+    assert err.count("cold-backup: migrate refused —") == 2
 
 
 def _free_space_stub(

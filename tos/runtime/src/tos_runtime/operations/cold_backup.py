@@ -45,7 +45,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -67,6 +67,7 @@ from tos_runtime.operations.backup_set import (
     next_generation,
 )
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 __all__ = [
     "COLD_BACKUP_CONFIG_NAME",
@@ -140,6 +141,55 @@ class ColdBackupFailed(RuntimeError):
         ``"report"``)."""
         super().__init__(f"{stage} failed — {type(cause).__name__}: {cause}")
         self.stage = stage
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[..., ColdBackupFailed],
+        tuple[type[ColdBackupFailed], str, str],
+        dict[str, Any],
+    ]:
+        """Rebuild through :func:`_rebuild_cold_backup_failed` instead of ``cls(*args)``.
+
+        Same latent break as
+        :class:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused`, one constructor
+        shape over: ``BaseException.__reduce__`` returns ``(cls, self.args)`` and ``args``
+        holds the single FORMATTED message, while ``__init__`` takes TWO positionals — so
+        ``pickle``, ``copy`` and ``deepcopy`` all raise ``TypeError: missing 1 required
+        positional argument: 'cause'`` (measured). Nothing in this repo pickles it today;
+        it is fixed here because this command's verdicts are the ones that would cross a
+        process boundary first, and a wrapper whose own serialization raises replaces a
+        reportable stage with an unrelated ``TypeError`` (review round 2 note c).
+
+        ``cause`` is NOT carried: it was never stored, only folded into the message at
+        construction. The round trip is total over what the object actually holds — the
+        message, ``stage``, and everything else in the instance dict.
+        """
+        return (
+            _rebuild_cold_backup_failed,
+            (type(self), self.args[0], self.stage),
+            self.__dict__,
+        )
+
+
+def _rebuild_cold_backup_failed(
+    cls: type[ColdBackupFailed], message: str, stage: str
+) -> ColdBackupFailed:
+    """Reconstruct a :class:`ColdBackupFailed` — or a subclass — from its stored parts.
+
+    Module level because pickle stores a QUALIFIED NAME and re-imports it. The CLASS travels
+    as the first argument so the round trip preserves the exact type instead of downgrading a
+    subclass to this one.
+
+    Built with ``__new__`` rather than ``cls(stage, cause)`` because the constructor FORMATS
+    its message from a ``cause`` this object no longer has; calling it would need a fabricated
+    exception and would rewrite the message. Setting ``args`` directly reproduces the original
+    byte for byte.
+    """
+    rebuilt = cls.__new__(cls)
+    BaseException.__init__(rebuilt, message)
+    rebuilt.stage = stage
+    return rebuilt
 
 
 class FilesystemFreeSpace(BaseModel):
@@ -581,13 +631,30 @@ def _refuse_existing_artifacts(config: ColdBackupConfig, generation: int) -> Non
 #: Exceptions that are VERDICTS, not environment faults, and therefore pass through
 #: :func:`_stage` with their own types intact.
 #:
-#: The last three are the ones this wave had to add. The archive's third check re-verifies
-#: the evidence chain out of the decompressed copy, and when that fails the fact is "**do
-#: not trust this copy**" — the most serious thing this command can discover. Wrapping it as
-#: a stage failure filed it under "the host broke, fix it and re-run", which is the wrong
-#: instruction in the one case where re-running is not the answer (review round 2, F1).
-#: ``CustodyError`` and ``KeyContinuityRefused`` are the same shape one layer out: keys that
-#: cannot be loaded, or a generation the chain does not continue from.
+#: ``EvidenceCorruption``, ``KeyContinuityRefused`` and ``CustodyError`` were added by review
+#: round 2, F1. The archive's third check re-verifies the evidence chain out of the
+#: decompressed copy, and when that fails the fact is "**do not trust this copy**" — the most
+#: serious thing this command can discover. Wrapping it as a stage failure filed it under "the
+#: host broke, fix it and re-run", which is the wrong instruction in the one case where
+#: re-running is not the answer. ``CustodyError`` and ``KeyContinuityRefused`` are the same
+#: shape one layer out: keys that cannot be loaded, or a generation the chain does not
+#: continue from.
+#:
+#: ``SchemaVersionRefused`` is the fourth application of the same criterion (plan §7.1.28).
+#: It comes from the same archive check as ``EvidenceCorruption``, one step earlier: that check
+#: CONSTRUCTS a store over the decompressed copy, and the constructor refuses when the on-disk
+#: ``PRAGMA user_version`` is not this code's — before a single chain row is read. So it is a
+#: judgement about the TARGET, inherited byte-for-byte from the source data directory.
+#:
+#: **Both directions pass through, and they are not the same verdict.** BEHIND (the measured
+#: case on the deploy host, where every boot-proof corpus is at evidence schema v1 — runbook
+#: ``docs/runbooks/tos-evidence-cold-backup.md`` §4-5-2) is fixed by the ``migrate`` CLI on
+#: that data directory. AHEAD is not: ``apply_migrations`` refuses an AHEAD store too, so the
+#: resolution is to run the code that wrote it or to stop the lane. What they share, and the
+#: reason both belong here rather than under ``ColdBackupFailed``, is that **neither is fixed
+#: by running again**, which is exactly what ``archive failed`` told the operator to do.
+#: The dispatch splits them by
+#: :attr:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused.direction`.
 _PASSTHROUGH_REFUSALS: tuple[type[BaseException], ...] = (
     ColdBackupRefused,
     BackupSetRefused,
@@ -595,6 +662,7 @@ _PASSTHROUGH_REFUSALS: tuple[type[BaseException], ...] = (
     EvidenceCorruption,
     KeyContinuityRefused,
     CustodyError,
+    SchemaVersionRefused,
 )
 
 
@@ -646,8 +714,14 @@ def _stage(stage: str, action: Callable[[], _T]) -> _T:
     """Run ``action``, letting :data:`_PASSTHROUGH_REFUSALS` through and wrapping anything
     else as :class:`ColdBackupFailed` tagged with ``stage``.
 
-    Those types pass untouched because each already says exactly what was wrong and which
-    layer said so. Everything else is an environment fault with no common base class
+    Those types pass untouched because each already says exactly what was wrong, and the
+    dispatch can name it in one word: the LAYER that decided, the ACTION the target needs
+    (``migrate``), or the SUBJECT that is wrong where no single action can be named
+    (``schema``) — the ``[<layer>|<action>|<subject> ]refused`` shape
+    :data:`~tos_runtime.compose._backup_dispatch._REFUSAL_PREFIXES` spells out. "Which layer
+    said so" was true of this list until ``SchemaVersionRefused`` joined it: that one is a
+    judgement about the TARGET, which no layer here owns. Everything else is an environment
+    fault with no common base class
     (:class:`ColdBackupFailed`'s own docstring), and wrapping it here is what lets the CLI
     print one line naming the stage instead of a traceback.
     """
@@ -701,6 +775,14 @@ def cold_backup(
             trust this copy" is a verdict, not a host fault.
         tos_runtime.custody.ports.CustodyError: Custody could not be loaded. Raised from the
             PREFLIGHT, before anything is copied.
+        tos_runtime.operations.schema_ledger.SchemaVersionRefused: The archived store is at a
+            different schema version than this code — propagated unchanged
+            (:data:`_PASSTHROUGH_REFUSALS`), because no re-run changes an on-disk
+            ``PRAGMA user_version``. The fix depends on ``direction``: BEHIND wants the
+            ``migrate`` CLI on the source data directory, AHEAD wants the code version that
+            wrote the store (``migrate`` refuses AHEAD as well). Either way the uncompressed
+            snapshot is already complete when this arrives, and the next run takes the NEXT
+            generation.
         ColdBackupFailed: Anything underneath broke — a held sqlite handle, a full disk,
             an unparseable manifest. Carries the stage and the original exception as
             ``__cause__``.

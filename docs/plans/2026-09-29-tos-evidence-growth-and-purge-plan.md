@@ -4017,10 +4017,164 @@ mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → 
 로더는 바이트 정수만 받는다) · 대상 `--data-dir` = `~/.local/state/tos/paper-data`
 (상주 paper 런타임, 2026-10-06 genesis 예정). 호스트 좌표·래퍼·증명은 저장소 밖에 있고
 §4-5 가 그것을 등재한다. 남은 것은 crontab 한 줄(운영자)과 그 genesis 다.
+**→ 정정(PR #855): crontab 한 줄은 운영자가 그날 16:13 KST 에 넣었다**(#851 머지 뒤 ·
+`0 18 * * 1-5` · `CRON_TZ=Asia/Seoul` · 설치 직전 스냅숏
+`~/.config/kis-probes/crontab.bak.20261003T161332`). 남은 것은 genesis 하나다 — 런북 §4-5-3.
 
 **후속 과제 — 이 PR 의 범위 밖으로 남긴 것**:
 
 | # | 무엇 | 왜 여기서 고치지 않았나 |
 |---|---|---|
-| A3-F1 | **`SchemaVersionRefused` 가 `archive failed` 로 분류된다.** `_PASSTHROUGH_REFUSALS`(`cold_backup.py`)에 없어 환경 고장으로 포장되는데, 실제로는 「대상이 구 스키마」라는 **판정**이고 조치는 재실행이 아니라 `migrate` 다. #840 2차 리뷰 F1 이 `EvidenceCorruption`·`CustodyError`·`KeyContinuityRefused` 를 같은 이유로 통과 목록에 넣었으니 **같은 부류의 네 번째**로 보인다 | 런타임 코드 변경이고, 이 PR 은 문서·호스트 좌표 전용이다. 접두를 바꾸면 런북 §5 표와 래퍼 분류표가 함께 움직이므로 한 레인에서 같이 다루는 편이 낫다. 지금은 §5 의 `archive failed` 행에 포인터를 달고 런북 §4-5-2 에 실측 줄을 남겨 두었다 |
+| A3-F1 ✅ | **`SchemaVersionRefused` 가 `archive failed` 로 분류된다.** `_PASSTHROUGH_REFUSALS`(`cold_backup.py`)에 없어 환경 고장으로 포장되는데, 실제로는 「대상이 구 스키마」라는 **판정**이고 조치는 재실행이 아니라 `migrate` 다. #840 2차 리뷰 F1 이 `EvidenceCorruption`·`CustodyError`·`KeyContinuityRefused` 를 같은 이유로 통과 목록에 넣었으니 **같은 부류의 네 번째**로 보인다 | 런타임 코드 변경이고, 이 PR 은 문서·호스트 좌표 전용이다. 접두를 바꾸면 런북 §5 표와 래퍼 분류표가 함께 움직이므로 한 레인에서 같이 다루는 편이 낫다. 지금은 §5 의 `archive failed` 행에 포인터를 달고 런북 §4-5-2 에 실측 줄을 남겨 두었다. **→ 착지: PR #855 — §7.1.28**  |
 | A3-F2 | **단일 장치 배치** — 세 보관 경로와 (아직 없는) 라이브 data dir 이 전부 `/dev/sdd` 다. `_free_space` 의 `st_dev` 묶기가 세 루트의 바닥을 한 측정으로 축약하고, §6 이 권하는 「다른 매체로 옮긴다」에 쓸 매체가 **없다** | 저장장치 추가는 운영자 결정이고 코드 문제가 아니다. 런북 §4-5-1 에 이탈로 등재했다 |
+
+#### 7.1.28 A3-F1 착지 + 독립 리뷰 처분 — PR #855 (2026-10-04, 분기점 main `c2075e03`) — §7.1 과 별개 PR
+
+§7.1.27 이 후속으로 등재한 **A3-F1**(`SchemaVersionRefused` 가 `archive failed` 로
+분류된다)의 착지 기록이다. 절을 따로 연 이유는 §7.1.27 자신의 경고 때문이다 — 중첩
+`#####` 로 두면 그 절의 grep 규칙(`^#### 7\.1\.2`)이 **이 PR 을 찾지 못한다**.
+
+⚠ **숫자는 여기에 다시 적지 않는다.** 래퍼 sha · 분류 대조 · selftest 시각은 런북
+§4-5-4(분류 종결 · 대조 아티팩트 표)와 §4-5-1(재고 행)이 단일 출처다. 이 절이 그것을
+옮겨 적으면 두 곳이 어긋나는 것은 시간문제다 — 이 PR 안에서만 래퍼 sha 가 거듭
+움직였고, **몇 번인지조차 여기 적지 않는다**(그 수 자체가 런북 §4-5-4 의 사본 목록에
+딸린 값이라 여기 적는 순간 같은 이유로 낡는다).
+
+**무엇을 고쳤나.** `SchemaVersionRefused` 를 `_PASSTHROUGH_REFUSALS` 에 넣어 `_stage` 가
+타입 그대로 통과시키고, 디스패치의 `_REFUSAL_PREFIXES` 가 **방향으로 갈라** 접두를 준다 —
+`migrate refused`(BEHIND) · `schema refused`(AHEAD). 산출물 거동은 #840 이 남기던 그대로이고
+(비압축 세대·매니페스트·`gen{N}.verify` 는 남고 `.tar.xz` 와 보고서만 없다) 이제 테스트가
+고정한다. 호스트 래퍼 `classify()` 에도 두 가지를 더했다(런북 §4-5-4).
+
+**곁가지로 발견: cron 줄은 이미 등재돼 있었다.** 운영자가 2026-10-03 **16:13 KST** 에
+(#851 머지 뒤) 넣었고, 그 뒤로 **다섯 군데가 거짓**이었다 — 런북 §4-5 머리말 · §4-5-1 ·
+§4-5-3 · 래퍼 헤더 · `tos-paper-boot.md`. 전부 정정했고 §4-5-1 에 cron 등재 행과 설치
+직전 스냅숏(`crontab.bak.20261003T161332`, 차이는 그 세 줄뿐임을 `diff` 로 확인)을
+등재했다. **crontab 자체는 건드리지 않았다.**
+
+##### 독립 리뷰 #855 처분 (2026-10-04)
+
+저자와 다른 패스이지만 **같은 계열(Claude)** 이다 — 운영자는 이 PR 에 Codex 심사를 붙이지
+않았다(되돌리기 어려운 경로가 아니다: 거부 라우팅이지 데이터 파기가 아니다). 따라서 이
+라운드의 교차모델 독립성은 **없다** — 판정의 일부로 적는다.
+
+지적 4건 + 노트 9건, 전건 처분. **1번은 이 PR 이 닫으려던 결함 그 자체를 반대 방향으로
+저지르고 있었다**: 「접두가 조치를 말한다」면서 AHEAD 에는 **듣지 않는 조치**를 지시했다.
+
+| # | 지적 | 조치 |
+|---|---|---|
+| 1 | **AHEAD 팔이 거짓 조치를 지시한다.** `_refuse_version` 은 두 방향 모두 같은 타입을 던지는데 접두는 하나였다. `apply_migrations` 는 AHEAD 를 **쓰기 전에 거부**하므로 런북이 시킨 `migrate` 는 매일 밤 두 번째 거부를 낳는다. AHEAD 메시지는 조치를 말하지도 않는다. 테스트 0건 | **(a) 방향 분리를 택했다.** `SchemaVersionRefused` 에 `direction: Literal["BEHIND","AHEAD"]` 를 **필수 키워드**로 넣고 `_refuse_version` 이 채운다(메시지 파싱 금지 — 그 문구는 런북 둘이 그대로 인용한다). 디스패치는 `migrate refused`/`schema refused` 로 가른다. (b)를 택하지 않은 이유: 접두의 존재 이유가 「조치를 이름으로 부른다」인데, 한 접두로는 두 조치 중 하나에 대해 반드시 거짓이 된다. AHEAD 쪽은 조치가 둘(그 코드로 되돌리거나 레인을 멈추거나)이라 접두가 **대상**을 말하고 §5 행이 둘을 적는다 — 그 비대칭을 `_schema_version_prefix` 독스트링에 명시했다. 전 구간 AHEAD 테스트 + 접두 케이스 추가 · 래퍼 가지 추가 |
+| 2 | §4-5-2 ① 이 「래퍼는 아직 이 접두를 모른다」인데 같은 PR 의 §4-5-4 는 닫혔다고 적는다 | 그 문장을 「래퍼 분류도 같은 PR 에서 닫았다(§4-5-4)」로. 방향 둘을 함께 명시 |
+| 3 | §5 머리말·§4-5-4 의 「refused = 아무것도 쓰지 않았다」가 새 §5 행과 모순 | 머리말에 **착수 전 거부 / 아카이브 단계 거부**를 갈라 적고, 남는 산출물 셋을 이름으로 적었다. 재실행이 답이 아닌 것이 **셋**(integrity·migrate·schema)임을 양쪽에 반영. **거부된 밤마다 비압축 세대가 하나씩 는다**는 문장을 추가하고 **테스트로 고정**했다(2회 실행 → gen1·gen2 존재, 아카이브 0) |
+| 4 | `_PASSTHROUGH_REFUSALS` 와 `_REFUSAL_PREFIXES` 를 잇는 것이 없다 — 네 번째 손 동기화 | 두 집합이 **같다**는 테스트 + 디스패치 표에서 **파라미터를 도출**. 기대 접두만 리터럴로 남겨 자기 동어반복을 피했다. 커버리지는 `type(exc)` 가 아니라 **실제로 닿는 행**으로 비교한다 — `CustodyLoadRefused` 가 `CustodyError` 행에 닿으므로 타입 비교는 그 자체로 틀리고, 행 비교는 덤으로 **가려진 행**까지 잡는다 |
+
+**노트 9건** — 전부 수정: 대조 입력·두 출력·diff 를 `~/.local/state/tos/measure/cold-a3/
+classify-diff-20261004.*` 로 저장(날짜는 **실측일**이라 리뷰가 적은 10-03 이 아니다) ·
+래퍼 판본 사본 `cold-backup-nightly.<sha12>.sh` 보관 시작(어느 판이 남아 있는지는
+런북 §4-5-4 가 단일 출처다) · 이 절로 승격(위) ·
+「Six refusal families, five prefixes」→ 실제 수 · 「압축본만 없다」→ 보고서도 ·
+`§4-5-2 ②` 인용 셋 → ⚠ 문단/① · `dispatch_backup_set` 가 `_refusal_line` 재사용
+(표의 타입을 `except` 로 도출하므로 새 행이 자동으로 양쪽 문에 걸린다) ·
+`[<layer>|<조치>|<대상> ]refused` · §4-5-3 에 `CRON_TZ` 와 **순서** 조항(뒤집히면 KST 가 아니다).
+
+**변이로 red 확인 6건** — 전부 **최종 head 에서 다시 측정**했다(1회차 표는 중간 head 의
+것이었고 「+3건」 같은 센 적이 모호했다 — 2회차 L2).
+
+**세는 단위**: `red` 는 `(파라미터까지 센 테스트 수 / 서로 다른 함수 수)`. M1~M4 는
+`tests/compose/test_cold_backup_cli.py` + `tests/operations/test_cold_backup.py` 두 모듈을,
+M5~M6 는 `tests/operations/test_schema_ledger.py` 를 돌린 결과다.
+
+| # | 변이 | red | 어느 함수 |
+|---|---|---|---|
+| M1 | `_REFUSAL_PREFIXES` 에서 `SchemaVersionRefused` 행 제거 | **7 / 6** | `…prefix_and_leaves_the_snapshot` · `…older_evidence_schema…` · `…newer_evidence_schema…` · `…one_full_generation_per_night` · `test_every_dispatch_row_has_a_case` · `test_every_passthrough_verdict_has_a_dispatch_prefix` |
+| M2 | `_PASSTHROUGH_REFUSALS` 에만 타입 추가 | **1 / 1** | `test_every_passthrough_verdict_has_a_dispatch_prefix` |
+| M3 | 표 맨 위에 `(RuntimeError, …)` 삽입 — **진짜 가림** | **13 / 7** | M1 의 여섯 + `test_a_real_unusable_custody_root_is_refused_before_the_snapshot` |
+| M4 | 방향 분리를 한 접두로 되돌림 | **2 / 2** | `…newer_evidence_schema…` · `…prefix_and_leaves_the_snapshot` |
+| M5 | `SchemaVersionRefused.__reduce__` 제거 | **2 / 1** | `test_a_version_refusal_survives_pickle_and_copy[BEHIND\|AHEAD]` |
+| M6 | `EVIDENCE_SCHEMA_VERSION` 2 → 1(마이그레이션이 상수보다 새로워진다) | **16 / 16** | `test_no_store_has_a_migration_newer_than_its_own_schema_version` 포함. ⚠ **무딘 변이다** — 그 상수를 쓰는 다른 가드 열다섯이 함께 red 다. 그 테스트만 돌려 단독으로도 red 임을 따로 확인했다 |
+
+⚠ **헛다리 하나를 적어 둔다.** 가림(shadowing)을 재현하려고 처음에 `KeyContinuityRefused`
+와 `CustodyError` 의 순서를 바꿨는데 **green** 이었다. 둘은 상속 관계가 **아니므로** 그
+순서는 아무것도 가리지 않는다 — 올바른 green 이다. 「가드가 자기가 막는다고 말한 것을
+허용한다」를 피하려면 변이도 **주장과 같은 성질**이어야 한다는 사례라서, 그 입력(그리고
+실제로 red 를 내는 입력)을 테스트 독스트링에 적어 두었다.
+
+##### 중간 처분 — pickle/copy 와 접두의 모양 (2026-10-04, 리뷰 코멘트 없이)
+
+⚠ **회차 번호가 한 번 어긋났다.** 이 두 건은 PR 에 코멘트로 올라간 리뷰 없이 처분됐고
+(지시는 오케스트레이터 경유), 그 뒤 PR 에 올라온 리뷰가 스스로를 **2회차**라고 부른다.
+그래서 여기서는 번호 대신 **무엇을 처분했는지**로 적는다 — `#### 7.1.28` 안에서 유일하면
+된다는 §7.1.27 의 규율과 같은 이유다.
+
+| 건 | 처분 |
+|---|---|
+| **`SchemaVersionRefused` 가 프로세스 경계를 못 넘는다** | `c7f7001b` — `direction` 이 **필수 키워드**라 `BaseException.__reduce__` 의 `(cls, self.args)` 로는 재구성이 안 된다. 세 경로(`pickle`·`copy`·`deepcopy`) 모두 `TypeError`(실측). 모듈 수준 팩토리를 거치는 `__reduce__`. 저장소 안에 이 예외를 pickle 하는 자리는 없다 — **잠복** |
+| **접두 서술이 「층\|조치\|대상」 셋째 칸을 빠뜨린다** | `72b17716` — 런북 §4-5-4 이상형 셀 · `_REFUSAL_PREFIXES` 주석 · `dispatch_cold_backup`/`_stage` 독스트링. `_stage` 의 「각각이 어느 **층**이 그랬는지」는 `SchemaVersionRefused` 가 목록에 들어온 순간 거짓이 됐다 — **가드가 지키던 것을 옮길 때**가 적용 시점 |
+| **재도출 누락(이 레인이 스스로 찾음)** | `cc0fe5e8` — 위 둘이 `tos/runtime/src/**.py` 바이트를 바꿨는데 핀 두 곳이 `9077d633…` 에 멈춰 있었다. 실측은 `d75d9c09…`. `_VALUE_PINS` 도 CI 도 이 drift 를 못 잡는다(부팅만이 거부한다) |
+| **테스트 트리 mypy `arg-type`** | `2d685b48` — 파라미터가 `str` 인데 생성자는 `Literal`. `cast`/`type: ignore` 대신 `get_args(SchemaVersionDirection)` 로 **케이스를 타입에서 도출**. 손으로 동기화하는 목록이 이 PR 이 닫는 결함 형태라서 |
+
+##### 독립 리뷰 #855 **2회차** 처분 (2026-10-04, head `2d685b48`)
+
+지적 5건 + 노트 11건. **기각 0**(노트 e 는 범위를 좁혀 부분 수용 — 아래).
+
+| # | 지적 | 처분 |
+|---|---|---|
+| 1 | release.yaml 의 포인터가 옮겨 간 값을 **리터럴로** 다시 적어 핀과 어긋났다 | 그 자리에서 수를 빼고 **키를 가리킨다**. 헤더 자신의 단일 출처 규율대로 |
+| 2 | `__reduce__` 가 기반 클래스를 고정해 **하위형이 강등**된다 | `type(self)` 를 팩토리 첫 인자로. 직렬화가 성공한 것처럼 보이면서 좁은 `except` 가 조용히 안 맞게 되는 것이라 `TypeError` 보다 나쁘다 |
+| 3 | `docs/plans/INDEX.md` 행에 §7.1.28 이 없다 | 행 끝에 PR #855 착지로 등재 |
+| 4 | 런북 §5 의 「재실행이 답이 아닌 접두는 **둘**」 | **셋**으로. `schema refused` 의 조치는 「원인 고치고 다음 밤」이 아니라 **그 파일을 쓴 코드 판으로 올리거나 레인을 멈추는 것**이라고 적었다. 같은 목록의 다른 「둘」은 파일 전수 grep 으로 확인 — 이 한 곳뿐이었다(§4-5-4 거동표는 이미 셋) |
+| 5 | `backup-set` 문에 stderr 테스트가 **하나도 없다** | 표의 전 타입 ×(방향 둘) 파라미터 테스트. 케이스는 `_PREFIX_CASES` 에서 도출 — 두 문이 **같은 본문**을 낸다는 것이 검사 대상이라 둘째 목록은 어긋날 자유만 준다 |
+
+**노트 11건** — a·b·c·d·f·g·h·i·j·k 처분, e 는 범위 한정 수용.
+
+- **a** `custody refused` 가 「아무것도 안 썼다」로 분류돼 있었다. 발생지가 **둘**이다:
+  프리플라이트(`_stage("custody", …)`, 스냅숏 **앞**) 는 정말 아무것도 안 남기고,
+  `KeyContinuityRefused` 는 `verify_archive` 가 **푼 사본 위에서** `SqliteEvidenceStore` 를
+  열 때 나오므로 산출물이 **남는다**(실측: 발생 위치 두 곳 · `verify_archive` 가 그 스토어를
+  연다). 접두는 **쪼개지 않았다** — 조치는 양쪽 다 커스터디를 고치는 것이고, 갈라야 하는
+  것은 조치가 아니라 서술이다
+- **b** `__reduce__` 가 상태를 버렸다 → 3-튜플로 `self.__dict__`. `add_note` 의 `__notes__`
+  가 인스턴스 `__dict__` 에 산다(실측)
+- **c** `ColdBackupFailed` 도 같은 결함(2 위치인자) — 세 경로 전부 `TypeError`(실측). `cause`
+  는 저장되지 않으므로 `__new__` + `args` 복원. **⚠ 범위 밖 후속은 실측해 보니 두 모양이다**:
+  `authority/epoch.py::AuthorityEpochTransitionRefused` 는 세 경로 모두 **`AttributeError`**
+  로 깨진다(`args[0]` 이 문자열인데 `__init__` 이 `.reason` 을 본다). 반면
+  `rcl/gates.py::ReservationTransitionRefusal` · `rcl/log.py::StaleEpochRead` 는 **깨지지
+  않는다** — 대신 `__init__` 이 `args[0]` 을 **다시 감싸** 메시지가 이중 포맷된다(속성은
+  CPython 기본 `__reduce__` 가 `__dict__` 를 함께 보내 살아남는다). 「같은 모양 셋」이 아니라
+  **터지는 하나 + 조용히 문구가 틀어지는 둘**이다
+- **d** 「(or by `apply_migrations`)」 거짓 → 실제 발생지 둘(`open_or_create_schema` ·
+  `ensure_schema_current`)을 이름으로. `apply_migrations` 는 자기 타입을 던진다
+- **e** **범위 한정 수용.** 호스트 래퍼는 2026-10-04 19:19 KST 에 `c38078fc…`(잎 순회)로
+  옮겼고 래퍼 로그는 **다섯 블록**이 됐다. §4-5 를 잎 순회로 다시 등재하는 것은 **그 변경을
+  들여오는 PR 의 일**이라 이 레인은 표를 고치지 않고 **주의 두 줄만** 달았다(§4-5-1 래퍼 행 ·
+  「마지막 블록」 주장 두 곳). ✅ 그러면서 **`classify()` 는 그 이동에 포함되지 않았음을 쟀다**:
+  `fc0cd225…`·`6b6f5766…`·`c38078fc…`(현 호스트 파일) 세 판의 함수 추출물이 sha256 까지
+  같다(`7c306195…`). ⚠ 리뷰는 「네 판 전부 동일」이라 했는데 **아니다** — 네 번째
+  `d7e52b2f…` 는 PR 이전 판이고, 차이는 이 PR 이 더한 두 줄 그대로다(그 둘이 없는 것이 이
+  PR 의 존재 이유다)
+- **f** 런북의 인용 블록이 실측 전사처럼 보였다 → **「현 코드가 내는 줄 (조립)」**로 표시하고,
+  2026-10-03 조사가 실제로 본 것은 옛 `archive failed` 모양이라고 블록 **위에** 밝혔다
+- **g** 헤더 PR #855 이력의 「마지막 9077d633」·횟수·서수·머지 회계 — 재도출 커밋에서 함께
+- **h** 이 절(위 두 표)
+- **i** 접두를 **부등식**으로 갈랐다 → `match` + `assert_never`. mypy 가 Literal 의 셋째
+  멤버를 게이트에서 거부하고, 런타임 절반은 주석 뒤로 만든 값으로 테스트가 고정한다
+- **j** 「다섯 리터럴 = 층」이 거짓 — 여섯 행에 리터럴 다섯, 층을 말하는 것은 **넷**이고 맨
+  `refused` 는 층을 말하지 않는다(어느 층에 들기 전에 이 명령 자신이 거부). 런북 §4-5-4 의
+  출처도 방향 전용 `_schema_version_prefix` → `_REFUSAL_PREFIXES` **블록 주석**으로
+- **k** 정보 — mypy 수정은 `2d685b48` 에 이미 있다
+
+**변이로 red 확인 5건** — 전부 최종 head 에서. 단위는 `(파라미터까지 센 테스트 수)`.
+
+| # | 변이 | red | 어느 모듈 |
+|---|---|---|---|
+| M-a | `__reduce__` 가 `type(self)` 대신 기반 클래스 | **2** | `test_schema_ledger.py` |
+| M-b | 3-튜플에서 `self.__dict__` 제거 | **1** | `test_schema_ledger.py` |
+| M-c | `ColdBackupFailed.__reduce__` 제거 | **2** | `test_cold_backup.py` |
+| M-d | `backup-set` 의 `except` 를 `BackupArchiveRefused` 로 되돌림 | **7** | `test_cold_backup_cli.py` |
+| M-e | 전수 `match` 를 부등식으로 되돌림 | **1** | `test_cold_backup_cli.py` |
+
+⚠ M-d 가 8 이 아니라 **7** 인 것이 맞다 — 여덟 케이스 중 `BackupArchiveRefused` 하나는
+좁힌 `except` 로도 여전히 잡히므로 green 이다. 「전부 red」를 기대했다면 그 자체가 변이를
+주장과 다른 성질로 잡은 것이다.
+

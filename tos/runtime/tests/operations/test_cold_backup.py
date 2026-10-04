@@ -17,9 +17,11 @@ floor, and the report.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
+import pickle
 import shutil
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -42,6 +44,7 @@ from tos_runtime.operations.cold_backup import (
     load_cold_backup_config,
 )
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 from .conftest import FixedKeyProvider
 from .test_backup_set import _build_live_set
@@ -493,6 +496,14 @@ def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
         EvidenceCorruption("chain digest mismatch at seq 7"),
         CustodyLoadRefused("no evidence.key.<generation> files found"),
         KeyContinuityRefused("HISTORY_UNVERIFIABLE"),
+        SchemaVersionRefused(
+            "evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2",
+            direction="BEHIND",
+        ),
+        SchemaVersionRefused(
+            "evidence: on-disk schema user_version=3 is AHEAD of this code's schema_version=2",
+            direction="AHEAD",
+        ),
     ],
 )
 def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
@@ -502,6 +513,13 @@ def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
     can reach is the chain failing to re-verify out of the archive — "**do not trust this
     copy**". Wrapping that as a stage failure filed it under "the host broke, fix it and
     re-run", the wrong instruction in the one case where re-running is not the answer.
+
+    :class:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused` is the same criterion
+    applied a fourth time (plan §7.1.28): the archive's chain re-verification constructs
+    a store out of the decompressed copy, and an older on-disk schema is a judgement about
+    the TARGET, not about the host. Re-running cannot change it. BEHIND is fixed by
+    ``migrate``; AHEAD is not (``apply_migrations`` refuses that too), which is why the
+    dispatch splits the two by ``direction`` even though one type passes through here.
     """
     live_dir = _live(tmp_path)
 
@@ -858,3 +876,56 @@ def test_the_shipped_example_config_is_the_shape_this_loader_reads(
     )
     config = load_cold_backup_config(_write_config(tmp_path, filled))
     assert config.archive_dir == Path("/srv/c")
+
+
+# -- ColdBackupFailed survives a process boundary -----------------------------
+
+
+class _NarrowerColdBackupFailure(ColdBackupFailed):
+    """A subclass at MODULE level, because pickle stores a qualified name."""
+
+
+def test_a_wrapped_failure_survives_pickle_and_copy() -> None:
+    """The wrapper itself must serialize — the same two-positional defect, one class over.
+
+    ``__init__`` takes ``(stage, cause)`` while ``BaseException.__reduce__`` hands back only
+    the single formatted message, so ``pickle``, ``copy`` and ``deepcopy`` all raised
+    ``TypeError: missing 1 required positional argument: 'cause'`` (measured). This class is
+    the one that wraps whatever broke underneath a run, so the failure mode was: a stage
+    failure crosses a process boundary and arrives as an unrelated ``TypeError`` about the
+    reporter, losing the stage it existed to carry.
+
+    ``cause`` is deliberately not reconstructed — it was never stored, only folded into the
+    message — so the assertion is that the message and ``stage`` come back identical.
+    """
+    original = ColdBackupFailed("archive", OSError("no space left on device"))
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert type(rebuilt) is ColdBackupFailed
+        assert str(rebuilt) == str(original)
+        assert rebuilt.args == original.args
+        assert rebuilt.stage == "archive"
+
+
+def test_a_wrapped_failure_rebuilds_as_its_own_subclass_and_keeps_notes() -> None:
+    """Exact type and instance state, for the same reasons as the version refusal.
+
+    A rebuild that downgrades the type lets an ``except`` on the narrower class stop
+    matching while serialization still looks successful; a rebuild without state drops
+    ``add_note`` output that the traceback would have printed.
+    """
+    original = _NarrowerColdBackupFailure("snapshot", OSError("read-only file system"))
+    original.add_note("ran under the 18:00 cron")
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert type(rebuilt) is _NarrowerColdBackupFailure
+        assert rebuilt.stage == "snapshot"
+        assert rebuilt.__notes__ == ["ran under the 18:00 cron"]

@@ -8,11 +8,13 @@ call site is caught here, not just a regression in the shared helper.
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import pickle
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -22,6 +24,7 @@ from tos_runtime.marketfeed.store import MARKETFEED_SCHEMA_VERSION, SqliteSnapsh
 from tos_runtime.operations.schema_ledger import (
     SCHEMA_LEDGER_TRIGGER_NAMES,
     SchemaLedgerUnprotected,
+    SchemaVersionDirection,
     SchemaVersionRefused,
     compute_schema_shape_digest,
     create_schema_ledger_objects,
@@ -34,6 +37,7 @@ from tos_runtime.operations.schema_migrations import (
     EVIDENCE_MIGRATIONS,
     MARKETFEED_MIGRATIONS,
     RCL_MIGRATIONS,
+    STORE_MIGRATIONS,
     SchemaMigrationRefused,
     apply_migrations,
     schema_version,
@@ -1757,3 +1761,132 @@ def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
 
     assert first.changed is False
     assert second.changed is False
+
+
+# -- SchemaVersionRefused carries its direction across a process boundary -----
+
+
+class _NarrowerVersionRefusal(SchemaVersionRefused):
+    """A subclass, defined at MODULE level because pickle stores a qualified name.
+
+    Exists only so the round-trip tests can ask whether the rebuilt object is still THIS
+    type. Nothing in the runtime subclasses the refusal today; the point is that the rebuild
+    must not depend on that staying true.
+    """
+
+
+@pytest.mark.parametrize("direction", get_args(SchemaVersionDirection))
+def test_a_version_refusal_survives_pickle_and_copy(
+    direction: SchemaVersionDirection,
+) -> None:
+    """The refusal rebuilds with BOTH halves intact — message and ``direction``.
+
+    ``direction`` is a REQUIRED keyword-only argument, and ``BaseException.__reduce__``
+    rebuilds as ``cls(*self.args)`` with ``args`` holding only the message. Without the
+    ``__reduce__`` override this raises ``TypeError: missing 1 required keyword-only
+    argument: 'direction'`` on all three of ``pickle``, ``copy`` and ``deepcopy``
+    (measured). That is the shape that bites when an exception crosses a process boundary,
+    which this package already does elsewhere
+    (``test_schema_genesis_concurrency`` runs N processes against one file; it happens to
+    stringify before queueing, so nothing is broken today — this keeps it that way by
+    construction rather than by luck).
+
+    The round trip must preserve ``direction``, not merely succeed: the cold-backup
+    dispatch chooses ``migrate refused`` vs ``schema refused`` from that attribute, so an
+    exception that survives serialization with the attribute dropped would route a verdict
+    to the wrong runbook row — worse than failing to serialize at all.
+
+    The cases are derived from :data:`SchemaVersionDirection` itself rather than copied,
+    so a third direction added to that Literal is covered here without anyone remembering
+    to extend a list — the hand-synced-table shape this PR exists to close.
+    """
+    original = SchemaVersionRefused(
+        f"evidence: {direction} something", direction=direction
+    )
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert type(rebuilt) is SchemaVersionRefused
+        assert str(rebuilt) == str(original)
+        assert rebuilt.direction == direction
+
+
+@pytest.mark.parametrize("direction", get_args(SchemaVersionDirection))
+def test_a_version_refusal_rebuilds_as_its_own_subclass(
+    direction: SchemaVersionDirection,
+) -> None:
+    """A subclass must come back as the SUBCLASS, not downgraded to the base.
+
+    ``__reduce__`` used to name this module's class literally, so every rebuild returned a
+    plain ``SchemaVersionRefused`` whatever went in. That is worse than the ``TypeError`` it
+    replaced: serialization appears to succeed while an ``except`` clause on the narrower
+    type silently stops matching, and a verdict that was classified narrowly is handled as
+    the general case. Passing ``type(self)`` to the factory is what makes this pass.
+
+    The input that makes it fail, so the claim is checkable: replace ``type(self)`` with
+    ``SchemaVersionRefused`` in ``__reduce__`` (measured red on all three paths).
+    """
+    original = _NarrowerVersionRefusal(
+        f"evidence: {direction} something", direction=direction
+    )
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert type(rebuilt) is _NarrowerVersionRefusal
+        assert rebuilt.direction == direction
+
+
+def test_a_version_refusal_keeps_its_notes_and_attributes() -> None:
+    """Everything else in the instance dict survives too — notes above all.
+
+    ``BaseException.add_note`` stores into ``__notes__`` in the instance ``__dict__``
+    (measured), and the traceback machinery prints those notes. A two-element ``__reduce__``
+    returns no state, so every note and every subclass attribute was dropped on the way
+    through — the rebuilt exception looked right and printed less than the original.
+    Returning ``self.__dict__`` as pickle's third element is what carries them.
+    """
+    original = SchemaVersionRefused("evidence: AHEAD something", direction="AHEAD")
+    original.add_note("ran under the 18:00 cron")
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert rebuilt.__notes__ == ["ran under the 18:00 cron"]
+        assert rebuilt.direction == "AHEAD"
+
+
+def test_no_store_has_a_migration_newer_than_its_own_schema_version() -> None:
+    """``newest migration version <= SCHEMA_VERSION``, per store.
+
+    This is what makes the runbook's ``schema refused`` row true. That row tells the
+    operator that ``migrate`` is NOT the fix for an AHEAD store, and ``apply_migrations``
+    delivers that by refusing when ``current_version > migrations[-1].version``. If some
+    store ever shipped a migration NEWER than the constant its own boot check compares
+    against, a file at ``SCHEMA_VERSION + 1`` would be AHEAD for the boot check and yet
+    within range for ``apply_migrations`` — the advice would be wrong for that store, and
+    nothing else would notice.
+    """
+    expected = {
+        "evidence": EVIDENCE_SCHEMA_VERSION,
+        "rcl": RCL_SCHEMA_VERSION,
+        "inbox": INBOX_SCHEMA_VERSION,
+        "marketfeed": MARKETFEED_SCHEMA_VERSION,
+    }
+
+    assert set(expected) == set(
+        STORE_MIGRATIONS
+    ), "a store joined without a version here"
+    for store_name, migrations in STORE_MIGRATIONS.items():
+        newest = migrations[-1].version
+        assert newest <= expected[store_name], (
+            f"{store_name}: newest migration v{newest} is ahead of SCHEMA_VERSION "
+            f"{expected[store_name]} — the `schema refused` runbook row would be wrong"
+        )
