@@ -30,9 +30,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.custody.ports import CustodyError
@@ -55,6 +56,7 @@ from tos_runtime.operations.cold_backup import (
     load_cold_backup_config,
 )
 from tos_runtime.operations.key_rotation import KeyContinuityRefused
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 if TYPE_CHECKING:
     # TYPE_CHECKING-only: `cli.py` imports THIS module, so a top-level import of its
@@ -114,20 +116,87 @@ def cold_backup_args(namespace: argparse.Namespace) -> ColdBackupArgs:
     )
 
 
-#: ``(exception type, operator-facing prefix)``, most specific first. A VERDICT gets a
-#: prefix naming which layer reached it, so the runbook's §5 table can route the operator by
-#: that one word; anything not listed is an environment fault and falls through to
-#: ``failed``. ``integrity refused`` is the one that matters most: a chain that does not
-#: re-verify means "do not trust this copy", and filing it under "the host broke, re-run"
-#: was the wrong instruction in the single case where re-running is not the answer (review
-#: round 2, F1).
-_REFUSAL_PREFIXES: tuple[tuple[type[BaseException], str], ...] = (
+def _schema_version_prefix(exc: SchemaVersionRefused) -> str:
+    """``migrate refused`` for BEHIND, ``schema refused`` for AHEAD.
+
+    One exception type, two operator actions, so one prefix would have to lie about one of
+    them. BEHIND is fixed by the ``migrate`` CLI on that ``--data-dir``
+    (``docs/runbooks/tos-paper-boot.md`` §4-A). AHEAD is not: the store was written by NEWER
+    code, ``apply_migrations`` refuses it as well
+    (:func:`~tos_runtime.operations.schema_migrations.apply_migrations`'s AHEAD guard, which
+    fires before it writes anything), and the resolution is to run the code version that
+    wrote the file or to stop this lane until someone does.
+
+    So ``schema refused`` names the SUBJECT where ``migrate refused`` names the action —
+    because AHEAD has two admissible actions and this command cannot choose between them.
+    The runbook's §5 table carries both; what the prefix must guarantee is that the operator
+    does not land on the BEHIND row.
+
+    Reads :attr:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused.direction`, never
+    the message: that wording is quoted verbatim in two runbooks and must stay free to change
+    without silently re-routing a verdict.
+
+    EXHAUSTIVE, not an ``if/else`` on one value. The earlier form returned ``schema refused``
+    for everything that was not ``BEHIND``, so a third direction added to
+    :data:`~tos_runtime.operations.schema_ledger.SchemaVersionDirection` would have been
+    routed to the AHEAD row in silence — prescribing "run the newer code" for a case nobody
+    had classified. Here mypy refuses the ``assert_never`` unless both members are handled, so
+    that third member is a type error at the gate rather than a wrong runbook row at 18:00
+    (review round 2 note i).
+    """
+    match exc.direction:
+        case "BEHIND":
+            return "migrate refused"
+        case "AHEAD":
+            return "schema refused"
+        case _:
+            assert_never(exc.direction)
+
+
+#: ``(exception type, prefix)``, most specific first — where ``prefix`` is either the literal
+#: or, for a type whose action depends on HOW it refused, a function of the exception. A
+#: VERDICT gets a prefix of the form ``[<layer>|<action>|<subject> ]refused`` — naming the
+#: LAYER that reached the verdict, or the ACTION the target needs (``migrate``), or the
+#: SUBJECT that is wrong when no single action can be named (``schema``) — so the runbook's
+#: §5 table can route the operator by that one word and the host wrapper's ``classify()``
+#: legend can enumerate the same three forms. Counting the rows below: five literal prefixes
+#: over six rows (``custody refused`` is shared by two types), of which FOUR name a layer —
+#: ``snapshot`` / ``archive`` / ``integrity`` / ``custody``. The first row is the bare
+#: ``refused``, which names NO layer on purpose: :class:`ColdBackupRefused` is this command's
+#: own door saying no before any layer was entered, and there is no inner layer to name
+#: (review round 2 note j — this comment said "the five literals" and called all of them
+#: layers). The seventh row is the direction-dependent one and contributes no literal here.
+#: Anything not listed is an
+#: environment fault and falls through to ``failed``. ``integrity refused`` is the one that
+#: matters most: a chain that does not re-verify means "do not trust this copy", and filing
+#: it under "the host broke, re-run" was the wrong instruction in the single case where
+#: re-running is not the answer (review round 2, F1).
+#:
+#: :class:`SchemaVersionRefused` is the one direction-dependent row — see
+#: :func:`_schema_version_prefix`. It reached the host as ``archive failed`` (plan §7.1.27
+#: A3-F1, runbook ``tos-evidence-cold-backup.md`` §4-5-2), which routed to "fix the host and
+#: re-run"; a re-run cannot change an on-disk ``PRAGMA user_version`` in either direction.
+#:
+#: **Every type in** :data:`~tos_runtime.operations.cold_backup._PASSTHROUGH_REFUSALS` **must
+#: appear here**, or that verdict ships as the generic ``failed —`` line. That is not a
+#: convention to remember: ``tests/compose/test_cold_backup_cli.py`` asserts the two sets
+#: agree, and derives its per-prefix cases from this table.
+_PrefixRule = str | Callable[..., str]
+_REFUSAL_PREFIXES: tuple[tuple[type[BaseException], _PrefixRule], ...] = (
     (ColdBackupRefused, "refused"),
     (BackupSetRefused, "snapshot refused"),
     (BackupArchiveRefused, "archive refused"),
     (EvidenceCorruption, "integrity refused"),
     (KeyContinuityRefused, "custody refused"),
     (CustodyError, "custody refused"),
+    (SchemaVersionRefused, _schema_version_prefix),
+)
+
+
+#: The table's types as a plain tuple, for ``except``. Derived, never re-listed, so a new
+#: row is catchable by both doors the moment it is added.
+_REFUSAL_TYPES: tuple[type[BaseException], ...] = tuple(
+    exc_type for exc_type, _ in _REFUSAL_PREFIXES
 )
 
 
@@ -138,8 +207,9 @@ def _refusal_line(exc: BaseException) -> str:
     exception" is one table a test can read, and so this stays inside the 100-line budget as
     the list grows.
     """
-    for exc_type, prefix in _REFUSAL_PREFIXES:
+    for exc_type, rule in _REFUSAL_PREFIXES:
         if isinstance(exc, exc_type):
+            prefix = rule(exc) if callable(rule) else rule
             return f"{prefix} — {exc}"
     return f"failed — {type(exc).__name__}: {exc}"
 
@@ -151,9 +221,21 @@ def dispatch_cold_backup(args: ColdBackupArgs) -> int:
 
     * **Refused** — a verdict. :data:`_REFUSAL_PREFIXES` gives each type its own prefix
       (``refused`` / ``snapshot refused`` / ``archive refused`` / ``integrity refused`` /
-      ``custody refused``) so the one line says which layer decided, and the runbook's §5
-      table routes by that word. ``integrity refused`` is NOT a re-run: it means the
-      archived evidence chain did not verify.
+      ``custody refused`` / ``migrate refused`` / ``schema refused``) so the one line says
+      which layer decided — or, for the last two, the ACTION the target needs (``migrate``)
+      and the SUBJECT that is wrong where two actions are admissible and this command cannot
+      choose (``schema``), the ``[<layer>|<action>|<subject> ]refused`` shape the runbook's
+      §4-5-4 cell and the host wrapper's legend both spell out — and the runbook's
+      §5 table routes by that word. **Three of them are NOT a re-run**:
+      ``integrity refused`` (the archived evidence chain did not verify), ``migrate refused``
+      (the target is BEHIND this code's schema: the operator runs the ``migrate`` CLI on that
+      ``--data-dir``) and ``schema refused`` (the target is AHEAD: ``migrate`` refuses it too,
+      so the fix is to run the code that wrote it, or to stop this lane).
+      In the last two the snapshot stage already finished, so the uncompressed generation and
+      its manifest stand complete and the per-generation verify directory is kept as the
+      evidence of the refusal; what is missing is the compressed archive **and its report**.
+      Each further night takes the NEXT generation, so an unattended lane left on a refusing
+      target accumulates one full uncompressed copy per run until someone acts.
     * **Failed** — the run was admissible and the environment broke underneath it: the
       runtime still holding a sqlite handle (the precondition no code can check), a disk
       filling mid-copy, an unparseable manifest. Those arrive as
@@ -226,6 +308,12 @@ def dispatch_backup_set(args: BackupSetArgs) -> int:
     The snapshot itself is never conditional on the archive step: a failed or refused archive
     leaves the uncompressed generation exactly as ``backup_set`` wrote it, and is reported as a
     non-zero exit with the refusal on stderr rather than as a silent partial success.
+
+    Scope note: the ``backup_set`` call below is deliberately NOT wrapped. This is the
+    interactive door — an operator typed the generation — and a refusal there is about the
+    arguments just typed. The archive step is the one an unattended caller reaches through
+    :func:`dispatch_cold_backup` as well, which is why the two share
+    :func:`_refusal_line` rather than spelling the prefixes twice.
     """
     paths = DurableSetPaths.from_data_dir(args.data_dir)
     manifest = backup_set(
@@ -256,8 +344,13 @@ def dispatch_backup_set(args: BackupSetArgs) -> int:
             ),
             preset=args.xz_preset,
         )
-    except BackupArchiveRefused as refusal:
-        print(f"backup-set: archive refused — {refusal}", file=sys.stderr)
+    except _REFUSAL_TYPES as refusal:
+        # The SAME prefix table `cold-backup` routes by (review note). Before this, only
+        # `BackupArchiveRefused` was caught here, so the other verdicts the archive step can
+        # reach — a chain that does not re-verify, unreadable custody, a store at another
+        # schema — came out of this door as tracebacks while the identical refusal came out
+        # of `cold-backup` as one routed line. Same text, same §5 row, either door.
+        print(f"backup-set: {_refusal_line(refusal)}", file=sys.stderr)
         return 1
     print(
         f"backup-set: archived gen{verification.generation} to "
