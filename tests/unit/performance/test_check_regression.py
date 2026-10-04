@@ -162,6 +162,585 @@ class TestNormalizedRegressionGate:
         assert "BELOW FLOOR" in tiny.message
 
 
+# Two real measurements of ONE commit (586c7bc2 on PR #851 -- a config YAML plus
+# four docs files, none of them imported by anything in tests/performance/),
+# taken as attempt 1 and attempt 2 of CI run 37101956657, twelve minutes apart.
+# Every pair is (baseline median, current median) in seconds for the benchmarks
+# that clear the 0.05s noise floor, read from each attempt's uploaded
+# performance-report artifact against tests/performance/baselines.json. The
+# runner factor is NOT hardcoded in these tests: these numbers produce it.
+_HOT = (
+    "tests/performance/test_orchestrator_hot_path_benchmark.py"
+    "::TestOrchestratorHotPathBenchmark"
+)
+_SCAL = (
+    "tests/performance/test_orchestrator_scalability.py" "::TestOrchestratorScalability"
+)
+_REDIS = "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD"
+_WS = "tests/performance/test_websocket_load.py::TestWebSocketLoad"
+
+# Attempt 1: fourteen of the sixteen ratios sit in x1.01-x1.13 and the
+# orchestrator scalability pair sits at x2.59/x2.78; factor x1.066.
+PERF_RUN_37101956657_ATTEMPT_1 = {
+    f"{_HOT}::test_entry_path_scalability_200_symbols": (0.1085, 0.1095),
+    f"{_HOT}::test_aggregate_cost_reduction": (0.1080, 0.1092),
+    f"{_HOT}::test_entry_path_100_symbols": (0.1260, 0.1281),
+    f"{_WS}::test_sustained_load_5000_msgs": (14.1957, 14.6135),
+    f"{_WS}::test_end_to_end_latency_100_msgs": (1.0798, 1.1132),
+    f"{_WS}::test_end_to_end_latency_500_msgs": (1.4172, 1.4637),
+    f"{_WS}::test_peak_load_1000_msgs": (1.7524, 1.8276),
+    f"{_WS}::test_publish_throughput_1000_messages": (0.4360, 0.4711),
+    f"{_REDIS}::test_position_read_all_throughput": (0.5294, 0.5570),
+    f"{_REDIS}::test_concurrent_access_10_workers": (0.4245, 0.4591),
+    f"{_REDIS}::test_position_write_throughput": (2.1525, 2.3590),
+    f"{_REDIS}::test_position_read_throughput": (2.0181, 2.2257),
+    f"{_REDIS}::test_concurrent_access_50_workers": (1.0515, 1.1668),
+    f"{_REDIS}::test_latency_percentiles": (0.4076, 0.4599),
+    f"{_SCAL}::test_memory_usage_scaling": (0.0803, 0.2081),  # x2.591
+    f"{_SCAL}::test_scalability_summary": (0.0806, 0.2239),  # x2.778
+}
+
+# Attempt 2, same commit: the ratios span x0.39-x1.10 in at least three
+# clusters (redis x0.39-x0.49, hot path x0.53-x0.54, scalability x1.06-x1.10)
+# and the median lands on the middle one; factor x0.533. The same two
+# orchestrator benchmarks that read x2.59/x2.78 above read x1.10/x1.06 here,
+# on byte-identical code.
+PERF_RUN_37101956657_ATTEMPT_2 = {
+    f"{_HOT}::test_entry_path_scalability_200_symbols": (0.1085, 0.0579),
+    f"{_HOT}::test_aggregate_cost_reduction": (0.1080, 0.0576),
+    f"{_HOT}::test_entry_path_100_symbols": (0.1260, 0.0686),
+    f"{_WS}::test_sustained_load_5000_msgs": (14.1957, 11.8334),
+    f"{_WS}::test_end_to_end_latency_100_msgs": (1.0798, 1.0423),  # x0.965
+    f"{_WS}::test_end_to_end_latency_500_msgs": (1.4172, 1.1816),
+    f"{_WS}::test_peak_load_1000_msgs": (1.7524, 1.3493),
+    f"{_WS}::test_publish_throughput_1000_messages": (0.4360, 0.1837),
+    f"{_REDIS}::test_position_read_all_throughput": (0.5294, 0.2616),
+    f"{_REDIS}::test_concurrent_access_10_workers": (0.4245, 0.1974),
+    f"{_REDIS}::test_position_write_throughput": (2.1525, 0.8682),
+    f"{_REDIS}::test_position_read_throughput": (2.0181, 0.8456),
+    f"{_REDIS}::test_concurrent_access_50_workers": (1.0515, 0.4873),
+    f"{_REDIS}::test_latency_percentiles": (0.4076, 0.1602),  # x0.393
+    f"{_SCAL}::test_memory_usage_scaling": (0.0803, 0.0885),  # x1.102
+    f"{_SCAL}::test_scalability_summary": (0.0806, 0.0856),  # x1.062
+}
+
+_SCALING = f"{_SCAL}::test_memory_usage_scaling"
+_SUMMARY = f"{_SCAL}::test_scalability_summary"
+_WS_100 = f"{_WS}::test_end_to_end_latency_100_msgs"
+
+
+def _split(fixture: dict[str, tuple[float, float]]):
+    """(baseline map, current map) from a (baseline, current) fixture."""
+    return (
+        {k: v[0] for k, v in fixture.items()},
+        {k: v[1] for k, v in fixture.items()},
+    )
+
+
+def _judge(fixture: dict[str, tuple[float, float]]):
+    """Run the real checker over a fixture: (statuses, comparisons, factor)."""
+    checker = _checker()
+    baseline, current = _split(fixture)
+    factor = checker.runner_speed_factor(baseline, current)
+    comps = checker.compare_metrics(baseline, current, factor)
+    return _statuses(comps), comps, factor
+
+
+class TestErrorNeedsBothRatios:
+    """An error needs the raw AND the normalized ratio over the threshold.
+
+    A runner factor below 1.0 divides a small raw change UP, so thresholding
+    the normalized ratio alone let the normalizer manufacture an error out of a
+    benchmark that was inside the threshold on the wall clock. Both fixtures
+    here are one commit measured twice (CI run 37101956657).
+    """
+
+    def test_attempt_2_reaches_the_old_rules_error_branch(self):
+        """Red proof: the fixture must still trip the rule being replaced.
+
+        Without this, ``test_attempt_2_is_a_warning_not_an_error`` below could
+        pass because the fixture stopped being a counterexample -- a changed
+        baseline, noise floor or factor -- rather than because the new rule
+        works.
+        """
+        checker = _checker()
+        baseline, current = _split(PERF_RUN_37101956657_ATTEMPT_2)
+        factor = checker.runner_speed_factor(baseline, current)
+        raw = current[_SCALING] / baseline[_SCALING]
+        normalized = raw / factor
+
+        assert factor == pytest.approx(0.533, abs=0.005)
+        # The old rule thresholded this number alone -> error.
+        assert normalized >= checker.error_threshold
+        assert normalized == pytest.approx(2.066, abs=0.01)
+        # The wall clock never came close to it.
+        assert raw < checker.error_threshold
+        assert raw == pytest.approx(1.102, abs=0.005)
+
+    def test_attempt_2_is_a_warning_not_an_error(self):
+        """raw +10.2% / normalized +106.6% on a x0.53 factor -> warning."""
+        statuses, _, factor = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        assert factor == pytest.approx(0.533, abs=0.005)
+        assert statuses[_SCALING] == "warning"
+        assert "error" not in statuses.values()
+
+    def test_attempt_1_still_errors_because_both_ratios_breach(self):
+        """raw +177.8% / normalized +160.5% on a x1.07 factor -> still error.
+
+        The new rule must not acquit this one: the pair is 2.6x the baseline on
+        the wall clock while the other fourteen comparable ratios sit inside
+        x1.01-x1.13.
+        """
+        statuses, _, factor = _judge(PERF_RUN_37101956657_ATTEMPT_1)
+        assert factor == pytest.approx(1.066, abs=0.005)
+        assert statuses[_SUMMARY] == "error"
+        assert statuses[_SCALING] == "error"
+        assert sorted(n for n, s in statuses.items() if s == "error") == sorted(
+            [_SCALING, _SUMMARY]
+        )
+
+    def test_the_normalized_only_warning_path_is_unchanged(self):
+        """Not fixed here: a benchmark 3.5% FASTER still warns at "+81.0%".
+
+        The warning path still fires off the normalized ratio alone. Pinned so
+        the next reader sees the remaining defect instead of assuming this
+        change closed it.
+        """
+        statuses, comps, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        ws = next(c for c in comps if c.test_name == _WS_100)
+        assert ws.change_percent == pytest.approx(-3.5, abs=0.1)
+        assert ws.normalized_change_percent == pytest.approx(81.0, abs=0.5)
+        assert statuses[_WS_100] == "warning"
+
+    def test_message_names_the_ratio_that_breached_alone(self):
+        _, comps, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        message = next(c for c in comps if c.test_name == _SCALING).message
+        assert "UNCONFIRMED REGRESSION" in message
+        assert "only the normalized ratio" in message
+        assert "+10.2%" in message and "+106.6%" in message
+
+    def test_a_uniformly_slow_runner_still_acquits_to_pass(self):
+        """Raw over, normalized under: the case normalization exists for.
+
+        Eight benchmarks 2.5x slower together is one slow runner, not eight
+        regressions, so the factor is 2.5 and every normalized ratio is 1.0.
+        Only the normalized-alone case gets the UNCONFIRMED branch; this one
+        falls through to the ordinary ladder and lands on pass, exactly as it
+        did before the rule existed.
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.25 for i in range(8)}
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(2.5)
+        comps = checker.compare_metrics(baseline, current, factor)
+        assert {c.status for c in comps} == {"pass"}
+        assert all(c.normalized_change_percent == pytest.approx(0.0) for c in comps)
+        assert not any("UNCONFIRMED" in c.message for c in comps)
+
+    def test_raw_alone_over_the_error_bar_still_warns_when_normalized_warns(self):
+        """Raw-alone falls through, so the normalized ladder still decides.
+
+        The #395 shape with the spike pushed past the error bar: raw 2.10x on a
+        x1.17 runner is 1.80x normalized -- under the error threshold, over the
+        warning one -- so it is a warning by the ordinary rule, not by the
+        UNCONFIRMED branch.
+        """
+        checker = _checker()
+        ratios = [1.10, 1.12, 1.15, 1.15, 1.18, 1.20, 1.22]
+        baseline = {f"t{i}": 0.10 for i in range(len(ratios))}
+        current = {f"t{i}": 0.10 * r for i, r in enumerate(ratios)}
+        baseline["spiker"] = 0.10
+        current["spiker"] = 0.10 * 2.10
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.165, abs=0.005)
+        comp = next(
+            c
+            for c in checker.compare_metrics(baseline, current, factor)
+            if c.test_name == "spiker"
+        )
+        assert comp.change_percent == pytest.approx(110.0, abs=0.5)
+        assert comp.normalized_change_percent == pytest.approx(80.3, abs=0.5)
+        assert comp.change_percent >= (checker.error_threshold - 1) * 100
+        assert comp.status == "warning"
+        assert comp.message.startswith("WARNING:")
+        assert "UNCONFIRMED" not in comp.message
+
+    def test_the_epsilon_decides_wording_and_verdict_together(self):
+        """At x1.0005 the run is "not normalized" in both, not one of each.
+
+        Comparing the breaches at full precision while calling the run
+        unnormalized below 0.001 would print a message with no runner in it
+        while the verdict came from dividing by that runner.
+        """
+        checker = _checker()
+        ratios = [1.0005] * 7
+        baseline = {f"t{i}": 0.10 for i in range(len(ratios))}
+        current = {f"t{i}": 0.10 * r for i, r in enumerate(ratios)}
+        baseline["edge"] = 0.10
+        current["edge"] = 0.10 * (checker.error_threshold - 0.0004)
+        factor = checker.runner_speed_factor(baseline, current)
+        assert 1.0 < factor < 1.0 + _crmod.NORMALIZATION_EPSILON
+        comp = next(
+            c
+            for c in checker.compare_metrics(baseline, current, factor)
+            if c.test_name == "edge"
+        )
+        # Not normalized: the normalized ratio IS the raw ratio, so the two
+        # breaches cannot disagree and no suffix claims a runner correction.
+        assert comp.normalized_change_percent == pytest.approx(comp.change_percent)
+        assert "runner" not in comp.message
+        assert comp.status == "warning"
+
+    def test_rule_is_a_no_op_when_nothing_is_normalized(self):
+        """factor 1.0 -> the two ratios are one number -> the old verdict."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.10 for i in range(8)}
+        current["t3"] = 0.22
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.0)
+        statuses = _statuses(checker.compare_metrics(baseline, current, factor))
+        assert statuses["t3"] == "error"
+
+    def test_a_real_regression_under_the_raw_threshold_can_only_warn(self):
+        """The cost of the rule, pinned so it is not discovered by surprise.
+
+        The raw ratio is now NECESSARY, so on a runner twice as fast as the
+        baseline's a genuine 1.9x regression is a warning and the build stays
+        green. Accepted: the alternative is convicting on an estimator whose
+        own spread inside one run is x0.39-x1.10 (attempt 2 above).
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.05 for i in range(8)}
+        current["t3"] = 0.19  # 1.9x raw, 3.8x once normalized
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(0.5)
+        comp = next(
+            c
+            for c in checker.compare_metrics(baseline, current, factor)
+            if c.test_name == "t3"
+        )
+        assert comp.normalized_change_percent == pytest.approx(280.0, abs=0.5)
+        assert comp.status == "warning"
+
+
+class TestComparableRatioBand:
+    def test_mad_separates_several_clusters_from_a_real_regression(self):
+        """The endpoints do not, which is why the band carries a MAD.
+
+        Attempt 1 spans x2.75 end to end and attempt 2 spans x2.80, yet only
+        attempt 2's factor is meaningless. What tells them apart is dispersion
+        a couple of outliers cannot move.
+        """
+        checker = _checker()
+        _, a1, _ = _judge(PERF_RUN_37101956657_ATTEMPT_1)
+        _, a2, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        one_cluster = checker.comparable_ratio_band(a1)
+        three_clusters = checker.comparable_ratio_band(a2)
+
+        # Endpoints, as a multiplicative width: indistinguishable.
+        assert one_cluster.high / one_cluster.low == pytest.approx(2.75, abs=0.01)
+        assert three_clusters.high / three_clusters.low == pytest.approx(2.80, abs=0.01)
+        # MAD relative to the factor: 3% against 23%.
+        assert one_cluster.mad_fraction == pytest.approx(0.035, abs=0.003)
+        assert three_clusters.mad_fraction == pytest.approx(0.230, abs=0.003)
+        assert three_clusters.mad_fraction > 6 * one_cluster.mad_fraction
+
+    def test_band_endpoints_report_both_real_runs(self):
+        checker = _checker()
+        _, a1, _ = _judge(PERF_RUN_37101956657_ATTEMPT_1)
+        _, a2, _ = _judge(PERF_RUN_37101956657_ATTEMPT_2)
+        b1 = checker.comparable_ratio_band(a1)
+        b2 = checker.comparable_ratio_band(a2)
+        assert (b1.n, b2.n) == (16, 16)
+        assert b1.low == pytest.approx(1.009, abs=0.005)
+        assert b1.high == pytest.approx(2.778, abs=0.005)
+        assert b2.low == pytest.approx(0.393, abs=0.005)
+        assert b2.high == pytest.approx(1.102, abs=0.005)
+
+    def test_band_excludes_subfloor_benchmarks(self):
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(5)}
+        baseline["tiny"] = 0.001
+        current = {f"t{i}": 0.10 for i in range(5)}
+        current["tiny"] = 0.05  # 50x, below the floor
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        band = checker.comparable_ratio_band(comps)
+        assert (band.n, band.low, band.high, band.mad) == (5, 1.0, 1.0, 0.0)
+
+    def test_band_is_none_when_the_factor_consulted_no_ratios(self):
+        """Same floor as ``runner_speed_factor``: under it, the factor is 1.0.
+
+        Reporting a band there would describe ratios the factor never looked
+        at.
+        """
+        checker = _checker()
+        n = MIN_NORMALIZATION_SAMPLES - 1
+        baseline = {f"t{i}": 0.10 for i in range(n)}
+        current = {f"t{i}": 0.20 for i in range(n)}
+        assert checker.runner_speed_factor(baseline, current) == 1.0
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        assert checker.comparable_ratio_band(comps) is None
+        assert checker.comparable_ratio_band([]) is None
+
+    def test_band_covers_exactly_what_the_factor_was_taken_over(self):
+        """A zero-duration current median is dropped by both, or by neither.
+
+        ``runner_speed_factor`` skips a benchmark whose current median is 0;
+        if the band kept it the band would report x0.00 as the low end of a
+        median that never saw it.
+        """
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(6)}
+        current = {f"t{i}": 0.10 for i in range(6)}
+        current["t0"] = 0.0
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.0)
+        comps = checker.compare_metrics(baseline, current, factor)
+        band = checker.comparable_ratio_band(comps)
+        assert (band.n, band.low, band.high) == (5, 1.0, 1.0)
+
+
+class TestCommittedBaselineProvenance:
+    """The committed baseline must not claim a regeneration it cannot show."""
+
+    @staticmethod
+    def _baseline() -> dict:
+        path = (
+            Path(__file__).resolve().parents[3]
+            / "tests"
+            / "performance"
+            / "baselines.json"
+        )
+        return json.loads(path.read_text())
+
+    def test_every_regenerated_name_is_a_benchmark_in_the_file(self):
+        """A dangling name is a claim about a measurement nobody can check.
+
+        The concrete input this catches: a benchmark renamed or deleted while
+        ``partial_regeneration.regenerated`` keeps its old nodeid, so the file
+        says six entries were re-measured and only five of them exist.
+        """
+        baseline = self._baseline()
+        partial = baseline["provenance"].get("partial_regeneration")
+        if partial is None:
+            pytest.skip("the committed baseline is not partially regenerated")
+        dangling = sorted(set(partial["regenerated"]) - set(baseline["benchmarks"]))
+        assert not dangling, (
+            "partial_regeneration names benchmarks the file does not "
+            f"contain: {dangling}"
+        )
+        assert partial["regenerated"], "an empty regenerated list claims nothing"
+
+    def test_the_report_says_the_baseline_is_partial(self, capsys):
+        """Otherwise one date and one commit silently speak for all 25."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(5)}
+        current = {f"t{i}": 0.10 for i in range(5)}
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        checker.print_report(
+            comps,
+            1.0,
+            provenance={
+                "partial_regeneration": {
+                    "regenerated": ["t0", "t1"],
+                    "workflow_run": "https://example/runs/1",
+                    "commit": "abcdef1234",
+                }
+            },
+        )
+        out = capsys.readouterr().out
+        assert "PARTIAL BASELINE: 2 of 5" in out
+        assert "https://example/runs/1" in out
+        assert "abcdef12" in out
+
+    def test_the_markdown_summary_says_so_too(self):
+        checker = _checker()
+        baseline = {f"tests/performance/t{i}.py::t": 0.10 for i in range(5)}
+        current = {f"tests/performance/t{i}.py::t": 0.10 for i in range(5)}
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        md = checker.markdown_summary(
+            comps,
+            1.0,
+            provenance={
+                "partial_regeneration": {
+                    "regenerated": ["a"],
+                    "workflow_run": "https://example/runs/1",
+                }
+            },
+        )
+        assert "Partial baseline: 1 of 5" in md
+        assert "https://example/runs/1" in md
+
+    def test_no_partial_line_when_the_baseline_is_whole(self, capsys):
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(5)}
+        current = {f"t{i}": 0.10 for i in range(5)}
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        checker.print_report(comps, 1.0, provenance={"commit": "deadbeef"})
+        assert "PARTIAL BASELINE" not in capsys.readouterr().out
+
+
+class TestBelowFloorRoster:
+    def test_uncompared_benchmarks_are_named_not_just_counted(self, capsys):
+        """ "STABLE: N" counts exempt benchmarks as if they had been compared."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(5)}
+        current = {f"t{i}": 0.10 for i in range(5)}
+        baseline["tiny"] = 0.001
+        current["tiny"] = 0.002
+        comps = checker.compare_metrics(baseline, current, 1.0)
+        checker.print_report(comps, 1.0)
+        out = capsys.readouterr().out
+        assert "BELOW FLOOR (50ms): 1 of 6" in out
+        assert "\n    tiny\n" in out
+
+    def test_no_roster_when_everything_is_compared(self, capsys):
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(5)}
+        current = {f"t{i}": 0.10 for i in range(5)}
+        checker.print_report(checker.compare_metrics(baseline, current, 1.0), 1.0)
+        assert "BELOW FLOOR" not in capsys.readouterr().out
+
+
+class TestEffectiveErrorThreshold:
+    def test_the_report_states_the_raw_bar_the_rule_implies(self, capsys):
+        """error_threshold / runner_factor, which at x0.533 is +275%."""
+        checker = _checker()
+        baseline, current = _split(PERF_RUN_37101956657_ATTEMPT_2)
+        factor = checker.runner_speed_factor(baseline, current)
+        comps = checker.compare_metrics(baseline, current, factor)
+        checker.print_report(comps, factor)
+        out = capsys.readouterr().out
+        assert "Effective raw bar for an error: +275%" in out
+        assert (checker.error_threshold / factor - 1) * 100 == pytest.approx(275, abs=1)
+
+
+class TestOneEpsilonForReportAndVerdict:
+    """``print_report`` and ``compare_metrics`` read the SAME constant.
+
+    The report path tested ``abs(factor - 1.0) >= 0.001`` against a literal
+    while the verdict path tested ``NORMALIZATION_EPSILON``. They agreed only
+    because the literal happened to equal the constant, so the agreement was a
+    coincidence and not a property. The concrete input that breaks it: move the
+    constant past the run's factor and the verdict changes while the report
+    goes on describing the run the old way.
+    """
+
+    @staticmethod
+    def _straddling_run():
+        """Seven ratios at x1.002, plus one raw x2.001 across the error bar.
+
+        Normalized (the default epsilon, 0.001, is under 0.002), the edge
+        benchmark's normalized ratio is 2.001 / 1.002 = x1.997 -- raw breach
+        alone, which the ladder calls a warning. Un-normalized, the two ratios
+        are one number at x2.001 and the same benchmark is an error.
+        """
+        baseline = {f"t{i}": 0.10 for i in range(7)}
+        current = {f"t{i}": 0.10 * 1.002 for i in range(7)}
+        baseline["edge"] = 0.10
+        current["edge"] = 0.10 * 2.001
+        return baseline, current
+
+    def test_report_wording_and_verdict_flip_on_the_same_constant(
+        self, capsys, monkeypatch
+    ):
+        checker = _checker()
+        baseline, current = self._straddling_run()
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.002, abs=1e-6)
+
+        # Default epsilon: 0.002 is over it, so the run is normalized.
+        comps = checker.compare_metrics(baseline, current, factor)
+        checker.print_report(comps, factor)
+        out = capsys.readouterr().out
+        edge = next(c for c in comps if c.test_name == "edge")
+        assert "durations normalized to this before thresholding" in out
+        assert "runner x1.00" in edge.message
+        assert edge.status == "warning"
+
+        # Same run, same factor, epsilon raised past it. Both paths must move.
+        monkeypatch.setattr(_crmod, "NORMALIZATION_EPSILON", 0.01)
+        comps = checker.compare_metrics(baseline, current, factor)
+        checker.print_report(comps, factor)
+        out = capsys.readouterr().out
+        edge = next(c for c in comps if c.test_name == "edge")
+        assert "durations not normalized" in out
+        assert "runner" not in edge.message
+        assert edge.status == "error"
+
+
+class TestBandRenderingParity:
+    """The band prints in both renderers for a run, or in neither.
+
+    ``markdown_summary`` printed it whenever ``comparable_ratio_band`` returned
+    one; ``print_report`` printed it only inside the runner-factor branch. The
+    concrete input that separated them: an un-normalized run (factor x1.00)
+    whose ratios still sit in several clusters -- the step summary reported a
+    median over a large MAD and the terminal report said nothing at all, about
+    the same run. ``docs/performance_slas.md`` has the report printing the
+    ratios behind the factor, and the effective raw bar, on every run.
+    """
+
+    MARKER = "raw ratios spanning"
+
+    def _render_both(self, checker, comps, factor, capsys) -> tuple[str, str]:
+        checker.print_report(comps, factor)
+        return capsys.readouterr().out, checker.markdown_summary(comps, factor)
+
+    def test_band_prints_in_both_when_normalized(self, capsys):
+        checker = _checker()
+        baseline, current = _split(PERF_RUN_37101956657_ATTEMPT_2)
+        factor = checker.runner_speed_factor(baseline, current)
+        assert abs(factor - 1.0) >= _crmod.NORMALIZATION_EPSILON
+        comps = checker.compare_metrics(baseline, current, factor)
+        assert checker.comparable_ratio_band(comps) is not None
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert self.MARKER in out
+        assert self.MARKER in md
+
+    def test_band_prints_in_both_when_not_normalized(self, capsys):
+        """A factor of exactly x1.00 still has ratios behind it, and a MAD."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        spread = [0.6, 0.8, 0.9, 1.0, 1.0, 1.1, 1.2, 1.4]
+        current = {f"t{i}": 0.10 * r for i, r in enumerate(spread)}
+        factor = checker.runner_speed_factor(baseline, current)
+        assert abs(factor - 1.0) < _crmod.NORMALIZATION_EPSILON
+        comps = checker.compare_metrics(baseline, current, factor)
+        band = checker.comparable_ratio_band(comps)
+        assert band is not None and band.mad_fraction > 0.1
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert self.MARKER in out
+        assert self.MARKER in md
+
+    def test_band_prints_in_neither_when_the_factor_consulted_no_ratios(self, capsys):
+        checker = _checker()
+        n = MIN_NORMALIZATION_SAMPLES - 1
+        baseline = {f"t{i}": 0.10 for i in range(n)}
+        current = {f"t{i}": 0.20 for i in range(n)}
+        factor = checker.runner_speed_factor(baseline, current)
+        comps = checker.compare_metrics(baseline, current, factor)
+        assert checker.comparable_ratio_band(comps) is None
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert self.MARKER not in out
+        assert self.MARKER not in md
+
+    def test_effective_raw_bar_prints_in_both_on_an_unnormalized_run(self, capsys):
+        """Both renderers claim "every run"; x1.00 is a run."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.10 for i in range(8)}
+        factor = checker.runner_speed_factor(baseline, current)
+        assert abs(factor - 1.0) < _crmod.NORMALIZATION_EPSILON
+        comps = checker.compare_metrics(baseline, current, factor)
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert "Effective raw bar for an error: +100%" in out
+        assert "effective raw bar for an error is `+100%`" in md
+
+
 class TestExtractDurations:
     def test_sums_phases_for_passed_tests_only(self):
         checker = _checker()
