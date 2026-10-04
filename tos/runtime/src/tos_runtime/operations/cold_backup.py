@@ -45,7 +45,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -141,6 +141,55 @@ class ColdBackupFailed(RuntimeError):
         ``"report"``)."""
         super().__init__(f"{stage} failed — {type(cause).__name__}: {cause}")
         self.stage = stage
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[..., ColdBackupFailed],
+        tuple[type[ColdBackupFailed], str, str],
+        dict[str, Any],
+    ]:
+        """Rebuild through :func:`_rebuild_cold_backup_failed` instead of ``cls(*args)``.
+
+        Same latent break as
+        :class:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused`, one constructor
+        shape over: ``BaseException.__reduce__`` returns ``(cls, self.args)`` and ``args``
+        holds the single FORMATTED message, while ``__init__`` takes TWO positionals — so
+        ``pickle``, ``copy`` and ``deepcopy`` all raise ``TypeError: missing 1 required
+        positional argument: 'cause'`` (measured). Nothing in this repo pickles it today;
+        it is fixed here because this command's verdicts are the ones that would cross a
+        process boundary first, and a wrapper whose own serialization raises replaces a
+        reportable stage with an unrelated ``TypeError`` (review round 2 note c).
+
+        ``cause`` is NOT carried: it was never stored, only folded into the message at
+        construction. The round trip is total over what the object actually holds — the
+        message, ``stage``, and everything else in the instance dict.
+        """
+        return (
+            _rebuild_cold_backup_failed,
+            (type(self), self.args[0], self.stage),
+            self.__dict__,
+        )
+
+
+def _rebuild_cold_backup_failed(
+    cls: type[ColdBackupFailed], message: str, stage: str
+) -> ColdBackupFailed:
+    """Reconstruct a :class:`ColdBackupFailed` — or a subclass — from its stored parts.
+
+    Module level because pickle stores a QUALIFIED NAME and re-imports it. The CLASS travels
+    as the first argument so the round trip preserves the exact type instead of downgrading a
+    subclass to this one.
+
+    Built with ``__new__`` rather than ``cls(stage, cause)`` because the constructor FORMATS
+    its message from a ``cause`` this object no longer has; calling it would need a fabricated
+    exception and would rewrite the message. Setting ``args`` directly reproduces the original
+    byte for byte.
+    """
+    rebuilt = cls.__new__(cls)
+    BaseException.__init__(rebuilt, message)
+    rebuilt.stage = stage
+    return rebuilt
 
 
 class FilesystemFreeSpace(BaseModel):

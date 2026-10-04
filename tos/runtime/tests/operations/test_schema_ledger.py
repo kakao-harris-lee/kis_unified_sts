@@ -1766,6 +1766,15 @@ def test_a_non_idempotent_migration_is_never_re_run_by_the_repair_pass(
 # -- SchemaVersionRefused carries its direction across a process boundary -----
 
 
+class _NarrowerVersionRefusal(SchemaVersionRefused):
+    """A subclass, defined at MODULE level because pickle stores a qualified name.
+
+    Exists only so the round-trip tests can ask whether the rebuilt object is still THIS
+    type. Nothing in the runtime subclasses the refusal today; the point is that the rebuild
+    must not depend on that staying true.
+    """
+
+
 @pytest.mark.parametrize("direction", get_args(SchemaVersionDirection))
 def test_a_version_refusal_survives_pickle_and_copy(
     direction: SchemaVersionDirection,
@@ -1803,6 +1812,55 @@ def test_a_version_refusal_survives_pickle_and_copy(
         assert type(rebuilt) is SchemaVersionRefused
         assert str(rebuilt) == str(original)
         assert rebuilt.direction == direction
+
+
+@pytest.mark.parametrize("direction", get_args(SchemaVersionDirection))
+def test_a_version_refusal_rebuilds_as_its_own_subclass(
+    direction: SchemaVersionDirection,
+) -> None:
+    """A subclass must come back as the SUBCLASS, not downgraded to the base.
+
+    ``__reduce__`` used to name this module's class literally, so every rebuild returned a
+    plain ``SchemaVersionRefused`` whatever went in. That is worse than the ``TypeError`` it
+    replaced: serialization appears to succeed while an ``except`` clause on the narrower
+    type silently stops matching, and a verdict that was classified narrowly is handled as
+    the general case. Passing ``type(self)`` to the factory is what makes this pass.
+
+    The input that makes it fail, so the claim is checkable: replace ``type(self)`` with
+    ``SchemaVersionRefused`` in ``__reduce__`` (measured red on all three paths).
+    """
+    original = _NarrowerVersionRefusal(
+        f"evidence: {direction} something", direction=direction
+    )
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert type(rebuilt) is _NarrowerVersionRefusal
+        assert rebuilt.direction == direction
+
+
+def test_a_version_refusal_keeps_its_notes_and_attributes() -> None:
+    """Everything else in the instance dict survives too — notes above all.
+
+    ``BaseException.add_note`` stores into ``__notes__`` in the instance ``__dict__``
+    (measured), and the traceback machinery prints those notes. A two-element ``__reduce__``
+    returns no state, so every note and every subclass attribute was dropped on the way
+    through — the rebuilt exception looked right and printed less than the original.
+    Returning ``self.__dict__`` as pickle's third element is what carries them.
+    """
+    original = SchemaVersionRefused("evidence: AHEAD something", direction="AHEAD")
+    original.add_note("ran under the 18:00 cron")
+
+    for rebuilt in (
+        pickle.loads(pickle.dumps(original)),
+        copy.copy(original),
+        copy.deepcopy(original),
+    ):
+        assert rebuilt.__notes__ == ["ran under the 18:00 cron"]
+        assert rebuilt.direction == "AHEAD"
 
 
 def test_no_store_has_a_migration_newer_than_its_own_schema_version() -> None:

@@ -33,7 +33,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.custody.ports import CustodyError
@@ -135,18 +135,38 @@ def _schema_version_prefix(exc: SchemaVersionRefused) -> str:
     Reads :attr:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused.direction`, never
     the message: that wording is quoted verbatim in two runbooks and must stay free to change
     without silently re-routing a verdict.
+
+    EXHAUSTIVE, not an ``if/else`` on one value. The earlier form returned ``schema refused``
+    for everything that was not ``BEHIND``, so a third direction added to
+    :data:`~tos_runtime.operations.schema_ledger.SchemaVersionDirection` would have been
+    routed to the AHEAD row in silence — prescribing "run the newer code" for a case nobody
+    had classified. Here mypy refuses the ``assert_never`` unless both members are handled, so
+    that third member is a type error at the gate rather than a wrong runbook row at 18:00
+    (review round 2 note i).
     """
-    return "migrate refused" if exc.direction == "BEHIND" else "schema refused"
+    match exc.direction:
+        case "BEHIND":
+            return "migrate refused"
+        case "AHEAD":
+            return "schema refused"
+        case _:
+            assert_never(exc.direction)
 
 
 #: ``(exception type, prefix)``, most specific first — where ``prefix`` is either the literal
 #: or, for a type whose action depends on HOW it refused, a function of the exception. A
 #: VERDICT gets a prefix of the form ``[<layer>|<action>|<subject> ]refused`` — naming the
-#: LAYER that reached the verdict (the five literals below), or the ACTION the target needs
-#: (``migrate``), or the SUBJECT that is wrong when no single action can be named
-#: (``schema``) — so the runbook's §5 table can route the operator by that one word and the
-#: host wrapper's ``classify()`` legend can enumerate the same three forms; anything not
-#: listed is an
+#: LAYER that reached the verdict, or the ACTION the target needs (``migrate``), or the
+#: SUBJECT that is wrong when no single action can be named (``schema``) — so the runbook's
+#: §5 table can route the operator by that one word and the host wrapper's ``classify()``
+#: legend can enumerate the same three forms. Counting the rows below: five literal prefixes
+#: over six rows (``custody refused`` is shared by two types), of which FOUR name a layer —
+#: ``snapshot`` / ``archive`` / ``integrity`` / ``custody``. The first row is the bare
+#: ``refused``, which names NO layer on purpose: :class:`ColdBackupRefused` is this command's
+#: own door saying no before any layer was entered, and there is no inner layer to name
+#: (review round 2 note j — this comment said "the five literals" and called all of them
+#: layers). The seventh row is the direction-dependent one and contributes no literal here.
+#: Anything not listed is an
 #: environment fault and falls through to ``failed``. ``integrity refused`` is the one that
 #: matters most: a chain that does not re-verify means "do not trust this copy", and filing
 #: it under "the host broke, re-run" was the wrong instruction in the single case where

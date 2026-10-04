@@ -264,6 +264,97 @@ def test_every_dispatch_row_has_a_case() -> None:
     assert reached == routed
 
 
+#: The same exemplars, behind the OTHER door. Derived from :data:`_PREFIX_CASES` rather than
+#: retyped: the property under test is that ``backup-set`` prints the SAME body as
+#: ``cold-backup`` for the same verdict, so a second hand-kept list would be free to drift
+#: into agreeing with nothing. Only the command name differs.
+_BACKUP_SET_PREFIX_CASES: tuple[tuple[Exception, str], ...] = tuple(
+    (refusal, expected.replace("cold-backup: ", "backup-set: ", 1))
+    for refusal, expected in _PREFIX_CASES
+)
+
+
+@pytest.mark.parametrize(("refusal", "expected_prefix"), _BACKUP_SET_PREFIX_CASES)
+def test_the_backup_set_door_routes_every_verdict_by_the_same_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    refusal: Exception,
+    expected_prefix: str,
+) -> None:
+    """``backup-set --archive-dir`` reaches the same archive step, so it owes the same line.
+
+    This door had NO stderr test at all (review round 2 finding 5). It was widened from
+    ``except BackupArchiveRefused`` to the whole table, and nothing held that open: narrowing
+    it back is invisible to the suite while the operator gets a traceback from one command
+    and a routed one-line verdict from the other for the identical refusal.
+
+    The input that makes this fail, so the claim is checkable: put ``BackupArchiveRefused``
+    back as the sole ``except`` type in ``dispatch_backup_set`` — every other case then
+    escapes as a traceback instead of a line (measured red).
+
+    ``SchemaVersionRefused`` is covered in BOTH directions because this is the door where the
+    two prescriptions differ and neither has an inner layer to name.
+    """
+
+    class _FakeManifest:
+        generation = 1
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(
+        _backup_dispatch, "backup_set", lambda *_a, **_kw: _FakeManifest()
+    )
+    monkeypatch.setattr(
+        _backup_dispatch, "FileKeyProvider", lambda root, **_kw: ("keys", root)
+    )
+    monkeypatch.setattr(_backup_dispatch, "archive_backup_set", _raise)
+
+    exit_code = cli.main(
+        [
+            "backup-set",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--dest",
+            str(tmp_path / "backups"),
+            "--generation",
+            "1",
+            "--archive-dir",
+            str(tmp_path / "cold"),
+            "--verify-dir",
+            str(tmp_path / "verify"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+        ]
+    )
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(expected_prefix)
+    assert "failed —" not in err
+    assert "Traceback" not in err
+
+
+def test_an_unclassified_direction_is_refused_rather_than_routed_to_ahead() -> None:
+    """A direction nobody classified must stop, not quietly take the AHEAD row.
+
+    The prefix used to be ``"migrate refused" if direction == "BEHIND" else "schema
+    refused"``, so any third member of ``SchemaVersionDirection`` would have been prescribed
+    "run the newer code or stop the lane" without anyone deciding that was right. The
+    exhaustive ``match`` makes mypy reject an unhandled member at the gate; this test pins
+    the RUNTIME half, which a type checker cannot reach — a value constructed past the
+    annotation, which is exactly how such a value would arrive in practice.
+    """
+    unclassified = SchemaVersionRefused(
+        "evidence: on-disk schema is SIDEWAYS of this code's schema_version=2",
+        direction="SIDEWAYS",  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(AssertionError):
+        _backup_dispatch._schema_version_prefix(unclassified)
+
+
 @pytest.mark.parametrize(("refusal", "expected_prefix"), _PREFIX_CASES)
 def test_each_verdict_keeps_its_own_prefix_and_leaves_the_snapshot(
     tmp_path: Path,

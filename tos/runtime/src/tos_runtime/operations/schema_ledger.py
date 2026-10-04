@@ -89,7 +89,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Literal, NoReturn, Protocol
+from typing import Any, Literal, NoReturn, Protocol
 
 #: The FIRST logger in ``tos_runtime`` (review round-2 F6). Nothing in this package logged before,
 #: and nothing else does now — this one line exists because :func:`enable_wal_journal` can block
@@ -319,9 +319,17 @@ SchemaVersionDirection = Literal["BEHIND", "AHEAD"]
 
 
 class SchemaVersionRefused(RuntimeError):
-    """Raised at store construction (or by ``apply_migrations``) when the on-disk
-    ``PRAGMA user_version`` disagrees with what this code expects — a boot refusal, never an
-    auto-applied fix (module docstring cases 3/4).
+    """Raised by :func:`open_or_create_schema` and :func:`ensure_schema_current` (both
+    through :func:`_refuse_version`) when the on-disk ``PRAGMA user_version`` disagrees with
+    what this code expects — a boot refusal, never an auto-applied fix (module docstring
+    cases 3/4).
+
+    NOT raised by :func:`~tos_runtime.operations.schema_migrations.apply_migrations`, which
+    this docstring claimed until review round 2 note (d): that function has its own type
+    (:class:`~tos_runtime.operations.schema_migrations.SchemaMigrationRefused`) and its AHEAD
+    guard raises THAT. The distinction is load-bearing here — the cold-backup dispatch routes
+    this type by :attr:`direction`, and a reader who believed ``migrate`` also emits it would
+    look for the AHEAD arm in the wrong module.
 
     Carries :attr:`direction` because the two cases need DIFFERENT operator actions and a
     caller must be able to tell them apart **without parsing the message**. The cold-backup
@@ -340,7 +348,11 @@ class SchemaVersionRefused(RuntimeError):
 
     def __reduce__(
         self,
-    ) -> tuple[Callable[..., SchemaVersionRefused], tuple[str, SchemaVersionDirection]]:
+    ) -> tuple[
+        Callable[..., SchemaVersionRefused],
+        tuple[type[SchemaVersionRefused], str, SchemaVersionDirection],
+        dict[str, Any],
+    ]:
         """Rebuild through :func:`_rebuild_schema_version_refused` instead of ``cls(*args)``.
 
         ``BaseException.__reduce__`` returns ``(cls, self.args)``, and ``args`` holds only
@@ -356,22 +368,44 @@ class SchemaVersionRefused(RuntimeError):
         Returning ``direction`` positionally to the factory keeps the round trip total: the
         rebuilt exception carries the same message AND the same direction, so routing
         survives serialization.
+
+        Two things this returns that an earlier version did not, both review round 2:
+
+        * ``type(self)``, not this class. Hard-coding the class DOWNGRADES a subclass through
+          ``pickle``/``copy`` — the rebuilt object is a plain ``SchemaVersionRefused``, so an
+          ``except`` on the subclass stops matching and a narrower verdict silently widens.
+          A rebuild that changes an object's type is worse than one that raises (note 2).
+        * ``self.__dict__`` as pickle's third element, applied to the rebuilt instance. The
+          two-element form dropped every other attribute: notes added with
+          :meth:`BaseException.add_note` (they live in ``__notes__`` in the instance dict) and
+          anything a subclass sets in its own ``__init__``. ``direction`` is passed to the
+          factory as well as carried in the state because the constructor REQUIRES it; the
+          state then overwrites it with the identical value (note b).
         """
-        return (_rebuild_schema_version_refused, (self.args[0], self.direction))
+        return (
+            _rebuild_schema_version_refused,
+            (type(self), self.args[0], self.direction),
+            self.__dict__,
+        )
 
 
 def _rebuild_schema_version_refused(
-    message: str, direction: SchemaVersionDirection
+    cls: type[SchemaVersionRefused],
+    message: str,
+    direction: SchemaVersionDirection,
 ) -> SchemaVersionRefused:
-    """Reconstruct a :class:`SchemaVersionRefused` from its two parts.
+    """Reconstruct a :class:`SchemaVersionRefused` — or a subclass of it — from its parts.
 
     Module level because pickle stores a QUALIFIED NAME and re-imports it; a lambda or a
-    bound method could not be referenced. Takes ``direction`` positionally for the same
-    reason the constructor takes it by keyword: here the single caller is
-    :meth:`SchemaVersionRefused.__reduce__`, so there is no call site to protect from
-    mixing the two strings up.
+    bound method could not be referenced. The CLASS travels as the first argument rather
+    than being closed over, so one module-level function serves every subclass and the round
+    trip preserves the exact type (review round 2 note 2).
+
+    Takes ``direction`` positionally for the same reason the constructor takes it by keyword:
+    here the single caller is :meth:`SchemaVersionRefused.__reduce__`, so there is no call
+    site to protect from mixing the two strings up.
     """
-    return SchemaVersionRefused(message, direction=direction)
+    return cls(message, direction=direction)
 
 
 #: The journal mode every runtime-owned durable store must end up in. Compared against what
