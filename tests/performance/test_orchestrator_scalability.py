@@ -253,12 +253,19 @@ def _benchmark_orchestrator_cycle(position_count: int, iterations: int = 100) ->
     function does lands in the number. A full collection walks the entire live
     object graph of the pytest process -- set by what the session imported and
     what earlier tests left allocated, not by the code under test. Measured
-    2026-10-03 (#768): 8 collections cost 2.0 ms in a bare process and 1198 ms
-    with 1.2M extra tracked objects. In CI that made ``test_scalability_summary``
-    and ``test_memory_usage_scaling`` 101-281 ms per round whose own timed loop,
-    printed by the callers, summed to 4-6 ms. They were measuring the heap: in
-    run 37115379025 they read +249% and +229% in the same job where the
-    pure-CPU hot-path benchmarks ran 44% faster.
+    2026-10-03 on the deploy host (CPython 3.12.12, #768): 8 collections cost
+    4.2 ms in a bare process and 1251.7 ms with 1.2M extra tracked objects. In
+    job 111181087989 of run 37115379025 that made ``test_scalability_summary``
+    and ``test_memory_usage_scaling`` 262-286 ms per round, whose own timed
+    loop -- the per-cycle figures the callers print, summed over the sweep --
+    was about 2 ms. They were measuring the heap: they read +248.5% and +228.8%
+    in the same job where the seven pure-CPU hot-path benchmarks ran 26% to 45%
+    FASTER.
+
+    Source of record for every figure above, including the full cost-vs-heap
+    table and the method behind it: ``docs/performance_slas.md``, section "A
+    timed region containing ``gc.collect()`` measures the process heap". These
+    are quoted from there -- correct them there first.
 
     Args:
         position_count: Number of concurrent positions
