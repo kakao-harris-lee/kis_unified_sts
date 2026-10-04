@@ -618,6 +618,129 @@ class TestEffectiveErrorThreshold:
         assert (checker.error_threshold / factor - 1) * 100 == pytest.approx(275, abs=1)
 
 
+class TestOneEpsilonForReportAndVerdict:
+    """``print_report`` and ``compare_metrics`` read the SAME constant.
+
+    The report path tested ``abs(factor - 1.0) >= 0.001`` against a literal
+    while the verdict path tested ``NORMALIZATION_EPSILON``. They agreed only
+    because the literal happened to equal the constant, so the agreement was a
+    coincidence and not a property. The concrete input that breaks it: move the
+    constant past the run's factor and the verdict changes while the report
+    goes on describing the run the old way.
+    """
+
+    @staticmethod
+    def _straddling_run():
+        """Seven ratios at x1.002, plus one raw x2.001 across the error bar.
+
+        Normalized (the default epsilon, 0.001, is under 0.002), the edge
+        benchmark's normalized ratio is 2.001 / 1.002 = x1.997 -- raw breach
+        alone, which the ladder calls a warning. Un-normalized, the two ratios
+        are one number at x2.001 and the same benchmark is an error.
+        """
+        baseline = {f"t{i}": 0.10 for i in range(7)}
+        current = {f"t{i}": 0.10 * 1.002 for i in range(7)}
+        baseline["edge"] = 0.10
+        current["edge"] = 0.10 * 2.001
+        return baseline, current
+
+    def test_report_wording_and_verdict_flip_on_the_same_constant(
+        self, capsys, monkeypatch
+    ):
+        checker = _checker()
+        baseline, current = self._straddling_run()
+        factor = checker.runner_speed_factor(baseline, current)
+        assert factor == pytest.approx(1.002, abs=1e-6)
+
+        # Default epsilon: 0.002 is over it, so the run is normalized.
+        comps = checker.compare_metrics(baseline, current, factor)
+        checker.print_report(comps, factor)
+        out = capsys.readouterr().out
+        edge = next(c for c in comps if c.test_name == "edge")
+        assert "durations normalized to this before thresholding" in out
+        assert "runner x1.00" in edge.message
+        assert edge.status == "warning"
+
+        # Same run, same factor, epsilon raised past it. Both paths must move.
+        monkeypatch.setattr(_crmod, "NORMALIZATION_EPSILON", 0.01)
+        comps = checker.compare_metrics(baseline, current, factor)
+        checker.print_report(comps, factor)
+        out = capsys.readouterr().out
+        edge = next(c for c in comps if c.test_name == "edge")
+        assert "durations not normalized" in out
+        assert "runner" not in edge.message
+        assert edge.status == "error"
+
+
+class TestBandRenderingParity:
+    """The band prints in both renderers for a run, or in neither.
+
+    ``markdown_summary`` printed it whenever ``comparable_ratio_band`` returned
+    one; ``print_report`` printed it only inside the runner-factor branch. The
+    concrete input that separated them: an un-normalized run (factor x1.00)
+    whose ratios still sit in several clusters -- the step summary reported a
+    median over a large MAD and the terminal report said nothing at all, about
+    the same run. ``docs/performance_slas.md`` has the report printing the
+    ratios behind the factor, and the effective raw bar, on every run.
+    """
+
+    MARKER = "raw ratios spanning"
+
+    def _render_both(self, checker, comps, factor, capsys) -> tuple[str, str]:
+        checker.print_report(comps, factor)
+        return capsys.readouterr().out, checker.markdown_summary(comps, factor)
+
+    def test_band_prints_in_both_when_normalized(self, capsys):
+        checker = _checker()
+        baseline, current = _split(PERF_RUN_37101956657_ATTEMPT_2)
+        factor = checker.runner_speed_factor(baseline, current)
+        assert abs(factor - 1.0) >= _crmod.NORMALIZATION_EPSILON
+        comps = checker.compare_metrics(baseline, current, factor)
+        assert checker.comparable_ratio_band(comps) is not None
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert self.MARKER in out
+        assert self.MARKER in md
+
+    def test_band_prints_in_both_when_not_normalized(self, capsys):
+        """A factor of exactly x1.00 still has ratios behind it, and a MAD."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        spread = [0.6, 0.8, 0.9, 1.0, 1.0, 1.1, 1.2, 1.4]
+        current = {f"t{i}": 0.10 * r for i, r in enumerate(spread)}
+        factor = checker.runner_speed_factor(baseline, current)
+        assert abs(factor - 1.0) < _crmod.NORMALIZATION_EPSILON
+        comps = checker.compare_metrics(baseline, current, factor)
+        band = checker.comparable_ratio_band(comps)
+        assert band is not None and band.mad_fraction > 0.1
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert self.MARKER in out
+        assert self.MARKER in md
+
+    def test_band_prints_in_neither_when_the_factor_consulted_no_ratios(self, capsys):
+        checker = _checker()
+        n = MIN_NORMALIZATION_SAMPLES - 1
+        baseline = {f"t{i}": 0.10 for i in range(n)}
+        current = {f"t{i}": 0.20 for i in range(n)}
+        factor = checker.runner_speed_factor(baseline, current)
+        comps = checker.compare_metrics(baseline, current, factor)
+        assert checker.comparable_ratio_band(comps) is None
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert self.MARKER not in out
+        assert self.MARKER not in md
+
+    def test_effective_raw_bar_prints_in_both_on_an_unnormalized_run(self, capsys):
+        """Both renderers claim "every run"; x1.00 is a run."""
+        checker = _checker()
+        baseline = {f"t{i}": 0.10 for i in range(8)}
+        current = {f"t{i}": 0.10 for i in range(8)}
+        factor = checker.runner_speed_factor(baseline, current)
+        assert abs(factor - 1.0) < _crmod.NORMALIZATION_EPSILON
+        comps = checker.compare_metrics(baseline, current, factor)
+        out, md = self._render_both(checker, comps, factor, capsys)
+        assert "Effective raw bar for an error: +100%" in out
+        assert "effective raw bar for an error is `+100%`" in md
+
+
 class TestExtractDurations:
     def test_sums_phases_for_passed_tests_only(self):
         checker = _checker()

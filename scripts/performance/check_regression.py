@@ -978,9 +978,10 @@ class RegressionChecker:
             # Divide out the runner's common-mode speed before thresholding, so a
             # globally slow runner (every ratio shifted up together) does not
             # masquerade as a per-test regression.
-            # One epsilon decides both the wording and the verdict. Comparing
-            # the breaches at full precision while calling the run
-            # "not normalized" below 0.001 would let a factor of x1.0005 print
+            # One epsilon decides both the wording and the verdict, here and
+            # in ``print_report``. Comparing the breaches at full precision
+            # while calling the run "not normalized" below
+            # NORMALIZATION_EPSILON would let a factor of x1.0005 print
             # "raw +99.9%" with no runner shown and still take the normalized
             # branch -- a verdict whose own message contradicts it.
             normalized = abs(runner_factor - 1.0) >= NORMALIZATION_EPSILON
@@ -1154,28 +1155,43 @@ class RegressionChecker:
             f"current n={_fmt_rounds(current_rounds)} "
             f"(medians are compared)"
         )
-        if abs(runner_factor - 1.0) >= 0.001:
+        # ONE epsilon for the wording and the verdict. ``compare_metrics``
+        # decides "normalized" with ``NORMALIZATION_EPSILON``; a second literal
+        # here could describe a run the verdict treated the other way.
+        if abs(runner_factor - 1.0) >= NORMALIZATION_EPSILON:
             print(
                 f"Runner speed factor: x{runner_factor:.2f} "
                 f"(durations normalized to this before thresholding)"
             )
-            band = self.comparable_ratio_band(comparisons)
-            if band is not None:
-                print(
-                    f"    median of {band.n} raw ratios spanning "
-                    f"x{band.low:.2f}-x{band.high:.2f}, MAD "
-                    f"{band.mad_fraction * 100:.0f}% of the factor "
-                    "(a large MAD means several clusters, so the factor is "
-                    "not one common-mode speed; endpoints alone cannot tell "
-                    "that from a real regression)"
-                )
+        else:
             print(
-                "    an error needs BOTH raw and normalized over "
-                f"{(self.error_threshold - 1) * 100:.0f}%; normalized alone is "
-                "a warning. Effective raw bar for an error: "
-                f"{(self.error_threshold / runner_factor - 1) * 100:+.0f}% "
-                f"(error threshold / runner factor)"
+                f"Runner speed factor: x{runner_factor:.2f} "
+                f"(within {NORMALIZATION_EPSILON} of 1.0; durations not "
+                "normalized, so raw and normalized are one number)"
             )
+        # Band and effective bar print on EVERY run, normalized or not, which
+        # is what ``markdown_summary`` does and what this module's docstring
+        # and docs/performance_slas.md both claim. A reader comparing the two
+        # renderings of one run must not find the band in one and not the
+        # other. The band's own membership rule (``comparable_ratio_band``)
+        # decides whether there is a band at all.
+        band = self.comparable_ratio_band(comparisons)
+        if band is not None:
+            print(
+                f"    median of {band.n} raw ratios spanning "
+                f"x{band.low:.2f}-x{band.high:.2f}, MAD "
+                f"{band.mad_fraction * 100:.0f}% of the factor "
+                "(a large MAD means several clusters, so the factor is "
+                "not one common-mode speed; endpoints alone cannot tell "
+                "that from a real regression)"
+            )
+        print(
+            "    an error needs BOTH raw and normalized over "
+            f"{(self.error_threshold - 1) * 100:.0f}%; normalized alone is "
+            "a warning. Effective raw bar for an error: "
+            f"{(self.error_threshold / runner_factor - 1) * 100:+.0f}% "
+            f"(error threshold / runner factor)"
+        )
 
         single = self.single_sample_baselines(comparisons)
         if single:
