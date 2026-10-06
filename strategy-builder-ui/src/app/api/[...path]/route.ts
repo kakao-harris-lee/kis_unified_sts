@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
 
+import { getOnlyRoots, targetPathFor } from "../proxyRouting";
+
 const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5081";
 
 // Auth invariant (#861 review note f): this proxy attaches the server-side
@@ -30,31 +32,6 @@ function apiKeyMatches(presented: string | null, expected: string): boolean {
     createHash("sha256").update(expected).digest(),
   );
 }
-
-const compatRoots = new Set([
-  "auth",
-  "account",
-  "orders",
-  "market",
-  "files",
-  "symbols",
-  "experiments",
-]);
-const directRoots = new Set([
-  "coverage",
-  "event-context",
-  "health",
-  "kis-builder",
-  "market-risk",
-  "portfolio",
-  "reports",
-  "signals",
-  "strategies",
-  "strategy-builder",
-  "strategy-lab",
-  "trades",
-  "trading",
-]);
 
 export const dynamic = "force-dynamic";
 
@@ -462,28 +439,6 @@ function degradedResponse(path: string[], targetPath: string, request: NextReque
   return null;
 }
 
-function isDirectPath(path: string[]): boolean {
-  const root = path[0];
-  if (!root) return false;
-  if (root === "strategies") return path.length === 1;
-  return directRoots.has(root);
-}
-
-function targetPathFor(path: string[]): string | null {
-  const root = path[0];
-  if (root === "tos") return path.length === 2 && path[1] === "projection" ? "/api/tos/projection" : null;
-  if (root === "strategies" && path.length > 1) {
-    return `/api/kis-builder/${path.join("/")}`;
-  }
-  const isDirectRoot = isDirectPath(path);
-  if (!root || (!compatRoots.has(root) && !isDirectRoot)) {
-    return null;
-  }
-  return isDirectRoot
-    ? `/api/${path.join("/")}`
-    : `/api/kis-builder/${path.join("/")}`;
-}
-
 function pathForFallback(targetPath: string): string[] {
   return targetPath.replace(/^\/api\/?/, "").split("/").filter(Boolean);
 }
@@ -504,7 +459,12 @@ async function proxyBuilderApi(request: NextRequest, context: RouteContext): Pro
     return Response.json({ detail: "Unsupported Strategy Builder API path" }, { status: 404 });
   }
 
-  if (targetPath === "/api/tos/projection" && request.method !== "GET") {
+  // Checked after path resolution, so an unknown path under a GET-only root is
+  // still a 404 (unsupported) rather than a 405 (wrong method). OPTIONS never
+  // gets here: Next answers it itself with 204 and an Allow header listing every
+  // method, so a read-only root still advertises mutating ones on the dev server
+  // — upstream behaviour, identical on main, outside this guard (#861 note a).
+  if (getOnlyRoots.has(path[0]) && request.method !== "GET") {
     return Response.json({ detail: "Read-only TOS endpoint" }, { status: 405, headers: { Allow: "GET" } });
   }
 
