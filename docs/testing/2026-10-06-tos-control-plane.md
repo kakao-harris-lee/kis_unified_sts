@@ -94,7 +94,8 @@ rollback은 UI/조회 연결을 이전 버전으로 되돌리는 범위다. runt
 
 [운영 연결 런북](../runbooks/tos-paper-projection-connection.md)에 host 패치,
 producer/consumer 좌표, scratch 격리, 배포 및 복구 절차를 구체화했다.
-Dashboard 회귀 테스트는 33개로 증가했다. 잘못된 UTF-8, atomic replace 중
+Dashboard 회귀 테스트는 #864 커밋 `1836695b` 기준 33개로 증가했다
+(#864 최종 head `f7d15736` 에서는 42개다 — 같은 아크의 서로 다른 head 수치다). 잘못된 UTF-8, atomic replace 중
 age/content 일관성, 미래 mtime unknown 처리를 포함한다. host wiring 검증은
 실행 없이 7개 경로 선택, 상대 경로 abort 1건(래퍼 자신의 `abort()` 를 추출해
 실행하므로 래퍼에서 `abort` 가 사라지면 게이트가 FAIL 한다), 래퍼 자신의

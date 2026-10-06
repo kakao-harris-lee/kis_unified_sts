@@ -30,7 +30,7 @@ Static checks rerun on 2026-10-06:
 - The 2026-10-04 conversation's RED observation is superseded by this rerun;
   no change to the frozen completion contract was made.
 
-Next: verify real generation changes and stale transition during/after the next normal paper session on the deployed [CP-1 read-only Control Plane](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md). Claude independent review was unavailable due to its token limit; author checks and CI are not independent approval.
+Next: verify real generation changes and stale transition during/after the next normal paper session on the deployed [CP-1 read-only Control Plane](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md). #861 later received an independent Claude-side post-merge review ([11 findings + 8 notes](https://github.com/kakao-harris-lee/kis_unified_sts/pull/861#issuecomment-6016550580)), disposed by #864, which itself went through two review rounds and an independent verifier before merge; author self-checks and CI still are not independent approval.
 CP-0 documents layers/interfaces/disposition; later stages cover command design,
 first paper tenant and scoped retirement. Real-money futures orders and funding
 remain policy-blocked, not waiting for funding or a live milestone.
