@@ -36,10 +36,12 @@ export interface ReasonPrefix {
  * proves every `_unavailable(...)` call starts with one of these, and the TS
  * side proves `projectionState` maps each one.
  *
- * Both sides assert the file; only the Python side is CI-gated. There is no
- * node job in `.github/workflows/`, so a prefix added here without a matching
- * `projectionState` branch is green in CI and reaches the UI as `unknown`. A
- * UI-suite CI job is tracked as a follow-up, not done here.
+ * Both sides assert the file. The TS side runs in CI as the `ui` job
+ * (`.github/workflows/ui.yml`), path-gated on `strategy-builder-ui/**` and
+ * `tests/fixtures/**` — so a prefix added to the JSON without a matching
+ * `projectionState` branch fails that job instead of reaching the UI as
+ * `unknown`. `ui` is not a required check, so a red `ui` does not by itself
+ * block the merge button.
  */
 export function reasonPrefixes(): ReasonPrefix[] {
   // Paired with the `.github/workflows/ui.yml` path filters (PR #867) —

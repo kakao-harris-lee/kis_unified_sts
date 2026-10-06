@@ -1,7 +1,9 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FeedbackListResponse } from "@/lib/dashboard/reports";
+import { reportsApi } from "@/lib/dashboard/reports";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 
 function weeklyList(): FeedbackListResponse {
@@ -122,12 +124,11 @@ describe("FeedbackSummaryCard", () => {
       screen.getByText("판정 자료 — 승격/강등 결정은 수동"),
     ).toBeInTheDocument();
 
-    // Recent report links point at the read-only JSON endpoint.
-    const link = screen.getByRole("link", { name: "2026-07-06" });
-    expect(link).toHaveAttribute(
-      "href",
-      "/api/reports/feedback/weekly/2026-07-06",
-    );
+    // Recent reports are fetched through the authenticated client, not a plain
+    // <a href> — a browser navigation cannot carry X-API-Key, and the UI proxy
+    // now requires it (#861 review note f).
+    expect(screen.getByRole("button", { name: "2026-07-06" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "2026-07-06" })).toBeNull();
   });
 
   it("renders empty state when no reports are available", () => {
@@ -168,5 +169,85 @@ describe("FeedbackSummaryCard", () => {
       />,
     );
     expect(screen.getAllByText("N/A")).toHaveLength(3);
+  });
+});
+
+
+describe("FeedbackSummaryCard report download", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubObjectUrl() {
+    const createObjectURL = vi.fn(() => "blob:feedback");
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    return { createObjectURL, revokeObjectURL };
+  }
+
+  // Captures what the anchor looked like at the moment of the click, including
+  // whether it was attached. An earlier version of this card clicked a detached
+  // anchor, which Firefox ignores without throwing, and this spy recorded
+  // isConnected === false while the test still passed on attributes alone.
+  function captureClick() {
+    const seen: Array<{ connected: boolean; href: string; download: string }> = [];
+    const spy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function mockClick(this: HTMLAnchorElement) {
+        seen.push({
+          connected: this.isConnected,
+          href: this.href,
+          download: this.download,
+        });
+      });
+    return { seen, spy };
+  }
+
+  it("downloads the weekly report through the authenticated client", async () => {
+    const { createObjectURL, revokeObjectURL } = stubObjectUrl();
+    const getReport = vi
+      .spyOn(reportsApi, "getFeedbackReport")
+      .mockResolvedValue({
+        data: {
+          kind: "weekly",
+          period_label: "2026-07-06",
+          md_exists: false,
+          report: { headline: "ok" },
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+    const { seen } = captureClick();
+
+    render(<FeedbackSummaryCard weekly={weeklyList()} />);
+    await userEvent.click(screen.getByRole("button", { name: "2026-07-06" }));
+
+    await waitFor(() => expect(getReport).toHaveBeenCalledWith("weekly", "2026-07-06"));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([
+      {
+        connected: true,
+        href: "blob:feedback",
+        download: "feedback-weekly-2026-07-06.json",
+      },
+    ]);
+    // The helper defers the revoke; what matters here is that the card routes
+    // through it rather than revoking inside its own handler.
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:feedback"));
+    expect(document.querySelector("a[download]")).toBeNull();
+  });
+
+  it("surfaces a failed download instead of swallowing it", async () => {
+    stubObjectUrl();
+    vi.spyOn(reportsApi, "getFeedbackReport").mockRejectedValue(new Error("401"));
+
+    render(<FeedbackSummaryCard weekly={weeklyList()} />);
+    await userEvent.click(screen.getByRole("button", { name: "2026-07-06" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "2026-07-06 리포트를 불러오지 못했습니다",
+    );
   });
 });
