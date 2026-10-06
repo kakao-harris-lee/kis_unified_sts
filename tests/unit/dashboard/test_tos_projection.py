@@ -300,6 +300,18 @@ SHARED_PROJECTION_FIXTURES = frozenset(
 # producer's actual key set is checked separately, from the producer source,
 # by `test_protective_last_verdict_matches_the_producer_key_set` below.
 # No imports cross the TOS boundary.
+#
+# CI reach, after the move: the fixtures now sit under `tos/`, which
+# `.github/workflows/test.yml`'s `paths-ignore` covers — so a PR that changes
+# ONLY `tos/runtime/tests/fixtures/*.json` skips the `test` job and this
+# assertion does not run on it. What still runs on such a PR is the ungated
+# `tos-firewall` job, whose
+# `tos/runtime/tests/operator/test_projection.py::
+# test_shared_product_contract_fixture` round-trips both fixtures through the
+# producing assembler — so a fixture that drifts from the producer is caught
+# there, while the API-mirror direction asserted here is not. Closing that
+# needs a `test.yml` gate edit (a negated entry for the fixture directory),
+# which is an operator decision, not a side effect of this move.
 def test_shared_projection_contract_fixtures(monkeypatch, tmp_path):
     fixture_dir = Path(__file__).resolve().parents[3] / "tos/runtime/tests/fixtures"
     matched = sorted(fixture_dir.glob("operator-projection-v1*.json"))
