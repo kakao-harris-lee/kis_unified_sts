@@ -23,10 +23,13 @@ class CheckFailed(Exception):
 
     A real exception, not ``assert``: this script is a gate, and ``python -O``
     strips every ``assert`` in it — the old bare asserts made the whole gate
-    report PASS unconditionally under that flag. The one remaining ``assert``
-    narrows ``spec``/``spec.loader`` for type checkers immediately after
-    :func:`require` has already decided the same condition, so stripping it
-    changes no verdict.
+    report PASS unconditionally under that flag. No ``assert`` remains: the
+    four that narrowed a type for a checker (in :func:`_default_assignment`,
+    :func:`_check_default_published_path`, :func:`_wrapper_abort` and
+    :func:`check`) are now ``if ... raise CheckFailed`` instead, which both
+    narrows and survives ``-O``. A new ``assert`` anywhere in this file would
+    be a verdict that disappears under that flag, so checks belong in
+    :func:`require` or in an explicit ``raise``.
     """
 
 
@@ -43,10 +46,20 @@ _BLOCK_END = "GENESIS=no"
 # The wrapper's own abort() exits with this code. Pinned, not read from the
 # wrapper: a silent change to the abort contract is itself a finding.
 _WRAPPER_ABORT_EXIT = 2
-# `--norc --noprofile`: this host's /etc/bash.bashrc runs even for a
-# non-interactive `bash -c` and trips over `set -u` (`PS1: unbound
-# variable`). A wiring gate must not depend on, or be polluted by, the
-# host's shell startup files.
+# `--norc --noprofile`, plus a scrubbed `env=` on every invocation below:
+# hermetic by construction. A gate's verdict must not depend on what the
+# invoking environment arranges for new shells.
+#
+# Measured, so the reason here is not a guess:
+#   $ env -i PATH=/usr/bin:/bin bash -eu -c 'printf ok'   # rc 0, stderr empty
+#   /etc/bash.bashrc:7 is `[ -z "$PS1" ] && return`, and `bash -c` does not
+#   source that file at all.
+# So the earlier claim in this comment — that this host's bashrc runs for a
+# non-interactive `bash -c` and trips `set -u` — was false. A gate run here
+# did once print `PS1: unbound variable` seven times; it has not reproduced,
+# and `BASH_ENV` (which bash *does* read for non-interactive shells) is unset
+# in this environment, so that path is unconfirmed too. These flags close
+# both without depending on either being the cause.
 _BASH = ("bash", "--norc", "--noprofile")
 _PRINT_PATH = '\nprintf "%s" "$PROJECTION_PATH"'
 # The wrapper's own default for the published snapshot, as a single
@@ -143,13 +156,12 @@ def _default_assignment(shell: str, block: str) -> str:
         f"snapshot's default must be the only one",
     )
     match = _DEFAULT_ASSIGNMENT.search(shell)
-    require(
-        match is not None,
-        "no PROJECTION_PATH=${TOS_PAPER_PROJECTION_PATH:-...} default found in "
-        "tos-paper-session.sh — the published snapshot's default is what a "
-        "session with no overrides writes to",
-    )
-    assert match is not None  # narrowing for type checkers; require decided it
+    if match is None:
+        raise CheckFailed(
+            "no PROJECTION_PATH=${TOS_PAPER_PROJECTION_PATH:-...} default found "
+            "in tos-paper-session.sh — the published snapshot's default is what "
+            "a session with no overrides writes to"
+        )
     require(
         match.start() == outside[0].start(),
         f"the PROJECTION_PATH assignment outside the block is not the "
@@ -177,13 +189,12 @@ def _check_default_published_path(shell: str, block: str, preamble: str) -> str:
     """
     assignment = _default_assignment(shell, block)
     sessions_root = _SESSIONS_ROOT.search(shell)
-    require(
-        sessions_root is not None,
-        "no SESSIONS=<path> assignment found in tos-paper-session.sh — without "
-        "the wrapper's own session root this check cannot tell a published "
-        "default from a session-local one",
-    )
-    assert sessions_root is not None  # narrowing; require decided it
+    if sessions_root is None:
+        raise CheckFailed(
+            "no SESSIONS=<path> assignment found in tos-paper-session.sh — "
+            "without the wrapper's own session root this check cannot tell a "
+            "published default from a session-local one"
+        )
     require(
         "$SESSION_DIR" not in assignment and "${SESSION_DIR" not in assignment,
         f"the PROJECTION_PATH default interpolates SESSION_DIR: {assignment!r}",
@@ -249,13 +260,12 @@ def _check_default_published_path(shell: str, block: str, preamble: str) -> str:
 def _wrapper_abort(shell: str) -> str:
     """The wrapper's own ``abort()`` definition, or a loud failure."""
     match = _ABORT_DEFINITION.search(shell)
-    require(
-        match is not None,
-        "tos-paper-session.sh defines no abort() — the absolute-path guard "
-        "calls it, and under the wrapper's `set -u` (no `-e`) a missing "
-        "abort would let a relative projection path through",
-    )
-    assert match is not None  # narrowing for type checkers; require decided it
+    if match is None:
+        raise CheckFailed(
+            "tos-paper-session.sh defines no abort() — the absolute-path guard "
+            "calls it, and under the wrapper's `set -u` (no `-e`) a missing "
+            "abort would let a relative projection path through"
+        )
     definition = match.group(0)
     require(
         "exit " in definition,
@@ -348,8 +358,8 @@ def check(source: Path) -> None:
     spec = importlib.util.spec_from_file_location(
         "staged_paper_driver", source / "tos_paper_session.py"
     )
-    require(spec and spec.loader, "could not load the staged driver module")
-    assert spec is not None and spec.loader is not None  # narrowing for type checkers
+    if spec is None or spec.loader is None:
+        raise CheckFailed("could not load the staged driver module")
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
 
