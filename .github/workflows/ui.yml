@@ -27,9 +27,27 @@
 # No overlap with the existing jobs: test.yml / devcontainer.yml / ruff.yml /
 # tos-*.yml are Python-only. This is the only workflow that installs node.
 #
-# NOT a required check. The active `tos-gate` ruleset on refs/heads/main
-# requires contexts `tos-gate` and `ruff` only; adding `ui` to that list is a
-# GitHub setting and an operator decision, not configured here.
+# NOT a required check, and it MUST NOT BECOME ONE while it is path-gated.
+# Two things to know before anyone edits the ruleset:
+#
+#   1. The status context is NOT the job id `ui`. GitHub reports the job's
+#      `name:` below, so the context is literally
+#      "UI suite (lint + build + tsc + vitest)". Adding `ui` to a ruleset names
+#      a context that never reports.
+#   2. Even spelled correctly it would block every non-UI PR FOREVER. A
+#      required context that never reports stays "Expected — waiting for status
+#      to be reported", and this workflow deliberately does not run on a PR
+#      outside its `paths`. .github/workflows/ruff.yml exists as its own
+#      ungated workflow for exactly this reason, and says so in its header.
+#      Making this job required needs it to report on every PR first (an
+#      ungated workflow, or a skip job that reports a neutral success), which
+#      is a different change.
+#
+# For the record, the active `tos-gate` ruleset on refs/heads/main requires
+# contexts `tos-gate` and `ruff` only, and its
+# `strict_required_status_checks_policy: true` is a separate setting (it
+# requires the branch to be up to date before merging); it is not what would
+# cause the block above. Editing the ruleset is an operator decision.
 name: UI suite
 
 on:
@@ -78,9 +96,20 @@ on:
 #
 # No weekly schedule backstop here, unlike devcontainer.yml. That workflow needed
 # one because its jobs run `tests/unit`, which its gate does not watch (#835 sat
-# red for two weeks). This gate covers every input this suite reads, and `npm ci`
-# installs from the committed lockfile, so there is no third party that can move
-# under it between runs.
+# red for two weeks). This gate, by contrast, covers every input this suite
+# reads.
+#
+# Be precise about what is pinned: ONLY the dependency tree. `npm ci` installs
+# from the committed lockfile, so npm packages cannot move between runs. The
+# TOOLCHAIN does float — `node-version: '20'` resolves to whatever 20.x the
+# runner currently has, `ubuntu-latest` is re-imaged, and `actions/*@v4` moves
+# within v4 (this head's run is already annotated "Node.js 20 is deprecated …
+# actions/checkout@v4, actions/setup-node@v4 … forced to run on Node.js 24",
+# which is the actions' own runtime, not the node these steps use). So a
+# toolchain-side break is possible between runs; it just surfaces on the next
+# gated PR instead of a week later, and this job is not a required check, so a
+# weekly red here would notify nobody anyway. That is the reason for no
+# schedule, not an absence of moving parts.
 
 permissions:
   contents: read
@@ -107,9 +136,17 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          # Matches Dockerfile.strategy_builder_ui (`FROM node:20-slim`), so a
-          # green run here means the image's build stage sees the same engine.
+          # Chosen to match Dockerfile.strategy_builder_ui (`FROM node:20-slim`).
           # Next 16.1.6 requires >= 20.9; node:20-slim is 20.20.
+          #
+          # What a green run does and does not prove. It proves the suite passes
+          # on the same MAJOR engine line the image uses, nothing stricter: both
+          # sides float inside 20.x and have already differed (CI resolved
+          # 20.20.2 while the image's node:20-slim was 20.20.1). And the
+          # Dockerfile is OUTSIDE this workflow's `paths`, so if its base image
+          # is bumped to 22 this job does not run and this `'20'` silently stops
+          # matching it. Treat the pair as a convention to re-check when the
+          # image moves, not as an enforced invariant.
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: strategy-builder-ui/package-lock.json
