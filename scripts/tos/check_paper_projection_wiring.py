@@ -49,6 +49,14 @@ _WRAPPER_ABORT_EXIT = 2
 # host's shell startup files.
 _BASH = ("bash", "--norc", "--noprofile")
 _PRINT_PATH = '\nprintf "%s" "$PROJECTION_PATH"'
+# The wrapper's own default for the published snapshot, as a single
+# assignment line well above the selection block. Checked separately from
+# the seven selection cases, which inject PROJECTION_PATH to isolate the
+# selection logic and would therefore be overwritten by this assignment.
+_DEFAULT_ASSIGNMENT = re.compile(
+    r"^PROJECTION_PATH=\$\{TOS_PAPER_PROJECTION_PATH:-[^}\n]+\}$", re.MULTILINE
+)
+_PUBLISHED_BASENAME = "operator_projection.json"
 
 
 def _path_selection_block(shell: str) -> str:
@@ -95,6 +103,80 @@ _ABORT_DEFINITION = re.compile(r"^abort\(\)\s*\{.*?\}\s*$", re.DOTALL | re.MULTI
 # (unbound variable, exit 1) instead of silently.
 _ABORT_CONTEXT = {"TAG": "[test] ", "TODAY": "2026-10-06", "LOG": "/dev/null"}
 _HELPER_STUBS = "log() { printf '%s\\n' \"$*\" >&2; }\nnotify() { :; }\n"
+
+
+def _default_assignment(shell: str) -> str:
+    """The wrapper's own ``PROJECTION_PATH=...`` default, or a loud failure."""
+    matches = _DEFAULT_ASSIGNMENT.findall(shell)
+    require(
+        len(matches) == 1,
+        f"expected exactly one PROJECTION_PATH default assignment in "
+        f"tos-paper-session.sh, found {len(matches)} — the published snapshot's "
+        f"default is what a session with no overrides writes to",
+    )
+    return matches[0] + "\n"
+
+
+def _check_default_published_path(shell: str, block: str, preamble: str) -> str:
+    """The default the wrapper itself computes, with nothing injected.
+
+    The seven selection cases all inject ``PROJECTION_PATH``, so none of them
+    ever exercises the wrapper's own default constant — a default changed to a
+    relative path, or to a session-local one, would pass every other case
+    here. Properties are asserted, not the literal path: the deploy-host
+    coordinate belongs to the runbook, and the gate's job is that the default
+    is a usable published path and that the documented override still wins.
+    """
+    assignment = _default_assignment(shell)
+    base_env = {"PATH": os.defpath, "SELFTEST": "0", "SESSION_DIR": "/scratch session"}
+    script = preamble + assignment + block + _PRINT_PATH
+    # `run`, not `check_output`: a non-absolute default makes the wrapper's own
+    # guard abort, and a CalledProcessError traceback would report the gate as
+    # broken instead of reporting the finding.
+    completed = subprocess.run(
+        [*_BASH, "-eu", "-c", script],
+        env={**base_env, **_ABORT_CONTEXT},
+        capture_output=True,
+        text=True,
+    )
+    require(
+        completed.returncode == 0,
+        f"the wrapper's own default projection path does not survive its own "
+        f"guard (exit {completed.returncode}"
+        + (
+            f" == abort; stderr {completed.stderr.strip()!r}"
+            if completed.returncode == _WRAPPER_ABORT_EXIT
+            else f"; stderr {completed.stderr.strip()!r}"
+        )
+        + ") — every unattended session would abort",
+    )
+    default = completed.stdout
+    require(
+        default.startswith("/"),
+        f"the wrapper's default projection path is not absolute: {default!r} — "
+        "the absolute-path guard would abort every unattended session",
+    )
+    require(
+        default.endswith("/" + _PUBLISHED_BASENAME),
+        f"the wrapper's default does not end in {_PUBLISHED_BASENAME!r}: {default!r}",
+    )
+    require(
+        not default.startswith(base_env["SESSION_DIR"] + "/"),
+        f"the wrapper's default is session-local: {default!r} — an unattended "
+        "session would never publish the operational snapshot",
+    )
+
+    override = "/scratch/override dir/" + _PUBLISHED_BASENAME
+    overridden = subprocess.check_output(
+        [*_BASH, "-eu", "-c", preamble + assignment + block + _PRINT_PATH],
+        env={**base_env, "TOS_PAPER_PROJECTION_PATH": override},
+        text=True,
+    )
+    require(
+        overridden == override,
+        f"TOS_PAPER_PROJECTION_PATH did not win: {overridden!r} != {override!r}",
+    )
+    return default
 
 
 def _wrapper_abort(shell: str) -> str:
@@ -183,6 +265,9 @@ def check(source: Path) -> None:
         f"abort guard did not run: stderr {relative.stderr!r}",
     )
 
+    # 노트 h: the wrapper's own default for the published snapshot.
+    default_path = _check_default_published_path(shell, block, preamble)
+
     spec = importlib.util.spec_from_file_location(
         "staged_paper_driver", source / "tos_paper_session.py"
     )
@@ -254,7 +339,9 @@ def check(source: Path) -> None:
                     raise CheckFailed("driver never reached the captured launch")
     print(
         "PASS: 7 wrapper path cases + relative-path abort through the wrapper's "
-        "own abort(); driver argv with/without projection; no runtime launched"
+        "own abort() + default published path "
+        f"({default_path!r}, overridable); "
+        "driver argv with/without projection; no runtime launched"
     )
 
 

@@ -81,11 +81,14 @@ describe('TOS read-only page', () => {
     expect(card.getByText('capacity_exhausted')).toBeInTheDocument();
     expect(card.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
   });
-  it.each([
+  // The element type is declared, not inferred: `as const` would make `[]` a
+  // `readonly []`, which does not fit the DTO's mutable `string[] | null` and
+  // fails `tsc --noEmit` even though vitest (no type check) runs it green.
+  it.each<[string[] | null, string]>([
     [null, '해소 · 알 수 없음'],
     [[], '해소 · 없음'],
     [['stale snapshot'], '해소 · stale snapshot'],
-  ] as const)('renders a safety-mesh reason list of %s distinctly', async (reasons, expected) => {
+  ])('renders a safety-mesh reason list of %s distinctly', async (reasons, expected) => {
     // 지적 4: the old `reasons?.length ? … : ''` rendered null and [] the same.
     // '없음' is a substring of '알 수 없음', so compare the whole cell text.
     mount({ projection: { ...fixture, safety_mesh: {

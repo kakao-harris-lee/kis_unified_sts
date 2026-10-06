@@ -90,8 +90,9 @@ producer/consumer 좌표, scratch 격리, 배포 및 복구 절차를 구체화�
 Dashboard 회귀 테스트는 33개로 증가했다. 잘못된 UTF-8, atomic replace 중
 age/content 일관성, 미래 mtime unknown 처리를 포함한다. host wiring 검증은
 실행 없이 7개 경로 선택, 상대 경로 abort 1건(래퍼 자신의 `abort()` 를 추출해
-실행하므로 래퍼에서 `abort` 가 사라지면 게이트가 FAIL 한다), driver 인자
-유무를 확인한다.
+실행하므로 래퍼에서 `abort` 가 사라지면 게이트가 FAIL 한다), 래퍼 자신의
+기본 published 경로(절대·`operator_projection.json`·세션 로컬 아님·
+`TOS_PAPER_PROJECTION_PATH` 로 덮어쓰기 가능), driver 인자 유무를 확인한다.
 Claude 독립 리뷰는 token 한도로 실행되지 않았으며 자체 점검과 구분한다.
 
 ## 배포 기록 — 2026-10-06 20:14 KST
