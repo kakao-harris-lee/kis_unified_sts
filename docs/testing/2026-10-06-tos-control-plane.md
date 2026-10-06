@@ -61,3 +61,12 @@ rollback은 UI/조회 연결을 이전 버전으로 되돌리는 범위다. runt
   로컬 캡처: `/tmp/kis-cp1-artifacts/desktop.png`, `mobile-unknown.png` (비커밋).
 - `tos_firewall_check.py` PASS. Runtime 테스트 mypy는 CI와 같은
   `--disable-error-code=no-untyped-def` 옵션을 사용한다(기존 fixture helper 규칙).
+
+## 출력 연결 후속 변경
+
+[운영 연결 런북](../runbooks/tos-paper-projection-connection.md)에 host 패치,
+producer/consumer 좌표, scratch 격리, 배포 및 복구 절차를 구체화했다.
+Dashboard 회귀 테스트는 13개로 증가했다. 잘못된 UTF-8, atomic replace 중
+age/content 일관성, 미래 mtime unknown 처리를 포함한다. host wiring 검증은
+실행 없이 7개 경로 선택 및 driver 인자 유무를 확인한다.
+Claude 독립 리뷰는 token 한도로 실행되지 않았으며 자체 점검과 구분한다.

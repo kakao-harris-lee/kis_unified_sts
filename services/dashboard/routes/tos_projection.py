@@ -20,6 +20,7 @@ ADR-DEV-014 OBS-INV-003.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -207,37 +208,27 @@ class TosProjectionResponse(BaseModel):
 def _read_projection(path: Path) -> TosProjectionResponse:
     path_str = str(path)
 
-    if not path.exists():
+    age_seconds = None
+    try:
+        # The exporter atomically replaces the file. Read age and content from
+        # the same open inode so a concurrent export cannot mix generations.
+        with path.open(encoding="utf-8") as stream:
+            mtime = os.fstat(stream.fileno()).st_mtime
+            delta = time.time() - mtime
+            age_seconds = delta if delta >= 0 else None
+            payload = json.load(stream)
+    except FileNotFoundError:
         return TosProjectionResponse(
             available=False,
             reason="projection file absent",
             path=path_str,
-            age_seconds=None,
-            projection=None,
         )
-
-    try:
-        mtime = path.stat().st_mtime
-        age_seconds = max(0.0, time.time() - mtime)
-    except OSError as exc:  # pragma: no cover - defensive, race with unlink
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return TosProjectionResponse(
             available=False,
-            reason=f"invalid json: {type(exc).__name__}: {exc}",
-            path=path_str,
-            age_seconds=None,
-            projection=None,
-        )
-
-    try:
-        raw_text = path.read_text(encoding="utf-8")
-        payload = json.loads(raw_text)
-    except (OSError, json.JSONDecodeError) as exc:
-        return TosProjectionResponse(
-            available=False,
-            reason=f"invalid json: {type(exc).__name__}: {exc}",
+            reason=f"invalid json: {type(exc).__name__}",
             path=path_str,
             age_seconds=age_seconds,
-            projection=None,
         )
 
     if not isinstance(payload, dict):
