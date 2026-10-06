@@ -68,8 +68,18 @@ function caddyDirectRoots(): Set<string> {
   return roots;
 }
 
+/**
+ * Path segments `targetPathFor` would receive for this literal — the query
+ * string and fragment dropped, since Next hands the route only `params.path`
+ * and the proxy carries the search string separately (`target.search =
+ * request.nextUrl.search`).
+ */
 function segmentsOf(apiPath: string): string[] {
-  return apiPath.replace(/^\/api\/?/, "").split("/").filter(Boolean);
+  return apiPath
+    .replace(/[?#].*$/, "")
+    .replace(/^\/api\/?/, "")
+    .split("/")
+    .filter(Boolean);
 }
 
 describe("every dashboard API call site is reachable through the deployed stack", () => {
@@ -82,6 +92,23 @@ describe("every dashboard API call site is reachable through the deployed stack"
     expect(paths.map((p) => p.apiPath)).toContain(
       `/api/signals/${DYNAMIC_SEGMENT}/trace`,
     );
+  });
+
+  // A literal may carry its own query string or fragment — src/lib/api/
+  // symbols.ts builds `/api/symbols/search?${params}`. Those belong to the
+  // request, not to the path, and `targetPathFor` is given segments only. Left
+  // attached they ride along on the last segment, which the exact-path
+  // allowlist compares whole: "tos/projection?include=foo" is not
+  // "tos/projection", so a path the proxy resolves fine would be reported as
+  // reaching no hop at all.
+  it.each([
+    ["/api/tos/projection", ["tos", "projection"]],
+    ["/api/tos/projection?include=foo", ["tos", "projection"]],
+    ["/api/tos/projection#anchor", ["tos", "projection"]],
+    [`/api/symbols/search?${DYNAMIC_SEGMENT}`, ["symbols", "search"]],
+  ])("segments %s without its query or fragment", (apiPath, expected) => {
+    expect(segmentsOf(apiPath)).toEqual(expected);
+    expect(targetPathFor(segmentsOf(apiPath))).not.toBeNull();
   });
 
   it("resolves every call site through the catch-all proxy routing table", () => {
