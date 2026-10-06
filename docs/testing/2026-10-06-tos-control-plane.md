@@ -34,7 +34,15 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
 - Compose는 기존 경로를 기본으로 유지하며 projection 디렉터리와 읽기 경로를 env로 선택 가능.
   두 변수(`TOS_OPERATOR_PROJECTION_DIR` 호스트 디렉터리 · `TOS_OPERATOR_PROJECTION_PATH`
   컨테이너 파일)는 한 쌍이며 `.env*.example` 넷과 compose 주석에 기록했다.
-- 응답 본문은 projection 파일 경로를 싣지 않는다(서버 로그 DEBUG 로만 남는다).
+- 응답 본문은 projection 파일 경로를 싣지 않는다. 대신 unavailable 분기가
+  **WARNING**으로 남긴다 — 이 앱은 자체 로깅 설정이 없고 uvicorn 기본 INFO 라
+  DEBUG 는 아무에게도 닿지 않는다. 라우트는 `/tos` 를 연 동안만 돌므로
+  15 초 폴링이 배경에서 로그를 쌓지 않는다.
+- 어떤 `reason` 도 projection 파일에서 읽은 **값**을 담지 않는다. 버전 불일치는
+  값이 아니라 타입을, schema mismatch 는 DTO 로 해석한 위치를 보고한다
+  (매핑 키는 `<key>` 로 가린다 — 키도 파일에서 온다).
+- 사유 접두 다섯은 `tests/fixtures/tos/projection-reasons.json` 하나에 있고,
+  Python 방출기(라우트 소스 AST)와 TS 매처가 같은 파일을 단언한다.
 - 파일을 **열지 못한 경우**(권한·uid·디렉터리)는 `cannot read projection: <예외>`로
   형식 오류와 구분해 보고하고 화면도 별도 상태로 표시한다.
 
@@ -79,9 +87,11 @@ rollback은 UI/조회 연결을 이전 버전으로 되돌리는 범위다. runt
 
 [운영 연결 런북](../runbooks/tos-paper-projection-connection.md)에 host 패치,
 producer/consumer 좌표, scratch 격리, 배포 및 복구 절차를 구체화했다.
-Dashboard 회귀 테스트는 13개로 증가했다. 잘못된 UTF-8, atomic replace 중
+Dashboard 회귀 테스트는 33개로 증가했다. 잘못된 UTF-8, atomic replace 중
 age/content 일관성, 미래 mtime unknown 처리를 포함한다. host wiring 검증은
-실행 없이 7개 경로 선택 및 driver 인자 유무를 확인한다.
+실행 없이 7개 경로 선택, 상대 경로 abort 1건(래퍼 자신의 `abort()` 를 추출해
+실행하므로 래퍼에서 `abort` 가 사라지면 게이트가 FAIL 한다), driver 인자
+유무를 확인한다.
 Claude 독립 리뷰는 token 한도로 실행되지 않았으며 자체 점검과 구분한다.
 
 ## 배포 기록 — 2026-10-06 20:14 KST
