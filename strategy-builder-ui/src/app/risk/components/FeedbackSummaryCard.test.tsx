@@ -185,6 +185,24 @@ describe("FeedbackSummaryCard report download", () => {
     return { createObjectURL, revokeObjectURL };
   }
 
+  // Captures what the anchor looked like at the moment of the click, including
+  // whether it was attached. An earlier version of this card clicked a detached
+  // anchor, which Firefox ignores without throwing, and this spy recorded
+  // isConnected === false while the test still passed on attributes alone.
+  function captureClick() {
+    const seen: Array<{ connected: boolean; href: string; download: string }> = [];
+    const spy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function mockClick(this: HTMLAnchorElement) {
+        seen.push({
+          connected: this.isConnected,
+          href: this.href,
+          download: this.download,
+        });
+      });
+    return { seen, spy };
+  }
+
   it("downloads the weekly report through the authenticated client", async () => {
     const { createObjectURL, revokeObjectURL } = stubObjectUrl();
     const getReport = vi
@@ -201,26 +219,24 @@ describe("FeedbackSummaryCard report download", () => {
         headers: {},
         config: {} as never,
       });
-    // Capture the anchor the download helper builds, so the assertion reads the
-    // real download attribute rather than trusting that click happened.
-    let downloaded: { href: string; download: string } | null = null;
-    const clickSpy = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(function mockClick(this: HTMLAnchorElement) {
-        downloaded = { href: this.href, download: this.download };
-      });
+    const { seen } = captureClick();
 
     render(<FeedbackSummaryCard weekly={weeklyList()} />);
     await userEvent.click(screen.getByRole("button", { name: "2026-07-06" }));
 
     await waitFor(() => expect(getReport).toHaveBeenCalledWith("weekly", "2026-07-06"));
     expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-    expect(downloaded).toEqual({
-      href: "blob:feedback",
-      download: "feedback-weekly-2026-07-06.json",
-    });
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:feedback");
+    expect(seen).toEqual([
+      {
+        connected: true,
+        href: "blob:feedback",
+        download: "feedback-weekly-2026-07-06.json",
+      },
+    ]);
+    // The helper defers the revoke; what matters here is that the card routes
+    // through it rather than revoking inside its own handler.
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:feedback"));
+    expect(document.querySelector("a[download]")).toBeNull();
   });
 
   it("surfaces a failed download instead of swallowing it", async () => {

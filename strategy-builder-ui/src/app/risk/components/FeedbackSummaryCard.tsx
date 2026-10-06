@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ClipboardList, FileText, Info } from "lucide-react";
+import { downloadJson } from "@/lib/download";
 import { formatKstDateTime } from "@/lib/dashboard/format";
 import type {
   FeedbackListResponse,
@@ -28,17 +29,7 @@ const RECENT_LINK_COUNT = 5;
 // 내려준다 — 같은 읽기 전용 자료, 무인증 경로 0.
 async function downloadFeedbackReport(periodLabel: string): Promise<void> {
   const { data } = await reportsApi.getFeedbackReport("weekly", periodLabel);
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
-  );
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `feedback-weekly-${periodLabel}.json`;
-    anchor.click();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  downloadJson(`feedback-weekly-${periodLabel}.json`, data);
 }
 
 function fmtWinRate(v: number | null | undefined): string {
