@@ -1,7 +1,36 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
 
 const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5081";
-const apiKey = process.env.KIS_BUILDER_API_KEY || process.env.DASHBOARD_API_KEY || "";
+
+// Auth invariant (#861 review note f): this proxy attaches the server-side
+// dashboard key to every upstream call, so it must not forward a request it has
+// not itself authenticated — otherwise it is a credential-lending bypass of the
+// dashboard's own APIKeyMiddleware (services/dashboard/middleware/auth.py).
+// Caddy sends most /api roots straight to dashboard:8001, but coverage,
+// event-context, market-risk, portfolio and reports reach the dashboard only
+// through here, so without this guard those five answered 200 with no key while
+// the identical paths 401'd when called on the dashboard directly.
+//
+// Enforced only when a key is configured, mirroring the dashboard, which
+// installs its auth middleware under `require_auth and api_key`
+// (services/dashboard/app.py:206). With no key configured nothing is attached
+// and nothing upstream is protected, so there is still no keyed path left open.
+function configuredApiKey(): string {
+  return process.env.KIS_BUILDER_API_KEY || process.env.DASHBOARD_API_KEY || "";
+}
+
+// Digest both sides before comparing so the fixed-width compare does not reject
+// on length (timingSafeEqual throws on unequal buffers) and does not leak the
+// configured key's length through an early return.
+function apiKeyMatches(presented: string | null, expected: string): boolean {
+  if (!presented || !expected) return false;
+  return timingSafeEqual(
+    createHash("sha256").update(presented).digest(),
+    createHash("sha256").update(expected).digest(),
+  );
+}
+
 const compatRoots = new Set([
   "auth",
   "account",
@@ -460,6 +489,15 @@ function pathForFallback(targetPath: string): string[] {
 }
 
 async function proxyBuilderApi(request: NextRequest, context: RouteContext): Promise<Response> {
+  // Authenticate before resolving the path, so an unauthenticated caller cannot
+  // use the 404-vs-401 split to enumerate which roots this proxy forwards.
+  const serverApiKey = configuredApiKey();
+  if (serverApiKey && !apiKeyMatches(request.headers.get("X-API-Key"), serverApiKey)) {
+    // Same body the dashboard's middleware returns, so a client sees one shape
+    // regardless of which hop rejected it.
+    return Response.json({ detail: "Invalid or missing API key" }, { status: 401 });
+  }
+
   const { path = [] } = await context.params;
   const targetPath = targetPathFor(path);
   if (!targetPath) {
@@ -477,7 +515,7 @@ async function proxyBuilderApi(request: NextRequest, context: RouteContext): Pro
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   headers.set("accept", "application/json");
-  if (apiKey) headers.set("X-API-Key", apiKey);
+  if (serverApiKey) headers.set("X-API-Key", serverApiKey);
 
   const body =
     request.method === "GET" || request.method === "HEAD"
