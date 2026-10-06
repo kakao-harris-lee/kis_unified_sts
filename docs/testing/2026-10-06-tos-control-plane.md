@@ -22,7 +22,7 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
   15초 poll, 60초 stale, 1초 경과 갱신. runtime monotonic time과 브라우저 시계는 비교하지 않음.
   API 파일 age에 브라우저 monotonic 경과를 더해 요청이 멈춰도 캐시가 늙는다.
 - dashboard DTO는 producer의 whole-group null 및 unknown alert 목록을 보존한다.
-- 두 중립 JSON fixture(`tests/fixtures/tos/operator-projection-v1*.json`)를
+- 두 중립 JSON fixture(`tos/runtime/tests/fixtures/operator-projection-v1*.json`)를
   dashboard 테스트·UI 테스트·runtime 테스트가 모두 읽는다. 다만 runtime 쪽
   `test_shared_product_contract_fixture`는 fixture의 그룹을 projection의 reader로
   갈아끼워 **assembler pass-through만** 증명한다 — 실제 `_operations_wiring`

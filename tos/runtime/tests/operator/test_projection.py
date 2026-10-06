@@ -349,7 +349,13 @@ def test_shared_product_contract_fixture(
 
     import tos_runtime.operator.projection as module
 
-    fixture = Path(__file__).resolve().parents[4] / "tests/fixtures/tos" / name
+    # Owned by this distribution (review note e, #861): the projection document
+    # is produced by ``tos_runtime.operator.projection``, so the contract fixture
+    # lives in the tos tree and the product-side readers (the dashboard API test
+    # and the UI test) read it from here. Anchored at this tests package, never
+    # at the repo root, so nothing under ``tos/`` depends on the legacy tree
+    # surviving the planned repo split.
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / name
     expected = json.loads(fixture.read_text())
     monkeypatch.setattr(
         module.time, "monotonic_ns", lambda: expected["exported_at_monotonic_ns"]
