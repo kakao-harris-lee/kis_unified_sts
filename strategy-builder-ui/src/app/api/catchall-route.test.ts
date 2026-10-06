@@ -430,6 +430,18 @@ describe("TOS projection proxy boundary", () => {
     expect(response.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  it.each([
+    [["tos", "projection", "extra"], "/api/tos/projection/extra"],
+    [["tos"], "/api/tos"],
+    [["tos", "projection", ""], "/api/tos/projection/"],
+  ])("refuses %s instead of treating it as the projection", async (path, url) => {
+    // Exercises the `path.length === 2 && path[1] === "projection"` arm: with the
+    // length check removed, the first case proxies as the projection.
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await GET(requestFor(url), contextFor(path as string[]));
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it.each([401, 403, 503])("preserves upstream status %s instead of inventing an empty healthy snapshot", async (status) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ detail: "unavailable" }, { status }));
     const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));

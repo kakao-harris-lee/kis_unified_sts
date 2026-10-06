@@ -5,11 +5,11 @@ import { useQuery } from '@tanstack/react-query';
 import { RefreshCcw } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import config from '@/config/tos-control-plane.json';
-import { projectionAge, projectionState, tosApi, type ProjectionState } from '@/lib/dashboard/tos';
+import { isAcceptedProjection, projectionAge, projectionState, tosApi, type ProjectionState } from '@/lib/dashboard/tos';
 
 const labels: Record<ProjectionState, string> = {
   loading: '상태를 불러오는 중', error: '상태 조회 연결 오류', missing: '아직 상태 파일이 없습니다',
-  invalid: '상태 데이터 형식 오류', unsupported: '지원하지 않는 상태 버전',
+  unreadable: '상태 파일을 열지 못했습니다', invalid: '상태 데이터 형식 오류', unsupported: '지원하지 않는 상태 버전',
   unknown: '상태 확인 불가', stale: '오래된 상태', recent: '최근 상태를 조회했습니다',
 };
 
@@ -42,8 +42,8 @@ export default function TosPage() {
   const response = query.data?.response;
   const age = projectionAge(response?.age_seconds, now - (query.data?.requestedAt ?? now));
   const state = projectionState(response, age, query.isError || query.fetchStatus === 'paused');
-  const p = response?.available && response.projection?.schema_version === 1 && response.projection.non_authorizing === true
-    ? response.projection : null;
+  // Same acceptance predicate the banner uses — see isAcceptedProjection.
+  const p = response?.available && isAcceptedProjection(response.projection) ? response.projection : null;
   const httpStatus = isAxiosError(query.error) ? query.error.response?.status : undefined;
   const authError = httpStatus === 401 || httpStatus === 403;
   const warning = state !== 'recent' && state !== 'loading';
@@ -65,6 +65,7 @@ export default function TosPage() {
         : state === 'error' ? '연결을 확인한 후 다시 조회해 주세요. 남아 있는 값은 마지막 조회 기록입니다.'
         : state === 'stale' ? '새 상태가 도착하지 않았습니다. 아래 값으로 현재 런타임의 동작 여부를 판단하지 마세요.'
         : state === 'missing' ? '런타임의 상태 내보내기 경로와 조회 서비스 연결을 확인해 주세요.'
+        : state === 'unreadable' ? '상태 파일의 경로와 접근 권한을 확인해 주세요. 파일 내용의 문제가 아닙니다.'
         : state === 'invalid' || state === 'unsupported' ? '런타임과 조회 서비스의 상태 형식을 확인해 주세요.'
         : '값이 없으면 알 수 없음으로 표시합니다. 최근 조회 여부와 시스템 정상 여부는 별개입니다.'}</p>
       <p className="mt-2 text-xs">내보낸 파일 경과: {age === null ? '알 수 없음' : `${Math.floor(age)}초`} · {config.staleAfterSeconds}초부터 오래된 상태로 표시 · {config.pollIntervalMs / 1000}초마다 조회</p>
@@ -84,7 +85,11 @@ export default function TosPage() {
         <Card title="릴리스와 보호 상태">
           <Fact label="릴리스 수용">{flag(p.release?.admitted, '수용', '거부')}</Fact>
           <Fact label="배포 검증">{flag(p.release?.software_deployment_ok, '통과', '미통과')}</Fact>
-          <Fact label="보호 판정">{value(p.protective?.last_verdict)}</Fact>
+          <Fact label="보호 분류">{value(p.protective?.last_verdict?.classification)}</Fact>
+          <Fact label="해제 허용">{flag(p.protective?.last_verdict?.derestriction_admissible, '허용', '불허')}</Fact>
+          <Fact label="용량 소진">{flag(p.protective?.last_verdict?.capacity_exhausted, '소진', '여유')}</Fact>
+          <Fact label="보호 미확인 사유">{list(p.protective?.last_verdict?.reasons)}</Fact>
+          <Fact label="보호 미평가 항목">{list(p.protective?.last_verdict?.unevaluated)}</Fact>
           <Fact label="의존성 수용">{flag(p.operations?.dependency_admission, '수용', '거부')}</Fact>
         </Card>
         <Card title="안전 서비스">

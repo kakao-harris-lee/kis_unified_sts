@@ -3,15 +3,22 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TosPage from './page';
-import { tosApi, type TosProjectionResponse } from '@/lib/dashboard/tos';
+import { isAcceptedProjection, tosApi, type TosProjection, type TosProjectionResponse } from '@/lib/dashboard/tos';
 import { tosFixture } from '@/test/tosFixture';
 const fixture = tosFixture();
 const unknown = tosFixture(true);
 import config from '@/config/tos-control-plane.json';
 
+// `accept` lets a test replace the shared acceptance predicate. The page must
+// read THAT export rather than re-deriving the condition locally (지적 11).
+const shared = vi.hoisted(() => ({ accept: null as null | ((p: unknown) => boolean) }));
 vi.mock('@/lib/dashboard/tos', async () => {
   const actual = await vi.importActual<typeof import('@/lib/dashboard/tos')>('@/lib/dashboard/tos');
-  return { ...actual, tosApi: { getProjection: vi.fn() } };
+  return {
+    ...actual,
+    tosApi: { getProjection: vi.fn() },
+    isAcceptedProjection: (p: unknown) => (shared.accept ?? actual.isAcceptedProjection)(p as TosProjection),
+  };
 });
 let client: QueryClient;
 function mount(response?: Partial<TosProjectionResponse>) {
@@ -22,7 +29,7 @@ function mount(response?: Partial<TosProjectionResponse>) {
   render(<QueryClientProvider client={client}><TosPage /></QueryClientProvider>);
 }
 beforeEach(() => vi.resetAllMocks());
-afterEach(() => { client?.clear(); vi.useRealTimers(); });
+afterEach(() => { client?.clear(); vi.useRealTimers(); shared.accept = null; });
 
 describe('TOS read-only page', () => {
   it('renders producer fixture, preserves false/zero, and has no command buttons', async () => {
@@ -41,6 +48,7 @@ describe('TOS read-only page', () => {
   it.each([
     ['projection file absent', '아직 상태 파일이 없습니다'],
     ['invalid json: /private/secret-path', '상태 데이터 형식 오류'],
+    ['cannot read projection: PermissionError', '상태 파일을 열지 못했습니다'],
     ['unsupported schema_version 2', '지원하지 않는 상태 버전'],
   ])('shows %s without leaking the backend reason/path', async (reason, label) => {
     mount({ available: false, reason, projection: null });
@@ -62,6 +70,50 @@ describe('TOS read-only page', () => {
     await act(() => client.refetchQueries({ queryKey: ['tos-operator-projection'] }));
     expect(await screen.findByText('상태 조회 연결 오류')).toBeInTheDocument();
     expect(screen.getByText(/마지막 조회 기록/)).toBeInTheDocument();
+  });
+  it('renders the protective verdict object as facts, never [object Object]', async () => {
+    mount({});
+    const card = within(await screen.findByRole('region', { name: '릴리스와 보호 상태' }));
+    // Fixture verdict: derestriction false, capacity null, classification null,
+    // reasons ['derestriction_admissible'], unevaluated ['capacity_exhausted'].
+    expect(card.getByText('불허')).toBeInTheDocument();
+    expect(card.getByText('derestriction_admissible')).toBeInTheDocument();
+    expect(card.getByText('capacity_exhausted')).toBeInTheDocument();
+    expect(card.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
+  });
+  it('shows an absent reason list as unknown, never as none', async () => {
+    mount({ projection: { ...fixture, recovery: { readiness_verdict: 'READY', reasons: null } } });
+    const card = within(await screen.findByRole('region', { name: '복구와 실행 상태' }));
+    expect(card.getByText('알 수 없음')).toBeInTheDocument();
+    expect(card.queryByText('없음')).not.toBeInTheDocument();
+  });
+  it('still shows an empty reason list as none', async () => {
+    mount({ projection: { ...fixture, recovery: { readiness_verdict: 'READY', reasons: [] } } });
+    const card = within(await screen.findByRole('region', { name: '복구와 실행 상태' }));
+    expect(card.getByText('없음')).toBeInTheDocument();
+  });
+  it.each([
+    ['accepted document', (p: TosProjection) => p],
+    ['future schema version', (p: TosProjection) => ({ ...p, schema_version: 2 })],
+    ['authorizing document', (p: TosProjection) => ({ ...p, non_authorizing: false })],
+  ])('renders fact cards exactly when the shared predicate accepts: %s', async (_name, mutate) => {
+    const projection = mutate(fixture);
+    mount({ projection });
+    await screen.findByRole('status').catch(() => screen.findByRole('alert'));
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: '릴리스와 보호 상태' }) !== null)
+        .toBe(isAcceptedProjection(projection)));
+  });
+  it.each([
+    ['refuses the document', false, false],
+    ['accepts the document', true, true],
+  ])('defers to the shared acceptance predicate when it %s', async (_name, accept, rendered) => {
+    // Divergence proof: the fixture is a valid v1 document either way, so only a
+    // page that actually calls the shared export follows this override.
+    shared.accept = () => accept;
+    mount({});
+    await screen.findByText('최근 상태를 조회했습니다');
+    expect(screen.queryByRole('region', { name: '릴리스와 보호 상태' }) !== null).toBe(rendered);
   });
   it('ages into stale while the next request is still pending', async () => {
     mount({ age_seconds: config.staleAfterSeconds - 1 });
