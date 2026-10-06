@@ -22,9 +22,36 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
   15초 poll, 60초 stale, 1초 경과 갱신. runtime monotonic time과 브라우저 시계는 비교하지 않음.
   API 파일 age에 브라우저 monotonic 경과를 더해 요청이 멈춰도 캐시가 늙는다.
 - dashboard DTO는 producer의 whole-group null 및 unknown alert 목록을 보존한다.
-- 두 중립 JSON fixture를 producer·API·UI가 대조. Python 역방향 import 없음.
+- 두 중립 JSON fixture(`tests/fixtures/tos/operator-projection-v1*.json`)를
+  dashboard 테스트·UI 테스트·runtime 테스트가 모두 읽는다. 다만 runtime 쪽
+  `test_shared_product_contract_fixture`는 fixture의 그룹을 projection의 reader로
+  갈아끼워 **assembler pass-through만** 증명한다 — 실제 `_operations_wiring`
+  reader는 거치지 않으므로 producer의 키 집합을 검증하지 않는다.
+  producer 키 집합은 별도로 `tests/unit/dashboard/test_tos_projection.py::
+  test_protective_last_verdict_matches_the_producer_key_set`가 producer **소스**를
+  `ast`로 읽어 DTO 필드와 대조한다(import 없음). Python 역방향 import 없음.
 - Next proxy는 정확히 `GET /api/tos/projection`만 추가. 다른 TOS 경로와 쓰기 요청은 거부.
 - Compose는 기존 경로를 기본으로 유지하며 projection 디렉터리와 읽기 경로를 env로 선택 가능.
+  두 변수(`TOS_OPERATOR_PROJECTION_DIR` 호스트 디렉터리 · `TOS_OPERATOR_PROJECTION_PATH`
+  컨테이너 파일)는 한 쌍이며 `.env*.example` 넷과 compose 주석에 기록했다.
+- 응답 본문은 projection 파일 경로를 싣지 않는다. 대신 unavailable 분기가
+  원인별 레벨로 남긴다 — 세션 밖의 **정상** 상태인 `projection file absent` 는
+  **INFO**, 실제 결함 셋(읽기 실패·invalid json·schema/version mismatch)은
+  **WARNING**. 실측 근거: 이 앱은 로깅을 설정하지 않고 uvicorn 의
+  `LOGGING_CONFIG` 는 `uvicorn`·`uvicorn.error`·`uvicorn.access` 셋만 선언하므로
+  루트 로거에 핸들러가 없고 레벨은 WARNING 이다. 따라서 WARNING 은
+  `logging.lastResort`(stderr)로 컨테이너에 보이고 INFO 는 아무 출력도 내지
+  않는다. 탭 하나가 15 초마다 조회하므로 정상 상태를 WARNING 으로 두면
+  시간당 240 줄이 보인다.
+- 어떤 `reason` 도 projection 파일에서 읽은 **값**을 담지 않는다. 버전 불일치는
+  값이 아니라 타입을, schema mismatch 는 DTO 로 해석한 위치를 보고한다
+  (매핑 키는 `<key>` 로 가린다 — 키도 파일에서 온다).
+- 사유 접두 다섯은 `tests/fixtures/tos/projection-reasons.json` 하나에 있고,
+  Python 방출기(라우트 소스 AST)와 TS 매처가 같은 파일을 단언한다.
+  다만 CI 게이트는 Python 쪽뿐이다 — `.github/workflows/` 에 node 잡(`setup-node`·vitest·tsc)이 없어 TS 단언은 로컬·리뷰에서만 돈다.
+  UI 스위트 CI 잡은 후속으로 분리했다.
+- 파일을 **열지 못한 경우**(권한·uid·디렉터리)는 `cannot read projection: <예외>`로
+  형식 오류와 구분해 보고하고 화면도 별도 상태로 표시한다.
 
 ## 운영 연결 조건
 
@@ -67,9 +94,12 @@ rollback은 UI/조회 연결을 이전 버전으로 되돌리는 범위다. runt
 
 [운영 연결 런북](../runbooks/tos-paper-projection-connection.md)에 host 패치,
 producer/consumer 좌표, scratch 격리, 배포 및 복구 절차를 구체화했다.
-Dashboard 회귀 테스트는 13개로 증가했다. 잘못된 UTF-8, atomic replace 중
+Dashboard 회귀 테스트는 33개로 증가했다. 잘못된 UTF-8, atomic replace 중
 age/content 일관성, 미래 mtime unknown 처리를 포함한다. host wiring 검증은
-실행 없이 7개 경로 선택 및 driver 인자 유무를 확인한다.
+실행 없이 7개 경로 선택, 상대 경로 abort 1건(래퍼 자신의 `abort()` 를 추출해
+실행하므로 래퍼에서 `abort` 가 사라지면 게이트가 FAIL 한다), 래퍼 자신의
+기본 published 경로(절대·`operator_projection.json`·세션 로컬 아님·
+`TOS_PAPER_PROJECTION_PATH` 로 덮어쓰기 가능), driver 인자 유무를 확인한다.
 Claude 독립 리뷰는 token 한도로 실행되지 않았으며 자체 점검과 구분한다.
 
 ## 배포 기록 — 2026-10-06 20:14 KST

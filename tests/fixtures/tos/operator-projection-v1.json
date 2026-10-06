@@ -69,7 +69,18 @@
     "software_deployment_ok": true
   },
   "protective": {
-    "last_verdict": null
+    "last_verdict": {
+      "derestriction_admissible": false,
+      "capacity_exhausted": null,
+      "classification": null,
+      "unevaluated": [
+        "capacity_exhausted"
+      ],
+      "reasons": [
+        "derestriction_admissible"
+      ],
+      "protective_classification_digest": "sha256:0f1e2d3c"
+    }
   },
   "operations": {
     "schema_versions": {
