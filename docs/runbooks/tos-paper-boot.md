@@ -1187,10 +1187,13 @@ CRON_TZ=Asia/Seoul
   `~/.config/kis-probes/crontab.bak.20261003T161332`), 역시 자기 `CRON_TZ` 와 함께 crontab
   끝에 `0 18 * * 1-5 … cold-backup-nightly.sh` 한 줄이다. **월물별 잎으로 바뀌면서도 cron
   줄은 그대로다** — 바뀐 것은 래퍼 본체뿐이다.
-- ✅ **래퍼는 잎을 순회한다**(2026-10-04 · sha256
-  `c38078fcbbe71ce6ce76303e4758d9c03eadf8afc2d493446d2937a8d2366c0a` · 이전 판 백업
-  `~/.config/kis-probes/cold-backup-nightly.sh.bak.6b6f5766a6f0` · 판본 사본
-  `~/.local/state/tos/measure/cold-a3/cold-backup-nightly.c38078fcbbe7.sh`). 부모 밑의
+- ✅ **래퍼는 잎을 순회한다**(2026-10-04 잎 순회 판 `c38078fc…` → **2026-10-06 `umask 077` 판
+  `e7579803548b9dcb21dfb813650e51c995a0f25531e1e05add718a98f26d4916`** · 이전 판 백업
+  `~/.config/kis-probes/cold-backup-nightly.sh.bak.c38078fcbbe7` · 판본 사본
+  `~/.local/state/tos/measure/cold-a3/cold-backup-nightly.e7579803548b.sh`). 두 판의 차이는
+  `umask 077` 한 줄이다 — 첫 실전 실행(10-06 18:00)의 아카이브·세대 사본이 cron 의 umask 를
+  물려받아 664/644 로 났기 때문이고(콜드 백업 런북 §4-5-4 · 계획 A3-F3), 잎 순회 거동은
+  그대로다. 부모 밑의
   `A0####` 디렉터리만 잎으로 세고, 잎마다
   `cold-backup --data-dir <부모>/<잎> --config-dir ~/.local/state/tos/paper-ops/leaves/<잎>`
   을 **한 번씩** 돌린다. 세대 번호가 `backup_root` 단위라(콜드 백업 런북 §4-5-4) 잎마다
@@ -1367,11 +1370,25 @@ tos-paper-session.sh  e169e23d4ee190a5c42120d825922b098f5c1868ec8a22163dc35d385a
 tos_paper_session.py  995ada06d795ba1fd7d988e6b2c83793c1173c3adeeb85a59d33e379d85179b2
 ```
 
-⚠ **래퍼는 그 뒤 두 번 더 바뀌었다** — 2026-10-04 07:08 KST 의 §7.2-a 0700 패치 판
+⚠ **래퍼는 그 뒤 세 번 더 바뀌었다** — 2026-10-04 07:08 KST 의 §7.2-a 0700 패치 판
 `a898e6cb1f2f75d078d91a4cc53ebd0054fa5056316fe073f293da995ce74a8f`(이전 판 백업
-`~/.config/kis-probes/tos-paper-session.sh.bak.e169e23d`)과, **지금 출하본인 월물별 잎 판
+`~/.config/kis-probes/tos-paper-session.sh.bak.e169e23d`), **월물별 잎 판
 `fd554b2a3c1496d26c70dcce414ae529fec81f89abc131e41f7b4046aa0ab763`**(같은 날 18:19 KST 전 ·
-백업 `.bak.a898e6cb1f2f` · 드라이런과 변경 내용은 **§7.9-leaf**). 이 문단의 나머지는
+10-06 20:00 까지의 출하본 — 10-06 첫 상주 세션이 이 판으로 돌았다 ·
+백업 `.bak.a898e6cb1f2f` · 드라이런과 변경 내용은 **§7.9-leaf**).
+⚠ **그리고 2026-10-06 20:00 KST 에 한 번 더 — CP-1 projection 배선(Codex, PR #861 의 패치
+`docs/runbooks/patches/tos-paper-projection.patch`)으로 지금 출하본은 래퍼
+`2c3284a4ec3a1312018c0d6c730b7f2dbfb891c53fb4a2ea86aecb8980aaccef` · 드라이버
+`3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336b8624e` 다**(원본 백업
+`~/.local/state/tos/paper-ops/projection-connection-20261006/` · 절차는
+`docs/runbooks/tos-paper-projection-connection.md`). 백업과 설치본의 `diff` 로 확인한 변경은
+**projection 경로뿐**이다 — 래퍼: `PROJECTION_PATH` 기본값(`TOS_PAPER_PROJECTION_PATH`) ·
+selftest/우회 세션이면 세션 디렉터리로 격리 · 절대경로 검사 · 드라이버에 `--projection-path`
+(코드 6줄); 드라이버: `--projection-path` 인자를 `run` 에 전달(3줄). **종목 계산·잎 경로·달력·
+digest·부팅증명·정지·보고 경로는 바뀌지 않았으므로 §7.9-leaf 의 기록은 그대로 유효하다.**
+10-06 첫 상주 세션은 아직 `fd554b2a` 로 돌았고(날짜 로그 머리), `2c3284a4` 의 첫 세션은
+10-07 이다 — 그날 아침 §7.8 에 더해 projection 파일 생성(`paper-projection/operator_projection.json`)
+을 본다(`docs/runbooks/tos-paper-projection-connection.md` 의 「다음 세션에서 확인」 네 항목). 이 문단의 나머지는
 **첫 번째** 변경(`e169e23d` → `a898e6cb`)을 적은 것이다. **아래 ①–③·E1–E5·S1–S6 은 전부
 `e169e23d…` 또는 그 직전 두 판(`f452ee0b…`/`b28c188f…`)에서 돈 기록이다** — 어느 실행이 어느 판인지는 바로 아래 ⚠ 문단이 이름으로 가른다. 두 판의 차이는 `diff` 로 확인한 **셋뿐**이고
 — ① 드라이버 기동을 `( umask 077; exec … )` 서브셸로 감싼 것, ② 종료 뒤
@@ -1593,7 +1610,8 @@ data dir …/h1-data (genesis=yes) · 수집 5s · 정지 15:45 KST
 
 운영자 결정 2026-10-04(§7.10 7 (c))의 배선 ⓐ 를 호스트에 적용한 뒤, **상주 부모
 (`~/.local/state/tos/paper-data`)는 건드리지 않고** 스크래치 부모에서 세 번 부팅했다.
-출하본 둘(`~/.config/kis-probes/` · 700 · 비커밋):
+당시 출하본 둘(`~/.config/kis-probes/` · 700 · 비커밋 — 10-06 20:00 부터는 §7.9 머리의
+`2c3284a4…`/`3ce14fb6…`; 변경은 projection 경로 인자뿐이라 아래 기록은 유효하다):
 
 ```text
 tos-paper-session.sh  fd554b2a3c1496d26c70dcce414ae529fec81f89abc131e41f7b4046aa0ab763   (이전 판 백업 .bak.a898e6cb1f2f)
@@ -1911,10 +1929,11 @@ sqlite3 "file:$DATA/evidence.sqlite3?mode=ro&immutable=1" \
    | 이벤트마다 레지스트리 재해석 | 커널 변경이 크다 |
 
    ✅ **닫혔다 — 2026-10-04. 들어와야 했던 셋이 전부 들어왔다(결정만으로는 ✅ 가 아니었다):**
-   ⓐ 세션 래퍼 `fd554b2a…` / 드라이버 `21b583bd…` — 종목을 **한 번** 계산해 렌더
+   ⓐ 세션 래퍼 `fd554b2a…` / 드라이버 `21b583bd…`(10-06 20:00 부터 `2c3284a4…`/`3ce14fb6…` —
+   projection 경로 인자만 더해졌다, §7.9 머리) — 종목을 **한 번** 계산해 렌더
    `--instrument` 와 `--data-dir` 잎에 **같은 값**(§7.3 5-a · 드라이런 세 부팅 §7.9-leaf:
    자동 잎 genesis · 다음 월물 잎 genesis · 같은 잎 재부팅 IDENTICAL).
-   ⓑ 콜드 백업 래퍼 `c38078fc…` — **잎 순회**(§7.7 · 콜드 백업 런북 §4-5-4). 잎마다 보관소와
+   ⓑ 콜드 백업 래퍼 `c38078fc…`(10-06 부터 `umask 077` 판 `e7579803…`, 잎 순회 거동 동일 — §7.7) — **잎 순회**(§7.7 · 콜드 백업 런북 §4-5-4). 잎마다 보관소와
    파생 설정, 한 통에 잎마다 한 줄, 가장 나쁜 잎의 종료코드.
    ⓒ 커밋된 **두 번 부팅 레드 증명** `tos/runtime/tests/compose/test_contract_roll_replay.py`
    — 같은 dir 롤 = `EngineReplayDiverged` 이고 `REPLAY_DIVERGED` 행이 영수증 수만큼
