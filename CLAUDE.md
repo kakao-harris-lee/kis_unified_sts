@@ -81,6 +81,18 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   changes and no longer runs the tos governance tests (they live in
   `tos-firewall.yml`).
 
+## Official Layer Names
+
+Use [system context](docs/architecture/tos-system-context.md) for these names:
+`tos` = **TOS Kernel**; `tos_runtime` = **Application Runtime + Infrastructure
+Adapters**; dashboard's TOS-facing surface = **Control Plane API (BFF)**;
+`strategy-builder-ui` = **Product / Operator UI**. Strategy DSL, profiles, and
+governed configuration are **Tenant Content**, not another execution authority.
+Dashboard still serves legacy APIs; its TOS surface is currently read-only.
+[Public interface catalog](docs/architecture/tos-public-interfaces.md) distinguishes
+external contracts from runtime-internal ports. These names do not change the
+import firewall or authorize trading.
+
 ## Web/API Surface
 
 - Caddy is the only host-published web entry. Default host port is

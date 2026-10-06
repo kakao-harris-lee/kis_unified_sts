@@ -1,14 +1,14 @@
 # Documentation Index
 
-Last updated: 2026-09-18 (런북 색인을 README 하나로 일원화 — 이 문서의 개별 런북 행 제거,
-깨진 앵커 수정. 직전: 2026-07-04 active plan/spec context compacted).
+Last updated: 2026-10-06 (TOS system context, interface catalog, legacy disposition and integration plan).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § Runbooks](../README.md#runbooks).
 
 For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS.md).
 For "where is each asset headed (phased)?" → **[ROADMAP.md](ROADMAP.md)** — the
-authoritative Stock + Futures roadmap that supersedes scattered plan docs.
+authoritative Stock + Futures strategy roadmap. TOS product integration and
+legacy retirement sequencing use the [TOS integration plan](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md).
 
 ---
 
@@ -27,6 +27,10 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 
 | Doc | Use |
 |-----|-----|
+| [architecture/tos-system-context.md](architecture/tos-system-context.md) | TOS 공식 계층·책임·허용 의존 방향 정본. |
+| [architecture/tos-public-interfaces.md](architecture/tos-public-interfaces.md) | 외부 조회/CLI 계약과 런타임 내부 포트, 현재 구현과 후속 명령 경계. |
+| [migration/legacy-disposition.md](migration/legacy-disposition.md) | 기존 migration 정본을 참조하는 기능별 유지·이관·폐기 및 전환/롤백 조건. |
+| [plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md) | CP-0 문서 정리 → 조회 UI → 명령 설계 → 첫 paper tenant → scope별 축소. |
 | [api.md](api.md) | Current dashboard/Caddy API surface reference. |
 | [ports.md](ports.md) | Host port ownership: Caddy host 5081, internal service ports stay private. |
 | [strategies.md](strategies.md) | 설정 기반 전략 시스템 가이드 — YAML 정의, 레지스트리 패턴. |

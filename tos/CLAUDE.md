@@ -43,14 +43,19 @@ tos work so agents do not scan the legacy runtime.
 | --- | --- |
 | Kernel code | `tos/src/tos/` (one package per RFC component: `rcl`, `authority`, `egressgw`, `engine`, `marketfeed`, `capsule`, `evidence`, `staterestore`, …) |
 | Hermetic tests | `tos/tests/` (no `.env`, no network, no Redis; pytest rootdir is `tos/`) |
-| Runtime shell (ratified by the operator 2026-09-08, design #40 D1) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Currently a skeleton only — no network/sqlite/I-O code has landed here yet (upper plan §4.2 discipline stays in force until that code lands). Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
+| Application Runtime + Infrastructure Adapters (ratified by the operator 2026-09-08, design #40 D1) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Application Runtime + Infrastructure Adapters: composition, durable event processing, SQLite evidence/state, custody, market intake, synthetic/KIS mock transport, recovery, and operations CLI are implemented. `compose/cli.py` dispatches `run` through `_run_dispatch.py`; this is no longer a skeleton. Implementation is not live authorization. See `docs/architecture/tos-system-context.md` and `docs/architecture/tos-public-interfaces.md` for layer names, integration surfaces, and remaining gaps. Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
 | Spec (normative, broker-agnostic) | `tos-spec/src/` — RFC/ADR/verification registers |
 | Evidence runs | `tos-evidence/` |
 | Governance tools | `tools/tos_*.py`, `tools/tos_entry_harness.sh`, `tools/u17-verify.sh`, `tools/wfcanon-v222.py` |
 | Governance tests | `tests/tools/test_tos_*.py`, `tests/tools/test_u17_verify.py`, `tests/tos_l3/` |
+| Architecture / integration docs | `docs/architecture/tos-*.md`, `docs/migration/legacy-disposition.md`, `docs/PROJECT_STATUS.md` (TOS snapshot) |
 | Design docs / errata | `docs/plans/*tos*`, `docs/reviews/phase0-*` |
 | Completion config | `config/tos_completion.yaml` |
 | CI | `.github/workflows/tos-firewall.yml`, `.github/workflows/tos-gate.yml` |
+
+The runtime must not import any `shared.*` package (including the six kernel
+commons exceptions); code outside `tos/` must not import either `tos` or
+`tos_runtime`. Product integration uses serialized process boundaries.
 
 Everything else in the repo (`shared/`, `services/`, `strategy-builder-ui/`,
 `config/strategies/`, `tests/unit/`, Docker files) is the legacy runtime and
