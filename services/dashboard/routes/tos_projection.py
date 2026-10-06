@@ -312,21 +312,36 @@ def _safe_error_location(loc: tuple[object, ...]) -> str:
 
 
 def _unavailable(
-    reason: str, path: Path, age_seconds: float | None = None
+    reason: str,
+    path: Path,
+    age_seconds: float | None = None,
+    level: int = logging.WARNING,
 ) -> TosProjectionResponse:
     """Report "no usable projection" as a 200 with a reason, never a 5xx.
 
     The filesystem path stays on the server: it is logged here and never put
-    in the response body. WARNING, not DEBUG — this app configures no logging
-    of its own and runs under uvicorn's default INFO, so a DEBUG line would
-    reach no operator at all and the "see the server log" instruction would
-    be false. The route only runs while someone has ``/tos`` open, so the
-    15 s poll cannot log in the background.
+    in the response body. ``reason`` is built by the callers from locations
+    and type names only, so no projection file content reaches this line
+    either.
 
-    ``reason`` is built by the callers from locations and type names only; no
-    projection file content reaches this line either.
+    Levels, measured rather than assumed. Nothing in this app calls
+    ``basicConfig``/``dictConfig``, and uvicorn's ``LOGGING_CONFIG`` declares
+    only the ``uvicorn``, ``uvicorn.error`` and ``uvicorn.access`` loggers —
+    so after startup the root logger still has no handler and keeps level
+    ``WARNING``. A ``WARNING`` from this module therefore reaches the
+    container's stderr through ``logging.lastResort`` (a stderr handler at
+    ``WARNING``), and an ``INFO`` produces no output at all.
+
+    That is exactly the split this route wants, so the level is per cause:
+
+    * ``projection file absent`` is a **normal** state outside a paper
+      session, and this body is polled every 15 s while a tab is open (about
+      240 lines an hour). It logs at ``INFO`` — recorded in the call, silent
+      in this deployment.
+    * a real fault (unreadable file, invalid JSON, schema or version
+      mismatch) logs at ``WARNING``, which is visible.
     """
-    logger.warning("tos operator projection unavailable (%s): %s", reason, path)
+    logger.log(level, "tos operator projection unavailable (%s): %s", reason, path)
     return TosProjectionResponse(
         available=False,
         reason=reason,
@@ -346,7 +361,8 @@ def _read_projection(path: Path) -> TosProjectionResponse:
             age_seconds = delta if delta >= 0 else None
             payload = json.load(stream)
     except FileNotFoundError:
-        return _unavailable("projection file absent", path)
+        # Normal outside a session — INFO, not WARNING. See `_unavailable`.
+        return _unavailable("projection file absent", path, level=logging.INFO)
     except (UnicodeError, json.JSONDecodeError) as exc:
         return _unavailable(f"invalid json: {type(exc).__name__}", path, age_seconds)
     except OSError as exc:
@@ -365,7 +381,11 @@ def _read_projection(path: Path) -> TosProjectionResponse:
         )
 
     schema_version = payload.get("schema_version")
-    if schema_version != _SUPPORTED_SCHEMA_VERSION:
+    # `type(...) is int` excludes `bool`: `True != 1` is False, so a JSON
+    # `true` passed this gate and pydantic coerced it to 1 — the document
+    # rendered as a valid v1 projection (measured). `bool` is an `int`
+    # subclass, so `isinstance` would not exclude it.
+    if type(schema_version) is not int or schema_version != _SUPPORTED_SCHEMA_VERSION:
         # The type, never the value: `schema_version` is read from the file,
         # so `{schema_version!r}` would echo arbitrary file content (a long
         # string, a nested object) into a body the browser polls. An operator

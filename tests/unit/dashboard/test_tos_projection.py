@@ -3,10 +3,12 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
 from pathlib import Path
 from typing import get_args
 
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from services.dashboard.app import create_app
 from services.dashboard.routes import tos_projection
@@ -438,7 +440,8 @@ def test_protective_last_verdict_matches_the_producer_key_set():
     without the fix. Against the pre-fix DTO (``last_verdict: str | None``)
     this test fails where ``_ProtectiveVerdict`` is dereferenced — the class
     does not exist — and the end-to-end test below returns
-    ``available=false, reason="schema mismatch at protective.last_verdict"``.
+    ``available=false``, ``reason="schema mismatch at protective.last_verdict:
+    ValidationError"``.
     """
     producer_keys = _producer_last_verdict_keys()
 
@@ -740,33 +743,96 @@ def test_schema_mismatch_location_keeps_real_field_names_through_a_mapping(
     )
 
 
-def test_unavailable_branches_log_the_path_at_a_level_operators_see(
+def _unavailable_log_record(monkeypatch, tmp_path, path, caplog):
+    with caplog.at_level(logging.DEBUG, logger=tos_projection.__name__):
+        body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+    records = [r for r in caplog.records if r.name == tos_projection.__name__]
+    assert records, caplog.text
+    return body, records[-1]
+
+
+def test_an_absent_projection_logs_the_path_at_info_not_warning(
     monkeypatch, tmp_path, caplog
 ):
-    """지적 5: the response dropped ``path``, so the log line has to work.
+    """지적 1 (2 회차): absent is the normal state outside a paper session.
 
-    The app configures no logging and runs at uvicorn's default INFO, so a
-    DEBUG line would reach nobody and "operators read it from the log" would
-    be false.
+    At WARNING an open tab wrote about 240 visible lines an hour for a state
+    this PR's own docs call normal. INFO keeps the record without that: with
+    no root handler configured (uvicorn declares only its own three
+    loggers), an INFO from this module produces no output at all.
     """
     projection_path = tmp_path / "gone.json"
-    with caplog.at_level(logging.WARNING, logger=tos_projection.__name__):
-        body = (
-            _client(monkeypatch, tmp_path, projection_path)
-            .get("/api/tos/projection")
-            .json()
-        )
+    body, record = _unavailable_log_record(
+        monkeypatch, tmp_path, projection_path, caplog
+    )
 
     assert body["available"] is False
-    records = [
-        record
-        for record in caplog.records
-        if record.name == tos_projection.__name__ and record.levelno >= logging.WARNING
-    ]
-    assert records, caplog.text
-    message = records[-1].getMessage()
+    assert record.levelno == logging.INFO, record.levelname
+    message = record.getMessage()
     assert str(projection_path) in message
     assert "projection file absent" in message
+
+
+def test_a_real_fault_logs_the_path_at_warning(monkeypatch, tmp_path, caplog):
+    """The other side: a fault must stay visible.
+
+    WARNING reaches the container's stderr through ``logging.lastResort``
+    even with no handler on the root logger.
+    """
+    path = tmp_path / "a-directory.json"
+    path.mkdir()
+    body, record = _unavailable_log_record(monkeypatch, tmp_path, path, caplog)
+
+    assert body["available"] is False
+    assert record.levelno == logging.WARNING, record.levelname
+    assert str(path) in record.getMessage()
+    assert "cannot read projection" in record.getMessage()
+
+
+def test_the_configured_root_logger_shows_warning_and_hides_info():
+    """Pins the measured premise the level split rests on.
+
+    Nothing in this app configures logging, and uvicorn's ``LOGGING_CONFIG``
+    declares only ``uvicorn``/``uvicorn.error``/``uvicorn.access`` — so the
+    root logger keeps no handler and level WARNING, and ``logging.lastResort``
+    (stderr, WARNING) is what carries a record out.
+    """
+    import logging.config
+
+    import uvicorn.config
+
+    assert set(uvicorn.config.LOGGING_CONFIG["loggers"]) == {
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+    }
+    assert "root" not in uvicorn.config.LOGGING_CONFIG
+
+    saved_handlers = logging.root.handlers[:]
+    saved_level = logging.root.level
+    try:
+        # Start from a bare root, as a container does. pytest installs its own
+        # root handlers, which is why this cannot be read off the live root.
+        logging.root.handlers[:] = []
+        logging.root.setLevel(logging.WARNING)
+        logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+
+        # The premise: uvicorn's config adds nothing to the root logger.
+        assert logging.root.handlers == []
+        assert logging.root.level == logging.WARNING
+        module_logger = logging.getLogger(tos_projection.__name__)
+        assert module_logger.handlers == []
+        assert module_logger.propagate is True
+        assert module_logger.getEffectiveLevel() == logging.WARNING
+
+        # So a WARNING goes out through lastResort and an INFO goes nowhere.
+        assert logging.lastResort is not None
+        assert logging.lastResort.level == logging.WARNING
+        assert module_logger.isEnabledFor(logging.WARNING) is True
+        assert module_logger.isEnabledFor(logging.INFO) is False
+    finally:
+        logging.root.handlers[:] = saved_handlers
+        logging.root.setLevel(saved_level)
 
 
 def test_the_log_line_never_carries_projection_content(monkeypatch, tmp_path, caplog):
@@ -775,10 +841,88 @@ def test_the_log_line_never_carries_projection_content(monkeypatch, tmp_path, ca
     path = tmp_path / "mismatch-log.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with caplog.at_level(logging.WARNING, logger=tos_projection.__name__):
+    with caplog.at_level(logging.DEBUG, logger=tos_projection.__name__):
         _client(monkeypatch, tmp_path, path).get("/api/tos/projection")
 
     assert "SENTINEL" not in caplog.text
+
+
+def _reason_literal(call: ast.Call) -> ast.expr:
+    """The ``reason`` argument of an ``_unavailable`` call, positional or not.
+
+    Requiring ``call.args`` (an earlier version of this check did) silently
+    skipped every keyword-only call — the scan then counted fewer reasons and
+    still passed its ``>= 5`` floor.
+    """
+    if call.args:
+        return call.args[0]
+    for keyword in call.keywords:
+        if keyword.arg == "reason":
+            return keyword.value
+    raise AssertionError(f"_unavailable call with no reason: {ast.dump(call)}")
+
+
+def _reason_prefix_of(node: ast.expr) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr) and node.values:
+        head = node.values[0]
+        assert isinstance(head, ast.Constant), ast.dump(node)
+        return str(head.value)
+    raise AssertionError(f"unreadable reason expression: {ast.dump(node)}")
+
+
+def _unavailable_calls(tree: ast.AST) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_unavailable"
+    ]
+
+
+def _unavailable_reason_prefixes(source: str) -> list[str]:
+    """Every reason an ``_unavailable`` call site can produce.
+
+    The returned list has one entry per call site — no call site may be
+    skipped, which is what makes this a completeness check rather than a
+    sample.
+    """
+    tree = ast.parse(source)
+    calls = _unavailable_calls(tree)
+    prefixes = [_reason_prefix_of(_reason_literal(call)) for call in calls]
+    assert len(prefixes) == len(calls), (len(prefixes), len(calls))
+    return prefixes
+
+
+def _unavailable_response_sites(source: str) -> set[str]:
+    """Functions that build a ``TosProjectionResponse`` with ``available`` false.
+
+    ``_unavailable`` is the only place allowed to: it is where the reason
+    prefix and the log line live. A branch that returned the DTO directly
+    would bypass the prefix set entirely, and the prefix scan above would
+    never see it.
+    """
+    tree = ast.parse(source)
+    owners: set[str] = set()
+    for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for node in ast.walk(function):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "TosProjectionResponse"
+            ):
+                continue
+            available = next(
+                (kw.value for kw in node.keywords if kw.arg == "available"), None
+            )
+            # A non-literal `available` is treated as a false path too: the
+            # check cannot prove it is always true.
+            if isinstance(available, ast.Constant) and available.value is True:
+                continue
+            owners.add(function.name)
+    return owners
 
 
 def test_every_emitted_reason_starts_with_a_pinned_prefix():
@@ -790,33 +934,67 @@ def test_every_emitted_reason_starts_with_a_pinned_prefix():
     already maps or updating the shared fixture (and with it the UI test).
     """
     prefixes = _reason_prefixes()
-    tree = ast.parse(_ROUTE_MODULE.read_text(encoding="utf-8"))
-
-    emitted: list[str] = []
-    for node in ast.walk(tree):
-        is_call = (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_unavailable"
-            and node.args
-        )
-        if not is_call:
-            continue
-        reason = node.args[0]
-        if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
-            emitted.append(reason.value)
-        elif isinstance(reason, ast.JoinedStr) and reason.values:
-            head = reason.values[0]
-            assert isinstance(head, ast.Constant), ast.dump(reason)
-            emitted.append(head.value)
-        else:  # pragma: no cover - a shape this check cannot read is a failure
-            raise AssertionError(f"unreadable reason expression: {ast.dump(reason)}")
+    emitted = _unavailable_reason_prefixes(_ROUTE_MODULE.read_text(encoding="utf-8"))
 
     assert len(emitted) >= 5, emitted
     for reason in emitted:
         assert any(
             reason.startswith(prefix) for prefix in prefixes
         ), f"{reason!r} matches no prefix in {_REASON_FIXTURE.name}: {prefixes}"
+
+
+def test_only_unavailable_builds_an_unavailable_response():
+    """The other half of completeness (지적 2, 2 회차).
+
+    Scanning ``_unavailable`` call sites proves nothing if a branch can
+    return ``TosProjectionResponse(available=False, ...)`` on its own.
+    """
+    owners = _unavailable_response_sites(_ROUTE_MODULE.read_text(encoding="utf-8"))
+    assert owners == {"_unavailable"}, owners
+
+
+_KEYWORD_CALL_MODULE = """
+def _unavailable(reason, path, age_seconds=None, level=None):
+    return TosProjectionResponse(available=False, reason=reason)
+
+
+def _read(path):
+    if path:
+        return _unavailable("projection file absent", path)
+    return _unavailable(reason="brand new cause nobody mapped", path=path)
+"""
+
+_DIRECT_RETURN_MODULE = """
+def _unavailable(reason, path, age_seconds=None, level=None):
+    return TosProjectionResponse(available=False, reason=reason)
+
+
+def _read(path):
+    return TosProjectionResponse(available=False, reason="bypassed the prefixes")
+"""
+
+
+def test_the_reason_scan_catches_a_keyword_only_call():
+    """Red proof for the scan itself: this is what the old check skipped."""
+    prefixes = _reason_prefixes()
+    emitted = _unavailable_reason_prefixes(_KEYWORD_CALL_MODULE)
+
+    # Keyed by value, not position: ast.walk order is not source order.
+    assert "brand new cause nobody mapped" in emitted, emitted
+    unmapped = [
+        reason
+        for reason in emitted
+        if not any(reason.startswith(prefix) for prefix in prefixes)
+    ]
+    assert unmapped == ["brand new cause nobody mapped"], (emitted, unmapped)
+
+
+def test_the_response_scan_catches_a_direct_unavailable_return():
+    """Red proof: a branch that skips ``_unavailable`` is named."""
+    assert _unavailable_response_sites(_DIRECT_RETURN_MODULE) == {
+        "_unavailable",
+        "_read",
+    }
 
 
 def test_each_pinned_prefix_is_actually_reachable(monkeypatch, tmp_path):
@@ -850,3 +1028,57 @@ def test_each_pinned_prefix_is_actually_reachable(monkeypatch, tmp_path):
         assert any(
             reason.startswith(prefix) for reason in observed
         ), f"no observed reason starts with {prefix!r}: {sorted(observed)}"
+
+
+_TS_CONTRACT = (
+    Path(__file__).resolve().parents[3] / "strategy-builder-ui/src/lib/dashboard/tos.ts"
+)
+
+
+def _dto_leaf_names(model: type) -> set[str]:
+    """Every field name reachable from a DTO model, at any depth."""
+    names: set[str] = set()
+    for name, field in model.model_fields.items():
+        names.add(name)
+        target = tos_projection._field_target(field.annotation)
+        while isinstance(target, tuple):  # ("dict"|"list", inner)
+            target = target[1]
+        if isinstance(target, type) and issubclass(target, BaseModel):
+            names |= _dto_leaf_names(target)
+    return names
+
+
+def _ts_declared_identifiers(source: str) -> set[str]:
+    """Property names declared anywhere in the TS contract file.
+
+    Matches at a line start or after ``{``/``;``, because this file packs
+    several properties onto one line — anchoring on ``^`` alone would see
+    only the first of each line and report the rest as missing.
+    """
+    pattern = r"(?:^|[{;])\s*([A-Za-z_][A-Za-z0-9_]*)\??:"
+    return set(re.findall(pattern, source, re.MULTILINE))
+
+
+def test_every_dto_leaf_name_appears_in_the_ts_contract():
+    """노트 c: the claim is a property, so check it as one.
+
+    ``tos.ts`` says the Python DTO is its wire contract. The round-1 test
+    backed that with four hand-listed leaves out of the DTO's full set; this
+    walks the DTO instead, so a leaf added on the Python side and forgotten
+    in TS fails here — in CI, which the TS suite is not (no node job).
+    """
+    declared = _ts_declared_identifiers(_TS_CONTRACT.read_text(encoding="utf-8"))
+    leaves = _dto_leaf_names(tos_projection.TosOperatorProjection)
+
+    assert len(leaves) > 40, len(leaves)
+    assert not leaves - declared, sorted(leaves - declared)
+
+
+def test_the_ts_contract_scan_catches_a_dropped_leaf():
+    """Red proof: drop one leaf from the TS text and the parity check fails."""
+    source = _TS_CONTRACT.read_text(encoding="utf-8")
+    assert "process_nonce" in _ts_declared_identifiers(source)
+
+    without = source.replace("process_nonce?: string | null;", "", 1)
+    assert "process_nonce" not in _ts_declared_identifiers(without)
+    assert "process_nonce" in _dto_leaf_names(tos_projection.TosOperatorProjection)
