@@ -1,5 +1,13 @@
 # Plans Index
 
+## Current TOS integration entry — 2026-10-06
+
+- [Control Plane and first tenant plan](2026-10-06-tos-control-plane-and-first-tenant-plan.md): CP-0 documentation complete; CP-1 onward planned, paper-only migration scope.
+- Current implementation/check snapshot: [PROJECT_STATUS](../PROJECT_STATUS.md).
+- The dated update paragraphs below are historical observations, not current entry-gate verdicts. Consult the current checkers and normative sources for authorization.
+
+## Historical index updates
+
 Current update: 2026-08-22 — Phase 0 완료 계약 설계 문서(2026-08-12) v2.22 **에라타 8차 재동결 `e3d2ddf6`**(addendum-3 findings 15건 전건 처분) · addendum-4 결속(**부분 미종결** · findings 3: medium 1/low 2). 다음 = 에라타 9차 → 재결속 → v2.23 재심. D0 착수 금지 불변.
 v2.12 재심(쿼터 소진 → 크레딧 충전 후 재개)에서 **U-16 전칭 통일·K-14/T-83
 해소됨(누적 4)**, 잔여 3건 반영: U-15-f-4 부모 결속(하니스 평가 HEAD ==

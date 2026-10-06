@@ -1,12 +1,52 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-09-06
+**Last updated**: 2026-10-06 (TOS architecture/documentation refresh; repository `5c4f38e9`)
 
-> Phased roadmap (Cross-Asset + Stock + Futures): [ROADMAP.md](ROADMAP.md) —
-> authoritative. Cross-asset detail:
-> [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+## Current TOS snapshot — 2026-10-06
 
-## Current Runtime
+This section is a repository/code and static-check snapshot, not a live host
+inspection. Historical legacy observations below retain their original dates.
+
+| Area | Verified repository state | Remaining boundary |
+|---|---|---|
+| Layers | TOS Kernel (`tos`), Application Runtime + Infrastructure Adapters (`tos_runtime`), Control Plane API (dashboard TOS surface), Product / Operator UI | Names and owners: [system context](architecture/tos-system-context.md); naming does not grant new imports or authority |
+| Runtime | Composition, durable driver/inbox, risk/authority/currentness, marketfeed, synthetic/KIS mock transport, recovery/recon and operations CLI implemented | Implementation is not live authorization; [interface catalog](architecture/tos-public-interfaces.md) distinguishes internal ports from external contracts |
+| Product integration | Atomic schema v1 operator projection + `GET /api/tos/projection` reader | TOS UI consumer, common schema artifact, freshness policy and deployed path/mount verification remain open |
+| Operator commands | Runtime CLI has run, backup/cold-backup, restore, migration, rotation, rearm, ack and nontrade operations | No product command ingress; CLI restore-drill does not by itself perform full strategy replay/readiness |
+| Paper operations | Committed [boot runbook](runbooks/tos-paper-boot.md) records resident schedule, LONG configuration and contract-specific data-dir leaves; roll replay test is present | 2026-10-06 resident execution/genesis and today's backup outcome were **not observed in this documentation task** |
+| Tenant migration | `config/tos_runtime/paper/strategies/bootproof_band.strategy.yaml` exists as boot-proof content | First economic strategy tenant, parity evidence and scope cutover are not certified |
+| Legacy | Existing order-route/conformance register remains canonical; [disposition table](migration/legacy-disposition.md) adds functional ownership and removal gates | No legacy code deleted, authority switched or deployment changed by this refresh |
+
+Static checks rerun on 2026-10-06:
+
+- `tools/tos_spec_status.py --check`: **PASS**; restricted-live and production
+  remain **NOT_AUTHORIZED**. Non-blocking baseline warning: the older completion
+  development plan says 163 profile keys while the current profile derives 164
+  (16 null in both).
+- `tools/tos_completion_status.py --check`: **GREEN, violations=0**.
+  Completion observations still include `planned_unassigned_pairs=749`,
+  `blank_normative_ref_rows=22` and profile-dependent blocked evidence.
+  Checker success does not certify complete implementation or authorize trading.
+- The 2026-10-04 conversation's RED observation is superseded by this rerun;
+  no change to the frozen completion contract was made.
+
+Next: [CP-1 read-only Control Plane](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md).
+CP-0 documents layers/interfaces/disposition; later stages cover command design,
+first paper tenant and scoped retirement. Real-money futures orders and funding
+remain policy-blocked, not waiting for funding or a live milestone.
+
+## Roadmap ownership
+
+- [TOS integration plan](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md):
+  Control Plane, first paper tenant and legacy disposition sequencing.
+- [ROADMAP.md](ROADMAP.md): existing Cross-Asset + Stock + Futures strategy roadmap;
+  [cross-asset detail](plans/2026-07-02-unified-investment-system-roadmap.md).
+- Normative TOS contracts/registers remain authoritative for conformance and
+  authorization. These status and planning documents do not replace them.
+
+<a id="current-runtime"></a>
+
+## Legacy Runtime Reference (prior recorded state)
 
 - Frontend/API is consolidated behind Caddy. Paper/local host entrypoint is
   `DASHBOARD_HOST_PORT=5081`, with `dashboard:8001` and
@@ -76,7 +116,9 @@
   `/signals` trace QA was refreshed on 2026-06-27:
   [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md).
 
-## Cross-Asset Unified Investment System (Phases 0–6, shadow)
+<a id="cross-asset-unified-investment-system-phases-06-shadow"></a>
+
+## Legacy Cross-Asset Investment System (recorded Phases 0–6, shadow)
 
 Phases 0–6 of the unified investment system are merged to main
 (2026-07-03). **Every risk-bearing gate defaults to `mode: shadow`**, so
@@ -118,9 +160,12 @@ New Compose scheduler crontab entries (macro premarket, market-structure,
 night futures, market-risk engine, portfolio monitor, feedback reporter)
 require a scheduler image rebuild to activate.
 
-## Storage And Runtime Decisions
+<a id="storage-and-runtime-decisions"></a>
 
-- Redis DB 1 is the runtime stream/state store.
+## Legacy Storage And Runtime Decisions
+
+- Redis DB 1 is the **legacy** runtime stream/state store. TOS durable storage
+  is runtime-owned SQLite/files; do not apply legacy RuntimeLedger schema claims to it.
 - SQLite `RuntimeLedger` is the durable runtime ledger (schema v4: `track_id`
   tagging on orders/fills/trades/signal_decisions, plus `portfolio_equity_daily`
   and `hedge_advice` tables).
@@ -130,7 +175,9 @@ require a scheduler image rebuild to activate.
 - Futures ML/RL/TFT prediction paths have been removed. MLflow remains only as
   optional backtest/optimization experiment tracking.
 
-## Active Strategies
+<a id="active-strategies"></a>
+
+## Legacy Strategy Snapshot (verified 2026-07-04)
 
 Verified 2026-07-04 against `config/strategies/{stock,futures}/*.yaml`
 (`enabled` flag is the single source of truth; names below are the strategy
@@ -145,7 +192,9 @@ since 2026-06-28 — recent Setup D commits tuned parameters only.
 | Futures | `williams_r_15m`, `bb_reversion_15m`, `macd_ema_crossover_15m`, `momentum_breakout_futures`, `trend_pullback_futures`, `trix_golden_futures` | Disabled | `enabled: false`. Trend strategies collapse in walk-forward; `bb_reversion_15m` disabled (triggered stock BEAR_EXIT, #479). `track_a_exit.yaml` is an exit config, not a strategy. |
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
-## Recent Decisions
+<a id="recent-decisions"></a>
+
+## Decision History (retain original observation dates)
 
 **2026-09-06 (evening)** - Operator decisions on the PR #646 carry-overs
 (1a/2a/3b/4a/5a/6c/7b): the five small follow-ups land as one PR — enforce-mode
@@ -458,7 +507,9 @@ entry/exit components are removed.
 1 + SQLite WAL, market-data collection/backtest/prewarm uses Parquet/DuckDB, and
 default Python dependencies no longer include ClickHouse drivers.
 
-## Open Validation
+<a id="open-validation"></a>
+
+## Legacy Open Validation (historical follow-ups; reverify before resuming)
 
 Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top items:
 
