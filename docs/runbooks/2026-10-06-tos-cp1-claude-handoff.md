@@ -1,7 +1,7 @@
 # 2026-10-06 TOS 계층 정리 및 CP-1 작업 인계 — Codex → Claude
 
 - 작성: 2026-10-06 · 대상 독자: CP-1 조회 화면과 paper projection 배선을 이어받는 사람/에이전트
-- 기준 main: **`9198d44c`**(PR #864 병합)
+- 기준 main: **`00bd5456`**(PR #869 병합)
 - 충돌 시 정본: **코드와 CI 워크플로 > 계획·testing 문서 > 이 문서.** CP-1 구현·검증
   상세는 [`docs/testing/2026-10-06-tos-control-plane.md`](../testing/2026-10-06-tos-control-plane.md),
   출력 연결 절차는 [`tos-paper-projection-connection.md`](tos-paper-projection-connection.md) 가 정본이다.
@@ -9,17 +9,19 @@
 ## 0. 한 줄 요약
 
 TOS·레거시 계층 명명을 확정하고 **조회 전용 `/tos` 화면과 호스트 projection 출력 배선**을
-main 에 올려 dashboard·UI 두 서비스로 배포했다(#860~#864, main `9198d44c`). 아직 관측하지
+main 에 올려 dashboard·UI 두 서비스로 배포했다(#860~#864). 리뷰에서 분리한 후속 넷
+(#866~#869)도 머지됐다(main `00bd5456`). 아직 관측하지
 못한 것은 **실제 paper 세션의 projection 갱신**이며, 다음 정상 세션에서 §6 의 넷을 확인한다.
-리뷰에서 분리한 후속 넷은 §6 끝에 번호·상태와 함께 적었다.
+후속 넷의 처분은 §6 끝에 적었다.
 
 이 문서는 2026-10-06 작업 종료 시점의 인계 기록이다. 이후 작업을 재개할 때는
 현재 Git 상태와 실제 프로세스를 다시 확인한다. 이 인계 파일 자체는 별도 생성했으며,
-아래의 main 병합 완료 기록은 #860~#864 작업을 가리킨다.
+아래의 main 병합 완료 기록은 #860~#864 작업과 그 후속 #866~#869 를 가리킨다.
 
 ## 1. 커밋·병합 상태
 
-관련 구현과 배포 기록은 모두 main에 병합했다. 인계 기준 main은 `9198d44c`다.
+관련 구현과 배포 기록은 모두 main에 병합했다. 인계 기준 main은 `00bd5456`다.
+앞의 다섯은 CP-1 아크이고, 뒤의 넷은 그 리뷰에서 분리한 후속이다(§6).
 
 | PR | 내용 | main 병합 커밋 | 리뷰 |
 |---|---|---|---|
@@ -28,6 +30,10 @@ main 에 올려 dashboard·UI 두 서비스로 배포했다(#860~#864, main `919
 | [#862](https://github.com/kakao-harris-lee/kis_unified_sts/pull/862) | 실제 배포 결과 및 남은 확인 사항 문서화 | `373450ba` | **없음** — CI 만으로 머지(코멘트 0) |
 | [#863](https://github.com/kakao-harris-lee/kis_unified_sts/pull/863) | 콜드 백업 후속 — 산출물 모드(umask 077 판)·cron 로그 문장 정정·첫 실전 실행 등재 | `7b69d11b` | [정식 리뷰 1회](https://github.com/kakao-harris-lee/kis_unified_sts/pull/863#issuecomment-6016436632)(지적 11·노트 10) → [처분](https://github.com/kakao-harris-lee/kis_unified_sts/pull/863#issuecomment-6016449338) |
 | [#864](https://github.com/kakao-harris-lee/kis_unified_sts/pull/864) | projection DTO를 producer 계약에 맞춤 — #861 사후 리뷰 처분 | `9198d44c` | [1회차](https://github.com/kakao-harris-lee/kis_unified_sts/pull/864#issuecomment-6017198723)·[2회차](https://github.com/kakao-harris-lee/kis_unified_sts/pull/864#issuecomment-6017847627) + [독립 검증자](https://github.com/kakao-harris-lee/kis_unified_sts/pull/864#issuecomment-6018491899) |
+| [#866](https://github.com/kakao-harris-lee/kis_unified_sts/pull/866) | UI 프록시가 대시보드 키를 빌려주기 전에 호출자를 인증(#861 노트 f) | `7f643ba6` | [리뷰 1회](https://github.com/kakao-harris-lee/kis_unified_sts/pull/866#issuecomment-6019365372)(지적 3·노트 a) → [처분](https://github.com/kakao-harris-lee/kis_unified_sts/pull/866#issuecomment-6019549882) |
+| [#867](https://github.com/kakao-harris-lee/kis_unified_sts/pull/867) | 프런트엔드 스위트를 CI 잡으로 추가(#864 2회차 지적 5) | `87ff87b1` | [리뷰 1회](https://github.com/kakao-harris-lee/kis_unified_sts/pull/867#issuecomment-6019962905) → [처분](https://github.com/kakao-harris-lee/kis_unified_sts/pull/867#issuecomment-6020377431) |
+| [#868](https://github.com/kakao-harris-lee/kis_unified_sts/pull/868) | `tos`를 라우팅 표 안으로 넣고 HEAD 정책을 명시(#861 노트 c·d) | `47bbce70` | [리뷰 1회](https://github.com/kakao-harris-lee/kis_unified_sts/pull/868#issuecomment-6019343586)(지적 3·노트 a) → [처분](https://github.com/kakao-harris-lee/kis_unified_sts/pull/868#issuecomment-6019449902) |
+| [#869](https://github.com/kakao-harris-lee/kis_unified_sts/pull/869) | projection 계약 fixture를 생산자 배포로 이동(#861 노트 e) | `00bd5456` | [리뷰 1회](https://github.com/kakao-harris-lee/kis_unified_sts/pull/869#issuecomment-6019606413)(지적 2) → [처분](https://github.com/kakao-harris-lee/kis_unified_sts/pull/869#issuecomment-6019949958) |
 
 #861 최종 구현 코드 `bb394cb1`의 전체 CI가 통과했다.
 #862와 #863은 문서 범위라 ruff·tos-firewall·tos-gate 3개만 돌고 모두 통과했다
@@ -66,7 +72,7 @@ main 에 올려 dashboard·UI 두 서비스로 배포했다(#860~#864, main `919
 - 15초 조회, 60초부터 stale. UI 설정은
   `strategy-builder-ui/src/config/tos-control-plane.json`에 둔다.
 - 캐시된 조회 값도 브라우저 monotonic 경과에 따라 오래된 상태로 전환한다.
-- 공통 JSON fixture(`tests/fixtures/tos/operator-projection-v1*.json`)를 dashboard·UI·runtime
+- 공통 JSON fixture(#869 이후 `tos/runtime/tests/fixtures/operator-projection-v1*.json`)를 dashboard·UI·runtime
   테스트가 함께 읽는다. 다만 #861 시점의 nullable 정합은 불완전했다 —
   `protective.last_verdict`가 producer의 6-키 중첩이 아니라 `str | None`이어서 첫 실제
   verdict에 필드 하나가 아니라 문서 전체가 거부될 상태였고, runtime fixture 테스트는
@@ -149,8 +155,9 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
 - 실행 없이 7개 경로 선택과 driver 인자 유무 검증 통과. 이 검증은 runtime을 실행하지 않는다.
   #864가 이 게이트의 fail-open 둘을 닫고 래퍼의 기본 published 경로까지 보게 했으며,
   레드 증명 14건이 각각 exit 1임을(그리고 `python -O`에서도 같음을) 확인했다.
-- TS 쪽 단언에는 CI 잡이 없다 — `.github/workflows/`에 node 잡(`setup-node`·vitest·tsc)이
-  없어 UI 테스트는 로컬·리뷰에서만 돈다. 후속으로 분리했다(§6 · #867).
+- TS 쪽 단언에도 이제 CI 잡이 있다 — #867이 `.github/workflows/ui.yml`
+  (체크 이름 「UI suite (lint + build + tsc + vitest)」)을 추가했다. 다만 **필수 체크가
+  아니고 경로 게이팅**이라 UI 경로를 건드리지 않는 PR에서는 돌지 않는다.
 - 컨테이너 uid 1000의 읽기 성공·쓰기 거부·같은 컨테이너에서 atomic replace 후 갱신 확인.
 - 실제 Caddy 경유 `/tos` 200, 인증 projection GET 200, 비인증 GET 401.
 - API `Cache-Control: no-store` 확인.
@@ -186,24 +193,29 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
 현재 완료 범위는 코드·호스트 배선·조회 서비스 배포와 missing/auth 상태 검증이다.
 실제 세션의 출력 갱신을 관측한 것으로 보고하지 않는다.
 
-#861·#864 리뷰에서 분리한 후속은 넷이고 **넷 다 PR이 열려 있다**. 네 건 모두
-#864가 만든 것이 아니라 그 전부터 있던 상태다.
+#861·#864 리뷰에서 분리한 후속은 넷이고 **넷 다 main에 머지됐다**. 네 건 모두
+#864가 만든 것이 아니라 그 전부터 있던 상태였다.
 
 - **UI 프록시의 미인증 root 다섯** — 프록시가 모든 상류 요청에 서버 키를 붙이면서 자기
   인증은 없어, Caddy `@to_dashboard`에 없는 root 다섯(coverage·event-context·
   market-risk·portfolio·reports)이 키 없이 200이다. 기존 보안 결함이고 projection
-  경로와 독립이다(#861 노트 f). **[#866](https://github.com/kakao-harris-lee/kis_unified_sts/pull/866)** 열림.
+  경로와 독립이다(#861 노트 f). **[#866](https://github.com/kakao-harris-lee/kis_unified_sts/pull/866) 머지됨** — `7f643ba6`.
 - **프록시의 `tos` 전용 분기와 HEAD 정책** — `tos`가 `compatRoots`/`directRoots` 밖의
   early-return이라 `isDirectPath`와 어긋나고, `HEAD /api/tos/projection`은 405다. 라우팅
   테이블 통합은 TOS 외 root의 거동까지 바꾸므로 범위를 따로 잡는다(#861 노트 c
-  뒷부분·d). **[#868](https://github.com/kakao-harris-lee/kis_unified_sts/pull/868)** 열림.
+  뒷부분·d). **[#868](https://github.com/kakao-harris-lee/kis_unified_sts/pull/868) 머지됨** — `47bbce70`.
 - **UI 스위트 CI 잡**(`setup-node`+vitest+tsc) — 이것이 없는 동안 TS 단언은 로컬·리뷰에서만
-  돈다. 1회차의 `as const` TS2322이 `next build`에서만 터질 결함이었던 것과 같은
-  구멍이다(#864 2회차 지적 5). **[#867](https://github.com/kakao-harris-lee/kis_unified_sts/pull/867)** 열림.
+  돌았다. 1회차의 `as const` TS2322이 `next build`에서만 터질 결함이었던 것과 같은
+  구멍이다(#864 2회차 지적 5). **[#867](https://github.com/kakao-harris-lee/kis_unified_sts/pull/867) 머지됨** — `87ff87b1`.
 - **tos runtime 테스트의 fixture 소유 위치** — `tos/runtime/tests/operator/test_projection.py`가
   `parents[4]/tests/fixtures/tos`로 레거시 트리에 손을 뻗는다. `tos/CLAUDE.md` 작업 집합
-  밖이라 #864는 건드리지 않았다(#861 노트 e). **[#869](https://github.com/kakao-harris-lee/kis_unified_sts/pull/869)** 열림 — fixture 를
-  `tos/runtime/tests/fixtures/` 로 옮기고 `projection-reasons.json` 은 레거시 트리에 남긴다.
+  밖이라 #864는 건드리지 않았다(#861 노트 e). **[#869](https://github.com/kakao-harris-lee/kis_unified_sts/pull/869) 머지됨** — `00bd5456`.
+  fixture 를 `tos/runtime/tests/fixtures/` 로 옮기고 `projection-reasons.json` 은 레거시
+  트리에 남겼다.
+
+#866·#868 은 UI 프록시 코드를 바꿨고 **이 둘의 재배포는 아직 하지 않았다** — 이 문서가
+들어가는 #865 머지 직후 재배포 예정이다. 그때까지 호스트에 떠 있는 UI 컨테이너는
+2026-10-06 23:39 KST 판(#864 시점)이다.
 
 ## 7. Claude 작업 중복 확인 기록
 

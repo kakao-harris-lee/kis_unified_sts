@@ -48,8 +48,9 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
   (매핑 키는 `<key>` 로 가린다 — 키도 파일에서 온다).
 - 사유 접두 다섯은 `tests/fixtures/tos/projection-reasons.json` 하나에 있고,
   Python 방출기(라우트 소스 AST)와 TS 매처가 같은 파일을 단언한다.
-  다만 CI 게이트는 Python 쪽뿐이다 — `.github/workflows/` 에 node 잡(`setup-node`·vitest·tsc)이 없어 TS 단언은 로컬·리뷰에서만 돈다.
-  UI 스위트 CI 잡은 후속으로 분리했다.
+  TS 쪽은 #867 이 추가한 `.github/workflows/ui.yml`(체크 이름
+  「UI suite (lint + build + tsc + vitest)」)이 돌린다. 그 잡은 필수 체크가 아니고
+  경로 게이팅이므로 UI 경로를 건드리지 않는 PR 에서는 돌지 않는다.
 - 파일을 **열지 못한 경우**(권한·uid·디렉터리)는 `cannot read projection: <예외>`로
   형식 오류와 구분해 보고하고 화면도 별도 상태로 표시한다.
 
