@@ -274,9 +274,25 @@ def test_route_module_does_not_import_tos_or_tos_runtime():
             ), f"forbidden import-from {module!r} in {_ROUTE_MODULE}"
 
 
+# The contract set, named here the way the other two readers name it: the
+# runtime test parametrizes on both files and the UI loader selects between
+# them. Pinning the set is what keeps the loop below from passing on zero
+# matches — a glob that finds nothing iterates zero times and asserts nothing,
+# so a fixture moved or renamed away from this directory would otherwise go
+# silently green here while the other two readers go red. Adding a third
+# fixture is a deliberate edit in all three readers, not a silent pickup.
+SHARED_PROJECTION_FIXTURES = frozenset(
+    {"operator-projection-v1.json", "operator-projection-v1-unknown.json"}
+)
+
+
 # What this test checks: the API accepts each shared fixture and mirrors it
-# back byte-for-byte. The same files are read by the UI tests
-# (`strategy-builder-ui/src/test/tosFixture.ts`) and by the runtime's
+# back byte-for-byte. The fixtures are OWNED by the producing distribution and
+# live in its tree (`tos/runtime/tests/fixtures/`, review note e of #861): the
+# document is produced by `tos_runtime.operator.projection`, and the planned
+# repo split keeps `tos/` while removing this legacy runtime, so the readers
+# point into `tos/` and never the reverse. The same files are read by the UI
+# tests (`strategy-builder-ui/src/test/tosFixture.ts`) and by the runtime's
 # `tos/runtime/tests/operator/test_projection.py::
 # test_shared_product_contract_fixture`, which substitutes the fixture's own
 # groups for the projection's readers and so proves assembler pass-through
@@ -284,9 +300,31 @@ def test_route_module_does_not_import_tos_or_tos_runtime():
 # producer's actual key set is checked separately, from the producer source,
 # by `test_protective_last_verdict_matches_the_producer_key_set` below.
 # No imports cross the TOS boundary.
+#
+# This assertion is the only lane that reads fixture CONTENT against the DTO.
+# The runtime test named above cannot stand in for it: it feeds each group
+# back as its own reader and `OperatorProjection.build` does not validate
+# reader return values, so group content there is a pure echo. Measured:
+# deleting `protective_classification_digest` from
+# `operator-projection-v1.json` leaves the runtime test green and fails this
+# one.
+#
+# CI reach: the fixtures sit under `tos/`, which
+# `.github/workflows/test.yml` excludes with `!tos/**` — so that file
+# re-includes `tos/runtime/tests/fixtures/**` as its LAST pattern, and a PR
+# that changes only those fixtures runs this job. Both halves of the guard
+# are here: this content assertion and the `SHARED_PROJECTION_FIXTURES` pin
+# that catches the directory moving again. Removing that re-include line, or
+# moving it above `!tos/**`, silently takes both out of reach of every
+# fixture-only change.
 def test_shared_projection_contract_fixtures(monkeypatch, tmp_path):
-    fixture_dir = Path(__file__).resolve().parents[3] / "tests/fixtures/tos"
-    for fixture in sorted(fixture_dir.glob("operator-projection-v1*.json")):
+    fixture_dir = Path(__file__).resolve().parents[3] / "tos/runtime/tests/fixtures"
+    matched = sorted(fixture_dir.glob("operator-projection-v1*.json"))
+    assert {f.name for f in matched} == SHARED_PROJECTION_FIXTURES, (
+        f"shared contract fixtures missing from {fixture_dir}: "
+        f"found {sorted(f.name for f in matched)}"
+    )
+    for fixture in matched:
         payload = json.loads(fixture.read_text())
         projection_path = tmp_path / fixture.name
         projection_path.write_text(json.dumps(payload))
@@ -348,7 +386,7 @@ def test_future_mtime_is_unknown_age(monkeypatch, tmp_path):
 
     fixture = (
         Path(__file__).resolve().parents[3]
-        / "tests/fixtures/tos/operator-projection-v1.json"
+        / "tos/runtime/tests/fixtures/operator-projection-v1.json"
     )
     path = tmp_path / "projection.json"
     path.write_bytes(fixture.read_bytes())
@@ -365,7 +403,7 @@ def test_atomic_replace_reads_age_and_payload_from_same_inode(monkeypatch, tmp_p
 
     fixture = (
         Path(__file__).resolve().parents[3]
-        / "tests/fixtures/tos/operator-projection-v1.json"
+        / "tos/runtime/tests/fixtures/operator-projection-v1.json"
     )
     path = tmp_path / "projection.json"
     original = json.loads(fixture.read_text())

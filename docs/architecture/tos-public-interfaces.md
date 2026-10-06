@@ -19,7 +19,7 @@ EXT-01/02의 `age_seconds`는 파일 mtime 기반이다. `available=true`는 par
 뜻하며 fresh·healthy·거래 허용을 뜻하지 않는다. monotonic timestamp를 다른
 프로세스/호스트의 벽시계와 빼서 freshness로 쓰지 않는다. threshold는 후속 설정 계약에서 정한다.
 읽기 경로는 `TOS_OPERATOR_PROJECTION_PATH`로 지정되며 생산 경로와 실제 mount의
-일치 여부는 배포 검증 항목이다. producer/API/UI가 `tests/fixtures/tos/operator-projection-v1*.json` 계약 fixture를 공유한다.
+일치 여부는 배포 검증 항목이다. producer/API/UI가 `tos/runtime/tests/fixtures/operator-projection-v1*.json` 계약 fixture를 공유한다. 이 fixture 의 소유자는 **생산자 배포**(`tos_runtime.operator.projection`)이므로 tos 트리 안에 둔다 — 레포 분리는 `tos/` 를 남기고 레거시 런타임을 제거하므로, 읽는 쪽(dashboard·UI)이 `tos/` 를 참조하고 그 역방향은 두지 않는다. 반대로 아래 EXT-02 사유 접두 fixture 는 dashboard API 가 방출하는 어휘이고 `tos/` 아래에서 읽는 코드가 없으므로 레거시 테스트 트리에 남는다.
 `protective.last_verdict`는 6키 객체(`derestriction_admissible`·`capacity_exhausted`·
 `classification`·`unevaluated`·`reasons`·`protective_classification_digest`)이며
 producer 키 집합은 DTO 테스트가 producer 소스에서 직접 대조한다(역방향 import 없음).
