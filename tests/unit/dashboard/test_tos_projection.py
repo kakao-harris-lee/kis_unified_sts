@@ -410,7 +410,11 @@ def _producer_last_verdict_keys() -> set[str]:
     assert _PRODUCER_SOURCE.exists(), f"producer source missing: {_PRODUCER_SOURCE}"
     tree = ast.parse(_PRODUCER_SOURCE.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.FunctionDef) and node.name == "_read_protective"):
+        is_reader = (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_read_protective"
+        )
+        if not is_reader:
             continue
         for inner in ast.walk(node):
             if not isinstance(inner, ast.Dict):
@@ -906,7 +910,15 @@ def _unavailable_response_sites(source: str) -> set[str]:
     """
     tree = ast.parse(source)
     owners: set[str] = set()
-    for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+    # Both kinds: `ast.AsyncFunctionDef` is not a subclass of
+    # `ast.FunctionDef`, and this route's endpoint is an `async def` — a
+    # DTO built there would have been invisible to this guard.
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for function in functions:
         for node in ast.walk(function):
             if not (
                 isinstance(node, ast.Call)
@@ -962,6 +974,15 @@ def _read(path):
     if path:
         return _unavailable("projection file absent", path)
     return _unavailable(reason="brand new cause nobody mapped", path=path)
+"""
+
+_ASYNC_RETURN_MODULE = """
+def _unavailable(reason, path, age_seconds=None, level=None):
+    return TosProjectionResponse(available=False, reason=reason)
+
+
+async def get_tos_projection(response):
+    return TosProjectionResponse(available=False, reason="from an async def")
 """
 
 _DIRECT_RETURN_MODULE = """
@@ -1082,3 +1103,35 @@ def test_the_ts_contract_scan_catches_a_dropped_leaf():
     without = source.replace("process_nonce?: string | null;", "", 1)
     assert "process_nonce" not in _ts_declared_identifiers(without)
     assert "process_nonce" in _dto_leaf_names(tos_projection.TosOperatorProjection)
+
+
+def test_the_response_scan_sees_an_async_function():
+    """Red proof for 지적 2's residual: ``async def`` is a different node type.
+
+    ``ast.AsyncFunctionDef`` does not subclass ``ast.FunctionDef``, and this
+    route's endpoint is an ``async def`` — so a scan over ``FunctionDef``
+    alone would have reported this module as clean.
+    """
+    assert _unavailable_response_sites(_ASYNC_RETURN_MODULE) == {
+        "_unavailable",
+        "get_tos_projection",
+    }
+
+
+def test_a_boolean_schema_version_is_rejected(monkeypatch, tmp_path):
+    """노트 a: ``True != 1`` is False, so JSON ``true`` walked the version gate.
+
+    pydantic then coerced it, and the document rendered as a valid v1
+    projection. Reverting the ``type(...) is int`` clause makes this fail with
+    ``available=true``.
+    """
+    payload = dict(_VALID_PROJECTION, schema_version=True)
+    path = tmp_path / "boolean-version.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert '"schema_version": true' in path.read_text(encoding="utf-8")
+
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+
+    assert body["available"] is False
+    assert body["reason"] == "unsupported schema_version (expected 1, got bool)"
+    assert body["projection"] is None
