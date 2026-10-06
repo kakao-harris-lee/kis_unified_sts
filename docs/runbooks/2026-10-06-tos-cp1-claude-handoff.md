@@ -186,7 +186,7 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
 현재 완료 범위는 코드·호스트 배선·조회 서비스 배포와 missing/auth 상태 검증이다.
 실제 세션의 출력 갱신을 관측한 것으로 보고하지 않는다.
 
-#861·#864 리뷰에서 분리한 후속은 넷이다. 둘은 PR이 열렸고 둘은 착수 중이다. 네 건 모두
+#861·#864 리뷰에서 분리한 후속은 넷이다. 셋은 PR이 열렸고 하나는 착수 중이다. 네 건 모두
 #864가 만든 것이 아니라 그 전부터 있던 상태다.
 
 - **UI 프록시의 미인증 root 다섯** — 프록시가 모든 상류 요청에 서버 키를 붙이면서 자기
@@ -196,7 +196,7 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
 - **프록시의 `tos` 전용 분기와 HEAD 정책** — `tos`가 `compatRoots`/`directRoots` 밖의
   early-return이라 `isDirectPath`와 어긋나고, `HEAD /api/tos/projection`은 405다. 라우팅
   테이블 통합은 TOS 외 root의 거동까지 바꾸므로 범위를 따로 잡는다(#861 노트 c
-  뒷부분·d). **분리 — 착수 중, PR 번호 추후.**
+  뒷부분·d). **[#868](https://github.com/kakao-harris-lee/kis_unified_sts/pull/868)** 열림.
 - **UI 스위트 CI 잡**(`setup-node`+vitest+tsc) — 이것이 없는 동안 TS 단언은 로컬·리뷰에서만
   돈다. 1회차의 `as const` TS2322이 `next build`에서만 터질 결함이었던 것과 같은
   구멍이다(#864 2회차 지적 5). **[#867](https://github.com/kakao-harris-lee/kis_unified_sts/pull/867)** 열림.
