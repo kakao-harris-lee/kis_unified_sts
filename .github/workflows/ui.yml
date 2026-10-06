@@ -1,0 +1,133 @@
+# Frontend suite (strategy-builder-ui) as a CI check.
+#
+# Why this exists: the repo asserts a Python↔TypeScript wire contract on
+# `tests/fixtures/tos/projection-reasons.json` and on the
+# `services/dashboard/routes/tos_projection.py` DTO, but only the Python half
+# was ever executed by CI. Nothing in `.github/workflows/` ran vitest, eslint or
+# tsc, so the TS half of every such "cannot drift" claim was unenforced: a
+# `tsc` TS2322 in `src/app/tos/page.test.tsx` reached a PR head unnoticed
+# (PR #864, review round 2 item 5) and would have surfaced only in the Docker
+# `next build`. This job runs the TS half.
+#
+# Why a SEPARATE workflow instead of a job in test.yml: `paths` and
+# `paths-ignore` are workflow-level trigger filters, not job-level ones, and the
+# two cannot be combined for the same event. test.yml is gated with
+# `paths-ignore` (tos/, docs/, …); this job needs an include gate (`paths`), so
+# it cannot share that workflow's triggers.
+#
+# No overlap with the existing jobs: test.yml / devcontainer.yml / ruff.yml /
+# tos-*.yml are Python-only. This is the only workflow that installs node.
+#
+# NOT a required check. The active `tos-gate` ruleset on refs/heads/main
+# requires contexts `tos-gate` and `ruff` only; adding `ui` to that list is a
+# GitHub setting and an operator decision, not configured here.
+name: UI suite
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      # The suite itself.
+      - 'strategy-builder-ui/**'
+      # Two inputs the suite reads from OUTSIDE strategy-builder-ui/. Re-derive
+      # the list with:
+      #   grep -rn 'readFileSync\|process\.cwd()\|\.\./\.\./' strategy-builder-ui/src
+      # - src/test/tosFixture.ts     -> ../tests/fixtures/tos/*.json
+      # - src/lib/builder/catalogSot.test.ts
+      #                              -> ../../../../config/strategy_builder/indicators.yaml
+      # Gated at directory level, not file level, so a newly added fixture or
+      # catalog file under them is covered without editing this list.
+      - 'tests/fixtures/**'
+      - 'config/strategy_builder/**'
+      # This workflow.
+      - '.github/workflows/ui.yml'
+  pull_request:
+    branches: [main]
+    paths: *paths
+
+# Path gating means a PR that changes ONLY the Python emitter does not run this
+# job. That direction is covered by the Python side:
+# tests/unit/dashboard/test_tos_projection.py walks the DTO and asserts every
+# leaf is declared in src/lib/dashboard/tos.ts, and it runs in test.yml.
+#
+# No weekly schedule backstop here, unlike devcontainer.yml. That workflow needed
+# one because its jobs run `tests/unit`, which its gate does not watch (#835 sat
+# red for two weeks). This gate covers every input this suite reads, and `npm ci`
+# installs from the committed lockfile, so there is no third party that can move
+# under it between runs.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    name: UI suite (lint + build + tsc + vitest)
+    runs-on: ubuntu-latest
+    # Backstop only. Measured on node 20 in a node:20-slim container, fresh
+    # install: npm ci 25s, lint 11s, build 16s, tsc 9s, vitest 9s (~70s total).
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: strategy-builder-ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Matches Dockerfile.strategy_builder_ui (`FROM node:20-slim`), so a
+          # green run here means the image's build stage sees the same engine.
+          # Next 16.1.6 requires >= 20.9; node:20-slim is 20.20.
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: strategy-builder-ui/package-lock.json
+
+      - name: Install dependencies
+        # `npm ci`, NOT the Dockerfile's `npm install --legacy-peer-deps`.
+        # Verified on node 20.20.1 / npm 10.8.2 (what node:20-slim ships) against
+        # the committed lockfileVersion-3 package-lock.json: exit 0, 559 packages,
+        # no peer-dep conflict. The Dockerfile's flag predates that lockfile
+        # refresh and is left alone here (changing the image is out of scope).
+        # `npm ci` is the stronger choice for CI on purpose: it fails if
+        # package.json and package-lock.json have drifted, which `npm install`
+        # silently repairs.
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # `if: !cancelled()` on the remaining steps: this job is ~70s, so one run
+      # should report all four verdicts rather than making a contributor fix lint
+      # to find out whether the tests pass. A failing step still fails the job.
+      - name: Build (next build)
+        if: ${{ !cancelled() }}
+        # Same command the image's build stage runs, so a broken production
+        # compile fails CI instead of only the Docker build. It also runs Next's
+        # own TypeScript pass and GENERATES `next-env.d.ts` and `.next/types/**`
+        # — both gitignored, so both absent from a fresh checkout.
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build
+
+      - name: Type-check (tsc --noEmit)
+        if: ${{ !cancelled() }}
+        # Deliberately AFTER the build: tsconfig.json includes `next-env.d.ts`
+        # and `.next/types/**/*.ts`, which only exist once `next build` has run.
+        # Running tsc first would check a strict SUBSET of what the Docker build
+        # checks; running it here makes it a superset. Kept as its own step even
+        # though `next build` type-checks, because it is a direct verdict with
+        # clean output and it survives anyone setting
+        # `typescript.ignoreBuildErrors` in next.config.ts.
+        run: npx tsc --noEmit -p .
+
+      - name: Unit tests (vitest)
+        if: ${{ !cancelled() }}
+        # `npm run test` is the project's own entry point (`vitest run`), so CI
+        # runs what a contributor runs and follows the script if it changes.
+        run: npm run test
