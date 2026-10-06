@@ -1,7 +1,8 @@
 # CP-1 조회 전용 TOS 운영 화면 — 구현 및 검증
 
 2026-10-06. 브랜치 `feat/tos-control-plane-readonly`, 별도 worktree.
-문서 정리 PR #860 이후 후속 구현. 실제 거래·paper 프로세스·cron·credential을 변경하지 않는다.
+문서 정리 PR #860 이후 후속 구현. #861을 main `af43fd8a`에 병합하고 조회 서비스를 배포했다.
+후속 출력 배선은 host wrapper/driver 인자만 변경했다. 실제 거래·cron·credential은 변경하지 않았다.
 
 ## 중복 확인
 
@@ -27,14 +28,14 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
 
 ## 운영 연결 조건
 
-현재 호스트 read-only 확인:
+배포 전 호스트 read-only 확인:
 
 - `kis_paper-dashboard`의 `/app/data/tos_runtime` mount는 writable=false.
 - 인증된 내부 GET 결과 `available=false`, `reason=projection file absent`, `age_seconds=null`.
 - 현재 호스트 paper session wrapper/driver에서 `projection` 경로 연결이 검색되지 않았다.
 
-따라서 이번 구현을 **운영 중 TOS의 실시간 화면 배포 완료**로 보고하지 않는다.
-다음 운영 변경은 paper 코드 핀/래퍼의 소유 작업과 함께 진행해야 한다.
+아래는 배포 전 확인한 연결 조건이다. 적용 결과는 마지막 배포 기록을 따른다.
+**운영 중인 TOS의 실제 출력 갱신까지 확인한 것으로 보고하지 않는다.**
 
 1. producer가 쓸 전용 projection 디렉터리와 파일을 확정한다. custody/durable-set 디렉터리 전체를 마운트하지 않는다.
 2. runtime의 기존 `--projection-path`와 아래 consumer 좌표를 맞춘다.
@@ -70,3 +71,24 @@ Dashboard 회귀 테스트는 13개로 증가했다. 잘못된 UTF-8, atomic rep
 age/content 일관성, 미래 mtime unknown 처리를 포함한다. host wiring 검증은
 실행 없이 7개 경로 선택 및 driver 인자 유무를 확인한다.
 Claude 독립 리뷰는 token 한도로 실행되지 않았으며 자체 점검과 구분한다.
+
+## 배포 기록 — 2026-10-06 20:14 KST
+
+- #861 최종 코드 `bb394cb1`의 모든 CI 통과(스케줄 실패 보고 작업만 해당 없음으로 skip).
+  main 병합 `af43fd8a`. Claude 독립 리뷰 미실행은 그대로 유지한다.
+- host preimage SHA와 정지 상태를 확인하고 wrapper/driver 설치. 커밋된 패치를
+  별도 사본에 재적용해 설치 파일과 byte-identical임을 확인했다.
+- private backup: `~/.local/state/tos/paper-ops/projection-connection-20261006/`.
+  원본 script와 비밀 설정 백업은 Git에 포함하지 않는다.
+- `.env.paper`의 projection 좌표 두 개 설정, 전용 디렉터리 uid/gid 1000·0700.
+  실제 dashboard mount는 `paper-projection` → `/app/data/tos_runtime`, `rw=false`.
+- 새 이미지의 uid 1000에서 읽기 성공·쓰기 거부·같은 container에서 atomic replace
+  후 새 내용 읽기를 검증했다. 별도 probe 파일은 삭제했고 운영 projection은 만들지 않았다.
+- `scripts/deploy_paper.sh --services "dashboard strategy-builder-ui" --no-build --no-cleanup -y`
+  통과. 앞서 해당 코드의 두 이미지를 빌드했다. 두 서비스 healthy, restart 0.
+  배포 전후 container ID 비교에서 이 두 개 외 변화 없음.
+- 실제 Caddy 경유 `/tos` 200, 브라우저의 인증 projection GET 200·available=false·missing.
+  인증 없는 projection GET 401. API `Cache-Control: no-store` 확인.
+  Chromium page errors 0, 390px 모바일 overflow 없음.
+- 실제 paper 세션은 기동하지 않았다. 다음 정상 세션의 generation 증가와 종료 뒤 stale
+  전환은 미확인이다. fixture 검증을 실제 세션 증거로 대체하지 않는다.
