@@ -9,6 +9,10 @@ import type { TosProjection } from '@/lib/dashboard/tos';
 // them (`tos_runtime.operator.projection`) and live in its own tree. The planned
 // repo split keeps `tos/` and removes the legacy runtime, so every reader points
 // into `tos/`; nothing under `tos/` reads out of it (review note e of #861).
+//
+// Paired with the `.github/workflows/ui.yml` path filters (PR #867) — this
+// loader reads TWO trees, so change both together or the UI job stops
+// watching the half that moved.
 const TOS_FIXTURE_DIR = '../tos/runtime/tests/fixtures';
 
 export function tosFixture(unknown = false): TosProjection {
@@ -38,6 +42,8 @@ export interface ReasonPrefix {
  * UI-suite CI job is tracked as a follow-up, not done here.
  */
 export function reasonPrefixes(): ReasonPrefix[] {
+  // Paired with the `.github/workflows/ui.yml` path filters (PR #867) —
+  // the other half of the pair above; see that comment.
   const path = resolve(process.cwd(), '../tests/fixtures/tos/projection-reasons.json');
   return (JSON.parse(readFileSync(path, 'utf8')) as { reasons: ReasonPrefix[] }).reasons;
 }
