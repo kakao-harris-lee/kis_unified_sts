@@ -95,7 +95,8 @@ export default function TosPage() {
         <Card title="안전 서비스">
           {p.safety_mesh?.services && Object.keys(p.safety_mesh.services).length
             ? Object.entries(p.safety_mesh.services).map(([name, facts]) => <Fact key={name} label={name.toUpperCase()}>
-              {flag(facts.clear, '해소', '미해소')}{facts.reasons?.length ? ` · ${facts.reasons.join(', ')}` : ''}
+              {/* `list()` like every other list on this page: null is 알 수 없음, [] is 없음. */}
+              {flag(facts.clear, '해소', '미해소')}{` · ${list(facts.reasons)}`}
             </Fact>) : <Fact label="서비스 상태">알 수 없음</Fact>}
         </Card>
         <Card title="입력 유효성과 처리 대기">

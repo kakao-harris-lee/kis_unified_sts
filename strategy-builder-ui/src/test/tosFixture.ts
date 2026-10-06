@@ -8,3 +8,21 @@ export function tosFixture(unknown = false): TosProjection {
   const name = unknown ? 'operator-projection-v1-unknown.json' : 'operator-projection-v1.json';
   return JSON.parse(readFileSync(resolve(process.cwd(), '../tests/fixtures/tos', name), 'utf8')) as TosProjection;
 }
+
+export interface ReasonPrefix {
+  prefix: string;
+  ui_state: string;
+}
+
+/**
+ * The reason prefixes the API may emit, with the UI state each maps to.
+ *
+ * Shared with `tests/unit/dashboard/test_tos_projection.py` so the Python
+ * emitter and the TS matcher cannot drift apart: the Python side proves every
+ * `_unavailable(...)` call starts with one of these, and the TS side proves
+ * `projectionState` maps each one.
+ */
+export function reasonPrefixes(): ReasonPrefix[] {
+  const path = resolve(process.cwd(), '../tests/fixtures/tos/projection-reasons.json');
+  return (JSON.parse(readFileSync(path, 'utf8')) as { reasons: ReasonPrefix[] }).reasons;
+}

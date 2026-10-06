@@ -1,14 +1,19 @@
 import { apiClient } from './client';
 import displayConfig from '@/config/tos-control-plane.json';
 
-// Wire contract: services/dashboard/routes/tos_projection.py. Entire groups may
-// be null when the runtime has no source. Never turn absence into clearance.
+// Wire contract: services/dashboard/routes/tos_projection.py. Every leaf of that
+// DTO is declared here, so a field the page does not render today is still
+// visible as part of the contract. Entire groups may be null when the runtime
+// has no source. Never turn absence into clearance.
 export interface TosProjection {
   schema_version: number;
   projection_generation: number;
   exported_at_monotonic_ns: number;
   non_authorizing: boolean;
-  runtime?: { cell_id?: string | null; runtime_generation?: number | null } | null;
+  runtime?: {
+    cell_id?: string | null; runtime_generation?: number | null;
+    process_nonce?: string | null; code_digest?: string | null;
+  } | null;
   // `reasons` is `null` when the runtime had no source for the list. That is not
   // the same fact as `[]` (evaluated, nothing to report) — never render it as 「없음」.
   recovery?: { readiness_verdict?: string | null; reasons?: string[] | null } | null;
@@ -21,14 +26,20 @@ export interface TosProjection {
   currentness?: { pending_dimensions?: string[] | null; last_assemble_complete?: boolean | null } | null;
   rcl?: { last_seq?: number | null; open_reservations?: number | null } | null;
   inbox?: { unconsumed_count?: number | null } | null;
-  evidence?: { tip_seq_excluding_stm_alert?: number | null; key_generation?: number | null } | null;
+  evidence?: {
+    tip_seq_excluding_stm_alert?: number | null; chain_digest?: string | null;
+    key_generation?: number | null;
+  } | null;
   release?: { admitted?: boolean | null; software_deployment_ok?: boolean | null } | null;
   // Producer: tos/runtime/src/tos_runtime/compose/_operations_wiring.py::_read_protective
   // emits this six-key object (or null), never a string.
   protective?: { last_verdict?: TosProtectiveVerdict | null } | null;
   operations?: {
     schema_versions?: Record<string, number | null> | null;
-    last_backup?: { generation?: number | null; age_monotonic_ns?: number | null } | null;
+    last_backup?: {
+      generation?: number | null; age_monotonic_ns?: number | null;
+      manifest_digest?: string | null;
+    } | null;
     key_continuity?: string | null;
     dependency_admission?: boolean | null;
   } | null;
@@ -93,7 +104,10 @@ export function projectionState(
   if (connectionFailed) return 'error';
   if (!response) return 'loading';
   if (!response.available) {
-    if (response.reason === 'projection file absent') return 'missing';
+    // Prefix match like every other branch: the shared fixture
+    // (tests/fixtures/tos/projection-reasons.json) declares these as prefixes,
+    // and the Python side only guarantees each reason *starts with* one.
+    if (response.reason?.startsWith('projection file absent')) return 'missing';
     // Not a data-format problem: the file could not be opened at all
     // (permissions, uid mismatch, a directory in its place). Pointing the
     // operator at the exporter's output would be the wrong instruction.

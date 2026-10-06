@@ -81,6 +81,20 @@ describe('TOS read-only page', () => {
     expect(card.getByText('capacity_exhausted')).toBeInTheDocument();
     expect(card.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
   });
+  it.each([
+    [null, '해소 · 알 수 없음'],
+    [[], '해소 · 없음'],
+    [['stale snapshot'], '해소 · stale snapshot'],
+  ] as const)('renders a safety-mesh reason list of %s distinctly', async (reasons, expected) => {
+    // 지적 4: the old `reasons?.length ? … : ''` rendered null and [] the same.
+    // '없음' is a substring of '알 수 없음', so compare the whole cell text.
+    mount({ projection: { ...fixture, safety_mesh: {
+      snapshot_generation: null, services: { spg: { clear: true, reasons } },
+    } } });
+    const card = within(await screen.findByRole('region', { name: '안전 서비스' }));
+    const cell = card.getByText(/해소/);
+    expect(cell.textContent?.replace(/\s+/g, ' ').trim()).toBe(expected);
+  });
   it('shows an absent reason list as unknown, never as none', async () => {
     mount({ projection: { ...fixture, recovery: { readiness_verdict: 'READY', reasons: null } } });
     const card = within(await screen.findByRole('region', { name: '복구와 실행 상태' }));

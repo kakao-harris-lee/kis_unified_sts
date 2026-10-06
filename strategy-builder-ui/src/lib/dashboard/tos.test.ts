@@ -3,7 +3,7 @@ import {
   isAcceptedProjection, projectionAcceptance, projectionAge, projectionState,
   SUPPORTED_SCHEMA_VERSION, type TosProjection, type TosProjectionResponse,
 } from './tos';
-import { tosFixture } from '@/test/tosFixture';
+import { reasonPrefixes, tosFixture } from '@/test/tosFixture';
 const populated = tosFixture();
 const unknown = tosFixture(true);
 import config from '@/config/tos-control-plane.json';
@@ -19,7 +19,8 @@ describe('TOS observation state', () => {
   });
   it.each([
     ['projection file absent', 'missing'], ['invalid json: bad', 'invalid'],
-    ['schema mismatch at driver: ValidationError', 'invalid'], ['unsupported schema_version 2', 'unsupported'],
+    ['schema mismatch at driver: ValidationError', 'invalid'],
+    ['unsupported schema_version (expected 1, got str)', 'unsupported'],
     // A file that could not be opened is a path/permission fault, not malformed data.
     ['cannot read projection: PermissionError', 'unreadable'],
     ['cannot read projection: IsADirectoryError', 'unreadable'],
@@ -59,6 +60,24 @@ describe('single acceptance predicate', () => {
   });
 });
 
+describe('shared reason prefixes', () => {
+  // tests/fixtures/tos/projection-reasons.json — the same list the Python
+  // tests assert the route emits. A prefix added on one side without the
+  // other fails here.
+  it.each(reasonPrefixes())('maps $prefix to $ui_state', ({ prefix, ui_state }) => {
+    const unavailable: TosProjectionResponse = {
+      available: false, reason: `${prefix}: detail`, age_seconds: null, projection: null,
+    };
+    expect(projectionState(unavailable, null, false)).toBe(ui_state);
+  });
+  it('still reports an unrecognised reason as unknown, never as clearance', () => {
+    const unavailable: TosProjectionResponse = {
+      available: false, reason: 'something new from a future route', age_seconds: null, projection: null,
+    };
+    expect(projectionState(unavailable, null, false)).toBe('unknown');
+  });
+});
+
 describe('producer wire contract', () => {
   it('carries the six-key protective verdict the runtime emits', () => {
     // tos/runtime/src/tos_runtime/compose/_operations_wiring.py::_read_protective
@@ -71,6 +90,16 @@ describe('producer wire contract', () => {
     expect(projectionState({ ...response, projection }, 0, false)).toBe('recent');
     expect(projection.protective?.last_verdict?.reasons).toEqual(['derestriction_admissible']);
     expect(populated.protective?.last_verdict?.protective_classification_digest).toBe('sha256:0f1e2d3c');
+  });
+  it('declares every leaf of the Python DTO', () => {
+    // 지적 9: four leaves were missing from the TS interface while the header
+    // claimed the Python DTO as the wire contract. The shared fixture carries
+    // them, so a type-level omission shows up as a compile error here.
+    const projection: TosProjection = populated;
+    expect(projection.runtime?.process_nonce).toBe('abc123');
+    expect(projection.runtime?.code_digest).toBe('sha256:deadbeef');
+    expect(projection.evidence?.chain_digest).toBeNull();
+    expect(projection.operations?.last_backup?.manifest_digest).toBeNull();
   });
   it('accepts null reason lists, null inner facts, and a null store schema version', () => {
     const projection: TosProjection = {
