@@ -9,10 +9,13 @@ const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5081";
 // dashboard key to every upstream call, so it must not forward a request it has
 // not itself authenticated — otherwise it is a credential-lending bypass of the
 // dashboard's own APIKeyMiddleware (services/dashboard/middleware/auth.py).
-// Caddy sends most /api roots straight to dashboard:8001, but coverage,
-// event-context, market-risk, portfolio and reports reach the dashboard only
-// through here, so without this guard those five answered 200 with no key while
+// Caddy sends most /api roots straight to dashboard:8001; the rest — the roots
+// in `directRoots` that Caddy does not route to the dashboard itself — reach it
+// only through here, so without this guard they answered 200 with no key while
 // the identical paths 401'd when called on the dashboard directly.
+// Which roots those are is a difference of two lists that both move, so this
+// comment does not name them: catchall-route.test.ts derives the set and holds
+// `PROXY_ONLY_ROOTS` equal to it.
 //
 // Enforced only when a key is configured, mirroring the dashboard, which
 // installs its auth middleware under `require_auth and api_key`

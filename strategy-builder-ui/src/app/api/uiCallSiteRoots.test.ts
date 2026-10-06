@@ -37,6 +37,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { relative, resolve } from "node:path";
 
+import { caddyDirectRoots } from "./caddyRouting";
 import { targetPathFor } from "./proxyRouting";
 
 // Both same-origin API client trees. Neither is more authoritative than the
@@ -45,8 +46,6 @@ const CLIENT_LIB_DIRS = [
   resolve(__dirname, "../../lib/dashboard"),
   resolve(__dirname, "../../lib/api"),
 ];
-const CADDYFILE = resolve(__dirname, "../../../../caddy/Caddyfile");
-
 /** A dynamic `${...}` segment stands in for any single path segment. */
 const DYNAMIC_SEGMENT = "__dynamic__";
 
@@ -81,21 +80,6 @@ function callSitePaths(): Array<{ file: string; apiPath: string }> {
     }
   }
   return found;
-}
-
-/** `/api/<root>` prefixes Caddy sends straight to dashboard:8001. */
-function caddyDirectRoots(): Set<string> {
-  const caddyfile = readFileSync(CADDYFILE, "utf8");
-  const matcher = /@to_dashboard\s*\{([\s\S]*?)\n\t\}/.exec(caddyfile);
-  if (!matcher) throw new Error("caddy/Caddyfile has no @to_dashboard matcher block");
-  const roots = new Set<string>();
-  for (const line of matcher[1].matchAll(/^\s*path\s+(.*)$/gm)) {
-    for (const token of line[1].split(/\s+/)) {
-      const root = /^\/api\/([a-z0-9-]+)/.exec(token);
-      if (root) roots.add(root[1]);
-    }
-  }
-  return roots;
 }
 
 /**

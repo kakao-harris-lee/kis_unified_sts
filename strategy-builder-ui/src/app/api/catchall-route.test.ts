@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { DELETE, GET, POST, PUT } from "./[...path]/route";
 import type { NextRequest } from "next/server";
-import { exactPathRoots } from "./proxyRouting";
+import { caddyDirectRoots } from "./caddyRouting";
+import { directRoots, exactPathRoots } from "./proxyRouting";
 
 function requestFor(path: string): NextRequest {
   const url = `http://localhost:3100${path}`;
@@ -540,10 +541,15 @@ describe("TOS projection proxy boundary", () => {
 // ---------------------------------------------------------------------------
 // #861 review note f — the proxy attaches the server-side dashboard key to
 // every upstream call, so it must authenticate the caller first. Caddy routes
-// most /api roots straight to dashboard:8001, but coverage, event-context,
-// market-risk, portfolio and reports reach the dashboard ONLY through here, so
-// before this guard those five answered 200 with no key while the identical
-// paths 401'd on the dashboard directly.
+// most /api roots straight to dashboard:8001; the rest — the roots in
+// `directRoots` that Caddy does not route to the dashboard itself — reach it
+// ONLY through here, so before this guard they answered 200 with no key while
+// the identical paths 401'd on the dashboard directly.
+//
+// `PROXY_ONLY_ROOTS` below is the canonical list of those roots and is held
+// equal to that derived difference, so neither this comment nor the list has to
+// be kept in step by hand: adding a root to `directRoots` without a Caddy entry
+// and without a case here is red.
 //
 // Design decision recorded by these tests: there is NO public exception. The
 // compat roots (auth/account/orders/market/files/symbols/experiments) are
@@ -554,6 +560,9 @@ describe("TOS projection proxy boundary", () => {
 // downloads through that authenticated client instead.
 // ---------------------------------------------------------------------------
 
+// One real subpath per root. The urls carry query strings where the real call
+// sites do, so the forwarding assertions exercise the search-string passthrough
+// too; the derived check below compares roots, not urls.
 const PROXY_ONLY_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
   ["/api/analytics/strategy-correlation?asset_class=stock", ["analytics", "strategy-correlation"]],
   ["/api/coverage?asset_class=futures", ["coverage"]],
@@ -564,6 +573,32 @@ const PROXY_ONLY_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
   ["/api/portfolio/equity", ["portfolio", "equity"]],
   ["/api/reports/feedback?kind=weekly", ["reports", "feedback"]],
 ];
+
+describe("PROXY_ONLY_ROOTS is the roots Caddy does not take itself", () => {
+  it("equals directRoots minus every root Caddy proxies to the dashboard", () => {
+    const caddyDirect = caddyDirectRoots();
+    const derived = [...directRoots].filter((root) => !caddyDirect.has(root)).sort();
+    const listed = [...new Set(PROXY_ONLY_ROOTS.map(([, path]) => path[0]))].sort();
+
+    // Deriving it is the point: a root added to directRoots with no Caddy entry
+    // and no case above would otherwise keep its 401-and-forwarding behaviour
+    // untested, which is how analytics/evidence/market-data arrived unrouted.
+    expect(listed).toEqual(derived);
+  });
+
+  // Caddy proxies to the dashboard in two forms, and the derived set above is
+  // wrong if either is missed: `trades` through the named `@to_dashboard`
+  // matcher, `kis-builder` through a path written inline on its own `handle`.
+  // Reading only the named matcher reported kis-builder as proxy-only, which it
+  // is not. Pin one root per form, and one the Caddyfile has never listed.
+  it.each([
+    ["trades", true, "named @to_dashboard matcher"],
+    ["kis-builder", true, "inline handle path"],
+    ["coverage", false, "no Caddy block — proxy only"],
+  ])("reads %s from the Caddyfile as caddy-direct=%s (%s)", (root, expected) => {
+    expect(caddyDirectRoots().has(root as string)).toBe(expected);
+  });
+});
 
 const COMPAT_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
   ["/api/auth/status", ["auth", "status"]],
