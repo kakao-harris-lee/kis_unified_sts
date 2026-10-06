@@ -89,6 +89,7 @@ def test_valid_projection_round_trips(monkeypatch, tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["available"] is True
+    assert response.headers["cache-control"] == "no-store"
     assert body["reason"] is None
     assert body["age_seconds"] >= 0
     assert body["projection"]["schema_version"] == 1
@@ -227,3 +228,112 @@ def test_route_module_does_not_import_tos_or_tos_runtime():
             assert (
                 root not in forbidden_roots
             ), f"forbidden import-from {module!r} in {_ROUTE_MODULE}"
+
+
+# These neutral JSON fixtures are also checked against the runtime producer and UI.
+# No imports cross the TOS boundary.
+def test_shared_projection_contract_fixtures(monkeypatch, tmp_path):
+    fixture_dir = Path(__file__).resolve().parents[3] / "tests/fixtures/tos"
+    for fixture in sorted(fixture_dir.glob("operator-projection-v1*.json")):
+        payload = json.loads(fixture.read_text())
+        projection_path = tmp_path / fixture.name
+        projection_path.write_text(json.dumps(payload))
+        body = (
+            _client(monkeypatch, tmp_path, projection_path)
+            .get("/api/tos/projection")
+            .json()
+        )
+        assert body["available"] is True, body
+        assert body["projection"] == payload
+
+
+def test_missing_groups_remain_unknown_instead_of_empty_facts(monkeypatch, tmp_path):
+    path = tmp_path / "minimal.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "projection_generation": 1,
+                "exported_at_monotonic_ns": 1,
+                "non_authorizing": True,
+            }
+        )
+    )
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+    assert body["available"] is True
+    assert body["projection"]["alerts"] is None
+    assert body["projection"]["safety_mesh"] is None
+    assert body["projection"]["release"] is None
+
+
+def test_projection_requires_existing_dashboard_auth(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOS_OPERATOR_PROJECTION_PATH", str(tmp_path / "missing.json"))
+    client = TestClient(create_app(require_auth=True, api_key="test-projection-key"))
+    assert client.get("/api/tos/projection").status_code == 401
+    assert (
+        client.get("/api/tos/projection", headers={"X-API-Key": "wrong"}).status_code
+        == 401
+    )
+    response = client.get(
+        "/api/tos/projection", headers={"X-API-Key": "test-projection-key"}
+    )
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+
+
+def test_invalid_utf8_is_unavailable(monkeypatch, tmp_path):
+    path = tmp_path / "projection.json"
+    path.write_bytes(b"\xff\xfe")
+    response = _client(monkeypatch, tmp_path, path).get("/api/tos/projection")
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["reason"].startswith("invalid json")
+
+
+def test_future_mtime_is_unknown_age(monkeypatch, tmp_path):
+    import os
+    import time
+
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "tests/fixtures/tos/operator-projection-v1.json"
+    )
+    path = tmp_path / "projection.json"
+    path.write_bytes(fixture.read_bytes())
+    future = time.time() + 3600
+    os.utime(path, (future, future))
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+    assert body["available"] is True
+    assert body["age_seconds"] is None
+
+
+def test_atomic_replace_reads_age_and_payload_from_same_inode(monkeypatch, tmp_path):
+    import os
+    import time
+
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "tests/fixtures/tos/operator-projection-v1.json"
+    )
+    path = tmp_path / "projection.json"
+    original = json.loads(fixture.read_text())
+    original["projection_generation"] = 1
+    path.write_text(json.dumps(original))
+    old = time.time() - 120
+    os.utime(path, (old, old))
+    replacement = tmp_path / "replacement.json"
+    newer = dict(original, projection_generation=2)
+    replacement.write_text(json.dumps(newer))
+    real_fstat = os.fstat
+
+    def replace_after_open(fd):
+        stat = real_fstat(fd)
+        if replacement.exists():
+            os.replace(replacement, path)
+        return stat
+
+    monkeypatch.setattr(tos_projection.os, "fstat", replace_after_open)
+    body = tos_projection._read_projection(path)
+    assert body.projection.projection_generation == 1
+    assert body.age_seconds >= 120
+    assert json.loads(path.read_text())["projection_generation"] == 2

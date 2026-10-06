@@ -1,0 +1,5 @@
+{
+  "pollIntervalMs": 15000,
+  "staleAfterSeconds": 60,
+  "clockTickMs": 1000
+}

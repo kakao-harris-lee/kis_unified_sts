@@ -11,7 +11,7 @@
 | TOS Kernel | `tos/src/tos/` | 결정·권한·위험·증거·전송 판정의 커널 타입, Protocol, 상태 전이. 제품 HTTP/UI를 소유하지 않는다. |
 | Application Runtime + Infrastructure Adapters | `tos/runtime/src/tos_runtime/` | `compose`에서 커널과 구현체 결선; event driver, 복구·대사, 시간·시세·SQLite·custody·transport, 운영 CLI. 별도 배포 패키지 `tos-runtime`. |
 | Control Plane API (BFF) | `services/dashboard/`의 TOS 표면 | 현재 projection 파일을 읽는 `GET /api/tos/projection`. 기존 dashboard 전체를 TOS 전용 API로 간주하지 않는다. |
-| Product / Operator UI | `strategy-builder-ui/` | 운영자가 상태·실험·전략을 보는 제품 표면. TOS 전용 projection 화면은 후속 작업. |
+| Product / Operator UI | `strategy-builder-ui/` | 운영자가 상태·실험·전략을 보는 제품 표면. `/tos` projection 조회 화면 구현; 운영 배포 대기. |
 | Tenant Content | `config/tos_runtime/paper/`, `tos/runtime/config/`, 향후 tenant 산출물 | DSL 전략, construction/policy 설정, broker profile 참조. 실행 권한과 별개인 버전 관리 콘텐츠. |
 | Legacy Runtime and Research Tools | `shared/`, `services/`, `cli/`, 기존 전략 설정 | 기존 실행 경로 및 연구·백테스트·데이터 도구. 기능별 처분은 이관 표가 관리한다. |
 
@@ -29,7 +29,7 @@ flowchart LR
   C[Tenant Content] -->|validated loading| RT
 ```
 
-UI→API는 제품의 일반 경로이며 TOS 조회 화면은 아직 연결되지 않았다.
+UI→API는 제품의 일반 경로이며 `/tos`가 기존 projection API를 조회한다. 운영 환경 연결은 검증 대기다.
 Control Plane→Runtime 명령 ingress는 현재 미구현이다.
 
 ## 2. 허용 의존 방향
@@ -54,8 +54,9 @@ synthetic과 KIS mock 전송 선택은 구현됐지만 실전 전송 승인과 �
 [운영 런북](../runbooks/tos-paper-boot.md)은 상주 paper·월물별 data dir·롤 동작을 기록한다.
 해당 기록이 오늘의 실행 성공을 자동으로 증명하지는 않는다.
 
-제품 연결은 schema v1 projection 생산자와 dashboard 소비자까지다.
-UI 연결, 공통 스키마 산출물, freshness 정책, 배포 경로 검증, 알림 전달의
+제품 연결은 schema v1 생산자·dashboard 소비자·`/tos` UI까지 구현됐다.
+nullable 계약 fixture, UI freshness 설정과 read-only proxy를 추가했다.
+공통 스키마 생성 산출물, 실제 배포 경로 검증, 알림 전달의
 end-to-end 증거와 명령 ingress는 후속 범위다. 공개/내부 경계는
 [인터페이스 카탈로그](tos-public-interfaces.md)를 따른다.
 

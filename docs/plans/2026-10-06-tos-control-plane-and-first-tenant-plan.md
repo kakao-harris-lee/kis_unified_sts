@@ -1,7 +1,7 @@
 # TOS Control Plane and first tenant plan
 
 작성: 2026-10-06. 기준 코드: `5c4f38e9`.
-상태: **문서 기반 정리 완료, CP-1 이후 구현 계획**. 실행·배포·live 승인 문서가 아니다.
+상태: **CP-0 문서 기반 정리 완료; CP-1 코드 구현·로컬 검증, 운영 연결/배포 대기; CP-2 이후 계획**. 실행·배포·live 승인 문서가 아니다.
 기존 TOS Phase 번호와 구분하기 위해 이 계획만 CP-0~CP-4를 사용한다.
 
 ## 1. 목적과 선행 조사
@@ -131,11 +131,35 @@ rollback drill → rollback 의존 종료 → caller 없는 legacy 코드 삭제
 | 첫 tenant 전략/상품/기간/담당자 | CP-3 시작 | 미정; 후보 비교표 필요 |
 | scope별 rollback 종료·삭제 시점 | CP-4 삭제 전 | 미정; 관측 증거 필요 |
 
-다음 구현 단위는 CP-1이다. 현재 요청의 산출물은 CP-0와 이 계획이며 UI/명령/거래 런타임
-구현이나 배포를 수행했다는 뜻이 아니다. 기존 paper 운영·장기 증거 측정은 해당 런북을 따른다.
+CP-1 구현 상태는 §6과 [검증 기록](../testing/2026-10-06-tos-control-plane.md)을 따른다.
+명령/거래 런타임 변경이나 운영 배포는 수행하지 않았다. 기존 paper 운영·장기 증거 측정은 해당 런북을 따른다.
 
 ## 5. 이번 문서 검증
 
 문서 변경 후 링크·소스 경로·diff whitespace·방화벽·spec/completion 정적 검사로 확인한다.
 코드 변경이 없으므로 전체 pytest/Gradle/프론트 빌드는 실행하지 않는다.
 독립 계획 심판/PR/배포는 이번 문서 작성의 완료 상태에 포함하지 않는다.
+
+## 6. CP-1 구현 범위 확정 — 2026-10-06
+
+중복 조사: 원격 최신 main `5c4f38e9`, 열린 PR 0(문서 #860 생성 전),
+Claude 최신 기록은 #859 월물별 data-dir/backup 종료. `wt-paper`, `wt-cold`,
+P8/evidence 워크트리는 clean. 미병합 원격 `feat/setup-d-decoupled-port`는
+Setup D/decision engine 경로이며 TOS UI와 겹치지 않는다. 실행 중인 Claude
+프로세스 자체를 작업 없음의 증거로 보지 않고 CP-1은 별도 worktree로 격리한다.
+
+선택: `/tos` 전용 조회 화면 + 기존 Navigation 한 항목. dashboard axios client와
+TanStack Query의 기존 polling을 재사용한다([공식 polling 문서](https://tanstack.com/query/latest/docs/framework/react/guides/polling)).
+별도 state/store/framework는 추가하지 않는다. UI 표시용 poll/freshness/timer는
+`strategy-builder-ui/src/config/tos-control-plane.json` 한 곳에 둔다.
+15초 조회·60초 stale는 UI 경고 기본값이며 거래/위험 게이트 임계값이 아니다.
+
+추가 발견: producer는 그룹 전체 또는 unresolved alert 목록을 null로 내보낼 수 있지만
+기존 dashboard DTO가 이를 거부한다. 원천 없음 보존을 위해 nullable DTO로 정렬한다.
+중립 JSON fixture를 runtime producer·dashboard consumer·UI 테스트가 함께 사용하며
+runtime source 변경과 Python 역방향 import는 없다.
+
+배포 준비: 기존 projection 디렉터리 read-only mount를 환경변수로 선택할 수 있게 한다.
+atomic rename을 따라가기 위해 파일 단독 mount는 사용하지 않는다. 운영 중인 paper
+wrapper/cron/코드 핀은 변경하지 않는다. 실제 호스트 producer 경로가 연결됐다는 증거와
+새 화면 배포 성공은 별도 확인 전까지 미완으로 유지한다.

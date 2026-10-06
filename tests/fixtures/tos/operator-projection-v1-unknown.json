@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "projection_generation": 1,
+  "exported_at_monotonic_ns": 123456789,
+  "non_authorizing": true,
+  "runtime": null,
+  "recovery": null,
+  "driver": null,
+  "time": null,
+  "safety_mesh": null,
+  "currentness": null,
+  "rcl": null,
+  "inbox": null,
+  "evidence": null,
+  "release": null,
+  "protective": null,
+  "operations": null,
+  "alerts": {
+    "unresolved_stm_alert_seqs": null,
+    "delivery_owner": "legacy alert-manager (outside tos_runtime)"
+  },
+  "export": {
+    "failures": 0,
+    "last_error": null
+  }
+}

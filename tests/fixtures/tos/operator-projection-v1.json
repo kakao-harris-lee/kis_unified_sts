@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "projection_generation": 1,
+  "exported_at_monotonic_ns": 123456789,
+  "non_authorizing": true,
+  "runtime": {
+    "cell_id": "cell-1",
+    "runtime_generation": 3,
+    "process_nonce": "abc123",
+    "code_digest": "sha256:deadbeef"
+  },
+  "recovery": {
+    "readiness_verdict": "READY",
+    "reasons": []
+  },
+  "driver": {
+    "wired": true,
+    "halt_latched": false,
+    "halt_reason": null
+  },
+  "time": {
+    "health": "TRUSTED"
+  },
+  "safety_mesh": {
+    "snapshot_generation": null,
+    "services": {
+      "spg": {
+        "clear": null,
+        "reasons": []
+      },
+      "wdr": {
+        "clear": true,
+        "reasons": []
+      },
+      "sir": {
+        "clear": null,
+        "reasons": [
+          "no source"
+        ]
+      },
+      "stm": {
+        "clear": null,
+        "reasons": []
+      }
+    }
+  },
+  "currentness": {
+    "pending_dimensions": [
+      "CONTEXT",
+      "CRITICAL_INPUT",
+      "EGRESS_IDENTITY"
+    ],
+    "last_assemble_complete": null
+  },
+  "rcl": {
+    "last_seq": 23,
+    "open_reservations": 0
+  },
+  "inbox": {
+    "unconsumed_count": 2
+  },
+  "evidence": {
+    "tip_seq_excluding_stm_alert": null,
+    "chain_digest": null,
+    "key_generation": null
+  },
+  "release": {
+    "admitted": false,
+    "software_deployment_ok": true
+  },
+  "protective": {
+    "last_verdict": null
+  },
+  "operations": {
+    "schema_versions": {
+      "evidence": 1,
+      "rcl": 1,
+      "inbox": 1
+    },
+    "last_backup": {
+      "generation": null,
+      "age_monotonic_ns": null,
+      "manifest_digest": null
+    },
+    "key_continuity": null,
+    "dependency_admission": null
+  },
+  "alerts": {
+    "unresolved_stm_alert_seqs": [],
+    "delivery_owner": "legacy alert-manager (outside tos_runtime)"
+  },
+  "export": {
+    "failures": 0,
+    "last_error": null
+  }
+}

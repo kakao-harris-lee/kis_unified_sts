@@ -59,6 +59,7 @@ legacy retirement sequencing use the [TOS integration plan](plans/2026-10-06-tos
 | [DAILY_SCANNER_VERIFICATION.md](DAILY_SCANNER_VERIFICATION.md) | `scripts/daily_indicator_scanner.py` 검증 절차. |
 | 운영 런북 전체 | → [README.md § Runbooks](../README.md#runbooks) — 런북 색인은 README 하나가 정본이다 |
 | [CI_PARALLEL_NOTES.md](CI_PARALLEL_NOTES.md) | `pytest-xdist` 병렬 실행 (#399로 CI 활성화: 병렬 패스 + `serial` 마커 직렬 패스) + parallel-unsafe 테스트 목록. |
+| [testing/2026-10-06-tos-control-plane.md](testing/2026-10-06-tos-control-plane.md) | CP-1 조회 UI·nullable 계약·로컬 검증과 운영 연결 미완 항목. |
 | [testing/stream-processor-audit-logging-2026-06-28.md](testing/stream-processor-audit-logging-2026-06-28.md) | Static QA evidence and paper-machine runtime checklist for stream processor audit logs. |
 | [testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md) | Final QA evidence for the 2026-06-28 quant gap expert-lane execution bundle. |
 | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) | Quant Ops Workbench desktop/mobile Playwright fallback screenshot QA evidence. |
