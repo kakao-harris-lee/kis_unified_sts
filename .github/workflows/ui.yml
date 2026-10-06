@@ -9,11 +9,20 @@
 # (PR #864, review round 2 item 5) and would have surfaced only in the Docker
 # `next build`. This job runs the TS half.
 #
-# Why a SEPARATE workflow instead of a job in test.yml: `paths` and
-# `paths-ignore` are workflow-level trigger filters, not job-level ones, and the
-# two cannot be combined for the same event. test.yml is gated with
-# `paths-ignore` (tos/, docs/, …); this job needs an include gate (`paths`), so
-# it cannot share that workflow's triggers.
+# Why a SEPARATE workflow instead of a job in test.yml: a trigger filter is
+# workflow-level, not job-level, so a job added to test.yml would inherit
+# test.yml's filter. That filter is broad by design: close to everything, with
+# tos/ and docs-only changes filtered out. This job needs the opposite, a narrow
+# include set naming only the UI suite and the files it reads, and one workflow
+# carries one filter per event, so the two cannot share a trigger.
+#
+# The exact SHAPE of that filter is deliberately not restated here, only its
+# effect, because the spelling changes: it has been written as `paths-ignore`,
+# and PR #869 converts it to `paths` with `!` negations plus a trailing
+# re-include of one fixture directory (the two forms cannot both filter a single
+# event, and a re-include is only expressible in the negated form). Whichever
+# lands first, read test.yml's own `on:` block for the current spelling instead
+# of trusting a description in this file.
 #
 # No overlap with the existing jobs: test.yml / devcontainer.yml / ruff.yml /
 # tos-*.yml are Python-only. This is the only workflow that installs node.
