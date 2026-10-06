@@ -26,6 +26,15 @@
 #                            by rewriting them to /api/kis-builder/<path> on
 #                            dashboard. Keeps the upstream UI working without
 #                            us editing every call site.
+#                          ← five STS roots are NOT listed below and therefore
+#                            reach dashboard only through that same Next proxy:
+#                            /api/coverage, /api/event-context, /api/market-risk,
+#                            /api/portfolio, /api/reports. That is deliberate —
+#                            the proxy holds their degraded empty-state
+#                            fallbacks. The proxy attaches the server key, so it
+#                            authenticates the caller itself before forwarding
+#                            (#861 review note f); do not move these here
+#                            without also moving the fallbacks.
 #
 # HTTP-only on container :5080; Docker maps DASHBOARD_HOST_PORT to this port.
 

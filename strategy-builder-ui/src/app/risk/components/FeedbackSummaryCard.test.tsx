@@ -1,7 +1,9 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FeedbackListResponse } from "@/lib/dashboard/reports";
+import { reportsApi } from "@/lib/dashboard/reports";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 
 function weeklyList(): FeedbackListResponse {
@@ -122,12 +124,11 @@ describe("FeedbackSummaryCard", () => {
       screen.getByText("판정 자료 — 승격/강등 결정은 수동"),
     ).toBeInTheDocument();
 
-    // Recent report links point at the read-only JSON endpoint.
-    const link = screen.getByRole("link", { name: "2026-07-06" });
-    expect(link).toHaveAttribute(
-      "href",
-      "/api/reports/feedback/weekly/2026-07-06",
-    );
+    // Recent reports are fetched through the authenticated client, not a plain
+    // <a href> — a browser navigation cannot carry X-API-Key, and the UI proxy
+    // now requires it (#861 review note f).
+    expect(screen.getByRole("button", { name: "2026-07-06" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "2026-07-06" })).toBeNull();
   });
 
   it("renders empty state when no reports are available", () => {
@@ -168,5 +169,69 @@ describe("FeedbackSummaryCard", () => {
       />,
     );
     expect(screen.getAllByText("N/A")).toHaveLength(3);
+  });
+});
+
+
+describe("FeedbackSummaryCard report download", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubObjectUrl() {
+    const createObjectURL = vi.fn(() => "blob:feedback");
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    return { createObjectURL, revokeObjectURL };
+  }
+
+  it("downloads the weekly report through the authenticated client", async () => {
+    const { createObjectURL, revokeObjectURL } = stubObjectUrl();
+    const getReport = vi
+      .spyOn(reportsApi, "getFeedbackReport")
+      .mockResolvedValue({
+        data: {
+          kind: "weekly",
+          period_label: "2026-07-06",
+          md_exists: false,
+          report: { headline: "ok" },
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+    // Capture the anchor the download helper builds, so the assertion reads the
+    // real download attribute rather than trusting that click happened.
+    let downloaded: { href: string; download: string } | null = null;
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function mockClick(this: HTMLAnchorElement) {
+        downloaded = { href: this.href, download: this.download };
+      });
+
+    render(<FeedbackSummaryCard weekly={weeklyList()} />);
+    await userEvent.click(screen.getByRole("button", { name: "2026-07-06" }));
+
+    await waitFor(() => expect(getReport).toHaveBeenCalledWith("weekly", "2026-07-06"));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(downloaded).toEqual({
+      href: "blob:feedback",
+      download: "feedback-weekly-2026-07-06.json",
+    });
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:feedback");
+  });
+
+  it("surfaces a failed download instead of swallowing it", async () => {
+    stubObjectUrl();
+    vi.spyOn(reportsApi, "getFeedbackReport").mockRejectedValue(new Error("401"));
+
+    render(<FeedbackSummaryCard weekly={weeklyList()} />);
+    await userEvent.click(screen.getByRole("button", { name: "2026-07-06" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "2026-07-06 리포트를 불러오지 못했습니다",
+    );
   });
 });

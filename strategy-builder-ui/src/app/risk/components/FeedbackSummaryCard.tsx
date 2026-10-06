@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { ClipboardList, FileText, Info } from "lucide-react";
 import { formatKstDateTime } from "@/lib/dashboard/format";
 import type {
@@ -10,6 +11,7 @@ import type {
 import {
   VERDICT_SPECS,
   normalizeVerdict,
+  reportsApi,
 } from "@/lib/dashboard/reports";
 
 // 성과 피드백 요약 카드 (Phase 6B — roadmap §Phase 6, 설계서 §8). 주간/월간/
@@ -18,6 +20,26 @@ import {
 // empty state — 엔진 미가동에도 /risk 페이지는 정상 렌더된다.
 
 const RECENT_LINK_COUNT = 5;
+
+// 리포트 본문은 인증이 필요한 /api/reports/feedback/{kind}/{period} 에서만 온다.
+// 예전에는 평범한 <a href> 였는데, 브라우저 내비게이션은 X-API-Key 헤더를 실을
+// 수 없어서 **UI 프록시가 인증을 안 하던 동안에만** 열렸다(#861 리뷰 노트 f).
+// 프록시가 이제 키를 요구하므로, 링크 대신 인증된 클라이언트로 받아 JSON 파일로
+// 내려준다 — 같은 읽기 전용 자료, 무인증 경로 0.
+async function downloadFeedbackReport(periodLabel: string): Promise<void> {
+  const { data } = await reportsApi.getFeedbackReport("weekly", periodLabel);
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+  );
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `feedback-weekly-${periodLabel}.json`;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 function fmtWinRate(v: number | null | undefined): string {
   if (v === null || v === undefined) return "-";
@@ -116,6 +138,23 @@ export default function FeedbackSummaryCard({
   quarterly,
   isLoading = false,
 }: FeedbackSummaryCardProps) {
+  // 다운로드 실패를 조용히 삼키지 않는다 — 빈 상태로 보이면 리포트가 없는 것과
+  // 구분이 안 된다(#469 의 catch {} 전례).
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleDownload = async (periodLabel: string): Promise<void> => {
+    setDownloading(periodLabel);
+    setDownloadError(null);
+    try {
+      await downloadFeedbackReport(periodLabel);
+    } catch {
+      setDownloadError(`${periodLabel} 리포트를 불러오지 못했습니다`);
+    } finally {
+      setDownloading(null);
+    }
+  };
+
   const latestWeekly: FeedbackReportRow | undefined = weekly?.reports?.[0];
   const latestMonthly: FeedbackReportRow | undefined = monthly?.reports?.[0];
   const latestQuarterly: FeedbackReportRow | undefined = quarterly?.reports?.[0];
@@ -252,17 +291,22 @@ export default function FeedbackSummaryCard({
               <ul className="flex flex-wrap gap-2">
                 {weekly.reports.slice(0, RECENT_LINK_COUNT).map((row) => (
                   <li key={row.period_label}>
-                    <a
-                      href={`/api/reports/feedback/weekly/${row.period_label}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center rounded border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 transition hover:bg-slate-50 focus-ring dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                    <button
+                      type="button"
+                      onClick={() => void handleDownload(row.period_label)}
+                      disabled={downloading === row.period_label}
+                      className="inline-flex items-center rounded border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 transition hover:bg-slate-50 focus-ring disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                     >
                       {row.period_label}
-                    </a>
+                    </button>
                   </li>
                 ))}
               </ul>
+              {downloadError ? (
+                <p role="alert" className="mt-1.5 text-xs text-loss">
+                  {downloadError}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>

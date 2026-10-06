@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { DELETE, GET, POST, PUT } from "./[...path]/route";
 import type { NextRequest } from "next/server";
 
@@ -438,7 +438,7 @@ describe("TOS projection proxy boundary", () => {
     // Exercises the `path.length === 2 && path[1] === "projection"` arm: with the
     // length check removed, the first case proxies as the projection.
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    const response = await GET(requestFor(url), contextFor(path as string[]));
+    const response = await GET(requestFor(url), contextFor(path));
     expect(response.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -451,5 +451,263 @@ describe("TOS projection proxy boundary", () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
     const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
     expect(response.status).toBe(503);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// #861 review note f — the proxy attaches the server-side dashboard key to
+// every upstream call, so it must authenticate the caller first. Caddy routes
+// most /api roots straight to dashboard:8001, but coverage, event-context,
+// market-risk, portfolio and reports reach the dashboard ONLY through here, so
+// before this guard those five answered 200 with no key while the identical
+// paths 401'd on the dashboard directly.
+//
+// Design decision recorded by these tests: there is NO public exception. The
+// compat roots (auth/account/orders/market/files/symbols/experiments) are
+// authenticated too — every browser caller already attaches X-API-Key from
+// NEXT_PUBLIC_API_KEY (src/lib/api/client.ts since #469,
+// src/lib/dashboard/client.ts), and the one header-less consumer (the weekly
+// report <a href> in app/risk/components/FeedbackSummaryCard.tsx) now
+// downloads through that authenticated client instead.
+// ---------------------------------------------------------------------------
+
+const PROXY_ONLY_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
+  ["/api/coverage?asset_class=futures", ["coverage"]],
+  ["/api/event-context/diagnostics", ["event-context", "diagnostics"]],
+  ["/api/market-risk", ["market-risk"]],
+  ["/api/portfolio/equity", ["portfolio", "equity"]],
+  ["/api/reports/feedback?kind=weekly", ["reports", "feedback"]],
+];
+
+const COMPAT_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
+  ["/api/auth/status", ["auth", "status"]],
+  ["/api/account/info", ["account", "info"]],
+  ["/api/orders/pending", ["orders", "pending"]],
+  ["/api/market/price/005930", ["market", "price", "005930"]],
+  ["/api/files/export", ["files", "export"]],
+  ["/api/symbols/status", ["symbols", "status"]],
+  ["/api/experiments/latest", ["experiments", "latest"]],
+];
+
+describe("proxy authenticates callers before lending the dashboard key", () => {
+  const SERVER_KEY = "proxy-server-key";
+  let savedBuilderKey: string | undefined;
+  let savedDashboardKey: string | undefined;
+
+  beforeEach(() => {
+    savedBuilderKey = process.env.KIS_BUILDER_API_KEY;
+    savedDashboardKey = process.env.DASHBOARD_API_KEY;
+    process.env.KIS_BUILDER_API_KEY = SERVER_KEY;
+    delete process.env.DASHBOARD_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedBuilderKey === undefined) delete process.env.KIS_BUILDER_API_KEY;
+    else process.env.KIS_BUILDER_API_KEY = savedBuilderKey;
+    if (savedDashboardKey === undefined) delete process.env.DASHBOARD_API_KEY;
+    else process.env.DASHBOARD_API_KEY = savedDashboardKey;
+    vi.restoreAllMocks();
+  });
+
+  function requestWithKey(path: string, key: string | null): NextRequest {
+    const headers = new Headers();
+    if (key !== null) headers.set("X-API-Key", key);
+    return {
+      method: "GET",
+      headers,
+      nextUrl: new URL(`http://localhost:3100${path}`),
+    } as NextRequest;
+  }
+
+  it.each(PROXY_ONLY_ROOTS)(
+    "rejects %s with 401 when the caller presents no key",
+    async (url, path) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+
+      const response = await GET(requestFor(url), contextFor(path));
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ detail: "Invalid or missing API key" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(PROXY_ONLY_ROOTS)(
+    "forwards %s upstream with the server key once the caller authenticates",
+    async (url, path) => {
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(Response.json({ ok: true }));
+
+      const response = await GET(
+        requestWithKey(url, SERVER_KEY),
+        contextFor(path),
+      );
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
+      expect(forwarded.get("X-API-Key")).toBe(SERVER_KEY);
+    },
+  );
+
+  it.each(COMPAT_ROOTS)(
+    "rejects compat root %s with 401 too — no public exception",
+    async (url, path) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+
+      const response = await GET(requestFor(url), contextFor(path));
+
+      expect(response.status).toBe(401);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(COMPAT_ROOTS)(
+    "forwards compat root %s to kis-builder with the server key when authenticated",
+    async (url, path) => {
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(Response.json({ ok: true }));
+
+      const response = await GET(
+        requestWithKey(url, SERVER_KEY),
+        contextFor(path),
+      );
+
+      expect(response.status).toBe(200);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/api/kis-builder/");
+      const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
+      expect(forwarded.get("X-API-Key")).toBe(SERVER_KEY);
+    },
+  );
+
+  it("rejects the Caddy-direct roots through the dev-server proxy as well", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const caddyDirect: ReadonlyArray<readonly [string, string[]]> = [
+      ["/api/trades?page=1", ["trades"]],
+      ["/api/signals", ["signals"]],
+      ["/api/trading/status", ["trading", "status"]],
+      ["/api/strategies", ["strategies"]],
+      ["/api/kis-builder/registered", ["kis-builder", "registered"]],
+      ["/api/tos/projection", ["tos", "projection"]],
+    ];
+    for (const [url, path] of caddyDirect) {
+      const response = await GET(requestFor(url), contextFor(path));
+      expect(response.status).toBe(401);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["POST", "PUT", "DELETE"] as const)(
+    "rejects unauthenticated %s before reading the body",
+    async (method) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const handler = { POST, PUT, DELETE }[method];
+      const request = requestWithMethod("/api/kis-builder/register-paper", method);
+      const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
+      (request as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
+        arrayBuffer;
+
+      const response = await handler(request, contextFor(["kis-builder", "register-paper"]));
+
+      expect(response.status).toBe(401);
+      expect(arrayBuffer).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("answers 401 rather than 404 for an unsupported path, so roots stay unenumerable", async () => {
+    const response = await GET(
+      requestFor("/api/definitely-not-a-root"),
+      contextFor(["definitely-not-a-root"]),
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("does not serve the degraded empty state to an unauthenticated caller", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
+    );
+
+    const response = await GET(requestFor("/api/coverage"), contextFor(["coverage"]));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("x-kis-degraded")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a wrong key of the same length", "proxy-server-kez"],
+    ["a shorter key", "proxy"],
+    ["a longer key", `${"proxy-server-key"}-extra`],
+    ["an empty key", ""],
+  ])("rejects %s without throwing on length", async (_label, presented) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await GET(
+      requestWithKey("/api/coverage", presented),
+      contextFor(["coverage"]),
+    );
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to DASHBOARD_API_KEY when KIS_BUILDER_API_KEY is unset", async () => {
+    delete process.env.KIS_BUILDER_API_KEY;
+    process.env.DASHBOARD_API_KEY = "dashboard-only-key";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+
+    const rejected = await GET(requestFor("/api/coverage"), contextFor(["coverage"]));
+    expect(rejected.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const accepted = await GET(
+      requestWithKey("/api/coverage", "dashboard-only-key"),
+      contextFor(["coverage"]),
+    );
+    expect(accepted.status).toBe(200);
+  });
+});
+
+describe("proxy with no key configured stays open, matching the dashboard", () => {
+  // services/dashboard/app.py:206 installs APIKeyMiddleware only under
+  // `require_auth and api_key`. With no key configured the dashboard enforces
+  // nothing and this proxy attaches nothing, so enforcing here would break the
+  // keyless dev setup without protecting anything.
+  let savedBuilderKey: string | undefined;
+  let savedDashboardKey: string | undefined;
+
+  beforeEach(() => {
+    savedBuilderKey = process.env.KIS_BUILDER_API_KEY;
+    savedDashboardKey = process.env.DASHBOARD_API_KEY;
+    delete process.env.KIS_BUILDER_API_KEY;
+    delete process.env.DASHBOARD_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedBuilderKey === undefined) delete process.env.KIS_BUILDER_API_KEY;
+    else process.env.KIS_BUILDER_API_KEY = savedBuilderKey;
+    if (savedDashboardKey === undefined) delete process.env.DASHBOARD_API_KEY;
+    else process.env.DASHBOARD_API_KEY = savedDashboardKey;
+    vi.restoreAllMocks();
+  });
+
+  it("forwards an unauthenticated call and lends no key", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+
+    const response = await GET(requestFor("/api/coverage"), contextFor(["coverage"]));
+
+    expect(response.status).toBe(200);
+    const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
+    expect(forwarded.has("X-API-Key")).toBe(false);
   });
 });
