@@ -26,15 +26,21 @@
 #                            by rewriting them to /api/kis-builder/<path> on
 #                            dashboard. Keeps the upstream UI working without
 #                            us editing every call site.
-#                          ← five STS roots are NOT listed below and therefore
-#                            reach dashboard only through that same Next proxy:
-#                            /api/coverage, /api/event-context, /api/market-risk,
-#                            /api/portfolio, /api/reports. That is deliberate —
-#                            the proxy holds their degraded empty-state
-#                            fallbacks. The proxy attaches the server key, so it
-#                            authenticates the caller itself before forwarding
-#                            (#861 review note f); do not move these here
-#                            without also moving the fallbacks.
+#                          ← an /api root that is in the proxy's `directRoots`
+#                            (route.ts) and NOT matched below reaches dashboard
+#                            only through that proxy. Read the two lists to see
+#                            which roots those are today; do not keep a copy of
+#                            the answer here, because the lists drift.
+#                            The proxy attaches the server key to what it
+#                            forwards, so it authenticates the caller itself
+#                            first (#861 review note f).
+#                            Two of those roots also have a degraded
+#                            empty-state fallback that lives only in the proxy
+#                            (`degradedResponse`): bare /api/coverage and
+#                            /api/event-context/diagnostics. Moving either one
+#                            here turns a dashboard outage into a 502 unless the
+#                            fallback moves too. The rest have no fallback and
+#                            already answer 503 when dashboard is down.
 #
 # HTTP-only on container :5080; Docker maps DASHBOARD_HOST_PORT to this port.
 

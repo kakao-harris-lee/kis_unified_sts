@@ -25,6 +25,30 @@ function contextFor(path: string[]) {
   return { params: { path } };
 }
 
+// The proxy reads KIS_BUILDER_API_KEY / DASHBOARD_API_KEY per request, so a key
+// in the developer's or CI runner's shell would make the unauthenticated cases
+// below 401 and read as a regression. Clear both for every test in this file and
+// put the ambient values back afterwards; the describes that need a key set one
+// explicitly on top of this clean slate.
+const AUTH_ENV_VARS = ["KIS_BUILDER_API_KEY", "DASHBOARD_API_KEY"] as const;
+const ambientAuthEnv = new Map<string, string | undefined>();
+
+beforeEach(() => {
+  for (const name of AUTH_ENV_VARS) {
+    ambientAuthEnv.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+
+afterEach(() => {
+  for (const name of AUTH_ENV_VARS) {
+    const saved = ambientAuthEnv.get(name);
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  }
+  ambientAuthEnv.clear();
+});
+
 describe("strategy-builder-ui API catch-all proxy", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -492,21 +516,14 @@ const COMPAT_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
 
 describe("proxy authenticates callers before lending the dashboard key", () => {
   const SERVER_KEY = "proxy-server-key";
-  let savedBuilderKey: string | undefined;
-  let savedDashboardKey: string | undefined;
 
+  // The file-level hook already cleared both vars; this only adds the one key
+  // these tests authenticate against.
   beforeEach(() => {
-    savedBuilderKey = process.env.KIS_BUILDER_API_KEY;
-    savedDashboardKey = process.env.DASHBOARD_API_KEY;
     process.env.KIS_BUILDER_API_KEY = SERVER_KEY;
-    delete process.env.DASHBOARD_API_KEY;
   });
 
   afterEach(() => {
-    if (savedBuilderKey === undefined) delete process.env.KIS_BUILDER_API_KEY;
-    else process.env.KIS_BUILDER_API_KEY = savedBuilderKey;
-    if (savedDashboardKey === undefined) delete process.env.DASHBOARD_API_KEY;
-    else process.env.DASHBOARD_API_KEY = savedDashboardKey;
     vi.restoreAllMocks();
   });
 
@@ -681,21 +698,9 @@ describe("proxy with no key configured stays open, matching the dashboard", () =
   // `require_auth and api_key`. With no key configured the dashboard enforces
   // nothing and this proxy attaches nothing, so enforcing here would break the
   // keyless dev setup without protecting anything.
-  let savedBuilderKey: string | undefined;
-  let savedDashboardKey: string | undefined;
-
-  beforeEach(() => {
-    savedBuilderKey = process.env.KIS_BUILDER_API_KEY;
-    savedDashboardKey = process.env.DASHBOARD_API_KEY;
-    delete process.env.KIS_BUILDER_API_KEY;
-    delete process.env.DASHBOARD_API_KEY;
-  });
-
+  // No per-describe setup: the file-level hook already leaves both vars unset,
+  // which is exactly the condition under test.
   afterEach(() => {
-    if (savedBuilderKey === undefined) delete process.env.KIS_BUILDER_API_KEY;
-    else process.env.KIS_BUILDER_API_KEY = savedBuilderKey;
-    if (savedDashboardKey === undefined) delete process.env.DASHBOARD_API_KEY;
-    else process.env.DASHBOARD_API_KEY = savedDashboardKey;
     vi.restoreAllMocks();
   });
 
