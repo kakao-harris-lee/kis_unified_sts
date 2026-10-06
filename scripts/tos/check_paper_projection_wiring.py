@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -20,9 +21,12 @@ from unittest.mock import patch
 class CheckFailed(Exception):
     """A wiring check did not hold.
 
-    A real exception, never ``assert``: this script is a gate, and ``python -O``
+    A real exception, not ``assert``: this script is a gate, and ``python -O``
     strips every ``assert`` in it — the old bare asserts made the whole gate
-    report PASS unconditionally under that flag.
+    report PASS unconditionally under that flag. The one remaining ``assert``
+    narrows ``spec``/``spec.loader`` for type checkers immediately after
+    :func:`require` has already decided the same condition, so stripping it
+    changes no verdict.
     """
 
 
@@ -36,6 +40,15 @@ _BLOCK_START = "# Test/override sessions"
 # everything past it is the operational wrapper (it starts the runtime), and
 # this script feeds the extracted text to `bash -eu -c`.
 _BLOCK_END = "GENESIS=no"
+# The wrapper's own abort() exits with this code. Pinned, not read from the
+# wrapper: a silent change to the abort contract is itself a finding.
+_WRAPPER_ABORT_EXIT = 2
+# `--norc --noprofile`: this host's /etc/bash.bashrc runs even for a
+# non-interactive `bash -c` and trips over `set -u` (`PS1: unbound
+# variable`). A wiring gate must not depend on, or be polluted by, the
+# host's shell startup files.
+_BASH = ("bash", "--norc", "--noprofile")
+_PRINT_PATH = '\nprintf "%s" "$PROJECTION_PATH"'
 
 
 def _path_selection_block(shell: str) -> str:
@@ -67,18 +80,53 @@ def _path_selection_block(shell: str) -> str:
     return block
 
 
-# `abort` is defined by the wrapper itself; the extracted slice does not carry
-# that definition, so the harness supplies a stub. Without it the guard's own
-# `case` arm would die with "abort: command not found" (exit 127) and the
-# check could not tell a working guard from a broken one.
-_ABORT_STUB = 'abort() { printf "ABORT: %s\n" "$*" >&2; exit 9; }\n'
+# `abort` is defined by the wrapper above the extracted slice. The harness
+# takes the wrapper's REAL definition rather than substituting one: a stub
+# would hide a wrapper that has no `abort` at all (the wrapper runs under
+# `set -u` only, so a missing `abort` makes the guard's `case` arm stop
+# nothing), and its exit code would be the harness's invention instead of the
+# wrapper's contract.
+_ABORT_DEFINITION = re.compile(r"^abort\(\)\s*\{.*?\}\s*$", re.DOTALL | re.MULTILINE)
+
+# Only the wrapper's logging/notification helpers are substituted, never the
+# guard or `abort` itself. `notify`'s argument is expanded before the call, so
+# the variables the real `abort` interpolates must exist under `set -u`; a
+# future `abort` that reaches for some other variable fails loudly here
+# (unbound variable, exit 1) instead of silently.
+_ABORT_CONTEXT = {"TAG": "[test] ", "TODAY": "2026-10-06", "LOG": "/dev/null"}
+_HELPER_STUBS = "log() { printf '%s\\n' \"$*\" >&2; }\nnotify() { :; }\n"
+
+
+def _wrapper_abort(shell: str) -> str:
+    """The wrapper's own ``abort()`` definition, or a loud failure."""
+    match = _ABORT_DEFINITION.search(shell)
+    require(
+        match is not None,
+        "tos-paper-session.sh defines no abort() — the absolute-path guard "
+        "calls it, and under the wrapper's `set -u` (no `-e`) a missing "
+        "abort would let a relative projection path through",
+    )
+    assert match is not None  # narrowing for type checkers; require decided it
+    definition = match.group(0)
+    require(
+        "exit " in definition,
+        f"abort() does not exit: {definition!r}",
+    )
+    return definition + "\n"
 
 
 def check(source: Path) -> None:
     shell = (source / "tos-paper-session.sh").read_text()
-    subprocess.run(["bash", "-n", str(source / "tos-paper-session.sh")], check=True)
+    subprocess.run([*_BASH, "-n", str(source / "tos-paper-session.sh")], check=True)
     # Execute only the path-selection block, never the operational wrapper.
     block = _path_selection_block(shell)
+    require(
+        re.search(r"\babort\b", block) is not None,
+        "the extracted path-selection block never calls abort — the "
+        "absolute-path guard is gone or moved outside the slice",
+    )
+    preamble = _HELPER_STUBS + _wrapper_abort(shell)
+    subprocess.run([*_BASH, "-n", "-c", preamble + block], check=True)
     for override in (
         {},
         {"SELFTEST": "1"},
@@ -96,12 +144,7 @@ def check(source: Path) -> None:
             **override,
         }
         result = subprocess.check_output(
-            [
-                "bash",
-                "-eu",
-                "-c",
-                _ABORT_STUB + block + '\nprintf "%s" "$PROJECTION_PATH"',
-            ],
+            [*_BASH, "-eu", "-c", preamble + block + _PRINT_PATH],
             env=env,
             text=True,
         )
@@ -114,30 +157,29 @@ def check(source: Path) -> None:
 
     # The absolute-path guard: none of the seven cases above reaches it (each
     # ends on an absolute path), so it gets its own case. A relative
-    # PROJECTION_PATH with no override left to rewrite it must abort.
+    # PROJECTION_PATH with no override left to rewrite it must abort, through
+    # the wrapper's OWN abort — exit code and message are the wrapper's.
     relative = subprocess.run(
-        [
-            "bash",
-            "-eu",
-            "-c",
-            _ABORT_STUB + block + '\nprintf "%s" "$PROJECTION_PATH"',
-        ],
+        [*_BASH, "-eu", "-c", preamble + block + _PRINT_PATH],
         env={
             "PATH": os.defpath,
             "SELFTEST": "0",
             "SESSION_DIR": "/scratch session",
             "PROJECTION_PATH": "relative/operator_projection.json",
+            **_ABORT_CONTEXT,
         },
         capture_output=True,
         text=True,
     )
     require(
-        relative.returncode == 9,
-        f"relative projection path was accepted (exit {relative.returncode}, "
-        f"stdout {relative.stdout!r})",
+        relative.returncode == _WRAPPER_ABORT_EXIT,
+        f"relative projection path did not reach the wrapper's abort "
+        f"(exit {relative.returncode}, expected {_WRAPPER_ABORT_EXIT}, "
+        f"stdout {relative.stdout!r}, stderr {relative.stderr!r})",
     )
     require(
-        "projection path must be absolute" in relative.stderr,
+        "ABORT" in relative.stderr
+        and "projection path must be absolute" in relative.stderr,
         f"abort guard did not run: stderr {relative.stderr!r}",
     )
 
@@ -211,8 +253,8 @@ def check(source: Path) -> None:
                 else:
                     raise CheckFailed("driver never reached the captured launch")
     print(
-        "PASS: 7 wrapper path cases + relative-path abort; "
-        "driver argv with/without projection; no runtime launched"
+        "PASS: 7 wrapper path cases + relative-path abort through the wrapper's "
+        "own abort(); driver argv with/without projection; no runtime launched"
     )
 
 
