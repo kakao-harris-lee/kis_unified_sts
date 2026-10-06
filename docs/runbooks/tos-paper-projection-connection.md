@@ -33,7 +33,12 @@ python scripts/tos/check_paper_projection_wiring.py /path/to/staged/scripts
 ```
 
 검증은 path selection과 자식 CLI 인자만 확인한다. subprocess와 renderer는
-대체되며 broker/runtime/알림은 실행하지 않는다. 운영 설치는 정지 상태와 preimage를
+대체되며 broker/runtime/알림은 실행하지 않는다. 추출 범위는 두 센티널
+(`# Test/override sessions` · `GENESIS=no`)이 각각 정확히 한 번 나올 때만
+성립하며, 하나라도 사라지면 스크립트는 운영 wrapper 전체를 실행하는 대신
+`FAIL`로 멈춘다. 절대경로 가드는 상대 경로 사례 하나로 직접 밟아 확인한다
+(`abort`는 harness가 stub으로 주입한다). 모든 판정은 예외로 올리므로
+`python -O`에서도 무력화되지 않는다. 운영 설치는 정지 상태와 preimage를
 다시 확인한 뒤 mode 0700으로 두 파일을 교체한다.
 
 일반 실행은 기존 CLI `--projection-path`를 사용한다. selftest 또는 data-dir,

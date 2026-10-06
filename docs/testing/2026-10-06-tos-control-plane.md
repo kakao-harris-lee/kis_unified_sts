@@ -22,9 +22,21 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
   15초 poll, 60초 stale, 1초 경과 갱신. runtime monotonic time과 브라우저 시계는 비교하지 않음.
   API 파일 age에 브라우저 monotonic 경과를 더해 요청이 멈춰도 캐시가 늙는다.
 - dashboard DTO는 producer의 whole-group null 및 unknown alert 목록을 보존한다.
-- 두 중립 JSON fixture를 producer·API·UI가 대조. Python 역방향 import 없음.
+- 두 중립 JSON fixture(`tests/fixtures/tos/operator-projection-v1*.json`)를
+  dashboard 테스트·UI 테스트·runtime 테스트가 모두 읽는다. 다만 runtime 쪽
+  `test_shared_product_contract_fixture`는 fixture의 그룹을 projection의 reader로
+  갈아끼워 **assembler pass-through만** 증명한다 — 실제 `_operations_wiring`
+  reader는 거치지 않으므로 producer의 키 집합을 검증하지 않는다.
+  producer 키 집합은 별도로 `tests/unit/dashboard/test_tos_projection.py::
+  test_protective_last_verdict_matches_the_producer_key_set`가 producer **소스**를
+  `ast`로 읽어 DTO 필드와 대조한다(import 없음). Python 역방향 import 없음.
 - Next proxy는 정확히 `GET /api/tos/projection`만 추가. 다른 TOS 경로와 쓰기 요청은 거부.
 - Compose는 기존 경로를 기본으로 유지하며 projection 디렉터리와 읽기 경로를 env로 선택 가능.
+  두 변수(`TOS_OPERATOR_PROJECTION_DIR` 호스트 디렉터리 · `TOS_OPERATOR_PROJECTION_PATH`
+  컨테이너 파일)는 한 쌍이며 `.env*.example` 넷과 compose 주석에 기록했다.
+- 응답 본문은 projection 파일 경로를 싣지 않는다(서버 로그 DEBUG 로만 남는다).
+- 파일을 **열지 못한 경우**(권한·uid·디렉터리)는 `cannot read projection: <예외>`로
+  형식 오류와 구분해 보고하고 화면도 별도 상태로 표시한다.
 
 ## 운영 연결 조건
 
