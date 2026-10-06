@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
 
+import { getOnlyRoots, targetPathFor } from "../proxyRouting";
+
 const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5081";
 
 // Auth invariant (#861 review note f): this proxy attaches the server-side
@@ -30,55 +32,6 @@ function apiKeyMatches(presented: string | null, expected: string): boolean {
     createHash("sha256").update(expected).digest(),
   );
 }
-
-const compatRoots = new Set([
-  "auth",
-  "account",
-  "orders",
-  "market",
-  "files",
-  "symbols",
-  "experiments",
-]);
-const directRoots = new Set([
-  "coverage",
-  "event-context",
-  "health",
-  "kis-builder",
-  "market-risk",
-  "portfolio",
-  "reports",
-  "signals",
-  "strategies",
-  "strategy-builder",
-  "strategy-lab",
-  "tos",
-  "trades",
-  "trading",
-]);
-
-// Direct roots whose surface is an exact allowlist rather than a whole subtree.
-// Anything else under the root is refused here instead of being forwarded, so
-// adding a route to the dashboard never silently widens this proxy.
-//
-// `tos` used to be a dedicated early return in targetPathFor(), outside both
-// routing sets — which meant isDirectPath() answered `false` for a path
-// targetPathFor() was in fact sending to the direct `/api/<path>` form
-// (#861 review note c). Latent, because targetPathFor() short-circuited before
-// consulting isDirectPath(); the hazard was the next edit that trusted
-// isDirectPath() and rewrote /api/tos/projection to /api/kis-builder/....
-const exactPathRoots = new Map<string, ReadonlySet<string>>([
-  ["tos", new Set(["tos/projection"])],
-]);
-
-// Roots this proxy forwards only as GET. The dashboard's TOS surface is
-// read-only: services/dashboard/routes/tos_projection.py declares
-// `@router.get("/projection")` and nothing else, and FastAPI's APIRoute — unlike
-// Starlette's Route — does not add HEAD to a GET route, so the dashboard itself
-// answers 405 to HEAD and to every mutating method there. Refusing them here
-// keeps the proxy's answer identical to the dashboard's instead of relaying a
-// round trip that is guaranteed to fail.
-const getOnlyRoots = new Set(["tos"]);
 
 export const dynamic = "force-dynamic";
 
@@ -486,34 +439,6 @@ function degradedResponse(path: string[], targetPath: string, request: NextReque
   return null;
 }
 
-function isDirectPath(path: string[]): boolean {
-  const root = path[0];
-  if (!root) return false;
-  if (root === "strategies") return path.length === 1;
-  return directRoots.has(root);
-}
-
-function targetPathFor(path: string[]): string | null {
-  const root = path[0];
-  if (root === "strategies" && path.length > 1) {
-    return `/api/kis-builder/${path.join("/")}`;
-  }
-  const isDirectRoot = isDirectPath(path);
-  if (!root || (!compatRoots.has(root) && !isDirectRoot)) {
-    return null;
-  }
-  // Exact-allowlist roots: compare the whole joined path, so a trailing empty
-  // segment, a deeper path, or a differently cased segment all fall through to
-  // null rather than reaching the dashboard.
-  const allowedPaths = exactPathRoots.get(root);
-  if (allowedPaths && !allowedPaths.has(path.join("/"))) {
-    return null;
-  }
-  return isDirectRoot
-    ? `/api/${path.join("/")}`
-    : `/api/kis-builder/${path.join("/")}`;
-}
-
 function pathForFallback(targetPath: string): string[] {
   return targetPath.replace(/^\/api\/?/, "").split("/").filter(Boolean);
 }
@@ -535,7 +460,10 @@ async function proxyBuilderApi(request: NextRequest, context: RouteContext): Pro
   }
 
   // Checked after path resolution, so an unknown path under a GET-only root is
-  // still a 404 (unsupported) rather than a 405 (wrong method).
+  // still a 404 (unsupported) rather than a 405 (wrong method). OPTIONS never
+  // gets here: Next answers it itself with 204 and an Allow header listing every
+  // method, so a read-only root still advertises mutating ones on the dev server
+  // — upstream behaviour, identical on main, outside this guard (#861 note a).
   if (getOnlyRoots.has(path[0]) && request.method !== "GET") {
     return Response.json({ detail: "Read-only TOS endpoint" }, { status: 405, headers: { Allow: "GET" } });
   }

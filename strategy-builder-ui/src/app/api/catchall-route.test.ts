@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { DELETE, GET, POST, PUT } from "./[...path]/route";
 import type { NextRequest } from "next/server";
+import { exactPathRoots } from "./proxyRouting";
 
 function requestFor(path: string): NextRequest {
   const url = `http://localhost:3100${path}`;
@@ -459,8 +460,8 @@ describe("TOS projection proxy boundary", () => {
     [["tos"], "/api/tos"],
     [["tos", "projection", ""], "/api/tos/projection/"],
   ])("refuses %s instead of treating it as the projection", async (path, url) => {
-    // Exercises the `path.length === 2 && path[1] === "projection"` arm: with the
-    // length check removed, the first case proxies as the projection.
+    // Exercises the exactPathRoots allowlist in proxyRouting.ts: with that lookup
+    // removed, all three of these proxy through as if they were the projection.
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const response = await GET(requestFor(url), contextFor(path));
     expect(response.status).toBe(404);
@@ -850,5 +851,65 @@ describe("TOS HEAD policy", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
+  });
+});
+
+
+describe("the exact-path allowlist applies to every root, not only to tos", () => {
+  afterEach(() => {
+    exactPathRoots.delete("strategies");
+    vi.restoreAllMocks();
+  });
+
+  // #868 review finding 1: `strategies` has its own early return in
+  // targetPathFor(), and with the allowlist lookup placed after it a
+  // `strategies` entry was silently ignored — the same root-specific
+  // short-circuit this PR removed from `tos`. The lookup now runs first.
+  it("refuses a strategies path outside its allowlist entry", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+    exactPathRoots.set("strategies", new Set(["strategies/custom"]));
+
+    const response = await GET(
+      requestFor("/api/strategies/anything"),
+      contextFor(["strategies", "anything"]),
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still routes the allowlisted strategies path through its own early return", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+    exactPathRoots.set("strategies", new Set(["strategies/custom"]));
+
+    const response = await GET(
+      requestFor("/api/strategies/custom"),
+      contextFor(["strategies", "custom"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/kis-builder/strategies/custom",
+    );
+  });
+
+  it("leaves strategies alone while it has no allowlist entry", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+
+    const response = await GET(
+      requestFor("/api/strategies/anything"),
+      contextFor(["strategies", "anything"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/kis-builder/strategies/anything",
+    );
   });
 });
