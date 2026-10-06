@@ -1086,7 +1086,9 @@ def test_every_dto_leaf_name_appears_in_the_ts_contract():
     ``tos.ts`` says the Python DTO is its wire contract. The round-1 test
     backed that with four hand-listed leaves out of the DTO's full set; this
     walks the DTO instead, so a leaf added on the Python side and forgotten
-    in TS fails here — in CI, which the TS suite is not (no node job).
+    in TS fails here. It stays on the Python side because a PR that adds a
+    leaf may touch no file under ``strategy-builder-ui/`` and so would not
+    run the path-gated ``ui`` job (.github/workflows/ui.yml).
     """
     declared = _ts_declared_identifiers(_TS_CONTRACT.read_text(encoding="utf-8"))
     leaves = _dto_leaf_names(tos_projection.TosOperatorProjection)
