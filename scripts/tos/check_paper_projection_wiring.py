@@ -56,6 +56,14 @@ _PRINT_PATH = '\nprintf "%s" "$PROJECTION_PATH"'
 _DEFAULT_ASSIGNMENT = re.compile(
     r"^PROJECTION_PATH=\$\{TOS_PAPER_PROJECTION_PATH:-[^}\n]+\}$", re.MULTILINE
 )
+# Every assignment to PROJECTION_PATH in any syntax. The wrapper is allowed
+# exactly two: this default, above the selection block, and the session-local
+# override inside it. A third (or a second shape of the first) would mean the
+# reassembled fragments below no longer model what the wrapper runs.
+_ANY_PROJECTION_ASSIGNMENT = re.compile(r"^[ \t]*PROJECTION_PATH=", re.MULTILINE)
+# The wrapper's per-session tree root, used to tell "published" from
+# "session-local" by the wrapper's own value rather than an injected one.
+_SESSIONS_ROOT = re.compile(r"^SESSIONS=(\S+)$", re.MULTILINE)
 _PUBLISHED_BASENAME = "operator_projection.json"
 
 
@@ -105,16 +113,56 @@ _ABORT_CONTEXT = {"TAG": "[test] ", "TODAY": "2026-10-06", "LOG": "/dev/null"}
 _HELPER_STUBS = "log() { printf '%s\\n' \"$*\" >&2; }\nnotify() { :; }\n"
 
 
-def _default_assignment(shell: str) -> str:
-    """The wrapper's own ``PROJECTION_PATH=...`` default, or a loud failure."""
-    matches = _DEFAULT_ASSIGNMENT.findall(shell)
+def _default_assignment(shell: str, block: str) -> str:
+    """The wrapper's own ``PROJECTION_PATH=...`` default, or a loud failure.
+
+    This gate reassembles two fragments (this line plus the selection block)
+    rather than running the wrapper's real prelude, so what makes that
+    reassembly faithful has to be asserted, not assumed:
+
+    * the default is **above** the selection block. Below it, the real
+      wrapper would either die on an unbound variable or let a test session
+      overwrite the published snapshot, and a reassembly would not notice.
+    * no other line outside the block assigns ``PROJECTION_PATH`` in any
+      syntax. Matching only the documented ``${VAR:-default}`` shape let a
+      bare ``PROJECTION_PATH=/tmp/wrong.json`` sit beside it unseen.
+    * the one line outside the block is that documented shape.
+    """
+    block_start = shell.index(_BLOCK_START)
+    block_end = block_start + len(block)
+    outside = [
+        match
+        for match in _ANY_PROJECTION_ASSIGNMENT.finditer(shell)
+        if not block_start <= match.start() < block_end
+    ]
+    lines = [shell.count("\n", 0, match.start()) + 1 for match in outside]
     require(
-        len(matches) == 1,
-        f"expected exactly one PROJECTION_PATH default assignment in "
-        f"tos-paper-session.sh, found {len(matches)} — the published snapshot's "
-        f"default is what a session with no overrides writes to",
+        len(outside) == 1,
+        f"expected exactly one PROJECTION_PATH assignment outside the selection "
+        f"block, found {len(outside)} at lines {lines} — the published "
+        f"snapshot's default must be the only one",
     )
-    return matches[0] + "\n"
+    match = _DEFAULT_ASSIGNMENT.search(shell)
+    require(
+        match is not None,
+        "no PROJECTION_PATH=${TOS_PAPER_PROJECTION_PATH:-...} default found in "
+        "tos-paper-session.sh — the published snapshot's default is what a "
+        "session with no overrides writes to",
+    )
+    assert match is not None  # narrowing for type checkers; require decided it
+    require(
+        match.start() == outside[0].start(),
+        f"the PROJECTION_PATH assignment outside the block is not the "
+        f"documented ${{TOS_PAPER_PROJECTION_PATH:-...}} form: "
+        f"{shell[outside[0].start():].splitlines()[0]!r}",
+    )
+    require(
+        match.start() < block_start,
+        f"the PROJECTION_PATH default is at offset {match.start()}, at or after "
+        f"the selection block at {block_start} — a default below the block is "
+        f"not what the wrapper runs, and this gate reassembles the two",
+    )
+    return match.group(0) + "\n"
 
 
 def _check_default_published_path(shell: str, block: str, preamble: str) -> str:
@@ -127,7 +175,19 @@ def _check_default_published_path(shell: str, block: str, preamble: str) -> str:
     coordinate belongs to the runbook, and the gate's job is that the default
     is a usable published path and that the documented override still wins.
     """
-    assignment = _default_assignment(shell)
+    assignment = _default_assignment(shell, block)
+    sessions_root = _SESSIONS_ROOT.search(shell)
+    require(
+        sessions_root is not None,
+        "no SESSIONS=<path> assignment found in tos-paper-session.sh — without "
+        "the wrapper's own session root this check cannot tell a published "
+        "default from a session-local one",
+    )
+    assert sessions_root is not None  # narrowing; require decided it
+    require(
+        "$SESSION_DIR" not in assignment and "${SESSION_DIR" not in assignment,
+        f"the PROJECTION_PATH default interpolates SESSION_DIR: {assignment!r}",
+    )
     base_env = {"PATH": os.defpath, "SELFTEST": "0", "SESSION_DIR": "/scratch session"}
     script = preamble + assignment + block + _PRINT_PATH
     # `run`, not `check_output`: a non-absolute default makes the wrapper's own
@@ -160,11 +220,18 @@ def _check_default_published_path(shell: str, block: str, preamble: str) -> str:
         default.endswith("/" + _PUBLISHED_BASENAME),
         f"the wrapper's default does not end in {_PUBLISHED_BASENAME!r}: {default!r}",
     )
-    require(
-        not default.startswith(base_env["SESSION_DIR"] + "/"),
-        f"the wrapper's default is session-local: {default!r} — an unattended "
-        "session would never publish the operational snapshot",
-    )
+    # Both roots: the one this harness injected, and — the one that matters —
+    # the wrapper's own SESSIONS tree, so a default pointing at a literal
+    # per-session path is caught too.
+    for label, root in (
+        ("the injected session dir", base_env["SESSION_DIR"]),
+        ("the wrapper's SESSIONS tree", sessions_root.group(1)),
+    ):
+        require(
+            not default.startswith(root.rstrip("/") + "/"),
+            f"the wrapper's default is under {label} ({root}): {default!r} — an "
+            "unattended session would never publish the operational snapshot",
+        )
 
     override = "/scratch/override dir/" + _PUBLISHED_BASENAME
     overridden = subprocess.check_output(
@@ -199,7 +266,13 @@ def _wrapper_abort(shell: str) -> str:
 
 def check(source: Path) -> None:
     shell = (source / "tos-paper-session.sh").read_text()
-    subprocess.run([*_BASH, "-n", str(source / "tos-paper-session.sh")], check=True)
+    # Scrubbed `env=` like every other invocation: a parse check that
+    # inherits the parent's `BASH_ENV` is not hermetic either.
+    subprocess.run(
+        [*_BASH, "-n", str(source / "tos-paper-session.sh")],
+        check=True,
+        env={"PATH": os.defpath},
+    )
     # Execute only the path-selection block, never the operational wrapper.
     block = _path_selection_block(shell)
     require(
@@ -208,7 +281,11 @@ def check(source: Path) -> None:
         "absolute-path guard is gone or moved outside the slice",
     )
     preamble = _HELPER_STUBS + _wrapper_abort(shell)
-    subprocess.run([*_BASH, "-n", "-c", preamble + block], check=True)
+    subprocess.run(
+        [*_BASH, "-n", "-c", preamble + block],
+        check=True,
+        env={"PATH": os.defpath},
+    )
     for override in (
         {},
         {"SELFTEST": "1"},
