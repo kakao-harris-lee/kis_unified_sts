@@ -29,14 +29,31 @@ on:
     paths: &paths
       # The suite itself.
       - 'strategy-builder-ui/**'
-      # Two inputs the suite reads from OUTSIDE strategy-builder-ui/. Re-derive
-      # the list with:
+      # Inputs the suite reads from OUTSIDE strategy-builder-ui/. Re-derive the
+      # list with:
       #   grep -rn 'readFileSync\|process\.cwd()\|\.\./\.\./' strategy-builder-ui/src
-      # - src/test/tosFixture.ts     -> ../tests/fixtures/tos/*.json
-      # - src/lib/builder/catalogSot.test.ts
-      #                              -> ../../../../config/strategy_builder/indicators.yaml
+      #
+      # src/test/tosFixture.ts reads TWO trees, because the two files have
+      # different producers and the fixture lives with whoever produces it:
+      #   - the projection DOCUMENTS (operator-projection-v1*.json) are produced
+      #     by `tos_runtime.operator.projection`, so they are owned by that
+      #     distribution and sit in its own tree,
+      #     tos/runtime/tests/fixtures/ (PR #869, #861 review note e);
+      #   - the REASON-PREFIX vocabulary (projection-reasons.json) is emitted by
+      #     the dashboard API (Control Plane API / BFF), not by tos_runtime, and
+      #     nothing under tos/ reads it, so it stays in tests/fixtures/tos/.
+      # Both locations are listed, so this gate is correct whether #869 lands
+      # before or after this workflow: whichever tree currently holds a fixture,
+      # a change to it runs the UI suite. A path filter that names a directory
+      # which does not exist yet simply never matches; it is not an error.
+      #
+      # src/lib/builder/catalogSot.test.ts reads
+      #   ../../../../config/strategy_builder/indicators.yaml
+      # so a backend indicator-catalog change runs the UI suite too.
+      #
       # Gated at directory level, not file level, so a newly added fixture or
       # catalog file under them is covered without editing this list.
+      - 'tos/runtime/tests/fixtures/**'
       - 'tests/fixtures/**'
       - 'config/strategy_builder/**'
       # This workflow.
