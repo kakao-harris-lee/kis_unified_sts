@@ -89,6 +89,7 @@ jobs:
           cache-dependency-path: strategy-builder-ui/package-lock.json
 
       - name: Install dependencies
+        id: install
         # `npm ci`, NOT the Dockerfile's `npm install --legacy-peer-deps`.
         # Verified on node 20.20.1 / npm 10.8.2 (what node:20-slim ships) against
         # the committed lockfileVersion-3 package-lock.json: exit 0, 559 packages,
@@ -102,11 +103,18 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # `if: !cancelled()` on the remaining steps: this job is ~70s, so one run
-      # should report all four verdicts rather than making a contributor fix lint
-      # to find out whether the tests pass. A failing step still fails the job.
+      # `steps.install.outcome == 'success' && !cancelled()` on the remaining
+      # steps. The `!cancelled()` half: this job is ~70s, so one run should
+      # report all four verdicts rather than making a contributor fix lint to
+      # find out whether the tests pass. A failing step still fails the job.
+      # The install half: without it a failed `npm ci` would still run build,
+      # tsc and vitest against an absent node_modules, turning one real failure
+      # into four misleading ones (and `npx tsc` would try to fetch TypeScript
+      # from the registry). `outcome`, not `conclusion` — the install step has
+      # no continue-on-error, so the two agree, and `outcome` stays correct if
+      # one is ever added.
       - name: Build (next build)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         # Same command the image's build stage runs, so a broken production
         # compile fails CI instead of only the Docker build. It also runs Next's
         # own TypeScript pass and GENERATES `next-env.d.ts` and `.next/types/**`
@@ -116,7 +124,7 @@ jobs:
         run: npm run build
 
       - name: Type-check (tsc --noEmit)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         # Deliberately AFTER the build: tsconfig.json includes `next-env.d.ts`
         # and `.next/types/**/*.ts`, which only exist once `next build` has run.
         # Running tsc first would check a strict SUBSET of what the Docker build
@@ -127,7 +135,7 @@ jobs:
         run: npx tsc --noEmit -p .
 
       - name: Unit tests (vitest)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         # `npm run test` is the project's own entry point (`vitest run`), so CI
         # runs what a contributor runs and follows the script if it changes.
         run: npm run test
