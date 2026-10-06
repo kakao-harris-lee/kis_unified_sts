@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { downloadBlob } from "@/lib/download";
 import { FileDropZone } from "@/components/file";
 import {
   IndicatorSelector,
@@ -266,15 +267,7 @@ export default function BuilderPage() {
     const filename = builder.state.metadata.name
       ? `${builder.state.metadata.name.toLowerCase().replace(/\s+/g, "_")}.kis.yaml`
       : "strategy.kis.yaml";
-    const blob = new Blob([content], { type: "application/x-yaml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(filename, new Blob([content], { type: "application/x-yaml" }));
   }, [builder.toYamlString, builder.state.metadata.name]);
 
   // Python export handler
@@ -283,15 +276,7 @@ export default function BuilderPage() {
     const filename = builder.state.metadata.name
       ? `strategy_${builder.state.metadata.name.toLowerCase().replace(/\s+/g, "_")}.py`
       : "strategy.py";
-    const blob = new Blob([pythonContent], { type: "text/x-python" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(filename, new Blob([pythonContent], { type: "text/x-python" }));
   }, [pythonContent, builder.state.metadata.name]);
 
   // Python preview fetcher

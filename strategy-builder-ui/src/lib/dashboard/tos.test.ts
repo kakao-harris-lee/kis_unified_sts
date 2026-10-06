@@ -96,8 +96,9 @@ describe('producer wire contract', () => {
     // `manifest_digest` were missing from the TS interface while the header
     // claimed the Python DTO as the wire contract. This is those four by name,
     // not a property — full DTO-to-TS leaf parity is checked in
-    // tests/unit/dashboard/test_tos_projection.py, which CI runs (there is no
-    // node job, so a type-level omission here would not fail CI).
+    // tests/unit/dashboard/test_tos_projection.py, which runs on a PR that
+    // touches only Python; the `ui` job (.github/workflows/ui.yml) that runs
+    // this file is path-gated and would not.
     const projection: TosProjection = populated;
     expect(projection.runtime?.process_nonce).toBe('abc123');
     expect(projection.runtime?.code_digest).toBe('sha256:deadbeef');

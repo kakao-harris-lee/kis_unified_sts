@@ -1,0 +1,204 @@
+# Frontend suite (strategy-builder-ui) as a CI check.
+#
+# Why this exists: the repo asserts a Python↔TypeScript wire contract on
+# `tests/fixtures/tos/projection-reasons.json` and on the
+# `services/dashboard/routes/tos_projection.py` DTO, but only the Python half
+# was ever executed by CI. Nothing in `.github/workflows/` ran vitest, eslint or
+# tsc, so the TS half of every such "cannot drift" claim was unenforced: a
+# `tsc` TS2322 in `src/app/tos/page.test.tsx` reached a PR head unnoticed
+# (PR #864, review round 2 item 5) and would have surfaced only in the Docker
+# `next build`. This job runs the TS half.
+#
+# Why a SEPARATE workflow instead of a job in test.yml: a trigger filter is
+# workflow-level, not job-level, so a job added to test.yml would inherit
+# test.yml's filter. That filter is broad by design: close to everything, with
+# tos/ and docs-only changes filtered out. This job needs the opposite, a narrow
+# include set naming only the UI suite and the files it reads, and one workflow
+# carries one filter per event, so the two cannot share a trigger.
+#
+# The exact SHAPE of that filter is deliberately not restated here, only its
+# effect, because the spelling changes: it has been written as `paths-ignore`,
+# and PR #869 converts it to `paths` with `!` negations plus a trailing
+# re-include of one fixture directory (the two forms cannot both filter a single
+# event, and a re-include is only expressible in the negated form). Whichever
+# lands first, read test.yml's own `on:` block for the current spelling instead
+# of trusting a description in this file.
+#
+# No overlap with the existing jobs: test.yml / devcontainer.yml / ruff.yml /
+# tos-*.yml are Python-only. This is the only workflow that installs node.
+#
+# NOT a required check, and it MUST NOT BECOME ONE while it is path-gated.
+# Two things to know before anyone edits the ruleset:
+#
+#   1. The status context is NOT the job id `ui`. GitHub reports the job's
+#      `name:` below, so the context is literally
+#      "UI suite (lint + build + tsc + vitest)". Adding `ui` to a ruleset names
+#      a context that never reports.
+#   2. Even spelled correctly it would block every non-UI PR FOREVER. A
+#      required context that never reports stays "Expected — waiting for status
+#      to be reported", and this workflow deliberately does not run on a PR
+#      outside its `paths`. .github/workflows/ruff.yml exists as its own
+#      ungated workflow for exactly this reason, and says so in its header.
+#      Making this job required needs it to report on every PR first (an
+#      ungated workflow, or a skip job that reports a neutral success), which
+#      is a different change.
+#
+# For the record, the active `tos-gate` ruleset on refs/heads/main requires
+# contexts `tos-gate` and `ruff` only, and its
+# `strict_required_status_checks_policy: true` is a separate setting (it
+# requires the branch to be up to date before merging); it is not what would
+# cause the block above. Editing the ruleset is an operator decision.
+name: UI suite
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      # The suite itself.
+      - 'strategy-builder-ui/**'
+      # Inputs the suite reads from OUTSIDE strategy-builder-ui/. Re-derive the
+      # list with:
+      #   grep -rn 'readFileSync\|process\.cwd()\|\.\./\.\./' strategy-builder-ui/src
+      #
+      # src/test/tosFixture.ts reads TWO trees, because the two files have
+      # different producers and the fixture lives with whoever produces it:
+      #   - the projection DOCUMENTS (operator-projection-v1*.json) are produced
+      #     by `tos_runtime.operator.projection`, so they are owned by that
+      #     distribution and sit in its own tree,
+      #     tos/runtime/tests/fixtures/ (PR #869, #861 review note e);
+      #   - the REASON-PREFIX vocabulary (projection-reasons.json) is emitted by
+      #     the dashboard API (Control Plane API / BFF), not by tos_runtime, and
+      #     nothing under tos/ reads it, so it stays in tests/fixtures/tos/.
+      # Both locations are listed, so this gate is correct whether #869 lands
+      # before or after this workflow: whichever tree currently holds a fixture,
+      # a change to it runs the UI suite. A path filter that names a directory
+      # which does not exist yet simply never matches; it is not an error.
+      #
+      # src/lib/builder/catalogSot.test.ts reads
+      #   ../../../../config/strategy_builder/indicators.yaml
+      # so a backend indicator-catalog change runs the UI suite too.
+      #
+      # Gated at directory level, not file level, so a newly added fixture or
+      # catalog file under them is covered without editing this list.
+      - 'tos/runtime/tests/fixtures/**'
+      - 'tests/fixtures/**'
+      - 'config/strategy_builder/**'
+      # This workflow.
+      - '.github/workflows/ui.yml'
+  pull_request:
+    branches: [main]
+    paths: *paths
+
+# Path gating means a PR that changes ONLY the Python emitter does not run this
+# job. That direction is covered by the Python side:
+# tests/unit/dashboard/test_tos_projection.py walks the DTO and asserts every
+# leaf is declared in src/lib/dashboard/tos.ts, and it runs in test.yml.
+#
+# No weekly schedule backstop here, unlike devcontainer.yml. That workflow needed
+# one because its jobs run `tests/unit`, which its gate does not watch (#835 sat
+# red for two weeks). This gate, by contrast, covers every input this suite
+# reads.
+#
+# Be precise about what is pinned: ONLY the dependency tree. `npm ci` installs
+# from the committed lockfile, so npm packages cannot move between runs. The
+# TOOLCHAIN does float — `node-version: '20'` resolves to whatever 20.x the
+# runner currently has, `ubuntu-latest` is re-imaged, and `actions/*@v4` moves
+# within v4 (this head's run is already annotated "Node.js 20 is deprecated …
+# actions/checkout@v4, actions/setup-node@v4 … forced to run on Node.js 24",
+# which is the actions' own runtime, not the node these steps use). So a
+# toolchain-side break is possible between runs; it just surfaces on the next
+# gated PR instead of a week later, and this job is not a required check, so a
+# weekly red here would notify nobody anyway. That is the reason for no
+# schedule, not an absence of moving parts.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    name: UI suite (lint + build + tsc + vitest)
+    runs-on: ubuntu-latest
+    # Backstop only. Measured on node 20 in a node:20-slim container, fresh
+    # install: npm ci 25s, lint 11s, build 16s, tsc 9s, vitest 9s (~70s total).
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: strategy-builder-ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Chosen to match Dockerfile.strategy_builder_ui (`FROM node:20-slim`).
+          # Next 16.1.6 requires >= 20.9; node:20-slim is 20.20.
+          #
+          # What a green run does and does not prove. It proves the suite passes
+          # on the same MAJOR engine line the image uses, nothing stricter: both
+          # sides float inside 20.x and have already differed (CI resolved
+          # 20.20.2 while the image's node:20-slim was 20.20.1). And the
+          # Dockerfile is OUTSIDE this workflow's `paths`, so if its base image
+          # is bumped to 22 this job does not run and this `'20'` silently stops
+          # matching it. Treat the pair as a convention to re-check when the
+          # image moves, not as an enforced invariant.
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: strategy-builder-ui/package-lock.json
+
+      - name: Install dependencies
+        id: install
+        # `npm ci`, NOT the Dockerfile's `npm install --legacy-peer-deps`.
+        # Verified on node 20.20.1 / npm 10.8.2 (what node:20-slim ships) against
+        # the committed lockfileVersion-3 package-lock.json: exit 0, 559 packages,
+        # no peer-dep conflict. The Dockerfile's flag predates that lockfile
+        # refresh and is left alone here (changing the image is out of scope).
+        # `npm ci` is the stronger choice for CI on purpose: it fails if
+        # package.json and package-lock.json have drifted, which `npm install`
+        # silently repairs.
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # `steps.install.outcome == 'success' && !cancelled()` on the remaining
+      # steps. The `!cancelled()` half: this job is ~70s, so one run should
+      # report all four verdicts rather than making a contributor fix lint to
+      # find out whether the tests pass. A failing step still fails the job.
+      # The install half: without it a failed `npm ci` would still run build,
+      # tsc and vitest against an absent node_modules, turning one real failure
+      # into four misleading ones (and `npx tsc` would try to fetch TypeScript
+      # from the registry). `outcome`, not `conclusion` — the install step has
+      # no continue-on-error, so the two agree, and `outcome` stays correct if
+      # one is ever added.
+      - name: Build (next build)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # Same command the image's build stage runs, so a broken production
+        # compile fails CI instead of only the Docker build. It also runs Next's
+        # own TypeScript pass and GENERATES `next-env.d.ts` and `.next/types/**`
+        # — both gitignored, so both absent from a fresh checkout.
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build
+
+      - name: Type-check (tsc --noEmit)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # Deliberately AFTER the build: tsconfig.json includes `next-env.d.ts`
+        # and `.next/types/**/*.ts`, which only exist once `next build` has run.
+        # Running tsc first would check a strict SUBSET of what the Docker build
+        # checks; running it here makes it a superset. Kept as its own step even
+        # though `next build` type-checks, because it is a direct verdict with
+        # clean output and it survives anyone setting
+        # `typescript.ignoreBuildErrors` in next.config.ts.
+        run: npx tsc --noEmit -p .
+
+      - name: Unit tests (vitest)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # `npm run test` is the project's own entry point (`vitest run`), so CI
+        # runs what a contributor runs and follows the script if it changes.
+        run: npm run test

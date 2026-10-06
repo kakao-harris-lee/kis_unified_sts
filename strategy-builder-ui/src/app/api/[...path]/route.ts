@@ -1,31 +1,37 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
 
+import { getOnlyRoots, targetPathFor } from "../proxyRouting";
+
 const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5081";
-const apiKey = process.env.KIS_BUILDER_API_KEY || process.env.DASHBOARD_API_KEY || "";
-const compatRoots = new Set([
-  "auth",
-  "account",
-  "orders",
-  "market",
-  "files",
-  "symbols",
-  "experiments",
-]);
-const directRoots = new Set([
-  "coverage",
-  "event-context",
-  "health",
-  "kis-builder",
-  "market-risk",
-  "portfolio",
-  "reports",
-  "signals",
-  "strategies",
-  "strategy-builder",
-  "strategy-lab",
-  "trades",
-  "trading",
-]);
+
+// Auth invariant (#861 review note f): this proxy attaches the server-side
+// dashboard key to every upstream call, so it must not forward a request it has
+// not itself authenticated — otherwise it is a credential-lending bypass of the
+// dashboard's own APIKeyMiddleware (services/dashboard/middleware/auth.py).
+// Caddy sends most /api roots straight to dashboard:8001, but coverage,
+// event-context, market-risk, portfolio and reports reach the dashboard only
+// through here, so without this guard those five answered 200 with no key while
+// the identical paths 401'd when called on the dashboard directly.
+//
+// Enforced only when a key is configured, mirroring the dashboard, which
+// installs its auth middleware under `require_auth and api_key`
+// (services/dashboard/app.py:206). With no key configured nothing is attached
+// and nothing upstream is protected, so there is still no keyed path left open.
+function configuredApiKey(): string {
+  return process.env.KIS_BUILDER_API_KEY || process.env.DASHBOARD_API_KEY || "";
+}
+
+// Digest both sides before comparing so the fixed-width compare does not reject
+// on length (timingSafeEqual throws on unequal buffers) and does not leak the
+// configured key's length through an early return.
+function apiKeyMatches(presented: string | null, expected: string): boolean {
+  if (!presented || !expected) return false;
+  return timingSafeEqual(
+    createHash("sha256").update(presented).digest(),
+    createHash("sha256").update(expected).digest(),
+  );
+}
 
 export const dynamic = "force-dynamic";
 
@@ -433,40 +439,32 @@ function degradedResponse(path: string[], targetPath: string, request: NextReque
   return null;
 }
 
-function isDirectPath(path: string[]): boolean {
-  const root = path[0];
-  if (!root) return false;
-  if (root === "strategies") return path.length === 1;
-  return directRoots.has(root);
-}
-
-function targetPathFor(path: string[]): string | null {
-  const root = path[0];
-  if (root === "tos") return path.length === 2 && path[1] === "projection" ? "/api/tos/projection" : null;
-  if (root === "strategies" && path.length > 1) {
-    return `/api/kis-builder/${path.join("/")}`;
-  }
-  const isDirectRoot = isDirectPath(path);
-  if (!root || (!compatRoots.has(root) && !isDirectRoot)) {
-    return null;
-  }
-  return isDirectRoot
-    ? `/api/${path.join("/")}`
-    : `/api/kis-builder/${path.join("/")}`;
-}
-
 function pathForFallback(targetPath: string): string[] {
   return targetPath.replace(/^\/api\/?/, "").split("/").filter(Boolean);
 }
 
 async function proxyBuilderApi(request: NextRequest, context: RouteContext): Promise<Response> {
+  // Authenticate before resolving the path, so an unauthenticated caller cannot
+  // use the 404-vs-401 split to enumerate which roots this proxy forwards.
+  const serverApiKey = configuredApiKey();
+  if (serverApiKey && !apiKeyMatches(request.headers.get("X-API-Key"), serverApiKey)) {
+    // Same body the dashboard's middleware returns, so a client sees one shape
+    // regardless of which hop rejected it.
+    return Response.json({ detail: "Invalid or missing API key" }, { status: 401 });
+  }
+
   const { path = [] } = await context.params;
   const targetPath = targetPathFor(path);
   if (!targetPath) {
     return Response.json({ detail: "Unsupported Strategy Builder API path" }, { status: 404 });
   }
 
-  if (targetPath === "/api/tos/projection" && request.method !== "GET") {
+  // Checked after path resolution, so an unknown path under a GET-only root is
+  // still a 404 (unsupported) rather than a 405 (wrong method). OPTIONS never
+  // gets here: Next answers it itself with 204 and an Allow header listing every
+  // method, so a read-only root still advertises mutating ones on the dev server
+  // — upstream behaviour, identical on main, outside this guard (#861 note a).
+  if (getOnlyRoots.has(path[0]) && request.method !== "GET") {
     return Response.json({ detail: "Read-only TOS endpoint" }, { status: 405, headers: { Allow: "GET" } });
   }
 
@@ -477,7 +475,7 @@ async function proxyBuilderApi(request: NextRequest, context: RouteContext): Pro
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   headers.set("accept", "application/json");
-  if (apiKey) headers.set("X-API-Key", apiKey);
+  if (serverApiKey) headers.set("X-API-Key", serverApiKey);
 
   const body =
     request.method === "GET" || request.method === "HEAD"
