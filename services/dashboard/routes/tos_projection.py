@@ -20,12 +20,15 @@ ADR-DEV-014 OBS-INV-003.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tos", tags=["tos"])
 
@@ -35,8 +38,6 @@ _SUPPORTED_SCHEMA_VERSION = 1
 
 
 def _projection_path() -> Path:
-    import os
-
     raw = os.environ.get("TOS_OPERATOR_PROJECTION_PATH", _DEFAULT_PROJECTION_PATH)
     path = Path(raw)
     return path if path.is_absolute() else _REPO_ROOT / path
@@ -48,7 +49,10 @@ class ServiceClearance(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     clear: bool | None = None
-    reasons: list[str] = []
+    #: ``None`` means "the runtime had no source for this list", which is NOT the
+    #: same fact as an empty list ("evaluated, nothing to report"). The producer
+    #: passes its reader's value through verbatim, so both shapes reach here.
+    reasons: list[str] | None = None
 
 
 class _RuntimeIdentity(BaseModel):
@@ -64,7 +68,8 @@ class _RecoveryFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     readiness_verdict: str | None = None
-    reasons: list[str] = []
+    #: ``None`` == no source (see :class:`ServiceClearance.reasons`).
+    reasons: list[str] | None = None
 
 
 class _DriverFacts(BaseModel):
@@ -123,10 +128,31 @@ class _ReleaseFacts(BaseModel):
     software_deployment_ok: bool | None = None
 
 
+class _ProtectiveVerdict(BaseModel):
+    """One ``ProtectiveActionService`` verdict as the producer renders it.
+
+    Pinned by the producer at ``tos/runtime/src/tos_runtime/compose/
+    _operations_wiring.py::_read_protective`` and by its own test
+    ``tos/runtime/tests/compose/test_operations_wiring.py`` (the key set is
+    asserted there). Every leaf is nullable: the runtime emits ``None`` for a
+    fact it has no source for, and this DTO must not turn that into a value.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    derestriction_admissible: bool | None = None
+    capacity_exhausted: bool | None = None
+    #: ``ProtectiveActionOutcome.value`` (a plain string) or ``None``.
+    classification: str | None = None
+    unevaluated: list[str] | None = None
+    reasons: list[str] | None = None
+    protective_classification_digest: str | None = None
+
+
 class _ProtectiveFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    last_verdict: str | None = None
+    last_verdict: _ProtectiveVerdict | None = None
 
 
 class _LastBackupFacts(BaseModel):
@@ -140,7 +166,10 @@ class _LastBackupFacts(BaseModel):
 class _OperationsFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    schema_versions: dict[str, int] | None = None
+    # ``OperationsFacts.schema_versions`` (compose/_types.py) declares
+    # ``dict[str, int | None]`` — a store with no readable ``PRAGMA
+    # user_version`` yet reports ``None`` for its own key.
+    schema_versions: dict[str, int | None] | None = None
     last_backup: _LastBackupFacts | None = None
     key_continuity: str | None = None
     dependency_admission: bool | None = None
@@ -200,14 +229,34 @@ class TosProjectionResponse(BaseModel):
 
     available: bool
     reason: str | None = None
-    path: str
     age_seconds: float | None = None
     projection: TosOperatorProjection | None = None
+    # The projection's filesystem path is deliberately NOT a response field.
+    # It is a deployment detail of the host/container, the page never renders
+    # it, and this body is polled every 15 s by a browser that holds the
+    # dashboard API key in its bundle. Operators get the path from the server
+    # log line in ``_unavailable`` instead.
+
+
+def _unavailable(
+    reason: str, path: Path, age_seconds: float | None = None
+) -> TosProjectionResponse:
+    """Report "no usable projection" as a 200 with a reason, never a 5xx.
+
+    The filesystem path stays on the server: it goes to the log at DEBUG (this
+    route is polled every 15 s, so anything louder would be a log flood) and
+    never into the response body.
+    """
+    logger.debug("tos operator projection unavailable (%s): %s", reason, path)
+    return TosProjectionResponse(
+        available=False,
+        reason=reason,
+        age_seconds=age_seconds,
+        projection=None,
+    )
 
 
 def _read_projection(path: Path) -> TosProjectionResponse:
-    path_str = str(path)
-
     age_seconds = None
     try:
         # The exporter atomically replaces the file. Read age and content from
@@ -218,36 +267,28 @@ def _read_projection(path: Path) -> TosProjectionResponse:
             age_seconds = delta if delta >= 0 else None
             payload = json.load(stream)
     except FileNotFoundError:
-        return TosProjectionResponse(
-            available=False,
-            reason="projection file absent",
-            path=path_str,
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return TosProjectionResponse(
-            available=False,
-            reason=f"invalid json: {type(exc).__name__}",
-            path=path_str,
-            age_seconds=age_seconds,
+        return _unavailable("projection file absent", path)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        return _unavailable(f"invalid json: {type(exc).__name__}", path, age_seconds)
+    except OSError as exc:
+        # NOT a data-format problem: a 0700 directory, a uid mismatch, or a
+        # directory where a file was expected. The runbook names this as the
+        # first installation hazard, so it gets its own reason — folding it
+        # into "invalid json" would send the operator to look at the exporter's
+        # output instead of at the mount's permissions.
+        return _unavailable(
+            f"cannot read projection: {type(exc).__name__}", path, age_seconds
         )
 
     if not isinstance(payload, dict):
-        return TosProjectionResponse(
-            available=False,
-            reason="invalid json: top-level value is not an object",
-            path=path_str,
-            age_seconds=age_seconds,
-            projection=None,
+        return _unavailable(
+            "invalid json: top-level value is not an object", path, age_seconds
         )
 
     schema_version = payload.get("schema_version")
     if schema_version != _SUPPORTED_SCHEMA_VERSION:
-        return TosProjectionResponse(
-            available=False,
-            reason=f"unsupported schema_version {schema_version!r}",
-            path=path_str,
-            age_seconds=age_seconds,
-            projection=None,
+        return _unavailable(
+            f"unsupported schema_version {schema_version!r}", path, age_seconds
         )
 
     try:
@@ -263,18 +304,17 @@ def _read_projection(path: Path) -> TosProjectionResponse:
                     first_error = f" at {loc}" if loc else ""
             except Exception:  # noqa: BLE001 - best-effort message only
                 first_error = ""
-        return TosProjectionResponse(
-            available=False,
-            reason=f"schema mismatch{first_error}: {type(exc).__name__}: {exc}",
-            path=path_str,
-            age_seconds=age_seconds,
-            projection=None,
+        # Location and exception type only. Pydantic's ``str(exc)`` embeds
+        # ``input_value=...`` — the offending slice of the projection file —
+        # and this body is polled by the browser every 15 s. Same reason the
+        # invalid-JSON branch above reports only the exception type.
+        return _unavailable(
+            f"schema mismatch{first_error}: {type(exc).__name__}", path, age_seconds
         )
 
     return TosProjectionResponse(
         available=True,
         reason=None,
-        path=path_str,
         age_seconds=age_seconds,
         projection=projection,
     )
