@@ -61,5 +61,6 @@ instrument, fake-date, worktree, calendar 우회가 설정된 세션은 무조�
 Claude 독립 리뷰를 요청했으나 주간 token 한도로 실행 불가. 사용자가 해당 제한을
 확인했다. 독립 승인으로 기록하지 않는다. 작성자 자체 점검에서 invalid UTF-8의
 500 응답, atomic replace 동안 age/content 세대 불일치, 미래 mtime의 잘못된 recent
-표시를 수정하고 회귀 테스트 3개를 추가했다. 기존 CI 성공은 `3d6e1feb` 기준이며,
-추가 변경의 CI는 별도로 확인해야 한다.
+표시를 수정하고 회귀 테스트 3개를 추가했다. 최종 코드 `bb394cb1`의 모든 CI가 통과했고 #861은 main `af43fd8a`에 병합됐다.
+조회 서비스 배포 및 실제 브라우저 검증은 [배포 기록](../testing/2026-10-06-tos-control-plane.md)에 있다.
+다음 정상 paper 세션의 실제 출력 갱신 관측은 남아 있다.

@@ -1,7 +1,7 @@
 # TOS Control Plane and first tenant plan
 
 작성: 2026-10-06. 기준 코드: `5c4f38e9`.
-상태: **CP-0 문서 기반 정리 완료; CP-1 코드 구현·로컬 검증, 운영 연결/배포 대기; CP-2 이후 계획**. 실행·배포·live 승인 문서가 아니다.
+상태: **CP-0 문서 기반 정리 완료; CP-1 코드·출력 배선·조회 서비스 배포 완료, 실제 세션 출력 관측 대기; CP-2 이후 계획**. 실행·배포·live 승인 문서가 아니다.
 기존 TOS Phase 번호와 구분하기 위해 이 계획만 CP-0~CP-4를 사용한다.
 
 ## 1. 목적과 선행 조사
@@ -159,7 +159,13 @@ TanStack Query의 기존 polling을 재사용한다([공식 polling 문서](http
 중립 JSON fixture를 runtime producer·dashboard consumer·UI 테스트가 함께 사용하며
 runtime source 변경과 Python 역방향 import는 없다.
 
-배포 준비: 기존 projection 디렉터리 read-only mount를 환경변수로 선택할 수 있게 한다.
-atomic rename을 따라가기 위해 파일 단독 mount는 사용하지 않는다. 운영 중인 paper
-wrapper/cron/코드 핀은 변경하지 않는다. 실제 호스트 producer 경로가 연결됐다는 증거와
-새 화면 배포 성공은 별도 확인 전까지 미완으로 유지한다.
+배포: #861은 main `af43fd8a`에 병합했고 dashboard·UI만 갱신했다. host wrapper/driver에
+기존 `--projection-path`를 연결했다. 전용 디렉터리는 deploy 소유 0700이며 dashboard는
+읽기 전용으로 마운트한다. scratch/override 세션은 session-local 파일로 격리한다.
+cron·코드 핀 정책·커널·durable set은 변경하지 않았다.
+
+실제 마운트와 인증, `/tos`의 missing 표시를 확인했다. 현재 paper 세션이 정지해 있어
+실제 export generation 증가·종료 후 stale 관측은 다음 정상 세션에서 확인해야 한다.
+Claude 독립 리뷰는 token 한도로 미실행이며 자체 점검·CI 통과와 구분한다.
+[출력 연결 런북](../runbooks/tos-paper-projection-connection.md)과
+[배포 검증 기록](../testing/2026-10-06-tos-control-plane.md)을 참조한다.
