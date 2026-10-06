@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 from pathlib import Path
+from typing import get_args
 
 from fastapi.testclient import TestClient
 
@@ -194,10 +196,13 @@ def test_declared_methods_include_no_implicit_head_or_options():
 
 
 def test_an_explicit_head_route_fails_the_get_only_check():
-    """Negative self-check for the removed subtraction (노트 b).
+    """Negative self-check for the removed subtraction.
 
-    With the old ``- {"HEAD", "OPTIONS"}`` this router reported ``{"GET"}``
-    and passed. It must now be visible as a violation.
+    This router declares HEAD and nothing else, so the old helper's
+    ``- {"HEAD", "OPTIONS"}`` reduced it to the **empty set** — which the
+    GET-only assertion's own ``assert router_methods`` guard would have
+    reported as "no routes registered", not as a read-only violation. Either
+    way the explicit HEAD was invisible as what it is. It must now show up.
     """
     from fastapi import APIRouter
 
@@ -429,8 +434,10 @@ def _producer_last_verdict_keys() -> set[str]:
 def test_protective_last_verdict_matches_the_producer_key_set():
     """지적 1 red proof: the DTO models every key the producer emits.
 
-    Against the pre-fix DTO (``last_verdict: str | None``) this fails on the
-    first assertion, and the end-to-end test below returns
+    The first assertion reads the producer source only, so it holds with or
+    without the fix. Against the pre-fix DTO (``last_verdict: str | None``)
+    this test fails where ``_ProtectiveVerdict`` is dereferenced — the class
+    does not exist — and the end-to-end test below returns
     ``available=false, reason="schema mismatch at protective.last_verdict"``.
     """
     producer_keys = _producer_last_verdict_keys()
@@ -443,9 +450,13 @@ def test_protective_last_verdict_matches_the_producer_key_set():
         "reasons",
         "protective_classification_digest",
     }, producer_keys
-    verdict_model = tos_projection._ProtectiveFacts.model_fields["last_verdict"]
     assert set(tos_projection._ProtectiveVerdict.model_fields) == producer_keys
-    assert verdict_model.annotation is not str
+    # The nested model must be what the field actually points at. `is not str`
+    # would not do: `(str | None) is not str` is true, so the pre-fix
+    # annotation passed that check.
+    annotation = tos_projection._ProtectiveFacts.model_fields["last_verdict"].annotation
+    assert tos_projection._ProtectiveVerdict in get_args(annotation), annotation
+    assert type(None) in get_args(annotation), annotation
 
 
 def test_a_real_producer_protective_verdict_round_trips(monkeypatch, tmp_path):
@@ -639,3 +650,203 @@ def test_response_never_carries_the_projection_filesystem_path(monkeypatch, tmp_
     unavailable = missing_client.get("/api/tos/projection").json()
     assert "path" not in unavailable
     assert str(tmp_path) not in json.dumps(unavailable)
+
+
+_REASON_FIXTURE = (
+    Path(__file__).resolve().parents[3] / "tests/fixtures/tos/projection-reasons.json"
+)
+
+
+def _reason_prefixes() -> list[str]:
+    payload = json.loads(_REASON_FIXTURE.read_text(encoding="utf-8"))
+    return [entry["prefix"] for entry in payload["reasons"]]
+
+
+def test_unsupported_schema_version_reason_never_echoes_the_value(
+    monkeypatch, tmp_path
+):
+    """지적 1: the version field is read from the file like any other value."""
+    secret = "SENTINEL-" + "x" * 300
+    payload = dict(_VALID_PROJECTION, schema_version=secret)
+    path = tmp_path / "version.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+
+    assert body["available"] is False
+    assert body["reason"] == "unsupported schema_version (expected 1, got str)"
+    assert "SENTINEL" not in json.dumps(body)
+
+
+def test_unsupported_schema_version_reports_the_shape_of_a_structured_value(
+    monkeypatch, tmp_path
+):
+    payload = dict(_VALID_PROJECTION, schema_version={"nested": "SENTINEL"})
+    path = tmp_path / "version-object.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+
+    assert body["reason"] == "unsupported schema_version (expected 1, got dict)"
+    assert "SENTINEL" not in json.dumps(body)
+
+
+def test_schema_mismatch_location_never_echoes_a_mapping_key(monkeypatch, tmp_path):
+    """지적 2: inside a mapping the failing segment is a key from the file.
+
+    ``operations.schema_versions`` is ``dict[str, int | None]``, so pydantic's
+    raw ``loc`` ends in whatever key the file used. The location is resolved
+    against the DTO and the key is replaced.
+    """
+    hostile = "SENTINEL-/srv/private/custody/key"
+    payload = dict(
+        _VALID_PROJECTION,
+        operations=dict(
+            _VALID_PROJECTION["operations"],
+            schema_versions={hostile: "not-an-int"},
+        ),
+    )
+    path = tmp_path / "hostile-key.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+
+    assert body["available"] is False
+    assert body["reason"].startswith(
+        "schema mismatch at operations.schema_versions.<key>"
+    )
+    assert "SENTINEL" not in json.dumps(body)
+
+
+def test_schema_mismatch_location_keeps_real_field_names_through_a_mapping(
+    monkeypatch, tmp_path
+):
+    """The sanitizer must not flatten everything to ``<key>``."""
+    payload = dict(
+        _VALID_PROJECTION,
+        safety_mesh={
+            "snapshot_generation": None,
+            "services": {"spg": {"clear": "not-a-bool", "reasons": []}},
+        },
+    )
+    path = tmp_path / "service-field.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+
+    assert body["available"] is False
+    assert body["reason"].startswith(
+        "schema mismatch at safety_mesh.services.<key>.clear"
+    )
+
+
+def test_unavailable_branches_log_the_path_at_a_level_operators_see(
+    monkeypatch, tmp_path, caplog
+):
+    """지적 5: the response dropped ``path``, so the log line has to work.
+
+    The app configures no logging and runs at uvicorn's default INFO, so a
+    DEBUG line would reach nobody and "operators read it from the log" would
+    be false.
+    """
+    projection_path = tmp_path / "gone.json"
+    with caplog.at_level(logging.WARNING, logger=tos_projection.__name__):
+        body = (
+            _client(monkeypatch, tmp_path, projection_path)
+            .get("/api/tos/projection")
+            .json()
+        )
+
+    assert body["available"] is False
+    records = [
+        record
+        for record in caplog.records
+        if record.name == tos_projection.__name__ and record.levelno >= logging.WARNING
+    ]
+    assert records, caplog.text
+    message = records[-1].getMessage()
+    assert str(projection_path) in message
+    assert "projection file absent" in message
+
+
+def test_the_log_line_never_carries_projection_content(monkeypatch, tmp_path, caplog):
+    secret = "SENTINEL-/srv/private/custody/secret"
+    payload = dict(_VALID_PROJECTION, projection_generation=secret)
+    path = tmp_path / "mismatch-log.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger=tos_projection.__name__):
+        _client(monkeypatch, tmp_path, path).get("/api/tos/projection")
+
+    assert "SENTINEL" not in caplog.text
+
+
+def test_every_emitted_reason_starts_with_a_pinned_prefix():
+    """노트 f: the Python emitter and the TS matcher share one list.
+
+    Completeness is read off the route source: every ``_unavailable(...)``
+    call site's reason must begin with one of the pinned prefixes, so a new
+    failure cause cannot be added without either reusing a prefix the UI
+    already maps or updating the shared fixture (and with it the UI test).
+    """
+    prefixes = _reason_prefixes()
+    tree = ast.parse(_ROUTE_MODULE.read_text(encoding="utf-8"))
+
+    emitted: list[str] = []
+    for node in ast.walk(tree):
+        is_call = (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_unavailable"
+            and node.args
+        )
+        if not is_call:
+            continue
+        reason = node.args[0]
+        if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
+            emitted.append(reason.value)
+        elif isinstance(reason, ast.JoinedStr) and reason.values:
+            head = reason.values[0]
+            assert isinstance(head, ast.Constant), ast.dump(reason)
+            emitted.append(head.value)
+        else:  # pragma: no cover - a shape this check cannot read is a failure
+            raise AssertionError(f"unreadable reason expression: {ast.dump(reason)}")
+
+    assert len(emitted) >= 5, emitted
+    for reason in emitted:
+        assert any(
+            reason.startswith(prefix) for prefix in prefixes
+        ), f"{reason!r} matches no prefix in {_REASON_FIXTURE.name}: {prefixes}"
+
+
+def test_each_pinned_prefix_is_actually_reachable(monkeypatch, tmp_path):
+    """The other direction: a prefix nobody emits would be dead UI mapping."""
+    absent = tmp_path / "absent.json"
+
+    unreadable = tmp_path / "a-directory.json"
+    unreadable.mkdir()
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+
+    mismatched = tmp_path / "mismatched.json"
+    mismatched.write_text(
+        json.dumps(dict(_VALID_PROJECTION, projection_generation="nope")),
+        encoding="utf-8",
+    )
+
+    future = tmp_path / "future.json"
+    future.write_text(
+        json.dumps(dict(_VALID_PROJECTION, schema_version=2)), encoding="utf-8"
+    )
+
+    observed = set()
+    for path in (absent, unreadable, broken, mismatched, future):
+        body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+        assert body["available"] is False, (path.name, body)
+        observed.add(body["reason"])
+
+    for prefix in _reason_prefixes():
+        assert any(
+            reason.startswith(prefix) for reason in observed
+        ), f"no observed reason starts with {prefix!r}: {sorted(observed)}"
