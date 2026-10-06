@@ -716,3 +716,139 @@ describe("proxy with no key configured stays open, matching the dashboard", () =
     expect(forwarded.has("X-API-Key")).toBe(false);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// #861 review notes c (rear) and d — `tos` was a dedicated early return in
+// targetPathFor(), outside both compatRoots and directRoots, so isDirectPath()
+// disagreed with the path targetPathFor() actually produced; and HEAD was
+// refused on the TOS projection while every other root proxied it.
+//
+// `tos` is now an ordinary direct root with an exact-path allowlist, and the
+// GET-only rule is a property of the root rather than of one literal target.
+//
+// Deployment note: Caddy sends /api/tos* straight to dashboard:8001
+// (caddy/Caddyfile @to_dashboard), so everything below is dev-server /
+// defence-in-depth behaviour, not the deployed request path.
+// ---------------------------------------------------------------------------
+describe("TOS routing lives in the routing table", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("resolves the projection through the direct-root form, never a kis-builder rewrite", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ available: false }));
+
+    const response = await GET(
+      requestFor("/api/tos/projection"),
+      contextFor(["tos", "projection"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/tos/projection",
+    );
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/api/kis-builder/");
+  });
+
+  it.each([
+    [["tos"], "/api/tos"],
+    [["tos", "projection", "extra"], "/api/tos/projection/extra"],
+    [["tos", "projection", ""], "/api/tos/projection/"],
+    [["tos", "projection", "a", "b"], "/api/tos/projection/a/b"],
+    [["tos", "rearm"], "/api/tos/rearm"],
+    [["tos", "projections"], "/api/tos/projections"],
+    [["tos", "PROJECTION"], "/api/tos/PROJECTION"],
+  ])("refuses %s — the allowlist is exact, not a prefix", async (path, url) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await GET(requestFor(url), contextFor(path as string[]));
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not turn ordinary direct roots into exact-path roots", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+
+    const response = await GET(
+      requestFor("/api/portfolio/equity/history?days=30"),
+      contextFor(["portfolio", "equity", "history"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/portfolio/equity/history?days=30",
+    );
+  });
+
+  it("answers an unknown path under the GET-only root as 404, not 405", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await POST(
+      requestWithMethod("/api/tos/rearm", "POST"),
+      contextFor(["tos", "rearm"]),
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("TOS HEAD policy", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // Decision: HEAD stays refused with 405, because the dashboard refuses it too.
+  // services/dashboard/routes/tos_projection.py declares only
+  // `@router.get("/projection")`, and FastAPI's APIRoute does not add HEAD to a
+  // GET route the way Starlette's Route does — measured against the real router
+  // with TestClient: GET 200, HEAD 405, POST 405. Proxying HEAD would spend a
+  // round trip to return the dashboard's 405 anyway.
+  it("refuses HEAD on the projection with the same 405 and Allow header as the other methods", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const response = await GET(
+      requestWithMethod("/api/tos/projection", "HEAD"),
+      contextFor(["tos", "projection"]),
+    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("GET");
+    expect(await response.json()).toEqual({ detail: "Read-only TOS endpoint" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still proxies HEAD for every other root, bodyless", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    const response = await GET(
+      requestWithMethod("/api/coverage?asset_class=futures", "HEAD"),
+      contextFor(["coverage"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("HEAD");
+    expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
+  });
+
+  it("serves the degraded HEAD fallback for a proxied root when upstream is offline", async () => {
+    // degradedResponse() explicitly admits HEAD alongside GET; with tos the only
+    // GET-only root, that branch is reachable rather than dead code.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
+    );
+
+    const response = await GET(
+      requestWithMethod("/api/coverage?asset_class=futures", "HEAD"),
+      contextFor(["coverage"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
+  });
+});

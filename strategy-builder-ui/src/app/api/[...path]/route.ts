@@ -52,9 +52,33 @@ const directRoots = new Set([
   "strategies",
   "strategy-builder",
   "strategy-lab",
+  "tos",
   "trades",
   "trading",
 ]);
+
+// Direct roots whose surface is an exact allowlist rather than a whole subtree.
+// Anything else under the root is refused here instead of being forwarded, so
+// adding a route to the dashboard never silently widens this proxy.
+//
+// `tos` used to be a dedicated early return in targetPathFor(), outside both
+// routing sets — which meant isDirectPath() answered `false` for a path
+// targetPathFor() was in fact sending to the direct `/api/<path>` form
+// (#861 review note c). Latent, because targetPathFor() short-circuited before
+// consulting isDirectPath(); the hazard was the next edit that trusted
+// isDirectPath() and rewrote /api/tos/projection to /api/kis-builder/....
+const exactPathRoots = new Map<string, ReadonlySet<string>>([
+  ["tos", new Set(["tos/projection"])],
+]);
+
+// Roots this proxy forwards only as GET. The dashboard's TOS surface is
+// read-only: services/dashboard/routes/tos_projection.py declares
+// `@router.get("/projection")` and nothing else, and FastAPI's APIRoute — unlike
+// Starlette's Route — does not add HEAD to a GET route, so the dashboard itself
+// answers 405 to HEAD and to every mutating method there. Refusing them here
+// keeps the proxy's answer identical to the dashboard's instead of relaying a
+// round trip that is guaranteed to fail.
+const getOnlyRoots = new Set(["tos"]);
 
 export const dynamic = "force-dynamic";
 
@@ -471,12 +495,18 @@ function isDirectPath(path: string[]): boolean {
 
 function targetPathFor(path: string[]): string | null {
   const root = path[0];
-  if (root === "tos") return path.length === 2 && path[1] === "projection" ? "/api/tos/projection" : null;
   if (root === "strategies" && path.length > 1) {
     return `/api/kis-builder/${path.join("/")}`;
   }
   const isDirectRoot = isDirectPath(path);
   if (!root || (!compatRoots.has(root) && !isDirectRoot)) {
+    return null;
+  }
+  // Exact-allowlist roots: compare the whole joined path, so a trailing empty
+  // segment, a deeper path, or a differently cased segment all fall through to
+  // null rather than reaching the dashboard.
+  const allowedPaths = exactPathRoots.get(root);
+  if (allowedPaths && !allowedPaths.has(path.join("/"))) {
     return null;
   }
   return isDirectRoot
@@ -504,7 +534,9 @@ async function proxyBuilderApi(request: NextRequest, context: RouteContext): Pro
     return Response.json({ detail: "Unsupported Strategy Builder API path" }, { status: 404 });
   }
 
-  if (targetPath === "/api/tos/projection" && request.method !== "GET") {
+  // Checked after path resolution, so an unknown path under a GET-only root is
+  // still a 404 (unsupported) rather than a 405 (wrong method).
+  if (getOnlyRoots.has(path[0]) && request.method !== "GET") {
     return Response.json({ detail: "Read-only TOS endpoint" }, { status: 405, headers: { Allow: "GET" } });
   }
 
