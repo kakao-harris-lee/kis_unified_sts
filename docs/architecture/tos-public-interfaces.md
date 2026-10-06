@@ -10,7 +10,7 @@
 | ID | 표면 / 소유자 → 소비자 | 입력·출력 및 실패 의미 | 상태 / 근거 |
 |---|---|---|---|
 | EXT-01 | Operator projection / runtime → dashboard | schema v1 JSON; generation·monotonic export time·non_authorizing·운영 사실. 원천 없음은 null. 임시 파일 후 atomic replace. | 구현. [producer](../../tos/runtime/src/tos_runtime/operator/projection.py), [exporter](../../tos/runtime/src/tos_runtime/operator/export.py) |
-| EXT-02 | `GET /api/tos/projection` / dashboard → 제품 UI | `available`, `reason`, `age_seconds`, `projection`. 파일 경로는 응답에 없다(서버 로그만). unavailable 사유는 다섯 접두 중 하나다 — `projection file absent` · `cannot read projection: <예외>`(권한·경로) · `invalid json: <예외>` · `unsupported schema_version (expected N, got <타입>)` · `schema mismatch at <위치>: <예외>`. 사유는 파일에서 읽은 값을 담지 않는다(위치의 매핑 키는 `<key>`). 신규 extra 필드는 무시; 미지원 version은 거부. | API 및 `/tos` UI 구현; 운영 연결/배포 검증 대기. [route/DTO](../../services/dashboard/routes/tos_projection.py), [tests](../../tests/unit/dashboard/test_tos_projection.py), [사유 접두 fixture](../../tests/fixtures/tos/projection-reasons.json), [UI 매처](../../strategy-builder-ui/src/lib/dashboard/tos.ts) |
+| EXT-02 | `GET /api/tos/projection` / dashboard → 제품 UI | `available`, `reason`, `age_seconds`, `projection`. 파일 경로는 응답에 없다(서버 로그만). unavailable 사유는 다섯 접두 중 하나다 — `projection file absent` · `cannot read projection: <예외>`(권한·경로) · `invalid json: <예외>`(최상위가 객체가 아니면 예외 이름 없는 상수 `invalid json: top-level value is not an object`) · `unsupported schema_version (expected N, got <타입>)` · `schema mismatch at <위치>: <예외>`(위치를 못 읽으면 ` at …` 없이 `schema mismatch: <예외>`). 사유는 파일에서 읽은 값을 담지 않는다(위치의 매핑 키는 `<key>`). 신규 extra 필드는 무시; 미지원 version은 거부. | API 및 `/tos` UI 구현, 2026-10-06 배포됨(missing·auth 상태 검증 완료; 첫 정상 paper 세션 export 는 미관측 — `docs/PROJECT_STATUS.md` 제품 통합 행). [route/DTO](../../services/dashboard/routes/tos_projection.py), [tests](../../tests/unit/dashboard/test_tos_projection.py), [사유 접두 fixture](../../tests/fixtures/tos/projection-reasons.json), [UI 매처](../../strategy-builder-ui/src/lib/dashboard/tos.ts) |
 | EXT-03 | `python -m tos_runtime.compose` / 운영자 → runtime | `run`이 설정을 검증·조립·구동. 설정/권한 거부는 부팅 성공이 아니다. 자세한 플래그는 CLI parser와 런북 정본. | 구현. [CLI](../../tos/runtime/src/tos_runtime/compose/cli.py), [run dispatch](../../tos/runtime/src/tos_runtime/compose/_run_dispatch.py), [boot runbook](../runbooks/tos-paper-boot.md) |
 | EXT-04 | 운영 CLI / 운영자 → durable state | `backup-set`, `cold-backup`, `restore-drill`, `migrate`, `rotate-key`, `rearm`, `ack-alert`; `nontrade-eval`은 저장소를 쓰지 않는 dry run, `print-digests`, `print-policy-digests`는 조회. 명령별 precondition·증거 계약은 구현에 귀속. | 구현. [CLI](../../tos/runtime/src/tos_runtime/compose/cli.py), [CLI tests](../../tos/runtime/tests/compose/test_cli.py), [cold-backup tests](../../tos/runtime/tests/compose/test_cold_backup_cli.py) |
 | EXT-05 | 향후 operator command ingress / Control Plane → runtime | 명령 식별자·actor·scope·generation·승인 참조·durable 결과의 설계 필요. | **미구현/제안**. 현재 HTTP command API가 있다는 뜻이 아님. |
@@ -24,7 +24,7 @@ EXT-01/02의 `age_seconds`는 파일 mtime 기반이다. `available=true`는 par
 `classification`·`unevaluated`·`reasons`·`protective_classification_digest`)이며
 producer 키 집합은 DTO 테스트가 producer 소스에서 직접 대조한다(역방향 import 없음).
 EXT-02의 사유 접두는 `tests/fixtures/tos/projection-reasons.json`이 정본이고
-Python 방출기와 TS 매처 양쪽이 그 파일을 단언한다.
+Python 방출기와 TS 매처 양쪽이 그 파일을 단언한다. 다만 CI 게이트는 Python 쪽뿐이다 — `.github/workflows/` 에 node 잡(`setup-node`·vitest·tsc)이 없어 TS 단언은 로컬·리뷰에서만 돈다.
 전체 schema 생성 산출물은 없으며 fixture가 schema 전체를 대체하지 않는다.
 그룹 전체와 미해결 알림 목록의 null도 원천 없음으로 보존한다.
 

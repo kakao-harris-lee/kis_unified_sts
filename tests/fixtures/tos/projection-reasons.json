@@ -1,10 +1,25 @@
 {
-  "comment": "The reason prefixes GET /api/tos/projection may emit, and the UI state each maps to. Shared by services/dashboard/routes/tos_projection.py's tests and strategy-builder-ui/src/lib/dashboard/tos.ts's tests so the emitter and the matcher cannot drift apart. No reason ever carries a value read from the projection file.",
+  "comment": "The reason prefixes GET /api/tos/projection may emit, and the UI state each maps to. Shared by services/dashboard/routes/tos_projection.py's tests and strategy-builder-ui/src/lib/dashboard/tos.ts's tests. Both sides assert this file, but only the Python side is CI-gated: this repository has no node job (no setup-node, vitest or tsc in .github/workflows), so adding a prefix here without a projectionState branch passes CI and lands in the UI as 'unknown'. No reason ever carries a value read from the projection file.",
   "reasons": [
-    { "prefix": "projection file absent", "ui_state": "missing" },
-    { "prefix": "cannot read projection", "ui_state": "unreadable" },
-    { "prefix": "invalid json", "ui_state": "invalid" },
-    { "prefix": "schema mismatch", "ui_state": "invalid" },
-    { "prefix": "unsupported schema_version", "ui_state": "unsupported" }
+    {
+      "prefix": "projection file absent",
+      "ui_state": "missing"
+    },
+    {
+      "prefix": "cannot read projection",
+      "ui_state": "unreadable"
+    },
+    {
+      "prefix": "invalid json",
+      "ui_state": "invalid"
+    },
+    {
+      "prefix": "schema mismatch",
+      "ui_state": "invalid"
+    },
+    {
+      "prefix": "unsupported schema_version",
+      "ui_state": "unsupported"
+    }
   ]
 }

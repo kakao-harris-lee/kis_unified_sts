@@ -91,10 +91,13 @@ describe('producer wire contract', () => {
     expect(projection.protective?.last_verdict?.reasons).toEqual(['derestriction_admissible']);
     expect(populated.protective?.last_verdict?.protective_classification_digest).toBe('sha256:0f1e2d3c');
   });
-  it('declares every leaf of the Python DTO', () => {
-    // 지적 9: four leaves were missing from the TS interface while the header
-    // claimed the Python DTO as the wire contract. The shared fixture carries
-    // them, so a type-level omission shows up as a compile error here.
+  it('reads the four digest leaves added in round 1', () => {
+    // 지적 9 regression: `process_nonce`, `code_digest`, `chain_digest` and
+    // `manifest_digest` were missing from the TS interface while the header
+    // claimed the Python DTO as the wire contract. This is those four by name,
+    // not a property — full DTO-to-TS leaf parity is checked in
+    // tests/unit/dashboard/test_tos_projection.py, which CI runs (there is no
+    // node job, so a type-level omission here would not fail CI).
     const projection: TosProjection = populated;
     expect(projection.runtime?.process_nonce).toBe('abc123');
     expect(projection.runtime?.code_digest).toBe('sha256:deadbeef');

@@ -35,14 +35,21 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
   두 변수(`TOS_OPERATOR_PROJECTION_DIR` 호스트 디렉터리 · `TOS_OPERATOR_PROJECTION_PATH`
   컨테이너 파일)는 한 쌍이며 `.env*.example` 넷과 compose 주석에 기록했다.
 - 응답 본문은 projection 파일 경로를 싣지 않는다. 대신 unavailable 분기가
-  **WARNING**으로 남긴다 — 이 앱은 자체 로깅 설정이 없고 uvicorn 기본 INFO 라
-  DEBUG 는 아무에게도 닿지 않는다. 라우트는 `/tos` 를 연 동안만 돌므로
-  15 초 폴링이 배경에서 로그를 쌓지 않는다.
+  원인별 레벨로 남긴다 — 세션 밖의 **정상** 상태인 `projection file absent` 는
+  **INFO**, 실제 결함 셋(읽기 실패·invalid json·schema/version mismatch)은
+  **WARNING**. 실측 근거: 이 앱은 로깅을 설정하지 않고 uvicorn 의
+  `LOGGING_CONFIG` 는 `uvicorn`·`uvicorn.error`·`uvicorn.access` 셋만 선언하므로
+  루트 로거에 핸들러가 없고 레벨은 WARNING 이다. 따라서 WARNING 은
+  `logging.lastResort`(stderr)로 컨테이너에 보이고 INFO 는 아무 출력도 내지
+  않는다. 탭 하나가 15 초마다 조회하므로 정상 상태를 WARNING 으로 두면
+  시간당 240 줄이 보인다.
 - 어떤 `reason` 도 projection 파일에서 읽은 **값**을 담지 않는다. 버전 불일치는
   값이 아니라 타입을, schema mismatch 는 DTO 로 해석한 위치를 보고한다
   (매핑 키는 `<key>` 로 가린다 — 키도 파일에서 온다).
 - 사유 접두 다섯은 `tests/fixtures/tos/projection-reasons.json` 하나에 있고,
   Python 방출기(라우트 소스 AST)와 TS 매처가 같은 파일을 단언한다.
+  다만 CI 게이트는 Python 쪽뿐이다 — `.github/workflows/` 에 node 잡(`setup-node`·vitest·tsc)이 없어 TS 단언은 로컬·리뷰에서만 돈다.
+  UI 스위트 CI 잡은 후속으로 분리했다.
 - 파일을 **열지 못한 경우**(권한·uid·디렉터리)는 `cannot read projection: <예외>`로
   형식 오류와 구분해 보고하고 화면도 별도 상태로 표시한다.
 

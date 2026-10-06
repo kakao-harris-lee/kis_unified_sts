@@ -3,8 +3,12 @@ import displayConfig from '@/config/tos-control-plane.json';
 
 // Wire contract: services/dashboard/routes/tos_projection.py. Every leaf of that
 // DTO is declared here, so a field the page does not render today is still
-// visible as part of the contract. Entire groups may be null when the runtime
-// has no source. Never turn absence into clearance.
+// visible as part of the contract. That parity is checked by walking the DTO in
+// tests/unit/dashboard/test_tos_projection.py
+// (test_every_dto_leaf_name_appears_in_the_ts_contract) — on the Python side
+// because that is the side CI runs; this repository has no node job. Entire
+// groups may be null when the runtime has no source. Never turn absence into
+// clearance.
 export interface TosProjection {
   schema_version: number;
   projection_generation: number;
