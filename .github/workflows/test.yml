@@ -134,9 +134,12 @@ jobs:
         # tests/tos_l3/ are also excluded — they moved to the
         # tos-firewall.yml `tos-firewall` job (no runtime stack needed, no
         # path gating there) so this path-gated, runtime-heavy job doesn't
-        # also run them (this job is now paths-ignore'd away from tos
-        # changes anyway; the --ignore below is defense-in-depth for the case
-        # where a PR touches both tos/ and non-ignored paths).
+        # also run them. The `--ignore` flags below are what keep them out,
+        # and they are load-bearing, not belt-and-braces: the `on.paths`
+        # filter at the top of this file excludes tos with `!tos/**` but
+        # re-includes `tos/runtime/tests/fixtures/**` on its last line, so a
+        # fixture-only tos PR DOES run this job — and every PR touching both
+        # tos/ and non-excluded paths always did.
         #
         # --timeout=180 --timeout-method=thread: if any single test exceeds 180s
         # (no legit test runs that long), pytest-timeout dumps all thread stacks
