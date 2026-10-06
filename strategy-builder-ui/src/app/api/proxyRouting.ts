@@ -20,11 +20,22 @@ export const compatRoots = new Set([
 ]);
 
 // STS-native roots, forwarded at their own path.
+//
+// Membership here, not in Caddy's `@to_dashboard` matcher, is what makes a root
+// reachable from every entry point: Caddy's `handle {}` fallback sends
+// everything unmatched to this proxy, and `next dev` (no Caddy) only ever
+// reaches this proxy. A root served by Caddy alone 404s here — so a UI call
+// site whose root is missing from this set is a 404 the backend never sees
+// (commit 1a614f09, for market-risk/portfolio). uiCallSiteRoots.test.ts holds
+// the two sides together.
 export const directRoots = new Set([
+  "analytics",
   "coverage",
   "event-context",
+  "evidence",
   "health",
   "kis-builder",
+  "market-data",
   "market-risk",
   "portfolio",
   "reports",

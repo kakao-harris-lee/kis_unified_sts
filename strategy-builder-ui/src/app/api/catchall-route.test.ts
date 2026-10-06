@@ -88,6 +88,63 @@ describe("strategy-builder-ui API catch-all proxy", () => {
     );
   });
 
+  // The three roots of this group reach the dashboard only through this proxy
+  // (they are absent from Caddy's @to_dashboard matcher), and every call the UI
+  // makes under them is a read-only GET: analytics.py declares
+  // /strategy-correlation and /exposure-history, evidence.py /summary,
+  // market_data.py /bars. Before they joined directRoots the proxy answered
+  // 404 {"detail":"Unsupported Strategy Builder API path"} while the identical
+  // paths answered 200 on dashboard:8001.
+  it.each([
+    [
+      "/api/analytics/strategy-correlation?asset_class=stock&days=30",
+      ["analytics", "strategy-correlation"],
+    ],
+    [
+      "/api/analytics/exposure-history?asset_class=stock&days=30",
+      ["analytics", "exposure-history"],
+    ],
+    ["/api/evidence/summary?asset_class=stock", ["evidence", "summary"]],
+    [
+      "/api/market-data/bars?symbol=005930&timeframe=daily&days=5",
+      ["market-data", "bars"],
+    ],
+  ] as ReadonlyArray<readonly [string, string[]]>)(
+    "forwards %s at its own path, never a kis-builder rewrite",
+    async (url, path) => {
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(Response.json({ status: "ok" }));
+
+      const response = await GET(requestFor(url), contextFor(path));
+
+      expect(response.status).toBe(200);
+      expect(String(fetchMock.mock.calls[0][0])).toBe(`http://localhost:5081${url}`);
+    },
+  );
+
+  // These three have no `degradedResponse` arm, so an offline dashboard must
+  // surface as 503 rather than an empty state the UI would render as real data.
+  it.each([
+    ["/api/analytics/strategy-correlation", ["analytics", "strategy-correlation"]],
+    ["/api/evidence/summary", ["evidence", "summary"]],
+    ["/api/market-data/bars", ["market-data", "bars"]],
+  ] as ReadonlyArray<readonly [string, string[]]>)(
+    "reports %s as unavailable instead of fabricating an empty state",
+    async (url, path) => {
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(
+        Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
+      );
+
+      const response = await GET(requestFor(url), contextFor(path));
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("x-kis-degraded")).toBeNull();
+      expect(body.upstream_path).toBe(url);
+    },
+  );
+
   it("keeps bare /api/strategies on the STS registry route", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -498,8 +555,11 @@ describe("TOS projection proxy boundary", () => {
 // ---------------------------------------------------------------------------
 
 const PROXY_ONLY_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
+  ["/api/analytics/strategy-correlation?asset_class=stock", ["analytics", "strategy-correlation"]],
   ["/api/coverage?asset_class=futures", ["coverage"]],
   ["/api/event-context/diagnostics", ["event-context", "diagnostics"]],
+  ["/api/evidence/summary?asset_class=stock", ["evidence", "summary"]],
+  ["/api/market-data/bars?symbol=005930", ["market-data", "bars"]],
   ["/api/market-risk", ["market-risk"]],
   ["/api/portfolio/equity", ["portfolio", "equity"]],
   ["/api/reports/feedback?kind=weekly", ["reports", "feedback"]],
