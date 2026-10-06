@@ -24,7 +24,7 @@ EXT-01/02의 `age_seconds`는 파일 mtime 기반이다. `available=true`는 par
 `classification`·`unevaluated`·`reasons`·`protective_classification_digest`)이며
 producer 키 집합은 DTO 테스트가 producer 소스에서 직접 대조한다(역방향 import 없음).
 EXT-02의 사유 접두는 `tests/fixtures/tos/projection-reasons.json`이 정본이고
-Python 방출기와 TS 매처 양쪽이 그 파일을 단언한다. 다만 CI 게이트는 Python 쪽뿐이다 — `.github/workflows/` 에 node 잡(`setup-node`·vitest·tsc)이 없어 TS 단언은 로컬·리뷰에서만 돈다.
+Python 방출기와 TS 매처 양쪽이 그 파일을 단언한다. CI 는 양쪽을 서로 다른 잡이 돈다 — Python 단언은 `test`(이 fixture 는 레거시 트리에 있어 경로 게이트에 걸리지 않는다), TS 단언은 `.github/workflows/ui.yml` 의 체크 「UI suite (lint + build + tsc + vitest)」(#867, `strategy-builder-ui/**`·두 fixture 디렉터리 경로 게이트, 필수 체크 아님). Python 방출기만 바꾼 PR 은 그 체크를 깨우지 않으므로 그 방향은 Python 쪽 AST 단언이 맡는다.
 전체 schema 생성 산출물은 없으며 fixture가 schema 전체를 대체하지 않는다.
 그룹 전체와 미해결 알림 목록의 null도 원천 없음으로 보존한다.
 
