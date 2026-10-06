@@ -267,13 +267,13 @@ genesis(ops-paper 레인). 이 절은 호스트에 무엇이 있고, 켜는 데 
 | **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
 | **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 **`c38078fcbbe71ce6ce76303e4758d9c03eadf8afc2d493446d2937a8d2366c0a`** — **잎 순회 판**(2026-10-04 19:19 KST 설치, 운영자 결정 「계약월마다 durable set 하나」 · `tos-paper-boot.md` §7.10 7 (c)). 이전 판 `6b6f5766…`(PR #855 — `classify()` 에 `migrate refused` 가지)은 `.bak.6b6f5766a6f0` 로 옆에 있다. ✅ **`classify()` 는 이 이동에 포함되지 않았다** — `fc0cd225…`·`6b6f5766…`·`c38078fc…` 세 판에서 함수를 떼어 낸 추출물이 **sha256 까지 같다**(`7c306195…` — 추출물 넷과 해시는 `~/.local/state/tos/measure/cold-a3/classify-extract-20261004.txt`, 2026-10-04 실측). `d7e52b2f…`(#855 이전)만 다르고 그 차이는 #855 가 더한 두 줄이다. 그러므로 §4-5-4 의 분류 증명은 이 판에도 그대로 유효하다 |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 **`e7579803548b9dcb21dfb813650e51c995a0f25531e1e05add718a98f26d4916`** — **잎 순회 + `umask 077` 판**(2026-10-06 21:2x KST 설치 · 이전 판 `c38078fc…` 백업 `.bak.c38078fcbbe7`). 10-04 잎 순회 판(`c38078fc…`, 운영자 결정 「계약월마다 durable set 하나」 · `tos-paper-boot.md` §7.10 7 (c))과의 차이는 **`set -u` 다음의 `umask 077` 한 줄과 헤더 주석**뿐이다(`cold-a3/leaf-selftest-20261006/wrapper.diff.c38078fc-to-e7579803`): 첫 실전 실행(10-06 18:00)의 산출물이 cron 의 umask 를 물려받아 아카이브·리포트·매니페스트 664 · 세대 디렉터리 775 · 비압축 sqlite 사본 644 였기 때문이다(A3-F3 · 아래 §4-5-4). 그 전 판 `6b6f5766…`(PR #855 — `classify()` 에 `migrate refused` 가지)은 `.bak.6b6f5766a6f0` 로 옆에 있다. ✅ **`classify()` 는 이 이동에 포함되지 않았다** — `fc0cd225…`·`6b6f5766…`·`c38078fc…` 세 판에서 함수를 떼어 낸 추출물이 **sha256 까지 같다**(`7c306195…` — 추출물 넷과 해시는 `~/.local/state/tos/measure/cold-a3/classify-extract-20261004.txt`, 2026-10-04 실측). `d7e52b2f…`(#855 이전)만 다르고 그 차이는 #855 가 더한 두 줄이다. 그러므로 §4-5-4 의 분류 증명은 이 판에도 그대로 유효하다 |
 | **cron 등재** | 운영자 crontab (`crontab -l` 220-222행) | — | **설치됨 2026-10-03 16:13 KST**(운영자). 줄 그대로: `0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly`, 바로 위에 `CRON_TZ=Asia/Seoul` 과 머리 주석 한 줄(§4-5-3 에 셋 다 그대로). 설치 **직전** 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`(15401 B, mtime 16:13:32) — 그 파일과 현재 crontab 의 차이는 **이 세 줄뿐**이다(실측 `diff`). 첫 발화 2026-10-05(월) 18:00 KST |
-| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | `--selftest` **다섯 블록**(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33 — PR #855 의 네 판 · **10-04 19:20:06 — 잎 순회 판 `c38078fc…`**), 전부 PRE-GENESIS rc 0. 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍혀 있고 **마지막 블록이 위 행과 같다**. 래퍼가 소유한다 |
-| cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | — | 아직 없음. **비어 있는 것이 정상**(§4-5-3) |
-| 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5). **PR #855 이 더한 것**: `classify-diff-20261004.{in,out.before,out.after,diff}`(분류 대조 실측, §4-5-4) · 래퍼 판본 사본 `cold-backup-nightly.d7e52b2f7f34.sh` 와 `cold-backup-nightly.fc0cd225caeb.sh` · `cold-backup-nightly.6b6f5766a6f0.sh` · **`cold-backup-nightly.c38078fcbbe7.sh`(현재 · 잎 순회)**(전부 `600`) |
-| 대상 — **부모** | `~/.local/state/tos/paper-data` | — | **아직 없다** — 2026-10-06 첫 세션의 래퍼가 만든다(`tos-paper-boot.md` §7.6). 래퍼는 이 밑의 **`A0####` 디렉터리만** 잎으로 센다 |
-| 대상 — **잎** | `~/.local/state/tos/paper-data/<종목>` | — | **아직 없다** — `A05610` 은 10-06 genesis, `A05611` 은 10-12 genesis. 잎마다 `cold-backup` 한 번(§4-5-4). 잎이 아닌 항목은 거부하지 않고 ⚠ 줄로 텔레그램 본문에 실린다 |
+| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | **일곱 블록** — `--selftest` 다섯(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33 — PR #855 의 네 판 · 10-04 19:20:06 — 잎 순회 판 `c38078fc…`; 전부 PRE-GENESIS rc 0) + **cron 발화 둘**(10-05 18:00 PRE-GENESIS rc 0 · 10-06 18:00 `A05610` gen1 verdict rc 0, 둘 다 `c38078fc…`). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍힌다. ⚠ 현재 판 `e7579803…` 의 블록은 **아직 없다** — 그 판의 증명은 스크래치 `COLD_LOG` 로 돌렸고(§4-5-4 끝), 호스트 로그의 첫 `e7579803…` 블록은 **10-07 18:00** 이다. 래퍼가 소유한다 |
+| cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | `644` | **매 실행 줄이 쌓인다** — 래퍼의 `log()` 가 로그 파일과 stdout 양쪽에 쓰고 cron 줄이 stdout 을 여기로 보내므로, 래퍼 로그와 같은 줄(머리 sha256 · 결말 · 끝 줄)이 날마다 붙는다(실측 10-05 3줄 · 10-06 10줄). ⚠ 이 행의 1차 판 「비어 있는 것이 정상」은 **틀렸다** — 첫 발화 전(10-03) 의 부재를 일반화한 것이다. 비어 있거나 어제 날짜에서 멈춰 있으면 **cron 이 뜨지 않은 것**이고, rc 2 ABORT 의 stderr 한 줄이 남는 유일한 자리도 여기다(§4-5-4 결말표) |
+| 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5). **PR #855 이 더한 것**: `classify-diff-20261004.{in,out.before,out.after,diff}`(분류 대조 실측, §4-5-4) · 래퍼 판본 사본 `cold-backup-nightly.d7e52b2f7f34.sh` 와 `cold-backup-nightly.fc0cd225caeb.sh` · `cold-backup-nightly.6b6f5766a6f0.sh` · `cold-backup-nightly.c38078fcbbe7.sh`(잎 순회) · **`cold-backup-nightly.e7579803548b.sh`(현재 · 잎 순회 + umask)**(전부 `600`) · `leaf-selftest-20261004/`(잎 순회 증명 14 로그) · `leaf-selftest-20261006/`(umask 판 증명 · 모드 census) · `mode-fix-20261006.txt`(gen1 모드 전후) · `classify-extract-20261004.txt` |
+| 대상 — **부모** | `~/.local/state/tos/paper-data` | `700` | **2026-10-06 08:45 첫 세션의 래퍼가 만들었다**(`tos-paper-boot.md` §7.6, 실측). 래퍼는 이 밑의 **`A0####` 디렉터리만** 잎으로 센다 |
+| 대상 — **잎** | `~/.local/state/tos/paper-data/<종목>` | `700` | **`A05610` 은 10-06 genesis 완료**(첫날 194.8 MB · 같은 날 18:00 gen1 백업 verdict), `A05611` 은 10-12 genesis. 잎마다 `cold-backup` 한 번(§4-5-4). 잎이 아닌 항목은 거부하지 않고 ⚠ 줄로 텔레그램 본문에 실린다 |
 | ⛔ **이것이 아니다** | `~/.config/tos/paper-config/evidence_cold_backup.yaml` | `644` | 렌더가 만든 **all-null 쌍둥이**. **`origin/main` 의 저장소 템플릿(이 PR 머지 전 기준)과 바이트 동일**이고, ops-paper 가 매일 재렌더하므로(최근 2026-10-03 14:30) **이 PR 의 주석본은 다음 렌더가 가져간다** — 값은 그때도 all-null 이다. 로더가 둘을 구별하는 수단은 **`--config-dir` 하나뿐**이다 |
 
 래퍼의 첫 줄이 찍는 sha256 은 위 표의 값과 대조하라고 있는 것이다 — 값이 다르면 호스트
@@ -436,7 +436,8 @@ cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHI
    **이것만 남았다.**
 
 아직 한 번도 발화하지 않았다(2026-10-03 토요일 20:3x KST 기준 `cold-backup.cron.log`
-부재). 결함이 아니라 요일이다 — 스펙이 `1-5`(월–금)이므로 토요일에는 돌지 않는다.
+부재 — ⚠ 그 부재는 「발화 전」의 사실이지 정상 상태의 정의가 아니다: 발화한 뒤로는 매 실행
+줄이 그 파일에 쌓인다, §4-5-1 cron 로그 행). 결함이 아니라 요일이다 — 스펙이 `1-5`(월–금)이므로 토요일에는 돌지 않는다.
 **첫 발화는 2026-10-05(월) 18:00 KST** 이고 genesis 하루 전이라 `PRE-GENESIS` rc 0 로
 끝난다(§4-5-4). **첫 실제 아카이브는 2026-10-06(화) 18:00 KST** 실행에서 나온다.
 
@@ -492,8 +493,19 @@ CRON_TZ=Asia/Seoul
   **기준 설정에서 실행마다 다시 만든다**(temp → `mv`, 600) — 만든 뒤 (a) 세 경로 줄이 각각
   기대값 하나인가 · (b) 잎 경로를 담은 줄이 정확히 셋인가 · (c) 그 셋을 뺀 나머지가 기준
   설정과 바이트 단위로 같은가를 **따로** 묻고 하나라도 틀리면 그 잎을 돌리지 않고 거부한다.
-  잎 보관소 셋은 `umask 077` 로 미리 만든다 — 로더가 요구해서가 아니라 **모드** 때문이다
-  (python 의 mkdir 은 cron 의 umask 를 따라 755 를 만든다). ⚠ 여기서부터 래퍼가 **쓴다**:
+  잎 보관소 셋은 미리 만든다 — 로더가 요구해서가 아니라, 보관소를 못 만드는 호스트에서
+  잎 이름을 든 **래퍼 거부**가 CLI 의 중간 실패보다 먼저 나게 하려는 것이다.
+  ⚠ **모드는 2026-10-06 부터 래퍼 맨 위의 `umask 077` 한 줄이 지킨다**(A3-F3). 10-04 판은 잎
+  루트만 `umask 077` 로 미리 만들고 **CLI 가 쓰는 파일에는 손대지 않아서**, 첫 실전 실행
+  (10-06 18:00)의 산출물이 cron 의 umask 를 물려받았다 — 아카이브·리포트·매니페스트 **664**,
+  세대 디렉터리 `backups/gen1/` **775**, 그 안의 비압축 sqlite 사본 넷 **644**(실측
+  `cold-a3/mode-fix-20261006.txt` 「before」). 아카이브와 비압축 세대에는 계좌 좌표가 든 증거
+  DB 가 그대로 들어 있으므로 §7.2 좌표 규율의 600/700 이어야 한다. 그래서 (1) 래퍼가
+  `set -u` 바로 뒤에 `umask 077` 을 두어 자식 CLI 까지 물려받게 했고(코드에 명시 모드가 없음을
+  확인한 뒤 — `backup_set.py`·`backup_archive.py`·`cold_backup.py` 에 `chmod`/리터럴 모드 0건),
+  (2) gen1 산출물은 손으로 600/700 으로 돌렸다(같은 파일 「after」·「after-2」 — 파일 7 · 디렉터리 1).
+  잎 루트의 `( umask 077 && mkdir … )` 는 전역과 중복이지만 **일부러 남겼다**(전역 줄이 옮겨지거나
+  지워져도 보관소만은 조여진 채 남게). ⚠ 여기서부터 래퍼가 **쓴다**:
   그 뒤의 거부 본문은 「아무것도 쓰이지 않았다」 대신 **무엇을 이미 썼는지**(잎별 설정
   디렉터리 · 보관소 · 파생 설정 몇 개)를 말한다 — 가드가 자기가 막는다고 말한 것을 허용하는
   모양을 피하려는 것이다.
@@ -641,8 +653,23 @@ rc 0 · 텔레그램 `[SELFTEST]` 한 줄이었다(로그 머리 `sha256=6b6f576
   `selftest-{A1,A2,A3,B,B2,C-mixed,D-badfirst,E-lock,F-zeroleaf,F2-zeroleaf-born,G0-dupkey-otherparent,G-dupkey,H-leak,I-indented}.log`
   · 호스트 전후 목록 `hostdirs.{before,after,final}.txt` · `install.{before,after}.txt` ·
   `wrapper.diff`(6b6f5766 → c38078fc). 매 로그 머리 줄의 `sha256=` 이 `c38078fc…` 다. 판본 사본은
-  같은 디렉터리의 `cold-backup-nightly.c38078fcbbe7.sh`. 첫 실제 잎 백업은 2026-10-06 18:00
-  (`A05610` 하나), 첫 **두 잎** 메시지는 2026-10-12 18:00 이다.
+  같은 디렉터리의 `cold-backup-nightly.c38078fcbbe7.sh`.
+- **첫 실전 실행 — 2026-10-06 18:00:01 KST(`c38078fc…`)**: `leaves: A05610` → `[A05610] rc=0
+  class=verdict` → `telegram notified` → `wrapper 끝 rc=0 (잎 1개 중 verdict 1)`(`cold-backup.log`
+  43–60행 · cron 로그 10줄). 산출물 `paper-cold/A05610/archives/gen1.set.tar.xz`(11.9 MB) +
+  보고서, `backups/gen1/` + 매니페스트. **모드가 틀렸다** — 위 ⚠(A3-F3): 파일 664/644 · 세대
+  디렉터리 775. 손으로 600/700 으로 돌렸고(21:12 KST) 전후 목록이 `cold-a3/mode-fix-20261006.txt`.
+- **`umask 077` 판(`e7579803…`)의 증명** — `cold-a3/leaf-selftest-20261006/`(700/600), 전부
+  스크래치 좌표(`COLD_DATA_DIR`·`COLD_CONFIG_DIR`·`COLD_LOCK`·`COLD_LOG` 전부 스크래치 —
+  10-06 부터 호스트에는 실 잎이 있어 호스트 좌표로는 돌리지 않는다; 호스트 `paper-cold`·`paper-ops`·
+  `paper-data` 전후 목록 동일 `host.{before,after}.txt`): 잎 둘 → gen1 둘 verdict rc 0, **파일 27개
+  전부 600 · 디렉터리 19개 전부 700**(`selftest-J-umask.log` · `selftest-J-modes.txt`) · 새 로그
+  디렉터리·로그 파일·락 파일도 700/600 으로 생성(`selftest-J2-newlog.log`) · **설치본**을 설치 경로에서
+  같은 스크래치 좌표로 한 번 더 → gen2 둘 verdict rc 0, 머리 `sha256=e7579803…`, 트리 전체 **파일 43
+  · 600 / 디렉터리 22 · 700** 외 0건(`selftest-K-installed.log` · `selftest-K-modes.txt`) ·
+  `wrapper.diff.c38078fc-to-e7579803`(코드 변경 = `umask 077` 한 줄). ⚠ 10-06 당일부터 실 좌표에서는
+  `PRE-GENESIS` 가 더 나올 수 없다 — `BORN_ON` 당일이라 잎 0개 부모는 `refused` 다(J2 는 미래 날짜로
+  돌린 것). 첫 **두 잎** 메시지는 2026-10-12 18:00 이다.
 
 통지가 **빠질 수 있는** 두 경우도 적어 둔다: `.env` 의 briefing 두 줄이 없으면 실행은
 계속되고 로그에 `notify skipped: briefing credentials not found` 가 남는다. curl 이
@@ -810,7 +837,9 @@ done
 ```
 
 로그가 **어제 날짜에서 멈춰 있고 아무 블록도 없으면** cron 이 뜨지 않은 것이다. 그때는
-`~/.local/state/tos/cold-backup.cron.log`(비어 있는 것이 정상)와 `crontab -l` 을 본다.
+`~/.local/state/tos/cold-backup.cron.log` 와 `crontab -l` 을 본다 — cron 로그에는 **매 실행의
+래퍼 줄이 그대로 쌓이므로**(§4-5-1), 거기에도 어제 날짜가 없으면 cron 이 안 뜬 것이고, 거기에만
+있고 래퍼 로그에 없으면 rc 2 ABORT(로그 디렉터리·락·인자)다.
 
 ## 5. 거부되거나 실패하면 무엇을 하는가
 
