@@ -29,6 +29,7 @@ import ThemeToggle from "@/components/layout/ThemeToggle";
 // original Vite NavLink sequence.
 const navItems = [
   { href: "/", label: "Cockpit", icon: LayoutDashboard },
+  { href: "/tos", label: "TOS", icon: Activity },
   { href: "/positions", label: "Positions", icon: Briefcase },
   { href: "/signals", label: "Signals", icon: Activity },
   { href: "/risk", label: "Risk", icon: ShieldCheck },

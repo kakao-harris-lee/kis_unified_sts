@@ -10,7 +10,7 @@
 | ID | 표면 / 소유자 → 소비자 | 입력·출력 및 실패 의미 | 상태 / 근거 |
 |---|---|---|---|
 | EXT-01 | Operator projection / runtime → dashboard | schema v1 JSON; generation·monotonic export time·non_authorizing·운영 사실. 원천 없음은 null. 임시 파일 후 atomic replace. | 구현. [producer](../../tos/runtime/src/tos_runtime/operator/projection.py), [exporter](../../tos/runtime/src/tos_runtime/operator/export.py) |
-| EXT-02 | `GET /api/tos/projection` / dashboard → 제품 UI | `available`, `reason`, `path`, `age_seconds`, `projection`. 파일 부재·JSON/schema 오류는 unavailable. 신규 extra 필드는 무시; 미지원 version은 거부. | API 구현, TOS UI 소비 미연결. [route/DTO](../../services/dashboard/routes/tos_projection.py), [tests](../../tests/unit/dashboard/test_tos_projection.py) |
+| EXT-02 | `GET /api/tos/projection` / dashboard → 제품 UI | `available`, `reason`, `path`, `age_seconds`, `projection`. 파일 부재·JSON/schema 오류는 unavailable. 신규 extra 필드는 무시; 미지원 version은 거부. | API 및 `/tos` UI 구현; 운영 연결/배포 검증 대기. [route/DTO](../../services/dashboard/routes/tos_projection.py), [tests](../../tests/unit/dashboard/test_tos_projection.py) |
 | EXT-03 | `python -m tos_runtime.compose` / 운영자 → runtime | `run`이 설정을 검증·조립·구동. 설정/권한 거부는 부팅 성공이 아니다. 자세한 플래그는 CLI parser와 런북 정본. | 구현. [CLI](../../tos/runtime/src/tos_runtime/compose/cli.py), [run dispatch](../../tos/runtime/src/tos_runtime/compose/_run_dispatch.py), [boot runbook](../runbooks/tos-paper-boot.md) |
 | EXT-04 | 운영 CLI / 운영자 → durable state | `backup-set`, `cold-backup`, `restore-drill`, `migrate`, `rotate-key`, `rearm`, `ack-alert`; `nontrade-eval`은 저장소를 쓰지 않는 dry run, `print-digests`, `print-policy-digests`는 조회. 명령별 precondition·증거 계약은 구현에 귀속. | 구현. [CLI](../../tos/runtime/src/tos_runtime/compose/cli.py), [CLI tests](../../tos/runtime/tests/compose/test_cli.py), [cold-backup tests](../../tos/runtime/tests/compose/test_cold_backup_cli.py) |
 | EXT-05 | 향후 operator command ingress / Control Plane → runtime | 명령 식별자·actor·scope·generation·승인 참조·durable 결과의 설계 필요. | **미구현/제안**. 현재 HTTP command API가 있다는 뜻이 아님. |
@@ -19,7 +19,9 @@ EXT-01/02의 `age_seconds`는 파일 mtime 기반이다. `available=true`는 par
 뜻하며 fresh·healthy·거래 허용을 뜻하지 않는다. monotonic timestamp를 다른
 프로세스/호스트의 벽시계와 빼서 freshness로 쓰지 않는다. threshold는 후속 설정 계약에서 정한다.
 읽기 경로는 `TOS_OPERATOR_PROJECTION_PATH`로 지정되며 생산 경로와 실제 mount의
-일치 여부는 배포 검증 항목이다. 현재 스키마 정본을 공유하는 생성 산출물은 없다.
+일치 여부는 배포 검증 항목이다. producer/API/UI가 `tests/fixtures/tos/operator-projection-v1*.json` 계약 fixture를 공유한다.
+전체 schema 생성 산출물은 없으며 fixture가 schema 전체를 대체하지 않는다.
+그룹 전체와 미해결 알림 목록의 null도 원천 없음으로 보존한다.
 
 EXT-04의 CLI `restore-drill`은 non-live 복원과 digest 검증까지다.
 full replay/readiness 판정은 아래 INT-06의 전략별 호출자가 필요하다.

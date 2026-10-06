@@ -408,3 +408,36 @@ describe("strategy-builder-ui API catch-all proxy", () => {
     expect(body.mode).toBe("vps");
   });
 });
+
+
+describe("TOS projection proxy boundary", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("forwards only the projection GET without a cached or fabricated response", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ available: false }));
+    const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("http://localhost:5081/api/tos/projection");
+    expect(fetchMock.mock.calls[0][1]?.cache).toBe("no-store");
+    expect(await response.json()).toEqual({ available: false });
+  });
+  it("refuses mutation and unknown TOS paths without reaching upstream", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    for (const [method, handler] of [["POST", POST], ["PUT", PUT], ["DELETE", DELETE]] as const) {
+      const response = await handler(requestWithMethod("/api/tos/projection", method), contextFor(["tos", "projection"]));
+      expect(response.status).toBe(405);
+    }
+    const response = await GET(requestFor("/api/tos/rearm"), contextFor(["tos", "rearm"]));
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each([401, 403, 503])("preserves upstream status %s instead of inventing an empty healthy snapshot", async (status) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ detail: "unavailable" }, { status }));
+    const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
+    expect(response.status).toBe(status);
+  });
+  it("reports network failure as 503", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
+    expect(response.status).toBe(503);
+  });
+});

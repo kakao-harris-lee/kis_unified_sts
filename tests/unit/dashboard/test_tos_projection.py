@@ -89,6 +89,7 @@ def test_valid_projection_round_trips(monkeypatch, tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["available"] is True
+    assert response.headers["cache-control"] == "no-store"
     assert body["reason"] is None
     assert body["age_seconds"] >= 0
     assert body["projection"]["schema_version"] == 1
@@ -227,3 +228,54 @@ def test_route_module_does_not_import_tos_or_tos_runtime():
             assert (
                 root not in forbidden_roots
             ), f"forbidden import-from {module!r} in {_ROUTE_MODULE}"
+
+
+# These neutral JSON fixtures are also checked against the runtime producer and UI.
+# No imports cross the TOS boundary.
+def test_shared_projection_contract_fixtures(monkeypatch, tmp_path):
+    fixture_dir = Path(__file__).resolve().parents[3] / "tests/fixtures/tos"
+    for fixture in sorted(fixture_dir.glob("operator-projection-v1*.json")):
+        payload = json.loads(fixture.read_text())
+        projection_path = tmp_path / fixture.name
+        projection_path.write_text(json.dumps(payload))
+        body = (
+            _client(monkeypatch, tmp_path, projection_path)
+            .get("/api/tos/projection")
+            .json()
+        )
+        assert body["available"] is True, body
+        assert body["projection"] == payload
+
+
+def test_missing_groups_remain_unknown_instead_of_empty_facts(monkeypatch, tmp_path):
+    path = tmp_path / "minimal.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "projection_generation": 1,
+                "exported_at_monotonic_ns": 1,
+                "non_authorizing": True,
+            }
+        )
+    )
+    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
+    assert body["available"] is True
+    assert body["projection"]["alerts"] is None
+    assert body["projection"]["safety_mesh"] is None
+    assert body["projection"]["release"] is None
+
+
+def test_projection_requires_existing_dashboard_auth(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOS_OPERATOR_PROJECTION_PATH", str(tmp_path / "missing.json"))
+    client = TestClient(create_app(require_auth=True, api_key="test-projection-key"))
+    assert client.get("/api/tos/projection").status_code == 401
+    assert (
+        client.get("/api/tos/projection", headers={"X-API-Key": "wrong"}).status_code
+        == 401
+    )
+    response = client.get(
+        "/api/tos/projection", headers={"X-API-Key": "test-projection-key"}
+    )
+    assert response.status_code == 200
+    assert response.json()["available"] is False

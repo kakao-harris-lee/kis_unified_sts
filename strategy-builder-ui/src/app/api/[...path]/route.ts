@@ -442,6 +442,7 @@ function isDirectPath(path: string[]): boolean {
 
 function targetPathFor(path: string[]): string | null {
   const root = path[0];
+  if (root === "tos") return path.length === 2 && path[1] === "projection" ? "/api/tos/projection" : null;
   if (root === "strategies" && path.length > 1) {
     return `/api/kis-builder/${path.join("/")}`;
   }
@@ -463,6 +464,10 @@ async function proxyBuilderApi(request: NextRequest, context: RouteContext): Pro
   const targetPath = targetPathFor(path);
   if (!targetPath) {
     return Response.json({ detail: "Unsupported Strategy Builder API path" }, { status: 404 });
+  }
+
+  if (targetPath === "/api/tos/projection" && request.method !== "GET") {
+    return Response.json({ detail: "Read-only TOS endpoint" }, { status: 405, headers: { Allow: "GET" } });
   }
 
   const target = new URL(targetPath, apiBase);

@@ -336,3 +336,31 @@ def test_a_raising_read_export_status_is_counted_and_never_crashes_the_build() -
     document = _all_none_projection(export_status=_boom).build()
     assert document["export"]["failures"] == 1
     assert "exporter status read broke" in document["export"]["last_error"]
+
+
+@pytest.mark.parametrize(
+    "name", ["operator-projection-v1.json", "operator-projection-v1-unknown.json"]
+)
+def test_shared_product_contract_fixture(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from pathlib import Path
+
+    import tos_runtime.operator.projection as module
+
+    fixture = Path(__file__).resolve().parents[4] / "tests/fixtures/tos" / name
+    expected = json.loads(fixture.read_text())
+    monkeypatch.setattr(
+        module.time, "monotonic_ns", lambda: expected["exported_at_monotonic_ns"]
+    )
+    readers = {
+        f"read_{group}": (lambda group=group: expected[group]) for group in _GROUP_KEYS
+    }
+    seqs = expected["alerts"]["unresolved_stm_alert_seqs"]
+    projection = OperatorProjection(
+        **readers,
+        read_unresolved_stm_alert_candidate_seqs=lambda: seqs,
+        read_resolved_stm_alert_seqs=lambda: () if seqs is not None else None,
+    )
+    assert projection.build() == expected

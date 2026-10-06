@@ -23,7 +23,7 @@ import json
 import time
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api/tos", tags=["tos"])
@@ -84,13 +84,13 @@ class _SafetyMeshFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     snapshot_generation: int | None = None
-    services: dict[str, ServiceClearance] = {}
+    services: dict[str, ServiceClearance] | None = None
 
 
 class _CurrentnessFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    pending_dimensions: list[str] = []
+    pending_dimensions: list[str] | None = None
     last_assemble_complete: bool | None = None
 
 
@@ -139,8 +139,8 @@ class _LastBackupFacts(BaseModel):
 class _OperationsFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    schema_versions: dict[str, int] = {}
-    last_backup: _LastBackupFacts = _LastBackupFacts()
+    schema_versions: dict[str, int] | None = None
+    last_backup: _LastBackupFacts | None = None
     key_continuity: str | None = None
     dependency_admission: bool | None = None
 
@@ -148,7 +148,7 @@ class _OperationsFacts(BaseModel):
 class _AlertsFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    unresolved_stm_alert_seqs: list[int] = []
+    unresolved_stm_alert_seqs: list[int] | None = None
     delivery_owner: str | None = None
 
 
@@ -176,20 +176,20 @@ class TosOperatorProjection(BaseModel):
     projection_generation: int
     exported_at_monotonic_ns: int
     non_authorizing: bool
-    runtime: _RuntimeIdentity = _RuntimeIdentity()
-    recovery: _RecoveryFacts = _RecoveryFacts()
-    driver: _DriverFacts = _DriverFacts()
-    time: _TimeFacts = _TimeFacts()
-    safety_mesh: _SafetyMeshFacts = _SafetyMeshFacts()
-    currentness: _CurrentnessFacts = _CurrentnessFacts()
-    rcl: _RclFacts = _RclFacts()
-    inbox: _InboxFacts = _InboxFacts()
-    evidence: _EvidenceFacts = _EvidenceFacts()
-    release: _ReleaseFacts = _ReleaseFacts()
-    protective: _ProtectiveFacts = _ProtectiveFacts()
-    operations: _OperationsFacts = _OperationsFacts()
-    alerts: _AlertsFacts = _AlertsFacts()
-    export: _ExportFacts = _ExportFacts()
+    runtime: _RuntimeIdentity | None = None
+    recovery: _RecoveryFacts | None = None
+    driver: _DriverFacts | None = None
+    time: _TimeFacts | None = None
+    safety_mesh: _SafetyMeshFacts | None = None
+    currentness: _CurrentnessFacts | None = None
+    rcl: _RclFacts | None = None
+    inbox: _InboxFacts | None = None
+    evidence: _EvidenceFacts | None = None
+    release: _ReleaseFacts | None = None
+    protective: _ProtectiveFacts | None = None
+    operations: _OperationsFacts | None = None
+    alerts: _AlertsFacts | None = None
+    export: _ExportFacts | None = None
 
 
 class TosProjectionResponse(BaseModel):
@@ -290,7 +290,7 @@ def _read_projection(path: Path) -> TosProjectionResponse:
 
 
 @router.get("/projection", response_model=TosProjectionResponse)
-async def get_tos_projection() -> TosProjectionResponse:
+async def get_tos_projection(response: Response) -> TosProjectionResponse:
     """Return the last exported tos_runtime operator projection, if any.
 
     Read-only: opens the projection file by path only, never imports
@@ -299,4 +299,5 @@ async def get_tos_projection() -> TosProjectionResponse:
     ``reason`` rather than raising — this route never returns a 5xx for those
     cases.
     """
+    response.headers["Cache-Control"] = "no-store"
     return _read_projection(_projection_path())
