@@ -301,17 +301,22 @@ SHARED_PROJECTION_FIXTURES = frozenset(
 # by `test_protective_last_verdict_matches_the_producer_key_set` below.
 # No imports cross the TOS boundary.
 #
-# CI reach, after the move: the fixtures now sit under `tos/`, which
-# `.github/workflows/test.yml`'s `paths-ignore` covers — so a PR that changes
-# ONLY `tos/runtime/tests/fixtures/*.json` skips the `test` job and this
-# assertion does not run on it. What still runs on such a PR is the ungated
-# `tos-firewall` job, whose
-# `tos/runtime/tests/operator/test_projection.py::
-# test_shared_product_contract_fixture` round-trips both fixtures through the
-# producing assembler — so a fixture that drifts from the producer is caught
-# there, while the API-mirror direction asserted here is not. Closing that
-# needs a `test.yml` gate edit (a negated entry for the fixture directory),
-# which is an operator decision, not a side effect of this move.
+# This assertion is the only lane that reads fixture CONTENT against the DTO.
+# The runtime test named above cannot stand in for it: it feeds each group
+# back as its own reader and `OperatorProjection.build` does not validate
+# reader return values, so group content there is a pure echo. Measured:
+# deleting `protective_classification_digest` from
+# `operator-projection-v1.json` leaves the runtime test green and fails this
+# one.
+#
+# CI reach: the fixtures sit under `tos/`, which
+# `.github/workflows/test.yml` excludes with `!tos/**` — so that file
+# re-includes `tos/runtime/tests/fixtures/**` as its LAST pattern, and a PR
+# that changes only those fixtures runs this job. Both halves of the guard
+# are here: this content assertion and the `SHARED_PROJECTION_FIXTURES` pin
+# that catches the directory moving again. Removing that re-include line, or
+# moving it above `!tos/**`, silently takes both out of reach of every
+# fixture-only change.
 def test_shared_projection_contract_fixtures(monkeypatch, tmp_path):
     fixture_dir = Path(__file__).resolve().parents[3] / "tos/runtime/tests/fixtures"
     matched = sorted(fixture_dir.glob("operator-projection-v1*.json"))

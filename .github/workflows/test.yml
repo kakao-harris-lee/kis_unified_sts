@@ -1,7 +1,7 @@
 # .github/workflows/test.yml
 name: Tests
 
-# paths-ignore below (push + pull_request only — schedule is unaffected and
+# Path filter below (push + pull_request only — schedule is unaffected and
 # always runs the full weekly performance sweep): the tos governance test
 # batteries (tests/tools/test_tos_*.py, tests/tools/test_u17_verify.py,
 # tests/tos_l3/) moved to .github/workflows/tos-firewall.yml, which already
@@ -9,27 +9,66 @@ name: Tests
 # runtime stack (Redis service, full `.[dev]` install, ~25min) and gates
 # nothing tos-specific, so a PR that only touches tos/tos-spec/docs/config
 # no longer needs to pay for it.
+#
+# Why `paths` with `!` and not `paths-ignore`: one directory inside an
+# otherwise-excluded tree must still run this job, and `paths` and
+# `paths-ignore` cannot both filter one event. Every former `paths-ignore`
+# entry is carried over verbatim as a `!` pattern, so the exclusion set is
+# unchanged; the final positive line re-includes the one directory.
+#
+# GitHub semantics this relies on, quoted from
+# github/docs content/actions/reference/workflows-and-actions/workflow-syntax.md
+# ("Patterns to match file paths" table) and
+# content/actions/how-tos/write-workflows/choose-when-workflows-run/
+# trigger-a-workflow.md ("Example: Including and excluding paths"):
+#   - "The `**` wildcard matches any character including slash (`/`). This is
+#     the default behavior when you don't use a `path` filter."  ← so the
+#     leading '**' is exactly today's unfiltered reach, dotfiles included.
+#   - "Patterns are checked sequentially. A pattern that negates a previous
+#     pattern will re-include file paths."  ← so the last line wins over the
+#     '!tos/**' above it, and ORDER IS LOAD-BEARING: the re-include must stay
+#     last.
+#   - "If you define a path with the `!` character, you must also define at
+#     least one path without the `!` character."  ← the leading '**'.
+#   - "You cannot use both the `paths` and `paths-ignore` filters for the same
+#     event in a workflow."
+#
+# The re-included directory holds the operator-projection contract fixtures,
+# which `tests/unit/dashboard/test_tos_projection.py` asserts against the
+# dashboard DTO. tos-firewall's own fixture test cannot stand in for that: it
+# injects the fixture's own groups as the projection's readers, and
+# `OperatorProjection.build` does not validate reader return values, so group
+# content there is a pure echo (measured: deleting
+# `protective_classification_digest` from the fixture leaves tos-firewall
+# green). Without the re-include a fixture-only PR is tos-only, skips this
+# job, and ships a fixture that contradicts the DTO.
 on:
   push:
     branches: [main, develop]
-    paths-ignore: &paths-ignore
-      - 'tos/**'
-      - 'tos-spec/**'
-      - 'tos-evidence/**'
-      - 'docs/**'
-      - '**.md'
-      - '.claude/**'
-      - 'config/tos_completion.yaml'
-      - 'tools/tos_*'
-      - 'tools/u17-verify.sh'
-      - 'tools/wfcanon-v222.py'
-      - 'tests/tools/test_tos_*'
-      - 'tests/tools/test_u17_verify.py'
-      - 'tests/tos_l3/**'
-      - '.github/workflows/tos-*.yml'
+    paths: &paths
+      # Everything, i.e. this job's reach before any filter existed.
+      - '**'
+      # The former paths-ignore set, carried over verbatim as negations.
+      - '!tos/**'
+      - '!tos-spec/**'
+      - '!tos-evidence/**'
+      - '!docs/**'
+      - '!**.md'
+      - '!.claude/**'
+      - '!config/tos_completion.yaml'
+      - '!tools/tos_*'
+      - '!tools/u17-verify.sh'
+      - '!tools/wfcanon-v222.py'
+      - '!tests/tools/test_tos_*'
+      - '!tests/tools/test_u17_verify.py'
+      - '!tests/tos_l3/**'
+      - '!.github/workflows/tos-*.yml'
+      # MUST STAY LAST — patterns are checked sequentially and the last match
+      # wins, so this re-include only beats '!tos/**' while it is below it.
+      - 'tos/runtime/tests/fixtures/**'
   pull_request:
     branches: [main]
-    paths-ignore: *paths-ignore
+    paths: *paths
   schedule:
     # Run performance tests weekly on Monday at 00:00 UTC
     - cron: '0 0 * * 1'

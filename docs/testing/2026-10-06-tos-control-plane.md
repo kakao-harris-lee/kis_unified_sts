@@ -26,10 +26,20 @@ projection 또는 `/tos` 화면을 구현하지 않는다. Claude 프로세스�
   dashboard 테스트·UI 테스트·runtime 테스트가 모두 읽는다. 다만 runtime 쪽
   `test_shared_product_contract_fixture`는 fixture의 그룹을 projection의 reader로
   갈아끼워 **assembler pass-through만** 증명한다 — 실제 `_operations_wiring`
-  reader는 거치지 않으므로 producer의 키 집합을 검증하지 않는다.
+  reader는 거치지 않으므로 producer의 키 집합을 검증하지 않는다. 더 정확히는
+  `OperatorProjection.build` 가 reader 반환값을 검증하지 않으므로 그 테스트에서
+  **그룹 내용은 순수 에코**다. 실측: fixture 에서
+  `protective_classification_digest` 를 지우면 runtime 테스트는 green 이고
+  dashboard 의 `test_shared_projection_contract_fixtures` 만 red 다.
+  따라서 fixture 내용을 DTO 와 대조하는 레인은 dashboard 쪽 하나뿐이다.
   producer 키 집합은 별도로 `tests/unit/dashboard/test_tos_projection.py::
   test_protective_last_verdict_matches_the_producer_key_set`가 producer **소스**를
   `ast`로 읽어 DTO 필드와 대조한다(import 없음). Python 역방향 import 없음.
+- fixture 가 `tos/` 아래 있어도 그 dashboard 레인은 fixture 변경에 **돈다**.
+  `.github/workflows/test.yml` 이 `paths-ignore` 대신 `paths` + 부정 패턴을 쓰고
+  마지막 줄에서 `tos/runtime/tests/fixtures/**` 를 재포함하기 때문이다(패턴은
+  순차 평가되고 뒤가 이긴다). 그 줄을 지우거나 `!tos/**` 위로 올리면 미러 단언과
+  `SHARED_PROJECTION_FIXTURES` 핀이 동시에 fixture-only PR 의 사정권에서 빠진다.
 - Next proxy는 정확히 `GET /api/tos/projection`만 추가. 다른 TOS 경로와 쓰기 요청은 거부.
 - Compose는 기존 경로를 기본으로 유지하며 projection 디렉터리와 읽기 경로를 env로 선택 가능.
   두 변수(`TOS_OPERATOR_PROJECTION_DIR` 호스트 디렉터리 · `TOS_OPERATOR_PROJECTION_PATH`
