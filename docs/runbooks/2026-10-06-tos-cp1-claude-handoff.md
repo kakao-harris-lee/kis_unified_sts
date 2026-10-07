@@ -13,8 +13,9 @@ main 에 올려 dashboard·UI 두 서비스로 배포했다(#860~#864). 리뷰�
 (#866~#869)도 머지됐다(main `00bd5456`). 작성 시점에 관측하지
 못했던 **실제 paper 세션의 projection 갱신**은 2026-10-07 첫 실제 세션에서 §6 의 넷 중
 셋까지 관측했다 — 파일 생성·generation 증가, producer↔API 값 일치, 정지 뒤 stale 입력.
-남은 하나는 **재시작 뒤 runtime identity·generation 갱신**이고 다음 세션일의 대상이다.
-후속 넷의 처분은 §6 끝에 적었다.
+넷째 **재시작 뒤 runtime identity 갱신**은 같은 날 17:32 운영자 지시의 손 재시작에서 관측했다
+(`process_nonce` 교체 · export 순번 1 로 복귀 · RCL epoch 3). 남은 것은 재시작 뒤 **장중**
+export 주기와 UI stale 렌더 화면이다. 후속 넷의 처분은 §6 끝에 적었다.
 
 이 문서는 2026-10-06 작업 종료 시점의 인계 기록이다. 이후 작업을 재개할 때는
 현재 Git 상태와 실제 프로세스를 다시 확인한다. 이 인계 파일 자체는 별도 생성했으며,
@@ -203,13 +204,19 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
    467.3 초로 `staleAfterSeconds` 60 을 넘고 generation 은 5033 고정이다. 관측한 것은 UI
    의 stale 판정을 구동하는 **API 입력**이고, UI 가 실제로 stale 로 렌더한 화면은
    스크린샷으로 확인하지 않았다.
-4. 재시작 후 runtime identity·generation 갱신 — **미관측 — 다음 세션일**. 2026-10-07 은
-   하루 한 세션이라 같은 날 재시작이 없었다. runtime identity 는 세 지점 전부 동일했다
-   (`cell_id` `paper` · `process_nonce` 접두 `997451dd` · `runtime_generation` `0`) —
-   즉 이 항목의 **변화** 쪽은 아직 증거가 없다.
+4. 재시작 후 runtime identity·generation 갱신 — **관측됨(2026-10-07 17:32, 손 재시작)**.
+   운영자 지시로 같은 잎에 두 번째 세션(`2026-10-07-173223-LONG`, `TOS_PAPER_MINUTES=7`,
+   정지는 cron 과 같은 `stop`)을 띄웠다. 재작성된 첫 파일(17:32:50)부터 `process_nonce`
+   `997451dd…` → `e431c2d8…`, `projection_generation` 5033 → 1 이고 인증 API 가 같은 값을
+   돌려준다. `runtime_generation` 은 세 부팅 전부 **0** — compose root 가 0 으로 고정해 넘기는
+   값이라 재시작 카운터가 아니고, 실제로 오르는 durable 값은 RCL `epochs.epoch`(1·2·3)다.
+   ⚠ 장 밖이라 틱이 전부 `SKIPPED_SESSION_CLOSED` 로 끝나 **재시작 뒤 장중 export 주기**(새
+   nonce 아래 generation 증가)는 이 실행이 재지 않았다 — 08:45–15:45 안의 재시작이 필요하다.
+   부팅 증명 뒤 약 12 초는 옛 프로세스의 파일이 그대로 서빙된다(age 로만 stale).
 
-완료 범위는 코드·호스트 배선·조회 서비스 배포와 missing/auth 상태 검증에 더해 위 1~3 의
-실제 세션 관측이다. 4 와 UI stale 렌더 화면은 관측한 것으로 보고하지 않는다.
+완료 범위는 코드·호스트 배선·조회 서비스 배포와 missing/auth 상태 검증에 더해 위 1~4 의
+실제 세션 관측이다. 재시작 뒤 장중 export 주기와 UI stale 렌더 화면은 관측한 것으로 보고하지
+않는다.
 
 #861·#864 리뷰에서 분리한 후속은 넷이고 **넷 다 main에 머지됐다**. 네 건 모두
 #864가 만든 것이 아니라 그 전부터 있던 상태였다.

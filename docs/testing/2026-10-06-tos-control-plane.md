@@ -182,3 +182,70 @@ T3 와 T3' 는 같은 정지 상태를 30 초 간격으로 두 번 찍은 것이
 세션 보고서는
 `/home/deploy/.local/state/tos/paper-sessions/2026-10-07-084508-LONG/report.json` 이다.
 인증 GET 에 쓴 API 키는 이 기록에 담지 않는다.
+
+## 재시작 관측 2026-10-07 17:32 — 인계 §6 체크 4
+
+운영자 지시(「재시작이 필요하면 진행해」, 2026-10-07 오후)로 **같은 날** 같은 잎
+`paper-data/A05610` 에 두 번째 세션을 손으로 띄웠다 — 세션 `2026-10-07-173223-LONG`.
+래퍼는 cron 과 같은 `2c3284a4…` 이고 바뀐 것은 환경변수 `TOS_PAPER_MINUTES=7` 하나다:
+15:45 이 지난 뒤의 `start` 는 이 값 없이는 「stop time already passed」로 ABORT 이고, 이
+변수는 projection 을 session-local 로 격리하는 조건(`--selftest`·data-dir·instrument·
+fake-date·worktree·calendar 우회)에 **들지 않으므로** 운영 파일에 그대로 쓴다. 정지는 cron 과
+같은 `stop`(드라이버 SIGTERM)이고, 18:00 콜드 백업의 열린 핸들 검사 전에 스토어를 닫았다
+(17:34:10 `driver exited`, `fuser` 0 건). 텔레그램 기동·종료 줄은 평소대로 나갔다(17:32:42 ·
+17:34:11 `telegram notified`) — 기동 줄의 「정지 15:45 KST」는 래퍼 템플릿이고 실제 정지는
+손 `stop` 이다.
+
+| 지점 | 프로브 KST | 파일 mtime | 파일 gen | API gen | `process_nonce` 접두 | `runtime_generation` | age 초 | `/tos` |
+|---|---|---|---|---|---|---|---|---|
+| R0 | 17:31:58 | 15:45:00 | 5033 | 5033 | `997451dd` | 0 | 6433.1 | 200 |
+| — | 17:32:23 `start` · 17:32:37 boot proof OK(14.33 s · genesis=no · baseline_seq 147922) | | | | | | | |
+| R1 | 17:32:49 | 15:45:00 | 5033 | 5033 | `997451dd` | 0 | 6469.5 | 200 |
+| R2 | 17:33:34 | 17:32:50 | 1 | 1 | `e431c2d8` | 0 | 44.3 | 200 |
+| — | 17:34:06 `stop` → 17:34:10 `driver exited` rc=0 · `stop_reason=signal` | | | | | | | |
+| R3 | 17:34:14 | 17:32:50 | 1 | 1 | `e431c2d8` | 0 | 84.1 | 200 |
+| R3' | 17:34:36 | 17:32:50 | 1 | 1 | `e431c2d8` | 0 | 106.2 | 200 |
+
+다섯 지점 전부 인증 GET 은 `available=true`·`reason=None`, 비인증 GET 은 401 이다.
+`cell_id` 는 `paper`, `code_digest` 는
+`ec20680a444cc9798ad601fbcda61edc05cee30d1c00f524c60b717c5f3a5044` 으로 다섯 지점 동일 —
+워크트리 커밋은 아침 `4010bc17` 에서 `45ebdab9` 로 바뀌었지만 tos 바이트는 같아 digest
+가드가 통과했다.
+
+- **관측됨 — identity 갱신.** 재작성된 첫 파일(17:32:50)부터 `process_nonce` 가
+  `997451dd…` → `e431c2d8…` 로 바뀌고 `projection_generation` 은 5033 → **1** 로 되돌아간다
+  (프로세스별 export 순번이라 부팅 export 가 1 이다). 인증 API 는 같은 시점 파일과 같은 값을
+  돌려준다(R2·R3·R3' 전부 gen 1·새 nonce).
+- **관측됨 — 교체 전 창.** 부팅 증명(17:32:37) 뒤 약 12 초 동안은 **이전 프로세스의 파일**
+  (gen 5033·옛 nonce·age 6469 초)이 그대로 서빙된다(R1). 그 창에서 API 는 옛 identity 를
+  `available=true` 로 돌려주고 stale 판정은 age 가 맡는다 — 첫 export 는 operations wiring 의
+  `exporter.export()` 한 번이고(`compose/_operations_wiring.py`), 그 전에는 아무도 파일을
+  건드리지 않는다.
+- **`runtime_generation` 은 재시작 카운터가 아니다 — 세 부팅 전부 0.** compose root 가
+  identity 를 `runtime_generation=0` 으로 만들고(`compose/_wiring.py::_build_identity`),
+  `acquire_epoch(identity, runtime_generation=0)` 으로 넘기며, `seed_from(rcl_log)` 의 반환값은
+  쓰지 않는다(같은 파일, 「not separately consumed by this compose root」 주석). 재시작마다
+  실제로 올라가는 durable 값은 RCL `epochs.epoch` 다 — 정지 뒤 `rcl.sqlite3` 를 읽기 전용
+  (`mode=ro&immutable=1`)으로 연 결과 세 행이 epoch 1·2·3 이고 nonce 는 각각 `13b564cd…`
+  (10-06 08:45) · `997451dd…`(10-07 08:45) · `e431c2d8…`(10-07 17:32), `runtime_generation`
+  열은 셋 다 0 이다. 그러므로 인계 §6 체크 4 의 「generation 갱신」은 **epoch 로 관측됐고
+  `runtime_generation` 으로는 관측될 수 없는 값**이다. 설계 #40 D1.1 의 문장(「epoch 와 같은
+  트랜잭션에서 증가」)과 compose root 의 0 고정이 다른 것을 말하는지, projection 이 epoch 를
+  실어야 하는지는 운영자 결정이고 이 기록은 코드를 바꾸지 않았다.
+- **미관측 — 재시작 뒤 장중 export 주기.** `projection_generation` 은 17:32:50 의 1 에서 정지까지
+  움직이지 않았다. 재export 는 드라이버 턴 뒤 콜백에 묶여 있는데
+  (`driver.bind_after_turn(exporter.as_after_turn_callback())`), 장 밖 틱은 턴 전에
+  `SKIPPED_SESSION_CLOSED` 로 끝난다(`marketfeed/scheduler.py::decide_tick`). 보고서도 같다 —
+  관측 덧붙임 17 · 소비 0 · 스냅샷 +0 · 결정 none. 아침 세션의 5 초 주기가 새 nonce 아래에서도
+  이어지는지는 **08:45–15:45 안의 재시작**에서만 볼 수 있고, 이 실행은 그것을 재지 않았다.
+- **리플레이.** `REPLAY_VERDICT_IDENTICAL` 1 · `REPLAY_DIVERGED` 0 · 증거행 +20 ·
+  data dir +24,576 B. `boot_seconds` 는 genesis 2.0 → 08:45 9.21(75,839 행 위) → 17:32
+  **14.33**(147,922 행 위)으로, 런북 §7.8 2 의 리플레이 시간 곡선에 세 번째 점이 생겼다.
+- **정지 뒤 stale 입력 재현.** R3→R3' 에서 generation 1 고정·age 84.1 → 106.2 초로 체크 3 과
+  같은 모양이다. UI 가 stale 로 렌더한 화면은 이번에도 캡처하지 않았다.
+
+원시 관측은 `~/.local/state/tos/measure/cp1-restart-20261007/`(700/600 · `R0-file`·`R0-api`·
+`R1`·`R2`·`R3`·`R3b`·`report-summary`), 세션 디렉터리
+`~/.local/state/tos/paper-sessions/2026-10-07-173223-LONG/`(`report.json`), 날짜 로그
+`~/.local/state/tos/paper-logs/2026-10-07.log` 의 17:32:17 블록이다. 인증 GET 에 쓴 API 키는
+이 기록에 담지 않는다.

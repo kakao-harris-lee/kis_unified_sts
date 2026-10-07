@@ -11,7 +11,7 @@ inspection. Historical legacy observations below retain their original dates.
 |---|---|---|
 | Layers | TOS Kernel (`tos`), Application Runtime + Infrastructure Adapters (`tos_runtime`), Control Plane API (dashboard TOS surface), Product / Operator UI | Names and owners: [system context](architecture/tos-system-context.md); naming does not grant new imports or authority |
 | Runtime | Composition, durable driver/inbox, risk/authority/currentness, marketfeed, synthetic/KIS mock transport, recovery/recon and operations CLI implemented | Implementation is not live authorization; [interface catalog](architecture/tos-public-interfaces.md) distinguishes internal ports from external contracts |
-| Product integration | Atomic schema v1 projection + nullable `GET /api/tos/projection` + `/tos` read-only UI (CP-1, #861 merged and deployed) | Host output path and read-only mount connected; deployed missing/auth states verified; first normal paper-session export observed 2026-10-07 (live observation section below); identity refresh after restart still unobserved |
+| Product integration | Atomic schema v1 projection + nullable `GET /api/tos/projection` + `/tos` read-only UI (CP-1, #861 merged and deployed) | Host output path and read-only mount connected; deployed missing/auth states verified; first normal paper-session export observed 2026-10-07 and identity refresh after a same-day manual restart observed 2026-10-07 17:32 (live observation section below); in-session re-export cadence after a restart still unobserved |
 | Operator commands | Runtime CLI has run, backup/cold-backup, restore, migration, rotation, rearm, ack and nontrade operations | No product command ingress; CLI restore-drill does not by itself perform full strategy replay/readiness |
 | Paper operations | Committed [boot runbook](runbooks/tos-paper-boot.md) records resident schedule, LONG configuration and contract-specific data-dir leaves; roll replay test is present | 2026-10-06 resident execution/genesis and today's backup outcome were **not observed in this documentation task** |
 | Tenant migration | `config/tos_runtime/paper/strategies/bootproof_band.strategy.yaml` exists as boot-proof content | First economic strategy tenant, parity evidence and scope cutover are not certified |
@@ -47,8 +47,14 @@ Unlike the snapshot above, this section records a live host inspection.
   rendering was not screenshot-verified, only the API age that drives it.
   Numbers and caveats: the 2026-10-07 observation section of the
   [CP-1 implementation and verification record](testing/2026-10-06-tos-control-plane.md).
-- Still unobserved: runtime identity and generation refresh after a restart, on
-  the next session day. Observation does not authorize trading.
+- Same-day manual restart (17:32-17:34 KST, operator-authorized, same leaf):
+  `process_nonce` changed, `projection_generation` returned to 1 and the
+  authenticated API served the new identity; `runtime_generation` stayed 0 on
+  all three boots because the compose root pins it to 0, while the durable
+  restart counter is the RCL epoch (1, 2, 3). Outside session hours every tick
+  is skipped before a driver turn, so the in-session re-export cadence after a
+  restart is still unobserved, as is the UI's own stale rendering. Details in
+  the restart section of the same record. Observation does not authorize trading.
 
 ## Roadmap ownership
 
