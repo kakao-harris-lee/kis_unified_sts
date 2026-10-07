@@ -40,6 +40,7 @@ import logging
 import sys
 import warnings
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -828,15 +829,27 @@ def test_config_source_diff_names_the_fields_the_harness_never_read(
         "min_confidence",
         "reversal_confirm_enabled",
     }, diff
+    # None of the four is a CLI-sourced field, so each is compared against the
+    # dataclass default and says so.
     assert diff["no_entry_after_minutes_since_open"] == {
         "yaml": 345,
         "harness_default": 360,
+        "harness_source": "dataclass_default",
     }
-    assert diff["stall_buffer_atr_mult"] == {"yaml": 1.5, "harness_default": 1.0}
-    assert diff["min_confidence"] == {"yaml": 0.6, "harness_default": 0.0}
+    assert diff["stall_buffer_atr_mult"] == {
+        "yaml": 1.5,
+        "harness_default": 1.0,
+        "harness_source": "dataclass_default",
+    }
+    assert diff["min_confidence"] == {
+        "yaml": 0.6,
+        "harness_default": 0.0,
+        "harness_source": "dataclass_default",
+    }
     assert diff["reversal_confirm_enabled"] == {
         "yaml": True,
         "harness_default": False,
+        "harness_source": "dataclass_default",
     }
 
     # Every entry is computed, not written down: it must agree with a fresh
@@ -846,6 +859,89 @@ def test_config_source_diff_names_the_fields_the_harness_never_read(
         assert pair["harness_default"] == getattr(defaults, name), name
         assert pair["yaml"] == getattr(strategy.entry_config, name), name
         assert pair["yaml"] != pair["harness_default"], name
+
+
+def test_the_trend_fields_are_sourced_from_argparse_not_the_dataclass(
+    strategy: produce_fields.StrategyInputs, tmp_path: Path
+) -> None:
+    """The five fields the script passes explicitly come from its CLI defaults.
+
+    They coincide with the dataclass defaults today, which is exactly why an
+    earlier revision could claim "every other field takes its dataclass
+    default" and be accidentally right. Read out of the script's AST so a
+    change on either side moves one value and not the other.
+    """
+    cli = emit_legacy_decisions.harness_cli_defaults()
+    assert set(cli) == set(emit_legacy_decisions.HARNESS_CLI_FIELDS)
+    assert cli == {
+        "trend_filter_enabled": False,
+        "trend_window_bars": 30,
+        "trend_warmup_bars": 10,
+        "trend_block_threshold": 1.0,
+        "against_trend_extreme_atr_mult": 2.6,
+    }
+    # They coincide with the dataclass TODAY — asserted so a future divergence
+    # is visible here rather than silently changing what the lineage claims.
+    defaults = emit_legacy_decisions.SetupDConfig()
+    for name, value in cli.items():
+        assert value == getattr(defaults, name), name
+
+    # Every field the diff reports says WHICH source it was compared against.
+    diff = emit_legacy_decisions.config_source_diff(strategy)
+    for name, pair in diff.items():
+        assert pair["harness_source"] in {
+            "dataclass_default",
+            *(
+                f"cli_default:{option}"
+                for option in emit_legacy_decisions.HARNESS_CLI_FIELDS.values()
+            ),
+        }, name
+        if name in cli:
+            assert pair["harness_source"].startswith("cli_default:"), name
+        else:
+            assert pair["harness_source"] == "dataclass_default", name
+
+    # A renamed option must fail loudly rather than leave the lineage
+    # describing a flag nobody can pass. Driven with a stand-in script that
+    # parses but declares a DIFFERENT option name — which is what a rename
+    # looks like from here.
+    renamed = tmp_path / "renamed_harness.py"
+    renamed.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        'p.add_argument("--trend-gate", action="store_true")\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        emit_legacy_decisions.EmitLegacyDecisionsError, match="no argparse default"
+    ):
+        emit_legacy_decisions.harness_cli_defaults(renamed)
+
+
+def test_against_trend_reachability_follows_the_trend_flag(
+    bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    """AGAINST_TREND is unreachable in a default-flag run, and the note says so."""
+    unreachable = emit_legacy_decisions.outcomes_unreachable_under_harness_defaults()
+    assert "AGAINST_TREND" in unreachable
+    assert emit_legacy_decisions.harness_cli_defaults()["trend_filter_enabled"] is False
+
+    data_root = b1a._write_parquet_tree(bars, tmp_path / "market")
+    with _quiet():
+        warnings.simplefilter("ignore")
+        result = emit_legacy_decisions.run(
+            data_root=data_root,
+            symbol=SYMBOL,
+            start=SESSIONS[0],
+            end=SESSIONS[-1],
+            strategy_yaml=STRATEGY_YAML,
+            out_dir=tmp_path / "out",
+        )
+    note = result.lineage["config_source_diff"]["note"]
+    assert "--trend-filter" in note
+    assert "AGAINST_TREND" in note
+    # The note must no longer claim the dataclass supplies every non-YAML field.
+    assert "argparse" in note or "CLI" in note
 
 
 def test_four_outcomes_were_unreachable_in_the_published_run() -> None:
@@ -1027,26 +1123,80 @@ def test_an_eod_disagreement_with_the_strategy_yaml_is_refused(
 # ---------------------------------------------------------------------------
 
 
-def test_loading_the_harness_leaves_logging_and_sys_path_alone() -> None:
-    """The script calls logging.basicConfig and sys.path.insert at module level."""
-    # Force a fresh load so the side effects would actually run.
-    monkey = emit_legacy_decisions
-    monkey._WALKFORWARD_MODULE = None
+@contextmanager
+def _bare_root_logger():
+    """Run the body with a root logger that ``basicConfig`` would really change.
+
+    Under pytest the logging plugin owns the root logger — four handlers at
+    level WARNING — and ``logging.basicConfig`` is documented to DO NOTHING
+    when the root already has a handler. An earlier revision of the test below
+    therefore asserted "handlers unchanged" in a world where nothing could have
+    changed them: it passed with the save/restore deleted. Clearing the
+    handlers first is what makes the assertion mean something.
+    """
+    saved_handlers = list(logging.root.handlers)
+    saved_level = logging.root.level
+    try:
+        logging.root.handlers[:] = []
+        logging.root.setLevel(logging.WARNING)
+        yield
+    finally:
+        logging.root.handlers[:] = saved_handlers
+        logging.root.setLevel(saved_level)
+
+
+def _reset_walkforward_load() -> None:
+    emit_legacy_decisions._WALKFORWARD_MODULE = None
     sys.modules.pop(emit_legacy_decisions.WALKFORWARD_MODULE_NAME, None)
 
-    handlers_before = list(logging.root.handlers)
-    level_before = logging.root.level
-    path_before = list(sys.path)
 
-    module = emit_legacy_decisions.load_walkforward_module()
+def test_basic_config_really_would_fire_on_a_bare_root_logger() -> None:
+    """The precondition the next test depends on — asserted, not assumed.
 
-    assert logging.root.handlers == handlers_before
-    assert logging.root.level == level_before
-    assert sys.path == path_before
+    If this ever stops holding, the save/restore test below goes vacuous again
+    and nothing else would say so.
+    """
+    with _bare_root_logger():
+        assert logging.root.handlers == []
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+        assert logging.root.handlers, (
+            "basicConfig added no handler to a bare root logger, so the "
+            "save/restore test cannot be exercising anything"
+        )
+        assert logging.root.level == logging.INFO
+
+
+def test_loading_the_harness_leaves_logging_and_sys_path_alone() -> None:
+    """The script calls logging.basicConfig and sys.path.insert at module level.
+
+    Asserted on a BARE root logger (see :func:`_bare_root_logger`), so the
+    script's ``basicConfig`` can actually fire and the restore is what puts
+    things back.
+    """
+    _reset_walkforward_load()
+    with _bare_root_logger():
+        handlers_before = list(logging.root.handlers)
+        level_before = logging.root.level
+        path_before = list(sys.path)
+        assert handlers_before == [], "the bare-root context did not take"
+
+        module = emit_legacy_decisions.load_walkforward_module()
+
+        assert logging.root.handlers == handlers_before
+        assert logging.root.level == level_before
+        assert sys.path == path_before
+
     # The module itself stays registered — its dataclasses resolve annotations
     # through sys.modules for the life of the process.
     assert sys.modules[emit_legacy_decisions.WALKFORWARD_MODULE_NAME] is module
     assert hasattr(module, "_simulate_exit")
+
+
+def test_the_harness_script_really_does_configure_logging_at_module_level() -> None:
+    """Red-side evidence that there is a side effect to contain at all."""
+    source = emit_legacy_decisions.WALKFORWARD_SCRIPT.read_text(encoding="utf-8")
+    assert "logging.basicConfig(" in source
+    assert "sys.path.insert(" in source
 
 
 # ---------------------------------------------------------------------------
@@ -1071,10 +1221,42 @@ def test_every_published_number_has_a_provenance_entry(
         )
     fields = result.lineage["fields"]
 
-    expected = {name for _, name, _ in emit_legacy_decisions.EVAL_PROJECTION} | {
-        name for name, _, _, _ in emit_legacy_decisions.BRACKET_PROJECTION
-    }
-    assert set(fields) == expected
+    # COUNTED, not set-unioned. The earlier assertion compared against a
+    # UNION of the two name sets, which collapses the confidence_x1000
+    # collision on both sides — so it passed while the block described 32 of 33
+    # published numbers and gave eval.confidence_x1000 the Signal's provenance.
+    expected_count = len(emit_legacy_decisions.EVAL_PROJECTION) + len(
+        emit_legacy_decisions.BRACKET_PROJECTION
+    )
+    assert len(fields) == expected_count == 33
+    prefix = emit_legacy_decisions.EVAL_WIRE_PREFIX
+    assert set(fields) == {
+        f"{prefix}{name}" for _, name, _ in emit_legacy_decisions.EVAL_PROJECTION
+    } | {name for name, _, _, _ in emit_legacy_decisions.BRACKET_PROJECTION}
+
+    # The two confidence_x1000 wire locations are described separately and
+    # correctly: the trace entry comes from last_eval, is present only on the
+    # bars that reached step 7 (FIRED + LOW_CONFIDENCE) and is never null
+    # there; the bracket entry comes from the Signal and is null off FIRED.
+    trace_confidence = fields[f"{prefix}confidence_x1000"]
+    bracket_confidence = fields["confidence_x1000"]
+    assert trace_confidence["parents"] == ["last_eval:confidence"]
+    assert bracket_confidence["parents"] == ["signal:confidence"]
+    assert trace_confidence["wire_path"] == "decision.eval.confidence_x1000"
+    assert bracket_confidence["wire_path"] == "decision.confidence_x1000"
+    counts = Counter(record.outcome for record in result.records)
+    reached_step_7 = counts["FIRED"] + counts["LOW_CONFIDENCE"]
+    assert reached_step_7 > 0
+    assert trace_confidence["range_observed"]["present"] == reached_step_7
+    assert trace_confidence["range_observed"]["null"] == 0
+    assert bracket_confidence["range_observed"]["present"] == (
+        result.lineage["dataset"]["bars_emitted"]
+    )
+    assert bracket_confidence["range_observed"]["null"] == (
+        result.lineage["dataset"]["bars_emitted"] - counts["FIRED"]
+    )
+    assert trace_confidence["unit"] == bracket_confidence["unit"] == "ratio"
+
     for name, entry in fields.items():
         assert set(entry) >= {
             "unit",
@@ -1092,14 +1274,15 @@ def test_every_published_number_has_a_provenance_entry(
         assert entry["type"] in {"int", "bool", "str"}, name
         assert entry["parents"], name
         assert entry["range_observed"]["present"] >= 0, name
+        assert entry["wire_path"].startswith("decision."), name
 
     # A trace key absent on some bars must say so, so "never observed" is
     # distinguishable from "observed false".
     assert (
-        fields["fired"]["range_observed"]["present"]
+        fields[f"{prefix}fired"]["range_observed"]["present"]
         < result.lineage["dataset"]["bars_emitted"]
     )
-    assert fields["entry_window"]["range_observed"]["present"] == (
+    assert fields[f"{prefix}entry_window"]["range_observed"]["present"] == (
         result.lineage["dataset"]["bars_emitted"]
     )
     # The bracket integers are null off a FIRED bar.

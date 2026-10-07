@@ -552,48 +552,137 @@ def project_eval(
 # ---------------------------------------------------------------------------
 
 
+#: The ``SetupDConfig`` fields the walk-forward script passes EXPLICITLY, from
+#: its own argparse defaults rather than from the dataclass. The script's
+#: ``SetupDConfig(...)`` call (lines 441-447) forwards exactly these five, so
+#: for them the harness's operating point is the CLI default, NOT the field
+#: default — they coincide today, which is why an earlier revision of this
+#: module could say "every other field takes its dataclass default" and be
+#: accidentally right.
+HARNESS_CLI_FIELDS: dict[str, str] = {
+    "trend_filter_enabled": "--trend-filter",
+    "trend_window_bars": "--trend-window-bars",
+    "trend_warmup_bars": "--trend-warmup-bars",
+    "trend_block_threshold": "--trend-block-threshold",
+    "against_trend_extreme_atr_mult": "--against-trend-extreme-atr-mult",
+}
+
+
+def harness_cli_defaults(source: Path = WALKFORWARD_SCRIPT) -> dict[str, Any]:
+    """The argparse default behind each field in :data:`HARNESS_CLI_FIELDS`.
+
+    Read out of the script's AST rather than restated, for the same reason
+    :func:`legacy_reject_prefixes` is: a default changed there must move this
+    value, not silently contradict it. ``action="store_true"`` is read as a
+    ``False`` default, which is what argparse does.
+
+    Raises when a flag named in :data:`HARNESS_CLI_FIELDS` is not found, so a
+    renamed option fails here instead of leaving the lineage describing an
+    option that no longer exists.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    by_option: dict[str, Any] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "add_argument"):
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        option = first.value
+        keywords = {kw.arg: kw.value for kw in node.keywords}
+        action = keywords.get("action")
+        if isinstance(action, ast.Constant) and action.value == "store_true":
+            by_option[option] = False
+            continue
+        default = keywords.get("default")
+        if isinstance(default, ast.Constant):
+            by_option[option] = default.value
+
+    resolved: dict[str, Any] = {}
+    for field, option in HARNESS_CLI_FIELDS.items():
+        if option not in by_option:
+            raise EmitLegacyDecisionsError(
+                f"{source}: no argparse default found for {option!r}, which "
+                f"supplies SetupDConfig.{field} in the harness's config "
+                "(lines 441-447). The option was renamed or removed, so the "
+                "lineage would describe an operating point nobody can reproduce"
+            )
+        resolved[field] = by_option[option]
+    return resolved
+
+
 def config_source_diff(strategy: StrategyInputs) -> dict[str, dict[str, Any]]:
     """Per-field diff between the YAML this run used and the harness defaults.
 
     The walk-forward script that produced Setup D's published OOS numbers
-    **never reads the strategy YAML**: it builds
-    ``SetupDConfig(trend_filter_enabled=…, trend_window_bars=…,
-    trend_warmup_bars=…, trend_block_threshold=…,
-    against_trend_extreme_atr_mult=…)`` (lines 441-447) and takes the field
-    default for everything else. So any field the YAML sets away from its
-    default is a value the published run did not use — and some of those change
-    which outcomes are *reachable at all*, not merely how often they occur.
+    **never reads the strategy YAML**. Its operating point has TWO sources, and
+    conflating them is a mistake this function exists to avoid:
 
-    Computed from ``SetupDConfig()`` rather than written down, so it cannot
-    describe a default that has since moved.
+    * the five fields it passes explicitly — ``SetupDConfig(trend_* …)`` at
+      lines 441-447 — come from its own **argparse defaults**
+      (:data:`HARNESS_CLI_FIELDS`, lines ~419-427), so they are a default-FLAG
+      run's values, not field defaults;
+    * every other field takes the **dataclass default**, because the call does
+      not mention it.
+
+    They coincide today for all five, which is exactly why this distinction is
+    worth recording rather than assuming: a change to either side would move
+    one and not the other.
+
+    Both sides are computed — from ``SetupDConfig()`` and from the script's AST
+    — so neither can describe a default that has since moved. Each entry says
+    which source it came from in ``harness_source``.
     """
     defaults = SetupDConfig()
+    cli_defaults = harness_cli_defaults()
     diff: dict[str, dict[str, Any]] = {}
     for name in type(defaults).model_fields:
         used = getattr(strategy.entry_config, name)
-        default = getattr(defaults, name)
-        if used != default:
-            diff[name] = {"yaml": used, "harness_default": default}
+        if name in cli_defaults:
+            harness_value = cli_defaults[name]
+            source = f"cli_default:{HARNESS_CLI_FIELDS[name]}"
+        else:
+            harness_value = getattr(defaults, name)
+            source = "dataclass_default"
+        if used != harness_value:
+            diff[name] = {
+                "yaml": used,
+                "harness_default": harness_value,
+                "harness_source": source,
+            }
     return diff
 
 
 def outcomes_unreachable_under_harness_defaults() -> list[str]:
     """Outcomes no run at the harness defaults could ever emit.
 
-    Derived from ``SetupDConfig()``, not listed: the gates that make these
-    branches reachable are config-gated in ``check()``, so with the default
-    value the branch is dead rather than rare. Today that is ``LOW_CONFIDENCE``
-    (``min_confidence`` defaults to 0.0 and the gate is
-    ``if c.min_confidence > 0.0 and …``) and all three
-    ``AWAITING_REVERSAL_CONFIRM_*`` (``reversal_confirm_enabled`` defaults to
-    False and the whole confirmation block sits under
-    ``if c.reversal_confirm_enabled:``), plus ``AGAINST_TREND`` whenever the
-    trend filter is off.
+    Derived, not listed: the gates that make these branches reachable are
+    config-gated in ``check()``, so at the harness's value the branch is dead
+    rather than rare. Today that is ``LOW_CONFIDENCE`` (``min_confidence``
+    defaults to 0.0 and the gate is ``if c.min_confidence > 0.0 and …``) and
+    all three ``AWAITING_REVERSAL_CONFIRM_*`` (``reversal_confirm_enabled``
+    defaults to False and the whole confirmation block sits under
+    ``if c.reversal_confirm_enabled:``) — both from the DATACLASS, since the
+    script never passes either.
+
+    ``AGAINST_TREND`` is different in kind: it depends on ``--trend-filter``,
+    an argparse flag, so it is unreachable in a DEFAULT-FLAG run and reachable
+    in a ``--trend-filter`` run. The published numbers are the baseline
+    (flag off, which the option's own help calls "default off = baseline"), and
+    this list describes that run; a ``--trend-filter`` run would not be
+    comparable to it either, and B2 refuses to run at all while the YAML
+    enables the gate (declared difference L7).
 
     This is why the published outcome mix cannot be compared to this run's:
-    four of the fourteen outcomes could not occur in it.
+    five of the fourteen outcomes could not occur in it.
     """
     defaults = SetupDConfig()
+    cli_defaults = harness_cli_defaults()
     unreachable: list[str] = []
     if not defaults.min_confidence > 0.0:
         unreachable.append("LOW_CONFIDENCE")
@@ -603,7 +692,7 @@ def outcomes_unreachable_under_harness_defaults() -> list[str]:
             for outcome in OUTCOMES
             if outcome.startswith("AWAITING_REVERSAL_CONFIRM_")
         )
-    if not defaults.trend_filter_enabled:
+    if not cli_defaults["trend_filter_enabled"]:
         unreachable.append("AGAINST_TREND")
     return [outcome for outcome in OUTCOMES if outcome in set(unreachable)]
 
@@ -1305,7 +1394,7 @@ def _declared_differences(
                     "'no_market_context'"
                 ),
                 "regime_gate_blocked": (
-                    "same file lines 204-217 — _apply_regime_gate with a "
+                    "same file lines 205-218 — _apply_regime_gate with a "
                     "GateConfig, publishing reject 'regime_gate_blocked'"
                 ),
                 "regime_gate_enabled_in_yaml": bool(
@@ -1402,8 +1491,13 @@ def _observed_range(
     return observed
 
 
+#: Prefix the ``fields`` block uses for a key that lives inside
+#: ``decision.eval`` rather than directly under ``decision``.
+EVAL_WIRE_PREFIX = "eval."
+
+
 def _field_lineage(records: list[DecisionRecord]) -> dict[str, dict[str, Any]]:
-    """Per-key provenance for everything this artifact publishes as a number.
+    """Per-WIRE-PATH provenance for everything this artifact publishes.
 
     Same ADR-002-018 §10 derived-Critical-Input shape B1a's ``fields`` block
     uses — unit, scale token, multiplier string, sign, type, quantization,
@@ -1413,25 +1507,52 @@ def _field_lineage(records: list[DecisionRecord]) -> dict[str, dict[str, Any]]:
     setup's own trace, so every ``parents`` entry names the ``last_eval`` key
     (or the ``Signal`` attribute) the value came from, and nothing here is a
     second computation of anything.
+
+    **Keyed by wire path, not by field name.** ``confidence_x1000`` is
+    published at TWO places — ``decision.confidence_x1000`` (the fired
+    ``Signal``'s value, null off a FIRED bar) and
+    ``decision.eval.confidence_x1000`` (the trace's own ``confidence``, present
+    only on the bars that reached step 7 and never null there). They are
+    different quantities with different parents and different observed ranges.
+    An earlier revision keyed this block by field name, so the bracket loop —
+    running second — OVERWROTE the trace entry: the block described 32 of 33
+    published numbers and told a reader that ``eval.confidence_x1000`` came
+    from ``signal:confidence`` and was null on 35,062 lines, which was false in
+    both halves. The key is therefore the path under ``decision``:
+    ``eval.<name>`` for a trace key, bare ``<name>`` for a bracket integer, and
+    a collision now raises instead of silently resolving.
     """
     spec: dict[str, dict[str, Any]] = {}
     for key, published, projection in EVAL_PROJECTION:
         entry = dict(PROJECTION_ENCODING[projection])
+        entry["wire_path"] = f"decision.{EVAL_WIRE_PREFIX}{published}"
         entry["unit"] = EVAL_UNITS[key]
         entry["parents"] = [f"last_eval:{key}"]
         entry["source"] = (
             "SetupDVWAPReversion.check() wrote this key on the branch it took; "
-            "this tool projects it and recomputes nothing"
+            "this tool projects it and recomputes nothing. ABSENT on a bar "
+            "whose branch never ran (declared difference L6)"
         )
         entry["range_observed"] = _observed_range(records, published, from_trace=True)
-        spec[published] = entry
+        spec[f"{EVAL_WIRE_PREFIX}{published}"] = entry
     for published, projection, unit, parent in BRACKET_PROJECTION:
         entry = dict(PROJECTION_ENCODING[projection])
+        entry["wire_path"] = f"decision.{published}"
         entry["unit"] = unit
         entry["parents"] = [parent]
-        entry["source"] = "the fired Signal's own value; null on every non-FIRED bar"
+        entry["source"] = (
+            "the fired Signal's own value; present on every emitted line and "
+            "null on every non-FIRED bar"
+        )
         entry["range_observed"] = _observed_range(records, published, from_trace=False)
         spec[published] = entry
+    expected = len(EVAL_PROJECTION) + len(BRACKET_PROJECTION)
+    if len(spec) != expected:
+        raise EmitLegacyDecisionsError(
+            f"the fields block has {len(spec)} entries for {expected} published "
+            "numbers: two values collided on one key, so one of them is "
+            "described by the other's provenance"
+        )
     return spec
 
 
@@ -1704,6 +1825,13 @@ def build_lineage(
             "eval_projections": {
                 published: projection for _, published, projection in EVAL_PROJECTION
             },
+            "fields_block_keys": (
+                "the fields block is keyed by PATH UNDER decision — "
+                f"'{EVAL_WIRE_PREFIX}<name>' for a trace key, bare '<name>' "
+                "for a bracket integer — because confidence_x1000 is published "
+                "at both places and they are different quantities (the trace's "
+                "own confidence vs the fired Signal's)"
+            ),
             "eval_absent_key_semantics": (
                 "a key missing from decision.eval was NEVER EVALUATED on that "
                 "bar (check() returned before the branch that records it); a "
@@ -1740,22 +1868,46 @@ def build_lineage(
         "config_source_diff": {
             "this_run": str(strategy.path),
             "harness": (
-                "scripts/analysis/walkforward_setup_d_vwap_reversion.py lines "
-                "441-447 — SetupDConfig(trend_* only); every other field takes "
-                "its dataclass default and the strategy YAML is never read"
+                "scripts/analysis/walkforward_setup_d_vwap_reversion.py — the "
+                "strategy YAML is never read. Its operating point has TWO "
+                "sources: the five fields SetupDConfig(...) is called with "
+                "(lines 441-447) come from the script's own ARGPARSE defaults "
+                "(lines ~419-427), and every field the call does not mention "
+                "takes the dataclass default."
             ),
+            "harness_cli_fields": {
+                field: {
+                    "option": option,
+                    "cli_default": harness_cli_defaults()[field],
+                    "dataclass_default": getattr(SetupDConfig(), field),
+                }
+                for field, option in HARNESS_CLI_FIELDS.items()
+            },
             "differs": config_source_diff(strategy),
             "outcomes_unreachable_under_harness_defaults": (
                 outcomes_unreachable_under_harness_defaults()
             ),
             "note": (
-                "Machine-computed against SetupDConfig(), so it cannot describe "
-                "a default that has since moved. Every field listed under "
-                "'differs' is a value the published walk-forward did NOT use, "
-                "and the outcomes listed above were UNREACHABLE in it — not "
-                "rare, but dead, because the gates that produce them are "
-                "config-gated in check(). Read this block before comparing any "
-                "count here to a published number (declared difference L2)."
+                "Both sides are machine-computed — the dataclass side from "
+                "SetupDConfig(), the CLI side from the script's AST — so "
+                "neither can describe a default that has since moved, and each "
+                "entry under 'differs' names its source in 'harness_source'. "
+                "Every field listed there is a value the published "
+                "walk-forward did NOT use, and the outcomes listed above were "
+                "UNREACHABLE in it — not rare, but dead, because the gates "
+                "that produce them are config-gated in check(). "
+                "AGAINST_TREND is unreachable for a different reason from the "
+                "rest: it depends on the argparse flag --trend-filter, which "
+                "defaults off ('default off = baseline' in the option's own "
+                "help), so a --trend-filter run WOULD reach it. This block, and "
+                "the unreachable list in it, describe the DEFAULT-FLAG run — "
+                "the baseline the published numbers report. The five CLI "
+                "fields coincide with their dataclass defaults today "
+                "(harness_cli_fields above lets a reader check rather than "
+                "assume); recording both is what keeps a change to one of them "
+                "from quietly becoming a claim about the other. Read this block "
+                "before comparing any count here to a published number "
+                "(declared difference L2)."
             ),
         },
         "fields": _field_lineage(records),
