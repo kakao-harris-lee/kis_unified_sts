@@ -1,7 +1,7 @@
 # TOS Control Plane and first tenant plan
 
 작성: 2026-10-06. 기준 코드: `5c4f38e9`.
-상태: **CP-0 문서 기반 정리 완료; CP-1 코드·출력 배선·조회 서비스 배포 완료, 실제 세션 출력 관측 대기; CP-2 이후 계획**. 실행·배포·live 승인 문서가 아니다.
+상태: **CP-0 문서 기반 정리 완료; CP-1 코드·출력 배선·조회 서비스 배포 완료, 실제 세션 출력과 재시작 identity 관측 완료(2026-10-07 — 남은 것은 재시작 뒤 장중 export 주기와 UI stale 렌더 화면); CP-3 착수 문서 작성(결정 대기); CP-2 이후 계획**. 실행·배포·live 승인 문서가 아니다.
 기존 TOS Phase 번호와 구분하기 위해 이 계획만 CP-0~CP-4를 사용한다.
 
 ## 1. 목적과 선행 조사
@@ -128,7 +128,7 @@ rollback drill → rollback 의존 종료 → caller 없는 legacy 코드 삭제
 | UI `/tos` 독립 화면 또는 Cockpit 섹션 | CP-1 구현 시작 | 미정; 기존 UI 탐색 후 최소 변경 선택 |
 | freshness/polling 수치·배포 projection 경로 | CP-1 배포 검증 전 | 미정; 설정으로 기록하고 실제 export 주기 검증 |
 | command 범위·전달 방식·승인 책임 | CP-2 설계 완료 | 미정; 기존 CLI 우선 |
-| 첫 tenant 전략/상품/기간/담당자 | CP-3 시작 | 미정; 후보 비교표 필요 |
+| 첫 tenant 전략/상품/기간/담당자 | CP-3 시작 | 미정 — 후보 비교표와 결정 여덟은 [CP-3 착수 문서](2026-10-07-tos-cp3-first-tenant-kickoff.md) §1·§4(권고 Setup D) |
 | scope별 rollback 종료·삭제 시점 | CP-4 삭제 전 | 미정; 관측 증거 필요 |
 
 CP-1 구현 상태는 §6과 [검증 기록](../testing/2026-10-06-tos-control-plane.md)을 따른다.
