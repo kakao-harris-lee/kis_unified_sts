@@ -453,11 +453,18 @@ def _psbl_params(creds: Any, symbol: str, unit_price: Decimal) -> dict[str, str]
 def _psbl_observation(
     status: int, parsed: dict[str, Any], headers: dict[str, str], elapsed_ms: float
 ) -> dict[str, Any]:
-    """The four ``VTTO5105R`` fields design §4.1 records, plus the answer code.
+    """The ``VTTO5105R`` fields design §4.1 records, plus the answer code.
 
-    Verbatim: a refusal is transcribed, not classified. P-CA's lesson is the
-    reason — reading ``held=0`` as "flat" when the query had been refused cost
-    that campaign a whole observation.
+    The keys are the design table's own names — ``ord_psbl_qty`` /
+    ``tot_psbl_qty`` / ``bass_idx`` / ``rt_cd`` / ``msg_cd`` / ``msg1`` — so a
+    reviewer reading §4.1 beside the artifact matches them one to one. Their
+    values are what the broker sent, UNPARSED: a refusal is transcribed, not
+    classified. P-CA's lesson is the reason — reading ``held=0`` as "flat" when
+    the query had been refused cost that campaign a whole observation.
+
+    L3 additionally publishes ``ord_psbl_qty_int`` / ``tot_psbl_qty_int``
+    (see :func:`_integral_quantity`). Those are DERIVED, which is why they carry
+    a different name instead of overwriting the transcript.
     """
     output = parsed.get("output")
     output = output if isinstance(output, dict) else {}
@@ -466,9 +473,9 @@ def _psbl_observation(
         "rt_cd": rt_cd_of(parsed),
         "msg_cd": str(parsed.get("msg_cd") or ""),
         "msg1": str(parsed.get("msg1") or "").strip(),
-        "ord_psbl_qty_raw": output.get("ord_psbl_qty"),
-        "tot_psbl_qty_raw": output.get("tot_psbl_qty"),
-        "bass_idx_raw": output.get("bass_idx"),
+        "ord_psbl_qty": output.get("ord_psbl_qty"),
+        "tot_psbl_qty": output.get("tot_psbl_qty"),
+        "bass_idx": output.get("bass_idx"),
         "elapsed_ms": round(elapsed_ms, 1),
         "broker_date_header": headers.get("Date", ""),
     }
@@ -705,11 +712,11 @@ def _leg_psbl(
     run.observe(**record)
 
     if enforce_integral and record["answered"]:
-        record["ord_psbl_qty"] = _integral_quantity(
-            record["ord_psbl_qty_raw"], "ord_psbl_qty"
+        record["ord_psbl_qty_int"] = _integral_quantity(
+            record["ord_psbl_qty"], "ord_psbl_qty"
         )
-        record["tot_psbl_qty"] = _integral_quantity(
-            record["tot_psbl_qty_raw"], "tot_psbl_qty"
+        record["tot_psbl_qty_int"] = _integral_quantity(
+            record["tot_psbl_qty"], "tot_psbl_qty"
         )
     return record
 
@@ -898,14 +905,21 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
                     "msg1": l3["msg1"],
                 },
             )
-        elif l3.get("ord_psbl_qty", 0) >= 1:
+        elif l3["ord_psbl_qty_int"] >= 1:
+            # Not ``l3["ord_psbl_qty"]``: that key holds the broker's own
+            # UNPARSED string, so comparing it to 1 would be a type error on a
+            # good answer and a string comparison on a bad one. The verdict
+            # reads the value ``_integral_quantity`` already proved is an exact
+            # contract count. Not ``.get(..., 0)`` either — a default would turn
+            # a missing key into "zero available", the P-CA error in a new hat;
+            # the key is guaranteed present because ``answered`` is true here.
             verdicts["L3"] = VERDICT_PASS
         else:
             verdicts["L3"] = VERDICT_FAIL
             run.measure(
                 "l3_zero_quantity_record",
                 {
-                    "ord_psbl_qty": l3.get("ord_psbl_qty"),
+                    "ord_psbl_qty": l3["ord_psbl_qty_int"],
                     "recorded_not_interpreted": (
                         "Zero order-available quantity at the touch means 예수금 "
                         "0 or a margin constraint on this account. It says nothing "

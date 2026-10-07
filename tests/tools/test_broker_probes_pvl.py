@@ -935,10 +935,11 @@ def test_l4_and_l5_do_not_apply_the_integral_guard(
 
     run = pvl.probe_pvl(_args())
 
-    assert run.measurements["l4_psbl_at_lower_limit"]["ord_psbl_qty_raw"] == "1.5"
+    l4 = run.measurements["l4_psbl_at_lower_limit"]
+    assert l4["ord_psbl_qty"] == "1.5"
+    assert "ord_psbl_qty_int" not in l4
     assert (
-        run.measurements["l5_psbl_above_upper_limit"]["ord_psbl_qty_raw"]
-        == "not-a-number"
+        run.measurements["l5_psbl_above_upper_limit"]["ord_psbl_qty"] == "not-a-number"
     )
     assert run.measurements["leg_verdicts"]["L4"] == "OBSERVATION_ONLY_NO_VERDICT"
 
@@ -968,7 +969,10 @@ def test_l3_refusal_is_recorded_and_never_read_as_zero_available(
     assert record["msg_cd"] == "EGW00215"
     assert "NOT 'zero available'" in record["recorded_not_interpreted"]
     assert "P-CA" in record["recorded_not_interpreted"]
-    assert "ord_psbl_qty" not in run.measurements["l3_psbl_at_touch"]
+    # The transcript keeps the broker's own empty string; the DERIVED
+    # integer is absent, because nothing was parsed from a refused answer.
+    assert run.measurements["l3_psbl_at_touch"]["ord_psbl_qty"] == ""
+    assert "ord_psbl_qty_int" not in run.measurements["l3_psbl_at_touch"]
 
 
 def test_l3_zero_quantity_is_a_fail_distinct_from_a_refusal(
