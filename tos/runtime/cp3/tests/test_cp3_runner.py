@@ -148,6 +148,13 @@ def test_entry_fires_on_its_bar_and_the_second_is_capacity_denied(
     assert artifacts.rule_fire_counts["R1-ENTRY-LONG"] == 2
     # Every other bar took the default.
     assert artifacts.rule_fire_counts["R0-DEFAULT-NO-ACTION"] == 48
+    # WHICH bar spent the order is recorded, not inferred from handoffs=1.
+    assert artifacts.realized_order == {
+        "raw_event_id": lines[10]["raw_event_id"],
+        "bar_index": 10,
+        "rule_id": "R1-ENTRY-LONG",
+        "outcome_kind": DecisionKind.ACTION.value,
+    }
 
 
 def test_entry_threshold_is_the_authored_binding_not_an_always_true_gate(
@@ -224,6 +231,41 @@ def test_entry_then_exit_exit_is_capacity_denied_not_reclassified(
     assert by_index[12]["outcome_kind"] == DecisionKind.FLAT.value
     assert by_index[12]["rule_id"] == "R2-EXIT-VWAP-REVERTED"
     assert by_index[12]["capacity_denied"] is True
+    assert artifacts.realized_order is not None
+    assert artifacts.realized_order["bar_index"] == 4
+
+
+def test_an_early_exit_spends_the_single_order_before_any_entry(
+    tmp_path: Path,
+) -> None:
+    """The cap is spent by the FIRST firing of ANY rule — not by the first entry.
+
+    The real 35,612-bar run lands exactly here: B1a's first bar carries
+    ``vwap_reverted: true`` (close sits on the session VWAP), so the one order
+    goes to an exit FLAT on bar 0 and every one of the 392 entry firings is
+    capacity-denied. Reading ``handoffs=1`` beside ``ACTION=392`` as "an entry
+    was realized" is therefore wrong, and this test is what keeps
+    ``realized_order`` honest about it.
+    """
+    lines = fx.synthetic_stream(
+        bar_count=20, entry_at=(11,), special={1: fx.reverted_fields}
+    )
+    path = fx.write_jsonl(tmp_path / "fields.jsonl", lines)
+    artifacts = runner.run_replay(
+        records=runner.read_field_records(path), content=_content()
+    )
+    assert artifacts.realized_order == {
+        "raw_event_id": lines[1]["raw_event_id"],
+        "bar_index": 1,
+        "rule_id": "R2-EXIT-VWAP-REVERTED",
+        "outcome_kind": DecisionKind.FLAT.value,
+    }
+    by_index = {line["bar_index"]: line for line in artifacts.trace_lines}
+    # The entry still FIRES — it is denied at the ledger, not reclassified.
+    assert by_index[11]["outcome_kind"] == DecisionKind.ACTION.value
+    assert by_index[11]["rule_id"] == "R1-ENTRY-LONG"
+    assert by_index[11]["capacity_denied"] is True
+    assert artifacts.run.handoff_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +437,7 @@ def test_two_runs_produce_byte_identical_trace_and_lineage(tmp_path: Path) -> No
     assert lineage["counts"]["bars_read"] == 40
     assert lineage["counts"]["bars_driven"] == 40
     assert lineage["counts"]["capacity_denials"] == 2
+    assert lineage["counts"]["realized_order"]["rule_id"] == "R1-ENTRY-LONG"
     assert lineage["claims"]["closes_no_ev"] is True
     # The two declared differences the task names explicitly.
     ids = {item["id"] for item in lineage["declared_differences"]}

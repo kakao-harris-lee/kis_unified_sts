@@ -1151,6 +1151,12 @@ class RunArtifacts:
     rule_fire_counts: Mapping[str, int]
     capacity_denials: int
     halt_counts: Mapping[str, int]
+    #: The ONE bar whose decision actually reached the send boundary, or ``None``
+    #: for a run in which nothing did. Recorded explicitly because the B4 cap
+    #: spends the single order on the **first firing of ANY rule**, which need
+    #: not be an entry: reading "handoffs=1" beside "ACTION=N" invites the
+    #: misreading that an entry was realized.
+    realized_order: Mapping[str, Any] | None
 
 
 def _session_template() -> SessionContext:
@@ -1282,6 +1288,7 @@ def run_replay(
     rule_fire_counts: dict[str, int] = {}
     halt_counts: dict[str, int] = {}
     capacity_denials = 0
+    realized_order: dict[str, Any] | None = None
     for entry, result in zip(run.trace.entries, run.event_results):
         if entry.event_kind is not EventKind.DECISION_TICK:
             continue
@@ -1314,6 +1321,19 @@ def run_replay(
         pipeline_halt = None if result.pipeline is None else result.pipeline.halt_reason
         outcome_counts[kind_label] = outcome_counts.get(kind_label, 0) + 1
         rule_fire_counts[rule_id] = rule_fire_counts.get(rule_id, 0) + 1
+        if entry.handed_off and realized_order is None:
+            realized_order = {
+                "raw_event_id": record.raw_event_id,
+                "bar_index": bar_index,
+                "rule_id": rule_id,
+                "outcome_kind": kind_label,
+            }
+        elif entry.handed_off:
+            raise Cp3RunnerRefusal(
+                f"{record.raw_event_id}: a second hand-off reached the send "
+                "boundary — the at-most-one seal did not hold, which would "
+                "mean the capacity denials below are not what they appear"
+            )
         # Counted ONCE per bar per distinct reason: ``result.halt_reason`` is
         # the core's own restatement of whichever stage halted, so adding all
         # three sources naively double-counts every halt.
@@ -1368,6 +1388,7 @@ def run_replay(
         rule_fire_counts=dict(sorted(rule_fire_counts.items())),
         capacity_denials=capacity_denials,
         halt_counts=dict(sorted(halt_counts.items())),
+        realized_order=realized_order,
     )
 
 
@@ -1516,6 +1537,13 @@ def build_lineage(
             "capacity_denials": artifacts.capacity_denials,
             "halt_reasons": dict(artifacts.halt_counts),
             "handoffs": run.handoff_count,
+            # Which bar spent the single order (B1b-D1). It is the first firing
+            # of ANY rule, which is NOT necessarily an entry.
+            "realized_order": (
+                None
+                if artifacts.realized_order is None
+                else dict(artifacts.realized_order)
+            ),
             "halt_records": len(run.halts),
             "fill_records": len(run.fill_records),
             "unsettled_fill_records": len(run.unsettled_fill_records),
@@ -1567,7 +1595,12 @@ def build_lineage(
                     "capacity_denied=true. kickoff §3 B4 disposes this as "
                     "'체결 비교 포기': the comparison is decision/intent level, "
                     "never fill-for-fill. The denials are the seal FIRING, not "
-                    "run failures."
+                    "run failures. ⚠ The single order is spent by the FIRST "
+                    "firing of ANY rule — an exit FLAT on an early bar takes it "
+                    "just as readily as an entry — so counts.realized_order "
+                    "names which bar actually reached the send boundary; "
+                    "handoffs=1 beside ACTION=N must NOT be read as 'an entry "
+                    "was realized'."
                 ),
             },
             {
@@ -1776,6 +1809,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"capacity_denials={artifacts.capacity_denials}")
     print(f"halt_reasons={artifacts.halt_counts}")
     print(f"handoffs={artifacts.run.handoff_count}")
+    print(f"realized_order={artifacts.realized_order}")
     print(f"trace_digest={artifacts.trace_digest}")
     print(f"trace={trace_path}")
     print(f"lineage={lineage_path}")
