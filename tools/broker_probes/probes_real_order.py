@@ -89,6 +89,12 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from tools.broker_probes import probes_order
+from tools.broker_probes._tick_math import (
+    corroborate_tick as _corroborate_tick,
+)
+from tools.broker_probes._tick_math import (
+    decimal_field as _decimal_field,
+)
 from tools.broker_probes.common import (
     ENV_REAL,
     REAL_BASE_URL,
@@ -429,27 +435,17 @@ def assert_real_order_confirmation(args: argparse.Namespace) -> None:
 # Field parsing — absent/unparseable is NEVER folded into zero
 # ---------------------------------------------------------------------------
 
-
-def _decimal_field(container: Any, key: str) -> Decimal | None:
-    """A numeric broker field as an exact Decimal, or ``None`` if unestablished.
-
-    ``None`` means "the broker did not give us this number", which is a different
-    fact from ``0``. Every caller here treats ``None`` as fail-closed: an
-    unreadable order-available amount aborts exactly like a zero one, and an
-    unreadable fill quantity aborts rather than reading as "did not fill".
-    """
-    if not isinstance(container, dict):
-        return None
-    raw = container.get(key)
-    if raw is None:
-        return None
-    text = str(raw).strip().replace(",", "")
-    if not text:
-        return None
-    try:
-        return Decimal(text)
-    except ArithmeticError:
-        return None
+# ``_decimal_field`` and ``_corroborate_tick`` used to live here. They were pure
+# already, and a GET-only probe needs them — but reaching them meant importing
+# THIS module, the only order-emitting one in the harness, which also imports
+# ``probes_order`` at module level. One import would have put both order paths
+# into a read-only module's graph, which the canaries at
+# ``test_broker_probes_real_order.py::test_get_only_real_module_does_not_import_the_real_order_module``
+# and ``test_broker_probes_ca.py::test_module_does_not_import_order_capable_modules``
+# exist to forbid. They now live in the stdlib-only ``_tick_math`` and are
+# re-exported here under their original private names, so every call site in
+# this file and the existing test that reaches ``pro._corroborate_tick`` are
+# unchanged. Address moved; behaviour did not.
 
 
 def _int_field(container: Any, key: str) -> int | None:
@@ -1439,36 +1435,6 @@ def _preflight_market_and_instrument(
         },
     )
     return int(contract.multiplier_krw_per_point), tick
-
-
-def _corroborate_tick(
-    quote_output: dict[str, Any], tick: Tick, fields: tuple[str, ...]
-) -> dict[str, Any]:
-    """Check the broker's own quoted prices are multiples of the configured tick.
-
-    The honest substitute for a broker-reported 호가단위 on an asset class that
-    does not report one. If the venue quotes a price that is not a multiple of
-    the tick this repo has registered, the registered tick is CONTRADICTED and
-    the caller must not snap to it.
-    """
-    observed: dict[str, Any] = {}
-    offenders: list[str] = []
-    for name in fields:
-        value = _decimal_field(quote_output, name)
-        observed[name] = str(value) if value is not None else None
-        if value is not None and value > 0 and value % tick.size != 0:
-            offenders.append(f"{name}={value}")
-    return {
-        "tick_size_points": str(tick.size),
-        "broker_quoted_values": observed,
-        "non_multiples": offenders,
-        "corroborated": not offenders,
-        "meaning": (
-            "Every positive broker-quoted price above is expected to be an exact "
-            "multiple of the registered tick. A non-multiple contradicts the "
-            "registry and the resting price must not be snapped to it."
-        ),
-    }
 
 
 def probe_real_preflight(args: argparse.Namespace) -> ProbeRun:

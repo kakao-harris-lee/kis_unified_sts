@@ -971,29 +971,31 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         statistic=(
             "categorical per leg, no numeric bound. L1 = 다섯 시세 필드 존재·양수·"
-            "틱 정합(_corroborate_tick). L2 = 관측 band 와 시행세칙 제56조 산식"
-            "(기준가격×비율, 상한가 내림/하한가 올림)의 일치 여부 — 비율 "
-            "{8,15,20}% × 틱 {규정 0.05, 레지스트리} 조합 중 어느 것이 재현하는지만 "
-            "기록하고 해석하지 않는다. L3 = ord_psbl_qty >= 1 (예수금 파생값 — "
-            "구조 상한 아님). L4·L5 = 관측 전용, PASS/FAIL 없음. 호가수량한도 "
-            "2,000(별표 17의2 제1호)은 GET 으로 관측 불가 — 1차 출처는 규정 문서다"
+            "틱 정합(_tick_math.corroborate_tick). L2 = 관측 band 와 시행세칙 "
+            "제56조 산식(기준가격×비율, 상한가 내림/하한가 올림)의 일치 여부 — "
+            "비율 {8,15,20}%(별표 14 제1호) 중 어느 단계가 재현하는지만 기록하고 "
+            "해석하지 않는다. 틱은 --symbol 의 **등록 호가가격단위**"
+            "(config/execution.yaml::futures_contract_spec — 미니 0.02 / 전체 "
+            "0.05)이고 리터럴도 paper 정책값도 아니다. L3 = ord_psbl_qty >= 1 "
+            "(예수금 파생값 — 구조 상한 아님). L4·L5 = 관측 전용, PASS/FAIL 없음. "
+            "호가수량한도(별표 17의2 제1호: 미니 정규 10,000 / 전체 정규 2,000)는 "
+            "GET 으로 관측 불가 — 아티팩트에 맥락으로만 적고 1차 출처는 규정 "
+            "문서다"
         ),
+        # Same polarity as P-16: a read-only MOCK query probe is LOW risk, and
+        # --confirm still gates broker contact (prerequisites below).
         risk="LOW",
         duration="~10 s (GET 5 + 토큰 1, 1.1 s 페이싱)",
         emits_orders=False,
-        # Design §4 declares requires_confirm=False. P-VL is the only NETWORKED
-        # probe in this register with no --confirm gate, so runbook safety
-        # control #4 (docs/runbooks/kis-capability-probes.md:86) does not apply
-        # to it. What stands in its place is structural and asserted by
-        # tests/tools/test_broker_probes_pvl.py: a GET+TR+path allowlist checked
-        # before the session is touched, assert_mock_host on every URL, and
-        # assert_mock_trading_tr on the one /trading/ TR.
-        requires_confirm=False,
+        requires_confirm=True,
         supported=True,
         skip_reason="",
         prerequisites=(
             "--symbol 필수 — 상주 paper 세션이 실제로 돌고 있는 결제월(호스트 "
-            "~/.local/state/tos/paper-data/<종목>). 리터럴 기본값 없음",
+            "~/.local/state/tos/paper-data/<종목>). 리터럴 기본값 없음. 허용 "
+            "접두는 KOSPI200 지수선물뿐(A05 미니 / 101·A01 전체), 그 밖은 거부",
+            "--confirm gates broker contact for every networked probe, including "
+            "read-only ones (P-16 문형)",
             "거래일 CONTINUOUS 08:45-15:45 KST (config/tos_runtime/paper/"
             "calendar.yaml:56). 설계 §4.2: 08:50±3분(확대 불가 창 — L2 기대값이 "
             "정해진다)과 09:20 이후 각 1회, 별도 아티팩트",
@@ -1001,7 +1003,9 @@ PROBES: dict[str, ProbeSpec] = {
             "같으면 토큰 1분 재발급 한도(N-15)를 피해 09:20 샘플만 찍는다",
             "분리 워크트리에서 실행 (origin/main detached) — 공유 체크아웃은 병렬 "
             "레인이 브랜치를 바꿔 repo_commit 이 비-main 으로 찍힌다(#793 HIGH)",
-            "READ-ONLY: GET 전용, 모듈에 주문 경로 없음. 실전 자격증명·실주문 없음",
+            "READ-ONLY: GET 전용, 모듈에 주문 경로 없음. 주문 가능 모듈"
+            "(probes_order·probes_real_order)을 임포트하지 않는다 — 순수 함수는 "
+            "stdlib 전용 _tick_math 에서 온다. 실전 자격증명·실주문 없음",
         ),
         entrypoint="tools.broker_probes.probes_venue_limits:probe_pvl",
     ),

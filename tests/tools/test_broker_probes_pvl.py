@@ -46,7 +46,7 @@ from typing import Any
 
 import pytest
 
-from tools.broker_probes import probes_order
+from tools.broker_probes import _tick_math
 from tools.broker_probes import probes_venue_limits as pvl
 from tools.broker_probes.common import (
     MOCK_BASE_URL,
@@ -63,10 +63,15 @@ _ACCOUNT = "1234567803"  # 8-digit CANO + product code 03 (futures)
 _APP_KEY = "pvl-test-app-key"
 _APP_SECRET = "pvl-test-app-secret"
 
-#: A 미니코스피200 leaf — the product the resident paper session actually runs,
-#: and the only family ``resolve_smallest_contract`` admits (it refuses anything
-#: that is not the smallest registered contract).
+#: A 미니코스피200 leaf — the product the resident paper session actually runs
+#: (today's resident leaf). Its registered 호가가격단위 is 0.02, NOT the 0.05 of
+#: the full-size contract that the deployed paper policy still carries.
 _SYMBOL = "A05610"
+
+#: The tick ``config/execution.yaml::futures_contract_spec.kospi200_mini``
+#: registers for :data:`_SYMBOL`. Spelled out here so the hand-checkable band
+#: arithmetic below is read against the right unit.
+_MINI_TICK = Decimal("0.02")
 
 #: 기준가격 for every fixture. See the module docstring for why 420.00.
 _SDPR = "420.00"
@@ -195,7 +200,7 @@ def _args(**overrides: object) -> argparse.Namespace:
         "probe_id": "P-VL",
         "symbol": _SYMBOL,
         "asset": "futures",
-        "confirm": False,  # P-VL is requires_confirm=False by design §4
+        "confirm": True,  # P-VL is requires_confirm=True (P-16 polarity)
         "pace_s": 0.0,  # these tests assert values, not intervals
         "token_cache_dir": None,
         "out_dir": None,
@@ -294,21 +299,23 @@ def test_registry_entry_is_a_get_only_mock_query() -> None:
     assert spec.entrypoint == "tools.broker_probes.probes_venue_limits:probe_pvl"
 
 
-def test_registry_declares_no_confirm_gate_and_names_what_replaces_it() -> None:
-    """Design §4 sets ``requires_confirm=False`` — the one networked probe here
-    that runbook safety control #4 does not gate.
+def test_registry_is_confirm_gated_like_every_other_networked_probe() -> None:
+    """``--confirm`` gates broker contact even for a read-only probe.
 
-    The assertion is paired on purpose: a reader who sees ``False`` must also be
-    able to find, in the register itself, that the probe is read-only by
-    construction and runs nowhere but the mock host.
+    P-16 and P-13 are both read-only MOCK queries and both set this. A networked
+    probe without it would be the only hole in runbook safety control #4, so the
+    flag is asserted beside the register's own statement that the module is
+    read-only and imports no order path.
     """
     spec = get("P-VL")
 
-    assert spec.requires_confirm is False
+    assert spec.requires_confirm is True
+    assert get("P-16").requires_confirm is True  # the polarity being followed
     prerequisites = " ".join(spec.prerequisites)
     assert "READ-ONLY" in prerequisites
     assert "GET 전용" in prerequisites
     assert "실주문 없음" in prerequisites
+    assert "probes_order" in prerequisites
 
 
 def test_registry_source_cites_the_design_document() -> None:
@@ -365,12 +372,21 @@ def test_run_py_knows_where_the_probe_s_cli_args_live() -> None:
     )
 
 
-def test_pace_default_is_the_shared_measured_constant_not_a_local_literal() -> None:
+def test_pace_default_is_p13s_measured_clean_rate() -> None:
+    """1.1 s, and the constant is LOCAL on purpose.
+
+    ``probes_order.DEFAULT_PACE_S`` holds the same number, but importing that
+    module would put order-submitting code in this probe's graph — the hole
+    ``test_module_does_not_import_order_capable_modules`` exists to close.
+    ``probes_balance`` and ``probes_ca`` keep their own copies for the same
+    reason, and the docstring on this one says so.
+    """
     parser = argparse.ArgumentParser()
     pvl.add_venue_limits_args(parser)
 
-    default = parser.get_default("pace_s")
-    assert default == probes_order.DEFAULT_PACE_S == 1.1
+    assert parser.get_default("pace_s") == pvl.DEFAULT_PACE_S == 1.1
+    module_text = Path(pvl.__file__).read_text(encoding="utf-8")
+    assert "probes_order.DEFAULT_PACE_S" in module_text  # the reason, in writing
 
 
 # ---------------------------------------------------------------------------
@@ -417,25 +433,60 @@ def test_the_real_trading_tr_appears_nowhere_in_the_module() -> None:
     assert "TTTO5105R" not in Path(pvl.__file__).read_text(encoding="utf-8")
 
 
-def test_read_only_claim_is_scoped_to_this_module_not_its_import_graph() -> None:
-    """Name the hole instead of letting the AST test imply a stronger claim.
-
-    ``probes_balance`` can assert it imports no order module. P-VL cannot: the
-    design mandates reusing ``probes_real_order``'s pure functions, which drags
-    order-emitting modules into the import graph. This test pins that fact so
-    nobody later reads the AST tests above as "no order code is reachable".
-    """
+def _imported_modules(module: Any) -> set[str]:
     imported: set[str] = set()
-    for node in ast.walk(_module_ast()):
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported |= {alias.name for alias in node.names}
         elif isinstance(node, ast.ImportFrom):
             imported.add(node.module or "")
+    return imported
 
-    assert "tools.broker_probes.probes_real_order" in imported
-    assert "tools.broker_probes.probes_order" in imported
-    docstring = ast.get_docstring(_module_ast()) or ""
-    assert "IMPORT GRAPH" in docstring
+
+def test_module_does_not_import_order_capable_modules() -> None:
+    """The canary ``test_broker_probes_ca.py`` carries, applied to this module.
+
+    ``probes_real_order`` is the only order-emitting module in the harness and it
+    imports ``probes_order`` at module level, so ONE import of either would put
+    both order paths in this read-only module's graph. The two pure helpers this
+    probe reuses live in ``_tick_math`` precisely so that import is unnecessary.
+    """
+    banned = ("probes_order", "probes_real_order")
+
+    assert not [
+        name for name in _imported_modules(pvl) if any(b in name for b in banned)
+    ]
+
+
+def test_the_relocated_helper_module_is_stdlib_only() -> None:
+    """``_tick_math`` is the shared dependency, so its own graph must stay empty.
+
+    One ``tools.broker_probes`` or ``shared`` import here would be inherited by
+    every GET-only module that reuses it and would silently reopen the hole the
+    relocation closed.
+    """
+    imported = _imported_modules(_tick_math)
+
+    assert not [
+        name
+        for name in imported
+        if name.startswith(("tools", "shared", "services", "tos"))
+    ]
+    assert imported <= {"decimal", "typing", "__future__"}
+
+
+def test_probes_real_order_still_exposes_the_relocated_helpers() -> None:
+    """The relocation was an address change, not a rename for callers.
+
+    ``probes_real_order._corroborate_tick`` is reached by name from
+    ``tests/tools/test_broker_probes_real_order.py``, and every call site inside
+    that module uses the private names. Re-export keeps both working.
+    """
+    from tools.broker_probes import probes_real_order as pro
+
+    assert pro._corroborate_tick is _tick_math.corroborate_tick
+    assert pro._decimal_field is _tick_math.decimal_field
 
 
 def test_allowlist_is_two_read_only_inquiries_and_nothing_else() -> None:
@@ -564,12 +615,13 @@ def test_negative_price_is_refused() -> None:
 def test_band_expectation_reproduces_the_rule_arithmetic_by_hand() -> None:
     """420 × 1.08 = 453.6 내림 · 420 × 0.92 = 386.4 올림 (시행세칙 제56조)."""
     record = pvl.band_expectation(
-        Decimal(_SDPR), ratio=Decimal("0.08"), tick=pvl.RULE_TICK_POINTS
+        Decimal(_SDPR), ratio=Decimal("0.08"), tick=_MINI_TICK
     )
 
     assert Decimal(record["expected_upper"]) == Decimal(_STAGE1_UPPER)
     assert Decimal(record["expected_lower"]) == Decimal(_STAGE1_LOWER)
     assert "제56조" in record["rounding_rule"]
+    assert "제55조제1항제2호" in record["basis_price_rule"]
 
 
 def test_band_stage_matches_identifies_which_stage_reproduced_the_band() -> None:
@@ -577,12 +629,13 @@ def test_band_stage_matches_identifies_which_stage_reproduced_the_band() -> None
         sdpr=Decimal(_SDPR),
         observed_upper=Decimal(_STAGE2_UPPER),
         observed_lower=Decimal(_STAGE2_LOWER),
-        ticks={"rule": pvl.RULE_TICK_POINTS},
+        tick=_MINI_TICK,
     )
 
     assert report["any_match"] is True
-    assert [m["stage"] for m in report["matching_combinations"]] == [2]
-    assert len(report["candidates"]) == 3  # one per stage, one tick candidate
+    assert report["matching_stages"] == [2]
+    assert len(report["candidates"]) == 3  # one per 별표 14 stage
+    assert [c["ratio"] for c in report["candidates"]] == ["0.08", "0.15", "0.20"]
 
 
 def test_band_stage_matches_reports_no_match_without_claiming_a_cause() -> None:
@@ -591,19 +644,17 @@ def test_band_stage_matches_reports_no_match_without_claiming_a_cause() -> None:
         sdpr=Decimal(_SDPR),
         observed_upper=Decimal("500.00"),
         observed_lower=Decimal("300.00"),
-        ticks={"rule": pvl.RULE_TICK_POINTS},
+        tick=_MINI_TICK,
     )
 
     assert report["any_match"] is False
-    assert report["matching_combinations"] == []
+    assert report["matching_stages"] == []
     assert "does not establish" in report["not_an_interpretation"]
 
 
 def test_band_expectation_refuses_a_non_positive_basis_price() -> None:
     with pytest.raises(ProbeError, match="기준가격 must be positive"):
-        pvl.band_expectation(
-            Decimal("0"), ratio=Decimal("0.08"), tick=pvl.RULE_TICK_POINTS
-        )
+        pvl.band_expectation(Decimal("0"), ratio=Decimal("0.08"), tick=_MINI_TICK)
 
 
 # ---------------------------------------------------------------------------
@@ -732,8 +783,13 @@ def test_green_run_states_what_it_cannot_establish(
     cannot = pvl.probe_pvl(_args()).measurements["cannot_establish"]
 
     assert "예수금" in cannot["kis_quantity_limit"]
-    assert "2,000" in cannot["kis_quantity_limit"]
+    assert "별표 17의2" in cannot["kis_quantity_limit"]
     assert "제61조제3항" in cannot["kis_quantity_limit"]
+    # No contract count is spelled here on purpose: WHICH number applies depends
+    # on --symbol's product family, so the row lives in resolved_instrument and
+    # this text points at it rather than hardcoding the full-size 2,000.
+    assert "CONTEXT" in cannot["kis_quantity_limit"]
+    assert "2,000" not in cannot["kis_quantity_limit"]
     assert set(cannot) == {
         "kis_quantity_limit",
         "stage_2_3_escalation",
@@ -752,18 +808,25 @@ def test_green_run_proposes_partial_not_verified(futures_env: None, wire: Any) -
     assert len(disposition["still_unestablished"]) >= 4
 
 
-def test_green_run_records_the_tick_discrepancy_it_cannot_resolve(
+def test_green_run_records_the_registry_policy_tick_disagreement(
     futures_env: None, wire: Any
 ) -> None:
-    """The mini leaf's 0.02 unit vs 코스피200선물거래's 0.05 — recorded, not fixed."""
+    """The mini leaf's 0.02 against the paper policy's 5 (= 0.05).
+
+    The probe surfaces the drift and resolves nothing: the registry tick governs
+    the arithmetic because it is keyed on this symbol's own product, and the
+    policy value sits beside it so a reader sees they disagree.
+    """
     wire(_FakeSession(_price_body(), _green_psbl()))
 
-    record = pvl.probe_pvl(_args()).measurements["symbol_vs_policy_product"]
+    record = pvl.probe_pvl(_args()).measurements["resolved_instrument"]
 
     assert record["resolved_product"] == "kospi200_mini"
     assert record["registry_tick_points"] == "0.02"
-    assert record["rule_tick_points_kospi200_futures"] == "0.05"
-    assert "operator question" in record["note"]
+    assert record["paper_policy_tick"]["tick_size_scaled_int"] == 5
+    assert record["paper_policy_tick"]["tick_points"] == "0.05"
+    assert record["tick_registry_matches_policy"] is False
+    assert "OBSERVATION, not a probe failure" in record["disagreement_note"]
 
 
 def test_artifact_leaks_no_secret_and_no_full_account_number(
@@ -779,6 +842,66 @@ def test_artifact_leaks_no_secret_and_no_full_account_number(
     assert _ACCOUNT not in payload
     assert run.credentials["account_masked"] == "12******03"
     assert run.measurements["account_product_code_is_futures_03"]["matches"] is True
+
+
+def test_l2_does_its_arithmetic_at_the_registry_tick(
+    futures_env: None, wire: Any
+) -> None:
+    """Not the paper policy's 0.05, and not a literal.
+
+    420 × 1.08 = 453.6 and 420 × 0.92 = 386.4 are already exact multiples of
+    both units, which is what makes the green fixture usable for either family —
+    so the assertion is on the tick the report SAYS it used, not on the band.
+    """
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    report = pvl.probe_pvl(_args()).measurements["l2_band_rule_arithmetic"]
+
+    assert report["tick_points"] == str(_MINI_TICK)
+    assert "kospi200_mini" in report["tick_provenance"]
+    assert all(c["tick_points"] == str(_MINI_TICK) for c in report["candidates"])
+
+
+# ---------------------------------------------------------------------------
+# --confirm gate (runbook safety control #4)
+# ---------------------------------------------------------------------------
+
+
+def test_without_confirm_nothing_is_sent(futures_env: None, wire: Any) -> None:
+    """The dry run resolves the instrument offline and opens no socket."""
+    session = wire(_FakeSession(_price_body(), _green_psbl()))
+
+    run = pvl.probe_pvl(_args(confirm=False))
+
+    assert session.calls == []
+    assert run.mode == "dry-run"
+    assert "leg_verdicts" not in run.measurements
+    assert run.measurements["resolved_instrument"]["registry_tick_points"] == str(
+        _MINI_TICK
+    )
+
+
+def test_the_dry_run_says_what_it_would_send(futures_env: None, wire: Any) -> None:
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    run = pvl.probe_pvl(_args(confirm=False))
+
+    would = next(o for o in run.observations if "would_send" in o)
+    assert "5 read-only GETs" in would["would_send"]
+    assert "FHMIF10000000" in would["would_send"]
+    assert "VTTO5105R" in would["would_send"]
+    assert would["resolved_tick_points"] == str(_MINI_TICK)
+
+
+def test_the_dry_run_never_reads_the_account_number(
+    futures_env: None, wire: Any
+) -> None:
+    """``require_account`` is past the gate, so a dry run works without one."""
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    run = pvl.probe_pvl(_args(confirm=False))
+
+    assert "account_product_code_is_futures_03" not in run.measurements
 
 
 # ---------------------------------------------------------------------------
@@ -876,7 +999,7 @@ def test_stage2_band_against_the_stage1_arithmetic_is_reported_not_raised(
     assert run.measurements["leg_verdicts"]["L3"] == "PASS"
     report = run.measurements["l2_band_rule_arithmetic"]
     assert report["declared_expectation_matches"] is False
-    assert 2 in {m["stage"] for m in report["matching_combinations"]}
+    assert report["matching_stages"] == [2]
     assert "recorded_not_interpreted" in run.measurements["l2_mismatch_record"]
 
 
@@ -892,7 +1015,7 @@ def test_a_band_no_stage_reproduces_is_still_only_reported(
 
     assert run.measurements["leg_verdicts"]["L2"] == "FAIL"
     assert run.measurements["l2_band_rule_arithmetic"]["any_match"] is False
-    assert run.measurements["l2_mismatch_record"]["matching_combinations"] == []
+    assert run.measurements["l2_mismatch_record"]["matching_stages"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1091,31 +1214,162 @@ def test_a_negative_pace_is_refused(futures_env: None, wire: Any) -> None:
         pvl.probe_pvl(_args(pace_s=-1.0))
 
 
-def test_an_unregistered_symbol_is_refused_before_any_contact(
-    futures_env: None, wire: Any
+@pytest.mark.parametrize("symbol", ["ZZ99999", "005930", "A06610", "10", ""])
+def test_a_non_kospi200_symbol_is_refused_before_any_contact(
+    futures_env: None, wire: Any, symbol: str
 ) -> None:
-    session = wire(_FakeSession(_price_body(), _green_psbl()))
+    """Fail-closed on an unknown family.
 
-    with pytest.raises(ProbeError, match="no contract spec for --symbol"):
-        pvl.probe_pvl(_args(symbol="ZZ99999"))
-
-    assert session.calls == []
-
-
-def test_a_non_smallest_contract_is_refused_with_the_reason_recorded(
-    futures_env: None, wire: Any
-) -> None:
-    """The inherited real-money rule, made visible rather than left to surprise.
-
-    ``resolve_smallest_contract`` refuses the FULL KOSPI200 leaf because a
-    real-money probe must take the smallest contract. P-VL reuses that function
-    by design mandate and therefore inherits the refusal — which is why the
-    probe can only ever observe the smallest leaf, and why the 2,000-contract
-    limit of 별표 17의2 제1호 (a 코스피200선물거래 row) is not a probe output.
+    ``005930`` is a stock code, ``A06610`` is a neighbouring futures prefix, and
+    ``10`` is a truncated one. None of them belong to 주가지수선물거래, so
+    measuring them against this probe's 별표 rows would be wrong with no sign
+    that it happened. The empty string is caught earlier, by the --symbol check.
     """
     session = wire(_FakeSession(_price_body(), _green_psbl()))
 
-    with pytest.raises(ProbeError, match="not the smallest"):
-        pvl.probe_pvl(_args(symbol="A01609"))
+    with pytest.raises(ProbeError):
+        pvl.probe_pvl(_args(symbol=symbol))
 
     assert session.calls == []
+
+
+def test_the_refusal_message_names_the_accepted_prefixes() -> None:
+    with pytest.raises(ProbeError, match="not a KOSPI200 index-futures code"):
+        pvl._symbol_prefix("ZZ99999")
+
+    with pytest.raises(ProbeError) as excinfo:
+        pvl._symbol_prefix("005930")
+    message = str(excinfo.value)
+    assert "A05" in message and "101" in message and "A01" in message
+
+
+def test_the_tick_is_read_from_the_config_file_not_hardcoded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Point the loader at a different spec; the resolved tick must follow it.
+
+    This is the test a literal 0.02 or a read of the paper policy's 5 could not
+    pass. It is also the reachable failing input for the "no contract spec"
+    refusal: every accepted prefix is registered today, so the only way that
+    branch fires is a ``config/execution.yaml`` that dropped one.
+    """
+    other = tmp_path / "execution.yaml"
+    other.write_text(
+        "futures_contract_spec:\n"
+        "  probe_fixture:\n"
+        "    multiplier_krw_per_point: 50000\n"
+        "    tick_size_points: 0.25\n"
+        "    tick_value_krw: 12500\n"
+        "    commission_rate: 0.00003\n"
+        '    symbol_prefix: "A05"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pvl, "_EXECUTION_CONFIG", other)
+
+    tick, record = pvl.resolve_instrument(_SYMBOL)
+
+    assert tick.size == Decimal("0.25")
+    assert "probe_fixture" in tick.source
+    assert record["tick_registry_matches_policy"] is False
+
+
+def test_a_non_positive_registered_tick_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A zero tick cannot be corroborated against, so it is refused loudly.
+
+    Reachable input: a ``config/execution.yaml`` whose spec declares
+    ``tick_size_points: 0``. Without this the zero would flow into
+    ``corroborate_tick``, where ``value % 0`` raises an opaque
+    ``DecimalException`` instead of naming the config as the cause.
+    """
+    broken = tmp_path / "execution.yaml"
+    broken.write_text(
+        "futures_contract_spec:\n"
+        "  probe_fixture:\n"
+        "    multiplier_krw_per_point: 50000\n"
+        "    tick_size_points: 0\n"
+        "    tick_value_krw: 0\n"
+        "    commission_rate: 0.00003\n"
+        '    symbol_prefix: "A05"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pvl, "_EXECUTION_CONFIG", broken)
+
+    with pytest.raises(ProbeError, match="non-positive tick"):
+        pvl.resolve_instrument(_SYMBOL)
+
+
+def test_an_accepted_prefix_with_no_registered_spec_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The reachable failing input for the registry-miss branch."""
+    empty = tmp_path / "execution.yaml"
+    empty.write_text("futures_contract_spec: {}\n", encoding="utf-8")
+    monkeypatch.setattr(pvl, "_EXECUTION_CONFIG", empty)
+
+    with pytest.raises(ProbeError, match="no contract spec for --symbol"):
+        pvl.resolve_instrument(_SYMBOL)
+
+
+def test_the_full_size_family_resolves_its_own_tick_and_rulebook_row(
+    futures_env: None, wire: Any
+) -> None:
+    """``A01609`` is 코스피200선물거래: tick 0.05, 별표 17의2 regular 2,000.
+
+    Both families are accepted. The point of resolving per symbol is that the
+    mini row (10,000) and the full row (2,000) are different numbers, and a
+    probe that assumed one would mislabel the other.
+    """
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    record = pvl.probe_pvl(_args(symbol="A01609")).measurements["resolved_instrument"]
+
+    assert record["matched_prefix"] == "A01"
+    assert record["resolved_product"] == "kospi200_full"
+    assert record["registry_tick_points"] == "0.05"
+    # The full-size leaf is the one the deployed paper policy's tick matches.
+    assert record["tick_registry_matches_policy"] is True
+    row = record["krx_quantity_limit_row"]
+    assert row["product"] == "코스피200선물거래"
+    assert row["regular_session_contracts"] == 2000
+    assert row["night_session_contracts"] == 1000
+
+
+def test_the_mini_family_gets_the_mini_rulebook_row(
+    futures_env: None, wire: Any
+) -> None:
+    """``A05610`` is 미니코스피200선물거래: 별표 17의2 regular 10,000.
+
+    This is the row that governs the resident paper leaf. Reading the full-size
+    2,000 onto it was the specific misreading this record exists to prevent.
+    """
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    record = pvl.probe_pvl(_args()).measurements["resolved_instrument"]
+
+    assert record["matched_prefix"] == "A05"
+    row = record["krx_quantity_limit_row"]
+    assert row["product"] == "미니코스피200선물거래"
+    assert row["regular_session_contracts"] == 10000
+    assert row["night_session_contracts"] == 5000
+    assert "별표 17의2 제1호" in row["source"]
+    assert "제61조제3항" in row["caveats"]
+    assert "누적호가수량한도" in row["caveats"]
+    assert "CONTEXT" in record["krx_quantity_limit_is_context_only"]
+
+
+def test_rulebook_rows_cover_every_accepted_prefix_and_nothing_else() -> None:
+    """A prefix the probe accepts but has no 별표 row for would KeyError live."""
+    accepted = set(pvl._MINI_PREFIXES) | set(pvl._FULL_PREFIXES)
+
+    assert set(pvl.KRX_QUANTITY_LIMIT_BY_PREFIX) == accepted
+    assert accepted == {"A05", "101", "A01"}
+
+
+def test_price_limit_stages_are_the_byeolpyo_14_ratios() -> None:
+    assert (
+        (1, Decimal("0.08")),
+        (2, Decimal("0.15")),
+        (3, Decimal("0.20")),
+    ) == pvl.KRX_PRICE_LIMIT_STAGES

@@ -19,17 +19,18 @@ What it CANNOT close — stated first, design §4.3:
 
 * **KIS 측 호가수량한도.** ``VTTO5105R``'s ``ord_psbl_qty`` is derived from
   예수금/증거금, not from the venue's structural limit (P-R5-PRE 2026-08-03: a
-  zero-deposit account reports 0). The 2,000-contract 호가수량한도 of 별표 17의2,
-  and any lower member limit KIS sets under 시행세칙 제61조제3항, are visible
-  only by SENDING an order and reading the rejection. That is outside this
-  probe's GET-only scope (design §7 ④ keeps it as a separate P-VL-2 option).
+  zero-deposit account reports 0). The 호가수량한도 of 별표 17의2 and any lower
+  member limit KIS sets under 시행세칙 제61조제3항 are visible only by SENDING an
+  order and reading the rejection. That is outside this probe's GET-only scope
+  (design §7 ④ keeps it as a separate P-VL-2 option). The rulebook rows are
+  recorded as CONTEXT in :data:`KRX_QUANTITY_LIMIT_BY_PREFIX` and decide nothing.
 * **2/3단계 확대 의미론.** Escalation depends on a 기준종목 touching its own
   limit; a probe cannot cause it. Observed or not observed, never induced.
 * **The runtime supply of a band.** This probe observes values; wiring a band
   into ``VenueConstraintSnapshot`` is design §6, a separate decision.
 
-Safety model. This module is read-only by construction and mock-only by
-construction, and both properties are structural rather than documentary:
+Safety model. Read-only by construction and mock-only by construction, both
+structural rather than documentary:
 
 1. :data:`ALLOWLIST` is a three-way gate (method ``GET`` + TR id + URL path)
    enforced by :func:`~tools.broker_probes.common.assert_read_only_call` before
@@ -41,30 +42,33 @@ construction, and both properties are structural rather than documentary:
 3. The one ``/trading/`` TR is additionally checked by
    :func:`~tools.broker_probes.common.assert_mock_trading_tr` (모의 trading TRs
    are ``V``-prefixed), so a real trading TR cannot be smuggled in.
+4. ``--confirm`` gates broker contact, as it does for every networked probe in
+   this register including the read-only ones (P-16, P-13).
 
-The register declares this probe ``requires_confirm=False`` (design §4), which is
-the ONE place P-VL differs from every other networked probe in
-``tools/broker_probes``: runbook safety control #4 (``--confirm`` 없이는 브로커
-무접촉, ``docs/runbooks/kis-capability-probes.md:86``) does not apply to it. The
-three controls above are what stands in its place, and
-``tests/tools/test_broker_probes_pvl.py`` asserts each one against this module's
-own AST and against a refused real-host client rather than against this comment.
-Note the scope of that AST claim: the mandated reuse of
-``probes_real_order._corroborate_tick`` / ``resolve_smallest_contract`` puts
-order-emitting modules in this file's IMPORT GRAPH, so the read-only property is
-a property of *this module's* transport, not of everything it imports.
+**This module imports no order-capable module.** ``probes_order`` and
+``probes_real_order`` are both absent from its graph, which
+``tests/tools/test_broker_probes_pvl.py::test_module_does_not_import_order_capable_modules``
+asserts against this file's AST — the same canary
+``tests/tools/test_broker_probes_ca.py`` carries. The two pure helpers this
+probe reuses were relocated to the stdlib-only
+:mod:`tools.broker_probes._tick_math` for exactly that reason; importing them
+from ``probes_real_order`` would have pulled both order paths in, because that
+module imports ``probes_order`` at module level.
 """
 
 from __future__ import annotations
 
 import argparse
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as clock_time
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from tools.broker_probes._tick_math import corroborate_tick, decimal_field
 from tools.broker_probes.common import (
     MOCK_BASE_URL,
     ProbeError,
@@ -74,6 +78,7 @@ from tools.broker_probes.common import (
     assert_mock_trading_tr,
     assert_read_only_call,
     build_auth_config,
+    dry_run_banner,
     probe_token_cache_dir,
     require_account,
     resolve_credentials,
@@ -81,23 +86,22 @@ from tools.broker_probes.common import (
     rt_cd_of,
     warn_shared_token_cache,
 )
-
-# Pacing is shared, not re-derived: 1.1 s is P-13's measured clean query rate
-# (artifact ``P-13-20260729T063120Z``, clean 1.0 rps / throttled 2.0 rps
-# ``EGW00201``). ``probes_balance`` keeps a local copy of this number to keep
-# order-submitting code out of its import graph; that reason does not apply here
-# because the design mandates reusing ``probes_real_order``'s pure functions,
-# which already imports ``probes_order``. A second copy would be duplication
-# without buying any isolation.
-from tools.broker_probes.probes_order import DEFAULT_PACE_S
-from tools.broker_probes.probes_real_order import (
-    _corroborate_tick,
-    _decimal_field,
-    resolve_smallest_contract,
-)
 from tools.broker_probes.registry import ProbeSpec, get
 
 KST = ZoneInfo("Asia/Seoul")
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: Default pause between calls, in seconds.
+#:
+#: Measured, not guessed: P-13 (artifact ``P-13-20260729T063120Z``) bracketed the
+#: mock account's query class at clean 1.0 rps / throttled 2.0 rps (``EGW00201``).
+#: 1.1 s sits just above the measured clean rate. Deliberately a local constant
+#: rather than an import of ``probes_order.DEFAULT_PACE_S`` — importing that
+#: module would put order-submitting code in this module's graph and destroy the
+#: structural read-only property this file exists to guarantee. ``probes_balance``
+#: and ``probes_ca`` keep their own copies for the same reason.
+DEFAULT_PACE_S = 1.1
 
 # ---------------------------------------------------------------------------
 # Endpoints — TR ids cited to the official KIS example wrappers (design §1)
@@ -113,13 +117,13 @@ _PRICE_TR = "FHMIF10000000"
 #: 선물옵션 주문가능 [v1_국내선물-005]. Official wrapper
 #: ``examples_llm/domestic_futureoption/inquire_psbl_order/inquire_psbl_order.py``
 #: — its ``env_dv`` table gives a ``TTT``-prefixed id for ``real`` and
-#: ``VTTO5105R`` for ``demo``; required params ``CANO`` /
-#: ``ACNT_PRDT_CD`` / ``PDNO`` / ``SLL_BUY_DVSN_CD`` / ``UNIT_PRICE`` /
-#: ``ORD_DVSN_CD``. Only the DEMO id appears here: this probe is MOCK_VTS, and
-#: that wrapper's REAL id (the ``TTT``-prefixed twin) is deliberately absent
-#: from this file, so it cannot be spelled into the allowlist by a copy-paste.
-#: ``tests/tools/test_broker_probes_pvl.py`` asserts that absence over the whole
-#: file text — which is why this comment names the twin by prefix, not by id.
+#: ``VTTO5105R`` for ``demo``; required params ``CANO`` / ``ACNT_PRDT_CD`` /
+#: ``PDNO`` / ``SLL_BUY_DVSN_CD`` / ``UNIT_PRICE`` / ``ORD_DVSN_CD``. Only the
+#: DEMO id appears here: this probe is MOCK_VTS, and that wrapper's REAL id is
+#: deliberately absent from this file so it cannot be spelled into the allowlist
+#: by a copy-paste. ``tests/tools/test_broker_probes_pvl.py`` asserts that
+#: absence over the whole file text — which is why this comment names the twin
+#: by prefix, not by id.
 _PSBL_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-psbl-order"
 _PSBL_TR = "VTTO5105R"
 
@@ -155,30 +159,106 @@ _ORD_DVSN_LIMIT = "01"
 _FUTURES_PRODUCT_CODE = "03"
 
 # ---------------------------------------------------------------------------
+# Instrument resolution — config, never a literal
+# ---------------------------------------------------------------------------
+
+#: ``futures_contract_spec`` lives here. Read through
+#: ``shared.instruments.contract_spec``, the same registry the runtime uses, so
+#: the tick this probe corroborates is the tick the runtime would trade on. A
+#: local path constant rather than ``probes_order._EXECUTION_CONFIG``: that
+#: module is order-capable and must stay out of this graph.
+_EXECUTION_CONFIG = _REPO_ROOT / "config" / "execution.yaml"
+
+#: The deployed paper venue policy, read ONLY to record its ``tick_size`` beside
+#: the registry's and report whether they agree. The probe never treats this
+#: value as the truth — see :func:`resolve_instrument`.
+_PAPER_VENUE_POLICY = (
+    _REPO_ROOT / "config" / "tos_runtime" / "paper" / "venue_constraint_policy.yaml"
+)
+
+#: The paper policy states its own price scale in its header: "tick_size 5 =
+#: 0.05 index points at the ×100 integer price scale"
+#: (``config/tos_runtime/paper/venue_constraint_policy.yaml:11-13``). The kernel
+#: treats venue ints as opaque-scaled
+#: (``tos/runtime/src/tos_runtime/venue/_venue_policy_loader.py:185-191``), so
+#: there is no named constant upstream to import — this is the policy file's own
+#: declared convention, cited rather than assumed.
+_POLICY_PRICE_SCALE = Decimal(100)
+
+#: Accepted ``--symbol`` families, by prefix. ``A05`` is 미니코스피200선물거래 and
+#: is what the resident paper session runs; ``101``/``A01`` are
+#: 코스피200선물거래 (continuous-backtest and live front-month codes
+#: respectively, both registered on ``kospi200_full`` in
+#: ``config/execution.yaml``). Any other prefix is refused: this probe's TRs and
+#: its 별표 rows are specific to KOSPI200 index futures.
+_MINI_PREFIXES: tuple[str, ...] = ("A05",)
+_FULL_PREFIXES: tuple[str, ...] = ("101", "A01")
+
+# ---------------------------------------------------------------------------
 # Rule constants — KRX 파생상품시장 업무규정 시행세칙 제164차 (2026-07-06 시행)
 # ---------------------------------------------------------------------------
 
-#: 가격제한비율, 주가지수선물거래 — 별표 14 제1호 (최종개정 2025-05-29): 1단계
-#: 8% · 2단계 15% · 3단계 20%. Design §2.1.
-RULE_RATIO_STAGES: tuple[tuple[int, Decimal], ...] = (
+#: 호가수량한도 (1 호가당 최대 계약 수) per product — 업무규정 제71조 → 시행세칙
+#: 제61조제1항 → **별표 17의2 제1호** (별표 최종개정 2025-05-29). CONTEXT ONLY:
+#: no leg passes or fails on these numbers, and the probe cannot observe them
+#: (see this module's docstring). They are recorded so the artifact names WHICH
+#: row governs ``--symbol`` instead of leaving a reader to assume the 2,000 of
+#: the full-size contract applies to a mini leaf.
+#:
+#: Two 단서 travel with every value (design §2.2): 회원(증권사) may set a LOWER
+#: limit under 시행세칙 제61조제3항, and 거래소 may change these for market
+#: management (제61조제1항 단서). 누적호가수량한도 (제61조제2항) is a DIFFERENT
+#: limit applying only to 회원 자기거래계좌·사후위탁증거금계좌, never to a
+#: 위탁계좌 like paper/모의 — it is deliberately absent here.
+_QUANTITY_LIMIT_CAVEATS = (
+    "회원은 시행세칙 제61조제3항으로 더 낮게 정할 수 있고, 거래소는 제61조제1항 "
+    "단서로 변경할 수 있다. 공표 규정값이지 불변식이 아니다. 누적호가수량한도"
+    "(제61조제2항)는 위탁계좌에 적용되지 않으므로 여기 없다."
+)
+_QUANTITY_LIMIT_SOURCE = "시행세칙 별표 17의2 제1호 (별표 최종개정 2025-05-29)"
+
+KRX_QUANTITY_LIMIT_BY_PREFIX: dict[str, dict[str, Any]] = {
+    **{
+        prefix: {
+            "product": "미니코스피200선물거래",
+            "regular_session_contracts": 10000,
+            "night_session_contracts": 5000,
+            "source": _QUANTITY_LIMIT_SOURCE,
+            "caveats": _QUANTITY_LIMIT_CAVEATS,
+        }
+        for prefix in _MINI_PREFIXES
+    },
+    **{
+        prefix: {
+            "product": "코스피200선물거래",
+            "regular_session_contracts": 2000,
+            "night_session_contracts": 1000,
+            "source": _QUANTITY_LIMIT_SOURCE,
+            "caveats": _QUANTITY_LIMIT_CAVEATS,
+        }
+        for prefix in _FULL_PREFIXES
+    },
+}
+
+#: 가격제한비율, 주가지수선물거래 — 업무규정 제70조 → 시행세칙 제56조·제56조의2 →
+#: **별표 14 제1호** (별표 최종개정 2025-05-29): 1단계 8% · 2단계 15% · 3단계 20%.
+#: One table for both products: 별표 14 제1호 is keyed on 주가지수선물거래, which
+#: covers 코스피200선물거래 and 미니코스피200선물거래 alike.
+KRX_PRICE_LIMIT_STAGES: tuple[tuple[int, Decimal], ...] = (
     (1, Decimal("0.08")),
     (2, Decimal("0.15")),
     (3, Decimal("0.20")),
 )
 
-#: 호가가격단위 of 코스피200선물거래 — 시행세칙 제4조의9제1호 (최종개정
-#: 2024-11-01): 0.05 포인트. This is the value design §4.1 L2 names, and the
-#: value the deployed paper policy carries as ``tick_size: 5`` at the ×100
-#: integer scale. It is the FULL contract's tick: a 미니 leaf has its own
-#: 호가가격단위, which is why :func:`band_stage_matches` sweeps the registry tick
-#: alongside this one instead of assuming they agree.
-RULE_TICK_POINTS = Decimal("0.05")
-
-#: 상·하한가 산출 — 시행세칙 제56조제1항·제2항 단서: 상한가는 호가가격단위로
-#: 내림, 하한가는 올림.
+#: 상·하한가 산출 — 시행세칙 제56조제1항·제2항 단서.
 _RULE_BAND_ROUNDING = (
     "시행세칙 제56조제1항·제2항 단서 — 상한가 = 기준가격 + 기준가격×비율 을 "
     "호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림"
+)
+
+#: 기준가격 — 시행세칙 제55조제1항제2호: 직전 거래일의 **정산가격**, not the close.
+_RULE_BASIS_PRICE = (
+    "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조)"
 )
 
 #: 단계 확대가 불가능한 창 — 시행세칙 제56조의2제2항 (최종개정 2026-06-11):
@@ -207,6 +287,22 @@ _L1_PRICE_FIELDS: tuple[str, ...] = (
 VERDICT_PASS = "PASS"
 VERDICT_FAIL = "FAIL"
 VERDICT_RECORDED = "OBSERVATION_ONLY_NO_VERDICT"
+
+
+@dataclass(frozen=True)
+class VenueTick:
+    """A price increment with the evidence that established it.
+
+    Structurally a :class:`tools.broker_probes._tick_math.TickLike`, which is
+    the contract :func:`~tools.broker_probes._tick_math.corroborate_tick`
+    accepts. Deliberately NOT ``probes_order.Tick``: naming that class would
+    mean importing an order-capable module, which is the whole point of the
+    ``_tick_math`` relocation. The Protocol exists so each module can carry its
+    own tick without that import.
+    """
+
+    size: Decimal
+    source: str
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +354,7 @@ def band_expectation(sdpr: Decimal, *, ratio: Decimal, tick: Decimal) -> dict[st
         "expected_upper": str(floor_to_tick(sdpr * (Decimal(1) + ratio), tick)),
         "expected_lower": str(ceil_to_tick(sdpr * (Decimal(1) - ratio), tick)),
         "rounding_rule": _RULE_BAND_ROUNDING,
+        "basis_price_rule": _RULE_BASIS_PRICE,
     }
 
 
@@ -266,60 +363,46 @@ def band_stage_matches(
     sdpr: Decimal,
     observed_upper: Decimal,
     observed_lower: Decimal,
-    ticks: dict[str, Decimal],
+    tick: Decimal,
 ) -> dict[str, Any]:
-    """Which (stage ratio, tick) combination reproduces the observed band.
+    """Which 별표 14 stage ratio reproduces the observed band, at ``tick``.
 
-    Design §5 L2 licenses exactly this move for the ratio: on a mismatch,
-    recompute at 15%/20% and record *which stage matched*, with no
-    interpretation. The tick is swept the same way for the same reason — the
-    0.05 호가가격단위 of :data:`RULE_TICK_POINTS` belongs to 코스피200선물거래,
-    while the symbol actually under probe may be a 미니 leaf with its own unit,
-    and guessing which applies would be the interpretation this probe refuses to
-    make. Both candidates are computed; the matches are listed; nothing is
-    concluded here.
+    Design §5 L2 licenses exactly this: on a mismatch, recompute at 15%/20% and
+    record *which stage matched*, with no interpretation. The tick is a single
+    value because it is RESOLVED, not guessed — ``--symbol``'s own 호가가격단위
+    from ``config/execution.yaml`` (see :func:`resolve_instrument`).
     """
-    combinations: list[dict[str, Any]] = []
-    for stage, ratio in RULE_RATIO_STAGES:
-        for tick_name, tick in ticks.items():
-            expectation = band_expectation(sdpr, ratio=ratio, tick=tick)
-            upper_ok = Decimal(expectation["expected_upper"]) == observed_upper
-            lower_ok = Decimal(expectation["expected_lower"]) == observed_lower
-            combinations.append(
-                {
-                    "stage": stage,
-                    "tick_name": tick_name,
-                    **expectation,
-                    "upper_matches": upper_ok,
-                    "lower_matches": lower_ok,
-                    "both_match": upper_ok and lower_ok,
-                }
-            )
-    matched = [
-        {
-            "stage": c["stage"],
-            "tick_name": c["tick_name"],
-            "tick_points": c["tick_points"],
-        }
-        for c in combinations
-        if c["both_match"]
-    ]
+    candidates: list[dict[str, Any]] = []
+    for stage, ratio in KRX_PRICE_LIMIT_STAGES:
+        expectation = band_expectation(sdpr, ratio=ratio, tick=tick)
+        upper_ok = Decimal(expectation["expected_upper"]) == observed_upper
+        lower_ok = Decimal(expectation["expected_lower"]) == observed_lower
+        candidates.append(
+            {
+                "stage": stage,
+                **expectation,
+                "upper_matches": upper_ok,
+                "lower_matches": lower_ok,
+                "both_match": upper_ok and lower_ok,
+            }
+        )
+    matched = [c["stage"] for c in candidates if c["both_match"]]
     return {
         "observed_upper": str(observed_upper),
         "observed_lower": str(observed_lower),
-        "candidates": combinations,
-        "matching_combinations": matched,
+        "tick_points": str(tick),
+        "candidates": candidates,
+        "matching_stages": matched,
         "any_match": bool(matched),
         "source": (
             "ratios: 별표 14 제1호 (주가지수선물거래 1/2/3단계 8/15/20%) · "
-            "rounding: 시행세칙 제56조제1항·제2항 단서 · "
-            "기준가격: 시행세칙 제55조제1항제2호 (직전 거래일의 정산가격)"
+            f"rounding: {_RULE_BAND_ROUNDING} · basis: {_RULE_BASIS_PRICE}"
         ),
         "not_an_interpretation": (
-            "A matching combination records WHICH arithmetic reproduces the "
-            "broker's numbers. It does not establish that the venue used that "
-            "stage or that unit, and a non-match does not establish that the "
-            "rule is wrong — 기준가격 or the rounding could differ instead."
+            "A matching stage records WHICH arithmetic reproduces the broker's "
+            "numbers. It does not establish that the venue used that stage, and a "
+            "non-match does not establish that the rule is wrong — 기준가격 or the "
+            "rounding could differ instead."
         ),
     }
 
@@ -347,6 +430,133 @@ def kst_sample_window(now: datetime) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Instrument resolution
+# ---------------------------------------------------------------------------
+
+
+def _symbol_prefix(symbol: str) -> str:
+    """The accepted KOSPI200-futures prefix ``symbol`` starts with, or refuse.
+
+    Fail-closed on an unknown family: this probe's TRs are 선물옵션 and its
+    rulebook rows are 주가지수선물거래 rows, so a symbol from any other product
+    would be measured against the wrong 별표 row with no sign that it happened.
+    """
+    for prefix in (*_MINI_PREFIXES, *_FULL_PREFIXES):
+        if symbol.startswith(prefix):
+            return prefix
+    raise ProbeError(
+        f"--symbol {symbol!r} is not a KOSPI200 index-futures code. Accepted "
+        f"prefixes: {', '.join((*_MINI_PREFIXES, *_FULL_PREFIXES))} "
+        "(mini / full-size). This probe's TRs and its 별표 17의2 · 별표 14 rows "
+        "are specific to that product family."
+    )
+
+
+def _policy_tick_record() -> dict[str, Any]:
+    """The deployed paper policy's ``tick_size``, recorded — never the truth.
+
+    Read so the artifact can state whether the policy and the contract registry
+    agree about ``--symbol``'s 호가가격단위. As of 2026-10-08 they DISAGREE for a
+    mini leaf: the policy carries 5 (= 0.05, the full-size unit) while the
+    registry carries 0.02. Surfacing that is the probe's job; resolving it is
+    the operator's.
+    """
+    import yaml
+
+    raw = yaml.safe_load(_PAPER_VENUE_POLICY.read_text(encoding="utf-8"))
+    shape = ((raw or {}).get("_model_view") or {}).get("shape_constraints") or {}
+    value = decimal_field(shape, "tick_size")
+    return {
+        "policy_path": str(_PAPER_VENUE_POLICY.relative_to(_REPO_ROOT)),
+        "tick_size_scaled_int": shape.get("tick_size"),
+        "price_scale": str(_POLICY_PRICE_SCALE),
+        "scale_source": (
+            "the policy file's own header — 'tick_size 5 = 0.05 index points at "
+            "the ×100 integer price scale' (venue_constraint_policy.yaml:11-13)"
+        ),
+        "tick_points": (
+            str(value / _POLICY_PRICE_SCALE) if value is not None else None
+        ),
+    }
+
+
+def resolve_instrument(symbol: str) -> tuple[VenueTick, dict[str, Any]]:
+    """Resolve ``--symbol``'s tick from config and record every comparison.
+
+    The tick comes from ``config/execution.yaml::futures_contract_spec`` through
+    ``shared.instruments.contract_spec`` — the same registry the runtime reads,
+    matched by ``symbol_prefix``. It is NOT taken from the deployed paper
+    policy's ``tick_size`` and NOT a literal: a mini leaf's 호가가격단위 is 0.02
+    while the policy carries the full-size 0.05, and a probe that assumed either
+    one would manufacture a band mismatch or miss a real one.
+
+    Returns:
+        The resolved tick, and a record carrying the registry value, the policy
+        value, ``tick_registry_matches_policy``, and the 별표 17의2 row for the
+        matched prefix.
+
+    Raises:
+        ProbeError: the prefix is not a KOSPI200 index-futures family, the
+            registry has no spec for it, or the registered tick is non-positive.
+    """
+    from shared.instruments.contract_spec import (
+        ContractSpecRegistry,
+        resolve_contract_spec,
+    )
+
+    prefix = _symbol_prefix(symbol)
+    try:
+        registry = ContractSpecRegistry.from_yaml(str(_EXECUTION_CONFIG))
+        spec = resolve_contract_spec(symbol, registry)
+    except Exception as exc:  # noqa: BLE001 — an unresolved instrument refuses
+        raise ProbeError(
+            f"no contract spec for --symbol {symbol} in {_EXECUTION_CONFIG}: "
+            f"{exc}. Register the prefix rather than hardcoding a tick."
+        ) from exc
+
+    size = Decimal(str(spec.tick_size_points))
+    if size <= 0:
+        raise ProbeError(
+            f"tick_size_points for {spec.name} is {size}; a non-positive tick "
+            "cannot be corroborated against."
+        )
+    source = (
+        f"config/execution.yaml::futures_contract_spec.{spec.name}"
+        f".tick_size_points (matched symbol_prefix {spec.symbol_prefix!r})"
+    )
+    tick = VenueTick(size=size, source=source)
+
+    policy = _policy_tick_record()
+    policy_points = policy.get("tick_points")
+    record = {
+        "symbol": symbol,
+        "matched_prefix": prefix,
+        "resolved_product": spec.name,
+        "registry_tick_points": str(size),
+        "registry_tick_source": source,
+        "paper_policy_tick": policy,
+        "tick_registry_matches_policy": (
+            policy_points is not None and Decimal(policy_points) == size
+        ),
+        "disagreement_note": (
+            "A False here is an OBSERVATION, not a probe failure. The registry "
+            "tick governs this probe's arithmetic because it is keyed on "
+            "--symbol's own product; the policy's value is recorded beside it so "
+            "the drift is visible. Which one the deployed policy should carry is "
+            "an operator decision, not a probe output."
+        ),
+        "krx_quantity_limit_row": KRX_QUANTITY_LIMIT_BY_PREFIX[prefix],
+        "krx_quantity_limit_is_context_only": (
+            "This row is CONTEXT. No leg passes or fails on it and this probe "
+            "cannot observe it — ord_psbl_qty is 예수금-derived. It is recorded so "
+            "a reader sees WHICH 별표 17의2 row governs --symbol instead of "
+            "assuming the full-size contract's number applies to a mini leaf."
+        ),
+    }
+    return tick, record
+
+
+# ---------------------------------------------------------------------------
 # Transport — the ONLY one in this module
 # ---------------------------------------------------------------------------
 
@@ -354,11 +564,8 @@ def kst_sample_window(now: datetime) -> dict[str, Any]:
 class MockQueryClient:
     """GET-only client pinned to the 모의투자 host. No order path exists on it.
 
-    Deliberately NOT ``probes_real_order.PreflightClient``: that client fixes
-    its base URL to ``REAL_BASE_URL`` behind ``assert_real_host`` (design §1),
-    and loosening it would weaken a real-money guard to serve a mock probe.
-    Deliberately NOT routed through
-    :func:`~tools.broker_probes.common.http_json` either: that helper drops the
+    Deliberately not routed through
+    :func:`~tools.broker_probes.common.http_json`: that helper drops the
     response headers, and the ``Date`` header is one of the things design §4.1
     L1 records — the same reason ``probes_balance._get`` and P-16 go to the
     transport directly.
@@ -489,7 +696,7 @@ def _integral_quantity(raw: Any, field: str) -> int:
     sent, and a fractional or unparsable value means the field is not what this
     probe believes it is. Fail-closed and loudly, never round.
     """
-    value = _decimal_field({field: raw}, field)
+    value = decimal_field({field: raw}, field)
     if value is None:
         raise ProbeError(
             f"{field}={raw!r} is not a readable number. The broker answered "
@@ -515,7 +722,7 @@ def _integral_quantity(raw: Any, field: str) -> int:
 
 
 def _leg_l1(
-    client: MockQueryClient, run: ProbeRun, symbol: str, tick: Any
+    client: MockQueryClient, run: ProbeRun, symbol: str, tick: VenueTick
 ) -> dict[str, Decimal]:
     """L1 — the five 시세 fields, the ``Date`` header and the tick corroboration.
 
@@ -557,7 +764,7 @@ def _leg_l1(
     prices: dict[str, Decimal] = {}
     unusable: list[str] = []
     for field in _L1_PRICE_FIELDS:
-        value = _decimal_field(output, field)
+        value = decimal_field(output, field)
         if value is None or value <= 0:
             unusable.append(f"{field}={output.get(field)!r}")
         else:
@@ -575,7 +782,7 @@ def _leg_l1(
             "field_meanings": {
                 "futs_prpr": "현재가",
                 "futs_prdy_clpr": "전일종가",
-                "futs_sdpr": "기준가격 (시행세칙 제55조제1항제2호: 직전 거래일의 정산가격)",
+                "futs_sdpr": f"기준가격 ({_RULE_BASIS_PRICE})",
                 "futs_mxpr": "상한가",
                 "futs_llam": "하한가",
             },
@@ -588,24 +795,22 @@ def _leg_l1(
             "is recorded, never substituted."
         )
 
-    basis_is_settlement = prices["futs_sdpr"] != prices["futs_prdy_clpr"]
     run.measure(
         "l1_basis_price_distinguishable",
         {
             "futs_sdpr": str(prices["futs_sdpr"]),
             "futs_prdy_clpr": str(prices["futs_prdy_clpr"]),
-            "differ": basis_is_settlement,
+            "differ": prices["futs_sdpr"] != prices["futs_prdy_clpr"],
             "meaning": (
-                "시행세칙 제55조제1항제2호 says 기준가격 is the previous trading "
-                "day's SETTLEMENT price, not its close. When the two fields "
-                "differ, this sample distinguishes them. When they are equal, "
-                "the sample is simply uninformative on that question — equality "
-                "is not evidence that the rule is wrong."
+                f"{_RULE_BASIS_PRICE}, not its close. When the two fields differ, "
+                "this sample distinguishes them. When they are equal, the sample "
+                "is simply uninformative on that question — equality is not "
+                "evidence that the rule is wrong."
             ),
         },
     )
 
-    corroboration = _corroborate_tick(output, tick, _L1_PRICE_FIELDS)
+    corroboration = corroborate_tick(output, tick, _L1_PRICE_FIELDS)
     run.measure("l1_tick_corroboration", corroboration)
     if not corroboration["corroborated"]:
         raise ProbeError(
@@ -619,7 +824,7 @@ def _leg_l1(
 
 
 def _leg_l2(
-    run: ProbeRun, prices: dict[str, Decimal], tick: Any, window: dict[str, Any]
+    run: ProbeRun, prices: dict[str, Decimal], tick: VenueTick, window: dict[str, Any]
 ) -> bool:
     """L2 — 제56조 arithmetic against the observed band. No network. Never raises.
 
@@ -631,47 +836,35 @@ def _leg_l2(
         sdpr=prices["futs_sdpr"],
         observed_upper=prices["futs_mxpr"],
         observed_lower=prices["futs_llam"],
-        ticks={
-            "rule_tick_0.05_kospi200_futures": RULE_TICK_POINTS,
-            f"registry_tick_{tick.size}": Decimal(str(tick.size)),
-        },
+        tick=tick.size,
     )
-    declared = band_expectation(
-        prices["futs_sdpr"], ratio=RULE_RATIO_STAGES[0][1], tick=RULE_TICK_POINTS
+    stage1, stage1_ratio = KRX_PRICE_LIMIT_STAGES[0]
+    report["declared_expectation"] = band_expectation(
+        prices["futs_sdpr"], ratio=stage1_ratio, tick=tick.size
     )
-    stage1_rule_tick_matches = any(
-        c["both_match"]
-        for c in report["candidates"]
-        if c["stage"] == 1 and c["tick_points"] == str(RULE_TICK_POINTS)
-    )
-    report["declared_expectation"] = declared
-    report["declared_expectation_matches"] = stage1_rule_tick_matches
+    passed = stage1 in report["matching_stages"]
+    report["declared_expectation_matches"] = passed
     report["declared_expectation_note"] = (
-        "The declared expectation is design §4.1 L2 verbatim: 비율 0.08, 틱 0.05. "
-        "It is the PASS criterion only for a sample inside the no-escalation "
-        "window on a 코스피200선물 leaf."
+        "The declared expectation is design §4.1 L2: 1단계 비율 8% at --symbol's "
+        "own 호가가격단위. It is the PASS criterion, and it is the DETERMINED "
+        "expectation only for a sample inside the no-escalation window."
     )
-    report["registry_tick"] = {
-        "tick_points": str(tick.size),
-        "source": tick.source,
-        "differs_from_rule_tick": Decimal(str(tick.size)) != RULE_TICK_POINTS,
-    }
+    report["tick_provenance"] = tick.source
     run.measure("l2_band_rule_arithmetic", report)
 
-    passed = bool(stage1_rule_tick_matches)
     if not passed:
-        matched = report["matching_combinations"]
         run.measure(
             "l2_mismatch_record",
             {
                 "recorded_not_interpreted": (
-                    "The 8%/0.05 arithmetic did not reproduce the observed band. "
-                    "Candidates that did are listed; if none did, 기준가격 may not "
-                    "be the settlement price, or the rounding or the unit differs. "
+                    "The 1단계 8% arithmetic did not reproduce the observed band. "
+                    "Stages that did are listed; if none did, 기준가격 may not be "
+                    "the settlement price, or the rounding or the unit differs. "
                     "This probe records the fact and names the possibilities; it "
                     "does not choose between them."
                 ),
-                "matching_combinations": matched,
+                "matching_stages": report["matching_stages"],
+                "tick_points": str(tick.size),
                 "inside_no_escalation_window": window["inside_no_escalation_window"],
             },
         )
@@ -766,7 +959,7 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
     run = ProbeRun(
         probe_id=spec.probe_id,
         title=spec.title,
-        mode="live",
+        mode="live" if args.confirm else "dry-run",
         environment=spec.environment,
         args=vars(args),
     )
@@ -774,28 +967,22 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         read_only_attestation=(
             "GET-only against the allowlist in "
             "tools/broker_probes/probes_venue_limits.py::ALLOWLIST, on the mock "
-            "host only (assert_mock_host). No order path exists in this module."
+            "host only (assert_mock_host). No order path exists in this module "
+            "and it imports no order-capable module."
         ),
         allowlist=[{"tr_id": e.tr_id, "path": e.path} for e in ALLOWLIST],
     )
     run.measure(
-        "confirm_gate",
-        {
-            "requires_confirm": False,
-            "why": (
-                "Design §4 registers P-VL requires_confirm=False. Runbook safety "
-                "control #4 (docs/runbooks/kis-capability-probes.md:86) therefore "
-                "does not gate this probe; the three structural controls that do "
-                "are listed in structural_controls."
-            ),
-            "structural_controls": [
-                "assert_read_only_call: GET + TR id + path, checked before the "
-                "session is touched",
-                "assert_mock_host on every URL, built from MOCK_BASE_URL",
-                "assert_mock_trading_tr on the one /trading/ TR (모의 = V-prefixed)",
-            ],
-            "confirm_flag_was_passed": bool(getattr(args, "confirm", False)),
-        },
+        "structural_controls",
+        [
+            "assert_read_only_call: GET + TR id + path, checked before the "
+            "session is touched, so a refused call opens no socket",
+            "assert_mock_host on every URL, built from MOCK_BASE_URL",
+            "assert_mock_trading_tr on the one /trading/ TR (모의 = V-prefixed)",
+            "--confirm gates broker contact (runbook safety control #4), as it "
+            "does for every networked probe including read-only ones",
+            "no order-capable module in this module's import graph",
+        ],
     )
     run.measure(
         "cannot_establish",
@@ -803,9 +990,10 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
             "kis_quantity_limit": (
                 "ord_psbl_qty is derived from 예수금/증거금, not from the venue "
                 "limit (P-R5-PRE 2026-08-03: zero-deposit account reports 0). The "
-                "2,000-contract 호가수량한도 (별표 17의2 제1호) and any lower "
-                "member limit under 시행세칙 제61조제3항 are observable only by "
-                "sending an order — outside this probe's GET-only scope."
+                "호가수량한도 of 별표 17의2 and any lower member limit under "
+                "시행세칙 제61조제3항 are observable only by sending an order — "
+                "outside this probe's GET-only scope. The rulebook row for "
+                "--symbol is recorded as CONTEXT and decides nothing."
             ),
             "stage_2_3_escalation": (
                 "Escalation depends on a 기준종목 reaching its own limit; a probe "
@@ -818,36 +1006,27 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         },
     )
 
-    contract, tick, contract_record = resolve_smallest_contract(symbol)
-    run.measure("resolved_contract", contract_record)
-    run.measure(
-        "symbol_vs_policy_product",
-        {
-            "resolved_product": contract_record["resolved_product"],
-            "registry_tick_points": str(tick.size),
-            "rule_tick_points_kospi200_futures": str(RULE_TICK_POINTS),
-            "deployed_paper_policy_tick": (
-                "config/tos_runtime/paper/venue_constraint_policy.yaml "
-                "_model_view.shape_constraints.tick_size: 5 (= 0.05 at the ×100 "
-                "integer scale)"
-            ),
-            "note": (
-                "resolve_smallest_contract refuses any symbol that is not the "
-                "smallest registered contract — a real-money rule this probe "
-                "inherits by reusing it (design §4). The consequence is that "
-                "P-VL can only probe the smallest leaf, whose 호가가격단위 may "
-                "differ from the 0.05 of 코스피200선물거래 that design §2.1 and "
-                "the deployed policy carry. That is recorded here, not resolved: "
-                "the 2,000-contract value of 별표 17의2 제1호 belongs to "
-                "코스피200선물거래, and which row of that 별표 governs the "
-                "resolved product is an operator question, not a probe output."
-            ),
-        },
-    )
+    tick, instrument = resolve_instrument(symbol)
+    run.measure("resolved_instrument", instrument)
 
     warn_shared_token_cache()
     creds = resolve_credentials("futures", is_real=False)
     run.credentials = creds.describe()
+
+    if not args.confirm:
+        dry_run_banner(spec)
+        run.observe(
+            would_send=(
+                f"5 read-only GETs on the mock host for {symbol}: one "
+                f"{_PRICE_TR} 시세 call, then three {_PSBL_TR} 주문가능 calls at "
+                f"the touch, at 하한가, and at 상한가 + one tick ({tick.size}). "
+                "L2 is offline arithmetic and sends nothing."
+            ),
+            resolved_tick_points=str(tick.size),
+            resolved_tick_source=tick.source,
+        )
+        return run
+
     require_account(creds)
     run.measure(
         "account_product_code_is_futures_03",
@@ -951,7 +1130,7 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         )
         verdicts["L4"] = VERDICT_RECORDED
 
-        l5_price = prices["futs_mxpr"] + Decimal(str(tick.size))
+        l5_price = prices["futs_mxpr"] + tick.size
         l5 = _leg_psbl(
             client,
             run,
@@ -973,10 +1152,10 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
                     "futs_mxpr": str(prices["futs_mxpr"]),
                     "tick_added": str(tick.size),
                     "tick_source": tick.source,
-                    "design_literal": (
-                        "design §4.1 L5 writes 'futs_mxpr + 0.05 (상한가 + 1틱)'. "
-                        "The 1-tick intent is honoured with the tick registered "
-                        "for THIS symbol; 0.05 is 코스피200선물거래's unit."
+                    "rule": (
+                        "design §4.1 L5 asks for 상한가 + 1틱. The tick is the one "
+                        "registered for THIS symbol, not a literal: a mini leaf's "
+                        "호가가격단위 is not the full-size contract's."
                     ),
                 },
                 "why_no_verdict": (
