@@ -83,7 +83,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | 1 | 주문 계열은 모의 호스트만 (**`P-R5` 제외 — 항목 9**) | `assert_mock_host()` — `openapi.koreainvestment.com` 거부 | 불가 (플래그 없음) |
 | 2 | 주문 TR은 `V` 접두만 | `assert_mock_trading_tr()` — `TTT*`/`STTN*`/`CTF*` 거부 | 불가 |
 | 3 | live 선물 설정 무장 시 주문 프로브 거부 | `assert_no_live_futures_config()` | 불가 |
-| 4 | `--confirm` 없이는 브로커 무접촉 | `requires_confirm` + `dry_run_banner()` | — (기본값이 안전) |
+| 4 | `--confirm` 없이는 브로커 무접촉 (**`P-VL` 제외 — 아래 주석**) | `requires_confirm` + `dry_run_banner()` | — (기본값이 안전) |
 | 5 | 실전 프로브는 GET + 3중 allowlist | `assert_read_only_call()` (method ∧ tr_id ∧ path) | 불가 — 모듈에 POST 경로 자체가 없음 |
 | 6 | 시크릿·계좌 마스킹 | `redact()` — 아티팩트·로그 전수 | — |
 | 7 | 토큰 캐시 격리 | `results/.token_cache` 기본값 | `--token-cache-dir`로 명시적 변경만 |
@@ -93,7 +93,9 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 강제 5의 allowlist는 **모듈별**이다: `probes_real.py::ALLOWLIST` 4건(N-16·N-18) +
 `probes_balance.py::ALLOWLIST` 3건(P-BAL — 잔고 조회 TR 3종뿐, `/order` 경로 0건) +
 `probes_real_order.py::PREFLIGHT_ALLOWLIST` 5건(`P-R5-PRE` — 잔고·총자산·주문가능·
-시세·주문체결조회, `/order` 경로 0건). 항목 추가는 상수 편집 = 리뷰 대상 변경이다.
+시세·주문체결조회, `/order` 경로 0건) + `probes_venue_limits.py::ALLOWLIST` 2건
+(`P-VL` — 선물옵션 시세·주문가능뿐, `/order` 경로 0건). 항목 추가는 상수 편집 =
+리뷰 대상 변경이다.
 세 모듈 중 앞의 둘은 POST/PUT/PATCH/DELETE 경로가 **존재하지 않으며**, 그 부재가
 `tests/tools/test_broker_probes_balance.py`와
 `tests/tools/test_broker_probes_real_order.py`에서 **모듈 AST 대조로 강제**된다(주석이
@@ -112,6 +114,27 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 > 함수로 치환한 뒤 1단계가 완주하는지로 검증된다
 > (`test_stage1_never_constructs_an_order_body`).
 
+> **강제 4의 예외는 `P-VL` 하나다 — 유일하게 `--confirm` 게이트가 없는
+> **네트워크** 프로브다.** 설계
+> (`docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md` §4)가
+> `requires_confirm=False` 로 등재하라고 적었고 그대로 구현했다. 그 자리를 메우는
+> 통제는 셋이고 전부 **세션을 만지기 전에** 돈다: ① `assert_read_only_call()`
+> (method ∧ tr_id ∧ path 3중 allowlist — 거부된 호출은 소켓을 열지 않는다),
+> ② 모든 URL 이 `MOCK_BASE_URL` 에서 만들어지고 `assert_mock_host()` 를 통과해야
+> 한다(실전 호스트는 이 모듈에서 도달 불가), ③ 하나뿐인 `/trading/` TR 에
+> `assert_mock_trading_tr()` 가 추가로 걸린다. 셋 다 `tests/tools/
+> test_broker_probes_pvl.py` 가 **모듈 자신의 AST** 와 「실전 호스트를 받은
+> 클라이언트가 거부당한다」로 지킨다. 아티팩트의 `confirm_gate` 측정값이 이 교환을
+> 그대로 적는다.
+>
+> ⚠ `P-VL` 의 읽기 전용 주장은 **이 모듈의 transport** 에 대한 것이고 임포트
+> 그래프에 대한 것이 **아니다**. 설계가 `probes_real_order` 의 순수 함수
+> (`_corroborate_tick`·`resolve_smallest_contract`) 재사용을 지시했으므로 주문
+> 모듈이 그래프에 들어온다 — `probes_balance`·`probes_real` 이 가진 「주문 모듈을
+> 임포트하지 않음」 속성은 `P-VL` 에는 **없다**. 그 사실을
+> `test_read_only_claim_is_scoped_to_this_module_not_its_import_graph` 가 고정해,
+> 위 AST 단언이 더 센 주장으로 읽히지 않게 한다.
+
 ### 2.4 결과 디렉터리
 
 `tools/broker_probes/results/` — `.gitignore:89`의 `results/` 규칙으로 **커밋되지
@@ -120,7 +143,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 
 ---
 
-## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 4 = 20)
+## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 7 = 23)
 
 공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
 `--price-offset-pct`(기본 10 — 미체결 유지용, **지정가 경로 전용**) · `--samples` ·
@@ -153,12 +176,14 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | **P-R5** | OPEN_ORDER_QUERY | ORDER | REAL_PROD | **§5.7 전용 절차** (`--i-understand-this-places-real-orders`) | ~5 min at N=3 | **HIGH — 실자금** | **예 (실전)** |
 | **N-19** | CORPORATE_ADMINISTRATIVE_EVENTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — 명세 대조 · 산출 `docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) | ~2-3 h 데스크워크 | LOW | 아니오 |
 | **P-CA** | CORPORATE_ADMINISTRATIVE_EVENTS | MANUAL (GET 전용) | MOCK_VTS / REAL_PROD (`--env`) | `python -m tools.broker_probes.run P-CA --asset stock --symbol <종목> --event-class <class> --effective-time <ISO> [--payable-time <ISO>] [--reference-check] --confirm` (2026-09-10 구현 착지 — **§5.8**) | 이벤트 창 전후 폴링 · 운영자 7-시각 기록 | LOW | 아니오 |
+| **P-VL** | MARKET_INSTRUMENT_CONSTRAINTS | QUERY (GET 전용) | MOCK_VTS | `python -m tools.broker_probes.run P-VL --asset futures --symbol <현재 잎>` (**`--confirm` 불요 — §2.3 강제 4 예외** · **§5.9**) | GET 5 + 토큰 1 (~10 s) | LOW | 아니오 |
 
-> **P-NMPR·P-BAL·P-R5-PRE·P-R5는 정본 16에 속하지 않는다.** 각각 N-17 대조,
-> wave-3b 런타임 트레이스(H4), 그리고 wave-3b D-2의 NOT-IN-SCOPE 항목에서 파생된
-> **후속 4건**이며, `registry.py`의 `source`가 "draft"·"plan" 어느 쪽으로도 시작하지
-> 않아 `--coverage`의 정본 12 / census 4 카운트를 **바꾸지 않는다**. 캠페인 집계에서
-> "20건 실행"을 "정본 전건 실행"으로 읽지 말 것.
+> **P-NMPR·P-BAL·P-R5-PRE·P-R5·N-19·P-CA·P-VL은 정본 16에 속하지 않는다.** 각각
+> N-17 대조, wave-3b 런타임 트레이스(H4), wave-3b D-2의 NOT-IN-SCOPE 항목,
+> 2026-08-07 non-trade 프로브 정의서, 그리고 CP-3 결정 9(2026-10-08 설계 §4)에서
+> 파생된 **후속 7건**이며, `registry.py`의 `source`가 "draft"·"plan" 어느 쪽으로도
+> 시작하지 않아 `--coverage`의 정본 12 / census 4 카운트를 **바꾸지 않는다**. 캠페인
+> 집계에서 "23건 실행"을 "정본 전건 실행"으로 읽지 말 것.
 >
 > **⚠ `P-R5`는 이 표에서 유일하게 실전 계좌에 주문을 내는 프로브다.** 다른 모든
 > `주문 발생 = 예` 행은 **모의투자 전용**이며 `assert_mock_host()`로 구조적으로
@@ -194,6 +219,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | P-BAL | 잔고 조회의 **페이지 크기**와 연속조회 키 거동, 그리고 truncation 위험의 **3값 판정**. 런타임은 잔고를 1페이지만 읽고(`client.py:931-932`·`:1055-1056`) 그 사실을 감지할 수단이 없다. 소비자 `services/trading/broker_verification.py`는 잔고에 없는 포지션을 `remove_position(reason="broker_absent")`로 **파괴**한다(`:187-190`) — 지금까지 그 인과는 **추론뿐**이었고 페이지 크기는 한 번도 측정되지 않았다. **1페이지 k행은 페이지 크기 k가 아니다** — `page_size_lower_bound`만 성립 |
 | P-R5-PRE | **P-R5의 선행 관문(GET 전용, 위험 0)**. 계좌 지문 일치 / 실전 **trading** TR 도달성(시세 TR 성공은 trading 자격증명의 증거가 **아니다** — 캠페인 wave-3) / 주문가능금액 / 현재 포지션 / 당일 기존 주문 / 세션 상태 / 터치·일일 가격제한폭·틱·승수를 한 번에 확립한다. 산출은 `preflight_verdict` 단일 문자열이며 **`READY_FOR_STAGE_2`만** 2단계를 허가한다. **중단(ABORT)도 결과다** — 아티팩트를 남긴다 |
 | P-R5 | **실전 환경의 P-5.** 수락(t0)→조회 가시(t1) 지연을 모의 P-5와 **동일한 계산**으로 측정해 비교 가능하게 만든다. 존재 이유는 `config/execution.yaml::futures_fill_check_timeout_seconds`(1.0s)와 모의 p50 2632.9ms의 모순이며, 그 모순은 **실환경 측정 없이는 해소 불가**다(wave-3b D-2가 이 프로브를 명시적으로 지목). 부수 산출 2건: **submit 클래스** 페이싱 브래킷(P-13은 query 클래스만 측정 — 외삽 금지)과 실전 **페이지 크기** 1회 관측. n은 설계상 작다(실노출 비용) → `candidate_only` + 소표본 |
+| P-VL | 가격제한폭 **의미론**: 기준가격이 전일 **정산가**인지(`futs_sdpr` vs `futs_prdy_clpr`), 관측 band 가 시행세칙 제56조 산식(기준가격×비율 · 상한가 **내림** / 하한가 **올림**)을 재현하는지, 브로커 호가가 등록 틱의 배수인지. **호가수량한도는 주지 않는다** — `ord_psbl_qty` 는 예수금·증거금 파생값이고(P-R5-PRE 2026-08-03: 예수금 0 계좌에서 0) 2,000 계약(별표 17의2 제1호)은 주문을 넣어 거부 코드를 받아야 보인다. 1차 출처는 **규정 문서**이고 이 프로브는 **보강**이다(CP-3 결정 9 (a)). 2/3단계 확대는 기준종목 도달 사건에 달려 있어 프로브가 일으킬 수 없다 — 관측되면 기록, 아니면 미관측. 처분은 `PARTIAL` 이며 미확립 축을 열거한다(UNKNOWN 을 한 글자로 뒤집지 않는다) |
 | P-NMPR | [필수] 2필드 빈 문자열 vs 명시 코드 A/B — 수락/거부와 등가성 직접 판정. B-arm(빈 값) 거부 = 수정 전 런타임이 계약 위반이었음을 확정 (N-17 소견 2). **수락 동수는 등가성이 아니다** — 조회면이 두 필드를 되돌려주지 않으면 "blank == 01/0"은 UNKNOWN으로 남는다 |
 
 ---
@@ -935,6 +961,92 @@ leg가 창 안에서 관측되지 않았다는 것은 지연이 0이라는 증�
 (+ `.status`) — 전용 수치 슬롯은 없다(§6). 값 확립(`value_ms`)은 이 프로브
 단독으로는 불가하며 N-19 문서 모델 + Bounds-Approver 판단이 함께 필요하다
 (설계 문서 §7 연언 요건).
+
+---
+
+### 5.9 P-VL 실행 절차 (venue 가격제한폭 의미론) — GET 전용·모의 전용
+
+#### 목적
+
+CP-3 결정 9 는 `max_quantity` 의 **1차 출처를 KRX 규정 문서**로 삼았다(파생상품시장
+업무규정 제71조 → 시행세칙 제61조제1항 → 별표 17의2 제1호: 코스피200선물거래 정규거래
+**2,000 계약**). 이 프로브는 그 결정의 **보강**이고, 규정값을 주지도 확인하지도 않는다.
+설계: `docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md` §4·§5.
+
+#### 선행 조건
+
+1. **`--symbol` 은 필수이고 기본값이 없다.** 상주 paper 세션이 **실제로 돌고 있는**
+   결제월을 넣는다 — 호스트의 `~/.local/state/tos/paper-data/<종목>` 잎 이름. 리터럴
+   기본값을 두면 관측 대상이 아닌 월물을 조용히 찍는다.
+2. **거래일 CONTINUOUS 창**(08:45-15:45 KST ·
+   `config/tos_runtime/paper/calendar.yaml:56`). 두 번 찍고 **아티팩트를 분리**한다:
+   ① **08:50±3분** — 시행세칙 제56조의2제2항이 08:45~09:00 에 단계 확대를 금지하므로
+   **1단계가 보장되고 L2 의 기대값이 정해진다**. ② **09:20 이후** 1회 — 확대 가능
+   창이다. 보통 여전히 1단계이고, 다르면 그날의 확대 **사실만** 기록된다.
+3. **`.env.mock` 의 앱키가 상주 paper 세션의 키와 다른지** 실행 전 지문으로 확인한다.
+   같으면 토큰 1분 재발급 한도(N-15)에 걸릴 수 있으므로 **09:20 샘플 하나만** 찍는다.
+4. **분리 워크트리**(origin/main detached)에서 돈다. 공용 체크아웃은 병렬 레인이
+   브랜치를 바꿔 아티팩트의 `repo_commit` 이 비-main 으로 찍힌다(#793 HIGH).
+   워크트리에 `.env.mock` 이 없으면 기본 체크아웃에서 복사한다(권한 600).
+5. `--asset` 은 `futures` 뿐이다. `--asset stock` 은 **거부된다** — 이 프로브의 TR 은
+   전부 선물옵션이고 자격증명도 futures 로 해석되므로, 통과시키면 아티팩트가 무엇을
+   측정했는지 거짓으로 말한다.
+
+#### 명령
+
+```bash
+python -m tools.broker_probes.run P-VL --asset futures --symbol <현재 잎>
+# --confirm 불요 (§2.3 강제 4 예외). 페이싱 기본 1.1 s — P-13 실측 clean rate.
+```
+
+#### 레그와 판정 (설계 §4.1 / §5)
+
+| # | TR | 입력 | 판정 |
+|---|---|---|---|
+| L1 | `FHMIF10000000` | `F` · `<symbol>` | PASS/FAIL. `rt_cd≠0` · 다섯 필드 중 부재/0 · 틱 불일치는 전부 `ProbeError` — 아티팩트는 남는다 |
+| L2 | (네트워크 없음) | L1 의 `futs_sdpr` | PASS/FAIL. **불일치는 기록이고 예외가 아니다** |
+| L3 | `VTTO5105R` | `UNIT_PRICE=futs_prpr` | PASS/FAIL — `ord_psbl_qty ≥ 1` |
+| L4 | `VTTO5105R` | `UNIT_PRICE=futs_llam` | **관측 전용, 판정 없음** |
+| L5 | `VTTO5105R` | `UNIT_PRICE=futs_mxpr + 1틱` | **관측 전용**. 거부/수락을 축자 기록하고 **해석하지 않는다** |
+
+L2 는 비율 {8, 15, 20}%(별표 14 제1호) × 틱 {규정 0.05, 심볼 레지스트리} 조합을 훑어
+**어느 것이 관측 band 를 재현하는지만** 적는다. 전부 `Decimal` 이고 비교 경로에 float
+산술은 없다. 불일치 시 「기준가격이 정산가가 아니거나 내림/올림 규칙이 다르다」를
+**가능성으로 열거**하고 그중 하나를 고르지 않는다.
+
+⚠ **판정 읽기 함정 둘.**
+(i) L3 의 `ord_psbl_qty = 0` 은 「예수금 0 또는 증거금 제약」이고 **venue 상한과
+무관**하다. `rt_cd≠0` 은 **조회 거부**이지 「가용 수량 0」이 아니다 — 두 경우는 아티팩트에서
+`l3_zero_quantity_record` 와 `l3_refusal_record` 로 **갈라져** 기록된다(P-CA 의 `held=0`
+오판 재발 방지).
+(ii) L1/L2 PASS 는 **모의에서 band 의미론이 관측됐다**는 것뿐이다. 수량 상한은
+**규정값·broker 미확인**으로 남는다.
+
+#### 확립하지 **않는** 것 (먼저 읽을 것)
+
+- **KIS 측 호가수량한도.** GET 으로 관측 불가. 구조 상한(2,000 또는 KIS 가 시행세칙
+  제61조제3항으로 낮춘 값)은 주문을 보내 거부 코드를 받아야 보인다 → 원하면 별도
+  프로브(설계 §7 ④ `P-VL-2`), 운영자 결정 사항.
+- **2/3단계 확대 의미론.** 프로브가 일으킬 수 없다.
+- **런타임의 band 공급 경로.** 설계 §6 의 별도 결정이다. 이 프로브는 값을 **관측**할 뿐
+  런타임에 넣지 않는다.
+- **최소 계약이 아닌 잎.** `resolve_smallest_contract` 는 최소 등록 계약이 아닌 심볼을
+  거부한다(실자금 프로브 규칙을 재사용하므로 물려받는다). 따라서 **전체 계약 잎은 프로브
+  불가**이고, 2,000 계약은 **코스피200선물거래**(전체) 행의 값이라는 점을 함께 읽는다 —
+  현재 상주 잎은 미니이고 그 호가가격단위는 0.02 다(`config/execution.yaml:286`).
+  어느 별표 행이 지배하는지는 **운영자 질문**이며 아티팩트가 그 괴리를
+  `symbol_vs_policy_product` 로 적는다.
+
+#### 아티팩트 처리
+
+경로·`artifact_id`·`UNAPPROVED_CANDIDATE` 규율은 §6.1 과 동일하다. 두 샘플은 **각각
+별도 아티팩트**이며, 증거 디렉터리
+`docs/broker-profiles/evidence/2026-10-xx-cp3-venue-limits/` 로 복사하고 README 에
+인용 토큰(`CITATION-RULE.md` 형식)을 적어 `tools/tos_evidence_citation_check.py` 를
+통과시킨다. 기입면은
+`capabilities.market_and_instrument_constraints.price_band_tick_lot_and_quantity_semantics`
+이고 제안 처분은 **`PARTIAL`** — 아티팩트의 `p02_disposition_proposal` 이 미확립 축을
+열거한다.
 
 ---
 
