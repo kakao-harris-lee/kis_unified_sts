@@ -1,6 +1,6 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-10-06 (TOS architecture/documentation refresh; repository `5c4f38e9`)
+**Last updated**: 2026-10-07 (first real paper-session Control Plane observation; 2026-10-06 TOS architecture/documentation refresh, repository `5c4f38e9`)
 
 ## Current TOS snapshot — 2026-10-06
 
@@ -11,7 +11,7 @@ inspection. Historical legacy observations below retain their original dates.
 |---|---|---|
 | Layers | TOS Kernel (`tos`), Application Runtime + Infrastructure Adapters (`tos_runtime`), Control Plane API (dashboard TOS surface), Product / Operator UI | Names and owners: [system context](architecture/tos-system-context.md); naming does not grant new imports or authority |
 | Runtime | Composition, durable driver/inbox, risk/authority/currentness, marketfeed, synthetic/KIS mock transport, recovery/recon and operations CLI implemented | Implementation is not live authorization; [interface catalog](architecture/tos-public-interfaces.md) distinguishes internal ports from external contracts |
-| Product integration | Atomic schema v1 projection + nullable `GET /api/tos/projection` + `/tos` read-only UI (CP-1, #861 merged and deployed) | Host output path and read-only mount connected; deployed missing/auth states verified; first normal paper-session export remains unobserved |
+| Product integration | Atomic schema v1 projection + nullable `GET /api/tos/projection` + `/tos` read-only UI (CP-1, #861 merged and deployed) | Host output path and read-only mount connected; deployed missing/auth states verified; first normal paper-session export observed 2026-10-07 (live observation section below); identity refresh after restart still unobserved |
 | Operator commands | Runtime CLI has run, backup/cold-backup, restore, migration, rotation, rearm, ack and nontrade operations | No product command ingress; CLI restore-drill does not by itself perform full strategy replay/readiness |
 | Paper operations | Committed [boot runbook](runbooks/tos-paper-boot.md) records resident schedule, LONG configuration and contract-specific data-dir leaves; roll replay test is present | 2026-10-06 resident execution/genesis and today's backup outcome were **not observed in this documentation task** |
 | Tenant migration | `config/tos_runtime/paper/strategies/bootproof_band.strategy.yaml` exists as boot-proof content | First economic strategy tenant, parity evidence and scope cutover are not certified |
@@ -30,10 +30,25 @@ Static checks rerun on 2026-10-06:
 - The 2026-10-04 conversation's RED observation is superseded by this rerun;
   no change to the frozen completion contract was made.
 
-Next: verify real generation changes and stale transition during/after the next normal paper session on the deployed [CP-1 read-only Control Plane](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md). #861 later received an independent Claude-side post-merge review ([11 findings + 8 notes](https://github.com/kakao-harris-lee/kis_unified_sts/pull/861#issuecomment-6016550580)), disposed by #864, which itself went through two review rounds and an independent verifier before merge; author self-checks and CI still are not independent approval.
+#861 later received an independent Claude-side post-merge review ([11 findings + 8 notes](https://github.com/kakao-harris-lee/kis_unified_sts/pull/861#issuecomment-6016550580)), disposed by #864, which itself went through two review rounds and an independent verifier before merge; author self-checks and CI still are not independent approval.
 CP-0 documents layers/interfaces/disposition; later stages cover command design,
 first paper tenant and scoped retirement. Real-money futures orders and funding
 remain policy-blocked, not waiting for funding or a live milestone.
+
+## Live host observation — 2026-10-07
+
+Unlike the snapshot above, this section records a live host inspection.
+
+- First real paper session (08:45-15:45 KST) on the deployed
+  [CP-1 read-only Control Plane](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md):
+  operator-projection generation 264 -> 5033, with the authenticated API
+  reporting the same generation as the file at every probe, and an API age of
+  437 s with the generation frozen after the 15:45 KST stop. The UI's own stale
+  rendering was not screenshot-verified, only the API age that drives it.
+  Numbers and caveats: the 2026-10-07 observation section of the
+  [CP-1 implementation and verification record](testing/2026-10-06-tos-control-plane.md).
+- Still unobserved: runtime identity and generation refresh after a restart, on
+  the next session day. Observation does not authorize trading.
 
 ## Roadmap ownership
 
