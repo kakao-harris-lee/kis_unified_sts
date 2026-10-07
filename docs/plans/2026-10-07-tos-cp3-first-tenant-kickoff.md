@@ -1,6 +1,6 @@
 # CP-3 착수 — 첫 paper tenant 후보 비교와 운영자 결정표 (2026-10-07)
 
-상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a)·2 (B1b·B2) 구현** (4회차: #874·#876·#877 리뷰 처분 반영). 상위 계획은
+상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a)·2 (B1b·B2·B3) 구현** (5회차: #874·#876·#877 리뷰 처분 반영 + B3). 상위 계획은
 [Control Plane 및 첫 tenant 계획](2026-10-06-tos-control-plane-and-first-tenant-plan.md) §3 CP-3 이고,
 그 계획이 「전략 선택은 미정 · 후보 비교표 필요」로 남긴 자리를 이 문서가 채운다.
 이 문서는 실행·배포·live 승인 문서가 아니다. 실전 선물 주문·증거금 투입은 영구 정책 차단이다.
@@ -106,8 +106,8 @@ CP-3 에서 가장 큰 설계 질문이다.
   없다(`data/market/manifest.yaml` 부재) — §5 5 의 「데이터셋 lineage」는 그 매니페스트를 만드는 일이다.
   선물 **일봉은 2026-06-25 에서 멈춰** 있다.
 
-구축물 넷(§4 결정 7 로 승인됨 — **B1a·B2 구현됨**(`tools/tos_cp3/`) · **B1b 구현됨**(`tos/runtime/cp3/`) ·
-B3·B4 미착수).
+구축물 넷(§4 결정 7 로 승인됨 — **B1a·B2·B3 구현됨**(`tools/tos_cp3/`) · **B1b 구현됨**(`tos/runtime/cp3/`) ·
+B4 는 「체결 비교 포기」로 처분되어 B3 의 `summary.json` 이 그 범위 제한을 명시한다).
 ⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
 파일도 `tos`/`tos_runtime` 을 import 할 수 없고(`tools/tos_firewall_check.py` TOS-FW-R, `tools/` 도 검사
 대상), `tos` 는 `shared.indicators` 는 되지만 `shared.backtest` 는 안 된다. 그래서 `Bar` 튜플을 만들거나
@@ -157,15 +157,18 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    출처를 적어 선언한다(상주 `paper` 트리는 건드리지 않는다 — 건드리면 런북 §7.10 6 의 두 번 부팅
    의무가 따라온다). 트리의 `environment`·`scope.environments` 는 `paper` 로 둔다(로더가
    `--environment-label` 과 대조하지 않아 어긋나도 조용히 부팅한다 — 같은 파일 56–62행).
-2. **B1a·B1b·B2 구현됨 · B3 미착수** — `tos/` 안의 러너가 JSONL 을 `Bar` 로 읽어
+2. **B1a·B1b·B2·B3 구현됨** — `tos/` 안의 러너가 JSONL 을 `Bar` 로 읽어
    `BacktestDriver` trace 를 쓰고, 레거시 쪽 기록기가 봉별 후보·거부를 뽑고, `tools/tos_cp3/` 가
-   둘을 봉별로 diff 한다. 세 자리:
+   둘을 봉별로 diff 한다. 네 자리:
    **B1a** `tools/tos_cp3/produce_fields.py` · **B2** `tools/tos_cp3/emit_legacy_decisions.py` ·
    **B1b** `tos/runtime/cp3/`(`runner.py` 외 여덟 모듈 · `strategies/setup_d_long.strategy.yaml` ·
-   `strategy_bindings.yaml` · `tests/`). 산출물: `--out/decisions.jsonl` + `lineage.json`;
-   `reports/tos-cp3/<dataset>/` 배치는 B3 가 정한다(아티팩트는 커밋하지 않는다) + 요약(일치율,
-   불일치 사유 분포). 불일치는 **미해결로 남기되**, 결정 5·6 의 두 의도된 차이는 승인 근거와
-   함께 따로 센다.
+   `strategy_bindings.yaml` · `tests/`) · **B3** `tools/tos_cp3/diff_decisions.py`. 산출물은
+   넷 다 `--out/<payload>.jsonl` + `lineage.json` 이고 B3 는 거기에 `summary.json` 을 더한다;
+   **배치는 B3 가 이렇게 정했다** —
+   `reports/tos-cp3/<symbol>_<window_start>_<window_end>/`(합의된 window identity 로 키를 잡아
+   같은 창의 두 실행이 같은 자리에 떨어지고 경로만 보고 어느 창인지 알 수 있게; `reports/**` 는
+   gitignore 라 아티팩트는 커밋하지 않는다) + 요약(일치율, 불일치 사유 분포). 불일치는
+   **미해결로 남기되**, 결정 5·6 의 두 의도된 차이는 승인 근거와 함께 따로 센다.
 
    **B2 착수·구현(2026-10-08)**: `tools/tos_cp3/emit_legacy_decisions.py`
    (테스트 `tests/tools/test_cp3_emit_legacy_decisions.py`). 창은 B1a 의
@@ -198,7 +201,52 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    가 거짓이 되고 그 digest 가 모든 `outcome_digest` 로 흐른다 — 2026-10-08 리뷰 실측). 커널·런타임
    변경 0. 하네스에는 `critical_input_policy` 주입 자리가 없어 필드는 **이미 승인된 값**으로
    들어가고, 다섯 값(unit/scale/multiplier/sign/max_age_ms)은 lineage 의 `versions.field_policy` 에
-   기록된다(의도된 차이 B1b-D3). **B3 는 미착수.**
+   기록된다(의도된 차이 B1b-D3).
+
+   **B3 착수·구현(2026-10-08)**: `tools/tos_cp3/diff_decisions.py`
+   (테스트 `tests/tools/test_cp3_diff_decisions.py`). CLI 는
+   `diff_decisions --fields <B1a fields.jsonl> --legacy <B2 decisions.jsonl> --tos <B1b trace.jsonl>
+   --out <dir>` 이고 각 아티팩트의 `lineage.json` 은 형제로 자동 발견된다(`--*-lineage` 로 덮어쓴다).
+   자리는 `tools/tos_cp3/`(§3 표 B3 행)이고 `tos`/`tos_runtime` import 0 — B1b 의 trace 는 **파일로**
+   읽는다. B1a 의 `produce_fields` 도 import 하지 않는다: B3 의 주장은 세 **파일**에 관한 것이므로
+   그 파일을 만든 밴드 수학이 사라진 뒤(CP-4)에도 유효해야 한다. 그래서 provenance 헬퍼 둘
+   (`render_json`·`_git_identity`)만 자기 사본으로 두고, 둘이 B1a 의 것과 바이트 단위로 같다는 것을
+   테스트가 고정한다.
+
+   **먼저 거부한다**(종료코드 2, 전 검사는 통과 여부와 함께 출력 lineage 의 `checks` 에 적힌다):
+   ① B1a 의 투영된 window identity ≠ B2 의 `join.window_identity`(B2 의 `b3_contract` 가 요구하는
+   거부 — B1a 에는 `join` 블록이 없으므로 identity 는 `dataset`·`strategy` 에서 투영하고 그 투영표를
+   lineage 에 적는다) · ② 세 파일이 각자의 lineage 가 적은 sha256·줄수와 다름 · ③ B1b lineage 의
+   `parents.fields_jsonl.sha256`(과 `parents.fields_lineage_json.sha256`) ≠ 준 fields.jsonl ·
+   ④ 줄수 불일치 · ⑤ `raw_event_id` 순서 불일치(위치를 지목) · ⑥ `as_of_ms` 불일치 ·
+   ⑦ 페이로드의 **float**(`json.loads` 의 `parse_float`/`parse_constant` 훅이라 `1.0` 같은 정수값
+   리터럴도 거부) · ⑧ B2 의 닫힌 집합 밖 outcome · ⑨ **귀속표가 어떤 lineage 에도 없는 선언된 차이
+   id 를 가리킴**.
+
+   봉마다 한 줄(`diff.jsonl`)에 레거시 `outcome`·`direction`·
+   `would_be_admitted_by_legacy_position_model`, TOS `outcome_kind`·`rule_id`·`capacity_denied`,
+   B1a 의 게이트 불린 넷 + `z_x1000`, **버킷**(`AGREE_NO_ACTION` · `AGREE_ENTRY` ·
+   `TOS_ONLY_ENTRY` · `LEGACY_ONLY_ENTRY` · `TOS_EXIT_ON_LEGACY_<outcome>`; 전수·배타)과 **귀속**을
+   적는다. 귀속표는 모듈 수준의 (술어, 선언된 차이 id) **순서 있는 목록**이고 첫 일치가 이긴다 —
+   레거시 SHORT 발화 → B1b-D5 · 레거시 `LOW_CONFIDENCE` 인데 TOS ACTION → B1a-D1·B2-L9(L9 가 그
+   귀속을 자기 문장으로 적어 둔다) · 포지션 없는 TOS FLAT → B1b-D7 · 결정은 일치했으나 포지션 모델이
+   거부 → B1b-D7·B2-L3·B2-L10 · 결정은 일치했으나 용량 거부 → B1b-D1 · z 양자화 경계 → B1a-D8 ·
+   그 밖은 **UNRESOLVED**(이유를 만들지 않고 id 를 적는다). 용량·포지션 모델 규칙을 ACTION 규칙
+   **뒤**에 둔 것은 의도다: B1b 실행에서 첫 실현 주문 뒤의 모든 ACTION 이 용량 거부라, 앞에 두면
+   모든 진입 불일치를 흡수해 원인을 가린다. 임계 `z_entry_max_x1000` 은 리터럴이 아니라 B1b lineage
+   의 `parents.strategy_bindings_file.bindings` 에서 읽는다.
+
+   **실측(2026-10-08, `101S6000` 2025-12-01~2026-04-30, 35,612 봉)**: 레거시 FIRED **550**
+   (LONG **374** / SHORT **176**), TOS R1 ACTION **392**. 버킷 = `AGREE_NO_ACTION` 31,691 ·
+   `AGREE_ENTRY` **374** · `TOS_ONLY_ENTRY` 18 · `LEGACY_ONLY_ENTRY` 176 ·
+   `TOS_EXIT_ON_LEGACY_*` 3,353(AFTER_CUTOFF 1,918 · VOL_BELOW_GATE 652 · BEFORE_WINDOW 549 ·
+   NOT_EXTREME 234). **규칙 수준 진입 일치 374/374 = 100 %**, **포지션 모델 수준 96/96 = 100 %**,
+   TOS 쪽에서 본 374/392 = 95.41 %. **UNRESOLVED 0** — LONG 쪽 레거시 발화는 TOS ACTION 과
+   **정확히** 일치하고, 초과한 18 은 전부 레거시 `LOW_CONFIDENCE`(B1a-D1·B2-L9: 공개 필드가
+   `min_confidence` 를 표현할 수 없어 정책이 「레거시 발화」의 **상위집합**)다. 176 은 전부
+   SHORT(B1b-D5: LONG 단독 렌더). 산출물은 커밋하지 않는다
+   (`/home/deploy/.local/state/tos/measure/cp3-b3-run1/`, diff sha256
+   `ce36450f68f7cb669b0680faa185d1aa906a91c91a80894e8434c13ca5af5677`).
 3. **Setup D DSL 콘텐츠 — LONG 구현됨(2026-10-08) · 부팅 경로 미착수** — 콘텐츠는
    `tos/runtime/cp3/strategies/setup_d_long.strategy.yaml` +
    `tos/runtime/cp3/strategy_bindings.yaml`(strategies/ 아래가 아니라 그 형제 — 안에 두면 로더의
@@ -223,6 +271,11 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
 5. **완료 증거**(계획 §3 CP-3) — 이관 artifact + digest, 데이터셋 lineage(커버리지 매니페스트), 판단/거부/
    위험 차이 보고서(의도된 차이 둘 + 미해결), 양방향·재시작·복구 증거. **PnL 동일성은 완료 조건이
    아니다**(TOS 가 못 낸다).
+   **판단/거부/위험 차이 보고서 = B3 의 `summary.json`**(`<out>/summary.json`, §5 2): 버킷별·귀속별
+   카운트, 레거시 outcome × TOS kind 행렬, 두 일치율(규칙 수준·포지션 모델 수준)과 정의,
+   UNRESOLVED 봉 목록(상한 있음), 세 아티팩트의 선언된 차이 전부와 각각이 흡수한 봉 수, 그리고
+   **체결·PnL 은 비교하지 않는다**는 `scope` 문단(B4 「체결 비교 포기」 — 실행당 주문 1 개 +
+   봉인된 성과 표면). 아직 없는 것은 데이터셋 lineage(커버리지 매니페스트)와 §5 4 의 paper 증거다.
 
 범위 밖(명시): 커널·DSL 변경(GOV-001 절차), `Proposal.direction` 런타임 배선, 상주 코퍼스·설정 교체,
 live·실전·증거금. 레거시 코드 삭제는 CP-4.
