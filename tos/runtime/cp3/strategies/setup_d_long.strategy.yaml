@@ -92,7 +92,9 @@ policy:
             every Setup D gate satisfied.
     # ---------------------------------------------------------------- R2
     # 청산 1: 가격이 VWAP 밴드로 되돌아왔다 = 평균회귀 명제 실현.
-    # `vwap_reverted` 는 B1a D7 의 **밴드 꼴**(abs(z) ≤ 0.2)이다 —
+    # `vwap_reverted` 는 B1a **D3** 의 **밴드 꼴**(abs(z) ≤ 0.2)이다 —
+    # (D7 이 아니다: D7 은 측정된 D7 생성기에 관한 항목이고 그 note 자신이
+    #  「그 카운트를 밴드의 오차 막대로 읽지 말라」고 적는다.)
     # 레거시 YAML 에 vwap_revert_band_atr_mult 가 없어 B1a 가
     # reversal_confirm_atr_mult 를 폴백으로 썼고, 그 차이는 lineage 의
     # declared_differences 에 등재돼 있다.

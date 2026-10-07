@@ -199,10 +199,25 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    변경 0. 하네스에는 `critical_input_policy` 주입 자리가 없어 필드는 **이미 승인된 값**으로
    들어가고, 다섯 값(unit/scale/multiplier/sign/max_age_ms)은 lineage 의 `versions.field_policy` 에
    기록된다(의도된 차이 B1b-D3). **B3 는 미착수.**
-3. **Setup D DSL 콘텐츠 + 부팅 경로** — `config/tos_runtime/<tenant>/strategies/setup_d_vwap_reversion.strategy.yaml`,
-   `config/tos_runtime/<tenant>/strategy_bindings.yaml`(strategies/ 아래가 아니라 설정 루트), 예산 64 안
-   (규칙 3개면 비교 ≤ 20). 렌더의 전략 파일 상수·다섯 digest 재도출·`safety_activation.yaml::members`
-   갱신. LONG/SHORT 는 각각 렌더.
+3. **Setup D DSL 콘텐츠 — LONG 구현됨(2026-10-08) · 부팅 경로 미착수** — 콘텐츠는
+   `tos/runtime/cp3/strategies/setup_d_long.strategy.yaml` +
+   `tos/runtime/cp3/strategy_bindings.yaml`(strategies/ 아래가 아니라 그 형제 — 안에 두면 로더의
+   stray-file 규칙이 디렉터리 전체를 거부한다)로 **먼저 B1b 실행기 쪽에** 들어갔다. 규칙 셋(진입 1 +
+   FLAT 2) + 기본값이고 `policy_work_steps` = 3 + 7 + 14 = **24 ≤ 64**(비교 7 ≤ 20). 진입 임계는
+   리터럴이 아니라 바인딩 `z_entry_max_x1000 = -1800 = -trunc(extreme_atr_mult × 1000)` 이고 그 등식은
+   테스트가 `config/strategies/futures/setup_d_vwap_reversion.yaml` 74행을 직접 읽어 고정한다.
+   파일은 **운영 로더**(`tos_runtime.strategy.loader.load_strategies` + 실제 `parse_strategy` /
+   `strategy_admissible` + `resolve` 의 바인딩 다섯 규칙)로 적재·승인되는 것을 테스트로 증명했다.
+   ⚠ 그래도 `config/tos_runtime/<tenant>/` 로 옮기는 것은 **「복사만」이 아니다**(2026-10-08 리뷰).
+   최소 넷이 더 필요하다: ① tenant 설정 트리 자체(렌더가 만드는 열몇 개 YAML — 상주 `paper` 트리는
+   건드리지 않는다) · ② 열다섯 필드 × 다섯 값을 `critical_input_policy.yaml` 에 선언하되
+   **`max_age_ms` 는 이 경로에서 도출할 수 없다**(B1b 는 전부 `null` 로 두고 의도된 차이 B1b-D3 로
+   등재했다 — 백테스트는 주입된 시간 경계로 신선도를 판정하고 필드별 수명 소비자가 없다; 값은
+   **운영자 출처**여야 한다) · ③ 그 열다섯 필드를 **paper 런타임에서 매 봉 발행하는 생산자** — B1a 는
+   Parquet 배치 도구이고 실시간 발행기가 아니다 · ④ §5 3 의 **부팅 경로**(렌더의 전략 파일 상수·다섯
+   digest 재도출·`safety_activation.yaml::members` 갱신). 넷 모두 **미착수**다.
+   LONG/SHORT 는 각각 렌더이며 SHORT 파일은 아직 없다(DSL 에 abs() 가 없어 진입 비교가 한 변뿐이므로
+   SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
 4. **paper 검증**(결정 3·4·8·9) — 방향별 data dir, 런북 §3 절차, 재시작·리플레이·콜드 백업 복원 drill
    증거. 결정 9 가 닫히기 전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.
 5. **완료 증거**(계획 §3 CP-3) — 이관 artifact + digest, 데이터셋 lineage(커버리지 매니페스트), 판단/거부/

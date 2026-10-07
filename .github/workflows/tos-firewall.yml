@@ -146,9 +146,15 @@ jobs:
       # `*.py` under the two installed package roots (`tos/src/tos` and
       # `tos/runtime/src/tos_runtime`), so a file added under either would ABORT
       # the resident paper session every morning. Being outside those roots also
-      # means the three steps below (pytest / Black / mypy) would not have
-      # covered it — the same "unformatted-by-nobody" hole the Black step's own
-      # scope note describes — so each one names it explicitly.
+      # means FOUR gates would not have covered it — the three steps below
+      # (pytest / Black / mypy) and the size budget, whose own `scope` list in
+      # `config/tos_size_budget.yaml` is path-based for the same reason. The
+      # first three name the directory explicitly below; the fourth gained
+      # `tos/runtime/cp3` in that config (2026-10-08 review: the earlier version
+      # of this comment named three holes and omitted the size budget, and
+      # `tos_size_budget --check PASS` was being cited for a tree the checker
+      # never looked at). Same "unformatted-by-nobody" shape the Black step's own
+      # scope note describes.
       - name: tos-cp3 hermetic tests
         run: pytest tos/runtime/cp3/tests
 

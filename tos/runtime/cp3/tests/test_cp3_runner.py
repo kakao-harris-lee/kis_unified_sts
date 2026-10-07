@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 from tos.dsl import DecisionKind
+from tos.dsl.context_value import VALUE_NAMESPACE
 from tos.engine import HaltReason
+from tos.marketfeed.value import view_digest_matches
 
 # Relative, not absolute: `import cp3.runner` from a file under tos/ is a
 # TOS-FW-A violation (the firewall allowlist does not name `cp3`), while a
@@ -105,7 +107,17 @@ def test_value_view_reaches_the_dsl_at_resolved_values() -> None:
     assert mapping["entry_window"] is True
     assert mapping["session_token"] == "2025-12-08"
     # The namespace the DSL ref walks.
-    assert runner.VALUE_NAMESPACE == "resolved_values"
+    assert VALUE_NAMESPACE == "resolved_values"
+    # THE regression guard for review item 1: the recorded digest must be the
+    # digest of the view's own content under the KERNEL's preimage (which
+    # includes the snapshot binding and sorts by field_key). Before the fix this
+    # was False on every bar, and the mismatch rode into every outcome_digest.
+    assert view_digest_matches(payload.value_view, runner.SCHEME) is True
+    # ...and the values are published in field_key order, the ordering the
+    # kernel's preimage uses.
+    assert [value.field_key for value in payload.value_view.values] == sorted(
+        runner.REQUIRED_FIELD_KEYS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,12 +161,14 @@ def test_entry_fires_on_its_bar_and_the_second_is_capacity_denied(
     # Every other bar took the default.
     assert artifacts.rule_fire_counts["R0-DEFAULT-NO-ACTION"] == 48
     # WHICH bar spent the order is recorded, not inferred from handoffs=1.
-    assert artifacts.realized_order == {
-        "raw_event_id": lines[10]["raw_event_id"],
-        "bar_index": 10,
-        "rule_id": "R1-ENTRY-LONG",
-        "outcome_kind": DecisionKind.ACTION.value,
-    }
+    assert artifacts.realized_orders == (
+        {
+            "raw_event_id": lines[10]["raw_event_id"],
+            "bar_index": 10,
+            "rule_id": "R1-ENTRY-LONG",
+            "outcome_kind": DecisionKind.ACTION.value,
+        },
+    )
 
 
 def test_entry_threshold_is_the_authored_binding_not_an_always_true_gate(
@@ -231,8 +245,8 @@ def test_entry_then_exit_exit_is_capacity_denied_not_reclassified(
     assert by_index[12]["outcome_kind"] == DecisionKind.FLAT.value
     assert by_index[12]["rule_id"] == "R2-EXIT-VWAP-REVERTED"
     assert by_index[12]["capacity_denied"] is True
-    assert artifacts.realized_order is not None
-    assert artifacts.realized_order["bar_index"] == 4
+    assert len(artifacts.realized_orders) == 1
+    assert artifacts.realized_orders[0]["bar_index"] == 4
 
 
 def test_an_early_exit_spends_the_single_order_before_any_entry(
@@ -254,12 +268,14 @@ def test_an_early_exit_spends_the_single_order_before_any_entry(
     artifacts = runner.run_replay(
         records=runner.read_field_records(path), content=_content()
     )
-    assert artifacts.realized_order == {
-        "raw_event_id": lines[1]["raw_event_id"],
-        "bar_index": 1,
-        "rule_id": "R2-EXIT-VWAP-REVERTED",
-        "outcome_kind": DecisionKind.FLAT.value,
-    }
+    assert artifacts.realized_orders == (
+        {
+            "raw_event_id": lines[1]["raw_event_id"],
+            "bar_index": 1,
+            "rule_id": "R2-EXIT-VWAP-REVERTED",
+            "outcome_kind": DecisionKind.FLAT.value,
+        },
+    )
     by_index = {line["bar_index"]: line for line in artifacts.trace_lines}
     # The entry still FIRES — it is denied at the ledger, not reclassified.
     assert by_index[11]["outcome_kind"] == DecisionKind.ACTION.value
@@ -432,12 +448,24 @@ def test_two_runs_produce_byte_identical_trace_and_lineage(tmp_path: Path) -> No
 
     lineage = json.loads(outputs[0][1])
     assert lineage["lineage_schema_version"] == runner.LINEAGE_SCHEMA_VERSION
-    assert lineage["determinism"]["no_timestamps"] is True
-    assert lineage["reconciliation"]["bars_read_equals_bars_driven"] is True
+    assert lineage["determinism"]["no_clock_derived_timestamp"] is True
+    # The two tautological reconciliation booleans are GONE (review item 4):
+    # they could not be False, because run_replay refuses an unequal run.
+    assert "bars_read_equals_bars_driven" not in lineage["reconciliation"]
+    assert "trace_lines_equals_bars_driven" not in lineage["reconciliation"]
+    assert lineage["reconciliation"]["enforced_by"]
     assert lineage["counts"]["bars_read"] == 40
     assert lineage["counts"]["bars_driven"] == 40
     assert lineage["counts"]["capacity_denials"] == 2
-    assert lineage["counts"]["realized_order"]["rule_id"] == "R1-ENTRY-LONG"
+    assert [order["rule_id"] for order in lineage["counts"]["realized_orders"]] == [
+        "R1-ENTRY-LONG"
+    ]
+    # Review item 5: the producer identity by VALUE, not a pointer string.
+    assert lineage["parents"]["fields_jsonl"]["source_id"] == "tos-cp3-b1b-test/0.1.0"
+    # Review item 9: repo + interpreter coordinates are present.
+    assert set(lineage["tool"]["git"]) == {"repo_root", "commit", "branch", "dirty"}
+    assert lineage["tool"]["runtime"]["python"]
+    assert lineage["tool"]["runtime"]["sqlite"]
     assert lineage["claims"]["closes_no_ev"] is True
     # The two declared differences the task names explicitly.
     ids = {item["id"] for item in lineage["declared_differences"]}
