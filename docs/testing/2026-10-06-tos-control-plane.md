@@ -134,3 +134,49 @@ Claude 독립 리뷰는 token 한도로 실행되지 않았으며 자체 점검�
   Chromium page errors 0, 390px 모바일 overflow 없음.
 - 실제 paper 세션은 기동하지 않았다. 다음 정상 세션의 generation 증가와 종료 뒤 stale
   전환은 미확인이다. fixture 검증을 실제 세션 증거로 대체하지 않는다.
+  (이 두 항목은 2026-10-07 첫 실제 세션에서 관측했다 — 아래 절. 이 배포 기록 자체는
+  2026-10-06 시점 그대로 둔다.)
+
+## 첫 실제 세션 관측 2026-10-07
+
+2026-10-07 첫 실제 paper 세션(08:45~15:45 KST, 세션 `2026-10-07-084508-LONG`,
+data dir `/home/deploy/.local/state/tos/paper-data/A05610`)에서
+[인계 기록](../runbooks/2026-10-06-tos-cp1-claude-handoff.md) §6 의 넷 중 셋을 관측했다.
+아래 수치는 호스트에서 직접 뜬 세 지점의 원시 관측 그대로다.
+
+| 지점 | 프로브 KST | 파일 mtime | 파일 gen | API gen | age 초 | `/tos` |
+|---|---|---|---|---|---|---|
+| T1 | 09:07:12 | 09:07:10 | 264 | 264 | 1.5 | 200 |
+| T2 | 09:37:15 | 09:37:11 | 624 | 624 | 4.3 | 200 |
+| T3 | 15:52:17 | 15:45:00 | 5033 | 5033 | 437.3 | 200 |
+| T3' | 15:52:47 | 15:45:00 | 5033 | 5033 | 467.3 | 200 |
+
+T3 와 T3' 는 같은 정지 상태를 30 초 간격으로 두 번 찍은 것이다.
+
+- **생성과 재작성.** 운영 projection 파일
+  `/home/deploy/.local/state/tos/paper-projection/operator_projection.json` 하나가
+  mode `0600` 으로 생겼다. 세션 중 그 디렉터리에는 이 파일 하나뿐이었다. T1→T2 는
+  1803 초에 generation +360 이므로 약 5.0 초마다 재작성이다.
+- **producer → 인증 API → `/tos` 값 일치.** Caddy 경유 인증 GET 이 세 지점 전부
+  `available=true`·`reason=None` 이고 generation 이 같은 시점 파일과 같다(264·624·5033).
+  `/tos` 도 세 지점 전부 200. producer 세대 변화가 조회 표면까지 같은 값으로 도달한다.
+- **runtime identity 는 하루 종일 불변.** `cell_id` `paper`, `process_nonce` 접두
+  `997451dd`, `code_digest`
+  `ec20680a444cc9798ad601fbcda61edc05cee30d1c00f524c60b717c5f3a5044`,
+  `runtime_generation` `0` — 세 지점 동일. 세션 worktree 는 `4010bc175d5f` 이고 digest 는
+  `release.yaml` 과 일치했다.
+- **stale 전환 — 관측한 것과 안 한 것.** 15:45:06 `stop: driver exited` 로 멈추고 그 뒤
+  세션 프로세스 0, 마지막 쓰기는 15:45:00 이다. 정지 약 7 분 뒤 두 프로브의 age 가
+  437.3 → 467.3 초로 경과하고 generation 은 5033 에 고정이다.
+  [UI 설정](../../strategy-builder-ui/src/config/tos-control-plane.json)의
+  `staleAfterSeconds` 가 60 이므로, UI 의 stale 판정을 구동하는 **API 입력**은 stale
+  조건을 만족한다. **UI 가 실제로 stale 로 렌더한 화면은 확인하지 않았다** — 관측한 것은
+  그 렌더를 구동하는 API age 뿐이고 브라우저 캡처는 없다.
+- **미관측.** 인계 기록 §6 체크 4(재시작 뒤 runtime identity·generation 갱신).
+  2026-10-07 은 하루 한 세션이라 같은 날 재시작이 없었고, 위 identity 네 값은 **불변**만
+  보였다 — **변화** 쪽 증거는 아직 없다. UI stale 렌더 화면도 같다. 둘 다 다음 정상
+  세션일의 관측 대상이다.
+
+세션 보고서는
+`/home/deploy/.local/state/tos/paper-sessions/2026-10-07-084508-LONG/report.json` 이다.
+인증 GET 에 쓴 API 키는 이 기록에 담지 않는다.
