@@ -164,9 +164,37 @@ class TestCoverageInvariantsUnchanged:
         report = coverage_report()
         assert report["census_count"] == 4
 
-    def test_total_is_22(self) -> None:
+    def test_total_is_23(self) -> None:
+        """A deliberate literal: the register grows only by an explicit edit.
+
+        The number is NOT derived (``canonical + census + followups`` is
+        tautological — every probe lands in exactly one bucket, so such an
+        assertion would block nothing). It is a hand-maintained count, so adding
+        a probe has to come here and say which one. What the 23 is made of:
+
+        * 12 canonical (draft §5) + 4 census (P0-2 plan §1 T2) — pinned above,
+          and those two MUST NOT move;
+        * 7 follow-ups, outside the ratified sets: P-NMPR, P-BAL, P-R5-PRE,
+          P-R5, N-19, P-CA, and P-VL (2026-10-08, CP-3 decision 9 corroboration
+          probe — ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
+          §4).
+        """
         report = coverage_report()
-        assert report["total"] == 22
+        assert report["total"] == 23
+        followups = sorted(
+            spec.probe_id
+            for spec in PROBES.values()
+            if not spec.source.startswith(("draft", "plan"))
+        )
+        assert followups == [
+            "N-19",
+            "P-BAL",
+            "P-CA",
+            "P-NMPR",
+            "P-R5",
+            "P-R5-PRE",
+            "P-VL",
+        ]
 
     def test_n19_still_unsupported_pca_no_longer_is(self) -> None:
         # N-19 is a documentary cross-check, not a script — it stays unsupported.

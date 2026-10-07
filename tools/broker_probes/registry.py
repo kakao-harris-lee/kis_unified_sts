@@ -951,6 +951,60 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         entrypoint="tools.broker_probes.probes_ca:probe_pca",
     ),
+    "P-VL": _S(
+        probe_id="P-VL",
+        title=(
+            "venue limits — 가격제한폭 의미론 대조 + 모의 주문가능수량 보강 "
+            "(GET-only · MOCK_VTS)"
+        ),
+        source=(
+            "docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md "
+            "§4 (CP-3 결정 9 (a) 보강 프로브)"
+        ),
+        kind="QUERY",
+        environment=ENV_MOCK,
+        dimension="MARKET_INSTRUMENT_CONSTRAINTS",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.market_and_instrument_constraints."
+            "price_band_tick_lot_and_quantity_semantics",
+        ),
+        statistic=(
+            "categorical per leg, no numeric bound. L1 = 다섯 시세 필드 존재·양수·"
+            "틱 정합(_corroborate_tick). L2 = 관측 band 와 시행세칙 제56조 산식"
+            "(기준가격×비율, 상한가 내림/하한가 올림)의 일치 여부 — 비율 "
+            "{8,15,20}% × 틱 {규정 0.05, 레지스트리} 조합 중 어느 것이 재현하는지만 "
+            "기록하고 해석하지 않는다. L3 = ord_psbl_qty >= 1 (예수금 파생값 — "
+            "구조 상한 아님). L4·L5 = 관측 전용, PASS/FAIL 없음. 호가수량한도 "
+            "2,000(별표 17의2 제1호)은 GET 으로 관측 불가 — 1차 출처는 규정 문서다"
+        ),
+        risk="LOW",
+        duration="~10 s (GET 5 + 토큰 1, 1.1 s 페이싱)",
+        emits_orders=False,
+        # Design §4 declares requires_confirm=False. P-VL is the only NETWORKED
+        # probe in this register with no --confirm gate, so runbook safety
+        # control #4 (docs/runbooks/kis-capability-probes.md:86) does not apply
+        # to it. What stands in its place is structural and asserted by
+        # tests/tools/test_broker_probes_pvl.py: a GET+TR+path allowlist checked
+        # before the session is touched, assert_mock_host on every URL, and
+        # assert_mock_trading_tr on the one /trading/ TR.
+        requires_confirm=False,
+        supported=True,
+        skip_reason="",
+        prerequisites=(
+            "--symbol 필수 — 상주 paper 세션이 실제로 돌고 있는 결제월(호스트 "
+            "~/.local/state/tos/paper-data/<종목>). 리터럴 기본값 없음",
+            "거래일 CONTINUOUS 08:45-15:45 KST (config/tos_runtime/paper/"
+            "calendar.yaml:56). 설계 §4.2: 08:50±3분(확대 불가 창 — L2 기대값이 "
+            "정해진다)과 09:20 이후 각 1회, 별도 아티팩트",
+            ".env.mock 의 앱키가 상주 paper 세션의 키와 다른지 지문으로 확인 — "
+            "같으면 토큰 1분 재발급 한도(N-15)를 피해 09:20 샘플만 찍는다",
+            "분리 워크트리에서 실행 (origin/main detached) — 공유 체크아웃은 병렬 "
+            "레인이 브랜치를 바꿔 repo_commit 이 비-main 으로 찍힌다(#793 HIGH)",
+            "READ-ONLY: GET 전용, 모듈에 주문 경로 없음. 실전 자격증명·실주문 없음",
+        ),
+        entrypoint="tools.broker_probes.probes_venue_limits:probe_pvl",
+    ),
 }
 
 
