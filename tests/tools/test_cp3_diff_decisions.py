@@ -40,6 +40,7 @@ import ast
 import copy
 import hashlib
 import json
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -47,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from tools.tos_cp3 import diff_decisions as dd
 from tools.tos_cp3 import emit_legacy_decisions, produce_fields
@@ -57,6 +59,10 @@ WINDOW_END = "2026-04-30"
 MARKET_OPEN = "09:00"
 MARKET_OPEN_SOURCE = "era-rule"
 MIN_BARS_PER_DAY = 330
+#: B1a's z scale (thousandths of one ATR), imported rather than restated.
+Z_SCALE = produce_fields.Z_SCALE
+#: The deployed entry threshold, pinned to the bindings file by
+#: ``test_the_binding_is_the_truncated_extreme_multiple``.
 Z_ENTRY_MAX_X1000 = -1800
 
 #: B2's declared closed set, copied here as a fixture value (the tool reads it
@@ -94,6 +100,31 @@ B1B_STRATEGY_SOURCE = (
     / "strategies"
     / "setup_d_long.strategy.yaml"
 )
+#: The two YAML files the quantization derivation actually rests on. Read here,
+#: never restated: an earlier revision asserted the derivation against
+#: test-local literals (`extreme = 1.8`, `threshold = -1800`), so mutating
+#: either file left the suite green while the derivation this tool SHIPS in
+#: `config.quantization_edge` became false.
+B1B_BINDINGS_SOURCE = (
+    dd.REPO_ROOT / "tos" / "runtime" / "cp3" / "strategy_bindings.yaml"
+)
+SETUP_D_YAML_SOURCE = (
+    dd.REPO_ROOT / "config" / "strategies" / "futures" / "setup_d_vwap_reversion.yaml"
+)
+
+
+def deployed_entry_threshold() -> int:
+    """``z_entry_max_x1000`` as the deployed bindings file states it."""
+    document = yaml.safe_load(B1B_BINDINGS_SOURCE.read_text(encoding="utf-8"))
+    return int(
+        document["strategies"]["setup_d_long.strategy"]["bindings"]["z_entry_max_x1000"]
+    )
+
+
+def legacy_extreme_atr_mult() -> float:
+    """``extreme_atr_mult`` as the legacy Setup D YAML states it."""
+    document = yaml.safe_load(SETUP_D_YAML_SOURCE.read_text(encoding="utf-8"))
+    return float(document["strategy"]["entry"]["params"]["extreme_atr_mult"])
 
 
 def _declared_ids_from_source(path: Path, pattern: str) -> tuple[str, ...]:
@@ -841,31 +872,78 @@ def test_an_agreeing_bar_carries_no_attribution() -> None:
     )
 
 
+def test_the_binding_is_the_truncated_extreme_multiple() -> None:
+    """``z_entry_max_x1000 == -trunc(extreme_atr_mult * 1000)``, from the files.
+
+    Both sides are READ, not restated. Concrete failing input: edit
+    ``tos/runtime/cp3/strategy_bindings.yaml`` to ``-1801``, or change the
+    scale on either side.
+    """
+    assert deployed_entry_threshold() == -int(legacy_extreme_atr_mult() * Z_SCALE)
+    # The fixture constant is a convenience for the synthetic trios; it must
+    # not be allowed to drift away from the deployment it stands in for.
+    assert deployed_entry_threshold() == Z_ENTRY_MAX_X1000
+
+
 def test_there_is_no_quantization_edge_rule_and_the_arithmetic_says_why() -> None:
     """The premise an earlier revision shipped is false; this is the proof.
 
-    With an integral ``extreme_atr_mult * 1000`` the published-integer
-    condition and the legacy condition are the SAME predicate, so no edge
-    exists to attribute. Concrete failing input: if the binding stopped being
-    ``-trunc(extreme_atr_mult * 1000)`` — say it were rounded up, or the scale
-    changed — the two columns below would disagree for some z and this test
-    goes red, which is exactly when a quantization attribution would start
-    being a real thing rather than a catch-all.
+    The two predicates are compared over z values read nowhere else and the
+    quantizer is B1a's own ``scaled_int_toward_zero``, so three different
+    mutations turn this red — each of which would make the derivation this
+    tool SHIPS (``config.quantization_edge``) false:
+
+    * **the binding** — ``strategy_bindings.yaml``'s ``z_entry_max_x1000``
+      moved off ``-trunc(extreme_atr_mult * 1000)`` (caught by the pin above
+      and by the sweep).
+    * **the strategy parameter** — ``extreme_atr_mult`` becomes non-integral
+      at this scale (``1.8005``): the binding still truncates to ``-1800`` so
+      the pin alone cannot see it, but ``z = -1.800`` then fires on the TOS
+      side and not on the legacy one.
+    * **the quantizer** — ``trunc`` replaced by ``floor``/``round``/``ceil``.
+      This is why the sweep visits HALF-GRID z: at ``z = -1.7995`` trunc gives
+      ``-1799`` (no fire, agreeing with legacy) while floor gives ``-1800``
+      (fires, disagreeing). An on-grid-only sweep, as an earlier revision had,
+      cannot tell the four apart at all — every quantizer agrees on an exact
+      1/1000 point, so the loop was blind to the one operation the derivation
+      rests on.
     """
-    multiplier = 1000
-    extreme = 1.8  # config/strategies/futures/setup_d_vwap_reversion.yaml 74행
-    threshold = -int(extreme * multiplier)  # the bindings' own derivation
-    assert threshold == Z_ENTRY_MAX_X1000
-    for micro in range(-2000, 1, 1):  # z from -2.000 to 0.000 in x1000 steps
-        z = micro / multiplier
-        published = int(z * multiplier)  # truncate toward zero
+    extreme = legacy_extreme_atr_mult()
+    threshold = deployed_entry_threshold()
+    quantize = produce_fields.scaled_int_toward_zero
+
+    sampled_half_grid = False
+    # Tenths of a milli-ATR either side of zero: on-grid points (…, -1.800, …)
+    # AND the half-grid points between them (…, -1.7995, …).
+    for half in range(-40000, 40001):
+        z = half / (Z_SCALE * 20)
+        published = quantize(z, Z_SCALE)
         tos_fires = published <= threshold
-        legacy_fires = abs(z) >= extreme and z < 0
-        assert tos_fires == legacy_fires, (z, published)
+        legacy_fires_long = z < 0 and abs(z) >= extreme
+        assert tos_fires == legacy_fires_long, (z, published, threshold, extreme)
+        if abs(half) % 20 == 10:
+            sampled_half_grid = True
+    assert sampled_half_grid, "the sweep must visit points between the grid"
+
     assert "IDENTICAL" in dd.QUANTIZATION_EDGE_DERIVATION
     assert "NOT_EXTREME" in dd.QUANTIZATION_EDGE_DERIVATION
     assert not [rule for rule in dd.ATTRIBUTION_RULES if "quantization" in rule.name]
     assert not [rule for rule in dd.ATTRIBUTION_RULES if "B1a-D8" in rule.ids]
+
+
+def test_the_sweep_would_catch_a_floor_quantizer() -> None:
+    """The half-grid point, isolated, so the previous test's claim is checkable.
+
+    With ``floor`` the published integer at ``z = -1.7995`` clears a threshold
+    the real value does not, which is exactly the "edge" the deleted rule
+    claimed — it exists only if the quantizer stops truncating toward zero.
+    """
+    extreme = legacy_extreme_atr_mult()
+    threshold = deployed_entry_threshold()
+    z = -(extreme - 0.0005)
+    assert produce_fields.scaled_int_toward_zero(z, Z_SCALE) > threshold
+    assert math.floor(z * Z_SCALE) <= threshold
+    assert abs(z) < extreme  # legacy does not fire here
 
 
 def test_the_deployed_threshold_is_read_from_the_bindings(tmp_path: Path) -> None:
@@ -1366,6 +1444,39 @@ _NUMBER_WORDS = {
 }
 
 
+def test_the_refusal_order_is_the_recorded_order_for_the_first_pair(
+    tmp_path: Path,
+) -> None:
+    """Violate checks #1 and #2 together; #1's message must be the one raised.
+
+    `run` used to call `assert_entry_outcome_literals` BEFORE
+    `_lineage_refusals`, whose first act is the attribution-id check — so this
+    trio was refused with check #2's message while the enumeration (and the PR
+    body, and the kickoff doc) said the order was #1 then #2. The claim is only
+    true if the first pair is ordered, and only a trio that breaks both can
+    tell.
+    """
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:1]),
+        b1a_ids=tuple(i for i in B1A_DIFFERENCE_IDS if i != "D1"),
+        legacy_outcomes=tuple(o for o in LEGACY_OUTCOMES if o != "LOW_CONFIDENCE"),
+    )
+    with pytest.raises(dd.DiffDecisionsError) as excinfo:
+        run_trio(trio, tmp_path / "out")
+    message = str(excinfo.value)
+    assert "attribution table cites declared-difference ids" in message
+    assert "B1a-D1" in message
+    assert "closed_set" not in message
+    # Both really were broken: each alone refuses with its own message.
+    assert dd.CHECK_NAMES[0] == "attribution_ids_declared"
+    assert dd.CHECK_NAMES[1] == "entry_outcome_literals_are_closed_set_members"
+    with pytest.raises(dd.DiffDecisionsError, match="does not contain"):
+        dd.assert_entry_outcome_literals(
+            tuple(o for o in LEGACY_OUTCOMES if o != "LOW_CONFIDENCE")
+        )
+
+
 def test_a_check_name_outside_the_enumeration_is_refused() -> None:
     """``check_entry`` is the only way a row is built, and it is closed."""
     with pytest.raises(dd.DiffDecisionsError, match="not in CHECK_NAMES"):
@@ -1832,8 +1943,6 @@ def test_the_gate_fields_are_r1s_own_operands() -> None:
     pin. Concrete failing input: a fifth gate, a rename, or a reordering of
     ``R1-ENTRY-LONG``'s comparisons.
     """
-    import yaml
-
     document = yaml.safe_load(B1B_STRATEGY_SOURCE.read_text(encoding="utf-8"))
     r1 = document["policy"]["rules"][0]["all_of"]
     operands = [compare["left"]["ref"] for compare in r1]

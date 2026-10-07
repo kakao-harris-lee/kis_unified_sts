@@ -261,9 +261,15 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    에서만 더 관대한데, 그 봉에서 `check()` 는 4단계에서 `NOT_EXTREME` 으로 거부하므로 `stall_ok`·
    `reversal_ok` 는 평가되지 않고 B1a 가 **False 로 공개**한다(그 D5, fail-closed) → R1 의 AND 가
    거짓이라 TOS 도 NO_ACTION 이다. 즉 간극은 **D5 에 가려져** 불일치를 만들 수 없고, 실측 행렬의
-   `NOT_EXTREME × ACTION` 은 **0** 이다. 그래서 규칙을 **삭제**했고 ①을 산술로 고정하는 테스트를
-   남겼다(바인딩이 `-trunc(extreme_atr_mult×1000)` 이기를 그치면 거기서 레드가 난다).
-   `summary.json`/`lineage.json` 의 `config.quantization_edge` 가 이 도출을 싣는다.
+   `NOT_EXTREME × ACTION` 은 **0** 이다. 그래서 규칙을 **삭제**했고 그 자리에 도출을 고정하는
+   테스트를 남겼다 — 임계는 `tos/runtime/cp3/strategy_bindings.yaml`, `extreme_atr_mult` 는
+   `config/strategies/futures/setup_d_vwap_reversion.yaml` 에서 **읽고**(테스트 지역 리터럴 금지:
+   리터럴이면 두 YAML 을 바꿔도 초록이고 출하된 도출이 거짓이 된다), z 는 **격자 사이**
+   (예 `-1.7995`)까지 훑어 B1a 의 실제 양자화기 `scaled_int_toward_zero` 를 통과시킨다 —
+   그래서 trunc→floor 치환이 레드가 된다(격자 위 점만 보면 네 양자화기가 전부 일치해 구별이
+   안 된다). 레드 증명 셋 실측: 바인딩 −1800→−1801 · `extreme_atr_mult` 1.8→1.8005 ·
+   양자화기 trunc→floor. `summary.json`/`lineage.json` 의 `config.quantization_edge` 가 이 도출을
+   싣는다.
 
    ⚠ **B1b-D7 의 B3 의무는 미이행으로 적는다.** B1b-D7 의 note 는 「B3's diff has to scope the
    legacy side to bars where a position was held」를 요구하지만, B2 의 봉별 페이로드에 포지션·노출

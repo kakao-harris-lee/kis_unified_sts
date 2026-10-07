@@ -18,8 +18,12 @@ TOS-FW-R — so B1b's trace is consumed as a FILE, never by driving the kernel).
 That is also why this module does not import B1a's ``produce_fields``: B3's
 claim is about three files, so a B3 run must stay valid when the legacy band
 math behind those files is gone (CP-4 deletes it). The two provenance helpers
-it therefore keeps locally are pinned byte-for-byte against B1a's by
-``tests/tools/test_cp3_diff_decisions.py`` so they cannot drift apart.
+it therefore keeps locally are pinned to B1a's by
+``tests/tools/test_cp3_diff_decisions.py`` as NORMALIZED-AST SOURCE equality —
+the function's own name, its argument names and its docstring may differ,
+nothing else — so the two copies cannot become two implementations. (An
+earlier revision said "byte-for-byte", which was not what the test did: it
+compared one sample document's output, and a ``sort_keys`` divergence passed.)
 
 What it refuses
 ---------------
@@ -43,8 +47,8 @@ Fills and PnL. ``tos.backtest`` holds at most ONE order per scope for the whole
 run (B1b-D1), so the first firing is realized and every later one is an exact
 capacity denial; and its result types carry no Sharpe/PnL/return/edge field at
 all (B1b's ``claims.performance_surface``: "ABSENT BY CONSTRUCTION"). kickoff
-§3 B4 disposes of this as **체결 비교 포기** — the comparison is decision and
-intent level, never fill for fill. ``summary.json`` says so in its ``scope``
+§3 B4 poses this and §4 결정 7 disposes of it as **체결 비교 포기** — the
+comparison is decision and intent level, never fill for fill. ``summary.json`` says so in its ``scope``
 block rather than leaving a reader to infer it from a missing section.
 
 Output layout
@@ -2042,6 +2046,11 @@ def _lineage_refusals(
     checks: list[dict[str, Any]] = []
     declared_index, ids_check = _check_attribution_ids(refs)
     checks.append(ids_check)
+    # AFTER the attribution-id check, not before it: `run` used to call this
+    # one first, so a trio violating BOTH was refused with check #2's message
+    # while the enumeration promised #1 — "거부 순서 = 기록 순서" was false for
+    # exactly that pair.
+    assert_entry_outcome_literals(legacy_outcomes)
     checks.append(
         check_entry(
             "entry_outcome_literals_are_closed_set_members",
@@ -2095,8 +2104,6 @@ def run(
     legacy_outcomes = tuple(
         _dig(refs[LABEL_LEGACY].lineage, "outcomes.closed_set", LABEL_LEGACY)
     )
-    assert_entry_outcome_literals(legacy_outcomes)
-
     declared_index, identity, input_lines, checks = _lineage_refusals(
         refs, legacy_outcomes
     )
