@@ -61,6 +61,13 @@ instrument, fake-date, worktree, calendar 우회가 설정된 세션은 무조�
 5. 다음 정상 paper 세션에서 projection generation 증가, API 값, UI freshness를 대조한다.
    종료 뒤 stale 전환, 재시작 후 generation/runtime identity 변화를 확인한다.
    이 관측 전에는 실제 세션 end-to-end 검증 완료로 표시하지 않는다.
+   → 2026-10-07 에 관측했다(generation 증가·API 일치·stale 입력은 08:45 세션, identity 변화는
+   17:32 손 재시작). 수치는 [CP-1 구현·검증·배포 기록](../testing/2026-10-06-tos-control-plane.md)
+   의 두 관측 절. ⚠ 그 재시작은 4 의 「장 마감 후 세션 금지」와 `tos-paper-boot.md` §7.2 의
+   ⛔ `TOS_PAPER_MINUTES` 를 운영자 지시로 한 번 벗어난 것이고, 금지 자체는 그대로다. 재시작
+   뒤 **장중** export 주기와 UI stale 렌더 화면은 아직 미관측이다. `runtime_generation` 은
+   compose root 가 0 으로 고정해 재시작에 변하지 않는다 — 변하는 값은 `process_nonce` 와
+   RCL epoch 다.
 
 복구: 정지 상태에서 backup wrapper/driver를 복원하고 조회 서비스의 이전 배포와
 두 env 설정을 복원한다. runtime DB·custody·authority는 복구 대상이 아니다.
@@ -72,4 +79,5 @@ Claude 독립 리뷰를 요청했으나 주간 token 한도로 실행 불가. �
 500 응답, atomic replace 동안 age/content 세대 불일치, 미래 mtime의 잘못된 recent
 표시를 수정하고 회귀 테스트 3개를 추가했다. 최종 코드 `bb394cb1`의 모든 CI가 통과했고 #861은 main `af43fd8a`에 병합됐다.
 조회 서비스 배포 및 실제 브라우저 검증은 [배포 기록](../testing/2026-10-06-tos-control-plane.md)에 있다.
-다음 정상 paper 세션의 실제 출력 갱신 관측은 남아 있다.
+다음 정상 paper 세션의 실제 출력 갱신 관측은 2026-10-07 에 했다(위 5). 남은 것은 재시작 뒤
+장중 export 주기와 UI stale 렌더 화면이다.

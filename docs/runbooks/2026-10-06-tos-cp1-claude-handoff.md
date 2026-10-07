@@ -13,8 +13,9 @@ main 에 올려 dashboard·UI 두 서비스로 배포했다(#860~#864). 리뷰�
 (#866~#869)도 머지됐다(main `00bd5456`). 작성 시점에 관측하지
 못했던 **실제 paper 세션의 projection 갱신**은 2026-10-07 첫 실제 세션에서 §6 의 넷 중
 셋까지 관측했다 — 파일 생성·generation 증가, producer↔API 값 일치, 정지 뒤 stale 입력.
-남은 하나는 **재시작 뒤 runtime identity·generation 갱신**이고 다음 세션일의 대상이다.
-후속 넷의 처분은 §6 끝에 적었다.
+넷째 **재시작 뒤 runtime identity 갱신**은 같은 날 17:32 운영자 지시의 손 재시작에서 관측했다
+(`process_nonce` 교체 · export 순번 1 로 복귀 · RCL epoch 3). 남은 것은 재시작 뒤 **장중**
+export 주기와 UI stale 렌더 화면이다. 후속 넷의 처분은 §6 끝에 적었다.
 
 이 문서는 2026-10-06 작업 종료 시점의 인계 기록이다. 이후 작업을 재개할 때는
 현재 Git 상태와 실제 프로세스를 다시 확인한다. 이 인계 파일 자체는 별도 생성했으며,
@@ -188,9 +189,9 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
 장 마감 후 검증을 위해 거래 세션을 임의로 시작하지 않았다.
 
 다음 정상 paper 세션에서 아래를 확인해야 한다. 그 세션은 2026-10-07(08:45~15:45 KST)에
-돌았고 **넷 중 셋을 관측했다**. 수치의 정본은
-[CP-1 구현·검증·배포 기록](../testing/2026-10-06-tos-control-plane.md)의
-「첫 실제 세션 관측 2026-10-07」절이다.
+돌았고 **넷 중 셋을 관측했다**; 넷째는 같은 날 17:32 KST 의 손 재시작에서 관측했다. 수치의
+정본은 [CP-1 구현·검증·배포 기록](../testing/2026-10-06-tos-control-plane.md)의
+「첫 실제 세션 관측 2026-10-07」절(1~3)과 「재시작 관측 2026-10-07 17:32」절(4)이다.
 
 1. projection 파일 생성 및 generation 증가 — **관측됨(2026-10-07)**. T1 09:07:12 KST 에
    mode `0600` 파일 하나, generation 264. T2 09:37:15 에 624, T3 15:52:17 에 5033(마지막
@@ -203,13 +204,20 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
    467.3 초로 `staleAfterSeconds` 60 을 넘고 generation 은 5033 고정이다. 관측한 것은 UI
    의 stale 판정을 구동하는 **API 입력**이고, UI 가 실제로 stale 로 렌더한 화면은
    스크린샷으로 확인하지 않았다.
-4. 재시작 후 runtime identity·generation 갱신 — **미관측 — 다음 세션일**. 2026-10-07 은
-   하루 한 세션이라 같은 날 재시작이 없었다. runtime identity 는 세 지점 전부 동일했다
-   (`cell_id` `paper` · `process_nonce` 접두 `997451dd` · `runtime_generation` `0`) —
-   즉 이 항목의 **변화** 쪽은 아직 증거가 없다.
+4. 재시작 후 runtime identity·generation 갱신 — **identity 갱신 관측됨(2026-10-07 17:32 KST,
+   손 재시작) · generation 은 RCL epoch(1→2→3)로만 갱신되고 projection 표면에서는 관측 불가**.
+   운영자 지시로 같은 잎에 두 번째 세션(`2026-10-07-173223-LONG`, `TOS_PAPER_MINUTES=7`,
+   정지는 cron 과 같은 `stop`)을 띄웠다. 재작성된 첫 파일(17:32:50)부터 `process_nonce`
+   `997451dd…` → `e431c2d8…`, `projection_generation` 5033 → 1 이고 인증 API 가 같은 값을
+   돌려준다. `runtime_generation` 은 세 부팅 전부 **0** — compose root 가 0 으로 고정해 넘기는
+   값이라 재시작 카운터가 아니고, 실제로 오르는 durable 값은 RCL `epochs.epoch`(1·2·3)다.
+   ⚠ 장 밖이라 틱이 전부 `SKIPPED_SESSION_CLOSED` 로 끝나 **재시작 뒤 장중 export 주기**(새
+   nonce 아래 generation 증가)는 이 실행이 재지 않았다 — 08:45–15:45 안의 재시작이 필요하다.
+   부팅 증명 뒤 약 12 초는 옛 프로세스의 파일이 그대로 서빙된다(age 로만 stale).
 
-완료 범위는 코드·호스트 배선·조회 서비스 배포와 missing/auth 상태 검증에 더해 위 1~3 의
-실제 세션 관측이다. 4 와 UI stale 렌더 화면은 관측한 것으로 보고하지 않는다.
+완료 범위는 코드·호스트 배선·조회 서비스 배포와 missing/auth 상태 검증에 더해 위 1~4 의
+실제 세션 관측이다. 재시작 뒤 장중 export 주기와 UI stale 렌더 화면은 관측한 것으로 보고하지
+않는다.
 
 #861·#864 리뷰에서 분리한 후속은 넷이고 **넷 다 main에 머지됐다**. 네 건 모두
 #864가 만든 것이 아니라 그 전부터 있던 상태였다.
@@ -230,6 +238,20 @@ tos_paper_session.py  3ce14fb685a009b993ba9fcaa1b4693c38efd4279e60fa4e0622140336
   밖이라 #864는 건드리지 않았다(#861 노트 e). **[#869](https://github.com/kakao-harris-lee/kis_unified_sts/pull/869) 머지됨** — `00bd5456`.
   fixture 를 `tos/runtime/tests/fixtures/` 로 옮기고 `projection-reasons.json` 은 레거시
   트리에 남겼다.
+
+2026-10-07 17:32 재시작 관측(#873)이 드러낸 후속 셋 — 전부 미착수, 처분은 운영자 결정:
+
+- **래퍼 격리 술어와 그 주석의 불일치** — 주석은 「test/override 세션은 운영 스냅샷을 덮지
+  않는다」인데 술어는 변수 여섯의 열거라 `TOS_PAPER_MINUTES` 단독 세션(런북 §7.2 ⛔)은 운영
+  projection 에 쓴다(`docs/runbooks/patches/tos-paper-projection.patch` 15–18행). 성질로
+  다시 쓰거나 주석을 열거에 맞춘다 — [[guards-that-admit-what-they-name]] 모양.
+- **`runtime_generation` 은 compose root 가 0 으로 고정** — `tos/runtime/src/tos_runtime/compose/_wiring.py`
+  287행·422행, `seed_from` 반환값 미사용(423–425행). 설계 #40 **D4.1**(「epoch 와 같은
+  트랜잭션에서 증가」)과 맞는지, projection 이 RCL epoch 를 실어야 하는지. 같은 423행 주석의
+  「D1.1」은 D4.1 의 오기.
+- **`projection_generation` 「단조」 문구의 범위** — `operator/projection.py` 172행 주석과
+  Phase 5 W4 계획은 프로세스 범위를 말하지 않는데 재시작에 1 로 되돌아간다. 「프로세스 안에서만
+  단조」로 한정하든지 재시작 넘어 단조로 바꾸든지.
 
 #866·#868 의 UI 프록시 변경은 **배포됐다**. 호스트에 떠 있는 UI 컨테이너는
 2026-10-07 13:17:15 KST 생성판이다(`docker inspect kis_paper-strategy-builder-ui
