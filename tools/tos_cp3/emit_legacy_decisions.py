@@ -85,6 +85,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import logging
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -101,7 +102,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from shared.backtest.market_context_replay import (  # noqa: E402
+    MarketContextReplay,
+)
 from shared.decision.setups.vwap_reversion import (  # noqa: E402
+    SetupDConfig,
     SetupDVWAPReversion,
 )
 from shared.instruments.contract_spec import ContractSpec  # noqa: E402
@@ -114,6 +119,7 @@ from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
 # plan §3 warns about. tools/tos_cp3 is one package with one owner.
 from tools.tos_cp3.produce_fields import (  # noqa: E402
     DEFAULT_MIN_BARS_PER_DAY,
+    OMITTED_ID_LIST_CAP,
     OPEN_ANCHOR_CUTOVER,
     PRE_CUTOVER_OPEN,
     PRICE_SCALE,
@@ -123,6 +129,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     ProduceFieldsError,
     StrategyInputs,
     _bar_accounting,
+    _bar_lookup,
     _git_identity,
     _inputs_unusable,
     _runtime_versions,
@@ -145,11 +152,14 @@ SOURCE_ID = f"tos-cp3-b2/{TOS_CP3_VERSION}"
 DECISIONS_FILENAME = "decisions.jsonl"
 LINEAGE_FILENAME = "lineage.json"
 
-#: Top-level keys of every line. The first four are B1a's join keys, spelled
-#: and derived identically; the payload hangs off ``decision`` where B1a has
-#: ``fields``. This artifact is NOT read by the TOS journal (it is legacy-side
-#: input to B3), so the journal's required-key set is not a constraint here —
-#: only the join is.
+#: Top-level keys of every line. ``raw_event_id`` and ``as_of_ms`` are B1a's
+#: join keys, derived by B1a's own helpers — **those two are the join**.
+#: ``instrument`` agrees with B1a's, and ``source_id`` deliberately DIFFERS
+#: (``tos-cp3-b2/…`` vs ``tos-cp3-b1a/…``): it names which producer wrote the
+#: line, so a tool that joined on it would match nothing. The payload hangs off
+#: ``decision`` where B1a has ``fields``. This artifact is NOT read by the TOS
+#: journal (it is legacy-side input to B3), so the journal's required-key set is
+#: not a constraint here — only the join is.
 LINE_KEYS = ("raw_event_id", "source_id", "instrument", "as_of_ms", "decision")
 
 #: The legacy source whose ``_reject`` branches and ``ev[...]`` keys the two
@@ -173,6 +183,16 @@ WALKFORWARD_SCRIPT = (
 #: script's own stem, so this private load cannot be mistaken for (or collide
 #: with) an importable module of that name.
 WALKFORWARD_MODULE_NAME = "cp3_b2_walkforward_setup_d"
+
+#: The open anchor ``collect_entries`` takes TODAY, read off the
+#: ``MarketContextReplay`` dataclass rather than written as a literal: the
+#: script builds its replay without ``market_open_hour``/``market_open_minute``
+#: (lines 160-167), so this field default IS what it uses, and a change to the
+#: default must move this value rather than silently contradict it.
+WALKFORWARD_TODAY_OPEN = (
+    MarketContextReplay.__dataclass_fields__["market_open_hour"].default,
+    MarketContextReplay.__dataclass_fields__["market_open_minute"].default,
+)
 
 #: Names this module needs from that script. Checked on load so a refactor
 #: there fails loudly here instead of silently changing what "admitted" means.
@@ -363,6 +383,99 @@ _EVAL_BY_KEY: dict[str, tuple[str, str]] = {
     key: (published, projection) for key, published, projection in EVAL_PROJECTION
 }
 
+#: What each projection kind means on the wire, in the shape
+#: ``config/tos_runtime/paper/critical_input_policy.yaml`` uses (a TOKEN for
+#: ``scale``, a STRING for ``multiplier``) and B1a's lineage mirrors. Bare
+#: numbers are deliberately not used: a reader reconstructing the real value
+#: needs to know the rounding rule as much as the factor.
+PROJECTION_ENCODING: dict[str, dict[str, str]] = {
+    PROJ_BOOL: {
+        "scale": "none",
+        "multiplier": "1",
+        "sign": "unsigned",
+        "type": "bool",
+        "quantization": "exact",
+    },
+    PROJ_DIRECTION: {
+        "scale": "none",
+        "multiplier": "1",
+        "sign": "unsigned",
+        "type": "str",
+        "quantization": "exact",
+    },
+    PROJ_PRICE_X100_HALF_UP: {
+        "scale": "hundredths",
+        "multiplier": str(PRICE_SCALE),
+        "sign": "unsigned",
+        "type": "int",
+        "quantization": "half_up",
+    },
+    PROJ_SIGNED_X100_TOWARD_ZERO: {
+        "scale": "hundredths",
+        "multiplier": str(PRICE_SCALE),
+        "sign": "signed",
+        "type": "int",
+        "quantization": "truncate_toward_zero",
+    },
+    PROJ_SIGNED_X1000_TOWARD_ZERO: {
+        "scale": "thousandths",
+        "multiplier": str(Z_SCALE),
+        "sign": "signed",
+        "type": "int",
+        "quantization": "truncate_toward_zero",
+    },
+}
+
+#: The unit each trace key carries, keyed by ``last_eval`` key. Kept beside
+#: :data:`EVAL_PROJECTION` rather than folded into it so the tuple arity the
+#: tests unpack stays stable; a test asserts the two key sets are equal, so
+#: this table cannot rot behind a new projection entry.
+EVAL_UNITS: dict[str, str] = {
+    "minutes_since_open": "minute",
+    "entry_window": "bool",
+    "atr_14": "index_point",
+    "close": "index_point",
+    "vwap": "index_point",
+    "inputs_usable": "bool",
+    "prev_close": "index_point",
+    "vol_ref": "index_point",
+    "vol_gate_active": "bool",
+    "vol_ratio": "ratio",
+    "recent_high": "index_point",
+    "recent_low": "index_point",
+    "trend_score": "atr",
+    "hi_vol": "bool",
+    "z": "atr",
+    "extreme": "bool",
+    "direction": "enum_long_short",
+    "trend_ok": "bool",
+    "trend_override": "bool",
+    "stall_distance": "index_point",
+    "stall_buffer": "index_point",
+    "stall_ok": "bool",
+    "prev_z": "atr",
+    "reversal_price_turn": "bool",
+    "reversal_z_improvement": "atr",
+    "reversal_ok": "bool",
+    "confidence": "ratio",
+    "confidence_ok": "bool",
+    "fired": "bool",
+}
+
+#: The four integers taken from the fired ``Signal`` rather than from the trace,
+#: as ``(published key, projection, unit, parent)``.
+BRACKET_PROJECTION: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "confidence_x1000",
+        PROJ_SIGNED_X1000_TOWARD_ZERO,
+        "ratio",
+        "signal:confidence",
+    ),
+    ("entry_x100", PROJ_PRICE_X100_HALF_UP, "index_point", "signal:entry_price"),
+    ("stop_x100", PROJ_PRICE_X100_HALF_UP, "index_point", "signal:stop_loss"),
+    ("target_x100", PROJ_PRICE_X100_HALF_UP, "index_point", "signal:take_profit"),
+)
+
 #: The legacy ``direction`` token → the published one.
 DIRECTION_TOKENS = {"long": "LONG", "short": "SHORT"}
 
@@ -435,6 +548,67 @@ def project_eval(
 
 
 # ---------------------------------------------------------------------------
+# Config source: the strategy YAML vs the harness's own defaults
+# ---------------------------------------------------------------------------
+
+
+def config_source_diff(strategy: StrategyInputs) -> dict[str, dict[str, Any]]:
+    """Per-field diff between the YAML this run used and the harness defaults.
+
+    The walk-forward script that produced Setup D's published OOS numbers
+    **never reads the strategy YAML**: it builds
+    ``SetupDConfig(trend_filter_enabled=…, trend_window_bars=…,
+    trend_warmup_bars=…, trend_block_threshold=…,
+    against_trend_extreme_atr_mult=…)`` (lines 441-447) and takes the field
+    default for everything else. So any field the YAML sets away from its
+    default is a value the published run did not use — and some of those change
+    which outcomes are *reachable at all*, not merely how often they occur.
+
+    Computed from ``SetupDConfig()`` rather than written down, so it cannot
+    describe a default that has since moved.
+    """
+    defaults = SetupDConfig()
+    diff: dict[str, dict[str, Any]] = {}
+    for name in type(defaults).model_fields:
+        used = getattr(strategy.entry_config, name)
+        default = getattr(defaults, name)
+        if used != default:
+            diff[name] = {"yaml": used, "harness_default": default}
+    return diff
+
+
+def outcomes_unreachable_under_harness_defaults() -> list[str]:
+    """Outcomes no run at the harness defaults could ever emit.
+
+    Derived from ``SetupDConfig()``, not listed: the gates that make these
+    branches reachable are config-gated in ``check()``, so with the default
+    value the branch is dead rather than rare. Today that is ``LOW_CONFIDENCE``
+    (``min_confidence`` defaults to 0.0 and the gate is
+    ``if c.min_confidence > 0.0 and …``) and all three
+    ``AWAITING_REVERSAL_CONFIRM_*`` (``reversal_confirm_enabled`` defaults to
+    False and the whole confirmation block sits under
+    ``if c.reversal_confirm_enabled:``), plus ``AGAINST_TREND`` whenever the
+    trend filter is off.
+
+    This is why the published outcome mix cannot be compared to this run's:
+    four of the fourteen outcomes could not occur in it.
+    """
+    defaults = SetupDConfig()
+    unreachable: list[str] = []
+    if not defaults.min_confidence > 0.0:
+        unreachable.append("LOW_CONFIDENCE")
+    if not defaults.reversal_confirm_enabled:
+        unreachable.extend(
+            outcome
+            for outcome in OUTCOMES
+            if outcome.startswith("AWAITING_REVERSAL_CONFIRM_")
+        )
+    if not defaults.trend_filter_enabled:
+        unreachable.append("AGAINST_TREND")
+    return [outcome for outcome in OUTCOMES if outcome in set(unreachable)]
+
+
+# ---------------------------------------------------------------------------
 # No floats
 # ---------------------------------------------------------------------------
 
@@ -476,13 +650,23 @@ _WALKFORWARD_MODULE: ModuleType | None = None
 def load_walkforward_module() -> ModuleType:
     """Load ``walkforward_setup_d_vwap_reversion.py`` as a module.
 
-    ``scripts/`` is not a package, so the script is loaded by file path — the
-    way this repo already loads analysis scripts from tests (precedent:
-    ``tests/unit/analysis/test_regime_gate_counterfactual.py`` lines 6-9). The
-    point of loading rather than copying is that
-    :func:`simulate_legacy_position_model` then runs the SAME exit simulation
-    that produced Setup D's published OOS numbers, so there is no second
-    implementation to drift — the hazard the kickoff plan §3 names.
+    ``scripts/`` is not a package, so the script is loaded by file path. The
+    point of loading rather than copying is that :func:`emit_decisions` then
+    runs the SAME single-position gate and exit simulation the published
+    walk-forward used, so there is no second implementation to drift — the
+    hazard the kickoff plan §3 names.
+
+    The script has **module-level side effects**, because it is a script:
+
+    * ``logging.basicConfig(level=INFO, format=…, stream=sys.stderr)`` — which
+      on a process with no root handler yet installs one and sets the root
+      level, changing logging for everything else in the process (a pytest
+      session included).
+    * ``sys.path.insert(0, PROJECT_ROOT)``.
+
+    Both are saved and restored around ``exec_module`` so importing the script
+    to borrow two functions does not reconfigure the caller's process. The
+    registration in ``sys.modules`` is NOT undone on success — see below.
     """
     global _WALKFORWARD_MODULE
     if _WALKFORWARD_MODULE is not None:
@@ -504,13 +688,28 @@ def load_walkforward_module() -> ModuleType:
     # ``dataclasses`` resolves its string annotations through
     # ``sys.modules[cls.__module__].__dict__``. Without this line that lookup
     # returns None and the module raises ``AttributeError: 'NoneType' object
-    # has no attribute '__dict__'`` while being defined.
+    # has no attribute '__dict__'`` while being defined. Same reason, same
+    # shape as ``tools/tos_evidence_scan_measure.py`` lines ~442-452, which
+    # loads its bench module this way and says so in the same words.
+    #
+    # It STAYS registered after a successful load: the dataclasses defined in
+    # the module keep resolving annotations through it for the life of the
+    # process (``SimTrade`` instances are created on every admitted entry), so
+    # removing the entry would break the very objects this load exists to get.
     sys.modules[WALKFORWARD_MODULE_NAME] = module
+    # Save the process-global state the script's module level writes to.
+    saved_handlers = list(logging.root.handlers)
+    saved_level = logging.root.level
+    saved_path = list(sys.path)
     try:
         spec.loader.exec_module(module)
     except BaseException:
         sys.modules.pop(WALKFORWARD_MODULE_NAME, None)
         raise
+    finally:
+        logging.root.handlers[:] = saved_handlers
+        logging.root.setLevel(saved_level)
+        sys.path[:] = saved_path
     missing = [name for name in WALKFORWARD_REQUIRED_NAMES if not hasattr(module, name)]
     if missing:
         raise EmitLegacyDecisionsError(
@@ -521,6 +720,38 @@ def load_walkforward_module() -> ModuleType:
         )
     _WALKFORWARD_MODULE = module
     return module
+
+
+def assert_eod_agreement(wf: ModuleType, strategy: StrategyInputs) -> None:
+    """Refuse when the harness's EOD constants and the YAML's cutoff disagree.
+
+    The admission flag's exits come from the harness's own
+    ``EOD_HOUR``/``EOD_MINUTE`` (declared difference L3), while the published
+    ``eod`` field and the live exit come from
+    ``SetupTargetExitConfig.eod_close_time``. They agree today (both 15:15),
+    and the earlier revision of this tool merely PRINTED both into the lineage
+    and let a reader notice. That is the wrong shape: if the YAML cutoff moved
+    to 15:10, every admitted entry would still be held to 15:15 by the harness
+    constant, the two numbers would sit side by side in the sidecar, and
+    nothing would say the artifact had become incoherent.
+
+    The concrete input this refuses: ``eod_close_minute: 10`` in the strategy
+    YAML (or an ``EOD_MINUTE`` changed in the harness) — either direction.
+    """
+    cutoff = strategy.exit_config.eod_close_time
+    harness = (int(wf.EOD_HOUR), int(wf.EOD_MINUTE))
+    configured = (cutoff.hour, cutoff.minute)
+    if harness != configured:
+        raise EmitLegacyDecisionsError(
+            "EOD cutoff disagreement: the walk-forward harness exits at "
+            f"{harness[0]:02d}:{harness[1]:02d} "
+            "(walkforward_setup_d_vwap_reversion.py EOD_HOUR/EOD_MINUTE) but "
+            f"{strategy.path} sets eod_close_time "
+            f"{configured[0]:02d}:{configured[1]:02d}. The admission flag and "
+            "the eod semantics of the joined B1a field set would then describe "
+            "different session ends, so the artifact would be incoherent in a "
+            "way no count in the lineage reveals"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -610,9 +841,19 @@ def emit_decisions(
     """
     import pandas as pd
 
-    from shared.backtest.market_context_replay import MarketContextReplay
-
     wf = load_walkforward_module()
+    assert_eod_agreement(wf, strategy)
+
+    # B1a's OHLCV lookup, called for its REFUSAL, not for its result: it
+    # rejects a duplicated bar timestamp (the #516 minute-dedup defect). B2
+    # publishes no OHLC, but the same duplicate would be worse here than there
+    # — ``ts_to_idx`` below would keep only the LAST index for the repeated
+    # stamp, so ``last_exit_idx`` would be compared against the wrong bar and
+    # the emitted join key would appear twice, which B3 joins one-to-many
+    # without noticing. Calling B1a's assertion rather than restating it keeps
+    # one definition of "this frame is usable" on both sides of the join.
+    _bar_lookup(df)
+
     setup = SetupDVWAPReversion(config=strategy.entry_config)
     replay = MarketContextReplay(
         df=df,
@@ -771,9 +1012,10 @@ def render_jsonl(records: list[DecisionRecord]) -> bytes:
 # Lineage
 # ---------------------------------------------------------------------------
 
-#: How many omitted-bar ids the lineage lists before truncating (the count and
-#: the per-outcome tally are always exact; the id list is a sample above this).
-OMITTED_ID_LIST_CAP = 200
+# The omitted-id list cap is B1a's ``OMITTED_ID_LIST_CAP``, imported above: the
+# two sidecars truncate the same list at the same length, so a reader comparing
+# them never sees one artifact's sample end where the other's continues. (The
+# count and the per-outcome tally are always exact; only the id list is capped.)
 
 
 def _declared_differences(
@@ -803,7 +1045,7 @@ def _declared_differences(
                 "This emitter runs SetupDVWAPReversion.check() ALONE. The live "
                 "paper path runs it behind shared/strategy/entry/"
                 "setup_d_adapter.py, which — when long_blocked_regimes or "
-                "short_blocked_regimes is non-empty (lines 174-197) — resolves "
+                "short_blocked_regimes is non-empty (lines 174-199) — resolves "
                 "a regime label via setup_llm_gate.resolve_regime_label (LLM "
                 "market context, else EntryContext.metadata 'regime' / "
                 "'market_state'; lines 67-84) and drops a SHORT whose regime is "
@@ -820,27 +1062,71 @@ def _declared_differences(
         },
         {
             "id": "L2",
-            "item": "open anchor differs from the published OOS run",
+            "item": (
+                "the admitted count is not the published trade count — four "
+                "reasons, one of them unresolved"
+            ),
             "value": {
-                "this_run": anchor.kst,
-                "this_run_source": anchor.source,
-                "walkforward_script_default": "08:45",
+                "this_run_anchor": anchor.kst,
+                "this_run_anchor_source": anchor.source,
+                "collect_entries_anchor_today": (
+                    f"{WALKFORWARD_TODAY_OPEN[0]:02d}:"
+                    f"{WALKFORWARD_TODAY_OPEN[1]:02d}"
+                ),
+                "collect_entries_anchor_source": (
+                    "MarketContextReplay.market_open_hour/minute field "
+                    "defaults — collect_entries lines 160-167 pass neither"
+                ),
                 "era_cutover": OPEN_ANCHOR_CUTOVER.isoformat(),
                 "pre_cutover_open": (
                     f"{PRE_CUTOVER_OPEN[0]:02d}:{PRE_CUTOVER_OPEN[1]:02d}"
                 ),
+                "anchor_of_published_numbers": "unresolved — see note (c)",
+                "published_oos_trades": 135,
+                "published_fold_mode": (
+                    "daily-stride, --is-days 40 / --oos-days 10 / --step-days "
+                    "10 (walkforward script lines 405-416, 486-491; folds built "
+                    "by split_folds_trading_days lines 372-392)"
+                ),
+                "config_source_diff": "see the top-level config_source_diff block",
             },
             "note": (
-                "The admission flag replicates the walk-forward harness's "
-                "GATING ALGORITHM, not its published run. collect_entries "
-                "(lines 160-167) builds MarketContextReplay without "
-                "market_open_hour/minute, taking the dataclass default 08:45 "
-                "(market_context_replay.py lines 88-93, whose own comment says "
-                "a pre-cutover replay MUST pass 09:00). This emitter uses the "
-                "same era rule as B1a so the two artifacts line up bar for "
-                "bar, which shifts every minutes_since_open by 15 minutes "
-                "relative to the published OOS numbers. The admitted count "
-                "here is therefore NOT the published trade count."
+                "The flag replicates the harness's GATING ALGORITHM, not its "
+                "published run, and four separate things stand between the two "
+                "numbers. "
+                f"(a) THIS RUN is anchored at {anchor.kst} ({anchor.source}), "
+                "the same rule B1a uses, so the two artifacts line up bar for "
+                "bar. "
+                "(b) collect_entries TODAY takes "
+                f"{WALKFORWARD_TODAY_OPEN[0]:02d}:"
+                f"{WALKFORWARD_TODAY_OPEN[1]:02d} because it passes no open to "
+                "MarketContextReplay and that is the field default — but that "
+                "default POSTDATES the script (the session moved 2026-06-28, "
+                "#552), so it is not evidence about what the published run "
+                "used. "
+                "(c) UNRESOLVED: two sources say the published numbers were "
+                "computed at 09:00 — market_context_replay.py lines ~86-91 "
+                "('Setup A / Setup D OOS Sharpe were computed at 09:00', and a "
+                "pre-cutover replay MUST pass 09:00) and "
+                "docs/plans/2026-07-06-futures-strategy-improvement-roadmap.md "
+                "P1.3 ('Their headline numbers were computed at the 09:00 "
+                "anchor ... Re-run the dedicated walk-forwards at 08:45 before "
+                "any promotion decision' — still unexecuted). Against that, the "
+                "2026-07-06 re-examination that records the +2.135 / 135-trade "
+                "figures is dated AFTER the 2026-06-28 cutover, when a plain "
+                "re-run would have picked up the 08:45 default. This tool does "
+                "not settle it: an earlier revision of this entry asserted the "
+                "published run used 08:45, which contradicted the "
+                "PRE_CUTOVER_OPEN constant this very module imports. Treat the "
+                "anchor of the published numbers as UNKNOWN until P1.3 is run. "
+                "(d) Even with the anchor settled the counts could not match, "
+                "for two reasons that have nothing to do with it: the published "
+                "135 is a concatenation of OOS fold blocks (40 trading days IS "
+                "/ 10 OOS, stride 10) and so covers only part of the window an "
+                "admitted count here covers in full; and the script never reads "
+                "the strategy YAML, so it ran a different operating point — see "
+                "config_source_diff, which also lists the outcomes that were "
+                "UNREACHABLE in it."
             ),
         },
         {
@@ -891,11 +1177,22 @@ def _declared_differences(
             "id": "L5",
             "item": "quantization",
             "value": {
-                "price_magnitudes": "half_up",
-                "signed_threshold_compared": "truncate_toward_zero",
-                "price_scale": PRICE_SCALE,
-                "z_scale": Z_SCALE,
-                "confidence": f"toward_zero_x{Z_SCALE}",
+                "price_magnitudes": {
+                    "scale": "hundredths",
+                    "multiplier": str(PRICE_SCALE),
+                    "quantization": "half_up",
+                },
+                "signed_threshold_compared": {
+                    "scale": "thousandths",
+                    "multiplier": str(Z_SCALE),
+                    "quantization": "truncate_toward_zero",
+                },
+                "signed_price_distances": {
+                    "scale": "hundredths",
+                    "multiplier": str(PRICE_SCALE),
+                    "quantization": "truncate_toward_zero",
+                },
+                "per_field": "see the fields block for the exact pairing",
             },
             "note": (
                 "B1a's rules, imported rather than restated "
@@ -965,7 +1262,177 @@ def _declared_differences(
                 "the policy."
             ),
         },
+        {
+            "id": "L10",
+            "item": "the live post-exit re-entry guard is not applied",
+            "value": {
+                "config": "config/execution.yaml::entry_reentry_guard",
+                "enabled_in_config": True,
+                "scope": "symbol_strategy",
+                "futures_override": (
+                    "config/execution.yaml::entry_reentry_guard.futures — "
+                    "default_cooldown_seconds 600, stop_loss "
+                    "${FUTURES_REENTRY_STOP_LOSS_COOLDOWN_SECONDS:180}"
+                ),
+                "live_filter": (
+                    "services/trading/orchestrator.py::"
+                    "_filter_reentry_guarded_signals (defined line 5209, "
+                    "applied line 5411)"
+                ),
+            },
+            "note": (
+                "Live, a signal is dropped when the same (symbol, strategy) "
+                "exited inside a reason-dependent cooldown — a SECOND "
+                "suppression on top of the single-position model, keyed on time "
+                "since the last exit and on its reason (#601 fixed a dead-key "
+                "mismatch that had made it silently inert). The walk-forward "
+                "gate this flag replicates has no cooldown at all: it admits "
+                "the next fire on the bar after the exit bar. So "
+                "would_be_admitted_by_legacy_position_model is an UPPER BOUND "
+                "on what paper would have entered, and a B3 comparison against "
+                "a paper session must not read an admitted bar that paper "
+                "skipped as a policy mismatch."
+            ),
+        },
+        {
+            "id": "L11",
+            "item": "two more adapter-level reject paths are absent",
+            "value": {
+                "no_market_context": (
+                    "shared/strategy/entry/setup_d_adapter.py lines 158-163 — "
+                    "_build_market_context returns None, the setup is never "
+                    "called, and the adapter publishes reject "
+                    "'no_market_context'"
+                ),
+                "regime_gate_blocked": (
+                    "same file lines 204-217 — _apply_regime_gate with a "
+                    "GateConfig, publishing reject 'regime_gate_blocked'"
+                ),
+                "regime_gate_enabled_in_yaml": bool(
+                    (strategy.entry_params.get("regime_gate") or {}).get(
+                        "enabled", False
+                    )
+                ),
+            },
+            "note": (
+                "L1 covers the direction blocks; these are the other two ways "
+                "the live adapter returns None around a check() that fired or "
+                "was never reached. 'no_market_context' has no counterpart here "
+                "by construction — MarketContextReplay yields a context for "
+                "every replayed bar or yields nothing, so B2's outcome set has "
+                "no 'the inputs never assembled' member and a live session's "
+                "no_market_context bars are simply ABSENT from a comparison "
+                "rather than disagreeing with one. The regime gate ships "
+                "disabled (value above), so it is latent, not active."
+            ),
+        },
+        {
+            "id": "L12",
+            "item": "VWAP/ATR come from the replay, not the live indicator pipeline",
+            "value": {
+                "here": (
+                    "shared/backtest/market_context_replay.py — session-anchored "
+                    "VWAP and the trailing atr_partial(14) series, from bars at "
+                    "or before the current index"
+                ),
+                "live": (
+                    "the orchestrator's indicator pipeline fills "
+                    "EntryContext.market_data; "
+                    "setup_d_adapter.required_indicators is ['atr', 'vwap'] "
+                    "(lines 153-156)"
+                ),
+            },
+            "note": (
+                "Both of Setup D's GATE references are causal and "
+                "self-computed by the setup from the per-bar inputs — the "
+                "parity argument the walk-forward script's own docstring makes "
+                "('Look-ahead safety + live parity', lines 18-34: the high-vol "
+                "reference comes from a trailing window of past ATRs, NOT the "
+                "replay's full-series atr_90th_percentile, and the stall range "
+                "from past closes, NOT last_15min_high/low which has no live "
+                "producer). That argument covers the GATES. It does NOT say the "
+                "VWAP and ATR-14 fed IN are bit-identical to the live "
+                "pipeline's, which aggregates ticks through a different code "
+                "path. So an equal decision here is evidence about the POLICY, "
+                "not proof that live would have seen the same z — the same "
+                "common-mode caveat ADR-002-018 §10 attaches to 'the same "
+                "function call'."
+            ),
+        },
     ]
+
+
+def _observed_range(
+    records: list[DecisionRecord], published: str, from_trace: bool
+) -> dict[str, Any]:
+    """Observed value range for one published key, over the emitted lines.
+
+    B1a's ``_observed_range`` can assume every field is present on every line
+    with a non-null value. Neither holds here: a trace key is absent on bars
+    that never reached it (declared difference L6) and the bracket integers are
+    null off a FIRED bar. So ``present`` and ``null`` are reported alongside
+    the range — a reader must be able to tell "never observed" from "observed
+    as false".
+    """
+    values: list[Any] = []
+    present = 0
+    for record in records:
+        source = record.eval_trace if from_trace else record.to_payload()["decision"]
+        if published not in source:
+            continue
+        present += 1
+        values.append(source[published])
+    non_null = [value for value in values if value is not None]
+    observed: dict[str, Any] = {
+        "present": present,
+        "null": len(values) - len(non_null),
+    }
+    if not non_null:
+        return observed
+    if isinstance(non_null[0], bool):
+        true_count = sum(1 for value in non_null if value)
+        observed["true"] = true_count
+        observed["false"] = len(non_null) - true_count
+        return observed
+    if isinstance(non_null[0], str):
+        observed["distinct"] = sorted({str(value) for value in non_null})
+        return observed
+    observed["min"] = min(int(value) for value in non_null)
+    observed["max"] = max(int(value) for value in non_null)
+    return observed
+
+
+def _field_lineage(records: list[DecisionRecord]) -> dict[str, dict[str, Any]]:
+    """Per-key provenance for everything this artifact publishes as a number.
+
+    Same ADR-002-018 §10 derived-Critical-Input shape B1a's ``fields`` block
+    uses — unit, scale token, multiplier string, sign, type, quantization,
+    parents, and the range actually observed in this run — so a reader of
+    either sidecar reconstructs a value the same way. B1a's block describes
+    fields derived from bars; this one describes a projection of the legacy
+    setup's own trace, so every ``parents`` entry names the ``last_eval`` key
+    (or the ``Signal`` attribute) the value came from, and nothing here is a
+    second computation of anything.
+    """
+    spec: dict[str, dict[str, Any]] = {}
+    for key, published, projection in EVAL_PROJECTION:
+        entry = dict(PROJECTION_ENCODING[projection])
+        entry["unit"] = EVAL_UNITS[key]
+        entry["parents"] = [f"last_eval:{key}"]
+        entry["source"] = (
+            "SetupDVWAPReversion.check() wrote this key on the branch it took; "
+            "this tool projects it and recomputes nothing"
+        )
+        entry["range_observed"] = _observed_range(records, published, from_trace=True)
+        spec[published] = entry
+    for published, projection, unit, parent in BRACKET_PROJECTION:
+        entry = dict(PROJECTION_ENCODING[projection])
+        entry["unit"] = unit
+        entry["parents"] = [parent]
+        entry["source"] = "the fired Signal's own value; null on every non-FIRED bar"
+        entry["range_observed"] = _observed_range(records, published, from_trace=False)
+        spec[published] = entry
+    return spec
 
 
 def build_lineage(
@@ -1087,6 +1554,29 @@ def build_lineage(
                 "definition, imported by both sides"
             ),
             "omission_predicate": "produce_fields._inputs_unusable",
+            # The key encodes symbol + timeframe + bar instant and NOTHING about
+            # how the bar was reduced to fields. Two runs of the same window at
+            # different anchors therefore join PERFECTLY and diff garbage: every
+            # entry_window / eod / minutes_since_open on one side is shifted.
+            # These four values are the window identity a consumer must compare
+            # BEFORE joining.
+            "window_identity": {
+                "symbol": symbol,
+                "market_open_kst": anchor.kst,
+                "market_open_source": anchor.source,
+                "min_bars_per_day": min_bars_per_day,
+                "window_start": requested_start.isoformat(),
+                "window_end": requested_end.isoformat(),
+            },
+            "b3_contract": (
+                "B3 MUST REFUSE a (B1a, B2) pair whose join.window_identity "
+                "blocks differ in any field, rather than join on raw_event_id "
+                "and report the difference as a decision mismatch. The key "
+                "carries no anchor, so a mismatched pair is not detectable from "
+                "the lines themselves — only from these blocks. B3 implements "
+                "the refusal; this producer's job is to record the identity so "
+                "the refusal is possible."
+            ),
             "shared_quantity": (
                 "decision.eval.z_x1000 uses B1a's scale and quantization "
                 "exactly, so where present it is directly comparable to B1a's "
@@ -1232,7 +1722,43 @@ def build_lineage(
                 "epoch milliseconds of the bar's labelled KST minute — "
                 "produce_fields.derive_as_of_ms, the same derivation B1a uses"
             ),
+            "published_bools_are_authoritative": (
+                "A published bool (stall_ok, hi_vol, reversal_ok, extreme, "
+                "entry_window, confidence_ok, trend_ok) is the branch check() "
+                "ACTUALLY took. Recomputing one from the published integers can "
+                "disagree at a boundary, because the operands are quantized by "
+                "DIFFERENT rules: stall_distance_x100 truncates toward zero "
+                "while stall_buffer_x100 rounds half-up, so a bar whose real "
+                "stall_distance only just exceeds its buffer can publish "
+                "stall_distance_x100 <= stall_buffer_x100 while stall_ok is "
+                "false (and the symmetric case for z_x1000 against a threshold "
+                "a reader rounds the other way). Where the pair and the bool "
+                "disagree, the BOOL is the decision; the integers are evidence "
+                "about magnitude, not a re-derivation of the gate."
+            ),
         },
+        "config_source_diff": {
+            "this_run": str(strategy.path),
+            "harness": (
+                "scripts/analysis/walkforward_setup_d_vwap_reversion.py lines "
+                "441-447 — SetupDConfig(trend_* only); every other field takes "
+                "its dataclass default and the strategy YAML is never read"
+            ),
+            "differs": config_source_diff(strategy),
+            "outcomes_unreachable_under_harness_defaults": (
+                outcomes_unreachable_under_harness_defaults()
+            ),
+            "note": (
+                "Machine-computed against SetupDConfig(), so it cannot describe "
+                "a default that has since moved. Every field listed under "
+                "'differs' is a value the published walk-forward did NOT use, "
+                "and the outcomes listed above were UNREACHABLE in it — not "
+                "rare, but dead, because the gates that produce them are "
+                "config-gated in check(). Read this block before comparing any "
+                "count here to a published number (declared difference L2)."
+            ),
+        },
+        "fields": _field_lineage(records),
         "declared_differences": _declared_differences(strategy, anchor),
         "output": {
             "jsonl": DECISIONS_FILENAME,
@@ -1303,10 +1829,21 @@ def legacy_trace_keys(source: Path = LEGACY_SETUP_SOURCE) -> list[str]:
     """Every key assigned into the ``ev`` trace dict in ``check()``.
 
     ``ev`` is the local alias :meth:`SetupDVWAPReversion.check` binds to
-    ``self.last_eval`` before writing to it, so ``ev["k"] = ...`` is the
-    complete set of trace keys. Walking the AST is what lets the test suite
-    pin :data:`EVAL_PROJECTION` against the source instead of against a
-    hand-kept list.
+    ``self.last_eval`` before writing to it, so ``ev["k"] = ...`` is today's
+    complete set of trace keys. Walking the AST is what lets the test suite pin
+    :data:`EVAL_PROJECTION` against the source instead of against a hand-kept
+    list.
+
+    **What this walk does and does not see.** It matches only ``ast.Assign``
+    nodes whose target is ``ev[<string literal>]``. It does NOT see
+    ``ev.update({...})``, ``ev |= {...}``, an augmented assignment, a
+    non-literal key, or a write through ``self.last_eval[...]`` instead of the
+    alias — a key added in any of those forms would leave this pin green. That
+    is why the pin is a **second** guard and not the only one:
+    :func:`project_eval` refuses an unknown key at RUN time, so such a key
+    aborts the run on the first bar that records it rather than being dropped.
+    A non-literal ``ev[...]`` key raises here instead of being skipped, so the
+    one form that would make the static set unknowable is loud.
     """
     tree = ast.parse(source.read_text(encoding="utf-8"))
     keys: list[str] = []

@@ -36,6 +36,7 @@ negates the same prefix. This suite needs the full runtime stack.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import warnings
 from collections import Counter
@@ -457,6 +458,19 @@ def test_two_runs_write_byte_identical_artifacts(
     assert lineage["tool"]["source_id"] == emit_legacy_decisions.SOURCE_ID
     assert lineage["tool"]["source_id"].startswith("tos-cp3-b2/")
     assert lineage["join"]["key"] == "raw_event_id"
+    # The join key encodes no anchor and no density gate, so the pair's window
+    # identity has to travel in the sidecar or B3 cannot tell a comparable pair
+    # from an incomparable one.
+    identity = lineage["join"]["window_identity"]
+    assert identity == {
+        "symbol": SYMBOL,
+        "market_open_kst": "09:00",
+        "market_open_source": "era-rule",
+        "min_bars_per_day": produce_fields.DEFAULT_MIN_BARS_PER_DAY,
+        "window_start": SESSIONS[0].isoformat(),
+        "window_end": SESSIONS[-1].isoformat(),
+    }
+    assert "MUST REFUSE" in lineage["join"]["b3_contract"]
     # Reconciliation is asserted by build_lineage; check the chain it reports.
     dataset = lineage["dataset"]
     assert (
@@ -474,7 +488,7 @@ def test_two_runs_write_byte_identical_artifacts(
     for forbidden in ("run_at", "generated_at", "duration_seconds", "elapsed"):
         assert forbidden not in rendered
     assert {difference["id"] for difference in lineage["declared_differences"]} == {
-        f"L{index}" for index in range(1, 10)
+        f"L{index}" for index in range(1, 13)
     }
 
 
@@ -787,3 +801,378 @@ def test_strategy_inputs_are_shared_with_b1a(
     again = produce_fields.load_strategy_inputs(STRATEGY_YAML)
     assert replace(again, path=strategy.path) == replace(strategy, path=strategy.path)
     assert again.sha256 == strategy.sha256
+
+
+# ---------------------------------------------------------------------------
+# Review #876: the config-source difference behind "admitted != published"
+# ---------------------------------------------------------------------------
+
+
+def test_config_source_diff_names_the_fields_the_harness_never_read(
+    strategy: produce_fields.StrategyInputs,
+) -> None:
+    """The published walk-forward ran a different operating point, machine-proved.
+
+    ``collect_entries``' caller builds ``SetupDConfig(trend_* only)`` and never
+    reads the strategy YAML, so every field the YAML moves off its default is a
+    value the published numbers did not use. An earlier revision blamed the
+    whole gap on the 15-minute open anchor; this diff is why that was wrong.
+    """
+    diff = emit_legacy_decisions.config_source_diff(strategy)
+    assert diff, "the YAML and the harness defaults cannot be identical"
+    # The four that are in force today. Named explicitly so a YAML edit that
+    # silently returns one of them to its default is visible here.
+    assert set(diff) == {
+        "no_entry_after_minutes_since_open",
+        "stall_buffer_atr_mult",
+        "min_confidence",
+        "reversal_confirm_enabled",
+    }, diff
+    assert diff["no_entry_after_minutes_since_open"] == {
+        "yaml": 345,
+        "harness_default": 360,
+    }
+    assert diff["stall_buffer_atr_mult"] == {"yaml": 1.5, "harness_default": 1.0}
+    assert diff["min_confidence"] == {"yaml": 0.6, "harness_default": 0.0}
+    assert diff["reversal_confirm_enabled"] == {
+        "yaml": True,
+        "harness_default": False,
+    }
+
+    # Every entry is computed, not written down: it must agree with a fresh
+    # SetupDConfig() rather than with a literal in the tool.
+    defaults = emit_legacy_decisions.SetupDConfig()
+    for name, pair in diff.items():
+        assert pair["harness_default"] == getattr(defaults, name), name
+        assert pair["yaml"] == getattr(strategy.entry_config, name), name
+        assert pair["yaml"] != pair["harness_default"], name
+
+
+def test_four_outcomes_were_unreachable_in_the_published_run() -> None:
+    """Config-gated branches are DEAD at the defaults, not merely rare."""
+    unreachable = emit_legacy_decisions.outcomes_unreachable_under_harness_defaults()
+    assert set(unreachable) == {
+        "LOW_CONFIDENCE",
+        "AWAITING_REVERSAL_CONFIRM_NO_PREV_CLOSE",
+        "AWAITING_REVERSAL_CONFIRM_PRICE_TURN",
+        "AWAITING_REVERSAL_CONFIRM_Z_IMPROVE",
+        "AGAINST_TREND",
+    }, unreachable
+    assert set(unreachable) <= set(emit_legacy_decisions.OUTCOMES)
+    # Derived from the dataclass, so it tracks a default that moves.
+    defaults = emit_legacy_decisions.SetupDConfig()
+    assert defaults.min_confidence == 0.0
+    assert defaults.reversal_confirm_enabled is False
+
+
+def test_the_lineage_carries_the_config_source_diff(
+    bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    data_root = b1a._write_parquet_tree(bars, tmp_path / "market")
+    with _quiet():
+        warnings.simplefilter("ignore")
+        result = emit_legacy_decisions.run(
+            data_root=data_root,
+            symbol=SYMBOL,
+            start=SESSIONS[0],
+            end=SESSIONS[-1],
+            strategy_yaml=STRATEGY_YAML,
+            out_dir=tmp_path / "out",
+        )
+    block = result.lineage["config_source_diff"]
+    assert set(block["differs"]) == {
+        "no_entry_after_minutes_since_open",
+        "stall_buffer_atr_mult",
+        "min_confidence",
+        "reversal_confirm_enabled",
+    }
+    assert "LOW_CONFIDENCE" in block["outcomes_unreachable_under_harness_defaults"]
+
+    # L2 must no longer assert the published run's anchor, and must name the
+    # fold concatenation and this diff as independent reasons.
+    l2 = next(
+        item for item in result.lineage["declared_differences"] if item["id"] == "L2"
+    )
+    assert l2["value"]["anchor_of_published_numbers"].startswith("unresolved")
+    assert l2["value"]["published_oos_trades"] == 135
+    assert "config_source_diff" in l2["note"]
+    assert "concatenation of OOS fold blocks" in l2["note"]
+    assert "UNRESOLVED" in l2["note"]
+    # The anchor collect_entries takes today is read off the dataclass, not
+    # written as a literal.
+    default_hour = MarketContextReplay.__dataclass_fields__["market_open_hour"].default
+    default_minute = MarketContextReplay.__dataclass_fields__[
+        "market_open_minute"
+    ].default
+    assert l2["value"]["collect_entries_anchor_today"] == (
+        f"{default_hour:02d}:{default_minute:02d}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review #876: duplicate bar timestamps
+# ---------------------------------------------------------------------------
+
+
+def test_a_duplicated_bar_timestamp_is_refused(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """Red proof: B1a refuses a duplicated stamp, so B2 must refuse it too.
+
+    Without the shared refusal, ``ts_to_idx`` keeps only the LAST index for the
+    repeated stamp — so ``last_exit_idx`` is compared against the wrong bar —
+    and the duplicated ``raw_event_id`` would be emitted twice, which B3 joins
+    one-to-many without noticing.
+    """
+    frame = bars.reset_index(drop=True)
+    duplicated = pd.concat(
+        [frame, frame.iloc[[len(frame) // 2]]], ignore_index=True
+    ).sort_values("timestamp")
+
+    with pytest.raises(produce_fields.ProduceFieldsError, match="duplicate bar"):
+        _emit(duplicated, strategy, anchor)
+    # ... and B1a refuses the same frame, which is what makes it the same rule.
+    with pytest.raises(produce_fields.ProduceFieldsError, match="duplicate bar"):
+        with _quiet():
+            warnings.simplefilter("ignore")
+            produce_fields.produce_records(
+                duplicated.reset_index(drop=True),
+                symbol=SYMBOL,
+                strategy=strategy,
+                contract_spec=b1a._contract_spec(),
+                anchor=anchor,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Review #876: the omission leg of the join contract
+# ---------------------------------------------------------------------------
+
+
+def test_the_omission_leg_of_the_join_is_exercised(
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """Both producers must DROP the same bars, not merely keep the same ones.
+
+    The earlier suite would stay green with ``_inputs_unusable`` replaced by
+    ``lambda *_: None``, because its synthetic series has no unusable bar. B1a's
+    flat-run fixture does: a 41-bar perfectly flat stretch drives
+    ``atr_partial`` to exactly 0.
+    """
+    flat = b1a._bars_with_flat_run().reset_index(drop=True)
+
+    with _quiet():
+        warnings.simplefilter("ignore")
+        b1a_produced = produce_fields.produce_bars(
+            flat,
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=b1a._contract_spec(),
+            anchor=anchor,
+        )
+    b2_emitted = _emit(flat, strategy, anchor)
+
+    b1a_omitted = {raw_event_id for raw_event_id, _ in b1a_produced.omitted}
+    b2_omitted = {raw_event_id for raw_event_id, _, _ in b2_emitted.omitted}
+    assert b1a_omitted, "the flat run must make some bars unpublishable"
+    assert b1a_omitted == b2_omitted
+    assert [record.raw_event_id for record in b1a_produced.records] == [
+        record.raw_event_id for record in b2_emitted.records
+    ]
+    assert b2_emitted.bars_replayed == len(b2_emitted.records) + len(b2_emitted.omitted)
+    # The omitted bars' decisions are not lost: each carries its legacy outcome.
+    assert all(
+        outcome in emit_legacy_decisions.OUTCOMES
+        for _, _, outcome in b2_emitted.omitted
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review #876: the EOD agreement is asserted, not printed
+# ---------------------------------------------------------------------------
+
+
+def test_an_eod_disagreement_with_the_strategy_yaml_is_refused(
+    strategy: produce_fields.StrategyInputs,
+    bars: pd.DataFrame,
+    anchor: produce_fields.OpenAnchor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Red proof: move the harness constant and the run must stop."""
+    harness = emit_legacy_decisions.load_walkforward_module()
+    cutoff = strategy.exit_config.eod_close_time
+    # Agreement today — the precondition the refusal protects.
+    emit_legacy_decisions.assert_eod_agreement(harness, strategy)
+    assert (cutoff.hour, cutoff.minute) == (harness.EOD_HOUR, harness.EOD_MINUTE)
+
+    monkeypatch.setattr(harness, "EOD_MINUTE", 10)
+    with pytest.raises(
+        emit_legacy_decisions.EmitLegacyDecisionsError,
+        match="EOD cutoff disagreement",
+    ):
+        emit_legacy_decisions.assert_eod_agreement(harness, strategy)
+    # And the refusal is wired into the emit path, not only callable.
+    with pytest.raises(
+        emit_legacy_decisions.EmitLegacyDecisionsError,
+        match="EOD cutoff disagreement",
+    ):
+        _emit(bars, strategy, anchor)
+
+
+# ---------------------------------------------------------------------------
+# Review #876: loading the harness must not reconfigure the process
+# ---------------------------------------------------------------------------
+
+
+def test_loading_the_harness_leaves_logging_and_sys_path_alone() -> None:
+    """The script calls logging.basicConfig and sys.path.insert at module level."""
+    # Force a fresh load so the side effects would actually run.
+    monkey = emit_legacy_decisions
+    monkey._WALKFORWARD_MODULE = None
+    sys.modules.pop(emit_legacy_decisions.WALKFORWARD_MODULE_NAME, None)
+
+    handlers_before = list(logging.root.handlers)
+    level_before = logging.root.level
+    path_before = list(sys.path)
+
+    module = emit_legacy_decisions.load_walkforward_module()
+
+    assert logging.root.handlers == handlers_before
+    assert logging.root.level == level_before
+    assert sys.path == path_before
+    # The module itself stays registered — its dataclasses resolve annotations
+    # through sys.modules for the life of the process.
+    assert sys.modules[emit_legacy_decisions.WALKFORWARD_MODULE_NAME] is module
+    assert hasattr(module, "_simulate_exit")
+
+
+# ---------------------------------------------------------------------------
+# Review #876: per-field provenance
+# ---------------------------------------------------------------------------
+
+
+def test_every_published_number_has_a_provenance_entry(
+    bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    """ADR-002-018 §10 shape, same as B1a's fields block, for every key."""
+    data_root = b1a._write_parquet_tree(bars, tmp_path / "market")
+    with _quiet():
+        warnings.simplefilter("ignore")
+        result = emit_legacy_decisions.run(
+            data_root=data_root,
+            symbol=SYMBOL,
+            start=SESSIONS[0],
+            end=SESSIONS[-1],
+            strategy_yaml=STRATEGY_YAML,
+            out_dir=tmp_path / "out",
+        )
+    fields = result.lineage["fields"]
+
+    expected = {name for _, name, _ in emit_legacy_decisions.EVAL_PROJECTION} | {
+        name for name, _, _, _ in emit_legacy_decisions.BRACKET_PROJECTION
+    }
+    assert set(fields) == expected
+    for name, entry in fields.items():
+        assert set(entry) >= {
+            "unit",
+            "scale",
+            "multiplier",
+            "sign",
+            "type",
+            "quantization",
+            "parents",
+            "range_observed",
+        }, name
+        assert isinstance(entry["multiplier"], str), name
+        assert entry["scale"] in {"none", "hundredths", "thousandths"}, name
+        assert entry["sign"] in {"signed", "unsigned"}, name
+        assert entry["type"] in {"int", "bool", "str"}, name
+        assert entry["parents"], name
+        assert entry["range_observed"]["present"] >= 0, name
+
+    # A trace key absent on some bars must say so, so "never observed" is
+    # distinguishable from "observed false".
+    assert (
+        fields["fired"]["range_observed"]["present"]
+        < result.lineage["dataset"]["bars_emitted"]
+    )
+    assert fields["entry_window"]["range_observed"]["present"] == (
+        result.lineage["dataset"]["bars_emitted"]
+    )
+    # The bracket integers are null off a FIRED bar.
+    assert fields["entry_x100"]["range_observed"]["null"] > 0
+
+    # The scale tokens replaced the bare numbers in L5.
+    l5 = next(
+        item for item in result.lineage["declared_differences"] if item["id"] == "L5"
+    )
+    assert l5["value"]["price_magnitudes"] == {
+        "scale": "hundredths",
+        "multiplier": "100",
+        "quantization": "half_up",
+    }
+    assert "price_scale" not in l5["value"]
+
+    # And the "the bool is authoritative" statement is present and specific.
+    sentence = result.lineage["encoding"]["published_bools_are_authoritative"]
+    assert "stall_distance_x100" in sentence and "stall_buffer_x100" in sentence
+    assert "BOOL is the decision" in sentence
+
+
+def test_the_units_table_cannot_rot_behind_the_projection_table() -> None:
+    assert set(emit_legacy_decisions.EVAL_UNITS) == {
+        key for key, _, _ in emit_legacy_decisions.EVAL_PROJECTION
+    }
+    assert set(emit_legacy_decisions.PROJECTION_ENCODING) == {
+        projection for _, _, projection in emit_legacy_decisions.EVAL_PROJECTION
+    } | {projection for _, projection, _, _ in emit_legacy_decisions.BRACKET_PROJECTION}
+
+
+# ---------------------------------------------------------------------------
+# Review #876: the new declared differences point at real code
+# ---------------------------------------------------------------------------
+
+
+def test_the_new_declared_differences_cite_code_that_exists(
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """L10/L11/L12 must name real symbols, not plausible ones."""
+    declared = {
+        item["id"]: item
+        for item in emit_legacy_decisions._declared_differences(strategy, anchor)
+    }
+    assert set(declared) == {f"L{index}" for index in range(1, 13)}
+
+    orchestrator = (
+        produce_fields.REPO_ROOT / "services" / "trading" / "orchestrator.py"
+    ).read_text(encoding="utf-8")
+    assert "def _filter_reentry_guarded_signals" in orchestrator
+    execution_yaml = (produce_fields.REPO_ROOT / "config" / "execution.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "entry_reentry_guard:" in execution_yaml
+    assert (
+        "L10" in declared
+        and "entry_reentry_guard" in declared["L10"]["value"]["config"]
+    )
+    assert "UPPER BOUND" in declared["L10"]["note"]
+
+    adapter = (
+        produce_fields.REPO_ROOT
+        / "shared"
+        / "strategy"
+        / "entry"
+        / "setup_d_adapter.py"
+    ).read_text(encoding="utf-8")
+    assert '"no_market_context"' in adapter
+    assert '"regime_gate_blocked"' in adapter
+    assert "_apply_regime_gate" in adapter
+    assert declared["L11"]["value"]["regime_gate_enabled_in_yaml"] is False
+
+    assert "atr_90th_percentile" in declared["L12"]["note"]
+    walkforward = emit_legacy_decisions.WALKFORWARD_SCRIPT.read_text(encoding="utf-8")
+    assert "Look-ahead safety + live parity" in walkforward
