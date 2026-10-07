@@ -18,7 +18,10 @@ Logic overview
 2. **High-vol regime gate**: ``atr_14 >= min_atr_ratio * vol_reference``, where
    ``vol_reference`` is the **causal** ``vol_percentile`` (default 90th) of a
    rolling window of recent ATRs that the setup computes **itself** from the
-   ``atr_14`` it receives each bar (``vol_window_bars``, reset per KST day). The
+   ``atr_14`` it receives each bar (``vol_window_bars`` — a trailing window
+   spanning ~2 sessions that is **NOT** reset per day; a per-day reset leaves
+   too few early-session observations to be a meaningful percentile, which is
+   what ``_vol_reference``/``vol_window_bars`` have always said). The
    reference uses only ATRs observed at or BEFORE the current bar — no
    look-ahead — and the gate is permissive during warmup (< ``vol_warmup_bars``
    observations) so the setup is never silently dead. A ratio near/above 1.0
@@ -599,7 +602,7 @@ class SetupDVWAPReversion(Setup):
             if prev_close is None:
                 ev["reversal_ok"] = False
                 return self._reject("awaiting_reversal_confirm(no_prev_close)")
-            prev_z = (prev_close - ctx.vwap) / atr
+            prev_z = self.vwap_extension_z(prev_close, ctx.vwap, atr)
             reversal_z_improvement = abs(prev_z) - abs(z)
             reversal_price_turn = (
                 ctx.current_price > prev_close
@@ -702,11 +705,13 @@ class SetupDVWAPReversion(Setup):
     def vwap_extension_z(close: float, vwap: float, atr: float) -> float:
         """Return the VWAP extension in ATR units: ``(close - vwap) / atr``.
 
-        The ONE definition of Setup D's fade metric. ``check`` calls it, and so
+        The ONE definition of Setup D's fade metric. ``check`` calls it for both
+        the current bar's ``z`` and the prior close's ``prev_z`` (step 6), and so
         does ``tools/tos_cp3/produce_fields.py`` (CP-3 B1a), which must publish
         ``z`` on bars ``check`` returns from early (outside the entry window the
         session-exit fields still need it) — a second copy of this expression
-        there is exactly the "two implementations" the CP-3 plan §3 warns about.
+        anywhere is exactly the "two implementations" the CP-3 plan §3 warns
+        about.
         Read-only and stateless: it touches none of the causal windows, so a
         caller may evaluate it on any bar without perturbing ``check``.
 

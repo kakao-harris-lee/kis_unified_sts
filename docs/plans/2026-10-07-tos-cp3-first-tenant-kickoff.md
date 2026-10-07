@@ -106,7 +106,8 @@ CP-3 에서 가장 큰 설계 질문이다.
   없다(`data/market/manifest.yaml` 부재) — §5 5 의 「데이터셋 lineage」는 그 매니페스트를 만드는 일이다.
   선물 **일봉은 2026-06-25 에서 멈춰** 있다.
 
-구축물 넷(코드, 전부 미착수 — §4 결정 7 이 승인 대상). ⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
+구축물 넷(§4 결정 7 로 승인됨 — **B1a 착수·구현됨**(`tools/tos_cp3/`), B1b·B2·B3·B4 미착수).
+⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
 파일도 `tos`/`tos_runtime` 을 import 할 수 없고(`tools/tos_firewall_check.py` TOS-FW-R, `tools/` 도 검사
 대상), `tos` 는 `shared.indicators` 는 되지만 `shared.backtest` 는 안 된다. 그래서 `Bar` 튜플을 만들거나
 `BacktestDriver` 를 모는 코드는 **`tos/` 안**에만 둘 수 있다.
@@ -142,7 +143,7 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
 
 결정 1·2·3·5·6·9 는 §5 착수 전에 필요하다. 7 은 코드 첫 줄 전에, 4·8 은 paper 단계 전에.
 
-## 5. 1차 슬라이스 (결정 뒤 착수 — 코드 0 줄 상태)
+## 5. 1차 슬라이스 (운영자 승인 2026-10-07 · 1 착수)
 
 1. **B1a 공유 지표 생산자 — 착수(2026-10-07)**: `tools/tos_cp3/produce_fields.py`
    (패키지 `tools/tos_cp3/`, 레거시 쪽 · `tos`/`tos_runtime` import 0 · 테스트
