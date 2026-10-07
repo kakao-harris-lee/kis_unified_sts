@@ -18,7 +18,10 @@ Logic overview
 2. **High-vol regime gate**: ``atr_14 >= min_atr_ratio * vol_reference``, where
    ``vol_reference`` is the **causal** ``vol_percentile`` (default 90th) of a
    rolling window of recent ATRs that the setup computes **itself** from the
-   ``atr_14`` it receives each bar (``vol_window_bars``, reset per KST day). The
+   ``atr_14`` it receives each bar (``vol_window_bars`` — a trailing window
+   spanning ~2 sessions that is **NOT** reset per day; a per-day reset leaves
+   too few early-session observations to be a meaningful percentile, which is
+   what ``_vol_reference``/``vol_window_bars`` have always said). The
    reference uses only ATRs observed at or BEFORE the current bar — no
    look-ahead — and the gate is permissive during warmup (< ``vol_warmup_bars``
    observations) so the setup is never silently dead. A ratio near/above 1.0
@@ -357,6 +360,18 @@ class SetupDVWAPReversion(Setup):
         self._vwap_window: deque[float] = deque(maxlen=self.config.trend_window_bars)
         self._trend_session_date: date | None = None
         self.last_signal_details: dict[str, float | int | bool | str | None] = {}
+        # Read-only per-bar evaluation trace, populated on EVERY ``check()``
+        # call (every early return included) from the SAME branches that take
+        # the decision — nothing here is recomputed, so the trace can never
+        # disagree with the decision it describes. A key is ABSENT when
+        # ``check`` returned before that branch ran, which is how a reader
+        # tells "this gate rejected" from "this gate was never evaluated"
+        # (the windows below only advance on in-window bars with usable
+        # inputs, so there is no value to report for the rest). Added for
+        # ``tools/tos_cp3/produce_fields.py`` (CP-3 B1a) so the shared
+        # indicator producer reads this setup's own math instead of
+        # restating it. Observability only — no behaviour depends on it.
+        self.last_eval: dict[str, float | int | bool | str | None] = {}
 
     def _reject(self, reason: str) -> None:
         """Record the rejection reason and return None (early-return helper)."""
@@ -448,25 +463,35 @@ class SetupDVWAPReversion(Setup):
         Returns ``None`` as soon as any condition fails (early-return pattern).
         """
         c = self.config
+        ev: dict[str, float | int | bool | str | None] = {}
+        self.last_eval = ev
 
         # 1. Session window guard
         minutes_since_open = ctx.minutes_since_open()
+        ev["minutes_since_open"] = minutes_since_open
         if minutes_since_open < c.valid_minutes_min:
+            ev["entry_window"] = False
             return self._reject(
                 f"before_window({minutes_since_open:.0f}m<{c.valid_minutes_min})"
             )
         if minutes_since_open > c.no_entry_after_minutes_since_open:
+            ev["entry_window"] = False
             return self._reject(
                 f"after_cutoff({minutes_since_open:.0f}m>"
                 f"{c.no_entry_after_minutes_since_open})"
             )
+        ev["entry_window"] = True
 
         # 2. Inputs must be usable
         atr = ctx.atr_14
+        ev["atr_14"] = atr
+        ev["close"] = ctx.current_price
+        ev["vwap"] = ctx.vwap
         if atr <= 0:
             return self._reject("no_atr")
         if ctx.current_price <= 0:
             return self._reject("no_price")
+        ev["inputs_usable"] = True
 
         # 3. High-vol regime gate (causal, self-computed — see _vol_reference).
         #    _vol_reference and _self_range are called on EVERY in-window bar (and
@@ -482,17 +507,30 @@ class SetupDVWAPReversion(Setup):
         trend_score = self._trend_score(ctx.vwap, atr, ctx.now.date())
         gate_active = vol_ref is not None and vol_ref > 0
         vol_ratio = atr / vol_ref if gate_active else 0.0
+        ev["prev_close"] = prev_close
+        ev["vol_ref"] = vol_ref
+        ev["vol_gate_active"] = gate_active
+        ev["vol_ratio"] = vol_ratio
+        ev["recent_high"] = recent_range[0] if recent_range is not None else None
+        ev["recent_low"] = recent_range[1] if recent_range is not None else None
+        ev["trend_score"] = trend_score
         if c.min_atr_ratio > 0 and gate_active and vol_ratio < c.min_atr_ratio:
+            ev["hi_vol"] = False
             return self._reject(f"vol_below_gate({vol_ratio:.2f}<{c.min_atr_ratio})")
+        ev["hi_vol"] = True
 
         # 4. VWAP extension extreme (the fade trigger)
-        z = (ctx.current_price - ctx.vwap) / atr
+        z = self.vwap_extension_z(ctx.current_price, ctx.vwap, atr)
+        ev["z"] = z
         if z >= c.extreme_atr_mult:
             direction = "short"  # fade the up-spike back toward VWAP
         elif z <= -c.extreme_atr_mult:
             direction = "long"  # fade the down-spike back toward VWAP
         else:
+            ev["extreme"] = False
             return self._reject(f"not_extreme(z={z:+.2f},need±{c.extreme_atr_mult})")
+        ev["extreme"] = True
+        ev["direction"] = direction
 
         # 4.5 Trend-day guard (optional, config-gated, long/short symmetric).
         #     Block a COUNTER-trend fade (long while the session VWAP is grinding
@@ -513,9 +551,12 @@ class SetupDVWAPReversion(Setup):
                 if abs(z) >= override_mult:
                     trend_override = True  # climactic flush → allow
                 else:
+                    ev["trend_ok"] = False
                     return self._reject(
                         f"against_trend(score={trend_score:+.2f},z={z:+.2f})"
                     )
+        ev["trend_ok"] = True
+        ev["trend_override"] = trend_override
 
         # 5. Stall confirmation — spike must be near (not blown through) the
         #    self-computed recent extreme on its side, so we fade a stalling
@@ -534,6 +575,7 @@ class SetupDVWAPReversion(Setup):
                 # (close to it / just poking through, not far past = still trending)
                 stall_distance = ctx.current_price - recent_high
                 if stall_distance > buffer:
+                    ev["stall_ok"] = False
                     return self._reject(
                         f"still_trending_up(px={ctx.current_price:.2f}-"
                         f"hi={recent_high:.2f}>{buffer:.2f})"
@@ -541,10 +583,14 @@ class SetupDVWAPReversion(Setup):
             else:
                 stall_distance = recent_low - ctx.current_price
             if direction == "long" and stall_distance > buffer:
+                ev["stall_ok"] = False
                 return self._reject(
                     f"still_trending_down(lo={recent_low:.2f}-"
                     f"px={ctx.current_price:.2f}>{buffer:.2f})"
                 )
+        ev["stall_distance"] = stall_distance
+        ev["stall_buffer"] = stall_buffer
+        ev["stall_ok"] = True
 
         # 6. Optional reversal confirmation — arm on the extreme, fire only once
         #    price starts moving back toward VWAP. This avoids treating a fresh
@@ -554,8 +600,9 @@ class SetupDVWAPReversion(Setup):
         prev_z: float | None = None
         if c.reversal_confirm_enabled:
             if prev_close is None:
+                ev["reversal_ok"] = False
                 return self._reject("awaiting_reversal_confirm(no_prev_close)")
-            prev_z = (prev_close - ctx.vwap) / atr
+            prev_z = self.vwap_extension_z(prev_close, ctx.vwap, atr)
             reversal_z_improvement = abs(prev_z) - abs(z)
             reversal_price_turn = (
                 ctx.current_price > prev_close
@@ -563,15 +610,21 @@ class SetupDVWAPReversion(Setup):
                 else ctx.current_price < prev_close
             )
             if c.reversal_confirm_requires_price_turn and not reversal_price_turn:
+                ev["reversal_ok"] = False
                 return self._reject(
                     f"awaiting_reversal_confirm(price_turn={direction})"
                 )
             if reversal_z_improvement < c.reversal_confirm_atr_mult:
+                ev["reversal_ok"] = False
                 return self._reject(
                     "awaiting_reversal_confirm("
                     f"z_improve={reversal_z_improvement:.2f}<"
                     f"{c.reversal_confirm_atr_mult:.2f})"
                 )
+        ev["prev_z"] = prev_z
+        ev["reversal_price_turn"] = reversal_price_turn
+        ev["reversal_z_improvement"] = reversal_z_improvement
+        ev["reversal_ok"] = True
 
         # 7. Risk bracket (ATR-scaled, symmetric)
         entry = ctx.current_price
@@ -587,8 +640,11 @@ class SetupDVWAPReversion(Setup):
             target = entry - target_distance
 
         confidence = self._compute_confidence(z, vol_ratio)
+        ev["confidence"] = confidence
         if c.min_confidence > 0.0 and confidence < c.min_confidence:
+            ev["confidence_ok"] = False
             return self._reject(f"low_confidence({confidence:.2f}<{c.min_confidence})")
+        ev["confidence_ok"] = True
 
         target_rr = target_distance / risk if risk > 0 else 0.0
         self.last_signal_details = {
@@ -625,6 +681,7 @@ class SetupDVWAPReversion(Setup):
         }
 
         self.last_reject_reason = None  # fired — clear any prior reject reason
+        ev["fired"] = True
         return Signal(
             setup_type="D_vwap_reversion",
             direction=direction,
@@ -643,6 +700,26 @@ class SetupDVWAPReversion(Setup):
             valid_until=ctx.now + timedelta(minutes=c.signal_ttl_minutes),
             generated_at=ctx.now,
         )
+
+    @staticmethod
+    def vwap_extension_z(close: float, vwap: float, atr: float) -> float:
+        """Return the VWAP extension in ATR units: ``(close - vwap) / atr``.
+
+        The ONE definition of Setup D's fade metric. ``check`` calls it for both
+        the current bar's ``z`` and the prior close's ``prev_z`` (step 6), and so
+        does ``tools/tos_cp3/produce_fields.py`` (CP-3 B1a), which must publish
+        ``z`` on bars ``check`` returns from early (outside the entry window the
+        session-exit fields still need it) — a second copy of this expression
+        anywhere is exactly the "two implementations" the CP-3 plan §3 warns
+        about.
+        Read-only and stateless: it touches none of the causal windows, so a
+        caller may evaluate it on any bar without perturbing ``check``.
+
+        Caller contract: ``atr > 0``. At ``atr == 0`` the extension is undefined
+        and this raises ``ZeroDivisionError`` rather than returning a fabricated
+        extreme; ``check`` rejects ``no_atr`` before reaching it.
+        """
+        return (close - vwap) / atr
 
     def _compute_confidence(self, z: float, vol_ratio: float) -> float:
         """Compute a [0.5, 1.0] confidence score.

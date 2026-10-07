@@ -1,6 +1,6 @@
 # CP-3 착수 — 첫 paper tenant 후보 비교와 운영자 결정표 (2026-10-07)
 
-상태: **조사 완료 · 운영자 결정 대기 · 코드 0 줄** (2회차: #874 리뷰 처분 반영). 상위 계획은
+상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a) 착수** (2회차: #874 리뷰 처분 반영). 상위 계획은
 [Control Plane 및 첫 tenant 계획](2026-10-06-tos-control-plane-and-first-tenant-plan.md) §3 CP-3 이고,
 그 계획이 「전략 선택은 미정 · 후보 비교표 필요」로 남긴 자리를 이 문서가 채운다.
 이 문서는 실행·배포·live 승인 문서가 아니다. 실전 선물 주문·증거금 투입은 영구 정책 차단이다.
@@ -106,7 +106,8 @@ CP-3 에서 가장 큰 설계 질문이다.
   없다(`data/market/manifest.yaml` 부재) — §5 5 의 「데이터셋 lineage」는 그 매니페스트를 만드는 일이다.
   선물 **일봉은 2026-06-25 에서 멈춰** 있다.
 
-구축물 넷(코드, 전부 미착수 — §4 결정 7 이 승인 대상). ⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
+구축물 넷(§4 결정 7 로 승인됨 — **B1a 착수·구현됨**(`tools/tos_cp3/`), B1b·B2·B3·B4 미착수).
+⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
 파일도 `tos`/`tos_runtime` 을 import 할 수 없고(`tools/tos_firewall_check.py` TOS-FW-R, `tools/` 도 검사
 대상), `tos` 는 `shared.indicators` 는 되지만 `shared.backtest` 는 안 된다. 그래서 `Bar` 튜플을 만들거나
 `BacktestDriver` 를 모는 코드는 **`tos/` 안**에만 둘 수 있다.
@@ -138,11 +139,19 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
 | 8 | 검증 기간·담당자 | parity 1회 + paper: YAML 131행의 **「≥4 주」**를 기본으로, 더 짧게 자르면 그 근거를 적는다. 담당 = 운영자(실행은 Claude) | — |
 | 9 | **venue 수량 상한의 출처** | 오늘 paper 의 `venue_constraint_policy.yaml::max_quantity` 는 **null(의도된 fail-closed)** 이라 Proposal 이 전부 `STAGE_DENIED | venue quantity constraint incomplete` 다(10-07 세션 2,510건). 값이 들어오기 전까지 paper 단계는 **결정 수준 관측만** 가능하고 청산 규칙·영수증 증거는 못 만든다. 권고: 모의 계좌 **P0-2 식 GET 프로브**로 출처를 만들어 값을 넣는 것 — 실전 계좌·실주문은 영구 차단 | 값 없이 가면 §5 4 의 범위를 「체결 없음」으로 줄여 적는다 |
 
+**운영자 승인 2026-10-07: 아홉 전부 권고대로.**
+
 결정 1·2·3·5·6·9 는 §5 착수 전에 필요하다. 7 은 코드 첫 줄 전에, 4·8 은 paper 단계 전에.
 
-## 5. 1차 슬라이스 (결정 뒤 착수 — 코드 0 줄 상태)
+## 5. 1차 슬라이스 (운영자 승인 2026-10-07 · 1 착수)
 
-1. **B1a 공유 지표 생산자** — 입력 Parquet(결정 2), 출력 = 봉별 필드 JSONL + lineage 블록. 새 필드는
+1. **B1a 공유 지표 생산자 — 착수(2026-10-07)**: `tools/tos_cp3/produce_fields.py`
+   (패키지 `tools/tos_cp3/`, 레거시 쪽 · `tos`/`tos_runtime` import 0 · 테스트
+   `tests/tools/test_cp3_produce_fields.py`). 산식은 레거시
+   `shared/decision/setups/vwap_reversion.py` 를 봉마다 몰아 그 자신의 평가 기록
+   (`SetupDVWAPReversion.last_eval`, 같은 PR 에서 추가한 읽기 전용 관측 슬롯)을 읽는다 —
+   §3 이 경고한 「두 번째 구현」을 두지 않기 위해서다. 입력 Parquet(결정 2), 출력 = 봉별 필드
+   JSONL + lineage 블록. 새 필드는
    **tenant 설정 트리**의 `critical_input_policy.yaml` 에 다섯 값(unit/scale/multiplier/sign/max_age_ms)과
    출처를 적어 선언한다(상주 `paper` 트리는 건드리지 않는다 — 건드리면 런북 §7.10 6 의 두 번 부팅
    의무가 따라온다). 트리의 `environment`·`scope.environments` 는 `paper` 로 둔다(로더가
