@@ -128,7 +128,7 @@ rollback drill → rollback 의존 종료 → caller 없는 legacy 코드 삭제
 | UI `/tos` 독립 화면 또는 Cockpit 섹션 | CP-1 구현 시작 | 미정; 기존 UI 탐색 후 최소 변경 선택 |
 | freshness/polling 수치·배포 projection 경로 | CP-1 배포 검증 전 | 미정; 설정으로 기록하고 실제 export 주기 검증 |
 | command 범위·전달 방식·승인 책임 | CP-2 설계 완료 | 미정; 기존 CLI 우선 |
-| 첫 tenant 전략/상품/기간/담당자 | CP-3 시작 | 미정 — 후보 비교표와 결정 여덟은 [CP-3 착수 문서](2026-10-07-tos-cp3-first-tenant-kickoff.md) §1·§4(권고 Setup D) |
+| 첫 tenant 전략/상품/기간/담당자 | CP-3 시작 | 결정됨 2026-10-07 — Setup D (CP-3 착수 문서 §4) |
 | scope별 rollback 종료·삭제 시점 | CP-4 삭제 전 | 미정; 관측 증거 필요 |
 
 CP-1 구현 상태는 §6과 [검증 기록](../testing/2026-10-06-tos-control-plane.md)을 따른다.
