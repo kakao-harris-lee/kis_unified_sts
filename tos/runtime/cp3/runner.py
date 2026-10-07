@@ -4,20 +4,36 @@
 Placement rationale (digest-untouched + firewall scope) is in this package's
 ``__init__.py`` — read that first.
 
-What this module is
--------------------
+What this package is
+--------------------
 A **loader + driver**, nothing else. ``tos.backtest`` ships no loader on
 purpose (``bars.py`` 4-7행: parquet/pandas ingestion is out-of-tree because a
 harness that reads files is no longer a pure function of its inputs) and the
-harness is handed a ``tuple[Bar, ...]``. This module is that out-of-tree loader
+harness is handed a ``tuple[Bar, ...]``. This package is that out-of-tree loader
 for the one input shape CP-3 defines — B1a's five-key journal JSONL — plus the
 wiring that drives it through the single shipped event core and writes the
 trace artifact the out-of-tree comparator (B3) reads.
 
-It **re-authors nothing**: ``validate_bar_stream``, ``CausalBarConverter``,
-``BacktestDriver``, ``EngineCore``, ``trace_document`` / ``trace_digest``, the
-strategy loader, the bindings loader and the bindings resolution rules are all
-consumed verbatim.
+**This module is the CLI and the package's single import surface.** The work
+lives in siblings — ``contract`` (the journal contract + field policy), ``bars``,
+``seam`` (the Capsule / value-view seam), ``strategy``, ``replay``, ``lineage``,
+``differences`` — split there by the 2026-10-08 review's size-budget finding, not
+by a change of design; every public name is re-exported here so a caller does not
+have to know which sibling a name lives in.
+
+It **re-authors nothing** — now. ``validate_bar_stream``, ``CausalBarConverter``,
+``BacktestDriver``, ``EngineCore``, ``trace_document`` / ``trace_digest``,
+``context_value_view_digest``, the strategy loader, the bindings loader and the
+bindings resolution rules are all consumed verbatim.
+
+⚠ That sentence was **false for one value** until 2026-10-08, and the way it was
+false is worth keeping on the page: the published ``ContextValueView``'s
+``canonical_digest`` was computed locally, in emission order, without the
+snapshot binding in its preimage — so ``view_digest_matches`` was ``False`` on
+every bar (``a82270de…`` recorded vs ``41faf4ac…`` canonical) and the mismatch
+rode into every ``outcome_digest`` and the ``trace_digest``. Nothing rejected it;
+a claim in a docstring is not a gate. The fix imports the kernel function and a
+test asserts the predicate — which is the only form of that claim that holds.
 
 The value-surface seam (how per-bar fields reach the DSL)
 ---------------------------------------------------------
