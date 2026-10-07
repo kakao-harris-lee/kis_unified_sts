@@ -61,8 +61,15 @@ def _sha256_file(path: Path) -> str:
 _SKIP_DIR_NAMES: frozenset[str] = frozenset({"__pycache__"})
 
 
-def _cp3_code_digest() -> str:
+def _cp3_code_digest(root: Path | None = None) -> str:
     """This package's own source digest — EVERY ``*.py`` under it.
+
+    ``root`` defaults to this package's directory and exists so a test can point
+    the SAME function at a copy of the tree and prove the digest actually
+    depends on the bytes it walks (2026-10-08 verification D-1: the previous
+    test computed the file list and then never used it, so swapping the body
+    back to a hardcoded two-file list still passed). Mirrors
+    ``observe_source_tree_digest(package_roots=None)``'s own injectable shape.
 
     An ``rglob`` with the same skip set and the same canonical scheme
     ``tos_runtime.operations.dependency_admission.observe_source_tree_digest``
@@ -76,7 +83,7 @@ def _cp3_code_digest() -> str:
     Tests ARE included: they are part of what the package is, and excluding them
     would make the digest unable to see a weakened assertion.
     """
-    root = Path(__file__).resolve().parent
+    root = (Path(__file__).resolve().parent if root is None else root).resolve()
     entries = [
         [path.relative_to(root).as_posix(), _sha256_file(path)]
         for path in sorted(root.rglob("*.py"))
@@ -171,6 +178,12 @@ def _packed_ref(git_dir: Path, ref: str) -> str | None:
     return None
 
 
+#: ``CE_EXTENDED`` in a cache entry's 2-byte flags field (the last 2 bytes of
+#: the 62-byte prefix). When set — index version 3 only — an EXTRA 2-byte
+#: extended-flags field follows the prefix, BEFORE the name.
+_CE_EXTENDED = 0x4000
+
+
 def _worktree_dirty(repo_root: Path, git_dir: Path) -> bool | str:
     """Whether any tracked file differs from the index, or ``"UNKNOWN"``.
 
@@ -178,13 +191,30 @@ def _worktree_dirty(repo_root: Path, git_dir: Path) -> bool | str:
     recorded size and mtime against the worktree. That is the same cheap check
     ``git status`` starts from; it can report a false ``True`` for a file whose
     content was rewritten identically with a new mtime, which is the SAFE
-    direction. Anything it cannot read at all returns ``"UNKNOWN"``.
+    direction.
+
+    **Everything it cannot read returns ``"UNKNOWN"``, never a traceback and
+    never a guessed ``False``** (2026-10-08 verification D-2). Two specifics:
+
+    * a v3 entry with :data:`_CE_EXTENDED` set carries an extra 2-byte field
+      after the 62-byte prefix, so the name does NOT start at ``offset + 62``.
+      An earlier revision claimed "extended flags are inside the 62-byte prefix
+      already handled" — that was simply false, and it would have mis-set the
+      name boundary and therefore every subsequent entry's offset. This returns
+      ``"UNKNOWN"`` for such an index rather than parsing a field no artifact
+      here needs: a wrong ``dirty`` is worse than an unknown one;
+    * a malformed/truncated index raises ``ValueError`` (``bytes.index`` finding
+      no NUL) or ``struct.error``, both now caught alongside ``OSError``.
     """
-    index_path = git_dir / "index"
     try:
-        blob = index_path.read_bytes()
-    except OSError:
+        return _parse_index_dirty(repo_root, git_dir)
+    except (OSError, ValueError, struct.error):
         return "UNKNOWN"
+
+
+def _parse_index_dirty(repo_root: Path, git_dir: Path) -> bool | str:
+    """The parse :func:`_worktree_dirty` wraps — may raise; never called bare."""
+    blob = (git_dir / "index").read_bytes()
     if len(blob) < 12 or blob[:4] != b"DIRC":
         return "UNKNOWN"
     version, count = struct.unpack(">II", blob[4:12])
@@ -196,12 +226,13 @@ def _worktree_dirty(repo_root: Path, git_dir: Path) -> bool | str:
             return "UNKNOWN"
         mtime_s, mtime_ns = struct.unpack(">II", blob[offset + 8 : offset + 16])
         size = struct.unpack(">I", blob[offset + 36 : offset + 40])[0]
+        flags = struct.unpack(">H", blob[offset + 60 : offset + 62])[0]
+        if version == 3 and flags & _CE_EXTENDED:
+            return "UNKNOWN"
         name_end = blob.index(b"\x00", offset + 62)
         name = blob[offset + 62 : name_end].decode("utf-8", "replace")
         entry_len = name_end - offset + 1
         offset += entry_len + ((8 - (entry_len % 8)) % 8 or 0)
-        if version == 3:
-            pass  # extended flags are inside the 62-byte prefix already handled
         path = repo_root / name
         try:
             stat = path.stat()

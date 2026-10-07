@@ -267,9 +267,17 @@ def test_the_band_form_difference_cites_b1a_d3_not_d7() -> None:
     by_id = {item["id"]: item for item in DECLARED_DIFFERENCES}
     assert "B1a D3" in by_id["B1b-D2"]["item"]
     assert "D3" in by_id["B1b-D2"]["note"]
+    # Asserted on the SENTENCE that attributes the band form, not on a Korean
+    # particle (verification D-3: `"B1a D7 의" not in strategy` pinned "의" and
+    # would have passed any other inflection). The file legitimately MENTIONS
+    # D7 — to say the band form is not D7 — so a bare `"B1a D7" not in` is wrong
+    # too; what must hold is that the attributing line cites D3.
     strategy = fx.STRATEGY_PATH.read_text(encoding="utf-8")
-    assert "B1a **D3**" in strategy
-    assert "B1a D7 의" not in strategy
+    attributing = [line for line in strategy.splitlines() if "밴드 꼴" in line]
+    assert attributing, "the band-form attribution comment is gone"
+    for line in attributing:
+        assert "D3" in line, f"band form attributed without D3: {line.strip()}"
+        assert "D7" not in line, f"band form attributed to D7: {line.strip()}"
 
 
 def test_the_exposure_precondition_difference_is_declared() -> None:
@@ -381,8 +389,41 @@ def test_lineage_tool_block_carries_repo_and_runtime_coordinates(
     assert len(tool["code_digest"]) == 64
 
 
-def test_cp3_code_digest_covers_every_source_file() -> None:
-    """The package digest changes when ANY of its ``*.py`` files changes."""
+def _recompute_cp3_digest(root: Path) -> str:
+    """The package digest, recomputed INDEPENDENTLY of the function under test.
+
+    Spells out the shape rather than calling the implementation: a test that
+    re-uses the code it checks cannot tell a correct digest from a consistent
+    one. The shape is the one ``observe_source_tree_digest`` uses — sorted
+    ``[relative posix path, sha256(bytes)]`` pairs under ``{"files": …}``,
+    folded through the same canonical scheme.
+    """
+    import hashlib
+
+    from .._base import SCHEME
+
+    entries = [
+        [
+            path.relative_to(root).as_posix(),
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        ]
+        for path in sorted(root.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    ]
+    digest = SCHEME.compute_digest({"files": entries})
+    assert isinstance(digest, str)
+    return digest
+
+
+def test_cp3_code_digest_is_the_digest_of_every_tracked_source_file() -> None:
+    """The digest EQUALS an independent fold over every tracked ``*.py``.
+
+    The 2026-10-08 verification (D-1) found the previous version of this test
+    computed the file list and then never used it, so restoring the old
+    hardcoded two-file body still passed — a guard that admitted exactly what it
+    named. The equality below is what bites: a digest over any other file set
+    (two files, or a set that misses a module) cannot match it.
+    """
     from .. import lineage as lineage_module
 
     package_root = Path(lineage_module.__file__).resolve().parent
@@ -390,9 +431,116 @@ def test_cp3_code_digest_covers_every_source_file() -> None:
         path for path in package_root.rglob("*.py") if "__pycache__" not in path.parts
     )
     assert len(tracked) >= 10, "the package has more than a couple of modules now"
-    first = lineage_module._cp3_code_digest()
-    assert first == lineage_module._cp3_code_digest(), "digest must be stable"
-    assert len(first) == 64
+
+    digest = lineage_module._cp3_code_digest()
+    assert digest == lineage_module._cp3_code_digest(), "digest must be stable"
+    assert len(digest) == 64
+    assert digest == _recompute_cp3_digest(package_root), (
+        "the recorded digest is not the fold over the package's tracked sources "
+        f"({len(tracked)} files) — it is covering some other file set"
+    )
+
+
+def test_cp3_code_digest_moves_when_a_tracked_file_changes(tmp_path: Path) -> None:
+    """Appending one byte to a NON-runner module changes the digest.
+
+    The other half of D-1's disposition, and the half a hardcoded two-file list
+    fails outright: ``differences.py`` is not ``runner.py`` or ``__init__.py``,
+    so a digest over only those two is blind to it. Run over a copy so nothing
+    in the real package is touched (and so the write stays inside ``tmp_path``,
+    which this suite's own guard requires).
+    """
+    import shutil
+
+    from .. import lineage as lineage_module
+
+    package_root = Path(lineage_module.__file__).resolve().parent
+    copy_root = tmp_path / "cp3"
+    shutil.copytree(
+        package_root, copy_root, ignore=shutil.ignore_patterns("__pycache__")
+    )
+
+    baseline = lineage_module._cp3_code_digest(copy_root)
+    assert baseline == lineage_module._cp3_code_digest(), (
+        "an untouched copy must digest to the same value as the original — "
+        "otherwise this test's baseline is measuring the copy, not the content"
+    )
+
+    victim = copy_root / "differences.py"
+    assert victim.is_file(), "the non-runner module this test perturbs is gone"
+    with victim.open("ab") as handle:
+        handle.write(b"\n")
+
+    after = lineage_module._cp3_code_digest(copy_root)
+    assert after != baseline, (
+        "appending a byte to differences.py did not move the digest — the fold "
+        "is not covering every tracked module (this is the exact defect a "
+        "hardcoded ('__init__.py', 'runner.py') list reintroduces)"
+    )
+    assert after == _recompute_cp3_digest(copy_root)
+
+
+def test_malformed_git_index_yields_unknown_never_a_traceback(
+    tmp_path: Path,
+) -> None:
+    """Every unreadable index shape returns ``"UNKNOWN"`` (verification D-2).
+
+    Four shapes, each of which reached a different failure before: a body with
+    no NUL terminator (``bytes.index`` -> ``ValueError``), a truncated entry, a
+    v3 entry with ``CE_EXTENDED`` set (whose name does NOT start at
+    ``offset + 62``, so the old parser mis-set every subsequent offset while
+    reporting a confident answer), and a missing file. A guessed ``False`` on
+    any of them would stamp ``dirty: false`` onto an artifact built from an
+    unknown tree.
+    """
+    import struct
+
+    from .. import lineage as lineage_module
+
+    git_dir = tmp_path / "gitdir"
+    git_dir.mkdir()
+    index = git_dir / "index"
+
+    # 1. header claims 5 entries; body has no NUL at all
+    index.write_bytes(b"DIRC" + struct.pack(">II", 2, 5) + b"\xff" * 80)
+    assert lineage_module._worktree_dirty(tmp_path, git_dir) == "UNKNOWN", (
+        "an index body with no NUL terminator must read UNKNOWN (bytes.index "
+        "raises ValueError there)"
+    )
+
+    # 2. truncated inside the first entry's 62-byte prefix
+    index.write_bytes(b"DIRC" + struct.pack(">II", 2, 1) + b"\x00" * 10)
+    assert (
+        lineage_module._worktree_dirty(tmp_path, git_dir) == "UNKNOWN"
+    ), "an index truncated inside the first 62-byte prefix must read UNKNOWN"
+
+    # 3. v3 entry with CE_EXTENDED — the shape the false comment claimed was
+    #    "already handled"
+    entry = bytearray(62 + 8)
+    struct.pack_into(">H", entry, 60, lineage_module._CE_EXTENDED)
+    entry[62:66] = b"a.py"
+    index.write_bytes(b"DIRC" + struct.pack(">II", 3, 1) + bytes(entry))
+    assert lineage_module._worktree_dirty(tmp_path, git_dir) == "UNKNOWN", (
+        "a v3 entry with CE_EXTENDED must read UNKNOWN: an extra 2-byte field "
+        "follows the prefix, so the name does not start at offset+62 and every "
+        "later entry offset would be wrong — the shape the deleted comment "
+        "claimed was already handled"
+    )
+
+    # 3b. the SAME entry without the extended bit is parsed, not refused —
+    #     otherwise the check above would pass by refusing all of v3.
+    struct.pack_into(">H", entry, 60, 0)
+    index.write_bytes(b"DIRC" + struct.pack(">II", 3, 1) + bytes(entry))
+    assert lineage_module._worktree_dirty(tmp_path, git_dir) is True, (
+        "the same v3 entry WITHOUT the extended bit must be parsed (a.py is "
+        "absent, so dirty) — otherwise the check above passes by refusing all "
+        "of index v3, which would make it decorative"
+    )
+
+    # 4. no index file
+    assert (
+        lineage_module._worktree_dirty(tmp_path, git_dir / "absent") == "UNKNOWN"
+    ), "a missing index file must read UNKNOWN, never a guessed False"
 
 
 # ---------------------------------------------------------------------------
