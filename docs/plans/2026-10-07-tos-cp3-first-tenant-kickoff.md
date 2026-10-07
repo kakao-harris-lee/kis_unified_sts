@@ -1,6 +1,6 @@
 # CP-3 착수 — 첫 paper tenant 후보 비교와 운영자 결정표 (2026-10-07)
 
-상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a)·2 (B2) 구현** (3회차: #874·#876 리뷰 처분 반영). 상위 계획은
+상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a)·2 (B1b·B2) 구현** (4회차: #874·#876·#877 리뷰 처분 반영). 상위 계획은
 [Control Plane 및 첫 tenant 계획](2026-10-06-tos-control-plane-and-first-tenant-plan.md) §3 CP-3 이고,
 그 계획이 「전략 선택은 미정 · 후보 비교표 필요」로 남긴 자리를 이 문서가 채운다.
 이 문서는 실행·배포·live 승인 문서가 아니다. 실전 선물 주문·증거금 투입은 영구 정책 차단이다.
@@ -106,7 +106,8 @@ CP-3 에서 가장 큰 설계 질문이다.
   없다(`data/market/manifest.yaml` 부재) — §5 5 의 「데이터셋 lineage」는 그 매니페스트를 만드는 일이다.
   선물 **일봉은 2026-06-25 에서 멈춰** 있다.
 
-구축물 넷(§4 결정 7 로 승인됨 — **B1a·B2 구현됨**(`tools/tos_cp3/`) · **B1b 는 #877** · B3·B4 미착수).
+구축물 넷(§4 결정 7 로 승인됨 — **B1a·B2 구현됨**(`tools/tos_cp3/`) · **B1b 구현됨**(`tos/runtime/cp3/`) ·
+B3·B4 미착수).
 ⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
 파일도 `tos`/`tos_runtime` 을 import 할 수 없고(`tools/tos_firewall_check.py` TOS-FW-R, `tools/` 도 검사
 대상), `tos` 는 `shared.indicators` 는 되지만 `shared.backtest` 는 안 된다. 그래서 `Bar` 튜플을 만들거나
@@ -115,7 +116,7 @@ CP-3 에서 가장 큰 설계 질문이다.
 | # | 구축물 | 자리(방화벽 준수) | 왜 |
 |---|---|---|---|
 | B1a | Parquet → 봉별 **정수 필드 JSONL** 생산자(vwap·atr14·z·ATR p90·스톨·역전·세션 창; `shared/decision/setups/vwap_reversion.py` 의 산식과 봉별 일치를 테스트로 고정; lineage 기록 포함) | `tools/tos_cp3/`(레거시 쪽; `tos` import 0) | 양쪽이 **같은 산식**을 쓰게 — 아니면 비교가 밴드 수학을 잰다 |
-| B1b | JSONL → `tuple[Bar,...]` 로더 + `BacktestDriver` 실행기 → trace JSONL | **`tos/runtime/`(또는 `tos/tests/backtest` 식 러너) 안**; 바깥과는 파일로만 만난다(`render_paper_config.py` 의 서브프로세스 경계와 같은 모양) | `Bar`·`BacktestDriver` 는 `tos.backtest` 타입 |
+| B1b | JSONL → `tuple[Bar,...]` 로더 + `BacktestDriver` 실행기 → trace JSONL — **구현됨 `tos/runtime/cp3/`** (`runner.py` · `strategies/setup_d_long.strategy.yaml` · `strategy_bindings.yaml` · `tests/`) | **`tos/runtime/`(또는 `tos/tests/backtest` 식 러너) 안**; 바깥과는 파일로만 만난다(`render_paper_config.py` 의 서브프로세스 경계와 같은 모양). ⛔ **설치 패키지 루트 둘(`tos/src/tos/`·`tos/runtime/src/tos_runtime/`) 아래에는 단 한 바이트도 두지 않는다** — paper 릴리스 핀 `config/tos_runtime/paper/release.yaml::expected_code_digest` 가 그 두 루트의 모든 `*.py` 를 접은 sha256 이고(`tos_runtime/operations/dependency_admission.py::observe_source_tree_digest` + `default_package_roots`) 상주 paper 세션이 매일 아침 origin/main 에서 재도출해 불일치면 ABORT 하므로, 파일 하나만 더해도 상주가 멈춘다. 동시에 `tos/cp3/` 는 쓸 수 없다 — 방화벽의 범위 판정(`tools/tos_firewall_check.py::scope_for_tos_path`)이 `tos/runtime/**` 만 RUNTIME 으로 보고 그 밖의 `tos/` 는 KERNEL 로 보아 `tos_runtime` import 를 TOS-FW-G 로 막는다(실측: `tos/cp3/_probe.py` 가 전략 로더를 import 하면 게이트 red). 두 제약을 동시에 만족하는 자리는 `tos/runtime/cp3/` 뿐이다. 모듈 경로는 그래서 `cp3.runner`(`PYTHONPATH=…:tos/runtime`)이고 `tos.cp3.runner` 가 아니다 — 후자는 커널 패키지 루트에 파일을 넣어야 해서 digest 제약과 충돌한다 | `Bar`·`BacktestDriver` 는 `tos.backtest` 타입 |
 | B2 | 레거시 봉별 후보·거부 기록기 | `tools/tos_cp3/`(레거시 쪽; 당초 이 행은 `shared/backtest/` 래퍼로 적었으나, B1a 의 창 로더·조인 키·생략 술어를 **같은 코드로** 써야 조인이 성립하므로 같은 패키지에 두었다) | `signals_writer` 가 no-op 이라 거부 사유가 없다 |
 | B3 | 결정 수준 diff(봉별: 레거시 후보/거부 ↔ TOS 발화/NO_ACTION/거부 사유) | `tools/tos_cp3/`(아티팩트 대 아티팩트, 설계 #33 §6.1) | TOS 는 PnL 을 못 낸다 |
 | B4 | 스코프당 주문 1 개 캡의 처분 | 설계 결정(커널 변경은 `tos-spec/src/part-1-foundation/GOV-001-Ratification-and-Change-Governance.md` 절차) | 체결 비교를 포기할지, 하루 1 실행으로 쪼갤지 |
@@ -156,11 +157,16 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    출처를 적어 선언한다(상주 `paper` 트리는 건드리지 않는다 — 건드리면 런북 §7.10 6 의 두 번 부팅
    의무가 따라온다). 트리의 `environment`·`scope.environments` 는 `paper` 로 둔다(로더가
    `--environment-label` 과 대조하지 않아 어긋나도 조용히 부팅한다 — 같은 파일 56–62행).
-2. **B1b·B2·B3** — `tos/` 안의 러너가 JSONL 을 `Bar` 로 읽어 `BacktestDriver` trace 를 쓰고, 레거시
-   하네스 래퍼가 봉별 후보·거부를 뽑고, `tools/tos_cp3/` 가 둘을 봉별로 diff 한다. 산출물:
-   `--out/decisions.jsonl` + `lineage.json`; `reports/tos-cp3/<dataset>/` 배치는 B3 가 정한다
-   (아티팩트는 커밋하지 않는다) + 요약(일치율, 불일치 사유 분포). 불일치는
-   **미해결로 남기되**, 결정 5·6 의 두 의도된 차이는 승인 근거와 함께 따로 센다.
+2. **B1a·B1b·B2 구현됨 · B3 미착수** — `tos/` 안의 러너가 JSONL 을 `Bar` 로 읽어
+   `BacktestDriver` trace 를 쓰고, 레거시 쪽 기록기가 봉별 후보·거부를 뽑고, `tools/tos_cp3/` 가
+   둘을 봉별로 diff 한다. 세 자리:
+   **B1a** `tools/tos_cp3/produce_fields.py` · **B2** `tools/tos_cp3/emit_legacy_decisions.py` ·
+   **B1b** `tos/runtime/cp3/`(`runner.py` 외 여덟 모듈 · `strategies/setup_d_long.strategy.yaml` ·
+   `strategy_bindings.yaml` · `tests/`). 산출물: `--out/decisions.jsonl` + `lineage.json`;
+   `reports/tos-cp3/<dataset>/` 배치는 B3 가 정한다(아티팩트는 커밋하지 않는다) + 요약(일치율,
+   불일치 사유 분포). 불일치는 **미해결로 남기되**, 결정 5·6 의 두 의도된 차이는 승인 근거와
+   함께 따로 센다.
+
    **B2 착수·구현(2026-10-08)**: `tools/tos_cp3/emit_legacy_decisions.py`
    (테스트 `tests/tools/test_cp3_emit_legacy_decisions.py`). 창은 B1a 의
    `produce_fields.load_window` 를 그대로 호출하고 조인 키도 B1a 의
@@ -175,11 +181,43 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    stall 1.5 vs 1.0 · `min_confidence` 0.6 vs 0.0 · `reversal_confirm_enabled` true vs false) —
    그래서 공표된 수치의 실행에서는 `LOW_CONFIDENCE` 와 `awaiting_reversal_confirm` 셋이
    **도달 불가**였고, admitted 수를 공표된 135 와 비교할 수 없다(135 는 OOS 폴드 연결이기도 하다).
-   공표 수치의 앵커는 **미해결**로 적는다(09:00 을 가리키는 근거 둘 vs 재검토 문서 날짜). B3 는 미착수.
-3. **Setup D DSL 콘텐츠 + 부팅 경로** — `config/tos_runtime/<tenant>/strategies/setup_d_vwap_reversion.strategy.yaml`,
-   `config/tos_runtime/<tenant>/strategy_bindings.yaml`(strategies/ 아래가 아니라 설정 루트), 예산 64 안
-   (규칙 3개면 비교 ≤ 20). 렌더의 전략 파일 상수·다섯 digest 재도출·`safety_activation.yaml::members`
-   갱신. LONG/SHORT 는 각각 렌더.
+   공표 수치의 앵커는 **미해결**로 적는다(09:00 을 가리키는 근거 둘 vs 재검토 문서 날짜).
+
+   **B1b 착수·구현(2026-10-08)**: 자리와 그 이유는 §3 의 B1b 행에 있고, 한 줄로 다시 적으면 —
+   **설치 패키지 루트 둘(`tos/src/tos/`·`tos/runtime/src/tos_runtime/`) 아래에 0 바이트**를 두어야
+   하고(paper 릴리스 핀 `expected_code_digest` 가 그 두 루트를 접으며 상주 세션이 매일 재도출해
+   불일치면 ABORT) 동시에 `tos_runtime` 을 import 할 수 있어야 해서(방화벽이 `tos/runtime/**` 만
+   RUNTIME 으로 본다) **두 제약을 같이 만족하는 자리는 `tos/runtime/cp3/` 뿐**이다. CLI 는
+   `python -m cp3.runner --fields … --strategy … --bindings … --out …` (모듈 경로가 `cp3.runner` 이고
+   `tos.cp3.runner` 가 아닌 것도 같은 digest 제약 때문이다)이고 타입 거부는 종료코드 2 다.
+   값이 DSL 에 닿는 경로는 **이미 있던 타입 seam** 이다 — 봉마다 Capsule 을 발행해 그 `SnapshotRef` 를
+   해석기가 되읽어 `DecisionTickPayload.value_view`(`tos.dsl.ContextValueView`)를 공개하면
+   `tos.engine.pipeline` 이 그것을 `evaluate_resolved` 로 넘기고 `build_environment` 가
+   `capsule.resolved_values.<field>` 로 병합한다. 뷰의 `canonical_digest` 는 커널
+   `tos.marketfeed.value.context_value_view_digest` 로 계산한다(직접 계산하면 `view_digest_matches`
+   가 거짓이 되고 그 digest 가 모든 `outcome_digest` 로 흐른다 — 2026-10-08 리뷰 실측). 커널·런타임
+   변경 0. 하네스에는 `critical_input_policy` 주입 자리가 없어 필드는 **이미 승인된 값**으로
+   들어가고, 다섯 값(unit/scale/multiplier/sign/max_age_ms)은 lineage 의 `versions.field_policy` 에
+   기록된다(의도된 차이 B1b-D3). **B3 는 미착수.**
+3. **Setup D DSL 콘텐츠 — LONG 구현됨(2026-10-08) · 부팅 경로 미착수** — 콘텐츠는
+   `tos/runtime/cp3/strategies/setup_d_long.strategy.yaml` +
+   `tos/runtime/cp3/strategy_bindings.yaml`(strategies/ 아래가 아니라 그 형제 — 안에 두면 로더의
+   stray-file 규칙이 디렉터리 전체를 거부한다)로 **먼저 B1b 실행기 쪽에** 들어갔다. 규칙 셋(진입 1 +
+   FLAT 2) + 기본값이고 `policy_work_steps` = 3 + 7 + 14 = **24 ≤ 64**(비교 7 ≤ 20). 진입 임계는
+   리터럴이 아니라 바인딩 `z_entry_max_x1000 = -1800 = -trunc(extreme_atr_mult × 1000)` 이고 그 등식은
+   테스트가 `config/strategies/futures/setup_d_vwap_reversion.yaml` 74행을 직접 읽어 고정한다.
+   파일은 **운영 로더**(`tos_runtime.strategy.loader.load_strategies` + 실제 `parse_strategy` /
+   `strategy_admissible` + `resolve` 의 바인딩 다섯 규칙)로 적재·승인되는 것을 테스트로 증명했다.
+   ⚠ 그래도 `config/tos_runtime/<tenant>/` 로 옮기는 것은 **「복사만」이 아니다**(2026-10-08 리뷰).
+   최소 넷이 더 필요하다: ① tenant 설정 트리 자체(렌더가 만드는 열몇 개 YAML — 상주 `paper` 트리는
+   건드리지 않는다) · ② 열다섯 필드 × 다섯 값을 `critical_input_policy.yaml` 에 선언하되
+   **`max_age_ms` 는 이 경로에서 도출할 수 없다**(B1b 는 전부 `null` 로 두고 의도된 차이 B1b-D3 로
+   등재했다 — 백테스트는 주입된 시간 경계로 신선도를 판정하고 필드별 수명 소비자가 없다; 값은
+   **운영자 출처**여야 한다) · ③ 그 열다섯 필드를 **paper 런타임에서 매 봉 발행하는 생산자** — B1a 는
+   Parquet 배치 도구이고 실시간 발행기가 아니다 · ④ §5 3 의 **부팅 경로**(렌더의 전략 파일 상수·다섯
+   digest 재도출·`safety_activation.yaml::members` 갱신). 넷 모두 **미착수**다.
+   LONG/SHORT 는 각각 렌더이며 SHORT 파일은 아직 없다(DSL 에 abs() 가 없어 진입 비교가 한 변뿐이므로
+   SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
 4. **paper 검증**(결정 3·4·8·9) — 방향별 data dir, 런북 §3 절차, 재시작·리플레이·콜드 백업 복원 drill
    증거. 결정 9 가 닫히기 전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.
 5. **완료 증거**(계획 §3 CP-3) — 이관 artifact + digest, 데이터셋 lineage(커버리지 매니페스트), 판단/거부/

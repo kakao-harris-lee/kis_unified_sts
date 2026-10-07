@@ -140,6 +140,24 @@ jobs:
       - name: tos-runtime hermetic package tests
         run: pytest tos/runtime/tests
 
+      # CP-3 B1b (docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §3 B1b).
+      # `tos/runtime/cp3/` is a sibling of `tos/runtime/src`, deliberately
+      # OUTSIDE it: the paper release pin's `expected_code_digest` folds every
+      # `*.py` under the two installed package roots (`tos/src/tos` and
+      # `tos/runtime/src/tos_runtime`), so a file added under either would ABORT
+      # the resident paper session every morning. Being outside those roots also
+      # means FOUR gates would not have covered it — the three steps below
+      # (pytest / Black / mypy) and the size budget, whose own `scope` list in
+      # `config/tos_size_budget.yaml` is path-based for the same reason. The
+      # first three name the directory explicitly below; the fourth gained
+      # `tos/runtime/cp3` in that config (2026-10-08 review: the earlier version
+      # of this comment named three holes and omitted the size budget, and
+      # `tos_size_budget --check PASS` was being cited for a tree the checker
+      # never looked at). Same "unformatted-by-nobody" shape the Black step's own
+      # scope note describes.
+      - name: tos-cp3 hermetic tests
+        run: pytest tos/runtime/cp3/tests
+
       # Phase 1 작업 7 (계획 §2 표 7행) — 같은 잡의 스텝으로 추가한다(필수 체크
       # 이름을 늘리지 않는다는 위 헤더 규율). 두 스텝의 실행 위치가 다르다 —
       # (독립 리뷰 Low-4, 2026-09-07: 이전 주석은 «둘 다 `cd tos`」로 실행한다고 잘못
@@ -172,6 +190,7 @@ jobs:
       - name: Black (tos)
         run: >-
           black --check tos/src tos/tests tos/runtime/src tos/runtime/tests
+          tos/runtime/cp3
           tools/tos_*.py tests/tools/test_tos_*.py tests/tools/test_u17_verify.py
 
       - name: mypy (tos kernel)
@@ -462,6 +481,14 @@ jobs:
       - name: mypy (tos runtime tests)
         run: >-
           mypy tos/runtime/tests --ignore-missing-imports
+          --disable-error-code=no-untyped-def
+
+      # CP-3 B1b, sources AND tests in one invocation (the package is small and
+      # has no duplicate-module hazard). Same single deferral the two test-tree
+      # steps carry; everything else is checked.
+      - name: mypy (tos cp3)
+        run: >-
+          mypy tos/runtime/cp3 --ignore-missing-imports
           --disable-error-code=no-untyped-def
 
       - name: tos size budget
