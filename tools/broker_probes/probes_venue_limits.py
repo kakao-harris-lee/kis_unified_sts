@@ -743,6 +743,18 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
     pace_s = float(getattr(args, "pace_s", DEFAULT_PACE_S))
     if pace_s < 0:
         raise ProbeError(f"--pace-s must be >= 0 (got {pace_s})")
+    # ``--asset`` is a COMMON argument, so ``--asset stock`` parses fine and
+    # would otherwise be ignored: every TR below is 선물옵션 and the credentials
+    # are resolved as futures unconditionally. Silently honouring the futures
+    # account under a stock flag is the kind of mismatch that makes an artifact
+    # lie about what it measured, so refuse it instead.
+    asset = str(getattr(args, "asset", "futures") or "futures").strip().lower()
+    if asset != "futures":
+        raise ProbeError(
+            f"--asset {asset!r} is not available for P-VL: every TR here is "
+            "선물옵션 (FHMIF10000000 / VTTO5105R) and the credentials resolve "
+            "as futures. Re-run with --asset futures."
+        )
 
     run = ProbeRun(
         probe_id=spec.probe_id,

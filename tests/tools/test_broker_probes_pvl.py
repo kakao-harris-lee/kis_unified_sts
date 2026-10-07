@@ -1063,6 +1063,23 @@ def test_symbol_is_required_and_has_no_literal_default(
         pvl.probe_pvl(_args(symbol=""))
 
 
+def test_asset_stock_is_refused_rather_than_silently_ignored(
+    futures_env: None, wire: Any
+) -> None:
+    """``--asset`` is a COMMON flag, so ``--asset stock`` parses fine.
+
+    Every TR in this probe is 선물옵션 and the credentials resolve as futures
+    unconditionally. Honouring the futures account under a stock flag would put
+    a wrong ``args.asset`` in the artifact beside futures measurements.
+    """
+    session = wire(_FakeSession(_price_body(), _green_psbl()))
+
+    with pytest.raises(ProbeError, match="not available for P-VL"):
+        pvl.probe_pvl(_args(asset="stock"))
+
+    assert session.calls == []
+
+
 def test_a_negative_pace_is_refused(futures_env: None, wire: Any) -> None:
     wire(_FakeSession(_price_body(), _green_psbl()))
 
