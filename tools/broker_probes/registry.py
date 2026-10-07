@@ -1,13 +1,13 @@
 """Machine-readable probe register — the single source for the runbook table.
 
-Sources of the probe set (12 + 4 = 16 ratified, plus 4 follow-ups):
+Sources of the probe set (12 + 4 = 16 ratified, plus 7 follow-ups):
 
 * **12 canonical** — ``docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md``
   §5 "측정 프로시저 제안" table (:225-238): P-1, P-2, P-5, P-5b, P-8, P-11,
   P-13, P-14, P-15, P-16, P-EXT, P-FQP.
 * **4 census additions** — ``docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md``
   §1 T2 (:34-38): N-15, N-16, N-17, N-18.
-* **6 follow-ups**, all deliberately **outside** the ratified 16 — each one's
+* **7 follow-ups**, all deliberately **outside** the ratified 16 — each one's
   ``source`` starts with neither "draft" nor "plan", so the canonical/census
   counts in :func:`coverage_report` stay exactly as ratified:
 
@@ -21,6 +21,10 @@ Sources of the probe set (12 + 4 = 16 ratified, plus 4 follow-ups):
     ``B_non_trade_reconcile`` ``ADJACENT_BOUND_KEYS``. Both ``supported=False``
     (see ``skip_reason``); N-19 is a documentary cross-check (``ENV_NONE``),
     P-CA is an opportunistic GET-only observation gated on N-19.
+  * P-VL — ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
+    v2 (PR #879 head ``de3c7e98``) §4, the corroboration leg of CP-3 decision 9.
+    GET-only on 모의투자; the 호가수량한도 it is about comes from the KRX
+    rulebook, not from the probe.
 
 ``bounds_keys`` cite ``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``
 key names verified by direct read (line numbers in :data:`BOUND_KEYS`).
@@ -985,7 +989,10 @@ PROBES: dict[str, ProbeSpec] = {
         # Same polarity as P-16: a read-only MOCK query probe is LOW risk, and
         # --confirm still gates broker contact (prerequisites below).
         risk="LOW",
-        duration="~10 s (GET 5 + 토큰 1, 1.1 s 페이싱)",
+        # GET 4: 시세 1 + 주문가능 3. L2 is offline and sends none — the
+        # number is derived in the module as GET_CALL_COUNT and a test pins
+        # this string against it.
+        duration="~10 s (GET 4 + 토큰 1, 1.1 s 페이싱)",
         emits_orders=False,
         requires_confirm=True,
         supported=True,

@@ -437,9 +437,10 @@ def assert_real_order_confirmation(args: argparse.Namespace) -> None:
 
 # ``_decimal_field`` and ``_corroborate_tick`` used to live here. They were pure
 # already, and a GET-only probe needs them — but reaching them meant importing
-# THIS module, the only order-emitting one in the harness, which also imports
-# ``probes_order`` at module level. One import would have put both order paths
-# into a read-only module's graph, which the canaries at
+# THIS module, the only one here that can place a REAL-money order, which also
+# imports ``probes_order`` (itself order-emitting on 모의) at module level —
+# so one import would have put BOTH order paths into a read-only module's
+# graph, which the canaries at
 # ``test_broker_probes_real_order.py::test_get_only_real_module_does_not_import_the_real_order_module``
 # and ``test_broker_probes_ca.py::test_module_does_not_import_order_capable_modules``
 # exist to forbid. They now live in the stdlib-only ``_tick_math`` and are

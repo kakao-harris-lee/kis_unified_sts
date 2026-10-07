@@ -24,13 +24,18 @@ What it closes (design §4.1):
 
 What it CANNOT close — stated first, design §4.3:
 
-* **KIS 측 호가수량한도.** ``VTTO5105R``'s ``ord_psbl_qty`` is derived from
-  예수금/증거금, not from the venue's structural limit (P-R5-PRE 2026-08-03: a
-  zero-deposit account reports 0). The 호가수량한도 of 별표 17의2 and any lower
-  member limit KIS sets under 시행세칙 제61조제3항 are visible only by SENDING an
-  order and reading the rejection. That is outside this probe's GET-only scope
-  (design §7 ④ keeps it as a separate P-VL-2 option). The rulebook rows are
-  recorded as CONTEXT in :data:`KRX_QUANTITY_LIMIT_BY_PREFIX` and decide nothing.
+* **KIS 측 호가수량한도.** ``VTTO5105R``'s ``ord_psbl_qty`` is 주문가능수량 per
+  the official spec: a function of 예수금·증거금 **and of that leg's own price,
+  side and order-type parameters** (``probes_real_order.py:1651-1658`` — "a 0 …
+  could be about the parameters and not the account"). ⚠ **No ``ord_psbl_qty``
+  observation exists in this repo yet**: P-R5-PRE's 2026-08-03 run aborted on the
+  deposit leg (``CTRP6550R`` ``ord_psbl_cash``/``ord_psbl_tota`` = 0) **before**
+  that leg ran (``P-R5-PRE-20260803T002732Z.json``), so nothing here may cite it
+  for what a zero 주문가능수량 means. The structural cap of 별표 17의2 and any
+  lower member limit under 시행세칙 제61조제3항 are visible only by SENDING an
+  order and reading the rejection — outside this probe's GET-only scope (design
+  v2 §4.3 / §7 ④ keep it as a separate P-VL-2 option). The rulebook rows are
+  recorded as CONTEXT in :data:`KRX_PREFIX_TABLE` and decide nothing.
 * **2/3단계 확대 의미론.** Escalation depends on a 기준종목 touching its own
   limit; a probe cannot cause it. Observed or not observed, never induced.
 * **The runtime supply of a band.** This probe observes values; wiring a band
@@ -56,8 +61,10 @@ structural rather than documentary:
 ``probes_real_order`` are both absent from its graph, which
 ``tests/tools/test_broker_probes_pvl.py::test_module_does_not_import_order_capable_modules``
 asserts against this file's AST — the same canary
-``tests/tools/test_broker_probes_ca.py`` carries. The two pure helpers this
-probe reuses were relocated to the stdlib-only
+``tests/tools/test_broker_probes_ca.py`` carries. Both are order-capable:
+``probes_order`` POSTs 모의 orders for the seven ``emits_orders=True`` specs, and
+``probes_real_order`` is the only module here that can place a **REAL-money**
+order. The two pure helpers this probe reuses were relocated to the stdlib-only
 :mod:`tools.broker_probes._tick_math` for exactly that reason; importing them
 from ``probes_real_order`` would have pulled both order paths in, because that
 module imports ``probes_order`` at module level.
@@ -192,38 +199,37 @@ _PAPER_VENUE_POLICY = (
 #: declared convention, cited rather than assumed.
 _POLICY_PRICE_SCALE = Decimal(100)
 
-#: Accepted ``--symbol`` families, by prefix. ``A05`` is 미니코스피200선물거래 and
-#: is what the resident paper session runs; ``101``/``A01`` are
-#: 코스피200선물거래 (continuous-backtest and live front-month codes
-#: respectively, both registered on ``kospi200_full`` in
-#: ``config/execution.yaml``). Any other prefix is refused: this probe's TRs and
-#: its 별표 rows are specific to KOSPI200 index futures.
-_MINI_PREFIXES: tuple[str, ...] = ("A05",)
-_FULL_PREFIXES: tuple[str, ...] = ("101", "A01")
-
-# ---------------------------------------------------------------------------
-# Rule constants — KRX 파생상품시장 업무규정 시행세칙 제164차 (2026-07-06 시행)
-# ---------------------------------------------------------------------------
-
 #: Committed parsed-text evidence for every rule value below (design v2 §2.3).
 #: The HWP binaries are not committed; the README in this directory carries the
 #: 판·bookid·sha256 binding and the 법무포털 reproduction recipe. Line references
-#: in the constants point into these files, so a reviewer re-derives a number
+#: in the table point into these files, so a reviewer re-derives a number
 #: without trusting this module's prose.
 _EVIDENCE_DIR = "docs/broker-profiles/evidence/2026-10-08-krx-venue-limits/"
 
-#: 호가수량한도 (1 호가당 최대 계약 수) per product — 업무규정 제71조 → 시행세칙
-#: 제61조제1항 → **별표 17의2 제1호** (별표 최종개정 2025-05-29). CONTEXT ONLY:
-#: no leg passes or fails on these numbers, and the probe cannot observe them
-#: (see this module's docstring). They are recorded so the artifact names WHICH
-#: row governs ``--symbol`` instead of leaving a reader to assume the 2,000 of
-#: the full-size contract applies to a mini leaf.
+#: The ONE table keyed by ``--symbol`` prefix. Every per-product fact lives here
+#: — the registry product name, the 별표 17의2 row, and the 호가가격단위's 호 —
+#: because the review found the previous shape (three dicts side by side) could
+#: drift silently: move ``A05`` off ``kospi200_mini`` in ``config/execution.yaml``
+#: and the artifact would carry the mini 10,000 row beside a 0.05 tick with
+#: nothing complaining. ``registry_product`` is cross-checked against the spec
+#: ``resolve_contract_spec`` returns, and a mismatch REFUSES
+#: (:func:`resolve_instrument`).
 #:
-#: Two 단서 travel with every value (design §2.2): 회원(증권사) may set a LOWER
-#: limit under 시행세칙 제61조제3항, and 거래소 may change these for market
-#: management (제61조제1항 단서). 누적호가수량한도 (제61조제2항) is a DIFFERENT
-#: limit applying only to 회원 자기거래계좌·사후위탁증거금계좌, never to a
-#: 위탁계좌 like paper/모의 — it is deliberately absent here.
+#: ``A05`` is 미니코스피200선물거래 and is what the resident paper session runs;
+#: ``101``/``A01`` are 코스피200선물거래 (continuous-backtest and live
+#: front-month codes, both registered on ``kospi200_full``). Any other prefix is
+#: refused: this probe's TRs and its 별표 rows are specific to KOSPI200 index
+#: futures.
+#:
+#: **Quantity rows are CONTEXT ONLY.** No leg passes or fails on them and this
+#: probe cannot observe them (see the module docstring). They are recorded so the
+#: artifact names WHICH 별표 17의2 row governs ``--symbol`` instead of leaving a
+#: reader to assume the full-size contract's number applies to a mini leaf.
+#: Values are the 공표 규정값, with the two 단서 of design v2 §2.2 attached: 회원
+#: may set a LOWER limit (시행세칙 제61조제3항) and 거래소 may change them
+#: (제61조제1항 단서). 누적호가수량한도 (제61조제2항) is a DIFFERENT limit applying
+#: only to 회원 자기거래계좌·사후위탁증거금계좌, never to a 위탁계좌 like
+#: paper/모의 — deliberately absent.
 _QUANTITY_LIMIT_CAVEATS = (
     "회원은 시행세칙 제61조제3항으로 더 낮게 정할 수 있고, 거래소는 제61조제1항 "
     "단서로 변경할 수 있다. 공표 규정값이지 불변식이 아니다. 누적호가수량한도"
@@ -234,56 +240,56 @@ _QUANTITY_LIMIT_CHAIN = (
     "(별표 최종개정 2025-05-29)"
 )
 
-KRX_QUANTITY_LIMIT_BY_PREFIX: dict[str, dict[str, Any]] = {
-    **{
-        prefix: {
-            "product": "미니코스피200선물거래",
-            "regular_session_contracts": 10000,
-            "night_session_contracts": 5000,
-            # 별표 17의2 제1호 의 괄호 값 — 해당 상품이 유동성관리상품으로
-            # 지정된 경우에만 적용된다. 지정 여부는 이 프로브가 관측하지 않는다.
-            "liquidity_managed_regular_contracts": 1000,
-            "liquidity_managed_night_contracts": 500,
-            "source": _QUANTITY_LIMIT_CHAIN,
-            "evidence": (
-                f"{_EVIDENCE_DIR}byeolpyo17-2_order_quantity_limits.txt:41-45 "
-                "(미니코스피200선물거래 행) · 괄호 의미 비고 :118"
-            ),
-            "caveats": _QUANTITY_LIMIT_CAVEATS,
-        }
-        for prefix in _MINI_PREFIXES
+KRX_PREFIX_TABLE: dict[str, dict[str, Any]] = {
+    "A05": {
+        "registry_product": "kospi200_mini",
+        "product": "미니코스피200선물거래",
+        "regular_session_contracts": 10000,
+        "night_session_contracts": 5000,
+        # 별표 17의2 제1호 의 괄호 값 — 해당 상품이 유동성관리상품으로 지정된
+        # 경우에만 적용된다. 지정 여부는 이 프로브가 관측하지 않는다.
+        "liquidity_managed_regular_contracts": 1000,
+        "liquidity_managed_night_contracts": 500,
+        "source": _QUANTITY_LIMIT_CHAIN,
+        "evidence": (
+            f"{_EVIDENCE_DIR}byeolpyo17-2_order_quantity_limits.txt:41-45 "
+            "(미니코스피200선물거래 행) · 괄호 의미 비고 :118"
+        ),
+        "caveats": _QUANTITY_LIMIT_CAVEATS,
+        "tick_article": "시행세칙 제4조의9제2호 (미니 0.02 포인트, 최종개정 2024-11-01)",
     },
-    **{
-        prefix: {
-            "product": "코스피200선물거래",
-            "regular_session_contracts": 2000,
-            "night_session_contracts": 1000,
-            "liquidity_managed_regular_contracts": 200,
-            "liquidity_managed_night_contracts": 100,
-            "source": _QUANTITY_LIMIT_CHAIN,
-            "evidence": (
-                f"{_EVIDENCE_DIR}byeolpyo17-2_order_quantity_limits.txt:29-33 "
-                "(코스피200선물거래 행) · 괄호 의미 비고 :118"
-            ),
-            "caveats": _QUANTITY_LIMIT_CAVEATS,
-        }
-        for prefix in _FULL_PREFIXES
+    "101": {
+        "registry_product": "kospi200_full",
+        "product": "코스피200선물거래",
+        "regular_session_contracts": 2000,
+        "night_session_contracts": 1000,
+        "liquidity_managed_regular_contracts": 200,
+        "liquidity_managed_night_contracts": 100,
+        "source": _QUANTITY_LIMIT_CHAIN,
+        "evidence": (
+            f"{_EVIDENCE_DIR}byeolpyo17-2_order_quantity_limits.txt:29-33 "
+            "(코스피200선물거래 행) · 괄호 의미 비고 :118"
+        ),
+        "caveats": _QUANTITY_LIMIT_CAVEATS,
+        "tick_article": "시행세칙 제4조의9제1호 (전체 0.05 포인트, 최종개정 2024-11-01)",
     },
 }
+#: ``A01`` is the live front-month code for the SAME product as ``101``
+#: (``config/execution.yaml`` registers both on ``kospi200_full``), so it shares
+#: the row rather than restating it.
+KRX_PREFIX_TABLE["A01"] = KRX_PREFIX_TABLE["101"]
 
-#: 호가가격단위's article, per product — 시행세칙 제4조의9: 제1호 is the full
-#: contract's 0.05, 제2호 the mini's 0.02 (design v2 §2.1). Recorded so the
-#: artifact cites the 호 that actually governs ``--symbol`` rather than the one
-#: a reader might assume. The VALUE still comes from the repo registry, never
-#: from this table — these are citations, not a second source of truth.
-_TICK_ARTICLE_BY_PREFIX: dict[str, str] = {
-    **dict.fromkeys(
-        _MINI_PREFIXES, "시행세칙 제4조의9제2호 (미니 0.02 포인트, 최종개정 2024-11-01)"
-    ),
-    **dict.fromkeys(
-        _FULL_PREFIXES, "시행세칙 제4조의9제1호 (전체 0.05 포인트, 최종개정 2024-11-01)"
-    ),
-}
+#: Accepted ``--symbol`` prefixes, derived from the table so the two can never
+#: disagree about which families exist.
+ACCEPTED_PREFIXES: tuple[str, ...] = tuple(KRX_PREFIX_TABLE)
+
+#: Prefixes whose product is the mini — derived, so 제55조제1항 단서's scope and
+#: the 별표 row cannot disagree about which leaves are mini.
+_MINI_PREFIX_SET: frozenset[str] = frozenset(
+    prefix
+    for prefix, row in KRX_PREFIX_TABLE.items()
+    if row["registry_product"] == "kospi200_mini"
+)
 
 #: 가격제한비율, 주가지수선물거래 — 업무규정 제70조 → 시행세칙 제56조·제56조의2 →
 #: **별표 14 제1호** (별표 최종개정 2025-05-29): 1단계 8% · 2단계 15% · 3단계 20%.
@@ -308,21 +314,60 @@ _RULE_BAND_ROUNDING = (
 #: close. 제55조제4항 then adjusts it to the NEAREST 호가가격단위 (the higher one
 #: on a tie), which is why a 기준가격 that is itself off-grid would already be a
 #: finding rather than an input (design v2 §2.1).
+#:
+#: ⚠ 제55조제1항 **단서**: for a 분기월 mini contract the 기준가격 is the
+#: 코스피200선물's, not its own previous settlement. So on a Mar/Jun/Sep/Dec mini
+#: leaf, ``futs_sdpr != futs_prdy_clpr`` does NOT distinguish "settlement vs
+#: close" — the two could differ because the basis came from another product.
+#: :func:`_leg_l1` records that qualification instead of claiming the stronger
+#: reading.
 _RULE_BASIS_PRICE = (
     "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); "
-    "제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정"
+    "제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; "
+    "제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격"
 )
 
-#: 단계 확대가 불가능한 창 — 시행세칙 제56조의2제2항 (최종개정 2026-06-11):
-#: 야간거래와 08:45~09:00 은 1단계만. A sample taken inside it has a DETERMINED
-#: expected band; a sample outside it does not.
+#: Quarterly contract months, where 제55조제1항 단서 applies to a mini leaf.
+_QUARTERLY_MONTHS: frozenset[int] = frozenset({3, 6, 9, 12})
+
+#: 단계 확대가 불가능한 창 — 시행세칙 제56조의2제2항: 야간거래와 08:45~09:00 은
+#: 1단계만. A sample taken inside it has a DETERMINED expected band; a sample
+#: outside it does not. These are REGULATION literals (the 세칙 names the two
+#: clock times), not a schedule, so they stay here rather than in YAML.
 _NO_ESCALATION_START = clock_time(8, 45)
 _NO_ESCALATION_END = clock_time(9, 0)
+#: 제56조의2 의 개정일은 **둘**이다: 제2항 본문 2025-05-29, 제2항제1호가목
+#: 2026-06-11 (design v2 §2.1). 하나만 적으면 다른 절의 날짜를 이 절에 붙이게 된다.
+_NO_ESCALATION_SOURCE = (
+    "시행세칙 제56조의2제2항 (본문 최종개정 2025-05-29 · 제2항제1호가목 2026-06-11)"
+)
 
-#: CONTINUOUS 세션 — the one phase ``config/tos_runtime/paper/calendar.yaml:56``
-#: declares for ``krx-index-futures`` (08:45-15:45 KST).
-_SESSION_START = clock_time(8, 45)
-_SESSION_END = clock_time(15, 45)
+#: CONTINUOUS 세션 — READ from the calendar, never a literal. CLAUDE.md puts
+#: schedules in YAML, and the artifact cited ``calendar.yaml`` while the module
+#: carried its own copy of the times. ``_session_window()`` reads the one phase
+#: that file declares for ``krx-index-futures``.
+_CALENDAR_CONFIG = _REPO_ROOT / "config" / "tos_runtime" / "paper" / "calendar.yaml"
+_SESSION_INSTRUMENT_CLASS = "krx-index-futures"
+_SESSION_PHASE = "CONTINUOUS"
+
+#: The 주문가능 legs, in call order. :data:`GET_CALL_COUNT` is derived from this
+#: rather than written down twice: the review found "5 read-only GETs" in
+#: ``would_send`` beside a test asserting a 4-element call list, because L2 sends
+#: nothing and the prose had counted it.
+_PSBL_LEG_IDS: tuple[str, ...] = ("L3", "L4", "L5")
+
+#: Quote calls per run — one 시세 call feeds every later leg.
+_QUOTE_CALL_COUNT = 1
+
+#: Total GETs one ``--confirm`` run issues. L2 is offline and adds none.
+GET_CALL_COUNT = _QUOTE_CALL_COUNT + len(_PSBL_LEG_IDS)
+
+#: Common CLI args this probe parses and never reads. ``add_common_args`` is
+#: shared, so they cannot simply be dropped; naming them keeps a reader from
+#: mistaking an inert default for a setting that was honoured.
+_INERT_COMMON_ARGS: frozenset[str] = frozenset(
+    {"quantity", "price_offset_pct", "samples", "margin_pct"}
+)
 
 #: The five L1 fields, in the order design §4.1 lists them. Every one must be a
 #: positive number and an exact multiple of the registered tick.
@@ -339,6 +384,33 @@ _L1_PRICE_FIELDS: tuple[str, ...] = (
 VERDICT_PASS = "PASS"
 VERDICT_FAIL = "FAIL"
 VERDICT_RECORDED = "OBSERVATION_ONLY_NO_VERDICT"
+
+#: L1 abort codes, recorded verbatim in ``errors`` so the artifact names which
+#: guard stopped the run.
+ABORT_L1_REFUSED = "ABORT_L1_QUOTE_REFUSED"
+ABORT_L1_FIELD_UNUSABLE = "ABORT_L1_PRICE_FIELD_UNUSABLE"
+ABORT_L1_TICK_CONTRADICTED = "ABORT_L1_TICK_CONTRADICTED_BY_BROKER_QUOTES"
+
+
+class VenueLimitAbort(ProbeError):
+    """A guard stopped the run AFTER the network answered. The abort IS a result.
+
+    Distinct from a plain :class:`~tools.broker_probes.common.ProbeError`, which
+    ``run.py`` turns into exit 4 with **no artifact** — correct for a
+    precondition that failed before any contact, wrong for L1, whose three
+    guards fire on a response the probe has already paid a call for. In the
+    08:50±3분 window a single ``rt_cd≠0`` (what P-CA hit four times on 09-30)
+    would otherwise leave zero evidence that the probe ran at all.
+
+    Same polarity as ``probes_real_order.RealOrderAbort`` (":348-356" — "the
+    abort IS the result, so it gets an artifact"). :func:`probe_pvl` catches it,
+    records it through ``run.error``, marks L1 FAIL and RETURNS the run, so
+    ``run.py`` writes the artifact on the normal path.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -459,24 +531,74 @@ def band_stage_matches(
     }
 
 
+def _session_window() -> tuple[clock_time, clock_time, str]:
+    """The CONTINUOUS window for ``krx-index-futures``, READ from the calendar.
+
+    The artifact used to cite ``calendar.yaml`` beside two literals this module
+    carried. CLAUDE.md puts schedules in YAML, so the times come from the file
+    the citation names and a drift between them is impossible rather than
+    unnoticed.
+
+    Raises:
+        ProbeError: the calendar declares no such phase for that instrument
+            class. Fail-closed: a missing window would otherwise read as "the
+            sample was outside the session", which is a different claim.
+    """
+    import yaml
+
+    try:
+        raw = yaml.safe_load(_CALENDAR_CONFIG.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ProbeError(f"cannot read {_CALENDAR_CONFIG}: {exc}") from exc
+    sessions = ((raw or {}).get("sessions") or {}).get(_SESSION_INSTRUMENT_CLASS)
+    for entry in sessions or []:
+        if isinstance(entry, dict) and entry.get("phase") == _SESSION_PHASE:
+            start = str(entry.get("start", ""))
+            end = str(entry.get("end", ""))
+            try:
+                hh1, mm1 = (int(part) for part in start.split(":"))
+                hh2, mm2 = (int(part) for part in end.split(":"))
+            except ValueError as exc:
+                raise ProbeError(
+                    f"{_CALENDAR_CONFIG} {_SESSION_INSTRUMENT_CLASS} "
+                    f"{_SESSION_PHASE} has unparsable start/end "
+                    f"{start!r}/{end!r}: {exc}"
+                ) from exc
+            return (
+                clock_time(hh1, mm1),
+                clock_time(hh2, mm2),
+                f"{_CALENDAR_CONFIG.name}::sessions.{_SESSION_INSTRUMENT_CLASS} "
+                f"{_SESSION_PHASE} {start}-{end}",
+            )
+    raise ProbeError(
+        f"{_CALENDAR_CONFIG} declares no {_SESSION_PHASE} phase for "
+        f"{_SESSION_INSTRUMENT_CLASS}; the sample window cannot be stated."
+    )
+
+
 def kst_sample_window(now: datetime) -> dict[str, Any]:
     """The KST wall clock of a sample and which rule windows contain it."""
     local = now.astimezone(KST)
     hhmm = local.time()
     inside_no_escalation = _NO_ESCALATION_START <= hhmm < _NO_ESCALATION_END
+    session_start, session_end, session_source = _session_window()
     return {
         "sampled_at_kst": local.isoformat(),
         "inside_no_escalation_window": inside_no_escalation,
-        "no_escalation_window_kst": "08:45-09:00",
-        "no_escalation_source": "시행세칙 제56조의2제2항 (최종개정 2026-06-11)",
-        "inside_continuous_session": _SESSION_START <= hhmm < _SESSION_END,
-        "continuous_session_kst": "08:45-15:45",
-        "continuous_session_source": "config/tos_runtime/paper/calendar.yaml:56",
+        "no_escalation_window_kst": (
+            f"{_NO_ESCALATION_START:%H:%M}-{_NO_ESCALATION_END:%H:%M}"
+        ),
+        "no_escalation_source": _NO_ESCALATION_SOURCE,
+        "inside_continuous_session": session_start <= hhmm < session_end,
+        "continuous_session_kst": f"{session_start:%H:%M}-{session_end:%H:%M}",
+        "continuous_session_source": session_source,
         "expected_stage_is_determined": inside_no_escalation,
         "why": (
-            "Inside 08:45-09:00 only stage 1 can be in force, so L2's expected "
-            "band is determined. Outside it, a 2/3단계 band is admissible and a "
-            "mismatch against the 8% arithmetic is not by itself a defect."
+            "Inside the no-escalation window only stage 1 can be in force, so "
+            "L2's expected band is DETERMINED and a mismatch is a FAIL. Outside "
+            "it, a 2/3단계 band is admissible, so a mismatch is recorded with "
+            "the stage that matched and carries no verdict (design v2 §4.2: "
+            "「그날의 확대 사실을 기록만」)."
         ),
     }
 
@@ -486,6 +608,39 @@ def kst_sample_window(now: datetime) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _is_quarterly_mini(symbol: str) -> bool:
+    """Is ``symbol`` a 분기월 mini leaf, where 제55조제1항 단서 applies?
+
+    KIS futures codes carry the contract month in the 5th character (``A05610``
+    → month ``1``, ``A05612`` → December via ``C``). Rather than decode that
+    encoding — which this repo has no committed reference for — the check is
+    deliberately CONSERVATIVE: anything that cannot be read as a non-quarterly
+    month counts as quarterly, so the caveat is attached when in doubt and the
+    stronger reading is never claimed by accident.
+    """
+    if _symbol_prefix(symbol) not in _MINI_PREFIX_SET:
+        return False
+    month = _contract_month(symbol)
+    return month is None or month in _QUARTERLY_MONTHS
+
+
+def _contract_month(symbol: str) -> int | None:
+    """The contract month in a KIS futures code, or ``None`` if unreadable.
+
+    The codes this probe accepts are ``<prefix><year digit><2-digit month>``:
+    ``A05610`` is the October 2026 mini leaf (the resident one), ``A05603`` is
+    March, and ``A01609`` is the September full-size contract that
+    ``tests/tools/test_broker_probes_tick.py`` already uses. ``None`` means "do
+    not claim to know", which :func:`_is_quarterly_mini` treats as quarterly so
+    the stronger basis-price reading is never claimed by accident.
+    """
+    tail = symbol[len(_symbol_prefix(symbol)) :]
+    if len(tail) < 3 or not tail[:3].isdigit():
+        return None
+    month = int(tail[1:3])
+    return month if 1 <= month <= 12 else None
+
+
 def _symbol_prefix(symbol: str) -> str:
     """The accepted KOSPI200-futures prefix ``symbol`` starts with, or refuse.
 
@@ -493,15 +648,27 @@ def _symbol_prefix(symbol: str) -> str:
     rulebook rows are 주가지수선물거래 rows, so a symbol from any other product
     would be measured against the wrong 별표 row with no sign that it happened.
     """
-    for prefix in (*_MINI_PREFIXES, *_FULL_PREFIXES):
+    for prefix in ACCEPTED_PREFIXES:
         if symbol.startswith(prefix):
             return prefix
     raise ProbeError(
         f"--symbol {symbol!r} is not a KOSPI200 index-futures code. Accepted "
-        f"prefixes: {', '.join((*_MINI_PREFIXES, *_FULL_PREFIXES))} "
-        "(mini / full-size). This probe's TRs and its 별표 17의2 · 별표 14 rows "
-        "are specific to that product family."
+        f"prefixes: {', '.join(ACCEPTED_PREFIXES)} (mini / full-size). This "
+        "probe's TRs and its 별표 17의2 · 별표 14 rows are specific to that "
+        "product family."
     )
+
+
+def _repo_relative(path: Path) -> str:
+    """``path`` relative to the repo root when it is inside it, else as given.
+
+    The artifact should cite a repo path, but a test that points the loader at a
+    temporary file must not crash on ``relative_to``.
+    """
+    try:
+        return str(path.relative_to(_REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def _policy_tick_record() -> dict[str, Any]:
@@ -515,11 +682,21 @@ def _policy_tick_record() -> dict[str, Any]:
     """
     import yaml
 
-    raw = yaml.safe_load(_PAPER_VENUE_POLICY.read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(_PAPER_VENUE_POLICY.read_text(encoding="utf-8"))
+    except OSError as exc:
+        # A bare FileNotFoundError here would surface as an unhandled traceback
+        # and run.py's generic handler, naming neither the file nor why it is
+        # read. The comparison is the point, so say what is missing.
+        raise ProbeError(
+            f"cannot read the deployed paper venue policy {_PAPER_VENUE_POLICY}: "
+            f"{exc}. It is read only to record its tick_size beside the "
+            "registry's; pass a repo checkout that contains it."
+        ) from exc
     shape = ((raw or {}).get("_model_view") or {}).get("shape_constraints") or {}
     value = decimal_field(shape, "tick_size")
     return {
-        "policy_path": str(_PAPER_VENUE_POLICY.relative_to(_REPO_ROOT)),
+        "policy_path": _repo_relative(_PAPER_VENUE_POLICY),
         "tick_size_scaled_int": shape.get("tick_size"),
         "price_scale": str(_POLICY_PRICE_SCALE),
         "scale_source": (
@@ -566,6 +743,27 @@ def resolve_instrument(symbol: str) -> tuple[VenueTick, dict[str, Any]]:
             f"{exc}. Register the prefix rather than hardcoding a tick."
         ) from exc
 
+    row = KRX_PREFIX_TABLE[prefix]
+    # The cross-check finding 8 asked for. The 별표 row and the tick come from
+    # two different files (this table and config/execution.yaml), and before this
+    # guard a symbol_prefix edit could pair the mini 10,000 row with the
+    # full-size 0.05 tick in one artifact, silently. Refuse instead: a product
+    # disagreement means one of the two tables is wrong and the probe cannot tell
+    # which.
+    registered_prefixes = tuple(
+        part.strip() for part in str(spec.symbol_prefix).split(",") if part.strip()
+    )
+    if row["registry_product"] != spec.name or prefix not in registered_prefixes:
+        raise ProbeError(
+            f"--symbol {symbol} matched prefix {prefix!r}, which this module's "
+            f"별표 table binds to product {row['registry_product']!r} "
+            f"({row['product']}), but config/execution.yaml resolved it to "
+            f"{spec.name!r} with symbol_prefix {spec.symbol_prefix!r}. The 별표 "
+            "17의2 row and the 호가가격단위 would describe different products in "
+            "one artifact. Reconcile KRX_PREFIX_TABLE with "
+            "config/execution.yaml::futures_contract_spec before measuring."
+        )
+
     size = Decimal(str(spec.tick_size_points))
     if size <= 0:
         raise ProbeError(
@@ -587,7 +785,7 @@ def resolve_instrument(symbol: str) -> tuple[VenueTick, dict[str, Any]]:
         "registry_tick_points": str(size),
         "registry_tick_source": source,
         "paper_policy_tick": policy,
-        "registry_tick_rule_article": _TICK_ARTICLE_BY_PREFIX[prefix],
+        "registry_tick_rule_article": row["tick_article"],
         "tick_registry_matches_policy": (
             policy_points is not None and Decimal(policy_points) == size
         ),
@@ -606,7 +804,9 @@ def resolve_instrument(symbol: str) -> tuple[VenueTick, dict[str, Any]]:
             "policy tick. Recorded so the drift is not read as cosmetic; the "
             "disposition is an operator item on the §6 wave, not this probe's."
         ),
-        "krx_quantity_limit_row": KRX_QUANTITY_LIMIT_BY_PREFIX[prefix],
+        "krx_quantity_limit_row": {
+            key: value for key, value in row.items() if key != "tick_article"
+        },
         "krx_quantity_limit_is_context_only": (
             "This row is CONTEXT. No leg passes or fails on it and this probe "
             "cannot observe it — ord_psbl_qty is 예수금-derived. It is recorded so "
@@ -815,11 +1015,12 @@ def _leg_l1(
     run.measure("l1_sample_window", window)
 
     if rt_cd != "0":
-        raise ProbeError(
+        raise VenueLimitAbort(
+            ABORT_L1_REFUSED,
             f"L1 {_PRICE_TR} answered rt_cd={rt_cd!r} "
             f"msg_cd={parsed.get('msg_cd')!r} msg1={parsed.get('msg1')!r}. Every "
             "later leg reads its prices from this response, so there is nothing "
-            "to measure — the refusal is the whole observation."
+            "to measure — the refusal is the whole observation.",
         )
 
     prices: dict[str, Decimal] = {}
@@ -840,6 +1041,9 @@ def _leg_l1(
             ),
             "values": {field: str(value) for field, value in prices.items()},
             "unusable": unusable,
+            # Design §4.1 lists the ``Date`` header among L1's measurements, so
+            # it belongs here and not only in the observation stream.
+            "broker_date_header": headers.get("Date", ""),
             "field_meanings": {
                 "futs_prpr": "현재가",
                 "futs_prdy_clpr": "전일종가",
@@ -850,23 +1054,37 @@ def _leg_l1(
         },
     )
     if unusable:
-        raise ProbeError(
+        raise VenueLimitAbort(
+            ABORT_L1_FIELD_UNUSABLE,
             f"L1 {_PRICE_TR} returned no usable value for {', '.join(unusable)}. "
             "Design §5 requires all five fields positive; a zero or absent field "
-            "is recorded, never substituted."
+            "is recorded, never substituted.",
         )
 
+    quarterly = _is_quarterly_mini(symbol)
     run.measure(
         "l1_basis_price_distinguishable",
         {
             "futs_sdpr": str(prices["futs_sdpr"]),
             "futs_prdy_clpr": str(prices["futs_prdy_clpr"]),
             "differ": prices["futs_sdpr"] != prices["futs_prdy_clpr"],
+            "distinguishes_settlement_from_close": (
+                prices["futs_sdpr"] != prices["futs_prdy_clpr"] and not quarterly
+            ),
+            "quarterly_mini_leaf": quarterly,
             "meaning": (
-                f"{_RULE_BASIS_PRICE}, not its close. When the two fields differ, "
-                "this sample distinguishes them. When they are equal, the sample "
-                "is simply uninformative on that question — equality is not "
-                "evidence that the rule is wrong."
+                f"{_RULE_BASIS_PRICE}. When the two fields differ, this sample "
+                "distinguishes 정산가 from 종가. When they are equal, the sample "
+                "is simply uninformative — equality is not evidence that the "
+                "rule is wrong."
+            ),
+            "quarterly_caveat": (
+                "⚠ On a 분기월 mini leaf (제55조제1항 단서) the 기준가격 is the "
+                "코스피200선물's, not this contract's own settlement price, so a "
+                "difference here may be about the OTHER product and does not "
+                "distinguish 정산가 from 종가. "
+                "distinguishes_settlement_from_close is False for that reason, "
+                "not because the fields matched."
             ),
         },
     )
@@ -874,24 +1092,35 @@ def _leg_l1(
     corroboration = corroborate_tick(output, tick, _L1_PRICE_FIELDS)
     run.measure("l1_tick_corroboration", corroboration)
     if not corroboration["corroborated"]:
-        raise ProbeError(
+        raise VenueLimitAbort(
+            ABORT_L1_TICK_CONTRADICTED,
             "L1 tick corroboration FAILED: the broker quoted "
             f"{corroboration['non_multiples']}, which are not multiples of the "
             f"registered tick {corroboration['tick_size_points']} "
             f"({tick.source}). The registry is CONTRADICTED; no band arithmetic "
-            "may be done against a tick the venue's own quotes deny."
+            "may be done against a tick the venue's own quotes deny.",
         )
     return prices
 
 
 def _leg_l2(
     run: ProbeRun, prices: dict[str, Decimal], tick: VenueTick, window: dict[str, Any]
-) -> bool:
+) -> str:
     """L2 — 제56조 arithmetic against the observed band. No network. Never raises.
 
-    Design §5: a mismatch is REPORTED with the alternative stages recomputed. It
-    is not an exception, because a 2/3단계 band outside the no-escalation window
-    is a legitimate market state, not a harness defect.
+    THREE-way, because the design takes two samples with different epistemic
+    standing (§4.2):
+
+    * inside the no-escalation window, stage 1 is the only admissible band, so a
+      mismatch is a genuine :data:`VERDICT_FAIL`;
+    * outside it, a 2/3단계 band is a legitimate market state. The old code
+      scored that ``FAIL`` while its own docstring called it legitimate — the
+      review's finding 5. It now returns :data:`VERDICT_RECORDED` with the stage
+      that matched, which is exactly what §4.2 asks for
+      (「그날의 확대 사실을 기록만」).
+
+    A mismatch is never an exception either way: the probe cannot choose the
+    escalation state it finds.
     """
     report = band_stage_matches(
         sdpr=prices["futs_sdpr"],
@@ -903,20 +1132,31 @@ def _leg_l2(
     report["declared_expectation"] = band_expectation(
         prices["futs_sdpr"], ratio=stage1_ratio, tick=tick.size
     )
-    passed = stage1 in report["matching_stages"]
-    report["declared_expectation_matches"] = passed
+    matched = stage1 in report["matching_stages"]
+    determined = bool(window["expected_stage_is_determined"])
+    if matched:
+        verdict = VERDICT_PASS
+    elif determined:
+        verdict = VERDICT_FAIL
+    else:
+        verdict = VERDICT_RECORDED
+    report["declared_expectation_matches"] = matched
+    report["expected_stage_is_determined"] = determined
+    report["verdict"] = verdict
     report["declared_expectation_note"] = (
         "The declared expectation is design §4.1 L2: 1단계 비율 8% at --symbol's "
-        "own 호가가격단위. It is the PASS criterion, and it is the DETERMINED "
-        "expectation only for a sample inside the no-escalation window."
+        "own 호가가격단위. It is the PASS criterion. It is only the DETERMINED "
+        "expectation inside the no-escalation window — outside it a 2/3단계 band "
+        "is admissible, so a mismatch is recorded without a verdict."
     )
     report["tick_provenance"] = tick.source
     run.measure("l2_band_rule_arithmetic", report)
 
-    if not passed:
+    if not matched:
         run.measure(
             "l2_mismatch_record",
             {
+                "verdict": verdict,
                 "recorded_not_interpreted": (
                     "The 1단계 8% arithmetic did not reproduce the observed band. "
                     "Stages that did are listed; if none did, 기준가격 may not be "
@@ -927,9 +1167,17 @@ def _leg_l2(
                 "matching_stages": report["matching_stages"],
                 "tick_points": str(tick.size),
                 "inside_no_escalation_window": window["inside_no_escalation_window"],
+                "why_this_verdict": (
+                    "FAIL — the sample is inside the no-escalation window, where "
+                    "stage 1 is the only admissible band."
+                    if determined
+                    else "No verdict — outside the no-escalation window a 2/3단계 "
+                    "band is a legitimate market state, so the matched stage is "
+                    "recorded as the day's escalation fact (design v2 §4.2)."
+                ),
             },
         )
-    return passed
+    return verdict
 
 
 def _leg_psbl(
@@ -966,13 +1214,62 @@ def _leg_psbl(
     run.observe(**record)
 
     if enforce_integral and record["answered"]:
+        # ``ord_psbl_qty`` is the number L3's verdict reads, so an unreadable or
+        # fractional one is fatal. ``tot_psbl_qty`` carries NO verdict in design
+        # §5, and raising on it used to abort the run before L4 and L5 ever ran —
+        # trading two observations for a field nothing judges. It is transcribed,
+        # and its unreadability is recorded rather than thrown.
         record["ord_psbl_qty_int"] = _integral_quantity(
             record["ord_psbl_qty"], "ord_psbl_qty"
         )
-        record["tot_psbl_qty_int"] = _integral_quantity(
-            record["tot_psbl_qty"], "tot_psbl_qty"
-        )
+        try:
+            record["tot_psbl_qty_int"] = _integral_quantity(
+                record["tot_psbl_qty"], "tot_psbl_qty"
+            )
+        except ProbeError as exc:
+            record["tot_psbl_qty_unreadable"] = str(exc)
     return record
+
+
+def disposition_token(verdicts: dict[str, str]) -> str:
+    """The P0-2 field's value, DERIVED from the leg verdicts. PURE.
+
+    Design v2 §5 rejects a one-word status by name and gives the profile's own
+    idiom: a self-describing compound token in the shape of
+    ``:4432 DAY_AND_NIGHT_TR_SURFACE_PRESENT__OTHER_COVERAGE_UNKNOWN``, with the
+    observed and unobserved axes written INTO the token. The previous
+    ``PARTIAL`` was the exact word the design refuses.
+
+    Derived, not chosen, so an L2 that did not pass cannot ship a token claiming
+    ``BAND_SEMANTICS_OBSERVED_ON_MOCK``:
+
+    * **band axis** — ``OBSERVED_ON_MOCK`` only when L1 and L2 both PASS;
+      ``L2_STAGE_RECORDED_ONLY`` when L2 carries no verdict (outside the
+      no-escalation window); ``CONTRADICTED_ON_MOCK`` on an L2 FAIL;
+      ``NOT_OBSERVED`` when L1 never produced prices.
+    * **tick axis** — ``FROM_REGULATION_NOT_BROKER`` only when L1 PASSed, i.e.
+      the corroboration actually ran against broker quotes. The value is still a
+      repo/regulation value and the broker never published it, which is why the
+      token says so and the profile's ``:2426-2430`` note stays intact.
+    * **quantity axis** — always ``RULE_VALUE_BROKER_UNCONFIRMED``: this probe
+      cannot observe a venue cap at all (module docstring, design v2 §4.3).
+    """
+    l1 = verdicts.get("L1")
+    l2 = verdicts.get("L2")
+    if l1 != VERDICT_PASS:
+        band = "BAND_SEMANTICS_NOT_OBSERVED"
+    elif l2 == VERDICT_PASS:
+        band = "BAND_SEMANTICS_OBSERVED_ON_MOCK"
+    elif l2 == VERDICT_RECORDED:
+        band = "BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY"
+    else:
+        band = "BAND_SEMANTICS_CONTRADICTED_ON_MOCK"
+    tick = (
+        "TICK_FROM_REGULATION_NOT_BROKER"
+        if l1 == VERDICT_PASS
+        else "TICK_UNCORROBORATED"
+    )
+    return f"{band}__{tick}__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED"
 
 
 # ---------------------------------------------------------------------------
@@ -1034,6 +1331,30 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         allowlist=[{"tr_id": e.tr_id, "path": e.path} for e in ALLOWLIST],
     )
     run.measure(
+        "inert_common_args",
+        {
+            "ignored": sorted(_INERT_COMMON_ARGS),
+            "why": (
+                "add_common_args gives every probe the same CLI, so these parse "
+                "and land in args but this probe never reads them: it issues a "
+                "fixed GET plan, places nothing, and proposes no numeric bound. "
+                "Named here because an artifact carrying '--samples 30' beside 4 "
+                "calls reads like a discarded setting rather than an unused flag."
+            ),
+        },
+    )
+    run.measure(
+        "verdict_and_error_relation",
+        (
+            "Every FAIL verdict is ALSO recorded through run.error, so "
+            "errors == [] means no leg failed and provenance_class MEASURED is "
+            "earned. The runbook treats an empty errors list as a complete run "
+            "(§5.5), and a probe that scored a FAIL while shipping errors: [] "
+            "would have made that reading false. L4/L5 carry no verdict and "
+            "therefore never produce an error."
+        ),
+    )
+    run.measure(
         "structural_controls",
         [
             "assert_read_only_call: GET + TR id + path, checked before the "
@@ -1049,12 +1370,24 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         "cannot_establish",
         {
             "kis_quantity_limit": (
-                "ord_psbl_qty is derived from 예수금/증거금, not from the venue "
-                "limit (P-R5-PRE 2026-08-03: zero-deposit account reports 0). The "
-                "호가수량한도 of 별표 17의2 and any lower member limit under "
-                "시행세칙 제61조제3항 are observable only by sending an order — "
-                "outside this probe's GET-only scope. The rulebook row for "
-                "--symbol is recorded as CONTEXT and decides nothing."
+                "ord_psbl_qty is 주문가능수량 per the official spec: a function "
+                "of 예수금·증거금 AND of this leg's own price, side and "
+                "order-type parameters (probes_real_order.py:1651-1658 — 'a 0 … "
+                "could be about the parameters and not the account'). It is not "
+                "the venue's structural limit. The 호가수량한도 of 별표 17의2 and "
+                "any lower member limit under 시행세칙 제61조제3항 are observable "
+                "only by sending an order and reading the rejection — outside "
+                "this probe's GET-only scope. The rulebook row for --symbol is "
+                "recorded as CONTEXT and decides nothing."
+            ),
+            "no_prior_ord_psbl_qty_observation": (
+                "This repo holds NO ord_psbl_qty observation yet. P-R5-PRE's "
+                "2026-08-03 run aborted on the deposit leg (CTRP6550R "
+                "ord_psbl_cash/ord_psbl_tota = 0) BEFORE the 주문가능 leg ran "
+                "(P-R5-PRE-20260803T002732Z.json), so no artifact here supports "
+                "any claim about what a zero 주문가능수량 means. Design v2 §4.3 "
+                "says this explicitly; an earlier draft of this module cited that "
+                "run for the opposite and was wrong."
             ),
             "stage_2_3_escalation": (
                 "Escalation depends on a 기준종목 reaching its own limit; a probe "
@@ -1078,11 +1411,14 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         dry_run_banner(spec)
         run.observe(
             would_send=(
-                f"5 read-only GETs on the mock host for {symbol}: one "
-                f"{_PRICE_TR} 시세 call, then three {_PSBL_TR} 주문가능 calls at "
-                f"the touch, at 하한가, and at 상한가 + one tick ({tick.size}). "
-                "L2 is offline arithmetic and sends nothing."
+                f"{GET_CALL_COUNT} read-only GETs on the mock host for {symbol}: "
+                f"{_QUOTE_CALL_COUNT} {_PRICE_TR} 시세 call, then "
+                f"{len(_PSBL_LEG_IDS)} {_PSBL_TR} 주문가능 calls "
+                f"({', '.join(_PSBL_LEG_IDS)}) at the touch, at 하한가, and at "
+                f"상한가 + one tick ({tick.size}). L2 is offline arithmetic and "
+                "sends nothing, so it adds no call."
             ),
+            get_call_count=GET_CALL_COUNT,
             resolved_tick_points=str(tick.size),
             resolved_tick_source=tick.source,
         )
@@ -1116,9 +1452,16 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         verdicts["L1"] = VERDICT_PASS
 
         window = run.measurements["l1_sample_window"]
-        verdicts["L2"] = (
-            VERDICT_PASS if _leg_l2(run, prices, tick, window) else VERDICT_FAIL
-        )
+        verdicts["L2"] = _leg_l2(run, prices, tick, window)
+        if verdicts["L2"] == VERDICT_FAIL:
+            report = run.measurements["l2_band_rule_arithmetic"]
+            run.error(
+                "L2 FAIL — inside the no-escalation window the observed band "
+                f"({report['observed_lower']} / {report['observed_upper']}) does "
+                "not match 제56조 at 1단계 8% and tick "
+                f"{report['tick_points']}; matching stages: "
+                f"{report['matching_stages']}"
+            )
 
         l3 = _leg_psbl(
             client,
@@ -1132,6 +1475,11 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
         run.measure("l3_psbl_at_touch", l3)
         if not l3["answered"]:
             verdicts["L3"] = VERDICT_FAIL
+            run.error(
+                f"L3 FAIL — {_PSBL_TR} refused the query: rt_cd={l3['rt_cd']!r} "
+                f"msg_cd={l3['msg_cd']!r} msg1={l3['msg1']!r}. No quantity was "
+                "observed; this is NOT 'zero available'."
+            )
             run.measure(
                 "l3_refusal_record",
                 {
@@ -1156,15 +1504,30 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
             verdicts["L3"] = VERDICT_PASS
         else:
             verdicts["L3"] = VERDICT_FAIL
+            run.error(
+                f"L3 FAIL — {_PSBL_TR} answered rt_cd={l3['rt_cd']!r} with "
+                f"ord_psbl_qty={l3['ord_psbl_qty']!r} (< 1 contract). Says "
+                "nothing about the venue's structural quantity limit."
+            )
             run.measure(
                 "l3_zero_quantity_record",
                 {
                     "ord_psbl_qty": l3["ord_psbl_qty_int"],
                     "recorded_not_interpreted": (
-                        "Zero order-available quantity at the touch means 예수금 "
-                        "0 or a margin constraint on this account. It says nothing "
-                        "about the venue's structural quantity limit."
+                        "A zero 주문가능수량 is RECORDED, not explained. Design "
+                        "v2 §5 names three causes and this probe cannot "
+                        "distinguish them: (1) 예수금 0, (2) a 증거금 constraint "
+                        "on this account, (3) THIS LEG'S OWN parameters — the "
+                        "price, side and order type it sent "
+                        "(probes_real_order.py:1651-1658). Whichever it is, it "
+                        "says nothing about the venue's structural quantity "
+                        "limit."
                     ),
+                    "candidate_causes": [
+                        "예수금 0",
+                        "증거금 constraint on this account",
+                        "this leg's own price/side/order-type parameters",
+                    ],
                 },
             )
 
@@ -1228,6 +1591,27 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
             },
         )
         verdicts["L5"] = VERDICT_RECORDED
+    except VenueLimitAbort as abort:
+        # The abort IS the result. Recording it through run.error marks the
+        # artifact NOT_MEASURED and RETURNING the run lets run.py write it on
+        # the normal path — rather than exit 4 with the L1 measurements, the
+        # credentials and the sample window all discarded.
+        verdicts["L1"] = VERDICT_FAIL
+        run.error(str(abort))
+        run.measure(
+            "l1_abort",
+            {
+                "code": abort.code,
+                "message": str(abort),
+                "why_the_artifact_still_exists": (
+                    "Design §5 says an L1 failure is recorded 「아티팩트에 "
+                    "그대로」. probes_real_order's RealOrderAbort established the "
+                    "polarity: a guard that fires AFTER the broker answered has "
+                    "observed something, so it gets an artifact. A bare "
+                    "ProbeError would have exited 4 and written nothing."
+                ),
+            },
+        )
     finally:
         run.measure("leg_verdicts", verdicts)
         session.close()
@@ -1240,13 +1624,8 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
                 "price_band_tick_lot_and_quantity_semantics"
             ),
             "current": "UNKNOWN",
-            "proposed": "PARTIAL",
-            "established_if_l1_l2_pass": [
-                "band semantics on 모의투자: 기준가격 field identity, the stage "
-                "ratio that reproduces the band, and the 내림/올림 rounding",
-                "tick: every broker-quoted price is a multiple of the registered "
-                "tick (corroboration, not a broker-published tick value)",
-            ],
+            "proposed": disposition_token(verdicts),
+            "derived_from": dict(verdicts),
             "still_unestablished": [
                 "the structural 호가수량한도 (별표 17의2) — regulation value only, "
                 "broker-side limit unconfirmed",
@@ -1255,8 +1634,11 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
                 "the runtime supply path for a band (design §6)",
             ],
             "rule": (
-                "Design §5: do not flip UNKNOWN to VERIFIED in one word. Record "
-                "PARTIAL and enumerate the unestablished axes."
+                "Design v2 §5: the profile's idiom is a self-describing COMPOUND "
+                "token (:4432 shape), not a one-word status — 'PARTIAL' is "
+                "refused there by name. The token above is DERIVED from "
+                "derived_from, so a leg that did not pass cannot claim an "
+                "observed axis. See disposition_token()."
             ),
         },
     )
