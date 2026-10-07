@@ -1367,6 +1367,84 @@ def test_rulebook_rows_cover_every_accepted_prefix_and_nothing_else() -> None:
     assert accepted == {"A05", "101", "A01"}
 
 
+def test_rulebook_rows_cite_the_committed_evidence_texts() -> None:
+    """Each row points into the parsed 별표 text, at the line range for ITS row.
+
+    Design v2 §2.1 is explicit that v1's 2,000 was the full-size row read onto a
+    mini product. A citation that did not distinguish the two line ranges would
+    leave that mistake just as easy to repeat.
+    """
+    mini = pvl.KRX_QUANTITY_LIMIT_BY_PREFIX["A05"]
+    full = pvl.KRX_QUANTITY_LIMIT_BY_PREFIX["101"]
+    evidence_dir = "docs/broker-profiles/evidence/2026-10-08-krx-venue-limits/"
+
+    for row in (mini, full):
+        assert row["evidence"].startswith(evidence_dir)
+        assert "byeolpyo17-2_order_quantity_limits.txt:" in row["evidence"]
+        assert "업무규정 제71조" in row["source"]
+        assert "별표 17의2 제1호" in row["source"]
+    assert mini["evidence"] != full["evidence"]
+
+
+def test_liquidity_managed_variants_are_recorded_not_folded_in() -> None:
+    """별표 17의2's parenthesised numbers are a DIFFERENT condition.
+
+    10,000 applies unless the product is designated 유동성관리상품, in which case
+    the limit is 1,000. The probe does not observe that designation, so folding
+    the two into one number would state more than it knows.
+    """
+    mini = pvl.KRX_QUANTITY_LIMIT_BY_PREFIX["A05"]
+    full = pvl.KRX_QUANTITY_LIMIT_BY_PREFIX["101"]
+
+    assert mini["liquidity_managed_regular_contracts"] == 1000
+    assert mini["liquidity_managed_night_contracts"] == 500
+    assert full["liquidity_managed_regular_contracts"] == 200
+    assert full["liquidity_managed_night_contracts"] == 100
+
+
+@pytest.mark.parametrize(
+    ("prefix", "ho"),
+    [("A05", "제4조의9제2호"), ("101", "제4조의9제1호"), ("A01", "제4조의9제1호")],
+)
+def test_the_tick_article_is_the_ho_that_governs_that_product(
+    prefix: str, ho: str
+) -> None:
+    """시행세칙 제4조의9: 제1호 is the full contract's unit, 제2호 the mini's."""
+    assert ho in pvl._TICK_ARTICLE_BY_PREFIX[prefix]
+
+
+def test_the_instrument_record_names_the_tick_article_and_the_drift_consequence(
+    futures_env: None, wire: Any
+) -> None:
+    """A False ``tick_registry_matches_policy`` must not read as cosmetic.
+
+    Design v2 §2.0 names what it costs later: once a band arrives, a 0.05 policy
+    tick would judge a mini leaf's normal 0.02-grid quotes INADMISSIBLE. The
+    record says so, and still leaves the disposition to the operator.
+    """
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    record = pvl.probe_pvl(_args()).measurements["resolved_instrument"]
+
+    assert "제4조의9제2호" in record["registry_tick_rule_article"]
+    assert "INADMISSIBLE" in record["why_the_drift_matters_later"]
+    assert "predicates.py" in record["why_the_drift_matters_later"]
+
+
+def test_the_basis_price_rule_records_the_article_55_4_adjustment() -> None:
+    """제55조제4항 snaps 기준가격 to the nearest 호가가격단위 before the band.
+
+    L2 floors and ceils FROM that basis, so a reader checking the arithmetic by
+    hand needs to know the basis is already on-grid.
+    """
+    record = pvl.band_expectation(
+        Decimal(_SDPR), ratio=Decimal("0.08"), tick=_MINI_TICK
+    )
+
+    assert "제55조제1항제2호" in record["basis_price_rule"]
+    assert "제55조제4항" in record["basis_price_rule"]
+
+
 def test_price_limit_stages_are_the_byeolpyo_14_ratios() -> None:
     assert (
         (1, Decimal("0.08")),

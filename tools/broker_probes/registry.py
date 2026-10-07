@@ -959,7 +959,7 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         source=(
             "docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md "
-            "§4 (CP-3 결정 9 (a) 보강 프로브)"
+            "v2 (PR #879 head de3c7e98) §2.0·§4 (CP-3 결정 9 (a) 보강 프로브)"
         ),
         kind="QUERY",
         environment=ENV_MOCK,

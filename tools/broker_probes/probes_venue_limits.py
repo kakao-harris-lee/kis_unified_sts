@@ -1,9 +1,16 @@
 """P-VL — venue price-band / quantity limits, GET-only on 모의투자 (MOCK_VTS).
 
 Design: ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
-§4 (legs, timing, artifact) and §5 (verdicts). CP-3 decision 9 picked the KRX
+**v2** (PR #879 head ``de3c7e98``) — §2.0 (which product's 별표 row applies),
+§4 (legs, timing, artifact), §5 (verdicts). CP-3 decision 9 picked the KRX
 rulebook as the PRIMARY source for ``max_quantity``; this probe is the
 **corroboration**, not the source.
+
+v2 corrected two things this module follows: the deployed product is
+미니코스피200선물 (``A056xx``), so the 별표 17의2 row and the 호가가격단위 are the
+mini ones; and the probe is ``requires_confirm=True`` like every other networked
+probe. Rule values are bound to the committed evidence texts under
+:data:`_EVIDENCE_DIR`, not to a web summary.
 
 What it closes (design §4.1):
 
@@ -198,6 +205,13 @@ _FULL_PREFIXES: tuple[str, ...] = ("101", "A01")
 # Rule constants — KRX 파생상품시장 업무규정 시행세칙 제164차 (2026-07-06 시행)
 # ---------------------------------------------------------------------------
 
+#: Committed parsed-text evidence for every rule value below (design v2 §2.3).
+#: The HWP binaries are not committed; the README in this directory carries the
+#: 판·bookid·sha256 binding and the 법무포털 reproduction recipe. Line references
+#: in the constants point into these files, so a reviewer re-derives a number
+#: without trusting this module's prose.
+_EVIDENCE_DIR = "docs/broker-profiles/evidence/2026-10-08-krx-venue-limits/"
+
 #: 호가수량한도 (1 호가당 최대 계약 수) per product — 업무규정 제71조 → 시행세칙
 #: 제61조제1항 → **별표 17의2 제1호** (별표 최종개정 2025-05-29). CONTEXT ONLY:
 #: no leg passes or fails on these numbers, and the probe cannot observe them
@@ -215,7 +229,10 @@ _QUANTITY_LIMIT_CAVEATS = (
     "단서로 변경할 수 있다. 공표 규정값이지 불변식이 아니다. 누적호가수량한도"
     "(제61조제2항)는 위탁계좌에 적용되지 않으므로 여기 없다."
 )
-_QUANTITY_LIMIT_SOURCE = "시행세칙 별표 17의2 제1호 (별표 최종개정 2025-05-29)"
+_QUANTITY_LIMIT_CHAIN = (
+    "업무규정 제71조 → 시행세칙 제61조제1항 → 별표 17의2 제1호 "
+    "(별표 최종개정 2025-05-29)"
+)
 
 KRX_QUANTITY_LIMIT_BY_PREFIX: dict[str, dict[str, Any]] = {
     **{
@@ -223,7 +240,15 @@ KRX_QUANTITY_LIMIT_BY_PREFIX: dict[str, dict[str, Any]] = {
             "product": "미니코스피200선물거래",
             "regular_session_contracts": 10000,
             "night_session_contracts": 5000,
-            "source": _QUANTITY_LIMIT_SOURCE,
+            # 별표 17의2 제1호 의 괄호 값 — 해당 상품이 유동성관리상품으로
+            # 지정된 경우에만 적용된다. 지정 여부는 이 프로브가 관측하지 않는다.
+            "liquidity_managed_regular_contracts": 1000,
+            "liquidity_managed_night_contracts": 500,
+            "source": _QUANTITY_LIMIT_CHAIN,
+            "evidence": (
+                f"{_EVIDENCE_DIR}byeolpyo17-2_order_quantity_limits.txt:41-45 "
+                "(미니코스피200선물거래 행) · 괄호 의미 비고 :118"
+            ),
             "caveats": _QUANTITY_LIMIT_CAVEATS,
         }
         for prefix in _MINI_PREFIXES
@@ -233,17 +258,40 @@ KRX_QUANTITY_LIMIT_BY_PREFIX: dict[str, dict[str, Any]] = {
             "product": "코스피200선물거래",
             "regular_session_contracts": 2000,
             "night_session_contracts": 1000,
-            "source": _QUANTITY_LIMIT_SOURCE,
+            "liquidity_managed_regular_contracts": 200,
+            "liquidity_managed_night_contracts": 100,
+            "source": _QUANTITY_LIMIT_CHAIN,
+            "evidence": (
+                f"{_EVIDENCE_DIR}byeolpyo17-2_order_quantity_limits.txt:29-33 "
+                "(코스피200선물거래 행) · 괄호 의미 비고 :118"
+            ),
             "caveats": _QUANTITY_LIMIT_CAVEATS,
         }
         for prefix in _FULL_PREFIXES
     },
 }
 
+#: 호가가격단위's article, per product — 시행세칙 제4조의9: 제1호 is the full
+#: contract's 0.05, 제2호 the mini's 0.02 (design v2 §2.1). Recorded so the
+#: artifact cites the 호 that actually governs ``--symbol`` rather than the one
+#: a reader might assume. The VALUE still comes from the repo registry, never
+#: from this table — these are citations, not a second source of truth.
+_TICK_ARTICLE_BY_PREFIX: dict[str, str] = {
+    **dict.fromkeys(
+        _MINI_PREFIXES, "시행세칙 제4조의9제2호 (미니 0.02 포인트, 최종개정 2024-11-01)"
+    ),
+    **dict.fromkeys(
+        _FULL_PREFIXES, "시행세칙 제4조의9제1호 (전체 0.05 포인트, 최종개정 2024-11-01)"
+    ),
+}
+
 #: 가격제한비율, 주가지수선물거래 — 업무규정 제70조 → 시행세칙 제56조·제56조의2 →
 #: **별표 14 제1호** (별표 최종개정 2025-05-29): 1단계 8% · 2단계 15% · 3단계 20%.
 #: One table for both products: 별표 14 제1호 is keyed on 주가지수선물거래, which
-#: covers 코스피200선물거래 and 미니코스피200선물거래 alike.
+#: covers 코스피200선물거래 and 미니코스피200선물거래 alike — and 제56조의2
+#: 제2항제1호 단서 applies the same ratios to the mini (design v2 §2.1).
+#: Evidence: ``byeolpyo14_price_limit_ratios.txt:19-25`` under
+#: :data:`_EVIDENCE_DIR`.
 KRX_PRICE_LIMIT_STAGES: tuple[tuple[int, Decimal], ...] = (
     (1, Decimal("0.08")),
     (2, Decimal("0.15")),
@@ -256,9 +304,13 @@ _RULE_BAND_ROUNDING = (
     "호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림"
 )
 
-#: 기준가격 — 시행세칙 제55조제1항제2호: 직전 거래일의 **정산가격**, not the close.
+#: 기준가격 — 시행세칙 제55조제1항제2호: 직전 거래일의 **정산가격**, not the
+#: close. 제55조제4항 then adjusts it to the NEAREST 호가가격단위 (the higher one
+#: on a tie), which is why a 기준가격 that is itself off-grid would already be a
+#: finding rather than an input (design v2 §2.1).
 _RULE_BASIS_PRICE = (
-    "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조)"
+    "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); "
+    "제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정"
 )
 
 #: 단계 확대가 불가능한 창 — 시행세칙 제56조의2제2항 (최종개정 2026-06-11):
@@ -535,6 +587,7 @@ def resolve_instrument(symbol: str) -> tuple[VenueTick, dict[str, Any]]:
         "registry_tick_points": str(size),
         "registry_tick_source": source,
         "paper_policy_tick": policy,
+        "registry_tick_rule_article": _TICK_ARTICLE_BY_PREFIX[prefix],
         "tick_registry_matches_policy": (
             policy_points is not None and Decimal(policy_points) == size
         ),
@@ -544,6 +597,14 @@ def resolve_instrument(symbol: str) -> tuple[VenueTick, dict[str, Any]]:
             "--symbol's own product; the policy's value is recorded beside it so "
             "the drift is visible. Which one the deployed policy should carry is "
             "an operator decision, not a probe output."
+        ),
+        "why_the_drift_matters_later": (
+            "Design v2 §2.0 names the consequence: today the band is null so "
+            "step 3 is UNKNOWN and the mismatch is masked, but the moment a band "
+            "arrives (design §6) tos/src/tos/venue/predicates.py would judge a "
+            "mini leaf's NORMAL 0.02-grid quotes INADMISSIBLE against a 0.05 "
+            "policy tick. Recorded so the drift is not read as cosmetic; the "
+            "disposition is an operator item on the §6 wave, not this probe's."
         ),
         "krx_quantity_limit_row": KRX_QUANTITY_LIMIT_BY_PREFIX[prefix],
         "krx_quantity_limit_is_context_only": (
