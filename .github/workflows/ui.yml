@@ -78,11 +78,21 @@ on:
       #   ../../../../config/strategy_builder/indicators.yaml
       # so a backend indicator-catalog change runs the UI suite too.
       #
+      # src/app/api/caddyRouting.ts reads
+      #   ../../../../caddy/Caddyfile
+      # so a Caddyfile-only PR that moves a root into @to_dashboard runs the UI
+      # suite, whose derived-equality test would otherwise go red on main
+      # without this gate ever firing.
+      #
       # Gated at directory level, not file level, so a newly added fixture or
-      # catalog file under them is covered without editing this list.
+      # catalog file under them is covered without editing this list. The
+      # Caddyfile is the exception, named as a file: its reader hardcodes that
+      # one filename, so a second file in caddy/ would not be read and widening
+      # to caddy/** would only run the suite for nothing.
       - 'tos/runtime/tests/fixtures/**'
       - 'tests/fixtures/**'
       - 'config/strategy_builder/**'
+      - 'caddy/Caddyfile'
       # This workflow.
       - '.github/workflows/ui.yml'
   pull_request:
