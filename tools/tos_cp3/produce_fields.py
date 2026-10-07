@@ -243,6 +243,37 @@ def scaled_int_toward_zero(value: float, scale: int) -> int:
     return int(math.trunc(value * scale))
 
 
+# ---------------------------------------------------------------------------
+# Join keys
+# ---------------------------------------------------------------------------
+#
+# ONE definition, shared with the B2 decision emitter
+# (``tools/tos_cp3/emit_legacy_decisions.py``). B3 joins the two artifacts on
+# ``raw_event_id``, so a second derivation on the other side — even an
+# identical-looking one — is how the two files would come to disagree about
+# which bar a line is about. B2 imports these; it does not restate them.
+
+
+def derive_raw_event_id(symbol: str, bar_kst: datetime) -> str:
+    """The join key for one replayed bar.
+
+    ``<symbol>:1m:<YYYYmmddTHHMMSS±HHMM>``. The offset is part of the key so a
+    naive and an aware stamp for the same wall-clock minute cannot collide, and
+    the timeframe token says what a "bar" is here.
+    """
+    return f"{symbol}:1m:{bar_kst.strftime('%Y%m%dT%H%M%S%z')}"
+
+
+def derive_as_of_ms(bar_kst: datetime) -> int:
+    """Epoch milliseconds of the bar's LABELLED minute.
+
+    The label, not label+60s: the session fields (``entry_window``, ``eod``)
+    are computed on the label, so an end-of-bar stamp would desynchronise
+    ``as_of_ms`` from them (a 15:15 bar would carry a 15:16 ``as_of_ms``).
+    """
+    return int(bar_kst.timestamp() * 1000)
+
+
 def _assert_scale_covers_tick(spec: ContractSpec, scale: int) -> None:
     """Refuse a contract whose tick is not an integer at *scale*.
 
@@ -715,8 +746,8 @@ def produce_bars(
         bars_replayed += 1
 
         now: datetime = ctx.now
-        as_of_ms = int(now.timestamp() * 1000)
-        raw_event_id = f"{symbol}:1m:{now.strftime('%Y%m%dT%H%M%S%z')}"
+        as_of_ms = derive_as_of_ms(now)
+        raw_event_id = derive_raw_event_id(symbol, now)
 
         close = float(ctx.current_price)
         vwap = float(ctx.vwap)

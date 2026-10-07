@@ -1,6 +1,6 @@
 # CP-3 착수 — 첫 paper tenant 후보 비교와 운영자 결정표 (2026-10-07)
 
-상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a) 착수** (2회차: #874 리뷰 처분 반영). 상위 계획은
+상태: **조사 완료 · 운영자 승인 2026-10-07 · §5 1 (B1a)·2 (B2) 구현** (3회차: #874·#876 리뷰 처분 반영). 상위 계획은
 [Control Plane 및 첫 tenant 계획](2026-10-06-tos-control-plane-and-first-tenant-plan.md) §3 CP-3 이고,
 그 계획이 「전략 선택은 미정 · 후보 비교표 필요」로 남긴 자리를 이 문서가 채운다.
 이 문서는 실행·배포·live 승인 문서가 아니다. 실전 선물 주문·증거금 투입은 영구 정책 차단이다.
@@ -106,7 +106,7 @@ CP-3 에서 가장 큰 설계 질문이다.
   없다(`data/market/manifest.yaml` 부재) — §5 5 의 「데이터셋 lineage」는 그 매니페스트를 만드는 일이다.
   선물 **일봉은 2026-06-25 에서 멈춰** 있다.
 
-구축물 넷(§4 결정 7 로 승인됨 — **B1a 착수·구현됨**(`tools/tos_cp3/`), B1b·B2·B3·B4 미착수).
+구축물 넷(§4 결정 7 로 승인됨 — **B1a·B2 구현됨**(`tools/tos_cp3/`) · **B1b 는 #877** · B3·B4 미착수).
 ⛔ **방화벽은 양방향이다**: `tos` 밖의 어떤
 파일도 `tos`/`tos_runtime` 을 import 할 수 없고(`tools/tos_firewall_check.py` TOS-FW-R, `tools/` 도 검사
 대상), `tos` 는 `shared.indicators` 는 되지만 `shared.backtest` 는 안 된다. 그래서 `Bar` 튜플을 만들거나
@@ -116,7 +116,7 @@ CP-3 에서 가장 큰 설계 질문이다.
 |---|---|---|---|
 | B1a | Parquet → 봉별 **정수 필드 JSONL** 생산자(vwap·atr14·z·ATR p90·스톨·역전·세션 창; `shared/decision/setups/vwap_reversion.py` 의 산식과 봉별 일치를 테스트로 고정; lineage 기록 포함) | `tools/tos_cp3/`(레거시 쪽; `tos` import 0) | 양쪽이 **같은 산식**을 쓰게 — 아니면 비교가 밴드 수학을 잰다 |
 | B1b | JSONL → `tuple[Bar,...]` 로더 + `BacktestDriver` 실행기 → trace JSONL | **`tos/runtime/`(또는 `tos/tests/backtest` 식 러너) 안**; 바깥과는 파일로만 만난다(`render_paper_config.py` 의 서브프로세스 경계와 같은 모양) | `Bar`·`BacktestDriver` 는 `tos.backtest` 타입 |
-| B2 | 레거시 봉별 후보·거부 기록기 | `shared/backtest/` 하네스 래퍼 | `signals_writer` 가 no-op 이라 거부 사유가 없다 |
+| B2 | 레거시 봉별 후보·거부 기록기 | `tools/tos_cp3/`(레거시 쪽; 당초 이 행은 `shared/backtest/` 래퍼로 적었으나, B1a 의 창 로더·조인 키·생략 술어를 **같은 코드로** 써야 조인이 성립하므로 같은 패키지에 두었다) | `signals_writer` 가 no-op 이라 거부 사유가 없다 |
 | B3 | 결정 수준 diff(봉별: 레거시 후보/거부 ↔ TOS 발화/NO_ACTION/거부 사유) | `tools/tos_cp3/`(아티팩트 대 아티팩트, 설계 #33 §6.1) | TOS 는 PnL 을 못 낸다 |
 | B4 | 스코프당 주문 1 개 캡의 처분 | 설계 결정(커널 변경은 `tos-spec/src/part-1-foundation/GOV-001-Ratification-and-Change-Governance.md` 절차) | 체결 비교를 포기할지, 하루 1 실행으로 쪼갤지 |
 
@@ -158,8 +158,24 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    `--environment-label` 과 대조하지 않아 어긋나도 조용히 부팅한다 — 같은 파일 56–62행).
 2. **B1b·B2·B3** — `tos/` 안의 러너가 JSONL 을 `Bar` 로 읽어 `BacktestDriver` trace 를 쓰고, 레거시
    하네스 래퍼가 봉별 후보·거부를 뽑고, `tools/tos_cp3/` 가 둘을 봉별로 diff 한다. 산출물:
-   `reports/tos-cp3/<dataset>/{legacy,tos,diff}.jsonl` + 요약(일치율, 불일치 사유 분포). 불일치는
+   `--out/decisions.jsonl` + `lineage.json`; `reports/tos-cp3/<dataset>/` 배치는 B3 가 정한다
+   (아티팩트는 커밋하지 않는다) + 요약(일치율, 불일치 사유 분포). 불일치는
    **미해결로 남기되**, 결정 5·6 의 두 의도된 차이는 승인 근거와 함께 따로 센다.
+   **B2 착수·구현(2026-10-08)**: `tools/tos_cp3/emit_legacy_decisions.py`
+   (테스트 `tests/tools/test_cp3_emit_legacy_decisions.py`). 창은 B1a 의
+   `produce_fields.load_window` 를 그대로 호출하고 조인 키도 B1a 의
+   `derive_raw_event_id`/`derive_as_of_ms` 를 import 하므로 두 아티팩트는 봉 단위로 맞물린다.
+   봉마다 `check()` 의 결과(FIRED 또는 닫힌 집합으로 분류된 거부 사유)와 그 자신의 평가 기록을
+   정수·불린으로 투영해 적고, 별도 불린
+   `would_be_admitted_by_legacy_position_model` 로 워크포워드 하네스의 단일 포지션 게이트
+   (`scripts/analysis/walkforward_setup_d_vwap_reversion.py::collect_entries` 150–203행,
+   청산은 같은 파일 `_simulate_exit` 206–263행을 **그대로 호출**)까지 함께 센다.
+   자리는 `tools/tos_cp3/`(§3 표 B2 행에 이유를 적었다). lineage 는 `config_source_diff` 로
+   **워크포워드 하네스가 전략 YAML 을 읽지 않는다**는 사실을 기계적으로 적는다(컷오프 345 vs 360 ·
+   stall 1.5 vs 1.0 · `min_confidence` 0.6 vs 0.0 · `reversal_confirm_enabled` true vs false) —
+   그래서 공표된 수치의 실행에서는 `LOW_CONFIDENCE` 와 `awaiting_reversal_confirm` 셋이
+   **도달 불가**였고, admitted 수를 공표된 135 와 비교할 수 없다(135 는 OOS 폴드 연결이기도 하다).
+   공표 수치의 앵커는 **미해결**로 적는다(09:00 을 가리키는 근거 둘 vs 재검토 문서 날짜). B3 는 미착수.
 3. **Setup D DSL 콘텐츠 + 부팅 경로** — `config/tos_runtime/<tenant>/strategies/setup_d_vwap_reversion.strategy.yaml`,
    `config/tos_runtime/<tenant>/strategy_bindings.yaml`(strategies/ 아래가 아니라 설정 루트), 예산 64 안
    (규칙 3개면 비교 ≤ 20). 렌더의 전략 파일 상수·다섯 digest 재도출·`safety_activation.yaml::members`

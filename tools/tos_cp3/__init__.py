@@ -14,9 +14,13 @@ Contents:
   Parquet minute bars → per-bar integer/bool field JSONL + lineage sidecar,
   computed by driving the legacy ``SetupDVWAPReversion`` bar by bar so both
   sides of the CP-3 comparison run ONE copy of the band math.
+* :mod:`tools.tos_cp3.emit_legacy_decisions` — B2, the legacy per-bar
+  candidate/reject emitter: the same bars (B1a's own ``load_window`` and join
+  keys) → per-bar ``FIRED``/reject-reason JSONL + lineage, plus the
+  walk-forward harness's single-position verdict per bar.
 
-Plan: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a)
-and §5 step 1.
+Plan: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a,
+B2) and §5 steps 1-2.
 """
 
 from __future__ import annotations
