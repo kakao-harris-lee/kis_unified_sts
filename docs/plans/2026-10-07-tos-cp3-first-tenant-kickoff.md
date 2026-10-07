@@ -138,7 +138,7 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
 | 6 | **스톱/타깃·EOD 의 자리** | 1차 슬라이스 청산 = `vwap_reverted` FLAT + `eod` FLAT(15:15) 둘. **ATR 스톱(1.5×)은 1차 범위 밖 — 의도된 차이로 승인 근거를 남긴다**(DSL 에 진입가·수치 출력이 없고, 보호 분류는 PAC 소관이라 전략이 자칭 못 함) | 스톱을 TOS 보호 레인(aggregate risk / safety mesh)에 매핑하는 것은 별도 설계 |
 | 7 | **구축물 B1a·B1b·B2·B3·B4 승인(범위·비용)** | B1a·B1b·B3 먼저, B2 는 작게, B4 는 「체결 비교 포기」로 처분. 공수는 착수 뒤 첫 PR 에서 실측으로 | B4 를 커널 수정으로 풀면 GOV-001 절차 |
 | 8 | 검증 기간·담당자 | parity 1회 + paper: YAML 131행의 **「≥4 주」**를 기본으로, 더 짧게 자르면 그 근거를 적는다. 담당 = 운영자(실행은 Claude) | — |
-| 9 | **venue 수량 상한의 출처** | 오늘 paper 의 `venue_constraint_policy.yaml::max_quantity` 는 **null(의도된 fail-closed)** 이라 Proposal 이 전부 `STAGE_DENIED | venue quantity constraint incomplete` 다(10-07 세션 2,510건). 값이 들어오기 전까지 paper 단계는 **결정 수준 관측만** 가능하고 청산 규칙·영수증 증거는 못 만든다. 권고: 모의 계좌 **P0-2 식 GET 프로브**로 출처를 만들어 값을 넣는 것 — 실전 계좌·실주문은 영구 차단 | 값 없이 가면 §5 4 의 범위를 「체결 없음」으로 줄여 적는다 |
+| 9 | **venue 수량 상한의 출처** | 오늘 paper 의 `venue_constraint_policy.yaml::max_quantity` 는 **null(의도된 fail-closed)** 이라 Proposal 이 전부 `STAGE_DENIED | venue quantity constraint incomplete` 다(10-07 세션 2,510건). 값이 들어오기 전까지 paper 단계는 **결정 수준 관측만** 가능하고 청산 규칙·영수증 증거는 못 만든다. 권고: 모의 계좌 **P0-2 식 GET 프로브**로 출처를 만들어 값을 넣는 것 — 실전 계좌·실주문은 영구 차단. **운영자 선택 2026-10-08: (a) KRX 규정 문서를 1차 출처로, 모의 GET 은 보강** — 설계 `docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md`(값 2,000 = 시행세칙 별표 17의2 · ⚠ `price_min/max` 는 일별 동적 값이라 결정 9 만으로는 `order_shape_admissible` UNKNOWN 유지 → band 원천은 그 문서 §6 의 별도 결정) | 값 없이 가면 §5 4 의 범위를 「체결 없음」으로 줄여 적는다 |
 
 **운영자 승인 2026-10-07: 아홉 전부 권고대로.**
 
@@ -219,7 +219,8 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    LONG/SHORT 는 각각 렌더이며 SHORT 파일은 아직 없다(DSL 에 abs() 가 없어 진입 비교가 한 변뿐이므로
    SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
 4. **paper 검증**(결정 3·4·8·9) — 방향별 data dir, 런북 §3 절차, 재시작·리플레이·콜드 백업 복원 drill
-   증거. 결정 9 가 닫히기 전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.
+   증거. 결정 9 **와 band 원천 웨이브**(2026-10-08 설계 §6 — `price_min/max` 가 null 이면 step 3 가 UNKNOWN)가 닫히기
+   전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.
 5. **완료 증거**(계획 §3 CP-3) — 이관 artifact + digest, 데이터셋 lineage(커버리지 매니페스트), 판단/거부/
    위험 차이 보고서(의도된 차이 둘 + 미해결), 양방향·재시작·복구 증거. **PnL 동일성은 완료 조건이
    아니다**(TOS 가 못 낸다).
