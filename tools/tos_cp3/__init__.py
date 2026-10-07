@@ -18,9 +18,16 @@ Contents:
   candidate/reject emitter: the same bars (B1a's own ``load_window`` and join
   keys) → per-bar ``FIRED``/reject-reason JSONL + lineage, plus the
   walk-forward harness's single-position verdict per bar.
+* :mod:`tools.tos_cp3.diff_decisions` — B3, the decision-level diff: B1a's
+  fields, B2's outcomes and B1b's trace (read as a FILE — B1b lives inside
+  ``tos/``) joined bar by bar → per-bar bucket + declared-difference
+  attribution JSONL, a ``summary.json`` difference report, and lineage. It
+  imports neither ``tos`` nor ``produce_fields``: its claim is about three
+  files, so it must stay runnable after CP-4 removes the band math behind
+  them.
 
 Plan: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a,
-B2) and §5 steps 1-2.
+B2, B3) and §5 steps 1-2.
 """
 
 from __future__ import annotations

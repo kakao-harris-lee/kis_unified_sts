@@ -30,8 +30,12 @@ lineage states the contract in its own words
 (``join.b3_contract``): *"B3 MUST REFUSE a (B1a, B2) pair whose
 join.window_identity blocks differ in any field, rather than join on
 raw_event_id and report the difference as a decision mismatch."* This tool
-implements that refusal and five more; every one of them, passed or not, is
-recorded in the output lineage's ``checks`` list (exit code 2 on refusal).
+implements that refusal and fourteen more (:data:`CHECK_NAMES`). A refused run
+writes NOTHING — the refusal is exit code 2 and a message on stderr — so the
+output lineage's ``checks`` list only ever enumerates checks that held; there
+is no FAIL row and the list carries no ``status`` field claiming one. What
+makes each entry a guard rather than a label is that
+``tests/tools/test_cp3_diff_decisions.py`` carries a red proof for every one.
 
 What it does NOT compare
 ------------------------
@@ -115,13 +119,48 @@ DEFAULT_OUT_ROOT = REPO_ROOT / "reports" / "tos-cp3"
 #: than the diff it summarizes. The count is never capped, only the id list.
 UNRESOLVED_ID_LIST_CAP = 200
 
-#: One x1000 quantization unit. B1a publishes ``z_x1000`` truncated toward zero
-#: (its D8), so a published integer understates the real magnitude by at most
-#: one unit: a legacy fire at a real ``|z|`` just over the threshold can land on
-#: a published integer just under it. A bar within this many units of the
-#: threshold is therefore attributable to the quantization rather than to the
-#: policy.
-Z_EDGE_UNITS = 1
+#: Why this module has NO quantization-edge attribution rule — the derivation,
+#: kept because an earlier revision shipped one and the premise was false.
+#:
+#: Let ``m = extreme_atr_mult``, ``f = m * 1000`` and ``T = -trunc(f)`` (the
+#: deployed binding). B1a truncates toward zero, so for ``z < 0`` the published
+#: integer is ``trunc(z*1000) = -floor(|z|*1000)`` and the TOS condition
+#: ``trunc(z*1000) <= T`` is ``floor(|z|*1000) >= floor(f)``; the legacy
+#: condition is ``|z|*1000 >= f``.
+#:
+#: (1) **f integral** — ``floor(y) >= n`` iff ``y >= n`` for integer ``n``, so
+#:     the two conditions are IDENTICAL. No edge exists. This is what B1a's own
+#:     D8 says ("a policy written on the integer NEVER fires where the legacy
+#:     setup did not") and the earlier rule's comment contradicted it.
+#: (2) **f non-integral** (e.g. ``m = 1.8005``) — TOS fires on
+#:     ``|z|*1000 ∈ [floor(f), f)`` where legacy does not, so the TOS side is
+#:     more permissive by at most one unit, ONE-SIDED and at the single integer
+#:     ``z_x1000 == T``. On such a bar ``check()`` rejects at step 4 with
+#:     ``NOT_EXTREME``, which means ``stall_ok`` and ``reversal_ok`` were never
+#:     evaluated and B1a publishes them as ``False`` (its D5, fail-closed).
+#:     ``R1-ENTRY-LONG`` ANDs both, so the TOS side yields NO_ACTION too: the
+#:     quantization gap is MASKED by D5 and cannot produce a disagreement.
+#:     The real run agrees — the legacy-outcome x TOS-kind matrix has zero
+#:     ``NOT_EXTREME x ACTION`` bars.
+#:
+#: So there is no reachable bar to attribute, and a rule for it would only act
+#: as a last-position catch-all converting bars the kickoff plan requires to be
+#: left UNRESOLVED into a reason. ``tests/tools/test_cp3_diff_decisions.py``
+#: pins (1) as arithmetic over a range of z, which is what would go red if the
+#: binding stopped being ``-trunc(extreme_atr_mult * 1000)``.
+QUANTIZATION_EDGE_DERIVATION = (
+    "No quantization-edge attribution rule exists. With an integral "
+    "extreme_atr_mult*1000 the published-integer condition "
+    "trunc(z*1000) <= z_entry_max_x1000 is IDENTICAL to the legacy "
+    "abs(z) >= extreme_atr_mult (floor(y) >= n iff y >= n for integer n), so "
+    "there is no edge; with a non-integral product the TOS side is more "
+    "permissive at the single integer z_x1000 == z_entry_max_x1000, but on "
+    "such a bar check() rejects at NOT_EXTREME and B1a therefore publishes "
+    "stall_ok and reversal_ok as False (its D5, fail-closed), so R1's AND is "
+    "false and the TOS side yields NO_ACTION as well. The gap is masked and "
+    "no bar can be attributed to it; a bar that nonetheless reached the "
+    "threshold unexplained is left UNRESOLVED rather than given this reason."
+)
 
 
 class DiffDecisionsError(RuntimeError):
@@ -212,6 +251,24 @@ OUTCOME_FIRED = "FIRED"
 #: one gate B1a's published field set cannot express (B1a-D1 / B2-L9).
 OUTCOME_LOW_CONFIDENCE = "LOW_CONFIDENCE"
 
+#: The two members of B2's closed set this module names. The set itself is read
+#: from B2's lineage at run time; these two are the ones classification and
+#: attribution branch on, so :func:`assert_entry_outcome_literals` asserts both
+#: are members of the set that was read — a rename upstream refuses instead of
+#: silently moving every bar out of AGREE_ENTRY.
+NAMED_LEGACY_OUTCOMES = (OUTCOME_FIRED, OUTCOME_LOW_CONFIDENCE)
+
+#: The ``decision.direction`` tokens B2 publishes. Mirrors
+#: ``emit_legacy_decisions.py::DIRECTION_TOKENS`` values; B2's lineage does not
+#: declare them, so this is a literal, pinned to that module's own constant by
+#: ``tests/tools/test_cp3_diff_decisions.py``. A FIRED bar whose direction is
+#: outside this set is refused: direction decides AGREE_ENTRY vs
+#: LEGACY_ONLY_ENTRY, and a case or token change would otherwise move every
+#: long fire into LEGACY_ONLY_ENTRY and report the headline rate as 0/0.
+DIRECTION_LONG = "LONG"
+DIRECTION_SHORT = "SHORT"
+DIRECTION_TOKENS = (DIRECTION_LONG, DIRECTION_SHORT)
+
 #: The TOS outcome kinds. NO_ACTION is a first-class result, not a gap.
 TOS_ACTION = "ACTION"
 TOS_FLAT = "FLAT"
@@ -247,11 +304,11 @@ class JoinedBar:
 
     @property
     def legacy_fired_long(self) -> bool:
-        return self.legacy_fired and self.legacy_direction == "LONG"
+        return self.legacy_fired and self.legacy_direction == DIRECTION_LONG
 
     @property
     def legacy_fired_short(self) -> bool:
-        return self.legacy_fired and self.legacy_direction == "SHORT"
+        return self.legacy_fired and self.legacy_direction == DIRECTION_SHORT
 
     @property
     def tos_action(self) -> bool:
@@ -321,11 +378,12 @@ class DiffContext:
     (``parents.strategy_bindings_file.bindings``), which is where the deployed
     threshold lives — ``tos/runtime/cp3/strategy_bindings.yaml``. It is not a
     literal here: a threshold restated in a second place is a threshold that
-    can disagree with the deployment it claims to describe.
+    can disagree with the deployment it claims to describe. No attribution
+    predicate reads it (see :data:`QUANTIZATION_EDGE_DERIVATION`); it is
+    carried so the report records which threshold the compared run deployed.
     """
 
     z_entry_max_x1000: int
-    z_edge_units: int = Z_EDGE_UNITS
 
 
 @dataclass(frozen=True)
@@ -364,10 +422,6 @@ def _agree_entry_capacity_denied(bar: JoinedBar, bucket: str, ctx: DiffContext) 
     return bucket == BUCKET_AGREE_ENTRY and bar.tos_capacity_denied
 
 
-def _z_quantization_edge(bar: JoinedBar, bucket: str, ctx: DiffContext) -> bool:
-    return abs(abs(bar.z_x1000) - abs(ctx.z_entry_max_x1000)) <= ctx.z_edge_units
-
-
 #: The attribution table — ordered, data-driven, first match wins.
 #:
 #: Every id named here must exist in one of the three lineages'
@@ -375,10 +429,12 @@ def _z_quantization_edge(bar: JoinedBar, bucket: str, ctx: DiffContext) -> bool:
 #: checks that at run time and refuses otherwise, so a rule cannot cite a
 #: difference nobody declared.
 #:
-#: Order matters and the two fill-level rules are LAST among the ACTION rules
-#: on purpose. Every TOS ACTION in a B1b run after the first realized order is
-#: capacity-denied, so a capacity rule read earlier would absorb every entry
-#: disagreement and hide its decision-level cause.
+#: Order matters and the two fill-level rules are LAST on purpose, and are
+#: scoped to the ``AGREE_ENTRY`` bucket. Every TOS ACTION in a B1b run after
+#: the first realized order is capacity-denied, so a capacity rule read earlier
+#: would absorb every entry disagreement and hide its decision-level cause.
+#: There is deliberately NO catch-all last entry: a bar nothing explains is
+#: UNRESOLVED (kickoff §5 2).
 ATTRIBUTION_RULES: tuple[AttributionRule, ...] = (
     AttributionRule(
         name="legacy_short_entry",
@@ -415,7 +471,15 @@ ATTRIBUTION_RULES: tuple[AttributionRule, ...] = (
             "regardless of whether anything is open. The legacy exit is "
             "position-scoped. A TOS FLAT on a bar where the legacy strategy "
             "did not even propose an entry is that difference, not a "
-            "disagreement about when to exit."
+            "disagreement about when to exit. ⚠ OBLIGATION UNMET: B1b-D7's "
+            "own note asks B3 to 'scope the legacy side to bars where a "
+            "position was held'. This predicate does NOT do that — it reads "
+            "`TOS FLAT and the legacy strategy did not fire`, because B2's "
+            "payload carries no position or exposure field and nothing in "
+            "these three artifacts says whether a legacy position was open on "
+            "a bar. The count below is therefore an UPPER BOUND on the "
+            "position-scoped comparison, not that comparison; see "
+            "summary.json's scope.b1b_d7_obligation."
         ),
         predicate=_tos_flat_without_legacy_fire,
     ),
@@ -440,25 +504,19 @@ ATTRIBUTION_RULES: tuple[AttributionRule, ...] = (
         why=(
             "tos.backtest holds at most ONE order per scope for the whole run, "
             "so the first firing is realized and every later one is an exact "
-            "capacity denial (AT_MOST_ONE_EXPOSURE_HELD). kickoff §3 B4 "
-            "disposes of this as '체결 비교 포기': the decision agreed on this "
+            "capacity denial (AT_MOST_ONE_EXPOSURE_HELD). kickoff §3 B4 poses "
+            "this and §4 결정 7 disposes of it as '체결 비교 포기' "
+            "(operator-approved 2026-10-07): the decision agreed on this "
             "bar and the denial is about the fill, which this report does not "
-            "compare. Recorded rather than dropped so no ACTION bar silently "
-            "carries an unrecorded inability to fill."
+            "compare. This rule only reaches bars no EARLIER rule explains, so "
+            "an AGREE_ENTRY bar that was also rejected by the position model "
+            "carries that attribution instead and its capacity denial is NOT "
+            "in its `attribution` list — the fact is on the line itself "
+            "(`tos.capacity_denied`) and in summary.json's "
+            "`totals.tos_action_capacity_denied`, which is where a reader "
+            "counts denials."
         ),
         predicate=_agree_entry_capacity_denied,
-    ),
-    AttributionRule(
-        name="z_quantization_edge",
-        ids=("B1a-D8",),
-        why=(
-            "B1a publishes z truncated toward zero, so a published integer "
-            "understates the real magnitude by up to one x1000 unit. Within "
-            "one unit of the deployed threshold the two sides can disagree "
-            "about whether the threshold was cleared without disagreeing about "
-            "the policy."
-        ),
-        predicate=_z_quantization_edge,
     ),
 )
 
@@ -497,6 +555,24 @@ def attribute(
         if rule.predicate(bar, bucket, ctx):
             return rule.name, rule.ids
     return ATTRIBUTION_UNRESOLVED, ()
+
+
+def assert_entry_outcome_literals(legacy_outcomes: tuple[str, ...]) -> None:
+    """Refuse unless the outcomes this module branches on are in B2's own set.
+
+    Concrete failing input: B2 renames ``LOW_CONFIDENCE`` (or drops it from
+    ``outcomes.closed_set``). Without this, every bar that outcome names stops
+    matching the low-confidence attribution rule, those bars become
+    ``UNRESOLVED``, and nothing says why.
+    """
+    missing = [name for name in NAMED_LEGACY_OUTCOMES if name not in legacy_outcomes]
+    if missing:
+        raise DiffDecisionsError(
+            "B2's declared outcomes.closed_set does not contain "
+            f"{', '.join(missing)}, which this tool's classification and "
+            "attribution branch on. The closed set moved; the comparison would "
+            "silently stop recognising those bars."
+        )
 
 
 def assert_attribution_ids_declared(
@@ -560,10 +636,25 @@ def _dig(lineage: dict[str, Any], dotted: str, label: str) -> Any:
     for part in dotted.split("."):
         if not isinstance(node, dict) or part not in node:
             raise DiffDecisionsError(
-                f"{label} lineage has no {dotted} — the window identity cannot "
-                "be established, so the join cannot be shown to be meaningful"
+                f"{label} lineage has no {dotted} — this report quotes that "
+                "value, so it cannot be produced without it"
             )
         node = node[part]
+    return node
+
+
+def _dig_mapping(lineage: dict[str, Any], dotted: str, label: str) -> dict[str, Any]:
+    """:func:`_dig`, refusing when the value is not a block.
+
+    Every caller that subscripts a dug-out value goes through this instead, so
+    a malformed sidecar is the documented exit-2 refusal rather than a
+    ``TypeError`` traceback at exit 1.
+    """
+    node = _dig(lineage, dotted, label)
+    if not isinstance(node, dict):
+        raise DiffDecisionsError(
+            f"{label} lineage {dotted} is {type(node).__name__}, not a block"
+        )
     return node
 
 
@@ -577,9 +668,7 @@ def b1a_window_identity(lineage: dict[str, Any]) -> dict[str, Any]:
 
 def b2_window_identity(lineage: dict[str, Any]) -> dict[str, Any]:
     """B2's declared ``join.window_identity``, exactly as it records it."""
-    block = _dig(lineage, "join.window_identity", LABEL_LEGACY)
-    if not isinstance(block, dict):
-        raise DiffDecisionsError("B2 lineage join.window_identity is not a block")
+    block = _dig_mapping(lineage, "join.window_identity", LABEL_LEGACY)
     missing = [f for f in WINDOW_IDENTITY_FIELDS if f not in block]
     if missing:
         raise DiffDecisionsError(
@@ -737,6 +826,192 @@ class JoinResult:
     checks: list[dict[str, Any]]
 
 
+def _published_gates(
+    published: dict[str, Any], raw_event_id: str
+) -> tuple[bool, bool, bool, bool]:
+    """B1a's four gate booleans, refusing a missing or non-boolean one."""
+    gates: list[bool] = []
+    for gate in GATE_FIELDS:
+        if gate not in published:
+            raise DiffDecisionsError(
+                f"{raw_event_id}: B1a publishes no {gate!r} — the tenant entry "
+                "rule ANDs it, so its absence makes the comparison undefined"
+            )
+        value = published[gate]
+        if not isinstance(value, bool):
+            raise DiffDecisionsError(
+                f"{raw_event_id}: B1a {gate!r} is {value!r}, not a boolean"
+            )
+        gates.append(value)
+    return (gates[0], gates[1], gates[2], gates[3])
+
+
+def _legacy_direction(
+    decision: dict[str, Any], outcome: Any, raw_event_id: str
+) -> str | None:
+    """B2's direction token, refusing drift.
+
+    Concrete failing input: ``emit_legacy_decisions`` publishes ``"Long"``.
+    Direction decides AGREE_ENTRY vs LEGACY_ONLY_ENTRY, so without this every
+    long fire would move bucket and the headline rate would read 0/0
+    "undefined" with every check recorded.
+    """
+    direction = decision.get("direction")
+    if direction is not None and direction not in DIRECTION_TOKENS:
+        raise DiffDecisionsError(
+            f"{raw_event_id}: B2 direction {direction!r} is not one of "
+            f"{DIRECTION_TOKENS} — direction decides AGREE_ENTRY vs "
+            "LEGACY_ONLY_ENTRY, so an unrecognised token would move bars "
+            "between buckets silently"
+        )
+    if outcome == OUTCOME_FIRED and direction not in DIRECTION_TOKENS:
+        raise DiffDecisionsError(
+            f"{raw_event_id}: B2 reports {OUTCOME_FIRED} with direction "
+            f"{direction!r} — a fire with no direction cannot be placed on "
+            "either side of a one-directional comparison"
+        )
+    return direction
+
+
+def _require_bool(
+    block: dict[str, Any], key: str, label: str, raw_event_id: str
+) -> bool:
+    value = block.get(key)
+    if not isinstance(value, bool):
+        raise DiffDecisionsError(
+            f"{raw_event_id}: {label} {key} is {value!r}, not a boolean"
+        )
+    return value
+
+
+def project_bar(
+    *,
+    raw_event_id: str,
+    as_of_ms: int,
+    fields_payload: dict[str, Any],
+    legacy_payload: dict[str, Any],
+    tos_payload: dict[str, Any],
+    index: int,
+    legacy_outcome_set: set[str],
+) -> JoinedBar:
+    """One bar as all three artifacts describe it, every field refused on drift.
+
+    Nothing here reads a value with a bare ``.get`` and compares it to a
+    literal: an unrecognised outcome, outcome_kind, direction or non-boolean
+    flag is a refusal, because every one of them decides a bucket.
+    """
+    published = _require(fields_payload, "fields", LABEL_FIELDS, index)
+    if not isinstance(published, dict):
+        raise DiffDecisionsError(f"B1a line {index + 1} fields is not a block")
+    decision = _require(legacy_payload, "decision", LABEL_LEGACY, index)
+    if not isinstance(decision, dict):
+        raise DiffDecisionsError(f"B2 line {index + 1} decision is not a block")
+
+    legacy_outcome = decision.get("outcome")
+    direction = _legacy_direction(decision, legacy_outcome, raw_event_id)
+    if legacy_outcome not in legacy_outcome_set:
+        raise DiffDecisionsError(
+            f"{raw_event_id}: legacy outcome {legacy_outcome!r} is not in B2's "
+            "declared closed set — a bucket named after it would name an "
+            "outcome B2 does not claim to produce"
+        )
+    tos_kind = tos_payload.get("outcome_kind")
+    if tos_kind not in TOS_OUTCOME_KINDS:
+        raise DiffDecisionsError(
+            f"{raw_event_id}: TOS outcome_kind {tos_kind!r} is not one of "
+            f"{TOS_OUTCOME_KINDS}"
+        )
+    z_value = published.get("z_x1000")
+    if not isinstance(z_value, int) or isinstance(z_value, bool):
+        raise DiffDecisionsError(
+            f"{raw_event_id}: B1a z_x1000 is {z_value!r}, not an integer"
+        )
+    return JoinedBar(
+        raw_event_id=raw_event_id,
+        as_of_ms=as_of_ms,
+        legacy_outcome=str(legacy_outcome),
+        legacy_direction=direction,
+        admitted=_require_bool(
+            decision,
+            "would_be_admitted_by_legacy_position_model",
+            "B2",
+            raw_event_id,
+        ),
+        tos_outcome_kind=str(tos_kind),
+        tos_rule_id=tos_payload.get("rule_id"),
+        tos_capacity_denied=_require_bool(
+            tos_payload, "capacity_denied", "B1b", raw_event_id
+        ),
+        gates=_published_gates(published, raw_event_id),
+        z_x1000=z_value,
+    )
+
+
+def _refuse_bar_mismatch(
+    id_mismatch: dict[str, Any] | None, as_of_mismatch: dict[str, Any] | None
+) -> None:
+    """Turn a recorded lockstep disagreement into the refusal, naming the position."""
+    if id_mismatch is not None:
+        raise DiffDecisionsError(
+            "raw_event_id sequences differ at position "
+            f"{id_mismatch['position']}: B1a={id_mismatch[LABEL_FIELDS]!r} "
+            f"B2={id_mismatch[LABEL_LEGACY]!r} B1b={id_mismatch[LABEL_TOS]!r}. "
+            "The three artifacts are not about the same bars in the same order, "
+            "so a positional join would compare different bars to each other."
+        )
+    if as_of_mismatch is not None:
+        raise DiffDecisionsError(
+            "as_of_ms differ at position "
+            f"{as_of_mismatch['position']} ({as_of_mismatch['raw_event_id']}): "
+            f"B1a={as_of_mismatch[LABEL_FIELDS]} "
+            f"B2={as_of_mismatch[LABEL_LEGACY]} "
+            f"B1b={as_of_mismatch[LABEL_TOS]}"
+        )
+
+
+def _join_checks(
+    bars: list[JoinedBar], legacy_outcomes: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """The per-line checks the lockstep pass enforced, in CHECK_NAMES order."""
+    return [
+        check_entry(
+            "raw_event_id_sequences_identical",
+            "every position of the three artifacts carries the same " "raw_event_id",
+            bars=len(bars),
+        ),
+        check_entry(
+            "as_of_ms_identical",
+            "every position carries the same as_of_ms in all three",
+        ),
+        check_entry(
+            "no_floats_in_payloads",
+            "enforced by json.loads parse_float/parse_constant hooks on every "
+            "line of all three artifacts, so a float LITERAL is refused even "
+            "where its value is integral",
+        ),
+        check_entry(
+            "legacy_outcome_in_declared_closed_set",
+            "every B2 outcome is a member of that run's lineage "
+            "outcomes.closed_set, so every TOS_EXIT_ON_LEGACY_<outcome> bucket "
+            "name is one B2 declares",
+            closed_set_size=len(legacy_outcomes),
+        ),
+        check_entry(
+            "legacy_direction_in_published_token_set",
+            "every B2 direction is null or one of "
+            f"{list(DIRECTION_TOKENS)}, and every {OUTCOME_FIRED} bar carries "
+            "one of them — direction decides AGREE_ENTRY vs LEGACY_ONLY_ENTRY, "
+            "so a token change must refuse rather than move bars between "
+            "buckets",
+            tokens=list(DIRECTION_TOKENS),
+        ),
+        check_entry(
+            "tos_outcome_kind_in_closed_set",
+            f"every B1b outcome_kind is one of {list(TOS_OUTCOME_KINDS)}",
+        ),
+    ]
+
+
 def join_artifacts(
     *,
     fields_path: Path,
@@ -788,137 +1063,20 @@ def join_artifacts(
             }
             break
 
-        published = _require(fields_payload, "fields", LABEL_FIELDS, index)
-        if not isinstance(published, dict):
-            raise DiffDecisionsError(f"B1a line {index + 1} fields is not a block")
-        decision = _require(legacy_payload, "decision", LABEL_LEGACY, index)
-        if not isinstance(decision, dict):
-            raise DiffDecisionsError(f"B2 line {index + 1} decision is not a block")
-
-        legacy_outcome = decision.get("outcome")
-        if legacy_outcome not in legacy_outcome_set:
-            raise DiffDecisionsError(
-                f"{fields_id}: legacy outcome {legacy_outcome!r} is not in B2's "
-                "declared closed set — a bucket named after it would name an "
-                "outcome B2 does not claim to produce"
-            )
-        tos_kind = tos_payload.get("outcome_kind")
-        if tos_kind not in TOS_OUTCOME_KINDS:
-            raise DiffDecisionsError(
-                f"{fields_id}: TOS outcome_kind {tos_kind!r} is not one of "
-                f"{TOS_OUTCOME_KINDS}"
-            )
-
-        gates = []
-        for gate in GATE_FIELDS:
-            if gate not in published:
-                raise DiffDecisionsError(
-                    f"{fields_id}: B1a publishes no {gate!r} — the tenant entry "
-                    "rule ANDs it, so its absence makes the comparison undefined"
-                )
-            value = published[gate]
-            if not isinstance(value, bool):
-                raise DiffDecisionsError(
-                    f"{fields_id}: B1a {gate!r} is {value!r}, not a boolean"
-                )
-            gates.append(value)
-        z_value = published.get("z_x1000")
-        if not isinstance(z_value, int) or isinstance(z_value, bool):
-            raise DiffDecisionsError(
-                f"{fields_id}: B1a z_x1000 is {z_value!r}, not an integer"
-            )
-        admitted = decision.get("would_be_admitted_by_legacy_position_model")
-        if not isinstance(admitted, bool):
-            raise DiffDecisionsError(
-                f"{fields_id}: B2 would_be_admitted_by_legacy_position_model is "
-                f"{admitted!r}, not a boolean"
-            )
-        capacity_denied = tos_payload.get("capacity_denied")
-        if not isinstance(capacity_denied, bool):
-            raise DiffDecisionsError(
-                f"{fields_id}: B1b capacity_denied is {capacity_denied!r}, not a "
-                "boolean"
-            )
-
         bars.append(
-            JoinedBar(
+            project_bar(
                 raw_event_id=str(fields_id),
                 as_of_ms=int(fields_as_of),
-                legacy_outcome=str(legacy_outcome),
-                legacy_direction=decision.get("direction"),
-                admitted=admitted,
-                tos_outcome_kind=str(tos_kind),
-                tos_rule_id=tos_payload.get("rule_id"),
-                tos_capacity_denied=capacity_denied,
-                gates=(gates[0], gates[1], gates[2], gates[3]),
-                z_x1000=z_value,
+                fields_payload=fields_payload,
+                legacy_payload=legacy_payload,
+                tos_payload=tos_payload,
+                index=index,
+                legacy_outcome_set=legacy_outcome_set,
             )
         )
 
-    if id_mismatch is not None:
-        raise DiffDecisionsError(
-            "raw_event_id sequences differ at position "
-            f"{id_mismatch['position']}: B1a={id_mismatch[LABEL_FIELDS]!r} "
-            f"B2={id_mismatch[LABEL_LEGACY]!r} B1b={id_mismatch[LABEL_TOS]!r}. "
-            "The three artifacts are not about the same bars in the same order, "
-            "so a positional join would compare different bars to each other."
-        )
-    if as_of_mismatch is not None:
-        raise DiffDecisionsError(
-            "as_of_ms differ at position "
-            f"{as_of_mismatch['position']} ({as_of_mismatch['raw_event_id']}): "
-            f"B1a={as_of_mismatch[LABEL_FIELDS]} "
-            f"B2={as_of_mismatch[LABEL_LEGACY]} "
-            f"B1b={as_of_mismatch[LABEL_TOS]}"
-        )
-
-    checks.append(
-        {
-            "name": "raw_event_id_sequences_identical",
-            "status": "PASS",
-            "detail": (
-                "every position of the three artifacts carries the same " "raw_event_id"
-            ),
-            "bars": len(bars),
-        }
-    )
-    checks.append(
-        {
-            "name": "as_of_ms_identical",
-            "status": "PASS",
-            "detail": "every position carries the same as_of_ms in all three",
-        }
-    )
-    checks.append(
-        {
-            "name": "no_floats_in_payloads",
-            "status": "PASS",
-            "detail": (
-                "enforced by json.loads parse_float/parse_constant hooks on "
-                "every line of all three artifacts, so a float LITERAL is "
-                "refused even where its value is integral"
-            ),
-        }
-    )
-    checks.append(
-        {
-            "name": "legacy_outcome_in_declared_closed_set",
-            "status": "PASS",
-            "detail": (
-                "every B2 outcome is a member of that run's lineage "
-                "outcomes.closed_set, so every TOS_EXIT_ON_LEGACY_<outcome> "
-                "bucket name is one B2 declares"
-            ),
-            "closed_set_size": len(legacy_outcomes),
-        }
-    )
-    checks.append(
-        {
-            "name": "tos_outcome_kind_in_closed_set",
-            "status": "PASS",
-            "detail": f"every B1b outcome_kind is one of {list(TOS_OUTCOME_KINDS)}",
-        }
-    )
+    _refuse_bar_mismatch(id_mismatch, as_of_mismatch)
+    checks.extend(_join_checks(bars, legacy_outcomes))
     return JoinResult(bars=bars, checks=checks)
 
 
@@ -1016,14 +1174,37 @@ def _rate(numerator: int, denominator: int) -> dict[str, Any]:
     }
 
 
+#: B1b-D7 asks B3 for something these three artifacts cannot supply. Stated,
+#: not silently skipped, and NOT replaced by an inferred position state.
+B1B_D7_OBLIGATION_NOTE = (
+    "UNMET. B1b-D7's note asks that 'B3's diff has to scope the legacy side "
+    "to bars where a position was held' "
+    "(tos/runtime/cp3/differences.py, declared difference B1b-D7). This "
+    "report does not: B2's per-bar payload carries no position or exposure "
+    "field, and neither B1a's fields nor B1b's trace says whether a legacy "
+    "Setup D position was open on a bar — the walk-forward position model is "
+    "visible only as the per-bar verdict "
+    "would_be_admitted_by_legacy_position_model, which answers 'was this fire "
+    "admitted', not 'was something open now'. So the "
+    "TOS_EXIT_ON_LEGACY_<outcome> buckets and the "
+    "tos_flat_without_legacy_fire attribution count TOS FLAT INTENT on bars "
+    "where the legacy strategy did not fire, which is an UPPER BOUND on the "
+    "position-scoped comparison B1b-D7 asks for. No position state is "
+    "inferred here: deriving one from the admitted flag plus an exit "
+    "simulation would be a fourth implementation of the harness's exit path "
+    "(B2-L3) and its errors would be reported as policy differences. Closing "
+    "this needs a position/exposure field published by one of the producers, "
+    "which is a B2 or kernel change and outside this tool."
+)
+
 #: Said in the summary rather than left to be inferred from a missing section.
 SCOPE_NOTE = (
     "Fills and PnL are NOT compared. Two independent reasons, both recorded by "
     "the TOS artifact itself: (1) tos.backtest holds at most ONE order per "
     "scope for the whole run, so after the first realized order every firing is "
-    "an exact capacity denial (B1b-D1); kickoff §3 B4 disposes of this as "
-    "'체결 비교 포기' — the comparison is decision and intent level, never fill "
-    "for fill. (2) The performance surface is sealed: no Sharpe, PnL, return or "
+    "an exact capacity denial (B1b-D1); kickoff §3 B4 poses this and §4 결정 7 "
+    "disposes of it as '체결 비교 포기' (operator-approved 2026-10-07) — the "
+    "comparison is decision and intent level, never fill for fill. (2) The performance surface is sealed: no Sharpe, PnL, return or "
     "edge field exists anywhere in tos.backtest's result types (design #33 "
     "§1.2 B1), so the TOS side cannot make a performance claim to compare "
     "against. The legacy side's would_be_admitted_by_legacy_position_model flag "
@@ -1031,6 +1212,106 @@ SCOPE_NOTE = (
     "quantity (B2-L3), and it is an upper bound on what paper would have "
     "entered because the live post-exit cooldown is absent from it (B2-L10)."
 )
+
+
+def _summary_totals(records: list[DiffRecord], buckets: Counter[str]) -> dict[str, int]:
+    """The counts both agreement rates are computed from."""
+    return {
+        "legacy_fired": sum(1 for r in records if r.bar.legacy_fired),
+        "legacy_fired_long": sum(1 for r in records if r.bar.legacy_fired_long),
+        "legacy_fired_short": sum(1 for r in records if r.bar.legacy_fired_short),
+        "legacy_fired_long_admitted_by_position_model": sum(
+            1 for r in records if r.bar.legacy_fired_long and r.bar.admitted
+        ),
+        "agree_entry": buckets.get(BUCKET_AGREE_ENTRY, 0),
+        "agree_entry_admitted_by_position_model": sum(
+            1 for r in records if r.bucket == BUCKET_AGREE_ENTRY and r.bar.admitted
+        ),
+        "tos_action": sum(1 for r in records if r.bar.tos_action),
+        "tos_action_capacity_denied": sum(
+            1 for r in records if r.bar.tos_action and r.bar.tos_capacity_denied
+        ),
+        "tos_flat": sum(1 for r in records if r.bar.tos_flat),
+        "tos_no_action": sum(
+            1 for r in records if r.bar.tos_outcome_kind == TOS_NO_ACTION
+        ),
+    }
+
+
+def _summary_rates(totals: dict[str, int]) -> dict[str, Any]:
+    """The headline rates, each with the definition it is a rate OF.
+
+    Rule level and position-model level differ in their DENOMINATOR: the first
+    asks "did the two entry RULES fire on the same bars", the second restricts
+    to the long fires the walk-forward single-position model would actually
+    have entered. Both are computed, because "agreement" without saying which
+    question it answers is the thing this report exists not to say.
+    """
+    return {
+        "rule_level_entry_agreement": {
+            "definition": (
+                "AGREE_ENTRY / (legacy outcome FIRED and direction LONG). "
+                "'Did the tenant policy's entry rule fire on the bars the "
+                "legacy ENTRY RULE fired on, long side?' Neither side's "
+                "position state enters this rate: it is a rule-to-rule "
+                "comparison. The denominator is LONG-only because this TOS "
+                "deployment renders one direction (B1b-D5)."
+            ),
+            **_rate(totals["agree_entry"], totals["legacy_fired_long"]),
+        },
+        "position_model_level_entry_agreement": {
+            "definition": (
+                "(AGREE_ENTRY and would_be_admitted_by_legacy_position_model) "
+                "/ (legacy FIRED LONG and would_be_admitted_by_legacy_"
+                "position_model). 'Of the long fires the walk-forward "
+                "harness's single-position model would actually have entered, "
+                "on how many did the tenant policy also propose an entry?' The "
+                "TOS side contributes no position state to either side of this "
+                "rate — it has none (B1b-D7) — so the rate narrows the "
+                "denominator only."
+            ),
+            **_rate(
+                totals["agree_entry_admitted_by_position_model"],
+                totals["legacy_fired_long_admitted_by_position_model"],
+            ),
+        },
+        "tos_action_explained_by_a_legacy_long_fire": {
+            "definition": (
+                "AGREE_ENTRY / (TOS outcome_kind ACTION). The same numerator "
+                "read from the TOS side: 'of the bars where the tenant policy "
+                "proposed an entry, on how many did the legacy rule also fire "
+                "long?' Below 1 because the published field set cannot express "
+                "min_confidence, so the policy is a SUPERSET of 'legacy fired' "
+                "(B1a-D1 / B2-L9)."
+            ),
+            **_rate(totals["agree_entry"], totals["tos_action"]),
+        },
+    }
+
+
+def _summary_scope(tos_lineage: dict[str, Any]) -> dict[str, Any]:
+    """What this report does NOT compare, and the TOS counts that say why."""
+    counts = tos_lineage.get("counts")
+    counts = counts if isinstance(counts, dict) else {}
+    claims = tos_lineage.get("claims")
+    claims = claims if isinstance(claims, dict) else {}
+    return {
+        "fills_and_pnl_not_compared": SCOPE_NOTE,
+        "b1b_d7_obligation": B1B_D7_OBLIGATION_NOTE,
+        "tos_fill_records": counts.get("fill_records"),
+        "tos_handoffs": counts.get("handoffs"),
+        "tos_capacity_denials": counts.get("capacity_denials"),
+        "tos_realized_orders": counts.get("realized_orders"),
+        "tos_realized_orders_note": (
+            "echoed from B1b's own counts, which it added so that handoffs=1 "
+            "is not misread as 'one bar handed off out of many': ONE order was "
+            "realized in the whole run, on the bar named here, and every later "
+            "firing is a capacity denial (B1b-D1). Read beside "
+            "totals.tos_action_capacity_denied."
+        ),
+        "tos_performance_surface": claims.get("performance_surface"),
+        "tos_oracle_scope": claims.get("oracle_scope"),
+    }
 
 
 def build_summary(
@@ -1059,30 +1340,14 @@ def build_summary(
             record.bar.tos_outcome_kind
         ] += 1
 
-    legacy_fired = sum(1 for r in records if r.bar.legacy_fired)
-    legacy_fired_long = sum(1 for r in records if r.bar.legacy_fired_long)
-    legacy_fired_short = sum(1 for r in records if r.bar.legacy_fired_short)
-    legacy_fired_long_admitted = sum(
-        1 for r in records if r.bar.legacy_fired_long and r.bar.admitted
-    )
-    tos_action = sum(1 for r in records if r.bar.tos_action)
-    tos_action_capacity_denied = sum(
-        1 for r in records if r.bar.tos_action and r.bar.tos_capacity_denied
-    )
-    agree_entry = buckets.get(BUCKET_AGREE_ENTRY, 0)
-    agree_entry_admitted = sum(
-        1 for r in records if r.bucket == BUCKET_AGREE_ENTRY and r.bar.admitted
-    )
-
+    totals = _summary_totals(records, buckets)
     unresolved = [
         r.bar.raw_event_id
         for r in records
         if r.attribution_rule == ATTRIBUTION_UNRESOLVED
     ]
-
-    absorbed: dict[str, list[dict[str, Any]]] = {}
-    for label, entries in declared_index.items():
-        absorbed[label] = [
+    absorbed = {
+        label: [
             {
                 "id": entry["id"],
                 "item": entry["item"],
@@ -1090,6 +1355,8 @@ def build_summary(
             }
             for entry in entries
         ]
+        for label, entries in declared_index.items()
+    }
 
     return {
         "summary_schema_version": 1,
@@ -1097,7 +1364,6 @@ def build_summary(
         "window_identity": dict(identity),
         "bars": len(records),
         "buckets": dict(sorted(buckets.items())),
-        "buckets_reconcile_to_bars": sum(buckets.values()) == len(records),
         "attribution_rules": {
             name: {
                 "bars": count,
@@ -1116,57 +1382,8 @@ def build_summary(
             outcome: dict(sorted(kinds.items()))
             for outcome, kinds in sorted(matrix.items())
         },
-        "totals": {
-            "legacy_fired": legacy_fired,
-            "legacy_fired_long": legacy_fired_long,
-            "legacy_fired_short": legacy_fired_short,
-            "legacy_fired_long_admitted_by_position_model": (
-                legacy_fired_long_admitted
-            ),
-            "tos_action": tos_action,
-            "tos_action_capacity_denied": tos_action_capacity_denied,
-            "tos_flat": sum(1 for r in records if r.bar.tos_flat),
-            "tos_no_action": sum(
-                1 for r in records if r.bar.tos_outcome_kind == TOS_NO_ACTION
-            ),
-        },
-        "rates": {
-            "rule_level_entry_agreement": {
-                "definition": (
-                    "AGREE_ENTRY / (legacy outcome FIRED and direction LONG). "
-                    "'Did the tenant policy's entry rule fire on the bars the "
-                    "legacy ENTRY RULE fired on, long side?' Neither side's "
-                    "position state enters this rate: it is a rule-to-rule "
-                    "comparison. The denominator is LONG-only because this TOS "
-                    "deployment renders one direction (B1b-D5)."
-                ),
-                **_rate(agree_entry, legacy_fired_long),
-            },
-            "position_model_level_entry_agreement": {
-                "definition": (
-                    "(AGREE_ENTRY and would_be_admitted_by_legacy_position_model) "
-                    "/ (legacy FIRED LONG and would_be_admitted_by_legacy_"
-                    "position_model). 'Of the long fires the walk-forward "
-                    "harness's single-position model would actually have "
-                    "entered, on how many did the tenant policy also propose an "
-                    "entry?' The TOS side contributes no position state to "
-                    "either side of this rate — it has none (B1b-D7) — so the "
-                    "rate narrows the denominator only."
-                ),
-                **_rate(agree_entry_admitted, legacy_fired_long_admitted),
-            },
-            "tos_action_explained_by_a_legacy_long_fire": {
-                "definition": (
-                    "AGREE_ENTRY / (TOS outcome_kind ACTION). The same "
-                    "numerator read from the TOS side: 'of the bars where the "
-                    "tenant policy proposed an entry, on how many did the "
-                    "legacy rule also fire long?' Below 1 because the published "
-                    "field set cannot express min_confidence, so the policy is a "
-                    "SUPERSET of 'legacy fired' (B1a-D1 / B2-L9)."
-                ),
-                **_rate(agree_entry, tos_action),
-            },
-        },
+        "totals": totals,
+        "rates": _summary_rates(totals),
         "unresolved": {
             "count": len(unresolved),
             "id_list_cap": UNRESOLVED_ID_LIST_CAP,
@@ -1193,16 +1410,9 @@ def build_summary(
                 "B1b lineage parents.strategy_bindings_file.bindings — "
                 "tos/runtime/cp3/strategy_bindings.yaml"
             ),
-            "z_edge_units": ctx.z_edge_units,
+            "quantization_edge": QUANTIZATION_EDGE_DERIVATION,
         },
-        "scope": {
-            "fills_and_pnl_not_compared": SCOPE_NOTE,
-            "tos_fill_records": tos_lineage.get("counts", {}).get("fill_records"),
-            "tos_performance_surface": tos_lineage.get("claims", {}).get(
-                "performance_surface"
-            ),
-            "tos_oracle_scope": tos_lineage.get("claims", {}).get("oracle_scope"),
-        },
+        "scope": _summary_scope(tos_lineage),
     }
 
 
@@ -1217,8 +1427,9 @@ COMMON_MODE = (
     "shared/decision/setups/vwap_reversion.py, driven bar by bar by B1a — so "
     "agreement here confirms the POLICY (which published scalars the tenant "
     "rules compare, and when they fire), never the VWAP/ATR/z arithmetic those "
-    "scalars came from. ADR-002-018 §10: 'the same function call is a common "
-    "mode, not independent corroboration'."
+    "scalars came from — ADR-002-018 §10's point about a shared library being "
+    "a common mode rather than independent corroboration, which all three "
+    "artifacts restate in their own common_mode blocks."
 )
 
 
@@ -1291,6 +1502,87 @@ class ArtifactRef:
         }
 
 
+#: What "first match wins" and UNRESOLVED mean, restated for a reader of the
+#: sidecar who has not read this module.
+ATTRIBUTION_SEMANTICS = (
+    "Ordered, first match wins. A bar with nothing to explain is "
+    f"{ATTRIBUTION_AGREED!r}; a bar with something to explain that no "
+    f"rule matches is {ATTRIBUTION_UNRESOLVED!r} and is listed in "
+    "summary.json rather than given a reason. Every id a rule names is "
+    "checked against the three lineages' declared_differences at run "
+    "time (check attribution_ids_declared); an undeclared id is a "
+    "refusal, not a dangling reference. There is no catch-all last "
+    "entry, and in particular no quantization-edge rule — see "
+    "config.quantization_edge for the derivation of why none can "
+    "match a bar these producers can emit."
+)
+
+
+def _lineage_classification(
+    records: list[DiffRecord], refs: dict[str, ArtifactRef]
+) -> dict[str, Any]:
+    """What a bucket name means, and which strategy the gate list came from."""
+    return {
+        "buckets": sorted({record.bucket for record in records}),
+        "bucket_families": [
+            BUCKET_AGREE_NO_ACTION,
+            BUCKET_AGREE_ENTRY,
+            BUCKET_TOS_ONLY_ENTRY,
+            BUCKET_LEGACY_ONLY_ENTRY,
+            f"{BUCKET_TOS_EXIT_PREFIX}<legacy outcome>",
+        ],
+        "decision_tree": CLASSIFICATION_DECISION_TREE,
+        "gate_fields": list(GATE_FIELDS),
+        "gate_fields_source": (
+            "the five comparisons of R1-ENTRY-LONG in "
+            "tos/runtime/cp3/strategies/setup_d_long.strategy.yaml — four "
+            "booleans plus z_x1000 against the bound threshold. The list "
+            "is a literal in this tool (which never reads that file), so "
+            "the strategy the list was derived FROM is identified below "
+            "and tests/tools/test_cp3_diff_decisions.py parses the YAML "
+            "and pins the list against R1's own refs: a fifth gate or a "
+            "rename goes red there, not silently green here."
+        ),
+        "gate_fields_derived_from_strategy": {
+            key: value
+            for key, value in (
+                refs[LABEL_TOS]
+                .lineage.get("parents", {})
+                .get("strategy_file", {})
+                .items()
+            )
+            if key in ("path", "sha256", "canonical_digest", "strategy_id")
+        },
+    }
+
+
+def _lineage_attribution_table(records: list[DiffRecord]) -> list[dict[str, Any]]:
+    """The ordered table as it was read, with each rule's match count."""
+    return [
+        {
+            "order": order,
+            "name": rule.name,
+            "ids": list(rule.ids),
+            "why": rule.why,
+            "matched_bars": sum(
+                1 for record in records if record.attribution_rule == rule.name
+            ),
+        }
+        for order, rule in enumerate(ATTRIBUTION_RULES)
+    ]
+
+
+def _lineage_config(ctx: DiffContext) -> dict[str, Any]:
+    """The compared run's operating point, read from B1b's bindings."""
+    return {
+        "z_entry_max_x1000": ctx.z_entry_max_x1000,
+        "z_entry_max_x1000_source": (
+            "B1b lineage parents.strategy_bindings_file.bindings." "z_entry_max_x1000"
+        ),
+        "quantization_edge": QUANTIZATION_EDGE_DERIVATION,
+    }
+
+
 def build_lineage(
     *,
     refs: dict[str, ArtifactRef],
@@ -1350,62 +1642,16 @@ def build_lineage(
             "bars": len(records),
         },
         "checks": checks,
-        "classification": {
-            "buckets": sorted({record.bucket for record in records}),
-            "bucket_families": [
-                BUCKET_AGREE_NO_ACTION,
-                BUCKET_AGREE_ENTRY,
-                BUCKET_TOS_ONLY_ENTRY,
-                BUCKET_LEGACY_ONLY_ENTRY,
-                f"{BUCKET_TOS_EXIT_PREFIX}<legacy outcome>",
-            ],
-            "decision_tree": CLASSIFICATION_DECISION_TREE,
-            "gate_fields": list(GATE_FIELDS),
-            "gate_fields_source": (
-                "the five comparisons of R1-ENTRY-LONG in "
-                "tos/runtime/cp3/strategies/setup_d_long.strategy.yaml — four "
-                "booleans plus z_x1000 against the bound threshold"
-            ),
-        },
-        "attribution_table": [
-            {
-                "order": order,
-                "name": rule.name,
-                "ids": list(rule.ids),
-                "why": rule.why,
-                "matched_bars": sum(
-                    1 for record in records if record.attribution_rule == rule.name
-                ),
-            }
-            for order, rule in enumerate(ATTRIBUTION_RULES)
-        ],
-        "attribution_semantics": (
-            "Ordered, first match wins. A bar with nothing to explain is "
-            f"{ATTRIBUTION_AGREED!r}; a bar with something to explain that no "
-            f"rule matches is {ATTRIBUTION_UNRESOLVED!r} and is listed in "
-            "summary.json rather than given a reason. Every id a rule names is "
-            "checked against the three lineages' declared_differences at run "
-            "time (check attribution_ids_declared); an undeclared id is a "
-            "refusal, not a dangling reference."
-        ),
+        "classification": _lineage_classification(records, refs),
+        "attribution_table": _lineage_attribution_table(records),
+        "attribution_semantics": ATTRIBUTION_SEMANTICS,
         "declared_differences_index": declared_index,
-        "config": {
-            "z_entry_max_x1000": ctx.z_entry_max_x1000,
-            "z_entry_max_x1000_source": (
-                "B1b lineage parents.strategy_bindings_file.bindings."
-                "z_entry_max_x1000"
-            ),
-            "z_edge_units": ctx.z_edge_units,
-            "z_edge_units_rationale": (
-                "one x1000 quantization unit; B1a truncates z toward zero "
-                "(B1a-D8) so a published integer understates the magnitude by "
-                "at most one unit"
-            ),
-        },
+        "config": _lineage_config(ctx),
         "common_mode": COMMON_MODE,
         "scope": {
             "compares": "decision and intent level only",
             "does_not_compare": SCOPE_NOTE,
+            "b1b_d7_obligation": B1B_D7_OBLIGATION_NOTE,
         },
         "determinism": {
             "no_clock_reads": True,
@@ -1465,37 +1711,50 @@ def default_out_dir(identity: dict[str, Any]) -> Path:
     )
 
 
-def run(
-    *,
-    fields_jsonl: Path,
-    legacy_jsonl: Path,
-    tos_jsonl: Path,
-    out_dir: Path | None = None,
-    fields_lineage: Path | None = None,
-    legacy_lineage: Path | None = None,
-    tos_lineage: Path | None = None,
-) -> RunResult:
-    """Refuse or diff; write ``diff.jsonl``, ``summary.json`` and ``lineage.json``."""
-    refs = {
-        LABEL_FIELDS: _load_ref(
-            label=LABEL_FIELDS,
-            jsonl_path=fields_jsonl,
-            lineage_path=_sidecar_for(fields_jsonl, fields_lineage),
-        ),
-        LABEL_LEGACY: _load_ref(
-            label=LABEL_LEGACY,
-            jsonl_path=legacy_jsonl,
-            lineage_path=_sidecar_for(legacy_jsonl, legacy_lineage),
-        ),
-        LABEL_TOS: _load_ref(
-            label=LABEL_TOS,
-            jsonl_path=tos_jsonl,
-            lineage_path=_sidecar_for(tos_jsonl, tos_lineage),
-        ),
-    }
-    checks: list[dict[str, Any]] = []
+#: The checks this tool performs, in the order the lineage records them. The
+#: list is the enumeration — prose that states a count is pinned to
+#: ``len(CHECK_NAMES)`` by the test suite, so the four-different-numbers defect
+#: an independent review found in the first revision cannot recur.
+CHECK_NAMES = (
+    "attribution_ids_declared",
+    "entry_outcome_literals_are_closed_set_members",
+    "window_identity_agreement",
+    "strategy_yaml_and_input_files_agreement",
+    "artifact_matches_its_own_lineage",
+    "tos_parent_is_this_fields_artifact",
+    "line_counts_equal",
+    "raw_event_id_sequences_identical",
+    "as_of_ms_identical",
+    "no_floats_in_payloads",
+    "legacy_outcome_in_declared_closed_set",
+    "legacy_direction_in_published_token_set",
+    "tos_outcome_kind_in_closed_set",
+    "buckets_sum_equals_input_line_count",
+    "report_carries_no_floats",
+)
 
-    # --- refusal 0: the attribution table cites only declared differences ---
+
+def check_entry(name: str, detail: str, **extra: Any) -> dict[str, Any]:
+    """One ``checks`` row. No ``status`` field — see the module docstring.
+
+    A refused run writes no artifact, so a row can only ever describe a check
+    that held; a ``status`` key would be a literal that is always the same.
+    """
+    if name not in CHECK_NAMES:
+        raise DiffDecisionsError(f"{name!r} is not in CHECK_NAMES")
+    return {"name": name, "detail": detail, **extra}
+
+
+def _canonical_digest(value: Any) -> str:
+    """sha256 over a canonical JSON rendering — used to compare long lists."""
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _check_attribution_ids(
+    refs: dict[str, ArtifactRef],
+) -> tuple[dict[str, list[dict[str, str]]], dict[str, Any]]:
     declared_index = declared_difference_index(
         {label: ref.lineage for label, ref in refs.items()}
     )
@@ -1503,24 +1762,22 @@ def run(
         entry["id"] for entries in declared_index.values() for entry in entries
     }
     assert_attribution_ids_declared(ATTRIBUTION_RULES, declared_ids)
-    checks.append(
-        {
-            "name": "attribution_ids_declared",
-            "status": "PASS",
-            "detail": (
-                "every declared-difference id named by the attribution table "
-                "exists in one of the three input lineages"
-            ),
-            "declared_ids": len(declared_ids),
-            "cited_ids": sorted({i for rule in ATTRIBUTION_RULES for i in rule.ids}),
-        }
+    return declared_index, check_entry(
+        "attribution_ids_declared",
+        "every declared-difference id named by the attribution table exists in "
+        "one of the three input lineages",
+        declared_ids=len(declared_ids),
+        cited_ids=sorted({i for rule in ATTRIBUTION_RULES for i in rule.ids}),
     )
 
-    # --- refusal 1: the window identities must agree ---
+
+def _check_window_identity(
+    refs: dict[str, ArtifactRef],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     b1a_identity = b1a_window_identity(refs[LABEL_FIELDS].lineage)
     b2_identity = b2_window_identity(refs[LABEL_LEGACY].lineage)
     differing = {
-        field: {LABEL_FIELDS: b1a_identity[field], LABEL_LEGACY: b2_identity[field]}
+        field: (b1a_identity[field], b2_identity[field])
         for field in WINDOW_IDENTITY_FIELDS
         if b1a_identity[field] != b2_identity[field]
     }
@@ -1528,34 +1785,80 @@ def run(
         raise DiffDecisionsError(
             "B1a and B2 describe different windows: "
             + "; ".join(
-                f"{field} B1a={values[LABEL_FIELDS]!r} B2={values[LABEL_LEGACY]!r}"
-                for field, values in differing.items()
+                f"{field} B1a={a!r} B2={b!r}" for field, (a, b) in differing.items()
             )
             + ". B2's lineage states the contract: 'B3 MUST REFUSE a (B1a, B2) "
             "pair whose join.window_identity blocks differ in any field, rather "
             "than join on raw_event_id and report the difference as a decision "
             "mismatch.'"
         )
-    checks.append(
-        {
-            "name": "window_identity_agreement",
-            "status": "PASS",
-            "detail": (
-                "B1a's projected identity equals B2's declared "
-                "join.window_identity in all "
-                f"{len(WINDOW_IDENTITY_FIELDS)} fields"
-            ),
-            "identity": dict(b2_identity),
-        }
+    return b2_identity, check_entry(
+        "window_identity_agreement",
+        "B1a's projected identity equals B2's declared join.window_identity in "
+        f"all {len(WINDOW_IDENTITY_FIELDS)} fields",
+        identity=dict(b2_identity),
     )
 
-    # --- refusal 2: each artifact is the one its own lineage describes ---
-    self_digest_sources = {
-        LABEL_FIELDS: ("output.jsonl_sha256", "output.jsonl_lines"),
-        LABEL_LEGACY: ("output.jsonl_sha256", "output.jsonl_lines"),
-        LABEL_TOS: ("output.trace_jsonl_sha256", "output.trace_jsonl_lines"),
+
+def _check_strategy_and_inputs(refs: dict[str, ArtifactRef]) -> dict[str, Any]:
+    """The (B1a, B2) edge, pinned on more than the six identity fields.
+
+    Concrete failing input: the Setup D YAML's ``extreme_atr_mult`` is edited
+    between the B1a run and the B2 run, or one of them reads a re-written
+    Parquet part. The six identity fields are all unchanged, every
+    ``raw_event_id`` still lines up, and the two sides would be compared as if
+    they had run the same strategy over the same bytes. The (B1a, B1b) edge is
+    already sha-pinned through B1b's ``parents``; this closes the asymmetry.
+    """
+    pins: dict[str, dict[str, Any]] = {}
+    for label in (LABEL_FIELDS, LABEL_LEGACY):
+        lineage = refs[label].lineage
+        strategy = _dig_mapping(lineage, "strategy", label)
+        dataset = _dig_mapping(lineage, "dataset", label)
+        for key, where in (("sha256", strategy), ("path", strategy)):
+            if key not in where:
+                raise DiffDecisionsError(f"{label} lineage strategy has no {key}")
+        if "input_files" not in dataset:
+            raise DiffDecisionsError(f"{label} lineage dataset has no input_files")
+        pins[label] = {
+            "strategy_path": strategy["path"],
+            "strategy_sha256": strategy["sha256"],
+            "input_files_digest": _canonical_digest(dataset["input_files"]),
+            "input_file_count": dataset.get("input_file_count"),
+        }
+    differing = {
+        key: (pins[LABEL_FIELDS][key], pins[LABEL_LEGACY][key])
+        for key in pins[LABEL_FIELDS]
+        if pins[LABEL_FIELDS][key] != pins[LABEL_LEGACY][key]
     }
-    for label, (sha_key, lines_key) in self_digest_sources.items():
+    if differing:
+        raise DiffDecisionsError(
+            "B1a and B2 did not read the same strategy file and input bytes: "
+            + "; ".join(
+                f"{key} B1a={a!r} B2={b!r}" for key, (a, b) in differing.items()
+            )
+            + ". The six window-identity fields cannot see this, so a parameter "
+            "or data edit between the two runs would be reported as a decision "
+            "difference."
+        )
+    return check_entry(
+        "strategy_yaml_and_input_files_agreement",
+        "B1a and B2 record the same strategy YAML path and sha256, the same "
+        "input-file count, and the same digest over dataset.input_files",
+        **pins[LABEL_FIELDS],
+    )
+
+
+#: Where each artifact's own sidecar records its payload digest and line count.
+SELF_DIGEST_SOURCES = {
+    LABEL_FIELDS: ("output.jsonl_sha256", "output.jsonl_lines"),
+    LABEL_LEGACY: ("output.jsonl_sha256", "output.jsonl_lines"),
+    LABEL_TOS: ("output.trace_jsonl_sha256", "output.trace_jsonl_lines"),
+}
+
+
+def _check_self_digests(refs: dict[str, ArtifactRef]) -> dict[str, Any]:
+    for label, (sha_key, lines_key) in SELF_DIGEST_SOURCES.items():
         ref = refs[label]
         declared_sha = _dig(ref.lineage, sha_key, label)
         declared_lines = _dig(ref.lineage, lines_key, label)
@@ -1567,22 +1870,24 @@ def run(
                 f"lines={declared_lines}. The lineage this report quotes must "
                 "describe the file it read."
             )
-    checks.append(
-        {
-            "name": "artifact_matches_its_own_lineage",
-            "status": "PASS",
-            "detail": (
-                "each of the three files' sha256 and line count equals the "
-                "value its own sidecar records"
-            ),
-            "sources": {k: list(v) for k, v in self_digest_sources.items()},
-        }
+    return check_entry(
+        "artifact_matches_its_own_lineage",
+        "each of the three files' sha256 and line count equals the value its "
+        "own sidecar records",
+        sources={k: list(v) for k, v in SELF_DIGEST_SOURCES.items()},
     )
 
-    # --- refusal 3: B1b consumed THIS fields.jsonl (and its sidecar) ---
-    tos_parents = _dig(refs[LABEL_TOS].lineage, "parents", LABEL_TOS)
-    parent_fields = tos_parents.get("fields_jsonl") or {}
-    parent_lineage = tos_parents.get("fields_lineage_json") or {}
+
+def _check_tos_parent(refs: dict[str, ArtifactRef]) -> dict[str, Any]:
+    tos_parents = _dig_mapping(refs[LABEL_TOS].lineage, "parents", LABEL_TOS)
+    parent_fields = tos_parents.get("fields_jsonl")
+    parent_lineage = tos_parents.get("fields_lineage_json")
+    if not isinstance(parent_fields, dict) or not isinstance(parent_lineage, dict):
+        raise DiffDecisionsError(
+            "B1b lineage parents must carry fields_jsonl and "
+            "fields_lineage_json blocks — without them nothing ties the trace "
+            "to a particular field stream"
+        )
     fields_ref = refs[LABEL_FIELDS]
     if parent_fields.get("sha256") != fields_ref.jsonl_sha256:
         raise DiffDecisionsError(
@@ -1607,40 +1912,195 @@ def run(
             "differences this report quotes would not be the ones the TOS run "
             "was governed by."
         )
-    checks.append(
-        {
-            "name": "tos_parent_is_this_fields_artifact",
-            "status": "PASS",
-            "detail": (
-                "B1b's parents.fields_jsonl sha256/lines and "
-                "parents.fields_lineage_json sha256 all match the B1a artifact "
-                "and sidecar given to this run"
-            ),
-            "fields_jsonl_sha256": fields_ref.jsonl_sha256,
-            "fields_lineage_sha256": fields_ref.lineage_sha256,
-        }
+    return check_entry(
+        "tos_parent_is_this_fields_artifact",
+        "B1b's parents.fields_jsonl sha256/lines and "
+        "parents.fields_lineage_json sha256 all match the B1a artifact and "
+        "sidecar given to this run",
+        fields_jsonl_sha256=fields_ref.jsonl_sha256,
+        fields_lineage_sha256=fields_ref.lineage_sha256,
     )
 
-    # --- refusal 4: equal line counts ---
+
+def _check_line_counts(refs: dict[str, ArtifactRef]) -> tuple[int, dict[str, Any]]:
     counts = {label: ref.jsonl_lines for label, ref in refs.items()}
     if len(set(counts.values())) != 1:
         raise DiffDecisionsError(
             "the three artifacts have different line counts "
             f"({counts}) — they cannot be joined line for line"
         )
-    checks.append(
-        {
-            "name": "line_counts_equal",
-            "status": "PASS",
-            "detail": f"all three artifacts have {counts[LABEL_FIELDS]} lines",
-            "lines": counts[LABEL_FIELDS],
-        }
+    lines = counts[LABEL_FIELDS]
+    return lines, check_entry(
+        "line_counts_equal",
+        f"all three artifacts have {lines} lines",
+        lines=lines,
     )
 
-    # --- refusals 5-7: ids, as_of_ms, floats (and the closed sets) ---
+
+def _read_entry_threshold(refs: dict[str, ArtifactRef]) -> DiffContext:
+    bindings = _dig_mapping(
+        refs[LABEL_TOS].lineage, "parents.strategy_bindings_file.bindings", LABEL_TOS
+    )
+    value = bindings.get("z_entry_max_x1000")
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise DiffDecisionsError(
+            "B1b lineage parents.strategy_bindings_file.bindings has no integer "
+            "z_entry_max_x1000 — the threshold the compared run deployed is "
+            "unknown, and this report records it as the operating point the "
+            f"agreement rates are about (got {value!r})"
+        )
+    return DiffContext(z_entry_max_x1000=value)
+
+
+def _check_reconciliation(
+    records: list[DiffRecord], input_lines: int
+) -> dict[str, Any]:
+    """Bucket total against the INDEPENDENTLY measured input line count.
+
+    Concrete failing input: ``classify_all`` or the lockstep loop drops or
+    duplicates a bar. ``sum(buckets.values()) == len(records)`` is true by
+    construction and cannot see that; ``input_lines`` is a newline count taken
+    in the digest pass, before any JSON was parsed, so the two numbers are
+    arrived at by different routes.
+    """
+    bucket_total = sum(Counter(record.bucket for record in records).values())
+    if not bucket_total == len(records) == input_lines:
+        raise DiffDecisionsError(
+            f"bucket total {bucket_total} / classified bars {len(records)} / "
+            f"input lines {input_lines} do not reconcile — a bar was lost or "
+            "duplicated between reading and classifying"
+        )
+    return check_entry(
+        "buckets_sum_equals_input_line_count",
+        "the bucket counts sum to the number of classified bars and to the "
+        "newline count taken from the input files in the digest pass, before "
+        "any line was parsed",
+        bars=input_lines,
+    )
+
+
+def _refuse_floats_in_report(*rendered: tuple[str, bytes]) -> dict[str, Any]:
+    """Scan the rendered bytes of EVERY sidecar this tool writes.
+
+    ``summary.json`` is built from integers, but ``lineage.json`` copies
+    ``producer.{name,version,source_id,git_commit}`` straight out of the input
+    sidecars, and :func:`load_lineage` deliberately permits floats there (a
+    producer records its strategy's float parameters). So a sidecar carrying
+    ``"version": 1.0`` would put a float in this tool's own output. Scanning
+    the rendered bytes of both files is what closes that; scanning only the
+    summary, as the first revision did, could not see it.
+    """
+    found: list[str] = []
+    for name, payload in rendered:
+        for where in _float_paths(json.loads(payload.decode("utf-8"))):
+            found.append(f"{name}:{where}")
+    if found:
+        raise DiffDecisionsError("this report would carry a float: " + ", ".join(found))
+    return check_entry(
+        "report_carries_no_floats",
+        "the rendered bytes of summary.json AND lineage.json hold integers, "
+        "booleans, strings and nulls only — rates are integer "
+        "numerator/denominator plus a half-up rate_x10000, and a float copied "
+        "out of an input sidecar's producer block refuses the run",
+        scanned=[name for name, _ in rendered],
+    )
+
+
+def _float_scan_check() -> dict[str, Any]:
+    """The recorded row for the scan :func:`_refuse_floats_in_report` performs."""
+    return check_entry(
+        "report_carries_no_floats",
+        "the rendered bytes of summary.json AND lineage.json hold integers, "
+        "booleans, strings and nulls only",
+        scanned=[SUMMARY_FILENAME, LINEAGE_FILENAME],
+    )
+
+
+def _load_refs(
+    *specs: tuple[str, Path, Path | None],
+) -> dict[str, ArtifactRef]:
+    """Digest and parse each artifact and its sidecar, keyed by label."""
+    return {
+        label: _load_ref(
+            label=label,
+            jsonl_path=jsonl,
+            lineage_path=_sidecar_for(jsonl, explicit),
+        )
+        for label, jsonl, explicit in specs
+    }
+
+
+def _lineage_refusals(
+    refs: dict[str, ArtifactRef], legacy_outcomes: tuple[str, ...]
+) -> tuple[dict[str, list[dict[str, str]]], dict[str, Any], int, list[dict[str, Any]]]:
+    """The refusals that read only the sidecars, in :data:`CHECK_NAMES` order.
+
+    Appended one at a time rather than built eagerly and listed afterwards:
+    the order a malformed trio is REFUSED in has to be the order the
+    enumeration promises, and the eager version silently reordered them.
+    """
+    checks: list[dict[str, Any]] = []
+    declared_index, ids_check = _check_attribution_ids(refs)
+    checks.append(ids_check)
+    checks.append(
+        check_entry(
+            "entry_outcome_literals_are_closed_set_members",
+            "the two B2 outcomes this tool branches on "
+            f"({', '.join(NAMED_LEGACY_OUTCOMES)}) are members of the "
+            "outcomes.closed_set its lineage declares",
+            closed_set_size=len(legacy_outcomes),
+        )
+    )
+    identity, identity_check = _check_window_identity(refs)
+    checks.append(identity_check)
+    checks.append(_check_strategy_and_inputs(refs))
+    checks.append(_check_self_digests(refs))
+    checks.append(_check_tos_parent(refs))
+    input_lines, lines_check = _check_line_counts(refs)
+    checks.append(lines_check)
+    return declared_index, identity, input_lines, checks
+
+
+def _write_report(target: Path, *rendered: tuple[str, bytes]) -> None:
+    """Create ``target`` and write each rendered file into it."""
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DiffDecisionsError(f"cannot create {target}: {exc}") from exc
+    for name, payload in rendered:
+        (target / name).write_bytes(payload)
+
+
+def run(
+    *,
+    fields_jsonl: Path,
+    legacy_jsonl: Path,
+    tos_jsonl: Path,
+    out_dir: Path | None = None,
+    fields_lineage: Path | None = None,
+    legacy_lineage: Path | None = None,
+    tos_lineage: Path | None = None,
+) -> RunResult:
+    """Refuse or diff; write ``diff.jsonl``, ``summary.json`` and ``lineage.json``.
+
+    Every refusal happens before ``mkdir``, so a refused trio leaves nothing
+    behind. The one exception by necessity is the float scan of this tool's own
+    output, which needs the rendered bytes — it too raises before any write.
+    """
+    refs = _load_refs(
+        (LABEL_FIELDS, fields_jsonl, fields_lineage),
+        (LABEL_LEGACY, legacy_jsonl, legacy_lineage),
+        (LABEL_TOS, tos_jsonl, tos_lineage),
+    )
     legacy_outcomes = tuple(
         _dig(refs[LABEL_LEGACY].lineage, "outcomes.closed_set", LABEL_LEGACY)
     )
+    assert_entry_outcome_literals(legacy_outcomes)
+
+    declared_index, identity, input_lines, checks = _lineage_refusals(
+        refs, legacy_outcomes
+    )
+
     joined = join_artifacts(
         fields_path=fields_jsonl,
         legacy_path=legacy_jsonl,
@@ -1649,21 +2109,12 @@ def run(
     )
     checks.extend(joined.checks)
 
-    bindings = _dig(
-        refs[LABEL_TOS].lineage, "parents.strategy_bindings_file.bindings", LABEL_TOS
-    )
-    if "z_entry_max_x1000" not in bindings:
-        raise DiffDecisionsError(
-            "B1b lineage parents.strategy_bindings_file.bindings has no "
-            "z_entry_max_x1000 — the deployed entry threshold is unknown, so "
-            "the quantization-edge attribution cannot be evaluated"
-        )
-    ctx = DiffContext(z_entry_max_x1000=int(bindings["z_entry_max_x1000"]))
-
+    ctx = _read_entry_threshold(refs)
     records = classify_all(joined.bars, ctx)
+    checks.append(_check_reconciliation(records, input_lines))
     summary = build_summary(
         records=records,
-        identity=b2_identity,
+        identity=identity,
         declared_index=declared_index,
         ctx=ctx,
         tos_lineage=refs[LABEL_TOS].lineage,
@@ -1671,37 +2122,10 @@ def run(
 
     diff_bytes = render_jsonl(records)
     summary_bytes = render_json(summary)
-    self_floats = _float_paths(summary) + _float_paths(
-        json.loads(summary_bytes.decode("utf-8"))
-    )
-    if self_floats:
-        raise DiffDecisionsError(
-            "this report would carry a float: " + ", ".join(self_floats)
-        )
-    checks.append(
-        {
-            "name": "report_carries_no_floats",
-            "status": "PASS",
-            "detail": (
-                "summary.json holds integers, booleans, strings and nulls only "
-                "— rates are reported as integer numerator/denominator plus a "
-                "half-up rate_x10000"
-            ),
-        }
-    )
-
-    target = out_dir if out_dir is not None else default_out_dir(b2_identity)
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise DiffDecisionsError(f"cannot create {target}: {exc}") from exc
-    diff_path = target / DIFF_FILENAME
-    summary_path = target / SUMMARY_FILENAME
-    lineage_path = target / LINEAGE_FILENAME
-
+    checks.append(_float_scan_check())
     lineage = build_lineage(
         refs=refs,
-        identity=b2_identity,
+        identity=identity,
         checks=checks,
         records=records,
         declared_index=declared_index,
@@ -1722,15 +2146,28 @@ def run(
         },
     )
     lineage_bytes = render_json(lineage)
+    # Raises before any write; the recorded row above describes what held.
+    _refuse_floats_in_report(
+        (SUMMARY_FILENAME, summary_bytes), (LINEAGE_FILENAME, lineage_bytes)
+    )
+    if [entry["name"] for entry in checks] != list(CHECK_NAMES):
+        raise DiffDecisionsError(
+            "the recorded checks are not CHECK_NAMES in order: "
+            f"{[entry['name'] for entry in checks]}"
+        )
 
-    diff_path.write_bytes(diff_bytes)
-    summary_path.write_bytes(summary_bytes)
-    lineage_path.write_bytes(lineage_bytes)
+    target = out_dir if out_dir is not None else default_out_dir(identity)
+    _write_report(
+        target,
+        (DIFF_FILENAME, diff_bytes),
+        (SUMMARY_FILENAME, summary_bytes),
+        (LINEAGE_FILENAME, lineage_bytes),
+    )
     return RunResult(
         out_dir=target,
-        diff_path=diff_path,
-        summary_path=summary_path,
-        lineage_path=lineage_path,
+        diff_path=target / DIFF_FILENAME,
+        summary_path=target / SUMMARY_FILENAME,
+        lineage_path=target / LINEAGE_FILENAME,
         lineage=lineage,
         summary=summary,
     )

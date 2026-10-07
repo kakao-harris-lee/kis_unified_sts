@@ -37,6 +37,7 @@ prefix.
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 import re
@@ -48,7 +49,7 @@ from typing import Any
 import pytest
 
 from tools.tos_cp3 import diff_decisions as dd
-from tools.tos_cp3 import produce_fields
+from tools.tos_cp3 import emit_legacy_decisions, produce_fields
 
 SYMBOL = "101S6000"
 WINDOW_START = "2025-12-01"
@@ -78,11 +79,65 @@ LEGACY_OUTCOMES = (
     "LOW_CONFIDENCE",
 )
 
-#: The declared-difference ids each artifact really publishes, so the
-#: attribution table's run-time guard is exercised against a realistic index.
-B1A_DIFFERENCE_IDS = tuple(f"D{n}" for n in range(1, 11))
-B2_DIFFERENCE_IDS = tuple(f"L{n}" for n in range(1, 13))
-B1B_DIFFERENCE_IDS = tuple(f"B1b-D{n}" for n in range(1, 10))
+#: The three producers' source files. B3 reads none of them at run time; the
+#: suite reads them so that a fixture cannot drift away from what a real run
+#: would be given. ``differences.py`` lives inside ``tos/`` — read as TEXT,
+#: never imported (the firewall forbids the import, not the read).
+PRODUCE_FIELDS_SOURCE = dd.REPO_ROOT / "tools" / "tos_cp3" / "produce_fields.py"
+EMIT_LEGACY_SOURCE = dd.REPO_ROOT / "tools" / "tos_cp3" / "emit_legacy_decisions.py"
+B1B_DIFFERENCES_SOURCE = dd.REPO_ROOT / "tos" / "runtime" / "cp3" / "differences.py"
+B1B_STRATEGY_SOURCE = (
+    dd.REPO_ROOT
+    / "tos"
+    / "runtime"
+    / "cp3"
+    / "strategies"
+    / "setup_d_long.strategy.yaml"
+)
+
+
+def _declared_ids_from_source(path: Path, pattern: str) -> tuple[str, ...]:
+    """Every ``"id": "<literal>"`` in *path* matching *pattern*, in file order.
+
+    Derived, not restated: a renumbering or a dropped difference in
+    ``produce_fields.py`` / ``emit_legacy_decisions.py`` /
+    ``tos/runtime/cp3/differences.py`` changes these tuples, so a fixture built
+    from them stops containing an id the attribution table cites and the
+    suite goes red — where the first revision's hand-written ``D1..D10`` stayed
+    green while every real run refused.
+    """
+    compiled = re.compile(pattern)
+    found: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if (
+                isinstance(key, ast.Constant)
+                and key.value == "id"
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+                and compiled.fullmatch(value.value)
+                and value.value not in found
+            ):
+                found.append(value.value)
+    assert found, f"no declared-difference ids matching {pattern} in {path}"
+    return tuple(found)
+
+
+B1A_DIFFERENCE_IDS = _declared_ids_from_source(PRODUCE_FIELDS_SOURCE, r"D\d+")
+B2_DIFFERENCE_IDS = _declared_ids_from_source(EMIT_LEGACY_SOURCE, r"L\d+")
+B1B_DIFFERENCE_IDS = _declared_ids_from_source(B1B_DIFFERENCES_SOURCE, r"B1b-D\d+")
+
+#: The strategy-file pin both (B1a, B2) lineages carry, and the input-file
+#: list digest derived from it. Values are synthetic; what matters is that the
+#: two sides agree, which is the thing the check tests.
+STRATEGY_PATH = "config/strategies/futures/setup_d_vwap_reversion.yaml"
+STRATEGY_SHA256 = "8d" * 32
+INPUT_FILES = [
+    {"path": "futures/minute/code=101S6000/part-0.parquet", "sha256": "ab" * 32},
+    {"path": "futures/minute/code=101S6000/part-1.parquet", "sha256": "cd" * 32},
+]
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +274,9 @@ def seal(
     legacy_outcomes: tuple[str, ...] = LEGACY_OUTCOMES,
     bindings: dict[str, Any] | None = None,
     b1b_parent_overrides: dict[str, Any] | None = None,
+    b1a_pin: dict[str, Any] | None = None,
+    b2_pin: dict[str, Any] | None = None,
+    b1a_producer: dict[str, Any] | None = None,
 ) -> Trio:
     """(Re)write the three lineage sidecars from whatever the JSONL files hold.
 
@@ -245,6 +303,21 @@ def seal(
         **(b2_identity or {}),
     }
 
+    #: The (B1a, B2) pin: strategy file identity plus the input bytes both
+    #: sides read. Equal by default; a test moves one side to prove the check.
+    pin_a = {
+        "strategy_path": STRATEGY_PATH,
+        "strategy_sha256": STRATEGY_SHA256,
+        "input_files": INPUT_FILES,
+        **(b1a_pin or {}),
+    }
+    pin_b = {
+        "strategy_path": STRATEGY_PATH,
+        "strategy_sha256": STRATEGY_SHA256,
+        "input_files": INPUT_FILES,
+        **(b2_pin or {}),
+    }
+
     fields_sha, fields_lines = _sha_and_lines(trio.fields)
     trio.fields_lineage.write_bytes(
         dd.render_json(
@@ -255,16 +328,23 @@ def seal(
                     "version": "tos_cp3/0.1.0",
                     "source_id": "tos-cp3-b1a/0.1.0",
                     "git": {"commit": "0" * 40},
+                    **(b1a_producer or {}),
                 },
                 "dataset": {
                     "symbol": identity_a["symbol"],
                     "min_bars_per_day": identity_a["min_bars_per_day"],
                     "requested_start": identity_a["window_start"],
                     "requested_end": identity_a["window_end"],
+                    "input_files": pin_a["input_files"],
+                    "input_file_count": len(pin_a["input_files"]),
                 },
                 "strategy": {
+                    "path": pin_a["strategy_path"],
+                    "sha256": pin_a["strategy_sha256"],
                     "market_open_kst": identity_a["market_open_kst"],
                     "market_open_source": identity_a["market_open_source"],
+                    # A float, on purpose: a lineage records its strategy's
+                    # float parameters and `load_lineage` must permit them.
                     "entry_params_yaml": {"extreme_atr_mult": 1.8},
                 },
                 "declared_differences": _declared(b1a_ids),
@@ -292,6 +372,15 @@ def seal(
                     "key": "raw_event_id",
                     "window_identity": identity_b,
                     "b3_contract": "B3 MUST REFUSE a (B1a, B2) pair whose ...",
+                },
+                "dataset": {
+                    "symbol": identity_b["symbol"],
+                    "input_files": pin_b["input_files"],
+                    "input_file_count": len(pin_b["input_files"]),
+                },
+                "strategy": {
+                    "path": pin_b["strategy_path"],
+                    "sha256": pin_b["strategy_sha256"],
                 },
                 "outcomes": {"closed_set": list(legacy_outcomes)},
                 "declared_differences": _declared(b2_ids),
@@ -325,6 +414,12 @@ def seal(
                 else bindings
             ),
         },
+        "strategy_file": {
+            "path": "tos/runtime/cp3/strategies/setup_d_long.strategy.yaml",
+            "sha256": "47" * 32,
+            "canonical_digest": "3a" * 32,
+            "strategy_id": "astrat-" + "3a" * 32,
+        },
     }
     for key, value in (b1b_parent_overrides or {}).items():
         parents[key] = {**parents.get(key, {}), **value}
@@ -343,7 +438,19 @@ def seal(
                     "oracle_scope": "DECISION_AND_INTENT_LEVEL_ONLY",
                     "performance_surface": "ABSENT BY CONSTRUCTION",
                 },
-                "counts": {"fill_records": 1},
+                "counts": {
+                    "fill_records": 1,
+                    "handoffs": 1,
+                    "capacity_denials": 3,
+                    "realized_orders": [
+                        {
+                            "bar_index": 0,
+                            "outcome_kind": "FLAT",
+                            "raw_event_id": COVERAGE_BARS[0].raw_event_id,
+                            "rule_id": "R2-EXIT-VWAP-REVERTED",
+                        }
+                    ],
+                },
                 "declared_differences": _declared(b1b_ids),
                 "output": {
                     "trace_jsonl": "trace.jsonl",
@@ -478,30 +585,33 @@ COVERAGE_BARS: tuple[BarSpec, ...] = (
         tos_rule_id="R3-EXIT-EOD",
         capacity_denied=True,
     ),
-    # LEGACY_ONLY_ENTRY / z_quantization_edge — a long fire one x1000 unit
-    # inside the deployed threshold, which the TOS rule therefore misses.
+    # TOS_ONLY_ENTRY / UNRESOLVED — a COUNTERFACTUAL, and deliberately so.
+    #
+    # Under today's producers UNRESOLVED is unreachable, and that is not an
+    # accident: B1a publishes an unevaluated gate as False (its D5), so a TOS
+    # ACTION requires the legacy setup to have evaluated all four gates true,
+    # which means it got past its own extreme/trend/stall/reversal checks and
+    # can only have rejected on confidence — the one rule that covers it.
+    # Every other reachable disagreement is covered by the other four rules.
+    # So the only way to exercise UNRESOLVED is a bar the producers cannot
+    # currently emit, and this is the shape that would appear FIRST if that
+    # stopped being true: TOS fires at exactly the deployed threshold while
+    # the legacy setup rejected as NOT_EXTREME. That is the very shape the
+    # deleted quantization-edge rule claimed to explain
+    # (`dd.QUANTIZATION_EDGE_DERIVATION`); the tool must leave it UNRESOLVED
+    # and list it, not attribute it to B1a-D8.
     BarSpec(
         minute=8,
-        legacy_outcome="FIRED",
-        legacy_direction="LONG",
-        admitted=True,
+        legacy_outcome="NOT_EXTREME",
+        legacy_direction=None,
+        admitted=False,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-LONG",
+        capacity_denied=True,
         hi_vol=True,
         stall_ok=True,
         reversal_ok=True,
-        z_x1000=-1799,
-    ),
-    # LEGACY_ONLY_ENTRY / UNRESOLVED — a long fire deep past the threshold that
-    # the TOS rule did not take. No declared difference explains it, so none is
-    # invented.
-    BarSpec(
-        minute=9,
-        legacy_outcome="FIRED",
-        legacy_direction="LONG",
-        admitted=True,
-        hi_vol=True,
-        stall_ok=True,
-        reversal_ok=True,
-        z_x1000=-3500,
+        z_x1000=Z_ENTRY_MAX_X1000,
     ),
 )
 
@@ -533,10 +643,10 @@ def test_every_bucket_family_is_exercised(
     assert buckets == {
         dd.BUCKET_AGREE_ENTRY: 3,
         dd.BUCKET_AGREE_NO_ACTION: 1,
-        dd.BUCKET_LEGACY_ONLY_ENTRY: 3,
+        dd.BUCKET_LEGACY_ONLY_ENTRY: 1,
         f"{dd.BUCKET_TOS_EXIT_PREFIX}AFTER_CUTOFF": 1,
         f"{dd.BUCKET_TOS_EXIT_PREFIX}VOL_BELOW_GATE": 1,
-        dd.BUCKET_TOS_ONLY_ENTRY: 1,
+        dd.BUCKET_TOS_ONLY_ENTRY: 2,
     }
 
 
@@ -582,8 +692,7 @@ def test_each_bar_lands_on_the_bucket_and_rule_its_comment_names(
             "tos_flat_without_legacy_fire",
             ["B1b-D7"],
         ),
-        8: (dd.BUCKET_LEGACY_ONLY_ENTRY, "z_quantization_edge", ["B1a-D8"]),
-        9: (dd.BUCKET_LEGACY_ONLY_ENTRY, dd.ATTRIBUTION_UNRESOLVED, []),
+        8: (dd.BUCKET_TOS_ONLY_ENTRY, dd.ATTRIBUTION_UNRESOLVED, []),
     }
     for record in _records(result):
         bar = by_minute[record["raw_event_id"]]
@@ -599,18 +708,32 @@ def test_the_unresolved_bar_is_listed_not_explained(
     _, result = coverage
     unresolved = result.summary["unresolved"]
     assert unresolved["count"] == 1
-    assert unresolved["raw_event_ids"] == [COVERAGE_BARS[9].raw_event_id]
+    assert unresolved["raw_event_ids"] == [COVERAGE_BARS[8].raw_event_id]
     assert unresolved["raw_event_ids_truncated"] is False
 
 
+#: The whole classification table, written out. Membership in a family is not
+#: a property — swapping AGREE_ENTRY and TOS_ONLY_ENTRY would satisfy it — so
+#: every cell names the ONE bucket the decision tree must return.
+EXPECTED_BUCKETS: dict[tuple[str, str, str | None], str] = {
+    ("ACTION", "FIRED", "LONG"): dd.BUCKET_AGREE_ENTRY,
+    ("ACTION", "FIRED", "SHORT"): dd.BUCKET_TOS_ONLY_ENTRY,
+    ("ACTION", "VOL_BELOW_GATE", None): dd.BUCKET_TOS_ONLY_ENTRY,
+    ("ACTION", "LOW_CONFIDENCE", "LONG"): dd.BUCKET_TOS_ONLY_ENTRY,
+    ("FLAT", "FIRED", "LONG"): dd.BUCKET_LEGACY_ONLY_ENTRY,
+    ("FLAT", "FIRED", "SHORT"): dd.BUCKET_LEGACY_ONLY_ENTRY,
+    ("FLAT", "VOL_BELOW_GATE", None): (f"{dd.BUCKET_TOS_EXIT_PREFIX}VOL_BELOW_GATE"),
+    ("FLAT", "LOW_CONFIDENCE", "LONG"): (f"{dd.BUCKET_TOS_EXIT_PREFIX}LOW_CONFIDENCE"),
+    ("NO_ACTION", "FIRED", "LONG"): dd.BUCKET_LEGACY_ONLY_ENTRY,
+    ("NO_ACTION", "FIRED", "SHORT"): dd.BUCKET_LEGACY_ONLY_ENTRY,
+    ("NO_ACTION", "VOL_BELOW_GATE", None): dd.BUCKET_AGREE_NO_ACTION,
+    ("NO_ACTION", "LOW_CONFIDENCE", "LONG"): dd.BUCKET_AGREE_NO_ACTION,
+}
+
+
 def test_classification_is_exhaustive_over_kind_times_fire() -> None:
-    """Every (outcome_kind, legacy fire/direction) pair yields exactly one bucket."""
-    families = {
-        dd.BUCKET_AGREE_NO_ACTION,
-        dd.BUCKET_AGREE_ENTRY,
-        dd.BUCKET_TOS_ONLY_ENTRY,
-        dd.BUCKET_LEGACY_ONLY_ENTRY,
-    }
+    """Every (outcome_kind, legacy outcome, direction) cell names one bucket."""
+    seen: set[tuple[str, str, str | None]] = set()
     for kind in dd.TOS_OUTCOME_KINDS:
         for outcome, direction in (
             ("FIRED", "LONG"),
@@ -630,13 +753,10 @@ def test_classification_is_exhaustive_over_kind_times_fire() -> None:
                 gates=(False, False, False, False),
                 z_x1000=0,
             )
-            bucket = dd.classify(bar)
-            assert bucket in families or bucket.startswith(dd.BUCKET_TOS_EXIT_PREFIX), (
-                kind,
-                outcome,
-                direction,
-                bucket,
-            )
+            cell = (kind, outcome, direction)
+            assert dd.classify(bar) == EXPECTED_BUCKETS[cell], cell
+            seen.add(cell)
+    assert seen == set(EXPECTED_BUCKETS)
 
 
 def test_an_unknown_tos_outcome_kind_is_refused() -> None:
@@ -721,33 +841,51 @@ def test_an_agreeing_bar_carries_no_attribution() -> None:
     )
 
 
-def test_the_quantization_edge_threshold_comes_from_the_bindings(
-    tmp_path: Path,
-) -> None:
-    """Move the deployed threshold and the edge attribution moves with it.
+def test_there_is_no_quantization_edge_rule_and_the_arithmetic_says_why() -> None:
+    """The premise an earlier revision shipped is false; this is the proof.
 
-    The edge is not a literal in this module: it is read from B1b's lineage
-    (``parents.strategy_bindings_file.bindings``). A run whose binding says
-    -2500 must stop calling z=-1799 an edge bar and start calling z=-2499 one.
+    With an integral ``extreme_atr_mult * 1000`` the published-integer
+    condition and the legacy condition are the SAME predicate, so no edge
+    exists to attribute. Concrete failing input: if the binding stopped being
+    ``-trunc(extreme_atr_mult * 1000)`` — say it were rounded up, or the scale
+    changed — the two columns below would disagree for some z and this test
+    goes red, which is exactly when a quantization attribution would start
+    being a real thing rather than a catch-all.
     """
-    bars = [
-        replace(COVERAGE_BARS[8], minute=8),
-        replace(COVERAGE_BARS[8], minute=9, z_x1000=-2499),
-    ]
-    trio = write_trio(tmp_path / "in", bars, bindings={"z_entry_max_x1000": -2500})
+    multiplier = 1000
+    extreme = 1.8  # config/strategies/futures/setup_d_vwap_reversion.yaml 74행
+    threshold = -int(extreme * multiplier)  # the bindings' own derivation
+    assert threshold == Z_ENTRY_MAX_X1000
+    for micro in range(-2000, 1, 1):  # z from -2.000 to 0.000 in x1000 steps
+        z = micro / multiplier
+        published = int(z * multiplier)  # truncate toward zero
+        tos_fires = published <= threshold
+        legacy_fires = abs(z) >= extreme and z < 0
+        assert tos_fires == legacy_fires, (z, published)
+    assert "IDENTICAL" in dd.QUANTIZATION_EDGE_DERIVATION
+    assert "NOT_EXTREME" in dd.QUANTIZATION_EDGE_DERIVATION
+    assert not [rule for rule in dd.ATTRIBUTION_RULES if "quantization" in rule.name]
+    assert not [rule for rule in dd.ATTRIBUTION_RULES if "B1a-D8" in rule.ids]
+
+
+def test_the_deployed_threshold_is_read_from_the_bindings(tmp_path: Path) -> None:
+    """No predicate reads it, but the report must record which one ran."""
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:2]),
+        bindings={"z_entry_max_x1000": -2500},
+    )
     result = run_trio(trio, tmp_path / "out")
-    rules = {
-        record["raw_event_id"]: record["attribution_rule"]
-        for record in _records(result)
-    }
-    assert rules[bars[0].raw_event_id] == dd.ATTRIBUTION_UNRESOLVED
-    assert rules[bars[1].raw_event_id] == "z_quantization_edge"
     assert result.summary["config"]["z_entry_max_x1000"] == -2500
+    assert result.lineage["config"]["z_entry_max_x1000"] == -2500
 
 
-def test_a_binding_without_the_entry_threshold_is_refused(tmp_path: Path) -> None:
-    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:1]), bindings={})
-    with pytest.raises(dd.DiffDecisionsError, match="no z_entry_max_x1000"):
+@pytest.mark.parametrize("bindings", [{}, {"z_entry_max_x1000": "-1800"}])
+def test_a_binding_without_an_integer_threshold_is_refused(
+    tmp_path: Path, bindings: dict[str, Any]
+) -> None:
+    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:1]), bindings=bindings)
+    with pytest.raises(dd.DiffDecisionsError, match="no integer z_entry_max_x1000"):
         run_trio(trio, tmp_path / "out")
 
 
@@ -1070,7 +1208,13 @@ def test_summary_counts_reconcile_to_the_line_count(
     assert inputs == {len(COVERAGE_BARS)}
     assert summary["bars"] == len(COVERAGE_BARS)
     assert sum(summary["buckets"].values()) == summary["bars"]
-    assert summary["buckets_reconcile_to_bars"] is True
+    assert "buckets_reconcile_to_bars" not in summary
+    reconcile = next(
+        check
+        for check in result.lineage["checks"]
+        if check["name"] == "buckets_sum_equals_input_line_count"
+    )
+    assert reconcile["bars"] == len(COVERAGE_BARS)
     assert (
         sum(block["bars"] for block in summary["attribution_rules"].values())
         == summary["bars"]
@@ -1090,24 +1234,32 @@ def test_both_agreement_rates_are_defined_and_computed(
 ) -> None:
     """Rule level and position-model level are different questions.
 
-    The coverage series has four long fires (minutes 1, 2, 3, 8, 9 — five, of
-    which three became TOS ACTION) precisely so the two rates differ: the
-    position-model denominator drops the bar the harness would not have entered.
+    They differ in their DENOMINATOR, not (under these producers) in their
+    value: the position-model rate counts only the long fires the walk-forward
+    gate would actually have entered — minutes 1 and 3 of 1, 2, 3. Both come
+    out at 1 here for the same structural reason the real run does (a legacy
+    long fire implies all four published gates are true, so the TOS rule fires
+    too), which is why the test pins the four counts and not just the ratios: a
+    regression that collapsed the two definitions into one would keep the
+    ratios and lose the denominators.
     """
     rates = coverage[1].summary["rates"]
     rule_level = rates["rule_level_entry_agreement"]
     pm_level = rates["position_model_level_entry_agreement"]
     assert rule_level["numerator"] == 3  # minutes 1, 2, 3
-    assert rule_level["denominator"] == 5  # minutes 1, 2, 3, 8, 9
-    assert rule_level["rate_x10000"] == 6000
+    assert rule_level["denominator"] == 3  # the long fires
+    assert rule_level["rate_x10000"] == 10000
     assert pm_level["numerator"] == 2  # minutes 1 and 3 were admitted
-    assert pm_level["denominator"] == 4  # 1, 3, 8, 9 were admitted
-    assert pm_level["rate_x10000"] == 5000
+    assert pm_level["denominator"] == 2
+    assert pm_level["rate_x10000"] == 10000
+    assert rule_level["denominator"] != pm_level["denominator"]
+    assert rule_level["definition"] != pm_level["definition"]
     for block in rates.values():
         assert block["definition"].strip()
     tos_side = rates["tos_action_explained_by_a_legacy_long_fire"]
     assert tos_side["numerator"] == 3
-    assert tos_side["denominator"] == 4  # minute 4 actioned on LOW_CONFIDENCE
+    assert tos_side["denominator"] == 5  # minutes 1-4 and 8 proposed an entry
+    assert tos_side["rate_x10000"] == 6000
 
 
 def test_an_empty_denominator_is_undefined_not_zero(tmp_path: Path) -> None:
@@ -1177,7 +1329,10 @@ def test_no_float_reaches_either_output(
     for line in result.diff_path.read_text(encoding="utf-8").splitlines():
         json.loads(line, parse_float=refuse, parse_constant=refuse)
     checks = {check["name"]: check for check in result.lineage["checks"]}
-    assert checks["report_carries_no_floats"]["status"] == "PASS"
+    assert checks["report_carries_no_floats"]["scanned"] == [
+        dd.SUMMARY_FILENAME,
+        dd.LINEAGE_FILENAME,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1190,20 +1345,32 @@ def test_every_check_is_recorded_in_the_lineage(
 ) -> None:
     _, result = coverage
     names = [check["name"] for check in result.lineage["checks"]]
-    assert names == [
-        "attribution_ids_declared",
-        "window_identity_agreement",
-        "artifact_matches_its_own_lineage",
-        "tos_parent_is_this_fields_artifact",
-        "line_counts_equal",
-        "raw_event_id_sequences_identical",
-        "as_of_ms_identical",
-        "no_floats_in_payloads",
-        "legacy_outcome_in_declared_closed_set",
-        "tos_outcome_kind_in_closed_set",
-        "report_carries_no_floats",
-    ]
-    assert all(check["status"] == "PASS" for check in result.lineage["checks"])
+    assert names == list(dd.CHECK_NAMES)
+    # No `status` key: a refused run writes nothing, so a row could only ever
+    # read "PASS" and asserting that would be a tautology (an earlier revision
+    # did exactly that). What makes a row a guard is the red proof elsewhere in
+    # this file, one per name.
+    assert not [check for check in result.lineage["checks"] if "status" in check]
+    assert all(check["detail"].strip() for check in result.lineage["checks"])
+    # The module docstring states a count; it is derived from this list, so the
+    # four-different-numbers defect cannot recur.
+    assert f"and {_NUMBER_WORDS[len(dd.CHECK_NAMES) - 1]} more" in dd.__doc__
+
+
+#: Only as many as the docstring needs; indexed by count.
+_NUMBER_WORDS = {
+    13: "thirteen",
+    14: "fourteen",
+    15: "fifteen",
+    16: "sixteen",
+}
+
+
+def test_a_check_name_outside_the_enumeration_is_refused() -> None:
+    """``check_entry`` is the only way a row is built, and it is closed."""
+    with pytest.raises(dd.DiffDecisionsError, match="not in CHECK_NAMES"):
+        dd.check_entry("something_new", "detail")
+    assert len(set(dd.CHECK_NAMES)) == len(dd.CHECK_NAMES)
 
 
 def test_the_lineage_names_three_parents_with_both_digests(
@@ -1242,7 +1409,15 @@ def test_the_lineage_carries_no_clock_timestamp(
     # "...at" key. Dates DO appear (the window bounds) and are not clock reads;
     # a time-of-day stamp is what would make two runs differ.
     text = result.lineage_path.read_text(encoding="utf-8")
-    assert not re.search(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", text)
+    # Both shapes: the ISO form, and the compact ``20251208T084500+0900`` form
+    # the sibling B1b guard was widened for (#877). Bare dates are NOT matched
+    # — the window bounds are dates and are not clock reads.
+    for pattern in (
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}",
+        r"\d{8}T\d{6}",
+        r"\d{2}:\d{2}:\d{2}",
+    ):
+        assert not re.search(pattern, text), pattern
 
     def keys(node: Any) -> list[str]:
         if isinstance(node, dict):
@@ -1431,17 +1606,78 @@ def test_the_differ_reads_no_strategy_code() -> None:
     assert "tools.tos_cp3.TOS_CP3_VERSION" in imported
 
 
-def test_the_local_provenance_helpers_do_not_drift_from_b1as() -> None:
-    """B3 keeps its own copies on purpose; they must still behave identically.
+class _RenameLocals(ast.NodeTransformer):
+    """Rewrite argument names to positional placeholders."""
+
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self.mapping = mapping
+
+    def visit_arg(self, node: ast.arg) -> ast.arg:
+        node.arg = self.mapping.get(node.arg, node.arg)
+        return node
+
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+        node.id = self.mapping.get(node.id, node.id)
+        return node
+
+
+def _normalized_function_ast(path: Path, name: str) -> str:
+    """One function's AST with its own name, arg names and docstring removed.
+
+    Projection comparisons (same output on one sample input) do not establish
+    that two implementations are the same implementation — project memory
+    ``guards-that-admit-what-they-name``: two implementations are compared by
+    NORMALIZED AST, not by projection. Names are normalized because the two
+    copies legitimately differ there (``render_json(document)`` vs
+    ``render_lineage(lineage)``); everything else must match exactly.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            clone = copy.deepcopy(node)
+            clone.name = "f"
+            args = clone.args
+            positional = args.posonlyargs + args.args + args.kwonlyargs
+            mapping = {arg.arg: f"a{i}" for i, arg in enumerate(positional)}
+
+            clone = _RenameLocals(mapping).visit(clone)
+            if (
+                clone.body
+                and isinstance(clone.body[0], ast.Expr)
+                and isinstance(clone.body[0].value, ast.Constant)
+                and isinstance(clone.body[0].value.value, str)
+            ):
+                clone.body = clone.body[1:]
+            return ast.dump(clone)
+    raise AssertionError(f"{name} not found in {path}")
+
+
+@pytest.mark.parametrize(
+    "mine,theirs",
+    [("render_json", "render_lineage"), ("_git_identity", "_git_identity")],
+)
+def test_the_local_provenance_helpers_are_b1as_implementation(
+    mine: str, theirs: str
+) -> None:
+    """B3 keeps its own copies on purpose; they must BE the same implementation.
 
     ``diff_decisions`` deliberately does not import ``produce_fields`` (see the
-    previous test), so the two provenance helpers exist twice. This test is the
-    guard that makes that duplication safe: the sidecar byte rendering and the
-    git identity must be the same function in both, or a B3 lineage would stop
-    being comparable with a B1a one.
+    previous test), so these two helpers exist twice. What this pins is the
+    SOURCE, normalized for the names that are allowed to differ — not one
+    sample document's bytes, which an earlier revision compared and which a
+    ``sort_keys`` divergence would have passed. Concrete failing input: flip
+    ``sort_keys=False`` to ``True``, or drop the ``+ "\n"``, in either file.
     """
-    document = {"a": 1, "b": [True, None, "텍스트"], "c": {"d": "x"}}
+    assert _normalized_function_ast(
+        dd.REPO_ROOT / "tools" / "tos_cp3" / "diff_decisions.py", mine
+    ) == _normalized_function_ast(PRODUCE_FIELDS_SOURCE, theirs)
+
+
+def test_the_provenance_helpers_also_agree_on_an_unsorted_document() -> None:
+    """The behavioural half, on keys that are NOT already in sorted order."""
+    document = {"z": 1, "a": {"y": True, "b": None}, "m": [3, "텍스트"]}
     assert dd.render_json(document) == produce_fields.render_lineage(document)
+    assert b'"z": 1' in dd.render_json(document).split(b"\n")[1]
     assert dd._git_identity(dd.REPO_ROOT) == produce_fields._git_identity(dd.REPO_ROOT)
 
 
@@ -1455,3 +1691,307 @@ def test_the_runtime_block_records_no_library_that_cannot_change_the_output() ->
     runtime = dd._runtime_versions()
     assert set(runtime) == {"python", "python_implementation", "third_party"}
     assert runtime["third_party"] == "none — standard library only"
+
+
+# ---------------------------------------------------------------------------
+# Review dispositions (PR #878) — one red proof per new refusal
+# ---------------------------------------------------------------------------
+
+
+def test_a_float_in_a_producer_sidecar_refuses_the_report(tmp_path: Path) -> None:
+    """Finding 4: the lineage copies the producer block out of the sidecars.
+
+    ``load_lineage`` permits floats in a sidecar on purpose (a producer records
+    its strategy's float parameters), and ``ArtifactRef.to_lineage`` copies
+    ``producer.{name,version,source_id,git_commit}`` verbatim — so a sidecar
+    whose ``tool.version`` is ``1.0`` puts a float in THIS tool's output.
+    Scanning only ``summary.json``, as the first revision did, could not see
+    it; the scan now covers the rendered bytes of both files.
+    """
+    trio = write_trio(
+        tmp_path / "in", list(COVERAGE_BARS[:3]), b1a_producer={"version": 1.0}
+    )
+    out = tmp_path / "out"
+    with pytest.raises(dd.DiffDecisionsError, match="would carry a float"):
+        run_trio(trio, out)
+    assert not out.exists() or not list(out.iterdir())
+
+
+def test_the_float_scan_covers_both_sidecars(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    check = next(
+        entry
+        for entry in coverage[1].lineage["checks"]
+        if entry["name"] == "report_carries_no_floats"
+    )
+    assert check["scanned"] == [dd.SUMMARY_FILENAME, dd.LINEAGE_FILENAME]
+    scanned = dd._refuse_floats_in_report(
+        (dd.SUMMARY_FILENAME, b"{}"), (dd.LINEAGE_FILENAME, b"{}")
+    )
+    assert scanned["scanned"] == [dd.SUMMARY_FILENAME, dd.LINEAGE_FILENAME]
+    with pytest.raises(dd.DiffDecisionsError, match="lineage.json:a=1.5"):
+        dd._refuse_floats_in_report(
+            (dd.SUMMARY_FILENAME, b"{}"), (dd.LINEAGE_FILENAME, b'{"a": 1.5}')
+        )
+
+
+def test_the_direction_tokens_are_b2s_own(coverage: tuple[Trio, dd.RunResult]) -> None:
+    """Finding 5: B2 does not declare them in its lineage, so pin the module.
+
+    Concrete failing input: ``emit_legacy_decisions.DIRECTION_TOKENS`` starts
+    publishing ``"Long"``. Without this pin, every long fire would move from
+    ``AGREE_ENTRY`` to ``LEGACY_ONLY_ENTRY`` and the headline rate would read
+    ``0/0`` "undefined" with every check recorded.
+    """
+    assert set(dd.DIRECTION_TOKENS) == set(
+        emit_legacy_decisions.DIRECTION_TOKENS.values()
+    )
+    check = next(
+        entry
+        for entry in coverage[1].lineage["checks"]
+        if entry["name"] == "legacy_direction_in_published_token_set"
+    )
+    assert check["tokens"] == list(dd.DIRECTION_TOKENS)
+
+
+@pytest.mark.parametrize("token", ["Long", "long", "", "BOTH"])
+def test_an_unrecognised_direction_is_refused(tmp_path: Path, token: str) -> None:
+    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:3]))
+
+    def retoken(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        payloads[1]["decision"]["direction"] = token
+        return payloads
+
+    mutate_jsonl(trio.legacy, retoken)
+    seal(trio)
+    with pytest.raises(dd.DiffDecisionsError, match="is not one of"):
+        run_trio(trio, tmp_path / "out")
+
+
+def test_a_fire_without_a_direction_is_refused(tmp_path: Path) -> None:
+    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:3]))
+
+    def drop(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        payloads[1]["decision"]["direction"] = None
+        return payloads
+
+    mutate_jsonl(trio.legacy, drop)
+    seal(trio)
+    with pytest.raises(dd.DiffDecisionsError, match="with direction None"):
+        run_trio(trio, tmp_path / "out")
+
+
+@pytest.mark.parametrize("dropped", ["FIRED", "LOW_CONFIDENCE"])
+def test_an_outcome_literal_missing_from_the_closed_set_is_refused(
+    tmp_path: Path, dropped: str
+) -> None:
+    """Finding 5: the two literals this tool branches on must be B2's own."""
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:1]),
+        legacy_outcomes=tuple(o for o in LEGACY_OUTCOMES if o != dropped),
+    )
+    with pytest.raises(dd.DiffDecisionsError, match=dropped):
+        run_trio(trio, tmp_path / "out")
+    dd.assert_entry_outcome_literals(LEGACY_OUTCOMES)
+
+
+def test_the_reconciliation_check_can_fail(coverage: tuple[Trio, dd.RunResult]) -> None:
+    """Finding 8: the old flag was true by construction; this one is not.
+
+    Concrete failing input: a bar lost between the digest pass's newline count
+    and the classified record list.
+    """
+    _, result = coverage
+    bars = [
+        dd.JoinedBar(
+            raw_event_id="x",
+            as_of_ms=0,
+            legacy_outcome="VOL_BELOW_GATE",
+            legacy_direction=None,
+            admitted=False,
+            tos_outcome_kind="NO_ACTION",
+            tos_rule_id=None,
+            tos_capacity_denied=False,
+            gates=(True, False, False, False),
+            z_x1000=0,
+        )
+    ]
+    records = dd.classify_all(bars, dd.DiffContext(z_entry_max_x1000=-1800))
+    assert dd._check_reconciliation(records, 1)["bars"] == 1
+    with pytest.raises(dd.DiffDecisionsError, match="do not reconcile"):
+        dd._check_reconciliation(records, 2)
+
+
+def test_the_gate_fields_are_r1s_own_operands() -> None:
+    """(a): the literal list, pinned to the strategy file it was derived from.
+
+    B3 never reads that file at run time (it is inside ``tos/`` and B3 is
+    artifact-only), so the list is a literal — which is exactly why it needs a
+    pin. Concrete failing input: a fifth gate, a rename, or a reordering of
+    ``R1-ENTRY-LONG``'s comparisons.
+    """
+    import yaml
+
+    document = yaml.safe_load(B1B_STRATEGY_SOURCE.read_text(encoding="utf-8"))
+    r1 = document["policy"]["rules"][0]["all_of"]
+    operands = [compare["left"]["ref"] for compare in r1]
+    assert all(ref[:2] == ["capsule", "resolved_values"] for ref in operands)
+    names = [ref[2] for ref in operands]
+    # The four booleans, in R1's order; the fifth comparison is z_x1000
+    # against the bound threshold, which is not a gate boolean.
+    assert names[:-1] == list(dd.GATE_FIELDS)
+    assert names[-1] == "z_x1000"
+    assert r1[-1]["right"]["ref"] == ["config", "z_entry_max_x1000"]
+
+
+def test_the_strategy_file_the_gate_list_came_from_is_recorded(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    classification = coverage[1].lineage["classification"]
+    pinned = classification["gate_fields_derived_from_strategy"]
+    assert pinned["canonical_digest"] and pinned["sha256"]
+    assert pinned["path"].endswith("setup_d_long.strategy.yaml")
+
+
+@pytest.mark.parametrize(
+    "pin",
+    [
+        {"strategy_sha256": "ff" * 32},
+        {"strategy_path": "config/strategies/futures/other.yaml"},
+        {"input_files": [{"path": "p", "sha256": "ee" * 32}]},
+    ],
+)
+def test_a_strategy_or_input_disagreement_between_b1a_and_b2_is_refused(
+    tmp_path: Path, pin: dict[str, Any]
+) -> None:
+    """(b): the (B1a, B2) edge was pinned only on the six identity fields.
+
+    Concrete failing input: the Setup D YAML is edited between the two runs, or
+    one of them reads a re-written Parquet part. All six identity fields are
+    unchanged and every ``raw_event_id`` lines up, so without this the two
+    sides would be compared as if they had run the same strategy over the same
+    bytes. The (B1a, B1b) edge is sha-pinned through B1b's ``parents``; this
+    closes the asymmetry.
+    """
+    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:2]), b2_pin=pin)
+    with pytest.raises(
+        dd.DiffDecisionsError, match="did not read the same strategy file"
+    ):
+        run_trio(trio, tmp_path / "out")
+
+
+def test_the_strategy_and_input_pin_is_recorded_when_it_agrees(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    check = next(
+        entry
+        for entry in coverage[1].lineage["checks"]
+        if entry["name"] == "strategy_yaml_and_input_files_agreement"
+    )
+    assert check["strategy_sha256"] == STRATEGY_SHA256
+    assert check["strategy_path"] == STRATEGY_PATH
+    assert check["input_file_count"] == len(INPUT_FILES)
+    assert len(check["input_files_digest"]) == 64
+
+
+@pytest.mark.parametrize("missing", ["strategy", "dataset"])
+def test_a_lineage_without_the_pin_blocks_is_refused(
+    tmp_path: Path, missing: str
+) -> None:
+    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:1]))
+    lineage = json.loads(trio.legacy_lineage.read_text(encoding="utf-8"))
+    del lineage[missing]
+    trio.legacy_lineage.write_bytes(dd.render_json(lineage))
+    with pytest.raises(dd.DiffDecisionsError, match=f"has no {missing}"):
+        run_trio(trio, tmp_path / "out")
+
+
+def test_a_non_block_where_a_block_is_required_is_a_refusal_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    """(g): a malformed sidecar must exit 2, not traceback at exit 1."""
+    trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:1]))
+    lineage = json.loads(trio.tos_lineage.read_text(encoding="utf-8"))
+    lineage["parents"] = "not a block"
+    trio.tos_lineage.write_bytes(dd.render_json(lineage))
+    code = dd.main(
+        [
+            "--fields",
+            str(trio.fields),
+            "--legacy",
+            str(trio.legacy),
+            "--tos",
+            str(trio.tos),
+            "--out",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert code == 2
+
+
+def test_the_scope_block_echoes_b1bs_own_order_counts(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """(c): B1b added these counts so handoffs=1 is not misread."""
+    scope = coverage[1].summary["scope"]
+    assert scope["tos_handoffs"] == 1
+    assert scope["tos_fill_records"] == 1
+    assert scope["tos_capacity_denials"] == 3
+    assert scope["tos_realized_orders"][0]["raw_event_id"] == (
+        COVERAGE_BARS[0].raw_event_id
+    )
+    assert "handoffs=1 is not misread" in scope["tos_realized_orders_note"]
+
+
+def test_the_b1b_d7_obligation_is_recorded_as_unmet(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """Finding 7: B1b-D7 asks for something these artifacts cannot supply.
+
+    The requirement is stated, not silently skipped, and no position state is
+    inferred — which is why the FLAT rule's own ``why`` carries the same
+    warning as the scope block.
+    """
+    _, result = coverage
+    note = result.summary["scope"]["b1b_d7_obligation"]
+    assert note.startswith("UNMET.")
+    assert "scope the legacy side to bars where a position was held" in note
+    assert "UPPER BOUND" in note
+    assert result.lineage["scope"]["b1b_d7_obligation"] == note
+    flat_rule = next(
+        entry
+        for entry in result.lineage["attribution_table"]
+        if entry["name"] == "tos_flat_without_legacy_fire"
+    )
+    assert "OBLIGATION UNMET" in flat_rule["why"]
+    # And the obligation's own words really are in B1b's source, not invented.
+    source = B1B_DIFFERENCES_SOURCE.read_text(encoding="utf-8")
+    assert "scope the legacy side to bars " in source
+
+
+def test_the_capacity_rules_why_does_not_overclaim(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """(e): an earlier `why` said no ACTION bar carries an unrecorded denial.
+
+    Fixture minute 2 is both un-admitted and capacity-denied and takes the
+    earlier rule, so its denial is NOT in `attribution` — the claim was false
+    and the text now says where a reader counts denials instead.
+    """
+    _, result = coverage
+    record = next(
+        r
+        for r in _records(result)
+        if r["raw_event_id"] == COVERAGE_BARS[2].raw_event_id
+    )
+    assert record["tos"]["capacity_denied"] is True
+    assert "B1b-D1" not in record["attribution"]
+    rule = next(
+        entry
+        for entry in result.lineage["attribution_table"]
+        if entry["name"] == "agree_entry_capacity_denied"
+    )
+    assert "is NOT in its `attribution` list" in rule["why"]
+    assert result.summary["totals"]["tos_action_capacity_denied"] == 4
