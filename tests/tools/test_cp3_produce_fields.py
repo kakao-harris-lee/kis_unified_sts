@@ -60,6 +60,10 @@ SYMBOL = "101S6000"
 #: that first session anyway for lack of a prior-session close.
 SESSIONS = (date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5))
 BARS_PER_SESSION = 421  # 08:45..15:45 KST inclusive, 1-minute bars
+#: A fifth session deliberately shorter than the 330 default, used only by the
+#: density-gate test so that gate has something to drop.
+SHORT_SESSION = date(2026, 3, 6)
+SHORT_SESSION_BARS = 200
 #: Seed chosen so the legacy setup reaches every one of its branches on this
 #: series, ``low_confidence`` on more than one bar — see the coverage assertions
 #: in :func:`test_fields_match_legacy_setup_evaluation`.
@@ -209,10 +213,36 @@ JOURNAL_REQUIRED_KEYS_MIRROR = frozenset(
     {"raw_event_id", "instrument", "as_of_ms", "fields", "source_id"}
 )
 
-#: MIRRORS the required fields of ``tos/src/tos/backtest/bars.py::Bar`` that must
-#: come from this JSONL for B1b to build one without a second path to Parquet.
-#: ``bar_index`` and ``timestamp_coordinate`` are the runner's to assign.
-BAR_REQUIRED_FROM_JSONL = ("open", "high", "low", "close", "volume", "session_token")
+#: MIRRORS, BY NAME, the non-optional fields of
+#: ``tos/src/tos/backtest/bars.py::Bar``. The import firewall forbids importing
+#: it (``tests/`` is outside ``tos/``), so the names are restated as a literal
+#: — an earlier revision listed ``open``/``high``/``low``/``close`` and called
+#: that a mirror of ``Bar``, which it was not: ``Bar`` spells them
+#: ``open_price``/``high_price``/``low_price``/``close_price``.
+BAR_NON_OPTIONAL_FIELDS = (
+    "bar_index",
+    "timestamp_coordinate",
+    "open_price",
+    "high_price",
+    "low_price",
+    "close_price",
+    "volume",
+    "session_token",
+)
+
+#: Where B1b gets each of those. ``"fields"`` = a published field key,
+#: ``"line"`` = a top-level key of the JSONL line, ``"runner"`` = the runner
+#: assigns it (``bar_index`` is a position in the stream B1b builds).
+BAR_FIELD_SOURCE: dict[str, tuple[str, str]] = {
+    "bar_index": ("", "runner"),
+    "timestamp_coordinate": ("as_of_ms", "line"),
+    "open_price": ("open_x100", "fields"),
+    "high_price": ("high_x100", "fields"),
+    "low_price": ("low_x100", "fields"),
+    "close_price": ("close_x100", "fields"),
+    "volume": ("volume", "fields"),
+    "session_token": ("session_token", "fields"),
+}
 
 
 def test_line_shape_matches_journal_required_keys(
@@ -245,9 +275,16 @@ def test_fields_carry_the_bar_so_b1b_needs_no_second_parquet_path(
         pd.Timestamp(row.timestamp): row for row in bars.itertuples(index=False)
     }
 
-    for name in BAR_REQUIRED_FROM_JSONL:
-        suffixed = name if name in {"volume", "session_token"} else f"{name}_x100"
-        assert suffixed in produce_fields.FIELD_ORDER, name
+    # The mapping covers every non-optional Bar field by name, and each source
+    # really exists where it claims to.
+    assert set(BAR_FIELD_SOURCE) == set(BAR_NON_OPTIONAL_FIELDS)
+    for bar_field, (source, where) in BAR_FIELD_SOURCE.items():
+        if where == "fields":
+            assert source in produce_fields.FIELD_ORDER, bar_field
+        elif where == "line":
+            assert source in produce_fields.JOURNAL_REQUIRED_KEYS, bar_field
+        else:
+            assert where == "runner" and source == "", bar_field
 
     for record in records:
         fields = record.fields
@@ -865,21 +902,305 @@ def test_jsonl_and_lineage_are_byte_deterministic(
     assert "timestamp" not in json.dumps(lineage["tool"])
 
 
-def test_min_bars_per_day_gate_changes_the_output(
+def _bars_with_a_short_session(bars: pd.DataFrame) -> pd.DataFrame:
+    """The usual series plus one session too thin to clear the 330 default."""
+    base = datetime.combine(SHORT_SESSION, time(8, 45))
+    price = 400.0
+    rows: list[dict[str, object]] = []
+    for minute in range(SHORT_SESSION_BARS):
+        price += 0.05 if minute % 2 else -0.03
+        rows.append(
+            {
+                "code": SYMBOL,
+                "timestamp": base + timedelta(minutes=minute),
+                "open": price,
+                "high": price + 0.05,
+                "low": price - 0.05,
+                "close": price,
+                "volume": 10,
+            }
+        )
+    return pd.concat([bars, pd.DataFrame(rows)], ignore_index=True)
+
+
+def test_min_bars_per_day_gate_drops_a_thin_session(
     bars: pd.DataFrame, tmp_path: Path
 ) -> None:
-    """The density gate is a real knob, defaulted to the walk-forward's 330."""
-    assert produce_fields.DEFAULT_MIN_BARS_PER_DAY == 330
-    data_root = _write_parquet_tree(bars, tmp_path / "market")
+    """The density gate is a real knob, defaulted to the walk-forward's 330.
 
-    off = _run(data_root, tmp_path / "off", min_bars_per_day=0)
-    # Every synthetic session has 421 bars, so a gate above that drops them all.
-    gated = _run(data_root, tmp_path / "gated", min_bars_per_day=400)
-    assert gated.lineage["dataset"]["bars_after_density_gate"] == len(bars)
-    assert off.jsonl_bytes == gated.jsonl_bytes  # nothing dropped at 400 either
+    Asserting it against a series where every session already clears the gate
+    would assert nothing, so a 200-bar session is added for this test only.
+    """
+    assert produce_fields.DEFAULT_MIN_BARS_PER_DAY == 330
+    assert SHORT_SESSION_BARS < produce_fields.DEFAULT_MIN_BARS_PER_DAY
+    widened = _bars_with_a_short_session(bars)
+    data_root = _write_parquet_tree(widened, tmp_path / "market")
+
+    def one(out_name: str, **kwargs) -> produce_fields.RunResult:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return produce_fields.run(
+                data_root=data_root,
+                symbol=SYMBOL,
+                start=SESSIONS[0],
+                end=SHORT_SESSION,
+                strategy_yaml=STRATEGY_YAML,
+                out_dir=tmp_path / out_name,
+                **kwargs,
+            )
+
+    off = one("off", min_bars_per_day=0)
+    default_run = one("default")
+
+    assert off.lineage["dataset"]["bars_after_density_gate"] == len(widened)
+    assert (
+        default_run.lineage["dataset"]["bars_after_density_gate"]
+        == len(widened) - SHORT_SESSION_BARS
+    )
+    assert default_run.lineage["dataset"]["min_bars_per_day"] == 330
+    # The gate changed the OUTPUT, not merely a count.
+    assert off.jsonl_bytes != default_run.jsonl_bytes
+    assert off.lineage["dataset"]["bars_emitted"] > (
+        default_run.lineage["dataset"]["bars_emitted"]
+    )
+    assert SHORT_SESSION.isoformat() not in default_run.jsonl_bytes.decode("utf-8")
+    assert SHORT_SESSION.isoformat() in off.jsonl_bytes.decode("utf-8")
 
     with pytest.raises(produce_fields.ProduceFieldsError, match="density gate dropped"):
-        _run(data_root, tmp_path / "all-dropped", min_bars_per_day=500)
+        one("all-dropped", min_bars_per_day=500)
 
-    default_run = _run(data_root, tmp_path / "default")
-    assert default_run.lineage["dataset"]["min_bars_per_day"] == 330
+
+# ---------------------------------------------------------------------------
+# D7's generator, and the guards that had no failing input
+# ---------------------------------------------------------------------------
+
+
+def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """The generator behind the D7 literal, exercised on the synthetic series.
+
+    The parity-window numbers themselves cannot be regenerated here (the market
+    data is gitignored and lives only in the primary checkout), so what is
+    pinned is the thing that went wrong once: the bucket arithmetic. The first
+    revision measured the "frozen never reached" case to the end of the whole
+    SERIES and reported a 32,591-bar maximum lead.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        measurement = produce_fields.measure_moving_vs_frozen_exit(
+            bars.reset_index(drop=True),
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=_contract_spec(),
+            anchor=anchor,
+        )
+
+    # Shape: the committed literal and a fresh measurement must agree on keys,
+    # so the literal cannot drift out of the generator's schema.
+    assert set(measurement) == set(produce_fields.D7_MEASUREMENT)
+    for key, value in measurement.items():
+        if key in {"window", "market_open_kst"}:
+            assert isinstance(value, str), key
+        else:
+            assert isinstance(value, int), key
+
+    # Non-vacuous: this series actually produces entries to classify.
+    assert measurement["entries"] > 0
+
+    # Disjoint and exhaustive.
+    assert (
+        measurement["earlier"]
+        + measurement["identical"]
+        + measurement["later"]
+        + measurement["never_either"]
+        == measurement["entries"]
+    )
+    assert (
+        measurement["earlier_frozen_never_reached_in_session"] <= measurement["earlier"]
+    )
+    assert measurement["later_moving_never_reached_in_session"] <= measurement["later"]
+    # A lead exists only where BOTH rules reached inside the session.
+    assert measurement["lead_bars_measured_over"] <= (
+        measurement["earlier"]
+        - measurement["earlier_frozen_never_reached_in_session"]
+        + measurement["later"]
+        - measurement["later_moving_never_reached_in_session"]
+    )
+
+    # Session-bounded: the inner walk stops at the session boundary, so no lead
+    # can exceed one session's bar count. This is the assertion the 32,591-bar
+    # defect would have failed.
+    assert 0 <= measurement["max_lead_bars"] < BARS_PER_SESSION
+    assert 0 <= measurement["median_lead_bars"] <= measurement["max_lead_bars"]
+
+    assert measurement["market_open_kst"] == anchor.kst
+
+
+def test_measure_d7_cli_prints_a_pasteable_literal(
+    bars: pd.DataFrame, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--measure-d7`` is the generator the D7 comment names, and it runs."""
+    assert produce_fields.D7_GENERATOR_COMMAND == "produce_fields.py --measure-d7"
+    data_root = _write_parquet_tree(bars, tmp_path / "market")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        # No --out: the measure path writes nothing.
+        exit_code = produce_fields.main(
+            [
+                "--data-root",
+                str(data_root),
+                "--symbol",
+                SYMBOL,
+                "--start",
+                SESSIONS[0].isoformat(),
+                "--end",
+                SESSIONS[-1].isoformat(),
+                "--strategy-yaml",
+                str(STRATEGY_YAML),
+                "--min-bars-per-day",
+                "0",
+                "--measure-d7",
+            ]
+        )
+    assert exit_code == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("D7_MEASUREMENT: dict[str, Any] = {")
+    assert '"min_bars_per_day": DEFAULT_MIN_BARS_PER_DAY,' in printed
+    # Pasteable: every key of the committed literal appears.
+    for key in produce_fields.D7_MEASUREMENT:
+        assert f'"{key}":' in printed, key
+
+    # The lineage tells a sidecar reader how to regenerate the number.
+    result = _run(data_root, tmp_path / "out", min_bars_per_day=0)
+    d7 = next(
+        entry for entry in result.lineage["declared_differences"] if entry["id"] == "D7"
+    )
+    assert d7["d7_measurement_generator"] == produce_fields.D7_GENERATOR_COMMAND
+
+
+def test_out_is_required_unless_measuring(bars: pd.DataFrame, tmp_path: Path) -> None:
+    data_root = _write_parquet_tree(bars, tmp_path / "market")
+    with pytest.raises(SystemExit):
+        produce_fields.main(
+            [
+                "--data-root",
+                str(data_root),
+                "--symbol",
+                SYMBOL,
+                "--start",
+                SESSIONS[0].isoformat(),
+                "--end",
+                SESSIONS[-1].isoformat(),
+                "--strategy-yaml",
+                str(STRATEGY_YAML),
+            ]
+        )
+
+
+def _lineage_kwargs(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    tmp_path: Path,
+) -> dict[str, object]:
+    """A valid ``build_lineage`` call, for the red proofs to spoil one key of."""
+    df = bars.reset_index(drop=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        produced = produce_fields.produce_bars(
+            df,
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=_contract_spec(),
+            anchor=anchor,
+        )
+    warmup, first_session = produce_fields._bar_accounting(df)
+    return {
+        "produced": produced,
+        "jsonl_bytes": produce_fields.render_jsonl(produced.records),
+        "symbol": SYMBOL,
+        "strategy": strategy,
+        "contract_spec": _contract_spec(),
+        "anchor": anchor,
+        "data_root": tmp_path,
+        "requested_start": SESSIONS[0],
+        "requested_end": SESSIONS[-1],
+        "min_bars_per_day": 0,
+        "bars_loaded": len(df),
+        "bars_after_density_gate": len(df),
+        "warmup_skipped": warmup,
+        "first_session_dropped": first_session,
+        "input_files": [
+            produce_fields.InputFile(
+                path="probe.parquet", sha256="0" * 64, size_bytes=1
+            )
+        ],
+    }
+
+
+def test_empty_input_file_list_with_bars_loaded_is_refused(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    tmp_path: Path,
+) -> None:
+    """A lineage must not claim an input list it does not have."""
+    kwargs = _lineage_kwargs(bars, strategy, anchor, tmp_path)
+    assert produce_fields.build_lineage(**kwargs)["dataset"]["input_file_count"] == 1
+
+    kwargs["input_files"] = []
+    with pytest.raises(
+        produce_fields.ProduceFieldsError, match="no Parquet partition was found"
+    ):
+        produce_fields.build_lineage(**kwargs)
+
+
+def test_bar_accounting_that_does_not_reconcile_is_refused(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    tmp_path: Path,
+) -> None:
+    """``gated - dropped == replayed`` is a guard, not a comment."""
+    kwargs = _lineage_kwargs(bars, strategy, anchor, tmp_path)
+    kwargs["warmup_skipped"] = int(kwargs["warmup_skipped"]) + 1  # type: ignore[arg-type]
+    with pytest.raises(produce_fields.ProduceFieldsError, match="does not reconcile"):
+        produce_fields.build_lineage(**kwargs)
+
+
+def test_duplicate_bar_timestamps_are_refused() -> None:
+    """A duplicated minute would make the OHLCV lookup pick one arbitrarily."""
+    base = datetime.combine(SESSIONS[0], time(9, 0))
+    rows = [
+        {
+            "code": SYMBOL,
+            "timestamp": base,
+            "open": 400.0,
+            "high": 400.5,
+            "low": 399.5,
+            "close": 400.0,
+            "volume": 10,
+        },
+        {
+            "code": SYMBOL,
+            "timestamp": base,  # the duplicate
+            "open": 401.0,
+            "high": 401.5,
+            "low": 400.5,
+            "close": 401.0,
+            "volume": 11,
+        },
+    ]
+    with pytest.raises(
+        produce_fields.ProduceFieldsError, match="duplicate bar timestamps"
+    ):
+        produce_fields._bar_lookup(pd.DataFrame(rows))
+
+    # The same frame without the duplicate is accepted, so the guard is not
+    # simply rejecting every two-row frame.
+    rows[1]["timestamp"] = base + timedelta(minutes=1)
+    assert len(produce_fields._bar_lookup(pd.DataFrame(rows))) == 2

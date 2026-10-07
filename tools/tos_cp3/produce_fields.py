@@ -815,12 +815,29 @@ def render_jsonl(records: list[FieldRecord]) -> bytes:
 # Lineage
 # ---------------------------------------------------------------------------
 
-#: D7's measurement — how often an exit written on the MOVING session VWAP
-#: differs from the legacy exit's target price FROZEN at signal time. Produced
-#: by ``tools/tos_cp3/measure_d7.py`` over the parity window and restated here
-#: so the lineage carries it without re-running a second simulation on every
-#: produce. Regenerate whenever the window, the anchor or the strategy
-#: parameters change — the script prints this literal.
+#: D7's measurement — how often an exit written on the moving session-VWAP
+#: SIGN differs from the legacy exit's target price FROZEN at signal time.
+#:
+#: The generator is :func:`measure_moving_vs_frozen_exit` in THIS module, driven
+#: by :data:`D7_GENERATOR_COMMAND`::
+#:
+#:     python tools/tos_cp3/produce_fields.py --measure-d7 \
+#:         --data-root <root> --symbol 101S6000 \
+#:         --start 2025-12-01 --end 2026-04-30 \
+#:         --strategy-yaml config/strategies/futures/setup_d_vwap_reversion.yaml \
+#:         --out <unused>
+#:
+#: which prints exactly this literal to stdout for pasting. It is restated here
+#: rather than computed on every produce so a field run does not pay for a
+#: second simulation; regenerate whenever the window, the anchor or the strategy
+#: parameters change. (An earlier revision of this comment pointed at a
+#: ``measure_d7.py`` script that was never written — the flag above is the
+#: generator that actually exists.)
+#:
+#: Recorded in the lineage as ``declared_differences[D7].d7_measurement_generator``
+#: so a reader of the sidecar can regenerate the number without reading this file.
+D7_GENERATOR_COMMAND = "produce_fields.py --measure-d7"
+
 D7_MEASUREMENT: dict[str, Any] = {
     "window": "101S6000 2025-12-05..2026-04-29",
     "market_open_kst": "09:00",
@@ -1171,24 +1188,33 @@ def _declared_differences(
         },
         {
             "id": "D7",
-            "item": "moving session-VWAP exit vs the legacy frozen target",
+            "item": "moving session-VWAP sign exit vs the legacy frozen target",
             "value": measurement,
+            "d7_measurement_generator": D7_GENERATOR_COMMAND,
             "note": (
-                "Any exit rule written on these fields compares against the "
-                "session VWAP as it MOVES bar by bar. The legacy exit "
-                "(shared/strategy/exit/setup_target_exit.py) compares against a "
-                "take_profit PRICE frozen on the signal at entry time. They are "
-                "different rules, not two spellings of one: measured on the "
-                f"parity window ({measurement['window']}, anchor "
-                f"{measurement['market_open_kst']}), the moving form leaves "
-                f"earlier on {measurement['earlier']} of "
-                f"{measurement['entries']} entries, on the same bar for "
-                f"{measurement['identical']}, later on {measurement['later']}, "
-                f"and neither reaches on {measurement['never_either']}; median "
-                f"lead {measurement['median_lead_bars']} bars, max "
-                f"{measurement['max_lead_bars']}. Publishing the frozen target "
-                "would need a per-entry price the DSL has no slot for "
-                "(DSL-G5), so the difference is declared, not closed."
+                "An exit rule written on the published fields compares "
+                "against the session VWAP as it MOVES bar by bar; the legacy "
+                "exit (shared/strategy/exit/setup_target_exit.py) compares "
+                "against a take_profit PRICE frozen on the signal at entry "
+                "time. The MEASURED rule is the strongest moving form a "
+                "deployment can write — the z-SIGN crossing (z_x1000 >= 0 for a "
+                "long fade, <= 0 for a short), which is direction-specific and "
+                "therefore not the published vwap_reverted field. On the parity "
+                f"window ({measurement['window']}, anchor "
+                f"{measurement['market_open_kst']}) that rule leaves earlier on "
+                f"{measurement['earlier']} of {measurement['entries']} entries, "
+                f"on the same bar for {measurement['identical']}, later on "
+                f"{measurement['later']}, and neither reaches on "
+                f"{measurement['never_either']}; median lead "
+                f"{measurement['median_lead_bars']} bars, max "
+                f"{measurement['max_lead_bars']} (over "
+                f"{measurement['lead_bars_measured_over']} entries where both "
+                "rules reached). The divergence of the direction-agnostic BAND "
+                "field vwap_reverted itself (D3) is a DIFFERENT and so far "
+                "UNMEASURED quantity — these counts must not be read as its "
+                "error bar. Publishing the frozen target would need a per-entry "
+                "price the DSL has no slot for (DSL-G5), so the difference is "
+                "declared, not closed."
             ),
         },
         {
@@ -1232,7 +1258,8 @@ def _declared_differences(
             "item": "ATR stop (stop_atr_mult)",
             "value": cfg.stop_atr_mult,
             "note": (
-                "The legacy signal carries a 1.5x-ATR hard stop. It is OUT OF "
+                f"The legacy signal carries a {cfg.stop_atr_mult}x-ATR hard "
+                "stop. It is OUT OF "
                 "SCOPE for the first slice by operator decision (kickoff §4 "
                 "decision 6): the DSL has no entry price and no numeric "
                 "Proposal output, and protective classification is PAC's to "
@@ -1430,10 +1457,13 @@ def measure_moving_vs_frozen_exit(
 
     Returns the counts the lineage's D7 entry quotes. Kept beside the producer
     rather than in a scratch script so the number in the sidecar can be
-    regenerated by the same code that documents it.
-    """
-    import pandas as pd
+    regenerated by the same code that documents it: ``--measure-d7`` prints the
+    :data:`D7_MEASUREMENT` literal from this function's output.
 
+    The buckets are disjoint and exhaustive — ``earlier + identical + later +
+    never_either == entries`` — and every lead is session-bounded, because the
+    inner walk stops at the session boundary.
+    """
     setup = SetupDVWAPReversion(config=strategy.entry_config)
     replay = MarketContextReplay(
         df=df,
@@ -1504,7 +1534,6 @@ def measure_moving_vs_frozen_exit(
         else:
             later += 1
 
-    _ = pd  # the frame is consumed through the replay; import pinned for parity
     return {
         "window": f"{symbol} {df['timestamp'].dt.date.iloc[0]}"
         f"..{df['timestamp'].dt.date.iloc[-1]}",
@@ -1556,18 +1585,35 @@ def _bar_accounting(df: Any) -> tuple[int, int]:
     return warmup, max(0, first_session_bars - warmup)
 
 
-def run(
+@dataclass(frozen=True)
+class LoadedWindow:
+    """Everything resolved from the CLI arguments before any production."""
+
+    strategy: StrategyInputs
+    contract_spec: ContractSpec
+    df: Any
+    bars_loaded: int
+    anchor: OpenAnchor
+    input_files: list[InputFile]
+
+
+def load_window(
     *,
     data_root: Path,
     symbol: str,
     start: date,
     end: date,
     strategy_yaml: Path,
-    out_dir: Path,
-    min_bars_per_day: int = DEFAULT_MIN_BARS_PER_DAY,
-    market_open: str = "auto",
-) -> RunResult:
-    """Produce the field JSONL and lineage sidecar for one dataset window."""
+    min_bars_per_day: int,
+    market_open: str,
+) -> LoadedWindow:
+    """Resolve strategy, contract, bars and open anchor for one window.
+
+    Shared by :func:`run` and the ``--measure-d7`` path so the measurement is
+    taken over exactly the window a produce would use — a second, slightly
+    different loader here is how the number in the sidecar would come to
+    describe a window nobody published.
+    """
     strategy = load_strategy_inputs(strategy_yaml)
     registry = ContractSpecRegistry.from_yaml(str(REPO_ROOT / "config/execution.yaml"))
     contract_spec = resolve_contract_spec(symbol, registry)
@@ -1594,6 +1640,55 @@ def run(
         first_session=session_dates.iloc[0],
         last_session=session_dates.iloc[-1],
     )
+    return LoadedWindow(
+        strategy=strategy,
+        contract_spec=contract_spec,
+        df=df,
+        bars_loaded=bars_loaded,
+        anchor=anchor,
+        input_files=input_files,
+    )
+
+
+def render_d7_literal(measurement: dict[str, Any]) -> str:
+    """Format a measurement as the :data:`D7_MEASUREMENT` literal to paste."""
+    lines = ["D7_MEASUREMENT: dict[str, Any] = {"]
+    for key, value in measurement.items():
+        rendered = json.dumps(value, ensure_ascii=False)
+        if key == "min_bars_per_day":
+            rendered = "DEFAULT_MIN_BARS_PER_DAY"
+        lines.append(f'    "{key}": {rendered},')
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def run(
+    *,
+    data_root: Path,
+    symbol: str,
+    start: date,
+    end: date,
+    strategy_yaml: Path,
+    out_dir: Path,
+    min_bars_per_day: int = DEFAULT_MIN_BARS_PER_DAY,
+    market_open: str = "auto",
+) -> RunResult:
+    """Produce the field JSONL and lineage sidecar for one dataset window."""
+    window = load_window(
+        data_root=data_root,
+        symbol=symbol,
+        start=start,
+        end=end,
+        strategy_yaml=strategy_yaml,
+        min_bars_per_day=min_bars_per_day,
+        market_open=market_open,
+    )
+    strategy = window.strategy
+    contract_spec = window.contract_spec
+    df = window.df
+    bars_loaded = window.bars_loaded
+    anchor = window.anchor
+    input_files = window.input_files
     warmup_skipped, first_session_dropped = _bar_accounting(df)
 
     produced = produce_bars(
@@ -1673,7 +1768,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Setup D strategy YAML — the source of every threshold and window",
     )
     parser.add_argument(
-        "--out", required=True, type=Path, help="Output directory for the two artifacts"
+        "--out",
+        type=Path,
+        help=(
+            "Output directory for the two artifacts. Required unless "
+            "--measure-d7 is given, which writes nothing."
+        ),
+    )
+    parser.add_argument(
+        "--measure-d7",
+        action="store_true",
+        help=(
+            "Do not produce fields: measure declared difference D7 (the moving "
+            "session-VWAP sign exit vs the legacy frozen take-profit) over the "
+            "same window and print the D7_MEASUREMENT literal to paste back "
+            "into this module."
+        ),
     )
     parser.add_argument(
         "--min-bars-per-day",
@@ -1700,7 +1810,38 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.measure_d7:
+        try:
+            window = load_window(
+                data_root=args.data_root,
+                symbol=args.symbol,
+                start=args.start,
+                end=args.end,
+                strategy_yaml=args.strategy_yaml,
+                min_bars_per_day=args.min_bars_per_day,
+                market_open=args.market_open,
+            )
+            measurement = measure_moving_vs_frozen_exit(
+                window.df,
+                symbol=args.symbol,
+                strategy=window.strategy,
+                contract_spec=window.contract_spec,
+                anchor=window.anchor,
+            )
+        except ProduceFieldsError as exc:
+            print(f"produce_fields: {exc}", file=sys.stderr)
+            return 2
+        print(render_d7_literal(measurement))
+        print(
+            "# paste the block above over D7_MEASUREMENT in "
+            "tools/tos_cp3/produce_fields.py",
+            file=sys.stderr,
+        )
+        return 0
+    if args.out is None:
+        parser.error("--out is required unless --measure-d7 is given")
     try:
         result = run(
             data_root=args.data_root,
