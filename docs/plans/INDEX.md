@@ -2,7 +2,8 @@
 
 ## Current TOS integration entry — 2026-10-06
 
-- [Control Plane and first tenant plan](2026-10-06-tos-control-plane-and-first-tenant-plan.md): CP-0 documentation complete; CP-1 onward planned, paper-only migration scope.
+- [Control Plane and first tenant plan](2026-10-06-tos-control-plane-and-first-tenant-plan.md): CP-0 documentation complete; CP-1 implemented, deployed and observed (2026-10-07); CP-2 onward planned, paper-only migration scope.
+- [CP-3 kickoff — first tenant candidate comparison and operator decisions](2026-10-07-tos-cp3-first-tenant-kickoff.md): research only, zero code; Setup D recommended; DSL can only compare published integer scalars, so indicator math moves upstream; same-input parity needs four new builds (loader + shared indicator producer, legacy reject emitter, decision-level diff, one-order-per-scope disposition); eight operator decisions pending.
 - Current implementation/check snapshot: [PROJECT_STATUS](../PROJECT_STATUS.md).
 - The dated update paragraphs below are historical observations, not current entry-gate verdicts. Consult the current checkers and normative sources for authorization.
 
