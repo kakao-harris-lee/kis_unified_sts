@@ -1,6 +1,6 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-10-07 (first real paper-session Control Plane observation; 2026-10-06 TOS architecture/documentation refresh, repository `5c4f38e9`)
+**Last updated**: 2026-10-07 (first real paper-session Control Plane observation and same-day restart identity observation; 2026-10-06 TOS architecture/documentation refresh, repository `5c4f38e9`)
 
 ## Current TOS snapshot — 2026-10-06
 
@@ -11,7 +11,7 @@ inspection. Historical legacy observations below retain their original dates.
 |---|---|---|
 | Layers | TOS Kernel (`tos`), Application Runtime + Infrastructure Adapters (`tos_runtime`), Control Plane API (dashboard TOS surface), Product / Operator UI | Names and owners: [system context](architecture/tos-system-context.md); naming does not grant new imports or authority |
 | Runtime | Composition, durable driver/inbox, risk/authority/currentness, marketfeed, synthetic/KIS mock transport, recovery/recon and operations CLI implemented | Implementation is not live authorization; [interface catalog](architecture/tos-public-interfaces.md) distinguishes internal ports from external contracts |
-| Product integration | Atomic schema v1 projection + nullable `GET /api/tos/projection` + `/tos` read-only UI (CP-1, #861 merged and deployed) | Host output path and read-only mount connected; deployed missing/auth states verified; first normal paper-session export observed 2026-10-07 and identity refresh after a same-day manual restart observed 2026-10-07 17:32 (live observation section below); in-session re-export cadence after a restart still unobserved |
+| Product integration | Atomic schema v1 projection + nullable `GET /api/tos/projection` + `/tos` read-only UI (CP-1, #861 merged and deployed) | Host output path and read-only mount connected; deployed missing/auth states verified; live results (first session export, identity refresh after a same-day manual restart, what is still unobserved) are in the live observation section below, not in this snapshot row |
 | Operator commands | Runtime CLI has run, backup/cold-backup, restore, migration, rotation, rearm, ack and nontrade operations | No product command ingress; CLI restore-drill does not by itself perform full strategy replay/readiness |
 | Paper operations | Committed [boot runbook](runbooks/tos-paper-boot.md) records resident schedule, LONG configuration and contract-specific data-dir leaves; roll replay test is present | 2026-10-06 resident execution/genesis and today's backup outcome were **not observed in this documentation task** |
 | Tenant migration | `config/tos_runtime/paper/strategies/bootproof_band.strategy.yaml` exists as boot-proof content | First economic strategy tenant, parity evidence and scope cutover are not certified |

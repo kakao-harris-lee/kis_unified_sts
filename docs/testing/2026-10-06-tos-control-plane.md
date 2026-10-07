@@ -162,7 +162,8 @@ T3 와 T3' 는 같은 정지 상태를 30 초 간격으로 두 번 찍은 것이
 - **producer → 인증 API → `/tos` 값 일치.** Caddy 경유 인증 GET 이 세 지점 전부
   `available=true`·`reason=None` 이고 generation 이 같은 시점 파일과 같다(264·624·5033).
   `/tos` 도 세 지점 전부 200. producer 세대 변화가 조회 표면까지 같은 값으로 도달한다.
-- **runtime identity 는 하루 종일 불변.** `cell_id` `paper`, `process_nonce` 접두
+- **runtime identity 는 08:45 세션 안에서 불변**(같은 날 17:32 손 재시작에서는 바뀐다 — 아래
+  「재시작 관측」절). `cell_id` `paper`, `process_nonce` 접두
   `997451dd`, `code_digest`
   `ec20680a444cc9798ad601fbcda61edc05cee30d1c00f524c60b717c5f3a5044`,
   `runtime_generation` `0` — 세 지점 동일. 세션 worktree 는 `4010bc175d5f` 이고 digest 는
@@ -177,7 +178,8 @@ T3 와 T3' 는 같은 정지 상태를 30 초 간격으로 두 번 찍은 것이
 - **미관측.** 인계 기록 §6 체크 4(재시작 뒤 runtime identity·generation 갱신).
   2026-10-07 은 하루 한 세션이라 같은 날 재시작이 없었고, 위 identity 네 값은 **불변**만
   보였다 — **변화** 쪽 증거는 아직 없다. UI stale 렌더 화면도 같다. 둘 다 다음 정상
-  세션일의 관측 대상이다.
+  세션일의 관측 대상이다. (체크 4 는 같은 날 17:32 운영자 지시의 손 재시작에서 관측했다 —
+  아래 「재시작 관측 2026-10-07 17:32」절. 이 08:45 세션 기록 자체는 그 시점 그대로 둔다.)
 
 세션 보고서는
 `/home/deploy/.local/state/tos/paper-sessions/2026-10-07-084508-LONG/report.json` 이다.
@@ -190,22 +192,33 @@ T3 와 T3' 는 같은 정지 상태를 30 초 간격으로 두 번 찍은 것이
 래퍼는 cron 과 같은 `2c3284a4…` 이고 바뀐 것은 환경변수 `TOS_PAPER_MINUTES=7` 하나다:
 15:45 이 지난 뒤의 `start` 는 이 값 없이는 「stop time already passed」로 ABORT 이고, 이
 변수는 projection 을 session-local 로 격리하는 조건(`--selftest`·data-dir·instrument·
-fake-date·worktree·calendar 우회)에 **들지 않으므로** 운영 파일에 그대로 쓴다. 정지는 cron 과
+fake-date·worktree·calendar 우회)에 **들지 않으므로** 운영 파일에 그대로 쓴다.
+⚠ **이것은 런북에서 벗어난 실행이다** — `tos-paper-boot.md` §7.2 는 `TOS_PAPER_MINUTES` 를
+⛔ **드라이런 전용** 손잡이로 적고, `tos-paper-projection-connection.md` 4 는 장 마감 후
+검증용 세션을 금한다. 운영자 지시로 한 번 손으로 썼고 cron 줄은 건드리지 않았다. 부수로 드러난
+것: 래퍼의 격리 술어 위 주석은 「test/override 세션은 운영 스냅샷을 덮지 않는다」인데 술어는
+변수 여섯의 열거라 `TOS_PAPER_MINUTES` 단독 세션은 주석과 달리 운영 파일에 쓴다 — 이 실행에는
+그것이 의도였지만, 주석과 술어의 불일치 자체는 후속이다(인계 §6 끝). 정지는 cron 과
 같은 `stop`(드라이버 SIGTERM)이고, 18:00 콜드 백업의 열린 핸들 검사 전에 스토어를 닫았다
-(17:34:10 `driver exited`, `fuser` 0 건). 텔레그램 기동·종료 줄은 평소대로 나갔다(17:32:42 ·
+(17:34:10 `driver exited` — `report.json` 의 `ended_kst`·`stop_reason=signal`; 열린 핸들의
+손 점검은 기록을 남기지 않았다). 텔레그램 기동·종료 줄은 평소대로 나갔다(17:32:42 ·
 17:34:11 `telegram notified`) — 기동 줄의 「정지 15:45 KST」는 래퍼 템플릿이고 실제 정지는
 손 `stop` 이다.
 
 | 지점 | 프로브 KST | 파일 mtime | 파일 gen | API gen | `process_nonce` 접두 | `runtime_generation` | age 초 | `/tos` |
 |---|---|---|---|---|---|---|---|---|
-| R0 | 17:31:58 | 15:45:00 | 5033 | 5033 | `997451dd` | 0 | 6433.1 | 200 |
-| — | 17:32:23 `start` · 17:32:37 boot proof OK(14.33 s · genesis=no · baseline_seq 147922) | | | | | | | |
+| R0 | 17:32:13 | 15:45:00 | 5033 | 5033 | `997451dd` | 0 | 6433.1 | 200 |
+| — | 17:32:23 `start` · 17:32:38 boot proof OK(14.33 s · genesis=no · baseline_seq 147922) | | | | | | | |
 | R1 | 17:32:49 | 15:45:00 | 5033 | 5033 | `997451dd` | 0 | 6469.5 | 200 |
 | R2 | 17:33:34 | 17:32:50 | 1 | 1 | `e431c2d8` | 0 | 44.3 | 200 |
 | — | 17:34:06 `stop` → 17:34:10 `driver exited` rc=0 · `stop_reason=signal` | | | | | | | |
 | R3 | 17:34:14 | 17:32:50 | 1 | 1 | `e431c2d8` | 0 | 84.1 | 200 |
 | R3' | 17:34:36 | 17:32:50 | 1 | 1 | `e431c2d8` | 0 | 106.2 | 200 |
 
+R0 의 시각은 `R0-api.txt`(API 를 포함한 프로브)의 머리 시각이다 — 그보다 앞선 17:31:22 의
+`R0-file.txt` 는 파일 stat 만 뜬 것이라 표에 넣지 않았다(값은 같다). 17:32:38 은 로그에 없는
+**유도값**이다: 부팅 증명 줄에는 시각이 없고, `report.json` 의 `started_kst` 17:32:23.975 +
+`boot_seconds` 14.33 으로 셈했다.
 다섯 지점 전부 인증 GET 은 `available=true`·`reason=None`, 비인증 GET 은 401 이다.
 `cell_id` 는 `paper`, `code_digest` 는
 `ec20680a444cc9798ad601fbcda61edc05cee30d1c00f524c60b717c5f3a5044` 으로 다섯 지점 동일 —
@@ -216,7 +229,7 @@ fake-date·worktree·calendar 우회)에 **들지 않으므로** 운영 파일�
   `997451dd…` → `e431c2d8…` 로 바뀌고 `projection_generation` 은 5033 → **1** 로 되돌아간다
   (프로세스별 export 순번이라 부팅 export 가 1 이다). 인증 API 는 같은 시점 파일과 같은 값을
   돌려준다(R2·R3·R3' 전부 gen 1·새 nonce).
-- **관측됨 — 교체 전 창.** 부팅 증명(17:32:37) 뒤 약 12 초 동안은 **이전 프로세스의 파일**
+- **관측됨 — 교체 전 창.** 부팅 증명(17:32:38, 유도값) 뒤 약 12 초 동안은 **이전 프로세스의 파일**
   (gen 5033·옛 nonce·age 6469 초)이 그대로 서빙된다(R1). 그 창에서 API 는 옛 identity 를
   `available=true` 로 돌려주고 stale 판정은 age 가 맡는다 — 첫 export 는 operations wiring 의
   `exporter.export()` 한 번이고(`compose/_operations_wiring.py`), 그 전에는 아무도 파일을
@@ -229,23 +242,34 @@ fake-date·worktree·calendar 우회)에 **들지 않으므로** 운영 파일�
   (`mode=ro&immutable=1`)으로 연 결과 세 행이 epoch 1·2·3 이고 nonce 는 각각 `13b564cd…`
   (10-06 08:45) · `997451dd…`(10-07 08:45) · `e431c2d8…`(10-07 17:32), `runtime_generation`
   열은 셋 다 0 이다. 그러므로 인계 §6 체크 4 의 「generation 갱신」은 **epoch 로 관측됐고
-  `runtime_generation` 으로는 관측될 수 없는 값**이다. 설계 #40 D1.1 의 문장(「epoch 와 같은
-  트랜잭션에서 증가」)과 compose root 의 0 고정이 다른 것을 말하는지, projection 이 epoch 를
-  실어야 하는지는 운영자 결정이고 이 기록은 코드를 바꾸지 않았다.
+  `runtime_generation` 으로는 관측될 수 없는 값**이다. 설계 #40 **D4.1** 의 문장(「epoch 와 같은
+  트랜잭션에서 증가」 — `docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md`
+  109행; `_wiring.py` 423행 주석은 이를 D1.1 로 잘못 적는다)과 compose root 의 0 고정이 다른 것을
+  말하는지, projection 이 epoch 를 실어야 하는지는 운영자 결정이고 이 기록은 코드를 바꾸지
+  않았다. 같은 모양의 문구 하나 더: `operator/projection.py` 172행 주석과 Phase 5 W4 계획은
+  `projection_generation` 을 「단조」라고만 적고 프로세스 범위를 말하지 않는데, 실측은 재시작에
+  1 로 되돌아간다. 옮겨 적은 `epochs` 세 열(epoch · nonce 접두 · `runtime_generation`)에는
+  계좌·지문이 없다(§7.2 좌표 규율).
 - **미관측 — 재시작 뒤 장중 export 주기.** `projection_generation` 은 17:32:50 의 1 에서 정지까지
   움직이지 않았다. 재export 는 드라이버 턴 뒤 콜백에 묶여 있는데
   (`driver.bind_after_turn(exporter.as_after_turn_callback())`), 장 밖 틱은 턴 전에
-  `SKIPPED_SESSION_CLOSED` 로 끝난다(`marketfeed/scheduler.py::decide_tick`). 보고서도 같다 —
-  관측 덧붙임 17 · 소비 0 · 스냅샷 +0 · 결정 none. 아침 세션의 5 초 주기가 새 nonce 아래에서도
+  `SKIPPED_SESSION_CLOSED` 로 끝난다(`tos/runtime/src/tos_runtime/marketfeed/scheduler.py::TickScheduler.tick_once`
+  481–482행이 `decide_tick` 호출 전에 돌려준다). 이 결과 라벨은 코드에서 읽은 것이고 아티팩트에
+  틱 결과는 없다 — 보고서가 보여 주는 것은 관측 덧붙임 17 · 소비 0 · 스냅샷 +0 · 결정 none 이다.
+  런북 §7.8 2 의 「소비 0 인데 덧붙임 > 0 이면 held 를 의심」은 `withheld`·`flow_halted` 가 모두
+  비어 있어 기각했다. 아침 세션의 5 초 주기가 새 nonce 아래에서도
   이어지는지는 **08:45–15:45 안의 재시작**에서만 볼 수 있고, 이 실행은 그것을 재지 않았다.
 - **리플레이.** `REPLAY_VERDICT_IDENTICAL` 1 · `REPLAY_DIVERGED` 0 · 증거행 +20 ·
-  data dir +24,576 B. `boot_seconds` 는 genesis 2.0 → 08:45 9.21(75,839 행 위) → 17:32
-  **14.33**(147,922 행 위)으로, 런북 §7.8 2 의 리플레이 시간 곡선에 세 번째 점이 생겼다.
+  data dir +24,576 B. `boot_seconds` 는 10-06 08:45 genesis 2.0(이전 래퍼 `fd554b2a…`, 정수
+  해상도) → 10-07 08:45 9.21(75,839 행 위) → 17:32 **14.33**(147,922 행 위)으로, 런북 §7.8 2 의
+  리플레이 시간 곡선에 세 번째 점이 생겼다. 같은 래퍼·같은 해상도의 쌍은 뒤의 둘이다.
 - **정지 뒤 stale 입력 재현.** R3→R3' 에서 generation 1 고정·age 84.1 → 106.2 초로 체크 3 과
   같은 모양이다. UI 가 stale 로 렌더한 화면은 이번에도 캡처하지 않았다.
 
 원시 관측은 `~/.local/state/tos/measure/cp1-restart-20261007/`(700/600 · `R0-file`·`R0-api`·
-`R1`·`R2`·`R3`·`R3b`·`report-summary`), 세션 디렉터리
+`R1`·`R2`·`R3`·`R3b`·`report-summary` — `R3b.txt` 의 머리줄 라벨은 `R1b` 로 남아 있다(프로브
+스크립트의 라벨 인자를 안 고친 채 찍은 것, 파일은 찍힌 그대로 둔다; 표의 R3' 이 이 파일이다),
+세션 디렉터리
 `~/.local/state/tos/paper-sessions/2026-10-07-173223-LONG/`(`report.json`), 날짜 로그
 `~/.local/state/tos/paper-logs/2026-10-07.log` 의 17:32:17 블록이다. 인증 GET 에 쓴 API 키는
 이 기록에 담지 않는다.
