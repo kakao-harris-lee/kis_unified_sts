@@ -160,6 +160,18 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    하네스 래퍼가 봉별 후보·거부를 뽑고, `tools/tos_cp3/` 가 둘을 봉별로 diff 한다. 산출물:
    `reports/tos-cp3/<dataset>/{legacy,tos,diff}.jsonl` + 요약(일치율, 불일치 사유 분포). 불일치는
    **미해결로 남기되**, 결정 5·6 의 두 의도된 차이는 승인 근거와 함께 따로 센다.
+   **B2 착수·구현(2026-10-08)**: `tools/tos_cp3/emit_legacy_decisions.py`
+   (테스트 `tests/tools/test_cp3_emit_legacy_decisions.py`). 창은 B1a 의
+   `produce_fields.load_window` 를 그대로 호출하고 조인 키도 B1a 의
+   `derive_raw_event_id`/`derive_as_of_ms` 를 import 하므로 두 아티팩트는 봉 단위로 맞물린다.
+   봉마다 `check()` 의 결과(FIRED 또는 닫힌 집합으로 분류된 거부 사유)와 그 자신의 평가 기록을
+   정수·불린으로 투영해 적고, 별도 불린
+   `would_be_admitted_by_legacy_position_model` 로 워크포워드 하네스의 단일 포지션 게이트
+   (`scripts/analysis/walkforward_setup_d_vwap_reversion.py::collect_entries` 150–203행,
+   청산은 같은 파일 `_simulate_exit` 206–263행을 **그대로 호출**)까지 함께 센다.
+   §3 표의 B2 행은 자리를 `shared/backtest/` 로 적었지만 구현은 `tools/tos_cp3/` 에 두었다 —
+   B1a 의 창 로더·조인 키·생략 술어를 **같은 코드로** 써야 조인이 성립하고, `shared/backtest/` 에
+   두면 런타임 패키지가 CP-3 아티팩트 형식에 의존하게 된다. B1b·B3 는 아직 미착수.
 3. **Setup D DSL 콘텐츠 + 부팅 경로** — `config/tos_runtime/<tenant>/strategies/setup_d_vwap_reversion.strategy.yaml`,
    `config/tos_runtime/<tenant>/strategy_bindings.yaml`(strategies/ 아래가 아니라 설정 루트), 예산 64 안
    (규칙 3개면 비교 ≤ 20). 렌더의 전략 파일 상수·다섯 digest 재도출·`safety_activation.yaml::members`
