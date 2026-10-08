@@ -39,6 +39,14 @@
 #     intended fail-closed state until a governed band/limit source lands
 #     (plan §5 정직 상태 / §6 ⑤; pinned by
 #     tos/runtime/tests/compose/test_deploy_policies.py). Never fill by hand.
+#     ⚠ max_quantity: **source exists (10-08 결정 9); paper adoption deferred by
+#     operator** — the value 10000 (별표 17의2 제1호 미니코스피200선물거래 행, 등급 R,
+#     2026-10-08 설계 §2.1·§3) landed in the CP-3 tenant tree
+#     `config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml` ONLY. This
+#     resident tree's value stays `null` by operator decision 2026-10-08, so the
+#     step-2 DENY above is still the shipped behavior here. (Comment-only: measured
+#     2026-10-09 that this file's canonical_digest is unchanged by this paragraph —
+#     digests fold typed content, not comments.)
 #   * admitting session phase = the ONE token config/tos_runtime/paper/
 #     calendar.yaml declares for krx-index-futures (`CONTINUOUS`, 08:45-15:45
 #     KST); `CLOSED`/`EXPIRED` admit nothing.
