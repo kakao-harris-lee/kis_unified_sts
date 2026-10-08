@@ -1,0 +1,89 @@
+# =============================================================================
+# safety_activation.yaml — TOS paper 배포 승인값 (W-A / A-2 · A-3)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §3 · §4.3 · §6 3항
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/safety_activation.example.yaml
+# 로더 (두 개가 같은 파일의 **다른** 최상위 키를 읽는다):
+#   * `activation:` + `not_expired:` — tos_runtime.safety.profile.SafetyProfileService
+#     (compose/_safety_wiring.py:516, 무조건)
+#   * `members:` — tos_runtime.venue.activation.load_activation_members
+#     (venue/activation.py:68; compose/_riskstate_wiring.py:235 ·
+#      compose/_venue_wiring.py:262, 둘 다 무조건)
+# =============================================================================
+
+activation:
+  # 제안표 §4.3 식별자 규칙: `tos-paper-<무엇>-g<세대>`, 세대는 1.
+  activation_id: "tos-paper-activation-g1"
+  # 이 활성화가 고정하는 RuntimeSafetyProfile 세대 — safety_profile.yaml 의
+  # `profile.profile_generation` 과 같아야 한다.
+  profile_generation: 1
+  # [미확정] 제안표 §3(3행) · §6 3항 — **도출 절차 미확인.**
+  #   「도출 도구를 확인하지 못했으므로 **값을 짓지 않는다.** A-3 에서 절차를
+  #    찾거나, 못 찾으면 **못 찾았다고 보고**한다.」
+  # A-3 실측 결과: `print-policy-digests`(compose/cli.py:671 `_dispatch_print_
+  # policy_digests`)는 VENUE/OCP/AGGREGATE_RISK/ACTION_FLOW/CRITICAL_INPUT 의
+  # `policy_id`/`policy_generation`/`canonical_digest` 만 출력하고, envelope/
+  # profile/bundle digest 를 계산하는 서브커맨드는 **없다**(`compose/cli.py` 의
+  # `_SUBCOMMANDS` 전수 확인). 짓지 않고 null 로 둔다 — 이 세 필드는
+  # `tos.spg.ActivationRecord` 에서 `X | None` 이라 로더가 null 을 받는다
+  # (실측: tos/runtime/tests/compose/conftest.py 의 정상 부팅 픽스처도 셋 다 None).
+  envelope_digest: null
+  profile_digest: null
+  bundle_digest: null
+  # 제안표 §4.3 — 빈 것이 사실이다. 아직 기록된 승인도, 적합성 확약도 없다.
+  # (이 둘이 비면 ActivationInputs 의 staging_complete/attestation_complete 가
+  #  거짓이 되어 활성화가 보수적으로 막힌다 — 의도된 방향이다.)
+  scope: []
+  approval_ids: []
+  compatibility_attestation_refs: []
+  # 첫 세대라 선행 세대가 없다.
+  predecessor_generation: null
+  restrictive_generation_effects: []
+
+# 제안표 §4.3 — 운영자 확약. spg 는 시간 연산을 하지 않으므로(design #12 §3.5)
+# 「이 세대가 만료되지 않았다」를 명시적으로 진술한다. TRUSTED 시계와 함께
+# `tos.spg.expiry_suspends_new_risk` 가 「미정지」를 보고하는 조건이다.
+not_expired: true
+
+# =============================================================================
+# [D] `members:` — 제안표 §3(2행). **손으로 짓지 않는다.**
+#   도출 명령: tos-runtime print-policy-digests --config-dir config/tos_runtime/paper
+#   (출력 3필드 `member_id`/`generation`/`digest` 를 전사하고 `kind` 는
+#    `tos.spg.BundleMemberKind` enum 라벨을 사람이 옮긴다.)
+#
+# **A-3 실측 결과(2026-09-23) — 도출이 거부됐다:**
+#
+#   $ tos-runtime print-policy-digests --config-dir config/tos_runtime/paper
+#   print-policy-digests: refused — config/tos_runtime/paper/venue_constraint_policy.yaml:
+#   scope.accounts is still 'TBD'/empty (named-TBD) — fill the deployment
+#   coordinate before activation
+#   (exit 1)
+#
+# 원인은 이 웨이브가 채택한 파일이 아니라 **2026-09-16 에 이미 채택된**
+# `venue_constraint_policy.yaml`/`order_construction_policy.yaml` 의 운영자-기입
+# 잔여 TBD 다. 그 파일 자신의 헤더가 「scope.accounts — the paper account number
+# (**never committed here**)」라고 적고 있고, 제안표의 대상 범위는
+# 「`config/tos_runtime/paper/` 에 **아직 없는** 19종 + `construction.yaml`」이라
+# 이 값들의 행이 **없다.** 따라서 여기서 지어낼 수 없다.
+#
+# 제안표 §3 의 규율대로 **null(named-TBD)로 둔다.** 이 상태에서 로더
+# (`venue/activation.py`, A-0b 가 닫은 부류)는 「members 가 없거나 여전히 null」
+# 이라며 거부하며, 그 거부가 A-5 의 정직한 산출물이다. `[]`(아무것도 활성화되지
+# 않음)로 바꿔 통과시키는 것은 **다른 사실을 주장하는 것**이므로 하지 않는다
+# (example 주석: 「never substitute one for the other without an operator decision」).
+#
+# 운영자 기입 순서:
+#   1. venue_constraint_policy.yaml / order_construction_policy.yaml 의
+#      scope.accounts · scope.instruments (+ OCP admitted_quantity_bases ·
+#      _runtime.construction.axes DIRECTION) 기입
+#   2. 위 명령 재실행 → 출력 전사 (kind/member_id/generation/digest/resolved/immutable)
+# =============================================================================
+members: null

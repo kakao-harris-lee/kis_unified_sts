@@ -1,0 +1,180 @@
+# CP-3 첫 tenant 전략 콘텐츠 — Setup D VWAP 되돌림, LONG 배포.
+#
+# 상위: docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §4 결정 1·4·5·6,
+# §5 3. 운영자 승인 2026-10-07(아홉 전부 권고대로).
+#
+# 이 파일의 콘텐츠 원본은 B1b 실행기 쪽 사본 `tos/runtime/cp3/strategies/
+# setup_d_long.strategy.yaml` 이고, 그 파일이 **운영 로더**로 적재·승인되는 것은
+# `tos/runtime/cp3/tests/test_cp3_strategy_content.py` 가 증명한다(kickoff §5 3).
+# 이 사본과의 차이는 **좌표 칸 둘뿐**이다 — B1b 사본은 백테스트 하네스 리터럴
+# (`account: cp3-b1b-long` · `instrument: 101S6000`, parity 데이터셋의 **full** 월물)을
+# 들고 있고, 배포 트리는 그 둘을 이 트리의 다른 모든 좌표 칸과 **같은 named-TBD 토큰**
+# `"TBD"` 로 둔다(계좌·종목은 커밋되지 않는다 — 렌더가 저장소 밖에서만 채운다).
+# `"TBD"` 리프는 로더가 **거부한다**(`tos_runtime._named_tbd.first_named_tbd_leaf`) —
+# 그 거부가 운영자-채움 게이트다.
+# ⚠ tenant 상품은 mini `A056xx` 다(결정 2) — full `101S6000` 은 parity 데이터셋 전용이고
+# 그래서 여기 들고 오지 않는다.
+#
+# ⛔ **렌더는 아직 이 파일을 채우지 못한다 — 부팅 경로(kickoff §5 3 ④) 미착수.**
+# 두 가지가 걸린다(실측 2026-10-09):
+#   (1) `scripts/tos/render_paper_config.py::_STRATEGY_FILE` 가
+#       `strategies/bootproof_band.strategy.yaml` 로 **고정**이다.
+#   (2) 그 스크립트의 좌표 규칙은 앵커 줄이 **정확히 1회** 매칭될 것을 요구하는데
+#       (`_apply_rules`), 이 파일은 규칙이 셋이라 `account: "TBD"` ·
+#       `instrument: "TBD"` 가 **각 3회** 나온다. 또 `direction` 은 줄마다 값이 다르다
+#       (R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로 `--direction SHORT`
+#       렌더는 **일괄 치환이 성립하지 않는다**. ④ 는 「상수 한 줄 교체」가 아니다.
+#
+# 이 파일은 tos/runtime/src/tos_runtime/strategy/loader.py::load_strategies 가
+# 읽는 그 모양 그대로다 — tos/runtime/config/strategies/example.strategy.yaml 의
+# 템플릿을 채운 것이다. 미지의 키는 tos.dsl.serialization.parse_strategy 가 거부한다.
+#
+# ⚠ **배포 사본의 named-TBD 상태는 B1b 사본과 다르다.** B1b 사본
+# (`tos/runtime/cp3/strategies/setup_d_long.strategy.yaml`)은 모든 값이 concrete 이고
+# (`null` 리프 0 · `"TBD"` 문자열 0) 그래서 그 자리에서 적재·승인된다. **이 배포 사본은
+# `"TBD"` 리프를 여섯 개 들고 있다** — 세 규칙(R1·R2·R3)의 target 마다 `account` ·
+# `instrument` 두 칸(실측: 이 파일의 100·101·136·137·160·161행). 계좌·종목은 커밋되지
+# 않으므로(위 문단) 그것이 맞는 상태이고, 로더는 그 리프를 **이름으로 거부한다**
+# (`tos_runtime._named_tbd.first_named_tbd_leaf`, `parse` 가 보기 전에). 즉 **이 파일은
+# 커밋 상태로는 적재되지 않는다 — 그 거부가 운영자-채움 게이트다.** `null` 리프는
+# 여전히 0 이다.
+#
+# 방향은 **배포(구성)당 하나**다(kickoff §2 — order_construction_policy.yaml
+# 194-213행). 이 파일은 LONG 배포용이고, SHORT 는 별도 렌더·별도 파일이다
+# (결정 4). 그래서 진입 규칙의 임계는 음수 한쪽(`z_x1000 <= -1800`)만 본다.
+#
+# 작업 스텝 예산: tos.engine.admission.policy_work_steps =
+#   len(rules) + len(compares) + len(operands)
+#   = 3 + 7 + 14 = 24 ≤ 64 (이 트리의 engine.yaml `dsl_evaluation_budget_steps`
+#   — 상주 트리에서 바이트 그대로 복사된 값). kickoff §2 의 「규칙 3개면 비교
+#   ≤ 20」 도 7 비교로 만족한다.
+#
+# 지표 수학은 이 파일에 **없다**. DSL 에는 산술·집계·함수가 없으므로(DSL-G1)
+# vwap·atr14·z·ATR 백분위·스톨·역전·세션 창은 모두 상류 Critical Input 으로
+# 들어온다 — 생산자는 B1a(tools/tos_cp3/produce_fields.py)이고 그 lineage 가
+# 각 필드의 unit/scale/multiplier/sign 을 적는다.
+#
+# 각 Decision.rationale 은 **「<규칙 id>: <왜>」** 꼴이다. 규칙 id 는 이
+# 파일이 유일한 출처이고, tos/runtime/cp3/runner.py 가 발화한 규칙을
+# trace 에 적을 때 그 토큰을 그대로 쓴다(러너가 규칙을 재평가하지 않는다).
+
+dsl_version: cp3-b1b-dsl-1
+config_binding_version: cp3-b1b-bind-1
+
+policy:
+  rules:
+    # ---------------------------------------------------------------- R1
+    # 진입: Setup D 의 다섯 게이트 AND. 전부 상류 필드 비교다.
+    #   entry_window  09:00 앵커 기준 valid_minutes_min(15) ≤ 경과 ≤ 345
+    #   hi_vol        atr14 ≥ min_atr_ratio(0.9) × 780봉 ATR p90
+    #   stall_ok      최근 15봉 자체 레인지 스톨 가드 통과
+    #   reversal_ok   직전 봉 대비 VWAP 쪽으로 되돌았고 |z| 가 줄었다
+    #   z_x1000       VWAP 괴리가 LONG 쪽 극단(≤ -extreme_atr_mult)
+    # 임계 -1800 은 리터럴이 아니라 sibling strategy_bindings.yaml 의
+    # `z_entry_max_x1000` 이다(design §7 — 임계는 설정, 하드코딩 금지).
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, entry_window]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, hi_vol]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, stall_ok]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, reversal_ok]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, z_x1000]
+          op: LE
+          right:
+            ref: [config, z_entry_max_x1000]
+      decision:
+        kind: ACTION
+        rationale: >-
+          R1-ENTRY-LONG: entry window open, high-volatility regime, stall guard
+          clear, reversal confirmed, and the VWAP extension has reached the LONG
+          extreme threshold — propose a new long.
+        target:
+          kind: ACTION
+          account: "TBD"
+          instrument: "TBD"
+          direction: LONG
+          position_effect: OPEN
+          # 수량은 Proposal 에 숫자 슬롯이 없다(DSL-G5) — basis 만 증거로
+          # 싣고, 실제 수량은 OCP 의 정적 SizingBound(1 계약)가 정한다.
+          quantity_basis: RISK
+          # TargetSpec.rationale 은 **필수**다: ACTION/FLAT 의 Outcome 은
+          # tos.dsl.determinism._build_target_proposal 에서 *target* 의
+          # rationale 을 싣고(Decision 의 것이 아니다), Proposal 은 빈
+          # rationale 을 거부한다(proposal.py 147-155행). 규칙 id 접두가
+          # 같아야 trace 가 발화 규칙을 Outcome 에서 되읽을 수 있다.
+          rationale: >-
+            R1-ENTRY-LONG: open a new long at the LONG-side VWAP extreme with
+            every Setup D gate satisfied.
+    # ---------------------------------------------------------------- R2
+    # 청산 1: 가격이 VWAP 밴드로 되돌아왔다 = 평균회귀 명제 실현.
+    # `vwap_reverted` 는 B1a **D3** 의 **밴드 꼴**(abs(z) ≤ 0.2)이다 —
+    # (D7 이 아니다: D7 은 측정된 D7 생성기에 관한 항목이고 그 note 자신이
+    #  「그 카운트를 밴드의 오차 막대로 읽지 말라」고 적는다.)
+    # 레거시 YAML 에 vwap_revert_band_atr_mult 가 없어 B1a 가
+    # reversal_confirm_atr_mult 를 폴백으로 썼고, 그 차이는 lineage 의
+    # declared_differences 에 등재돼 있다.
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, vwap_reverted]
+          op: EQ
+          right:
+            const: true
+      decision:
+        kind: FLAT
+        rationale: >-
+          R2-EXIT-VWAP-REVERTED: price has returned to the VWAP band — the
+          mean-reversion thesis is realized, go flat.
+        target:
+          kind: FLAT
+          account: "TBD"
+          instrument: "TBD"
+          # 롱을 닫는 액션이므로 방향은 반대쪽이다(tos/tests/backtest/
+          # _backtest_fixtures.py 의 Explicit-Flat 과 같은 꼴).
+          direction: SHORT
+          position_effect: CLOSE
+          rationale: >-
+            R2-EXIT-VWAP-REVERTED: close the long — price is back inside the
+            VWAP band.
+    # ---------------------------------------------------------------- R3
+    # 청산 2: EOD(15:15). kickoff §4 결정 6 — 1차 슬라이스 청산은 이 둘뿐이고
+    # ATR 스톱(1.5×)은 의도된 차이로 범위 밖이다.
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, eod]
+          op: EQ
+          right:
+            const: true
+      decision:
+        kind: FLAT
+        rationale: >-
+          R3-EXIT-EOD: the session's EOD close time has arrived — go flat.
+        target:
+          kind: FLAT
+          account: "TBD"
+          instrument: "TBD"
+          direction: SHORT
+          position_effect: CLOSE
+          rationale: >-
+            R3-EXIT-EOD: close the long — the session's EOD close time has
+            arrived.
+  # 어떤 규칙도 발화하지 않을 때의 필수 기본값. NO_ACTION 은 1급 결과다.
+  default:
+    kind: NO_ACTION
+    rationale: >-
+      R0-DEFAULT-NO-ACTION: no rule fired — hold exposure unchanged.
