@@ -343,14 +343,35 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    트리를 소비하는 도구**다(`--source`). 그래서 트리는 상주 트리의 바이트 사본 + 선언된 차이로
    만들었고, 그것이 바로 그 스크립트가 나중에 `--source` 로 받을 모양이다.
 
-   **② 착지 완료(값 하나만 미결)** — 열다섯 필드를 B1a 의 `FIELD_ORDER` 순서로 선언하고
-   unit/scale/multiplier/sign 을 **B1a 필드 lineage**(`produce_fields._field_lineage`)에서 가져왔다.
-   `max_age_ms` 는 **열다섯 전부 `null`** 이고, 그래서 **그 파일은 로드되지 않는다** — 로더가
-   `null` `max_age_ms` 를 거부한다. 이것이 상주 트리가 출처 없는 값에 쓰는 fail-closed 규율과
-   같은 상태이고(`finality.yaml::source_revision` · `safety_activation.yaml::members`),
-   `tos/runtime/tests/compose/test_deploy_policies.py` 가 그 거부를 **키 이름으로** 고정한다.
-   상주의 600000 을 베껴 오지 않았다: 그 값의 근거는 **배치 저널 부팅**의 지연 흡수이고 생산자가
-   없는 이 tenant 에 옮길 수 없다. → **`max_age_ms` ×15 는 운영자 출처 미결 항목.**
+   **② 착지 완료 — 다섯 값 전부(`max_age_ms` 포함, 2026-10-09).** 열다섯 필드를 B1a 의
+   `FIELD_ORDER` 순서로 선언하고 unit/scale/multiplier/sign 을 **B1a 필드
+   lineage**(`produce_fields._field_lineage`)에서 가져왔다.
+
+   `max_age_ms` 는 초판에서 **열다섯 전부 `null`** 이었고 그래서 그 파일이 로드되지 않았다
+   (로더가 `null` `max_age_ms` 를 거부한다) — 출처가 없었기 때문이고, 상주 트리가 출처 없는
+   값에 쓰는 fail-closed 규율과 같은 상태였다(`finality.yaml::source_revision` ·
+   `safety_activation.yaml::members`). **운영자 지시 2026-10-09**(「출처가 없어도 설정이
+   필요하니 적용」)로 **180000** 을 적용했다 — 등급 **C**(개발 측 보수 제안,
+   `docs/plans/2026-09-12-tos-operator-value-proposals.md:4`).
+
+   도출은 **봉 주기에서** 나온다(실측): B1a 의 봉은 1분(`derive_raw_event_id` 의 `:1m:`),
+   `as_of_ms` 는 봉의 **라벨 = OPEN**(`derive_as_of_ms`: 「The label, not label+60s」), 런타임이
+   재는 것은 `now_ms - as_of_ms`(`marketfeed/snapshot.py::_derive_field_state`, `now_ms` 는 실
+   벽시계). 라벨 T 의 봉은 T+1P 에 닫히고 T+2P 에 교체되므로 **2P = 120,000 은 하한이지
+   안전값이 아니다** — 발행 지연 0 에서만 만족되고 그 모양은 이미 측정된 결함(#807)이다.
+   세 번째 P 가 지연 여유 → **3P = 180,000**. 보수 방향은 **작게**.
+   상주의 600000 은 베껴 오지 않았다: 그 근거는 **배치 저널 부팅**의 지연 흡수다.
+
+   ⚠⚠ **그러나 이 값은 ③ 를 대신하지 않는다(실측 2026-10-09).** 커널 시간 수용 경로는
+   **같은 양**(`source_age = wall_clock_now() - as_of`, `marketfeed/time_projection.py`)을
+   `time.yaml::MAX_time_conservative_freshness_age_ms` 1000 − Σdelay_bounds 200 = **800 ms**
+   예산에 댄다. 라벨 스탬프 1분봉은 그 **75 배**다. 즉 채운 효과는 「파일이 로드된다」뿐이고
+   시간 경로는 여전히 STALE 로 읽는다 — ③ 이 그것을 닫는다. ③ 이 상주 수집기처럼 **append
+   시각**을 `as_of_ms` 로 찍으면 올바른 한도는 180,000 이 아니라 **800 ms 자리수**이므로,
+   ③ 착지 시 이 키 ×15 · `poll_interval_ms` · `journal_pass_allowance_ms` 를 함께 다시 본다.
+   `tos/runtime/tests/compose/test_deploy_policies.py` 가 ① 열다섯 값 + 도출 문장 핀, ②
+   **하나라도 `null` 이면 로더가 그 키 이름으로 거부한다**(tmp 사본), ③ 위 산술(1분봉 ≥
+   800 ms 예산)을 고정한다.
 
    **③·④ 는 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
    「렌더의 전략 파일 상수 한 줄 교체」가 **아니다** — 그 스크립트의 좌표 규칙은 앵커 줄이

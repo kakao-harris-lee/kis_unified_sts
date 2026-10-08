@@ -84,28 +84,47 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
   는 `null` 이라 갱신할 활성화 기록이 없다.
 - **`price_min`/`price_max` 는 null 그대로다** — 일별 동적 값이라 정적 리터럴 금지(설계 §6).
 
-## 5. `critical_input_policy.yaml` — 열다섯 필드, `max_age_ms` 는 출처 없음
+## 5. `critical_input_policy.yaml` — 열다섯 필드 (`max_age_ms` = 180000, 등급 C)
 
 필드 목록·순서는 B1a 의 `FIELD_ORDER`(`tools/tos_cp3/produce_fields.py`) 그대로이고,
 각 필드의 `unit`/`scale`/`multiplier`/`sign` 은 **B1a 의 필드 lineage** 에서 온다
 (`produce_fields._field_lineage` — 그 독스트링이 「이 파일이 쓰는 모양으로 적는다」고 말한다).
 
-**`max_age_ms` 는 열다섯 전부 `null` 이고, 그래서 이 파일은 오늘 로드되지 않는다.** 로더가
-`null` `max_age_ms` 를 거부한다(`marketfeed/policy.py`). 이것은 결함이 아니라 상주 트리가
-출처 없는 값에 쓰는 **fail-closed 규율**(`finality.yaml::source_revision` ·
-`safety_activation.yaml::members`)과 같은 상태다. 근거는 그 파일 헤더에 있다: 제안표에 행이
-없고(안전 값이라 의도적으로 채택 안 됨), B1a lineage 도 이 키를 적지 않으며, 상주의 600000
-은 **배치 저널 부팅**의 근거로 정당화된 값이라 생산자가 없는 이 tenant 로 옮길 수 없다.
-→ **운영자 출처가 필요한 미결 항목**(§7).
+**`max_age_ms` 는 열다섯 전부 `180000` 이고, 그래서 이 파일은 이제 로드된다**(2026-10-09).
+종전 판은 전부 `null` 이어서 로더가 거부했고(`marketfeed/policy.py`), 그것이 출처 없는 값에
+대한 fail-closed 상태였다. **운영자 지시 2026-10-09**(「출처가 없어도 설정이 필요하니 적용」)
+로 그 상태를 닫았다 — 등급 **C**(개발 측 보수 제안 ·
+`docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 의 등급 어휘).
+
+도출은 **봉 주기에서** 나온다(그 파일 헤더가 실측 인용과 함께 적는다 — 여기서 요약만 한다):
+B1a 의 봉은 1분(`derive_raw_event_id` 의 `:1m:`)이고 `as_of_ms` 는 봉의 **라벨 = OPEN**
+(`derive_as_of_ms`: 「The label, not label+60s」)이며 런타임은 `now_ms - as_of_ms` 를 잰다
+(`marketfeed/snapshot.py`). 라벨 T 의 봉은 T+1P 에야 닫히고 T+2P 에 교체되므로 **2P =
+120,000 은 하한이지 안전값이 아니다**(발행 지연 0 에서만 만족 — 이슈 #807 의 모양을 재현).
+세 번째 P 가 발행·폴 지연 여유다 → **3P = 180,000**. 보수 방향은 **작게**(작으면 UNKNOWN →
+NO_ACTION, 크면 낡은 필드가 VALID = fail-OPEN).
+
+⚠⚠ **「로드된다」 ≠ 「부팅하면 돈다」.** 커널 시간 경로는 **같은 양**(`source_age =
+wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 4×50)에 대고, 라벨
+스탬프 1분봉은 그 75 배다 — 즉 시간 경로는 여전히 STALE 로 읽는다. ③ 생산자가 측정되면
+이 값을 **하향하거나 다시 도출한다**(특히 ③ 이 상주 수집기처럼 append 시각을 찍으면 올바른
+한도는 800 ms 자리수다).
+
+상주의 600000 은 **베껴 오지 않았다** — 그 근거(「렌더가 저널을 부팅 직전에 생성하므로 그
+여유는 실제로 그 부팅 지연만 덮는다」)는 배치 저널 부팅에만 성립한다.
 
 ## 6. 무엇이 증명되지 않았나 (이 PR 이 하지 않은 것)
 
 1. **부팅 0 회.** 이 트리로 `run` 을 돌리지 않았다. 검증된 것은 ① `venue_constraint_policy.yaml`
    이 좌표 미채움 상태에서 **거부되고**(운영자-채움 게이트) 좌표를 채우면 `max_quantity: 10000`
-   으로 적재된다는 것, ② `critical_input_policy.yaml` 이 `max_age_ms` 로 거부된다는 것,
-   ③ `construction.yaml` 의 두 price 키가 이 트리의 critical_input 필드 집합 **안에 있다**는 것
+   으로 적재되고 `tick_size: 2` 를 든다는 것, ② `critical_input_policy.yaml` 이 이제
+   **적재된다**는 것(`max_age_ms` ×15 = 180000, §5) **과** 그 중 하나라도 `null` 이면 로더가
+   여전히 **그 키 이름으로 거부한다**는 것, ③ `construction.yaml` 의 두 price 키가 이 트리의
+   critical_input 필드 집합 **안에 있다**는 것
    뿐이다(`tos/runtime/tests/compose/test_deploy_policies.py`). ③ 은 두 로더가 서로를 보지
    못하는 자리를 테스트가 대신 보는 것이고, **부팅이 그 교차를 검증한다는 뜻은 아니다.**
+   ⚠ ② 의 「적재된다」를 「부팅하면 돈다」로 읽지 말 것 — 커널 시간 경로의 800 ms 보수 예산은
+   라벨 스탬프 1분봉을 여전히 STALE 로 읽는다(§5 의 ⚠⚠). 그것을 닫는 것은 아래 3(③ 생산자)다.
 2. **렌더가 이 트리를 아직 처리하지 못한다** — kickoff §5 3 ④. `scripts/tos/render_paper_config.py`
    는 (a) `_STRATEGY_FILE` 이 `strategies/bootproof_band.strategy.yaml` 로 고정이고
    (b) 좌표 규칙이 앵커 **정확히 1회** 매칭을 요구하는데 이 트리의 전략 파일은 규칙이 셋이라
@@ -119,11 +138,19 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 
 ## 7. 운영자 미결 항목
 
-1. **`critical_input_policy.yaml::fields[].max_age_ms` ×15** — 신선도 한도. 출처 없음(§5).
+1. **`max_age_ms` 의 실제 원천** — 값 자체는 등급 C 로 **적용됐다**(§5). 남은 것은 ③ 실시간
+   생산자를 측정한 뒤의 **하향 또는 재도출**이고, 그 전까지 180,000 은 봉 주기에서 도출한
+   개발 측 제안이지 승인된 원천값이 아니다.
 2. **SHORT 트리** — 결정 4 의 나머지 반쪽. 별도 렌더·별도 트리·별도 data dir.
 3. **data dir** — 결정 3 의 「방향마다 따로」. 상주 잎에 절대 섞지 않는다(런북 §7.10 3).
 
 ### 닫힌 항목 (여기 있었다가 처분된 것)
+
+- **`critical_input_policy.yaml::fields[].max_age_ms` ×15 — ✅ 적용 2026-10-09 (등급 C).**
+  초판은 「출처 없음 → 열다섯 전부 `null` → 파일이 로드되지 않는다」를 미결로 기록했다.
+  **운영자 지시 2026-10-09**(「출처가 없어도 설정이 필요하니 적용」)로 닫혔다. 값은
+  **180000**(= 3 × 1분봉)이고 도출·등급·보수 방향·재도출 의무는 §5 와 그 파일 헤더에 있다.
+  남은 것은 위 1 의 재도출뿐이다.
 
 - **정책 식별자 충돌 — ✅ 해소됨 2026-10-09 (rename).** 초판은 「tenant
   `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데

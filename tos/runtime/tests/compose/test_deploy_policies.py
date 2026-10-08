@@ -169,6 +169,50 @@ _B1A_FIELD_POLICY: dict[str, tuple[str, str, str, str]] = {
     "eod": _B1A_BOOL,
 }
 
+#: B1a's bar period, in milliseconds. NOT a free parameter: ``produce_fields`` writes the
+#: timeframe into its own join key (``derive_raw_event_id``: ``<symbol>:1m:<stamp>``), so one
+#: minute is what a "bar" means on this path.
+_B1A_BAR_PERIOD_MS = 60_000
+
+#: ``critical_input_policy.yaml::fields[].max_age_ms``, filled 2026-10-09 on the operator's
+#: direction ("출처가 없어도 설정이 필요하니 적용") at grade **C** -- a dev-side conservative
+#: proposal, lowerable after server measurement (``docs/plans/2026-09-12-tos-operator-value-
+#: proposals.md:4``'s grade vocabulary). THREE bar periods, derived from the cadence:
+#: ``as_of_ms`` is the bar's LABEL (its OPEN), so one period passes before the bar even closes,
+#: a second before its successor is published -- 2P is therefore the infimum, satisfiable only
+#: with zero publish latency, and the third period is the latency allowance. Asserted against
+#: ``3 * _B1A_BAR_PERIOD_MS`` below rather than written as a bare 180000, so the derivation and
+#: the shipped number cannot drift apart.
+_TENANT_MAX_AGE_MS = 180_000
+
+#: ``time.yaml``'s four delay bounds, as ``marketfeed/time_projection.py``'s
+#: ``_DELAY_BOUND_FIELDS`` composes them -- the subtrahend in the conservative freshness budget
+#: this tree's ``marketfeed.yaml`` header derives (1000 - 4x50 = 800 ms). Literals here because
+#: the firewall keeps this test from importing the private tuple; the tie is this list plus the
+#: ``budget == 800`` assertion, which fails if either side moves.
+_TIME_DELAY_BOUND_KEYS = (
+    "MAX_time_source_precision_ms",
+    "MAX_time_transport_and_queue_uncertainty_ms",
+    "MAX_time_source_disagreement_ms",
+    "MAX_clock_domain_conversion_uncertainty_ms",
+)
+
+#: The sentences the adopted ``max_age_ms`` may not be read without -- the operator's direction
+#: verbatim, the grade, the three measured premises of the derivation, the conservative
+#: direction, and the obligation to re-derive once ③ (the live producer) is measured. A value
+#: with no source and no derivation written next to it is an invented number, which is the state
+#: the fifteen ``null``s existed to avoid.
+_MAX_AGE_PROVENANCE = (
+    "운영자 지시 2026-10-09: 출처 없이 적용",
+    "등급은 **C**",
+    "봉 주기 P = 60,000 ms",  # premise 1 -- the cadence
+    "The label, not label+60s",  # premise 2 -- as_of is the bar OPEN
+    "now_ms - as_of_ms",  # premise 3 -- what the runtime measures
+    "2P = 120,000 은 하한(infimum)이지 안전값이 아니다",
+    "보수 방향 = 작게",
+    "실시간 생산자가 측정되면 이 값을 하향하거나 다시 도출한다",
+)
+
 #: The price-like subset, by name -- asserted to be exactly the ×100 group, so a field cannot
 #: join or leave that scale silently.
 _B1A_PRICE_FIELDS = frozenset(
@@ -502,20 +546,23 @@ def test_filled_tenant_venue_policy_carries_10000_with_the_band_still_null(
     assert order_shape_admissible(on_grid, shape) is OrderAdmissibilityResult.UNKNOWN
 
 
-def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max_age_ms() -> (
+def test_tenant_critical_input_policy_declares_fifteen_fields_with_the_adopted_max_age_ms() -> (
     None
 ):
     """CP-3 kickoff §5 1 / §5 3 ②: the tenant tree declares B1a's fifteen upstream fields with
-    their unit/scale/multiplier/sign from B1a's own field lineage -- and leaves ``max_age_ms``
-    ``null``, because no source for it exists (the value proposal has no row for the key by
-    design, "신선도 한도 — 안전 값이다. 그래서 채택하지 않았다"; B1a's lineage does not
-    record it either).
+    their unit/scale/multiplier/sign from B1a's own field lineage, plus the fifth value
+    ``max_age_ms``, filled 2026-10-09 on the operator's direction ("출처가 없어도 설정이
+    필요하니 적용") at grade **C** -- a dev-side conservative proposal with its derivation
+    written next to it, not an approved source.
 
-    ``null`` makes the loader REFUSE the whole document, and that refusal is the point: it is
-    the same fail-closed posture the resident tree uses for its own unsourced leaves
-    (``finality.yaml::source_revision``, ``safety_activation.yaml::members``), pinned here BY
-    KEY NAME so filling it later is a deliberate act and not a drive-by "fix" with an invented
-    number -- the discipline ``test_deploy_approved_values.py`` applies to the resident tree.
+    Until that direction the fifteen were ``null`` and the loader refused the whole document.
+    This test replaced that refusal pin; the "``null`` would still be refused" half now lives in
+    ``test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms``, so filling the key
+    did not retire the guard that kept an unsourced value out.
+
+    The value is pinned as ONE number for all fifteen on purpose: B1a publishes the whole
+    ``FIELD_ORDER`` as a single per-bar record under one label ``as_of_ms``, so there is no
+    per-field lifetime to differentiate and a split would be an unexplained asymmetry.
     """
     path = _TENANT_DIR / "critical_input_policy.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -557,13 +604,87 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
             entry["multiplier"],
             entry["sign"],
         ) == _B1A_FIELD_POLICY[key], key
-        # The fifth value is the unsourced one -- null, by design (header).
-        assert entry["max_age_ms"] is None, key
+        # The fifth value -- the one with no source, adopted on the operator's direction.
+        assert entry["max_age_ms"] == _TENANT_MAX_AGE_MS, key
 
-    # And the loader refuses the document as committed, naming that key.
+    # And the document now LOADS -- which is all filling this key bought (see the ⚠⚠ paragraph
+    # in its header and ``test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget``
+    # below: the kernel's time path measures the SAME quantity against a far tighter bound).
+    policy = load_critical_input_policy(path, scheme=_SCHEME)
+    assert [field.field_key for field in policy.fields] == list(_B1A_FIELD_POLICY)
+    assert {field.max_age_ms for field in policy.fields} == {_TENANT_MAX_AGE_MS}
+
+    # The provenance the value cannot be read without: the operator's direction verbatim, the
+    # grade, the derivation's three measured premises, the conservative direction, and the
+    # re-derivation obligation. Pinned as strings for the same reason the decision-9 caveats
+    # are -- a number whose derivation has been deleted is an invented number again.
+    prose = _comment_prose(path)
+    for sentence in _MAX_AGE_PROVENANCE:
+        assert sentence in prose, sentence
+
+
+def test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms(
+    tmp_path: Path,
+) -> None:
+    """Filling the fifteen did not retire the loader's refusal -- pinned BY KEY NAME against a
+    tmp copy with ONE value nulled.
+
+    This is the half that the old "refuses as committed" test carried for free and that the fill
+    would otherwise have silently removed. Without it, a later edit that drops a ``max_age_ms``
+    back to ``null`` (or omits it) would be caught by nothing in this file, and the whole reason
+    the fifteen were ``null`` for two days was that this refusal is what keeps an unsourced
+    freshness bound out of a booting deployment.
+
+    ONE field, not all fifteen: a mutation that nulls every entry would also be caught by a
+    loader that only checked the first, so nulling the LAST one proves the loader walks them
+    all."""
+    raw = yaml.safe_load(
+        (_TENANT_DIR / "critical_input_policy.yaml").read_text(encoding="utf-8")
+    )
+    assert raw["fields"][-1]["field_key"] == "eod"  # B1a's FIELD_ORDER ends here
+    raw["fields"][-1]["max_age_ms"] = None
+    path = tmp_path / "critical_input_policy.yaml"
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+
     with pytest.raises(CriticalInputPolicyConfigError) as excinfo:
         load_critical_input_policy(path, scheme=_SCHEME)
     assert "max_age_ms" in str(excinfo.value)
+
+
+def test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget() -> None:
+    """The honest consequence of filling the key, as arithmetic rather than a comment.
+
+    ``max_age_ms`` and the kernel's time-admission bound measure the SAME quantity --
+    ``now_ms - as_of_ms`` (``marketfeed/snapshot.py::_derive_field_state``) and ``source_age =
+    wall_clock_now() - as_of`` (``marketfeed/time_projection.py``'s own docstring). B1a stamps
+    ``as_of_ms`` at the bar's LABEL, i.e. its OPEN (``produce_fields.derive_as_of_ms``: "The
+    label, not label+60s"), on 1-minute bars (``derive_raw_event_id``'s ``:1m:`` token). So the
+    SMALLEST age such an observation can have is one bar period -- and that already exceeds the
+    conservative freshness budget this tree's own ``time.yaml`` leaves, by a wide margin.
+
+    Pinned so "the file loads now" is never read as "the deployment would work": it would not,
+    for a reason ``max_age_ms`` cannot fix. The fix is ③, the live producer (kickoff §5 3).
+    """
+    time_cfg = yaml.safe_load((_TENANT_DIR / "time.yaml").read_text(encoding="utf-8"))
+    budget = time_cfg["MAX_time_conservative_freshness_age_ms"] - sum(
+        time_cfg[name] for name in _TIME_DELAY_BOUND_KEYS
+    )
+    assert (
+        budget == 800
+    )  # 1000 - 4x50, the derivation marketfeed.yaml's header writes out
+
+    # One bar period is the floor on a label-stamped bar's age, and it is over the budget.
+    assert budget < _B1A_BAR_PERIOD_MS
+    # The adopted bound is three bar periods -- derived from the cadence, and far above that
+    # budget too, which is exactly why it cannot rescue the time path.
+    assert _TENANT_MAX_AGE_MS == 3 * _B1A_BAR_PERIOD_MS
+    assert budget < _TENANT_MAX_AGE_MS
+
+    # And it is strictly above the two-period infimum, which is the point of the third period:
+    # at exactly 2P a bar goes STALE at the instant its successor is due, reproducing #807.
+    assert _TENANT_MAX_AGE_MS > 2 * _B1A_BAR_PERIOD_MS
 
 
 def test_tenant_construction_price_field_keys_are_declared_critical_inputs() -> None:
