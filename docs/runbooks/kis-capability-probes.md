@@ -667,6 +667,8 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 > |---|---|---|
 > | `00bcc5b3a87b` | 본 런북 5곳(`:538` §5.6 소싱표 · `:655` 아래 조건 3 · `:733`/`:774` 커맨드 예시 · `:751` 아티팩트 필드) + 실행 아티팩트(`N-16-20260729T132547Z.json:40` 등) + INSTANCE draft(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` — REAL_PROD 문서의 N-16 아티팩트 등재 `account_fingerprint` 2곳; 이 파일은 행번호 드리프트가 잦아 필드명으로 인용한다) + 캠페인 README 2026-07-31 Plan A census 4지문(`README.md:475`) | **프로브 실행 산출**(아티팩트 `credentials.account_fingerprint`)과 그 전재 |
 > | `8304d859b87f` | 캠페인 README `:575`(2026-08-04 운영자 결정 기록, "`.env.real` 배선 일치 2026-08-04 재검증") | **운영자 문언**의 전재 |
+> | `39a004459922` | 캠페인 README `2026-09-11-p02-t3-campaign/README.md:124-125`(2026-09-23 19:13 운영자 키 교체 기록 — **모의 선물** 앱키) | **운영자 문언**의 전재. 2026-10-08 `secret_fingerprint` 로 `.env.mock` 에서 재계산해 일치 확인 |
+> | ⛔ `cf6e5f9480ad` | PR #881 README §4.3 초판(2026-10-08) — **철회됨** | **어떤 키의 지문도 아니다.** dotenv 값의 **단일 인용부호를 벗기지 않은** 즉석 one-liner 가 `'<앱키>'`(38자)를 해시한 산물이다. 올바른 값은 위 `39a004459922`(36자). 교훈: 지문은 **커밋된 `secret_fingerprint`** 로만 만들고, 벡터 테스트로 방법을 고정한다(`test_secret_fingerprint_pins_its_method_with_a_known_vector`) |
 >
 > **출현 빈도는 정확성의 근거가 아니다** — 위 표는 어느 값이 옳은지 말하지 않는다.
 > 참고로 as-of 실측: HEAD `670aef6a` 기준 `8304d859b87f`는 리포 전역 **1회**(README `:575`)였고,
@@ -784,6 +786,7 @@ front=`A05608` 만기 08-13).
 | `errors` | `[]` | 하나라도 있으면 2단계가 거부한다 |
 | `mode` / `environment` | `live` / `REAL_PROD` | dry-run은 계좌에 대해 아무것도 관측하지 않았다 |
 | `credentials.account_fingerprint` | `00bcc5b3a87b` | 원 계좌번호는 아티팩트에 **절대** 들어가지 않는다 |
+| `credentials.app_key_fingerprint` | 12자 hex | 2026-10-08 신설(`common.py::secret_fingerprint`). **모든 프로브**의 아티팩트에 들어간다 — `describe()` 가 공유 표면이다. 앱키 자체는 들어가지 않고 `sha256(앱키)[:12]` 만. 빈 키는 `""` (없는 키의 지문은 팬텀). 용도는 「이 프로브의 키가 상주 paper 세션의 키와 같은가」를 **증거만으로** 재확인하는 것(설계 §4.2 선행조건) |
 | `measurements.trading_tr_reachable.rt_cd` | `"0"` | **실전 trading TR이 응답했다는 증거**. 시세 TR 성공은 이 증거가 아니다 — 실전 도메인은 모의 앱키의 시세 TR에도 정상 응답한다(캠페인 wave-3 부수 관측) |
 | `measurements.order_available.order_available_krw` | 0보다 큼 | 0이거나 읽히지 않으면 1단계가 중단한다 |
 | `measurements.positions.held_rows` | `[]` | 포지션이 있으면 체결 귀속이 불가능해진다 |

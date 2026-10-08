@@ -1297,6 +1297,29 @@ def test_the_artifact_records_an_app_key_fingerprint_not_the_key(
     assert _APP_KEY not in payload
 
 
+def test_secret_fingerprint_pins_its_method_with_a_known_vector() -> None:
+    """A fixed input/output pair, so the METHOD cannot drift unnoticed.
+
+    PR #881 attested an app-key fingerprint computed by an ad-hoc one-liner that
+    kept the surrounding single quotes of a dotenv value, producing a digest of
+    ``'<key>'`` rather than of the key. Without a pinned vector, "the method is
+    the same" is an assumption. With one, a reader can recompute it by hand:
+    ``sha256(b"pvl-test-app-key").hexdigest()[:12]``.
+    """
+    import hashlib
+
+    from tools.broker_probes.common import secret_fingerprint
+
+    assert secret_fingerprint("pvl-test-app-key") == "01f44d8ccabb"
+    # And the digest really is plain SHA-256 of the exact bytes, truncated to 12.
+    assert (
+        secret_fingerprint("pvl-test-app-key")
+        == hashlib.sha256(b"pvl-test-app-key").hexdigest()[:12]
+    )
+    # A quoted value is a DIFFERENT input — the #881 confusion, made explicit.
+    assert secret_fingerprint("'pvl-test-app-key'") != "01f44d8ccabb"
+
+
 def test_an_absent_app_key_yields_no_fingerprint() -> None:
     """A fingerprint for a key that does not exist would be a phantom."""
     from tools.broker_probes.common import secret_fingerprint
@@ -1530,7 +1553,7 @@ def test_stage2_band_inside_the_no_escalation_window_is_a_fail(
     report = run.measurements["l2_band_rule_arithmetic"]
     assert report["declared_expectation_matches"] is False
     assert report["matching_stages"] == [2]
-    assert run.measurements["l2_mismatch_record"]["verdict"] == "FAIL"
+    assert run.measurements["l2_band_disposition_record"]["verdict"] == "FAIL"
 
 
 def test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict(
@@ -1567,6 +1590,14 @@ def test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict(
     # A no-verdict leg is not an error, so the run stays MEASURED.
     assert run.errors == []
     assert run.to_dict()["provenance_class"] == "MEASURED"
+    # M3: the rationale must be present for THIS case too. It used to be gated
+    # on `not matched`, so the outside-window + MATCH leg — the one this whole
+    # reorder exists for — shipped no explanation anywhere in the artifact.
+    record = run.measurements["l2_band_disposition_record"]
+    assert record["verdict"] == "OBSERVATION_ONLY_NO_VERDICT"
+    assert record["declared_expectation_matched"] is True
+    assert "does not discriminate" in record["why_this_verdict"]
+    assert record["inside_no_escalation_window"] is False
 
 
 def test_the_pr881_artifacts_would_now_be_read_as_stage_recorded_only(
@@ -1629,7 +1660,7 @@ def test_stage2_band_outside_the_window_carries_no_verdict(
     report = run.measurements["l2_band_rule_arithmetic"]
     assert report["expected_stage_is_determined"] is False
     assert report["matching_stages"] == [2]
-    record = run.measurements["l2_mismatch_record"]
+    record = run.measurements["l2_band_disposition_record"]
     assert record["verdict"] == "OBSERVATION_ONLY_NO_VERDICT"
     assert "legitimate market state" in record["why_this_verdict"]
     # No verdict means no error, so the run stays MEASURED.
@@ -1650,7 +1681,7 @@ def test_a_band_no_stage_reproduces_is_still_only_reported(
 
     assert run.measurements["leg_verdicts"]["L2"] == "FAIL"
     assert run.measurements["l2_band_rule_arithmetic"]["any_match"] is False
-    assert run.measurements["l2_mismatch_record"]["matching_stages"] == []
+    assert run.measurements["l2_band_disposition_record"]["matching_stages"] == []
 
 
 def test_an_l2_fail_is_also_recorded_as_an_error(
