@@ -89,6 +89,15 @@ _TENANT_VENUE_POLICY = _TENANT_DIR / "venue_constraint_policy.yaml"
 #: (``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md`` §2.1 / §3).
 _ADOPTED_TENANT_MAX_QTY = 10000
 
+#: The tenant venue policy's own identity. Renamed off the resident ``vcp-paper-krx-index-
+#: futures`` on 2026-10-09 (PR #884 review L4): same id + same generation with DIFFERENT typed
+#: content means a different ``canonical_digest`` under an identity an activation record cannot
+#: disambiguate. Only the policies whose content actually differs were renamed -- the OCP
+#: (comment-only here, so identical typed content and identical digest), the aggregate-risk and
+#: the action-flow policies keep the resident ids on purpose: there, "same id, same digest"
+#: is a true statement that they ARE the same document.
+_TENANT_VENUE_POLICY_ID = "vcp-paper-cp3-setup-d-long-krx-index-futures"
+
 #: The provenance sentence design §8 step 5 requires next to that value. Pinned as a STRING so
 #: the value cannot keep its number while losing the citation that makes it an approved value
 #: (``config/tos_runtime/README.md``: "a value without a citation does not belong here").
@@ -97,9 +106,12 @@ _DECISION_9_PROVENANCE = (
     "별표 17의2 제1호 미니코스피200선물거래 행 · 등급 R"
 )
 
-#: Design §2.2's three caveats, which that design requires to accompany the value WHEREVER it
-#: is written. One pin each: a caveat silently dropped turns 10000 from "a venue ceiling whose
-#: broker-side limit is unconfirmed" into "the limit", which is the misreading §2.2 exists for.
+#: Design §2.2's **three** caveats, which that design requires to accompany the value WHEREVER
+#: it is written -- as **four** string pins, because caveat (1) is two separate claims and
+#: either can be dropped without the other: "a member may set a lower limit" (the rule) and
+#: "the KIS limit is unconfirmed" (this broker's actual state, unobservable by GET per §4.3).
+#: A caveat silently dropped turns 10000 from "a venue ceiling whose broker-side limit is
+#: unconfirmed" into "the limit", which is the misreading §2.2 exists for.
 _DECISION_9_CAVEATS = (
     "회원(증권사)은 이보다 낮게 정할 수 있다",  # §2.2 (1) -- 시행세칙 제61조제3항
     "KIS 측 한도는 미확인",  # §2.2 (1), second half -- GET 으로 관측 불가
@@ -112,6 +124,42 @@ _DECISION_9_CAVEATS = (
 #: landed here while the band is still null would be inert; a band landed there while the tick
 #: is still 5 would make every normal mini quote INADMISSIBLE).
 _TICK_CORRECTION_OWNER = "정정 2 는 승인됐고 band 원천 웨이브 소관이다"
+
+#: B1a's published field policy, as ``tools/tos_cp3/produce_fields.py`` declares it: field_key
+#: -> (unit, scale, multiplier, sign), in B1a's own ``FIELD_ORDER``. Literals, deliberately --
+#: ``tools`` is legacy-side and the firewall forbids this tree from importing it, so the tie
+#: between the two is this table plus the citation next to each group.
+#:
+#: Sources (``produce_fields._field_lineage``): the six price-like fields come from
+#: ``_price_field`` (unit ``index_point`` / ``hundredths`` / ``100`` / ``unsigned``, PRICE_SCALE
+#: 100); ``volume`` and ``session_token`` are that function's two inline entries; ``z_x1000``
+#: is the one ``signed`` field (ATR thousandths, Z_SCALE 1000); the six gates come from
+#: ``_bool_field`` (``bool`` / ``none`` / ``1`` / ``unsigned``).
+_B1A_PRICE: tuple[str, str, str, str] = ("index_point", "hundredths", "100", "unsigned")
+_B1A_BOOL: tuple[str, str, str, str] = ("bool", "none", "1", "unsigned")
+_B1A_FIELD_POLICY: dict[str, tuple[str, str, str, str]] = {
+    "open_x100": _B1A_PRICE,
+    "high_x100": _B1A_PRICE,
+    "low_x100": _B1A_PRICE,
+    "close_x100": _B1A_PRICE,
+    "volume": ("contract", "unit", "1", "unsigned"),
+    "session_token": ("opaque_token", "none", "1", "unsigned"),
+    "vwap_x100": _B1A_PRICE,
+    "atr14_x100": _B1A_PRICE,
+    "z_x1000": ("atr", "thousandths", "1000", "signed"),
+    "hi_vol": _B1A_BOOL,
+    "stall_ok": _B1A_BOOL,
+    "reversal_ok": _B1A_BOOL,
+    "entry_window": _B1A_BOOL,
+    "vwap_reverted": _B1A_BOOL,
+    "eod": _B1A_BOOL,
+}
+
+#: The price-like subset, by name -- asserted to be exactly the ×100 group, so a field cannot
+#: join or leave that scale silently.
+_B1A_PRICE_FIELDS = frozenset(
+    {"open_x100", "high_x100", "low_x100", "close_x100", "vwap_x100", "atr14_x100"}
+)
 
 #: The resident tree's own one-line record of the same decision (design §8 step 5's last
 #: sentence). Comment-only: measured 2026-10-09 that adding it leaves that file's
@@ -341,6 +389,18 @@ def test_tenant_venue_policy_carries_the_decision_9_provenance_and_its_three_cav
     # The approved-but-not-landed tick correction, and who owns landing it.
     assert _TICK_CORRECTION_OWNER in prose
 
+    # And the identity this tree's differing CONTENT requires: a policy whose typed content
+    # differs from the resident one's may not share its (member_id, generation) -- an
+    # activation record keyed on those could not tell the two documents apart. Renamed while
+    # it was still free to rename (never booted, no activation record, no evidence); the
+    # generation stays 1 because this is a DIFFERENT deployment's policy, not a next
+    # generation of the resident one.
+    tenant_raw = yaml.safe_load(_TENANT_VENUE_POLICY.read_text(encoding="utf-8"))
+    resident_raw = yaml.safe_load(_REAL_VENUE_POLICY.read_text(encoding="utf-8"))
+    assert tenant_raw["policy_id"] == _TENANT_VENUE_POLICY_ID
+    assert tenant_raw["policy_id"] != resident_raw["policy_id"]
+    assert tenant_raw["policy_generation"] == resident_raw["policy_generation"] == 1
+
 
 def test_resident_paper_tree_records_the_deferral_rather_than_the_value() -> None:
     """The other half of design §8 step 5: the resident tree says a source now EXISTS and that
@@ -426,38 +486,76 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
     path = _TENANT_DIR / "critical_input_policy.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
 
-    # The declared field set: exactly B1a's FIELD_ORDER, in that order.
-    assert [entry["field_key"] for entry in raw["fields"]] == [
-        "open_x100",
-        "high_x100",
-        "low_x100",
-        "close_x100",
-        "volume",
-        "session_token",
-        "vwap_x100",
-        "atr14_x100",
-        "z_x1000",
-        "hi_vol",
-        "stall_ok",
-        "reversal_ok",
-        "entry_window",
-        "vwap_reverted",
-        "eod",
-    ]
-    # The four sourced values are concrete for every field; the fifth is the unsourced one.
+    # Field set, ORDER, and the four sourced values per field -- all against
+    # _B1A_FIELD_POLICY, whose literals come from B1a's own lineage. Pinning the exact
+    # 4-tuple (not "some non-empty string") is the point: a wrong unit or multiplier is a
+    # silently wrong SCALE on the number an order is priced and sized against, and
+    # "non-empty" accepts every one of those.
+    assert [entry["field_key"] for entry in raw["fields"]] == list(_B1A_FIELD_POLICY)
     for entry in raw["fields"]:
-        for key in ("unit", "scale", "multiplier", "sign"):
-            assert isinstance(entry[key], str) and entry[key], (entry["field_key"], key)
-        assert entry["max_age_ms"] is None, entry["field_key"]
-    # z is the one SIGNED field (the LONG entry threshold -1800 is bound to that sign).
+        key = entry["field_key"]
+        assert (
+            entry["unit"],
+            entry["scale"],
+            entry["multiplier"],
+            entry["sign"],
+        ) == _B1A_FIELD_POLICY[key], key
+        # The fifth value is the unsourced one -- null, by design (header).
+        assert entry["max_age_ms"] is None, key
+
+    # Two properties of that table worth asserting as properties, not as rows: z is the ONE
+    # signed field (the LONG entry threshold -1800 is bound to that sign), and the price-like
+    # fields are the ONLY ones at the ×100 scale the venue policy's tick_size lives on.
     signs = {entry["field_key"]: entry["sign"] for entry in raw["fields"]}
-    assert signs["z_x1000"] == "signed"
     assert {key for key, sign in signs.items() if sign == "signed"} == {"z_x1000"}
+    assert {
+        key for key, spec in _B1A_FIELD_POLICY.items() if spec[2] == "100"
+    } == _B1A_PRICE_FIELDS
 
     # And the loader refuses the document as committed, naming that key.
     with pytest.raises(CriticalInputPolicyConfigError) as excinfo:
         load_critical_input_policy(path, scheme=_SCHEME)
     assert "max_age_ms" in str(excinfo.value)
+
+
+def test_tenant_construction_price_field_keys_are_declared_critical_inputs() -> None:
+    """``construction.yaml``'s two price field keys must name fields the SAME tree's
+    ``critical_input_policy.yaml`` declares -- the cross-check neither loader can perform.
+
+    ``compose/_construction_config.py``'s own module docstring names this gap: "the only way a
+    REAL deployment reaches the value-free branch is a tick whose critical-input policy does
+    not cover ``price_field_key`` for this instrument -- a governance gap this loader cannot
+    see or refuse from inside ``construction.yaml`` alone". The resident tree's value is
+    ``"close"`` (its boot-proof policy declares ``close``/``lower_band``/``upper_band``); this
+    tree declares B1a's fifteen, where the price-like field is ``close_x100`` and there is no
+    ``close``. Copying the resident value here therefore named a field that does not exist.
+
+    What that costs if it is wrong, measured rather than assumed: ``price_field_key`` is
+    non-``None``, so ``OrderConstructionStage._price_for`` projects from the value view via
+    ``admitted_price_from_view``, whose docstring states that a populated view LACKING the key
+    yields an observation carrying the capsule source and snapshot lineage but **no value**,
+    and that ``derive_order_size`` then denies with "no positive finite value". So it is a
+    no-send, never a fabricated price -- but the denial reason does not name the
+    misconfiguration, which is why it needs a test and not a comment.
+
+    Also pinned: the keys sit at the ×100 scale the venue policy's ``tick_size`` lives on, so
+    price and tick are on one grid."""
+    construction = yaml.safe_load(
+        (_TENANT_DIR / "construction.yaml").read_text(encoding="utf-8")
+    )
+    critical_input = yaml.safe_load(
+        (_TENANT_DIR / "critical_input_policy.yaml").read_text(encoding="utf-8")
+    )
+    declared = {entry["field_key"] for entry in critical_input["fields"]}
+
+    for key_name in ("price_field_key", "shape_price_field_key"):
+        key = construction[key_name]
+        assert key in declared, (
+            f"construction.yaml::{key_name} = {key!r} is not declared by this tree's "
+            f"critical_input_policy.yaml (declared: {sorted(declared)})"
+        )
+        # ... and it is a price, at the tick's own ×100 scale -- not a boolean gate, not z.
+        assert key in _B1A_PRICE_FIELDS, (key_name, key)
 
 
 def test_real_policies_boot_the_compose_root_and_the_attempt_denies_fail_closed(

@@ -1,6 +1,15 @@
 # =============================================================================
-# construction.yaml — TOS paper 배포 **부팅 증명 픽스처** (W-A / A-5)
+# construction.yaml — CP-3 tenant (Setup D / LONG)
 # =============================================================================
+# ⚠ TENANT TREE — 상주 `config/tos_runtime/paper/` 의 같은 파일에서 갈라져 나왔다.
+#   **런타임이 읽는 값 차이는 두 칸**: `price_field_key` · `shape_price_field_key`
+#   (`"close"` → `"close_x100"`; 이유와 고치지 않았을 때의 경로는 그 두 칸 위 주석).
+#   나머지 값은 상주 승인값 그대로다. 아래 「부팅 증명 픽스처」 문단은 그 상주 파일에서
+#   함께 온 것이고 **이 트리에서는 전략이 다르다** — 이 트리의 전략은
+#   `strategies/setup_d_long.strategy.yaml`(규칙 셋, Setup D)이고 `bootproof_band` 가
+#   아니다. 방향·좌표·스코프에 관한 문단은 두 트리에 그대로 유효하다.
+#   트리 전체의 범위는 이 트리의 `README.md`.
+#
 # 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
 #
 # 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §3 선택지 (가)
@@ -46,9 +55,11 @@ instrument: "TBD"
 # `--direction SHORT` 렌더는 이 줄을 NEW_SHORT 로 바꾼다(같은 표의 대칭 행).
 action_class: "NEW_LONG"
 
-# 세션 게이트가 읽는 캘린더 클래스 — config/tos_runtime/paper/calendar.yaml:36 이
+# 세션 게이트가 읽는 캘린더 클래스 — 이 트리의 `calendar.yaml` 이
 # 선언하는 두 클래스 중 KRX 지수선물 쪽(CONTINUOUS 08:45-15:45 KST MON-FRI).
-# venue_constraint_policy.yaml:71 이 같은 클래스를 대상으로 적는다.
+# 같은 트리의 `venue_constraint_policy.yaml::_runtime.instrument_class` 가 같은 토큰을
+# 적는다(상주 사본은 이 자리를 `:71` 로 인용했는데 그 행은 `policy_id` 였고, 이 트리는
+# 헤더가 길어져 행 번호가 또 달라진다 — 행 번호 인용은 조용히 썩으므로 키 경로로 쓴다).
 instrument_class: "krx-index-futures"
 
 # order_construction_policy.yaml:203-204 `_runtime.construction.action_class_shape`
@@ -58,7 +69,28 @@ instrument_class: "krx-index-futures"
 outbound_side: "BUY"
 
 # critical_input_policy.yaml 이 선언하는 `fields[].field_key` 중 하나여야 한다
-# (이 로더는 그 파일을 볼 수 없다 — 모듈 독스트링). 이 배포의 부팅 증명 정책은
-# close/lower_band/upper_band 세 필드를 선언하고, 전략 규칙이 비교하는 값이 close 다.
-price_field_key: "close"
-shape_price_field_key: "close"
+# (이 로더는 그 파일을 볼 수 없다 — `compose/_construction_config.py` 모듈 독스트링:
+#  「a governance gap this loader cannot see or refuse from inside construction.yaml alone」).
+#
+# ⚠ **TENANT TREE 에서 바뀐 값이다.** 상주 트리의 이 두 칸은 `"close"` 이고, 그것은 상주
+# 부팅 증명 정책이 선언하는 세 필드(close/lower_band/upper_band)를 가리킨다. 이 트리의
+# `critical_input_policy.yaml` 은 B1a 의 열다섯 필드를 선언하고 **`close` 라는 키는 없다**
+# — 가격 꼴 필드의 이름은 `close_x100` 이다. 그래서 두 칸을 `close_x100` 으로 바꿨다.
+#
+# 왜 `close_x100` 인가: 이 키가 가리키는 값이 **주문 가격**이 되고, venue 정책의
+# `tick_size: 5` 는 **×100 정수 가격 스케일**의 틱이다(= 0.05 포인트). B1a 의 `close_x100`
+# 이 바로 그 스케일(unit `index_point` · scale `hundredths` · multiplier `100`,
+# `produce_fields._price_field`)이므로 두 축이 같은 격자 위에 있다. `z_x1000`(ATR 천분율)
+# 이나 불린 게이트는 가격이 아니다.
+#
+# 고치지 않으면 무엇이 되는가(실측 경로): `price_field_key` 가 non-None 이므로
+# `_price_for`(`tos/src/tos/egressgw/construction.py::OrderConstructionStage._price_for`)는
+# 값 뷰에서 투영을 시도하고, **키가 없는 populated view** 는
+# `admitted_price_from_view` 의 독스트링대로 「capsule source 와 snapshot lineage 는 있고
+# **값은 없는**」 관측을 내며 `derive_order_size` 가 「no positive finite value」로 거부한다.
+# 즉 조용히 틀린 가격을 쓰지는 않지만, **거부 사유가 설정 불일치를 지목하지 않는다** —
+# 두 로더가 서로를 볼 수 없어서다. 아래 테스트가 그 교차를 대신 본다:
+# `tos/runtime/tests/compose/test_deploy_policies.py`
+# ::test_tenant_construction_price_field_keys_are_declared_critical_inputs.
+price_field_key: "close_x100"
+shape_price_field_key: "close_x100"
