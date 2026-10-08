@@ -5,6 +5,22 @@ real value an operator has signed off on for a named environment
 (`paper/`, later `live/`), distinct from the unapproved templates under
 `tos/runtime/config/*.example.yaml`.
 
+**Trees here are not one-per-environment-label.** `paper/` is the resident
+deployment (the daily session, `docs/runbooks/tos-paper-boot.md` §7); a
+**tenant** tree is a separate deployment with its own off-repo render and its
+own data dir that boots under the SAME `paper` environment label, because the
+label is a scope token the policies cross-check against each other, not a
+deployment identity (CP-3 kickoff
+`docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md` §5 1). The first one is
+`cp3-setup-d-long/` (CP-3 first tenant, Setup D VWAP reversion, LONG —
+operator decisions 3·4 of that kickoff's §4, approved 2026-10-07). Read
+**`cp3-setup-d-long/README.md`** before touching it: 23 of its files are byte
+copies of `paper/`'s approved values, four differ, and nothing in it has booted
+yet. Adding a tenant tree changes NO digest the resident session re-derives —
+`release.yaml::expected_code_digest` folds `*.py` bytes under the two installed
+package roots only, and each policy's `canonical_digest` is computed from its
+own typed content.
+
 Every file here carries a header comment naming its approval provenance
 (which plan/decision approved the value, and the date) — never add a value
 here without that citation; an un-cited value belongs in an `.example.yaml`
