@@ -976,13 +976,83 @@ def test_green_run_states_what_it_cannot_establish(
     assert "CONTEXT" in cannot["kis_quantity_limit"]
     assert "2,000" not in cannot["kis_quantity_limit"]
     # The leg's own parameters are the third cause design v2 §4.3 requires.
-    assert "probes_real_order.py:1651-1658" in cannot["kis_quantity_limit"]
+    assert (
+        pvl._ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION in cannot["kis_quantity_limit"]
+    )
     assert set(cannot) == {
         "kis_quantity_limit",
         "no_prior_ord_psbl_qty_observation",
         "stage_2_3_escalation",
         "runtime_band_supply",
     }
+
+
+def test_the_parameter_dependence_citation_still_points_at_real_text() -> None:
+    """The citation is checked against the cited file, not trusted.
+
+    The first draft of this module cited ``probes_real_order.py:1651-1658`` and
+    **this PR staled it**: relocating two helpers out of that file moved the
+    block 34 lines up, so the range came to name a closing paren and the next
+    ``def``. A line range cannot survive an edit above it, so the citation is
+    symbol-anchored and this test locates the quoted sentence INSIDE the named
+    function. If anyone moves it out, the anchor fails here instead of rotting.
+    """
+    import ast
+
+    from tools.broker_probes import probes_real_order as pro
+
+    source = Path(pro.__file__).read_text(encoding="utf-8")
+    citation = pvl._ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION
+    assert "_preflight_instrument_state" in citation
+    assert "'interpretation'" in citation
+
+    sentence = "about the parameters and not the account"
+    assert source.count(sentence) == 1, (
+        "the cited sentence is no longer unique in probes_real_order.py; the "
+        "citation can no longer point at one place"
+    )
+    sentence_line = source[: source.index(sentence)].count("\n") + 1
+
+    enclosing = [
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.lineno <= sentence_line <= (node.end_lineno or node.lineno)
+    ]
+    assert "_preflight_instrument_state" in enclosing, (
+        f"the cited sentence is now inside {enclosing}, not "
+        "_preflight_instrument_state; update the citation in "
+        "probes_venue_limits.py and the runbook"
+    )
+    # And it really is the ``interpretation`` value, not prose that happens to
+    # contain the words.
+    block = source[: source.index(sentence)]
+    assert block.rindex('"interpretation": (') > block.rindex("run.measure(")
+
+
+def test_no_live_line_pinned_citation_of_that_file_survives_in_the_probe() -> None:
+    """A line-number citation of a file this PR edits will go stale again.
+
+    ``probes_real_order.py::symbol`` is fine; ``probes_real_order.py:1651`` is
+    not. Exactly one line-pinned mention is allowed — the comment recording why
+    the anchor became symbolic — and it must be a comment, not live text a
+    reader would follow.
+    """
+    import re
+
+    module_text = Path(pvl.__file__).read_text(encoding="utf-8")
+    pinned = [
+        line.strip()
+        for line in module_text.splitlines()
+        if re.search(r"probes_real_order\.py:\d", line)
+    ]
+
+    assert len(pinned) == 1, f"expected only the history note, got: {pinned}"
+    assert pinned[0].startswith("#"), (
+        "the one permitted line-pinned mention must be a comment about the "
+        f"staleness, not live text: {pinned[0]!r}"
+    )
+    assert "staled" in module_text
 
 
 def test_the_artifact_does_not_claim_a_prior_ord_psbl_qty_observation(

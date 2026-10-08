@@ -100,8 +100,9 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 **존재하지 않으며**, 그 부재가 `tests/tools/test_broker_probes_pvl.py`와
 `tests/tools/test_broker_probes_balance.py`와
 `tests/tools/test_broker_probes_real_order.py`에서 **모듈 AST 대조로 강제**된다(주석이
-아니라 테스트). 두 파일은 각각 `probes_balance.py`·`probes_real.py`가 주문 경로를
-가진 모듈을 임포트하지 않음까지 확인한다 — 임포트하면 주문 경로가 그 모듈의 임포트
+아니라 테스트). **세 파일**은 각각 `probes_venue_limits.py`·`probes_balance.py`·
+`probes_real.py`가 주문 경로를 가진 모듈을 임포트하지 않음까지 확인한다 —
+임포트하면 주문 경로가 그 모듈의 임포트
 그래프에 들어온다.
 
 > **`probes_real_order.py`는 이 규칙의 예외이며, 그래서 별도 모듈이다.**
@@ -219,7 +220,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | P-BAL | 잔고 조회의 **페이지 크기**와 연속조회 키 거동, 그리고 truncation 위험의 **3값 판정**. 런타임은 잔고를 1페이지만 읽고(`client.py:931-932`·`:1055-1056`) 그 사실을 감지할 수단이 없다. 소비자 `services/trading/broker_verification.py`는 잔고에 없는 포지션을 `remove_position(reason="broker_absent")`로 **파괴**한다(`:187-190`) — 지금까지 그 인과는 **추론뿐**이었고 페이지 크기는 한 번도 측정되지 않았다. **1페이지 k행은 페이지 크기 k가 아니다** — `page_size_lower_bound`만 성립 |
 | P-R5-PRE | **P-R5의 선행 관문(GET 전용, 위험 0)**. 계좌 지문 일치 / 실전 **trading** TR 도달성(시세 TR 성공은 trading 자격증명의 증거가 **아니다** — 캠페인 wave-3) / 주문가능금액 / 현재 포지션 / 당일 기존 주문 / 세션 상태 / 터치·일일 가격제한폭·틱·승수를 한 번에 확립한다. 산출은 `preflight_verdict` 단일 문자열이며 **`READY_FOR_STAGE_2`만** 2단계를 허가한다. **중단(ABORT)도 결과다** — 아티팩트를 남긴다 |
 | P-R5 | **실전 환경의 P-5.** 수락(t0)→조회 가시(t1) 지연을 모의 P-5와 **동일한 계산**으로 측정해 비교 가능하게 만든다. 존재 이유는 `config/execution.yaml::futures_fill_check_timeout_seconds`(1.0s)와 모의 p50 2632.9ms의 모순이며, 그 모순은 **실환경 측정 없이는 해소 불가**다(wave-3b D-2가 이 프로브를 명시적으로 지목). 부수 산출 2건: **submit 클래스** 페이싱 브래킷(P-13은 query 클래스만 측정 — 외삽 금지)과 실전 **페이지 크기** 1회 관측. n은 설계상 작다(실노출 비용) → `candidate_only` + 소표본 |
-| P-VL | 가격제한폭 **의미론**: 기준가격이 전일 **정산가**인지(`futs_sdpr` vs `futs_prdy_clpr`), 관측 band 가 시행세칙 제56조 산식(기준가격×비율 · 상한가 **내림** / 하한가 **올림**)을 재현하는지, 브로커 호가가 등록 틱의 배수인지. **호가수량한도는 주지 않는다** — `ord_psbl_qty` 는 공식 명세상 「주문가능수량」으로 예수금·증거금 **과 그 레그의 가격·방향·주문유형 파라미터**의 함수다(`probes_real_order.py:1651-1658`). ⚠ 이 레포에 `ord_psbl_qty` 관측은 **아직 없다** — P-R5-PRE 08-03 은 예수금 레그(`CTRP6550R`)에서 **그 전에** ABORT 했다(설계 v2 §4.3). 호가수량한도(별표 17의2 제1호 — **미니 정규 10,000 / 전체 정규 2,000**, `--symbol` 의 상품에 따라 다른 행)는 주문을 넣어 거부 코드를 받아야 보인다. 틱도 상품별이다 — 미니 0.02 · 전체 0.05(`config/execution.yaml`), 그리고 **배포된 paper 정책의 `tick_size: 5` 는 미니 잎과 불일치**하므로 프로브가 둘을 나란히 적고 판정하지 않는다. 1차 출처는 **규정 문서**이고 이 프로브는 **보강**이다(CP-3 결정 9 (a)). 2/3단계 확대는 기준종목 도달 사건에 달려 있어 프로브가 일으킬 수 없다 — 관측되면 기록, 아니면 미관측. 처분은 한 단어 상태가 아니라 **판정에서 파생된 자기 서술 복합 토큰**이다(설계 v2 §5 — 프로파일 `:4432` 꼴). L1·L2 PASS 면 `BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED`; L2 가 통과하지 못하면 **band 축이 OBSERVED 를 주장할 수 없다** |
+| P-VL | 가격제한폭 **의미론**: 기준가격이 전일 **정산가**인지(`futs_sdpr` vs `futs_prdy_clpr`), 관측 band 가 시행세칙 제56조 산식(기준가격×비율 · 상한가 **내림** / 하한가 **올림**)을 재현하는지, 브로커 호가가 등록 틱의 배수인지. **호가수량한도는 주지 않는다** — `ord_psbl_qty` 는 공식 명세상 「주문가능수량」으로 예수금·증거금 **과 그 레그의 가격·방향·주문유형 파라미터**의 함수다(`probes_real_order.py::_preflight_instrument_state` 의 `interpretation` 키 — 「약어가 아니라 심볼로 인용한다」, 아래 §5.9 참조). ⚠ 이 레포에 `ord_psbl_qty` 관측은 **아직 없다** — P-R5-PRE 08-03 은 예수금 레그(`CTRP6550R`)에서 **그 전에** ABORT 했다(설계 v2 §4.3). 호가수량한도(별표 17의2 제1호 — **미니 정규 10,000 / 전체 정규 2,000**, `--symbol` 의 상품에 따라 다른 행)는 주문을 넣어 거부 코드를 받아야 보인다. 틱도 상품별이다 — 미니 0.02 · 전체 0.05(`config/execution.yaml`), 그리고 **배포된 paper 정책의 `tick_size: 5` 는 미니 잎과 불일치**하므로 프로브가 둘을 나란히 적고 판정하지 않는다. 1차 출처는 **규정 문서**이고 이 프로브는 **보강**이다(CP-3 결정 9 (a)). 2/3단계 확대는 기준종목 도달 사건에 달려 있어 프로브가 일으킬 수 없다 — 관측되면 기록, 아니면 미관측. 처분은 한 단어 상태가 아니라 **판정에서 파생된 자기 서술 복합 토큰**이다(설계 v2 §5 — 프로파일 `:4432` 꼴). L1·L2 PASS 면 `BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED`; L2 가 통과하지 못하면 **band 축이 OBSERVED 를 주장할 수 없다** |
 | P-NMPR | [필수] 2필드 빈 문자열 vs 명시 코드 A/B — 수락/거부와 등가성 직접 판정. B-arm(빈 값) 거부 = 수정 전 런타임이 계약 위반이었음을 확정 (N-17 소견 2). **수락 동수는 등가성이 아니다** — 조회면이 두 필드를 되돌려주지 않으면 "blank == 01/0"은 UNKNOWN으로 남는다 |
 
 ---
@@ -1063,7 +1064,12 @@ L2 는 비율 {8, 15, 20}%(별표 14 제1호 주가지수선물거래 — 두 �
 #### 확립하지 **않는** 것 (먼저 읽을 것)
 
 - **KIS 측 호가수량한도.** GET 으로 관측 불가. `ord_psbl_qty` 는 예수금·증거금
-  **과 그 레그의 가격·방향·주문유형 파라미터**의 함수이고(`probes_real_order.py:1651-1658`),
+  **과 그 레그의 가격·방향·주문유형 파라미터**의 함수이고
+  (`probes_real_order.py::_preflight_instrument_state` 의 `interpretation` 키 —
+  **행 번호가 아니라 심볼로 인용한다**: 이 PR 이 그 파일에서 헬퍼 둘을 옮겨
+  `1651-1658` 을 **스스로 낡게 만들었다**. 함수명은 위쪽 편집에 살아남고 행 범위는
+  살아남지 못한다. 프로브 테스트가 그 문장이 해당 함수 **안**에 있는지 AST 로
+  확인하므로 심볼 앵커도 조용히 썩지 않는다),
   ⚠ 이 레포에 그 필드의 관측은 **아직 없다**(P-R5-PRE 08-03 은 예수금 레그에서 먼저
   ABORT — 설계 v2 §4.3). 구조 상한(별표 17의2 제1호: **미니
   정규 10,000 / 야간 5,000 · 전체 정규 2,000 / 야간 1,000**, 해당 상품이

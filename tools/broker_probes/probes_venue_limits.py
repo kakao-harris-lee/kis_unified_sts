@@ -26,8 +26,9 @@ What it CANNOT close — stated first, design §4.3:
 
 * **KIS 측 호가수량한도.** ``VTTO5105R``'s ``ord_psbl_qty`` is 주문가능수량 per
   the official spec: a function of 예수금·증거금 **and of that leg's own price,
-  side and order-type parameters** (``probes_real_order.py:1651-1658`` — "a 0 …
-  could be about the parameters and not the account"). ⚠ **No ``ord_psbl_qty``
+  side and order-type parameters** — ``probes_real_order.py``'s
+  :data:`_ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION` names where that is
+  written down: "reasons that are about the parameters and not the account". ⚠ **No ``ord_psbl_qty``
   observation exists in this repo yet**: P-R5-PRE's 2026-08-03 run aborted on the
   deposit leg (``CTRP6550R`` ``ord_psbl_cash``/``ord_psbl_tota`` = 0) **before**
   that leg ran (``P-R5-PRE-20260803T002732Z.json``), so nothing here may cite it
@@ -198,6 +199,20 @@ _PAPER_VENUE_POLICY = (
 #: there is no named constant upstream to import — this is the policy file's own
 #: declared convention, cited rather than assumed.
 _POLICY_PRICE_SCALE = Decimal(100)
+
+#: Where the repo writes down that a zero 주문가능수량 can be about the LEG's
+#: parameters rather than the account. SYMBOL-anchored on purpose: the first
+#: draft of this module cited ``probes_real_order.py:1651-1658`` and **this PR
+#: staled its own citation** by relocating two helpers out of that file, moving
+#: the block 34 lines up. A function name survives edits above it; a line range
+#: does not. ``tests/tools/test_broker_probes_pvl.py`` locates the quoted
+#: sentence inside that function and fails if it moves OUT of it, so the anchor
+#: cannot rot silently either.
+_ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION = (
+    "probes_real_order.py::_preflight_instrument_state, the 'interpretation' key "
+    "— \"this leg's own parameters (price, side, order type) could produce a 0 "
+    'for reasons that are about the parameters and not the account"'
+)
 
 #: Committed parsed-text evidence for every rule value below (design v2 §2.3).
 #: The HWP binaries are not committed; the README in this directory carries the
@@ -1372,8 +1387,8 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
             "kis_quantity_limit": (
                 "ord_psbl_qty is 주문가능수량 per the official spec: a function "
                 "of 예수금·증거금 AND of this leg's own price, side and "
-                "order-type parameters (probes_real_order.py:1651-1658 — 'a 0 … "
-                "could be about the parameters and not the account'). It is not "
+                "order-type parameters "
+                f"({_ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION}). It is not "
                 "the venue's structural limit. The 호가수량한도 of 별표 17의2 and "
                 "any lower member limit under 시행세칙 제61조제3항 are observable "
                 "only by sending an order and reading the rejection — outside "
@@ -1519,7 +1534,8 @@ def probe_pvl(args: argparse.Namespace) -> ProbeRun:
                         "distinguish them: (1) 예수금 0, (2) a 증거금 constraint "
                         "on this account, (3) THIS LEG'S OWN parameters — the "
                         "price, side and order type it sent "
-                        "(probes_real_order.py:1651-1658). Whichever it is, it "
+                        f"({_ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION}). "
+                        "Whichever it is, it "
                         "says nothing about the venue's structural quantity "
                         "limit."
                     ),
