@@ -205,11 +205,17 @@ v1 은 이를 **측정되지 않은 전제**로 등재하고, 첫 켜기(§9 3) 
 **왜 지금**: 10-12 롤에서 `scope.instrument` 가 새 정책 generation 으로 바뀐다. `kis_quote` transport 설정의 `instrument`
 는 poll 시점에만 확인되고 venue 정책 scope 와는 대조되지 않는다(기존 scope 대조는 정책 ↔ construction 뿐,
 `compose/_venue_wiring.py:127-153 _cross_check_scope`).
-**가드 둘(둘 다 로더)**: `band_source.instrument` ≠ 정책 `scope.instruments` 의 유일 원소 → 부팅 거부 · transport 설정의
-`instrument` ≠ `band_source.instrument` → 부팅 거부. v2 의 「런타임 응답 측 재확인」은 **삭제**했다 — GET 의 종목이
-`band_source.instrument` 하나에서 오므로 로더가 이미 확인한 값을 다시 비교하는 가려진 절이었다(재리뷰). **레드 증명**:
-(1) `A05610` 정책 + `band_source.instrument: A05611` → 첫 검사를 지우면 부팅되어 `A05611` band 로 1160.00 이 ADMISSIBLE ·
-(2) `band_source.instrument: A05610` + transport `instrument: A05611` → 둘째 검사를 지우면 부팅된다.
+**가드(로더)**: `band_source.instrument` ≠ 정책 `scope.instruments` 의 유일 원소 → 부팅 거부. v2 의 「런타임 응답 측
+재확인」은 **삭제**했다 — GET 의 종목이 `band_source.instrument` 하나에서 오므로 로더가 이미 확인한 값을 다시 비교하는
+가려진 절이었다(재리뷰). **레드 증명**: `A05610` 정책 + `band_source.instrument: A05611` → 검사를 지우면 부팅되어 `A05611`
+band 로 1160.00 이 ADMISSIBLE.
+
+**설정 일관성 규칙(가드 아님, 3차 리뷰 LOW)**: transport 설정의 `instrument` ≠ `band_source.instrument` → 부팅 거부. band
+GET 은 transport 의 `instrument` 를 읽지 않으므로 이 규칙을 지워도 틀린 band 가 붙지는 않는다 — 구체적 fail-open 입력이
+없으니 §4.6 의 가드 수에 넣지 않는다. 두 값이 어긋난 설정은 그 자체로 운영 오류의 신호라서 거부할 뿐이다. 이 규칙이
+**가드가 되는 조건**: 같은 `kis_quote` transport 가 주문 가격의 원천(관측 인입)이기도 할 때 — 그러면 가격은 transport 종목,
+band 는 `band_source` 종목에서 와서 다른 계약의 가격을 다른 계약의 band 로 판정한다. ③ 생산자가 `kis_quote` 인입으로
+정해지면 그때 이 규칙을 가드로 올리고 「잘못 붙은 band 로 ADMISSIBLE」로 끝나는 레드 증명을 붙인다.
 
 ### 4.5 증거
 
@@ -275,8 +281,9 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
    `None` + `VENUE_BAND_OBSERVED.reason`.
 4. §4.4a 거래일 가드 — §4.4a 의 도달 가능한 시퀀스(장 밖 무호출 → 같은 phase 로 D+1 첫 호출). 비교 삭제 → red · 비교를 캐시 조기
    반환 뒤로 이동 → red.
-4b. §4.4b 계약 가드 — 레드 증명 둘(§4.4b): scope ↔ `band_source.instrument` 검사 삭제 → red · transport ↔
-   `band_source.instrument` 검사 삭제 → red. band 값은 10-08 P-VL 실측(`A05611` 990.48/1162.72).
+4b. §4.4b 계약 가드 — scope ↔ `band_source.instrument` 검사 삭제 → 잘못 붙은 band 로 ADMISSIBLE(red). band 값은 10-08
+   P-VL 실측(`A05611` 990.48/1162.72). transport ↔ `band_source.instrument` 일관성 규칙은 로더 거부 테스트(§8 6)로만 —
+   가드가 아니다.
 4c. 재발행은 전이에서만 — 장 밖에서 `snapshot()` 을 N 번 불러도 constraint_generation 이 1 만 오른다.
 4d. **`band_source` 가 켜진 배포에서만** `_runtime.price_scale` 부재·불일치 → 부팅 거부(끈 배포의 부재는 §8 1 이 통과를
    단언) · `timeout_ms: null` 로 켜면 부팅 거부 · 부팅 GET 이 `timeout_ms` 를 넘기면 `None` + `reason`.
