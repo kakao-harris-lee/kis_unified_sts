@@ -390,10 +390,22 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    **충돌 실측 2026-10-09(읽기 전용 점검)**: ① 콜드 백업 래퍼
    `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본 `paper-data`)의
    **직접 자식** 중 `A0[0-9][0-9][0-9][0-9]` 만 잎으로 세고 **`~/.local/state/tos/*` 를
-   글로브하지 않는다** → 두 부모는 보이지 않으므로 **백업되지 않는다**(켜는 것은 운영자
-   결정; 잎을 `<종목>` 으로 둔 덕에 래퍼 수정 없이 `COLD_DATA_DIR` 지정만으로 된다).
+   글로브하지 않는다** → 두 부모는 보이지 않으므로 **백업되지 않는다**(켜는 것은 운영자 결정).
+   ⛔ **그러나 켜는 방법은 「`COLD_DATA_DIR` 만 지정」이 아니다**(2026-10-09 리뷰 H1 — 초판이
+   그렇게 적었고 틀렸다): 그 변수만 바꾼 실행은 `COLD_CONFIG_DIR` 기본값
+   `~/.local/state/tos/paper-ops` 를 쓰고, 래퍼가 `COLD_ROOT` 를 그 기준 설정 세 경로의 공유
+   부모(= `paper-cold`)로 유도하므로, 잎별 설정·보관소가 **상주** `paper-ops/leaves/<잎>` ·
+   `paper-cold/<잎>` 에 들어간다. 잎 이름은 계약월이라 **세 배포가 같은 잎 이름**을 가지므로
+   tenant 아카이브가 상주 보관소에 섞이고 **같은 세대 번호**에서 하나가 거부된다(래퍼 헤더가
+   그 결과를 스스로 적는다). 그래서 tenant 실행은 `COLD_DATA_DIR` ·
+   **`COLD_CONFIG_DIR`**(tenant 전용 ops 디렉터리) · **`COLD_TARGET_BORN_ON`**(그 잎의 첫
+   부팅일 — 기본 `2026-10-06` 을 두면 genesis 전 부재가 rc 1 refused 다) 셋을 함께 지정하고,
+   그 ops 의 `evidence_cold_backup.yaml` 세 경로는 **tenant 전용 콜드 부모** 아래여야 한다.
+   경로 지정은 런북 **§7.2-b** 표의 뒤 두 열이다.
    ② 설정 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 의 세 경로는 전부
-   `paper-cold/` 아래 절대경로 리터럴 — 글로브·`~` 전개 없음, 충돌 없음. ③ A1 측정
+   `paper-cold/` 아래 절대경로 리터럴 — 글로브·`~` 전개 없음. ⚠ 그 파일 자체는 tenant 실행이
+   건드리지 않지만, 위 셋을 함께 바꾸지 않으면 **잎 단위로 충돌한다**(초판의 「충돌 없음」은
+   `COLD_DATA_DIR` 만 비교한 결과였다). ③ A1 측정
    아티팩트는 `~/.local/state/tos/measure/` 아래 — 충돌 없음. ④ ⚠ 상주 세션 래퍼의 렌더
    출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는 **하드코딩**(환경 손잡이가
    아니다)이라 **그 래퍼로는 이 tenant 를 띄울 수 없다** — ④ 의 일이다. ⑤ ⚠ 이름 인접:

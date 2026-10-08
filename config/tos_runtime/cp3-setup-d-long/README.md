@@ -187,9 +187,20 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
 - ⚠ **디렉터리를 만들지 않았다.** genesis 는 첫 부팅이고 그것은 ④ 다(§6 2).
 - ⚠ **콜드 백업에 아직 들어 있지 않다** — 래퍼는 `COLD_DATA_DIR`(기본 `paper-data`)의
   직접 자식 중 `A0####` 만 잎으로 세고 `~/.local/state/tos/*` 를 글로브하지 않으므로
-  이 부모는 보이지 않는다. 잎을 `<종목>` 으로 둔 것이 그래서다(래퍼 수정 없이 켤 수 있다).
-  켜는 것은 **운영자 결정**이다.
-- 전체 표·충돌 실측·상주 래퍼가 이 tenant 를 띄우지 못하는 이유는 런북 **§7.2-b** 에 있다.
+  이 부모는 보이지 않는다. 켜는 것은 **운영자 결정**이다.
+- ⛔ **켤 때 `COLD_DATA_DIR` 만 지정하면 안 된다**(2026-10-09 리뷰 H1). 그 변수만 바꾼
+  실행은 `COLD_CONFIG_DIR` 기본값 `~/.local/state/tos/paper-ops` 를 쓰고, 래퍼는
+  `COLD_ROOT` 를 그 기준 설정 세 경로의 **공유 부모**(= `paper-cold`)로 유도하므로 잎별
+  설정·보관소가 **상주** `paper-ops/leaves/<잎>` · `paper-cold/<잎>` 에 들어간다. 잎 이름은
+  계약월이라 상주·LONG·SHORT 가 **같은 잎 이름**을 가지므로 tenant 아카이브가 상주 보관소에
+  섞이고 같은 세대 번호에서 하나가 거부된다. 그래서 셋을 함께 지정한다 —
+  `COLD_DATA_DIR` · **`COLD_CONFIG_DIR=~/.local/state/tos/cp3-setup-d-long-ops`** ·
+  **`COLD_TARGET_BORN_ON=<이 잎의 첫 부팅일>`**(기본 `2026-10-06` 을 두면 genesis 전 부재가
+  조용한 rc 0 이 아니라 **rc 1 refused** 다). 그리고 그 ops 의 `evidence_cold_backup.yaml`
+  세 경로는 **`~/.local/state/tos/cp3-setup-d-long-cold/`** 아래여야 한다. ⚠ 그 ops·cold
+  디렉터리도 **아직 없다**.
+- 전체 표(ops·cold 열 포함)·충돌 실측·상주 래퍼가 이 tenant 를 띄우지 못하는 이유는 런북
+  **§7.2-b** 에 있다.
 
 ### 닫힌 항목 (여기 있었다가 처분된 것)
 
