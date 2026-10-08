@@ -39,7 +39,7 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 
 | 파일 | 상태 |
 | --- | --- |
-| `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4) + `policy_id` 가 tenant 전용(§7 2). 런타임이 읽는 **값** 차이는 `max_quantity` 한 곳 |
+| `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4) · `tick_size` 5 → **2**(mini 규정값 정정 2026-10-09, 아래 §4) + `policy_id` 가 tenant 전용(§7 2). 런타임이 읽는 **값** 차이는 그 **두 곳**이다 |
 | `critical_input_policy.yaml` | **다름** — 사본이 아니다. 상주 쪽은 부팅 증명 픽스처의 **세 필드**, 이쪽은 tenant 상류 **열다섯 필드**(아래 §5) + `policy_id` tenant 전용 |
 | `construction.yaml` | **다름** — `price_field_key`·`shape_price_field_key` 가 `"close"` → **`"close_x100"`**. 상주의 `"close"` 는 이 트리의 critical_input 에 **없는 키**이고, 두 로더는 서로를 볼 수 없어 그 불일치를 **거부하지 못한다**(그 파일의 해당 주석이 실측 경로를 적는다). 나머지 값은 상주 승인값 그대로 |
 | `engine.yaml` · `order_construction_policy.yaml` | **주석만 다름** — 값은 상주 승인값 그대로이고 타입 콘텐츠가 같으므로 **digest 도 같다**. 두 파일의 기존 주석이 상주 전략(`bootproof_band`)을 인용하고 있어 이 트리에서 거짓이 되므로, 각 자리에 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정 · `quantity_basis` 선언 자리) |
@@ -72,9 +72,16 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 
 - **상주 paper 트리는 이 값을 채택하지 않았다** — 운영자가 paper 채택을 보류했다(결정
   2026-10-08). 상주 트리의 `max_quantity` 는 `null` 그대로다.
-- **`tick_size` 는 5 그대로다.** mini 규정값 2 로의 정정은 승인됐으나 **band 원천 웨이브
-  (설계 §6)의 전제 항목**이고 이 PR 범위 밖이다. band 가 null 인 동안 tick 검사는 step 3
-  UNKNOWN 에 가려져 효력이 없다.
+- **`tick_size` 는 2 다 (정정 착지 2026-10-09).** 운영자 승인 2026-10-08 · 시행세칙
+  **제4조의9 제2호** · 등급 **R** · 브로커 정황 = P-VL band 격자(PR #881). band 원천 웨이브
+  계획 `docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md` §3 의 첫 PR 이다.
+  **거동 변화는 0 이다** — band 가 null 인 동안 tick 검사는 step 3 UNKNOWN 에 가려진다.
+  지금 고치는 이유는 band 가 들어오는 순간 종전 5(full 계약 값)가 mini 정상 호가를 전부
+  INADMISSIBLE 로 만들기 때문이다. 조문·보강 정황 셋은 그 파일 헤더에 있다.
+  **상주 `paper` 트리의 tick 은 5 그대로다** — 계획 §3 이 paper 채택과 함께 보류한다.
+  ⚠ 이 변경은 tenant VCP 의 `canonical_digest` 를 바꾼다(실측: VCP digest 는
+  `_model_view.shape_constraints` 를 덮는다). 이 트리의 `safety_activation.yaml::members`
+  는 `null` 이라 갱신할 활성화 기록이 없다.
 - **`price_min`/`price_max` 는 null 그대로다** — 일별 동적 값이라 정적 리터럴 금지(설계 §6).
 
 ## 5. `critical_input_policy.yaml` — 열다섯 필드, `max_age_ms` 는 출처 없음

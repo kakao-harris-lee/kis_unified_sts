@@ -119,11 +119,25 @@ _DECISION_9_CAVEATS = (
     "누적호가수량한도는 다른 한도다",  # §2.2 (3) -- 위탁계좌에는 적용되지 않는다
 )
 
-#: The tick correction is APPROVED but owned by design §6's band-source wave, not by the tree
-#: that carries the quantity value -- pinned so the two cannot drift apart silently (a tick 2
-#: landed here while the band is still null would be inert; a band landed there while the tick
-#: is still 5 would make every normal mini quote INADMISSIBLE).
-_TICK_CORRECTION_OWNER = "정정 2 는 승인됐고 band 원천 웨이브 소관이다"
+#: The tick correction, LANDED 2026-10-09 as the band-source wave plan's §3 first PR
+#: (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §3, operator-approved
+#: 2026-10-08). Pinned as a STRING for the same reason ``_DECISION_9_PROVENANCE`` is: the
+#: number 2 on its own does not say which regulation makes it the mini value, and
+#: ``config/tos_runtime/README.md`` makes the citation part of what admits a value here.
+#: Four separate pins because each can be dropped without the others -- the approval date, the
+#: 조문 (which is what makes it grade R rather than the grade C local registry reading it
+#: replaced), the grade itself, and the broker-side corroboration.
+_TICK_PROVENANCE = (
+    "운영자 승인 2026-10-08 · 시행세칙 제4조의9 제2호 · 등급 R · "
+    "브로커 정황 = P-VL band 격자(PR #881)"
+)
+
+#: The other half of the correction, pinned next to the value for the same reason the
+#: ``max_quantity`` deferral is: "the resident tree did NOT take this" is a state neither tree
+#: records alone. Plan §3's table row: the resident tick stays 5 until paper adoption, because
+#: moving it there buys a digest re-derivation plus the runbook §7.10 6 two-boot obligation for
+#: zero behaviour change (the band is null there too).
+_TICK_RESIDENT_DEFERRAL = "상주 `paper` 트리의 tick 은 5 그대로다"
 
 #: B1a's published field policy, as ``tools/tos_cp3/produce_fields.py`` declares it: field_key
 #: -> (unit, scale, multiplier, sign), in B1a's own ``FIELD_ORDER``. Literals, deliberately --
@@ -186,7 +200,16 @@ def _comment_prose(path: Path) -> str:
 
 #: The values the operator adopted (plan §6 ② table) -- pinned here so a
 #: silent edit of the deploy file cannot pass as "still the approved value".
-_ADOPTED_TICK = 5
+#:
+#: ``_RESIDENT_TICK`` and ``_TENANT_TICK`` are two constants on purpose, not one shared by both
+#: trees: since 2026-10-09 they genuinely differ, and a single constant would have made the
+#: tenant correction look like a resident change (or forced the resident assertion to follow the
+#: tenant silently). 5 is the FULL-contract value kept in the resident tree while the band is
+#: null (band-source wave plan §3's table: deferred with paper adoption); 2 is the mini
+#: regulation value (시행세칙 제4조의9 제2호, grade R) in the tenant tree, where the leaf is a
+#: mini ``A056xx``.
+_RESIDENT_TICK = 5
+_TENANT_TICK = 2
 _ADOPTED_LOT = 1
 _ADOPTED_MIN_QTY = 1
 _ADOPTED_ADMITTING_PHASE = "CONTINUOUS"
@@ -320,7 +343,10 @@ def test_filled_real_policies_carry_exactly_the_adopted_values(tmp_path: Path) -
     venue = load_venue_constraint_policy(venue_path, scheme=_SCHEME)
 
     shape = venue.policy.shape_constraints
-    assert shape.tick_size == _ADOPTED_TICK
+    # The resident tree's tick is still the FULL-contract 5: the 5 → 2 correction is approved
+    # but deferred HERE (band-source wave plan §3) -- pinned so the tenant correction cannot
+    # drift into this tree without a deliberate edit plus the runbook §7.10 6 obligations.
+    assert shape.tick_size == _RESIDENT_TICK
     assert shape.lot_size == _ADOPTED_LOT
     assert shape.min_quantity == _ADOPTED_MIN_QTY
     # No source → null → kernel UNKNOWN (plan §6 ② 보류 rows), never invented.
@@ -386,8 +412,11 @@ def test_tenant_venue_policy_carries_the_decision_9_provenance_and_its_three_cav
     assert _DECISION_9_PROVENANCE in prose
     for caveat in _DECISION_9_CAVEATS:
         assert caveat in prose, caveat
-    # The approved-but-not-landed tick correction, and who owns landing it.
-    assert _TICK_CORRECTION_OWNER in prose
+    # The tick correction's own provenance, landed 2026-10-09 (band-source wave plan §3), and
+    # the fact that the resident tree deliberately kept 5. Both in this header, because this is
+    # the file that carries the value.
+    assert _TICK_PROVENANCE in prose
+    assert _TICK_RESIDENT_DEFERRAL in prose
 
     # And the identity this tree's differing CONTENT requires: a policy whose typed content
     # differs from the resident one's may not share its (member_id, generation) -- an
@@ -447,8 +476,13 @@ def test_filled_tenant_venue_policy_carries_10000_with_the_band_still_null(
     assert shape.price_min is None and shape.price_max is None
     # Only the band is unsourced now -- the quantity axis left this set.
     assert set(venue.null_shape_bounds) == {"price_min", "price_max"}
-    # Decision 9 touched ONE bound: everything else is still the 2026-09-16 adopted value.
-    assert shape.tick_size == _ADOPTED_TICK
+    # Two bounds differ from the resident tree now: decision 9's quantity ceiling and the
+    # 2026-10-09 tick correction. ``tick_size`` is asserted as the MINI regulation value, which
+    # is also the one value here that is inert today -- ``order_shape_admissible`` below returns
+    # UNKNOWN on the null band BEFORE it examines the tick, so this assertion is the only thing
+    # that can catch a wrong tick until a band source lands.
+    assert shape.tick_size == _TENANT_TICK
+    assert shape.tick_size != _RESIDENT_TICK
     assert shape.lot_size == _ADOPTED_LOT
     assert shape.min_quantity == _ADOPTED_MIN_QTY
     assert venue.scope.instrument_class == "krx-index-futures"
@@ -508,7 +542,7 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
     multipliers = {entry["field_key"]: entry["multiplier"] for entry in raw["fields"]}
     signs = {entry["field_key"]: entry["sign"] for entry in raw["fields"]}
     # The price-like fields are the ONLY ones at the ×100 scale the venue policy's tick_size
-    # lives on (tick 5 = 0.05 index points at that scale).
+    # lives on (tick 2 = 0.02 index points at that scale, since the 2026-10-09 correction).
     assert {
         key for key, multiplier in multipliers.items() if multiplier == "100"
     } == _B1A_PRICE_FIELDS

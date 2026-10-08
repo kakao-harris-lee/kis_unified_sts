@@ -107,7 +107,7 @@ account_instrument_contract_and_route_rules:
 direction_side_and_position_effect_rules:
   - "long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE"
 unit_multiplier_currency_and_numeric_rules:
-  - "quantity unit CONTRACTS; price at ×100 integer index-point scale (tick 5 = 0.05pt); currency KRW"
+  - "quantity unit CONTRACTS; price at ×100 integer index-point scale (tick 2 = 0.02pt — mini 규정값, 시행세칙 제4조의9 제2호; 2026-10-09 에 5 에서 정정됐다, venue_constraint_policy.yaml 헤더); currency KRW"
 price_tick_lot_quantity_and_rounding_rules:
   - "no silent rounding — construction denies an off-grid shape rather than rounding it"
 order_type_time_in_force_expiration_and_mode_rules:

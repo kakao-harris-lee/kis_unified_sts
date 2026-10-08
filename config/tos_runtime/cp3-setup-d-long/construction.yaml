@@ -78,7 +78,8 @@ outbound_side: "BUY"
 # — 가격 꼴 필드의 이름은 `close_x100` 이다. 그래서 두 칸을 `close_x100` 으로 바꿨다.
 #
 # 왜 `close_x100` 인가: 이 키가 가리키는 값이 **주문 가격**이 되고, venue 정책의
-# `tick_size: 5` 는 **×100 정수 가격 스케일**의 틱이다(= 0.05 포인트). B1a 의 `close_x100`
+# `tick_size: 2` 는 **×100 정수 가격 스케일**의 틱이다(= 0.02 포인트 — mini 규정값,
+# 시행세칙 제4조의9 제2호; 2026-10-09 에 5 에서 정정됐다). B1a 의 `close_x100`
 # 이 바로 그 스케일(unit `index_point` · scale `hundredths` · multiplier `100`,
 # `produce_fields._price_field`)이므로 두 축이 같은 격자 위에 있다. `z_x1000`(ATR 천분율)
 # 이나 불린 게이트는 가격이 아니다.

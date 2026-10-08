@@ -6,8 +6,9 @@
 # (placement + activation per tos-spec/src/decision-records/DR-0002 §2.1/§2.2).
 #
 # ⚠ TENANT TREE — 상주 `config/tos_runtime/paper/` 의 같은 파일에서 갈라져 나왔다.
-#   **런타임이 읽는 값 차이는 `_model_view.shape_constraints.max_quantity` 한 곳**
-#   (null → 10000, 아래 출처)이고, 그 밖에 **`policy_id` 가 tenant 전용으로 바뀌었다**
+#   **런타임이 읽는 값 차이는 `_model_view.shape_constraints` 의 두 곳**
+#   — `max_quantity`(null → 10000)와 `tick_size`(5 → 2, 정정 2026-10-09), 둘 다 아래에
+#   출처가 있다 — 이고, 그 밖에 **`policy_id` 가 tenant 전용으로 바뀌었다**
 #   (아래). 나머지 차이는 그 값의 출처·단서를 적는 주석, 같은 사실을
 #   적는 template DATA 산문(`approved_sources` · `price_band_tick_and_lot_rules` ·
 #   `residual_risks` — 런타임이 해석하지 않는다, DR-0002 §2.1), 그리고 `approved_by`·
@@ -33,27 +34,46 @@
 # citation does not belong here):
 #   * values: docs/plans/2026-09-15-tos-venue-constraint-service-plan.md §6 ②
 #     proposal table, adopted by the operator on 2026-09-16 (「추천 방향으로 모두 선택」).
-#   * tick_size 5 = 0.05 index points at the ×100 integer price scale
-#     (config/execution.yaml::futures_contract_spec `tick_size_points: 0.02`
-#     (mini) / `0.05` (full) — a LOCAL setting, grade C; broker-side tick
-#     validation was observed in P0-2,
-#     docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml::
-#     capabilities.market_and_instrument_constraints._kis.tick_probe_observations_2026_07_30,
-#     but no broker QUERY of the tick exists).
-#     ⚠ 2026-10-08: 위 두 인용을 **키 경로**로 바꿨다. 같은 날 P-VL fold 가 이
-#     프로파일에 행을 넣어 종전 `:853-868` 이 가리키던 broker 측 틱 검증 기록을
-#     밀어냈고, 그 범위는 이제 **NOT_MEASURED 인용 부적격 주석**을 가리킨다 —
-#     행 번호 인용은 조용히 썩는다. (시프트 값은 적지 않는다: 델타도 행 번호와
-#     똑같이 썩고, 적는 순간 그 숫자가 다음 fold 에서 틀린다. 키 경로가 그 문제를
-#     없애려고 쓰는 것이다.)
-#     ⚠ **tick 5 는 이 미니 잎에 틀렸다 — 정정 2 는 승인됐고 band 원천 웨이브 소관이다.**
-#     규정값은 0.02(시행세칙 제4조의9제2호, ×100 = 2)이고 레포 레지스트리도 0.02 다;
-#     관측 band 경계 네 값이 0.05 의 배수가 아니라는 **브로커 측 정황**도 같은 방향이다
-#     (2026-10-08 설계 §2.0 ⚠ · §8 3단계 부수 산출). 운영자는 5 → 2 정정을 승인했고
-#     그 착지는 설계 §6 **band 원천 웨이브**(별도 계획 문서)가 소유한다
-#     — band 가 null 인 동안 tick 검사는 step 3 UNKNOWN 에 가려져 효력이 없고, band 와
-#     tick 을 한 PR 에서 함께 움직이는 것이 그 웨이브의 전제 항목이다. 그래서 여기 값은
-#     **5 그대로**다.
+#   * **tick_size 2 = 0.02 index points at the ×100 integer price scale —
+#     운영자 승인 2026-10-08 · 시행세칙 제4조의9 제2호 · 등급 R · 브로커 정황 =
+#     P-VL band 격자(PR #881).** 정정 5 → 2 는 band 원천 웨이브 계획
+#     `docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md` §3 의 첫 PR 로 착지했다
+#     (그 표의 「CP-3 tenant 트리」 행 — 상주 `paper` 트리는 **보류**, paper 채택과 함께).
+#     조문은 KRX 파생상품시장 업무규정 시행세칙 **제4조의9 제2호**(미니코스피200선물거래의
+#     호가가격단위 0.02 포인트)이므로 등급은 **R**(공표 규정 원문)이고, 종전 이 자리의
+#     grade C 로컬 설정 인용은 **보강 정황으로 내려간다**:
+#       - 레포 레지스트리 `config/execution.yaml::futures_contract_spec`
+#         `tick_size_points: 0.02`(mini) / `0.05`(full) — 규정값과 같은 방향의 LOCAL
+#         설정(grade C). **5 는 full 계약 값이었다**: 이 잎은 mini `A056xx` 이므로
+#         그 행을 잘못 집었던 것이 정정의 원인이다.
+#       - 브로커 측 틱 검증이 P0-2 에서 관측된 기록
+#         docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml::
+#         capabilities.market_and_instrument_constraints._kis.tick_probe_observations_2026_07_30
+#         — 검증이 존재한다는 사실이고 **틱 값의 브로커 QUERY 는 여전히 없다**.
+#       - P-VL 모의 실측(PR #881, 증거
+#         `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/`)에서 관측된
+#         price band 경계 네 값이 **0.02 격자에만** 떨어지고 0.05 의 배수가 아니었다 —
+#         **브로커 측 정황**이며 그 자체로 틱의 원천은 아니다(설계 §2.0 ⚠ · §8 3단계
+#         부수 산출).
+#     ⚠ 인용은 전부 **키 경로**다. 2026-10-08 P-VL fold 가 프로파일에 행을 넣어 종전
+#     `:853-868` 이 가리키던 broker 측 틱 검증 기록을 밀어냈고, 그 범위는 이제
+#     **NOT_MEASURED 인용 부적격 주석**을 가리킨다 — 행 번호 인용은 조용히 썩는다.
+#     (시프트 값은 적지 않는다: 델타도 행 번호와 똑같이 썩고, 적는 순간 그 숫자가
+#     다음 fold 에서 틀린다. 키 경로가 그 문제를 없애려고 쓰는 것이다.)
+#     ⚠ **이 값은 오늘 판정에 닿지 않는다 — 그래도 지금 고친 이유.** band 가 null 인
+#     동안 `order_shape_admissible` 은 tick 검사 **전에** step 3 UNKNOWN 으로 끝난다
+#     (설계 §1 술어 순서). 즉 5 든 2 든 오늘의 거동은 같다. 지금 고치는 것은 band 가
+#     들어오는 순간 **5 가 mini 정상 호가를 전부 INADMISSIBLE 로 만들기** 때문이고,
+#     band 와 tick 을 한 웨이브에서 함께 움직이는 것이 그 계획 §3 의 전제 항목이다.
+#     ⚠ 이 변경은 이 문서의 `canonical_digest` 를 바꾼다(실측 2026-10-09: VCP 의
+#     digest 는 `_model_view.shape_constraints` 를 덮는다 — `tick_size` 만 바꿔도
+#     달라진다). 이 트리의 `safety_activation.yaml::members` 는 **`null`** 이므로
+#     갱신할 활성화 기록이 없고, digest 리터럴을 지어내지도 않았다 — 활성화는 부팅
+#     경로(kickoff §5 3 ④)의 일로 남는다.
+#     ⚠ 상주 `paper` 트리의 tick 은 5 그대로다 — 계획 §3 이 **paper 채택과 함께**
+#     보류한다. 거기서 옮기면 정책 digest 재도출 + `safety_activation.yaml::members`
+#     갱신 + 런북 §7.10 6 의 두 번 부팅 의무가 따라오는데 행동 변화는 0 이다
+#     (그 트리의 band 도 null 이다).
 #   * lot_size / min_quantity 1 = one contract (official contract unit, grade B;
 #     조문 인용 시행세칙 제4조의5제1항·제2항 — 호가수량단위 = 거래수량단위 1 계약,
 #     2026-10-08 설계 §3 값 표).
@@ -117,7 +137,8 @@ status: ISSUED
 approved_by:
   - "operator (System Owner) — 2026-09-16, plan §6 ② 채택 (tick/lot/min_quantity/phase)"
   - "operator (System Owner) — 2026-10-08, 결정 9 (a) 채택 — max_quantity 10000 (별표 17의2 제1호 미니코스피200선물거래 행, 등급 R)"
-effective_from: "2026-10-08"
+  - "operator (System Owner) — 2026-10-08, tick_size 5 → 2 정정 승인 — 시행세칙 제4조의9 제2호, 등급 R (band 원천 웨이브 계획 §3; 착지 2026-10-09)"
+effective_from: "2026-10-09"
 review_due: null
 scope:
   environments: ["paper"]
@@ -131,7 +152,8 @@ scope:
   action_classes: ["NEW_LONG", "NEW_SHORT", "CLOSE"]
 approved_sources:
   - "session phase: this tree's own calendar.yaml (baseline expectation) read through TrustedWallClockReference (ADR-002-019 §9 — a calendar alone is not admissibility proof; the kernel folds the token). compose cross-checks within ONE --config-dir, so the sibling meant here is config/tos_runtime/cp3-setup-d-long/calendar.yaml"
-  - "tick/lot: local setting config/execution.yaml:286 (grade C) — no broker query source"
+  - "tick: KRX 파생상품시장 업무규정 시행세칙 제4조의9 제2호 — 미니코스피200선물거래 호가가격단위 0.02 포인트 (= 2 at the ×100 integer scale), grade R, 운영자 승인 2026-10-08. 레포 레지스트리 config/execution.yaml::futures_contract_spec tick_size_points 0.02 (mini) 는 같은 방향의 보강 정황 (grade C); 틱 값의 브로커 QUERY 원천은 여전히 없다"
+  - "lot: local setting config/execution.yaml::futures_contract_spec (grade C) — no broker query source"
   - "max quantity: KRX 파생상품시장 업무규정 시행세칙 별표 17의2 제1호 미니코스피200선물거래 행 (정규거래 10,000 계약) — grade R, 운영자 채택 2026-10-08 (결정 9 (a)); venue 상한이며 회원(KIS) 한도는 미확인 (시행세칙 제61조제3항)"
   - "price band: NO SOURCE for a STATIC literal — 일별 동적 값 (시행세칙 제55조·제56조·제56조의2) → null until the band-source wave supplies it at runtime (2026-10-08 설계 §6)"
 source_continuity_rules:
@@ -143,7 +165,7 @@ halt_suspension_and_tradability_rules:
 instrument_and_contract_rules:
   - "one contract per policy generation; contract month/expiration are not bound in the decision route fields (None)"
 price_band_tick_and_lot_rules:
-  - "tick_size 5 (= 0.05 pt at ×100 scale) — ⚠ mini 규정값은 0.02 (×100 = 2); 5 → 2 정정은 승인됐고 band 원천 웨이브 소관 (2026-10-08 설계 §2.0 ⚠ / §6 전제 항목)"
+  - "tick_size 2 (= 0.02 pt at ×100 scale) — mini 규정값, 시행세칙 제4조의9 제2호, grade R, 운영자 승인 2026-10-08. 종전 5 는 full 계약 값을 mini 잎에 잘못 집은 것이었다 (정정 착지 2026-10-09, band 원천 웨이브 계획 §3)"
   - "lot 1; min_quantity 1 (시행세칙 제4조의5)"
   - "max_quantity 10000 (별표 17의2 제1호 mini 행, grade R)"
   - "band null (일별 동적 값 — 정적 리터럴 금지)"
@@ -168,7 +190,7 @@ residual_risks:
   - "price band unsourced: admissibility is UNKNOWN for every attempt until a band source exists (intended fail-closed)"
   - "max_quantity 10000 is the VENUE ceiling, not a KIS-confirmed limit (시행세칙 제61조제3항) — a member limit below it would be observed only as a broker rejection, and this deployment transmits nothing (SYNTHETIC_FUTURES_ORDER)"
   - "max_quantity 10000 is a 공표 규정값 the exchange may change (제61조제1항 단서) — not an invariant"
-  - "tick_size 5 is the full-contract value on a mini leaf; it is inert only while the band is null (step 3 UNKNOWN). The band-source wave MUST land the 5 → 2 correction together with the band"
+  - "tick_size 2 is the mini regulation value and is INERT while the band is null — step 3 returns UNKNOWN before the tick is examined, so landing this correction changed no behaviour today. It matters the moment a band source lands: the previous 5 (a full-contract value) would have made every normal mini quote INADMISSIBLE. The band itself is still owned by the band-source wave (2026-10-08 설계 §6)"
 authority:
   grants_approval: false
   creates_capacity: false
@@ -196,7 +218,7 @@ _model_view:
   shape_constraints:
     price_min: null
     price_max: null
-    tick_size: 5
+    tick_size: 2
     lot_size: 1
     min_quantity: 1
     max_quantity: 10000
