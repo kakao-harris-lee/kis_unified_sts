@@ -193,8 +193,13 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
   실행은 `COLD_CONFIG_DIR` 기본값 `~/.local/state/tos/paper-ops` 를 쓰고, 래퍼는
   `COLD_ROOT` 를 그 기준 설정 세 경로의 **공유 부모**(= `paper-cold`)로 유도하므로 잎별
   설정·보관소가 **상주** `paper-ops/leaves/<잎>` · `paper-cold/<잎>` 에 들어간다. 잎 이름은
-  계약월이라 상주·LONG·SHORT 가 **같은 잎 이름**을 가지므로 tenant 아카이브가 상주 보관소에
-  섞이고 같은 세대 번호에서 하나가 거부된다. 그래서 셋을 함께 지정한다 —
+  계약월이라 상주·LONG·SHORT 가 **같은 잎 이름**을 갖고, 그 두 경로는 **잎 이름만**으로 키를
+  잡는다(`:443-444`). 결과는 **동시성에 따라 갈린다** — 기본 락이 공유라 직렬이면 거부가
+  아니라 **섞인다**(세대는 `backup_root` 단위 `:49-51`, 잎별 파생 설정은 매 실행 재생성
+  `:54`), 락을 우회해 동시가 되면 `:49-55` 대로 **둘째가 산출물 충돌로 거부된다**.
+  (래퍼 헤더의 `COLD_LOCK` 항목 `:86-92` 는 같은 말을 **락 우회**라는 다른 계기로 하는 유사
+  진술이고 기본 설정 tenant 실행에 대한 진술이 아니다 — 2026-10-09 재검토.)
+  그래서 셋을 함께 지정한다 —
   `COLD_DATA_DIR` · **`COLD_CONFIG_DIR=~/.local/state/tos/cp3-setup-d-long-ops`** ·
   **`COLD_TARGET_BORN_ON=<이 잎의 첫 부팅일>`**(기본 `2026-10-06` 을 두면 genesis 전 부재가
   조용한 rc 0 이 아니라 **rc 1 refused** 다). 그리고 그 ops 의 `evidence_cold_backup.yaml`
