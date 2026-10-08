@@ -1030,6 +1030,57 @@ def test_the_parameter_dependence_citation_still_points_at_real_text() -> None:
     assert block.rindex('"interpretation": (') > block.rindex("run.measure(")
 
 
+def test_the_byeolpyo_citations_point_at_the_rows_they_claim() -> None:
+    """The 별표 line ranges are checked against the committed evidence texts.
+
+    Same defect class as the verifier's blocker, one file over: a line-pinned
+    citation that nobody resolves. These ranges became checkable when the
+    evidence landed on main (#879), so they get checked rather than trusted —
+    and the mini and full rows must resolve to DIFFERENT text, which is the
+    specific confusion design v2 §2.1 records v1 making.
+    """
+    import re
+
+    repo_root = Path(pvl.__file__).resolve().parents[2]
+    seen: dict[str, str] = {}
+    for prefix in ("A05", "101"):
+        row = pvl.KRX_PREFIX_TABLE[prefix]
+        match = re.search(r"([\w./-]+\.txt):(\d+)-(\d+)", row["evidence"])
+        assert match, f"{prefix} evidence is not a resolvable range: {row['evidence']}"
+        path, start, end = match.group(1), int(match.group(2)), int(match.group(3))
+        lines = (repo_root / path).read_text(encoding="utf-8").splitlines()
+        cited = "\n".join(lines[start - 1 : end])
+
+        assert (
+            row["product"] in cited
+        ), f"{path}:{start}-{end} does not contain {row['product']!r}"
+        assert f"{row['regular_session_contracts']:,}" in cited
+        assert f"{row['night_session_contracts']:,}" in cited
+        # The parenthesised 유동성관리상품 values live in the same row.
+        assert f"({row['liquidity_managed_regular_contracts']:,})" in cited
+        seen[prefix] = cited
+
+    assert seen["A05"] != seen["101"], (
+        "the mini and full rows resolve to the same text; the citation cannot "
+        "distinguish the products it is there to distinguish"
+    )
+
+
+def test_the_price_limit_stage_citation_points_at_byeolpyo_14() -> None:
+    """The ratios, likewise resolved rather than trusted."""
+    repo_root = Path(pvl.__file__).resolve().parents[2]
+    cited = (
+        repo_root / pvl._EVIDENCE_DIR / "byeolpyo14_price_limit_ratios.txt"
+    ).read_text(encoding="utf-8")
+    lines = cited.splitlines()
+    window = "\n".join(lines[18:25])  # the :19-25 the module cites
+
+    assert "주가지수선물거래" in window
+    for stage, ratio in pvl.KRX_PRICE_LIMIT_STAGES:
+        assert f"{stage}단계" in window
+        assert f"{int(ratio * 100)}%" in window
+
+
 def test_no_live_line_pinned_citation_of_that_file_survives_in_the_probe() -> None:
     """A line-number citation of a file this PR edits will go stale again.
 
