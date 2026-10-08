@@ -15,8 +15,10 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
   data dir(`~/.local/state/tos/paper-data/<월물>`)은 이 PR 이 **건드리지 않았다**
   (결정 3 「상주 잎·상주 설정 불변」 — 상주 콘텐츠를 바꾸면 전략 키 변화로 부팅 리플레이가
   held 가 된다, 런북 `docs/runbooks/tos-paper-boot.md` §7.10 6).
-- **SHORT 는 여기 없다.** DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
+- **SHORT 는 여기 없다 — 자기 트리에 있다: `config/tos_runtime/cp3-setup-d-short/`**
+  (착지 2026-10-09). DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
   `z_x1000 >= +1800` 을 쓰는 **자기 파일·자기 트리**를 갖는다(결정 4; kickoff §5 3 마지막 줄).
+  두 트리의 차이 목록과 **SHORT parity 공백**은 그 트리의 `README.md` §3 에 있다.
 
 ## 2. 환경 라벨은 `paper` 다 — tenant 식별자가 아니다
 
@@ -141,9 +143,14 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
 1. **`max_age_ms` 의 실제 원천** — 값 자체는 등급 C 로 **적용됐다**(§5). 남은 것은 ③ 실시간
    생산자를 측정한 뒤의 **하향 또는 재도출**이고, 그 전까지 180,000 은 봉 주기에서 도출한
    개발 측 제안이지 승인된 원천값이 아니다.
-2. **SHORT 트리** — 결정 4 의 나머지 반쪽. 별도 렌더·별도 트리·별도 data dir.
-3. **data dir 의 genesis 와 콜드 백업 편입** — 이름은 **지정됐다**(아래 §8). 남은 것은
+2. **data dir 의 genesis 와 콜드 백업 편입** — 이름은 **지정됐다**(아래 §8). 남은 것은
    ① 첫 부팅(④)이 만드는 genesis 와 ② 콜드 백업 `COLD_DATA_DIR` 지정(운영자 결정).
+3. **SHORT parity 실행** — SHORT 트리는 **착지했다**(`config/tos_runtime/cp3-setup-d-short/`,
+   2026-10-09)지만 그 방향에는 **parity 증거가 0 이다**: B1b 실행이 LONG 단독이었고(선언된
+   차이 **B1b-D5**) 그래서 공표된 규칙 수준 일치 374/374 는 **LONG 쪽 수치**다. 더해서 결정 5
+   가 삭제한 `short_blocked_regimes` 는 레거시에서 **SHORT 에만** 걸려 있던 가드라 그 손실이
+   SHORT 트리에 비대칭적으로 떨어진다. 목록은 그 트리 `README.md` §3.3 이다 — 두 트리를 함께
+   읽어야 하므로 여기에도 적는다.
 
 ## 8. data dir · 렌더된 설정 — 지정 2026-10-09 (결정 3)
 

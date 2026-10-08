@@ -420,8 +420,36 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    여전히 `null` 이라 갱신할 활성화 기록이 없고 **digest 리터럴을 지어내지 않았다** — 활성화 자체는
    ④ 의 일로 남는다.
 
-   LONG/SHORT 는 각각 렌더이며 SHORT 파일·SHORT 트리는 아직 없다(DSL 에 abs() 가 없어 진입 비교가
-   한 변뿐이므로 SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
+   ✅ **SHORT 트리 착지 2026-10-09 — `config/tos_runtime/cp3-setup-d-short/`** (결정 4 의
+   나머지 반쪽). LONG 트리의 사본 + **선언된 방향 차이**이고, **31 파일 = LONG 과 바이트 동일
+   23 + 다름 6 + SHORT 전용 2**(`README.md` · `strategies/setup_d_short.strategy.yaml`; LONG 의
+   전략 파일은 이 트리에 없다). DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
+   `z_x1000 >= +1800`(op **GE**, 바인딩 `z_entry_min_x1000: 1800`)을 쓰는 자기 파일을 갖는다.
+
+   **방향이 사는 자리 다섯** — 런북 §7.10 3 이 셋을 열거하고(`construction.yaml::action_class`
+   `/outbound_side` · OCP 의 DIRECTION 축 · 전략 파일의 `direction`) 이 트리가 둘을 더한다:
+   `marketfeed.yaml::direction`(발행되는 모든 캡슐의 `SafetyCriticalFacts` 로 들어간다) ·
+   **진입 비교의 변과 그 바인딩**. 다섯 전부를
+   `tos/runtime/tests/compose/test_tenant_tree_short.py` 가 LONG 사본과 대조해 고정한다.
+   정책 id 는 **셋**이 SHORT 전용이다(venue · critical_input · **OCP**) — OCP 가 LONG 트리에서
+   rename 대상이 아니었던 이유는 타입 콘텐츠가 같았기 때문이고, 이 트리는 DIRECTION 축이
+   갈리므로 같은 기준(「내용이 갈렸는가」)으로 rename 된다.
+   ⚠ **실측 2026-10-09**: OCP 의 `canonical_digest` 는 DIRECTION 축을 바꿔도, **`policy_id` 를
+   바꿔도** 달라지지 않는다(OCP 헤더의 KNOWN LIMITATION 보다 한 걸음 더 나쁘다). 그래서 그
+   rename 은 digest 를 가르지 못하고 활성화 키의 **`member_id` 만** 두 문서를 구별한다.
+   VCP 는 반대로 digest 가 `_model_view.shape_constraints` 를 덮는다(`tick_size` 하나로 달라짐).
+
+   ⚠ **SHORT 에는 parity 증거가 0 이다** — 그 트리 `README.md` §3.3. B1b 실행이 LONG 단독
+   (**B1b-D5**)이었으므로 §5 2 의 「규칙 수준 374/374 = 100 %」는 **LONG 쪽 수치**이고, 레거시
+   SHORT 발화 176 은 전부 `LEGACY_ONLY_ENTRY` 로 그 차이에 귀속됐다. 더해서 결정 5 가 삭제한
+   `short_blocked_regimes` 는 레거시에서 **SHORT 에만** 걸려 있던 가드이므로
+   (`long_blocked_regimes` 는 빈 리스트다) 그 손실은 이 방향에 **비대칭적으로** 떨어진다.
+   ⚠ **B1a 필드에 SHORT 변종을 만들지 않았다 — 실측 근거**: 방향 의존 게이트
+   (`stall_ok`·`reversal_ok`)의 방향은 배포 설정이 아니라 **z 의 부호**에서 나오므로
+   (`shared/decision/setups/vwap_reversion.py`: `z >= +extreme` → short) SHORT 규칙이 발화할 수
+   있는 봉에서는 이미 숏 쪽 게이트가 평가돼 있다. `vwap_reverted` 는 `abs(z) <= band` 로 대칭,
+   `entry_window`·`eod`·`hi_vol` 은 방향 무관이다. **long 전용 필드는 없었다.**
+   ⚠ **이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다** — ④ 가 미착수라 그 경로가 없다.
 4. **paper 검증**(결정 3·4·8·9) — 방향별 data dir, 런북 §3 절차, 재시작·리플레이·콜드 백업 복원 drill
    증거. 결정 9 **와 band 원천 웨이브**(2026-10-08 설계 §6 — `price_min/max` 가 null 이면 step 3 가 UNKNOWN)가 닫히기
    전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.

@@ -1,0 +1,43 @@
+# CP-3 tenant (Setup D / **SHORT**) — config-sourced 피연산자 바인딩.
+#
+# LONG 사본은 `config/tos_runtime/cp3-setup-d-long/strategy_bindings.yaml` 이고, 두
+# 파일의 차이는 **키 이름과 부호뿐**이다(아래 도출).
+#
+# 자리: `strategies/` 의 **형제**이고 그 안이 아니다 —
+# tos/runtime/src/tos_runtime/strategy/bindings.py 모듈 docstring("a SIBLING of
+# strategies/, never inside it"): strategies/ 안에 두면 loader 의 stray-file
+# 규칙이 디렉터리 전체를 거부한다.
+#
+# 키는 strategy 파일의 **stem** 이다 — setup_d_short.strategy.yaml →
+# "setup_d_short.strategy". `config_binding_version` 은 그 전략 파일 자신의 값과
+# **같아야** 한다(resolve.py 규칙 2). 참조되지 않는 키는 거부된다(규칙 4) —
+# 그래서 이 파일에 `z_entry_max_x1000`(LONG 쪽 이름)을 남겨 둘 수 없다.
+#
+# ── z_entry_min_x1000 = +1800 의 도출 ──────────────────────────────────────
+# 레거시 Setup D 의 극단 임계는
+#   config/strategies/futures/setup_d_vwap_reversion.yaml 74행
+#   `extreme_atr_mult: 1.8`
+# 이고, 레거시 진입 조건은 `abs(z) >= extreme_atr_mult` 다
+# (shared/decision/setups/vwap_reversion.py). B1a 는 z 를 **천분의 일 단위
+# 정수**로 공개한다 — lineage 의 `z_x1000`: unit=atr, scale=thousandths,
+# multiplier=1000, sign=signed, quantization=truncate_toward_zero.
+# 따라서 **SHORT 쪽 변**은
+#   z_entry_min_x1000 = +trunc(extreme_atr_mult × 1000) = +trunc(1800) = 1800
+# 이고 DSL 조건은 `z_x1000 >= +1800` 이다. DSL 에 abs() 가 없으므로(DSL-G1) 양변 중
+# **방향에 맞는 한 변**만 비교한다 — LONG 배포는 `z_x1000 <= -1800` 을 쓰는 자기
+# 파일을 갖는다(결정 4: 방향마다 따로 렌더).
+# 이 등식은 테스트로 고정돼 있다 (LONG 사본과 **같은 모양의 등식 테스트**):
+#   tos/runtime/tests/compose/test_tenant_tree_short.py
+#   ::test_short_z_entry_binding_is_plus_trunc_extreme_atr_mult_times_1000
+# 그 테스트는 `extreme_atr_mult` 를 **그 YAML 에서 읽는다** — 테스트 지역 리터럴을
+# 쓰면 두 YAML 을 바꿔도 초록이고 출하된 도출이 거짓이 된다(B1b 쪽 같은 테스트의
+# 2026-10-08 리뷰 교훈).
+#
+# ⚠ quantization 은 truncate_toward_zero 이므로 +1800 은 **보수적**이다:
+# 레거시가 z = +1.7999 를 진입으로 보지 않는 것과 같이, x1000 정수 +1799 는
+# +1800 보다 작으므로 GE 가 거짓이다. LONG 쪽의 대칭 문장은 그 파일에 있다.
+strategies:
+  setup_d_short.strategy:
+    config_binding_version: cp3-b1b-bind-1
+    bindings:
+      z_entry_min_x1000: 1800

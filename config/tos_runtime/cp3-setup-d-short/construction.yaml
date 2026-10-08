@@ -1,0 +1,103 @@
+# =============================================================================
+# construction.yaml — CP-3 tenant (Setup D / LONG)
+# =============================================================================
+# ⚠ TENANT TREE — 상주 `config/tos_runtime/paper/` 의 같은 파일에서 갈라져 나왔다.
+#   **런타임이 읽는 값 차이는 두 칸**: `price_field_key` · `shape_price_field_key`
+#   (`"close"` → `"close_x100"`; 이유와 고치지 않았을 때의 경로는 그 두 칸 위 주석).
+#   나머지 값은 상주 승인값 그대로다. 아래 「부팅 증명 픽스처」 문단은 그 상주 파일에서
+#   함께 온 것이고 **이 트리에서는 전략이 다르다** — 이 트리의 전략은
+#   `strategies/setup_d_long.strategy.yaml`(규칙 셋, Setup D)이고 `bootproof_band` 가
+#   아니다. 방향·좌표·스코프에 관한 문단은 두 트리에 그대로 유효하다.
+#   트리 전체의 범위는 이 트리의 `README.md`.
+#
+# 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
+#
+# 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §3 선택지 (가)
+#       (운영자 선택 2026-09-23) · 상위 계획 §7.8
+#       (docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md)
+#
+# 이 파일이 무엇이고 무엇이 아닌가:
+#   이것은 `run` 이 **틱을 소비하는지** 만 증명하기 위한 최소 구성이다. 채택 스코프가
+#   `SYNTHETIC_FUTURES_ORDER`(브로커 미도달, broker_scopes.yaml)이므로 실주문 0 · 브로커
+#   호출 0 이다. **거래 전략이 아니며**, 여기 박힌 방향(SHORT)은 이 배포가 숏 전용임을
+#   뜻하지 않는다 — 현 설계에서 `DIRECTION` 은 배포 전체에 하나만 줄 수 있고
+#   (order_construction_policy.yaml:185-194 · venue/construction_rules.py `ActionClassShape`
+#   독스트링), **대칭은 전략 제안 경로가 착지한 뒤** 시도별 조회로 풀린다. 그 사이의
+#   증거로 같은 픽스처를 `--direction SHORT` 로도 렌더해 **양방향 모두 부팅됨**을 남긴다.
+#
+# 원본 템플릿: tos/runtime/config/construction.example.yaml
+# 로더: tos_runtime.compose._construction_config.load_construction_config
+#       (compose/_construction_config.py:167 · 부재 검사 :104-105)
+# 호출부: compose/_run_dispatch.py:94-99 (`dispatch_run` 1단계, 무조건)
+#
+# 좌표 칸(`account`/`instrument`)은 **커밋되지 않는다.** named-TBD `"TBD"` 로 두고
+# `scripts/tos/render_paper_config.py` 가 저장소 밖 렌더 디렉터리에서만 채운다
+# (설계 §1 표 · §2). `"TBD"` 는 이 로더가 이름으로 거부하는 형태다
+# (`_construction_config.py:_require_str`/`_require_action_class` — `_TBD_STR`).
+# =============================================================================
+
+# [좌표] 렌더 시 `.env.mock::KIS_FUTURES_ACCOUNT_NO` 에서 주입(설계 §1 표 1행).
+# venue_constraint_policy.yaml:58 `scope.accounts` ·
+# order_construction_policy.yaml:88 `scope.accounts` ·
+# aggregate_risk_policy.yaml:43 `account_scope` ·
+# action_flow_policy.yaml:54 `account_scope` 와 **같은 값이어야 한다**
+# (compose/_venue_wiring.py:139-142 · compose/_riskstate_wiring.py:86-89 이 대조한다).
+account: "TBD"
+
+# [좌표] 렌더 시 `shared.instruments.futures.get_front_month_code(product="mini")`
+# (설계 §1 표 2행 — 근월물은 만기마다 바뀌므로 파일에 고정하지 않는다).
+instrument: "TBD"
+
+# SHORT 구성의 액션 클래스. order_construction_policy.yaml `scope.action_classes`
+# 가 NEW_LONG/NEW_SHORT/CLOSE 를 허용하고, 같은 파일의
+# `direction_side_and_position_effect_rules` 가 "NEW_SHORT↔SELL/OPEN" 으로 짝을 고정한다.
+# 커널 열거: tos/src/tos/venue/vocabulary.py `ActionClass`.
+#
+# ⚠ **이 토큰이 CLOSE 의 SIDE 까지 정하지는 않는다.** 런타임은 `action_class` 가 방향을
+# **이름에 담은** 클래스(NEW_LONG/NEW_SHORT)일 때만 그 이름에서 방향을 읽고, `CLOSE` 는
+# 방향 무관 클래스라 **OCP 의 `DIRECTION` 축**으로 떨어진다
+# (`compose/_envelope_wiring.py::resolve_construction_direction` — 그 함수가 방향을 푸는
+# **유일한** 자리다). 그래서 이 트리의 CLOSE 는 축 `SHORT` → `CLOSE.SHORT` →
+# **BUY** 로 풀린다(숏을 닫는 매수). 두 줄은 함께 움직여야 한다.
+action_class: "NEW_SHORT"
+
+# 세션 게이트가 읽는 캘린더 클래스 — 이 트리의 `calendar.yaml` 이
+# 선언하는 두 클래스 중 KRX 지수선물 쪽(CONTINUOUS 08:45-15:45 KST MON-FRI).
+# 같은 트리의 `venue_constraint_policy.yaml::_runtime.instrument_class` 가 같은 토큰을
+# 적는다(상주 사본은 이 자리를 `:71` 로 인용했는데 그 행은 `policy_id` 였고, 이 트리는
+# 헤더가 길어져 행 번호가 또 달라진다 — 행 번호 인용은 조용히 썩으므로 키 경로로 쓴다).
+instrument_class: "krx-index-futures"
+
+# OCP `_runtime.construction.action_class_shape` 의 `NEW_SHORT → SHORT → side` 값
+# 그대로. 게이트웨이가 명령의 파생 SIDE 축과 이 값의 일치를 요구한다
+# (tos/src/tos/egressgw/gateway.py `OrderCommand` SIDE 축 대조).
+# LONG 트리의 같은 칸은 `NEW_LONG → LONG → side` = `BUY` 다.
+outbound_side: "SELL"
+
+# critical_input_policy.yaml 이 선언하는 `fields[].field_key` 중 하나여야 한다
+# (이 로더는 그 파일을 볼 수 없다 — `compose/_construction_config.py` 모듈 독스트링:
+#  「a governance gap this loader cannot see or refuse from inside construction.yaml alone」).
+#
+# ⚠ **TENANT TREE 에서 바뀐 값이다.** 상주 트리의 이 두 칸은 `"close"` 이고, 그것은 상주
+# 부팅 증명 정책이 선언하는 세 필드(close/lower_band/upper_band)를 가리킨다. 이 트리의
+# `critical_input_policy.yaml` 은 B1a 의 열다섯 필드를 선언하고 **`close` 라는 키는 없다**
+# — 가격 꼴 필드의 이름은 `close_x100` 이다. 그래서 두 칸을 `close_x100` 으로 바꿨다.
+#
+# 왜 `close_x100` 인가: 이 키가 가리키는 값이 **주문 가격**이 되고, venue 정책의
+# `tick_size: 2` 는 **×100 정수 가격 스케일**의 틱이다(= 0.02 포인트 — mini 규정값,
+# 시행세칙 제4조의9 제2호; 2026-10-09 에 5 에서 정정됐다). B1a 의 `close_x100`
+# 이 바로 그 스케일(unit `index_point` · scale `hundredths` · multiplier `100`,
+# `produce_fields._price_field`)이므로 두 축이 같은 격자 위에 있다. `z_x1000`(ATR 천분율)
+# 이나 불린 게이트는 가격이 아니다.
+#
+# 고치지 않으면 무엇이 되는가(실측 경로): `price_field_key` 가 non-None 이므로
+# `_price_for`(`tos/src/tos/egressgw/construction.py::OrderConstructionStage._price_for`)는
+# 값 뷰에서 투영을 시도하고, **키가 없는 populated view** 는
+# `admitted_price_from_view` 의 독스트링대로 「capsule source 와 snapshot lineage 는 있고
+# **값은 없는**」 관측을 내며 `derive_order_size` 가 「no positive finite value」로 거부한다.
+# 즉 조용히 틀린 가격을 쓰지는 않지만, **거부 사유가 설정 불일치를 지목하지 않는다** —
+# 두 로더가 서로를 볼 수 없어서다. 아래 테스트가 그 교차를 대신 본다:
+# `tos/runtime/tests/compose/test_deploy_policies.py`
+# ::test_tenant_construction_price_field_keys_are_declared_critical_inputs.
+price_field_key: "close_x100"
+shape_price_field_key: "close_x100"
