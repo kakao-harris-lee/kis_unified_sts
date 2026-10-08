@@ -373,6 +373,33 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    **하나라도 `null` 이면 로더가 그 키 이름으로 거부한다**(tmp 사본), ③ 위 산술(1분봉 ≥
    800 ms 예산)을 고정한다.
 
+   **✅ data dir · 렌더된 설정 — 지정 2026-10-09 (결정 3 의 「방향마다 따로」).**
+   **이름만 지정했고 디렉터리는 만들지 않았다** — genesis 는 첫 부팅(④)이다.
+
+   | 배포 | durable set 부모 | 잎 | 렌더된 설정 |
+   | --- | --- | --- | --- |
+   | 상주 paper (불변) | `~/.local/state/tos/paper-data` | `<종목>` | `~/.config/tos/paper-config` |
+   | tenant **LONG** | `~/.local/state/tos/cp3-setup-d-long-data` | `<종목>` | `~/.config/tos/cp3-setup-d-long-config` |
+   | tenant **SHORT** | `~/.local/state/tos/cp3-setup-d-short-data` | `<종목>` | `~/.config/tos/cp3-setup-d-short-config` |
+
+   이름 규칙은 **「설정 트리 이름 + `-data`/`-config`」**다 — 경로만 보고 어느 코퍼스가 어느
+   트리로 부팅됐는지 알 수 있어야 한다(런북 §5 ⑤: 활성화 기록은 방향을 결속하지 않는다).
+   모드·규율은 상주와 같다(부모·잎 0700 · 스토어 0600 · 저장소 밖). ⛔ 방향을 한 data dir
+   에 섞지 않고 상주 잎에도 섞지 않으므로 LONG·SHORT 는 **부모부터** 다르다(런북 §7.10 3).
+
+   **충돌 실측 2026-10-09(읽기 전용 점검)**: ① 콜드 백업 래퍼
+   `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본 `paper-data`)의
+   **직접 자식** 중 `A0[0-9][0-9][0-9][0-9]` 만 잎으로 세고 **`~/.local/state/tos/*` 를
+   글로브하지 않는다** → 두 부모는 보이지 않으므로 **백업되지 않는다**(켜는 것은 운영자
+   결정; 잎을 `<종목>` 으로 둔 덕에 래퍼 수정 없이 `COLD_DATA_DIR` 지정만으로 된다).
+   ② 설정 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 의 세 경로는 전부
+   `paper-cold/` 아래 절대경로 리터럴 — 글로브·`~` 전개 없음, 충돌 없음. ③ A1 측정
+   아티팩트는 `~/.local/state/tos/measure/` 아래 — 충돌 없음. ④ ⚠ 상주 세션 래퍼의 렌더
+   출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는 **하드코딩**(환경 손잡이가
+   아니다)이라 **그 래퍼로는 이 tenant 를 띄울 수 없다** — ④ 의 일이다. ⑤ ⚠ 이름 인접:
+   `~/.config/tos/paper-config-short` 가 이미 있는데 그것은 **2026-09-28 상주 SHORT
+   부팅증명**의 산출물이고 CP-3 SHORT 와 무관하다. 전체 표는 런북 **§7.2-b**.
+
    **③·④ 는 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
    「렌더의 전략 파일 상수 한 줄 교체」가 **아니다** — 그 스크립트의 좌표 규칙은 앵커 줄이
    **정확히 1회** 매칭될 것을 요구하는데(`_apply_rules`) tenant 전략 파일은 규칙이 셋이라

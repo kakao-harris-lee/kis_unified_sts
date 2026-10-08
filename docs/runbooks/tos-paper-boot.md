@@ -994,6 +994,53 @@ find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
 `~/.local/state/tos/paper-data` 는 2026-10-04 현재 **아직 없고**(실측) genesis 는 10-06 이라
 패치가 먼저다.
 
+#### 7.2-b CP-3 tenant durable set — **지정만 했다 (2026-10-09) · 디렉터리는 없다**
+
+§7.2 의 표는 **상주 배포**의 것이다. CP-3 첫 tenant(Setup D)는 kickoff 결정 3·4 대로
+**방향마다 따로** 돌므로 자기 durable set 과 자기 렌더 산출물을 갖는다. 이 절은 그
+**이름을 지정**하는 자리이고, 아래 어느 디렉터리도 **아직 만들지 않았다** — genesis 는
+그 잎의 **첫 부팅**이다(§7.6 과 같은 규율; CP-3 kickoff §5 3 ④ 는 미착수).
+
+| 배포 | durable set **부모** | **잎** | 렌더된 설정 |
+| --- | --- | --- | --- |
+| 상주 paper | `~/.local/state/tos/paper-data` | `paper-data/<종목>` | `~/.config/tos/paper-config` |
+| CP-3 tenant **LONG** (`config/tos_runtime/cp3-setup-d-long/`) | `~/.local/state/tos/cp3-setup-d-long-data` | `cp3-setup-d-long-data/<종목>` | `~/.config/tos/cp3-setup-d-long-config` |
+| CP-3 tenant **SHORT** (`config/tos_runtime/cp3-setup-d-short/`) | `~/.local/state/tos/cp3-setup-d-short-data` | `cp3-setup-d-short-data/<종목>` | `~/.config/tos/cp3-setup-d-short-config` |
+
+**이름 규칙은 「설정 트리 이름 + `-data` / `-config`」다** — data dir 이름을 설정 트리
+이름에서 **도출할 수 있어야** 어느 코퍼스가 어느 트리로 부팅됐는지 경로만 보고 알 수 있다
+(§5 ⑤: 활성화 기록은 방향을 결속하지 않으므로 경로가 그 역할을 한다).
+
+**모드·규율은 상주와 같다**: 부모·잎 디렉터리 **0700**, 스토어 파일 **0600**(결정 레코드가
+계좌번호를 평문으로 싣는다 — §7.2-a), 렌더된 설정 디렉터리 **0700**, 전부 저장소 밖.
+
+⛔ **방향을 한 data dir 에 섞지 않는다. 상주 잎에도 절대 섞지 않는다**(§7.10 3). 섞인
+코퍼스는 §5 ⑤ 때문에 나중에 digest 로 갈라낼 수 없다. 그래서 LONG·SHORT 는 **부모부터**
+다르다 — 같은 부모 아래 `long/`·`short/` 두 잎을 두는 배치를 쓰지 않은 이유는 그 부모가
+콜드 백업 래퍼에게 「계약월 잎들의 부모」로 보이고, 그 래퍼의 잎 열거는 `A0####` 패턴
+하나뿐이기 때문이다(아래).
+
+⚠ **콜드 백업에는 아직 들어 있지 않다 — 운영자 결정 자리다.** 실측(2026-10-09):
+- 래퍼 `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본
+  `~/.local/state/tos/paper-data`)의 **직접 자식**만 훑고 `A0[0-9][0-9][0-9][0-9]` 에 맞는
+  디렉터리만 잎으로 센다. 나머지는 `STRAY` 경고 한 줄이다. **`~/.local/state/tos/*` 를
+  글로브하는 코드는 없다.** 그러므로 위 두 부모는 오늘 래퍼에게 **보이지 않는다** —
+  백업되지 않는다.
+- 켜려면 `COLD_DATA_DIR` 를 그 부모로 지정해 **한 번 더** 돌린다(래퍼는 호출당 부모 하나다).
+  잎을 `<종목>` 으로 둔 것이 그래서다 — `A0####` 패턴에 그대로 맞아 래퍼 수정이 필요 없다.
+- 설정 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 의 세 경로는 전부
+  `~/.local/state/tos/paper-cold/` 아래 **절대경로 리터럴**이고 글로브·`~` 전개가 없다.
+  래퍼는 그 셋이 한 부모를 공유하지 않으면 거부한다. **충돌 없음.**
+
+⚠ **상주 세션 래퍼는 이 tenant 를 띄우지 못한다**(실측): `~/.config/kis-probes/
+tos-paper-session.sh` 의 렌더 출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는
+**환경 손잡이가 아니라 하드코딩**이다(`TOS_PAPER_DATA_DIR` 과 달리 덮어쓸 수 없다).
+tenant 부팅은 별도 호출 경로가 필요하고 그것은 ④ 의 일이다.
+
+⚠ **이름 인접 주의**: `~/.config/tos/paper-config-short` 가 **이미 있다** — 2026-09-28
+**상주** SHORT 부팅증명 캠페인의 산출물이고(§0 의 양방향 부팅) CP-3 SHORT tenant 와 **무관**
+하다. CP-3 쪽은 `cp3-setup-d-short-config` 다.
+
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
 0. **전제 좌표** — 인터프리터(`$MAIN/.venv/bin/python`) · 드라이버 · `$MAIN/.env.mock` ·
