@@ -609,11 +609,14 @@ def kst_sample_window(now: datetime) -> dict[str, Any]:
         "continuous_session_source": session_source,
         "expected_stage_is_determined": inside_no_escalation,
         "why": (
-            "Inside the no-escalation window only stage 1 can be in force, so "
-            "L2's expected band is DETERMINED and a mismatch is a FAIL. Outside "
-            "it, a 2/3단계 band is admissible, so a mismatch is recorded with "
-            "the stage that matched and carries no verdict (design v2 §4.2: "
-            "「그날의 확대 사실을 기록만」)."
+            "The WINDOW decides whether L2 carries a verdict at all, and it is "
+            "tested first. Outside the no-escalation window a 2/3단계 band is "
+            "admissible, so stage 1 matching is CONSISTENT with 제56조 but does "
+            "not DISCRIMINATE — the venue could be in stage 1, or a wider stage "
+            "could simply never have been triggered. The matched stage is "
+            "recorded and the leg carries NO verdict, match or not (design v2 "
+            "§4.2 「그날의 확대 사실을 기록만」). Inside the window stage 1 is the "
+            "only admissible band: a match is PASS and a mismatch is FAIL."
         ),
     }
 
@@ -1124,15 +1127,15 @@ def _leg_l2(
     """L2 — 제56조 arithmetic against the observed band. No network. Never raises.
 
     THREE-way, because the design takes two samples with different epistemic
-    standing (§4.2):
+    standing (§4.2). The window is tested FIRST:
 
-    * inside the no-escalation window, stage 1 is the only admissible band, so a
-      mismatch is a genuine :data:`VERDICT_FAIL`;
-    * outside it, a 2/3단계 band is a legitimate market state. The old code
-      scored that ``FAIL`` while its own docstring called it legitimate — the
-      review's finding 5. It now returns :data:`VERDICT_RECORDED` with the stage
-      that matched, which is exactly what §4.2 asks for
-      (「그날의 확대 사실을 기록만」).
+    * **outside** the no-escalation window — :data:`VERDICT_RECORDED`, match or
+      not. A 2/3단계 band is admissible there, so stage 1 matching is consistent
+      with 제56조 but does not discriminate between "the venue is in stage 1"
+      and "a wider stage was simply never triggered". The matched stage is
+      recorded as the day's escalation fact (§4.2 「그날의 확대 사실을 기록만」).
+    * **inside** it, stage 1 is the only admissible band: a match is
+      :data:`VERDICT_PASS` and a mismatch is a genuine :data:`VERDICT_FAIL`.
 
     A mismatch is never an exception either way: the probe cannot choose the
     escalation state it finds.
@@ -1149,46 +1152,78 @@ def _leg_l2(
     )
     matched = stage1 in report["matching_stages"]
     determined = bool(window["expected_stage_is_determined"])
-    if matched:
-        verdict = VERDICT_PASS
-    elif determined:
-        verdict = VERDICT_FAIL
-    else:
+    # WINDOW FIRST, then the match. The reverse order (match first) made
+    # VERDICT_RECORDED unreachable on a match, so a stage-1 reproduction outside
+    # the no-escalation window was scored PASS — which contradicted all three
+    # governing texts at once (design v2 §5 conditions L2 PASS on 「①샘플에서」,
+    # runbook §5.9's leg table says 창 밖 = no verdict, and this module's own
+    # disposition_token docstring says L2_STAGE_RECORDED_ONLY "when L2 carries no
+    # verdict (outside the no-escalation window)"). PR #881's two artifacts were
+    # produced by that defect; they are records and stay as they are, but the
+    # band axis they feed is read under the written rule.
+    #
+    # Why the written rule is the right one: outside the window a 2/3단계 band is
+    # admissible, so stage 1 matching is CONSISTENT with the rule but does not
+    # DISCRIMINATE — the venue could be in stage 1 or could have been in a wider
+    # stage that simply had not been triggered. Only inside the window is stage 1
+    # the sole admissible band, and only there does a match license a verdict.
+    if not determined:
         verdict = VERDICT_RECORDED
+    elif matched:
+        verdict = VERDICT_PASS
+    else:
+        verdict = VERDICT_FAIL
     report["declared_expectation_matches"] = matched
     report["expected_stage_is_determined"] = determined
     report["verdict"] = verdict
     report["declared_expectation_note"] = (
         "The declared expectation is design §4.1 L2: 1단계 비율 8% at --symbol's "
-        "own 호가가격단위. It is the PASS criterion. It is only the DETERMINED "
-        "expectation inside the no-escalation window — outside it a 2/3단계 band "
-        "is admissible, so a mismatch is recorded without a verdict."
+        "own 호가가격단위. It is the PASS criterion ONLY inside the no-escalation "
+        "window, which is why the window is tested first. Outside the window the "
+        "leg carries no verdict WHETHER OR NOT this expectation matched — a "
+        "match there is consistent with 제56조 but does not discriminate between "
+        "stage 1 and an untriggered wider stage, so the matched stage is "
+        "recorded as the day's escalation fact instead of scored."
     )
     report["tick_provenance"] = tick.source
     run.measure("l2_band_rule_arithmetic", report)
 
-    if not matched:
+    # UNGATED on purpose. This used to fire only when the expectation did NOT
+    # match, so the outside-window + MATCH case — the one the reordered verdict
+    # exists for — shipped a no-verdict leg with no rationale anywhere in the
+    # artifact. Every leg that is not a plain PASS now explains itself.
+    if verdict != VERDICT_PASS:
         run.measure(
-            "l2_mismatch_record",
+            "l2_band_disposition_record",
             {
                 "verdict": verdict,
-                "recorded_not_interpreted": (
-                    "The 1단계 8% arithmetic did not reproduce the observed band. "
-                    "Stages that did are listed; if none did, 기준가격 may not be "
-                    "the settlement price, or the rounding or the unit differs. "
-                    "This probe records the fact and names the possibilities; it "
-                    "does not choose between them."
-                ),
+                "declared_expectation_matched": matched,
                 "matching_stages": report["matching_stages"],
                 "tick_points": str(tick.size),
                 "inside_no_escalation_window": window["inside_no_escalation_window"],
                 "why_this_verdict": (
                     "FAIL — the sample is inside the no-escalation window, where "
-                    "stage 1 is the only admissible band."
+                    "stage 1 is the only admissible band, and the 1단계 8% "
+                    "arithmetic did not reproduce the observed band."
                     if determined
-                    else "No verdict — outside the no-escalation window a 2/3단계 "
-                    "band is a legitimate market state, so the matched stage is "
-                    "recorded as the day's escalation fact (design v2 §4.2)."
+                    else "No verdict — the sample is OUTSIDE the no-escalation "
+                    "window, where a 2/3단계 band is a legitimate market state. "
+                    + (
+                        "The 1단계 expectation DID match, but outside the window "
+                        "that match does not discriminate between stage 1 and an "
+                        "untriggered wider stage, so it is recorded as the day's "
+                        "escalation fact rather than scored (design v2 §4.2)."
+                        if matched
+                        else "The 1단계 expectation did not match; the stage that "
+                        "did (if any) is recorded as the day's escalation fact "
+                        "(design v2 §4.2)."
+                    )
+                ),
+                "recorded_not_interpreted": (
+                    "Where the 1단계 8% arithmetic did not reproduce the band, "
+                    "기준가격 may not be the settlement price, or the rounding or "
+                    "the unit may differ. This probe records the fact and names "
+                    "the possibilities; it does not choose between them."
                 ),
             },
         )
