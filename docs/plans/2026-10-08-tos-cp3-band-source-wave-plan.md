@@ -9,6 +9,9 @@
   (B) `_runtime.band_source` 는 증거 digest 로 메우고 커널 covered 승격은 GOV-001 후보 등재만.
 - **v2 (2026-10-08, 독립 리뷰 PR #883 처분 — 9건 전건 수용, 기각 0)**: H1 계약 결속(§4.1·§4.4b) · M1 거래일 가드의 날짜
   출처와 레드 증명(§4.2·§4.4a) · M2 가격 척도 비교 대상(§4.1) · M3 커널 필드 스탠드인 표기(§4.3·§6) · L1~L5.
+- **v3 (같은 날, 재리뷰 6건 전건 수용)**: H1 의 응답 측 재확인은 가려진 절 → 삭제, GET 종목 출처 단일화 + transport 대조 ·
+  M1 입력을 운영 도달 가능 시퀀스로, 수치는 가상 표기 · `price_scale` 요구를 `band_source` 켜진 배포로 한정(상주 paper
+  ABORT 방지) · `scope.instruments` 경로 · `timeout_ms` 는 출처 없는 제안값(null 템플릿) · §4.6 「셋」의 켜기 전제 명시.
 - **범위 밖**: 커널(`tos/src/tos/`) 변경 · 실전 계좌·실주문(비협상 규칙) · 09-15 계획 §6 ⑤ 의 tradability 반쪽 ·
   CP-3 §5 3 ③ 의 실시간 필드 생산자(이 문서는 그 존재를 **전제 조건**으로만 적는다, §5).
 
@@ -90,12 +93,12 @@ _runtime:
   band_source:            # null = 끔(상주 paper 기본값; 오늘의 거동 그대로)
     kind: "kis_quote_get"
     tr_id: "FHMIF10000000"
-    instrument: "A05610"            # 렌더가 채운다 — 반드시 _model_view.scope 의 instrument 와 같아야 함(§4.4b)
+    instrument: "A05610"            # 렌더가 채운다 — 최상위 scope.instruments 의 유일 원소와 같아야 함(§4.4b)
     upper_field: "futs_mxpr"
     lower_field: "futs_llam"
     basis_field: "futs_sdpr"        # 증거로만 기록 — 판정에 쓰지 않음
     price_scale: 100                # 아래 _runtime.price_scale 과 같아야 함
-    timeout_ms: 5000                # 부팅 GET 상한 — 초과는 실패(모의 ReadTimeout 전례: P-CA 09-30)
+    timeout_ms: null                # 운영자 채택 대상 제안값(출처 없음 — 아래 참고); null 이면 band_source 를 켤 수 없음
     bound: "trading_date_kst"       # 거래일이 바뀌면 무효(§4.4a)
     read_on: ["boot", "phase_change"]
     failure: "unknown"              # 읽기·검증 실패 = band None = 커널 UNKNOWN
@@ -108,18 +111,31 @@ price_scale` 0건). `critical_input_policy.yaml:87-100` 은 가격 필드를 `un
 ③ 쪽 대조를 「미결」로 증거에 남기고 band 원천은 켜지 않는다(§5). `critical_input_policy.yaml` 의 `KRW/minor` 표기 불일치는
 별도 정정 대상으로 등재만 한다(이 웨이브 범위 밖).
 
-로더 규칙(전부 부팅 거부, 이름을 밝혀): `band_source` 가 non-null 인데 `_model_view.shape_constraints.price_min/max` 가
-리터럴이면 거부(원천 둘) · `band_source.instrument` ≠ 정책 `scope` 의 instrument 이면 거부(§4.4b) · `band_source.price_scale`
-≠ `_runtime.price_scale` 이면 거부 · `failure` 는 `"unknown"` 하나만 허용 · `read_on` 은 위 두 토큰의 부분집합만 ·
-`timeout_ms` 는 양의 정수 · transport 설정이 없으면 거부. `_runtime.band_source` 키가 **없으면 null 과 같다**(상주 paper
-트리를 건드리지 않기 위해).
+**`timeout_ms` 는 출처 있는 값이 아니다(재리뷰 LOW).** 이 디렉터리는 모든 값에 승인 출처 인용을 요구한다
+(`config/tos_runtime/README.md`). P-CA 09-30 의 모의 `ReadTimeout`(`… read timeout=20.0`)은 상한이 **필요하다**는 전례일 뿐
+값의 출처가 아니다. 그래서 템플릿은 `null`(named-TBD) 로 두고, 켜는 배포에서 운영자가 값을 채택한다 — 제안 5000 ms 는
+「부팅 경로를 막지 않을 만큼 짧고 모의 왕복 실측(수백 ms)보다 충분히 긴 값」이라는 근거뿐인 **제안**이다.
+
+**GET 의 종목은 한 출처에서만 온다(재리뷰 H1 부분).** 요청의 `FID_INPUT_ISCD` 는 **`band_source.instrument` 하나**다.
+`kis_quote` transport 설정에도 `instrument` 필드가 있으므로(`transport/kis_quote/config.py`), 그 transport 설정(band 원천이 켜진
+배포에 있으면 두 값이 같아야 부팅한다 — 출처가 둘인 채로 어긋나는 것을 로더가 막는다.
+
+로더 규칙 — **전부 `band_source` 가 non-null 일 때만 적용**되고, 위반은 이름을 밝혀 부팅 거부:
+`_model_view.shape_constraints.price_min/max` 가 리터럴(원천 둘) · `band_source.instrument` ≠ 최상위 `scope.instruments` 의
+유일 원소(로더가 `LoadedVenuePolicy.scope.instrument` 로 노출, `_venue_policy_loader.py:133,168`; §4.4b) · transport 설정의
+`instrument` 가 있고 `band_source.instrument` 와 다름(§4.4b) · `_runtime.price_scale` 부재 또는 `band_source.price_scale` 과
+불일치 · `failure` 가 `"unknown"` 이 아님 · `read_on` 이 위 두 토큰의 부분집합이 아님 · `timeout_ms` 가 양의 정수가 아님 ·
+transport 설정 부재. `_runtime.band_source` 키가 **없으면 null 과 같고**, 그때는 `_runtime.price_scale` 도 요구하지 않는다
+(재리뷰 MEDIUM — 무조건 요구하면 상주 paper 트리의 `_runtime`(`instrument_class`·`quantity_unit`·`currency` 뿐)이 PR-2 머지
+다음 08:45 에 ABORT 한다).
 
 ### 4.2 읽기 (`tos_runtime/venue/band_source.py`, 신규)
 
 - 기존 `kis_quote` transport 의 host seal(MOCK `rest_base` 정확 일치)과 `KisTokenLifecycle` 을 **재사용**한다 — 새 HTTP
   클라이언트·새 토큰 경로를 만들지 않는다.
 - 응답 → `BandObservation(instrument, price_min, price_max, trading_date, raw_payload_digest, source_continuity_id, as_of_ms)`.
-  `instrument` 는 요청의 `FID_INPUT_ISCD` 다. ⚠ `trading_date` 는 **응답에서 온 값이 아니라 로컬 도장**이다 — GET 시점의
+  `instrument` 는 요청의 `FID_INPUT_ISCD`(= `band_source.instrument`)이고 응답 본문에는 계약 식별자가 없다 — 그래서 계약
+  결속은 응답 검사가 아니라 **로더 규칙**이 맡는다(§4.4b). ⚠ `trading_date` 는 **응답에서 온 값이 아니라 로컬 도장**이다 — GET 시점의
   `calendar/owner.py::trading_date_now()`(형식 `YYYYMMDD`, `calendar/phase.py::trading_date_at`). 그래서 이 도장은 「메모리에
   들고 있는 낡은 band」만 잡고 「낡은 응답」은 잡지 못한다(§2 측정되지 않은 전제 · §4.4a).
   변환은 `Decimal` 정확 곱(`× price_scale`)이고 정수가 아니면 거부한다(반올림 금지 — 커널 §12 「silent rounding」 원칙과
@@ -163,9 +179,13 @@ price_scale` 0건). `critical_input_policy.yaml:87-100` 은 가격 필드를 `un
 `read_on: phase_change` 가 08:45 에 다시 읽기 때문이다. 두 겹이 가리는 절은 판별에 기여하지 않는다(#838). 그래서 입력을
 **그 둘을 걷어낸 상태**로 다시 쓴다.
 
-**입력**: phase 변화 재조회를 스텁으로 막고(reader 가 호출되지 않음), band reader 가 **전 거래일 도장**(`20261007`)의 관측
-— 상한 1159.18 — 을 돌려준 상태에서, `trading_date_reader()` 는 `20261008` 이고 그날의 실제 상한은 1080.00 이다. 가격
-1100.00 의 매수는 낡은 band 로는 ADMISSIBLE, 거래소에서는 거부.
+**입력(운영에서 도달 가능한 형태, 재리뷰 M1 부분)**: D 일 장중에 band 를 읽은 프로세스가 15:45~익일 08:45 의 `None` 창
+동안 `snapshot()` 을 **한 번도 부르지 않는다**(장 밖엔 틱이 없거나 호스트가 절전). D+1 에 처음 불릴 때 직전 스냅샷의
+phase 와 현재 phase 가 둘 다 정규장이면 phase 변화가 없어 재조회가 일어나지 않는다 — 이때 band 를 떨어뜨리는 것은 **거래일
+비교 하나뿐**이다. 값은 **가상**이다: D 상한 1159.18(10-08 `A05610` 실측 상한을 D 의 값으로 빌림, `P-VL-20261008T010644Z.json`)
+· D+1 기준가가 1000.00 이라 실제 상한 1080.00 이라고 **가정**하면, 가격 1100.00 의 매수는 낡은 band 로는 ADMISSIBLE,
+거래소에서는 거부. 단위 테스트는 이 시퀀스를 그대로 재현한다(D 도장 관측 → `snapshot()` 호출 없이 거래일 진행 → 같은
+phase 로 D+1 첫 호출).
 **가드**: `snapshot()` 의 **첫 `if`(tick generation 캐시 조기 반환) 앞에서** band 의 `trading_date` 를 현재 거래일과 비교하고,
 다르거나 둘 중 하나가 `None` 이면 band 를 버리고(상태 전이일 때만) 재발행한다 → `UNKNOWN`. 캐시 반환 뒤에 두면 tick
 generation 이 그대로인 동안 검사가 건너뛰어진다. **레드 증명**: 비교를 지우면 위 입력이 ADMISSIBLE 로 통과 → 테스트 실패.
@@ -185,9 +205,11 @@ v1 은 이를 **측정되지 않은 전제**로 등재하고, 첫 켜기(§9 3) 
 **왜 지금**: 10-12 롤에서 `scope.instrument` 가 새 정책 generation 으로 바뀐다. `kis_quote` transport 설정의 `instrument`
 는 poll 시점에만 확인되고 venue 정책 scope 와는 대조되지 않는다(기존 scope 대조는 정책 ↔ construction 뿐,
 `compose/_venue_wiring.py:127-153 _cross_check_scope`).
-**가드 둘**: 로더가 `band_source.instrument` ≠ 정책 scope instrument 를 부팅 거부(§4.1) · 런타임이 응답을 받을 때 요청한
-`FID_INPUT_ISCD` 가 정책 instrument 와 같은지 다시 확인하고 다르면 `None`. **레드 증명**: `A05610` 정책 + `A05611` band
-픽스처 → 두 검사 각각을 지우면 해당 테스트가 실패.
+**가드 둘(둘 다 로더)**: `band_source.instrument` ≠ 정책 `scope.instruments` 의 유일 원소 → 부팅 거부 · transport 설정의
+`instrument` ≠ `band_source.instrument` → 부팅 거부. v2 의 「런타임 응답 측 재확인」은 **삭제**했다 — GET 의 종목이
+`band_source.instrument` 하나에서 오므로 로더가 이미 확인한 값을 다시 비교하는 가려진 절이었다(재리뷰). **레드 증명**:
+(1) `A05610` 정책 + `band_source.instrument: A05611` → 첫 검사를 지우면 부팅되어 `A05611` band 로 1160.00 이 ADMISSIBLE ·
+(2) `band_source.instrument: A05610` + transport `instrument: A05611` → 둘째 검사를 지우면 부팅된다.
 
 ### 4.5 증거
 
@@ -205,7 +227,9 @@ v1 은 이를 **측정되지 않은 전제**로 등재하고, 첫 켜기(§9 3) 
 모든 실패는 `band None` → 커널 `UNKNOWN` → 송신 0 이다. 즉 이 웨이브의 최악은 **오늘과 같은 상태**이고, 새로 열리는
 fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막는 것은 **셋** — §4.2 검증 셋(척도·순서·격자·`rt_cd`) ·
 §4.4a 거래일 결속 · §4.4b 계약 결속. v1 은 둘이라고 적었고 계약 결속이 빠져 있었다(리뷰 H1). 셋으로 막지 못하는 것은
-§4.4a 의 잔여 위험(낡은 **응답**) 하나이고, 측정되지 않은 전제로 등재돼 있다.
+§4.4a 의 잔여 위험(낡은 **응답**) 하나이고, 측정되지 않은 전제로 등재돼 있다. 단 이 「셋」은 **켜기 전제** 하나와
+함께일 때만 참이다 — 가격 척도가 ③ 생산자 계약과 합의되기 전에는 `band_source` 를 켜지 않는다(§4.1 가격 척도 문단 · §5).
+척도가 어긋난 채 켜면 band 와 가격이 다른 단위로 비교된다.
 
 ## 5. 어느 배포에서 켜나
 
@@ -243,16 +267,19 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 ## 8. 테스트 (레드 증명은 절 단위)
 
 1. `band_reader=None` 회귀(그리고 `_runtime.band_source` 키 부재 = null): 오늘의 스냅샷·결정 증거 행이 바이트 단위로
-   같다 — §4.5 의 새 키는 이때 나오지 않는다.
+   같다 — §4.5 의 새 키는 이때 나오지 않는다. **상주 paper 의 실제 `venue_constraint_policy.yaml`**(`_runtime` 에
+   `price_scale` 없음)이 그대로 로드되는 것도 여기서 단언한다.
 2. band 주입 → 유효 제약의 `price_min/max` 가 채워지고 step 3 결정과 게이트웨이 item 11 이 **같은 값**을 본다
    (`compose` 통합 테스트 — stage 와 context 가 같은 객체를 읽는지).
 3. §4.2 검증 셋 각각 한 건씩: 비정수 척도 · `min ≥ max` · tick 격자 밖(tick 5 + 0.02 격자 band) · `rt_cd ≠ 0` → 전부
    `None` + `VENUE_BAND_OBSERVED.reason`.
-4. §4.4a 거래일 가드 — phase 재조회를 스텁으로 막고 전일 도장 관측을 주입한 입력. 비교 삭제 → red · 비교를 캐시 조기
+4. §4.4a 거래일 가드 — §4.4a 의 도달 가능한 시퀀스(장 밖 무호출 → 같은 phase 로 D+1 첫 호출). 비교 삭제 → red · 비교를 캐시 조기
    반환 뒤로 이동 → red.
-4b. §4.4b 계약 가드 — `A05610` 정책 + `A05611` band(10-08 P-VL 실측값). 로더 검사 삭제 → red · 응답 측 재확인 삭제 → red.
+4b. §4.4b 계약 가드 — 레드 증명 둘(§4.4b): scope ↔ `band_source.instrument` 검사 삭제 → red · transport ↔
+   `band_source.instrument` 검사 삭제 → red. band 값은 10-08 P-VL 실측(`A05611` 990.48/1162.72).
 4c. 재발행은 전이에서만 — 장 밖에서 `snapshot()` 을 N 번 불러도 constraint_generation 이 1 만 오른다.
-4d. `_runtime.price_scale` 부재·불일치 → 부팅 거부. 부팅 GET 이 `timeout_ms` 를 넘기면 `None` + `reason`.
+4d. **`band_source` 가 켜진 배포에서만** `_runtime.price_scale` 부재·불일치 → 부팅 거부(끈 배포의 부재는 §8 1 이 통과를
+   단언) · `timeout_ms: null` 로 켜면 부팅 거부 · 부팅 GET 이 `timeout_ms` 를 넘기면 `None` + `reason`.
 5. band 변화 → 새 Constraint Generation (§18) — phase 동일 · band 값만 다른 두 읽기에서 재발행이 일어나야 함. 조건을
    지우면 red.
 6. 로더 거부 전부(§4.1 — 원천 둘 · 계약 · 척도 · `failure` · `read_on` · `timeout_ms` · transport 부재).
