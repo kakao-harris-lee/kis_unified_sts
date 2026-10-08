@@ -164,9 +164,37 @@ class TestCoverageInvariantsUnchanged:
         report = coverage_report()
         assert report["census_count"] == 4
 
-    def test_total_is_22(self) -> None:
+    def test_total_is_23(self) -> None:
+        """A deliberate literal: the register grows only by an explicit edit.
+
+        The number is NOT derived (``canonical + census + followups`` is
+        tautological — every probe lands in exactly one bucket, so such an
+        assertion would block nothing). It is a hand-maintained count, so adding
+        a probe has to come here and say which one. What the 23 is made of:
+
+        * 12 canonical (draft §5) + 4 census (P0-2 plan §1 T2) — pinned above,
+          and those two MUST NOT move;
+        * 7 follow-ups, outside the ratified sets: P-NMPR, P-BAL, P-R5-PRE,
+          P-R5, N-19, P-CA, and P-VL (2026-10-08, CP-3 decision 9 corroboration
+          probe — ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
+          §4).
+        """
         report = coverage_report()
-        assert report["total"] == 22
+        assert report["total"] == 23
+        followups = sorted(
+            spec.probe_id
+            for spec in PROBES.values()
+            if not spec.source.startswith(("draft", "plan"))
+        )
+        assert followups == [
+            "N-19",
+            "P-BAL",
+            "P-CA",
+            "P-NMPR",
+            "P-R5",
+            "P-R5-PRE",
+            "P-VL",
+        ]
 
     def test_n19_still_unsupported_pca_no_longer_is(self) -> None:
         # N-19 is a documentary cross-check, not a script — it stays unsupported.
@@ -186,3 +214,86 @@ class TestCoverageInvariantsUnchanged:
             if key in _NON_TRADE_KEYS
         }
         assert touched == set(_NON_TRADE_KEYS)
+
+
+# ---------------------------------------------------------------------------
+# runbook §3 table <-> registry agreement
+#
+# The runbook calls itself a view of this register ("the single source for the
+# runbook table", registry.py:1), but nothing checked that. P-VL shipped with
+# 주문 발생 = 예 against emits_orders=False, contradicting its own
+# "QUERY (GET 전용)" cell and the note two lines below that reads the 예 set as
+# "모의투자 전용 order probes" — four reviewers found it independently, which is
+# what an unparsed table costs. The failing input for the test below is exactly
+# that row.
+# ---------------------------------------------------------------------------
+
+_RUNBOOK = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "runbooks"
+    / "kis-capability-probes.md"
+)
+
+#: The 주문 발생 column's vocabulary. ``n/a`` is not in use today; a cell that is
+#: none of these fails loudly rather than being read as "no".
+_ORDER_CELL_TRUTH = {"예": True, "아니오": False}
+
+
+def _runbook_order_column() -> dict[str, bool]:
+    """``{probe_id: emits_orders}`` as the runbook §3 table states it.
+
+    Deliberately strict: a row whose ID is bold-wrapped, or whose 주문 발생 cell
+    carries emphasis or a parenthetical ("**예 (실전)**" for P-R5), is normalised
+    rather than skipped. Skipping is how a table drifts — the row stops being
+    checked and nobody notices.
+    """
+    rows: dict[str, bool] = {}
+    for line in _RUNBOOK.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 8:
+            continue
+        probe_id = cells[0].replace("*", "").strip()
+        if probe_id not in PROBES:
+            continue
+        raw = cells[7].replace("*", "").strip()
+        token = raw.split("(")[0].strip()
+        assert token in _ORDER_CELL_TRUTH, (
+            f"runbook §3 row {probe_id!r} has an unreadable 주문 발생 cell "
+            f"{raw!r}; expected one of {sorted(_ORDER_CELL_TRUTH)}"
+        )
+        rows[probe_id] = _ORDER_CELL_TRUTH[token]
+    return rows
+
+
+def test_runbook_order_column_matches_the_register_for_every_row() -> None:
+    """Every §3 row's 주문 발생 cell equals ``PROBES[id].emits_orders``."""
+    stated = _runbook_order_column()
+
+    assert stated, "parsed no §3 rows — the table shape changed, fix the parser"
+    mismatched = {
+        probe_id: (cell, PROBES[probe_id].emits_orders)
+        for probe_id, cell in stated.items()
+        if cell is not PROBES[probe_id].emits_orders
+    }
+    assert not mismatched, (
+        "runbook §3 disagrees with registry.py (runbook, registry): " f"{mismatched}"
+    )
+
+
+def test_the_runbook_table_lists_every_registered_probe() -> None:
+    """A probe missing from the table would pass the check above vacuously."""
+    stated = _runbook_order_column()
+
+    assert set(stated) == set(PROBES), (
+        f"in the register but not in runbook §3: {sorted(set(PROBES) - set(stated))}; "
+        f"in the table but not registered: {sorted(set(stated) - set(PROBES))}"
+    )
+
+
+def test_pvl_is_the_row_this_check_was_written_for() -> None:
+    """P-VL specifically: GET-only, so the cell must read 아니오."""
+    assert _runbook_order_column()["P-VL"] is False
+    assert PROBES["P-VL"].emits_orders is False
