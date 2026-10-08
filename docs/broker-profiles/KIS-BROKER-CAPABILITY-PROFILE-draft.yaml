@@ -225,6 +225,32 @@
 #     - `status: DRAFT` · `approvers: []` · digests unchanged. VERIFICATION-
 #       PROFILE-002.yaml untouched. This pass does not close P0-2.
 #
+# T4-γ CP-3 VENUE-BAND EVIDENCE INTAKE (2026-10-08). Two P-VL artifacts
+#   (`P-VL-20261008T010644Z` · `P-VL-20261008T010822Z`, GET-only MOCK_VTS,
+#   `repo_commit 36afc379`) are folded. Rules obeyed, verbatim:
+#     - **Citation eligibility (runbook §6.2) admitted both into document 1
+#       only.** Both are `mode: live` · `provenance_class: MEASURED` ·
+#       `errors: []` · `skips: []` · `environment: MOCK_VTS`, checked in the
+#       artifact. Document 2 (REAL_PROD) keeps `UNKNOWN` and cites neither —
+#       ADR-002-004 §13.14 forbids a MOCK_VTS artifact there, the same rule
+#       T4-α obeyed in the other direction for N-18.
+#     - **No `VERIFIED` appeared and no dimension `status` moved.** One field
+#       changed: `price_band_tick_lot_and_quantity_semantics`, from `UNKNOWN`
+#       to a self-describing compound token in the `:4432` idiom. The token is
+#       DERIVED from the artifacts' leg verdicts, not chosen.
+#     - **The band axis reads `L2_STAGE_RECORDED_ONLY`, not `OBSERVED_ON_MOCK`.**
+#       Both samples fell OUTSIDE the 08:45–09:00 no-escalation window
+#       (`inside_no_escalation_window: false`), where a 2/3단계 band is
+#       admissible and a stage-1 match therefore does not discriminate. The
+#       artifacts record `leg_verdicts.L2: PASS` because the probe tested the
+#       match before the window — a verdict-ORDER defect found in PR #881
+#       review and fixed in PR #882. The artifacts are records and are NOT
+#       rewritten; the value folded here reads them under the written rule
+#       (design v2 §5 「①샘플에서」 · runbook §5.9 leg table).
+#     - **The 2026-07-30 tick observations are untouched.** They remain
+#       NOT_MEASURED and remain outside `evidence_refs[]`
+#       (`market_and_instrument_constraints._kis.tick_probe_observations_2026_07_30`).
+#
 # T4-β3 WAVE-4 + CAMPAIGN-TAIL EVIDENCE INTAKE (2026-08-06). The remainder of what
 #   the campaign produced and this INSTANCE had never read is folded: the
 #   2026-07-31 night P-BAL balance-pagination session (7 runs — 3 MEASURED,
@@ -2352,6 +2378,10 @@ capabilities:
   market_and_instrument_constraints:
     # T4-α: status 는 UNKNOWN 유지(가격제한폭·호가단위·정지 semantics 전부 여전히
     # 미조회). 아래 두 필드만 공식 명세 확정분으로 갱신한다.
+    # _supersession_ 2026-10-08 (T4-γ): 위 문장의 「가격제한폭 … 전부 여전히 미조회」는
+    #   이 날짜로 **부분 폐기**된다 — P-VL(GET 전용·MOCK_VTS) 2런이 가격제한폭 **필드와
+    #   band 값**을 모의에서 조회했다. 호가단위·정지 semantics 는 그대로 미조회이고,
+    #   dimension `status` 도 UNKNOWN 그대로다(모의 한정 · 실전 미관측 · 수량축 미확인).
     status: UNKNOWN
     assurance_level: EV-L0
     evidence_refs:
@@ -2364,7 +2394,7 @@ capabilities:
       - "docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/README.md (인용 토큰 45건, tos_evidence_citation_check PASS)"
     session_phase_semantics: UNKNOWN
     halt_and_suspension_semantics: UNKNOWN
-    price_band_tick_lot_and_quantity_semantics: BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED
+    price_band_tick_lot_and_quantity_semantics: BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED
     order_type_time_in_force_and_route_semantics: UNKNOWN   # 유지 — 확정분은 선물
                                                             # 뿐이고 주식 값집합이
                                                             # 미확인이라 차원
@@ -2385,10 +2415,17 @@ capabilities:
     # 상태(PARTIAL 등)는 프로파일 어휘에 없다(설계 v2 §5).
     #   · BAND_SEMANTICS_OBSERVED_ON_MOCK — 모의 한정. 실전 미관측.
     #   · TICK_FROM_REGULATION_NOT_BROKER — 틱 **값**은 규정/레포 설정에서 왔고
-    #     브로커가 공표한 것이 아니다(그 TR 에 호가단위 필드가 없다). :2426-2430 의
-    #     기존 기록과 정합. ⚠ 다만 관측 band 가 **0.02 격자에만** 떨어지고 0.05 에는
-    #     떨어지지 않았다 — 배포 paper 정책의 `tick_size: 5` 가 이 미니 잎에 대해
-    #     틀렸다는 **브로커 측** 정황이다(README §0.1). 정책 처분은 설계 §6 웨이브.
+    #     브로커가 공표한 것이 아니다 — **이 프로브는 그 TR 에서 호가단위 필드를
+    #     읽지 않는다**(`_leg_l1` 은 다섯 가격 필드만 추출하고 출력 목록을 열거하지
+    #     않는다; 선물 경로에 그 필드가 있는지는 같은 블록의
+    #     `_kis.tick_probe_observations_2026_07_30.broker_side_tick_enforcement`
+    #     아래 기록대로 **미확인**이다). 기존 기록
+    #     `market_and_instrument_constraints._kis.tick_probe_observations_2026_07_30`
+    #     의 「로컬 설정에서 온 틱 값은 UNKNOWN 유지」와 정합(행 번호가 아니라 키 경로로
+    #     인용한다 — 이 PR 의 삽입이 행 번호를 밀어낸다). ⚠ 다만 관측 band 가 **두 틱
+    #     후보 중 0.02 격자에만** 떨어지고 0.05 격자에는 떨어지지 않았다 — 배포 paper
+    #     정책의 `tick_size: 5` 가 이 미니 잎에 대해 틀렸다는 **브로커 측 정황**이다
+    #     (README §0.1). 정책 처분은 설계 §6 웨이브.
     #   · QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED — 호가수량한도는 GET 으로
     #     관측 불가. 별표 17의2 제1호의 규정값(미니 정규 10,000)은 **맥락**이며
     #     `ord_psbl_qty` 는 예수금·증거금과 **레그 파라미터**의 함수다.
@@ -2399,7 +2436,10 @@ capabilities:
     restrictions: []
     restriction_approved: false
     fallback_reference: null
-    assurance_sources: [OFFICIAL_SPECIFICATION]   # instrument_coverage 한정 근거
+    # T4-γ 2026-10-08: CONTROLLED_SANDBOX_TEST 추가 — P-VL 이 모의 환경에서 band 를
+    # 실제로 조회했으므로 OFFICIAL_SPECIFICATION 단독은 더 이상 이 블록의 근거 전부가
+    # 아니다. P-15 선례와 같은 꼴(`credentials_and_revocation._kis`).
+    assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_SANDBOX_TEST]
     _model_view:
       dimension: MARKET_INSTRUMENT_CONSTRAINTS
       status: UNKNOWN
@@ -2408,13 +2448,18 @@ capabilities:
       restriction: null
       restriction_approved: null
       fallback_reference: null
-      assurance_sources: [OFFICIAL_SPECIFICATION]
+      assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_SANDBOX_TEST]
     _kis:
-      measurement: CODE-EVIDENCED (local config only) + NEEDS-LIVE-MEASUREMENT
+      measurement: CODE-EVIDENCED (local config only) + CONTROLLED-SANDBOX-OBSERVATION (P-VL) + NEEDS-LIVE-MEASUREMENT
       critical_distinction: >-
-        아래 값들은 전부 **우리 로컬 설정**이다. broker 가 발행하는 종목별
-        제약(가격제한폭·호가단위·수량단위·정지/거래중단 상태)을 조회하는 코드는
-        없다. 따라서 broker-declared constraints 는 UNKNOWN 이다.
+        아래 값들은 전부 **우리 로컬 설정**이다. ⚠ 2026-10-08 (T4-γ) 범위 한정:
+        이 문장은 **런타임 경로**에 대한 것이다 — `shared/`·`services/`·`tos_runtime`
+        에 broker 가 발행하는 종목별 제약을 조회하는 코드는 여전히 **없다**. 반면
+        하네스 프로브 P-VL 은 모의에서 가격제한폭 band 를 조회했다(아래
+        `band_probe_observations_2026_10_08`). 따라서 「런타임이 조회하지 않는다」와
+        「아무도 조회한 적이 없다」는 더 이상 같은 문장이 아니다. 호가단위·수량단위·
+        정지/거래중단 상태는 둘 다에서 미조회이고, broker-declared constraints 는
+        그 범위에서 UNKNOWN 이다.
       local_session_model:
         stock_regular: "09:00-15:30"
         futures_regular: "08:45-15:45"
@@ -2423,8 +2468,64 @@ capabilities:
       local_tick_sizes:
         futures_mini: 0.02
         futures_full_F200: 0.05
-        evidence: "config/execution.yaml:149, :154, :230"
+        # 2026-10-08: 행 번호가 낡아 무관한 줄을 가리키고 있었다 — 계약 스펙은
+        # `futures_contract_spec` 아래 `:283-294` 다. 키 경로로 바꾼다.
+        evidence: "config/execution.yaml::futures_contract_spec (kospi200_mini·kospi200_full, 2026-10-08 기준 :283-294)"
         note: "로컬 상수 — broker 조회값 아님. 틀리면 진입 전량 차단(:151 주석)."
+      band_probe_observations_2026_10_08:   # T4-γ · CP-3 결정 9 보강 (P-VL)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-10-08 10:06:51 · 10:08:27"
+        citation_eligibility: >-
+          두 아티팩트 모두 런북 §6.2 전수 통과(`mode: live` ·
+          `provenance_class: MEASURED` · `errors: []` · `skips: []` ·
+          `environment: MOCK_VTS` · `repo_commit 36afc379`)라 이 문서의
+          `evidence_refs[]` 에 들어가 있다. 보존 경로는
+          `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/`.
+        symbols: >-
+          `A05610`(미니 · **당일 만기** 2026-10-08, 호스트 read-model
+          `roll_state: expired` · `days_to_expiry: 0`) 과 `A05611`(차근월, 만기
+          2026-11-12). 만기일 잎의 수치를 평시 값으로 읽지 말 것 — 차근월을 같은
+          세션에서 찍어 아래 결론이 두 잎에서 독립 재현된다.
+        band_fields_present: >-
+          `FHMIF10000000` 이 `futs_prpr`·`futs_prdy_clpr`·`futs_sdpr`·`futs_mxpr`·
+          `futs_llam` 다섯 필드를 모두 양의 소수로 반환했다. 이것이 「가격제한폭
+          조회 0건」을 폐기하는 관측이다.
+        band_reproduces_rule: >-
+          관측 band 가 시행세칙 제56조 1단계(8% · 상한 내림/하한 올림) 산식을
+          재현한다 — `A05610` 기준가 1073.32 → 1159.18/987.46, `A05611` 기준가
+          1076.60 → 1162.72/990.48. 둘 다 등록 틱 0.02 에서.
+        tick_grid_discriminates: >-
+          ⚠ **정황(해석 아님 — 산술)**: 관측된 band 경계 **네 값 전부**(1159.18 ·
+          987.46 · 1162.72 · 990.48)가 **0.05 의 배수가 아니다**(각각 ÷0.05 =
+          23183.6 · 19749.2 · 23254.4 · 19809.6). 반면 관측값 **여덟 개 전부**는
+          0.02 의 배수다. 0.05 호가가격단위 체제라면 상·하한가는 제56조가 그 단위로
+          내림/올림한 값이므로 0.05 격자 위에 있어야 한다 — 그렇지 않다. 따라서 배포
+          paper 정책의 `tick_size: 5`(= 0.05)는 이 미니 잎에 맞지 않는다.
+          ⚠ 정확히 적는다: 기준가 쪽은 **갈린다** — `A05610` 의 1073.32 는 0.05 의
+          배수가 아니지만 `A05611` 의 1076.60 **은** 0.05 의 배수다(21532). 그래서
+          기준가를 이 논거에 쓰지 않는다. 판별하는 것은 **band 경계 네 값**이다.
+          정책 처분은 2026-10-08 설계 §6 웨이브의 운영자 항목이고 이 문서는 관측만
+          적는다.
+        what_it_does_not_establish: >-
+          (a) **확대 단계는 판별되지 않았다** — 두 샘플 모두 08:45~09:00 확대 불가
+          창 **밖**이고(`inside_no_escalation_window: false`) 그곳에서는 2/3단계
+          band 가 적법하므로 1단계 일치는 제56조와 양립하되 **판별하지 않는다**.
+          그래서 band 축이 `OBSERVED_ON_MOCK` 가 아니라
+          `L2_STAGE_RECORDED_ONLY` 다. 아티팩트의 `leg_verdicts.L2: PASS` 는
+          프로브가 창보다 일치를 먼저 본 **판정 순서 결함**의 산물이고(PR #881
+          리뷰 finding 1 · PR #882 에서 수정) 아티팩트는 기록이므로 고치지 않는다.
+          (b) 기준가격이 「직전 거래일 정산가격」인지 — 두 샘플 모두
+          `futs_sdpr == futs_prdy_clpr` 라 **무정보**다. 같다는 것이 규정이 틀렸다는
+          증거는 아니다. (c) 호가수량한도 — GET 으로 관측 불가. 별표 17의2 제1호의
+          규정값(미니 정규 10,000)은 **맥락**이고 `ord_psbl_qty`(관측값 4)는
+          예수금·증거금 **과 레그 파라미터**의 함수다. (d) 호가단위 **값** — 이
+          프로브는 그 TR 에서 호가단위 필드를 읽지 않는다. (e) 실전 — 미관측.
+          (f) band 의 런타임 공급 경로 — 설계 §6.
+        band_outside_price_not_refused: >-
+          **관측 전용(해석 아님)**: 상한가 + 1틱(band 밖) 가격으로 보낸 주문가능
+          조회가 두 잎 모두 `rt_cd: 0` 으로 **수락**됐고 `bass_idx` 가 보낸 값을
+          되돌려줬다. 주문가능 **조회면**이 band 밖 가격을 거르지 않는다는 관측이며,
+          같은 가격으로 **주문**을 넣으면 무엇이 일어나는지는 말하지 않는다.
       tick_probe_observations_2026_07_30:   # T4-β1 · wave-3 주문 계열 세션
         environment: MOCK_VTS
         observed_at_kst: "2026-07-30 09:06–09:27"
@@ -2469,10 +2570,14 @@ capabilities:
             은 미확립이고, (b) 선물 경로에 같은 필드가 있는지 미확인이며,
             (c) 가격제한폭·수량단위·정지 semantics 는 여전히 조회 0건이다.
             차원 필드는 UNKNOWN 유지.
+            _supersession_ 2026-10-08 (T4-γ): (c) 의 「가격제한폭 … 조회 0건」은 이
+            날짜로 **폐기**된다 — P-VL 이 모의에서 band 를 조회했다(아래
+            `band_probe_observations_2026_10_08`). 수량단위·정지 semantics 는 그대로
+            0건이고, (a)·(b) 와 「차원 필드는 UNKNOWN 유지」는 그대로다.
           integration_gap_note: >-
             우리 런타임은 이 필드를 읽지 않는다(`critical_distinction` 그대로).
             브로커 발행 틱 표면이 **존재함이 확인된 지금**, 로컬 상수
-            (`config/execution.yaml:149,:154,:230`)에 의존하는 현행 구조는
+            (`config/execution.yaml::futures_contract_spec`)에 의존하는 현행 구조는
             "조회 수단이 없어서" 가 아니라 "조회하지 않아서" 인 것으로 성격이
             바뀐다. 이는 코드 수정 후보이며 본 프로파일은 코드를 바꾸지 않는다.
       official_spec_partial:                # T4-α · N-17 #2 / #4 / #15
@@ -4453,6 +4558,9 @@ capabilities:
     # 정정취소 STTN1103U/TTTN1103U · 잔고 CTFN6118R)의 **실전 전용 존재**를
     # 공식 명세로 확정했다. 다른 커버리지 축(종목군·해외지수 표기 등)은 미확립.
     #
+    # _supersession_ 2026-10-08 (T4-γ): 아래 「UNKNOWN 유지」는 **이 REAL_PROD 문서에
+    #   한정**된다. MOCK_VTS 문서의 같은 키는 같은 날 복합 토큰으로 기입됐다(§6.2 가
+    #   환경 교차 인용을 금지하므로 두 문서의 값이 다른 것이 정상이다).
     # price_band_tick_lot_and_quantity_semantics 는 **UNKNOWN 유지**(2026-10-08).
     # P-VL 이 같은 축을 모의에서 관측했으나(위 MOCK_VTS 블록 T4-γ), 그 아티팩트는
     # `environment: MOCK_VTS` 이고 런북 §6.2 / ADR-002-004 §13.14 가 **MOCK_VTS

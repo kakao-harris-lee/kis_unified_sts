@@ -15,7 +15,15 @@
 #     but no broker QUERY of the tick exists).
 #   * lot_size / min_quantity 1 = one contract (official contract unit, grade B).
 #   * price_min / price_max / max_quantity: NO SOURCE (P0-2
-#     `price_band_tick_lot_and_quantity_semantics: UNKNOWN`) → null. With
+#     `price_band_tick_lot_and_quantity_semantics: UNKNOWN`) → null.
+#     2026-10-08 갱신: 그 P0-2 값은 더 이상 UNKNOWN 이 아니다 — 적용 문서(MOCK_VTS)는
+#     `BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED`
+#     를 들고 있다(증거 `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/`).
+#     **그래도 세 값은 null 이 맞다**: 수량 축은 토큰이 그대로
+#     `QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED` 라 broker 한도가 미확인이고,
+#     band 는 관측됐지만 **일별 동적 값**이라 런타임 공급 경로가 없으면 정적 리터럴로
+#     쓸 수 없다(2026-10-08 설계 §6 웨이브). 값이 들어오는 조건은 그 두 가지이지
+#     「조회된 적이 없다」가 아니다. With
 #     this file NOTHING is transmitted: the null max_quantity makes the
 #     venue quantity constraint incomplete, so step 2 (candidate command
 #     construction) DENIES before step 3; and the null band makes the
