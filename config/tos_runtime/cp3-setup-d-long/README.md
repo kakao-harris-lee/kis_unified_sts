@@ -61,6 +61,23 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 > 바꿀 때는 그 파일이 더 이상 사본이 아니므로 §3 표의 행을 옮긴다(`construction.yaml` 이
 > 2026-10-09 리뷰에서 실제로 그렇게 옮겨졌다).
 
+### ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** tenant 사본도 갱신한다
+
+위 23 개는 **상주 파일의 바이트 사본**이다. 그러므로 `config/tos_runtime/paper/` 의 그 파일
+중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 tenant 트리(`cp3-setup-d-long` ·
+`cp3-setup-d-short`)의 사본을 함께 갱신해야 한다. 안 하면 사본이 조용히 낡는다.
+
+⚠ **그 중 `release.yaml` 은 조용히 낡는 것으로 끝나지 않는다** — 그 파일이
+`expected_code_digest` 를 싣는다. 런타임 코드를 바꾸는 PR(예 band 원천 웨이브 PR-2)은 그
+핀을 **상주 트리에서만** 재도출한다. 상주 세션은 매일 재도출해 대조하므로 거기서는 드러나지만
+(런북 §5 ①), tenant 트리는 **부팅한 적이 없어** 낡은 핀이 드러날 레인이 없다 — 첫 tenant
+부팅이 digest 불일치로 **ABORT** 한다.
+
+`tos/runtime/tests/compose/test_tenant_tree_copies.py` 가 이 의무를 고정한다: 사본 23 개의
+**바이트 동일성** · 선언된 차이가 **실제로 다른가** · 분류의 **전수성**(파일을 더하고 분류를
+빼먹으면 red) · 분류됐지만 **어느 검사도 안 하는 이름이 없는가** · 그리고 `release.yaml` 은
+실패 메시지가 「두 트리에서 같은 PR 에 재도출하라」고 말하도록 **따로** 단언한다.
+
 ## 4. `max_quantity: 10000` — 결정 9 (a)
 
 운영자 채택 **2026-10-08**. 출처는 KRX 파생상품시장 업무규정 시행세칙 **별표 17의2 제1호

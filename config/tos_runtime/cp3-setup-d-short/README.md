@@ -52,6 +52,22 @@ red 다.
 | `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 180000` 포함) |
 | 나머지 **24 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다 |
 
+### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
+
+위 24 개 중 **22 개는 상주 `config/tos_runtime/paper/` 파일의 바이트 사본**이다(나머지 둘은
+`README.md` 와 `strategy_bindings.yaml` 로 tenant 전용이고, 이 트리는 거기에
+`marketfeed.yaml` 을 상주와 **다르게** 들고 있다 — LONG 트리에서는 그것이 상주 사본이다).
+그러므로 상주 파일 하나를 바꾸는 PR 은 **같은 PR 에서** 두 tenant 트리의 사본을 함께
+갱신해야 한다.
+
+⚠ **`release.yaml` 은 조용히 낡는 것으로 끝나지 않는다** — `expected_code_digest` 를 싣는다.
+런타임 코드를 바꾸는 PR 은 그 핀을 **상주 트리에서만** 재도출하고, 상주 세션은 매일 재도출해
+대조하지만(런북 §5 ①) tenant 트리는 **부팅한 적이 없어** 낡은 핀이 드러날 레인이 없다 —
+첫 부팅이 digest 불일치로 **ABORT** 한다.
+
+`tos/runtime/tests/compose/test_tenant_tree_copies.py` 가 이 의무를 고정하고, `release.yaml`
+은 실패 메시지가 「두 트리에서 같은 PR 에 재도출하라」고 말하도록 **따로** 단언된다.
+
 ### 3.1 방향이 사는 자리 넷 — 런북 §7.10 3 의 체크리스트
 
 런북 `docs/runbooks/tos-paper-boot.md` §7.10 3 은 「대칭이 깨지는 계기는 날짜가 아니라
