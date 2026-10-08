@@ -24,6 +24,14 @@ pins the real calendar:
    intended fail-closed state the plan's §5 정직 상태 records -- not a
    test-only shortcut.
 
+Since 2026-10-09 this file also pins the CP-3 **tenant** tree
+(``config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml``), which is
+where operator decision 9 (a)'s adopted ``max_quantity`` 10000 landed -- and the
+matching fact that the resident ``paper/`` tree above deliberately did NOT adopt
+it. The two halves are pinned next to each other on purpose: "the source exists
+but this tree defers it" is a state that neither the resident ``null`` nor the
+tenant ``10000`` records on its own.
+
 Hermetic (D1.4): every write lands under ``tmp_path`` (the real files are
 only READ and copied).
 """
@@ -40,6 +48,10 @@ from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.venue import OrderAdmissibilityResult, OrderShapeFields
 from tos.venue.predicates import order_shape_admissible
 from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.marketfeed.policy import (
+    CriticalInputPolicyConfigError,
+    load_critical_input_policy,
+)
 from tos_runtime.venue import (
     VenuePolicyConfigError,
     load_order_construction_policy,
@@ -63,6 +75,66 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DEPLOY_DIR = _REPO_ROOT / "config" / "tos_runtime" / "paper"
 _REAL_VENUE_POLICY = _DEPLOY_DIR / "venue_constraint_policy.yaml"
 _REAL_OCP = _DEPLOY_DIR / "order_construction_policy.yaml"
+
+#: The CP-3 first-tenant tree (Setup D / LONG) -- a SEPARATE deployment that boots under the
+#: same ``paper`` environment label with its own off-repo render and data dir (CP-3 kickoff
+#: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §4 decisions 3/4, approved
+#: 2026-10-07). Its ``venue_constraint_policy.yaml`` is where decision 9's adopted
+#: ``max_quantity`` landed; the resident ``paper/`` tree above deliberately did NOT adopt it.
+_TENANT_DIR = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
+_TENANT_VENUE_POLICY = _TENANT_DIR / "venue_constraint_policy.yaml"
+
+#: Decision 9 (a), adopted by the operator 2026-10-08 -- KRX 파생상품시장 업무규정 시행세칙
+#: 별표 17의2 제1호 미니코스피200선물거래 행 (정규거래 10,000 계약), grade R
+#: (``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md`` §2.1 / §3).
+_ADOPTED_TENANT_MAX_QTY = 10000
+
+#: The provenance sentence design §8 step 5 requires next to that value. Pinned as a STRING so
+#: the value cannot keep its number while losing the citation that makes it an approved value
+#: (``config/tos_runtime/README.md``: "a value without a citation does not belong here").
+_DECISION_9_PROVENANCE = (
+    "결정 9 (a) · 운영자 채택 2026-10-08 · "
+    "별표 17의2 제1호 미니코스피200선물거래 행 · 등급 R"
+)
+
+#: Design §2.2's three caveats, which that design requires to accompany the value WHEREVER it
+#: is written. One pin each: a caveat silently dropped turns 10000 from "a venue ceiling whose
+#: broker-side limit is unconfirmed" into "the limit", which is the misreading §2.2 exists for.
+_DECISION_9_CAVEATS = (
+    "회원(증권사)은 이보다 낮게 정할 수 있다",  # §2.2 (1) -- 시행세칙 제61조제3항
+    "KIS 측 한도는 미확인",  # §2.2 (1), second half -- GET 으로 관측 불가
+    "거래소가 시장관리상 변경할 수 있다",  # §2.2 (2) -- 제61조제1항 단서
+    "누적호가수량한도는 다른 한도다",  # §2.2 (3) -- 위탁계좌에는 적용되지 않는다
+)
+
+#: The tick correction is APPROVED but owned by design §6's band-source wave, not by the tree
+#: that carries the quantity value -- pinned so the two cannot drift apart silently (a tick 2
+#: landed here while the band is still null would be inert; a band landed there while the tick
+#: is still 5 would make every normal mini quote INADMISSIBLE).
+_TICK_CORRECTION_OWNER = "정정 2 는 승인됐고 band 원천 웨이브 소관이다"
+
+#: The resident tree's own one-line record of the same decision (design §8 step 5's last
+#: sentence). Comment-only: measured 2026-10-09 that adding it leaves that file's
+#: ``canonical_digest`` byte-identical, so the resident session's daily re-derivation is
+#: untouched.
+_PAPER_DEFERRAL_NOTE = (
+    "source exists (10-08 결정 9); paper adoption deferred by operator"
+)
+
+
+def _comment_prose(path: Path) -> str:
+    """Every comment line's text with ``#`` and indentation removed, joined by single spaces.
+
+    A header sentence is pinned against THIS, not against the raw bytes, so re-wrapping a
+    long Korean comment line does not break the pin while deleting or altering the sentence
+    still does."""
+    words: list[str] = []
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            words.extend(stripped.lstrip("#").split())
+    return " ".join(words)
+
 
 #: The values the operator adopted (plan §6 ② table) -- pinned here so a
 #: silent edit of the deploy file cannot pass as "still the approved value".
@@ -245,6 +317,147 @@ def test_filled_real_policies_carry_exactly_the_adopted_values(tmp_path: Path) -
     assert ocp.construction_rules.sizing_bound.admitted_quantity_bases == frozenset(
         {_OCP_ADMITTED_QUANTITY_BASIS}
     )
+
+
+# ---------------------------------------------------------------------------
+# CP-3 tenant tree (Setup D / LONG) -- decision 9 (a)'s landing site
+# ---------------------------------------------------------------------------
+
+
+def test_tenant_venue_policy_carries_the_decision_9_provenance_and_its_three_caveats() -> (
+    None
+):
+    """Design §8 step 5: the adopted value lands WITH its citation and §2.2's three caveats.
+
+    The number alone is not the approved value -- ``config/tos_runtime/README.md`` makes the
+    citation part of what admits a value into this directory, and design §2.2 makes the three
+    caveats part of what the value MEANS (10,000 is the venue ceiling, the member limit is
+    unconfirmed, the exchange may change it, and the cumulative limit is a different limit
+    that does not apply to this 위탁계좌)."""
+    prose = _comment_prose(_TENANT_VENUE_POLICY)
+    assert _DECISION_9_PROVENANCE in prose
+    for caveat in _DECISION_9_CAVEATS:
+        assert caveat in prose, caveat
+    # The approved-but-not-landed tick correction, and who owns landing it.
+    assert _TICK_CORRECTION_OWNER in prose
+
+
+def test_resident_paper_tree_records_the_deferral_rather_than_the_value() -> None:
+    """The other half of design §8 step 5: the resident tree says a source now EXISTS and that
+    adoption there is deferred, instead of silently looking like "no source was ever found".
+
+    Paired with ``test_filled_real_policies_carry_exactly_the_adopted_values``' assertion that
+    the resident ``max_quantity`` is still ``None``: together they pin "deferred", which
+    neither assertion pins alone (a note without the null would permit a quiet adoption; the
+    null without the note would keep claiming NO SOURCE)."""
+    assert _PAPER_DEFERRAL_NOTE in _comment_prose(_REAL_VENUE_POLICY)
+    assert "cp3-setup-d-long" in _comment_prose(_REAL_VENUE_POLICY)
+
+
+def test_tenant_venue_policy_refuses_to_load_until_the_operator_fills_the_scope() -> (
+    None
+):
+    """The tenant tree inherits the SAME operator-fill gate: accounts/instruments are
+    ``"TBD"`` as committed and the loader refuses them, so landing a quantity ceiling did not
+    turn this tree into something that boots on its own."""
+    with pytest.raises(VenuePolicyConfigError):
+        load_venue_constraint_policy(_TENANT_VENUE_POLICY, scheme=_SCHEME)
+
+
+def test_filled_tenant_venue_policy_carries_10000_with_the_band_still_null(
+    tmp_path: Path,
+) -> None:
+    """Decision 9 (a) is a NECESSARY, not sufficient, condition (design §3): the quantity
+    ceiling is adopted, so step 2's "venue quantity constraint is incomplete" DENY is gone --
+    but the price band is still ``null``, so ``order_shape_admissible`` stays ``UNKNOWN`` and
+    nothing can be transmitted. Pinned together so a later edit cannot quietly land the band
+    (a per-day dynamic value, design §6) alongside it and open a send path."""
+    raw = _filled(
+        _TENANT_VENUE_POLICY,
+        environment="paper",
+        account="acct-x",
+        instrument="inst-x",
+    )
+    path = tmp_path / "venue_constraint_policy.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
+    venue = load_venue_constraint_policy(path, scheme=_SCHEME)
+
+    shape = venue.policy.shape_constraints
+    assert shape.max_quantity == _ADOPTED_TENANT_MAX_QTY
+    assert shape.price_min is None and shape.price_max is None
+    # Only the band is unsourced now -- the quantity axis left this set.
+    assert set(venue.null_shape_bounds) == {"price_min", "price_max"}
+    # Decision 9 touched ONE bound: everything else is still the 2026-09-16 adopted value.
+    assert shape.tick_size == _ADOPTED_TICK
+    assert shape.lot_size == _ADOPTED_LOT
+    assert shape.min_quantity == _ADOPTED_MIN_QTY
+    assert venue.scope.instrument_class == "krx-index-futures"
+
+    # And the kernel's own shape predicate still refuses to admit an on-grid shape, for the
+    # band's sake alone -- the same UNKNOWN the resident tree gets, reached for ONE reason
+    # instead of two.
+    on_grid = OrderShapeFields(
+        price=5 * 100_000,
+        quantity=1,
+        order_type="LIMIT",
+        tif="DAY",
+        side="BUY",
+        position_effect="OPEN",
+        silently_rounded=False,
+    )
+    assert order_shape_admissible(on_grid, shape) is OrderAdmissibilityResult.UNKNOWN
+
+
+def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max_age_ms() -> (
+    None
+):
+    """CP-3 kickoff §5 1 / §5 3 ②: the tenant tree declares B1a's fifteen upstream fields with
+    their unit/scale/multiplier/sign from B1a's own field lineage -- and leaves ``max_age_ms``
+    ``null``, because no source for it exists (the value proposal has no row for the key by
+    design, "신선도 한도 — 안전 값이다. 그래서 채택하지 않았다"; B1a's lineage does not
+    record it either).
+
+    ``null`` makes the loader REFUSE the whole document, and that refusal is the point: it is
+    the same fail-closed posture the resident tree uses for its own unsourced leaves
+    (``finality.yaml::source_revision``, ``safety_activation.yaml::members``), pinned here BY
+    KEY NAME so filling it later is a deliberate act and not a drive-by "fix" with an invented
+    number -- the discipline ``test_deploy_approved_values.py`` applies to the resident tree.
+    """
+    path = _TENANT_DIR / "critical_input_policy.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    # The declared field set: exactly B1a's FIELD_ORDER, in that order.
+    assert [entry["field_key"] for entry in raw["fields"]] == [
+        "open_x100",
+        "high_x100",
+        "low_x100",
+        "close_x100",
+        "volume",
+        "session_token",
+        "vwap_x100",
+        "atr14_x100",
+        "z_x1000",
+        "hi_vol",
+        "stall_ok",
+        "reversal_ok",
+        "entry_window",
+        "vwap_reverted",
+        "eod",
+    ]
+    # The four sourced values are concrete for every field; the fifth is the unsourced one.
+    for entry in raw["fields"]:
+        for key in ("unit", "scale", "multiplier", "sign"):
+            assert isinstance(entry[key], str) and entry[key], (entry["field_key"], key)
+        assert entry["max_age_ms"] is None, entry["field_key"]
+    # z is the one SIGNED field (the LONG entry threshold -1800 is bound to that sign).
+    signs = {entry["field_key"]: entry["sign"] for entry in raw["fields"]}
+    assert signs["z_x1000"] == "signed"
+    assert {key for key, sign in signs.items() if sign == "signed"} == {"z_x1000"}
+
+    # And the loader refuses the document as committed, naming that key.
+    with pytest.raises(CriticalInputPolicyConfigError) as excinfo:
+        load_critical_input_policy(path, scheme=_SCHEME)
+    assert "max_age_ms" in str(excinfo.value)
 
 
 def test_real_policies_boot_the_compose_root_and_the_attempt_denies_fail_closed(
