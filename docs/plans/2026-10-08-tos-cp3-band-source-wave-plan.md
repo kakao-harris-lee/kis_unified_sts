@@ -5,6 +5,10 @@
 - **운영자 결정 2026-10-08 (대화)**: ① `max_quantity: 10000` 은 **CP-3 tenant 트리에만**(paper 트리 채택 보류) ·
   ② 배포 `tick_size` 5 → **2** 정정 승인 · ③ band 원천 = **(i) 브로커 조회 먼저**, (ii) 규정 계산은 나중에 대조 확인용.
   ①의 착지는 tenant 트리 PR 의 몫이고 이 문서는 ②·③ 만 다룬다.
+- **운영자 승인 2026-10-08 (대화, 이 문서 v1 뒤)**: §6 (A)·(B) **둘 다 권고대로** — (A) 런타임 첫 외부 호출·토큰 수용,
+  (B) `_runtime.band_source` 는 증거 digest 로 메우고 커널 covered 승격은 GOV-001 후보 등재만.
+- **v2 (2026-10-08, 독립 리뷰 PR #883 처분 — 9건 전건 수용, 기각 0)**: H1 계약 결속(§4.1·§4.4b) · M1 거래일 가드의 날짜
+  출처와 레드 증명(§4.2·§4.4a) · M2 가격 척도 비교 대상(§4.1) · M3 커널 필드 스탠드인 표기(§4.3·§6) · L1~L5.
 - **범위 밖**: 커널(`tos/src/tos/`) 변경 · 실전 계좌·실주문(비협상 규칙) · 09-15 계획 §6 ⑤ 의 tradability 반쪽 ·
   CP-3 §5 3 ③ 의 실시간 필드 생산자(이 문서는 그 존재를 **전제 조건**으로만 적는다, §5).
 
@@ -16,7 +20,10 @@ digest·연속성·거래일을 스냅샷의 **이미 있는** 세 필드(오늘
 로 **배포마다 켠다** — 상주 paper 는 끈 채로 남는다(가격이 합성값이라 켜면 전부 INADMISSIBLE, §5). tick 은 tenant
 트리에서 같은 PR 로 2 로 고치고, 상주 paper 의 tick 은 paper 채택과 함께 미룬다(§3).
 
-⚠ **운영자 확인이 필요한 새 사실 두 개**(§6) — 10-08 설계 §6 의 (i) 행은 이 둘을 적지 않았다:
+fail-open 을 막는 가드는 **셋**이다 — 검증 셋(§4.2) · 거래일 결속(§4.4a) · **계약 결속**(§4.4b). 셋 다 「구체적 실패
+입력 + 레드 증명」을 §8 에 갖는다.
+
+✅ **운영자 확인 두 개는 2026-10-08 권고대로 승인됐다**(§6) — 10-08 설계 §6 의 (i) 행은 이 둘을 적지 않았었다:
 (A) paper 런타임은 지금 **네트워크 호출 0**이다(transport synthetic · intake journal). band GET 은 그 런타임의 **첫 외부
 호출이자 첫 KIS 토큰 소비자**가 된다. (B) 활성화 digest 는 커널 `canonical_digest` 만 덮으므로 `_runtime.band_source`
 선언은 **활성화 밖**이다.
@@ -47,13 +54,18 @@ digest·연속성·거래일을 스냅샷의 **이미 있는** 세 필드(오늘
 
 - **같은 거래일 안에서** 시각 t 에 읽은 band 는 t 이후의 어느 band 의 **부분집합**이다. 낡은 band 로 생기는 오판은
   「유효 주문을 INADMISSIBLE 로」(보수 방향) 하나뿐이고, 「band 밖 주문을 ADMISSIBLE 로」는 **생기지 않는다**.
-- 08:45 부팅 직후의 GET 은 **1단계 band** 를 읽는다 — 그날 가장 좁은 band 다. 10-08 설계 §4.2 의 ① 샘플(08:50±3분,
-  확대 불가 창)과 같은 창이므로, 이 GET 의 증거 행은 그 미취득 샘플 역할도 한다(같은 앱키라 별도 프로브를 같은 날
-  돌리지 못하는 제약을 피한다).
+- 08:45 부팅 직후의 GET 은 **1단계 band** 를 읽는다 — 그날 가장 좁은 band 다. 시각은 10-08 설계 §4.2 의 ① 샘플 창
+  (08:50±3분)과 **다르지만** 같은 「1단계만 적용되는 08:45~09:00」 안이므로, 이 GET 의 증거 행은 ① 샘플의 **역할**(확대
+  불가 창의 1단계 대조)을 한다. 창 정의를 바꾸는 것은 상위 설계의 일이고 여기서 하지 않는다.
 - **거래일을 넘기면 이 성질이 깨진다** — 기준가격이 바뀌어 band 가 **이동**한다. 그래서 거래일 결속이 이 설계에서
-  유일하게 꼭 필요한 가드다(§4.4).
+  필요한 가드 셋 중 하나다(§4.4a; 나머지는 §4.2 검증 셋 · §4.4b 계약 결속).
 - 단서: 제56조의2 제3항(거래소가 확대 시간을 변경할 수 있음)과 제56조제3항(시장관리상 변경)은 **축소 금지를 말하지
-  않는다**. 단조성은 규정 본문의 구조에서 온 것이지 보장된 불변식이 아니다 → 재조회 경로(§4.3)를 열어 두고, 단조성
+  않는다**. 제55조제5항(장중 기준가격 변경)은 band 를 넓히는 것이 아니라 **옮길** 수 있다(효과는 제56조제3항과 같은
+  범주).
+- **측정되지 않은 전제**: 08:45 직후의 응답이 **이미 오늘의** 기준가로 계산된 band 라는 것. 응답 본문에는 영업일 필드가
+  없고(HTTP `Date` 헤더뿐), 10-08 관측에서 `futs_sdpr == futs_prdy_clpr` 라 기준가로도 날을 판별할 수 없었다. KIS 모의가
+  08:45:0x 에 아직 **전일** band(어쩌면 2·3단계로 확대된)를 내준다면 아래 가드 어느 것도 그것을 잡지 못한다 → §4.4a
+  잔여 위험. 단조성은 규정 본문의 구조에서 온 것이지 보장된 불변식이 아니다 → 재조회 경로(§4.3)를 열어 두고, 단조성
   위반을 관측하면 증거로 남긴다(§4.5).
 
 ## 3. tick 정정 5 → 2 (전제 항목)
@@ -78,24 +90,38 @@ _runtime:
   band_source:            # null = 끔(상주 paper 기본값; 오늘의 거동 그대로)
     kind: "kis_quote_get"
     tr_id: "FHMIF10000000"
+    instrument: "A05610"            # 렌더가 채운다 — 반드시 _model_view.scope 의 instrument 와 같아야 함(§4.4b)
     upper_field: "futs_mxpr"
     lower_field: "futs_llam"
     basis_field: "futs_sdpr"        # 증거로만 기록 — 판정에 쓰지 않음
-    price_scale: 100                # _model_view 의 정수 가격 척도와 같아야 함
-    bound: "trading_date_kst"       # 거래일이 바뀌면 무효(§4.4)
+    price_scale: 100                # 아래 _runtime.price_scale 과 같아야 함
+    timeout_ms: 5000                # 부팅 GET 상한 — 초과는 실패(모의 ReadTimeout 전례: P-CA 09-30)
+    bound: "trading_date_kst"       # 거래일이 바뀌면 무효(§4.4a)
     read_on: ["boot", "phase_change"]
     failure: "unknown"              # 읽기·검증 실패 = band None = 커널 UNKNOWN
 ```
 
+**가격 척도의 비교 대상(리뷰 M2).** 오늘 정책의 ×100 척도는 **헤더 주석에만** 있고 기계가 읽는 키가 없다(`grep
+price_scale` 0건). `critical_input_policy.yaml:87-100` 은 가격 필드를 `unit: KRW, scale: "minor"` 로 적어 「지수 포인트
+×100」과 어긋나기까지 한다. 그래서 `_runtime.price_scale: 100` 을 **정책 키로 새로 선언**하고(헤더 주석이 아니라), band
+원천의 `price_scale` 과 CP-3 §5 3 ③ 생산자 계약의 가격 척도가 **둘 다 이 키와 같아야** 부팅한다. ③ 계약이 생기기 전에는
+③ 쪽 대조를 「미결」로 증거에 남기고 band 원천은 켜지 않는다(§5). `critical_input_policy.yaml` 의 `KRW/minor` 표기 불일치는
+별도 정정 대상으로 등재만 한다(이 웨이브 범위 밖).
+
 로더 규칙(전부 부팅 거부, 이름을 밝혀): `band_source` 가 non-null 인데 `_model_view.shape_constraints.price_min/max` 가
-리터럴이면 거부(원천 둘) · `price_scale` 이 정책 척도와 다르면 거부 · `failure` 는 `"unknown"` 하나만 허용 ·
-`read_on` 은 위 두 토큰의 부분집합만 · transport 설정이 없으면 거부.
+리터럴이면 거부(원천 둘) · `band_source.instrument` ≠ 정책 `scope` 의 instrument 이면 거부(§4.4b) · `band_source.price_scale`
+≠ `_runtime.price_scale` 이면 거부 · `failure` 는 `"unknown"` 하나만 허용 · `read_on` 은 위 두 토큰의 부분집합만 ·
+`timeout_ms` 는 양의 정수 · transport 설정이 없으면 거부. `_runtime.band_source` 키가 **없으면 null 과 같다**(상주 paper
+트리를 건드리지 않기 위해).
 
 ### 4.2 읽기 (`tos_runtime/venue/band_source.py`, 신규)
 
 - 기존 `kis_quote` transport 의 host seal(MOCK `rest_base` 정확 일치)과 `KisTokenLifecycle` 을 **재사용**한다 — 새 HTTP
   클라이언트·새 토큰 경로를 만들지 않는다.
-- 응답 → `BandObservation(price_min, price_max, trading_date, raw_payload_digest, source_continuity_id, as_of_ms)`.
+- 응답 → `BandObservation(instrument, price_min, price_max, trading_date, raw_payload_digest, source_continuity_id, as_of_ms)`.
+  `instrument` 는 요청의 `FID_INPUT_ISCD` 다. ⚠ `trading_date` 는 **응답에서 온 값이 아니라 로컬 도장**이다 — GET 시점의
+  `calendar/owner.py::trading_date_now()`(형식 `YYYYMMDD`, `calendar/phase.py::trading_date_at`). 그래서 이 도장은 「메모리에
+  들고 있는 낡은 band」만 잡고 「낡은 응답」은 잡지 못한다(§2 측정되지 않은 전제 · §4.4a).
   변환은 `Decimal` 정확 곱(`× price_scale`)이고 정수가 아니면 거부한다(반올림 금지 — 커널 §12 「silent rounding」 원칙과
   같은 이유).
 - 검증 셋(하나라도 실패하면 `None` + 증거): `0 < price_min < price_max` · 두 값 모두 **정책 tick 의 배수**(tick 5 인
@@ -109,37 +135,77 @@ _runtime:
   Callable[[], str | None] | None = None`. 둘 다 `None` 이면 **오늘과 바이트 단위로 같은 거동**(회귀 테스트로 고정).
 - `shape_constraints` 를 속성(property)으로 바꿔 **유효 제약**을 돌려준다: band 가 있으면
   `policy.shape_constraints.model_copy(update={"price_min": …, "price_max": …})`, 없으면 정책 그대로. 소비자 셋(§1)은
-  이 속성을 이미 읽으므로 수정이 필요 없다 — step 3 결정과 step 15 재평가가 **같은 객체**를 본다.
+  이 속성을 이미 읽으므로 수정이 필요 없다. step 3 결정과 step 15 재평가는 **그 사이에 재발행이 없을 때** 같은 객체를
+  본다. 재발행이 끼면 게이트웨이 item 11 은 `decision.snapshot_digest` 를 결속하지 않고 **현재** 스냅샷·제약으로 다시
+  접는다(`gateway.py::_check_venue`) — 현재 band 가 이기고 결정도 ADMISSIBLE 이어야 하므로 보수 방향이다.
 - 읽는 시점: 첫 스냅샷 발행 · phase 변화로 인한 재발행. 그 외 시점에는 GET 하지 않는다(모의 시세 rate limit 1.0 rps —
   `config/tos_runtime/paper/marketfeed.yaml:101-103`, 프로브 P-13).
 - band 가 바뀌면(값 · 거래일 · 연속성 중 하나) **새 Constraint Generation** 으로 스냅샷을 재발행한다 — ADR-002-019 §18
   이 price-band 변화를 material change 로 열거한다. 지금의 `snapshot()` 은 phase 변화만 보므로 이 조건을 더한다.
 - 스냅샷의 세 필드: `critical_input_snapshot_digest` = band 관측 레코드의 정규화 digest · `source_continuity_id` =
-  §4.2 · `max_age` = `"trading_date_kst:<YYYY-MM-DD>"`(커널이 이 필드를 불투명 문자열로 정의한다). 결정은 스냅샷
-  digest 를 결속하므로 band 가 결정에 **간접 결속**된다. 커널 레코드 필드 추가 0.
+  §4.2 · `max_age` = `"trading_date_kst:<YYYYMMDD>"`(런타임 `trading_date_at` 형식 그대로; 커널은 이 필드를 불투명 문자열로
+  정의한다). 결정은 스냅샷 digest 를 결속하므로 band 가 결정에 **간접 결속**된다. 커널 레코드 필드 추가 0.
+- ⚠ **스탠드인(리뷰 M3).** 커널 docstring 은 `critical_input_snapshot_digest` 를 「CII provenance binding (capsule-owned;
+  venue binds the digest, §3.5)」로 정의한다(`tos/src/tos/venue/records.py:489-490`). 여기에 넣는 것은 커널
+  `CriticalInputSnapshot`(`tos/src/tos/capsule/snapshot.py`)의 digest 가 **아니라** 런타임 band 관측 레코드의 digest 다.
+  기계적으로는 커널 변경 0 이지만(이 필드의 소비자는 레코드 자신뿐) **의미는 런타임이 덧씌운 것**이다. 그래서 정책 헤더와
+  증거 행에 `egress_coordinates.yaml::capsule_terminus_fields` 와 같은 관용구로 「스탠드인」이라고 적고, 근거로 상위 설계
+  §6(band = Critical Input 사실, ADR-002-019 §9)을 인용하며, 「band 관측을 정식 CriticalInputSnapshot 으로」를 §6 (B) 옆에
+  GOV-001 후보로 등재한다.
+- 재발행은 **상태 전이에서만** 한다(리뷰 L3): band 있음 → 없음, 없음 → 있음, 값·거래일·연속성 변화. band 가 이미
+  `None` 인데 거래일이 `None` 인 상태(장 밖)에서 `snapshot()` 이 불릴 때마다 재발행하면 constraint_generation 이 부풀어
+  오른다.
 
-### 4.4 거래일 결속 가드 — 이것이 실패하는 구체적 입력
+### 4.4a 거래일 결속 가드 — 이것이 실패하는 구체적 입력
 
-**입력**: 10-08 에 읽은 band(상한 1159.18) 를 들고 10-09 에 부팅 없이 계속 돈 프로세스. 10-09 기준가가 1000.00 이면 실제
-상한은 1080.00 이다. 가격 1100.00 의 매수 주문은 낡은 band 로는 ADMISSIBLE, 거래소에서는 거부.
-**가드**: `snapshot()` 이 매번 `trading_date_reader()` 와 band 의 `trading_date` 를 비교하고, 다르거나 둘 중 하나가 `None`
-이면 band 를 버리고(`None`) 재발행한다 → `UNKNOWN`. **레드 증명**: 이 비교를 지우면 위 입력이 ADMISSIBLE 로 통과하는
-단위 테스트가 실패해야 한다. 상주 세션은 15:45 에 멈추므로 이 입력은 오늘의 운영에선 생기지 않지만, `TOS_PAPER_MINUTES`
-재시작·자정 넘김 수동 실행은 막혀 있지 않다.
+**가려진 절 주의(리뷰 M1).** v1 의 입력(「10-08 band 를 들고 10-09 까지 부팅 없이」)은 이 가드를 지워도 막힌다 —
+`calendar/phase.py:117-130 trading_date_at` 이 08:45~15:45 창 밖에서 `None` 을 돌려 15:45 에 band 가 떨어지고,
+`read_on: phase_change` 가 08:45 에 다시 읽기 때문이다. 두 겹이 가리는 절은 판별에 기여하지 않는다(#838). 그래서 입력을
+**그 둘을 걷어낸 상태**로 다시 쓴다.
+
+**입력**: phase 변화 재조회를 스텁으로 막고(reader 가 호출되지 않음), band reader 가 **전 거래일 도장**(`20261007`)의 관측
+— 상한 1159.18 — 을 돌려준 상태에서, `trading_date_reader()` 는 `20261008` 이고 그날의 실제 상한은 1080.00 이다. 가격
+1100.00 의 매수는 낡은 band 로는 ADMISSIBLE, 거래소에서는 거부.
+**가드**: `snapshot()` 의 **첫 `if`(tick generation 캐시 조기 반환) 앞에서** band 의 `trading_date` 를 현재 거래일과 비교하고,
+다르거나 둘 중 하나가 `None` 이면 band 를 버리고(상태 전이일 때만) 재발행한다 → `UNKNOWN`. 캐시 반환 뒤에 두면 tick
+generation 이 그대로인 동안 검사가 건너뛰어진다. **레드 증명**: 비교를 지우면 위 입력이 ADMISSIBLE 로 통과 → 테스트 실패.
+비교를 캐시 반환 뒤로 옮겨도(같은 tick generation 으로 호출) 실패해야 한다.
+
+**잔여 위험(가드 밖)**: 이 가드는 로컬 도장끼리 비교하므로 §2 의 「08:45 직후 모의가 전일 band 를 내준다」는 잡지 못한다.
+v1 은 이를 **측정되지 않은 전제**로 등재하고, 첫 켜기(§9 3) 세션의 `VENUE_BAND_OBSERVED` 행을 그 측정으로 쓴다 —
+`stage_hint`(제56조 1단계 산식과의 일치)가 거짓이면 그날 band 를 버리는 응답 측 검사를 **그 측정 뒤에** 넣을지 판단한다
+(측정 전에 넣으면 기준가 판별이 무정보인 날 모든 band 를 버릴 수 있다).
+
+### 4.4b 계약 결속 가드 — 이것이 실패하는 구체적 입력 (리뷰 H1)
+
+**입력**(이 문서의 증거 그대로, `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/` 의 `P-VL-20261008T010822Z.json`
+`measurements.l1_quote_fields.values`): `A05610` band 987.46/1159.18 · `A05611` band 990.48/1162.72. 둘 다 0.02 격자 ·
+`0 < min < max` · `rt_cd = 0` 이라 §4.2 검증 셋을 **전부 통과**한다. `A05610` 정책에 `A05611` band 가 붙으면 가격 1160.00
+의 매수는 ADMISSIBLE, 거래소에서는 거부. ADR-002-019:357 이 「wrong contract/account mapping」을 공통 원인으로 적는다.
+**왜 지금**: 10-12 롤에서 `scope.instrument` 가 새 정책 generation 으로 바뀐다. `kis_quote` transport 설정의 `instrument`
+는 poll 시점에만 확인되고 venue 정책 scope 와는 대조되지 않는다(기존 scope 대조는 정책 ↔ construction 뿐,
+`compose/_venue_wiring.py:127-153 _cross_check_scope`).
+**가드 둘**: 로더가 `band_source.instrument` ≠ 정책 scope instrument 를 부팅 거부(§4.1) · 런타임이 응답을 받을 때 요청한
+`FID_INPUT_ISCD` 가 정책 instrument 와 같은지 다시 확인하고 다르면 `None`. **레드 증명**: `A05610` 정책 + `A05611` band
+픽스처 → 두 검사 각각을 지우면 해당 테스트가 실패.
 
 ### 4.5 증거
 
 - 새 kind `VENUE_BAND_OBSERVED`(런타임 어휘, 커널 `EvidenceKind` 아님 — `service.py` 의 기존 관용구): GET 마다 한 행 —
-  성공이면 `price_min/max`·`basis`·`trading_date`·`raw_payload_digest`·`continuity`·`stage_hint`(§2 의 1단계 산식과의
+  성공이면 `instrument`·`price_min/max`·`basis`·`trading_date`·`raw_payload_digest`·`continuity`·`stage_hint`(§2 의 1단계 산식과의
   일치 여부, 판정 아님), 실패면 `reason`(검증 셋 중 어느 것인지 · transport 오류 · `rt_cd`).
-- `VENUE_SNAPSHOT_ISSUED` 행에 `band_digest` 를 더하고 `absent_fields` 는 실제로 빈 필드만 남긴다.
+- `VENUE_SNAPSHOT_ISSUED` 행에 `band_digest` 를 더하고 `absent_fields` 는 실제로 빈 필드만 남긴다. 이 키와 아래
+  `VENUE_POLICY_BOUND` 의 새 키는 **`band_source` 가 non-null 일 때만** 나온다(리뷰 L2) — 그래야 끈 배포의 행이 오늘과
+  바이트 단위로 같다(§8 1).
 - 같은 거래일에 band 가 **좁아지는** 관측은 별도 플래그 `narrowed_intraday: true` 로 남긴다(§2 단서의 반증 관측 자리).
 - `VENUE_POLICY_BOUND` 행에 `band_source` 블록의 정규화 digest 를 더한다 — §6 (B) 의 공백을 증거로라도 메운다.
 
 ### 4.6 실패 응답
 
 모든 실패는 `band None` → 커널 `UNKNOWN` → 송신 0 이다. 즉 이 웨이브의 최악은 **오늘과 같은 상태**이고, 새로 열리는
-fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막는 것은 §4.2 의 검증 셋과 §4.4 의 거래일 가드 둘이다.
+fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막는 것은 **셋** — §4.2 검증 셋(척도·순서·격자·`rt_cd`) ·
+§4.4a 거래일 결속 · §4.4b 계약 결속. v1 은 둘이라고 적었고 계약 결속이 빠져 있었다(리뷰 H1). 셋으로 막지 못하는 것은
+§4.4a 의 잔여 위험(낡은 **응답**) 하나이고, 측정되지 않은 전제로 등재돼 있다.
 
 ## 5. 어느 배포에서 켜나
 
@@ -149,7 +215,7 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 | CP-3 tenant (LONG) | **CP-3 §5 3 ③(실시간 필드 생산자)이 실제 가격을 흘린 뒤에** 켠다 | 같은 이유. 그 전에 켜면 위와 똑같이 전부 INADMISSIBLE 이다. 코드와 tenant tick 정정은 먼저 머지해도 된다(null 이면 무동작) |
 | 단위·통합 테스트 | 가짜 transport 로 켬 | §8 |
 
-## 6. 운영자 확인 (새로 드러난 사실 둘)
+## 6. 운영자 확인 (새로 드러난 사실 둘) — ✅ 2026-10-08 둘 다 권고대로 승인
 
 (A) **런타임 첫 외부 호출.** 오늘 paper 런타임은 소켓을 열지 않는다(§1). (i) 는 그 런타임이 MOCK 도메인에 GET 을 하고,
 `.env.mock` 앱키로 토큰을 받는다는 뜻이다. 이 앱키는 상주 세션 래퍼와 프로브가 공유한다(N-15: 토큰 발급 rate limit).
@@ -159,7 +225,9 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 (B) **`_runtime.band_source` 는 활성화 digest 밖이다.** 활성화는 커널 `canonical_digest`(`_model_view`) 만 대조한다.
 `_runtime` 의 다른 블록(`wire_codec` 등)도 같은 처지라 새 공백은 아니지만, band 원천은 판정에 닿는 값이다. 권고: 이번엔
 §4.5 처럼 `VENUE_POLICY_BOUND` 증거에 digest 를 남기고, 원천 선언을 커널 covered 필드로 올리는 것은 GOV-001 절차의
-후보로 등재만 한다.
+후보로 등재만 한다. 같은 후보 목록에 §4.3 의 스탠드인(band 관측을 정식 `CriticalInputSnapshot` 으로)을 함께 올린다.
+
+**처분 (운영자, 2026-10-08)**: (A) 수용 — (i) 그대로 런타임 GET. (B) 수용 — 증거 digest + GOV-001 후보 등재만.
 
 ## 7. 기각한 대안
 
@@ -174,15 +242,20 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 
 ## 8. 테스트 (레드 증명은 절 단위)
 
-1. `band_reader=None` 회귀: 오늘의 스냅샷·결정 증거 행이 바이트 단위로 같다.
+1. `band_reader=None` 회귀(그리고 `_runtime.band_source` 키 부재 = null): 오늘의 스냅샷·결정 증거 행이 바이트 단위로
+   같다 — §4.5 의 새 키는 이때 나오지 않는다.
 2. band 주입 → 유효 제약의 `price_min/max` 가 채워지고 step 3 결정과 게이트웨이 item 11 이 **같은 값**을 본다
    (`compose` 통합 테스트 — stage 와 context 가 같은 객체를 읽는지).
 3. §4.2 검증 셋 각각 한 건씩: 비정수 척도 · `min ≥ max` · tick 격자 밖(tick 5 + 0.02 격자 band) · `rt_cd ≠ 0` → 전부
    `None` + `VENUE_BAND_OBSERVED.reason`.
-4. §4.4 거래일 가드(위 구체 입력) — 비교를 지우면 red.
+4. §4.4a 거래일 가드 — phase 재조회를 스텁으로 막고 전일 도장 관측을 주입한 입력. 비교 삭제 → red · 비교를 캐시 조기
+   반환 뒤로 이동 → red.
+4b. §4.4b 계약 가드 — `A05610` 정책 + `A05611` band(10-08 P-VL 실측값). 로더 검사 삭제 → red · 응답 측 재확인 삭제 → red.
+4c. 재발행은 전이에서만 — 장 밖에서 `snapshot()` 을 N 번 불러도 constraint_generation 이 1 만 오른다.
+4d. `_runtime.price_scale` 부재·불일치 → 부팅 거부. 부팅 GET 이 `timeout_ms` 를 넘기면 `None` + `reason`.
 5. band 변화 → 새 Constraint Generation (§18) — phase 동일 · band 값만 다른 두 읽기에서 재발행이 일어나야 함. 조건을
    지우면 red.
-6. 로더 거부 넷(§4.1).
+6. 로더 거부 전부(§4.1 — 원천 둘 · 계약 · 척도 · `failure` · `read_on` · `timeout_ms` · transport 부재).
 7. host seal: `band_source` 가 켜진 배포에서 transport `rest_base` 가 REAL 이면 부팅 거부(기존 `kis_quote` seal 재사용
    증명).
 8. 같은 거래일 축소 관측 → `narrowed_intraday` 플래그.
@@ -198,4 +271,4 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
    `VENUE_BAND_OBSERVED` 행을 10-08 설계 §5 L2 의 ① 샘플 판정에 쓴다.
 4. (ii) 대조: 3 이후 `stage_hint` 가 며칠 모이면 별도 판단.
 
-운영자 확인이 필요한 것: §6 (A)·(B) 의 권고 수용 여부. 그 전에 PR-1 은 진행할 수 있다(런타임 무관).
+운영자 확인 §6 (A)·(B) 는 2026-10-08 승인됐다. 남은 운영자 사안은 §9 3 의 켜기 시점(③ 생산자 이후)뿐이다.
