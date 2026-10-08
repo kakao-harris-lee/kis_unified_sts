@@ -422,8 +422,9 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
 
    ✅ **SHORT 트리 착지 2026-10-09 — `config/tos_runtime/cp3-setup-d-short/`** (결정 4 의
    나머지 반쪽). LONG 트리의 사본 + **선언된 방향 차이**이고, **31 파일 = LONG 과 바이트 동일
-   23 + 다름 6 + SHORT 전용 2**(`README.md` · `strategies/setup_d_short.strategy.yaml`; LONG 의
-   전략 파일은 이 트리에 없다). DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
+   23 + YAML 이 다름 6 + 산문이 다름 1(`README.md`) + SHORT 전용 1
+   (`strategies/setup_d_short.strategy.yaml`; LONG 의 전략 파일은 이 트리에 없다)**.
+   DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
    `z_x1000 >= +1800`(op **GE**, 바인딩 `z_entry_min_x1000: 1800`)을 쓰는 자기 파일을 갖는다.
 
    **방향이 사는 자리 다섯** — 런북 §7.10 3 이 셋을 열거하고(`construction.yaml::action_class`

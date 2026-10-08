@@ -123,10 +123,23 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str]] = {
     "strategy_bindings.yaml": frozenset({"strategies"}),
 }
 
-#: Present in exactly one tree. The strategy file is renamed, not edited in place, so the DSL
-#: entry comparison cannot be flipped by a one-line render substitution (kickoff §5 3 ④).
-_SHORT_ONLY = frozenset({_SHORT_STRATEGY_REL, "README.md"})
-_LONG_ONLY = frozenset({_LONG_STRATEGY_REL, "README.md"})
+#: Present in exactly one tree. ONLY the strategy file: it is renamed, not edited in place, so
+#: the DSL entry comparison cannot be flipped by a one-line render substitution (kickoff §5 3 ④).
+#:
+#: ``README.md`` is deliberately NOT here. The first cut put it in these sets, which was a false
+#: statement -- both trees have one -- and worse, it made the file *classified but unchecked*:
+#: every assertion below iterates the identical set or the differs set, so a name parked in a
+#: third set no assertion reads is exempt from all of them. That is the same hole
+#: ``test_tenant_tree_copies.py`` grew and its red proof caught; it gets its own category and its
+#: own assertion here instead.
+_SHORT_ONLY = frozenset({_SHORT_STRATEGY_REL})
+_LONG_ONLY = frozenset({_LONG_STRATEGY_REL})
+
+#: Present in BOTH trees and expected to differ, but not comparable as parsed YAML. Checked by
+#: :func:`test_prose_files_differ_and_each_describes_its_own_tree` rather than by the key-path
+#: equality above -- a Markdown file has no key paths, and asserting only "it differs" would
+#: pass on two READMEs that both describe the LONG tree.
+_PROSE_DIFFERS = frozenset({"README.md"})
 
 
 def _files(directory: Path) -> frozenset[str]:
@@ -198,21 +211,49 @@ def test_short_tree_classification_is_exhaustive() -> None:
     adding a file to either tenant tree without saying which set it joins fails here."""
     short_files = _files(_SHORT_DIR)
     long_files = _files(_LONG_DIR)
+    shared = _IDENTICAL_TO_LONG | set(_DIFFERS_FROM_LONG) | _PROSE_DIFFERS
 
-    classified = _IDENTICAL_TO_LONG | set(_DIFFERS_FROM_LONG) | _SHORT_ONLY
+    classified = shared | _SHORT_ONLY
     assert classified == short_files, (
         f"unclassified in the SHORT tree: {sorted(short_files - classified)}; "
         f"classified but absent: {sorted(classified - short_files)}"
     )
-    long_classified = _IDENTICAL_TO_LONG | set(_DIFFERS_FROM_LONG) | _LONG_ONLY
+    long_classified = shared | _LONG_ONLY
     assert long_classified == long_files, (
         f"unclassified in the LONG tree: {sorted(long_files - long_classified)}; "
         f"classified but absent: {sorted(long_classified - long_files)}"
     )
+
+    # No name may sit in two categories -- overlap is how a file ends up checked by the wrong
+    # assertion (or, with a third set no assertion reads, by none at all).
+    categories = (
+        _IDENTICAL_TO_LONG,
+        frozenset(_DIFFERS_FROM_LONG),
+        _PROSE_DIFFERS,
+        _SHORT_ONLY,
+        _LONG_ONLY,
+    )
+    for index, first in enumerate(categories):
+        for second in categories[index + 1 :]:
+            assert not first & second, f"classified twice: {sorted(first & second)}"
+
+    # ... and every classified name lands in a set some assertion below actually iterates.
+    checked = (
+        _IDENTICAL_TO_LONG
+        | frozenset(_DIFFERS_FROM_LONG)
+        | _PROSE_DIFFERS
+        | _SHORT_ONLY
+        | _LONG_ONLY
+    )
+    assert classified | long_classified == checked
+
     # README §3's own counts, asserted so the prose and the tree cannot drift apart.
+    # MEASURED 2026-10-09: the two trees share 23 byte-identical files; 6 YAML files diverge in
+    # declared key paths; README.md diverges as prose; each tree has its own strategy file.
     assert len(_IDENTICAL_TO_LONG) == 23
     assert len(_DIFFERS_FROM_LONG) == 6
-    assert len(short_files) == 31
+    assert len(_PROSE_DIFFERS) == 1
+    assert len(short_files) == len(long_files) == 31
 
 
 @pytest.mark.parametrize("rel", sorted(_IDENTICAL_TO_LONG))
@@ -224,6 +265,32 @@ def test_identical_set_is_byte_identical_to_the_long_tree(rel: str) -> None:
         f"{rel} is classified byte-identical to the LONG tree but differs. If this was "
         f"deliberate, move it to _DIFFERS_FROM_LONG with the key paths that may differ."
     )
+
+
+@pytest.mark.parametrize("rel", sorted(_PROSE_DIFFERS))
+def test_prose_files_differ_and_each_describes_its_own_tree(rel: str) -> None:
+    """The prose category's own check, so it is not merely classified.
+
+    Two assertions, because either alone is weak. "They differ" alone passes on two READMEs that
+    both describe the LONG deployment (a copy with one word changed). "Each names its own tree"
+    alone passes on a SHORT README that is otherwise a verbatim LONG copy carrying LONG's
+    declared differences as if they were its own."""
+    short_text = (_SHORT_DIR / rel).read_text(encoding="utf-8")
+    long_text = (_LONG_DIR / rel).read_text(encoding="utf-8")
+    assert short_text != long_text
+
+    assert short_text.startswith("# config/tos_runtime/cp3-setup-d-short/")
+    assert long_text.startswith("# config/tos_runtime/cp3-setup-d-long/")
+    # Each describes its OWN direction's deployment, not the other's.
+    assert "SHORT 배포" in short_text and "LONG 배포" in long_text
+    # The SHORT README carries the gap RECORD -- its own §3.3 section, with the measured
+    # evidence. The LONG one may (and does) point AT that record; a cross-reference is not the
+    # record, so the distinguishing assertion is on the section heading and the measured token,
+    # not on the phrase (which appears in both, deliberately).
+    assert "### 3.3 ⚠ SHORT parity 공백" in short_text
+    assert "LEGACY_ONLY_ENTRY" in short_text
+    assert "### 3.3" not in long_text
+    assert "LEGACY_ONLY_ENTRY" not in long_text
 
 
 @pytest.mark.parametrize("rel", sorted(_DIFFERS_FROM_LONG))

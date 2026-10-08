@@ -34,12 +34,16 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ## 3. LONG 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**31 파일 = 바이트 동일 24 + 다름 6 + SHORT 전용 1**(LONG 트리 31 파일 기준; LONG 의
-`strategies/setup_d_long.strategy.yaml` 은 이 트리에 **없고** 그 자리를
-`strategies/setup_d_short.strategy.yaml` 이 차지한다). 측정은 작업트리 `cmp` 가 아니라
-`tos/runtime/tests/compose/test_tenant_tree_short.py` 의 **파싱된 YAML 대조**이고, 그
-테스트가 아래 표를 **기계로 읽는 리터럴**로 들고 있다 — 파일을 더하거나 분류를 빼먹으면
-red 다.
+**31 파일 = 바이트 동일 23 + YAML 이 다름 6 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+(LONG 트리도 31 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
+**없고** 그 자리를 `strategies/setup_d_short.strategy.yaml` 이 차지한다).
+
+측정은 작업트리 `cmp` 가 아니라 `tos/runtime/tests/compose/test_tenant_tree_short.py` 다 —
+바이트 동일 23 은 **바이트**로, 다름 6 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
+는 **자기 트리를 설명하는가**로 각각 검사한다. 그 테스트가 아래 표를 **기계로 읽는 리터럴**로
+들고 있다: 파일을 더하고 분류를 빼먹으면 red 이고, 한 이름이 두 분류에 들어가거나 **어느
+단언도 훑지 않는 분류에 들어가도** red 다(초판이 `README.md` 를 「한 트리에만 있음」으로
+분류해 **아무 검사도 받지 않던** 결함 — 2026-10-09 자기 점검에서 발견).
 
 | 파일 | 무엇이 다른가 |
 | --- | --- |
@@ -50,7 +54,8 @@ red 다.
 | `strategy_bindings.yaml` | 키 `setup_d_short.strategy` · 바인딩 **`z_entry_min_x1000: 1800`**(LONG 은 `z_entry_max_x1000: -1800`) |
 | `venue_constraint_policy.yaml` | `policy_id` SHORT 전용 (+ 헤더 제목·주석). **값은 LONG 과 같다**(`tick_size: 2` · `max_quantity: 10000`) |
 | `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 180000` 포함) |
-| 나머지 **24 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다 |
+| `README.md` (이 파일) | **산문이 다름** — 각 트리가 자기 방향의 배포를 설명한다. YAML 이 아니라 경로 비교 대상이 아니므로 테스트가 「자기 트리를 설명하는가」로 검사한다 |
+| 나머지 **23 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다. 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
 
 ### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
 
