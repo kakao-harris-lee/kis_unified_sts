@@ -16,9 +16,11 @@
 #     capabilities.market_and_instrument_constraints._kis.tick_probe_observations_2026_07_30,
 #     but no broker QUERY of the tick exists).
 #     ⚠ 2026-10-08: 위 두 인용을 **키 경로**로 바꿨다. 같은 날 P-VL fold 가 이
-#     프로파일에 +134 행을 넣어 종전 `:853-868` 이 가리키던 broker 측 틱 검증
-#     기록을 밀어냈고, 그 범위는 이제 **NOT_MEASURED 인용 부적격 주석**을
-#     가리킨다 — 행 번호 인용은 조용히 썩는다.
+#     프로파일에 행을 넣어 종전 `:853-868` 이 가리키던 broker 측 틱 검증 기록을
+#     밀어냈고, 그 범위는 이제 **NOT_MEASURED 인용 부적격 주석**을 가리킨다 —
+#     행 번호 인용은 조용히 썩는다. (시프트 값은 적지 않는다: 델타도 행 번호와
+#     똑같이 썩고, 적는 순간 그 숫자가 다음 fold 에서 틀린다. 키 경로가 그 문제를
+#     없애려고 쓰는 것이다.)
 #   * lot_size / min_quantity 1 = one contract (official contract unit, grade B).
 #   * price_min / price_max / max_quantity: NO SOURCE (P0-2
 #     `price_band_tick_lot_and_quantity_semantics: UNKNOWN`) → null.
