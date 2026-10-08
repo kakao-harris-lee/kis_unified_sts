@@ -1,0 +1,199 @@
+# =============================================================================
+# critical_input_policy.yaml — CP-3 tenant (Setup D / LONG) **필드 선언**
+# =============================================================================
+# 이 파일은 상주 `config/tos_runtime/paper/` 의 같은 파일의 사본이 **아니다** — 그
+# 파일은 부팅 증명 픽스처(`bootproof_band` 가 읽는 세 필드)이고, 이 파일은 CP-3 첫
+# tenant 전략(`strategies/setup_d_long.strategy.yaml`)의 상류 필드 **열다섯**을 선언한다.
+#
+# 출처: docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §5 1 (「새 필드는 **tenant
+#       설정 트리**의 `critical_input_policy.yaml` 에 다섯 값(unit/scale/multiplier/sign/
+#       max_age_ms)과 출처를 적어 선언한다 — 상주 `paper` 트리는 건드리지 않는다」) ·
+#       §5 3 ② · 운영자 승인 2026-10-07(결정 1·4·5·6).
+#
+# 로더: tos_runtime.marketfeed.policy.load_critical_input_policy
+# 원본 템플릿: tos/runtime/config/critical_input_policy.example.yaml
+#
+# ⛔ **이 파일은 오늘 로드되지 않는다 — 의도된 fail-closed 다.** 아래 열다섯 필드의
+#    `max_age_ms` 가 전부 `null` 이고, 로더는 `max_age_ms` 가 「absent, `null`, not an
+#    int, or not strictly positive」이면 그 파일을 거부한다(`marketfeed/policy.py`
+#    `_require_int` + 양수 검사). 그것이 여기 적는 유일한 정직한 상태다 — 아래
+#    「`max_age_ms` 에 출처가 없다」 문단을 볼 것. 상주 `paper` 트리가 출처 없는 값에
+#    쓰는 규율과 같다(`finality.yaml::source_revision: null` ·
+#    `safety_activation.yaml::members: null` — 둘 다 자기 로더가 거부하고,
+#    `tos/runtime/tests/compose/test_deploy_approved_values.py` 가 그 거부를 **키 이름으로**
+#    고정한다). 값을 지어내지 않는다.
+#
+# ── `max_age_ms` 에 출처가 없다 (운영자 출처 필요 · 미결) ────────────────────────
+# `max_age_ms` 는 **신선도 한도 = 안전 값**이다. 두 후보 출처 모두 이 열다섯에 값을
+# 주지 못한다:
+#   * 제안표 `docs/plans/2026-09-18-tos-config-value-proposal.md` 는 이 키에 행이 없다
+#     (상위 계획 §7.8 A-5: 「특히 `critical_input_policy::fields[].max_age_ms` 는
+#      신선도 한도 — 안전 값이다. 그래서 채택하지 않았다」).
+#   * B1a(`tools/tos_cp3/produce_fields.py`)의 필드 lineage 는 unit/scale/multiplier/
+#     sign 을 적지만 `max_age_ms` 는 적지 **않는다** — 백테스트는 주입된 시간 경계로
+#     신선도를 판정하고 필드별 수명 소비자가 없다(kickoff §5 3 ②, 의도된 차이 B1b-D3:
+#     B1b 는 전부 `null` 로 두었다).
+# 상주 트리의 600000 을 베껴 오지 않는다: 그 값은 **부팅 증명 픽스처**의 값이고 그
+# 근거(「렌더가 저널을 부팅 직전에 생성하므로 그 여유는 실제로 그 부팅 지연만 덮는다」)는
+# 배치 저널 부팅에만 성립한다. 이 tenant 의 생산자는 아직 없다(kickoff §5 3 ③ —
+# 실시간 발행기 미착수). 생산자 없이 신선도 한도를 고르는 것은 **지어내는 것**이다.
+# → **운영자 출처가 필요한 미결 항목**이고, 값이 승인되면 그것으로 교체한다.
+#
+# ── 좌표 칸 없음 ────────────────────────────────────────────────────────────────
+# 이 파일은 계좌·종목을 담지 않으므로 `scripts/tos/render_paper_config.py` 가 건드리지
+# 않는다(상주 트리의 같은 파일과 같다).
+# =============================================================================
+
+# --- identity ---------------------------------------------------------------
+# 제안표 §4.3 식별자 규칙(`tos-paper-<무엇>-g<세대>`, 세대 1)을 따른다. 상주 트리의
+# `tos-paper-critical-input-bootproof-g1` 과 **다른 이름을 쓴다** — 내용이 사본이 아니고
+# (세 픽스처 필드 vs 열다섯 tenant 필드), `bootproof` 라는 토큰이 이 문서에 대해
+# 거짓이기 때문이다.
+policy_id: "tos-paper-cp3-setup-d-long-critical-input-g1"
+policy_version: "1.0.0"
+policy_generation: 1
+
+# 발행 스냅샷의 귀속 주체(tos.capsule.CriticalInputSnapshot.issuer_principal_id).
+# 상주 트리의 같은 칸과 같은 꼴이고, 치환 대상이 아니므로 확정 리터럴이다.
+issuer_principal_id: "tos-paper-cp3-setup-d-long-critical-input-issuer-g1"
+
+# --- scope --------------------------------------------------------------
+# `environment` — **`paper` 다.** kickoff §5 1 이 그 이유를 적는다: 로더는 이 토큰을
+#   `--environment-label` 과 **대조하지 않으므로**(상주 트리 같은 파일 56–62행의 실측)
+#   어긋나도 조용히 부팅하고 증거만 틀린 라벨을 단다. 그래서 이 트리의
+#   `venue_constraint_policy.yaml::scope.environments` ·
+#   `order_construction_policy.yaml` 이 선언한 `paper` 와 **같은 값**을 박는다
+#   (compose 의 `_cross_check_scope` 가 그 둘끼리는 대조한다 →
+#    `VenuePolicyScopeMismatch`).
+#   ⚠ 이 토큰은 발행되는 모든 스냅샷·캡슐의 covered content 로 들어간다.
+#   ⚠ 그러므로 `paper` 는 **환경 라벨**이고 tenant 식별자가 아니다 — 상주 세션과 이
+#   tenant 는 같은 라벨 아래 **다른 data dir · 다른 설정 트리**로 돈다(결정 3).
+#
+# `decision_class` / `intended_use` — 상주 트리와 같은 조합(진입 결정).
+environment: "paper"
+decision_class: "entry"
+intended_use: "entry-decision"
+
+# --- admissible fields -------------------------------------------------
+# tenant 전략이 읽는 필드와 B1b 러너가 봉마다 발행하는 필드의 합집합 = B1a 의
+# `FIELD_ORDER` 열다섯(`tools/tos_cp3/produce_fields.py` FIELD_ORDER). 목록에 없는
+# 필드는 커널의 UNKNOWN 바닥이 떨어뜨린다(tos/src/tos/marketfeed/value.py).
+#
+# 순서는 B1a 의 `FIELD_ORDER` 그대로다(앞 여섯은 봉 자체, 나머지는 파생 Setup D 입력).
+#
+# unit/scale/multiplier/sign 의 **출처는 B1a 의 필드 lineage** 이고, 그 lineage 는
+# 이 파일이 쓰는 모양 그대로 적는다(`produce_fields._field_lineage` 독스트링: 「the
+# unit/scale/multiplier triple in the shape `config/tos_runtime/paper/
+# critical_input_policy.yaml` uses (a token for `scale`, a number for `multiplier`)」).
+# 네 값은 **각각 별개의 안전 필드**이며 하나의 토큰으로 합치지 않는다
+# (tos/src/tos/capsule/observation.py Mapping 독스트링).
+#
+#   * 가격 꼴 여섯(open/high/low/close/vwap/atr14 `_x100`) — unit `index_point` ·
+#     scale `hundredths` · multiplier `100` · sign `unsigned`
+#     (`produce_fields._price_field`; PRICE_SCALE=100, 양자화 half_up).
+#   * `volume` — unit `contract` · scale `unit` · multiplier `1` · sign `unsigned`
+#     (같은 파일 `volume` 항목; 이미 정수).
+#   * `session_token` — unit `opaque_token` · scale `none` · multiplier `1` ·
+#     sign `unsigned` (봉의 KST 날짜. 토큰은 불투명하게 둔다 — 장시간을 읽지 않는다).
+#   * `z_x1000` — unit `atr` · scale `thousandths` · multiplier `1000` ·
+#     sign **`signed`** (VWAP 괴리는 부호가 있다; 양자화 truncate_toward_zero. 진입
+#     임계 `z_entry_max_x1000 = -1800` 이 이 부호·배율에 결속된다 —
+#     `strategy_bindings.yaml`).
+#   * 불린 여섯(hi_vol/stall_ok/reversal_ok/entry_window/vwap_reverted/eod) —
+#     unit `bool` · scale `none` · multiplier `1` · sign `unsigned`
+#     (`produce_fields._bool_field`; 양자화 exact).
+#
+# ⚠ `max_age_ms: null` 은 **빠뜨린 것이 아니라 선언**이다(위 헤더). 열다섯 전부 동일.
+fields:
+  # --- the bar itself (what B1b builds a tos.backtest.Bar from) --------------
+  - field_key: "open_x100"
+    unit: "index_point"
+    scale: "hundredths"
+    multiplier: "100"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "high_x100"
+    unit: "index_point"
+    scale: "hundredths"
+    multiplier: "100"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "low_x100"
+    unit: "index_point"
+    scale: "hundredths"
+    multiplier: "100"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "close_x100"
+    unit: "index_point"
+    scale: "hundredths"
+    multiplier: "100"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "volume"
+    unit: "contract"
+    scale: "unit"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "session_token"
+    unit: "opaque_token"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  # --- derived Setup D inputs ----------------------------------------------
+  - field_key: "vwap_x100"
+    unit: "index_point"
+    scale: "hundredths"
+    multiplier: "100"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "atr14_x100"
+    unit: "index_point"
+    scale: "hundredths"
+    multiplier: "100"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "z_x1000"
+    unit: "atr"
+    scale: "thousandths"
+    multiplier: "1000"
+    sign: "signed"
+    max_age_ms: null
+  - field_key: "hi_vol"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "stall_ok"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "reversal_ok"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "entry_window"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "vwap_reverted"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
+  - field_key: "eod"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: null
