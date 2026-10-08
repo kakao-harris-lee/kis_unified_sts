@@ -226,6 +226,26 @@ def account_fingerprint(account_no: str) -> str:
     return hashlib.sha256(digits.encode()).hexdigest()[:12]
 
 
+def secret_fingerprint(secret: str) -> str:
+    """Stable non-reversible correlator for an app key. NEVER the key itself.
+
+    Design §4.2 makes "is this probe's app key the same one the resident paper
+    session uses?" a PRECONDITION, because a shared key can hit the 1-minute
+    token-reissue limit (N-15). PR #881 had to answer it from a host file and a
+    line number, which a reviewer cannot verify and which the runbook warns
+    against as an anchor style. Recording the fingerprint in the artifact makes
+    the comparison re-checkable from the evidence alone.
+
+    Twelve hex characters of SHA-256, the same width
+    :func:`account_fingerprint` uses, so the two read alike in an artifact. An
+    empty secret yields ``""`` rather than the digest of the empty string: a
+    fingerprint for a key that does not exist would be a phantom.
+    """
+    if not secret:
+        return ""
+    return hashlib.sha256(secret.encode()).hexdigest()[:12]
+
+
 def redact(obj: Any) -> Any:
     """Recursively redact secrets and mask account fields in a payload."""
     if isinstance(obj, dict):
@@ -278,6 +298,7 @@ class ProbeCredentials:
             "asset": self.asset,
             "app_key_present": bool(self.app_key),
             "app_secret_present": bool(self.app_secret),
+            "app_key_fingerprint": secret_fingerprint(self.app_key),
             "account_masked": mask_account(self.account_no),
             "account_fingerprint": account_fingerprint(self.account_no),
         }
