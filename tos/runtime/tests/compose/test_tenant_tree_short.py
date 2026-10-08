@@ -117,6 +117,17 @@ _IDENTICAL_TO_LONG = frozenset(
 #: description. Comments are invisible to this comparison by construction (it reads parsed
 #: YAML), which is deliberate: re-wording a header must not need a test edit, while moving a
 #: value must.
+#:
+#: ⚠ **Two of these paths fold a whole subtree, and a declared prefix exempts everything under
+#: it** (review M2, measured 2026-10-09): ``_runtime.construction.axes`` is a LIST, which
+#: :func:`_leaves` treats as one leaf, so declaring it also exempted the TIF axis beside
+#: DIRECTION -- a SHORT-tree ``DAY`` -> ``IOC`` edit was green. ``strategies`` folds a dict for
+#: the same reason. Neither is narrowed by this table (it cannot express "this list, minus one
+#: entry"); each has its own dedicated test instead:
+#: :func:`test_the_axes_list_differs_only_in_its_DIRECTION_entry` and
+#: :func:`test_the_bindings_subtree_differs_only_in_the_direction_bearing_names`. **A new folded
+#: prefix added here needs the same treatment** -- the entry below records which paths are
+#: folded so that obligation is visible at the declaration site, not only in a commit message.
 _DIFFERS_FROM_LONG: dict[str, frozenset[str]] = {
     "construction.yaml": frozenset({"action_class", "outbound_side"}),
     "marketfeed.yaml": frozenset({"direction"}),
@@ -127,6 +138,16 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str]] = {
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
     "strategy_bindings.yaml": frozenset({"strategies"}),
 }
+
+#: The declared paths above that FOLD a subtree, and therefore need a narrowing test of their
+#: own (see the ⚠ on ``_DIFFERS_FROM_LONG``).
+#: :func:`test_every_folded_prefix_has_a_narrowing_test` keeps this honest.
+_FOLDED_PREFIXES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("order_construction_policy.yaml", "_runtime.construction.axes"),
+        ("strategy_bindings.yaml", "strategies"),
+    }
+)
 
 #: Present in exactly one tree. ONLY the strategy file: it is renamed, not edited in place, so
 #: the DSL entry comparison cannot be flipped by a one-line render substitution (kickoff §5 3 ④).
@@ -304,6 +325,102 @@ def test_prose_files_differ_and_each_describes_its_own_tree(rel: str) -> None:
     assert "LEGACY_ONLY_ENTRY" in short_text
     assert "### 3.3" not in long_text
     assert "LEGACY_ONLY_ENTRY" not in long_text
+
+
+def test_every_folded_prefix_has_a_narrowing_test() -> None:
+    """``_FOLDED_PREFIXES`` must be exactly the declared paths that are not leaf scalars.
+
+    This is the part that survives me: a future declared path that happens to fold a list or a
+    dict gets caught here instead of silently exempting its subtree the way the axes list did.
+    Computed from the shipped documents, never from a second hand-written list."""
+    folded: set[tuple[str, str]] = set()
+    for rel, paths in _DIFFERS_FROM_LONG.items():
+        leaves = _leaves(_mapping(_LONG_DIR, rel))
+        for path in paths:
+            value = leaves.get(path)
+            # A declared path is "folded" when it is NOT a single scalar leaf: either it is a
+            # prefix of other leaves (a dict) or its own value is a container (a list).
+            is_prefix = any(key.startswith(f"{path}.") for key in leaves)
+            if is_prefix or isinstance(value, (list, dict)):
+                folded.add((rel, path))
+    assert folded == _FOLDED_PREFIXES, (
+        f"folded declared prefixes without a recorded narrowing test: "
+        f"{sorted(folded - _FOLDED_PREFIXES)}; recorded but no longer folded: "
+        f"{sorted(_FOLDED_PREFIXES - folded)}. Each folded prefix needs its own test that "
+        f"compares the subtree minus the direction-bearing part."
+    )
+
+
+def test_the_axes_list_differs_only_in_its_DIRECTION_entry() -> None:
+    """``_runtime.construction.axes`` is ONE leaf to :func:`_leaves` (a list), so declaring that
+    path "may differ" exempts the whole list -- including the TIF axis riding beside DIRECTION.
+
+    Measured 2026-10-09 (review M2): a SHORT-tree TIF edit ``DAY`` -> ``IOC`` stayed green under
+    the declared-path comparison alone. This narrows it to what the declaration actually means:
+    remove the DIRECTION entry and the remaining axes must be EQUAL between the two trees, and
+    the list must be the same LENGTH (so an axis cannot be added or dropped on one side).
+    """
+    long_axes = _mapping(_LONG_DIR, "order_construction_policy.yaml")["_runtime"][
+        "construction"
+    ]["axes"]
+    short_axes = _mapping(_SHORT_DIR, "order_construction_policy.yaml")["_runtime"][
+        "construction"
+    ]["axes"]
+
+    assert len(long_axes) == len(short_axes)
+    # Exactly one DIRECTION entry per tree -- asserted here too, because "remove the DIRECTION
+    # entry" is only a well-defined operation if there is exactly one to remove.
+    for axes in (long_axes, short_axes):
+        assert sum(entry["axis"] == "DIRECTION" for entry in axes) == 1
+    without_direction = [
+        [entry for entry in axes if entry["axis"] != "DIRECTION"]
+        for axes in (long_axes, short_axes)
+    ]
+    assert without_direction[0] == without_direction[1], (
+        "the two trees' axes differ outside the DIRECTION entry: "
+        f"LONG {without_direction[0]} vs SHORT {without_direction[1]}"
+    )
+    # The axis NAMES are the same set in both, DIRECTION included -- so the narrowed comparison
+    # above cannot be satisfied by an axis that simply vanished from one tree.
+    assert [entry["axis"] for entry in long_axes] == [
+        entry["axis"] for entry in short_axes
+    ]
+
+
+def test_the_bindings_subtree_differs_only_in_the_direction_bearing_names() -> None:
+    """``strategies`` is the other declared prefix that folds a whole subtree -- same hazard as
+    the axes list, so it gets the same treatment.
+
+    Here the KEY NAMES themselves carry the direction (``setup_d_long.strategy`` /
+    ``z_entry_max_x1000`` vs their SHORT spellings), so the subtrees cannot be compared
+    path-for-path. What CAN be compared is the shape with those names normalised away: one
+    strategy entry, one binding under it, the same ``config_binding_version``, and the binding
+    values mirroring to zero (the last two also pinned by the binding tests below, deliberately
+    -- this one exists so the folded prefix is not the only thing standing there)."""
+    long_strategies = _mapping(_LONG_DIR, "strategy_bindings.yaml")["strategies"]
+    short_strategies = _mapping(_SHORT_DIR, "strategy_bindings.yaml")["strategies"]
+
+    assert len(long_strategies) == len(short_strategies) == 1
+    (long_stem, long_entry), (short_stem, short_entry) = (
+        next(iter(long_strategies.items())),
+        next(iter(short_strategies.items())),
+    )
+    assert long_stem == "setup_d_long.strategy"
+    assert short_stem == "setup_d_short.strategy"
+
+    # Same keys at the entry level -- so one tree cannot grow a field the other lacks.
+    assert set(long_entry) == set(short_entry) == {"config_binding_version", "bindings"}
+    assert long_entry["config_binding_version"] == short_entry["config_binding_version"]
+
+    # One binding each, mirrored. The NAMES differ by design; the magnitudes must match.
+    assert len(long_entry["bindings"]) == len(short_entry["bindings"]) == 1
+    (long_key, long_value), (short_key, short_value) = (
+        next(iter(long_entry["bindings"].items())),
+        next(iter(short_entry["bindings"].items())),
+    )
+    assert long_key == "z_entry_max_x1000"
+    assert short_key == "z_entry_min_x1000"
+    assert long_value + short_value == 0
 
 
 @pytest.mark.parametrize("rel", sorted(_DIFFERS_FROM_LONG))

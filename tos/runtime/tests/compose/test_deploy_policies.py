@@ -308,8 +308,16 @@ def _filled(
     ``direction`` is the EXPECTED axis value, not a value written into the document: the
     assertion below still reads the file. It defaults to ``LONG`` -- the resident and LONG-tenant
     deployments -- and the CP-3 SHORT tenant tree passes ``"SHORT"``. A single hard-coded
-    ``LONG`` here would have forced the SHORT tree's callers to skip this helper, which would
-    have meant skipping the ``admitted_quantity_bases`` and axis-count checks with it.
+    ``LONG`` here would have forced the SHORT tree's callers to skip this helper, and with it
+    the ``admitted_quantity_bases`` check.
+
+    ⚠ What the axis block below does and does not check: it asserts there is exactly ONE
+    ``DIRECTION`` entry and that its value is the expected one. It does **not** check the length
+    of ``axes`` or anything about the other axes -- a TIF axis edited, added or dropped passes
+    straight through. (This docstring used to claim an "axis-count" check; review M2 found there
+    was none.) The axes list as a whole is compared between the two tenant trees by
+    ``test_tenant_tree_short.py::test_the_axes_list_differs_only_in_its_DIRECTION_entry``, and
+    the resident tree's own axes are pinned in ``test_deploy_approved_values.py``.
     """
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(raw, dict), f"policy document loaded as {type(raw).__name__}"
