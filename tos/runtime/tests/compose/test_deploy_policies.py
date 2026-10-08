@@ -52,6 +52,8 @@ from tos_runtime.marketfeed.policy import (
     CriticalInputPolicyConfigError,
     load_critical_input_policy,
 )
+from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
+from tos_runtime.time.config import _BOUND_FIELD_BY_KEY
 from tos_runtime.venue import (
     VenuePolicyConfigError,
     load_order_construction_policy,
@@ -185,16 +187,28 @@ _B1A_BAR_PERIOD_MS = 60_000
 #: the shipped number cannot drift apart.
 _TENANT_MAX_AGE_MS = 180_000
 
-#: ``time.yaml``'s four delay bounds, as ``marketfeed/time_projection.py``'s
-#: ``_DELAY_BOUND_FIELDS`` composes them -- the subtrahend in the conservative freshness budget
-#: this tree's ``marketfeed.yaml`` header derives (1000 - 4x50 = 800 ms). Literals here because
-#: the firewall keeps this test from importing the private tuple; the tie is this list plus the
-#: ``budget == 800`` assertion, which fails if either side moves.
-_TIME_DELAY_BOUND_KEYS = (
-    "MAX_time_source_precision_ms",
-    "MAX_time_transport_and_queue_uncertainty_ms",
-    "MAX_time_source_disagreement_ms",
-    "MAX_clock_domain_conversion_uncertainty_ms",
+#: ``time.yaml``'s four delay-bound KEYS -- **derived from the runtime, never re-listed**.
+#:
+#: ``_DELAY_BOUND_FIELDS`` is the tuple ``RuntimeTimeProjection`` actually sums into
+#: ``delay_bounds``, and ``_BOUND_FIELD_BY_KEY`` is the loader's own YAML-key -> config-field
+#: map; inverting the second over the first yields the YAML keys with **no literal in this
+#: file**. ``compose/_marketfeed_wiring.py`` imports the same private tuple for the same reason
+#: its docstring gives: "a guard that reads a second copy of the numbers it guards is exactly
+#: the failure this repo has already hit". Both imports are RUNTIME-scope -> RUNTIME-scope, which
+#: the firewall permits (it only forbids ``shared.*`` from here, and ``tos`` importing
+#: ``tos_runtime``).
+#:
+#: ⚠ The first cut DID re-list them, and got one wrong: it named
+#: ``MAX_time_source_disagreement_ms``, which is NOT a delay bound -- the runtime's fourth entry
+#: is ``MAX_time_source_sequence_gap_ms``. The ``budget == 800`` assertion passed anyway because
+#: both values happen to be 50 in every shipped ``time.yaml``. That is precisely the class of
+#: guard this repo's project memory calls "a guard that admits what it names": it would have
+#: stayed green while measuring the wrong four numbers.
+_TIME_DELAY_BOUND_KEYS: tuple[str, ...] = tuple(
+    key
+    for field in _DELAY_BOUND_FIELDS
+    for key, mapped in _BOUND_FIELD_BY_KEY.items()
+    if mapped == field
 )
 
 #: The sentences the adopted ``max_age_ms`` may not be read without -- the operator's direction
@@ -680,8 +694,25 @@ def test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget() -> None:
 
     Pinned so "the file loads now" is never read as "the deployment would work": it would not,
     for a reason ``max_age_ms`` cannot fix. The fix is ③, the live producer (kickoff §5 3).
-    """
+
+    ⚠ **What this test does and does not guard.** It reads ``time.yaml`` and the runtime's own
+    ``_DELAY_BOUND_FIELDS``, so it tracks those two. Everything else here -- the bar period, the
+    label semantics, the quantity the runtime compares -- is asserted as VALUES against the
+    constants above, which carry the code citations in their own comments; this test does not
+    re-derive them from ``produce_fields`` or ``snapshot.py`` (``tools`` is legacy-side and
+    firewall-denied from here, and the comparison in ``snapshot.py`` is an expression, not a
+    readable constant). So: a changed ``time.yaml`` or a changed delay-bound set fails here; a
+    changed bar period or a producer that starts stamping at bar CLOSE would NOT, and would make
+    the derivation in ``critical_input_policy.yaml``'s header stale with nothing failing. That
+    gap is the ③ re-derivation obligation, not something this test closes."""
     time_cfg = yaml.safe_load((_TENANT_DIR / "time.yaml").read_text(encoding="utf-8"))
+
+    # The derivation must have produced the runtime's full set -- an inverted-map lookup that
+    # silently found nothing would make the sum below too small and the budget too large (i.e.
+    # permissive), so an empty or short result is never an acceptable outcome here.
+    assert len(_TIME_DELAY_BOUND_KEYS) == len(_DELAY_BOUND_FIELDS)
+    assert set(_TIME_DELAY_BOUND_KEYS) <= set(time_cfg)
+
     budget = time_cfg["MAX_time_conservative_freshness_age_ms"] - sum(
         time_cfg[name] for name in _TIME_DELAY_BOUND_KEYS
     )
