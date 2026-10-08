@@ -117,8 +117,8 @@ price_scale` 0건). `critical_input_policy.yaml:87-100` 은 가격 필드를 `un
 「부팅 경로를 막지 않을 만큼 짧고 모의 왕복 실측(수백 ms)보다 충분히 긴 값」이라는 근거뿐인 **제안**이다.
 
 **GET 의 종목은 한 출처에서만 온다(재리뷰 H1 부분).** 요청의 `FID_INPUT_ISCD` 는 **`band_source.instrument` 하나**다.
-`kis_quote` transport 설정에도 `instrument` 필드가 있으므로(`transport/kis_quote/config.py`), 그 transport 설정(band 원천이 켜진
-배포에 있으면 두 값이 같아야 부팅한다 — 출처가 둘인 채로 어긋나는 것을 로더가 막는다.
+`kis_quote` transport 설정에도 `instrument` 필드가 있으므로(`transport/kis_quote/config.py`), band 원천이 켜진
+배포에는 그 transport 설정이 반드시 있고(아래 로더 규칙의 「transport 설정 부재」) 두 값이 같아야 부팅한다 — 출처가 둘인 채로 어긋나는 것을 로더가 막는다.
 
 로더 규칙 — **전부 `band_source` 가 non-null 일 때만 적용**되고, 위반은 이름을 밝혀 부팅 거부:
 `_model_view.shape_constraints.price_min/max` 가 리터럴(원천 둘) · `band_source.instrument` ≠ 최상위 `scope.instruments` 의
