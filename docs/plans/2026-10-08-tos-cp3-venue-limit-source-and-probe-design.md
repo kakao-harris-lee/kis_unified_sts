@@ -229,12 +229,18 @@ UNKNOWN`(`:2363, :4425`). 이 문서를 닫아도 ⑤ 는 닫히지 않는다.
 ## 8. 핸드오버 — 순서
 
 1. **운영자**: 이 문서 승인(§3 값 표 채택 여부 · §2.0 tick 정정 · §6 선택). 승인 전엔 아무 값도 착지하지 않는다.
-2. 실행 에이전트: `P-VL` 구현(레지스트리 + `probes_venue_limits.py` + `_tick_math.py` 이전 + hermetic 테스트: 레그별 레드 증명 —
+2. ✅ **완료 2026-10-08 (PR #880, main `36afc379`).** 실행 에이전트: `P-VL` 구현(레지스트리 + `probes_venue_limits.py` + `_tick_math.py` 이전 + hermetic 테스트: 레그별 레드 증명 —
    band 불일치·`ord_psbl_qty` 비정수·`rt_cd≠0`·틱 불일치 각 1건, 실전 호스트 거부 1건, **주문 가능 모듈 미import 카나리** 1건,
    `tick_registry_matches_policy` 불일치 기록 1건) → PR → 리뷰 → 머지.
-3. 거래일 장중 실행(§4.2, 분리 워크트리) → 증거 디렉터리 + README(인용 토큰, n>0) → PR. 같은 PR 에 10-07 STAGE_DENIED 의
-   evidence store 재집계(`STAGE_DENIED` 행 5,020 ↔ 사유 문자열 행 2,510 의 2:1 매핑)를 적는다(§1 「소비 1」 행).
-4. 브로커 프로파일 초안 `price_band_tick_lot_and_quantity_semantics` 처분(§5 복합 토큰) — 같은 PR.
+3. ✅ **완료 2026-10-08 10:06/10:08 KST** — 증거 `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/`
+   (아티팩트 2건 · README 인용 45건 PASS). **② 샘플만**이다(①의 08:50±3분 창은 지나 있었다). 재집계도 그 README §4.1 에
+   들어갔고 2:1 은 **「1 거부 → EVENT_CONSUMED 1 + FLOW_HALTED 1, 사유는 FLOW_HALTED 에만」**으로 해소됐다(사유 누락 0건).
+   ⭐ 부수 산출: 관측 band 가 **미니 틱 0.02 격자에만** 떨어진다 — 배포 정책 `tick_size: 5` 가 틀렸다는 **브로커 측** 정황이고
+   §2.0 의 규정 논거를 관측으로 보강한다(처분은 §6 웨이브).
+4. ✅ **완료 2026-10-08** — 프로파일 초안 `price_band_tick_lot_and_quantity_semantics` 를 **MOCK_VTS 문서에만**
+   `BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED` 로
+   기입(`:2367`). **REAL_PROD 문서(`:4450`)는 UNKNOWN 유지** — 런북 §6.2 / ADR-002-004 §13.14 가 MOCK_VTS 아티팩트의
+   REAL_PROD 문서 인용을 금지하므로, 사유를 그 블록 주석에 적어 두었다.
 5. CP-3 §5 3 tenant 트리 생성 시 `max_quantity: 10000` 과 §2.2 단서·채택일·결정 id(「결정 9 (a) · 운영자 채택 YYYY-MM-DD · 별표
    17의2 제1호 미니코스피200선물거래 행 · 등급 R」)를 헤더에 적어 착지. 헤더의 「NO SOURCE … Never fill by hand」 문단은 **분리**:
    `price_min/max` 는 그대로, `max_quantity` 줄은 출처 문장으로 교체. `test_deploy_policies.py` 의 **paper 단언 3건은 그대로 두고**

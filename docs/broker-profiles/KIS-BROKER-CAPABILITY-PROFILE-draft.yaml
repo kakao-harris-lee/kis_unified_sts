@@ -2359,9 +2359,12 @@ capabilities:
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:46 (N-17 #2 · 부분 — 선물 TIF)"
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:48 (N-17 #4 · 부분 — 주문유형 값집합)"
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:59 (N-17 #15 · 부분 — ATS 경로)"
+      - "P-VL-20261008T010644Z (docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/P-VL-20261008T010644Z.json; MOCK_VTS, GET 4, errors 0, 2026-10-08 10:06 KST — A05610 **당일 만기** 잎)"
+      - "P-VL-20261008T010822Z (docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/P-VL-20261008T010822Z.json; MOCK_VTS, GET 4, errors 0, 2026-10-08 10:08 KST — A05611 차근월, 같은 결론 독립 재현)"
+      - "docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/README.md (인용 토큰 45건, tos_evidence_citation_check PASS)"
     session_phase_semantics: UNKNOWN
     halt_and_suspension_semantics: UNKNOWN
-    price_band_tick_lot_and_quantity_semantics: UNKNOWN
+    price_band_tick_lot_and_quantity_semantics: BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED
     order_type_time_in_force_and_route_semantics: UNKNOWN   # 유지 — 확정분은 선물
                                                             # 뿐이고 주식 값집합이
                                                             # 미확인이라 차원
@@ -2372,6 +2375,26 @@ capabilities:
     # 확정했다(demo+night → ValueError · 야간 잔고에 env_dv 분기 부재). 값은 이
     # 커버리지 사실의 서술이며, 다른 커버리지 축(종목군·해외지수 등)은 미확립이다.
     # N-18 은 REAL_PROD 아티팩트이므로 이 문서에 인용하지 않는다(런북 §6.2).
+    #
+    # T4-γ 기입 근거(price_band_tick_lot_and_quantity_semantics · 2026-10-08):
+    # P-VL(GET 전용·MOCK_VTS) 두 런이 band **의미론**을 모의에서 관측했다 —
+    # 다섯 시세 필드가 등록 틱 격자에 정합하고(`l1_tick_corroboration.corroborated`),
+    # 관측 band 가 시행세칙 제56조 1단계(8% · 상한 내림/하한 올림) 산식을 재현한다
+    # (`l2_band_rule_arithmetic.matching_stages=[1]`). 토큰의 세 축은 아티팩트가
+    # 판정에서 **파생**한 것이고(`p02_disposition_proposal.derived_from`), 한 단어
+    # 상태(PARTIAL 등)는 프로파일 어휘에 없다(설계 v2 §5).
+    #   · BAND_SEMANTICS_OBSERVED_ON_MOCK — 모의 한정. 실전 미관측.
+    #   · TICK_FROM_REGULATION_NOT_BROKER — 틱 **값**은 규정/레포 설정에서 왔고
+    #     브로커가 공표한 것이 아니다(그 TR 에 호가단위 필드가 없다). :2426-2430 의
+    #     기존 기록과 정합. ⚠ 다만 관측 band 가 **0.02 격자에만** 떨어지고 0.05 에는
+    #     떨어지지 않았다 — 배포 paper 정책의 `tick_size: 5` 가 이 미니 잎에 대해
+    #     틀렸다는 **브로커 측** 정황이다(README §0.1). 정책 처분은 설계 §6 웨이브.
+    #   · QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED — 호가수량한도는 GET 으로
+    #     관측 불가. 별표 17의2 제1호의 규정값(미니 정규 10,000)은 **맥락**이며
+    #     `ord_psbl_qty` 는 예수금·증거금과 **레그 파라미터**의 함수다.
+    # 미확립: 기준가격의 정산가 여부(두 샘플 모두 futs_sdpr == futs_prdy_clpr 로
+    # 무정보) · 2/3단계 확대 · 설계 §4.2 ① 샘플(08:50±3분, 오늘 미취득) · band 의
+    # 런타임 공급(설계 §6).
     instrument_coverage: DAY_SESSION_TR_SURFACE_ONLY__NIGHT_ABSENT__OTHER_COVERAGE_UNKNOWN
     restrictions: []
     restriction_approved: false
@@ -4429,6 +4452,13 @@ capabilities:
     # T4-α 기입 근거(1줄): N-17 #13 이 야간 세션 TR 3계열(주문 STTN1101U ·
     # 정정취소 STTN1103U/TTTN1103U · 잔고 CTFN6118R)의 **실전 전용 존재**를
     # 공식 명세로 확정했다. 다른 커버리지 축(종목군·해외지수 표기 등)은 미확립.
+    #
+    # price_band_tick_lot_and_quantity_semantics 는 **UNKNOWN 유지**(2026-10-08).
+    # P-VL 이 같은 축을 모의에서 관측했으나(위 MOCK_VTS 블록 T4-γ), 그 아티팩트는
+    # `environment: MOCK_VTS` 이고 런북 §6.2 / ADR-002-004 §13.14 가 **MOCK_VTS
+    # 아티팩트를 REAL_PROD 문서에 인용하는 것을 금지**한다 — 이 블록이 N-18 을
+    # 인용하고 위 블록이 인용하지 않는 것과 **같은 규칙의 반대 방향**이다. 실전
+    # band 의미론은 실전 관측이 있어야 서술할 수 있고, 그 관측은 아직 없다.
     instrument_coverage: DAY_AND_NIGHT_TR_SURFACE_PRESENT__OTHER_COVERAGE_UNKNOWN
     restrictions: []
     restriction_approved: false

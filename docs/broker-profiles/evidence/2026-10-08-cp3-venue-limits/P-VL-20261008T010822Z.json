@@ -1,0 +1,402 @@
+{
+  "artifact_id": "P-VL-20261008T010822Z",
+  "probe_id": "P-VL",
+  "title": "venue limits — 가격제한폭 의미론 대조 + 모의 주문가능수량 보강 (GET-only · MOCK_VTS)",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-10-08T01:08:22.429676+00:00",
+  "finished_at_utc": "2026-10-08T01:08:48.359833+00:00",
+  "duration_s": 25.93,
+  "repo_commit": "36afc379",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-VL",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05611",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "",
+    "pace_s": 1.1
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "46c39c54d3bb"
+  },
+  "measurements": {
+    "inert_common_args": {
+      "ignored": [
+        "margin_pct",
+        "price_offset_pct",
+        "quantity",
+        "samples"
+      ],
+      "why": "add_common_args gives every probe the same CLI, so these parse and land in args but this probe never reads them: it issues a fixed GET plan, places nothing, and proposes no numeric bound. Named here because an artifact carrying '--samples 30' beside 4 calls reads like a discarded setting rather than an unused flag."
+    },
+    "verdict_and_error_relation": "Every FAIL verdict is ALSO recorded through run.error, so errors == [] means no leg failed and provenance_class MEASURED is earned. The runbook treats an empty errors list as a complete run (§5.5), and a probe that scored a FAIL while shipping errors: [] would have made that reading false. L4/L5 carry no verdict and therefore never produce an error.",
+    "structural_controls": [
+      "assert_read_only_call: GET + TR id + path, checked before the session is touched, so a refused call opens no socket",
+      "assert_mock_host on every URL, built from MOCK_BASE_URL",
+      "assert_mock_trading_tr on the one /trading/ TR (모의 = V-prefixed)",
+      "--confirm gates broker contact (runbook safety control #4), as it does for every networked probe including read-only ones",
+      "no order-capable module in this module's import graph"
+    ],
+    "cannot_establish": {
+      "kis_quantity_limit": "ord_psbl_qty is 주문가능수량 per the official spec: a function of 예수금·증거금 AND of this leg's own price, side and order-type parameters (probes_real_order.py::_preflight_instrument_state, the 'interpretation' key — \"this leg's own parameters (price, side, order type) could produce a 0 for reasons that are about the parameters and not the account\"). It is not the venue's structural limit. The 호가수량한도 of 별표 17의2 and any lower member limit under 시행세칙 제61조제3항 are observable only by sending an order and reading the rejection — outside this probe's GET-only scope. The rulebook row for --symbol is recorded as CONTEXT and decides nothing.",
+      "no_prior_ord_psbl_qty_observation": "This repo holds NO ord_psbl_qty observation yet. P-R5-PRE's 2026-08-03 run aborted on the deposit leg (CTRP6550R ord_psbl_cash/ord_psbl_tota = 0) BEFORE the 주문가능 leg ran (P-R5-PRE-20260803T002732Z.json), so no artifact here supports any claim about what a zero 주문가능수량 means. Design v2 §4.3 says this explicitly; an earlier draft of this module cited that run for the opposite and was wrong.",
+      "stage_2_3_escalation": "Escalation depends on a 기준종목 reaching its own limit; a probe cannot cause it. Observed or not observed, never induced.",
+      "runtime_band_supply": "This probe observes band values. Wiring a band into VenueConstraintSnapshot is design §6, a separate decision."
+    },
+    "resolved_instrument": {
+      "symbol": "A05611",
+      "matched_prefix": "A05",
+      "resolved_product": "kospi200_mini",
+      "registry_tick_points": "0.02",
+      "registry_tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "paper_policy_tick": {
+        "policy_path": "config/tos_runtime/paper/venue_constraint_policy.yaml",
+        "tick_size_scaled_int": 5,
+        "price_scale": "100",
+        "scale_source": "the policy file's own header — 'tick_size 5 = 0.05 index points at the ×100 integer price scale' (venue_constraint_policy.yaml:11-13)",
+        "tick_points": "0.05"
+      },
+      "registry_tick_rule_article": "시행세칙 제4조의9제2호 (미니 0.02 포인트, 최종개정 2024-11-01)",
+      "tick_registry_matches_policy": false,
+      "disagreement_note": "A False here is an OBSERVATION, not a probe failure. The registry tick governs this probe's arithmetic because it is keyed on --symbol's own product; the policy's value is recorded beside it so the drift is visible. Which one the deployed policy should carry is an operator decision, not a probe output.",
+      "why_the_drift_matters_later": "Design v2 §2.0 names the consequence: today the band is null so step 3 is UNKNOWN and the mismatch is masked, but the moment a band arrives (design §6) tos/src/tos/venue/predicates.py would judge a mini leaf's NORMAL 0.02-grid quotes INADMISSIBLE against a 0.05 policy tick. Recorded so the drift is not read as cosmetic; the disposition is an operator item on the §6 wave, not this probe's.",
+      "krx_quantity_limit_row": {
+        "registry_product": "kospi200_mini",
+        "product": "미니코스피200선물거래",
+        "regular_session_contracts": 10000,
+        "night_session_contracts": 5000,
+        "liquidity_managed_regular_contracts": 1000,
+        "liquidity_managed_night_contracts": 500,
+        "source": "업무규정 제71조 → 시행세칙 제61조제1항 → 별표 17의2 제1호 (별표 최종개정 2025-05-29)",
+        "evidence": "docs/broker-profiles/evidence/2026-10-08-krx-venue-limits/byeolpyo17-2_order_quantity_limits.txt:41-45 (미니코스피200선물거래 행) · 괄호 의미 비고 :118",
+        "caveats": "회원은 시행세칙 제61조제3항으로 더 낮게 정할 수 있고, 거래소는 제61조제1항 단서로 변경할 수 있다. 공표 규정값이지 불변식이 아니다. 누적호가수량한도(제61조제2항)는 위탁계좌에 적용되지 않으므로 여기 없다."
+      },
+      "krx_quantity_limit_is_context_only": "This row is CONTEXT. No leg passes or fails on it and this probe cannot observe it — ord_psbl_qty is 예수금-derived. It is recorded so a reader sees WHICH 별표 17의2 row governs --symbol instead of assuming the full-size contract's number applies to a mini leaf."
+    },
+    "account_product_code_is_futures_03": {
+      "matches": true,
+      "expected": "03",
+      "source": "P-R5-PRE 2026-08-03 — 선물옵션 상품코드 is 03; the account number itself is never recorded, only this comparison"
+    },
+    "l1_sample_window": {
+      "sampled_at_kst": "2026-10-08T10:08:27.232391+09:00",
+      "inside_no_escalation_window": false,
+      "no_escalation_window_kst": "08:45-09:00",
+      "no_escalation_source": "시행세칙 제56조의2제2항 (본문 최종개정 2025-05-29 · 제2항제1호가목 2026-06-11)",
+      "inside_continuous_session": true,
+      "continuous_session_kst": "08:45-15:45",
+      "continuous_session_source": "calendar.yaml::sessions.krx-index-futures CONTINUOUS 08:45-15:45",
+      "expected_stage_is_determined": false,
+      "why": "Inside the no-escalation window only stage 1 can be in force, so L2's expected band is DETERMINED and a mismatch is a FAIL. Outside it, a 2/3단계 band is admissible, so a mismatch is recorded with the stage that matched and carries no verdict (design v2 §4.2: 「그날의 확대 사실을 기록만」)."
+    },
+    "l1_quote_fields": {
+      "tr_id": "FHMIF10000000",
+      "source": "examples_llm/domestic_futureoption/inquire_price/inquire_price.py (env_dv: FHMIF10000000 for both real and demo)",
+      "values": {
+        "futs_prpr": "1068.70",
+        "futs_prdy_clpr": "1076.60",
+        "futs_sdpr": "1076.60",
+        "futs_mxpr": "1162.72",
+        "futs_llam": "990.48"
+      },
+      "unusable": [],
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:22 GMT",
+      "field_meanings": {
+        "futs_prpr": "현재가",
+        "futs_prdy_clpr": "전일종가",
+        "futs_sdpr": "기준가격 (시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격)",
+        "futs_mxpr": "상한가",
+        "futs_llam": "하한가"
+      }
+    },
+    "l1_basis_price_distinguishable": {
+      "futs_sdpr": "1076.60",
+      "futs_prdy_clpr": "1076.60",
+      "differ": false,
+      "distinguishes_settlement_from_close": false,
+      "quarterly_mini_leaf": false,
+      "meaning": "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격. When the two fields differ, this sample distinguishes 정산가 from 종가. When they are equal, the sample is simply uninformative — equality is not evidence that the rule is wrong.",
+      "quarterly_caveat": "⚠ On a 분기월 mini leaf (제55조제1항 단서) the 기준가격 is the 코스피200선물's, not this contract's own settlement price, so a difference here may be about the OTHER product and does not distinguish 정산가 from 종가. distinguishes_settlement_from_close is False for that reason, not because the fields matched."
+    },
+    "l1_tick_corroboration": {
+      "tick_size_points": "0.02",
+      "broker_quoted_values": {
+        "futs_prpr": "1068.70",
+        "futs_prdy_clpr": "1076.60",
+        "futs_sdpr": "1076.60",
+        "futs_mxpr": "1162.72",
+        "futs_llam": "990.48"
+      },
+      "non_multiples": [],
+      "corroborated": true,
+      "meaning": "Every positive broker-quoted price above is expected to be an exact multiple of the registered tick. A non-multiple contradicts the registry and the resting price must not be snapped to it."
+    },
+    "l2_band_rule_arithmetic": {
+      "observed_upper": "1162.72",
+      "observed_lower": "990.48",
+      "tick_points": "0.02",
+      "candidates": [
+        {
+          "stage": 1,
+          "basis_price": "1076.60",
+          "ratio": "0.08",
+          "tick_points": "0.02",
+          "expected_upper": "1162.72",
+          "expected_lower": "990.48",
+          "rounding_rule": "시행세칙 제56조제1항·제2항 단서 — 상한가 = 기준가격 + 기준가격×비율 을 호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림",
+          "basis_price_rule": "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격",
+          "upper_matches": true,
+          "lower_matches": true,
+          "both_match": true
+        },
+        {
+          "stage": 2,
+          "basis_price": "1076.60",
+          "ratio": "0.15",
+          "tick_points": "0.02",
+          "expected_upper": "1238.08",
+          "expected_lower": "915.12",
+          "rounding_rule": "시행세칙 제56조제1항·제2항 단서 — 상한가 = 기준가격 + 기준가격×비율 을 호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림",
+          "basis_price_rule": "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격",
+          "upper_matches": false,
+          "lower_matches": false,
+          "both_match": false
+        },
+        {
+          "stage": 3,
+          "basis_price": "1076.60",
+          "ratio": "0.20",
+          "tick_points": "0.02",
+          "expected_upper": "1291.92",
+          "expected_lower": "861.28",
+          "rounding_rule": "시행세칙 제56조제1항·제2항 단서 — 상한가 = 기준가격 + 기준가격×비율 을 호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림",
+          "basis_price_rule": "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격",
+          "upper_matches": false,
+          "lower_matches": false,
+          "both_match": false
+        }
+      ],
+      "matching_stages": [
+        1
+      ],
+      "any_match": true,
+      "source": "ratios: 별표 14 제1호 (주가지수선물거래 1/2/3단계 8/15/20%) · rounding: 시행세칙 제56조제1항·제2항 단서 — 상한가 = 기준가격 + 기준가격×비율 을 호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림 · basis: 시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격",
+      "not_an_interpretation": "A matching stage records WHICH arithmetic reproduces the broker's numbers. It does not establish that the venue used that stage, and a non-match does not establish that the rule is wrong — 기준가격 or the rounding could differ instead.",
+      "declared_expectation": {
+        "basis_price": "1076.60",
+        "ratio": "0.08",
+        "tick_points": "0.02",
+        "expected_upper": "1162.72",
+        "expected_lower": "990.48",
+        "rounding_rule": "시행세칙 제56조제1항·제2항 단서 — 상한가 = 기준가격 + 기준가격×비율 을 호가가격단위로 내림, 하한가 = 기준가격 − 기준가격×비율 을 올림",
+        "basis_price_rule": "시행세칙 제55조제1항제2호 — 기준가격은 직전 거래일의 정산가격(규정 제96조); 제55조제4항으로 호가가격단위에 가장 가까운 값(동일하면 높은 쪽)으로 조정; 제55조제1항 단서 — 분기월 mini 는 같은 최종거래일 코스피200선물의 기준가격"
+      },
+      "declared_expectation_matches": true,
+      "expected_stage_is_determined": false,
+      "verdict": "PASS",
+      "declared_expectation_note": "The declared expectation is design §4.1 L2: 1단계 비율 8% at --symbol's own 호가가격단위. It is the PASS criterion. It is only the DETERMINED expectation inside the no-escalation window — outside it a 2/3단계 band is admissible, so a mismatch is recorded without a verdict.",
+      "tick_provenance": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')"
+    },
+    "l3_psbl_at_touch": {
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "20310000",
+      "msg1": "모의투자 조회가 완료되었습니다.",
+      "ord_psbl_qty": "4",
+      "tot_psbl_qty": "4",
+      "bass_idx": "1068.70000000",
+      "elapsed_ms": 6463.2,
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:28 GMT",
+      "leg": "L3",
+      "tr_id": "VTTO5105R",
+      "unit_price_sent": "1068.70",
+      "unit_price_meaning": "futs_prpr (현재가) — the touch",
+      "sampled_at_kst": "2026-10-08T10:08:34.795687+09:00",
+      "answered": true,
+      "ord_psbl_qty_int": 4,
+      "tot_psbl_qty_int": 4
+    },
+    "l4_psbl_at_lower_limit": {
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "20310000",
+      "msg1": "모의투자 조회가 완료되었습니다.",
+      "ord_psbl_qty": "4",
+      "tot_psbl_qty": "4",
+      "bass_idx": "990.48000000",
+      "elapsed_ms": 7116.6,
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:35 GMT",
+      "leg": "L4",
+      "tr_id": "VTTO5105R",
+      "unit_price_sent": "990.48",
+      "unit_price_meaning": "futs_llam (하한가) — the lower band edge, inclusive?",
+      "sampled_at_kst": "2026-10-08T10:08:43.012515+09:00",
+      "answered": true,
+      "verdict": "OBSERVATION_ONLY_NO_VERDICT",
+      "why_no_verdict": "Design §5: L4 is observation only. Whether the broker admits the band edge is recorded; no PASS/FAIL is defined because neither answer contradicts anything this probe asserts."
+    },
+    "l5_psbl_above_upper_limit": {
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "20310000",
+      "msg1": "모의투자 조회가 완료되었습니다.",
+      "ord_psbl_qty": "4",
+      "tot_psbl_qty": "4",
+      "bass_idx": "1162.74000000",
+      "elapsed_ms": 4242.6,
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:43 GMT",
+      "leg": "L5",
+      "tr_id": "VTTO5105R",
+      "unit_price_sent": "1162.74",
+      "unit_price_meaning": "futs_mxpr + 1 tick (0.02) — one tick ABOVE the upper band edge, i.e. outside the band",
+      "sampled_at_kst": "2026-10-08T10:08:48.355259+09:00",
+      "answered": true,
+      "verdict": "OBSERVATION_ONLY_NO_VERDICT",
+      "price_derivation": {
+        "futs_mxpr": "1162.72",
+        "tick_added": "0.02",
+        "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+        "rule": "design §4.1 L5 asks for 상한가 + 1틱. The tick is the one registered for THIS symbol, not a literal: a mini leaf's 호가가격단위 is not the full-size contract's."
+      },
+      "why_no_verdict": "Design §5: L5's refusal or acceptance is recorded verbatim and never interpreted. An rt_cd != 0 here is an observation, not a failure of this probe — the question of whether the GET surface validates the band is exactly what is open."
+    },
+    "leg_verdicts": {
+      "L1": "PASS",
+      "L2": "PASS",
+      "L3": "PASS",
+      "L4": "OBSERVATION_ONLY_NO_VERDICT",
+      "L5": "OBSERVATION_ONLY_NO_VERDICT"
+    },
+    "p02_disposition_proposal": {
+      "field": "capabilities.market_and_instrument_constraints.price_band_tick_lot_and_quantity_semantics",
+      "current": "UNKNOWN",
+      "proposed": "BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED",
+      "derived_from": {
+        "L1": "PASS",
+        "L2": "PASS",
+        "L3": "PASS",
+        "L4": "OBSERVATION_ONLY_NO_VERDICT",
+        "L5": "OBSERVATION_ONLY_NO_VERDICT"
+      },
+      "still_unestablished": [
+        "the structural 호가수량한도 (별표 17의2) — regulation value only, broker-side limit unconfirmed",
+        "any member limit KIS sets under 시행세칙 제61조제3항",
+        "2/3단계 확대 의미론",
+        "the runtime supply path for a band (design §6)"
+      ],
+      "rule": "Design v2 §5: the profile's idiom is a self-describing COMPOUND token (:4432 shape), not a one-word status — 'PARTIAL' is refused there by name. The token above is DERIVED from derived_from, so a leg that did not pass cannot claim an observed axis. See disposition_token()."
+    }
+  },
+  "observations": [
+    {
+      "read_only_attestation": "GET-only against the allowlist in tools/broker_probes/probes_venue_limits.py::ALLOWLIST, on the mock host only (assert_mock_host). No order path exists in this module and it imports no order-capable module.",
+      "allowlist": [
+        {
+          "tr_id": "FHMIF10000000",
+          "path": "/uapi/domestic-futureoption/v1/quotations/inquire-price"
+        },
+        {
+          "tr_id": "VTTO5105R",
+          "path": "/uapi/domestic-futureoption/v1/trading/inquire-psbl-order"
+        }
+      ]
+    },
+    {
+      "leg": "L1",
+      "tr_id": "FHMIF10000000",
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "MCA00000",
+      "msg1": "정상처리 되었습니다.",
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:22 GMT",
+      "elapsed_ms": 4477.3,
+      "sampled_at_kst": "2026-10-08T10:08:27.232391+09:00",
+      "inside_no_escalation_window": false,
+      "no_escalation_window_kst": "08:45-09:00",
+      "no_escalation_source": "시행세칙 제56조의2제2항 (본문 최종개정 2025-05-29 · 제2항제1호가목 2026-06-11)",
+      "inside_continuous_session": true,
+      "continuous_session_kst": "08:45-15:45",
+      "continuous_session_source": "calendar.yaml::sessions.krx-index-futures CONTINUOUS 08:45-15:45",
+      "expected_stage_is_determined": false,
+      "why": "Inside the no-escalation window only stage 1 can be in force, so L2's expected band is DETERMINED and a mismatch is a FAIL. Outside it, a 2/3단계 band is admissible, so a mismatch is recorded with the stage that matched and carries no verdict (design v2 §4.2: 「그날의 확대 사실을 기록만」)."
+    },
+    {
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "20310000",
+      "msg1": "모의투자 조회가 완료되었습니다.",
+      "ord_psbl_qty": "4",
+      "tot_psbl_qty": "4",
+      "bass_idx": "1068.70000000",
+      "elapsed_ms": 6463.2,
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:28 GMT",
+      "leg": "L3",
+      "tr_id": "VTTO5105R",
+      "unit_price_sent": "1068.70",
+      "unit_price_meaning": "futs_prpr (현재가) — the touch",
+      "sampled_at_kst": "2026-10-08T10:08:34.795687+09:00",
+      "answered": true
+    },
+    {
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "20310000",
+      "msg1": "모의투자 조회가 완료되었습니다.",
+      "ord_psbl_qty": "4",
+      "tot_psbl_qty": "4",
+      "bass_idx": "990.48000000",
+      "elapsed_ms": 7116.6,
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:35 GMT",
+      "leg": "L4",
+      "tr_id": "VTTO5105R",
+      "unit_price_sent": "990.48",
+      "unit_price_meaning": "futs_llam (하한가) — the lower band edge, inclusive?",
+      "sampled_at_kst": "2026-10-08T10:08:43.012515+09:00",
+      "answered": true
+    },
+    {
+      "http_status": 200,
+      "rt_cd": "0",
+      "msg_cd": "20310000",
+      "msg1": "모의투자 조회가 완료되었습니다.",
+      "ord_psbl_qty": "4",
+      "tot_psbl_qty": "4",
+      "bass_idx": "1162.74000000",
+      "elapsed_ms": 4242.6,
+      "broker_date_header": "Thu, 08 Oct 2026 01:08:43 GMT",
+      "leg": "L5",
+      "tr_id": "VTTO5105R",
+      "unit_price_sent": "1162.74",
+      "unit_price_meaning": "futs_mxpr + 1 tick (0.02) — one tick ABOVE the upper band edge, i.e. outside the band",
+      "sampled_at_kst": "2026-10-08T10:08:48.355259+09:00",
+      "answered": true
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.market_and_instrument_constraints.price_band_tick_lot_and_quantity_semantics"
+    ],
+    "capability_dimension": "MARKET_INSTRUMENT_CONSTRAINTS"
+  }
+}
