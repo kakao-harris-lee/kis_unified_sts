@@ -90,8 +90,17 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 걸음 더 나쁘다**: OCP 의 `canonical_digest` 는 DIRECTION 축을 바꿔도, **`policy_id` 를 바꿔도**
 달라지지 않는다. 그래서 이 트리의 OCP `policy_id` rename 이 digest 를 가르지는 못하고,
 활성화 키 `(kind, member_id, generation)` 의 **`member_id` 만** 두 문서를 구별한다 — rename
-이 그 자리를 위한 것이다. (VCP 는 반대다: 그 digest 는 `_model_view.shape_constraints` 를
-덮으므로 `tick_size` 하나만 바꿔도 달라진다.)
+이 그 자리를 위한 것이다.
+
+⚠ **VCP 도 이 두 트리를 가르지 못한다 — 다른 이유로.** VCP 의 digest 는 OCP 와 달리
+`_model_view.shape_constraints` 를 **덮는다**(`tick_size` 하나만 바꿔도 달라진다 — 실측).
+그런데 **`policy_id` 는 덮지 않고**, LONG 과 SHORT 의 shape 는 **같다**(tick 2 · lot 1 ·
+min 1 · max 10000 · band null). 그래서 **두 트리의 VCP digest 는 동일하다**(실측
+2026-10-09). 결론은 OCP 와 같다: 두 VCP 문서를 가르는 것은 digest 가 아니라 활성화 키의
+**`member_id`** 뿐이고, 그래서 **이 트리의 VCP rename 도 장식이 아니라 유일한 판별 수단**
+이다. 「VCP digest 는 내용을 덮으므로 두 배포를 구별한다」로 읽지 말 것 — 덮는 내용이
+같으면 구별하지 않는다. 이 사실은
+`test_tenant_tree_short.py::test_policy_digests_cannot_tell_the_two_trees_apart` 가 고정한다.
 
 ### 3.2 `direction` 토큰의 두 뜻 — 섞지 말 것
 

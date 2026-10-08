@@ -31,13 +31,18 @@ from tos_runtime.marketfeed.policy import (
     CriticalInputPolicyConfigError,
     load_critical_input_policy,
 )
-from tos_runtime.venue import VenuePolicyConfigError, load_venue_constraint_policy
+from tos_runtime.venue import (
+    VenuePolicyConfigError,
+    load_order_construction_policy,
+    load_venue_constraint_policy,
+)
 
 from .test_deploy_policies import (
     _ADOPTED_LOT,
     _ADOPTED_MIN_QTY,
     _ADOPTED_TENANT_MAX_QTY,
     _B1A_FIELD_POLICY,
+    _RESIDENT_TICK,
     _TENANT_MAX_AGE_MS,
     _TENANT_TICK,
     _filled,
@@ -154,6 +159,14 @@ def _mapping(directory: Path, rel: str) -> dict[str, Any]:
     raw = yaml.safe_load((directory / rel).read_text(encoding="utf-8"))
     assert isinstance(raw, dict), f"{rel} did not load as a mapping"
     return raw
+
+
+def _write(path: Path, raw: dict[str, Any]) -> Path:
+    """Dump a filled policy document under ``tmp_path`` for a loader to read."""
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return path
 
 
 def _leaves(node: Any, prefix: str = "") -> dict[str, Any]:
@@ -561,6 +574,97 @@ def test_short_tree_policy_ids_are_short_specific() -> None:
             _mapping(_SHORT_DIR, rel)["policy_id"]
             == _mapping(_LONG_DIR, rel)["policy_id"]
         )
+
+
+def test_policy_digests_cannot_tell_the_two_trees_apart(tmp_path: Path) -> None:
+    """MEASURED 2026-10-09: neither the OCP's nor the VCP's ``canonical_digest`` distinguishes
+    the LONG tree from the SHORT one -- so the ``policy_id`` renames are the ONLY mechanism that
+    does, and this is the test that makes that statement checkable.
+
+    Two different reasons, which is why both halves are here:
+
+    * The **OCP** digest is blind to the content that differs: flipping the ``DIRECTION`` axis
+      leaves it unchanged, and so does changing ``policy_id``. The file's own header records the
+      first as a KNOWN LIMITATION (DR-0002 §2.3 binds the digest to
+      policy_id/generation/version); the measurement shows it does not even track the id.
+    * The **VCP** digest DOES cover ``_model_view.shape_constraints`` -- pinned below, because
+      that is what makes the tick correction a digest-changing edit. But it does not cover
+      ``policy_id``, and the two trees' shapes are IDENTICAL (same tick, lot, quantity bounds,
+      same null band). So it is equal across the trees for a completely different reason, and
+      "the VCP digest covers the content" must not be read as "it tells the deployments apart".
+
+    Without this test, both READMEs' claims about why the renames matter are prose about a
+    property nothing checks -- and a future change that made one digest discriminating would
+    leave that prose quietly false."""
+    long_ocp = load_order_construction_policy(
+        _write(
+            tmp_path / "long_ocp.yaml",
+            _filled(
+                _LONG_DIR / "order_construction_policy.yaml",
+                environment="paper",
+                account="a",
+                instrument="i",
+            ),
+        ),
+        scheme=_SCHEME,
+    )
+    short_ocp = load_order_construction_policy(
+        _write(
+            tmp_path / "short_ocp.yaml",
+            _filled(
+                _SHORT_DIR / "order_construction_policy.yaml",
+                environment="paper",
+                account="a",
+                instrument="i",
+                direction="SHORT",
+            ),
+        ),
+        scheme=_SCHEME,
+    )
+    # Different ids, different DIRECTION axis -- same digest.
+    assert long_ocp.policy.policy_id != short_ocp.policy.policy_id
+    assert long_ocp.policy.canonical_digest == short_ocp.policy.canonical_digest
+
+    long_raw = _filled(
+        _LONG_DIR / "venue_constraint_policy.yaml",
+        environment="paper",
+        account="a",
+        instrument="i",
+    )
+    short_raw = _filled(
+        _SHORT_DIR / "venue_constraint_policy.yaml",
+        environment="paper",
+        account="a",
+        instrument="i",
+    )
+    long_vcp = load_venue_constraint_policy(
+        _write(tmp_path / "long_vcp.yaml", long_raw), scheme=_SCHEME
+    )
+    short_vcp = load_venue_constraint_policy(
+        _write(tmp_path / "short_vcp.yaml", short_raw), scheme=_SCHEME
+    )
+    # Different ids, IDENTICAL shapes -- same digest.
+    assert long_vcp.policy.policy_id != short_vcp.policy.policy_id
+    assert long_vcp.policy.shape_constraints == short_vcp.policy.shape_constraints
+    assert long_vcp.policy.canonical_digest == short_vcp.policy.canonical_digest
+
+    # ... and the VCP digest IS shape-sensitive, so the equality above is about equal shapes and
+    # not about a digest that ignores everything. Without this clause the two asserts above
+    # would also pass on a VCP digest derived from nothing at all.
+    mutated = {
+        **short_raw,
+        "_model_view": {
+            **short_raw["_model_view"],
+            "shape_constraints": {
+                **short_raw["_model_view"]["shape_constraints"],
+                "tick_size": _RESIDENT_TICK,
+            },
+        },
+    }
+    mutated_vcp = load_venue_constraint_policy(
+        _write(tmp_path / "mutated_vcp.yaml", mutated), scheme=_SCHEME
+    )
+    assert mutated_vcp.policy.canonical_digest != short_vcp.policy.canonical_digest
 
 
 def test_short_tree_venue_policy_refuses_until_the_operator_fills_the_scope() -> None:

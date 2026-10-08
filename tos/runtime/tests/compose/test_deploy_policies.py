@@ -275,14 +275,28 @@ _OCP_ADMITTED_QUANTITY_BASIS = "RISK"
 _OCP_DIRECTION = "LONG"
 
 
-def _filled(path: Path, *, environment: str, account: str, instrument: str) -> dict:
+def _filled(
+    path: Path,
+    *,
+    environment: str,
+    account: str,
+    instrument: str,
+    direction: str = _OCP_DIRECTION,
+) -> dict:
     """The real document with ONLY the operator-fill coordinates filled -- exactly what
     ``scripts/tos/render_paper_config.py`` fills off-repo before ``print-policy-digests``.
 
     Since W-A / A-5 that is just the scope coordinates (+ the environment this suite boots
     under): ``admitted_quantity_bases`` and the ``DIRECTION`` axis are no longer operator-fill
     -- they are committed values now, asserted here rather than written, so a silent edit of
-    either shows up as a failure in this file too."""
+    either shows up as a failure in this file too.
+
+    ``direction`` is the EXPECTED axis value, not a value written into the document: the
+    assertion below still reads the file. It defaults to ``LONG`` -- the resident and LONG-tenant
+    deployments -- and the CP-3 SHORT tenant tree passes ``"SHORT"``. A single hard-coded
+    ``LONG`` here would have forced the SHORT tree's callers to skip this helper, which would
+    have meant skipping the ``admitted_quantity_bases`` and axis-count checks with it.
+    """
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(raw, dict), f"policy document loaded as {type(raw).__name__}"
     assert raw["scope"]["accounts"] == ["TBD"]
@@ -299,7 +313,7 @@ def _filled(path: Path, *, environment: str, account: str, instrument: str) -> d
             entry for entry in construction["axes"] if entry["axis"] == "DIRECTION"
         ]
         assert len(direction_entries) == 1
-        assert direction_entries[0]["value"] == _OCP_DIRECTION
+        assert direction_entries[0]["value"] == direction
     return raw
 
 
