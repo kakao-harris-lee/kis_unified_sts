@@ -229,7 +229,15 @@ UNKNOWN`(두 환경 문서의 `capabilities.market_and_instrument_constraints.ha
 
 ## 8. 핸드오버 — 순서
 
-1. **운영자**: 이 문서 승인(§3 값 표 채택 여부 · §2.0 tick 정정 · §6 선택). 승인 전엔 아무 값도 착지하지 않는다.
+1. ✅ **완료 2026-10-08 — 운영자 승인.** 이 문서의 세 질문 전부 닫혔다:
+   - **§3 값 표**: `max_quantity: 10000` **채택**. 단 착지는 **CP-3 tenant 트리에만** —
+     상주 `config/tos_runtime/paper/` 의 값은 `null` 유지(**paper 채택은 운영자가 보류**).
+   - **§2.0 tick 정정**: `tick_size` 5 → **2 승인**. 단 착지 소유자는 **§6 band 원천 웨이브**
+     (별도 계획 문서)이고 tenant 트리 PR 범위 밖이다 — band 가 null 인 동안 tick 검사는
+     step 3 UNKNOWN 에 가려져 효력이 없고, 둘을 **같은 PR 에서** 움직이는 것이 그 웨이브의
+     전제 항목이다(§6 전제 문단).
+   - **§6 선택**: **(i) broker 조회**. 이것도 별도 계획 문서·별도 웨이브다.
+     `price_min`/`price_max` 는 그때까지 `null` 유지.
 2. ✅ **완료 2026-10-08 (PR #880, main `36afc379`).** 실행 에이전트: `P-VL` 구현(레지스트리 + `probes_venue_limits.py` + `_tick_math.py` 이전 + hermetic 테스트: 레그별 레드 증명 —
    band 불일치·`ord_psbl_qty` 비정수·`rt_cd≠0`·틱 불일치 각 1건, 실전 호스트 거부 1건, **주문 가능 모듈 미import 카나리** 1건,
    `tick_registry_matches_policy` 불일치 기록 1건) → PR → 리뷰 → 머지.
@@ -249,12 +257,19 @@ UNKNOWN`(두 환경 문서의 `capabilities.market_and_instrument_constraints.ha
    때문이다(아티팩트의 `L2=PASS` 는 판정 순서 결함의 산물 — PR #882 에서 수정, 아티팩트는 기록이라 미수정).
    **REAL_PROD 문서의 같은 키는 UNKNOWN 유지** — 런북 §6.2 / ADR-002-004 §13.14 가 MOCK_VTS 아티팩트의 REAL_PROD 문서
    인용을 금지하므로 사유를 그 블록 주석에 적었다.
-   ⚠ **§8 1단계(운영자 승인)는 여전히 열려 있다.** 3·4단계가 그보다 먼저 ✅ 가 된 것은, 이 둘이 **초안 문서와 증거**에만
-   손대는 저작 행위이고 `-draft.yaml` 헤더가 그것을 허용하기 때문이다 — 값을 승인 대상 INSTANCE 로 올리는 것은 1단계와
-   5단계의 일이다.
-5. CP-3 §5 3 tenant 트리 생성 시 `max_quantity: 10000` 과 §2.2 단서·채택일·결정 id(「결정 9 (a) · 운영자 채택 YYYY-MM-DD · 별표
-   17의2 제1호 미니코스피200선물거래 행 · 등급 R」)를 헤더에 적어 착지. 헤더의 「NO SOURCE … Never fill by hand」 문단은 **분리**:
-   `price_min/max` 는 그대로, `max_quantity` 줄은 출처 문장으로 교체. `test_deploy_policies.py` 의 **paper 단언 3건은 그대로 두고**
-   tenant 트리용 단언(10000 + 헤더 provenance 문자열 핀)을 **추가**한다. paper 트리 헤더의 같은 문단에도 「source exists
-   (10-08 결정 9); paper adoption deferred by operator」 한 줄을 더한다.
+   ⚠ **(이 줄은 2026-10-08 당시의 상태다)** 「§8 1단계(운영자 승인)는 여전히 열려 있다」 — 3·4단계가 그보다 먼저 ✅ 가 된 것은,
+   이 둘이 **초안 문서와 증거**에만 손대는 저작 행위이고 `-draft.yaml` 헤더가 그것을 허용하기 때문이다. 값을 승인 대상 INSTANCE
+   로 올리는 것은 1단계와 5단계의 일이고, **그 둘은 같은 날 닫혔다**(위 1단계 ✅ · 아래 5단계 ✅).
+5. ✅ **완료 2026-10-09 (운영자 채택 2026-10-08) — tenant 트리 착지.** 값은 `config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml`
+   (`_model_view.shape_constraints.max_quantity: 10000`)에 들어갔고, 헤더가 결정 id·채택일·조문 행(「결정 9 (a) · 운영자 채택
+   2026-10-08 · 별표 17의2 제1호 미니코스피200선물거래 행 · 등급 R」)과 **§2.2 단서 셋**을 함께 적는다. 「NO SOURCE … Never
+   fill by hand」 문단은 **분리**했다 — `price_min/max` 가 그 문단을 그대로 들고, `max_quantity` 줄은 출처 문장으로 교체됐다.
+   `tos/runtime/tests/compose/test_deploy_policies.py` 의 **paper 단언은 손대지 않고** tenant 단언을 **추가**했다(10000 ·
+   provenance 문자열 핀 · §2.2 단서 넷의 문자열 핀 · band 두 값 null 유지 · 좌표 게이트 · tenant `critical_input_policy.yaml`
+   의 의도된 거부). **레드 증명 16 건**(값·인용·단서별 각 1 건 등)이 PR 본문에 있다.
+   paper 트리 헤더에는 「source exists (10-08 결정 9); paper adoption deferred by operator」 한 줄을 더했고, **주석-only 변경이
+   그 파일의 `canonical_digest` 를 바꾸지 않는다는 것을 실측**했다(2026-10-09)(digest 는 타입 콘텐츠를 접고 주석을 접지 않는다; 상주 세션이
+   매일 재도출하는 `release.yaml::expected_code_digest` 는 두 설치 패키지 루트의 `*.py` 바이트만 접는다).
+   ⛔ **이 단계가 닫은 것은 값뿐이다** — tenant 트리의 **부팅 경로는 미착수**(kickoff §5 3 ④: 렌더의 전략 파일 상수 · 좌표 규칙
+   의 단일 매칭 전제 · digest 다섯 재도출 · `safety_activation.yaml::members`). 자세한 것은 그 트리의 `README.md` §6.
 6. §2.0 tick 정정 + §6 결정 → 별도 계획 문서. `CITATION-RULE.md` 에 규정 텍스트용 `파일명:행` 형식 추가(§2.3 README 의 전제).

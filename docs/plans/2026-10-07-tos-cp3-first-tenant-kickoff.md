@@ -138,7 +138,7 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
 | 6 | **스톱/타깃·EOD 의 자리** | 1차 슬라이스 청산 = `vwap_reverted` FLAT + `eod` FLAT(15:15) 둘. **ATR 스톱(1.5×)은 1차 범위 밖 — 의도된 차이로 승인 근거를 남긴다**(DSL 에 진입가·수치 출력이 없고, 보호 분류는 PAC 소관이라 전략이 자칭 못 함) | 스톱을 TOS 보호 레인(aggregate risk / safety mesh)에 매핑하는 것은 별도 설계 |
 | 7 | **구축물 B1a·B1b·B2·B3·B4 승인(범위·비용)** | B1a·B1b·B3 먼저, B2 는 작게, B4 는 「체결 비교 포기」로 처분. 공수는 착수 뒤 첫 PR 에서 실측으로 | B4 를 커널 수정으로 풀면 GOV-001 절차 |
 | 8 | 검증 기간·담당자 | parity 1회 + paper: YAML 131행의 **「≥4 주」**를 기본으로, 더 짧게 자르면 그 근거를 적는다. 담당 = 운영자(실행은 Claude) | — |
-| 9 | **venue 수량 상한의 출처** | 오늘 paper 의 `venue_constraint_policy.yaml::max_quantity` 는 **null(의도된 fail-closed)** 이라 Proposal 이 전부 `STAGE_DENIED | venue quantity constraint incomplete` 다(10-07 세션 2,510건). 값이 들어오기 전까지 paper 단계는 **결정 수준 관측만** 가능하고 청산 규칙·영수증 증거는 못 만든다. 권고: 모의 계좌 **P0-2 식 GET 프로브**로 출처를 만들어 값을 넣는 것 — 실전 계좌·실주문은 영구 차단. **10-08 재결정: 위 권고(프로브가 출처)는 불가로 판정됐다 — `VTTO5105R` 은 예수금·레그 파라미터 파생값이라 구조 상한을 못 준다 — 운영자 선택 2026-10-08 (a) 「KRX 규정 문서를 1차 출처로, 모의 GET 은 보강」이 권고를 대체한다.** 설계 `docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md`(값 **10,000** = 시행세칙 별표 17의2 **미니코스피200선물거래** 행 — tenant·paper 상품은 결정 2 의 mini `A056xx`; full `101xxxx` 행 2,000 은 parity 데이터셋에만 · ⚠ `price_min/max` 는 일별 동적 값이라 결정 9 만으로는 `order_shape_admissible` UNKNOWN 유지 → band 원천은 그 문서 §6 의 별도 결정 · ⚠ 부수 발견: 배포 `tick_size: 5` 는 full 의 0.05, mini 규정값은 0.02 — §6 전제로 정정 대기) | 값 없이 가면 §5 4 의 범위를 「체결 없음」으로 줄여 적는다 |
+| 9 | **venue 수량 상한의 출처** | 오늘 paper 의 `venue_constraint_policy.yaml::max_quantity` 는 **null(의도된 fail-closed)** 이라 Proposal 이 전부 `STAGE_DENIED | venue quantity constraint incomplete` 다(10-07 세션 2,510건). 값이 들어오기 전까지 paper 단계는 **결정 수준 관측만** 가능하고 청산 규칙·영수증 증거는 못 만든다. 권고: 모의 계좌 **P0-2 식 GET 프로브**로 출처를 만들어 값을 넣는 것 — 실전 계좌·실주문은 영구 차단. **10-08 재결정: 위 권고(프로브가 출처)는 불가로 판정됐다 — `VTTO5105R` 은 예수금·레그 파라미터 파생값이라 구조 상한을 못 준다 — 운영자 선택 2026-10-08 (a) 「KRX 규정 문서를 1차 출처로, 모의 GET 은 보강」이 권고를 대체한다.** 설계 `docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md`(값 **10,000** = 시행세칙 별표 17의2 **미니코스피200선물거래** 행 — tenant·paper 상품은 결정 2 의 mini `A056xx`; full `101xxxx` 행 2,000 은 parity 데이터셋에만 · ⚠ `price_min/max` 는 일별 동적 값이라 결정 9 만으로는 `order_shape_admissible` UNKNOWN 유지 → band 원천은 그 문서 §6 의 별도 결정 · ⚠ 부수 발견: 배포 `tick_size: 5` 는 full 의 0.05, mini 규정값은 0.02 — §6 전제로 정정) **✅ 값 착지 완료 2026-10-09**(채택 2026-10-08 · 설계 §8 1·5단계): 운영자가 세 가지를 결정했다 — ① `max_quantity: 10000` 은 **CP-3 tenant 트리에만**(`config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml`), **상주 `paper` 트리는 `null` 유지**(paper 채택 보류) · ② `tick_size` 5 → **2 승인**, 단 착지 소유자는 **band 원천 웨이브**(별도 계획 문서) — band 가 null 인 동안 tick 검사는 step 3 UNKNOWN 에 가려져 무효이고 둘은 같은 PR 에서 움직인다 · ③ band 원천 = **(i) broker 조회**, 역시 그 웨이브. ⚠ 그래서 **step 2 의 `quantity constraint incomplete` DENY 는 tenant 트리에서 사라졌지만 송신은 열리지 않았다**(band null → step 3 UNKNOWN; 설계 §3 「필요조건이지 충분조건이 아니다」) | 값 없이 가면 §5 4 의 범위를 「체결 없음」으로 줄여 적는다 |
 
 **운영자 승인 2026-10-07: 아홉 전부 권고대로.** — 단, **결정 9 는 2026-10-08 에 (a) 로 재결정**(행 9 의 10-08 줄: 10-07 권고가 불가로 판정돼 출처가 프로브 → KRX 규정으로 바뀌었다).
 
@@ -313,9 +313,49 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    등재했다 — 백테스트는 주입된 시간 경계로 신선도를 판정하고 필드별 수명 소비자가 없다; 값은
    **운영자 출처**여야 한다) · ③ 그 열다섯 필드를 **paper 런타임에서 매 봉 발행하는 생산자** — B1a 는
    Parquet 배치 도구이고 실시간 발행기가 아니다 · ④ §5 3 의 **부팅 경로**(렌더의 전략 파일 상수·다섯
-   digest 재도출·`safety_activation.yaml::members` 갱신). 넷 모두 **미착수**다.
-   LONG/SHORT 는 각각 렌더이며 SHORT 파일은 아직 없다(DSL 에 abs() 가 없어 진입 비교가 한 변뿐이므로
-   SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
+   digest 재도출·`safety_activation.yaml::members` 갱신).
+
+   **① 착지 완료 2026-10-09 — LONG tenant 트리 `config/tos_runtime/cp3-setup-d-long/`.**
+   29 개 파일: 23 개는 상주 `paper` 트리 승인값의 **바이트 동일 사본**(`cmp` 로 확인), 넷이 다르고,
+   둘이 신규(전략 + 바인딩), 하나가 트리 자신의 `README.md` 다. 다른 넷 —
+   `venue_constraint_policy.yaml`(결정 9 (a) `max_quantity: 10000` · 아래 ②와 별개) ·
+   `critical_input_policy.yaml`(사본이 아니다 — 아래 ②) · `engine.yaml` ·
+   `order_construction_policy.yaml`(뒤 둘은 **주석만**: 두 파일의 기존 주석이 상주 전략
+   `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로 tenant 적용 문단을 덧붙였고, 그 과정에서
+   스텝 수 24 ≤ 64 를 재측정해 적었다). 상주 전략 파일은 이 트리에 **없고** 그 자리를
+   `strategies/setup_d_long.strategy.yaml` 이 차지한다. `environment`·`scope.environments` 는
+   §5 1 대로 `paper` 다. 전략 파일의 B1b 하네스 리터럴 둘(`account: cp3-b1b-long` ·
+   `instrument: 101S6000` — 후자는 parity 전용 **full** 월물)은 이 트리의 다른 좌표 칸과 같은
+   named-TBD `"TBD"` 로 바뀌었고, 그 `"TBD"` 거부가 운영자-채움 게이트다.
+   ⛔ **렌더로 만들지 못했다 — 「저장소의 렌더러를 쓸 것」이 성립하지 않는다**(실측):
+   `scripts/tos/render_paper_config.py` 는 설계상 **출력이 저장소 안이면 거부**하고
+   (`_refuse_output_inside_repo` — 렌더 산출물은 계좌 좌표를 담는다), `.env.mock` 계좌 ·
+   종목 · 호스트 digest 를 요구한다. 그 스크립트는 **커밋된 트리를 만드는 도구가 아니라 커밋된
+   트리를 소비하는 도구**다(`--source`). 그래서 트리는 상주 트리의 바이트 사본 + 선언된 차이로
+   만들었고, 그것이 바로 그 스크립트가 나중에 `--source` 로 받을 모양이다.
+
+   **② 착지 완료(값 하나만 미결)** — 열다섯 필드를 B1a 의 `FIELD_ORDER` 순서로 선언하고
+   unit/scale/multiplier/sign 을 **B1a 필드 lineage**(`produce_fields._field_lineage`)에서 가져왔다.
+   `max_age_ms` 는 **열다섯 전부 `null`** 이고, 그래서 **그 파일은 로드되지 않는다** — 로더가
+   `null` `max_age_ms` 를 거부한다. 이것이 상주 트리가 출처 없는 값에 쓰는 fail-closed 규율과
+   같은 상태이고(`finality.yaml::source_revision` · `safety_activation.yaml::members`),
+   `tos/runtime/tests/compose/test_deploy_policies.py` 가 그 거부를 **키 이름으로** 고정한다.
+   상주의 600000 을 베껴 오지 않았다: 그 값의 근거는 **배치 저널 부팅**의 지연 흡수이고 생산자가
+   없는 이 tenant 에 옮길 수 없다. → **`max_age_ms` ×15 는 운영자 출처 미결 항목.**
+
+   **③·④ 는 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
+   「렌더의 전략 파일 상수 한 줄 교체」가 **아니다** — 그 스크립트의 좌표 규칙은 앵커 줄이
+   **정확히 1회** 매칭될 것을 요구하는데(`_apply_rules`) tenant 전략 파일은 규칙이 셋이라
+   `account: "TBD"`·`instrument: "TBD"` 가 **각 3회** 나오고, `direction` 은 줄마다 값이 다르다
+   (R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로 `--direction SHORT` 렌더의 일괄
+   치환이 성립하지 않는다. 또 **미결 하나가 더 드러났다**: tenant `venue_constraint_policy.yaml` 의
+   `policy_id`/`policy_generation` 은 상주 트리의 것과 **같은 값인데 내용이 달라** digest 가
+   다르다 — 두 트리는 따로 활성화되므로 한 bound set 안에서 충돌하지 않지만
+   `(kind, member_id, generation)` 만으로는 두 문서를 구별할 수 없다. 식별자를 tenant 전용으로
+   바꿀지는 ④ 에서 처분한다(이 PR 은 결정하지 않고 기록만 했다).
+
+   LONG/SHORT 는 각각 렌더이며 SHORT 파일·SHORT 트리는 아직 없다(DSL 에 abs() 가 없어 진입 비교가
+   한 변뿐이므로 SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
 4. **paper 검증**(결정 3·4·8·9) — 방향별 data dir, 런북 §3 절차, 재시작·리플레이·콜드 백업 복원 drill
    증거. 결정 9 **와 band 원천 웨이브**(2026-10-08 설계 §6 — `price_min/max` 가 null 이면 step 3 가 UNKNOWN)가 닫히기
    전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.
