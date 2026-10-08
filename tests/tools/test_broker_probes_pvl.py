@@ -841,8 +841,16 @@ def test_a_sample_outside_the_continuous_session_is_marked_as_such() -> None:
 
 
 def test_green_run_records_every_leg_and_passes_l1_l2_l3(
-    futures_env: None, wire: Any
+    futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
+    """The all-PASS run, taken INSIDE the no-escalation window.
+
+    L2 PASS is only available there: outside it a stage-1 match does not
+    discriminate and earns no verdict (see
+    ``test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict``). A test
+    that asserted PASS without pinning the window was asserting the wall clock.
+    """
+    escalation_window(determined=True)
     session = wire(_FakeSession(_price_body(), _green_psbl()))
 
     run = pvl.probe_pvl(_args())
@@ -1127,13 +1135,15 @@ def test_the_artifact_does_not_claim_a_prior_ord_psbl_qty_observation(
 
 
 def test_green_run_proposes_the_compound_token_design_v2_asks_for(
-    futures_env: None, wire: Any
+    futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
     """Design v2 §5: a self-describing compound token, never a one-word status.
 
     ``PARTIAL`` is the word the design refuses by name, and it appears in the
-    profile only as a key suffix.
+    profile only as a key suffix. Inside the window, so the band axis can
+    legitimately read ``OBSERVED_ON_MOCK``.
     """
+    escalation_window(determined=True)
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     disposition = pvl.probe_pvl(_args()).measurements["p02_disposition_proposal"]
@@ -1262,6 +1272,37 @@ def test_the_deployed_policy_still_says_five_as_of_2026_10_08() -> None:
         "update the drift notes in the module and runbook §5.9"
     )
     assert record["tick_points"] == "0.05"
+
+
+def test_the_artifact_records_an_app_key_fingerprint_not_the_key(
+    futures_env: None, wire: Any
+) -> None:
+    """PR #881 finding 10: the shared-key precondition must be re-checkable.
+
+    Design §4.2 makes "is this the resident paper session's key?" a
+    precondition, and PR #881 could only answer it from a host file and a line
+    number. The fingerprint puts the comparison in the evidence.
+    """
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    run = pvl.probe_pvl(_args())
+
+    fingerprint = run.credentials["app_key_fingerprint"]
+    assert len(fingerprint) == 12
+    assert all(c in "0123456789abcdef" for c in fingerprint)
+    assert _APP_KEY not in fingerprint
+    # Same width and shape as the account correlator, so they read alike.
+    assert len(run.credentials["account_fingerprint"]) == 12
+    payload = json.dumps(run.to_dict(get("P-VL")), ensure_ascii=False, default=str)
+    assert _APP_KEY not in payload
+
+
+def test_an_absent_app_key_yields_no_fingerprint() -> None:
+    """A fingerprint for a key that does not exist would be a phantom."""
+    from tools.broker_probes.common import secret_fingerprint
+
+    assert secret_fingerprint("") == ""
+    assert secret_fingerprint("x") != ""
 
 
 def test_artifact_leaks_no_secret_and_no_full_account_number(
@@ -1490,6 +1531,78 @@ def test_stage2_band_inside_the_no_escalation_window_is_a_fail(
     assert report["declared_expectation_matches"] is False
     assert report["matching_stages"] == [2]
     assert run.measurements["l2_mismatch_record"]["verdict"] == "FAIL"
+
+
+def test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict(
+    futures_env: None, wire: Any, escalation_window: Any
+) -> None:
+    """The branch the old verdict order could not reach. PR #881 finding 1.
+
+    ``if matched`` came before the window test, so a stage-1 reproduction
+    outside the no-escalation window was scored ``PASS`` — contradicting all
+    three governing texts at once (design v2 §5 「①샘플에서」, runbook §5.9's leg
+    table, and ``disposition_token``'s own docstring). No test covered this
+    combination, which is why the disagreement shipped.
+
+    The concrete input is the ordinary green quote set, which DOES match stage 1
+    at the registry tick, taken outside the window. Nothing about the band is
+    wrong; what was wrong was calling a non-discriminating observation a PASS.
+    """
+    escalation_window(determined=False)
+    wire(_FakeSession(_price_body(), _green_psbl()))
+
+    run = pvl.probe_pvl(_args())
+
+    report = run.measurements["l2_band_rule_arithmetic"]
+    # The match is still RECORDED as a fact ...
+    assert report["declared_expectation_matches"] is True
+    assert report["matching_stages"] == [1]
+    # ... but it earns no verdict outside the window.
+    assert run.measurements["leg_verdicts"]["L2"] == "OBSERVATION_ONLY_NO_VERDICT"
+    assert report["verdict"] == "OBSERVATION_ONLY_NO_VERDICT"
+    # And therefore the band axis cannot claim observation.
+    token = run.measurements["p02_disposition_proposal"]["proposed"]
+    assert token.startswith("BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY__")
+    assert "BAND_SEMANTICS_OBSERVED_ON_MOCK" not in token
+    # A no-verdict leg is not an error, so the run stays MEASURED.
+    assert run.errors == []
+    assert run.to_dict()["provenance_class"] == "MEASURED"
+
+
+def test_the_pr881_artifacts_would_now_be_read_as_stage_recorded_only(
+    futures_env: None, wire: Any, escalation_window: Any
+) -> None:
+    """Replays PR #881's exact quote set under the corrected order.
+
+    ``A05610`` at 10:06 KST: 기준가 1073.32, band 1159.18/987.46 — a clean stage-1
+    match at tick 0.02, taken OUTSIDE the window. The artifacts recorded
+    ``L2=PASS``; under the written rule the same observation is
+    ``OBSERVATION_ONLY_NO_VERDICT``. The artifacts are records and are not
+    rewritten; this test pins how they must be READ.
+    """
+    escalation_window(determined=False)
+    wire(
+        _FakeSession(
+            _price_body(
+                futs_prpr="1065.56",
+                futs_prdy_clpr="1073.32",
+                futs_sdpr="1073.32",
+                futs_mxpr="1159.18",
+                futs_llam="987.46",
+            ),
+            _green_psbl(),
+        )
+    )
+
+    run = pvl.probe_pvl(_args())
+
+    assert run.measurements["l2_band_rule_arithmetic"]["matching_stages"] == [1]
+    assert run.measurements["leg_verdicts"]["L2"] == "OBSERVATION_ONLY_NO_VERDICT"
+    assert run.measurements["p02_disposition_proposal"]["proposed"] == (
+        "BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY"
+        "__TICK_FROM_REGULATION_NOT_BROKER"
+        "__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED"
+    )
 
 
 def test_stage2_band_outside_the_window_carries_no_verdict(

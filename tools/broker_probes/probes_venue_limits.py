@@ -1124,15 +1124,15 @@ def _leg_l2(
     """L2 — 제56조 arithmetic against the observed band. No network. Never raises.
 
     THREE-way, because the design takes two samples with different epistemic
-    standing (§4.2):
+    standing (§4.2). The window is tested FIRST:
 
-    * inside the no-escalation window, stage 1 is the only admissible band, so a
-      mismatch is a genuine :data:`VERDICT_FAIL`;
-    * outside it, a 2/3단계 band is a legitimate market state. The old code
-      scored that ``FAIL`` while its own docstring called it legitimate — the
-      review's finding 5. It now returns :data:`VERDICT_RECORDED` with the stage
-      that matched, which is exactly what §4.2 asks for
-      (「그날의 확대 사실을 기록만」).
+    * **outside** the no-escalation window — :data:`VERDICT_RECORDED`, match or
+      not. A 2/3단계 band is admissible there, so stage 1 matching is consistent
+      with 제56조 but does not discriminate between "the venue is in stage 1"
+      and "a wider stage was simply never triggered". The matched stage is
+      recorded as the day's escalation fact (§4.2 「그날의 확대 사실을 기록만」).
+    * **inside** it, stage 1 is the only admissible band: a match is
+      :data:`VERDICT_PASS` and a mismatch is a genuine :data:`VERDICT_FAIL`.
 
     A mismatch is never an exception either way: the probe cannot choose the
     escalation state it finds.
@@ -1149,12 +1149,27 @@ def _leg_l2(
     )
     matched = stage1 in report["matching_stages"]
     determined = bool(window["expected_stage_is_determined"])
-    if matched:
-        verdict = VERDICT_PASS
-    elif determined:
-        verdict = VERDICT_FAIL
-    else:
+    # WINDOW FIRST, then the match. The reverse order (match first) made
+    # VERDICT_RECORDED unreachable on a match, so a stage-1 reproduction outside
+    # the no-escalation window was scored PASS — which contradicted all three
+    # governing texts at once (design v2 §5 conditions L2 PASS on 「①샘플에서」,
+    # runbook §5.9's leg table says 창 밖 = no verdict, and this module's own
+    # disposition_token docstring says L2_STAGE_RECORDED_ONLY "when L2 carries no
+    # verdict (outside the no-escalation window)"). PR #881's two artifacts were
+    # produced by that defect; they are records and stay as they are, but the
+    # band axis they feed is read under the written rule.
+    #
+    # Why the written rule is the right one: outside the window a 2/3단계 band is
+    # admissible, so stage 1 matching is CONSISTENT with the rule but does not
+    # DISCRIMINATE — the venue could be in stage 1 or could have been in a wider
+    # stage that simply had not been triggered. Only inside the window is stage 1
+    # the sole admissible band, and only there does a match license a verdict.
+    if not determined:
         verdict = VERDICT_RECORDED
+    elif matched:
+        verdict = VERDICT_PASS
+    else:
+        verdict = VERDICT_FAIL
     report["declared_expectation_matches"] = matched
     report["expected_stage_is_determined"] = determined
     report["verdict"] = verdict
