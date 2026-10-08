@@ -34,7 +34,7 @@ paper venue 정책의 `max_quantity: null` 은 「출처 없음」의 fail-close
 | 하네스 — 실전 전용 레그 | `tools/broker_probes/probes_real_order.py:1092-1097` `PreflightClient.get` 이 `REAL_BASE_URL` + `assert_real_host` 로 **실전 호스트 고정**; `TTTO5105R`(`:181`)·`FHMIF10000000`(`:151`) 레그와 band 읽기(`:1717-1718`) · `_corroborate_tick`(`:1444-1471`, 순수 함수) · `resolve_smallest_contract`(`:718-780`, 네트워크 없음이나 `config/execution.yaml` 을 읽고 abort 사유가 「real-money probe」 전제) | 모의로 **그대로 못 씀**. ⛔ 이 모듈은 유일한 주문 가능 모듈이라 GET-only 모듈이 **import 하면 안 된다**(`tests/tools/test_broker_probes_real_order.py:312-320` · `test_broker_probes_ca.py:265-273` 카나리) → `_corroborate_tick` 은 중립 모듈로 **이전**(§4) |
 | 하네스 — 모의 레그 | `tools/broker_probes/probes_query.py:212-219` P-16 이 모의 호스트로 `FHMIF10000000` 을 치지만 **시계 필드만** 기록 · 페이싱 `probes_order.py:236-242` `DEFAULT_PACE_S = 1.1`(P-13 `P-13-20260729T063120Z` 실측 1.0 rps 정상 / 2.0 rps `EGW00201`) | 가격 필드 기록 없음 |
 | 공식 TR 표 | KIS `examples_llm/domestic_futureoption/inquire_psbl_order/inquire_psbl_order.py` — `real: TTTO5105R` / `demo: VTTO5105R`, 필수 파라미터 `CANO/ACNT_PRDT_CD(03)/PDNO/SLL_BUY_DVSN_CD/UNIT_PRICE/ORD_DVSN_CD`; `inquire_price/inquire_price.py` — `FHMIF10000000` 실전·모의 동일 | `VTTO5105R` 은 레포에 아직 없음 |
-| P0-2 미결 | `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2364, 4427` `price_band_tick_lot_and_quantity_semantics: UNKNOWN` · `:2426-2430` 「로컬 설정에서 온 틱 값은 UNKNOWN 유지」 | 이 문서의 프로브가 **부분** 해소(§5) |
+| P0-2 미결 | `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` 의 두 환경 문서 `capabilities.market_and_instrument_constraints.price_band_tick_lot_and_quantity_semantics` · 같은 블록 `._kis.tick_probe_observations_2026_07_30` 「로컬 설정에서 온 틱 값은 UNKNOWN 유지」 (⚠ **키 경로로 인용한다** — 행 번호는 2026-10-08 fold 가 밀어냈다) | 이 문서의 프로브가 **부분** 해소(§5) |
 
 ## 2. 1차 출처 — KRX 규정 (원문 확보 2026-10-08)
 
@@ -188,9 +188,10 @@ every networked probe, including read-only ones」; P-13 도 True · risk MEDIUM
 | L4·L5 | 관측만 — PASS/FAIL 없음 | `rt_cd`·`msg_cd`·수량을 그대로 |
 
 P0-2 `price_band_tick_lot_and_quantity_semantics` 의 처분: 프로파일의 관용구는 한 단어 상태가 아니라 **자기 서술 복합 토큰**
-(`:4432 DAY_AND_NIGHT_TR_SURFACE_PRESENT__OTHER_COVERAGE_UNKNOWN` 꼴)이므로, L1·L2 PASS 면
+(REAL_PROD 문서의 `capabilities.market_and_instrument_constraints.instrument_coverage` =
+`DAY_AND_NIGHT_TR_SURFACE_PRESENT__OTHER_COVERAGE_UNKNOWN` 꼴)이므로, L1·L2 PASS 면
 `BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED` 처럼 **관측된 축과
-안 된 축을 토큰 안에** 적는다. 프로파일 `:2426-2430` 의 기록(「로컬 설정에서 온 틱 값은 UNKNOWN 유지」)과 정합: 틱·수량 축은 여전히
+안 된 축을 토큰 안에** 적는다. 프로파일 `._kis.tick_probe_observations_2026_07_30` 의 기록(「로컬 설정에서 온 틱 값은 UNKNOWN 유지」)과 정합: 틱·수량 축은 여전히
 broker 미확인이다.
 
 ## 6. band 원천 웨이브 — 운영자 결정 (후속, 이 문서로 열어 둠)
@@ -213,7 +214,7 @@ spec 은 band 를 Critical Input 사실(출처·연속성·as_of·max_age 결속
 
 **09-15 §6 ⑤ 의 tradability 반쪽은 이 문서 범위 밖이며 계속 열려 있다** — `venue_constraint_policy.yaml:73` 「no halt/suspension
 source → action_tradability map is empty」 · `service.py:270 action_tradability=()` · 프로파일 `halt_and_suspension_semantics:
-UNKNOWN`(`:2363, :4425`). 이 문서를 닫아도 ⑤ 는 닫히지 않는다.
+UNKNOWN`(두 환경 문서의 `capabilities.market_and_instrument_constraints.halt_and_suspension_semantics`). 이 문서를 닫아도 ⑤ 는 닫히지 않는다.
 
 ## 7. 기각한 대안
 
@@ -229,12 +230,28 @@ UNKNOWN`(`:2363, :4425`). 이 문서를 닫아도 ⑤ 는 닫히지 않는다.
 ## 8. 핸드오버 — 순서
 
 1. **운영자**: 이 문서 승인(§3 값 표 채택 여부 · §2.0 tick 정정 · §6 선택). 승인 전엔 아무 값도 착지하지 않는다.
-2. 실행 에이전트: `P-VL` 구현(레지스트리 + `probes_venue_limits.py` + `_tick_math.py` 이전 + hermetic 테스트: 레그별 레드 증명 —
+2. ✅ **완료 2026-10-08 (PR #880, main `36afc379`).** 실행 에이전트: `P-VL` 구현(레지스트리 + `probes_venue_limits.py` + `_tick_math.py` 이전 + hermetic 테스트: 레그별 레드 증명 —
    band 불일치·`ord_psbl_qty` 비정수·`rt_cd≠0`·틱 불일치 각 1건, 실전 호스트 거부 1건, **주문 가능 모듈 미import 카나리** 1건,
    `tick_registry_matches_policy` 불일치 기록 1건) → PR → 리뷰 → 머지.
-3. 거래일 장중 실행(§4.2, 분리 워크트리) → 증거 디렉터리 + README(인용 토큰, n>0) → PR. 같은 PR 에 10-07 STAGE_DENIED 의
-   evidence store 재집계(`STAGE_DENIED` 행 5,020 ↔ 사유 문자열 행 2,510 의 2:1 매핑)를 적는다(§1 「소비 1」 행).
-4. 브로커 프로파일 초안 `price_band_tick_lot_and_quantity_semantics` 처분(§5 복합 토큰) — 같은 PR.
+3. ✅ **완료 2026-10-08** — 거래일 장중 실행(§4.2, 분리 워크트리) → 증거 디렉터리 + README(인용 토큰, n>0) → PR.
+   같은 PR 에 10-07 STAGE_DENIED 의 evidence store 재집계를 적는다(§1 「소비 1」 행).
+   실행 10:06:51 · 10:08:27 KST, 증거 `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/`(아티팩트 2건 ·
+   README 인용 77건 PASS), PR #881.
+   ⚠ **② 샘플만**이다 — ① 은 시각(10:06) 때문만이 아니라 **§4.2 의 공유키 규칙이 같은 날 둘을 금지**하기 때문에 없다.
+   재집계는 교차표로 해소했다(`FLOW_HALTED` 에만 사유 · 누락 0 · 같은 `event_id` 공유 → 「1 거부 → 2 행」). ⚠ 설계가 적은
+   5,020 과는 **술어가 달라** 절대값 비교 불가, 비율·구조만 비교된다.
+   ⭐ 부수 산출: 관측 **band 경계 네 값이 0.05 의 배수가 아니다** — 배포 정책 `tick_size: 5` 가 이 미니 잎에 맞지 않는다는
+   **브로커 측 정황**이고 §2.0 의 규정 논거를 관측으로 보강한다(처분은 §6 웨이브).
+4. ✅ **완료 2026-10-08** — 브로커 프로파일 초안 `price_band_tick_lot_and_quantity_semantics` 처분(§5 복합 토큰) — 같은 PR.
+   **MOCK_VTS 문서에만** 기입했고 값은
+   `BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED`
+   다 — band 축이 `OBSERVED_ON_MOCK` 가 **아닌** 이유는 두 샘플이 확대 불가 창 밖이고 그곳의 1단계 일치가 판별하지 않기
+   때문이다(아티팩트의 `L2=PASS` 는 판정 순서 결함의 산물 — PR #882 에서 수정, 아티팩트는 기록이라 미수정).
+   **REAL_PROD 문서의 같은 키는 UNKNOWN 유지** — 런북 §6.2 / ADR-002-004 §13.14 가 MOCK_VTS 아티팩트의 REAL_PROD 문서
+   인용을 금지하므로 사유를 그 블록 주석에 적었다.
+   ⚠ **§8 1단계(운영자 승인)는 여전히 열려 있다.** 3·4단계가 그보다 먼저 ✅ 가 된 것은, 이 둘이 **초안 문서와 증거**에만
+   손대는 저작 행위이고 `-draft.yaml` 헤더가 그것을 허용하기 때문이다 — 값을 승인 대상 INSTANCE 로 올리는 것은 1단계와
+   5단계의 일이다.
 5. CP-3 §5 3 tenant 트리 생성 시 `max_quantity: 10000` 과 §2.2 단서·채택일·결정 id(「결정 9 (a) · 운영자 채택 YYYY-MM-DD · 별표
    17의2 제1호 미니코스피200선물거래 행 · 등급 R」)를 헤더에 적어 착지. 헤더의 「NO SOURCE … Never fill by hand」 문단은 **분리**:
    `price_min/max` 는 그대로, `max_quantity` 줄은 출처 문장으로 교체. `test_deploy_policies.py` 의 **paper 단언 3건은 그대로 두고**

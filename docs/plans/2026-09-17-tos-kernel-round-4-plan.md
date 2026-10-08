@@ -37,7 +37,10 @@ docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-11-20260730T002715Z.j
 
 그러나 이것은 **가격대 하나**(232,500원 지점)일 뿐 **표가 아니다.** 나머지 구간은 여전히
 미측정이고, 프로필의 `price_band_tick_lot_and_quantity_semantics` 는 `UNKNOWN` 상태 그대로다
-(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2364`, `:4427`). 그 밖의 주식 가격대별 tick 내용은
+(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` 두 환경 문서의
+`capabilities.market_and_instrument_constraints.price_band_tick_lot_and_quantity_semantics`
+— ⚠ 2026-10-08 fold 가 행 번호를 밀었으므로 **키 경로로 인용한다**; 종전 `:2364`, `:4427`).
+그 밖의 주식 가격대별 tick 내용은
 P0-2 증거 전 디렉터리·`config/`·`shared/` 어디에도 없다(리뷰어 재확인).
 
 따라서 결론은 유지되되 근거가 바뀐다 — ② 는 **구조(형상)만** 추가하고 배포 값은 `null` 로

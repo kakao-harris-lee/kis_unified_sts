@@ -119,7 +119,10 @@ class KisCredentialSession:
 - 그러나 **증인의 평문 반환(1.3)은 그대로 남는다** — 모양의 문제이지 앱 개수의 문제가 아니다. (B) 또는 (C) 가
   여전히 필요하다.
 - 읽기 전용 앱이 **브로커 측에서 실제로 읽기 전용인지는 근거가 없다** — 프로파일의
-  `account_permission_semantics` 는 **`UNKNOWN`**(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2555`). 권한 분리가
+  `account_permission_semantics` 는 **`UNKNOWN`**
+(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` 의
+`capabilities.account_margin_borrow_and_settlement_constraints.account_permission_semantics`
+— ⚠ 2026-10-08 fold 가 행 번호를 밀었으므로 **키 경로로 인용한다**; 종전 `:2555`). 권한 분리가
   아니라 **토큰 분리**만 확실하다.
 - 외부 등록(운영자 계정 작업)과 custody scope 추가(`kis_mock_read.*`)가 따라온다.
 
