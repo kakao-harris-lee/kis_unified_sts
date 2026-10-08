@@ -492,6 +492,29 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
     # silently wrong SCALE on the number an order is priced and sized against, and
     # "non-empty" accepts every one of those.
     assert [entry["field_key"] for entry in raw["fields"]] == list(_B1A_FIELD_POLICY)
+
+    # Two properties of the SHIPPED FILE, asserted as properties rather than as rows -- and
+    # deliberately BEFORE the per-field loop below. Both read ``raw``, never the table: an
+    # assert between two test constants would pass no matter what the tenant tree ships (PR
+    # #884 re-check, LOW). Ordering is part of the design: the loop pins every field's whole
+    # 4-tuple, so if it ran first it would catch any field-level mutation and leave these two
+    # unable to fail -- a clause that cannot fail is not a guard. Running them first makes each
+    # one the clause a scale/sign mutation actually trips.
+    #
+    # Their own contribution, beyond what the loop covers: ``_B1A_PRICE_FIELDS`` is what
+    # ``test_tenant_construction_price_field_keys_are_declared_critical_inputs`` consults to
+    # decide "is this key a price?". These bind that constant to the shipped file, so it cannot
+    # drift into naming a field the file does not publish at the ×100 price scale.
+    multipliers = {entry["field_key"]: entry["multiplier"] for entry in raw["fields"]}
+    signs = {entry["field_key"]: entry["sign"] for entry in raw["fields"]}
+    # The price-like fields are the ONLY ones at the ×100 scale the venue policy's tick_size
+    # lives on (tick 5 = 0.05 index points at that scale).
+    assert {
+        key for key, multiplier in multipliers.items() if multiplier == "100"
+    } == _B1A_PRICE_FIELDS
+    # z is the ONE signed field -- the LONG entry threshold -1800 is bound to that sign.
+    assert {key for key, sign in signs.items() if sign == "signed"} == {"z_x1000"}
+
     for entry in raw["fields"]:
         key = entry["field_key"]
         assert (
@@ -502,15 +525,6 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
         ) == _B1A_FIELD_POLICY[key], key
         # The fifth value is the unsourced one -- null, by design (header).
         assert entry["max_age_ms"] is None, key
-
-    # Two properties of that table worth asserting as properties, not as rows: z is the ONE
-    # signed field (the LONG entry threshold -1800 is bound to that sign), and the price-like
-    # fields are the ONLY ones at the ×100 scale the venue policy's tick_size lives on.
-    signs = {entry["field_key"]: entry["sign"] for entry in raw["fields"]}
-    assert {key for key, sign in signs.items() if sign == "signed"} == {"z_x1000"}
-    assert {
-        key for key, spec in _B1A_FIELD_POLICY.items() if spec[2] == "100"
-    } == _B1A_PRICE_FIELDS
 
     # And the loader refuses the document as committed, naming that key.
     with pytest.raises(CriticalInputPolicyConfigError) as excinfo:
