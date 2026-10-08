@@ -94,10 +94,18 @@ _ADOPTED_TENANT_MAX_QTY = 10000
 #: The tenant venue policy's own identity. Renamed off the resident ``vcp-paper-krx-index-
 #: futures`` on 2026-10-09 (PR #884 review L4): same id + same generation with DIFFERENT typed
 #: content means a different ``canonical_digest`` under an identity an activation record cannot
-#: disambiguate. Only the policies whose content actually differs were renamed -- the OCP
-#: (comment-only here, so identical typed content and identical digest), the aggregate-risk and
-#: the action-flow policies keep the resident ids on purpose: there, "same id, same digest"
-#: is a true statement that they ARE the same document.
+#: disambiguate. Only the policies whose content actually differs were renamed -- the OCP, the
+#: aggregate-risk and the action-flow policies keep the resident ids on purpose: there, "same id,
+#: same digest" is a true statement that they ARE the same document.
+#:
+#: ⚠ The LONG tree's OCP is **digest-identical, not comment-only** (review L1). The 2026-10-09
+#: tick correction rewrote its ``unit_multiplier_currency_and_numeric_rules`` line, which is
+#: template DATA (DR-0002 §2.1 -- preserved, never interpreted by the runtime), not a comment.
+#: The ``canonical_digest`` is unchanged regardless (``c90444b9...`` measured for the resident,
+#: LONG and SHORT trees alike -- that digest tracks neither the DATA prose nor ``policy_id``),
+#: which is why the id stays shared and the rename rule is unaffected. The earlier
+#: "comment-only" wording was true when written and stopped being true in this PR's own first
+#: commit.
 _TENANT_VENUE_POLICY_ID = "vcp-paper-cp3-setup-d-long-krx-index-futures"
 
 #: The provenance sentence design §8 step 5 requires next to that value. Pinned as a STRING so

@@ -44,7 +44,8 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 | `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4) · `tick_size` 5 → **2**(mini 규정값 정정 2026-10-09, 아래 §4) + `policy_id` 가 tenant 전용(§7 2). 런타임이 읽는 **값** 차이는 그 **두 곳**이다 |
 | `critical_input_policy.yaml` | **다름** — 사본이 아니다. 상주 쪽은 부팅 증명 픽스처의 **세 필드**, 이쪽은 tenant 상류 **열다섯 필드**(아래 §5) + `policy_id` tenant 전용 |
 | `construction.yaml` | **다름** — `price_field_key`·`shape_price_field_key` 가 `"close"` → **`"close_x100"`**. 상주의 `"close"` 는 이 트리의 critical_input 에 **없는 키**이고, 두 로더는 서로를 볼 수 없어 그 불일치를 **거부하지 못한다**(그 파일의 해당 주석이 실측 경로를 적는다). 나머지 값은 상주 승인값 그대로 |
-| `engine.yaml` · `order_construction_policy.yaml` | **주석만 다름** — 값은 상주 승인값 그대로이고 타입 콘텐츠가 같으므로 **digest 도 같다**. 두 파일의 기존 주석이 상주 전략(`bootproof_band`)을 인용하고 있어 이 트리에서 거짓이 되므로, 각 자리에 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정 · `quantity_basis` 선언 자리) |
+| `engine.yaml` | **주석만 다름** — 값은 상주 승인값 그대로다. 기존 주석이 상주 전략(`bootproof_band`)을 인용해 이 트리에서 거짓이 되므로 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정) |
+| `order_construction_policy.yaml` | **digest 동일 · template DATA 산문이 다름** — 2026-10-09 tick 정정이 `unit_multiplier_currency_and_numeric_rules` 줄을 고쳤고 그것은 **주석이 아니라 DATA**(DR-0002 §2.1 — 보존되지만 런타임이 해석하지 않는다)다. 그래서 「주석만 다름」은 **더 이상 참이 아니다**(초판에는 참이었고 이 PR 의 첫 커밋이 깨뜨렸다). `canonical_digest` 는 **그대로**다(`c90444b9…` — 상주·LONG·SHORT 셋 다 같다; 그 digest 는 DATA 산문도 `policy_id` 도 추적하지 않는다). 주석 쪽도 `quantity_basis` 선언 자리에 tenant 적용 문단을 덧붙였다 |
 | `strategies/setup_d_long.strategy.yaml` | **tenant 전용** — 상주의 `strategies/bootproof_band.strategy.yaml` 을 **대체**한다(그 파일은 이 트리에 없다) |
 | `strategy_bindings.yaml` | **tenant 전용** — `z_entry_max_x1000: -1800`. `strategies/` 의 **형제**다(안에 두면 로더의 stray-file 규칙이 디렉터리 전체를 거부한다) |
 | `README.md` (이 파일) | **tenant 전용** |
@@ -217,7 +218,8 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
   부팅한 적이 없고 활성화 기록도 증거도 없으므로 rename 이 무효화할 것이 없다. 그래서
   `vcp-paper-cp3-setup-d-long-krx-index-futures` 로 바꿨고 **세대는 1 그대로**다(다른 배포의
   정책이지 상주 정책의 다음 세대가 아니다). 기준은 **내용이 갈렸는가**이지 트리가 다른가가
-  아니므로, 타입 콘텐츠가 같은 `order_construction_policy.yaml`(주석만 다름) ·
+  아니므로, digest 가 같은 `order_construction_policy.yaml`(주석 + template DATA 산문만
+  다르고 `canonical_digest` 는 `c90444b9…` 그대로다 — §3 표) ·
   `aggregate_risk_policy.yaml` · `action_flow_policy.yaml` 의 id 는 **바꾸지 않았다**.
   `safety_activation.yaml::members` 는 여전히 `null` 이라 갱신할 활성화 기록이 없고
   digest 리터럴도 지어내지 않았다 — 활성화는 ④ 의 일로 남는다.

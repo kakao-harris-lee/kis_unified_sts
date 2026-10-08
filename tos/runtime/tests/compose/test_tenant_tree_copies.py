@@ -30,6 +30,7 @@ Hermetic (D1.4): the real files are only READ.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -104,8 +105,11 @@ _DIFFERS_FROM_RESIDENT: dict[str, str] = {
         "which is false in a tree that does not contain it"
     ),
     "order_construction_policy.yaml": (
-        "comment-only in the LONG tree; the SHORT tree also flips the DIRECTION axis and renames "
-        "policy_id"
+        "digest-identical; template DATA prose differs -- the tick 5 -> 2 correction rewrote the "
+        "unit_multiplier_currency_and_numeric_rules line (DR-0002 §2.1 template DATA, never "
+        "interpreted by the runtime), so this is NOT comment-only. The canonical_digest is "
+        "unchanged (c90444b9..., measured for paper/LONG/SHORT alike). The SHORT tree also flips "
+        "the DIRECTION axis and renames policy_id"
     ),
 }
 
@@ -320,12 +324,83 @@ def test_resident_only_files_are_absent_from_the_tenant_tree(tree: str) -> None:
     )
 
 
-def test_the_counts_each_tree_readme_states() -> None:
-    """The counts the trees' READMEs write out, asserted against the literals above so the prose
-    and the classification cannot drift apart."""
-    assert len(_identical_set("cp3-setup-d-long")) == 23
-    assert len(_differs_set("cp3-setup-d-long")) == 5
-    assert len(_identical_set("cp3-setup-d-short")) == 22
-    assert len(_differs_set("cp3-setup-d-short")) == 6
-    for tree in _TENANT_TREES:
-        assert len(_files(_CONFIG_ROOT / tree)) == 31
+def test_the_counts_the_long_readme_states_are_read_from_it() -> None:
+    """PARSE the LONG README's own count line and compare it to the classification.
+
+    Review L3: the first cut asserted four integer literals and never opened a README, so the
+    prose it claimed to guard could say anything. The numbers now come OUT of the file, which is
+    the only way "the prose and the classification cannot drift apart" is a checkable statement.
+
+    This file's baseline is the RESIDENT tree, and the LONG README's §3 line is stated against
+    that same baseline (``바이트 동일`` = resident copies). The SHORT README's §3 line is stated
+    against the LONG tree instead, so it is parsed in ``test_tenant_tree_short.py``; what the
+    SHORT README says about the RESIDENT baseline lives in its §3.0 and is parsed below.
+    """
+    readme = (_CONFIG_ROOT / "cp3-setup-d-long" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(
+        r"이 트리는 (\d+) 파일이다: 바이트 동일 (\d+) \+ 다름 (\d+) \+ tenant 전용 (\d+)",
+        readme,
+    )
+    assert match is not None, (
+        "the LONG README's §3 count line is gone or reworded -- this test reads it, so the "
+        "sentence is load-bearing; update the regex together with the prose"
+    )
+    total, identical, differs, tenant_only = (int(g) for g in match.groups())
+
+    assert identical == len(_identical_set("cp3-setup-d-long"))
+    assert differs == len(_differs_set("cp3-setup-d-long"))
+    assert tenant_only == len(
+        _TENANT_ONLY_COMMON | {_TENANT_STRATEGY["cp3-setup-d-long"]}
+    )
+    assert total == len(_files(_CONFIG_ROOT / "cp3-setup-d-long"))
+    # ... and the stated parts must actually add up to the stated total.
+    assert identical + differs + tenant_only == total
+
+
+def test_the_resident_copy_count_the_short_readme_states_is_read_from_it() -> None:
+    """PARSE the SHORT README's §3.0 sentence about the RESIDENT baseline.
+
+    It is the one place either tenant README states how many of its LONG-identical files are
+    ALSO resident copies, and which one is not -- review L2 found both numbers wrong there (it
+    said "of the 24 above, 22" and named ``README.md``/``strategy_bindings.yaml`` as the
+    remainder, when the total is 23 and the remainder is ``engine.yaml``). Parsing it means a
+    future recount cannot drift again."""
+    readme = (_CONFIG_ROOT / "cp3-setup-d-short" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    # ``\*{0,2}`` so re-emphasising the sentence in Markdown does not break the pin, while
+    # changing either NUMBER still does -- the same trade the comment-prose helpers make.
+    match = re.search(
+        r"바이트 동일한 (\d+) 개\*{0,2} 가운데 \*{0,2}(\d+) 개가 상주", readme
+    )
+    assert (
+        match is not None
+    ), "the SHORT README's §3.0 resident-copy sentence is gone or reworded -- this test reads it"
+    identical_to_long, resident_copies = (int(g) for g in match.groups())
+
+    short_files = _files(_CONFIG_ROOT / "cp3-setup-d-short")
+    long_files = _files(_CONFIG_ROOT / "cp3-setup-d-long")
+    # Recomputed from the trees, not from this file's literals: LONG-identical, and of those,
+    # the ones that are resident copies too.
+    same_as_long = {
+        rel
+        for rel in short_files & long_files
+        if (_CONFIG_ROOT / "cp3-setup-d-short" / rel).read_bytes()
+        == (_CONFIG_ROOT / "cp3-setup-d-long" / rel).read_bytes()
+    }
+    also_resident = {
+        rel
+        for rel in same_as_long
+        if (_RESIDENT_DIR / rel).is_file()
+        and (_RESIDENT_DIR / rel).read_bytes()
+        == (_CONFIG_ROOT / "cp3-setup-d-short" / rel).read_bytes()
+    }
+    assert identical_to_long == len(same_as_long)
+    assert resident_copies == len(also_resident)
+    # The remainder is exactly one file, and the README names it.
+    remainder = same_as_long - also_resident
+    assert len(remainder) == identical_to_long - resident_copies
+    assert remainder == {"engine.yaml"}, remainder
+    assert "`engine.yaml`" in readme

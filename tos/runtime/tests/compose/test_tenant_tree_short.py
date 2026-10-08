@@ -21,6 +21,7 @@ Hermetic (D1.4): the real files are only READ; every write lands under ``tmp_pat
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -281,13 +282,45 @@ def test_short_tree_classification_is_exhaustive() -> None:
     )
     assert classified | long_classified == checked
 
-    # README §3's own counts, asserted so the prose and the tree cannot drift apart.
     # MEASURED 2026-10-09: the two trees share 23 byte-identical files; 6 YAML files diverge in
     # declared key paths; README.md diverges as prose; each tree has its own strategy file.
     assert len(_IDENTICAL_TO_LONG) == 23
     assert len(_DIFFERS_FROM_LONG) == 6
     assert len(_PROSE_DIFFERS) == 1
     assert len(short_files) == len(long_files) == 31
+
+
+def test_the_counts_the_short_readme_states_are_read_from_it() -> None:
+    """PARSE the SHORT README's §3 count line and compare it to the classification above.
+
+    Review L3: asserting integer literals that match other integer literals guards nothing --
+    the prose the comment claimed to pin was never opened. The numbers now come OUT of the file.
+
+    This file's baseline is the LONG tree, which is what the SHORT README's §3 line states
+    (``LONG 과 바이트 동일``). The SHORT README's §3.0 sentence is about the RESIDENT baseline
+    instead, and is parsed by ``test_tenant_tree_copies.py``."""
+    readme = (_SHORT_DIR / "README.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"(\d+) 파일 = 바이트 동일 (\d+) \+ YAML 이 다름 (\d+) \+ 산문이 다름 (\d+)"
+        r"\(`README\.md`\) \+ SHORT 전용 (\d+)",
+        readme,
+    )
+    assert match is not None, (
+        "the SHORT README's §3 count line is gone or reworded -- this test reads it, so the "
+        "sentence is load-bearing; update the regex together with the prose"
+    )
+    total, identical, yaml_differs, prose_differs, short_only = (
+        int(group) for group in match.groups()
+    )
+
+    assert identical == len(_IDENTICAL_TO_LONG)
+    assert yaml_differs == len(_DIFFERS_FROM_LONG)
+    assert prose_differs == len(_PROSE_DIFFERS)
+    assert short_only == len(_SHORT_ONLY)
+    assert total == len(_files(_SHORT_DIR))
+    # The stated parts must add up to the stated total -- four numbers that each match a set
+    # but do not sum to the file count would mean a category is missing from the sentence.
+    assert identical + yaml_differs + prose_differs + short_only == total
 
 
 @pytest.mark.parametrize("rel", sorted(_IDENTICAL_TO_LONG))

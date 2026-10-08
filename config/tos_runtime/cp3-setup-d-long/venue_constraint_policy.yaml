@@ -20,7 +20,9 @@
 #   활성화 기록의 `(kind, member_id, generation)` 만으로 두 문서를 구별할 수 없다. 세대는
 #   **1 그대로** 둔다 — 이것은 상주 정책의 다음 세대가 아니라 **다른 배포의 정책**이다.
 #   같은 규칙을 적용해 `critical_input_policy.yaml` 의 id 도 tenant 전용이다. 반대로
-#   `order_construction_policy.yaml`(이 트리에서 주석만 다름 → 타입 콘텐츠·digest 동일) ·
+#   `order_construction_policy.yaml`(이 트리에서 **digest 동일** — 주석과 template DATA
+#   산문만 다르다. 2026-10-09 tick 정정이 그 DATA 줄을 고쳤으므로 「주석만 다름」은 더 이상
+#   참이 아니고, `canonical_digest` 는 `c90444b9…` 로 상주와 같다) ·
 #   `aggregate_risk_policy.yaml` · `action_flow_policy.yaml`(바이트 동일)의 id 는
 #   **바꾸지 않았다**: 같은 id·세대·digest 는 「같은 문서」라는 참인 진술이고, 거기서
 #   이름을 가르면 같은 것을 둘로 보이게 만든다. 즉 기준은 트리가 아니라 **내용이

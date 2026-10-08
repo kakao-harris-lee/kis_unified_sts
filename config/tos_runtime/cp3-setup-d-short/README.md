@@ -59,9 +59,13 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
 
-위 24 개 중 **22 개는 상주 `config/tos_runtime/paper/` 파일의 바이트 사본**이다(나머지 둘은
-`README.md` 와 `strategy_bindings.yaml` 로 tenant 전용이고, 이 트리는 거기에
-`marketfeed.yaml` 을 상주와 **다르게** 들고 있다 — LONG 트리에서는 그것이 상주 사본이다).
+LONG 트리와 **바이트 동일한 23 개** 가운데 **22 개가 상주 `config/tos_runtime/paper/` 파일의
+바이트 사본**이고, 남는 **하나는 `engine.yaml`** 이다(상주와 **주석이 다르다** — 상주 주석이
+상주 전략 `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로 tenant 적용 문단을 덧붙였다.
+두 tenant 트리끼리는 같다). 실측은 blob 재계수다(2026-10-09 리뷰 L2 — 초판은 「위 24 개 중
+22 개」라고 적고 남는 둘을 `README.md`·`strategy_bindings.yaml` 로 지목했는데, **총계와 지목이
+모두 틀렸다**: 그 둘은 LONG 과도 다르므로 애초에 그 23 에 들어 있지 않다).
+
 그러므로 상주 파일 하나를 바꾸는 PR 은 **같은 PR 에서** 두 tenant 트리의 사본을 함께
 갱신해야 한다.
 
