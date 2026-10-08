@@ -31,24 +31,33 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 
 ## 3. 상주 트리와 무엇이 다른가 (실측 2026-10-09)
 
+**이 트리는 31 파일이다: 바이트 동일 23 + 다름 5 + tenant 전용 3.** 더해서 상주 트리의
+`strategies/bootproof_band.strategy.yaml` **하나가 이 트리에 없다**(상주 29 파일 기준).
+측정 방법은 작업트리 `cmp` 가 아니라 **git blob OID 대조**(`git ls-tree -r
+origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-object`)다 — 양쪽 모두
+**커밋된 내용**에 대한 진술이어야 하기 때문이다.
+
 | 파일 | 상태 |
 | --- | --- |
-| `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4). 런타임이 읽는 값 차이는 이 한 곳뿐이다 |
-| `critical_input_policy.yaml` | **다름** — 사본이 아니다. 상주 쪽은 부팅 증명 픽스처의 **세 필드**, 이쪽은 tenant 상류 **열다섯 필드**(아래 §5) |
-| `strategies/setup_d_long.strategy.yaml` | **신규** — 상주의 `strategies/bootproof_band.strategy.yaml` 을 **대체**한다(그 파일은 이 트리에 없다) |
-| `strategy_bindings.yaml` | **신규** — `z_entry_max_x1000: -1800`. `strategies/` 의 **형제**다(안에 두면 로더의 stray-file 규칙이 디렉터리 전체를 거부한다) |
-| `engine.yaml` · `order_construction_policy.yaml` | **주석만 다름** — 값은 상주 승인값 그대로다. 두 파일의 기존 주석이 상주 전략(`bootproof_band`)을 인용하고 있어 이 트리에서 거짓이 되므로, 각 자리에 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정 · `quantity_basis` 선언 자리) |
+| `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4) + `policy_id` 가 tenant 전용(§7 2). 런타임이 읽는 **값** 차이는 `max_quantity` 한 곳 |
+| `critical_input_policy.yaml` | **다름** — 사본이 아니다. 상주 쪽은 부팅 증명 픽스처의 **세 필드**, 이쪽은 tenant 상류 **열다섯 필드**(아래 §5) + `policy_id` tenant 전용 |
+| `construction.yaml` | **다름** — `price_field_key`·`shape_price_field_key` 가 `"close"` → **`"close_x100"`**. 상주의 `"close"` 는 이 트리의 critical_input 에 **없는 키**이고, 두 로더는 서로를 볼 수 없어 그 불일치를 **거부하지 못한다**(그 파일의 해당 주석이 실측 경로를 적는다). 나머지 값은 상주 승인값 그대로 |
+| `engine.yaml` · `order_construction_policy.yaml` | **주석만 다름** — 값은 상주 승인값 그대로이고 타입 콘텐츠가 같으므로 **digest 도 같다**. 두 파일의 기존 주석이 상주 전략(`bootproof_band`)을 인용하고 있어 이 트리에서 거짓이 되므로, 각 자리에 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정 · `quantity_basis` 선언 자리) |
+| `strategies/setup_d_long.strategy.yaml` | **tenant 전용** — 상주의 `strategies/bootproof_band.strategy.yaml` 을 **대체**한다(그 파일은 이 트리에 없다) |
+| `strategy_bindings.yaml` | **tenant 전용** — `z_entry_max_x1000: -1800`. `strategies/` 의 **형제**다(안에 두면 로더의 stray-file 규칙이 디렉터리 전체를 거부한다) |
+| `README.md` (이 파일) | **tenant 전용** |
 | 나머지 **23 개** | **바이트 동일** — 상주 트리에서 그대로 복사된 승인값이다. 아래 ⚠ 를 볼 것 |
 
 > ⚠ **바이트 동일한 23 개 안의 `config/tos_runtime/paper/...` 인용을 「이 트리의 형제
 > 파일」로 읽을 것.** 그 파일들은 서로를 **절대 경로 꼴**로 인용한다(예 `time.yaml` 의
 > 「강제 일치: config/tos_runtime/paper/calendar.yaml 의 `calendar_version`」 ·
-> `construction.yaml`·`marketfeed.yaml`·`safety_profile.yaml`·`safety_activation.yaml` ·
+> `marketfeed.yaml`·`safety_profile.yaml`·`safety_activation.yaml` ·
 > `calendar.yaml`·`broker_scopes.yaml`). 런타임의 그 대조는 **하나의 `--config-dir` 안에서**
 > 일어나므로 실제로 가리키는 것은 **이 트리의 같은 이름 파일**이다. 경로를 일괄 치환하지
 > 않은 이유는 그렇게 하면 「상주 승인값의 사본」이라는 **기계로 확인 가능한 성질**
-> (`cmp` 로 23/23 동일)을 잃기 때문이다. 치환 규칙은 이 줄이 유일한 기록이다 — 값을
-> 바꿀 때는 그 파일이 더 이상 사본이 아니므로 §3 표의 행을 옮긴다.
+> (blob OID 로 23/23 동일)을 잃기 때문이다. 치환 규칙은 이 줄이 유일한 기록이다 — 값을
+> 바꿀 때는 그 파일이 더 이상 사본이 아니므로 §3 표의 행을 옮긴다(`construction.yaml` 이
+> 2026-10-09 리뷰에서 실제로 그렇게 옮겨졌다).
 
 ## 4. `max_quantity: 10000` — 결정 9 (a)
 
@@ -84,9 +93,12 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 
 ## 6. 무엇이 증명되지 않았나 (이 PR 이 하지 않은 것)
 
-1. **부팅 0 회.** 이 트리로 `run` 을 돌리지 않았다. 검증된 것은 `venue_constraint_policy.yaml`
+1. **부팅 0 회.** 이 트리로 `run` 을 돌리지 않았다. 검증된 것은 ① `venue_constraint_policy.yaml`
    이 좌표 미채움 상태에서 **거부되고**(운영자-채움 게이트) 좌표를 채우면 `max_quantity: 10000`
-   으로 적재된다는 것뿐이다(`tos/runtime/tests/compose/test_deploy_policies.py`).
+   으로 적재된다는 것, ② `critical_input_policy.yaml` 이 `max_age_ms` 로 거부된다는 것,
+   ③ `construction.yaml` 의 두 price 키가 이 트리의 critical_input 필드 집합 **안에 있다**는 것
+   뿐이다(`tos/runtime/tests/compose/test_deploy_policies.py`). ③ 은 두 로더가 서로를 보지
+   못하는 자리를 테스트가 대신 보는 것이고, **부팅이 그 교차를 검증한다는 뜻은 아니다.**
 2. **렌더가 이 트리를 아직 처리하지 못한다** — kickoff §5 3 ④. `scripts/tos/render_paper_config.py`
    는 (a) `_STRATEGY_FILE` 이 `strategies/bootproof_band.strategy.yaml` 로 고정이고
    (b) 좌표 규칙이 앵커 **정확히 1회** 매칭을 요구하는데 이 트리의 전략 파일은 규칙이 셋이라
@@ -101,9 +113,19 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 ## 7. 운영자 미결 항목
 
 1. **`critical_input_policy.yaml::fields[].max_age_ms` ×15** — 신선도 한도. 출처 없음(§5).
-2. **정책 식별자** — `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 은
-   상주 트리의 것과 **같은 값인데 내용은 다르다**. 두 트리는 따로 활성화되므로 한 bound set
-   안에서 충돌하지 않지만, `(kind, member_id, generation)` 만으로는 두 문서를 구별할 수 없다.
-   tenant 전용 식별자로 바꿀지는 부팅 경로(④)에서 처분한다 — 이 PR 은 결정하지 않았다.
-3. **SHORT 트리** — 결정 4 의 나머지 반쪽. 별도 렌더·별도 트리·별도 data dir.
-4. **data dir** — 결정 3 의 「방향마다 따로」. 상주 잎에 절대 섞지 않는다(런북 §7.10 3).
+2. **SHORT 트리** — 결정 4 의 나머지 반쪽. 별도 렌더·별도 트리·별도 data dir.
+3. **data dir** — 결정 3 의 「방향마다 따로」. 상주 잎에 절대 섞지 않는다(런북 §7.10 3).
+
+### 닫힌 항목 (여기 있었다가 처분된 것)
+
+- **정책 식별자 충돌 — ✅ 해소됨 2026-10-09 (rename).** 초판은 「tenant
+  `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데
+  내용이 달라 `(kind, member_id, generation)` 으로 구별되지 않는다」를 **미결로 기록**하고
+  부팅 경로(④)로 넘겼다. 리뷰(2026-10-09)의 지적대로 **지금 바꾸는 것이 공짜다** — 이 트리는
+  부팅한 적이 없고 활성화 기록도 증거도 없으므로 rename 이 무효화할 것이 없다. 그래서
+  `vcp-paper-cp3-setup-d-long-krx-index-futures` 로 바꿨고 **세대는 1 그대로**다(다른 배포의
+  정책이지 상주 정책의 다음 세대가 아니다). 기준은 **내용이 갈렸는가**이지 트리가 다른가가
+  아니므로, 타입 콘텐츠가 같은 `order_construction_policy.yaml`(주석만 다름) ·
+  `aggregate_risk_policy.yaml` · `action_flow_policy.yaml` 의 id 는 **바꾸지 않았다**.
+  `safety_activation.yaml::members` 는 여전히 `null` 이라 갱신할 활성화 기록이 없고
+  digest 리터럴도 지어내지 않았다 — 활성화는 ④ 의 일로 남는다.

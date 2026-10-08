@@ -14,9 +14,13 @@ deployment identity (CP-3 kickoff
 `docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md` §5 1). The first one is
 `cp3-setup-d-long/` (CP-3 first tenant, Setup D VWAP reversion, LONG —
 operator decisions 3·4 of that kickoff's §4, approved 2026-10-07). Read
-**`cp3-setup-d-long/README.md`** before touching it: 23 of its files are byte
-copies of `paper/`'s approved values, four differ, and nothing in it has booted
-yet. Adding a tenant tree changes NO digest the resident session re-derives —
+**`cp3-setup-d-long/README.md`** before touching it: of its **31** files, **23**
+are byte copies of `paper/`'s approved values, **5** differ and **3** are
+tenant-only; `paper/`'s `strategies/bootproof_band.strategy.yaml` is absent
+there. (Measured by git blob OID against `origin/main:config/tos_runtime/paper`,
+not by comparing working trees — both sides of that claim have to be about
+committed content.) Nothing in it has booted yet.
+Adding a tenant tree changes NO digest the resident session re-derives —
 `release.yaml::expected_code_digest` folds `*.py` bytes under the two installed
 package roots only, and each policy's `canonical_digest` is computed from its
 own typed content.

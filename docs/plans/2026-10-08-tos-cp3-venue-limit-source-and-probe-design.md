@@ -265,7 +265,9 @@ UNKNOWN`(두 환경 문서의 `capabilities.market_and_instrument_constraints.ha
    2026-10-08 · 별표 17의2 제1호 미니코스피200선물거래 행 · 등급 R」)과 **§2.2 단서 셋**을 함께 적는다. 「NO SOURCE … Never
    fill by hand」 문단은 **분리**했다 — `price_min/max` 가 그 문단을 그대로 들고, `max_quantity` 줄은 출처 문장으로 교체됐다.
    `tos/runtime/tests/compose/test_deploy_policies.py` 의 **paper 단언은 손대지 않고** tenant 단언을 **추가**했다(10000 ·
-   provenance 문자열 핀 · §2.2 단서 넷의 문자열 핀 · band 두 값 null 유지 · 좌표 게이트 · tenant `critical_input_policy.yaml`
+   provenance 문자열 핀 · §2.2 **단서 셋**의 문자열 핀 **넷**(단서 (1) 은 두 문장이라 앞뒤를 따로 핀한다:
+   「회원은 이보다 낮게 정할 수 있다」와 「KIS 측 한도는 미확인」) · band 두 값 null 유지 · 좌표 게이트 ·
+   tenant `critical_input_policy.yaml`
    의 의도된 거부). **레드 증명 16 건**(값·인용·단서별 각 1 건 등)이 PR 본문에 있다.
    paper 트리 헤더에는 「source exists (10-08 결정 9); paper adoption deferred by operator」 한 줄을 더했고, **주석-only 변경이
    그 파일의 `canonical_digest` 를 바꾸지 않는다는 것을 실측**했다(2026-10-09)(digest 는 타입 콘텐츠를 접고 주석을 접지 않는다; 상주 세션이

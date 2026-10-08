@@ -316,17 +316,26 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    digest 재도출·`safety_activation.yaml::members` 갱신).
 
    **① 착지 완료 2026-10-09 — LONG tenant 트리 `config/tos_runtime/cp3-setup-d-long/`.**
-   29 개 파일: 23 개는 상주 `paper` 트리 승인값의 **바이트 동일 사본**(`cmp` 로 확인), 넷이 다르고,
-   둘이 신규(전략 + 바인딩), 하나가 트리 자신의 `README.md` 다. 다른 넷 —
-   `venue_constraint_policy.yaml`(결정 9 (a) `max_quantity: 10000` · 아래 ②와 별개) ·
-   `critical_input_policy.yaml`(사본이 아니다 — 아래 ②) · `engine.yaml` ·
-   `order_construction_policy.yaml`(뒤 둘은 **주석만**: 두 파일의 기존 주석이 상주 전략
-   `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로 tenant 적용 문단을 덧붙였고, 그 과정에서
-   스텝 수 24 ≤ 64 를 재측정해 적었다). 상주 전략 파일은 이 트리에 **없고** 그 자리를
+   **31 개 파일 = 바이트 동일 23 + 다름 5 + tenant 전용 3**이고, 더해서 상주 트리의
+   `strategies/bootproof_band.strategy.yaml` **하나가 이 트리에 없다**(상주 29 기준).
+   측정은 작업트리 비교가 아니라 **git blob OID 대조**(`origin/main:config/tos_runtime/paper`)다.
+   다른 다섯 —
+   `venue_constraint_policy.yaml`(결정 9 (a) `max_quantity: 10000` · 아래 ②와 별개 · `policy_id`
+   tenant 전용) · `critical_input_policy.yaml`(사본이 아니다 — 아래 ②) ·
+   `construction.yaml`(**리뷰 2026-10-09 H1**: `price_field_key`·`shape_price_field_key` 가 상주의
+   `"close"` → **`"close_x100"`**. 상주의 그 키는 이 트리의 critical_input 에 **없고**, 두 로더가
+   서로를 보지 못해 그 불일치를 거부하지 못한다 — `compose/_construction_config.py` 모듈
+   독스트링이 그 갭을 자기 입으로 적는다. 고치지 않으면 `_price_for` 가 **값 없는** 가격 관측을
+   내고 `derive_order_size` 가 「no positive finite value」로 거부하는데, 그 사유가 설정 불일치를
+   지목하지 않는다) · `engine.yaml` · `order_construction_policy.yaml`(뒤 둘은 **주석만**: 두 파일의
+   기존 주석이 상주 전략 `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로 tenant 적용 문단을
+   덧붙였고, 그 과정에서 스텝 수 24 ≤ 64 를 재측정해 적었다). tenant 전용 셋은 전략 · 바인딩 ·
+   트리 자신의 `README.md` 다. 상주 전략 파일은 이 트리에 **없고** 그 자리를
    `strategies/setup_d_long.strategy.yaml` 이 차지한다. `environment`·`scope.environments` 는
    §5 1 대로 `paper` 다. 전략 파일의 B1b 하네스 리터럴 둘(`account: cp3-b1b-long` ·
    `instrument: 101S6000` — 후자는 parity 전용 **full** 월물)은 이 트리의 다른 좌표 칸과 같은
-   named-TBD `"TBD"` 로 바뀌었고, 그 `"TBD"` 거부가 운영자-채움 게이트다.
+   named-TBD `"TBD"` 로 바뀌었고(세 규칙 × 두 칸 = **여섯 리프**), 그 `"TBD"` 거부가 운영자-채움
+   게이트다 — 그러므로 **배포 사본은 B1b 사본과 달리 커밋 상태로 적재되지 않는다.**
    ⛔ **렌더로 만들지 못했다 — 「저장소의 렌더러를 쓸 것」이 성립하지 않는다**(실측):
    `scripts/tos/render_paper_config.py` 는 설계상 **출력이 저장소 안이면 거부**하고
    (`_refuse_output_inside_repo` — 렌더 산출물은 계좌 좌표를 담는다), `.env.mock` 계좌 ·
@@ -348,11 +357,20 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    **정확히 1회** 매칭될 것을 요구하는데(`_apply_rules`) tenant 전략 파일은 규칙이 셋이라
    `account: "TBD"`·`instrument: "TBD"` 가 **각 3회** 나오고, `direction` 은 줄마다 값이 다르다
    (R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로 `--direction SHORT` 렌더의 일괄
-   치환이 성립하지 않는다. 또 **미결 하나가 더 드러났다**: tenant `venue_constraint_policy.yaml` 의
-   `policy_id`/`policy_generation` 은 상주 트리의 것과 **같은 값인데 내용이 달라** digest 가
-   다르다 — 두 트리는 따로 활성화되므로 한 bound set 안에서 충돌하지 않지만
-   `(kind, member_id, generation)` 만으로는 두 문서를 구별할 수 없다. 식별자를 tenant 전용으로
-   바꿀지는 ④ 에서 처분한다(이 PR 은 결정하지 않고 기록만 했다).
+   치환이 성립하지 않는다.
+
+   ✅ **정책 식별자 충돌은 ④ 로 넘기지 않고 같은 PR 에서 닫았다(2026-10-09 리뷰 L4).** 초판은
+   「tenant `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데
+   내용이 달라 digest 가 다르고, `(kind, member_id, generation)` 만으로는 두 문서를 구별할 수 없다」를
+   ④ 로 미뤘는데, **지금 바꾸는 것이 공짜**라는 지적이 맞았다 — 이 트리는 부팅한 적이 없고 활성화
+   기록·증거가 0 이므로 rename 이 무효화할 것이 없다. `vcp-paper-cp3-setup-d-long-krx-index-futures`
+   로 바꿨고 **세대는 1 그대로**(상주 정책의 다음 세대가 아니라 **다른 배포의 정책**이다). 기준은
+   트리가 다른가가 아니라 **내용이 갈렸는가**이므로 타입 콘텐츠가 같은
+   `order_construction_policy.yaml`(주석만 다름) · `aggregate_risk_policy.yaml` ·
+   `action_flow_policy.yaml` 의 id 는 **바꾸지 않았다**(같은 id·세대·digest 는 「같은 문서」라는 참인
+   진술이고, 거기서 이름을 가르면 같은 것을 둘로 보이게 만든다). `safety_activation.yaml::members` 는
+   여전히 `null` 이라 갱신할 활성화 기록이 없고 **digest 리터럴을 지어내지 않았다** — 활성화 자체는
+   ④ 의 일로 남는다.
 
    LONG/SHORT 는 각각 렌더이며 SHORT 파일·SHORT 트리는 아직 없다(DSL 에 abs() 가 없어 진입 비교가
    한 변뿐이므로 SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).

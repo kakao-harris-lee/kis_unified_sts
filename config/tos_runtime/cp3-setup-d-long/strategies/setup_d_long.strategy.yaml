@@ -27,8 +27,17 @@
 #
 # 이 파일은 tos/runtime/src/tos_runtime/strategy/loader.py::load_strategies 가
 # 읽는 그 모양 그대로다 — tos/runtime/config/strategies/example.strategy.yaml 의
-# 템플릿을 채운 것이고, 모든 값이 concrete(named-TBD `null` 0개, 'TBD' 문자열
-# 0개)이다. 미지의 키는 tos.dsl.serialization.parse_strategy 가 거부한다.
+# 템플릿을 채운 것이다. 미지의 키는 tos.dsl.serialization.parse_strategy 가 거부한다.
+#
+# ⚠ **배포 사본의 named-TBD 상태는 B1b 사본과 다르다.** B1b 사본
+# (`tos/runtime/cp3/strategies/setup_d_long.strategy.yaml`)은 모든 값이 concrete 이고
+# (`null` 리프 0 · `"TBD"` 문자열 0) 그래서 그 자리에서 적재·승인된다. **이 배포 사본은
+# `"TBD"` 리프를 여섯 개 들고 있다** — 세 규칙(R1·R2·R3)의 target 마다 `account` ·
+# `instrument` 두 칸(실측: 이 파일의 100·101·136·137·160·161행). 계좌·종목은 커밋되지
+# 않으므로(위 문단) 그것이 맞는 상태이고, 로더는 그 리프를 **이름으로 거부한다**
+# (`tos_runtime._named_tbd.first_named_tbd_leaf`, `parse` 가 보기 전에). 즉 **이 파일은
+# 커밋 상태로는 적재되지 않는다 — 그 거부가 운영자-채움 게이트다.** `null` 리프는
+# 여전히 0 이다.
 #
 # 방향은 **배포(구성)당 하나**다(kickoff §2 — order_construction_policy.yaml
 # 194-213행). 이 파일은 LONG 배포용이고, SHORT 는 별도 렌더·별도 파일이다
