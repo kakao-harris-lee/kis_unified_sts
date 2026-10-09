@@ -226,7 +226,7 @@ def test_run_replay_refuses_when_any_bar_emitted_no_outcome(
 # ---------------------------------------------------------------------------
 
 
-def _declared(direction: str = "LONG") -> list[dict[str, object]]:
+def _declared(direction: str = "LONG") -> list[dict[str, str]]:
     """The declared-difference block as a run of *direction* would write it.
 
     Rendered from the committed strategy content rather than from literals, so
