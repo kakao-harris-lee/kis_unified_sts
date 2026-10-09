@@ -28,20 +28,30 @@ from ._documents import SCHEME, band_source_runtime_extra, venue_policy_yaml
 _INSTRUMENT = "K200F"
 
 
-def _write(tmp_path: Path, *, runtime_extra: str, **kwargs: str) -> Path:
+def _write(
+    tmp_path: Path,
+    *,
+    runtime_extra: str,
+    price_min: str = "null",
+    price_max: str = "null",
+) -> Path:
     """A fixture venue policy with ``runtime_extra`` in its ``_runtime`` block.
 
     ``price_min``/``price_max`` default to ``null`` here — the opposite of
     :func:`venue_policy_yaml`'s own defaults — because a DECLARED band source is the source of
     those two bounds (plan §4.1 "원천 둘"). A test that wants the literals back passes them.
+
+    Spelled out rather than forwarded through ``**kwargs: str``: :func:`venue_policy_yaml` also
+    takes ``int`` parameters, so a ``str``-valued kwargs unpack is a type error waiting for the
+    first test that mistypes a name (mypy says so — ``arg-type`` on the unpack). These two are
+    the only overrides this suite has ever needed.
     """
     path = tmp_path / "venue_constraint_policy.yaml"
     path.write_text(
         venue_policy_yaml(
-            price_min=kwargs.pop("price_min", "null"),
-            price_max=kwargs.pop("price_max", "null"),
+            price_min=price_min,
+            price_max=price_max,
             runtime_extra=runtime_extra,
-            **kwargs,
         ),
         encoding="utf-8",
     )

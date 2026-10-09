@@ -138,10 +138,12 @@ class _FakeCredentials:
 class _FakeSession:
     """A :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession`
     double. ``tokens`` is consumed one per read, so a test can hand the reader a REISSUED token
-    and watch the continuity id advance."""
+    and watch the continuity id advance. An ``Exception`` in the list is RAISED instead of
+    returned — that is how the stale-token path is reached, hence the union element type rather
+    than ``Any`` (which would also let the ``str`` return slip through unchecked)."""
 
-    def __init__(self, tokens: list[Any] | None = None) -> None:
-        self._tokens = list(tokens or ["token-a"])
+    def __init__(self, tokens: list[str | Exception] | None = None) -> None:
+        self._tokens: list[str | Exception] = list(tokens or ["token-a"])
 
     def ensure_token_string(self) -> str:
         value = self._tokens.pop(0) if len(self._tokens) > 1 else self._tokens[0]
@@ -183,7 +185,7 @@ def _reader(
     tick_size: int | None = 2,
     band_source: BandSourceConfig | None = None,
     trading_date: Any = _TRADING_DATE,
-    tokens: list[Any] | None = None,
+    tokens: list[str | Exception] | None = None,
     sink: _Sink | None = None,
 ) -> tuple[KisBandSourceReader, _Sink, _FakeClient]:
     evidence = sink if sink is not None else _Sink()
@@ -192,9 +194,13 @@ def _reader(
     reader = KisBandSourceReader(
         band_source=band_source if band_source is not None else _band_source(),
         transport_config=_transport_config(),
+        # The two ignores are for CONCRETE classes the reader names (``KisMockHttpClient`` /
+        # ``KisCredentialSession``) — a double cannot be their subclass without inheriting
+        # real I/O. ``monotonic`` needs none: ``MonotonicSource`` is a Protocol and
+        # ``_FakeMonotonic`` satisfies it structurally, which mypy checks here.
         client=client,  # type: ignore[arg-type]
         credential_session=_FakeSession(tokens),  # type: ignore[arg-type]
-        monotonic=_FakeMonotonic(),  # type: ignore[arg-type]
+        monotonic=_FakeMonotonic(),
         evidence_sink=evidence,
         trading_date_reader=lambda: dates.pop(0) if len(dates) > 1 else dates[0],
         tick_size=tick_size,
