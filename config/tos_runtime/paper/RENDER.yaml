@@ -1,0 +1,143 @@
+# Render manifest for THIS tree — read ONLY by scripts/tos/render_paper_config.py.
+#
+# Provenance: docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md §2.1
+# (PR-A, 렌더러 일반화). Upper design: docs/plans/2026-09-23-tos-paper-coordinates-and-
+# first-boot-design.md §2 steps 4-5 — this file is that design's rule table, moved out of
+# the renderer's source and into the tree it describes.
+#
+# ⚠ This is NOT an approved VALUE file. It carries no deployment value: every slot names a
+# value SOURCE out of a closed set the renderer knows, and the `replacement` template is
+# shape-checked so it cannot smuggle a literal in (plan §2.1 rules ①–④). The approved
+# values live in the sibling YAMLs and are cited in their own headers; the coordinates this
+# manifest points at are exactly the leaves that may NOT be committed
+# (config/tos_runtime/README.md — "scope.accounts — the paper account number (never
+# committed here)").
+#
+# ⚠ No runtime reads this file. `compose` loads named files only (_boot_integrity.py's
+# four CONFIG_NAME constants, each loader's own path), and the strategy loader's stray-file
+# rule applies to `strategies/` alone — so the copy that render_paper_config.py leaves in
+# the off-repo output directory (plan §7) is inert there.
+#
+# The slot list below is byte-equivalent to the renderer's own `_coordinate_rules` table as
+# of main bb9a4d4d; `tests/unit/scripts/test_render_paper_config.py` pins both the
+# equivalence (transition) and the full (file, key, anchor, replacement) tuples (plan §4.1).
+# `safety_activation.yaml::members` is deliberately absent — it is ALWAYS derived from
+# `print-policy-digests` against the already-coordinate-filled copy, never hand-written
+# (plan §2.1, adoption plan §2 decision 3).
+
+tree_id: "paper"
+
+direction:
+  # "substitute" = today's resident behaviour: `--direction` rewrites the four
+  # direction-bound slots together (runbook tos-paper-boot.md §7.10 3). A tenant tree is
+  # committed per direction and uses "declared" instead (plan §2.3) — which this tree
+  # must not, because its LONG/SHORT variants exist only as a render flag.
+  mode: "substitute"
+
+journal:
+  # "synthetic_bootproof" = today's resident behaviour: the renderer writes the one-
+  # observation boot-proof journal itself, immediately before boot (design §4 item 5).
+  # A tenant tree takes its observations from the ③ producer and uses "external".
+  mode: "synthetic_bootproof"
+
+slots:
+  - file: "venue_constraint_policy.yaml"
+    key: "scope.accounts"
+    anchor: '  accounts: ["TBD"]'
+    replacement: '  accounts: ["{value}"]'
+    value: "account"
+  - file: "venue_constraint_policy.yaml"
+    key: "scope.instruments"
+    anchor: '  instruments: ["TBD"]'
+    replacement: '  instruments: ["{value}"]'
+    value: "instrument"
+  - file: "order_construction_policy.yaml"
+    key: "scope.accounts"
+    anchor: '  accounts: ["TBD"]'
+    replacement: '  accounts: ["{value}"]'
+    value: "account"
+  - file: "order_construction_policy.yaml"
+    key: "scope.instruments"
+    anchor: '  instruments: ["TBD"]'
+    replacement: '  instruments: ["{value}"]'
+    value: "instrument"
+  - file: "order_construction_policy.yaml"
+    key: "_runtime.construction.axes.DIRECTION"
+    anchor: '        value: "LONG"'
+    replacement: '        value: "{value}"'
+    value: "direction"
+  - file: "aggregate_risk_policy.yaml"
+    key: "account_scope"
+    anchor: 'account_scope: ["TBD"]'
+    replacement: 'account_scope: ["{value}"]'
+    value: "account"
+  - file: "aggregate_risk_policy.yaml"
+    key: "instrument_scope"
+    anchor: 'instrument_scope: ["TBD"]'
+    replacement: 'instrument_scope: ["{value}"]'
+    value: "instrument"
+  - file: "action_flow_policy.yaml"
+    key: "account_scope"
+    anchor: 'account_scope: ["TBD"]'
+    replacement: 'account_scope: ["{value}"]'
+    value: "account"
+  - file: "construction.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{value}"'
+    value: "account"
+  - file: "construction.yaml"
+    key: "instrument"
+    anchor: 'instrument: "TBD"'
+    replacement: 'instrument: "{value}"'
+    value: "instrument"
+  - file: "construction.yaml"
+    key: "action_class"
+    anchor: 'action_class: "NEW_LONG"'
+    replacement: 'action_class: "{value}"'
+    value: "direction_action_class"
+  - file: "construction.yaml"
+    key: "outbound_side"
+    anchor: 'outbound_side: "BUY"'
+    replacement: 'outbound_side: "{value}"'
+    value: "direction_side"
+  - file: "strategies/bootproof_band.strategy.yaml"
+    key: "policy.rules[0].decision.target.account"
+    anchor: '          account: "TBD"'
+    replacement: '          account: "{value}"'
+    value: "account"
+  - file: "strategies/bootproof_band.strategy.yaml"
+    key: "policy.rules[0].decision.target.instrument"
+    anchor: '          instrument: "TBD"'
+    replacement: '          instrument: "{value}"'
+    value: "instrument"
+  - file: "strategies/bootproof_band.strategy.yaml"
+    key: "policy.rules[0].decision.target.direction"
+    anchor: '          direction: "LONG"'
+    replacement: '          direction: "{value}"'
+    value: "direction"
+  - file: "marketfeed.yaml"
+    key: "instruments"
+    anchor: 'instruments: ["TBD"]'
+    replacement: 'instruments: ["{value}"]'
+    value: "instrument"
+  - file: "marketfeed.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{value}"'
+    value: "account"
+  - file: "marketfeed.yaml"
+    key: "direction"
+    anchor: 'direction: "LONG"'
+    replacement: 'direction: "{value}"'
+    value: "direction"
+  - file: "marketfeed.yaml"
+    key: "journal_path"
+    anchor: 'journal_path: "TBD"'
+    replacement: 'journal_path: "{value}"'
+    value: "journal_path"
+  - file: "finality.yaml"
+    key: "source_revision"
+    anchor: "source_revision: null"
+    replacement: 'source_revision: "{value}"'
+    value: "revision"

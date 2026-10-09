@@ -18,6 +18,7 @@ needed it is measured through a SUBPROCESS, exactly as the script itself does.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
@@ -25,8 +26,10 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT_DIR = _REPO_ROOT / "scripts" / "tos"
@@ -62,6 +65,39 @@ def _source_copy(tmp_path: Path) -> Path:
     dest = tmp_path / "source"
     shutil.copytree(_SOURCE, dest)
     return dest
+
+
+def _resident_manifest_dict() -> dict[str, Any]:
+    """The committed resident ``RENDER.yaml``, as a plain mutable mapping."""
+    raw = yaml.safe_load(
+        (_SOURCE / rpc.RENDER_MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    assert isinstance(raw, dict)
+    return raw
+
+
+def _tree_with_manifest(
+    parent: Path, manifest: dict[str, Any], *, name: str = "tree"
+) -> Path:
+    """A copy of the resident tree whose ``RENDER.yaml`` is replaced by ``manifest``.
+
+    Design §4.2's tenant cases need a tree that declares ``declared``/``external`` modes, and
+    no tenant manifest is committed yet (that is PR-B). Re-manifesting the resident VALUES is
+    the smallest fixture that exercises the modes without inventing a second value tree.
+    """
+    tree = parent / name
+    shutil.copytree(_SOURCE, tree)
+    (tree / rpc.RENDER_MANIFEST_NAME).write_text(
+        yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return tree
+
+
+def _slot_index(manifest: dict[str, Any], file_name: str, key: str) -> int:
+    for index, slot in enumerate(manifest["slots"]):
+        if slot["file"] == file_name and slot["key"] == key:
+            return index
+    raise AssertionError(f"no slot {file_name}::{key} in the manifest")
 
 
 # ---------------------------------------------------------------------------
@@ -831,3 +867,728 @@ def test_policy_digest_is_stable_across_hash_seeds(
     assert (
         first and first == second
     ), f"{policy_file} digests differently under two hash seeds: {first} != {second}"
+
+
+# ---------------------------------------------------------------------------
+# The per-tree render manifest (design 2026-10-09 §2.1 · §4.1 · §4.2)
+# ---------------------------------------------------------------------------
+
+
+def _slot_tuples(
+    manifest: rpc.RenderManifest,
+) -> tuple[tuple[str, str, str, str], ...]:
+    return tuple(
+        (slot.file, slot.rule_key, slot.anchor, slot.replacement)
+        for slot in manifest.slots
+    )
+
+
+#: The RESIDENT tree's slots, pinned as FULL ``(file, key, anchor, replacement)`` tuples.
+#:
+#: **Why the whole tuple and not the key names** (design §2.1, re-review LOW). Once the slot
+#: table is data, the renderer's old self-check (``rendered_keys`` vs ``COORDINATE_RULE_KEYS``)
+#: compares the manifest to itself and cannot go red. A key-name pin would restore only part of
+#: the force: a manifest that keeps the key ``construction.yaml::account`` while re-aiming its
+#: anchor AND template at a different leaf passes template rules ①–④ and a key-name pin alike.
+#: ``test_red_proof_a_re_aimed_slot_passes_the_shape_rules_and_only_this_pin_catches_it``
+#: measures exactly that, so this literal's necessity is demonstrated rather than asserted.
+_EXPECTED_RESIDENT_SLOTS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "venue_constraint_policy.yaml",
+        "venue_constraint_policy.yaml::scope.accounts",
+        '  accounts: ["TBD"]',
+        '  accounts: ["{value}"]',
+    ),
+    (
+        "venue_constraint_policy.yaml",
+        "venue_constraint_policy.yaml::scope.instruments",
+        '  instruments: ["TBD"]',
+        '  instruments: ["{value}"]',
+    ),
+    (
+        "order_construction_policy.yaml",
+        "order_construction_policy.yaml::scope.accounts",
+        '  accounts: ["TBD"]',
+        '  accounts: ["{value}"]',
+    ),
+    (
+        "order_construction_policy.yaml",
+        "order_construction_policy.yaml::scope.instruments",
+        '  instruments: ["TBD"]',
+        '  instruments: ["{value}"]',
+    ),
+    (
+        "order_construction_policy.yaml",
+        "order_construction_policy.yaml::_runtime.construction.axes.DIRECTION",
+        '        value: "LONG"',
+        '        value: "{value}"',
+    ),
+    (
+        "aggregate_risk_policy.yaml",
+        "aggregate_risk_policy.yaml::account_scope",
+        'account_scope: ["TBD"]',
+        'account_scope: ["{value}"]',
+    ),
+    (
+        "aggregate_risk_policy.yaml",
+        "aggregate_risk_policy.yaml::instrument_scope",
+        'instrument_scope: ["TBD"]',
+        'instrument_scope: ["{value}"]',
+    ),
+    (
+        "action_flow_policy.yaml",
+        "action_flow_policy.yaml::account_scope",
+        'account_scope: ["TBD"]',
+        'account_scope: ["{value}"]',
+    ),
+    (
+        "construction.yaml",
+        "construction.yaml::account",
+        'account: "TBD"',
+        'account: "{value}"',
+    ),
+    (
+        "construction.yaml",
+        "construction.yaml::instrument",
+        'instrument: "TBD"',
+        'instrument: "{value}"',
+    ),
+    (
+        "construction.yaml",
+        "construction.yaml::action_class",
+        'action_class: "NEW_LONG"',
+        'action_class: "{value}"',
+    ),
+    (
+        "construction.yaml",
+        "construction.yaml::outbound_side",
+        'outbound_side: "BUY"',
+        'outbound_side: "{value}"',
+    ),
+    (
+        "strategies/bootproof_band.strategy.yaml",
+        "strategies/bootproof_band.strategy.yaml::policy.rules[0].decision.target.account",
+        '          account: "TBD"',
+        '          account: "{value}"',
+    ),
+    (
+        "strategies/bootproof_band.strategy.yaml",
+        "strategies/bootproof_band.strategy.yaml::policy.rules[0].decision.target.instrument",
+        '          instrument: "TBD"',
+        '          instrument: "{value}"',
+    ),
+    (
+        "strategies/bootproof_band.strategy.yaml",
+        "strategies/bootproof_band.strategy.yaml::policy.rules[0].decision.target.direction",
+        '          direction: "LONG"',
+        '          direction: "{value}"',
+    ),
+    (
+        "marketfeed.yaml",
+        "marketfeed.yaml::instruments",
+        'instruments: ["TBD"]',
+        'instruments: ["{value}"]',
+    ),
+    (
+        "marketfeed.yaml",
+        "marketfeed.yaml::account",
+        'account: "TBD"',
+        'account: "{value}"',
+    ),
+    (
+        "marketfeed.yaml",
+        "marketfeed.yaml::direction",
+        'direction: "LONG"',
+        'direction: "{value}"',
+    ),
+    (
+        "marketfeed.yaml",
+        "marketfeed.yaml::journal_path",
+        'journal_path: "TBD"',
+        'journal_path: "{value}"',
+    ),
+    (
+        "finality.yaml",
+        "finality.yaml::source_revision",
+        "source_revision: null",
+        'source_revision: "{value}"',
+    ),
+)
+
+
+@pytest.mark.parametrize("direction", ["LONG", "SHORT"])
+def test_manifest_rules_equal_the_legacy_hardcoded_table(direction: str) -> None:
+    """Design §4.1 item 1 — the TRANSITION pin.
+
+    The rules the resident ``RENDER.yaml`` produces must be the same ``Rule`` tuple the
+    hard-coded :func:`render_paper_config._coordinate_rules` produced, element for element, for
+    BOTH directions (the SHORT half matters because four slots are direction-bound and only
+    SHORT moves their bytes). This is what makes "the resident render did not change" a
+    measurement; the byte-level proof against ``origin/main``'s renderer is in the PR body, and
+    this pin is its committed, re-runnable half until the follow-up PR deletes
+    ``_coordinate_rules``.
+    """
+    journal_path = Path("/nowhere/bootproof_journal.jsonl")
+    legacy = rpc._coordinate_rules(
+        account=_FAKE_ACCOUNT,
+        instrument=_FAKE_INSTRUMENT,
+        revision=_FAKE_REVISION,
+        direction=direction,
+        journal_path=journal_path,
+    )
+    from_manifest = rpc._slot_rules(
+        rpc.load_manifest(_SOURCE),
+        account=_FAKE_ACCOUNT,
+        instrument=_FAKE_INSTRUMENT,
+        revision=_FAKE_REVISION,
+        direction=direction,
+        journal_path=journal_path,
+    )
+    assert from_manifest == legacy
+
+
+def test_resident_manifest_declares_the_resident_modes() -> None:
+    """The resident tree keeps TODAY's behaviour: ``--direction`` substitutes, and the
+    boot-proof journal is written by the renderer. A tenant tree declares the other two.
+    """
+    manifest = rpc.load_manifest(_SOURCE)
+    assert manifest.tree_id == "paper"
+    assert manifest.direction_mode == "substitute"
+    assert manifest.direction_value is None
+    assert manifest.journal_mode == "synthetic_bootproof"
+
+
+def test_resident_manifest_slots_are_pinned_as_full_tuples() -> None:
+    """Design §2.1's key-set pin, as full tuples. Adding, removing, reordering or re-aiming a
+    resident slot turns this RED and requires the literal above to be edited."""
+    assert _slot_tuples(rpc.load_manifest(_SOURCE)) == _EXPECTED_RESIDENT_SLOTS
+
+
+def test_red_proof_a_re_aimed_slot_passes_the_shape_rules_and_only_this_pin_catches_it(
+    tmp_path: Path,
+) -> None:
+    """**The red proof for the pin above, built so nothing else can mask it** (#838).
+
+    The mutation keeps the slot's KEY (``construction.yaml::account``) and moves both its anchor
+    and its template onto a different leaf of the same file. Three things are measured, in
+    order, and the third is the only one that fires:
+
+    1. the manifest LOADS — template rules ①–④ accept it, so they are not what would catch this;
+    2. the set of rule KEYS is unchanged — a key-name pin would also not catch it;
+    3. the full-tuple pin differs — which is why the literal carries anchors and templates.
+
+    Without steps 1 and 2 this test would "pass" while some earlier guard did the work, and the
+    literal's necessity would be unproven.
+    """
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "construction.yaml", "account")
+    manifest["slots"][index]["anchor"] = 'instrument_class: "krx-index-futures"'
+    manifest["slots"][index]["replacement"] = 'instrument_class: "{value}"'
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    loaded = rpc.load_manifest(tree)  # 1 — rules ①–④ do not refuse this
+
+    assert {slot.rule_key for slot in loaded.slots} == {
+        key for _file, key, _anchor, _replacement in _EXPECTED_RESIDENT_SLOTS
+    }  # 2 — a key-name pin stays green
+    assert _slot_tuples(loaded) != _EXPECTED_RESIDENT_SLOTS  # 3 — only this pin is red
+
+
+# ---- template shape rules ①–④ (design §2.1) --------------------------------
+
+
+def test_template_carrying_a_literal_value_is_refused(tmp_path: Path) -> None:
+    """Rule ④'s reason for existing: a template that smuggles an approved-looking value past
+    the closed value-source set. ``["{value}", "A05610"]`` would render the coordinate AND a
+    hard-coded instrument nobody approved — exactly what ``COORDINATE_RULE_KEYS`` prevented
+    while it was code."""
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "marketfeed.yaml", "instruments")
+    manifest["slots"][index]["replacement"] = 'instruments: ["{value}", "A05610"]'
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="literal characters"):
+        rpc.load_manifest(tree)
+
+
+def test_template_with_a_mismatched_yaml_anchor_name_is_refused(tmp_path: Path) -> None:
+    """Rule ④'s single exception, and its byte-identity condition.
+
+    §2.2 collapses a tenant strategy's repeated coordinates onto one anchored line
+    (``account: &account "TBD"``) plus aliases, so a template must be allowed to carry that one
+    token. It must carry the SAME one: a template defining ``&acct`` where the file anchors
+    ``&account`` renders a document whose every ``*account`` alias dangles.
+    """
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "construction.yaml", "account")
+    manifest["slots"][index]["anchor"] = 'account: &account "TBD"'
+    manifest["slots"][index]["replacement"] = 'account: &acct "{value}"'
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="YAML anchor token differs"):
+        rpc.load_manifest(tree)
+
+
+def test_the_matching_yaml_anchor_token_is_accepted(tmp_path: Path) -> None:
+    """The other half of the exception — without this, "refuses a mismatched anchor" would be
+    satisfied by a rule that refuses EVERY anchor token, and §2.2's alias scheme could not be
+    rendered at all."""
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "construction.yaml", "account")
+    manifest["slots"][index]["anchor"] = '          account: &account "TBD"'
+    manifest["slots"][index]["replacement"] = '          account: &account "{value}"'
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    loaded = rpc.load_manifest(tree)
+    assert loaded.slots[index].replacement == '          account: &account "{value}"'
+
+
+@pytest.mark.parametrize(
+    ("replacement", "match"),
+    [
+        ('account: "{value}{value}"', "exactly one"),
+        ('account: "TBD"', "exactly one"),
+        ('account: "{value}{other}"', "carries a brace"),
+        ("tick_size: {value}", "key prefix"),
+    ],
+    ids=["two-placeholders", "no-placeholder", "second-brace", "re-aimed-key-prefix"],
+)
+def test_template_shape_rules_refuse(
+    tmp_path: Path, replacement: str, match: str
+) -> None:
+    """Rules ①–③, one failing input each, and each matched on the message the rule it is
+    aimed at produces — so a case that is caught by a DIFFERENT rule shows up as a failure
+    rather than as a pass that proves nothing about the rule it is named for."""
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "construction.yaml", "account")
+    manifest["slots"][index]["replacement"] = replacement
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match=match):
+        rpc.load_manifest(tree)
+
+
+# ---- manifest load refusals (design §4.2) ----------------------------------
+
+
+def test_a_value_source_outside_the_closed_set_is_refused(tmp_path: Path) -> None:
+    """Design §2.1: the value-source set is CLOSED. Opening it is how a manifest would start
+    carrying values, which is what the whole shape-checking apparatus exists to prevent.
+    """
+    manifest = _resident_manifest_dict()
+    manifest["slots"][0]["value"] = "tick_size"
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="value source refused"):
+        rpc.load_manifest(tree)
+
+
+@pytest.mark.parametrize(
+    ("section", "mode", "match"),
+    [
+        ("direction", "inherit", "direction.mode refused"),
+        ("journal", "none", "journal.mode refused"),
+    ],
+)
+def test_a_mode_outside_the_two_declared_ones_is_refused(
+    tmp_path: Path, section: str, mode: str, match: str
+) -> None:
+    manifest = _resident_manifest_dict()
+    manifest[section]["mode"] = mode
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match=match):
+        rpc.load_manifest(tree)
+
+
+def test_a_slot_whose_file_is_missing_from_the_tree_is_refused(tmp_path: Path) -> None:
+    manifest = _resident_manifest_dict()
+    manifest["slots"][0]["file"] = "no_such_policy.yaml"
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="slot target missing"):
+        rpc.load_manifest(tree)
+
+
+def test_two_slots_sharing_a_key_are_refused(tmp_path: Path) -> None:
+    """A copy-pasted slot would otherwise render twice and report one key — and the second
+    application would refuse with "matched 0 times" far from the cause."""
+    manifest = _resident_manifest_dict()
+    manifest["slots"].append(copy.deepcopy(manifest["slots"][0]))
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="duplicate slot key"):
+        rpc.load_manifest(tree)
+
+
+def test_a_tree_without_a_manifest_is_refused(tmp_path: Path) -> None:
+    """Fail-closed: no manifest, no render. The alternative — falling back to the hard-coded
+    resident table — would render a tenant tree with the resident tree's slots."""
+    tree = _source_copy(tmp_path)
+    (tree / rpc.RENDER_MANIFEST_NAME).unlink()
+
+    with pytest.raises(rpc.RenderError, match="render manifest not found"):
+        _render(tmp_path / "out", source=tree)
+
+
+def test_a_substitute_mode_manifest_may_not_also_declare_a_direction(
+    tmp_path: Path,
+) -> None:
+    """Two sources for one fact. In substitute mode the direction is ``--direction``; a
+    manifest value could only agree or lie, and the lying case is silent."""
+    manifest = _resident_manifest_dict()
+    manifest["direction"]["value"] = "LONG"
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="second source"):
+        rpc.load_manifest(tree)
+
+
+# ---- declared direction mode (design §2.3) ---------------------------------
+
+
+def _declared_manifest(direction: str) -> dict[str, Any]:
+    """The resident slots, re-declared the way a per-direction tenant tree will."""
+    manifest = _resident_manifest_dict()
+    manifest["tree_id"] = f"fixture-declared-{direction.lower()}"
+    manifest["direction"] = {"mode": "declared", "value": direction}
+    return manifest
+
+
+def test_declared_mode_renders_and_leaves_the_direction_lines_untouched(
+    tmp_path: Path,
+) -> None:
+    """The positive half, without which every refusal below could be satisfied by a mode that
+    simply never renders.
+
+    The committed tree is LONG and the manifest declares LONG: the direction slots are
+    VERIFY-ONLY (replacement == anchor), so those lines come out byte-identical to the
+    committed ones while the coordinate slots are filled as usual.
+    """
+    tree = _tree_with_manifest(tmp_path, _declared_manifest("LONG"))
+    result = rpc.render(
+        tree,
+        tmp_path / "out",
+        account=_FAKE_ACCOUNT,
+        instrument=_FAKE_INSTRUMENT,
+        revision=_FAKE_REVISION,
+        direction="LONG",
+    )
+
+    assert result.tree_id == "fixture-declared-long"
+    construction = (result.out / "construction.yaml").read_text(encoding="utf-8")
+    assert 'action_class: "NEW_LONG"' in construction
+    assert 'outbound_side: "BUY"' in construction
+    assert f'account: "{_FAKE_ACCOUNT}"' in construction
+
+
+def test_declared_mode_refuses_a_direction_flag_that_disagrees(tmp_path: Path) -> None:
+    """Design §2.3: a per-direction tree is not re-pointed by a flag."""
+    tree = _tree_with_manifest(tmp_path, _declared_manifest("LONG"))
+
+    with pytest.raises(rpc.RenderError, match="declared-direction tree"):
+        rpc.render(
+            tree,
+            tmp_path / "out",
+            account=_FAKE_ACCOUNT,
+            instrument=_FAKE_INSTRUMENT,
+            revision=_FAKE_REVISION,
+            direction="SHORT",
+        )
+
+
+def test_declared_mode_refuses_a_tree_whose_direction_lines_do_not_match(
+    tmp_path: Path,
+) -> None:
+    """**Review H1's concrete failing input.** A tree declaring ``SHORT`` whose
+    ``construction.yaml`` still carries the LONG tokens.
+
+    Comparing the manifest against the flag alone would render this happily — the five digests
+    do not bind DIRECTION (``_policy_digest_lines``' own docstring), so activation would pass
+    and nothing would refuse. Keeping the direction slots in a declared manifest makes it
+    "``action_class: "NEW_SHORT"`` matched 0 times" instead.
+
+    The manifest here is INTERNALLY CONSISTENT (it declares SHORT and its direction anchors are
+    the SHORT lines), so the self-consistency refusal below cannot be what fires — this
+    measures the tree-vs-manifest check specifically. The mutation that turns it green is
+    dropping the direction slots from the manifest, which is what review H1 named and what
+    PR-B's per-tree direction-consistency test pins for the real tenant manifests.
+    """
+    manifest = _declared_manifest("SHORT")
+    for file_name, key, long_token, short_token in (
+        ("construction.yaml", "action_class", "NEW_LONG", "NEW_SHORT"),
+        ("construction.yaml", "outbound_side", "BUY", "SELL"),
+        ("marketfeed.yaml", "direction", "LONG", "SHORT"),
+        (
+            "order_construction_policy.yaml",
+            "_runtime.construction.axes.DIRECTION",
+            "LONG",
+            "SHORT",
+        ),
+        (
+            "strategies/bootproof_band.strategy.yaml",
+            "policy.rules[0].decision.target.direction",
+            "LONG",
+            "SHORT",
+        ),
+    ):
+        index = _slot_index(manifest, file_name, key)
+        manifest["slots"][index]["anchor"] = manifest["slots"][index]["anchor"].replace(
+            long_token, short_token
+        )
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="matched 0 times"):
+        rpc.render(
+            tree,
+            tmp_path / "out",
+            account=_FAKE_ACCOUNT,
+            instrument=_FAKE_INSTRUMENT,
+            revision=_FAKE_REVISION,
+            direction="SHORT",
+        )
+
+
+def test_declared_mode_refuses_a_manifest_that_contradicts_its_own_direction(
+    tmp_path: Path,
+) -> None:
+    """The other shape: a manifest declaring ``SHORT`` whose direction anchors are still the
+    LONG lines. Rendering it would verify LONG lines under a SHORT declaration, so the
+    declaration and the anchors must agree before the tree is ever read."""
+    tree = _tree_with_manifest(tmp_path, _declared_manifest("SHORT"))
+
+    with pytest.raises(rpc.RenderError, match="disagrees with itself"):
+        rpc.render(
+            tree,
+            tmp_path / "out",
+            account=_FAKE_ACCOUNT,
+            instrument=_FAKE_INSTRUMENT,
+            revision=_FAKE_REVISION,
+            direction="SHORT",
+        )
+
+
+# ---- external journal mode (design §2.4 · §7) ------------------------------
+
+
+def _external_manifest() -> dict[str, Any]:
+    manifest = _resident_manifest_dict()
+    manifest["tree_id"] = "fixture-external"
+    manifest["journal"] = {"mode": "external"}
+    return manifest
+
+
+def _upstream_journal(path: Path) -> Path:
+    """A stand-in for the ③ producer's output. The renderer never reads it — it only has to
+    exist — but the shape is the real one so a loader downstream would accept it."""
+    observation = {
+        "raw_event_id": "upstream-1",
+        "instrument": _FAKE_INSTRUMENT,
+        "as_of_ms": 1_760_000_000_000,
+        "fields": {
+            "close": 4_499_000,
+            "lower_band": 4_500_000,
+            "upper_band": 4_520_000,
+        },
+        "source_id": "fixture-upstream",
+        "received_ms": 1_760_000_000_000,
+    }
+    path.write_text(json.dumps(observation, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture(scope="session")
+def external_render(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, Path, Path]:
+    """One ``external``-mode render, shared by the tests that only READ it.
+
+    Session-scoped because a render runs two runtime subprocesses; the tests that mutate the
+    output copy it first.
+    """
+    base = tmp_path_factory.mktemp("external")
+    journal = _upstream_journal(base / "upstream.jsonl")
+    tree = _tree_with_manifest(base, _external_manifest())
+    out = base / "out"
+    rpc.render(
+        tree,
+        out,
+        account=_FAKE_ACCOUNT,
+        instrument=_FAKE_INSTRUMENT,
+        revision=_FAKE_REVISION,
+        direction="LONG",
+        journal_path=journal,
+    )
+    return tree, out, journal
+
+
+def test_external_mode_refuses_without_a_journal_path(tmp_path: Path) -> None:
+    """Design §2.4, fail-closed: no ③ output, no tenant render. The renderer must not fall back
+    to inventing observations — the synthetic journal's ``close`` is a fixture constant, and a
+    tenant deciding on it would be deciding on a made-up market."""
+    tree = _tree_with_manifest(tmp_path, _external_manifest())
+
+    with pytest.raises(rpc.RenderError, match="journal path required"):
+        _render(tmp_path / "out", source=tree)
+
+
+def test_external_mode_refuses_a_journal_path_that_does_not_exist(
+    tmp_path: Path,
+) -> None:
+    tree = _tree_with_manifest(tmp_path, _external_manifest())
+
+    with pytest.raises(rpc.RenderError, match="journal file not found"):
+        rpc.render(
+            tree,
+            tmp_path / "out",
+            account=_FAKE_ACCOUNT,
+            instrument=_FAKE_INSTRUMENT,
+            revision=_FAKE_REVISION,
+            direction="LONG",
+            journal_path=tmp_path / "absent.jsonl",
+        )
+
+
+def test_synthetic_mode_refuses_a_journal_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The mirror refusal, driven through the CLI so ``--journal-path``'s plumbing into
+    :func:`render` is measured rather than assumed. The resident tree writes its own journal; a
+    second one passed in would be a second source."""
+    env_path = tmp_path / ".env.mock"
+    env_path.write_text(
+        f"KIS_FUTURES_ACCOUNT_NO='{_FAKE_ACCOUNT_HYPHENATED}'\n", encoding="utf-8"
+    )
+
+    code = rpc.main(
+        [
+            "--out",
+            str(tmp_path / "out"),
+            "--env-file",
+            str(env_path),
+            "--instrument",
+            _FAKE_INSTRUMENT,
+            "--journal-path",
+            str(_upstream_journal(tmp_path / "upstream.jsonl")),
+        ]
+    )
+
+    assert code == 1
+    assert "journal path refused" in capsys.readouterr().err
+
+
+def test_external_mode_writes_no_journal_and_points_at_the_upstream_one(
+    external_render: tuple[Path, Path, Path],
+) -> None:
+    """Design §2.4: the renderer writes no journal in this mode, and the rendered
+    ``marketfeed.yaml`` names the producer's file."""
+    _tree, out, journal = external_render
+
+    assert not (out / rpc.JOURNAL_NAME).exists()
+    marketfeed = (out / "marketfeed.yaml").read_text(encoding="utf-8")
+    assert f'journal_path: "{journal}"' in marketfeed
+    manifest = json.loads((out / rpc.RENDERED_NAME).read_text(encoding="utf-8"))
+    assert manifest["journal_path"] == str(journal)
+    assert manifest["journal_as_of_ms"] is None
+
+
+def test_check_is_clean_on_an_external_mode_render(
+    external_render: tuple[Path, Path, Path],
+) -> None:
+    """Design §7: ``_GENERATED_NAMES`` used to be a constant that always required
+    ``bootproof_journal.jsonl``, so ``--check`` reported "render artifact missing" against every
+    correct external render. The required set now follows ``journal.mode``.
+
+    This also covers the manifest's own copy: ``RENDER.yaml`` is byte-copied into the output
+    (§7) and so must NOT be reported as an unexpected extra file.
+    """
+    tree, out, _journal = external_render
+
+    assert rpc.check(tree, out) == []
+    assert (out / rpc.RENDER_MANIFEST_NAME).is_file()
+
+
+def test_check_still_catches_an_edit_outside_the_slots_in_external_mode(
+    external_render: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """The red proof for the test above: a ``--check`` that reported nothing at all would also
+    be "clean". A hand edit outside every registered slot is still named."""
+    tree, rendered, _journal = external_render
+    out = tmp_path / "out"
+    shutil.copytree(rendered, out)
+    calendar = out / "calendar.yaml"
+    calendar.write_text(
+        calendar.read_text(encoding="utf-8").replace(
+            'tz_id: "Asia/Seoul"', 'tz_id: "UTC"'
+        ),
+        encoding="utf-8",
+    )
+
+    problems = rpc.check(tree, out)
+    assert any("calendar.yaml" in problem for problem in problems), problems
+
+
+def test_check_names_an_edit_to_the_copied_manifest(
+    external_render: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """``RENDER.yaml`` is copied through and no slot is anchored in it — so an edit to the
+    OUTPUT's copy is a change outside every coordinate slot and must be reported. Without this,
+    "the manifest is copied through" would be indistinguishable from "the manifest is exempt
+    from the check"."""
+    tree, rendered, _journal = external_render
+    out = tmp_path / "out"
+    shutil.copytree(rendered, out)
+    path = out / rpc.RENDER_MANIFEST_NAME
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("fixture-external", "smuggled"),
+        encoding="utf-8",
+    )
+
+    problems = rpc.check(tree, out)
+    assert any(rpc.RENDER_MANIFEST_NAME in problem for problem in problems), problems
+
+
+# ---- the 08:45 resident path (design §4.1 item 3) --------------------------
+
+
+def test_the_resident_driver_invocation_needs_no_new_argument(tmp_path: Path) -> None:
+    """Design §4.1 item 3, measured rather than reasoned.
+
+    The host driver (``~/.config/kis-probes/tos_paper_session.py:306-316``) passes exactly
+    ``--out --env-file --instrument --direction`` and relies on the DEFAULT ``--source``. This
+    runs that same invocation and asserts the five keys the driver then reads
+    (``:331-333,366-370``) are present — which is why ``paper/RENDER.yaml`` had to land in THIS
+    PR rather than a later one: a default ``--source`` with no manifest next to it would refuse
+    at 08:45 the morning after the merge.
+    """
+    env_path = tmp_path / ".env.mock"
+    env_path.write_text(
+        f"KIS_FUTURES_ACCOUNT_NO='{_FAKE_ACCOUNT_HYPHENATED}'\n", encoding="utf-8"
+    )
+    out = tmp_path / "out"
+
+    code = rpc.main(
+        [
+            "--out",
+            str(out),
+            "--env-file",
+            str(env_path),
+            "--instrument",
+            _FAKE_INSTRUMENT,
+            "--direction",
+            "LONG",
+        ]
+    )
+
+    assert code == 0
+    rendered = json.loads((out / rpc.RENDERED_NAME).read_text(encoding="utf-8"))
+    for key in (
+        "instrument",
+        "journal_path",
+        "activation_check",
+        "source_revision",
+        "rendered_at_kst",
+    ):
+        assert rendered.get(key), f"the driver reads {key!r} and it is missing or empty"
+    assert rendered["instrument"] == _FAKE_INSTRUMENT
+    assert Path(rendered["journal_path"]).is_file()

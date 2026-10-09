@@ -120,10 +120,25 @@ _TENANT_STRATEGY = {
     "cp3-setup-d-short": "strategies/setup_d_short.strategy.yaml",
 }
 
-#: Present only in the RESIDENT tree -- the boot-proof strategy the tenant strategy replaces.
-#: Asserted as an absence, because "the tenant tree does not carry the resident strategy" is what
-#: makes the ``engine.yaml`` comment divergence above necessary rather than cosmetic.
-_RESIDENT_ONLY = frozenset({"strategies/bootproof_band.strategy.yaml"})
+#: Present only in the RESIDENT tree, each with the reason it is not copied. Asserted as an
+#: absence: for the strategy, "the tenant tree does not carry the resident strategy" is what
+#: makes the ``engine.yaml`` comment divergence above necessary rather than cosmetic; for
+#: ``RENDER.yaml`` the absence is a STAGE, and naming it that way is the point -- when PR-B adds
+#: the tenant manifests, :func:`test_resident_only_files_are_absent_from_the_tenant_tree` turns
+#: red and forces the reclassification rather than letting a tenant manifest appear unchecked.
+_RESIDENT_ONLY: dict[str, str] = {
+    "strategies/bootproof_band.strategy.yaml": (
+        "the resident boot-proof strategy; each tenant tree carries its own Setup D strategy "
+        "instead, and loading two would refuse"
+    ),
+    "RENDER.yaml": (
+        "the resident render manifest (plan 2026-10-09 §2.1, PR-A). NOT a copy candidate: a "
+        "manifest describes ITS OWN tree's slots and modes, and the tenant trees need "
+        "direction.mode 'declared' + journal.mode 'external', which the resident manifest does "
+        "not declare. The tenant manifests land in PR-B of that plan; until then this file is "
+        "resident-only by design, not by oversight"
+    ),
+}
 
 _TENANT_TREES = tuple(_TENANT_STRATEGY)
 
@@ -234,7 +249,9 @@ def test_resident_tree_is_fully_covered(tree: str) -> None:
     the tenant tree is unclassified), and a future resident addition would then be missing from
     the tenant trees with no test saying so."""
     resident = _files(_RESIDENT_DIR)
-    accounted = _identical_set(tree) | frozenset(_differs_set(tree)) | _RESIDENT_ONLY
+    accounted = (
+        _identical_set(tree) | frozenset(_differs_set(tree)) | frozenset(_RESIDENT_ONLY)
+    )
     assert accounted == resident, (
         f"{tree}: resident files not accounted for {sorted(resident - accounted)}; "
         f"accounted but not in the resident tree {sorted(accounted - resident)}"
@@ -303,15 +320,20 @@ def test_declared_divergences_actually_diverge(tree: str) -> None:
 
 @pytest.mark.parametrize("tree", _TENANT_TREES)
 def test_resident_only_files_are_absent_from_the_tenant_tree(tree: str) -> None:
-    """The resident boot-proof strategy is NOT in a tenant tree, and its replacement is.
+    """Each resident-only file is NOT in a tenant tree, and the strategy's replacement is.
 
-    Both halves together: if ``bootproof_band.strategy.yaml`` were copied in, the tree would
-    load TWO strategies, and the ``engine.yaml`` divergence reason above ("the resident comment
-    cites a strategy this tree does not contain") would be false."""
-    for rel in _RESIDENT_ONLY:
-        assert not (
-            _CONFIG_ROOT / tree / rel
-        ).exists(), f"{tree}/{rel} is the RESIDENT boot-proof strategy and must not be copied here"
+    Both halves together for the strategy: if ``bootproof_band.strategy.yaml`` were copied in,
+    the tree would load TWO strategies, and the ``engine.yaml`` divergence reason above ("the
+    resident comment cites a strategy this tree does not contain") would be false.
+
+    For ``RENDER.yaml`` this is the stage marker PR-B has to step over: the day a tenant
+    manifest is committed, this fails and names the file, so the author must move it out of
+    :data:`_RESIDENT_ONLY` and into a per-tree set that some assertion actually iterates.
+    """
+    for rel, reason in _RESIDENT_ONLY.items():
+        path = _CONFIG_ROOT / tree / rel
+        why = f"{tree}/{rel} is resident-only and must not be copied here -- {reason}"
+        assert not path.exists(), why
     assert (_CONFIG_ROOT / tree / _TENANT_STRATEGY[tree]).is_file()
     strategies = {
         str(path.relative_to(_CONFIG_ROOT / tree))
