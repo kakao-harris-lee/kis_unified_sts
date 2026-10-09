@@ -951,11 +951,18 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 116
+  measured: 123
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-09 PR #890 재리뷰 LOW-2 재등재 116→123(+7)**: 셀의 「채우기」와
+    「소비자 시작」을 **분리**했다 — `fill` 은 `wire_engine_and_driver` **앞**(레지스트리
+    공개), `start_consumers()` 는 **뒤**(부팅 리플레이 앞). `session_for` 는 **첫 호출자의
+    클라이언트**로 공유 세션을 만들기 때문이다: 주문 transport 가 전과 똑같이 생성자여야
+    하고, 밴드 리더가 먼저 잡으면 주문 토큰 발급이 밴드 클라이언트
+    (`band_source.timeout_ms` · `kis_quote` 의 plaintext 플래그)를 타게 된다. 순증은
+    호출 1줄 + 주석 6줄.
     **2026-10-09 PR #890 독립 리뷰 M1 재등재 114→116(+2)**: 셀을 채우는 한 줄이
     `credential_sessions_cell.sessions = …` 에서 `…fill(…)` 로 바뀌고 주석이 두 줄
     늘었다. `fill` 은 셀의 `on_ready` 콜백을 함께 돌리므로, 밴드 리더가 자기 KIS 세션을

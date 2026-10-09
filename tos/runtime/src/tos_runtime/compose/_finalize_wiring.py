@@ -177,11 +177,12 @@ def _finalize(
     finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
     kis_credential_sessions = _kis_credential_sessions(infra, identity)
     if credential_sessions_cell is not None:
-        # Filled HERE, not after this function returns: the boot replay below can already
-        # drive step 3, and therefore a CP-3 band read, before the caller sees a
-        # `ComposedRuntime` at all. `fill` also runs the cell's `on_ready` callbacks, which is
-        # where the band reader acquires its session — so a session-terms conflict is a BOOT
-        # refusal rather than a first-decision one (`KisCredentialSessionsCell`'s docstring).
+        # Published HERE, dispatched BELOW. `wire_engine_and_driver` is where the order
+        # transport takes its `kis_mock.*` session, and `session_for` CREATES that shared
+        # session for its first caller using that caller's client. So the order transport must
+        # go first, exactly as it did before the band source existed; dispatching here would
+        # make the band reader the creator and route the order transport's token issuance
+        # through the band client (independent review LOW-2).
         credential_sessions_cell.fill(kis_credential_sessions)
     wired = wire_engine_and_driver(
         data_dir=data_dir,
@@ -211,6 +212,12 @@ def _finalize(
         mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
         trading_date_now=trading_date_now,
     )
+
+    if credential_sessions_cell is not None:
+        # After the order transport has its session, before the boot replay — which can
+        # already drive step 3, and therefore a CP-3 band read. A session-terms conflict
+        # raised by a consumer here still refuses the BOOT (independent review M1).
+        credential_sessions_cell.start_consumers()
 
     _verify_boot_replay(
         config_dir=config_dir,

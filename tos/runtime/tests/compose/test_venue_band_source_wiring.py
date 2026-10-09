@@ -400,6 +400,49 @@ class TestADeclaredSourceAtBoot:
 
         assert "REAL_PROD" in str(excinfo.value)
 
+    def test_the_order_transport_stays_the_shared_sessions_creator(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """Re-review LOW-2. ``KisCredentialSessions.session_for`` CREATES the one app-key
+        session for its first caller, and that caller's client issues every later token —
+        including the order transport's. The band reader must therefore take the session
+        AFTER the order transport, not before.
+
+        Dispatching the cell's callbacks inside ``fill`` (which runs before
+        ``wire_engine_and_driver``) made the band reader the creator, so the order transport's
+        token requests would have gone out through a client built from
+        ``band_source.timeout_ms`` and ``kis_quote.yaml``'s own plaintext flag — neither of
+        which the order transport ever declared. The assertion is object identity on the
+        token lifecycle's client, because that is the thing that silently changes.
+        """
+        self._kis_mock_boot(config_dir, custody_root)
+        # Token TERMS identical to the order transport's, so nothing refuses and the only
+        # difference left is which client created the session.
+        _write_kis_quote_transport_config(
+            config_dir, instrument=_VENUE_POLICY_INSTRUMENT
+        )
+        _declare_band_source(config_dir)
+
+        runtime = _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
+        try:
+            transport = runtime.transport
+            session = transport._credential_session  # noqa: SLF001
+            # One app key, one session (C-2 decision (C)) — the band reader holds this very
+            # object, so "whose client is inside it" is the whole question.
+            assert (
+                session._lifecycle._client  # noqa: SLF001
+                is transport._client  # noqa: SLF001
+            )
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()
+
     def test_a_session_terms_conflict_refuses_at_BOOT_not_at_the_first_decision(
         self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
     ) -> None:
