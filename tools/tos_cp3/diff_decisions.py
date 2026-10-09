@@ -1592,7 +1592,17 @@ def build_summary(
                 "Every difference the three artifacts declare, with the number "
                 "of bars this report attributed to it. A zero means this window "
                 "exercised nothing that the difference explains — not that the "
-                "difference is absent."
+                "difference is absent. ⚠ And for an id NO attribution rule "
+                "cites, the zero is STRUCTURAL: it would be zero however the "
+                "window behaved, so it is not evidence about the difference at "
+                "all. Check attribution_table[].ids before reading a zero as a "
+                "measurement; the ids that can be non-zero are exactly the "
+                "ones listed there. What a bar no rule explains produces is an "
+                "UNRESOLVED entry, which is why the unresolved count — not a "
+                "zero here — is what backs 'this window hid nothing'."
+            ),
+            "cited_ids": sorted(
+                {difference_id for rule in rules_table for difference_id in rule.ids}
             ),
             "by_artifact": absorbed,
         },

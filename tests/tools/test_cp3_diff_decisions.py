@@ -2424,7 +2424,72 @@ def test_both_sidecars_declare_schema_version_two(
     assert (
         "legacy_fired_long_admitted_by_position_model" not in result.summary["totals"]
     )
-    assert "tos_action_explained_by_a_legacy_fire" not in result.summary["rates"]
+    # The third rate's KEY is per-direction now, which is the other half of the
+    # v1 -> v2 shape change. Asserted on a SHORT run against the LONG one, not
+    # as the absence of a key no version ever had: the first revision asserted
+    # `"tos_action_explained_by_a_legacy_fire" not in rates`, which no
+    # implementation could ever violate (2026-10-09 review).
+    assert "tos_action_explained_by_a_legacy_long_fire" in result.summary["rates"]
+    assert "tos_action_explained_by_a_legacy_short_fire" not in result.summary["rates"]
+
+
+def test_the_absorbed_counts_say_which_ids_could_be_non_zero(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """``declared_differences.cited_ids`` makes the structural zeros checkable.
+
+    ``absorbed_bars: 0`` reads as a measurement, and for ``B1b-D8`` / ``B1b-D9``
+    it is not: no attribution rule cites them, so their count is zero however
+    the window behaved. The note beside the numbers says so, but a sentence is
+    not a gate — ``cited_ids`` puts the list of ids that CAN be non-zero in the
+    same block, derived from the table this run actually read.
+
+    Concrete failing input: a rule's ``ids`` tuple changes and the block keeps
+    claiming the old set.
+    """
+    _, result = coverage
+    block = result.summary["declared_differences"]
+    cited = set(block["cited_ids"])
+    assert cited == {
+        difference_id
+        for rule in dd.build_attribution_rules(dd.DIRECTION_LONG)
+        for difference_id in rule.ids
+    }
+    # The two the review was about are NOT in it, which is exactly why their
+    # zero is structural.
+    assert "B1b-D8" not in cited
+    assert "B1b-D9" not in cited
+    # Every uncited id really does sit at zero, and every non-zero id is cited
+    # — the property that makes `cited_ids` a readable filter rather than a
+    # decorative list.
+    for entries in block["by_artifact"].values():
+        for entry in entries:
+            if entry["id"] not in cited:
+                assert entry["absorbed_bars"] == 0, entry
+    assert "STRUCTURAL" in block["note"]
+    assert "UNRESOLVED" in block["note"]
+
+
+def test_the_third_rate_key_names_the_deployment_direction(tmp_path: Path) -> None:
+    """The SHORT half of the per-direction rate key.
+
+    Concrete failing input: pin the key back to ``_long`` (or to any fixed
+    token). A LONG run cannot see that — its key IS ``_long`` — so the
+    assertion that bites has to be made on a SHORT run, which is what this
+    test is for. Both halves are asserted so neither direction of the mistake
+    passes: the SHORT key present AND the LONG key absent.
+    """
+    trio = write_trio(
+        tmp_path / "in", list(SHORT_COVERAGE_BARS), direction=dd.DIRECTION_SHORT
+    )
+    rates = run_trio(trio, tmp_path / "out").summary["rates"]
+    assert "tos_action_explained_by_a_legacy_short_fire" in rates
+    assert "tos_action_explained_by_a_legacy_long_fire" not in rates
+    # The two direction-independent keys stay put — the bump moved one key, not
+    # all three, and a test that allowed the other two to drift would not say
+    # which change it was pinning.
+    assert "rule_level_entry_agreement" in rates
+    assert "position_model_level_entry_agreement" in rates
 
 
 def test_the_strategy_file_the_gate_list_came_from_is_recorded(
