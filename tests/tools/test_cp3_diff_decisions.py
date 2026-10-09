@@ -61,9 +61,18 @@ MARKET_OPEN_SOURCE = "era-rule"
 MIN_BARS_PER_DAY = 330
 #: B1a's z scale (thousandths of one ATR), imported rather than restated.
 Z_SCALE = produce_fields.Z_SCALE
-#: The deployed entry threshold, pinned to the bindings file by
-#: ``test_the_binding_is_the_truncated_extreme_multiple``.
+#: The deployed entry thresholds, pinned to the two bindings files by
+#: ``test_the_binding_is_the_truncated_extreme_multiple``. Two, because the
+#: DSL has no ``abs()``: a LONG render compares the negative side and a SHORT
+#: render the positive one, and the bindings loader refuses a key no rule
+#: references — so the two deployments carry different key NAMES as well as
+#: different values.
 Z_ENTRY_MAX_X1000 = -1800
+Z_ENTRY_MIN_X1000 = 1800
+Z_ENTRY_THRESHOLD = {
+    dd.DIRECTION_LONG: Z_ENTRY_MAX_X1000,
+    dd.DIRECTION_SHORT: Z_ENTRY_MIN_X1000,
+}
 
 #: B2's declared closed set, copied here as a fixture value (the tool reads it
 #: from the lineage it is given, so the fixture is what makes the bucket names
@@ -100,6 +109,20 @@ B1B_STRATEGY_SOURCE = (
     / "strategies"
     / "setup_d_long.strategy.yaml"
 )
+#: The SHORT render's own strategy file. It lives in a SEPARATE config_dir
+#: because B1b refuses a ``strategies/`` directory holding two strategies, and
+#: it is read here for the same reason as the LONG one: the gate-field list
+#: this tool ships must be pinned against BOTH committed entry rules, or a
+#: rename in the unread one stays green.
+B1B_SHORT_STRATEGY_SOURCE = (
+    dd.REPO_ROOT
+    / "tos"
+    / "runtime"
+    / "cp3"
+    / "short"
+    / "strategies"
+    / "setup_d_short.strategy.yaml"
+)
 #: The two YAML files the quantization derivation actually rests on. Read here,
 #: never restated: an earlier revision asserted the derivation against
 #: test-local literals (`extreme = 1.8`, `threshold = -1800`), so mutating
@@ -108,16 +131,34 @@ B1B_STRATEGY_SOURCE = (
 B1B_BINDINGS_SOURCE = (
     dd.REPO_ROOT / "tos" / "runtime" / "cp3" / "strategy_bindings.yaml"
 )
+B1B_SHORT_BINDINGS_SOURCE = (
+    dd.REPO_ROOT / "tos" / "runtime" / "cp3" / "short" / "strategy_bindings.yaml"
+)
 SETUP_D_YAML_SOURCE = (
     dd.REPO_ROOT / "config" / "strategies" / "futures" / "setup_d_vwap_reversion.yaml"
 )
 
+#: ``direction -> (bindings file, strategy stem, strategy file)``.
+DEPLOYED_SOURCES = {
+    dd.DIRECTION_LONG: (
+        B1B_BINDINGS_SOURCE,
+        "setup_d_long.strategy",
+        B1B_STRATEGY_SOURCE,
+    ),
+    dd.DIRECTION_SHORT: (
+        B1B_SHORT_BINDINGS_SOURCE,
+        "setup_d_short.strategy",
+        B1B_SHORT_STRATEGY_SOURCE,
+    ),
+}
 
-def deployed_entry_threshold() -> int:
-    """``z_entry_max_x1000`` as the deployed bindings file states it."""
-    document = yaml.safe_load(B1B_BINDINGS_SOURCE.read_text(encoding="utf-8"))
+
+def deployed_entry_threshold(direction: str = dd.DIRECTION_LONG) -> int:
+    """This direction's entry threshold as its deployed bindings file states it."""
+    source, stem, _ = DEPLOYED_SOURCES[direction]
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
     return int(
-        document["strategies"]["setup_d_long.strategy"]["bindings"]["z_entry_max_x1000"]
+        document["strategies"][stem]["bindings"][dd.ENTRY_BINDING_KEY[direction]]
     )
 
 
@@ -303,6 +344,7 @@ def seal(
     b2_ids: tuple[str, ...] = B2_DIFFERENCE_IDS,
     b1b_ids: tuple[str, ...] = B1B_DIFFERENCE_IDS,
     legacy_outcomes: tuple[str, ...] = LEGACY_OUTCOMES,
+    direction: str = dd.DIRECTION_LONG,
     bindings: dict[str, Any] | None = None,
     b1b_parent_overrides: dict[str, Any] | None = None,
     b1a_pin: dict[str, Any] | None = None,
@@ -438,18 +480,30 @@ def seal(
             "sha256": fields_lineage_sha,
         },
         "strategy_bindings_file": {
-            "path": "tos/runtime/cp3/strategy_bindings.yaml",
+            "path": (
+                str(DEPLOYED_SOURCES[direction][0].relative_to(dd.REPO_ROOT))
+                if direction in DEPLOYED_SOURCES
+                else "tos/runtime/cp3/strategy_bindings.yaml"
+            ),
             "bindings": (
-                {"z_entry_max_x1000": Z_ENTRY_MAX_X1000}
-                if bindings is None
-                else bindings
+                {dd.ENTRY_BINDING_KEY[direction]: Z_ENTRY_THRESHOLD[direction]}
+                if bindings is None and direction in Z_ENTRY_THRESHOLD
+                else (bindings or {})
             ),
         },
         "strategy_file": {
-            "path": "tos/runtime/cp3/strategies/setup_d_long.strategy.yaml",
+            "path": (
+                str(DEPLOYED_SOURCES[direction][2].relative_to(dd.REPO_ROOT))
+                if direction in DEPLOYED_SOURCES
+                else "tos/runtime/cp3/strategies/setup_d_long.strategy.yaml"
+            ),
             "sha256": "47" * 32,
             "canonical_digest": "3a" * 32,
             "strategy_id": "astrat-" + "3a" * 32,
+            # The key B3 reads to decide which legacy fires its AGREE_ENTRY
+            # half is. B1b derives it from the authored ACTION targets; here it
+            # is a fixture value so a test can make it wrong.
+            "direction": direction,
         },
     }
     for key, value in (b1b_parent_overrides or {}).items():
@@ -629,7 +683,7 @@ COVERAGE_BARS: tuple[BarSpec, ...] = (
     # stopped being true: TOS fires at exactly the deployed threshold while
     # the legacy setup rejected as NOT_EXTREME. That is the very shape the
     # deleted quantization-edge rule claimed to explain
-    # (`dd.QUANTIZATION_EDGE_DERIVATION`); the tool must leave it UNRESOLVED
+    # (`dd.quantization_edge_derivation`); the tool must leave it UNRESOLVED
     # and list it, not attribute it to B1a-D8.
     BarSpec(
         minute=8,
@@ -687,7 +741,7 @@ def test_every_attribution_rule_is_exercised(
     """Each rule in the table matched at least one bar, plus AGREED/UNRESOLVED."""
     _, result = coverage
     matched = result.summary["attribution_rules"]
-    for rule in dd.ATTRIBUTION_RULES:
+    for rule in dd.build_attribution_rules(dd.DIRECTION_LONG):
         assert matched.get(rule.name, {}).get("bars", 0) >= 1, rule.name
     assert matched[dd.ATTRIBUTION_AGREED]["bars"] == 2  # minute 0 and minute 3
     assert matched[dd.ATTRIBUTION_UNRESOLVED]["bars"] == 1
@@ -743,34 +797,68 @@ def test_the_unresolved_bar_is_listed_not_explained(
     assert unresolved["raw_event_ids_truncated"] is False
 
 
-#: The whole classification table, written out. Membership in a family is not
-#: a property — swapping AGREE_ENTRY and TOS_ONLY_ENTRY would satisfy it — so
-#: every cell names the ONE bucket the decision tree must return.
-EXPECTED_BUCKETS: dict[tuple[str, str, str | None], str] = {
-    ("ACTION", "FIRED", "LONG"): dd.BUCKET_AGREE_ENTRY,
-    ("ACTION", "FIRED", "SHORT"): dd.BUCKET_TOS_ONLY_ENTRY,
-    ("ACTION", "VOL_BELOW_GATE", None): dd.BUCKET_TOS_ONLY_ENTRY,
-    ("ACTION", "LOW_CONFIDENCE", "LONG"): dd.BUCKET_TOS_ONLY_ENTRY,
-    ("FLAT", "FIRED", "LONG"): dd.BUCKET_LEGACY_ONLY_ENTRY,
-    ("FLAT", "FIRED", "SHORT"): dd.BUCKET_LEGACY_ONLY_ENTRY,
-    ("FLAT", "VOL_BELOW_GATE", None): (f"{dd.BUCKET_TOS_EXIT_PREFIX}VOL_BELOW_GATE"),
-    ("FLAT", "LOW_CONFIDENCE", "LONG"): (f"{dd.BUCKET_TOS_EXIT_PREFIX}LOW_CONFIDENCE"),
-    ("NO_ACTION", "FIRED", "LONG"): dd.BUCKET_LEGACY_ONLY_ENTRY,
-    ("NO_ACTION", "FIRED", "SHORT"): dd.BUCKET_LEGACY_ONLY_ENTRY,
-    ("NO_ACTION", "VOL_BELOW_GATE", None): dd.BUCKET_AGREE_NO_ACTION,
-    ("NO_ACTION", "LOW_CONFIDENCE", "LONG"): dd.BUCKET_AGREE_NO_ACTION,
-}
+def ctx_for(direction: str) -> dd.DiffContext:
+    """The deployment context a run of *direction* would read from B1b."""
+    return dd.DiffContext(
+        direction=direction,
+        z_entry_binding_key=dd.ENTRY_BINDING_KEY[direction],
+        z_entry_threshold_x1000=Z_ENTRY_THRESHOLD[direction],
+    )
 
 
-def test_classification_is_exhaustive_over_kind_times_fire() -> None:
-    """Every (outcome_kind, legacy outcome, direction) cell names one bucket."""
+LONG_CTX = ctx_for(dd.DIRECTION_LONG)
+SHORT_CTX = ctx_for(dd.DIRECTION_SHORT)
+
+
+def expected_buckets(deployment: str) -> dict[tuple[str, str, str | None], str]:
+    """The whole classification table for a deployment, written out.
+
+    Membership in a family is not a property — swapping AGREE_ENTRY and
+    TOS_ONLY_ENTRY would satisfy it — so every cell names the ONE bucket the
+    decision tree must return. The table is a FUNCTION of the deployment's
+    direction and the two renders are mirror images: only the two
+    ``("ACTION", "FIRED", …)`` cells move, which is exactly the claim
+    "direction decides which fires could agree".
+    """
+    other = dd.OPPOSITE_DIRECTION[deployment]
+    return {
+        ("ACTION", "FIRED", deployment): dd.BUCKET_AGREE_ENTRY,
+        ("ACTION", "FIRED", other): dd.BUCKET_TOS_ONLY_ENTRY,
+        ("ACTION", "VOL_BELOW_GATE", None): dd.BUCKET_TOS_ONLY_ENTRY,
+        ("ACTION", "LOW_CONFIDENCE", deployment): dd.BUCKET_TOS_ONLY_ENTRY,
+        ("FLAT", "FIRED", deployment): dd.BUCKET_LEGACY_ONLY_ENTRY,
+        ("FLAT", "FIRED", other): dd.BUCKET_LEGACY_ONLY_ENTRY,
+        ("FLAT", "VOL_BELOW_GATE", None): (
+            f"{dd.BUCKET_TOS_EXIT_PREFIX}VOL_BELOW_GATE"
+        ),
+        ("FLAT", "LOW_CONFIDENCE", deployment): (
+            f"{dd.BUCKET_TOS_EXIT_PREFIX}LOW_CONFIDENCE"
+        ),
+        ("NO_ACTION", "FIRED", deployment): dd.BUCKET_LEGACY_ONLY_ENTRY,
+        ("NO_ACTION", "FIRED", other): dd.BUCKET_LEGACY_ONLY_ENTRY,
+        ("NO_ACTION", "VOL_BELOW_GATE", None): dd.BUCKET_AGREE_NO_ACTION,
+        ("NO_ACTION", "LOW_CONFIDENCE", deployment): dd.BUCKET_AGREE_NO_ACTION,
+    }
+
+
+@pytest.mark.parametrize("deployment", dd.DIRECTION_TOKENS)
+def test_classification_is_exhaustive_over_kind_times_fire(deployment: str) -> None:
+    """Every (outcome_kind, legacy outcome, direction) cell names one bucket.
+
+    Run for BOTH deployments. The first revision ran it for one and hardcoded
+    ``LONG`` in the classifier; the mirror run is what makes "AGREE_ENTRY is
+    this deployment's own half" a measured property rather than a sentence.
+    """
+    table = expected_buckets(deployment)
+    ctx = ctx_for(deployment)
+    other = dd.OPPOSITE_DIRECTION[deployment]
     seen: set[tuple[str, str, str | None]] = set()
     for kind in dd.TOS_OUTCOME_KINDS:
         for outcome, direction in (
-            ("FIRED", "LONG"),
-            ("FIRED", "SHORT"),
+            ("FIRED", deployment),
+            ("FIRED", other),
             ("VOL_BELOW_GATE", None),
-            ("LOW_CONFIDENCE", "LONG"),
+            ("LOW_CONFIDENCE", deployment),
         ):
             bar = dd.JoinedBar(
                 raw_event_id="x",
@@ -785,9 +873,9 @@ def test_classification_is_exhaustive_over_kind_times_fire() -> None:
                 z_x1000=0,
             )
             cell = (kind, outcome, direction)
-            assert dd.classify(bar) == EXPECTED_BUCKETS[cell], cell
+            assert dd.classify(bar, ctx) == table[cell], cell
             seen.add(cell)
-    assert seen == set(EXPECTED_BUCKETS)
+    assert seen == set(table)
 
 
 def test_an_unknown_tos_outcome_kind_is_refused() -> None:
@@ -804,7 +892,7 @@ def test_an_unknown_tos_outcome_kind_is_refused() -> None:
         z_x1000=-2000,
     )
     with pytest.raises(dd.DiffDecisionsError, match="unknown TOS outcome_kind"):
-        dd.classify(bar)
+        dd.classify(bar, LONG_CTX)
 
 
 def test_the_attribution_table_is_read_in_order(tmp_path: Path) -> None:
@@ -840,12 +928,13 @@ def test_the_attribution_table_is_read_in_order(tmp_path: Path) -> None:
         gates=(True, True, True, True),
         z_x1000=bar.z_x1000,
     )
-    ctx = dd.DiffContext(z_entry_max_x1000=Z_ENTRY_MAX_X1000)
-    bucket = dd.classify(joined)
-    assert dd.attribute(joined, bucket, ctx)[0] == (
+    ctx = LONG_CTX
+    table = dd.build_attribution_rules(ctx.direction)
+    bucket = dd.classify(joined, ctx)
+    assert dd.attribute(joined, bucket, ctx, table)[0] == (
         "agree_entry_rejected_by_legacy_position_model"
     )
-    reversed_table = tuple(reversed(dd.ATTRIBUTION_RULES))
+    reversed_table = tuple(reversed(table))
     assert dd.attribute(joined, bucket, ctx, reversed_table)[0] == (
         "agree_entry_capacity_denied"
     )
@@ -864,28 +953,40 @@ def test_an_agreeing_bar_carries_no_attribution() -> None:
         gates=(True, False, False, False),
         z_x1000=-100,
     )
-    ctx = dd.DiffContext(z_entry_max_x1000=Z_ENTRY_MAX_X1000)
+    ctx = LONG_CTX
     assert dd.needs_attribution(joined, dd.BUCKET_AGREE_NO_ACTION) is False
-    assert dd.attribute(joined, dd.BUCKET_AGREE_NO_ACTION, ctx) == (
+    assert dd.attribute(
+        joined,
+        dd.BUCKET_AGREE_NO_ACTION,
+        ctx,
+        dd.build_attribution_rules(ctx.direction),
+    ) == (
         dd.ATTRIBUTION_AGREED,
         (),
     )
 
 
-def test_the_binding_is_the_truncated_extreme_multiple() -> None:
-    """``z_entry_max_x1000 == -trunc(extreme_atr_mult * 1000)``, from the files.
+@pytest.mark.parametrize("direction", dd.DIRECTION_TOKENS)
+def test_the_binding_is_the_truncated_extreme_multiple(direction: str) -> None:
+    """``z_entry_*_x1000 == ∓trunc(extreme_atr_mult * 1000)``, from the files.
 
     Both sides are READ, not restated. Concrete failing input: edit
-    ``tos/runtime/cp3/strategy_bindings.yaml`` to ``-1801``, or change the
-    scale on either side.
+    ``tos/runtime/cp3/strategy_bindings.yaml`` (or the SHORT render's own
+    sibling under ``short/``) to ``∓1801``, or change the scale on either side.
     """
-    assert deployed_entry_threshold() == -int(legacy_extreme_atr_mult() * Z_SCALE)
+    sign = dd.ENTRY_THRESHOLD_SIGN[direction]
+    assert deployed_entry_threshold(direction) == sign * int(
+        legacy_extreme_atr_mult() * Z_SCALE
+    )
     # The fixture constant is a convenience for the synthetic trios; it must
     # not be allowed to drift away from the deployment it stands in for.
-    assert deployed_entry_threshold() == Z_ENTRY_MAX_X1000
+    assert deployed_entry_threshold(direction) == Z_ENTRY_THRESHOLD[direction]
 
 
-def test_there_is_no_quantization_edge_rule_and_the_arithmetic_says_why() -> None:
+@pytest.mark.parametrize("direction", dd.DIRECTION_TOKENS)
+def test_there_is_no_quantization_edge_rule_and_the_arithmetic_says_why(
+    direction: str,
+) -> None:
     """The premise an earlier revision shipped is false; this is the proof.
 
     The two predicates are compared over z values read nowhere else and the
@@ -909,8 +1010,9 @@ def test_there_is_no_quantization_edge_rule_and_the_arithmetic_says_why() -> Non
       rests on.
     """
     extreme = legacy_extreme_atr_mult()
-    threshold = deployed_entry_threshold()
+    threshold = deployed_entry_threshold(direction)
     quantize = produce_fields.scaled_int_toward_zero
+    long_side = direction == dd.DIRECTION_LONG
 
     sampled_half_grid = False
     # Tenths of a milli-ATR either side of zero: on-grid points (…, -1.800, …)
@@ -918,17 +1020,26 @@ def test_there_is_no_quantization_edge_rule_and_the_arithmetic_says_why() -> Non
     for half in range(-40000, 40001):
         z = half / (Z_SCALE * 20)
         published = quantize(z, Z_SCALE)
-        tos_fires = published <= threshold
-        legacy_fires_long = z < 0 and abs(z) >= extreme
-        assert tos_fires == legacy_fires_long, (z, published, threshold, extreme)
+        tos_fires = published <= threshold if long_side else published >= threshold
+        legacy_fires_this_side = (z < 0 if long_side else z > 0) and abs(z) >= extreme
+        assert tos_fires == legacy_fires_this_side, (
+            z,
+            published,
+            threshold,
+            extreme,
+            direction,
+        )
         if abs(half) % 20 == 10:
             sampled_half_grid = True
     assert sampled_half_grid, "the sweep must visit points between the grid"
 
-    assert "IDENTICAL" in dd.QUANTIZATION_EDGE_DERIVATION
-    assert "NOT_EXTREME" in dd.QUANTIZATION_EDGE_DERIVATION
-    assert not [rule for rule in dd.ATTRIBUTION_RULES if "quantization" in rule.name]
-    assert not [rule for rule in dd.ATTRIBUTION_RULES if "B1a-D8" in rule.ids]
+    derivation = dd.quantization_edge_derivation(direction)
+    assert "IDENTICAL" in derivation
+    assert "NOT_EXTREME" in derivation
+    assert dd.ENTRY_BINDING_KEY[direction] in derivation
+    table = dd.build_attribution_rules(direction)
+    assert not [rule for rule in table if "quantization" in rule.name]
+    assert not [rule for rule in table if "B1a-D8" in rule.ids]
 
 
 def test_the_sweep_would_catch_a_floor_quantizer() -> None:
@@ -954,8 +1065,9 @@ def test_the_deployed_threshold_is_read_from_the_bindings(tmp_path: Path) -> Non
         bindings={"z_entry_max_x1000": -2500},
     )
     result = run_trio(trio, tmp_path / "out")
-    assert result.summary["config"]["z_entry_max_x1000"] == -2500
-    assert result.lineage["config"]["z_entry_max_x1000"] == -2500
+    assert result.summary["config"]["z_entry_threshold_x1000"] == -2500
+    assert result.lineage["config"]["z_entry_threshold_x1000"] == -2500
+    assert result.summary["config"]["z_entry_binding_key"] == "z_entry_max_x1000"
 
 
 @pytest.mark.parametrize("bindings", [{}, {"z_entry_max_x1000": "-1800"}])
@@ -963,7 +1075,113 @@ def test_a_binding_without_an_integer_threshold_is_refused(
     tmp_path: Path, bindings: dict[str, Any]
 ) -> None:
     trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:1]), bindings=bindings)
-    with pytest.raises(dd.DiffDecisionsError, match="no integer z_entry_max_x1000"):
+    with pytest.raises(dd.DiffDecisionsError, match="no.*integer z_entry_max_x1000"):
+        run_trio(trio, tmp_path / "out")
+
+
+@pytest.mark.parametrize(
+    "direction", [None, "Long", "long", "", "BOTH", "SHORT_AND_LONG"]
+)
+def test_a_b1b_lineage_without_a_usable_direction_is_refused(
+    tmp_path: Path, direction: Any
+) -> None:
+    """Red proof #1 for ``tos_deployment_direction_matches_entry_binding``.
+
+    Concrete failing input: a B1b trace produced before 2026-10-09 (no
+    ``parents.strategy_file.direction`` at all — the ``None`` case), or one
+    whose token was renamed or case-folded. Before this check the tool assumed
+    LONG, so a SHORT trace reported a headline agreement of ``0/374``.
+    """
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:2]),
+        b1b_parent_overrides={"strategy_file": {"direction": direction}},
+    )
+    out = tmp_path / "out"
+    with pytest.raises(dd.DiffDecisionsError, match="parents.strategy_file.direction"):
+        run_trio(trio, out)
+    assert not (out / dd.DIFF_FILENAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("direction", "bindings"),
+    [
+        (dd.DIRECTION_SHORT, {"z_entry_max_x1000": -1800}),
+        (dd.DIRECTION_LONG, {"z_entry_min_x1000": 1800}),
+    ],
+)
+def test_a_direction_contradicted_by_the_binding_key_is_refused(
+    tmp_path: Path, direction: str, bindings: dict[str, Any]
+) -> None:
+    """Red proof #2: the declared direction and the deployed key disagree.
+
+    The bindings loader refuses a key no rule references, so the key PRESENT
+    is evidence of which side the entry rule compares. A lineage carrying the
+    other direction's key is describing two different deployments at once.
+    """
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:1]),
+        direction=direction,
+        bindings=bindings,
+    )
+    with pytest.raises(
+        dd.DiffDecisionsError, match=f"no integer {dd.ENTRY_BINDING_KEY[direction]}"
+    ):
+        run_trio(trio, tmp_path / "out")
+
+
+@pytest.mark.parametrize("direction", dd.DIRECTION_TOKENS)
+def test_a_lineage_carrying_both_entry_thresholds_is_refused(
+    tmp_path: Path, direction: str
+) -> None:
+    """Red proof #2b: the expected key is present, and so is the other one.
+
+    Without this the check reads the expected key and ignores the rest, which
+    admits exactly what its own sentence ("the key present IS evidence of
+    which side the rule compares") says it rejects — the repo's
+    ``guards-that-admit-what-they-name`` shape. A real B1b lineage cannot
+    carry both (the bindings loader refuses a key no rule references), so an
+    artifact that does is not describing one deployment.
+    """
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:1]),
+        direction=direction,
+        bindings={
+            "z_entry_max_x1000": Z_ENTRY_MAX_X1000,
+            "z_entry_min_x1000": Z_ENTRY_MIN_X1000,
+        },
+    )
+    with pytest.raises(dd.DiffDecisionsError, match="carry BOTH"):
+        run_trio(trio, tmp_path / "out")
+
+
+@pytest.mark.parametrize(
+    ("direction", "bindings"),
+    [
+        (dd.DIRECTION_SHORT, {"z_entry_min_x1000": -1800}),
+        (dd.DIRECTION_LONG, {"z_entry_max_x1000": 1800}),
+        (dd.DIRECTION_SHORT, {"z_entry_min_x1000": 0}),
+    ],
+)
+def test_a_threshold_whose_sign_contradicts_the_direction_is_refused(
+    tmp_path: Path, direction: str, bindings: dict[str, Any]
+) -> None:
+    """Red proof #3: right key, wrong sign.
+
+    ``z_x1000 >= -1800`` is true on almost every bar; a run against it would
+    report near-total "agreement" that measures the sign error, not the
+    policy. ``0`` is included because it is the value a half-edited file
+    lands on and ``value * sign > 0`` must reject it.
+    """
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:1]),
+        direction=direction,
+        bindings=bindings,
+    )
+    with pytest.raises(dd.DiffDecisionsError, match="sign contradicts it"):
         run_trio(trio, tmp_path / "out")
 
 
@@ -1204,7 +1422,9 @@ def test_an_undeclared_attribution_id_refuses_the_whole_run(
         why="synthetic",
         predicate=lambda bar, bucket, ctx: True,
     )
-    monkeypatch.setattr(dd, "ATTRIBUTION_RULES", dd.ATTRIBUTION_RULES + (bogus,))
+    monkeypatch.setattr(
+        dd, "ALL_ATTRIBUTION_RULES", dd.ALL_ATTRIBUTION_RULES + (bogus,)
+    )
     trio = write_trio(tmp_path / "in", list(COVERAGE_BARS[:2]))
     out = tmp_path / "out"
     with pytest.raises(dd.DiffDecisionsError, match="B2-L99"):
@@ -1232,7 +1452,7 @@ def test_every_cited_id_is_declared_by_the_real_artifacts(
         for entries in result.lineage["declared_differences_index"].values()
         for entry in entries
     }
-    cited = {i for rule in dd.ATTRIBUTION_RULES for i in rule.ids}
+    cited = {i for rule in dd.ALL_ATTRIBUTION_RULES for i in rule.ids}
     assert cited <= declared
     assert cited  # the table cites something
 
@@ -1554,7 +1774,7 @@ def test_the_lineage_restates_the_classifier_and_the_table(
     assert "Exhaustive" in classification["decision_tree"]
     table = result.lineage["attribution_table"]
     assert [entry["name"] for entry in table] == [
-        rule.name for rule in dd.ATTRIBUTION_RULES
+        rule.name for rule in dd.build_attribution_rules(dd.DIRECTION_LONG)
     ]
     assert [entry["order"] for entry in table] == list(range(len(table)))
     for entry in table:
@@ -1929,21 +2149,27 @@ def test_the_reconciliation_check_can_fail(coverage: tuple[Trio, dd.RunResult]) 
             z_x1000=0,
         )
     ]
-    records = dd.classify_all(bars, dd.DiffContext(z_entry_max_x1000=-1800))
+    records = dd.classify_all(bars, LONG_CTX)
     assert dd._check_reconciliation(records, 1)["bars"] == 1
     with pytest.raises(dd.DiffDecisionsError, match="do not reconcile"):
         dd._check_reconciliation(records, 2)
 
 
-def test_the_gate_fields_are_r1s_own_operands() -> None:
-    """(a): the literal list, pinned to the strategy file it was derived from.
+@pytest.mark.parametrize("direction", dd.DIRECTION_TOKENS)
+def test_the_gate_fields_are_r1s_own_operands(direction: str) -> None:
+    """(a): the literal list, pinned to the strategy files it was derived from.
 
-    B3 never reads that file at run time (it is inside ``tos/`` and B3 is
+    B3 never reads those files at run time (they are inside ``tos/`` and B3 is
     artifact-only), so the list is a literal — which is exactly why it needs a
     pin. Concrete failing input: a fifth gate, a rename, or a reordering of
-    ``R1-ENTRY-LONG``'s comparisons.
+    ``R1-ENTRY-<direction>``'s comparisons in **either** render. Both are
+    checked: the field NAMES are direction-invariant (B1a publishes no SHORT
+    variant — the gate booleans' direction comes from the sign of z), so one
+    list covers both files, and a rename in the unchecked one would otherwise
+    stay green.
     """
-    document = yaml.safe_load(B1B_STRATEGY_SOURCE.read_text(encoding="utf-8"))
+    _, _, source = DEPLOYED_SOURCES[direction]
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
     r1 = document["policy"]["rules"][0]["all_of"]
     operands = [compare["left"]["ref"] for compare in r1]
     assert all(ref[:2] == ["capsule", "resolved_values"] for ref in operands)
@@ -1952,7 +2178,388 @@ def test_the_gate_fields_are_r1s_own_operands() -> None:
     # against the bound threshold, which is not a gate boolean.
     assert names[:-1] == list(dd.GATE_FIELDS)
     assert names[-1] == "z_x1000"
-    assert r1[-1]["right"]["ref"] == ["config", "z_entry_max_x1000"]
+    assert r1[-1]["right"]["ref"] == ["config", dd.ENTRY_BINDING_KEY[direction]]
+    # The comparison OPERATOR is the other half of "this render compares one
+    # side": a LONG file with GE would fire on the SHORT extreme.
+    assert r1[-1]["op"] == ("LE" if direction == dd.DIRECTION_LONG else "GE")
+
+
+def test_the_two_attribution_tables_cite_exactly_the_same_ids() -> None:
+    """Direction-invariance of the cited ids, which check #1 relies on.
+
+    ``attribution_ids_declared`` runs FIRST, before the direction has been
+    read, over the union of both tables. That is only sound while the two
+    tables cite the same ids — if a future SHORT-only rule cited a new id, the
+    union check would still pass for a LONG run whose lineage never declares
+    it. Pinned here rather than asserted in a comment.
+    """
+    long_ids = {
+        i for rule in dd.build_attribution_rules(dd.DIRECTION_LONG) for i in rule.ids
+    }
+    short_ids = {
+        i for rule in dd.build_attribution_rules(dd.DIRECTION_SHORT) for i in rule.ids
+    }
+    assert long_ids == short_ids
+    assert {i for rule in dd.ALL_ATTRIBUTION_RULES for i in rule.ids} == long_ids
+    # Only the first rule's NAME is direction-dependent; the other four are not.
+    long_names = [rule.name for rule in dd.build_attribution_rules(dd.DIRECTION_LONG)]
+    short_names = [rule.name for rule in dd.build_attribution_rules(dd.DIRECTION_SHORT)]
+    assert long_names[0] == "legacy_short_entry"
+    assert short_names[0] == "legacy_long_entry"
+    assert long_names[1:] == short_names[1:]
+    assert len(long_names) == len(short_names) == 5
+
+
+#: A trio a SHORT deployment would actually produce — **not** the LONG coverage
+#: bars relabelled (2026-10-09 review M1). Relabelling gives a SHORT run with
+#: ZERO ``AGREE_ENTRY`` bars, so neither headline rate has a non-empty
+#: denominator and a mutation of
+#: ``legacy_fired_in_deployment_direction_admitted_by_position_model`` back to
+#: the hardcoded ``legacy_fired_long and admitted`` stayed green across the
+#: whole file. Every bar here has a positive ``z_x1000``, which is the side a
+#: SHORT entry rule compares.
+SHORT_COVERAGE_BARS: tuple[BarSpec, ...] = (
+    # AGREE_NO_ACTION / AGREED.
+    BarSpec(minute=0, z_x1000=120),
+    # AGREE_ENTRY, admitted, capacity available -> AGREED. Counts in BOTH
+    # rates' numerator and denominator.
+    BarSpec(
+        minute=1,
+        legacy_outcome="FIRED",
+        legacy_direction="SHORT",
+        admitted=True,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=2800,
+    ),
+    # AGREE_ENTRY the legacy position model would NOT have entered. In the
+    # rule-level denominator, OUT of the position-model one: the single bar
+    # that makes the two rates differ.
+    BarSpec(
+        minute=2,
+        legacy_outcome="FIRED",
+        legacy_direction="SHORT",
+        admitted=False,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=2900,
+    ),
+    # AGREE_ENTRY, admitted, capacity denied -> the fill-level rule. Still in
+    # both denominators: the decision agreed.
+    BarSpec(
+        minute=3,
+        legacy_outcome="FIRED",
+        legacy_direction="SHORT",
+        admitted=True,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        capacity_denied=True,
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=3100,
+    ),
+    # The unrendered half: a legacy LONG fire this run did not act on.
+    BarSpec(
+        minute=4,
+        legacy_outcome="FIRED",
+        legacy_direction="LONG",
+        admitted=True,
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=-2600,
+    ),
+    # TOS_ONLY_ENTRY on a legacy LOW_CONFIDENCE bar — the published field set
+    # cannot express min_confidence (B1a-D1 / B2-L9).
+    BarSpec(
+        minute=5,
+        legacy_outcome="LOW_CONFIDENCE",
+        legacy_direction="SHORT",
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        capacity_denied=True,
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=2100,
+    ),
+)
+
+
+def test_a_short_run_mirrors_the_long_classification_and_attribution(
+    tmp_path: Path,
+) -> None:
+    """A SHORT deployment's own trio, with both rates' denominators non-empty.
+
+    What this pins that the LONG coverage run cannot: the rate denominators
+    follow ``ctx.direction``. Concrete failing input (review M1): restore
+    ``legacy_fired_in_deployment_direction_admitted_by_position_model`` to
+    ``r.bar.legacy_fired_long and r.bar.admitted`` — identical for a LONG run,
+    so every other test stays green, while this one reports ``2/1`` instead of
+    ``2/2`` and on the real SHORT window would have reported ``56/96``.
+
+    The three ``AGREE_ENTRY`` bars differ in exactly the two facts the two
+    rates disagree about, so the rates come out 3/3 and 2/2 rather than being
+    equal by accident.
+    """
+    trio = write_trio(
+        tmp_path / "in", list(SHORT_COVERAGE_BARS), direction=dd.DIRECTION_SHORT
+    )
+    result = run_trio(trio, tmp_path / "out")
+
+    assert result.summary["buckets"] == {
+        dd.BUCKET_AGREE_ENTRY: 3,
+        dd.BUCKET_AGREE_NO_ACTION: 1,
+        dd.BUCKET_LEGACY_ONLY_ENTRY: 1,
+        dd.BUCKET_TOS_ONLY_ENTRY: 1,
+    }
+    rules = result.summary["attribution_rules"]
+    assert "legacy_long_entry" in rules
+    assert "legacy_short_entry" not in rules
+    assert rules["legacy_long_entry"]["ids"] == ["B1b-D5"]
+    assert rules["legacy_long_entry"]["bars"] == 1
+    assert rules["agree_entry_rejected_by_legacy_position_model"]["bars"] == 1
+    assert rules["agree_entry_capacity_denied"]["bars"] == 1
+    assert rules["tos_action_on_legacy_low_confidence"]["bars"] == 1
+
+    totals = result.summary["totals"]
+    assert totals["legacy_fired"] == 4
+    assert totals["legacy_fired_long"] == 1
+    assert totals["legacy_fired_short"] == 3
+    assert totals["legacy_fired_in_deployment_direction"] == 3
+    assert (
+        totals["legacy_fired_in_deployment_direction_admitted_by_position_model"] == 2
+    )
+    assert totals["agree_entry"] == 3
+    assert totals["agree_entry_admitted_by_position_model"] == 2
+    assert totals["tos_action"] == 4
+
+    rates = result.summary["rates"]
+    rule_level = rates["rule_level_entry_agreement"]
+    assert (rule_level["numerator"], rule_level["denominator"]) == (3, 3)
+    assert "direction SHORT" in rule_level["definition"]
+    position_level = rates["position_model_level_entry_agreement"]
+    assert (position_level["numerator"], position_level["denominator"]) == (2, 2)
+    assert "legacy FIRED SHORT" in position_level["definition"]
+    tos_side = rates["tos_action_explained_by_a_legacy_short_fire"]
+    assert (tos_side["numerator"], tos_side["denominator"]) == (3, 4)
+
+    assert result.summary["unresolved"]["count"] == 0
+    assert result.summary["config"]["deployment_direction"] == dd.DIRECTION_SHORT
+    assert result.summary["config"]["z_entry_binding_key"] == "z_entry_min_x1000"
+
+
+def test_a_tos_action_against_an_opposite_direction_legacy_fire_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    """Review M2's red proof: the severest disagreement must not be absorbed.
+
+    The legacy rule fired LONG and this SHORT deployment proposed an entry on
+    the SAME bar. That is a disagreement about DIRECTION, not "the other half
+    has no counterpart here" — B1b-D5 says the unrendered half produces no TOS
+    action, and this bar produced one. Concrete failing input: drop the
+    ``bucket == BUCKET_LEGACY_ONLY_ENTRY`` scope from
+    ``_legacy_opposite_direction_entry`` and the bar is filed under B1b-D5.
+    """
+    bars = [
+        BarSpec(minute=0, z_x1000=120),
+        BarSpec(
+            minute=1,
+            legacy_outcome="FIRED",
+            legacy_direction="LONG",
+            admitted=True,
+            tos_outcome_kind="ACTION",
+            tos_rule_id="R1-ENTRY-SHORT",
+            capacity_denied=True,
+            hi_vol=True,
+            stall_ok=True,
+            reversal_ok=True,
+            z_x1000=2700,
+        ),
+    ]
+    trio = write_trio(tmp_path / "in", bars, direction=dd.DIRECTION_SHORT)
+    result = run_trio(trio, tmp_path / "out")
+
+    record = next(
+        r for r in _records(result) if r["raw_event_id"] == bars[1].raw_event_id
+    )
+    assert record["bucket"] == dd.BUCKET_TOS_ONLY_ENTRY
+    assert record["attribution_rule"] == dd.ATTRIBUTION_UNRESOLVED
+    assert record["attribution"] == []
+    assert result.summary["unresolved"]["count"] == 1
+    assert result.summary["unresolved"]["raw_event_ids"] == [bars[1].raw_event_id]
+    assert "legacy_long_entry" not in result.summary["attribution_rules"]
+
+
+def test_both_sidecars_declare_schema_version_two(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """Review M3: the shape changed, so the version must say so.
+
+    ``diff.jsonl`` is byte-identical across the 1 -> 2 change (the LONG run
+    still reproduces ``ce36450f…``), which is precisely the trap: a consumer
+    diffing payloads would conclude nothing moved while
+    ``config.z_entry_max_x1000`` and
+    ``totals.legacy_fired_long_admitted_by_position_model`` had been replaced.
+    Pinned as a literal here AND asserted against the module constants, so
+    neither can drift alone.
+    """
+    _, result = coverage
+    assert dd.LINEAGE_SCHEMA_VERSION == dd.SUMMARY_SCHEMA_VERSION == 2
+    assert result.lineage["lineage_schema_version"] == 2
+    assert result.summary["summary_schema_version"] == 2
+    # The v1 keys are gone, which is what makes the bump necessary rather than
+    # cosmetic. Asserted as absences: a bump beside a key that never left would
+    # be a version number with nothing behind it.
+    assert "z_entry_max_x1000" not in result.summary["config"]
+    assert "z_entry_max_x1000_source" not in result.summary["config"]
+    assert "z_entry_max_x1000" not in result.lineage["config"]
+    assert (
+        "legacy_fired_long_admitted_by_position_model" not in result.summary["totals"]
+    )
+    # The third rate's KEY is per-direction now, which is the other half of the
+    # v1 -> v2 shape change. Asserted on a SHORT run against the LONG one, not
+    # as the absence of a key no version ever had: the first revision asserted
+    # `"tos_action_explained_by_a_legacy_fire" not in rates`, which no
+    # implementation could ever violate (2026-10-09 review).
+    assert "tos_action_explained_by_a_legacy_long_fire" in result.summary["rates"]
+    assert "tos_action_explained_by_a_legacy_short_fire" not in result.summary["rates"]
+
+
+def test_the_absorbed_counts_say_which_ids_could_be_non_zero(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """``declared_differences.cited_ids`` makes the structural zeros checkable.
+
+    ``absorbed_bars: 0`` reads as a measurement, and for ``B1b-D8`` / ``B1b-D9``
+    it is not: no attribution rule cites them, so their count is zero however
+    the window behaved. The note beside the numbers says so, but a sentence is
+    not a gate — ``cited_ids`` puts the list of ids that CAN be non-zero in the
+    same block, derived from the table this run actually read.
+
+    Concrete failing input: a rule's ``ids`` tuple changes and the block keeps
+    claiming the old set.
+    """
+    _, result = coverage
+    block = result.summary["declared_differences"]
+    cited = set(block["cited_ids"])
+    assert cited == {
+        difference_id
+        for rule in dd.build_attribution_rules(dd.DIRECTION_LONG)
+        for difference_id in rule.ids
+    }
+    # The two the review was about are NOT in it, which is exactly why their
+    # zero is structural.
+    assert "B1b-D8" not in cited
+    assert "B1b-D9" not in cited
+    # Every uncited id really does sit at zero, and every non-zero id is cited
+    # — the property that makes `cited_ids` a readable filter rather than a
+    # decorative list.
+    for entries in block["by_artifact"].values():
+        for entry in entries:
+            if entry["id"] not in cited:
+                assert entry["absorbed_bars"] == 0, entry
+    assert "STRUCTURAL" in block["note"]
+    assert "UNRESOLVED" in block["note"]
+    assert "cited_ids" in block["note"]
+
+
+#: snake_case tokens ``declared_differences.note`` may use that are NOT keys of
+#: ``summary.json``. Empty: every such token in the shipped note today is a real
+#: key (``cited_ids``). Kept as an explicit literal rather than omitted, because
+#: a future note may legitimately name a tool, a file or a term in snake_case —
+#: and then the right move is to add it HERE, where a reviewer sees the list, not
+#: to loosen the assertion.
+ALLOWED_PROSE_TOKENS: frozenset[str] = frozenset()
+
+
+def test_the_absorbed_note_sends_the_reader_somewhere_that_exists(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """A note in summary.json may only name keys summary.json actually has.
+
+    Concrete failing input, and the one this test was written for: the note
+    said "Check attribution_table[].ids". ``attribution_table`` exists only in
+    ``lineage.json``, so a reader following the note found nothing — a
+    cross-document pointer that reads as if it were local (2026-10-09 review).
+
+    Asserted as a CLASS, not as that one string: every snake_case identifier
+    the note mentions must be a key reachable in ``summary.json``, or be listed
+    in :data:`ALLOWED_PROSE_TOKENS`. A literal ``"attribution_table" not in
+    note`` would not catch the next cross-document pointer.
+
+    ⚠ The first cut of this test asserted only that the mentioned tokens did
+    not intersect the keys that are in ``lineage.json`` but not in
+    ``summary.json`` — so a token in **neither** file ("and in
+    absorbed_ids_table") passed, while the docstring claimed "may only name
+    keys summary.json actually has". The assertion now says what the docstring
+    says; the gap was the review's finding, and it is the same
+    guard-admits-what-it-names shape this suite keeps meeting.
+    """
+    _, result = coverage
+    note = result.summary["declared_differences"]["note"]
+
+    def keys_of(document: Any) -> set[str]:
+        found: set[str] = set()
+        stack = [document]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                found.update(node)
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        return found
+
+    summary_keys = keys_of(result.summary)
+    mentioned = set(re.findall(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", note))
+    unresolvable = mentioned - summary_keys - ALLOWED_PROSE_TOKENS
+    lineage_only = keys_of(result.lineage) - summary_keys
+    assert not unresolvable, (
+        f"declared_differences.note names {sorted(unresolvable)}, which a "
+        "reader of summary.json cannot resolve there"
+        + (
+            f" — {sorted(unresolvable & lineage_only)} exist in lineage.json "
+            "only, so the note is pointing at the other sidecar as if it were "
+            "this one"
+            if unresolvable & lineage_only
+            else " (they are keys of neither sidecar)"
+        )
+        + ". Point the note at a key of this document, or add the token to "
+        "ALLOWED_PROSE_TOKENS if it is prose rather than a pointer."
+    )
+    # And it does point at something: a note naming no key at all would satisfy
+    # the assertion above vacuously.
+    assert mentioned & summary_keys
+
+
+def test_the_third_rate_key_names_the_deployment_direction(tmp_path: Path) -> None:
+    """The SHORT half of the per-direction rate key.
+
+    Concrete failing input: pin the key back to ``_long`` (or to any fixed
+    token). A LONG run cannot see that — its key IS ``_long`` — so the
+    assertion that bites has to be made on a SHORT run, which is what this
+    test is for. Both halves are asserted so neither direction of the mistake
+    passes: the SHORT key present AND the LONG key absent.
+    """
+    trio = write_trio(
+        tmp_path / "in", list(SHORT_COVERAGE_BARS), direction=dd.DIRECTION_SHORT
+    )
+    rates = run_trio(trio, tmp_path / "out").summary["rates"]
+    assert "tos_action_explained_by_a_legacy_short_fire" in rates
+    assert "tos_action_explained_by_a_legacy_long_fire" not in rates
+    # The two direction-independent keys stay put — the bump moved one key, not
+    # all three, and a test that allowed the other two to drift would not say
+    # which change it was pinning.
+    assert "rule_level_entry_agreement" in rates
+    assert "position_model_level_entry_agreement" in rates
 
 
 def test_the_strategy_file_the_gate_list_came_from_is_recorded(

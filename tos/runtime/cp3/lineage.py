@@ -29,17 +29,18 @@ from pathlib import Path
 from typing import Any
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION
+from tos.dsl import DecisionKind
 from tos.dsl.context_value import VALUE_NAMESPACE
 from tos_runtime.operations.dependency_admission import observe_source_tree_digest
 
 from . import __version__ as CP3_VERSION
 from ._base import LINEAGE_SCHEMA_VERSION, SCHEME
 from .contract import FIELD_POLICY, REQUIRED_FIELD_KEYS
-from .differences import DECLARED_DIFFERENCES
+from .differences import declared_differences
 from .replay import PROVISIONAL_TIME_BOUNDS, RunArtifacts
 from .strategy import LoadedStrategyContent
 
-__all__ = ["build_lineage", "write_artifacts"]
+__all__ = ["build_lineage", "entry_comparison", "write_artifacts"]
 
 # ===========================================================================
 # Artifacts
@@ -327,6 +328,52 @@ def _versions_block(
     }
 
 
+#: The authored ``CompareOp`` tokens this module renders as symbols. A token
+#: outside this map is rendered as the token itself rather than guessed at —
+#: an invented symbol in the difference block would misdescribe the rule.
+_OP_SYMBOLS: Mapping[str, str] = {
+    "EQ": "==",
+    "NE": "!=",
+    "LT": "<",
+    "LE": "<=",
+    "GT": ">",
+    "GE": ">=",
+}
+
+
+def entry_comparison(content: LoadedStrategyContent) -> str:
+    """The authored one-side entry comparison, e.g. ``z_x1000 <= -1800``.
+
+    Rendered from the ACTION rule's config-bound compare and the binding the
+    production resolver actually resolved — never a literal. B1b-D5's note
+    quotes this phrase, and a literal there could disagree with the file it
+    claims to describe (the repo's "a threshold restated in a second place is a
+    threshold that can disagree" rule).
+
+    Returns:
+        ``"<field> <op> <value>"`` for the first ACTION-rule compare whose
+        right operand is a ``config`` ref, or ``"(no config-bound entry
+        compare)"`` when the authored policy has none — stated, never guessed.
+    """
+    policy = content.strategy.policy
+    if policy is None:  # pragma: no cover - admission already refused this
+        return "(no policy)"
+    for rule in policy.rules:
+        if rule.decision.kind is not DecisionKind.ACTION:
+            continue
+        for compare in rule.all_of:
+            ref = compare.right.ref
+            if not ref or ref[0] != "config":
+                continue
+            key = ref[-1]
+            if key not in content.bindings:  # pragma: no cover - resolver gate
+                continue
+            field = (compare.left.ref or ("?",))[-1]
+            op = getattr(compare.op, "value", str(compare.op))
+            return f"{field} {_OP_SYMBOLS.get(op, op)} {content.bindings[key]}"
+    return "(no config-bound entry compare)"
+
+
 def _parents_block(
     *,
     artifacts: RunArtifacts,
@@ -361,6 +408,20 @@ def _parents_block(
             "canonical_digest": content.strategy.canonical_digest,
             "dsl_version": content.strategy.dsl_version,
             "config_binding_version": content.strategy.config_binding_version,
+            # The deployment's direction, derived by `_single_direction` from
+            # the authored ACTION targets — the FILE, never a CLI flag (there
+            # is none) and never a caller-supplied token. B3 reads this key to
+            # decide which legacy fires are its AGREE_ENTRY half and which are
+            # the declared difference B1b-D5, so a flag a caller could set
+            # wrongly would let a run claim the wrong half agreed.
+            "direction": content.direction,
+            "direction_source": (
+                "cp3.strategy._single_direction — the one direction the "
+                "authored ACTION targets declare; two different ones are a "
+                "refusal, because direction is a per-deployment fact "
+                "(kickoff §2 / §4 결정 4)"
+            ),
+            "entry_comparison": entry_comparison(content),
         },
         "strategy_bindings_file": {
             "path": str(content.bindings_path),
@@ -512,7 +573,13 @@ def build_lineage(
         ),
         "counts": _counts_block(artifacts=artifacts),
         **_assurance_blocks(artifacts=artifacts),
-        "declared_differences": [dict(item) for item in DECLARED_DIFFERENCES],
+        "declared_differences": [
+            dict(item)
+            for item in declared_differences(
+                direction=content.direction,
+                entry_comparison=entry_comparison(content),
+            )
+        ],
         "output": {
             "trace_jsonl": "trace.jsonl",
             "trace_digest": artifacts.trace_digest,

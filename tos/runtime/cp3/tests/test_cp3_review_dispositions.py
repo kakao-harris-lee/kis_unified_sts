@@ -15,8 +15,10 @@ import pytest
 import yaml
 
 from .. import runner
-from ..differences import DECLARED_DIFFERENCES, declared_difference_ids
+from ..differences import declared_difference_ids, declared_differences
+from ..lineage import entry_comparison
 from ..replay import _attribute_rule
+from ..strategy import load_strategy_content
 from . import _cp3_fixtures as fx
 
 
@@ -224,6 +226,29 @@ def test_run_replay_refuses_when_any_bar_emitted_no_outcome(
 # ---------------------------------------------------------------------------
 
 
+def _declared(direction: str = "LONG") -> list[dict[str, str]]:
+    """The declared-difference block as a run of *direction* would write it.
+
+    Rendered from the committed strategy content rather than from literals, so
+    the ``entry_comparison`` phrase these assertions read is the one a real run
+    would emit. ``LONG`` is the default because these tests predate the SHORT
+    render; the SHORT half is covered by
+    ``test_cp3_short_strategy_content.py``.
+    """
+    paths = {
+        "LONG": (fx.STRATEGY_PATH, fx.BINDINGS_PATH),
+        "SHORT": (fx.SHORT_STRATEGY_PATH, fx.SHORT_BINDINGS_PATH),
+    }[direction]
+    content = load_strategy_content(strategy_path=paths[0], bindings_path=paths[1])
+    return [
+        dict(item)
+        for item in declared_differences(
+            direction=content.direction,
+            entry_comparison=entry_comparison(content),
+        )
+    ]
+
+
 def test_every_declared_difference_is_present_and_well_formed() -> None:
     """Nine entries, unique ids, each with a non-trivial note."""
     ids = declared_difference_ids()
@@ -239,7 +264,7 @@ def test_every_declared_difference_is_present_and_well_formed() -> None:
         "B1b-D9",
     )
     assert len(set(ids)) == len(ids)
-    for item in DECLARED_DIFFERENCES:
+    for item in _declared():
         assert item["item"].strip()
         assert len(str(item["note"]).strip()) > 80, item["id"]
 
@@ -251,7 +276,7 @@ def test_the_two_operator_approved_differences_cite_their_decisions() -> None:
     parity report is built from must carry them, or the report attributes an
     approved difference to a policy disagreement.
     """
-    by_id = {item["id"]: item for item in DECLARED_DIFFERENCES}
+    by_id = {item["id"]: item for item in _declared()}
     assert "결정 5" in by_id["B1b-D8"]["item"]
     assert "short_blocked_regimes" in by_id["B1b-D8"]["note"]
     assert "결정 6" in by_id["B1b-D9"]["item"]
@@ -264,7 +289,7 @@ def test_the_band_form_difference_cites_b1a_d3_not_d7() -> None:
     D7 is the measured-D7-generator entry and its own note says its counts must
     not be read as the band's error bar; the band form is D3.
     """
-    by_id = {item["id"]: item for item in DECLARED_DIFFERENCES}
+    by_id = {item["id"]: item for item in _declared()}
     assert "B1a D3" in by_id["B1b-D2"]["item"]
     assert "D3" in by_id["B1b-D2"]["note"]
     # Asserted on the SENTENCE that attributes the band form, not on a Korean
@@ -282,7 +307,7 @@ def test_the_band_form_difference_cites_b1a_d3_not_d7() -> None:
 
 def test_the_exposure_precondition_difference_is_declared() -> None:
     """B1b-D7: FLAT carries no exposure precondition, and that is recorded."""
-    by_id = {item["id"]: item for item in DECLARED_DIFFERENCES}
+    by_id = {item["id"]: item for item in _declared()}
     note = by_id["B1b-D7"]["note"]
     assert "exposure" in note
     assert "position-scoped" in note
