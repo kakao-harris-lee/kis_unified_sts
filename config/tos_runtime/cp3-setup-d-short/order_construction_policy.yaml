@@ -70,7 +70,7 @@
 
 artifact_type: ORDER_CONSTRUCTION_POLICY
 schema_version: "1.0-DRAFT"
-policy_id: "ocp-paper-krx-index-futures"
+policy_id: "ocp-paper-cp3-setup-d-short-krx-index-futures"
 policy_generation: 3
 construction_generation: 1
 canonical_digest: TBD
@@ -210,12 +210,22 @@ _runtime:
       # above still authorizes BOTH directions, and the committed value is one direction ONLY
       # because the current (proposal-path-less) design can express exactly one per composition
       # (this file's own comment above; construction_rules.py's ActionClassShape docstring).
-      # The operator's choice (가) makes that a BOOT PROOF, not a trading posture, and requires
-      # the SAME fixture to be booted SHORT as well — scripts/tos/render_paper_config.py
-      # --direction SHORT rewrites this axis together with construction.yaml's
-      # action_class/outbound_side and the strategy file's direction. A second, SHORT copy is
-      # deliberately NOT committed. Long/short symmetry is resolved for real when the strategy
+      # ⚠ TENANT SHORT TREE (2026-10-09): the value here is **SHORT**, and this IS the second,
+      # committed copy that the resident tree's comment above says is "deliberately NOT
+      # committed". That sentence is about the RESIDENT boot-proof deployment, where SHORT is a
+      # render flag (`--direction SHORT`). CP-3 kickoff decision 4 settled the opposite for the
+      # tenant: LONG and SHORT are two SEPARATE deployments with their own config trees and
+      # their own data dirs, because a single corpus cannot carry both (runbook §7.10 3, and
+      # §5 ⑤: an activation record does not bind direction, so a mixed corpus cannot be split
+      # apart afterwards). Long/short symmetry is still only resolved for real when the strategy
       # proposal path lands and direction becomes a per-attempt lookup key.
+      #
+      # ⚠ This axis is what resolves a **CLOSE**'s direction, and therefore its SIDE:
+      # `compose/_envelope_wiring.py::resolve_construction_direction` reads the direction off
+      # the action class's own name for NEW_LONG/NEW_SHORT, and falls back to THIS axis for
+      # direction-agnostic classes like CLOSE. So axis SHORT -> `CLOSE.SHORT` -> **BUY**, which
+      # is what closing a short requires. The strategy file's R2/R3 do NOT supply it (nothing
+      # reads `Proposal.direction` on this path yet).
       #
       # ⚠ KNOWN LIMITATION (measured 2026-09-24, review-797 LOW-6): this value is NOT part of
       # this document's canonical covered content. DR-0002 §2.3 binds `canonical_digest` to
@@ -227,7 +237,7 @@ _runtime:
       # slots together plus the direction-consistency pins in
       # tos/runtime/tests/compose/test_deploy_approved_values.py — never the digest.
       - axis: "DIRECTION"
-        value: "LONG"
+        value: "SHORT"
     action_class_shape:
       # Machine-readable form of direction_side_and_position_effect_rules above
       # ("long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE").

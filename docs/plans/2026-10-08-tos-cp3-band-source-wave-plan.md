@@ -75,7 +75,7 @@ fail-open 을 막는 가드는 **셋**이다 — 검증 셋(§4.2) · 거래일 
 
 | 트리 | 처분 | 이유 |
 |---|---|---|
-| CP-3 tenant 트리 | **이 웨이브의 첫 PR 에서 `tick_size: 2`** · 헤더에 「운영자 승인 2026-10-08 · 시행세칙 제4조의9 제2호 · 등급 R · 브로커 정황 = P-VL band 격자(PR #881)」 | band 가 들어오면 tick 검사가 살아난다. 5 로 두면 mini 정상 호가(0.02 격자 중 0.05 의 배수가 아닌 가격)가 전부 INADMISSIBLE |
+| CP-3 tenant 트리 | ✅ **착지 2026-10-09 — `tick_size: 2`** · 헤더에 「운영자 승인 2026-10-08 · 시행세칙 제4조의9 제2호 · 등급 R · 브로커 정황 = P-VL band 격자(PR #881)」 (LONG `cp3-setup-d-long` 과 같은 PR 에서 만든 SHORT `cp3-setup-d-short` **둘 다**) | band 가 들어오면 tick 검사가 살아난다. 5 로 두면 mini 정상 호가(0.02 격자 중 0.05 의 배수가 아닌 가격)가 전부 INADMISSIBLE |
 | 상주 `paper` 트리 | **보류 — paper 채택과 함께** | band 를 켜지 않는 한 tick 은 판정에 닿지 않는다(§1 술어 순서: band `None` → tick 전에 `UNKNOWN`). 바꾸면 정책 digest → `safety_activation.yaml::members` 갱신 + 런북 §7.10 6 의 두 번 부팅 의무만 생기고 행동 변화는 0 |
 | `config/execution.yaml` 레지스트리 | 변경 없음(이미 0.02) | — |
 
@@ -296,7 +296,18 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 
 ## 9. 순서 · 핸드오버
 
-1. **PR-1 (tenant tick)**: tenant 트리 `tick_size: 2` + 헤더 + 단언(§3). tenant 트리 PR 이 머지된 뒤에.
+1. ✅ **PR-1 (tenant tick) — 착지 2026-10-09.** tenant 트리 `tick_size: 2` + 헤더 출처
+   (「운영자 승인 2026-10-08 · 시행세칙 제4조의9 제2호 · 등급 R · 브로커 정황 = P-VL band
+   격자(PR #881)」) + 단언(§3). tenant 트리 PR(#884)이 머지된 뒤에 돌았다.
+   부수로 같은 PR 이 처리한 것 넷: 같은 트리의 `tick 5` 산문 셋(`construction.yaml` ·
+   `order_construction_policy.yaml` 의 DATA 산문 · `README.md`) · tenant
+   `critical_input_policy.yaml::fields[].max_age_ms` ×15(운영자 지시 2026-10-09 — 출처 없이
+   적용, 등급 C) · tenant data dir 지정(LONG·SHORT) · **SHORT 트리**
+   `config/tos_runtime/cp3-setup-d-short/`.
+   ⚠ 실측 2026-10-09: tick 변경은 tenant VCP 의 `canonical_digest` 를 **바꾼다**(VCP digest 는
+   `_model_view.shape_constraints` 를 덮는다 — OCP 와 다르다). 그 트리의
+   `safety_activation.yaml::members` 는 `null` 이라 갱신할 활성화 기록이 없었다.
+   상주 `paper` 트리의 tick 은 §3 표대로 **5 그대로**다.
 2. **PR-2 (runtime)**: §4 전부 + §8 테스트. `tos/runtime/src/tos_runtime/` 를 바꾸므로 **같은 PR 에서
    `expected_code_digest` 재도출**(`config/tos_runtime/paper/release.yaml` — 재도출하지 않으면 상주 세션이 다음 08:45 에
    ABORT 한다; 주석만 바꾼 PR 도 예외 없음). 상주 paper 의 `band_source` 는 null 이라 행동 변화 0 을 §8 1 이 증명한다.

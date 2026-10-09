@@ -1,5 +1,5 @@
 # =============================================================================
-# critical_input_policy.yaml — CP-3 tenant (Setup D / LONG) **필드 선언**
+# critical_input_policy.yaml — CP-3 tenant (Setup D / SHORT) **필드 선언**
 # =============================================================================
 # 이 파일은 상주 `config/tos_runtime/paper/` 의 같은 파일의 사본이 **아니다** — 그
 # 파일은 부팅 증명 픽스처(`bootproof_band` 가 읽는 세 필드)이고, 이 파일은 CP-3 첫
@@ -84,13 +84,13 @@
 # `tos-paper-critical-input-bootproof-g1` 과 **다른 이름을 쓴다** — 내용이 사본이 아니고
 # (세 픽스처 필드 vs 열다섯 tenant 필드), `bootproof` 라는 토큰이 이 문서에 대해
 # 거짓이기 때문이다.
-policy_id: "tos-paper-cp3-setup-d-long-critical-input-g1"
+policy_id: "tos-paper-cp3-setup-d-short-critical-input-g1"
 policy_version: "1.0.0"
 policy_generation: 1
 
 # 발행 스냅샷의 귀속 주체(tos.capsule.CriticalInputSnapshot.issuer_principal_id).
 # 상주 트리의 같은 칸과 같은 꼴이고, 치환 대상이 아니므로 확정 리터럴이다.
-issuer_principal_id: "tos-paper-cp3-setup-d-long-critical-input-issuer-g1"
+issuer_principal_id: "tos-paper-cp3-setup-d-short-critical-input-issuer-g1"
 
 # --- scope --------------------------------------------------------------
 # `environment` — **`paper` 다.** kickoff §5 1 이 그 이유를 적는다: 로더는 이 토큰을

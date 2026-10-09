@@ -52,6 +52,8 @@ from tos_runtime.marketfeed.policy import (
     CriticalInputPolicyConfigError,
     load_critical_input_policy,
 )
+from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
+from tos_runtime.time.config import _BOUND_FIELD_BY_KEY
 from tos_runtime.venue import (
     VenuePolicyConfigError,
     load_order_construction_policy,
@@ -92,10 +94,18 @@ _ADOPTED_TENANT_MAX_QTY = 10000
 #: The tenant venue policy's own identity. Renamed off the resident ``vcp-paper-krx-index-
 #: futures`` on 2026-10-09 (PR #884 review L4): same id + same generation with DIFFERENT typed
 #: content means a different ``canonical_digest`` under an identity an activation record cannot
-#: disambiguate. Only the policies whose content actually differs were renamed -- the OCP
-#: (comment-only here, so identical typed content and identical digest), the aggregate-risk and
-#: the action-flow policies keep the resident ids on purpose: there, "same id, same digest"
-#: is a true statement that they ARE the same document.
+#: disambiguate. Only the policies whose content actually differs were renamed -- the OCP, the
+#: aggregate-risk and the action-flow policies keep the resident ids on purpose: there, "same id,
+#: same digest" is a true statement that they ARE the same document.
+#:
+#: ⚠ The LONG tree's OCP is **digest-identical, not comment-only** (review L1). The 2026-10-09
+#: tick correction rewrote its ``unit_multiplier_currency_and_numeric_rules`` line, which is
+#: template DATA (DR-0002 §2.1 -- preserved, never interpreted by the runtime), not a comment.
+#: The ``canonical_digest`` is unchanged regardless (``c90444b9...`` measured for the resident,
+#: LONG and SHORT trees alike -- that digest tracks neither the DATA prose nor ``policy_id``),
+#: which is why the id stays shared and the rename rule is unaffected. The earlier
+#: "comment-only" wording was true when written and stopped being true in this PR's own first
+#: commit.
 _TENANT_VENUE_POLICY_ID = "vcp-paper-cp3-setup-d-long-krx-index-futures"
 
 #: The provenance sentence design §8 step 5 requires next to that value. Pinned as a STRING so
@@ -119,11 +129,25 @@ _DECISION_9_CAVEATS = (
     "누적호가수량한도는 다른 한도다",  # §2.2 (3) -- 위탁계좌에는 적용되지 않는다
 )
 
-#: The tick correction is APPROVED but owned by design §6's band-source wave, not by the tree
-#: that carries the quantity value -- pinned so the two cannot drift apart silently (a tick 2
-#: landed here while the band is still null would be inert; a band landed there while the tick
-#: is still 5 would make every normal mini quote INADMISSIBLE).
-_TICK_CORRECTION_OWNER = "정정 2 는 승인됐고 band 원천 웨이브 소관이다"
+#: The tick correction, LANDED 2026-10-09 as the band-source wave plan's §3 first PR
+#: (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §3, operator-approved
+#: 2026-10-08). Pinned as a STRING for the same reason ``_DECISION_9_PROVENANCE`` is: the
+#: number 2 on its own does not say which regulation makes it the mini value, and
+#: ``config/tos_runtime/README.md`` makes the citation part of what admits a value here.
+#: Four separate pins because each can be dropped without the others -- the approval date, the
+#: 조문 (which is what makes it grade R rather than the grade C local registry reading it
+#: replaced), the grade itself, and the broker-side corroboration.
+_TICK_PROVENANCE = (
+    "운영자 승인 2026-10-08 · 시행세칙 제4조의9 제2호 · 등급 R · "
+    "브로커 정황 = P-VL band 격자(PR #881)"
+)
+
+#: The other half of the correction, pinned next to the value for the same reason the
+#: ``max_quantity`` deferral is: "the resident tree did NOT take this" is a state neither tree
+#: records alone. Plan §3's table row: the resident tick stays 5 until paper adoption, because
+#: moving it there buys a digest re-derivation plus the runbook §7.10 6 two-boot obligation for
+#: zero behaviour change (the band is null there too).
+_TICK_RESIDENT_DEFERRAL = "상주 `paper` 트리의 tick 은 5 그대로다"
 
 #: B1a's published field policy, as ``tools/tos_cp3/produce_fields.py`` declares it: field_key
 #: -> (unit, scale, multiplier, sign), in B1a's own ``FIELD_ORDER``. Literals, deliberately --
@@ -154,6 +178,62 @@ _B1A_FIELD_POLICY: dict[str, tuple[str, str, str, str]] = {
     "vwap_reverted": _B1A_BOOL,
     "eod": _B1A_BOOL,
 }
+
+#: B1a's bar period, in milliseconds. NOT a free parameter: ``produce_fields`` writes the
+#: timeframe into its own join key (``derive_raw_event_id``: ``<symbol>:1m:<stamp>``), so one
+#: minute is what a "bar" means on this path.
+_B1A_BAR_PERIOD_MS = 60_000
+
+#: ``critical_input_policy.yaml::fields[].max_age_ms``, filled 2026-10-09 on the operator's
+#: direction ("출처가 없어도 설정이 필요하니 적용") at grade **C** -- a dev-side conservative
+#: proposal, lowerable after server measurement (``docs/plans/2026-09-12-tos-operator-value-
+#: proposals.md:4``'s grade vocabulary). THREE bar periods, derived from the cadence:
+#: ``as_of_ms`` is the bar's LABEL (its OPEN), so one period passes before the bar even closes,
+#: a second before its successor is published -- 2P is therefore the infimum, satisfiable only
+#: with zero publish latency, and the third period is the latency allowance. Asserted against
+#: ``3 * _B1A_BAR_PERIOD_MS`` below rather than written as a bare 180000, so the derivation and
+#: the shipped number cannot drift apart.
+_TENANT_MAX_AGE_MS = 180_000
+
+#: ``time.yaml``'s four delay-bound KEYS -- **derived from the runtime, never re-listed**.
+#:
+#: ``_DELAY_BOUND_FIELDS`` is the tuple ``RuntimeTimeProjection`` actually sums into
+#: ``delay_bounds``, and ``_BOUND_FIELD_BY_KEY`` is the loader's own YAML-key -> config-field
+#: map; inverting the second over the first yields the YAML keys with **no literal in this
+#: file**. ``compose/_marketfeed_wiring.py`` imports the same private tuple for the same reason
+#: its docstring gives: "a guard that reads a second copy of the numbers it guards is exactly
+#: the failure this repo has already hit". Both imports are RUNTIME-scope -> RUNTIME-scope, which
+#: the firewall permits (it only forbids ``shared.*`` from here, and ``tos`` importing
+#: ``tos_runtime``).
+#:
+#: ⚠ The first cut DID re-list them, and got one wrong: it named
+#: ``MAX_time_source_disagreement_ms``, which is NOT a delay bound -- the runtime's fourth entry
+#: is ``MAX_time_source_sequence_gap_ms``. The ``budget == 800`` assertion passed anyway because
+#: both values happen to be 50 in every shipped ``time.yaml``. That is precisely the class of
+#: guard this repo's project memory calls "a guard that admits what it names": it would have
+#: stayed green while measuring the wrong four numbers.
+_TIME_DELAY_BOUND_KEYS: tuple[str, ...] = tuple(
+    key
+    for field in _DELAY_BOUND_FIELDS
+    for key, mapped in _BOUND_FIELD_BY_KEY.items()
+    if mapped == field
+)
+
+#: The sentences the adopted ``max_age_ms`` may not be read without -- the operator's direction
+#: verbatim, the grade, the three measured premises of the derivation, the conservative
+#: direction, and the obligation to re-derive once ③ (the live producer) is measured. A value
+#: with no source and no derivation written next to it is an invented number, which is the state
+#: the fifteen ``null``s existed to avoid.
+_MAX_AGE_PROVENANCE = (
+    "운영자 지시 2026-10-09: 출처 없이 적용",
+    "등급은 **C**",
+    "봉 주기 P = 60,000 ms",  # premise 1 -- the cadence
+    "The label, not label+60s",  # premise 2 -- as_of is the bar OPEN
+    "now_ms - as_of_ms",  # premise 3 -- what the runtime measures
+    "2P = 120,000 은 하한(infimum)이지 안전값이 아니다",
+    "보수 방향 = 작게",
+    "실시간 생산자가 측정되면 이 값을 하향하거나 다시 도출한다",
+)
 
 #: The price-like subset, by name -- asserted to be exactly the ×100 group, so a field cannot
 #: join or leave that scale silently.
@@ -186,7 +266,16 @@ def _comment_prose(path: Path) -> str:
 
 #: The values the operator adopted (plan §6 ② table) -- pinned here so a
 #: silent edit of the deploy file cannot pass as "still the approved value".
-_ADOPTED_TICK = 5
+#:
+#: ``_RESIDENT_TICK`` and ``_TENANT_TICK`` are two constants on purpose, not one shared by both
+#: trees: since 2026-10-09 they genuinely differ, and a single constant would have made the
+#: tenant correction look like a resident change (or forced the resident assertion to follow the
+#: tenant silently). 5 is the FULL-contract value kept in the resident tree while the band is
+#: null (band-source wave plan §3's table: deferred with paper adoption); 2 is the mini
+#: regulation value (시행세칙 제4조의9 제2호, grade R) in the tenant tree, where the leaf is a
+#: mini ``A056xx``.
+_RESIDENT_TICK = 5
+_TENANT_TICK = 2
 _ADOPTED_LOT = 1
 _ADOPTED_MIN_QTY = 1
 _ADOPTED_ADMITTING_PHASE = "CONTINUOUS"
@@ -208,14 +297,36 @@ _OCP_ADMITTED_QUANTITY_BASIS = "RISK"
 _OCP_DIRECTION = "LONG"
 
 
-def _filled(path: Path, *, environment: str, account: str, instrument: str) -> dict:
+def _filled(
+    path: Path,
+    *,
+    environment: str,
+    account: str,
+    instrument: str,
+    direction: str = _OCP_DIRECTION,
+) -> dict:
     """The real document with ONLY the operator-fill coordinates filled -- exactly what
     ``scripts/tos/render_paper_config.py`` fills off-repo before ``print-policy-digests``.
 
     Since W-A / A-5 that is just the scope coordinates (+ the environment this suite boots
     under): ``admitted_quantity_bases`` and the ``DIRECTION`` axis are no longer operator-fill
     -- they are committed values now, asserted here rather than written, so a silent edit of
-    either shows up as a failure in this file too."""
+    either shows up as a failure in this file too.
+
+    ``direction`` is the EXPECTED axis value, not a value written into the document: the
+    assertion below still reads the file. It defaults to ``LONG`` -- the resident and LONG-tenant
+    deployments -- and the CP-3 SHORT tenant tree passes ``"SHORT"``. A single hard-coded
+    ``LONG`` here would have forced the SHORT tree's callers to skip this helper, and with it
+    the ``admitted_quantity_bases`` check.
+
+    ⚠ What the axis block below does and does not check: it asserts there is exactly ONE
+    ``DIRECTION`` entry and that its value is the expected one. It does **not** check the length
+    of ``axes`` or anything about the other axes -- a TIF axis edited, added or dropped passes
+    straight through. (This docstring used to claim an "axis-count" check; review M2 found there
+    was none.) The axes list as a whole is compared between the two tenant trees by
+    ``test_tenant_tree_short.py::test_the_axes_list_differs_only_in_its_DIRECTION_entry``, and
+    the resident tree's own axes are pinned in ``test_deploy_approved_values.py``.
+    """
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(raw, dict), f"policy document loaded as {type(raw).__name__}"
     assert raw["scope"]["accounts"] == ["TBD"]
@@ -232,7 +343,7 @@ def _filled(path: Path, *, environment: str, account: str, instrument: str) -> d
             entry for entry in construction["axes"] if entry["axis"] == "DIRECTION"
         ]
         assert len(direction_entries) == 1
-        assert direction_entries[0]["value"] == _OCP_DIRECTION
+        assert direction_entries[0]["value"] == direction
     return raw
 
 
@@ -320,7 +431,10 @@ def test_filled_real_policies_carry_exactly_the_adopted_values(tmp_path: Path) -
     venue = load_venue_constraint_policy(venue_path, scheme=_SCHEME)
 
     shape = venue.policy.shape_constraints
-    assert shape.tick_size == _ADOPTED_TICK
+    # The resident tree's tick is still the FULL-contract 5: the 5 → 2 correction is approved
+    # but deferred HERE (band-source wave plan §3) -- pinned so the tenant correction cannot
+    # drift into this tree without a deliberate edit plus the runbook §7.10 6 obligations.
+    assert shape.tick_size == _RESIDENT_TICK
     assert shape.lot_size == _ADOPTED_LOT
     assert shape.min_quantity == _ADOPTED_MIN_QTY
     # No source → null → kernel UNKNOWN (plan §6 ② 보류 rows), never invented.
@@ -386,8 +500,11 @@ def test_tenant_venue_policy_carries_the_decision_9_provenance_and_its_three_cav
     assert _DECISION_9_PROVENANCE in prose
     for caveat in _DECISION_9_CAVEATS:
         assert caveat in prose, caveat
-    # The approved-but-not-landed tick correction, and who owns landing it.
-    assert _TICK_CORRECTION_OWNER in prose
+    # The tick correction's own provenance, landed 2026-10-09 (band-source wave plan §3), and
+    # the fact that the resident tree deliberately kept 5. Both in this header, because this is
+    # the file that carries the value.
+    assert _TICK_PROVENANCE in prose
+    assert _TICK_RESIDENT_DEFERRAL in prose
 
     # And the identity this tree's differing CONTENT requires: a policy whose typed content
     # differs from the resident one's may not share its (member_id, generation) -- an
@@ -447,8 +564,13 @@ def test_filled_tenant_venue_policy_carries_10000_with_the_band_still_null(
     assert shape.price_min is None and shape.price_max is None
     # Only the band is unsourced now -- the quantity axis left this set.
     assert set(venue.null_shape_bounds) == {"price_min", "price_max"}
-    # Decision 9 touched ONE bound: everything else is still the 2026-09-16 adopted value.
-    assert shape.tick_size == _ADOPTED_TICK
+    # Two bounds differ from the resident tree now: decision 9's quantity ceiling and the
+    # 2026-10-09 tick correction. ``tick_size`` is asserted as the MINI regulation value, which
+    # is also the one value here that is inert today -- ``order_shape_admissible`` below returns
+    # UNKNOWN on the null band BEFORE it examines the tick, so this assertion is the only thing
+    # that can catch a wrong tick until a band source lands.
+    assert shape.tick_size == _TENANT_TICK
+    assert shape.tick_size != _RESIDENT_TICK
     assert shape.lot_size == _ADOPTED_LOT
     assert shape.min_quantity == _ADOPTED_MIN_QTY
     assert venue.scope.instrument_class == "krx-index-futures"
@@ -468,20 +590,23 @@ def test_filled_tenant_venue_policy_carries_10000_with_the_band_still_null(
     assert order_shape_admissible(on_grid, shape) is OrderAdmissibilityResult.UNKNOWN
 
 
-def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max_age_ms() -> (
+def test_tenant_critical_input_policy_declares_fifteen_fields_with_the_adopted_max_age_ms() -> (
     None
 ):
     """CP-3 kickoff §5 1 / §5 3 ②: the tenant tree declares B1a's fifteen upstream fields with
-    their unit/scale/multiplier/sign from B1a's own field lineage -- and leaves ``max_age_ms``
-    ``null``, because no source for it exists (the value proposal has no row for the key by
-    design, "신선도 한도 — 안전 값이다. 그래서 채택하지 않았다"; B1a's lineage does not
-    record it either).
+    their unit/scale/multiplier/sign from B1a's own field lineage, plus the fifth value
+    ``max_age_ms``, filled 2026-10-09 on the operator's direction ("출처가 없어도 설정이
+    필요하니 적용") at grade **C** -- a dev-side conservative proposal with its derivation
+    written next to it, not an approved source.
 
-    ``null`` makes the loader REFUSE the whole document, and that refusal is the point: it is
-    the same fail-closed posture the resident tree uses for its own unsourced leaves
-    (``finality.yaml::source_revision``, ``safety_activation.yaml::members``), pinned here BY
-    KEY NAME so filling it later is a deliberate act and not a drive-by "fix" with an invented
-    number -- the discipline ``test_deploy_approved_values.py`` applies to the resident tree.
+    Until that direction the fifteen were ``null`` and the loader refused the whole document.
+    This test replaced that refusal pin; the "``null`` would still be refused" half now lives in
+    ``test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms``, so filling the key
+    did not retire the guard that kept an unsourced value out.
+
+    The value is pinned as ONE number for all fifteen on purpose: B1a publishes the whole
+    ``FIELD_ORDER`` as a single per-bar record under one label ``as_of_ms``, so there is no
+    per-field lifetime to differentiate and a split would be an unexplained asymmetry.
     """
     path = _TENANT_DIR / "critical_input_policy.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -508,7 +633,7 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
     multipliers = {entry["field_key"]: entry["multiplier"] for entry in raw["fields"]}
     signs = {entry["field_key"]: entry["sign"] for entry in raw["fields"]}
     # The price-like fields are the ONLY ones at the ×100 scale the venue policy's tick_size
-    # lives on (tick 5 = 0.05 index points at that scale).
+    # lives on (tick 2 = 0.02 index points at that scale, since the 2026-10-09 correction).
     assert {
         key for key, multiplier in multipliers.items() if multiplier == "100"
     } == _B1A_PRICE_FIELDS
@@ -523,13 +648,104 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_and_refuses_on_max
             entry["multiplier"],
             entry["sign"],
         ) == _B1A_FIELD_POLICY[key], key
-        # The fifth value is the unsourced one -- null, by design (header).
-        assert entry["max_age_ms"] is None, key
+        # The fifth value -- the one with no source, adopted on the operator's direction.
+        assert entry["max_age_ms"] == _TENANT_MAX_AGE_MS, key
 
-    # And the loader refuses the document as committed, naming that key.
+    # And the document now LOADS -- which is all filling this key bought (see the ⚠⚠ paragraph
+    # in its header and ``test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget``
+    # below: the kernel's time path measures the SAME quantity against a far tighter bound).
+    policy = load_critical_input_policy(path, scheme=_SCHEME)
+    assert [field.field_key for field in policy.fields] == list(_B1A_FIELD_POLICY)
+    assert {field.max_age_ms for field in policy.fields} == {_TENANT_MAX_AGE_MS}
+
+    # The provenance the value cannot be read without: the operator's direction verbatim, the
+    # grade, the derivation's three measured premises, the conservative direction, and the
+    # re-derivation obligation. Pinned as strings for the same reason the decision-9 caveats
+    # are -- a number whose derivation has been deleted is an invented number again.
+    prose = _comment_prose(path)
+    for sentence in _MAX_AGE_PROVENANCE:
+        assert sentence in prose, sentence
+
+
+def test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms(
+    tmp_path: Path,
+) -> None:
+    """Filling the fifteen did not retire the loader's refusal -- pinned BY KEY NAME against a
+    tmp copy with ONE value nulled.
+
+    This is the half that the old "refuses as committed" test carried for free and that the fill
+    would otherwise have silently removed. Without it, a later edit that drops a ``max_age_ms``
+    back to ``null`` (or omits it) would be caught by nothing in this file, and the whole reason
+    the fifteen were ``null`` for two days was that this refusal is what keeps an unsourced
+    freshness bound out of a booting deployment.
+
+    ONE field, not all fifteen: a mutation that nulls every entry would also be caught by a
+    loader that only checked the first, so nulling the LAST one proves the loader walks them
+    all."""
+    raw = yaml.safe_load(
+        (_TENANT_DIR / "critical_input_policy.yaml").read_text(encoding="utf-8")
+    )
+    assert raw["fields"][-1]["field_key"] == "eod"  # B1a's FIELD_ORDER ends here
+    raw["fields"][-1]["max_age_ms"] = None
+    path = tmp_path / "critical_input_policy.yaml"
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+
     with pytest.raises(CriticalInputPolicyConfigError) as excinfo:
         load_critical_input_policy(path, scheme=_SCHEME)
     assert "max_age_ms" in str(excinfo.value)
+
+
+def test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget() -> None:
+    """The honest consequence of filling the key, as arithmetic rather than a comment.
+
+    ``max_age_ms`` and the kernel's time-admission bound measure the SAME quantity --
+    ``now_ms - as_of_ms`` (``marketfeed/snapshot.py::_derive_field_state``) and ``source_age =
+    wall_clock_now() - as_of`` (``marketfeed/time_projection.py``'s own docstring). B1a stamps
+    ``as_of_ms`` at the bar's LABEL, i.e. its OPEN (``produce_fields.derive_as_of_ms``: "The
+    label, not label+60s"), on 1-minute bars (``derive_raw_event_id``'s ``:1m:`` token). So the
+    SMALLEST age such an observation can have is one bar period -- and that already exceeds the
+    conservative freshness budget this tree's own ``time.yaml`` leaves, by a wide margin.
+
+    Pinned so "the file loads now" is never read as "the deployment would work": it would not,
+    for a reason ``max_age_ms`` cannot fix. The fix is ③, the live producer (kickoff §5 3).
+
+    ⚠ **What this test does and does not guard.** It reads ``time.yaml`` and the runtime's own
+    ``_DELAY_BOUND_FIELDS``, so it tracks those two. Everything else here -- the bar period, the
+    label semantics, the quantity the runtime compares -- is asserted as VALUES against the
+    constants above, which carry the code citations in their own comments; this test does not
+    re-derive them from ``produce_fields`` or ``snapshot.py`` (``tools`` is legacy-side and
+    firewall-denied from here, and the comparison in ``snapshot.py`` is an expression, not a
+    readable constant). So: a changed ``time.yaml`` or a changed delay-bound set fails here; a
+    changed bar period or a producer that starts stamping at bar CLOSE would NOT, and would make
+    the derivation in ``critical_input_policy.yaml``'s header stale with nothing failing. That
+    gap is the ③ re-derivation obligation, not something this test closes."""
+    time_cfg = yaml.safe_load((_TENANT_DIR / "time.yaml").read_text(encoding="utf-8"))
+
+    # The derivation must have produced the runtime's full set -- an inverted-map lookup that
+    # silently found nothing would make the sum below too small and the budget too large (i.e.
+    # permissive), so an empty or short result is never an acceptable outcome here.
+    assert len(_TIME_DELAY_BOUND_KEYS) == len(_DELAY_BOUND_FIELDS)
+    assert set(_TIME_DELAY_BOUND_KEYS) <= set(time_cfg)
+
+    budget = time_cfg["MAX_time_conservative_freshness_age_ms"] - sum(
+        time_cfg[name] for name in _TIME_DELAY_BOUND_KEYS
+    )
+    assert (
+        budget == 800
+    )  # 1000 - 4x50, the derivation marketfeed.yaml's header writes out
+
+    # One bar period is the floor on a label-stamped bar's age, and it is over the budget.
+    assert budget < _B1A_BAR_PERIOD_MS
+    # The adopted bound is three bar periods -- derived from the cadence, and far above that
+    # budget too, which is exactly why it cannot rescue the time path.
+    assert _TENANT_MAX_AGE_MS == 3 * _B1A_BAR_PERIOD_MS
+    assert budget < _TENANT_MAX_AGE_MS
+
+    # And it is strictly above the two-period infimum, which is the point of the third period:
+    # at exactly 2P a bar goes STALE at the instant its successor is due, reproducing #807.
+    assert _TENANT_MAX_AGE_MS > 2 * _B1A_BAR_PERIOD_MS
 
 
 def test_tenant_construction_price_field_keys_are_declared_critical_inputs() -> None:

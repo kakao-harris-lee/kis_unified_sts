@@ -343,14 +343,82 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    트리를 소비하는 도구**다(`--source`). 그래서 트리는 상주 트리의 바이트 사본 + 선언된 차이로
    만들었고, 그것이 바로 그 스크립트가 나중에 `--source` 로 받을 모양이다.
 
-   **② 착지 완료(값 하나만 미결)** — 열다섯 필드를 B1a 의 `FIELD_ORDER` 순서로 선언하고
-   unit/scale/multiplier/sign 을 **B1a 필드 lineage**(`produce_fields._field_lineage`)에서 가져왔다.
-   `max_age_ms` 는 **열다섯 전부 `null`** 이고, 그래서 **그 파일은 로드되지 않는다** — 로더가
-   `null` `max_age_ms` 를 거부한다. 이것이 상주 트리가 출처 없는 값에 쓰는 fail-closed 규율과
-   같은 상태이고(`finality.yaml::source_revision` · `safety_activation.yaml::members`),
-   `tos/runtime/tests/compose/test_deploy_policies.py` 가 그 거부를 **키 이름으로** 고정한다.
-   상주의 600000 을 베껴 오지 않았다: 그 값의 근거는 **배치 저널 부팅**의 지연 흡수이고 생산자가
-   없는 이 tenant 에 옮길 수 없다. → **`max_age_ms` ×15 는 운영자 출처 미결 항목.**
+   **② 착지 완료 — 다섯 값 전부(`max_age_ms` 포함, 2026-10-09).** 열다섯 필드를 B1a 의
+   `FIELD_ORDER` 순서로 선언하고 unit/scale/multiplier/sign 을 **B1a 필드
+   lineage**(`produce_fields._field_lineage`)에서 가져왔다.
+
+   `max_age_ms` 는 초판에서 **열다섯 전부 `null`** 이었고 그래서 그 파일이 로드되지 않았다
+   (로더가 `null` `max_age_ms` 를 거부한다) — 출처가 없었기 때문이고, 상주 트리가 출처 없는
+   값에 쓰는 fail-closed 규율과 같은 상태였다(`finality.yaml::source_revision` ·
+   `safety_activation.yaml::members`). **운영자 지시 2026-10-09**(「출처가 없어도 설정이
+   필요하니 적용」)로 **180000** 을 적용했다 — 등급 **C**(개발 측 보수 제안,
+   `docs/plans/2026-09-12-tos-operator-value-proposals.md:4`).
+
+   도출은 **봉 주기에서** 나온다(실측): B1a 의 봉은 1분(`derive_raw_event_id` 의 `:1m:`),
+   `as_of_ms` 는 봉의 **라벨 = OPEN**(`derive_as_of_ms`: 「The label, not label+60s」), 런타임이
+   재는 것은 `now_ms - as_of_ms`(`marketfeed/snapshot.py::_derive_field_state`, `now_ms` 는 실
+   벽시계). 라벨 T 의 봉은 T+1P 에 닫히고 T+2P 에 교체되므로 **2P = 120,000 은 하한이지
+   안전값이 아니다** — 발행 지연 0 에서만 만족되고 그 모양은 이미 측정된 결함(#807)이다.
+   세 번째 P 가 지연 여유 → **3P = 180,000**. 보수 방향은 **작게**.
+   상주의 600000 은 베껴 오지 않았다: 그 근거는 **배치 저널 부팅**의 지연 흡수다.
+
+   ⚠⚠ **그러나 이 값은 ③ 를 대신하지 않는다(실측 2026-10-09).** 커널 시간 수용 경로는
+   **같은 양**(`source_age = wall_clock_now() - as_of`, `marketfeed/time_projection.py`)을
+   `time.yaml::MAX_time_conservative_freshness_age_ms` 1000 − Σdelay_bounds 200 = **800 ms**
+   예산에 댄다. 라벨 스탬프 1분봉은 그 **75 배**다. 즉 채운 효과는 「파일이 로드된다」뿐이고
+   시간 경로는 여전히 STALE 로 읽는다 — ③ 이 그것을 닫는다. ③ 이 상주 수집기처럼 **append
+   시각**을 `as_of_ms` 로 찍으면 올바른 한도는 180,000 이 아니라 **800 ms 자리수**이므로,
+   ③ 착지 시 이 키 ×15 · `poll_interval_ms` · `journal_pass_allowance_ms` 를 함께 다시 본다.
+   `tos/runtime/tests/compose/test_deploy_policies.py` 가 ① 열다섯 값 + 도출 문장 핀, ②
+   **하나라도 `null` 이면 로더가 그 키 이름으로 거부한다**(tmp 사본), ③ 위 산술(1분봉 ≥
+   800 ms 예산)을 고정한다.
+
+   **✅ data dir · 렌더된 설정 — 지정 2026-10-09 (결정 3 의 「방향마다 따로」).**
+   **이름만 지정했고 디렉터리는 만들지 않았다** — genesis 는 첫 부팅(④)이다.
+
+   | 배포 | durable set 부모 | 잎 | 렌더된 설정 |
+   | --- | --- | --- | --- |
+   | 상주 paper (불변) | `~/.local/state/tos/paper-data` | `<종목>` | `~/.config/tos/paper-config` |
+   | tenant **LONG** | `~/.local/state/tos/cp3-setup-d-long-data` | `<종목>` | `~/.config/tos/cp3-setup-d-long-config` |
+   | tenant **SHORT** | `~/.local/state/tos/cp3-setup-d-short-data` | `<종목>` | `~/.config/tos/cp3-setup-d-short-config` |
+
+   이름 규칙은 **「설정 트리 이름 + `-data`/`-config`」**다 — 경로만 보고 어느 코퍼스가 어느
+   트리로 부팅됐는지 알 수 있어야 한다(런북 §5 ⑤: 활성화 기록은 방향을 결속하지 않는다).
+   모드·규율은 상주와 같다(부모·잎 0700 · 스토어 0600 · 저장소 밖). ⛔ 방향을 한 data dir
+   에 섞지 않고 상주 잎에도 섞지 않으므로 LONG·SHORT 는 **부모부터** 다르다(런북 §7.10 3).
+
+   **충돌 실측 2026-10-09(읽기 전용 점검)**: ① 콜드 백업 래퍼
+   `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본 `paper-data`)의
+   **직접 자식** 중 `A0[0-9][0-9][0-9][0-9]` 만 잎으로 세고 **`~/.local/state/tos/*` 를
+   글로브하지 않는다** → 두 부모는 보이지 않으므로 **백업되지 않는다**(켜는 것은 운영자 결정).
+   ⛔ **그러나 켜는 방법은 「`COLD_DATA_DIR` 만 지정」이 아니다**(2026-10-09 리뷰 H1 — 초판이
+   그렇게 적었고 틀렸다): 그 변수만 바꾼 실행은 `COLD_CONFIG_DIR` 기본값
+   `~/.local/state/tos/paper-ops` 를 쓰고, 래퍼가 `COLD_ROOT` 를 그 기준 설정 세 경로의 공유
+   부모(= `paper-cold`)로 유도하므로, 잎별 설정·보관소가 **상주** `paper-ops/leaves/<잎>` ·
+   `paper-cold/<잎>` 에 들어간다. 충돌의 기계장치는 `:443-444` 다 — 그 두 경로는 **잎 이름만**
+   으로 키를 잡고(`LEAF_CFG_DIR="$CONFIG_DIR/leaves/$leaf"` · `LEAF_ROOT="$COLD_ROOT/$leaf"`)
+   잎 이름은 계약월이라 **세 배포가 같은 잎 이름**을 갖는다. 결과는 **동시성에 따라 갈린다**:
+   기본 락이 공유라(`:135`) 직렬이면 거부가 아니라 **섞인다**(세대는 `backup_root` 단위 —
+   `:49-51` — 이므로 세 배포가 한 카운터를 쓰고, 잎별 파생 설정은 **매 실행 재생성**되므로
+   `:54` 마지막 실행이 앞 실행의 좌표를 덮는다); 락을 우회해 **동시**가 되면 `:49-55` 가 적는
+   대로 「같은 밤에 둘 다 같은 세대 번호를 받고 **둘째가 산출물 충돌로 거부된다**」.
+   ℹ️ 래퍼 헤더의 `COLD_LOCK` 항목(`:86-92`)은 같은 말을 **다른 계기**(락 우회 스크래치 실행)로
+   하는 **유사 진술**이고 기본 설정 tenant 실행에 대한 진술이 아니다 — 초판이 그 문장을 이
+   자리의 근거로 인용한 것은 **오인용**이었다(2026-10-09 재검토). 그래서 tenant 실행은
+   `COLD_DATA_DIR` ·
+   **`COLD_CONFIG_DIR`**(tenant 전용 ops 디렉터리) · **`COLD_TARGET_BORN_ON`**(그 잎의 첫
+   부팅일 — 기본 `2026-10-06` 을 두면 genesis 전 부재가 rc 1 refused 다) 셋을 함께 지정하고,
+   그 ops 의 `evidence_cold_backup.yaml` 세 경로는 **tenant 전용 콜드 부모** 아래여야 한다.
+   경로 지정은 런북 **§7.2-b** 표의 뒤 두 열이다.
+   ② 설정 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 의 세 경로는 전부
+   `paper-cold/` 아래 절대경로 리터럴 — 글로브·`~` 전개 없음. ⚠ 그 파일 자체는 tenant 실행이
+   건드리지 않지만, 위 셋을 함께 바꾸지 않으면 **잎 단위로 충돌한다**(초판의 「충돌 없음」은
+   `COLD_DATA_DIR` 만 비교한 결과였다). ③ A1 측정
+   아티팩트는 `~/.local/state/tos/measure/` 아래 — 충돌 없음. ④ ⚠ 상주 세션 래퍼의 렌더
+   출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는 **하드코딩**(환경 손잡이가
+   아니다)이라 **그 래퍼로는 이 tenant 를 띄울 수 없다** — ④ 의 일이다. ⑤ ⚠ 이름 인접:
+   `~/.config/tos/paper-config-short` 가 이미 있는데 그것은 **2026-09-28 상주 SHORT
+   부팅증명**의 산출물이고 CP-3 SHORT 와 무관하다. 전체 표는 런북 **§7.2-b**.
 
    **③·④ 는 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
    「렌더의 전략 파일 상수 한 줄 교체」가 **아니다** — 그 스크립트의 좌표 규칙은 앵커 줄이
@@ -372,8 +440,37 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    여전히 `null` 이라 갱신할 활성화 기록이 없고 **digest 리터럴을 지어내지 않았다** — 활성화 자체는
    ④ 의 일로 남는다.
 
-   LONG/SHORT 는 각각 렌더이며 SHORT 파일·SHORT 트리는 아직 없다(DSL 에 abs() 가 없어 진입 비교가
-   한 변뿐이므로 SHORT 는 `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다).
+   ✅ **SHORT 트리 착지 2026-10-09 — `config/tos_runtime/cp3-setup-d-short/`** (결정 4 의
+   나머지 반쪽). LONG 트리의 사본 + **선언된 방향 차이**이고, **31 파일 = LONG 과 바이트 동일
+   23 + YAML 이 다름 6 + 산문이 다름 1(`README.md`) + SHORT 전용 1
+   (`strategies/setup_d_short.strategy.yaml`; LONG 의 전략 파일은 이 트리에 없다)**.
+   DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
+   `z_x1000 >= +1800`(op **GE**, 바인딩 `z_entry_min_x1000: 1800`)을 쓰는 자기 파일을 갖는다.
+
+   **방향이 사는 자리 다섯** — 런북 §7.10 3 이 셋을 열거하고(`construction.yaml::action_class`
+   `/outbound_side` · OCP 의 DIRECTION 축 · 전략 파일의 `direction`) 이 트리가 둘을 더한다:
+   `marketfeed.yaml::direction`(발행되는 모든 캡슐의 `SafetyCriticalFacts` 로 들어간다) ·
+   **진입 비교의 변과 그 바인딩**. 다섯 전부를
+   `tos/runtime/tests/compose/test_tenant_tree_short.py` 가 LONG 사본과 대조해 고정한다.
+   정책 id 는 **셋**이 SHORT 전용이다(venue · critical_input · **OCP**) — OCP 가 LONG 트리에서
+   rename 대상이 아니었던 이유는 타입 콘텐츠가 같았기 때문이고, 이 트리는 DIRECTION 축이
+   갈리므로 같은 기준(「내용이 갈렸는가」)으로 rename 된다.
+   ⚠ **실측 2026-10-09**: OCP 의 `canonical_digest` 는 DIRECTION 축을 바꿔도, **`policy_id` 를
+   바꿔도** 달라지지 않는다(OCP 헤더의 KNOWN LIMITATION 보다 한 걸음 더 나쁘다). 그래서 그
+   rename 은 digest 를 가르지 못하고 활성화 키의 **`member_id` 만** 두 문서를 구별한다.
+   VCP 는 반대로 digest 가 `_model_view.shape_constraints` 를 덮는다(`tick_size` 하나로 달라짐).
+
+   ⚠ **SHORT 에는 parity 증거가 0 이다** — 그 트리 `README.md` §3.3. B1b 실행이 LONG 단독
+   (**B1b-D5**)이었으므로 §5 2 의 「규칙 수준 374/374 = 100 %」는 **LONG 쪽 수치**이고, 레거시
+   SHORT 발화 176 은 전부 `LEGACY_ONLY_ENTRY` 로 그 차이에 귀속됐다. 더해서 결정 5 가 삭제한
+   `short_blocked_regimes` 는 레거시에서 **SHORT 에만** 걸려 있던 가드이므로
+   (`long_blocked_regimes` 는 빈 리스트다) 그 손실은 이 방향에 **비대칭적으로** 떨어진다.
+   ⚠ **B1a 필드에 SHORT 변종을 만들지 않았다 — 실측 근거**: 방향 의존 게이트
+   (`stall_ok`·`reversal_ok`)의 방향은 배포 설정이 아니라 **z 의 부호**에서 나오므로
+   (`shared/decision/setups/vwap_reversion.py`: `z >= +extreme` → short) SHORT 규칙이 발화할 수
+   있는 봉에서는 이미 숏 쪽 게이트가 평가돼 있다. `vwap_reverted` 는 `abs(z) <= band` 로 대칭,
+   `entry_window`·`eod`·`hi_vol` 은 방향 무관이다. **long 전용 필드는 없었다.**
+   ⚠ **이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다** — ④ 가 미착수라 그 경로가 없다.
 4. **paper 검증**(결정 3·4·8·9) — 방향별 data dir, 런북 §3 절차, 재시작·리플레이·콜드 백업 복원 drill
    증거. 결정 9 **와 band 원천 웨이브**(2026-10-08 설계 §6 — `price_min/max` 가 null 이면 step 3 가 UNKNOWN)가 닫히기
    전엔 체결·영수증(부분/중복/미지)이 없으므로 그 항목은 **미관측**으로 적는다.

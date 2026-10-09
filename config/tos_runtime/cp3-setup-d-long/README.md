@@ -15,8 +15,10 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
   data dir(`~/.local/state/tos/paper-data/<월물>`)은 이 PR 이 **건드리지 않았다**
   (결정 3 「상주 잎·상주 설정 불변」 — 상주 콘텐츠를 바꾸면 전략 키 변화로 부팅 리플레이가
   held 가 된다, 런북 `docs/runbooks/tos-paper-boot.md` §7.10 6).
-- **SHORT 는 여기 없다.** DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
+- **SHORT 는 여기 없다 — 자기 트리에 있다: `config/tos_runtime/cp3-setup-d-short/`**
+  (착지 2026-10-09). DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
   `z_x1000 >= +1800` 을 쓰는 **자기 파일·자기 트리**를 갖는다(결정 4; kickoff §5 3 마지막 줄).
+  두 트리의 차이 목록과 **SHORT parity 공백**은 그 트리의 `README.md` §3 에 있다.
 
 ## 2. 환경 라벨은 `paper` 다 — tenant 식별자가 아니다
 
@@ -39,10 +41,11 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 
 | 파일 | 상태 |
 | --- | --- |
-| `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4) + `policy_id` 가 tenant 전용(§7 2). 런타임이 읽는 **값** 차이는 `max_quantity` 한 곳 |
+| `venue_constraint_policy.yaml` | **다름** — `max_quantity` null → **10000**(결정 9 (a), 아래 §4) · `tick_size` 5 → **2**(mini 규정값 정정 2026-10-09, 아래 §4) + `policy_id` 가 tenant 전용(§7 2). 런타임이 읽는 **값** 차이는 그 **두 곳**이다 |
 | `critical_input_policy.yaml` | **다름** — 사본이 아니다. 상주 쪽은 부팅 증명 픽스처의 **세 필드**, 이쪽은 tenant 상류 **열다섯 필드**(아래 §5) + `policy_id` tenant 전용 |
 | `construction.yaml` | **다름** — `price_field_key`·`shape_price_field_key` 가 `"close"` → **`"close_x100"`**. 상주의 `"close"` 는 이 트리의 critical_input 에 **없는 키**이고, 두 로더는 서로를 볼 수 없어 그 불일치를 **거부하지 못한다**(그 파일의 해당 주석이 실측 경로를 적는다). 나머지 값은 상주 승인값 그대로 |
-| `engine.yaml` · `order_construction_policy.yaml` | **주석만 다름** — 값은 상주 승인값 그대로이고 타입 콘텐츠가 같으므로 **digest 도 같다**. 두 파일의 기존 주석이 상주 전략(`bootproof_band`)을 인용하고 있어 이 트리에서 거짓이 되므로, 각 자리에 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정 · `quantity_basis` 선언 자리) |
+| `engine.yaml` | **주석만 다름** — 값은 상주 승인값 그대로다. 기존 주석이 상주 전략(`bootproof_band`)을 인용해 이 트리에서 거짓이 되므로 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정) |
+| `order_construction_policy.yaml` | **digest 동일 · template DATA 산문이 다름** — 2026-10-09 tick 정정이 `unit_multiplier_currency_and_numeric_rules` 줄을 고쳤고 그것은 **주석이 아니라 DATA**(DR-0002 §2.1 — 보존되지만 런타임이 해석하지 않는다)다. 그래서 「주석만 다름」은 **더 이상 참이 아니다**(초판에는 참이었고 이 PR 의 첫 커밋이 깨뜨렸다). `canonical_digest` 는 **그대로**다(`c90444b9…` — 상주·LONG·SHORT 셋 다 같다; 그 digest 는 DATA 산문도 `policy_id` 도 추적하지 않는다). 주석 쪽도 `quantity_basis` 선언 자리에 tenant 적용 문단을 덧붙였다 |
 | `strategies/setup_d_long.strategy.yaml` | **tenant 전용** — 상주의 `strategies/bootproof_band.strategy.yaml` 을 **대체**한다(그 파일은 이 트리에 없다) |
 | `strategy_bindings.yaml` | **tenant 전용** — `z_entry_max_x1000: -1800`. `strategies/` 의 **형제**다(안에 두면 로더의 stray-file 규칙이 디렉터리 전체를 거부한다) |
 | `README.md` (이 파일) | **tenant 전용** |
@@ -59,6 +62,23 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 > 바꿀 때는 그 파일이 더 이상 사본이 아니므로 §3 표의 행을 옮긴다(`construction.yaml` 이
 > 2026-10-09 리뷰에서 실제로 그렇게 옮겨졌다).
 
+### ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** tenant 사본도 갱신한다
+
+위 23 개는 **상주 파일의 바이트 사본**이다. 그러므로 `config/tos_runtime/paper/` 의 그 파일
+중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 tenant 트리(`cp3-setup-d-long` ·
+`cp3-setup-d-short`)의 사본을 함께 갱신해야 한다. 안 하면 사본이 조용히 낡는다.
+
+⚠ **그 중 `release.yaml` 은 조용히 낡는 것으로 끝나지 않는다** — 그 파일이
+`expected_code_digest` 를 싣는다. 런타임 코드를 바꾸는 PR(예 band 원천 웨이브 PR-2)은 그
+핀을 **상주 트리에서만** 재도출한다. 상주 세션은 매일 재도출해 대조하므로 거기서는 드러나지만
+(런북 §5 ①), tenant 트리는 **부팅한 적이 없어** 낡은 핀이 드러날 레인이 없다 — 첫 tenant
+부팅이 digest 불일치로 **ABORT** 한다.
+
+`tos/runtime/tests/compose/test_tenant_tree_copies.py` 가 이 의무를 고정한다: 사본 23 개의
+**바이트 동일성** · 선언된 차이가 **실제로 다른가** · 분류의 **전수성**(파일을 더하고 분류를
+빼먹으면 red) · 분류됐지만 **어느 검사도 안 하는 이름이 없는가** · 그리고 `release.yaml` 은
+실패 메시지가 「두 트리에서 같은 PR 에 재도출하라」고 말하도록 **따로** 단언한다.
+
 ## 4. `max_quantity: 10000` — 결정 9 (a)
 
 운영자 채택 **2026-10-08**. 출처는 KRX 파생상품시장 업무규정 시행세칙 **별표 17의2 제1호
@@ -72,33 +92,59 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 
 - **상주 paper 트리는 이 값을 채택하지 않았다** — 운영자가 paper 채택을 보류했다(결정
   2026-10-08). 상주 트리의 `max_quantity` 는 `null` 그대로다.
-- **`tick_size` 는 5 그대로다.** mini 규정값 2 로의 정정은 승인됐으나 **band 원천 웨이브
-  (설계 §6)의 전제 항목**이고 이 PR 범위 밖이다. band 가 null 인 동안 tick 검사는 step 3
-  UNKNOWN 에 가려져 효력이 없다.
+- **`tick_size` 는 2 다 (정정 착지 2026-10-09).** 운영자 승인 2026-10-08 · 시행세칙
+  **제4조의9 제2호** · 등급 **R** · 브로커 정황 = P-VL band 격자(PR #881). band 원천 웨이브
+  계획 `docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md` §3 의 첫 PR 이다.
+  **거동 변화는 0 이다** — band 가 null 인 동안 tick 검사는 step 3 UNKNOWN 에 가려진다.
+  지금 고치는 이유는 band 가 들어오는 순간 종전 5(full 계약 값)가 mini 정상 호가를 전부
+  INADMISSIBLE 로 만들기 때문이다. 조문·보강 정황 셋은 그 파일 헤더에 있다.
+  **상주 `paper` 트리의 tick 은 5 그대로다** — 계획 §3 이 paper 채택과 함께 보류한다.
+  ⚠ 이 변경은 tenant VCP 의 `canonical_digest` 를 바꾼다(실측: VCP digest 는
+  `_model_view.shape_constraints` 를 덮는다). 이 트리의 `safety_activation.yaml::members`
+  는 `null` 이라 갱신할 활성화 기록이 없다.
 - **`price_min`/`price_max` 는 null 그대로다** — 일별 동적 값이라 정적 리터럴 금지(설계 §6).
 
-## 5. `critical_input_policy.yaml` — 열다섯 필드, `max_age_ms` 는 출처 없음
+## 5. `critical_input_policy.yaml` — 열다섯 필드 (`max_age_ms` = 180000, 등급 C)
 
 필드 목록·순서는 B1a 의 `FIELD_ORDER`(`tools/tos_cp3/produce_fields.py`) 그대로이고,
 각 필드의 `unit`/`scale`/`multiplier`/`sign` 은 **B1a 의 필드 lineage** 에서 온다
 (`produce_fields._field_lineage` — 그 독스트링이 「이 파일이 쓰는 모양으로 적는다」고 말한다).
 
-**`max_age_ms` 는 열다섯 전부 `null` 이고, 그래서 이 파일은 오늘 로드되지 않는다.** 로더가
-`null` `max_age_ms` 를 거부한다(`marketfeed/policy.py`). 이것은 결함이 아니라 상주 트리가
-출처 없는 값에 쓰는 **fail-closed 규율**(`finality.yaml::source_revision` ·
-`safety_activation.yaml::members`)과 같은 상태다. 근거는 그 파일 헤더에 있다: 제안표에 행이
-없고(안전 값이라 의도적으로 채택 안 됨), B1a lineage 도 이 키를 적지 않으며, 상주의 600000
-은 **배치 저널 부팅**의 근거로 정당화된 값이라 생산자가 없는 이 tenant 로 옮길 수 없다.
-→ **운영자 출처가 필요한 미결 항목**(§7).
+**`max_age_ms` 는 열다섯 전부 `180000` 이고, 그래서 이 파일은 이제 로드된다**(2026-10-09).
+종전 판은 전부 `null` 이어서 로더가 거부했고(`marketfeed/policy.py`), 그것이 출처 없는 값에
+대한 fail-closed 상태였다. **운영자 지시 2026-10-09**(「출처가 없어도 설정이 필요하니 적용」)
+로 그 상태를 닫았다 — 등급 **C**(개발 측 보수 제안 ·
+`docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 의 등급 어휘).
+
+도출은 **봉 주기에서** 나온다(그 파일 헤더가 실측 인용과 함께 적는다 — 여기서 요약만 한다):
+B1a 의 봉은 1분(`derive_raw_event_id` 의 `:1m:`)이고 `as_of_ms` 는 봉의 **라벨 = OPEN**
+(`derive_as_of_ms`: 「The label, not label+60s」)이며 런타임은 `now_ms - as_of_ms` 를 잰다
+(`marketfeed/snapshot.py`). 라벨 T 의 봉은 T+1P 에야 닫히고 T+2P 에 교체되므로 **2P =
+120,000 은 하한이지 안전값이 아니다**(발행 지연 0 에서만 만족 — 이슈 #807 의 모양을 재현).
+세 번째 P 가 발행·폴 지연 여유다 → **3P = 180,000**. 보수 방향은 **작게**(작으면 UNKNOWN →
+NO_ACTION, 크면 낡은 필드가 VALID = fail-OPEN).
+
+⚠⚠ **「로드된다」 ≠ 「부팅하면 돈다」.** 커널 시간 경로는 **같은 양**(`source_age =
+wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 4×50)에 대고, 라벨
+스탬프 1분봉은 그 75 배다 — 즉 시간 경로는 여전히 STALE 로 읽는다. ③ 생산자가 측정되면
+이 값을 **하향하거나 다시 도출한다**(특히 ③ 이 상주 수집기처럼 append 시각을 찍으면 올바른
+한도는 800 ms 자리수다).
+
+상주의 600000 은 **베껴 오지 않았다** — 그 근거(「렌더가 저널을 부팅 직전에 생성하므로 그
+여유는 실제로 그 부팅 지연만 덮는다」)는 배치 저널 부팅에만 성립한다.
 
 ## 6. 무엇이 증명되지 않았나 (이 PR 이 하지 않은 것)
 
 1. **부팅 0 회.** 이 트리로 `run` 을 돌리지 않았다. 검증된 것은 ① `venue_constraint_policy.yaml`
    이 좌표 미채움 상태에서 **거부되고**(운영자-채움 게이트) 좌표를 채우면 `max_quantity: 10000`
-   으로 적재된다는 것, ② `critical_input_policy.yaml` 이 `max_age_ms` 로 거부된다는 것,
-   ③ `construction.yaml` 의 두 price 키가 이 트리의 critical_input 필드 집합 **안에 있다**는 것
+   으로 적재되고 `tick_size: 2` 를 든다는 것, ② `critical_input_policy.yaml` 이 이제
+   **적재된다**는 것(`max_age_ms` ×15 = 180000, §5) **과** 그 중 하나라도 `null` 이면 로더가
+   여전히 **그 키 이름으로 거부한다**는 것, ③ `construction.yaml` 의 두 price 키가 이 트리의
+   critical_input 필드 집합 **안에 있다**는 것
    뿐이다(`tos/runtime/tests/compose/test_deploy_policies.py`). ③ 은 두 로더가 서로를 보지
    못하는 자리를 테스트가 대신 보는 것이고, **부팅이 그 교차를 검증한다는 뜻은 아니다.**
+   ⚠ ② 의 「적재된다」를 「부팅하면 돈다」로 읽지 말 것 — 커널 시간 경로의 800 ms 보수 예산은
+   라벨 스탬프 1분봉을 여전히 STALE 로 읽는다(§5 의 ⚠⚠). 그것을 닫는 것은 아래 3(③ 생산자)다.
 2. **렌더가 이 트리를 아직 처리하지 못한다** — kickoff §5 3 ④. `scripts/tos/render_paper_config.py`
    는 (a) `_STRATEGY_FILE` 이 `strategies/bootproof_band.strategy.yaml` 로 고정이고
    (b) 좌표 규칙이 앵커 **정확히 1회** 매칭을 요구하는데 이 트리의 전략 파일은 규칙이 셋이라
@@ -112,11 +158,63 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 
 ## 7. 운영자 미결 항목
 
-1. **`critical_input_policy.yaml::fields[].max_age_ms` ×15** — 신선도 한도. 출처 없음(§5).
-2. **SHORT 트리** — 결정 4 의 나머지 반쪽. 별도 렌더·별도 트리·별도 data dir.
-3. **data dir** — 결정 3 의 「방향마다 따로」. 상주 잎에 절대 섞지 않는다(런북 §7.10 3).
+1. **`max_age_ms` 의 실제 원천** — 값 자체는 등급 C 로 **적용됐다**(§5). 남은 것은 ③ 실시간
+   생산자를 측정한 뒤의 **하향 또는 재도출**이고, 그 전까지 180,000 은 봉 주기에서 도출한
+   개발 측 제안이지 승인된 원천값이 아니다.
+2. **data dir 의 genesis 와 콜드 백업 편입** — 이름은 **지정됐다**(아래 §8). 남은 것은
+   ① 첫 부팅(④)이 만드는 genesis 와 ② 콜드 백업 `COLD_DATA_DIR` 지정(운영자 결정).
+3. **SHORT parity 실행** — SHORT 트리는 **착지했다**(`config/tos_runtime/cp3-setup-d-short/`,
+   2026-10-09)지만 그 방향에는 **parity 증거가 0 이다**: B1b 실행이 LONG 단독이었고(선언된
+   차이 **B1b-D5**) 그래서 공표된 규칙 수준 일치 374/374 는 **LONG 쪽 수치**다. 더해서 결정 5
+   가 삭제한 `short_blocked_regimes` 는 레거시에서 **SHORT 에만** 걸려 있던 가드라 그 손실이
+   SHORT 트리에 비대칭적으로 떨어진다. 목록은 그 트리 `README.md` §3.3 이다 — 두 트리를 함께
+   읽어야 하므로 여기에도 적는다.
+
+## 8. data dir · 렌더된 설정 — 지정 2026-10-09 (결정 3)
+
+| 무엇 | 어디 | 비고 |
+| --- | --- | --- |
+| durable set **부모** | `~/.local/state/tos/cp3-setup-d-long-data` | **0700** · 저장소 밖 · **아직 없다** |
+| durable set **잎** | `cp3-setup-d-long-data/<종목>` | 계약월마다 하나 · **0700**(디렉터리) · **0600**(스토어 넷) · **그 잎의 첫 세션 genesis 가 만든다** |
+| 렌더된 설정 | `~/.config/tos/cp3-setup-d-long-config` | **0700** · 부팅 직전 재렌더(저널 신선도) · **아직 없다** |
+
+이름 규칙은 **「설정 트리 이름 + `-data` / `-config`」**다 — 이 트리 이름이
+`cp3-setup-d-long` 이므로 그대로 따라간다. 경로만 보고 어느 코퍼스가 어느 트리로
+부팅됐는지 알 수 있어야 하기 때문이다(런북 §5 ⑤: **활성화 기록은 방향을 결속하지
+않으므로** 경로가 그 역할을 한다).
+
+- ⛔ **상주 잎(`~/.local/state/tos/paper-data/<종목>`)에 절대 섞지 않는다**(런북 §7.10 3).
+  **SHORT 와도 섞지 않는다** — SHORT 는 `cp3-setup-d-short-data` 로 **부모부터** 다르다.
+- ⚠ **디렉터리를 만들지 않았다.** genesis 는 첫 부팅이고 그것은 ④ 다(§6 2).
+- ⚠ **콜드 백업에 아직 들어 있지 않다** — 래퍼는 `COLD_DATA_DIR`(기본 `paper-data`)의
+  직접 자식 중 `A0####` 만 잎으로 세고 `~/.local/state/tos/*` 를 글로브하지 않으므로
+  이 부모는 보이지 않는다. 켜는 것은 **운영자 결정**이다.
+- ⛔ **켤 때 `COLD_DATA_DIR` 만 지정하면 안 된다**(2026-10-09 리뷰 H1). 그 변수만 바꾼
+  실행은 `COLD_CONFIG_DIR` 기본값 `~/.local/state/tos/paper-ops` 를 쓰고, 래퍼는
+  `COLD_ROOT` 를 그 기준 설정 세 경로의 **공유 부모**(= `paper-cold`)로 유도하므로 잎별
+  설정·보관소가 **상주** `paper-ops/leaves/<잎>` · `paper-cold/<잎>` 에 들어간다. 잎 이름은
+  계약월이라 상주·LONG·SHORT 가 **같은 잎 이름**을 갖고, 그 두 경로는 **잎 이름만**으로 키를
+  잡는다(`:443-444`). 결과는 **동시성에 따라 갈린다** — 기본 락이 공유라 직렬이면 거부가
+  아니라 **섞인다**(세대는 `backup_root` 단위 `:49-51`, 잎별 파생 설정은 매 실행 재생성
+  `:54`), 락을 우회해 동시가 되면 `:49-55` 대로 **둘째가 산출물 충돌로 거부된다**.
+  (래퍼 헤더의 `COLD_LOCK` 항목 `:86-92` 는 같은 말을 **락 우회**라는 다른 계기로 하는 유사
+  진술이고 기본 설정 tenant 실행에 대한 진술이 아니다 — 2026-10-09 재검토.)
+  그래서 셋을 함께 지정한다 —
+  `COLD_DATA_DIR` · **`COLD_CONFIG_DIR=~/.local/state/tos/cp3-setup-d-long-ops`** ·
+  **`COLD_TARGET_BORN_ON=<이 잎의 첫 부팅일>`**(기본 `2026-10-06` 을 두면 genesis 전 부재가
+  조용한 rc 0 이 아니라 **rc 1 refused** 다). 그리고 그 ops 의 `evidence_cold_backup.yaml`
+  세 경로는 **`~/.local/state/tos/cp3-setup-d-long-cold/`** 아래여야 한다. ⚠ 그 ops·cold
+  디렉터리도 **아직 없다**.
+- 전체 표(ops·cold 열 포함)·충돌 실측·상주 래퍼가 이 tenant 를 띄우지 못하는 이유는 런북
+  **§7.2-b** 에 있다.
 
 ### 닫힌 항목 (여기 있었다가 처분된 것)
+
+- **`critical_input_policy.yaml::fields[].max_age_ms` ×15 — ✅ 적용 2026-10-09 (등급 C).**
+  초판은 「출처 없음 → 열다섯 전부 `null` → 파일이 로드되지 않는다」를 미결로 기록했다.
+  **운영자 지시 2026-10-09**(「출처가 없어도 설정이 필요하니 적용」)로 닫혔다. 값은
+  **180000**(= 3 × 1분봉)이고 도출·등급·보수 방향·재도출 의무는 §5 와 그 파일 헤더에 있다.
+  남은 것은 위 1 의 재도출뿐이다.
 
 - **정책 식별자 충돌 — ✅ 해소됨 2026-10-09 (rename).** 초판은 「tenant
   `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데
@@ -125,7 +223,8 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
   부팅한 적이 없고 활성화 기록도 증거도 없으므로 rename 이 무효화할 것이 없다. 그래서
   `vcp-paper-cp3-setup-d-long-krx-index-futures` 로 바꿨고 **세대는 1 그대로**다(다른 배포의
   정책이지 상주 정책의 다음 세대가 아니다). 기준은 **내용이 갈렸는가**이지 트리가 다른가가
-  아니므로, 타입 콘텐츠가 같은 `order_construction_policy.yaml`(주석만 다름) ·
+  아니므로, digest 가 같은 `order_construction_policy.yaml`(주석 + template DATA 산문만
+  다르고 `canonical_digest` 는 `c90444b9…` 그대로다 — §3 표) ·
   `aggregate_risk_policy.yaml` · `action_flow_policy.yaml` 의 id 는 **바꾸지 않았다**.
   `safety_activation.yaml::members` 는 여전히 `null` 이라 갱신할 활성화 기록이 없고
   digest 리터럴도 지어내지 않았다 — 활성화는 ④ 의 일로 남는다.

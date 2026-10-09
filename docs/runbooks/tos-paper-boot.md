@@ -994,6 +994,128 @@ find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
 `~/.local/state/tos/paper-data` 는 2026-10-04 현재 **아직 없고**(실측) genesis 는 10-06 이라
 패치가 먼저다.
 
+#### 7.2-b CP-3 tenant durable set — **지정만 했다 (2026-10-09) · 디렉터리는 없다**
+
+§7.2 의 표는 **상주 배포**의 것이다. CP-3 첫 tenant(Setup D)는 kickoff 결정 3·4 대로
+**방향마다 따로** 돌므로 자기 durable set 과 자기 렌더 산출물을 갖는다. 이 절은 그
+**이름을 지정**하는 자리이고, 아래 어느 디렉터리도 **아직 만들지 않았다** — genesis 는
+그 잎의 **첫 부팅**이다(§7.6 과 같은 규율; CP-3 kickoff §5 3 ④ 는 미착수).
+
+| 배포 | durable set **부모** | **잎** | 렌더된 설정 | 콜드 백업 **ops**(`COLD_CONFIG_DIR`) | 콜드 **보관소 부모**(`COLD_ROOT`, 유도) |
+| --- | --- | --- | --- | --- | --- |
+| 상주 paper | `~/.local/state/tos/paper-data` | `paper-data/<종목>` | `~/.config/tos/paper-config` | `~/.local/state/tos/paper-ops` | `~/.local/state/tos/paper-cold` |
+| CP-3 tenant **LONG** (`config/tos_runtime/cp3-setup-d-long/`) | `~/.local/state/tos/cp3-setup-d-long-data` | `cp3-setup-d-long-data/<종목>` | `~/.config/tos/cp3-setup-d-long-config` | `~/.local/state/tos/cp3-setup-d-long-ops` | `~/.local/state/tos/cp3-setup-d-long-cold` |
+| CP-3 tenant **SHORT** (`config/tos_runtime/cp3-setup-d-short/`) | `~/.local/state/tos/cp3-setup-d-short-data` | `cp3-setup-d-short-data/<종목>` | `~/.config/tos/cp3-setup-d-short-config` | `~/.local/state/tos/cp3-setup-d-short-ops` | `~/.local/state/tos/cp3-setup-d-short-cold` |
+
+⚠ 뒤 두 열은 **콜드 백업을 켤 때 필요한 지정**이고, 켜는 것 자체는 운영자 결정이다(아래 ⛔
+문단). `COLD_ROOT` 는 환경변수가 아니라 그 ops 디렉터리의 `evidence_cold_backup.yaml` 세
+경로가 **공유하는 부모**로 유도되므로, tenant 보관소를 가르는 유일한 수단은 그 세 경로를
+tenant 콜드 부모 아래에 적는 것이다.
+
+**이름 규칙은 「설정 트리 이름 + `-data` / `-config`」다** — data dir 이름을 설정 트리
+이름에서 **도출할 수 있어야** 어느 코퍼스가 어느 트리로 부팅됐는지 경로만 보고 알 수 있다
+(§5 ⑤: 활성화 기록은 방향을 결속하지 않으므로 경로가 그 역할을 한다).
+
+**모드·규율은 상주와 같다**: 부모·잎 디렉터리 **0700**, 스토어 파일 **0600**(결정 레코드가
+계좌번호를 평문으로 싣는다 — §7.2-a), 렌더된 설정 디렉터리 **0700**, 전부 저장소 밖.
+
+⛔ **방향을 한 data dir 에 섞지 않는다. 상주 잎에도 절대 섞지 않는다**(§7.10 3). 섞인
+코퍼스는 §5 ⑤ 때문에 나중에 digest 로 갈라낼 수 없다. 그래서 LONG·SHORT 는 **부모부터**
+다르다 — 같은 부모 아래 `long/`·`short/` 두 잎을 두는 배치를 쓰지 않은 이유는 그 부모가
+콜드 백업 래퍼에게 「계약월 잎들의 부모」로 보이고, 그 래퍼의 잎 열거는 `A0####` 패턴
+하나뿐이기 때문이다(아래).
+
+⚠ **콜드 백업에는 아직 들어 있지 않다 — 운영자 결정 자리다.** 실측(2026-10-09):
+- 래퍼 `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본
+  `~/.local/state/tos/paper-data`)의 **직접 자식**만 훑고 `A0[0-9][0-9][0-9][0-9]` 에 맞는
+  디렉터리만 잎으로 센다. 나머지는 `STRAY` 경고 한 줄이다. **`~/.local/state/tos/*` 를
+  글로브하는 코드는 없다.** 그러므로 위 두 부모는 오늘 래퍼에게 **보이지 않는다** —
+  백업되지 않는다.
+
+⛔ **켜는 것은 「`COLD_DATA_DIR` 만 바꿔 한 번 더 돌리기」가 아니다 — 그렇게 하면 tenant
+아카이브가 상주 콜드 보관소에 섞인다**(2026-10-09 리뷰 H1, 래퍼 텍스트 재확인).
+`COLD_DATA_DIR` 만 바꾼 실행은 나머지를 **기본값 그대로** 쓴다:
+
+| 래퍼 변수 | 기본값 / 유도 | 결과 |
+| --- | --- | --- |
+| `COLD_CONFIG_DIR` | `/home/deploy/.local/state/tos/paper-ops` (`:132` `CONFIG_DIR=${COLD_CONFIG_DIR:-…}`) | 잎별 파생 설정이 **상주** `paper-ops/leaves/<잎>/` 에 쓰인다 (`:443` `LEAF_CFG_DIR="$CONFIG_DIR/leaves/$leaf"`) |
+| `COLD_ROOT` | 환경변수가 **아니다** — 기준 설정 `$CONFIG_DIR/evidence_cold_backup.yaml` 의 `backup_root`·`archive_dir`·`verify_root` 가 **공유하는 부모**로 유도된다 (`:345`·`:353-370`; 셋이 한 부모가 아니면 거부) → 상주 기준 설정에서는 `~/.local/state/tos/paper-cold` | 잎별 보관소가 **상주** `paper-cold/<잎>` 이다 (`:444` `LEAF_ROOT="$COLD_ROOT/$leaf"`) |
+| `COLD_TARGET_BORN_ON` | `2026-10-06` (`:131`) | **그 날 이후**이므로 genesis 전인 tenant 부모는 PRE-GENESIS(rc 0)가 아니라 **`refused`(rc 1)** 다 |
+
+**충돌의 기계장치는 `:443-444` 다.** 그 두 경로는 **잎 이름만**으로 키를 잡는다 —
+`LEAF_CFG_DIR="$CONFIG_DIR/leaves/$leaf"` · `LEAF_ROOT="$COLD_ROOT/$leaf"`. 그리고 잎 이름은
+**계약월**(`A05611` 등)이므로 상주·tenant LONG·tenant SHORT 세 배포가 **같은 잎 이름**을
+갖는다. 즉 위 기본값대로 돌리면 셋이 전부 `paper-ops/leaves/A05611` 과 `paper-cold/A05611`
+**같은 두 자리**로 해석된다.
+
+그래서 무엇이 되는가는 **동시성에 달려 있다** — 둘을 구분해 적는다:
+
+- **직렬(기본)**: 기본 락은 `:135` `LOCK=${COLD_LOCK:-…nightly.lock}` 로 **공유**이므로
+  tenant 실행과 야간 실행은 겹치지 않는다. 그러면 거부는 나지 않고 **섞인다**: 세 배포의
+  아카이브가 한 보관소에 쌓이고 세대 번호가 **하나의 카운터**에서 나오므로(세대는
+  `backup_root` 단위 — `:49-51`) 어느 세대가 어느 배포의 것인지 보관소만 보고 가를 수 없다.
+  더해서 잎별 파생 설정은 **매 실행 재생성**되므로(`:54`) 그 자리를 공유하면 마지막 실행의
+  좌표가 앞 실행의 것을 덮는다.
+- **동시(락을 우회했을 때만)**: `:49-55` 가 그 결과를 적는다 — 「잎 둘이 한 `backup_root` 를
+  공유하면 **같은 밤에 둘 다 같은 세대 번호를 받고 둘째가 산출물 충돌로 거부된다**」.
+  그 문단은 래퍼가 그래서 「**잎마다 자기 보관소와 자기 설정**」을 쓴다고 이어지는데,
+  tenant 는 **배포마다** 같은 분리가 필요하고 그것을 줄 수 있는 것은 `COLD_CONFIG_DIR` 와
+  그 기준 설정의 세 경로뿐이다.
+
+ℹ️ 래퍼 헤더의 **`COLD_LOCK` 항목(`:86-92`)**은 같은 말을 **다른 계기**로 한다 — 그 항목이
+경고하는 것은 「`COLD_LOCK` 을 바꿔 공유 락을 우회한 스크래치 실행이 진짜 야간 실행과
+겹치는 것」이고, 그 처방도 「그 변수를 쓰는 실행은 `COLD_DATA_DIR`·`COLD_CONFIG_DIR` 도 함께
+바꾼 스크래치 실행이어야 한다」다. **기본 설정으로 도는 tenant 실행에 대한 진술이 아니다** —
+초판은 그 문장을 이 자리의 근거로 인용했는데 그것은 **오인용**이었다(2026-10-09 재검토).
+여기서는 **유사 진술**로만 읽는다: 같은 두 자리를 공유하면 터진다는 성질이 계기와 무관하게
+같다는 것.
+
+**그러므로 tenant 콜드 백업 실행은 셋을 함께 지정한다**(아래 §7.2-b 표의 ops·cold 열):
+
+```
+COLD_DATA_DIR=~/.local/state/tos/cp3-setup-d-long-data \
+COLD_CONFIG_DIR=~/.local/state/tos/cp3-setup-d-long-ops \
+COLD_TARGET_BORN_ON=<그 잎의 첫 부팅일>
+```
+
+그리고 그 `cp3-setup-d-long-ops/evidence_cold_backup.yaml` 의 **세 경로는 tenant 전용 콜드
+부모 아래**여야 한다(`~/.local/state/tos/cp3-setup-d-long-cold/{backups,archives,verify}`) —
+래퍼가 `COLD_ROOT` 를 그 셋의 공유 부모로 유도하므로 그것이 잎별 보관소를 가르는 **유일한**
+수단이다. SHORT 도 같은 꼴(`cp3-setup-d-short-ops` · `cp3-setup-d-short-cold`)이다.
+`COLD_TARGET_BORN_ON` 은 **그 잎의 첫 부팅일**이어야 한다 — 기본값 2026-10-06 을 그대로 두면
+genesis 전 부재가 조용한 rc 0 이 아니라 refused 로 난다.
+
+- 상주 설정 `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` 의 세 경로는 전부
+  `~/.local/state/tos/paper-cold/` 아래 **절대경로 리터럴**이고 글로브·`~` 전개가 없다.
+  그 파일 자체는 tenant 실행이 건드리지 않는다(기준 파일은 읽기 전용이고, tenant 실행은
+  **자기 `COLD_CONFIG_DIR`** 의 기준 파일을 쓴다). ⚠ 위 셋을 함께 바꾸지 않으면 **충돌한다**
+  — 초판이 여기에 「충돌 없음」이라고 적었는데 그것은 `COLD_DATA_DIR` 만 비교한 결과였다.
+- ⚠ 위 ops·cold 디렉터리도 **아직 만들지 않았다**(이 절은 지정이고 생성이 아니다).
+
+⚠ **상주 세션 래퍼는 이 tenant 를 띄우지 못한다**(실측): `~/.config/kis-probes/
+tos-paper-session.sh` 의 렌더 출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는
+**환경 손잡이가 아니라 하드코딩**이다(`TOS_PAPER_DATA_DIR` 과 달리 덮어쓸 수 없다).
+tenant 부팅은 별도 호출 경로가 필요하고 그것은 ④ 의 일이다.
+
+⚠ **이름 인접 주의**: `~/.config/tos/paper-config-short` 가 **이미 있다** — 2026-09-28
+**상주** SHORT 부팅증명 캠페인의 산출물이고(§0 의 양방향 부팅) CP-3 SHORT tenant 와 **무관**
+하다. CP-3 쪽은 `cp3-setup-d-short-config` 다.
+
+⛔ **사본 의무 — 상주 설정 파일을 바꾸는 PR 은 같은 PR 에서 tenant 사본도 갱신한다.**
+두 tenant 트리는 `config/tos_runtime/paper/` 파일들의 **바이트 사본**을 들고 있다(LONG 23 ·
+SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의 사본을 함께 갱신해야 한다.
+
+⚠ 그 사본 집합에 **`release.yaml` 이 들어 있고 그 파일이 `expected_code_digest` 를 싣는다.**
+런타임 코드를 바꾸는 PR 은 그 핀을 상주 트리에서만 재도출한다 — 상주 세션은 매일 재도출해
+대조하므로 거기서는 드러나지만(§5 ①), **tenant 트리는 부팅한 적이 없어 낡은 핀이 드러날
+레인이 없다.** 첫 tenant 부팅이 digest 불일치로 **ABORT** 한다. 이것은 §7.10 6 이 적는
+「어제의 증거를 오늘의 코드로 재해석할 수 없게 만드는 변경」의 사본 판이다.
+
+`tos/runtime/tests/compose/test_tenant_tree_copies.py` 가 이 의무를 고정한다: 사본의 **바이트
+동일성** · 선언된 차이가 실제로 다른가 · 분류의 **전수성**(파일을 더하고 분류를 빼먹으면 red) ·
+분류됐지만 **어느 검사도 안 하는 이름이 없는가** · `release.yaml` 은 실패 메시지가 「두
+트리에서 같은 PR 에 재도출하라」고 말하도록 **따로** 단언한다.
+
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
 0. **전제 좌표** — 인터프리터(`$MAIN/.venv/bin/python`) · 드라이버 · `$MAIN/.env.mock` ·
