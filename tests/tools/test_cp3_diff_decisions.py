@@ -2210,36 +2210,221 @@ def test_the_two_attribution_tables_cite_exactly_the_same_ids() -> None:
     assert len(long_names) == len(short_names) == 5
 
 
+#: A trio a SHORT deployment would actually produce — **not** the LONG coverage
+#: bars relabelled (2026-10-09 review M1). Relabelling gives a SHORT run with
+#: ZERO ``AGREE_ENTRY`` bars, so neither headline rate has a non-empty
+#: denominator and a mutation of
+#: ``legacy_fired_in_deployment_direction_admitted_by_position_model`` back to
+#: the hardcoded ``legacy_fired_long and admitted`` stayed green across the
+#: whole file. Every bar here has a positive ``z_x1000``, which is the side a
+#: SHORT entry rule compares.
+SHORT_COVERAGE_BARS: tuple[BarSpec, ...] = (
+    # AGREE_NO_ACTION / AGREED.
+    BarSpec(minute=0, z_x1000=120),
+    # AGREE_ENTRY, admitted, capacity available -> AGREED. Counts in BOTH
+    # rates' numerator and denominator.
+    BarSpec(
+        minute=1,
+        legacy_outcome="FIRED",
+        legacy_direction="SHORT",
+        admitted=True,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=2800,
+    ),
+    # AGREE_ENTRY the legacy position model would NOT have entered. In the
+    # rule-level denominator, OUT of the position-model one: the single bar
+    # that makes the two rates differ.
+    BarSpec(
+        minute=2,
+        legacy_outcome="FIRED",
+        legacy_direction="SHORT",
+        admitted=False,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=2900,
+    ),
+    # AGREE_ENTRY, admitted, capacity denied -> the fill-level rule. Still in
+    # both denominators: the decision agreed.
+    BarSpec(
+        minute=3,
+        legacy_outcome="FIRED",
+        legacy_direction="SHORT",
+        admitted=True,
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        capacity_denied=True,
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=3100,
+    ),
+    # The unrendered half: a legacy LONG fire this run did not act on.
+    BarSpec(
+        minute=4,
+        legacy_outcome="FIRED",
+        legacy_direction="LONG",
+        admitted=True,
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=-2600,
+    ),
+    # TOS_ONLY_ENTRY on a legacy LOW_CONFIDENCE bar — the published field set
+    # cannot express min_confidence (B1a-D1 / B2-L9).
+    BarSpec(
+        minute=5,
+        legacy_outcome="LOW_CONFIDENCE",
+        legacy_direction="SHORT",
+        tos_outcome_kind="ACTION",
+        tos_rule_id="R1-ENTRY-SHORT",
+        capacity_denied=True,
+        hi_vol=True,
+        stall_ok=True,
+        reversal_ok=True,
+        z_x1000=2100,
+    ),
+)
+
+
 def test_a_short_run_mirrors_the_long_classification_and_attribution(
     tmp_path: Path,
 ) -> None:
-    """The whole point of this change, measured on a synthetic SHORT trio.
+    """A SHORT deployment's own trio, with both rates' denominators non-empty.
 
-    The SAME coverage bars, sealed as a SHORT deployment: every legacy LONG
-    fire becomes ``LEGACY_ONLY_ENTRY`` attributed to ``legacy_long_entry``, and
-    the legacy SHORT fire that was ``LEGACY_ONLY_ENTRY`` for the LONG render
-    becomes a ``TOS_ONLY_ENTRY`` (the TOS side took no ACTION on that bar in
-    this fixture). The headline denominator follows the deployment rather than
-    staying LONG.
+    What this pins that the LONG coverage run cannot: the rate denominators
+    follow ``ctx.direction``. Concrete failing input (review M1): restore
+    ``legacy_fired_in_deployment_direction_admitted_by_position_model`` to
+    ``r.bar.legacy_fired_long and r.bar.admitted`` — identical for a LONG run,
+    so every other test stays green, while this one reports ``2/1`` instead of
+    ``2/2`` and on the real SHORT window would have reported ``56/96``.
+
+    The three ``AGREE_ENTRY`` bars differ in exactly the two facts the two
+    rates disagree about, so the rates come out 3/3 and 2/2 rather than being
+    equal by accident.
     """
     trio = write_trio(
-        tmp_path / "in", list(COVERAGE_BARS), direction=dd.DIRECTION_SHORT
+        tmp_path / "in", list(SHORT_COVERAGE_BARS), direction=dd.DIRECTION_SHORT
     )
     result = run_trio(trio, tmp_path / "out")
+
+    assert result.summary["buckets"] == {
+        dd.BUCKET_AGREE_ENTRY: 3,
+        dd.BUCKET_AGREE_NO_ACTION: 1,
+        dd.BUCKET_LEGACY_ONLY_ENTRY: 1,
+        dd.BUCKET_TOS_ONLY_ENTRY: 1,
+    }
     rules = result.summary["attribution_rules"]
     assert "legacy_long_entry" in rules
     assert "legacy_short_entry" not in rules
     assert rules["legacy_long_entry"]["ids"] == ["B1b-D5"]
+    assert rules["legacy_long_entry"]["bars"] == 1
+    assert rules["agree_entry_rejected_by_legacy_position_model"]["bars"] == 1
+    assert rules["agree_entry_capacity_denied"]["bars"] == 1
+    assert rules["tos_action_on_legacy_low_confidence"]["bars"] == 1
+
     totals = result.summary["totals"]
-    assert totals["legacy_fired_long"] == 3
-    assert totals["legacy_fired_short"] == 1
-    assert totals["legacy_fired_in_deployment_direction"] == 1
-    rate = result.summary["rates"]["rule_level_entry_agreement"]
-    assert rate["denominator"] == 1
-    assert "direction SHORT" in rate["definition"]
+    assert totals["legacy_fired"] == 4
+    assert totals["legacy_fired_long"] == 1
+    assert totals["legacy_fired_short"] == 3
+    assert totals["legacy_fired_in_deployment_direction"] == 3
+    assert (
+        totals["legacy_fired_in_deployment_direction_admitted_by_position_model"] == 2
+    )
+    assert totals["agree_entry"] == 3
+    assert totals["agree_entry_admitted_by_position_model"] == 2
+    assert totals["tos_action"] == 4
+
+    rates = result.summary["rates"]
+    rule_level = rates["rule_level_entry_agreement"]
+    assert (rule_level["numerator"], rule_level["denominator"]) == (3, 3)
+    assert "direction SHORT" in rule_level["definition"]
+    position_level = rates["position_model_level_entry_agreement"]
+    assert (position_level["numerator"], position_level["denominator"]) == (2, 2)
+    assert "legacy FIRED SHORT" in position_level["definition"]
+    tos_side = rates["tos_action_explained_by_a_legacy_short_fire"]
+    assert (tos_side["numerator"], tos_side["denominator"]) == (3, 4)
+
+    assert result.summary["unresolved"]["count"] == 0
     assert result.summary["config"]["deployment_direction"] == dd.DIRECTION_SHORT
     assert result.summary["config"]["z_entry_binding_key"] == "z_entry_min_x1000"
-    assert "tos_action_explained_by_a_legacy_short_fire" in result.summary["rates"]
+
+
+def test_a_tos_action_against_an_opposite_direction_legacy_fire_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    """Review M2's red proof: the severest disagreement must not be absorbed.
+
+    The legacy rule fired LONG and this SHORT deployment proposed an entry on
+    the SAME bar. That is a disagreement about DIRECTION, not "the other half
+    has no counterpart here" — B1b-D5 says the unrendered half produces no TOS
+    action, and this bar produced one. Concrete failing input: drop the
+    ``bucket == BUCKET_LEGACY_ONLY_ENTRY`` scope from
+    ``_legacy_opposite_direction_entry`` and the bar is filed under B1b-D5.
+    """
+    bars = [
+        BarSpec(minute=0, z_x1000=120),
+        BarSpec(
+            minute=1,
+            legacy_outcome="FIRED",
+            legacy_direction="LONG",
+            admitted=True,
+            tos_outcome_kind="ACTION",
+            tos_rule_id="R1-ENTRY-SHORT",
+            capacity_denied=True,
+            hi_vol=True,
+            stall_ok=True,
+            reversal_ok=True,
+            z_x1000=2700,
+        ),
+    ]
+    trio = write_trio(tmp_path / "in", bars, direction=dd.DIRECTION_SHORT)
+    result = run_trio(trio, tmp_path / "out")
+
+    record = next(
+        r for r in _records(result) if r["raw_event_id"] == bars[1].raw_event_id
+    )
+    assert record["bucket"] == dd.BUCKET_TOS_ONLY_ENTRY
+    assert record["attribution_rule"] == dd.ATTRIBUTION_UNRESOLVED
+    assert record["attribution"] == []
+    assert result.summary["unresolved"]["count"] == 1
+    assert result.summary["unresolved"]["raw_event_ids"] == [bars[1].raw_event_id]
+    assert "legacy_long_entry" not in result.summary["attribution_rules"]
+
+
+def test_both_sidecars_declare_schema_version_two(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """Review M3: the shape changed, so the version must say so.
+
+    ``diff.jsonl`` is byte-identical across the 1 -> 2 change (the LONG run
+    still reproduces ``ce36450f…``), which is precisely the trap: a consumer
+    diffing payloads would conclude nothing moved while
+    ``config.z_entry_max_x1000`` and
+    ``totals.legacy_fired_long_admitted_by_position_model`` had been replaced.
+    Pinned as a literal here AND asserted against the module constants, so
+    neither can drift alone.
+    """
+    _, result = coverage
+    assert dd.LINEAGE_SCHEMA_VERSION == dd.SUMMARY_SCHEMA_VERSION == 2
+    assert result.lineage["lineage_schema_version"] == 2
+    assert result.summary["summary_schema_version"] == 2
+    # The v1 keys are gone, which is what makes the bump necessary rather than
+    # cosmetic. Asserted as absences: a bump beside a key that never left would
+    # be a version number with nothing behind it.
+    assert "z_entry_max_x1000" not in result.summary["config"]
+    assert "z_entry_max_x1000_source" not in result.summary["config"]
+    assert "z_entry_max_x1000" not in result.lineage["config"]
+    assert (
+        "legacy_fired_long_admitted_by_position_model" not in result.summary["totals"]
+    )
+    assert "tos_action_explained_by_a_legacy_fire" not in result.summary["rates"]
 
 
 def test_the_strategy_file_the_gate_list_came_from_is_recorded(

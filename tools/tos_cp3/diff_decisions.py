@@ -102,7 +102,31 @@ from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
 
 #: Lineage schema version — separate from the tool version so a reader can tell
 #: "values may differ" from "the sidecar is shaped differently".
-LINEAGE_SCHEMA_VERSION = 1
+#:
+#: **1 -> 2 (2026-10-09, direction awareness).** Both sidecars lost and gained
+#: keys, so a consumer written against v1 would read a v2 sidecar wrong rather
+#: than fail: ``config.z_entry_max_x1000`` and its ``_source`` sibling became
+#: ``config.z_entry_binding_key`` + ``config.z_entry_threshold_x1000`` +
+#: ``config.z_entry_threshold_source`` (the key name now depends on the
+#: direction); ``config.deployment_direction`` is new;
+#: ``totals.legacy_fired_long_admitted_by_position_model`` became
+#: ``totals.legacy_fired_in_deployment_direction_admitted_by_position_model``
+#: beside a new ``totals.legacy_fired_in_deployment_direction``; and the third
+#: rate's KEY is now per-direction
+#: (``rates.tos_action_explained_by_a_legacy_{long,short}_fire``). ``diff.jsonl``
+#: is unchanged — the LONG run still reproduces ``ce36450f…`` byte for byte —
+#: which is exactly why the sidecars need the bump: the payload's stability
+#: would otherwise suggest the whole report was unchanged.
+#:
+#: :data:`SUMMARY_SCHEMA_VERSION` moves with it: the two are bumped together
+#: because every shape change so far has touched both, and a reader comparing
+#: the two numbers should not have to work out which one lagged.
+LINEAGE_SCHEMA_VERSION = 2
+
+#: Summary schema version — see :data:`LINEAGE_SCHEMA_VERSION` for the 1 -> 2
+#: change. A literal in ``build_summary`` before 2026-10-09, which is why the
+#: shape moved without it.
+SUMMARY_SCHEMA_VERSION = 2
 
 #: Stable identity stamped on every diff line as ``source_id``.
 SOURCE_ID = f"tos-cp3-b3/{TOS_CP3_VERSION}"
@@ -477,8 +501,23 @@ class AttributionRule:
 def _legacy_opposite_direction_entry(
     bar: JoinedBar, bucket: str, ctx: DiffContext
 ) -> bool:
-    """A legacy fire on the side this deployment does not render."""
-    return bar.legacy_fired and bar.legacy_direction != ctx.direction
+    """A legacy fire on the unrendered side **that this run did not act on**.
+
+    Scoped to ``LEGACY_ONLY_ENTRY`` deliberately (2026-10-09 review M2). Without
+    the bucket test this rule also matched a ``TOS_ONLY_ENTRY`` bar — the legacy
+    rule fired SHORT while the TOS policy proposed a LONG entry on the same bar,
+    which is the most severe disagreement these artifacts can express — and
+    filed it under B1b-D5, "no counterpart in THIS run by construction". That
+    bar HAS a counterpart: this run acted, in the opposite direction. It must
+    stay UNRESOLVED (real-data count: 0 in both the LONG and the SHORT run, so
+    the fix moves no measured bar; the point is that it would not silently
+    swallow one).
+    """
+    return (
+        bucket == BUCKET_LEGACY_ONLY_ENTRY
+        and bar.legacy_fired
+        and bar.legacy_direction != ctx.direction
+    )
 
 
 def _tos_action_on_legacy_low_confidence(
@@ -546,7 +585,11 @@ def build_attribution_rules(direction: str) -> tuple[AttributionRule, ...]:
                 f"only (z_x1000 {op} {key}) and the {other} half is a separate "
                 "render with its own strategy file (kickoff §4 결정 4). A "
                 f"legacy {other} fire has no counterpart in THIS run by "
-                "construction."
+                "construction. SCOPED to LEGACY_ONLY_ENTRY: if this run DID "
+                f"act on such a bar (TOS ACTION {direction} against a legacy "
+                f"{other} fire) the bar is a TOS_ONLY_ENTRY and the two sides "
+                "disagree about DIRECTION, which is not what this difference "
+                "explains — that bar stays UNRESOLVED."
             ),
             predicate=_legacy_opposite_direction_entry,
         ),
@@ -1508,7 +1551,7 @@ def build_summary(
     }
 
     return {
-        "summary_schema_version": 1,
+        "summary_schema_version": SUMMARY_SCHEMA_VERSION,
         "tool": {"name": "tools/tos_cp3/diff_decisions.py", "source_id": SOURCE_ID},
         "window_identity": dict(identity),
         "bars": len(records),

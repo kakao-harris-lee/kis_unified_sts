@@ -145,22 +145,32 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    것이 추세 지속일의 **지배적 실패 모드**」. TOS 에는 regime 입력이 없어 이 가드를 옮길 수
    없고 결정 5 가 **삭제를 의도된 차이로 등재**했다. ⚠ **그 가드는 SHORT 에만 걸려 있었으므로
    손실은 이 트리에 비대칭적으로 떨어진다** — LONG 트리는 잃은 것이 없다.
-   ⚠⚠ **그러나 그 손실은 이 비교에 **나타날 수 없다**(실측 2026-10-09).** `B1b-D8` 은
-   SHORT 실행의 `summary.json` 에도 선언된 차이로 올라가지만 **흡수한 봉은 0** 이고, 그것이
-   맞는 값이다: 그 가드는 `shared/strategy/entry/setup_d_adapter.py` 에서
-   `self._setup.check(mc)` 가 **반환한 뒤** 걸리는데 B2 는 `SetupDVWAPReversion.check()` 를
-   **직접** 몰기 때문에 **레거시 쪽도 그 블록을 적용한 적이 없다**. 양쪽이 똑같이 무방비인
-   것이다. 그러므로 결정 5 가 말한 「parity 보고서의 SHORT 편향 diff 를 이 항목에 귀속」은
-   **이 결정 수준 비교에서는 성립하지 않는다** — 0 은 「가드가 무해했다」가 아니라 「이
-   비교가 그 가드를 보는 지점이 아니다」라는 뜻이다. 닫으려면 B2 가 어댑터의 판정을
-   공개해야 하고 그것은 B2 변경이다. 배포(paper/live)는 어댑터를 타므로 차이는 **거기서**
-   실재한다. 이 두 문장은 `B1b-D8` 의 note 와
+   ⚠⚠ **그러나 그 손실은 이 비교에 나타날 수 없다 — 그리고 그 근거는 `B1b-D8` 의 0 이
+   아니다.** 기계장치는 **B2 가 이미 자기 차이 `B2-L1` 로 선언해 둔 것**이다(「this emitter
+   runs `SetupDVWAPReversion.check()` ALONE … that block CANNOT fire here」): B2 는
+   `tools/tos_cp3/emit_legacy_decisions.py:946`·`:990` 에서 setup 을 만들어 `check()` 를
+   **직접** 몰고, 그 블록은 한 겹 위 `shared/strategy/entry/setup_d_adapter.py:174` —
+   `check()` 가 반환하는 `:166` **뒤** — 에 있다. 즉 **레거시 쪽도 그 블록을 적용한 적이
+   없고** 양쪽이 똑같이 무방비다. 그러므로 결정 5 가 말한 「parity 보고서의 SHORT 편향 diff
+   를 이 항목에 귀속」은 **이 결정 수준 비교에서는 성립하지 않는다**.
+   ⛔ **`summary.json` 의 `attribution_ids['B1b-D8'] == 0` 을 그 증거로 읽지 말 것**
+   (2026-10-09 리뷰 L1): **어떤 귀속 규칙도 B1b-D8 을 인용하지 않으므로**(B1b-D9 도 같다)
+   그 0 은 **구조적으로** 0 이고 가드가 실제로 물었어도 0 이었다. 「이 창에 숨은 regime 차이가
+   없다」를 받치는 것은 **UNRESOLVED 0** 이다 — regime 에 막혔어야 할 레거시 SHORT 발화에
+   이 정책이 발화했다면 그 봉은 `TOS_ONLY_ENTRY` 에 어떤 규칙도 맞지 않는 채로 남는다.
+   닫으려면 B2 가 어댑터의 판정을 공개해야 하고 그것은 B2 변경이다. 배포(paper/live)는
+   어댑터를 타므로 차이는 **거기서** 실재한다. 이 문단은 `B1b-D8` 의 note 와
    `test_cp3_short_strategy_content.py::test_the_regime_guard_difference_says_why_it_cannot_show_up`
-   이 고정한다(그 테스트는 어댑터 소스에서 `check()` 가 블록보다 **앞**인지까지 읽는다).
+   이 고정한다 — 그 테스트는 어댑터에서 `check()` 가 블록보다 **앞**인지, 그리고
+   `shared/decision/setups/vwap_reversion.py` 안에 regime 블록이 **없는지**(음의 단언)까지
+   읽는다.
 3. **ATR 스톱(1.5×)과 `min_confidence` 는 LONG 과 같은 이유로 없다** — 결정 6 · B1a-D1.
-   대칭이므로 SHORT 전용 공백은 아니다. `min_confidence` 는 위 1 의 초과 12 로 **관측됐고**,
-   ATR 스톱(`B1b-D9`)은 양쪽 실행 모두 흡수 봉 **0** 이다(청산 비교 자체가 B1b-D7 의
-   미이행 의무 아래에 있다 — kickoff §5 2).
+   대칭이므로 SHORT 전용 공백은 아니다. `min_confidence` 는 위 1 의 초과 12 로 **관측됐다**
+   (B1a-D1·B2-L9 을 인용하는 귀속 규칙이 **있기** 때문에 그 12 는 측정값이다).
+   ⛔ ATR 스톱(`B1b-D9`)의 흡수 봉 0 은 위 2 의 `B1b-D8` 과 **같은 이유로 구조적**이다 —
+   그것을 인용하는 귀속 규칙이 없다. 청산 비교 자체가 `B1b-D7` 의 **미이행 의무** 아래에
+   있다는 것이 그 항목의 실제 상태다(kickoff §5 2 · B3 `summary.json` 의
+   `scope.b1b_d7_obligation` = UNMET).
 
 **필드는 LONG 과 같은 열다섯이고 SHORT 변종을 만들지 않았다** — 그 실측 근거(게이트 불린의
 방향 의존이 **z 의 부호**에서 나오므로 SHORT 규칙이 발화할 수 있는 봉에서는 이미 숏 쪽

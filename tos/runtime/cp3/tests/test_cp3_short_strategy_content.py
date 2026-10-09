@@ -450,15 +450,21 @@ def test_the_short_lineage_declares_its_direction_and_the_short_difference(
 def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     tmp_path: Path,
 ) -> None:
-    """B1b-D8 is declared in BOTH renders and states its own measured reach.
+    """B1b-D8 points at B2-L1 and does NOT claim its zero count as evidence.
 
     ``short_blocked_regimes`` is the operator's 결정 5 deletion and it bites
     the SHORT side asymmetrically in a DEPLOYMENT — but it cannot produce a
     decision-level difference in a B1a/B2/B1b comparison, because the legacy
     side of that comparison never applies it either: the block lives in
     ``shared/strategy/entry/setup_d_adapter.py``, AFTER ``check()`` returns,
-    and B2 drives ``check()``. The note has to say that, or a reader of a
-    SHORT parity report will read the zero as "the guard made no difference".
+    and B2 drives ``check()``. B2 already declares exactly that as **B2-L1**,
+    so B1b-D8 cites it rather than re-deriving it.
+
+    The second half is the 2026-10-09 review's L1: the note must NOT offer
+    ``attribution_ids['B1b-D8'] == 0`` as evidence. No attribution rule cites
+    B1b-D8, so that zero holds by construction and would hold even if the
+    guard did bite. What backs "no hidden regime difference in this window" is
+    the UNRESOLVED count.
     """
     content = _short_content()
     path = fx.write_jsonl(tmp_path / "fields.jsonl", fx.synthetic_stream(bar_count=2))
@@ -475,12 +481,20 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     note = next(
         item for item in lineage["declared_differences"] if item["id"] == "B1b-D8"
     )["note"]
-    assert "setup_d_adapter" in note
-    assert "absorbs zero bars" in note
-    # And the claim is checked against the file it is about: the regime block
-    # must still be downstream of check(), or the note is stale.
+    assert "setup_d_adapter.py:174" in note
+    assert "B2-L1" in note
+    assert "emit_legacy_decisions.py:946" in note
+    assert "UNRESOLVED" in note
+    # The overclaim the review found, asserted as an ABSENCE: the earlier note
+    # said "the item absorbs zero bars" as if that measured something.
+    assert "absorbs zero bars" not in note
+    assert "BY CONSTRUCTION" in note
+
+    # The claims are checked against the files they are about. (1) the block is
+    # still downstream of check() in the adapter.
+    repo_root = _require_repo_root()
     adapter = (
-        _require_repo_root() / "shared" / "strategy" / "entry" / "setup_d_adapter.py"
+        repo_root / "shared" / "strategy" / "entry" / "setup_d_adapter.py"
     ).read_text(encoding="utf-8")
     check_at = adapter.index("self._setup.check(")
     block_at = adapter.index("short_blocked_regimes")
@@ -488,3 +502,27 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
         "the regime block moved ahead of check(); B1b-D8's note now claims "
         "something false about what B2 measures"
     )
+    # (2) the NEGATIVE half, which the previous revision never checked: the
+    # setup `check()` B2 drives must itself contain no regime block. Reading
+    # only the adapter leaves "B2 never applies it" resting on the absence
+    # being somewhere else — if a regime gate were added to the setup, the
+    # adapter assertion above would still pass and the note would be false.
+    setup_src = (
+        repo_root / "shared" / "decision" / "setups" / "vwap_reversion.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "short_blocked_regimes",
+        "long_blocked_regimes",
+        "resolve_regime_label",
+    ):
+        offenders = [
+            line
+            for line in setup_src.splitlines()
+            if token in line and not line.lstrip().startswith("#")
+        ]
+        assert not offenders, (
+            f"{token} now appears in SetupDVWAPReversion's own module outside a "
+            f"comment ({offenders[:2]}); B2 drives check() directly, so B1b-D8's "
+            "claim that the legacy side of this comparison never applies the "
+            "regime block would no longer hold"
+        )

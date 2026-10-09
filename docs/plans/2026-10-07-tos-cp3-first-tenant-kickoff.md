@@ -324,28 +324,39 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    --porcelain` 빈 상태)에서 돌았고 여섯 lineage 전부 `dirty: false` 다. 커밋 sha 는 여기에
    **옮겨 적지 않는다** — 각 `lineage.json::tool.git.commit` 이 출처이고, 그 값을 적는 문서
    수정은 **반드시 그 커밋 뒤에** 오므로 「lineage 의 commit = HEAD」는 측정 시점에만 참이다
-   (그 등식을 산문에 적으면 다음 커밋에서 바로 거짓이 된다). 단언하는 것은 ① 작업트리가
-   깨끗했다 ② 그 커밋이 이 브랜치의 조상이고 측정된 코드를 담는다 셋이다.
-   ⚠ 측정은 **코드가 바뀔 때마다 다시 돌렸다**(리뷰 처분·CI 수정 뒤 각 1회). 매번 payload
-   sha256 여덟이 전부 불변이었고 달라진 것은 lineage 의 commit·code_digest 뿐이다 — 즉 위
-   수치는 그 변경들에 **무관**하다.
+   (그 등식을 산문에 적으면 다음 커밋에서 바로 거짓이 된다). 단언하는 것은 **둘**이다 —
+   ① 작업트리가 깨끗했다 ② 그 커밋이 이 브랜치의 조상이고 측정된 코드를 담는다.
 
-   ⚠ **`short_blocked_regimes`(결정 5)는 이 비교에 나타날 수 없다 — 실측.** `B1b-D8` 은 SHORT
-   실행의 `summary.json` 에 선언된 차이로 올라가지만 **흡수 봉 0** 이고, 그것이 맞는 값이다:
-   그 가드는 `shared/strategy/entry/setup_d_adapter.py` 에서 `self._setup.check(mc)` 가
-   **반환한 뒤** 걸리는데 B2 는 `SetupDVWAPReversion.check()` 를 **직접** 몰므로 레거시 쪽도
-   그 블록을 적용한 적이 없다. 즉 §4 결정 5 의 「parity 보고서는 SHORT 편향 diff 를 이 항목에
-   귀속」은 **결정 수준 비교에서는 성립하지 않는다**(0 은 「가드가 무해했다」가 아니라 「이
-   비교가 그것을 보는 지점이 아니다」). 닫으려면 B2 가 어댑터 판정을 공개해야 하고 그것은 B2
+   ⚠ **`short_blocked_regimes`(결정 5)는 이 비교에 나타날 수 없다 — 그리고 그 근거는
+   `B1b-D8` 의 0 이 아니다.** 기계장치는 **B2 가 이미 자기 차이 `B2-L1` 로 선언해 둔 것**이다:
+   B2 는 `tools/tos_cp3/emit_legacy_decisions.py:946`·`:990` 에서 `SetupDVWAPReversion` 을
+   만들어 `check()` 를 **직접** 몰고, 그 블록은 한 겹 위 `setup_d_adapter.py:174` —
+   `check()` 가 반환하는 `:166` **뒤** — 에 있다. 레거시 쪽도 적용한 적이 없으므로 양쪽이
+   똑같이 무방비다. 즉 §4 결정 5 의 「parity 보고서는 SHORT 편향 diff 를 이 항목에 귀속」은
+   **결정 수준 비교에서는 성립하지 않는다**.
+   ⛔ **`attribution_ids['B1b-D8'] == 0` 을 증거로 읽지 말 것**(2026-10-09 리뷰 L1): 어떤
+   귀속 규칙도 B1b-D8 을 인용하지 않으므로(B1b-D9 도 같다) 그 0 은 **구조적**이고 가드가
+   실제로 물었어도 0 이다. 이 창에 숨은 regime 차이가 없다는 것을 받치는 것은 **UNRESOLVED 0**
+   이다 — 막혔어야 할 레거시 SHORT 발화에 정책이 발화했다면 그 봉은 `TOS_ONLY_ENTRY` 에
+   어떤 규칙도 맞지 않는 채로 남는다. 닫으려면 B2 가 어댑터 판정을 공개해야 하고 그것은 B2
    변경이다. 배포(paper/live)는 어댑터를 타므로 차이는 **거기서** 실재한다.
 
    **도구 변경(같은 PR)**: B3 의 분류·귀속·일치율 분모가 **B1b lineage 의
    `parents.strategy_file.direction`** 에서 나온다 — `--direction` 플래그는 없고, 그 값은
    B1b 가 **저자된 ACTION 타깃**에서 읽은 것이다(`cp3.strategy._single_direction`). 귀속 규칙
    #1 은 「이 배포가 렌더하지 않은 쪽의 레거시 발화」로 일반화됐고 이름이 방향을 따라간다
-   (LONG → `legacy_short_entry`, SHORT → `legacy_long_entry`). 포괄 규칙은 여전히 없다.
-   검사는 **열다섯 → 열여섯**(`tos_deployment_direction_matches_entry_binding`: 방향 부재/미지
-   토큰 · 그 방향의 바인딩 키 부재 · 임계 부호가 방향과 모순 — 레드 증명 셋). **회귀 증거**:
+   (LONG → `legacy_short_entry`, SHORT → `legacy_long_entry`). 그 규칙은
+   **`LEGACY_ONLY_ENTRY` 버킷으로 한정**된다(2026-10-09 리뷰 M2) — 한정하지 않으면 「레거시가
+   반대쪽으로 발화했는데 이 실행이 **그 봉에서 진입을 제안한**」 `TOS_ONLY_ENTRY`,
+   즉 이 아티팩트들이 표현할 수 있는 **가장 심한 불일치**를 B1b-D5(「이 실행에 대응물이 없다」)로
+   흡수한다. 그 봉은 UNRESOLVED 로 남아야 한다(실데이터 영향 0 — 양쪽 실행 모두 그런 봉이
+   없다). 포괄 규칙은 여전히 없다.
+   검사는 **열다섯 → 열여섯**(`tos_deployment_direction_matches_entry_binding`). 그 하나가
+   거부하는 것은 **넷**이고 레드 증명도 **네 묶음**이다 — ① 방향 부재/미지 토큰(6건)
+   ② 그 방향의 바인딩 키 부재(2건) ③ **양쪽 키 동시 존재**(2건) ④ 임계 부호가 방향과 모순
+   (3건). 사이드카 **스키마는 1 → 2**(리뷰 M3: `config.z_entry_max_x1000`·
+   `totals.legacy_fired_long_admitted_by_position_model` 이 사라지고 방향별 키로 바뀌었는데
+   `diff.jsonl` 은 바이트가 같아 「아무것도 안 바뀌었다」로 읽힐 수 있었다). **회귀 증거**:
    같은 PR 에서 LONG 쪽 B1b·B3 를 새 코드로 다시 돌려 trace `98eb11f4…` 와 diff `ce36450f…` 가
    **바이트 그대로** 재현됐다(그래서 LONG 은 패키지 루트에 두고 SHORT 를
    `tos/runtime/cp3/short/` 에 두는 **비대칭** 배치를 골랐다 — 로더가 `strategies/` 에 전략
