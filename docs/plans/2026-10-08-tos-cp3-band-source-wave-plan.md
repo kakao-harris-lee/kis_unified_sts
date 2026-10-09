@@ -302,7 +302,9 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
    부수로 같은 PR 이 처리한 것 넷: 같은 트리의 `tick 5` 산문 셋(`construction.yaml` ·
    `order_construction_policy.yaml` 의 DATA 산문 · `README.md`) · tenant
    `critical_input_policy.yaml::fields[].max_age_ms` ×15(운영자 지시 2026-10-09 — 출처 없이
-   적용, 등급 C) · tenant data dir 지정(LONG·SHORT) · **SHORT 트리**
+   적용, 등급 C → **같은 날 800 으로 대체(PR #887)** — 운영자 결정 「max_age_ms : 800ms 로
+   정해」 · 등급 **A(운영자 결정 2026-10-09)** · 커널 시간 예산 1000 − Σ지연 200) ·
+   tenant data dir 지정(LONG·SHORT) · **SHORT 트리**
    `config/tos_runtime/cp3-setup-d-short/`.
    ⚠ 실측 2026-10-09: tick 변경은 tenant VCP 의 `canonical_digest` 를 **바꾼다**(VCP digest 는
    `_model_view.shape_constraints` 를 덮는다 — OCP 와 다르다). 그 트리의
