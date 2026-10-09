@@ -115,6 +115,13 @@ cd /home/deploy/project/kis_unified_sts
 .venv/bin/python scripts/tos/render_paper_config.py --check --out ~/.config/tos/paper-config
 ```
 
+⚠ **PR #888 머지 직후 한 번은 `file missing from the rendered directory: RENDER.yaml` 로 rc 1**
+이다(실측). 그 PR 이 상주 트리에 `RENDER.yaml` 을 더했고 `--check` 는 원천과 산출의 **파일 목록**을
+비교하는데, 그 전에 렌더된 디렉터리에는 그 파일이 없다. **고장이 아니라 낡은 산출물**이고, 다음 렌더가
+원천 전체를 다시 복사하면 사라진다 — 래퍼가 매일 08:45 에 렌더하므로 (런북 §7.10 6) 다음 세션에서
+저절로 해소된다. 자동화가 `--check` 를 돌리는 곳은 없다(드라이버·cron 모두 호출하지 않는다, 실측)
+— 이 한 줄은 그 사이에 손으로 돌려 보는 운영자를 위한 것이다. 지금 바로 없애려면 그냥 다시 렌더한다.
+
 ### SHORT 구성
 
 같은 명령에 `--direction SHORT` 만 바꾼다. `construction.yaml::action_class`/`outbound_side`,

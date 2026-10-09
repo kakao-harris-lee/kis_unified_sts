@@ -22,6 +22,19 @@ So a host script outside ``tos/`` byte-copies the committed values, fills ONLY t
 slots, and writes the result somewhere outside the repository; ``run --config-dir <that dir>``
 then boots. Zero tos-code and zero firewall changes.
 
+Which slots, and in what mode, is NOT hard-coded here
+-----------------------------------------------------
+Each renderable tree commits its own ``RENDER.yaml`` manifest next to its values
+(``docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md`` §2.1). It declares the
+slot list, how DIRECTION is handled (``substitute`` — the resident behaviour, ``--direction``
+rewrites the direction slots; ``declared`` — a tenant tree committed per direction, where
+those slots are verified rather than rewritten, §2.3), and where the observation journal comes
+from (``synthetic_bootproof`` — written here; ``external`` — produced elsewhere and named by
+``--journal-path``, §2.4). A manifest may not carry a VALUE: each slot names a source out of a
+closed set, and its ``replacement`` template is shape-checked so it cannot smuggle a literal in
+(:func:`_validate_replacement_template`). ``safety_activation.yaml::members`` stays out of the
+manifest entirely — it is always derived from ``print-policy-digests``.
+
 Firewall note (this file is OUTSIDE ``tos/``): it therefore may NOT import ``tos`` or
 ``tos_runtime`` at all (``tools/tos_firewall_check.py`` rule (e)/TOS-FW-R,
 ``_REVERSE_SCAN_TARGET_NAMES = {"tos", "tos_runtime"}``). The two runtime operations this
@@ -58,6 +71,7 @@ import argparse
 import difflib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -67,6 +81,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:  # direct-script invocation
@@ -78,9 +94,13 @@ from tools.broker_probes.common import account_fingerprint  # noqa: E402
 __all__ = [
     "COORDINATE_RULE_KEYS",
     "MANDATORY_POLICY_KINDS",
+    "RENDER_MANIFEST_NAME",
     "RenderError",
+    "RenderManifest",
     "RenderResult",
+    "Slot",
     "check",
+    "load_manifest",
     "main",
     "normalize_account",
     "parse_account_from_env_file",
@@ -119,9 +139,10 @@ JOURNAL_NAME = "bootproof_journal.jsonl"
 #: The render manifest written into the output directory.
 RENDERED_NAME = "RENDERED.json"
 
-#: Files the output directory may carry that the source does not (``--check`` allows exactly
-#: these two, nothing else).
-_GENERATED_NAMES = frozenset({JOURNAL_NAME, RENDERED_NAME})
+#: The per-tree RENDER manifest this script reads out of ``--source`` (design 2026-10-09
+#: §2.1). It is COMMITTED next to the values it describes and is byte-copied into the output
+#: directory like every other source file (§7) — no runtime reads it there.
+RENDER_MANIFEST_NAME = "RENDER.yaml"
 
 #: The policy kinds ``print-policy-digests`` MUST print for this deployment — the four
 #: ``compose`` itself calls ``require_member_activated`` for
@@ -204,9 +225,15 @@ class Rule:
     replacement: str
 
 
-#: Every coordinate/host-fact slot this script is allowed to touch, by name. The unit test pins
-#: this set: ADDING a rule (e.g. one that rewrites a value nobody approved) turns it RED, and a
-#: rule whose anchor is not in the source refuses at render time.
+#: Every coordinate/host-fact slot the RESIDENT tree carries, by name.
+#:
+#: ⚠ **Transition reference** (design 2026-10-09 §4.1 item 1). Since the slot table moved into
+#: the per-tree ``RENDER.yaml`` manifest, this tuple and :func:`_coordinate_rules` below are no
+#: longer what :func:`render` executes — the manifest is. They are kept for exactly one job:
+#: ``tests/unit/scripts/test_render_paper_config.py`` asserts the manifest-built ``Rule`` tuple
+#: equals this one, which is how "the resident render did not change" is checkable rather than
+#: claimed. The follow-up PR deletes both, and the per-tree expected-slot literal in that same
+#: test file (full ``(file, key, anchor, replacement)`` tuples) takes over the pin.
 COORDINATE_RULE_KEYS: tuple[str, ...] = (
     "venue_constraint_policy.yaml::scope.accounts",
     "venue_constraint_policy.yaml::scope.instruments",
@@ -245,6 +272,10 @@ def _coordinate_rules(
     The DIRECTION-dependent rules are applied for BOTH directions, including ``LONG`` where the
     replacement equals the committed line: the anchor must still be found exactly once, so a
     fixture edit that drops or duplicates the slot refuses instead of silently rendering.
+
+    ⚠ **Transition reference only** — see :data:`COORDINATE_RULE_KEYS`. :func:`render` builds its
+    rules from ``<source>/RENDER.yaml`` via :func:`_slot_rules`; this function is what the unit
+    test compares that result against, and nothing else calls it.
     """
     tokens = _DIRECTION_TOKENS[direction]
     return (
@@ -369,6 +400,400 @@ def _coordinate_rules(
             f'source_revision: "{revision}"',
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# The per-tree render manifest (design 2026-10-09 §2.1)
+# ---------------------------------------------------------------------------
+
+#: The ONE placeholder a ``replacement`` template may carry.
+_PLACEHOLDER = "{value}"
+
+#: The CLOSED set of value sources a slot may name. A manifest cannot carry a literal value —
+#: that is what preserved the property the hard-coded :data:`COORDINATE_RULE_KEYS` pin had
+#: ("a rule that writes a value nobody approved cannot appear"), now that the table is data
+#: (design §2.1).
+_VALUE_SOURCES: frozenset[str] = frozenset(
+    {
+        "account",
+        "instrument",
+        "revision",
+        "journal_path",
+        "direction_action_class",
+        "direction_side",
+        "direction",
+    }
+)
+
+#: The subset of :data:`_VALUE_SOURCES` whose value is a function of DIRECTION. In
+#: ``declared`` mode these slots are VERIFY-ONLY (design §2.3): the renderer builds the line
+#: from the manifest's declared direction and requires it to be present, unchanged, exactly
+#: once. Without them a declared-mode tree would have no direction check at all — the review's
+#: H1 finding.
+_DIRECTION_VALUE_SOURCES: frozenset[str] = frozenset(
+    {"direction_action_class", "direction_side", "direction"}
+)
+
+#: ``substitute`` = the resident behaviour (``--direction`` rewrites the direction slots).
+#: ``declared`` = a tenant tree committed per direction; ``--direction`` is compared, not applied.
+_DIRECTION_MODES: tuple[str, ...] = ("substitute", "declared")
+
+#: ``synthetic_bootproof`` = the renderer writes the boot-proof journal itself (resident).
+#: ``external`` = the journal comes from the ③ producer; ``--journal-path`` is REQUIRED and the
+#: renderer writes no journal at all (design §2.4, fail-closed).
+_JOURNAL_MODES: tuple[str, ...] = ("synthetic_bootproof", "external")
+
+#: One YAML anchor token, the single exception rule ④ below allows inside a template.
+_YAML_ANCHOR_TOKEN = re.compile(r"&[A-Za-z_][A-Za-z0-9_]*")
+
+#: Everything rule ④ tolerates OUTSIDE the placeholder, the key prefix and the anchor token.
+#: Deliberately not a superset: a comma, a letter or a digit here is a literal being smuggled
+#: into a template, which is the one thing the closed value set exists to prevent.
+_TEMPLATE_FILLER: frozenset[str] = frozenset("\"'[] \t")
+
+
+@dataclass(frozen=True)
+class Slot:
+    """One manifest slot — the data form of a :class:`Rule`, with the VALUE left as a source
+    name rather than a value."""
+
+    #: Path relative to the tree.
+    file: str
+    #: ``"<file>::<dotted.key>"``'s dotted half; the full key is ``f"{file}::{key}"``.
+    key: str
+    #: The exact source line to replace (or, for a verify-only direction slot, to require).
+    anchor: str
+    #: The replacement TEMPLATE — exactly one ``{value}``, shape-checked by rules ①–④.
+    replacement: str
+    #: A member of :data:`_VALUE_SOURCES`.
+    value: str
+
+    @property
+    def rule_key(self) -> str:
+        return f"{self.file}::{self.key}"
+
+
+@dataclass(frozen=True)
+class RenderManifest:
+    """``<tree>/RENDER.yaml``, validated."""
+
+    tree_id: str
+    direction_mode: str
+    #: Only set (and only meaningful) in ``declared`` mode.
+    direction_value: str | None
+    journal_mode: str
+    slots: tuple[Slot, ...]
+
+
+def _generated_names(journal_mode: str) -> frozenset[str]:
+    """Files the output directory carries that the source does not — i.e. what :func:`render`
+    GENERATES, and therefore exactly what :func:`check` both requires and tolerates.
+
+    Mode-dependent since design §7: ``external`` renders write no journal, so requiring
+    ``bootproof_journal.jsonl`` would make ``--check`` report "render artifact missing" against
+    every correct tenant render.
+    """
+    if journal_mode == "synthetic_bootproof":
+        return frozenset({JOURNAL_NAME, RENDERED_NAME})
+    return frozenset({RENDERED_NAME})
+
+
+def _key_prefix(line: str) -> str | None:
+    """``"  accounts:"`` for ``'  accounts: ["TBD"]'`` — up to and INCLUDING the first colon.
+
+    ``None`` when the line carries no colon, which is not a YAML key line at all.
+    """
+    head, sep, _tail = line.partition(":")
+    return head + sep if sep else None
+
+
+def _anchor_token(tail: str) -> str | None:
+    """The one YAML anchor token immediately after a key prefix, or ``None``.
+
+    "Immediately after" means only whitespace separates it from the colon — an ``&name`` later
+    in the line is not this exception and falls through to rule ④, which refuses it.
+
+    ⚠ **The position test is load-bearing, not tidiness.** Concrete failing input, measured:
+    anchor ``'          account: &account "TBD"'`` with template
+    ``'          account: "{value}" &account'``. Without the position test both sides report
+    ``&account``, the tokens compare equal, and what is left is quotes and spaces — so rule ④
+    accepts it and the render writes ``account: "<value>" &account``, which is not valid YAML
+    (an anchor may not follow the scalar it would name). With it, the template side reports
+    ``None`` and rule ④ refuses on the mismatch.
+    """
+    match = _YAML_ANCHOR_TOKEN.search(tail)
+    if match is None or tail[: match.start()].strip() != "":
+        return None
+    return match.group()
+
+
+def _validate_replacement_template(*, key: str, anchor: str, template: str) -> None:
+    """Rules ①–④ of design §2.1 — the shape check that keeps a template from carrying a value.
+
+    The point is NOT formatting hygiene. ``COORDINATE_RULE_KEYS`` used to be a code constant,
+    so "this table may only write approved coordinates" was true because a human reviewed the
+    code. With the table as data, that property has to be mechanical, and these four rules are
+    it: a template may re-shape the line around the value (quotes, a list bracket, a YAML
+    anchor) and may do nothing else.
+
+    ① exactly one ``{value}``; ② no other brace; ③ the template's key prefix is byte-identical
+    to the anchor's, and the placeholder lies after it; ④ what is left, once the key prefix, the
+    placeholder and at most one YAML anchor token are removed, is quotes/brackets/whitespace
+    only — and that anchor token must be BYTE-IDENTICAL to the anchor line's.
+
+    Concrete inputs this refuses:
+
+    * ``replacement: '  instruments: ["{value}", "A05610"]'`` — a literal instrument rides along
+      with the coordinate (rule ④);
+    * ``replacement: '          account: &acct "{value}"'`` against anchor
+      ``'          account: &account "TBD"'`` — the rendered line would define an anchor nobody
+      aliases, so every ``*account`` alias in the file dangles (rule ④'s byte-identity half);
+    * ``replacement: '  tick_size: {value}'`` against anchor ``'  accounts: ["TBD"]'`` — the
+      slot has been re-aimed at a different leaf (rule ③);
+    * ``replacement: '  foo{value}: ""'`` against anchor ``'  foo{value}: ""'`` — the
+      placeholder is inside the KEY, so the value would be substituted into the key NAME and
+      the leaf would be left empty (the inside-prefix clause).
+
+    ⚠ **On that last clause** (PR #888 review L1a). For an ordinary anchor it IS unreachable:
+    a placeholder inside the key makes the template's key prefix differ from the anchor's, so
+    rule ③ refuses first. It becomes reachable only when the ANCHOR's own key carries the
+    literal ``{value}`` — then both prefixes match, the tail is filler-only, and rule ④ sees
+    nothing wrong. Measured: with the clause disabled, that pair is ACCEPTED and the rendered
+    line is ``  foo9999999999: ""``. No committed YAML has such a key, so the input is
+    contrived — but the clause is one comparison and the failure it prevents is silent, so it
+    is kept and
+    ``test_a_placeholder_inside_the_key_prefix_is_refused`` is its red proof.
+    """
+    occurrences = template.count(_PLACEHOLDER)
+    if occurrences != 1:
+        raise RenderError(
+            f"slot {key}: replacement template must carry exactly one {_PLACEHOLDER} "
+            f"placeholder, found {occurrences} — {template!r}"
+        )
+    without_placeholder = template.replace(_PLACEHOLDER, "", 1)
+    if "{" in without_placeholder or "}" in without_placeholder:
+        raise RenderError(
+            f"slot {key}: replacement template carries a brace outside the "
+            f"{_PLACEHOLDER} placeholder — {template!r}"
+        )
+
+    anchor_prefix = _key_prefix(anchor)
+    template_prefix = _key_prefix(template)
+    if anchor_prefix is None:
+        raise RenderError(f"slot {key}: anchor line carries no key — {anchor!r}")
+    if template_prefix is None or template_prefix != anchor_prefix:
+        raise RenderError(
+            f"slot {key}: replacement template's key prefix {template_prefix!r} does not match "
+            f"the anchor's {anchor_prefix!r} — the slot has been re-aimed at a different leaf"
+        )
+    if template.index(_PLACEHOLDER) < len(template_prefix):
+        raise RenderError(
+            f"slot {key}: the {_PLACEHOLDER} placeholder sits inside the key prefix — "
+            f"{template!r}"
+        )
+
+    template_tail = template[len(template_prefix) :]
+    anchor_tail = anchor[len(anchor_prefix) :]
+    template_token = _anchor_token(template_tail)
+    anchor_token = _anchor_token(anchor_tail)
+    if template_token != anchor_token:
+        raise RenderError(
+            f"slot {key}: the YAML anchor token differs between the anchor line "
+            f"({anchor_token!r}) and the replacement template ({template_token!r}) — the one "
+            "token rule ④ allows must be byte-identical in both"
+        )
+    residue = template_tail.replace(_PLACEHOLDER, "", 1)
+    if template_token is not None:
+        residue = residue.replace(template_token, "", 1)
+    stray = sorted({char for char in residue if char not in _TEMPLATE_FILLER})
+    if stray:
+        raise RenderError(
+            f"slot {key}: replacement template carries literal characters {stray!r} outside the "
+            f"{_PLACEHOLDER} placeholder — a template may re-shape the line around the value, "
+            f"never supply one ({template!r})"
+        )
+
+
+def _require_str(raw: Any, *, where: str) -> str:
+    if not isinstance(raw, str) or not raw:
+        raise RenderError(f"{where}: expected a non-empty string, got {raw!r}")
+    return raw
+
+
+def load_manifest(tree: Path) -> RenderManifest:
+    """Read and validate ``<tree>/RENDER.yaml`` (design §2.1).
+
+    Every refusal here is a refusal to render — the manifest is the whole rule table, so an
+    unvalidated one is an unvalidated render.
+
+    Raises:
+        RenderError: the file is missing/unparseable, a mode is not one of the two declared
+            ones, a slot names a value source outside the closed set, two slots share a key, a
+            slot's target file is absent from the tree, or a replacement template fails rules
+            ①–④.
+    """
+    path = tree / RENDER_MANIFEST_NAME
+    if not path.is_file():
+        raise RenderError(
+            f"render manifest not found: {path} — every tree this script renders must commit "
+            f"its own {RENDER_MANIFEST_NAME} (design 2026-10-09 §2.1)"
+        )
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise RenderError(f"render manifest could not be read: {path} ({exc})") from exc
+    if not isinstance(raw, dict):
+        raise RenderError(
+            f"{path}: expected a mapping at the top level, got {type(raw)}"
+        )
+
+    tree_id = _require_str(raw.get("tree_id"), where=f"{path}: tree_id")
+
+    direction_raw = raw.get("direction")
+    if not isinstance(direction_raw, dict):
+        raise RenderError(f"{path}: direction must be a mapping")
+    direction_mode = direction_raw.get("mode")
+    if direction_mode not in _DIRECTION_MODES:
+        raise RenderError(
+            f"{path}: direction.mode refused: {direction_mode!r} — expected one of "
+            f"{list(_DIRECTION_MODES)!r}"
+        )
+    direction_value = direction_raw.get("value")
+    if direction_mode == "declared":
+        if direction_value not in _DIRECTION_TOKENS:
+            raise RenderError(
+                f"{path}: direction.value refused: {direction_value!r} — a declared-mode tree "
+                f"must name one of {sorted(_DIRECTION_TOKENS)!r}"
+            )
+    elif direction_value is not None:
+        # Two sources for one fact. In substitute mode the direction comes from `--direction`,
+        # so a manifest value could only ever agree or lie.
+        raise RenderError(
+            f"{path}: direction.value is set in substitute mode — the direction comes from "
+            "--direction there, and a manifest value would be a second source"
+        )
+
+    journal_raw = raw.get("journal")
+    if not isinstance(journal_raw, dict):
+        raise RenderError(f"{path}: journal must be a mapping")
+    journal_mode = journal_raw.get("mode")
+    if journal_mode not in _JOURNAL_MODES:
+        raise RenderError(
+            f"{path}: journal.mode refused: {journal_mode!r} — expected one of "
+            f"{list(_JOURNAL_MODES)!r}"
+        )
+
+    slots_raw = raw.get("slots")
+    if not isinstance(slots_raw, list) or not slots_raw:
+        raise RenderError(f"{path}: slots must be a non-empty list")
+    slots: list[Slot] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(slots_raw):
+        where = f"{path}: slots[{index}]"
+        if not isinstance(entry, dict):
+            raise RenderError(f"{where}: expected a mapping, got {entry!r}")
+        slot = Slot(
+            file=_require_str(entry.get("file"), where=f"{where}.file"),
+            key=_require_str(entry.get("key"), where=f"{where}.key"),
+            anchor=_require_str(entry.get("anchor"), where=f"{where}.anchor"),
+            replacement=_require_str(
+                entry.get("replacement"), where=f"{where}.replacement"
+            ),
+            value=_require_str(entry.get("value"), where=f"{where}.value"),
+        )
+        if slot.value not in _VALUE_SOURCES:
+            raise RenderError(
+                f"{where}: value source refused: {slot.value!r} — the set is closed to "
+                f"{sorted(_VALUE_SOURCES)!r}, so a manifest cannot carry a literal value"
+            )
+        if slot.rule_key in seen:
+            raise RenderError(f"{where}: duplicate slot key {slot.rule_key!r}")
+        seen.add(slot.rule_key)
+        if not (tree / slot.file).is_file():
+            raise RenderError(
+                f"{where}: slot target missing from the tree: {tree / slot.file}"
+            )
+        _validate_replacement_template(
+            key=slot.rule_key, anchor=slot.anchor, template=slot.replacement
+        )
+        slots.append(slot)
+
+    if direction_mode == "declared":
+        # Review H1's disposition has a precondition nothing enforced: the verify-only rules
+        # only check a direction if the slots EXIST. Drop them and a declared tree renders
+        # with no direction check at all — the five policy digests do not bind DIRECTION
+        # (:func:`_policy_digest_lines`' own docstring), so a SHORT tree rendered under a LONG
+        # manifest would activate, boot, and refuse nothing. Measured: deleting the three slots
+        # from a declared manifest turns the H1 test green again.
+        missing = sorted(_DIRECTION_VALUE_SOURCES - {slot.value for slot in slots})
+        if missing:
+            raise RenderError(
+                f"{path}: a declared-direction tree must carry a slot for EVERY direction-bound "
+                f"value source — missing {missing!r}. Without them nothing verifies this tree's "
+                "direction, and the activation digests do not bind it either"
+            )
+
+    return RenderManifest(
+        tree_id=tree_id,
+        direction_mode=direction_mode,
+        direction_value=direction_value if direction_mode == "declared" else None,
+        journal_mode=journal_mode,
+        slots=tuple(slots),
+    )
+
+
+def _slot_rules(
+    manifest: RenderManifest,
+    *,
+    account: str,
+    instrument: str,
+    revision: str,
+    direction: str,
+    journal_path: Path,
+) -> tuple[Rule, ...]:
+    """Turn the manifest's slots into the :class:`Rule` tuple :func:`_apply_rules` executes.
+
+    ``substitute`` mode reproduces :func:`_coordinate_rules` exactly (the unit test pins that).
+
+    ``declared`` mode adds exactly ONE clause, for the direction-bound slots: the line the
+    declared direction makes must BE the committed anchor. Everything else about those slots is
+    unchanged, and deliberately so (design §2.3) — the substitution is then a no-op and
+    ``_apply_rules``' existing "exactly one anchor match" invariant does the direction check by
+    itself. A ``cp3-setup-d-short`` tree rendered against a manifest declaring ``LONG``, or a
+    tree whose ``construction.yaml`` still says ``NEW_LONG`` under a ``SHORT`` manifest, refuses
+    with "matched 0 times"; without the direction slots in the manifest at all, nothing would
+    (review H1).
+
+    ⚠ The clause is written as a bare check rather than as a separate anchor/replacement path,
+    because the two are provably the same once it holds — a second formulation would be a
+    clause that can never fire on its own (#838).
+    """
+    tokens = _DIRECTION_TOKENS[direction]
+    values: dict[str, str] = {
+        "account": account,
+        "instrument": instrument,
+        "revision": revision,
+        "journal_path": str(journal_path),
+        "direction_action_class": tokens["action_class"],
+        "direction_side": tokens["side"],
+        "direction": direction,
+    }
+    rules: list[Rule] = []
+    for slot in manifest.slots:
+        line = slot.replacement.replace(_PLACEHOLDER, values[slot.value])
+        if (
+            manifest.direction_mode == "declared"
+            and slot.value in _DIRECTION_VALUE_SOURCES
+            and line != slot.anchor
+        ):
+            raise RenderError(
+                f"slot {slot.rule_key}: this tree declares direction "
+                f"{manifest.direction_value!r}, which makes the verify-only line {line!r} — "
+                f"but the manifest's committed anchor is {slot.anchor!r}. The manifest "
+                "disagrees with itself about its own direction"
+            )
+        rules.append(Rule(slot.file, slot.rule_key, slot.anchor, line))
+    return tuple(rules)
 
 
 def _members_rule(members_block: str) -> Rule:
@@ -985,8 +1410,13 @@ class RenderResult:
     policy_digests: tuple[tuple[str, str, int, str], ...]
     activation_check: str
     journal_path: Path
-    journal_as_of_ms: int
+    #: ``None`` in ``external`` journal mode — the renderer does not read the journal there,
+    #: so it has no observation timestamp to report (design §2.4).
+    journal_as_of_ms: int | None
     rendered_at_kst: str
+    #: The manifest's ``tree_id`` — which committed tree this render came from. No default:
+    #: a fallback of ``"paper"`` would label a tenant render as the resident one.
+    tree_id: str
 
 
 def render(
@@ -998,8 +1428,13 @@ def render(
     revision: str,
     direction: str = "LONG",
     now_ms: int | None = None,
+    journal_path: Path | None = None,
 ) -> RenderResult:
-    """Byte-copy ``source`` to ``out`` and fill exactly the coordinate slots.
+    """Byte-copy ``source`` to ``out`` and fill exactly the slots ``source``'s manifest declares.
+
+    The rule table is NOT in this file: it is ``<source>/RENDER.yaml``, validated by
+    :func:`load_manifest` (design 2026-10-09 §2.1). ``_apply_rules`` is unchanged, so the
+    "exactly one anchor match" invariant holds for every tree.
 
     This function reads NO env file and touches NO ``os.environ`` (design §2 guard "계좌
     원천이 모의 파일" — the env-file rule lives in :func:`main`, and the tests drive this
@@ -1011,13 +1446,19 @@ def render(
         account: The already-normalized account coordinate.
         instrument: The contract code coordinate.
         revision: ``finality.yaml::source_revision``.
-        direction: ``LONG`` or ``SHORT`` (design §3 choice (가) — both are booted).
+        direction: ``LONG`` or ``SHORT``. In ``substitute`` mode (design §3 choice (가)) it is
+            APPLIED to the direction slots; in ``declared`` mode it must equal the manifest's
+            own ``direction.value`` and the direction slots are verified, not rewritten.
         now_ms: Wall-clock milliseconds for the generated journal; defaults to now.
+        journal_path: REQUIRED in ``external`` journal mode (the ③ producer's output, which
+            must already exist); REFUSED in ``synthetic_bootproof`` mode, where the renderer
+            writes the journal itself.
 
     Raises:
-        RenderError: any refusal — bad direction, an output path inside the repo, an anchor
-            that did not match exactly once, a refused ``print-policy-digests``, or an
-            activation read-back that does not see every member.
+        RenderError: any refusal — a bad direction, a manifest that refuses to load, a
+            direction or journal argument that contradicts the manifest's mode, an output path
+            inside the repo, an anchor that did not match exactly once, a refused
+            ``print-policy-digests``, or an activation read-back that does not see every member.
     """
     if direction not in _DIRECTION_TOKENS:
         raise RenderError(
@@ -1031,6 +1472,32 @@ def render(
     source = source.resolve()
     if not source.is_dir():
         raise RenderError(f"source directory not found: {source}")
+    manifest = load_manifest(source)
+    if manifest.direction_mode == "declared" and direction != manifest.direction_value:
+        raise RenderError(
+            f"direction refused: {source.name} is a declared-direction tree committed as "
+            f"{manifest.direction_value!r}, but --direction says {direction!r}. A declared tree "
+            "is not re-pointed by a flag — render the tree for the direction you want"
+        )
+    if manifest.journal_mode == "external":
+        if journal_path is None:
+            raise RenderError(
+                f"journal path required: {source.name} declares journal.mode 'external', so "
+                "the observation journal comes from its producer and --journal-path is "
+                "mandatory (design §2.4 — fail-closed, the renderer invents no observations)"
+            )
+        journal_path = journal_path.expanduser()
+        journal_path = (
+            journal_path if journal_path.is_absolute() else Path.cwd() / journal_path
+        ).resolve()
+        if not journal_path.is_file():
+            raise RenderError(f"journal file not found: {journal_path}")
+    elif journal_path is not None:
+        raise RenderError(
+            f"journal path refused: {source.name} declares journal.mode "
+            "'synthetic_bootproof', so the renderer writes the journal itself — passing one "
+            "would be a second source"
+        )
     out = out.expanduser()
     out = (out if out.is_absolute() else Path.cwd() / out).resolve()
     _refuse_output_inside_repo(out, source)
@@ -1070,19 +1537,30 @@ def render(
             else datetime.fromtimestamp(now_ms / 1000, tz=_KST)
         )
         effective_now_ms = int(now.timestamp() * 1000)
-        # The journal FILE is written into staging, but the path baked into marketfeed.yaml
-        # is the FINAL one — the rendered config must be correct after the swap, not during.
-        journal_path = out / JOURNAL_NAME
-        journal_as_of_ms = _write_journal(
-            staging / JOURNAL_NAME, instrument=instrument, now_ms=effective_now_ms
-        )
+        journal_as_of_ms: int | None
+        # `journal_path is not None` is exactly `journal_mode == "external"` here: the
+        # pre-flight above REQUIRES a path in external mode and REFUSES one in synthetic mode,
+        # so branching on the value keeps the two facts from drifting apart.
+        if journal_path is not None:
+            # The ③ producer's output. The renderer neither writes nor reads it — the content
+            # contract belongs to the producer (design §2.4).
+            effective_journal_path = journal_path
+            journal_as_of_ms = None
+        else:
+            # The journal FILE is written into staging, but the path baked into marketfeed.yaml
+            # is the FINAL one — the rendered config must be correct after the swap, not during.
+            effective_journal_path = out / JOURNAL_NAME
+            journal_as_of_ms = _write_journal(
+                staging / JOURNAL_NAME, instrument=instrument, now_ms=effective_now_ms
+            )
 
-        rules = _coordinate_rules(
+        rules = _slot_rules(
+            manifest,
             account=account,
             instrument=instrument,
             revision=revision,
             direction=direction,
-            journal_path=journal_path,
+            journal_path=effective_journal_path,
         )
         # ---- the first account byte reaches the disk here ----
         _apply_rules(staging, rules)
@@ -1093,12 +1571,13 @@ def render(
         _apply_rules(staging, (members,))
         activation_check = _verify_activation(staging, digests)
 
+        # ⚠ No self-check against :data:`COORDINATE_RULE_KEYS` here any more, and deliberately
+        # not a self-check against the manifest either. With the slot table as DATA, comparing
+        # the rendered keys to the manifest would compare the manifest to itself — adding a
+        # slot would turn nothing red (design §2.1, review M1). The pin that keeps its force is
+        # the per-tree expected-slot literal in the unit tests, which carries the full
+        # ``(file, key, anchor, replacement)`` tuple, not just the key name.
         rendered_keys = tuple(rule.key for rule in rules) + (members.key,)
-        if set(rendered_keys) != set(COORDINATE_RULE_KEYS):
-            raise RenderError(
-                "rendered key set does not match COORDINATE_RULE_KEYS — "
-                f"{sorted(set(rendered_keys) ^ set(COORDINATE_RULE_KEYS))!r}"
-            )
 
         fingerprint = account_fingerprint(account)
         result = RenderResult(
@@ -1111,9 +1590,10 @@ def render(
             rendered_keys=rendered_keys,
             policy_digests=digests,
             activation_check=activation_check,
-            journal_path=journal_path,
+            journal_path=effective_journal_path,
             journal_as_of_ms=journal_as_of_ms,
             rendered_at_kst=rendered_at,
+            tree_id=manifest.tree_id,
         )
         # RENDERED.json is written LAST inside staging, so the directory that lands at `out`
         # can never be the "non-empty, no RENDERED.json" shape the guard above permanently
@@ -1138,8 +1618,12 @@ def render(
                     for kind, member_id, generation, digest in digests
                 ],
                 "activation_check": activation_check,
-                "journal_path": str(journal_path),
+                "journal_path": str(effective_journal_path),
                 "journal_as_of_ms": journal_as_of_ms,
+                # ADDED 2026-10-09 (design §2.3): which committed tree this render came from.
+                # The five keys the host driver reads are untouched
+                # (`~/.config/kis-probes/tos_paper_session.py:331-333,366-370`).
+                "tree_id": manifest.tree_id,
                 "note": (
                     "boot-proof fixture render — 거래 전략 아님. The account number itself is "
                     "never recorded here, only its fingerprint."
@@ -1173,35 +1657,38 @@ def check(source: Path, out: Path) -> list[str]:
     ``instrument`` — merge into one hunk, which is why the check is per-line-within-the-hunk
     rather than one-line-per-hunk). A hand edit anywhere else, a pure insertion or deletion, an
     extra file, or a missing file is reported by name.
+
+    The registered slots come from ``<source>/RENDER.yaml`` — the SAME manifest :func:`render`
+    executed, so the two cannot drift. ``RENDER.yaml`` itself is byte-copied into the output
+    (design §7) and is therefore compared like any other file: an edit to the output's copy is
+    reported, because no slot is anchored in it.
     """
     source = source.resolve()
     out = out.expanduser().resolve()
     problems: list[str] = []
     if not out.is_dir():
         return [f"output directory not found: {out}"]
+    try:
+        manifest = load_manifest(source)
+    except RenderError as exc:
+        return [str(exc)]
 
+    generated = _generated_names(manifest.journal_mode)
     source_files = _relative_files(source)
     out_files = _relative_files(out)
-    for extra in sorted(out_files - source_files - _GENERATED_NAMES):
+    for extra in sorted(out_files - source_files - generated):
         problems.append(f"unexpected file in the rendered directory: {extra}")
     for missing in sorted(source_files - out_files):
         problems.append(f"file missing from the rendered directory: {missing}")
-    for required in sorted(_GENERATED_NAMES):
+    for required in sorted(generated):
         if required not in out_files:
             problems.append(f"render artifact missing: {required}")
 
     anchors_by_file: dict[str, set[str]] = {}
-    for key in COORDINATE_RULE_KEYS:
-        file_name = key.split("::", 1)[0]
-        anchors_by_file.setdefault(file_name, set())
-    for rule in _coordinate_rules(
-        account="RENDERED",
-        instrument="RENDERED",
-        revision="RENDERED",
-        direction="LONG",
-        journal_path=Path("RENDERED"),
-    ) + (_members_rule("members: RENDERED"),):
-        anchors_by_file.setdefault(rule.file, set()).add(rule.anchor)
+    for slot in manifest.slots:
+        anchors_by_file.setdefault(slot.file, set()).add(slot.anchor)
+    members = _members_rule("members: RENDERED")
+    anchors_by_file.setdefault(members.file, set()).add(members.anchor)
 
     for name in sorted(source_files & out_files):
         source_lines = (source / name).read_text(encoding="utf-8").split("\n")
@@ -1272,7 +1759,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--direction",
         choices=sorted(_DIRECTION_TOKENS),
         default="LONG",
-        help="boot-proof fixture direction (default: %(default)s)",
+        help=(
+            "direction. Applied to the direction slots when --source declares "
+            "direction.mode 'substitute'; compared against the tree's own declared value "
+            "when it declares 'declared' (default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--journal-path",
+        type=Path,
+        default=None,
+        help=(
+            "the observation journal the rendered marketfeed points at. REQUIRED when "
+            "--source declares journal.mode 'external' (the file must already exist and is "
+            "never read here); REFUSED when it declares 'synthetic_bootproof', where this "
+            "script writes the journal itself"
+        ),
     )
     parser.add_argument(
         "--check",
@@ -1318,19 +1820,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             instrument=instrument,
             revision=revision,
             direction=args.direction,
+            journal_path=args.journal_path,
         )
     except RenderError as exc:
         print(f"render_paper_config: refused — {exc}", file=sys.stderr)
         return 1
 
     print(f"rendered: {result.out}")
+    print(f"  tree_id:         {result.tree_id}")
     print(f"  source_revision: {result.revision}")
     print(f"  direction:       {result.direction}")
     print(f"  instrument:      {result.instrument}")
     print(f"  account:         <withheld> fingerprint={result.account_fingerprint}")
-    print(
-        f"  journal:         {result.journal_path} (as_of_ms={result.journal_as_of_ms})"
+    journal_note = (
+        "external"
+        if result.journal_as_of_ms is None
+        else f"as_of_ms={result.journal_as_of_ms}"
     )
+    print(f"  journal:         {result.journal_path} ({journal_note})")
     print(f"  activation:      {result.activation_check}")
     for kind, member_id, generation, digest in result.policy_digests:
         print(f"  digest:          {kind} {member_id} {generation} {digest}")
