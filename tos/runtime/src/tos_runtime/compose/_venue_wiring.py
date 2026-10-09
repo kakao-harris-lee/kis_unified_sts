@@ -48,9 +48,11 @@ above.
 
 **The declared band source** (CP-3 band 원천 웨이브,
 ``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4). Two things happen here and
-nowhere else. (1) The venue policy loader is handed the ``kis_quote`` document's own
-``instrument`` — unconditionally, because an ABSENT document answers ``None`` and only a
-policy that DECLARES a band source turns that into a refusal (plan §4.1/§4.4b). (2) A band
+nowhere else. (1) The venue policy loader is handed a THUNK that reads the ``kis_quote``
+document's own ``instrument``, which it calls only once it has parsed a non-null
+``band_source`` — so a deployment with the source off never opens that file at all, and an
+absent one answers ``None``, which is a refusal only for a policy that declares a source
+(plan §4.1/§4.4b). (2) A band
 reader is built ONLY when the loaded policy declares a source; a declaration with no
 :data:`BandReaderFactory` behind it is :class:`VenueBandSourceUnwired`, never a silent "band
 always ``None``". Every tree shipped today declares none (plan §5), so on every real boot path
@@ -103,6 +105,7 @@ from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 from tos_runtime.transport.kis_mock.token import EvidenceRecorder
 from tos_runtime.transport.kis_quote.config import (
     load_kis_quote_transport_config,
@@ -302,9 +305,11 @@ def _load_and_activate_policies(
         scheme=scheme,
         # The band source's config-consistency rule (plan §4.4b) needs the ``kis_quote``
         # document's own ``instrument``, and needs it BEFORE the two INSTANCE host-seal facts
-        # a full ``load_kis_quote_transport_config`` requires have been resolved. ``None``
-        # (no such document) is only a refusal when a band source is actually declared.
-        band_transport_instrument=read_declared_instrument(
+        # a full ``load_kis_quote_transport_config`` requires have been resolved. Passed as a
+        # THUNK (independent review L1): the loader calls it only once it has parsed a
+        # non-null `band_source`, so a deployment with the source off never touches
+        # `kis_quote.yaml` and a broken one beside it cannot turn into a boot refusal.
+        band_transport_instrument_reader=lambda: read_declared_instrument(
             config_dir / KIS_QUOTE_TRANSPORT_CONFIG_NAME
         ),
     )
@@ -363,20 +368,24 @@ def build_kis_band_reader_factory(
     """The production :data:`BandReaderFactory` — a KIS band reader on the ``kis_quote``
     document's EXISTING host seal and the boot's ONE credential session (plan §4.2).
 
-    **Why the reader is built lazily, on first read.** This factory is called from
-    :func:`build_venue_service`, which runs before ``_finalize`` builds this boot's
-    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessions` registry
-    (step 2 needs the loaded Order Construction Policy before the engine exists). Building a
-    PRIVATE registry here instead would hand this app key a second token lifecycle — exactly
-    what C-2 decision (C) forbids. So the returned reader closes over
-    ``credential_sessions_cell`` and constructs itself on its first actual read, which is
-    strictly after ``_finalize`` filled that cell. A read that somehow arrives first refuses
-    (:class:`VenueBandSourceUnwired`) rather than quietly answering ``None``.
-
-    Everything else is resolved EAGERLY, inside this call: the host seal
+    **Every refusal this factory can produce is a BOOT refusal.** The host seal
     (:func:`~tos_runtime.compose._marketfeed_wiring.resolve_kis_instance_rest_bases` plus
-    :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config`) must
-    refuse at BOOT, not on the first band read hours later.
+    :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config`) resolves
+    inside this call. The one thing that cannot — this boot's
+    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessions`
+    registry, which ``_finalize`` builds after :func:`build_venue_service` has already run —
+    is acquired through
+    :meth:`~tos_runtime.compose._kis_credential_wiring.KisCredentialSessionsCell.on_ready`,
+    so the acquisition still happens *during* compose. Building a PRIVATE registry here
+    instead would hand this app key a second token lifecycle, exactly what C-2 decision (C)
+    forbids.
+
+    Independent review M1: an earlier cut built the reader on its first READ, which pushed a
+    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessionConflict`
+    (two consumers of one app key disagreeing about token endpoint or cooldown) out of boot
+    and into the first decision — contradicting this very docstring.
+    :class:`VenueBandSourceUnwired` remains only as the fail-closed answer for a read that
+    somehow precedes the cell being filled; on the real compose path it cannot fire.
     """
 
     def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
@@ -389,35 +398,38 @@ def build_kis_band_reader_factory(
         client = build_band_client(transport_config, band_source)
         built: dict[str, KisBandSourceReader | None] = {"reader": None}
 
+        def _build(sessions: KisCredentialSessions) -> None:
+            built["reader"] = KisBandSourceReader(
+                band_source=band_source,
+                transport_config=transport_config,
+                client=client,
+                credential_session=kis_mock_credential_session(
+                    sessions,
+                    client=client,
+                    token_endpoint_base=transport_config.endpoint_rest_base,
+                    token_path=transport_config.token_path,
+                    token_reissue_min_interval_s=(
+                        transport_config.token_reissue_min_interval_s
+                    ),
+                ),
+                monotonic=monotonic,
+                evidence_sink=evidence_sink,
+                trading_date_reader=trading_date_reader,
+                tick_size=tick_size,
+            )
+
+        # Runs inside `_finalize` (or immediately, if the cell is already filled), so a
+        # session-terms conflict refuses the BOOT — docstring above.
+        credential_sessions_cell.on_ready(_build)
+
         def _read() -> BandObservation | None:
             reader = built["reader"]
             if reader is None:
-                sessions = credential_sessions_cell.read()
-                if sessions is None:
-                    raise VenueBandSourceUnwired(
-                        "band source read attempted before this boot's KIS credential "
-                        "registry existed — the band reader must never build a private "
-                        "session (C-2 decision (C): one app key, one token lifecycle)"
-                    )
-                reader = KisBandSourceReader(
-                    band_source=band_source,
-                    transport_config=transport_config,
-                    client=client,
-                    credential_session=kis_mock_credential_session(
-                        sessions,
-                        client=client,
-                        token_endpoint_base=transport_config.endpoint_rest_base,
-                        token_path=transport_config.token_path,
-                        token_reissue_min_interval_s=(
-                            transport_config.token_reissue_min_interval_s
-                        ),
-                    ),
-                    monotonic=monotonic,
-                    evidence_sink=evidence_sink,
-                    trading_date_reader=trading_date_reader,
-                    tick_size=tick_size,
+                raise VenueBandSourceUnwired(
+                    "band source read attempted before this boot's KIS credential registry "
+                    "existed — the band reader must never build a private session "
+                    "(C-2 decision (C): one app key, one token lifecycle)"
                 )
-                built["reader"] = reader
             return reader.read()
 
         return _read

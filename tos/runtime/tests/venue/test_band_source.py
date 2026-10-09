@@ -18,6 +18,8 @@ double, and the autouse network guard would refuse a real one anyway.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
@@ -28,7 +30,7 @@ from tos_runtime.transport.kis_mock.client import (
     KisMockTimeoutError,
     RawResponse,
 )
-from tos_runtime.transport.kis_mock.token import TokenStale
+from tos_runtime.transport.kis_mock.token import TokenResponseError, TokenStale
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 from tos_runtime.venue.band_source import (
     VENUE_BAND_OBSERVED_KIND,
@@ -106,6 +108,9 @@ class _FakeClient:
     def __init__(self, responses: list[Any]) -> None:
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
+        #: The exact body text handed back, so a test can digest the same bytes the reader
+        #: did (L2) rather than re-deriving them.
+        self.bodies: list[str] = []
 
     def get_quote(
         self,
@@ -122,9 +127,12 @@ class _FakeClient:
         if isinstance(nxt, Exception):
             raise nxt
         if isinstance(nxt, RawResponse):
+            self.bodies.append(nxt.text)
             return nxt
         assert isinstance(nxt, dict)
-        return RawResponse(status=200, json=nxt, text="")
+        text = json.dumps(nxt, sort_keys=True)
+        self.bodies.append(text)
+        return RawResponse(status=200, json=nxt, text=text)
 
 
 class _FakeCredentials:
@@ -235,6 +243,12 @@ class TestValidationSet:
         row = sink.only()
         assert row["outcome"] == "OBSERVED"
         assert row["band_digest"] == observation.record_digest
+        # L2: the payload digest is over the BROKER'S BYTES, not over a re-serialization of
+        # the parsed block — so it changes when the body changes and nothing else.
+        assert (
+            observation.raw_payload_digest
+            == hashlib.sha256(client.bodies[0].encode("utf-8")).hexdigest()
+        )
         assert row["narrowed_intraday"] is False
         assert row["critical_input_snapshot_digest_role"] == "stand-in"
 
@@ -242,6 +256,16 @@ class TestValidationSet:
         """Plan §4.2 "반올림 금지". ``1159.185 × 100 = 115918.5`` is not a whole number; a
         reader that rounded would hand the kernel a band the broker never quoted."""
         reader, sink, _ = _reader([_ok_body(upper="1159.185")])
+
+        assert reader.read() is None
+        assert sink.only()["reason"] == "non_integral_scale"
+
+    @pytest.mark.parametrize("value", ["Infinity", "-Infinity", "NaN"])
+    def test_a_non_finite_bound_is_refused_not_raised(self, value: str) -> None:
+        """Independent review M1: ``Decimal`` accepts these, they survive the multiply and
+        the integral comparison, and only blow up at ``int()`` with an ``OverflowError`` that
+        would escape ``read()`` entirely."""
+        reader, sink, _ = _reader([_ok_body(upper=value)])
 
         assert reader.read() is None
         assert sink.only()["reason"] == "non_integral_scale"
@@ -362,6 +386,33 @@ class TestTimeoutMs:
         assert reader.read() is None
         assert sink.only()["reason"] == "token_stale"
 
+    def test_an_unusable_token_response_is_a_named_refusal(self) -> None:
+        """Plan §4.6 / independent review M1: ``KisTokenLifecycle`` raises this when the token
+        endpoint answers without a usable ``access_token``/``expires_in``. Uncaught it would
+        leave ``read()`` by exception and reach ``snapshot()``/``decide()`` — the one thing
+        this wave promises cannot happen."""
+        reader, sink, _ = _reader(
+            [_ok_body()], tokens=[TokenResponseError("missing access_token")]
+        )
+
+        assert reader.read() is None
+        row = sink.only()
+        assert row["reason"] == "token_response_invalid"
+        assert "access_token" in row["detail"]
+
+    def test_a_token_request_that_never_completed_is_a_named_refusal(self) -> None:
+        """Same review finding: the token call uses the same HTTP client the quote does, so
+        it raises the same timeout/connection errors — from a DIFFERENT call site than the
+        quote GET, hence its own reason token."""
+        reader, sink, _ = _reader(
+            [_ok_body()], tokens=[KisMockTimeoutError("token endpoint timed out")]
+        )
+
+        assert reader.read() is None
+        row = sink.only()
+        assert row["reason"] == "token_transport_error"
+        assert "token endpoint" in row["detail"]
+
 
 class TestSourceContinuity:
     """ADR-002-019 §9 / plan §4.2 — new per boot, and NEW on a token reissue."""
@@ -392,19 +443,26 @@ class TestSourceContinuity:
         assert one.source_continuity_id != two.source_continuity_id
 
 
-class TestStageHint:
-    """Plan §4.5 / module docstring — a RATE-FREE necessary condition of the 제56조의2 stage-1
-    formula (``기준가격 × (1 ± r)`` is symmetric for any ``r``), never a judgement."""
+class TestSymmetricAboutBasis:
+    """Plan §4.5 / module docstring — the field records SYMMETRY and claims nothing about
+    which price-limit stage is in force.
+
+    Symmetry about the basis is a NECESSARY condition of 제56조의2's stage-1 band
+    (``기준가격 × (1 ± r)``) — and of stage 2 and stage 3, which use the same ± form with a
+    larger ``r``. So it cannot discriminate stage 1, which is why the field is no longer
+    called ``stage_hint`` (independent review L3); the stage-1 judgement is made offline from
+    the ``basis``/``price_min``/``price_max`` the same evidence row carries.
+    """
 
     def test_the_measured_band_is_symmetric_about_its_basis(self) -> None:
         reader, sink, _ = _reader([_ok_body()])
 
         observation = reader.read()
 
-        assert observation is not None and observation.stage_hint is True
-        assert sink.only()["stage_hint"] is True
+        assert observation is not None and observation.symmetric_about_basis is True
+        assert sink.only()["symmetric_about_basis"] is True
 
-    def test_an_asymmetric_band_is_still_used_but_hinted_false(self) -> None:
+    def test_an_asymmetric_band_is_still_used_but_recorded_false(self) -> None:
         reader, sink, _ = _reader([_ok_body(upper="1200.00")])
 
         observation = reader.read()
@@ -412,10 +470,10 @@ class TestStageHint:
         assert (
             observation is not None
         )  # NOT dropped — plan §4.4a residual-risk paragraph
-        assert observation.stage_hint is False
-        assert sink.only()["stage_hint"] is False
+        assert observation.symmetric_about_basis is False
+        assert sink.only()["symmetric_about_basis"] is False
 
-    def test_an_unusable_basis_leaves_the_hint_unknown_without_dropping_the_band(
+    def test_an_unusable_basis_leaves_the_field_unknown_without_dropping_the_band(
         self,
     ) -> None:
         reader, _, _ = _reader([_ok_body(basis=None)])
@@ -424,7 +482,7 @@ class TestStageHint:
 
         assert observation is not None
         assert observation.basis is None
-        assert observation.stage_hint is None
+        assert observation.symmetric_about_basis is None
 
 
 class TestNarrowedIntraday:

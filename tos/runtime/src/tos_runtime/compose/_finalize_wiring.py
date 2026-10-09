@@ -179,8 +179,10 @@ def _finalize(
     if credential_sessions_cell is not None:
         # Filled HERE, not after this function returns: the boot replay below can already
         # drive step 3, and therefore a CP-3 band read, before the caller sees a
-        # `ComposedRuntime` at all (`KisCredentialSessionsCell`'s own docstring).
-        credential_sessions_cell.sessions = kis_credential_sessions
+        # `ComposedRuntime` at all. `fill` also runs the cell's `on_ready` callbacks, which is
+        # where the band reader acquires its session — so a session-terms conflict is a BOOT
+        # refusal rather than a first-decision one (`KisCredentialSessionsCell`'s docstring).
+        credential_sessions_cell.fill(kis_credential_sessions)
     wired = wire_engine_and_driver(
         data_dir=data_dir,
         context_resolver=context_resolver,

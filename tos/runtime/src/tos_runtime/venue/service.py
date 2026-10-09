@@ -50,8 +50,13 @@ statements govern it, and each one is a test in plan §8:
   on a reader being present, so a tree with no declaration (today: the
   resident ``paper`` tree and both CP-3 tenant trees, plan §5) emits exactly
   the rows it emitted yesterday.
-* **Two read instants only** — the first snapshot, and a session-phase change
-  (``band_source.read_on``). The 모의 quote rate limit is 1.0 rps
+* **The declared read instants, and only those** — the first snapshot is
+  ``"boot"`` and every later phase change is ``"phase_change"``, and a read
+  happens only when ``band_source.read_on`` names that token. A policy
+  declaring ``["boot"]`` therefore reads exactly once for the life of the
+  process. (Independent review M2: ``read_on`` used to be validated by the
+  loader and then ignored, so every declaration behaved like both tokens.)
+  The 모의 quote rate limit is 1.0 rps
   (``config/tos_runtime/paper/marketfeed.yaml:101-103``, probe P-13), and plan
   §2 shows a same-day band can only WIDEN, so reading once at boot is the
   conservative direction, not a shortcut.
@@ -59,11 +64,16 @@ statements govern it, and each one is a test in plan §8:
   return** (plan §4.4a). Behind that early return the check would be skipped
   for as long as the tick generation did not move — which is exactly the
   overnight state the bond exists for.
-* **Re-issue only on a state TRANSITION** (plan §4.3's review L3): band
-  appearing, band disappearing, or its value/trading date/continuity
-  changing. A band change is a material change under ADR-002-019 §18, so it
-  takes a new Constraint Generation; a band that is ALREADY ``None`` staying
-  ``None`` is not a transition and must not inflate the counter.
+* **Re-issue only on a state TRANSITION** (plan §4.3's review L3). A band
+  change is a material change under ADR-002-019 §18 and takes a new
+  Constraint Generation — but the only same-phase band transition this
+  runtime can actually produce is the trading-date bond DROPPING a stale
+  band, because every read coincides with a phase change, which already
+  re-issues. A band that is ALREADY ``None`` staying ``None`` is not a
+  transition and must not inflate the counter. (Independent review M3: the
+  value/continuity comparison that used to sit beside this was measured to
+  decide nothing and was deleted — see :meth:`VenueConstraintService
+  ._read_band`.)
 
 **The three snapshot fields are a STAND-IN** (plan §4.3's review M3). The
 kernel defines ``critical_input_snapshot_digest`` as "CII provenance binding
@@ -329,6 +339,14 @@ class VenueConstraintService:
             self._policy_shape_constraints
         )
         self._band_source_declared = loaded_policy.band_source is not None
+        #: The policy's own ``band_source.read_on`` — the instants this service may read at
+        #: (independent review M2: it used to be validated by the loader and then ignored).
+        #: Empty when no source is declared, which makes the read unreachable either way.
+        self._band_read_on: tuple[str, ...] = (
+            ()
+            if loaded_policy.band_source is None
+            else loaded_policy.band_source.read_on
+        )
         self._band_reader = band_reader
         self._trading_date_reader = trading_date_reader
         self._band: BandObservation | None = None
@@ -366,9 +384,10 @@ class VenueConstraintService:
             or self.last_snapshot.observed_session_phase != phase
         )
         if phase_changed:
-            # `band_source.read_on` — the first snapshot ("boot") and a phase change are the
-            # only two instants this service ever reads the band source.
-            band_transition = self._read_band() or band_transition
+            # `band_source.read_on` is CONSULTED, not merely validated (independent review
+            # M2): the very first snapshot is the "boot" instant and every later phase change
+            # is a "phase_change" one, and a token the policy did not declare means no read.
+            self._read_band("boot" if self.last_snapshot is None else "phase_change")
         if not band_transition and not phase_changed:
             # Same phase, new tick generation, band unchanged — no material change, no
             # re-issue. `last_snapshot` is non-None here (phase_changed is True when it is).
@@ -396,15 +415,21 @@ class VenueConstraintService:
         self._set_band(None)
         return True
 
-    def _read_band(self) -> bool:
-        """Read the declared band source once. ``True`` iff the held band changed."""
-        if self._band_reader is None:
-            return False
-        observed = self._band_reader()
-        if _same_band(self._band, observed):
-            return False
-        self._set_band(observed)
-        return True
+    def _read_band(self, instant: str) -> None:
+        """Read the declared band source once, if ``instant`` is one the policy declared.
+
+        **Returns nothing on purpose** (independent review M3). An earlier cut returned "did
+        the band change" and folded that into the re-issue condition — and the fold decided
+        NOTHING: a read only ever happens when the phase changed, and a phase change already
+        forces a re-issue, so mutating the comparison to "always changed" AND deleting the fold
+        outright both left every test green (measured). Dead logic that looks like a guard is
+        exactly what #838 is about, so it is gone rather than left in place. The one same-phase
+        band transition that IS reachable — the trading-date bond dropping a stale band — keeps
+        its own return value and its own red proof (:meth:`_enforce_trading_date_bond`).
+        """
+        if self._band_reader is None or instant not in self._band_read_on:
+            return
+        self._set_band(self._band_reader())
 
     def _set_band(self, band: BandObservation | None) -> None:
         self._band = band
@@ -547,25 +572,6 @@ class VenueConstraintService:
         )
         self.last_decision = decision
         return decision
-
-
-def _same_band(held: BandObservation | None, observed: BandObservation | None) -> bool:
-    """Whether two band readings are the SAME held state (plan §4.3: "값 · 거래일 · 연속성 중
-    하나" changing is a transition).
-
-    Deliberately NOT ``held == observed``: :class:`~tos_runtime.venue.band_source
-    .BandObservation` also carries ``as_of_ms`` and a raw-payload digest, which differ on every
-    single read. Comparing the whole record would make every re-read a "change" and every phase
-    change a new Constraint Generation even when the broker said exactly the same thing.
-    """
-    if held is None or observed is None:
-        return held is None and observed is None
-    return (
-        held.price_min == observed.price_min
-        and held.price_max == observed.price_max
-        and held.trading_date == observed.trading_date
-        and held.source_continuity_id == observed.source_continuity_id
-    )
 
 
 def _classify_sub_results(

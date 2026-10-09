@@ -15,6 +15,7 @@ Firewall (R1, runtime scope): stdlib + ``tos.*`` only — no ``shared.*``.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -370,7 +371,7 @@ def _cross_check_band_source(
     runtime_raw: dict[str, Any],
     scope_instrument: str,
     shape_constraints: VenueShapeConstraints,
-    transport_instrument: str | None,
+    transport_instrument_reader: Callable[[], str | None] | None,
     path: Path,
 ) -> int | None:
     """The four cross-document rules a DECLARED band source must satisfy, and the
@@ -381,13 +382,18 @@ def _cross_check_band_source(
     source (plan §4.1's 재리뷰 MEDIUM; requiring it unconditionally would ABORT the resident
     paper session at the first 08:45 after this merge).
 
-    ``transport_instrument`` is the ``kis_quote`` document's own ``instrument``, or ``None``
-    when this deployment carries no such document. It is a CALLER-supplied fact, the same way
-    :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config` takes its
-    two INSTANCE host-seal facts from its caller rather than reading the broker-capability
-    profile itself;
+    ``transport_instrument_reader`` yields the ``kis_quote`` document's own ``instrument``, or
+    ``None`` when this deployment carries no such document. It is a CALLER-supplied fact, the
+    same way :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config`
+    takes its two INSTANCE host-seal facts from its caller rather than reading the
+    broker-capability profile itself;
     :func:`~tos_runtime.transport.kis_quote.config.read_declared_instrument` is how a compose
     root obtains it.
+
+    It is a CALLABLE, not a value, so that it is invoked ONLY past the early return above
+    (independent review L1). Read eagerly, a deployment with ``band_source: null`` and a
+    broken or still-``TBD`` ``kis_quote.yaml`` beside it would start refusing to boot over a
+    document nothing in its configuration consults.
 
     Returns:
         The policy's own ``_runtime.price_scale``, or ``None`` when no source is declared.
@@ -423,6 +429,9 @@ def _cross_check_band_source(
             f"_runtime.band_source.price_scale {band_source.price_scale!r} — the band and the "
             "order price would be compared in different units (plan §4.1 가격 척도)"
         )
+    transport_instrument = (
+        None if transport_instrument_reader is None else transport_instrument_reader()
+    )
     if transport_instrument is None:
         raise VenuePolicyConfigError(
             f"{path}: _runtime.band_source is declared but this deployment carries no "
@@ -620,7 +629,7 @@ def load_venue_constraint_policy(
     path: Path,
     *,
     scheme: CanonicalizationScheme,
-    band_transport_instrument: str | None = None,
+    band_transport_instrument_reader: Callable[[], str | None] | None = None,
 ) -> LoadedVenuePolicy:
     """Load, fail-closed-validate, and kernel-issue a Venue Constraint Policy
     INSTANCE document from ``path`` (an instance of
@@ -630,7 +639,8 @@ def load_venue_constraint_policy(
     Args:
         path: The INSTANCE document.
         scheme: The injected canonicalization scheme.
-        band_transport_instrument: see :func:`_cross_check_band_source`, its only consumer.
+        band_transport_instrument_reader: see :func:`_cross_check_band_source`, its only
+            consumer — and the only thing that ever CALLS it.
 
     Raises:
         VenuePolicyConfigError: the file is missing/unreadable/not valid YAML/not a mapping;
@@ -674,7 +684,7 @@ def load_venue_constraint_policy(
         runtime_raw=runtime_raw,
         scope_instrument=scope.instrument,
         shape_constraints=shape_constraints,
-        transport_instrument=band_transport_instrument,
+        transport_instrument_reader=band_transport_instrument_reader,
         path=path,
     )
 

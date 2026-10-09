@@ -67,6 +67,14 @@ class _FakeReader:
         return self.value
 
 
+class _Reads:
+    """How many times the band reader was actually called — the observable ``read_on`` acts
+    on (independent review M2: it used to be validated and then ignored)."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+
 def _band(
     *,
     price_min: int = _LOWER,
@@ -83,7 +91,7 @@ def _band(
         source_continuity_id=continuity,
         as_of_ms=1_000,
         basis=(price_min + price_max) // 2,
-        stage_hint=True,
+        symmetric_about_basis=True,
     )
 
 
@@ -104,14 +112,19 @@ def _build(
     initial_phase: str | None = "REGULAR",
     initial_generation: int | None = 1,
     tick_size: str = "2",
+    read_on: str = '["boot", "phase_change"]',
 ):
     """A service whose policy declares (or does not declare) a band source.
 
-    ``bands`` is consumed one per READ — the service's own read instants (first snapshot and
-    phase change) are what pull from it, so a test never has to simulate them.
+    ``bands`` is consumed one per READ — the service's own read instants are what pull from
+    it, so a test never has to simulate them. ``reads`` on the returned ``_Reads`` counts how
+    many times the reader was actually called, which is the only way to see ``read_on`` being
+    honoured rather than merely parsed (independent review M2).
     """
     runtime_extra = (
-        band_source_runtime_extra(instrument=_INSTRUMENT) if declare_band_source else ""
+        band_source_runtime_extra(instrument=_INSTRUMENT, read_on=read_on)
+        if declare_band_source
+        else ""
     )
     path = write_fixture_venue_policy(
         tmp_path,
@@ -127,11 +140,15 @@ def _build(
     loaded = load_venue_constraint_policy(
         path,
         scheme=SCHEME,
-        band_transport_instrument=_INSTRUMENT if declare_band_source else None,
+        band_transport_instrument_reader=(
+            (lambda: _INSTRUMENT) if declare_band_source else None
+        ),
     )
     queue = list(bands or [])
+    reads = _Reads()
 
     def _read_band() -> BandObservation | None:
+        reads.count += 1
         return queue.pop(0) if len(queue) > 1 else (queue[0] if queue else None)
 
     date_reader = _FakeReader(trading_date)
@@ -151,7 +168,7 @@ def _build(
         band_reader=_read_band if bands is not None else None,
         trading_date_reader=date_reader,
     )
-    return service, phase_reader, generation_reader, date_reader, loaded
+    return service, phase_reader, generation_reader, date_reader, loaded, reads
 
 
 def _shape(price: int) -> OrderShapeFields:
@@ -170,7 +187,7 @@ class TestNoBandReaderIsYesterdaysBehaviour:
     def test_rows_carry_no_band_keys_and_the_three_fields_stay_absent(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        service, _phase, _gen, _date, _loaded = _build(
+        service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, declare_band_source=False, bands=None
         )
 
@@ -205,7 +222,7 @@ class TestNoBandReaderIsYesterdaysBehaviour:
     def test_the_effective_constraints_are_the_policy_object_itself(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        service, _phase, _gen, _date, loaded = _build(
+        service, _phase, _gen, _date, loaded, _reads = _build(
             tmp_path, evidence_store, declare_band_source=False, bands=None
         )
 
@@ -216,7 +233,7 @@ class TestEffectiveConstraints:
     def test_a_band_fills_the_two_bounds_and_nothing_else(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        service, _phase, _gen, _date, loaded = _build(
+        service, _phase, _gen, _date, loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -234,7 +251,7 @@ class TestEffectiveConstraints:
     ) -> None:
         """Before a band, the kernel answers UNKNOWN on a null bound
         (``predicates.py``'s required-bound check); with one, it judges."""
-        service, _phase, _gen, _date, _loaded = _build(
+        service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -259,7 +276,7 @@ class TestEffectiveConstraints:
         values. They read the same property, so what has to hold is that the property does not
         mint a NEW ``model_copy`` per access — which would also make every comparison a
         different object and hide a genuine mid-attempt change."""
-        service, _phase, _gen, _date, _loaded = _build(
+        service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -271,7 +288,7 @@ class TestEffectiveConstraints:
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
         observation = _band()
-        service, _phase, _gen, _date, _loaded = _build(
+        service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[observation]
         )
 
@@ -288,7 +305,7 @@ class TestEffectiveConstraints:
     def test_the_policy_bound_row_carries_the_band_source_digest(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        _service, _phase, _gen, _date, loaded = _build(
+        _service, _phase, _gen, _date, loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -309,7 +326,7 @@ class TestTradingDateBond:
         tick generation. Neither the phase-change re-read nor the out-of-session ``None`` phase
         can fire here, so the date comparison is the ONLY thing standing between the D band
         and a D+1 decision."""
-        service, _phase, _gen, date_reader, _loaded = _build(
+        service, _phase, _gen, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -339,7 +356,7 @@ class TestTradingDateBond:
     def test_an_unavailable_current_trading_date_also_drops_the_band(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        service, _phase, _gen, date_reader, _loaded = _build(
+        service, _phase, _gen, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -356,7 +373,7 @@ class TestTradingDateBond:
         SAME tick generation as the first, so a bond evaluated after the cache early return
         would never run at all. Asserted on the generation counter rather than on the dropped
         band, so moving the check behind the cache fails HERE specifically."""
-        service, _phase, generation, date_reader, _loaded = _build(
+        service, _phase, generation, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -382,7 +399,7 @@ class TestWrongContractBandWouldAdmit:
             price_min=int(float(PVL_A05611_LOWER) * 100),
             price_max=int(float(PVL_A05611_UPPER) * 100),
         )
-        service, _phase, _gen, _date, _loaded = _build(
+        service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[wrong]
         )
 
@@ -403,7 +420,7 @@ class TestReissueOnlyOnTransition:
     def test_repeated_out_of_session_calls_advance_the_generation_once(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        service, phase, generation, _date, _loaded = _build(
+        service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[None], trading_date=None
         )
 
@@ -417,10 +434,14 @@ class TestReissueOnlyOnTransition:
         assert len(_rows(evidence_store, VENUE_SNAPSHOT_ISSUED_KIND)) == 1
         assert phase.value == "REGULAR"
 
-    def test_a_band_that_reads_identically_does_not_reissue(
+    def test_a_new_tick_generation_without_a_phase_change_does_not_reissue(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        service, phase, generation, _date, _loaded = _build(
+        """Renamed from "a band that reads identically does not reissue" (independent review
+        M3): no read happens on the final call at all, so the old name claimed a band
+        comparison this sequence never performs. What it pins is the pre-existing rule — a new
+        tick generation at an unchanged phase is not a material change."""
+        service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band(), _band()]
         )
 
@@ -438,19 +459,90 @@ class TestReissueOnlyOnTransition:
         assert service.snapshot().constraint_generation == 3
 
 
+class TestReadOnIsHonoured:
+    """Independent review M2 — ``read_on`` is CONSULTED, not merely validated by the loader.
+
+    Before this, every declaration behaved like ``["boot", "phase_change"]``: a tree
+    declaring ``["boot"]`` kept re-reading on every phase change (3x the GETs it asked for,
+    against a 1.0 rps mock limit), and one declaring ``["phase_change"]`` still read at boot.
+    """
+
+    def test_boot_only_reads_once_and_never_again(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        service, phase, generation, _date, _loaded, reads = _build(
+            tmp_path, evidence_store, bands=[_band()], read_on='["boot"]'
+        )
+
+        service.snapshot()
+        assert reads.count == 1
+
+        for step, next_phase in enumerate(("CLOSED", "REGULAR", "CLOSED"), start=2):
+            phase.value = next_phase
+            generation.value = step
+            service.snapshot()
+
+        assert reads.count == 1
+        # The band read at boot is still the one in force — not dropped by the absent reads.
+        assert service.shape_constraints.price_max == _UPPER
+
+    def test_phase_change_only_does_not_read_at_boot(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        service, phase, generation, _date, _loaded, reads = _build(
+            tmp_path, evidence_store, bands=[_band()], read_on='["phase_change"]'
+        )
+
+        service.snapshot()
+
+        assert reads.count == 0
+        assert (
+            service.shape_constraints.price_max is None
+        )  # no band yet, kernel UNKNOWN
+
+        phase.value = "CLOSED"
+        generation.value = 2
+        service.snapshot()
+
+        assert reads.count == 1
+        assert service.shape_constraints.price_max == _UPPER
+
+    def test_both_tokens_read_at_boot_and_on_each_phase_change(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """The baseline the two tests above differ from — without it they would also pass
+        against a service that never reads at all."""
+        service, phase, generation, _date, _loaded, reads = _build(
+            tmp_path, evidence_store, bands=[_band()]
+        )
+
+        service.snapshot()
+        phase.value = "CLOSED"
+        generation.value = 2
+        service.snapshot()
+
+        assert reads.count == 2
+
+
 class TestBandChangeIsANewGeneration:
     """ADR-002-019 §18 / plan §8 5 — a band change is a material change ⇒ new Constraint
     Generation.
 
     **Plan §8 5 says "phase 동일 · band 값만 다른 두 읽기", and a same-phase VALUE change is
-    not reachable.** ``read_on`` carries exactly two tokens, so a READ only ever happens at
-    boot or on a phase change — two reads with the same phase cannot occur, and a test that
-    staged one would be testing a sequence the runtime cannot produce. The same correction
-    plan §4.4a already made for its own v1 input applies here: the reachable form of "the
-    phase did not change but the band did" is the trading-date bond dropping it, and
+    NOT reachable under any ``read_on``.** A read happens only at boot or on a phase change,
+    and both of those already issue; so no sequence this runtime can produce has two reads at
+    the same phase. The same correction plan §4.4a already made for its own v1 input applies
+    here: the reachable form of "the phase did not change but the band did" is the
+    trading-date bond DROPPING it, and
     :meth:`test_a_same_phase_band_transition_takes_a_new_generation` is that test — the one
-    that goes red if ``band_transition`` is dropped from the re-issue condition. The two
-    phase-change tests below pin what the new generation BINDS, which is a different claim.
+    that goes red if ``band_transition`` is dropped from the re-issue condition.
+
+    Independent review M3 measured the consequence: the value/continuity comparison that used
+    to sit beside it decided nothing (mutating it to "always changed", and deleting the fold
+    outright, both left every test green), so it is gone. The two tests below are renamed to
+    claim only what they actually pin — a phase change re-issues, and the re-issued snapshot
+    binds the band read at that moment — rather than "a band change re-issues", which they
+    never showed.
     """
 
     def test_a_same_phase_band_transition_takes_a_new_generation(
@@ -461,7 +553,7 @@ class TestBandChangeIsANewGeneration:
         the phase check alone, which answers "nothing changed" — and the constraint generation
         stops moving even though the kernel is now judging on a different constraint set.
         """
-        service, phase, generation, date_reader, _loaded = _build(
+        service, phase, generation, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
@@ -473,11 +565,13 @@ class TestBandChangeIsANewGeneration:
         assert second.constraint_generation == first.constraint_generation + 1
         assert len(_rows(evidence_store, VENUE_SNAPSHOT_ISSUED_KIND)) == 2
 
-    def test_a_changed_band_reissues_even_though_the_phase_did_not_change(
+    def test_the_reissued_snapshot_binds_the_band_read_at_that_moment(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
+        """The phase change is what re-issues; this pins that the NEW snapshot carries the
+        band the read at that instant returned, not the previous one."""
         widened = _band(price_min=_LOWER - 200, price_max=_UPPER + 200)
-        service, phase, generation, _date, _loaded = _build(
+        service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band(), widened]
         )
 
@@ -492,14 +586,14 @@ class TestBandChangeIsANewGeneration:
         assert service.shape_constraints.price_max == _UPPER + 200
         assert second.critical_input_snapshot_digest == widened.record_digest
 
-    def test_a_continuity_change_alone_reissues(
+    def test_the_reissued_snapshot_binds_the_new_continuity_id(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Plan §4.3 lists continuity among the three transition triggers. A token reissue
-        produces the SAME numbers under a NEW continuity id — if only the values were
-        compared, the snapshot would keep claiming the old continuity."""
+        """A token reissue produces the SAME band numbers under a NEW continuity id. The
+        re-issue here comes from the phase change (M3) — what this pins is that the snapshot
+        carries the continuity of the read it just took, never the previous one."""
         reissued = _band(continuity="boot-1:1")
-        service, phase, generation, _date, _loaded = _build(
+        service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band(), reissued]
         )
 

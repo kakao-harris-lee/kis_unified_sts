@@ -29,6 +29,9 @@ import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.transport.kis_mock.credential_session import (
+    KisCredentialSessionConflict,
+)
 from tos_runtime.transport.kis_quote.config import (
     KisQuoteTransportConfigError,
     read_declared_instrument,
@@ -139,7 +142,7 @@ def _sync_venue_activation_digest(config_dir: Path) -> None:
     loaded = load_venue_constraint_policy(
         config_dir / "venue_constraint_policy.yaml",
         scheme=_SCHEME,
-        band_transport_instrument=read_declared_instrument(
+        band_transport_instrument_reader=lambda: read_declared_instrument(
             config_dir / "kis_quote.yaml"
         ),
     )
@@ -238,6 +241,16 @@ class TestTodaysRowsAreUnchanged:
             assert (
                 snapshot_rows
             ), "no snapshot row — the assertions below would be vacuous"
+            # L4 — an OBSERVATION of the null path's shape, deliberately NOT claimed as a
+            # guard. One attempt at one phase writes exactly one snapshot row, at generation
+            # 1. Three separate single-clause mutations were tried against it (forcing
+            # `phase_changed`, bypassing the tick-generation cache early return, and dropping
+            # the no-material-change early return) and all three stayed GREEN, because
+            # `snapshot()` is only ever reached once per attempt here. So it pins the measured
+            # shape — which a later extra issuance or a skipped generation would break — and
+            # #838 says to say that rather than let it read like a clause-level guard.
+            assert len(snapshot_rows) == 1
+            assert [row["constraint_generation"] for row in snapshot_rows] == [1]
             for snapshot_row in snapshot_rows:
                 assert set(snapshot_row) == set(_SNAPSHOT_KEYS)
                 assert snapshot_row["absent_fields"] == [
@@ -386,6 +399,66 @@ class TestADeclaredSourceAtBoot:
             )
 
         assert "REAL_PROD" in str(excinfo.value)
+
+    def test_a_session_terms_conflict_refuses_at_BOOT_not_at_the_first_decision(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """Independent review M1. One app key gets one token lifecycle (C-2 decision (C)), so
+        two consumers declaring different token terms is a
+        :class:`KisCredentialSessionConflict`. It must surface while compose is still running
+        — a reader built on its FIRST READ instead would raise this hours later, inside a
+        decision, which is exactly what the factory's docstring promised it would not do.
+
+        The conflicting leaf is the reissue cooldown: the order transport's
+        ``kis_mock_transport.yaml`` and this ``kis_quote.yaml`` disagree about it.
+        """
+        self._kis_mock_boot(config_dir, custody_root)
+        _write_kis_quote_transport_config(
+            config_dir,
+            instrument=_VENUE_POLICY_INSTRUMENT,
+            token_reissue_min_interval_s=61,
+        )
+        _declare_band_source(config_dir)
+
+        with pytest.raises(KisCredentialSessionConflict):
+            _compose(
+                tmp_path,
+                config_dir,
+                data_dir,
+                custody_root,
+                transport_kind=TransportKind.KIS_MOCK,
+            )
+
+    def test_a_null_band_source_boots_beside_a_still_TBD_transport_document(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """Independent review L1. ``build_venue_service`` hands the loader a THUNK, which the
+        loader calls only once it has parsed a non-null ``band_source``. Read eagerly instead,
+        THIS boot would ABORT — a deployment with the band source off, refusing over a
+        document nothing in its configuration consults. Every tree shipped today is in exactly
+        this state (plan §5), so the refusal would have been the resident 08:45 session.
+        """
+        self._kis_mock_boot(config_dir, custody_root)
+        _write_kis_quote_transport_config(
+            config_dir, instrument="TBD", token_path="TBD"
+        )
+        # The venue policy is the fixture one: no `_runtime.band_source` at all.
+        assert "band_source" not in (
+            config_dir / "venue_constraint_policy.yaml"
+        ).read_text(encoding="utf-8")
+
+        runtime = _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
+        try:
+            assert runtime.venue._band_reader is None  # noqa: SLF001
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()
 
     def test_a_declared_source_without_a_transport_document_refuses_at_boot(
         self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path

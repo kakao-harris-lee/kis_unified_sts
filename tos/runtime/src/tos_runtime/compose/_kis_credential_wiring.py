@@ -13,6 +13,8 @@ one app key has one token lifecycle. This module is neutral ground: the quote wi
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.credential_session import (
@@ -37,14 +39,36 @@ class KisCredentialSessionsCell:
     The registry is built inside ``_finalize``, but the venue service — and therefore the
     CP-3 band reader it may be handed
     (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.2) — is constructed earlier,
-    because step 2 needs the loaded Order Construction Policy before the engine exists. A
-    consumer that only ever READS the session at call time (the band reader never touches it
-    at construction) closes over this cell instead; ``_finalize`` fills it the instant the
-    registry exists, which is strictly before the boot replay that can first trigger a read.
+    because step 2 needs the loaded Order Construction Policy before the engine exists.
+
+    **:meth:`on_ready` is what keeps a session fault a BOOT refusal** (independent review M1).
+    A consumer that merely read the cell lazily would not discover a
+    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessionConflict`
+    — two consumers of one app key disagreeing about the token endpoint or the reissue
+    cooldown — until the first decision, hours into a session. Registering a callback instead
+    makes the acquisition happen inside :func:`_finalize`, so the conflict surfaces while
+    compose is still running, which is what every docstring here already promised.
     """
 
     def __init__(self) -> None:
         self.sessions: KisCredentialSessions | None = None
+        self._on_ready: list[Callable[[KisCredentialSessions], None]] = []
+
+    def on_ready(self, callback: Callable[[KisCredentialSessions], None]) -> None:
+        """Run ``callback`` with the registry — now if it already exists, else when
+        :meth:`fill` supplies it. An exception the callback raises propagates to whoever is
+        filling the cell (``_finalize``), i.e. it refuses the boot."""
+        if self.sessions is not None:
+            callback(self.sessions)
+            return
+        self._on_ready.append(callback)
+
+    def fill(self, sessions: KisCredentialSessions) -> None:
+        """Supply the registry and run every pending :meth:`on_ready` callback."""
+        self.sessions = sessions
+        pending, self._on_ready = self._on_ready, []
+        for callback in pending:
+            callback(sessions)
 
     def read(self) -> KisCredentialSessions | None:
         return self.sessions

@@ -59,8 +59,13 @@ def _write(
 
 
 def _load(path: Path, transport_instrument: str | None = _INSTRUMENT):
+    """The loader takes a THUNK, not a value (independent review L1) — wrapped here so the
+    tests below keep reading as plain values. ``TestLazyTransportRead`` is what pins that the
+    thunk is not called for a policy with no band source."""
     return load_venue_constraint_policy(
-        path, scheme=SCHEME, band_transport_instrument=transport_instrument
+        path,
+        scheme=SCHEME,
+        band_transport_instrument_reader=lambda: transport_instrument,
     )
 
 
@@ -118,6 +123,52 @@ class TestEveryRuleIsReachedAlone:
         )
 
         assert loaded.band_source is None
+
+
+class TestLazyTransportRead:
+    """Independent review L1 — the ``kis_quote`` thunk is called ONLY for a policy that
+    declares a band source.
+
+    Called eagerly, a deployment running with ``band_source`` absent (every tree shipped
+    today, plan §5) would start refusing to boot the moment a broken or still-``TBD``
+    ``kis_quote.yaml`` appeared beside it — over a document nothing in its configuration
+    consults. ``tests/compose/test_venue_band_source_wiring.py`` carries the boot-level half.
+    """
+
+    def test_no_declaration_never_calls_the_reader(self, tmp_path: Path) -> None:
+        calls: list[int] = []
+
+        def _explode() -> str | None:
+            calls.append(1)
+            raise AssertionError("the transport document must not be read at all")
+
+        path = tmp_path / "venue_constraint_policy.yaml"
+        path.write_text(venue_policy_yaml(), encoding="utf-8")
+
+        loaded = load_venue_constraint_policy(
+            path, scheme=SCHEME, band_transport_instrument_reader=_explode
+        )
+
+        assert loaded.band_source is None
+        assert calls == []
+
+    def test_a_declaration_does_call_the_reader(self, tmp_path: Path) -> None:
+        """The baseline: without it the test above would also pass against a loader that
+        never calls the thunk at all."""
+        calls: list[int] = []
+
+        def _counted() -> str | None:
+            calls.append(1)
+            return _INSTRUMENT
+
+        loaded = load_venue_constraint_policy(
+            _write(tmp_path, runtime_extra=band_source_runtime_extra()),
+            scheme=SCHEME,
+            band_transport_instrument_reader=_counted,
+        )
+
+        assert loaded.band_source is not None
+        assert calls == [1]
 
 
 class TestTwoSourcesForOneBound:
@@ -302,9 +353,10 @@ class TestDeclaredVocabulary:
         assert "must be a non-empty subset of" in str(excinfo.value)
 
     def test_a_read_on_subset_of_one_token_loads(self, tmp_path: Path) -> None:
-        """The rule is SUBSET, not equality — ``["boot"]`` is a legitimate declaration (read
-        once, never again). Without this the ``read_on`` test above would also pass against a
-        wrongly-written equality check."""
+        """The rule is SUBSET, not equality — ``["boot"]`` is a legitimate declaration, and
+        the service honours it literally: read once, never again
+        (``test_service_band.py::TestReadOnIsHonoured``). Without this the ``read_on`` test
+        above would also pass against a wrongly-written equality check."""
         loaded = _load(
             _write(
                 tmp_path, runtime_extra=band_source_runtime_extra(read_on='["boot"]')

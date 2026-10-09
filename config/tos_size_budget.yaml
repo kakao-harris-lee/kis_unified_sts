@@ -951,11 +951,15 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 114
+  measured: 116
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-09 PR #890 독립 리뷰 M1 재등재 114→116(+2)**: 셀을 채우는 한 줄이
+    `credential_sessions_cell.sessions = …` 에서 `…fill(…)` 로 바뀌고 주석이 두 줄
+    늘었다. `fill` 은 셀의 `on_ready` 콜백을 함께 돌리므로, 밴드 리더가 자기 KIS 세션을
+    **이 함수 안에서** 얻는다 — 세션 조건 충돌이 첫 결정이 아니라 **부팅**에서 거부된다.
     **2026-10-09 CP-3 band 원천 웨이브(PR-2) 재등재 108→114(+6)**: 선택 매개변수
     `credential_sessions_cell` 1줄 + `kis_credential_sessions` 생성 직후 그 셀을
     채우는 2줄(주석 3줄). 셀을 **이 함수 안에서** 채우는 이유는 아래 부팅 리플레이가

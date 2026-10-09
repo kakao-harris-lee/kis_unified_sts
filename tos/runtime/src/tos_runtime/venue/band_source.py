@@ -37,17 +37,20 @@ registered there as residual risk, not closed here. A read whose stamp is ``None
 cannot say which trading date this instant belongs to) is REFUSED outright rather than stamped
 with a guess: a band that cannot be bound to a date cannot be invalidated when the date turns.
 
-**``stage_hint`` is an observation, never a judgement, and carries NO rate constant.** 시행세칙
-제56조의2's stage-1 band is ``기준가격 × (1 ± r)`` — symmetric about the basis for ANY rate ``r``.
-So "the observed band is symmetric about the observed basis" is a rate-free NECESSARY condition
-of the stage-1 formula, and that is exactly what :data:`BandObservation.stage_hint` records
-(the 2026-10-08 모의 measurement satisfies it: basis 1073.32, band 987.46/1159.18, both legs
-85.86 wide). It is deliberately NOT the full 산식 check — this module has no governed source for
-``r``, and inventing one would be the hardcoded-threshold defect this repo's CLAUDE.md forbids.
-A ``False`` (or ``None``, when the basis did not scale exactly) hint NEVER drops a band: plan
-§4.4a's residual-risk paragraph says the response-side check waits until the first enabled
-session's rows are measured. ``stage_hint`` is the slot plan §7 reserves for the (ii)
-regulation-calculation cross-check, filled with the part that needs no approved value.
+**``symmetric_about_basis`` names exactly what it measures — it does NOT identify stage 1.**
+시행세칙 제56조의2's stage-1 band is ``기준가격 × (1 ± r)``, which is symmetric about the basis;
+so is stage 2 and so is stage 3, because every stage uses the same ± form with a larger ``r``.
+Symmetry is therefore a NECESSARY condition of the stage-1 formula and not a sufficient one, and
+calling the field ``stage_hint`` (as this module first did, and as plan §4.5 originally
+worded it — corrected there 2026-10-09 with an implementation-time note)
+claimed a discrimination it cannot make. The field records the measurement and nothing more: the
+observed band is symmetric about the observed basis (the 2026-10-08 모의 measurement satisfies
+it — basis 1073.32, band 987.46/1159.18, both legs 85.86 wide). **The stage-1 judgement is made
+OFFLINE**, from the raw ``basis``/``price_min``/``price_max`` the same evidence row carries, once
+an approved source for ``r`` exists (plan §9 4); this module has none and inventing one would be
+the hardcoded-threshold defect this repo's CLAUDE.md forbids. A ``False`` (or ``None``, when the
+basis did not scale exactly) value NEVER drops a band: plan §4.4a's residual-risk paragraph says
+the response-side check waits until the first enabled session's rows are measured.
 
 **Source continuity (ADR-002-019 §9: 재시작·재접속·자격 교체는 새 연속성).** The continuity id is
 ``<boot_continuity_seed>:<token_epoch>``. The seed is minted once per reader construction (so a
@@ -77,7 +80,11 @@ from tos_runtime.transport.kis_mock.client import (
     RawResponse,
 )
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
-from tos_runtime.transport.kis_mock.token import EvidenceRecorder, TokenStale
+from tos_runtime.transport.kis_mock.token import (
+    EvidenceRecorder,
+    TokenResponseError,
+    TokenStale,
+)
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 
 __all__ = [
@@ -131,8 +138,8 @@ class BandSourceConfig:
         upper_field: The response ``output`` key carrying the upper limit (``futs_mxpr``).
         lower_field: The response ``output`` key carrying the lower limit (``futs_llam``).
         basis_field: The response ``output`` key carrying the reference price (``futs_sdpr``) —
-            recorded as evidence and used for :attr:`BandObservation.stage_hint` only, NEVER
-            for admissibility.
+            recorded as evidence and used for
+            :attr:`BandObservation.symmetric_about_basis` only, NEVER for admissibility.
         price_scale: The exact integer multiplier from the broker's quoted index points to the
             kernel's opaque scaled ints. Must equal ``_runtime.price_scale`` (plan §4.1's price
             scale paragraph — the loader refuses a mismatch).
@@ -168,14 +175,19 @@ class BandObservation:
         price_max: The upper limit, same scaling.
         trading_date: The LOCAL ``YYYYMMDD`` KST stamp taken at the GET instant (module
             docstring) — never a response field, never ``None`` on a successful observation.
-        raw_payload_digest: SHA-256 over the response's whole ``output`` block, canonically
-            serialized — the runtime's own direct binding to the bytes the broker sent
-            (plan §6 (A): this is the reason the GET lives in the runtime at all).
+        raw_payload_digest: SHA-256 over the response body's RAW bytes, exactly as received —
+            the runtime's own direct binding to what the broker sent (plan §6 (A): this is the
+            reason the GET lives in the runtime at all). Deliberately not a digest of the
+            PARSED ``output`` block: any re-serialization is a digest of this runtime's
+            rendering, not of the broker's bytes, and an earlier cut that stringified the
+            parsed values made ``"1159.18"`` and ``1159.18`` collide.
         source_continuity_id: Module docstring's "source continuity".
         as_of_ms: The monotonic reading taken immediately before the request went out.
         basis: The scaled reference price, or ``None`` when the basis field was absent or did
             not scale exactly (evidence only — never admissibility).
-        stage_hint: Module docstring's ``stage_hint`` — ``None`` when :attr:`basis` is ``None``.
+        symmetric_about_basis: Module docstring's own section — ``None`` when :attr:`basis`
+            is ``None`` (nothing to be symmetric about), never a judgement about which
+            price-limit stage is in force.
     """
 
     instrument: str
@@ -186,7 +198,7 @@ class BandObservation:
     source_continuity_id: str
     as_of_ms: int
     basis: int | None
-    stage_hint: bool | None
+    symmetric_about_basis: bool | None
 
     @property
     def record_digest(self) -> str:
@@ -203,7 +215,7 @@ class BandObservation:
                 "raw_payload_digest": self.raw_payload_digest,
                 "source_continuity_id": self.source_continuity_id,
                 "basis": self.basis,
-                "stage_hint": self.stage_hint,
+                "symmetric_about_basis": self.symmetric_about_basis,
             }
         )
 
@@ -332,10 +344,23 @@ class KisBandSourceReader:
         if trading_date is None:
             self._refuse("trading_date_unavailable")
             return None
+        # The token step has THREE distinct failure modes, not one (independent review M1):
+        # the held token is stale and the cooldown has not elapsed (`TokenStale`), the token
+        # endpoint answered with an unusable body (`TokenResponseError`), or the token request
+        # never completed (`KisMockClientError` — `KisTokenLifecycle._issue_token` calls the
+        # same HTTP client this module does). Letting the last two propagate would carry a
+        # transport fault out through `snapshot()`/`decide()` instead of into band `None`,
+        # which is the one outcome plan §4.6 promises.
         try:
             access_token = self._credential_session.ensure_token_string()
         except TokenStale as exc:
             self._refuse("token_stale", detail=str(exc))
+            return None
+        except TokenResponseError as exc:
+            self._refuse("token_response_invalid", detail=str(exc))
+            return None
+        except KisMockClientError as exc:
+            self._refuse("token_transport_error", detail=str(exc))
             return None
         continuity_id = self._continuity_for(access_token)
         try:
@@ -348,6 +373,7 @@ class KisBandSourceReader:
             return None  # _parse_output already recorded its own refusal
         return self._validate(
             output,
+            raw_text=response.text,
             trading_date=trading_date,
             continuity_id=continuity_id,
             as_of_ms=as_of_ms,
@@ -405,6 +431,7 @@ class KisBandSourceReader:
         self,
         output: dict[str, Any],
         *,
+        raw_text: str,
         trading_date: str,
         continuity_id: str,
         as_of_ms: int,
@@ -445,11 +472,13 @@ class KisBandSourceReader:
             price_min=lower,
             price_max=upper,
             trading_date=trading_date,
-            raw_payload_digest=_canonical_digest({"output": _stringify(output)}),
+            raw_payload_digest=hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
             source_continuity_id=continuity_id,
             as_of_ms=as_of_ms,
             basis=basis,
-            stage_hint=None if basis is None else (upper - basis) == (basis - lower),
+            symmetric_about_basis=(
+                None if basis is None else (upper - basis) == (basis - lower)
+            ),
         )
         self._record_observed(observation)
         self._last_observation = observation
@@ -483,7 +512,7 @@ class KisBandSourceReader:
                 "raw_payload_digest": observation.raw_payload_digest,
                 "continuity": observation.source_continuity_id,
                 "band_digest": observation.record_digest,
-                "stage_hint": observation.stage_hint,
+                "symmetric_about_basis": observation.symmetric_about_basis,
                 "narrowed_intraday": self._narrowed_intraday(observation),
                 # Plan §4.3 M3 / §4.5: the stand-in label travels with the row, in the same
                 # idiom `egress_coordinates.yaml::capsule_terminus_fields` uses.
@@ -514,16 +543,16 @@ def _scaled(raw: Any, scale: int) -> int | None:
     if raw is None or isinstance(raw, bool):
         return None
     try:
-        value = Decimal(str(raw)) * scale
+        parsed = Decimal(str(raw))
     except (InvalidOperation, ValueError, ArithmeticError):
         return None
+    # `Decimal` accepts "Infinity"/"-Infinity"/"NaN" (independent review M1): they survive the
+    # multiply and the integral comparison, and only blow up at `int()` with an OverflowError
+    # that would escape `read()` entirely. Refused here, as a named reason like any other
+    # unusable value.
+    if not parsed.is_finite():
+        return None
+    value = parsed * scale
     if value != value.to_integral_value():
         return None
     return int(value)
-
-
-def _stringify(output: Mapping[str, Any]) -> dict[str, str]:
-    """The response ``output`` block as plain strings — so the raw-payload digest folds the
-    broker's own bytes rather than a JSON type coincidence (``"1159.18"`` and ``1159.18``
-    must not collide)."""
-    return {str(key): str(value) for key, value in output.items()}
