@@ -118,27 +118,49 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
 축 `SHORT` → `CLOSE.SHORT` → **BUY** 가 된다. 두 표기를 고정하는 것은 주석이 아니라
 `test_tenant_tree_short.py::test_flat_rule_direction_is_the_closing_action_not_the_position` 이다.
 
-### 3.3 ⚠ SHORT parity 공백 — **이 방향에는 parity 증거가 0 이다**
+### 3.3 ✅ SHORT parity — **닫혔다 (2026-10-09 실측)**
 
-1. **B1b parity 실행은 LONG 단독이었다 — 선언된 차이 `B1b-D5`.** B3 실측
-   (kickoff §5 2, `101S6000` 2025-12-01~2026-04-30, 35,612 봉)에서 레거시 FIRED 550 =
-   **LONG 374 / SHORT 176** 이었고, 규칙 수준 진입 일치 **374/374 = 100 %** 는 **LONG 쪽
-   수치다**. SHORT 176 은 전부 `LEGACY_ONLY_ENTRY` 버킷에 들어가 **B1b-D5 로 귀속**됐다 —
-   「TOS 쪽이 틀렸다」가 아니라 「TOS 쪽에 SHORT 렌더가 없어서 비교가 성립하지 않았다」는
-   뜻이다. 그러므로 **이 트리의 진입 규칙은 한 번도 레거시와 대조된 적이 없다.**
-   닫으려면 B1b 를 이 전략 파일로 다시 돌려 B3 를 다시 내야 한다(미착수).
+> 이 절은 2026-10-09 까지 「이 방향에는 parity 증거가 0 이다」였다. 운영자 지시
+> (「short 전략 파일로 다시 돌려줘」)로 B1b 를 SHORT 로 돌려 B3 를 다시 냈고, 아래가 그
+> 수치다. **남은 공백은 §3.3-2 하나**(regime 가드)이고 그것은 이 비교가 **원리상** 볼 수
+> 없는 종류의 차이라는 것까지 실측됐다.
+
+1. ✅ **SHORT 규칙 수준 진입 일치 176/176 = 100 %** (`101S6000` 2025-12-01~2026-04-30,
+   35,612 봉 · 깨끗한 분리 워크트리 `dirty:false`). 레거시 FIRED 550 = **LONG 374 /
+   SHORT 176** 은 같은 B2 아티팩트이고(바이트 동일 재현), 이번에는 **SHORT 176 쪽**이
+   분모다. 포지션 모델 수준 **56/56 = 100 %**, TOS 쪽에서 본 **176/188 = 93.62 %**,
+   **UNRESOLVED 0**. 초과한 12 는 전부 레거시 `LOW_CONFIDENCE`(B1a-D1·B2-L9 — 공개 필드가
+   `min_confidence` 를 표현할 수 없어 정책이 「레거시 발화」의 상위집합이다). 레거시 LONG
+   발화 374 는 이제 **거울로** `LEGACY_ONLY_ENTRY` → 귀속 `legacy_long_entry`(B1b-D5)다.
+   전체 수치와 산출물 sha256 은 kickoff §5 2 의 SHORT 문단에 있다.
+   ⚠ **이 트리의 전략 파일이 직접 실행된 것은 아니다** — 실행된 것은 B1b 쪽 사본
+   `tos/runtime/cp3/short/strategies/setup_d_short.strategy.yaml` 이고(이 파일은 좌표가
+   `"TBD"` 라 적재되지 않는다, §5 1), 둘이 **좌표 정규화 뒤 같은 파싱 YAML** 이라는 것은
+   `tos/runtime/cp3/tests/test_cp3_short_strategy_content.py` 의 드리프트 가드가 고정한다
+   (레드 증명 다섯). 그 가드는 이 PR 전까지 **LONG 쪽에도 없었다**.
 2. **레거시의 SHORT 전용 가드가 삭제됐다 — 결정 5 의 의도된 차이.** 레거시
    `config/strategies/futures/setup_d_vwap_reversion.yaml` 은
    `short_blocked_regimes: ["BULL_STRONG"]` 를 들고 있고(`long_blocked_regimes` 는 **빈
    리스트**다), 그 주석이 근거를 적는다: 「강한 추세 레지임에 맞서 VWAP 스파이크를 페이드하는
    것이 추세 지속일의 **지배적 실패 모드**」. TOS 에는 regime 입력이 없어 이 가드를 옮길 수
    없고 결정 5 가 **삭제를 의도된 차이로 등재**했다. ⚠ **그 가드는 SHORT 에만 걸려 있었으므로
-   손실은 이 트리에 비대칭적으로 떨어진다** — LONG 트리는 잃은 것이 없다. 결정 5 는 그래서
-   「07-07 노출이 **둘 다** 열린다」고 적고 parity 보고서의 SHORT 편향 diff 를 이 항목에
-   귀속시킨다.
+   손실은 이 트리에 비대칭적으로 떨어진다** — LONG 트리는 잃은 것이 없다.
+   ⚠⚠ **그러나 그 손실은 이 비교에 **나타날 수 없다**(실측 2026-10-09).** `B1b-D8` 은
+   SHORT 실행의 `summary.json` 에도 선언된 차이로 올라가지만 **흡수한 봉은 0** 이고, 그것이
+   맞는 값이다: 그 가드는 `shared/strategy/entry/setup_d_adapter.py` 에서
+   `self._setup.check(mc)` 가 **반환한 뒤** 걸리는데 B2 는 `SetupDVWAPReversion.check()` 를
+   **직접** 몰기 때문에 **레거시 쪽도 그 블록을 적용한 적이 없다**. 양쪽이 똑같이 무방비인
+   것이다. 그러므로 결정 5 가 말한 「parity 보고서의 SHORT 편향 diff 를 이 항목에 귀속」은
+   **이 결정 수준 비교에서는 성립하지 않는다** — 0 은 「가드가 무해했다」가 아니라 「이
+   비교가 그 가드를 보는 지점이 아니다」라는 뜻이다. 닫으려면 B2 가 어댑터의 판정을
+   공개해야 하고 그것은 B2 변경이다. 배포(paper/live)는 어댑터를 타므로 차이는 **거기서**
+   실재한다. 이 두 문장은 `B1b-D8` 의 note 와
+   `test_cp3_short_strategy_content.py::test_the_regime_guard_difference_says_why_it_cannot_show_up`
+   이 고정한다(그 테스트는 어댑터 소스에서 `check()` 가 블록보다 **앞**인지까지 읽는다).
 3. **ATR 스톱(1.5×)과 `min_confidence` 는 LONG 과 같은 이유로 없다** — 결정 6 · B1a-D1.
-   대칭이므로 SHORT 전용 공백은 아니지만, SHORT 쪽 검증이 아예 없는 상태에서 함께 읽어야
-   하는 항목이라 여기 적는다.
+   대칭이므로 SHORT 전용 공백은 아니다. `min_confidence` 는 위 1 의 초과 12 로 **관측됐고**,
+   ATR 스톱(`B1b-D9`)은 양쪽 실행 모두 흡수 봉 **0** 이다(청산 비교 자체가 B1b-D7 의
+   미이행 의무 아래에 있다 — kickoff §5 2).
 
 **필드는 LONG 과 같은 열다섯이고 SHORT 변종을 만들지 않았다** — 그 실측 근거(게이트 불린의
 방향 의존이 **z 의 부호**에서 나오므로 SHORT 규칙이 발화할 수 있는 봉에서는 이미 숏 쪽
@@ -197,7 +219,11 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    (`_STRATEGY_FILE` 고정 · 앵커 1회 매칭 요구)이고, 전략 파일 헤더가 적는다.
    ⚠ **그러므로 이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다.**
 3. **실시간 필드 생산자가 없다** — kickoff §5 3 ③. B1a 는 Parquet 배치 도구다.
-4. **SHORT parity 증거 0** — §3.3. 이것이 이 트리의 가장 큰 공백이다.
+4. ✅ **SHORT parity 증거 — 2026-10-09 에 생겼다**(§3.3 1: 규칙 수준 176/176 = 100 %,
+   UNRESOLVED 0). ⚠ 그 실행은 이 트리의 전략 파일이 아니라 **좌표만 다른 B1b 사본**으로
+   돌았고(이 파일은 `"TBD"` 라 적재되지 않는다), 둘의 등식은 드리프트 가드가 고정한다.
+   그리고 그것은 **결정 수준** 증거이지 체결·PnL 증거가 아니다 — B3 의 `scope` 가 그렇게
+   적는다. 남은 공백은 §3.3 2(regime 가드는 이 비교가 보는 지점이 아니다)와 위 1~3 이다.
 5. **체결·영수증 증거 없음** — band 가 null 인 동안 step 3 는 UNKNOWN 이다.
    실주문은 어느 경우에도 0 이다(채택 스코프 `SYNTHETIC_FUTURES_ORDER`, `broker_scopes.yaml`).
 6. **활성화 0** — `safety_activation.yaml::members` 는 `null` 이다. digest 리터럴을 지어내지

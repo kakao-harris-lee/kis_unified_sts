@@ -350,11 +350,14 @@ def test_prose_files_differ_and_each_describes_its_own_tree(rel: str) -> None:
     assert long_text.startswith("# config/tos_runtime/cp3-setup-d-long/")
     # Each describes its OWN direction's deployment, not the other's.
     assert "SHORT 배포" in short_text and "LONG 배포" in long_text
-    # The SHORT README carries the gap RECORD -- its own §3.3 section, with the measured
+    # The SHORT README carries the parity RECORD -- its own §3.3 section, with the measured
     # evidence. The LONG one may (and does) point AT that record; a cross-reference is not the
     # record, so the distinguishing assertion is on the section heading and the measured token,
     # not on the phrase (which appears in both, deliberately).
-    assert "### 3.3 ⚠ SHORT parity 공백" in short_text
+    # 2026-10-09: the heading moved from "공백" (gap) to "닫혔다" (closed) when the SHORT
+    # parity run landed. Asserted on the stable prefix plus the verdict token, so the record
+    # cannot be deleted and cannot silently revert to claiming a gap that no longer exists.
+    assert "### 3.3 ✅ SHORT parity — **닫혔다" in short_text
     assert "LEGACY_ONLY_ENTRY" in short_text
     assert "### 3.3" not in long_text
     assert "LEGACY_ONLY_ENTRY" not in long_text
@@ -901,20 +904,30 @@ def test_short_tree_scope_authorizes_both_directions() -> None:
     assert set(venue["scope"]["action_classes"]) == {"NEW_LONG", "NEW_SHORT", "CLOSE"}
 
 
-def test_short_tree_records_its_parity_gap() -> None:
-    """README §3.3: this direction has NO parity evidence, and the one guard the intended
-    differences removed was SHORT-only.
+def test_short_tree_records_its_parity_result() -> None:
+    """README §3.3: the SHORT parity run and its two remaining qualifications.
 
-    Pinned as strings because the gap is the most consequential thing about this tree and the
-    easiest to lose in a later edit: B1b's parity runs were LONG-only (declared difference
-    B1b-D5, so the measured 374/374 entry agreement is a LONG number), and decision 5 deleted
-    ``short_blocked_regimes`` -- which the legacy YAML sets while leaving
-    ``long_blocked_regimes`` empty, so the loss falls asymmetrically here."""
+    Until 2026-10-09 this tree's §3.3 recorded a GAP ("this direction has no parity
+    evidence"). The run landed, so what has to survive a later edit changed with it, and the
+    assertions below are the new record rather than the old one:
+
+    * the measured SHORT numbers (176/176 rule level, UNRESOLVED 0) and the declared
+      difference that now absorbs the LONG half (``B1b-D5`` via ``LEGACY_ONLY_ENTRY``);
+    * the qualification that what ran was the B1b copy, not this tree's own file (its
+      coordinates are ``"TBD"``, so it cannot be loaded as committed);
+    * the ``short_blocked_regimes`` disposition -- the deletion is real for the DEPLOYMENT but
+      CANNOT appear in this comparison, because the guard sits in ``setup_d_adapter`` after
+      ``check()`` returns and B2 drives ``check()`` directly. A reader who loses that sentence
+      will read ``B1b-D8``'s zero as "the guard was harmless".
+    """
     prose = (_SHORT_DIR / "README.md").read_text(encoding="utf-8")
     assert "B1b-D5" in prose
-    assert "SHORT parity 공백" in prose
-    assert "short_blocked_regimes" in prose
+    assert "176/176" in prose
+    assert "UNRESOLVED 0" in prose
     assert "LEGACY_ONLY_ENTRY" in prose
+    assert "short_blocked_regimes" in prose
+    assert "setup_d_adapter" in prose
+    assert "B1b-D8" in prose
 
     # And the asymmetry the README claims is still true of the legacy YAML it cites -- a claim
     # about another file is only a guard if it reads that file.
@@ -926,3 +939,13 @@ def test_short_tree_records_its_parity_gap() -> None:
     assert not params[
         "long_blocked_regimes"
     ], "README §3.3 claims the guard was SHORT-only; long_blocked_regimes is now non-empty"
+
+    # The disposition is a claim about ANOTHER file's call order, so it is read there too: if
+    # the regime block ever moves ahead of check(), B2 would start seeing it and the README's
+    # "cannot appear in this comparison" becomes false.
+    adapter = _REPO_ROOT / "shared" / "strategy" / "entry" / "setup_d_adapter.py"
+    source = adapter.read_text(encoding="utf-8")
+    assert source.index("self._setup.check(") < source.index("short_blocked_regimes"), (
+        "the regime block moved ahead of check(); README §3.3 2 now claims something false "
+        "about what a B1a/B2/B1b comparison can see"
+    )

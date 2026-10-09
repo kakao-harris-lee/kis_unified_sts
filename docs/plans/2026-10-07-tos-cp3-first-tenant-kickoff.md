@@ -162,7 +162,11 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    둘을 봉별로 diff 한다. 네 자리:
    **B1a** `tools/tos_cp3/produce_fields.py` · **B2** `tools/tos_cp3/emit_legacy_decisions.py` ·
    **B1b** `tos/runtime/cp3/`(`runner.py` 외 여덟 모듈 · `strategies/setup_d_long.strategy.yaml` ·
-   `strategy_bindings.yaml` · `tests/`) · **B3** `tools/tos_cp3/diff_decisions.py`. 산출물은
+   `strategy_bindings.yaml` · 2026-10-09 추가된 SHORT 렌더
+   `short/{strategies/setup_d_short.strategy.yaml, strategy_bindings.yaml}` — **방향마다 자기
+   config_dir**: 로더가 `strategies/` 디렉터리 전체를 읽고 러너가 그 안에 전략이 정확히
+   하나일 것을 요구하므로 한 디렉터리에 둘을 두면 LONG 실행까지 거부된다 · `tests/`) ·
+   **B3** `tools/tos_cp3/diff_decisions.py`. 산출물은
    넷 다 `--out/<payload>.jsonl` + `lineage.json` 이고 B3 는 거기에 `summary.json` 을 더한다;
    **배치는 B3 가 이렇게 정했다** —
    `reports/tos-cp3/<symbol>_<window_start>_<window_end>/`(합의된 window identity 로 키를 잡아
@@ -297,6 +301,54 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    ⚠ 이 실측은 **리뷰 처분 뒤 깨끗한 커밋 상태**(`git status --porcelain` 빈 상태)에서 다시 돌려
    lineage 의 `tool.git.commit` 이 HEAD 와 같고 `dirty: false` 임을 확인한 산출물이다 — 초판은
    커밋 전 트리에서 돌아 리뷰된 코드가 들어 있지 않은 커밋으로 기록됐다(독립 리뷰 ②).
+
+   **SHORT 실측(2026-10-09, 운영자 지시 「short 전략 파일로 다시 돌려줘」 — 같은 창·같은 봉,
+   `101S6000` 2025-12-01~2026-04-30, 35,612 봉)**: 위 LONG 실측과 **같은 B1a·B2 아티팩트**를
+   쓴다(재실행이 바이트 동일로 재현됐다 — fields `528be035…` · decisions `2a32e739…`). 그러므로
+   아래 수치는 LONG 수치와 **같은 봉에 대한 다른 절반**이지 다른 실험이 아니다.
+   레거시 FIRED **550**(LONG **374** / SHORT **176**) — LONG 문단과 같은 값이다.
+   TOS R1 ACTION **188**(LONG 은 392). 버킷 = `AGREE_NO_ACTION` 31,697 · `AGREE_ENTRY` **176** ·
+   `TOS_ONLY_ENTRY` 12 · `LEGACY_ONLY_ENTRY` **374** · `TOS_EXIT_ON_LEGACY_*` **3,353**
+   (AFTER_CUTOFF 1,918 · VOL_BELOW_GATE 652 · BEFORE_WINDOW 549 · NOT_EXTREME 234 — **LONG 과
+   봉 단위로 같다**: R2·R3 의 가드(`vwap_reverted`·`eod`)가 방향 무관이라 FLAT 집합이 두 렌더에서
+   동일하다). **규칙 수준 SHORT 진입 일치 176/176 = 100 %**, **포지션 모델 수준 56/56 = 100 %**,
+   TOS 쪽에서 본 176/188 = **93.62 %**. **UNRESOLVED 0**. 초과한 12 는 전부 레거시
+   `LOW_CONFIDENCE`(B1a-D1·B2-L9, LONG 쪽 18 의 거울)이고, 레거시 LONG 발화 374 는 전부
+   `LEGACY_ONLY_ENTRY` → 귀속 **`legacy_long_entry`(B1b-D5)** 다 — LONG 실행의
+   `legacy_short_entry` 와 같은 규칙의 거울이다. ACTION **188 전부**가 용량 거부다(LONG 과 같은
+   이유로 바닥 봉의 R2 FLAT 이 유일한 주문을 썼다). 산출물은 커밋하지 않는다
+   (`/home/deploy/.local/state/tos/measure/cp3-short-parity-run1/`, diff sha256
+   `cefc3ceb1da7284b23c8ee4e43a99a8ecc954c27bcf6c7c675cb396ecf690704` ·
+   B1b SHORT trace `97255d15a7da01570d9beb6e8f5c9029932a91901e7e2c2a3c144f549afda321`).
+   실행은 **분리된 detached 워크트리**(`measure/wt-cp3-short-parity`, 푸시된 HEAD
+   `3e25e7e7`)에서 돌았고 lineage 셋 전부 `dirty: false` 다.
+
+   ⚠ **`short_blocked_regimes`(결정 5)는 이 비교에 나타날 수 없다 — 실측.** `B1b-D8` 은 SHORT
+   실행의 `summary.json` 에 선언된 차이로 올라가지만 **흡수 봉 0** 이고, 그것이 맞는 값이다:
+   그 가드는 `shared/strategy/entry/setup_d_adapter.py` 에서 `self._setup.check(mc)` 가
+   **반환한 뒤** 걸리는데 B2 는 `SetupDVWAPReversion.check()` 를 **직접** 몰므로 레거시 쪽도
+   그 블록을 적용한 적이 없다. 즉 §4 결정 5 의 「parity 보고서는 SHORT 편향 diff 를 이 항목에
+   귀속」은 **결정 수준 비교에서는 성립하지 않는다**(0 은 「가드가 무해했다」가 아니라 「이
+   비교가 그것을 보는 지점이 아니다」). 닫으려면 B2 가 어댑터 판정을 공개해야 하고 그것은 B2
+   변경이다. 배포(paper/live)는 어댑터를 타므로 차이는 **거기서** 실재한다.
+
+   **도구 변경(같은 PR)**: B3 의 분류·귀속·일치율 분모가 **B1b lineage 의
+   `parents.strategy_file.direction`** 에서 나온다 — `--direction` 플래그는 없고, 그 값은
+   B1b 가 **저자된 ACTION 타깃**에서 읽은 것이다(`cp3.strategy._single_direction`). 귀속 규칙
+   #1 은 「이 배포가 렌더하지 않은 쪽의 레거시 발화」로 일반화됐고 이름이 방향을 따라간다
+   (LONG → `legacy_short_entry`, SHORT → `legacy_long_entry`). 포괄 규칙은 여전히 없다.
+   검사는 **열다섯 → 열여섯**(`tos_deployment_direction_matches_entry_binding`: 방향 부재/미지
+   토큰 · 그 방향의 바인딩 키 부재 · 임계 부호가 방향과 모순 — 레드 증명 셋). **회귀 증거**:
+   같은 PR 에서 LONG 쪽 B1b·B3 를 새 코드로 다시 돌려 trace `98eb11f4…` 와 diff `ce36450f…` 가
+   **바이트 그대로** 재현됐다(그래서 LONG 은 패키지 루트에 두고 SHORT 를
+   `tos/runtime/cp3/short/` 에 두는 **비대칭** 배치를 골랐다 — 로더가 `strategies/` 에 전략
+   둘을 허용하지 않으므로 방향마다 config_dir 가 필요하고, LONG 을 옮기면 기록된
+   `parents.strategy_file.path` 가 재현되지 않는다).
+   **드리프트 가드 신설**: B1b 사본과 배포 tenant 트리 전략이 좌표 정규화 뒤 같은 파싱 YAML
+   임을 양방향 모두 고정한다(`tos/runtime/cp3/tests/test_cp3_short_strategy_content.py`,
+   레드 증명 다섯). 그 변은 이 PR 전까지 **LONG 쪽에도 가드가 없었다** —
+   `test_tenant_tree_copies.py` 는 tenant↔상주를, `test_tenant_tree_short.py` 는 LONG↔SHORT 를
+   보고 둘 다 `tos/runtime/cp3/` 에 닿지 않는다.
 3. **Setup D DSL 콘텐츠 — LONG 구현됨(2026-10-08) · 부팅 경로 미착수** — 콘텐츠는
    `tos/runtime/cp3/strategies/setup_d_long.strategy.yaml` +
    `tos/runtime/cp3/strategy_bindings.yaml`(strategies/ 아래가 아니라 그 형제 — 안에 두면 로더의
@@ -460,11 +512,18 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    rename 은 digest 를 가르지 못하고 활성화 키의 **`member_id` 만** 두 문서를 구별한다.
    VCP 는 반대로 digest 가 `_model_view.shape_constraints` 를 덮는다(`tick_size` 하나로 달라짐).
 
-   ⚠ **SHORT 에는 parity 증거가 0 이다** — 그 트리 `README.md` §3.3. B1b 실행이 LONG 단독
-   (**B1b-D5**)이었으므로 §5 2 의 「규칙 수준 374/374 = 100 %」는 **LONG 쪽 수치**이고, 레거시
-   SHORT 발화 176 은 전부 `LEGACY_ONLY_ENTRY` 로 그 차이에 귀속됐다. 더해서 결정 5 가 삭제한
-   `short_blocked_regimes` 는 레거시에서 **SHORT 에만** 걸려 있던 가드이므로
-   (`long_blocked_regimes` 는 빈 리스트다) 그 손실은 이 방향에 **비대칭적으로** 떨어진다.
+   ✅ **SHORT parity 실행 2026-10-09 — 그 공백은 닫혔다**(그 트리 `README.md` §3.3 · §5 2 의
+   SHORT 문단). B1b 를 SHORT 렌더(`tos/runtime/cp3/short/`)로 다시 돌려 B3 를 냈고 **규칙 수준
+   176/176 = 100 % · 포지션 모델 56/56 = 100 % · UNRESOLVED 0** 이다. §5 2 의 「374/374」는
+   여전히 **LONG 쪽 수치**이고 둘은 같은 B1a·B2 아티팩트에 대한 두 절반이다. 레거시 LONG 발화
+   374 는 이제 거울로 `LEGACY_ONLY_ENTRY` → `legacy_long_entry`(B1b-D5)다.
+   ⚠ 결정 5 가 삭제한 `short_blocked_regimes` 는 레거시에서 **SHORT 에만** 걸려 있던 가드이므로
+   (`long_blocked_regimes` 는 빈 리스트다) 그 손실은 **배포에서는** 이 방향에 비대칭적으로
+   떨어지지만, **이 결정 수준 비교에는 나타날 수 없다**(`B1b-D8` 흡수 봉 0 — 가드가
+   `setup_d_adapter` 에서 `check()` **뒤**에 걸리고 B2 는 `check()` 를 직접 몬다). 실측과 처분은
+   §5 2 의 SHORT 문단 끝에 있다.
+   ⚠ **배포 트리 파일이 실행된 것은 아니다** — 좌표가 `"TBD"` 라 적재되지 않는다. 실행된 것은
+   좌표만 다른 B1b 사본이고, 둘의 등식은 신설된 드리프트 가드가 고정한다.
    ⚠ **B1a 필드에 SHORT 변종을 만들지 않았다 — 실측 근거**: 방향 의존 게이트
    (`stall_ok`·`reversal_ok`)의 방향은 배포 설정이 아니라 **z 의 부호**에서 나오므로
    (`shared/decision/setups/vwap_reversion.py`: `z >= +extreme` → short) SHORT 규칙이 발화할 수
