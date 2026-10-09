@@ -2468,6 +2468,50 @@ def test_the_absorbed_counts_say_which_ids_could_be_non_zero(
                 assert entry["absorbed_bars"] == 0, entry
     assert "STRUCTURAL" in block["note"]
     assert "UNRESOLVED" in block["note"]
+    assert "cited_ids" in block["note"]
+
+
+def test_the_absorbed_note_sends_the_reader_somewhere_that_exists(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """A note in summary.json may only name keys summary.json actually has.
+
+    Concrete failing input, and the one this test was written for: the note
+    said "Check attribution_table[].ids". ``attribution_table`` exists only in
+    ``lineage.json``, so a reader following the note found nothing — a
+    cross-document pointer that reads as if it were local (2026-10-09 review).
+
+    Asserted as a CLASS, not as that one string: every snake_case identifier
+    the note mentions that is a key of ``lineage.json`` must also be reachable
+    in ``summary.json``. That catches the next note which points at the other
+    sidecar, which a literal ``"attribution_table" not in note`` would not.
+    """
+    _, result = coverage
+    note = result.summary["declared_differences"]["note"]
+
+    def keys_of(document: Any) -> set[str]:
+        found: set[str] = set()
+        stack = [document]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                found.update(node)
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        return found
+
+    summary_keys = keys_of(result.summary)
+    lineage_only = keys_of(result.lineage) - summary_keys
+    mentioned = set(re.findall(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", note))
+    assert not (mentioned & lineage_only), (
+        f"declared_differences.note points at {sorted(mentioned & lineage_only)}, "
+        "which exist in lineage.json but not in summary.json — a reader of the "
+        "summary follows that pointer into nothing"
+    )
+    # And it does point at something: a note naming no key at all would pass
+    # the assertion above vacuously.
+    assert mentioned & summary_keys
 
 
 def test_the_third_rate_key_names_the_deployment_direction(tmp_path: Path) -> None:

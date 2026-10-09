@@ -1595,9 +1595,9 @@ def build_summary(
                 "difference is absent. ⚠ And for an id NO attribution rule "
                 "cites, the zero is STRUCTURAL: it would be zero however the "
                 "window behaved, so it is not evidence about the difference at "
-                "all. Check attribution_table[].ids before reading a zero as a "
-                "measurement; the ids that can be non-zero are exactly the "
-                "ones listed there. What a bar no rule explains produces is an "
+                "all. The ids that can be non-zero are exactly the ones in "
+                "cited_ids, beside this note — read a zero as a measurement "
+                "only for those. What a bar no rule explains produces is an "
                 "UNRESOLVED entry, which is why the unresolved count — not a "
                 "zero here — is what backs 'this window hid nothing'."
             ),
