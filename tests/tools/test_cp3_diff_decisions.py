@@ -2471,6 +2471,15 @@ def test_the_absorbed_counts_say_which_ids_could_be_non_zero(
     assert "cited_ids" in block["note"]
 
 
+#: snake_case tokens ``declared_differences.note`` may use that are NOT keys of
+#: ``summary.json``. Empty: every such token in the shipped note today is a real
+#: key (``cited_ids``). Kept as an explicit literal rather than omitted, because
+#: a future note may legitimately name a tool, a file or a term in snake_case —
+#: and then the right move is to add it HERE, where a reviewer sees the list, not
+#: to loosen the assertion.
+ALLOWED_PROSE_TOKENS: frozenset[str] = frozenset()
+
+
 def test_the_absorbed_note_sends_the_reader_somewhere_that_exists(
     coverage: tuple[Trio, dd.RunResult],
 ) -> None:
@@ -2482,9 +2491,17 @@ def test_the_absorbed_note_sends_the_reader_somewhere_that_exists(
     cross-document pointer that reads as if it were local (2026-10-09 review).
 
     Asserted as a CLASS, not as that one string: every snake_case identifier
-    the note mentions that is a key of ``lineage.json`` must also be reachable
-    in ``summary.json``. That catches the next note which points at the other
-    sidecar, which a literal ``"attribution_table" not in note`` would not.
+    the note mentions must be a key reachable in ``summary.json``, or be listed
+    in :data:`ALLOWED_PROSE_TOKENS`. A literal ``"attribution_table" not in
+    note`` would not catch the next cross-document pointer.
+
+    ⚠ The first cut of this test asserted only that the mentioned tokens did
+    not intersect the keys that are in ``lineage.json`` but not in
+    ``summary.json`` — so a token in **neither** file ("and in
+    absorbed_ids_table") passed, while the docstring claimed "may only name
+    keys summary.json actually has". The assertion now says what the docstring
+    says; the gap was the review's finding, and it is the same
+    guard-admits-what-it-names shape this suite keeps meeting.
     """
     _, result = coverage
     note = result.summary["declared_differences"]["note"]
@@ -2502,14 +2519,23 @@ def test_the_absorbed_note_sends_the_reader_somewhere_that_exists(
         return found
 
     summary_keys = keys_of(result.summary)
-    lineage_only = keys_of(result.lineage) - summary_keys
     mentioned = set(re.findall(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", note))
-    assert not (mentioned & lineage_only), (
-        f"declared_differences.note points at {sorted(mentioned & lineage_only)}, "
-        "which exist in lineage.json but not in summary.json — a reader of the "
-        "summary follows that pointer into nothing"
+    unresolvable = mentioned - summary_keys - ALLOWED_PROSE_TOKENS
+    lineage_only = keys_of(result.lineage) - summary_keys
+    assert not unresolvable, (
+        f"declared_differences.note names {sorted(unresolvable)}, which a "
+        "reader of summary.json cannot resolve there"
+        + (
+            f" — {sorted(unresolvable & lineage_only)} exist in lineage.json "
+            "only, so the note is pointing at the other sidecar as if it were "
+            "this one"
+            if unresolvable & lineage_only
+            else " (they are keys of neither sidecar)"
+        )
+        + ". Point the note at a key of this document, or add the token to "
+        "ALLOWED_PROSE_TOKENS if it is prose rather than a pointer."
     )
-    # And it does point at something: a note naming no key at all would pass
+    # And it does point at something: a note naming no key at all would satisfy
     # the assertion above vacuously.
     assert mentioned & summary_keys
 
