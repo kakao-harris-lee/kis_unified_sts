@@ -683,7 +683,7 @@ COVERAGE_BARS: tuple[BarSpec, ...] = (
     # stopped being true: TOS fires at exactly the deployed threshold while
     # the legacy setup rejected as NOT_EXTREME. That is the very shape the
     # deleted quantization-edge rule claimed to explain
-    # (`dd.QUANTIZATION_EDGE_DERIVATION`); the tool must leave it UNRESOLVED
+    # (`dd.quantization_edge_derivation`); the tool must leave it UNRESOLVED
     # and list it, not attribute it to B1a-D8.
     BarSpec(
         minute=8,
