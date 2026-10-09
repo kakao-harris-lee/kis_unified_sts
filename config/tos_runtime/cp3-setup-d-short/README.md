@@ -53,7 +53,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 | `strategies/setup_d_short.strategy.yaml` | **SHORT 전용 파일.** R1 진입 `direction: SHORT`/`OPEN` + 비교 **GE** · R2·R3 `direction: LONG`/`CLOSE`(숏을 **매수로** 닫는다) · rationale 토큰 전부 |
 | `strategy_bindings.yaml` | 키 `setup_d_short.strategy` · 바인딩 **`z_entry_min_x1000: 1800`**(LONG 은 `z_entry_max_x1000: -1800`) |
 | `venue_constraint_policy.yaml` | `policy_id` SHORT 전용 (+ 헤더 제목·주석). **값은 LONG 과 같다**(`tick_size: 2` · `max_quantity: 10000`) |
-| `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 180000` 포함) |
+| `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 800` 포함) |
 | `README.md` (이 파일) | **산문이 다름** — 각 트리가 자기 방향의 배포를 설명한다. YAML 이 아니라 경로 비교 대상이 아니므로 테스트가 「자기 트리를 설명하는가」로 검사한다 |
 | 나머지 **23 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다. 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
 
@@ -192,11 +192,14 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    ④ 방향 다섯 자리가 LONG 사본과 **선언된 집합에서만** 갈린다 · ⑤ 진입 임계 등식
    `z_entry_min_x1000 == +trunc(extreme_atr_mult × 1000)`.
    ⚠ **「적재된다」를 「부팅하면 돈다」로 읽지 말 것** — LONG 트리 README §5 의 ⚠⚠ 와 같은
-   이유(커널 시간 경로의 800 ms 보수 예산)가 이 트리에도 그대로 적용된다.
+   이유가 이 트리에도 그대로 적용된다: `max_age_ms` = 800 은 커널의 보수 예산 **그 자체**
+   이고, 라벨 스탬프 1분봉은 최소 나이가 60,000 ms 라 열다섯 전부 `(UNKNOWN, "stale")` 다.
 2. **렌더가 이 트리를 처리하지 못한다** — kickoff §5 3 ④. LONG 트리와 같은 두 이유
    (`_STRATEGY_FILE` 고정 · 앵커 1회 매칭 요구)이고, 전략 파일 헤더가 적는다.
    ⚠ **그러므로 이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다.**
 3. **실시간 필드 생산자가 없다** — kickoff §5 3 ③. B1a 는 Parquet 배치 도구다.
+   ⛔ ③ 에는 **저널 append 시각 스탬프**라는 구속 요구가 붙어 있다(운영자 결정 2026-10-09 ·
+   LONG README §5) — 라벨 스탬프 생산자로는 이 트리도 결정까지 가지 못한다.
 4. **SHORT parity 증거 0** — §3.3. 이것이 이 트리의 가장 큰 공백이다.
 5. **체결·영수증 증거 없음** — band 가 null 인 동안 step 3 는 UNKNOWN 이다.
    실주문은 어느 경우에도 0 이다(채택 스코프 `SYNTHETIC_FUTURES_ORDER`, `broker_scopes.yaml`).
@@ -205,7 +208,9 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
 
 ## 6. 운영자 미결 항목
 
-1. **`max_age_ms` 의 실제 원천** — LONG 과 같은 등급 C 값(180000)을 들고 있다. ③ 생산자
-   측정 뒤의 하향·재도출이 남는다. 도출은 그 파일 헤더에 있다.
+1. **`max_age_ms` 가 실제로 만족 가능한가** — LONG 과 같은 **등급 A(운영자 결정 2026-10-09)**
+   값(800 = 커널 시간 예산 1000 − Σ지연 200; 두 항 다 VER-002 APPROVED)을 들고 있다. 값·등급은
+   미결이 아니고, 남은 것은 ③ 생산자의 발행 지연 측정이다. ⛔ 그 측정이 나빠도 처분은
+   **한도 상향이 아니라 ③ 쪽**이다. 좌표와 근거는 그 파일 헤더에 있다.
 2. **SHORT parity 실행** — §3.3 1. B1b 를 이 전략 파일로 돌려 B3 를 다시 내는 일.
 3. **data dir genesis 와 콜드 백업 편입** — §4.
