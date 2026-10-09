@@ -84,6 +84,13 @@ _REAL_OCP = _DEPLOY_DIR / "order_construction_policy.yaml"
 #: 2026-10-07). Its ``venue_constraint_policy.yaml`` is where decision 9's adopted
 #: ``max_quantity`` landed; the resident ``paper/`` tree above deliberately did NOT adopt it.
 _TENANT_DIR = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
+
+#: The SHORT tenant tree. Named HERE, next to the LONG one, because the ``max_age_ms`` provenance
+#: pins run over BOTH: the two headers carry the same decision, and nothing else compares them at
+#: the COMMENT level (``test_tenant_tree_short.py``'s divergence guard reads parsed YAML, where
+#: comments are invisible by construction). Without this, every sentence could be deleted from the
+#: SHORT header with the whole suite green -- measured in the PR #887 re-check (LOW 2).
+_TENANT_SHORT_DIR = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-short"
 _TENANT_VENUE_POLICY = _TENANT_DIR / "venue_constraint_policy.yaml"
 
 #: Decision 9 (a), adopted by the operator 2026-10-08 -- KRX 파생상품시장 업무규정 시행세칙
@@ -244,7 +251,17 @@ _TIME_DELAY_BOUND_KEYS: tuple[str, ...] = tuple(
 #: fifteen ``null``s existed to avoid.
 _MAX_AGE_PROVENANCE = (
     "운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)",
-    "등급 A(운영자 결정 2026-10-09)",
+    # ⚠ The grade is stated TWICE in the header -- on the title rule and again as its own
+    # section heading -- so ONE ``"등급 A(운영자 결정 2026-10-09)" in prose`` pin stayed green
+    # whenever only one of them was changed (PR #887 re-check, LOW 1: the masked-clause shape
+    # again). Each occurrence is pinned through the text that DISAMBIGUATES it: the title form
+    # follows the closing ``」`` of the decision quote, the section form sits between rules.
+    # Neither substring can match the other's line, so each has its own red proof.
+    # An exact-count assertion is deliberately NOT added on top: given these two it could only
+    # fail on a THIRD occurrence appearing, which is harmless -- and a clause that cannot fail
+    # for the reason it is written is the defect this comment exists to avoid.
+    "」 · 등급 A(운영자 결정 2026-10-09)",  # the title rule, :16
+    "── 등급 A(운영자 결정 2026-10-09) ──",  # the section heading, :26
     "VERIFICATION-PROFILE-002.yaml:1078",  # the minuend's normative coordinate
     "`MAX_time_source_sequence_gap_ms` :1077 — 전부 APPROVED 2026-07-29",  # the four 50s
     "값이 같아 조용히 통과하는 이웃 둘을 섞지 말 것",  # :1071 and :1067, the near misses
@@ -716,13 +733,32 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_with_the_adopted_m
     assert [field.field_key for field in policy.fields] == list(_B1A_FIELD_POLICY)
     assert {field.max_age_ms for field in policy.fields} == {_TENANT_MAX_AGE_MS}
 
-    # The provenance the value cannot be read without: the operator's direction verbatim, the
-    # grade, the derivation's three measured premises, the conservative direction, and the
-    # re-derivation obligation. Pinned as strings for the same reason the decision-9 caveats
-    # are -- a number whose derivation has been deleted is an invented number again.
-    prose = _comment_prose(path)
+    # The header prose is NOT checked here -- it is checked for BOTH trees by
+    # ``test_both_tenant_headers_carry_the_max_age_provenance`` below. Keeping a LONG-only copy
+    # of that loop here as well would be a masked clause: every mutation it could catch, the
+    # parametrized one catches first.
+
+
+@pytest.mark.parametrize(
+    "tree_dir", [_TENANT_DIR, _TENANT_SHORT_DIR], ids=["long", "short"]
+)
+def test_both_tenant_headers_carry_the_max_age_provenance(tree_dir: Path) -> None:
+    """The provenance the adopted value cannot be read without -- in **both** tenant headers.
+
+    The two trees ship the same decision, and their ``critical_input_policy.yaml`` files are
+    byte-identical apart from the title line and the two identifiers. But "differ only in the
+    declared key paths" (``test_tenant_tree_short.py``) is asserted on **parsed YAML**, where
+    comments do not exist, so until this test was parametrized the SHORT header was pinned by
+    nothing at all: every sentence below could be deleted from it, or its grade changed back to
+    M, with the whole suite green (measured, PR #887 re-check LOW 2).
+
+    Pinned as strings for the same reason the decision-9 caveats are: a number whose derivation,
+    grade, normative coordinates or binding consequence has been deleted is an invented number
+    again -- which is the state the fifteen ``null``s existed to avoid.
+    """
+    prose = _comment_prose(tree_dir / "critical_input_policy.yaml")
     for sentence in _MAX_AGE_PROVENANCE:
-        assert sentence in prose, sentence
+        assert sentence in prose, (tree_dir.name, sentence)
 
 
 def test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms(
