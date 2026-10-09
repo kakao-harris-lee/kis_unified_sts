@@ -320,8 +320,15 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    (`/home/deploy/.local/state/tos/measure/cp3-short-parity-run1/`, diff sha256
    `cefc3ceb1da7284b23c8ee4e43a99a8ecc954c27bcf6c7c675cb396ecf690704` ·
    B1b SHORT trace `97255d15a7da01570d9beb6e8f5c9029932a91901e7e2c2a3c144f549afda321`).
-   실행은 **분리된 detached 워크트리**(`measure/wt-cp3-short-parity`, 푸시된 HEAD
-   `3e25e7e7`)에서 돌았고 lineage 셋 전부 `dirty: false` 다.
+   실행은 **분리된 detached 워크트리**(`measure/wt-cp3-short-parity`, `git status
+   --porcelain` 빈 상태)에서 돌았고 여섯 lineage 전부 `dirty: false` 다. 커밋 sha 는 여기에
+   **옮겨 적지 않는다** — 각 `lineage.json::tool.git.commit` 이 출처이고, 그 값을 적는 문서
+   수정은 **반드시 그 커밋 뒤에** 오므로 「lineage 의 commit = HEAD」는 측정 시점에만 참이다
+   (그 등식을 산문에 적으면 다음 커밋에서 바로 거짓이 된다). 단언하는 것은 ① 작업트리가
+   깨끗했다 ② 그 커밋이 이 브랜치의 조상이고 측정된 코드를 담는다 셋이다.
+   ⚠ 측정은 **코드가 바뀔 때마다 다시 돌렸다**(리뷰 처분·CI 수정 뒤 각 1회). 매번 payload
+   sha256 여덟이 전부 불변이었고 달라진 것은 lineage 의 commit·code_digest 뿐이다 — 즉 위
+   수치는 그 변경들에 **무관**하다.
 
    ⚠ **`short_blocked_regimes`(결정 5)는 이 비교에 나타날 수 없다 — 실측.** `B1b-D8` 은 SHORT
    실행의 `summary.json` 에 선언된 차이로 올라가지만 **흡수 봉 0** 이고, 그것이 맞는 값이다:
