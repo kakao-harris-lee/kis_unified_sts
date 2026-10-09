@@ -184,16 +184,23 @@ _B1A_FIELD_POLICY: dict[str, tuple[str, str, str, str]] = {
 #: minute is what a "bar" means on this path.
 _B1A_BAR_PERIOD_MS = 60_000
 
-#: ``critical_input_policy.yaml::fields[].max_age_ms``, filled 2026-10-09 on the operator's
-#: direction ("출처가 없어도 설정이 필요하니 적용") at grade **C** -- a dev-side conservative
-#: proposal, lowerable after server measurement (``docs/plans/2026-09-12-tos-operator-value-
-#: proposals.md:4``'s grade vocabulary). THREE bar periods, derived from the cadence:
-#: ``as_of_ms`` is the bar's LABEL (its OPEN), so one period passes before the bar even closes,
-#: a second before its successor is published -- 2P is therefore the infimum, satisfiable only
-#: with zero publish latency, and the third period is the latency allowance. Asserted against
-#: ``3 * _B1A_BAR_PERIOD_MS`` below rather than written as a bare 180000, so the derivation and
-#: the shipped number cannot drift apart.
-_TENANT_MAX_AGE_MS = 180_000
+#: ``critical_input_policy.yaml::fields[].max_age_ms``, DECIDED by the operator 2026-10-09
+#: ("max_age_ms : 800ms 로 정해") at grade **M** -- producible only from the operator, in the
+#: ``docs/plans/2026-09-12-tos-operator-value-proposals.md:4`` vocabulary. Not A (VER-002 has no
+#: APPROVED coordinate for this key, and the proposal table has no row for it: grade travels with
+#: the KEY, not with the two grade-A terms the arithmetic consumes), not B (no measurement exists
+#: -- ③, the live producer, has not been built), not C (the dev-side proposal WAS 180000, and the
+#: same header recorded 800 as the order of magnitude that does not hold under the current ③
+#: semantics; calling it a dev proposal would be a false statement).
+#:
+#: The number equals the kernel's own time-admission budget:
+#: ``time.yaml::MAX_time_conservative_freshness_age_ms`` minus the sum of the delay bounds
+#: ``RuntimeTimeProjection`` folds in. :func:`_tenant_kernel_time_budget_ms` RE-DERIVES that from
+#: this tree's own ``time.yaml`` and
+#: :func:`test_the_adopted_max_age_ms_is_the_kernel_budget_label_stamped_bars_cannot_meet`
+#: asserts the equality, so a ``time.yaml`` edit turns this literal red rather than letting the
+#: shipped number and its stated derivation drift apart.
+_TENANT_MAX_AGE_MS = 800
 
 #: ``time.yaml``'s four delay-bound KEYS -- **derived from the runtime, never re-listed**.
 #:
@@ -219,20 +226,23 @@ _TIME_DELAY_BOUND_KEYS: tuple[str, ...] = tuple(
     if mapped == field
 )
 
-#: The sentences the adopted ``max_age_ms`` may not be read without -- the operator's direction
-#: verbatim, the grade, the three measured premises of the derivation, the conservative
-#: direction, and the obligation to re-derive once ③ (the live producer) is measured. A value
-#: with no source and no derivation written next to it is an invented number, which is the state
-#: the fifteen ``null``s existed to avoid.
+#: The sentences the adopted ``max_age_ms`` may not be read without -- the operator's decision
+#: with its arithmetic, the grade **and the reasons the other three grades would be false**, the
+#: two measured premises behind the consequence, the consequence itself, the obligation that
+#: consequence places on ③, the superseded 180000 kept as history, and the conservative
+#: direction. A value with no source and no derivation written next to it is an invented number,
+#: which is the state the fifteen ``null``s existed to avoid.
 _MAX_AGE_PROVENANCE = (
-    "운영자 지시 2026-10-09: 출처 없이 적용",
-    "등급은 **C**",
-    "봉 주기 P = 60,000 ms",  # premise 1 -- the cadence
-    "The label, not label+60s",  # premise 2 -- as_of is the bar OPEN
-    "now_ms - as_of_ms",  # premise 3 -- what the runtime measures
-    "2P = 120,000 은 하한(infimum)이지 안전값이 아니다",
+    "운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)",
+    "등급 M",
+    "키를 따라가지 산술의 입력을 따라가지 않는다",  # why not A
+    "개발 측 제안은 180000 이었고",  # why not C
+    "The label, not label+60s",  # premise -- as_of is the bar OPEN
+    "now_ms - as_of_ms",  # premise -- what the runtime measures
+    "현행 B1a 의미론에서는 열다섯 전부 STALE 이다",  # the binding consequence
+    "저널에 append 하는 시각을 `as_of_ms` 로 찍어야 한다",  # what it binds ③ to
+    "180000 은 폐기됐다",  # the superseded value, as history
     "보수 방향 = 작게",
-    "실시간 생산자가 측정되면 이 값을 하향하거나 다시 도출한다",
 )
 
 #: The price-like subset, by name -- asserted to be exactly the ×100 group, so a field cannot
@@ -248,6 +258,33 @@ _B1A_PRICE_FIELDS = frozenset(
 _PAPER_DEFERRAL_NOTE = (
     "source exists (10-08 결정 9); paper adoption deferred by operator"
 )
+
+
+def _tenant_kernel_time_budget_ms() -> int:
+    """The conservative freshness budget THIS TREE's own ``time.yaml`` leaves, derived the way
+    ``RuntimeTimeProjection`` derives it: the conservative freshness age bound minus the sum of
+    the delay bounds it actually folds into ``delay_bounds``.
+
+    Derived, never written as ``800``: the point of the 2026-10-09 decision is that
+    ``max_age_ms`` IS this budget, so a literal here would let ``time.yaml`` move while the
+    fifteen stayed -- exactly the drift the pacing guard
+    (``compose/_marketfeed_wiring.py::_load_config_within_freshness_budget``, and its own suite
+    ``test_marketfeed_pacing_budget.py``) exists to prevent on the other two terms. Same
+    machinery as that suite: the runtime's ``_DELAY_BOUND_FIELDS`` mapped through the loader's
+    ``_BOUND_FIELD_BY_KEY`` to YAML keys (:data:`_TIME_DELAY_BOUND_KEYS`), with no second copy
+    of the numbers.
+    """
+    time_cfg = yaml.safe_load((_TENANT_DIR / "time.yaml").read_text(encoding="utf-8"))
+
+    # The inverted-map derivation must have produced the runtime's FULL set -- a lookup that
+    # silently found nothing would make the sum below too small and the budget too large (i.e.
+    # permissive), so an empty or short result is never an acceptable outcome here.
+    assert len(_TIME_DELAY_BOUND_KEYS) == len(_DELAY_BOUND_FIELDS)
+    assert set(_TIME_DELAY_BOUND_KEYS) <= set(time_cfg)
+
+    return int(time_cfg["MAX_time_conservative_freshness_age_ms"]) - sum(
+        int(time_cfg[name]) for name in _TIME_DELAY_BOUND_KEYS
+    )
 
 
 def _comment_prose(path: Path) -> str:
@@ -595,14 +632,16 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_with_the_adopted_m
 ):
     """CP-3 kickoff §5 1 / §5 3 ②: the tenant tree declares B1a's fifteen upstream fields with
     their unit/scale/multiplier/sign from B1a's own field lineage, plus the fifth value
-    ``max_age_ms``, filled 2026-10-09 on the operator's direction ("출처가 없어도 설정이
-    필요하니 적용") at grade **C** -- a dev-side conservative proposal with its derivation
-    written next to it, not an approved source.
+    ``max_age_ms``, DECIDED by the operator 2026-10-09 ("max_age_ms : 800ms 로 정해") at grade
+    **M** -- the kernel's own time-admission budget, with the reasons A/B/C would each be a false
+    label written next to it.
 
-    Until that direction the fifteen were ``null`` and the loader refused the whole document.
-    This test replaced that refusal pin; the "``null`` would still be refused" half now lives in
+    Until 2026-10-09 the fifteen were ``null`` and the loader refused the whole document. This
+    test replaced that refusal pin; the "``null`` would still be refused" half now lives in
     ``test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms``, so filling the key
-    did not retire the guard that kept an unsourced value out.
+    did not retire the guard that kept an unsourced value out. The first fill wrote 180000 (3
+    bar periods, grade C); the operator superseded it the same day, and the header keeps that
+    derivation as history rather than deleting it.
 
     The value is pinned as ONE number for all fifteen on purpose: B1a publishes the whole
     ``FIELD_ORDER`` as a single per-bar record under one label ``as_of_ms``, so there is no
@@ -648,12 +687,13 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_with_the_adopted_m
             entry["multiplier"],
             entry["sign"],
         ) == _B1A_FIELD_POLICY[key], key
-        # The fifth value -- the one with no source, adopted on the operator's direction.
+        # The fifth value -- the one with no source, set by the operator's decision.
         assert entry["max_age_ms"] == _TENANT_MAX_AGE_MS, key
 
-    # And the document now LOADS -- which is all filling this key bought (see the ⚠⚠ paragraph
-    # in its header and ``test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget``
-    # below: the kernel's time path measures the SAME quantity against a far tighter bound).
+    # And the document LOADS -- which is all this key buys on its own (see the 구속 결과 section
+    # in its header and
+    # ``test_the_adopted_max_age_ms_is_the_kernel_budget_label_stamped_bars_cannot_meet`` below:
+    # a label-stamped bar's floor age is 75x this bound, so every field reads STALE).
     policy = load_critical_input_policy(path, scheme=_SCHEME)
     assert [field.field_key for field in policy.fields] == list(_B1A_FIELD_POLICY)
     assert {field.max_age_ms for field in policy.fields} == {_TENANT_MAX_AGE_MS}
@@ -697,55 +737,66 @@ def test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms(
     assert "max_age_ms" in str(excinfo.value)
 
 
-def test_tenant_max_age_ms_does_not_satisfy_the_kernel_time_budget() -> None:
-    """The honest consequence of filling the key, as arithmetic rather than a comment.
+def test_the_adopted_max_age_ms_is_the_kernel_budget_label_stamped_bars_cannot_meet() -> (
+    None
+):
+    """The operator's 2026-10-09 decision, as arithmetic rather than a comment -- and its honest
+    consequence in the same place.
 
     ``max_age_ms`` and the kernel's time-admission bound measure the SAME quantity --
     ``now_ms - as_of_ms`` (``marketfeed/snapshot.py::_derive_field_state``) and ``source_age =
-    wall_clock_now() - as_of`` (``marketfeed/time_projection.py``'s own docstring). B1a stamps
-    ``as_of_ms`` at the bar's LABEL, i.e. its OPEN (``produce_fields.derive_as_of_ms``: "The
-    label, not label+60s"), on 1-minute bars (``derive_raw_event_id``'s ``:1m:`` token). So the
-    SMALLEST age such an observation can have is one bar period -- and that already exceeds the
-    conservative freshness budget this tree's own ``time.yaml`` leaves, by a wide margin.
+    wall_clock_now() - as_of`` (``marketfeed/time_projection.py``'s own docstring). The decision
+    binds the first to the budget the second leaves, so the two bounds are now one number.
 
-    Pinned so "the file loads now" is never read as "the deployment would work": it would not,
-    for a reason ``max_age_ms`` cannot fix. The fix is ③, the live producer (kickoff §5 3).
+    That makes the consequence sharper than it was at 180000, not softer. B1a stamps ``as_of_ms``
+    at the bar's LABEL, i.e. its OPEN (``produce_fields.derive_as_of_ms``: "The label, not
+    label+60s"), on 1-minute bars (``derive_raw_event_id``'s ``:1m:`` token), so the SMALLEST age
+    such an observation can have is one bar period. At 180000 those fields read VALID here and
+    were rejected one layer up by the time path; at 800 ``_derive_field_state`` itself returns
+    ``(UNKNOWN, "stale")`` for **every one of the fifteen**. The fix is ③, the live producer
+    (kickoff §5 3), and the decision is what makes append-time stamping a REQUIREMENT on it
+    rather than a preference: a label-stamping ③ cannot be rescued by raising this bound,
+    because the kernel would then refuse the same observation on the same quantity.
+
+    ⚠ **Clause inventory, and one clause deliberately NOT asserted** (the masked-clause rule --
+    host memory ``guards-that-admit-what-they-name.md``, #838):
+
+    * ``budget == _TENANT_MAX_AGE_MS`` -- red when this tree's ``time.yaml`` moves either term
+      (measured: raising ``MAX_time_conservative_freshness_age_ms`` 1000 -> 1200 across all three
+      trees, which is what the byte-identity drift guards require, turns ONLY this test and
+      ``test_approved_value_is_unchanged`` red). ⚠ It compares the derived budget against the
+      CONSTANT, so it does **not** fire when the shipped fifteen move: that direction is
+      ``test_tenant_critical_input_policy_...with_the_adopted_max_age_ms``'s per-field pin, which
+      is what binds the constant to the file (measured: reverting the fifteen to 180000 turns
+      that test red and leaves this one green). The two together are what stops the shipped
+      number and its stated derivation from drifting apart; neither does it alone.
+    * ``_TENANT_MAX_AGE_MS < _B1A_BAR_PERIOD_MS`` -- red if the bar period changes (measured:
+      60_000 -> 600 turns ONLY this test red, with the clause above still green). This is the
+      form ``_derive_field_state`` actually compares, which is why it is the one kept.
+    * ``budget < _B1A_BAR_PERIOD_MS`` -- **not asserted**. Given the first clause it is the same
+      statement as the second, so it could not fail on its own: a clause that cannot fail is not
+      a guard, it is a decoration that makes the test look stronger than it is. (It WAS a
+      separate fact at 180000, where the two numbers differed by 225x.)
 
     ⚠ **What this test does and does not guard.** It reads ``time.yaml`` and the runtime's own
-    ``_DELAY_BOUND_FIELDS``, so it tracks those two. Everything else here -- the bar period, the
-    label semantics, the quantity the runtime compares -- is asserted as VALUES against the
-    constants above, which carry the code citations in their own comments; this test does not
-    re-derive them from ``produce_fields`` or ``snapshot.py`` (``tools`` is legacy-side and
-    firewall-denied from here, and the comparison in ``snapshot.py`` is an expression, not a
-    readable constant). So: a changed ``time.yaml`` or a changed delay-bound set fails here; a
-    changed bar period or a producer that starts stamping at bar CLOSE would NOT, and would make
-    the derivation in ``critical_input_policy.yaml``'s header stale with nothing failing. That
-    gap is the ③ re-derivation obligation, not something this test closes."""
-    time_cfg = yaml.safe_load((_TENANT_DIR / "time.yaml").read_text(encoding="utf-8"))
+    ``_DELAY_BOUND_FIELDS``, so it tracks those two. Everything else -- the bar period, the label
+    semantics, the quantity the runtime compares -- is asserted as VALUES against the constants
+    above, which carry the code citations in their own comments; this test does not re-derive
+    them from ``produce_fields`` or ``snapshot.py`` (``tools`` is legacy-side and firewall-denied
+    from here, and the comparison in ``snapshot.py`` is an expression, not a readable constant).
+    So: a changed ``time.yaml`` or a changed delay-bound set fails here; a ③ that starts stamping
+    at append time would NOT turn anything red -- it would simply stop reproducing the second
+    clause's consequence at runtime. That asymmetry is the ③ obligation, not something this test
+    closes."""
+    budget = _tenant_kernel_time_budget_ms()
 
-    # The derivation must have produced the runtime's full set -- an inverted-map lookup that
-    # silently found nothing would make the sum below too small and the budget too large (i.e.
-    # permissive), so an empty or short result is never an acceptable outcome here.
-    assert len(_TIME_DELAY_BOUND_KEYS) == len(_DELAY_BOUND_FIELDS)
-    assert set(_TIME_DELAY_BOUND_KEYS) <= set(time_cfg)
+    # The decision: the fifteen ARE the kernel's conservative freshness budget.
+    assert budget == _TENANT_MAX_AGE_MS
 
-    budget = time_cfg["MAX_time_conservative_freshness_age_ms"] - sum(
-        time_cfg[name] for name in _TIME_DELAY_BOUND_KEYS
-    )
-    assert (
-        budget == 800
-    )  # 1000 - 4x50, the derivation marketfeed.yaml's header writes out
-
-    # One bar period is the floor on a label-stamped bar's age, and it is over the budget.
-    assert budget < _B1A_BAR_PERIOD_MS
-    # The adopted bound is three bar periods -- derived from the cadence, and far above that
-    # budget too, which is exactly why it cannot rescue the time path.
-    assert _TENANT_MAX_AGE_MS == 3 * _B1A_BAR_PERIOD_MS
-    assert budget < _TENANT_MAX_AGE_MS
-
-    # And it is strictly above the two-period infimum, which is the point of the third period:
-    # at exactly 2P a bar goes STALE at the instant its successor is due, reproducing #807.
-    assert _TENANT_MAX_AGE_MS > 2 * _B1A_BAR_PERIOD_MS
+    # Its consequence under the current producer: one bar period is the FLOOR on a label-stamped
+    # observation's age, and that floor is already past the adopted bound -- so every field reads
+    # ``(UNKNOWN, "stale")`` and the kernel's UNKNOWN floor drops the key.
+    assert _TENANT_MAX_AGE_MS < _B1A_BAR_PERIOD_MS
 
 
 def test_tenant_construction_price_field_keys_are_declared_critical_inputs() -> None:

@@ -314,6 +314,10 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    **운영자 출처**여야 한다) · ③ 그 열다섯 필드를 **paper 런타임에서 매 봉 발행하는 생산자** — B1a 는
    Parquet 배치 도구이고 실시간 발행기가 아니다 · ④ §5 3 의 **부팅 경로**(렌더의 전략 파일 상수·다섯
    digest 재도출·`safety_activation.yaml::members` 갱신).
+   ⛔ **③ 에는 2026-10-09 운영자 결정이 붙인 구속 요구가 있다**: `max_age_ms` = 800 이 커널 시간
+   예산 그 자체이므로 ③ 은 `as_of_ms` 를 **저널에 append 하는 시각**으로 찍어야 한다. 라벨(봉 OPEN)
+   스탬프 생산자는 관측의 최소 나이가 60,000 ms 라 열다섯 전부 STALE 이고, 그것은 한도를 올려서
+   고칠 수 있는 문제가 아니다(아래 §5 3 ②).
 
    **① 착지 완료 2026-10-09 — LONG tenant 트리 `config/tos_runtime/cp3-setup-d-long/`.**
    **31 개 파일 = 바이트 동일 23 + 다름 5 + tenant 전용 3**이고, 더해서 상주 트리의
@@ -350,28 +354,38 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    `max_age_ms` 는 초판에서 **열다섯 전부 `null`** 이었고 그래서 그 파일이 로드되지 않았다
    (로더가 `null` `max_age_ms` 를 거부한다) — 출처가 없었기 때문이고, 상주 트리가 출처 없는
    값에 쓰는 fail-closed 규율과 같은 상태였다(`finality.yaml::source_revision` ·
-   `safety_activation.yaml::members`). **운영자 지시 2026-10-09**(「출처가 없어도 설정이
-   필요하니 적용」)로 **180000** 을 적용했다 — 등급 **C**(개발 측 보수 제안,
-   `docs/plans/2026-09-12-tos-operator-value-proposals.md:4`).
+   `safety_activation.yaml::members`). 2026-10-09 1차 적용은 「출처가 없어도 설정이 필요하니
+   적용」 지시에 대해 봉 주기에서 도출한 **180000**(3P · 등급 C)이었고, 같은 날 **운영자
+   결정**(「max_age_ms : 800ms 로 정해」)이 그것을 **폐기하고 800 으로 확정**했다.
 
-   도출은 **봉 주기에서** 나온다(실측): B1a 의 봉은 1분(`derive_raw_event_id` 의 `:1m:`),
-   `as_of_ms` 는 봉의 **라벨 = OPEN**(`derive_as_of_ms`: 「The label, not label+60s」), 런타임이
-   재는 것은 `now_ms - as_of_ms`(`marketfeed/snapshot.py::_derive_field_state`, `now_ms` 는 실
-   벽시계). 라벨 T 의 봉은 T+1P 에 닫히고 T+2P 에 교체되므로 **2P = 120,000 은 하한이지
-   안전값이 아니다** — 발행 지연 0 에서만 만족되고 그 모양은 이미 측정된 결함(#807)이다.
-   세 번째 P 가 지연 여유 → **3P = 180,000**. 보수 방향은 **작게**.
-   상주의 600000 은 베껴 오지 않았다: 그 근거는 **배치 저널 부팅**의 지연 흡수다.
+   **값 = 800 ms · 등급 M**(`docs/plans/2026-09-12-tos-operator-value-proposals.md:4`).
+   800 은 커널의 시간 수용 예산과 **같은 수**다 —
+   `time.yaml::MAX_time_conservative_freshness_age_ms` **1000** − `Σdelay_bounds`(런타임의
+   `_DELAY_BOUND_FIELDS` 네 항 × 50 = **200**) = **800**. 등급이 M 인 이유는 나머지 셋이
+   거짓이기 때문이다: **A 아님**(VER-002 에 이 키의 APPROVED 좌표가 없다 — 산술의 두 항은 A
+   지만 등급은 키를 따라간다) · **B 아님**(③ 이 없어 잴 발행 지연이 없다) · **C 아님**(개발
+   측 제안은 180000 이었고 같은 헤더가 800 을 「현행 ③ 의미론에서 성립하지 않는 자리수」로
+   적었다). ⚠ 과대 주장하지 않는다 — 800 이라는 **수**는 저장소 안에서 도출되고 테스트가
+   `time.yaml` 에서 다시 계산한다. 운영자에게서만 나온 것은 **이 키를 그 예산에 결속한다는
+   결정**이다. 상주의 600000 은 베껴 오지 않았다(그 근거는 **배치 저널 부팅**의 지연 흡수다).
 
-   ⚠⚠ **그러나 이 값은 ③ 를 대신하지 않는다(실측 2026-10-09).** 커널 시간 수용 경로는
-   **같은 양**(`source_age = wall_clock_now() - as_of`, `marketfeed/time_projection.py`)을
-   `time.yaml::MAX_time_conservative_freshness_age_ms` 1000 − Σdelay_bounds 200 = **800 ms**
-   예산에 댄다. 라벨 스탬프 1분봉은 그 **75 배**다. 즉 채운 효과는 「파일이 로드된다」뿐이고
-   시간 경로는 여전히 STALE 로 읽는다 — ③ 이 그것을 닫는다. ③ 이 상주 수집기처럼 **append
-   시각**을 `as_of_ms` 로 찍으면 올바른 한도는 180,000 이 아니라 **800 ms 자리수**이므로,
-   ③ 착지 시 이 키 ×15 · `poll_interval_ms` · `journal_pass_allowance_ms` 를 함께 다시 본다.
-   `tos/runtime/tests/compose/test_deploy_policies.py` 가 ① 열다섯 값 + 도출 문장 핀, ②
-   **하나라도 `null` 이면 로더가 그 키 이름으로 거부한다**(tmp 사본), ③ 위 산술(1분봉 ≥
-   800 ms 예산)을 고정한다.
+   ⚠⚠ **구속 결과 — ③ 은 저널 append 시각을 `as_of_ms` 로 찍어야 한다(실측 2026-10-09).**
+   `max_age_ms` 와 커널 시간 수용 경로는 **같은 양**을 잰다
+   (`marketfeed/snapshot.py::_derive_field_state` 의 `now_ms - as_of_ms` ·
+   `marketfeed/time_projection.py` 의 `source_age = wall_clock_now() - as_of`). B1a 는
+   `as_of_ms` 를 봉의 **라벨 = OPEN** 으로 찍고(`derive_as_of_ms`: 「The label, not
+   label+60s」) 봉은 1분(`derive_raw_event_id` 의 `:1m:`)이므로 관측의 **최소** 나이가
+   60,000 ms, 즉 800 ms 의 **75 배**다. 그래서 **현행 B1a 의미론에서는 열다섯 전부 STALE**
+   이고 `_derive_field_state` 가 필드마다 `(UNKNOWN, "stale")` 를 돌려준다(180000 일 때는
+   이 층에서 VALID 였고 한 층 위 시간 경로가 거부했다 — 이제 두 층 다 거부한다).
+   **한도를 올려서 고칠 수 없다**: 올리면 커널이 같은 관측을 같은 양으로 재서 거부한다.
+   그러므로 이것은 ③ 에 대한 **요구사항**이다 — ③ 실시간 생산자는 상주 저널 수집기처럼
+   **저널에 append 하는 시각**을 찍어야 한다(`marketfeed/scheduler.py::_finalize_pending` 의
+   「an honest source event time」). ③ 착지 시 이 키 ×15 · `poll_interval_ms` ·
+   `journal_pass_allowance_ms` 가 **한 예산을 나눠 쓰므로** 함께 본다.
+   `tos/runtime/tests/compose/test_deploy_policies.py` 가 ① 열다섯 값 + 출처 문장 핀, ②
+   **하나라도 `null` 이면 로더가 그 키 이름으로 거부한다**(tmp 사본), ③ `max_age_ms` ==
+   `time.yaml` 에서 다시 도출한 커널 예산 **과** 1분봉 최소 나이 > 그 값을 고정한다.
 
    **✅ data dir · 렌더된 설정 — 지정 2026-10-09 (결정 3 의 「방향마다 따로」).**
    **이름만 지정했고 디렉터리는 만들지 않았다** — genesis 는 첫 부팅(④)이다.

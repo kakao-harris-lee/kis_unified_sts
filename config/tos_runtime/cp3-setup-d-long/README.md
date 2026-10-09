@@ -104,31 +104,46 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
   는 `null` 이라 갱신할 활성화 기록이 없다.
 - **`price_min`/`price_max` 는 null 그대로다** — 일별 동적 값이라 정적 리터럴 금지(설계 §6).
 
-## 5. `critical_input_policy.yaml` — 열다섯 필드 (`max_age_ms` = 180000, 등급 C)
+## 5. `critical_input_policy.yaml` — 열다섯 필드 (`max_age_ms` = 800, 등급 M)
 
 필드 목록·순서는 B1a 의 `FIELD_ORDER`(`tools/tos_cp3/produce_fields.py`) 그대로이고,
 각 필드의 `unit`/`scale`/`multiplier`/`sign` 은 **B1a 의 필드 lineage** 에서 온다
 (`produce_fields._field_lineage` — 그 독스트링이 「이 파일이 쓰는 모양으로 적는다」고 말한다).
 
-**`max_age_ms` 는 열다섯 전부 `180000` 이고, 그래서 이 파일은 이제 로드된다**(2026-10-09).
-종전 판은 전부 `null` 이어서 로더가 거부했고(`marketfeed/policy.py`), 그것이 출처 없는 값에
-대한 fail-closed 상태였다. **운영자 지시 2026-10-09**(「출처가 없어도 설정이 필요하니 적용」)
-로 그 상태를 닫았다 — 등급 **C**(개발 측 보수 제안 ·
-`docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 의 등급 어휘).
+**`max_age_ms` 는 열다섯 전부 `800` 이다 — 운영자 결정 2026-10-09**(「max_age_ms : 800ms 로
+정해」). 그 수는 커널의 시간 수용 예산과 **같은 수**다:
+`time.yaml::MAX_time_conservative_freshness_age_ms` **1000** − `Σdelay_bounds`(네 항 × 50 =
+**200**) = **800 ms**. 종전 판은 전부 `null` 이어서 로더가 거부했고(`marketfeed/policy.py`),
+그 fail-closed 상태는 2026-10-09 에 닫혔다.
 
-도출은 **봉 주기에서** 나온다(그 파일 헤더가 실측 인용과 함께 적는다 — 여기서 요약만 한다):
-B1a 의 봉은 1분(`derive_raw_event_id` 의 `:1m:`)이고 `as_of_ms` 는 봉의 **라벨 = OPEN**
-(`derive_as_of_ms`: 「The label, not label+60s」)이며 런타임은 `now_ms - as_of_ms` 를 잰다
-(`marketfeed/snapshot.py`). 라벨 T 의 봉은 T+1P 에야 닫히고 T+2P 에 교체되므로 **2P =
-120,000 은 하한이지 안전값이 아니다**(발행 지연 0 에서만 만족 — 이슈 #807 의 모양을 재현).
-세 번째 P 가 발행·폴 지연 여유다 → **3P = 180,000**. 보수 방향은 **작게**(작으면 UNKNOWN →
-NO_ACTION, 크면 낡은 필드가 VALID = fail-OPEN).
+**등급은 M** 이다(운영자·서버에서만 산출 가능 ·
+`docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 의 등급 어휘). 나머지 셋이 이 값에
+대해 거짓이기 때문이다 — **A 아님**(VER-002 에 이 키의 APPROVED 좌표가 없다; 산술의 두 항은
+A 지만 등급은 키를 따라간다) · **B 아님**(③ 생산자가 없어 잴 발행 지연 자체가 없다) ·
+**C 아님**(개발 측 제안은 180000 이었고, 같은 헤더가 800 을 「현행 ③ 의미론에서는 성립하지
+않는 자리수」로 적었다). ⚠ 과대 주장하지 않는다: 800 이라는 **수 자체**는 저장소 안에서
+도출되고 테스트가 `time.yaml` 에서 다시 계산한다. 운영자에게서만 나온 것은 **이 키를 그
+예산에 결속한다는 결정**이다.
 
-⚠⚠ **「로드된다」 ≠ 「부팅하면 돈다」.** 커널 시간 경로는 **같은 양**(`source_age =
-wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 4×50)에 대고, 라벨
-스탬프 1분봉은 그 75 배다 — 즉 시간 경로는 여전히 STALE 로 읽는다. ③ 생산자가 측정되면
-이 값을 **하향하거나 다시 도출한다**(특히 ③ 이 상주 수집기처럼 append 시각을 찍으면 올바른
-한도는 800 ms 자리수다).
+⚠⚠ **구속 결과 — ③ 은 저널 append 시각을 `as_of_ms` 로 찍어야 한다.** `max_age_ms` 와 커널
+시간 경로는 **같은 양**을 잰다(`snapshot.py::_derive_field_state` 의 `now_ms - as_of_ms` ·
+`time_projection.py` 의 `source_age = wall_clock_now() - as_of`). B1a 는 `as_of_ms` 를 봉의
+**라벨 = OPEN** 으로 찍으므로(`derive_as_of_ms`: 「The label, not label+60s」, 봉은 1분 —
+`derive_raw_event_id` 의 `:1m:`) 관측의 **최소** 나이가 60,000 ms 다. 60,000 > 800 이므로
+**현행 B1a 의미론에서는 열다섯 전부 STALE** 이고, `_derive_field_state` 가 필드마다
+`(UNKNOWN, "stale")` 를 돌려주며 커널의 ∅/UNKNOWN 바닥이 그 키들을 떨어뜨린다 → R1 거짓 →
+NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제가 아니다** — 올리면 커널
+시간 경로가 같은 관측을 같은 양으로 재서 거부한다. 그러므로 이것은 ③ 에 대한 **요구사항**
+이다: ③ 실시간 생산자는 상주 저널 수집기처럼 **저널에 append 하는 시각**을 찍어야 한다
+(`marketfeed/scheduler.py::_finalize_pending` 의 「an honest source event time」). ③ 착지
+시 이 셋이 한 예산을 나눠 쓴다 — 이 키 ×15 · `poll_interval_ms` · `journal_pass_allowance_ms`.
+
+**180000 은 폐기됐다(연혁).** 2026-10-09 초판은 「출처가 없어도 설정이 필요하니 적용」 지시에
+**봉 주기에서** 3P = 180,000 을 도출해 적었다(등급 C: 2P = 120,000 은 하한, 세 번째 P 가
+발행·폴 지연 여유). 그 판은 파일이 로드되게 할 뿐 시간 경로를 열지 못했고(같은 헤더가
+「800 ms 예산의 75 배」로 적었다), 운영자 결정이 그 간극을 **예산 쪽으로** 닫았다. 보수
+방향은 **작게**(작으면 UNKNOWN → NO_ACTION, 크면 낡은 필드가 VALID = fail-OPEN)이고, 800 은
+커널 예산을 넘지 않는 **가장 큰** 값이라 이 방향으로 더 키울 수 없다.
 
 상주의 600000 은 **베껴 오지 않았다** — 그 근거(「렌더가 저널을 부팅 직전에 생성하므로 그
 여유는 실제로 그 부팅 지연만 덮는다」)는 배치 저널 부팅에만 성립한다.
@@ -138,13 +153,15 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
 1. **부팅 0 회.** 이 트리로 `run` 을 돌리지 않았다. 검증된 것은 ① `venue_constraint_policy.yaml`
    이 좌표 미채움 상태에서 **거부되고**(운영자-채움 게이트) 좌표를 채우면 `max_quantity: 10000`
    으로 적재되고 `tick_size: 2` 를 든다는 것, ② `critical_input_policy.yaml` 이 이제
-   **적재된다**는 것(`max_age_ms` ×15 = 180000, §5) **과** 그 중 하나라도 `null` 이면 로더가
+   **적재된다**는 것(`max_age_ms` ×15 = 800, §5) **과** 그 중 하나라도 `null` 이면 로더가
    여전히 **그 키 이름으로 거부한다**는 것, ③ `construction.yaml` 의 두 price 키가 이 트리의
    critical_input 필드 집합 **안에 있다**는 것
    뿐이다(`tos/runtime/tests/compose/test_deploy_policies.py`). ③ 은 두 로더가 서로를 보지
    못하는 자리를 테스트가 대신 보는 것이고, **부팅이 그 교차를 검증한다는 뜻은 아니다.**
-   ⚠ ② 의 「적재된다」를 「부팅하면 돈다」로 읽지 말 것 — 커널 시간 경로의 800 ms 보수 예산은
-   라벨 스탬프 1분봉을 여전히 STALE 로 읽는다(§5 의 ⚠⚠). 그것을 닫는 것은 아래 3(③ 생산자)다.
+   ⚠ ② 의 「적재된다」를 「부팅하면 돈다」로 읽지 말 것 — 800 은 커널의 보수 예산 **그 자체**
+   이고, 라벨 스탬프 1분봉은 최소 나이가 60,000 ms 라 **열다섯 전부** `(UNKNOWN, "stale")`
+   로 읽힌다(§5 의 ⚠⚠). 그것을 닫는 것은 아래 3(③ 생산자)이고, 이제 ③ 에는 **저널 append
+   시각 스탬프**라는 구속 요구가 붙는다.
 2. **렌더가 이 트리를 아직 처리하지 못한다** — kickoff §5 3 ④. `scripts/tos/render_paper_config.py`
    는 (a) `_STRATEGY_FILE` 이 `strategies/bootproof_band.strategy.yaml` 로 고정이고
    (b) 좌표 규칙이 앵커 **정확히 1회** 매칭을 요구하는데 이 트리의 전략 파일은 규칙이 셋이라
@@ -153,14 +170,21 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
    그 뒤에 digest 다섯 재도출 + `safety_activation.yaml::members` 갱신이 따라온다(런북 §5).
 3. **실시간 필드 생산자가 없다** — kickoff §5 3 ③. B1a 는 Parquet 배치 도구이고 발행기가
    아니다. 복사된 `marketfeed.yaml` 은 상주와 같은 **저널 기반** 좌표를 들고 있다.
+   ⛔ **2026-10-09 운영자 결정이 ③ 에 구속 요구를 붙였다**: `max_age_ms` = 800 은 커널 시간
+   예산 그 자체이므로 ③ 은 `as_of_ms` 를 **저널에 append 하는 시각**으로 찍어야 한다
+   (`marketfeed/scheduler.py::_finalize_pending` 의 「an honest source event time」 모양).
+   라벨 스탬프 생산자는 이 트리를 결코 결정까지 끌고 가지 못한다(§5).
 4. **체결·영수증 증거 없음** — band 가 null 인 동안 step 3 는 UNKNOWN 이다(설계 §3).
    실주문은 어느 경우에도 0 이다(채택 스코프 `SYNTHETIC_FUTURES_ORDER`, `broker_scopes.yaml`).
 
 ## 7. 운영자 미결 항목
 
-1. **`max_age_ms` 의 실제 원천** — 값 자체는 등급 C 로 **적용됐다**(§5). 남은 것은 ③ 실시간
-   생산자를 측정한 뒤의 **하향 또는 재도출**이고, 그 전까지 180,000 은 봉 주기에서 도출한
-   개발 측 제안이지 승인된 원천값이 아니다.
+1. **`max_age_ms` 의 실제 원천** — 값은 **운영자 결정 2026-10-09** 로 800 이고 등급 **M**
+   이다(§5). 남은 것은 ③ 실시간 생산자가 생긴 뒤 그 **발행 지연을 측정**해 이 한도가 실제로
+   만족 가능한지 확인하는 것이고, 그 측정이 나오기 전까지 800 은 승인된 원천값이 아니라
+   **운영자가 커널 예산에 결속한 수**다. ⛔ 그 측정이 나빠도 **한도를 올리는 처분은 없다** —
+   커널 시간 경로가 같은 양을 같은 예산에 대므로 처분은 ③ 쪽(append 시각 스탬프 · 지연 단축)
+   이다.
 2. **data dir 의 genesis 와 콜드 백업 편입** — 이름은 **지정됐다**(아래 §8). 남은 것은
    ① 첫 부팅(④)이 만드는 genesis 와 ② 콜드 백업 `COLD_DATA_DIR` 지정(운영자 결정).
 3. **SHORT parity 실행** — SHORT 트리는 **착지했다**(`config/tos_runtime/cp3-setup-d-short/`,
@@ -210,11 +234,12 @@ wall_clock_now() - as_of`)을 `time.yaml` 의 **800 ms** 보수 예산(1000 − 
 
 ### 닫힌 항목 (여기 있었다가 처분된 것)
 
-- **`critical_input_policy.yaml::fields[].max_age_ms` ×15 — ✅ 적용 2026-10-09 (등급 C).**
+- **`critical_input_policy.yaml::fields[].max_age_ms` ×15 — ✅ 적용 2026-10-09 (등급 M).**
   초판은 「출처 없음 → 열다섯 전부 `null` → 파일이 로드되지 않는다」를 미결로 기록했다.
-  **운영자 지시 2026-10-09**(「출처가 없어도 설정이 필요하니 적용」)로 닫혔다. 값은
-  **180000**(= 3 × 1분봉)이고 도출·등급·보수 방향·재도출 의무는 §5 와 그 파일 헤더에 있다.
-  남은 것은 위 1 의 재도출뿐이다.
+  같은 날 1차로 **180000**(= 3 × 1분봉 · 등급 C · 「출처가 없어도 설정이 필요하니 적용」)이
+  들어갔고, **운영자 결정 2026-10-09**(「max_age_ms : 800ms 로 정해」)가 그것을 **폐기하고**
+  **800**(= 커널 시간 예산 1000 − Σ지연 200)으로 닫았다. 등급·구속 결과(③ 의 append 시각
+  스탬프)·보수 방향은 §5 와 그 파일 헤더에 있다. 남은 것은 위 1 의 ③ 측정뿐이다.
 
 - **정책 식별자 충돌 — ✅ 해소됨 2026-10-09 (rename).** 초판은 「tenant
   `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데
