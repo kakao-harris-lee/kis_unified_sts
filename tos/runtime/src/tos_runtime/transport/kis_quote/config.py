@@ -75,6 +75,7 @@ __all__ = [
     "KisQuoteTransportConfig",
     "KisQuoteTransportConfigError",
     "load_kis_quote_transport_config",
+    "read_declared_instrument",
 ]
 
 #: The exact measured KIS quotations TR id shape (module docstring): ``FH`` + 3 uppercase
@@ -323,6 +324,30 @@ def _read_yaml_mapping(path: Path) -> dict[str, Any]:
             f"KIS QUOTE transport config file must be a top-level mapping: {path}"
         )
     return raw
+
+
+def read_declared_instrument(path: Path) -> str | None:
+    """This document's own ``instrument`` leaf, or ``None`` when the document does not exist.
+
+    The ONE fact the venue policy loader's band-source config-consistency rule needs
+    (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.4b) — and it needs it at a
+    point in compose where the two INSTANCE host-seal facts
+    :func:`load_kis_quote_transport_config` requires have not been resolved yet. This reader
+    therefore answers that one question and NOTHING else: it performs no host seal, builds no
+    config object, and must never be used to start a transport. A deployment with no
+    ``kis_quote.yaml`` at all gets ``None``, which the venue loader turns into a boot refusal
+    *only* when a band source is actually declared.
+
+    Raises:
+        KisQuoteTransportConfigError: The file exists but is unreadable, is not valid YAML, is
+            not a top-level mapping, or its ``instrument`` is absent/null/not a non-empty
+            string/still the ``"TBD"`` placeholder — the same fail-closed treatment
+            :func:`load_kis_quote_transport_config` gives that leaf. A present-but-broken
+            document is never silently read as "absent".
+    """
+    if not path.is_file():
+        return None
+    return _require_str(_read_yaml_mapping(path), "instrument", path)
 
 
 def load_kis_quote_transport_config(

@@ -72,23 +72,42 @@ from tos.venue import (
     VenueShapeConstraints,
 )
 
-from tos_runtime.brokercap import InstanceDocument
+from tos_runtime.brokercap import BrokerScopesConfig, InstanceDocument
 from tos_runtime.calendar.config import CalendarConfig
 from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._envelope_wiring import (
     SideDerivationRefused,
     resolve_construction_direction,
 )
+from tos_runtime.compose._kis_credential_wiring import (
+    KisCredentialSessionsCell,
+    kis_mock_credential_session,
+)
+from tos_runtime.compose._marketfeed_wiring import (
+    KIS_QUOTE_TRANSPORT_CONFIG_NAME,
+    resolve_kis_instance_rest_bases,
+)
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+from tos_runtime.transport.kis_mock.token import EvidenceRecorder
+from tos_runtime.transport.kis_quote.config import (
+    load_kis_quote_transport_config,
+    read_declared_instrument,
+)
 from tos_runtime.venue import (
     ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
     VENUE_POLICY_CONFIG_NAME,
+    BandObservation,
+    BandReader,
+    BandSourceConfig,
+    KisBandSourceReader,
     LoadedOrderConstructionPolicy,
     LoadedVenuePolicy,
     VenueConstraintService,
+    build_band_client,
     load_activation_members,
     load_order_construction_policy,
     load_venue_constraint_policy,
@@ -98,10 +117,19 @@ from tos_runtime.venue import (
 from tos_runtime.venue.construction_rules import ConstructionRules
 
 __all__ = [
+    "BandReaderFactory",
+    "VenueBandSourceUnwired",
     "VenuePolicyScopeMismatch",
     "VenueServiceStage",
+    "build_kis_band_reader_factory",
     "build_venue_service",
 ]
+
+#: What :func:`build_venue_service` calls — exactly once, and ONLY when the loaded policy
+#: declares a ``_runtime.band_source`` — to obtain the service's band reader. Takes the
+#: declared source and the policy's own ``tick_size`` (the grid the reader validates both
+#: bounds against, plan §4.2).
+BandReaderFactory = Callable[[BandSourceConfig, int | None], BandReader]
 
 #: Duplicated from ``tos_runtime.compose._safety_wiring``'s own private
 #: ``_SAFETY_ACTIVATION_CONFIG_NAME`` (module-private there, not exported) — the SAME
@@ -113,6 +141,18 @@ _SAFETY_ACTIVATION_CONFIG_NAME = "safety_activation.yaml"
 #: name for a ``kis-mock`` transport (``tos_runtime.transport.kis_mock.codec`` names the codec
 #: itself this way nowhere as a string constant, so this module owns the one literal).
 _KIS_ORDER_CASH_WIRE_CODEC_KIND = "kis-order-cash-v1"
+
+
+class VenueBandSourceUnwired(RuntimeError):
+    """The loaded Venue Constraint Policy declares a ``_runtime.band_source`` but this compose
+    root supplied no :data:`BandReaderFactory` (or the factory's own dependencies were not
+    ready) — a boot refusal, never a silent "declared but never read".
+
+    Plan §4.6: the worst outcome of this wave is supposed to be "exactly today's behaviour"
+    (band ``None`` ⇒ kernel ``UNKNOWN``). A policy that DECLARES a source and silently gets no
+    reader would produce that same ``None`` for a completely different reason, and nothing
+    downstream could tell the two apart — so it is refused at boot instead.
+    """
 
 
 class VenuePolicyScopeMismatch(RuntimeError):
@@ -247,7 +287,15 @@ def _load_and_activate_policies(
     :func:`build_venue_service` purely for the function-length budget (no behavioural
     difference from having this inline there)."""
     loaded_policy = load_venue_constraint_policy(
-        config_dir / VENUE_POLICY_CONFIG_NAME, scheme=scheme
+        config_dir / VENUE_POLICY_CONFIG_NAME,
+        scheme=scheme,
+        # The band source's config-consistency rule (plan §4.4b) needs the ``kis_quote``
+        # document's own ``instrument``, and needs it BEFORE the two INSTANCE host-seal facts
+        # a full ``load_kis_quote_transport_config`` requires have been resolved. ``None``
+        # (no such document) is only a refusal when a band source is actually declared.
+        band_transport_instrument=read_declared_instrument(
+            config_dir / KIS_QUOTE_TRANSPORT_CONFIG_NAME
+        ),
     )
     loaded_ocp = load_order_construction_policy(
         config_dir / ORDER_CONSTRUCTION_POLICY_CONFIG_NAME, scheme=scheme
@@ -292,6 +340,80 @@ def _load_and_activate_policies(
     return loaded_policy, loaded_ocp, venue_member, ocp_member
 
 
+def build_kis_band_reader_factory(
+    *,
+    config_dir: Path,
+    broker_scopes: BrokerScopesConfig,
+    monotonic: MonotonicSource,
+    evidence_sink: EvidenceRecorder,
+    credential_sessions_cell: KisCredentialSessionsCell,
+    trading_date_reader: Callable[[], str | None],
+) -> BandReaderFactory:
+    """The production :data:`BandReaderFactory` — a KIS band reader on the ``kis_quote``
+    document's EXISTING host seal and the boot's ONE credential session (plan §4.2).
+
+    **Why the reader is built lazily, on first read.** This factory is called from
+    :func:`build_venue_service`, which runs before ``_finalize`` builds this boot's
+    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessions` registry
+    (step 2 needs the loaded Order Construction Policy before the engine exists). Building a
+    PRIVATE registry here instead would hand this app key a second token lifecycle — exactly
+    what C-2 decision (C) forbids. So the returned reader closes over
+    ``credential_sessions_cell`` and constructs itself on its first actual read, which is
+    strictly after ``_finalize`` filled that cell. A read that somehow arrives first refuses
+    (:class:`VenueBandSourceUnwired`) rather than quietly answering ``None``.
+
+    Everything else is resolved EAGERLY, inside this call: the host seal
+    (:func:`~tos_runtime.compose._marketfeed_wiring.resolve_kis_instance_rest_bases` plus
+    :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config`) must
+    refuse at BOOT, not on the first band read hours later.
+    """
+
+    def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+        mock_rest_base, real_rest_base = resolve_kis_instance_rest_bases(broker_scopes)
+        transport_config = load_kis_quote_transport_config(
+            config_dir / KIS_QUOTE_TRANSPORT_CONFIG_NAME,
+            instance_mock_rest_base=mock_rest_base,
+            instance_real_rest_base=real_rest_base,
+        )
+        client = build_band_client(transport_config, band_source)
+        built: dict[str, KisBandSourceReader | None] = {"reader": None}
+
+        def _read() -> BandObservation | None:
+            reader = built["reader"]
+            if reader is None:
+                sessions = credential_sessions_cell.read()
+                if sessions is None:
+                    raise VenueBandSourceUnwired(
+                        "band source read attempted before this boot's KIS credential "
+                        "registry existed — the band reader must never build a private "
+                        "session (C-2 decision (C): one app key, one token lifecycle)"
+                    )
+                reader = KisBandSourceReader(
+                    band_source=band_source,
+                    transport_config=transport_config,
+                    client=client,
+                    credential_session=kis_mock_credential_session(
+                        sessions,
+                        client=client,
+                        token_endpoint_base=transport_config.endpoint_rest_base,
+                        token_path=transport_config.token_path,
+                        token_reissue_min_interval_s=(
+                            transport_config.token_reissue_min_interval_s
+                        ),
+                    ),
+                    monotonic=monotonic,
+                    evidence_sink=evidence_sink,
+                    trading_date_reader=trading_date_reader,
+                    tick_size=tick_size,
+                )
+                built["reader"] = reader
+            return reader.read()
+
+        return _read
+
+    return _factory
+
+
 def build_venue_service(
     *,
     config_dir: Path,
@@ -305,6 +427,8 @@ def build_venue_service(
     egress_coordinates: EgressCoordinatesConfig,
     transport_kind: TransportKind,
     calendar_config: CalendarConfig,
+    band_reader_factory: BandReaderFactory | None = None,
+    trading_date_reader: Callable[[], str | None] | None = None,
 ) -> tuple[VenueConstraintService, LoadedOrderConstructionPolicy]:
     """Load, activate, cross-check, and construct the governed venue-constraint service
     (module docstring).
@@ -318,6 +442,8 @@ def build_venue_service(
         VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, or the
             Order Construction Policy's wire-codec declaration, disagree with this compose
             root's own configured facts.
+        VenueBandSourceUnwired: the policy declares a ``_runtime.band_source`` and
+            ``band_reader_factory`` is ``None``.
     """
     loaded_policy, loaded_ocp, venue_member, ocp_member = _load_and_activate_policies(
         config_dir=config_dir,
@@ -346,6 +472,21 @@ def build_venue_service(
         broker=loaded_policy.scope.broker,
         route=egress_coordinates.route_identity,
     )
+    # Plan §4: the reader is built ONLY when the policy declares a source, so a tree that
+    # declares none (today: every shipped tree, plan §5) gets a service whose behaviour — and
+    # whose evidence rows — are byte-identical to before this wave.
+    band_reader: BandReader | None = None
+    if loaded_policy.band_source is not None:
+        if band_reader_factory is None:
+            raise VenueBandSourceUnwired(
+                f"{config_dir / VENUE_POLICY_CONFIG_NAME}: _runtime.band_source is declared "
+                "but this compose root supplied no band_reader_factory — refusing to boot a "
+                "policy whose declared source would never be read"
+            )
+        band_reader = band_reader_factory(
+            loaded_policy.band_source,
+            loaded_policy.policy.shape_constraints.tick_size,
+        )
     service = VenueConstraintService(
         loaded_policy=loaded_policy,
         scheme=scheme,
@@ -357,6 +498,10 @@ def build_venue_service(
         broker_capability_profile_version=profile_version,
         broker_capability_profile_digest=profile_digest,
         activated_member_digest=venue_member.digest,
+        band_reader=band_reader,
+        trading_date_reader=(
+            None if loaded_policy.band_source is None else trading_date_reader
+        ),
     )
     record_order_construction_policy_bound(
         evidence_store, loaded_ocp, ocp_member.digest

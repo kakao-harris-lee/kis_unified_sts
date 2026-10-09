@@ -75,7 +75,7 @@ path either way.
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
 resolves for the order transport — resolved independently here (module-local
-:func:`_resolve_kis_instance_rest_bases`, duplicated rather than imported from that sibling
+:func:`resolve_kis_instance_rest_bases`, duplicated rather than imported from that sibling
 wiring module: this module has no dependency on which *order* transport kind is active, and a
 deployment may run the KIS quote intake with a purely synthetic order transport, or vice versa —
 coupling the two would make one unavailable without the other for no structural reason).
@@ -147,6 +147,7 @@ __all__ = [
     "MarketFeedConfigError",
     "build_tick_scheduler",
     "load_marketfeed_config",
+    "resolve_kis_instance_rest_bases",
 ]
 
 #: The runtime INSTANCE file name (distinct from ``marketfeed.example.yaml``).
@@ -521,13 +522,20 @@ def _time_pacer_pass(
     ).before_decide
 
 
-def _resolve_kis_instance_rest_bases(
+def resolve_kis_instance_rest_bases(
     broker_scopes: BrokerScopesConfig,
 ) -> tuple[str, str]:
     """Resolve the (MOCK, REAL) INSTANCE ``rest_base`` host-seal facts for the ``kis_quote``
     intake — the SAME two facts
     :func:`tos_runtime.compose._transport_wiring.load_transport_config` resolves for the order
     transport, independently re-derived here (module docstring).
+
+    Public (it was module-private until the CP-3 band 원천 웨이브): the band GET reuses the
+    very same ``kis_quote`` document and therefore needs the very same two facts to prove its
+    host seal (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.2 "기존
+    ``kis_quote`` transport 의 host seal … 을 재사용한다"). Exporting this one resolver is how
+    the band reader stays on the sealed path instead of growing a third, independent
+    derivation of the same two values.
 
     Args:
         broker_scopes: The already-loaded scope table (unconditionally available at this
@@ -578,7 +586,7 @@ def _evidence_recorder(
     fields)``) onto :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append` — mirrors
     :mod:`tos_runtime.compose._transport_wiring`'s own ``_evidence_recorder`` (duplicated, not
     imported — same "no dependency on the order transport wiring" reasoning as
-    :func:`_resolve_kis_instance_rest_bases`)."""
+    :func:`resolve_kis_instance_rest_bases`)."""
 
     def _record(kind: str, fields: Mapping[str, Any]) -> None:
         store.append(
@@ -611,7 +619,7 @@ def _build_intake(
     scheduler maps those readings through that service (``tos_runtime.transport.kis_quote
     .adapter``'s own "one clock, two jobs" note; #810). The kis_quote intake takes NO time
     service: it reads no wall clock at all. ``broker_scopes`` resolves the host seal
-    (:func:`_resolve_kis_instance_rest_bases`); ``runtime_identity`` attributes evidence.
+    (:func:`resolve_kis_instance_rest_bases`); ``runtime_identity`` attributes evidence.
     ``credential_sessions`` is the boot's KIS credential registry (C-2 decision (C)) — the
     intake takes the SAME ``kis_mock.*`` session the order transport holds (required — a
     private registry would silently give it a second token lifecycle for the same app key).
@@ -622,7 +630,7 @@ def _build_intake(
     assert (
         config.intake_kind == "kis_quote"
     )  # _VALID_INTAKE_KINDS has exactly two members
-    instance_mock_rest_base, instance_real_rest_base = _resolve_kis_instance_rest_bases(
+    instance_mock_rest_base, instance_real_rest_base = resolve_kis_instance_rest_bases(
         broker_scopes
     )
     quote_config = load_kis_quote_transport_config(

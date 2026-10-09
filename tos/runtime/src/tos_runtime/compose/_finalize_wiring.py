@@ -41,7 +41,10 @@ from tos_runtime.compose._engine_wiring import (
     verify_replay_or_halt,
     wire_engine_and_driver,
 )
-from tos_runtime.compose._kis_credential_wiring import build_kis_credential_sessions
+from tos_runtime.compose._kis_credential_wiring import (
+    KisCredentialSessionsCell,
+    build_kis_credential_sessions,
+)
 from tos_runtime.compose._preconditions import (
     COORDINATOR_PRECONDITIONS_CONFIG_NAME,
     load_coordinator_preconditions_config,
@@ -157,6 +160,7 @@ def _finalize(
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
     trading_date_now: Callable[[], str | None] | None = None,
+    credential_sessions_cell: KisCredentialSessionsCell | None = None,
 ) -> ComposedRuntime:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
     :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
@@ -172,6 +176,11 @@ def _finalize(
     # SYNTHETIC post-trade finality policy (CR-4, plan §2.2) — fail-closed, from its own file.
     finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
     kis_credential_sessions = _kis_credential_sessions(infra, identity)
+    if credential_sessions_cell is not None:
+        # Filled HERE, not after this function returns: the boot replay below can already
+        # drive step 3, and therefore a CP-3 band read, before the caller sees a
+        # `ComposedRuntime` at all (`KisCredentialSessionsCell`'s own docstring).
+        credential_sessions_cell.sessions = kis_credential_sessions
     wired = wire_engine_and_driver(
         data_dir=data_dir,
         context_resolver=context_resolver,
