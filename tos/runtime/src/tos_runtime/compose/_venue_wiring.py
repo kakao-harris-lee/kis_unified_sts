@@ -46,6 +46,17 @@ at this point in ``compose_paper_runtime`` is whatever ``_boot_services`` itself
 function's own first two evidence rows, and both only ever get written past every refusal check
 above.
 
+**The declared band source** (CP-3 band 원천 웨이브,
+``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4). Two things happen here and
+nowhere else. (1) The venue policy loader is handed the ``kis_quote`` document's own
+``instrument`` — unconditionally, because an ABSENT document answers ``None`` and only a
+policy that DECLARES a band source turns that into a refusal (plan §4.1/§4.4b). (2) A band
+reader is built ONLY when the loaded policy declares a source; a declaration with no
+:data:`BandReaderFactory` behind it is :class:`VenueBandSourceUnwired`, never a silent "band
+always ``None``". Every tree shipped today declares none (plan §5), so on every real boot path
+in this wave the factory is constructed and never called — which is the point: turning the
+source on is then a config edit, not a code change.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*`` +
 ``tos_runtime.*`` only. No ``shared.*``.
 """

@@ -730,6 +730,15 @@
 #   규율). `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다
 #   49d3bd83…). `expected_dependency_set_digest` 는 바뀌지 않았다 — 같은 배포 호스트 루트
 #   `.venv`(python 3.12.12 / sqlite 3.45.1), 출력이 커밋된 값과 바이트 동일.
+#   ⚠ **같은 브랜치에서 한 번 더 움직였다 — 재도출 2회차**: `49d3bd83…` → **`4d33b6b0…`**.
+#   바뀐 것은 `compose/_venue_wiring.py` 의 **모듈 독스트링 한 문단뿐**이다(밴드 원천 결선이
+#   그 모듈의 무엇을 바꾸는지 설명). 동작 변경은 0 이지만 이 digest 는 `*.py` **바이트**를
+#   접으므로 값이 바뀐다 — 이 파일 위쪽 #814 교훈과 PR #855 2회차의 「주석 두 줄」 전례
+#   그대로다. 세는 단위는 **재도출 커밋**이고, 이 브랜치의 재도출은 둘이다:
+#     1. `d551d322` — ec20680a… → 49d3bd83…  (PR-2 본체)
+#     2. `(이 커밋)` — 49d3bd83… → **4d33b6b0…**  (모듈 독스트링 한 문단)
+#   두 경로 일치(둘 다 4d33b6b0…). `expected_dependency_set_digest` 는 두 번 모두 불변.
+#
 #   ⚠ 이 파일은 CP-3 tenant 트리 둘(`cp3-setup-d-long`/`cp3-setup-d-short`)에 **바이트
 #   사본**으로 들어간다 — 세 곳을 함께 갱신했다(`tos/runtime/tests/compose/
 #   test_tenant_tree_copies.py` 가 강제한다). 값 핀도 함께:
@@ -752,7 +761,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "49d3bd83b2882556ca3680f99410b185b11d64f647b2f5941d7fab7286887a2f"
+expected_code_digest: "4d33b6b00c89572fb913bf1f0aaad9af2c33790c82e23ce6a6667aef0ee28c67"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
