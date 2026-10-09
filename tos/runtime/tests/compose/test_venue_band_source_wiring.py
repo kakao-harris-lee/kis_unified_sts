@@ -282,11 +282,20 @@ class TestStepThreeAndItemElevenReadOneObject:
     """Plan §8 2 — the venue stage (step 3's folds) and the send-boundary context (item 11)
     must never disagree about the effective constraints.
 
-    They cannot, structurally: both read
-    :attr:`~tos_runtime.compose._venue_wiring.VenueServiceStage.shape_constraints`, which
-    delegates to the service's own property. This test pins that delegation on a REAL composed
-    runtime — if the stage ever cached a copy of the constraints at construction, a band
-    arriving later would reach the decision and not item 11.
+    They cannot, structurally, and the chain is three links long:
+    :meth:`~tos_runtime.compose.context.ComposeContextResolver.resolve` passes
+    ``venue_shape_constraints=self.venue_stage.shape_constraints``
+    (``compose/context.py:850``); that stage property returns
+    ``self._service.shape_constraints``; and step 3's own two folds pass the same property into
+    ``VenueConstraintStage``. This test pins the two links the compose root owns on a REAL
+    composed runtime — if the stage ever cached a copy at construction, a band arriving later
+    would reach the decision and NOT item 11, and nothing else in the suite would notice.
+
+    The third link — that a band actually moves the value both of them then read — is unit-
+    tested in ``tests/venue/test_service_band.py::TestEffectiveConstraints`` (including through
+    the kernel predicate), because the band's own read instants are boot and a session-phase
+    change: injecting one into an ALREADY-composed runtime would mean reaching past the public
+    surface, which is weaker evidence than driving the same property directly.
     """
 
     def test_the_stage_serves_the_services_own_effective_constraints_object(
@@ -296,6 +305,12 @@ class TestStepThreeAndItemElevenReadOneObject:
         try:
             assert (
                 runtime.venue_stage.shape_constraints is runtime.venue.shape_constraints
+            )
+            # And the resolver really does read it off the stage, not off a snapshot of its
+            # own taken at construction.
+            assert (
+                runtime.context_resolver.venue_stage.shape_constraints
+                is runtime.venue.shape_constraints
             )
         finally:
             runtime.rcl_log.close()
