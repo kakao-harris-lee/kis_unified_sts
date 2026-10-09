@@ -1,0 +1,176 @@
+# CP-3 B1b 실행기 — Setup D VWAP 되돌림, **SHORT 배포**의 전략 콘텐츠.
+#
+# 상위: docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §4 결정 1·4·5·6,
+# §5 2·3. 운영자 지시 2026-10-09(「short 전략 파일로 다시 돌려줘」) —
+# SHORT parity 공백(`config/tos_runtime/cp3-setup-d-short/README.md` §3.3 1)을
+# 닫기 위해 B1b 실행기가 **이 방향으로도** 돌 수 있어야 한다.
+#
+# ── 왜 LONG 과 다른 디렉터리에 있는가 (자리의 이유) ─────────────────────────
+# `tos_runtime.strategy.loader.load_strategies` 는 `strategies/` **디렉터리 전체**를
+# 읽고, `cp3.strategy.load_strategy_content` 는 그 디렉터리가 **정확히 한 개**의
+# 전략 파일을 들고 있을 것을 요구한다(「this replay drives one scope through one
+# core」). 그러므로 LONG 파일 옆에 SHORT 파일을 두면 **LONG 실행까지 거부된다** —
+# 두 방향은 각자의 config_dir 를 가져야 한다(`_refuse_path_shape`: 전략은
+# `<config_dir>/strategies/`, 바인딩은 `<config_dir>/strategy_bindings.yaml`,
+# 둘은 같은 config_dir 에서 파생돼야 한다 — 부팅이 그렇게 파생하기 때문이다).
+#
+# ⛔ **LONG 을 옮기지 않았다.** 2026-10-08 의 LONG parity 실행 산출물
+# (trace.jsonl sha256
+#  `98eb11f4b4a15a14a4ad326ee63656b9322876795ad7c07fc50b2748075bd2aa`,
+#  `~/.local/state/tos/measure/cp3-b1b-run1/`)의 lineage 는
+# `parents.strategy_file.path` 로 그 자리를 적는다. 대칭을 위해 LONG 을
+# `long/strategies/` 로 옮기면 그 기록이 재현되지 않는다 — **비대칭이지만 기록이
+# 재현되는 쪽**을 골랐다. 그래서 LONG 은 패키지 루트(`tos/runtime/cp3/strategies/` +
+# `tos/runtime/cp3/strategy_bindings.yaml`), SHORT 는 `tos/runtime/cp3/short/` 다.
+#
+# ── 배포 트리 사본과의 관계 ────────────────────────────────────────────────
+# 이 파일은 **배포 트리** `config/tos_runtime/cp3-setup-d-short/strategies/
+# setup_d_short.strategy.yaml` 과 **좌표 칸 여섯(세 규칙 × `account`·`instrument`)을
+# 빼면 YAML 로 같다**. 배포 사본은 그 여섯을 named-TBD `"TBD"` 로 두고(계좌·종목은
+# 커밋되지 않는다) 이 B1b 사본은 LONG B1b 사본과 같은 방식으로 **백테스트 하네스
+# 리터럴**을 들고 있다 — `account: cp3-b1b-short` · `instrument: 101S6000`(parity
+# 데이터셋의 **full** 월물, 결정 2. tenant 상품 mini `A056xx` 는 여기 오지 않는다).
+# 그 등식은 주석이 아니라 테스트가 고정한다:
+#   tos/runtime/cp3/tests/test_cp3_short_strategy_content.py
+#   ::test_b1b_copy_equals_the_deployed_tenant_strategy_after_normalising_coordinates
+# (LONG 쪽도 같은 테스트가 같은 방식으로 고정한다 — 그 가드는 이 PR 전까지 **없었다**.)
+#
+# 이 파일은 tos/runtime/src/tos_runtime/strategy/loader.py::load_strategies 가 읽는 그
+# 모양 그대로이고, 모든 값이 concrete(named-TBD `"TBD"` 0개, `null` 리프 0개)이다 —
+# 그래서 배포 사본과 달리 **커밋 상태로 적재된다**. 미지의 키는
+# tos.dsl.serialization.parse_strategy 가 거부한다.
+#
+# 방향은 **배포(구성)당 하나**다(kickoff §2). 이 파일은 SHORT 배포용이고,
+# 진입 비교는 `z_x1000 >= +1800`(op **GE**) 한 변이다 — DSL 에 `abs()` 가 없어서다.
+dsl_version: cp3-b1b-dsl-1
+config_binding_version: cp3-b1b-bind-1
+
+policy:
+  rules:
+    # ---------------------------------------------------------------- R1
+    # 진입: Setup D 의 다섯 게이트 AND. 전부 상류 필드 비교다.
+    #   entry_window  09:00 앵커 기준 valid_minutes_min(15) ≤ 경과 ≤ 345
+    #   hi_vol        atr14 ≥ min_atr_ratio(0.9) × 780봉 ATR p90
+    #   stall_ok      최근 15봉 자체 레인지 스톨 가드 통과 (숏 쪽 변: 직전 고점 위
+    #                 buffer 안에서 멈췄는가 — 게이트 불린의 방향은 배포 설정이
+    #                 아니라 **z 의 부호**에서 나온다. 그 실측 근거는 배포 사본
+    #                 `config/tos_runtime/cp3-setup-d-short/strategies/
+    #                 setup_d_short.strategy.yaml` 헤더의 「읽는 필드는 LONG 과
+    #                 같은 열다섯」 문단에 있다 — 그래서 SHORT 변종 필드는 없다)
+    #   reversal_ok   직전 봉 대비 VWAP 쪽으로 되돌았고 |z| 가 줄었다
+    #   z_x1000       VWAP 괴리가 **SHORT 쪽 극단**(≥ +extreme_atr_mult)
+    # 임계 +1800 은 리터럴이 아니라 sibling strategy_bindings.yaml 의
+    # `z_entry_min_x1000` 이다(design §7 — 임계는 설정, 하드코딩 금지).
+    # ⚠ 비교는 **GE** 다(LONG 사본은 LE). 키 이름도 `_max_` 가 아니라 `_min_` 인데,
+    # 그 쪽이 이 변의 **하한**이기 때문이다 — 이름이 부등호를 따라간다.
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, entry_window]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, hi_vol]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, stall_ok]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, reversal_ok]
+          op: EQ
+          right:
+            const: true
+        - left:
+            ref: [capsule, resolved_values, z_x1000]
+          op: GE
+          right:
+            ref: [config, z_entry_min_x1000]
+      decision:
+        kind: ACTION
+        rationale: >-
+          R1-ENTRY-SHORT: entry window open, high-volatility regime, stall guard
+          clear, reversal confirmed, and the VWAP extension has reached the SHORT
+          extreme threshold — propose a new short.
+        target:
+          kind: ACTION
+          account: cp3-b1b-short
+          instrument: 101S6000
+          direction: SHORT
+          position_effect: OPEN
+          # 수량은 Proposal 에 숫자 슬롯이 없다(DSL-G5) — basis 만 증거로
+          # 싣고, 실제 수량은 OCP 의 정적 SizingBound(1 계약)가 정한다.
+          quantity_basis: RISK
+          # TargetSpec.rationale 은 **필수**다: ACTION/FLAT 의 Outcome 은
+          # tos.dsl.determinism._build_target_proposal 에서 *target* 의
+          # rationale 을 싣고(Decision 의 것이 아니다), Proposal 은 빈
+          # rationale 을 거부한다(proposal.py 147-155행). 규칙 id 접두가
+          # 같아야 trace 가 발화 규칙을 Outcome 에서 되읽을 수 있다.
+          rationale: >-
+            R1-ENTRY-SHORT: open a new short at the SHORT-side VWAP extreme with
+            every Setup D gate satisfied.
+    # ---------------------------------------------------------------- R2
+    # 청산 1: 가격이 VWAP 밴드로 되돌아왔다 = 평균회귀 명제 실현.
+    # `vwap_reverted` 는 B1a **D3** 의 **밴드 꼴**(abs(z) ≤ 0.2)이고 **부호 대칭**이라
+    # 이 규칙은 LONG 사본과 **글자 그대로 같은 비교**다 — 방향만 아래에서 갈린다.
+    # (D7 이 아니다: D7 은 측정된 D7 생성기에 관한 항목이고 그 note 자신이
+    #  「그 카운트를 밴드의 오차 막대로 읽지 말라」고 적는다.)
+    # 레거시 YAML 에 vwap_revert_band_atr_mult 가 없어 B1a 가
+    # reversal_confirm_atr_mult 를 폴백으로 썼고, 그 차이는 lineage 의
+    # declared_differences 에 등재돼 있다.
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, vwap_reverted]
+          op: EQ
+          right:
+            const: true
+      decision:
+        kind: FLAT
+        rationale: >-
+          R2-EXIT-VWAP-REVERTED: price has returned to the VWAP band — the
+          mean-reversion thesis is realized, go flat.
+        target:
+          kind: FLAT
+          account: cp3-b1b-short
+          instrument: 101S6000
+          # 숏을 닫는 액션이므로 방향은 반대쪽이다 — FLAT 의 `direction` 은
+          # **닫는 액션의 방향**이고(`tos/src/tos/dsl/proposal.py::build_flat`
+          # 「The direction of the closing action」) 숏은 **매수로** 닫는다.
+          # LONG 사본의 같은 칸은 `SHORT` 다. 이 토큰과 OCP `action_class_shape`
+          # 의 `direction` 키가 **같은 토큰을 다른 뜻으로** 쓴다는 실측은 배포
+          # 사본 헤더와 `config/tos_runtime/cp3-setup-d-short/README.md` §3.2 다.
+          direction: LONG
+          position_effect: CLOSE
+          rationale: >-
+            R2-EXIT-VWAP-REVERTED: buy to close the short — price is back inside
+            the VWAP band.
+    # ---------------------------------------------------------------- R3
+    # 청산 2: EOD(15:15). kickoff §4 결정 6 — 1차 슬라이스 청산은 이 둘뿐이고
+    # ATR 스톱(1.5×)은 의도된 차이로 범위 밖이다.
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, eod]
+          op: EQ
+          right:
+            const: true
+      decision:
+        kind: FLAT
+        rationale: >-
+          R3-EXIT-EOD: the session's EOD close time has arrived — go flat.
+        target:
+          kind: FLAT
+          account: cp3-b1b-short
+          instrument: 101S6000
+          direction: LONG
+          position_effect: CLOSE
+          rationale: >-
+            R3-EXIT-EOD: buy to close the short — the session's EOD close time
+            has arrived.
+  # 어떤 규칙도 발화하지 않을 때의 필수 기본값. NO_ACTION 은 1급 결과다.
+  default:
+    kind: NO_ACTION
+    rationale: >-
+      R0-DEFAULT-NO-ACTION: no rule fired — hold exposure unchanged.
