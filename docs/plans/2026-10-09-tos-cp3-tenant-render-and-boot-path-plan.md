@@ -67,7 +67,9 @@ slots:                      # 각 항목 = 오늘의 Rule 하나: 파일 · 키 
   `COORDINATE_RULE_KEYS`)는 매니페스트를 자기 자신과 비교하게 된다 — 슬롯을 하나 더해도 아무것도 red 가 되지 않는다.
   그래서 **트리마다 기대 슬롯을 테스트의 리터럴로 커밋**한다 — 키 이름 집합이 아니라 `(file, key, anchor, replacement)`
   **튜플 전체**(재리뷰 LOW: 키 이름만 핀하면 `construction.yaml::account` 키를 `  tick_size: 5` 줄에 다시 겨눠도 통과한다).
-  상주 = 오늘의 `_coordinate_rules` 21개와 같은 튜플. 슬롯 추가·변경은 테스트 수정을 요구한다. 레드 증명: 키는
+  상주 = 오늘의 `_coordinate_rules` **20개**와 같은 튜플(정정 2026-10-09, PR #888 실측: `_coordinate_rules` 는 20 이고
+  `COORDINATE_RULE_KEYS` 가 21 이다 — 21번째 `safety_activation.yaml::members` 는 아래 행대로 매니페스트에 **없고**
+  늘 도출되므로 이 리터럴에도 들어가지 않는다). 슬롯 추가·변경은 테스트 수정을 요구한다. 레드 증명: 키는
   `construction.yaml::account` 그대로 두고 앵커 `  tick_size: 5` 와 템플릿 `  tick_size: {value}` 를 **함께** 바꾼 매니페스트
   → red. (앵커만 바꾸면 템플릿의 키 접두가 앵커와 달라 규칙 ③ 이 먼저 거부하므로 핀의 기여를 보이지 못한다 — 3차 리뷰
   LOW, #838. 함께 바꾼 입력은 ①~④ 를 모두 통과하고 핀만이 잡는다.)
