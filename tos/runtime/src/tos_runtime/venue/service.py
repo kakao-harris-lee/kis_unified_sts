@@ -37,8 +37,59 @@ the last issued snapshot, the cached snapshot is kept (constraint_generation
 unchanged, no re-issue) — a fresh snapshot is issued only on the very first
 call or when the phase actually changed.
 
-Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.evidence
-.store`` only — no ``shared.*``.
+**The declared band source** (CP-3 band 원천 웨이브,
+``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.3). When the
+active policy declares a ``_runtime.band_source``, this service is handed a
+``band_reader`` and a ``trading_date_reader`` and folds the observed broker
+price band into the EFFECTIVE shape constraints
+(:attr:`VenueConstraintService.shape_constraints`, now a property). Four
+statements govern it, and each one is a test in plan §8:
+
+* **Both readers ``None`` ⇒ byte-identical behaviour to before this wave.**
+  Every new evidence key is gated on the POLICY declaring a band source, not
+  on a reader being present, so a tree with no declaration (today: the
+  resident ``paper`` tree and both CP-3 tenant trees, plan §5) emits exactly
+  the rows it emitted yesterday.
+* **The declared read instants, and only those** — the first snapshot is
+  ``"boot"`` and every later phase change is ``"phase_change"``, and a read
+  happens only when ``band_source.read_on`` names that token. A policy
+  declaring ``["boot"]`` therefore reads exactly once for the life of the
+  process. (Independent review M2: ``read_on`` used to be validated by the
+  loader and then ignored, so every declaration behaved like both tokens.)
+  The 모의 quote rate limit is 1.0 rps
+  (``config/tos_runtime/paper/marketfeed.yaml:101-103``, probe P-13), and plan
+  §2 shows a same-day band can only WIDEN, so reading once at boot is the
+  conservative direction, not a shortcut.
+* **The trading-date bond runs BEFORE the tick-generation cache early
+  return** (plan §4.4a). Behind that early return the check would be skipped
+  for as long as the tick generation did not move — which is exactly the
+  overnight state the bond exists for.
+* **Re-issue only on a state TRANSITION** (plan §4.3's review L3). A band
+  change is a material change under ADR-002-019 §18 and takes a new
+  Constraint Generation — but the only same-phase band transition this
+  runtime can actually produce is the trading-date bond DROPPING a stale
+  band, because every read coincides with a phase change, which already
+  re-issues. A band that is ALREADY ``None`` staying ``None`` is not a
+  transition and must not inflate the counter. (Independent review M3: the
+  value/continuity comparison that used to sit beside this was measured to
+  decide nothing and was deleted — see :meth:`VenueConstraintService
+  ._read_band`.)
+
+**The three snapshot fields are a STAND-IN** (plan §4.3's review M3). The
+kernel defines ``critical_input_snapshot_digest`` as "CII provenance binding
+(capsule-owned; venue binds the digest, §3.5)"
+(``tos/src/tos/venue/records.py:489-490``). What this service puts there is
+the digest of a RUNTIME :class:`~tos_runtime.venue.band_source
+.BandObservation`, not of a kernel ``CriticalInputSnapshot``
+(``tos/src/tos/capsule/snapshot.py``). Mechanically the kernel is unchanged
+(this field's only consumer is the record itself); semantically the runtime
+has overlaid a meaning, so every evidence row this service writes says
+``"stand-in"`` in the same idiom ``egress_coordinates.yaml::
+capsule_terminus_fields`` uses, and "promote the band observation to a real
+``CriticalInputSnapshot``" is registered as a GOV-001 candidate (plan §6 (B)).
+
+Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.*`` only —
+no ``shared.*``.
 """
 
 from __future__ import annotations
@@ -62,6 +113,7 @@ from tos.venue import (
 )
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.venue.band_source import BandObservation, BandReader
 from tos_runtime.venue.config import LoadedOrderConstructionPolicy, LoadedVenuePolicy
 
 __all__ = [
@@ -118,6 +170,32 @@ def record_order_construction_policy_bound(
     )
 
 
+def _policy_bound_payload(
+    loaded_policy: LoadedVenuePolicy, activated_member_digest: str
+) -> dict[str, object]:
+    """The one boot-time ``VENUE_POLICY_BOUND`` row (plan §2 decision 8).
+
+    The two band-source keys appear ONLY when the policy declares a source (plan §4.5's
+    review L2 — a tree that declares none must emit a row byte-identical to yesterday's).
+    They exist because activation compares the kernel ``canonical_digest``, which covers
+    ``_model_view`` only: a ``_runtime.band_source`` declaration is OUTSIDE it. The
+    operator's 2026-10-08 disposition on plan §6 (B) was to fill that gap with evidence and
+    register the covered-field promotion as a GOV-001 candidate — never to extend the kernel
+    record here.
+    """
+    payload: dict[str, object] = {
+        "policy_id": loaded_policy.policy.policy_id,
+        "policy_generation": loaded_policy.policy.policy_generation,
+        "canonical_digest": loaded_policy.policy.canonical_digest,
+        "activated_member_digest": activated_member_digest,
+        "null_shape_bounds": list(loaded_policy.null_shape_bounds),
+    }
+    if loaded_policy.band_source is not None:
+        payload["band_source_digest"] = loaded_policy.band_source_digest
+        payload["price_scale"] = loaded_policy.price_scale
+    return payload
+
+
 def _count_prior_rows(evidence_store: SqliteEvidenceStore, kind: str) -> int:
     """The durable count of pre-existing evidence rows of ``kind`` — the
     basis for a durable-monotonic generation counter surviving a restart
@@ -146,6 +224,8 @@ class VenueConstraintService:
         broker_capability_profile_version: str | None,
         broker_capability_profile_digest: str | None,
         activated_member_digest: str,
+        band_reader: BandReader | None = None,
+        trading_date_reader: Callable[[], str | None] | None = None,
     ) -> None:
         """Construct the service and record its one boot-time
         ``VENUE_POLICY_BOUND`` evidence row (plan §2 decision 8).
@@ -181,6 +261,8 @@ class VenueConstraintService:
                 interface listing, since activation happens strictly BEFORE
                 construction — see this lane's own report for the
                 justification).
+            band_reader: see :meth:`_adopt_band_source`.
+            trading_date_reader: see :meth:`_adopt_band_source`.
 
         Note:
             ``activated_member_digest`` is not listed in plan §4.1's
@@ -193,10 +275,8 @@ class VenueConstraintService:
             from the fixed §4.1 interface, reported to lane b.
         """
         self.policy: VenueConstraintPolicy = loaded_policy.policy
-        self.shape_constraints: VenueShapeConstraints = (
-            loaded_policy.policy.shape_constraints
-        )
         self.quantity_constraint = loaded_policy.quantity_constraint
+        self._adopt_band_source(loaded_policy, band_reader, trading_date_reader)
         self._scheme = scheme
         self._session_phase_reader = session_phase_reader
         self._tick_generation_reader = tick_generation_reader
@@ -220,36 +300,146 @@ class VenueConstraintService:
         self.last_decision: OrderAdmissibilityDecision | None = None
 
         evidence_store.append(
-            {
-                "policy_id": self.policy.policy_id,
-                "policy_generation": self.policy.policy_generation,
-                "canonical_digest": self.policy.canonical_digest,
-                "activated_member_digest": activated_member_digest,
-                "null_shape_bounds": list(loaded_policy.null_shape_bounds),
-            },
+            _policy_bound_payload(loaded_policy, activated_member_digest),
             kind=VENUE_POLICY_BOUND_KIND,
             record_class=VENUE_POLICY_BOUND_KIND,
         )
 
+    def _adopt_band_source(
+        self,
+        loaded_policy: LoadedVenuePolicy,
+        band_reader: BandReader | None,
+        trading_date_reader: Callable[[], str | None] | None,
+    ) -> None:
+        """Set up this service's band state (module docstring's "the declared band source").
+
+        Args:
+            loaded_policy: Its ``band_source`` is the SINGLE source for "does this deployment
+                have a band source", and therefore for whether any of this wave's evidence
+                keys appear at all (plan §4.5's review L2: a tree that declares none must emit
+                rows byte-identical to yesterday's).
+            band_reader: The declared source's reader, or ``None`` — the shipped state of
+                every tree today (plan §5), in which case this service behaves exactly as it
+                did before this wave.
+            trading_date_reader: The calendar owner's KST trading-date reading, used ONLY for
+                the §4.4a bond. ``None`` makes that bond drop any held band on its next
+                evaluation — fail-closed: a band whose date cannot be compared cannot be shown
+                to still be today's.
+        """
+        #: The policy's own shape constraints, untouched. The EFFECTIVE constraints every
+        #: consumer reads are :attr:`shape_constraints` (a property since the band-source
+        #: wave) — identical to this object whenever no band is held.
+        self._policy_shape_constraints: VenueShapeConstraints = (
+            loaded_policy.policy.shape_constraints
+        )
+        #: The effective constraints, recomputed ONLY when the band transitions — so step 3's
+        #: decision and the gateway's item 11 re-fold read the SAME object between re-issues
+        #: (plan §4.3), never two equal-but-distinct ``model_copy`` results.
+        self._effective_shape_constraints: VenueShapeConstraints = (
+            self._policy_shape_constraints
+        )
+        self._band_source_declared = loaded_policy.band_source is not None
+        #: The policy's own ``band_source.read_on`` — the instants this service may read at
+        #: (independent review M2: it used to be validated by the loader and then ignored).
+        #: Empty when no source is declared, which makes the read unreachable either way.
+        self._band_read_on: tuple[str, ...] = (
+            ()
+            if loaded_policy.band_source is None
+            else loaded_policy.band_source.read_on
+        )
+        self._band_reader = band_reader
+        self._trading_date_reader = trading_date_reader
+        self._band: BandObservation | None = None
+
+    @property
+    def shape_constraints(self) -> VenueShapeConstraints:
+        """The EFFECTIVE shape constraints — the policy's own, with ``price_min``/``price_max``
+        replaced by the held band when there is one (module docstring's "the declared band
+        source"; plan §4.3).
+
+        A property rather than the plain attribute it used to be, so the three existing
+        consumers (step 3's decision, the venue stage's two folds, the gateway's item 11
+        context) see a band appear or disappear without any of them changing what they read.
+        """
+        return self._effective_shape_constraints
+
     def snapshot(self) -> VenueConstraintSnapshot:
         """The current tick generation's ``VenueConstraintSnapshot`` — issued
-        once per tick generation, re-issued only on a session-phase change
-        (module docstring)."""
+        once per tick generation, re-issued on a session-phase change or a band
+        transition (module docstring)."""
         generation = self._tick_generation_reader()
+        # (plan §4.4a) The trading-date bond is evaluated BEFORE the tick-generation cache
+        # early return below. Behind it, a band held from a previous trading date would
+        # survive for as long as the tick generation did not move.
+        band_transition = self._enforce_trading_date_bond()
         if (
-            self.last_snapshot is not None
+            not band_transition
+            and self.last_snapshot is not None
             and generation == self._cached_tick_generation
         ):
             return self.last_snapshot
         phase = self._session_phase_reader()
-        if (
-            self.last_snapshot is not None
-            and self.last_snapshot.observed_session_phase == phase
-        ):
-            # Same phase, new tick generation — no material change, no re-issue.
+        phase_changed = (
+            self.last_snapshot is None
+            or self.last_snapshot.observed_session_phase != phase
+        )
+        if phase_changed:
+            # `band_source.read_on` is CONSULTED, not merely validated (independent review
+            # M2): the very first snapshot is the "boot" instant and every later phase change
+            # is a "phase_change" one, and a token the policy did not declare means no read.
+            self._read_band("boot" if self.last_snapshot is None else "phase_change")
+        if not band_transition and not phase_changed:
+            # Same phase, new tick generation, band unchanged — no material change, no
+            # re-issue. `last_snapshot` is non-None here (phase_changed is True when it is).
+            assert self.last_snapshot is not None
             self._cached_tick_generation = generation
             return self.last_snapshot
         return self._issue_snapshot(phase, generation)
+
+    def _enforce_trading_date_bond(self) -> bool:
+        """Drop a held band whose trading date is not the current one (plan §4.4a).
+
+        Returns:
+            ``True`` only when this call actually dropped a band — a state TRANSITION (plan
+            §4.3's review L3). An already-``None`` band is not re-dropped, so an out-of-session
+            process calling :meth:`snapshot` N times does not advance the Constraint Generation
+            N times.
+        """
+        if self._band is None:
+            return False
+        current = (
+            None if self._trading_date_reader is None else self._trading_date_reader()
+        )
+        if current is not None and current == self._band.trading_date:
+            return False
+        self._set_band(None)
+        return True
+
+    def _read_band(self, instant: str) -> None:
+        """Read the declared band source once, if ``instant`` is one the policy declared.
+
+        **Returns nothing on purpose** (independent review M3). An earlier cut returned "did
+        the band change" and folded that into the re-issue condition — and the fold decided
+        NOTHING: a read only ever happens when the phase changed, and a phase change already
+        forces a re-issue, so mutating the comparison to "always changed" AND deleting the fold
+        outright both left every test green (measured). Dead logic that looks like a guard is
+        exactly what #838 is about, so it is gone rather than left in place. The one same-phase
+        band transition that IS reachable — the trading-date bond dropping a stale band — keeps
+        its own return value and its own red proof (:meth:`_enforce_trading_date_bond`).
+        """
+        if self._band_reader is None or instant not in self._band_read_on:
+            return
+        self._set_band(self._band_reader())
+
+    def _set_band(self, band: BandObservation | None) -> None:
+        self._band = band
+        self._effective_shape_constraints = (
+            self._policy_shape_constraints
+            if band is None
+            else self._policy_shape_constraints.model_copy(
+                update={"price_min": band.price_min, "price_max": band.price_max}
+            )
+        )
 
     def _issue_snapshot(
         self, phase: str | None, generation: int | None
@@ -259,6 +449,7 @@ class VenueConstraintService:
             self._snapshot_generation_base + self._snapshot_issue_count
         )
         snapshot_id = f"vsnap-{self._environment_label}-{constraint_generation}"
+        band = self._band
         snapshot = VenueConstraintSnapshot.issue(
             scheme=self._scheme,
             snapshot_id=snapshot_id,
@@ -268,9 +459,13 @@ class VenueConstraintService:
             policy_digest=self.policy.canonical_digest,
             observed_session_phase=phase,
             action_tradability=(),
-            critical_input_snapshot_digest=None,
-            source_continuity_id=None,
-            max_age=None,
+            # The three fields plan §4.3 binds the band observation into. STAND-IN semantics
+            # (module docstring's own section) — kernel record fields added: 0.
+            critical_input_snapshot_digest=(
+                None if band is None else band.record_digest
+            ),
+            source_continuity_id=(None if band is None else band.source_continuity_id),
+            max_age=(None if band is None else f"trading_date_kst:{band.trading_date}"),
         )
         assert isinstance(snapshot, VenueConstraintSnapshot)
         absent_fields = [
@@ -278,15 +473,19 @@ class VenueConstraintService:
             for name in _SNAPSHOT_ABSENT_FIELD_NAMES
             if getattr(snapshot, name) is None
         ]
+        payload: dict[str, object] = {
+            "snapshot_id": snapshot.snapshot_id,
+            "canonical_digest": snapshot.canonical_digest,
+            "constraint_generation": snapshot.constraint_generation,
+            "observed_session_phase": snapshot.observed_session_phase,
+            "policy_digest": snapshot.policy_digest,
+            "absent_fields": absent_fields,
+        }
+        if self._band_source_declared:
+            payload["band_digest"] = None if band is None else band.record_digest
+            payload["critical_input_snapshot_digest_role"] = "stand-in"
         self._evidence_store.append(
-            {
-                "snapshot_id": snapshot.snapshot_id,
-                "canonical_digest": snapshot.canonical_digest,
-                "constraint_generation": snapshot.constraint_generation,
-                "observed_session_phase": snapshot.observed_session_phase,
-                "policy_digest": snapshot.policy_digest,
-                "absent_fields": absent_fields,
-            },
+            payload,
             kind=VENUE_SNAPSHOT_ISSUED_KIND,
             record_class=VENUE_SNAPSHOT_ISSUED_KIND,
         )

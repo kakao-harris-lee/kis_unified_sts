@@ -14,6 +14,8 @@ Firewall (R1, runtime scope): stdlib + ``tos.*`` only — no ``shared.*``.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -51,6 +53,14 @@ from tos_runtime.venue._policy_primitives import (
     require_str,
     require_str_list,
     require_template_shape,
+)
+from tos_runtime.venue.band_source import (
+    BAND_SOURCE_BOUND_TRADING_DATE_KST,
+    BAND_SOURCE_FAILURE_UNKNOWN,
+    BAND_SOURCE_KIND_KIS_QUOTE_GET,
+    BAND_SOURCE_READ_ON_TOKENS,
+    BandSourceConfig,
+    band_source_digest,
 )
 
 __all__ = [
@@ -136,6 +146,13 @@ _VENUE_SCOPE_SINGLETON_FIELD_NAMES: tuple[str, ...] = (
 #: The venue-policy ``scope`` block's remaining explicit-list keys (any length).
 _VENUE_SCOPE_LIST_KEYS: tuple[str, ...] = ("safety_cells", "contracts")
 
+#: The measured KIS quotations TR id shape — ``FH`` + 3 uppercase letters + 8 digits. The
+#: measurement and its four independent citations live in
+#: :mod:`tos_runtime.transport.kis_quote.config`'s own module docstring; the pattern is
+#: duplicated here (never imported) because that module is private to its own package and
+#: deliberately stdlib-only. The two must be kept in sync by hand if the shape ever changes.
+_QUOTE_TR_ID_PATTERN = re.compile(r"^FH[A-Z]{3}\d{8}$")
+
 
 @dataclass(frozen=True)
 class VenuePolicyScope:
@@ -174,12 +191,23 @@ class VenuePolicyScope:
 @dataclass(frozen=True)
 class LoadedVenuePolicy:
     """A loaded, kernel-issued Venue Constraint Policy plus its structured
-    scope and its derived quantity constraint (plan §4.1)."""
+    scope and its derived quantity constraint (plan §4.1).
+
+    ``band_source``/``band_source_digest``/``price_scale`` are the CP-3 band 원천 웨이브
+    additions (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.1). All three are
+    ``None`` when the document declares no ``_runtime.band_source`` — which is every tree
+    shipped today (plan §5: the resident ``paper`` tree and both CP-3 tenant trees keep it
+    ``null``/absent until CP-3 §5 3 ③ produces real prices), so every rule the block carries is
+    inert for them.
+    """
 
     policy: VenueConstraintPolicy
     scope: VenuePolicyScope
     quantity_constraint: VenueQuantityConstraint
     null_shape_bounds: tuple[str, ...]
+    band_source: BandSourceConfig | None = None
+    band_source_digest: str | None = None
+    price_scale: int | None = None
 
 
 def _as_decimal(value: int | None) -> Decimal | None:
@@ -235,7 +263,7 @@ def _scope_identity(scope: VenuePolicyScope) -> str:
 
 def _parse_venue_runtime_block(
     raw: dict[str, Any], path: Path
-) -> tuple[str, QuantityUnitKind, str | None]:
+) -> tuple[str, QuantityUnitKind, str | None, dict[str, Any]]:
     runtime_raw = require_mapping_key(raw, "_runtime", path)
     instrument_class = require_str(runtime_raw, "instrument_class", path, "_runtime")
     unit_token = require_str(runtime_raw, "quantity_unit", path, "_runtime")
@@ -250,7 +278,175 @@ def _parse_venue_runtime_block(
         raise VenuePolicyConfigError(
             f"{path}: _runtime.currency must be a string or null"
         )
-    return instrument_class, quantity_unit, currency
+    return instrument_class, quantity_unit, currency, runtime_raw
+
+
+def _require_positive_int_key(
+    raw: dict[str, Any], key: str, path: Path, ctx: str
+) -> int:
+    value = raw.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.{key} must be a positive int, got {value!r} — a band source "
+            "cannot be enabled with an unbounded or absent value here (plan §4.1)"
+        )
+    return value
+
+
+def _parse_band_source(
+    runtime_raw: dict[str, Any], path: Path
+) -> BandSourceConfig | None:
+    """Parse ``_runtime.band_source`` (plan §4.1's YAML block), or ``None``.
+
+    **An ABSENT key means ``null``** (plan §4.1's 재리뷰 MEDIUM paragraph): requiring the key
+    unconditionally would ABORT the resident paper tree — whose ``_runtime`` carries only
+    ``instrument_class``/``quantity_unit``/``currency`` — at the first 08:45 after this merge.
+    So absence and ``null`` are the same thing, and EVERY rule below applies only past this
+    early return.
+    """
+    block = runtime_raw.get("band_source")
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.band_source must be a mapping or null, got {block!r}"
+        )
+    ctx = "_runtime.band_source"
+    kind = require_filled_str(block, "kind", path, ctx)
+    if kind != BAND_SOURCE_KIND_KIS_QUOTE_GET:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.kind {kind!r} is not {BAND_SOURCE_KIND_KIS_QUOTE_GET!r} — the "
+            "runtime has no reader for any other kind, and a declared-but-unreadable source "
+            "would boot as 'band always None', indistinguishable from a broker outage"
+        )
+    tr_id = require_filled_str(block, "tr_id", path, ctx)
+    if not _QUOTE_TR_ID_PATTERN.match(tr_id):
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.tr_id {tr_id!r} does not match the measured KIS quotations TR id "
+            "shape ('FH' + 3 letters + 8 digits — tos_runtime.transport.kis_quote.config's own "
+            "module docstring records the measurement and its citations)"
+        )
+    bound = require_filled_str(block, "bound", path, ctx)
+    if bound != BAND_SOURCE_BOUND_TRADING_DATE_KST:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.bound {bound!r} is not "
+            f"{BAND_SOURCE_BOUND_TRADING_DATE_KST!r} — the trading-date bond (plan §4.4a) is "
+            "the only invalidation this runtime implements"
+        )
+    failure = require_filled_str(block, "failure", path, ctx)
+    if failure != BAND_SOURCE_FAILURE_UNKNOWN:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.failure {failure!r} is not {BAND_SOURCE_FAILURE_UNKNOWN!r} — "
+            "every read/validation failure is band None and therefore kernel UNKNOWN "
+            "(plan §4.6); no other failure response exists to declare"
+        )
+    read_on = tuple(
+        require_str_list(require_list(block, "read_on", path, ctx), path, ctx)
+    )
+    unknown_tokens = sorted(set(read_on) - BAND_SOURCE_READ_ON_TOKENS)
+    if unknown_tokens or not read_on:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.read_on {list(read_on)!r} must be a non-empty subset of "
+            f"{sorted(BAND_SOURCE_READ_ON_TOKENS)!r} — a token outside that set names a read "
+            "instant nothing implements (plan §4.3)"
+        )
+    return BandSourceConfig(
+        kind=kind,
+        tr_id=tr_id,
+        instrument=require_filled_str(block, "instrument", path, ctx),
+        upper_field=require_filled_str(block, "upper_field", path, ctx),
+        lower_field=require_filled_str(block, "lower_field", path, ctx),
+        basis_field=require_filled_str(block, "basis_field", path, ctx),
+        price_scale=_require_positive_int_key(block, "price_scale", path, ctx),
+        timeout_ms=_require_positive_int_key(block, "timeout_ms", path, ctx),
+        bound=bound,
+        read_on=read_on,
+        failure=failure,
+    )
+
+
+def _cross_check_band_source(
+    band_source: BandSourceConfig | None,
+    *,
+    runtime_raw: dict[str, Any],
+    scope_instrument: str,
+    shape_constraints: VenueShapeConstraints,
+    transport_instrument_reader: Callable[[], str | None] | None,
+    path: Path,
+) -> int | None:
+    """The four cross-document rules a DECLARED band source must satisfy, and the
+    ``_runtime.price_scale`` it returns (plan §4.1's refusal list).
+
+    ``band_source is None`` — the shipped state of every tree today (plan §5) — returns
+    ``None`` immediately: ``_runtime.price_scale`` is NOT required of a tree that declares no
+    source (plan §4.1's 재리뷰 MEDIUM; requiring it unconditionally would ABORT the resident
+    paper session at the first 08:45 after this merge).
+
+    ``transport_instrument_reader`` yields the ``kis_quote`` document's own ``instrument``, or
+    ``None`` when this deployment carries no such document. It is a CALLER-supplied fact, the
+    same way :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config`
+    takes its two INSTANCE host-seal facts from its caller rather than reading the
+    broker-capability profile itself;
+    :func:`~tos_runtime.transport.kis_quote.config.read_declared_instrument` is how a compose
+    root obtains it.
+
+    It is a CALLABLE, not a value, so that it is invoked ONLY past the early return above
+    (independent review L1). Read eagerly, a deployment with ``band_source: null`` and a
+    broken or still-``TBD`` ``kis_quote.yaml`` beside it would start refusing to boot over a
+    document nothing in its configuration consults.
+
+    Returns:
+        The policy's own ``_runtime.price_scale``, or ``None`` when no source is declared.
+
+    Raises:
+        VenuePolicyConfigError: Any rule below. Each names the offending key.
+    """
+    if band_source is None:
+        return None
+    if (
+        shape_constraints.price_min is not None
+        or shape_constraints.price_max is not None
+    ):
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.band_source is declared AND "
+            f"_model_view.shape_constraints.price_min/price_max carry literals "
+            f"({shape_constraints.price_min!r}/{shape_constraints.price_max!r}) — two sources "
+            "for one bound; the band source fills them, so the literals must be null"
+        )
+    if band_source.instrument != scope_instrument:
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.band_source.instrument {band_source.instrument!r} != "
+            f"scope.instruments' sole element {scope_instrument!r} — a band read for one "
+            "contract would be folded onto another contract's policy (plan §4.4b; "
+            "ADR-002-019:357 'wrong contract/account mapping')"
+        )
+    price_scale = _require_positive_int_key(
+        runtime_raw, "price_scale", path, "_runtime"
+    )
+    if price_scale != band_source.price_scale:
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.price_scale {price_scale!r} != "
+            f"_runtime.band_source.price_scale {band_source.price_scale!r} — the band and the "
+            "order price would be compared in different units (plan §4.1 가격 척도)"
+        )
+    transport_instrument = (
+        None if transport_instrument_reader is None else transport_instrument_reader()
+    )
+    if transport_instrument is None:
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.band_source is declared but this deployment carries no "
+            "kis_quote transport document — the band GET reuses that document's host seal and "
+            "paths, so there is nothing to read it through (plan §4.1)"
+        )
+    if transport_instrument != band_source.instrument:
+        raise VenuePolicyConfigError(
+            f"{path}: kis_quote transport instrument {transport_instrument!r} != "
+            f"_runtime.band_source.instrument {band_source.instrument!r} — a config whose two "
+            "contract declarations disagree is an operations error on its face (plan §4.4b's "
+            "config-consistency rule; it becomes a GUARD once the same transport is also the "
+            "order price's source)"
+        )
+    return price_scale
 
 
 def _parse_admitting_phase_rules(
@@ -384,40 +580,20 @@ def _cross_check_admitting_actions_in_scope(
             )
 
 
-def load_venue_constraint_policy(
-    path: Path, *, scheme: CanonicalizationScheme
-) -> LoadedVenuePolicy:
-    """Load, fail-closed-validate, and kernel-issue a Venue Constraint Policy
-    INSTANCE document from ``path`` (an instance of
-    ``VENUE-CONSTRAINT-POLICY-template.yaml`` — see
-    :mod:`tos_runtime.venue.config`'s own module docstring).
+def _build_venue_scope(
+    raw: dict[str, Any], path: Path
+) -> tuple[
+    VenuePolicyScope, frozenset[ActionClass], dict[str, Any], BandSourceConfig | None
+]:
+    """The ``scope`` block plus the ``_runtime`` block it is completed from — split out of
+    :func:`load_venue_constraint_policy` purely for the function-length budget
+    (``config/tos_size_budget.yaml``; no behavioural difference from having this inline).
 
-    Raises:
-        VenuePolicyConfigError: the file is missing/unreadable/not valid
-            YAML/not a mapping; ``artifact_type``/``schema_version`` do not
-            match the accepted constants; ``status`` is not ``ISSUED``;
-            ``policy_id``/``policy_generation`` are absent, ``null``, or
-            still ``"TBD"``; ``canonical_digest`` is present but does not
-            match the freshly computed digest; any ``scope`` singleton key
-            does not carry exactly one string; an ``action_classes`` /
-            ``_model_view`` action token is not a known ``ActionClass``; an
-            admitting-phase-rules action is outside the declared scope; a
-            ``_model_view``/``_runtime`` block is absent; ``_runtime
-            .quantity_unit`` is not a known ``QuantityUnitKind``;
-            ``effective_from``/``review_due`` is absent (may be ``null``, but
-            the key itself must be present) or present-and-not-``null``-and-
-            not-a-string; or any template rule-list/``authority``/
-            ``evidence`` key is absent or not list/mapping-shaped.
+    Returns:
+        ``(scope, scope_action_classes, runtime_raw, band_source)`` — ``runtime_raw`` is
+        returned because :func:`_cross_check_band_source` still needs ``_runtime.price_scale``
+        off it, and re-reading the block there would be a second parse of the same mapping.
     """
-    raw = load_mapping(path, "venue constraint policy")
-    require_exact_str(raw, "artifact_type", _VENUE_ARTIFACT_TYPE, path, "policy")
-    require_exact_str(raw, "schema_version", ACCEPTED_SCHEMA_VERSION, path, "policy")
-    require_issued_status(raw, path)
-    policy_id = require_filled_str(raw, "policy_id", path, "policy")
-    policy_generation = require_int(raw, "policy_generation", path, "policy")
-    require_nullable_str_key_present(raw, "effective_from", path, "policy")
-    require_nullable_str_key_present(raw, "review_due", path, "policy")
-
     (
         environment,
         broker,
@@ -427,7 +603,9 @@ def load_venue_constraint_policy(
         instrument,
         scope_action_classes,
     ) = _parse_venue_scope(raw, path)
-    instrument_class, quantity_unit, currency = _parse_venue_runtime_block(raw, path)
+    instrument_class, quantity_unit, currency, runtime_raw = _parse_venue_runtime_block(
+        raw, path
+    )
     scope = VenuePolicyScope(
         environment=environment,
         broker=broker,
@@ -439,6 +617,59 @@ def load_venue_constraint_policy(
         currency=currency,
         quantity_unit=quantity_unit,
     )
+    return (
+        scope,
+        scope_action_classes,
+        runtime_raw,
+        _parse_band_source(runtime_raw, path),
+    )
+
+
+def load_venue_constraint_policy(
+    path: Path,
+    *,
+    scheme: CanonicalizationScheme,
+    band_transport_instrument_reader: Callable[[], str | None] | None = None,
+) -> LoadedVenuePolicy:
+    """Load, fail-closed-validate, and kernel-issue a Venue Constraint Policy
+    INSTANCE document from ``path`` (an instance of
+    ``VENUE-CONSTRAINT-POLICY-template.yaml`` — see
+    :mod:`tos_runtime.venue.config`'s own module docstring).
+
+    Args:
+        path: The INSTANCE document.
+        scheme: The injected canonicalization scheme.
+        band_transport_instrument_reader: see :func:`_cross_check_band_source`, its only
+            consumer — and the only thing that ever CALLS it.
+
+    Raises:
+        VenuePolicyConfigError: the file is missing/unreadable/not valid YAML/not a mapping;
+            ``artifact_type``/``schema_version`` do not match the accepted constants;
+            ``status`` is not ``ISSUED``; ``policy_id``/``policy_generation`` are absent,
+            ``null``, or still ``"TBD"``; ``canonical_digest`` is present but does not match
+            the freshly computed digest; any ``scope`` singleton key does not carry exactly
+            one string; an ``action_classes``/``_model_view`` action token is not a known
+            ``ActionClass``; an admitting-phase-rules action is outside the declared scope; a
+            ``_model_view``/``_runtime`` block is absent; ``_runtime.quantity_unit`` is not a
+            known ``QuantityUnitKind``; ``effective_from``/``review_due`` is absent (may be
+            ``null``, but the key itself must be present) or present-and-not-``null``-and-not-
+            a-string; any template rule-list/``authority``/``evidence`` key is absent or not
+            list/mapping-shaped; or — ONLY when ``_runtime.band_source`` is declared — any
+            rule :func:`_parse_band_source` / :func:`_cross_check_band_source` enforce (plan
+            §4.1's refusal list, each with its own named reason).
+    """
+    raw = load_mapping(path, "venue constraint policy")
+    require_exact_str(raw, "artifact_type", _VENUE_ARTIFACT_TYPE, path, "policy")
+    require_exact_str(raw, "schema_version", ACCEPTED_SCHEMA_VERSION, path, "policy")
+    require_issued_status(raw, path)
+    policy_id = require_filled_str(raw, "policy_id", path, "policy")
+    policy_generation = require_int(raw, "policy_generation", path, "policy")
+    require_nullable_str_key_present(raw, "effective_from", path, "policy")
+    require_nullable_str_key_present(raw, "review_due", path, "policy")
+
+    scope, scope_action_classes, runtime_raw, band_source = _build_venue_scope(
+        raw, path
+    )
 
     mv_raw = require_mapping_key(raw, "_model_view", path)
     admitting_phase_rules = _parse_admitting_phase_rules(mv_raw, path)
@@ -447,6 +678,14 @@ def load_venue_constraint_policy(
     dependency_closure = _parse_dependency_closure(mv_raw, path)
     _cross_check_admitting_actions_in_scope(
         admitting_phase_rules, scope_action_classes, path
+    )
+    price_scale = _cross_check_band_source(
+        band_source,
+        runtime_raw=runtime_raw,
+        scope_instrument=scope.instrument,
+        shape_constraints=shape_constraints,
+        transport_instrument_reader=band_transport_instrument_reader,
+        path=path,
     )
 
     require_template_shape(
@@ -480,4 +719,9 @@ def load_venue_constraint_policy(
         scope=scope,
         quantity_constraint=quantity_constraint,
         null_shape_bounds=null_bounds,
+        band_source=band_source,
+        band_source_digest=(
+            None if band_source is None else band_source_digest(band_source)
+        ),
+        price_scale=price_scale,
     )

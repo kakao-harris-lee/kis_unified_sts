@@ -41,7 +41,10 @@ from tos_runtime.compose._engine_wiring import (
     verify_replay_or_halt,
     wire_engine_and_driver,
 )
-from tos_runtime.compose._kis_credential_wiring import build_kis_credential_sessions
+from tos_runtime.compose._kis_credential_wiring import (
+    KisCredentialSessionsCell,
+    build_kis_credential_sessions,
+)
 from tos_runtime.compose._preconditions import (
     COORDINATOR_PRECONDITIONS_CONFIG_NAME,
     load_coordinator_preconditions_config,
@@ -157,6 +160,7 @@ def _finalize(
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
     trading_date_now: Callable[[], str | None] | None = None,
+    credential_sessions_cell: KisCredentialSessionsCell | None = None,
 ) -> ComposedRuntime:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
     :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
@@ -172,6 +176,14 @@ def _finalize(
     # SYNTHETIC post-trade finality policy (CR-4, plan §2.2) — fail-closed, from its own file.
     finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
     kis_credential_sessions = _kis_credential_sessions(infra, identity)
+    if credential_sessions_cell is not None:
+        # Published HERE, dispatched BELOW. `wire_engine_and_driver` is where the order
+        # transport takes its `kis_mock.*` session, and `session_for` CREATES that shared
+        # session for its first caller using that caller's client. So the order transport must
+        # go first, exactly as it did before the band source existed; dispatching here would
+        # make the band reader the creator and route the order transport's token issuance
+        # through the band client (independent review LOW-2).
+        credential_sessions_cell.fill(kis_credential_sessions)
     wired = wire_engine_and_driver(
         data_dir=data_dir,
         context_resolver=context_resolver,
@@ -200,6 +212,12 @@ def _finalize(
         mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
         trading_date_now=trading_date_now,
     )
+
+    if credential_sessions_cell is not None:
+        # After the order transport has its session, before the boot replay — which can
+        # already drive step 3, and therefore a CP-3 band read. A session-terms conflict
+        # raised by a consumer here still refuses the BOOT (independent review M1).
+        credential_sessions_cell.start_consumers()
 
     _verify_boot_replay(
         config_dir=config_dir,

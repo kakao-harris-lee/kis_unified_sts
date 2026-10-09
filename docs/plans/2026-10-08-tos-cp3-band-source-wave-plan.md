@@ -193,7 +193,7 @@ generation 이 그대로인 동안 검사가 건너뛰어진다. **레드 증명
 
 **잔여 위험(가드 밖)**: 이 가드는 로컬 도장끼리 비교하므로 §2 의 「08:45 직후 모의가 전일 band 를 내준다」는 잡지 못한다.
 v1 은 이를 **측정되지 않은 전제**로 등재하고, 첫 켜기(§9 3) 세션의 `VENUE_BAND_OBSERVED` 행을 그 측정으로 쓴다 —
-`stage_hint`(제56조 1단계 산식과의 일치)가 거짓이면 그날 band 를 버리는 응답 측 검사를 **그 측정 뒤에** 넣을지 판단한다
+`symmetric_about_basis`(기준가 대칭 — 제56조 1단계 산식의 **필요조건**이지 1단계 판별이 아니다, ⚠ 아래)가 거짓이면 그날 band 를 버리는 응답 측 검사를 **그 측정 뒤에** 넣을지 판단한다
 (측정 전에 넣으면 기준가 판별이 무정보인 날 모든 band 를 버릴 수 있다).
 
 ### 4.4b 계약 결속 가드 — 이것이 실패하는 구체적 입력 (리뷰 H1)
@@ -220,8 +220,15 @@ band 는 `band_source` 종목에서 와서 다른 계약의 가격을 다른 계
 ### 4.5 증거
 
 - 새 kind `VENUE_BAND_OBSERVED`(런타임 어휘, 커널 `EvidenceKind` 아님 — `service.py` 의 기존 관용구): GET 마다 한 행 —
-  성공이면 `instrument`·`price_min/max`·`basis`·`trading_date`·`raw_payload_digest`·`continuity`·`stage_hint`(§2 의 1단계 산식과의
-  일치 여부, 판정 아님), 실패면 `reason`(검증 셋 중 어느 것인지 · transport 오류 · `rt_cd`).
+  성공이면 `instrument`·`price_min/max`·`basis`·`trading_date`·`raw_payload_digest`·`continuity`·
+  `symmetric_about_basis`(⚠ 아래 — 판정 아님), 실패면 `reason`(검증 셋 중 어느 것인지 · transport 오류 · `rt_cd`).
+
+⚠ **구현 시점 정정 (2026-10-09, PR #890 독립 리뷰 L3)**: v1~v3 은 이 필드를 `stage_hint`(「1단계 산식과의 일치
+여부」)라고 적었는데, 그 이름이 주장하는 판별을 필드가 **할 수 없다**. 1단계 band 는 `기준가격 × (1 ± r)` 라 기준가
+대칭이지만, 2·3단계도 같은 ± 꼴에 `r` 만 커진 것이라 **대칭은 모든 단계에서 성립한다** — 필요조건이지 충분조건이
+아니다. 그래서 필드 이름은 재는 것을 그대로 적은 `symmetric_about_basis` 이고, **1단계 판정은 같은 증거 행의
+`basis`·`price_min`·`price_max` 로 오프라인에서** 한다(§9 4 — 승인된 `r` 출처가 생긴 뒤). 본문의 나머지 `stage_hint`
+표기도 같은 뜻으로 읽는다.
 - `VENUE_SNAPSHOT_ISSUED` 행에 `band_digest` 를 더하고 `absent_fields` 는 실제로 빈 필드만 남긴다. 이 키와 아래
   `VENUE_POLICY_BOUND` 의 새 키는 **`band_source` 가 non-null 일 때만** 나온다(리뷰 L2) — 그래야 끈 배포의 행이 오늘과
   바이트 단위로 같다(§8 1).
@@ -263,7 +270,7 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 
 | 대안 | 이유 |
 |---|---|
-| (ii) 규정 계산만 | 2·3단계 확대를 못 본다. 10-08 운영자 선택이 (i) 먼저. (ii) 는 §4.5 의 `stage_hint` 로 대조 자리만 둔다 |
+| (ii) 규정 계산만 | 2·3단계 확대를 못 본다. 10-08 운영자 선택이 (i) 먼저. (ii) 는 §4.5 의 `symmetric_about_basis` 와 그 행의 `basis`/band 로 대조 자리만 둔다 |
 | (i-b) GET 을 외부 생산자(③)가 하고 band 를 journal 행으로 전달 | 런타임은 소켓 없이 유지되지만, 런타임이 원 응답을 보지 못해 §9 의 raw payload digest·연속성을 **생산자의 주장**으로만 받는다. ③ 이 아직 설계 전이라 그 계약에 band 를 얹는 것은 순서가 뒤집힌다. ③ 설계 때 다시 볼 후보로 남긴다 |
 | `VenueConstraintSnapshot` 에 band 필드 추가 | 커널 레코드 변경(GOV-001). 기존 세 필드로 결속이 된다(§4.3) |
 | 정책 리터럴 band 를 매일 재렌더 | 일별 값이라 정책 generation 이 매일 바뀌고 활성화 갱신이 매일 필요. 장중 확대도 못 본다 |
@@ -316,6 +323,6 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
    커널 무변경이므로 `tos-gate` 의 커널 digest 는 그대로여야 한다.
 3. **켜기**: CP-3 §5 3 ③ 이 tenant 에 실제 가격을 흘린 뒤, tenant 정책에 `band_source` 를 채우고 활성화 갱신 → 첫 세션의
    `VENUE_BAND_OBSERVED` 행을 10-08 설계 §5 L2 의 ① 샘플 판정에 쓴다.
-4. (ii) 대조: 3 이후 `stage_hint` 가 며칠 모이면 별도 판단.
+4. (ii) 대조: 3 이후 증거 행(`symmetric_about_basis` + `basis`/`price_min`/`price_max`)이 며칠 모이면 별도 판단 — 1단계 판정 자체는 승인된 비율 `r` 이 생긴 뒤 오프라인에서(§4.5 ⚠).
 
 운영자 확인 §6 (A)·(B) 는 2026-10-08 승인됐다. 남은 운영자 사안은 §9 3 의 켜기 시점(③ 생산자 이후)뿐이다.

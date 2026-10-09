@@ -77,6 +77,7 @@ from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
 from tos_runtime.compose._finalize_wiring import _finalize
+from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
 from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
 from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
@@ -92,14 +93,17 @@ from tos_runtime.compose._session_wiring import (
     build_nontrade_processor,
     build_session_facts_owner,
 )
-from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose._transport_wiring import TransportKind, evidence_recorder
 from tos_runtime.compose._types import (
     ComposedRuntime,
     ConstructionConfig,
     ReleaseAdmissionRefused,
     RiskStateConfigError,
 )
-from tos_runtime.compose._venue_wiring import build_venue_service
+from tos_runtime.compose._venue_wiring import (
+    build_kis_band_reader_factory,
+    build_venue_service,
+)
 from tos_runtime.compose._wiring import (
     _boot_services,
     _build_construction_stages,
@@ -282,6 +286,15 @@ def compose_paper_runtime(
     # refusals here (policy activation / scope mismatch — `build_venue_service`'s own
     # docstring "Order of boot refusals") surface before any evidence past what
     # `_boot_services` already wrote.
+    # CP-3 band 원천 웨이브 (plan §4.2/§4.3): the SAME trading-date reading `_finalize` already
+    # stamps broker acknowledgements with — one calendar, one trusted wall clock, so the band's
+    # §4.4a bond can never disagree with the rest of the runtime about which day it is.
+    trading_date_reader = lambda: session_facts_owner.trading_date_now(  # noqa: E731
+        construction.instrument_class
+    )
+    # Filled by `_finalize` the instant this boot's KIS credential registry exists — strictly
+    # before the boot replay that can first trigger a band read (`KisCredentialSessionsCell`).
+    credential_sessions_cell = KisCredentialSessionsCell()
     venue_service, loaded_ocp = build_venue_service(
         config_dir=config_dir,
         scheme=_SCHEME,
@@ -294,6 +307,18 @@ def compose_paper_runtime(
         egress_coordinates=boot.egress_coordinates,
         transport_kind=transport_kind,
         calendar_config=calendar_config,
+        # Built unconditionally, CALLED only when the policy declares a band source (plan §5:
+        # no shipped tree does today, so this factory is never invoked on any real boot path
+        # in this wave — building it costs nothing and keeps the enabling step a config edit).
+        band_reader_factory=build_kis_band_reader_factory(
+            config_dir=config_dir,
+            broker_scopes=boot.broker_scopes,
+            monotonic=boot.infra.monotonic_source,
+            evidence_sink=evidence_recorder(boot.infra.evidence_store, boot.identity),
+            credential_sessions_cell=credential_sessions_cell,
+            trading_date_reader=trading_date_reader,
+        ),
+        trading_date_reader=trading_date_reader,
     )
 
     construction_stages = _build_construction_stages(
@@ -433,9 +458,8 @@ def compose_paper_runtime(
         transport_config=boot.transport_config,
         # The broker-acknowledged result's KST trading date, through the SAME trusted wall
         # clock and calendar as every session phase (plan 2026-09-26 egress trading date).
-        trading_date_now=lambda: session_facts_owner.trading_date_now(
-            construction.instrument_class
-        ),
+        trading_date_now=trading_date_reader,
+        credential_sessions_cell=credential_sessions_cell,
     )
     # TOS venue constraint service wave (plan §2 decision 9) — attach the already-live venue
     # service to the composed runtime (the service itself was built earlier, above, before

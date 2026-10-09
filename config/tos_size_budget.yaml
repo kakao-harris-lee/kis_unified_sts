@@ -731,11 +731,22 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 421
+  measured: 441
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-09 CP-3 band 원천 웨이브(PR-2) 재등재 421→441(+20)**: `build_venue_service`
+    호출 앞에 `trading_date_reader` 지역 람다(주석 3줄) + `credential_sessions_cell`
+    1줄(주석 2줄)을 두고, 그 호출에 `band_reader_factory=build_kis_band_reader_factory(...)`
+    (kwargs 6 · 주석 3줄) 와 `trading_date_reader=` 1줄을 추가 ·
+    `_finalize` 호출의 기존 `trading_date_now=` 람다를 같은 지역 람다 재사용으로
+    바꾸고 `credential_sessions_cell=` 1줄 추가. 밴드 리더는 **정책이 원천을
+    선언할 때만** 만들어진다(계획 §5 — 오늘 출하되는 어느 트리도 선언하지 않는다).
+    셀이 필요한 이유는 KIS 자격 레지스트리가 `_finalize` 안에서 생기는데 venue
+    서비스는 그보다 먼저 만들어지기 때문이고, 사설 레지스트리를 만들면 같은 앱키에
+    토큰 수명이 둘 생긴다(C-2 결정 (C)). 호출 시퀀스 자체는 무변경. 정본 결선 순서
+    문서라 분해 대신 등재.
     **2026-09-17 TOS run-boot/실 원천 웨이브(W2 레인) 재등재 411→415(+4)**:
     `build_tick_scheduler(...)` 호출부에 `custody=boot.infra.custody,` ·
     `monotonic=boot.infra.monotonic_source,` · `broker_scopes=boot.broker_scopes,` ·
@@ -940,11 +951,27 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 108
+  measured: 123
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-09 PR #890 재리뷰 LOW-2 재등재 116→123(+7)**: 셀의 「채우기」와
+    「소비자 시작」을 **분리**했다 — `fill` 은 `wire_engine_and_driver` **앞**(레지스트리
+    공개), `start_consumers()` 는 **뒤**(부팅 리플레이 앞). `session_for` 는 **첫 호출자의
+    클라이언트**로 공유 세션을 만들기 때문이다: 주문 transport 가 전과 똑같이 생성자여야
+    하고, 밴드 리더가 먼저 잡으면 주문 토큰 발급이 밴드 클라이언트
+    (`band_source.timeout_ms` · `kis_quote` 의 plaintext 플래그)를 타게 된다. 순증은
+    호출 1줄 + 주석 6줄.
+    **2026-10-09 PR #890 독립 리뷰 M1 재등재 114→116(+2)**: 셀을 채우는 한 줄이
+    `credential_sessions_cell.sessions = …` 에서 `…fill(…)` 로 바뀌고 주석이 두 줄
+    늘었다. `fill` 은 셀의 `on_ready` 콜백을 함께 돌리므로, 밴드 리더가 자기 KIS 세션을
+    **이 함수 안에서** 얻는다 — 세션 조건 충돌이 첫 결정이 아니라 **부팅**에서 거부된다.
+    **2026-10-09 CP-3 band 원천 웨이브(PR-2) 재등재 108→114(+6)**: 선택 매개변수
+    `credential_sessions_cell` 1줄 + `kis_credential_sessions` 생성 직후 그 셀을
+    채우는 2줄(주석 3줄). 셀을 **이 함수 안에서** 채우는 이유는 아래 부팅 리플레이가
+    이미 step 3 — 따라서 밴드 읽기 — 를 구동할 수 있어서, 호출자가 `ComposedRuntime`
+    을 받은 뒤에 채우면 늦기 때문이다. 호출 시퀀스 자체는 무변경.
     W3.1 독립 리뷰 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot) 신규 등재 —
     `wire_engine_and_driver` 호출부에 `mesh_snapshot_refresher=risk.safety_mesh
     .refresh_tick_snapshot,` 1줄 추가 — Coordinator 의 mesh-check 경로가 매 틱

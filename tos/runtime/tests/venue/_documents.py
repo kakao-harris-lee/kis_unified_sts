@@ -142,6 +142,7 @@ def venue_policy_yaml(
     max_quantity: str = "null",
     admitting_phases: str = '["REGULAR"]',
     admitting_phases_short: str | None = None,
+    runtime_extra: str = "",
 ) -> str:
     """The standard fixture ``venue_constraint_policy.yaml`` INSTANCE
     document — a full VENUE-CONSTRAINT-POLICY-template.yaml key set plus
@@ -154,7 +155,15 @@ def venue_policy_yaml(
     Every scope/``_runtime`` coordinate is independently overridable (added for
     ``tests.compose.conftest`` reuse, 2026-09-15 — the compose suite's own account/instrument/
     environment/instrument-class fixture constants differ from this module's own defaults, and
-    the loader's scope cross-check requires an exact match)."""
+    the loader's scope cross-check requires an exact match).
+
+    ``runtime_extra`` is appended verbatim INSIDE the ``_runtime`` block (CP-3 band 원천
+    웨이브, 2026-10-09) — the band-source suites use it to add ``price_scale``/``band_source``.
+    It defaults to ``""``, so every pre-existing caller gets the SAME document it got before,
+    byte for byte: a ``_runtime`` with exactly ``instrument_class``/``quantity_unit``/
+    ``currency``, which is also the shape the real resident ``paper/`` tree ships
+    (:func:`tos_runtime.venue._venue_policy_loader._parse_band_source`'s "absent means null").
+    """
     short_phases = (
         admitting_phases if admitting_phases_short is None else admitting_phases_short
     )
@@ -205,7 +214,67 @@ def venue_policy_yaml(
           quantity_unit: "{quantity_unit}"
           currency: "{currency}"
         """)
-    return head + _VENUE_TEMPLATE_TAIL + model_view
+    return (
+        head + _VENUE_TEMPLATE_TAIL + model_view + textwrap.indent(runtime_extra, "  ")
+    )
+
+
+#: The 2026-10-08 모의 P-VL measurement for ``A05610``, in index points
+#: (``docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/P-VL-20261008T010822Z.json``
+#: ``measurements.l1_quote_fields.values``). Real numbers, not invented ones: every band
+#: fixture in these suites starts from a band the broker actually returned.
+PVL_A05610_BASIS = "1073.32"
+PVL_A05610_UPPER = "1159.18"
+PVL_A05610_LOWER = "987.46"
+#: The SAME measurement's neighbouring contract — the §4.4b "wrong contract" input. It passes
+#: every §4.2 validation clause, which is exactly why the contract bond must be a loader rule.
+PVL_A05611_UPPER = "1162.72"
+PVL_A05611_LOWER = "990.48"
+
+
+def band_source_runtime_extra(
+    *,
+    instrument: str = "K200F",
+    price_scale: str | None = "100",
+    band_price_scale: str = "100",
+    timeout_ms: str = "5000",
+    kind: str = '"kis_quote_get"',
+    tr_id: str = '"FHMIF10000000"',
+    upper_field: str = '"futs_mxpr"',
+    lower_field: str = '"futs_llam"',
+    basis_field: str = '"futs_sdpr"',
+    bound: str = '"trading_date_kst"',
+    read_on: str = '["boot", "phase_change"]',
+    failure: str = '"unknown"',
+) -> str:
+    """A ``_runtime`` tail declaring a band source (plan §4.1's YAML block), for
+    :func:`venue_policy_yaml`'s ``runtime_extra``.
+
+    Every leaf is independently overridable as a RAW YAML fragment so each loader-refusal test
+    can mutate exactly one of them; ``price_scale=None`` omits the ``_runtime.price_scale`` key
+    entirely (the §4.1 "척도 부재" refusal, which is a DIFFERENT input from a mismatching one).
+    """
+    block = textwrap.dedent(f"""\
+        band_source:
+          kind: {kind}
+          tr_id: {tr_id}
+          instrument: "{instrument}"
+          upper_field: {upper_field}
+          lower_field: {lower_field}
+          basis_field: {basis_field}
+          price_scale: {band_price_scale}
+          timeout_ms: {timeout_ms}
+          bound: {bound}
+          read_on: {read_on}
+          failure: {failure}
+        """)
+    # Prepended AFTER the dedent, never interpolated into the triple-quoted literal: a
+    # substituted multi-line value breaks `textwrap.dedent`'s common-prefix computation (its
+    # first line carries the literal's indent, the rest carry none), which silently produces
+    # unparseable YAML rather than an error.
+    if price_scale is None:
+        return block
+    return f"price_scale: {price_scale}\n{block}"
 
 
 def ocp_yaml(

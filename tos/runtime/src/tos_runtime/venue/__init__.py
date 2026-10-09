@@ -16,13 +16,23 @@ split):
   per tick generation) and ``OrderAdmissibilityDecision`` (once per
   admissibility attempt), with every ``result`` coming exclusively from the
   kernel's own ``tos.egressgw.construction.fold_venue_admissibility``.
+* :mod:`tos_runtime.venue.band_source` — the CP-3 band 원천 웨이브 addition
+  (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.2): reads the
+  broker price band the active policy's own ``_runtime.band_source`` declares,
+  through the ``kis_quote`` transport's EXISTING host seal and token
+  lifecycle. No admissibility judgement either — it produces a validated
+  observation or ``None``, and the service folds it into the effective shape
+  constraints.
 
 Referenced design: ADR-002-019 §5/§8/§14, ADR-002-020 §5.2/§9.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib +
-``pyyaml`` + ``tos.*`` + ``tos_runtime.evidence.store`` only — no
-``shared.*``, no ``os.environ``, no ``subprocess``, no
-``importlib.import_module`` (the firewall scans tests too).
+``pyyaml`` + ``tos.*`` + ``tos_runtime.*`` only — no ``shared.*``, no
+``os.environ``, no ``subprocess``, no ``importlib.import_module`` (the
+firewall scans tests too). The ``tos_runtime.*`` siblings this package reaches
+are ``evidence.store``, and — since the band-source wave — ``time.sources``
+and the ``transport.kis_mock``/``transport.kis_quote`` seams the band GET
+reuses rather than re-implements.
 """
 
 from __future__ import annotations
@@ -32,6 +42,15 @@ from tos_runtime.venue.activation import (
     PolicyNotActivated,
     load_activation_members,
     require_member_activated,
+)
+from tos_runtime.venue.band_source import (
+    VENUE_BAND_OBSERVED_KIND,
+    BandObservation,
+    BandReader,
+    BandSourceConfig,
+    KisBandSourceReader,
+    band_source_digest,
+    build_band_client,
 )
 from tos_runtime.venue.config import (
     ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
@@ -53,6 +72,14 @@ from tos_runtime.venue.service import (
 )
 
 __all__ = [
+    # band_source
+    "VENUE_BAND_OBSERVED_KIND",
+    "BandObservation",
+    "BandReader",
+    "BandSourceConfig",
+    "KisBandSourceReader",
+    "band_source_digest",
+    "build_band_client",
     # config
     "VENUE_POLICY_CONFIG_NAME",
     "ORDER_CONSTRUCTION_POLICY_CONFIG_NAME",
