@@ -11,7 +11,7 @@ Nine entries:
 
 * **B1b-D1..D6** — this slice's own structural differences from the legacy
   runtime (the one-order cap, the band-form exit, already-admitted field values,
-  the injected time/session stance, LONG-only, no mandated ScenarioId).
+  the injected time/session stance, one-side-only, no mandated ScenarioId).
 * **B1b-D7** — the exposure-precondition gap the 2026-10-08 independent review
   found unrecorded: the DSL has no position operand, so FLAT is proposed on every
   reverted/EOD bar regardless of exposure.
@@ -21,6 +21,15 @@ Nine entries:
   therefore belong in any artifact the parity report is built from; the review
   found them missing from this block.
 
+**Direction (2026-10-09).** B1b-D5 is the declared difference that *names a
+direction*, so this is a function of the deployment's direction rather than a
+constant: a SHORT render whose lineage says "LONG side only" would be a
+difference block describing a run that did not happen. The direction is the one
+``cp3.strategy.load_strategy_content`` derives from the authored ACTION targets
+(``_single_direction``) — the file, never a caller's flag — and the one-side
+comparison is rendered from the authored compare + its resolved binding, so the
+``(z_x1000 <= -1800)`` phrase cannot go stale against the file it describes.
+
 Firewall: stdlib only. No ``tos.*`` import is needed — this is prose and ids.
 """
 
@@ -29,10 +38,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-__all__ = ["DECLARED_DIFFERENCES", "declared_difference_ids"]
+__all__ = ["declared_difference_ids", "declared_differences"]
 
-#: The nine entries, in id order.
-DECLARED_DIFFERENCES: Sequence[Mapping[str, Any]] = [
+#: The two tokens ``_single_direction`` can return. Named here because this
+#: module renders the mirror of whichever one it is handed.
+_DIRECTIONS = ("LONG", "SHORT")
+
+#: ``LONG -> SHORT`` and back: B1b-D5's note names the half this run does NOT
+#: render, which is the half a separate render covers.
+_OTHER_SIDE: Mapping[str, str] = {"LONG": "SHORT", "SHORT": "LONG"}
+
+
+#: The eight direction-INDEPENDENT entries, split around B1b-D5 so the id
+#: order stays explicit at the one place that assembles them. Module-level
+#: data rather than a function body: it IS data, and a 170-line function
+#: breaks config/tos_size_budget.yaml's 100-line cap over this tree.
+_D1_TO_D4: Sequence[Mapping[str, Any]] = [
     {
         "id": "B1b-D1",
         "item": "one order per scope per run (B4)",
@@ -107,19 +128,10 @@ DECLARED_DIFFERENCES: Sequence[Mapping[str, Any]] = [
             "strategy gates, not tradability evidence)."
         ),
     },
-    {
-        "id": "B1b-D5",
-        "item": "LONG side only",
-        "note": (
-            "the DSL has no abs() (DSL-G1) and direction is a "
-            "per-deployment fact, so the entry rule compares one side "
-            "(z_x1000 <= -1800). The legacy entry fires on abs(z) >= "
-            "1.8, i.e. BOTH sides; the SHORT half is a separate render "
-            "with its own strategy file (kickoff §4 결정 4). Expect this "
-            "run's ACTION/firing count to be a SUBSET of B1a's "
-            "entry-AND bar count for that reason."
-        ),
-    },
+]
+
+#: The four that follow B1b-D5, same discipline.
+_D6_TO_D9: Sequence[Mapping[str, Any]] = [
     {
         "id": "B1b-D6",
         "item": "no mandated ScenarioId",
@@ -160,11 +172,25 @@ DECLARED_DIFFERENCES: Sequence[Mapping[str, Any]] = [
             "symmetric, but that guard was what blocked the dominant "
             "trend-day failure, so the 2026-07-07 exposure (13 "
             "consecutive counter-trend longs, -8.4 pt) is open on BOTH "
-            "sides now. A parity report attributes any SHORT-side bias "
-            "diff to this item. This LONG deployment is unaffected "
-            "mechanically — the field is simply absent from the 15 — but "
-            "the difference is registered here because the comparison "
-            "will meet it."
+            "sides now. ⚠ MEASURED 2026-10-09, and it corrects the "
+            "previous revision's forward-looking claim that 'the "
+            "comparison will meet it': this guard CANNOT produce a "
+            "decision-level difference in a B1a/B2/B1b comparison, in "
+            "EITHER direction. It is applied by "
+            "shared/strategy/entry/setup_d_adapter.py (the "
+            "`if cfg.long_blocked_regimes or cfg.short_blocked_regimes` "
+            "branch) AFTER `self._setup.check(mc)` has already returned a "
+            "signal, and B2 drives `SetupDVWAPReversion.check()` itself — "
+            "never the adapter — so the legacy side of this comparison "
+            "never applied the block either. The two sides are therefore "
+            "EQUALLY unguarded here, and the item absorbs zero bars. The "
+            "difference is registered because it is real for the "
+            "DEPLOYMENT (paper/live runs the adapter), and B3's "
+            "summary.json counts it at zero rather than omitting it — a "
+            "zero means this comparison exercised nothing the difference "
+            "explains, not that the difference is absent. Closing it at "
+            "the decision level would need B2 to publish the adapter's "
+            "verdict, which is a B2 change."
         ),
     },
     {
@@ -187,6 +213,73 @@ DECLARED_DIFFERENCES: Sequence[Mapping[str, Any]] = [
 ]
 
 
+def _d5(*, direction: str, entry_comparison: str) -> dict[str, Any]:
+    """The one entry that names a direction — rendered, never a constant."""
+    return {
+        "id": "B1b-D5",
+        "item": f"{direction} side only",
+        "note": (
+            "the DSL has no abs() (DSL-G1) and direction is a "
+            "per-deployment fact, so the entry rule compares one side "
+            f"({entry_comparison}). The legacy entry fires on abs(z) >= "
+            f"1.8, i.e. BOTH sides; the {_OTHER_SIDE[direction]} half is "
+            "a separate render "
+            "with its own strategy file (kickoff §4 결정 4). Expect this "
+            "run's ACTION/firing count to be a SUBSET of B1a's "
+            "entry-AND bar count for that reason."
+        ),
+    }
+
+
+def _entries(*, direction: str, entry_comparison: str) -> list[dict[str, Any]]:
+    """The nine entries, in id order, rendered for *direction*."""
+    return [
+        *(dict(item) for item in _D1_TO_D4),
+        _d5(direction=direction, entry_comparison=entry_comparison),
+        *(dict(item) for item in _D6_TO_D9),
+    ]
+
+
+def declared_differences(
+    *, direction: str, entry_comparison: str
+) -> Sequence[Mapping[str, Any]]:
+    """The nine declared differences, rendered for this deployment's direction.
+
+    Args:
+        direction: ``"LONG"`` or ``"SHORT"`` — the one
+            :func:`cp3.strategy._single_direction` read off the authored ACTION
+            targets. A caller cannot pass a third token: an unknown direction
+            is refused rather than rendered, because B1b-D5's whole content is
+            "which side this run compares" and a block that names a side the
+            run did not take is worse than no block.
+        entry_comparison: The authored one-side comparison with its resolved
+            binding, e.g. ``"z_x1000 <= -1800"``. Rendered by
+            :func:`cp3.lineage` from the strategy file itself so the phrase
+            cannot drift from the file it describes.
+
+    Returns:
+        The entries, in id order.
+
+    Raises:
+        ValueError: ``direction`` is not one of :data:`_DIRECTIONS`.
+    """
+    if direction not in _DIRECTIONS:
+        raise ValueError(
+            f"direction {direction!r} is not one of {_DIRECTIONS} — the "
+            "declared-difference block names the side this run compared and "
+            "cannot be rendered for an unknown one"
+        )
+    return _entries(direction=direction, entry_comparison=entry_comparison)
+
+
 def declared_difference_ids() -> tuple[str, ...]:
-    """The declared ids, in order — the set a test pins."""
-    return tuple(str(item["id"]) for item in DECLARED_DIFFERENCES)
+    """The declared ids, in order — the set a test pins.
+
+    Direction-invariant by construction: both renders carry the same nine ids
+    and differ only in prose, which is what lets B3 check an attribution's ids
+    against a lineage without knowing which direction produced it.
+    """
+    return tuple(
+        str(item["id"])
+        for item in _entries(direction="LONG", entry_comparison="(ids only)")
+    )

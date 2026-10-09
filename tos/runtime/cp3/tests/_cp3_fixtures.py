@@ -21,9 +21,21 @@ from typing import Any
 INSTRUMENT = "101S6000"
 
 #: The committed strategy content, relative to the package root.
+#:
+#: The two directions sit in **different config_dirs** and that is load-bearing:
+#: ``load_strategy_content`` refuses a ``strategies/`` directory holding more
+#: than the one requested file ("this replay drives one scope through one
+#: core"), so a SHORT file beside the LONG one would refuse the LONG run too.
+#: LONG stays at the package root — moving it would stop the recorded
+#: 2026-10-08 artifact (``cp3-b1b-run1``) reproducing its
+#: ``parents.strategy_file.path`` — and SHORT lives under ``short/``.
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 STRATEGY_PATH = _PACKAGE_ROOT / "strategies" / "setup_d_long.strategy.yaml"
 BINDINGS_PATH = _PACKAGE_ROOT / "strategy_bindings.yaml"
+SHORT_STRATEGY_PATH = (
+    _PACKAGE_ROOT / "short" / "strategies" / "setup_d_short.strategy.yaml"
+)
+SHORT_BINDINGS_PATH = _PACKAGE_ROOT / "short" / "strategy_bindings.yaml"
 
 #: One minute in milliseconds — the bar cadence B1a produces.
 MINUTE_MS = 60_000
@@ -79,6 +91,26 @@ def entry_fields(index: int) -> dict[str, Any]:
             "z_x1000": -1_800,
         }
     )
+    return fields
+
+
+def short_entry_fields(index: int) -> dict[str, Any]:
+    """One bar's fields satisfying every conjunct of ``R1-ENTRY-SHORT``.
+
+    The mirror of :func:`entry_fields`: ``z_x1000 = +1800`` sits exactly ON the
+    SHORT threshold, which is the boundary the ``GE`` operator admits. A LONG
+    entry bar must NOT satisfy this rule and vice versa, which is what makes
+    the two renders different strategies rather than one with a sign flip.
+    """
+    fields = entry_fields(index)
+    fields["z_x1000"] = 1_800
+    return fields
+
+
+def short_near_miss_entry_fields(index: int) -> dict[str, Any]:
+    """Every SHORT entry gate true but ``z_x1000`` one unit inside the band."""
+    fields = short_entry_fields(index)
+    fields["z_x1000"] = 1_799
     return fields
 
 
