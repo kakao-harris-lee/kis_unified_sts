@@ -1131,6 +1131,32 @@ def test_a_direction_contradicted_by_the_binding_key_is_refused(
         run_trio(trio, tmp_path / "out")
 
 
+@pytest.mark.parametrize("direction", dd.DIRECTION_TOKENS)
+def test_a_lineage_carrying_both_entry_thresholds_is_refused(
+    tmp_path: Path, direction: str
+) -> None:
+    """Red proof #2b: the expected key is present, and so is the other one.
+
+    Without this the check reads the expected key and ignores the rest, which
+    admits exactly what its own sentence ("the key present IS evidence of
+    which side the rule compares") says it rejects — the repo's
+    ``guards-that-admit-what-they-name`` shape. A real B1b lineage cannot
+    carry both (the bindings loader refuses a key no rule references), so an
+    artifact that does is not describing one deployment.
+    """
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS[:1]),
+        direction=direction,
+        bindings={
+            "z_entry_max_x1000": Z_ENTRY_MAX_X1000,
+            "z_entry_min_x1000": Z_ENTRY_MIN_X1000,
+        },
+    )
+    with pytest.raises(dd.DiffDecisionsError, match="carry BOTH"):
+        run_trio(trio, tmp_path / "out")
+
+
 @pytest.mark.parametrize(
     ("direction", "bindings"),
     [

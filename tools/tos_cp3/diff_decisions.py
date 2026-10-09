@@ -2119,7 +2119,11 @@ def _read_deployment_context(
       a SHORT lineage carrying only ``z_entry_max_x1000``. The bindings loader
       refuses a key no rule references, so the key present IS evidence of which
       side the rule compares, and a lineage whose key contradicts its declared
-      direction is describing two different deployments.
+      direction is describing two different deployments. ``both`` keys present
+      is the same failure and is refused too: "the key present is evidence"
+      only holds while exactly one is — a check that read the expected key and
+      ignored the other would admit the very thing this sentence claims it
+      rejects.
     * **the threshold's sign contradicts the direction** — a SHORT render with
       ``z_entry_min_x1000: -1800`` would fire ``z_x1000 >= -1800`` on nearly
       every bar, and the resulting "agreement" would be an artifact of the
@@ -2154,6 +2158,16 @@ def _read_deployment_context(
             "declared direction is not corroborated by the binding it would "
             f"have to have (got {value!r})"
         )
+    other_key = ENTRY_BINDING_KEY[OPPOSITE_DIRECTION[direction]]
+    if other_key in bindings:
+        raise DiffDecisionsError(
+            f"B1b lineage declares direction {direction} but its bindings "
+            f"carry BOTH {key} and {other_key}. A deployment compares ONE side "
+            "(the DSL has no abs()) and the bindings loader refuses a key no "
+            "rule references, so two entry thresholds mean the artifact does "
+            "not describe one deployment — and reading only the expected key "
+            "would let this report name a direction the other half contradicts"
+        )
     sign = ENTRY_THRESHOLD_SIGN[direction]
     if value * sign <= 0:
         raise DiffDecisionsError(
@@ -2171,8 +2185,8 @@ def _read_deployment_context(
         "tos_deployment_direction_matches_entry_binding",
         "B1b's lineage declares a direction in "
         f"{DIRECTION_TOKENS}, its bindings carry the integer key that "
-        "direction's entry rule references, and that threshold's sign agrees "
-        "with the direction",
+        "direction's entry rule references AND NOT the other direction's, and "
+        "that threshold's sign agrees with the direction",
         direction=direction,
         z_entry_binding_key=key,
         z_entry_threshold_x1000=value,
