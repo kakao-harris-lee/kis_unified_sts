@@ -753,6 +753,23 @@
 #     2. `4e1be0ec` — 49d3bd83… → 4d33b6b0…  (모듈 독스트링 한 문단)
 #     3. `(이 커밋)` — 4d33b6b0… → **88725780…**  (독립 리뷰 처분)
 #
+#   ⚠ **재도출 4회차 — PR #890 재리뷰 LOW 둘**: `88725780…` → **`fb4ac519…`**.
+#   런타임 소스 둘이 바뀌었다 — `compose/_kis_credential_wiring.py`(셀의 죽은 분기를 거부로,
+#   공개와 발송을 `fill`/`start_consumers` 로 분리) · `compose/_finalize_wiring.py`(발송을
+#   주문 transport 가 세션을 집은 **뒤**, 부팅 리플레이 **앞**으로). `tos/src`(커널)는
+#   **네 번 모두 한 바이트도 바뀌지 않았다**. 두 경로 일치(둘 다 fb4ac519…).
+#   ⚠ **이번에는 origin/main 이 움직였다** — PR #887(`6e23496e`) 머지. 그래서 **머지한 뒤에**
+#   쟀다. #887 이 가져온 것은 tenant `critical_input_policy.yaml`/README · 계획 문서 셋 ·
+#   `tos/runtime/tests/compose/test_deploy_policies.py` 이고, `tos/src`·`tos/runtime/src`·
+#   `release.yaml` 은 **한 건도 없다**(그 경로들의 `bb9a4d4d..origin/main` 차이가 비어 있다).
+#   「안 건드렸으니 같을 것」이 아니라 **「머지 뒤에 같은 것을 쟀다」**로 남긴다(#814 이후
+#   이 파일의 규율). `expected_dependency_set_digest` 는 네 번 모두 불변.
+#   이 브랜치의 재도출 커밋은 이로써 넷이다:
+#     1. `d551d322` — ec20680a… → 49d3bd83…  (PR-2 본체)
+#     2. `4e1be0ec` — 49d3bd83… → 4d33b6b0…  (모듈 독스트링 한 문단)
+#     3. `bb8b310a` — 4d33b6b0… → 88725780…  (독립 리뷰 처분)
+#     4. `(이 커밋)` — 88725780… → **fb4ac519…**  (재리뷰 LOW 둘 · origin/main 머지 뒤)
+#
 #   ⚠ 이 파일은 CP-3 tenant 트리 둘(`cp3-setup-d-long`/`cp3-setup-d-short`)에 **바이트
 #   사본**으로 들어간다 — 세 곳을 함께 갱신했다(`tos/runtime/tests/compose/
 #   test_tenant_tree_copies.py` 가 강제한다). 값 핀도 함께:
@@ -775,7 +792,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "88725780e681d1aec980e9ec564fde4c9a1198e4acb14f3c02fedb9fe253e2db"
+expected_code_digest: "fb4ac519d55df1062b10653b01fcceeb56cb044090b7a4b25ae90421c945187d"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
