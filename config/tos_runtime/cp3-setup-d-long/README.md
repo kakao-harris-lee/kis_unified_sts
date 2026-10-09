@@ -104,7 +104,7 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
   는 `null` 이라 갱신할 활성화 기록이 없다.
 - **`price_min`/`price_max` 는 null 그대로다** — 일별 동적 값이라 정적 리터럴 금지(설계 §6).
 
-## 5. `critical_input_policy.yaml` — 열다섯 필드 (`max_age_ms` = 800, 등급 M)
+## 5. `critical_input_policy.yaml` — 열다섯 필드 (`max_age_ms` = 800, 등급 A(운영자 결정 2026-10-09))
 
 필드 목록·순서는 B1a 의 `FIELD_ORDER`(`tools/tos_cp3/produce_fields.py`) 그대로이고,
 각 필드의 `unit`/`scale`/`multiplier`/`sign` 은 **B1a 의 필드 lineage** 에서 온다
@@ -116,14 +116,27 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 **200**) = **800 ms**. 종전 판은 전부 `null` 이어서 로더가 거부했고(`marketfeed/policy.py`),
 그 fail-closed 상태는 2026-10-09 에 닫혔다.
 
-**등급은 M** 이다(운영자·서버에서만 산출 가능 ·
-`docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 의 등급 어휘). 나머지 셋이 이 값에
-대해 거짓이기 때문이다 — **A 아님**(VER-002 에 이 키의 APPROVED 좌표가 없다; 산술의 두 항은
-A 지만 등급은 키를 따라간다) · **B 아님**(③ 생산자가 없어 잴 발행 지연 자체가 없다) ·
-**C 아님**(개발 측 제안은 180000 이었고, 같은 헤더가 800 을 「현행 ③ 의미론에서는 성립하지
-않는 자리수」로 적었다). ⚠ 과대 주장하지 않는다: 800 이라는 **수 자체**는 저장소 안에서
-도출되고 테스트가 `time.yaml` 에서 다시 계산한다. 운영자에게서만 나온 것은 **이 키를 그
-예산에 결속한다는 결정**이다.
+**등급은 A(운영자 결정 2026-10-09)** 다(`docs/plans/2026-09-12-tos-operator-value-proposals.md:4`
+의 등급 어휘 — A = 「규범 문서에 이미 승인된 값(VER-002 `APPROVED`)」). 800 을 만드는 **두 항이
+모두 VER-002 승인치**이기 때문이다(좌표는
+`tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`):
+
+- 피감수 **1000** = `MAX_time_conservative_freshness_age_ms` **:1078** · APPROVED 2026-09-04
+  (그 항목 자신이 「> Σ delay-class bounds 200 ms, conservative direction LOWER」를 적는다).
+- 감수 **200** = 런타임이 `delay_bounds` 로 더하는 네 항 × 50 —
+  `MAX_time_transport_and_queue_uncertainty_ms` **:1069** ·
+  `MAX_clock_domain_conversion_uncertainty_ms` **:1070** ·
+  `MAX_time_source_precision_ms` **:1076** · `MAX_time_source_sequence_gap_ms` **:1077**,
+  전부 APPROVED 2026-07-29. ⚠ 값이 같아 조용히 통과하는 이웃 둘을 섞지 말 것 —
+  `MAX_time_source_disagreement_ms`(:1071)는 똑같이 50 이지만 지연 한도가 **아니고**,
+  `MAX_critical_input_consumer_receipt_age_ms`(:1067)는 똑같이 1000 이지만 **다른 경계**다.
+
+괄호 안 「운영자 결정 2026-10-09」은 같은 표의 `trading_calendar_version`(:22)이 쓰는
+**A(§11 결정 11)** 과 같은 꼴이다 — 값은 규범 승인치이고, 운영자 결정은 **이 키를 그 승인치에
+결속한다**는 판단이다. ⛔ **M 이 아니다**(이 PR 초판의 오기, 리뷰 M2 에서 정정): M 은
+「운영자·서버에서만 산출 가능」이고 그 표의 M 행은 전부 호스트·운영자만 아는 사실인데
+(`tz_db_version` :21 · `verification_profile_version` :23 · `finality.source_revision` :78 ·
+`ACNT_PRDT_CD` :93), 800 은 저장소 안에서 도출되고 테스트가 `time.yaml` 에서 다시 계산한다.
 
 ⚠⚠ **구속 결과 — ③ 은 저널 append 시각을 `as_of_ms` 로 찍어야 한다.** `max_age_ms` 와 커널
 시간 경로는 **같은 양**을 잰다(`snapshot.py::_derive_field_state` 의 `now_ms - as_of_ms` ·
@@ -141,9 +154,16 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
 **180000 은 폐기됐다(연혁).** 2026-10-09 초판은 「출처가 없어도 설정이 필요하니 적용」 지시에
 **봉 주기에서** 3P = 180,000 을 도출해 적었다(등급 C: 2P = 120,000 은 하한, 세 번째 P 가
 발행·폴 지연 여유). 그 판은 파일이 로드되게 할 뿐 시간 경로를 열지 못했고(같은 헤더가
-「800 ms 예산의 75 배」로 적었다), 운영자 결정이 그 간극을 **예산 쪽으로** 닫았다. 보수
-방향은 **작게**(작으면 UNKNOWN → NO_ACTION, 크면 낡은 필드가 VALID = fail-OPEN)이고, 800 은
-커널 예산을 넘지 않는 **가장 큰** 값이라 이 방향으로 더 키울 수 없다.
+「800 ms 예산의 75 배」로 적었다), 운영자 결정이 그 간극을 **예산 쪽으로** 닫았다.
+**그리고 그 옛 헤더는 800 을 이미 지목하고 있었다** — main `bb9a4d4d` 의 그 파일 :72-74 축자:
+「…올바른 한도는 180,000 이 아니라 위 800 ms 예산 자리수다」(조건 = ③ 이 append 시각을 찍을
+것). 즉 운영자 결정은 개발 측이 **조건부로 이미 지목한 자리수**를 택하면서 그 조건을
+**요구사항으로 승격**한 것이다. ⚠ 이 PR 초판은 그 문장을 「현행 ③ 의미론에서는 성립하지 않는
+자리수」로 **오인용**해 「개발 측은 800 을 부정했다」는 근거로 썼다(리뷰 M1) — 그런 문장은
+`bb9a4d4d` 에 없다. 삭제했다.
+
+보수 방향은 **작게**(작으면 UNKNOWN → NO_ACTION, 크면 낡은 필드가 VALID = fail-OPEN)이고,
+800 은 커널 예산을 넘지 않는 **가장 큰** 값이라 이 방향으로 더 키울 수 없다.
 
 상주의 600000 은 **베껴 오지 않았다** — 그 근거(「렌더가 저널을 부팅 직전에 생성하므로 그
 여유는 실제로 그 부팅 지연만 덮는다」)는 배치 저널 부팅에만 성립한다.
@@ -179,12 +199,11 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
 
 ## 7. 운영자 미결 항목
 
-1. **`max_age_ms` 의 실제 원천** — 값은 **운영자 결정 2026-10-09** 로 800 이고 등급 **M**
-   이다(§5). 남은 것은 ③ 실시간 생산자가 생긴 뒤 그 **발행 지연을 측정**해 이 한도가 실제로
-   만족 가능한지 확인하는 것이고, 그 측정이 나오기 전까지 800 은 승인된 원천값이 아니라
-   **운영자가 커널 예산에 결속한 수**다. ⛔ 그 측정이 나빠도 **한도를 올리는 처분은 없다** —
-   커널 시간 경로가 같은 양을 같은 예산에 대므로 처분은 ③ 쪽(append 시각 스탬프 · 지연 단축)
-   이다.
+1. **`max_age_ms` 가 실제로 만족 가능한가** — 값·등급은 미결이 **아니다**(800 · 등급
+   **A(운영자 결정 2026-10-09)** · §5: 두 항 다 VER-002 APPROVED). 남은 것은 ③ 실시간
+   생산자가 생긴 뒤 그 **발행 지연을 측정**해 이 한도를 실제로 지킬 수 있는지 확인하는 것이다.
+   ⛔ 그 측정이 나빠도 **한도를 올리는 처분은 없다** — 커널 시간 경로가 같은 양을 같은 예산에
+   대므로 처분은 ③ 쪽(append 시각 스탬프 · 지연 단축)이다.
 2. **data dir 의 genesis 와 콜드 백업 편입** — 이름은 **지정됐다**(아래 §8). 남은 것은
    ① 첫 부팅(④)이 만드는 genesis 와 ② 콜드 백업 `COLD_DATA_DIR` 지정(운영자 결정).
 3. **SHORT parity 실행** — SHORT 트리는 **착지했다**(`config/tos_runtime/cp3-setup-d-short/`,
@@ -234,7 +253,8 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
 
 ### 닫힌 항목 (여기 있었다가 처분된 것)
 
-- **`critical_input_policy.yaml::fields[].max_age_ms` ×15 — ✅ 적용 2026-10-09 (등급 M).**
+- **`critical_input_policy.yaml::fields[].max_age_ms` ×15 — ✅ 적용 2026-10-09
+  (등급 A(운영자 결정 2026-10-09)).**
   초판은 「출처 없음 → 열다섯 전부 `null` → 파일이 로드되지 않는다」를 미결로 기록했다.
   같은 날 1차로 **180000**(= 3 × 1분봉 · 등급 C · 「출처가 없어도 설정이 필요하니 적용」)이
   들어갔고, **운영자 결정 2026-10-09**(「max_age_ms : 800ms 로 정해」)가 그것을 **폐기하고**

@@ -185,13 +185,21 @@ _B1A_FIELD_POLICY: dict[str, tuple[str, str, str, str]] = {
 _B1A_BAR_PERIOD_MS = 60_000
 
 #: ``critical_input_policy.yaml::fields[].max_age_ms``, DECIDED by the operator 2026-10-09
-#: ("max_age_ms : 800ms 로 정해") at grade **M** -- producible only from the operator, in the
-#: ``docs/plans/2026-09-12-tos-operator-value-proposals.md:4`` vocabulary. Not A (VER-002 has no
-#: APPROVED coordinate for this key, and the proposal table has no row for it: grade travels with
-#: the KEY, not with the two grade-A terms the arithmetic consumes), not B (no measurement exists
-#: -- ③, the live producer, has not been built), not C (the dev-side proposal WAS 180000, and the
-#: same header recorded 800 as the order of magnitude that does not hold under the current ③
-#: semantics; calling it a dev proposal would be a false statement).
+#: ("max_age_ms : 800ms 로 정해") at grade **A(운영자 결정 2026-10-09)** in the
+#: ``docs/plans/2026-09-12-tos-operator-value-proposals.md:4`` vocabulary -- the same shape that
+#: table's ``trading_calendar_version`` row (:22) uses for ``A(§11 결정 11)``: the value itself is
+#: normatively APPROVED and the operator's decision is WHICH approved quantity this key binds to.
+#: Both terms are VER-002 ``APPROVED``
+#: (``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``): the minuend
+#: ``MAX_time_conservative_freshness_age_ms`` 1000 at :1078 (APPROVED 2026-09-04, whose own entry
+#: reads "> Σ delay-class bounds 200 ms, conservative direction LOWER"), and the four 50s the
+#: runtime sums -- :1069, :1070, :1076, :1077, all APPROVED 2026-07-29.
+#:
+#: ⚠ It is NOT grade M: M is "운영자·서버에서만 산출 가능" and every M row in that table is a
+#: host- or operator-only fact (``tz_db_version`` :21, ``verification_profile_version`` :23,
+#: ``finality.source_revision`` :78, ``ACNT_PRDT_CD`` :93). 800 is derivable in-repo, which is
+#: exactly what :func:`_tenant_kernel_time_budget_ms` does. (This PR's first cut graded it M;
+#: corrected on review.)
 #:
 #: The number equals the kernel's own time-admission budget:
 #: ``time.yaml::MAX_time_conservative_freshness_age_ms`` minus the sum of the delay bounds
@@ -227,21 +235,30 @@ _TIME_DELAY_BOUND_KEYS: tuple[str, ...] = tuple(
 )
 
 #: The sentences the adopted ``max_age_ms`` may not be read without -- the operator's decision
-#: with its arithmetic, the grade **and the reasons the other three grades would be false**, the
-#: two measured premises behind the consequence, the consequence itself, the obligation that
-#: consequence places on ③, the superseded 180000 kept as history, and the conservative
-#: direction. A value with no source and no derivation written next to it is an invented number,
-#: which is the state the fifteen ``null``s existed to avoid.
+#: with its arithmetic, the grade **with both terms' VER-002 coordinates**, the near-miss
+#: neighbours those coordinates must not be confused with, the precedent the grade's parenthesis
+#: follows, why it is not M, the two measured premises behind the consequence, the consequence
+#: itself, the obligation it places on ③, the superseded 180000 kept as history **with the old
+#: header's own sentence quoted verbatim**, and the conservative direction. A value with no
+#: source and no derivation written next to it is an invented number, which is the state the
+#: fifteen ``null``s existed to avoid.
 _MAX_AGE_PROVENANCE = (
     "운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)",
-    "등급 M",
-    "키를 따라가지 산술의 입력을 따라가지 않는다",  # why not A
-    "개발 측 제안은 180000 이었고",  # why not C
+    "등급 A(운영자 결정 2026-10-09)",
+    "VERIFICATION-PROFILE-002.yaml:1078",  # the minuend's normative coordinate
+    "`MAX_time_source_sequence_gap_ms` :1077 — 전부 APPROVED 2026-07-29",  # the four 50s
+    "값이 같아 조용히 통과하는 이웃 둘을 섞지 말 것",  # :1071 and :1067, the near misses
+    "A(§11 결정 11)",  # the precedent for an operator-decided grade-A value
+    "M 은 「운영자·서버에서만 산출 가능」이고",  # why the first cut's M was wrong
     "The label, not label+60s",  # premise -- as_of is the bar OPEN
     "now_ms - as_of_ms",  # premise -- what the runtime measures
     "현행 B1a 의미론에서는 열다섯 전부 STALE 이다",  # the binding consequence
     "저널에 append 하는 시각을 `as_of_ms` 로 찍어야 한다",  # what it binds ③ to
     "180000 은 폐기됐다",  # the superseded value, as history
+    # The old header's OWN sentence, verbatim from main bb9a4d4d (:72-74). Pinned because this
+    # PR's first cut paraphrased it into its opposite: the dev side named the 800 order as the
+    # CORRECT limit, conditional on append-time stamping -- it did not reject it.
+    "올바른 한도는 180,000 이 아니라 위 800 ms 예산 자리수다",
     "보수 방향 = 작게",
 )
 
@@ -633,15 +650,16 @@ def test_tenant_critical_input_policy_declares_fifteen_fields_with_the_adopted_m
     """CP-3 kickoff §5 1 / §5 3 ②: the tenant tree declares B1a's fifteen upstream fields with
     their unit/scale/multiplier/sign from B1a's own field lineage, plus the fifth value
     ``max_age_ms``, DECIDED by the operator 2026-10-09 ("max_age_ms : 800ms 로 정해") at grade
-    **M** -- the kernel's own time-admission budget, with the reasons A/B/C would each be a false
-    label written next to it.
+    **A(운영자 결정 2026-10-09)** -- the kernel's own time-admission budget, whose two terms are
+    both VER-002 ``APPROVED``, with their coordinates written next to it.
 
     Until 2026-10-09 the fifteen were ``null`` and the loader refused the whole document. This
     test replaced that refusal pin; the "``null`` would still be refused" half now lives in
     ``test_tenant_critical_input_policy_still_refuses_a_null_max_age_ms``, so filling the key
     did not retire the guard that kept an unsourced value out. The first fill wrote 180000 (3
     bar periods, grade C); the operator superseded it the same day, and the header keeps that
-    derivation as history rather than deleting it.
+    derivation as history -- together with the OLD header's own sentence, which had already named
+    the 800 order as the correct limit conditional on append-time stamping.
 
     The value is pinned as ONE number for all fifteen on purpose: B1a publishes the whole
     ``FIELD_ORDER`` as a single per-bar record under one label ``as_of_ms``, so there is no
@@ -773,6 +791,18 @@ def test_the_adopted_max_age_ms_is_the_kernel_budget_label_stamped_bars_cannot_m
     * ``_TENANT_MAX_AGE_MS < _B1A_BAR_PERIOD_MS`` -- red if the bar period changes (measured:
       60_000 -> 600 turns ONLY this test red, with the clause above still green). This is the
       form ``_derive_field_state`` actually compares, which is why it is the one kept.
+      ⚠ **Its red proof is strictly weaker than the first clause's, and the asymmetry is
+      structural.** ``_B1A_BAR_PERIOD_MS`` is a TEST constant: mutating it proves only that the
+      two clauses do not mask each other, not that this clause tracks anything SHIPPED. Searched
+      for a shipped fact to tie it to and found none (2026-10-09): neither tenant tree declares a
+      bar period -- ``marketfeed.yaml::time_evaluate_closed_interval_ms`` is 60000 but is the
+      time-EVALUATION cadence, and binding to it would be a coincidence of value, not a
+      derivation; the legacy ``setup_d_vwap_reversion.yaml`` carries session minutes, not a
+      timeframe; and the only real source, ``produce_fields.derive_raw_event_id``'s ``:1m:``
+      token, is in ``tools`` (firewall-denied from here, and text-scraping it would pin a string,
+      not the 60_000). So a producer that moved to 5-minute bars, or started stamping at bar
+      CLOSE, would leave this clause green while making the header's reasoning stale. That gap is
+      the ③ obligation; do not read this clause as closing it.
     * ``budget < _B1A_BAR_PERIOD_MS`` -- **not asserted**. Given the first clause it is the same
       statement as the second, so it could not fail on its own: a clause that cannot fail is not
       a guard, it is a decoration that makes the test look stronger than it is. (It WAS a

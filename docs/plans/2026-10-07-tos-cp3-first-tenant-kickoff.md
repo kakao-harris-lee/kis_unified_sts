@@ -357,17 +357,31 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    `safety_activation.yaml::members`). 2026-10-09 1차 적용은 「출처가 없어도 설정이 필요하니
    적용」 지시에 대해 봉 주기에서 도출한 **180000**(3P · 등급 C)이었고, 같은 날 **운영자
    결정**(「max_age_ms : 800ms 로 정해」)이 그것을 **폐기하고 800 으로 확정**했다.
+   ⚠ 그 1차 헤더는 800 을 **이미 지목하고 있었다** — main `bb9a4d4d` 의 그 파일 :72-74 축자:
+   「…올바른 한도는 180,000 이 아니라 위 800 ms 예산 자리수다」(조건 = ③ 이 append 시각을 찍을
+   것). 운영자 결정은 그 **조건부 지목을 택하면서 조건을 요구사항으로 승격**한 것이다.
+   (이 문장을 「현행 ③ 의미론에서 성립하지 않는 자리수」로 적었던 초판 서술은 **오인용**이라
+   삭제했다 — PR #887 리뷰 M1.)
 
-   **값 = 800 ms · 등급 M**(`docs/plans/2026-09-12-tos-operator-value-proposals.md:4`).
-   800 은 커널의 시간 수용 예산과 **같은 수**다 —
-   `time.yaml::MAX_time_conservative_freshness_age_ms` **1000** − `Σdelay_bounds`(런타임의
-   `_DELAY_BOUND_FIELDS` 네 항 × 50 = **200**) = **800**. 등급이 M 인 이유는 나머지 셋이
-   거짓이기 때문이다: **A 아님**(VER-002 에 이 키의 APPROVED 좌표가 없다 — 산술의 두 항은 A
-   지만 등급은 키를 따라간다) · **B 아님**(③ 이 없어 잴 발행 지연이 없다) · **C 아님**(개발
-   측 제안은 180000 이었고 같은 헤더가 800 을 「현행 ③ 의미론에서 성립하지 않는 자리수」로
-   적었다). ⚠ 과대 주장하지 않는다 — 800 이라는 **수**는 저장소 안에서 도출되고 테스트가
-   `time.yaml` 에서 다시 계산한다. 운영자에게서만 나온 것은 **이 키를 그 예산에 결속한다는
-   결정**이다. 상주의 600000 은 베껴 오지 않았다(그 근거는 **배치 저널 부팅**의 지연 흡수다).
+   **값 = 800 ms · 등급 A(운영자 결정 2026-10-09)**
+   (`docs/plans/2026-09-12-tos-operator-value-proposals.md:4` — A = 규범 문서에 이미 승인된 값).
+   800 은 커널의 시간 수용 예산과 **같은 수**이고, 그 **두 항이 모두 VER-002 `APPROVED`** 다
+   (좌표: `tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`):
+   피감수 `MAX_time_conservative_freshness_age_ms` **1000** = **:1078**(APPROVED 2026-09-04;
+   그 항목 자신이 「> Σ delay-class bounds 200 ms, conservative direction LOWER」를 적는다),
+   감수 **200** = 런타임의 `_DELAY_BOUND_FIELDS` 네 항 × 50 = **:1069**(transport_and_queue) ·
+   **:1070**(clock_domain_conversion) · **:1076**(source_precision) ·
+   **:1077**(source_sequence_gap), 전부 APPROVED 2026-07-29.
+   ⚠ 값이 같아 조용히 통과하는 이웃 둘을 섞지 말 것 — `MAX_time_source_disagreement_ms`(:1071)
+   는 똑같이 50 이지만 지연 한도가 **아니고**, `MAX_critical_input_consumer_receipt_age_ms`
+   (:1067)는 똑같이 1000 이지만 **다른 경계**다.
+   괄호 안 「운영자 결정 2026-10-09」은 같은 표의 `trading_calendar_version`(:22)이 쓰는
+   **A(§11 결정 11)** 과 같은 꼴이다 — 값은 규범 승인치이고 운영자 결정은 **이 키를 그 승인치에
+   결속한다**는 판단이다. ⛔ **M 이 아니다**(이 PR 초판의 오기, 리뷰 M2 정정): M 은
+   「운영자·서버에서만 산출 가능」이고 그 표의 M 행은 전부 호스트·운영자만 아는 사실인데
+   (`tz_db_version` :21 · `verification_profile_version` :23 · `finality.source_revision` :78 ·
+   `ACNT_PRDT_CD` :93), 800 은 저장소 안에서 도출된다.
+   상주의 600000 은 베껴 오지 않았다(그 근거는 **배치 저널 부팅**의 지연 흡수다).
 
    ⚠⚠ **구속 결과 — ③ 은 저널 append 시각을 `as_of_ms` 로 찍어야 한다(실측 2026-10-09).**
    `max_age_ms` 와 커널 시간 수용 경로는 **같은 양**을 잰다

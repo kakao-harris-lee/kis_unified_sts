@@ -13,7 +13,7 @@
 # 로더: tos_runtime.marketfeed.policy.load_critical_input_policy
 # 원본 템플릿: tos/runtime/config/critical_input_policy.example.yaml
 #
-# ── `max_age_ms` ×15 = 800 — 「운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)」 · 등급 M ──
+# ── `max_age_ms` ×15 = 800 — 「운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)」 · 등급 A(운영자 결정 2026-10-09) ──
 #
 # **운영자 결정 2026-10-09 (대화): 「max_age_ms : 800ms 로 정해」.** 적힌 수는 커널의 시간
 # 수용 예산과 **같은 수**다: `time.yaml::MAX_time_conservative_freshness_age_ms` **1000** 에서
@@ -23,22 +23,31 @@
 # `max_age_ms` 를 거부한다). 그 fail-closed 상태는 2026-10-09 에 닫혔고, 이 판은 그때 적은
 # 180000 을 **폐기하고** 운영자가 정한 800 으로 바꾼 것이다(아래 「연혁」).
 #
-# ── 등급 M — 운영자·서버에서만 산출 가능(수동) ──────────────────────────────────
-# 등급 어휘는 `docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 다. **M** 인 이유는
-# 나머지 셋이 이 값에 대해 **거짓 진술**이기 때문이다:
-#   * **A 아님** — VER-002 에 이 키의 APPROVED 좌표가 없다. 산술의 두 항(1000 · 50×4)은
-#     A 지만 등급은 **키를 따라가지 산술의 입력을 따라가지 않는다**. 제안표
-#     `docs/plans/2026-09-18-tos-config-value-proposal.md` 에도 이 키 행이 없다(상위 계획
-#     §7.8 A-5: 「신선도 한도 — 안전 값이다. 그래서 채택하지 않았다」).
-#   * **B 아님** — 공식 문서 근거도 측정 근거도 없다. ③ 생산자가 아직 없으므로 잴 발행
-#     지연 자체가 없다.
-#   * **C 아님** — C 는 개발 측 보수 제안을 뜻하는데, 개발 측 제안은 180000 이었고 같은
-#     헤더가 800 을 「현행 ③ 의미론에서는 성립하지 않는 자리수」로 적었다. 그 수를 개발 측
-#     제안이라고 부르면 거짓이다. 800 은 보수 여유가 아니라 커널 예산의 **천장**이기도 하다.
-# ⚠ **M 을 과대 주장하지 않는다.** 800 이라는 **수 자체**는 저장소 안에서 도출된다
-# (1000 − 200; `tos/runtime/tests/compose/test_deploy_policies.py` 가 이 트리의 `time.yaml`
-# 에서 다시 계산해 이 열다섯과 대조한다). 운영자에게서만 나온 것은 **이 키를 그 예산에
-# 결속한다는 결정**이고, 그 결정이 아래 ③ 의무를 만든다.
+# ── 등급 A(운영자 결정 2026-10-09) ─────────────────────────────────────────────
+# 등급 어휘는 `docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 다. **A** 는 「규범
+# 문서에 이미 승인된 값(VER-002 `APPROVED`)」이고, 800 을 만드는 **두 항이 모두 그것**이다
+# (좌표는 `tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`):
+#   * 피감수 **1000** — `MAX_time_conservative_freshness_age_ms`,
+#     VERIFICATION-PROFILE-002.yaml:1078 · APPROVED 2026-09-04. 그 항목 자신이 근거로
+#     「> Σ delay-class bounds 200 ms, conservative direction LOWER」를 적는다.
+#   * 감수 **200** — 런타임이 `delay_bounds` 로 더하는 네 항 × 50:
+#     `MAX_time_transport_and_queue_uncertainty_ms` :1069 ·
+#     `MAX_clock_domain_conversion_uncertainty_ms` :1070 ·
+#     `MAX_time_source_precision_ms` :1076 ·
+#     `MAX_time_source_sequence_gap_ms` :1077 — 전부 APPROVED 2026-07-29.
+#     네 항의 정본은 `_DELAY_BOUND_FIELDS` 이고 위 좌표는 그 네 이름을 VER-002 에서 찾은
+#     것이다. ⚠ **값이 같아 조용히 통과하는 이웃 둘을 섞지 말 것** —
+#     `MAX_time_source_disagreement_ms` :1071 은 똑같이 50 이지만 지연 한도가 **아니고**,
+#     `MAX_critical_input_consumer_receipt_age_ms` :1067 은 똑같이 1000 이지만 **다른 경계**다
+#     (이 저장소는 전자를 이미 한 번 잘못 셌다 — `test_deploy_policies.py` 의
+#      `_TIME_DELAY_BOUND_KEYS` 주석).
+# 괄호 안 「운영자 결정 2026-10-09」은 같은 표에서 `trading_calendar_version`(:22)이 쓰는
+# **A(§11 결정 11)** 과 같은 꼴이다: 값 자체는 규범 승인치이고, 운영자 결정은 **이 키를 그
+# 승인치에 결속한다**는 판단이다.
+# ⛔ **M 이 아니다.** M 은 「운영자·서버에서만 산출 가능」이고 그 표의 M 행은 전부 호스트·
+# 운영자만 아는 사실이다(`tz_db_version` :21 · `verification_profile_version` :23 ·
+# `finality.source_revision` :78 · `ACNT_PRDT_CD` :93). 800 은 저장소 안에서 도출되므로
+# 그 정의에 해당하지 않는다. (이 PR 의 초판이 M 으로 적었다 — 리뷰 M2 에서 정정.)
 #
 # ── 구속 결과: ③ 은 저널 append 시각을 as_of_ms 로 찍어야 한다 ──────────────────
 # `max_age_ms` 와 커널 시간 경로는 **같은 양**을 잰다 —
@@ -63,9 +72,17 @@
 # ── 180000 은 폐기됐다 (연혁) ───────────────────────────────────────────────────
 # 2026-10-09 초판은 「출처가 없어도 설정이 필요하니 적용」 지시에 대해 **봉 주기에서**
 # 3P = 180,000 을 도출해 적었다(등급 C): 라벨 T 의 봉은 T+1P 에 닫히고 T+2P 에 교체되므로
-# 2P = 120,000 은 하한(infimum)이고 세 번째 P 가 발행·폴 지연 여유라는 논증이었다. 그 판은
-# **파일이 로드되게 할 뿐** 시간 경로를 열지 못했고(같은 헤더가 그것을 「800 ms 예산의
-# 75 배」로 적었다), 운영자 결정이 그 간극을 **예산 쪽으로** 닫았다.
+# 2P = 120,000 은 하한(infimum)이고 세 번째 P 가 발행·폴 지연 여유라는 논증이었다.
+# **그런데 같은 헤더가 올바른 한도를 이미 지목하고 있었다** — main `bb9a4d4d` 의 이 파일
+# :72-74, 축자:
+#   「수집기처럼 **append 시각**을 `as_of_ms` 로 찍으면(저널 수집기는 「an honest source
+#    event time」을 찍는다 — `marketfeed/scheduler.py::_finalize_pending`) 올바른 한도는
+#    180,000 이 아니라 위 800 ms 예산 자리수다.」
+# 즉 800 은 개발 측이 **조건부로 이미 지목한 자리수**였고(조건 = ③ 의 append 시각 스탬프),
+# 운영자 결정은 그 조건을 **요구사항으로 승격**하면서 값을 그 자리에 박은 것이다.
+# ⚠ 이 PR 의 초판은 그 문장을 「현행 ③ 의미론에서는 성립하지 않는 자리수」라고 **오인용**해
+# 「개발 측은 800 을 부정했다」는 근거로 썼다(리뷰 M1). 그런 문장은 `bb9a4d4d` 에 **없다** —
+# 옛 헤더는 800 을 부정한 것이 아니라 조건부로 **긍정**했다. 그 오인용은 삭제했다.
 #
 # **보수 방향 = 작게.** 너무 작으면 필드가 `UNKNOWN` 이 되어 fail-closed 고, 너무 크면
 # **진짜로 낡은 필드가 VALID 로 읽힌다** — 그쪽이 fail-OPEN 이다. 800 은 커널 예산을 넘지
