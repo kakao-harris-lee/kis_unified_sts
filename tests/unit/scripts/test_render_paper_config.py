@@ -208,19 +208,25 @@ def test_check_passes_on_a_freshly_rendered_directory(tmp_path: Path) -> None:
 
 def test_guard_every_rule_anchor_occurs_exactly_once_in_the_committed_source() -> None:
     """Guard "칸마다 정확히 1회 매칭", positive half: the committed source must actually carry
-    each anchor exactly once, or the render below refuses."""
-    rules = rpc._coordinate_rules(
-        account=_FAKE_ACCOUNT,
-        instrument=_FAKE_INSTRUMENT,
-        revision=_FAKE_REVISION,
-        direction="LONG",
-        journal_path=Path("/nowhere/journal.jsonl"),
-    ) + (rpc._members_rule("members: x"),)
-    for rule in rules:
-        lines = (_SOURCE / rule.file).read_text(encoding="utf-8").split("\n")
-        assert [line for line in lines if line == rule.anchor] == [
-            rule.anchor
-        ], f"{rule.key}: anchor {rule.anchor!r} does not occur exactly once in {rule.file}"
+    each anchor exactly once, or the render refuses.
+
+    ⚠ **Retargeted at the MANIFEST** (PR #888 review L2). It used to build its anchors from
+    ``_coordinate_rules``, which since the manifest landed is a transition reference nothing
+    executes — so it was asserting something true of a table ``render()`` no longer reads. The
+    anchors now come from ``RENDER.yaml`` itself, which is what ``render()`` and ``check()``
+    both use. ``load_manifest`` validates template SHAPE but never opens the target file, so
+    this is the only place "the anchor is really in the committed tree, exactly once" is
+    checked before a render.
+    """
+    manifest = rpc.load_manifest(_SOURCE)
+    anchored = [(slot.file, slot.rule_key, slot.anchor) for slot in manifest.slots]
+    members = rpc._members_rule("members: x")
+    anchored.append((members.file, members.key, members.anchor))
+    for file_name, key, anchor in anchored:
+        lines = (_SOURCE / file_name).read_text(encoding="utf-8").split("\n")
+        assert [line for line in lines if line == anchor] == [
+            anchor
+        ], f"{key}: anchor {anchor!r} does not occur exactly once in {file_name}"
 
 
 @pytest.mark.parametrize(
@@ -266,8 +272,18 @@ def test_guard_coordinate_rule_key_set_is_pinned() -> None:
     """Guard "좌표 칸만 바뀐다": the exact set of slots the script may rewrite, pinned by name.
 
     Adding a rule that rewrites a value nobody approved turns this RED — the rule table cannot
-    grow silently."""
-    assert set(rpc.COORDINATE_RULE_KEYS) == {
+    grow silently.
+
+    ⚠ **Retargeted at what ``render()`` actually writes** (PR #888 review L2). It used to pin
+    ``COORDINATE_RULE_KEYS``, a transition reference nothing executes any more. The set now
+    comes from the manifest ``render()`` reads PLUS the derived ``members`` key taken from
+    :func:`render_paper_config._members_rule` itself — which makes this the only pin covering
+    ``members``, since that slot is deliberately not in the manifest and therefore not in
+    ``_EXPECTED_RESIDENT_SLOTS``.
+    """
+    rendered_keys = {slot.rule_key for slot in rpc.load_manifest(_SOURCE).slots}
+    rendered_keys.add(rpc._members_rule("members: x").key)
+    assert rendered_keys == {
         "venue_constraint_policy.yaml::scope.accounts",
         "venue_constraint_policy.yaml::scope.instruments",
         "order_construction_policy.yaml::scope.accounts",
@@ -1168,6 +1184,51 @@ def test_template_shape_rules_refuse(
         rpc.load_manifest(tree)
 
 
+def test_a_yaml_anchor_token_that_is_not_immediately_after_the_key_is_refused(
+    tmp_path: Path,
+) -> None:
+    """PR #888 review L1b — the red proof the anchor-token POSITION test was missing.
+
+    Rule ④ allows one YAML anchor token, and :func:`render_paper_config._anchor_token` only
+    recognises it when nothing but whitespace separates it from the colon. Drop that position
+    test and this input is accepted: both sides report ``&account``, the tokens compare equal,
+    and the residue is quotes and spaces. The rendered line would be
+    ``account: "<value>" &account`` — not valid YAML, since an anchor may not trail the scalar
+    it would name, so the whole document fails to parse at boot.
+    """
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "construction.yaml", "account")
+    manifest["slots"][index]["anchor"] = '          account: &account "TBD"'
+    manifest["slots"][index]["replacement"] = '          account: "{value}" &account'
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="YAML anchor token differs"):
+        rpc.load_manifest(tree)
+
+
+def test_a_placeholder_inside_the_key_prefix_is_refused(tmp_path: Path) -> None:
+    """PR #888 review L1a — the red proof the inside-prefix clause was missing.
+
+    For an ORDINARY anchor the clause is unreachable: a placeholder inside the key makes the
+    template's key prefix differ from the anchor's, so rule ③ refuses first. It becomes
+    reachable exactly when the ANCHOR's own key carries the literal ``{value}`` — then both
+    prefixes match, the tail is filler-only, and rule ④ sees nothing wrong.
+
+    Measured with the clause disabled: this pair is ACCEPTED and the rendered line is
+    ``  foo9999999999: ""`` — the account substituted into the KEY NAME, the leaf left empty.
+    No committed YAML carries such a key, so the input is contrived; the clause is one
+    comparison and the failure it prevents is silent, so it stays and this is its proof.
+    """
+    manifest = _resident_manifest_dict()
+    index = _slot_index(manifest, "construction.yaml", "account")
+    manifest["slots"][index]["anchor"] = '  foo{value}: ""'
+    manifest["slots"][index]["replacement"] = '  foo{value}: ""'
+    tree = _tree_with_manifest(tmp_path, manifest)
+
+    with pytest.raises(rpc.RenderError, match="sits inside the key prefix"):
+        rpc.load_manifest(tree)
+
+
 # ---- manifest load refusals (design §4.2) ----------------------------------
 
 
@@ -1280,6 +1341,61 @@ def test_declared_mode_renders_and_leaves_the_direction_lines_untouched(
     assert 'action_class: "NEW_LONG"' in construction
     assert 'outbound_side: "BUY"' in construction
     assert f'account: "{_FAKE_ACCOUNT}"' in construction
+
+
+def _drop_value_source(manifest: dict[str, Any], source: str) -> dict[str, Any]:
+    """Remove EVERY slot drawing on ``source``.
+
+    Not "the first one": ``direction`` has three slots in the resident table
+    (``order_construction_policy.yaml``'s DIRECTION axis, the strategy rule, and
+    ``marketfeed.yaml``), so dropping one leaves the source present and would measure nothing.
+    """
+    before = len(manifest["slots"])
+    manifest["slots"] = [s for s in manifest["slots"] if s["value"] != source]
+    assert len(manifest["slots"]) < before, f"no slot drew on {source!r}"
+    return manifest
+
+
+@pytest.mark.parametrize(
+    "source", ["direction_action_class", "direction_side", "direction"]
+)
+def test_declared_mode_refuses_a_manifest_missing_a_direction_slot(
+    tmp_path: Path, source: str
+) -> None:
+    """PR #888 review L3 — review H1's disposition had an unenforced PRECONDITION.
+
+    The verify-only rules only check a direction if the slots are THERE. Delete them and a
+    declared tree renders with no direction check at all: the five policy digests do not bind
+    DIRECTION, so a SHORT tree under a LONG manifest activates, boots and refuses nothing.
+    Measured before this guard existed — deleting the slots turned
+    :func:`test_declared_mode_refuses_a_tree_whose_direction_lines_do_not_match` green.
+
+    One parameter per direction-bound value source, because dropping any ONE of the three is
+    enough to stop verifying that part of the direction; a guard that only noticed all three
+    going missing would admit the two-thirds case.
+    """
+    tree = _tree_with_manifest(
+        tmp_path, _drop_value_source(_declared_manifest("LONG"), source)
+    )
+
+    with pytest.raises(rpc.RenderError, match="EVERY direction-bound value source"):
+        rpc.load_manifest(tree)
+
+
+def test_substitute_mode_does_not_require_the_direction_slots(tmp_path: Path) -> None:
+    """The other side of L3: the requirement is DECLARED-mode only.
+
+    In substitute mode the direction is an argument, not a committed fact, so a tree that
+    simply has no direction-bound leaf is legitimate. Without this, "refuses a missing
+    direction slot" would be satisfied by a rule that refuses it everywhere and would quietly
+    forbid a future substitute tree from existing.
+    """
+    tree = _tree_with_manifest(
+        tmp_path, _drop_value_source(_resident_manifest_dict(), "direction")
+    )
+
+    loaded = rpc.load_manifest(tree)
+    assert "direction" not in {slot.value for slot in loaded.slots}
 
 
 def test_declared_mode_refuses_a_direction_flag_that_disagrees(tmp_path: Path) -> None:

@@ -512,6 +512,14 @@ def _anchor_token(tail: str) -> str | None:
 
     "Immediately after" means only whitespace separates it from the colon — an ``&name`` later
     in the line is not this exception and falls through to rule ④, which refuses it.
+
+    ⚠ **The position test is load-bearing, not tidiness.** Concrete failing input, measured:
+    anchor ``'          account: &account "TBD"'`` with template
+    ``'          account: "{value}" &account'``. Without the position test both sides report
+    ``&account``, the tokens compare equal, and what is left is quotes and spaces — so rule ④
+    accepts it and the render writes ``account: "<value>" &account``, which is not valid YAML
+    (an anchor may not follow the scalar it would name). With it, the template side reports
+    ``None`` and rule ④ refuses on the mismatch.
     """
     match = _YAML_ANCHOR_TOKEN.search(tail)
     if match is None or tail[: match.start()].strip() != "":
@@ -541,7 +549,20 @@ def _validate_replacement_template(*, key: str, anchor: str, template: str) -> N
       ``'          account: &account "TBD"'`` — the rendered line would define an anchor nobody
       aliases, so every ``*account`` alias in the file dangles (rule ④'s byte-identity half);
     * ``replacement: '  tick_size: {value}'`` against anchor ``'  accounts: ["TBD"]'`` — the
-      slot has been re-aimed at a different leaf (rule ③).
+      slot has been re-aimed at a different leaf (rule ③);
+    * ``replacement: '  foo{value}: ""'`` against anchor ``'  foo{value}: ""'`` — the
+      placeholder is inside the KEY, so the value would be substituted into the key NAME and
+      the leaf would be left empty (the inside-prefix clause).
+
+    ⚠ **On that last clause** (PR #888 review L1a). For an ordinary anchor it IS unreachable:
+    a placeholder inside the key makes the template's key prefix differ from the anchor's, so
+    rule ③ refuses first. It becomes reachable only when the ANCHOR's own key carries the
+    literal ``{value}`` — then both prefixes match, the tail is filler-only, and rule ④ sees
+    nothing wrong. Measured: with the clause disabled, that pair is ACCEPTED and the rendered
+    line is ``  foo9999999999: ""``. No committed YAML has such a key, so the input is
+    contrived — but the clause is one comparison and the failure it prevents is silent, so it
+    is kept and
+    ``test_a_placeholder_inside_the_key_prefix_is_refused`` is its red proof.
     """
     occurrences = template.count(_PLACEHOLDER)
     if occurrences != 1:
@@ -696,6 +717,21 @@ def load_manifest(tree: Path) -> RenderManifest:
             key=slot.rule_key, anchor=slot.anchor, template=slot.replacement
         )
         slots.append(slot)
+
+    if direction_mode == "declared":
+        # Review H1's disposition has a precondition nothing enforced: the verify-only rules
+        # only check a direction if the slots EXIST. Drop them and a declared tree renders
+        # with no direction check at all — the five policy digests do not bind DIRECTION
+        # (:func:`_policy_digest_lines`' own docstring), so a SHORT tree rendered under a LONG
+        # manifest would activate, boot, and refuse nothing. Measured: deleting the three slots
+        # from a declared manifest turns the H1 test green again.
+        missing = sorted(_DIRECTION_VALUE_SOURCES - {slot.value for slot in slots})
+        if missing:
+            raise RenderError(
+                f"{path}: a declared-direction tree must carry a slot for EVERY direction-bound "
+                f"value source — missing {missing!r}. Without them nothing verifies this tree's "
+                "direction, and the activation digests do not bind it either"
+            )
 
     return RenderManifest(
         tree_id=tree_id,
