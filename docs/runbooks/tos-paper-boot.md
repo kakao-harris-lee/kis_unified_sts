@@ -1001,12 +1001,16 @@ find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
 `~/.local/state/tos/paper-data` 는 2026-10-04 현재 **아직 없고**(실측) genesis 는 10-06 이라
 패치가 먼저다.
 
-#### 7.2-b CP-3 tenant durable set — **지정만 했다 (2026-10-09) · 디렉터리는 없다**
+#### 7.2-b CP-3 tenant durable set — **data dir 은 아직 없다 · ops/cold 는 2026-10-09 에 생겼다**
 
 §7.2 의 표는 **상주 배포**의 것이다. CP-3 첫 tenant(Setup D)는 kickoff 결정 3·4 대로
 **방향마다 따로** 돌므로 자기 durable set 과 자기 렌더 산출물을 갖는다. 이 절은 그
-**이름을 지정**하는 자리이고, 아래 어느 디렉터리도 **아직 만들지 않았다** — genesis 는
-그 잎의 **첫 부팅**이다(§7.6 과 같은 규율; CP-3 kickoff §5 3 ④ 는 미착수).
+**이름을 지정**하는 자리다. **durable set 부모와 잎(`cp3-setup-d-*-data`)과 렌더된 설정
+(`~/.config/tos/cp3-setup-d-*-config`)은 아직 없다** — genesis 는 그 잎의 **첫 부팅**이고
+(§7.6 과 같은 규율) 그 부팅은 ③ 을 기다린다(§7.2-c).
+
+✅ **그러나 뒤 두 열(ops·cold)은 더 이상 「없다」가 아니다 — 운영자가 2026-10-09 23:28 KST 에
+만들었다(실측 2026-10-10).** 아래 ⚠ 문단들이 「아직 만들지 않았다」로 적던 상태가 그날 바뀌었다.
 
 | 배포 | durable set **부모** | **잎** | 렌더된 설정 | 콜드 백업 **ops**(`COLD_CONFIG_DIR`) | 콜드 **보관소 부모**(`COLD_ROOT`, 유도) |
 | --- | --- | --- | --- | --- | --- |
@@ -1014,8 +1018,10 @@ find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
 | CP-3 tenant **LONG** (`config/tos_runtime/cp3-setup-d-long/`) | `~/.local/state/tos/cp3-setup-d-long-data` | `cp3-setup-d-long-data/<종목>` | `~/.config/tos/cp3-setup-d-long-config` | `~/.local/state/tos/cp3-setup-d-long-ops` | `~/.local/state/tos/cp3-setup-d-long-cold` |
 | CP-3 tenant **SHORT** (`config/tos_runtime/cp3-setup-d-short/`) | `~/.local/state/tos/cp3-setup-d-short-data` | `cp3-setup-d-short-data/<종목>` | `~/.config/tos/cp3-setup-d-short-config` | `~/.local/state/tos/cp3-setup-d-short-ops` | `~/.local/state/tos/cp3-setup-d-short-cold` |
 
-⚠ 뒤 두 열은 **콜드 백업을 켤 때 필요한 지정**이고, 켜는 것 자체는 운영자 결정이다(아래 ⛔
-문단). `COLD_ROOT` 는 환경변수가 아니라 그 ops 디렉터리의 `evidence_cold_backup.yaml` 세
+⚠ 뒤 두 열은 **콜드 백업을 켤 때 필요한 지정**이었고, **운영자가 2026-10-09 에 그대로
+켰다** — 아래 ✅ 절이 그 실측이다(그러므로 이 절의 「켜는 것은 운영자 결정이다」류 문장은
+**이미 내려진 결정**을 설명하는 것으로 읽는다). `COLD_ROOT` 는 환경변수가 아니라 그 ops
+디렉터리의 `evidence_cold_backup.yaml` 세
 경로가 **공유하는 부모**로 유도되므로, tenant 보관소를 가르는 유일한 수단은 그 세 경로를
 tenant 콜드 부모 아래에 적는 것이다.
 
@@ -1032,7 +1038,8 @@ tenant 콜드 부모 아래에 적는 것이다.
 콜드 백업 래퍼에게 「계약월 잎들의 부모」로 보이고, 그 래퍼의 잎 열거는 `A0####` 패턴
 하나뿐이기 때문이다(아래).
 
-⚠ **콜드 백업에는 아직 들어 있지 않다 — 운영자 결정 자리다.** 실측(2026-10-09):
+⚠ **아래 실측은 「켜기 전」의 상태 기록이다(2026-10-09, 켜기 직전).** 왜 `COLD_DATA_DIR`
+하나만 바꾸면 안 되는지를 설명하므로 남겨 둔다 — **실제로 어떻게 켰는지는 아래 ✅ 절**이다:
 - 래퍼 `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본
   `~/.local/state/tos/paper-data`)의 **직접 자식**만 훑고 `A0[0-9][0-9][0-9][0-9]` 에 맞는
   디렉터리만 잎으로 센다. 나머지는 `STRAY` 경고 한 줄이다. **`~/.local/state/tos/*` 를
@@ -1097,7 +1104,36 @@ genesis 전 부재가 조용한 rc 0 이 아니라 refused 로 난다.
   그 파일 자체는 tenant 실행이 건드리지 않는다(기준 파일은 읽기 전용이고, tenant 실행은
   **자기 `COLD_CONFIG_DIR`** 의 기준 파일을 쓴다). ⚠ 위 셋을 함께 바꾸지 않으면 **충돌한다**
   — 초판이 여기에 「충돌 없음」이라고 적었는데 그것은 `COLD_DATA_DIR` 만 비교한 결과였다.
-- ⚠ 위 ops·cold 디렉터리도 **아직 만들지 않았다**(이 절은 지정이고 생성이 아니다).
+##### ✅ 켰다 — 운영자 2026-10-09 23:28 KST (실측 2026-10-10, 읽기 전용)
+
+위 ⛔·⚠ 문단들이 「운영자 결정 자리」로 적던 것이 결정됐다. **호스트 상태**(만든 것은
+운영자이고, 이 절은 기록이다):
+
+| 무엇 | 실측 |
+| --- | --- |
+| `~/.local/state/tos/cp3-setup-d-{long,short}-ops` | **0700**, 각각 `evidence_cold_backup.yaml` **0600** 한 개 |
+| `~/.local/state/tos/cp3-setup-d-{long,short}-cold` | **0700**, `backups`·`archives`·`verify` 세 하위 **0700** |
+| 그 `evidence_cold_backup.yaml` 의 세 경로 | 전부 자기 tenant 콜드 부모 아래 절대경로 리터럴 — 즉 `COLD_ROOT` 가 `cp3-setup-d-{long,short}-cold` 로 유도된다(위 표대로) |
+| `minimum_free_bytes` | `53687091200`(= 50 GiB, 바이트 정수 — 상주와 같은 값) |
+
+**크론 두 줄 등록됨**(`crontab -l | grep cp3-setup-d` → 2행, 평일만 `1-5`):
+
+```
+20 18 * * 1-5  COLD_DATA_DIR=…/cp3-setup-d-long-data  COLD_CONFIG_DIR=…/cp3-setup-d-long-ops  COLD_TARGET_BORN_ON=2026-10-12 … # cold-backup-cp3-long
+40 18 * * 1-5  COLD_DATA_DIR=…/cp3-setup-d-short-data COLD_CONFIG_DIR=…/cp3-setup-d-short-ops COLD_TARGET_BORN_ON=2026-10-12 … # cold-backup-cp3-short
+```
+
+셋을 함께 지정했으므로 위 ⛔ 문단이 경고하던 **상주 보관소와의 섞임은 일어나지 않는다**
+(18:20·18:40 로 야간 상주 실행과도 시각이 갈린다).
+
+⛔ **결과 — 2026-10-12 부터 매일 밤 거부가 난다.** `COLD_TARGET_BORN_ON` 이 **2026-10-12**
+인데 tenant data dir 의 genesis 는 ③ 을 기다리므로(위), 그날부터 래퍼는 부모 부재를
+「아직 아님」이 아니라 **「없어진 대상」**으로 읽는다 — `cold-backup-nightly.sh:335` 의
+`abort_refused` 가 **종료코드 1** 로 끝내고 **텔레그램 REFUSED 한 줄**을 보낸다(`:233-243`).
+10-11 까지는 같은 부재가 PRE-GENESIS(rc 0 · 텔레그램 한 줄)다(`:327-334`).
+⚠ **그러므로 10-12 부터의 그 야간 알림은 고장이 아니라 「③ 이 아직 없다」는 말이다.**
+없애려면 ③ → 첫 genesis 로 잎을 만들거나, 운영자가 `COLD_TARGET_BORN_ON` 을 미루거나
+두 크론 줄을 잠시 빼야 한다. **이 런북은 호스트를 바꾸지 않는다 — 셋 다 운영자 결정이다.**
 
 ⚠ **상주 세션 래퍼는 이 tenant 를 띄우지 못한다**(실측): `~/.config/kis-probes/
 tos-paper-session.sh` 의 렌더 출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는
@@ -1122,6 +1158,151 @@ SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의
 동일성** · 선언된 차이가 실제로 다른가 · 분류의 **전수성**(파일을 더하고 분류를 빼먹으면 red) ·
 분류됐지만 **어느 검사도 안 하는 이름이 없는가** · `release.yaml` 은 실패 메시지가 「두
 트리에서 같은 PR 에 재도출하라」고 말하도록 **따로** 단언한다.
+
+#### 7.2-c CP-3 tenant 부팅 증명 — **스크래치에서 손으로 1회** (코드 2026-10-10 · 실행 미착수)
+
+③(실시간 15 필드 생산자)이 없는 동안 tenant 배선을 한 번 관통시켜 보는 절차다. 계획
+`docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §2.5 · §2.6 · §5 3(PR-C).
+**§7.2-b 의 지정된 durable set 에는 쓰지 않는다** — 그 네 디렉터리의 첫 genesis 는 ③ 의
+실데이터다. 여기서 쓰는 것은 **스크래치 data dir 하나**이고, 세션도 **한 번**이다. cron 에
+넣지 않는다(첫 실제 세션은 ③ 뒤 운영자 결정).
+
+**⚠ 무엇을 증명하고 무엇을 증명하지 않는가 — 과장하지 않는다.**
+증명하는 것은 **배선**이다: 렌더(`journal.mode: external`) → 활성화 → 전략 로더 → 열다섯
+필드 **선언** → 결정 경로 → 거부. 증명하지 **않는** 것은 **필드 소비**다.
+tenant 트리의 `critical_input_policy.yaml::max_age_ms` 는 **800** 이고(§7.2-b 가 가리키는
+운영자 결정 2026-10-09), `max_age_ms` 와 커널 시간 경로는 **같은 양**(`now_ms - as_of_ms`)을
+잰다. 도구가 `as_of_ms` 를 **쓰는 시각**으로 찍어도 `_derive_field_state` 가 필드마다
+`(UNKNOWN, "stale")` 를 돌려주고, 커널의 UNKNOWN 바닥이 그 키들을 떨어뜨려 R1 의 AND 가
+거짓 → NO_ACTION → 송신 0 이다(fail-closed).
+
+⛔ **「공산이 크다」가 아니라 구조상 확정이다(초판의 약한 표현을 정정 — PR #892 리뷰 LOW).**
+이 절차에서 쓰기와 첫 평가 사이에는 **가드 · 렌더 · 부팅 · 리플레이**가 들어간다. 렌더만
+해도 다섯 digest 도출과 스테이징 스왑이고, 부팅 리플레이는 이력에 비례해 커진다(§7.3 7 의
+600 s 천장이 그래서 있다). **초 단위**가 800 ms 를 넘지 않을 길이 없다. 그러므로 기대 결말은
+「부팅 성공 · 정책 결속 다섯 줄 · 관측 1건 · **열다섯 전부 STALE**」이다. 상주 렌더의 부팅
+증명 관측이 `_JOURNAL_AGE_MS` 1000 > 800 때문에 **언제나** STALE 인 것과 같은 모양이고
+(아래 §5 ④ 와 같은 절의 STALE 문단), 계획 §2.5 의 「15 필드 **소비**」라는 표현은 **PR #887
+에서 하향**됐다. **소비를 보려면 부팅 뒤에 행을 덧붙이는 경로가 필요한데 그것은 만들지
+않았다**(계획 §2.5 의 PR-C 선택: 지금 만들면 ③ 이전에 두 번째 생산자가 생긴다). 그래서
+「STALE 이냐 아니냐」는 이 절차가 답할 질문이 **아니다** — 아래 「실행 기록」은 STALE 이
+실제로 그렇게 나왔는지를 **확인**해 적는 자리이고, 열린 질문은 ③ 으로 넘어간다.
+
+**도구 둘 · 가드 하나.**
+
+| 무엇 | 자리 |
+| --- | --- |
+| 부팅 증명 저널(한 행, 열다섯 필드, 쓰는 시각 `as_of_ms`) | `tools/tos_cp3/bootproof_journal.py` |
+| 실행 템플릿(렌더 → 부팅 → 정지 → 증거 요약) | `tools/tos_cp3/runners/run_tenant_session.sh` |
+| data-dir 가드(두 진입점 **공용**) | `tools/tos_cp3/bootproof_guard.py` |
+
+값은 B1a 실측 창의 **한 봉**을 빌린다. ⚠ **그 봉은 full 계약 `101S6000` 의 것이다** —
+부팅 증명 행은 소비되려면 렌더된 **mini** 종목 코드를 달아야 하므로 full→mini **재표지**다.
+숨기지 않는다: `source_id` 가 `cp3-bootproof-synthetic:101S6000:<원 raw_event_id>` 다.
+⚠ 그 표지는 **출처 표시이고 판정 기준이 아니다** — 판정은 아래 **allowlist** 가 한다.
+**결과를 시장 사실로 읽지 않는다.**
+
+**가드가 하는 일 — allowlist · fail-closed** (계획 §2.5 의 ⛔⛔ 문단, PR #892 리뷰 HIGH 로
+초판의 denylist 를 뒤집은 것):
+
+1. **상주 durable set `~/.local/state/tos/paper-data` 는 어떤 저널로도 대상이 아니다**(무조건).
+2. **모든 행**의 `source_id` 가 `APPROVED_REAL_PRODUCER_PREFIXES` 의 접두면 §7.2-b 의 지정된
+   tenant 저장소가 허용된다. ⛔ **그 목록은 ③ 이 생길 때까지 비어 있다** — 그래서 **오늘은
+   스크래치 밖 부팅이 전부 거부된다.** ③ 의 PR 이 자기 접두를 더하는 것이 첫 실제 genesis 가
+   가능해지는 순간이다.
+3. 그 밖에는 data dir 이 스크래치 루트 `~/.local/state/tos/scratch/` **아래**(양쪽 `resolve()`)
+   의 **새 빈 디렉터리**여야 하고, 스크래치 루트 자신이 심볼릭 링크가 아니어야 하며, 경로에
+   `cp3-setup-d-*-data`·`paper-data` 같은 durable-set 이름 조각이 없어야 한다.
+
+초판이 **왜** 틀렸는지도 적어 둔다(같은 모양을 또 만들지 않기 위해): 초판은 「합성 표지가
+붙은 저널」만 스크래치에 가뒀는데, **오늘 이 호스트의 저널은 전부 합성이고 대부분 그 표지를
+달고 있지 않다.** 상주 렌더의 `~/.config/tos/paper-config/bootproof_journal.jsonl`
+(`tos-paper-bootproof-render` · `tos-paper-resident-session`)을 근월물로 바꿔 지정 dir 에
+겨누면 가드가 **「ok」를 찍었다**(리뷰어 실측).
+
+⚠ 도구의 `--out` 도 스크래치 아래여야 한다 — 이 도구는 출력 파일을 **통째로 원자적 교체**
+하므로, 제약이 없으면 위의 **살아 있는 상주 저널**을 합성 한 행으로 덮어쓴다(리뷰 LOW).
+
+**절차 (분리 워크트리 · `origin/main` · clean · 모의 전용).**
+
+```bash
+# 0) 분리 워크트리 — 템플릿이 clean·detached·origin/main 조상을 스스로 확인하고 아니면 ABORT 한다.
+MAIN=/home/deploy/project/kis_unified_sts
+WT=~/.local/state/tos/measure/wt-cp3-bootproof   # 상주 래퍼의 wt-paper 옆, 그 자리는 건드리지 않는다
+git -C "$MAIN" fetch origin && git -C "$MAIN" worktree prune
+git -C "$MAIN" worktree add --detach "$WT" origin/main
+cp -p "$MAIN/.env.mock" "$WT/.env.mock" && chmod 600 "$WT/.env.mock"   # 운영자 2026-10-01
+
+# 1) 계약월 — 템플릿이 쓰는 것과 **같은 한 줄**. 저널도 같은 코드를 달아야 하므로 먼저 본다.
+INSTRUMENT=$(cd "$WT" && PYTHONPATH="$WT" "$MAIN/.venv/bin/python" -c \
+  'from shared.instruments.futures import get_front_month_code; print(get_front_month_code(product="mini"))')
+echo "$INSTRUMENT"
+
+# 2) 스크래치 자리 — 부모만 만든다. 잎(<종목>)은 genesis 의 몫이다.
+SESSION=~/.local/state/tos/scratch/cp3-bootproof-$(date +%Y%m%d)
+( umask 077; mkdir -p "$SESSION" )
+
+# 3) 저널 한 행. --raw-event-id 는 기본값이 없다 — 빌린 봉이 이 행의 출처 전부이기 때문이다.
+#    서브셸로 둔다 — 이 절차는 운영자 셸의 cwd 를 바꾸지 않는다.
+( cd "$WT" && PYTHONPATH="$WT" "$MAIN/.venv/bin/python" -m tools.tos_cp3.bootproof_journal \
+  --fields ~/.local/state/tos/measure/cp3-short-parity-run1/b1a/fields.jsonl \
+  --raw-event-id '101S6000:1m:20251208T092000+0900' \
+  --instrument "$INSTRUMENT" \
+  --out "$SESSION/journal.jsonl" \
+  --data-dir "$SESSION/data/$INSTRUMENT" )
+
+# 4) 세션. 인스턴스 값은 전부 env 이고 **기본값이 하나도 없다** — 지정 경로는 이 런북에만 있다.
+TENANT_LOG=$SESSION/session.log \
+TENANT_PYTHON=$MAIN/.venv/bin/python \
+TENANT_TREE=cp3-setup-d-long \
+TENANT_DIRECTION=LONG \
+TENANT_RENDER_OUT=$SESSION/config \
+TENANT_DATA_PARENT=$SESSION/data \
+TENANT_JOURNAL=$SESSION/journal.jsonl \
+TENANT_STOP_AT='+5 minutes' \
+TENANT_ENV_FILE=$WT/.env.mock \
+TENANT_CUSTODY_ROOT=~/.local/state/tos/paper-custody \
+TENANT_ENVIRONMENT_LABEL=paper \
+  "$WT/tools/tos_cp3/runners/run_tenant_session.sh"
+```
+
+- `TENANT_ENV_FILE` 은 **basename 이 `.env.mock` 이어야** 한다 — 렌더러의 같은 가드를 한 걸음
+  앞에서 되풀이하므로, 실전 자격증명 파일로는 이 템플릿을 인스턴스화할 수 없다.
+- `TENANT_CUSTODY_ROOT` 는 §1 의 커스터디 루트이고 매니페스트의 `environment_label` 이
+  `TENANT_ENVIRONMENT_LABEL` 과 **바이트 일치**해야 한다(아니면 부팅이 거부한다).
+- `TENANT_ENVIRONMENT_LABEL` 은 **렌더된 트리의 `critical_input_policy.yaml::environment` 와도**
+  같아야 하고, 템플릿이 렌더 직후 대조한다(PR #892 리뷰 LOW). critical-input 로더는 그 둘을
+  **대조하지 않으므로**, 어긋난 라벨은 조용히 부팅하고 그 세션의 모든 스냅샷·캡슐 covered
+  content 에 틀린 환경이 박힌다 — append-only 저장소에 **틀린 증거**가 남는 것이다.
+- **정지 경로 둘 — 무엇이 덮이고 무엇이 안 덮이는지 정확히 적는다.**
+  ① 템플릿이 **TERM/INT/HUP 를 받으면** 자식 `run` 에 SIGTERM → 120 s → SIGKILL 을 적용한다
+  (상주 드라이버와 같은 블록). 그래서 Ctrl-C 나 `kill` 로 멈춰도 `run` 이 고아로 남지 않는다.
+  그 `trap` 은 `run` 을 띄우기 **전에** 걸린다 — 띄운 뒤에 걸면 그 사이에 도착한 신호가
+  기본 처분으로 템플릿만 죽이고 자식을 남긴다.
+  ② ⚠ **그러나 trap 은 템플릿이 살아서 볼 수 있는 신호만 덮는다.** 템플릿에 `SIGKILL` 이
+  가거나 호스트가 죽으면 핸들러는 **돌지 않는다**. 그래서 자식은 `timeout` 아래에서 뜬다 —
+  `timeout --kill-after=120s <정지창+120>s`. 별도 감독 프로세스의 자기 알람이므로 템플릿이
+  한마디도 못 하고 죽어도 `run` 은 그 천장에서 끝난다. 천장이 「정지창 + 120 s」인 이유는
+  ① 의 우아한 정지가 진행 중일 때 외부 알람이 **먼저 끼어들지 않게** 하기 위해서다.
+  ⛔ 덮이지 **않는** 것: 템플릿과 `timeout` 이 **둘 다** SIGKILL 되는 경우. 그때는 `run` 이
+  정말 고아가 되므로, 손으로 확인한다 — `pgrep -af "tos_runtime.compose.cli"`.
+- `TENANT_DIRECTION` 은 그 트리의 `RENDER.yaml::direction.value` 와 **같아야** 한다 — tenant
+  트리는 `declared` 모드라 렌더가 방향을 치환하지 않고 **대조**한다(계획 §2.3).
+- 템플릿은 마지막에 그 durable set 의 `snapshots` · `entries` 수와 **kind 별 분포**를 찍는다.
+  틱 소비 확인은 로그가 아니라 **지속 저장소**로 한다(§4).
+
+**정리.** 끝나면 워크트리를 접는다(`git -C "$MAIN" worktree remove "$WT"` → `worktree prune`).
+`$SESSION` 은 스크래치이므로 콜드 백업 대상이 아니고(§7.2-b 의 래퍼는 `paper-data` 의 직접
+자식만 훑는다), 남겨 둘 이유가 없으면 지운다. **지정된 tenant durable set 은 이 절차로 생기지
+않는다.**
+
+**실행 기록 — ⛔ 아직 돌리지 않았다 (2026-10-10).** 돌린 뒤 §7.9 형식으로 여기에 적는다:
+출하본 sha256 셋(`run_tenant_session.sh` · `bootproof_journal.py` · `bootproof_guard.py`) ·
+세션 디렉터리 · rc · **정책 결속 다섯 줄의 유무**(이것이 이 절차의 본 주장이다) ·
+`snapshots` 와 `entries` 델타 · kind 별 분포 · 그리고 **열다섯이 STALE 로 떨어진 것이
+맞는지의 확인**(위 ⛔ 대로 구조상 그래야 한다 — 아니었다면 그쪽이 소견이다).
+⚠ **「소비되는가」는 이 절차가 답할 질문이 아니다** — 답하려면 부팅 뒤에 행을 덧붙이는 경로가
+있어야 하고 그것은 만들지 않았다. 그 질문은 ③ 의 것이다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 

@@ -25,9 +25,25 @@ Contents:
   imports neither ``tos`` nor ``produce_fields``: its claim is about three
   files, so it must stay runnable after CP-4 removes the band math behind
   them.
+* :mod:`tools.tos_cp3.bootproof_journal` — the tenant boot-proof journal: ONE
+  row carrying a chosen B1a bar's fifteen fields, re-labelled onto the rendered
+  mini contract and stamped with the WRITE time. It proves the tenant wiring
+  before ③ (the real-time producer) exists; it does not prove field
+  consumption.
+* :mod:`tools.tos_cp3.bootproof_guard` — the data-dir refusal those boot proofs
+  share with ``runners/run_tenant_session.sh``, as an **allowlist**: the
+  resident durable set is never a target; the designated tenant sets open only
+  when EVERY row's ``source_id`` is from an approved real producer (that list is
+  empty until ③ lands); everything else must be a fresh, empty directory under
+  the scratch root. Stdlib-only, so the shell template can call it as a guard.
+* ``tools/tos_cp3/runners/run_tenant_session.sh`` — the tracked tenant session
+  template (render → boot → stop), with the same checkout guards as
+  ``tools/broker_probes/runners/run_p_ca.sh``, sourced from that file.
 
-Plan: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a,
-B2, B3) and §5 steps 1-2.
+Plans: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a,
+B2, B3) and §5 steps 1-2; ``docs/plans/2026-10-09-tos-cp3-tenant-render-and-
+boot-path-plan.md`` §2.5-§2.6 (the boot-proof pair). Procedure: runbook
+``docs/runbooks/tos-paper-boot.md`` §7.2-c.
 """
 
 from __future__ import annotations

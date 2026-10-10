@@ -557,6 +557,32 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    남은 ④ 는 **부팅 증명 도구 + 실행 템플릿**(계획 PR-C, §2.5·§2.6)과 **첫 실제 genesis**
    (③ 뒤 운영자 결정)다. 지정된 tenant data dir 에는 아직 아무것도 쓰지 않았다.
 
+   **④ 는 그래서 재설계됐고 세 PR 로 나간다** —
+   `docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §5:
+   **PR-A** 렌더러 일반화(규칙 표 → 트리마다 커밋되는 `RENDER.yaml`, 상주 산출 바이트 동일) ·
+   **PR-B** tenant 매니페스트 + 전략 파일 YAML 별칭 · **PR-C** 부팅 증명 도구와 실행 템플릿.
+   **PR-C 코드 착지 2026-10-10**: `tools/tos_cp3/bootproof_journal.py`(열다섯 필드 한 행을
+   **쓰는 시각** `as_of_ms` 로 — 위 ⚠⚠ 의 ③ 요구를 이 한 행에 먼저 적용한 것) ·
+   `tools/tos_cp3/runners/run_tenant_session.sh`(선례 `run_p_ca.sh` 의 가드 · 인스턴스 값은
+   전부 env, 기본값 0개) · 둘이 공유하는 data-dir 가드 `tools/tos_cp3/bootproof_guard.py`.
+   ⛔ **그 가드는 allowlist 이고 fail-closed 다**(계획 §2.5 의 ⛔⛔ 문단 — PR #892 리뷰 HIGH 가
+   초판의 「합성 표지를 단 저널만 가둔다」를 뒤집었다. 오늘 이 호스트의 저널은 **전부 합성인데
+   대부분 그 표지가 없어서**, 표지 기준 규칙은 상주 렌더의 저널을 지정된 저장소로 통과시켰다):
+   ① 상주 `paper-data` 는 어떤 저널로도 대상이 아니다 · ② **모든 행**의 `source_id` 가
+   `APPROVED_REAL_PRODUCER_PREFIXES` 접두일 때만 지정된 tenant 저장소가 열린다 ·
+   ③ 그 밖에는 스크래치 루트 아래 새 빈 디렉터리여야 한다.
+   **그 목록은 ③ 이 생길 때까지 비어 있고, 거기에 접두를 더하는 것이 ③ PR 의 일이다** — 즉
+   `cp3-setup-d-*-data` 의 첫 genesis 는 기계적으로 ③ 이후다.
+   ⚠ **그 부팅 증명이 증명하는 것은 배선이지 필드 소비가 아니다**(계획 §2.5 는 PR #887 에서
+   하향됐다): 쓰기와 첫 평가 사이에 가드·렌더·부팅·리플레이가 들어가므로 간격은 **초 단위**이고,
+   `max_age_ms` 800 에 대해 열다섯이 STALE 이 되는 것은 공산이 아니라 **구조상 확정**이다
+   (PR #892 리뷰 LOW 로 「likely」를 정정). 소비까지 보려면 부팅 **뒤에** 행을 덧붙이는 경로가
+   필요한데 그것은 만들지 않았다 — ③ 이전에 두 번째 생산자를 만들지 않기 위해서다.
+   **실행은 아직이다** — PR-B 머지 뒤 스크래치 data dir 에서 1 세션, 절차와 기록 자리는 런북
+   **§7.2-c**, 기록 형식은 §7.9.
+   ⚠ `safety_activation.yaml::members` 는 여전히 `null` 이고, 활성화 재검증은 그 1 세션이
+   처음으로 실측하는 것이다.
+
    ✅ **정책 식별자 충돌은 ④ 로 넘기지 않고 같은 PR 에서 닫았다(2026-10-09 리뷰 L4).** 초판은
    「tenant `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데
    내용이 달라 digest 가 다르고, `(kind, member_id, generation)` 만으로는 두 문서를 구별할 수 없다」를
