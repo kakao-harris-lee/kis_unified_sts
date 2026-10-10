@@ -161,8 +161,13 @@ B1a 는 `--data-root` 아래 Parquet 저장소 배치만 읽는다(`produce_fiel
 **append-only** 로 쓴다(v3 재리뷰 M1):
 
 - 시드 일자들은 기동 시 하루씩 한 번 쓴다.
-- 오늘은 **봉이 동결될 때마다 그 봉 하나를 자기 part 파일**로 쓴다 — 임시 파일 + `os.replace`. 저장소의
-  `append_minute_bars` 가 원자적이면 그것을 쓰고, 아니면 PR-2 가 감싼다(실측으로 정한다).
+- 오늘은 **봉이 동결될 때마다 그 봉 하나를 자기 part 파일**로 쓴다. 저장소의 `append_minute_bars` 는 최종 이름
+  `part-<uuid>.parquet` 에 바로 `to_parquet` 하므로 원자적이지 **않다** — PR-2 가 감싼다: `.part-<uuid>.tmp` 로 쓰고
+  `os.replace` 로 `part-<uuid>.parquet`. 임시 이름은 `*.parquet` 가 아니어야 한다 — B1a `discover_input_files` 의 glob 과
+  저장소 `_files` 의 `rglob("*.parquet")` 가 크래시로 남은 반쪽 파일을 읽지 않게(v4 재리뷰 L1).
+- **재시작은 세션 dir 을 재사용하지 않는다**(v4 재리뷰 L2): append-only 라 같은 dir 로 재기동하면 시드와 동결 봉이 중복
+  기록되고 B1a 의 중복 시각 거부로 그 세션 입력 전체를 잃는다. 생산자는 세션 dir 에 기존 파티션이 있으면 기동을
+  거부하고, 생산자 ABORT 는 그 세션의 끝이다(러너가 새 세션 dir 로 다시 시작하는 것은 운영자 결정).
 - ⛔ `replace_minute_day` 는 쓰지 않는다: 그 경로는 일자 파티션을 `rmtree` 한 뒤 비원자적으로 다시 쓰므로 매 분
   삭제 창이 생기고, 그 창의 크래시가 바로 이 절이 막으려는 입력 소실이다. 이중 기록은 B1a `_bar_lookup` 의 중복
   시각 검사가 시끄럽게 거부한다.
@@ -265,3 +270,6 @@ v3 재리뷰(2026-10-10): v2 처분 전부 종결(러너 SIGKILL 은 아래 보�
 | L1 | 달력 동등성 테스트가 방화벽상 순환 | §3.2 커밋 픽스처 경첩(#892 꼴) |
 | L2 | 달력은 2026 만 | §3.2 지평 초과 시 기동 전 명시 거부 |
 | — | 러너 SIGKILL 시 생산자 무감독 | §3.5 생산자도 `timeout` 상한 |
+
+v4 재리뷰(2026-10-10): **APPROVE**(Claude 측 레인, 교차 모델 아님) — v3 처분 전부 종결, LOW 2 를 v5 에서 반영:
+L1 `append_minute_bars` 비원자 확정 → `.tmp` 임시 이름 + `os.replace` · L2 재시작 시 세션 dir 재사용 금지(§3.6).
