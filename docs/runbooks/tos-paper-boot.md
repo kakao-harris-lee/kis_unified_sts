@@ -1001,12 +1001,16 @@ find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
 `~/.local/state/tos/paper-data` 는 2026-10-04 현재 **아직 없고**(실측) genesis 는 10-06 이라
 패치가 먼저다.
 
-#### 7.2-b CP-3 tenant durable set — **지정만 했다 (2026-10-09) · 디렉터리는 없다**
+#### 7.2-b CP-3 tenant durable set — **data dir 은 아직 없다 · ops/cold 는 2026-10-09 에 생겼다**
 
 §7.2 의 표는 **상주 배포**의 것이다. CP-3 첫 tenant(Setup D)는 kickoff 결정 3·4 대로
 **방향마다 따로** 돌므로 자기 durable set 과 자기 렌더 산출물을 갖는다. 이 절은 그
-**이름을 지정**하는 자리이고, 아래 어느 디렉터리도 **아직 만들지 않았다** — genesis 는
-그 잎의 **첫 부팅**이다(§7.6 과 같은 규율; CP-3 kickoff §5 3 ④ 는 미착수).
+**이름을 지정**하는 자리다. **durable set 부모와 잎(`cp3-setup-d-*-data`)과 렌더된 설정
+(`~/.config/tos/cp3-setup-d-*-config`)은 아직 없다** — genesis 는 그 잎의 **첫 부팅**이고
+(§7.6 과 같은 규율) 그 부팅은 ③ 을 기다린다(§7.2-c).
+
+✅ **그러나 뒤 두 열(ops·cold)은 더 이상 「없다」가 아니다 — 운영자가 2026-10-09 23:28 KST 에
+만들었다(실측 2026-10-10).** 아래 ⚠ 문단들이 「아직 만들지 않았다」로 적던 상태가 그날 바뀌었다.
 
 | 배포 | durable set **부모** | **잎** | 렌더된 설정 | 콜드 백업 **ops**(`COLD_CONFIG_DIR`) | 콜드 **보관소 부모**(`COLD_ROOT`, 유도) |
 | --- | --- | --- | --- | --- | --- |
@@ -1014,8 +1018,10 @@ find ~/.local/state/tos/paper-sessions -name 'render.log' -perm -004 | wc -l
 | CP-3 tenant **LONG** (`config/tos_runtime/cp3-setup-d-long/`) | `~/.local/state/tos/cp3-setup-d-long-data` | `cp3-setup-d-long-data/<종목>` | `~/.config/tos/cp3-setup-d-long-config` | `~/.local/state/tos/cp3-setup-d-long-ops` | `~/.local/state/tos/cp3-setup-d-long-cold` |
 | CP-3 tenant **SHORT** (`config/tos_runtime/cp3-setup-d-short/`) | `~/.local/state/tos/cp3-setup-d-short-data` | `cp3-setup-d-short-data/<종목>` | `~/.config/tos/cp3-setup-d-short-config` | `~/.local/state/tos/cp3-setup-d-short-ops` | `~/.local/state/tos/cp3-setup-d-short-cold` |
 
-⚠ 뒤 두 열은 **콜드 백업을 켤 때 필요한 지정**이고, 켜는 것 자체는 운영자 결정이다(아래 ⛔
-문단). `COLD_ROOT` 는 환경변수가 아니라 그 ops 디렉터리의 `evidence_cold_backup.yaml` 세
+⚠ 뒤 두 열은 **콜드 백업을 켤 때 필요한 지정**이었고, **운영자가 2026-10-09 에 그대로
+켰다** — 아래 ✅ 절이 그 실측이다(그러므로 이 절의 「켜는 것은 운영자 결정이다」류 문장은
+**이미 내려진 결정**을 설명하는 것으로 읽는다). `COLD_ROOT` 는 환경변수가 아니라 그 ops
+디렉터리의 `evidence_cold_backup.yaml` 세
 경로가 **공유하는 부모**로 유도되므로, tenant 보관소를 가르는 유일한 수단은 그 세 경로를
 tenant 콜드 부모 아래에 적는 것이다.
 
@@ -1032,7 +1038,8 @@ tenant 콜드 부모 아래에 적는 것이다.
 콜드 백업 래퍼에게 「계약월 잎들의 부모」로 보이고, 그 래퍼의 잎 열거는 `A0####` 패턴
 하나뿐이기 때문이다(아래).
 
-⚠ **콜드 백업에는 아직 들어 있지 않다 — 운영자 결정 자리다.** 실측(2026-10-09):
+⚠ **아래 실측은 「켜기 전」의 상태 기록이다(2026-10-09, 켜기 직전).** 왜 `COLD_DATA_DIR`
+하나만 바꾸면 안 되는지를 설명하므로 남겨 둔다 — **실제로 어떻게 켰는지는 아래 ✅ 절**이다:
 - 래퍼 `~/.config/kis-probes/cold-backup-nightly.sh` 는 `COLD_DATA_DIR`(기본
   `~/.local/state/tos/paper-data`)의 **직접 자식**만 훑고 `A0[0-9][0-9][0-9][0-9]` 에 맞는
   디렉터리만 잎으로 센다. 나머지는 `STRAY` 경고 한 줄이다. **`~/.local/state/tos/*` 를
@@ -1097,7 +1104,36 @@ genesis 전 부재가 조용한 rc 0 이 아니라 refused 로 난다.
   그 파일 자체는 tenant 실행이 건드리지 않는다(기준 파일은 읽기 전용이고, tenant 실행은
   **자기 `COLD_CONFIG_DIR`** 의 기준 파일을 쓴다). ⚠ 위 셋을 함께 바꾸지 않으면 **충돌한다**
   — 초판이 여기에 「충돌 없음」이라고 적었는데 그것은 `COLD_DATA_DIR` 만 비교한 결과였다.
-- ⚠ 위 ops·cold 디렉터리도 **아직 만들지 않았다**(이 절은 지정이고 생성이 아니다).
+##### ✅ 켰다 — 운영자 2026-10-09 23:28 KST (실측 2026-10-10, 읽기 전용)
+
+위 ⛔·⚠ 문단들이 「운영자 결정 자리」로 적던 것이 결정됐다. **호스트 상태**(만든 것은
+운영자이고, 이 절은 기록이다):
+
+| 무엇 | 실측 |
+| --- | --- |
+| `~/.local/state/tos/cp3-setup-d-{long,short}-ops` | **0700**, 각각 `evidence_cold_backup.yaml` **0600** 한 개 |
+| `~/.local/state/tos/cp3-setup-d-{long,short}-cold` | **0700**, `backups`·`archives`·`verify` 세 하위 **0700** |
+| 그 `evidence_cold_backup.yaml` 의 세 경로 | 전부 자기 tenant 콜드 부모 아래 절대경로 리터럴 — 즉 `COLD_ROOT` 가 `cp3-setup-d-{long,short}-cold` 로 유도된다(위 표대로) |
+| `minimum_free_bytes` | `53687091200`(= 50 GiB, 바이트 정수 — 상주와 같은 값) |
+
+**크론 두 줄 등록됨**(`crontab -l | grep cp3-setup-d` → 2행, 평일만 `1-5`):
+
+```
+20 18 * * 1-5  COLD_DATA_DIR=…/cp3-setup-d-long-data  COLD_CONFIG_DIR=…/cp3-setup-d-long-ops  COLD_TARGET_BORN_ON=2026-10-12 … # cold-backup-cp3-long
+40 18 * * 1-5  COLD_DATA_DIR=…/cp3-setup-d-short-data COLD_CONFIG_DIR=…/cp3-setup-d-short-ops COLD_TARGET_BORN_ON=2026-10-12 … # cold-backup-cp3-short
+```
+
+셋을 함께 지정했으므로 위 ⛔ 문단이 경고하던 **상주 보관소와의 섞임은 일어나지 않는다**
+(18:20·18:40 로 야간 상주 실행과도 시각이 갈린다).
+
+⛔ **결과 — 2026-10-12 부터 매일 밤 거부가 난다.** `COLD_TARGET_BORN_ON` 이 **2026-10-12**
+인데 tenant data dir 의 genesis 는 ③ 을 기다리므로(위), 그날부터 래퍼는 부모 부재를
+「아직 아님」이 아니라 **「없어진 대상」**으로 읽는다 — `cold-backup-nightly.sh:335` 의
+`abort_refused` 가 **종료코드 1** 로 끝내고 **텔레그램 REFUSED 한 줄**을 보낸다(`:233-243`).
+10-11 까지는 같은 부재가 PRE-GENESIS(rc 0 · 텔레그램 한 줄)다(`:327-334`).
+⚠ **그러므로 10-12 부터의 그 야간 알림은 고장이 아니라 「③ 이 아직 없다」는 말이다.**
+없애려면 ③ → 첫 genesis 로 잎을 만들거나, 운영자가 `COLD_TARGET_BORN_ON` 을 미루거나
+두 크론 줄을 잠시 빼야 한다. **이 런북은 호스트를 바꾸지 않는다 — 셋 다 운영자 결정이다.**
 
 ⚠ **상주 세션 래퍼는 이 tenant 를 띄우지 못한다**(실측): `~/.config/kis-probes/
 tos-paper-session.sh` 의 렌더 출력 경로 `CONFIG=/home/deploy/.config/tos/paper-config` 는
@@ -1238,8 +1274,18 @@ TENANT_ENVIRONMENT_LABEL=paper \
   같아야 하고, 템플릿이 렌더 직후 대조한다(PR #892 리뷰 LOW). critical-input 로더는 그 둘을
   **대조하지 않으므로**, 어긋난 라벨은 조용히 부팅하고 그 세션의 모든 스냅샷·캡슐 covered
   content 에 틀린 환경이 박힌다 — append-only 저장소에 **틀린 증거**가 남는 것이다.
-- 템플릿은 TERM/INT/HUP 를 받으면 자식 `run` 에 SIGTERM → 120 s → SIGKILL 을 그대로 적용한다
-  (상주 드라이버와 같은 블록). Ctrl-C 로 멈춰도 `run` 이 고아로 남지 않는다.
+- **정지 경로 둘 — 무엇이 덮이고 무엇이 안 덮이는지 정확히 적는다.**
+  ① 템플릿이 **TERM/INT/HUP 를 받으면** 자식 `run` 에 SIGTERM → 120 s → SIGKILL 을 적용한다
+  (상주 드라이버와 같은 블록). 그래서 Ctrl-C 나 `kill` 로 멈춰도 `run` 이 고아로 남지 않는다.
+  그 `trap` 은 `run` 을 띄우기 **전에** 걸린다 — 띄운 뒤에 걸면 그 사이에 도착한 신호가
+  기본 처분으로 템플릿만 죽이고 자식을 남긴다.
+  ② ⚠ **그러나 trap 은 템플릿이 살아서 볼 수 있는 신호만 덮는다.** 템플릿에 `SIGKILL` 이
+  가거나 호스트가 죽으면 핸들러는 **돌지 않는다**. 그래서 자식은 `timeout` 아래에서 뜬다 —
+  `timeout --kill-after=120s <정지창+120>s`. 별도 감독 프로세스의 자기 알람이므로 템플릿이
+  한마디도 못 하고 죽어도 `run` 은 그 천장에서 끝난다. 천장이 「정지창 + 120 s」인 이유는
+  ① 의 우아한 정지가 진행 중일 때 외부 알람이 **먼저 끼어들지 않게** 하기 위해서다.
+  ⛔ 덮이지 **않는** 것: 템플릿과 `timeout` 이 **둘 다** SIGKILL 되는 경우. 그때는 `run` 이
+  정말 고아가 되므로, 손으로 확인한다 — `pgrep -af "tos_runtime.compose.cli"`.
 - `TENANT_DIRECTION` 은 그 트리의 `RENDER.yaml::direction.value` 와 **같아야** 한다 — tenant
   트리는 `declared` 모드라 렌더가 방향을 치환하지 않고 **대조**한다(계획 §2.3).
 - 템플릿은 마지막에 그 durable set 의 `snapshots` · `entries` 수와 **kind 별 분포**를 찍는다.

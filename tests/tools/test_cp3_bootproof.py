@@ -65,7 +65,7 @@ _FIXTURE_INSTRUMENT = "A05611"
 #: A stand-in for ③'s eventual prefix, used only where a test needs the allowlist
 #: to be non-empty. Production's own tuple is empty and
 #: :func:`test_the_allowlist_is_empty_until_the_real_producer_lands` pins that.
-_TEST_ALLOWLIST = ("tos-cp3-third-producer/",)
+_TEST_ALLOWLIST = ("tos-cp3-third-producer",)
 
 #: The ``source_id`` values the RESIDENT deployment actually writes — measured
 #: from ``~/.config/tos/paper-config/bootproof_journal.jsonl`` (5032 rows,
@@ -127,7 +127,7 @@ def _resident_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path
 
 def _allowlisted_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
     return _journal(
-        path, [_row(source_id=_TEST_ALLOWLIST[0] + "0.1.0", instrument=instrument)]
+        path, [_row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0", instrument=instrument)]
     )
 
 
@@ -189,14 +189,148 @@ def test_the_allowlist_is_empty_until_the_real_producer_lands() -> None:
 def test_an_empty_allowlist_marks_every_row_unapproved(
     tmp_path: Path, state: types.SimpleNamespace
 ) -> None:
-    """``str.startswith(())`` is False for every string, which is what makes the
-    empty allowlist fail closed with no second code path. Pinned here rather
-    than left as a stdlib corner the next reader has to know."""
+    """``any()`` over no prefixes is False, which is what makes the empty
+    allowlist fail closed with no second code path."""
     journal = _journal(
         tmp_path / "j.jsonl",
-        [_row(source_id="anything-at-all"), _row(source_id=_TEST_ALLOWLIST[0] + "x")],
+        [
+            _row(source_id="anything-at-all"),
+            _row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0"),
+        ],
     )
     assert bootproof_guard.unapproved_rows(journal) == (1, 2)
+
+
+#: The allowlist entry the boundary tests match against. Deliberately WITHOUT a
+#: trailing slash — the matcher appends the delimiter, and an entry that carries
+#: one is refused outright (see the shape tests).
+_BOUNDARY_PREFIX = "tos-cp3-live"
+
+
+@pytest.mark.parametrize(
+    ("source_id", "approved"),
+    [
+        # Accepted: the name itself, and the name + delimiter + anything. B1a's
+        # own source_id already has this shape ("tos-cp3-b1a/0.1.0").
+        ("tos-cp3-live", True),
+        ("tos-cp3-live/1.0", True),
+        ("tos-cp3-live/1.0/extra", True),
+        # Refused: a bare `startswith` would approve every one of these.
+        ("tos-cp3-live-EVIL", False),
+        ("tos-cp3-liveX", False),
+        ("tos-cp3-live.evil/1.0", False),
+        ("tos-cp3-liv", False),
+        ("evil/tos-cp3-live", False),
+    ],
+)
+def test_red_the_allowlist_requires_a_delimiter(
+    tmp_path: Path,
+    state: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    source_id: str,
+    approved: bool,
+) -> None:
+    """**Re-review LOW.** A producer name is a NAMESPACE, not a string prefix.
+
+    With a bare ``startswith``, an entry of ``tos-cp3-live`` approves
+    ``tos-cp3-live-EVIL`` — anyone who can pick a ``source_id`` picks one that
+    starts with an approved name and gets a permanent corpus. The separator is
+    what makes the boundary real, so the matcher requires ``== p`` or
+    ``p + "/"``.
+
+    Red proofs are the ``False`` rows: every one of them passes a bare
+    ``startswith``.
+    """
+    monkeypatch.setattr(
+        bootproof_guard, "APPROVED_REAL_PRODUCER_PREFIXES", (_BOUNDARY_PREFIX,)
+    )
+    journal = _journal(tmp_path / "j.jsonl", [_row(source_id=source_id)])
+    designated = state.designated / _FIXTURE_INSTRUMENT
+
+    assert bootproof_guard.unapproved_rows(journal) == (() if approved else (1,))
+    if approved:
+        require_scratch_rule(journal, designated)
+    else:
+        with pytest.raises(BootProofGuardRefused):
+            require_scratch_rule(journal, designated)
+
+
+@pytest.mark.parametrize(
+    ("bad_entry", "expected"),
+    [("", "EMPTY entry"), ("tos-cp3-live/", "ends with '/'")],
+)
+def test_red_a_malformed_allowlist_entry_is_refused_at_call_time(
+    tmp_path: Path,
+    state: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_entry: str,
+    expected: str,
+) -> None:
+    """An entry that cannot mean what it looks like is a refusal, not a silent
+    no-match.
+
+    ``""`` reads as "approve everything" and, under the delimiter rule, would in
+    fact match almost nothing — permissive-looking, restrictive-behaving, and
+    nobody finds out until a real genesis is refused for a reason the list does
+    not state. A trailing ``/`` matches nothing at all, because the matcher
+    appends the delimiter itself.
+    """
+    monkeypatch.setattr(
+        bootproof_guard, "APPROVED_REAL_PRODUCER_PREFIXES", (bad_entry,)
+    )
+    journal = _journal(tmp_path / "j.jsonl", [_row(source_id="anything")])
+
+    with pytest.raises(BootProofGuardRefused, match=expected):
+        bootproof_guard.unapproved_rows(journal)
+    with pytest.raises(BootProofGuardRefused, match=expected):
+        require_scratch_rule(journal, state.designated / _FIXTURE_INSTRUMENT)
+
+
+@pytest.mark.parametrize("bad_entry", ['""', '"tos-cp3-live/"'])
+def test_red_a_malformed_allowlist_entry_fails_at_import(
+    tmp_path: Path, bad_entry: str
+) -> None:
+    """The same shape check at IMPORT, which is where ③'s PR will be standing
+    when it adds its prefix.
+
+    A module that refuses to import is a louder failure than one that refuses at
+    call time, and this is the one that fires on a bad commit rather than on a
+    bad run. Exercised against a copy of the real source with the literal
+    swapped, so it cannot drift from the module under test.
+    """
+    import importlib.util
+
+    source = (_REPO_ROOT / "tools/tos_cp3/bootproof_guard.py").read_text("utf-8")
+    patched = source.replace(
+        "APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ()",
+        f"APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ({bad_entry},)",
+        1,
+    )
+    assert patched != source, "the literal this test patches has moved"
+    module_path = tmp_path / "patched_guard.py"
+    module_path.write_text(patched, encoding="utf-8")
+
+    spec = importlib.util.spec_from_file_location("patched_guard", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    with pytest.raises(Exception, match="APPROVED_REAL_PRODUCER_PREFIXES"):
+        spec.loader.exec_module(module)
+
+
+def test_the_real_module_imports_with_its_own_literal() -> None:
+    """The green side of the import check: today's empty tuple is well-formed,
+    so the gate above is not simply refusing everything."""
+    assert bootproof_guard._validated_prefixes(()) == ()
+    assert bootproof_guard._validated_prefixes(("a", "b/c")) == ("a", "b/c")
+
+
+def test_the_allowlist_attests_intent_not_provenance() -> None:
+    """Said out loud, in the module, because the distinction is load-bearing:
+    nothing authenticates ``source_id``. The list records which producer names
+    the operator has decided may create a permanent corpus — a producer that
+    lies about its name is outside what this guard can see."""
+    assert "intent, not provenance" in bootproof_guard.__doc__
+    assert "self-declared" in bootproof_guard.__doc__
 
 
 def test_red_h1_an_unmarked_resident_style_journal_cannot_reach_a_designated_dir(
@@ -270,8 +404,8 @@ def test_red_c_one_unapproved_row_among_approved_ones_is_refused(
     journal = _journal(
         tmp_path / "mixed.jsonl",
         [
-            _row(source_id=_TEST_ALLOWLIST[0] + "0.1.0"),
-            _row(source_id=_TEST_ALLOWLIST[0] + "0.1.0"),
+            _row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0"),
+            _row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0"),
             _row(source_id="tos-paper-resident-session"),
         ],
     )
@@ -907,9 +1041,11 @@ def test_runner_boots_the_way_the_resident_session_does() -> None:
         'CLI="import sys;from tos_runtime.compose.cli import main;'
         'sys.exit(main(sys.argv[1:]))"' in text
     )
-    assert (
-        'PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src" "$PY" -c "$CLI" run' in text
-    )
+    # Asserted as two facts rather than one long line: the launch now also goes
+    # through `timeout` (re-review LOW), and the PYTHONPATH is still exactly the
+    # driver's — the repo root deliberately NOT on it.
+    assert 'PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src"' in text
+    assert '"$PY" -c "$CLI" run' in text
     for flag in ("--config-dir", "--data-dir", "--custody-root", "--environment-label"):
         assert flag in text, flag
 
@@ -931,6 +1067,28 @@ def test_runner_forwards_signals_to_the_child() -> None:
     for sig in ("TERM", "INT", "HUP"):
         assert f"trap 'on_signal {sig}" in text, sig
     assert "stop_run()" in text
+
+
+def test_runner_arms_the_traps_before_launching_the_child() -> None:
+    """**Re-review LOW.** A signal arriving between ``run … &`` and the ``trap``
+    statements would kill the runner with the default disposition and leave the
+    child orphaned — the exact failure the traps exist to prevent, in the one
+    moment nothing is watching for it. ``stop_run`` tolerates an unset
+    ``RUN_PID``, so arming early costs nothing."""
+    lines = _RUNNER.read_text("utf-8").splitlines()
+    first_trap = next(i for i, line in enumerate(lines) if line.startswith("trap "))
+    launch = next(i for i, line in enumerate(lines) if line.startswith("RUN_PID=$!"))
+    assert first_trap < launch, (first_trap, launch)
+    # And the reason arming early is safe, stated as a property of the code.
+    assert '[ -n "${RUN_PID:-}" ]' in _RUNNER.read_text("utf-8")
+
+
+def test_runner_gives_the_child_a_ceiling_of_its_own() -> None:
+    """Source-level companion: the child runs under ``timeout``, whose duration
+    is the stop window plus the same grace the runner's own stop path allows."""
+    text = _RUNNER.read_text("utf-8")
+    assert "CHILD_CEILING_S=$((RUN_S + SIGKILL_AFTER_S))" in text
+    assert 'timeout --kill-after="${SIGKILL_AFTER_S}s" "${CHILD_CEILING_S}s"' in text
 
 
 # ---------------------------------------------------------------------------
@@ -1402,4 +1560,81 @@ def test_red_m2_a_signal_to_the_runner_stops_the_child(tmp_path: Path) -> None:
         if runner.poll() is None:
             runner.kill()
         if child_pid > 0 and _pid_alive(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
+
+
+def _start_bootable_runner(
+    tmp_path: Path, pidfile: Path, *, stop_at: str
+) -> tuple[Any, int]:
+    """Start the template against the stubs and return ``(runner, child pid)``."""
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path, TENANT_STOP_AT=stop_at)
+    env[_RUN_PIDFILE_ENV] = str(pidfile)
+    runner = subprocess.Popen(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not pidfile.is_file():
+        assert runner.poll() is None, runner.communicate()[0]
+        time.sleep(0.2)
+    assert pidfile.is_file(), (
+        "the stub `run` never started; session log:\n"
+        + (tmp_path / "session.log").read_text("utf-8", errors="replace")[-3000:]
+    )
+    return runner, int(pidfile.read_text().strip())
+
+
+def test_red_a_sigkilled_runner_still_leaves_the_child_a_deadline(
+    tmp_path: Path,
+) -> None:
+    """**Re-review LOW.** The traps only cover signals the runner lives to see.
+
+    SIGKILL delivers nothing to a handler, so with traps alone a ``kill -9`` on
+    the runner (or the host dying under it) leaves ``run`` orphaned with no
+    deadline at all, writing into a durable set nobody is watching. The child
+    therefore runs under ``timeout``, a separate supervising process with its
+    own alarm.
+
+    This test is **slow on purpose** (~2.5 min): the ceiling is the stop window
+    plus ``SIGKILL_AFTER_S`` = 120 s, and that 120 s is real — it exists so the
+    external alarm never pre-empts a graceful stop already under way. Faking it
+    would prove nothing, so the test waits for the actual deadline.
+    """
+    pidfile = tmp_path / "run.pid"
+    stop_window_s = 15
+    runner, child_pid = _start_bootable_runner(
+        tmp_path, pidfile, stop_at=f"+{stop_window_s} seconds"
+    )
+    ceiling_s = stop_window_s + 120
+    try:
+        assert _pid_alive(child_pid)
+        runner.kill()
+        runner.wait(timeout=30)
+        assert runner.returncode == -signal.SIGKILL
+
+        # The orphan condition really is reached: nothing stopped the child when
+        # the runner died. Without this the test could pass on a child that had
+        # already exited for some other reason.
+        time.sleep(2)
+        assert _pid_alive(child_pid), (
+            "the child was already gone right after the runner was SIGKILLed, so "
+            "this test is not exercising the external ceiling"
+        )
+
+        gone_by = time.monotonic() + ceiling_s + 60
+        while time.monotonic() < gone_by and _pid_alive(child_pid):
+            time.sleep(1)
+        assert not _pid_alive(child_pid), (
+            f"the stub `run` (pid {child_pid}) outlived its {ceiling_s}s ceiling after "
+            "the runner was SIGKILLed — it is an orphan with no deadline"
+        )
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+        if _pid_alive(child_pid):
             os.kill(child_pid, signal.SIGKILL)

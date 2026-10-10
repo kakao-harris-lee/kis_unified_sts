@@ -27,7 +27,10 @@ producer been approved to create a permanent corpus".
 
 :data:`APPROVED_REAL_PRODUCER_PREFIXES` **is empty today**, so rule 2 never fires
 and every non-scratch boot is refused. ③'s PR adds its prefix there, and that
-addition is the moment the first real genesis becomes possible.
+addition is the moment the first real genesis becomes possible. ⚠ ``source_id``
+is self-declared and nothing authenticates it, so the allowlist attests
+**intent, not provenance** — it records which producer names the operator has
+decided may create a permanent corpus.
 
 **The inversion (implementation-time correction, independent review of PR #892,
 HIGH).** The first cut keyed on a *marker*: a journal carrying
@@ -94,6 +97,17 @@ POLICY_VERSION = "cp3-tenant-bootproof/2"
 #: says in its own comment which producer it is approving. Adding a prefix is a
 #: decision to let that producer write an append-only corpus; it is not a
 #: formatting change.
+#:
+#: ⚠ **``source_id`` is self-declared.** Nothing authenticates it, so this list
+#: attests INTENT, not provenance: it records which producer names the operator
+#: has decided may create a permanent corpus, and a producer that lies about its
+#: name is outside what this guard can see.
+#:
+#: Matching requires a DELIMITER (:func:`_matches_prefix`): an entry ``p``
+#: matches ``p`` exactly or ``p + "/"`` + anything. A bare ``startswith`` would
+#: let ``tos-cp3-live-EVIL`` through on an entry of ``tos-cp3-live``, and an
+#: entry of ``""`` would approve every row. Entries are validated at import and
+#: at every call (:func:`_validated_prefixes`).
 APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ()
 
 #: The scratch root, as the plan spells it. ``expanduser()`` is applied at use
@@ -176,6 +190,56 @@ def _rows(journal_path: Path) -> list[tuple[int, dict[str, Any]]]:
     return rows
 
 
+def _validated_prefixes(prefixes: tuple[str, ...]) -> tuple[str, ...]:
+    """Refuse an allowlist entry that cannot mean what it looks like.
+
+    Two shapes, each with its own concrete failure:
+
+    * **empty** — ``""`` reads as "any producer". Under the delimiter rule it
+      would in fact match almost nothing, which is arguably worse: the entry
+      looks permissive, behaves restrictively, and nobody finds out until a real
+      genesis is refused for a reason the list does not state.
+    * **trailing ``/``** — ``"tos-cp3-live/"`` would require ``tos-cp3-live//…``
+      because the delimiter is appended here. The entry would silently match
+      nothing at all.
+
+    Called at import (so a bad edit to the literal fails loudly, at the point
+    ③'s PR touches it) and on every call (so a list substituted at runtime —
+    a test, a patched deployment — is held to the same shape).
+    """
+    for prefix in prefixes:
+        if not prefix:
+            raise BootProofGuardRefused(
+                "APPROVED_REAL_PRODUCER_PREFIXES contains an EMPTY entry. An empty "
+                "prefix reads as 'approve everything'; it is never a producer name"
+            )
+        if prefix.endswith("/"):
+            raise BootProofGuardRefused(
+                f"APPROVED_REAL_PRODUCER_PREFIXES entry {prefix!r} ends with '/'. The "
+                "delimiter is appended by the matcher, so this entry would match "
+                "nothing — write it without the trailing slash"
+            )
+    return tuple(prefixes)
+
+
+#: Import-time shape check on the literal above. A bad edit to
+#: :data:`APPROVED_REAL_PRODUCER_PREFIXES` fails at import — the loudest place,
+#: and the one ③'s PR will be standing in when it adds its prefix.
+_validated_prefixes(APPROVED_REAL_PRODUCER_PREFIXES)
+
+
+def _matches_prefix(source_id: str, prefix: str) -> bool:
+    """``source_id`` is ``prefix`` exactly, or ``prefix`` followed by ``/``.
+
+    The delimiter is the whole point. A bare ``startswith`` approves
+    ``tos-cp3-live-EVIL`` on an entry of ``tos-cp3-live`` — a producer name is a
+    namespace, not a string prefix, and the separator is what makes the boundary
+    real. B1a's own ``source_id`` already has this shape
+    (``tos-cp3-b1a/0.1.0``: name, slash, version).
+    """
+    return source_id == prefix or source_id.startswith(prefix + "/")
+
+
 def unapproved_rows(journal_path: Path) -> tuple[int, ...]:
     """1-indexed line numbers whose ``source_id`` is **not** on the allowlist.
 
@@ -185,17 +249,16 @@ def unapproved_rows(journal_path: Path) -> tuple[int, ...]:
     unapproved rows into a permanent corpus. (This is the same "all rows, not
     the first" property the plan's third red proof names; the inversion moved it
     from the marker to the allowlist, and it survives the move.)
+
+    An EMPTY allowlist marks every row unapproved: ``any()`` over no prefixes is
+    False, with no second code path to get wrong.
     """
-    approved = tuple(APPROVED_REAL_PRODUCER_PREFIXES)
-    # ``str.startswith(())`` is False for every string, so an EMPTY allowlist
-    # marks every row unapproved with no second code path to get wrong. Pinned
-    # by ``test_an_empty_allowlist_marks_every_row_unapproved`` rather than left
-    # as a stdlib corner the reader has to know.
+    approved = _validated_prefixes(tuple(APPROVED_REAL_PRODUCER_PREFIXES))
     return tuple(
         line_no
         for line_no, payload in _rows(journal_path)
         if not isinstance(payload.get("source_id"), str)
-        or not payload["source_id"].startswith(approved)
+        or not any(_matches_prefix(payload["source_id"], prefix) for prefix in approved)
     )
 
 

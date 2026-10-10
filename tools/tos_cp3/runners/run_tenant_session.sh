@@ -213,32 +213,19 @@ TREE_ENV=$("$PY" -c \
   die "TENANT_ENVIRONMENT_LABEL='$TENANT_ENVIRONMENT_LABEL' but the rendered tree declares environment '$TREE_ENV' ($CIP). The loader does not compare these, so booting would issue capsules whose covered content names the wrong environment"
 log "environment label $TENANT_ENVIRONMENT_LABEL matches the rendered tree"
 
-# --- 9. boot ---------------------------------------------------------------
+# --- 9. the stop path, installed BEFORE anything is launched ---------------
 #
-# Verbatim the resident boot invocation: the one-liner is
-# ~/.config/kis-probes/tos_paper_session.py's CLI constant and runbook §3's
-# `run` call, and PYTHONPATH is exactly that driver's
-# `tos/src:tos/runtime/src` — the repo root is deliberately NOT on it, so the
-# runtime composes with the same path it has in production.
-CLI="import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))"
-log "=== BOOT label=$TENANT_ENVIRONMENT_LABEL custody=$TENANT_CUSTODY_ROOT stop in ${RUN_S}s ($TENANT_STOP_AT)"
-PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src" "$PY" -c "$CLI" run \
-  --config-dir "$TENANT_RENDER_OUT" \
-  --data-dir "$DATA_LEAF" \
-  --custody-root "$TENANT_CUSTODY_ROOT" \
-  --environment-label "$TENANT_ENVIRONMENT_LABEL" >>"$TENANT_LOG" 2>&1 &
-RUN_PID=$!
-log "run pid=$RUN_PID"
-
-# --- 10. stop --------------------------------------------------------------
+# ONE stop path, reached three ways: the deadline in step 11, a signal sent to
+# THIS script, or the child exiting on its own. The resident driver forwards
+# signals the same way (~/.config/kis-probes/tos_paper_session.py:264 installs
+# the handlers, :439-441 and :525-529 are the SIGTERM -> SIGKILL_AFTER_S ->
+# SIGKILL block).
 #
-# ONE stop path, reached three ways: the deadline below, a signal sent to THIS
-# script, or the child exiting on its own. The resident driver forwards signals
-# the same way (~/.config/kis-probes/tos_paper_session.py:264 installs the
-# handlers, :439-441 and :525-529 are the SIGTERM -> SIGKILL_AFTER_S -> SIGKILL
-# block). Without the trap, Ctrl-C or a `kill` on the runner leaves `run`
-# ORPHANED with no deadline at all — writing into a durable set nobody is
-# watching, which is the opposite of what a one-off boot proof is for.
+# ⚠ The traps go in BEFORE `run … &`, not after it. A signal arriving in the
+# window between the launch and the `trap` statements would otherwise kill the
+# runner with the default disposition and leave `run` orphaned — the very thing
+# the traps exist to prevent, in the one moment nothing is watching for it.
+# `stop_run` is written to tolerate an unset RUN_PID, so arming it early is safe.
 stop_run() {
   if [ -n "${RUN_PID:-}" ] && kill -0 "$RUN_PID" 2>/dev/null; then
     log "=== STOP SIGTERM -> pid $RUN_PID"
@@ -266,6 +253,38 @@ trap 'on_signal TERM 143' TERM
 trap 'on_signal INT 130' INT
 trap 'on_signal HUP 129' HUP
 
+# --- 10. boot --------------------------------------------------------------
+#
+# Verbatim the resident boot invocation: the one-liner is
+# ~/.config/kis-probes/tos_paper_session.py's CLI constant and runbook §3's
+# `run` call, and PYTHONPATH is exactly that driver's
+# `tos/src:tos/runtime/src` — the repo root is deliberately NOT on it, so the
+# runtime composes with the same path it has in production.
+#
+# ⚠ Under `timeout`, which the traps above CANNOT replace. A trap handles a
+# signal this script lives to see; SIGKILL on the runner (or the runner's own
+# host dying) delivers nothing, and `run` would then be an orphan with no
+# deadline writing into a durable set. `timeout` is a separate supervising
+# process with its own alarm, so the child still ends even when this script
+# does not get to say so. The ceiling is the stop window plus the same grace
+# the runner's own stop path allows, so the external alarm never pre-empts a
+# graceful stop that is already under way; `--kill-after` is that same grace
+# again, for a child that ignores TERM.
+CHILD_CEILING_S=$((RUN_S + SIGKILL_AFTER_S))
+CLI="import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))"
+log "=== BOOT label=$TENANT_ENVIRONMENT_LABEL custody=$TENANT_CUSTODY_ROOT stop in ${RUN_S}s ($TENANT_STOP_AT) · child ceiling ${CHILD_CEILING_S}s"
+PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src" \
+  timeout --kill-after="${SIGKILL_AFTER_S}s" "${CHILD_CEILING_S}s" \
+  "$PY" -c "$CLI" run \
+  --config-dir "$TENANT_RENDER_OUT" \
+  --data-dir "$DATA_LEAF" \
+  --custody-root "$TENANT_CUSTODY_ROOT" \
+  --environment-label "$TENANT_ENVIRONMENT_LABEL" >>"$TENANT_LOG" 2>&1 &
+RUN_PID=$!
+log "run pid=$RUN_PID (supervised by timeout, ceiling ${CHILD_CEILING_S}s)"
+
+# --- 11. stop --------------------------------------------------------------
+
 # The ABSOLUTE stop second, not "now + the window measured back in step 4": the
 # steps between then and here cost real time (a front-month lookup, the guard, a
 # render), so a relative deadline computed here would run past TENANT_STOP_AT by
@@ -285,12 +304,16 @@ wait "$RUN_PID" 2>/dev/null
 run_rc=$?
 log "=== END run rc=$run_rc"
 
-# --- 11. what the durable set holds now (runbook §4) -----------------------
+# --- 12. what the durable set holds now (runbook §4) -----------------------
 #
 # The evidence is the STORE, not the log: run_forever writes nothing per pass,
 # and a pass that did not TICK leaves no row (runbook §4). The kind breakdown is
 # what §7.9 records — in particular whether anything was CONSUMED or whether the
-# fifteen fields read STALE, which is the question plan §2.5 leaves open.
+# fifteen fields read STALE. At max_age_ms 800 that is not an open question but
+# a certainty — write-to-first-evaluation spans this guard, a render, a boot and
+# a replay, i.e. seconds — so the record CONFIRMS it rather than discovering it
+# (runbook §7.2-c). Whether the fields are ever CONSUMED is ③'s question: it
+# would need an after-boot append path, which is deliberately not built.
 COUNTS=$(
   "$PY" - "$DATA_LEAF" <<'PY' 2>&1
 import sqlite3
