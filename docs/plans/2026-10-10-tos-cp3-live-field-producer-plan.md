@@ -1,125 +1,203 @@
 # CP-3 ③ 실시간 필드 생산자 계획
 
-- 상태: 초안 v1 (2026-10-10) · 저자: 세션 모델 단독(운영자 지시 2026-09-04) · 검토: 운영자
+- 상태: v2 (2026-10-10, v1 독립 리뷰 HIGH 3 · MED 4 · LOW 4 처분 — §8) · 저자: 세션 모델 단독(운영자 지시
+  2026-09-04) · 검토: 운영자
 - 상위: kickoff `docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md` §5 3 ③ ·
   렌더·부팅 경로 계획 `docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §2.4–§2.6
 - 운영자 결정(2026-10-10, 대화): ③ 착수 수락 · ③ 뒤 첫 실제 genesis 와 band 원천 켜기 승인 ·
   **데이터 원천 = 실전 키 REST 분봉 GET(`FHKIF03020200`)**
-- 범위 밖: band 원천 켜기(③ 뒤 별도 PR) · SHORT 상주화 · 체결 비교(B4 포기, kickoff 결정 8)
+- 범위 밖: band 원천 켜기(③ 뒤 별도 PR) · SHORT 상주화 · 체결 비교(B4 포기, kickoff 결정 8) ·
+  수능 등 개장 지연일(그날 생산자는 기동을 거부한다 — §3.5)
 
 ## 1. 무엇을 만드는가
 
-장중(08:45–15:45 KST)에 mini KOSPI200 선물 front month(`get_front_month_code(product="mini")`, 10-12 부터
-`A05611`)의 **완성된 1분봉마다 저널 한 줄**을 append 하는 호스트 프로세스. 한 줄의 모양은 B1a
+장중에 mini KOSPI200 선물 front month(`shared/instruments/futures.py::get_front_month_code(product="mini")`,
+10-12 부터 `A05611`)의 **완성된 1분봉마다 저널 한 줄**을 append 하는 호스트 프로세스. 한 줄의 모양은 B1a
 (`tools/tos_cp3/produce_fields.py`)의 레코드와 같고 다른 것은 셋뿐이다:
 
 | 키 | B1a(오프라인) | ③(실시간) |
 | --- | --- | --- |
-| `as_of_ms` | 봉 라벨 = OPEN (`derive_as_of_ms`) | **저널에 append 하는 벽시계 시각** (구속 요구, §2) |
+| `as_of_ms` | 봉 라벨 = OPEN (`derive_as_of_ms`) | **저널 파일을 교체하기 직전의 벽시계 시각** (§2 1) |
 | `source_id` | `tos-cp3-b1a/<ver>` | `tos-cp3-live/<ver>` |
 | `received_ms` | 없음 | REST 응답을 받은 벽시계 시각 |
 
-`raw_event_id`(`{symbol}:1m:{bar_kst}`, `derive_raw_event_id`)와 열다섯 필드(`FIELD_ORDER`)는 **B1a 와
-같은 함수가 만든다** — 그래야 같은 봉에 대해 실시간 줄과 오프라인 줄이 B3(`diff_decisions.py`)의
-`raw_event_id` 조인으로 대조된다.
+`raw_event_id`(`derive_raw_event_id`, `{symbol}:1m:{bar_kst}`)와 열다섯 필드(`FIELD_ORDER`)는 **B1a 와 같은
+함수가 만든다** — 같은 봉의 실시간 줄과 오프라인 줄이 B3(`tools/tos_cp3/diff_decisions.py`)의 `raw_event_id`
+조인으로 대조된다.
 
-## 2. 구속 요구 (이미 머지된 결정에서 온다 — 이 계획이 바꾸지 않는다)
+## 2. 구속 요구 (머지된 결정에서 온다 — 이 계획이 바꾸지 않는다)
 
-1. **`as_of_ms` = append 시각.** tenant `critical_input_policy.yaml` 의 열다섯 `max_age_ms` 가 800
-   (= 커널 시간 예산 1000 − 지연 한도 4×50, 운영자 결정 2026-10-09, #887)이므로 라벨 도장은 최소
-   나이 60,000 ms 로 전부 STALE 이다. 한도를 올리는 것은 배제됐다(tenant README §7.1).
-2. **예산 분배.** tenant `marketfeed.yaml` 의 `poll_interval_ms: 400` · `journal_pass_allowance_ms: 100`
-   과 함께 append→소비 최악 나이 = 400 + 100 + (append 와 읽기 사이 파일시스템 지연)이다. 생산자 쪽
-   계산·네트워크 지연은 **append 이전**이라 이 예산에 들어가지 않는다 — 대신 봉 마감에서 결정까지의
-   지연(§5 측정 M2)으로 따로 잰다.
-3. **원자적 기록.** `JsonLinesObservationJournal.poll` 은 매번 파일 전체를 다시 읽고 반쯤 쓴 마지막 줄도
-   전체 거부한다(`marketfeed/journal.py` 모듈 docstring). 그러므로 매 append 는 **임시 파일 + `os.replace`**
-   로 파일 전체를 교체한다(상주 드라이버 `append_observation` 과 PR-C `bootproof_journal.py` 가 같은 꼴).
-4. **`as_of_ms` 단조 증가.** 리더는 `after_as_of_ms` 보다 큰 줄만 돌려준다 — 같은/작은 값은 영원히
-   소비되지 않는다. 생산자는 직전 줄의 `as_of_ms` 이하가 되면 +1 ms 가 아니라 **그 append 를 거부하고
-   로그**한다(시계 역행은 결함이지 보정 대상이 아니다).
-5. **부팅 증명 가드(#892) 허용 목록.** `bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES` 는 의도적으로
-   비어 있고 「③ 의 PR 이 생산자를 진짜로 만드는 그 PR 에서 접두를 더한다」고 적혀 있다. 접두
-   `tos-cp3-live` 를 PR-2 에서 더한다(구분자 규칙상 `source_id` 는 `tos-cp3-live/<ver>`).
-6. **설계된 data dir 첫 기록 = ③ 실데이터.** §2.5 의 「`cp3-setup-d-*-data` 에는 ③ 이전에 절대 쓰지
-   않는다」를 그대로 지킨다. 첫 genesis 는 PR-3 이후 운영자 지정 세션(승인됨, 날짜는 미정).
+1. **`as_of_ms` = 기록 시각.** tenant `critical_input_policy.yaml` 의 열다섯 `max_age_ms` 가 800(커널 시간 예산
+   1000 − 지연 한도 4×50, 운영자 결정 2026-10-09, #887)이라 라벨 도장은 최소 나이 60,000 ms 로 전부 STALE 이다.
+   한도 상향은 배제됐다(tenant README §7.1).
+2. **예산.** tenant `marketfeed.yaml` 은 최악 나이 = 수집기 지연 + `poll_interval_ms` 400 + 패스 여유 100 이라 적고
+   수집기 몫을 300 ms 로 남긴다(그 파일 자신이 패스 여유 100 은 강제되지 않는다고 적는다). 생산자의 계산·네트워크
+   지연은 `as_of_ms` 를 찍기 **전**이라 이 예산 밖이다 — 안에 드는 것은 「도장 → 임시 파일 쓰기 → `os.replace`」
+   구간뿐이고, 그 구간을 M6 으로 잰다. 봉 마감에서 기록까지의 지연은 결정 지연으로 따로 잰다(M2).
+3. **원자적 기록.** `JsonLinesObservationJournal.poll` 은 매번 파일 전체를 다시 읽고 반쯤 쓴 줄도 전체 거부한다
+   (`tos/runtime/src/tos_runtime/marketfeed/journal.py` 모듈 docstring). 그러므로 매 기록은 임시 파일 +
+   `os.replace` 로 파일 전체를 교체한다. 저장소 안 선례: `tools/tos_cp3/bootproof_journal.py`(#892)의 원자적 교체
+   · `scripts/tos/render_paper_config.py` 의 저널 기록. (상주 세션의 `append_observation` 은 저장소 밖 호스트
+   스크립트 `~/.config/kis-probes/tos_paper_session.py` 이고 같은 꼴이다.)
+4. **줄당 정확히 한 번 소비 — 따라잡기 묶음 금지.** `decide_tick` 은 폴링된 묶음에서 **가장 새 관측 하나**만
+   고르고(`marketfeed/scheduler.py::decide_tick`) `store.put` 이 `latest_as_of` 를 전진시키므로, 두 패스 사이에
+   두 줄이 들어오면 **오래된 줄은 영원히 소비되지 않는다**(침묵). 그래서 생산자는 한 번의 기록에 **한 줄만**
+   더한다. 밀렸으면(여러 봉이 한꺼번에 완성) 가장 최근 완성 봉 하나만 쓰고 건너뛴 봉은 로그에 `skipped_behind` 로
+   남긴다 — 결정은 최신 봉에서만 의미가 있다.
+5. **`as_of_ms` 단조 증가.** 리더는 `after_as_of_ms` 보다 큰 줄만 돌려준다. 직전 줄 이하가 되면 보정하지 않고 그
+   기록을 거부하고 로그한다(시계 역행은 결함).
+6. **부팅 증명 가드(#892) 허용 목록.** `bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES` 는 의도적으로 비어 있고,
+   ③ 의 PR 이 접두를 더한다. 접두 `tos-cp3-live`, `source_id` = `tos-cp3-live/<ver>`(구분자 규칙).
+7. **지정 data dir 첫 기록 = ③ 실데이터.** 계획 2026-10-09 §2.5 그대로.
 
 ## 3. 설계
 
-### 3.1 재사용 — 새 계산 코드를 쓰지 않는다
+### 3.1 재사용 — 필드 계산을 새로 쓰지 않는다
 
-열다섯 필드의 수학은 **`produce_fields.produce_bars` 를 그대로 호출**해 얻는다. 매 분:
+열다섯 필드는 **`produce_fields.produce_bars` 를 그대로 호출**해 얻는다. 매 분:
 
 ```
-frame = 시드 봉(직전 N 세션) ++ 오늘 완성된 봉 전부      # pandas DataFrame, B1a 와 같은 열
-produced = produce_bars(frame, symbol=…, strategy=…, contract_spec=…, anchor=08:45)
-last = produced.records[-1]                                # 방금 완성된 봉이어야 한다 — 아니면 거부
-line = {**last 의 raw_event_id/instrument/fields, as_of_ms=now_ms(), source_id=…, received_ms=…}
+frame = 시드 봉 ++ 오늘 동결된 봉                           # B1a 와 같은 열, append-only (§3.3)
+produced = produce_bars(frame, symbol, strategy, contract_spec,
+                        anchor=resolve_open_anchor(...))    # 앵커는 B1a 의 해석기에서 — 하드코딩 금지
+last = produced.records[-1]
 ```
 
-- **왜 증분 엔진이 아니라 매 분 배치 재실행인가.** `produce_bars` 는 `check()` 를 봉마다 정확히 한 번
-  부르는 것으로 레거시의 인과 창(ATR 780 · close 15 · VWAP 30)을 전진시킨다. 같은 함수를 같은
-  프레임에 돌리면 마지막 봉의 값은 **정의상** 오프라인 B1a 와 같다 — 증분 구현은 그 동일성을 별도
-  테스트로 증명해야 하는 두 번째 구현이다(교훈 「두 구현 동일성은 정규화 AST 대조로」 — 아예 두 번째를
-  만들지 않는다). 비용은 하루 ~3–4 세션 × ~400 봉 재생 / 분 — PR-1 에서 실측(M3)하고 1 초를 넘으면
-  그때 증분화를 재검토한다.
-- 기각: `CandleAccumulator`(`shared/indicators/streaming/candles.py`) — 틱 입력용이고 REST 분봉에는
-  불필요. 기각: TOS `transport/kis_quote` — MOCK 봉인·현재가 전용이고 방화벽상 `tools/` 에서 import 불가.
+- `last` 가 방금 완성된 봉이 아니면 기록하지 않는다. 그 경우는 둘뿐이다(리뷰 확인): `_inputs_unusable` 생략 ·
+  전일 종가 없는 세션 생략. 둘 다 B1a 도 같은 봉을 생략하므로 B3 는 발산하지 않는다 — **결함이 아니라 자기 사유**
+  (`omitted_unusable`)로 로그한다.
+- **왜 증분 엔진이 아니라 매 분 배치 재실행인가.** `produce_bars` 는 `check()` 를 봉마다 정확히 한 번 불러 인과
+  창을 전진시킨다. 같은 함수를 쓰면 필드 정의가 하나다. 증분 구현은 두 번째 구현이고 동일성 증명이 따로 든다.
+  비용(M3)이 1 초를 넘으면 그때 재검토한다.
+- 마지막 레코드가 인과적인 근거(리뷰 확인): ATR 은 후행 SMA14, VWAP 은 세션 시작 앵커, `_bar_lookup` 은 프레임
+  조회뿐이다. `atr_90th_percentile` 은 미래를 보지만 Setup D 가 읽지 않는다. 그러므로 **프레임이 같으면** 마지막
+  레코드는 오프라인과 같다 — 문제는 프레임을 같게 만드는 것이고, 그것이 §3.2–§3.3 이다.
+- 기각: `CandleAccumulator` — 틱 입력용. 기각: TOS `transport/kis_quote` — MOCK 봉인·현재가 전용·방화벽상 import 불가.
 
-### 3.2 데이터 원천 — `FHKIF03020200` 실전 GET 한 원천으로 시드와 장중
+### 3.2 시드 — `vol_window` 를 채울 때까지 (리뷰 H2)
 
-- 엔드포인트 `/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice`, 파라미터는
-  `shared/collector/historical/backfill.py::fetch_minute_async` 의 날짜 지정 형태(`FID_HOUR_CLS_CODE` ·
-  `FID_PW_DATA_INCU_YN=Y` · `FID_INPUT_DATE_1`)를 따른다. 재사용 대상: 그 함수의 요청·페이지네이션·
-  파싱(필요하면 동기 래퍼만 추가). 토큰은 기존 `_get_token("futures")` 캐시.
-- **GET-only.** 실전 계좌 정책(Non-Negotiable)상 허용되는 범위다. 주문 TR 은 import 하지 않는다 —
-  PR-2 테스트가 모듈 그래프에 주문 경로(`shared/execution`·`probes_real_order`)가 없음을 고정한다.
-- **시드.** 부팅 시 직전 3 거래일(ATR 780 창 ≈ 2.4 세션 + 리플레이 워밍업 60 봉 + 전일 종가 요구)을
-  날짜 지정 페이지 조회로 받는다. Parquet(`data/market/futures/minute/`)은 레거시 수집이 10-08 에
-  멈춰 끊겼으므로 쓰지 않는다. 시드 결과는 세션 디렉터리에 `seed.parquet` + sha256 으로 남긴다.
-- **장중 폴링.** 분 경계 + δ 초에 한 번 조회. 봉 m 은 **응답에 m+1 행이 있을 때만** 완성으로 본다
-  (m+1 행이 없으면 다음 초 재조회, 경계 + G 초까지 없으면 그 분은 「무거래」가 아니라 **결측**으로
-  로그하고 건너뛴다 — 무거래 봉을 합성하지 않는다). δ·G 는 PR-1 실측값으로 정한다.
+- `_atr_window`(`vol_window_bars` 780)는 **진입 창 안 봉**(`valid_minutes_min` 15 ~ `no_entry_after` 345, 세션당
+  331 봉)에서만 전진하고, 시드 첫 세션은 전일 종가가 없어 통째로 건너뛴다. 3 세션 시드는 오늘 09:00 에 창이 662 로
+  780 에 못 미치고 `hi_vol` 의 90 분위가 B1a 의 긴 창 실행과 ~10:58 까지 다르다.
+- 그래서 시드는 **세션 수가 아니라 창 충족으로** 정한다: 거래일을 거꾸로 받아 가며, 세션 2..N 의 진입 창 봉 수
+  합이 `vol_window_bars`(전략 YAML 에서 읽는다) 이상이 될 때까지 늘린다(보통 4–5 세션). 기동 시 이 합을 단언하고
+  미달이면 **기동 거부**.
+- 거래일 선택은 `shared/collector/historical/calendar.py::get_past_trading_days` 를 쓴다. 휴장일 빈 응답은 결측
+  세션이 아니라 달력 오류로 거부한다.
+- **밀도 게이트를 B1a 와 같게.** B1a 는 하루 봉 수가 게이트(기본 330) 미만인 날을 통째로 버린다. 시드에도 **같은
+  상수를 같은 함수로** 적용하고 값과 버린 날을 lineage 에 남긴다. 롤 직후 얇은 날이 버려지면 위 충족 규칙이 더
+  과거로 간다.
+
+### 3.3 데이터 원천과 봉 동결 — `FHKIF03020200` 실전 GET
+
+- 엔드포인트 `/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice`. 요청·뒤로 가는 페이지네이션
+  (`FID_INPUT_HOUR_1`)은 `shared/collector/historical/backfill.py::fetch_minute_async` 의 날짜 지정 형태를 재사용한다.
+  이 함수는 원시 `output2` 만 돌려주고 파싱은 `shared/collector/historical/ohlcv_parser.py::parse_ohlcv` 다. 첫 페이지에
+  페이지 단위 재시도가 없다는 점은 PR-2 에서 감싼다. `client.py::_get_futures_minute_bars` 는 다른 형태
+  (`PW_DATA_INCU_YN=N`, 날짜 없음)라 쓰지 않는다.
+- **고정 파라미터를 핀하고 lineage 에 남긴다**(리뷰 L9): `FID_HOUR_CLS_CODE`(env `KIS_FUTURES_HOUR_CLS_CODE`, 기본
+  60) · `KIS_MINUTE_BAR_MIN_VOLUME`(기본 10). 생산자는 env 값이 핀과 다르면 기동을 거부한다 — 봉 크기·생략 규칙이
+  환경에 따라 조용히 바뀌지 않게. 같은 두 값으로 만든 Parquet 이어야 오프라인 대조가 성립한다.
+- **완성 판정은 원시 행으로**(리뷰 M5): 봉 m 은 **원시 응답**에 m+1 시각 행이 있을 때 완성이다. 파싱 뒤 행으로
+  보면 거래량 < 10 으로 버려진 m+1 때문에 m 이 영원히 미완성이 된다. 경계 + G 초까지 m+1 원시 행이 없으면 m 은
+  `missing_no_successor` 로 로그하고 건너뛴다(무거래 봉을 합성하지 않는다).
+- **동결**: `parse_ohlcv` 의 `_resolve_minute_bars` 는 응답 전체에서 앵커를 골라 행을 고르므로, 자라는 하루를 매 분
+  다시 파싱하면 이전 봉이 바뀔 수 있다. 그래서 한 번 완성된 봉은 **동결**하고 다시 파싱하지 않는다. 매 조회에서는
+  마지막 동결 봉보다 새 행만 파싱해 덧붙인다. 동결 프레임이 곧 §3.1 의 `frame` 이다.
+- **장 마감**: 15:35–15:45 단일가 구간은 원시 행이 없어 m+1 규칙으로 마지막 봉(15:34)이 완성되지 않을 수 있다.
+  M2b 로 실측하고, 행이 없으면 「세션 종료 시각 경과」를 마지막 봉의 완성 조건으로 한다. 그 뒤 생산자는 기록을 멈춘다.
+- **GET-only.** 주문 TR 은 import 하지 않는다. PR-2 테스트가 생산자 모듈 그래프에 `shared/execution` ·
+  `probes_real_order` 가 없음을 고정한다.
 - 호출량: 장중 ≈ 1–3 콜/분, 시드 ≈ 수십 콜(5 rps 한도 안).
 
-### 3.3 프로세스와 수명
+### 3.4 자격증명 분리 (리뷰 M4)
 
-- 위치: `tools/tos_cp3/live_producer/`(방화벽 바깥 — `shared.*` import 가능, `tos*` import 불가).
-  모듈은 크기 예산 범위에 넣는다(`tools/tos_cp3` 의 기존 큰 모듈들처럼 예외로 남기지 않는다).
-- 순수 부분과 I/O 분리: `build_line(frame, now_ms, received_ms, prev_as_of_ms) -> dict` 는 순수 함수,
-  루프·HTTP·파일 교체는 얇은 바깥 층(스케줄러의 `decide_tick`/`run_forever` 분리와 같은 꼴).
-- 기동: PR-C 의 `run_tenant_session.sh` 가 렌더 **전에** 생산자를 띄운다(렌더러는 저널 파일 존재를
-  요구한다 → 생산자가 시드 후 빈 저널을 원자적으로 만든 뒤 `READY` 표지를 남긴다) · 세션 종료 시
-  같은 trap/`timeout` 감독 아래 함께 멈춘다. 같은 저널을 쓰는 생산자가 둘이면 거부(`flock`).
-- 롤: 생산자는 instrument 를 인자로만 받고 스스로 계산하지 않는다 — 래퍼가 상주와 같은 규칙으로 한
-  번 계산해 렌더·data dir·생산자에 같은 값을 준다(상주 잎 규칙, 런북 §7).
+- PR-C 러너는 `TENANT_ENV_FILE` 이 `.env.mock` 이어야 한다(`run_tenant_session.sh` 가드). 런타임은 그대로 둔다.
+- 생산자 **하위 프로세스에만** `.env.real` 의 선물 조회 키 두 개(`KIS_FUTURES_APP_KEY/SECRET`)를 넘긴다. 러너
+  환경과 런타임 환경에는 실전 키가 들어가지 않는다. PR-3 테스트가 런타임 프로세스 환경에 그 키가 없음을 확인한다.
+- 토큰 캐시: 기존 `KISToken` 캐시(`~/.cache/kis_token_futures.json`)는 도메인만으로 키를 잡고 앱 키를 보지 않는다.
+  생산자는 **자기 캐시 경로**를 쓰고, 캐시 토큰을 쓰기 전에 앱 키 지문(커밋된 `secret_fingerprint`)이 일치하는지
+  확인한다. `rt_cd≠0` 의 토큰 오류는 1 회 재발급 후 재시도하고, 그래도 실패하면 그 분을 `fetch_error` 로 남긴다.
+
+### 3.5 프로세스·수명·부팅 순서 (리뷰 H1)
+
+- 위치: `tools/tos_cp3/live_producer/`(방화벽 바깥 — `shared.*` 가능, `tos*` 불가). 크기 예산 범위에 넣는다.
+- 순수 함수 `build_line(frame, now_ms, received_ms, prev_as_of_ms)` 와 얇은 바깥 루프(HTTP·파일 교체)로 나눈다.
+- **부팅 순서**: #892 가드는 빈 저널을 거부한다(`bootproof_guard` 의 「holds no rows」 · `require_journal_instrument`).
+  가드의 의미는 바꾸지 않는다. 러너는 ① 생산자 기동(시드) → ② **첫 실제 `tos-cp3-live/…` 줄**이 생길 때까지 대기
+  (상한 있음, 넘으면 ABORT) → ③ 가드 → 렌더 → 부팅 순서로 간다. 첫 줄은 부팅이 끝날 때 이미 STALE 이므로
+  `consumed_stale_at_boot` 로 따로 센다.
+- 정지: 러너의 trap/`timeout` 감독 아래 런타임과 함께 멈춘다. #892 재리뷰 LOW L1(`RUN_PID` 초기화) · L2(`kill -KILL`
+  을 프로세스 그룹으로)를 PR-3 에서 함께 처리한다. 같은 저널에 생산자가 둘이면 `flock` 으로 거부한다.
+- 롤: instrument 는 인자로만 받는다. 러너가 상주와 같은 규칙으로 한 번 계산해 렌더·data dir·생산자에 같은 값을 준다.
+- 개장 앵커가 표준과 다른 날(수능 등)은 `resolve_open_anchor` 결과가 정규 앵커가 아니면 기동 거부.
+- `ProduceFieldsError`(비유한 값·중복 시각) 는 그 분을 `produce_error` 로 건너뛰고 기록하지 않는다. 연속 5 회면
+  생산자를 멈춘다. 멈춘 생산자는 러너가 ABORT 로 보고한다.
+
+### 3.6 오프라인 대조 입력 (리뷰 H3)
+
+B1a 는 `--data-root` 아래 Parquet 저장소 배치만 읽는다(`produce_fields.py` 의 `ParquetMarketDataStore`). 레거시
+수집은 10-08 에 멈췄다. 그래서 생산자는 세션이 끝날 때 **동결 프레임(시드 + 오늘)을 같은 저장소 배치**
+(`<세션 dir>/market/futures/minute/code=<종목>/…`)로 쓰고 sha256 을 남긴다. 장후 B1a 를 `--data-root <세션 dir>/market`
+으로 돌리면 같은 프레임에서 오프라인 레코드가 나온다. 밀도 게이트는 시드와 같은 값을 쓰고, 오늘(정규 세션 ~420 봉)은
+게이트를 통과한다. 미달이면 B3 대조 대상에서 그날이 빠졌다고 기록한다.
 
 ## 4. PR 분할
 
 | PR | 내용 | 시장 필요 |
 | --- | --- | --- |
-| **PR-1 프로브** | `FHKIF03020200` 실전 GET-only 측정 도구 + 결과 증거: M1 mini `A0561x` 응답 여부·행 모양 · M2 분 경계 후 m 행이 「완성」(m+1 행 출현)되기까지 초 단위 분포 · M3 `produce_bars` 재실행 시간(시드 3 세션 + 장중 최대) · M4 시드 페이지 수와 전일 행 정합(같은 날 Parquet 가 있는 10-08 이전 날짜로 대조) | **예 — 10-12(월) 장중**, 분리 워크트리(origin/main)에서 |
-| **PR-2 생산자** | `build_line` + 루프 + 원자적 writer + `tos-cp3-live` 허용 접두 + 테스트: ① 같은 프레임에서 마지막 줄 필드 == B1a 배치 레코드(바이트) ② `as_of_ms` 단조·역행 거부 ③ m+1 미출현 시 미발행 ④ 반쯤 쓴 파일이 리더에 보이지 않음 ⑤ 주문 경로 import 0 ⑥ 리더(`JsonLinesObservationJournal`) 로 왕복 — 마지막은 `tos/runtime/tests` 쪽 픽스처로(방화벽) | 아니오 |
-| **PR-3 배선·첫 세션 준비** | `run_tenant_session.sh` 에 생산자 기동/정지 · 런북 §7.2 갱신 · tenant 콜드 백업 BORN_ON 정합 안내 | 아니오 |
-| 첫 실제 genesis | 운영자 지정 날짜에 LONG tenant 세션 1회(승인됨) → M5: append→소비 나이 분포(800 ms 안인지) · 결정 수 · B3 로 같은 날 오프라인 B1a 와 대조(UNRESOLVED 0 목표) | 예 |
-| band 원천 켜기 | `2026-10-08-tos-cp3-band-source-wave-plan.md` 의 스위치 — genesis 세션이 깨끗한 뒤 별도 PR(승인됨) | — |
+| **PR-1 프로브** | `FHKIF03020200` 실전 GET-only 측정 도구 + 증거(분리 워크트리, origin/main): M1 mini `A0561x` 응답·행 모양 · M2 분 경계 뒤 m+1 원시 행이 나오기까지 초 분포(δ·G 도출) · M2b 15:30–15:45 마감 구간 행 모양 · M3 `produce_bars` 재실행 시간(창 충족 시드 + 장중 최대) · M4 시드 페이지 수, 그리고 10-08 이전 날짜에서 REST 재파싱 봉 == 기존 Parquet 봉 | **예 — 10-12(월) 장중**, `A05611` |
+| **PR-2 생산자** | §3 전부 + `tos-cp3-live` 허용 접두 + 테스트(§5) | 아니오 |
+| **PR-3 배선** | 러너 부팅 순서(§3.5) · 자격증명 분리(§3.4) · #892 L1·L2 · 런북 §7.2 | 아니오 |
+| 첫 실제 genesis | 운영자 지정 날짜에 LONG tenant 세션 1 회(승인됨) → M5 · M6 · B3 대조 | 예 |
+| band 원천 켜기 | `2026-10-08-tos-cp3-band-source-wave-plan.md` 의 스위치, genesis 세션이 깨끗한 뒤 별도 PR(승인됨) | — |
 
-PR-2 는 #892 머지 뒤에 연다(허용 목록이 그 PR 의 모듈에 있다).
+## 5. 테스트와 수용 기준
 
-## 5. 수용 기준
+PR-2 테스트:
+1. **동일성(동어반복 아님)**: 같은 원시 응답 픽스처에서, 실시간 경로가 만든 오늘의 줄들(창 충족 시드) == B1a 를
+   **더 긴 프레임**(10 세션)에 돌린 레코드의 오늘 부분. `hi_vol` 이 실제로 판별에 기여하는지는 시드를 3 세션으로
+   줄이면 이 테스트가 red 가 되는 것으로 확인한다.
+2. `as_of_ms` 단조·역행 거부 · 한 기록에 한 줄(밀림 시 `skipped_behind`).
+3. 원시 m+1 없으면 미발행. 거래량 < 10 인 m+1 원시 행이 있으면 m 은 완성.
+4. 동결: 이전 봉을 바꾸는 응답이 와도 동결 프레임은 그대로다.
+5. 반쯤 쓴 파일이 리더에 보이지 않음 · 주문 경로 import 0 · env 핀 불일치 시 기동 거부 · 시드 창 미달 시 기동 거부.
+6. 리더 왕복: `tos/runtime/tests` 쪽 커밋 픽스처를 실제 `JsonLinesObservationJournal` 이 받는다(#892 선례).
+   **픽스처를 생산자로 다시 만들어 바이트 대조하는 tools 쪽 테스트**를 함께 둔다(리뷰 L11 — 픽스처 드리프트 차단).
 
-- [ ] M1–M4 실측이 증거 디렉터리에 sha256 과 함께 있고 δ·G 가 그 값에서 도출된다
-- [ ] 같은 프레임에서 ③ 의 필드 == B1a 필드(테스트) — 「같은 함수를 부르니 같다」를 주장으로 두지 않는다
-- [ ] 첫 genesis 세션에서 append→소비 나이가 800 ms 를 넘은 관측 수 = 0, 넘으면 원인 기록
-- [ ] 같은 세션의 B3 대조에서 UNRESOLVED 0
-- [ ] 실전 주문 TR 호출 0 (요청 로그로 증명)
+수용 기준:
+- [ ] M1–M4 증거가 sha256 과 함께 있고 δ·G 가 그 값에서 도출된다
+- [ ] 첫 genesis 세션: M5 = 「STALE 로 소비된 줄 수」(부팅 첫 줄 제외) · 「소비되지 않은 줄 수」 둘 다 0, 아니면 원인 기록
+- [ ] M6 도장→교체 구간 최대값이 300 ms 미만
+- [ ] 같은 세션의 B3 대조(§3.6 입력)에서 UNRESOLVED 0
+- [ ] 실전 주문 TR 호출 0 (요청 로그)
 
 ## 6. 열린 위험
 
-- **분봉 완성 판정(M2)이 느리면** 결정 지연이 분 단위로 커진다 — Setup D 는 1분 결정이라 수 초는
-  수용, 수십 초면 운영자에게 WebSocket 재검토를 올린다(DUAL-WS: 레거시 `market_ingest` 를 다시 켜면 충돌).
-- **mini 코드 응답(M1) UNVERIFIED** — 백필은 `A056xx` 코드로 Parquet 을 만들었으므로 응답할 공산이
-  크지만 실측 전에는 가정이다.
-- **800 ms 창**: 줄 하나는 append 후 ~800 ms 동안만 신선하다 → 런타임은 그 사이 1–2 패스에서만 그 봉을
-  VALID 로 본다. 의도된 동작(봉당 한 결정)이지만 M5 에서 「신선한 패스 0」인 봉 수를 따로 센다.
-- 10-12 는 월물 롤 날이다. PR-1 프로브는 `A05611` 로 잰다.
+- **M2 가 느리면** 결정 지연이 커진다. 수 초는 수용, 수십 초면 WebSocket 재검토를 운영자에게 올린다
+  (레거시 `market_ingest` 를 다시 켜면 같은 계좌 선물 WS 연결과 충돌).
+- **mini 코드 응답(M1)** 은 실측 전에는 가정이다.
+- 10-12 는 월물 롤 날이다. `A05611` 의 롤 전 얇은 날은 밀도 게이트에 걸려 시드가 더 과거로 갈 수 있다(§3.2).
+
+## 7. 호스트 조치 — 이 계획의 PR 과 별개 (리뷰 M7)
+
+tenant 콜드 백업 cron 두 줄(18:20 LONG · 18:40 SHORT)에 `COLD_TARGET_BORN_ON=2026-10-12` 가 들어 있다. genesis 는
+③ 이후라 **10-12 부터 매일 rc 1 REFUSED** 알림이 간다(#892 재리뷰 L3: 이 줄들은 PRE-GENESIS 를 한 번도 보내지
+않았다). 10-12 전에 운영자가 그 두 줄을 주석 처리하거나 BORN_ON 을 genesis 날로 옮긴다. 에이전트는 호스트 crontab 을
+바꾸지 않는다.
+
+## 8. v1 리뷰 처분 (2026-10-10, Claude 측 독립 레인 — 교차 모델 아님)
+
+| # | 지적 | 처분 |
+| --- | --- | --- |
+| H1 | 빈 저널 부팅은 #892 가드가 거부 | §3.5 — 첫 실제 줄을 기다린 뒤 가드·렌더·부팅. 가드 의미 불변 |
+| H2 | 3 세션 시드는 `vol_window` 780 미달 → `hi_vol` 상이 | §3.2 창 충족 시드 + 기동 단언 · §5 1 을 긴 프레임 대조로 |
+| H3 | 오프라인 B3 대조에 입력이 없다(Parquet 정지·밀도 게이트) | §3.6 동결 프레임을 저장소 배치로 · 게이트 공유 |
+| M4 | 실전 키 vs 러너의 mock 전용 · 토큰 캐시가 앱 키 무관 | §3.4 |
+| M5 | `parse_ohlcv` 전역 앵커로 이전 봉 변동 · m+1 을 파싱 뒤 행으로 보면 영구 미완성 | §3.3 동결 + 원시 행 판정 |
+| M6 | 「1–2 패스 유효」는 틀림 — 줄당 한 번 소비, 묶음은 침묵 유실 | §2 4 · §5 M5 지표 교체 |
+| M7 | BORN_ON 10-12 cron | §7 호스트 조치(운영자) |
+| L8 | `append_observation` 을 저장소 코드처럼 인용 | §2 3 저장소 선례로 교체, 호스트 스크립트는 명시 |
+| L9 | 앵커 하드코딩 · `HOUR_CLS_CODE` env 표류 | §3.1 `resolve_open_anchor` · §3.3 핀 |
+| L10 | 마감 단일가 · 달력 · `ProduceFieldsError` · 수능 | §3.3 마감 · §3.2 달력 · §3.5 |
+| L11 | 커밋 픽스처 드리프트 | §5 6 재생성 바이트 대조 |
