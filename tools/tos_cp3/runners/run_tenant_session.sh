@@ -106,9 +106,11 @@ ENV_BASENAME=${TENANT_ENV_FILE##*/}
 [ -f "$TENANT_ENV_FILE" ] ||
   die "TENANT_ENV_FILE does not exist: $TENANT_ENV_FILE"
 
-TREE_DIR=config/tos_runtime/$TENANT_TREE
-[ -d "$REPO/$TREE_DIR" ] ||
-  die "TENANT_TREE='$TENANT_TREE' names no config tree: $REPO/$TREE_DIR"
+# Absolute, so --source names THIS checkout's tree no matter what the renderer
+# later resolves it against.
+TREE_DIR=$REPO/config/tos_runtime/$TENANT_TREE
+[ -d "$TREE_DIR" ] ||
+  die "TENANT_TREE='$TENANT_TREE' names no config tree: $TREE_DIR"
 
 [ -d "$TENANT_CUSTODY_ROOT" ] ||
   die "TENANT_CUSTODY_ROOT does not exist: $TENANT_CUSTODY_ROOT"
