@@ -34,12 +34,13 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ## 3. LONG 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**31 파일 = 바이트 동일 23 + YAML 이 다름 6 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
-(LONG 트리도 31 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
-**없고** 그 자리를 `strategies/setup_d_short.strategy.yaml` 이 차지한다).
+**32 파일 = 바이트 동일 23 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+(LONG 트리도 32 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
+**없고** 그 자리를 `strategies/setup_d_short.strategy.yaml` 이 차지한다). 31 → 32 · 다름
+6 → 7 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`**(렌더 매니페스트) 때문이다.
 
 측정은 작업트리 `cmp` 가 아니라 `tos/runtime/tests/compose/test_tenant_tree_short.py` 다 —
-바이트 동일 23 은 **바이트**로, 다름 6 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
+바이트 동일 23 은 **바이트**로, 다름 7 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
 는 **자기 트리를 설명하는가**로 각각 검사한다. 그 테스트가 아래 표를 **기계로 읽는 리터럴**로
 들고 있다: 파일을 더하고 분류를 빼먹으면 red 이고, 한 이름이 두 분류에 들어가거나 **어느
 단언도 훑지 않는 분류에 들어가도** red 다(초판이 `README.md` 를 「한 트리에만 있음」으로
@@ -54,6 +55,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 | `strategy_bindings.yaml` | 키 `setup_d_short.strategy` · 바인딩 **`z_entry_min_x1000: 1800`**(LONG 은 `z_entry_max_x1000: -1800`) |
 | `venue_constraint_policy.yaml` | `policy_id` SHORT 전용 (+ 헤더 제목·주석). **값은 LONG 과 같다**(`tick_size: 2` · `max_quantity: 10000`) |
 | `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 800` 포함) |
+| `RENDER.yaml` | 렌더 매니페스트(2026-10-10 PR-B). `tree_id` · `direction.value` **LONG → SHORT** · `slots` 의 **방향 결속 다섯 줄과 전략 파일 이름**. 모드는 둘 다 `declared` + `external` 이다. `slots` 는 리스트라 경로 비교에서 **한 잎으로 접히므로** 전용 좁히기 테스트(`test_the_render_manifest_slot_list_differs_only_in_the_direction_bearing_rows`)가 따로 있다 |
 | `README.md` (이 파일) | **산문이 다름** — 각 트리가 자기 방향의 배포를 설명한다. YAML 이 아니라 경로 비교 대상이 아니므로 테스트가 「자기 트리를 설명하는가」로 검사한다 |
 | 나머지 **23 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다. 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
 
@@ -226,9 +228,39 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    ⚠ **「적재된다」를 「부팅하면 돈다」로 읽지 말 것** — LONG 트리 README §5 의 ⚠⚠ 와 같은
    이유가 이 트리에도 그대로 적용된다: `max_age_ms` = 800 은 커널의 보수 예산 **그 자체**
    이고, 라벨 스탬프 1분봉은 최소 나이가 60,000 ms 라 열다섯 전부 `(UNKNOWN, "stale")` 다.
-2. **렌더가 이 트리를 처리하지 못한다** — kickoff §5 3 ④. LONG 트리와 같은 두 이유
-   (`_STRATEGY_FILE` 고정 · 앵커 1회 매칭 요구)이고, 전략 파일 헤더가 적는다.
-   ⚠ **그러므로 이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다.**
+2. ✅ **렌더는 이 트리를 처리한다 — 2026-10-10(계획 2026-10-09 PR-B).** LONG 트리 README
+   §6 2 와 같은 두 처분(슬롯 표가 `RENDER.yaml` 로 · 전략 파일 R1 앵커 + R2·R3 별칭)이다.
+   이 트리의 `RENDER.yaml` 은 `direction.mode: declared` + `value: "SHORT"` ·
+   `journal.mode: external` 이다.
+
+   ```bash
+   .venv/bin/python scripts/tos/render_paper_config.py \
+     --source config/tos_runtime/cp3-setup-d-short \
+     --out ~/.config/tos/cp3-setup-d-short-config \
+     --env-file .env.mock \
+     --instrument <근월물 mini 코드> \
+     --direction SHORT \
+     --journal-path <③ 생산자의 출력>
+   ```
+
+   등록 슬롯 밖 변경은 `--check` 로 본다 — ⛔ **`--source` 를 반드시 같이 준다**(리뷰 L2):
+   기본값이 상주 `config/tos_runtime/paper` 라, 빼면 **거짓 차이**를 내고 rc 1 로 끝난다.
+
+   ```bash
+   .venv/bin/python scripts/tos/render_paper_config.py --check \
+     --source config/tos_runtime/cp3-setup-d-short \
+     --out ~/.config/tos/cp3-setup-d-short-config
+   ```
+
+   ⚠ **`--journal-path` 가 막는 것은 「인자 부재」와 「없는 파일」 둘뿐이다**(리뷰 L1, 실측:
+   **빈 파일**로도 렌더가 성공한다). 내용은 읽지 않으므로 「③ 이 없으면 렌더되지 않는다」가
+   아니다 — 합성 저널 차단은 PR-C 의 **스크래치 루트 거부**가 한다(계획 §2.5). LONG 트리
+   README §6 2 의 같은 문단을 볼 것.
+
+   ⚠ **그래도 이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다** — 트리는 여전히
+   LONG 사본 + 선언된 방향 차이로 **커밋**돼 있고, 렌더는 그 방향을 **검증만** 한다
+   (`--direction LONG` 은 거부된다). ⚠ **아직 안 돌렸다** — 위 `--out` 디렉터리는 §4 대로
+   없다. 첫 실제 genesis 는 ③ 뒤의 운영자 결정이다.
 3. **실시간 필드 생산자가 없다** — kickoff §5 3 ③. B1a 는 Parquet 배치 도구다.
    ⛔ ③ 에는 **저널 append 시각 스탬프**라는 구속 요구가 붙어 있다(운영자 결정 2026-10-09 ·
    LONG README §5) — 라벨 스탬프 생산자로는 이 트리도 결정까지 가지 못한다.
@@ -242,8 +274,11 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    것이 ③·그 append-시각 요구를 대신하지 않는다.
 5. **체결·영수증 증거 없음** — band 가 null 인 동안 step 3 는 UNKNOWN 이다.
    실주문은 어느 경우에도 0 이다(채택 스코프 `SYNTHETIC_FUTURES_ORDER`, `broker_scopes.yaml`).
-6. **활성화 0** — `safety_activation.yaml::members` 는 `null` 이다. digest 리터럴을 지어내지
-   않았다. 활성화는 ④ 의 일이다.
+6. **활성화 0** — 이 **커밋된** 트리의 `safety_activation.yaml::members` 는 `null` 이고 그대로
+   둔다. digest 리터럴을 지어내지 않았다. 렌더는 그 칸을 **산출 dir 에서만** 채운다
+   (손으로 적는 경로는 없다 — `print-policy-digests` 다섯 줄에서 **도출**하고 새 프로세스로
+   재검증한다, 위 2). 그러므로 활성화 기록은 **렌더된 사본에만** 생기고, 첫 실제 부팅은
+   ③ 뒤의 운영자 결정이다.
 
 ## 6. 운영자 미결 항목
 

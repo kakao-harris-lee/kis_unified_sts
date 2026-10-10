@@ -16,22 +16,27 @@
 # 양쪽 극단에서 모두 발화하는 **다른 전략**이 된다(결정 4; kickoff §5 3 마지막 줄).
 #
 # ⚠ tenant 상품은 mini `A056xx` 다(결정 2) — full `101S6000` 은 parity 데이터셋 전용이다.
-# ⚠ **`"TBD"` 리프 여섯 개**(세 규칙 × `account`·`instrument`). 계좌·종목은 커밋되지
+# ⚠ **`"TBD"` 리프 여섯 개**(세 규칙 × `account`·`instrument`). ⚠ **리프는 여섯이지만
+# 원문의 `"TBD"` 토큰은 둘뿐이다**(실측 2026-10-10: R1 의 앵커 줄 둘 — 아래
+# `&account`·`&instrument` — 이고 R2·R3 는 별칭이라 파싱 때 같은 값으로 해석된다).
+# 계좌·종목은 커밋되지
 # 않으므로 그것이 맞는 상태이고, 로더가 그 리프를 **이름으로 거부한다**
 # (`tos_runtime._named_tbd.first_named_tbd_leaf`, `parse` 가 보기 전에) — 그 거부가
 # 운영자-채움 게이트다. 즉 **이 파일은 커밋 상태로는 적재되지 않는다.** `null` 리프는 0 이다.
 #
-# ⛔ **렌더는 아직 이 파일을 채우지 못한다 — 부팅 경로(kickoff §5 3 ④) 미착수.**
-# LONG 사본과 같은 두 가지가 걸린다(실측 2026-10-09):
-#   (1) `scripts/tos/render_paper_config.py::_STRATEGY_FILE` 가
-#       `strategies/bootproof_band.strategy.yaml` 로 **고정**이다.
-#   (2) 그 스크립트의 좌표 규칙은 앵커 줄이 **정확히 1회** 매칭될 것을 요구하는데
-#       (`_apply_rules`), 이 파일은 규칙이 셋이라 `account: "TBD"` ·
-#       `instrument: "TBD"` 가 **각 3회** 나온다. 또 `direction` 은 줄마다 값이 다르다
-#       (R1 = SHORT 진입, R2·R3 = 숏을 닫는 반대쪽 LONG).
-#   ⚠ 그러므로 **`--direction SHORT` 렌더가 이 파일을 만들지 않았다.** 이 트리는 LONG
-#   트리의 사본 + 선언된 방향 차이로 만들었고, 그것이 그 스크립트가 나중에 `--source` 로
-#   받을 모양이다(LONG 트리 README §6 2 의 같은 실측).
+# ✅ **렌더는 이 파일을 채운다 — 2026-10-10(계획 2026-10-09 PR-B).** LONG 사본과 같은
+# 방식으로 2026-10-09 의 두 막힘이 풀렸다:
+#   (1) `scripts/tos/render_paper_config.py::_STRATEGY_FILE` 상수는 더 이상 렌더가 읽는
+#       원천이 아니다 — 슬롯 표가 `<tree>/RENDER.yaml` 로 옮겨졌고(PR-A, 계획 §2.1)
+#       이 트리의 매니페스트가 **이 파일 이름**을 적는다.
+#   (2) 앵커 **정확히 1회** 규칙(`_apply_rules`)은 **그대로**다 — 바꾼 것은 이 파일이다.
+#       R1 의 두 칸에만 YAML 앵커를 달고 R2·R3 는 별칭으로 참조하므로(계획 §2.2)
+#       `account: &account "TBD"` 줄은 원문에 **한 번**만 있다.
+#   ⚠ 그래도 **`--direction SHORT` 렌더가 이 파일을 만든 것은 아니다.** 이 트리는 여전히
+#   LONG 트리의 사본 + 선언된 방향 차이로 **커밋**돼 있고, 매니페스트는
+#   `direction.mode: declared` + `value: "SHORT"` 를 선언한다 — 아래 R1 의
+#   `direction: SHORT` 는 **검증 전용 슬롯**(치환문 == 앵커, 정확히 1회)이라 렌더가 방향을
+#   쓰지 않고 **대조만** 한다(계획 §2.3). `--direction LONG` 은 이 트리에 대해 거부된다.
 #
 # 이 파일은 tos/runtime/src/tos_runtime/strategy/loader.py::load_strategies 가 읽는 그
 # 모양 그대로다. 미지의 키는 tos.dsl.serialization.parse_strategy 가 거부한다.
@@ -135,8 +140,8 @@ policy:
           extreme threshold — propose a new short.
         target:
           kind: ACTION
-          account: "TBD"
-          instrument: "TBD"
+          account: &account "TBD"
+          instrument: &instrument "TBD"
           direction: SHORT
           position_effect: OPEN
           # 수량은 Proposal 에 숫자 슬롯이 없다(DSL-G5) — basis 만 증거로
@@ -172,8 +177,8 @@ policy:
           mean-reversion thesis is realized, go flat.
         target:
           kind: FLAT
-          account: "TBD"
-          instrument: "TBD"
+          account: *account
+          instrument: *instrument
           # 숏을 닫는 액션이므로 방향은 반대쪽이다 — FLAT 의 `direction` 은
           # **닫는 액션의 방향**이고(`tos/src/tos/dsl/proposal.py::build_flat`
           # 「The direction of the closing action」) 숏은 **매수로** 닫는다.
@@ -198,8 +203,8 @@ policy:
           R3-EXIT-EOD: the session's EOD close time has arrived — go flat.
         target:
           kind: FLAT
-          account: "TBD"
-          instrument: "TBD"
+          account: *account
+          instrument: *instrument
           direction: LONG
           position_effect: CLOSE
           rationale: >-

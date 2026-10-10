@@ -1,0 +1,172 @@
+# Render manifest for THIS tree — read ONLY by scripts/tos/render_paper_config.py.
+#
+# Provenance: docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md §2.1 · §2.3 ·
+# §2.4 (PR-B, tenant 매니페스트 + 별칭). Upper: docs/plans/2026-10-07-tos-cp3-first-tenant-
+# kickoff.md §5 3 ④ — the boot path that PR #884's lane measured could NOT be reached by
+# "swap one renderer constant".
+#
+# ⚠ This is NOT an approved VALUE file. It carries no deployment value: every slot names a
+# value SOURCE out of a closed set the renderer knows, and the `replacement` template is
+# shape-checked so it cannot smuggle a literal in (plan §2.1 rules ①–④). The approved values
+# live in the sibling YAMLs and are cited in their own headers; the coordinates this manifest
+# points at are exactly the leaves that may NOT be committed
+# (config/tos_runtime/README.md — "scope.accounts — the paper account number (never
+# committed here)").
+#
+# ⚠ No runtime reads this file. `compose` loads named files only (_boot_integrity.py's four
+# CONFIG_NAME constants, each loader's own path), and the strategy loader's stray-file rule
+# applies to `strategies/` alone — so the copy that render_paper_config.py leaves in the
+# off-repo output directory (plan §7) is inert there.
+#
+# **How this tree differs from the resident manifest** (config/tos_runtime/paper/RENDER.yaml):
+#   1. `direction.mode: declared` — this tree is committed PER DIRECTION, so `--direction` is
+#      COMPARED against `direction.value`, never applied (plan §2.3). The four direction slots
+#      below stay in the list as VERIFY-ONLY rules: the line the declared direction makes must
+#      BE the committed anchor, and `_apply_rules`' "exactly one match" invariant then does the
+#      direction check by itself. Drop them and nothing checks this tree's direction at all —
+#      the five activation digests do NOT bind DIRECTION (render_paper_config.py
+#      `_policy_digest_lines` docstring, review-797 LOW-6), so a tree whose construction.yaml
+#      still said the other direction would render, activate and refuse nothing. The loader
+#      refuses a declared manifest that is missing any of the three direction value sources.
+#   2. `journal.mode: external` — the observation journal is the ③ producer's output, named by
+#      a MANDATORY `--journal-path`. The renderer writes no journal here and reads none; the
+#      content contract belongs to the producer (plan §2.4, fail-closed).
+#   3. The strategy slots name THIS tree's strategy file, and its account/instrument anchors
+#      carry a YAML ANCHOR token (`&account` / `&instrument`). That is plan §2.2: this file's
+#      policy has three rules, so the coordinate lines occurred three times each and the
+#      "exactly one anchor match" rule could not hold. R1 now defines the anchors and R2/R3
+#      alias them, which keeps that invariant unchanged — and a missed alias is caught by the
+#      runtime loader's own named-TBD scan after render, not by a new guard.
+#
+# `safety_activation.yaml::members` is deliberately absent — it is ALWAYS derived from
+# `print-policy-digests` against the already-coordinate-filled copy, never hand-written
+# (plan §2.1, adoption plan §2 decision 3).
+#
+# The slot list below is pinned as FULL (file, key, anchor, replacement) tuples by
+# `tests/unit/scripts/test_render_tenant_trees.py` (plan §4.2) — a key-name pin would let a
+# slot be re-aimed at another leaf of the same file while keeping its key.
+
+tree_id: "cp3-setup-d-long"
+
+direction:
+  # "declared" — this tree is committed for ONE direction (plan §2.3). The renderer
+  # compares --direction against the value below and refuses a mismatch; the four
+  # direction slots are verified, never rewritten. The resident tree uses "substitute".
+  mode: "declared"
+  value: "LONG"
+
+journal:
+  # "external" — the observation journal comes from the ③ producer and --journal-path is
+  # MANDATORY. The renderer writes no journal and reads none (plan §2.4).
+  mode: "external"
+
+slots:
+  - file: "venue_constraint_policy.yaml"
+    key: "scope.accounts"
+    anchor: '  accounts: ["TBD"]'
+    replacement: '  accounts: ["{value}"]'
+    value: "account"
+  - file: "venue_constraint_policy.yaml"
+    key: "scope.instruments"
+    anchor: '  instruments: ["TBD"]'
+    replacement: '  instruments: ["{value}"]'
+    value: "instrument"
+  - file: "order_construction_policy.yaml"
+    key: "scope.accounts"
+    anchor: '  accounts: ["TBD"]'
+    replacement: '  accounts: ["{value}"]'
+    value: "account"
+  - file: "order_construction_policy.yaml"
+    key: "scope.instruments"
+    anchor: '  instruments: ["TBD"]'
+    replacement: '  instruments: ["{value}"]'
+    value: "instrument"
+  # VERIFY-ONLY (plan §2.3)
+  - file: "order_construction_policy.yaml"
+    key: "_runtime.construction.axes.DIRECTION"
+    anchor: '        value: "LONG"'
+    replacement: '        value: "{value}"'
+    value: "direction"
+  - file: "aggregate_risk_policy.yaml"
+    key: "account_scope"
+    anchor: 'account_scope: ["TBD"]'
+    replacement: 'account_scope: ["{value}"]'
+    value: "account"
+  - file: "aggregate_risk_policy.yaml"
+    key: "instrument_scope"
+    anchor: 'instrument_scope: ["TBD"]'
+    replacement: 'instrument_scope: ["{value}"]'
+    value: "instrument"
+  - file: "action_flow_policy.yaml"
+    key: "account_scope"
+    anchor: 'account_scope: ["TBD"]'
+    replacement: 'account_scope: ["{value}"]'
+    value: "account"
+  - file: "construction.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{value}"'
+    value: "account"
+  - file: "construction.yaml"
+    key: "instrument"
+    anchor: 'instrument: "TBD"'
+    replacement: 'instrument: "{value}"'
+    value: "instrument"
+  # VERIFY-ONLY (plan §2.3)
+  - file: "construction.yaml"
+    key: "action_class"
+    anchor: 'action_class: "NEW_LONG"'
+    replacement: 'action_class: "{value}"'
+    value: "direction_action_class"
+  # VERIFY-ONLY (plan §2.3)
+  - file: "construction.yaml"
+    key: "outbound_side"
+    anchor: 'outbound_side: "BUY"'
+    replacement: 'outbound_side: "{value}"'
+    value: "direction_side"
+  # the &account ANCHOR line; R2/R3 are *account aliases (plan §2.2)
+  - file: "strategies/setup_d_long.strategy.yaml"
+    key: "policy.rules[0].decision.target.account"
+    anchor: '          account: &account "TBD"'
+    replacement: '          account: &account "{value}"'
+    value: "account"
+  # the &instrument ANCHOR line; R2/R3 are *instrument aliases (plan §2.2)
+  - file: "strategies/setup_d_long.strategy.yaml"
+    key: "policy.rules[0].decision.target.instrument"
+    anchor: '          instrument: &instrument "TBD"'
+    replacement: '          instrument: &instrument "{value}"'
+    value: "instrument"
+  # VERIFY-ONLY (plan §2.3) — the ENTRY rule's direction; R2/R3 carry the closing action's
+  #  opposite token and are NOT slots
+  - file: "strategies/setup_d_long.strategy.yaml"
+    key: "policy.rules[0].decision.target.direction"
+    anchor: "          direction: LONG"
+    replacement: "          direction: {value}"
+    value: "direction"
+  - file: "marketfeed.yaml"
+    key: "instruments"
+    anchor: 'instruments: ["TBD"]'
+    replacement: 'instruments: ["{value}"]'
+    value: "instrument"
+  - file: "marketfeed.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{value}"'
+    value: "account"
+  # VERIFY-ONLY (plan §2.3) — rides into every capsule's SafetyCriticalFacts
+  - file: "marketfeed.yaml"
+    key: "direction"
+    anchor: 'direction: "LONG"'
+    replacement: 'direction: "{value}"'
+    value: "direction"
+  # the ③ producer's output, from the mandatory --journal-path
+  - file: "marketfeed.yaml"
+    key: "journal_path"
+    anchor: 'journal_path: "TBD"'
+    replacement: 'journal_path: "{value}"'
+    value: "journal_path"
+  - file: "finality.yaml"
+    key: "source_revision"
+    anchor: "source_revision: null"
+    replacement: 'source_revision: "{value}"'
+    value: "revision"

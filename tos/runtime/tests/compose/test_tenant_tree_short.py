@@ -138,6 +138,7 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str]] = {
     "venue_constraint_policy.yaml": frozenset({"policy_id"}),
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
     "strategy_bindings.yaml": frozenset({"strategies"}),
+    "RENDER.yaml": frozenset({"tree_id", "direction.value", "slots"}),
 }
 
 #: The declared paths above that FOLD a subtree, and therefore need a narrowing test of their
@@ -147,6 +148,7 @@ _FOLDED_PREFIXES: frozenset[tuple[str, str]] = frozenset(
     {
         ("order_construction_policy.yaml", "_runtime.construction.axes"),
         ("strategy_bindings.yaml", "strategies"),
+        ("RENDER.yaml", "slots"),
     }
 )
 
@@ -282,12 +284,13 @@ def test_short_tree_classification_is_exhaustive() -> None:
     )
     assert classified | long_classified == checked
 
-    # MEASURED 2026-10-09: the two trees share 23 byte-identical files; 6 YAML files diverge in
-    # declared key paths; README.md diverges as prose; each tree has its own strategy file.
+    # MEASURED 2026-10-10 (PR-B added each tree's own RENDER.yaml): the two trees share 23
+    # byte-identical files; 7 YAML files diverge in declared key paths; README.md diverges as
+    # prose; each tree has its own strategy file.
     assert len(_IDENTICAL_TO_LONG) == 23
-    assert len(_DIFFERS_FROM_LONG) == 6
+    assert len(_DIFFERS_FROM_LONG) == 7
     assert len(_PROSE_DIFFERS) == 1
-    assert len(short_files) == len(long_files) == 31
+    assert len(short_files) == len(long_files) == 32
 
 
 def test_the_counts_the_short_readme_states_are_read_from_it() -> None:
@@ -457,6 +460,93 @@ def test_the_bindings_subtree_differs_only_in_the_direction_bearing_names() -> N
     assert long_key == "z_entry_max_x1000"
     assert short_key == "z_entry_min_x1000"
     assert long_value + short_value == 0
+
+
+def test_the_render_manifest_slot_list_differs_only_in_the_direction_bearing_rows() -> (
+    None
+):
+    """``slots`` is a LIST, so :func:`_leaves` folds the whole render manifest's rule table into
+    one leaf -- the same hazard as the axes list, and the same treatment (plan 2026-10-09 §2.1,
+    PR-B).
+
+    Declaring ``slots`` "may differ" would otherwise exempt all twenty rows: a tenant manifest
+    could drop a coordinate slot, re-aim one at another leaf, or point ``journal_path`` somewhere
+    else, on ONE side only, and this file would stay green. What the declaration actually means
+    is narrower -- the two tables are the same table, modulo the direction token and the strategy
+    file's name.
+
+    The per-tree slot tuples themselves are pinned as literals in
+    ``tests/unit/scripts/test_render_tenant_trees.py``; this test is the LONG-vs-SHORT half,
+    which that file cannot make (it pins each tree against its own literal, so two trees could
+    drift apart in lockstep with two edited literals)."""
+    long_slots = _mapping(_LONG_DIR, "RENDER.yaml")["slots"]
+    short_slots = _mapping(_SHORT_DIR, "RENDER.yaml")["slots"]
+
+    assert len(long_slots) == len(short_slots) == 20
+    # Same keys on every row -- a tenant manifest cannot grow a field the other lacks.
+    for row in (*long_slots, *short_slots):
+        assert set(row) == {"file", "key", "anchor", "replacement", "value"}
+
+    def _normalise(slots: list[dict[str, str]], direction: str) -> list[dict[str, str]]:
+        """The rows with this tree's direction token and strategy file name erased.
+
+        Erased by SUBSTITUTION rather than by deletion: a row whose direction token were
+        dropped entirely would compare equal to a row that never had one.
+        """
+        tokens = {
+            "LONG": ("LONG", "NEW_LONG", "BUY", "setup_d_long"),
+            "SHORT": ("SHORT", "NEW_SHORT", "SELL", "setup_d_short"),
+        }[direction]
+        out = []
+        for row in slots:
+            normalised = {}
+            for key, value in row.items():
+                for token, placeholder in zip(
+                    tokens,
+                    ("<DIR>", "<ACTION_CLASS>", "<SIDE>", "<STRATEGY>"),
+                    strict=True,
+                ):
+                    value = value.replace(token, placeholder)
+                normalised[key] = value
+            out.append(normalised)
+        return out
+
+    assert _normalise(long_slots, "LONG") == _normalise(short_slots, "SHORT")
+
+    # ... and the normalisation really erased something: the raw rows DO differ, in exactly the
+    # five direction-bound slots plus the two aliased strategy coordinate slots.
+    differing = [
+        long_row["key"]
+        for long_row, short_row in zip(long_slots, short_slots, strict=True)
+        if long_row != short_row
+    ]
+    assert sorted(differing) == sorted(
+        [
+            "_runtime.construction.axes.DIRECTION",
+            "action_class",
+            "outbound_side",
+            "direction",
+            "policy.rules[0].decision.target.account",
+            "policy.rules[0].decision.target.instrument",
+            "policy.rules[0].decision.target.direction",
+        ]
+    ), differing
+
+
+def test_the_two_render_manifests_declare_the_same_tenant_modes() -> None:
+    """Both tenant manifests are ``declared`` + ``external``; only the declared VALUE differs
+    (plan §2.3, §2.4). A tenant tree that silently reverted to ``substitute`` would let a flag
+    re-point its direction, which is the thing committing a tree per direction exists to stop.
+    """
+    long_manifest = _mapping(_LONG_DIR, "RENDER.yaml")
+    short_manifest = _mapping(_SHORT_DIR, "RENDER.yaml")
+    assert long_manifest["tree_id"] == "cp3-setup-d-long"
+    assert short_manifest["tree_id"] == "cp3-setup-d-short"
+    for manifest in (long_manifest, short_manifest):
+        assert manifest["direction"]["mode"] == "declared"
+        assert manifest["journal"]["mode"] == "external"
+    assert long_manifest["direction"]["value"] == "LONG"
+    assert short_manifest["direction"]["value"] == "SHORT"
 
 
 @pytest.mark.parametrize("rel", sorted(_DIFFERS_FROM_LONG))

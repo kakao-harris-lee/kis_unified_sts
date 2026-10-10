@@ -6,24 +6,36 @@
 # 이 파일의 콘텐츠 원본은 B1b 실행기 쪽 사본 `tos/runtime/cp3/strategies/
 # setup_d_long.strategy.yaml` 이고, 그 파일이 **운영 로더**로 적재·승인되는 것은
 # `tos/runtime/cp3/tests/test_cp3_strategy_content.py` 가 증명한다(kickoff §5 3).
-# 이 사본과의 차이는 **좌표 칸 둘뿐**이다 — B1b 사본은 백테스트 하네스 리터럴
-# (`account: cp3-b1b-long` · `instrument: 101S6000`, parity 데이터셋의 **full** 월물)을
-# 들고 있고, 배포 트리는 그 둘을 이 트리의 다른 모든 좌표 칸과 **같은 named-TBD 토큰**
-# `"TBD"` 로 둔다(계좌·종목은 커밋되지 않는다 — 렌더가 저장소 밖에서만 채운다).
-# `"TBD"` 리프는 로더가 **거부한다**(`tos_runtime._named_tbd.first_named_tbd_leaf`) —
-# 그 거부가 운영자-채움 게이트다.
+# 이 사본과 B1b 사본은 **파싱된 YAML 로 좌표 칸(`account`·`instrument`) 여섯만 다르다**
+# — B1b 사본은 백테스트 하네스 리터럴(`account: cp3-b1b-long` · `instrument: 101S6000`,
+# parity 데이터셋의 **full** 월물)을 들고 있고, 배포 트리는 그 여섯을 이 트리의 다른 모든
+# 좌표 칸과 **같은 named-TBD 토큰** `"TBD"` 로 둔다(계좌·종목은 커밋되지 않는다 — 렌더가
+# 저장소 밖에서만 채운다). `"TBD"` 리프는 로더가 **거부한다**
+# (`tos_runtime._named_tbd.first_named_tbd_leaf`) — 그 거부가 운영자-채움 게이트다.
+# ⚠ **표기까지 같지는 않다(2026-10-10, 렌더 경로 PR-B).** 아래 R1 은 그 두 칸에 YAML 앵커
+# (`&account`·`&instrument`)를 달고 R2·R3 는 별칭(`*account`·`*instrument`)으로 참조한다 —
+# B1b 사본은 세 번 다 리터럴이다. 그래서 「좌표 칸만 다르다」는 **바이트가 아니라 파싱된
+# 값**에 대한 진술이고, 드리프트 가드
+# (`tos/runtime/cp3/tests/test_cp3_short_strategy_content.py::
+# test_b1b_copy_equals_the_deployed_tenant_strategy_after_normalising_coordinates`)도
+# `yaml.safe_load` 뒤를 대조하므로 별칭 표기를 그대로 받는다(별칭은 파싱 시 해석된다).
 # ⚠ tenant 상품은 mini `A056xx` 다(결정 2) — full `101S6000` 은 parity 데이터셋 전용이고
 # 그래서 여기 들고 오지 않는다.
 #
-# ⛔ **렌더는 아직 이 파일을 채우지 못한다 — 부팅 경로(kickoff §5 3 ④) 미착수.**
-# 두 가지가 걸린다(실측 2026-10-09):
-#   (1) `scripts/tos/render_paper_config.py::_STRATEGY_FILE` 가
-#       `strategies/bootproof_band.strategy.yaml` 로 **고정**이다.
-#   (2) 그 스크립트의 좌표 규칙은 앵커 줄이 **정확히 1회** 매칭될 것을 요구하는데
-#       (`_apply_rules`), 이 파일은 규칙이 셋이라 `account: "TBD"` ·
-#       `instrument: "TBD"` 가 **각 3회** 나온다. 또 `direction` 은 줄마다 값이 다르다
-#       (R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로 `--direction SHORT`
-#       렌더는 **일괄 치환이 성립하지 않는다**. ④ 는 「상수 한 줄 교체」가 아니다.
+# ✅ **렌더는 이 파일을 채운다 — 2026-10-10(계획 2026-10-09 PR-B).** 2026-10-09 에 적혀
+# 있던 두 막힘은 이렇게 풀렸다:
+#   (1) `scripts/tos/render_paper_config.py::_STRATEGY_FILE` 상수는 더 이상 렌더가 읽는
+#       원천이 아니다 — 슬롯 표가 트리마다 커밋되는 `<tree>/RENDER.yaml` 로 옮겨졌고
+#       (PR-A, 계획 §2.1), 이 트리의 매니페스트가 **이 파일 이름**을 적는다.
+#   (2) 앵커 **정확히 1회** 규칙(`_apply_rules`)은 **그대로**다 — 바꾼 것은 이 파일이다.
+#       R1 의 두 칸에만 YAML 앵커를 달고 R2·R3 는 별칭으로 참조하므로(계획 §2.2)
+#       `account: &account "TBD"` 줄은 원문에 **한 번**만 있다. 별칭을 하나 빠뜨리면
+#       렌더 뒤에 `"TBD"` 가 남고 로더가 그 리프를 **이름으로 거부한다** — 새 가드가
+#       필요 없는 이유다.
+#   방향은 **치환하지 않는다**(계획 §2.3). 이 트리는 방향별로 커밋돼 있으므로 매니페스트가
+#   `direction.mode: declared` + `value: "LONG"` 을 선언하고, 아래 R1 의 `direction: LONG`
+#   은 **검증 전용 슬롯**(치환문 == 앵커, 정확히 1회)이다. `--direction SHORT` 는 이 트리에
+#   대해 **거부된다** — SHORT 는 `cp3-setup-d-short` 트리를 렌더한다.
 #
 # 이 파일은 tos/runtime/src/tos_runtime/strategy/loader.py::load_strategies 가
 # 읽는 그 모양 그대로다 — tos/runtime/config/strategies/example.strategy.yaml 의
@@ -33,7 +45,9 @@
 # (`tos/runtime/cp3/strategies/setup_d_long.strategy.yaml`)은 모든 값이 concrete 이고
 # (`null` 리프 0 · `"TBD"` 문자열 0) 그래서 그 자리에서 적재·승인된다. **이 배포 사본은
 # `"TBD"` 리프를 여섯 개 들고 있다** — 세 규칙(R1·R2·R3)의 target 마다 `account` ·
-# `instrument` 두 칸(실측: 이 파일의 100·101·136·137·160·161행). 계좌·종목은 커밋되지
+# `instrument` 두 칸. ⚠ **리프는 여섯이지만 원문의 `"TBD"` 토큰은 둘뿐이다**(실측
+# 2026-10-10: R1 의 앵커 줄 둘 — 아래 `&account`·`&instrument` — 이고, R2·R3 는 별칭이라
+# 파싱 때 같은 값으로 해석된다). 계좌·종목은 커밋되지
 # 않으므로(위 문단) 그것이 맞는 상태이고, 로더는 그 리프를 **이름으로 거부한다**
 # (`tos_runtime._named_tbd.first_named_tbd_leaf`, `parse` 가 보기 전에). 즉 **이 파일은
 # 커밋 상태로는 적재되지 않는다 — 그 거부가 운영자-채움 게이트다.** `null` 리프는
@@ -106,8 +120,8 @@ policy:
           extreme threshold — propose a new long.
         target:
           kind: ACTION
-          account: "TBD"
-          instrument: "TBD"
+          account: &account "TBD"
+          instrument: &instrument "TBD"
           direction: LONG
           position_effect: OPEN
           # 수량은 Proposal 에 숫자 슬롯이 없다(DSL-G5) — basis 만 증거로
@@ -142,8 +156,8 @@ policy:
           mean-reversion thesis is realized, go flat.
         target:
           kind: FLAT
-          account: "TBD"
-          instrument: "TBD"
+          account: *account
+          instrument: *instrument
           # 롱을 닫는 액션이므로 방향은 반대쪽이다(tos/tests/backtest/
           # _backtest_fixtures.py 의 Explicit-Flat 과 같은 꼴).
           direction: SHORT
@@ -166,8 +180,8 @@ policy:
           R3-EXIT-EOD: the session's EOD close time has arrived — go flat.
         target:
           kind: FLAT
-          account: "TBD"
-          instrument: "TBD"
+          account: *account
+          instrument: *instrument
           direction: SHORT
           position_effect: CLOSE
           rationale: >-
