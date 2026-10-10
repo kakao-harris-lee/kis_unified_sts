@@ -228,11 +228,35 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
 
 1. **PR-A (렌더러 일반화)**: 매니페스트 로더 + 상주 `RENDER.yaml` + §4.1 세 테스트. 상주 산출 바이트 동일이 머지 조건.
    `scripts/` 변경이라 `expected_code_digest` 와 무관(설치 패키지 루트 밖) — PR 에서 실측으로 확인.
-2. **PR-B (tenant 매니페스트 + 별칭)**: LONG·SHORT 트리에 `RENDER.yaml` · 전략 파일 별칭화 · §4.2 테스트. tenant 완성
+2. ✅ **PR-B (tenant 매니페스트 + 별칭) — 2026-10-10 완료**: LONG·SHORT 트리에 `RENDER.yaml` · 전략 파일 별칭화 · §4.2 테스트. tenant 완성
    PR(값·SHORT·data dir·드리프트 가드)이 머지된 뒤에. 같은 PR 에서 tenant 전략 파일 헤더의 낡은 주장 둘을 고친다(리뷰
    L2 — 9행 「B1b 사본과 좌표 두 칸만 다르다」는 별칭화로 거짓이 되고, 36행의 행 번호 100·101·136·137·160·161 은 이미
    109·110·145·146·169·170 이다). tenant 완성 PR 에 B1b ↔ 배포 전략 드리프트 가드가 있으면 별칭 표기를 그 가드가 허용하도록
    함께 맞춘다.
+
+   **실측 처분**:
+   - 두 트리의 매니페스트는 **각 20 슬롯**(상주와 같은 20 개를 tenant 파일 이름과 방향 토큰으로 옮긴 것)이고
+     `direction.mode: declared` + `journal.mode: external` 이다. 검증 전용 방향 슬롯은 **다섯**이다 —
+     `construction.yaml::action_class`/`outbound_side` · OCP `DIRECTION` 축 · `marketfeed.yaml::direction` ·
+     전략 **진입 규칙**의 `direction` — §2.3 의 처분 목록 그대로다. ⚠ 로더의 declared 필수 검사는 **값 원천
+     세 종류**(`direction` · `direction_action_class` · `direction_side`)를 요구하고 그 셋이 이 다섯 슬롯에 걸쳐
+     있으므로, **슬롯 하나를 지워도 그 검사는 통과할 수 있다**(예: `marketfeed.yaml::direction` 만 지우면 세 원천이
+     모두 남는다). 다섯이 다 있다는 것을 고정하는 것은 로더가 아니라 PR-B 의 트리별 기대 슬롯 리터럴과
+     `test_every_direction_slot_is_verify_only_and_matches_the_committed_tree` 다.
+   - `finality.yaml::source_revision` 슬롯은 tenant 트리에도 **있다**(그 파일이 상주 바이트 사본이다).
+   - **B1b ↔ 배포 드리프트 가드는 수정이 필요 없었다.** `tos/runtime/cp3/tests/test_cp3_short_strategy_content.py::
+     test_b1b_copy_equals_the_deployed_tenant_strategy_after_normalising_coordinates` 는 `yaml.safe_load` **뒤**를
+     대조하고(`normalise_coordinates` 가 파싱된 문서를 받는다) 별칭은 파싱 시 해석되므로, 별칭 표기가 그대로 통과한다.
+     바이트 대조가 아니라는 것은 그 테스트 자신의 docstring 이 적고 있던 사실이다. 그래서 「텍스트로 비교하면 정직하게
+     고치고 기록한다」 조항은 발동하지 않았다 — 실측으로 확인했다(23 tests pass, 변경 0).
+   - 전략 파일 헤더의 낡은 주장은 **둘이 아니라 셋**이었다: 9행 · 36행의 행 번호 **그리고** 「⛔ 렌더는 아직 이 파일을
+     채우지 못한다」 블록 — 그 블록은 이 PR 이 바로 거짓으로 만드는 것이므로 함께 고쳤다. 행 번호는 다시 적지 않고
+     **표기에 대한 진술**로 바꿨다(헤더가 길어지면 또 어긋난다).
+   - 드리프트 가드 `tos/runtime/tests/compose/test_tenant_tree_copies.py` 의 `RENDER.yaml` 은 `_RESIDENT_ONLY` 에서
+     `_DIFFERS_FROM_RESIDENT` 로 옮겼다(사본이 아니다 — 매니페스트는 자기 트리를 적는다).
+     `test_tenant_tree_short.py` 에서는 `_DIFFERS_FROM_LONG` 에 `{tree_id, direction.value, slots}` 로 등재하고,
+     `slots` 가 리스트라 **한 잎으로 접히므로** `_FOLDED_PREFIXES` 에 넣고 좁히기 테스트를 함께 달았다.
+   - 두 트리 파일 수 **31 → 32**, README 의 계수 문장 셋을 함께 갱신했다(그 문장들을 **파싱하는** 테스트가 있다).
 3. **PR-C (부팅 증명 도구 + 실행 템플릿)**: §2.5 · §2.6. 첫 부팅 증명 실행은 스크래치 data dir 에서 1 세션, 기록은 런북
    §7.9 형식.
 4. **실제 genesis**: ③ 생산자가 생긴 뒤 운영자 결정. 이 계획에서 하지 않는다.

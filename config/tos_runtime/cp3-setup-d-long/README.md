@@ -33,8 +33,10 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 
 ## 3. 상주 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**이 트리는 31 파일이다: 바이트 동일 23 + 다름 5 + tenant 전용 3.** 더해서 상주 트리의
-`strategies/bootproof_band.strategy.yaml` **하나가 이 트리에 없다**(상주 29 파일 기준).
+**이 트리는 32 파일이다: 바이트 동일 23 + 다름 6 + tenant 전용 3.** 더해서 상주 트리의
+`strategies/bootproof_band.strategy.yaml` **하나가 이 트리에 없다**(상주 30 파일 기준).
+31 → 32 · 다름 5 → 6 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`** 때문이다(상주 29 → 30 은
+PR-A 가 더한 상주 `RENDER.yaml`).
 측정 방법은 작업트리 `cmp` 가 아니라 **git blob OID 대조**(`git ls-tree -r
 origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-object`)다 — 양쪽 모두
 **커밋된 내용**에 대한 진술이어야 하기 때문이다.
@@ -46,6 +48,7 @@ origin/main:config/tos_runtime/paper` vs 이 트리 파일들의 `git hash-objec
 | `construction.yaml` | **다름** — `price_field_key`·`shape_price_field_key` 가 `"close"` → **`"close_x100"`**. 상주의 `"close"` 는 이 트리의 critical_input 에 **없는 키**이고, 두 로더는 서로를 볼 수 없어 그 불일치를 **거부하지 못한다**(그 파일의 해당 주석이 실측 경로를 적는다). 나머지 값은 상주 승인값 그대로 |
 | `engine.yaml` | **주석만 다름** — 값은 상주 승인값 그대로다. 기존 주석이 상주 전략(`bootproof_band`)을 인용해 이 트리에서 거짓이 되므로 tenant 적용 한 문단을 덧붙였다(스텝 수 24 ≤ 64 재측정) |
 | `order_construction_policy.yaml` | **digest 동일 · template DATA 산문이 다름** — 2026-10-09 tick 정정이 `unit_multiplier_currency_and_numeric_rules` 줄을 고쳤고 그것은 **주석이 아니라 DATA**(DR-0002 §2.1 — 보존되지만 런타임이 해석하지 않는다)다. 그래서 「주석만 다름」은 **더 이상 참이 아니다**(초판에는 참이었고 이 PR 의 첫 커밋이 깨뜨렸다). `canonical_digest` 는 **그대로**다(`c90444b9…` — 상주·LONG·SHORT 셋 다 같다; 그 digest 는 DATA 산문도 `policy_id` 도 추적하지 않는다). 주석 쪽도 `quantity_basis` 선언 자리에 tenant 적용 문단을 덧붙였다 |
+| `RENDER.yaml` | **다름 — 사본이 아니다.** 렌더 매니페스트는 **자기 트리**의 슬롯과 모드를 적는다(계획 2026-10-09 §2.1). 상주는 `substitute` + `synthetic_bootproof`, 이 트리는 **`declared`(값 `LONG`) + `external`** 이고, 전략 슬롯은 이 트리의 Setup D 파일을 §2.2 의 YAML 앵커 표기로 가리킨다 |
 | `strategies/setup_d_long.strategy.yaml` | **tenant 전용** — 상주의 `strategies/bootproof_band.strategy.yaml` 을 **대체**한다(그 파일은 이 트리에 없다) |
 | `strategy_bindings.yaml` | **tenant 전용** — `z_entry_max_x1000: -1800`. `strategies/` 의 **형제**다(안에 두면 로더의 stray-file 규칙이 디렉터리 전체를 거부한다) |
 | `README.md` (이 파일) | **tenant 전용** |
@@ -182,12 +185,33 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
    이고, 라벨 스탬프 1분봉은 최소 나이가 60,000 ms 라 **열다섯 전부** `(UNKNOWN, "stale")`
    로 읽힌다(§5 의 ⚠⚠). 그것을 닫는 것은 아래 3(③ 생산자)이고, 이제 ③ 에는 **저널 append
    시각 스탬프**라는 구속 요구가 붙는다.
-2. **렌더가 이 트리를 아직 처리하지 못한다** — kickoff §5 3 ④. `scripts/tos/render_paper_config.py`
-   는 (a) `_STRATEGY_FILE` 이 `strategies/bootproof_band.strategy.yaml` 로 고정이고
-   (b) 좌표 규칙이 앵커 **정확히 1회** 매칭을 요구하는데 이 트리의 전략 파일은 규칙이 셋이라
-   `account: "TBD"`·`instrument: "TBD"` 가 각 3회 나오며 `direction` 은 줄마다 값이 다르다
-   (R1 LONG 진입 / R2·R3 는 롱을 닫는 SHORT). 즉 ④ 는 「상수 한 줄 교체」가 아니다.
-   그 뒤에 digest 다섯 재도출 + `safety_activation.yaml::members` 갱신이 따라온다(런북 §5).
+2. ✅ **렌더는 이 트리를 처리한다 — 2026-10-10(계획 2026-10-09 PR-B).** 2026-10-09 의 두
+   막힘은 ⓐ `_STRATEGY_FILE` 상수(→ 슬롯 표가 `RENDER.yaml` 로 옮겨졌다, PR-A)와 ⓑ 앵커
+   **정확히 1회** 매칭 요구(→ 전략 파일의 R1 에만 YAML 앵커를 달고 R2·R3 는 별칭으로
+   참조한다, 계획 §2.2)로 풀렸다. 방향은 **치환하지 않고 검증한다** — 이 트리의
+   `RENDER.yaml` 이 `direction.mode: declared` + `value: "LONG"` 을 선언하고 방향 결속
+   다섯 자리를 **검증 전용 슬롯**으로 들고 있어서 `--direction SHORT` 는 거부된다(계획 §2.3).
+   저널은 `journal.mode: external` 이라 렌더가 쓰지 않고 **`--journal-path` 가 필수**다
+   (계획 §2.4 — ③ 생산자의 출력, fail-closed).
+
+   ```bash
+   # ③ 생산자의 저널 경로를 넣는다. 산출 dir 은 저장소 밖이어야 한다.
+   python scripts/tos/render_paper_config.py \
+     --source config/tos_runtime/cp3-setup-d-long \
+     --out ~/.config/tos/cp3-setup-d-long-config \
+     --env-file .env.mock \
+     --instrument <근월물 mini 코드> \
+     --direction LONG \
+     --journal-path <③ 생산자의 출력>
+   ```
+
+   렌더는 좌표를 채운 뒤 `print-policy-digests` 다섯 줄(`CRITICAL_INPUT_POLICY` 포함)에서
+   `safety_activation.yaml::members` 를 **도출**하고 **새 프로세스로 활성화를 재검증**한다.
+   `--check` 로 등록 슬롯 밖 변경을 다시 볼 수 있다.
+   ⚠ **아직 안 돌렸다 — 위 명령의 `--out` 디렉터리는 §8 대로 없다.** 첫 실제 genesis 는
+   ③ 생산자가 생긴 뒤 운영자 결정이고(계획 §2.5), 그 전의 부팅 증명은 **스크래치 data dir**
+   에서만 한다(계획 PR-C). 테스트가 보는 것은 `tmp_path` 로의 렌더다
+   (`tests/unit/scripts/test_render_tenant_trees.py`).
 3. **실시간 필드 생산자가 없다** — kickoff §5 3 ③. B1a 는 Parquet 배치 도구이고 발행기가
    아니다. 복사된 `marketfeed.yaml` 은 상주와 같은 **저널 기반** 좌표를 들고 있다.
    ⛔ **2026-10-09 운영자 결정이 ③ 에 구속 요구를 붙였다**: `max_age_ms` = 800 은 커널 시간
