@@ -537,11 +537,20 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    **PR-C 코드 착지 2026-10-10**: `tools/tos_cp3/bootproof_journal.py`(열다섯 필드 한 행을
    **쓰는 시각** `as_of_ms` 로 — 위 ⚠⚠ 의 ③ 요구를 이 한 행에 먼저 적용한 것) ·
    `tools/tos_cp3/runners/run_tenant_session.sh`(선례 `run_p_ca.sh` 의 가드 · 인스턴스 값은
-   전부 env, 기본값 0개) · 둘이 공유하는 거부 `tools/tos_cp3/bootproof_guard.py`
-   (합성 표지가 붙은 저널은 **스크래치 루트 아래의 새 빈 디렉터리**에서만 genesis 할 수 있다 —
-   지정된 `cp3-setup-d-*-data` 의 첫 genesis 는 ③ 의 실데이터다).
+   전부 env, 기본값 0개) · 둘이 공유하는 data-dir 가드 `tools/tos_cp3/bootproof_guard.py`.
+   ⛔ **그 가드는 allowlist 이고 fail-closed 다**(계획 §2.5 의 ⛔⛔ 문단 — PR #892 리뷰 HIGH 가
+   초판의 「합성 표지를 단 저널만 가둔다」를 뒤집었다. 오늘 이 호스트의 저널은 **전부 합성인데
+   대부분 그 표지가 없어서**, 표지 기준 규칙은 상주 렌더의 저널을 지정된 저장소로 통과시켰다):
+   ① 상주 `paper-data` 는 어떤 저널로도 대상이 아니다 · ② **모든 행**의 `source_id` 가
+   `APPROVED_REAL_PRODUCER_PREFIXES` 접두일 때만 지정된 tenant 저장소가 열린다 ·
+   ③ 그 밖에는 스크래치 루트 아래 새 빈 디렉터리여야 한다.
+   **그 목록은 ③ 이 생길 때까지 비어 있고, 거기에 접두를 더하는 것이 ③ PR 의 일이다** — 즉
+   `cp3-setup-d-*-data` 의 첫 genesis 는 기계적으로 ③ 이후다.
    ⚠ **그 부팅 증명이 증명하는 것은 배선이지 필드 소비가 아니다**(계획 §2.5 는 PR #887 에서
-   하향됐다): `max_age_ms` 800 은 쓰기→부팅 간격이 800 ms 를 넘으면 열다섯을 STALE 로 만든다.
+   하향됐다): 쓰기와 첫 평가 사이에 가드·렌더·부팅·리플레이가 들어가므로 간격은 **초 단위**이고,
+   `max_age_ms` 800 에 대해 열다섯이 STALE 이 되는 것은 공산이 아니라 **구조상 확정**이다
+   (PR #892 리뷰 LOW 로 「likely」를 정정). 소비까지 보려면 부팅 **뒤에** 행을 덧붙이는 경로가
+   필요한데 그것은 만들지 않았다 — ③ 이전에 두 번째 생산자를 만들지 않기 위해서다.
    **실행은 아직이다** — PR-B 머지 뒤 스크래치 data dir 에서 1 세션, 절차와 기록 자리는 런북
    **§7.2-c**, 기록 형식은 §7.9.
    ⚠ `safety_activation.yaml::members` 는 여전히 `null` 이고, 활성화 재검증은 그 1 세션이

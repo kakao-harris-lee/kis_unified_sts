@@ -1,26 +1,37 @@
 """CP-3 tenant boot-proof journal + run template (plan 2026-10-09 §2.5 / §2.6).
 
-Every guard in :mod:`tools.tos_cp3.bootproof_guard` gets its OWN red proof here,
-and the three the plan names by hand are marked as such. The discipline is the
-repo's repeated one (#838): a guard whose concrete failing input nobody can
-write is a guard that blocks nothing, and a clause that only ever fires behind
-another clause is a *masked* clause — so each red proof below is built so that
-exactly the clause it names is the one that refuses.
+Every clause in :mod:`tools.tos_cp3.bootproof_guard` gets its OWN red proof, and
+each is built so that exactly the clause it names is the one that refuses. The
+discipline is the repo's repeated one (#838): a guard whose concrete failing
+input nobody can write blocks nothing, and a clause that only ever fires behind
+another clause is a *masked* clause.
 
-The run template's own tests follow ``tests/tools/test_broker_probes_ca.py``'s
-shape: a throwaway git checkout holding a copy of the template, so the guards
-run against a real ``git`` rather than a stubbed one.
+**The first cut of this module failed open and these tests did not catch it.**
+It keyed on a MARKER (``cp3-bootproof-synthetic``) and treated every other
+journal as a real producer, so the resident render's own journal was waved
+through to the designated tenant durable set. The test that pinned that hole —
+"a real-producer journal is not subject to the scratch rule" — asserted the bug
+as if it were the contract. It is gone; :func:`test_red_h1_an_unmarked_resident_style_journal_cannot_reach_a_designated_dir`
+replaces it with the reviewer's measured input.
+
+No test writes anything under the real ``~/.local/state/tos``: every one that
+touches a root moves ``HOME`` into ``tmp_path`` first, which also means the
+paths under test are the paths production uses — the guard takes no root
+override.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -36,23 +47,31 @@ from tools.tos_cp3.produce_fields import FIELD_ORDER
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The template under test and the shared guard file it sources.
 _RUNNER = _REPO_ROOT / "tools" / "tos_cp3" / "runners" / "run_tenant_session.sh"
 _RUNNER_COMMON = _REPO_ROOT / "tools" / "broker_probes" / "runners" / "_common.sh"
 
 #: The committed row ``tos/runtime/tests/marketfeed/test_journal_cp3_bootproof_row.py``
 #: feeds to the REAL ``JsonLinesObservationJournal``. The firewall forbids
-#: importing that reader from here, so the proof is split: that test shows the
-#: reader accepts this file, and :func:`test_the_tool_reproduces_the_committed_fixture`
-#: below shows this tool still produces it. Neither half can drift alone.
+#: importing that reader from here, so the proof is split and the fixture is the
+#: hinge; :func:`test_the_tool_reproduces_the_committed_fixture` is the other half.
 _FIXTURE = (
     _REPO_ROOT / "tos" / "runtime" / "tests" / "fixtures" / "cp3-bootproof-row.jsonl"
 )
 
-#: The bar the fixture borrows, and the B1a run it came from.
 _FIXTURE_RAW_EVENT_ID = "101S6000:1m:20251208T092000+0900"
 _FIXTURE_SOURCE_INSTRUMENT = "101S6000"
 _FIXTURE_INSTRUMENT = "A05611"
+
+#: A stand-in for ③'s eventual prefix, used only where a test needs the allowlist
+#: to be non-empty. Production's own tuple is empty and
+#: :func:`test_the_allowlist_is_empty_until_the_real_producer_lands` pins that.
+_TEST_ALLOWLIST = ("tos-cp3-third-producer/",)
+
+#: The ``source_id`` values the RESIDENT deployment actually writes — measured
+#: from ``~/.config/tos/paper-config/bootproof_journal.jsonl`` (5032 rows,
+#: instrument A05610). This is the reviewer's H1 input, and neither carries the
+#: synthetic marker: that is precisely why a marker-keyed rule failed open.
+_RESIDENT_SOURCE_IDS = ("tos-paper-bootproof-render", "tos-paper-resident-session")
 
 #: MIRRORS ``tos/runtime/src/tos_runtime/marketfeed/journal.py::_REQUIRED_KEYS``.
 #: ``tests/`` is outside ``tos/``, so the five names are restated as a literal —
@@ -63,7 +82,7 @@ JOURNAL_REQUIRED_KEYS_MIRROR = frozenset(
 
 
 # ---------------------------------------------------------------------------
-# Journal fixtures
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -98,178 +117,346 @@ def _synthetic_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Pat
     )
 
 
-def _real_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
+def _resident_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
+    """The reviewer's H1 input: the resident deployment's own source_ids."""
     return _journal(
-        path, [_row(source_id="tos-cp3-third-producer/0.1.0", instrument=instrument)]
+        path,
+        [_row(source_id=sid, instrument=instrument) for sid in _RESIDENT_SOURCE_IDS],
     )
 
 
-def _state(tmp_path: Path) -> tuple[Path, Path]:
-    """``(scratch root, the designated tenant data parent)`` under ``tmp_path``.
+def _allowlisted_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
+    return _journal(
+        path, [_row(source_id=_TEST_ALLOWLIST[0] + "0.1.0", instrument=instrument)]
+    )
 
-    Named exactly like the real ones (runbook §7.2-b) but rooted in ``tmp_path``:
-    nothing under the real ``~/.local/state/tos`` is ever created by these tests.
+
+@pytest.fixture
+def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
+    """``HOME`` in ``tmp_path``, with the §7.2-b directory names laid out under it.
+
+    The names are the real ones so the tests read like the runbook; the location
+    is throwaway. The guard takes no root override, so moving ``HOME`` is the
+    only way in — which means these tests exercise the same lookup production
+    does, rather than a test-only parameter.
     """
-    state = tmp_path / ".local" / "state" / "tos"
-    scratch = state / "scratch"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tos = tmp_path / ".local" / "state" / "tos"
+    scratch = tos / "scratch"
     scratch.mkdir(parents=True)
-    designated = state / "cp3-setup-d-long-data"
+    designated = tos / "cp3-setup-d-long-data"
     designated.mkdir(parents=True)
-    return scratch, designated
+    resident = tos / "paper-data"
+    resident.mkdir(parents=True)
+    return types.SimpleNamespace(
+        home=tmp_path,
+        tos=tos,
+        scratch=scratch,
+        designated=designated,
+        resident=resident,
+    )
+
+
+def _allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        bootproof_guard, "APPROVED_REAL_PRODUCER_PREFIXES", _TEST_ALLOWLIST
+    )
 
 
 # ---------------------------------------------------------------------------
-# The scratch rule — the three red proofs plan §2.5 names, plus the others
+# The rule itself — H1
 # ---------------------------------------------------------------------------
 
 
-def test_the_default_scratch_root_is_the_one_the_plan_names() -> None:
-    """The literal, pinned. Every red proof below moves the root to ``tmp_path``,
-    so without this nothing would say WHICH directory production actually uses."""
-    assert str(bootproof_guard.DEFAULT_SCRATCH_ROOT) == "~/.local/state/tos/scratch"
-    assert bootproof_guard.SYNTHETIC_SOURCE_PREFIX == "cp3-bootproof-synthetic"
+def test_the_allowlist_is_empty_until_the_real_producer_lands() -> None:
+    """The literal, pinned.
 
-
-@pytest.mark.parametrize("leaf", ["", "A05611"])
-def test_red_a_designated_data_dir_with_a_synthetic_journal_is_refused(
-    tmp_path: Path, leaf: str
-) -> None:
-    """Plan §2.5 red proof (a) — the H2 input verbatim.
-
-    ``run_tenant_session.sh`` pointed at the designated tenant durable set with a
-    boot-proof journal would genesis ``cp3-setup-d-long-data`` from synthetic
-    data, and an append-only evidence store cannot be un-genesised.
-
-    Both shapes are checked: the designated parent itself, and the contract-month
-    leaf under it (the path the template actually hands over). Both are EMPTY, so
-    the emptiness clause has nothing to say and the refusal is the containment
-    clause's alone.
+    Every "a real producer may genesis a designated set" test below has to
+    monkeypatch this tuple, so without this assertion nothing would say that
+    production's own copy is empty — which is the whole fail-closed posture.
+    ③'s PR adds its prefix here and changes this test in the same commit.
     """
-    scratch, designated = _state(tmp_path)
-    data_dir = designated / leaf if leaf else designated
+    assert bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES == ()
+    assert str(bootproof_guard.DEFAULT_SCRATCH_ROOT) == "~/.local/state/tos/scratch"
+    assert str(bootproof_guard.RESIDENT_DATA_ROOT) == "~/.local/state/tos/paper-data"
+    assert bootproof_guard.DESIGNATED_PARENT_GLOBS == (
+        "cp3-setup-d-*-data",
+        "paper-data",
+    )
+    assert bootproof_guard.POLICY_VERSION == "cp3-tenant-bootproof/2"
+
+
+def test_an_empty_allowlist_marks_every_row_unapproved(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """``str.startswith(())`` is False for every string, which is what makes the
+    empty allowlist fail closed with no second code path. Pinned here rather
+    than left as a stdlib corner the next reader has to know."""
+    journal = _journal(
+        tmp_path / "j.jsonl",
+        [_row(source_id="anything-at-all"), _row(source_id=_TEST_ALLOWLIST[0] + "x")],
+    )
+    assert bootproof_guard.unapproved_rows(journal) == (1, 2)
+
+
+def test_red_h1_an_unmarked_resident_style_journal_cannot_reach_a_designated_dir(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """**The reviewer's measured input (HIGH).**
+
+    ``~/.config/tos/paper-config/bootproof_journal.jsonl`` carries ``source_id``
+    ``tos-paper-bootproof-render`` / ``tos-paper-resident-session`` — synthetic,
+    but with no ``cp3-bootproof-synthetic`` marker anywhere. The first cut of
+    this guard printed "ok — real-producer journal" for it and the runner would
+    have genesised ``cp3-setup-d-long-data`` from synthetic rows, irreversibly.
+
+    Goes red against a marker-keyed (denylist) implementation; that is the point.
+    """
+    journal = _resident_journal(tmp_path / "resident-style.jsonl")
+
+    # The property the old rule was fooled by: nothing here says "synthetic".
+    assert bootproof_guard.synthetic_rows(journal) == ()
+    assert bootproof_guard.unapproved_rows(journal) == (1, 2)
+
+    for data_dir in (state.designated, state.designated / _FIXTURE_INSTRUMENT):
+        with pytest.raises(BootProofGuardRefused) as excinfo:
+            require_scratch_rule(journal, data_dir)
+        assert "not from an approved real producer" in str(excinfo.value)
+
+
+def test_an_allowlisted_journal_may_genesis_a_designated_dir(
+    tmp_path: Path, state: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """③'s path still works once its prefix is added — the inversion is
+    fail-closed, not a wall. Without this, a guard that refused everything would
+    look just as green."""
+    _allowlist(monkeypatch)
+    journal = _allowlisted_journal(tmp_path / "third.jsonl")
+
+    assert bootproof_guard.unapproved_rows(journal) == ()
+    require_scratch_rule(journal, state.designated / _FIXTURE_INSTRUMENT)
+
+
+def test_red_h1_the_resident_store_is_refused_even_with_an_allowlisted_journal(
+    tmp_path: Path, state: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unconditional clause, isolated: the journal is allowlisted, so the
+    scratch branch is not taken at all and only the resident check can fire.
+
+    The resident leaf is live. Its rows are attributed to the resident
+    deployment and activation records bind neither direction nor tree (runbook
+    §5 ⑤), so tenant rows appended there could never be separated again.
+    """
+    _allowlist(monkeypatch)
+    journal = _allowlisted_journal(tmp_path / "third.jsonl")
+    assert bootproof_guard.unapproved_rows(journal) == ()
+
+    for data_dir in (state.resident, state.resident / _FIXTURE_INSTRUMENT):
+        with pytest.raises(BootProofGuardRefused) as excinfo:
+            require_scratch_rule(journal, data_dir)
+        assert "RESIDENT paper durable set" in str(excinfo.value)
+
+
+def test_red_c_one_unapproved_row_among_approved_ones_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan §2.5's third red proof, carried across the inversion: **every** row
+    is examined, not the first.
+
+    Rows 1-2 are allowlisted and row 3 is not. A first-row-only check clears
+    this journal and lets the unapproved rows into a permanent corpus.
+    """
+    _allowlist(monkeypatch)
+    journal = _journal(
+        tmp_path / "mixed.jsonl",
+        [
+            _row(source_id=_TEST_ALLOWLIST[0] + "0.1.0"),
+            _row(source_id=_TEST_ALLOWLIST[0] + "0.1.0"),
+            _row(source_id="tos-paper-resident-session"),
+        ],
+    )
+
+    # The property a first-row-only check would have been fooled by.
+    assert bootproof_guard.unapproved_rows(journal) == (3,)
+
+    with pytest.raises(BootProofGuardRefused):
+        require_scratch_rule(journal, state.designated / _FIXTURE_INSTRUMENT)
+
+
+# ---------------------------------------------------------------------------
+# The scratch branch — one isolated red proof per clause
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("leaf", ["", _FIXTURE_INSTRUMENT])
+def test_red_a_designated_data_dir_with_a_synthetic_journal_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace, leaf: str
+) -> None:
+    """Plan §2.5 red proof (a) — the H2 input verbatim, now refused because the
+    allowlist is empty rather than because of a marker."""
+    data_dir = state.designated / leaf if leaf else state.designated
     journal = _synthetic_journal(tmp_path / "journal.jsonl")
 
     with pytest.raises(BootProofGuardRefused) as excinfo:
-        require_scratch_rule(journal, data_dir, scratch_root=scratch)
+        require_scratch_rule(journal, data_dir)
     assert "scratch root" in str(excinfo.value)
 
 
+def test_red_containment_a_plain_dir_outside_scratch_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """Containment, isolated.
+
+    The dir is outside scratch but carries NO durable-set name and is NOT under
+    the resident root, so the name clause and the resident clause have nothing
+    to say — only containment can refuse it. Without this, containment's only
+    red proofs would be inputs the name clause also catches.
+    """
+    data_dir = state.tos / "somewhere-else" / _FIXTURE_INSTRUMENT
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    assert bootproof_guard._designated_component(data_dir.resolve()) is None
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "which is not" in str(excinfo.value)
+
+
 def test_red_b_a_symlink_inside_scratch_pointing_at_a_designated_dir_is_refused(
-    tmp_path: Path,
+    tmp_path: Path, state: types.SimpleNamespace
 ) -> None:
     """Plan §2.5 red proof (b) — this one fails without ``Path.resolve()``.
 
     The test asserts the property, not just the outcome: the path handed to the
     guard IS lexically under the scratch root, so a containment check written on
-    strings would clear it. Only resolving both sides refuses it.
+    strings would clear it.
     """
-    scratch, designated = _state(tmp_path)
-    link = scratch / "looks-like-scratch"
-    link.symlink_to(designated, target_is_directory=True)
+    link = state.scratch / "looks-like-scratch"
+    link.symlink_to(state.designated, target_is_directory=True)
     journal = _synthetic_journal(tmp_path / "journal.jsonl")
 
-    # The property a string comparison would have been fooled by.
-    assert str(link).startswith(str(scratch) + os.sep)
-    assert link.resolve() == designated.resolve()
-
-    with pytest.raises(BootProofGuardRefused) as excinfo:
-        require_scratch_rule(journal, link, scratch_root=scratch)
-    assert str(designated.resolve()) in str(excinfo.value)
-
-
-def test_red_c_a_synthetic_marker_on_the_third_row_only_is_refused(
-    tmp_path: Path,
-) -> None:
-    """Plan §2.5 red proof (c) — this one fails if only the first row is checked.
-
-    The first two rows carry a real producer's ``source_id``; the third carries
-    the marker. A first-row-only implementation clears this journal and the
-    synthetic data reaches the designated durable set.
-    """
-    scratch, designated = _state(tmp_path)
-    journal = _journal(
-        tmp_path / "journal.jsonl",
-        [
-            _row(source_id="tos-cp3-third-producer/0.1.0"),
-            _row(source_id="tos-cp3-third-producer/0.1.0"),
-            _row(
-                source_id=f"{SYNTHETIC_SOURCE_PREFIX}:{_FIXTURE_SOURCE_INSTRUMENT}:bar"
-            ),
-        ],
-    )
-
-    # The property a first-row-only check would have been fooled by.
-    first = json.loads(journal.read_text(encoding="utf-8").splitlines()[0])
-    assert not first["source_id"].startswith(SYNTHETIC_SOURCE_PREFIX)
-    assert bootproof_guard.synthetic_rows(journal) == (3,)
+    assert str(link).startswith(str(state.scratch) + os.sep)
+    assert link.resolve() == state.designated.resolve()
 
     with pytest.raises(BootProofGuardRefused):
-        require_scratch_rule(journal, designated / "A05611", scratch_root=scratch)
+        require_scratch_rule(journal, link)
 
 
-def test_a_non_empty_scratch_dir_is_refused(tmp_path: Path) -> None:
-    """The emptiness clause, isolated: the directory IS under the scratch root,
-    so containment has nothing to say. Genesis into a directory that already
-    holds something appends synthetic evidence to whatever is there."""
-    scratch, _designated = _state(tmp_path)
-    data_dir = scratch / "bp" / "data" / "A05611"
+def test_red_m1_a_symlinked_scratch_root_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Review MEDIUM, isolated.**
+
+    ``~/.local/state/tos/scratch`` is a symlink. The data dir here is genuinely
+    under the RESOLVED root, is empty, carries no durable-set name and is not
+    under the resident root — so every other clause is satisfied and only the
+    symlink check can refuse it. Delete that check and this goes green.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tos = tmp_path / ".local" / "state" / "tos"
+    (tos / "real-scratch").mkdir(parents=True)
+    (tos / "scratch").symlink_to(tos / "real-scratch", target_is_directory=True)
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, tos / "scratch" / "bp" / _FIXTURE_INSTRUMENT)
+    assert "symlinked scratch root" in str(excinfo.value)
+
+
+def test_red_m1_the_reviewers_symlinked_root_input_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reviewer's own framing of the same finding: the root points at an
+    ANCESTOR of the designated sets, so every one of them resolves "under
+    scratch".
+
+    Two clauses cover this input — the symlinked root fires first, and the
+    durable-set name would catch it anyway. That redundancy is stated rather
+    than hidden; the two preceding tests are what prove each clause can fire on
+    its own.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tos = tmp_path / ".local" / "state" / "tos"
+    designated = tos / "cp3-setup-d-long-data"
+    designated.mkdir(parents=True)
+    (tos / "scratch").symlink_to(tos, target_is_directory=True)
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    candidate = tos / "scratch" / "cp3-setup-d-long-data" / _FIXTURE_INSTRUMENT
+    assert candidate.resolve() == (designated / _FIXTURE_INSTRUMENT).resolve()
+    with pytest.raises(BootProofGuardRefused):
+        require_scratch_rule(journal, candidate)
+
+
+@pytest.mark.parametrize(
+    "name", ["cp3-setup-d-long-data", "cp3-setup-d-short-data", "paper-data"]
+)
+def test_red_m1_a_durable_set_name_under_scratch_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace, name: str
+) -> None:
+    """The durable-set-name clause, isolated.
+
+    The dir is genuinely under a genuinely non-symlinked scratch root and is
+    empty, so containment, the symlink check and emptiness all pass. ``paper-data``
+    here is NOT under the real resident root either, so the resident clause
+    cannot fire — which is why that name is checked in both places rather than
+    once: each placement has its own live failing input.
+    """
+    data_dir = state.scratch / name / _FIXTURE_INSTRUMENT
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "durable-set parent name" in str(excinfo.value)
+
+
+def test_a_non_empty_scratch_dir_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """Emptiness, isolated: under scratch, no durable-set name, real root."""
+    data_dir = state.scratch / "bp" / "data" / _FIXTURE_INSTRUMENT
     data_dir.mkdir(parents=True)
     (data_dir / "evidence.sqlite3").write_text("x", encoding="utf-8")
     journal = _synthetic_journal(tmp_path / "journal.jsonl")
 
     with pytest.raises(BootProofGuardRefused) as excinfo:
-        require_scratch_rule(journal, data_dir, scratch_root=scratch)
+        require_scratch_rule(journal, data_dir)
     assert "newly created and empty" in str(excinfo.value)
 
 
-def test_a_file_where_the_data_dir_should_be_is_refused(tmp_path: Path) -> None:
+def test_a_file_where_the_data_dir_should_be_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
     """Same clause's other half — ``iterdir`` would raise instead of refusing."""
-    scratch, _designated = _state(tmp_path)
-    data_dir = scratch / "bp"
-    data_dir.parent.mkdir(parents=True, exist_ok=True)
+    data_dir = state.scratch / "bp"
     data_dir.write_text("not a directory", encoding="utf-8")
     journal = _synthetic_journal(tmp_path / "journal.jsonl")
 
     with pytest.raises(BootProofGuardRefused) as excinfo:
-        require_scratch_rule(journal, data_dir, scratch_root=scratch)
+        require_scratch_rule(journal, data_dir)
     assert "not a directory" in str(excinfo.value)
 
 
-def test_the_scratch_root_itself_is_refused(tmp_path: Path) -> None:
+def test_the_scratch_root_itself_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
     """ "Under the scratch root" means strictly under it: the root is the parent
     of the one-off session directories, not a durable set of its own."""
-    scratch, _designated = _state(tmp_path)
     journal = _synthetic_journal(tmp_path / "journal.jsonl")
-
     with pytest.raises(BootProofGuardRefused):
-        require_scratch_rule(journal, scratch, scratch_root=scratch)
+        require_scratch_rule(journal, state.scratch)
 
 
-def test_a_fresh_scratch_dir_is_accepted(tmp_path: Path) -> None:
-    """The green side: absent is fine — the caller creates it right after."""
-    scratch, _designated = _state(tmp_path)
-    journal = _synthetic_journal(tmp_path / "journal.jsonl")
-
-    require_scratch_rule(
-        journal, scratch / "bp" / "data" / "A05611", scratch_root=scratch
-    )
-    (scratch / "bp" / "data" / "A05611").mkdir(parents=True)
-    require_scratch_rule(
-        journal, scratch / "bp" / "data" / "A05611", scratch_root=scratch
-    )
-
-
-def test_a_real_producer_journal_is_not_subject_to_the_scratch_rule(
-    tmp_path: Path,
+def test_a_fresh_scratch_dir_is_accepted(
+    tmp_path: Path, state: types.SimpleNamespace
 ) -> None:
-    """③'s first real genesis goes into the DESIGNATED durable set — that is what
-    those directories are for. Without this the rule would block the thing it
-    exists to protect."""
-    scratch, designated = _state(tmp_path)
-    journal = _real_journal(tmp_path / "journal.jsonl")
+    """The green side: absent is fine — the caller creates it right after — and
+    so is an existing empty one."""
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+    data_dir = state.scratch / "cp3-bootproof-20261010" / "data" / _FIXTURE_INSTRUMENT
 
-    require_scratch_rule(journal, designated / "A05611", scratch_root=scratch)
-    assert bootproof_guard.synthetic_rows(journal) == ()
+    require_scratch_rule(journal, data_dir)
+    data_dir.mkdir(parents=True)
+    require_scratch_rule(journal, data_dir)
 
 
 @pytest.mark.parametrize(
@@ -281,53 +468,44 @@ def test_a_real_producer_journal_is_not_subject_to_the_scratch_rule(
     ],
 )
 def test_an_unreadable_journal_is_refused_not_cleared(
-    tmp_path: Path, content: str, expected: str
+    tmp_path: Path, state: types.SimpleNamespace, content: str, expected: str
 ) -> None:
     """Fail-closed: a line this guard cannot parse is a line whose ``source_id``
-    it cannot clear, so "unreadable" must never collapse into "no synthetic rows
-    found" — which would hand a corrupt journal the designated durable set."""
-    scratch, designated = _state(tmp_path)
+    it cannot clear, so "unreadable" must never collapse into "every row is from
+    an approved producer"."""
     journal = tmp_path / "journal.jsonl"
     journal.write_text(content, encoding="utf-8")
 
     with pytest.raises(BootProofGuardRefused) as excinfo:
-        require_scratch_rule(journal, designated, scratch_root=scratch)
+        require_scratch_rule(journal, state.designated)
     assert expected in str(excinfo.value)
 
 
-def test_a_missing_journal_is_refused(tmp_path: Path) -> None:
-    scratch, designated = _state(tmp_path)
+def test_a_missing_journal_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
     with pytest.raises(BootProofGuardRefused) as excinfo:
-        require_scratch_rule(tmp_path / "nope.jsonl", designated, scratch_root=scratch)
+        require_scratch_rule(tmp_path / "nope.jsonl", state.designated)
     assert "does not exist" in str(excinfo.value)
 
 
 def test_a_journal_for_another_contract_month_is_refused(tmp_path: Path) -> None:
-    """Isolated from the scratch rule on purpose: a REAL journal, so only the
-    instrument clause can fire. A mismatch is not an error downstream — the
-    runtime reader filters by instrument, so it is zero observations and a
-    session that boots cleanly and proves nothing."""
-    journal = _real_journal(tmp_path / "journal.jsonl", instrument="A05612")
+    """Isolated from the data-dir rule on purpose. A mismatch is not an error
+    downstream — the runtime reader FILTERS by instrument, so it is zero
+    observations and a session that boots cleanly and proves nothing."""
+    journal = _synthetic_journal(tmp_path / "journal.jsonl", instrument="A05612")
 
     bootproof_guard.require_journal_instrument(journal, "A05612")
     with pytest.raises(BootProofGuardRefused) as excinfo:
-        bootproof_guard.require_journal_instrument(journal, "A05611")
+        bootproof_guard.require_journal_instrument(journal, _FIXTURE_INSTRUMENT)
     assert "A05612" in str(excinfo.value)
 
 
 def test_the_guard_cli_refuses_and_says_why(
-    tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, state: types.SimpleNamespace, capsys: Any
 ) -> None:
     """The shell template reaches the rule through this entry point, so the exit
-    codes are part of the contract.
-
-    The CLI has no ``--scratch-root`` flag — a template that could be told where
-    "scratch" is would be a guard its caller can switch off — so the throwaway
-    root is installed by moving ``HOME``, which is also how the shell tests below
-    keep away from the real ``~/.local/state/tos``.
-    """
-    scratch, designated = _state(tmp_path)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    codes and the branch it reports are part of the contract."""
     journal = _synthetic_journal(tmp_path / "journal.jsonl")
 
     assert (
@@ -336,20 +514,23 @@ def test_the_guard_cli_refuses_and_says_why(
                 "--journal",
                 str(journal),
                 "--data-dir",
-                str(scratch / "bp" / "A05611"),
+                str(state.scratch / "bp" / _FIXTURE_INSTRUMENT),
                 "--instrument",
                 _FIXTURE_INSTRUMENT,
             ]
         )
         == 0
     )
+    out = capsys.readouterr().out
+    assert "SCRATCH" in out and SYNTHETIC_SOURCE_PREFIX in out
+
     assert (
         bootproof_guard.main(
             [
                 "--journal",
                 str(journal),
                 "--data-dir",
-                str(designated / "A05611"),
+                str(state.designated / _FIXTURE_INSTRUMENT),
                 "--instrument",
                 _FIXTURE_INSTRUMENT,
             ]
@@ -359,21 +540,14 @@ def test_the_guard_cli_refuses_and_says_why(
     assert "REFUSED" in capsys.readouterr().err
 
 
-def test_the_cli_offers_no_scratch_root_flag() -> None:
-    """Stated directly, because the absence is the point and an added flag would
-    otherwise be an invisible widening."""
+@pytest.mark.parametrize("flag", ["--scratch-root", "--allow-producer"])
+def test_the_cli_offers_no_root_or_allowlist_override(flag: str) -> None:
+    """Stated directly, because the absence is the point: a template that could
+    be told where "scratch" is, or which producers count, is a guard its caller
+    can switch off."""
     with pytest.raises(SystemExit) as excinfo:
         bootproof_guard.main(
-            [
-                "--journal",
-                "j",
-                "--data-dir",
-                "d",
-                "--instrument",
-                "A05611",
-                "--scratch-root",
-                "/tmp",
-            ]
+            ["--journal", "j", "--data-dir", "d", "--instrument", "A05611", flag, "x"]
         )
     assert excinfo.value.code == 2
 
@@ -419,7 +593,11 @@ def test_the_relabel_is_explicit_in_source_id(tmp_path: Path) -> None:
     """Plan L1: the borrowed bar is the FULL contract ``101S6000`` and the row
     has to carry the rendered MINI code or nothing consumes it. The relabel is
     named rather than hidden, so a result from this boot is never read as a
-    market fact."""
+    market fact.
+
+    ⚠ The marker is PROVENANCE, not the rule — the guard reports it and does not
+    branch on it. Keying the rule on it is what failed open (review HIGH).
+    """
     bar = bootproof_journal.select_bar(_b1a_source(tmp_path), _FIXTURE_RAW_EVENT_ID)
     row = bootproof_journal.build_row(bar, _FIXTURE_INSTRUMENT, 1791601200000)
 
@@ -427,24 +605,23 @@ def test_the_relabel_is_explicit_in_source_id(tmp_path: Path) -> None:
     assert row["source_id"] == (
         f"{SYNTHETIC_SOURCE_PREFIX}:{_FIXTURE_SOURCE_INSTRUMENT}:{_FIXTURE_RAW_EVENT_ID}"
     )
-    # And the guard that keeps it out of a designated durable set actually sees it.
     journal = _journal(tmp_path / "j.jsonl", [row])
     assert bootproof_guard.synthetic_rows(journal) == (1,)
+    assert bootproof_guard.unapproved_rows(journal) == (1,)
 
 
 def test_as_of_ms_is_the_write_time_not_the_bar_label(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, state: types.SimpleNamespace
 ) -> None:
     """The operator's 2026-10-09 decision for ③, applied here: ``max_age_ms`` 800
     and the kernel's time path measure the SAME quantity, and B1a's own
-    ``as_of_ms`` is the bar LABEL — a minimum age of 60,000 ms, 75× the budget.
+    ``as_of_ms`` is the bar LABEL — a minimum age of 60,000 ms, 75x the budget.
     A label stamp can never be fresh, at any limit."""
     source = _b1a_source(tmp_path)
     label_as_of = json.loads(source.read_text(encoding="utf-8").splitlines()[0])[
         "as_of_ms"
     ]
-    _state(tmp_path)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    out = state.scratch / "bp" / "journal.jsonl"
 
     before = time.time_ns() // 1_000_000
     assert (
@@ -457,18 +634,16 @@ def test_as_of_ms_is_the_write_time_not_the_bar_label(
                 "--instrument",
                 _FIXTURE_INSTRUMENT,
                 "--out",
-                str(tmp_path / "out" / "journal.jsonl"),
+                str(out),
                 "--data-dir",
-                str(tmp_path / ".local/state/tos/scratch/bp/A05611"),
+                str(state.scratch / "bp" / "data" / _FIXTURE_INSTRUMENT),
             ]
         )
         == 0
     )
     after = time.time_ns() // 1_000_000
 
-    written = json.loads(
-        (tmp_path / "out" / "journal.jsonl").read_text(encoding="utf-8")
-    )
+    written = json.loads(out.read_text(encoding="utf-8"))
     assert before <= written["as_of_ms"] <= after
     assert written["as_of_ms"] != label_as_of
     # 60 s is the bar period, so the label is at least that stale the moment it
@@ -477,14 +652,13 @@ def test_as_of_ms_is_the_write_time_not_the_bar_label(
 
 
 def test_the_tool_refuses_a_designated_data_dir(
-    tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, state: types.SimpleNamespace, capsys: Any
 ) -> None:
     """The same refusal as the run template, reached from the OTHER entry point —
     that is why it lives in one module (plan §2.5: "두 진입점 어느 쪽에서도
     막히게")."""
     source = _b1a_source(tmp_path)
-    _scratch, designated = _state(tmp_path)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    out = state.scratch / "bp" / "journal.jsonl"
 
     rc = bootproof_journal.main(
         [
@@ -495,14 +669,52 @@ def test_the_tool_refuses_a_designated_data_dir(
             "--instrument",
             _FIXTURE_INSTRUMENT,
             "--out",
-            str(tmp_path / "out" / "journal.jsonl"),
+            str(out),
             "--data-dir",
-            str(designated / "A05611"),
+            str(state.designated / _FIXTURE_INSTRUMENT),
         ]
     )
     assert rc == 1
     assert "REFUSED" in capsys.readouterr().err
-    assert not (tmp_path / "out" / "journal.jsonl").exists()
+    assert not out.exists()
+
+
+def test_red_l1_the_tool_refuses_an_out_path_outside_scratch(
+    tmp_path: Path, state: types.SimpleNamespace, capsys: Any
+) -> None:
+    """**Review LOW.** ``--out`` was unconstrained, and this tool replaces its
+    output file WHOLE and atomically — so
+
+        --out ~/.config/tos/paper-config/bootproof_journal.jsonl
+
+    would have silently replaced the live resident journal (the resident
+    session's only observation source, 5032 rows) with one synthetic row.
+
+    The data dir here is a perfectly good scratch dir, so only the output clause
+    can refuse this.
+    """
+    source = _b1a_source(tmp_path)
+    live = state.home / ".config" / "tos" / "paper-config" / "bootproof_journal.jsonl"
+    live.parent.mkdir(parents=True)
+    live.write_text('{"the": "live resident journal"}\n', encoding="utf-8")
+
+    rc = bootproof_journal.main(
+        [
+            "--fields",
+            str(source),
+            "--raw-event-id",
+            _FIXTURE_RAW_EVENT_ID,
+            "--instrument",
+            _FIXTURE_INSTRUMENT,
+            "--out",
+            str(live),
+            "--data-dir",
+            str(state.scratch / "bp" / "data" / _FIXTURE_INSTRUMENT),
+        ]
+    )
+    assert rc == 1
+    assert "REFUSED" in capsys.readouterr().err
+    assert live.read_text(encoding="utf-8") == '{"the": "live resident journal"}\n'
 
 
 def test_the_tool_refuses_an_unknown_or_ambiguous_bar(tmp_path: Path) -> None:
@@ -578,7 +790,7 @@ def test_the_tool_reproduces_the_committed_fixture(tmp_path: Path) -> None:
         bar, _FIXTURE_INSTRUMENT, expected["as_of_ms"]
     )
     assert produced == expected
-    # Byte-for-byte, including key order and the separators the writer uses.
+
     bootproof_journal.write_journal(tmp_path / "again.jsonl", produced)
     assert (tmp_path / "again.jsonl").read_bytes() == _FIXTURE.read_bytes()
 
@@ -598,13 +810,11 @@ def test_the_journal_is_replaced_atomically(tmp_path: Path) -> None:
     lines = out.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["as_of_ms"] == 2
-    # No ``.partial`` left behind — a reader that found one would be reading a
-    # file this tool never finished writing.
     assert [p.name for p in out.parent.glob("*.partial")] == []
 
 
 # ---------------------------------------------------------------------------
-# The run template
+# The run template — source properties
 # ---------------------------------------------------------------------------
 
 
@@ -647,8 +857,7 @@ def test_runner_template_passes_shellcheck() -> None:
 def test_runner_template_carries_no_instance_defaults() -> None:
     """Every ``TENANT_*`` value is read WITHOUT a non-empty ``:-`` default. The
     designated tenant paths (runbook §7.2-b) live in the runbook, never here: a
-    default is how one session's data dir silently becomes the next session's —
-    and the plan's whole H2 concern is a session writing to the wrong one."""
+    default is how one session's data dir silently becomes the next session's."""
     pairs = set(
         re.findall(r"\$\{(TENANT_[A-Z_]+):-([^}]*)\}", _RUNNER.read_text("utf-8"))
     )
@@ -657,9 +866,6 @@ def test_runner_template_carries_no_instance_defaults() -> None:
         "TENANT_LOG",
         "TENANT_ALLOW_SHARED_CHECKOUT",
     }, pairs
-    # The shared helpers stay prefix-free: a TENANT_ name creeping into
-    # _common.sh is one runner reading another's environment. (Its own test
-    # already pins PCA_/P8_; this is the same property for this caller.)
     helpers = _RUNNER_COMMON.read_text("utf-8")
     assert not re.findall(r"\bTENANT_[A-Z_]+\b", helpers), helpers
 
@@ -708,17 +914,53 @@ def test_runner_boots_the_way_the_resident_session_does() -> None:
         assert flag in text, flag
 
 
-# --- the guards, against a real git checkout -------------------------------
+def test_runner_pins_the_guard_generation_it_was_written_for() -> None:
+    """A template copied out of another tree drives refusals that are not the
+    ones its header describes. The inversion bumped the guard to ``/2``; without
+    this the template could still be pinned to ``/1``."""
+    assert (
+        f"EXPECT_POLICY_VERSION={bootproof_guard.POLICY_VERSION}"
+        in _RUNNER.read_text("utf-8")
+    )
 
 
-_FRONT_MONTH = "A05611"
+def test_runner_forwards_signals_to_the_child() -> None:
+    """Source-level companion to the live test below: the traps exist and all
+    three route through the one stop path."""
+    text = _RUNNER.read_text("utf-8")
+    for sig in ("TERM", "INT", "HUP"):
+        assert f"trap 'on_signal {sig}" in text, sig
+    assert "stop_run()" in text
+
+
+# ---------------------------------------------------------------------------
+# The run template — against a real git checkout
+# ---------------------------------------------------------------------------
+
+
+_FRONT_MONTH = _FIXTURE_INSTRUMENT
+
+#: Written by the stub `run` so a test can find the child process.
+_RUN_PIDFILE_ENV = "STUB_RUN_PIDFILE"
+#: Read by the stub renderer to decide the rendered tree's `environment`.
+_TREE_ENV = "STUB_TREE_ENVIRONMENT"
 
 
 def _runner_repo(
-    tmp_path: Path, *, detached: bool = True, policy: str | None = None
+    tmp_path: Path,
+    *,
+    detached: bool = True,
+    policy: str | None = None,
+    bootable: bool = False,
 ) -> Path:
     """A throwaway checkout holding the template, the helpers it sources, the
-    guard module it hands off to, and a stub front-month lookup."""
+    guard module it hands off to, and a stub front-month lookup.
+
+    ``bootable=True`` additionally installs a stub renderer and a stub
+    ``tos_runtime.compose.cli`` that runs until it is killed, so the tests that
+    need the template to reach step 8b and step 9 can get there without the real
+    renderer, a custody root or a kernel.
+    """
     repo = tmp_path / "repo"
     (repo / "tools" / "tos_cp3" / "runners").mkdir(parents=True)
     (repo / "tools" / "broker_probes" / "runners").mkdir(parents=True)
@@ -734,9 +976,9 @@ def _runner_repo(
     )
     (repo / "tools/tos_cp3/__init__.py").write_text("", encoding="utf-8")
     if policy is not None:
-        text = (repo / "tools/tos_cp3/bootproof_guard.py").read_text("utf-8")
-        (repo / "tools/tos_cp3/bootproof_guard.py").write_text(
-            text.replace(
+        guard = repo / "tools/tos_cp3/bootproof_guard.py"
+        guard.write_text(
+            guard.read_text("utf-8").replace(
                 f'POLICY_VERSION = "{bootproof_guard.POLICY_VERSION}"',
                 f'POLICY_VERSION = "{policy}"',
             ),
@@ -749,10 +991,41 @@ def _runner_repo(
         f"    return {_FRONT_MONTH!r}\n",
         encoding="utf-8",
     )
-    (repo / "scripts/tos/render_paper_config.py").write_text(
-        "raise SystemExit('the guard tests never reach the renderer')\n",
-        encoding="utf-8",
-    )
+
+    if bootable:
+        (repo / "scripts/tos/render_paper_config.py").write_text(
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "argv = sys.argv[1:]\n"
+            "out = Path(argv[argv.index('--out') + 1])\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            f"env = os.environ.get({_TREE_ENV!r}, 'paper')\n"
+            "if env != '__omit__':\n"
+            "    (out / 'critical_input_policy.yaml').write_text(\n"
+            "        'environment: \"%s\"\\n' % env, encoding='utf-8')\n"
+            "print('stub render ok')\n",
+            encoding="utf-8",
+        )
+        cli_dir = repo / "tos/runtime/src/tos_runtime/compose"
+        cli_dir.mkdir(parents=True)
+        (repo / "tos/runtime/src/tos_runtime/__init__.py").write_text(
+            "", encoding="utf-8"
+        )
+        (cli_dir / "__init__.py").write_text("", encoding="utf-8")
+        (cli_dir / "cli.py").write_text(
+            "import os, time\n"
+            "from pathlib import Path\n"
+            "def main(argv):\n"
+            f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
+            "    while True:\n"
+            "        time.sleep(0.2)\n",
+            encoding="utf-8",
+        )
+    else:
+        (repo / "scripts/tos/render_paper_config.py").write_text(
+            "raise SystemExit('the guard tests never reach the renderer')\n",
+            encoding="utf-8",
+        )
 
     def git(*argv: str) -> None:
         subprocess.run(
@@ -778,12 +1051,12 @@ def _runner_repo(
     return repo
 
 
-def _run_runner(repo: Path, tmp_path: Path, **overrides: str) -> Any:
-    """Run the template with a complete, valid environment unless overridden.
+def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
+    """A complete, valid environment for the template.
 
-    ``HOME`` is ``tmp_path``, so ``bootproof_guard``'s default scratch root is a
-    throwaway one — nothing under the real ``~/.local/state/tos`` is touched.
-    ``""`` as an override value UNSETS the variable.
+    ``HOME`` is ``tmp_path``, so the guard's default scratch root is a throwaway
+    one — nothing under the real ``~/.local/state/tos`` is touched. ``""`` as an
+    override value UNSETS the variable.
     """
     scratch = tmp_path / ".local" / "state" / "tos" / "scratch" / "bp"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -813,11 +1086,15 @@ def _run_runner(repo: Path, tmp_path: Path, **overrides: str) -> Any:
             env.pop(name, None)
         else:
             env[name] = value
+    return env
+
+
+def _run_runner(repo: Path, tmp_path: Path, **overrides: str) -> Any:
     return subprocess.run(
         ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
         capture_output=True,
         text=True,
-        env=env,
+        env=_runner_env(tmp_path, **overrides),
         cwd=str(tmp_path),
     )
 
@@ -923,8 +1200,7 @@ def test_runner_refuses_a_stop_time_it_cannot_honour(
 ) -> None:
     """Three separate failing inputs, because "the stop time is checked" covers
     three different ways to lose a session: an unparseable value, a deadline that
-    has already gone by (the session would stop before it started), and a typo
-    like "2027" that never ends."""
+    has already gone by, and a typo like "2027" that never ends."""
     result = _run_runner(_runner_repo(tmp_path), tmp_path, TENANT_STOP_AT=stop_at)
     assert result.returncode != 0
     assert expected in result.stdout + result.stderr
@@ -933,21 +1209,60 @@ def test_runner_refuses_a_stop_time_it_cannot_honour(
 def test_runner_refuses_a_guard_module_of_a_different_generation(
     tmp_path: Path,
 ) -> None:
-    """The POLICY_VERSION handshake: a template copied out of another tree drives
-    refusals that are not the ones its header describes."""
     repo = _runner_repo(tmp_path, policy="cp3-tenant-bootproof/99")
     result = _run_runner(repo, tmp_path)
     assert result.returncode != 0
     assert "policy version mismatch" in result.stdout + result.stderr
 
 
+def test_red_h1_runner_refuses_the_reviewers_resident_journal_input(
+    tmp_path: Path,
+) -> None:
+    """**The reviewer's HIGH input, end to end at the run template.**
+
+    An unmarked resident-style journal plus
+    ``TENANT_DATA_PARENT=<designated cp3-setup-d-long-data>``. The old guard
+    accepted this and the runner would have genesised the designated store from
+    synthetic rows. Nothing is created and nothing is rendered now.
+    """
+    designated = tmp_path / ".local" / "state" / "tos" / "cp3-setup-d-long-data"
+    journal = _resident_journal(tmp_path / "resident-style.jsonl", _FRONT_MONTH)
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        TENANT_DATA_PARENT=str(designated),
+        TENANT_JOURNAL=str(journal),
+    )
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "boot-proof guard refused" in output
+    assert "not from an approved real producer" in output
+    assert not (designated / _FRONT_MONTH).exists()
+    assert not (tmp_path / "render-out").exists()
+
+
+def test_red_h1_runner_refuses_the_resident_durable_set(tmp_path: Path) -> None:
+    """The same journal pointed at the LIVE resident parent — the second half of
+    the reviewer's input. Refused by the unconditional clause."""
+    resident = tmp_path / ".local" / "state" / "tos" / "paper-data"
+    resident.mkdir(parents=True)
+    journal = _resident_journal(tmp_path / "resident-style.jsonl", _FRONT_MONTH)
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        TENANT_DATA_PARENT=str(resident),
+        TENANT_JOURNAL=str(journal),
+    )
+    assert result.returncode != 0
+    assert "RESIDENT paper durable set" in result.stdout + result.stderr
+    assert not (resident / _FRONT_MONTH).exists()
+
+
 def test_runner_refuses_a_synthetic_journal_outside_the_scratch_root(
     tmp_path: Path,
 ) -> None:
-    """Plan §2.5's H2 input, at the RUN TEMPLATE: data parent
-    ``~/.local/state/tos`` plus a boot-proof journal would genesis the designated
-    tenant durable set with synthetic data. Nothing is created and nothing is
-    rendered — the refusal lands before the data dir exists."""
+    """Plan §2.5's H2 input at the run template: data parent
+    ``~/.local/state/tos`` plus a boot-proof journal."""
     designated = tmp_path / ".local" / "state" / "tos" / "cp3-setup-d-long-data"
     result = _run_runner(
         _runner_repo(tmp_path), tmp_path, TENANT_DATA_PARENT=str(designated)
@@ -974,3 +1289,117 @@ def test_runner_refuses_a_missing_journal(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "does not exist" in result.stdout + result.stderr
+
+
+# --- the bootable fixture: label check and signal forwarding ---------------
+
+
+@pytest.mark.parametrize(
+    ("tree_env", "expected"),
+    [
+        ("non-live-test", "the rendered tree declares environment 'non-live-test'"),
+        ("__omit__", "cannot read environment"),
+    ],
+)
+def test_red_l3_runner_refuses_a_label_the_rendered_tree_does_not_declare(
+    tmp_path: Path, tree_env: str, expected: str
+) -> None:
+    """**Review LOW.** ``--environment-label`` is free-form and the critical-input
+    loader does not compare its own ``environment`` against it, so a mismatch
+    boots quietly and every capsule this session issues carries the wrong
+    environment inside its covered content — wrong evidence, not missing
+    evidence, in an append-only store.
+
+    Two failing inputs: the tree declares something else, and the tree declares
+    nothing this can read.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path)
+    env[_TREE_ENV] = tree_env
+    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
+    # A short window and a hard timeout: when this guard is REMOVED the runner
+    # does not fail, it BOOTS — so without these the mutation experiment that
+    # proves the guard load-bearing would hang the suite for the whole session
+    # window instead of failing. (Measured: it did, before these were added.)
+    env["TENANT_STOP_AT"] = "+1 minutes"
+    try:
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=120,
+        )
+    finally:
+        pidfile = tmp_path / "run.pid"
+        if pidfile.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    assert result.returncode != 0
+    assert expected in result.stdout + result.stderr
+    # The boot never started.
+    assert not (tmp_path / "run.pid").exists()
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def test_red_m2_a_signal_to_the_runner_stops_the_child(tmp_path: Path) -> None:
+    """**Review MEDIUM.** Without a trap, SIGTERM to the runner leaves ``run``
+    ORPHANED with no deadline — writing into a durable set nobody is watching,
+    which is the opposite of what a one-off boot proof is for. The resident
+    driver forwards signals the same way
+    (``~/.config/kis-probes/tos_paper_session.py:264, 439-441, 525-529``).
+
+    A stub ``run`` stands in for the kernel; the assertion is about the child's
+    lifetime, not about what it does.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    pidfile = tmp_path / "run.pid"
+    env = _runner_env(tmp_path, TENANT_STOP_AT="+2 hours")
+    env[_RUN_PIDFILE_ENV] = str(pidfile)
+
+    runner = subprocess.Popen(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    child_pid = -1
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not pidfile.is_file():
+            assert runner.poll() is None, runner.communicate()[0]
+            time.sleep(0.2)
+        assert pidfile.is_file(), (
+            "the stub `run` never started; runner output:\n"
+            + (tmp_path / "session.log").read_text("utf-8", errors="replace")[-3000:]
+        )
+        child_pid = int(pidfile.read_text().strip())
+        assert _pid_alive(child_pid)
+
+        runner.send_signal(signal.SIGTERM)
+        out = runner.communicate(timeout=60)[0]
+
+        gone = time.monotonic() + 30
+        while time.monotonic() < gone and _pid_alive(child_pid):
+            time.sleep(0.2)
+        assert not _pid_alive(child_pid), (
+            f"the stub `run` (pid {child_pid}) survived a SIGTERM to the runner — "
+            "it is orphaned with no deadline"
+        )
+        assert runner.returncode == 143, out
+        assert "SIGNAL TERM received by the runner" in out
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+        if child_pid > 0 and _pid_alive(child_pid):
+            os.kill(child_pid, signal.SIGKILL)

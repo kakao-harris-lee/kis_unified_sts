@@ -1136,30 +1136,56 @@ SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의
 필드 **선언** → 결정 경로 → 거부. 증명하지 **않는** 것은 **필드 소비**다.
 tenant 트리의 `critical_input_policy.yaml::max_age_ms` 는 **800** 이고(§7.2-b 가 가리키는
 운영자 결정 2026-10-09), `max_age_ms` 와 커널 시간 경로는 **같은 양**(`now_ms - as_of_ms`)을
-잰다. 도구가 `as_of_ms` 를 **쓰는 시각**으로 찍어도 **쓰기와 부팅 사이가 800 ms 를 넘으면**
-`_derive_field_state` 가 필드마다 `(UNKNOWN, "stale")` 를 돌려주고, 커널의 UNKNOWN 바닥이
-그 키들을 떨어뜨려 R1 의 AND 가 거짓 → NO_ACTION → 송신 0 이다(fail-closed). 상주 렌더의
-부팅 증명 관측이 `_JOURNAL_AGE_MS` 1000 > 800 때문에 **언제나** STALE 인 것과 같은 모양이다
-(아래 §5 ④ 와 같은 절의 STALE 문단). 계획 §2.5 의 「15 필드 **소비**」라는 초판 표현은
-**PR #887 에서 하향**됐다. 그러므로 이 절차의 기대 결말은 「부팅 성공 · 정책 결속 다섯 줄 ·
-관측 1건 · **STALE 일 공산이 크다**」이고, **실제로 어느 쪽이 나왔는지는 돌린 뒤에 아래
-「실행 기록」에 적는다**(소비까지 보려면 부팅 **뒤에** 행을 덧붙이거나 ③ 을 기다린다).
+잰다. 도구가 `as_of_ms` 를 **쓰는 시각**으로 찍어도 `_derive_field_state` 가 필드마다
+`(UNKNOWN, "stale")` 를 돌려주고, 커널의 UNKNOWN 바닥이 그 키들을 떨어뜨려 R1 의 AND 가
+거짓 → NO_ACTION → 송신 0 이다(fail-closed).
 
-**도구 둘 · 거부 하나.**
+⛔ **「공산이 크다」가 아니라 구조상 확정이다(초판의 약한 표현을 정정 — PR #892 리뷰 LOW).**
+이 절차에서 쓰기와 첫 평가 사이에는 **가드 · 렌더 · 부팅 · 리플레이**가 들어간다. 렌더만
+해도 다섯 digest 도출과 스테이징 스왑이고, 부팅 리플레이는 이력에 비례해 커진다(§7.3 7 의
+600 s 천장이 그래서 있다). **초 단위**가 800 ms 를 넘지 않을 길이 없다. 그러므로 기대 결말은
+「부팅 성공 · 정책 결속 다섯 줄 · 관측 1건 · **열다섯 전부 STALE**」이다. 상주 렌더의 부팅
+증명 관측이 `_JOURNAL_AGE_MS` 1000 > 800 때문에 **언제나** STALE 인 것과 같은 모양이고
+(아래 §5 ④ 와 같은 절의 STALE 문단), 계획 §2.5 의 「15 필드 **소비**」라는 표현은 **PR #887
+에서 하향**됐다. **소비를 보려면 부팅 뒤에 행을 덧붙이는 경로가 필요한데 그것은 만들지
+않았다**(계획 §2.5 의 PR-C 선택: 지금 만들면 ③ 이전에 두 번째 생산자가 생긴다). 그래서
+「STALE 이냐 아니냐」는 이 절차가 답할 질문이 **아니다** — 아래 「실행 기록」은 STALE 이
+실제로 그렇게 나왔는지를 **확인**해 적는 자리이고, 열린 질문은 ③ 으로 넘어간다.
+
+**도구 둘 · 가드 하나.**
 
 | 무엇 | 자리 |
 | --- | --- |
 | 부팅 증명 저널(한 행, 열다섯 필드, 쓰는 시각 `as_of_ms`) | `tools/tos_cp3/bootproof_journal.py` |
 | 실행 템플릿(렌더 → 부팅 → 정지 → 증거 요약) | `tools/tos_cp3/runners/run_tenant_session.sh` |
-| 스크래치 전용 강제(두 진입점 **공용**) | `tools/tos_cp3/bootproof_guard.py` |
+| data-dir 가드(두 진입점 **공용**) | `tools/tos_cp3/bootproof_guard.py` |
 
 값은 B1a 실측 창의 **한 봉**을 빌린다. ⚠ **그 봉은 full 계약 `101S6000` 의 것이다** —
 부팅 증명 행은 소비되려면 렌더된 **mini** 종목 코드를 달아야 하므로 full→mini **재표지**다.
-숨기지 않는다: `source_id` 가 `cp3-bootproof-synthetic:101S6000:<원 raw_event_id>` 이고,
-그 `cp3-bootproof-synthetic` 접두가 바로 거부의 입력이다 — **저널의 어느 행이든** 그 접두를
-달고 있으면, data dir 의 `Path.resolve()` 가 스크래치 루트 `~/.local/state/tos/scratch/` 의
-`Path.resolve()` **아래**이고 **새로 만든 빈 디렉터리**일 때만 진행한다. 그래서 스크래치 루트
-안의 심볼릭 링크가 지정 dir 을 가리켜도 거부된다. **결과를 시장 사실로 읽지 않는다.**
+숨기지 않는다: `source_id` 가 `cp3-bootproof-synthetic:101S6000:<원 raw_event_id>` 다.
+⚠ 그 표지는 **출처 표시이고 판정 기준이 아니다** — 판정은 아래 **allowlist** 가 한다.
+**결과를 시장 사실로 읽지 않는다.**
+
+**가드가 하는 일 — allowlist · fail-closed** (계획 §2.5 의 ⛔⛔ 문단, PR #892 리뷰 HIGH 로
+초판의 denylist 를 뒤집은 것):
+
+1. **상주 durable set `~/.local/state/tos/paper-data` 는 어떤 저널로도 대상이 아니다**(무조건).
+2. **모든 행**의 `source_id` 가 `APPROVED_REAL_PRODUCER_PREFIXES` 의 접두면 §7.2-b 의 지정된
+   tenant 저장소가 허용된다. ⛔ **그 목록은 ③ 이 생길 때까지 비어 있다** — 그래서 **오늘은
+   스크래치 밖 부팅이 전부 거부된다.** ③ 의 PR 이 자기 접두를 더하는 것이 첫 실제 genesis 가
+   가능해지는 순간이다.
+3. 그 밖에는 data dir 이 스크래치 루트 `~/.local/state/tos/scratch/` **아래**(양쪽 `resolve()`)
+   의 **새 빈 디렉터리**여야 하고, 스크래치 루트 자신이 심볼릭 링크가 아니어야 하며, 경로에
+   `cp3-setup-d-*-data`·`paper-data` 같은 durable-set 이름 조각이 없어야 한다.
+
+초판이 **왜** 틀렸는지도 적어 둔다(같은 모양을 또 만들지 않기 위해): 초판은 「합성 표지가
+붙은 저널」만 스크래치에 가뒀는데, **오늘 이 호스트의 저널은 전부 합성이고 대부분 그 표지를
+달고 있지 않다.** 상주 렌더의 `~/.config/tos/paper-config/bootproof_journal.jsonl`
+(`tos-paper-bootproof-render` · `tos-paper-resident-session`)을 근월물로 바꿔 지정 dir 에
+겨누면 가드가 **「ok」를 찍었다**(리뷰어 실측).
+
+⚠ 도구의 `--out` 도 스크래치 아래여야 한다 — 이 도구는 출력 파일을 **통째로 원자적 교체**
+하므로, 제약이 없으면 위의 **살아 있는 상주 저널**을 합성 한 행으로 덮어쓴다(리뷰 LOW).
 
 **절차 (분리 워크트리 · `origin/main` · clean · 모의 전용).**
 
@@ -1208,6 +1234,12 @@ TENANT_ENVIRONMENT_LABEL=paper \
   앞에서 되풀이하므로, 실전 자격증명 파일로는 이 템플릿을 인스턴스화할 수 없다.
 - `TENANT_CUSTODY_ROOT` 는 §1 의 커스터디 루트이고 매니페스트의 `environment_label` 이
   `TENANT_ENVIRONMENT_LABEL` 과 **바이트 일치**해야 한다(아니면 부팅이 거부한다).
+- `TENANT_ENVIRONMENT_LABEL` 은 **렌더된 트리의 `critical_input_policy.yaml::environment` 와도**
+  같아야 하고, 템플릿이 렌더 직후 대조한다(PR #892 리뷰 LOW). critical-input 로더는 그 둘을
+  **대조하지 않으므로**, 어긋난 라벨은 조용히 부팅하고 그 세션의 모든 스냅샷·캡슐 covered
+  content 에 틀린 환경이 박힌다 — append-only 저장소에 **틀린 증거**가 남는 것이다.
+- 템플릿은 TERM/INT/HUP 를 받으면 자식 `run` 에 SIGTERM → 120 s → SIGKILL 을 그대로 적용한다
+  (상주 드라이버와 같은 블록). Ctrl-C 로 멈춰도 `run` 이 고아로 남지 않는다.
 - `TENANT_DIRECTION` 은 그 트리의 `RENDER.yaml::direction.value` 와 **같아야** 한다 — tenant
   트리는 `declared` 모드라 렌더가 방향을 치환하지 않고 **대조**한다(계획 §2.3).
 - 템플릿은 마지막에 그 durable set 의 `snapshots` · `entries` 수와 **kind 별 분포**를 찍는다.
@@ -1219,10 +1251,12 @@ TENANT_ENVIRONMENT_LABEL=paper \
 않는다.**
 
 **실행 기록 — ⛔ 아직 돌리지 않았다 (2026-10-10).** 돌린 뒤 §7.9 형식으로 여기에 적는다:
-출하본 sha256 둘(`run_tenant_session.sh` · `bootproof_journal.py`) · 세션 디렉터리 · `verdict`
-와 rc · 정책 결속 다섯 줄의 유무 · `snapshots` 와 `entries` 델타 · **그리고 위 ⚠ 의 열린
-질문의 답**: 열다섯 필드가 STALE 로 떨어졌는가, 아니면 쓰기→부팅이 800 ms 안에 들어와
-소비됐는가. 어느 쪽이든 **그대로** 적는다 — 이 절차의 값은 그 답이지 초록 체크가 아니다.
+출하본 sha256 셋(`run_tenant_session.sh` · `bootproof_journal.py` · `bootproof_guard.py`) ·
+세션 디렉터리 · rc · **정책 결속 다섯 줄의 유무**(이것이 이 절차의 본 주장이다) ·
+`snapshots` 와 `entries` 델타 · kind 별 분포 · 그리고 **열다섯이 STALE 로 떨어진 것이
+맞는지의 확인**(위 ⛔ 대로 구조상 그래야 한다 — 아니었다면 그쪽이 소견이다).
+⚠ **「소비되는가」는 이 절차가 답할 질문이 아니다** — 답하려면 부팅 뒤에 행을 덧붙이는 경로가
+있어야 하고 그것은 만들지 않았다. 그 질문은 ③ 의 것이다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 

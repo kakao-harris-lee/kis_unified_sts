@@ -157,17 +157,43 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
   생기고, 계획이 피하려는 「두 원천」이 된다(§3 의 같은 기각 사유). 그래서 이 PR 이 증명하는 것은 **배선**이고, 열다섯이
   STALE 로 떨어지는지 아닌지는 **실행에서 실측**해 런북 §7.2-c 「실행 기록」에 적는다 — 코드만으로는 아직 답이 없다.
 - 이 저널로 하는 부팅은 런북 §3 의 1회성 절차 그대로, **스크래치 data dir** 에서만 한다. 지정된 tenant data dir
-  (`~/.local/state/tos/cp3-setup-d-*-data`)에는 **절대 쓰지 않는다** — 첫 실제 genesis 는 ③ 의 실데이터로 한다.
+  (`~/.local/state/tos/cp3-setup-d-*-data`)에도 상주 잎(`~/.local/state/tos/paper-data/<종목>`)에도 **절대 쓰지 않는다** —
+  첫 실제 genesis 는 ③ 의 실데이터로 한다. 도구의 `--out` 도 같은 봉쇄를 받는다(리뷰 LOW): 이 도구는 출력 파일을 **통째로
+  원자적 교체**하므로, 제약이 없으면 `--out ~/.config/tos/paper-config/bootproof_journal.jsonl` 이 **살아 있는 상주 저널**을
+  합성 한 행으로 덮어쓴다.
 - ⚠ **산문만으로는 이 규칙이 지켜지지 않는다(리뷰 H2).** 렌더러는 저널을 읽지 않고 data dir 을 모르며, 실행 템플릿은 data
   부모를 env 로 받는다. 구체적 실패 입력: `run_tenant_session.sh` 에 data 부모 `~/.local/state/tos` + 부팅 증명 저널 → 지정된
   `cp3-setup-d-*-data` 저장소에 합성 데이터로 genesis. 저장소는 append-only 라 **되돌릴 수 없다**.
-  **처분 — 실행 템플릿의 거부 하나**(레드 증명 = 위 입력 그대로): 저널의 **어느 행이든** `source_id` 가
+  **처분(이 계획이 적었던 것) — 실행 템플릿의 거부 하나**: 저널의 **어느 행이든** `source_id` 가
   `cp3-bootproof-synthetic` 접두를 달고 있으면, data dir 의 `Path.resolve()` 가 스크래치 루트(`~/.local/state/tos/scratch/`)의
   `Path.resolve()` 아래에 있고 **새로 만든 빈 디렉터리**일 때만 진행한다. 부팅 증명 도구 쪽에도 같은 검사를 둔다(두 진입점
-  어느 쪽에서도 막히게). v2 에 있던 둘째 거부(「지정 패턴 + 합성 → 거부」)는 첫째가 이미 덮어 혼자서는 발화할 수 없는 가려진
-  절이라 **삭제**했다(재리뷰 LOW, #838). 해석(`resolve`)이 있으므로 스크래치 루트 아래의 심볼릭 링크가 지정 dir 을 가리키는
-  경우도 거부된다 — 이것을 둘째 레드 증명으로 둔다(스크래치 루트 안 심볼릭 링크 → 지정 dir, 합성 저널 → 거부). 첫 행만이 아니라
-  모든 행을 보는 레드 증명: 첫 행은 실데이터 표지, 셋째 행이 합성 표지 → 거부.
+  어느 쪽에서도 막히게).
+
+  ⛔⛔ **그 처분은 틀렸다 — 구현 시점 정정, PR #892 독립 리뷰 HIGH (2026-10-10).** 위 문장은 **표지를 기준으로 하는
+  denylist** 이고, denylist 는 **fail-open** 한다. 지금 이 호스트에 있는 저널은 **전부 합성**인데 대부분 그 표지를 달고 있지
+  않기 때문이다. **구체적 실패 입력(리뷰어 실측)**: 상주 렌더가 만든 저널
+  `~/.config/tos/paper-config/bootproof_journal.jsonl`(`source_id` 는 `tos-paper-bootproof-render` ·
+  `tos-paper-resident-session`, 5,032 행) 을 근월물로 바꾸고 `TENANT_DATA_PARENT=~/.local/state/tos/cp3-setup-d-long-data`
+  로 돌리면, 가드가 **「ok — real-producer journal」을 찍고** 지정된 저장소가 합성 데이터로 genesis 된다. `paper-data` 를
+  주면 **살아 있는 상주 잎**에 tenant 증거가 덧붙는다. 둘 다 append-only 라 되돌릴 수 없다. (이 저장소의 반복 결함
+  — 가드를 「문장 종류·표지의 열거」로 쓰면 거의 틀린다. 성질을 물어야 한다.)
+
+  **정정된 규칙 — allowlist · fail-closed**(`tools/tos_cp3/bootproof_guard.py`):
+  ① 상주 durable set(`~/.local/state/tos/paper-data`)은 **어떤 저널로도** 대상이 아니다(무조건). ②
+  **모든 행**의 `source_id` 가 `APPROVED_REAL_PRODUCER_PREFIXES` 의 접두로 시작할 때만 지정된 tenant 저장소가 허용된다. ③
+  그 밖에는 스크래치 루트 아래의 **새 빈 디렉터리**여야 하고, 그 경로에 심볼릭 링크도 durable-set 이름(`cp3-setup-d-*-data` ·
+  `paper-data`)도 없어야 한다. **그 allowlist 는 ③ 생산자가 생길 때까지 비어 있다** — 그래서 오늘은 스크래치 밖 부팅이
+  전부 거부된다. ③ 의 PR 이 자기 접두를 거기에 더하는 것이 「첫 실제 genesis 가 가능해지는 순간」이다.
+  표지(`cp3-bootproof-synthetic`)는 **출처 표시로 남고 판정에 쓰이지 않는다**.
+
+  레드 증명(전부 변이로 확인 — 절을 지우면 그 테스트만 red):
+  리뷰어의 입력 그대로(표지 없는 상주 저널 + 지정 dir) · 같은 저널 + 상주 `paper-data` · allowlist 에 접두가 있는 저널은
+  지정 dir 을 genesis **할 수 있다**(③ 경로가 막히지 않았다는 증명) · 스크래치 루트 **자신이 심볼릭 링크**(리뷰 MEDIUM:
+  루트가 지정 집합의 조상을 가리키면 전부 「스크래치 아래」가 된다) · 스크래치 **안**의 링크가 지정 dir 을 가리킴 ·
+  스크래치 안인데 이름이 `cp3-setup-d-*-data` · 비어 있지 않은 스크래치 dir · 1·2행은 승인 접두인데 **3행만** 아님
+  (모든 행을 본다는 성질은 반전 뒤에도 그대로다).
+  v2 에 있던 둘째 거부(「지정 패턴 + 합성 → 거부」)는 가려진 절이라 삭제했었는데(재리뷰 LOW, #838), 위 ③ 의 durable-set
+  이름 절로 **살아 있는 레드 증명과 함께** 돌아왔다 — 스크래치 안에 그 이름을 쓴 dir 은 다른 어느 절도 잡지 않는다.
 - B1a 값을 쓰는 이유: 지어낸 값이 아니고, B1b 실행이 같은 값으로 이미 결정을 냈으므로 부팅 증명 결과를 B1b 트레이스와
   대조할 수 있다. ⚠ **단 그 봉은 full 계약 `101S6000` 의 것이다(리뷰 L1)** — `cp3-b1a-run1` 의 lineage 가 그렇고(세션
   2025-12-08, 가격대 ~583), 부팅 증명 행은 소비되려면 렌더된 **mini** 종목 코드를 달아야 한다. 즉 full 값을 mini 로 **재표지**
@@ -182,6 +208,13 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
   `origin/main` 조상 가드 · 인스턴스 값은 전부 env 필수, 기본값 0개). 위치 제안: `tools/tos_cp3/runners/run_tenant_session.sh`.
 - 템플릿이 받는 값: 트리 id · 방향 · 렌더 출력 dir · data 부모 dir(잎 `<종목>` 은 상주처럼 근월물 코드) · 저널 경로 · 정지
   시각. 기본값을 두지 않는다. 지정된 경로(tenant 완성 PR 의 data dir 지정)는 런북에만 적고 템플릿에는 하드코딩하지 않는다.
+- **구현 시점에 더한 둘(PR #892 리뷰 MEDIUM·LOW)**: ① **신호 전달** — 템플릿에 TERM/INT/HUP `trap` 을 두고 상주
+  드라이버와 같은 블록(SIGTERM → 120 s → SIGKILL, `tos_paper_session.py:264,439-441,525-529`)을 자식에게 적용한다.
+  없으면 템플릿을 `kill` 하거나 Ctrl-C 했을 때 `run` 이 **마감 없이 고아**가 되어 아무도 안 보는 durable set 에 계속 쓴다.
+  ② **부팅 라벨 대조** — `--environment-label` 은 자유 문자열이고 critical-input 로더는 자기 `environment` 토큰과
+  **대조하지 않는다**. 그래서 어긋난 라벨은 **조용히** 부팅하고 그 세션이 발행하는 모든 스냅샷·캡슐의 covered content 에
+  틀린 환경이 박힌다 — append-only 저장소에 「없는 증거」가 아니라 **틀린 증거**가 남는다. 템플릿이 렌더된 트리의
+  `critical_input_policy.yaml::environment` 와 바이트 대조한다.
 - cron 등록은 이 계획에 없다 — 첫 실제 세션은 ③ 뒤의 운영자 결정이다.
 
 ## 3. 기각한 대안
@@ -240,8 +273,9 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
 3. **PR-C (부팅 증명 도구 + 실행 템플릿)**: §2.5 · §2.6. ✅ **코드 착지 2026-10-10** —
    `tools/tos_cp3/bootproof_journal.py`(한 행 · 열다섯 필드 · **쓰는 시각** `as_of_ms` · `source_id` 에 full→mini 재표지) ·
    `tools/tos_cp3/runners/run_tenant_session.sh`(선례 `run_p_ca.sh` 의 가드를 **같은 `_common.sh` 에서** 가져온다 — 가드를
-   두 벌로 두지 않는다) · 둘이 공유하는 거부 `tools/tos_cp3/bootproof_guard.py`. 테스트는 `tests/tools/test_cp3_bootproof.py`
-   (§2.5 레드 증명 셋 + 비어 있지 않은 스크래치 + 실데이터 저널 면제 + 템플릿 가드 전건) 와
+   두 벌로 두지 않는다) · 둘이 공유하는 거부 `tools/tos_cp3/bootproof_guard.py`(**allowlist · fail-closed** — §2.5 의
+   ⛔⛔ 문단, 구현 시점 정정). 테스트는 `tests/tools/test_cp3_bootproof.py`
+   (§2.5 의 레드 증명 전건 + 절마다 변이로 확인한 격리 + 템플릿 가드 전건) 와
    `tos/runtime/tests/marketfeed/test_journal_cp3_bootproof_row.py`(커밋된 픽스처 한 행을 **실제** `JsonLinesObservationJournal`
    이 받는다 — 방화벽상 한 테스트가 양쪽을 다 들 수 없어 픽스처가 경첩이다).
    ⛔ **첫 부팅 증명 실행은 아직이다** — PR-B 머지 뒤, 스크래치 data dir 에서 1 세션. 절차·기록 자리는 런북 **§7.2-c**,

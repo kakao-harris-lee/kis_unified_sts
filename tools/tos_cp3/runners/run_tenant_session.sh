@@ -31,11 +31,15 @@
 #      the render (--instrument), exactly as the resident wrapper does it
 #      (runbook §7.3 5-a) — two places computing it separately disagree silently
 #      on a roll day.
-#   7. the boot-proof refusal (plan §2.5): a journal carrying the
-#      `cp3-bootproof-synthetic` marker on ANY row may only genesis a fresh,
-#      empty directory under the scratch root. The check itself lives in
-#      tools/tos_cp3/bootproof_guard.py, which tools/tos_cp3/bootproof_journal.py
-#      calls too, so the two entry points cannot drift.
+#   7. the data-dir refusal (plan §2.5, as corrected by the review of PR #892):
+#      the resident durable set is never a target; otherwise EVERY row's
+#      source_id must come from an approved real producer, and that allowlist is
+#      EMPTY until ③ lands — so today every boot must land in a fresh, empty
+#      scratch directory. The check lives in tools/tos_cp3/bootproof_guard.py,
+#      which tools/tos_cp3/bootproof_journal.py calls too, so the two entry
+#      points cannot drift.
+#   8. the boot label must equal the rendered tree's own `environment` — the
+#      loader does not compare them, so a mismatch is wrong evidence, quietly.
 #
 # Then: render (the tenant tree declares journal.mode "external", so
 # --journal-path is required and the renderer writes no journal of its own) →
@@ -69,7 +73,7 @@ guard_checkout "$SCRIPT_DIR" "${TENANT_ALLOW_SHARED_CHECKOUT:-0}" \
 # template was COPIED OUT of a different tree — and a template driving a guard
 # of a different generation is a template whose refusals are not the ones its
 # header describes.
-EXPECT_POLICY_VERSION=cp3-tenant-bootproof/1
+EXPECT_POLICY_VERSION=cp3-tenant-bootproof/2
 
 # The driver's own SIGKILL_AFTER_S (~/.config/kis-probes/tos_paper_session.py):
 # SIGTERM, then this many seconds, then SIGKILL. One number, so the stop path
@@ -151,7 +155,7 @@ esac
 DATA_LEAF=$TENANT_DATA_PARENT/$INSTRUMENT
 log "instrument=$INSTRUMENT · data leaf $DATA_LEAF"
 
-# --- 7. the boot-proof refusal (plan §2.5) ---------------------------------
+# --- 7. the data-dir refusal (plan §2.5, as corrected by review) -----------
 #
 # BEFORE the leaf is created, so the "newly created and empty" half of the rule
 # still has something to say. The journal's own existence is this guard's first
@@ -191,6 +195,24 @@ printf '%s\n' "$RENDER_LOG" >>"$TENANT_LOG"
   die "render refused (rc=$render_rc): $(printf '%s' "$RENDER_LOG" | tail -1 | cut -c1-200)"
 log "render ok -> $TENANT_RENDER_OUT"
 
+# --- 8b. the boot label must be the tree's own environment -----------------
+#
+# `--environment-label` is free-form and the critical-input loader does NOT
+# compare its own `environment` token against it (measured; the tenant tree's
+# critical_input_policy.yaml header says so in as many words). So a mismatched
+# label boots QUIETLY and every snapshot and capsule this session issues carries
+# the wrong environment inside its covered content — evidence that is wrong
+# rather than missing, in an append-only store. The rendered tree is what
+# `compose` actually loads, so that is the copy compared (review LOW).
+CIP=$TENANT_RENDER_OUT/critical_input_policy.yaml
+TREE_ENV=$("$PY" -c \
+  'import sys,yaml;d=yaml.safe_load(open(sys.argv[1],encoding="utf-8"));print(d["environment"])' \
+  "$CIP" 2>&1) ||
+  die "cannot read environment from $CIP: $TREE_ENV"
+[ "$TREE_ENV" = "$TENANT_ENVIRONMENT_LABEL" ] ||
+  die "TENANT_ENVIRONMENT_LABEL='$TENANT_ENVIRONMENT_LABEL' but the rendered tree declares environment '$TREE_ENV' ($CIP). The loader does not compare these, so booting would issue capsules whose covered content names the wrong environment"
+log "environment label $TENANT_ENVIRONMENT_LABEL matches the rendered tree"
+
 # --- 9. boot ---------------------------------------------------------------
 #
 # Verbatim the resident boot invocation: the one-liner is
@@ -209,6 +231,40 @@ RUN_PID=$!
 log "run pid=$RUN_PID"
 
 # --- 10. stop --------------------------------------------------------------
+#
+# ONE stop path, reached three ways: the deadline below, a signal sent to THIS
+# script, or the child exiting on its own. The resident driver forwards signals
+# the same way (~/.config/kis-probes/tos_paper_session.py:264 installs the
+# handlers, :439-441 and :525-529 are the SIGTERM -> SIGKILL_AFTER_S -> SIGKILL
+# block). Without the trap, Ctrl-C or a `kill` on the runner leaves `run`
+# ORPHANED with no deadline at all — writing into a durable set nobody is
+# watching, which is the opposite of what a one-off boot proof is for.
+stop_run() {
+  if [ -n "${RUN_PID:-}" ] && kill -0 "$RUN_PID" 2>/dev/null; then
+    log "=== STOP SIGTERM -> pid $RUN_PID"
+    kill -TERM "$RUN_PID" 2>/dev/null || true
+    waited=0
+    while kill -0 "$RUN_PID" 2>/dev/null && [ "$waited" -lt "$SIGKILL_AFTER_S" ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 "$RUN_PID" 2>/dev/null; then
+      log "WARN: run did not stop within ${SIGKILL_AFTER_S}s of SIGTERM — SIGKILL"
+      kill -KILL "$RUN_PID" 2>/dev/null || true
+    fi
+  fi
+}
+
+# 128+signo, the conventional shell exit code, so a caller can tell an
+# interrupted session from a clean one.
+on_signal() {
+  log "=== SIGNAL $1 received by the runner — forwarding to the child"
+  stop_run
+  exit "$2"
+}
+trap 'on_signal TERM 143' TERM
+trap 'on_signal INT 130' INT
+trap 'on_signal HUP 129' HUP
 
 # The ABSOLUTE stop second, not "now + the window measured back in step 4": the
 # steps between then and here cost real time (a front-month lookup, the guard, a
@@ -221,17 +277,7 @@ while [ "$(TZ=Asia/Seoul date +%s)" -lt "$DEADLINE" ]; do
 done
 
 if kill -0 "$RUN_PID" 2>/dev/null; then
-  log "=== STOP SIGTERM -> pid $RUN_PID"
-  kill -TERM "$RUN_PID" 2>/dev/null || true
-  waited=0
-  while kill -0 "$RUN_PID" 2>/dev/null && [ "$waited" -lt "$SIGKILL_AFTER_S" ]; do
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if kill -0 "$RUN_PID" 2>/dev/null; then
-    log "WARN: run did not stop within ${SIGKILL_AFTER_S}s of SIGTERM — SIGKILL"
-    kill -KILL "$RUN_PID" 2>/dev/null || true
-  fi
+  stop_run
 else
   log "run exited on its own before the stop time"
 fi

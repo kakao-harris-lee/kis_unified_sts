@@ -81,6 +81,7 @@ from tools.tos_cp3.bootproof_guard import (  # noqa: E402
     SYNTHETIC_SOURCE_PREFIX,
     BootProofGuardRefused,
     require_scratch_data_dir,
+    require_scratch_output_path,
 )
 from tools.tos_cp3.produce_fields import (  # noqa: E402
     FIELD_ORDER,
@@ -262,14 +263,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         # The scratch rule first: this tool is ABOUT to write a synthetic row, so
-        # the rule applies by construction — there is no journal to inspect yet.
-        require_scratch_data_dir(
-            args.data_dir,
-            why=(
-                f"this tool writes a {SYNTHETIC_SOURCE_PREFIX!r} row, which no designated "
-                "tenant durable set may ever be genesised from"
-            ),
+        # the rule applies by construction — there is no journal to inspect yet,
+        # and no allowlisted producer wrote what is about to be written.
+        why = (
+            f"this tool writes a {SYNTHETIC_SOURCE_PREFIX!r} row, which is not from an "
+            "approved real producer"
         )
+        require_scratch_data_dir(args.data_dir, why=why)
+        # And the OUTPUT itself (review LOW): this writes synthetic rows and
+        # replaces the file whole, so an unconstrained --out can overwrite a live
+        # journal — e.g. the resident session's own
+        # ~/.config/tos/paper-config/bootproof_journal.jsonl.
+        require_scratch_output_path(args.out)
         bar = select_bar(args.fields, args.raw_event_id)
         as_of_ms = time.time_ns() // 1_000_000
         row = build_row(bar, args.instrument, as_of_ms)
