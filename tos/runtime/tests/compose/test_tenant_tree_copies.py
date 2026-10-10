@@ -111,6 +111,15 @@ _DIFFERS_FROM_RESIDENT: dict[str, str] = {
         "unchanged (c90444b9..., measured for paper/LONG/SHORT alike). The SHORT tree also flips "
         "the DIRECTION axis and renames policy_id"
     ),
+    "RENDER.yaml": (
+        "not a copy candidate at all -- a render manifest describes ITS OWN tree's slots and "
+        "modes (plan 2026-10-09 §2.1). The resident one declares direction.mode 'substitute' + "
+        "journal.mode 'synthetic_bootproof'; a tenant tree is committed PER DIRECTION and takes "
+        "its observations from the ③ producer, so it declares 'declared' + 'external' and its "
+        "strategy slots name this tree's own Setup D file with the §2.2 YAML-anchor spelling. "
+        "Landed in PR-B of that plan (2026-10-10), which is the step the _RESIDENT_ONLY entry "
+        "this replaced was staged to force"
+    ),
 }
 
 #: Present only in a tenant tree.
@@ -121,22 +130,18 @@ _TENANT_STRATEGY = {
 }
 
 #: Present only in the RESIDENT tree, each with the reason it is not copied. Asserted as an
-#: absence: for the strategy, "the tenant tree does not carry the resident strategy" is what
-#: makes the ``engine.yaml`` comment divergence above necessary rather than cosmetic; for
-#: ``RENDER.yaml`` the absence is a STAGE, and naming it that way is the point -- when PR-B adds
-#: the tenant manifests, :func:`test_resident_only_files_are_absent_from_the_tenant_tree` turns
-#: red and forces the reclassification rather than letting a tenant manifest appear unchecked.
+#: absence: "the tenant tree does not carry the resident strategy" is what makes the
+#: ``engine.yaml`` comment divergence above necessary rather than cosmetic.
+#:
+#: ``RENDER.yaml`` used to be here as a STAGE marker, so that the day a tenant manifest was
+#: committed :func:`test_resident_only_files_are_absent_from_the_tenant_tree` would turn red and
+#: force a reclassification rather than let the file appear unchecked. That day was 2026-10-10
+#: (plan PR-B): it is now in :data:`_DIFFERS_FROM_RESIDENT`, which
+#: :func:`test_declared_divergences_actually_diverge` iterates.
 _RESIDENT_ONLY: dict[str, str] = {
     "strategies/bootproof_band.strategy.yaml": (
         "the resident boot-proof strategy; each tenant tree carries its own Setup D strategy "
         "instead, and loading two would refuse"
-    ),
-    "RENDER.yaml": (
-        "the resident render manifest (plan 2026-10-09 §2.1, PR-A). NOT a copy candidate: a "
-        "manifest describes ITS OWN tree's slots and modes, and the tenant trees need "
-        "direction.mode 'declared' + journal.mode 'external', which the resident manifest does "
-        "not declare. The tenant manifests land in PR-B of that plan; until then this file is "
-        "resident-only by design, not by oversight"
     ),
 }
 
@@ -325,10 +330,6 @@ def test_resident_only_files_are_absent_from_the_tenant_tree(tree: str) -> None:
     Both halves together for the strategy: if ``bootproof_band.strategy.yaml`` were copied in,
     the tree would load TWO strategies, and the ``engine.yaml`` divergence reason above ("the
     resident comment cites a strategy this tree does not contain") would be false.
-
-    For ``RENDER.yaml`` this is the stage marker PR-B has to step over: the day a tenant
-    manifest is committed, this fails and names the file, so the author must move it out of
-    :data:`_RESIDENT_ONLY` and into a per-tree set that some assertion actually iterates.
     """
     for rel, reason in _RESIDENT_ONLY.items():
         path = _CONFIG_ROOT / tree / rel

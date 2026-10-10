@@ -523,12 +523,39 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    `~/.config/tos/paper-config-short` 가 이미 있는데 그것은 **2026-09-28 상주 SHORT
    부팅증명**의 산출물이고 CP-3 SHORT 와 무관하다. 전체 표는 런북 **§7.2-b**.
 
-   **③·④ 는 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
-   「렌더의 전략 파일 상수 한 줄 교체」가 **아니다** — 그 스크립트의 좌표 규칙은 앵커 줄이
-   **정확히 1회** 매칭될 것을 요구하는데(`_apply_rules`) tenant 전략 파일은 규칙이 셋이라
-   `account: "TBD"`·`instrument: "TBD"` 가 **각 3회** 나오고, `direction` 은 줄마다 값이 다르다
-   (R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로 `--direction SHORT` 렌더의 일괄
-   치환이 성립하지 않는다.
+   **③ 은 여전히 미착수다. ④ 는 렌더 경로까지 착지했다(2026-10-10).** ④ 에 대해 2026-10-09 에
+   **새로 측정된 사실**은 ④ 가 「렌더의 전략 파일 상수 한 줄 교체」가 **아니라는** 것이었다 —
+   그 스크립트의 좌표 규칙은 앵커 줄이 **정확히 1회** 매칭될 것을 요구하는데(`_apply_rules`)
+   tenant 전략 파일은 규칙이 셋이라 `account: "TBD"`·`instrument: "TBD"` 가 **각 3회** 나오고,
+   `direction` 은 줄마다 값이 다르다(R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로
+   `--direction SHORT` 렌더의 일괄 치환이 성립하지 않는다. 그 측정이
+   `docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` 를 낳았고, 그 계획의
+   **PR-A(렌더러 일반화, 머지)** 와 **PR-B(tenant 매니페스트 + 별칭, 2026-10-10)** 가 이렇게
+   처분했다:
+
+   * 슬롯 표가 코드 상수에서 **트리마다 커밋되는 `<tree>/RENDER.yaml`** 로 옮겨졌다(계획
+     §2.1) — `_STRATEGY_FILE` 고정이 사라졌다.
+   * 「정확히 1회」 규칙은 **그대로 두고** tenant 전략 파일의 반복 좌표를 **YAML 앵커/별칭**
+     으로 모았다(§2.2): R1 이 `account: &account "TBD"`, R2·R3 가 `*account`. 별칭을
+     빠뜨리면 렌더 뒤 `"TBD"` 가 남고 **로더가 이름으로 거부한다** — 새 가드가 없다.
+   * 방향은 tenant 에서 **치환하지 않고 검증한다**(§2.3): 두 트리의 매니페스트가
+     `direction.mode: declared` + 자기 방향을 선언하고, 방향 결속 **다섯 자리**
+     (`construction.yaml::action_class`/`outbound_side` · OCP `DIRECTION` 축 ·
+     `marketfeed.yaml::direction` · 전략 **진입 규칙**의 `direction`)가 **검증 전용 슬롯**
+     이라 다른 방향의 트리·매니페스트 조합은 「앵커 0회 매칭」으로 거부된다.
+   * 저널은 `journal.mode: external` 이라 렌더가 **쓰지 않고** `--journal-path` 가 필수다(§2.4).
+     ⚠ **그 필수가 막는 것은 「인자 부재」와 「없는 파일」 둘뿐이다**(2026-10-10 PR-B 리뷰 L1,
+     실측: **빈 파일**로도 렌더가 성공한다). 렌더러는 **내용을 읽지 않는다** — 내용 계약은 ③ 의
+     일이고, 합성 저널로 **지정** data dir 에 genesis 하는 것을 막는 것은 PR-C 의 **스크래치
+     루트 거부**다(§2.5). 그러므로 「③ 이 없으면 tenant 는 렌더되지 않는다」로 읽으면 틀린다.
+
+   **실측(PR-B)**: 두 트리 모두 `tmp_path` 로 렌더되고 `print-policy-digests` 가
+   **다섯 kind**(`CRITICAL_INPUT_POLICY` 포함)를 내며 활성화 재검증을 통과하고,
+   `--check` 가 깨끗하며 `bootproof_journal.jsonl` 은 **쓰이지 않는다**. 렌더된 전략은 운영
+   로더로 적재되고 `"TBD"` 가 남지 않으며, 열다섯 critical-input 필드는 `max_age_ms` 800 으로
+   그대로 적재된다. **커널·런타임 패키지 변경 0** 이다.
+   남은 ④ 는 **부팅 증명 도구 + 실행 템플릿**(계획 PR-C, §2.5·§2.6)과 **첫 실제 genesis**
+   (③ 뒤 운영자 결정)다. 지정된 tenant data dir 에는 아직 아무것도 쓰지 않았다.
 
    ✅ **정책 식별자 충돌은 ④ 로 넘기지 않고 같은 PR 에서 닫았다(2026-10-09 리뷰 L4).** 초판은
    「tenant `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데
