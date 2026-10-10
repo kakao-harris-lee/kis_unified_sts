@@ -543,8 +543,11 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
      (`construction.yaml::action_class`/`outbound_side` · OCP `DIRECTION` 축 ·
      `marketfeed.yaml::direction` · 전략 **진입 규칙**의 `direction`)가 **검증 전용 슬롯**
      이라 다른 방향의 트리·매니페스트 조합은 「앵커 0회 매칭」으로 거부된다.
-   * 저널은 `journal.mode: external` 이라 렌더가 **쓰지 않고** `--journal-path` 가 필수다
-     (§2.4, fail-closed) — ③ 이 없으면 tenant 는 렌더되지 않는다.
+   * 저널은 `journal.mode: external` 이라 렌더가 **쓰지 않고** `--journal-path` 가 필수다(§2.4).
+     ⚠ **그 필수가 막는 것은 「인자 부재」와 「없는 파일」 둘뿐이다**(2026-10-10 PR-B 리뷰 L1,
+     실측: **빈 파일**로도 렌더가 성공한다). 렌더러는 **내용을 읽지 않는다** — 내용 계약은 ③ 의
+     일이고, 합성 저널로 **지정** data dir 에 genesis 하는 것을 막는 것은 PR-C 의 **스크래치
+     루트 거부**다(§2.5). 그러므로 「③ 이 없으면 tenant 는 렌더되지 않는다」로 읽으면 틀린다.
 
    **실측(PR-B)**: 두 트리 모두 `tmp_path` 로 렌더되고 `print-policy-digests` 가
    **다섯 kind**(`CRITICAL_INPUT_POLICY` 포함)를 내며 활성화 재검증을 통과하고,

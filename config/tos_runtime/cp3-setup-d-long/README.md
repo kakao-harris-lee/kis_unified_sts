@@ -191,12 +191,20 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
    참조한다, 계획 §2.2)로 풀렸다. 방향은 **치환하지 않고 검증한다** — 이 트리의
    `RENDER.yaml` 이 `direction.mode: declared` + `value: "LONG"` 을 선언하고 방향 결속
    다섯 자리를 **검증 전용 슬롯**으로 들고 있어서 `--direction SHORT` 는 거부된다(계획 §2.3).
-   저널은 `journal.mode: external` 이라 렌더가 쓰지 않고 **`--journal-path` 가 필수**다
-   (계획 §2.4 — ③ 생산자의 출력, fail-closed).
+   저널은 `journal.mode: external` 이라 렌더가 **쓰지 않고** `--journal-path` 가 **필수**다
+   (계획 §2.4 — ③ 생산자의 출력).
+
+   ⚠ **그 필수 인자가 하는 일을 과대평가하지 말 것(2026-10-10 PR-B 리뷰 L1, 실측).**
+   렌더러가 거부하는 것은 **인자 부재**와 **존재하지 않는 파일** 둘뿐이다. 존재하는 파일이면
+   무엇이든 통과하고 **내용은 읽지 않는다** — 리뷰어가 **빈 파일**로 렌더를 성공시켰다.
+   내용 계약은 ③ 의 일이고(계획 §2.4 「그 파일의 존재만 확인하고 내용은 읽지 않는다」),
+   **합성 저널로 지정 data dir 에 genesis 하는 것을 막는 것은 렌더러가 아니라 PR-C 의
+   스크래치 루트 거부**다(계획 §2.5). 그러므로 「③ 이 없으면 tenant 는 렌더되지 않는다」로
+   읽으면 틀린다 — 빈 파일 하나면 렌더는 된다.
 
    ```bash
    # ③ 생산자의 저널 경로를 넣는다. 산출 dir 은 저장소 밖이어야 한다.
-   python scripts/tos/render_paper_config.py \
+   .venv/bin/python scripts/tos/render_paper_config.py \
      --source config/tos_runtime/cp3-setup-d-long \
      --out ~/.config/tos/cp3-setup-d-long-config \
      --env-file .env.mock \
@@ -207,7 +215,15 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
 
    렌더는 좌표를 채운 뒤 `print-policy-digests` 다섯 줄(`CRITICAL_INPUT_POLICY` 포함)에서
    `safety_activation.yaml::members` 를 **도출**하고 **새 프로세스로 활성화를 재검증**한다.
-   `--check` 로 등록 슬롯 밖 변경을 다시 볼 수 있다.
+   등록 슬롯 밖 변경은 `--check` 로 다시 볼 수 있다 — ⛔ **`--source` 를 반드시 같이 준다**
+   (리뷰 L2): 기본값은 **상주 `config/tos_runtime/paper`** 라, 빼면 tenant 산출을 상주 트리와
+   대조해 **거짓 차이**를 잔뜩 내고 rc 1 로 끝난다.
+
+   ```bash
+   .venv/bin/python scripts/tos/render_paper_config.py --check \
+     --source config/tos_runtime/cp3-setup-d-long \
+     --out ~/.config/tos/cp3-setup-d-long-config
+   ```
    ⚠ **아직 안 돌렸다 — 위 명령의 `--out` 디렉터리는 §8 대로 없다.** 첫 실제 genesis 는
    ③ 생산자가 생긴 뒤 운영자 결정이고(계획 §2.5), 그 전의 부팅 증명은 **스크래치 data dir**
    에서만 한다(계획 PR-C). 테스트가 보는 것은 `tmp_path` 로의 렌더다

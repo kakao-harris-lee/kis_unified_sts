@@ -234,7 +234,7 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    `journal.mode: external` 이다.
 
    ```bash
-   python scripts/tos/render_paper_config.py \
+   .venv/bin/python scripts/tos/render_paper_config.py \
      --source config/tos_runtime/cp3-setup-d-short \
      --out ~/.config/tos/cp3-setup-d-short-config \
      --env-file .env.mock \
@@ -242,6 +242,20 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
      --direction SHORT \
      --journal-path <③ 생산자의 출력>
    ```
+
+   등록 슬롯 밖 변경은 `--check` 로 본다 — ⛔ **`--source` 를 반드시 같이 준다**(리뷰 L2):
+   기본값이 상주 `config/tos_runtime/paper` 라, 빼면 **거짓 차이**를 내고 rc 1 로 끝난다.
+
+   ```bash
+   .venv/bin/python scripts/tos/render_paper_config.py --check \
+     --source config/tos_runtime/cp3-setup-d-short \
+     --out ~/.config/tos/cp3-setup-d-short-config
+   ```
+
+   ⚠ **`--journal-path` 가 막는 것은 「인자 부재」와 「없는 파일」 둘뿐이다**(리뷰 L1, 실측:
+   **빈 파일**로도 렌더가 성공한다). 내용은 읽지 않으므로 「③ 이 없으면 렌더되지 않는다」가
+   아니다 — 합성 저널 차단은 PR-C 의 **스크래치 루트 거부**가 한다(계획 §2.5). LONG 트리
+   README §6 2 의 같은 문단을 볼 것.
 
    ⚠ **그래도 이 트리는 `--direction SHORT` 렌더가 만든 것이 아니다** — 트리는 여전히
    LONG 사본 + 선언된 방향 차이로 **커밋**돼 있고, 렌더는 그 방향을 **검증만** 한다
