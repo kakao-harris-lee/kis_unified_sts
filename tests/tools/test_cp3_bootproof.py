@@ -861,6 +861,10 @@ def test_runner_aborts_when_head_is_not_an_ancestor_of_origin_main(
 @pytest.mark.parametrize(
     "name",
     [
+        # TENANT_LOG included: without it every log() line is silently dropped,
+        # which is the "the attempt vanished" shape these runners exist to
+        # prevent (#825 round-3 F1).
+        "TENANT_LOG",
         "TENANT_PYTHON",
         "TENANT_TREE",
         "TENANT_DIRECTION",
