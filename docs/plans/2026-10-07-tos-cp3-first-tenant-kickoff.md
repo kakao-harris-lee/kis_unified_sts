@@ -523,12 +523,29 @@ CRITICAL_INPUT 정책 digest 를 바꾸므로 다섯 digest 를 다시 뽑아 `s
    `~/.config/tos/paper-config-short` 가 이미 있는데 그것은 **2026-09-28 상주 SHORT
    부팅증명**의 산출물이고 CP-3 SHORT 와 무관하다. 전체 표는 런북 **§7.2-b**.
 
-   **③·④ 는 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
+   **③ 은 여전히 미착수다.** ④ 에 대해 2026-10-09 에 **새로 측정된 사실**: ④ 는
    「렌더의 전략 파일 상수 한 줄 교체」가 **아니다** — 그 스크립트의 좌표 규칙은 앵커 줄이
    **정확히 1회** 매칭될 것을 요구하는데(`_apply_rules`) tenant 전략 파일은 규칙이 셋이라
    `account: "TBD"`·`instrument: "TBD"` 가 **각 3회** 나오고, `direction` 은 줄마다 값이 다르다
    (R1 = LONG 진입, R2·R3 = 롱을 닫는 반대쪽 SHORT)이므로 `--direction SHORT` 렌더의 일괄
    치환이 성립하지 않는다.
+
+   **④ 는 그래서 재설계됐고 세 PR 로 나간다** —
+   `docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §5:
+   **PR-A** 렌더러 일반화(규칙 표 → 트리마다 커밋되는 `RENDER.yaml`, 상주 산출 바이트 동일) ·
+   **PR-B** tenant 매니페스트 + 전략 파일 YAML 별칭 · **PR-C** 부팅 증명 도구와 실행 템플릿.
+   **PR-C 코드 착지 2026-10-10**: `tools/tos_cp3/bootproof_journal.py`(열다섯 필드 한 행을
+   **쓰는 시각** `as_of_ms` 로 — 위 ⚠⚠ 의 ③ 요구를 이 한 행에 먼저 적용한 것) ·
+   `tools/tos_cp3/runners/run_tenant_session.sh`(선례 `run_p_ca.sh` 의 가드 · 인스턴스 값은
+   전부 env, 기본값 0개) · 둘이 공유하는 거부 `tools/tos_cp3/bootproof_guard.py`
+   (합성 표지가 붙은 저널은 **스크래치 루트 아래의 새 빈 디렉터리**에서만 genesis 할 수 있다 —
+   지정된 `cp3-setup-d-*-data` 의 첫 genesis 는 ③ 의 실데이터다).
+   ⚠ **그 부팅 증명이 증명하는 것은 배선이지 필드 소비가 아니다**(계획 §2.5 는 PR #887 에서
+   하향됐다): `max_age_ms` 800 은 쓰기→부팅 간격이 800 ms 를 넘으면 열다섯을 STALE 로 만든다.
+   **실행은 아직이다** — PR-B 머지 뒤 스크래치 data dir 에서 1 세션, 절차와 기록 자리는 런북
+   **§7.2-c**, 기록 형식은 §7.9.
+   ⚠ `safety_activation.yaml::members` 는 여전히 `null` 이고, 활성화 재검증은 그 1 세션이
+   처음으로 실측하는 것이다.
 
    ✅ **정책 식별자 충돌은 ④ 로 넘기지 않고 같은 PR 에서 닫았다(2026-10-09 리뷰 L4).** 초판은
    「tenant `venue_constraint_policy.yaml` 의 `policy_id`/`policy_generation` 이 상주와 같은 값인데

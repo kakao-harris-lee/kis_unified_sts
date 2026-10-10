@@ -1123,6 +1123,106 @@ SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의
 분류됐지만 **어느 검사도 안 하는 이름이 없는가** · `release.yaml` 은 실패 메시지가 「두
 트리에서 같은 PR 에 재도출하라」고 말하도록 **따로** 단언한다.
 
+#### 7.2-c CP-3 tenant 부팅 증명 — **스크래치에서 손으로 1회** (코드 2026-10-10 · 실행 미착수)
+
+③(실시간 15 필드 생산자)이 없는 동안 tenant 배선을 한 번 관통시켜 보는 절차다. 계획
+`docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §2.5 · §2.6 · §5 3(PR-C).
+**§7.2-b 의 지정된 durable set 에는 쓰지 않는다** — 그 네 디렉터리의 첫 genesis 는 ③ 의
+실데이터다. 여기서 쓰는 것은 **스크래치 data dir 하나**이고, 세션도 **한 번**이다. cron 에
+넣지 않는다(첫 실제 세션은 ③ 뒤 운영자 결정).
+
+**⚠ 무엇을 증명하고 무엇을 증명하지 않는가 — 과장하지 않는다.**
+증명하는 것은 **배선**이다: 렌더(`journal.mode: external`) → 활성화 → 전략 로더 → 열다섯
+필드 **선언** → 결정 경로 → 거부. 증명하지 **않는** 것은 **필드 소비**다.
+tenant 트리의 `critical_input_policy.yaml::max_age_ms` 는 **800** 이고(§7.2-b 가 가리키는
+운영자 결정 2026-10-09), `max_age_ms` 와 커널 시간 경로는 **같은 양**(`now_ms - as_of_ms`)을
+잰다. 도구가 `as_of_ms` 를 **쓰는 시각**으로 찍어도 **쓰기와 부팅 사이가 800 ms 를 넘으면**
+`_derive_field_state` 가 필드마다 `(UNKNOWN, "stale")` 를 돌려주고, 커널의 UNKNOWN 바닥이
+그 키들을 떨어뜨려 R1 의 AND 가 거짓 → NO_ACTION → 송신 0 이다(fail-closed). 상주 렌더의
+부팅 증명 관측이 `_JOURNAL_AGE_MS` 1000 > 800 때문에 **언제나** STALE 인 것과 같은 모양이다
+(아래 §5 ④ 와 같은 절의 STALE 문단). 계획 §2.5 의 「15 필드 **소비**」라는 초판 표현은
+**PR #887 에서 하향**됐다. 그러므로 이 절차의 기대 결말은 「부팅 성공 · 정책 결속 다섯 줄 ·
+관측 1건 · **STALE 일 공산이 크다**」이고, **실제로 어느 쪽이 나왔는지는 돌린 뒤에 아래
+「실행 기록」에 적는다**(소비까지 보려면 부팅 **뒤에** 행을 덧붙이거나 ③ 을 기다린다).
+
+**도구 둘 · 거부 하나.**
+
+| 무엇 | 자리 |
+| --- | --- |
+| 부팅 증명 저널(한 행, 열다섯 필드, 쓰는 시각 `as_of_ms`) | `tools/tos_cp3/bootproof_journal.py` |
+| 실행 템플릿(렌더 → 부팅 → 정지 → 증거 요약) | `tools/tos_cp3/runners/run_tenant_session.sh` |
+| 스크래치 전용 강제(두 진입점 **공용**) | `tools/tos_cp3/bootproof_guard.py` |
+
+값은 B1a 실측 창의 **한 봉**을 빌린다. ⚠ **그 봉은 full 계약 `101S6000` 의 것이다** —
+부팅 증명 행은 소비되려면 렌더된 **mini** 종목 코드를 달아야 하므로 full→mini **재표지**다.
+숨기지 않는다: `source_id` 가 `cp3-bootproof-synthetic:101S6000:<원 raw_event_id>` 이고,
+그 `cp3-bootproof-synthetic` 접두가 바로 거부의 입력이다 — **저널의 어느 행이든** 그 접두를
+달고 있으면, data dir 의 `Path.resolve()` 가 스크래치 루트 `~/.local/state/tos/scratch/` 의
+`Path.resolve()` **아래**이고 **새로 만든 빈 디렉터리**일 때만 진행한다. 그래서 스크래치 루트
+안의 심볼릭 링크가 지정 dir 을 가리켜도 거부된다. **결과를 시장 사실로 읽지 않는다.**
+
+**절차 (분리 워크트리 · `origin/main` · clean · 모의 전용).**
+
+```bash
+# 0) 분리 워크트리 — 템플릿이 clean·detached·origin/main 조상을 스스로 확인하고 아니면 ABORT 한다.
+MAIN=/home/deploy/project/kis_unified_sts
+WT=~/.local/state/tos/wt-cp3-bootproof
+git -C "$MAIN" fetch origin && git -C "$MAIN" worktree prune
+git -C "$MAIN" worktree add --detach "$WT" origin/main
+cp -p "$MAIN/.env.mock" "$WT/.env.mock" && chmod 600 "$WT/.env.mock"   # 운영자 2026-10-01
+
+# 1) 계약월 — 템플릿이 쓰는 것과 **같은 한 줄**. 저널도 같은 코드를 달아야 하므로 먼저 본다.
+INSTRUMENT=$(cd "$WT" && PYTHONPATH="$WT" "$MAIN/.venv/bin/python" -c \
+  'from shared.instruments.futures import get_front_month_code; print(get_front_month_code(product="mini"))')
+echo "$INSTRUMENT"
+
+# 2) 스크래치 자리 — 부모만 만든다. 잎(<종목>)은 genesis 의 몫이다.
+SESSION=~/.local/state/tos/scratch/cp3-bootproof-$(date +%Y%m%d)
+( umask 077; mkdir -p "$SESSION" )
+
+# 3) 저널 한 행. --raw-event-id 는 기본값이 없다 — 빌린 봉이 이 행의 출처 전부이기 때문이다.
+cd "$WT" && PYTHONPATH="$WT" "$MAIN/.venv/bin/python" -m tools.tos_cp3.bootproof_journal \
+  --fields ~/.local/state/tos/measure/cp3-short-parity-run1/b1a/fields.jsonl \
+  --raw-event-id '101S6000:1m:20251208T092000+0900' \
+  --instrument "$INSTRUMENT" \
+  --out "$SESSION/journal.jsonl" \
+  --data-dir "$SESSION/data/$INSTRUMENT"
+
+# 4) 세션. 인스턴스 값은 전부 env 이고 **기본값이 하나도 없다** — 지정 경로는 이 런북에만 있다.
+TENANT_LOG=$SESSION/session.log \
+TENANT_PYTHON=$MAIN/.venv/bin/python \
+TENANT_TREE=cp3-setup-d-long \
+TENANT_DIRECTION=LONG \
+TENANT_RENDER_OUT=$SESSION/config \
+TENANT_DATA_PARENT=$SESSION/data \
+TENANT_JOURNAL=$SESSION/journal.jsonl \
+TENANT_STOP_AT='+5 minutes' \
+TENANT_ENV_FILE=$WT/.env.mock \
+TENANT_CUSTODY_ROOT=~/.config/tos/paper-custody \
+TENANT_ENVIRONMENT_LABEL=paper \
+  "$WT/tools/tos_cp3/runners/run_tenant_session.sh"
+```
+
+- `TENANT_ENV_FILE` 은 **basename 이 `.env.mock` 이어야** 한다 — 렌더러의 같은 가드를 한 걸음
+  앞에서 되풀이하므로, 실전 자격증명 파일로는 이 템플릿을 인스턴스화할 수 없다.
+- `TENANT_CUSTODY_ROOT` 는 §1 의 커스터디 루트이고 매니페스트의 `environment_label` 이
+  `TENANT_ENVIRONMENT_LABEL` 과 **바이트 일치**해야 한다(아니면 부팅이 거부한다).
+- `TENANT_DIRECTION` 은 그 트리의 `RENDER.yaml::direction.value` 와 **같아야** 한다 — tenant
+  트리는 `declared` 모드라 렌더가 방향을 치환하지 않고 **대조**한다(계획 §2.3).
+- 템플릿은 마지막에 그 durable set 의 `snapshots` · `entries` 수와 **kind 별 분포**를 찍는다.
+  틱 소비 확인은 로그가 아니라 **지속 저장소**로 한다(§4).
+
+**정리.** 끝나면 워크트리를 접는다(`git -C "$MAIN" worktree remove "$WT"` → `worktree prune`).
+`$SESSION` 은 스크래치이므로 콜드 백업 대상이 아니고(§7.2-b 의 래퍼는 `paper-data` 의 직접
+자식만 훑는다), 남겨 둘 이유가 없으면 지운다. **지정된 tenant durable set 은 이 절차로 생기지
+않는다.**
+
+**실행 기록 — ⛔ 아직 돌리지 않았다 (2026-10-10).** 돌린 뒤 §7.9 형식으로 여기에 적는다:
+출하본 sha256 둘(`run_tenant_session.sh` · `bootproof_journal.py`) · 세션 디렉터리 · `verdict`
+와 rc · 정책 결속 다섯 줄의 유무 · `snapshots` 와 `entries` 델타 · **그리고 위 ⚠ 의 열린
+질문의 답**: 열다섯 필드가 STALE 로 떨어졌는가, 아니면 쓰기→부팅이 800 ms 안에 들어와
+소비됐는가. 어느 쪽이든 **그대로** 적는다 — 이 절차의 값은 그 답이지 초록 체크가 아니다.
+
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
 0. **전제 좌표** — 인터프리터(`$MAIN/.venv/bin/python`) · 드라이버 · `$MAIN/.env.mock` ·
