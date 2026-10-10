@@ -1166,7 +1166,7 @@ tenant 트리의 `critical_input_policy.yaml::max_age_ms` 는 **800** 이고(§7
 ```bash
 # 0) 분리 워크트리 — 템플릿이 clean·detached·origin/main 조상을 스스로 확인하고 아니면 ABORT 한다.
 MAIN=/home/deploy/project/kis_unified_sts
-WT=~/.local/state/tos/wt-cp3-bootproof
+WT=~/.local/state/tos/measure/wt-cp3-bootproof   # 상주 래퍼의 wt-paper 옆, 그 자리는 건드리지 않는다
 git -C "$MAIN" fetch origin && git -C "$MAIN" worktree prune
 git -C "$MAIN" worktree add --detach "$WT" origin/main
 cp -p "$MAIN/.env.mock" "$WT/.env.mock" && chmod 600 "$WT/.env.mock"   # 운영자 2026-10-01
@@ -1181,12 +1181,13 @@ SESSION=~/.local/state/tos/scratch/cp3-bootproof-$(date +%Y%m%d)
 ( umask 077; mkdir -p "$SESSION" )
 
 # 3) 저널 한 행. --raw-event-id 는 기본값이 없다 — 빌린 봉이 이 행의 출처 전부이기 때문이다.
-cd "$WT" && PYTHONPATH="$WT" "$MAIN/.venv/bin/python" -m tools.tos_cp3.bootproof_journal \
+#    서브셸로 둔다 — 이 절차는 운영자 셸의 cwd 를 바꾸지 않는다.
+( cd "$WT" && PYTHONPATH="$WT" "$MAIN/.venv/bin/python" -m tools.tos_cp3.bootproof_journal \
   --fields ~/.local/state/tos/measure/cp3-short-parity-run1/b1a/fields.jsonl \
   --raw-event-id '101S6000:1m:20251208T092000+0900' \
   --instrument "$INSTRUMENT" \
   --out "$SESSION/journal.jsonl" \
-  --data-dir "$SESSION/data/$INSTRUMENT"
+  --data-dir "$SESSION/data/$INSTRUMENT" )
 
 # 4) 세션. 인스턴스 값은 전부 env 이고 **기본값이 하나도 없다** — 지정 경로는 이 런북에만 있다.
 TENANT_LOG=$SESSION/session.log \
@@ -1198,7 +1199,7 @@ TENANT_DATA_PARENT=$SESSION/data \
 TENANT_JOURNAL=$SESSION/journal.jsonl \
 TENANT_STOP_AT='+5 minutes' \
 TENANT_ENV_FILE=$WT/.env.mock \
-TENANT_CUSTODY_ROOT=~/.config/tos/paper-custody \
+TENANT_CUSTODY_ROOT=~/.local/state/tos/paper-custody \
 TENANT_ENVIRONMENT_LABEL=paper \
   "$WT/tools/tos_cp3/runners/run_tenant_session.sh"
 ```
