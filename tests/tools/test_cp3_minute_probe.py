@@ -308,9 +308,9 @@ def fake_page_probe(tmp_path, monkeypatch, token_outcomes, payloads):
             assert url == p.REAL_BASE_URL + p.QUOTE_PATH
             assert headers["tr_id"] == p.TR
             self.authorizations.append(headers["authorization"])
-            return httpx.Response(
-                200, json=replies.popleft(), request=httpx.Request("GET", url)
-            )
+            reply = replies.popleft()
+            status, body = reply if isinstance(reply, tuple) else (200, reply)
+            return httpx.Response(status, json=body, request=httpx.Request("GET", url))
 
     quote = p.Quotes.__new__(p.Quotes)
     quote.auth = Auth()
@@ -360,13 +360,14 @@ def test_auth_exhaustion_is_sanitized_per_minute_failure(tmp_path, monkeypatch):
     assert "private" not in (quote.recorder.output / "requests.jsonl").read_text()
 
 
-def test_remote_token_expiry_reissues_once(tmp_path, monkeypatch):
+@pytest.mark.parametrize("status", [200, 401, 500])
+def test_remote_token_expiry_reissues_once(tmp_path, monkeypatch, status):
     quote = fake_page_probe(
         tmp_path,
         monkeypatch,
         ["cached", "fresh"],
         [
-            {"rt_cd": "1", "msg_cd": "EGW00123"},
+            (status, {"rt_cd": "1", "msg_cd": "EGW00123"}),
             {"rt_cd": "0", "output2": [row("090000")]},
         ],
     )

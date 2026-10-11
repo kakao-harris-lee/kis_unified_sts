@@ -192,8 +192,9 @@ class Quotes:
                 self.last = time.monotonic()
                 self.calls += 1
                 response = self.http.get(url, headers=headers, params=params)
-                response.raise_for_status()
                 payload = response.json()
+                if not isinstance(payload, dict):
+                    raise ValueError("quote response is not a mapping")
                 self.last_received_kst = datetime.now(KST)
                 rows = payload.get("output2") or []
                 # Persist only quote rows + response status; never headers, token or msg1.
@@ -207,11 +208,10 @@ class Quotes:
                         "params": params,
                         "attempt": attempt + 1,
                         "rt_cd": payload.get("rt_cd"),
+                        "http_status": response.status_code,
                         "rows": rows,
                     }
                 )
-                if str(payload.get("rt_cd")) == "0" and isinstance(rows, list):
-                    return [r for r in rows if isinstance(r, dict)]
                 if is_token_expired_error(payload) and not refreshed:
                     # This manager owns only the app-key scoped probe cache.
                     self.auth.invalidate()
@@ -224,6 +224,11 @@ class Quotes:
                             "params": params,
                         }
                     )
+                # KIS can report expiry with non-2xx HTTP status. Detect it
+                # above before generic HTTP retry, or the cached token persists.
+                response.raise_for_status()
+                if str(payload.get("rt_cd")) == "0" and isinstance(rows, list):
+                    return [r for r in rows if isinstance(r, dict)]
                 error = "broker_response"
             except (httpx.HTTPError, requests.RequestException, ValueError):
                 error = "auth_http_or_json_error"
