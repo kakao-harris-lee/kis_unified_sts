@@ -19,9 +19,9 @@ from zoneinfo import ZoneInfo
 import httpx
 import pandas as pd
 import yaml
-from dotenv import dotenv_values
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
+from shared.config.dotenv_guard import read_explicit_dotenv
 from shared.kis.auth import KISAuthManager
 from shared.storage.market_data_store import ParquetMarketDataStore
 from tools.broker_probes.common import (
@@ -181,18 +181,20 @@ class Quotes:
                 "content-type": "application/json",
             }
             started = datetime.now(KST)
+            self.last_started_kst = started
             self.last = time.monotonic()
             self.calls += 1
             try:
                 response = self.http.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 payload = response.json()
+                self.last_received_kst = datetime.now(KST)
                 rows = payload.get("output2") or []
                 # Persist only quote rows + response status; never headers, token or msg1.
                 self.recorder.event(
                     {
                         "started_kst": started,
-                        "received_kst": datetime.now(KST),
+                        "received_kst": self.last_received_kst,
                         "method": "GET",
                         "tr_id": TR,
                         "path": QUOTE_PATH,
@@ -337,11 +339,19 @@ def sample(quotes, cfg, target, symbol, rec):
             if datetime.now(KST) > scheduled + timedelta(
                 seconds=cfg["late_tolerance_s"]
             ):
+                observations.append(
+                    {
+                        "boundary_kst": minute,
+                        "scheduled_kst": scheduled,
+                        "skipped_late": True,
+                    }
+                )
                 continue
             time.sleep(max(0, (scheduled - datetime.now(KST)).total_seconds()))
             try:
                 rows = quotes.page(symbol, target)
-                now = datetime.now(KST)
+                now = quotes.last_received_kst
+                request_start = quotes.last_started_kst
                 stamps = [raw_stamp(r, target) for r in rows]
                 present = any(
                     s is not None and s.replace(second=0, microsecond=0) == minute
@@ -351,6 +361,7 @@ def sample(quotes, cfg, target, symbol, rec):
                     {
                         "boundary_kst": minute,
                         "received_kst": now,
+                        "request_started_kst": request_start,
                         "successor_present": present,
                         "delay_upper_s": (
                             (now - minute).total_seconds() if present else None
@@ -361,7 +372,9 @@ def sample(quotes, cfg, target, symbol, rec):
                 if present:
                     found = True
                 else:
-                    previous_absent = (now - minute).total_seconds()
+                    # An absent response may have been sampled by the server
+                    # before receipt. Request START is the conservative lower edge.
+                    previous_absent = max(0, (request_start - minute).total_seconds())
                 latest_rows = select_day(rows, target)
                 if found and minute < closing:
                     break
@@ -399,8 +412,9 @@ def main(argv=None):
     if now.date() != target or now.strftime("%H:%M:%S") >= cfg["sample_end"]:
         raise RuntimeError("wrong date or measurement window ended")
     # Only the two futures query secrets cross into this measurement process.
-    values = dotenv_values(cfg["env_file"])
-    for key in ("KIS_FUTURES_APP_KEY", "KIS_FUTURES_APP_SECRET"):
+    credential_keys = ("KIS_FUTURES_APP_KEY", "KIS_FUTURES_APP_SECRET")
+    values = read_explicit_dotenv(Path(cfg["env_file"]), keys=credential_keys)
+    for key in credential_keys:
         value = values.get(key)
         if not value:
             raise RuntimeError("missing futures credential")

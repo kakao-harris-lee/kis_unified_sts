@@ -1,5 +1,6 @@
 """Hermetic canaries for the PR-1 quotation capture. No real credentials/network."""
 
+import os
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -9,6 +10,16 @@ from tools.broker_probes.common import SafetyViolation, assert_read_only_call
 from tools.tos_cp3 import minute_probe as p
 
 DAY = date(2026, 10, 12)
+
+
+@pytest.fixture(autouse=True)
+def preserve_process_umask():
+    original = os.umask(0o077)
+    os.umask(original)
+    try:
+        yield
+    finally:
+        os.umask(original)
 
 
 def row(hour, close="100", volume="20", day="20261012"):
@@ -155,8 +166,22 @@ def test_confirmed_flow_with_fake_transport(tmp_path, monkeypatch, seed_failure)
     )
     config = tmp_path / "config.yaml"
     config.write_text(yaml.safe_dump(cfg))
+    for key, value in {
+        "KIS_FUTURES_APP_KEY": "fake",
+        "KIS_FUTURES_APP_SECRET": "fake",
+        **cfg["parser_env"],
+    }.items():
+        monkeypatch.setenv(key, str(value))
     monkeypatch.setattr(p, "datetime", Clock)
     monkeypatch.setattr(p, "Quotes", FakeQuotes)
+    monkeypatch.setattr(
+        p,
+        "read_explicit_dotenv",
+        lambda *a, **k: {
+            "KIS_FUTURES_APP_KEY": "fake",
+            "KIS_FUTURES_APP_SECRET": "fake",
+        },
+    )
     monkeypatch.setattr(
         p,
         "sample",
@@ -191,3 +216,63 @@ def test_confirmed_flow_with_fake_transport(tmp_path, monkeypatch, seed_failure)
     assert summary["seen_successors"] == 1
     assert summary["orders"] == 0
     assert (tmp_path / "capture/sha256.json").exists()
+
+
+def test_sample_bracket_uses_request_start_for_absence(tmp_path, monkeypatch):
+    clock = [datetime(2026, 10, 12, 9, tzinfo=p.KST)]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    class Quotes:
+        calls = 0
+
+        def page(self, *args):
+            self.last_started_kst = clock[0]
+            self.calls += 1
+            clock[0] += timedelta(seconds=3 if self.calls == 1 else 2)
+            self.last_received_kst = clock[0]
+            return [] if self.calls == 1 else [row("090000")]
+
+    monkeypatch.setattr(p, "datetime", Clock)
+    monkeypatch.setattr(
+        p.time,
+        "sleep",
+        lambda seconds: clock.__setitem__(0, clock[0] + timedelta(seconds=seconds)),
+    )
+    cfg = {
+        "sample_start": "09:00:00",
+        "sample_end": "09:01:00",
+        "closing_start": "15:30:00",
+        "sample_offsets_s": [1, 5, 15],
+        "late_tolerance_s": 2,
+    }
+    _, observed = p.sample(
+        Quotes(), cfg, DAY, "A05611", p.Recorder(tmp_path / "capture")
+    )
+    assert len(observed) == 2
+    assert (
+        observed[-1]["last_absent_delay_s"] == 1
+    )  # response arrived at +4, not the lower edge
+    assert observed[-1]["delay_upper_s"] == 7
+
+
+def test_late_offsets_remain_visible_as_missing_measurements(tmp_path, monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 12, 9, 0, 20, tzinfo=p.KST)
+
+    monkeypatch.setattr(p, "datetime", Clock)
+    cfg = {
+        "sample_start": "09:00:00",
+        "sample_end": "09:01:00",
+        "closing_start": "15:30:00",
+        "sample_offsets_s": [1, 5, 15],
+        "late_tolerance_s": 2,
+    }
+    _, observed = p.sample(None, cfg, DAY, "A05611", p.Recorder(tmp_path / "capture"))
+    assert len(observed) == 3
+    assert all(obs["skipped_late"] for obs in observed)

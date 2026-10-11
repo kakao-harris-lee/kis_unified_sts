@@ -35,7 +35,7 @@ across the whole repository.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from contextlib import suppress
 from pathlib import Path
 
@@ -45,6 +45,7 @@ __all__ = [
     "env_flag",
     "hermetic_mode_enabled",
     "load_project_dotenv",
+    "read_explicit_dotenv",
     "project_dotenv_candidates",
     "project_root",
 ]
@@ -127,3 +128,26 @@ def load_project_dotenv(*, override: bool = False) -> Path | None:
             load_dotenv(candidate, override=override)
             return candidate
     return None
+
+
+def read_explicit_dotenv(path: Path, *, keys: Collection[str]) -> dict[str, str]:
+    """Read selected keys from one operator-specified file without changing env.
+
+    Unlike automatic entrypoint loading, probes may explicitly name an external
+    real-query file. No ancestor search, interpolation or fallback is allowed.
+    Hermetic processes never read the file, even when a path is supplied.
+    """
+    if hermetic_mode_enabled():
+        return {}
+    source = Path(path).expanduser()
+    if not source.is_absolute():
+        raise ValueError("explicit dotenv path must be absolute")
+    source = source.resolve(strict=True)
+    from dotenv import dotenv_values
+
+    values = dotenv_values(dotenv_path=source, interpolate=False)
+    return {
+        key: value
+        for key in keys
+        if isinstance((value := values.get(key)), str) and value
+    }
