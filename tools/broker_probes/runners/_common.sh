@@ -1,7 +1,13 @@
 # shellcheck shell=bash
 #
-# Shared helpers for the tracked probe runner TEMPLATES in this directory.
+# Shared helpers for the tracked runner TEMPLATES of this repository.
 # Sourced, never executed; it has no shebang and is not marked executable.
+#
+# Callers: `run_p_ca.sh` and `run_p8.sh` beside this file, and
+# `tools/tos_cp3/runners/run_tenant_session.sh` (which sources it by relative
+# path). The helpers are prefix-free by construction — see below — so a caller
+# outside this directory needs no edit here, which is the point: the
+# clean/detached/ancestor policy has ONE copy.
 #
 # Why it exists: `run_p_ca.sh` (#825) and `run_p8.sh` (this PR) need the same
 # guards — clean/detached/ancestor checkout, no instance defaults, a proven
@@ -12,9 +18,9 @@
 # retry on one path and stopped the run at once on the other (#825 independent
 # review F4). The guards here are the same kind of thing.
 #
-# Nothing in this file reads a PCA_* or P8_* variable. Every instance value
-# arrives as an ARGUMENT, including the NAME of the variable a message should
-# cite, so the two runners cannot leak into one another and a third runner
+# Nothing in this file reads a PCA_*, P8_* or TENANT_* variable. Every instance
+# value arrives as an ARGUMENT, including the NAME of the variable a message
+# should cite, so the runners cannot leak into one another and a further runner
 # needs no edit here.
 #
 # Globals this file sets, deliberately and by name (bash has no better way to
