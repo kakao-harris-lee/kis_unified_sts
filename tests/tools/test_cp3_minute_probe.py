@@ -276,3 +276,121 @@ def test_late_offsets_remain_visible_as_missing_measurements(tmp_path, monkeypat
     _, observed = p.sample(None, cfg, DAY, "A05611", p.Recorder(tmp_path / "capture"))
     assert len(observed) == 3
     assert all(obs["skipped_late"] for obs in observed)
+
+
+def fake_page_probe(tmp_path, monkeypatch, token_outcomes, payloads):
+    """Exercise the real page retry loop with fake OAuth and HTTP boundaries."""
+    from collections import deque
+
+    import httpx
+
+    tokens = deque(token_outcomes)
+    replies = deque(payloads)
+
+    class Auth:
+        attempts = 0
+        invalidations = 0
+
+        def get_token(self):
+            self.attempts += 1
+            outcome = tokens.popleft()
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        def invalidate(self):
+            self.invalidations += 1
+
+    class HTTP:
+        authorizations = []
+
+        def get(self, url, *, headers, params):
+            assert url == p.REAL_BASE_URL + p.QUOTE_PATH
+            assert headers["tr_id"] == p.TR
+            self.authorizations.append(headers["authorization"])
+            return httpx.Response(
+                200, json=replies.popleft(), request=httpx.Request("GET", url)
+            )
+
+    quote = p.Quotes.__new__(p.Quotes)
+    quote.auth = Auth()
+    quote.http = HTTP()
+    quote.creds = SimpleNamespace(app_key="fake-key", app_secret="fake-secret")
+    quote.recorder = p.Recorder(tmp_path / "capture")
+    quote.cfg = {"attempts": 3, "pace_s": 0, "retry_pause_s": 0}
+    quote.calls, quote.last = 0, 0
+    monkeypatch.setattr(p.time, "sleep", lambda seconds: None)
+    return quote
+
+
+@pytest.mark.parametrize("error_kind", ["value", "requests"])
+def test_auth_transient_failure_recovers_without_leaking_text(
+    tmp_path, monkeypatch, error_kind
+):
+    import requests
+
+    error = (
+        ValueError("sensitive-auth-body")
+        if error_kind == "value"
+        else requests.Timeout("sensitive-auth-body")
+    )
+    quote = fake_page_probe(
+        tmp_path,
+        monkeypatch,
+        [error, "new-token"],
+        [{"rt_cd": "0", "output2": [row("090000")]}],
+    )
+    assert quote.page("A05611", DAY) == [row("090000")]
+    assert quote.auth.attempts == 2
+    assert quote.calls == 1
+    assert (
+        "sensitive-auth-body"
+        not in (quote.recorder.output / "requests.jsonl").read_text()
+    )
+
+
+def test_auth_exhaustion_is_sanitized_per_minute_failure(tmp_path, monkeypatch):
+    quote = fake_page_probe(
+        tmp_path, monkeypatch, [ValueError("private") for _ in range(3)], []
+    )
+    with pytest.raises(RuntimeError, match="^auth_http_or_json_error$"):
+        quote.page("A05611", DAY)
+    assert quote.auth.attempts == 3
+    assert quote.calls == 0
+    assert "private" not in (quote.recorder.output / "requests.jsonl").read_text()
+
+
+def test_remote_token_expiry_reissues_once(tmp_path, monkeypatch):
+    quote = fake_page_probe(
+        tmp_path,
+        monkeypatch,
+        ["cached", "fresh"],
+        [
+            {"rt_cd": "1", "msg_cd": "EGW00123"},
+            {"rt_cd": "0", "output2": [row("090000")]},
+        ],
+    )
+    assert quote.page("A05611", DAY) == [row("090000")]
+    assert quote.auth.invalidations == 1
+    assert quote.http.authorizations == ["Bearer cached", "Bearer fresh"]
+
+
+def test_persistent_expiry_does_not_invalidate_repeatedly(tmp_path, monkeypatch):
+    quote = fake_page_probe(
+        tmp_path,
+        monkeypatch,
+        ["cached", "fresh", "fresh"],
+        [{"rt_cd": "1", "msg_cd": "EGW00123"} for _ in range(3)],
+    )
+    with pytest.raises(RuntimeError, match="broker_response"):
+        quote.page("A05611", DAY)
+    assert quote.auth.invalidations == 1
+    assert quote.calls == 3
+
+
+def test_safety_exceptions_are_not_normalized_or_retried(tmp_path, monkeypatch):
+    quote = fake_page_probe(tmp_path, monkeypatch, [SafetyViolation("refused")], [])
+    with pytest.raises(SafetyViolation):
+        quote.page("A05611", DAY)
+    assert quote.auth.attempts == 1
+    assert quote.calls == 0

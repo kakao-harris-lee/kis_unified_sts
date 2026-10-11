@@ -18,11 +18,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
+import requests
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
 from shared.config.dotenv_guard import read_explicit_dotenv
-from shared.kis.auth import KISAuthManager
+from shared.kis.auth import KISAuthManager, is_token_expired_error
 from shared.storage.market_data_store import ParquetMarketDataStore
 from tools.broker_probes.common import (
     REAL_BASE_URL,
@@ -171,20 +172,25 @@ class Quotes:
             "FID_INPUT_DATE_1": day.strftime("%Y%m%d"),
             "FID_INPUT_HOUR_1": cursor,
         }
+        refreshed = False
         for attempt in range(self.cfg["attempts"]):
             time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
-            headers = {
-                "authorization": "Bearer " + self.auth.get_token(),
-                "appkey": self.creds.app_key,
-                "appsecret": self.creds.app_secret,
-                "tr_id": TR,
-                "content-type": "application/json",
-            }
             started = datetime.now(KST)
-            self.last_started_kst = started
-            self.last = time.monotonic()
-            self.calls += 1
             try:
+                # OAuth may raise ValueError or requests errors. Keep it in the
+                # bounded retry; never persist their possibly sensitive text.
+                token = self.auth.get_token()
+                headers = {
+                    "authorization": "Bearer " + token,
+                    "appkey": self.creds.app_key,
+                    "appsecret": self.creds.app_secret,
+                    "tr_id": TR,
+                    "content-type": "application/json",
+                }
+                started = datetime.now(KST)
+                self.last_started_kst = started
+                self.last = time.monotonic()
+                self.calls += 1
                 response = self.http.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 payload = response.json()
@@ -206,9 +212,21 @@ class Quotes:
                 )
                 if str(payload.get("rt_cd")) == "0" and isinstance(rows, list):
                     return [r for r in rows if isinstance(r, dict)]
+                if is_token_expired_error(payload) and not refreshed:
+                    # This manager owns only the app-key scoped probe cache.
+                    self.auth.invalidate()
+                    refreshed = True
+                    self.recorder.event(
+                        {
+                            "started_kst": started,
+                            "token_invalidated": True,
+                            "attempt": attempt + 1,
+                            "params": params,
+                        }
+                    )
                 error = "broker_response"
-            except (httpx.HTTPError, ValueError):
-                error = "http_or_json_error"
+            except (httpx.HTTPError, requests.RequestException, ValueError):
+                error = "auth_http_or_json_error"
                 self.recorder.event(
                     {"started_kst": started, "error": error, "params": params}
                 )
