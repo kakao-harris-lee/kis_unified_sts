@@ -1,0 +1,56 @@
+{
+  "status": "PROXY_MEASUREMENT_DIFFERENT_CONTRACT",
+  "why_proxy": "the 10-12 probe aborted in the seed stage before benchmark(); A05611 has no dense pre-roll sessions, so the 780-bar window cannot be built from that contract at all",
+  "proxy_symbol": "101S6000",
+  "proxy_symbol_is_not_the_producer_instrument": true,
+  "producer_instrument": "A05611",
+  "reused_from_probe": [
+    "benchmark",
+    "seed_capacity"
+  ],
+  "benchmark_rounds": 3,
+  "vol_window_bars_required": 780,
+  "open_anchor": "OpenAnchor(hour=9, minute=0, source='era-rule')",
+  "seed_sessions_used": [
+    "2026-04-09",
+    "2026-04-10",
+    "2026-04-13",
+    "2026-04-14"
+  ],
+  "seed_session_count": 4,
+  "seed_capacity": 993,
+  "duplicate_timestamps_dropped_seed": 0,
+  "duplicate_timestamps_dropped_today": 0,
+  "target_session": "2026-04-16",
+  "a_seed_only": {
+    "rows": 1644,
+    "records": 1233,
+    "seconds": [
+      0.26232796907424927,
+      0.25265735713765025,
+      0.2655322670470923
+    ],
+    "max_s": 0.2655322670470923
+  },
+  "b_seed_plus_full_day": {
+    "rows": 2055,
+    "records": 1644,
+    "seconds": [
+      0.34403014392592013,
+      0.33779107010923326,
+      0.3488136699888855
+    ],
+    "max_s": 0.3488136699888855
+  },
+  "measurement_conditions": {
+    "loadavg_1_5_15": [
+      3.87255859375,
+      4.4794921875,
+      2.60791015625
+    ],
+    "cpu_count": 16,
+    "foreign_gradle_processes": 6
+  },
+  "contention_note": "a foreign project's Gradle test build was running; CPU contention can only inflate these timings, so an under-budget result stays conservative",
+  "plan_budget_reference_s": 1.0
+}

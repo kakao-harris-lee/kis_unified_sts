@@ -1,0 +1,554 @@
+{
+  "probe_seed_outcome": {
+    "capacity": 0,
+    "required": 780,
+    "calendar_days_budget": 90,
+    "trading_days_walked": 59,
+    "oldest_day_walked": "2026-07-14",
+    "density_passing_days_found": [
+      "2026-10-08"
+    ],
+    "why_zero": "exactly one day passed the density gate, and seed_capacity skips the earliest session in the frame for lack of a previous close, so a one-session frame can only ever yield 0",
+    "exception_message_recorded_in_abort_json": false
+  },
+  "gate": {
+    "min_bars_per_day": 330,
+    "vol_window_bars_required": 780,
+    "entry_window_minutes_since_open": [
+      15,
+      345
+    ],
+    "entry_window_bars_if_complete": 331,
+    "open_anchor_20261012": "OpenAnchor(hour=8, minute=45, source='config')"
+  },
+  "key_sessions": {
+    "d20261012": {
+      "parsed_rows": 411,
+      "density_pass": true,
+      "in_entry_window_bars": 331,
+      "source": "today-bars.json (single-pass history parse)"
+    },
+    "d20261008": {
+      "parsed_rows": 411,
+      "density_pass": true,
+      "in_entry_window_bars": 331,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "d20261007": {
+      "parsed_rows": 191,
+      "density_pass": false,
+      "in_entry_window_bars": 165,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "d20261006": {
+      "parsed_rows": 109,
+      "density_pass": false,
+      "in_entry_window_bars": 93,
+      "source": "replayed from recorded raw seed pages"
+    }
+  },
+  "measured_density_by_day": {
+    "2026-10-12": {
+      "parsed_rows": 411,
+      "density_pass": true,
+      "in_entry_window_bars": 331,
+      "source": "today-bars.json (single-pass history parse)"
+    },
+    "2026-10-08": {
+      "parsed_rows": 411,
+      "density_pass": true,
+      "in_entry_window_bars": 331,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-10-07": {
+      "parsed_rows": 191,
+      "density_pass": false,
+      "in_entry_window_bars": 165,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-10-06": {
+      "parsed_rows": 109,
+      "density_pass": false,
+      "in_entry_window_bars": 93,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-10-02": {
+      "parsed_rows": 14,
+      "density_pass": false,
+      "in_entry_window_bars": 11,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-10-01": {
+      "parsed_rows": 10,
+      "density_pass": false,
+      "in_entry_window_bars": 7,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-30": {
+      "parsed_rows": 14,
+      "density_pass": false,
+      "in_entry_window_bars": 14,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-29": {
+      "parsed_rows": 1,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-28": {
+      "parsed_rows": 4,
+      "density_pass": false,
+      "in_entry_window_bars": 3,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-23": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-22": {
+      "parsed_rows": 2,
+      "density_pass": false,
+      "in_entry_window_bars": 2,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-21": {
+      "parsed_rows": 4,
+      "density_pass": false,
+      "in_entry_window_bars": 4,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-18": {
+      "parsed_rows": 1,
+      "density_pass": false,
+      "in_entry_window_bars": 1,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-17": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-16": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-15": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-14": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-11": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-10": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-09": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-08": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-07": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-04": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-03": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-02": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-09-01": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-31": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-28": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-27": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-26": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-25": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-24": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-21": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-20": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-19": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-18": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-14": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-13": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-12": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-11": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-10": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-07": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-06": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-05": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-04": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-08-03": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-31": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-30": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-29": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-28": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-27": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-24": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-23": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-22": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-21": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-20": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-17": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-16": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-15": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    },
+    "2026-07-14": {
+      "parsed_rows": 0,
+      "density_pass": false,
+      "in_entry_window_bars": 0,
+      "source": "replayed from recorded raw seed pages"
+    }
+  },
+  "measured_density_passing_days": [
+    "2026-10-08",
+    "2026-10-12"
+  ],
+  "assumed_contributions": {
+    "2026-10-13": 331,
+    "2026-10-14": 331
+  },
+  "capacity_by_target_date": [
+    {
+      "target": "2026-10-12",
+      "capacity": 0,
+      "required": 780,
+      "fills": false,
+      "density_days_used": [
+        "2026-10-08"
+      ]
+    },
+    {
+      "target": "2026-10-13",
+      "capacity": 331,
+      "required": 780,
+      "fills": false,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12"
+      ]
+    },
+    {
+      "target": "2026-10-14",
+      "capacity": 662,
+      "required": 780,
+      "fills": false,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13"
+      ]
+    },
+    {
+      "target": "2026-10-15",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    },
+    {
+      "target": "2026-10-16",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    },
+    {
+      "target": "2026-10-19",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    },
+    {
+      "target": "2026-10-20",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    },
+    {
+      "target": "2026-10-21",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    },
+    {
+      "target": "2026-10-22",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    },
+    {
+      "target": "2026-10-23",
+      "capacity": 993,
+      "required": 780,
+      "fills": true,
+      "density_days_used": [
+        "2026-10-08",
+        "2026-10-12",
+        "2026-10-13",
+        "2026-10-14"
+      ]
+    }
+  ],
+  "earliest_seed_fill_date": {
+    "target": "2026-10-15",
+    "capacity": 993,
+    "required": 780,
+    "fills": true,
+    "density_days_used": [
+      "2026-10-08",
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14"
+    ]
+  },
+  "roll_blackout_trading_days": [
+    "2026-10-12",
+    "2026-10-13",
+    "2026-10-14"
+  ],
+  "roll_blackout_N": 3
+}

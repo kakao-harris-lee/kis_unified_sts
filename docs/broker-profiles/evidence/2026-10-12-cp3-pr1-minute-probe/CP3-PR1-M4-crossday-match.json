@@ -1,0 +1,363 @@
+{
+  "question": "for each A05611 Parquet minute row, which REST-replayed day holds the identical five-field bar at the same clock minute?",
+  "rest_days_available": [
+    "20260714",
+    "20260715",
+    "20260720",
+    "20260721",
+    "20260723",
+    "20260724",
+    "20260727",
+    "20260728",
+    "20260729",
+    "20260730",
+    "20260731",
+    "20260803",
+    "20260804",
+    "20260806",
+    "20260812",
+    "20260813",
+    "20260814",
+    "20260818",
+    "20260819",
+    "20260821",
+    "20260824",
+    "20260825",
+    "20260826",
+    "20260827",
+    "20260831",
+    "20260901",
+    "20260902",
+    "20260903",
+    "20260904",
+    "20260907",
+    "20260908",
+    "20260909",
+    "20260910",
+    "20260911",
+    "20260914",
+    "20260915",
+    "20260916",
+    "20260917",
+    "20260918",
+    "20260921",
+    "20260922",
+    "20260923",
+    "20260928",
+    "20260929",
+    "20260930",
+    "20261001",
+    "20261002",
+    "20261006",
+    "20261007",
+    "20261008",
+    "20261012"
+  ],
+  "rest_rows_per_day": {
+    "20260714": 0,
+    "20260715": 0,
+    "20260720": 0,
+    "20260721": 0,
+    "20260723": 0,
+    "20260724": 0,
+    "20260727": 0,
+    "20260728": 0,
+    "20260729": 0,
+    "20260730": 0,
+    "20260731": 0,
+    "20260803": 0,
+    "20260804": 0,
+    "20260806": 0,
+    "20260812": 0,
+    "20260813": 0,
+    "20260814": 0,
+    "20260818": 0,
+    "20260819": 0,
+    "20260821": 0,
+    "20260824": 0,
+    "20260825": 0,
+    "20260826": 0,
+    "20260827": 0,
+    "20260831": 0,
+    "20260901": 0,
+    "20260902": 0,
+    "20260903": 0,
+    "20260904": 0,
+    "20260907": 0,
+    "20260908": 0,
+    "20260909": 0,
+    "20260910": 0,
+    "20260911": 0,
+    "20260914": 0,
+    "20260915": 0,
+    "20260916": 0,
+    "20260917": 0,
+    "20260918": 1,
+    "20260921": 4,
+    "20260922": 2,
+    "20260923": 0,
+    "20260928": 4,
+    "20260929": 1,
+    "20260930": 14,
+    "20261001": 10,
+    "20261002": 14,
+    "20261006": 109,
+    "20261007": 191,
+    "20261008": 411,
+    "20261012": 217
+  },
+  "verdict_totals": {
+    "previous_trading_day_same_minute": 77,
+    "own_day_same_minute": 113,
+    "no_rest_match": 26
+  },
+  "per_parquet_day": [
+    {
+      "parquet_day": "2026-10-08",
+      "previous_trading_day": "2026-10-07",
+      "parquet_rows": 41,
+      "matched_rest_days": [
+        "20261007"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 41
+      }
+    },
+    {
+      "parquet_day": "2026-10-07",
+      "previous_trading_day": "2026-10-06",
+      "parquet_rows": 18,
+      "matched_rest_days": [
+        "20261006"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 18
+      }
+    },
+    {
+      "parquet_day": "2026-10-06",
+      "previous_trading_day": "2026-10-02",
+      "parquet_rows": 108,
+      "matched_rest_days": [
+        "20261006"
+      ],
+      "relations": {
+        "own_day_same_minute": 108
+      }
+    },
+    {
+      "parquet_day": "2026-10-02",
+      "previous_trading_day": "2026-10-01",
+      "parquet_rows": 5,
+      "matched_rest_days": [
+        "20261001"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 5
+      }
+    },
+    {
+      "parquet_day": "2026-10-01",
+      "previous_trading_day": "2026-09-30",
+      "parquet_rows": 8,
+      "matched_rest_days": [
+        "20260930"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 8
+      }
+    },
+    {
+      "parquet_day": "2026-09-30",
+      "previous_trading_day": "2026-09-29",
+      "parquet_rows": 1,
+      "matched_rest_days": [
+        "20260929"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 1
+      }
+    },
+    {
+      "parquet_day": "2026-09-29",
+      "previous_trading_day": "2026-09-28",
+      "parquet_rows": 2,
+      "matched_rest_days": [
+        "20260928"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 2
+      }
+    },
+    {
+      "parquet_day": "2026-09-28",
+      "previous_trading_day": "2026-09-23",
+      "parquet_rows": 4,
+      "matched_rest_days": [
+        "20260928"
+      ],
+      "relations": {
+        "own_day_same_minute": 4
+      }
+    },
+    {
+      "parquet_day": "2026-09-22",
+      "previous_trading_day": "2026-09-21",
+      "parquet_rows": 1,
+      "matched_rest_days": [
+        "20260921"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 1
+      }
+    },
+    {
+      "parquet_day": "2026-09-21",
+      "previous_trading_day": "2026-09-18",
+      "parquet_rows": 1,
+      "matched_rest_days": [
+        "20260918"
+      ],
+      "relations": {
+        "previous_trading_day_same_minute": 1
+      }
+    },
+    {
+      "parquet_day": "2026-09-18",
+      "previous_trading_day": "2026-09-17",
+      "parquet_rows": 1,
+      "matched_rest_days": [
+        "20260918"
+      ],
+      "relations": {
+        "own_day_same_minute": 1
+      }
+    },
+    {
+      "parquet_day": "2026-07-31",
+      "previous_trading_day": "2026-07-30",
+      "parquet_rows": 1,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 1
+      }
+    },
+    {
+      "parquet_day": "2026-07-30",
+      "previous_trading_day": "2026-07-29",
+      "parquet_rows": 1,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 1
+      }
+    },
+    {
+      "parquet_day": "2026-07-29",
+      "previous_trading_day": "2026-07-28",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-28",
+      "previous_trading_day": "2026-07-27",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-27",
+      "previous_trading_day": "2026-07-24",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-24",
+      "previous_trading_day": "2026-07-23",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-23",
+      "previous_trading_day": "2026-07-22",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-22",
+      "previous_trading_day": "2026-07-21",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-21",
+      "previous_trading_day": "2026-07-20",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-20",
+      "previous_trading_day": "2026-07-17",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-17",
+      "previous_trading_day": "2026-07-16",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-16",
+      "previous_trading_day": "2026-07-15",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-15",
+      "previous_trading_day": "2026-07-14",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    },
+    {
+      "parquet_day": "2026-07-14",
+      "previous_trading_day": "2026-07-13",
+      "parquet_rows": 2,
+      "matched_rest_days": [],
+      "relations": {
+        "no_rest_match": 2
+      }
+    }
+  ]
+}

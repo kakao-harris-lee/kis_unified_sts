@@ -1,0 +1,77 @@
+{
+  "hypothesis": "the +5s mode is time-to-first-trade in a quiet minute, not broker latency",
+  "volume_of_boundaries_first_seen_at_plus_1s": {
+    "n": 343,
+    "min": 59.0,
+    "p25": 252.0,
+    "median": 339.0,
+    "p75": 480.0,
+    "max": 1365.0,
+    "mean": 382.289
+  },
+  "volume_of_boundaries_first_seen_only_at_plus_5s": {
+    "n": 67,
+    "min": 58.0,
+    "p25": 198.0,
+    "median": 278.0,
+    "p75": 408.0,
+    "max": 1004.0,
+    "mean": 316.776
+  },
+  "late_mode_by_hour": {
+    "h08": {
+      "late": 2,
+      "seen": 14,
+      "late_pct": 14.3
+    },
+    "h09": {
+      "late": 2,
+      "seen": 60,
+      "late_pct": 3.3
+    },
+    "h10": {
+      "late": 2,
+      "seen": 60,
+      "late_pct": 3.3
+    },
+    "h11": {
+      "late": 14,
+      "seen": 60,
+      "late_pct": 23.3
+    },
+    "h12": {
+      "late": 12,
+      "seen": 60,
+      "late_pct": 20.0
+    },
+    "h13": {
+      "late": 13,
+      "seen": 60,
+      "late_pct": 21.7
+    },
+    "h14": {
+      "late": 13,
+      "seen": 60,
+      "late_pct": 21.7
+    },
+    "h15": {
+      "late": 9,
+      "seen": 36,
+      "late_pct": 25.0
+    }
+  },
+  "late_run_lengths": [
+    1,
+    2,
+    3
+  ],
+  "late_runs_total": 50,
+  "longest_late_run": 3,
+  "median_volume_ratio_early_over_late": 1.219,
+  "continuous_session_minutes_0845_to_1534_expected": 410,
+  "continuous_session_minutes_with_a_parsed_bar": 410,
+  "continuous_session_minutes_missing_a_bar": [],
+  "g_never_fired_in_continuous_session": true,
+  "upper_bound_max_s": 5.345897,
+  "upper_bound_p50_s": 1.110636
+}
