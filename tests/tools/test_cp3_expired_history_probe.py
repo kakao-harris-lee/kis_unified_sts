@@ -87,6 +87,36 @@ def test_committed_plan_walks_the_front_month_resolver():
     assert plan["junction_day"] == JUNCTION
 
 
+def test_symbols_come_from_the_resolver_and_not_from_a_literal(monkeypatch):
+    """Red proof for the test above: it passes on hardcoded symbols too.
+
+    §3.2a requires the contract per session to come from the SAME front-month
+    resolver the producer uses. Replacing that resolver must move every symbol
+    in the plan, and it must be asked for the right (product, date) pairs.
+    """
+    asked = []
+
+    def fake(*, product, target_date):
+        asked.append((product, target_date))
+        return "ZZ001" if target_date <= JUNCTION else "ZZ002"
+
+    monkeypatch.setattr(e, "get_front_month_code", fake)
+    plan = e.resolve_plan(base_config(), today=TODAY)
+    assert plan["expired_symbol"] == "ZZ001"
+    assert plan["successor_symbol"] == "ZZ002"
+    assert [symbol for symbol, _ in plan["requests"]] == ["ZZ001"] * 5 + ["ZZ002"]
+    # mini only, and the successor is asked for the junction's NEXT trading day
+    assert {product for product, _ in asked} == {"mini"}
+    assert set(asked) == {
+        ("mini", JUNCTION),
+        ("mini", date(2026, 10, 7)),
+        ("mini", date(2026, 10, 6)),
+        ("mini", date(2026, 10, 2)),
+        ("mini", date(2026, 10, 1)),
+        ("mini", date(2026, 10, 12)),
+    }
+
+
 @pytest.mark.parametrize(
     "mutate,reason",
     [
