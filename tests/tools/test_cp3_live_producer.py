@@ -772,13 +772,22 @@ def test_item3_red_a_late_bar_does_not_steal_the_current_bars_publication(
 
     Now: the late bar is frozen and counted, the loop keeps polling, and the
     current bar is the one that gets published.
+
+    **The second hold is what makes this test discriminate** (review N2).
+    Holding only ``successor`` left both bars complete in the NEXT boundary's
+    very first poll, so "return on the late bar" and "keep polling" produced the
+    same journal and the mutation passed. Holding ``successor``'s own successor
+    to 2.5 s — past the first poll at +1.8 s, inside G — puts the late bar
+    ALONE in that first poll, which is the shape the cascade needs.
     """
     starved = market.target_bars[25][1]  # the bar whose boundary will miss
     successor = market.target_bars[26][1]  # its completion signal, held back
     producer, _clock, quotes = _build(tmp_path, market)
     # The successor row appears 12 s past ITS own boundary — past G = 10 s from
     # `starved`'s boundary, so `starved` cannot complete inside its own window.
-    quotes.hold_until = {successor: 12.0}
+    # And `successor`'s own completion signal arrives at +2.5 s, so the first
+    # poll of ITS boundary sees `starved` completing and nothing else.
+    quotes.hold_until = {successor: 12.0, market.target_bars[27][1]: 2.5}
     producer.boot()
     producer.run_session()
     producer.finish()
@@ -800,6 +809,75 @@ def test_item3_red_a_late_bar_does_not_steal_the_current_bars_publication(
     assert successor in frozen
     # no published line is older than the one before it
     assert published == sorted(published)
+
+
+@pytest.mark.serial
+def test_item3_red_a_stalled_poll_publishes_the_newest_frozen_bar(
+    tmp_path: Path, market: Market
+) -> None:
+    """One poll that returns past the NEXT boundary (review N1).
+
+    Reachable without anything exotic: one request may take 3 x 10 s of
+    transport timeout plus 2 x 2 s of backoff, and ``history()`` escalation adds
+    a second request on top of that.
+
+    The exact repro the reviewer wrote: ``catch_up``'s row is held 30 s, so
+    ``stalled``'s own boundary finds no successor, and the poll issued at
+    09:16:08 does not return until 09:17:06 — by which time ``following``'s row
+    exists and BOTH bars are complete in that one response.
+
+    Before the fix the pair was lost under two wrong labels: ``stalled`` was
+    published over a frame that already ended at ``catch_up``, so ``build_line``
+    returned ``omitted_unusable``; ``catch_up`` was counted ``skipped_behind``
+    and then, at its own boundary, polled for the full G and logged
+    ``missing_no_successor`` with ``bar_minute_traded: true`` — for a bar that
+    was sitting frozen in the frame. Now the newest newly frozen bar is
+    published as a catch-up and the boundary it already covered returns at once.
+    """
+    stalled = market.target_bars[30][1]  # 09:15 — overtaken by the stall
+    catch_up = market.target_bars[31][1]  # 09:16 — complete when the poll returns
+    following = market.target_bars[32][1]  # 09:17 — the next ordinary boundary
+    producer, clock, quotes = _build(tmp_path, market)
+    quotes.hold_until = {catch_up: 30.0}
+
+    stall_at = catch_up + timedelta(seconds=8)
+    inner_page, stalled_once = quotes.page, []
+
+    def stalling_page(symbol: str, day: date, cursor: str = "") -> list[dict]:
+        if not stalled_once and clock.now().replace(tzinfo=None) >= stall_at:
+            stalled_once.append(clock.now())
+            clock.sleep(58.0)  # the response arrives at 09:17:06
+        return inner_page(symbol, day, cursor)
+
+    quotes.page = stalling_page
+    producer.boot()
+    producer.run_session()
+    producer.finish()
+
+    assert stalled_once, "the repro never stalled — the poll pacing moved"
+    published = [
+        _minute_of(r["raw_event_id"]) for r in _journal_rows(producer.journal_path)
+    ]
+    frozen = {bar[1] for bar in producer.frozen}
+
+    # the newest bar the stalled poll froze is the one that gets published...
+    assert catch_up in published
+    # ...the overtaken bar is frozen and counted, not mislabelled
+    assert stalled in frozen
+    assert stalled not in published
+    assert producer.counters.skipped_behind >= 1
+    assert producer.counters.omitted_unusable == 0
+    # ...the boundary the catch-up already covered polls nothing and claims no
+    # missing successor for a bar that is frozen
+    assert producer.counters.missing_no_successor == 0
+    assert producer.counters.already_published == 1
+    # ...and the session carries on at the next ordinary boundary
+    assert following in published
+
+    # the invariants this catch-up must not break
+    assert len(published) == len(set(published))  # nothing published twice
+    assert published == sorted(published)  # strictly increasing minutes
+    assert set(published) <= frozen  # only bars that entered the frame
 
 
 # ===========================================================================

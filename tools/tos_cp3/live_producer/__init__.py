@@ -24,13 +24,16 @@ a stamp taken before that compute would be stale on arrival however fast the
 write is. M6 therefore measures stamp → temp write → ``os.replace`` only;
 everything earlier is decision latency (M2).
 
-**One published line per boundary, and only that boundary's bar** (plan §2 4,
-§3.3; review M1). Every completed bar is frozen into the frame and written to
+**One published line per boundary, and never a stale bar** (plan §2 4, §3.3;
+reviews M1 and N1). Every completed bar is frozen into the frame and written to
 Parquet — B1a reads that frame, so parity needs each bar to advance the causal
-windows exactly once — but the only line written for a boundary is the one for
-``boundary - 1min``. A bar that completes after its own boundary passed is
-counted ``late_completed`` and left unpublished: a fresh stamp on a stale bar
-is what the runtime would consume as the current observation.
+windows exactly once — but at most ONE line is written per boundary, for
+``boundary - 1min`` or, when a poll comes back after a NEWER bar has completed
+too, for the newest bar of that response as a catch-up (plan §2 4's 「가장 최근
+완성 봉 하나만」); the boundary that catch-up already covered then returns without
+polling. A bar that completes after its own boundary passed is counted
+``late_completed`` and left unpublished: a fresh stamp on a stale bar is what
+the runtime would consume as the current observation.
 
 ``raw_event_id`` and the fifteen ``FIELD_ORDER`` keys come from B1a's own
 helpers, so the same bar's real-time and offline lines join in B3.

@@ -198,7 +198,14 @@ class Counters:
       fresh ``as_of_ms`` for a stale bar, and the runtime would consume it as
       the current observation (review M1).
     * ``skipped_behind`` — more than one bar completed in ONE poll; only the
-      newest is published (plan §2 4).
+      newest is published (plan §2 4), and the older ones — this boundary's own
+      bar among them when a poll came back after the next bar had completed
+      too — are counted here.
+    * ``already_published`` — this boundary's bar was already published, as the
+      catch-up of an earlier boundary whose poll returned late (review N1), so
+      the boundary polls nothing. Without it the bar is frozen and unpublishable
+      and the boundary would wait the full G and then claim
+      ``missing_no_successor`` for a bar sitting in the frame.
     """
 
     published: int = 0
@@ -206,6 +213,7 @@ class Counters:
     late_completed: int = 0
     missing_no_successor: int = 0
     no_raw_row_for_minute: int = 0
+    already_published: int = 0
     omitted_unusable: int = 0
     produce_error: int = 0
     clock_regression: int = 0
@@ -220,6 +228,7 @@ class Counters:
             "late_completed": self.late_completed,
             "missing_no_successor": self.missing_no_successor,
             "no_raw_row_for_minute": self.no_raw_row_for_minute,
+            "already_published": self.already_published,
             "omitted_unusable": self.omitted_unusable,
             "produce_error": self.produce_error,
             "clock_regression": self.clock_regression,
@@ -262,6 +271,12 @@ class LiveProducer:
     frozen: list[Bar] = field(default_factory=list)
     counters: Counters = field(default_factory=Counters)
     consecutive_produce_errors: int = 0
+    #: The minute of the last bar a journal line was actually WRITTEN for. It
+    #: only ever advances, and a boundary at or behind it has nothing left to do
+    #: (review N1). Set after the write, never before: a bar that ended in
+    #: ``omitted_unusable``, ``produce_error`` or a refused stamp was not
+    #: published and must not silence its own boundary.
+    last_published_minute: datetime | None = None
 
     def __post_init__(self) -> None:
         # The log exists before anything can refuse, so a refusal is recorded
@@ -457,15 +472,19 @@ class LiveProducer:
         Freezing and publishing are separate (review M1). Every completed bar
         is frozen into the frame and written to Parquet on the poll that finds
         it, because B1a reads that frame and parity depends on every bar
-        advancing the causal windows exactly once. Only the bar this boundary
-        is about — ``boundary - 1min`` — is ever published. An older bar that
-        completes late is counted as ``late_completed`` and the loop KEEPS
-        POLLING for the current one; the first cut returned on any newly frozen
-        bar, which published a stale bar under a fresh stamp and then never
-        looked for the current bar again (measured: 09:04 published at
-        09:06:01.85 while 09:05, complete at +2.5 s, was never published).
+        advancing the causal windows exactly once. The line written is for the
+        bar this boundary is about — ``boundary - 1min`` — or, when a poll comes
+        back so late that a NEWER bar completed in the same response, for that
+        newest bar as a catch-up (:meth:`_publication_target`, review N1). An
+        older bar that completes late is counted as ``late_completed`` and the
+        loop KEEPS POLLING for the current one; the first cut returned on any
+        newly frozen bar, which published a stale bar under a fresh stamp and
+        then never looked for the current bar again (measured: 09:04 published
+        at 09:06:01.85 while 09:05, complete at +2.5 s, was never published).
         """
         bar_minute = boundary - timedelta(minutes=1)
+        if self._already_published(boundary, bar_minute):
+            return
         self._sleep_until(boundary + timedelta(seconds=self.config.first_poll_delay_s))
         deadline = boundary + timedelta(
             seconds=self.config.missing_no_successor_timeout_s
@@ -490,6 +509,30 @@ class LiveProducer:
                 self._record_unpublished(boundary, bar_minute, raw_minutes)
                 return
             self.clock.sleep(self.config.repoll_pace_s)
+
+    def _already_published(self, boundary: datetime, bar_minute: datetime) -> bool:
+        """Has an earlier boundary's catch-up already published THIS bar?
+
+        Then there is nothing to poll for (review N1). The bar is frozen, so no
+        later ``freeze_step`` can return it again — polling the full G would
+        find nothing and end in ``missing_no_successor``, a label that says "the
+        minute traded but never completed" about a minute that completed and was
+        published a boundary ago. Returning at once also keeps the loop's phase:
+        the next boundary's first poll still lands at its own ``+δ``.
+        """
+        last = self.last_published_minute
+        if last is None or bar_minute > last:
+            return False
+        self.counters.already_published += 1
+        self.log.event(
+            {
+                "stage": "already_published",
+                "boundary": str(boundary),
+                "bar": str(bar_minute),
+                "last_published_minute": str(last),
+            }
+        )
+        return True
 
     def _record_unpublished(
         self,
@@ -574,13 +617,14 @@ class LiveProducer:
     def _freeze(
         self, step: FreezeStep, *, bar_minute: datetime | None, at_boot: bool = False
     ) -> Bar | None:
-        """Add every completed bar to the frame and Parquet; return the current one.
+        """Add every completed bar to the frame and Parquet; return the one to publish.
 
         ALL newly completed bars are frozen — B1a reads this frame and parity
         needs every bar to advance the causal windows exactly once. What comes
-        back is only the bar *bar_minute* names, if it is among them; the rest
-        are counted and left unpublished, under the reason that is actually
-        true of them:
+        back is the single bar this step publishes (:meth:`_publication_target`
+        — *bar_minute*, or a newer bar that completed in the same response);
+        the rest are counted and left unpublished, under the reason that is
+        actually true of them:
 
         * ``at_boot`` — the morning already happened before this process
           existed. Those bars are not late, they are history, so they count as
@@ -588,6 +632,10 @@ class LiveProducer:
         * in session, a bar OLDER than this boundary's bar — its own boundary
           came and went, so it is ``late_completed`` (review M1). It still
           enters the frame; it is simply never published.
+        * in session, a bar at or after this boundary's bar that is not the one
+          published — the plan's "several bars completed at once, publish the
+          newest" case, so ``skipped_behind`` (plan §2 4). This is where
+          *bar_minute* itself lands when a stalled poll overtook it.
         """
         if not step.newly_frozen:
             return None
@@ -598,11 +646,11 @@ class LiveProducer:
             symbol=self.instrument,
             bars=step.newly_frozen,
         )
-        current: Bar | None = None
+        current = self._publication_target(step, bar_minute)
         for bar in step.newly_frozen:
-            if bar_minute is not None and bar[1] == bar_minute:
-                current = bar
-            elif not at_boot and bar_minute is not None and bar[1] < bar_minute:
+            if current is not None and bar[1] == current[1]:
+                continue
+            if not at_boot and bar_minute is not None and bar[1] < bar_minute:
                 self.counters.late_completed += 1
                 self.log.event(
                     {
@@ -617,6 +665,34 @@ class LiveProducer:
                 self.counters.skipped_behind += 1
                 self.log.event({"stage": "skipped_behind", "bar": str(bar[1])})
         return current
+
+    def _publication_target(
+        self, step: FreezeStep, bar_minute: datetime | None
+    ) -> Bar | None:
+        """The ONE bar of this step to publish: the newest, when it is not stale.
+
+        Plan §2 4 is explicit — 「밀렸으면(여러 봉이 한꺼번에 완성) 가장 최근 완성 봉
+        하나만 쓰고 건너뛴 봉은 skipped_behind 로」 — and the first cut published
+        *bar_minute* instead, which is the same thing only while a poll returns
+        inside its own minute. A poll that comes back after the next bar has
+        also completed (review N1: one request can spend 3 x 10 s of transport
+        timeout plus 2 x 2 s of backoff, and a ``history()`` escalation doubles
+        that) froze both bars, and publishing the older one wrote a line over a
+        frame that already ended at the newer one, so ``build_line`` dropped it
+        as ``omitted_unusable`` — and the newer bar, frozen but unpublished,
+        could never be published afterwards either.
+
+        Nothing OLDER than *bar_minute* is ever returned: that bar's own
+        boundary has passed and a fresh stamp on it would be consumed as the
+        current observation (review M1), which is the whole reason freezing and
+        publishing are separate. Because the target always comes from
+        ``newly_frozen``, and a bar is frozen exactly once, the published
+        minutes are strictly increasing and no bar is published twice.
+        """
+        if bar_minute is None:
+            return None
+        newest = step.newly_frozen[-1]
+        return newest if newest[1] >= bar_minute else None
 
     def _publish_bar(self, bar: Bar, *, received_ms: int | None) -> None:
         """Compute the fifteen fields for *bar* and journal one line."""
@@ -669,6 +745,7 @@ class LiveProducer:
             )
             return
         self.counters.published += 1
+        self.last_published_minute = bar[1]
         self.counters.max_stamp_to_replace_s = max(
             self.counters.max_stamp_to_replace_s, result.stamp_to_replace_s
         )
