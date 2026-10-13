@@ -1,8 +1,11 @@
 """CP-3 PR-1: real quotation GET measurements; never writes tenant state.
 
-Only quote transport is the method/TR/path allowlist below. Authentication uses
-existing KISAuthManager with an app-key scoped PRIVATE cache. No order imports.
-Raw quote pages, timing brackets, parser comparisons and B1a timings are retained.
+Only quote transport is the method/TR/path allowlist in
+:mod:`tools.tos_cp3.quote_client`, which this module re-exports — PR-2's live
+field producer reuses that same client rather than growing a second one.
+Authentication uses existing KISAuthManager with an app-key scoped PRIVATE
+cache. No order imports. Raw quote pages, timing brackets, parser comparisons
+and B1a timings are retained.
 """
 
 from __future__ import annotations
@@ -14,22 +17,15 @@ import os
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-import httpx
 import pandas as pd
-import requests
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
 from shared.config.dotenv_guard import read_explicit_dotenv
-from shared.kis.auth import KISAuthManager, is_token_expired_error
 from shared.storage.market_data_store import ParquetMarketDataStore
 from tools.broker_probes.common import (
     REAL_BASE_URL,
-    ReadOnlyCall,
-    assert_read_only_call,
-    build_auth_config,
     resolve_credentials,
     secret_fingerprint,
 )
@@ -41,32 +37,30 @@ from tools.tos_cp3.produce_fields import (
     resolve_contract_spec,
     resolve_open_anchor,
 )
+from tools.tos_cp3.quote_client import (
+    ALLOWLIST,
+    KST,
+    QUOTE_PATH,
+    TR,
+    Quotes,
+    raw_stamp,
+    select_day,
+)
 
-KST = ZoneInfo("Asia/Seoul")
 ROOT = Path(__file__).resolve().parents[2]
-QUOTE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
-TR = "FHKIF03020200"
-ALLOWLIST = (ReadOnlyCall(TR, QUOTE_PATH, "CP3 minute quotation"),)
 COLUMNS = ["code", "timestamp", "open", "high", "low", "close", "volume"]
 
-
-def raw_stamp(row: dict, day: date) -> datetime | None:
-    """Date is checked BEFORE completion/parsing; PW_DATA may include other days."""
-    day_text = str(
-        row.get("stck_bsop_date") or row.get("futs_bsop_date") or day.strftime("%Y%m%d")
-    )
-    hour = str(row.get("stck_cntg_hour") or row.get("futs_cntg_hour") or "")
-    if len(hour) == 4:
-        hour += "00"
-    try:
-        stamp = datetime.strptime(day_text + hour, "%Y%m%d%H%M%S").replace(tzinfo=KST)
-    except ValueError:
-        return None
-    return stamp if stamp.date() == day else None
-
-
-def select_day(rows: list[dict], day: date) -> list[dict]:
-    return [row for row in rows if raw_stamp(row, day) is not None]
+__all__ = [
+    "ALLOWLIST",
+    "KST",
+    "QUOTE_PATH",
+    "REAL_BASE_URL",
+    "TR",
+    "Quotes",
+    "main",
+    "raw_stamp",
+    "select_day",
+]
 
 
 def frame(rows: list[tuple]) -> pd.DataFrame:
@@ -145,114 +139,6 @@ class Recorder:
                 if p.is_file() and p.name != "sha256.json"
             },
         )
-
-
-class Quotes:
-    def __init__(self, creds, recorder: Recorder, cfg):
-        cache = (
-            recorder.output.parent / ".token-cache" / secret_fingerprint(creds.app_key)
-        )
-        self.auth = KISAuthManager(build_auth_config(creds, cache), use_singleton=False)
-        self.creds, self.recorder, self.cfg = creds, recorder, cfg
-        self.http = httpx.Client(
-            timeout=cfg["request_timeout_s"], follow_redirects=False
-        )
-        self.last = 0.0
-        self.calls = 0
-
-    def page(self, symbol: str, day: date, cursor: str = "") -> list[dict]:
-        url = REAL_BASE_URL + QUOTE_PATH
-        assert_read_only_call("GET", url, TR, ALLOWLIST)
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "F",
-            "FID_INPUT_ISCD": symbol,
-            "FID_HOUR_CLS_CODE": "60",
-            "FID_PW_DATA_INCU_YN": "Y",
-            "FID_FAKE_TICK_INCU_YN": "N",
-            "FID_INPUT_DATE_1": day.strftime("%Y%m%d"),
-            "FID_INPUT_HOUR_1": cursor,
-        }
-        refreshed = False
-        for attempt in range(self.cfg["attempts"]):
-            time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
-            started = datetime.now(KST)
-            try:
-                # OAuth may raise ValueError or requests errors. Keep it in the
-                # bounded retry; never persist their possibly sensitive text.
-                token = self.auth.get_token()
-                headers = {
-                    "authorization": "Bearer " + token,
-                    "appkey": self.creds.app_key,
-                    "appsecret": self.creds.app_secret,
-                    "tr_id": TR,
-                    "content-type": "application/json",
-                }
-                started = datetime.now(KST)
-                self.last_started_kst = started
-                self.last = time.monotonic()
-                self.calls += 1
-                response = self.http.get(url, headers=headers, params=params)
-                payload = response.json()
-                if not isinstance(payload, dict):
-                    raise ValueError("quote response is not a mapping")
-                self.last_received_kst = datetime.now(KST)
-                rows = payload.get("output2") or []
-                # Persist only quote rows + response status; never headers, token or msg1.
-                self.recorder.event(
-                    {
-                        "started_kst": started,
-                        "received_kst": self.last_received_kst,
-                        "method": "GET",
-                        "tr_id": TR,
-                        "path": QUOTE_PATH,
-                        "params": params,
-                        "attempt": attempt + 1,
-                        "rt_cd": payload.get("rt_cd"),
-                        "http_status": response.status_code,
-                        "rows": rows,
-                    }
-                )
-                if is_token_expired_error(payload) and not refreshed:
-                    # This manager owns only the app-key scoped probe cache.
-                    self.auth.invalidate()
-                    refreshed = True
-                    self.recorder.event(
-                        {
-                            "started_kst": started,
-                            "token_invalidated": True,
-                            "attempt": attempt + 1,
-                            "params": params,
-                        }
-                    )
-                # KIS can report expiry with non-2xx HTTP status. Detect it
-                # above before generic HTTP retry, or the cached token persists.
-                response.raise_for_status()
-                if str(payload.get("rt_cd")) == "0" and isinstance(rows, list):
-                    return [r for r in rows if isinstance(r, dict)]
-                error = "broker_response"
-            except (httpx.HTTPError, requests.RequestException, ValueError):
-                error = "auth_http_or_json_error"
-                self.recorder.event(
-                    {"started_kst": started, "error": error, "params": params}
-                )
-            time.sleep(self.cfg["retry_pause_s"])
-        raise RuntimeError(error)
-
-    def history(self, symbol: str, day: date) -> list[dict]:
-        result, seen, cursor = [], set(), ""
-        for _ in range(self.cfg["max_pages"]):
-            rows = self.page(symbol, day, cursor)
-            result.extend(select_day(rows, day))
-            stamps = [raw_stamp(r, day) for r in rows]
-            stamps = [s for s in stamps if s is not None]
-            if not stamps:
-                return result
-            next_cursor = min(stamps).strftime("%H%M%S")
-            if next_cursor in seen:
-                return result
-            seen.add(next_cursor)
-            cursor = next_cursor
-        raise RuntimeError("history pagination capped: do not claim complete seed")
 
 
 def seed_and_compare(
