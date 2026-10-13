@@ -168,15 +168,18 @@ def _allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_allowlist_is_empty_until_the_real_producer_lands() -> None:
+def test_the_allowlist_holds_exactly_the_one_approved_producer() -> None:
     """The literal, pinned.
 
-    Every "a real producer may genesis a designated set" test below has to
-    monkeypatch this tuple, so without this assertion nothing would say that
-    production's own copy is empty — which is the whole fail-closed posture.
-    ③'s PR adds its prefix here and changes this test in the same commit.
+    Every "a real producer may genesis a designated set" test below
+    monkeypatches this tuple, so without this assertion nothing would say what
+    production's own copy actually is. It held ``()`` until ③'s PR-2, which
+    added ``tos-cp3-live`` — the real-time field producer in
+    :mod:`tools.tos_cp3.live_producer` — and nothing else. A second entry
+    appearing here is a second producer approved to create a permanent corpus,
+    which is a decision, so it changes this test too.
     """
-    assert bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES == ()
+    assert bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES == ("tos-cp3-live",)
     assert str(bootproof_guard.DEFAULT_SCRATCH_ROOT) == "~/.local/state/tos/scratch"
     assert str(bootproof_guard.RESIDENT_DATA_ROOT) == "~/.local/state/tos/paper-data"
     assert bootproof_guard.DESIGNATED_PARENT_GLOBS == (
@@ -290,8 +293,8 @@ def test_red_a_malformed_allowlist_entry_is_refused_at_call_time(
 def test_red_a_malformed_allowlist_entry_fails_at_import(
     tmp_path: Path, bad_entry: str
 ) -> None:
-    """The same shape check at IMPORT, which is where ③'s PR will be standing
-    when it adds its prefix.
+    """The same shape check at IMPORT, which is where ③'s PR-2 was standing
+    when it added ``tos-cp3-live``.
 
     A module that refuses to import is a louder failure than one that refuses at
     call time, and this is the one that fires on a bad commit rather than on a
@@ -300,11 +303,14 @@ def test_red_a_malformed_allowlist_entry_fails_at_import(
     """
     import importlib.util
 
+    assignment = "APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = "
     source = (_REPO_ROOT / "tools/tos_cp3/bootproof_guard.py").read_text("utf-8")
-    patched = source.replace(
-        "APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ()",
-        f"APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ({bad_entry},)",
-        1,
+    # Replaced by LINE, not by the literal's text: the shipped tuple changes
+    # whenever a producer is approved (③'s PR-2 added ``tos-cp3-live``), and a
+    # test keyed on the old spelling would quietly stop patching anything.
+    patched = "\n".join(
+        f"{assignment}({bad_entry},)" if line.startswith(assignment) else line
+        for line in source.splitlines()
     )
     assert patched != source, "the literal this test patches has moved"
     module_path = tmp_path / "patched_guard.py"
@@ -318,8 +324,14 @@ def test_red_a_malformed_allowlist_entry_fails_at_import(
 
 
 def test_the_real_module_imports_with_its_own_literal() -> None:
-    """The green side of the import check: today's empty tuple is well-formed,
-    so the gate above is not simply refusing everything."""
+    """The green side of the import check: the shipped tuple is well-formed, so
+    the gate above is not simply refusing everything."""
+    assert (
+        bootproof_guard._validated_prefixes(
+            bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES
+        )
+        == bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES
+    )
     assert bootproof_guard._validated_prefixes(()) == ()
     assert bootproof_guard._validated_prefixes(("a", "b/c")) == ("a", "b/c")
 
