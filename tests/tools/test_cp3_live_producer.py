@@ -17,10 +17,12 @@ import ast
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -255,6 +257,12 @@ class FakeQuotes:
         self.http = None
         self.last_received_kst = clock.now()
         self.fail_next = 0
+        #: ``minute -> seconds past its own boundary before the row appears``.
+        #: Anything over G makes that boundary miss its bar (review M1).
+        self.hold_until: dict[datetime, float] = {}
+
+    def _arrival(self, minute: datetime) -> datetime:
+        return minute + timedelta(seconds=self.hold_until.get(minute, ARRIVAL_LAG_S))
 
     def _visible(self, day: date) -> list[dict]:
         rows = self.market.rows(day)
@@ -264,10 +272,11 @@ class FakeQuotes:
         return [
             row
             for row in rows
-            if datetime.strptime(
-                row["stck_bsop_date"] + row["stck_cntg_hour"], "%Y%m%d%H%M%S"
+            if self._arrival(
+                datetime.strptime(
+                    row["stck_bsop_date"] + row["stck_cntg_hour"], "%Y%m%d%H%M%S"
+                )
             )
-            + timedelta(seconds=ARRIVAL_LAG_S)
             <= now
         ]
 
@@ -292,6 +301,17 @@ class FakeQuotes:
 # ---------------------------------------------------------------------------
 # Config + calendar on disk
 # ---------------------------------------------------------------------------
+
+
+#: The years the producer's YAML declares for the tenant calendar (review L4).
+COVERED_YEARS = (2026,)
+
+
+def _tenant_calendar(*, covered_years=COVERED_YEARS):
+    return calendar_mod.load_runtime_calendar(
+        _REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml",
+        covered_years=covered_years,
+    )
 
 
 def _write_calendar(tmp_path: Path, *, session_end: str = TARGET_SESSION_END) -> Path:
@@ -458,9 +478,7 @@ def test_item1_the_window_fill_rule_counts_capacity_not_sessions(
 
     seed = frame_mod.build_seed(
         target=TARGET,
-        calendar=calendar_mod.load_runtime_calendar(
-            _REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml"
-        ),
+        calendar=_tenant_calendar(),
         strategy=inputs["strategy"],
         anchor=inputs["anchor"],
         min_bars_per_day=330,
@@ -478,21 +496,27 @@ def test_item1_the_window_fill_rule_counts_capacity_not_sessions(
 # ===========================================================================
 
 
-def _row(as_of_ms: int, raw_event_id: str = "A05611:1m:20261019T090000+0900") -> dict:
+def _row(raw_event_id: str = "A05611:1m:20261019T090000+0900") -> dict:
+    """A journal row as ``build_line`` returns it — with NO ``as_of_ms``."""
     return {
         "raw_event_id": raw_event_id,
         "source_id": producer_mod.SOURCE_ID,
         "instrument": INSTRUMENT,
-        "as_of_ms": as_of_ms,
-        "received_ms": as_of_ms - 50,
+        "received_ms": 1_792_286_460_001,
         "fields": dict.fromkeys(FIELD_ORDER, 1),
     }
 
 
+def _journal_at(path: Path, stamps: list[int]) -> sinks_mod.ObservationJournal:
+    """A journal whose clock hands out *stamps* in order."""
+    feed = iter(stamps)
+    return sinks_mod.ObservationJournal(path, clock=lambda: next(feed))
+
+
 def test_item2_as_of_ms_must_advance(tmp_path: Path) -> None:
-    journal = sinks_mod.ObservationJournal(tmp_path / "journal.jsonl")
-    journal.append(_row(1_000))
-    journal.append(_row(1_001))
+    journal = _journal_at(tmp_path / "journal.jsonl", [1_000, 1_001])
+    assert journal.append(_row()).written
+    assert journal.append(_row()).written
     assert [row["as_of_ms"] for row in _journal_rows(journal.path)] == [1_000, 1_001]
 
 
@@ -500,17 +524,72 @@ def test_item2_as_of_ms_must_advance(tmp_path: Path) -> None:
 def test_item2_red_a_non_advancing_stamp_is_refused(
     tmp_path: Path, second: int
 ) -> None:
-    """Equal is refused as well as backwards.
+    """Equal is refused as well as backwards — and the session goes ON.
 
     The reader returns rows strictly newer than ``after_as_of_ms``, so an EQUAL
-    stamp is a line nothing can ever consume — a ``>=`` here would admit
-    exactly the silent loss the guard is named for.
+    stamp is a line nothing can ever consume; a ``>=`` here would admit exactly
+    the silent loss the guard is named for.
+
+    Plan §2 5 says to refuse THAT WRITE and log it. It does not say to end the
+    session, and raising would have cost every remaining minute of a market day
+    (review L6) — so this returns an outcome the caller counts.
     """
-    journal = sinks_mod.ObservationJournal(tmp_path / "journal.jsonl")
-    journal.append(_row(1_000))
-    with pytest.raises(LiveProducerRefused, match="does not advance"):
-        journal.append(_row(second))
+    journal = _journal_at(tmp_path / "journal.jsonl", [1_000, second, 1_002])
+    assert journal.append(_row()).written
+
+    refused = journal.append(_row())
+    assert not refused.written
+    assert refused.reason == "clock_regression"
     assert len(_journal_rows(journal.path)) == 1
+    # the journal is still usable: the next advancing stamp is written
+    assert journal.append(_row()).written
+    assert [row["as_of_ms"] for row in _journal_rows(journal.path)] == [1_000, 1_002]
+
+
+def test_item2_the_caller_may_not_supply_the_stamp(tmp_path: Path) -> None:
+    """``as_of_ms`` belongs to the journal (review B1), enforced not just documented."""
+    journal = sinks_mod.ObservationJournal(tmp_path / "journal.jsonl")
+    with pytest.raises(LiveProducerRefused, match="the caller supplied as_of_ms"):
+        journal.append({**_row(), "as_of_ms": 1_000})
+    assert not (tmp_path / "journal.jsonl").exists()
+
+
+@pytest.mark.serial
+def test_item2_red_the_stamp_is_taken_after_produce_bars_not_before(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The B1 defect, as a clock that moves DURING the compute.
+
+    ``produce_bars`` was measured at ~0.44 s late in a session, against a
+    tenant budget of ``max_age_ms`` 800 with 300 ms left for the collector. A
+    stamp taken before the compute is therefore stale on arrival. Here the fake
+    clock advances 5 s inside ``produce_bars``, so a pre-compute stamp is 5 s
+    behind the post-compute clock and the assertion below fails — which is
+    exactly what it did before the fix.
+    """
+    producer, clock, _quotes = _build(tmp_path, market)
+    clock.moment = datetime(
+        TARGET.year, TARGET.month, TARGET.day, 9, 10, 5, tzinfo=producer_mod.KST
+    )
+    real_produce_bars = producer_mod.produce_bars
+    compute_cost_s = 5.0
+
+    def slow_produce_bars(*args, **kwargs):
+        result = real_produce_bars(*args, **kwargs)
+        clock.sleep(compute_cost_s)  # the compute takes real time
+        return result
+
+    monkeypatch.setattr(producer_mod, "produce_bars", slow_produce_bars)
+    before = clock.now()
+    producer.boot()
+    producer.finish()
+
+    rows = _journal_rows(producer.journal_path)
+    assert len(rows) == 1
+    stamped = rows[0]["as_of_ms"]
+    # the stamp is AFTER the compute, not before it
+    assert stamped >= int((before.timestamp() + compute_cost_s) * 1000)
+    assert stamped <= int(clock.now().timestamp() * 1000)
 
 
 @pytest.mark.serial
@@ -534,6 +613,9 @@ def test_item2_one_line_per_write_and_catch_up_is_counted_not_batched(
     assert producer.counters.skipped_behind > 20
     # every frozen bar is in the frame even though only one was published
     assert len(producer.frozen) == producer.counters.skipped_behind + 1
+    # the morning's bars are HISTORY, not late arrivals: `late_completed` is
+    # reserved for a bar whose own boundary passed while the session ran
+    assert producer.counters.late_completed == 0
     producer.finish()
 
 
@@ -630,14 +712,21 @@ def test_item3_the_last_bar_of_the_day_completes_only_on_session_end(
 
 
 @pytest.mark.serial
-def test_item3_a_full_run_publishes_both_the_gap_bar_and_the_session_end_bar(
+def test_item3_a_full_run_freezes_the_gap_bar_and_publishes_the_session_end_bar(
     tmp_path: Path, market: Market
 ) -> None:
     """End to end, with a hole in the raw feed where 15:35-15:44 was.
 
     The session's second-to-last minute is withheld from the fixture entirely,
     so the bar before it has no ``m+1`` successor — the 15:34 shape — and the
-    last bar is the session end minute — the 15:45 shape. Both must appear.
+    last bar is the session end minute — the 15:45 shape.
+
+    **The two get different dispositions** (review M1). The gap bar is
+    COMPLETED into the frame and written to Parquet, which is all evidence §2.2
+    requires and all B1a parity needs; it is NOT published, because plan §3.3
+    skips publication after G and a line stamped at 15:46 for a 15:34 bar would
+    be consumed as the current observation. The session-end bar IS published,
+    because 15:46 is its own boundary.
     """
     withheld = market.target_bars[-2][1]
     thinned = Market(
@@ -650,11 +739,67 @@ def test_item3_a_full_run_publishes_both_the_gap_bar_and_the_session_end_bar(
     producer.finish()
 
     published = {row["raw_event_id"] for row in _journal_rows(producer.journal_path)}
+    frozen = {bar[1] for bar in producer.frozen}
     gap_bar = market.target_bars[-3][1]
     last_bar = market.target_bars[-1][1]
-    for bar_minute in (gap_bar, last_bar):
-        assert _event_id(bar_minute) in published
+
+    # the session-end bar: its own boundary, so published
+    assert _event_id(last_bar) in published
+    assert last_bar in frozen
+    # the gap bar: completed into the frame, deliberately NOT published
+    assert gap_bar in frozen
+    assert _event_id(gap_bar) not in published
+    assert producer.counters.late_completed >= 1
+    # and the withheld minute never becomes a bar at all
+    assert withheld not in frozen
+    assert producer.counters.no_raw_row_for_minute >= 1
+    # every frozen bar reached Parquet, so B1a reads the same frame
+    stored = len(list((producer.market_root).rglob("*.parquet")))
+    assert stored >= len(producer.frozen)
+
+
+@pytest.mark.serial
+def test_item3_red_a_late_bar_does_not_steal_the_current_bars_publication(
+    tmp_path: Path, market: Market
+) -> None:
+    """The measured M1 cascade: two late rows in a row.
+
+    Reproduces the reviewer's scenario. One minute's row arrives past G so its
+    boundary ends in ``missing_no_successor``; at the NEXT boundary the first
+    poll completes only that older bar. The first cut returned there — it
+    published the stale bar under a fresh stamp and never looked for the
+    current bar again, so the current bar was lost with no counter naming it.
+
+    Now: the late bar is frozen and counted, the loop keeps polling, and the
+    current bar is the one that gets published.
+    """
+    starved = market.target_bars[25][1]  # the bar whose boundary will miss
+    successor = market.target_bars[26][1]  # its completion signal, held back
+    producer, _clock, quotes = _build(tmp_path, market)
+    # The successor row appears 12 s past ITS own boundary — past G = 10 s from
+    # `starved`'s boundary, so `starved` cannot complete inside its own window.
+    quotes.hold_until = {successor: 12.0}
+    producer.boot()
+    producer.run_session()
+    producer.finish()
+
+    published = [
+        _minute_of(r["raw_event_id"]) for r in _journal_rows(producer.journal_path)
+    ]
+    frozen = {bar[1] for bar in producer.frozen}
+
+    # the starved minute's own boundary published nothing...
+    assert starved not in published
     assert producer.counters.missing_no_successor >= 1
+    # ...it still reached the frame, so B1a sees the same bars...
+    assert starved in frozen
+    assert producer.counters.late_completed >= 1
+    # ...and the NEXT boundary published ITS OWN bar rather than returning on
+    # the late one (the cascade: the first cut lost this bar entirely)
+    assert successor in published
+    assert successor in frozen
+    # no published line is older than the one before it
+    assert published == sorted(published)
 
 
 # ===========================================================================
@@ -738,8 +883,9 @@ def test_item5_a_half_written_journal_is_never_visible(tmp_path: Path) -> None:
     journal path cannot observe a partial write, and after the replace the file
     holds exactly the complete lines.
     """
-    journal = sinks_mod.ObservationJournal(tmp_path / "journal.jsonl")
-    journal.append(_row(1))
+    journal = _journal_at(tmp_path / "journal.jsonl", [1_000, 1_001])
+    assert journal.append(_row()).written
+    after_first = (tmp_path / "journal.jsonl").read_text(encoding="utf-8")
     seen: list[str] = []
     original = os.replace
 
@@ -750,12 +896,15 @@ def test_item5_a_half_written_journal_is_never_visible(tmp_path: Path) -> None:
 
     sinks_mod.os.replace = spy
     try:
-        journal.append(_row(2))
+        assert journal.append(_row()).written
     finally:
         sinks_mod.os.replace = original
-    assert seen == [json.dumps(_row(1), separators=(",", ":")) + "\n"]
+    # mid-write the file still holds EXACTLY the previous complete line — the
+    # expectation is the writer's own bytes, not a re-serialisation here
+    assert seen == [after_first]
     assert len(_journal_rows(journal.path)) == 2
     assert list(tmp_path.glob("*.tmp")) == []
+    assert list(tmp_path.glob(".*.tmp")) == []
 
 
 def test_item5_a_crashed_parquet_write_is_not_picked_up(
@@ -824,59 +973,200 @@ def test_item5_a_crashed_parquet_write_is_not_picked_up(
     )
 
 
-def _import_closure(module_name: str) -> set[str]:
+def _module_source(name: str, root: Path) -> Path | None:
+    parts = name.split(".")
+    for candidate in (
+        root.joinpath(*parts).with_suffix(".py"),
+        root.joinpath(*parts, "__init__.py"),
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _import_closure(module_name: str, *, root: Path | None = None) -> set[str]:
     """Every module reachable by a static import walk from *module_name*.
 
-    Static, not ``sys.modules``: an order path that is imported lazily inside a
-    function would not show up in a runtime snapshot of a module that was never
+    Static, not ``sys.modules``: an order path imported lazily inside a
+    function would not appear in a runtime snapshot of a module that was never
     called, and "we never called it" is not the claim being made.
+
+    Two things the first cut got wrong and this does not (review M3):
+
+    * **parent packages.** Importing ``a.b.c`` executes ``a/__init__.py`` and
+      ``a/b/__init__.py``, so whatever THOSE import is in the graph too. The
+      measured consequence of skipping them: the real closure reaches
+      ``shared.execution`` through ``shared.backtest.config``, and the old walk
+      reported the producer as having no ``shared.execution`` edge at all.
+    * **relative imports.** ``from .b import thing`` has ``node.module is
+      None`` or a non-zero ``node.level``; the old walk skipped every one, so
+      any package that reaches an order path through its own siblings was
+      invisible.
     """
+    base = _REPO_ROOT if root is None else root
     seen: set[str] = set()
     queue = [module_name]
     while queue:
         name = queue.pop()
-        if name in seen:
+        if not name or name in seen:
             continue
         seen.add(name)
         parts = name.split(".")
-        candidates = [
-            _REPO_ROOT.joinpath(*parts).with_suffix(".py"),
-            _REPO_ROOT.joinpath(*parts, "__init__.py"),
-        ]
-        source = next((p for p in candidates if p.is_file()), None)
+        # Parent packages run their own __init__ on the way in.
+        queue.extend(".".join(parts[:depth]) for depth in range(1, len(parts)))
+        source = _module_source(name, base)
         if source is None:
             continue
+        package = name if source.name == "__init__.py" else ".".join(parts[:-1])
         tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 queue.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                queue.append(node.module)
-                queue.extend(f"{node.module}.{a.name}" for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    owner = package.split(".")
+                    climb = node.level - 1
+                    if climb:
+                        owner = owner[: len(owner) - climb]
+                    target = ".".join(owner + ([node.module] if node.module else []))
+                else:
+                    target = node.module or ""
+                if not target:
+                    continue
+                queue.append(target)
+                queue.extend(f"{target}.{alias.name}" for alias in node.names)
     return seen
 
 
-@pytest.mark.parametrize(
-    "forbidden",
-    ["shared.execution", "tools.broker_probes.probes_real_order", "tos", "tos_runtime"],
+#: The ONLY ``shared.execution`` modules the producer's closure may reach.
+#: Measured on this branch, and asserted by EQUALITY below rather than by
+#: "none of the bad ones" — an exact set is what turns a NEW arrival red.
+#: All five are pure value/config modules: none contains an order call
+#: (``place_order``/``order_cash``/``.post(``), which is checked here too so
+#: the allowlist cannot quietly absorb something that grows one.
+PURE_SHARED_EXECUTION = frozenset(
+    {
+        "shared.execution",
+        "shared.execution.config",
+        "shared.execution.contract_spec",
+        "shared.execution.slippage_control",
+        "shared.execution.slippage_model",
+        "shared.execution.tr_ids",
+    }
 )
-def test_item5_the_producer_import_graph_has_no_order_path(forbidden: str) -> None:
-    """GET-only and firewall-clean, pinned on the whole static closure.
 
-    ``shared.execution`` is the order path, ``probes_real_order`` is the probe
-    harness that can emit one, and ``tos`` / ``tos_runtime`` are the other side
-    of the bidirectional import firewall (``tools/`` may not import either).
+#: Modules that can put an order on the wire. Forbidden by NAME, because
+#: "`shared.execution` is absent" is no longer true of the real closure.
+ORDER_EMITTING_MODULES = (
+    "shared.execution.executor",
+    "shared.execution.venue_router",
+    "shared.execution.kis_futures_adapter",
+    "shared.execution.paper_kis_futures_adapter",
+    "shared.execution.live_exit_executor",
+    "shared.execution.force_close",
+    "shared.execution.passive_maker",
+    "shared.execution.pseudo_oco",
+    "shared.execution.mock_mirror",
+    "tools.broker_probes.probes_real_order",
+    "tos",
+    "tos_runtime",
+)
+
+
+@pytest.fixture(scope="module")
+def producer_closure() -> set[str]:
+    return _import_closure("tools.tos_cp3.live_producer.producer")
+
+
+@pytest.mark.parametrize("forbidden", ORDER_EMITTING_MODULES)
+def test_item5_the_producer_import_graph_has_no_order_path(
+    forbidden: str, producer_closure: set[str]
+) -> None:
+    """No order-emitting module, and no ``tos``/``tos_runtime``, in the closure.
+
+    What is actually checked: the static closure — including parent packages
+    and relative imports — contains none of
+    :data:`ORDER_EMITTING_MODULES`. It does NOT claim the closure avoids
+    ``shared.execution`` entirely; it does not, and
+    :func:`test_item5_the_reached_shared_execution_modules_are_exactly_the_pure_set`
+    pins which parts it reaches.
     """
-    closure = _import_closure("tools.tos_cp3.live_producer.producer")
     offending = sorted(
         name
-        for name in closure
+        for name in producer_closure
         if name == forbidden or name.startswith(forbidden + ".")
     )
     assert not offending, offending
     # the walk really reached the producer's own dependencies
-    assert "tools.tos_cp3.produce_fields" in closure
-    assert "tools.tos_cp3.quote_client" in closure
+    assert "tools.tos_cp3.produce_fields" in producer_closure
+    assert "tools.tos_cp3.quote_client" in producer_closure
+
+
+def test_item5_the_reached_shared_execution_modules_are_exactly_the_pure_set(
+    producer_closure: set[str],
+) -> None:
+    """Exact equality, so a newly reached module is red rather than tolerated.
+
+    The producer reaches ``shared.execution`` transitively (e.g. through
+    ``shared.backtest.config``). A containment check over a deny list would
+    stay green when the next refactor pulls in a sixth module; equality does
+    not. Each allowlisted module is also checked to contain no order call, so
+    the list cannot absorb one that grows a wire path later.
+    """
+    reached = {
+        name
+        for name in producer_closure
+        if (name == "shared.execution" or name.startswith("shared.execution."))
+        and _module_source(name, _REPO_ROOT) is not None
+    }
+    assert reached == PURE_SHARED_EXECUTION
+
+    order_calls = ("place_order", "order_cash", ".post(", "submit_order")
+    for name in sorted(PURE_SHARED_EXECUTION):
+        source = _module_source(name, _REPO_ROOT)
+        assert source is not None
+        text = source.read_text(encoding="utf-8")
+        found = [call for call in order_calls if call in text]
+        assert not found, f"{name} grew an order call: {found}"
+
+
+def test_item5_red_the_closure_walker_sees_parents_and_relative_imports(
+    tmp_path: Path,
+) -> None:
+    """The walker's own red proof — planted relative and parent-package edges.
+
+    Three edges, each invisible to the first cut: a relative sibling import, a
+    relative parent (``..``) import, and an order path reached only through a
+    package ``__init__``. If any of them were skipped the assertions below
+    would fail, which is the same shape as the real defect: the producer's
+    ``shared.execution`` edge was reached through a parent ``__init__``.
+    """
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "__init__.py").write_text(
+        "import shared.execution.executor\n", encoding="utf-8"
+    )
+    (tmp_path / "pkg" / "sibling.py").write_text(
+        "import shared.execution.venue_router\n", encoding="utf-8"
+    )
+    (tmp_path / "pkg" / "sub" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "sub" / "entry.py").write_text(
+        "from .leaf import thing\nfrom ..sibling import other\n", encoding="utf-8"
+    )
+    (tmp_path / "pkg" / "sub" / "leaf.py").write_text(
+        "import tools.broker_probes.probes_real_order\n", encoding="utf-8"
+    )
+
+    closure = _import_closure("pkg.sub.entry", root=tmp_path)
+
+    # relative sibling (`.leaf`) -> and what it imports
+    assert "pkg.sub.leaf" in closure
+    assert "tools.broker_probes.probes_real_order" in closure
+    # relative parent (`..sibling`) -> and what it imports
+    assert "pkg.sibling" in closure
+    assert "shared.execution.venue_router" in closure
+    # parent package __init__ -> and what it imports
+    assert "pkg" in closure
+    assert "shared.execution.executor" in closure
 
 
 def test_item5_the_transport_is_a_get_only_allowlist() -> None:
@@ -970,17 +1260,88 @@ def test_item5_red_a_reused_session_directory_refuses_to_start(
     producer.finish()
 
 
-def test_item5_red_a_second_producer_on_one_journal_is_refused(
+def test_item5_red_a_second_producer_on_one_session_is_refused(
     tmp_path: Path,
 ) -> None:
-    held = sinks_mod.acquire_journal_lock(tmp_path / "journal.jsonl")
+    """The lock is per SESSION, not per journal (review L5).
+
+    The failing input is the one a per-journal lock let through: two producers
+    aimed at the same ``--session-dir`` with DIFFERENT ``--journal`` paths.
+    Both would then append to the same Parquet partitions, which is the
+    duplicate-timestamp input loss ``refuse_if_partitions_exist`` exists to
+    prevent — and neither journal path would collide, so a per-journal lock saw
+    nothing wrong.
+    """
+    market_root = tmp_path / "session" / "market"
+    held = sinks_mod.acquire_session_lock(market_root)
     try:
         with pytest.raises(LiveProducerRefused, match="another producer holds"):
-            sinks_mod.acquire_journal_lock(tmp_path / "journal.jsonl")
+            sinks_mod.acquire_session_lock(market_root)
     finally:
         held.close()
     # released: the next acquire succeeds
-    sinks_mod.acquire_journal_lock(tmp_path / "journal.jsonl").close()
+    sinks_mod.acquire_session_lock(market_root).close()
+    # and the lock file is not something B1a or the store would read as input
+    assert list(market_root.rglob("*.parquet")) == []
+
+
+def test_item5_red_the_lock_is_held_while_the_refusals_run(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ORDERING, observed rather than assumed (review L5).
+
+    The refusals read the very state a second producer is about to create, so
+    checking before locking is a race both processes win. Single-threaded, the
+    way to see the order is from inside a refusal: while
+    ``refuse_if_partitions_exist`` runs, a second ``acquire_session_lock`` on
+    the same market root must already FAIL. If the lock were taken afterwards
+    it would succeed, and this test is what turns that red.
+    """
+    observed: dict[str, bool] = {}
+    real_refuse = producer_mod.refuse_if_partitions_exist
+
+    def spy(market_root: Path, **kwargs):
+        try:
+            sinks_mod.acquire_session_lock(market_root).close()
+            observed["locked_first"] = False
+        except LiveProducerRefused:
+            observed["locked_first"] = True
+        return real_refuse(market_root, **kwargs)
+
+    monkeypatch.setattr(producer_mod, "refuse_if_partitions_exist", spy)
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.boot()
+    producer.finish()
+
+    assert observed == {"locked_first": True}
+
+
+@pytest.mark.serial
+def test_item5_red_a_second_producer_on_the_same_session_dir_is_refused(
+    tmp_path: Path, market: Market
+) -> None:
+    """Two producers, one session dir, two DIFFERENT journals (review L5).
+
+    This is the input a per-journal lock let through: neither journal path
+    collides, so the old lock saw nothing wrong, and both would then append to
+    the same Parquet partitions — the duplicate timestamps B1a refuses.
+    """
+    first, _clock, _quotes = _build(tmp_path, market)
+    first.boot()
+    try:
+        second = producer_mod.LiveProducer(
+            config=first.config,
+            instrument=INSTRUMENT,
+            target=TARGET,
+            session_dir=first.session_dir,  # SAME session
+            journal_path=first.session_dir / "other-journal.jsonl",  # different journal
+            clock=first.clock,
+            quotes_factory=lambda _c, _l: pytest.fail("got past the lock"),
+        )
+        with pytest.raises(LiveProducerRefused, match="session lock"):
+            second.boot()
+    finally:
+        first.finish()
 
 
 def test_item5_red_an_existing_journal_is_not_overwritten(tmp_path: Path) -> None:
@@ -1045,8 +1406,171 @@ def test_item5_the_shipped_config_carries_the_operator_confirmed_delta_and_g(
     text = (_REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml").read_text("utf-8")
     assert "운영자 결정 2026-10-14" in text
     assert "1.765964" in text and "5.345897" in text
-    source = (_REPO_ROOT / "tools/tos_cp3/live_producer/producer.py").read_text("utf-8")
-    assert "1.8" not in source and "10.0" not in source
+
+    # Neither value appears as a NUMBER anywhere in the producer's code. Asked
+    # of the AST, not of the file text: a substring scan matched the "+1.8 s"
+    # and "09:06:01.85" in the prose and would have had to be loosened until it
+    # checked nothing.
+    for module in ("producer.py", "frame.py", "sinks.py", "calendar.py"):
+        tree = ast.parse(
+            (_REPO_ROOT / "tools/tos_cp3/live_producer" / module).read_text("utf-8")
+        )
+        literals = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, (int, float))
+            and not isinstance(node.value, bool)
+        }
+        assert shipped.first_poll_delay_s not in literals, module
+        assert shipped.missing_no_successor_timeout_s not in literals, module
+
+
+@pytest.mark.serial
+def test_item5_red_a_first_page_that_misses_the_open_escalates(
+    tmp_path: Path, market: Market
+) -> None:
+    """With nothing frozen yet, the page must reach the session OPEN (review M2).
+
+    The failing input: a page so short it cannot reach 08:45. The first cut
+    only escalated when something was already frozen, so the very first
+    successful page started today's frame mid-morning — a hole B1a does not
+    have, in the one place no later poll repairs. Here the page carries two
+    rows; the producer must fall back to ``history()`` and the frame must start
+    at the session open.
+    """
+    producer, clock, quotes = _build(tmp_path, market)
+    # Boot BEFORE the open, so its history fetch finds nothing and the frame
+    # starts out empty — the `last_frozen is None` state the old check skipped.
+    producer.boot()
+    assert producer.frozen == [], "the premise is an empty frame at the first poll"
+
+    # Now it is mid-morning and the page is too short to reach the open.
+    clock.moment = datetime(
+        TARGET.year, TARGET.month, TARGET.day, 9, 10, 5, tzinfo=producer_mod.KST
+    )
+    quotes.page_size = 2
+    history_before = quotes.history_calls
+    producer._handle_boundary(datetime(TARGET.year, TARGET.month, TARGET.day, 9, 11))
+    producer.finish()
+
+    assert quotes.history_calls > history_before, "never escalated to history()"
+    assert producer.frozen, "froze nothing at all"
+    assert producer.frozen[0][1] == datetime(
+        TARGET.year, TARGET.month, TARGET.day, *OPEN_HM
+    ), "today's frame did not start at the session open"
+    # and no minute is missing or duplicated between the open and the last bar
+    minutes = [bar[1] for bar in producer.frozen]
+    assert minutes == sorted(minutes)
+    assert len(set(minutes)) == len(minutes)
+
+
+def test_item5_red_a_density_gate_that_is_not_b1as_refuses_to_start(
+    tmp_path: Path,
+) -> None:
+    """One source of truth for the gate value (review M4).
+
+    The gate decides which days enter the frame, so a producer running 300
+    while B1a runs 330 seeds from a DIFFERENT set of sessions than the offline
+    run it is compared against — and the B3 join then diverges for a reason
+    that looks like a field defect. The key stays in config; its value is
+    pinned to B1a's constant at load.
+    """
+    from tools.tos_cp3.produce_fields import DEFAULT_MIN_BARS_PER_DAY
+
+    assert DEFAULT_MIN_BARS_PER_DAY == 330
+    shipped = config_mod.load_config(
+        _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
+    )
+    assert shipped.min_bars_per_day == DEFAULT_MIN_BARS_PER_DAY
+    with pytest.raises(LiveProducerRefused, match="DEFAULT_MIN_BARS_PER_DAY"):
+        config_mod.load_config(
+            _write_config(tmp_path, min_bars_per_day=300), repo_root=_REPO_ROOT
+        )
+
+
+def test_item5_red_a_declared_covered_year_without_holidays_is_refused() -> None:
+    """Coverage is declared and cross-checked, never inferred (review L4).
+
+    Inferring from the holiday dates makes ONE forward-dated entry mark a whole
+    year as covered, which is the silent "every weekday trades" that plan
+    §3.2 L2's refusal exists to prevent. The tenant calendar is digest-bound so
+    it cannot carry its own range; the declaration is checked against the file
+    instead.
+    """
+    assert _tenant_calendar().covered_years == frozenset({2026})
+    # a year the file does not really cover is refused, not accepted
+    with pytest.raises(LiveProducerRefused, match="2027"):
+        _tenant_calendar(covered_years=(2026, 2027))
+    with pytest.raises(LiveProducerRefused, match="no covered years"):
+        _tenant_calendar(covered_years=())
+    # the shipped config declares exactly the year the tenant file covers
+    shipped = config_mod.load_config(
+        _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
+    )
+    assert shipped.calendar_covered_years == (2026,)
+
+
+def test_item5_red_a_thin_year_is_refused_even_with_one_holiday(
+    tmp_path: Path,
+) -> None:
+    """The concrete input L4 names: a single stray 2027 entry.
+
+    One holiday is not a covered year. Built here rather than measured on the
+    tenant file, because the tenant file must not be edited.
+    """
+    source = yaml.safe_load(
+        (_REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    source["holidays"] = [*source["holidays"], "2027-01-01"]
+    path = tmp_path / "with-stray-2027.yaml"
+    path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
+
+    # 2026 is genuinely covered...
+    assert calendar_mod.load_runtime_calendar(
+        path, covered_years=(2026,)
+    ).covered_years == frozenset({2026})
+    # ...but the lone 2027 entry does not make 2027 covered
+    with pytest.raises(LiveProducerRefused, match="2027: 1"):
+        calendar_mod.load_runtime_calendar(path, covered_years=(2026, 2027))
+
+
+def test_item5_the_token_cache_is_scoped_to_the_app_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cache path carries the app-key fingerprint (review L2).
+
+    Dropping it is what PR-1's own derivation exists to prevent: the stock
+    ``KISToken`` cache keys on the domain alone, so two different app keys
+    would share one token file and a reissue for one would hand the other a
+    token its key never minted. The fingerprint is irreversible, so the path
+    names the key without carrying it.
+    """
+    from tools.broker_probes.common import secret_fingerprint
+
+    captured: dict[str, Any] = {}
+
+    class FakeCreds:
+        app_key = "app-key-under-test"
+        app_secret = "app-secret-under-test"
+
+    monkeypatch.setattr(
+        producer_mod, "resolve_credentials", lambda *a, **k: FakeCreds()
+    )
+    monkeypatch.setattr(
+        producer_mod,
+        "Quotes",
+        lambda *a, **k: captured.update(k) or SimpleNamespace(http=None),
+    )
+    config = config_mod.load_config(_write_config(tmp_path), repo_root=_REPO_ROOT)
+    producer_mod._real_quotes(config, producer_mod.EventLog(tmp_path / "log"))
+
+    fingerprint = secret_fingerprint(FakeCreds.app_key)
+    assert captured["token_cache"] == config.token_cache_dir / fingerprint
+    assert fingerprint not in (FakeCreds.app_key, FakeCreds.app_secret)
+    assert FakeCreds.app_key not in str(captured["token_cache"])
 
 
 @pytest.mark.parametrize("walk_back_year", [2025])
@@ -1058,9 +1582,7 @@ def test_item5_red_a_seed_walk_leaving_the_calendar_is_refused(
     The tenant calendar holds 2026 only, so a target early enough that the walk
     crosses into the previous year must refuse before requesting anything.
     """
-    calendar = calendar_mod.load_runtime_calendar(
-        _REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml"
-    )
+    calendar = _tenant_calendar()
     with pytest.raises(LiveProducerRefused, match="covers"):
         list(calendar.trading_days_before(date(2026, 1, 5), max_calendar_days=10))
     assert walk_back_year not in calendar.covered_years
@@ -1072,15 +1594,15 @@ def test_item5_the_session_window_comes_from_the_calendar(tmp_path: Path) -> Non
     Red proof of "read from the calendar": a calendar whose CONTINUOUS end is
     09:20 must yield a 09:21 end boundary, which a hardcoded 15:46 could not.
     """
-    tenant = calendar_mod.load_runtime_calendar(
-        _REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml"
-    )
+    tenant = _tenant_calendar()
     window = tenant.window("krx-index-futures", "CONTINUOUS")
     assert (window.start.hour, window.start.minute) == (8, 45)
     assert window.last_bar_minute(TARGET) == datetime(2026, 10, 19, 15, 45)
     assert window.end_boundary(TARGET) == datetime(2026, 10, 19, 15, 46)
 
-    moved = calendar_mod.load_runtime_calendar(_write_calendar(tmp_path))
+    moved = calendar_mod.load_runtime_calendar(
+        _write_calendar(tmp_path), covered_years=COVERED_YEARS
+    )
     assert moved.window("krx-index-futures", "CONTINUOUS").end_boundary(
         TARGET
     ) == datetime(2026, 10, 19, 9, 21)
@@ -1208,12 +1730,18 @@ def _fixture_frame(market: Market, seed_days: list[date]) -> Any:
 def test_item6_the_producer_reproduces_the_committed_fixture(
     market: Market, inputs: dict
 ) -> None:
-    """The tools half of the hinge: the same bytes, from ``build_line``.
+    """The tools half of the hinge: the same bytes, through the real writer.
 
-    Regenerated from the same synthetic market and the same ``as_of_ms`` /
-    ``received_ms`` the fixture records, so the only way this drifts is a real
-    change in the line shape or the field values — which is exactly when the
-    runtime-side half must be looked at too.
+    Regenerated from the same synthetic market, the same ``received_ms`` and a
+    pinned journal clock, so the only way this drifts is a real change in the
+    line shape or the field values — which is exactly when the runtime-side
+    half must be looked at too.
+
+    **Written through ``ObservationJournal.append``, not ``json.dumps`` here**
+    (review L1). Re-serialising in the test made the comparison a test of the
+    test: changing the writer's ``separators`` or key order would have left
+    this green while every real line changed shape. The bytes compared are now
+    the bytes the writer produces.
     """
     expected = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     outcome = producer_mod.build_line(
@@ -1223,12 +1751,18 @@ def test_item6_the_producer_reproduces_the_committed_fixture(
         contract_spec=inputs["contract_spec"],
         anchor=inputs["anchor"],
         bar_minute=market.target_bars[-1][1],
-        now_ms=expected["as_of_ms"],
         received_ms=expected["received_ms"],
     )
-    assert outcome.row == expected
-    rendered = json.dumps(outcome.row, separators=(",", ":"), ensure_ascii=True) + "\n"
-    assert rendered.encode("utf-8") == _FIXTURE.read_bytes()
+    assert outcome.row is not None
+    assert "as_of_ms" not in outcome.row  # the journal owns the stamp (review B1)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        regenerated = Path(scratch) / _FIXTURE.name
+        journal = sinks_mod.ObservationJournal(
+            regenerated, clock=lambda: expected["as_of_ms"]
+        )
+        assert journal.append(outcome.row).written
+        assert regenerated.read_bytes() == _FIXTURE.read_bytes()
 
 
 def test_item6_the_fixture_carries_the_journals_required_shape() -> None:
@@ -1298,13 +1832,12 @@ def _regenerate() -> None:  # pragma: no cover - a maintenance entry point
             cli_value="auto", first_session=TARGET, last_session=TARGET
         ),
         bar_minute=market.target_bars[-1][1],
-        now_ms=1792286460123,
         received_ms=1792286460001,
     )
     _FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    _FIXTURE.write_text(
-        json.dumps(outcome.row, separators=(",", ":"), ensure_ascii=True) + "\n",
-        encoding="utf-8",
+    # Through the real writer, so the committed bytes are the writer's bytes.
+    sinks_mod.ObservationJournal(_FIXTURE, clock=lambda: 1792286460123).append(
+        outcome.row
     )
 
 

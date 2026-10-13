@@ -25,7 +25,8 @@ a committed fixture is the hinge (plan §3.2, #892's shape):
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -73,9 +74,20 @@ class RuntimeCalendar:
     calendar_version: str
     tz_id: str
     holidays: frozenset[date]
-    #: Years the holiday list actually covers. The tenant calendar holds 2026
-    #: only, and plan §3.2 L2 requires an EXPLICIT refusal before the walk
-    #: leaves it rather than a silent "no holidays, so every weekday trades".
+    #: Years this calendar is DECLARED to cover, supplied by the producer's own
+    #: YAML (``calendar_covered_years``) — never inferred from the holiday
+    #: dates. Plan §3.2 L2 requires an explicit refusal before the seed walk
+    #: leaves the covered range rather than a silent "no holidays, so every
+    #: weekday trades".
+    #:
+    #: ⚠ **Inference was wrong and is the reason this is declared** (review
+    #: L4). Deriving the set from ``{d.year for d in holidays}`` makes ONE
+    #: 2027-01-01 entry mark the whole of 2027 as covered, which is exactly the
+    #: silent "every weekday trades" the refusal exists to prevent — and the
+    #: tenant calendar is digest-bound, so it cannot be edited to carry the
+    #: range itself. :func:`load_runtime_calendar` cross-checks the declared
+    #: years against the file instead, so a year declared but absent from the
+    #: holiday list is a startup refusal.
     covered_years: frozenset[int]
     sessions: dict[str, tuple[SessionWindow, ...]]
 
@@ -130,8 +142,25 @@ def _parse_time(value: str, *, path: Path, field: str) -> time:
         raise LiveProducerRefused(f"{path}: {field}={value!r} is not HH:MM") from exc
 
 
-def load_runtime_calendar(path: Path) -> RuntimeCalendar:
-    """Read the tenant calendar YAML, or refuse."""
+#: A declared covered year must carry at least this many holidays in the
+#: calendar file. KRX closes far more days than this every year (the tenant
+#: file lists 19 for 2026), so a year scraping past 1 is not a covered year —
+#: it is a stray forward-dated entry (review L4).
+MIN_HOLIDAYS_PER_COVERED_YEAR = 5
+
+
+def load_runtime_calendar(
+    path: Path, *, covered_years: Iterable[int]
+) -> RuntimeCalendar:
+    """Read the tenant calendar YAML and cross-check its declared range.
+
+    Args:
+        covered_years: the years the producer's YAML declares this calendar
+            covers. Each one must actually carry holidays here, or startup is
+            refused: the tenant file is digest-bound and cannot be edited to
+            state its own range, so the declaration and the file are checked
+            against each other instead of one being trusted (review L4).
+    """
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise LiveProducerRefused(f"{path}: not a YAML mapping")
@@ -167,11 +196,31 @@ def load_runtime_calendar(path: Path) -> RuntimeCalendar:
         raise LiveProducerRefused(
             f"{path}: 'calendar_version' and 'tz_id' must both be strings"
         )
+    declared = frozenset(int(year) for year in covered_years)
+    if not declared:
+        raise LiveProducerRefused(
+            f"{path}: no covered years declared. Without a declared range the "
+            "seed walk cannot tell 'this year has no holidays listed' from "
+            "'this year is closed on no days' (plan §3.2 L2)"
+        )
+    per_year = Counter(day.year for day in holidays)
+    thin = sorted(
+        year for year in declared if per_year[year] < MIN_HOLIDAYS_PER_COVERED_YEAR
+    )
+    if thin:
+        raise LiveProducerRefused(
+            f"{path} declares {sorted(declared)} covered but carries "
+            + ", ".join(f"{year}: {per_year[year]}" for year in thin)
+            + f" holiday(s) — fewer than the {MIN_HOLIDAYS_PER_COVERED_YEAR} a "
+            "real KRX year has. A year present only as a stray forward-dated "
+            "entry would let every weekday in it read as a trading day "
+            "(review L4)"
+        )
     return RuntimeCalendar(
         path=path,
         calendar_version=version,
         tz_id=tz_id,
         holidays=holidays,
-        covered_years=frozenset(day.year for day in holidays),
+        covered_years=declared,
         sessions=sessions,
     )

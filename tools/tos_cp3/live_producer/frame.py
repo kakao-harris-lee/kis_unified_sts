@@ -83,6 +83,11 @@ class FreezeStep:
     deferred: tuple[datetime, ...]
     newest_raw_minute: datetime | None
     oldest_raw_minute: datetime | None
+    #: Every minute the RAW response carried for this day. Lets the caller tell
+    #: "this minute traded but has no successor yet" (the 15:34 shape) from
+    #: "this minute never traded at all" (the 15:35-15:44 shape) — two facts the
+    #: counters must not merge (review M1).
+    raw_minutes: frozenset[datetime] = frozenset()
 
     @property
     def published(self) -> Bar | None:
@@ -117,7 +122,7 @@ def freeze_step(
         }
     )
     if not minutes:
-        return FreezeStep((), (), None, None)
+        return FreezeStep((), (), None, None, frozenset())
     newest, oldest = minutes[-1], minutes[0]
 
     fresh = [
@@ -129,7 +134,20 @@ def freeze_step(
     parsed = parse_ohlcv(symbol, day.strftime("%Y%m%d"), {"output2": fresh})
     complete = tuple(bar for bar in parsed if bar[1] < newest or session_ended)
     deferred = tuple(bar[1] for bar in parsed if not (bar[1] < newest or session_ended))
-    return FreezeStep(complete, deferred, newest, oldest)
+    return FreezeStep(complete, deferred, newest, oldest, frozenset(minutes))
+
+
+#: Why a walked seed day was dropped.
+#:
+#: ``no_raw_rows`` is kept APART from ``density`` on purpose (review L3). A day
+#: the calendar calls a trading day that returns zero rows is either a real
+#: no-trade day or a HOLIDAY THE CALENDAR IS MISSING, and the second is the
+#: 2026-08-17 / 10-05 defect plan §3.2 moved off
+#: ``shared/collector/historical/calendar.py`` to avoid. Merged into a density
+#: count it would be invisible; counted separately an operator can see "the
+#: walk found eleven empty 'trading' days" and go look at the calendar.
+SEED_DROP_NO_RAW_ROWS = "no_raw_rows"
+SEED_DROP_DENSITY = "density"
 
 
 @dataclass(frozen=True)
@@ -141,6 +159,13 @@ class SeedSession:
     raw_rows: int
     parsed_rows: int
     density_pass: bool
+
+    @property
+    def drop_reason(self) -> str | None:
+        """``None`` when kept, else :data:`SEED_DROP_NO_RAW_ROWS`/``_DENSITY``."""
+        if self.density_pass:
+            return None
+        return SEED_DROP_NO_RAW_ROWS if self.raw_rows == 0 else SEED_DROP_DENSITY
 
 
 @dataclass(frozen=True)
@@ -216,7 +241,22 @@ def build_seed(
     The density gate is B1a's: a day with fewer than *min_bars_per_day* parsed
     bars is dropped whole, exactly as ``produce_fields.load_bars`` drops it, so
     a thin post-roll day pushes the walk further back instead of entering the
-    frame at a different density.
+    frame at a different density. The caller's config is refused at load unless
+    that number equals ``produce_fields.DEFAULT_MIN_BARS_PER_DAY``
+    (:func:`~tools.tos_cp3.live_producer.config.load_config`), so there is one
+    source of truth for the value even though it is passed in (review M4).
+
+    ⚠ **Documented deviation from plan §3.2** (review L3). The plan says
+    「달력 안의 휴장일 빈 응답은 결측 세션이 아니라 달력 오류로 거부한다」. A
+    calendar holiday is never requested here — :meth:`RuntimeCalendar
+    .is_trading_day` skips it — so the case that actually arises is the
+    converse: a day the calendar calls a TRADING day returning zero rows. This
+    function treats that as a dropped session and walks further back rather
+    than refusing startup, because PR-1's measured run walked 59 trading days
+    of which 34 returned zero rows (evidence §3.2) and refusing would have made
+    the seed unusable on a day the plan expects to work. The missing-holiday
+    risk the plan was guarding is kept visible instead: those days are counted
+    under :data:`SEED_DROP_NO_RAW_ROWS`, separately from density misses.
 
     Which contract each day is requested on, and how the kept days become one
     frame, are both *assembler*'s business — nothing here names a contract
@@ -266,16 +306,44 @@ def build_seed(
                 min_bars_per_day=min_bars_per_day,
             )
 
+    raise _unfilled_seed_refusal(
+        target=target,
+        sessions=tuple(sessions),
+        required=required,
+        min_bars_per_day=min_bars_per_day,
+    )
+
+
+def _unfilled_seed_refusal(
+    *,
+    target: date,
+    sessions: Sequence[SeedSession],
+    required: int,
+    min_bars_per_day: int,
+) -> LiveProducerRefused:
+    """The refusal :func:`build_seed` raises, with the walk's own numbers in it.
+
+    Separated so the caller stays inside the module's function-size budget and
+    so the two drop reasons are reported distinctly (review L3): an operator
+    reading "11 of the walked days returned zero rows" goes and looks at the
+    calendar, which is what a merged density count would have hidden.
+    """
     walked = [session.day for session in sessions]
-    raise LiveProducerRefused(
+    empty = sum(1 for s in sessions if s.drop_reason == SEED_DROP_NO_RAW_ROWS)
+    thin = sum(1 for s in sessions if s.drop_reason == SEED_DROP_DENSITY)
+    return LiveProducerRefused(
         f"seed window not filled before {target}: "
         f"{len(walked)} trading day(s) walked back to "
         f"{min(walked) if walked else 'none'}, "
         f"{sum(1 for s in sessions if s.density_pass)} passed the "
-        f"{min_bars_per_day}-bar density gate, and the causal vol window needs "
-        f"{required} in-entry-window bars. Refusing to start: a short seed makes "
-        "hi_vol's percentile differ from B1a's, so the real-time and offline "
-        "lines for the same bar would not match (plan §3.2). The post-roll "
-        "blackout this produces is INTENDED behaviour, not a defect "
-        "(plan §6.2 — open operator decision)"
+        f"{min_bars_per_day}-bar density gate "
+        f"({empty} returned no rows at all, {thin} were too thin), and the "
+        f"causal vol window needs {required} in-entry-window bars. Refusing to "
+        "start: a short seed makes hi_vol's percentile differ from B1a's, so "
+        "the real-time and offline lines for the same bar would not match "
+        "(plan §3.2). The post-roll blackout this produces is INTENDED "
+        "behaviour, not a defect — its disposition is plan §3.2a's "
+        "cross-contract stitching (#897, PR-2b). ⚠ A day the calendar calls a "
+        "trading day that returned NO rows may be a holiday the calendar is "
+        "missing; that is why it is counted separately above"
     )

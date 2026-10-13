@@ -8,6 +8,19 @@ upstream, in the collector. So each append writes every line to a temp file and
 ``os.replace``s it over the journal. Precedent in this repo:
 ``tools/tos_cp3/bootproof_journal.py::write_journal`` (#892).
 
+**The journal takes the stamp, not its caller** (plan §2 1-2; review B1).
+:class:`ObservationJournal` reads the clock inside :meth:`~ObservationJournal
+.append`, immediately before the temp write, and refuses a row that arrives
+with an ``as_of_ms`` already on it. The reason is arithmetic: the tenant tree
+declares ``max_age_ms: 800`` for all fifteen fields and ``marketfeed.yaml``
+leaves 300 ms of that for the collector, while ``produce_bars`` was measured at
+~0.44 s late in a session. A stamp taken before the compute would therefore be
+STALE on arrival no matter how fast the write is. The interval inside the
+budget — the one M6 reports as
+:attr:`AppendOutcome.stamp_to_replace_s` — is exactly "stamp → temp write →
+``os.replace``"; the network, the parse and the replay all happen before the
+stamp and are decision latency (M2), not freshness.
+
 **The Parquet side is append-only part files** (plan §3.6).
 ``ParquetMarketDataStore.append_minute_bars`` writes straight to the final
 ``part-<uuid>.parquet`` name, which is NOT atomic, so this module wraps it:
@@ -30,7 +43,7 @@ import json
 import os
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -44,23 +57,35 @@ from tools.tos_cp3.live_producer.config import LiveProducerRefused
 BAR_COLUMNS = ["code", "datetime", "open", "high", "low", "close", "volume"]
 
 
-def acquire_journal_lock(path: Path) -> IO[str]:
-    """Take an exclusive, non-blocking ``flock`` for this journal.
+def acquire_session_lock(market_root: Path) -> IO[str]:
+    """Take an exclusive, non-blocking ``flock`` on the SESSION, before any check.
 
-    Two producers on one journal would interleave whole-file replacements and
-    each would drop the other's lines (plan §3.5). The lock lives in a sibling
-    file because the journal itself is replaced by inode, which would drop a
-    lock held on it.
+    Two producers on one session would interleave whole-file journal
+    replacements and append duplicate bars into one partition tree, and each
+    would drop the other's lines (plan §3.5).
+
+    **Scoped to the session directory, not the journal** (review L5). A
+    per-journal lock lets two producers aimed at the same ``--session-dir`` with
+    different ``--journal`` paths both pass, and they then both append to the
+    same Parquet partitions — the duplicate timestamps B1a's ``_bar_lookup``
+    refuses, i.e. the whole session's offline input lost.
+
+    **Taken FIRST, before the partition/journal refusals** (review L5). Those
+    refusals read the very state a second producer is about to create, so
+    checking before locking is a race: both processes can see an empty tree and
+    both proceed. The lock file lives inside the market root and is not a
+    ``*.parquet`` file, so neither B1a's glob nor the store's reader sees it.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = (path.parent / (path.name + ".lock")).open("w", encoding="utf-8")
+    market_root.mkdir(parents=True, exist_ok=True)
+    handle = (market_root / ".session.lock").open("w", encoding="utf-8")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         handle.close()
         raise LiveProducerRefused(
-            f"another producer holds {path.name}.lock — two producers on one "
-            "journal would each drop the other's lines (plan §3.5)"
+            f"another producer holds the session lock under {market_root} — two "
+            "producers on one session would duplicate partitions and drop each "
+            "other's journal lines (plan §3.5)"
         ) from exc
     handle.write(f"{os.getpid()}\n")
     handle.flush()
@@ -85,41 +110,101 @@ def refuse_if_journal_exists(path: Path) -> None:
         )
 
 
+#: Wire key order of a journal line. Fixed so the file is byte-stable and so a
+#: reader can diff it against B1a's own ``FieldRecord.to_payload`` order;
+#: ``as_of_ms`` sits where B1a puts it even though this writer supplies it.
+JOURNAL_KEY_ORDER = (
+    "raw_event_id",
+    "source_id",
+    "instrument",
+    "as_of_ms",
+    "received_ms",
+    "fields",
+)
+
+
+def _wall_clock_ms() -> int:
+    return time.time_ns() // 1_000_000
+
+
+@dataclass(frozen=True)
+class AppendOutcome:
+    """What one append did, including the M6 interval and any refusal."""
+
+    written: bool
+    as_of_ms: int
+    #: Stamp → end of ``os.replace``. The ONLY part of the producer inside the
+    #: tenant's 800 ms freshness budget, so it is what M6 measures.
+    stamp_to_replace_s: float
+    reason: str | None = None
+
+
 @dataclass
 class ObservationJournal:
-    """Append-only content, atomic whole-file writes, monotone ``as_of_ms``."""
+    """Append-only content, atomic whole-file writes, monotone ``as_of_ms``.
+
+    **This object owns the stamp** (review B1). ``as_of_ms`` is read from the
+    clock here, immediately before the temp write — not by the caller before it
+    computes the fifteen fields. The tenant tree declares ``max_age_ms: 800``
+    with 300 ms left for the collector (``marketfeed.yaml``), and the measured
+    cost of ``produce_bars`` at the end of a session is ~0.44 s, so a stamp
+    taken before the compute would be older than the whole budget by the time
+    the line lands. Plan §2 1-2 is explicit that the only interval inside the
+    budget is "stamp → temp write → ``os.replace``"; everything before the
+    stamp — network, parse, replay — is decision latency (M2), not freshness.
+    """
 
     path: Path
+    #: Injected so a test can pin the stamp. Epoch milliseconds.
+    clock: Callable[[], int] = _wall_clock_ms
     lines: list[str] = field(default_factory=list)
     last_as_of_ms: int | None = None
 
-    def append(self, row: dict[str, Any]) -> float:
-        """Add one line and replace the file. Returns the stamp→replace seconds.
+    def append(self, row: dict[str, Any]) -> AppendOutcome:
+        """Stamp *row*, add one line, and replace the file whole.
 
-        That interval is the only part of the producer inside the tenant's
-        800 ms freshness budget (plan §2 2: the network and compute happen
-        BEFORE the stamp), so it is what M6 measures.
+        Args:
+            row: every journal key EXCEPT ``as_of_ms`` — the caller does not
+                get to choose the stamp.
 
-        Raises:
-            LiveProducerRefused: ``as_of_ms`` did not advance. A reader only
-                returns rows strictly newer than ``after_as_of_ms``, so a
-                non-advancing stamp is a line nothing can ever consume; the
-                clock going backwards is a defect and is not corrected here
-                (plan §2 5).
+        Returns:
+            The outcome. ``written=False`` with ``reason="clock_regression"``
+            when the stamp did not advance: a reader returns only rows strictly
+            newer than ``after_as_of_ms``, so a non-advancing stamp is a line
+            nothing can ever consume. Plan §2 5 says to refuse THAT WRITE and
+            log it — not to end the session (review L6) and not to adjust the
+            clock. The caller counts it and goes on to the next minute.
         """
-        as_of_ms = row["as_of_ms"]
-        if self.last_as_of_ms is not None and as_of_ms <= self.last_as_of_ms:
+        if "as_of_ms" in row:
             raise LiveProducerRefused(
-                f"as_of_ms {as_of_ms} does not advance past {self.last_as_of_ms}; "
-                "refusing the write rather than adjusting the clock (plan §2 5)"
+                "the caller supplied as_of_ms; the journal owns the stamp so it "
+                "can be taken immediately before the replace (plan §2 1-2)"
+            )
+        missing = [key for key in JOURNAL_KEY_ORDER if key != "as_of_ms"]
+        absent = [key for key in missing if key not in row]
+        if absent:
+            raise LiveProducerRefused(f"journal row is missing {absent}")
+
+        as_of_ms = self.clock()
+        if self.last_as_of_ms is not None and as_of_ms <= self.last_as_of_ms:
+            return AppendOutcome(
+                written=False,
+                as_of_ms=as_of_ms,
+                stamp_to_replace_s=0.0,
+                reason="clock_regression",
             )
         began = time.perf_counter()
-        self.lines.append(json.dumps(row, separators=(",", ":"), ensure_ascii=True))
+        stamped = {**row, "as_of_ms": as_of_ms}
+        ordered = {key: stamped[key] for key in JOURNAL_KEY_ORDER}
+        self.lines.append(json.dumps(ordered, separators=(",", ":"), ensure_ascii=True))
         tmp = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
         tmp.write_text("".join(f"{line}\n" for line in self.lines), encoding="utf-8")
         os.replace(tmp, self.path)
+        elapsed = time.perf_counter() - began
         self.last_as_of_ms = as_of_ms
-        return time.perf_counter() - began
+        return AppendOutcome(
+            written=True, as_of_ms=as_of_ms, stamp_to_replace_s=elapsed
+        )
 
 
 def partition_dir(

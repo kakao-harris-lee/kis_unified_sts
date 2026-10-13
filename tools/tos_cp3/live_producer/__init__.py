@@ -8,11 +8,29 @@ by **the same function** (``produce_bars``) — three keys differ (plan §1):
 =============  ==============================  ==============================
 key            B1a (offline)                   ③ (real time)
 =============  ==============================  ==============================
-``as_of_ms``   the bar label                   the wall clock just before the
-                                               journal file is replaced (§2 1)
+``as_of_ms``   the bar label                   the wall clock read INSIDE the
+                                               journal write, immediately
+                                               before the replace (§2 1-2)
 ``source_id``  ``tos-cp3-b1a/<ver>``           ``tos-cp3-live/<ver>``
 ``received_ms``  absent                        when the REST response arrived
 =============  ==============================  ==============================
+
+**Where the stamp is taken, precisely** (plan §2 1-2; review B1). ``build_line``
+runs ``produce_bars`` and returns a row with NO ``as_of_ms``;
+``ObservationJournal.append`` reads the clock and refuses a row that already
+carries one. The tenant tree allows ``max_age_ms: 800`` with 300 ms for the
+collector while ``produce_bars`` was measured at ~0.44 s late in a session, so
+a stamp taken before that compute would be stale on arrival however fast the
+write is. M6 therefore measures stamp → temp write → ``os.replace`` only;
+everything earlier is decision latency (M2).
+
+**One published line per boundary, and only that boundary's bar** (plan §2 4,
+§3.3; review M1). Every completed bar is frozen into the frame and written to
+Parquet — B1a reads that frame, so parity needs each bar to advance the causal
+windows exactly once — but the only line written for a boundary is the one for
+``boundary - 1min``. A bar that completes after its own boundary passed is
+counted ``late_completed`` and left unpublished: a fresh stamp on a stale bar
+is what the runtime would consume as the current observation.
 
 ``raw_event_id`` and the fifteen ``FIELD_ORDER`` keys come from B1a's own
 helpers, so the same bar's real-time and offline lines join in B3.

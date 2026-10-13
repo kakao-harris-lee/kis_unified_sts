@@ -24,6 +24,8 @@ from typing import Any
 
 import yaml
 
+from tools.tos_cp3.produce_fields import DEFAULT_MIN_BARS_PER_DAY
+
 
 class LiveProducerRefused(RuntimeError):
     """The producer refused to start, or refused to write. Never routed around."""
@@ -52,6 +54,9 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("max_consecutive_produce_errors", int),
 )
 
+#: Keys read as a list of ints rather than a scalar.
+_REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
+
 
 @dataclass(frozen=True)
 class LiveProducerConfig:
@@ -79,6 +84,9 @@ class LiveProducerConfig:
     min_bars_per_day: int
     max_seed_calendar_days: int
     max_consecutive_produce_errors: int
+    #: Years the tenant calendar is declared to cover. Not inferred from its
+    #: holiday dates (review L4) and cross-checked against the file at load.
+    calendar_covered_years: tuple[int, ...]
     #: The two parser env values the producer PINS (plan §3.3 L9). Bar size and
     #: the drop rule must not change quietly with the environment.
     parser_env: tuple[tuple[str, str], ...]
@@ -109,14 +117,18 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
     if not isinstance(data, dict):
         raise LiveProducerRefused(f"{path}: not a YAML mapping")
 
-    known = {name for name, _ in _REQUIRED} | {"parser_env"}
+    known = {name for name, _ in _REQUIRED} | set(_REQUIRED_INT_LISTS) | {"parser_env"}
     unknown = sorted(set(data) - known)
     if unknown:
         raise LiveProducerRefused(
             f"{path}: unknown key(s) {unknown}. An ignored key is a setting the "
             "operator believes is in effect and is not"
         )
-    missing = sorted(name for name, _ in _REQUIRED if name not in data)
+    missing = sorted(
+        name
+        for name in [n for n, _ in _REQUIRED] + list(_REQUIRED_INT_LISTS)
+        if name not in data
+    )
     if missing:
         raise LiveProducerRefused(f"{path}: missing key(s) {missing}")
 
@@ -127,6 +139,16 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
         except (TypeError, ValueError) as exc:
             raise LiveProducerRefused(
                 f"{path}: {name}={data[name]!r} is not a {kind.__name__}"
+            ) from exc
+    for name in _REQUIRED_INT_LISTS:
+        entries = data[name]
+        if not isinstance(entries, list) or not entries:
+            raise LiveProducerRefused(f"{path}: {name} must be a non-empty list")
+        try:
+            values[name] = tuple(sorted({int(entry) for entry in entries}))
+        except (TypeError, ValueError) as exc:
+            raise LiveProducerRefused(
+                f"{path}: {name}={entries!r} is not a list of ints"
             ) from exc
 
     parser_env = data.get("parser_env")
@@ -155,6 +177,18 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
     if values["max_consecutive_produce_errors"] < 1:
         raise LiveProducerRefused(
             f"{path}: max_consecutive_produce_errors must be >= 1 (plan §3.5)"
+        )
+    if values["min_bars_per_day"] != DEFAULT_MIN_BARS_PER_DAY:
+        raise LiveProducerRefused(
+            f"{path}: min_bars_per_day={values['min_bars_per_day']} but B1a's "
+            f"DEFAULT_MIN_BARS_PER_DAY is {DEFAULT_MIN_BARS_PER_DAY}. Plan §3.2 "
+            "requires 「밀도 게이트를 B1a 와 같게」 — the gate decides which days "
+            "enter the frame, so a producer running a different one would seed "
+            "from a different set of sessions than the offline run it is "
+            "compared against, and the B3 join would diverge for a reason that "
+            "looks like a field defect. The key stays in config (CLAUDE.md: "
+            "thresholds belong in YAML) but B1a's constant is the only source "
+            "of truth for its value (review M4)"
         )
 
     return LiveProducerConfig(

@@ -31,7 +31,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from shared.config.dotenv_guard import read_explicit_dotenv  # noqa: E402
-from tools.broker_probes.common import resolve_credentials  # noqa: E402
+from tools.broker_probes.common import (  # noqa: E402
+    resolve_credentials,
+    secret_fingerprint,
+)
 from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
 from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
     RuntimeCalendar,
@@ -46,6 +49,8 @@ from tools.tos_cp3.live_producer.config import (  # noqa: E402
     read_query_credentials,
 )
 from tools.tos_cp3.live_producer.frame import (  # noqa: E402
+    SEED_DROP_DENSITY,
+    SEED_DROP_NO_RAW_ROWS,
     Bar,
     FreezeStep,
     Seed,
@@ -55,7 +60,7 @@ from tools.tos_cp3.live_producer.frame import (  # noqa: E402
 )
 from tools.tos_cp3.live_producer.sinks import (  # noqa: E402
     ObservationJournal,
-    acquire_journal_lock,
+    acquire_session_lock,
     append_bar_part,
     market_digest,
     refuse_if_journal_exists,
@@ -101,16 +106,21 @@ def build_line(
     contract_spec: Any,
     anchor: OpenAnchor,
     bar_minute: datetime,
-    now_ms: int,
     received_ms: int,
 ) -> LineOutcome:
     """The pure half: a frozen frame in, at most one journal row out.
 
     ``raw_event_id`` and the fifteen ``FIELD_ORDER`` values come from B1a's own
     ``produce_bars``, so the same bar's real-time and offline lines join in B3.
-    Three keys differ from B1a (plan §1): ``as_of_ms`` is the stamp the caller
-    is about to write with, ``source_id`` names this producer, and
-    ``received_ms`` records when the REST response arrived.
+    Two keys differ from B1a here (plan §1): ``source_id`` names this producer
+    and ``received_ms`` records when the REST response arrived.
+
+    **The row carries no ``as_of_ms``** (review B1). This function runs
+    ``produce_bars`` — measured at ~0.44 s late in a session — so a stamp taken
+    here would already have spent more than the tenant's whole 800 ms budget by
+    the time the line is written. :meth:`~tools.tos_cp3.live_producer.sinks
+    .ObservationJournal.append` takes it immediately before the replace, and
+    refuses a row that arrives with one.
 
     A last record that is not *bar_minute* is not a defect: ``produce_bars``
     omits a bar whose ATR/VWAP inputs cannot carry their published meaning, and
@@ -139,7 +149,6 @@ def build_line(
             "raw_event_id": last.raw_event_id,
             "source_id": SOURCE_ID,
             "instrument": last.instrument,
-            "as_of_ms": now_ms,
             "received_ms": received_ms,
             "fields": last.fields,
         },
@@ -172,13 +181,34 @@ class EventLog:
 
 @dataclass
 class Counters:
-    """What the session reports back to the runner."""
+    """What the session reports back to the runner.
+
+    The unpublished reasons are kept apart on purpose — merged, none of them
+    says anything an operator can act on:
+
+    * ``missing_no_successor`` — the minute TRADED (a raw row exists) but no
+      strictly later row arrived inside G, so publication is skipped (plan
+      §3.3). This is the 15:34 shape.
+    * ``no_raw_row_for_minute`` — the minute produced no raw row at all, so
+      there is no bar to publish. This is the 15:35-15:44 call-auction shape,
+      and it is NOT a late feed (review M1).
+    * ``late_completed`` — an OLDER bar completed after its own boundary had
+      already passed. It is frozen into the frame and written to Parquet so B1a
+      parity holds, but it is not published: a line stamped now would carry a
+      fresh ``as_of_ms`` for a stale bar, and the runtime would consume it as
+      the current observation (review M1).
+    * ``skipped_behind`` — more than one bar completed in ONE poll; only the
+      newest is published (plan §2 4).
+    """
 
     published: int = 0
     skipped_behind: int = 0
+    late_completed: int = 0
     missing_no_successor: int = 0
+    no_raw_row_for_minute: int = 0
     omitted_unusable: int = 0
     produce_error: int = 0
+    clock_regression: int = 0
     fetch_error: int = 0
     pre_boot_lines: int = 0
     max_stamp_to_replace_s: float = 0.0
@@ -187,9 +217,12 @@ class Counters:
         return {
             "published": self.published,
             "skipped_behind": self.skipped_behind,
+            "late_completed": self.late_completed,
             "missing_no_successor": self.missing_no_successor,
+            "no_raw_row_for_minute": self.no_raw_row_for_minute,
             "omitted_unusable": self.omitted_unusable,
             "produce_error": self.produce_error,
+            "clock_regression": self.clock_regression,
             "fetch_error": self.fetch_error,
             "pre_boot_lines": self.pre_boot_lines,
             "max_stamp_to_replace_s": self.max_stamp_to_replace_s,
@@ -238,8 +271,23 @@ class LiveProducer:
     # -- boot ------------------------------------------------------------
 
     def boot(self) -> None:
-        """Everything that can refuse, before the first line is written."""
-        self.calendar = load_runtime_calendar(self.config.calendar_yaml)
+        """Everything that can refuse, before the first line is written.
+
+        **The session lock comes first** (review L5). The partition and journal
+        refusals below read the very state a second producer is about to
+        create, so taking the lock after them is a race in which both processes
+        see an empty tree and both proceed.
+        """
+        self.lock = acquire_session_lock(self.market_root)
+        refuse_if_partitions_exist(
+            self.market_root, asset_class=ASSET_CLASS, symbol=self.instrument
+        )
+        refuse_if_journal_exists(self.journal_path)
+
+        self.calendar = load_runtime_calendar(
+            self.config.calendar_yaml,
+            covered_years=self.config.calendar_covered_years,
+        )
         if not self.calendar.is_trading_day(self.target):
             raise LiveProducerRefused(
                 f"{self.target} is not a trading day in {self.calendar.path}"
@@ -254,12 +302,9 @@ class LiveProducer:
         registry = ContractSpecRegistry.from_yaml(str(self.config.execution_yaml))
         self.contract_spec = resolve_contract_spec(self.instrument, registry)
 
-        refuse_if_partitions_exist(
-            self.market_root, asset_class=ASSET_CLASS, symbol=self.instrument
+        self.journal = ObservationJournal(
+            self.journal_path, clock=lambda: int(self.clock.now().timestamp() * 1000)
         )
-        refuse_if_journal_exists(self.journal_path)
-        self.lock = acquire_journal_lock(self.journal_path)
-        self.journal = ObservationJournal(self.journal_path)
         self.quotes = self.quotes_factory(self.config, self.log)
 
         self.seed = build_seed(
@@ -319,11 +364,28 @@ class LiveProducer:
             "capacity": self.seed.capacity,
             "required": self.seed.required,
             "min_bars_per_day": self.seed.min_bars_per_day,
+            # Reason-tagged, not one count (review L3): a day the calendar
+            # calls a trading day that returned ZERO rows may be a holiday the
+            # calendar is missing, which is the defect plan §3.2 moved off
+            # `shared/collector/historical/calendar.py` to avoid. Merged into a
+            # density count it would be invisible.
             "dropped_days": [
-                {"day": str(s.day), "parsed_rows": s.parsed_rows}
+                {
+                    "day": str(s.day),
+                    "raw_rows": s.raw_rows,
+                    "parsed_rows": s.parsed_rows,
+                    "reason": s.drop_reason,
+                }
                 for s in self.seed.sessions
                 if not s.density_pass
             ],
+            "dropped_no_raw_rows": sum(
+                1 for s in self.seed.sessions if s.drop_reason == SEED_DROP_NO_RAW_ROWS
+            ),
+            "dropped_density": sum(
+                1 for s in self.seed.sessions if s.drop_reason == SEED_DROP_DENSITY
+            ),
+            "calendar_covered_years": list(self.config.calendar_covered_years),
             "parser_env": dict(self.config.parser_env),
             "config_sha256": self.config.sha256,
             "source_id": SOURCE_ID,
@@ -356,9 +418,15 @@ class LiveProducer:
                 "deferred": [str(minute) for minute in step.deferred],
             }
         )
-        if step.newly_frozen:
+        if not step.newly_frozen:
+            return
+        # The newest already-complete bar IS this boot's "current" bar: there is
+        # no boundary yet, and the runner needs one real line to exist.
+        newest = step.newly_frozen[-1]
+        current = self._freeze(step, bar_minute=newest[1], at_boot=True)
+        if current is not None:
             self.counters.pre_boot_lines += 1
-            self._publish(step, received_ms=received_ms)
+            self._publish_bar(current, received_ms=received_ms)
 
     # -- session loop ----------------------------------------------------
 
@@ -384,11 +452,25 @@ class LiveProducer:
         return max(opened, now)
 
     def _handle_boundary(self, boundary: datetime) -> None:
+        """Re-poll until THIS boundary's bar is complete, or until m+G.
+
+        Freezing and publishing are separate (review M1). Every completed bar
+        is frozen into the frame and written to Parquet on the poll that finds
+        it, because B1a reads that frame and parity depends on every bar
+        advancing the causal windows exactly once. Only the bar this boundary
+        is about — ``boundary - 1min`` — is ever published. An older bar that
+        completes late is counted as ``late_completed`` and the loop KEEPS
+        POLLING for the current one; the first cut returned on any newly frozen
+        bar, which published a stale bar under a fresh stamp and then never
+        looked for the current bar again (measured: 09:04 published at
+        09:06:01.85 while 09:05, complete at +2.5 s, was never published).
+        """
         bar_minute = boundary - timedelta(minutes=1)
         self._sleep_until(boundary + timedelta(seconds=self.config.first_poll_delay_s))
         deadline = boundary + timedelta(
             seconds=self.config.missing_no_successor_timeout_s
         )
+        raw_minutes: frozenset[datetime] = frozenset()
         while True:
             try:
                 step, received_ms = self._poll()
@@ -398,22 +480,39 @@ class LiveProducer:
                     {"stage": "fetch_error", "boundary": str(boundary), "why": str(exc)}
                 )
                 step, received_ms = None, None
-            if step is not None and step.newly_frozen:
-                self._publish(step, received_ms=received_ms)
-                return
+            if step is not None:
+                raw_minutes |= step.raw_minutes
+                current = self._freeze(step, bar_minute=bar_minute)
+                if current is not None:
+                    self._publish_bar(current, received_ms=received_ms)
+                    return
             if self._now_naive() >= deadline:
-                self.counters.missing_no_successor += 1
-                self.log.event(
-                    {
-                        "stage": "missing_no_successor",
-                        "boundary": str(boundary),
-                        "bar": str(bar_minute),
-                        "deferred": [str(m) for m in (step.deferred if step else ())],
-                        "timeout_s": self.config.missing_no_successor_timeout_s,
-                    }
-                )
+                self._record_unpublished(boundary, bar_minute, raw_minutes)
                 return
             self.clock.sleep(self.config.repoll_pace_s)
+
+    def _record_unpublished(
+        self,
+        boundary: datetime,
+        bar_minute: datetime,
+        raw_minutes: frozenset[datetime],
+    ) -> None:
+        """Name WHY this boundary published nothing — the two reasons differ."""
+        traded = bar_minute in raw_minutes
+        stage = "missing_no_successor" if traded else "no_raw_row_for_minute"
+        if traded:
+            self.counters.missing_no_successor += 1
+        else:
+            self.counters.no_raw_row_for_minute += 1
+        self.log.event(
+            {
+                "stage": stage,
+                "boundary": str(boundary),
+                "bar": str(bar_minute),
+                "bar_minute_traded": traded,
+                "timeout_s": self.config.missing_no_successor_timeout_s,
+            }
+        )
 
     def _poll(self) -> tuple[FreezeStep, int]:
         """One page, escalating to full pagination when it cannot reach back."""
@@ -421,21 +520,43 @@ class LiveProducer:
         rows = self.quotes.page(self.instrument, self.target)
         received_ms = self._received_ms()
         step = self._freeze_from(rows, last_frozen)
-        if (
-            last_frozen is not None
-            and step.oldest_raw_minute is not None
-            and step.oldest_raw_minute > last_frozen
-        ):
-            # The page's oldest row is already newer than the last frozen bar,
-            # so minutes between the two are off the page and would never be
-            # frozen — the frame would get a hole B1a does not have.
+        if self._page_missed_bars(step, last_frozen):
+            # Minutes between the page's oldest row and what is already frozen
+            # are off the page and would never be frozen — the frame would get
+            # a hole B1a does not have.
             rows = self.quotes.history(self.instrument, self.target)
             received_ms = self._received_ms()
             step = self._freeze_from(rows, last_frozen)
             self.log.event(
-                {"stage": "page_did_not_reach_back", "last_frozen": str(last_frozen)}
+                {
+                    "stage": "page_did_not_reach_back",
+                    "last_frozen": str(last_frozen),
+                    "session_start": str(self._session_start()),
+                }
             )
         return step, received_ms
+
+    def _session_start(self) -> datetime:
+        return datetime.combine(self.target, self.window.start)
+
+    def _page_missed_bars(self, step: FreezeStep, last_frozen: datetime | None) -> bool:
+        """Does this page fail to reach back to where the frame must continue?
+
+        Two cases, and the second was missing (review M2):
+
+        * something is frozen — the page must reach at or before the last
+          frozen minute, or the gap between them is lost;
+        * **nothing is frozen yet** — the page must reach the session's OPEN
+          minute, because the frame has to start there. The first cut only
+          checked the first case, so if fetch errors right after the open
+          outlasted a page span, the very first successful page started
+          mid-morning and today's frame silently began there — a hole B1a does
+          not have, in the one place no later poll can repair.
+        """
+        if step.oldest_raw_minute is None:
+            return False
+        floor = self._session_start() if last_frozen is None else last_frozen
+        return step.oldest_raw_minute > floor
 
     def _freeze_from(
         self, rows: list[dict], last_frozen: datetime | None
@@ -448,10 +569,28 @@ class LiveProducer:
             session_ended=self._session_ended(),
         )
 
-    # -- publication -----------------------------------------------------
+    # -- freezing and publication (separate on purpose — review M1) -------
 
-    def _publish(self, step: FreezeStep, *, received_ms: int | None) -> None:
-        """Freeze every new bar, write them, and journal the newest one only."""
+    def _freeze(
+        self, step: FreezeStep, *, bar_minute: datetime | None, at_boot: bool = False
+    ) -> Bar | None:
+        """Add every completed bar to the frame and Parquet; return the current one.
+
+        ALL newly completed bars are frozen — B1a reads this frame and parity
+        needs every bar to advance the causal windows exactly once. What comes
+        back is only the bar *bar_minute* names, if it is among them; the rest
+        are counted and left unpublished, under the reason that is actually
+        true of them:
+
+        * ``at_boot`` — the morning already happened before this process
+          existed. Those bars are not late, they are history, so they count as
+          ``skipped_behind`` (plan §2 4's "one line per write").
+        * in session, a bar OLDER than this boundary's bar — its own boundary
+          came and went, so it is ``late_completed`` (review M1). It still
+          enters the frame; it is simply never published.
+        """
+        if not step.newly_frozen:
+            return None
         self.frozen.extend(step.newly_frozen)
         append_bar_part(
             self.market_root,
@@ -459,19 +598,29 @@ class LiveProducer:
             symbol=self.instrument,
             bars=step.newly_frozen,
         )
-        for behind in step.skipped_behind:
-            self.counters.skipped_behind += 1
-            self.log.event({"stage": "skipped_behind", "bar": str(behind[1])})
+        current: Bar | None = None
+        for bar in step.newly_frozen:
+            if bar_minute is not None and bar[1] == bar_minute:
+                current = bar
+            elif not at_boot and bar_minute is not None and bar[1] < bar_minute:
+                self.counters.late_completed += 1
+                self.log.event(
+                    {
+                        "stage": "late_completed",
+                        "bar": str(bar[1]),
+                        "current_boundary_bar": str(bar_minute),
+                        "frozen_into_frame": True,
+                        "published": False,
+                    }
+                )
+            else:
+                self.counters.skipped_behind += 1
+                self.log.event({"stage": "skipped_behind", "bar": str(bar[1])})
+        return current
 
-        bar = step.published
-        if bar is None:
-            raise LiveProducerRefused(
-                "_publish was called with no newly frozen bar; a caller that "
-                "publishes an empty step would write a line for the previous "
-                "minute twice"
-            )
+    def _publish_bar(self, bar: Bar, *, received_ms: int | None) -> None:
+        """Compute the fifteen fields for *bar* and journal one line."""
         frame = bars_to_frame(list(self.seed.bars) + self.frozen)
-        now = self.clock.now()
         try:
             outcome = build_line(
                 frame,
@@ -480,7 +629,6 @@ class LiveProducer:
                 contract_spec=self.contract_spec,
                 anchor=self.anchor,
                 bar_minute=bar[1],
-                now_ms=int(now.timestamp() * 1000),
                 received_ms=(
                     self._received_ms() if received_ms is None else received_ms
                 ),
@@ -503,19 +651,35 @@ class LiveProducer:
                 }
             )
             return
-        elapsed = self.journal.append(outcome.row)
+        # The journal stamps as_of_ms here, AFTER the compute above (review B1).
+        result = self.journal.append(outcome.row)
+        if not result.written:
+            # Plan §2 5: refuse this write and log it; the session goes on
+            # (review L6). A clock that went backwards is a defect, but ending
+            # the session loses every remaining minute of a market day too.
+            self.counters.clock_regression += 1
+            self.log.event(
+                {
+                    "stage": result.reason,
+                    "bar": str(bar[1]),
+                    "as_of_ms": result.as_of_ms,
+                    "last_as_of_ms": self.journal.last_as_of_ms,
+                    "written": False,
+                }
+            )
+            return
         self.counters.published += 1
         self.counters.max_stamp_to_replace_s = max(
-            self.counters.max_stamp_to_replace_s, elapsed
+            self.counters.max_stamp_to_replace_s, result.stamp_to_replace_s
         )
         self.log.event(
             {
                 "stage": "published",
                 "bar": str(bar[1]),
                 "raw_event_id": outcome.row["raw_event_id"],
-                "as_of_ms": outcome.row["as_of_ms"],
+                "as_of_ms": result.as_of_ms,
                 "received_ms": outcome.row["received_ms"],
-                "stamp_to_replace_s": elapsed,
+                "stamp_to_replace_s": result.stamp_to_replace_s,
             }
         )
 
@@ -569,9 +733,22 @@ class LiveProducer:
 
 
 def _real_quotes(config: LiveProducerConfig, log: EventLog) -> Quotes:
-    """The real transport. Only reached with ``--confirm``."""
+    """The real transport. Only reached with ``--confirm``.
+
+    The cache path carries the app-key FINGERPRINT (review L2). Dropping that
+    segment is what PR-1's own derivation exists to prevent: the stock
+    ``KISToken`` cache keys on the domain alone, so two different app keys
+    would share one token file and a reissue for one would hand the other a
+    token its key never minted. ``secret_fingerprint`` is irreversible, so the
+    path names the key without carrying it.
+    """
     creds = resolve_credentials("futures", is_real=True)
-    return Quotes(creds, log, config.transport, token_cache=config.token_cache_dir)
+    return Quotes(
+        creds,
+        log,
+        config.transport,
+        token_cache=config.token_cache_dir / secret_fingerprint(creds.app_key),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
