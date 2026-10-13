@@ -1,0 +1,318 @@
+{
+  "density_gate": 330,
+  "density_gate_source": "tools/tos_cp3/produce_fields.py::DEFAULT_MIN_BARS_PER_DAY",
+  "volume_floor": 10,
+  "expired_symbol": "A05610",
+  "expired_sessions_requested": 5,
+  "expired_sessions_with_bars": 5,
+  "expired_sessions_passing_density": 5,
+  "sessions": [
+    {
+      "symbol": "A05610",
+      "day": "2026-10-08",
+      "pages": 5,
+      "rt_cd": [
+        "0"
+      ],
+      "msg_cd": [
+        "MCA00000"
+      ],
+      "http_status": [
+        200
+      ],
+      "transport_errors": [],
+      "fetch_error": null,
+      "raw_row_keys": [
+        "acml_tr_pbmn",
+        "cntg_vol",
+        "futs_hgpr",
+        "futs_lwpr",
+        "futs_oprc",
+        "futs_prpr",
+        "stck_bsop_date",
+        "stck_cntg_hour"
+      ],
+      "raw_rows_distinct": 395,
+      "raw_rows_as_probe_counted": 399,
+      "pagination_overlap_rows": 4,
+      "pagination_overlap_equals_page_boundaries": true,
+      "raw_minutes": 395,
+      "raw_first_kst": "08:45:00",
+      "raw_last_kst": "15:19:00",
+      "parsed_bars": 395,
+      "parsed_bars_matches_probe": true,
+      "density_gate": 330,
+      "density_pass": true,
+      "raw_minute_span": 395,
+      "absent_minutes_in_span": 0,
+      "absent_minutes_kst": [],
+      "raw_minutes_not_stored": 0,
+      "closes_x100_all_even": true
+    },
+    {
+      "symbol": "A05610",
+      "day": "2026-10-07",
+      "pages": 6,
+      "rt_cd": [
+        "0"
+      ],
+      "msg_cd": [
+        "MCA00000"
+      ],
+      "http_status": [
+        200
+      ],
+      "transport_errors": [],
+      "fetch_error": null,
+      "raw_row_keys": [
+        "acml_tr_pbmn",
+        "cntg_vol",
+        "futs_hgpr",
+        "futs_lwpr",
+        "futs_oprc",
+        "futs_prpr",
+        "stck_bsop_date",
+        "stck_cntg_hour"
+      ],
+      "raw_rows_distinct": 411,
+      "raw_rows_as_probe_counted": 416,
+      "pagination_overlap_rows": 5,
+      "pagination_overlap_equals_page_boundaries": true,
+      "raw_minutes": 411,
+      "raw_first_kst": "08:45:00",
+      "raw_last_kst": "15:45:00",
+      "parsed_bars": 411,
+      "parsed_bars_matches_probe": true,
+      "density_gate": 330,
+      "density_pass": true,
+      "raw_minute_span": 421,
+      "absent_minutes_in_span": 10,
+      "absent_minutes_kst": [
+        "15:35",
+        "15:36",
+        "15:37",
+        "15:38",
+        "15:39",
+        "15:40",
+        "15:41",
+        "15:42",
+        "15:43",
+        "15:44"
+      ],
+      "raw_minutes_not_stored": 0,
+      "closes_x100_all_even": true
+    },
+    {
+      "symbol": "A05610",
+      "day": "2026-10-06",
+      "pages": 6,
+      "rt_cd": [
+        "0"
+      ],
+      "msg_cd": [
+        "MCA00000"
+      ],
+      "http_status": [
+        200
+      ],
+      "transport_errors": [],
+      "fetch_error": null,
+      "raw_row_keys": [
+        "acml_tr_pbmn",
+        "cntg_vol",
+        "futs_hgpr",
+        "futs_lwpr",
+        "futs_oprc",
+        "futs_prpr",
+        "stck_bsop_date",
+        "stck_cntg_hour"
+      ],
+      "raw_rows_distinct": 411,
+      "raw_rows_as_probe_counted": 416,
+      "pagination_overlap_rows": 5,
+      "pagination_overlap_equals_page_boundaries": true,
+      "raw_minutes": 411,
+      "raw_first_kst": "08:45:00",
+      "raw_last_kst": "15:45:00",
+      "parsed_bars": 411,
+      "parsed_bars_matches_probe": true,
+      "density_gate": 330,
+      "density_pass": true,
+      "raw_minute_span": 421,
+      "absent_minutes_in_span": 10,
+      "absent_minutes_kst": [
+        "15:35",
+        "15:36",
+        "15:37",
+        "15:38",
+        "15:39",
+        "15:40",
+        "15:41",
+        "15:42",
+        "15:43",
+        "15:44"
+      ],
+      "raw_minutes_not_stored": 0,
+      "closes_x100_all_even": true
+    },
+    {
+      "symbol": "A05610",
+      "day": "2026-10-02",
+      "pages": 6,
+      "rt_cd": [
+        "0"
+      ],
+      "msg_cd": [
+        "MCA00000"
+      ],
+      "http_status": [
+        200
+      ],
+      "transport_errors": [],
+      "fetch_error": null,
+      "raw_row_keys": [
+        "acml_tr_pbmn",
+        "cntg_vol",
+        "futs_hgpr",
+        "futs_lwpr",
+        "futs_oprc",
+        "futs_prpr",
+        "stck_bsop_date",
+        "stck_cntg_hour"
+      ],
+      "raw_rows_distinct": 411,
+      "raw_rows_as_probe_counted": 416,
+      "pagination_overlap_rows": 5,
+      "pagination_overlap_equals_page_boundaries": true,
+      "raw_minutes": 411,
+      "raw_first_kst": "08:45:00",
+      "raw_last_kst": "15:45:00",
+      "parsed_bars": 411,
+      "parsed_bars_matches_probe": true,
+      "density_gate": 330,
+      "density_pass": true,
+      "raw_minute_span": 421,
+      "absent_minutes_in_span": 10,
+      "absent_minutes_kst": [
+        "15:35",
+        "15:36",
+        "15:37",
+        "15:38",
+        "15:39",
+        "15:40",
+        "15:41",
+        "15:42",
+        "15:43",
+        "15:44"
+      ],
+      "raw_minutes_not_stored": 0,
+      "closes_x100_all_even": true
+    },
+    {
+      "symbol": "A05610",
+      "day": "2026-10-01",
+      "pages": 6,
+      "rt_cd": [
+        "0"
+      ],
+      "msg_cd": [
+        "MCA00000"
+      ],
+      "http_status": [
+        200
+      ],
+      "transport_errors": [],
+      "fetch_error": null,
+      "raw_row_keys": [
+        "acml_tr_pbmn",
+        "cntg_vol",
+        "futs_hgpr",
+        "futs_lwpr",
+        "futs_oprc",
+        "futs_prpr",
+        "stck_bsop_date",
+        "stck_cntg_hour"
+      ],
+      "raw_rows_distinct": 411,
+      "raw_rows_as_probe_counted": 416,
+      "pagination_overlap_rows": 5,
+      "pagination_overlap_equals_page_boundaries": true,
+      "raw_minutes": 411,
+      "raw_first_kst": "08:45:00",
+      "raw_last_kst": "15:45:00",
+      "parsed_bars": 411,
+      "parsed_bars_matches_probe": true,
+      "density_gate": 330,
+      "density_pass": true,
+      "raw_minute_span": 421,
+      "absent_minutes_in_span": 10,
+      "absent_minutes_kst": [
+        "15:35",
+        "15:36",
+        "15:37",
+        "15:38",
+        "15:39",
+        "15:40",
+        "15:41",
+        "15:42",
+        "15:43",
+        "15:44"
+      ],
+      "raw_minutes_not_stored": 0,
+      "closes_x100_all_even": true
+    },
+    {
+      "symbol": "A05611",
+      "day": "2026-10-08",
+      "pages": 6,
+      "rt_cd": [
+        "0"
+      ],
+      "msg_cd": [
+        "MCA00000"
+      ],
+      "http_status": [
+        200
+      ],
+      "transport_errors": [],
+      "fetch_error": null,
+      "raw_row_keys": [
+        "acml_tr_pbmn",
+        "cntg_vol",
+        "futs_hgpr",
+        "futs_lwpr",
+        "futs_oprc",
+        "futs_prpr",
+        "stck_bsop_date",
+        "stck_cntg_hour"
+      ],
+      "raw_rows_distinct": 411,
+      "raw_rows_as_probe_counted": 416,
+      "pagination_overlap_rows": 5,
+      "pagination_overlap_equals_page_boundaries": true,
+      "raw_minutes": 411,
+      "raw_first_kst": "08:45:00",
+      "raw_last_kst": "15:45:00",
+      "parsed_bars": 411,
+      "parsed_bars_matches_probe": true,
+      "density_gate": 330,
+      "density_pass": true,
+      "raw_minute_span": 421,
+      "absent_minutes_in_span": 10,
+      "absent_minutes_kst": [
+        "15:35",
+        "15:36",
+        "15:37",
+        "15:38",
+        "15:39",
+        "15:40",
+        "15:41",
+        "15:42",
+        "15:43",
+        "15:44"
+      ],
+      "raw_minutes_not_stored": 0,
+      "closes_x100_all_even": true
+    }
+  ]
+}
