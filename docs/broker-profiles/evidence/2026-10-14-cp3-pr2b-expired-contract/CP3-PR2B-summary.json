@@ -1,0 +1,23 @@
+{
+  "question": "does FHKIF03020200 return historical minute bars for the EXPIRED mini contract A05610 (expiry 2026-10-08)?",
+  "answer": "YES",
+  "expired_symbol": "A05610",
+  "expired_history_served": true,
+  "expired_sessions_requested": 5,
+  "expired_sessions_with_bars": 5,
+  "expired_sessions_passing_density": 5,
+  "requests": 35,
+  "orders": 0,
+  "method": "GET",
+  "tr_id": "FHKIF03020200",
+  "run_started_kst": "2026-10-14 00:56:21.864554+09:00",
+  "verdict_scope": "prerequisite only; neither the producer nor the §6.2 fallback is designed or approved here",
+  "source_sha256": {
+    "junction.json": "5c1e4b0b8cd66644f4fb181b32a9ce59818e6f938511f2c8ef45db0e2bf5163d",
+    "requests.jsonl": "aa22d11fa7570212679cdc82a7d6158519a7fd80866869d78d6675741d3c6bef",
+    "run.json": "ba08af1c537334a222954898af2f050aa563c87156f2734ec11effa55a5b71c4",
+    "s1a-spread.json": "bc7b80d312b30c6cfbd6307a3011da096b5ec456300c0db7f021aeec707d4819",
+    "sessions.json": "d27a07e98b47be0892d2a8946ed87b8086aecc89f1f225267cb057a8479ec2fb",
+    "summary.json": "dac503c8b65538356627e8f659a1cbb9bd5b4ef753fb7cbec764eedca4cf2760"
+  }
+}

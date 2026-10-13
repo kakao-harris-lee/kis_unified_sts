@@ -1,0 +1,26 @@
+{
+  "junction_day": "2026-10-08",
+  "expired_symbol": "A05610",
+  "successor_symbol": "A05611",
+  "expired_raw_last_kst": "15:19",
+  "successor_raw_last_kst": "15:45",
+  "expired_raw_minutes_after_last_common": 0,
+  "successor_raw_minutes_after_last_common": 16,
+  "minutes_the_expired_leg_is_short_by": 26,
+  "common_parsed_minutes": 395,
+  "first_common_minute_kst": "08:45",
+  "last_common_minute_kst": "15:19",
+  "expired_close_x100": 104900,
+  "successor_close_x100": 105244,
+  "c_x100": 344,
+  "c_x100_is_even": true,
+  "expired_volume_at_last_common": 667,
+  "successor_volume_at_last_common": 449,
+  "last_common_is_expired_last_parsed": true,
+  "last_common_is_successor_last_parsed": false,
+  "matches_probe_artifact": {
+    "c_x100": true,
+    "last_common_minute": true,
+    "common_parsed_minutes": true
+  }
+}
