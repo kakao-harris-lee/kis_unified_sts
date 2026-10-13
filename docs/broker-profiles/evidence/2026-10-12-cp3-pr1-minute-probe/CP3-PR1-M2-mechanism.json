@@ -71,7 +71,8 @@
   "continuous_session_minutes_0845_to_1534_expected": 410,
   "continuous_session_minutes_with_a_parsed_bar": 410,
   "continuous_session_minutes_missing_a_bar": [],
-  "g_never_fired_in_continuous_session": true,
+  "no_missing_bar_0845_1534": true,
+  "g_fires_on_two_closing_bars_see_m2b_artifact": 2,
   "upper_bound_max_s": 5.345897,
   "upper_bound_p50_s": 1.110636
 }

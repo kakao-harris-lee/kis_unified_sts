@@ -524,9 +524,14 @@ def main(argv=None):
         )
     except BaseException as exc:
         # The message is kept so an abort names its own cause instead of sending
-        # the reader to guess from the last artifact. Transport/OAuth text is
-        # already reduced to fixed tokens in Quotes.page; redact the two query
-        # secrets as well, so this record cannot become the one that leaks them.
+        # the reader to guess from the last artifact.
+        #
+        # Scope of the redaction below: exactly the two query secrets this process
+        # holds. It does NOT cover the bearer token, which exists only as a local
+        # in Quotes.page — and every transport/OAuth exception raised in there is
+        # already reduced to one of two fixed tokens before it reaches this
+        # handler, so no token text takes this path today. If a future caller
+        # raises token-bearing text from outside page(), this scope must widen.
         message = str(exc)
         for secret in (creds.app_key, creds.app_secret):
             if secret:

@@ -24,6 +24,22 @@
 | M4 Parquet 대조 | 측정됨 → **분류 + 예상 못한 결함**(§3) | `CP3-PR1-M4-*.json` |
 | 시드 충족 | **실패**(용량 0/780) → 최단 충족일 도출(§5) | `CP3-PR1-seed-earliest-fill.json` |
 
+### 0.0 ⛔ 정정 (2026-10-13, PR #896 독립 리뷰 REQUEST_CHANGES)
+
+리뷰가 이 문서 초판의 **관측 범위 주장 하나를 반증**했다. 정정했고, 숨기지 않고 남긴다:
+
+| 초판이 적은 것 | 실제 | 어디 |
+|---|---|---|
+| 「15:45 뒤 **2 분 55 초**를 더 관측했는데 15:46 행이 오지 않았다」 | 당일 조회 관측은 **15:45:21.7** 에 끝났다(+21.7 초). 2 분 55 초는 **다른 날짜를 조회한 장후 시드 호출**의 응답 시각이었다. 그리고 **15:46 경계는 표본되지 않았다** | §2.1 |
+| 「G 는 이 날 한 번도 발동하지 않았다」 | 08:45–15:34 에 빠진 봉은 없지만, **후속 행이 없는 봉은 둘**(15:34 · 15:45)이고 G 는 그 둘에 발동한다 | §1.6 |
+| 「+15 초 조회는 검열 10 경계에만 쏘였다」 | 마감 창 **16 경계 전부**가 세 offset 을 받았다. 그것이 `present` 421 의 출처다 | §1.2 |
+| 전송 오류 0 건 | 재시도에 **흡수된 오류 1 건**이 있었고, 그 때문에 15:45 의 +5 초 조회가 **+7.248 초**에 나갔다 | §1.3 |
+
+원인은 내 분석 스크립트가 **조회 날짜를 가리지 않고** 마지막 수신 시각의 최대값을 취한 것이다.
+스크립트를 고치고 필드를 날짜별로 분리했다(§8 의 sha256 갱신). **「세션 종료 시각 경과」 판정
+자체는 유지된다** — 다만 근거가 「15:46 을 관측했다」가 아니라 **계획 §3.3 의 완성 규칙 + 런타임
+달력의 세션 창**으로 바뀐다(§2.2).
+
 ### 0.1 원천 아티팩트 — 비공개, 이 디렉터리에 없다
 
 원천은 호스트의 0700 디렉터리 `~/.local/state/tos/measure/cp3-pr1-20261012/`(파일 0600)에 있다.
@@ -88,7 +104,18 @@ min `CP3-PR1-M2-brackets.json:upper_bound_s.min=1.082358`.
 몇 번째 조회에서 보였는가:
 `CP3-PR1-M2-brackets.json:probes_until_first_hit.hits_at_probe_1=343` ·
 `CP3-PR1-M2-brackets.json:probes_until_first_hit.hits_at_probe_2=67`.
-**+15 초까지 간 경계는 0 건이다**(세 번째 조회에서 처음 보인 경계가 없다).
+**세 번째 조회(+15 초)에서 처음 보인 경계는 0 건이다.**
+
+⚠ **그것이 「+15 초 조회를 거의 쏘지 않았다」는 뜻은 아니다.** `sample()` 은 `minute < closing`
+동안만 첫 발견에서 멈추므로, **마감 창의 16 경계 전부가 세 offset 을 다 받았다** —
+`CP3-PR1-M2-brackets.json:probe_accounting.closing_window_boundaries=16` ·
+`CP3-PR1-M2-brackets.json:probe_accounting.boundaries_probed_at_all_three_offsets=16` ·
+`CP3-PR1-M2-brackets.json:probe_accounting.third_offset_went_to_every_closing_boundary=true`.
+그중 §1.3 의 검열 10 경계는 세 번 다 부재였고, 나머지 6 경계는 **이미 +1/+5 초에 보인 뒤에도**
+계속 조회돼 중복 관측을 남겼다. 그래서 `present` 가 경계 수를 넘는다 —
+중복 `CP3-PR1-M2-brackets.json:probe_accounting.repeat_present_observations_at_closing_boundaries=11`
+이고 `CP3-PR1-M2-brackets.json:probe_accounting.present_equals_first_hits_plus_repeats=true`
+(421 = 410 첫 발견 + 11 중복). **경계가 더 있는 것이 아니다.**
 
 하한: 하한이 **박힌** 경계는 `CP3-PR1-M2-brackets.json:lower_bound_s_constrained_only.n=67` 뿐이고
 그 값은 min `CP3-PR1-M2-brackets.json:lower_bound_s_constrained_only.min=1.000298` ~ max
@@ -111,15 +138,54 @@ min `CP3-PR1-M2-brackets.json:upper_bound_s.min=1.082358`.
   0 건**(두 키가 집계에 아예 나타나지 않는다).
 - **지연으로 offset 을 놓친 표본도 0 건이다.**
 
+⚠ **그래도 「전송 오류 0 건」은 아니다 — 표본에 안 보이는 오류가 하나 있었다.** `Quotes.page` 는
+전송·OAuth 오류를 **제한 재시도 안에서 흡수**하므로 재시도가 성공하면 `fetch_error` 관측이
+남지 않는다. 이 런에는 그런 사건이 1 건 있었다 —
+`CP3-PR1-M2-brackets.json:absorbed_transport_errors_count=1` ·
+`CP3-PR1-M2-brackets.json:absorbed_transport_errors[0].error=auth_http_or_json_error` ·
+`CP3-PR1-M2-brackets.json:absorbed_transport_errors[0].started_kst=2026-10-12 15:45:05.000335+09:00`.
+
+그 때문에 **15:45 경계의 +5 초 조회가 실제로는 +7.248 초에 나갔다** —
+`CP3-PR1-M2-brackets.json:probes_shifted_past_scheduled_offset[0].scheduled_offset_s=5` →
+`CP3-PR1-M2-brackets.json:probes_shifted_past_scheduled_offset[0].actual_offset_s=7.248`
+(격자를 벗어난 조회는 이 1 건뿐 —
+`CP3-PR1-M2-brackets.json:probes_shifted_past_scheduled_offset_count=1`).
+`late_tolerance_s` 는 2 인데 이 조회는 거부되지 않았다 — 그 가드는 **예정 시각으로 자기 전에**
+한 번만 보고, 재시도로 밀린 시각은 다시 보지 않는다.
+
+⚠ **단 이것은 §1.2 의 δ 수치를 바꾸지 않는다.** 15:45 경계의 **첫 발견은 +1 초 조회**였으므로 그
+경계의 상한은 +1 초 봉에서 나왔고, 밀린 조회는 두 번째 관측이다. 2 봉(67 경계) 중에는 격자를
+벗어난 조회가 없다.
+
 즉 원천 `summary.json` 의 `censored_or_errors` = 10 은 **오류 10 건이 아니라 「거래가 없어서 행이
 존재하지 않은 분」 10 건**이다. 이것은 §2 의 마감 판정과 같은 사실이다.
 
 ### 1.4 δ/G 제안
 
-**δ (전형적 완성 지연) 제안값 = 1.2 초.**
+**먼저 δ 의 운영 의미를 정의한다** — 그러지 않으면 「전형적 지연」은 쓸 데가 없는 수다. 제안하는
+의미는 **생산자의 첫 폴링 시각**이다: 봉 경계 `m` 뒤 `m+δ` 에 처음 조회하고, m+1 원시 행이 없으면
+`m+G` 까지 재폴링한다. 그러면 δ 는 **「첫 폴링이 성공할 비율」과 「매 분 결정이 늦는 시간」의
+교환비**가 된다.
 
-- 근거: 83.7 %(343/410)가 +1 초 조회에서 이미 보였고 그 봉의 상한은 p50 1.107809 초 · max
-  1.765964 초다. 전체 p50 상한도 1.110636 초다. 1.2 초는 그 봉의 중앙값 바로 위에 있다.
+**이 날 직접 측정된 두 격자점**(프로브가 실제로 그 offset 에 요청을 쐈으므로 추론이 아니다):
+
+| 첫 폴링 offset | 첫 폴링 성공 | 재폴링 필요 |
+|---|---|---|
+| **+1.0 초** | `CP3-PR1-M2-brackets.json:first_poll_success.at_offset_1s_succeeded=343` / `CP3-PR1-M2-brackets.json:first_poll_success.at_offset_1s_of_boundaries=410` = `CP3-PR1-M2-brackets.json:first_poll_success.at_offset_1s_pct=83.66` % | `CP3-PR1-M2-brackets.json:first_poll_success.needed_a_second_poll=67` |
+| **+5.0 초** | 재폴링 67/67 성공 (`CP3-PR1-M2-brackets.json:first_poll_success.second_poll_at_offset_5s_succeeded=67`) | `CP3-PR1-M2-brackets.json:first_poll_success.boundaries_still_unresolved_after_offset_5s=0` |
+
+**δ 제안값 = 1.2 초** (첫 폴링 1 회 + 늦은 분만 재폴링).
+
+- 근거: +1 봉 상한 p50 1.107809 초 · 전체 p50 1.110636 초이고, **+1.0 초 폴링이 83.66 % 에서
+  성공**한다. 즉 제안 운영에서는 **약 16 % 의 분만 재폴링**하면 된다(이 날 기준).
+- ⚠ **1.2 초는 +1 봉의 p95 `CP3-PR1-M2-brackets.json:upper_bound_s_first_offset_mode.p95=1.240584`
+  보다 작다.** 즉 1 봉 안에서도 첫 폴링이 확실하지 않다. 재폴링을 **반드시** 갖춰야 하고, δ 를
+  단독 대기 시간으로 쓰면 안 된다.
+- **더 큰 δ 도 합리적 후보다(역시 제안):** δ ≈ 1.8 초(+1 봉 max 1.765964 초 위)로 올리면 1 봉
+  전체가 첫 폴링에서 잡히지만 **모든 분의 결정이 0.6 초 더 늦는다**. 반대로 δ 를 +5 초까지 올리면
+  재폴링이 거의 사라지는 대신 **매 분 5 초**를 낸다. ⚠ 이 날의 격자는 **+1.0 과 +5.0 두 점만**
+  측정했으므로 **그 사이의 어떤 δ 도 성공률이 측정되지 않았다** — 1.2 나 1.8 의 성공률은 상한
+  분포에서 읽은 추정이다.
 - ⚠ **참값은 이보다 작을 수 있다.** 상한은 수신 시각이고 343 개는 하한이 없다. 이 측정은 δ 를
   **위에서만** 묶는다.
 - 계획 §2 2 에 따르면 이 지연은 `as_of_ms` 도장 **전**이라 tenant 의 800 ms 예산 **밖**이다. 따라서
@@ -163,15 +229,33 @@ min `CP3-PR1-M2-brackets.json:upper_bound_s.min=1.082358`.
 못한다**. 반면 시간대 의존성은 뚜렷하다(§1.4 의 3.3 % → 23.3 %). 늦음이 뭉치지는 않는다 —
 최장 연속 `CP3-PR1-M2-mechanism.json:longest_late_run=3` 분.
 
-### 1.6 G 는 이 날 한 번도 발동하지 않았다
+### 1.6 G 가 발동하는 봉은 이 날 **둘**이다 (둘 다 마감 구간)
 
 연속 세션 08:45–15:34 의 기대 분 수
 `CP3-PR1-M2-mechanism.json:continuous_session_minutes_0845_to_1534_expected=410` · 실제 봉이 있는 분
 `CP3-PR1-M2-mechanism.json:continuous_session_minutes_with_a_parsed_bar=410` · 빠진 분
 `CP3-PR1-M2-mechanism.json:continuous_session_minutes_missing_a_bar=[]` →
-`CP3-PR1-M2-mechanism.json:g_never_fired_in_continuous_session=true`.
-**이 날 연속 세션에는 무거래 분이 없었다.** 따라서 G 의 비용(건너뛰기 지연)은 이 날 0 이고,
-G 의 값은 **마감 구간과 다른 장세에서만** 문제가 된다.
+`CP3-PR1-M2-mechanism.json:no_missing_bar_0845_1534=true`.
+즉 **08:45–15:34 에는 봉이 빠진 분이 없다.**
+
+⚠ **그것은 「G 가 발동하지 않는다」와 다르다.** G 는 봉이 빠졌을 때가 아니라 **m+1 후속 행이
+없을 때** 발동한다. 그리고 마지막 연속 봉 15:34 의 후속(15:35)은 **부재**다(§2). 후속 행이 없는
+봉을 전수로 세면 **둘**이다 —
+`CP3-PR1-M2b-closing.json:bars_without_raw_m_plus_1_successor_count=2`:
+
+| 봉 | 없는 후속 |
+|---|---|
+| `CP3-PR1-M2b-closing.json:bars_without_raw_m_plus_1_successor[0].bar=15:34` | `CP3-PR1-M2b-closing.json:bars_without_raw_m_plus_1_successor[0].missing_successor=15:35` |
+| `CP3-PR1-M2b-closing.json:bars_without_raw_m_plus_1_successor[1].bar=15:45` | `CP3-PR1-M2b-closing.json:bars_without_raw_m_plus_1_successor[1].missing_successor=15:46` |
+
+(`CP3-PR1-M2-mechanism.json:g_fires_on_two_closing_bars_see_m2b_artifact=2`. 이 날 원시 분 집합과
+파싱 봉 집합이 같으므로 — `CP3-PR1-M2b-closing.json:raw_minute_set_equals_parsed_bar_set=true` —
+파싱 봉으로 센 이 집합이 원시 행 기준 집합과 같다.)
+
+**정정**: 앞 판은 「G 의 비용은 이 날 0」이라고 적었는데 틀렸다. 정확히는 **연속 세션(08:45–15:34)
+구간에서 G 가 발동하는 봉은 없고, 마감 구간에서 두 봉에 발동한다.** 그 둘은 둘 다 §2 의 처분
+대상이므로 **G 의 값이 아니라 마감 완성 규칙이 다룬다** — 15:45 는 G 를 아무리 키워도 후속이
+오지 않는다. 다른 장세에 무거래 분이 생기면 그때 비로소 G 값 자체가 비용을 만든다.
 
 ## 2. M2b — 마감 구간 판정: **「세션 종료 시각 경과」를 써야 한다**
 
@@ -194,29 +278,64 @@ G 의 값은 **마감 구간과 다른 장세에서만** 문제가 된다.
   `CP3-PR1-M2b-closing.json:parsed_bars=411`(원천 `m4-today-parser.json` 의 `full_rows` = 411 ·
   `incremental_rows` = 411 · `different_minutes` = 빈 배열과 일치).
 
-### 2.1 마지막 봉은 m+1 후속 행을 **끝까지 받지 못한다**
+### 2.1 마지막 봉의 후속(15:46)은 **관측되지 않았다** — 측정이 아니라 구조적 추론이다
 
-마지막 파싱 봉은 `CP3-PR1-M2b-closing.json:last_parsed_bar=15:45` 이고 그 후속은
-`CP3-PR1-M2b-closing.json:successor_label_for_last_parsed_bar=15:46` 인데
-`CP3-PR1-M2b-closing.json:successor_raw_row_exists_for_last_parsed_bar=false` 다.
-프로브는 이후로도 계속 응답을 받았고 마지막 수신이
-`CP3-PR1-M2b-closing.json:source.last_response_received_kst=2026-10-12 15:47:55.691185+09:00`
-(행을 담은 응답 `CP3-PR1-M2b-closing.json:source.responses_with_rows=664` 건)이다. 즉 **15:45 경계
-뒤 약 2 분 55 초를 더 관측했는데 15:46 행은 오지 않았다.**
+⛔ **이 절의 앞 판은 틀렸다. 독립 리뷰(PR #896, HIGH)가 잡았고 여기서 정정한다.**
+앞 판은 「15:45 경계 뒤 약 2 분 55 초를 더 관측했는데 15:46 행은 오지 않았다」고 적었다. 그 2 분
+55 초는 **당일 데이터를 본 시간이 아니다** — 마지막 수신
+`CP3-PR1-M2b-closing.json:source.last_response_any_date_received_kst=2026-10-12 15:47:55.691185+09:00`
+은 **다른 날짜를 조회한 장후 시드 호출**의 응답이었고, 내 분석 스크립트가 조회 날짜를 가리지 않고
+최대값을 취해 그 시각을 당일 관측으로 잘못 돌렸다(스크립트 수정 + 필드 분리 완료).
+
+**실제로 당일(`FID_INPUT_DATE_1=20261012`)을 조회한 마지막 응답은**
+`CP3-PR1-M2b-closing.json:source.last_response_target_date_received_kst=2026-10-12 15:45:21.713421+09:00`
+이다 — 15:45 경계 뒤
+`CP3-PR1-M2b-closing.json:source.observed_seconds_past_last_parsed_bar_boundary=21.713` 초.
+(당일 조회 응답 `CP3-PR1-M2b-closing.json:source.responses_with_rows_target_date=524` 건 / 전체
+`CP3-PR1-M2b-closing.json:source.responses_with_rows_any_date=664` 건.)
+
+**그리고 15:46 경계는 아예 표본되지 않았다.** 설정
+`CP3-PR1-M2b-closing.json:source.sample_end_from_config=15:46:00` 이고 `sample()` 의 루프 조건이
+`minute < end` 이므로 마지막 경계는 15:45 다 —
+`CP3-PR1-M2b-closing.json:successor_boundary_was_sampled=false`.
+
+그래서 `CP3-PR1-M2b-closing.json:successor_raw_row_seen_within_observation_window=false` 는
+**공허하다**: 관측이 끝난 15:45:21.7 에는 15:46 분이 **아직 시작조차 하지 않았다**. 부재는
+표본 창의 결과이고 행이 오지 않았다는 관측이 아니다 —
+`CP3-PR1-M2b-closing.json:successor_absence_is_structural_inference_not_measurement=true`.
+
+**해석(측정 아님)**: 15:46 행은 존재할 수 없다. 근거는 관측이 아니라 **런타임 달력의 세션 창**이다 —
+`CP3-PR1-M2b-closing.json:session_window_from_runtime_calendar.calendar_version=krx-2026.09.1` 의
+선물 CONTINUOUS 창이
+`CP3-PR1-M2b-closing.json:session_window_from_runtime_calendar.start=08:45` ~
+`CP3-PR1-M2b-closing.json:session_window_from_runtime_calendar.end=15:45` 이고, 마지막 파싱 봉이
+바로 그 종료 분이며(`CP3-PR1-M2b-closing.json:session_window_from_runtime_calendar.last_parsed_bar_is_session_end_minute=true`)
+후속 15:46 은 **세션 밖**이다
+(`CP3-PR1-M2b-closing.json:session_window_from_runtime_calendar.successor_is_outside_session=true`).
+세션이 끝난 분에는 체결이 없고, 체결이 없으면 원시 행이 없다.
 
 ### 2.2 판정
 
 계획 §3.3 「장 마감」은 **후속 행 규칙을 쓸 수 없고, 「세션 종료 시각 경과」를 마지막 봉의 완성
 조건으로 써야 한다.** 계획이 예상한 것보다 **구멍이 둘**이다:
 
-1. **봉 15:34** — 후속 `15:35` 행이 단일가 중단 때문에 영구 부재다. m+1 규칙을 글자대로 쓰면 이
-   봉은 `missing_no_successor` 로 건너뛰어진다. (⚠ 계획이 예상한 바로 그 경우다.)
-2. **봉 15:45** — 후속 `15:46` 행이 **어떤 시각에도 존재하지 않는다**. 이 봉은 거래일 마지막 봉이라
-   미래의 어떤 행도 그것을 완성시키지 못한다. **시각 경과 규칙 말고는 완성시킬 방법이 없다.**
+1. **봉 15:34 — 측정됨.** 후속 `15:35` 행이 단일가 구간이라 부재이고, **그 경계는 세 offset 전부
+   조회해 세 번 다 부재를 확인했다**(§1.3). m+1 규칙을 글자대로 쓰면 이 봉은
+   `missing_no_successor` 로 건너뛰어진다. (⚠ 계획 §3.3 이 예상한 바로 그 경우다.)
+2. **봉 15:45 — 측정이 아니라 추론.** 후속 `15:46` 경계는 **표본되지 않았다**(§2.1). 그러므로
+   「15:46 행이 오지 않았다」는 이 실행의 **관측이 아니다**. 그런데도 이 봉이 m+1 규칙으로 완성될 수
+   없다고 말할 수 있는 근거는 둘이고, 둘 다 관측 밖에 있다:
+   - **계획 §3.3 자신의 규칙**(계획 `:111` 「완성 판정은 원시 행으로」 — 「봉 m 은 원시 응답에 m+1
+     시각 행이 있을 때 완성이다」, 그리고 그 처분을 적은 `:121-122` 「장 마감」): 15:45 는 거래일
+     마지막 봉이므로 그 조건을 만족시킬 행이 **미래에 올 수 없다**.
+   - **런타임 달력의 세션 창**(§2.1): 세션이 15:45 에 끝나므로 15:46 은 세션 밖이고 체결이 없다.
 
-⚠ **두 번째가 더 무겁다.** 1 번은 「후속 행」의 정의를 `m+1` 에서 「`m` 보다 **엄격히 뒤**인 원시
-행」으로 넓히면 15:45 행이 15:34 를 완성시켜 해결된다. 하지만 2 번은 그 완화로도 해결되지 않는다.
-그러므로 **세션 종료 시각 경과 규칙은 선택이 아니라 필수**이고, 생산자는 그 뒤 기록을 멈춘다.
+⚠ **두 번째가 더 무겁고, 완화로 해결되지 않는다.** 1 번은 「후속 행」의 정의를 `m+1` 에서 「`m` 보다
+**엄격히 뒤**인 원시 행」으로 넓히면 15:45 행이 15:34 를 완성시켜 해결된다. 2 번은 그 완화로도
+해결되지 않는다 — 뒤에 올 행이 없다. 그러므로 **세션 종료 시각 경과 규칙은 선택이 아니라 필수**이고,
+생산자는 그 뒤 기록을 멈춘다. ⚠ 이 결론은 **계획의 규칙 + 달력**에서 나오며, 15:46 을 관측해서
+얻은 것이 아니다. 관측으로 확정하려면 `sample_end` 를 세션 종료 뒤로(예 15:50) 늘린 새 실행이
+필요하다 — 후속 실행의 과제로 남긴다.
 
 **해석(측정 아님)**: 15:35–15:44 의 행 부재는 단일가 호가 접수 구간이라 체결이 없기 때문으로 읽는
 것이 자연스럽다. 이 실행이 관측한 것은 **행의 부재**이고 거래소의 구간 정의를 확인한 것은 아니다.
@@ -453,6 +572,9 @@ mini 는 **월물**이므로(tenant 달력 `futures_expiry` 의 `months` 가 1..
 - **mini 월물에서의 `produce_bars` 비용.** M3 는 프록시다(§4).
 - **10-13 · 10-14 의 밀도.** 가정이다(§5.2).
 - **15:35–15:44 행 부재의 거래소 측 근거.** 행의 부재만 관측했다(§2.2).
+- **15:46 행의 부재.** **관측되지 않았다** — 그 경계는 표본 밖이고(`sample_end` 15:46:00), 당일
+  데이터 관측은 15:45:21.7 에 끝났다(§2.1). 세션 종료 뒤까지 표본하는 새 실행이 필요하다.
+- **δ 가 +1.0 과 +5.0 초 사이에서 갖는 첫 폴링 성공률.** 두 격자점만 측정됐다(§1.4).
 
 ## 7. 도구 결함 하나를 고쳤다 — `abort.json` 이 자기 사유를 말하지 못했다
 
@@ -465,6 +587,12 @@ mini 는 **월물**이므로(tenant 달력 `futures_expiry` 의 `months` 가 1..
 `Quotes.page` 는 이미 전송·OAuth 오류 텍스트를 고정 토큰으로 줄이고 있고, 이 기록이 그것을
 우회하는 통로가 되면 안 된다. 레드 증명을 단계마다 따로 확인했다: `stage` 를 정적 문자열로
 되돌리면 `stage` 단언만 실패하고, 치환을 빼면 비밀 단언만 실패한다(두 절이 **독립적으로** 판별한다).
+
+⚠ **치환 범위를 과장하지 않는다**(리뷰 LOW). 치환은 이 프로세스가 들고 있는 **조회 비밀 두 개**
+(`KIS_FUTURES_APP_KEY` / `_SECRET`)만 덮고 **bearer 토큰은 덮지 않는다**. 토큰은 `Quotes.page` 의
+지역 변수로만 존재하고 그 안에서 난 전송·OAuth 예외는 **이 핸들러에 닿기 전에 고정 토큰 두 개로
+축약**되므로 현재 경로에서는 토큰 텍스트가 이 기록에 올 수 없다. 코드 주석도 그 범위로
+좁혔다 — `page()` 밖에서 토큰을 품은 텍스트를 던지는 호출자가 생기면 범위를 넓혀야 한다.
 
 테스트: `tests/tools/test_cp3_minute_probe.py::test_abort_records_its_own_stage_and_message`
 (hermetic · 네트워크·자격증명 0).
@@ -506,9 +634,9 @@ python tools/tos_evidence_citation_check.py \
 
 | 스크립트 | sha256 |
 |---|---|
-| `m2_brackets.py` | `fdcc7e8cff3553f6c3716d77e73151ef00c2d9235daa851cd3193f229d11536e` |
-| `m2b_closing.py` | `e862061c415b2e59a217b475b24d69a5981ad107b7b52fb7cbbc98f8acf9b1b3` |
-| `m2_mechanism.py` | `742be8ba2de0fbf08fae1d608f91e9e944bf98b4b58755a97cbc947810d0dd4b` |
+| `m2_brackets.py` | `a0516ec4b20a8628f2486e11b6742a383a06df0a4729f3813e00c2c8d92afbc5` |
+| `m2b_closing.py` | `e42f62efa836992d27570892531cc713c6e037eed9612296dccbe7bbd1f7cb30` |
+| `m2_mechanism.py` | `22f4805388154b0f53264982b22961b07484838bbe9dd586dae98c7a4aae5ad5` |
 | `m4_parquet_classify.py` | `5d30f1f06999c71cbd84b74b9144c9afa2ee88f1124720514da0231cac8e1d78` |
 | `m4_crossday_match.py` | `c53f03c16d99fe8e06f23a5d310b1d1de51de72faa7cd076dc6f813b43eda157` |
 | `m4_params_and_duplication.py` | `cbdd35513609e28ae9565455dbe40e08b37709607ea3aa88c80a677f3aa18482` |

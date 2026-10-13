@@ -9,6 +9,37 @@
     "present": 421,
     "absent": 97
   },
+  "probe_accounting": {
+    "closing_window_boundaries": 16,
+    "boundaries_probed_at_all_three_offsets": 16,
+    "third_offset_went_to_every_closing_boundary": true,
+    "repeat_present_observations_at_closing_boundaries": 11,
+    "present_equals_first_hits_plus_repeats": true
+  },
+  "first_poll_success": {
+    "at_offset_1s_succeeded": 343,
+    "at_offset_1s_of_boundaries": 410,
+    "at_offset_1s_pct": 83.66,
+    "needed_a_second_poll": 67,
+    "second_poll_at_offset_5s_succeeded": 67,
+    "boundaries_still_unresolved_after_offset_5s": 0
+  },
+  "absorbed_transport_errors": [
+    {
+      "started_kst": "2026-10-12 15:45:05.000335+09:00",
+      "error": "auth_http_or_json_error",
+      "request_date": "20261012"
+    }
+  ],
+  "absorbed_transport_errors_count": 1,
+  "probes_shifted_past_scheduled_offset": [
+    {
+      "boundary_kst": "2026-10-12 15:45:00+09:00",
+      "scheduled_offset_s": 5,
+      "actual_offset_s": 7.248
+    }
+  ],
+  "probes_shifted_past_scheduled_offset_count": 1,
   "resolution_caveat": "sampling resolves only to the +1/+5/+15s offset grid; a bracket upper bound is a receipt time, not an arrival time",
   "seen_successors": 410,
   "censored_boundaries": 10,
