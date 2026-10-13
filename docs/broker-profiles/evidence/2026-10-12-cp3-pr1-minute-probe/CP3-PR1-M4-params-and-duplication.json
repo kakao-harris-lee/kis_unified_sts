@@ -1,0 +1,69 @@
+{
+  "symbol": "A05611",
+  "data_root": "/home/deploy/project/kis_unified_sts/data/market",
+  "min_volume_pin_test": {
+    "pinned_min_volume": 10,
+    "parquet_rows_total": 277,
+    "distinct_days": 57,
+    "volume_min": 10.0,
+    "rows_below_pinned_min_volume": 0,
+    "consistent_with_pin": true,
+    "note": "0 rows below the pin is CONSISTENT with the same threshold; it does not prove the build env, because a HIGHER threshold would also produce 0 such rows"
+  },
+  "cross_partition_duplication": [
+    {
+      "later_partition": "2026-10-07",
+      "earlier_partition": "2026-10-06",
+      "comparable": true,
+      "later_rows": 18,
+      "earlier_rows": 108,
+      "shared_clock_minutes": 17,
+      "byte_identical_at_shared_minutes": 17,
+      "later_minutes_absent_from_earlier": [
+        "14:25"
+      ]
+    },
+    {
+      "later_partition": "2026-10-08",
+      "earlier_partition": "2026-10-07",
+      "comparable": true,
+      "later_rows": 41,
+      "earlier_rows": 18,
+      "shared_clock_minutes": 10,
+      "byte_identical_at_shared_minutes": 0,
+      "later_minutes_absent_from_earlier": [
+        "13:52",
+        "13:53",
+        "13:55",
+        "13:56",
+        "14:00",
+        "14:03",
+        "14:06",
+        "14:11",
+        "14:12",
+        "14:15",
+        "14:16",
+        "14:17",
+        "14:18",
+        "14:20",
+        "14:22",
+        "14:28",
+        "14:29",
+        "14:31",
+        "14:52",
+        "15:00",
+        "15:02",
+        "15:03",
+        "15:04",
+        "15:05",
+        "15:12",
+        "15:13",
+        "15:14",
+        "15:15",
+        "15:19",
+        "15:20",
+        "15:45"
+      ]
+    }
+  ]
+}

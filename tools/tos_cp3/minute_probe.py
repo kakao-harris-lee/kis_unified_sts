@@ -462,12 +462,14 @@ def main(argv=None):
         },
     )
     quotes = Quotes(creds, rec, cfg)
+    stage = "sample"
     try:
         rows, observations = sample(quotes, cfg, target, symbol, rec)
         rec.save(
             "capture-status.json", {"status": "CAPTURED", "samples": len(observations)}
         )
         # Preserve all market-dependent measurements before attempting a thin-roll seed.
+        stage = "today_history"
         raw = quotes.history(symbol, target)
         parsed = parse_ohlcv(symbol, target.strftime("%Y%m%d"), {"output2": raw})
         today = frame(parsed)
@@ -496,8 +498,11 @@ def main(argv=None):
                 "delta_G": "derive after inspection of brackets, censored samples and closing rows; no automatic bound claim",
             },
         )
+        stage = "seed"
         seed, strategy, anchor = seed_and_compare(quotes, cfg, target, symbol, rec)
+        stage = "benchmark_seed"
         rec.save("m3-seed.json", benchmark(seed, symbol, strategy, anchor, cfg))
+        stage = "benchmark_full_day"
         rec.save(
             "m3-full-day.json",
             benchmark(
@@ -508,6 +513,7 @@ def main(argv=None):
                 cfg,
             ),
         )
+        stage = "completion"
         rec.save(
             "completion.json",
             {
@@ -517,12 +523,27 @@ def main(argv=None):
             },
         )
     except BaseException as exc:
+        # The message is kept so an abort names its own cause instead of sending
+        # the reader to guess from the last artifact.
+        #
+        # Scope of the redaction below: exactly the two query secrets this process
+        # holds. It does NOT cover the bearer token, which exists only as a local
+        # in Quotes.page — and every transport/OAuth exception raised in there is
+        # already reduced to one of two fixed tokens before it reaches this
+        # handler, so no token text takes this path today. If a future caller
+        # raises token-bearing text from outside page(), this scope must widen.
+        message = str(exc)
+        for secret in (creds.app_key, creds.app_secret):
+            if secret:
+                message = message.replace(secret, "<redacted>")
         rec.save(
             "abort.json",
             {
                 "status": "ABORT",
                 "error_type": type(exc).__name__,
-                "stage": "see last completed artifact; capture summary is not complete M1-M4 acceptance",
+                "error_message": message,
+                "stage": stage,
+                "note": "capture summary is not complete M1-M4 acceptance",
                 "requests": quotes.calls,
             },
         )

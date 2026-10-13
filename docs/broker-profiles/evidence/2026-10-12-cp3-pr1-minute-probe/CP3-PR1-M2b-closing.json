@@ -1,0 +1,89 @@
+{
+  "source": {
+    "artifacts": [
+      "requests.jsonl",
+      "today-bars.json",
+      "run.json"
+    ],
+    "responses_with_rows_any_date": 664,
+    "responses_with_rows_target_date": 524,
+    "last_response_any_date_received_kst": "2026-10-12 15:47:55.691185+09:00",
+    "last_response_target_date_received_kst": "2026-10-12 15:45:21.713421+09:00",
+    "observed_seconds_past_last_parsed_bar_boundary": 21.713,
+    "sample_end_from_config": "15:46:00"
+  },
+  "raw_minutes_15_30_to_15_46": [
+    {
+      "minute": "15:30",
+      "raw_row_occurrences": 49,
+      "first_seen_kst": "2026-10-12 15:30:01.124854+09:00"
+    },
+    {
+      "minute": "15:31",
+      "raw_row_occurrences": 45,
+      "first_seen_kst": "2026-10-12 15:31:05.035042+09:00"
+    },
+    {
+      "minute": "15:32",
+      "raw_row_occurrences": 43,
+      "first_seen_kst": "2026-10-12 15:32:01.091749+09:00"
+    },
+    {
+      "minute": "15:33",
+      "raw_row_occurrences": 40,
+      "first_seen_kst": "2026-10-12 15:33:01.107652+09:00"
+    },
+    {
+      "minute": "15:34",
+      "raw_row_occurrences": 37,
+      "first_seen_kst": "2026-10-12 15:34:01.113024+09:00"
+    },
+    {
+      "minute": "15:45",
+      "raw_row_occurrences": 4,
+      "first_seen_kst": "2026-10-12 15:45:01.134899+09:00"
+    }
+  ],
+  "raw_minutes_15_30_to_15_46_count": 6,
+  "raw_minute_labels_at_or_after_15_35": [
+    "15:45"
+  ],
+  "raw_row_at_or_after_15_35_exists": true,
+  "last_raw_minute_of_day": "15:45",
+  "distinct_raw_minutes_of_day": 411,
+  "parsed_bars": 411,
+  "parsed_bar_labels_at_or_after_15_30": [
+    "15:30",
+    "15:31",
+    "15:32",
+    "15:33",
+    "15:34",
+    "15:45"
+  ],
+  "last_parsed_bar": "15:45",
+  "successor_label_for_last_parsed_bar": "15:46",
+  "successor_boundary_was_sampled": false,
+  "successor_raw_row_seen_within_observation_window": false,
+  "successor_absence_is_structural_inference_not_measurement": true,
+  "session_window_from_runtime_calendar": {
+    "calendar_version": "krx-2026.09.1",
+    "phase": "CONTINUOUS",
+    "start": "08:45",
+    "end": "15:45",
+    "last_parsed_bar_is_session_end_minute": true,
+    "successor_is_outside_session": true
+  },
+  "raw_minutes_15_35_to_15_44_exist": [],
+  "bars_without_raw_m_plus_1_successor": [
+    {
+      "bar": "15:34",
+      "missing_successor": "15:35"
+    },
+    {
+      "bar": "15:45",
+      "missing_successor": "15:46"
+    }
+  ],
+  "bars_without_raw_m_plus_1_successor_count": 2,
+  "raw_minute_set_equals_parsed_bar_set": true
+}

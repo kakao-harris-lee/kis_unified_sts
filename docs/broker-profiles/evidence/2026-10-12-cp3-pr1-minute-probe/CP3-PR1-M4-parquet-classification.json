@@ -1,0 +1,1118 @@
+{
+  "source": {
+    "artifacts": [
+      "requests.jsonl",
+      "seed-summary.json",
+      "run.json"
+    ],
+    "symbol": "A05611",
+    "data_root": "/home/deploy/project/kis_unified_sts/data/market",
+    "parser_env": {
+      "KIS_FUTURES_HOUR_CLS_CODE": "60",
+      "KIS_MINUTE_BAR_MIN_VOLUME": "10"
+    },
+    "method": "REST side replayed offline from recorded raw output2 rows"
+  },
+  "replay_faithful_all_days": true,
+  "replay_mismatches": [],
+  "sessions_walked": 59,
+  "sessions_with_parquet_rows": 25,
+  "sessions_with_zero_parquet_rows": 34,
+  "classification_totals": {
+    "rest_only": 597,
+    "parquet_only": 52,
+    "both_present_different_values": 51
+  },
+  "differing_columns_totals": {
+    "open": 51,
+    "high": 51,
+    "low": 51,
+    "close": 51,
+    "volume": 50
+  },
+  "days_with_any_both_present_difference": [
+    "2026-10-08",
+    "2026-10-07"
+  ],
+  "per_day": [
+    {
+      "day": "2026-10-08",
+      "rest_rows": 411,
+      "parquet_rows": 41,
+      "parquet_comparable": true,
+      "density_pass": true,
+      "diff_total": 411,
+      "rest_only": 370,
+      "parquet_only": 0,
+      "both_present_different_values": 41,
+      "differing_columns": {
+        "open": 41,
+        "high": 41,
+        "low": 41,
+        "close": 41,
+        "volume": 41
+      },
+      "both_examples": [
+        {
+          "minute": "2026-10-08T13:52:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1061.54,
+            "high": 1062.1,
+            "low": 1061.42,
+            "close": 1061.56,
+            "volume": 141.0
+          },
+          "parquet": {
+            "open": 1086.72,
+            "high": 1086.72,
+            "low": 1085.02,
+            "close": 1085.02,
+            "volume": 13.0
+          }
+        },
+        {
+          "minute": "2026-10-08T13:53:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1061.48,
+            "high": 1061.64,
+            "low": 1060.96,
+            "close": 1061.52,
+            "volume": 157.0
+          },
+          "parquet": {
+            "open": 1085.0,
+            "high": 1085.0,
+            "low": 1084.5,
+            "close": 1084.82,
+            "volume": 13.0
+          }
+        },
+        {
+          "minute": "2026-10-08T13:55:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1063.16,
+            "high": 1064.12,
+            "low": 1062.8,
+            "close": 1063.16,
+            "volume": 290.0
+          },
+          "parquet": {
+            "open": 1084.64,
+            "high": 1085.0,
+            "low": 1084.36,
+            "close": 1085.0,
+            "volume": 10.0
+          }
+        },
+        {
+          "minute": "2026-10-08T13:56:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1063.12,
+            "high": 1063.12,
+            "low": 1062.32,
+            "close": 1062.42,
+            "volume": 201.0
+          },
+          "parquet": {
+            "open": 1084.9,
+            "high": 1085.28,
+            "low": 1084.34,
+            "close": 1084.34,
+            "volume": 20.0
+          }
+        },
+        {
+          "minute": "2026-10-08T13:57:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1062.38,
+            "high": 1064.0,
+            "low": 1062.38,
+            "close": 1063.86,
+            "volume": 240.0
+          },
+          "parquet": {
+            "open": 1084.0,
+            "high": 1084.0,
+            "low": 1083.22,
+            "close": 1083.78,
+            "volume": 13.0
+          }
+        }
+      ],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-10-07",
+      "rest_rows": 191,
+      "parquet_rows": 18,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 199,
+      "rest_only": 181,
+      "parquet_only": 8,
+      "both_present_different_values": 10,
+      "differing_columns": {
+        "open": 10,
+        "high": 10,
+        "low": 10,
+        "close": 10,
+        "volume": 9
+      },
+      "both_examples": [
+        {
+          "minute": "2026-10-07T13:57:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1084.0,
+            "high": 1084.0,
+            "low": 1083.22,
+            "close": 1083.78,
+            "volume": 13.0
+          },
+          "parquet": {
+            "open": 1096.52,
+            "high": 1096.9,
+            "low": 1096.52,
+            "close": 1096.9,
+            "volume": 30.0
+          }
+        },
+        {
+          "minute": "2026-10-07T13:59:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close"
+          ],
+          "rest": {
+            "open": 1083.46,
+            "high": 1083.54,
+            "low": 1082.9,
+            "close": 1083.38,
+            "volume": 26.0
+          },
+          "parquet": {
+            "open": 1097.26,
+            "high": 1097.26,
+            "low": 1096.34,
+            "close": 1096.52,
+            "volume": 26.0
+          }
+        },
+        {
+          "minute": "2026-10-07T14:14:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1082.02,
+            "high": 1082.34,
+            "low": 1081.98,
+            "close": 1081.98,
+            "volume": 23.0
+          },
+          "parquet": {
+            "open": 1097.02,
+            "high": 1097.24,
+            "low": 1096.62,
+            "close": 1096.62,
+            "volume": 14.0
+          }
+        },
+        {
+          "minute": "2026-10-07T14:25:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1083.2,
+            "high": 1083.98,
+            "low": 1083.2,
+            "close": 1083.98,
+            "volume": 13.0
+          },
+          "parquet": {
+            "open": 1099.54,
+            "high": 1099.68,
+            "low": 1099.22,
+            "close": 1099.22,
+            "volume": 10.0
+          }
+        },
+        {
+          "minute": "2026-10-07T14:30:00",
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "rest": {
+            "open": 1085.0,
+            "high": 1085.0,
+            "low": 1084.36,
+            "close": 1084.64,
+            "volume": 14.0
+          },
+          "parquet": {
+            "open": 1098.4,
+            "high": 1098.7,
+            "low": 1098.4,
+            "close": 1098.7,
+            "volume": 11.0
+          }
+        }
+      ],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-10-06",
+      "rest_rows": 109,
+      "parquet_rows": 108,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 1,
+      "rest_only": 1,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-10-02",
+      "rest_rows": 14,
+      "parquet_rows": 5,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 19,
+      "rest_only": 14,
+      "parquet_only": 5,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-10-01",
+      "rest_rows": 10,
+      "parquet_rows": 8,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 18,
+      "rest_only": 10,
+      "parquet_only": 8,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-30",
+      "rest_rows": 14,
+      "parquet_rows": 1,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 15,
+      "rest_only": 14,
+      "parquet_only": 1,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-29",
+      "rest_rows": 1,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 3,
+      "rest_only": 1,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-28",
+      "rest_rows": 4,
+      "parquet_rows": 4,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-23",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-22",
+      "rest_rows": 2,
+      "parquet_rows": 1,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 3,
+      "rest_only": 2,
+      "parquet_only": 1,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-21",
+      "rest_rows": 4,
+      "parquet_rows": 1,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 5,
+      "rest_only": 4,
+      "parquet_only": 1,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-18",
+      "rest_rows": 1,
+      "parquet_rows": 1,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-17",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-16",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-15",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-14",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-11",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-10",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-09",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-08",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-07",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-04",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-03",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-02",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-09-01",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-31",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-28",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-27",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-26",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-25",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-24",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-21",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-20",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-19",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-18",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-14",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-13",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-12",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-11",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-10",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-07",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-06",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-05",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-04",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-08-03",
+      "rest_rows": 0,
+      "parquet_rows": 0,
+      "parquet_comparable": false,
+      "density_pass": false,
+      "diff_total": 0,
+      "rest_only": 0,
+      "parquet_only": 0,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-31",
+      "rest_rows": 0,
+      "parquet_rows": 1,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 1,
+      "rest_only": 0,
+      "parquet_only": 1,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-30",
+      "rest_rows": 0,
+      "parquet_rows": 1,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 1,
+      "rest_only": 0,
+      "parquet_only": 1,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-29",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-28",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-27",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-24",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-23",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-22",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-21",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-20",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-17",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-16",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-15",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    },
+    {
+      "day": "2026-07-14",
+      "rest_rows": 0,
+      "parquet_rows": 2,
+      "parquet_comparable": true,
+      "density_pass": false,
+      "diff_total": 2,
+      "rest_only": 0,
+      "parquet_only": 2,
+      "both_present_different_values": 0,
+      "differing_columns": {},
+      "both_examples": [],
+      "replay_faithful": true
+    }
+  ]
+}

@@ -395,3 +395,77 @@ def test_safety_exceptions_are_not_normalized_or_retried(tmp_path, monkeypatch):
         quote.page("A05611", DAY)
     assert quote.auth.attempts == 1
     assert quote.calls == 0
+
+
+def test_abort_records_its_own_stage_and_message(tmp_path, monkeypatch):
+    """An abort must name its cause and the stage it died in, with secrets redacted.
+
+    The first run (2026-10-12) aborted with a bare ``{"error_type": "RuntimeError"}``
+    and a static stage string, so the artifact could not say which measurement
+    stage had failed, or why.
+    """
+    import json
+
+    import yaml
+
+    secret_key = "probe-app-key-DO-NOT-PERSIST"
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 12, 8, 45, tzinfo=p.KST)
+
+    class FakeQuotes:
+        calls = 7
+        http = SimpleNamespace(close=lambda: None)
+
+        def __init__(self, *args):
+            pass
+
+        def history(self, symbol, day):
+            return [row("090000")]
+
+    cfg = yaml.safe_load(
+        (p.ROOT / "config/tos_probes/cp3-pr1-20261012.yaml").read_text()
+    )
+    cfg["env_file"] = str(tmp_path / "env")
+    cfg["output"] = str(tmp_path / "capture")
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump(cfg))
+    for key, value in {
+        "KIS_FUTURES_APP_KEY": secret_key,
+        "KIS_FUTURES_APP_SECRET": "probe-app-secret",
+        **cfg["parser_env"],
+    }.items():
+        monkeypatch.setenv(key, str(value))
+    monkeypatch.setattr(p, "datetime", Clock)
+    monkeypatch.setattr(p, "Quotes", FakeQuotes)
+    monkeypatch.setattr(
+        p,
+        "read_explicit_dotenv",
+        lambda *a, **k: {
+            "KIS_FUTURES_APP_KEY": secret_key,
+            "KIS_FUTURES_APP_SECRET": "probe-app-secret",
+        },
+    )
+    monkeypatch.setattr(p, "sample", lambda *a: ([], []))
+
+    def fail_seed(*args):
+        raise RuntimeError(
+            f"seed window not filled within configured horizon ({secret_key})"
+        )
+
+    monkeypatch.setattr(p, "seed_and_compare", fail_seed)
+
+    with pytest.raises(RuntimeError, match="probe aborted"):
+        p.main(["--config", str(config), "--confirm"])
+
+    abort = json.loads((tmp_path / "capture/abort.json").read_text())
+    assert abort["stage"] == "seed"
+    assert "seed window not filled within configured horizon" in abort["error_message"]
+    assert abort["error_type"] == "RuntimeError"
+    assert abort["requests"] == 7
+    # the message is persisted, but never with the query secrets in it
+    assert secret_key not in abort["error_message"]
+    assert "<redacted>" in abort["error_message"]
+    assert secret_key not in (tmp_path / "capture/abort.json").read_text()
