@@ -161,6 +161,9 @@ class Quotes:
                         "params": params,
                         "attempt": attempt + 1,
                         "rt_cd": payload.get("rt_cd"),
+                        # Message CLASS only. msg1 is the human text and is
+                        # never persisted; msg_cd is what names a refusal.
+                        "msg_cd": payload.get("msg_cd"),
                         "http_status": response.status_code,
                         "rows": rows,
                     }
