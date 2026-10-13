@@ -1,0 +1,91 @@
+# CP-3 ③ 실시간 필드 생산자 설정 — tools/tos_cp3/live_producer
+#
+# 계획: docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md §3
+# 증거: docs/broker-profiles/evidence/2026-10-12-cp3-pr1-minute-probe/README.md
+#
+# CLAUDE.md 비협상 규칙: 문턱·일정·게이트는 YAML 에 있고 코드 분기에 없다.
+# 아래 값은 전부 tools/tos_cp3/live_producer/config.py 가 읽는다. 오타 난 키는
+# 무시되지 않고 **기동 거부**로 끝난다(무시된 키 = 운영자가 걸려 있다고 믿는
+# 설정이 안 걸려 있는 상태).
+
+# --- 자격증명과 토큰 (계획 §3.4) ---
+# 조회용 선물 키 두 개(KIS_FUTURES_APP_KEY/SECRET)만 이 파일이 지정한 env 파일에서
+# 읽는다. 러너·런타임 환경에는 실전 키가 들어가지 않는다(그 단언은 PR-3).
+env_file: /home/deploy/project/kis_unified_sts/.env.real
+# 생산자 **자기** 토큰 캐시. 기존 KISToken 캐시(~/.cache/kis_token_futures.json)는
+# 도메인만으로 키를 잡고 앱 키를 보지 않으므로 공유하지 않는다(계획 §3.4).
+token_cache_dir: /home/deploy/.cache/tos-cp3-live-producer/token
+
+# --- 입력 파일 ---
+strategy_yaml: config/strategies/futures/setup_d_vwap_reversion.yaml
+# ⛔ shared/collector/historical/calendar.py 는 쓰지 않는다(계획 §3.2): 그 모듈의
+# 하드코딩 휴장일에 2026 대체휴일 둘(08-17 · 10-05)이 빠져 있어 10-12 시드가
+# 10-05 빈 응답에서 기동 거부로 막힌다. 런타임이 세션 게이트에 쓰는 바로 이 파일을 읽는다.
+calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+execution_yaml: config/execution.yaml
+# 세션 창(08:45~15:45)의 출처. 마지막 봉(15:45)은 후속 원시 행이 영원히 오지
+# 않으므로 「세션 종료 시각 경과」가 완성 조건이고(증거 §2.2), 그 시각은 하드코딩이
+# 아니라 이 달력에서 온다.
+calendar_session_id: krx-index-futures
+calendar_session_phase: CONTINUOUS
+
+# --- δ / G — **운영자 결정 2026-10-14** (둘 다 확정값이다) ---
+# PR-1 증거(§1.4)는 두 값을 **제안**으로만 올렸고 자동 확정을 거부했다
+# (「PR-2 가 이 값을 config 로 받아야 하며, 이 문서는 코드에 박는 것을 승인하지
+# 않는다」). 2026-10-14 운영자가 둘 다 확정했다. 값은 그래도 코드가 아니라 이
+# 파일에 있다 — 확정은 「설정에서 읽는다」를 바꾸지 않는다.
+#
+# δ = 봉 경계 뒤 첫 폴링 시각. **1.8 초 — 운영자 결정 2026-10-14.**
+#   증거 근거(README δ 절): +1 초에서 처음 보인 봉(343 경계)의 상한 max 가
+#   1.765964 초이고 1.8 은 **그 위**다 → 그 봉 전체가 첫 폴링에서 잡힌다.
+#   참고로 +1.0 초 폴링의 실측 성공률은 343/410 = 83.66 % 였고, 1.2 초는 그 봉의
+#   p95(1.240584)보다도 작아 첫 폴링이 확실하지 않았다.
+#   ⚠ 재폴링은 그래도 **필수**다(운영자 결정에서도 유지): 1.765964 는 하루치
+#     관측의 최대값이고, 늦는 봉 비율이 시각에 따라 3.3 % → 25 % 로 바뀌므로 다른
+#     장세의 최악값은 모른다. +1.0 과 +5.0 사이의 성공률은 측정되지 않았다.
+#   이 지연은 as_of_ms 도장 **전**이라 tenant 의 800 ms 예산 밖이다(계획 §2 2).
+first_poll_delay_s: 1.8
+# G = missing_no_successor 타임아웃. **10 초 — 운영자 결정 2026-10-14.**
+#   증거 근거: 관측된 최대 완성 지연이 5.345897 초이고 **410/410 경계가 +5 초
+#   조회까지 전부 해소**됐다(세 번째 조회에서 처음 보인 경계 0 건) → G 가 5.35 초
+#   이하면 실제로 완성된 봉을 버렸을 것이다. 상한 제약은 다음 분 경계와 겹치지
+#   않는 것이고(config.py 가 60 미만을 강제), 오류 비대칭상 큰 쪽으로 틀리는 것이
+#   안전하다(작으면 완성될 봉을 **조용히** 버린다).
+#   ⚠ **(5.35, 15] 초 구간은 관측되지 않았다** — +15 초 조회는 구조적 부재 10 건에만
+#     쏘였고 전부 부재였다. 10 은 그 무지 구간 안에 있고, 이 설정은 그 구간에서
+#     무엇이 관측됐다고 주장하지 않는다.
+missing_no_successor_timeout_s: 10.0
+# 재폴링 간격. 5 rps 한도 안(장중 ≈ 1–3 콜/분).
+repoll_pace_s: 1.1
+
+# --- 전송 (PR-1 프로브와 같은 값) ---
+request_timeout_s: 10
+attempts: 3
+retry_pause_s: 2.0
+pace_s: 1.1
+max_pages: 20
+
+# --- 시드 (계획 §3.2) ---
+# 밀도 게이트는 B1a 와 **같은 값**: produce_fields.DEFAULT_MIN_BARS_PER_DAY = 330
+# (walkforward_setup_d_vwap_reversion.py 의 기본값 — 공표 OOS 수치가 이 값으로 났다).
+min_bars_per_day: 330
+# 거래일이 아니라 **창 충족**으로 멈춘다. 이 예산은 거꾸로 걷는 달력 일수 상한이고
+# PR-1 프로브와 같은 90 일이다. ⚠ 롤 직후에는 게이트 통과일이 네 개 모일 때까지
+# 기동이 거부된다(실측 N ≈ 3 거래일, 계획 §6.2 — **열린 운영자 결정**). 그 거부는
+# 결함이 아니라 §3.2 가 의도한 거동이다.
+max_seed_calendar_days: 90
+
+# --- 파서 env 핀 (계획 §3.3 L9) ---
+# env 값이 핀과 다르면 기동을 거부한다 — 봉 크기·생략 규칙이 환경에 따라 조용히
+# 바뀌면 생산자의 프레임과 B1a 의 프레임이 봉 단위로 어긋난다.
+# ⚠ 기존 Parquet 이 같은 두 값으로 만들어졌다는 것은 **가정**이고 M4 로 깨끗하게
+# 시험되지 않았다(증거 §3.4 — 레거시 A05611 파티션의 날짜 라벨이 신뢰할 수 없다).
+# 그래서 오프라인 대조 입력은 레거시 Parquet 이 아니라 생산자가 쓴 동결 프레임이다.
+parser_env:
+  KIS_FUTURES_HOUR_CLS_CODE: '60'
+  KIS_MINUTE_BAR_MIN_VOLUME: '10'
+
+# --- 정지 조건 (계획 §3.5) ---
+# ProduceFieldsError(비유한 값·중복 시각)가 연속 이만큼이면 생산자를 멈춘다.
+# 멈춘 생산자는 러너가 ABORT 로 보고한다.
+max_consecutive_produce_errors: 5

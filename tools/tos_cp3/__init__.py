@@ -25,6 +25,20 @@ Contents:
   imports neither ``tos`` nor ``produce_fields``: its claim is about three
   files, so it must stay runnable after CP-4 removes the band math behind
   them.
+* :mod:`tools.tos_cp3.quote_client` — the GET-only real-key minute quotation
+  transport (``FHKIF03020200``): a three-way method/TR/path allowlist, an
+  app-key-fingerprinted private token cache, bounded retries and a token-expiry
+  re-issue. Extracted from PR-1's probe so ③ reuses the measured client rather
+  than growing a second one. There is no POST code path in it.
+* :mod:`tools.tos_cp3.minute_probe` — PR-1, the real quotation GET measurement
+  tool that derived δ and G (evidence
+  ``docs/broker-profiles/evidence/2026-10-12-cp3-pr1-minute-probe/README.md``).
+* :mod:`tools.tos_cp3.live_producer` — ③, the real-time fifteen-field producer:
+  one journal line per completed minute bar, with the values computed by B1a's
+  own ``produce_bars`` so the same bar's real-time and offline lines join in
+  B3. It is the one producer
+  :data:`tools.tos_cp3.bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES`
+  approves to create a permanent corpus.
 * :mod:`tools.tos_cp3.bootproof_journal` — the tenant boot-proof journal: ONE
   row carrying a chosen B1a bar's fifteen fields, re-labelled onto the rendered
   mini contract and stamped with the WRITE time. It proves the tenant wiring
