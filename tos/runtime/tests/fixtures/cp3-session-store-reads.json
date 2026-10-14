@@ -1,17 +1,25 @@
 {
   "_": [
-    "The hinge between tools/tos_cp3/session_inputs.py (CP-3 plan 2026-10-10 §3.6,",
-    "PR-3) and the two runtime stores it reads. The firewall is bidirectional, so no",
-    "single test can hold both ends: tools/ may not import tos_runtime, and a test",
+    "The hinge between tools/tos_cp3/session_inputs.py (CP-3 plan 2026-10-10 \u00a73.6,",
+    "PR-3) and the three runtime stores it reads. The firewall is bidirectional, so",
+    "no single test can hold both ends: tools/ may not import tos_runtime, and a test",
     "under tos/ may not import tools. This file is what both halves read.",
     "",
-    "tos side  — tos/runtime/tests/operations/test_cp3_session_store_reads.py: every",
-    "  (table, column) named here exists in that store's registered migrations, and",
-    "  schema_version is the latest version those migrations reach.",
-    "tools side — tests/tools/test_cp3_session_inputs.py: the extractor's pinned",
-    "  versions equal these, and every fixture store it builds is built from exactly",
-    "  these columns, so a column the extractor reads but does not declare here is a",
-    "  sqlite error rather than a silent read of a store nobody checked."
+    "reads  \u2014 every (table, column) the extractor selects.",
+    "payloads \u2014 the EXACT payload_json bytes the REAL stores write, produced by",
+    "  driving SqliteEvidenceStore through EngineEvidenceSinkAdapter and",
+    "  SqliteEventInbox. PR-3 first cut read entries.payload_json as if it were the",
+    "  engine record; the store wraps it ({\"payload\": .., \"masked_keys\": ..}), so",
+    "  every field came back null and the tools-side tests missed it because they",
+    "  wrote flat rows of their own invention. A fixture of invented bytes tests the",
+    "  invention. These are the stores own.",
+    "",
+    "tos side  \u2014 tos/runtime/tests/operations/test_cp3_session_store_reads.py:",
+    "  the columns exist in the registered migrations, and these bytes are what the",
+    "  stores write today (byte equality \u2014 regenerate in the PR that moves them).",
+    "tools side \u2014 tests/tools/test_cp3_session_inputs.py: the extractor pins the same",
+    "  versions, its fixture stores are built from exactly these columns, and the",
+    "  evidence/inbox rows it parses are exactly these bytes."
   ],
   "marketfeed": {
     "file_name": "marketfeed.sqlite3",
@@ -38,5 +46,42 @@
         "payload_json": "TEXT"
       }
     }
+  },
+  "inbox": {
+    "file_name": "inbox.sqlite3",
+    "schema_version": 1,
+    "reads": {
+      "events": {
+        "seq": "INTEGER",
+        "kind": "TEXT",
+        "payload_json": "TEXT"
+      }
+    }
+  },
+  "payloads": {
+    "evidence_entries": [
+      {
+        "kind": "DECISION_OUTCOME_EMITTED",
+        "payload_json": "{\"masked_keys\":[],\"payload\":{\"attempt_id\":null,\"authority\":{\"asserts_venue_or_session_state\":false,\"bypasses_currentness\":false,\"constructs_broker_command\":false,\"creates_aggregate_exposure_via_retry\":false,\"exceeds_action_flow_budget\":false,\"issues_or_reuses_transmission_capability\":false,\"mutates_risk_capacity_ledger\":false,\"originates_approves_or_widens_authority\":false,\"self_classifies_protective\":false,\"treats_tca_as_authority\":false,\"treats_timeout_as_rejection\":false},\"authority_class\":null,\"bound_digest\":null,\"bound_identity\":null,\"broker_execution_id\":null,\"capacity_state\":null,\"capsule_digest\":\"0e2d740b1cfc25ef5fdda591b3ceff23a44011fbfa5924d001a6270113724968\",\"capsule_id\":\"dcc-0e2d740b1cfc25ef5fdda591b3ceff23a44011fbfa5924d001a6270113724968\",\"config_version\":null,\"detail\":\"fixture: no-action emitted\",\"egress_result_kind\":null,\"event_id\":null,\"filled_quantity\":null,\"halt_reason\":\"NO_ACTION_OUTCOME\",\"instrument_key\":{\"account\":\"acct-ar\",\"instrument\":\"ES\"},\"kind\":\"DECISION_OUTCOME_EMITTED\",\"knowledge\":null,\"nontrade_disposition\":null,\"outcome_digest\":\"oc-digest-1\",\"outcome_type\":\"NoActionOutcome\",\"remaining_quantity\":null,\"result_disposition\":null,\"stage_outcome\":null,\"step\":null,\"strategy_version\":null}}"
+      },
+      {
+        "kind": "FLOW_HALTED",
+        "payload_json": "{\"masked_keys\":[],\"payload\":{\"attempt_id\":null,\"authority\":{\"asserts_venue_or_session_state\":false,\"bypasses_currentness\":false,\"constructs_broker_command\":false,\"creates_aggregate_exposure_via_retry\":false,\"exceeds_action_flow_budget\":false,\"issues_or_reuses_transmission_capability\":false,\"mutates_risk_capacity_ledger\":false,\"originates_approves_or_widens_authority\":false,\"self_classifies_protective\":false,\"treats_tca_as_authority\":false,\"treats_timeout_as_rejection\":false},\"authority_class\":null,\"bound_digest\":null,\"bound_identity\":null,\"broker_execution_id\":null,\"capacity_state\":null,\"capsule_digest\":null,\"capsule_id\":null,\"config_version\":null,\"detail\":\"fixture: capacity denial\",\"egress_result_kind\":null,\"event_id\":null,\"filled_quantity\":null,\"halt_reason\":\"AT_MOST_ONE_EXPOSURE_HELD\",\"instrument_key\":{\"account\":\"acct-ar\",\"instrument\":\"ES\"},\"kind\":\"FLOW_HALTED\",\"knowledge\":null,\"nontrade_disposition\":null,\"outcome_digest\":null,\"outcome_type\":null,\"remaining_quantity\":null,\"result_disposition\":null,\"stage_outcome\":null,\"step\":null,\"strategy_version\":null}}"
+      },
+      {
+        "kind": "DECISION_WITHHELD",
+        "payload_json": "{\"masked_keys\":[],\"payload\":{\"attempt_id\":null,\"authority\":{\"asserts_venue_or_session_state\":false,\"bypasses_currentness\":false,\"constructs_broker_command\":false,\"creates_aggregate_exposure_via_retry\":false,\"exceeds_action_flow_budget\":false,\"issues_or_reuses_transmission_capability\":false,\"mutates_risk_capacity_ledger\":false,\"originates_approves_or_widens_authority\":false,\"self_classifies_protective\":false,\"treats_tca_as_authority\":false,\"treats_timeout_as_rejection\":false},\"authority_class\":null,\"bound_digest\":null,\"bound_identity\":null,\"broker_execution_id\":null,\"capacity_state\":null,\"capsule_digest\":null,\"capsule_id\":null,\"config_version\":null,\"detail\":\"fixture: withheld, carries no capsule id\",\"egress_result_kind\":null,\"event_id\":null,\"filled_quantity\":null,\"halt_reason\":\"REGISTRY_MISSING\",\"instrument_key\":{\"account\":\"acct-ar\",\"instrument\":\"ES\"},\"kind\":\"DECISION_WITHHELD\",\"knowledge\":null,\"nontrade_disposition\":null,\"outcome_digest\":null,\"outcome_type\":null,\"remaining_quantity\":null,\"result_disposition\":null,\"stage_outcome\":null,\"step\":null,\"strategy_version\":null}}"
+      }
+    ],
+    "inbox_events": [
+      {
+        "kind": "DECISION_TICK",
+        "payload_json": "{\"corporate_action\":null,\"decision_tick\":{\"capsule\":{\"artifact_type\":\"DECISION_CONTEXT_CAPSULE\",\"authority\":{\"creates_capacity\":false,\"creates_live_authorization\":false,\"creates_protective_classification\":false,\"grants_approval\":false,\"permits_automatic_rearm\":false,\"permits_broker_transmission\":false,\"permits_rearm\":false},\"bindings\":null,\"canonical_digest\":\"0e2d740b1cfc25ef5fdda591b3ceff23a44011fbfa5924d001a6270113724968\",\"canonicalization_version\":\"ev-l1-provisional-0\",\"capsule_id\":\"dcc-0e2d740b1cfc25ef5fdda591b3ceff23a44011fbfa5924d001a6270113724968\",\"context_generation\":null,\"critical_input_policy\":{\"canonical_digest\":\"pd-ar\",\"policy_generation\":null,\"policy_id\":\"pol-ar\"},\"critical_input_snapshot\":{\"canonical_digest\":\"sd-ar-1\",\"snapshot_id\":\"cis-ar-1\"},\"generation_vector\":{\"authority_epoch\":null,\"broker_capability_profile_version\":null,\"deployment_generation\":null,\"evidence_policy_generation\":null,\"identity_generation\":null,\"recovery_generation\":null,\"safety_configuration_generation\":null,\"time_health_generation\":null},\"independent_validation\":{\"approved_paths\":[],\"common_mode_dependencies\":[],\"required\":true,\"required_facts\":[],\"residual_risk_ids\":[]},\"issuer_principal_id\":\"iss-ar\",\"order_admissibility_decision\":null,\"safety_critical_facts\":{\"account\":\"acct-ar\",\"direction\":\"LONG\",\"expiration\":null,\"exposure_effect\":null,\"instrument\":\"ES\",\"price_and_order_constraints\":[],\"quantity_basis\":\"RISK\",\"session_and_tradability\":null,\"unit\":\"contract\"},\"schema_version\":\"1.0-DRAFT\",\"scope\":{\"account\":\"acct-ar\",\"decision_class\":\"entry\",\"environment\":\"non-live-test\",\"instrument\":\"ES\",\"requested_action_scope\":null,\"safety_cell\":null,\"venue\":null},\"status\":\"ISSUED\",\"validity\":{\"consumer_receipt_anchor\":null,\"expires_at\":null,\"invalidation_conditions\":[],\"invalidation_generation\":null,\"issued_at\":null,\"maximum_age_ms\":null},\"venue_constraint_policy\":null,\"venue_constraint_snapshot\":null},\"instrument_key\":{\"account\":\"acct-ar\",\"instrument\":\"ES\"},\"reference\":{\"causal_predecessor_ids\":[],\"egress_journal_sequence\":null,\"event_id\":null,\"local_monotonic_value\":null,\"quorum_commit_index\":null,\"source_continuity_id\":\"fixture\",\"source_native_sequence\":1,\"time_hi\":null,\"time_lo\":null},\"time\":{\"delay_bounds\":[5],\"future_tolerance\":50,\"health_state\":\"TRUSTED\",\"max_age_bound\":1000,\"maximum_consumer_age_ms\":1000,\"session_context\":{\"boundary_value\":100000,\"is_open\":true,\"phase\":\"CONTINUOUS\",\"trading_calendar_version\":\"cal-ar\",\"tz_db_version\":\"tzdb-ar\",\"tz_id\":\"tz\",\"tz_version_conflict\":false},\"snapshot_age_bound\":20,\"source_age\":10,\"uncertainty_interval\":{\"hi\":2,\"lo\":1}},\"value_view\":null},\"egress_result\":null,\"kind\":\"DECISION_TICK\"}"
+      },
+      {
+        "kind": "DECISION_TICK",
+        "payload_json": "{\"corporate_action\":null,\"decision_tick\":{\"capsule\":{\"artifact_type\":\"DECISION_CONTEXT_CAPSULE\",\"authority\":{\"creates_capacity\":false,\"creates_live_authorization\":false,\"creates_protective_classification\":false,\"grants_approval\":false,\"permits_automatic_rearm\":false,\"permits_broker_transmission\":false,\"permits_rearm\":false},\"bindings\":null,\"canonical_digest\":\"1ba14b1e6d5d61c87b8c1caee2664ad9f64a3a1b6f11c091cac092bee348fb57\",\"canonicalization_version\":\"ev-l1-provisional-0\",\"capsule_id\":\"dcc-1ba14b1e6d5d61c87b8c1caee2664ad9f64a3a1b6f11c091cac092bee348fb57\",\"context_generation\":null,\"critical_input_policy\":{\"canonical_digest\":\"pd-ar\",\"policy_generation\":null,\"policy_id\":\"pol-ar\"},\"critical_input_snapshot\":{\"canonical_digest\":\"sd-ar-2\",\"snapshot_id\":\"cis-ar-2\"},\"generation_vector\":{\"authority_epoch\":null,\"broker_capability_profile_version\":null,\"deployment_generation\":null,\"evidence_policy_generation\":null,\"identity_generation\":null,\"recovery_generation\":null,\"safety_configuration_generation\":null,\"time_health_generation\":null},\"independent_validation\":{\"approved_paths\":[],\"common_mode_dependencies\":[],\"required\":true,\"required_facts\":[],\"residual_risk_ids\":[]},\"issuer_principal_id\":\"iss-ar\",\"order_admissibility_decision\":null,\"safety_critical_facts\":{\"account\":\"acct-ar\",\"direction\":\"LONG\",\"expiration\":null,\"exposure_effect\":null,\"instrument\":\"ES\",\"price_and_order_constraints\":[],\"quantity_basis\":\"RISK\",\"session_and_tradability\":null,\"unit\":\"contract\"},\"schema_version\":\"1.0-DRAFT\",\"scope\":{\"account\":\"acct-ar\",\"decision_class\":\"entry\",\"environment\":\"non-live-test\",\"instrument\":\"ES\",\"requested_action_scope\":null,\"safety_cell\":null,\"venue\":null},\"status\":\"ISSUED\",\"validity\":{\"consumer_receipt_anchor\":null,\"expires_at\":null,\"invalidation_conditions\":[],\"invalidation_generation\":null,\"issued_at\":null,\"maximum_age_ms\":null},\"venue_constraint_policy\":null,\"venue_constraint_snapshot\":null},\"instrument_key\":{\"account\":\"acct-ar\",\"instrument\":\"ES\"},\"reference\":{\"causal_predecessor_ids\":[],\"egress_journal_sequence\":null,\"event_id\":null,\"local_monotonic_value\":null,\"quorum_commit_index\":null,\"source_continuity_id\":\"fixture\",\"source_native_sequence\":2,\"time_hi\":null,\"time_lo\":null},\"time\":{\"delay_bounds\":[5],\"future_tolerance\":50,\"health_state\":\"TRUSTED\",\"max_age_bound\":1000,\"maximum_consumer_age_ms\":1000,\"session_context\":{\"boundary_value\":100000,\"is_open\":true,\"phase\":\"CONTINUOUS\",\"trading_calendar_version\":\"cal-ar\",\"tz_db_version\":\"tzdb-ar\",\"tz_id\":\"tz\",\"tz_version_conflict\":false},\"snapshot_age_bound\":20,\"source_age\":10,\"uncertainty_interval\":{\"hi\":2,\"lo\":1}},\"value_view\":null},\"egress_result\":null,\"kind\":\"DECISION_TICK\"}"
+      }
+    ]
   }
 }

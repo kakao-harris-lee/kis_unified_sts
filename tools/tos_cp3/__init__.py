@@ -29,10 +29,13 @@ Contents:
   the ``raw_event_id`` set the runtime actually consumed (from the session
   ``marketfeed.sqlite3``'s ``preimages``) with a reason for every produced bar
   it did not consume, and one record per live decision shaped like B1b's
-  offline trace (from the session ``evidence.sqlite3``). Both stores are read
-  as plain sqlite files in ``mode=ro`` — the firewall forbids importing
-  ``tos_runtime`` from here, so the schema versions and the columns read are
-  pinned against a committed hinge the runtime side checks
+  offline trace (from the session ``evidence.sqlite3``, keyed to its bar
+  through the ``inbox.sqlite3`` tick that carries both the capsule id the
+  decision names and the snapshot id the bar came from). All three stores are
+  read as plain sqlite files in ``mode=ro`` — the firewall forbids importing
+  ``tos_runtime`` from here, so the schema versions, the columns read AND the
+  stored ``payload_json`` bytes are pinned against a committed hinge the
+  runtime side produces and checks
   (``tos/runtime/tests/fixtures/cp3-session-store-reads.json``).
 * :mod:`tools.tos_cp3.quote_client` — the GET-only real-key minute quotation
   transport (``FHKIF03020200``): a three-way method/TR/path allowlist, an

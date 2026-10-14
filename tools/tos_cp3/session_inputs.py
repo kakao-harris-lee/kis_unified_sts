@@ -20,30 +20,49 @@ the session's own durable stores and produces those two inputs:
 
 ``live-decisions``
     One record per live decision, shaped like B1b's offline trace line, from
-    the session ``evidence.sqlite3``'s ``entries`` table.
+    the session ``evidence.sqlite3``'s ``entries`` table — tied to its bar
+    through the session ``inbox.sqlite3`` (below).
 
 **Read-only, and no ``tos`` import.** The firewall is bidirectional —
 ``tools/`` is in its reverse scan (``tools/tos_firewall_check.py`` TOS-FW-R) —
-so both stores are opened as plain sqlite files in ``mode=ro``, and the four
-runtime literals this needs (two file names, two schema versions) are MIRRORED
-here with the constant each mirrors named beside it. A mirrored literal that
-drifts is caught rather than assumed: every read pins ``PRAGMA user_version``
-against the mirrored version and refuses a store the extractor was not written
-for, instead of reading a changed shape as if it were the old one.
+so all three stores are opened as plain sqlite files in ``mode=ro``, and the
+runtime literals this needs (three file names, three schema versions, the
+field paths inside two stored payloads) are MIRRORED here with the constant
+each mirrors named beside it. A mirrored literal that drifts is caught rather
+than assumed: every read pins ``PRAGMA user_version`` against the mirrored
+version, and the committed hinge
+``tos/runtime/tests/fixtures/cp3-session-store-reads.json`` carries the exact
+``payload_json`` bytes the REAL stores write — produced and checked on the
+runtime side, replayed as input on this one.
 
-**How a live decision is tied to a bar, and what that costs.** The engine's
-durable evidence record (``tos.engine.records.EngineEvidenceRecord``) carries
-``capsule_id``/``capsule_digest`` — never the ``raw_event_id`` and never the
-snapshot id. The capsule binds its snapshot by content digest, and recomputing
-that digest here would need the kernel, which this side may not import. So the
-pairing is ORDERED, not keyed: the scheduler issues exactly one snapshot per
-TICKed pass and hands exactly one ``DECISION_TICK`` event to the engine before
-the next pass (``tos_runtime.marketfeed.scheduler.MarketFeedScheduler.
-tick_once``), so the k-th decision record belongs to the k-th snapshot. That is
-an inference, and it is guarded rather than trusted: the counts must be equal,
-every snapshot must name the same instrument, and every snapshot must carry
-exactly one preimage row. Any of those failing is a refusal naming both counts
-— this module never pairs a decision with a bar it cannot account for.
+**How a live decision is tied to its bar.** By KEY, through three durable
+rows:
+
+1. the decision record names the capsule it consumed (``capsule_id``, copied
+   off the recorded input signature in ``tos/src/tos/engine/pipeline.py``);
+2. the inbox event that carried that tick names the same capsule and the
+   snapshot it bound (``decision_tick.capsule.capsule_id`` and
+   ``…capsule.critical_input_snapshot.snapshot_id``) — the driver admits every
+   event durably before processing it
+   (``tos_runtime.engine.driver.EngineDriver.enqueue_and_run``);
+3. ``preimages`` maps that snapshot to the bar's ``raw_event_id``.
+
+A ``DECISION_WITHHELD`` or ``COORDINATOR_PRECONDITION_REFUSED`` record names
+no capsule — the pipeline never reached a signature — so those, and only
+those, take the next tick no keyed decision claimed. Every record says which
+of the two it was in its ``attributed_by`` field.
+
+The first cut paired by POSITION (the k-th decision with the k-th snapshot)
+because the evidence record carries no bar id. That is an inference the stores
+can contradict silently: one tick queued and drained later shifts every later
+record onto the wrong bar with the counts still matching. The key cannot
+shift, so the count comparison is now a REPORTED cross-check rather than the
+thing the attribution rests on.
+
+**What is still refused, not guessed**: a capsule the inbox never admitted,
+two decisions on one tick, an unkeyed decision with no tick left, a tick whose
+snapshot the marketfeed store does not hold, two instruments in one session,
+and a snapshot without exactly one preimage row.
 
 Usage::
 
@@ -95,15 +114,59 @@ SCHEMA_VERSION = 1
 #: imported: the firewall forbids importing either from here.
 MARKETFEED_FILE_NAME = "marketfeed.sqlite3"
 EVIDENCE_FILE_NAME = "evidence.sqlite3"
+#: Mirrors ``tos_runtime.operations.backup_set.INBOX_FILE_NAME``. The durable
+#: event queue is what carries the KEYED link from a decision to its bar
+#: (:func:`read_decision_ticks`).
+INBOX_FILE_NAME = "inbox.sqlite3"
 
-#: Mirrors ``tos_runtime.marketfeed.store.MARKETFEED_SCHEMA_VERSION`` and
-#: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION`` — each store stamps
-#: its own value into ``PRAGMA user_version``. Pinned rather than read-and-
+#: Mirrors ``tos_runtime.marketfeed.store.MARKETFEED_SCHEMA_VERSION``,
+#: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION`` and
+#: ``tos_runtime.engine.inbox.INBOX_SCHEMA_VERSION`` — each store stamps its
+#: own value into ``PRAGMA user_version``. Pinned rather than read-and-
 #: accepted: a bumped version means the tables changed shape, and reading a new
 #: shape with these queries would answer a question about a store that no
 #: longer exists (the migration note is runbook ``tos-paper-boot.md`` §4-A).
 PINNED_MARKETFEED_SCHEMA_VERSION = 1
 PINNED_EVIDENCE_SCHEMA_VERSION = 2
+PINNED_INBOX_SCHEMA_VERSION = 1
+
+#: The ``kind`` the inbox stores for a market tick
+#: (``tos.engine.EventKind.DECISION_TICK``).
+DECISION_TICK_EVENT_KIND = "DECISION_TICK"
+
+#: Where the capsule id and the snapshot id live inside one inbox event's
+#: ``payload_json`` (``EngineEvent.model_dump(mode="json")``:
+#: ``decision_tick`` is the ``DecisionTickPayload``, whose ``capsule`` is the
+#: issued ``DecisionContextCapsule`` and whose ``critical_input_snapshot`` is
+#: the ``SnapshotRef`` the capsule binds).
+TICK_CAPSULE_PATH: tuple[str, ...] = ("decision_tick", "capsule", "capsule_id")
+TICK_SNAPSHOT_PATH: tuple[str, ...] = (
+    "decision_tick",
+    "capsule",
+    "critical_input_snapshot",
+    "snapshot_id",
+)
+
+#: The resolved Critical Input value surface for that tick
+#: (``DecisionTickPayload.value_view``). ``null`` means the resolver published
+#: no view at all; a view with ``values: []`` is the defined "the binding
+#: resolved and nothing was admissible" outcome
+#: (``tos.dsl.context_value.ContextValueView``'s own ∅-both-ways note), which
+#: at this tenant's ``max_age_ms`` of 800 is what a STALE line looks like from
+#: the durable side (plan §5 M5; runbook §7.2-c's structural argument).
+TICK_VALUE_VIEW_PATH: tuple[str, ...] = ("decision_tick", "value_view")
+
+#: The evidence store wraps every record: ``payload_json`` is
+#: ``{"payload": <the scrubbed record>, "masked_keys": [...]}``
+#: (``tos_runtime.evidence.store.SqliteEvidenceStore._append_with_scheme``), so
+#: the record's own fields are one level down. Reading the outer object instead
+#: finds ``outcome_type``/``capsule_id`` absent and silently turns every
+#: emitted no-action into an unmappable outcome — the first cut did exactly
+#: that, and its tests missed it because they wrote flat rows (Claude lane
+#: BLOCKER B1, 2026-10-14). The committed fixture in
+#: ``tos/runtime/tests/fixtures/cp3-session-store-reads.json`` now carries
+#: bytes the REAL store wrote, and both sides check against them.
+EVIDENCE_PAYLOAD_KEY = "payload"
 
 #: The engine evidence kinds that TERMINATE one decision pass — exactly one of
 #: these is recorded per ``DECISION_TICK`` (``tos.engine.vocabulary
@@ -135,13 +198,24 @@ FLOW_KINDS: tuple[str, ...] = (
 #: ``denied = flow_halt is HaltReason.AT_MOST_ONE_EXPOSURE_HELD``).
 CAPACITY_DENIAL_HALT_REASON = "AT_MOST_ONE_EXPOSURE_HELD"
 
-#: ``outcome_type`` (the emitted outcome's class name) -> B1b's ``outcome_kind``
-#: token. Only the no-action case is derivable from the durable record: a
-#: ``Proposal`` is ACTION or FLAT depending on its ``position_effect``, which
-#: the evidence record does not carry (it records ``outcome_type`` and
-#: ``outcome_digest`` only). :func:`_live_outcome_kind` refuses rather than
-#: guessing, and says what would have to change.
+#: ``outcome_type`` (the emitted outcome's class name) -> the token this side
+#: reports. ``NoActionOutcome`` is exactly B1b's ``NO_ACTION``; every other
+#: emitted outcome is a Proposal, and whether that is B1b's ACTION or its FLAT
+#: turns on the proposal's ``position_effect``, which NO durable record carries
+#: — measured, not assumed: ``position_effect`` does not occur anywhere in
+#: ``tos/src/tos/engine/*.py``, so neither the decision record nor any
+#: commitment-flow record stores it.
+#:
+#: So the live side says :data:`PROPOSAL_KIND` — "an outcome was emitted and it
+#: was not a no-action" — instead of refusing the whole document over one bar
+#: (Claude lane MEDIUM M3) or guessing which of the two it was. B3 treats it as
+#: a KIND-ONLY match against an offline ACTION or FLAT and counts those bars
+#: separately, so the half that is known is used and the half that is not is
+#: visible.
 OUTCOME_TYPE_TO_KIND: Mapping[str, str] = {"NoActionOutcome": "NO_ACTION"}
+
+#: An emitted Proposal whose ACTION/FLAT half the durable record cannot say.
+PROPOSAL_KIND = "PROPOSAL"
 
 #: A tick that ended without an emitted outcome is not one of B1b's three
 #: decision kinds, and B1b itself refuses to call it a fourth
@@ -406,6 +480,51 @@ def unpaired_reasons(
     return reasons
 
 
+def consumed_value_view_counts(
+    *, data_dir: Path, by_snapshot: Mapping[str, str]
+) -> dict[str, Any]:
+    """M5's first count: how the runtime's values stood when it consumed a line.
+
+    Plan §5 M5 asks for "lines consumed STALE". The durable side can answer it,
+    and this is exactly how far it can: every admitted tick carries the
+    resolver's ``value_view``, and that view is either absent (no view
+    published), explicitly empty (resolved, nothing admissible) or populated.
+    At this tenant's ``max_age_ms`` of 800 an empty view is what a stale line
+    produces — the runbook §7.2-c argument — but the view records "nothing was
+    admissible", not "stale", so the key is named for what the store says and
+    the note carries the inference.
+
+    The ids with admitted values are listed rather than the ones without: at
+    genesis the second list is expected to be every line, and a list of
+    everything is not a finding.
+    """
+    ticks = read_decision_ticks(data_dir)
+    counts = {"no_view": 0, "empty_view": 0, "values_admitted": 0}
+    with_values: list[str] = []
+    for tick in ticks:
+        raw_event_id = by_snapshot.get(tick.snapshot_id)
+        if tick.admitted_values is None:
+            counts["no_view"] += 1
+        elif tick.admitted_values == 0:
+            counts["empty_view"] += 1
+        else:
+            counts["values_admitted"] += 1
+            if raw_event_id is not None:
+                with_values.append(raw_event_id)
+    return {
+        "counts": counts,
+        "raw_event_ids_with_admitted_values": sorted(with_values),
+        "note": (
+            "per admitted DECISION_TICK, the shape of the resolver's "
+            "value_view. empty_view = 'the binding resolved and nothing was "
+            "admissible', which at max_age_ms 800 is the STALE shape (runbook "
+            "§7.2-c); no_view = the resolver published none at all. Neither "
+            "key claims the word 'stale' — the store does not record it — so "
+            "M5's first count is empty_view + no_view with that reading stated"
+        ),
+    }
+
+
 def build_consumed_ids_document(
     *,
     data_dir: Path,
@@ -458,6 +577,12 @@ def build_consumed_ids_document(
         "raw_event_ids": sorted(consumed),
         "unpaired_reasons": dict(sorted(reasons.items())),
         "unpaired_reason_counts": dict(sorted(reason_counts.items())),
+        "consumed_value_view": consumed_value_view_counts(
+            data_dir=data_dir,
+            by_snapshot={
+                snapshot.snapshot_id: snapshot.raw_event_id for snapshot in snapshots
+            },
+        ),
     }
 
 
@@ -474,6 +599,47 @@ class DecisionBlock:
     kind: str
     payload: dict[str, Any]
     flow: tuple[tuple[str, dict[str, Any]], ...]
+
+    @property
+    def capsule_id(self) -> str | None:
+        """The capsule this decision consumed, when the record names one.
+
+        ``DECISION_OUTCOME_EMITTED`` carries it (``pipeline.py`` copies it off
+        the recorded input signature); ``DECISION_WITHHELD`` and the
+        Coordinator's refusal do not — the pipeline never reached a signature.
+        That is why the attribution below is keyed where a key exists and
+        positional only where one cannot exist.
+        """
+        value = self.payload.get("capsule_id")
+        return None if value is None else str(value)
+
+
+def _evidence_record(payload_json: str, *, seq: int, kind: str) -> dict[str, Any]:
+    """The engine record inside one ``entries.payload_json``.
+
+    The store wraps it: ``{"payload": …, "masked_keys": […]}``
+    (:data:`EVIDENCE_PAYLOAD_KEY`). Reading the wrapper as if it were the
+    record finds every field absent and says so nowhere — the BLOCKER this
+    refusal replaces. An entry without the wrapper is a store this extractor
+    was not written for, and that is a refusal, not a fallback.
+    """
+    outer = json.loads(payload_json)
+    if not isinstance(outer, dict) or EVIDENCE_PAYLOAD_KEY not in outer:
+        raise SessionInputsError(
+            f"evidence seq {seq} ({kind}): payload_json has no "
+            f"{EVIDENCE_PAYLOAD_KEY!r} key. Every entry the store writes is "
+            '{"payload": <record>, "masked_keys": [...]} — a row shaped '
+            "otherwise was not written by SqliteEvidenceStore, and reading it "
+            "as the record itself would find every field absent and report an "
+            "emitted outcome as an empty one"
+        )
+    record = outer[EVIDENCE_PAYLOAD_KEY]
+    if not isinstance(record, dict):
+        raise SessionInputsError(
+            f"evidence seq {seq} ({kind}): payload is {type(record).__name__}, "
+            "not an object"
+        )
+    return record
 
 
 def read_decision_blocks(data_dir: Path) -> tuple[DecisionBlock, ...]:
@@ -511,7 +677,7 @@ def read_decision_blocks(data_dir: Path) -> tuple[DecisionBlock, ...]:
     current: dict[str, Any] | None = None
     flow: list[tuple[str, dict[str, Any]]] = []
     for seq, kind, payload_json in rows:
-        payload = json.loads(payload_json)
+        payload = _evidence_record(payload_json, seq=int(seq), kind=str(kind))
         if kind in DECISION_KINDS:
             if current is not None:
                 blocks.append(
@@ -545,22 +711,27 @@ def read_decision_blocks(data_dir: Path) -> tuple[DecisionBlock, ...]:
 
 
 def _live_outcome_kind(block: DecisionBlock) -> str:
-    """B1b's ``outcome_kind`` token for one live decision block."""
+    """The token for one live decision block.
+
+    ``NO_OUTCOME`` for a pass that emitted nothing, ``NO_ACTION`` for an
+    emitted no-action, and :data:`PROPOSAL_KIND` for any other emitted outcome
+    — the durable record says an outcome was emitted and cannot say whether it
+    was B1b's ACTION or its FLAT, so this names exactly that much. Refusing
+    instead (the first cut) threw away the whole document over one bar; naming
+    ACTION or FLAT would be this module deciding what the engine decided.
+    """
     if block.kind != "DECISION_OUTCOME_EMITTED":
         return NO_OUTCOME_KIND
     outcome_type = block.payload.get("outcome_type")
-    kind = OUTCOME_TYPE_TO_KIND.get(str(outcome_type))
-    if kind is None:
+    if outcome_type is None:
         raise SessionInputsError(
-            f"evidence seq {block.seq}: outcome_type {outcome_type!r} is not one "
-            "this extractor can map to a B1b decision kind. Only "
-            f"{sorted(OUTCOME_TYPE_TO_KIND)} is derivable from the durable "
-            "record: a Proposal is ACTION or FLAT by its position_effect, which "
-            "EngineEvidenceRecord does not carry (it records outcome_type and "
-            "outcome_digest). Labelling it either way would be this module "
-            "deciding what the engine decided"
+            f"evidence seq {block.seq}: an emitted-outcome record with no "
+            "outcome_type. Every DECISION_OUTCOME_EMITTED record the pipeline "
+            "writes carries one, so this row is not one of them (a wrapper "
+            "read as the record looks exactly like this — see "
+            f"{EVIDENCE_PAYLOAD_KEY!r})"
         )
-    return kind
+    return OUTCOME_TYPE_TO_KIND.get(str(outcome_type), PROPOSAL_KIND)
 
 
 def _flow_halt_reason(block: DecisionBlock) -> str | None:
@@ -571,11 +742,170 @@ def _flow_halt_reason(block: DecisionBlock) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class DecisionTick:
+    """One admitted ``DECISION_TICK`` event: the KEY from a decision to a bar."""
+
+    seq: int
+    capsule_id: str
+    snapshot_id: str
+    #: How many Critical Input values the resolver ADMITTED for this tick, or
+    #: ``None`` when it published no view at all (plan §5 M5 — see
+    #: :func:`consumed_value_view_counts`).
+    admitted_values: int | None
+
+
+def _dig(payload: Mapping[str, Any], path: Sequence[str]) -> Any:
+    value: Any = payload
+    for key in path:
+        if not isinstance(value, Mapping) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
+    """Every admitted market tick, in admission order, with its two ids.
+
+    This is the link the evidence store does not carry. The scheduler issues a
+    snapshot, binds it into a capsule and hands the engine ONE
+    ``DECISION_TICK`` event (``marketfeed/scheduler.py::tick_once``); the
+    driver admits that event durably before processing it
+    (``engine/driver.py::enqueue_and_run`` -> ``SqliteEventInbox.enqueue``),
+    and the stored ``payload_json`` is the whole event — capsule id and
+    ``SnapshotRef`` included. So ``decision.capsule_id -> tick.snapshot_id ->
+    preimages.raw_event_id`` is a keyed join over durable rows, and the
+    ordered pairing the first cut used is needed only where no key can exist.
+
+    Raises:
+        SessionInputsError: A tick event carries no capsule or snapshot id, or
+            two ticks share one capsule id. Both make the key useless, and a
+            key that is sometimes ambiguous is not a key.
+    """
+    conn = _connect_ro(
+        data_dir / INBOX_FILE_NAME,
+        label="inbox",
+        pinned_version=PINNED_INBOX_SCHEMA_VERSION,
+    )
+    try:
+        rows = list(
+            conn.execute(
+                "SELECT seq, payload_json FROM events WHERE kind = ? ORDER BY seq",
+                (DECISION_TICK_EVENT_KIND,),
+            )
+        )
+    finally:
+        conn.close()
+
+    ticks: list[DecisionTick] = []
+    seen: dict[str, int] = {}
+    for seq, payload_json in rows:
+        payload = json.loads(payload_json)
+        capsule_id = _dig(payload, TICK_CAPSULE_PATH)
+        snapshot_id = _dig(payload, TICK_SNAPSHOT_PATH)
+        if not isinstance(capsule_id, str) or not isinstance(snapshot_id, str):
+            raise SessionInputsError(
+                f"inbox seq {seq}: a {DECISION_TICK_EVENT_KIND} event with no "
+                f"{'.'.join(TICK_CAPSULE_PATH)} / {'.'.join(TICK_SNAPSHOT_PATH)}. "
+                "Those two are what tie a decision to its bar; without them "
+                "this extractor would be back to guessing by position"
+            )
+        if capsule_id in seen:
+            raise SessionInputsError(
+                f"inbox seq {seq}: capsule {capsule_id!r} was already admitted "
+                f"at seq {seen[capsule_id]} — a capsule id that names two ticks "
+                "cannot attribute a decision to one of them"
+            )
+        seen[capsule_id] = int(seq)
+        view = _dig(payload, TICK_VALUE_VIEW_PATH)
+        values = None if view is None else _dig(view, ("values",))
+        ticks.append(
+            DecisionTick(
+                seq=int(seq),
+                capsule_id=capsule_id,
+                snapshot_id=snapshot_id,
+                admitted_values=None if values is None else len(values),
+            )
+        )
+    return tuple(ticks)
+
+
+def _attribute(
+    blocks: Sequence[DecisionBlock], ticks: Sequence[DecisionTick]
+) -> list[tuple[DecisionBlock, DecisionTick, str]]:
+    """Pair each decision with the tick it was about: by key, else by position.
+
+    ``DECISION_OUTCOME_EMITTED`` names its capsule, so that pairing is a
+    lookup and survives a shifted sequence. ``DECISION_WITHHELD`` and the
+    Coordinator's refusal name none — the pipeline never reached a signature —
+    so those take the next tick no keyed decision has claimed, and the
+    strictly-increasing check below is what stops a silent shift from moving
+    them onto someone else's bar.
+
+    Raises:
+        SessionInputsError: a decision names a capsule the inbox never
+            admitted; two decisions land on one tick; or an unkeyed decision
+            has no tick left to take.
+    """
+    by_capsule = {tick.capsule_id: (index, tick) for index, tick in enumerate(ticks)}
+    assigned: dict[int, tuple[int, str]] = {}  # block position -> (tick index, how)
+    used: dict[int, int] = {}  # tick index -> evidence seq
+
+    # Pass 1 — every decision that names a capsule, by key. Keyed first and in
+    # their own pass, so an unkeyed record earlier in the file cannot take a
+    # tick that a later keyed record names: the fallback must only ever see
+    # ticks no key claims.
+    for position, block in enumerate(blocks):
+        capsule_id = block.capsule_id
+        if capsule_id is None:
+            continue
+        found = by_capsule.get(capsule_id)
+        if found is None:
+            raise SessionInputsError(
+                f"evidence seq {block.seq}: capsule {capsule_id!r} is not one "
+                "the inbox admitted. The decision and the tick stores "
+                "disagree about what this session processed"
+            )
+        index, tick = found
+        if index in used:
+            raise SessionInputsError(
+                f"evidence seq {block.seq} and seq {used[index]} both attribute "
+                f"to inbox seq {tick.seq} — one tick, two decisions"
+            )
+        used[index] = block.seq
+        assigned[position] = (index, "capsule_id")
+
+    # Pass 2 — the rest, in file order, onto the ticks left over in theirs.
+    spare = iter(index for index in range(len(ticks)) if index not in used)
+    for position, block in enumerate(blocks):
+        if position in assigned:
+            continue
+        index = next(spare, -1)
+        if index < 0:
+            raise SessionInputsError(
+                f"evidence seq {block.seq}: a {block.kind} record carries no "
+                "capsule id and every admitted tick already has a decision. "
+                "There is no bar left for it, and attributing it to one "
+                "anyway would be inventing the attribution this join exists "
+                "to avoid"
+            )
+        used[index] = block.seq
+        assigned[position] = (index, "position")
+
+    return [
+        (block, ticks[assigned[position][0]], assigned[position][1])
+        for position, block in enumerate(blocks)
+    ]
+
+
 def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
     """One record per live decision, in B1b's trace shape.
 
     The keys B3 reads from a trace line — ``raw_event_id``, ``as_of_ms``,
-    ``outcome_kind``, ``rule_id``, ``capacity_denied`` — are all present.
+    ``outcome_kind``, ``rule_id``, ``capacity_denied`` — are all present, and
+    each record also says HOW it was attributed (``attributed_by``), because
+    "by key" and "by position" are not the same claim.
+
     ``rule_id`` is always ``null`` and says so in the sidecar: B1b resolves it
     from the emitted outcome's ``rationale`` through the authored policy's rule
     index, and the rationale is on the in-memory outcome, not in the durable
@@ -587,20 +917,19 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
     ``as_of_ms``; B3 does not compare them.
     """
     snapshots = read_snapshots(data_dir)
-    blocks = read_decision_blocks(data_dir)
-    if len(snapshots) != len(blocks):
-        raise SessionInputsError(
-            f"the session issued {len(snapshots)} snapshot(s) but recorded "
-            f"{len(blocks)} decision(s). The pairing is ordered — the k-th "
-            "decision belongs to the k-th snapshot — so unequal counts mean a "
-            "tick was queued without being run (a held runtime), or a decision "
-            "was recorded for something other than a market tick. Either way "
-            "the bar each decision was about is not decidable from these two "
-            "stores"
-        )
     _assert_one_instrument(snapshots)
+    by_snapshot = {snapshot.snapshot_id: snapshot for snapshot in snapshots}
+    ticks = read_decision_ticks(data_dir)
+    blocks = read_decision_blocks(data_dir)
     records: list[dict[str, Any]] = []
-    for index, (snapshot, block) in enumerate(zip(snapshots, blocks)):
+    for index, (block, tick, how) in enumerate(_attribute(blocks, ticks)):
+        snapshot = by_snapshot.get(tick.snapshot_id)
+        if snapshot is None:
+            raise SessionInputsError(
+                f"inbox seq {tick.seq} names snapshot {tick.snapshot_id!r}, which "
+                "the marketfeed store does not hold. The tick was admitted and "
+                "its snapshot is gone, so the bar it was about is not knowable"
+            )
         flow_halt = _flow_halt_reason(block)
         records.append(
             {
@@ -613,24 +942,33 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
                 "flow_halt_reason": flow_halt,
                 "capacity_denied": flow_halt == CAPACITY_DENIAL_HALT_REASON,
                 "handed_off": any(kind == "SEND_HANDED_OFF" for kind, _ in block.flow),
+                "attributed_by": how,
                 "evidence_seq": block.seq,
                 "evidence_kind": block.kind,
+                "inbox_seq": tick.seq,
                 "snapshot_id": snapshot.snapshot_id,
                 "outcome_digest": block.payload.get("outcome_digest"),
-                "capsule_id": block.payload.get("capsule_id"),
+                "capsule_id": block.capsule_id,
             }
         )
     return records
 
 
 def build_live_lineage(
-    *, data_dir: Path, records: Sequence[Mapping[str, Any]], payload: bytes
+    *,
+    data_dir: Path,
+    records: Sequence[Mapping[str, Any]],
+    payload: bytes,
+    ticks: int,
 ) -> dict[str, Any]:
     """The sidecar B3 reads beside ``live.jsonl``."""
     kinds: dict[str, int] = {}
+    attribution: dict[str, int] = {}
     for record in records:
         kind = str(record["outcome_kind"])
         kinds[kind] = kinds.get(kind, 0) + 1
+        how = str(record["attributed_by"])
+        attribution[how] = attribution.get(how, 0) + 1
     return {
         "schema_version": SCHEMA_VERSION,
         "source_id": SOURCE_ID,
@@ -641,12 +979,33 @@ def build_live_lineage(
             "evidence_schema_version": PINNED_EVIDENCE_SCHEMA_VERSION,
             "marketfeed_sqlite3": _file_ref(data_dir / MARKETFEED_FILE_NAME),
             "marketfeed_schema_version": PINNED_MARKETFEED_SCHEMA_VERSION,
+            "inbox_sqlite3": _file_ref(data_dir / INBOX_FILE_NAME),
+            "inbox_schema_version": PINNED_INBOX_SCHEMA_VERSION,
         },
         "join": {
-            "method": "ordered_snapshot_to_decision",
+            "method": "capsule_id_keyed_with_positional_fallback",
+            "key": (
+                "decision.capsule_id -> inbox DECISION_TICK "
+                "decision_tick.capsule.capsule_id -> "
+                "critical_input_snapshot.snapshot_id -> preimages.raw_event_id"
+            ),
+            "fallback": (
+                "a DECISION_WITHHELD or COORDINATOR_PRECONDITION_REFUSED record "
+                "names no capsule (the pipeline never reached a signature), so "
+                "it takes the next tick no keyed decision claimed; the "
+                "attributed_by field on every record says which of the two it "
+                "was"
+            ),
             "guard": (
-                "equal counts, one instrument, exactly one preimage row per "
-                "snapshot — any of these failing is a refusal"
+                "a capsule the inbox never admitted, two decisions on one tick, "
+                "an unkeyed decision with no tick left, a tick whose snapshot "
+                "the marketfeed store does not hold, one instrument, exactly "
+                "one preimage row per snapshot — each is a refusal"
+            ),
+            "cross_check": (
+                "admitted ticks vs decisions is REPORTED, not refused: a tick "
+                "queued and never run (a held runtime) leaves a real, keyed "
+                "answer for every decision that did run"
             ),
             "rule_id": (
                 "always null: B1b resolves it from the emitted outcome's "
@@ -661,7 +1020,12 @@ def build_live_lineage(
             "live_jsonl_sha256": hashlib.sha256(payload).hexdigest(),
             "live_jsonl_lines": len(records),
         },
-        "counts": {"outcome_kinds": dict(sorted(kinds.items()))},
+        "counts": {
+            "outcome_kinds": dict(sorted(kinds.items())),
+            "attributed_by": dict(sorted(attribution.items())),
+            "admitted_decision_ticks": ticks,
+            "ticks_without_a_decision": ticks - len(records),
+        },
     }
 
 
@@ -755,11 +1119,17 @@ def main(argv: list[str] | None = None) -> int:
         records = live_decision_records(args.data_dir)
         payload = render_jsonl(records)
         lineage = build_live_lineage(
-            data_dir=args.data_dir, records=records, payload=payload
+            data_dir=args.data_dir,
+            records=records,
+            payload=payload,
+            ticks=len(read_decision_ticks(args.data_dir)),
         )
         _write(args.out / "live.jsonl", payload)
         _write(args.out / "lineage.json", render_json(lineage))
-        print(f"live-decisions: {len(records)} record(s) -> {args.out}")
+        print(
+            f"live-decisions: {len(records)} record(s) "
+            f"({lineage['counts']['attributed_by']}) -> {args.out}"
+        )
         return 0
     except SessionInputsError as exc:
         print(f"session_inputs: REFUSED — {exc}", file=sys.stderr)
