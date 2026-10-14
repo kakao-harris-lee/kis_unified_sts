@@ -1350,6 +1350,22 @@ TENANT_ENVIRONMENT_LABEL=paper \
    ⛔ GET 전용이다. 생산자의 import 그래프에 `shared.execution` 주문 경로도
    `probes_real_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문 TR 은 0 건이어야
    하고, 그 0 은 세션 뒤 요청 로그로 확인한다.
+   ⛔ **`bash -x` 로 돌리지 않는다 — 돌려도 추적은 나오지 않는다**(Codex 리뷰 HIGH,
+   2026-10-14). 템플릿은 첫 줄에서 `set +x +v` 를 하고, 그 뒤 자격증명 가드는 값이 아니라
+   **이름**을 본다(`${!name+x}`). 추적을 켠 셸에서 호출해도(`SHELLOPTS=xtrace` 포함) 값이
+   로그에 찍히지 않는다는 뜻이고, 거꾸로 디버깅용 추적은 얻을 수 없다는 뜻이기도 하다 —
+   읽을 것은 `TENANT_LOG` 다(경로·pid·거부 사유가 다 있고 값은 없다).
+
+**⚠ 운영자 단계 — 같은 월물로 두 번째 세션을 돌리면 durable set 을 이어 쓴다.**
+가드(#892)의 **승인된 생산자** 분기에는 「data dir 이 비어 있어야 한다」가 없다 — 비어 있는
+스크래치를 요구하는 것은 **승인되지 않은** 저널일 때의 규칙(규칙 3)이고, 모든 행이
+`tos-cp3-live/…` 이면 지정된 tenant 저장소가 그냥 허용된다. 그래서 같은
+`TENANT_DATA_PARENT`·같은 월물로 두 번째 세션을 돌리면 **기존 코퍼스에 이어 붙는다**
+(append-only 이므로 덮어쓰지는 않는다). 그것이 의도일 때도 있고(하루치를 이어 가는 운영),
+아닐 때도 있다(실험을 섞어 버림). ⛔ 생산자 쪽은 다르다 — `TENANT_PRODUCER_SESSION_DIR` 은
+**매번 새 디렉터리**여야 하고, 기존 파티션이 있으면 생산자가 기동을 거부한다(계획 §3.6
+v4 재리뷰 L2). 요약하면: **저널과 생산자 세션 dir 은 세션마다 새로, durable set 은
+운영자가 의도한 대로.**
 
 **⚠ 운영자 단계 — 개장 지연일에는 tenant 세션을 돌리지 않는다.**
 수능일처럼 개장이 늦춰지는 날이 있다. 그런 날 생산자는 정규 개장 시각 기준으로 세션
@@ -1391,11 +1407,20 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   판단은 운영자의 것이고, 그 디렉터리의 첫 genesis 는 되돌릴 수 없다.
 - 러너는 끝에 생산자 요약(`producer-summary.json`: 계수와 동결 프레임 sha256)과
   durable set 의 `snapshots`·`entries` 분포를 찍는다.
+- **종료 코드**: 0/143 은 정상(정지창까지 간 세션은 우리 stop 경로의 SIGTERM 으로 끝나므로
+  143 이 보통이다) · 3 은 가드·렌더·라벨 등의 ABORT · 4 는 가드 모듈 세대 불일치 ·
+  **5 는 「런타임은 요청대로 끝났는데 생산자가 세션 중에 멈췄다」**(그 분부터 저널이 자라지
+  않았으므로 깨끗한 세션이 아니다 — 계획 §3.5) · 143/130/129 는 받은 신호.
 
 **세션 뒤 — §3.6 대조 (계획 §5 수용 기준).**
 
+추출기는 세션 data dir 의 **세 저장소**를 읽는다: `marketfeed.sqlite3`(소비된 id),
+`evidence.sqlite3`(결정), `inbox.sqlite3`(결정 ↔ 봉을 잇는 **키**. 커널 증거 레코드는
+`capsule_id` 만 들고 있고 inbox 의 `DECISION_TICK` 이벤트가 그 capsule 의 snapshot_id 를
+들고 있다). 셋 다 읽기 전용으로 열고 각자의 `PRAGMA user_version` 을 핀한다.
+
 ```bash
-# ① 런타임이 실제로 소비한 id + 짝 없는 봉의 사유별 계수
+# ① 런타임이 실제로 소비한 id + 짝 없는 봉의 사유별 계수 + M5 의 value_view 계수
 "$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/session_inputs.py" consumed-ids \
   --data-dir "$SESSION/data/$INSTRUMENT" \
   --producer-log "$SESSION/producer/producer-log.jsonl" \
@@ -1422,13 +1447,33 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
 
 - **M5** — 「STALE 로 소비된 줄」과 「소비되지 않은 줄」 둘 다 0 인가. **부팅 전 줄은
   두 계수에서 뺀다**(구조상 소비되지 않는다) — 그 수는 러너 로그의
-  `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있다.
+  `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있고, 그 스냅샷은 **부팅 직전에**
+  다시 찍힌다(가드·렌더 동안 발행된 봉도 부팅 전 줄이다).
+  - 「**STALE 로 소비된 줄**」은 이제 추출기가 센다:
+    `consumed-ids.json` 의 `consumed_value_view.counts` 가 소비된 틱을
+    `no_view`(리졸버가 뷰를 못 냄) · `empty_view`(결속은 됐고 **허용된 값이 0**) ·
+    `values_admitted` 로 가른다. `max_age_ms` 800 에서 `empty_view` 가 STALE 의 모양이고
+    (§7.2-c 의 구조적 논증), 저장소가 적는 말은 「허용된 값이 없다」이지 「stale」이
+    아니므로 키 이름도 그렇게 돼 있다. **M5 의 첫 수 = `empty_view` + `no_view`**,
+    그 읽기를 함께 적는다. 나머지(`values_admitted`)의 id 는 같은 블록에 나열된다 —
+    genesis 에서는 0 건일 것으로 보는 쪽이고, 0 이 아니면 그것이 소견이다.
+  - 「**소비되지 않은 줄**」은 `unpaired_reason_counts` 의 `published_not_consumed` 다
+    (`pre_boot` 와 생산자 사유들은 그 수에서 빠진다).
 - **M6** — `producer-summary.json` 의 `max_stamp_to_replace_s` 가 0.300 미만인가.
 - **B3** — `summary.json` 의 `unresolved.count` 가 0 인가. 대조 범위는
   `session_scope.consumed_id_filter`, 짝 없는 봉은
   `session_scope.unpaired_offline_records_by_reason` 에 사유별로 있다.
   `live_comparison.divergent` 는 **실시간 런타임이 오프라인 리플레이와 다르게 결정한
   봉 수**다 — 0 이 아니면 그것이 소견이고, B3 는 그것을 거부가 아니라 보고로 낸다.
+  `live_comparison.kind_only_matches` 는 **반만 잰** 봉이다: 실시간 쪽이 `PROPOSAL`
+  (「결정이 나왔고 no-action 은 아니다」)이고 오프라인이 ACTION 또는 FLAT 인 경우로,
+  ACTION/FLAT 구분은 어떤 지속 레코드에도 없다(`position_effect` 는 `tos/src/tos/engine`
+  어디에도 없다 — 실측). 정확 일치와 **합치지 않는다**: 합친 수는 「같게 결정했다」로
+  읽히는데 절반은 재지 않았다.
+- **`live.jsonl` 의 귀속** — `lineage.json` 의 `counts.attributed_by` 가
+  `capsule_id`(키 조인)와 `position`(키가 없는 withheld/coordinator 거부)의 수를 가른다.
+  `counts.ticks_without_a_decision` 이 0 이 아니면 큐에만 들어가고 안 돈 틱이 있었다는
+  뜻이다(거부가 아니라 보고 — 돌아간 결정들은 그대로 키로 귀속된다).
 - **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 는 조회
   `FHKIF03020200` 뿐이어야 한다.
 
