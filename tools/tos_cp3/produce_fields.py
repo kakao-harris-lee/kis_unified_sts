@@ -152,6 +152,17 @@ from shared.strategy.exit.setup_target_exit import (  # noqa: E402
     SetupTargetExitConfig,
 )
 from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
+from tools.tos_cp3.stitch import (  # noqa: E402
+    STITCH_FILENAME,
+    StitchError,
+    StitchJunction,
+    StitchManifest,
+    assert_recomputed,
+    derive_junction,
+    load_manifest,
+    segment_offsets_x100,
+    shift_price_x100,
+)
 
 #: Lineage schema version — separate from the tool version so a reader can
 #: tell "values may differ" from "the sidecar is shaped differently".
@@ -500,6 +511,35 @@ def discover_input_files(
     return found
 
 
+def _apply_density_gate(df: Any, *, min_bars_per_day: int, loaded: int) -> Any:
+    """Drop whole sessions thinner than *min_bars_per_day*. ONE body.
+
+    Called by :func:`load_bars` (single contract) and by
+    :func:`load_stitched_bars` (cross-contract, plan §3.2a). Shared rather than
+    copied because the gate decides WHICH DAYS enter the frame: two copies
+    could come to keep different sessions, and a producer seeded from a
+    different set of sessions than the offline run it is compared against
+    makes B3 diverge for a reason that looks like a field defect (plan §3.2
+    「밀도 게이트를 B1a 와 같게」).
+
+    Args:
+        loaded: the PRE-gate row count, for the refusal message only.
+    """
+    if min_bars_per_day <= 0:
+        return df
+    bars_per_day = df.groupby(df["timestamp"].dt.date).size()
+    healthy = set(bars_per_day[bars_per_day >= min_bars_per_day].index)
+    gated = df[df["timestamp"].dt.date.map(lambda d: d in healthy)].reset_index(
+        drop=True
+    )
+    if gated.empty:
+        raise ProduceFieldsError(
+            f"the --min-bars-per-day {min_bars_per_day} density gate dropped "
+            f"every one of the {loaded} loaded bars"
+        )
+    return gated
+
+
 def load_bars(
     data_root: Path,
     *,
@@ -534,18 +574,214 @@ def load_bars(
         .reset_index(drop=True)
     )
     loaded = int(len(df))
-    if min_bars_per_day > 0:
-        bars_per_day = df.groupby(df["timestamp"].dt.date).size()
-        healthy = set(bars_per_day[bars_per_day >= min_bars_per_day].index)
-        df = df[df["timestamp"].dt.date.map(lambda d: d in healthy)].reset_index(
-            drop=True
+    # ONE gate body, shared with the stitched loader (review MEDIUM-2). The
+    # first cut copied these lines into a second function for the stitched
+    # path and left this one in place, so the two could drift into keeping
+    # different sessions — the exact divergence the gate exists to prevent.
+    gated = _apply_density_gate(df, min_bars_per_day=min_bars_per_day, loaded=loaded)
+    return gated, loaded
+
+
+# ---------------------------------------------------------------------------
+# Inputs: the cross-contract (month-stitch) seed — plan §3.2a
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StitchedInputs:
+    """What reading a stitched window produced, beyond the frame itself."""
+
+    manifest: StitchManifest
+    #: Junctions re-derived from the stored UNADJUSTED partitions and asserted
+    #: equal to the manifest's (plan §3.2a MEDIUM-3).
+    recomputed: tuple[StitchJunction, ...]
+    #: ``contract -> offset_x100`` actually applied to that segment's OHLC.
+    offsets_x100: dict[str, int]
+    #: Splice-day NEW-contract partitions, read for the recomputation only and
+    #: deliberately NOT part of the frame (re-review N-3).
+    recompute_input_files: list[InputFile]
+    recompute_bars: int
+
+
+def _segment_day_bars(
+    data_root: Path, *, asset_class: str, contract: str, day: date
+) -> Any:
+    """One ``(contract, day)`` partition, as the project's own store reads it."""
+    store = ParquetMarketDataStore(root=data_root, asset_class=asset_class)
+    df = store.get_minute_bars(contract, start=day, end=day)
+    if df.empty:
+        raise ProduceFieldsError(
+            f"the stitch manifest names ({contract}, {day}) but no bar is "
+            f"stored for that pair under {data_root}"
         )
-        if df.empty:
-            raise ProduceFieldsError(
-                f"the --min-bars-per-day {min_bars_per_day} density gate dropped "
-                f"every one of the {loaded} loaded bars"
+    return df.rename(columns={"datetime": "timestamp"})
+
+
+def _day_partition_files(
+    data_root: Path, *, asset_class: str, contract: str, day: date
+) -> list[InputFile]:
+    return discover_input_files(
+        data_root, asset_class=asset_class, symbol=contract, start=day, end=day
+    )
+
+
+def load_stitched_bars(
+    data_root: Path,
+    *,
+    asset_class: str,
+    manifest: StitchManifest,
+    min_bars_per_day: int,
+) -> tuple[Any, int, list[InputFile], StitchedInputs]:
+    """Read exactly the manifest's ``(contract, day)`` pairs and align them.
+
+    Never a date-range glob (plan §3.2a 「구간에 적힌 (월물, 거래일) 쌍만 읽는다」):
+    a session directory holds the previous month's partitions too, and a glob
+    over the target symbol alone would silently drop them while a glob over the
+    tree would silently duplicate the splice day.
+
+    The previous month's OHLC is shifted by the manifest's integer ``c_x100``
+    — volume is untouched — and the splice day's new-contract partition is read
+    ONLY to recompute that constant.
+    """
+    import pandas as pd
+
+    offsets = segment_offsets_x100(manifest)
+    parts: list[Any] = []
+    input_files: list[InputFile] = []
+    loaded = 0
+    for segment in manifest.segments:
+        offset = offsets[segment.contract]
+        for day in segment.days:
+            frame = _segment_day_bars(
+                data_root,
+                asset_class=asset_class,
+                contract=segment.contract,
+                day=day,
             )
-    return df, loaded
+            loaded += int(len(frame))
+            if offset:
+                for column in ("open", "high", "low", "close"):
+                    frame[column] = [
+                        shift_price_x100(value, offset) for value in frame[column]
+                    ]
+            parts.append(frame)
+            input_files.extend(
+                _day_partition_files(
+                    data_root,
+                    asset_class=asset_class,
+                    contract=segment.contract,
+                    day=day,
+                )
+            )
+
+    recomputed, recompute_files, recompute_bars = _recompute_junctions(
+        data_root, asset_class=asset_class, manifest=manifest
+    )
+    assert_recomputed(manifest, recomputed)
+
+    df = (
+        pd.concat(parts, ignore_index=True)
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+    df = _apply_density_gate(df, min_bars_per_day=min_bars_per_day, loaded=loaded)
+    return (
+        df,
+        loaded,
+        input_files,
+        StitchedInputs(
+            manifest=manifest,
+            recomputed=tuple(recomputed),
+            offsets_x100=offsets,
+            recompute_input_files=recompute_files,
+            recompute_bars=recompute_bars,
+        ),
+    )
+
+
+def _recompute_junctions(
+    data_root: Path, *, asset_class: str, manifest: StitchManifest
+) -> tuple[list[StitchJunction], list[InputFile], int]:
+    """Re-derive every junction from the stored UNADJUSTED bars."""
+    recomputed: list[StitchJunction] = []
+    files: list[InputFile] = []
+    bars = 0
+    for junction in manifest.junctions:
+        old = _segment_day_bars(
+            data_root,
+            asset_class=asset_class,
+            contract=junction.old_contract,
+            day=junction.day,
+        )
+        new = _segment_day_bars(
+            data_root,
+            asset_class=asset_class,
+            contract=junction.new_contract,
+            day=junction.day,
+        )
+        bars += int(len(new))
+        files.extend(
+            _day_partition_files(
+                data_root,
+                asset_class=asset_class,
+                contract=junction.new_contract,
+                day=junction.day,
+            )
+        )
+        recomputed.append(
+            derive_junction(
+                day=junction.day,
+                old_contract=junction.old_contract,
+                new_contract=junction.new_contract,
+                old_bars=_as_parse_tuples(old, junction.old_contract),
+                new_bars=_as_parse_tuples(new, junction.new_contract),
+            )
+        )
+    return recomputed, files, bars
+
+
+def _as_parse_tuples(df: Any, contract: str) -> list[tuple]:
+    """A stored frame back in ``parse_ohlcv`` tuple shape, for the ``c`` math."""
+    return [
+        (contract, stamp.to_pydatetime(), 0.0, 0.0, 0.0, float(close), 0)
+        for stamp, close in zip(df["timestamp"], df["close"])
+    ]
+
+
+def resolve_session_manifest(
+    data_root: Path, *, symbol: str, stitch_manifest: Path | None
+) -> StitchManifest | None:
+    """The session-directory refusal rules of plan §3.2a (MEDIUM-1, N-2).
+
+    ``stitch.json`` sits directly under the ``--data-root`` B1a and B2 are
+    given, i.e. ``<session dir>/market/``. A run against that directory that
+    does not pass the manifest would read only the target contract's
+    partitions and silently produce a SHORTER frame than the producer's, so it
+    is refused. A manifest describing another instrument is refused for the
+    same reason: it would align the wrong segment.
+
+    ⛔ Not implemented, by decision: "there are sibling ``code=`` directories,
+    so this must be a stitched tree". The legacy ``data/market`` root always
+    holds several contract months and the check would be a false positive on
+    every legacy run (plan §9 MEDIUM-1).
+    """
+    manifest = load_manifest(stitch_manifest) if stitch_manifest else None
+    in_session = data_root / STITCH_FILENAME
+    if manifest is None and in_session.is_file():
+        raise ProduceFieldsError(
+            f"{in_session} exists but no --stitch-manifest was given. That file "
+            "means the frame under this data root was assembled across contract "
+            "months; reading it without the manifest would quietly load only "
+            f"the {symbol} partitions and compare a short frame against the "
+            "producer's stitched one (plan §3.2a 「세션 dir 거부 규칙」)"
+        )
+    if manifest is not None and manifest.symbol != symbol:
+        raise ProduceFieldsError(
+            f"{stitch_manifest} targets {manifest.symbol!r} but --symbol is "
+            f"{symbol!r}. The manifest decides which segment is the reference "
+            "for the back-adjust, so the wrong one aligns the wrong bars"
+        )
+    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +907,12 @@ class ProducedBars:
     records: list[FieldRecord]
     bars_replayed: int
     omitted: list[tuple[str, str]]  # (raw_event_id, reason)
+    #: Bars replayed from a NON-target stitch segment (plan §3.2a). They
+    #: advance the causal windows and are then dropped without a
+    #: ``raw_event_id``: naming a previous-month bar after this symbol is
+    #: precisely the label error the plan's 「라벨은 진실하게」 rule forbids, so
+    #: they are COUNTED here and never listed by id.
+    non_target_segment_bars: int = 0
 
 
 def _bar_lookup(df: Any) -> dict[Any, tuple[float, float, float, float]]:
@@ -705,6 +947,7 @@ def produce_bars(
     strategy: StrategyInputs,
     contract_spec: ContractSpec,
     anchor: OpenAnchor,
+    emit_days: frozenset[date] | None = None,
 ) -> ProducedBars:
     """Drive the legacy Setup D bar by bar and project its state into fields.
 
@@ -718,6 +961,15 @@ def produce_bars(
     (:func:`_inputs_unusable`) is still EVALUATED — the legacy replay evaluates
     every bar, and the causal deques must advance identically — but is not
     emitted. Its id and reason go into the lineage.
+
+    Args:
+        emit_days: when given, only bars on these KST dates are EMITTED. Every
+            other bar is still replayed — the whole point of a stitched seed is
+            that the previous month's sessions advance ATR, the vol-window
+            percentile and ``prev_close`` — but produces no record, because a
+            previous-month bar carrying a ``raw_event_id`` named after this
+            symbol would be a label error (plan §3.2a). ``None`` keeps the
+            pre-stitch behaviour: every replayed bar is a candidate.
     """
     import pandas as pd
 
@@ -740,12 +992,18 @@ def produce_bars(
     records: list[FieldRecord] = []
     omitted: list[tuple[str, str]] = []
     bars_replayed = 0
+    non_target = 0
     for ctx in replay.iter_contexts():
         setup.check(ctx)
         ev = setup.last_eval
         bars_replayed += 1
 
         now: datetime = ctx.now
+        if emit_days is not None and now.date() not in emit_days:
+            # Replayed (the windows advanced on the check() above) and then
+            # dropped BEFORE a join key is derived — see the docstring.
+            non_target += 1
+            continue
         as_of_ms = derive_as_of_ms(now)
         raw_event_id = derive_raw_event_id(symbol, now)
 
@@ -814,9 +1072,15 @@ def produce_bars(
         raise ProduceFieldsError(
             "replay yielded no publishable bars: a window shorter than the "
             f"{DEFAULT_WARMUP_BARS}-bar replay warmup, a first session with "
-            f"no prior-session close, or {len(omitted)} unusable-input bars"
+            f"no prior-session close, {len(omitted)} unusable-input bars, or "
+            f"{non_target} bars outside the stitch manifest's target segment"
         )
-    return ProducedBars(records=records, bars_replayed=bars_replayed, omitted=omitted)
+    return ProducedBars(
+        records=records,
+        bars_replayed=bars_replayed,
+        omitted=omitted,
+        non_target_segment_bars=non_target,
+    )
 
 
 def produce_records(
@@ -1301,6 +1565,41 @@ def _declared_differences(
     ]
 
 
+def _stitch_lineage(
+    stitch: StitchedInputs | None, non_target_segment_bars: int
+) -> dict[str, Any] | None:
+    """The cross-contract block both B1a and B2 record, or ``None``.
+
+    Shared rather than restated on each side: the two sidecars are compared
+    field by field, and two spellings of the same block is how they would come
+    to disagree about a window they both read correctly.
+    """
+    if stitch is None:
+        return None
+    manifest = stitch.manifest
+    return {
+        "manifest_path": str(manifest.path) if manifest.path else None,
+        "manifest_sha256": manifest.sha256,
+        "method": manifest.method,
+        "symbol": manifest.symbol,
+        "segments": [segment.to_payload() for segment in manifest.segments],
+        "junctions": [junction.to_payload() for junction in manifest.junctions],
+        "recomputed_junctions": [item.to_payload() for item in stitch.recomputed],
+        "offsets_x100": dict(sorted(stitch.offsets_x100.items())),
+        # The splice day's NEW-contract partition. Read to re-derive c_x100 and
+        # deliberately kept OUT of the frame: two contracts' bars on one minute
+        # would hit the duplicate-timestamp refusal (plan §3.2a re-review N-3).
+        "junction_recompute_only_input_files": [
+            {"path": item.path, "sha256": item.sha256, "size_bytes": item.size_bytes}
+            for item in stitch.recompute_input_files
+        ],
+        "junction_recompute_only_bars": stitch.recompute_bars,
+        "target_days": [day.isoformat() for day in sorted(manifest.target_days)],
+        "non_target_segment_bars_replayed_not_emitted": non_target_segment_bars,
+        "source_sha256": dict(sorted(manifest.source_sha256.items())),
+    }
+
+
 def build_lineage(
     *,
     produced: ProducedBars,
@@ -1318,6 +1617,7 @@ def build_lineage(
     warmup_skipped: int,
     first_session_dropped: int,
     input_files: list[InputFile],
+    stitch: StitchedInputs | None = None,
 ) -> dict[str, Any]:
     """Assemble the lineage sidecar.
 
@@ -1336,6 +1636,19 @@ def build_lineage(
             f"{bars_after_density_gate} after the density gate minus "
             f"{dropped_before_replay} dropped before replay != "
             f"{produced.bars_replayed} replayed"
+        )
+    # The second half of the chain, which B2 has always asserted and this side
+    # did not. It became load-bearing with the stitch segment counter (plan
+    # §3.2a): a replayed bar now leaves by one of exactly three doors —
+    # emitted, omitted as unusable, or dropped as non-target — and a counter
+    # that misses one would publish a lineage whose own numbers do not add up
+    # while B3 compared the file happily.
+    accounted = len(records) + len(produced.omitted) + produced.non_target_segment_bars
+    if accounted != produced.bars_replayed:
+        raise ProduceFieldsError(
+            f"{produced.bars_replayed} replayed != {len(records)} emitted + "
+            f"{len(produced.omitted)} omitted + "
+            f"{produced.non_target_segment_bars} non-target stitch-segment bars"
         )
     if bars_loaded > 0 and not input_files:
         raise ProduceFieldsError(
@@ -1405,6 +1718,13 @@ def build_lineage(
                 for item in input_files
             ],
             "input_file_count": len(input_files),
+            # Plan §3.2a: part of B3's WINDOW IDENTITY, so it is present on
+            # EVERY run. ``None`` means "no manifest" (a legacy data root) —
+            # NOT "no splice": the producer writes ``stitch.json`` even on a
+            # day with zero junctions, so a producer session is always
+            # non-null and a legacy B2 paired with a stitched B1a is refused.
+            "stitch_manifest_sha256": stitch.manifest.sha256 if stitch else None,
+            "stitch": _stitch_lineage(stitch, produced.non_target_segment_bars),
         },
         "strategy": {
             "path": str(strategy.path),
@@ -1626,6 +1946,18 @@ class LoadedWindow:
     bars_loaded: int
     anchor: OpenAnchor
     input_files: list[InputFile]
+    #: Present only for a stitched window (plan §3.2a); ``None`` otherwise.
+    stitch: StitchedInputs | None = None
+
+    @property
+    def emit_days(self) -> frozenset[date] | None:
+        """The days whose bars may be EMITTED, or ``None`` for every day."""
+        return self.stitch.manifest.target_days if self.stitch else None
+
+    @property
+    def stitch_manifest_sha256(self) -> str | None:
+        """The identity B3 compares. ``None`` = no manifest (legacy data root)."""
+        return self.stitch.manifest.sha256 if self.stitch else None
 
 
 def load_window(
@@ -1637,6 +1969,7 @@ def load_window(
     strategy_yaml: Path,
     min_bars_per_day: int,
     market_open: str,
+    stitch_manifest: Path | None = None,
 ) -> LoadedWindow:
     """Resolve strategy, contract, bars and open anchor for one window.
 
@@ -1644,27 +1977,62 @@ def load_window(
     taken over exactly the window a produce would use — a second, slightly
     different loader here is how the number in the sidecar would come to
     describe a window nobody published.
+
+    **It is also the ONE alignment function** (plan §3.2a HIGH-1). B2
+    (``tools/tos_cp3/emit_legacy_decisions.py``) builds its frame through this
+    very call and the live producer reuses the same helpers, so a stitched
+    seed does not need three implementations to agree — there is one. Had the
+    alignment been a B1a flag instead, every stitched session would have been
+    an automatic B3 refusal on input digests and line counts.
+
+    Args:
+        stitch_manifest: path to a ``stitch.json``. With it, the frame is read
+            from exactly the manifest's ``(contract, day)`` pairs, the older
+            contract's OHLC is shifted by the integer ``c_x100``, and the
+            constant is re-derived from the stored bars and asserted against
+            the manifest.
     """
     strategy = load_strategy_inputs(strategy_yaml)
     registry = ContractSpecRegistry.from_yaml(str(REPO_ROOT / "config/execution.yaml"))
     contract_spec = resolve_contract_spec(symbol, registry)
     _assert_scale_covers_tick(contract_spec, PRICE_SCALE)
 
-    input_files = discover_input_files(
-        data_root,
-        asset_class=strategy.asset_class,
-        symbol=symbol,
-        start=start,
-        end=end,
-    )
-    df, bars_loaded = load_bars(
-        data_root,
-        asset_class=strategy.asset_class,
-        symbol=symbol,
-        start=start,
-        end=end,
-        min_bars_per_day=min_bars_per_day,
-    )
+    try:
+        manifest = resolve_session_manifest(
+            data_root, symbol=symbol, stitch_manifest=stitch_manifest
+        )
+    except StitchError as exc:
+        raise ProduceFieldsError(str(exc)) from exc
+
+    if manifest is None:
+        input_files = discover_input_files(
+            data_root,
+            asset_class=strategy.asset_class,
+            symbol=symbol,
+            start=start,
+            end=end,
+        )
+        df, bars_loaded = load_bars(
+            data_root,
+            asset_class=strategy.asset_class,
+            symbol=symbol,
+            start=start,
+            end=end,
+            min_bars_per_day=min_bars_per_day,
+        )
+        stitch = None
+    else:
+        _assert_window_matches_manifest(manifest, start=start, end=end)
+        try:
+            df, bars_loaded, input_files, stitch = load_stitched_bars(
+                data_root,
+                asset_class=strategy.asset_class,
+                manifest=manifest,
+                min_bars_per_day=min_bars_per_day,
+            )
+        except StitchError as exc:
+            raise ProduceFieldsError(str(exc)) from exc
+
     session_dates = df["timestamp"].dt.date
     anchor = resolve_open_anchor(
         cli_value=market_open,
@@ -1678,7 +2046,38 @@ def load_window(
         bars_loaded=bars_loaded,
         anchor=anchor,
         input_files=input_files,
+        stitch=stitch,
     )
+
+
+def _assert_window_matches_manifest(
+    manifest: StitchManifest, *, start: date, end: date
+) -> None:
+    """``--start``/``--end`` must be EXACTLY the manifest's span.
+
+    The manifest, not the date range, selects the partitions — but the range
+    is half of B3's window identity (``window_start`` / ``window_end``), so
+    the declared window has to be true of the frame that was actually read.
+
+    **Both directions are refused** (review LOW-1). Narrower was always
+    refused: the manifest would reach outside the window it claims. Wider was
+    accepted by the first cut and is just as wrong in the direction that
+    matters — ``--start 2026-09-01`` over a manifest beginning 2026-10-02
+    publishes a sidecar claiming a September window, and because B1a and B2
+    take the SAME flag they would both claim it, so B3 compares two equal
+    labels and never notices. The check has to be here or nowhere. There is no
+    case for a wider window: with a manifest the span IS the manifest's, and a
+    caller who wants a different one wants a different manifest.
+    """
+    days = manifest.all_days
+    if (start, end) != (days[0], days[-1]):
+        raise ProduceFieldsError(
+            f"--start {start} --end {end} is not the stitch manifest's own span "
+            f"{days[0]}..{days[-1]}. The declared window is half of what B3 "
+            "compares and both sides take this same flag, so a window that is "
+            "not exactly the manifest's would be agreed on by both and caught "
+            "by neither"
+        )
 
 
 def render_d7_literal(measurement: dict[str, Any]) -> str:
@@ -1703,6 +2102,7 @@ def run(
     out_dir: Path,
     min_bars_per_day: int = DEFAULT_MIN_BARS_PER_DAY,
     market_open: str = "auto",
+    stitch_manifest: Path | None = None,
 ) -> RunResult:
     """Produce the field JSONL and lineage sidecar for one dataset window."""
     window = load_window(
@@ -1713,6 +2113,7 @@ def run(
         strategy_yaml=strategy_yaml,
         min_bars_per_day=min_bars_per_day,
         market_open=market_open,
+        stitch_manifest=stitch_manifest,
     )
     strategy = window.strategy
     contract_spec = window.contract_spec
@@ -1728,6 +2129,7 @@ def run(
         strategy=strategy,
         contract_spec=contract_spec,
         anchor=anchor,
+        emit_days=window.emit_days,
     )
     jsonl_bytes = render_jsonl(produced.records)
     lineage = build_lineage(
@@ -1746,6 +2148,7 @@ def run(
         warmup_skipped=warmup_skipped,
         first_session_dropped=first_session_dropped,
         input_files=input_files,
+        stitch=window.stitch,
     )
     lineage_bytes = render_lineage(lineage)
 
@@ -1837,6 +2240,20 @@ def build_parser() -> argparse.ArgumentParser:
             "refused."
         ),
     )
+    parser.add_argument(
+        "--stitch-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a cross-contract seed manifest (stitch.json, plan 3.2a). "
+            "With it the frame is read from exactly the manifest's "
+            "(contract, day) pairs and the previous month's OHLC is shifted by "
+            "the manifest's integer c_x100; the constant is re-derived from the "
+            "stored bars and the run refuses if it disagrees. REQUIRED when a "
+            "stitch.json sits directly under --data-root, and must match the "
+            "B2 run this artifact is joined to."
+        ),
+    )
     return parser
 
 
@@ -1853,6 +2270,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategy_yaml=args.strategy_yaml,
                 min_bars_per_day=args.min_bars_per_day,
                 market_open=args.market_open,
+                stitch_manifest=args.stitch_manifest,
             )
             measurement = measure_moving_vs_frozen_exit(
                 window.df,
@@ -1883,6 +2301,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=args.out,
             min_bars_per_day=args.min_bars_per_day,
             market_open=args.market_open,
+            stitch_manifest=args.stitch_manifest,
         )
     except ProduceFieldsError as exc:
         print(f"produce_fields: {exc}", file=sys.stderr)
@@ -1905,7 +2324,25 @@ def main(argv: list[str] | None = None) -> int:
         f"({lineage['strategy']['market_open_source']})"
     )
     print(f"input parquet files: {dataset['input_file_count']}")
+    print(_stitch_summary_line(dataset))
     return 0
+
+
+def _stitch_summary_line(dataset: dict[str, Any]) -> str:
+    """One line naming the splice, so a stitched run is never mistaken for one."""
+    stitch = dataset.get("stitch")
+    if stitch is None:
+        return "stitch: none (single-contract window)"
+    segments = " + ".join(
+        f"{segment['contract']}x{len(segment['days'])}"
+        for segment in stitch["segments"]
+    )
+    junctions = [item["c_x100"] for item in stitch["junctions"]]
+    return (
+        f"stitch: {segments} | junction c_x100 {junctions} | "
+        f"non-target bars replayed but not emitted "
+        f"{stitch['non_target_segment_bars_replayed_not_emitted']}"
+    )
 
 
 if __name__ == "__main__":

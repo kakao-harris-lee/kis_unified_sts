@@ -470,6 +470,11 @@ def test_two_runs_write_byte_identical_artifacts(
         "min_bars_per_day": produce_fields.DEFAULT_MIN_BARS_PER_DAY,
         "window_start": SESSIONS[0].isoformat(),
         "window_end": SESSIONS[-1].isoformat(),
+        # Plan §3.2a: present on every run, None when no stitch manifest was
+        # given. None means "no manifest", NOT "no splice" — a producer session
+        # always has one, so a None here paired with a stitched B1a is the pair
+        # B3's window-identity check must refuse.
+        "stitch_manifest_sha256": None,
     }
     assert "MUST REFUSE" in lineage["join"]["b3_contract"]
     # Reconciliation is asserted by build_lineage; check the chain it reports.
@@ -689,6 +694,11 @@ def test_cli_window_options_mirror_b1a(tmp_path: Path, bars: pd.DataFrame) -> No
         "out",
         "market_open",
         "min_bars_per_day",
+        # Plan §3.2a: the cross-contract manifest goes through
+        # produce_fields.load_window, so BOTH sides take the same flag with
+        # the same default — a B1a-only flag would make every stitched session
+        # a B3 refusal on input digests (plan §9 HIGH-1).
+        "stitch_manifest",
     )
     assert set(b2_options) == set(shared)
     assert set(shared) <= set(b1a_options)

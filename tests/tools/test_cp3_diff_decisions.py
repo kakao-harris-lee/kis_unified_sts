@@ -1232,6 +1232,9 @@ def test_the_window_identity_is_echoed_when_it_agrees(
         "min_bars_per_day": MIN_BARS_PER_DAY,
         "window_start": WINDOW_START,
         "window_end": WINDOW_END,
+        # Plan §3.2a: part of the identity B3 compares. These fixtures carry
+        # no stitch manifest on either side, so both read as None and agree.
+        "stitch_manifest_sha256": None,
     }
     assert result.lineage["window_identity"] == expected
     assert result.summary["window_identity"] == expected

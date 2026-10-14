@@ -25,6 +25,7 @@ firewall forbids it for runtime scope outright), synthetic JSONL under
 
 from __future__ import annotations
 
+import ast
 import copy
 from decimal import Decimal
 from pathlib import Path
@@ -447,6 +448,47 @@ def test_the_short_lineage_declares_its_direction_and_the_short_difference(
     assert "the LONG half is a separate render" in d5["note"]
 
 
+def _assert_b2_citations_resolve(repo_root: Path, note: str) -> None:
+    """B1b-D8 claims B2 drives ``check()`` directly; check that it still does.
+
+    Added 2026-10-14 (PR-2b). The note cited ``:946``/``:990`` and an unrelated
+    docstring edit in that module moved both — a citation that still looked
+    precise while pointing into a docstring, with nothing checking it.
+
+    The first fix re-pinned the NEW line numbers, which only moves the next
+    drift one commit away and would redden this test for any concurrent PR
+    that touches the module (review LOW-3). So the anchor is the **symbol**:
+    both statements must still be inside ``emit_decisions``, which is the
+    thing the note is actually about. ``ast`` locates the function, so a
+    rename fails here loudly instead of a line number rotting quietly.
+    """
+    source = (repo_root / "tools" / "tos_cp3" / "emit_legacy_decisions.py").read_text(
+        encoding="utf-8"
+    )
+    assert "emit_legacy_decisions.py::emit_decisions" in note
+    tree = ast.parse(source)
+    func = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "emit_decisions"
+        ),
+        None,
+    )
+    assert func is not None, (
+        "emit_legacy_decisions.emit_decisions is gone; B1b-D8's note names it as "
+        "where B2 drives check() directly"
+    )
+    body = ast.get_source_segment(source, func) or ""
+    for statement in ("setup = SetupDVWAPReversion(", "signal = setup.check(ctx)"):
+        assert statement in note, f"the note no longer quotes {statement!r}"
+        assert statement in body, (
+            f"{statement!r} is no longer inside emit_decisions; B1b-D8's note "
+            "cites it as where B2 drives check() directly, so either the note "
+            "or the emitter has moved on without the other"
+        )
+
+
 def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     tmp_path: Path,
 ) -> None:
@@ -483,7 +525,7 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     )["note"]
     assert "setup_d_adapter.py:174" in note
     assert "B2-L1" in note
-    assert "emit_legacy_decisions.py:946" in note
+    assert "emit_legacy_decisions.py::emit_decisions" in note
     assert "UNRESOLVED" in note
     # The overclaim the review found, asserted as an ABSENCE: the earlier note
     # said "the item absorbs zero bars" as if that measured something.
@@ -526,3 +568,6 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
             "claim that the legacy side of this comparison never applies the "
             "regime block would no longer hold"
         )
+
+    # (3) the note's citation of B2 still resolves — by symbol, not line.
+    _assert_b2_citations_resolve(repo_root, note)

@@ -256,8 +256,10 @@ NO_ACTION, 송신 0(fail-closed). **한도를 올려서 고칠 수 있는 문제
    ⚠ 남은 것은 결정 5 가 삭제한 `short_blocked_regimes` 인데, **이 비교는 그것을 볼 수 없다**.
    근거는 **B2 가 자기 차이 `B2-L1` 로 선언해 둔 것**이다 — 그 가드는
    `shared/strategy/entry/setup_d_adapter.py:174` 에서 `check()` 가 반환하는 `:166` **뒤**에
-   걸리는데 B2 는 `tools/tos_cp3/emit_legacy_decisions.py:946`·`:990` 에서 `check()` 를
-   **직접** 몰므로 레거시 쪽도 적용한 적이 없다.
+   걸리는데 B2 는 `tools/tos_cp3/emit_legacy_decisions.py::emit_decisions` 안에서
+   `SetupDVWAPReversion(...)` 을 만들어 `setup.check(ctx)` 를 **직접** 몰므로 레거시 쪽도
+   적용한 적이 없다. (인용은 **심볼 기준**이다 — 줄 번호로 적었던 `:946`·`:990` 은 PR #900
+   의 무관한 docstring 추가로 밀렸고 아무것도 그것을 검사하지 않았다.)
    ⛔ **`B1b-D8` 의 흡수 봉 0 을 그 근거로 쓰지 말 것** — 어떤 귀속 규칙도 B1b-D8 을(B1b-D9 도)
    인용하지 않으므로 그 0 은 **구조적**이고 가드가 실제로 물었어도 0 이다. 이 창에 숨은 regime
    차이가 없다는 것을 받치는 것은 **UNRESOLVED 0** 이다. 자세한 처분은 그 트리

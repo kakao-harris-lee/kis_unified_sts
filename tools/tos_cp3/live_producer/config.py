@@ -41,6 +41,7 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("execution_yaml", str),
     ("calendar_session_id", str),
     ("calendar_session_phase", str),
+    ("front_month_product", str),
     ("first_poll_delay_s", float),
     ("missing_no_successor_timeout_s", float),
     ("repoll_pace_s", float),
@@ -71,6 +72,13 @@ class LiveProducerConfig:
     execution_yaml: Path
     calendar_session_id: str
     calendar_session_phase: str
+    #: The ``product`` argument of
+    #: ``shared.instruments.futures.get_front_month_code``. It names each seed
+    #: day's contract in the cross-contract seed (plan §3.2a) and is checked
+    #: against ``--instrument`` at startup, so it is a setting rather than a
+    #: literal: a producer pointed at the standard contract while the runner
+    #: trades mini would otherwise splice against the wrong month.
+    front_month_product: str
     #: δ — the first poll happens at ``bar boundary + first_poll_delay_s``.
     first_poll_delay_s: float
     #: G — re-poll until ``boundary + G`` before calling the minute late.

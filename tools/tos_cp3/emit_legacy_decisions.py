@@ -127,12 +127,14 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     InputFile,
     OpenAnchor,
     ProduceFieldsError,
+    StitchedInputs,
     StrategyInputs,
     _bar_accounting,
     _bar_lookup,
     _git_identity,
     _inputs_unusable,
     _runtime_versions,
+    _stitch_lineage,
     derive_as_of_ms,
     derive_raw_event_id,
     load_window,
@@ -905,6 +907,14 @@ class EmittedDecisions:
     omitted: list[tuple[str, str, str]]
     #: Bar indices (into the gated frame) the single-position model admitted.
     admitted_indices: list[int]
+    #: Bars replayed from a NON-target stitch segment (plan §3.2a) — evaluated
+    #: so the causal windows and the single-position gate advance exactly as
+    #: B1a's replay does, then dropped without a published join key.
+    non_target_segment_bars: int = 0
+    #: How many of :attr:`admitted_indices` fell on such a bar. Kept apart so
+    #: the "every admitted bar has a line" reconciliation stays an assertion
+    #: rather than being weakened to an inequality.
+    non_target_admitted: int = 0
 
 
 def emit_decisions(
@@ -914,6 +924,7 @@ def emit_decisions(
     strategy: StrategyInputs,
     contract_spec: ContractSpec,
     anchor: OpenAnchor,
+    emit_days: frozenset[date] | None = None,
 ) -> EmittedDecisions:
     """Replay the gated frame and project each bar's legacy decision.
 
@@ -927,6 +938,15 @@ def emit_decisions(
     The single-position gate runs in this same pass, so its state
     (``last_exit_idx``) advances on the same call sequence rather than on a
     second replay.
+
+    Args:
+        emit_days: when given, only bars on these KST dates produce a record.
+            A bar outside them is still evaluated AND still passes through the
+            single-position gate — the previous month's sessions are in the
+            frame precisely so the causal state advances — but it publishes no
+            line, because B1a publishes none either and a previous-month bar
+            stamped with this symbol's ``raw_event_id`` is a label error (plan
+            §3.2a). ``None`` keeps the pre-stitch behaviour.
     """
     import pandas as pd
 
@@ -966,6 +986,8 @@ def emit_decisions(
     omitted: list[tuple[str, str, str]] = []
     admitted_indices: list[int] = []
     bars_replayed = 0
+    non_target = 0
+    non_target_admitted = 0
     last_exit_idx = -1  # collect_entries line 174 — one position at a time
 
     for ctx in replay.iter_contexts():
@@ -1012,6 +1034,13 @@ def emit_decisions(
             last_exit_idx = trade.bar_idx  # line 202
             admitted = True
             admitted_indices.append(idx)
+
+        if emit_days is not None and ts_naive.date() not in emit_days:
+            # AFTER check() and after the single-position gate above, so the
+            # causal state is identical to B1a's; before any line is built.
+            non_target += 1
+            non_target_admitted += int(admitted)
+            continue
 
         unusable = _inputs_unusable(
             float(ctx.current_price), float(ctx.vwap), float(ctx.atr_14)
@@ -1081,14 +1110,17 @@ def emit_decisions(
     if not records:
         raise EmitLegacyDecisionsError(
             "replay yielded no publishable bars: a window shorter than the "
-            "replay warmup, a first session with no prior-session close, or "
-            f"{len(omitted)} unusable-input bars"
+            "replay warmup, a first session with no prior-session close, "
+            f"{len(omitted)} unusable-input bars, or {non_target} bars outside "
+            "the stitch manifest's target segment"
         )
     return EmittedDecisions(
         records=records,
         bars_replayed=bars_replayed,
         omitted=omitted,
         admitted_indices=admitted_indices,
+        non_target_segment_bars=non_target,
+        non_target_admitted=non_target_admitted,
     )
 
 
@@ -1573,6 +1605,7 @@ def build_lineage(
     warmup_skipped: int,
     first_session_dropped: int,
     input_files: list[InputFile],
+    stitch: StitchedInputs | None = None,
 ) -> dict[str, Any]:
     """Assemble the lineage sidecar (ADR-002-018 §10 shape, as B1a uses it).
 
@@ -1599,10 +1632,13 @@ def build_lineage(
             f"{dropped_before_replay} dropped before replay != "
             f"{emitted.bars_replayed} replayed"
         )
-    if emitted.bars_replayed - len(emitted.omitted) != len(records):
+    if emitted.bars_replayed - len(
+        emitted.omitted
+    ) - emitted.non_target_segment_bars != len(records):
         raise EmitLegacyDecisionsError(
             f"{emitted.bars_replayed} replayed minus {len(emitted.omitted)} "
-            f"omitted != {len(records)} emitted"
+            f"omitted minus {emitted.non_target_segment_bars} non-target "
+            f"stitch-segment bars != {len(records)} emitted"
         )
     if sum(outcome_counts.values()) != len(records):
         raise EmitLegacyDecisionsError(
@@ -1614,11 +1650,12 @@ def build_lineage(
         raise EmitLegacyDecisionsError(
             f"emitted outcomes outside the closed set: {unknown_outcomes}"
         )
-    if admitted != len(emitted.admitted_indices):
+    if admitted != len(emitted.admitted_indices) - emitted.non_target_admitted:
         raise EmitLegacyDecisionsError(
             f"{admitted} emitted lines are admitted but the position model "
-            f"admitted {len(emitted.admitted_indices)} bars — an admitted bar "
-            "was omitted from the output"
+            f"admitted {len(emitted.admitted_indices)} bars of which "
+            f"{emitted.non_target_admitted} were outside the stitch target "
+            "segment — an admitted bar was omitted from the output"
         )
     if admitted > outcome_counts.get(OUTCOME_FIRED, 0):
         raise EmitLegacyDecisionsError(
@@ -1688,6 +1725,12 @@ def build_lineage(
                 "min_bars_per_day": min_bars_per_day,
                 "window_start": requested_start.isoformat(),
                 "window_end": requested_end.isoformat(),
+                # Plan §3.2a / re-review N-1: the manifest digest belongs in
+                # the identity B3 actually COMPARES, not merely somewhere in
+                # this file. ``None`` = no manifest (legacy data root); it is
+                # never "no splice", because the producer writes stitch.json
+                # on a zero-junction day too.
+                "stitch_manifest_sha256": (stitch.manifest.sha256 if stitch else None),
             },
             "b3_contract": (
                 "B3 MUST REFUSE a (B1a, B2) pair whose join.window_identity "
@@ -1725,7 +1768,8 @@ def build_lineage(
                 "asserted": (
                     "bars_after_density_gate - (replay_warmup_bars_skipped + "
                     "first_session_bars_dropped_no_prior_close) == "
-                    "bars_replayed; bars_replayed - omitted_bars.count == "
+                    "bars_replayed; bars_replayed - omitted_bars.count - "
+                    "stitch.non_target_segment_bars_replayed_not_emitted == "
                     "bars_emitted; sum(outcomes.counts) == bars_emitted"
                 ),
                 "bars_dropped_before_replay": dropped_before_replay,
@@ -1756,6 +1800,10 @@ def build_lineage(
                 for item in input_files
             ],
             "input_file_count": len(input_files),
+            # Same block, same spelling as B1a's — ``_stitch_lineage`` is
+            # shared so the two sidecars cannot describe one manifest two ways.
+            "stitch_manifest_sha256": stitch.manifest.sha256 if stitch else None,
+            "stitch": _stitch_lineage(stitch, emitted.non_target_segment_bars),
         },
         "outcomes": {
             "closed_set": list(OUTCOMES),
@@ -2046,6 +2094,7 @@ def run(
     out_dir: Path,
     min_bars_per_day: int = DEFAULT_MIN_BARS_PER_DAY,
     market_open: str = "auto",
+    stitch_manifest: Path | None = None,
 ) -> RunResult:
     """Emit the decision JSONL and lineage sidecar for one dataset window."""
     window = load_window(
@@ -2056,6 +2105,7 @@ def run(
         strategy_yaml=strategy_yaml,
         min_bars_per_day=min_bars_per_day,
         market_open=market_open,
+        stitch_manifest=stitch_manifest,
     )
     warmup_skipped, first_session_dropped = _bar_accounting(window.df)
 
@@ -2065,6 +2115,7 @@ def run(
         strategy=window.strategy,
         contract_spec=window.contract_spec,
         anchor=window.anchor,
+        emit_days=window.emit_days,
     )
     jsonl_bytes = render_jsonl(emitted.records)
     lineage = build_lineage(
@@ -2083,6 +2134,7 @@ def run(
         warmup_skipped=warmup_skipped,
         first_session_dropped=first_session_dropped,
         input_files=window.input_files,
+        stitch=window.stitch,
     )
     lineage_bytes = render_lineage(lineage)
 
@@ -2164,6 +2216,19 @@ def build_parser() -> argparse.ArgumentParser:
             "refused. Must match the B1a run this artifact is joined to."
         ),
     )
+    parser.add_argument(
+        "--stitch-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a cross-contract seed manifest (stitch.json, plan 3.2a). "
+            "Read through the SAME produce_fields.load_window B1a uses, so "
+            "both sides see one aligned frame. REQUIRED when a stitch.json "
+            "sits directly under --data-root, and must match the B1a run this "
+            "artifact is joined to — B3 compares the manifest digest as part "
+            "of the window identity."
+        ),
+    )
     return parser
 
 
@@ -2180,6 +2245,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=args.out,
             min_bars_per_day=args.min_bars_per_day,
             market_open=args.market_open,
+            stitch_manifest=args.stitch_manifest,
         )
     except (EmitLegacyDecisionsError, ProduceFieldsError) as exc:
         print(f"emit_legacy_decisions: {exc}", file=sys.stderr)

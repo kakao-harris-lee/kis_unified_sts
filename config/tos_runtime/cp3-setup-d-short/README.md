@@ -150,8 +150,11 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    ⚠⚠ **그러나 그 손실은 이 비교에 나타날 수 없다 — 그리고 그 근거는 `B1b-D8` 의 0 이
    아니다.** 기계장치는 **B2 가 이미 자기 차이 `B2-L1` 로 선언해 둔 것**이다(「this emitter
    runs `SetupDVWAPReversion.check()` ALONE … that block CANNOT fire here」): B2 는
-   `tools/tos_cp3/emit_legacy_decisions.py:946`·`:990` 에서 setup 을 만들어 `check()` 를
-   **직접** 몰고, 그 블록은 한 겹 위 `shared/strategy/entry/setup_d_adapter.py:174` —
+   `tools/tos_cp3/emit_legacy_decisions.py::emit_decisions` 안에서
+   `SetupDVWAPReversion(...)` 을 만들어 `setup.check(ctx)` 를
+   **직접** 몰고(인용은 **심볼 기준** — 줄 번호 `:946`·`:990` 은 PR #900 의 무관한 docstring
+   추가로 밀렸고 아무것도 그것을 검사하지 않았다),
+   그 블록은 한 겹 위 `shared/strategy/entry/setup_d_adapter.py:174` —
    `check()` 가 반환하는 `:166` **뒤** — 에 있다. 즉 **레거시 쪽도 그 블록을 적용한 적이
    없고** 양쪽이 똑같이 무방비다. 그러므로 결정 5 가 말한 「parity 보고서의 SHORT 편향 diff
    를 이 항목에 귀속」은 **이 결정 수준 비교에서는 성립하지 않는다**.
