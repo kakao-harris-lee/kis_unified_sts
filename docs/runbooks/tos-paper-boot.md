@@ -1161,6 +1161,11 @@ SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의
 
 #### 7.2-c CP-3 tenant 부팅 증명 — **스크래치에서 손으로 1회** (코드 2026-10-10 · 실행 미착수)
 
+> ⛔ **2026-10-14 부터 이 절차는 이력이다 — 실제 세션은 §7.2-d 로 돈다.** ③ 이 PR-2 로
+> 들어오면서 러너의 순서가 바뀌었고(생산자가 저널을 만든다), 아래의 「저널 한 행을 손으로
+> 만든다」 단계는 이제 생산자의 기동 거부를 부른다. 아래는 ③ **이전**에 무엇을 증명하려
+> 했는지의 기록으로 남긴다.
+
 ③(실시간 15 필드 생산자)이 없는 동안 tenant 배선을 한 번 관통시켜 보는 절차다. 계획
 `docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §2.5 · §2.6 · §5 3(PR-C).
 **§7.2-b 의 지정된 durable set 에는 쓰지 않는다** — 그 네 디렉터리의 첫 genesis 는 ③ 의
@@ -1303,6 +1308,129 @@ TENANT_ENVIRONMENT_LABEL=paper \
 맞는지의 확인**(위 ⛔ 대로 구조상 그래야 한다 — 아니었다면 그쪽이 소견이다).
 ⚠ **「소비되는가」는 이 절차가 답할 질문이 아니다** — 답하려면 부팅 뒤에 행을 덧붙이는 경로가
 있어야 하고 그것은 만들지 않았다. 그 질문은 ③ 의 것이다.
+
+#### 7.2-d CP-3 tenant 세션 — ③ 이 **있는** 지금의 절차 (PR-3, 2026-10-14)
+
+§7.2-c 는 ③ 이 **없던** 동안의 절차다(한 행짜리 합성 저널로 배선만 관통). ③(실시간
+15 필드 생산자, `tools/tos_cp3/live_producer`)이 PR-2 로 들어오면서 러너의 순서가
+바뀌었다 — 계획 `docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md` §3.4·§3.5·§3.6.
+**실제 genesis 세션은 이 절차로 돈다.** §7.2-c 는 이력으로 남긴다.
+
+**무엇이 바뀌었나 — 네 가지.**
+
+1. **저널은 운영자가 만들지 않는다. 생산자가 만든다.** 러너는 ① 생산자 기동(시드)
+   → ② 첫 **실제** `tos-cp3-live/…` 줄이 생길 때까지 대기(상한 `FIRST_LINE_TIMEOUT_S`
+   = 600 s, 넘으면 ABORT) → ③ 가드 → 렌더 → 부팅 순으로 간다. #892 가드는 빈 저널을
+   거부하고 모든 행이 **승인된 생산자**의 것이기를 요구하는데, 그것을 참으로 만드는
+   것이 ③ 이다. 가드의 의미는 그대로다.
+   ⛔ 그래서 `TENANT_JOURNAL` 은 **아직 없는 경로**여야 한다. 이미 있는 저널에는
+   생산자가 기동을 거부한다(그 파일을 통째로 교체해 버리므로).
+2. **첫 줄은 부팅이 끝날 때 이미 STALE 이다.** 러너는 부팅 직전의 저널 행 수를
+   `consumed_stale_at_boot` 로 로그에 남기고, 그 id 들을
+   `<TENANT_PRODUCER_SESSION_DIR>/boot-journal-snapshot.json` 에 적는다. 그 파일이
+   §3.6 추출기가 「구조상 소비될 수 없던 부팅 전 줄」과 「런타임이 소비하지 못한 줄」을
+   가르는 근거다(계획 §5 M5 는 전자를 두 계수에서 뺀다).
+3. **정리(trap)가 생산자 기동 *전에* 걸린다.** 생산자는 가드·렌더·라벨 검사보다
+   먼저 뜨므로, 그 사이의 어떤 `die` 든 생산자를 멈춰야 한다 — 안 그러면 러너는 죽고
+   생산자만 남아 하루 종일 **실전 조회 API** 를 부른다(계획 §3.5 v2 재리뷰 M1).
+   EXIT trap 이 그것이고, 두 자식 모두 자기 `timeout` 천장 아래에서 뜬다(러너가
+   SIGKILL 되면 trap 은 돌지 않는다). 종료 신호는 **프로세스 그룹**으로 간다 —
+   손에 든 pid 는 `timeout` 의 것이고, `timeout` 에만 KILL 을 보내면 실제 작업
+   프로세스가 감독자보다 오래 산다(#892 재리뷰 L2).
+4. **자격증명 분리(계획 §3.4).** 환경은 셋이고 실전 키를 가질 수 있는 것은 하나뿐이다:
+   - 러너 — 모의 전용. `TENANT_ENV_FILE` 은 basename 이 `.env.mock` 이어야 한다.
+   - 생산자 — 선물 **조회** 키 두 개(`KIS_FUTURES_APP_KEY`/`SECRET`)를 **자기가**
+     읽는다. 어디서? 자기 config(`TENANT_PRODUCER_CONFIG`)의 `env_file:` 이 가리키는
+     파일(`/home/deploy/project/kis_unified_sts/.env.real`). 러너는 그 값을 읽지도
+     전달하지도 로그하지도 않는다. 토큰 캐시 경로도 앱 키의 **지문**만 쓴다.
+   - 런타임 — 모의 전용이고, 실전 자격증명을 절대 들면 안 되는 **그** 프로세스.
+   자식은 환경을 물려받으므로, 셸에 그 두 키가 export 돼 있으면 **런타임에도** 들어간다.
+   러너는 그래서 자기 환경에 둘 중 하나라도 있으면 **기동을 거부한다**. 생산자에게
+   키를 주려고 `export KIS_FUTURES_APP_KEY=…` 하지 말 것 — 생산자는 파일에서 읽는다.
+   ⛔ GET 전용이다. 생산자의 import 그래프에 `shared.execution` 주문 경로도
+   `probes_real_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문 TR 은 0 건이어야
+   하고, 그 0 은 세션 뒤 요청 로그로 확인한다.
+
+**⚠ 운영자 단계 — 개장 지연일에는 tenant 세션을 돌리지 않는다.**
+수능일처럼 개장이 늦춰지는 날이 있다. 그런 날 생산자는 정규 개장 시각 기준으로 세션
+창과 앵커를 잡으므로 프레임이 실제 장과 어긋난다. **기계적 거부는 없다, 그리고 그것은
+의도다**(계획 §3.5, v2 재리뷰 M3): `resolve_open_anchor("auto")` 는 정적
+`market_schedule.futures.regular.open` 을 돌려주고 날짜별 예외(`special_days`)가 비어
+있어서, 그 값과의 비교는 **언제나 통과한다** — 아무것도 막지 않는 가드를 달면 막힌다고
+믿게 만들 뿐이다. 그래서 이 줄은 운영자 체크리스트 항목이다. 날짜 목록이 config 에
+생기면 그때 그 목록을 읽는 거부와 **구체 날짜 레드 테스트**를 같이 단다.
+
+**절차 (분리 워크트리 · `origin/main` · clean · 모의 전용).** §7.2-c 의 0)~2) 와 같고,
+3) 저널 수기 생성이 **없어지고**, 4) 의 env 가 둘 늘어난다.
+
+```bash
+# 0)~2) §7.2-c 와 동일 — 워크트리, 계약월(INSTRUMENT), 스크래치 자리($SESSION)
+
+# 3) (삭제) 저널은 생산자가 만든다. $SESSION/journal.jsonl 이 **없는지** 확인만 한다.
+[ -e "$SESSION/journal.jsonl" ] && echo "이미 있다 — 새 세션 디렉터리를 쓴다"
+
+# 4) 세션. 인스턴스 값은 전부 env 이고 기본값이 하나도 없다.
+TENANT_LOG=$SESSION/session.log \
+TENANT_PYTHON=$MAIN/.venv/bin/python \
+TENANT_TREE=cp3-setup-d-long \
+TENANT_DIRECTION=LONG \
+TENANT_RENDER_OUT=$SESSION/config \
+TENANT_DATA_PARENT=$SESSION/data \
+TENANT_JOURNAL=$SESSION/journal.jsonl \
+TENANT_STOP_AT='15:50' \
+TENANT_ENV_FILE=$WT/.env.mock \
+TENANT_CUSTODY_ROOT=~/.local/state/tos/paper-custody \
+TENANT_ENVIRONMENT_LABEL=paper \
+TENANT_PRODUCER_CONFIG=$WT/config/tos_probes/cp3-live-producer.yaml \
+TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
+  "$WT/tools/tos_cp3/runners/run_tenant_session.sh"
+```
+
+- 지정된 durable set 으로 genesis 하려면 `TENANT_DATA_PARENT` 를 §7.2-b 의 경로로
+  바꾼다 — 이제 가드가 그것을 **허용한다**(모든 행이 `tos-cp3-live/…` 이므로). 그
+  판단은 운영자의 것이고, 그 디렉터리의 첫 genesis 는 되돌릴 수 없다.
+- 러너는 끝에 생산자 요약(`producer-summary.json`: 계수와 동결 프레임 sha256)과
+  durable set 의 `snapshots`·`entries` 분포를 찍는다.
+
+**세션 뒤 — §3.6 대조 (계획 §5 수용 기준).**
+
+```bash
+# ① 런타임이 실제로 소비한 id + 짝 없는 봉의 사유별 계수
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/session_inputs.py" consumed-ids \
+  --data-dir "$SESSION/data/$INSTRUMENT" \
+  --producer-log "$SESSION/producer/producer-log.jsonl" \
+  --boot-snapshot "$SESSION/producer/boot-journal-snapshot.json" \
+  --out "$SESSION/b3/consumed-ids.json"
+
+# ② 실시간 결정 레코드(B1b 트레이스와 같은 모양)
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/session_inputs.py" live-decisions \
+  --data-dir "$SESSION/data/$INSTRUMENT" --out "$SESSION/b3/live"
+
+# ③ B1a 를 **생산자가 쓴 동결 프레임**에 돌리고(§3.6: 레거시 Parquet 이 아니다),
+#    B2·B1b 를 잇고, B3 를 그 둘을 더해 돌린다.
+#    --data-root 는 $SESSION/producer/market 이다.
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/diff_decisions.py" \
+  --fields  "$SESSION/b1a/fields.jsonl" \
+  --legacy  "$SESSION/b2/decisions.jsonl" \
+  --tos     "$SESSION/b1b/trace.jsonl" \
+  --consumed-ids "$SESSION/b3/consumed-ids.json" \
+  --live    "$SESSION/b3/live/live.jsonl" \
+  --out     "$SESSION/b3/report"
+```
+
+적어 둘 것(계획 §5):
+
+- **M5** — 「STALE 로 소비된 줄」과 「소비되지 않은 줄」 둘 다 0 인가. **부팅 전 줄은
+  두 계수에서 뺀다**(구조상 소비되지 않는다) — 그 수는 러너 로그의
+  `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있다.
+- **M6** — `producer-summary.json` 의 `max_stamp_to_replace_s` 가 0.300 미만인가.
+- **B3** — `summary.json` 의 `unresolved.count` 가 0 인가. 대조 범위는
+  `session_scope.consumed_id_filter`, 짝 없는 봉은
+  `session_scope.unpaired_offline_records_by_reason` 에 사유별로 있다.
+  `live_comparison.divergent` 는 **실시간 런타임이 오프라인 리플레이와 다르게 결정한
+  봉 수**다 — 0 이 아니면 그것이 소견이고, B3 는 그것을 거부가 아니라 보고로 낸다.
+- **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 는 조회
+  `FHKIF03020200` 뿐이어야 한다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 
