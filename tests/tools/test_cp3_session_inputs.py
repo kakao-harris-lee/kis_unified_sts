@@ -1377,6 +1377,12 @@ def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
     has ten possible reasons (``_admit_one``), only one of which is
     state-shaped, and that one folds STALE in with UNKNOWN, CONFLICTED and
     INVALID.
+
+    Two of the three ticks are the COMMITTED bytes: the first published no
+    view and the second a real ``ContextValueView`` with one admitted value,
+    so the counted-as-admitted case runs on what the inbox actually stores
+    rather than on a view this file wrote. Only the explicitly-empty shape is
+    built here, from those same bytes.
     """
     bars = _bars(hinge, 3)
     data_dir = _write_session(
@@ -1385,23 +1391,19 @@ def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
         snapshots=_snapshot_rows(bars),
         preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
         ticks=[
-            (1, bars[0].tick_payload, *bars[0].window),  # value_view: null
-            (
-                2,
-                _tick_with_view(hinge, bars[1], values=[]),
-                *bars[1].window,
-            ),  # -> empty_view
+            (1, bars[0].tick_payload, *bars[0].window),  # committed: no view
+            (2, bars[1].tick_payload, *bars[1].window),  # committed: one value
             (
                 3,
-                _tick_with_view(hinge, bars[2], values=[{"field_key": "close_x100"}]),
+                _tick_with_view(hinge, bars[2], values=[]),
                 *bars[2].window,
-            ),
+            ),  # -> empty_view
         ],
     )
     document = si.build_consumed_ids_document(data_dir=data_dir)
     view = document["consumed_value_view"]
     assert view["counts"] == {"no_view": 1, "empty_view": 1, "values_admitted": 1}
-    assert view["raw_event_ids_with_admitted_values"] == [bars[2].raw_event_id]
+    assert view["raw_event_ids_with_admitted_values"] == [bars[1].raw_event_id]
     # the note says what the store says, and refuses the inference it used to
     # make
     assert "nothing was admissible" in view["note"]
