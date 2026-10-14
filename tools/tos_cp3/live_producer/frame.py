@@ -180,9 +180,11 @@ class SeedDay:
 #: ``(day, kept) -> (contract code to request for `day`, frame built from
 #: `kept`)``. ONE seam, deliberately: day→contract selection and frame assembly
 #: are the two things a stitched seed changes, so they live in a single
-#: replaceable function. Plan §3.2a 「월물 교차 시드」 (cross-contract stitching) is
-#: a later PR and is OUT OF SCOPE here — :func:`build_seed` below never names a
-#: contract itself, so that PR replaces this callable and nothing else.
+#: replaceable function. Plan §3.2a 「월물 교차 시드」 (cross-contract stitching)
+#: landed in PR-2b and did exactly that: it supplies
+#: :class:`~tools.tos_cp3.live_producer.stitch_seed.StitchedSeed` here and
+#: changes nothing else in this module's walk. :func:`build_seed` below still
+#: never names a contract itself.
 SeedAssembler = Callable[[date, Sequence["SeedDay"]], tuple[str, Any]]
 
 
@@ -392,9 +394,11 @@ def _unfilled_seed_refusal(
         f"causal vol window needs {required} in-entry-window bars. Refusing to "
         "start: a short seed makes hi_vol's percentile differ from B1a's, so "
         "the real-time and offline lines for the same bar would not match "
-        "(plan §3.2). The post-roll blackout this produces is INTENDED "
-        "behaviour, not a defect — its disposition is plan §3.2a's "
-        "cross-contract stitching (#897, PR-2b). ⚠ A day the calendar calls a "
+        "(plan §3.2). With the SAME-contract assembler the post-roll blackout "
+        "this produces is INTENDED behaviour, not a defect; its disposition — "
+        "plan §3.2a's cross-contract stitching — shipped in PR-2b, so reaching "
+        "this message with the stitched assembler means the window could not "
+        "be filled even ACROSS the roll. ⚠ A day the calendar calls a "
         "trading day that returned NO rows may be a holiday the calendar is "
         "missing; that is why it is counted separately above"
     )
