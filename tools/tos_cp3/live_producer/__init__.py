@@ -49,6 +49,10 @@ Modules:
   missing two 2026 substitute holidays).
 * :mod:`~tools.tos_cp3.live_producer.frame` — bar completion on RAW rows, the
   frozen frame, and the window-filled seed.
+* :mod:`~tools.tos_cp3.live_producer.session_log` — what the session records
+  about itself: the append-only JSONL process log (one event per bar
+  disposition, each carrying the bar's ``raw_event_id`` so §3.6's reason map
+  keys on B3's own join key) and the counters the runner reports.
 * :mod:`~tools.tos_cp3.live_producer.sinks` — the atomically replaced
   observation journal (``flock``-held, monotone ``as_of_ms``) and the
   append-only Parquet part writer that is B3's offline input.
