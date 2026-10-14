@@ -1159,6 +1159,68 @@ def test_the_source_digest_names_the_responses_the_days_were_parsed_from(
     assert f"{NEW}:{SPLICE.isoformat()}" in manifest.source_sha256
 
 
+def test_b1a_refuses_a_lineage_whose_three_exit_doors_do_not_add_up(
+    stitched_session: StitchedSession,
+) -> None:
+    """A replayed bar leaves by exactly one of three doors; the lineage says so.
+
+    Added with the non-target counter (plan §3.2a). B2 has always asserted its
+    half of this chain and B1a asserted only the first half, so a counter that
+    missed a bar would publish a sidecar whose own numbers do not add up while
+    B3 compared the file happily. The failing input is right here: a
+    ``ProducedBars`` whose non-target count is one short.
+    """
+    result = b1a.run(
+        **stitched_session.run_kwargs(out_name="b1a-accounting", with_manifest=True)
+    )
+    window = b1a.load_window(
+        **{
+            key: value
+            for key, value in stitched_session.run_kwargs(
+                out_name="unused", with_manifest=True
+            ).items()
+            if key != "out_dir"
+        },
+        market_open="auto",
+    )
+    produced = b1a.produce_bars(
+        window.df,
+        symbol=NEW,
+        strategy=window.strategy,
+        contract_spec=window.contract_spec,
+        anchor=window.anchor,
+        emit_days=window.emit_days,
+    )
+    short_by_one = b1a.ProducedBars(
+        records=produced.records,
+        bars_replayed=produced.bars_replayed,
+        omitted=produced.omitted,
+        non_target_segment_bars=produced.non_target_segment_bars - 1,
+    )
+    warmup, first_session = b1a._bar_accounting(window.df)
+    kwargs = {
+        "jsonl_bytes": b1a.render_jsonl(produced.records),
+        "symbol": NEW,
+        "strategy": window.strategy,
+        "contract_spec": window.contract_spec,
+        "anchor": window.anchor,
+        "data_root": stitched_session.market_root,
+        "requested_start": SEED_DAYS[0],
+        "requested_end": TARGET,
+        "min_bars_per_day": 0,
+        "bars_loaded": window.bars_loaded,
+        "bars_after_density_gate": int(len(window.df)),
+        "warmup_skipped": warmup,
+        "first_session_dropped": first_session,
+        "input_files": window.input_files,
+        "stitch": window.stitch,
+    }
+    b1a.build_lineage(produced=produced, **kwargs)  # the honest one is accepted
+    with pytest.raises(ProduceFieldsError, match="non-target stitch-segment bars"):
+        b1a.build_lineage(produced=short_by_one, **kwargs)
+    assert result.lineage["dataset"]["bars_emitted"] == len(produced.records)
+
+
 def test_the_producer_refuses_an_instrument_the_roll_function_disagrees_with() -> None:
     """``--instrument`` and the per-day walk must name the same function's output."""
     with pytest.raises(LiveProducerRefused, match="get_front_month_code"):

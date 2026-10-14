@@ -1636,6 +1636,19 @@ def build_lineage(
             f"{dropped_before_replay} dropped before replay != "
             f"{produced.bars_replayed} replayed"
         )
+    # The second half of the chain, which B2 has always asserted and this side
+    # did not. It became load-bearing with the stitch segment counter (plan
+    # §3.2a): a replayed bar now leaves by one of exactly three doors —
+    # emitted, omitted as unusable, or dropped as non-target — and a counter
+    # that misses one would publish a lineage whose own numbers do not add up
+    # while B3 compared the file happily.
+    accounted = len(records) + len(produced.omitted) + produced.non_target_segment_bars
+    if accounted != produced.bars_replayed:
+        raise ProduceFieldsError(
+            f"{produced.bars_replayed} replayed != {len(records)} emitted + "
+            f"{len(produced.omitted)} omitted + "
+            f"{produced.non_target_segment_bars} non-target stitch-segment bars"
+        )
     if bars_loaded > 0 and not input_files:
         raise ProduceFieldsError(
             f"{bars_loaded} bars were loaded but no Parquet partition was found "
