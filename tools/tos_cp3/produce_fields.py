@@ -511,6 +511,35 @@ def discover_input_files(
     return found
 
 
+def _apply_density_gate(df: Any, *, min_bars_per_day: int, loaded: int) -> Any:
+    """Drop whole sessions thinner than *min_bars_per_day*. ONE body.
+
+    Called by :func:`load_bars` (single contract) and by
+    :func:`load_stitched_bars` (cross-contract, plan §3.2a). Shared rather than
+    copied because the gate decides WHICH DAYS enter the frame: two copies
+    could come to keep different sessions, and a producer seeded from a
+    different set of sessions than the offline run it is compared against
+    makes B3 diverge for a reason that looks like a field defect (plan §3.2
+    「밀도 게이트를 B1a 와 같게」).
+
+    Args:
+        loaded: the PRE-gate row count, for the refusal message only.
+    """
+    if min_bars_per_day <= 0:
+        return df
+    bars_per_day = df.groupby(df["timestamp"].dt.date).size()
+    healthy = set(bars_per_day[bars_per_day >= min_bars_per_day].index)
+    gated = df[df["timestamp"].dt.date.map(lambda d: d in healthy)].reset_index(
+        drop=True
+    )
+    if gated.empty:
+        raise ProduceFieldsError(
+            f"the --min-bars-per-day {min_bars_per_day} density gate dropped "
+            f"every one of the {loaded} loaded bars"
+        )
+    return gated
+
+
 def load_bars(
     data_root: Path,
     *,
@@ -545,18 +574,12 @@ def load_bars(
         .reset_index(drop=True)
     )
     loaded = int(len(df))
-    if min_bars_per_day > 0:
-        bars_per_day = df.groupby(df["timestamp"].dt.date).size()
-        healthy = set(bars_per_day[bars_per_day >= min_bars_per_day].index)
-        df = df[df["timestamp"].dt.date.map(lambda d: d in healthy)].reset_index(
-            drop=True
-        )
-        if df.empty:
-            raise ProduceFieldsError(
-                f"the --min-bars-per-day {min_bars_per_day} density gate dropped "
-                f"every one of the {loaded} loaded bars"
-            )
-    return df, loaded
+    # ONE gate body, shared with the stitched loader (review MEDIUM-2). The
+    # first cut copied these lines into a second function for the stitched
+    # path and left this one in place, so the two could drift into keeping
+    # different sessions — the exact divergence the gate exists to prevent.
+    gated = _apply_density_gate(df, min_bars_per_day=min_bars_per_day, loaded=loaded)
+    return gated, loaded
 
 
 # ---------------------------------------------------------------------------
@@ -674,28 +697,6 @@ def load_stitched_bars(
             recompute_bars=recompute_bars,
         ),
     )
-
-
-def _apply_density_gate(df: Any, *, min_bars_per_day: int, loaded: int) -> Any:
-    """B1a's own gate, applied to the stitched frame day by day.
-
-    Same constant and same shape as :func:`load_bars` so a stitched window and
-    a plain one keep or drop the same sessions (plan §3.2 「밀도 게이트를 B1a 와
-    같게」).
-    """
-    if min_bars_per_day <= 0:
-        return df
-    bars_per_day = df.groupby(df["timestamp"].dt.date).size()
-    healthy = set(bars_per_day[bars_per_day >= min_bars_per_day].index)
-    gated = df[df["timestamp"].dt.date.map(lambda d: d in healthy)].reset_index(
-        drop=True
-    )
-    if gated.empty:
-        raise ProduceFieldsError(
-            f"the --min-bars-per-day {min_bars_per_day} density gate dropped "
-            f"every one of the {loaded} stitched bars"
-        )
-    return gated
 
 
 def _recompute_junctions(
@@ -2021,7 +2022,7 @@ def load_window(
         )
         stitch = None
     else:
-        _assert_manifest_inside_window(manifest, start=start, end=end)
+        _assert_window_matches_manifest(manifest, start=start, end=end)
         try:
             df, bars_loaded, input_files, stitch = load_stitched_bars(
                 data_root,
@@ -2049,22 +2050,33 @@ def load_window(
     )
 
 
-def _assert_manifest_inside_window(
+def _assert_window_matches_manifest(
     manifest: StitchManifest, *, start: date, end: date
 ) -> None:
-    """``--start``/``--end`` must still describe what was read.
+    """``--start``/``--end`` must be EXACTLY the manifest's span.
 
     The manifest, not the date range, selects the partitions — but the range
-    is half of B3's window identity, so a manifest reaching outside it would
-    make both sides agree on a window label that is not true of either frame.
+    is half of B3's window identity (``window_start`` / ``window_end``), so
+    the declared window has to be true of the frame that was actually read.
+
+    **Both directions are refused** (review LOW-1). Narrower was always
+    refused: the manifest would reach outside the window it claims. Wider was
+    accepted by the first cut and is just as wrong in the direction that
+    matters — ``--start 2026-09-01`` over a manifest beginning 2026-10-02
+    publishes a sidecar claiming a September window, and because B1a and B2
+    take the SAME flag they would both claim it, so B3 compares two equal
+    labels and never notices. The check has to be here or nowhere. There is no
+    case for a wider window: with a manifest the span IS the manifest's, and a
+    caller who wants a different one wants a different manifest.
     """
-    outside = [day for day in manifest.all_days if not (start <= day <= end)]
-    if outside:
+    days = manifest.all_days
+    if (start, end) != (days[0], days[-1]):
         raise ProduceFieldsError(
-            f"the stitch manifest names {len(outside)} day(s) outside "
-            f"--start {start} .. --end {end} (e.g. {outside[0]}). The declared "
-            "window is what B3 compares, so it must contain every day the "
-            "frame was built from"
+            f"--start {start} --end {end} is not the stitch manifest's own span "
+            f"{days[0]}..{days[-1]}. The declared window is half of what B3 "
+            "compares and both sides take this same flag, so a window that is "
+            "not exactly the manifest's would be agreed on by both and caught "
+            "by neither"
         )
 
 

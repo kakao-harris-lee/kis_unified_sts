@@ -39,6 +39,7 @@ from tools.tos_cp3 import produce_fields as b1a
 from tools.tos_cp3 import stitch as stitch_mod
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
+from tools.tos_cp3.live_producer import sinks as sinks_mod
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
 from tools.tos_cp3.live_producer.stitch_seed import StitchedSeed, shift_bars
 from tools.tos_cp3.minute_probe import frame as bars_to_frame
@@ -940,22 +941,33 @@ def test_the_fixture_session_really_is_stitched(
 
 
 def _canonical(frame: Any) -> bytes:
-    """A frame's content as bytes, for an exact comparison.
+    """A frame's content as bytes, for an EXACT comparison.
 
     The two frames are built by different code paths (one from parsed tuples,
     one through Parquet), so their dtypes and index differ while their CONTENT
     must not. Serialising the columns that carry meaning is the comparison that
     says so.
+
+    ⚠ **Every float goes through ``.hex()``, not ``f"{x:.2f}"``** (review
+    MEDIUM-1). The first cut formatted to two decimals, which is the published
+    precision — and therefore rounds away exactly the drift this test exists to
+    find: the reviewer mutated
+    :func:`~tools.tos_cp3.live_producer.stitch_seed.shift_bars` to add
+    ``1e-9`` and all twenty-five tests stayed green. A comparison written at
+    the precision of the thing it compares cannot detect a difference below
+    that precision, and "the producer's frame equals the reconstruction" is a
+    claim about the bits the next ``produce_bars`` will read, not about their
+    printed form. ``float.hex()`` is exact and round-trips.
     """
     ordered = frame.sort_values("timestamp").reset_index(drop=True)
     return "\n".join(
         "|".join(
             [
                 str(row.timestamp),
-                f"{float(row.open):.2f}",
-                f"{float(row.high):.2f}",
-                f"{float(row.low):.2f}",
-                f"{float(row.close):.2f}",
+                float(row.open).hex(),
+                float(row.high).hex(),
+                float(row.low).hex(),
+                float(row.close).hex(),
                 str(int(row.volume)),
             ]
         )
@@ -994,6 +1006,109 @@ def test_item5_the_reconstructed_frame_equals_the_producers_own(
     assert window.stitch.recompute_input_files
     per_day = window.df.groupby(window.df["timestamp"].dt.date)["code"].nunique()
     assert set(per_day.unique()) == {1}
+
+
+def _window_kwargs(session: StitchedSession, **overrides: Any) -> dict[str, Any]:
+    """``load_window`` arguments for this session (no ``out_dir``)."""
+    kwargs = {
+        key: value
+        for key, value in session.run_kwargs(
+            out_name="unused", with_manifest=True
+        ).items()
+        if key != "out_dir"
+    }
+    kwargs["market_open"] = "auto"
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_the_density_gate_drops_a_thin_day_from_the_STITCHED_frame(
+    stitched_session: StitchedSession,
+) -> None:
+    """The gate runs on the cross-contract frame too, with B1a's own constant.
+
+    Review MEDIUM-2: every other stitched test passes ``min_bars_per_day=0``
+    (the fixture's target session is deliberately truncated to keep the
+    boundary loop short), so the gate call in ``load_stitched_bars`` was never
+    executed and deleting it stayed green — a copy of the gate that nothing
+    exercised. This runs the real constant over the same session and checks
+    that the thin day leaves and the dense ones stay.
+
+    The thin day here is the realistic shape, not a contrivance: a producer
+    that stopped early leaves exactly this — full previous-month seed days and
+    a part-written target day.
+    """
+    gate = b1a.DEFAULT_MIN_BARS_PER_DAY
+    ungated = b1a.load_window(**_window_kwargs(stitched_session, min_bars_per_day=0))
+    per_day = ungated.df.groupby(ungated.df["timestamp"].dt.date).size()
+    assert 0 < per_day[TARGET] < gate, (
+        f"the fixture's target day holds {per_day.get(TARGET)} bars; the test "
+        "is vacuous unless it is thin"
+    )
+    assert all(per_day[day] >= gate for day in SEED_DAYS)
+
+    gated = b1a.load_window(**_window_kwargs(stitched_session, min_bars_per_day=gate))
+    kept = set(gated.df["timestamp"].dt.date)
+    assert TARGET not in kept, "the thin target day survived the density gate"
+    assert kept == set(SEED_DAYS)
+    assert gated.bars_loaded == int(len(ungated.df))  # PRE-gate count, as B1a reports
+
+
+def test_the_declared_window_must_be_exactly_the_manifests_span(
+    stitched_session: StitchedSession,
+) -> None:
+    """Both directions, because only one of them was refused (review LOW-1).
+
+    B1a and B2 take the same ``--start``/``--end``, so a window label that is
+    not true of the frame is agreed on by both sides and invisible to B3. The
+    wider case was silently accepted by the first cut.
+    """
+    b1a.load_window(**_window_kwargs(stitched_session))  # the exact span is fine
+    with pytest.raises(ProduceFieldsError, match="not the stitch manifest's own span"):
+        b1a.load_window(
+            **_window_kwargs(stitched_session, start=date(2026, 9, 1))
+        )  # wider
+    with pytest.raises(ProduceFieldsError, match="not the stitch manifest's own span"):
+        b1a.load_window(
+            **_window_kwargs(stitched_session, end=date(2026, 10, 19))
+        )  # wider
+    with pytest.raises(ProduceFieldsError, match="not the stitch manifest's own span"):
+        b1a.load_window(
+            **_window_kwargs(stitched_session, start=SEED_DAYS[1])
+        )  # narrower
+
+
+def test_a_session_holding_only_the_PREVIOUS_months_partitions_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Restarting into a post-roll session directory must still be refused.
+
+    Review LOW-2. Right after a roll the seed is entirely the previous month,
+    so a producer that crashed after writing it leaves ``code=A05610`` and NO
+    ``code=A05611`` at all. The first cut's check globbed the traded symbol
+    only: it would find nothing, let the restart proceed, and append every
+    previous-month seed day a second time — the duplicate timestamps that cost
+    B1a the whole session's input.
+    """
+    market_root = tmp_path / "market"
+    sinks_mod.append_bar_part(
+        market_root,
+        asset_class=producer_mod.ASSET_CLASS,
+        symbol=OLD,
+        bars=_flat_session(OLD, SPLICE, 400.00, 0.75)[:5],
+    )
+    traded = market_root / producer_mod.ASSET_CLASS / "minute" / f"code={NEW}"
+    assert not traded.exists(), "the fixture must hold no partition for the traded code"
+
+    with pytest.raises(LiveProducerRefused, match="already holds"):
+        sinks_mod.refuse_if_partitions_exist(
+            market_root, asset_class=producer_mod.ASSET_CLASS, symbol=NEW
+        )
+    # An empty tree is still accepted — the refusal is about THIS directory's
+    # emptiness, not about sibling months being present anywhere.
+    sinks_mod.refuse_if_partitions_exist(
+        tmp_path / "fresh", asset_class=producer_mod.ASSET_CLASS, symbol=NEW
+    )
 
 
 def test_item5_no_record_is_emitted_for_a_non_target_segment(
