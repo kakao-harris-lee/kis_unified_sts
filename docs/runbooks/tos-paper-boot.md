@@ -1365,7 +1365,12 @@ TENANT_ENVIRONMENT_LABEL=paper \
 아닐 때도 있다(실험을 섞어 버림). ⛔ 생산자 쪽은 다르다 — `TENANT_PRODUCER_SESSION_DIR` 은
 **매번 새 디렉터리**여야 하고, 기존 파티션이 있으면 생산자가 기동을 거부한다(계획 §3.6
 v4 재리뷰 L2). 요약하면: **저널과 생산자 세션 dir 은 세션마다 새로, durable set 은
-운영자가 의도한 대로.**
+운영자가 의도한 대로.** ⚠ 이어 쓴 durable set 에서는 §7.2-d 의 추출기가 **두 세션의
+틱·id 를 모두** 읽는다(저장소가 append-only 이므로 당연하다) — 그래서 그 날짜의
+오프라인 3종만 들고 B3 를 돌리면 `--consumed-ids` 가 **닫히는 쪽으로 실패한다**
+(`diff_decisions.py::apply_consumed_filter` 가 「소비 id 가 조인된 아티팩트에 없다」로
+거부한다). 두 세션을 한 번에 대조하려면 오프라인 3종도 두 날을 덮어야 하고, 하루만
+보려면 **그 하루의 durable set**(= 새 잎)으로 돌려야 한다.
 
 **⚠ 운영자 단계 — 개장 지연일에는 tenant 세션을 돌리지 않는다.**
 수능일처럼 개장이 늦춰지는 날이 있다. 그런 날 생산자는 정규 개장 시각 기준으로 세션
@@ -1449,18 +1454,40 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   두 계수에서 뺀다**(구조상 소비되지 않는다) — 그 수는 러너 로그의
   `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있고, 그 스냅샷은 **부팅 직전에**
   다시 찍힌다(가드·렌더 동안 발행된 봉도 부팅 전 줄이다).
-  - 「**STALE 로 소비된 줄**」은 이제 추출기가 **저장소가 적은 낱말 그대로** 센다:
+  - ⛔ **지속 레코드에 `STALE` 은 찍히지 않는다.** 발행기
+    (`tos_runtime/marketfeed/snapshot.py::_derive_field_state`)는 `now_ms - as_of_ms
+    > max_age_ms` 인 필드를 `FieldState.UNKNOWN` 으로 적고, 사유 문자열 `"stale"` 은
+    **메모리 안**(`IssuedSnapshot.field_reports`)에만 남는다. 그래서 「지속된 STALE 을
+    센다」는 계수는 아무리 stale 한 세션에서도 **언제나 0** 이다(실측: 정책
+    `max_age_ms` 5000, `as_of+5001` 발행 → 지속 상태 `['UNKNOWN','UNKNOWN']`).
+    2026-10-14 이전 판의 이 절과 추출기가 그 계수였다 — 둘 다 폐기한다.
+  - 「**STALE 로 소비된 줄**」은 이제 **발행기가 값을 쥐고도 거절한 줄**로 센다:
     `consumed-ids.json` 의 `consumed_field_states` 가 소비된 id 마다
-    `marketfeed.snapshots.snapshot_json` 의 `field_evaluations[*].state` 를 읽는다.
-    **M5 의 첫 수 = `m5_post_boot_consumed_ids_with_a_stale_field_evaluation`** —
-    「STALE 인 필드 평가를 하나라도 가진 **부팅 후** 소비 id 의 수」(id 당 1 회).
-    부팅 전 줄은 `pre_boot_…` 키로 따로 세고 그 수에서 뺀다(계획 §5 M5 가 두 계수
-    모두에서 빼는 것과 같다). STALE 이 아닌 비-VALID 상태(UNKNOWN·CONFLICTED·INVALID)는
-    `other_field_evaluation_states` 에 **상태 이름별로** 따로 나오고 M5 수에 합치지
-    않는다 — 서로 다른 결함이고 M5 가 묻는 것은 STALE 하나다. 관측 쪽 상태
-    (`observations[*].field_state`)도 `observation_field_states_not_valid` 로 따로
-    나온다. 커널의 VALID 게이트(`tos.marketfeed.value.value_field_state`)가 둘 중
-    **나쁜 쪽**을 취하므로 한쪽이 다른 쪽을 대신할 수 없다.
+    `snapshots.snapshot_json` 의 `field_evaluations[*]` 와
+    `preimages.preimage_json` 의 토큰을 **같이** 읽는다.
+    **M5 의 첫 수 = `m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown`**
+    — 「UNKNOWN 인 필드 평가 중, 그 `field_ref` 가 **그 봉의 preimage 에 있고**
+    토큰이 **투영 가능**(bool/int/str; float 은 커널 `project_scalar` 가 거절)한
+    것을 하나라도 가진 **부팅 후** 소비 id 의 수」(id 당 1 회). 읽는 법은
+    **「stale 이거나, 평가 시각을 세울 수 없었거나」** — STALE 의 **상한**이고,
+    낱말을 세는 계수와 달리 **stale 한 줄이 있는데 0 이 될 수 없다**.
+    `_derive_field_state` 의 UNKNOWN 사유는 넷뿐이다: `absent_from_payload` ·
+    `now_ms_unknown` · `stale` · `unprojectable`. 첫째는 **키 유무**로, 넷째는
+    **투영 가능성**으로 갈라지고, 가운데 둘이 위의 수다. 갈라낸 둘은
+    `unknown_field_causes` 에 **사유 이름별로** 따로 나오고 M5 수에 합치지 않는다 —
+    페이로드에 없던 필드는 신선도에 대해 아무 말도 하지 않고, 투영 불가 토큰은 다른
+    결함이다. 부팅 전 줄은 `pre_boot_…` 키로 따로 세고 그 수에서 뺀다(계획 §5 M5 가
+    두 계수 모두에서 빼는 것과 같다). 관측 쪽 상태(`observations[*].field_state`)도
+    `observation_field_states_not_valid` 로 따로 나온다 — 커널의 VALID 게이트
+    (`tos.marketfeed.value.value_field_state`)가 둘 중 **나쁜 쪽**을 취하므로 한쪽이
+    다른 쪽을 대신할 수 없다. `STALE`·`CONFLICTED`·`INVALID` 가 혹시 찍히면
+    `other_field_evaluation_states` 에 이름 그대로 나온다(오늘은 전부 0 이어야 하고,
+    STALE 이 0 이 아니면 **발행기가 바뀐 것**이므로 위 정의를 다시 좁힐 때다).
+  - ⚠ **한 군데 빈틈, 적어 둔다**: `now_ms` 가 없을 때 발행기는 **투영 검사 전에**
+    돌아가므로, 「있지만 투영 불가」인 필드는 시계 실패였을 수도 있는데 이 쪽은
+    `unprojectable` 로 적힌다. 수 옆에 그 계수가 같이 나오니 사라지지는 않고, 시계가
+    없으면 **선언된 모든 필드**가 UNKNOWN 이 되므로 같은 스냅샷에 투영 가능한 필드가
+    하나라도 있으면 M5 수가 잡는다.
   - ⚠ **`consumed_value_view` 는 M5 의 수가 아니다.** 그 블록은 리졸버가 무엇을
     했는지를 적는다(`no_view` · `empty_view` · `values_admitted`). `_admit_one`
     (`tos/src/tos/marketfeed/value.py`)은 값 후보를 **열 가지** 사유로 떨어뜨리고,
@@ -1470,8 +1497,12 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
     그 읽기는 ③ 이 **없던** §7.2-c 의 한 행짜리 합성 저널 논증이다(2026-10-14 정정).
   - **genesis 에서의 기대**: ③ 이 **있고** M6(교체 지연)가 `max_age_ms` 800 에 대해
     0.300 s 미만이면, **부팅 후 줄은 값이 허용된 채 소비되는 것이 정상**이다. 즉
-    `m5_…_stale_field_evaluation` 이 0 이고 `values_admitted` 가 소비 수에 가까운
-    것이 통과한 모양이며, `empty_view` 가 세션 전체인 쪽이 **소견**이다.
+    `m5_…_present_value_refused_as_unknown` 이 0 이고 `values_admitted` 가 소비 수에
+    가까운 것이 통과한 모양이며, `empty_view` 가 세션 전체인 쪽이 **소견**이다.
+  - ⛔ `consumed-ids` 는 **`--boot-snapshot` 없이는 거부**한다(2026-10-14). 문서가
+    항상 M5 계수를 싣는데 그 계수는 부팅 전 줄을 빼야 하고, 플래그가 없으면 부팅 전
+    줄이 **조용히** 부팅 후 수에 들어간다. 「부팅 전 줄 없음」은 **빈 리스트**이지
+    파일 없음이 아니다.
   - 「**소비되지 않은 줄**」은 `unpaired_reason_counts` 의 `published_not_consumed` 다
     (`pre_boot` 와 생산자 사유들은 그 수에서 빠진다).
 - **M6** — `producer-summary.json` 의 `max_stamp_to_replace_s` 가 0.300 미만인가.

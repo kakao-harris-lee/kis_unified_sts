@@ -84,13 +84,22 @@ def _seq(index: int, offset: int = 1) -> int:
     return 100 * index + offset
 
 
+#: The four committed snapshot shapes, named by what the REAL
+#: ``SnapshotIssuer`` did to them: ``fresh`` (every field VALID),
+#: ``stale_by_age`` (both fields UNKNOWN, issued past ``max_age_ms``),
+#: ``absent_field`` (one declared field the payload never carried) and
+#: ``unprojectable`` (a float token the kernel's ``project_scalar`` refuses).
+#: They are the whole decision table of
+#: ``tos_runtime.marketfeed.snapshot._derive_field_state``.
+SNAPSHOT_SHAPES = ("fresh", "stale_by_age", "absent_field", "unprojectable")
+
+
 def _snapshot_json(hinge: dict[str, Any], name: str, *, snapshot_id: str) -> str:
     """One committed snapshot's bytes, re-keyed to *snapshot_id*.
 
-    ``name`` is the FieldState shape (``valid`` / ``stale`` / ``unknown``) the
-    real :class:`SqliteSnapshotStore` wrote in the hinge. Only the id is
-    rewritten — the ``field_evaluations`` and ``observations`` the extractor
-    counts are the store's own.
+    ``name`` is one of :data:`SNAPSHOT_SHAPES`. Only the id is rewritten — the
+    ``field_evaluations`` and ``observations`` the extractor reads are the
+    issuer's own.
     """
     document = json.loads(
         hinge["payloads"]["marketfeed_snapshots"][name]["snapshot_json"]
@@ -99,12 +108,22 @@ def _snapshot_json(hinge: dict[str, Any], name: str, *, snapshot_id: str) -> str
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
+def _preimage_json(hinge: dict[str, Any], name: str) -> str:
+    """The tokens that snapshot's observation attested, as the store wrote them.
+
+    The companion half of :func:`_snapshot_json`: whether an UNKNOWN field's
+    key is IN here, and whether its token projects, is what separates "the
+    issuer held the value and refused it" from "the payload never carried it".
+    """
+    return str(hinge["payloads"]["marketfeed_snapshots"][name]["preimage_json"])
+
+
 def _write_session(
     tmp_path: Path,
     hinge: dict[str, Any],
     *,
     snapshots: list[tuple[str, str, int]] | list[tuple[str, str, int, str]],
-    preimages: list[tuple[str, str]],
+    preimages: list[tuple[str, str]] | list[tuple[str, str, str]],
     entries: list[tuple[int, str, str]] | None = None,
     ticks: (
         list[tuple[int, str]] | list[tuple[int, str, int | None, int | None]] | None
@@ -122,10 +141,11 @@ def _write_session(
     :func:`_real_entry`), and a helper that rebuilt them from a dict would be
     testing the rebuild.
 
-    A ``snapshots`` row may omit ``snapshot_json`` and a ``ticks`` row the two
-    receipt stamps; the first then carries the committed all-VALID snapshot
-    and the second a window from :func:`_window`, so a test that is not about
-    field states or attribution does not have to spell them out.
+    A ``snapshots`` row may omit ``snapshot_json``, a ``preimages`` row its
+    ``preimage_json`` and a ``ticks`` row the two receipt stamps; they then
+    carry the committed all-VALID (``fresh``) snapshot and its preimage, and a
+    window from :func:`_window` — so a test that is not about field states or
+    attribution does not have to spell them out.
     """
     data_dir = tmp_path / "data" / INSTRUMENT
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -149,14 +169,18 @@ def _write_session(
                 (
                     row
                     if len(row) == 4
-                    else (*row, _snapshot_json(hinge, "valid", snapshot_id=row[0]))
+                    else (*row, _snapshot_json(hinge, "fresh", snapshot_id=row[0]))
                 )
                 for row in snapshots
             ],
         )
         conn.executemany(
-            "INSERT INTO preimages (snapshot_id, raw_event_id) VALUES (?, ?)",
-            preimages,
+            "INSERT INTO preimages (snapshot_id, raw_event_id, preimage_json) "
+            "VALUES (?, ?, ?)",
+            [
+                row if len(row) == 3 else (*row, _preimage_json(hinge, "fresh"))
+                for row in preimages
+            ],
         )
         conn.commit()
     finally:
@@ -278,8 +302,11 @@ class Bar:
     as_of_ms: int
     tick_payload: str
     #: The committed snapshot bytes this bar's row carries, re-keyed to its
-    #: own id — the FieldStates M5 counts live in here.
+    #: own id — the field evaluations M5 reads live in here.
     snapshot_json: str
+    #: The committed preimage bytes of the same shape — the tokens those
+    #: evaluations were made against.
+    preimage_json: str
     #: ``(handling_started_evidence_seq, consumed_evidence_seq)``: the durable
     #: bracket a capsule-less decision record is attributed by. ``None`` for
     #: either end is a real shape (never ran / never finished) and some tests
@@ -297,8 +324,8 @@ def _bars(
     any further bar is that same event with its two ids replaced, which keeps
     the shape real even where the fixture runs out.
 
-    ``states`` names each bar's committed snapshot shape (``valid`` /
-    ``stale`` / ``unknown``); the default is all-``valid``.
+    ``states`` names each bar's committed snapshot shape
+    (:data:`SNAPSHOT_SHAPES`); the default is all-``fresh``.
     """
     bars: list[Bar] = []
     committed = len(hinge["payloads"]["inbox_events"])
@@ -321,8 +348,11 @@ def _bars(
                 tick_payload=payload,
                 snapshot_json=_snapshot_json(
                     hinge,
-                    "valid" if states is None else states[index],
+                    "fresh" if states is None else states[index],
                     snapshot_id=snapshot_id,
+                ),
+                preimage_json=_preimage_json(
+                    hinge, "fresh" if states is None else states[index]
                 ),
                 window=_window(index),
             )
@@ -343,7 +373,7 @@ def _session(
         tmp_path,
         hinge,
         snapshots=_snapshot_rows(bars),
-        preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
+        preimages=_preimage_rows(bars),
         ticks=_tick_rows(bars),
         entries=entries,
         **kwargs,
@@ -355,6 +385,11 @@ def _snapshot_rows(bars: list[Bar]) -> list[tuple[str, str, int, str]]:
     return [
         (bar.snapshot_id, INSTRUMENT, bar.as_of_ms, bar.snapshot_json) for bar in bars
     ]
+
+
+def _preimage_rows(bars: list[Bar]) -> list[tuple[str, str, str]]:
+    """The ``preimages`` rows for *bars*, each with its own committed tokens."""
+    return [(bar.snapshot_id, bar.raw_event_id, bar.preimage_json) for bar in bars]
 
 
 def _tick_rows(bars: list[Bar]) -> list[tuple[int, str, int | None, int | None]]:
@@ -380,7 +415,7 @@ def test_consumed_ids_are_the_preimage_rows(
 ) -> None:
     """The id filter is what the runtime actually covered, nothing inferred."""
     data_dir = _three_bar_session(tmp_path, hinge)
-    document = si.build_consumed_ids_document(data_dir=data_dir)
+    document = _document(tmp_path, data_dir)
 
     assert document["raw_event_ids"] == [
         _event_id("0900"),
@@ -447,7 +482,7 @@ def test_red_a_snapshot_without_exactly_one_preimage_is_refused(
         preimages=([("snap-1", _event_id("0900"))] if covered else []) + extra,
     )
     with pytest.raises(si.SessionInputsError) as excinfo:
-        si.build_consumed_ids_document(data_dir=data_dir)
+        _document(tmp_path, data_dir)
     assert f"covers {covered} preimage row(s)" in str(excinfo.value)
 
 
@@ -475,7 +510,7 @@ def test_red_two_instruments_in_one_session_are_refused(
         ],
     )
     with pytest.raises(si.SessionInputsError) as excinfo:
-        si.build_consumed_ids_document(data_dir=data_dir)
+        _document(tmp_path, data_dir)
     assert "A05612" in str(excinfo.value)
 
 
@@ -491,7 +526,7 @@ def test_red_a_session_that_consumed_nothing_is_refused(
     """
     data_dir = _write_session(tmp_path, hinge, snapshots=[], preimages=[])
     with pytest.raises(si.SessionInputsError) as excinfo:
-        si.build_consumed_ids_document(data_dir=data_dir)
+        _document(tmp_path, data_dir)
     assert "holds no snapshots" in str(excinfo.value)
 
 
@@ -797,7 +832,7 @@ def test_red_a_tick_queued_and_never_run_takes_no_record(
         tmp_path,
         hinge,
         snapshots=_snapshot_rows(bars),
-        preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
+        preimages=_preimage_rows(bars),
         ticks=[
             (1, bars[0].tick_payload, *bars[0].window),
             (2, held.tick_payload, None, None),
@@ -852,7 +887,7 @@ def test_red_a_keyed_record_whose_tick_never_started_handling_is_refused(
         tmp_path,
         hinge,
         snapshots=_snapshot_rows(bars),
-        preimages=[(bars[0].snapshot_id, bars[0].raw_event_id)],
+        preimages=_preimage_rows(bars[:1]),
         ticks=[(1, bars[0].tick_payload, None, None)],
         entries=[(_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0]))],
     )
@@ -873,7 +908,7 @@ def test_red_an_unkeyed_record_in_two_windows_is_refused(
         tmp_path,
         hinge,
         snapshots=_snapshot_rows(bars),
-        preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
+        preimages=_preimage_rows(bars),
         ticks=[
             (1, bars[0].tick_payload, bars[0].window[0], None),
             (2, bars[1].tick_payload, *bars[1].window),
@@ -1257,6 +1292,8 @@ def test_cli_writes_both_inputs(tmp_path: Path, hinge: dict[str, Any]) -> None:
                 "consumed-ids",
                 "--data-dir",
                 str(data_dir),
+                "--boot-snapshot",
+                str(_boot_snapshot(tmp_path, [])),
                 "--out",
                 str(out / "consumed-ids.json"),
             ]
@@ -1291,7 +1328,18 @@ def test_cli_refusal_is_exit_2_and_writes_nothing(
     data_dir = _write_session(tmp_path, hinge, snapshots=[], preimages=[])
     out = tmp_path / "b3-inputs" / "consumed-ids.json"
     assert (
-        si.main(["consumed-ids", "--data-dir", str(data_dir), "--out", str(out)]) == 2
+        si.main(
+            [
+                "consumed-ids",
+                "--data-dir",
+                str(data_dir),
+                "--boot-snapshot",
+                str(_boot_snapshot(tmp_path, [])),
+                "--out",
+                str(out),
+            ]
+        )
+        == 2
     )
     assert not out.exists()
 
@@ -1389,7 +1437,7 @@ def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
         tmp_path,
         hinge,
         snapshots=_snapshot_rows(bars),
-        preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
+        preimages=_preimage_rows(bars),
         ticks=[
             (1, bars[0].tick_payload, *bars[0].window),  # committed: no view
             (2, bars[1].tick_payload, *bars[1].window),  # committed: one value
@@ -1400,19 +1448,22 @@ def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
             ),  # -> empty_view
         ],
     )
-    document = si.build_consumed_ids_document(data_dir=data_dir)
+    document = _document(tmp_path, data_dir)
     view = document["consumed_value_view"]
     assert view["counts"] == {"no_view": 1, "empty_view": 1, "values_admitted": 1}
     assert view["raw_event_ids_with_admitted_values"] == [bars[1].raw_event_id]
     # the note says what the store says, and refuses the inference it used to
     # make
     assert "nothing was admissible" in view["note"]
-    assert "NOT the STALE count" in view["note"]
-    assert "m5_post_boot_consumed_ids_with_a_stale_field_evaluation" in view["note"]
+    assert "NOT M5's first number" in view["note"]
+    assert (
+        "m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"
+        in view["note"]
+    )
 
 
 # ===========================================================================
-# M5's first count — STALE from the snapshot's own field states (MEDIUM R2)
+# M5's first count — the issuer held the value and refused it (BLOCKER R2')
 # ===========================================================================
 
 
@@ -1422,89 +1473,184 @@ def _boot_snapshot(tmp_path: Path, ids: list[str]) -> Path:
     return path
 
 
-def test_m5s_stale_count_is_the_snapshots_own_field_state(
-    tmp_path: Path, hinge: dict[str, Any]
-) -> None:
-    """**MEDIUM R2.** Plan §5 M5's first number, from the word the store writes.
-
-    Three consumed bars, each carrying a snapshot the REAL store wrote: one
-    all-VALID, one with a STALE field evaluation, one with an UNKNOWN
-    evaluation over a STALE observation. M5 counts the STALE one; the UNKNOWN
-    is reported by its own name; the observation-level STALE is reported on
-    its own surface, because ``value_field_state`` takes the worst of both and
-    neither stands for the other.
-    """
-    bars = _bars(hinge, 3, states=["valid", "stale", "unknown"])
-    data_dir = _session(tmp_path, hinge, bars)
-    document = si.build_consumed_ids_document(data_dir=data_dir)
-    states = document["consumed_field_states"]
-
-    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 1
-    assert states["post_boot_raw_event_ids_with_a_stale_field_evaluation"] == [
-        bars[1].raw_event_id
-    ]
-    assert states["counts"]["consumed_ids"] == 3
-    assert states["counts"]["pre_boot_consumed_ids"] == 0
-    assert states["counts"]["post_boot_consumed_ids"] == 3
-    assert states["counts"]["consumed_ids_without_field_evaluations"] == 0
-    # the other non-VALID states, by name, NOT summed into the STALE number
-    assert states["other_field_evaluation_states"] == {
-        "UNKNOWN": {"post_boot": 1, "pre_boot": 0}
-    }
-    assert states["observation_field_states_not_valid"] == {
-        "STALE": {"post_boot": 1, "pre_boot": 0}
-    }
-    assert "field_evaluations[*].state == 'STALE'" in states["definition"]
-
-
-def test_red_a_non_stale_rejection_is_not_counted_as_stale(
-    tmp_path: Path, hinge: dict[str, Any]
-) -> None:
-    """**MEDIUM R2's first red proof.**
-
-    Concrete input: every consumed bar carries an UNKNOWN field evaluation
-    and NO stale one. The resolver admits no value for any of them, so the
-    count this replaces (``empty_view + no_view``) would report three "lines
-    consumed STALE" — a defect the session did not have, on the acceptance
-    criterion that decides whether ③ worked. M5's number is 0 here, and the
-    three UNKNOWNs are visible under their own name.
-    """
-    bars = _bars(hinge, 3, states=["unknown", "unknown", "unknown"])
-    data_dir = _session(tmp_path, hinge, bars)
-    states = si.build_consumed_ids_document(data_dir=data_dir)["consumed_field_states"]
-    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 0
-    assert states["post_boot_raw_event_ids_with_a_stale_field_evaluation"] == []
-    assert states["other_field_evaluation_states"]["UNKNOWN"]["post_boot"] == 3
-
-
-def test_red_a_pre_boot_stale_line_is_not_in_the_post_boot_count(
-    tmp_path: Path, hinge: dict[str, Any]
-) -> None:
-    """**MEDIUM R2's second red proof.**
-
-    Concrete input: two consumed bars with STALE field evaluations, one of
-    them listed in the runner's boot-journal snapshot. Plan §5 M5 excludes
-    pre-boot lines from both of its counts — they are structurally
-    unconsumable-fresh — so counting it would report a defect the acceptance
-    criterion does not ask about, on every genesis session that consumed its
-    first journal line.
-    """
-    bars = _bars(hinge, 2, states=["stale", "stale"])
-    data_dir = _session(tmp_path, hinge, bars)
-    document = si.build_consumed_ids_document(
+def _document(
+    tmp_path: Path, data_dir: Path, *, pre_boot: list[str] | None = None, **kwargs: Any
+) -> dict[str, Any]:
+    """The consumed-ids document, with the now-REQUIRED boot snapshot."""
+    return si.build_consumed_ids_document(
         data_dir=data_dir,
-        boot_snapshot=_boot_snapshot(tmp_path, [bars[0].raw_event_id]),
+        boot_snapshot=_boot_snapshot(tmp_path, pre_boot or []),
+        **kwargs,
     )
-    states = document["consumed_field_states"]
-    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 1
-    assert states["post_boot_raw_event_ids_with_a_stale_field_evaluation"] == [
-        bars[1].raw_event_id
+
+
+def test_m5s_first_number_counts_a_value_the_issuer_held_and_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**BLOCKER R2'.** Plan §5 M5's first number, from what the issuer did.
+
+    Four consumed bars, each carrying a snapshot the REAL ``SnapshotIssuer``
+    produced — one per outcome of its own ``_derive_field_state``. The
+    over-age one is the line M5 asks about, and the durable shape it leaves
+    is ``UNKNOWN`` with its two fields PRESENT and projectable in the
+    preimage: the issuer had the values and refused them on age. The absent
+    field and the float token are UNKNOWN too and are NOT that, so they are
+    counted under their own cause names.
+
+    A count of the persisted word ``STALE`` would be 0 on all four — the
+    issuer never writes it (``tos/runtime/tests/operations
+    /test_cp3_session_store_reads.py`` asserts that against the issuer).
+    """
+    bars = _bars(hinge, 4, states=list(SNAPSHOT_SHAPES))
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
+
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 1
+    )
+    assert states[
+        "post_boot_raw_event_ids_with_a_present_value_refused_as_unknown"
+    ] == [bars[1].raw_event_id]
+    assert states["unknown_field_causes"] == {
+        si.CAUSE_PRESENT_REFUSED: {"post_boot": 1, "pre_boot": 0},
+        si.CAUSE_ABSENT_FROM_PAYLOAD: {"post_boot": 1, "pre_boot": 0},
+        si.CAUSE_UNPROJECTABLE: {"post_boot": 1, "pre_boot": 0},
+    }
+    assert states["counts"]["consumed_ids"] == 4
+    assert states["counts"]["post_boot_consumed_ids"] == 4
+    assert states["counts"]["consumed_ids_without_field_evaluations"] == 0
+    # the word itself appears nowhere, and the block says so
+    assert states["other_field_evaluation_states"] == {}
+    assert "never STALE" in states["definition"]
+    assert "stale, or evaluation clock unknown" in states["definition"]
+
+
+def test_red_an_absent_field_is_not_counted_as_a_refused_value(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**BLOCKER R2''s first red proof.**
+
+    Concrete input: three bars whose snapshots are the issuer's
+    ``absent_field`` one — a declared field the payload never carried, which
+    the issuer records as ``UNKNOWN`` exactly like an over-age field does.
+    Counting UNKNOWN alone would report three stale lines on a session whose
+    clock was perfect; the preimage says the key was never there, so M5's
+    number is 0 and the three are visible under
+    ``absent_from_payload``.
+    """
+    bars = _bars(hinge, 3, states=["absent_field"] * 3)
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
+    )
+    assert states["unknown_field_causes"][si.CAUSE_ABSENT_FROM_PAYLOAD] == {
+        "post_boot": 3,
+        "pre_boot": 0,
+    }
+
+
+def test_red_an_unprojectable_token_is_not_counted_as_a_refused_value(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**BLOCKER R2''s second red proof.**
+
+    Concrete input: the issuer's ``unprojectable`` snapshot — a float token
+    the kernel's own ``project_scalar`` refuses, recorded ``UNKNOWN`` while
+    the clock was fine. "Present in the preimage" alone would count it; the
+    projection mirror separates it, and it is reported under its own cause
+    rather than dropped.
+    """
+    bars = _bars(hinge, 2, states=["unprojectable", "unprojectable"])
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
+    )
+    assert states["unknown_field_causes"][si.CAUSE_UNPROJECTABLE] == {
+        "post_boot": 2,
+        "pre_boot": 0,
+    }
+
+
+def test_red_a_fresh_session_counts_nothing(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**BLOCKER R2''s third red proof, and the genesis expectation.**
+
+    Concrete input: three bars the issuer evaluated VALID throughout. A
+    counter that read "UNKNOWN or anything not VALID" would still find
+    nothing here, but one that counted ids rather than causes could; this
+    pins the healthy session at 0 on every key.
+    """
+    bars = _bars(hinge, 3)
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
+    )
+    assert states["unknown_field_causes"] == {
+        si.CAUSE_PRESENT_REFUSED: {"post_boot": 0, "pre_boot": 0},
+        si.CAUSE_ABSENT_FROM_PAYLOAD: {"post_boot": 0, "pre_boot": 0},
+        si.CAUSE_UNPROJECTABLE: {"post_boot": 0, "pre_boot": 0},
+    }
+    assert states["observation_field_states_not_valid"] == {}
+
+
+def test_red_a_pre_boot_refused_line_is_not_in_the_post_boot_count(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**BLOCKER R2''s fourth red proof (and MEDIUM R2's, kept).**
+
+    Concrete input: two bars the issuer refused on age, one of them listed in
+    the runner's boot-journal snapshot. Plan §5 M5 excludes pre-boot lines
+    from both of its counts — they are structurally unconsumable-fresh — so
+    counting it would report a defect the criterion does not ask about, on
+    every genesis session that consumed its first journal line.
+    """
+    bars = _bars(hinge, 2, states=["stale_by_age", "stale_by_age"])
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir, pre_boot=[bars[0].raw_event_id])[
+        "consumed_field_states"
     ]
-    assert states["pre_boot_raw_event_ids_with_a_stale_field_evaluation"] == [
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 1
+    )
+    assert states[
+        "post_boot_raw_event_ids_with_a_present_value_refused_as_unknown"
+    ] == [bars[1].raw_event_id]
+    assert states["pre_boot_raw_event_ids_with_a_present_value_refused_as_unknown"] == [
         bars[0].raw_event_id
     ]
+    assert states["unknown_field_causes"][si.CAUSE_PRESENT_REFUSED] == {
+        "post_boot": 1,
+        "pre_boot": 1,
+    }
     assert states["counts"]["pre_boot_consumed_ids"] == 1
     assert states["counts"]["post_boot_consumed_ids"] == 1
+
+
+def test_red_consumed_ids_without_a_boot_snapshot_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**LOW L-a's red proof.**
+
+    Concrete input: the document built with no boot snapshot at all. Every
+    document carries M5's counts and both of them exclude pre-boot lines, so
+    without the runner's own record EVERY pre-boot line is counted as a
+    post-boot one — silently, in the number the acceptance criterion is read
+    off. 'No pre-boot lines' is an empty list, which the runner writes; a
+    missing file is a different thing.
+    """
+    bars = _bars(hinge, 1, states=["stale_by_age"])
+    data_dir = _session(tmp_path, hinge, bars)
+    with pytest.raises(si.SessionInputsError, match="--boot-snapshot"):
+        si.build_consumed_ids_document(data_dir=data_dir)
+    # and the CLI cannot be invoked without the flag either
+    with pytest.raises(SystemExit):
+        si.build_parser().parse_args(
+            ["consumed-ids", "--data-dir", str(data_dir), "--out", str(tmp_path / "x")]
+        )
 
 
 def test_red_a_field_evaluation_without_a_state_is_refused(
@@ -1512,10 +1658,10 @@ def test_red_a_field_evaluation_without_a_state_is_refused(
 ) -> None:
     """**Guard.** Concrete input: a ``field_evaluations`` entry with no
     ``state`` key — what a renamed field in ``FieldEvaluation`` would produce.
-    Read permissively it is "not STALE", so M5's number would silently drop to
-    0 on a session full of stale lines: the undercount the whole criterion
-    exists to catch."""
-    bars = _bars(hinge, 1, states=["stale"])
+    Read permissively it is "not a finding", so M5's number would silently
+    drop to 0 on a session full of refused lines: the undercount the whole
+    criterion exists to catch."""
+    bars = _bars(hinge, 1, states=["stale_by_age"])
     broken = json.loads(bars[0].snapshot_json)
     broken["field_evaluations"][0].pop("state")
     data_dir = _write_session(
@@ -1524,11 +1670,61 @@ def test_red_a_field_evaluation_without_a_state_is_refused(
         snapshots=[
             (bars[0].snapshot_id, INSTRUMENT, bars[0].as_of_ms, json.dumps(broken))
         ],
-        preimages=[(bars[0].snapshot_id, bars[0].raw_event_id)],
+        preimages=_preimage_rows(bars[:1]),
         ticks=_tick_rows(bars),
     )
     with pytest.raises(si.SessionInputsError, match="silent undercount"):
-        si.build_consumed_ids_document(data_dir=data_dir)
+        _document(tmp_path, data_dir)
+
+
+def test_red_a_field_evaluation_without_a_field_ref_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard.** Concrete input: an UNKNOWN evaluation with no ``field_ref``.
+
+    Its cause is then undecidable — there is no key to look up in the
+    preimage — and the obvious permissive readings are both wrong: treating
+    it as absent drops a possibly-stale line from M5, treating it as present
+    invents one. Refusing names the drift instead.
+    """
+    bars = _bars(hinge, 1, states=["stale_by_age"])
+    broken = json.loads(bars[0].snapshot_json)
+    broken["field_evaluations"][0].pop("field_ref")
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=[
+            (bars[0].snapshot_id, INSTRUMENT, bars[0].as_of_ms, json.dumps(broken))
+        ],
+        preimages=_preimage_rows(bars[:1]),
+        ticks=_tick_rows(bars),
+    )
+    with pytest.raises(si.SessionInputsError, match="field_ref"):
+        _document(tmp_path, data_dir)
+
+
+def test_red_a_preimage_row_that_is_not_a_preimage_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard.** Concrete input: a ``preimage_json`` with no ``entries``.
+
+    Read permissively, every field looks ABSENT from the payload — the one
+    UNKNOWN cause M5 excludes — so a session of stale lines would report 0
+    refused values and a pile of "absent" ones, which is the undercount with
+    a different label on it.
+    """
+    bars = _bars(hinge, 1, states=["stale_by_age"])
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=_snapshot_rows(bars),
+        preimages=[
+            (bars[0].snapshot_id, bars[0].raw_event_id, json.dumps({"rows": []}))
+        ],
+        ticks=_tick_rows(bars),
+    )
+    with pytest.raises(si.SessionInputsError, match="entries"):
+        _document(tmp_path, data_dir)
 
 
 def test_a_snapshot_with_no_field_evaluations_is_counted_not_read_as_valid(
@@ -1550,40 +1746,54 @@ def test_a_snapshot_with_no_field_evaluations_is_counted_not_read_as_valid(
         snapshots=[
             (bars[0].snapshot_id, INSTRUMENT, bars[0].as_of_ms, json.dumps(empty))
         ],
-        preimages=[(bars[0].snapshot_id, bars[0].raw_event_id)],
+        preimages=_preimage_rows(bars[:1]),
         ticks=_tick_rows(bars),
     )
-    states = si.build_consumed_ids_document(data_dir=data_dir)["consumed_field_states"]
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
     assert states["counts"]["consumed_ids_without_field_evaluations"] == 1
-    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 0
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
+    )
 
 
-def test_hinge_the_committed_snapshot_rows_carry_the_states_m5_counts(
+def test_hinge_the_committed_snapshots_are_the_issuers_four_outcomes(
     hinge: dict[str, Any],
 ) -> None:
     """The tools half of the snapshot hinge (the tos half is in ``tos/runtime``).
 
-    Stated here so a regeneration that lost the STALE row turns red where the
-    counting is tested, not only where the bytes are compared: without it
-    every assertion above would pass against a fixture that cannot produce a
-    stale line at all.
+    Stated here so a regeneration that lost the over-age row turns red where
+    the counting is tested, not only where the bytes are compared: without
+    it every assertion above would pass against a fixture that cannot produce
+    a refused value at all. It also pins the thing the BLOCKER turned on —
+    the persisted state of an over-age field is UNKNOWN, never STALE.
     """
     rows = hinge["payloads"]["marketfeed_snapshots"]
-    states = {
-        name: [
-            evaluation[si.FIELD_EVALUATION_STATE_KEY]
-            for evaluation in json.loads(row["snapshot_json"])[
+    assert set(rows) == set(SNAPSHOT_SHAPES)
+
+    def evaluations(name: str) -> dict[str, str]:
+        return {
+            entry[si.FIELD_EVALUATION_FIELD_REF_KEY]: entry[
+                si.FIELD_EVALUATION_STATE_KEY
+            ]
+            for entry in json.loads(rows[name]["snapshot_json"])[
                 si.SNAPSHOT_FIELD_EVALUATIONS_KEY
             ]
-        ]
-        for name, row in rows.items()
-    }
-    assert states["stale"] == [si.STALE_FIELD_STATE]
-    assert states["valid"] == [si.VALID_FIELD_STATE]
-    assert si.STALE_FIELD_STATE not in states["unknown"]
-    assert [
-        observation[si.OBSERVATION_FIELD_STATE_KEY]
-        for observation in json.loads(rows["unknown"]["snapshot_json"])[
-            si.SNAPSHOT_OBSERVATIONS_KEY
-        ]
-    ] == [si.STALE_FIELD_STATE]
+        }
+
+    def tokens(name: str) -> dict[str, Any]:
+        return {
+            entry[si.PREIMAGE_ENTRY_KEY_KEY]: entry[si.PREIMAGE_ENTRY_VALUE_KEY]
+            for entry in json.loads(rows[name]["preimage_json"])[
+                si.PREIMAGE_ENTRIES_KEY
+            ]
+        }
+
+    assert set(evaluations("fresh").values()) == {si.VALID_FIELD_STATE}
+    assert set(evaluations("stale_by_age").values()) == {si.UNKNOWN_FIELD_STATE}
+    assert si.STALE_FIELD_STATE not in evaluations("stale_by_age").values()
+    # and the three causes are told apart by the preimage, not by the state
+    assert si._projectable(tokens("stale_by_age")["close"])
+    assert "session" not in tokens("absent_field")
+    assert evaluations("absent_field")["session"] == si.UNKNOWN_FIELD_STATE
+    assert not si._projectable(tokens("unprojectable")["close"])
+    assert evaluations("unprojectable")["close"] == si.UNKNOWN_FIELD_STATE

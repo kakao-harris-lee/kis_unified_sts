@@ -13,10 +13,14 @@ the session's own durable stores and produces those two inputs:
     The ``raw_event_id`` set the runtime really consumed, from the session
     ``marketfeed.sqlite3``'s ``preimages(snapshot_id, raw_event_id)`` table —
     one row per observation each issued snapshot covers. Given the producer's
-    own log (and the runner's boot snapshot), it also says, for every bar the
-    offline stream has and the runtime did NOT consume, WHY: the plan's
-    pre-boot / ``skipped_behind`` / ``produce_error`` / ``omitted_unusable``
-    reasons, each from the producer's own label rather than from a guess here.
+    own log (and the runner's boot snapshot, which is REQUIRED), it also says,
+    for every bar the offline stream has and the runtime did NOT consume,
+    WHY: the plan's pre-boot / ``skipped_behind`` / ``produce_error`` /
+    ``omitted_unusable`` reasons, each from the producer's own label rather
+    than from a guess here. It also carries plan §5 M5's first number, read
+    from each consumed snapshot's own field evaluations against its preimage
+    (:func:`consumed_field_states`) — NOT from a count of the persisted word
+    ``STALE``, which today's issuer never writes.
 
 ``live-decisions``
     One record per live decision, shaped like B1b's offline trace line, from
@@ -96,7 +100,7 @@ import json
 import sqlite3
 import sys
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -115,10 +119,14 @@ SOURCE_ID = f"tos-cp3-session-inputs/{TOS_CP3_VERSION}"
 #: Document schema version — bumped when a produced document changes shape, so
 #: a consumer reads "shaped differently" rather than "values differ".
 #:
-#: 2 (2026-10-14, Claude lane MEDIUM R1/R2): ``consumed-ids`` gained the
-#: ``consumed_field_states`` block that M5's first number now comes from, and
-#: the live ``lineage.json``'s ``join`` renamed its positional fallback to the
-#: ``evidence_seq_range`` key (``attributed_by`` values changed with it). Both
+#: 2 (2026-10-14, Claude lane MEDIUM R1/R2 + BLOCKER R2′): ``consumed-ids``
+#: gained the ``consumed_field_states`` block that M5's first number now comes
+#: from (whose own key was renamed from ``…_with_a_stale_field_evaluation`` to
+#: ``…_with_a_present_value_refused_as_unknown`` within this same unreleased
+#: version — the first spelling never shipped), and ``consumed-ids`` now
+#: refuses without a boot snapshot; the live ``lineage.json``'s ``join``
+#: renamed its positional fallback to the ``evidence_seq_range`` key
+#: (``attributed_by`` values changed with it). Both
 #: documents are read by B3 (:mod:`tools.tos_cp3.diff_decisions`) only through
 #: keys that did not move, so a 1-shaped document still compares — the bump is
 #: so a reader of an old artifact knows which shape it is.
@@ -173,11 +181,12 @@ TICK_SNAPSHOT_PATH: tuple[str, ...] = (
 #: ``OBSERVATION_NOT_FOUND``, ``PAYLOAD_DIGEST_ABSENT``, ``AS_OF_ABSENT``,
 #: ``DIGEST_MISMATCH``, ``VALUE_NOT_IN_PAYLOAD``, ``NON_DETERMINISTIC_NUMERIC``,
 #: ``LINEAGE_NOT_REPRODUCIBLE``, ``WILDCARD_FIELD_KEY``), and its one
-#: state-shaped reason — ``FIELD_STATE_NOT_VALID`` — folds STALE together with
-#: UNKNOWN, CONFLICTED and INVALID. So an empty view says "nothing was
-#: admissible", never "stale": M5's STALE count is read from the snapshot's
-#: own field states (:func:`consumed_field_states`), and this surface is
-#: reported beside it as what the RESOLVER did (Claude lane MEDIUM R2).
+#: state-shaped reason — ``FIELD_STATE_NOT_VALID`` — folds every non-VALID
+#: field state together. So an empty view says "nothing was admissible", never
+#: "stale": M5's first number is read from the snapshot's own field
+#: evaluations against its preimage (:func:`consumed_field_states`), and this
+#: surface is reported beside it as what the RESOLVER did (Claude lane MEDIUM
+#: R2 / BLOCKER R2′).
 TICK_VALUE_VIEW_PATH: tuple[str, ...] = ("decision_tick", "value_view")
 
 #: The two receipt stamps an inbox row carries, written by
@@ -203,13 +212,54 @@ INBOX_CONSUMED_COLUMN = "consumed_evidence_seq"
 SNAPSHOT_FIELD_EVALUATIONS_KEY = "field_evaluations"
 SNAPSHOT_OBSERVATIONS_KEY = "observations"
 FIELD_EVALUATION_STATE_KEY = "state"
+FIELD_EVALUATION_FIELD_REF_KEY = "field_ref"
 OBSERVATION_FIELD_STATE_KEY = "field_state"
 
+#: Inside one ``preimages.preimage_json`` (``RawPayloadPreimage
+#: .model_dump_json()``): the tokens the snapshot's observation attested.
+#: Measured on the real store's bytes (hinge ``marketfeed_snapshots``):
+#: ``{"entries":[{"key":"close","value":451250}, …]}``. This is what makes
+#: "the issuer HAD this value and refused it" decidable from the durable side
+#: (:func:`consumed_field_states`).
+PREIMAGE_ENTRIES_KEY = "entries"
+PREIMAGE_ENTRY_KEY_KEY = "key"
+PREIMAGE_ENTRY_VALUE_KEY = "value"
+
 #: ``tos.capsule.field_evaluation.FieldState`` members, as the model dumps
-#: them. Only the two this side names are mirrored: STALE is what plan §5 M5
-#: counts, VALID is the one state that is not a finding.
+#: them. VALID is the one state that is not a finding; UNKNOWN is the one the
+#: real issuer writes for an over-age field.
+#:
+#: ⚠ **STALE is never written by today's issuer.**
+#: ``tos_runtime.marketfeed.snapshot._derive_field_state`` returns
+#: ``(FieldState.UNKNOWN, "stale")`` for ``now_ms - as_of_ms >
+#: spec.max_age_ms``, and the reason string lives only on the in-memory
+#: ``IssuedSnapshot.field_reports`` — the persisted ``FieldEvaluation`` carries
+#: the state alone. Measured on the real issuer (hinge
+#: ``marketfeed_snapshots.stale_by_age``, policy ``max_age_ms`` 5000, issued at
+#: ``as_of + 5001``): persisted states ``['UNKNOWN', 'UNKNOWN']``. So a count
+#: of persisted ``STALE`` reads 0 on every real session however stale it was —
+#: the defect this constant's first use had (Claude lane BLOCKER R2′,
+#: 2026-10-14). STALE is still reported if it ever appears, under
+#: ``other_field_evaluation_states``, which is where a future issuer change
+#: would show up.
 STALE_FIELD_STATE = "STALE"
 VALID_FIELD_STATE = "VALID"
+UNKNOWN_FIELD_STATE = "UNKNOWN"
+
+#: The three causes this side can tell apart for one UNKNOWN field evaluation,
+#: from the durable bytes alone. ``_derive_field_state`` has exactly four, in
+#: this order: ``absent_from_payload`` (the key is not in the preimage),
+#: ``now_ms_unknown`` (no trustworthy clock), ``stale`` (over ``max_age_ms``)
+#: and ``unprojectable`` (``project_scalar`` refuses the token).
+#:
+#: Presence separates the first; projectability separates the last; the two in
+#: the middle are exactly the ones where the issuer HELD a usable value and
+#: refused it, and they are the ones plan §5 M5 asks about. They are reported
+#: together because no durable byte distinguishes them (the reason is not
+#: persisted) — see :data:`CAUSE_PRESENT_REFUSED`'s use.
+CAUSE_PRESENT_REFUSED = "present_value_refused"
+CAUSE_ABSENT_FROM_PAYLOAD = "absent_from_payload"
+CAUSE_UNPROJECTABLE = "unprojectable"
 
 #: The evidence store wraps every record: ``payload_json`` is
 #: ``{"payload": <the scrubbed record>, "masked_keys": [...]}``
@@ -374,31 +424,60 @@ class Snapshot:
     instrument: str
     as_of_ms: int
     raw_event_id: str
-    #: ``field_evaluations[*].state`` as stored, in stored order (plan §5 M5 —
-    #: :func:`consumed_field_states`). Empty when the snapshot carries no
-    #: evaluations at all, which is itself counted rather than read as VALID.
-    field_states: tuple[str, ...] = ()
+    #: ``(field_ref, state)`` per ``field_evaluations`` entry, in stored order
+    #: (plan §5 M5 — :func:`consumed_field_states`). Empty when the snapshot
+    #: carries no evaluations at all, which is itself counted rather than read
+    #: as VALID. The ``field_ref`` is load-bearing: it is the key looked up in
+    #: :attr:`payload_tokens` to tell WHY a field is UNKNOWN.
+    field_evaluations: tuple[tuple[str, str], ...] = ()
     #: ``observations[*].field_state`` as stored. The kernel's VALID gate takes
-    #: the worst of this and the matching evaluations, so a STALE here is a
-    #: STALE line too — counted apart, never folded in.
+    #: the worst of this and the matching evaluations, so a non-VALID here is
+    #: a degraded line too — counted apart, never folded in.
     observation_states: tuple[str, ...] = ()
+    #: The tokens this snapshot's one preimage attested, by key
+    #: (``preimages.preimage_json``). Empty when the row carries none.
+    payload_tokens: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def field_states(self) -> tuple[str, ...]:
+        """Just the states, in stored order."""
+        return tuple(state for _ref, state in self.field_evaluations)
+
+
+def _projectable(token: Any) -> bool:
+    """Would ``tos.marketfeed.value.project_scalar`` admit this token?
+
+    MIRRORED, not imported — the firewall is bidirectional. The kernel rule is
+    three admitted shapes and one refusal: ``bool``, ``int`` and ``str``
+    project; a ``float`` is refused (``NON_DETERMINISTIC_NUMERIC``), including
+    an integral-valued one, because the decimal → float projection rule is not
+    ratified. Anything else a JSON token could be (``null``, a list, an
+    object) is not a scalar the kernel would take either.
+
+    The hinge's ``unprojectable`` snapshot carries a real float token the real
+    issuer refused, so this mirror is checked against the issuer's own verdict
+    rather than against this file's reading of it.
+    """
+    return isinstance(token, (bool, int, str))
 
 
 def _snapshot_states(
     snapshot_json: str, *, snapshot_id: str
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
     """The durable FieldStates inside one ``snapshots.snapshot_json``.
 
     Returns:
-        ``(field_evaluation states, observation field_states)``, each in
-        stored order.
+        ``(field evaluations as (field_ref, state), observation
+        field_states)``, each in stored order.
 
     Raises:
         SessionInputsError: the stored JSON is not an object, or an entry in
-            either list is not an object / carries a non-string state. A
-            missing state would otherwise be counted as "not STALE" — the
-            quiet undercount M5 exists to prevent, so it is refused instead.
-            A snapshot with NO ``field_evaluations`` is not refused: that is a
+            either list is not an object / carries a non-string state (or, for
+            a field evaluation, no string ``field_ref``). A missing state
+            would otherwise be counted as "not a finding" — the quiet
+            undercount M5 exists to prevent — and a missing ``field_ref``
+            would make its cause undecidable while still looking answered. A
+            snapshot with NO ``field_evaluations`` is not refused: that is a
             real shape (nothing was evaluated) and gets its own count.
     """
     document = json.loads(snapshot_json)
@@ -410,30 +489,83 @@ def _snapshot_states(
             "otherwise was not written by SqliteSnapshotStore"
         )
 
-    def states(key: str, state_key: str) -> tuple[str, ...]:
+    def entries_of(key: str) -> list[Any]:
         entries = document.get(key)
         if entries is None:
-            return ()
+            return []
         if not isinstance(entries, list):
             raise SessionInputsError(
                 f"snapshot {snapshot_id}: {key} is {type(entries).__name__}, "
                 "not a list"
             )
-        collected: list[str] = []
-        for index, entry in enumerate(entries):
-            if not isinstance(entry, dict) or not isinstance(entry.get(state_key), str):
-                raise SessionInputsError(
-                    f"snapshot {snapshot_id}: {key}[{index}] carries no "
-                    f"string {state_key!r}. Counting it as 'not STALE' is the "
-                    "silent undercount M5's first number exists to prevent"
-                )
-            collected.append(str(entry[state_key]))
-        return tuple(collected)
+        return entries
 
-    return (
-        states(SNAPSHOT_FIELD_EVALUATIONS_KEY, FIELD_EVALUATION_STATE_KEY),
-        states(SNAPSHOT_OBSERVATIONS_KEY, OBSERVATION_FIELD_STATE_KEY),
+    def string_at(entry: Any, key: str, *, where: str) -> str:
+        if not isinstance(entry, dict) or not isinstance(entry.get(key), str):
+            raise SessionInputsError(
+                f"snapshot {snapshot_id}: {where} carries no string {key!r}. "
+                "Counting it as 'not a finding' is the silent undercount M5's "
+                "first number exists to prevent"
+            )
+        return str(entry[key])
+
+    evaluations = tuple(
+        (
+            string_at(
+                entry,
+                FIELD_EVALUATION_FIELD_REF_KEY,
+                where=f"{SNAPSHOT_FIELD_EVALUATIONS_KEY}[{index}]",
+            ),
+            string_at(
+                entry,
+                FIELD_EVALUATION_STATE_KEY,
+                where=f"{SNAPSHOT_FIELD_EVALUATIONS_KEY}[{index}]",
+            ),
+        )
+        for index, entry in enumerate(entries_of(SNAPSHOT_FIELD_EVALUATIONS_KEY))
     )
+    observations = tuple(
+        string_at(
+            entry,
+            OBSERVATION_FIELD_STATE_KEY,
+            where=f"{SNAPSHOT_OBSERVATIONS_KEY}[{index}]",
+        )
+        for index, entry in enumerate(entries_of(SNAPSHOT_OBSERVATIONS_KEY))
+    )
+    return evaluations, observations
+
+
+def _preimage_tokens(preimage_json: str, *, snapshot_id: str) -> dict[str, Any]:
+    """The tokens one ``preimages.preimage_json`` attested, by key.
+
+    Raises:
+        SessionInputsError: the row is not a ``RawPayloadPreimage`` dump — no
+            ``entries`` list, or an entry without a string ``key``. Read
+            permissively, a field would look ABSENT from the payload (its key
+            not found) when the payload is simply unreadable here, and
+            "absent" is the one UNKNOWN cause M5 excludes.
+    """
+    document = json.loads(preimage_json)
+    entries = document.get(PREIMAGE_ENTRIES_KEY) if isinstance(document, dict) else None
+    if not isinstance(entries, list):
+        raise SessionInputsError(
+            f"snapshot {snapshot_id}: preimage_json has no "
+            f"{PREIMAGE_ENTRIES_KEY!r} list — the store writes "
+            "RawPayloadPreimage.model_dump_json(), and without its tokens an "
+            "UNKNOWN field cannot be told from an absent one"
+        )
+    tokens: dict[str, Any] = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict) or not isinstance(
+            entry.get(PREIMAGE_ENTRY_KEY_KEY), str
+        ):
+            raise SessionInputsError(
+                f"snapshot {snapshot_id}: "
+                f"{PREIMAGE_ENTRIES_KEY}[{index}] carries no string "
+                f"{PREIMAGE_ENTRY_KEY_KEY!r}"
+            )
+        tokens[str(entry[PREIMAGE_ENTRY_KEY_KEY])] = entry.get(PREIMAGE_ENTRY_VALUE_KEY)
+    return tokens
 
 
 def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
@@ -447,8 +579,9 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
     below read in it rather than in sqlite's scan order.
 
     Each snapshot also carries the FieldStates it recorded
-    (:func:`_snapshot_states`), which is what plan §5 M5's first number is
-    counted from.
+    (:func:`_snapshot_states`) AND the tokens its preimage attested
+    (:func:`_preimage_tokens`) — plan §5 M5's first number is the two read
+    together, because the state alone does not say why it is not VALID.
 
     Raises:
         SessionInputsError: A snapshot covers no preimage row, or more than
@@ -456,8 +589,9 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
             the store's own docstring describes (a snapshot id in hand, every
             value UNKNOWN), the second means a snapshot covered several
             observations and "the bar this decision was about" is not a
-            question with one answer. Or its ``snapshot_json`` is not a
-            readable snapshot (:func:`_snapshot_states`).
+            question with one answer. Or its ``snapshot_json`` /
+            ``preimage_json`` is not a readable dump of what the store writes
+            (:func:`_snapshot_states`, :func:`_preimage_tokens`).
     """
     conn = _connect_ro(
         data_dir / MARKETFEED_FILE_NAME,
@@ -471,11 +605,13 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
                 "FROM snapshots ORDER BY rowid"
             )
         )
-        preimages: dict[str, list[str]] = {}
-        for snapshot_id, raw_event_id in conn.execute(
-            "SELECT snapshot_id, raw_event_id FROM preimages"
+        preimages: dict[str, list[tuple[str, str]]] = {}
+        for snapshot_id, raw_event_id, preimage_json in conn.execute(
+            "SELECT snapshot_id, raw_event_id, preimage_json FROM preimages"
         ):
-            preimages.setdefault(str(snapshot_id), []).append(str(raw_event_id))
+            preimages.setdefault(str(snapshot_id), []).append(
+                (str(raw_event_id), str(preimage_json))
+            )
     finally:
         conn.close()
 
@@ -491,17 +627,21 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
                 "were lost — either way the id this decision was about is not "
                 "decidable here"
             )
-        field_states, observation_states = _snapshot_states(
+        evaluations, observation_states = _snapshot_states(
             str(snapshot_json), snapshot_id=str(snapshot_id)
         )
+        raw_event_id, preimage_json = covered[0]
         snapshots.append(
             Snapshot(
                 snapshot_id=str(snapshot_id),
                 instrument=str(instrument),
                 as_of_ms=int(as_of_ms),
-                raw_event_id=covered[0],
-                field_states=field_states,
+                raw_event_id=raw_event_id,
+                field_evaluations=evaluations,
                 observation_states=observation_states,
+                payload_tokens=_preimage_tokens(
+                    preimage_json, snapshot_id=str(snapshot_id)
+                ),
             )
         )
     return tuple(snapshots)
@@ -610,58 +750,91 @@ def unpaired_reasons(
 def consumed_field_states(
     *, snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
 ) -> dict[str, Any]:
-    """M5's first count, from the state the snapshot itself recorded.
+    """M5's first count: lines the issuer HELD a value for and refused anyway.
 
-    Plan §5 M5 asks for "lines consumed STALE", and the durable side records
-    the word: ``snapshots.snapshot_json`` is
-    ``CriticalInputSnapshot.model_dump_json()``, whose ``field_evaluations[*]
-    .state`` and ``observations[*].field_state`` are
-    ``tos.capsule.field_evaluation.FieldState`` members — ``STALE`` among
-    them. That is what is counted here.
+    **Why it is not a count of ``STALE``.** Plan §5 M5 asks for "lines
+    consumed STALE", and the durable side does not write that word.
+    ``tos_runtime.marketfeed.snapshot._derive_field_state`` returns
+    ``(FieldState.UNKNOWN, "stale")`` when ``now_ms - as_of_ms >
+    spec.max_age_ms``; only the STATE is persisted into
+    ``field_evaluations``, while the reason stays on the in-memory
+    ``IssuedSnapshot.field_reports``. A count of persisted ``STALE`` is
+    therefore 0 on every real session however stale its lines were (Claude
+    lane BLOCKER R2', 2026-10-14) — measured on the real issuer, in the hinge.
 
-    **M5's first number is**
-    ``m5_post_boot_consumed_ids_with_a_stale_field_evaluation``: the number of
-    consumed ``raw_event_id``s whose snapshot carries AT LEAST ONE
-    ``field_evaluations`` entry with ``state == "STALE"``, counting only ids
-    the runner's boot snapshot does NOT list as already in the journal at boot.
-    One id is counted once however many of its fields are STALE, and the ids
-    themselves are listed so the number can be checked rather than believed.
+    **What is counted instead.** ``_derive_field_state`` has exactly four
+    UNKNOWN causes, in this order: ``absent_from_payload`` (the key is not in
+    the preimage), ``now_ms_unknown`` (no trustworthy clock), ``stale`` (over
+    ``max_age_ms``), ``unprojectable`` (``project_scalar`` refuses the token).
+    Two of them are decidable from durable bytes — presence of the key in
+    ``preimages.preimage_json``, and whether its token projects
+    (:func:`_projectable`) — and what is left in the middle is exactly "the
+    issuer HAD a usable value for this field and refused it on age or on an
+    unestablished clock". That is
 
-    Pre-boot ids are counted under their own key and excluded from that
-    number, exactly as plan §5 M5 excludes them from both of its counts: a
-    line already in the journal at boot is structurally unconsumable-fresh,
-    and the scheduler's first poll takes the newest observation.
+    ``m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown``:
+    consumed ``raw_event_id``s with at least one ``field_evaluations`` entry
+    in state ``UNKNOWN`` whose ``field_ref`` IS a key of that snapshot's
+    preimage and whose token is projectable, counted once per id, excluding
+    ids the runner's boot snapshot lists as pre-boot (plan §5 M5 excludes
+    those from both of its counts). Read it as **"stale, or the evaluation
+    clock was unknown"**: an UPPER BOUND on STALE that, unlike a count of the
+    word, cannot read 0 when lines were consumed stale.
 
-    **What the count is NOT.** It is not "the resolver admitted no values":
-    ``tos.marketfeed.value._admit_one`` rejects a candidate for nine other
-    reasons, and its one state-shaped reason (``FIELD_STATE_NOT_VALID``) folds
-    STALE together with UNKNOWN, CONFLICTED and INVALID. Those other states
-    are therefore reported here BY NAME, apart from the STALE number, rather
-    than summed into it (Claude lane MEDIUM R2; the pre-③ reading this
-    replaces is runbook §7.2-c's).
+    The two separated causes are reported under their own names
+    (:data:`CAUSE_ABSENT_FROM_PAYLOAD`, :data:`CAUSE_UNPROJECTABLE`), never
+    folded in: a field the payload never carried says nothing about freshness,
+    and a token the kernel would refuse to project is a different defect.
 
-    **Expectation at genesis** (plan §5 M5 with ③ live, M6 < 300 ms against
+    **The one gap, stated.** When ``now_ms`` is ``None`` the issuer returns at
+    its second check, before projection — so a field that is present but
+    UNPROJECTABLE could also be a clock refusal, and this side files it under
+    ``unprojectable``. It is visible rather than lost (that count sits beside
+    the number), and it cannot hide a clock failure on its own: with no
+    trustworthy clock EVERY declared field reads UNKNOWN, so any present,
+    projectable field in the same snapshot is counted.
+
+    **Expectation at genesis** (plan §5 M5 with (3) live, M6 < 300 ms against
     this tenant's ``max_age_ms`` of 800): post-boot lines are expected to
-    arrive fresh and be consumed WITH values admitted, so this number is
+    arrive fresh and be consumed with values admitted, so this number is
     expected to be 0 and a non-zero value is the finding. The pre-boot key is
     where a non-zero count is unremarkable.
     """
-    post_boot_stale: list[str] = []
-    pre_boot_stale: list[str] = []
+    post_boot_refused: list[str] = []
+    pre_boot_refused: list[str] = []
+    by_cause: dict[str, dict[str, int]] = {
+        CAUSE_PRESENT_REFUSED: {"post_boot": 0, "pre_boot": 0},
+        CAUSE_ABSENT_FROM_PAYLOAD: {"post_boot": 0, "pre_boot": 0},
+        CAUSE_UNPROJECTABLE: {"post_boot": 0, "pre_boot": 0},
+    }
     by_state: dict[str, dict[str, int]] = {}
     observation_by_state: dict[str, dict[str, int]] = {}
     without_evaluations = 0
     for snapshot in snapshots:
         where = "pre_boot" if snapshot.raw_event_id in pre_boot else "post_boot"
-        if not snapshot.field_states:
+        if not snapshot.field_evaluations:
             without_evaluations += 1
-        if STALE_FIELD_STATE in snapshot.field_states:
-            (pre_boot_stale if where == "pre_boot" else post_boot_stale).append(
+        causes: set[str] = set()
+        states: set[str] = set()
+        for field_ref, state in snapshot.field_evaluations:
+            if state == VALID_FIELD_STATE:
+                continue
+            if state != UNKNOWN_FIELD_STATE:
+                states.add(state)
+                continue
+            if field_ref not in snapshot.payload_tokens:
+                causes.add(CAUSE_ABSENT_FROM_PAYLOAD)
+            elif _projectable(snapshot.payload_tokens[field_ref]):
+                causes.add(CAUSE_PRESENT_REFUSED)
+            else:
+                causes.add(CAUSE_UNPROJECTABLE)
+        for cause in sorted(causes):
+            by_cause[cause][where] += 1
+        if CAUSE_PRESENT_REFUSED in causes:
+            (pre_boot_refused if where == "pre_boot" else post_boot_refused).append(
                 snapshot.raw_event_id
             )
-        for state in sorted(set(snapshot.field_states)):
-            if state in (VALID_FIELD_STATE, STALE_FIELD_STATE):
-                continue
+        for state in sorted(states):
             bucket = by_state.setdefault(state, {"post_boot": 0, "pre_boot": 0})
             bucket[where] += 1
         for state in sorted(set(snapshot.observation_states)):
@@ -672,31 +845,44 @@ def consumed_field_states(
             )
             bucket[where] += 1
     return {
-        "m5_post_boot_consumed_ids_with_a_stale_field_evaluation": len(post_boot_stale),
+        "m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown": len(
+            post_boot_refused
+        ),
         "definition": (
-            "consumed raw_event_ids whose snapshots.snapshot_json carries at "
-            "least one field_evaluations[*].state == 'STALE', counted once per "
-            "id, excluding ids the runner's boot-journal snapshot lists as "
-            "pre-boot (plan §5 M5 excludes those from both of its counts)"
+            "consumed raw_event_ids with at least one field_evaluations[*] in "
+            "state UNKNOWN whose field_ref is a key of that snapshot's "
+            "preimages.preimage_json AND whose token is projectable "
+            "(bool/int/str; a float is refused by the kernel's own "
+            "project_scalar) — i.e. the issuer held a usable value and refused "
+            "it on age or on an unestablished clock. Counted once per id, "
+            "excluding ids the runner's boot-journal snapshot lists as pre-boot "
+            "(plan §5 M5 excludes those from both of its counts). Read as "
+            "'stale, or evaluation clock unknown': an upper bound on STALE. "
+            "The persisted FieldState is never STALE — "
+            "tos_runtime.marketfeed.snapshot._derive_field_state writes "
+            "UNKNOWN and keeps the reason in memory only"
         ),
         "counts": {
             "consumed_ids": len(snapshots),
             "pre_boot_consumed_ids": sum(
                 1 for snapshot in snapshots if snapshot.raw_event_id in pre_boot
             ),
-            # the denominator of the number above it, so "1 stale" is read
+            # the denominator of the number above it, so "1 refused" is read
             # against how many post-boot lines the session consumed at all
             "post_boot_consumed_ids": sum(
                 1 for snapshot in snapshots if snapshot.raw_event_id not in pre_boot
             ),
-            "post_boot_with_a_stale_field_evaluation": len(post_boot_stale),
-            "pre_boot_with_a_stale_field_evaluation": len(pre_boot_stale),
             "consumed_ids_without_field_evaluations": without_evaluations,
         },
-        "post_boot_raw_event_ids_with_a_stale_field_evaluation": sorted(
-            post_boot_stale
+        "unknown_field_causes": {
+            cause: dict(counts) for cause, counts in sorted(by_cause.items())
+        },
+        "post_boot_raw_event_ids_with_a_present_value_refused_as_unknown": sorted(
+            post_boot_refused
         ),
-        "pre_boot_raw_event_ids_with_a_stale_field_evaluation": sorted(pre_boot_stale),
+        "pre_boot_raw_event_ids_with_a_present_value_refused_as_unknown": sorted(
+            pre_boot_refused
+        ),
         "other_field_evaluation_states": {
             state: dict(counts) for state, counts in sorted(by_state.items())
         },
@@ -705,15 +891,17 @@ def consumed_field_states(
             for state, counts in sorted(observation_by_state.items())
         },
         "note": (
-            "ids per state, not fields per state: one id with three STALE "
-            "fields counts once. The two state surfaces are reported apart "
-            "because tos.marketfeed.value.value_field_state takes the WORST of "
-            "the observation's admission state, the observation's own "
-            "field_state and the matching field evaluations — so a STALE "
-            "observation is a stale line too, and folding it into the "
-            "evaluation count would hide which one the session recorded. "
-            "Every non-VALID state other than STALE is named rather than "
-            "summed: they are different defects, and only STALE is M5's"
+            "ids per cause, not fields per cause: one id with three refused "
+            "fields counts once, and an id with two different causes counts "
+            "once under each. other_field_evaluation_states carries every "
+            "non-VALID, non-UNKNOWN state by name — STALE among them, which "
+            "today's issuer never writes (it writes UNKNOWN with the reason "
+            "in memory), so a non-zero STALE there means the issuer changed "
+            "and this block's definition must be revisited. The observation "
+            "surface is reported apart because "
+            "tos.marketfeed.value.value_field_state takes the WORST of the "
+            "observation's admission state, its own field_state and the "
+            "matching field evaluations, so neither stands for the other"
         ),
     }
 
@@ -760,10 +948,10 @@ def consumed_value_view_counts(
             "per admitted DECISION_TICK, the shape of the resolver's "
             "value_view: empty_view = 'the binding resolved and nothing was "
             "admissible', no_view = the resolver published none at all. "
-            "NOT the STALE count — an empty view has ten possible reasons and "
-            "the store does not say which; M5's first number is "
+            "NOT M5's first number — an empty view has ten possible reasons "
+            "and the store does not say which; M5's first number is "
             "consumed_field_states"
-            ".m5_post_boot_consumed_ids_with_a_stale_field_evaluation"
+            ".m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"
         ),
     }
 
@@ -774,7 +962,29 @@ def build_consumed_ids_document(
     producer_log: Path | None = None,
     boot_snapshot: Path | None = None,
 ) -> dict[str, Any]:
-    """The ``consumed-ids`` document: the id filter plus the reason map."""
+    """The ``consumed-ids`` document: the id filter plus the reason map.
+
+    Raises:
+        SessionInputsError: ``boot_snapshot`` is missing. Every document this
+            function writes carries the M5 block, and plan §5 M5 excludes
+            pre-boot lines from its counts — without the runner's own record
+            of what was already in the journal at boot, EVERY pre-boot line
+            would be counted as a post-boot one, in the number the acceptance
+            criterion is read off. The same omission also moves every pre-boot
+            unconsumed line into ``published_not_consumed`` (the second M5
+            count). An absent flag is not a legitimate "no pre-boot lines":
+            that is an empty list, which the runner writes (Claude lane LOW
+            L-a, 2026-10-14).
+    """
+    if boot_snapshot is None:
+        raise SessionInputsError(
+            "consumed-ids needs the runner's boot-journal snapshot "
+            "(--boot-snapshot): the document always carries M5's counts, and "
+            "plan §5 M5 excludes pre-boot lines from them. Without it every "
+            "pre-boot line is counted as a post-boot one — silently, in the "
+            "number the criterion is read off. 'No pre-boot lines' is an "
+            "empty pre_boot_raw_event_ids list, not a missing file"
+        )
     snapshots = read_snapshots(data_dir)
     if not snapshots:
         raise SessionInputsError(
@@ -787,11 +997,7 @@ def build_consumed_ids_document(
     dispositions = (
         producer_dispositions(producer_log) if producer_log is not None else {}
     )
-    pre_boot = (
-        read_boot_snapshot(boot_snapshot)
-        if boot_snapshot is not None
-        else (frozenset())
-    )
+    pre_boot = read_boot_snapshot(boot_snapshot)
     reasons = unpaired_reasons(
         consumed=consumed, dispositions=dispositions, pre_boot=pre_boot
     )
@@ -1439,10 +1645,13 @@ def build_parser() -> argparse.ArgumentParser:
     consumed.add_argument(
         "--boot-snapshot",
         type=Path,
-        default=None,
+        required=True,
         help=(
-            "the runner's boot-journal-snapshot.json; without it a pre-boot "
-            "line cannot be told from one the runtime failed to consume"
+            "the runner's boot-journal-snapshot.json. REQUIRED: without it a "
+            "pre-boot line cannot be told from one the runtime failed to "
+            "consume, and both of M5's counts exclude pre-boot lines — so an "
+            "omitted flag would silently move every pre-boot line into the "
+            "numbers the criterion is read off"
         ),
     )
     consumed.add_argument("--out", type=Path, required=True)
