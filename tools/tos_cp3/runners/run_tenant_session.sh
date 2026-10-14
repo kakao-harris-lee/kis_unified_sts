@@ -56,6 +56,8 @@
 # Then: render (the tenant tree declares journal.mode "external", so
 # --journal-path is required and the renderer writes no journal of its own) →
 # boot → stop at TENANT_STOP_AT → stop the producer → post-stop evidence counts.
+# A producer that stopped BEFORE the session did is reported as an ABORT (exit
+# 5) rather than killing the runtime mid-session (plan §3.5).
 #
 # This script never deletes itself and touches no crontab.
 #
@@ -522,6 +524,16 @@ log "=== END run rc=$run_rc"
 # explicitly, so its own `finish()` summary (counters, frozen-frame sha256) is
 # on disk before step 13 reads it. The EXIT trap would stop it anyway — this is
 # the ordering, not a second mechanism.
+#
+# Asked BEFORE stopping it: did it last the session, or had it already stopped?
+# Plan §3.5 — a producer that halts mid-session (five consecutive
+# `produce_error`s, a fetch path that gave up) is reported as an ABORT, because
+# from that minute on the journal stops growing and every remaining pass reads
+# a frozen one. The runtime keeps running to its own stop time — truncating a
+# durable set loses the very evidence the session exists to leave — so the
+# report is the EXIT CODE, not a kill.
+PRODUCER_SELF_STOPPED=0
+kill -0 "$PRODUCER_PID" 2>/dev/null || PRODUCER_SELF_STOPPED=1
 stop_producer
 wait "$PRODUCER_PID" 2>/dev/null
 producer_rc=$?
@@ -574,5 +586,21 @@ PY
 ) || true
 log "post-stop durable set $DATA_LEAF:"
 printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
+
+# Exit code 5: the runtime finished the way it was asked to, and the producer
+# did not last the session (step 12).
+#
+# "The way it was asked to" is 0 OR 143: a session that reaches TENANT_STOP_AT
+# is stopped by SIGTERM from this script's own stop path, so 143 is the
+# ORDINARY end of a full session, not a failure. Those two are the codes a
+# producer's silence has something to add to. Any OTHER code is a runtime
+# failure and keeps its own: it is the earlier and larger fact, and replacing
+# it with 5 would report a boot that died as a feed that stopped.
+case "$PRODUCER_SELF_STOPPED:$run_rc" in
+1:0 | 1:143)
+  log "ABORT: the producer stopped before the session did (producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
+  exit 5
+  ;;
+esac
 
 exit "$run_rc"

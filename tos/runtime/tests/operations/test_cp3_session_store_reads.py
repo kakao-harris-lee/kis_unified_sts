@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION
@@ -50,13 +51,14 @@ DECLARED = {
 
 
 @pytest.fixture(scope="module")
-def pinned() -> dict:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+def pinned() -> dict[str, Any]:
+    document: dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    return document
 
 
 @pytest.mark.parametrize("store", sorted(DECLARED))
 def test_the_extractor_pins_this_stores_file_name_and_version(
-    store: str, pinned: dict
+    store: str, pinned: dict[str, Any]
 ) -> None:
     """The file name and schema version the extractor was written against.
 
@@ -75,7 +77,7 @@ def test_the_extractor_pins_this_stores_file_name_and_version(
 
 @pytest.mark.parametrize("store", sorted(DECLARED))
 def test_every_column_the_extractor_reads_is_one_the_migrations_declare(
-    store: str, pinned: dict
+    store: str, pinned: dict[str, Any]
 ) -> None:
     """Column-level, not table-level: a rename is the drift that matters.
 

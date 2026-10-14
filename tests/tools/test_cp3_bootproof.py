@@ -1176,6 +1176,9 @@ _PRODUCER_SOURCE_IDS_ENV = "STUB_PRODUCER_SOURCE_IDS"
 _PRODUCER_INSTRUMENT_ENV = "STUB_PRODUCER_INSTRUMENT"
 #: "0" to write no journal at all, and exit — a producer that refused at boot.
 _PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
+#: "1" to exit right after writing — a producer that halted mid-session (five
+#: consecutive ``produce_error``s is the plan's own example).
+_PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
 
 #: What the producer's own ``source_id`` looks like, as the allowlist approves
 #: it (``tools/tos_cp3/bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES``).
@@ -1239,6 +1242,9 @@ def _runner_repo(
         "}) + '\\n' for index, source_id in enumerate(source_ids.split(','))))\n"
         "(session / 'producer-summary.json').write_text(\n"
         "    json.dumps({'stage': 'finish', 'counters': {'published': 1}}) + '\\n')\n"
+        f"if os.environ.get({_PRODUCER_EXIT_ENV!r}) == '1':\n"
+        "    print('stub producer: halted after writing')\n"
+        "    raise SystemExit(1)\n"
         "while True:\n"
         "    time.sleep(0.2)\n",
         encoding="utf-8",
@@ -1965,6 +1971,40 @@ def test_the_boot_order_is_producer_then_first_row_then_guard_then_boot(
     # and the producer is stopped with the session, not left behind
     assert "=== END producer" in output
     assert not result.producer_outlived_the_runner
+
+
+def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5's last sentence: 「멈춘 생산자는 러너가 ABORT 로 보고한다」.**
+
+    The producer halts after writing (the plan's own example is five
+    consecutive ``produce_error``s). From that minute the journal stops
+    growing and every remaining pass reads a frozen one — a session that looks
+    clean and measured nothing.
+
+    The runtime is NOT killed for it: truncating a durable set loses the
+    evidence the session exists to leave. The report is the exit code, and it
+    is its own (5), because "the boot failed" and "the boot was fine and the
+    feed behind it stopped" are different findings.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _PRODUCER_EXIT_ENV: "1",
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+        },
+    )
+    output = result.stdout + result.stderr
+    # the boot itself was fine and ran to its stop time — this is not a refusal
+    assert "=== BOOT" in output
+    assert "=== END run rc=143" in output  # SIGTERM from our own stop path
+    # ...and the session is still not reported as clean
+    assert result.returncode == 5, output[-2000:]
+    assert "ABORT: the producer stopped before the session did" in output
 
 
 # ---------------------------------------------------------------------------
