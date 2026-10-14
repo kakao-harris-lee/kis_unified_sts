@@ -447,6 +447,32 @@ def test_the_short_lineage_declares_its_direction_and_the_short_difference(
     assert "the LONG half is a separate render" in d5["note"]
 
 
+def _assert_b2_line_citations_resolve(repo_root: Path, note: str) -> None:
+    """B1b-D8 cites B2 by LINE; check those lines still say what it claims.
+
+    Added 2026-10-14 (PR-2b): the note cited ``:946`` and ``:990``, and an
+    unrelated edit to that module's docstring moved both — a citation that
+    still looked precise while pointing into a docstring. Nothing checked it.
+    Line numbers are the repo's least stable citation form, so if they are
+    going to be used at all, their drift has to fail a test rather than rot.
+    """
+    emitter = (
+        (repo_root / "tools" / "tos_cp3" / "emit_legacy_decisions.py")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    for cited, expected in (
+        (966, "setup = SetupDVWAPReversion(config=strategy.entry_config)"),
+        (1012, "signal = setup.check(ctx)"),
+    ):
+        assert f":{cited}" in note, f"the note no longer cites line {cited}"
+        assert emitter[cited - 1].strip() == expected, (
+            f"emit_legacy_decisions.py:{cited} is now "
+            f"{emitter[cited - 1].strip()!r}, not {expected!r}; B1b-D8's note "
+            "cites that line as where B2 drives check() directly"
+        )
+
+
 def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     tmp_path: Path,
 ) -> None:
@@ -528,23 +554,4 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
         )
 
     # (3) the two LINE citations in the note resolve to the lines they claim.
-    # Added 2026-10-14 (PR-2b): the note cited :946 and :990, and an unrelated
-    # edit to that module's docstring moved both — a citation that still looked
-    # precise while pointing at a docstring. Nothing checked it. Line numbers
-    # are the repo's least stable citation form, so if they are going to be
-    # used at all, their drift has to fail a test rather than rot quietly.
-    emitter = (
-        (repo_root / "tools" / "tos_cp3" / "emit_legacy_decisions.py")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    )
-    for cited, expected in (
-        (966, "setup = SetupDVWAPReversion(config=strategy.entry_config)"),
-        (1012, "signal = setup.check(ctx)"),
-    ):
-        assert f"emit_legacy_decisions.py:{cited}" in note or f":{cited}" in note
-        assert emitter[cited - 1].strip() == expected, (
-            f"emit_legacy_decisions.py:{cited} is now "
-            f"{emitter[cited - 1].strip()!r}, not {expected!r}; B1b-D8's note "
-            "cites that line as where B2 drives check() directly"
-        )
+    _assert_b2_line_citations_resolve(repo_root, note)
