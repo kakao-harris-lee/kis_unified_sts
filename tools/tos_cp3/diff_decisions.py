@@ -776,7 +776,16 @@ WINDOW_IDENTITY_FIELDS = (
     "min_bars_per_day",
     "window_start",
     "window_end",
+    "stitch_manifest_sha256",
 )
+
+#: Identity fields a lineage written BEFORE they existed may legitimately not
+#: carry. An absent one reads as ``None`` on both sides rather than raising,
+#: and it stays IN the comparison: dropping it would let a stitched B1a and a
+#: pre-stitch B2 pass the check that exists to catch exactly that pair (plan
+#: §3.2a, v7 re-review LOW). ``None`` means "no manifest", never "no splice" —
+#: the producer writes ``stitch.json`` on a zero-junction day too.
+IDENTITY_FIELDS_ABSENT_AS_NULL = frozenset({"stitch_manifest_sha256"})
 
 #: Where each field of B1a's identity is projected from. B1a's lineage has no
 #: ``join`` block — it is the producer, not a side of the join — so the
@@ -789,6 +798,7 @@ B1A_IDENTITY_PROJECTION = {
     "min_bars_per_day": "dataset.min_bars_per_day",
     "window_start": "dataset.requested_start",
     "window_end": "dataset.requested_end",
+    "stitch_manifest_sha256": "dataset.stitch_manifest_sha256",
 }
 
 
@@ -819,10 +829,29 @@ def _dig_mapping(lineage: dict[str, Any], dotted: str, label: str) -> dict[str, 
     return node
 
 
+def _dig_optional(lineage: dict[str, Any], dotted: str) -> Any:
+    """:func:`_dig` for a path a pre-stitch sidecar may legitimately lack.
+
+    Returns ``None`` for an absent path instead of raising. Only the fields in
+    :data:`IDENTITY_FIELDS_ABSENT_AS_NULL` use it, and they are still compared
+    — the tolerance is about reading an older file, not about skipping a check.
+    """
+    node: Any = lineage
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
 def b1a_window_identity(lineage: dict[str, Any]) -> dict[str, Any]:
     """B1a's window identity, projected from its dataset/strategy blocks."""
     return {
-        field: _dig(lineage, B1A_IDENTITY_PROJECTION[field], LABEL_FIELDS)
+        field: (
+            _dig_optional(lineage, B1A_IDENTITY_PROJECTION[field])
+            if field in IDENTITY_FIELDS_ABSENT_AS_NULL
+            else _dig(lineage, B1A_IDENTITY_PROJECTION[field], LABEL_FIELDS)
+        )
         for field in WINDOW_IDENTITY_FIELDS
     }
 
@@ -830,14 +859,18 @@ def b1a_window_identity(lineage: dict[str, Any]) -> dict[str, Any]:
 def b2_window_identity(lineage: dict[str, Any]) -> dict[str, Any]:
     """B2's declared ``join.window_identity``, exactly as it records it."""
     block = _dig_mapping(lineage, "join.window_identity", LABEL_LEGACY)
-    missing = [f for f in WINDOW_IDENTITY_FIELDS if f not in block]
+    missing = [
+        f
+        for f in WINDOW_IDENTITY_FIELDS
+        if f not in block and f not in IDENTITY_FIELDS_ABSENT_AS_NULL
+    ]
     if missing:
         raise DiffDecisionsError(
             "B2 lineage join.window_identity is missing "
             f"{', '.join(missing)} — the refusal its own b3_contract requires "
             "cannot be performed on a partial identity"
         )
-    return {field: block[field] for field in WINDOW_IDENTITY_FIELDS}
+    return {field: block.get(field) for field in WINDOW_IDENTITY_FIELDS}
 
 
 # ---------------------------------------------------------------------------
