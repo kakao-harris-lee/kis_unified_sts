@@ -41,7 +41,7 @@ from typing import Any
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.capsule import CriticalInputSnapshot, FieldEvaluation, FieldState
+from tos.capsule import FieldState
 from tos.dsl.context_value import ContextValue, ContextValueView
 from tos.engine.records import EngineEvent, EngineEvidenceRecord
 from tos.engine.vocabulary import EvidenceKind, HaltReason
@@ -50,6 +50,7 @@ from tos_runtime.engine.inbox import INBOX_SCHEMA_VERSION, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
 from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION, SqliteEvidenceStore
+from tos_runtime.marketfeed.snapshot import IssuedSnapshot, SnapshotIssuer
 from tos_runtime.marketfeed.store import (
     MARKETFEED_FILE_NAME,
     MARKETFEED_SCHEMA_VERSION,
@@ -61,7 +62,7 @@ from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS
 from ..engine import _fixtures as fx
 from ..engine.conftest import FakeMonotonicSource
 from ..evidence.conftest import FixedKeyProvider
-from ..marketfeed import _store_fixtures as mf
+from ..marketfeed import _fixtures as mf
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "cp3-session-store-reads.json"
@@ -91,7 +92,14 @@ STAMPS = {1: (0, 16), 2: (17, 26)}
 #: The tenant instrument the extractor's own tests use, so the snapshot rows
 #: here and the sessions there name one contract month.
 INSTRUMENT = "A05611"
+#: The as-of the committed value view records (inbox half).
 AS_OF_MS = 1_760_000_000_000
+#: The bar coordinate the issued snapshots carry, and the freshness ceiling
+#: the shared marketfeed policy fixture declares for BOTH its fields — the
+#: issuer's own numbers, so ``SNAPSHOT_AS_OF_MS + MAX_AGE_MS + 1`` is over-age
+#: by construction rather than by a number copied here.
+SNAPSHOT_AS_OF_MS = mf.BAR_ONE_AS_OF
+MAX_AGE_MS = 5000
 
 #: A bound no test here reaches (mirrors ``tests/engine/test_driver.py``'s own
 #: constant): nothing below exercises timeout injection.
@@ -294,77 +302,70 @@ def real_inbox_payloads(tmp_path: Path) -> list[dict[str, Any]]:
     ]
 
 
-def snapshot_cases() -> dict[str, tuple[CriticalInputSnapshot, str, Any]]:
-    """One issued snapshot per FieldState shape plan §5 M5 distinguishes.
+#: One raw observation per outcome of the REAL issuer's own
+#: ``_derive_field_state`` (``tos_runtime/marketfeed/snapshot.py``), with the
+#: ``now_ms`` each is issued at. The policy is the shared fixture's
+#: (``close`` + ``session``, both ``max_age_ms`` 5000), so these four are the
+#: whole decision table: fresh, over-age, key not in the payload, and a token
+#: ``project_scalar`` refuses.
+#:
+#: The first cut of this half built ``FieldEvaluation(state=FieldState.STALE)``
+#: BY HAND and stored it through the real store — real bytes, invented state.
+#: The issuer never writes STALE: an over-age field is ``UNKNOWN`` with the
+#: reason ``"stale"`` kept only on the in-memory report, so an extractor
+#: counting persisted STALE reads 0 on every real session (Claude-lane
+#: BLOCKER R2', 2026-10-14). Hand-built artifacts are how that got committed;
+#: these are the issuer's own.
+SNAPSHOT_CASES: dict[str, tuple[dict[str, Any], int]] = {
+    "fresh": (
+        {
+            "raw_event_id": "raw-fresh",
+            "fields": (("close", 451_250), ("session", "REGULAR")),
+        },
+        SNAPSHOT_AS_OF_MS + 1,
+    ),
+    "stale_by_age": (
+        {
+            "raw_event_id": "raw-stale",
+            "fields": (("close", 451_250), ("session", "REGULAR")),
+        },
+        SNAPSHOT_AS_OF_MS + MAX_AGE_MS + 1,
+    ),
+    "absent_field": (
+        {"raw_event_id": "raw-absent", "fields": (("close", 451_250),)},
+        SNAPSHOT_AS_OF_MS + 1,
+    ),
+    "unprojectable": (
+        {
+            "raw_event_id": "raw-unproj",
+            "fields": (("close", 4512.5), ("session", "REGULAR")),
+        },
+        SNAPSHOT_AS_OF_MS + 1,
+    ),
+}
 
-    ``valid`` is the healthy bar; ``stale`` carries a STALE field evaluation —
-    the one M5's first number counts; ``unknown`` carries an UNKNOWN
-    evaluation over a STALE OBSERVATION, which is the pair the extractor must
-    report apart (``tos.marketfeed.value.value_field_state`` takes the worst
-    of both, so neither surface stands for the other).
-    """
-    payload = mf.preimage(close=451_250)
+
+def issue_snapshot_cases(tmp_path: Path) -> dict[str, IssuedSnapshot]:
+    """Issue all four through the REAL :class:`SnapshotIssuer`."""
+    issuer = SnapshotIssuer(
+        policy=mf.loaded_policy(tmp_path), scheme=mf.SCHEME, account=mf.ACCOUNT
+    )
     return {
-        "valid": (
-            mf.issue_snapshot(
-                observations=(
-                    mf.observation(
-                        raw_event_id="raw-valid", payload=payload, as_of=AS_OF_MS
-                    ),
-                ),
-                field_evaluations=(
-                    FieldEvaluation(field_ref="close", state=FieldState.VALID),
-                ),
-                instruments=(INSTRUMENT,),
-            ),
-            "raw-valid",
-            payload,
-        ),
-        "stale": (
-            mf.issue_snapshot(
-                observations=(
-                    mf.observation(
-                        raw_event_id="raw-stale",
-                        payload=payload,
-                        as_of=AS_OF_MS + 60_000,
-                    ),
-                ),
-                field_evaluations=(
-                    FieldEvaluation(field_ref="close", state=FieldState.STALE),
-                ),
-                instruments=(INSTRUMENT,),
-            ),
-            "raw-stale",
-            payload,
-        ),
-        "unknown": (
-            mf.issue_snapshot(
-                observations=(
-                    mf.observation(
-                        raw_event_id="raw-unknown",
-                        payload=payload,
-                        as_of=AS_OF_MS + 120_000,
-                        field_state=FieldState.STALE,
-                    ),
-                ),
-                field_evaluations=(
-                    FieldEvaluation(field_ref="close", state=FieldState.UNKNOWN),
-                ),
-                instruments=(INSTRUMENT,),
-            ),
-            "raw-unknown",
-            payload,
-        ),
+        name: issuer.issue(
+            mf.observation(instrument=INSTRUMENT, as_of_ms=SNAPSHOT_AS_OF_MS, **kwargs),
+            now_ms=now_ms,
+        )
+        for name, (kwargs, now_ms) in SNAPSHOT_CASES.items()
     }
 
 
 def real_marketfeed_snapshots(tmp_path: Path) -> dict[str, dict[str, Any]]:
-    """Those three snapshots through the REAL snapshot store, as stored."""
+    """Those four snapshots through the REAL snapshot store, as stored."""
+    issued = issue_snapshot_cases(tmp_path)
     store = SqliteSnapshotStore(tmp_path / MARKETFEED_FILE_NAME, monotonic_ns=lambda: 0)
-    cases = snapshot_cases()
     try:
-        for snapshot, raw_event_id, preimage in cases.values():
-            store.put(snapshot, {raw_event_id: preimage})
+        for one in issued.values():
+            store.put(one.snapshot, one.preimages)
     finally:
         store.close()
     conn = sqlite3.connect(tmp_path / MARKETFEED_FILE_NAME)
@@ -376,23 +377,26 @@ def real_marketfeed_snapshots(tmp_path: Path) -> dict[str, dict[str, Any]]:
             )
         }
         covered = {
-            str(snapshot_id): raw_event_id
-            for snapshot_id, raw_event_id in conn.execute(
-                "SELECT snapshot_id, raw_event_id FROM preimages"
+            str(snapshot_id): (raw_event_id, preimage_json)
+            for snapshot_id, raw_event_id, preimage_json in conn.execute(
+                "SELECT snapshot_id, raw_event_id, preimage_json FROM preimages"
             )
         }
     finally:
         conn.close()
     rows: dict[str, dict[str, Any]] = {}
-    for name, (snapshot, _raw_event_id, _preimage) in cases.items():
-        assert snapshot.snapshot_id is not None
-        instrument, as_of_ms, snapshot_json = stored[snapshot.snapshot_id]
+    for name, one in issued.items():
+        snapshot_id = one.snapshot.snapshot_id
+        assert snapshot_id is not None
+        instrument, as_of_ms, snapshot_json = stored[snapshot_id]
+        raw_event_id, preimage_json = covered[snapshot_id]
         rows[name] = {
-            "snapshot_id": snapshot.snapshot_id,
+            "snapshot_id": snapshot_id,
             "instrument": instrument,
             "as_of_ms": as_of_ms,
             "snapshot_json": snapshot_json,
-            "raw_event_id": covered[snapshot.snapshot_id],
+            "raw_event_id": raw_event_id,
+            "preimage_json": preimage_json,
         }
     return rows
 
@@ -450,35 +454,98 @@ def test_the_committed_inbox_payloads_are_what_the_inbox_writes(
 def test_the_committed_snapshot_rows_are_what_the_snapshot_store_writes(
     tmp_path: Path, pinned: dict[str, Any]
 ) -> None:
-    """**M5's own hinge (Claude-lane MEDIUM R2).**
+    """**M5's own hinge (Claude-lane MEDIUM R2, corrected by BLOCKER R2′).**
 
-    ``snapshots.snapshot_json`` is ``CriticalInputSnapshot.model_dump_json()``,
-    and the extractor counts STALE out of its ``field_evaluations[*].state``.
-    Byte equality here, plus the states named, so that a FieldState rename or
-    a moved key is red in the PR that makes it rather than a silent zero in a
-    genesis count.
+    ``snapshots.snapshot_json`` is ``CriticalInputSnapshot.model_dump_json()``
+    and ``preimages.preimage_json`` is ``RawPayloadPreimage
+    .model_dump_json()``; the extractor reads M5's first number out of the
+    two together. Byte equality, plus the states and tokens named, so a
+    FieldState rename or a moved key is red in the PR that makes it rather
+    than a silent zero in a genesis count.
     """
     assert (
         real_marketfeed_snapshots(tmp_path)
         == pinned["payloads"]["marketfeed_snapshots"]
     )
-    states = {
-        name: json.loads(row["snapshot_json"])
-        for name, row in pinned["payloads"]["marketfeed_snapshots"].items()
+    rows = pinned["payloads"]["marketfeed_snapshots"]
+    snapshots = {name: json.loads(row["snapshot_json"]) for name, row in rows.items()}
+    tokens = {
+        name: {
+            entry["key"]: entry["value"]
+            for entry in json.loads(row["preimage_json"])["entries"]
+        }
+        for name, row in rows.items()
     }
-    assert [
-        evaluation["state"] for evaluation in states["stale"]["field_evaluations"]
-    ] == [FieldState.STALE.value]
-    assert [
-        evaluation["state"] for evaluation in states["unknown"]["field_evaluations"]
-    ] == [FieldState.UNKNOWN.value]
-    # the other surface the same aggregate reads, carried by a DIFFERENT row
-    assert [
-        observation["field_state"] for observation in states["unknown"]["observations"]
-    ] == [FieldState.STALE.value]
-    assert [
-        evaluation["state"] for evaluation in states["valid"]["field_evaluations"]
-    ] == [FieldState.VALID.value]
+
+    def states(name: str) -> dict[str, str]:
+        return {
+            evaluation["field_ref"]: evaluation["state"]
+            for evaluation in snapshots[name]["field_evaluations"]
+        }
+
+    # the four shapes, as the REAL issuer wrote them
+    assert states("fresh") == {
+        "close": FieldState.VALID.value,
+        "session": FieldState.VALID.value,
+    }
+    assert states("stale_by_age") == {
+        "close": FieldState.UNKNOWN.value,
+        "session": FieldState.UNKNOWN.value,
+    }
+    assert states("absent_field") == {
+        "close": FieldState.VALID.value,
+        "session": FieldState.UNKNOWN.value,
+    }
+    assert states("unprojectable") == {
+        "close": FieldState.UNKNOWN.value,
+        "session": FieldState.VALID.value,
+    }
+    # and what makes the three UNKNOWNs distinguishable from the durable side:
+    # the key is present and projectable / absent / present and a float
+    assert tokens["stale_by_age"]["close"] == 451_250
+    assert "session" not in tokens["absent_field"]
+    assert isinstance(tokens["unprojectable"]["close"], float)
+
+
+def test_an_over_age_field_is_persisted_unknown_and_its_reason_is_not(
+    tmp_path: Path,
+) -> None:
+    """**BLOCKER R2′'s own hinge: the word STALE is never written.**
+
+    ``_derive_field_state`` returns ``(FieldState.UNKNOWN, "stale")`` for a
+    field older than its ``max_age_ms``. Only the state reaches
+    ``field_evaluations``; the reason stays on the in-memory
+    ``IssuedSnapshot.field_reports``. An extractor counting persisted
+    ``STALE`` therefore reads 0 on every real session however stale its lines
+    were — which is what ``tools/tos_cp3/session_inputs.py`` shipped until
+    this round, and what its hand-built STALE fixture hid.
+
+    Asserted here against the issuer itself, in both directions: the reason
+    IS "stale" in memory, and ``STALE`` appears NOWHERE in the persisted
+    snapshot JSON of any of the four cases. If a future issuer starts writing
+    it, this goes red and the extractor's definition (an upper bound built
+    from UNKNOWN + preimage presence) can be narrowed to the word.
+    """
+    issued = issue_snapshot_cases(tmp_path)
+    reports = {
+        name: {
+            report.field_key: (report.state, report.reason)
+            for report in one.field_reports
+        }
+        for name, one in issued.items()
+    }
+    assert reports["stale_by_age"]["close"] == (FieldState.UNKNOWN, "stale")
+    assert reports["stale_by_age"]["session"] == (FieldState.UNKNOWN, "stale")
+    assert reports["absent_field"]["session"] == (
+        FieldState.UNKNOWN,
+        "absent_from_payload",
+    )
+    assert reports["unprojectable"]["close"] == (FieldState.UNKNOWN, "unprojectable")
+    assert reports["fresh"]["close"] == (FieldState.VALID, None)
+    for name, one in issued.items():
+        persisted = one.snapshot.model_dump_json()
+        assert FieldState.STALE.value not in persisted, name
+        assert "stale" not in json.loads(persisted).get("field_evaluations", [{}])[0]
 
 
 def test_the_drivers_receipts_bracket_the_decision_records_it_writes(
