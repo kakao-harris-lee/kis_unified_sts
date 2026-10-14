@@ -25,12 +25,13 @@ producer been approved to create a permanent corpus".
    scratch root ``~/.local/state/tos/scratch/``, whose own path contains no
    symlink and no component named like a durable set.
 
-:data:`APPROVED_REAL_PRODUCER_PREFIXES` **is empty today**, so rule 2 never fires
-and every non-scratch boot is refused. ③'s PR adds its prefix there, and that
-addition is the moment the first real genesis becomes possible. ⚠ ``source_id``
-is self-declared and nothing authenticates it, so the allowlist attests
-**intent, not provenance** — it records which producer names the operator has
-decided may create a permanent corpus.
+:data:`APPROVED_REAL_PRODUCER_PREFIXES` holds exactly one entry since ③'s PR-2 —
+``tos-cp3-live``, the real-time field producer in
+:mod:`tools.tos_cp3.live_producer`. Every other journal on this host is still
+refused outside scratch. ⚠ ``source_id`` is self-declared and nothing
+authenticates it, so the allowlist attests **intent, not provenance** — it
+records which producer names the operator has decided may create a permanent
+corpus.
 
 **The inversion (implementation-time correction, independent review of PR #892,
 HIGH).** The first cut keyed on a *marker*: a journal carrying
@@ -85,18 +86,20 @@ POLICY_VERSION = "cp3-tenant-bootproof/2"
 #: Producers whose rows may create a PERMANENT corpus — the ONLY way a boot
 #: reaches a designated tenant durable set.
 #:
-#: ⛔ **EMPTY ON PURPOSE.** No real producer exists yet: ③ (the real-time
-#: fifteen-field producer, kickoff §5 3 ③) is unbuilt, so every journal on this
-#: host today is synthetic — the resident render's
-#: ``tos-paper-bootproof-render``, the resident collector's
-#: ``tos-paper-resident-session``, B1a's ``tos-cp3-b1a/…`` batch output, and
-#: this package's own ``cp3-bootproof-synthetic:…``. While this tuple is empty
-#: every non-scratch boot is refused, which is the intended state.
+#: **``tos-cp3-live`` — ③, the real-time fifteen-field producer** (PR-2 of plan
+#: ``docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md``, §2 6;
+#: kickoff §5 3 ③). The approved producer is
+#: :mod:`tools.tos_cp3.live_producer.producer`, whose ``SOURCE_ID`` is
+#: ``tos-cp3-live/<TOS_CP3_VERSION>``: it reads the real-key GET-only quotation
+#: TR ``FHKIF03020200``, freezes a bar only once a raw row proves it complete,
+#: and computes the fifteen values with B1a's own ``produce_bars``. Approving
+#: it is the decision to let it write an append-only permanent corpus; this is
+#: not a formatting change.
 #:
-#: ③'s PR adds its prefix here, in the same PR that makes the producer real, and
-#: says in its own comment which producer it is approving. Adding a prefix is a
-#: decision to let that producer write an append-only corpus; it is not a
-#: formatting change.
+#: Everything else on this host stays unapproved and is confined to scratch —
+#: the resident render's ``tos-paper-bootproof-render``, the resident
+#: collector's ``tos-paper-resident-session``, B1a's ``tos-cp3-b1a/…`` batch
+#: output, and this package's own ``cp3-bootproof-synthetic:…``.
 #:
 #: ⚠ **``source_id`` is self-declared.** Nothing authenticates it, so this list
 #: attests INTENT, not provenance: it records which producer names the operator
@@ -108,7 +111,7 @@ POLICY_VERSION = "cp3-tenant-bootproof/2"
 #: let ``tos-cp3-live-EVIL`` through on an entry of ``tos-cp3-live``, and an
 #: entry of ``""`` would approve every row. Entries are validated at import and
 #: at every call (:func:`_validated_prefixes`).
-APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ()
+APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = ("tos-cp3-live",)
 
 #: The scratch root, as the plan spells it. ``expanduser()`` is applied at use
 #: time, so a test can move ``HOME`` and get a throwaway root — which is also
@@ -422,9 +425,11 @@ def require_scratch_output_path(out_path: Path) -> None:
 def require_scratch_rule(journal_path: Path, data_dir: Path) -> None:
     """The rule (module docstring): resident never; allowlisted may; else scratch.
 
-    Fail-closed. With :data:`APPROVED_REAL_PRODUCER_PREFIXES` empty — its state
-    until ③ lands — the middle branch never fires and every non-scratch boot is
-    refused.
+    Fail-closed. The middle branch fires only for a journal whose EVERY row
+    comes from :data:`APPROVED_REAL_PRODUCER_PREFIXES` — ``tos-cp3-live`` since
+    ③'s PR-2, and nothing else. Every other journal is still scratch-only, and
+    were that tuple emptied again, ``any()`` over no prefixes would refuse
+    every non-scratch boot with no second code path.
     """
     require_not_resident_store(data_dir)
 
@@ -433,7 +438,7 @@ def require_scratch_rule(journal_path: Path, data_dir: Path) -> None:
         return
 
     approved = ", ".join(repr(p) for p in APPROVED_REAL_PRODUCER_PREFIXES) or (
-        "<empty — no real producer is approved yet; ③ is unbuilt>"
+        "<empty — no real producer is approved>"
     )
     shown = ", ".join(str(n) for n in unapproved[:5])
     more = f" (+{len(unapproved) - 5} more)" if len(unapproved) > 5 else ""

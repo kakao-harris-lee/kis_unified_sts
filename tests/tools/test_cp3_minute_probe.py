@@ -4,6 +4,7 @@ import os
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from tools.broker_probes.common import SafetyViolation, assert_read_only_call
@@ -35,8 +36,10 @@ def row(hour, close="100", volume="20", day="20261012"):
 
 
 def test_no_network_dry_run(tmp_path, monkeypatch, capsys):
+    # The client lives in tools/tos_cp3/quote_client.py since PR-2; patching the
+    # httpx class object covers it wherever it is constructed from.
     monkeypatch.setattr(
-        p.httpx.Client,
+        httpx.Client,
         "__init__",
         lambda *a, **k: pytest.fail("network client created"),
     )

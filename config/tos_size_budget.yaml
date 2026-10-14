@@ -43,6 +43,14 @@ scope:
   # code and the wrong one for code written this week. 0 exceptions below are
   # cp3's.
   - tos/runtime/cp3
+  # CP-3 ③ 실시간 필드 생산자 (docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md
+  # §3.5 「크기 예산 범위에 넣는다」). `tools/tos_cp3/live_producer` 는 레거시 측
+  # (방화벽 밖)이라 `tos/src` · `tos/runtime/src` 와 같은 설치 패키지가 아니지만,
+  # tenant 저널에 쓰는 코드이므로 커널·런타임과 같은 모듈/함수 크기 규율을 받는다.
+  # tos/runtime/cp3 를 넣은 것과 같은 이유다 — 범위에 없으면 캡이 **보이지 않는다**
+  # (2026-10-08 독립 리뷰가 runner.py 1,820 줄을 그렇게 찾았다). 착수 시점 위반 0 ·
+  # 아래 exceptions 중 이 디렉터리의 것은 0 건.
+  - tools/tos_cp3/live_producer
 
 # 2026-09-07 Phase 1 작업 6 등재 — 착수 시점 초과분 전건(모듈 11 · 함수 18 = 29건).
 # decomposition_order 는 measured 내림차순(동률 시 target 오름차순) — 순서가 바뀌면

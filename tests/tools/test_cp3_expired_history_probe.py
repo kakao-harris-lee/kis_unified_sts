@@ -9,6 +9,7 @@ import os
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import yaml
 
@@ -48,8 +49,10 @@ def base_config():
 
 
 def test_no_network_dry_run(monkeypatch, capsys):
+    # The client lives in tools/tos_cp3/quote_client.py since PR-2; patching
+    # the httpx class object covers it wherever it is constructed from.
     monkeypatch.setattr(
-        p.httpx.Client,
+        httpx.Client,
         "__init__",
         lambda *a, **k: pytest.fail("network client created"),
     )
