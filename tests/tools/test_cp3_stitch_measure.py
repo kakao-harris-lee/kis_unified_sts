@@ -262,6 +262,75 @@ def test_a_missing_session_is_named_rather_than_silently_skipped(
         inputs.bars("A05610", date(2026, 10, 8))
 
 
+def _cli_args(tmp_path: Path, requests: Path, out: Path) -> list[str]:
+    return [
+        "--requests", str(requests),
+        "--out", str(out),
+        "--symbol", "A05611",
+        "--previous-symbol", "A05610",
+        "--target", "2026-10-12",
+        "--splice-day", "2026-10-08",
+        "--previous-day", "2026-10-07",
+        "--compare-day", "2026-10-12",
+        "--c-x100", "344",
+        "--spread-range-x100", "118",
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        (
+            ["--day-not-measured", "2026-10-14", "--day-not-measured-reason", "open"],
+            ("2026-10-14", "open"),
+        ),
+        ([], (None, None)),
+    ],
+)
+def test_the_day_not_measured_flags_reach_the_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flags: list[str],
+    expected: tuple[str | None, str | None],
+) -> None:
+    """Both halves of the flag's purpose, in one pair.
+
+    What it exists for: a comparison day the plan asks for and the run could
+    not take must be NAMED in the artifact — an absent day that is not named
+    reads as a day with no difference. The second case is the half that makes
+    this PR's own artifact readable: with the flags omitted the field is
+    ``null``, which is the positive claim "every day the plan asks for was
+    measured", not merely a missing key.
+
+    Scope: the CLI → :func:`measure_s1b` → artifact hop. The measurements
+    themselves are stubbed — a real run is the hours-long one the README's §5
+    reproduces — so this says nothing about the numbers.
+    """
+    requests = tmp_path / "requests.jsonl"
+    requests.write_text(
+        _event("A05611", "20261012", [_row("20261012", "090000", "400.00")]) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        stitch_measure,
+        "measure_s1a",
+        lambda *a, **k: {"flips_total": 0, "flip_margin_x100": {}},
+    )
+    monkeypatch.setattr(
+        stitch_measure,
+        "measure_s1b",
+        lambda inputs, **kwargs: {
+            "hi_vol_differences_total": 0,
+            "day_not_measured": kwargs["day_not_measured"],
+            "day_not_measured_reason": kwargs["day_not_measured_reason"],
+        },
+    )
+    out = tmp_path / "out"
+    assert stitch_measure.main(_cli_args(tmp_path, requests, out) + flags) == 0
+    written = json.loads((out / "CP3-PR2B-S1b.json").read_text(encoding="utf-8"))
+    assert (written["day_not_measured"], written["day_not_measured_reason"]) == expected
+
+
 def test_the_output_is_byte_stable(tmp_path: Path) -> None:
     """Two renders of one payload are identical — no run timestamp inside.
 

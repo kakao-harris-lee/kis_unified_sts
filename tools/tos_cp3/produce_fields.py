@@ -117,6 +117,7 @@ import platform
 import statistics
 import subprocess
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -948,6 +949,7 @@ def produce_bars(
     contract_spec: ContractSpec,
     anchor: OpenAnchor,
     emit_days: frozenset[date] | None = None,
+    observer: Callable[[datetime, Mapping[str, Any]], None] | None = None,
 ) -> ProducedBars:
     """Drive the legacy Setup D bar by bar and project its state into fields.
 
@@ -970,6 +972,16 @@ def produce_bars(
             previous-month bar carrying a ``raw_event_id`` named after this
             symbol would be a label error (plan §3.2a). ``None`` keeps the
             pre-stitch behaviour: every replayed bar is a candidate.
+        observer: read-only hook called with ``(bar_kst, last_eval)`` after
+            ``check()`` on EVERY replayed bar — the non-emitted previous-month
+            bars included, which is the point: the causal ATR window is filled
+            by bars this function does not publish, so a measurement of that
+            window (``tools/tos_cp3/stitch_measure.py`` S1b, plan §3.2a's
+            「``_atr_window`` 내용과 백분위 기준값」) cannot read it from the
+            records. It observes the setup's own trace — nothing here is
+            recomputed — and takes no part in the decision: the returned
+            records are identical with and without it
+            (``tests/tools/test_cp3_produce_fields.py``).
     """
     import pandas as pd
 
@@ -996,6 +1008,8 @@ def produce_bars(
     for ctx in replay.iter_contexts():
         setup.check(ctx)
         ev = setup.last_eval
+        if observer is not None:
+            observer(ctx.now, ev)
         bars_replayed += 1
 
         now: datetime = ctx.now

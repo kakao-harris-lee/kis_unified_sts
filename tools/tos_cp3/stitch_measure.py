@@ -164,7 +164,10 @@ class Inputs:
         return [bar for bar in frame_bars if bar[1].date() in keep]
 
     def produce(
-        self, frame_bars: Sequence[tuple], emit_days: Iterable[date]
+        self,
+        frame_bars: Sequence[tuple],
+        emit_days: Iterable[date],
+        observer: Any | None = None,
     ) -> ProducedBars:
         ordered = sorted(self.gate(frame_bars), key=lambda bar: bar[1])
         if not ordered:
@@ -181,6 +184,7 @@ class Inputs:
             contract_spec=self.contract_spec,
             anchor=anchor,
             emit_days=frozenset(emit_days),
+            observer=observer,
         )
 
     def fields_by_minute(
@@ -350,6 +354,126 @@ def _first_flip(flips_at: Any, *, sign: int) -> int | None:
     return sign * upper
 
 
+def observe_vol_window(
+    inputs: Inputs,
+    frame_bars: Sequence[tuple],
+    *,
+    emit_days: Sequence[date],
+    source_by_day: dict[date, str],
+) -> tuple[
+    dict[date, dict[str, Any]],
+    dict[datetime, Any],
+    dict[date, list[tuple[datetime, date, float]]],
+]:
+    """``_atr_window`` composition and percentile reference, from the setup.
+
+    Plan §3.2a S1b asks for both alongside the ``hi_vol`` count. Neither is a
+    published field, and the window is filled mostly by bars ``produce_bars``
+    replays without emitting, so they are read through its observer hook off
+    the setup's own eval trace — ``ev["vol_ref"]`` IS the value
+    ``_vol_reference`` returned. Nothing here re-derives a percentile.
+
+    ``ev`` carries ``vol_ref`` on exactly the bars where ``_vol_reference``
+    ran, which is exactly the bars that appended to ``_atr_window``, so the
+    composition below is bookkeeping over that sequence rather than a second
+    model of the deque. The current bar's ATR is appended AFTER the read, so
+    the snapshot is taken BEFORE recording this bar's own contribution.
+
+    Returns ``({emit day: snapshot}, {bar: ref}, {emit day: window contents})``,
+    where the window contents are the ``(bar, session, atr)`` triples the
+    window held when that day's first contributing bar read it.
+    """
+    window_bars = int(inputs.strategy.entry_config.vol_window_bars)
+    wanted = set(emit_days)
+    contributors: list[tuple[datetime, date, float]] = []
+    snapshots: dict[date, dict[str, Any]] = {}
+    windows: dict[date, list[tuple[datetime, date, float]]] = {}
+    refs: dict[datetime, Any] = {}
+
+    def observe(stamp: datetime, ev: Any) -> None:
+        if "vol_ref" not in ev:
+            return
+        naive = stamp.replace(tzinfo=None)
+        day = naive.date()
+        if day in wanted and day not in snapshots:
+            window = contributors[-window_bars:]
+            by_source: dict[str, int] = {}
+            for _, contributed, _ in window:
+                key = f"{source_by_day[contributed]}:{contributed.isoformat()}"
+                by_source[key] = by_source.get(key, 0) + 1
+            reference = ev["vol_ref"]
+            windows[day] = window
+            snapshots[day] = {
+                "first_contributing_bar_kst": naive.strftime("%H:%M"),
+                "bars_in_window": len(window),
+                "by_source": {key: by_source[key] for key in sorted(by_source)},
+                "vol_ref_x10000": (
+                    None if reference is None else round(float(reference) * 10000)
+                ),
+                "window_max_atr_x10000": (
+                    round(max(a for _, _, a in window) * 10000) if window else None
+                ),
+            }
+        refs[naive] = ev["vol_ref"]
+        contributors.append((naive, day, float(ev["atr_14"])))
+
+    inputs.produce(frame_bars, emit_days, observer=observe)
+    missing = sorted(day for day in wanted if day not in snapshots)
+    if missing:
+        raise StitchMeasureError(
+            "no bar advanced the causal ATR window on "
+            + ", ".join(day.isoformat() for day in missing)
+        )
+    return snapshots, refs, windows
+
+
+def compare_splice_contribution(
+    windows: dict[str, list[tuple[datetime, date, float]]],
+    snapshots: dict[str, dict[str, Any]],
+    *,
+    splice_day: date,
+) -> dict[str, Any]:
+    """What the substitution changes INSIDE the window, and where it ranks.
+
+    Without this, a zero in ``hi_vol_differs`` reads as "the substitution
+    changed nothing", which would be the wrong reading: the splice session's
+    ATRs DO change: they simply may not reach the rank the percentile is taken
+    at. Both halves are reported so the zero can only be read with its reason.
+    """
+    per_frame = {
+        label: {stamp: atr for stamp, day, atr in windows[label] if day == splice_day}
+        for label in windows
+    }
+    shared = sorted(set(per_frame["stitched"]) & set(per_frame["substituted"]))
+    a, b = per_frame["stitched"], per_frame["substituted"]
+    out: dict[str, Any] = {
+        "splice_day_bars_in_window": len(shared),
+        "splice_day_minutes_kst": (
+            f"{shared[0]:%H:%M}-{shared[-1]:%H:%M}" if shared else None
+        ),
+        "atr_differs": sum(1 for s in shared if a[s] != b[s]),
+        "atr_max_abs_difference_x10000": (
+            round(max(abs(a[s] - b[s]) for s in shared) * 10000) if shared else None
+        ),
+    }
+    for label, values in (("stitched", a), ("substituted", b)):
+        reference = snapshots[label]["vol_ref_x10000"]
+        out[f"atr_x10000_range_{label}"] = (
+            [
+                round(min(values[s] for s in shared) * 10000),
+                round(max(values[s] for s in shared) * 10000),
+            ]
+            if shared
+            else None
+        )
+        out[f"splice_day_bars_at_or_above_vol_ref_{label}"] = (
+            None
+            if reference is None
+            else sum(1 for s in shared if round(values[s] * 10000) >= reference)
+        )
+    return out
+
+
 def measure_s1b(
     inputs: Inputs,
     *,
@@ -418,6 +542,53 @@ def measure_s1b(
             "hi_vol_true_substituted": sum(b[s] for s in stamps),
         }
 
+    # Plan §3.2a S1b: report the window the percentile is taken over, not only
+    # the hi_vol count. The 「완전한 비교」 claim for the last compare day is
+    # exactly a claim about this composition — that one previous-month session
+    # is left inside the window — so it is measured here instead of restated.
+    sources = {
+        "stitched": {
+            **dict.fromkeys([*previous_days, splice_day], inputs.previous_symbol),
+            **dict.fromkeys(compare_days, inputs.symbol),
+        },
+        "substituted": {
+            **dict.fromkeys(previous_days, inputs.previous_symbol),
+            **dict.fromkeys([splice_day, *compare_days], inputs.symbol),
+        },
+    }
+    window_snapshots: dict[str, Any] = {}
+    window_refs: dict[str, dict[datetime, Any]] = {}
+    window_contents: dict[str, Any] = {}
+    for label, index in (("stitched", 0), ("substituted", 1)):
+        (
+            window_snapshots[label],
+            window_refs[label],
+            window_contents[label],
+        ) = observe_vol_window(
+            inputs,
+            frames(c_x100)[index],
+            emit_days=compare_days,
+            source_by_day=sources[label],
+        )
+    composition: dict[str, Any] = {}
+    for day in compare_days:
+        stamps = [s for s in shared if s.date() == day]
+        composition[day.isoformat()] = {
+            "stitched": window_snapshots["stitched"][day],
+            "substituted": window_snapshots["substituted"][day],
+            "vol_ref_differs_in_entry_window": sum(
+                1
+                for s in stamps
+                if window_refs["stitched"].get(s) != window_refs["substituted"].get(s)
+            ),
+            "in_entry_window": len(stamps),
+            "splice_day_contribution": compare_splice_contribution(
+                {label: window_contents[label][day] for label in window_contents},
+                {label: window_snapshots[label][day] for label in window_snapshots},
+                splice_day=splice_day,
+            ),
+        }
+
     independence: dict[str, Any] = {}
     for label, index in (("stitched", 0), ("substituted", 1)):
         baseline = hi_vol(frames(c_x100)[index])
@@ -461,6 +632,11 @@ def measure_s1b(
         ),
         "c_independence_check": independence,
         "c_values_checked_x100": list(c_values_x100),
+        "atr_window_bars": int(inputs.strategy.entry_config.vol_window_bars),
+        "vol_percentile": float(inputs.strategy.entry_config.vol_percentile),
+        "vol_warmup_bars": int(inputs.strategy.entry_config.vol_warmup_bars),
+        "min_atr_ratio": float(inputs.strategy.entry_config.min_atr_ratio),
+        "atr_window_composition": composition,
         "day_not_measured": day_not_measured,
         "day_not_measured_reason": day_not_measured_reason,
     }
