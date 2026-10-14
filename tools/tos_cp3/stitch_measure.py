@@ -270,7 +270,7 @@ def measure_s1a(
     # `docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-stitch-measurements/`
     # (review LOW-4: the README's §5 `diff` is only a claim if it holds).
     return {
-        "measurement": "S1a — c sensitivity on the splice-crossing gates",
+        "measurement": "S1a — c sensitivity on the splice-crossing stall/reversal gates",
         "plan": "docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md §3.2a S1a",
         "target_day": target.isoformat(),
         "window_kst": "09:00-09:14",
@@ -393,6 +393,11 @@ def measure_s1b(
         }
 
     stitched, substituted = frames(c_x100)
+    # Every EMITTED bar, for the honest "how many were compared" count, and
+    # the entry-window subset, which is where hi_vol can differ at all.
+    all_a = inputs.fields_by_minute(stitched, compare_days)
+    all_b = inputs.fields_by_minute(substituted, compare_days)
+    compared = sorted(set(all_a) & set(all_b))
     a, b = hi_vol(stitched), hi_vol(substituted)
     shared = sorted(set(a) & set(b))
     per_day: dict[str, Any] = {}
@@ -400,6 +405,7 @@ def measure_s1b(
         stamps = [s for s in shared if s.date() == day]
         differing = [s for s in stamps if a[s] != b[s]]
         per_day[day.isoformat()] = {
+            "bars_compared": sum(1 for s in compared if s.date() == day),
             "in_entry_window": len(stamps),
             "hi_vol_differs": len(differing),
             "first_difference_kst": (
@@ -415,16 +421,19 @@ def measure_s1b(
     independence: dict[str, Any] = {}
     for label, index in (("stitched", 0), ("substituted", 1)):
         baseline = hi_vol(frames(c_x100)[index])
+        by_c: dict[str, int] = {}
+        for c in c_values_x100:
+            # ONE frame build per c. The first cut had this call inside the
+            # generator over `baseline.items()`, which rebuilt the frame and
+            # re-ran produce_bars once PER BAR — 662 x 5 x 2 runs, so the
+            # documented reproduction never finished. Caught by running it.
+            other = hi_vol(frames(c)[index])
+            by_c[str(c)] = sum(
+                1 for stamp, value in baseline.items() if other.get(stamp) != value
+            )
         independence[label] = {
             "in_window_bars": len(baseline),
-            "hi_vol_differences_by_c_x100": {
-                str(c): sum(
-                    1
-                    for stamp, value in baseline.items()
-                    if hi_vol(frames(c)[index]).get(stamp) != value
-                )
-                for c in c_values_x100
-            },
+            "hi_vol_differences_by_c_x100": by_c,
         }
 
     return {
@@ -443,7 +452,7 @@ def measure_s1b(
         ),
         "compare_days": [d.isoformat() for d in compare_days],
         "per_day": per_day,
-        "bars_compared_total": len(shared),
+        "bars_compared_total": len(compared),
         "hi_vol_differences_total": sum(
             row["hi_vol_differs"] for row in per_day.values()
         ),

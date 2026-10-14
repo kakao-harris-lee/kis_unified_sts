@@ -35,18 +35,20 @@
     "stitched": {
       "in_window_bars": 662,
       "hi_vol_differences_by_c_x100": {
-        "226": 0,
-        "462": 0,
         "0": 0,
+        "226": 0,
+        "344": 0,
+        "462": 0,
         "1000": 0
       }
     },
     "substituted": {
       "in_window_bars": 662,
       "hi_vol_differences_by_c_x100": {
-        "226": 0,
-        "462": 0,
         "0": 0,
+        "226": 0,
+        "344": 0,
+        "462": 0,
         "1000": 0
       }
     }

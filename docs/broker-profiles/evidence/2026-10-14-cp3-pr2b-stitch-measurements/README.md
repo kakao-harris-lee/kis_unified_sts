@@ -22,8 +22,10 @@
 | **S1a** `c` 민감도 (경로 a) | `CP3-PR2B-summary.json:answer_s1a=no flip: 0 of 118 perturbations across the measured spread range move stall_ok or reversal_ok on 2026-10-12 09:00-09:14` |
 | **S1b** ATR 대체 (경로 b) | `CP3-PR2B-summary.json:answer_s1b=1 bar of 662: substituting the splice session's own contract changes hi_vol on exactly one in-entry-window bar across 2026-10-12 and 10-13` |
 
-그리고 **계획의 구조 주장 하나가 반증됐다** — §3.2a S1a 의 「다른 필드·다른 날은 구조상 움직이지
-않으므로 세지 않는다」는 참이 아니다(§3).
+그리고 **계획의 구조 주장 하나가 모호했음이 드러나 명확해졌다** — §3.2a S1a 의 「다른 필드·다른 날은
+구조상 움직이지 않으므로 세지 않는다」는 **창(09:00–09:14) 안으로 읽으면 참**이고 대상일 전체로 읽으면
+아니다(§3). 독립 리뷰 판정도 「거짓이 아니라 범위가 모호」였고, 계획 문구는 그 판정대로 PR #900 에서
+명확화했다.
 
 ## 1. S1a — `c` 를 스프레드 폭만큼 흔들었다. 아무것도 뒤집히지 않는다
 
@@ -113,10 +115,11 @@
 일부만 바꾼 **부분** 비교다. 10-14 에 오면 창 안에 남는 직전 월물 세션이 10-08 하나뿐이라
 그것만 바꾸는 것이 **완전한** 반사실이 된다.
 
-## 3. ⚠ 계획의 구조 주장 하나가 반증됐다
+## 3. ⚠ 계획의 구조 주장 하나가 모호했다 — 범위를 명확히 했다
 
-§3.2a S1a 는 「다른 필드·다른 날은 구조상 움직이지 않으므로 세지 않는다」고 적는다. 재고 보니
-**움직인다**:
+§3.2a S1a 는 「다른 필드·다른 날은 구조상 움직이지 않으므로 세지 않는다」고 적는다. **창
+09:00–09:14 안으로 읽으면 참이다.** 대상일 전체로 읽으면 아니다 — 재 보니 창 **밖** 개장 봉들에서
+움직인다:
 
 - 움직인 필드: `CP3-PR2B-S1a.json:fields_that_moved_outside_the_window[0]=atr14_x100` ·
   `CP3-PR2B-S1a.json:fields_that_moved_outside_the_window[1]=vwap_reverted` ·
@@ -128,12 +131,12 @@
   `CP3-PR2B-S1a.json:offsets_at_which_something_moved_outside_the_window=118`
 
 원인은 계획 본문이 이미 적은 그것이다 — 접합 true range 는 **08:45 봉**에 있다. 계획은 거기서
-「진입 창(09:00~) ATR 의 SMA14 창에 보통 들어가지 않는다」로 이어지는데, 그 말은 맞고 **진입 창**에
-대해서만 맞다. 08:45 봉의 TR 은 그 뒤 14 봉(08:45–08:58)의 ATR14 안에 있고, 그 봉들은 B1a 가
-**발행하는** 봉이다. 즉 「구조상 안 움직인다」는 판별 게이트에 대해 참이고 **아티팩트에 대해 거짓**이다.
+「진입 창(09:00~) ATR 의 SMA14 창에 보통 들어가지 않는다」로 이어지는데, 그 말은 맞다. 다만 08:45 봉의
+TR 은 **그 뒤 14 봉(08:45–08:58)** 의 ATR14 안에 있고 그 봉들은 B1a 가 **발행하는** 봉이다. 즉 원문은
+판별 게이트(창 안)에 대해 참이고, 발행되는 아티팩트 전체에 대해서는 **범위가 적혀 있지 않았다**.
 
-처분 제안(운영자 판단): 계획 §3.2a 의 그 한 문장을 「진입 창 밖 개장 14 봉의 `atr14_x100`·
-`z_x1000`·`vwap_reverted` 는 `c` 와 함께 움직인다 — 판별에는 닿지 않는다」로 정정. **파리티와는
+**처분(PR #900 에서 적용됨).** 독립 리뷰 판정은 「거짓이 아니라 범위가 모호」였고, 그 판정대로 계획
+§3.2a S1a 의 괄호를 창 범위 명시 + 개장 14 봉 예외로 **명확화**했다(이 PR 의 docs 변경). **파리티와는
 무관하다**: 생산자와 B1a·B2 가 같은 매니페스트를 읽으므로 세 쪽 모두 같은 값을 낸다. 이 문단이
 말하는 것은 「`c` 가 다르면 아티팩트가 다르다」이지 「두 쪽이 어긋난다」가 아니다.
 
@@ -154,9 +157,40 @@
 
 ## 5. 재현
 
+⚠ **분석 스크립트는 커밋했다.** PR-1·#899 는 일회성이라며 커밋하지 않았고, 그 대가가 여기서 나왔다 —
+문서가 수치를 적을 수는 있어도 아무도 스크립트를 다시 쓰지 않고는 재도출할 수 없었다(독립 리뷰 LOW-4).
+도구는 `tools/tos_cp3/stitch_measure.py` 이고 오프라인이며 원천 경로를 인자로 받는다. 아래 1) 이
+**이 디렉터리의 `CP3-PR2B-S1a.json`·`CP3-PR2B-S1b.json` 을 바이트 그대로 재생성**한다(출력에 실행
+시각이 없다 — 같은 입력이면 같은 바이트). 그 둘이 **측정**이다.
+
+⚠ `CP3-PR2B-summary.json` 은 도구가 만들지 않는다 — 산문 판정·GET 횟수·원천 지문처럼 측정이 아닌
+값이 들어 있고 실행 시각에 따라 달라지는 항목이 없도록 손으로 조립한 것이다. 도구는 대신 같은
+`--out` 에 `CP3-PR2B-sources.json`(원천 sha256 · 세션별 파싱 봉 수 · 게이트 값)을 써서 그 수치들을
+기계적으로 대조할 수 있게 한다.
+
 ```bash
-# 1) 오프라인 재계산 — 네트워크 0. 원천은 아래 세 requests.jsonl.
-#    (분석 스크립트는 PR-1·#899 와 같은 방침으로 커밋하지 않는다 — 지문은 §6)
+# 1) S1a·S1b 재계산 — 네트워크 0, 자격증명 0.
+#    이 호스트에서 약 8 분(섭동 118 회 + 이분 탐색 두 방향 + c 독립성 10 회).
+#    2026-10-14 실행에서 아래 두 diff 가 **모두 비어 있음**을 확인했다.
+PYTHONPATH=. .venv/bin/python -m tools.tos_cp3.stitch_measure \
+  --requests ~/.local/state/tos/measure/cp3-pr2b-expired-20261014/requests.jsonl \
+  --requests ~/.local/state/tos/measure/cp3-pr1-20261012/requests.jsonl \
+  --requests ~/.local/state/tos/measure/cp3-pr2b-s1b-20261014/requests.jsonl \
+  --out /tmp/cp3-pr2b-s1 \
+  --symbol A05611 --previous-symbol A05610 \
+  --target 2026-10-12 --splice-day 2026-10-08 \
+  --previous-day 2026-10-02 --previous-day 2026-10-06 --previous-day 2026-10-07 \
+  --compare-day 2026-10-12 --compare-day 2026-10-13 \
+  --c-x100 344 --spread-range-x100 118 \
+  --c-value-x100 0 --c-value-x100 226 --c-value-x100 344 \
+  --c-value-x100 462 --c-value-x100 1000
+diff /tmp/cp3-pr2b-s1/CP3-PR2B-S1a.json \
+  docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-stitch-measurements/CP3-PR2B-S1a.json
+diff /tmp/cp3-pr2b-s1/CP3-PR2B-S1b.json \
+  docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-stitch-measurements/CP3-PR2B-S1b.json
+
+# 1b) 그 도구 자체 (hermetic · 네트워크·자격증명 0)
+PYTHONPATH=. .venv/bin/python -m pytest tests/tools/test_cp3_stitch_measure.py -q
 
 # 2) S1b 가 필요로 한 단 하나의 조회 (완료 세션, GET-only, 분리 워크트리 origin/main)
 #    종목 CP3-PR2B-summary.json:requests_symbol · 날짜 CP3-PR2B-summary.json:requests_day
