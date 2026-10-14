@@ -1,7 +1,8 @@
 {
   "question": "how far does the cross-contract seed's unremoved residue reach into Setup D's published decision gates on the 2026-10 roll?",
   "answer_s1a": "no flip: 0 of 118 perturbations across the measured spread range move stall_ok or reversal_ok on 2026-10-12 09:00-09:14",
-  "answer_s1b": "1 bar of 662: substituting the splice session's own contract changes hi_vol on exactly one in-entry-window bar across 2026-10-12 and 10-13",
+  "answer_s1b": "1 bar of 993: substituting the splice session's own contract changes hi_vol on exactly one in-entry-window bar across 2026-10-12, 10-13 and 10-14; none of them on 10-14, the plan's complete comparison point, where the percentile reference is identical in both frames",
+  "answer_s1b_complete_day": "2026-10-14: 0 of 331 in-entry-window bars change hi_vol and the percentile reference differs on 0 of them, although the substitution changes ALL 118 ATRs 10-08 still contributes to that window — none of those 118 reaches the rank the 90th percentile is read at, in either frame, whereas on 2026-10-12 and 10-13 they do",
   "gate": false,
   "gate_note": "plan §3.2a: a measurement, not a gate; a flip is reported, not blocking",
   "method": "offline recomputation over recorded raw responses",
@@ -12,7 +13,17 @@
   "requests_symbol": "A05611",
   "requests_day": "2026-10-13",
   "requests_raw_rows": 416,
+  "requests_note": "requests counts the first run's GETs (2026-10-13); requests_followup counts this follow-up PR's (2026-10-14); requests_total is their sum. Both read one completed session each, GET-only, from a detached worktree of origin/main.",
+  "requests_followup": 6,
+  "requests_followup_day": "2026-10-14",
+  "requests_followup_raw_rows": 416,
+  "requests_followup_parsed_bars": 411,
+  "requests_followup_raw_first_kst": "08:45:00",
+  "requests_followup_raw_last_kst": "15:45:00",
+  "requests_followup_purpose": "the completed 2026-10-14 session — the plan's COMPLETE S1b comparison point, which the first run could not read while that session was still open",
+  "requests_total": 12,
   "run_started_kst": "2026-10-14T10:38:09.538721+09:00",
+  "followup_requests_started_kst": "2026-10-14T15:50:27.350321+09:00",
   "c_x100": 344,
   "spread_range_x100": 118,
   "density_gate": 330,
@@ -29,17 +40,19 @@
     "A05611:2026-10-07": 191,
     "A05611:2026-10-08": 411,
     "A05611:2026-10-12": 411,
-    "A05611:2026-10-13": 411
+    "A05611:2026-10-13": 411,
+    "A05611:2026-10-14": 411
   },
   "source_sha256": {
     "cp3-pr2b-expired-20261014/requests.jsonl": "aa22d11fa7570212679cdc82a7d6158519a7fd80866869d78d6675741d3c6bef",
     "cp3-pr1-20261012/requests.jsonl": "731697c65ca5afa66d183a8fd8a6270181b702185d92fdc1832fec0fafe81a12",
-    "cp3-pr2b-s1b-20261014/requests.jsonl": "1689d76082fb830ddbb0f5f7556d46de871d9989759d4fe3bc766df5cbe95eff"
+    "cp3-pr2b-s1b-20261014/requests.jsonl": "1689d76082fb830ddbb0f5f7556d46de871d9989759d4fe3bc766df5cbe95eff",
+    "cp3-pr2b-s1b2-20261014/requests.jsonl": "8f26e77855769e499763f38f5c39498f3f192b2aa79ff3aae7f9191fe014b09b"
   },
   "plan_claim_contradicted": "§3.2a S1a says 'other fields and other days are structurally immobile, so they are not counted'. Measured: atr14_x100, z_x1000 and vwap_reverted move on the fourteen 08:45-08:58 bars of the target day at every non-zero perturbation. They are published bars; they are outside the ENTRY window, not outside the artifact.",
   "not_measured": [
-    "2026-10-14 (session still open at measurement time)",
     "any roll other than 2026-10",
-    "whether the single 2026-10-12 hi_vol difference changes a trade"
+    "whether the single 2026-10-12 hi_vol difference changes a trade",
+    "S1a on 2026-10-13 and 2026-10-14 (structurally zero there — plan §3.2a)"
   ]
 }

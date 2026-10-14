@@ -790,6 +790,68 @@ def test_zero_atr_bars_are_omitted_not_filled(
         assert record.fields["atr14_x100"] > 0
 
 
+def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """The read-only hook S1b's ``_atr_window`` measurement reads the setup through.
+
+    Three claims, each with its own way of being wrong:
+
+    1. The records are byte-identical with and without it — an observer that
+       consumed the replay, or was called before ``check()`` advanced the
+       setup, would move them.
+    2. It is called once per replayed bar, emitted or not. The window the
+       percentile is taken over is filled mostly by bars that are NOT emitted
+       (a stitched previous month), so an observer that only saw emitted bars
+       would measure the wrong window and say nothing about it.
+    3. ``vol_ref`` is present on exactly the bars that advanced the causal ATR
+       window — in-entry-window bars with usable inputs. ``stitch_measure``
+       counts the window's composition off that correspondence; if the key
+       appeared on other bars the composition would silently drift.
+    """
+    emit = frozenset(SESSIONS[-1:])
+    seen: list[tuple[datetime, dict]] = []
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kwargs = {
+            "symbol": SYMBOL,
+            "strategy": strategy,
+            "contract_spec": _contract_spec(),
+            "anchor": anchor,
+            "emit_days": emit,
+        }
+        plain = produce_fields.produce_bars(bars.reset_index(drop=True), **kwargs)
+        watched = produce_fields.produce_bars(
+            bars.reset_index(drop=True),
+            **kwargs,
+            observer=lambda stamp, ev: seen.append((stamp, dict(ev))),
+        )
+
+    assert produce_fields.render_jsonl(watched.records) == produce_fields.render_jsonl(
+        plain.records
+    )
+    assert len(seen) == plain.bars_replayed > len(plain.records)
+    assert {stamp.date() for stamp, _ in seen} > set(emit), "only emitted bars observed"
+
+    advanced = [(stamp, ev) for stamp, ev in seen if "vol_ref" in ev]
+    assert advanced, "no bar advanced the causal ATR window"
+    for stamp, ev in advanced:
+        assert ev["entry_window"] is True, stamp
+        assert ev["atr_14"] > 0 and ev["close"] > 0, stamp
+    for stamp, ev in seen:
+        if "vol_ref" in ev:
+            continue
+        assert not (
+            ev.get("entry_window") is True and ev.get("inputs_usable") is True
+        ), f"{stamp}: an in-window usable bar advanced the window without a vol_ref"
+    # Both sides of the warmup appear, so neither assertion above is vacuous.
+    references = [ev["vol_ref"] for _, ev in advanced]
+    assert None in references and any(r is not None for r in references)
+
+
 # ---------------------------------------------------------------------------
 # Determinism, lineage and the density gate
 # ---------------------------------------------------------------------------

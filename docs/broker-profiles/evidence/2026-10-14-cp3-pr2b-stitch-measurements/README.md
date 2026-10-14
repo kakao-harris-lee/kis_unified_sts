@@ -4,7 +4,7 @@
 - 선행 증거: `docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-expired-contract/README.md`
   (전제 실측 — `c_x100` 344 · 스프레드 폭 118 · 15:19 세션 끝) ·
   `docs/broker-profiles/evidence/2026-10-12-cp3-pr1-minute-probe/README.md` (PR-1, 10-12 수집).
-- 구현: 이 PR 의 `tools/tos_cp3/stitch.py` · `produce_fields.load_window(stitch_manifest=)` ·
+- 구현: PR #900 의 `tools/tos_cp3/stitch.py` · `produce_fields.load_window(stitch_manifest=)` ·
   `tools/tos_cp3/live_producer/stitch_seed.py`.
 - **게이트가 아니다** (`CP3-PR2B-summary.json:gate=false`,
   `CP3-PR2B-summary.json:gate_note=plan §3.2a: a measurement, not a gate; a flip is reported, not blocking`).
@@ -14,13 +14,21 @@
   **주문 0 건** (`CP3-PR2B-summary.json:orders=0`), **GET 6 회**
   (`CP3-PR2B-summary.json:requests=6`) — 그 6 회는 아무도 기록해 두지 않은 완료 세션 하나뿐이다
   (§5). TR 은 PR-1 과 같은 조회 TR (`CP3-PR2B-summary.json:tr_id=FHKIF03020200`).
+- **후속(2026-10-14 15:50 KST, 이 문서의 두 번째 판).** 첫 실행 때 열려 있던 **10-14 세션이 닫힌 뒤**
+  같은 조회 클라이언트로 GET `CP3-PR2B-summary.json:requests_followup=6` 회를 더 쏴
+  (`CP3-PR2B-summary.json:requests_followup_day=2026-10-14`) S1b 의 **완전한** 비교 점을 채웠다.
+  합계 GET `CP3-PR2B-summary.json:requests_total=12` 회 · 주문은 여전히 0 건. 두 실행의 역할 구분은
+  `CP3-PR2B-summary.json:requests_note=requests counts the first run's GETs (2026-10-13); requests_followup counts this follow-up PR's (2026-10-14); requests_total is their sum. Both read one completed session each, GET-only, from a detached worktree of origin/main.`
+  **`CP3-PR2B-S1a.json` 은 바이트 그대로다** — 새 원천은 `(A05611, 2026-10-14)` 만 더하고 S1a 가 읽는
+  `(월물, 날)` 중 어느 것도 바꾸지 않는다(§5 의 `cmp` 로 확인).
 
 ## 0. 답
 
 | 측정 | 답 |
 |---|---|
 | **S1a** `c` 민감도 (경로 a) | `CP3-PR2B-summary.json:answer_s1a=no flip: 0 of 118 perturbations across the measured spread range move stall_ok or reversal_ok on 2026-10-12 09:00-09:14` |
-| **S1b** ATR 대체 (경로 b) | `CP3-PR2B-summary.json:answer_s1b=1 bar of 662: substituting the splice session's own contract changes hi_vol on exactly one in-entry-window bar across 2026-10-12 and 10-13` |
+| **S1b** ATR 대체 (경로 b) | `CP3-PR2B-summary.json:answer_s1b=1 bar of 993: substituting the splice session's own contract changes hi_vol on exactly one in-entry-window bar across 2026-10-12, 10-13 and 10-14; none of them on 10-14, the plan's complete comparison point, where the percentile reference is identical in both frames` |
+| **S1b** 의 **완전한** 비교 점 (10-14) | `CP3-PR2B-summary.json:answer_s1b_complete_day=2026-10-14: 0 of 331 in-entry-window bars change hi_vol and the percentile reference differs on 0 of them, although the substitution changes ALL 118 ATRs 10-08 still contributes to that window — none of those 118 reaches the rank the 90th percentile is read at, in either frame, whereas on 2026-10-12 and 10-13 they do` |
 
 그리고 **계획의 구조 주장 하나가 모호했음이 드러나 명확해졌다** — §3.2a S1a 의 「다른 필드·다른 날은
 구조상 움직이지 않으므로 세지 않는다」는 **창(09:00–09:14) 안으로 읽으면 참**이고 대상일 전체로 읽으면
@@ -84,20 +92,26 @@
 대조한다. 프레임은 **측정 전용 수기 매니페스트**이고(front month 걸음을 따르지 않는다) `c_x100`
 재계산 단언을 적용하지 않는다 — 계획이 그렇게 정한다.
 
-- A(접합) `CP3-PR2B-S1b.json:frame_a_stitched=A05610 ['2026-10-02', '2026-10-06', '2026-10-07', '2026-10-08'] + A05611 ['2026-10-12', '2026-10-13']`
-- B(대체) `CP3-PR2B-S1b.json:frame_b_substituted=A05610 ['2026-10-02', '2026-10-06', '2026-10-07'] + A05611 ['2026-10-08', '2026-10-12', '2026-10-13']`
+- A(접합) `CP3-PR2B-S1b.json:frame_a_stitched=A05610 ['2026-10-02', '2026-10-06', '2026-10-07', '2026-10-08'] + A05611 ['2026-10-12', '2026-10-13', '2026-10-14']`
+- B(대체) `CP3-PR2B-S1b.json:frame_b_substituted=A05610 ['2026-10-02', '2026-10-06', '2026-10-07'] + A05611 ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14']`
 
-| 날 | 진입 창 봉 | `hi_vol` 다른 봉 | 처음/마지막 | A 의 `hi_vol` True | B 의 `hi_vol` True |
-|---|---|---|---|---|---|
-| 2026-10-12 | `CP3-PR2B-S1b.json:per_day.2026-10-12.in_entry_window=331` | **`CP3-PR2B-S1b.json:per_day.2026-10-12.hi_vol_differs=1`** | `CP3-PR2B-S1b.json:per_day.2026-10-12.first_difference_kst=09:47` | `CP3-PR2B-S1b.json:per_day.2026-10-12.hi_vol_true_stitched=115` | `CP3-PR2B-S1b.json:per_day.2026-10-12.hi_vol_true_substituted=114` |
-| 2026-10-13 | `CP3-PR2B-S1b.json:per_day.2026-10-13.in_entry_window=331` | `CP3-PR2B-S1b.json:per_day.2026-10-13.hi_vol_differs=0` | `CP3-PR2B-S1b.json:per_day.2026-10-13.first_difference_kst=null` | `CP3-PR2B-S1b.json:per_day.2026-10-13.hi_vol_true_stitched=104` | `CP3-PR2B-S1b.json:per_day.2026-10-13.hi_vol_true_substituted=104` |
+| 날 | 비교 | 진입 창 봉 | `hi_vol` 다른 봉 | 처음/마지막 | A 의 `hi_vol` True | B 의 `hi_vol` True |
+|---|---|---|---|---|---|---|
+| 2026-10-12 | 부분 | `CP3-PR2B-S1b.json:per_day.2026-10-12.in_entry_window=331` | **`CP3-PR2B-S1b.json:per_day.2026-10-12.hi_vol_differs=1`** | `CP3-PR2B-S1b.json:per_day.2026-10-12.first_difference_kst=09:47` | `CP3-PR2B-S1b.json:per_day.2026-10-12.hi_vol_true_stitched=115` | `CP3-PR2B-S1b.json:per_day.2026-10-12.hi_vol_true_substituted=114` |
+| 2026-10-13 | 부분 | `CP3-PR2B-S1b.json:per_day.2026-10-13.in_entry_window=331` | `CP3-PR2B-S1b.json:per_day.2026-10-13.hi_vol_differs=0` | `CP3-PR2B-S1b.json:per_day.2026-10-13.first_difference_kst=null` | `CP3-PR2B-S1b.json:per_day.2026-10-13.hi_vol_true_stitched=104` | `CP3-PR2B-S1b.json:per_day.2026-10-13.hi_vol_true_substituted=104` |
+| **2026-10-14** | **완전** | `CP3-PR2B-S1b.json:per_day.2026-10-14.in_entry_window=331` | **`CP3-PR2B-S1b.json:per_day.2026-10-14.hi_vol_differs=0`** | `CP3-PR2B-S1b.json:per_day.2026-10-14.first_difference_kst=null` | `CP3-PR2B-S1b.json:per_day.2026-10-14.hi_vol_true_stitched=23` | `CP3-PR2B-S1b.json:per_day.2026-10-14.hi_vol_true_substituted=23` |
 
 합계 `CP3-PR2B-S1b.json:hi_vol_differences_total=1` / 진입 창
-`CP3-PR2B-S1b.json:in_entry_window_total=662` 봉.
+`CP3-PR2B-S1b.json:in_entry_window_total=993` 봉 (발행 봉 전체는
+`CP3-PR2B-S1b.json:bars_compared_total=1233`).
 
 **이것이 경로 (b) 의 본체다** — 직전 월물의 ATR 들이 `_atr_window` 를 채워 `hi_vol` 의 백분위
-기준을 정하는 효과. 이 롤에서 그 대체가 바꾼 것은 **진입 창 662 봉 중 한 봉**이고, 그 한 봉이
+기준을 정하는 효과. 이 롤에서 그 대체가 바꾼 것은 **진입 창 993 봉 중 한 봉**이고, 그 한 봉이
 거래로 이어지는지는 **재지 않았다**(§4).
+
+**뒤집힘은 없다** — 계획이 「게이트가 아니다」라고 적은 그 보고다. 10-14 의 한 봉도 뒤집히지
+않았고, 남은 한 봉은 PR #900 이 이미 보고한 10-12 09:47 그대로다(그 봉은 `hi_vol` 이 True→False
+로 바뀐다 — 대체 프레임에서 한 봉 **덜** 통과한다).
 
 ### 2.1 `c` 와 무관함을 **확인**했다(가정하지 않았다)
 
@@ -106,14 +120,76 @@
 진입 창 `hi_vol` 이 바뀌는지 셌다 — 전부 0 이다
 (`CP3-PR2B-S1b.json:c_independence_check.stitched.hi_vol_differences_by_c_x100.1000=0` ·
 `CP3-PR2B-S1b.json:c_independence_check.substituted.hi_vol_differences_by_c_x100.1000=0`,
-비교 봉 `CP3-PR2B-S1b.json:c_independence_check.stitched.in_window_bars=662`).
+비교 봉 `CP3-PR2B-S1b.json:c_independence_check.stitched.in_window_bars=993`).
 
-### 2.2 왜 10-12·10-13 이 「부분」이고 10-14 가 「완전」인가
+### 2.2 `_atr_window` 내용과 백분위 기준값 — 「완전/부분」을 **재서** 확인했다
 
-계획의 분류를 그대로 읽으면: 10-12·10-13 의 `_atr_window` 는 10-08 **외에** 10-07·10-06 도 담는데
-그 두 날은 A05611 에서 너무 얇아(전제 실측 §3 의 밀도 게이트) 대체할 수 없다 — 그래서 반사실의
-일부만 바꾼 **부분** 비교다. 10-14 에 오면 창 안에 남는 직전 월물 세션이 10-08 하나뿐이라
-그것만 바꾸는 것이 **완전한** 반사실이 된다.
+계획 §3.2a 가 S1b 에 함께 적으라고 한 둘이다. 창은 발행되지 않는 봉들이 채우므로 published 필드에
+없다 — `produce_bars` 의 읽기 전용 관찰자로 **세트업 자신의** 평가 트레이스에서 읽는다
+(`ev["vol_ref"]` 가 `_vol_reference` 가 돌려준 그 값이다; 백분위를 다시 구현하지 않는다).
+창 크기 `CP3-PR2B-S1b.json:atr_window_bars=780` · 백분위
+`CP3-PR2B-S1b.json:vol_percentile=90.0` · 워밍업 `CP3-PR2B-S1b.json:vol_warmup_bars=120` ·
+게이트 비 `CP3-PR2B-S1b.json:min_atr_ratio=0.9` 는 전략 YAML 값 그대로다.
+
+각 날의 **첫 기여 봉**(`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.stitched.first_contributing_bar_kst=09:00`)에서
+창 780 칸을 (월물:세션)별로 센 것:
+
+| 날 | A(접합) 창 구성 | B(대체) 창 구성 | 창 안 직전 월물 세션(A 기준) | A 기준값 | B 기준값 | 기준값 다른 진입 창 봉 |
+|---|---|---|---|---|---|---|
+| 10-12 | 10-06 118 + 10-07 331 + 10-08 331, 전부 A05610 | 10-06·10-07 A05610 + **10-08 A05611** 331 | **셋** | 1.7043 | 1.7537 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-12.vol_ref_differs_in_entry_window=331` / 331 |
+| 10-13 | 10-07 118 + 10-08 331 (A05610) + 10-12 331 | 10-07 A05610 + **10-08 A05611** + 10-12 | **둘** | 2.0373 | 2.0534 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-13.vol_ref_differs_in_entry_window=51` / 331 |
+| **10-14** | **10-08 118 (A05610)** + 10-12 331 + 10-13 331 | **10-08 118 (A05611)** + 10-12 + 10-13 | **하나** | 2.7719 | 2.7719 | **`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.vol_ref_differs_in_entry_window=0`** / 331 |
+
+기준값은 `vol_ref_x10000`(1/10000 단위)로 적혀 있다 — 예
+`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.stitched.vol_ref_x10000=27719` ·
+`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.substituted.vol_ref_x10000=27719`.
+칸 수는 세 날 모두 꽉 찬 `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.stitched.bars_in_window=780`
+이다(워밍업 창이 아니다).
+
+**이 표가 계획의 「완전/부분」 분류를 측정으로 바꾼다.** 10-12 는 창 안에 직전 월물 세션이 **셋**,
+10-13 은 **둘**, 10-14 는 **하나**(10-08 의 118 칸)뿐이고 — 780 − 331 − 331 = 118 — 그 하나를
+바꾸는 것이 곧 **완전한** 반사실이다. 10-07·10-06 은 A05611 에서 얇아(전제 실측 §3 의 밀도 게이트)
+대체할 수 없으므로 10-12·10-13 은 반사실의 일부만 바꾼 **부분** 비교다. 계획에서 읽어 옮긴 주장이
+아니라 창을 센 결과다.
+
+### 2.3 ⚠ 10-14 의 0 은 「대체가 아무것도 안 바꿨다」가 아니다
+
+0 을 그대로 읽으면 과소평가다. 그래서 도구가 **창 안에서 대체가 실제로 바꾼 것**과 **그것이
+백분위를 정하는 순위대에 있는지**를 같은 아티팩트에 함께 적는다
+(`atr_window_composition.<날>.splice_day_contribution`) — 산문에만 있으면 아무도 재도출할 수 없다는
+LOW-4 의 교훈을 이 수치들에도 적용한다.
+
+10-14 창에 남은 10-08 의 칸들은 **대체하면 실제로 달라진다**:
+
+| 10-14 창 안 10-08 기여 | 값 |
+|---|---|
+| 10-14 창 안 10-08 기여 칸 수 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.splice_day_bars_in_window=118` |
+| 그 칸들의 구간 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.splice_day_minutes_kst=12:33-14:30` |
+| `atr14` 가 **다른** 칸 | **`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.atr_differs=118`** — 즉 **전부** |
+| 최대 차이 ×10000 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.atr_max_abs_difference_x10000=900` (= 0.09) |
+| A 의 `atr14` 범위 ×10000 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.atr_x10000_range_stitched=[9986,13714]` |
+| B 의 `atr14` 범위 ×10000 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.atr_x10000_range_substituted=[10371,14214]` |
+| 기준값(2.7719) **이상**인 칸 — A | **`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.splice_day_bars_at_or_above_vol_ref_stitched=0`** |
+| 기준값 이상인 칸 — B | **`CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.splice_day_contribution.splice_day_bars_at_or_above_vol_ref_substituted=0`** |
+| 창 최대 `atr14` ×10000 | `CP3-PR2B-S1b.json:atr_window_composition.2026-10-14.stitched.window_max_atr_x10000=37886` |
+
+즉 **10-14 의 0 은 「대체가 창을 안 건드렸다」가 아니다** — 118 칸의 `atr14` 가 **전부** 달라졌는데도
+기준값이 1/10000 단위까지 같다. 이유는 그 칸들이 90 백분위(2.7719, 창 최대 3.7886) **훨씬 아래**
+([0.9986, 1.3714] / [1.0371, 1.4214])에 있어 **백분위가 읽는 순위대에 한 칸도 닿지 않기** 때문이다.
+
+그 118 칸은 10-08 의 **후반부**(12:33–14:30)다 — 창이 780 칸이라 10-12·10-13 이 662 칸을 먹고 남은
+꼬리가 접합일의 뒤쪽이기 때문이다.
+
+**이 설명이 공허하지 않다는 증거는 같은 측정의 다른 두 날이다.** 똑같은 수치를 10-12·10-13 에서
+재면 10-08 기여 칸이 그 순위대에 **닿는다** — 10-12 는 기준값 이상 칸이
+`CP3-PR2B-S1b.json:atr_window_composition.2026-10-12.splice_day_contribution.splice_day_bars_at_or_above_vol_ref_stitched=49`
+(A)·`CP3-PR2B-S1b.json:atr_window_composition.2026-10-12.splice_day_contribution.splice_day_bars_at_or_above_vol_ref_substituted=49`
+(B), 10-13 은 `CP3-PR2B-S1b.json:atr_window_composition.2026-10-13.splice_day_contribution.splice_day_bars_at_or_above_vol_ref_stitched=18`
+→ `CP3-PR2B-S1b.json:atr_window_composition.2026-10-13.splice_day_contribution.splice_day_bars_at_or_above_vol_ref_substituted=23`
+이고(A·B 가 **다르다**), 그래서 §2.2 의 기준값 차이가 331 → 51 → 0 으로 줄어든다. 10-14 의 0 은
+측정이 둔해서 나온 0 이 아니라 **창에서 접합일이 빠져나가는 과정의 끝**이다.
+
+다른 롤에서 접합일 후반부가 그 세션의 변동 구간이면 같은 결론을 주지 않는다. **한 롤의 관측이다.**
 
 ## 3. ⚠ 계획의 구조 주장 하나가 모호했다 — 범위를 명확히 했다
 
@@ -136,22 +212,26 @@ TR 은 **그 뒤 14 봉(08:45–08:58)** 의 ATR14 안에 있고 그 봉들은 B
 판별 게이트(창 안)에 대해 참이고, 발행되는 아티팩트 전체에 대해서는 **범위가 적혀 있지 않았다**.
 
 **처분(PR #900 에서 적용됨).** 독립 리뷰 판정은 「거짓이 아니라 범위가 모호」였고, 그 판정대로 계획
-§3.2a S1a 의 괄호를 창 범위 명시 + 개장 14 봉 예외로 **명확화**했다(이 PR 의 docs 변경). **파리티와는
+§3.2a S1a 의 괄호를 창 범위 명시 + 개장 14 봉 예외로 **명확화**했다(PR #900 의 docs 변경). **파리티와는
 무관하다**: 생산자와 B1a·B2 가 같은 매니페스트를 읽으므로 세 쪽 모두 같은 값을 낸다. 이 문단이
 말하는 것은 「`c` 가 다르면 아티팩트가 다르다」이지 「두 쪽이 어긋난다」가 아니다.
 
 ## 4. 이 측정이 **확립하지 못한 것**
 
-- **2026-10-14.** 측정 시각에 그날 세션이 **열려 있었다**
-  (`CP3-PR2B-S1b.json:day_not_measured=2026-10-14` ·
-  `CP3-PR2B-S1b.json:day_not_measured_reason=the 2026-10-14 session was still open at measurement time (10:18 KST; the futures CONTINUOUS window ends 15:45), and a growing day cannot be parsed as a completed session`).
-  계획이 「완전한 비교」라 부른 날이 바로 이 날이므로, **S1b 의 가장 깨끗한 한 점이 빠져 있다.**
-  15:45 뒤에 같은 도구로 6 회 GET 을 더 쏘면 채울 수 있다(§5 의 명령 그대로, 날짜만 바꾼다).
-- **다른 롤.** 2026-10 만기 하나만 봤다. S1a 의 여유 22 배도 S1b 의 1/662 도 이 롤의 값이다.
+- ~~**2026-10-14.**~~ **해소됨(이 PR).** 첫 실행 때는 그날 세션이 열려 있어 빠져 있었고, 그 공백은
+  아티팩트에 `day_not_measured` 로 **적혀** 있었다. 15:45 뒤 GET 6 회로 채웠고 이 판에서는
+  `CP3-PR2B-S1b.json:day_not_measured=null` ·
+  `CP3-PR2B-S1b.json:day_not_measured_reason=null` 이다 — 즉 **계획이 요구한 세 날이 모두
+  측정됐다**는 적극적 주장이고, 키가 없어서 null 인 것이 아니다(그 구분은
+  `tests/tools/test_cp3_stitch_measure.py` 의 플래그 쌍 테스트가 지킨다).
+- **다른 롤.** 2026-10 만기 하나만 봤다. S1a 의 여유 22 배도 S1b 의 1/993 도, §2.3 의 「기여 칸이
+  백분위 아래」도 이 롤의 값이다.
 - **거래 영향.** S1b 가 찾은 한 봉이 주문·체결로 이어지는지는 재지 않았다. `hi_vol` 은 게이트
   하나일 뿐이고 그 뒤에 |z| 문턱·정체·반전·신뢰도가 더 있다.
-- **파리티.** 이 문서는 생산자와 B1a·B2 가 **같은 값을 내는지**를 재지 않는다. 그것은 이 PR 의
-  테스트 5 가 확인한다(생산자 프레임 == `load_window(stitch_manifest=)` 재구성).
+- **파리티.** 이 문서는 생산자와 B1a·B2 가 **같은 값을 내는지**를 재지 않는다. 그것은 PR #900 의
+  테스트 5 가 확인한다(생산자 프레임 == `load_window(stitch_manifest=)` 재구성). 이 판에서 더한
+  관찰자 훅도 파리티를 바꾸지 않는다 — 관찰자를 주든 안 주든 `produce_bars` 의 레코드가 바이트
+  동일함을 `tests/tools/test_cp3_produce_fields.py` 가 단언한다.
 - **S1a 의 다른 날.** 계획대로 10-12 만 쟀다. 10-13·10-14 의 09:00–09:14 에서는 경로 (a) 가
   구조상 0 이다(그 봉들의 `_close_window`·`prev_close` 에 직전 월물이 없다).
 
@@ -163,6 +243,13 @@ TR 은 **그 뒤 14 봉(08:45–08:58)** 의 ATR14 안에 있고 그 봉들은 B
 **이 디렉터리의 `CP3-PR2B-S1a.json`·`CP3-PR2B-S1b.json` 을 바이트 그대로 재생성**한다(출력에 실행
 시각이 없다 — 같은 입력이면 같은 바이트). 그 둘이 **측정**이다.
 
+⚠ **이 명령은 커밋한 바이트를 만든 명령 그대로다 — 플래그 하나까지**(독립 리뷰 LOW-5). 첫 판에서는
+`--day-not-measured`·`--day-not-measured-reason` 을 주고 돌린 결과를 커밋했는데 §5 에는 그 둘이 빠져
+있어, 적힌 명령을 그대로 돌리면 `diff` 가 비지 않았다. 이 판의 커밋된 `CP3-PR2B-S1b.json` 은 그 두
+플래그를 **주지 않고** 돌린 결과이고(세 날 모두 측정됐으므로 → `day_not_measured=null`), 아래 명령에도
+없다. 두 `diff` 가 **모두 비어 있음**을 2026-10-14 16:28 KST 실행에서 확인했고, 같은 명령을 한 번 더
+돌려(16:31 KST) 두 아티팩트가 커밋된 바이트와 **동일**함도 확인했다 — 각각 91 초·98 초.
+
 ⚠ `CP3-PR2B-summary.json` 은 도구가 만들지 않는다 — 산문 판정·GET 횟수·원천 지문처럼 측정이 아닌
 값이 들어 있고 실행 시각에 따라 달라지는 항목이 없도록 손으로 조립한 것이다. 도구는 대신 같은
 `--out` 에 `CP3-PR2B-sources.json`(원천 sha256 · 세션별 파싱 봉 수 · 게이트 값)을 써서 그 수치들을
@@ -170,17 +257,18 @@ TR 은 **그 뒤 14 봉(08:45–08:58)** 의 ATR14 안에 있고 그 봉들은 B
 
 ```bash
 # 1) S1a·S1b 재계산 — 네트워크 0, 자격증명 0.
-#    이 호스트에서 약 8 분(섭동 118 회 + 이분 탐색 두 방향 + c 독립성 10 회).
-#    2026-10-14 실행에서 아래 두 diff 가 **모두 비어 있음**을 확인했다.
+#    한가한 이 호스트에서 91~98 초(섭동 118 회 + 이분 탐색 두 방향 + c 독립성 10 회 + 창 관찰 2 회).
+#    첫 판은 바쁜 호스트에서 약 8 분이었다 — 같은 입력·같은 바이트, 벽시계만 다르다.
 PYTHONPATH=. .venv/bin/python -m tools.tos_cp3.stitch_measure \
   --requests ~/.local/state/tos/measure/cp3-pr2b-expired-20261014/requests.jsonl \
   --requests ~/.local/state/tos/measure/cp3-pr1-20261012/requests.jsonl \
   --requests ~/.local/state/tos/measure/cp3-pr2b-s1b-20261014/requests.jsonl \
+  --requests ~/.local/state/tos/measure/cp3-pr2b-s1b2-20261014/requests.jsonl \
   --out /tmp/cp3-pr2b-s1 \
   --symbol A05611 --previous-symbol A05610 \
   --target 2026-10-12 --splice-day 2026-10-08 \
   --previous-day 2026-10-02 --previous-day 2026-10-06 --previous-day 2026-10-07 \
-  --compare-day 2026-10-12 --compare-day 2026-10-13 \
+  --compare-day 2026-10-12 --compare-day 2026-10-13 --compare-day 2026-10-14 \
   --c-x100 344 --spread-range-x100 118 \
   --c-value-x100 0 --c-value-x100 226 --c-value-x100 344 \
   --c-value-x100 462 --c-value-x100 1000
@@ -189,16 +277,26 @@ diff /tmp/cp3-pr2b-s1/CP3-PR2B-S1a.json \
 diff /tmp/cp3-pr2b-s1/CP3-PR2B-S1b.json \
   docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-stitch-measurements/CP3-PR2B-S1b.json
 
-# 1b) 그 도구 자체 (hermetic · 네트워크·자격증명 0)
-PYTHONPATH=. .venv/bin/python -m pytest tests/tools/test_cp3_stitch_measure.py -q
+# 1b) 그 도구 자체 (hermetic · 네트워크·자격증명 0) — 창 관찰자 훅은 produce_fields 쪽에 있다
+PYTHONPATH=. .venv/bin/python -m pytest \
+  tests/tools/test_cp3_stitch_measure.py tests/tools/test_cp3_produce_fields.py -q
 
-# 2) S1b 가 필요로 한 단 하나의 조회 (완료 세션, GET-only, 분리 워크트리 origin/main)
-#    종목 CP3-PR2B-summary.json:requests_symbol · 날짜 CP3-PR2B-summary.json:requests_day
-#    GET CP3-PR2B-summary.json:requests 회 · 주문 CP3-PR2B-summary.json:orders 건
-#    원시 행 CP3-PR2B-summary.json:requests_raw_rows
+# 2) S1b 가 필요로 한 두 조회 (각각 완료 세션 하나, GET-only, 분리 워크트리 origin/main)
+#    종목 CP3-PR2B-summary.json:requests_symbol
+#    1차 날짜 CP3-PR2B-summary.json:requests_day · GET CP3-PR2B-summary.json:requests 회
+#         원시 행 CP3-PR2B-summary.json:requests_raw_rows
+#    2차 날짜 CP3-PR2B-summary.json:requests_followup_day · GET CP3-PR2B-summary.json:requests_followup 회
+#         원시 행 CP3-PR2B-summary.json:requests_followup_raw_rows
+#         파싱 봉 CP3-PR2B-summary.json:requests_followup_parsed_bars
+#         구간 CP3-PR2B-summary.json:requests_followup_raw_first_kst ~ CP3-PR2B-summary.json:requests_followup_raw_last_kst
+#    합계 CP3-PR2B-summary.json:requests_total 회 · 주문 CP3-PR2B-summary.json:orders 건
+#    두 수집 스크립트는 커밋하지 않았다. LOW-4 와 다른 경우다 — 그것들은 아무것도 도출하지 않고
+#    (파싱·백분위·대조는 전부 위 1) 의 커밋된 도구 안에 있다) 브로커를 다시 읽을 뿐이라, 재현
+#    대상은 스크립트가 아니라 §6 의 sha256 으로 고정된 원시 응답이다. 전송·허용목록·토큰 캐시는
+#    커밋된 tools/tos_cp3/quote_client.py 그대로 쓴다.
 
-# 3) 원천 무결성
-cd ~/.local/state/tos/measure/cp3-pr2b-s1b-20261014
+# 3) 원천 무결성 (두 수집 디렉터리 각각)
+cd ~/.local/state/tos/measure/cp3-pr2b-s1b-20261014      # 그리고 .../cp3-pr2b-s1b2-20261014
 python - <<'PY'
 import hashlib, json
 from pathlib import Path
@@ -223,14 +321,21 @@ python tools/tos_evidence_citation_check.py \
 |---|---|---|
 | `cp3-pr2b-expired-20261014/requests.jsonl` | `aa22d11fa7570212679cdc82a7d6158519a7fd80866869d78d6675741d3c6bef` | #899 전제 실측 — A05610 다섯 세션 + A05611 10-08 |
 | `cp3-pr1-20261012/requests.jsonl` | `731697c65ca5afa66d183a8fd8a6270181b702185d92fdc1832fec0fafe81a12` | #896 PR-1 — A05611 10-12 장중 수집 |
-| `cp3-pr2b-s1b-20261014/requests.jsonl` | `1689d76082fb830ddbb0f5f7556d46de871d9989759d4fe3bc766df5cbe95eff` | 이 측정의 GET 6 회 — A05611 10-13 |
+| `cp3-pr2b-s1b-20261014/requests.jsonl` | `1689d76082fb830ddbb0f5f7556d46de871d9989759d4fe3bc766df5cbe95eff` | 1차 측정의 GET 6 회 — A05611 10-13 |
+| `cp3-pr2b-s1b2-20261014/requests.jsonl` | `8f26e77855769e499763f38f5c39498f3f192b2aa79ff3aae7f9191fe014b09b` | **후속(이 PR)의 GET 6 회 — A05611 10-14 완료 세션** |
 
-앞의 둘은 각 수집기의 `sha256.json` 과 재대조해 일치를 확인했다(불일치 0 건). 세 번째는 이
-측정이 만든 것이고 그 디렉터리의 `sha256.json` 에 같은 값이 있다.
+앞의 둘은 각 수집기의 `sha256.json` 과 재대조해 일치를 확인했다(불일치 0 건). 뒤의 둘은 각각 그
+측정이 만든 것이고 각 디렉터리의 `sha256.json` 에 같은 값이 있다(네 번째도 재대조 일치).
+
+네 번째 원천이 더하는 것은 `(A05611, 2026-10-14)` **하나뿐**이다 — 네 파일을 읽은 `load_raw_rows`
+결과를 앞의 셋만 읽은 결과와 대조해 기존 `(월물, 날)` 중 행이 달라진 것이 **0 건**임을 확인했다.
+그래서 S1a 는 바이트 그대로일 수밖에 없고, 실제로 `cmp` 가 동일하다고 답한다.
 
 파생 수치의 출처가 되는 세션별 파싱 봉 수는 `CP3-PR2B-summary.json:parsed_bar_counts` 에
 그대로 있다 — 예: `CP3-PR2B-summary.json:parsed_bar_counts.A05610:2026-10-08=395`(만기 월물의
-짧은 접합일) · `CP3-PR2B-summary.json:parsed_bar_counts.A05611:2026-10-13=411`.
+짧은 접합일) · `CP3-PR2B-summary.json:parsed_bar_counts.A05611:2026-10-13=411` ·
+`CP3-PR2B-summary.json:parsed_bar_counts.A05611:2026-10-14=411`(후속 수집; 원시 416 행,
+08:45:00–15:45:00, 밀도 게이트 통과 — 자라는 날이 아니라 **닫힌** 세션이다).
 밀도 게이트 `CP3-PR2B-summary.json:density_gate=330` · 창 요구
 `CP3-PR2B-summary.json:vol_window_bars=780` 은 B1a·전략 YAML 의 값 그대로다.
 
@@ -241,7 +346,16 @@ python tools/tos_evidence_citation_check.py \
   `shared/execution` · `probes_real_order` 는 import 하지 않는다.
 - **GET `CP3-PR2B-summary.json:requests=6` 회**, PR-1 과 같은 `pace_s` 1.1 페이싱.
   목적은 `CP3-PR2B-summary.json:requests_purpose=the one completed session S1b needed that nothing had recorded`.
-- **분리 워크트리.** 조회는 `origin/main` 의 detached 워크트리에서 돌렸다(공유 체크아웃 아님).
+- **후속 GET `CP3-PR2B-summary.json:requests_followup=6` 회** — 같은 클라이언트·같은 TR·같은 페이싱.
+  목적은 `CP3-PR2B-summary.json:requests_followup_purpose=the completed 2026-10-14 session — the plan's COMPLETE S1b comparison point, which the first run could not read while that session was still open`.
+  수집기는 **열린 세션을 거부한다**(요청일이 오늘이고 15:45 KST 전이면 소켓을 열기 전에 중단) —
+  15:41 KST 에 돌려 거부되는 것을 확인한 뒤 15:50 KST 에 실행했다
+  (`CP3-PR2B-summary.json:followup_requests_started_kst=2026-10-14T15:50:27.350321+09:00`).
+  합계 `CP3-PR2B-summary.json:requests_total=12` 회.
+- **분리 워크트리.** 두 조회 모두 `origin/main` 의 detached 워크트리에서 돌렸다(공유 체크아웃 아님).
+  후속 조회의 워크트리는 `origin/main` `d8194746` 이고, 끝난 뒤 제거했다. 자격증명은 기본 체크아웃의
+  `.env.real` 을 그 워크트리에 **권한 600 으로 복사**해 썼고(경로만 기록, 값은 어디에도 남기지 않음)
+  워크트리와 함께 지웠다.
 - **공유 venv 미변경.** `pip install` 없이 기존 `.venv` 로만 돌렸다.
 - **tenant 미기동.** paper 상주 런타임·Redis·Parquet 쓰기 경로에 손대지 않았다.
 - **실전 선물 계좌 미펀딩 규칙 무관.** 조회(GET)만이고 주문 경로는 정책상 영구 차단 그대로다.
