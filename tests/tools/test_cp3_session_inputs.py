@@ -1443,6 +1443,7 @@ def test_m5s_stale_count_is_the_snapshots_own_field_state(
     ]
     assert states["counts"]["consumed_ids"] == 3
     assert states["counts"]["pre_boot_consumed_ids"] == 0
+    assert states["counts"]["post_boot_consumed_ids"] == 3
     assert states["counts"]["consumed_ids_without_field_evaluations"] == 0
     # the other non-VALID states, by name, NOT summed into the STALE number
     assert states["other_field_evaluation_states"] == {
@@ -1501,6 +1502,7 @@ def test_red_a_pre_boot_stale_line_is_not_in_the_post_boot_count(
         bars[0].raw_event_id
     ]
     assert states["counts"]["pre_boot_consumed_ids"] == 1
+    assert states["counts"]["post_boot_consumed_ids"] == 1
 
 
 def test_red_a_field_evaluation_without_a_state_is_refused(

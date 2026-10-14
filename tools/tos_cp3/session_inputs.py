@@ -678,6 +678,11 @@ def consumed_field_states(
             "pre_boot_consumed_ids": sum(
                 1 for snapshot in snapshots if snapshot.raw_event_id in pre_boot
             ),
+            # the denominator of the number above it, so "1 stale" is read
+            # against how many post-boot lines the session consumed at all
+            "post_boot_consumed_ids": sum(
+                1 for snapshot in snapshots if snapshot.raw_event_id not in pre_boot
+            ),
             "post_boot_with_a_stale_field_evaluation": len(post_boot_stale),
             "pre_boot_with_a_stale_field_evaluation": len(pre_boot_stale),
             "consumed_ids_without_field_evaluations": without_evaluations,
