@@ -56,6 +56,11 @@ from tools.tos_cp3.live_producer.frame import (  # noqa: E402
     build_seed,
     freeze_step,
 )
+from tools.tos_cp3.live_producer.session_log import (  # noqa: E402
+    STAGE_ALREADY_FROZEN,
+    Counters,
+    EventLog,
+)
 from tools.tos_cp3.live_producer.sinks import (  # noqa: E402
     ObservationJournal,
     acquire_session_lock,
@@ -71,6 +76,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     OpenAnchor,
     ProduceFieldsError,
     StrategyInputs,
+    derive_raw_event_id,
     load_strategy_inputs,
     produce_bars,
     resolve_contract_spec,
@@ -161,88 +167,6 @@ def build_line(
     )
 
 
-class EventLog:
-    """Append-only JSONL process log; also the ``Quotes`` recorder.
-
-    The raw ``rows`` payload is replaced by its length: PR-1's own request log
-    was 14 MB for one session, and the rows that matter are retained as the
-    frozen Parquet frame (plan §3.6), not twice. Nothing here ever receives a
-    header, a token or ``msg1`` — ``Quotes.page`` does not pass them.
-    """
-
-    def __init__(self, output: Path):
-        output.mkdir(parents=True, exist_ok=True)
-        self.output = output
-        self.path = output / "producer-log.jsonl"
-
-    def event(self, value: dict[str, Any]) -> None:
-        payload = dict(value)
-        rows = payload.pop("rows", None)
-        if rows is not None:
-            payload["row_count"] = len(rows)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
-
-
-@dataclass
-class Counters:
-    """What the session reports back to the runner.
-
-    The unpublished reasons are kept apart on purpose — merged, none of them
-    says anything an operator can act on:
-
-    * ``missing_no_successor`` — the minute TRADED (a raw row exists) but no
-      strictly later row arrived inside G, so publication is skipped (plan
-      §3.3). This is the 15:34 shape.
-    * ``no_raw_row_for_minute`` — the minute produced no raw row at all, so
-      there is no bar to publish. This is the 15:35-15:44 call-auction shape,
-      and it is NOT a late feed (review M1).
-    * ``late_completed`` — an OLDER bar completed after its own boundary had
-      already passed. It is frozen into the frame and written to Parquet so B1a
-      parity holds, but it is not published: a line stamped now would carry a
-      fresh ``as_of_ms`` for a stale bar, and the runtime would consume it as
-      the current observation (review M1).
-    * ``skipped_behind`` — more than one bar completed in ONE poll; only the
-      newest is published (plan §2 4), and the older ones — this boundary's own
-      bar among them when a poll came back after the next bar had completed
-      too — are counted here.
-    * ``already_published`` — this boundary's bar was already published, as the
-      catch-up of an earlier boundary whose poll returned late (review N1), so
-      the boundary polls nothing. Without it the bar is frozen and unpublishable
-      and the boundary would wait the full G and then claim
-      ``missing_no_successor`` for a bar sitting in the frame.
-    """
-
-    published: int = 0
-    skipped_behind: int = 0
-    late_completed: int = 0
-    missing_no_successor: int = 0
-    no_raw_row_for_minute: int = 0
-    already_published: int = 0
-    omitted_unusable: int = 0
-    produce_error: int = 0
-    clock_regression: int = 0
-    fetch_error: int = 0
-    pre_boot_lines: int = 0
-    max_stamp_to_replace_s: float = 0.0
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "published": self.published,
-            "skipped_behind": self.skipped_behind,
-            "late_completed": self.late_completed,
-            "missing_no_successor": self.missing_no_successor,
-            "no_raw_row_for_minute": self.no_raw_row_for_minute,
-            "already_published": self.already_published,
-            "omitted_unusable": self.omitted_unusable,
-            "produce_error": self.produce_error,
-            "clock_regression": self.clock_regression,
-            "fetch_error": self.fetch_error,
-            "pre_boot_lines": self.pre_boot_lines,
-            "max_stamp_to_replace_s": self.max_stamp_to_replace_s,
-        }
-
-
 @dataclass
 class Clock:
     """Injected so the loop is testable without waiting a real minute."""
@@ -281,17 +205,28 @@ class LiveProducer:
     frozen: list[Bar] = field(default_factory=list)
     counters: Counters = field(default_factory=Counters)
     consecutive_produce_errors: int = 0
-    #: The minute of the last bar a journal line was actually WRITTEN for. It
-    #: only ever advances, and a boundary at or behind it has nothing left to do
-    #: (review N1). Set after the write, never before: a bar that ended in
+    #: Every minute a journal line was actually WRITTEN for. A minute enters
+    #: this set AFTER the write, never before: a bar that ended in
     #: ``omitted_unusable``, ``produce_error`` or a refused stamp was not
-    #: published and must not silence its own boundary.
-    last_published_minute: datetime | None = None
+    #: published and must not silence its own boundary (review N1, and PR #898
+    #: round-3 review I2 which pins that order with its own test).
+    published_minutes: set[datetime] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         # The log exists before anything can refuse, so a refusal is recorded
         # in the session directory rather than only on the runner's stderr.
         self.log = EventLog(self.session_dir)
+
+    @property
+    def last_published_minute(self) -> datetime | None:
+        """The newest minute a journal line was written for, or ``None``.
+
+        Derived from :attr:`published_minutes` rather than tracked beside it:
+        two pieces of state advanced by hand on the same line are two places
+        the publication rule lives, and this one is read by the boundary
+        short-circuit below.
+        """
+        return max(self.published_minutes, default=None)
 
     # -- boot ------------------------------------------------------------
 
@@ -560,7 +495,7 @@ class LiveProducer:
         at 09:06:01.85 while 09:05, complete at +2.5 s, was never published).
         """
         bar_minute = boundary - timedelta(minutes=1)
-        if self._already_published(boundary, bar_minute):
+        if self._boundary_already_settled(boundary, bar_minute):
             return
         self._sleep_until(boundary + timedelta(seconds=self.config.first_poll_delay_s))
         deadline = boundary + timedelta(
@@ -587,29 +522,66 @@ class LiveProducer:
                 return
             self.clock.sleep(self.config.repoll_pace_s)
 
-    def _already_published(self, boundary: datetime, bar_minute: datetime) -> bool:
-        """Has an earlier boundary's catch-up already published THIS bar?
+    def _boundary_already_settled(
+        self, boundary: datetime, bar_minute: datetime
+    ) -> bool:
+        """Is there nothing left for THIS boundary to poll for?
 
-        Then there is nothing to poll for (review N1). The bar is frozen, so no
-        later ``freeze_step`` can return it again — polling the full G would
-        find nothing and end in ``missing_no_successor``, a label that says "the
-        minute traded but never completed" about a minute that completed and was
-        published a boundary ago. Returning at once also keeps the loop's phase:
-        the next boundary's first poll still lands at its own ``+δ``.
+        The question is about the FRAME, not about the last publication (PR
+        #898 round-3 review I1/I2). ``freeze_step`` only ever returns bars
+        strictly after the last frozen minute, so once the frame has moved past
+        ``bar_minute`` no later poll can produce it. Three settled shapes, and
+        each is logged as what it actually is:
+
+        * the bar is in the frame and WAS published — an earlier boundary's
+          catch-up covered it (review N1); ``already_published``.
+        * the bar is in the frame and was NOT published — ``omitted_unusable``,
+          ``produce_error``, a refused stamp or ``skipped_behind`` already
+          counted it when it happened, so this boundary logs
+          :data:`STAGE_ALREADY_FROZEN` and counts nothing. The first cut polled
+          the full G here and then logged ``missing_no_successor`` with
+          ``bar_minute_traded: true`` — "the minute traded but never completed"
+          about a bar sitting completed in the frame (review I2).
+        * the frame moved past the minute WITHOUT it — the minute left no bar
+          at all, so the honest reason is :meth:`_record_unpublished`'s
+          ``no_raw_row_for_minute``. The first cut answered
+          ``already_published`` for it, because it compared against the last
+          published minute alone: a catch-up that published m+2 made the m+1
+          boundary claim m+1 had been published, for a minute that never
+          existed (review I1).
+
+        Returning at once keeps the loop's phase: the next boundary's first
+        poll still lands at its own ``+δ``.
         """
-        last = self.last_published_minute
-        if last is None or bar_minute > last:
+        last_frozen = self.frozen[-1][1] if self.frozen else None
+        if last_frozen is None or bar_minute > last_frozen:
             return False
-        self.counters.already_published += 1
+        if not self._is_frozen(bar_minute):
+            self._record_unpublished(boundary, bar_minute, frozenset())
+            return True
+        published = bar_minute in self.published_minutes
+        if published:
+            self.counters.already_published += 1
         self.log.event(
             {
-                "stage": "already_published",
+                "stage": "already_published" if published else STAGE_ALREADY_FROZEN,
                 "boundary": str(boundary),
                 "bar": str(bar_minute),
-                "last_published_minute": str(last),
+                "raw_event_id": self._raw_event_id(bar_minute),
+                "last_published_minute": str(self.last_published_minute),
+                "last_frozen_minute": str(last_frozen),
             }
         )
         return True
+
+    def _is_frozen(self, bar_minute: datetime) -> bool:
+        """Is *bar_minute* a bar of the frozen frame?
+
+        A scan, not a second index: the frame holds one session (≈420 bars) and
+        this runs once a minute, so a mirror set would buy nothing and could
+        drift from :attr:`frozen`, which is the frame B1a actually reads.
+        """
+        return any(bar[1] == bar_minute for bar in self.frozen)
 
     def _record_unpublished(
         self,
@@ -629,6 +601,7 @@ class LiveProducer:
                 "stage": stage,
                 "boundary": str(boundary),
                 "bar": str(bar_minute),
+                "raw_event_id": self._raw_event_id(bar_minute),
                 "bar_minute_traded": traded,
                 "timeout_s": self.config.missing_no_successor_timeout_s,
             }
@@ -733,6 +706,7 @@ class LiveProducer:
                     {
                         "stage": "late_completed",
                         "bar": str(bar[1]),
+                        "raw_event_id": self._raw_event_id(bar[1]),
                         "current_boundary_bar": str(bar_minute),
                         "frozen_into_frame": True,
                         "published": False,
@@ -740,7 +714,13 @@ class LiveProducer:
                 )
             else:
                 self.counters.skipped_behind += 1
-                self.log.event({"stage": "skipped_behind", "bar": str(bar[1])})
+                self.log.event(
+                    {
+                        "stage": "skipped_behind",
+                        "bar": str(bar[1]),
+                        "raw_event_id": self._raw_event_id(bar[1]),
+                    }
+                )
         return current
 
     def _publication_target(
@@ -790,7 +770,12 @@ class LiveProducer:
             self.counters.produce_error += 1
             self.consecutive_produce_errors += 1
             self.log.event(
-                {"stage": "produce_error", "bar": str(bar[1]), "why": str(exc)}
+                {
+                    "stage": "produce_error",
+                    "bar": str(bar[1]),
+                    "raw_event_id": self._raw_event_id(bar[1]),
+                    "why": str(exc),
+                }
             )
             return
         self.consecutive_produce_errors = 0
@@ -800,6 +785,7 @@ class LiveProducer:
                 {
                     "stage": outcome.reason,
                     "bar": str(bar[1]),
+                    "raw_event_id": self._raw_event_id(bar[1]),
                     "last_raw_event_id": outcome.raw_event_id,
                 }
             )
@@ -815,6 +801,7 @@ class LiveProducer:
                 {
                     "stage": result.reason,
                     "bar": str(bar[1]),
+                    "raw_event_id": self._raw_event_id(bar[1]),
                     "as_of_ms": result.as_of_ms,
                     "last_as_of_ms": self.journal.last_as_of_ms,
                     "written": False,
@@ -822,7 +809,10 @@ class LiveProducer:
             )
             return
         self.counters.published += 1
-        self.last_published_minute = bar[1]
+        # AFTER the write, never before (review I2): the three returns above
+        # are bars this boundary did not publish, and a minute recorded here
+        # would silence its own boundary for a line that does not exist.
+        self.published_minutes.add(bar[1])
         self.counters.max_stamp_to_replace_s = max(
             self.counters.max_stamp_to_replace_s, result.stamp_to_replace_s
         )
@@ -838,6 +828,16 @@ class LiveProducer:
         )
 
     # -- clock helpers ---------------------------------------------------
+
+    def _raw_event_id(self, bar_minute: datetime) -> str:
+        """B1a's join key for *bar_minute*, from B1a's own deriver.
+
+        Every per-bar log event carries it, so §3.6's reason map for bars the
+        runtime never consumed keys on the exact string B3 joins on. Rebuilding
+        the key in the extractor instead would be a second derivation of a join
+        key, which is how two keys drift apart.
+        """
+        return derive_raw_event_id(self.instrument, bar_minute.replace(tzinfo=KST))
 
     def _now_naive(self) -> datetime:
         return self.clock.now().replace(tzinfo=None)

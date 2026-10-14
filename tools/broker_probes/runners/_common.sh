@@ -59,6 +59,64 @@ die() {
   exit "${2:-3}"
 }
 
+# --- stopping a supervised child -------------------------------------------
+#
+# $1 the pid of a child started under `timeout` (may be empty — a caller that
+#    has not launched anything yet calls this too), $2 the grace in seconds
+#    before SIGKILL, $3 a label for the log lines.
+#
+# SIGTERM, then up to $2 seconds, then SIGKILL — the resident driver's own
+# shape (~/.config/kis-probes/tos_paper_session.py:439-441, 525-529).
+#
+# ⚠ The signals go to the PROCESS GROUP, not to the pid alone (#892 re-review
+# L2). The pid a caller holds is `timeout`'s, and GNU timeout puts itself and
+# the command it runs in a NEW process group (it is the group leader, so the
+# group id IS that pid). `timeout` forwards a TERM, but a KILL to `timeout`
+# alone is not forwarded to anything: the real worker — a python process
+# holding a journal, a store, or a REAL quotation session — would survive its
+# own supervisor's death with nobody left to stop it. Signalling the group
+# reaches both. The plain-pid fallback is for a child that is NOT in a group of
+# its own (no `timeout` in front of it): the group signal then fails with
+# ESRCH and nothing has been signalled yet, so the fallback is a second attempt
+# at the same child rather than a second victim.
+# $1 the pid of a child started under `timeout`, i.e. ALSO its process-group
+# id. True while ANY member of that group is alive — the leader included, but
+# not only the leader.
+#
+# ⚠ Asking `kill -0 $pid` instead is the Codex review's MEDIUM (2026-10-14):
+# if the supervising `timeout` is SIGKILLed and reaped, its worker keeps
+# running in the SAME group (a process group outlives its leader while any
+# member is in it), and a leader-only test then answers "gone" about a process
+# still holding a journal or a REAL quotation session. Every liveness question
+# below therefore asks the GROUP.
+#
+# The leader-only fallback is for a child that is NOT in a group of its own
+# (nothing supervising it, so no `timeout` called `setpgid`): the group test
+# then fails with ESRCH and the pid test is the only true answer available.
+supervised_group_alive() {
+  kill -0 -- "-$1" 2>/dev/null || kill -0 "$1" 2>/dev/null
+}
+
+stop_supervised() {
+  _pid=$1
+  _grace=$2
+  _label=$3
+  [ -n "$_pid" ] || return 0
+  supervised_group_alive "$_pid" || return 0
+  log "=== STOP SIGTERM -> $_label pid $_pid (process group)"
+  kill -TERM -- "-$_pid" 2>/dev/null || kill -TERM "$_pid" 2>/dev/null || true
+  _waited=0
+  while supervised_group_alive "$_pid" && [ "$_waited" -lt "$_grace" ]; do
+    sleep 1
+    _waited=$((_waited + 1))
+  done
+  if supervised_group_alive "$_pid"; then
+    log "WARN: $_label did not stop within ${_grace}s of SIGTERM — SIGKILL to the process group"
+    kill -KILL -- "-$_pid" 2>/dev/null || kill -KILL "$_pid" 2>/dev/null || true
+  fi
+  return 0
+}
+
 # --- the checkout ----------------------------------------------------------
 #
 # $1 the directory the running script sits in

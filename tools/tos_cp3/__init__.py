@@ -25,6 +25,18 @@ Contents:
   imports neither ``tos`` nor ``produce_fields``: its claim is about three
   files, so it must stay runnable after CP-4 removes the band math behind
   them.
+* :mod:`tools.tos_cp3.session_inputs` — §3.6's two session-derived B3 inputs:
+  the ``raw_event_id`` set the runtime actually consumed (from the session
+  ``marketfeed.sqlite3``'s ``preimages``) with a reason for every produced bar
+  it did not consume, and one record per live decision shaped like B1b's
+  offline trace (from the session ``evidence.sqlite3``, keyed to its bar
+  through the ``inbox.sqlite3`` tick that carries both the capsule id the
+  decision names and the snapshot id the bar came from). All three stores are
+  read as plain sqlite files in ``mode=ro`` — the firewall forbids importing
+  ``tos_runtime`` from here, so the schema versions, the columns read AND the
+  stored ``payload_json`` bytes are pinned against a committed hinge the
+  runtime side produces and checks
+  (``tos/runtime/tests/fixtures/cp3-session-store-reads.json``).
 * :mod:`tools.tos_cp3.quote_client` — the GET-only real-key minute quotation
   transport (``FHKIF03020200``): a three-way method/TR/path allowlist, an
   app-key-fingerprinted private token cache, bounded retries and a token-expiry
@@ -51,8 +63,13 @@ Contents:
   empty until ③ lands); everything else must be a fresh, empty directory under
   the scratch root. Stdlib-only, so the shell template can call it as a guard.
 * ``tools/tos_cp3/runners/run_tenant_session.sh`` — the tracked tenant session
-  template (render → boot → stop), with the same checkout guards as
-  ``tools/broker_probes/runners/run_p_ca.sh``, sourced from that file.
+  template, with the same checkout guards as
+  ``tools/broker_probes/runners/run_p_ca.sh``, sourced from that file. Since
+  PR-3 its order is producer → first real journal row (bounded wait) → guard →
+  render → boot → stop (plan §3.5): the guard refuses an empty journal, and the
+  producer is what fills it. The stop path is armed BEFORE the producer starts,
+  as an EXIT trap as well as a signal trap, so no refusal between them can
+  leave a producer calling the real quotation API unattended.
 
 Plans: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a,
 B2, B3) and §5 steps 1-2; ``docs/plans/2026-10-09-tos-cp3-tenant-render-and-

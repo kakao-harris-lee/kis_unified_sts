@@ -1161,6 +1161,11 @@ SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의
 
 #### 7.2-c CP-3 tenant 부팅 증명 — **스크래치에서 손으로 1회** (코드 2026-10-10 · 실행 미착수)
 
+> ⛔ **2026-10-14 부터 이 절차는 이력이다 — 실제 세션은 §7.2-d 로 돈다.** ③ 이 PR-2 로
+> 들어오면서 러너의 순서가 바뀌었고(생산자가 저널을 만든다), 아래의 「저널 한 행을 손으로
+> 만든다」 단계는 이제 생산자의 기동 거부를 부른다. 아래는 ③ **이전**에 무엇을 증명하려
+> 했는지의 기록으로 남긴다.
+
 ③(실시간 15 필드 생산자)이 없는 동안 tenant 배선을 한 번 관통시켜 보는 절차다. 계획
 `docs/plans/2026-10-09-tos-cp3-tenant-render-and-boot-path-plan.md` §2.5 · §2.6 · §5 3(PR-C).
 **§7.2-b 의 지정된 durable set 에는 쓰지 않는다** — 그 네 디렉터리의 첫 genesis 는 ③ 의
@@ -1303,6 +1308,227 @@ TENANT_ENVIRONMENT_LABEL=paper \
 맞는지의 확인**(위 ⛔ 대로 구조상 그래야 한다 — 아니었다면 그쪽이 소견이다).
 ⚠ **「소비되는가」는 이 절차가 답할 질문이 아니다** — 답하려면 부팅 뒤에 행을 덧붙이는 경로가
 있어야 하고 그것은 만들지 않았다. 그 질문은 ③ 의 것이다.
+
+#### 7.2-d CP-3 tenant 세션 — ③ 이 **있는** 지금의 절차 (PR-3, 2026-10-14)
+
+§7.2-c 는 ③ 이 **없던** 동안의 절차다(한 행짜리 합성 저널로 배선만 관통). ③(실시간
+15 필드 생산자, `tools/tos_cp3/live_producer`)이 PR-2 로 들어오면서 러너의 순서가
+바뀌었다 — 계획 `docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md` §3.4·§3.5·§3.6.
+**실제 genesis 세션은 이 절차로 돈다.** §7.2-c 는 이력으로 남긴다.
+
+**무엇이 바뀌었나 — 네 가지.**
+
+1. **저널은 운영자가 만들지 않는다. 생산자가 만든다.** 러너는 ① 생산자 기동(시드)
+   → ② 첫 **실제** `tos-cp3-live/…` 줄이 생길 때까지 대기(상한 `FIRST_LINE_TIMEOUT_S`
+   = 600 s, 넘으면 ABORT) → ③ 가드 → 렌더 → 부팅 순으로 간다. #892 가드는 빈 저널을
+   거부하고 모든 행이 **승인된 생산자**의 것이기를 요구하는데, 그것을 참으로 만드는
+   것이 ③ 이다. 가드의 의미는 그대로다.
+   ⛔ 그래서 `TENANT_JOURNAL` 은 **아직 없는 경로**여야 한다. 이미 있는 저널에는
+   생산자가 기동을 거부한다(그 파일을 통째로 교체해 버리므로).
+2. **첫 줄은 부팅이 끝날 때 이미 STALE 이다.** 러너는 부팅 직전의 저널 행 수를
+   `consumed_stale_at_boot` 로 로그에 남기고, 그 id 들을
+   `<TENANT_PRODUCER_SESSION_DIR>/boot-journal-snapshot.json` 에 적는다. 그 파일이
+   §3.6 추출기가 「구조상 소비될 수 없던 부팅 전 줄」과 「런타임이 소비하지 못한 줄」을
+   가르는 근거다(계획 §5 M5 는 전자를 두 계수에서 뺀다).
+3. **정리(trap)가 생산자 기동 *전에* 걸린다.** 생산자는 가드·렌더·라벨 검사보다
+   먼저 뜨므로, 그 사이의 어떤 `die` 든 생산자를 멈춰야 한다 — 안 그러면 러너는 죽고
+   생산자만 남아 하루 종일 **실전 조회 API** 를 부른다(계획 §3.5 v2 재리뷰 M1).
+   EXIT trap 이 그것이고, 두 자식 모두 자기 `timeout` 천장 아래에서 뜬다(러너가
+   SIGKILL 되면 trap 은 돌지 않는다). 종료 신호는 **프로세스 그룹**으로 간다 —
+   손에 든 pid 는 `timeout` 의 것이고, `timeout` 에만 KILL 을 보내면 실제 작업
+   프로세스가 감독자보다 오래 산다(#892 재리뷰 L2).
+4. **자격증명 분리(계획 §3.4).** 환경은 셋이고 실전 키를 가질 수 있는 것은 하나뿐이다:
+   - 러너 — 모의 전용. `TENANT_ENV_FILE` 은 basename 이 `.env.mock` 이어야 한다.
+   - 생산자 — 선물 **조회** 키 두 개(`KIS_FUTURES_APP_KEY`/`SECRET`)를 **자기가**
+     읽는다. 어디서? 자기 config(`TENANT_PRODUCER_CONFIG`)의 `env_file:` 이 가리키는
+     파일(`/home/deploy/project/kis_unified_sts/.env.real`). 러너는 그 값을 읽지도
+     전달하지도 로그하지도 않는다. 토큰 캐시 경로도 앱 키의 **지문**만 쓴다.
+   - 런타임 — 모의 전용이고, 실전 자격증명을 절대 들면 안 되는 **그** 프로세스.
+   자식은 환경을 물려받으므로, 셸에 그 두 키가 export 돼 있으면 **런타임에도** 들어간다.
+   러너는 그래서 자기 환경에 둘 중 하나라도 있으면 **기동을 거부한다**. 생산자에게
+   키를 주려고 `export KIS_FUTURES_APP_KEY=…` 하지 말 것 — 생산자는 파일에서 읽는다.
+   ⛔ GET 전용이다. 생산자의 import 그래프에 `shared.execution` 주문 경로도
+   `probes_real_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문 TR 은 0 건이어야
+   하고, 그 0 은 세션 뒤 요청 로그로 확인한다.
+   ⛔ **`bash -x` 로 돌리지 않는다 — 돌려도 추적은 나오지 않는다**(Codex 리뷰 HIGH,
+   2026-10-14). 템플릿은 첫 줄에서 `set +x +v` 를 하고, 그 뒤 자격증명 가드는 값이 아니라
+   **이름**을 본다(`${!name+x}`). 추적을 켠 셸에서 호출해도(`SHELLOPTS=xtrace` 포함) 값이
+   로그에 찍히지 않는다는 뜻이고, 거꾸로 디버깅용 추적은 얻을 수 없다는 뜻이기도 하다 —
+   읽을 것은 `TENANT_LOG` 다(경로·pid·거부 사유가 다 있고 값은 없다).
+
+**⚠ 운영자 단계 — 같은 월물로 두 번째 세션을 돌리면 durable set 을 이어 쓴다.**
+가드(#892)의 **승인된 생산자** 분기에는 「data dir 이 비어 있어야 한다」가 없다 — 비어 있는
+스크래치를 요구하는 것은 **승인되지 않은** 저널일 때의 규칙(규칙 3)이고, 모든 행이
+`tos-cp3-live/…` 이면 지정된 tenant 저장소가 그냥 허용된다. 그래서 같은
+`TENANT_DATA_PARENT`·같은 월물로 두 번째 세션을 돌리면 **기존 코퍼스에 이어 붙는다**
+(append-only 이므로 덮어쓰지는 않는다). 그것이 의도일 때도 있고(하루치를 이어 가는 운영),
+아닐 때도 있다(실험을 섞어 버림). ⛔ 생산자 쪽은 다르다 — `TENANT_PRODUCER_SESSION_DIR` 은
+**매번 새 디렉터리**여야 하고, 기존 파티션이 있으면 생산자가 기동을 거부한다(계획 §3.6
+v4 재리뷰 L2). 요약하면: **저널과 생산자 세션 dir 은 세션마다 새로, durable set 은
+운영자가 의도한 대로.** ⚠ 이어 쓴 durable set 에서는 §7.2-d 의 추출기가 **두 세션의
+틱·id 를 모두** 읽는다(저장소가 append-only 이므로 당연하다) — 그래서 그 날짜의
+오프라인 3종만 들고 B3 를 돌리면 `--consumed-ids` 가 **닫히는 쪽으로 실패한다**
+(`diff_decisions.py::apply_consumed_filter` 가 「소비 id 가 조인된 아티팩트에 없다」로
+거부한다). 두 세션을 한 번에 대조하려면 오프라인 3종도 두 날을 덮어야 하고, 하루만
+보려면 **그 하루의 durable set**(= 새 잎)으로 돌려야 한다.
+
+**⚠ 운영자 단계 — 개장 지연일에는 tenant 세션을 돌리지 않는다.**
+수능일처럼 개장이 늦춰지는 날이 있다. 그런 날 생산자는 정규 개장 시각 기준으로 세션
+창과 앵커를 잡으므로 프레임이 실제 장과 어긋난다. **기계적 거부는 없다, 그리고 그것은
+의도다**(계획 §3.5, v2 재리뷰 M3): `resolve_open_anchor("auto")` 는 정적
+`market_schedule.futures.regular.open` 을 돌려주고 날짜별 예외(`special_days`)가 비어
+있어서, 그 값과의 비교는 **언제나 통과한다** — 아무것도 막지 않는 가드를 달면 막힌다고
+믿게 만들 뿐이다. 그래서 이 줄은 운영자 체크리스트 항목이다. 날짜 목록이 config 에
+생기면 그때 그 목록을 읽는 거부와 **구체 날짜 레드 테스트**를 같이 단다.
+
+**절차 (분리 워크트리 · `origin/main` · clean · 모의 전용).** §7.2-c 의 0)~2) 와 같고,
+3) 저널 수기 생성이 **없어지고**, 4) 의 env 가 둘 늘어난다.
+
+```bash
+# 0)~2) §7.2-c 와 동일 — 워크트리, 계약월(INSTRUMENT), 스크래치 자리($SESSION)
+
+# 3) (삭제) 저널은 생산자가 만든다. $SESSION/journal.jsonl 이 **없는지** 확인만 한다.
+[ -e "$SESSION/journal.jsonl" ] && echo "이미 있다 — 새 세션 디렉터리를 쓴다"
+
+# 4) 세션. 인스턴스 값은 전부 env 이고 기본값이 하나도 없다.
+TENANT_LOG=$SESSION/session.log \
+TENANT_PYTHON=$MAIN/.venv/bin/python \
+TENANT_TREE=cp3-setup-d-long \
+TENANT_DIRECTION=LONG \
+TENANT_RENDER_OUT=$SESSION/config \
+TENANT_DATA_PARENT=$SESSION/data \
+TENANT_JOURNAL=$SESSION/journal.jsonl \
+TENANT_STOP_AT='15:50' \
+TENANT_ENV_FILE=$WT/.env.mock \
+TENANT_CUSTODY_ROOT=~/.local/state/tos/paper-custody \
+TENANT_ENVIRONMENT_LABEL=paper \
+TENANT_PRODUCER_CONFIG=$WT/config/tos_probes/cp3-live-producer.yaml \
+TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
+  "$WT/tools/tos_cp3/runners/run_tenant_session.sh"
+```
+
+- 지정된 durable set 으로 genesis 하려면 `TENANT_DATA_PARENT` 를 §7.2-b 의 경로로
+  바꾼다 — 이제 가드가 그것을 **허용한다**(모든 행이 `tos-cp3-live/…` 이므로). 그
+  판단은 운영자의 것이고, 그 디렉터리의 첫 genesis 는 되돌릴 수 없다.
+- 러너는 끝에 생산자 요약(`producer-summary.json`: 계수와 동결 프레임 sha256)과
+  durable set 의 `snapshots`·`entries` 분포를 찍는다.
+- **종료 코드**: 0/143 은 정상(정지창까지 간 세션은 우리 stop 경로의 SIGTERM 으로 끝나므로
+  143 이 보통이다) · 3 은 가드·렌더·라벨 등의 ABORT · 4 는 가드 모듈 세대 불일치 ·
+  **5 는 「런타임은 요청대로 끝났는데 생산자가 세션 중에 멈췄다」**(그 분부터 저널이 자라지
+  않았으므로 깨끗한 세션이 아니다 — 계획 §3.5) · 143/130/129 는 받은 신호.
+
+**세션 뒤 — §3.6 대조 (계획 §5 수용 기준).**
+
+추출기는 세션 data dir 의 **세 저장소**를 읽는다: `marketfeed.sqlite3`(소비된 id),
+`evidence.sqlite3`(결정), `inbox.sqlite3`(결정 ↔ 봉을 잇는 **키**. 커널 증거 레코드는
+`capsule_id` 만 들고 있고 inbox 의 `DECISION_TICK` 이벤트가 그 capsule 의 snapshot_id 를
+들고 있다). 셋 다 읽기 전용으로 열고 각자의 `PRAGMA user_version` 을 핀한다.
+
+```bash
+# ① 런타임이 실제로 소비한 id + 짝 없는 봉의 사유별 계수 + M5 의 value_view 계수
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/session_inputs.py" consumed-ids \
+  --data-dir "$SESSION/data/$INSTRUMENT" \
+  --producer-log "$SESSION/producer/producer-log.jsonl" \
+  --boot-snapshot "$SESSION/producer/boot-journal-snapshot.json" \
+  --out "$SESSION/b3/consumed-ids.json"
+
+# ② 실시간 결정 레코드(B1b 트레이스와 같은 모양)
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/session_inputs.py" live-decisions \
+  --data-dir "$SESSION/data/$INSTRUMENT" --out "$SESSION/b3/live"
+
+# ③ B1a 를 **생산자가 쓴 동결 프레임**에 돌리고(§3.6: 레거시 Parquet 이 아니다),
+#    B2·B1b 를 잇고, B3 를 그 둘을 더해 돌린다.
+#    --data-root 는 $SESSION/producer/market 이다.
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/diff_decisions.py" \
+  --fields  "$SESSION/b1a/fields.jsonl" \
+  --legacy  "$SESSION/b2/decisions.jsonl" \
+  --tos     "$SESSION/b1b/trace.jsonl" \
+  --consumed-ids "$SESSION/b3/consumed-ids.json" \
+  --live    "$SESSION/b3/live/live.jsonl" \
+  --out     "$SESSION/b3/report"
+```
+
+적어 둘 것(계획 §5):
+
+- **M5** — 「STALE 로 소비된 줄」과 「소비되지 않은 줄」 둘 다 0 인가. **부팅 전 줄은
+  두 계수에서 뺀다**(구조상 소비되지 않는다) — 그 수는 러너 로그의
+  `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있고, 그 스냅샷은 **부팅 직전에**
+  다시 찍힌다(가드·렌더 동안 발행된 봉도 부팅 전 줄이다).
+  - ⛔ **지속 레코드에 `STALE` 은 찍히지 않는다.** 발행기
+    (`tos_runtime/marketfeed/snapshot.py::_derive_field_state`)는 `now_ms - as_of_ms
+    > max_age_ms` 인 필드를 `FieldState.UNKNOWN` 으로 적고, 사유 문자열 `"stale"` 은
+    **메모리 안**(`IssuedSnapshot.field_reports`)에만 남는다. 그래서 「지속된 STALE 을
+    센다」는 계수는 아무리 stale 한 세션에서도 **언제나 0** 이다(실측: 정책
+    `max_age_ms` 5000, `as_of+5001` 발행 → 지속 상태 `['UNKNOWN','UNKNOWN']`).
+    2026-10-14 이전 판의 이 절과 추출기가 그 계수였다 — 둘 다 폐기한다.
+  - 「**STALE 로 소비된 줄**」은 이제 **발행기가 값을 쥐고도 거절한 줄**로 센다:
+    `consumed-ids.json` 의 `consumed_field_states` 가 소비된 id 마다
+    `snapshots.snapshot_json` 의 `field_evaluations[*]` 와
+    `preimages.preimage_json` 의 토큰을 **같이** 읽는다.
+    **M5 의 첫 수 = `m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown`**
+    — 「UNKNOWN 인 필드 평가 중, 그 `field_ref` 가 **그 봉의 preimage 에 있고**
+    토큰이 **투영 가능**(bool/int/str; float 은 커널 `project_scalar` 가 거절)한
+    것을 하나라도 가진 **부팅 후** 소비 id 의 수」(id 당 1 회). 읽는 법은
+    **「stale 이거나, 평가 시각을 세울 수 없었거나」** — STALE 의 **상한**이고,
+    낱말을 세는 계수와 달리 **stale 한 줄이 있는데 0 이 될 수 없다**.
+    `_derive_field_state` 의 UNKNOWN 사유는 넷뿐이다: `absent_from_payload` ·
+    `now_ms_unknown` · `stale` · `unprojectable`. 첫째는 **키 유무**로, 넷째는
+    **투영 가능성**으로 갈라지고, 가운데 둘이 위의 수다. 갈라낸 둘은
+    `unknown_field_causes` 에 **사유 이름별로** 따로 나오고 M5 수에 합치지 않는다 —
+    페이로드에 없던 필드는 신선도에 대해 아무 말도 하지 않고, 투영 불가 토큰은 다른
+    결함이다. 부팅 전 줄은 `pre_boot_…` 키로 따로 세고 그 수에서 뺀다(계획 §5 M5 가
+    두 계수 모두에서 빼는 것과 같다). 관측 쪽 상태(`observations[*].field_state`)도
+    `observation_field_states_not_valid` 로 따로 나온다 — 커널의 VALID 게이트
+    (`tos.marketfeed.value.value_field_state`)가 둘 중 **나쁜 쪽**을 취하므로 한쪽이
+    다른 쪽을 대신할 수 없다. `STALE`·`CONFLICTED`·`INVALID` 가 혹시 찍히면
+    `other_field_evaluation_states` 에 이름 그대로 나온다(오늘은 전부 0 이어야 하고,
+    STALE 이 0 이 아니면 **발행기가 바뀐 것**이므로 위 정의를 다시 좁힐 때다).
+  - ⚠ **한 군데 빈틈, 적어 둔다**: `now_ms` 가 없을 때 발행기는 **투영 검사 전에**
+    돌아가므로, 「있지만 투영 불가」인 필드는 시계 실패였을 수도 있는데 이 쪽은
+    `unprojectable` 로 적힌다. 수 옆에 그 계수가 같이 나오니 사라지지는 않고, 시계가
+    없으면 **선언된 모든 필드**가 UNKNOWN 이 되므로 같은 스냅샷에 투영 가능한 필드가
+    하나라도 있으면 M5 수가 잡는다.
+  - ⚠ **`consumed_value_view` 는 M5 의 수가 아니다.** 그 블록은 리졸버가 무엇을
+    했는지를 적는다(`no_view` · `empty_view` · `values_admitted`). `_admit_one`
+    (`tos/src/tos/marketfeed/value.py`)은 값 후보를 **열 가지** 사유로 떨어뜨리고,
+    그중 상태에 관한 하나(`FIELD_STATE_NOT_VALID`)마저 STALE 과 UNKNOWN·CONFLICTED·
+    INVALID 를 **같이** 접는다. 「`empty_view` + `no_view` 가 M5 의 첫 수」라고 적었던
+    이 문서의 이전 판(그리고 추출기 docstring)은 **너무 넓고 방향이 거꾸로였다** —
+    그 읽기는 ③ 이 **없던** §7.2-c 의 한 행짜리 합성 저널 논증이다(2026-10-14 정정).
+  - **genesis 에서의 기대**: ③ 이 **있고** M6(교체 지연)가 `max_age_ms` 800 에 대해
+    0.300 s 미만이면, **부팅 후 줄은 값이 허용된 채 소비되는 것이 정상**이다. 즉
+    `m5_…_present_value_refused_as_unknown` 이 0 이고 `values_admitted` 가 소비 수에
+    가까운 것이 통과한 모양이며, `empty_view` 가 세션 전체인 쪽이 **소견**이다.
+  - ⛔ `consumed-ids` 는 **`--boot-snapshot` 없이는 거부**한다(2026-10-14). 문서가
+    항상 M5 계수를 싣는데 그 계수는 부팅 전 줄을 빼야 하고, 플래그가 없으면 부팅 전
+    줄이 **조용히** 부팅 후 수에 들어간다. 「부팅 전 줄 없음」은 **빈 리스트**이지
+    파일 없음이 아니다.
+  - 「**소비되지 않은 줄**」은 `unpaired_reason_counts` 의 `published_not_consumed` 다
+    (`pre_boot` 와 생산자 사유들은 그 수에서 빠진다).
+- **M6** — `producer-summary.json` 의 `max_stamp_to_replace_s` 가 0.300 미만인가.
+- **B3** — `summary.json` 의 `unresolved.count` 가 0 인가. 대조 범위는
+  `session_scope.consumed_id_filter`, 짝 없는 봉은
+  `session_scope.unpaired_offline_records_by_reason` 에 사유별로 있다.
+  `live_comparison.divergent` 는 **실시간 런타임이 오프라인 리플레이와 다르게 결정한
+  봉 수**다 — 0 이 아니면 그것이 소견이고, B3 는 그것을 거부가 아니라 보고로 낸다.
+  `live_comparison.kind_only_matches` 는 **반만 잰** 봉이다: 실시간 쪽이 `PROPOSAL`
+  (「결정이 나왔고 no-action 은 아니다」)이고 오프라인이 ACTION 또는 FLAT 인 경우로,
+  ACTION/FLAT 구분은 어떤 지속 레코드에도 없다(`position_effect` 는 `tos/src/tos/engine`
+  어디에도 없다 — 실측). 정확 일치와 **합치지 않는다**: 합친 수는 「같게 결정했다」로
+  읽히는데 절반은 재지 않았다.
+- **`live.jsonl` 의 귀속** — `lineage.json` 의 `counts.attributed_by` 가
+  `capsule_id`(결정이 자기 캡슐을 적은 경우)와 `evidence_seq_range`(캡슐을 적지 않는
+  withheld/coordinator 거부)의 수를 가른다. **위치로 귀속하는 경로는 없다**:
+  캡슐 없는 레코드는 그 증거 seq 를 품는 **유일한** 틱의 처리 구간
+  (인박스 `handling_started_evidence_seq` < seq ≤ `consumed_evidence_seq`, 드라이버가
+  각 이벤트 둘레에 쓰는 영수증 쌍)에 붙고, 둘 이상이거나 하나도 없으면 **거부**한다.
+  캡슐로 붙은 레코드도 같은 구간으로 **교차 확인**한다(2026-10-14 정정 — 그 전까지는
+  파일 순서의 「남은 다음 틱」이었고, 안 돈 틱 하나가 뒤의 모든 비-키 레코드를 **조용히**
+  옆 봉으로 밀었다).
+  `counts.ticks_without_a_decision` 이 0 이 아니면 큐에만 들어가고 안 돈 틱이 있었다는
+  뜻이다(거부가 아니라 보고 — 돌아간 결정들은 그대로 키로 귀속된다).
+- **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 는 조회
+  `FHKIF03020200` 뿐이어야 한다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 

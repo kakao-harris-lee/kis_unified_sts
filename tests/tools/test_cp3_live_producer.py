@@ -880,6 +880,162 @@ def test_item3_red_a_stalled_poll_publishes_the_newest_frozen_bar(
     assert set(published) <= frozen  # only bars that entered the frame
 
 
+@pytest.mark.serial
+def test_red_i1_a_minute_that_never_existed_is_not_called_already_published(
+    tmp_path: Path, market: Market
+) -> None:
+    """**PR #898 round-3 review I1.** The reviewer's exact repro.
+
+    Minute ``m+1`` leaves no raw row at all, and the poll at ITS boundary
+    stalls past ``m+3``'s row, so one response completes ``m`` and ``m+2``
+    together and the catch-up publishes ``m+2``. The next boundary is about
+    ``m+1`` — a minute that never traded.
+
+    The first cut answered that boundary from the last PUBLISHED minute alone
+    (``bar_minute <= last_published_minute``), so it logged
+    ``already_published`` for ``m+1``: a publication claim about a bar that was
+    never frozen, never published, and never existed. The counter then read 2
+    for one real catch-up. The predicate is now the FRAME — ``m+1`` is not in
+    it and never can be (``freeze_step`` only returns bars after the last
+    frozen minute), so the boundary records the true reason,
+    ``no_raw_row_for_minute``.
+
+    Remove the ``_is_frozen`` branch of
+    :meth:`LiveProducer._boundary_already_settled` and this test goes red on
+    ``already_published == 1``.
+    """
+    m = market.target_bars[30][1]  # 09:15 — completes only via m+2's row
+    missing = market.target_bars[31][1]  # 09:16 — no raw row, ever
+    m2 = market.target_bars[32][1]  # 09:17 — the catch-up publication
+    producer, clock, quotes = _build(tmp_path, market)
+    quotes.hold_until = {missing: 10_000.0}
+
+    # The poll issued at m+1's boundary (+δ) returns only after m+3's row
+    # exists, so m and m+2 are both complete in that one response.
+    stall_at = missing + timedelta(seconds=1)
+    inner_page, stalled_once = quotes.page, []
+
+    def stalling_page(symbol: str, day: date, cursor: str = "") -> list[dict]:
+        if not stalled_once and clock.now().replace(tzinfo=None) >= stall_at:
+            stalled_once.append(clock.now())
+            clock.sleep(120.0)
+        return inner_page(symbol, day, cursor)
+
+    quotes.page = stalling_page
+    producer.boot()
+    producer.run_session()
+    producer.finish()
+
+    assert stalled_once, "the repro never stalled — the poll pacing moved"
+    events = [
+        json.loads(line)
+        for line in (producer.session_dir / "producer-log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    published = [
+        _minute_of(r["raw_event_id"]) for r in _journal_rows(producer.journal_path)
+    ]
+    frozen = {bar[1] for bar in producer.frozen}
+
+    # the repro really happened: m+1 never became a bar, m+2 was the catch-up
+    assert missing not in frozen
+    assert m in frozen
+    assert m2 in published
+    # the boundary about the minute that never existed says exactly that...
+    missing_events = [e for e in events if e.get("bar") == str(missing)]
+    assert [e["stage"] for e in missing_events] == ["no_raw_row_for_minute"]
+    assert missing_events[0]["raw_event_id"] == _event_id(missing)
+    # ...and the publication counter counts the ONE real catch-up (m+2's own
+    # boundary), not two.
+    assert producer.counters.already_published == 1
+    assert [e["bar"] for e in events if e["stage"] == "already_published"] == [str(m2)]
+
+
+@pytest.mark.serial
+def test_red_i2_an_omitted_catch_up_does_not_count_as_published(
+    tmp_path: Path, market: Market
+) -> None:
+    """**PR #898 round-3 review I2.** ``last_published_minute`` after the WRITE.
+
+    The catch-up bar's ``build_line`` returns ``omitted_unusable``, so no line
+    is written for it. The next boundary is about that same bar, and it must
+    not claim a publication that did not happen — nor poll the full G and then
+    report ``missing_no_successor`` with ``bar_minute_traded: true`` about a bar
+    sitting completed in the frame, which is what the first cut did.
+
+    Two red proofs in one body: move ``published_minutes.add`` above the
+    ``outcome.row is None`` return and ``already_published`` becomes 1; drop
+    the frozen-but-unpublished branch of
+    :meth:`LiveProducer._boundary_already_settled` and ``missing_no_successor``
+    becomes 1 with ``bar_minute_traded: true``.
+    """
+    stalled = market.target_bars[30][1]  # 09:15
+    catch_up = market.target_bars[31][1]  # 09:16 — frozen, publication omitted
+    producer, clock, quotes = _build(tmp_path, market)
+    quotes.hold_until = {catch_up: 30.0}
+
+    stall_at = catch_up + timedelta(seconds=8)
+    inner_page, stalled_once = quotes.page, []
+
+    def stalling_page(symbol: str, day: date, cursor: str = "") -> list[dict]:
+        if not stalled_once and clock.now().replace(tzinfo=None) >= stall_at:
+            stalled_once.append(clock.now())
+            clock.sleep(58.0)
+        return inner_page(symbol, day, cursor)
+
+    quotes.page = stalling_page
+
+    real_build_line = producer_mod.build_line
+
+    def omit_the_catch_up(frame: Any, **kwargs: Any) -> Any:
+        if kwargs["bar_minute"] == catch_up:
+            return producer_mod.LineOutcome(
+                reason="omitted_unusable", raw_event_id=_event_id(catch_up)
+            )
+        return real_build_line(frame, **kwargs)
+
+    producer_mod.build_line = omit_the_catch_up
+    try:
+        producer.boot()
+        producer.run_session()
+        producer.finish()
+    finally:
+        producer_mod.build_line = real_build_line
+
+    assert stalled_once, "the repro never stalled — the poll pacing moved"
+    events = [
+        json.loads(line)
+        for line in (producer.session_dir / "producer-log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    journal_minutes = {
+        _minute_of(r["raw_event_id"]) for r in _journal_rows(producer.journal_path)
+    }
+
+    # the repro: the catch-up bar is in the frame, and its line was omitted
+    assert catch_up in {bar[1] for bar in producer.frozen}
+    assert producer.counters.omitted_unusable == 1
+    assert catch_up not in journal_minutes
+    # the publication bookkeeping follows the WRITE, not the attempt
+    assert producer.published_minutes == journal_minutes
+    assert producer.last_published_minute == max(journal_minutes)
+    assert catch_up not in producer.published_minutes
+    # the next boundary claims no publication and invents no missing successor
+    assert producer.counters.already_published == 0
+    assert producer.counters.missing_no_successor == 0
+    assert [e["stage"] for e in events if e.get("bar") == str(catch_up)] == [
+        "omitted_unusable",
+        producer_mod.STAGE_ALREADY_FROZEN,
+    ]
+    # the overtaken bar is still accounted for where it always was
+    assert stalled in {bar[1] for bar in producer.frozen}
+    assert producer.counters.skipped_behind >= 1
+
+
 # ===========================================================================
 # §5 4 — freezing
 # ===========================================================================

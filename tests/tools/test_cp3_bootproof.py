@@ -1081,18 +1081,66 @@ def test_runner_forwards_signals_to_the_child() -> None:
     assert "stop_run()" in text
 
 
-def test_runner_arms_the_traps_before_launching_the_child() -> None:
-    """**Re-review LOW.** A signal arriving between ``run … &`` and the ``trap``
-    statements would kill the runner with the default disposition and leave the
-    child orphaned — the exact failure the traps exist to prevent, in the one
-    moment nothing is watching for it. ``stop_run`` tolerates an unset
-    ``RUN_PID``, so arming early costs nothing."""
-    lines = _RUNNER.read_text("utf-8").splitlines()
+def test_runner_arms_the_traps_before_launching_either_child() -> None:
+    """**Re-review LOW, and plan §3.5's M1.** A signal arriving between a
+    ``… &`` and the ``trap`` statements would kill the runner with the default
+    disposition and leave that child orphaned — the exact failure the traps
+    exist to prevent, in the one moment nothing is watching for it.
+
+    Both launches, and the EXIT trap as well as the signal ones: the producer
+    starts before the guard, the render and the label check, so every ``die``
+    between them has to stop it. ``die`` exits, and EXIT is the one handler an
+    exit cannot skip.
+    """
+    text = _RUNNER.read_text("utf-8")
+    lines = text.splitlines()
     first_trap = next(i for i, line in enumerate(lines) if line.startswith("trap "))
-    launch = next(i for i, line in enumerate(lines) if line.startswith("RUN_PID=$!"))
-    assert first_trap < launch, (first_trap, launch)
-    # And the reason arming early is safe, stated as a property of the code.
-    assert '[ -n "${RUN_PID:-}" ]' in _RUNNER.read_text("utf-8")
+    for launch in ("PRODUCER_PID=$!", "RUN_PID=$!"):
+        at = next(i for i, line in enumerate(lines) if line.startswith(launch))
+        assert first_trap < at, (launch, first_trap, at)
+    assert "trap 'on_exit' EXIT" in text
+    # And the reason arming early is safe, stated as a property of the code:
+    # both pids exist, empty, before any trap can read them.
+    assert 'RUN_PID=""' in text
+    assert 'PRODUCER_PID=""' in text
+    assert lines.index('RUN_PID=""') < first_trap
+    assert lines.index('PRODUCER_PID=""') < first_trap
+
+
+def test_runner_gives_the_producer_a_ceiling_and_the_guards_order() -> None:
+    """Source-level companion to the live tests: the producer runs under its
+    own ``timeout``, and the boot order is producer → wait → guard → render →
+    boot (plan §3.5)."""
+    text = _RUNNER.read_text("utf-8")
+    assert "PRODUCER_CEILING_S=$((RUN_S + PRODUCER_SIGKILL_AFTER_S))" in text
+    assert (
+        'timeout --kill-after="${PRODUCER_SIGKILL_AFTER_S}s" "${PRODUCER_CEILING_S}s"'
+        in text
+    )
+    order = [
+        "PRODUCER_PID=$!",
+        "BOOT_SNAPSHOT=",
+        "GUARD_OUT=",
+        "RENDER_LOG=",
+        "RUN_PID=$!",
+    ]
+    positions = [text.index(marker) for marker in order]
+    assert positions == sorted(positions), list(zip(order, positions))
+
+
+def test_the_kill_escalation_targets_the_process_group() -> None:
+    """**#892 re-review L2, source level.** The pid the runner holds is
+    ``timeout``'s, and GNU timeout runs the command in a new process group with
+    itself as leader. A KILL to ``timeout`` alone is forwarded to nothing, so
+    the real worker — a python process holding a store, or a REAL quotation
+    session — would outlive its own supervisor."""
+    helpers = _RUNNER_COMMON.read_text("utf-8")
+    assert 'kill -KILL -- "-$_pid"' in helpers
+    assert 'kill -TERM -- "-$_pid"' in helpers
+    # the runner no longer carries its own copy of the escalation
+    runner = _RUNNER.read_text("utf-8")
+    assert "kill -KILL" not in runner
+    assert "stop_supervised" in runner
 
 
 def test_runner_gives_the_child_a_ceiling_of_its_own() -> None:
@@ -1112,8 +1160,44 @@ _FRONT_MONTH = _FIXTURE_INSTRUMENT
 
 #: Written by the stub `run` so a test can find the child process.
 _RUN_PIDFILE_ENV = "STUB_RUN_PIDFILE"
+#: Written by the stub `run`: its own environment, as JSON. The credential
+#: separation claim (plan §3.4) is about what the RUNTIME holds, so it is
+#: measured there rather than inferred from what the runner was given.
+_RUN_ENVFILE_ENV = "STUB_RUN_ENVFILE"
 #: Read by the stub renderer to decide the rendered tree's `environment`.
 _TREE_ENV = "STUB_TREE_ENVIRONMENT"
+#: Written by the stub producer so a test can find it and prove it was stopped.
+_PRODUCER_PIDFILE_ENV = "STUB_PRODUCER_PIDFILE"
+#: Written by the stub producer: its own environment, AFTER it has read the
+#: query keys from its config's env_file the way the real one does. The
+#: credential-separation claim is a comparison — these keys here, not there —
+#: and a test that only looked at the runtime would pass with no keys anywhere.
+_PRODUCER_ENVFILE_ENV = "STUB_PRODUCER_ENVFILE"
+#: Comma-separated ``source_id`` values the stub producer writes into the
+#: journal (default: one approved real-producer row).
+_PRODUCER_SOURCE_IDS_ENV = "STUB_PRODUCER_SOURCE_IDS"
+#: The instrument the stub producer labels its rows with (default: the
+#: ``--instrument`` the runner gave it).
+_PRODUCER_INSTRUMENT_ENV = "STUB_PRODUCER_INSTRUMENT"
+#: "0" to write no journal at all, and exit — a producer that refused at boot.
+_PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
+#: "1" to exit right after writing — a producer that halted mid-session (five
+#: consecutive ``produce_error``s is the plan's own example).
+_PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
+#: The path the ``1+1`` mode watches before publishing its second row — the
+#: rendered tree's own file, so "after the render, before the boot" is a fact
+#: about the pipeline rather than a bet on how long a stub takes.
+_PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
+
+#: What the producer's own ``source_id`` looks like, as the allowlist approves
+#: it (``tools/tos_cp3/bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES``).
+_APPROVED_SOURCE_ID = f"{bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES[0]}/0.1.0"
+
+#: Stand-ins for the two real futures query keys. Distinctive strings so a
+#: test can grep a whole captured stream for them — which is what the
+#: xtrace-leak proofs do.
+_PRODUCER_FAKE_KEY = "PSfake-app-key-0ac1dd"
+_PRODUCER_FAKE_SECRET = "fake-app-secret-77b31e"
 
 
 def _runner_repo(
@@ -1133,10 +1217,86 @@ def _runner_repo(
     """
     repo = tmp_path / "repo"
     (repo / "tools" / "tos_cp3" / "runners").mkdir(parents=True)
+    (repo / "tools" / "tos_cp3" / "live_producer").mkdir(parents=True)
     (repo / "tools" / "broker_probes" / "runners").mkdir(parents=True)
     (repo / "shared" / "instruments").mkdir(parents=True)
     (repo / "config" / "tos_runtime" / "cp3-setup-d-long").mkdir(parents=True)
     (repo / "scripts" / "tos").mkdir(parents=True)
+
+    # The stub ③. It stands in for tools/tos_cp3/live_producer/producer.py: it
+    # writes the journal rows its environment asks for and then runs until it is
+    # stopped, which is every property the runner's boot order depends on (the
+    # real producer's own refusals are exercised in
+    # tests/tools/test_cp3_live_producer.py).
+    (repo / "tools/tos_cp3/live_producer/__init__.py").write_text("", encoding="utf-8")
+    (repo / "tools/tos_cp3/live_producer/producer.py").write_text(
+        "import json, os, sys, time\n"
+        "from pathlib import Path\n"
+        "argv = sys.argv[1:]\n"
+        "def opt(name):\n"
+        "    return argv[argv.index(name) + 1]\n"
+        "journal = Path(opt('--journal'))\n"
+        "session = Path(opt('--session-dir'))\n"
+        "session.mkdir(parents=True, exist_ok=True)\n"
+        # The real producer reads the two query keys ITSELF, from the env_file
+        # its own config names (live_producer/config.py::read_query_credentials).
+        # The stub does the same one-line version of it, so a test can show the
+        # keys reaching THIS process and not the runtime.
+        "config = Path(opt('--config')).read_text(encoding='utf-8')\n"
+        "env_file = [l.split(':', 1)[1].strip() for l in config.splitlines()\n"
+        "            if l.startswith('env_file:')]\n"
+        "if env_file and Path(env_file[0]).is_file():\n"
+        "    for line in Path(env_file[0]).read_text(encoding='utf-8').splitlines():\n"
+        "        if '=' in line:\n"
+        "            key, _, value = line.partition('=')\n"
+        "            os.environ[key.strip()] = value.strip()\n"
+        f"envfile = os.environ.get({_PRODUCER_ENVFILE_ENV!r})\n"
+        "if envfile:\n"
+        "    Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
+        f"instrument = os.environ.get({_PRODUCER_INSTRUMENT_ENV!r}) or opt('--instrument')\n"
+        f"source_ids = os.environ.get({_PRODUCER_SOURCE_IDS_ENV!r}, {_APPROVED_SOURCE_ID!r})\n"
+        f"mode = os.environ.get({_PRODUCER_ROWS_ENV!r}, '1')\n"
+        f"pidfile = os.environ.get({_PRODUCER_PIDFILE_ENV!r})\n"
+        "if pidfile:\n"
+        "    Path(pidfile).write_text(str(os.getpid()))\n"
+        "if mode == '0':\n"
+        "    print('stub producer: refused, writing nothing')\n"
+        "    raise SystemExit(1)\n"
+        "journal.parent.mkdir(parents=True, exist_ok=True)\n"
+        "ids = source_ids.split(',')\n"
+        "def publish(count):\n"
+        "    # Whole-file replacement, like the real writer (sinks.py).\n"
+        "    journal.write_text(''.join(json.dumps({\n"
+        "        'raw_event_id': '%s:1m:2026101909%02d00+0900' % (instrument, index),\n"
+        "        'source_id': ids[min(index, len(ids) - 1)],\n"
+        "        'instrument': instrument,\n"
+        "        'as_of_ms': 1791601200000 + index,\n"
+        "        'fields': {'close_x100': 57950},\n"
+        "    }) + '\\n' for index in range(count)))\n"
+        "if mode == 'never':\n"
+        "    pass  # alive, publishing nothing — the wait runs its bound\n"
+        "elif mode == '1+1':\n"
+        "    # One bar now, a second the moment the render lands: the window\n"
+        "    # between the first-row wait and the boot, where a real producer\n"
+        "    # keeps publishing. Keyed to the render rather than to a sleep so\n"
+        "    # the test is not a race against stub timings.\n"
+        "    publish(1)\n"
+        f"    watch = Path(os.environ[{_PRODUCER_SECOND_ROW_WHEN_ENV!r}])\n"
+        "    deadline = time.monotonic() + 60\n"
+        "    while not watch.exists() and time.monotonic() < deadline:\n"
+        "        time.sleep(0.02)\n"
+        "    publish(2)\n"
+        "else:\n"
+        "    publish(max(len(ids), 1))\n"
+        "(session / 'producer-summary.json').write_text(\n"
+        "    json.dumps({'stage': 'finish', 'counters': {'published': 1}}) + '\\n')\n"
+        f"if os.environ.get({_PRODUCER_EXIT_ENV!r}) == '1':\n"
+        "    print('stub producer: halted after writing')\n"
+        "    raise SystemExit(1)\n"
+        "while True:\n"
+        "    time.sleep(0.2)\n",
+        encoding="utf-8",
+    )
 
     shutil.copy2(_RUNNER, repo / "tools/tos_cp3/runners/run_tenant_session.sh")
     shutil.copy2(_RUNNER_COMMON, repo / "tools/broker_probes/runners/_common.sh")
@@ -1183,9 +1343,12 @@ def _runner_repo(
         )
         (cli_dir / "__init__.py").write_text("", encoding="utf-8")
         (cli_dir / "cli.py").write_text(
-            "import os, time\n"
+            "import json, os, time\n"
             "from pathlib import Path\n"
             "def main(argv):\n"
+            f"    envfile = os.environ.get({_RUN_ENVFILE_ENV!r})\n"
+            "    if envfile:\n"
+            "        Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
             f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
             "    while True:\n"
             "        time.sleep(0.2)\n",
@@ -1234,7 +1397,17 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     env_file.write_text("KIS_FUTURES_ACCOUNT_NO=00000000-03\n", encoding="utf-8")
     custody = tmp_path / "custody"
     custody.mkdir(exist_ok=True)
-    journal = _synthetic_journal(tmp_path / "journal.jsonl", instrument=_FRONT_MONTH)
+    # The producer's own credential file and the config that names it — the
+    # arrangement plan §3.4 describes: the keys live in a file the PRODUCER's
+    # config points at, never in the runner's environment.
+    real_env = tmp_path / ".env.real"
+    real_env.write_text(
+        f"KIS_FUTURES_APP_KEY={_PRODUCER_FAKE_KEY}\n"
+        f"KIS_FUTURES_APP_SECRET={_PRODUCER_FAKE_SECRET}\n",
+        encoding="utf-8",
+    )
+    producer_config = tmp_path / "cp3-live-producer.yaml"
+    producer_config.write_text(f"env_file: {real_env}\n", encoding="utf-8")
 
     env = {
         "PATH": os.environ["PATH"],
@@ -1245,11 +1418,17 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "TENANT_DIRECTION": "LONG",
         "TENANT_RENDER_OUT": str(tmp_path / "render-out"),
         "TENANT_DATA_PARENT": str(scratch / "data"),
-        "TENANT_JOURNAL": str(journal),
+        # The producer CREATES the journal (plan §3.5 boot order), so this path
+        # does not exist yet — a pre-written one is what the real producer
+        # refuses to start against (sinks.refuse_if_journal_exists).
+        "TENANT_JOURNAL": str(tmp_path / "journal.jsonl"),
         "TENANT_STOP_AT": "+10 minutes",
         "TENANT_ENV_FILE": str(env_file),
         "TENANT_CUSTODY_ROOT": str(custody),
         "TENANT_ENVIRONMENT_LABEL": "paper",
+        "TENANT_PRODUCER_CONFIG": str(producer_config),
+        "TENANT_PRODUCER_SESSION_DIR": str(tmp_path / "producer-session"),
+        _PRODUCER_PIDFILE_ENV: str(tmp_path / "producer.pid"),
     }
     for name, value in overrides.items():
         if value == "":
@@ -1259,14 +1438,40 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     return env
 
 
+def _producer_outlived_the_runner(tmp_path: Path) -> bool:
+    """Is the stub producer still alive after the runner returned?
+
+    The question every refusal below now has to answer (plan §3.5, v2 re-review
+    M1): the producer starts BEFORE the guard, so a ``die`` that does not stop
+    it leaves it calling the real quotation API all day. Polled rather than
+    sampled once — SIGTERM, delivery and exit are not instantaneous — and
+    whatever the answer, a survivor is killed so the suite leaks nothing.
+    """
+    pidfile = tmp_path / "producer.pid"
+    if not pidfile.is_file():
+        return False
+    pid = int(pidfile.read_text().strip())
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and _pid_alive(pid):
+        time.sleep(0.2)
+    alive = _pid_alive(pid)
+    if alive:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+    return alive
+
+
 def _run_runner(repo: Path, tmp_path: Path, **overrides: str) -> Any:
-    return subprocess.run(
+    result = subprocess.run(
         ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
         capture_output=True,
         text=True,
         env=_runner_env(tmp_path, **overrides),
         cwd=str(tmp_path),
+        timeout=180,
     )
+    result.producer_outlived_the_runner = _producer_outlived_the_runner(tmp_path)
+    return result
 
 
 def test_runner_aborts_on_a_checkout_that_is_not_detached(tmp_path: Path) -> None:
@@ -1322,6 +1527,8 @@ def test_runner_aborts_when_head_is_not_an_ancestor_of_origin_main(
         "TENANT_ENV_FILE",
         "TENANT_CUSTODY_ROOT",
         "TENANT_ENVIRONMENT_LABEL",
+        "TENANT_PRODUCER_CONFIG",
+        "TENANT_PRODUCER_SESSION_DIR",
     ],
 )
 def test_runner_aborts_when_any_instance_value_is_unset(
@@ -1385,80 +1592,117 @@ def test_runner_refuses_a_guard_module_of_a_different_generation(
     assert "policy version mismatch" in result.stdout + result.stderr
 
 
-def test_red_h1_runner_refuses_the_reviewers_resident_journal_input(
+def test_red_h1_the_runner_refuses_the_reviewers_resident_journal_rows(
     tmp_path: Path,
 ) -> None:
     """**The reviewer's HIGH input, end to end at the run template.**
 
-    An unmarked resident-style journal plus
+    Unmarked resident-style ``source_id`` values plus
     ``TENANT_DATA_PARENT=<designated cp3-setup-d-long-data>``. The old guard
     accepted this and the runner would have genesised the designated store from
-    synthetic rows. Nothing is created and nothing is rendered now.
+    synthetic rows.
+
+    Since PR-3 the producer WRITES the journal, so the refusal arrives one step
+    earlier — at the first-row wait, which asks the guard's own
+    ``unapproved_rows`` rather than a second opinion. The guard still owns the
+    rule and still refuses the same input directly
+    (:func:`test_red_h1_an_unmarked_resident_style_journal_cannot_reach_a_designated_dir`);
+    what changed is only which gate the runner reaches first.
     """
     designated = tmp_path / ".local" / "state" / "tos" / "cp3-setup-d-long-data"
-    journal = _resident_journal(tmp_path / "resident-style.jsonl", _FRONT_MONTH)
     result = _run_runner(
         _runner_repo(tmp_path),
         tmp_path,
         TENANT_DATA_PARENT=str(designated),
-        TENANT_JOURNAL=str(journal),
+        **{_PRODUCER_SOURCE_IDS_ENV: ",".join(_RESIDENT_SOURCE_IDS)},
     )
     assert result.returncode != 0
     output = result.stdout + result.stderr
-    assert "boot-proof guard refused" in output
-    assert "not from an approved real producer" in output
+    assert "not an approved real producer" in output
     assert not (designated / _FRONT_MONTH).exists()
     assert not (tmp_path / "render-out").exists()
+    assert not result.producer_outlived_the_runner
 
 
 def test_red_h1_runner_refuses_the_resident_durable_set(tmp_path: Path) -> None:
-    """The same journal pointed at the LIVE resident parent — the second half of
-    the reviewer's input. Refused by the unconditional clause."""
+    """The LIVE resident parent, with an APPROVED journal — the clause that
+    holds unconditionally, and the only way to reach it now that an unapproved
+    row is refused before the guard runs at all."""
     resident = tmp_path / ".local" / "state" / "tos" / "paper-data"
     resident.mkdir(parents=True)
-    journal = _resident_journal(tmp_path / "resident-style.jsonl", _FRONT_MONTH)
     result = _run_runner(
-        _runner_repo(tmp_path),
-        tmp_path,
-        TENANT_DATA_PARENT=str(resident),
-        TENANT_JOURNAL=str(journal),
+        _runner_repo(tmp_path), tmp_path, TENANT_DATA_PARENT=str(resident)
     )
     assert result.returncode != 0
     assert "RESIDENT paper durable set" in result.stdout + result.stderr
     assert not (resident / _FRONT_MONTH).exists()
+    assert not result.producer_outlived_the_runner
 
 
-def test_runner_refuses_a_synthetic_journal_outside_the_scratch_root(
+def test_an_approved_producer_row_opens_the_designated_tenant_set(
     tmp_path: Path,
 ) -> None:
-    """Plan §2.5's H2 input at the run template: data parent
-    ``~/.local/state/tos`` plus a boot-proof journal."""
+    """The other half of the allowlist, and what ③ exists to unlock.
+
+    Until PR-2 added ``tos-cp3-live`` the list was empty and EVERY boot outside
+    scratch was refused; now the producer's own rows open the designated
+    tenant set — the first real genesis. The run gets past the guard and dies
+    at the stub renderer, which is as far as this fixture goes.
+
+    ⚠ Which clauses the runner can still reach is now narrower than the
+    guard's own set: the first-row wait refuses an unapproved journal before
+    the guard sees it, so the scratch containment clause (rule 3) is reachable
+    from ``tools/tos_cp3/bootproof_journal.py``, the other entry point, and
+    from the direct tests above — not from here. Rules 1 and 2 are what this
+    template exercises.
+    """
     designated = tmp_path / ".local" / "state" / "tos" / "cp3-setup-d-long-data"
     result = _run_runner(
         _runner_repo(tmp_path), tmp_path, TENANT_DATA_PARENT=str(designated)
     )
-    assert result.returncode != 0
-    assert "boot-proof guard refused" in result.stdout + result.stderr
-    assert not (designated / _FRONT_MONTH).exists()
-    assert not (tmp_path / "render-out").exists()
+    output = result.stdout + result.stderr
+    assert "boot-proof guard refused" not in output
+    assert (designated / _FRONT_MONTH).is_dir()
+    # as far as the non-bootable fixture goes: the stub renderer refuses
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
 
 
 def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:
-    """The contract month is derived ONCE and given to both the leaf and the
-    render (runbook §7.3 5-a). A journal written for last month's code is not an
-    error downstream — it is zero observations."""
-    other = _synthetic_journal(tmp_path / "other.jsonl", instrument="A05612")
-    result = _run_runner(_runner_repo(tmp_path), tmp_path, TENANT_JOURNAL=str(other))
-    assert result.returncode != 0
-    assert "A05612" in result.stdout + result.stderr
-
-
-def test_runner_refuses_a_missing_journal(tmp_path: Path) -> None:
+    """The contract month is derived ONCE and given to the leaf, the render and
+    the producer (runbook §7.3 5-a). A journal written for last month's code is
+    not an error downstream — it is zero observations."""
     result = _run_runner(
-        _runner_repo(tmp_path), tmp_path, TENANT_JOURNAL=str(tmp_path / "nope.jsonl")
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_PRODUCER_INSTRUMENT_ENV: "A05612"},
     )
     assert result.returncode != 0
-    assert "does not exist" in result.stdout + result.stderr
+    assert "A05612" in result.stdout + result.stderr
+    assert not result.producer_outlived_the_runner
+
+
+def test_runner_aborts_at_once_when_the_producer_writes_no_row(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5's bounded wait.** A producer that refused at boot (a seed
+    that cannot fill ``vol_window``, an env pin mismatch, an existing session
+    directory) writes nothing and exits.
+
+    The session must not then sit out the whole ceiling: the wait watches the
+    producer's own liveness and gives up as soon as it is gone. Timed here, so
+    "at once" is a measurement rather than a hope — the ceiling it must beat is
+    ``FIRST_LINE_TIMEOUT_S`` (600 s).
+    """
+    started = time.monotonic()
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **{_PRODUCER_ROWS_ENV: "0"})
+    elapsed = time.monotonic() - started
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "producer never produced a usable first row" in output
+    assert "exited before writing a usable journal row" in output
+    assert elapsed < 120, elapsed
+    assert not (tmp_path / "render-out").exists()
 
 
 # --- the bootable fixture: label check and signal forwarding ---------------
@@ -1568,6 +1812,10 @@ def test_red_m2_a_signal_to_the_runner_stops_the_child(tmp_path: Path) -> None:
         )
         assert runner.returncode == 143, out
         assert "SIGNAL TERM received by the runner" in out
+        # BOTH children (PR-3): the producer is the one holding a real
+        # quotation session, so a signal that stops only the runtime leaves
+        # the expensive half running.
+        assert not _producer_outlived_the_runner(tmp_path)
     finally:
         if runner.poll() is None:
             runner.kill()
@@ -1650,3 +1898,692 @@ def test_red_a_sigkilled_runner_still_leaves_the_child_a_deadline(
             runner.kill()
         if _pid_alive(child_pid):
             os.kill(child_pid, signal.SIGKILL)
+
+
+# ---------------------------------------------------------------------------
+# PR-3: credential separation, the boot order, and the stop path
+# ---------------------------------------------------------------------------
+
+
+def test_red_the_runner_refuses_a_real_query_key_in_its_own_environment(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.4.** The concrete input: a shell that exported
+    ``KIS_FUTURES_APP_KEY`` before calling the template — the natural thing to
+    do when the producer is the thing that needs it.
+
+    Every child inherits this environment, so that key would reach the RUNTIME
+    too, silently, because nothing downstream looks for it. The producer reads
+    the real keys itself from the file its own config names; the runner never
+    carries them. Nothing is launched and nothing is rendered.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, KIS_FUTURES_APP_KEY="PS-not-a-real-key"
+    )
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "KIS_FUTURES_APP_KEY is set in this shell" in output
+    # and the value itself is never echoed back into the log
+    assert "PS-not-a-real-key" not in output
+    assert not (tmp_path / "producer.pid").exists()
+    assert not (tmp_path / "render-out").exists()
+
+
+def test_red_the_same_refusal_for_the_secret(tmp_path: Path) -> None:
+    """The second key, separately: a guard that only names the first one lets
+    the pair through whenever the secret is the one that was exported."""
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, KIS_FUTURES_APP_SECRET="not-a-real-secret"
+    )
+    assert result.returncode != 0
+    assert "KIS_FUTURES_APP_SECRET is set in this shell" in result.stdout + (
+        result.stderr
+    )
+    assert "not-a-real-secret" not in result.stdout + result.stderr
+
+
+def test_a_die_after_the_producer_starts_does_not_leave_it_running(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5, v2 re-review M1 — the EXIT trap's red proof.**
+
+    #892 armed its traps after the render, which was enough while nothing ran
+    before the boot. The producer now starts BEFORE the guard, the render and
+    the label check, so a refusal in any of them used to leave it running —
+    calling the REAL quotation API all day, with the runner gone and nobody
+    watching.
+
+    The refusal used here is the label check, the LAST one before the boot, so
+    the whole span between the launch and the boot is covered by one case.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+2 minutes",
+        **{_TREE_ENV: "non-live-test", _RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+    )
+    assert result.returncode != 0
+    assert "the rendered tree declares environment 'non-live-test'" in (
+        result.stdout + result.stderr
+    )
+    # the producer really did start (otherwise this proves nothing)...
+    assert (tmp_path / "producer.pid").is_file()
+    # ...and the refusal stopped it
+    assert not result.producer_outlived_the_runner
+    # the boot never happened
+    assert not (tmp_path / "run.pid").exists()
+
+
+def test_the_boot_order_is_producer_then_first_row_then_guard_then_boot(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5 end to end**, in one short session.
+
+    What this pins, in the order the log must carry it: the producer starts
+    first and CREATES the journal (the #892 guard refuses an empty one); the
+    session waits for its first approved row and records how many rows are
+    there at boot as ``consumed_stale_at_boot``; the snapshot file the §3.6
+    extractor reads names those ids; the RUNTIME's environment holds neither
+    real query key (plan §3.4); and the producer is stopped when the session
+    ends rather than left behind.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    envfile = tmp_path / "runtime-env.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_ENVFILE_ENV: str(envfile),
+        },
+    )
+    output = result.stdout + result.stderr
+
+    # ① the producer, before anything else, and it is what wrote the journal
+    journal = tmp_path / "journal.jsonl"
+    assert journal.is_file()
+    rows = [json.loads(line) for line in journal.read_text("utf-8").splitlines()]
+    assert [row["source_id"] for row in rows] == [_APPROVED_SOURCE_ID]
+    # ② the bounded wait, and what it counted
+    assert "first real row seen · consumed_stale_at_boot=1" in output
+    snapshot = json.loads(
+        (tmp_path / "producer-session" / "boot-journal-snapshot.json").read_text(
+            "utf-8"
+        )
+    )
+    assert snapshot["consumed_stale_at_boot"] == 1
+    assert snapshot["pre_boot_raw_event_ids"] == [rows[0]["raw_event_id"]]
+    # ③ guard → render → boot, in that order, after the wait
+    for earlier, later in zip(
+        ["=== PRODUCER", "first real row seen", "=== RENDER", "=== BOOT"],
+        ["first real row seen", "=== RENDER", "=== BOOT", "=== END run"],
+    ):
+        assert output.index(earlier) < output.index(later), (earlier, later)
+    # the runtime's own environment carries neither real key (plan §3.4)
+    runtime_env = json.loads(envfile.read_text("utf-8"))
+    assert "KIS_FUTURES_APP_KEY" not in runtime_env
+    assert "KIS_FUTURES_APP_SECRET" not in runtime_env
+    # and the producer is stopped with the session, not left behind
+    assert "=== END producer" in output
+    assert not result.producer_outlived_the_runner
+
+
+def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5's last sentence: 「멈춘 생산자는 러너가 ABORT 로 보고한다」.**
+
+    The producer halts after writing (the plan's own example is five
+    consecutive ``produce_error``s). From that minute the journal stops
+    growing and every remaining pass reads a frozen one — a session that looks
+    clean and measured nothing.
+
+    The runtime is NOT killed for it: truncating a durable set loses the
+    evidence the session exists to leave. The report is the exit code, and it
+    is its own (5), because "the boot failed" and "the boot was fine and the
+    feed behind it stopped" are different findings.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _PRODUCER_EXIT_ENV: "1",
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+        },
+    )
+    output = result.stdout + result.stderr
+    # the boot itself was fine and ran to its stop time — this is not a refusal
+    assert "=== BOOT" in output
+    assert "=== END run rc=143" in output  # SIGTERM from our own stop path
+    # ...and the session is still not reported as clean
+    assert result.returncode == 5, output[-2000:]
+    assert "ABORT: the producer stopped before the session did" in output
+
+
+# ---------------------------------------------------------------------------
+# The stop helper, and the waiter, exercised directly
+# ---------------------------------------------------------------------------
+
+
+def test_red_stop_supervised_reaps_the_worker_behind_its_supervisor(
+    tmp_path: Path,
+) -> None:
+    """**#892 re-review L2 — the group kill's red proof.**
+
+    The pid a caller holds is ``timeout``'s. GNU timeout runs the command in a
+    NEW process group with itself as leader, forwards a TERM, and forwards
+    nothing at all when it is itself KILLed. So a worker that ignores SIGTERM
+    — in production: a python process mid-``os.replace``, or holding a REAL
+    quotation session — survives its own supervisor unless the escalation goes
+    to the GROUP.
+
+    The grace is two seconds here so the proof is cheap, and the supervisor's
+    OWN ``--kill-after`` is five minutes so it cannot be the thing that cleans
+    up inside the test window — otherwise this passes either way, which is
+    what the first cut of it did (measured: the worker died at ``timeout``'s
+    2 s kill-after, and the escalation never ran).
+    """
+    marker = tmp_path / "worker.pid"
+    script = tmp_path / "ignore-term.py"
+    script.write_text(
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        "    time.sleep(0.2)\n",
+        encoding="utf-8",
+    )
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        "set -u\n" f". {_RUNNER_COMMON}\n" 'set_log_file ""\n'
+        # Output to a FILE, not to this script's stdout: when the escalation
+        # fails to reach the group the worker is orphaned, and an orphan
+        # holding the captured pipe makes `subprocess.run` block forever on
+        # EOF — the mutation experiment would then HANG instead of failing,
+        # which is the shape this suite has paid for before (the §7.2-c label
+        # test's own "measured: it did, before these were added").
+        f"timeout --kill-after=300s 600s {sys.executable} {script} "
+        f">{tmp_path / 'worker.out'} 2>&1 &\n"
+        "PID=$!\n"
+        "while [ ! -s %s ]; do sleep 0.1; done\n" % marker
+        + 'stop_supervised "$PID" 2 worker\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(driver)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    worker_pid = int(marker.read_text().strip())
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and _pid_alive(worker_pid):
+        time.sleep(0.2)
+    try:
+        assert not _pid_alive(worker_pid), (
+            f"the worker (pid {worker_pid}) outlived the SIGKILL its supervisor "
+            "received — the escalation did not reach the process group"
+        )
+    finally:
+        if _pid_alive(worker_pid):
+            os.kill(worker_pid, signal.SIGKILL)
+    assert "SIGKILL to the process group" in result.stdout
+
+
+def test_stop_supervised_returns_at_once_for_a_child_that_already_exited(
+    tmp_path: Path,
+) -> None:
+    """A producer that reached its own session end is already gone.
+
+    The stop path must not TERM a pid that is not there and then sit out its
+    whole grace — at the end of a trading day that is the difference between
+    "stopped" and "the runner hung". Measured, not asserted from the code:
+    the call returns in well under the grace it was given.
+    """
+    driver = tmp_path / "already-gone.sh"
+    driver.write_text(
+        "set -u\n"
+        f". {_RUNNER_COMMON}\n"
+        'set_log_file ""\n'
+        "bash -c 'exit 0' &\n"
+        "PID=$!\n"
+        'wait "$PID"\n'
+        'stop_supervised "$PID" 30 worker\n'
+        "echo returned\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    result = subprocess.run(
+        ["bash", str(driver)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "returned" in result.stdout
+    assert "STOP SIGTERM" not in result.stdout
+    assert time.monotonic() - started < 10
+
+
+def _extract_waiter(tmp_path: Path) -> Path:
+    """The shipped first-row waiter, lifted out of the template verbatim.
+
+    The template runs it as a heredoc, so this is the only way to exercise it
+    with a small timeout — and lifting it means the tests below run the code
+    that ships, not a copy of it.
+    """
+    lines = _RUNNER.read_text("utf-8").splitlines()
+    # The waiter is the one heredoc launched in the BACKGROUND (Claude lane
+    # MEDIUM M2) — step 13's evidence summary is the foreground one, so the
+    # trailing `&` is what tells them apart.
+    body_start = next(i for i, line in enumerate(lines) if line.endswith("<<'PY' &"))
+    end = next(i for i in range(body_start + 1, len(lines)) if lines[i] == "PY")
+    path = tmp_path / "waiter.py"
+    path.write_text("\n".join(lines[body_start + 1 : end]) + "\n", encoding="utf-8")
+    return path
+
+
+def _run_waiter(
+    tmp_path: Path, journal: Path, timeout_s: str, pid: int
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(_extract_waiter(tmp_path)),
+            str(journal),
+            timeout_s,
+            str(pid),
+            str(tmp_path / "snapshot.json"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
+    )
+
+
+def test_red_the_waiter_gives_up_at_its_bound(tmp_path: Path) -> None:
+    """**Plan §3.5's bounded wait, with the bound exercised.**
+
+    A producer that is alive and simply never publishes (its seed walked a
+    month of empty responses, or the market is shut) must not hold the session
+    forever: the template's ``FIRST_LINE_TIMEOUT_S`` is the ceiling and this is
+    the same code under a two-second one. Without the deadline branch this
+    test hangs instead of failing, which is the defect.
+    """
+    alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = _run_waiter(tmp_path, tmp_path / "never.jsonl", "2", alive.pid)
+    finally:
+        alive.kill()
+    assert result.returncode != 0
+    assert "within 2s" in result.stderr
+    assert not (tmp_path / "snapshot.json").exists()
+
+
+def test_red_the_waiter_stops_as_soon_as_the_producer_is_gone(
+    tmp_path: Path,
+) -> None:
+    """A producer that refused at boot has already exited. Waiting out the
+    ceiling for it would turn a clear refusal into a ten-minute silence."""
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    started = time.monotonic()
+    result = _run_waiter(tmp_path, tmp_path / "never.jsonl", "600", dead.pid)
+    assert result.returncode != 0
+    assert "exited before writing a usable journal row" in result.stderr
+    assert time.monotonic() - started < 30
+
+
+def test_red_the_waiter_refuses_an_unapproved_row_rather_than_waiting(
+    tmp_path: Path,
+) -> None:
+    """The producer wrote, but not as an approved producer. The guard would
+    refuse that journal, and no amount of waiting unwrites it — so the wait
+    says so at once, with the guard's own predicate (``unapproved_rows``, the
+    allowlist and its delimiter rule) rather than a second opinion."""
+    journal = _journal(
+        tmp_path / "journal.jsonl", [_row(source_id="tos-cp3-live-EVIL/0.1.0")]
+    )
+    alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = _run_waiter(tmp_path, journal, "600", alive.pid)
+    finally:
+        alive.kill()
+    assert result.returncode != 0
+    assert "not an approved real producer" in result.stderr
+    assert not (tmp_path / "snapshot.json").exists()
+
+
+def test_the_waiter_records_every_row_present_at_boot(tmp_path: Path) -> None:
+    """``consumed_stale_at_boot`` is the rows present when the boot begins —
+    not "the first one". A seed that published two bars before the guard ran
+    leaves two structurally-unconsumable lines (plan §5 M5's own exclusion),
+    and the §3.6 extractor reads exactly this file to tell them from a line
+    the runtime failed to consume."""
+    journal = _journal(
+        tmp_path / "journal.jsonl",
+        [_row(source_id=_APPROVED_SOURCE_ID) for _ in range(2)],
+    )
+    alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = _run_waiter(tmp_path, journal, "600", alive.pid)
+    finally:
+        alive.kill()
+    assert result.returncode == 0, result.stderr
+    snapshot = json.loads((tmp_path / "snapshot.json").read_text("utf-8"))
+    assert snapshot["consumed_stale_at_boot"] == 2
+    assert len(snapshot["pre_boot_raw_event_ids"]) == 2
+    assert "consumed_stale_at_boot=2" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14 review round: xtrace leaks, group liveness, deferred signals
+# ---------------------------------------------------------------------------
+
+
+def _run_runner_traced(repo: Path, tmp_path: Path, **overrides: str) -> Any:
+    """The runner under a TRACE, the way an operator debugging it would."""
+    env = _runner_env(tmp_path, **overrides)
+    result = subprocess.run(
+        ["bash", "-x", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+    result.producer_outlived_the_runner = _producer_outlived_the_runner(tmp_path)
+    return result
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("KIS_FUTURES_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_FUTURES_APP_SECRET", _PRODUCER_FAKE_SECRET),
+    ],
+)
+def test_red_codex_high_no_credential_value_survives_bash_x(
+    tmp_path: Path, variable: str, value: str
+) -> None:
+    """**Codex review HIGH.** The guard against the key reaching the runtime
+    must not itself print the key.
+
+    Concrete input: the operator exports the key and runs the template with
+    ``bash -x`` — a debugging habit, not a mistake. ``set -x`` prints every
+    word AFTER expansion, so the first cut's ``[ -z "$(printenv "$_real_key")" ]``
+    wrote the value to stderr and into TENANT_LOG on its way to refusing it.
+
+    Both halves of the fix are exercised at once: tracing is off before any
+    environment is read, and the test is on the NAME (``${!name+x}``) so there
+    is no expansion to print. Restore either half and the value appears in the
+    captured stream.
+    """
+    repo = _runner_repo(tmp_path)
+    result = _run_runner_traced(repo, tmp_path, **{variable: value})
+    stream = (
+        result.stdout
+        + result.stderr
+        + (tmp_path / "session.log").read_text("utf-8", errors="replace")
+    )
+    assert result.returncode != 0
+    assert f"{variable} is set in this shell" in stream
+    assert value not in stream, "the credential value reached the trace"
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("KIS_FUTURES_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_FUTURES_APP_SECRET", _PRODUCER_FAKE_SECRET),
+    ],
+)
+def test_red_codex_high_no_credential_value_survives_inherited_shellopts(
+    tmp_path: Path, variable: str, value: str
+) -> None:
+    """The same leak through the other door: ``SHELLOPTS=xtrace`` exported by
+    the CALLING shell turns tracing on before this script's first line, with
+    nothing in the invocation to show for it. ``set +x`` at the top is what
+    closes it, and this is the input that proves the top is early enough."""
+    repo = _runner_repo(tmp_path)
+    result = _run_runner(repo, tmp_path, SHELLOPTS="xtrace", **{variable: value})
+    stream = (
+        result.stdout
+        + result.stderr
+        + (tmp_path / "session.log").read_text("utf-8", errors="replace")
+    )
+    assert result.returncode != 0
+    assert value not in stream, "the credential value reached the inherited trace"
+
+
+def test_the_producer_holds_the_keys_and_the_runtime_does_not(
+    tmp_path: Path,
+) -> None:
+    """**Codex review LOW — the separation stated as a comparison.**
+
+    The first cut asserted only that the runtime's environment lacked the two
+    keys, in a run where nothing had them: true, and true of any run at all.
+    This asserts the difference that is the actual claim — the PRODUCER reads
+    them (from the file its own config names) and the RUNTIME never sees them
+    — so a change that handed the keys to every child turns it red.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    runtime_env = tmp_path / "runtime-env.json"
+    producer_env = tmp_path / "producer-env.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_ENVFILE_ENV: str(runtime_env),
+            _PRODUCER_ENVFILE_ENV: str(producer_env),
+        },
+    )
+    assert "=== BOOT" in result.stdout + result.stderr
+    producer = json.loads(producer_env.read_text("utf-8"))
+    runtime = json.loads(runtime_env.read_text("utf-8"))
+    # the premise: the producer really does hold both keys...
+    assert producer["KIS_FUTURES_APP_KEY"] == _PRODUCER_FAKE_KEY
+    assert producer["KIS_FUTURES_APP_SECRET"] == _PRODUCER_FAKE_SECRET
+    # ...and the runtime holds neither
+    assert "KIS_FUTURES_APP_KEY" not in runtime
+    assert "KIS_FUTURES_APP_SECRET" not in runtime
+    # nor did either value pass through the runner's own log
+    assert _PRODUCER_FAKE_KEY not in (tmp_path / "session.log").read_text("utf-8")
+
+
+def test_red_codex_medium_the_worker_dies_when_its_supervisor_was_reaped_first(
+    tmp_path: Path,
+) -> None:
+    """**Codex review MEDIUM.** Liveness is a question about the GROUP.
+
+    Concrete input: the supervising ``timeout`` is SIGKILLed and reaped before
+    the stop path runs — a host OOM killer, an operator's ``kill -9``, a
+    crashed supervisor. Its worker keeps running in the same process group. A
+    leader-only ``kill -0`` then answers "already gone" and ``stop_supervised``
+    returns success over a process still holding a REAL quotation session.
+
+    Here the worker also ignores SIGTERM, so only the group KILL can end it —
+    and the supervisor's own ``--kill-after`` is five minutes, far outside the
+    window, so it cannot be the thing that cleans up.
+    """
+    marker = tmp_path / "worker.pid"
+    script = tmp_path / "ignore-term.py"
+    script.write_text(
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        "    time.sleep(0.2)\n",
+        encoding="utf-8",
+    )
+    driver = tmp_path / "reaped-leader.sh"
+    driver.write_text(
+        "set -u\n"
+        f". {_RUNNER_COMMON}\n"
+        'set_log_file ""\n'
+        f"timeout --kill-after=300s 600s {sys.executable} {script} "
+        f">{tmp_path / 'worker.out'} 2>&1 &\n"
+        "PID=$!\n"
+        "while [ ! -s %s ]; do sleep 0.1; done\n" % marker
+        # the supervisor dies and is reaped, leaving the worker in its group
+        + 'kill -KILL "$PID"\n'
+        'wait "$PID" 2>/dev/null || true\n'
+        'stop_supervised "$PID" 2 worker\n'
+        "echo returned\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(driver)], capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "returned" in result.stdout
+    worker_pid = int(marker.read_text().strip())
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and _pid_alive(worker_pid):
+        time.sleep(0.2)
+    try:
+        assert not _pid_alive(worker_pid), (
+            f"the worker (pid {worker_pid}) outlived a stop whose supervisor had "
+            "already been reaped — the liveness test asked about the leader, not "
+            "the group"
+        )
+    finally:
+        if _pid_alive(worker_pid):
+            os.kill(worker_pid, signal.SIGKILL)
+    # it really did go through the stop path (not "nothing to do")
+    assert "STOP SIGTERM" in result.stdout
+
+
+def test_red_m2_a_signal_during_the_first_row_wait_is_not_deferred(
+    tmp_path: Path,
+) -> None:
+    """**Claude-lane MEDIUM M2.** Bash runs a trap only BETWEEN commands.
+
+    Concrete input: the producer never publishes (so the wait runs its full
+    bound) and the operator sends TERM. As a foreground ``$(…)`` the handler
+    waited for the substitution to finish — up to ``FIRST_LINE_TIMEOUT_S``,
+    ten minutes, with the producer calling the real quotation API throughout.
+    In the background with ``wait``, the handler runs when the signal lands.
+
+    Measured, not asserted from the shape: the runner must be gone, and the
+    producer with it, in seconds rather than at the bound.
+    """
+    repo = _runner_repo(tmp_path)
+    env = _runner_env(tmp_path, **{_PRODUCER_ROWS_ENV: "never"})
+    runner = subprocess.Popen(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    try:
+        pidfile = tmp_path / "producer.pid"
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not pidfile.is_file():
+            assert runner.poll() is None, runner.communicate()[0]
+            time.sleep(0.2)
+        assert pidfile.is_file(), "the stub producer never started"
+        # it is waiting now: the journal exists but holds nothing approved
+        time.sleep(1.0)
+
+        sent_at = time.monotonic()
+        runner.send_signal(signal.SIGTERM)
+        out = runner.communicate(timeout=60)[0]
+        elapsed = time.monotonic() - sent_at
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+    assert runner.returncode == 143, out
+    assert "SIGNAL TERM received by the runner" in out
+    assert elapsed < 30, f"the signal was deferred for {elapsed:.1f}s"
+    assert not _producer_outlived_the_runner(tmp_path)
+
+
+def test_l2_the_boot_snapshot_is_taken_at_the_boot_not_at_the_first_row(
+    tmp_path: Path,
+) -> None:
+    """**Claude-lane LOW L2.** A bar published during guard/render/boot is
+    pre-boot too.
+
+    Concrete input: the producer writes its second row AFTER the first-row
+    wait returns — the guard, the render and the label check take real time
+    and the market does not pause for them. Snapshotted at first-row time the
+    second id is missing, and §3.6 then reports it as a line the runtime
+    failed to consume: the defect shape, manufactured by the runner's own
+    bookkeeping.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            # one row at once, a second when the render lands — after the
+            # first-row wait returned, before the boot
+            _PRODUCER_ROWS_ENV: "1+1",
+            _PRODUCER_SECOND_ROW_WHEN_ENV: str(
+                tmp_path / "render-out" / "critical_input_policy.yaml"
+            ),
+        },
+    )
+    assert "=== BOOT" in result.stdout + result.stderr
+    journal_ids = [
+        json.loads(line)["raw_event_id"]
+        for line in (tmp_path / "journal.jsonl").read_text("utf-8").splitlines()
+        if line.strip()
+    ]
+    snapshot = json.loads(
+        (tmp_path / "producer-session" / "boot-journal-snapshot.json").read_text(
+            "utf-8"
+        )
+    )
+    assert len(journal_ids) == 2, journal_ids
+    assert snapshot["consumed_stale_at_boot"] == 2
+    assert snapshot["pre_boot_raw_event_ids"] == journal_ids
+
+
+def test_red_codex_high_no_credential_value_reaches_a_redirected_trace(
+    tmp_path: Path,
+) -> None:
+    """**Codex review HIGH, the third door: ``BASH_XTRACEFD``.**
+
+    A trace need not go to the terminal. ``BASH_XTRACEFD`` points it at an
+    arbitrary open descriptor — a shared operator log, a file someone later
+    pastes into an issue — and ``SHELLOPTS=xtrace`` turns it on without
+    appearing in the command line. The two together are the quietest version
+    of this leak: nothing in the invocation shows it, and the output lands
+    somewhere the runner never looks.
+
+    The descriptor is real (``pass_fds``), so this is the mechanism and not a
+    mock of it; the assertion is that the file it points at never contains the
+    credential.
+    """
+    repo = _runner_repo(tmp_path)
+    trace = tmp_path / "trace.log"
+    with trace.open("w", encoding="utf-8") as handle:
+        env = _runner_env(tmp_path, KIS_FUTURES_APP_KEY=_PRODUCER_FAKE_KEY)
+        env["SHELLOPTS"] = "xtrace"
+        env["BASH_XTRACEFD"] = str(handle.fileno())
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=180,
+            pass_fds=(handle.fileno(),),
+        )
+    assert result.returncode != 0
+    assert "KIS_FUTURES_APP_KEY is set in this shell" in result.stdout + result.stderr
+    written = trace.read_text("utf-8", errors="replace")
+    assert _PRODUCER_FAKE_KEY not in written, "the value reached the redirected trace"
+    assert _PRODUCER_FAKE_KEY not in (tmp_path / "session.log").read_text(
+        "utf-8", errors="replace"
+    )
