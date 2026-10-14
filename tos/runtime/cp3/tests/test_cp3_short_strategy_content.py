@@ -25,6 +25,7 @@ firewall forbids it for runtime scope outright), synthetic JSONL under
 
 from __future__ import annotations
 
+import ast
 import copy
 from decimal import Decimal
 from pathlib import Path
@@ -447,29 +448,44 @@ def test_the_short_lineage_declares_its_direction_and_the_short_difference(
     assert "the LONG half is a separate render" in d5["note"]
 
 
-def _assert_b2_line_citations_resolve(repo_root: Path, note: str) -> None:
-    """B1b-D8 cites B2 by LINE; check those lines still say what it claims.
+def _assert_b2_citations_resolve(repo_root: Path, note: str) -> None:
+    """B1b-D8 claims B2 drives ``check()`` directly; check that it still does.
 
-    Added 2026-10-14 (PR-2b): the note cited ``:946`` and ``:990``, and an
-    unrelated edit to that module's docstring moved both — a citation that
-    still looked precise while pointing into a docstring. Nothing checked it.
-    Line numbers are the repo's least stable citation form, so if they are
-    going to be used at all, their drift has to fail a test rather than rot.
+    Added 2026-10-14 (PR-2b). The note cited ``:946``/``:990`` and an unrelated
+    docstring edit in that module moved both — a citation that still looked
+    precise while pointing into a docstring, with nothing checking it.
+
+    The first fix re-pinned the NEW line numbers, which only moves the next
+    drift one commit away and would redden this test for any concurrent PR
+    that touches the module (review LOW-3). So the anchor is the **symbol**:
+    both statements must still be inside ``emit_decisions``, which is the
+    thing the note is actually about. ``ast`` locates the function, so a
+    rename fails here loudly instead of a line number rotting quietly.
     """
-    emitter = (
-        (repo_root / "tools" / "tos_cp3" / "emit_legacy_decisions.py")
-        .read_text(encoding="utf-8")
-        .splitlines()
+    source = (repo_root / "tools" / "tos_cp3" / "emit_legacy_decisions.py").read_text(
+        encoding="utf-8"
     )
-    for cited, expected in (
-        (966, "setup = SetupDVWAPReversion(config=strategy.entry_config)"),
-        (1012, "signal = setup.check(ctx)"),
-    ):
-        assert f":{cited}" in note, f"the note no longer cites line {cited}"
-        assert emitter[cited - 1].strip() == expected, (
-            f"emit_legacy_decisions.py:{cited} is now "
-            f"{emitter[cited - 1].strip()!r}, not {expected!r}; B1b-D8's note "
-            "cites that line as where B2 drives check() directly"
+    assert "emit_legacy_decisions.py::emit_decisions" in note
+    tree = ast.parse(source)
+    func = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "emit_decisions"
+        ),
+        None,
+    )
+    assert func is not None, (
+        "emit_legacy_decisions.emit_decisions is gone; B1b-D8's note names it as "
+        "where B2 drives check() directly"
+    )
+    body = ast.get_source_segment(source, func) or ""
+    for statement in ("setup = SetupDVWAPReversion(", "signal = setup.check(ctx)"):
+        assert statement in note, f"the note no longer quotes {statement!r}"
+        assert statement in body, (
+            f"{statement!r} is no longer inside emit_decisions; B1b-D8's note "
+            "cites it as where B2 drives check() directly, so either the note "
+            "or the emitter has moved on without the other"
         )
 
 
@@ -509,7 +525,7 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     )["note"]
     assert "setup_d_adapter.py:174" in note
     assert "B2-L1" in note
-    assert "emit_legacy_decisions.py:966" in note
+    assert "emit_legacy_decisions.py::emit_decisions" in note
     assert "UNRESOLVED" in note
     # The overclaim the review found, asserted as an ABSENCE: the earlier note
     # said "the item absorbs zero bars" as if that measured something.
@@ -553,5 +569,5 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
             "regime block would no longer hold"
         )
 
-    # (3) the two LINE citations in the note resolve to the lines they claim.
-    _assert_b2_line_citations_resolve(repo_root, note)
+    # (3) the note's citation of B2 still resolves — by symbol, not line.
+    _assert_b2_citations_resolve(repo_root, note)
