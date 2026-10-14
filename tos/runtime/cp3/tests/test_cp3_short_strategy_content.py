@@ -483,7 +483,7 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
     )["note"]
     assert "setup_d_adapter.py:174" in note
     assert "B2-L1" in note
-    assert "emit_legacy_decisions.py:946" in note
+    assert "emit_legacy_decisions.py:966" in note
     assert "UNRESOLVED" in note
     # The overclaim the review found, asserted as an ABSENCE: the earlier note
     # said "the item absorbs zero bars" as if that measured something.
@@ -525,4 +525,26 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
             f"comment ({offenders[:2]}); B2 drives check() directly, so B1b-D8's "
             "claim that the legacy side of this comparison never applies the "
             "regime block would no longer hold"
+        )
+
+    # (3) the two LINE citations in the note resolve to the lines they claim.
+    # Added 2026-10-14 (PR-2b): the note cited :946 and :990, and an unrelated
+    # edit to that module's docstring moved both — a citation that still looked
+    # precise while pointing at a docstring. Nothing checked it. Line numbers
+    # are the repo's least stable citation form, so if they are going to be
+    # used at all, their drift has to fail a test rather than rot quietly.
+    emitter = (
+        (repo_root / "tools" / "tos_cp3" / "emit_legacy_decisions.py")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    for cited, expected in (
+        (966, "setup = SetupDVWAPReversion(config=strategy.entry_config)"),
+        (1012, "signal = setup.check(ctx)"),
+    ):
+        assert f"emit_legacy_decisions.py:{cited}" in note or f":{cited}" in note
+        assert emitter[cited - 1].strip() == expected, (
+            f"emit_legacy_decisions.py:{cited} is now "
+            f"{emitter[cited - 1].strip()!r}, not {expected!r}; B1b-D8's note "
+            "cites that line as where B2 drives check() directly"
         )
