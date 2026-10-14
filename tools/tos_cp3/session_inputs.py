@@ -457,6 +457,12 @@ def _projectable(token: Any) -> bool:
     The hinge's ``unprojectable`` snapshot carries a real float token the real
     issuer refused, so this mirror is checked against the issuer's own verdict
     rather than against this file's reading of it.
+
+    A ``null`` token would be the one place this could disagree with the
+    issuer (which reads an absent LOOKUP as "absent from payload"), and it
+    cannot occur: ``PreimageEntry`` cannot carry ``None`` — the kernel's own
+    ``RawPayloadPreimage.lookup`` docstring relies on exactly that to make its
+    ``None`` unambiguous.
     """
     return isinstance(token, (bool, int, str))
 
