@@ -126,6 +126,15 @@ LINEAGE_SCHEMA_VERSION = 2
 #: Summary schema version — see :data:`LINEAGE_SCHEMA_VERSION` for the 1 -> 2
 #: change. A literal in ``build_summary`` before 2026-10-09, which is why the
 #: shape moved without it.
+#:
+#: **Deliberately NOT bumped by PR-3 (2026-10-14), and why.** That PR adds the
+#: ``session_scope`` and ``live_comparison`` blocks (plan §3.6), but both exist
+#: only when the run was given the matching new input: a run with neither
+#: writes the same keys, in the same order, with the same bytes as a v2 run.
+#: The 1 -> 2 bump was necessary because keys were REPLACED — a v1 consumer
+#: read a v2 sidecar WRONG rather than failing. An additive, input-gated block
+#: cannot do that: a v2 consumer either does not pass the new inputs and sees
+#: exactly what it expects, or passes them and knows what it asked for.
 SUMMARY_SCHEMA_VERSION = 2
 
 #: Stable identity stamped on every diff line as ``source_id``.
@@ -226,6 +235,12 @@ LABEL_FIELDS = "B1a"
 LABEL_LEGACY = "B2"
 LABEL_TOS = "B1b"
 ARTIFACT_LABELS = (LABEL_FIELDS, LABEL_LEGACY, LABEL_TOS)
+
+#: The §3.6 live-decision stream (PR-3). Deliberately NOT in
+#: :data:`ARTIFACT_LABELS`: those three are joined line for line and must have
+#: equal line counts, while the live stream covers only the bars the runtime
+#: consumed and is joined by ``raw_event_id``.
+LABEL_LIVE = "LIVE"
 
 
 def qualify_difference_id(label: str, raw_id: str) -> str:
@@ -1512,8 +1527,17 @@ def build_summary(
     declared_index: dict[str, list[dict[str, str]]],
     ctx: DiffContext,
     tos_lineage: dict[str, Any],
+    session_scope: dict[str, Any] | None = None,
+    live_comparison: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The decision/reject/risk difference report (kickoff §5 step 5)."""
+    """The decision/reject/risk difference report (kickoff §5 step 5).
+
+    ``session_scope`` and ``live_comparison`` are the plan §3.6 blocks and are
+    ABSENT — not null — when the run was given no such input. A key that is
+    there but empty would read as "measured, nothing found"; absence reads as
+    "not asked", which is the true statement (see
+    :data:`SUMMARY_SCHEMA_VERSION` on why that is additive, not a bump).
+    """
     buckets = Counter(record.bucket for record in records)
     rules = Counter(record.attribution_rule for record in records)
     ids = Counter(
@@ -1550,10 +1574,17 @@ def build_summary(
         for label, entries in declared_index.items()
     }
 
+    session_blocks: dict[str, Any] = {}
+    if session_scope is not None:
+        session_blocks["session_scope"] = session_scope
+    if live_comparison is not None:
+        session_blocks["live_comparison"] = live_comparison
+
     return {
         "summary_schema_version": SUMMARY_SCHEMA_VERSION,
         "tool": {"name": "tools/tos_cp3/diff_decisions.py", "source_id": SOURCE_ID},
         "window_identity": dict(identity),
+        **session_blocks,
         "bars": len(records),
         "buckets": dict(sorted(buckets.items())),
         "attribution_rules": {
@@ -1808,6 +1839,7 @@ def build_lineage(
     declared_index: dict[str, list[dict[str, str]]],
     ctx: DiffContext,
     outputs: dict[str, Any],
+    session_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """ADR-002-018 §10 lineage for the diff: parents, tool, checks, outputs.
 
@@ -1828,6 +1860,7 @@ def build_lineage(
             "fields_jsonl": refs[LABEL_FIELDS].to_lineage(),
             "legacy_decisions_jsonl": refs[LABEL_LEGACY].to_lineage(),
             "tos_trace_jsonl": refs[LABEL_TOS].to_lineage(),
+            **(session_inputs or {}),
         },
         "window_identity": dict(identity),
         "window_identity_projection": {
@@ -1882,6 +1915,248 @@ def build_lineage(
         },
         "output": outputs,
     }
+
+
+# ---------------------------------------------------------------------------
+# §3.6 session inputs — the consumed-id filter and the live decisions (PR-3)
+# ---------------------------------------------------------------------------
+#
+# Plan ``docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md`` §3.6: with
+# the three offline artifacts alone this tool answers "did the offline replay
+# agree with the legacy rule", never "did the LIVE runtime behave like the
+# offline one". Both inputs below come from ``tools/tos_cp3/session_inputs.py``,
+# which reads the session's own stores; this module still reads only FILES, and
+# still imports neither ``tos`` nor the extractor (its claim is about files, and
+# CP-4 deletes the band math behind them).
+
+
+#: The reason recorded for a filtered-out bar whose id the filter document does
+#: not explain. Counted, never refused: a B3 run whose producer log was
+#: truncated still has something to say, and an unexplained unpaired record is
+#: itself a finding — which is exactly what a silent drop would hide. Every
+#: other reason string is OPAQUE here: this module counts the labels the
+#: extractor wrote and never branches on one.
+REASON_UNEXPLAINED = "unexplained"
+
+#: The live fields compared bar for bar. NOT ``rule_id`` (B1b resolves it from
+#: the emitted outcome's rationale, which the durable evidence record does not
+#: carry) and NOT ``as_of_ms`` (B1a's is the bar label, the live one is the
+#: write stamp — different quantities, so an equality between them would be a
+#: comparison of two different things).
+LIVE_COMPARED_FIELDS = ("outcome_kind", "capacity_denied")
+
+#: Cap on the divergence list carried in ``summary.json``, for the same reason
+#: :data:`UNRESOLVED_ID_LIST_CAP` exists. The count is never capped.
+LIVE_DIVERGENCE_LIST_CAP = 200
+
+
+@dataclass(frozen=True)
+class ConsumedIdFilter:
+    """The ``raw_event_id`` set the runtime consumed, plus the unpaired reasons."""
+
+    path: Path
+    sha256: str
+    raw_event_ids: frozenset[str]
+    unpaired_reasons: dict[str, str]
+
+
+def load_consumed_ids(path: Path) -> ConsumedIdFilter:
+    """Read the extractor's ``consumed-ids`` document.
+
+    Raises:
+        DiffDecisionsError: The document carries no ``raw_event_ids`` list, or
+            carries an empty one. An empty filter would restrict every
+            comparison to zero bars, and "UNRESOLVED 0 over zero bars" is the
+            acceptance criterion passing vacuously.
+    """
+    document = json.loads(path.read_text(encoding="utf-8"))
+    ids = document.get("raw_event_ids") if isinstance(document, dict) else None
+    if not isinstance(ids, list) or not all(isinstance(value, str) for value in ids):
+        raise DiffDecisionsError(
+            f"{path} carries no raw_event_ids list — that key is the set the "
+            "runtime actually consumed, and without it there is no filter"
+        )
+    if not ids:
+        raise DiffDecisionsError(
+            f"{path} lists zero consumed raw_event_ids. Restricting the "
+            "comparison to nothing would report every criterion as met over an "
+            "empty set"
+        )
+    reasons = document.get("unpaired_reasons") or {}
+    if not isinstance(reasons, dict):
+        raise DiffDecisionsError(f"{path}: unpaired_reasons is not an object")
+    return ConsumedIdFilter(
+        path=path,
+        sha256=sha256_file(path),
+        raw_event_ids=frozenset(ids),
+        unpaired_reasons={str(k): str(v) for k, v in reasons.items()},
+    )
+
+
+def apply_consumed_filter(
+    bars: list[JoinedBar], consumed: ConsumedIdFilter
+) -> tuple[list[JoinedBar], dict[str, Any], dict[str, Any]]:
+    """Keep the bars the runtime consumed; count the rest by their reason.
+
+    Returns ``(kept bars, the summary block, the check row)``.
+
+    Raises:
+        DiffDecisionsError: The filter names an id the three artifacts do not
+            cover. The runtime consumed a bar this offline trio knows nothing
+            about, so the trio is not about this session — comparing the
+            intersection instead would silently answer a smaller question than
+            the one asked.
+    """
+    joined = {bar.raw_event_id for bar in bars}
+    missing = sorted(consumed.raw_event_ids - joined)
+    if missing:
+        raise DiffDecisionsError(
+            f"{len(missing)} consumed raw_event_id(s) are absent from the "
+            f"joined artifacts, first {missing[:3]}. The runtime consumed bars "
+            "this offline trio does not cover, so the artifacts are not about "
+            "this session"
+        )
+    kept = [bar for bar in bars if bar.raw_event_id in consumed.raw_event_ids]
+    dropped = [bar for bar in bars if bar.raw_event_id not in consumed.raw_event_ids]
+    reason_counts: Counter[str] = Counter(
+        consumed.unpaired_reasons.get(bar.raw_event_id, REASON_UNEXPLAINED)
+        for bar in dropped
+    )
+    block = {
+        "consumed_id_filter": {
+            "path": str(consumed.path),
+            "sha256": consumed.sha256,
+            "consumed_raw_event_ids": len(consumed.raw_event_ids),
+            "compared_bars": len(kept),
+            "offline_bars_not_consumed": len(dropped),
+        },
+        "unpaired_offline_records_by_reason": dict(sorted(reason_counts.items())),
+        "note": (
+            "the comparison below is restricted to the raw_event_ids the "
+            "runtime actually consumed (plan §5: pre-boot, skipped_behind, "
+            "produce_error and omitted_unusable bars have no live counterpart "
+            "BY CONSTRUCTION, so counting them as differences would report the "
+            "producer's own bookkeeping as a decision disagreement). Each "
+            f"reason is the producer's own label; {REASON_UNEXPLAINED!r} is a "
+            "bar the filter document does not explain, which is a finding, not "
+            "a rounding"
+        ),
+    }
+    return (
+        kept,
+        block,
+        check_entry(
+            CHECK_CONSUMED_ID_FILTER,
+            "every raw_event_id the runtime consumed is present in the joined "
+            "artifacts, and the bars outside that set are counted by the "
+            "reason the producer recorded for them",
+            consumed=len(consumed.raw_event_ids),
+            compared=len(kept),
+            not_consumed=len(dropped),
+        ),
+    )
+
+
+def load_live_records(path: Path) -> list[dict[str, Any]]:
+    """Read the extractor's ``live.jsonl`` — one record per live decision.
+
+    Raises:
+        DiffDecisionsError: A line is malformed, carries no ``raw_event_id``,
+            is missing a compared field, or repeats an id. A repeated id is
+            not a tie to break: two live decisions claiming the same bar means
+            the ordered pairing in the extractor produced two answers for one
+            question.
+    """
+    records: dict[str, dict[str, Any]] = {}
+    for index, line in enumerate(_iter_lines(path)):
+        payload = parse_payload_line(line, LABEL_LIVE, index)
+        raw_event_id = _require(payload, "raw_event_id", LABEL_LIVE, index)
+        for key in LIVE_COMPARED_FIELDS:
+            _require(payload, key, LABEL_LIVE, index)
+        if str(raw_event_id) in records:
+            raise DiffDecisionsError(
+                f"{LABEL_LIVE} line {index + 1} repeats raw_event_id "
+                f"{raw_event_id!r} — two live decisions cannot both be the one "
+                "this bar got"
+            )
+        records[str(raw_event_id)] = payload
+    return list(records.values())
+
+
+def compare_live(
+    bars: list[JoinedBar], live: list[dict[str, Any]], *, path: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compare each live decision against the offline one for the same bar.
+
+    Returns ``(the summary block, the check row)``. Divergences are REPORTED,
+    never refused: "the live runtime decided differently from the offline
+    replay" is the finding this input exists to surface.
+
+    Raises:
+        DiffDecisionsError: A compared bar has no live record, or a live
+            record names a bar that is not compared. Either way the two sides
+            are not about the same session, and comparing the overlap would
+            quietly answer a smaller question — the shape ``--consumed-ids``
+            exists to make exact.
+    """
+    by_id = {record["raw_event_id"]: record for record in live}
+    compared_ids = [bar.raw_event_id for bar in bars]
+    missing = [key for key in compared_ids if key not in by_id]
+    if missing:
+        raise DiffDecisionsError(
+            f"{len(missing)} compared bar(s) have no live decision, first "
+            f"{missing[:3]}. Restrict the comparison to the bars the runtime "
+            "consumed (--consumed-ids) or supply a live file that covers every "
+            "compared bar; comparing only the overlap would report a partial "
+            "run as a complete one"
+        )
+    unknown = sorted(set(by_id) - set(compared_ids))
+    if unknown:
+        raise DiffDecisionsError(
+            f"{len(unknown)} live decision(s) name bars that are not compared, "
+            f"first {unknown[:3]} ({path}). The live session and the offline "
+            "artifacts are not about the same bars"
+        )
+    divergences: list[dict[str, Any]] = []
+    for bar in bars:
+        record = by_id[bar.raw_event_id]
+        offline = {
+            "outcome_kind": bar.tos_outcome_kind,
+            "capacity_denied": bar.tos_capacity_denied,
+        }
+        live_side = {key: record[key] for key in LIVE_COMPARED_FIELDS}
+        if offline != live_side:
+            divergences.append(
+                {
+                    "raw_event_id": bar.raw_event_id,
+                    "offline": offline,
+                    "live": live_side,
+                }
+            )
+    block = {
+        "compared_bars": len(bars),
+        "identical": len(bars) - len(divergences),
+        "divergent": len(divergences),
+        "divergences": divergences[:LIVE_DIVERGENCE_LIST_CAP],
+        "divergences_truncated": len(divergences) > LIVE_DIVERGENCE_LIST_CAP,
+        "compared_fields": list(LIVE_COMPARED_FIELDS),
+        "not_compared": (
+            "rule_id (B1b resolves it from the emitted outcome's rationale, "
+            "which the durable evidence record does not carry) and as_of_ms "
+            "(B1a's is the bar label, the live one is the journal write stamp)"
+        ),
+    }
+    return (
+        block,
+        check_entry(
+            CHECK_LIVE_DECISIONS,
+            "every compared bar has exactly one live decision and every live "
+            "decision names a compared bar — a divergence between them is "
+            "reported in summary.json, not refused",
+            compared=len(bars),
+            divergent=len(divergences),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1950,6 +2225,35 @@ CHECK_NAMES = (
     "report_carries_no_floats",
 )
 
+#: The §3.6 checks (PR-3), recorded only when the run was given the matching
+#: input. Conditional rather than always-present: a row saying "no filter was
+#: given, so nothing was covered" is a check that cannot fail, and this file's
+#: ``checks`` list is an enumeration of guards that HELD, not of guards that
+#: exist. :func:`expected_check_names` says where each one lands.
+CHECK_CONSUMED_ID_FILTER = "consumed_id_filter_covered_by_the_artifacts"
+CHECK_LIVE_DECISIONS = "live_decisions_cover_the_compared_bars"
+
+#: Every name :func:`check_entry` accepts.
+ALL_CHECK_NAMES = (*CHECK_NAMES, CHECK_CONSUMED_ID_FILTER, CHECK_LIVE_DECISIONS)
+
+#: The reconciliation row's position: the two §3.6 checks are recorded after
+#: the join and before it, because the filter is what decides how many bars
+#: that row has to reconcile.
+_RECONCILIATION_CHECK = "buckets_sum_equals_input_line_count"
+
+
+def expected_check_names(
+    *, consumed_ids: bool = False, live: bool = False
+) -> tuple[str, ...]:
+    """The exact check sequence THIS run must record, in order."""
+    names = list(CHECK_NAMES)
+    extra = [CHECK_CONSUMED_ID_FILTER] if consumed_ids else []
+    if live:
+        extra.append(CHECK_LIVE_DECISIONS)
+    at = names.index(_RECONCILIATION_CHECK)
+    names[at:at] = extra
+    return tuple(names)
+
 
 def check_entry(name: str, detail: str, **extra: Any) -> dict[str, Any]:
     """One ``checks`` row. No ``status`` field — see the module docstring.
@@ -1957,8 +2261,8 @@ def check_entry(name: str, detail: str, **extra: Any) -> dict[str, Any]:
     A refused run writes no artifact, so a row can only ever describe a check
     that held; a ``status`` key would be a literal that is always the same.
     """
-    if name not in CHECK_NAMES:
-        raise DiffDecisionsError(f"{name!r} is not in CHECK_NAMES")
+    if name not in ALL_CHECK_NAMES:
+        raise DiffDecisionsError(f"{name!r} is not in ALL_CHECK_NAMES")
     return {"name": name, "detail": detail, **extra}
 
 
@@ -2247,7 +2551,7 @@ def _read_deployment_context(
 
 
 def _check_reconciliation(
-    records: list[DiffRecord], input_lines: int
+    records: list[DiffRecord], input_lines: int, *, not_consumed: int = 0
 ) -> dict[str, Any]:
     """Bucket total against the INDEPENDENTLY measured input line count.
 
@@ -2256,20 +2560,30 @@ def _check_reconciliation(
     construction and cannot see that; ``input_lines`` is a newline count taken
     in the digest pass, before any JSON was parsed, so the two numbers are
     arrived at by different routes.
+
+    With a §3.6 consumed-id filter in force the classified bars are fewer than
+    the input lines BY DESIGN, so the identity becomes "classified + filtered
+    out == input lines" — still two independent routes, and still the thing
+    that catches a bar lost between reading and classifying. Dropping the
+    reconciliation instead when a filter is given would retire the guard
+    exactly where a new code path could lose a bar.
     """
     bucket_total = sum(Counter(record.bucket for record in records).values())
-    if not bucket_total == len(records) == input_lines:
+    if not bucket_total == len(records) == input_lines - not_consumed:
         raise DiffDecisionsError(
             f"bucket total {bucket_total} / classified bars {len(records)} / "
-            f"input lines {input_lines} do not reconcile — a bar was lost or "
-            "duplicated between reading and classifying"
+            f"input lines {input_lines} - filtered out {not_consumed} do not "
+            "reconcile — a bar was lost or duplicated between reading and "
+            "classifying"
         )
     return check_entry(
-        "buckets_sum_equals_input_line_count",
+        _RECONCILIATION_CHECK,
         "the bucket counts sum to the number of classified bars and to the "
         "newline count taken from the input files in the digest pass, before "
-        "any line was parsed",
-        bars=input_lines,
+        "any line was parsed, less the bars a consumed-id filter removed",
+        bars=len(records),
+        input_lines=input_lines,
+        filtered_out=not_consumed,
     )
 
 
@@ -2387,12 +2701,20 @@ def run(
     fields_lineage: Path | None = None,
     legacy_lineage: Path | None = None,
     tos_lineage: Path | None = None,
+    consumed_ids_json: Path | None = None,
+    live_jsonl: Path | None = None,
 ) -> RunResult:
     """Refuse or diff; write ``diff.jsonl``, ``summary.json`` and ``lineage.json``.
 
     Every refusal happens before ``mkdir``, so a refused trio leaves nothing
     behind. The one exception by necessity is the float scan of this tool's own
     output, which needs the rendered bytes — it too raises before any write.
+
+    ``consumed_ids_json`` and ``live_jsonl`` are the plan §3.6 session inputs
+    (PR-3). They are applied AFTER the lockstep join, so every refusal the
+    three offline artifacts owe each other — equal line counts, identical id
+    and ``as_of_ms`` sequences — still runs over the whole files; the filter
+    then decides which of those joined bars this report is about.
     """
     refs = _load_refs(
         (LABEL_FIELDS, fields_jsonl, fields_lineage),
@@ -2414,15 +2736,46 @@ def run(
     )
     checks.extend(joined.checks)
 
-    records = classify_all(joined.bars, ctx)
-    checks.append(_check_reconciliation(records, input_lines))
+    bars, session_scope, not_consumed = joined.bars, None, 0
+    if consumed_ids_json is not None:
+        consumed = load_consumed_ids(consumed_ids_json)
+        bars, session_scope, filter_check = apply_consumed_filter(bars, consumed)
+        not_consumed = len(joined.bars) - len(bars)
+        checks.append(filter_check)
+    live_comparison = None
+    if live_jsonl is not None:
+        live_comparison, live_check = compare_live(
+            bars, load_live_records(live_jsonl), path=live_jsonl
+        )
+        checks.append(live_check)
+
+    records = classify_all(bars, ctx)
+    checks.append(
+        _check_reconciliation(records, input_lines, not_consumed=not_consumed)
+    )
     summary = build_summary(
         records=records,
         identity=identity,
         declared_index=declared_index,
         ctx=ctx,
         tos_lineage=refs[LABEL_TOS].lineage,
+        session_scope=session_scope,
+        live_comparison=live_comparison,
     )
+
+    session_inputs: dict[str, Any] = {}
+    if consumed_ids_json is not None:
+        session_inputs["consumed_ids_json"] = {
+            "path": str(consumed_ids_json),
+            "sha256": sha256_file(consumed_ids_json),
+        }
+    if live_jsonl is not None:
+        live_sha, live_lines = sha256_and_lines(live_jsonl)
+        session_inputs["live_decisions_jsonl"] = {
+            "path": str(live_jsonl),
+            "sha256": live_sha,
+            "lines": live_lines,
+        }
 
     diff_bytes = render_jsonl(records)
     summary_bytes = render_json(summary)
@@ -2434,6 +2787,7 @@ def run(
         records=records,
         declared_index=declared_index,
         ctx=ctx,
+        session_inputs=session_inputs or None,
         outputs={
             "diff_jsonl": DIFF_FILENAME,
             "diff_jsonl_sha256": hashlib.sha256(diff_bytes).hexdigest(),
@@ -2454,10 +2808,13 @@ def run(
     _refuse_floats_in_report(
         (SUMMARY_FILENAME, summary_bytes), (LINEAGE_FILENAME, lineage_bytes)
     )
-    if [entry["name"] for entry in checks] != list(CHECK_NAMES):
+    expected = expected_check_names(
+        consumed_ids=consumed_ids_json is not None, live=live_jsonl is not None
+    )
+    if [entry["name"] for entry in checks] != list(expected):
         raise DiffDecisionsError(
-            "the recorded checks are not CHECK_NAMES in order: "
-            f"{[entry['name'] for entry in checks]}"
+            "the recorded checks are not this run's expected check names in "
+            f"order: {[entry['name'] for entry in checks]} != {list(expected)}"
         )
 
     target = out_dir if out_dir is not None else default_out_dir(identity)
@@ -2535,6 +2892,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the B1b lineage sidecar path",
     )
+    parser.add_argument(
+        "--consumed-ids",
+        type=Path,
+        default=None,
+        help=(
+            "plan §3.6: tools/tos_cp3/session_inputs.py's consumed-ids.json — "
+            "restrict the comparison to the raw_event_ids the runtime actually "
+            "consumed, and count the rest by the producer's own reason"
+        ),
+    )
+    parser.add_argument(
+        "--live",
+        type=Path,
+        default=None,
+        help=(
+            "plan §3.6: tools/tos_cp3/session_inputs.py's live.jsonl — compare "
+            "each live decision against the offline one for the same bar"
+        ),
+    )
     return parser
 
 
@@ -2550,6 +2926,8 @@ def main(argv: list[str] | None = None) -> int:
             fields_lineage=args.fields_lineage,
             legacy_lineage=args.legacy_lineage,
             tos_lineage=args.tos_lineage,
+            consumed_ids_json=args.consumed_ids,
+            live_jsonl=args.live,
         )
     except DiffDecisionsError as exc:
         print(f"diff_decisions: {exc}", file=sys.stderr)

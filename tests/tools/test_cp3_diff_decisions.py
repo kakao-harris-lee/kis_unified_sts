@@ -1698,10 +1698,16 @@ def test_the_refusal_order_is_the_recorded_order_for_the_first_pair(
 
 
 def test_a_check_name_outside_the_enumeration_is_refused() -> None:
-    """``check_entry`` is the only way a row is built, and it is closed."""
-    with pytest.raises(dd.DiffDecisionsError, match="not in CHECK_NAMES"):
+    """``check_entry`` is the only way a row is built, and it is closed.
+
+    The enumeration gained the two conditional §3.6 names (PR-3), so the
+    closed set ``check_entry`` validates against is ``ALL_CHECK_NAMES``; the
+    per-run ORDER is ``expected_check_names``, which is what ``run`` asserts.
+    """
+    with pytest.raises(dd.DiffDecisionsError, match="not in ALL_CHECK_NAMES"):
         dd.check_entry("something_new", "detail")
-    assert len(set(dd.CHECK_NAMES)) == len(dd.CHECK_NAMES)
+    assert len(set(dd.ALL_CHECK_NAMES)) == len(dd.ALL_CHECK_NAMES)
+    assert set(dd.CHECK_NAMES) < set(dd.ALL_CHECK_NAMES)
 
 
 def test_the_lineage_names_three_parents_with_both_digests(
@@ -2711,3 +2717,396 @@ def test_the_capacity_rules_why_does_not_overclaim(
     )
     assert "is NOT in its `attribution` list" in rule["why"]
     assert result.summary["totals"]["tos_action_capacity_denied"] == 4
+
+
+# ---------------------------------------------------------------------------
+# §3.6 session inputs: the consumed-id filter and the live decisions (PR-3)
+# ---------------------------------------------------------------------------
+
+
+def _consumed_ids_doc(
+    path: Path, bars: list[BarSpec], *, reasons: dict[str, str] | None = None
+) -> Path:
+    """What ``session_inputs.py consumed-ids`` writes, as this run needs it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "consumed_raw_event_ids",
+                "raw_event_ids": [bar.raw_event_id for bar in bars],
+                "unpaired_reasons": reasons or {},
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _live_jsonl(path: Path, records: list[dict[str, Any]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(path, records)
+    return path
+
+
+def _live_from(bars: list[BarSpec], **overrides: Any) -> list[dict[str, Any]]:
+    """The live records a session that decided exactly like B1b would produce."""
+    return [
+        {
+            "raw_event_id": bar.raw_event_id,
+            "as_of_ms": bar.as_of_ms + 59_000,  # the WRITE stamp, not the label
+            "outcome_kind": overrides.get(bar.raw_event_id, {}).get(
+                "outcome_kind", bar.tos_outcome_kind
+            ),
+            "capacity_denied": overrides.get(bar.raw_event_id, {}).get(
+                "capacity_denied", bar.capacity_denied
+            ),
+            "rule_id": None,
+        }
+        for bar in bars
+    ]
+
+
+def test_without_the_session_inputs_the_report_carries_neither_block(
+    coverage: tuple[Trio, dd.RunResult],
+) -> None:
+    """Absent, not empty: a run that was not asked does not answer (PR-3).
+
+    This is also the claim behind not bumping the schema version — the keys a
+    v2 consumer knows are unchanged, and the new ones only exist when the new
+    inputs were supplied.
+    """
+    _, result = coverage
+    assert "session_scope" not in result.summary
+    assert "live_comparison" not in result.summary
+    assert set(result.lineage["parents"]) == {
+        "fields_jsonl",
+        "legacy_decisions_jsonl",
+        "tos_trace_jsonl",
+    }
+    assert [entry["name"] for entry in result.lineage["checks"]] == list(
+        dd.expected_check_names()
+    )
+
+
+def test_the_consumed_id_filter_restricts_the_comparison_and_counts_the_rest(
+    tmp_path: Path,
+) -> None:
+    """Plan §5: the comparison is the bars the runtime consumed, and the rest
+    are counted under the producer's own reason rather than compared.
+
+    The three bars left out here are the plan's own shapes — a pre-boot line,
+    a ``skipped_behind`` bar and an ``omitted_unusable`` bar. Without the
+    filter all three are classified, and the disagreements among them would be
+    reported as decision differences the live runtime never had the chance to
+    make.
+    """
+    bars = list(COVERAGE_BARS)
+    consumed, unpaired = bars[:-3], bars[-3:]
+    trio = write_trio(tmp_path / "in", bars)
+    filter_path = _consumed_ids_doc(
+        tmp_path / "session" / "consumed-ids.json",
+        consumed,
+        reasons={
+            unpaired[0].raw_event_id: "pre_boot",
+            unpaired[1].raw_event_id: "skipped_behind",
+            unpaired[2].raw_event_id: "omitted_unusable",
+        },
+    )
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=filter_path,
+    )
+
+    assert result.summary["bars"] == len(consumed)
+    assert [record["raw_event_id"] for record in _records(result)] == [
+        bar.raw_event_id for bar in consumed
+    ]
+    scope = result.summary["session_scope"]
+    assert scope["consumed_id_filter"]["compared_bars"] == len(consumed)
+    assert scope["consumed_id_filter"]["offline_bars_not_consumed"] == 3
+    assert scope["unpaired_offline_records_by_reason"] == {
+        "omitted_unusable": 1,
+        "pre_boot": 1,
+        "skipped_behind": 1,
+    }
+    # the reconciliation still holds, with the filtered bars accounted for
+    reconciliation = next(
+        entry
+        for entry in result.lineage["checks"]
+        if entry["name"] == "buckets_sum_equals_input_line_count"
+    )
+    assert reconciliation["bars"] == len(consumed)
+    assert reconciliation["input_lines"] == len(bars)
+    assert reconciliation["filtered_out"] == 3
+    # and the filter file itself is pinned in the lineage
+    assert result.lineage["parents"]["consumed_ids_json"]["sha256"]
+
+
+def test_red_a_consumed_id_the_artifacts_do_not_cover_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** Concrete input: the filter names a bar the trio has no line
+    for — a session whose offline artifacts were built over a different
+    window. Taking the intersection instead would answer a smaller question
+    than the one asked and report it as the whole comparison.
+    """
+    bars = list(COVERAGE_BARS[:3])
+    trio = write_trio(tmp_path / "in", bars)
+    filter_path = _consumed_ids_doc(
+        tmp_path / "session" / "consumed-ids.json", [*bars, BarSpec(minute=99)]
+    )
+    with pytest.raises(dd.DiffDecisionsError) as excinfo:
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+            consumed_ids_json=filter_path,
+        )
+    assert "absent from the joined artifacts" in str(excinfo.value)
+    assert not (tmp_path / "out").exists()
+
+
+def test_red_an_empty_consumed_id_list_is_refused(tmp_path: Path) -> None:
+    """**Guard.** Concrete input: a filter listing zero ids — what a session
+    that never ticked produces. Every criterion would then be met over an
+    empty set, which is the acceptance criterion passing vacuously.
+    """
+    bars = list(COVERAGE_BARS[:3])
+    trio = write_trio(tmp_path / "in", bars)
+    filter_path = _consumed_ids_doc(tmp_path / "session" / "consumed-ids.json", [])
+    with pytest.raises(dd.DiffDecisionsError, match="zero consumed raw_event_ids"):
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+            consumed_ids_json=filter_path,
+        )
+
+
+def test_an_unpaired_bar_the_filter_cannot_explain_is_counted_not_dropped(
+    tmp_path: Path,
+) -> None:
+    """A truncated producer log must not make a bar disappear quietly.
+
+    It is counted under ``unexplained`` — a finding a reader can act on, which
+    is the opposite of a silent drop.
+    """
+    bars = list(COVERAGE_BARS[:4])
+    trio = write_trio(tmp_path / "in", bars)
+    filter_path = _consumed_ids_doc(
+        tmp_path / "session" / "consumed-ids.json", bars[:2], reasons={}
+    )
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=filter_path,
+    )
+    assert result.summary["session_scope"]["unpaired_offline_records_by_reason"] == {
+        dd.REASON_UNEXPLAINED: 2
+    }
+
+
+def test_live_decisions_that_match_the_offline_replay_are_reported_as_such(
+    tmp_path: Path,
+) -> None:
+    """The §3.6 question B3 could not previously ask, with the answer "yes"."""
+    bars = list(COVERAGE_BARS)
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(tmp_path / "session" / "live.jsonl", _live_from(bars)),
+    )
+    live = result.summary["live_comparison"]
+    assert live["compared_bars"] == len(bars)
+    assert live["identical"] == len(bars)
+    assert live["divergent"] == 0
+    assert live["divergences"] == []
+    assert live["compared_fields"] == ["outcome_kind", "capacity_denied"]
+    # rule_id and as_of_ms are deliberately not compared, and it says so
+    assert "rule_id" in live["not_compared"]
+    assert "as_of_ms" in live["not_compared"]
+    assert [entry["name"] for entry in result.lineage["checks"]] == list(
+        dd.expected_check_names(consumed_ids=True, live=True)
+    )
+    assert result.lineage["parents"]["live_decisions_jsonl"]["lines"] == len(bars)
+
+
+def test_a_live_divergence_is_reported_rather_than_refused(tmp_path: Path) -> None:
+    """ "The live runtime decided differently" is the FINDING, not an error.
+
+    Concrete input: the bar B1b replayed as ACTION came out NO_ACTION live —
+    the shape a STALE field set produces (at ``max_age_ms`` 800 every tenant
+    field falls to UNKNOWN and the entry rule's AND is false). Refusing here
+    would throw away the one measurement the genesis session exists to take.
+    """
+    bars = list(COVERAGE_BARS)
+    acted = next(bar for bar in bars if bar.tos_outcome_kind == "ACTION")
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    acted.raw_event_id: {
+                        "outcome_kind": "NO_ACTION",
+                        "capacity_denied": False,
+                    }
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["divergent"] == 1
+    assert live["divergences"][0]["raw_event_id"] == acted.raw_event_id
+    assert live["divergences"][0]["offline"]["outcome_kind"] == "ACTION"
+    assert live["divergences"][0]["live"]["outcome_kind"] == "NO_ACTION"
+
+
+def test_red_a_compared_bar_without_a_live_decision_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** Concrete input: a live file covering only the bars the
+    runtime consumed, run WITHOUT the consumed-id filter — the easy mistake.
+    Comparing just the overlap would report a partial run as a complete one;
+    the message names the flag that makes the scope exact.
+    """
+    bars = list(COVERAGE_BARS)
+    trio = write_trio(tmp_path / "in", bars)
+    with pytest.raises(dd.DiffDecisionsError) as excinfo:
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+            live_jsonl=_live_jsonl(
+                tmp_path / "session" / "live.jsonl", _live_from(bars[:2])
+            ),
+        )
+    message = str(excinfo.value)
+    assert "have no live decision" in message
+    assert "--consumed-ids" in message
+
+
+def test_red_a_live_decision_for_a_bar_that_is_not_compared_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** Concrete input: the live session decided on a bar the filter
+    does not name — the two sides are about different bars, which is exactly
+    what an id join cannot see on its own.
+    """
+    bars = list(COVERAGE_BARS[:3])
+    trio = write_trio(tmp_path / "in", bars)
+    with pytest.raises(dd.DiffDecisionsError, match="are not compared"):
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+            consumed_ids_json=_consumed_ids_doc(
+                tmp_path / "session" / "consumed-ids.json", bars[:2]
+            ),
+            live_jsonl=_live_jsonl(
+                tmp_path / "session" / "live.jsonl", _live_from(bars)
+            ),
+        )
+
+
+def test_red_a_repeated_live_raw_event_id_is_refused(tmp_path: Path) -> None:
+    """**Guard.** Concrete input: the same bar twice in the live file — what
+    an extractor pairing two decisions to one snapshot would emit. Building a
+    dict without the check would silently keep the last one and compare that.
+    """
+    bars = list(COVERAGE_BARS[:3])
+    trio = write_trio(tmp_path / "in", bars)
+    records = _live_from(bars)
+    with pytest.raises(dd.DiffDecisionsError, match="repeats raw_event_id"):
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+            consumed_ids_json=_consumed_ids_doc(
+                tmp_path / "session" / "consumed-ids.json", bars
+            ),
+            live_jsonl=_live_jsonl(
+                tmp_path / "session" / "live.jsonl", [*records, records[0]]
+            ),
+        )
+
+
+def test_red_a_live_record_missing_a_compared_field_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** Concrete input: a live record with no ``capacity_denied``.
+    Read with ``.get`` it would compare ``None`` against a boolean and report
+    that bar as a divergence — a defect in the extractor shown as a finding
+    about the runtime.
+    """
+    bars = list(COVERAGE_BARS[:3])
+    trio = write_trio(tmp_path / "in", bars)
+    records = _live_from(bars)
+    del records[1]["capacity_denied"]
+    with pytest.raises(dd.DiffDecisionsError, match="capacity_denied"):
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+            consumed_ids_json=_consumed_ids_doc(
+                tmp_path / "session" / "consumed-ids.json", bars
+            ),
+            live_jsonl=_live_jsonl(tmp_path / "session" / "live.jsonl", records),
+        )
+
+
+def test_the_cli_accepts_both_session_inputs(tmp_path: Path) -> None:
+    """End to end through ``main``, the way the runbook invokes it."""
+    bars = list(COVERAGE_BARS[:4])
+    trio = write_trio(tmp_path / "in", bars)
+    out = tmp_path / "out"
+    code = dd.main(
+        [
+            "--fields",
+            str(trio.fields),
+            "--legacy",
+            str(trio.legacy),
+            "--tos",
+            str(trio.tos),
+            "--out",
+            str(out),
+            "--consumed-ids",
+            str(
+                _consumed_ids_doc(tmp_path / "session" / "consumed-ids.json", bars[:3])
+            ),
+            "--live",
+            str(_live_jsonl(tmp_path / "session" / "live.jsonl", _live_from(bars[:3]))),
+        ]
+    )
+    assert code == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["session_scope"]["consumed_id_filter"]["compared_bars"] == 3
+    assert summary["live_comparison"]["identical"] == 3
