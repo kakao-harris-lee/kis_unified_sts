@@ -440,18 +440,24 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
     """Every issued snapshot of the session, in issue order, with its id.
 
     Issue order is ``rowid`` order: ``snapshots`` has a TEXT primary key, so
-    sqlite keeps its own rowid and that is insertion order. Ordering by
-    ``as_of_ms`` instead would reorder two snapshots that share a stamp, and
-    the ordered pairing below depends on this being the order the scheduler
-    wrote them in.
+    sqlite keeps its own rowid and that is insertion order. Nothing is
+    attributed by that order — the attribution is keyed
+    (:func:`_attribute`) — but it is the order the session happened in, so
+    the ``bar_index`` on each live record and the ids listed in every count
+    below read in it rather than in sqlite's scan order.
+
+    Each snapshot also carries the FieldStates it recorded
+    (:func:`_snapshot_states`), which is what plan §5 M5's first number is
+    counted from.
 
     Raises:
         SessionInputsError: A snapshot covers no preimage row, or more than
-            one. Both break the pairing: the first is the restore-path failure
+            one. Both break the join: the first is the restore-path failure
             the store's own docstring describes (a snapshot id in hand, every
             value UNKNOWN), the second means a snapshot covered several
             observations and "the bar this decision was about" is not a
-            question with one answer.
+            question with one answer. Or its ``snapshot_json`` is not a
+            readable snapshot (:func:`_snapshot_states`).
     """
     conn = _connect_ro(
         data_dir / MARKETFEED_FILE_NAME,
@@ -847,8 +853,9 @@ class DecisionBlock:
         ``DECISION_OUTCOME_EMITTED`` carries it (``pipeline.py`` copies it off
         the recorded input signature); ``DECISION_WITHHELD`` and the
         Coordinator's refusal do not — the pipeline never reached a signature.
-        That is why the attribution below is keyed where a key exists and
-        positional only where one cannot exist.
+        That is why :func:`_attribute` has a SECOND durable key for the
+        records with no capsule: the driver's receipt bracket around the
+        event that wrote them.
         """
         value = self.payload.get("capsule_id")
         return None if value is None else str(value)
@@ -1081,8 +1088,10 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
             raise SessionInputsError(
                 f"inbox seq {seq}: a {DECISION_TICK_EVENT_KIND} event with no "
                 f"{'.'.join(TICK_CAPSULE_PATH)} / {'.'.join(TICK_SNAPSHOT_PATH)}. "
-                "Those two are what tie a decision to its bar; without them "
-                "this extractor would be back to guessing by position"
+                "Those two are what tie a tick to its bar — the receipt "
+                "bracket says WHICH tick a record belongs to, and these say "
+                "which bar that tick was about; without them the chain ends "
+                "at the tick"
             )
         if capsule_id in seen:
             raise SessionInputsError(
