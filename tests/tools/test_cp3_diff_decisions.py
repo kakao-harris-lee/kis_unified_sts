@@ -3110,3 +3110,132 @@ def test_the_cli_accepts_both_session_inputs(tmp_path: Path) -> None:
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["session_scope"]["consumed_id_filter"]["compared_bars"] == 3
     assert summary["live_comparison"]["identical"] == 3
+
+
+def test_a_live_proposal_is_a_kind_only_match_against_an_offline_action(
+    tmp_path: Path,
+) -> None:
+    """**Claude-lane MEDIUM M3, B3's half.**
+
+    The live extractor can say "an outcome was emitted and it was not a
+    no-action" and no more: ACTION vs FLAT turns on the proposal's
+    ``position_effect``, which no durable record carries. Against an offline
+    ACTION (or FLAT) that is agreement as far as the record goes — counted
+    apart from the exact matches, never folded into them, because the folded
+    number would read as "the live runtime decided the same thing" when half
+    of it was not measured.
+    """
+    bars = list(COVERAGE_BARS)
+    acted = next(bar for bar in bars if bar.tos_outcome_kind == "ACTION")
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    acted.raw_event_id: {
+                        "outcome_kind": dd.LIVE_PROPOSAL_KIND,
+                        "capacity_denied": acted.capacity_denied,
+                    }
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["kind_only_matches"] == 1
+    assert live["divergent"] == 0
+    assert live["identical"] == len(bars) - 1
+    assert live["kind_only_match_bars"][0] == {
+        "raw_event_id": acted.raw_event_id,
+        "offline_outcome_kind": "ACTION",
+    }
+    assert "not in any durable record" in live["kind_only_note"]
+
+
+def test_a_live_proposal_against_an_offline_no_action_is_a_divergence(
+    tmp_path: Path,
+) -> None:
+    """The other half of M3, and the red proof that the leniency is bounded.
+
+    "An outcome was emitted" against "no action was taken" is a disagreement
+    about whether to act at all — nothing about ACTION-vs-FLAT excuses it. If
+    the kind-only rule were written as "a PROPOSAL matches anything", this
+    case would pass silently, and the one comparison the genesis session
+    exists to make would stop being able to fail.
+    """
+    bars = list(COVERAGE_BARS)
+    quiet = next(bar for bar in bars if bar.tos_outcome_kind == "NO_ACTION")
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    quiet.raw_event_id: {
+                        "outcome_kind": dd.LIVE_PROPOSAL_KIND,
+                        "capacity_denied": False,
+                    }
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["kind_only_matches"] == 0
+    assert live["divergent"] == 1
+    assert live["divergences"][0]["raw_event_id"] == quiet.raw_event_id
+
+
+def test_a_live_proposal_whose_capacity_denial_disagrees_is_a_divergence(
+    tmp_path: Path,
+) -> None:
+    """The capacity denial IS on both sides, so it is compared exactly even
+    when the kind can only be compared loosely. Without this the kind-only
+    path would swallow a real disagreement about whether the one exposure slot
+    was taken."""
+    bars = list(COVERAGE_BARS)
+    denied = next(
+        bar for bar in bars if bar.tos_outcome_kind == "ACTION" and bar.capacity_denied
+    )
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    denied.raw_event_id: {
+                        "outcome_kind": dd.LIVE_PROPOSAL_KIND,
+                        "capacity_denied": False,
+                    }
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["kind_only_matches"] == 0
+    assert live["divergent"] == 1
+    assert live["divergences"][0]["live"]["capacity_denied"] is False
+    assert live["divergences"][0]["offline"]["capacity_denied"] is True

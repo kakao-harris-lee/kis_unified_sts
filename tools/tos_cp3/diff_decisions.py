@@ -127,14 +127,28 @@ LINEAGE_SCHEMA_VERSION = 2
 #: change. A literal in ``build_summary`` before 2026-10-09, which is why the
 #: shape moved without it.
 #:
-#: **Deliberately NOT bumped by PR-3 (2026-10-14), and why.** That PR adds the
-#: ``session_scope`` and ``live_comparison`` blocks (plan §3.6), but both exist
-#: only when the run was given the matching new input: a run with neither
-#: writes the same keys, in the same order, with the same bytes as a v2 run.
-#: The 1 -> 2 bump was necessary because keys were REPLACED — a v1 consumer
-#: read a v2 sidecar WRONG rather than failing. An additive, input-gated block
-#: cannot do that: a v2 consumer either does not pass the new inputs and sees
-#: exactly what it expects, or passes them and knows what it asked for.
+#: **Deliberately NOT bumped by PR-3 (2026-10-14), and what that does and does
+#: not claim** (corrected after the Claude-lane LOW: the first version of this
+#: note said "a run with neither input writes the same bytes as a v2 run",
+#: which was false in two ways).
+#:
+#: What changed for EVERY run, input or no input: the reconciliation check row
+#: in ``lineage.json`` now carries ``bars`` / ``input_lines`` / ``filtered_out``
+#: where it used to carry only ``bars`` (and ``bars`` now means the classified
+#: count, which without a filter equals the input lines).
+#:
+#: What changes only WITH ``--consumed-ids``: ``summary.json`` gains
+#: ``session_scope``, and its top-level ``bars``, ``buckets``, ``totals``,
+#: ``rates`` and ``unresolved`` then describe the FILTERED subset — the bars
+#: the runtime consumed — not the whole window. A reader who passes the flag
+#: is asking for exactly that; a reader who does not sees the whole window as
+#: before. ``--live`` likewise adds ``live_comparison`` and nothing else.
+#:
+#: Why that is still not a bump: the 1 -> 2 change REPLACED keys, so a v1
+#: consumer read a v2 sidecar wrong rather than failing. Here no key changed
+#: meaning without the caller asking for it, and the one unconditional change
+#: is an ADDITION to a check row's detail fields. The version number is
+#: therefore honest, and this note is the record of what it covers.
 SUMMARY_SCHEMA_VERSION = 2
 
 #: Stable identity stamped on every diff line as ``source_id``.
@@ -1949,6 +1963,21 @@ LIVE_COMPARED_FIELDS = ("outcome_kind", "capacity_denied")
 #: :data:`UNRESOLVED_ID_LIST_CAP` exists. The count is never capped.
 LIVE_DIVERGENCE_LIST_CAP = 200
 
+#: The live token for an emitted outcome whose ACTION/FLAT half no durable
+#: record carries (``tools/tos_cp3/session_inputs.py``'s ``PROPOSAL_KIND``,
+#: restated here because this module imports nothing — its claim is about
+#: files). Against an offline ACTION or FLAT it is a KIND-ONLY match: the two
+#: sides agree that an outcome was emitted and the live side cannot say which
+#: of the two it was. Counted apart from the exact matches, because "agreed"
+#: and "agreed as far as the record goes" are different findings, and folding
+#: the second into the first is how a half-measurement becomes a claim.
+LIVE_PROPOSAL_KIND = "PROPOSAL"
+
+#: The offline kinds :data:`LIVE_PROPOSAL_KIND` can be a kind-only match for.
+#: NOT ``NO_ACTION``: a live proposal against an offline no-action is a real
+#: disagreement about whether to act at all.
+PROPOSAL_COMPATIBLE_OFFLINE_KINDS = (TOS_ACTION, TOS_FLAT)
+
 
 @dataclass(frozen=True)
 class ConsumedIdFilter:
@@ -2118,6 +2147,7 @@ def compare_live(
             "artifacts are not about the same bars"
         )
     divergences: list[dict[str, Any]] = []
+    kind_only: list[dict[str, Any]] = []
     for bar in bars:
         record = by_id[bar.raw_event_id]
         offline = {
@@ -2125,6 +2155,22 @@ def compare_live(
             "capacity_denied": bar.tos_capacity_denied,
         }
         live_side = {key: record[key] for key in LIVE_COMPARED_FIELDS}
+        proposal_pair = (
+            live_side["outcome_kind"] == LIVE_PROPOSAL_KIND
+            and offline["outcome_kind"] in PROPOSAL_COMPATIBLE_OFFLINE_KINDS
+        )
+        if proposal_pair:
+            # The kinds agree as far as the live record can say; the capacity
+            # denial is still compared exactly, because that one IS recorded
+            # on both sides.
+            if offline["capacity_denied"] == live_side["capacity_denied"]:
+                kind_only.append(
+                    {
+                        "raw_event_id": bar.raw_event_id,
+                        "offline_outcome_kind": offline["outcome_kind"],
+                    }
+                )
+                continue
         if offline != live_side:
             divergences.append(
                 {
@@ -2135,11 +2181,23 @@ def compare_live(
             )
     block = {
         "compared_bars": len(bars),
-        "identical": len(bars) - len(divergences),
+        "identical": len(bars) - len(divergences) - len(kind_only),
+        "kind_only_matches": len(kind_only),
         "divergent": len(divergences),
         "divergences": divergences[:LIVE_DIVERGENCE_LIST_CAP],
         "divergences_truncated": len(divergences) > LIVE_DIVERGENCE_LIST_CAP,
+        "kind_only_match_bars": kind_only[:LIVE_DIVERGENCE_LIST_CAP],
+        "kind_only_matches_truncated": len(kind_only) > LIVE_DIVERGENCE_LIST_CAP,
         "compared_fields": list(LIVE_COMPARED_FIELDS),
+        "kind_only_note": (
+            f"a live {LIVE_PROPOSAL_KIND} against an offline "
+            f"{' or '.join(PROPOSAL_COMPATIBLE_OFFLINE_KINDS)} agrees that an "
+            "outcome was emitted; which of the two it was is not in any "
+            "durable record, so these bars are counted apart from the exact "
+            "matches rather than folded into them. A live "
+            f"{LIVE_PROPOSAL_KIND} against an offline {TOS_NO_ACTION} is a "
+            "divergence, not a kind-only match"
+        ),
         "not_compared": (
             "rule_id (B1b resolves it from the emitted outcome's rationale, "
             "which the durable evidence record does not carry) and as_of_ms "
@@ -2155,6 +2213,7 @@ def compare_live(
             "reported in summary.json, not refused",
             compared=len(bars),
             divergent=len(divergences),
+            kind_only_matches=len(kind_only),
         ),
     )
 
