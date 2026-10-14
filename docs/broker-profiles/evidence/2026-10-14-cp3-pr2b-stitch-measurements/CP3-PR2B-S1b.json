@@ -1,0 +1,65 @@
+{
+  "measurement": "S1b — previous-month ATR substitution in the causal vol window",
+  "plan": "docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md §3.2a S1b",
+  "splice_day": "2026-10-08",
+  "frame_a_stitched": "A05610 ['2026-10-02', '2026-10-06', '2026-10-07', '2026-10-08'] + A05611 ['2026-10-12', '2026-10-13']",
+  "frame_b_substituted": "A05610 ['2026-10-02', '2026-10-06', '2026-10-07'] + A05611 ['2026-10-08', '2026-10-12', '2026-10-13']",
+  "compare_days": [
+    "2026-10-12",
+    "2026-10-13"
+  ],
+  "per_day": {
+    "2026-10-12": {
+      "bars_compared": 411,
+      "in_entry_window": 331,
+      "hi_vol_differs": 1,
+      "first_difference_kst": "09:47",
+      "last_difference_kst": "09:47",
+      "hi_vol_true_stitched": 115,
+      "hi_vol_true_substituted": 114
+    },
+    "2026-10-13": {
+      "bars_compared": 411,
+      "in_entry_window": 331,
+      "hi_vol_differs": 0,
+      "first_difference_kst": null,
+      "last_difference_kst": null,
+      "hi_vol_true_stitched": 104,
+      "hi_vol_true_substituted": 104
+    }
+  },
+  "bars_compared_total": 822,
+  "hi_vol_differences_total": 1,
+  "in_entry_window_total": 662,
+  "c_independence_check": {
+    "stitched": {
+      "in_window_bars": 662,
+      "hi_vol_differences_by_c_x100": {
+        "0": 0,
+        "226": 0,
+        "344": 0,
+        "462": 0,
+        "1000": 0
+      }
+    },
+    "substituted": {
+      "in_window_bars": 662,
+      "hi_vol_differences_by_c_x100": {
+        "0": 0,
+        "226": 0,
+        "344": 0,
+        "462": 0,
+        "1000": 0
+      }
+    }
+  },
+  "c_values_checked_x100": [
+    0,
+    226,
+    344,
+    462,
+    1000
+  ],
+  "day_not_measured": "2026-10-14",
+  "day_not_measured_reason": "the 2026-10-14 session was still open at measurement time (10:18 KST; the futures CONTINUOUS window ends 15:45), and a growing day cannot be parsed as a completed session"
+}

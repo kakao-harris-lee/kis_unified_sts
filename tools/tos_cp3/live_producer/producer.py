@@ -22,7 +22,6 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +55,6 @@ from tools.tos_cp3.live_producer.frame import (  # noqa: E402
     Seed,
     build_seed,
     freeze_step,
-    same_contract_seed,
 )
 from tools.tos_cp3.live_producer.session_log import (  # noqa: E402
     STAGE_ALREADY_FROZEN,
@@ -71,6 +69,7 @@ from tools.tos_cp3.live_producer.sinks import (  # noqa: E402
     refuse_if_journal_exists,
     refuse_if_partitions_exist,
 )
+from tools.tos_cp3.live_producer.stitch_seed import StitchedSeed  # noqa: E402
 from tools.tos_cp3.minute_probe import frame as bars_to_frame  # noqa: E402
 from tools.tos_cp3.produce_fields import (  # noqa: E402
     ContractSpecRegistry,
@@ -84,6 +83,12 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     resolve_open_anchor,
 )
 from tools.tos_cp3.quote_client import KST, QUOTE_PATH, TR, Quotes  # noqa: E402
+from tools.tos_cp3.stitch import (  # noqa: E402
+    STITCH_FILENAME,
+    StitchManifest,
+    rows_digest,
+    write_manifest,
+)
 
 #: The allowlist prefix added to ``bootproof_guard`` in this PR, and the full
 #: ``source_id`` every line carries. The delimiter rule there means the prefix
@@ -188,10 +193,15 @@ class LiveProducer:
     anchor: OpenAnchor = field(init=False)
     contract_spec: Any = field(init=False)
     seed: Seed = field(init=False)
+    assembler: StitchedSeed = field(init=False)
+    manifest: StitchManifest = field(init=False)
     quotes: Any = field(init=False)
     journal: ObservationJournal = field(init=False)
     log: EventLog = field(init=False)
     lock: Any = field(init=False, default=None)
+    #: ``"<contract>:<day>" -> sha256`` of the raw response the day was parsed
+    #: from. Becomes the manifest's ``source_sha256``.
+    raw_digests: dict[str, str] = field(default_factory=dict)
     frozen: list[Bar] = field(default_factory=list)
     counters: Counters = field(default_factory=Counters)
     consecutive_produce_errors: int = 0
@@ -257,6 +267,12 @@ class LiveProducer:
         )
         self.quotes = self.quotes_factory(self.config, self.log)
 
+        self.assembler = StitchedSeed(
+            instrument=self.instrument,
+            target=self.target,
+            product=self.config.front_month_product,
+            fetch_day=self._fetch_day,
+        )
         self.seed = build_seed(
             target=self.target,
             calendar=self.calendar,
@@ -264,20 +280,70 @@ class LiveProducer:
             anchor=self.anchor,
             min_bars_per_day=self.config.min_bars_per_day,
             max_calendar_days=self.config.max_seed_calendar_days,
-            fetch_day=lambda day, contract: self.quotes.history(contract, day),
-            # The ONE seam plan §3.2a's cross-contract stitching (a later PR,
-            # out of scope here) replaces. Same-contract seed, per plan §3.2.
-            assembler=partial(same_contract_seed, instrument=self.instrument),
+            fetch_day=self._fetch_day,
+            # The ONE seam (plan §3.2 :data:`SeedAssembler`). PR-2 passed
+            # ``same_contract_seed`` here and measured the post-roll blackout
+            # that follows; PR-2b passes the cross-contract assembler and
+            # nothing else in this file's seed path changed.
+            assembler=self.assembler,
         )
         self._assert_one_anchor()
-        append_bar_part(
-            self.market_root,
-            asset_class=ASSET_CLASS,
-            symbol=self.instrument,
-            bars=self.seed.bars,
-        )
+        self._store_unadjusted_seed()
+        self.manifest = self._write_manifest()
         self.log.event({"stage": "seed", **self._seed_lineage()})
         self._boot_today()
+
+    def _fetch_day(self, day: date, contract: str) -> list[dict]:
+        """One day's raw rows, fingerprinted for the manifest as they arrive.
+
+        ``source_sha256`` is what lets a reader ask "were these partitions
+        built from the responses the manifest claims?" — the responses
+        themselves are far too large to commit (PR-1's single session was
+        14 MB), so the digest travels instead of the bytes.
+        """
+        rows = self.quotes.history(contract, day)
+        self.raw_digests[f"{contract}:{day.isoformat()}"] = rows_digest(rows)
+        return rows
+
+    def _store_unadjusted_seed(self) -> None:
+        """Write every seed day under ITS OWN contract's partition, unadjusted.
+
+        Plan §3.2a 「라벨은 진실하게」: the previous month's bars are stored as
+        the previous month's, and the splice day's new-contract bars under the
+        new month's — the evidence ``c_x100`` is recomputed from. The
+        back-adjust is applied on READ (``load_window(stitch_manifest=…)``),
+        never on write, because the legacy A05611 Parquet's date-label defect
+        (plan §6.1) is exactly what happens when one instrument's values are
+        stored under another's name.
+        """
+        for entry in self.seed.kept:
+            append_bar_part(
+                self.market_root,
+                asset_class=ASSET_CLASS,
+                symbol=entry.contract,
+                bars=entry.bars,
+            )
+        if self.assembler.junction_new_bars:
+            append_bar_part(
+                self.market_root,
+                asset_class=ASSET_CLASS,
+                symbol=self.instrument,
+                bars=self.assembler.junction_new_bars,
+            )
+
+    def _write_manifest(self) -> StitchManifest:
+        """``<session dir>/market/stitch.json`` — written on EVERY session.
+
+        Also with zero junctions (plan §9 MEDIUM-1). B1a and B2 refuse a data
+        root that holds this file when they were not given it, and that
+        refusal protects nothing if a same-contract session leaves the file
+        out: the one run where the operator forgot the flag would be the one
+        run where there was nothing to forget.
+        """
+        manifest = self.assembler.manifest(
+            self.seed.kept, source_sha256=dict(self.raw_digests)
+        )
+        return write_manifest(self.market_root / STITCH_FILENAME, manifest)
 
     @property
     def market_root(self) -> Path:
@@ -339,6 +405,17 @@ class LiveProducer:
             "parser_env": dict(self.config.parser_env),
             "config_sha256": self.config.sha256,
             "source_id": SOURCE_ID,
+            # Plan §3.2a. ``junctions`` is [] on a session with no splice and
+            # the manifest is still written and still digested — B1a and B2
+            # read it either way.
+            "front_month_product": self.config.front_month_product,
+            "stitch_manifest": str(self.market_root / STITCH_FILENAME),
+            "stitch_manifest_sha256": self.manifest.sha256,
+            "stitch_segments": [s.to_payload() for s in self.manifest.segments],
+            "stitch_junctions": [j.to_payload() for j in self.manifest.junctions],
+            "junction_new_contract_bars_stored_not_framed": len(
+                self.assembler.junction_new_bars
+            ),
         }
 
     def _boot_today(self) -> None:
@@ -782,6 +859,7 @@ class LiveProducer:
     def finish(self) -> dict[str, Any]:
         """Fingerprint the frozen frame and report. Always runs."""
         digest = market_digest(self.market_root) if self.market_root.is_dir() else {}
+        manifest = getattr(self, "manifest", None)
         summary = {
             "stage": "finish",
             "instrument": self.instrument,
@@ -790,6 +868,8 @@ class LiveProducer:
             "frozen_bars_today": len(self.frozen),
             "counters": self.counters.as_dict(),
             "market_sha256": digest,
+            # What B1a and B2 must be given to reproduce this session's frame.
+            "stitch_manifest_sha256": manifest.sha256 if manifest else None,
         }
         (self.market_root / "sha256.json").parent.mkdir(parents=True, exist_ok=True)
         (self.market_root / "sha256.json").write_text(

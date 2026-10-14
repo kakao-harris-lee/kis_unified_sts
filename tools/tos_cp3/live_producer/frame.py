@@ -180,9 +180,11 @@ class SeedDay:
 #: ``(day, kept) -> (contract code to request for `day`, frame built from
 #: `kept`)``. ONE seam, deliberately: day→contract selection and frame assembly
 #: are the two things a stitched seed changes, so they live in a single
-#: replaceable function. Plan §3.2a 「월물 교차 시드」 (cross-contract stitching) is
-#: a later PR and is OUT OF SCOPE here — :func:`build_seed` below never names a
-#: contract itself, so that PR replaces this callable and nothing else.
+#: replaceable function. Plan §3.2a 「월물 교차 시드」 (cross-contract stitching)
+#: landed in PR-2b and did exactly that: it supplies
+#: :class:`~tools.tos_cp3.live_producer.stitch_seed.StitchedSeed` here and
+#: changes nothing else in this module's walk. :func:`build_seed` below still
+#: never names a contract itself.
 SeedAssembler = Callable[[date, Sequence["SeedDay"]], tuple[str, Any]]
 
 
@@ -202,6 +204,28 @@ def same_contract_seed(
     return instrument, bars_to_frame([bar for entry in ordered for bar in entry.bars])
 
 
+def assembled_bars(frame: Any) -> tuple[Bar, ...]:
+    """The assembler's frame back in ``parse_ohlcv`` tuple shape.
+
+    One direction of travel: bars -> frame (the assembler) -> bars (here). The
+    alternative, re-concatenating ``SeedDay.bars``, silently drops whatever the
+    assembler did to them, which for a cross-contract seed is the whole
+    alignment.
+    """
+    return tuple(
+        (
+            row[0],
+            row[1].to_pydatetime(),
+            float(row[2]),
+            float(row[3]),
+            float(row[4]),
+            float(row[5]),
+            int(row[6]),
+        )
+        for row in frame.itertuples(index=False, name=None)
+    )
+
+
 @dataclass(frozen=True)
 class Seed:
     """The seed frame plus the lineage of how it was assembled."""
@@ -214,6 +238,11 @@ class Seed:
     capacity: int
     required: int
     min_bars_per_day: int
+    #: The kept days with the contract each was requested on and its UNADJUSTED
+    #: bars. ``bars`` above is the assembled (possibly back-adjusted) frame; a
+    #: caller that must store what the broker actually returned — which plan
+    #: §3.2a 「라벨은 진실하게」 requires — reads these instead.
+    kept: tuple[SeedDay, ...] = ()
 
 
 def build_seed(
@@ -292,15 +321,10 @@ def build_seed(
         _next_contract, frame = assembler(day, kept)
         capacity = seed_capacity(frame, strategy, anchor)
         if capacity >= required:
-            ordered = sorted(kept, key=lambda entry: entry.day)
-            return Seed(
+            return _filled_seed(
                 frame=frame,
-                bars=tuple(bar for entry in ordered for bar in entry.bars),
-                sessions=tuple(sessions),
-                days_used=tuple(entry.day for entry in ordered),
-                contracts_used=tuple(
-                    dict.fromkeys(entry.contract for entry in ordered)
-                ),
+                kept=kept,
+                sessions=sessions,
                 capacity=capacity,
                 required=required,
                 min_bars_per_day=min_bars_per_day,
@@ -311,6 +335,35 @@ def build_seed(
         sessions=tuple(sessions),
         required=required,
         min_bars_per_day=min_bars_per_day,
+    )
+
+
+def _filled_seed(
+    *,
+    frame: Any,
+    kept: Sequence[SeedDay],
+    sessions: Sequence[SeedSession],
+    capacity: int,
+    required: int,
+    min_bars_per_day: int,
+) -> Seed:
+    """Pack the walk's result. Separate so :func:`build_seed` stays in budget."""
+    ordered = sorted(kept, key=lambda entry: entry.day)
+    return Seed(
+        frame=frame,
+        # Read BACK off the assembled frame, not re-concatenated from ``kept``:
+        # a cross-contract assembler (plan §3.2a) back-adjusts the previous
+        # month, and the two would then disagree — the frame B1a reconstructs
+        # would be aligned while the one the producer feeds ``produce_bars``
+        # every minute would not.
+        bars=assembled_bars(frame),
+        sessions=tuple(sessions),
+        days_used=tuple(entry.day for entry in ordered),
+        contracts_used=tuple(dict.fromkeys(entry.contract for entry in ordered)),
+        capacity=capacity,
+        required=required,
+        min_bars_per_day=min_bars_per_day,
+        kept=tuple(ordered),
     )
 
 
@@ -341,9 +394,11 @@ def _unfilled_seed_refusal(
         f"causal vol window needs {required} in-entry-window bars. Refusing to "
         "start: a short seed makes hi_vol's percentile differ from B1a's, so "
         "the real-time and offline lines for the same bar would not match "
-        "(plan §3.2). The post-roll blackout this produces is INTENDED "
-        "behaviour, not a defect — its disposition is plan §3.2a's "
-        "cross-contract stitching (#897, PR-2b). ⚠ A day the calendar calls a "
+        "(plan §3.2). With the SAME-contract assembler the post-roll blackout "
+        "this produces is INTENDED behaviour, not a defect; its disposition — "
+        "plan §3.2a's cross-contract stitching — shipped in PR-2b, so reaching "
+        "this message with the stitched assembler means the window could not "
+        "be filled even ACROSS the roll. ⚠ A day the calendar calls a "
         "trading day that returned NO rows may be a holiday the calendar is "
         "missing; that is why it is counted separately above"
     )

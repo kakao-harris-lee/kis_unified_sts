@@ -49,6 +49,14 @@ Modules:
   missing two 2026 substitute holidays).
 * :mod:`~tools.tos_cp3.live_producer.frame` — bar completion on RAW rows, the
   frozen frame, and the window-filled seed.
+* :mod:`~tools.tos_cp3.live_producer.stitch_seed` — the cross-contract seed
+  (plan §3.2a, PR-2b): each walked day is requested on ITS OWN front month and
+  the previous month is joined by a Panama difference back-adjust, so the
+  post-roll blackout plan §6.2 measured (0 / 780 capacity on 2026-10-12) does
+  not stop the producer. The manifest it writes is
+  :mod:`tools.tos_cp3.stitch`, and the alignment is applied on READ by
+  ``produce_fields.load_window(stitch_manifest=…)`` — the one function B1a and
+  B2 read through as well.
 * :mod:`~tools.tos_cp3.live_producer.session_log` — what the session records
   about itself: the append-only JSONL process log (one event per bar
   disposition, each carrying the bar's ``raw_event_id`` so §3.6's reason map
