@@ -1449,14 +1449,29 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   두 계수에서 뺀다**(구조상 소비되지 않는다) — 그 수는 러너 로그의
   `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있고, 그 스냅샷은 **부팅 직전에**
   다시 찍힌다(가드·렌더 동안 발행된 봉도 부팅 전 줄이다).
-  - 「**STALE 로 소비된 줄**」은 이제 추출기가 센다:
-    `consumed-ids.json` 의 `consumed_value_view.counts` 가 소비된 틱을
-    `no_view`(리졸버가 뷰를 못 냄) · `empty_view`(결속은 됐고 **허용된 값이 0**) ·
-    `values_admitted` 로 가른다. `max_age_ms` 800 에서 `empty_view` 가 STALE 의 모양이고
-    (§7.2-c 의 구조적 논증), 저장소가 적는 말은 「허용된 값이 없다」이지 「stale」이
-    아니므로 키 이름도 그렇게 돼 있다. **M5 의 첫 수 = `empty_view` + `no_view`**,
-    그 읽기를 함께 적는다. 나머지(`values_admitted`)의 id 는 같은 블록에 나열된다 —
-    genesis 에서는 0 건일 것으로 보는 쪽이고, 0 이 아니면 그것이 소견이다.
+  - 「**STALE 로 소비된 줄**」은 이제 추출기가 **저장소가 적은 낱말 그대로** 센다:
+    `consumed-ids.json` 의 `consumed_field_states` 가 소비된 id 마다
+    `marketfeed.snapshots.snapshot_json` 의 `field_evaluations[*].state` 를 읽는다.
+    **M5 의 첫 수 = `m5_post_boot_consumed_ids_with_a_stale_field_evaluation`** —
+    「STALE 인 필드 평가를 하나라도 가진 **부팅 후** 소비 id 의 수」(id 당 1 회).
+    부팅 전 줄은 `pre_boot_…` 키로 따로 세고 그 수에서 뺀다(계획 §5 M5 가 두 계수
+    모두에서 빼는 것과 같다). STALE 이 아닌 비-VALID 상태(UNKNOWN·CONFLICTED·INVALID)는
+    `other_field_evaluation_states` 에 **상태 이름별로** 따로 나오고 M5 수에 합치지
+    않는다 — 서로 다른 결함이고 M5 가 묻는 것은 STALE 하나다. 관측 쪽 상태
+    (`observations[*].field_state`)도 `observation_field_states_not_valid` 로 따로
+    나온다. 커널의 VALID 게이트(`tos.marketfeed.value.value_field_state`)가 둘 중
+    **나쁜 쪽**을 취하므로 한쪽이 다른 쪽을 대신할 수 없다.
+  - ⚠ **`consumed_value_view` 는 M5 의 수가 아니다.** 그 블록은 리졸버가 무엇을
+    했는지를 적는다(`no_view` · `empty_view` · `values_admitted`). `_admit_one`
+    (`tos/src/tos/marketfeed/value.py`)은 값 후보를 **열 가지** 사유로 떨어뜨리고,
+    그중 상태에 관한 하나(`FIELD_STATE_NOT_VALID`)마저 STALE 과 UNKNOWN·CONFLICTED·
+    INVALID 를 **같이** 접는다. 「`empty_view` + `no_view` 가 M5 의 첫 수」라고 적었던
+    이 문서의 이전 판(그리고 추출기 docstring)은 **너무 넓고 방향이 거꾸로였다** —
+    그 읽기는 ③ 이 **없던** §7.2-c 의 한 행짜리 합성 저널 논증이다(2026-10-14 정정).
+  - **genesis 에서의 기대**: ③ 이 **있고** M6(교체 지연)가 `max_age_ms` 800 에 대해
+    0.300 s 미만이면, **부팅 후 줄은 값이 허용된 채 소비되는 것이 정상**이다. 즉
+    `m5_…_stale_field_evaluation` 이 0 이고 `values_admitted` 가 소비 수에 가까운
+    것이 통과한 모양이며, `empty_view` 가 세션 전체인 쪽이 **소견**이다.
   - 「**소비되지 않은 줄**」은 `unpaired_reason_counts` 의 `published_not_consumed` 다
     (`pre_boot` 와 생산자 사유들은 그 수에서 빠진다).
 - **M6** — `producer-summary.json` 의 `max_stamp_to_replace_s` 가 0.300 미만인가.
@@ -1471,7 +1486,14 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   어디에도 없다 — 실측). 정확 일치와 **합치지 않는다**: 합친 수는 「같게 결정했다」로
   읽히는데 절반은 재지 않았다.
 - **`live.jsonl` 의 귀속** — `lineage.json` 의 `counts.attributed_by` 가
-  `capsule_id`(키 조인)와 `position`(키가 없는 withheld/coordinator 거부)의 수를 가른다.
+  `capsule_id`(결정이 자기 캡슐을 적은 경우)와 `evidence_seq_range`(캡슐을 적지 않는
+  withheld/coordinator 거부)의 수를 가른다. **위치로 귀속하는 경로는 없다**:
+  캡슐 없는 레코드는 그 증거 seq 를 품는 **유일한** 틱의 처리 구간
+  (인박스 `handling_started_evidence_seq` < seq ≤ `consumed_evidence_seq`, 드라이버가
+  각 이벤트 둘레에 쓰는 영수증 쌍)에 붙고, 둘 이상이거나 하나도 없으면 **거부**한다.
+  캡슐로 붙은 레코드도 같은 구간으로 **교차 확인**한다(2026-10-14 정정 — 그 전까지는
+  파일 순서의 「남은 다음 틱」이었고, 안 돈 틱 하나가 뒤의 모든 비-키 레코드를 **조용히**
+  옆 봉으로 밀었다).
   `counts.ticks_without_a_decision` 이 0 이 아니면 큐에만 들어가고 안 돈 틱이 있었다는
   뜻이다(거부가 아니라 보고 — 돌아간 결정들은 그대로 키로 귀속된다).
 - **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 는 조회

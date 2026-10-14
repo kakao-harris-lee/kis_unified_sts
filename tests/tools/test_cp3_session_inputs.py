@@ -64,14 +64,51 @@ def _create_store(path: Path, spec: dict[str, Any], *, user_version: int) -> Non
         conn.close()
 
 
+def _window(index: int) -> tuple[int, int]:
+    """Bar *index*'s durable handling window, as the driver would write it.
+
+    ``(EVENT_HANDLING_STARTED seq, EVENT_CONSUMED seq)``, 100 apart so each
+    bar has room for its own records and the windows cannot overlap by
+    accident. Bar 0 opens at ``0`` deliberately: a real driver's first receipt
+    IS seq 0 (measured —
+    ``tos/runtime/tests/operations/test_cp3_session_store_reads.py``'s driver
+    test), so any code that tests this stamp for truthiness instead of
+    ``is None`` drops bar 0's whole window.
+    """
+    return (100 * index, 100 * index + 99)
+
+
+def _seq(index: int, offset: int = 1) -> int:
+    """An evidence seq INSIDE bar *index*'s handling window."""
+    assert 1 <= offset <= 99, "an offset outside the window is another bar's seq"
+    return 100 * index + offset
+
+
+def _snapshot_json(hinge: dict[str, Any], name: str, *, snapshot_id: str) -> str:
+    """One committed snapshot's bytes, re-keyed to *snapshot_id*.
+
+    ``name`` is the FieldState shape (``valid`` / ``stale`` / ``unknown``) the
+    real :class:`SqliteSnapshotStore` wrote in the hinge. Only the id is
+    rewritten — the ``field_evaluations`` and ``observations`` the extractor
+    counts are the store's own.
+    """
+    document = json.loads(
+        hinge["payloads"]["marketfeed_snapshots"][name]["snapshot_json"]
+    )
+    document["snapshot_id"] = snapshot_id
+    return json.dumps(document, sort_keys=True, separators=(",", ":"))
+
+
 def _write_session(
     tmp_path: Path,
     hinge: dict[str, Any],
     *,
-    snapshots: list[tuple[str, str, int]],
+    snapshots: list[tuple[str, str, int]] | list[tuple[str, str, int, str]],
     preimages: list[tuple[str, str]],
     entries: list[tuple[int, str, str]] | None = None,
-    ticks: list[tuple[int, str]] | None = None,
+    ticks: (
+        list[tuple[int, str]] | list[tuple[int, str, int | None, int | None]] | None
+    ) = None,
     marketfeed_version: int | None = None,
     evidence_version: int | None = None,
     inbox_version: int | None = None,
@@ -84,6 +121,11 @@ def _write_session(
     extractor parses the bytes the real stores write (see
     :func:`_real_entry`), and a helper that rebuilt them from a dict would be
     testing the rebuild.
+
+    A ``snapshots`` row may omit ``snapshot_json`` and a ``ticks`` row the two
+    receipt stamps; the first then carries the committed all-VALID snapshot
+    and the second a window from :func:`_window`, so a test that is not about
+    field states or attribution does not have to spell them out.
     """
     data_dir = tmp_path / "data" / INSTRUMENT
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -100,8 +142,22 @@ def _write_session(
     )
     conn = sqlite3.connect(market)
     try:
-        conn.executemany("INSERT INTO snapshots VALUES (?, ?, ?)", snapshots)
-        conn.executemany("INSERT INTO preimages VALUES (?, ?)", preimages)
+        conn.executemany(
+            "INSERT INTO snapshots "
+            "(snapshot_id, instrument, as_of_ms, snapshot_json) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    row
+                    if len(row) == 4
+                    else (*row, _snapshot_json(hinge, "valid", snapshot_id=row[0]))
+                )
+                for row in snapshots
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO preimages (snapshot_id, raw_event_id) VALUES (?, ?)",
+            preimages,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -120,8 +176,18 @@ def _write_session(
         conn = sqlite3.connect(inbox)
         try:
             conn.executemany(
-                "INSERT INTO events VALUES (?, ?, ?)",
-                [(seq, "DECISION_TICK", payload) for seq, payload in (ticks or [])],
+                "INSERT INTO events (seq, kind, payload_json, "
+                "handling_started_evidence_seq, consumed_evidence_seq) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        row[0],
+                        "DECISION_TICK",
+                        row[1],
+                        *(row[2:] if len(row) == 4 else _window(index)),
+                    )
+                    for index, row in enumerate(ticks or [])
+                ],
             )
             conn.commit()
         finally:
@@ -211,15 +277,28 @@ class Bar:
     raw_event_id: str
     as_of_ms: int
     tick_payload: str
+    #: The committed snapshot bytes this bar's row carries, re-keyed to its
+    #: own id — the FieldStates M5 counts live in here.
+    snapshot_json: str
+    #: ``(handling_started_evidence_seq, consumed_evidence_seq)``: the durable
+    #: bracket a capsule-less decision record is attributed by. ``None`` for
+    #: either end is a real shape (never ran / never finished) and some tests
+    #: build one deliberately.
+    window: tuple[int | None, int | None]
 
 
-def _bars(hinge: dict[str, Any], count: int) -> list[Bar]:
+def _bars(
+    hinge: dict[str, Any], count: int, *, states: list[str] | None = None
+) -> list[Bar]:
     """``count`` bars whose ticks are the COMMITTED ones where there are any.
 
     The first two carry the real inbox bytes (capsule and snapshot ids
     included), so the keyed join is exercised against what the runtime writes;
     any further bar is that same event with its two ids replaced, which keeps
     the shape real even where the fixture runs out.
+
+    ``states`` names each bar's committed snapshot shape (``valid`` /
+    ``stale`` / ``unknown``); the default is all-``valid``.
     """
     bars: list[Bar] = []
     committed = len(hinge["payloads"]["inbox_events"])
@@ -240,6 +319,12 @@ def _bars(hinge: dict[str, Any], count: int) -> list[Bar]:
                 raw_event_id=_event_id(f"09{index:02d}"),
                 as_of_ms=1_760_000_000_000 + index * 60_000,
                 tick_payload=payload,
+                snapshot_json=_snapshot_json(
+                    hinge,
+                    "valid" if states is None else states[index],
+                    snapshot_id=snapshot_id,
+                ),
+                window=_window(index),
             )
         )
     return bars
@@ -257,12 +342,27 @@ def _session(
     return _write_session(
         tmp_path,
         hinge,
-        snapshots=[(bar.snapshot_id, INSTRUMENT, bar.as_of_ms) for bar in bars],
+        snapshots=_snapshot_rows(bars),
         preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
-        ticks=[(index + 1, bar.tick_payload) for index, bar in enumerate(bars)],
+        ticks=_tick_rows(bars),
         entries=entries,
         **kwargs,
     )
+
+
+def _snapshot_rows(bars: list[Bar]) -> list[tuple[str, str, int, str]]:
+    """The ``snapshots`` rows for *bars*, carrying each one's committed bytes."""
+    return [
+        (bar.snapshot_id, INSTRUMENT, bar.as_of_ms, bar.snapshot_json) for bar in bars
+    ]
+
+
+def _tick_rows(bars: list[Bar]) -> list[tuple[int, str, int | None, int | None]]:
+    """The ``events`` rows for *bars*, each with its own handling window."""
+    return [
+        (index + 1, bar.tick_payload, bar.window[0], bar.window[1])
+        for index, bar in enumerate(bars)
+    ]
 
 
 def _three_bar_session(tmp_path: Path, hinge: dict[str, Any], **kwargs: Any) -> Path:
@@ -531,10 +631,10 @@ def test_live_decisions_are_keyed_to_their_bar_by_capsule_id(
         hinge,
         bars,
         entries=[
-            (1, "ATTESTED_INPUTS", _entry({"ignored": True})),
-            (2, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
-            (3, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[1])),
-            (4, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
+            (_seq(0, 1), "ATTESTED_INPUTS", _entry({"ignored": True})),
+            (_seq(0, 2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(1, 2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[1])),
+            (_seq(2, 2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
         ],
     )
     records = si.live_decision_records(data_dir)
@@ -602,10 +702,9 @@ def test_red_a_shifted_sequence_is_attributed_by_key_not_by_position(
     Pairing by position hands bar 2's record to bar 3 and every later record
     moves with it — silently, because the counts still line up.
 
-    The keyed join reads each record's capsule: bar 1 and bar 3 get the
-    decisions that name them, and the record that names no bar at all is the
-    withheld one, which takes the only tick left (bar 2) and says
-    ``attributed_by: position`` about itself.
+    Both keys answer: bar 1 and bar 3 get the decisions that NAME them, and
+    the withheld record — which names no capsule — lands in the one handling
+    window that contains its evidence seq, bar 2's.
     """
     bars = _bars(hinge, 3)
     data_dir = _session(
@@ -613,9 +712,9 @@ def test_red_a_shifted_sequence_is_attributed_by_key_not_by_position(
         hinge,
         bars,
         entries=[
-            (1, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
-            (2, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
-            (3, "DECISION_WITHHELD", _withheld(hinge)),
+            (_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
+            (_seq(1), "DECISION_WITHHELD", _withheld(hinge)),
         ],
     )
     records = si.live_decision_records(data_dir)
@@ -624,10 +723,165 @@ def test_red_a_shifted_sequence_is_attributed_by_key_not_by_position(
     # 1 and 2
     assert attributed[bars[0].raw_event_id]["attributed_by"] == "capsule_id"
     assert attributed[bars[2].raw_event_id]["attributed_by"] == "capsule_id"
-    assert attributed[bars[2].raw_event_id]["evidence_seq"] == 2
-    # and the unkeyed one took the tick nobody claimed
-    assert attributed[bars[1].raw_event_id]["attributed_by"] == "position"
+    assert attributed[bars[2].raw_event_id]["evidence_seq"] == _seq(2)
+    # and the unkeyed one landed in the window that holds it
+    assert attributed[bars[1].raw_event_id]["attributed_by"] == "evidence_seq_range"
     assert attributed[bars[1].raw_event_id]["outcome_kind"] == si.NO_OUTCOME_KIND
+
+
+def test_red_an_unkeyed_decision_goes_to_the_window_that_holds_it_not_the_next_bar(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**MEDIUM R1's red proof — the reviewer's own sequence.**
+
+    Three ticks c1–c3 over bars 1–3. The runtime withheld on bar 1, DROPPED
+    tick 2 on recovery (it ran, wrote no decision), and withheld again on bar
+    3. Neither withheld record names a capsule, so the positional pairing took
+    "the next unclaimed tick in file order" and put bar 3's record on **bar
+    2** — with the counts still matching, no refusal, and B3 then comparing
+    the live decision of one bar against the offline decision of another.
+
+    The durable bracket cannot shift: B's evidence seq is inside c3's
+    ``(handling_started, consumed]`` window and no other, so it is c3's.
+    Bar 2 is left with no decision, which the lineage reports as
+    ``ticks_without_a_decision``.
+
+    Red on the positional cut: it asserts bar 2 carries B.
+    """
+    bars = _bars(hinge, 3)
+    data_dir = _session(
+        tmp_path,
+        hinge,
+        bars,
+        entries=[
+            (_seq(0), "DECISION_WITHHELD", _withheld(hinge, detail="A_FOR_BAR1")),
+            # tick 2 ran and was dropped on recovery: a real entry, not a
+            # decision kind, inside c2's own window
+            (
+                _seq(1),
+                "DECISION_TICK_DROPPED_ON_RECOVERY",
+                _entry({"detail": "dropped"}),
+            ),
+            (_seq(2), "DECISION_WITHHELD", _withheld(hinge, detail="B_FOR_BAR3")),
+        ],
+    )
+    records = si.live_decision_records(data_dir)
+    placed = {record["raw_event_id"]: record["evidence_seq"] for record in records}
+    assert placed == {bars[0].raw_event_id: _seq(0), bars[2].raw_event_id: _seq(2)}
+    assert bars[1].raw_event_id not in placed
+    assert [record["attributed_by"] for record in records] == ["evidence_seq_range"] * 2
+    lineage = si.build_live_lineage(
+        data_dir=data_dir,
+        records=records,
+        payload=si.render_jsonl(records),
+        ticks=len(si.read_decision_ticks(data_dir)),
+    )
+    assert lineage["counts"]["ticks_without_a_decision"] == 1
+
+
+def test_red_a_tick_queued_and_never_run_takes_no_record(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**MEDIUM R1, the other shape: the held tick that never started.**
+
+    Concrete input: tick 2 is admitted and never handled — both receipt
+    stamps NULL, which is exactly what a tick still in the queue at shutdown
+    looks like. Positionally it is "the next unclaimed tick", so the withheld
+    record written while bar 3 was handled landed on it. A row that never
+    started handling brackets nothing, so it takes nothing, and the record
+    goes where its seq says.
+    """
+    bars = _bars(hinge, 3)
+    held = bars[1]
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=_snapshot_rows(bars),
+        preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
+        ticks=[
+            (1, bars[0].tick_payload, *bars[0].window),
+            (2, held.tick_payload, None, None),
+            (3, bars[2].tick_payload, *bars[2].window),
+        ],
+        entries=[
+            (_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(2), "DECISION_WITHHELD", _withheld(hinge)),
+        ],
+    )
+    records = si.live_decision_records(data_dir)
+    assert [record["raw_event_id"] for record in records] == [
+        bars[0].raw_event_id,
+        bars[2].raw_event_id,
+    ]
+    assert records[1]["attributed_by"] == "evidence_seq_range"
+
+
+def test_red_a_keyed_record_outside_its_own_ticks_window_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard (MEDIUM R1's cross-check).**
+
+    Concrete input: a decision that NAMES bar 1's capsule but whose evidence
+    seq falls inside bar 2's handling window — the shape a replayed record, a
+    copied store or a mis-stamped row produces. The two durable keys then
+    disagree about which event wrote the record, and preferring either one
+    (the capsule, as the second cut did, or the window) would be a choice
+    recorded as a fact.
+    """
+    bars = _bars(hinge, 2)
+    data_dir = _session(
+        tmp_path,
+        hinge,
+        bars,
+        entries=[(_seq(1), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0]))],
+    )
+    with pytest.raises(si.SessionInputsError, match="outside it"):
+        si.live_decision_records(data_dir)
+
+
+def test_red_a_keyed_record_whose_tick_never_started_handling_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard.** Concrete input: a decision naming a capsule whose inbox row
+    has a NULL ``handling_started_evidence_seq``. The driver writes that stamp
+    before the handler can write any decision record, so the two cannot both
+    be true — and without a window there is nothing to cross-check the key
+    against, which is where a silent mis-attribution would re-enter."""
+    bars = _bars(hinge, 1)
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=_snapshot_rows(bars),
+        preimages=[(bars[0].snapshot_id, bars[0].raw_event_id)],
+        ticks=[(1, bars[0].tick_payload, None, None)],
+        entries=[(_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0]))],
+    )
+    with pytest.raises(si.SessionInputsError, match="is NULL"):
+        si.live_decision_records(data_dir)
+
+
+def test_red_an_unkeyed_record_in_two_windows_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard.** Concrete input: bar 1's row was never marked consumed (a
+    crash inside handling), so its window has no upper end and bar 2's lies
+    inside it. A capsule-less record after that point belongs to either, and
+    picking the narrower — or the later — would be this module deciding what
+    the receipts do not say."""
+    bars = _bars(hinge, 2)
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=_snapshot_rows(bars),
+        preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
+        ticks=[
+            (1, bars[0].tick_payload, bars[0].window[0], None),
+            (2, bars[1].tick_payload, *bars[1].window),
+        ],
+        entries=[(_seq(1), "DECISION_WITHHELD", _withheld(hinge))],
+    )
+    with pytest.raises(si.SessionInputsError, match="2 handling windows"):
+        si.live_decision_records(data_dir)
 
 
 def test_red_a_decision_naming_a_capsule_the_inbox_never_admitted_is_refused(
@@ -682,24 +936,44 @@ def test_red_two_decisions_on_one_tick_are_refused(
         si.live_decision_records(data_dir)
 
 
-def test_red_an_unkeyed_decision_with_no_tick_left_is_refused(
+def test_red_an_unkeyed_decision_in_no_window_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: more withheld records than admitted ticks.
-    They name no capsule, so there is nothing to key on, and the positional
-    fallback has run out of bars — attributing one anyway would be inventing
-    the attribution this join exists to avoid."""
+    """**Guard.** Concrete input: a withheld record whose evidence seq is
+    after every admitted tick's window closed — a record from a run whose
+    inbox rows are not these, or a store pair that was mixed. It names no
+    capsule, so there is nothing to key on either, and handing it the last
+    bar (what "the next unclaimed tick" amounts to once the list runs out)
+    would be inventing the attribution this join exists to avoid."""
     bars = _bars(hinge, 1)
     data_dir = _session(
         tmp_path,
         hinge,
         bars,
+        entries=[(_seq(5), "DECISION_WITHHELD", _withheld(hinge))],
+    )
+    with pytest.raises(si.SessionInputsError, match="lies in NO admitted tick"):
+        si.live_decision_records(data_dir)
+
+
+def test_red_two_unkeyed_decisions_in_one_window_are_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard.** Concrete input: two withheld records inside ONE tick's
+    handling window. Exactly one decision terminates one pass, so a second is
+    a replay or a re-run; keeping either silently would report one bar's
+    outcome as the other's."""
+    bars = _bars(hinge, 2)
+    data_dir = _session(
+        tmp_path,
+        hinge,
+        bars,
         entries=[
-            (1, "DECISION_WITHHELD", _withheld(hinge)),
-            (2, "DECISION_WITHHELD", _withheld(hinge)),
+            (_seq(0, 1), "DECISION_WITHHELD", _withheld(hinge)),
+            (_seq(0, 2), "DECISION_WITHHELD", _withheld(hinge)),
         ],
     )
-    with pytest.raises(si.SessionInputsError, match="no capsule id and every"):
+    with pytest.raises(si.SessionInputsError, match="one tick, two decisions"):
         si.live_decision_records(data_dir)
 
 
@@ -739,8 +1013,8 @@ def test_a_tick_without_a_decision_is_reported_not_refused(
         hinge,
         bars,
         entries=[
-            (1, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
-            (2, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
+            (_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
         ],
     )
     records = si.live_decision_records(data_dir)
@@ -769,11 +1043,15 @@ def test_capacity_denial_comes_from_the_flow_halt_in_the_same_block(
         hinge,
         bars,
         entries=[
-            (1, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
-            (2, "FLOW_HALTED", _flow_halted(hinge, si.CAPACITY_DENIAL_HALT_REASON)),
-            (3, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[1])),
-            (4, "FLOW_HALTED", _flow_halted(hinge, "SOMETHING_ELSE")),
-            (5, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
+            (_seq(0, 1), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (
+                _seq(0, 2),
+                "FLOW_HALTED",
+                _flow_halted(hinge, si.CAPACITY_DENIAL_HALT_REASON),
+            ),
+            (_seq(1, 1), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[1])),
+            (_seq(1, 2), "FLOW_HALTED", _flow_halted(hinge, "SOMETHING_ELSE")),
+            (_seq(2, 1), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[2])),
         ],
     )
     records = si.live_decision_records(data_dir)
@@ -798,9 +1076,13 @@ def test_red_a_flow_record_before_any_decision_is_refused(
         hinge,
         bars,
         entries=[
-            (1, "FLOW_HALTED", _flow_halted(hinge, si.CAPACITY_DENIAL_HALT_REASON)),
-            (2, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
-            (3, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[1])),
+            (
+                _seq(0, 1),
+                "FLOW_HALTED",
+                _flow_halted(hinge, si.CAPACITY_DENIAL_HALT_REASON),
+            ),
+            (_seq(0, 2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(1, 1), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[1])),
         ],
     )
     with pytest.raises(si.SessionInputsError) as excinfo:
@@ -825,9 +1107,9 @@ def test_a_proposal_is_named_proposal_not_guessed_and_not_refused(
         hinge,
         bars,
         entries=[
-            (1, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
             (
-                2,
+                _seq(1),
                 "DECISION_OUTCOME_EMITTED",
                 _emitted(hinge, bars[1], outcome_type="Proposal"),
             ),
@@ -857,7 +1139,7 @@ def test_red_an_emitted_record_without_an_outcome_type_is_refused(
         tmp_path,
         hinge,
         bars,
-        entries=[(1, "DECISION_OUTCOME_EMITTED", _entry(record))],
+        entries=[(_seq(0), "DECISION_OUTCOME_EMITTED", _entry(record))],
     )
     with pytest.raises(si.SessionInputsError, match="no outcome_type"):
         si.live_decision_records(data_dir)
@@ -879,13 +1161,17 @@ def test_a_tick_that_emitted_no_outcome_keeps_b1bs_own_token(
         hinge,
         bars,
         entries=[
-            (1, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
+            (_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0])),
             (
-                2,
+                _seq(1),
                 "DECISION_WITHHELD",
                 _withheld(hinge, halt_reason="VECTOR_OUTCOME_UNSUPPORTED"),
             ),
-            (3, "COORDINATOR_PRECONDITION_REFUSED", _entry({"halt_reason": "GATE"})),
+            (
+                _seq(2),
+                "COORDINATOR_PRECONDITION_REFUSED",
+                _entry({"halt_reason": "GATE"}),
+            ),
         ],
     )
     records = si.live_decision_records(data_dir)
@@ -897,8 +1183,8 @@ def test_a_tick_that_emitted_no_outcome_keeps_b1bs_own_token(
     assert records[1]["pipeline_halt_reason"] == "VECTOR_OUTCOME_UNSUPPORTED"
     assert [record["attributed_by"] for record in records] == [
         "capsule_id",
-        "position",
-        "position",
+        "evidence_seq_range",
+        "evidence_seq_range",
     ]
 
 
@@ -960,7 +1246,7 @@ def test_cli_writes_both_inputs(tmp_path: Path, hinge: dict[str, Any]) -> None:
         hinge,
         bars,
         entries=[
-            (index + 1, "DECISION_OUTCOME_EMITTED", _emitted(hinge, bar))
+            (_seq(index), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bar))
             for index, bar in enumerate(bars)
         ],
     )
@@ -1080,33 +1366,35 @@ def _tick_with_view(hinge: dict[str, Any], bar: Bar, *, values: list[Any]) -> st
     return json.dumps(event, sort_keys=True, separators=(",", ":"))
 
 
-def test_m5s_stale_consumed_count_comes_from_the_value_view(
+def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Claude-lane LOW L3.** The count plan §5 M5 asks for, derived.
+    """**Claude-lane LOW L3, corrected by MEDIUM R2.**
 
-    "Lines consumed STALE" is answerable from the durable side: every admitted
-    tick carries the resolver's ``value_view``, which is absent (no view
-    published), explicitly empty (resolved, nothing admissible — the shape a
-    stale line produces at ``max_age_ms`` 800) or populated.
-
-    Three bars, one of each, so the three counts are distinguished rather than
-    merely summed — and the ids LISTED are the ones with admitted values,
-    because at genesis the complement is expected to be every line and a list
-    of everything is not a finding.
+    The three shapes of the resolver's ``value_view`` are still reported —
+    they say what the resolver did — but the block no longer claims to be
+    M5's STALE count, and its note points at the one that is. An empty view
+    has ten possible reasons (``_admit_one``), only one of which is
+    state-shaped, and that one folds STALE in with UNKNOWN, CONFLICTED and
+    INVALID.
     """
     bars = _bars(hinge, 3)
     data_dir = _write_session(
         tmp_path,
         hinge,
-        snapshots=[(bar.snapshot_id, INSTRUMENT, bar.as_of_ms) for bar in bars],
+        snapshots=_snapshot_rows(bars),
         preimages=[(bar.snapshot_id, bar.raw_event_id) for bar in bars],
         ticks=[
-            (1, bars[0].tick_payload),  # value_view: null -> no_view
-            (2, _tick_with_view(hinge, bars[1], values=[])),  # -> empty_view
+            (1, bars[0].tick_payload, *bars[0].window),  # value_view: null
+            (
+                2,
+                _tick_with_view(hinge, bars[1], values=[]),
+                *bars[1].window,
+            ),  # -> empty_view
             (
                 3,
                 _tick_with_view(hinge, bars[2], values=[{"field_key": "close_x100"}]),
+                *bars[2].window,
             ),
         ],
     )
@@ -1114,6 +1402,184 @@ def test_m5s_stale_consumed_count_comes_from_the_value_view(
     view = document["consumed_value_view"]
     assert view["counts"] == {"no_view": 1, "empty_view": 1, "values_admitted": 1}
     assert view["raw_event_ids_with_admitted_values"] == [bars[2].raw_event_id]
-    # the note says what the store says, and what the reading adds
+    # the note says what the store says, and refuses the inference it used to
+    # make
     assert "nothing was admissible" in view["note"]
-    assert "max_age_ms 800" in view["note"]
+    assert "NOT the STALE count" in view["note"]
+    assert "m5_post_boot_consumed_ids_with_a_stale_field_evaluation" in view["note"]
+
+
+# ===========================================================================
+# M5's first count — STALE from the snapshot's own field states (MEDIUM R2)
+# ===========================================================================
+
+
+def _boot_snapshot(tmp_path: Path, ids: list[str]) -> Path:
+    path = tmp_path / "boot-journal-snapshot.json"
+    path.write_text(json.dumps({"pre_boot_raw_event_ids": ids}), encoding="utf-8")
+    return path
+
+
+def test_m5s_stale_count_is_the_snapshots_own_field_state(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**MEDIUM R2.** Plan §5 M5's first number, from the word the store writes.
+
+    Three consumed bars, each carrying a snapshot the REAL store wrote: one
+    all-VALID, one with a STALE field evaluation, one with an UNKNOWN
+    evaluation over a STALE observation. M5 counts the STALE one; the UNKNOWN
+    is reported by its own name; the observation-level STALE is reported on
+    its own surface, because ``value_field_state`` takes the worst of both and
+    neither stands for the other.
+    """
+    bars = _bars(hinge, 3, states=["valid", "stale", "unknown"])
+    data_dir = _session(tmp_path, hinge, bars)
+    document = si.build_consumed_ids_document(data_dir=data_dir)
+    states = document["consumed_field_states"]
+
+    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 1
+    assert states["post_boot_raw_event_ids_with_a_stale_field_evaluation"] == [
+        bars[1].raw_event_id
+    ]
+    assert states["counts"]["consumed_ids"] == 3
+    assert states["counts"]["pre_boot_consumed_ids"] == 0
+    assert states["counts"]["consumed_ids_without_field_evaluations"] == 0
+    # the other non-VALID states, by name, NOT summed into the STALE number
+    assert states["other_field_evaluation_states"] == {
+        "UNKNOWN": {"post_boot": 1, "pre_boot": 0}
+    }
+    assert states["observation_field_states_not_valid"] == {
+        "STALE": {"post_boot": 1, "pre_boot": 0}
+    }
+    assert "field_evaluations[*].state == 'STALE'" in states["definition"]
+
+
+def test_red_a_non_stale_rejection_is_not_counted_as_stale(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**MEDIUM R2's first red proof.**
+
+    Concrete input: every consumed bar carries an UNKNOWN field evaluation
+    and NO stale one. The resolver admits no value for any of them, so the
+    count this replaces (``empty_view + no_view``) would report three "lines
+    consumed STALE" — a defect the session did not have, on the acceptance
+    criterion that decides whether ③ worked. M5's number is 0 here, and the
+    three UNKNOWNs are visible under their own name.
+    """
+    bars = _bars(hinge, 3, states=["unknown", "unknown", "unknown"])
+    data_dir = _session(tmp_path, hinge, bars)
+    states = si.build_consumed_ids_document(data_dir=data_dir)["consumed_field_states"]
+    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 0
+    assert states["post_boot_raw_event_ids_with_a_stale_field_evaluation"] == []
+    assert states["other_field_evaluation_states"]["UNKNOWN"]["post_boot"] == 3
+
+
+def test_red_a_pre_boot_stale_line_is_not_in_the_post_boot_count(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**MEDIUM R2's second red proof.**
+
+    Concrete input: two consumed bars with STALE field evaluations, one of
+    them listed in the runner's boot-journal snapshot. Plan §5 M5 excludes
+    pre-boot lines from both of its counts — they are structurally
+    unconsumable-fresh — so counting it would report a defect the acceptance
+    criterion does not ask about, on every genesis session that consumed its
+    first journal line.
+    """
+    bars = _bars(hinge, 2, states=["stale", "stale"])
+    data_dir = _session(tmp_path, hinge, bars)
+    document = si.build_consumed_ids_document(
+        data_dir=data_dir,
+        boot_snapshot=_boot_snapshot(tmp_path, [bars[0].raw_event_id]),
+    )
+    states = document["consumed_field_states"]
+    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 1
+    assert states["post_boot_raw_event_ids_with_a_stale_field_evaluation"] == [
+        bars[1].raw_event_id
+    ]
+    assert states["pre_boot_raw_event_ids_with_a_stale_field_evaluation"] == [
+        bars[0].raw_event_id
+    ]
+    assert states["counts"]["pre_boot_consumed_ids"] == 1
+
+
+def test_red_a_field_evaluation_without_a_state_is_refused(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Guard.** Concrete input: a ``field_evaluations`` entry with no
+    ``state`` key — what a renamed field in ``FieldEvaluation`` would produce.
+    Read permissively it is "not STALE", so M5's number would silently drop to
+    0 on a session full of stale lines: the undercount the whole criterion
+    exists to catch."""
+    bars = _bars(hinge, 1, states=["stale"])
+    broken = json.loads(bars[0].snapshot_json)
+    broken["field_evaluations"][0].pop("state")
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=[
+            (bars[0].snapshot_id, INSTRUMENT, bars[0].as_of_ms, json.dumps(broken))
+        ],
+        preimages=[(bars[0].snapshot_id, bars[0].raw_event_id)],
+        ticks=_tick_rows(bars),
+    )
+    with pytest.raises(si.SessionInputsError, match="silent undercount"):
+        si.build_consumed_ids_document(data_dir=data_dir)
+
+
+def test_a_snapshot_with_no_field_evaluations_is_counted_not_read_as_valid(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """A snapshot that evaluated nothing is its own shape.
+
+    Not a refusal (it is a legal snapshot) and not VALID either — the kernel's
+    own gate floors an unevaluated field at UNKNOWN. It is counted, so a
+    session whose snapshots carry no evaluations reads as "M5 measured
+    nothing" instead of "M5 passed".
+    """
+    bars = _bars(hinge, 1)
+    empty = json.loads(bars[0].snapshot_json)
+    empty["field_evaluations"] = []
+    data_dir = _write_session(
+        tmp_path,
+        hinge,
+        snapshots=[
+            (bars[0].snapshot_id, INSTRUMENT, bars[0].as_of_ms, json.dumps(empty))
+        ],
+        preimages=[(bars[0].snapshot_id, bars[0].raw_event_id)],
+        ticks=_tick_rows(bars),
+    )
+    states = si.build_consumed_ids_document(data_dir=data_dir)["consumed_field_states"]
+    assert states["counts"]["consumed_ids_without_field_evaluations"] == 1
+    assert states["m5_post_boot_consumed_ids_with_a_stale_field_evaluation"] == 0
+
+
+def test_hinge_the_committed_snapshot_rows_carry_the_states_m5_counts(
+    hinge: dict[str, Any],
+) -> None:
+    """The tools half of the snapshot hinge (the tos half is in ``tos/runtime``).
+
+    Stated here so a regeneration that lost the STALE row turns red where the
+    counting is tested, not only where the bytes are compared: without it
+    every assertion above would pass against a fixture that cannot produce a
+    stale line at all.
+    """
+    rows = hinge["payloads"]["marketfeed_snapshots"]
+    states = {
+        name: [
+            evaluation[si.FIELD_EVALUATION_STATE_KEY]
+            for evaluation in json.loads(row["snapshot_json"])[
+                si.SNAPSHOT_FIELD_EVALUATIONS_KEY
+            ]
+        ]
+        for name, row in rows.items()
+    }
+    assert states["stale"] == [si.STALE_FIELD_STATE]
+    assert states["valid"] == [si.VALID_FIELD_STATE]
+    assert si.STALE_FIELD_STATE not in states["unknown"]
+    assert [
+        observation[si.OBSERVATION_FIELD_STATE_KEY]
+        for observation in json.loads(rows["unknown"]["snapshot_json"])[
+            si.SNAPSHOT_OBSERVATIONS_KEY
+        ]
+    ] == [si.STALE_FIELD_STATE]

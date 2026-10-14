@@ -48,21 +48,28 @@ rows:
 3. ``preimages`` maps that snapshot to the bar's ``raw_event_id``.
 
 A ``DECISION_WITHHELD`` or ``COORDINATOR_PRECONDITION_REFUSED`` record names
-no capsule — the pipeline never reached a signature — so those, and only
-those, take the next tick no keyed decision claimed. Every record says which
-of the two it was in its ``attributed_by`` field.
+no capsule — the pipeline never reached a signature — so those are tied by the
+OTHER durable key the driver writes: the bracket of receipts around each
+event. ``EngineDriver._process_next`` appends ``EVENT_HANDLING_STARTED``,
+stamps its ``seq`` onto the inbox row, runs the handler (which writes this
+tick's decision records), appends ``EVENT_CONSUMED`` and stamps that ``seq``
+too; the loop is single-threaded and refuses re-entry. So a capsule-less
+record belongs to the unique tick whose ``(handling_started, consumed]``
+window contains its evidence ``seq`` — and a keyed record is cross-checked
+against that same window. Every record says which key attributed it in its
+``attributed_by`` field (``capsule_id`` / ``evidence_seq_range``).
 
-The first cut paired by POSITION (the k-th decision with the k-th snapshot)
-because the evidence record carries no bar id. That is an inference the stores
-can contradict silently: one tick queued and drained later shifts every later
-record onto the wrong bar with the counts still matching. The key cannot
-shift, so the count comparison is now a REPORTED cross-check rather than the
-thing the attribution rests on.
+The first two cuts paired capsule-less records by POSITION (the k-th decision
+with the k-th unclaimed tick). That is an inference the stores can contradict
+silently: one tick queued and never run shifts every later unkeyed record onto
+the wrong bar with the counts still matching and nothing refused (Claude lane
+MEDIUM R1, 2026-10-14). Position is now used nowhere.
 
-**What is still refused, not guessed**: a capsule the inbox never admitted,
-two decisions on one tick, an unkeyed decision with no tick left, a tick whose
-snapshot the marketfeed store does not hold, two instruments in one session,
-and a snapshot without exactly one preimage row.
+**What is still refused, not guessed**: a capsule the inbox never admitted, a
+keyed record outside its own tick's window, a capsule-less record in no
+window or in more than one, two decisions on one tick, a tick whose snapshot
+the marketfeed store does not hold, two instruments in one session, and a
+snapshot without exactly one preimage row.
 
 Usage::
 
@@ -107,7 +114,15 @@ SOURCE_ID = f"tos-cp3-session-inputs/{TOS_CP3_VERSION}"
 
 #: Document schema version — bumped when a produced document changes shape, so
 #: a consumer reads "shaped differently" rather than "values differ".
-SCHEMA_VERSION = 1
+#:
+#: 2 (2026-10-14, Claude lane MEDIUM R1/R2): ``consumed-ids`` gained the
+#: ``consumed_field_states`` block that M5's first number now comes from, and
+#: the live ``lineage.json``'s ``join`` renamed its positional fallback to the
+#: ``evidence_seq_range`` key (``attributed_by`` values changed with it). Both
+#: documents are read by B3 (:mod:`tools.tos_cp3.diff_decisions`) only through
+#: keys that did not move, so a 1-shaped document still compares — the bump is
+#: so a reader of an old artifact knows which shape it is.
+SCHEMA_VERSION = 2
 
 #: Mirrors ``tos_runtime.marketfeed.store.MARKETFEED_FILE_NAME`` and
 #: ``tos_runtime.operations.backup_set.EVIDENCE_FILE_NAME``. Mirrored, not
@@ -151,10 +166,50 @@ TICK_SNAPSHOT_PATH: tuple[str, ...] = (
 #: (``DecisionTickPayload.value_view``). ``null`` means the resolver published
 #: no view at all; a view with ``values: []`` is the defined "the binding
 #: resolved and nothing was admissible" outcome
-#: (``tos.dsl.context_value.ContextValueView``'s own ∅-both-ways note), which
-#: at this tenant's ``max_age_ms`` of 800 is what a STALE line looks like from
-#: the durable side (plan §5 M5; runbook §7.2-c's structural argument).
+#: (``tos.dsl.context_value.ContextValueView``'s own ∅-both-ways note).
+#:
+#: It is NOT the STALE count. ``tos.marketfeed.value._admit_one`` drops a
+#: candidate for nine other reasons as well (``OBSERVATION_AMBIGUOUS``,
+#: ``OBSERVATION_NOT_FOUND``, ``PAYLOAD_DIGEST_ABSENT``, ``AS_OF_ABSENT``,
+#: ``DIGEST_MISMATCH``, ``VALUE_NOT_IN_PAYLOAD``, ``NON_DETERMINISTIC_NUMERIC``,
+#: ``LINEAGE_NOT_REPRODUCIBLE``, ``WILDCARD_FIELD_KEY``), and its one
+#: state-shaped reason — ``FIELD_STATE_NOT_VALID`` — folds STALE together with
+#: UNKNOWN, CONFLICTED and INVALID. So an empty view says "nothing was
+#: admissible", never "stale": M5's STALE count is read from the snapshot's
+#: own field states (:func:`consumed_field_states`), and this surface is
+#: reported beside it as what the RESOLVER did (Claude lane MEDIUM R2).
 TICK_VALUE_VIEW_PATH: tuple[str, ...] = ("decision_tick", "value_view")
+
+#: The two receipt stamps an inbox row carries, written by
+#: ``tos_runtime.engine.inbox.SqliteEventInbox.mark_handling_started`` and
+#: ``…mark_consumed``. The driver's loop
+#: (``tos_runtime.engine.driver.EngineDriver._process_next``) appends the
+#: ``EVENT_HANDLING_STARTED`` evidence entry and stamps its ``seq`` here,
+#: THEN calls ``core.handle`` (which appends this tick's decision and
+#: commitment-flow entries), THEN appends ``EVENT_CONSUMED`` and stamps that
+#: ``seq`` here. The loop is single-threaded and refuses re-entry (its own
+#: ``_draining`` guard), so one tick's decision entries are exactly the ones
+#: whose evidence ``seq`` lies in ``(handling_started, consumed]`` — the
+#: durable bracket :func:`_attribute` attributes by.
+INBOX_HANDLING_STARTED_COLUMN = "handling_started_evidence_seq"
+INBOX_CONSUMED_COLUMN = "consumed_evidence_seq"
+
+#: Inside one ``snapshots.snapshot_json`` (``CriticalInputSnapshot
+#: .model_dump_json()``): the two places a durable FieldState is written.
+#: ``tos.marketfeed.value.value_field_state`` takes the WORST of the
+#: observation's admission state, the observation's own ``field_state`` and
+#: every ``field_evaluations`` entry naming the field — so both are read here
+#: and reported apart, rather than one of them silently standing for both.
+SNAPSHOT_FIELD_EVALUATIONS_KEY = "field_evaluations"
+SNAPSHOT_OBSERVATIONS_KEY = "observations"
+FIELD_EVALUATION_STATE_KEY = "state"
+OBSERVATION_FIELD_STATE_KEY = "field_state"
+
+#: ``tos.capsule.field_evaluation.FieldState`` members, as the model dumps
+#: them. Only the two this side names are mirrored: STALE is what plan §5 M5
+#: counts, VALID is the one state that is not a finding.
+STALE_FIELD_STATE = "STALE"
+VALID_FIELD_STATE = "VALID"
 
 #: The evidence store wraps every record: ``payload_json`` is
 #: ``{"payload": <the scrubbed record>, "masked_keys": [...]}``
@@ -319,6 +374,66 @@ class Snapshot:
     instrument: str
     as_of_ms: int
     raw_event_id: str
+    #: ``field_evaluations[*].state`` as stored, in stored order (plan §5 M5 —
+    #: :func:`consumed_field_states`). Empty when the snapshot carries no
+    #: evaluations at all, which is itself counted rather than read as VALID.
+    field_states: tuple[str, ...] = ()
+    #: ``observations[*].field_state`` as stored. The kernel's VALID gate takes
+    #: the worst of this and the matching evaluations, so a STALE here is a
+    #: STALE line too — counted apart, never folded in.
+    observation_states: tuple[str, ...] = ()
+
+
+def _snapshot_states(
+    snapshot_json: str, *, snapshot_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The durable FieldStates inside one ``snapshots.snapshot_json``.
+
+    Returns:
+        ``(field_evaluation states, observation field_states)``, each in
+        stored order.
+
+    Raises:
+        SessionInputsError: the stored JSON is not an object, or an entry in
+            either list is not an object / carries a non-string state. A
+            missing state would otherwise be counted as "not STALE" — the
+            quiet undercount M5 exists to prevent, so it is refused instead.
+            A snapshot with NO ``field_evaluations`` is not refused: that is a
+            real shape (nothing was evaluated) and gets its own count.
+    """
+    document = json.loads(snapshot_json)
+    if not isinstance(document, dict):
+        raise SessionInputsError(
+            f"snapshot {snapshot_id}: snapshot_json is "
+            f"{type(document).__name__}, not an object — the store writes "
+            "CriticalInputSnapshot.model_dump_json(), so a row shaped "
+            "otherwise was not written by SqliteSnapshotStore"
+        )
+
+    def states(key: str, state_key: str) -> tuple[str, ...]:
+        entries = document.get(key)
+        if entries is None:
+            return ()
+        if not isinstance(entries, list):
+            raise SessionInputsError(
+                f"snapshot {snapshot_id}: {key} is {type(entries).__name__}, "
+                "not a list"
+            )
+        collected: list[str] = []
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict) or not isinstance(entry.get(state_key), str):
+                raise SessionInputsError(
+                    f"snapshot {snapshot_id}: {key}[{index}] carries no "
+                    f"string {state_key!r}. Counting it as 'not STALE' is the "
+                    "silent undercount M5's first number exists to prevent"
+                )
+            collected.append(str(entry[state_key]))
+        return tuple(collected)
+
+    return (
+        states(SNAPSHOT_FIELD_EVALUATIONS_KEY, FIELD_EVALUATION_STATE_KEY),
+        states(SNAPSHOT_OBSERVATIONS_KEY, OBSERVATION_FIELD_STATE_KEY),
+    )
 
 
 def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
@@ -346,7 +461,8 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
     try:
         rows = list(
             conn.execute(
-                "SELECT snapshot_id, instrument, as_of_ms FROM snapshots ORDER BY rowid"
+                "SELECT snapshot_id, instrument, as_of_ms, snapshot_json "
+                "FROM snapshots ORDER BY rowid"
             )
         )
         preimages: dict[str, list[str]] = {}
@@ -358,7 +474,7 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
         conn.close()
 
     snapshots: list[Snapshot] = []
-    for snapshot_id, instrument, as_of_ms in rows:
+    for snapshot_id, instrument, as_of_ms, snapshot_json in rows:
         covered = preimages.get(str(snapshot_id), [])
         if len(covered) != 1:
             raise SessionInputsError(
@@ -369,12 +485,17 @@ def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
                 "were lost — either way the id this decision was about is not "
                 "decidable here"
             )
+        field_states, observation_states = _snapshot_states(
+            str(snapshot_json), snapshot_id=str(snapshot_id)
+        )
         snapshots.append(
             Snapshot(
                 snapshot_id=str(snapshot_id),
                 instrument=str(instrument),
                 as_of_ms=int(as_of_ms),
                 raw_event_id=covered[0],
+                field_states=field_states,
+                observation_states=observation_states,
             )
         )
     return tuple(snapshots)
@@ -480,23 +601,133 @@ def unpaired_reasons(
     return reasons
 
 
+def consumed_field_states(
+    *, snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
+) -> dict[str, Any]:
+    """M5's first count, from the state the snapshot itself recorded.
+
+    Plan §5 M5 asks for "lines consumed STALE", and the durable side records
+    the word: ``snapshots.snapshot_json`` is
+    ``CriticalInputSnapshot.model_dump_json()``, whose ``field_evaluations[*]
+    .state`` and ``observations[*].field_state`` are
+    ``tos.capsule.field_evaluation.FieldState`` members — ``STALE`` among
+    them. That is what is counted here.
+
+    **M5's first number is**
+    ``m5_post_boot_consumed_ids_with_a_stale_field_evaluation``: the number of
+    consumed ``raw_event_id``s whose snapshot carries AT LEAST ONE
+    ``field_evaluations`` entry with ``state == "STALE"``, counting only ids
+    the runner's boot snapshot does NOT list as already in the journal at boot.
+    One id is counted once however many of its fields are STALE, and the ids
+    themselves are listed so the number can be checked rather than believed.
+
+    Pre-boot ids are counted under their own key and excluded from that
+    number, exactly as plan §5 M5 excludes them from both of its counts: a
+    line already in the journal at boot is structurally unconsumable-fresh,
+    and the scheduler's first poll takes the newest observation.
+
+    **What the count is NOT.** It is not "the resolver admitted no values":
+    ``tos.marketfeed.value._admit_one`` rejects a candidate for nine other
+    reasons, and its one state-shaped reason (``FIELD_STATE_NOT_VALID``) folds
+    STALE together with UNKNOWN, CONFLICTED and INVALID. Those other states
+    are therefore reported here BY NAME, apart from the STALE number, rather
+    than summed into it (Claude lane MEDIUM R2; the pre-③ reading this
+    replaces is runbook §7.2-c's).
+
+    **Expectation at genesis** (plan §5 M5 with ③ live, M6 < 300 ms against
+    this tenant's ``max_age_ms`` of 800): post-boot lines are expected to
+    arrive fresh and be consumed WITH values admitted, so this number is
+    expected to be 0 and a non-zero value is the finding. The pre-boot key is
+    where a non-zero count is unremarkable.
+    """
+    post_boot_stale: list[str] = []
+    pre_boot_stale: list[str] = []
+    by_state: dict[str, dict[str, int]] = {}
+    observation_by_state: dict[str, dict[str, int]] = {}
+    without_evaluations = 0
+    for snapshot in snapshots:
+        where = "pre_boot" if snapshot.raw_event_id in pre_boot else "post_boot"
+        if not snapshot.field_states:
+            without_evaluations += 1
+        if STALE_FIELD_STATE in snapshot.field_states:
+            (pre_boot_stale if where == "pre_boot" else post_boot_stale).append(
+                snapshot.raw_event_id
+            )
+        for state in sorted(set(snapshot.field_states)):
+            if state in (VALID_FIELD_STATE, STALE_FIELD_STATE):
+                continue
+            bucket = by_state.setdefault(state, {"post_boot": 0, "pre_boot": 0})
+            bucket[where] += 1
+        for state in sorted(set(snapshot.observation_states)):
+            if state == VALID_FIELD_STATE:
+                continue
+            bucket = observation_by_state.setdefault(
+                state, {"post_boot": 0, "pre_boot": 0}
+            )
+            bucket[where] += 1
+    return {
+        "m5_post_boot_consumed_ids_with_a_stale_field_evaluation": len(post_boot_stale),
+        "definition": (
+            "consumed raw_event_ids whose snapshots.snapshot_json carries at "
+            "least one field_evaluations[*].state == 'STALE', counted once per "
+            "id, excluding ids the runner's boot-journal snapshot lists as "
+            "pre-boot (plan §5 M5 excludes those from both of its counts)"
+        ),
+        "counts": {
+            "consumed_ids": len(snapshots),
+            "pre_boot_consumed_ids": sum(
+                1 for snapshot in snapshots if snapshot.raw_event_id in pre_boot
+            ),
+            "post_boot_with_a_stale_field_evaluation": len(post_boot_stale),
+            "pre_boot_with_a_stale_field_evaluation": len(pre_boot_stale),
+            "consumed_ids_without_field_evaluations": without_evaluations,
+        },
+        "post_boot_raw_event_ids_with_a_stale_field_evaluation": sorted(
+            post_boot_stale
+        ),
+        "pre_boot_raw_event_ids_with_a_stale_field_evaluation": sorted(pre_boot_stale),
+        "other_field_evaluation_states": {
+            state: dict(counts) for state, counts in sorted(by_state.items())
+        },
+        "observation_field_states_not_valid": {
+            state: dict(counts)
+            for state, counts in sorted(observation_by_state.items())
+        },
+        "note": (
+            "ids per state, not fields per state: one id with three STALE "
+            "fields counts once. The two state surfaces are reported apart "
+            "because tos.marketfeed.value.value_field_state takes the WORST of "
+            "the observation's admission state, the observation's own "
+            "field_state and the matching field evaluations — so a STALE "
+            "observation is a stale line too, and folding it into the "
+            "evaluation count would hide which one the session recorded. "
+            "Every non-VALID state other than STALE is named rather than "
+            "summed: they are different defects, and only STALE is M5's"
+        ),
+    }
+
+
 def consumed_value_view_counts(
     *, data_dir: Path, by_snapshot: Mapping[str, str]
 ) -> dict[str, Any]:
-    """M5's first count: how the runtime's values stood when it consumed a line.
+    """What the RESOLVER did on each consumed tick — reported beside M5, not as it.
 
-    Plan §5 M5 asks for "lines consumed STALE". The durable side can answer it,
-    and this is exactly how far it can: every admitted tick carries the
-    resolver's ``value_view``, and that view is either absent (no view
-    published), explicitly empty (resolved, nothing admissible) or populated.
-    At this tenant's ``max_age_ms`` of 800 an empty view is what a stale line
-    produces — the runbook §7.2-c argument — but the view records "nothing was
-    admissible", not "stale", so the key is named for what the store says and
-    the note carries the inference.
+    Every admitted tick carries the resolver's ``value_view``, which is either
+    absent (no view published at all), explicitly empty (the binding resolved
+    and nothing was admissible) or populated. That is a useful second view of
+    the same session, and it is NOT the STALE count: ``tos.marketfeed.value
+    ._admit_one`` rejects a candidate for ten reasons, of which the only
+    state-shaped one (``FIELD_STATE_NOT_VALID``) folds STALE together with
+    UNKNOWN, CONFLICTED and INVALID. An earlier revision of this docstring
+    called ``empty_view + no_view`` M5's first count; that was both too broad
+    and backwards, and M5 now reads :func:`consumed_field_states` (Claude lane
+    MEDIUM R2).
 
-    The ids with admitted values are listed rather than the ones without: at
-    genesis the second list is expected to be every line, and a list of
-    everything is not a finding.
+    **Expectation at genesis** with ③ live (plan §5 M5, M6 < 300 ms against
+    ``max_age_ms`` 800): values ARE expected to be admitted on post-boot
+    ticks, so ``values_admitted`` near the consumed count is the healthy
+    reading and a session of ``empty_view`` is the finding. The ids with
+    admitted values are listed because that list is the evidence for it.
     """
     ticks = read_decision_ticks(data_dir)
     counts = {"no_view": 0, "empty_view": 0, "values_admitted": 0}
@@ -516,11 +747,12 @@ def consumed_value_view_counts(
         "raw_event_ids_with_admitted_values": sorted(with_values),
         "note": (
             "per admitted DECISION_TICK, the shape of the resolver's "
-            "value_view. empty_view = 'the binding resolved and nothing was "
-            "admissible', which at max_age_ms 800 is the STALE shape (runbook "
-            "§7.2-c); no_view = the resolver published none at all. Neither "
-            "key claims the word 'stale' — the store does not record it — so "
-            "M5's first count is empty_view + no_view with that reading stated"
+            "value_view: empty_view = 'the binding resolved and nothing was "
+            "admissible', no_view = the resolver published none at all. "
+            "NOT the STALE count — an empty view has ten possible reasons and "
+            "the store does not say which; M5's first number is "
+            "consumed_field_states"
+            ".m5_post_boot_consumed_ids_with_a_stale_field_evaluation"
         ),
     }
 
@@ -577,6 +809,9 @@ def build_consumed_ids_document(
         "raw_event_ids": sorted(consumed),
         "unpaired_reasons": dict(sorted(reasons.items())),
         "unpaired_reason_counts": dict(sorted(reason_counts.items())),
+        "consumed_field_states": consumed_field_states(
+            snapshots=snapshots, pre_boot=pre_boot
+        ),
         "consumed_value_view": consumed_value_view_counts(
             data_dir=data_dir,
             by_snapshot={
@@ -750,9 +985,36 @@ class DecisionTick:
     capsule_id: str
     snapshot_id: str
     #: How many Critical Input values the resolver ADMITTED for this tick, or
-    #: ``None`` when it published no view at all (plan §5 M5 — see
+    #: ``None`` when it published no view at all (see
     #: :func:`consumed_value_view_counts`).
     admitted_values: int | None
+    #: This row's ``EVENT_HANDLING_STARTED`` evidence ``seq``, or ``None`` when
+    #: the driver never started handling it (a tick queued and never run).
+    handling_started_evidence_seq: int | None = None
+    #: This row's ``EVENT_CONSUMED`` evidence ``seq``, or ``None`` when the
+    #: driver started and never finished (a crash inside handling).
+    consumed_evidence_seq: int | None = None
+
+    def brackets(self, evidence_seq: int) -> bool:
+        """Does this tick's durable handling window contain ``evidence_seq``?
+
+        ``(handling_started, consumed]`` — the open lower end is the
+        ``EVENT_HANDLING_STARTED`` receipt itself, which is not a decision
+        record; the closed upper end is the ``EVENT_CONSUMED`` receipt, also
+        not a decision record, and is written closed only to match the
+        interval this is documented as. A tick with no handling-started stamp
+        brackets nothing (it never ran). A started-but-unconsumed tick has an
+        OPEN upper end: everything after it is inside, which makes any later
+        decision ambiguous — :func:`_attribute` refuses rather than picking.
+        """
+        if self.handling_started_evidence_seq is None:
+            return False
+        if evidence_seq <= self.handling_started_evidence_seq:
+            return False
+        return (
+            self.consumed_evidence_seq is None
+            or evidence_seq <= self.consumed_evidence_seq
+        )
 
 
 def _dig(payload: Mapping[str, Any], path: Sequence[str]) -> Any:
@@ -774,8 +1036,13 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
     (``engine/driver.py::enqueue_and_run`` -> ``SqliteEventInbox.enqueue``),
     and the stored ``payload_json`` is the whole event — capsule id and
     ``SnapshotRef`` included. So ``decision.capsule_id -> tick.snapshot_id ->
-    preimages.raw_event_id`` is a keyed join over durable rows, and the
-    ordered pairing the first cut used is needed only where no key can exist.
+    preimages.raw_event_id`` is a keyed join over durable rows.
+
+    The row also carries the two receipt stamps
+    (:data:`INBOX_HANDLING_STARTED_COLUMN`, :data:`INBOX_CONSUMED_COLUMN`)
+    that bracket the window this tick's evidence was written in — the durable
+    key for the records that name no capsule (:meth:`DecisionTick.brackets`,
+    :func:`_attribute`).
 
     Raises:
         SessionInputsError: A tick event carries no capsule or snapshot id, or
@@ -790,7 +1057,9 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
     try:
         rows = list(
             conn.execute(
-                "SELECT seq, payload_json FROM events WHERE kind = ? ORDER BY seq",
+                "SELECT seq, payload_json, "
+                f"{INBOX_HANDLING_STARTED_COLUMN}, {INBOX_CONSUMED_COLUMN} "
+                "FROM events WHERE kind = ? ORDER BY seq",
                 (DECISION_TICK_EVENT_KIND,),
             )
         )
@@ -799,7 +1068,7 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
 
     ticks: list[DecisionTick] = []
     seen: dict[str, int] = {}
-    for seq, payload_json in rows:
+    for seq, payload_json, handling_started, consumed in rows:
         payload = json.loads(payload_json)
         capsule_id = _dig(payload, TICK_CAPSULE_PATH)
         snapshot_id = _dig(payload, TICK_SNAPSHOT_PATH)
@@ -825,6 +1094,10 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
                 capsule_id=capsule_id,
                 snapshot_id=snapshot_id,
                 admitted_values=None if values is None else len(values),
+                handling_started_evidence_seq=(
+                    None if handling_started is None else int(handling_started)
+                ),
+                consumed_evidence_seq=None if consumed is None else int(consumed),
             )
         )
     return tuple(ticks)
@@ -833,28 +1106,55 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
 def _attribute(
     blocks: Sequence[DecisionBlock], ticks: Sequence[DecisionTick]
 ) -> list[tuple[DecisionBlock, DecisionTick, str]]:
-    """Pair each decision with the tick it was about: by key, else by position.
+    """Pair each decision with the tick it was about, by durable key only.
 
-    ``DECISION_OUTCOME_EMITTED`` names its capsule, so that pairing is a
-    lookup and survives a shifted sequence. ``DECISION_WITHHELD`` and the
-    Coordinator's refusal name none — the pipeline never reached a signature —
-    so those take the next tick no keyed decision has claimed, and the
-    strictly-increasing check below is what stops a silent shift from moving
-    them onto someone else's bar.
+    Two keys, both durable, neither positional:
+
+    ``capsule_id``
+        ``DECISION_OUTCOME_EMITTED`` names the capsule it consumed, and
+        exactly one inbox row admitted that capsule.
+
+    ``evidence_seq_range``
+        ``DECISION_WITHHELD`` and ``COORDINATOR_PRECONDITION_REFUSED`` name no
+        capsule — the pipeline never reached a signature — so they are
+        attributed by the bracket the driver itself writes around each event:
+        the ``EVENT_HANDLING_STARTED`` receipt's ``seq`` and the
+        ``EVENT_CONSUMED`` receipt's ``seq``, stamped onto the inbox row
+        (:data:`INBOX_HANDLING_STARTED_COLUMN`,
+        :data:`INBOX_CONSUMED_COLUMN`). The driver's loop is single-threaded
+        and refuses re-entry, so the records written during one event's
+        handling are exactly those whose evidence ``seq`` lies in
+        ``(handling_started, consumed]``, and the record is attributed to the
+        UNIQUE tick whose bracket contains it.
+
+    A keyed record is CROSS-CHECKED against the same bracket: if the capsule's
+    tick has a bracket and the record's ``seq`` is outside it, the two durable
+    keys disagree and that is a refusal, not a preference for one of them.
+
+    The first two cuts paired capsule-less records by POSITION (the k-th
+    unclaimed tick, in file order). That is an inference the stores can
+    contradict silently, and the reviewer's own sequence shows it: three ticks
+    c1–c3, evidence ``DECISION_WITHHELD{A on bar1}``,
+    ``DECISION_TICK_DROPPED_ON_RECOVERY`` (tick 2 never ran), ``DECISION_
+    WITHHELD{B on bar3}`` — positionally B lands on bar2, with every count
+    still matching and nothing refused (Claude lane MEDIUM R1, 2026-10-14).
+    Under the bracket, B's ``seq`` is inside c3's window and only c3's.
 
     Raises:
         SessionInputsError: a decision names a capsule the inbox never
-            admitted; two decisions land on one tick; or an unkeyed decision
-            has no tick left to take.
+            admitted; a keyed record falls outside its own tick's bracket; a
+            keyed record's tick has no bracket at all (the receipts the
+            cross-check needs are missing); a capsule-less record is in no
+            tick's bracket, or in more than one; or two decisions land on one
+            tick.
     """
     by_capsule = {tick.capsule_id: (index, tick) for index, tick in enumerate(ticks)}
     assigned: dict[int, tuple[int, str]] = {}  # block position -> (tick index, how)
     used: dict[int, int] = {}  # tick index -> evidence seq
 
-    # Pass 1 — every decision that names a capsule, by key. Keyed first and in
-    # their own pass, so an unkeyed record earlier in the file cannot take a
-    # tick that a later keyed record names: the fallback must only ever see
-    # ticks no key claims.
+    # Pass 1 — every decision that names a capsule, by key, each cross-checked
+    # against its tick's own bracket. Keyed first and in their own pass, so a
+    # capsule-less record cannot take a tick a later keyed record names.
     for position, block in enumerate(blocks):
         capsule_id = block.capsule_id
         if capsule_id is None:
@@ -867,6 +1167,23 @@ def _attribute(
                 "disagree about what this session processed"
             )
         index, tick = found
+        if tick.handling_started_evidence_seq is None:
+            raise SessionInputsError(
+                f"evidence seq {block.seq}: capsule {capsule_id!r} names inbox "
+                f"seq {tick.seq}, whose {INBOX_HANDLING_STARTED_COLUMN} is "
+                "NULL — the driver writes that stamp before it can write any "
+                "decision record, so a decision quoting this capsule and a "
+                "row that never started handling cannot both be true"
+            )
+        if not tick.brackets(block.seq):
+            raise SessionInputsError(
+                f"evidence seq {block.seq}: capsule {capsule_id!r} names inbox "
+                f"seq {tick.seq}, whose handling window is "
+                f"({tick.handling_started_evidence_seq}, "
+                f"{tick.consumed_evidence_seq}] — the record is outside it. "
+                "The capsule key and the driver's own receipts disagree about "
+                "which event wrote this record"
+            )
         if index in used:
             raise SessionInputsError(
                 f"evidence seq {block.seq} and seq {used[index]} both attribute "
@@ -875,22 +1192,46 @@ def _attribute(
         used[index] = block.seq
         assigned[position] = (index, "capsule_id")
 
-    # Pass 2 — the rest, in file order, onto the ticks left over in theirs.
-    spare = iter(index for index in range(len(ticks)) if index not in used)
+    # Pass 2 — the capsule-less records, each into the one bracket that holds
+    # it. No ordering, no leftovers, no "next unclaimed": a record the
+    # brackets cannot place is refused.
     for position, block in enumerate(blocks):
         if position in assigned:
             continue
-        index = next(spare, -1)
-        if index < 0:
+        holders = [
+            index for index, tick in enumerate(ticks) if tick.brackets(block.seq)
+        ]
+        if not holders:
             raise SessionInputsError(
                 f"evidence seq {block.seq}: a {block.kind} record carries no "
-                "capsule id and every admitted tick already has a decision. "
-                "There is no bar left for it, and attributing it to one "
-                "anyway would be inventing the attribution this join exists "
-                "to avoid"
+                "capsule id and lies in NO admitted tick's handling window "
+                f"({INBOX_HANDLING_STARTED_COLUMN} < seq <= "
+                f"{INBOX_CONSUMED_COLUMN}). The driver writes a decision "
+                "record only between those two receipts, so there is no event "
+                "this record can belong to"
+            )
+        if len(holders) > 1:
+            windows = ", ".join(
+                f"inbox seq {ticks[index].seq} "
+                f"({ticks[index].handling_started_evidence_seq}, "
+                f"{ticks[index].consumed_evidence_seq}]"
+                for index in holders
+            )
+            raise SessionInputsError(
+                f"evidence seq {block.seq}: a {block.kind} record carries no "
+                f"capsule id and lies in {len(holders)} handling windows "
+                f"[{windows}]. Overlapping windows mean an event was left "
+                "unconsumed while another ran — the bar this record was about "
+                "is not decidable from the receipts"
+            )
+        index = holders[0]
+        if index in used:
+            raise SessionInputsError(
+                f"evidence seq {block.seq} and seq {used[index]} both attribute "
+                f"to inbox seq {ticks[index].seq} — one tick, two decisions"
             )
         used[index] = block.seq
-        assigned[position] = (index, "position")
+        assigned[position] = (index, "evidence_seq_range")
 
     return [
         (block, ticks[assigned[position][0]], assigned[position][1])
@@ -903,8 +1244,9 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
 
     The keys B3 reads from a trace line — ``raw_event_id``, ``as_of_ms``,
     ``outcome_kind``, ``rule_id``, ``capacity_denied`` — are all present, and
-    each record also says HOW it was attributed (``attributed_by``), because
-    "by key" and "by position" are not the same claim.
+    each record also says WHICH durable key attributed it
+    (``attributed_by``): ``capsule_id`` for a record that names its capsule,
+    ``evidence_seq_range`` for one that cannot (:func:`_attribute`).
 
     ``rule_id`` is always ``null`` and says so in the sidecar: B1b resolves it
     from the emitted outcome's ``rationale`` through the authored policy's rule
@@ -983,24 +1325,34 @@ def build_live_lineage(
             "inbox_schema_version": PINNED_INBOX_SCHEMA_VERSION,
         },
         "join": {
-            "method": "capsule_id_keyed_with_positional_fallback",
+            "method": "capsule_id_keyed_with_evidence_seq_range_for_unkeyed",
             "key": (
                 "decision.capsule_id -> inbox DECISION_TICK "
                 "decision_tick.capsule.capsule_id -> "
                 "critical_input_snapshot.snapshot_id -> preimages.raw_event_id"
             ),
-            "fallback": (
+            "unkeyed": (
                 "a DECISION_WITHHELD or COORDINATOR_PRECONDITION_REFUSED record "
                 "names no capsule (the pipeline never reached a signature), so "
-                "it takes the next tick no keyed decision claimed; the "
-                "attributed_by field on every record says which of the two it "
-                "was"
+                "it is attributed to the UNIQUE admitted tick whose durable "
+                "handling window contains its evidence seq: inbox "
+                "handling_started_evidence_seq < seq <= consumed_evidence_seq, "
+                "the bracket the single-threaded driver writes around each "
+                "event. Nothing is attributed by position; the attributed_by "
+                "field on every record says which of the two keys was used"
+            ),
+            "cross_check_keyed": (
+                "every capsule-keyed record is also checked against its own "
+                "tick's window — a record outside it is a refusal, not a "
+                "preference for one of the two durable keys"
             ),
             "guard": (
-                "a capsule the inbox never admitted, two decisions on one tick, "
-                "an unkeyed decision with no tick left, a tick whose snapshot "
-                "the marketfeed store does not hold, one instrument, exactly "
-                "one preimage row per snapshot — each is a refusal"
+                "a capsule the inbox never admitted, a keyed record outside "
+                "its tick's window or whose tick never started handling, an "
+                "unkeyed record in no window or in more than one, two "
+                "decisions on one tick, a tick whose snapshot the marketfeed "
+                "store does not hold, one instrument, exactly one preimage row "
+                "per snapshot — each is a refusal"
             ),
             "cross_check": (
                 "admitted ticks vs decisions is REPORTED, not refused: a tick "
