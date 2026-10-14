@@ -65,6 +65,26 @@
 
 set -u
 
+# --- -1. no execution trace, ever (Codex review HIGH) ----------------------
+#
+# `set -x` prints every word AFTER expansion, so one traced line can put a real
+# app key on the operator's terminal and into TENANT_LOG — and nothing in this
+# file has to ask for it: `bash -x run_tenant_session.sh`, or an exported
+# `SHELLOPTS=xtrace` from the calling shell, turns tracing on before line 1
+# runs. The first cut's credential guard expanded the value into its own test
+# (`[ -z "$(printenv "$_real_key")" ]`), so under a trace the guard that exists
+# to keep the key out of the runtime printed it instead.
+#
+# Two defences, because either alone is thin: tracing is turned OFF here,
+# before anything reads an environment, and the guard in step 3b is rewritten
+# to test for the NAME's presence without ever expanding its value. `+v` goes
+# with it — verbose echoes the source line, which is harmless today and would
+# not be if a value ever became a literal.
+#
+# The debugging a reader wants is the log() stream: it carries paths, pids and
+# refusals, and never a value.
+set +x +v
+
 # --- 0. the shared guards --------------------------------------------------
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
@@ -171,8 +191,20 @@ TREE_DIR=$REPO/config/tos_runtime/$TENANT_TREE
 # would hand them to the RUNTIME as well — silently, because nothing downstream
 # looks. That is the whole failure mode, and the refusal below is its red
 # proof's input. Paths are logged; values never are.
+#
+# ⚠ The test is on the NAME, never on the value (Codex review HIGH). The first
+# cut read the value — `[ -z "$(printenv "$_real_key")" ]` — which is correct
+# logic and a leak: under `bash -x` (or an inherited `SHELLOPTS=xtrace`) the
+# trace prints the expanded word, so the guard against the key reaching the
+# runtime wrote the key into the operator's log. `${!name+x}` expands to `x`
+# or to nothing and NEVER to the value, so there is nothing for a trace to
+# print even if one were somehow on (step -1 turns it off).
+#
+# PRESENCE, not non-emptiness: an exported-but-empty `KIS_FUTURES_APP_KEY` is
+# an operator who believes they are handing a credential to something. The
+# honest answer is the same refusal, not a quiet pass.
 for _real_key in KIS_FUTURES_APP_KEY KIS_FUTURES_APP_SECRET; do
-  [ -z "$(printenv "$_real_key" || true)" ] ||
+  [ -z "${!_real_key+x}" ] ||
     die "$_real_key is set in this shell. The producer reads the real query keys itself, from the env_file its own config names; the runner and the runtime must not carry them, because every child inherits this environment (plan §3.4)"
 done
 log "credential separation ok: no real futures query key in this environment"
@@ -235,10 +267,11 @@ log "instrument=$INSTRUMENT · data leaf $DATA_LEAF"
 # left it running, calling the REAL quotation API all day with nobody watching.
 # `die` exits, and an EXIT trap is the one handler an exit cannot skip.
 #
-# Both PIDs are initialized (#892 re-review L1) so `set -u` has nothing to
+# All three PIDs are initialized (#892 re-review L1) so `set -u` has nothing to
 # stumble on no matter where the first failure lands.
 RUN_PID=""
 PRODUCER_PID=""
+WAIT_PID=""
 
 stop_run() {
   stop_supervised "$RUN_PID" "$SIGKILL_AFTER_S" run
@@ -248,12 +281,22 @@ stop_producer() {
   stop_supervised "$PRODUCER_PID" "$PRODUCER_SIGKILL_AFTER_S" producer
 }
 
+# The first-row waiter (step 8b). It is not under `timeout` — it has its own
+# deadline — so `stop_supervised`'s group signal finds no group of its own and
+# falls back to the pid, which is the right target. Five seconds is ample: it
+# sleeps in one-second steps and holds nothing open.
+stop_wait() {
+  stop_supervised "$WAIT_PID" 5 "first-row wait"
+}
+
 # The runtime first, the producer second: the producer is the one writing the
 # journal the runtime reads, and stopping it first would make the runtime's
-# last passes look like a feed that went silent.
+# last passes look like a feed that went silent. The waiter last — it is the
+# one that may still be sleeping when a signal arrives.
 on_exit() {
   stop_run
   stop_producer
+  stop_wait
 }
 
 # 128+signo, the conventional shell exit code, so a caller can tell an
@@ -262,6 +305,7 @@ on_signal() {
   log "=== SIGNAL $1 received by the runner — forwarding to the children"
   stop_run
   stop_producer
+  stop_wait
   exit "$2"
 }
 trap 'on_exit' EXIT
@@ -313,9 +357,31 @@ log "producer pid=$PRODUCER_PID (supervised by timeout, ceiling ${PRODUCER_CEILI
 # is how tools/tos_cp3/session_inputs.py later tells a structurally
 # unconsumable pre-boot line from one the runtime failed to consume (plan §5
 # M5, §3.6).
+#
+# ⚠ Called TWICE (Claude lane LOW L2): once here, to wait, and once in step 11
+# immediately before `run` starts. The guard, the render and the label check
+# take seconds, and a bar the producer publishes during them is pre-boot too —
+# recorded at first-row time only, it would reach the extractor as a line the
+# runtime "failed to consume", which is the defect shape. The second call
+# returns at once (rows exist) and rewrites the snapshot as of the boot.
+#
+# ⚠ In the BACKGROUND, with `wait` (Claude lane MEDIUM M2). As a foreground
+# `$(…)` this blocked the shell for up to FIRST_LINE_TIMEOUT_S, and bash runs
+# a trap only BETWEEN commands — so a TERM sent to the runner during the wait
+# was deferred for up to ten minutes, with the producer running all the while.
+# `wait` is interruptible: the handler runs when the signal lands, and
+# `stop_wait` ends the waiter with it.
 BOOT_SNAPSHOT=$TENANT_PRODUCER_SESSION_DIR/boot-journal-snapshot.json
-WAIT_OUT=$("$PY" - "$TENANT_JOURNAL" "$FIRST_LINE_TIMEOUT_S" "$PRODUCER_PID" \
-  "$BOOT_SNAPSHOT" <<'PY' 2>&1
+WAIT_LOG=$TENANT_PRODUCER_SESSION_DIR/first-row-wait.log
+(umask 077; mkdir -p -- "$TENANT_PRODUCER_SESSION_DIR") ||
+  die "cannot create the producer session directory $TENANT_PRODUCER_SESSION_DIR"
+
+# $1 the bound in seconds, $2 a label for the log line.
+first_row_wait() {
+  _bound=$1
+  _label=$2
+  "$PY" - "$TENANT_JOURNAL" "$_bound" "$PRODUCER_PID" \
+    "$BOOT_SNAPSHOT" >"$WAIT_LOG" 2>&1 <<'PY' &
 import json
 import os
 import sys
@@ -405,8 +471,18 @@ while True:
         )
     time.sleep(1.0)
 PY
-) || die "producer never produced a usable first row: $(printf '%s' "$WAIT_OUT" | tail -2 | tr '\n' ' ')"
-log "$WAIT_OUT"
+  WAIT_PID=$!
+  log "$_label: pid=$WAIT_PID (bound ${_bound}s, log $WAIT_LOG)"
+  if wait "$WAIT_PID"; then
+    WAIT_PID=""
+  else
+    WAIT_PID=""
+    die "producer never produced a usable first row ($_label): $(tail -2 "$WAIT_LOG" 2>/dev/null | tr '\n' ' ')"
+  fi
+  while IFS= read -r line; do log "  $line"; done <"$WAIT_LOG"
+}
+
+first_row_wait "$FIRST_LINE_TIMEOUT_S" "first-row wait"
 
 # --- 9. the data-dir refusal (plan §2.5, as corrected by review) -----------
 #
@@ -471,6 +547,17 @@ log "environment label $TENANT_ENVIRONMENT_LABEL matches the rendered tree"
 
 # --- 11. boot --------------------------------------------------------------
 #
+# First, the boot-moment snapshot (Claude lane LOW L2). Everything between the
+# first row and here — the guard, the render, the label check — is time the
+# producer kept publishing in, and those bars are pre-boot too. Taken here,
+# the snapshot is what the runtime will actually find already written; taken
+# only at first-row time, those bars reach §3.6 as lines the runtime "failed
+# to consume", which is the one shape that count exists to make visible.
+# The bound is 1 s: the rows are already there, so this returns on its first
+# look and never waits — but it is not 0, because a bound of zero would make
+# "the file is momentarily unreadable" an ABORT at the last step before boot.
+first_row_wait 1 "boot-moment snapshot"
+
 # Verbatim the resident boot invocation: the one-liner is
 # ~/.config/kis-probes/tos_paper_session.py's CLI constant and runbook §3's
 # `run` call, and PYTHONPATH is exactly that driver's
@@ -505,13 +592,17 @@ log "run pid=$RUN_PID (supervised by timeout, ceiling ${CHILD_CEILING_S}s)"
 # steps between then and here cost real time (a front-month lookup, the seed,
 # the first-row wait, the guard, a render), so a relative deadline computed
 # here would run past TENANT_STOP_AT by however long they took.
+# The liveness question is about the GROUP, here as in `stop_supervised`: the
+# pid is `timeout`'s, and the runtime outliving its own supervisor is exactly
+# the state a leader-only test reports as "exited on its own" (Codex review
+# MEDIUM).
 DEADLINE=$STOP_S
 while [ "$(TZ=Asia/Seoul date +%s)" -lt "$DEADLINE" ]; do
-  kill -0 "$RUN_PID" 2>/dev/null || break
+  supervised_group_alive "$RUN_PID" || break
   sleep 1
 done
 
-if kill -0 "$RUN_PID" 2>/dev/null; then
+if supervised_group_alive "$RUN_PID"; then
   stop_run
 else
   log "run exited on its own before the stop time"
@@ -533,7 +624,7 @@ log "=== END run rc=$run_rc"
 # durable set loses the very evidence the session exists to leave — so the
 # report is the EXIT CODE, not a kill.
 PRODUCER_SELF_STOPPED=0
-kill -0 "$PRODUCER_PID" 2>/dev/null || PRODUCER_SELF_STOPPED=1
+supervised_group_alive "$PRODUCER_PID" || PRODUCER_SELF_STOPPED=1
 stop_producer
 wait "$PRODUCER_PID" 2>/dev/null
 producer_rc=$?

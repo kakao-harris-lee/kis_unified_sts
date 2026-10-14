@@ -79,20 +79,38 @@ die() {
 # its own (no `timeout` in front of it): the group signal then fails with
 # ESRCH and nothing has been signalled yet, so the fallback is a second attempt
 # at the same child rather than a second victim.
+# $1 the pid of a child started under `timeout`, i.e. ALSO its process-group
+# id. True while ANY member of that group is alive — the leader included, but
+# not only the leader.
+#
+# ⚠ Asking `kill -0 $pid` instead is the Codex review's MEDIUM (2026-10-14):
+# if the supervising `timeout` is SIGKILLed and reaped, its worker keeps
+# running in the SAME group (a process group outlives its leader while any
+# member is in it), and a leader-only test then answers "gone" about a process
+# still holding a journal or a REAL quotation session. Every liveness question
+# below therefore asks the GROUP.
+#
+# The leader-only fallback is for a child that is NOT in a group of its own
+# (nothing supervising it, so no `timeout` called `setpgid`): the group test
+# then fails with ESRCH and the pid test is the only true answer available.
+supervised_group_alive() {
+  kill -0 -- "-$1" 2>/dev/null || kill -0 "$1" 2>/dev/null
+}
+
 stop_supervised() {
   _pid=$1
   _grace=$2
   _label=$3
   [ -n "$_pid" ] || return 0
-  kill -0 "$_pid" 2>/dev/null || return 0
+  supervised_group_alive "$_pid" || return 0
   log "=== STOP SIGTERM -> $_label pid $_pid (process group)"
   kill -TERM -- "-$_pid" 2>/dev/null || kill -TERM "$_pid" 2>/dev/null || true
   _waited=0
-  while kill -0 "$_pid" 2>/dev/null && [ "$_waited" -lt "$_grace" ]; do
+  while supervised_group_alive "$_pid" && [ "$_waited" -lt "$_grace" ]; do
     sleep 1
     _waited=$((_waited + 1))
   done
-  if kill -0 "$_pid" 2>/dev/null; then
+  if supervised_group_alive "$_pid"; then
     log "WARN: $_label did not stop within ${_grace}s of SIGTERM — SIGKILL to the process group"
     kill -KILL -- "-$_pid" 2>/dev/null || kill -KILL "$_pid" 2>/dev/null || true
   fi
