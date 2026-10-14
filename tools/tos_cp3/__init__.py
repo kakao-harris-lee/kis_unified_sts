@@ -25,6 +25,15 @@ Contents:
   imports neither ``tos`` nor ``produce_fields``: its claim is about three
   files, so it must stay runnable after CP-4 removes the band math behind
   them.
+* :mod:`tools.tos_cp3.session_inputs` — §3.6's two session-derived B3 inputs:
+  the ``raw_event_id`` set the runtime actually consumed (from the session
+  ``marketfeed.sqlite3``'s ``preimages``) with a reason for every produced bar
+  it did not consume, and one record per live decision shaped like B1b's
+  offline trace (from the session ``evidence.sqlite3``). Both stores are read
+  as plain sqlite files in ``mode=ro`` — the firewall forbids importing
+  ``tos_runtime`` from here, so the schema versions and the columns read are
+  pinned against a committed hinge the runtime side checks
+  (``tos/runtime/tests/fixtures/cp3-session-store-reads.json``).
 * :mod:`tools.tos_cp3.quote_client` — the GET-only real-key minute quotation
   transport (``FHKIF03020200``): a three-way method/TR/path allowlist, an
   app-key-fingerprinted private token cache, bounded retries and a token-expiry

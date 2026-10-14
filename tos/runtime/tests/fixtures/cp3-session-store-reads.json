@@ -1,0 +1,42 @@
+{
+  "_": [
+    "The hinge between tools/tos_cp3/session_inputs.py (CP-3 plan 2026-10-10 §3.6,",
+    "PR-3) and the two runtime stores it reads. The firewall is bidirectional, so no",
+    "single test can hold both ends: tools/ may not import tos_runtime, and a test",
+    "under tos/ may not import tools. This file is what both halves read.",
+    "",
+    "tos side  — tos/runtime/tests/operations/test_cp3_session_store_reads.py: every",
+    "  (table, column) named here exists in that store's registered migrations, and",
+    "  schema_version is the latest version those migrations reach.",
+    "tools side — tests/tools/test_cp3_session_inputs.py: the extractor's pinned",
+    "  versions equal these, and every fixture store it builds is built from exactly",
+    "  these columns, so a column the extractor reads but does not declare here is a",
+    "  sqlite error rather than a silent read of a store nobody checked."
+  ],
+  "marketfeed": {
+    "file_name": "marketfeed.sqlite3",
+    "schema_version": 1,
+    "reads": {
+      "snapshots": {
+        "snapshot_id": "TEXT",
+        "instrument": "TEXT",
+        "as_of_ms": "INTEGER"
+      },
+      "preimages": {
+        "snapshot_id": "TEXT",
+        "raw_event_id": "TEXT"
+      }
+    }
+  },
+  "evidence": {
+    "file_name": "evidence.sqlite3",
+    "schema_version": 2,
+    "reads": {
+      "entries": {
+        "seq": "INTEGER",
+        "kind": "TEXT",
+        "payload_json": "TEXT"
+      }
+    }
+  }
+}
