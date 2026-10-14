@@ -236,15 +236,25 @@ def refuse_if_partitions_exist(
     the seed and the already-frozen bars a SECOND time; B1a's ``_bar_lookup``
     then refuses the duplicate timestamps and the whole session's offline input
     is lost. Refusing here turns that into a startup failure the runner reports.
+
+    **Every ``code=`` directory, not just the traded symbol** (plan §3.2a). A
+    cross-contract seed writes the previous month's days under that month's own
+    partition, and right after a roll those may be the ONLY partitions a boot
+    produces — a restart checking the traded symbol alone would find nothing,
+    proceed, and duplicate every previous-month seed day. This is a check on
+    THIS session directory's own emptiness; it is not the "sibling ``code=``
+    means a mixed tree" heuristic plan §9 MEDIUM-1 rejects for B1a, which runs
+    against the legacy root where several months always coexist.
     """
-    base = market_root / asset_class / "minute" / f"code={symbol}"
-    existing = sorted(base.glob("year=*/month=*/day=*/*.parquet"))
+    base = market_root / asset_class / "minute"
+    existing = sorted(base.glob("code=*/year=*/month=*/day=*/*.parquet"))
     if existing:
         raise LiveProducerRefused(
             f"{base} already holds {len(existing)} partition file(s), e.g. "
-            f"{existing[0].name}. The writes here are append-only, so reusing a "
-            "session directory duplicates timestamps and B1a refuses the whole "
-            "window. Start a new session directory (plan §3.6)"
+            f"{existing[0].relative_to(base)} (this session trades {symbol}). "
+            "The writes here are append-only, so reusing a session directory "
+            "duplicates timestamps and B1a refuses the whole window. Start a "
+            "new session directory (plan §3.6)"
         )
 
 

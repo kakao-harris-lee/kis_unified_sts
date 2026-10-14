@@ -28,6 +28,13 @@ execution_yaml: config/execution.yaml
 # 아니라 이 달력에서 온다.
 calendar_session_id: krx-index-futures
 calendar_session_phase: CONTINUOUS
+# 월물 교차 시드(§3.2a)에서 **그날의 front month** 를 정하는
+# shared/instruments/futures.py::get_front_month_code 의 product 인자.
+# 오늘의 종목을 정하는 바로 그 함수이고, 기동 시 --instrument 와 일치하는지
+# 단언한다(어긋나면 거래하지 않는 월물에 접합하게 된다). 코드에 박지 않는 이유는
+# 같다 — 정규 월물로 돌리는 생산자가 mini 를 거래하는 러너 옆에서 조용히 다른
+# 월물을 고를 수 있다.
+front_month_product: mini
 # 이 달력이 **덮는 연도**를 명시한다. 휴장일 날짜에서 추론하지 않는다(리뷰 L4):
 # 추론하면 2027-01-01 항목 하나가 2027 전체를 「덮는다」고 표시하고, 그러면 시드
 # walk 가 2027 의 모든 평일을 거래일로 읽는다 — §3.2 L2 의 거부가 막으려던 바로
