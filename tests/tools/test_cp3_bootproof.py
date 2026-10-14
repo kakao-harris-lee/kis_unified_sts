@@ -2547,3 +2547,43 @@ def test_l2_the_boot_snapshot_is_taken_at_the_boot_not_at_the_first_row(
     assert len(journal_ids) == 2, journal_ids
     assert snapshot["consumed_stale_at_boot"] == 2
     assert snapshot["pre_boot_raw_event_ids"] == journal_ids
+
+
+def test_red_codex_high_no_credential_value_reaches_a_redirected_trace(
+    tmp_path: Path,
+) -> None:
+    """**Codex review HIGH, the third door: ``BASH_XTRACEFD``.**
+
+    A trace need not go to the terminal. ``BASH_XTRACEFD`` points it at an
+    arbitrary open descriptor — a shared operator log, a file someone later
+    pastes into an issue — and ``SHELLOPTS=xtrace`` turns it on without
+    appearing in the command line. The two together are the quietest version
+    of this leak: nothing in the invocation shows it, and the output lands
+    somewhere the runner never looks.
+
+    The descriptor is real (``pass_fds``), so this is the mechanism and not a
+    mock of it; the assertion is that the file it points at never contains the
+    credential.
+    """
+    repo = _runner_repo(tmp_path)
+    trace = tmp_path / "trace.log"
+    with trace.open("w", encoding="utf-8") as handle:
+        env = _runner_env(tmp_path, KIS_FUTURES_APP_KEY=_PRODUCER_FAKE_KEY)
+        env["SHELLOPTS"] = "xtrace"
+        env["BASH_XTRACEFD"] = str(handle.fileno())
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=180,
+            pass_fds=(handle.fileno(),),
+        )
+    assert result.returncode != 0
+    assert "KIS_FUTURES_APP_KEY is set in this shell" in result.stdout + result.stderr
+    written = trace.read_text("utf-8", errors="replace")
+    assert _PRODUCER_FAKE_KEY not in written, "the value reached the redirected trace"
+    assert _PRODUCER_FAKE_KEY not in (tmp_path / "session.log").read_text(
+        "utf-8", errors="replace"
+    )
