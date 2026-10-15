@@ -2286,6 +2286,12 @@ class _Http:
     def __init__(self, response: Any) -> None:
         self.response, self.seen = response, []
         self.timeouts: list[Any] = []
+        self.closed = False
+
+    def close(self) -> None:
+        # The band attempt owns its client and closes it; the caller closes it
+        # too when it aborts. Both paths must find a `close` here.
+        self.closed = True
 
     def stream(
         self,
@@ -2339,6 +2345,11 @@ def _bare_quotes(recorder: Any, http: Any) -> Any:
     quotes.http = http
     quotes.creds = SimpleNamespace(app_key="key", app_secret="secret")
     quotes.auth = SimpleNamespace(get_token=lambda: "token", invalidate=lambda: None)
+    # The band attempt builds its OWN client through this factory, so *http* is
+    # what it gets. ``object.__new__`` skips ``__init__``, which is where the
+    # real default is set — leaving it unset made the worker die with an
+    # ``AttributeError`` that surfaced as ``band_worker_crashed``.
+    quotes.band_client_factory = lambda _timeout: http
     return quotes
 
 
@@ -2944,8 +2955,12 @@ def test_the_band_get_keeps_the_phase_timeouts_as_inactivity_guards() -> None:
     raw = json.dumps(_band_payload()).encode("utf-8")
     http = _Http(_Response(raw))
     quotes = _bare_quotes(_Recorder(), http)
+    # The guards go to the CLIENT the attempt builds, so that is where they are
+    # inspected (before review round 3 they were a per-request argument).
+    given: list[Any] = []
+    quotes.band_client_factory = lambda timeout: (given.append(timeout), http)[1]
     quotes.band(INSTRUMENT)
-    (timeout,) = http.timeouts
+    (timeout,) = given
     budget = quotes.cfg["request_timeout_s"]
     assert timeout is not None
     phases = (timeout.connect, timeout.read, timeout.write, timeout.pool)
@@ -2963,10 +2978,223 @@ def test_the_band_get_keeps_the_phase_timeouts_as_inactivity_guards() -> None:
     http_tiny = _Http(_Response(raw))
     quotes_tiny = _bare_quotes(_Recorder(), http_tiny)
     quotes_tiny.cfg["request_timeout_s"] = tiny
+    given_tiny: list[Any] = []
+    quotes_tiny.band_client_factory = lambda timeout: (
+        given_tiny.append(timeout),
+        http_tiny,
+    )[1]
     quotes_tiny.band(INSTRUMENT)
-    (timeout_tiny,) = http_tiny.timeouts
+    (timeout_tiny,) = given_tiny
     assert timeout_tiny.read == pytest.approx(tiny / 4.0)
     assert timeout_tiny.read < 0.001
+
+
+def _mock_band_client(handler: Any) -> Any:
+    """A REAL ``httpx.Client`` over a ``MockTransport``, as the factory seam.
+
+    Real client, real streaming machinery, real decoding — only the socket is
+    replaced. That matters for review round 3: the two reads the previous bound
+    missed (header reception, compressed bytes that decode to nothing) happen
+    inside httpx, so a hand-rolled fake client cannot reproduce them.
+    """
+    import httpx
+
+    def factory(timeout: Any) -> Any:
+        return httpx.Client(
+            transport=httpx.MockTransport(handler),
+            timeout=timeout,
+            follow_redirects=False,
+        )
+
+    return factory
+
+
+def _slow_header_handler(delay_s: float) -> Any:
+    """Headers that arrive late: the handler sleeps before returning at all."""
+
+    def handler(_request: Any) -> Any:
+        import httpx
+
+        time.sleep(delay_s)
+        return httpx.Response(200, json=_band_payload())
+
+    return handler
+
+
+def _trickling_body_handler(chunks: int, pause_s: float, *, gzip_it: bool) -> Any:
+    """A body that arrives in slow pieces, optionally gzipped.
+
+    ``gzip_it`` is the nastier shape: the pieces are fragments of a VALID gzip
+    stream, so ``iter_bytes()`` decodes them to nothing for most of the
+    transfer and a deadline checked per yielded chunk never runs.
+    """
+
+    def handler(_request: Any) -> Any:
+        import gzip as gziplib
+
+        import httpx
+
+        body = json.dumps(_band_payload()).encode("utf-8")
+        wire = gziplib.compress(body) if gzip_it else body
+        size = max(1, -(-len(wire) // chunks))
+        pieces = [wire[at : at + size] for at in range(0, len(wire), size)]
+
+        def stream() -> Any:
+            for piece in pieces:
+                time.sleep(pause_s)
+                yield piece
+
+        headers = {"content-encoding": "gzip"} if gzip_it else {}
+        return httpx.Response(200, headers=headers, stream=_iter_stream(stream()))
+
+    return handler
+
+
+def _iter_stream(gen: Any) -> Any:
+    """Adapt a generator to httpx's sync byte-stream protocol.
+
+    Must really BE an ``httpx.SyncByteStream``: ``_send_single_request``
+    asserts the type, and a duck-typed stand-in makes the worker thread die
+    with an ``AssertionError`` instead of streaming.
+    """
+    import httpx
+
+    class _Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Any:
+            return iter(gen)
+
+        def close(self) -> None:
+            close = getattr(gen, "close", None)
+            if close is not None:
+                close()
+
+    return _Stream()
+
+
+@pytest.mark.parametrize(
+    "name,handler_factory",
+    [
+        # 1. headers that never come inside the budget — read ENTIRELY before
+        #    `iter_bytes()` yields anything, so the old in-loop deadline could
+        #    not see it at all.
+        ("trickled headers", lambda budget: _slow_header_handler(budget * 6)),
+        # 2. a valid gzip stream whose fragments decode to nothing for most of
+        #    the transfer: Codex's own reproduction (1.6 s against a 1 s
+        #    budget with 100 ms pieces).
+        (
+            "gzip that decodes to nothing",
+            lambda budget: _trickling_body_handler(12, budget / 2.0, gzip_it=True),
+        ),
+        # 3. a plain trickled body, each piece well inside its read guard.
+        (
+            "trickled body",
+            lambda budget: _trickling_body_handler(12, budget / 2.0, gzip_it=False),
+        ),
+    ],
+)
+def test_red_the_caller_returns_inside_the_budget_however_httpx_blocks(
+    name: str, handler_factory: Any
+) -> None:
+    """**Review round 3, Codex MEDIUM.** The CALLER's elapsed time is the bound.
+
+    Three inputs, one claim: whatever httpx is blocked on — headers, undecoded
+    compressed bytes, or a slow body — ``band()`` hands control back inside
+    ``request_timeout_s`` plus a small epsilon. Asserted on the CALLER's clock,
+    never the worker's, because a worker that lingers is explicitly allowed.
+
+    Mutation: a caller that joins the worker without a timeout (or re-joins it
+    after the timeout) blows the assertion on every one of the three.
+    """
+    budget = 0.4
+    epsilon = 0.6  # generous: this must not be a timing-flake factory
+    recorder = _Recorder()
+    quotes = _bare_quotes(recorder, _NoSocket())
+    quotes.cfg["request_timeout_s"] = budget
+    quotes.cfg["pace_s"] = 0.0
+    quotes.band_client_factory = _mock_band_client(handler_factory(budget))
+
+    began = time.monotonic()
+    with pytest.raises(RuntimeError, match="band_total_budget_exceeded"):
+        quotes.band(INSTRUMENT)
+    elapsed = time.monotonic() - began
+
+    assert elapsed < budget + epsilon, f"{name}: caller blocked {elapsed:.2f}s"
+    # ...and it really went through the TIMEOUT path rather than returning
+    # early for some other reason: the worker was still blocked at the join,
+    # which is only reachable after waiting the whole budget. A crash would
+    # have reported `band_worker_crashed` and the gate a `SafetyViolation`, so
+    # the token below plus this lower bound pin which branch ran.
+    assert elapsed >= budget * 0.9, f"{name}: returned early, {elapsed:.2f}s"
+    (event,) = recorder.events
+    assert event["error"] == "band_total_budget_exceeded"
+    assert event["total_budget_s"] == budget
+    assert event["tr_id"] == quote_client.BAND_TR
+
+
+def test_red_a_worker_crash_is_not_a_timeout() -> None:
+    """A dead worker must SAY it died, not borrow the budget's name.
+
+    The caller distinguishes three ends: the worker is still alive at the join
+    (budget exceeded), it reported a crash, or it vanished without reporting.
+    Conflating the first two is how a defect in this repo would get filed as
+    "the broker was slow" — and the first cut of this method did exactly that,
+    because it treated an empty result box as a timeout. The input: a client
+    factory that raises something outside the attempt's own except tuple.
+    """
+    recorder = _Recorder()
+    quotes = _bare_quotes(recorder, _NoSocket())
+    quotes.cfg["request_timeout_s"] = 2.0
+    quotes.cfg["pace_s"] = 0.0
+
+    def explode(_timeout: Any) -> Any:
+        raise KeyError("not a transport error")
+
+    quotes.band_client_factory = explode
+    began = time.monotonic()
+    with pytest.raises(RuntimeError, match="band_worker_crashed"):
+        quotes.band(INSTRUMENT)
+    # ...and it did not sit out the budget to find that out.
+    assert time.monotonic() - began < 1.0
+    (event,) = recorder.events
+    assert event["error"] == "band_worker_crashed"
+
+
+def test_the_band_get_asks_for_no_compression() -> None:
+    """``accept-encoding: identity`` — defence in depth, not the bound.
+
+    It removes the "compressed bytes that decode to nothing" path rather than
+    relying on anything about it; the bound is the caller's join.
+    """
+    raw = json.dumps(_band_payload()).encode("utf-8")
+    http = _Http(_Response(raw))
+    quotes = _bare_quotes(_Recorder(), _NoSocket())
+    quotes.band_client_factory = lambda _timeout: http
+    quotes.band(INSTRUMENT)
+    _url, headers, _params = http.seen[0]
+    assert headers["accept-encoding"] == "identity"
+
+
+def test_a_late_worker_result_is_discarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A worker that succeeds AFTER the budget must change nothing.
+
+    The caller has already raised; its record says ``band_total_budget_
+    exceeded`` and the band journal gets no line. This is the "discard any
+    late result" guard stated as a test: the attempt returns a perfectly good
+    payload, just too late to be anybody's answer.
+    """
+    budget = 0.3
+    recorder = _Recorder()
+    quotes = _bare_quotes(recorder, _NoSocket())
+    quotes.cfg["request_timeout_s"] = budget
+    quotes.cfg["pace_s"] = 0.0
+    quotes.band_client_factory = _mock_band_client(_slow_header_handler(budget * 2.5))
+    with pytest.raises(RuntimeError, match="band_total_budget_exceeded"):
+        quotes.band(INSTRUMENT)
+    # Let the worker finish on its own, then prove nothing changed.
+    time.sleep(budget * 3)
+    (event,) = recorder.events
+    assert event["error"] == "band_total_budget_exceeded"
+    assert "raw_payload_digest" not in event
 
 
 def test_red_a_trickling_response_is_cut_off_at_the_total_budget() -> None:
@@ -3000,15 +3228,19 @@ def test_red_a_trickling_response_is_cut_off_at_the_total_budget() -> None:
 
     # No single chunk was late enough for an inactivity guard to fire...
     assert pause < phase
-    # ...and the call still ended, near the budget rather than at 40 * pause.
+    # ...and the CALLER still came back near its budget rather than at
+    # 40 * pause. ⚠ Since review round 3 the mechanism is the caller's
+    # `join(budget)`, not a deadline inside the read loop: the loop only ever
+    # saw DECODED bytes, so it could not bound header reception or compressed
+    # fragments. The sibling test over a REAL httpx client + MockTransport
+    # covers those two; this one keeps the cheap version of the same claim.
     assert elapsed < 40 * pause
-    # The stream was CLOSED, not merely abandoned — by `Client.stream`'s
-    # context manager on the way out, which is the only mechanism here (an
-    # explicit `close()` before the raise was deleted: the round-3 mutation run
-    # showed no test could tell whether it was there).
-    assert response.closed is True
-    # Part of the body arrived and the rest never did.
+    # Part of the body arrived and the rest never did — the worker was still
+    # mid-stream when the caller gave up, which is the state being asserted.
     assert 0 < len(response.served) < len(raw)
+    # The caller closed the attempt's client from its own thread, which is what
+    # makes a real worker's blocked socket read fail.
+    assert http.closed is True
     (event,) = recorder.events
     assert event["error"] == "band_total_budget_exceeded"
     assert event["total_budget_s"] == budget
