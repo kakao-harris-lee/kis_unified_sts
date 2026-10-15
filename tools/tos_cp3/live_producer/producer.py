@@ -1,8 +1,14 @@
-"""③ itself: the pure ``build_line`` and the thin outer loop around it.
+"""③ itself: the thin outer loop, and the CLI that starts it.
 
 Plan §3.5 splits the producer in two on purpose — a pure function that turns a
 frame into one journal row, and a loop that does HTTP and file replacement —
-so the field computation is testable without a clock or a socket.
+so the field computation is testable without a clock or a socket. Since PR
+#904's review that split is also a FILE split: the pure half is
+:mod:`~tools.tos_cp3.live_producer.line`, the give-ups are
+:mod:`~tools.tos_cp3.live_producer.halt_policy`, and the seed's own report is
+:mod:`~tools.tos_cp3.live_producer.seed_lineage`. ``build_line`` is imported
+back into this module's namespace, so a test that monkeypatches
+``producer.build_line`` still reaches the call site below.
 
 **Why a batch re-run every minute rather than an incremental engine** (plan
 §3.1): ``produce_bars`` calls ``check()`` exactly once per bar, and that single
@@ -34,7 +40,6 @@ from tools.broker_probes.common import (  # noqa: E402
     resolve_credentials,
     secret_fingerprint,
 )
-from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
 from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
     RuntimeCalendar,
     SessionWindow,
@@ -48,14 +53,23 @@ from tools.tos_cp3.live_producer.config import (  # noqa: E402
     read_query_credentials,
 )
 from tools.tos_cp3.live_producer.frame import (  # noqa: E402
-    SEED_DROP_DENSITY,
-    SEED_DROP_NO_RAW_ROWS,
     Bar,
     FreezeStep,
     Seed,
     build_seed,
     freeze_step,
 )
+from tools.tos_cp3.live_producer.halt_policy import (  # noqa: E402
+    STAGE_FETCH_ERROR_MINUTE,
+    assert_the_session_can_still_happen,
+    assert_worth_continuing,
+    next_fetch_error_minutes,
+)
+from tools.tos_cp3.live_producer.line import (  # noqa: E402
+    SOURCE_ID,
+    build_line,
+)
+from tools.tos_cp3.live_producer.seed_lineage import seed_lineage  # noqa: E402
 from tools.tos_cp3.live_producer.session_log import (  # noqa: E402
     STAGE_ALREADY_FROZEN,
     Counters,
@@ -78,7 +92,6 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     StrategyInputs,
     derive_raw_event_id,
     load_strategy_inputs,
-    produce_bars,
     resolve_contract_spec,
     resolve_open_anchor,
 )
@@ -90,81 +103,8 @@ from tools.tos_cp3.stitch import (  # noqa: E402
     write_manifest,
 )
 
-#: The allowlist prefix added to ``bootproof_guard`` in this PR, and the full
-#: ``source_id`` every line carries. The delimiter rule there means the prefix
-#: matches ``tos-cp3-live`` exactly or ``tos-cp3-live/`` + anything.
-SOURCE_PREFIX = "tos-cp3-live"
-SOURCE_ID = f"{SOURCE_PREFIX}/{TOS_CP3_VERSION}"
-
 #: The asset class segment of the Parquet layout B1a reads back.
 ASSET_CLASS = "futures"
-
-
-@dataclass(frozen=True)
-class LineOutcome:
-    """One attempt at a journal row: the row, or the reason there is none."""
-
-    row: dict[str, Any] | None = None
-    reason: str | None = None
-    raw_event_id: str | None = None
-
-
-def build_line(
-    frame: Any,
-    *,
-    symbol: str,
-    strategy: StrategyInputs,
-    contract_spec: Any,
-    anchor: OpenAnchor,
-    bar_minute: datetime,
-    received_ms: int,
-) -> LineOutcome:
-    """The pure half: a frozen frame in, at most one journal row out.
-
-    ``raw_event_id`` and the fifteen ``FIELD_ORDER`` values come from B1a's own
-    ``produce_bars``, so the same bar's real-time and offline lines join in B3.
-    Two keys differ from B1a here (plan §1): ``source_id`` names this producer
-    and ``received_ms`` records when the REST response arrived.
-
-    **The row carries no ``as_of_ms``** (review B1). This function runs
-    ``produce_bars`` — measured at ~0.44 s late in a session — so a stamp taken
-    here would already have spent more than the tenant's whole 800 ms budget by
-    the time the line is written. :meth:`~tools.tos_cp3.live_producer.sinks
-    .ObservationJournal.append` takes it immediately before the replace, and
-    refuses a row that arrives with one.
-
-    A last record that is not *bar_minute* is not a defect: ``produce_bars``
-    omits a bar whose ATR/VWAP inputs cannot carry their published meaning, and
-    B1a omits the same bar, so B3 does not diverge (plan §3.1). It is reported
-    as ``omitted_unusable``.
-    """
-    import pandas as pd
-
-    produced = produce_bars(
-        frame,
-        symbol=symbol,
-        strategy=strategy,
-        contract_spec=contract_spec,
-        anchor=anchor,
-    )
-    last = produced.records[-1]
-    # ``MarketContextReplay`` yields KST-AWARE stamps while the frozen frame and
-    # ``parse_ohlcv`` carry naive KST wall time. Compared as-is, an aware and a
-    # naive Timestamp for the same minute are never equal, so every line would
-    # read as ``omitted_unusable`` and the producer would publish nothing at
-    # all. Dropped the same way B1a's own ``_bar_lookup`` drops it.
-    if pd.Timestamp(last.bar_kst).tz_localize(None) != pd.Timestamp(bar_minute):
-        return LineOutcome(reason="omitted_unusable", raw_event_id=last.raw_event_id)
-    return LineOutcome(
-        row={
-            "raw_event_id": last.raw_event_id,
-            "source_id": SOURCE_ID,
-            "instrument": last.instrument,
-            "received_ms": received_ms,
-            "fields": last.fields,
-        },
-        raw_event_id=last.raw_event_id,
-    )
 
 
 @dataclass
@@ -205,6 +145,11 @@ class LiveProducer:
     frozen: list[Bar] = field(default_factory=list)
     counters: Counters = field(default_factory=Counters)
     consecutive_produce_errors: int = 0
+    #: Consecutive boundaries that POLLED and got nothing back from any poll —
+    #: plan §3.5's fetch give-up (``max_consecutive_fetch_error_minutes``). A
+    #: boundary the frame had already settled polls nothing, so it neither
+    #: increments nor resets this: no feed information was gathered.
+    consecutive_fetch_error_minutes: int = 0
     #: Every minute a journal line was actually WRITTEN for. A minute enters
     #: this set AFTER the write, never before: a bar that ended in
     #: ``omitted_unusable``, ``produce_error`` or a refused stamp was not
@@ -254,6 +199,11 @@ class LiveProducer:
             )
         self.window = self.calendar.window(
             self.config.calendar_session_id, self.config.calendar_session_phase
+        )
+        assert_the_session_can_still_happen(
+            first_boundary=self._first_boundary(),
+            window=self.window,
+            target=self.target,
         )
         self.strategy = load_strategy_inputs(self.config.strategy_yaml)
         self.anchor = resolve_open_anchor(
@@ -371,52 +321,18 @@ class LiveProducer:
             )
 
     def _seed_lineage(self) -> dict[str, Any]:
-        return {
-            "instrument": self.instrument,
-            "calendar_version": self.calendar.calendar_version,
-            "session_window": f"{self.window.start}..{self.window.end}",
-            "days_used": [str(day) for day in self.seed.days_used],
-            "contracts_used": list(self.seed.contracts_used),
-            "capacity": self.seed.capacity,
-            "required": self.seed.required,
-            "min_bars_per_day": self.seed.min_bars_per_day,
-            # Reason-tagged, not one count (review L3): a day the calendar
-            # calls a trading day that returned ZERO rows may be a holiday the
-            # calendar is missing, which is the defect plan §3.2 moved off
-            # `shared/collector/historical/calendar.py` to avoid. Merged into a
-            # density count it would be invisible.
-            "dropped_days": [
-                {
-                    "day": str(s.day),
-                    "raw_rows": s.raw_rows,
-                    "parsed_rows": s.parsed_rows,
-                    "reason": s.drop_reason,
-                }
-                for s in self.seed.sessions
-                if not s.density_pass
-            ],
-            "dropped_no_raw_rows": sum(
-                1 for s in self.seed.sessions if s.drop_reason == SEED_DROP_NO_RAW_ROWS
-            ),
-            "dropped_density": sum(
-                1 for s in self.seed.sessions if s.drop_reason == SEED_DROP_DENSITY
-            ),
-            "calendar_covered_years": list(self.config.calendar_covered_years),
-            "parser_env": dict(self.config.parser_env),
-            "config_sha256": self.config.sha256,
-            "source_id": SOURCE_ID,
-            # Plan §3.2a. ``junctions`` is [] on a session with no splice and
-            # the manifest is still written and still digested — B1a and B2
-            # read it either way.
-            "front_month_product": self.config.front_month_product,
-            "stitch_manifest": str(self.market_root / STITCH_FILENAME),
-            "stitch_manifest_sha256": self.manifest.sha256,
-            "stitch_segments": [s.to_payload() for s in self.manifest.segments],
-            "stitch_junctions": [j.to_payload() for j in self.manifest.junctions],
-            "junction_new_contract_bars_stored_not_framed": len(
-                self.assembler.junction_new_bars
-            ),
-        }
+        return seed_lineage(
+            instrument=self.instrument,
+            target=self.target,
+            calendar=self.calendar,
+            window=self.window,
+            seed=self.seed,
+            config=self.config,
+            manifest=self.manifest,
+            assembler=self.assembler,
+            market_root=self.market_root,
+            source_id=SOURCE_ID,
+        )
 
     def _boot_today(self) -> None:
         """Freeze today's already-complete bars and publish the newest one.
@@ -458,18 +374,43 @@ class LiveProducer:
     # -- session loop ----------------------------------------------------
 
     def run_session(self) -> None:
-        """Walk minute boundaries to the session end, one decision each."""
+        """Walk minute boundaries to the session end, one decision each.
+
+        Two give-ups, both plan §3.5, both checked after every boundary. They
+        are separate counters because they are separate failures: the first is
+        a bar this producer cannot BUILD, the second is a feed that is not
+        answering at all (PR #904 review round 1 item A.1 — the first one
+        counts only ``ProduceFieldsError`` and so could not see a dead feed).
+
+        ⚠ The late-boot refusal is asked AGAIN here, on the boundary this loop
+        will actually use (review round 2 LOW 3). ``boot()`` asks it too, but
+        on an earlier clock reading — and the seed walk between the two is
+        tens of paginated GETs, so it can carry the clock past the close by
+        itself. Measured by the reviewer: a boot at 09:18:30 against a 09:21
+        end, a seed that advanced the clock to 09:23, and a loop that then ran
+        ZERO iterations and returned 0. Both calls are kept and neither is
+        redundant: ``boot()``'s saves the seed walk a session cannot use, and
+        this one is the one that actually guarantees the loop runs.
+        """
         boundary = self._first_boundary()
+        assert_the_session_can_still_happen(
+            first_boundary=boundary, window=self.window, target=self.target
+        )
         end = self.window.end_boundary(self.target)
         while boundary <= end:
             self._handle_boundary(boundary)
-            if self.consecutive_produce_errors >= (
-                self.config.max_consecutive_produce_errors
-            ):
-                raise LiveProducerRefused(
-                    f"{self.consecutive_produce_errors} consecutive produce_error(s) "
-                    "— stopping the producer (plan §3.5); the runner reports ABORT"
-                )
+            assert_worth_continuing(
+                consecutive_produce_errors=self.consecutive_produce_errors,
+                max_consecutive_produce_errors=(
+                    self.config.max_consecutive_produce_errors
+                ),
+                consecutive_fetch_error_minutes=self.consecutive_fetch_error_minutes,
+                max_consecutive_fetch_error_minutes=(
+                    self.config.max_consecutive_fetch_error_minutes
+                ),
+                fetch_error_total=self.counters.fetch_error,
+                published_total=self.counters.published,
+            )
             boundary += timedelta(minutes=1)
 
     def _first_boundary(self) -> datetime:
@@ -502,6 +443,7 @@ class LiveProducer:
             seconds=self.config.missing_no_successor_timeout_s
         )
         raw_minutes: frozenset[datetime] = frozenset()
+        polled_ok = False
         while True:
             try:
                 step, received_ms = self._poll()
@@ -512,15 +454,37 @@ class LiveProducer:
                 )
                 step, received_ms = None, None
             if step is not None:
+                polled_ok = True
                 raw_minutes |= step.raw_minutes
                 current = self._freeze(step, bar_minute=bar_minute)
                 if current is not None:
                     self._publish_bar(current, received_ms=received_ms)
+                    self._record_feed_health(boundary, polled_ok=True)
                     return
             if self._now_naive() >= deadline:
                 self._record_unpublished(boundary, bar_minute, raw_minutes)
+                self._record_feed_health(boundary, polled_ok=polled_ok)
                 return
             self.clock.sleep(self.config.repoll_pace_s)
+
+    def _record_feed_health(self, boundary: datetime, *, polled_ok: bool) -> None:
+        """This boundary's verdict on the FEED (see :mod:`halt_policy`).
+
+        Only boundaries that actually polled reach here — one the frame had
+        already settled gathered no feed information, so it must neither
+        increment the run nor reset it.
+        """
+        self.consecutive_fetch_error_minutes = next_fetch_error_minutes(
+            self.consecutive_fetch_error_minutes, polled_ok=polled_ok
+        )
+        if not polled_ok:
+            self.log.event(
+                {
+                    "stage": STAGE_FETCH_ERROR_MINUTE,
+                    "boundary": str(boundary),
+                    "consecutive": self.consecutive_fetch_error_minutes,
+                }
+            )
 
     def _boundary_already_settled(
         self, boundary: datetime, bar_minute: datetime

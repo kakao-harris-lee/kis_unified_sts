@@ -95,6 +95,7 @@ B1a, B2 and B1b use.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import hashlib
 import json
 import sqlite3
@@ -130,7 +131,14 @@ SOURCE_ID = f"tos-cp3-session-inputs/{TOS_CP3_VERSION}"
 #: documents are read by B3 (:mod:`tools.tos_cp3.diff_decisions`) only through
 #: keys that did not move, so a 1-shaped document still compares — the bump is
 #: so a reader of an old artifact knows which shape it is.
-SCHEMA_VERSION = 2
+#:
+#: 3 (2026-10-15): ``consumed-ids`` gained ``generated_from
+#: .producer_session_close`` and, with it, the
+#: :data:`REASON_PUBLISHED_AFTER_CLOSE` reason. The key is what makes a zero
+#: in that reason READABLE — without it, "no bar was published after the
+#: close" and "the producer log carried no seed record, so the question was
+#: never asked" are the same document.
+SCHEMA_VERSION = 3
 
 #: Mirrors ``tos_runtime.marketfeed.store.MARKETFEED_FILE_NAME`` and
 #: ``tos_runtime.operations.backup_set.EVIDENCE_FILE_NAME``. Mirrored, not
@@ -354,6 +362,27 @@ REASON_PRE_BOOT = "pre_boot"
 #: This is the M5 defect shape and gets its own name — never folded into a
 #: benign reason, which is the whole point of counting by reason.
 REASON_UNCONSUMED_AFTER_BOOT = "published_not_consumed"
+
+#: A line the producer published at or after the session CLOSE. Structurally
+#: unconsumable, the same way :data:`REASON_PRE_BOOT` is, and for a reason at
+#: the other end of the day: the runtime's scheduler answers
+#: ``SKIPPED_SESSION_CLOSED`` for every pass whose session context is not open
+#: (``tos_runtime.marketfeed.scheduler.decide_tick``'s FIRST clause), so a bar
+#: that only exists after the close can never be ticked.
+#:
+#: The session's own last bar is exactly that bar, by construction and not by
+#: accident: it is complete only once the minute after it has elapsed
+#: (``live_producer/calendar.py::SessionWindow.end_boundary`` — "the 15:45 bar
+#: covers 15:45:00-15:45:59, so 15:46:00 is the session end time has elapsed"),
+#: so the producer publishes it one minute past the close, every day. Counted
+#: as :data:`REASON_UNCONSUMED_AFTER_BOOT` it put a permanent 1 in the number
+#: plan §5 M5 requires to be 0 (measured on the 2026-10-15 LONG genesis
+#: session: ``published_not_consumed: 1``, the 15:45 bar).
+#:
+#: ⚠ Decided from the PUBLISH stamp against the close, never from the bar's
+#: label and never from a literal 15:45: a bar published at 15:44:59 that the
+#: runtime did not consume is a real miss and keeps the defect name.
+REASON_PUBLISHED_AFTER_CLOSE = "published_after_session_close"
 
 #: An offline bar with no producer-log disposition at all. Not refused: a B3
 #: run whose producer log is missing or truncated still has something to say,
@@ -685,8 +714,66 @@ def _iter_json_lines(path: Path, *, label: str) -> Iterator[dict[str, Any]]:
         yield payload
 
 
-def producer_dispositions(producer_log: Path) -> dict[str, str]:
-    """``raw_event_id -> the stage that disposed of that bar``.
+@dataclass(frozen=True)
+class ProducerLogFacts:
+    """What one pass over the producer's own log says about its bars.
+
+    Three facts, read together because they come from the same file and the
+    reason map needs all three:
+
+    * ``dispositions`` — ``raw_event_id -> the stage that disposed of it``;
+    * ``published_as_of_ms`` — the journal stamp the ``published`` event
+      recorded, i.e. WHEN the line became visible to the runtime. Not the
+      bar's label: the two differ by at least the boundary's own grace, and
+      the close question is about the stamp;
+    * ``session_close`` — the end of the session window the producer SEEDED
+      with, off its ``seed`` record's ``session_window`` (``08:45:00..15:45:00``
+      on 2026-10-15). Read from the record rather than written here: the
+      producer takes it from the tenant calendar the runtime also loads
+      (``live_producer/calendar.py``'s module docstring is explicit that a
+      hardcoded 15:45 would be a second source of truth), and ``None`` when
+      the log carries no seed record, which keeps every reason it would have
+      refined exactly as it was.
+    """
+
+    dispositions: dict[str, str]
+    published_as_of_ms: dict[str, int]
+    session_close: _dt.time | None
+
+
+#: The producer's ``seed`` log stage and the key on it that carries the
+#: session window, as ``live_producer/seed_lineage.py`` writes them:
+#: ``"<start>..<end>"`` of ``datetime.time.isoformat()``.
+#:
+#: ⚠ **The assumption this rests on, written down (PR #904 review round 1 LOW
+#: 4).** That window is ONE phase of one session id — the producer is
+#: configured with exactly one (``calendar_session_id`` plus
+#: ``calendar_session_phase``, today ``krx-index-futures`` / ``CONTINUOUS``)
+#: and logs that phase's end. The runtime reads the same calendar file, but
+#: nothing here checks that it reads the same PHASE. If the runtime's session
+#: context were ever open past the producer's phase end — a tenant tree that
+#: adds an evening phase, or a runtime configured for a different session id —
+#: then a bar published after the producer's close could still have been
+#: ticked, and calling it :data:`REASON_PUBLISHED_AFTER_CLOSE` would EXCUSE a
+#: real miss. The excuse is therefore only as narrow as "one phase, the same
+#: one on both sides". If a second phase is ever configured, this reason has
+#: to read the runtime's own session facts instead of the producer's log.
+PRODUCER_SEED_STAGE = "seed"
+PRODUCER_SESSION_WINDOW_KEY = "session_window"
+
+
+def _parse_session_close(value: Any) -> _dt.time | None:
+    """The END of a ``"<start>..<end>"`` window, or ``None`` if unreadable."""
+    if not isinstance(value, str) or ".." not in value:
+        return None
+    try:
+        return _dt.time.fromisoformat(value.rsplit("..", 1)[1])
+    except ValueError:
+        return None
+
+
+def producer_log_facts(producer_log: Path) -> ProducerLogFacts:
+    """One pass over the producer log — see :class:`ProducerLogFacts`.
 
     ``published`` wins over everything; otherwise the LAST dispositive stage
     wins, because a bar can miss its own boundary and complete afterwards. Only
@@ -695,8 +782,15 @@ def producer_dispositions(producer_log: Path) -> dict[str, str]:
     join key (plan §3.6).
     """
     disposed: dict[str, str] = {}
+    published_as_of_ms: dict[str, int] = {}
+    session_close: _dt.time | None = None
     for payload in _iter_json_lines(producer_log, label="producer log"):
         stage = payload.get("stage")
+        if stage == PRODUCER_SEED_STAGE and session_close is None:
+            session_close = _parse_session_close(
+                payload.get(PRODUCER_SESSION_WINDOW_KEY)
+            )
+            continue
         raw_event_id = payload.get("raw_event_id")
         if not isinstance(raw_event_id, str) or stage not in (
             PRODUCER_DISPOSITION_STAGES
@@ -705,7 +799,15 @@ def producer_dispositions(producer_log: Path) -> dict[str, str]:
         if disposed.get(raw_event_id) == "published":
             continue
         disposed[raw_event_id] = str(stage)
-    return disposed
+        if stage == "published":
+            as_of_ms = payload.get("as_of_ms")
+            if isinstance(as_of_ms, int) and not isinstance(as_of_ms, bool):
+                published_as_of_ms[raw_event_id] = as_of_ms
+    return ProducerLogFacts(
+        dispositions=disposed,
+        published_as_of_ms=published_as_of_ms,
+        session_close=session_close,
+    )
 
 
 def read_boot_snapshot(path: Path) -> frozenset[str]:
@@ -731,25 +833,74 @@ def read_boot_snapshot(path: Path) -> frozenset[str]:
     return frozenset(ids)
 
 
+#: The timeframe token :func:`tools.tos_cp3.produce_fields.derive_raw_event_id`
+#: puts between the symbol and the stamp, and the stamp's own format. Split on
+#: here rather than re-derived: the key is the producer's, and a second
+#: derivation of a join key is how two keys drift apart (that function's own
+#: docstring).
+_RAW_EVENT_ID_SEPARATOR = ":1m:"
+_RAW_EVENT_ID_STAMP_FORMAT = "%Y%m%dT%H%M%S%z"
+
+
+def _published_after_close(
+    raw_event_id: str, as_of_ms: int | None, session_close: _dt.time | None
+) -> bool:
+    """Was this bar's line STAMPED at or after its own session's close?
+
+    The close instant is built from the bar's OWN date (off the join key) and
+    the window end the producer seeded with — so a seed day's bar is measured
+    against that day's close, not against the target session's.
+
+    Unanswerable inputs are ``False``, never ``True``: without a stamp or a
+    window there is no evidence the line was unconsumable, and the caller's
+    fall-through is :data:`REASON_UNCONSUMED_AFTER_BOOT`, the defect name. A
+    missing input must not silently excuse a real miss.
+    """
+    if as_of_ms is None or session_close is None:
+        return False
+    try:
+        bar = _dt.datetime.strptime(
+            raw_event_id.split(_RAW_EVENT_ID_SEPARATOR, 1)[1],
+            _RAW_EVENT_ID_STAMP_FORMAT,
+        )
+    except (IndexError, ValueError):
+        return False
+    close = _dt.datetime.combine(bar.date(), session_close, tzinfo=bar.tzinfo)
+    return as_of_ms >= int(close.timestamp() * 1000)
+
+
 def unpaired_reasons(
     *,
     consumed: frozenset[str],
     dispositions: Mapping[str, str],
     pre_boot: frozenset[str],
+    published_as_of_ms: Mapping[str, int] | None = None,
+    session_close: _dt.time | None = None,
 ) -> dict[str, str]:
-    """Why each produced-but-unconsumed bar has no live counterpart."""
+    """Why each produced-but-unconsumed bar has no live counterpart.
+
+    Two of the reasons are structural rather than defects, one at each end of
+    the day: :data:`REASON_PRE_BOOT` for a line already in the journal when
+    the runtime booted, and :data:`REASON_PUBLISHED_AFTER_CLOSE` for a line
+    stamped at or after the session close, which the scheduler can never tick.
+    Everything else the producer published and the runtime did not consume is
+    :data:`REASON_UNCONSUMED_AFTER_BOOT` — the M5 defect shape.
+    """
+    stamps = published_as_of_ms or {}
     reasons: dict[str, str] = {}
     for raw_event_id, stage in dispositions.items():
         if raw_event_id in consumed:
             continue
-        if stage == "published":
-            reasons[raw_event_id] = (
-                REASON_PRE_BOOT
-                if raw_event_id in pre_boot
-                else REASON_UNCONSUMED_AFTER_BOOT
-            )
-        else:
+        if stage != "published":
             reasons[raw_event_id] = stage
+        elif raw_event_id in pre_boot:
+            reasons[raw_event_id] = REASON_PRE_BOOT
+        elif _published_after_close(
+            raw_event_id, stamps.get(raw_event_id), session_close
+        ):
+            reasons[raw_event_id] = REASON_PUBLISHED_AFTER_CLOSE
+        else:
+            reasons[raw_event_id] = REASON_UNCONSUMED_AFTER_BOOT
     return reasons
 
 
@@ -1000,12 +1151,21 @@ def build_consumed_ids_document(
         )
     instrument = _assert_one_instrument(snapshots)
     consumed = frozenset(snapshot.raw_event_id for snapshot in snapshots)
-    dispositions = (
-        producer_dispositions(producer_log) if producer_log is not None else {}
+    facts = (
+        producer_log_facts(producer_log)
+        if producer_log is not None
+        else ProducerLogFacts(
+            dispositions={}, published_as_of_ms={}, session_close=None
+        )
     )
+    dispositions = facts.dispositions
     pre_boot = read_boot_snapshot(boot_snapshot)
     reasons = unpaired_reasons(
-        consumed=consumed, dispositions=dispositions, pre_boot=pre_boot
+        consumed=consumed,
+        dispositions=dispositions,
+        pre_boot=pre_boot,
+        published_as_of_ms=facts.published_as_of_ms,
+        session_close=facts.session_close,
     )
     reason_counts: dict[str, int] = {}
     for reason in reasons.values():
@@ -1021,6 +1181,12 @@ def build_consumed_ids_document(
             "marketfeed_schema_version": PINNED_MARKETFEED_SCHEMA_VERSION,
             "producer_log": _file_ref(producer_log),
             "boot_snapshot": _file_ref(boot_snapshot),
+            # null when the log carried no readable `seed` record — then
+            # REASON_PUBLISHED_AFTER_CLOSE could not be decided for ANY bar,
+            # and a zero in that reason means "not asked", not "none".
+            "producer_session_close": (
+                facts.session_close.isoformat() if facts.session_close else None
+            ),
         },
         "counts": {
             "snapshots": len(snapshots),

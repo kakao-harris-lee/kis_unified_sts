@@ -1414,8 +1414,82 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   durable set 의 `snapshots`·`entries` 분포를 찍는다.
 - **종료 코드**: 0/143 은 정상(정지창까지 간 세션은 우리 stop 경로의 SIGTERM 으로 끝나므로
   143 이 보통이다) · 3 은 가드·렌더·라벨 등의 ABORT · 4 는 가드 모듈 세대 불일치 ·
-  **5 는 「런타임은 요청대로 끝났는데 생산자가 세션 중에 멈췄다」**(그 분부터 저널이 자라지
+  **5 는 「런타임은 요청대로 끝났는데 생산자가 세션 «중에» 멈췄다」**(그 분부터 저널이 자라지
   않았으므로 깨끗한 세션이 아니다 — 계획 §3.5) · 143/130/129 는 받은 신호.
+  - ⚠ **「세션 중에 멈췄다」≠「정지 시각 전에 사라졌다」** (2026-10-15 수정). 생산자는 세션의
+    마지막 봉(15:45)을 발행한 **직후 설계대로 끝난다** — 경계 루프가
+    `end_boundary`(15:46)를 지나면 `run_session` 이 반환하고 `main` 이 0 을 돌려준다. 정지
+    시각은 늘 그보다 뒤이므로(genesis 는 15:50) **온전히 하루를 돈 세션은 전부** 생산자가
+    먼저 사라진 상태이고, 이전 판 러너는 그 전부를 exit 5 로 보고했다(실측 2026-10-15
+    15:50:02, `producer rc=0, run rc=0`).
+  - **판정은 생산자의 종료코드 한 가지다**(PR #904 리뷰 1 라운드). 요약
+    (`producer-summary.json`)으로는 가를 수 없다 — `finish()` 는 `main` 의 `finally` 에서
+    돌고 `main` 은 그 뒤에야 0 을 돌려주므로, **rc 0 이면 `stage: finish` 요약은 이미 있다.**
+    rc 0 은 「세션을 끝냈다」, rc 0 이 아니면(1 = 거부, 137 = 피살) 「세션 중에 멈췄다」이고,
+    러너 로그의 `producer end: rc=…` 줄이 그것을 적는다.
+  - 그래서 **「멈춤」의 실질은 생산자 쪽 거부로 들어왔다**(같은 리뷰): ① 연속
+    `produce_error`(기존) · ② **폴링이 하나도 성공하지 않은 분이 연속
+    `max_consecutive_fetch_error_minutes`** — 토큰이 끊긴 하루는 이전 판에서 `fetch_error`
+    324 · `published` 0 인데도 rc 0 이었다 · ③ **장 마감 뒤 부팅**(경계 루프가 한 번도 안
+    도는 경우). 셋 다 rc 1 이고 따라서 exit 5 다.
+  - ⛔ **이 코드가 못 잡는 것 하나 — 「살아 있지만 멈춘」 생산자.** 정지 시각에 프로세스가
+    살아 있으면 `SELF_STOPPED=0` 이고 우리 stop 경로가 SIGTERM 으로 끝내므로 exit 5 조건에
+    걸리지 않는다. 생산자 자기 거부도 **경계 사이에서만** 검사하므로, 타임아웃 없는 소켓
+    읽기나 돌아오지 않는 `sleep` 에 걸려 다음 경계에 도달하지 못하는 생산자는 양쪽 모두를
+    통과한다 — 그 세션은 깨끗하다고 보고된다.
+  - ⛔ **같은 공백의 두 번째 얼굴 — 「대답은 하는데 낡은」 피드.** 폴링은 정상
+    (`rt_cd` 0 · 행도 온다)인데 그 행이 **갱신되지 않는** 경우다. 전송 포기 조건은
+    폴링 성공을 보므로 트립하지 않고, 경계마다 그 분의 행이 없으니
+    `no_raw_row_for_minute` 가 쌓이는데 — **그것은 점심 비거래 구간과 글자 그대로 같은
+    모양이다**(§3.6 의 사유 이름도 같다). 그래서 세션은 rc 0 으로 끝나고 러너도 할 말이
+    없다. 가르려면 「행이 오는데 시각이 안 움직인다」를 재는 계수가 필요하고, 그것도
+    이번 라운드 밖이다.
+  - **그 둘의 확인은 하나다 — 손으로**: 세션 뒤 `journal.jsonl` 의 **마지막 줄 시각이
+    마감(15:45) 근처인지** 본다. 멈춘 생산자든 낡은 피드든 그 시각이 훨씬 이르다.
+    닫으려면 생존 신호(러너가 읽는 하트비트, 또는 경계별 watchdog)와 위의 「행 신선도」
+    계수가 필요하다.
+
+    ```bash
+    # tz 를 명시한다 — naive fromtimestamp 는 호스트 로컬 존을 쓰므로 이 호스트에서만
+    # «우연히» 맞는다(CLAUDE.md: 비교·표시 전부 KST).
+    tail -1 "$SESSION/journal.jsonl" | python3 -c \
+      'import json,sys,datetime,zoneinfo; r=json.load(sys.stdin); \
+       print(r["raw_event_id"], datetime.datetime.fromtimestamp(
+           r["as_of_ms"]/1000, tz=zoneinfo.ZoneInfo("Asia/Seoul")))'
+    ```
+- **모드** — 러너는 맨 앞에서 `umask 077` 을 건다(프로세스 전체 · 모든 자식). 그래서 **이
+  세션이 만드는 것은 전부 0700 디렉터리 · 0600 파일**이다 — 렌더 산출물 · data parent/잎과
+  네 스토어 · 저널 · 세션 로그 · 생산자 아티팩트. ⚠ **2026-10-15 이전 판에는 `umask` 가
+  세 `mkdir` 을 감싼 서브셸에만 있었고**, 그래서 디렉터리만 0700 이고 그 안의 **파일은
+  0644** 였다(첫 genesis 세션 실측). §7.2-a 의 「왜 umask 인가」가 상주 래퍼에 대해 적은
+  것과 **같은 결함·같은 처방**이다. 상주 래퍼가 전역으로 걸지 않는 이유(공개 0755 워크트리)는
+  여기 해당하지 않는다 — 이 템플릿은 워크트리를 만들지 않고, 만드는 경로는 전부 좌표를 담는다.
+  - ⛔ **러너는 정지 뒤에 모드 복구(`chmod` 훑기)를 «하지 않는다» — 의도된 거부다**
+    (PR #904 Codex 재리뷰 MEDIUM). 상주 래퍼는 `umask` + 종료 뒤 `chmod` **둘**인데 이
+    템플릿은 앞의 하나만 쓴다. 이유: `find … -exec chmod` 는 **검사와 syscall 사이에 창이
+    있다** — step 6b 뒤에 조상이 심링크로 바뀌면 훑기 전체가 돌려지고, `find` 의 판정과
+    `chmod` 사이에 교체되거나 두 번째 이름이 붙은 항목은 `find` 가 승인한 이름을 통해
+    chmod 된다. `-P` 와 `-links 1` 은 **미리 만들 수 있는 모양**만 막고 이 창은 못 막는다
+    (막으려면 매 단계 `O_NOFOLLOW` 의 fd 기반 순회가 필요하고, 그건 쉘 템플릿이 가질
+    물건이 아니다). 그래서 모드는 **창이 없는 한 가지 기구**에서만 온다 — `umask`.
+  - ⚠ **그래서 남는 것 하나, 운영자 손일이다.** 이 수정 **전에** genesis 된 durable 잎은
+    태어날 때의 모드를 그대로 갖고 있다. 그 잎마다 **한 번** 돌린다(세션이 돌지 않을 때):
+
+    ```bash
+    LEAF=~/.local/state/tos/cp3-setup-d-long-data/<종목>
+    chmod 700 "$LEAF" && chmod 600 "$LEAF"/*.sqlite3*
+    # 확인: 0 건이어야 한다
+    find "$LEAF" -maxdepth 1 -type f ! -perm 600 | wc -l
+    ```
+
+    ✅ **오늘(2026-10-15) genesis 된 잎은 이미 처리했다.** 2026-10-15 이후 세션이 만든
+    잎은 처음부터 0600/0700 이므로 대상이 아니다.
+  - ⛔ 그리고 **지정된 durable set 경로에 심링크를 끼우지 말 것** — step 6b 가 자식을 띄우기
+    **전에** 세션 경로 넷(data parent · 잎 · 생산자 세션 dir · 렌더 산출물)에 심링크 성분이
+    있거나 resolve 결과가 준 경로와 다르면 **거부한다**(세션이 기동하지 않는다. 의도된
+    거동이고, 로그에 어느 성분이 링크인지 찍힌다). 그 검사는 **경로가 쓰여진 그대로인지**를
+    묻는 것이고 — 증거가 운영자가 고르지 않은 곳에 떨어지는 것을 막는다 — 세션 내내
+    유지되는 보장이 **아니다**. 그 구분이 위의 복구 거부 이유 그 자체다.
 
 **세션 뒤 — §3.6 대조 (계획 §5 수용 기준).**
 
@@ -1439,6 +1513,30 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
 # ③ B1a 를 **생산자가 쓴 동결 프레임**에 돌리고(§3.6: 레거시 Parquet 이 아니다),
 #    B2·B1b 를 잇고, B3 를 그 둘을 더해 돌린다.
 #    --data-root 는 $SESSION/producer/market 이다.
+#    START 는 stitch 의 **첫 날**(= `stitch.json` 의 가장 이른 세그먼트 날짜,
+#    생산자 로그 `seed` 레코드의 `days_used` 첫 값과 같다), END 는 세션 당일.
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/produce_fields.py" \
+  --data-root "$SESSION/producer/market" \
+  --symbol "$INSTRUMENT" --start "$STITCH_FIRST_DAY" --end "$SESSION_DAY" \
+  --strategy-yaml "$WT/config/strategies/futures/setup_d_vwap_reversion.yaml" \
+  --stitch-manifest "$SESSION/producer/market/stitch.json" \
+  --out "$SESSION/b1a"
+
+"$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/emit_legacy_decisions.py" \
+  --data-root "$SESSION/producer/market" \
+  --symbol "$INSTRUMENT" --start "$STITCH_FIRST_DAY" --end "$SESSION_DAY" \
+  --strategy-yaml "$WT/config/strategies/futures/setup_d_vwap_reversion.yaml" \
+  --stitch-manifest "$SESSION/producer/market/stitch.json" \
+  --out "$SESSION/b2"
+
+# B1b — ⚠ 전략·바인딩은 **그 세션이 렌더한 트리**($TENANT_RENDER_OUT)의 것이다.
+PYTHONPATH="$WT/tos/src:$WT/tos/runtime/src:$WT/tos/runtime" \
+  "$MAIN/.venv/bin/python" -m cp3.runner \
+  --fields   "$SESSION/b1a/fields.jsonl" \
+  --strategy "$TENANT_RENDER_OUT/strategies/setup_d_long.strategy.yaml" \
+  --bindings "$TENANT_RENDER_OUT/strategy_bindings.yaml" \
+  --out      "$SESSION/b1b"
+
 "$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/diff_decisions.py" \
   --fields  "$SESSION/b1a/fields.jsonl" \
   --legacy  "$SESSION/b2/decisions.jsonl" \
@@ -1447,6 +1545,15 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   --live    "$SESSION/b3/live/live.jsonl" \
   --out     "$SESSION/b3/report"
 ```
+
+⚠ **B1b 가 세션의 «렌더된» 트리를 쓰는 이유 — 커밋된 사본 둘 다 이 저널에 못 쓴다.**
+B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy.yaml`)은 좌표가
+**백테스트 리터럴**로 박혀 있다(`instrument: 101S6000` · `account: cp3-b1b-long`). 그 전략으로
+`A05611` 저널을 돌리면 거절된다 — 선언한 종목과 들어온 봉의 종목이 다르다. 반대로 tenant 트리의
+커밋 사본(`config/tos_runtime/cp3-setup-d-long/strategies/…`)은 바로 그 좌표 칸이 **`"TBD"`**
+(앵커 두 줄 `&account`·`&instrument`, R2·R3 는 별칭)라 로더가 거절한다. 두 칸을 그 세션의 실제
+계좌·월물로 치환한 유일한 사본이 렌더 산출물이므로, **B1b 는 `$TENANT_RENDER_OUT` 를 가리킨다.**
+(그래서 이 대조는 세션 디렉터리를 지우기 전에 돌려야 한다 — 렌더 트리가 거기 있다.)
 
 적어 둘 것(계획 §5):
 
@@ -1505,10 +1612,28 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
     파일 없음이 아니다.
   - 「**소비되지 않은 줄**」은 `unpaired_reason_counts` 의 `published_not_consumed` 다
     (`pre_boot` 와 생산자 사유들은 그 수에서 빠진다).
+  - ⛔ **세션의 마지막 봉은 그 수에 들어가지 않는다** — `published_after_session_close`
+    라는 제 사유로 나온다(2026-10-15 추가). 15:45 봉은 15:46 이 지나야 완성되므로
+    (`SessionWindow.end_boundary`) 발행 스탬프가 **장 마감 뒤**이고, 스케줄러의 첫 절이
+    `SKIPPED_SESSION_CLOSED` 라(`tos_runtime/marketfeed/scheduler.py`) 구조상 소비될 수
+    없다. `pre_boot` 가 하루의 **앞** 끝에서 같은 일을 하는 것과 대칭이다. 판정은 **발행
+    스탬프(`as_of_ms`) vs 그 봉 날짜의 마감**이고, 마감은 생산자 `seed` 레코드의
+    `session_window` 에서 읽는다 — 15:45 는 어디에도 적혀 있지 않다. 마감 직전에
+    발행됐는데 소비되지 않은 줄은 **진짜 누락**이라 `published_not_consumed` 로 남는다.
+    ⚠ 그 수가 0 일 때 「없었다」인지 「묻지 못했다」인지는
+    `generated_from.producer_session_close` 로 가른다(null = 생산자 로그에 seed 레코드가
+    없어 애초에 판정 불가).
 - **M6** — `producer-summary.json` 의 `max_stamp_to_replace_s` 가 0.300 미만인가.
 - **B3** — `summary.json` 의 `unresolved.count` 가 0 인가. 대조 범위는
   `session_scope.consumed_id_filter`, 짝 없는 봉은
   `session_scope.unpaired_offline_records_by_reason` 에 사유별로 있다.
+  - ⚠ `seed_day` 는 **세션 날짜보다 앞선 날의 봉**이다(2026-10-15 추가). 오프라인 삼총사는
+    stitch 된 **시드 날들까지** 포함한 프레임 전체를 덮는데 생산자 로그는 당일 분(分)만
+    처분하므로, 그 전부가 `unexplained` 로 떨어지고 있었다(genesis 실측: 1,233 = 411 봉 ×
+    시드 3일, 당일 사유 79 건 대비). 지금 `unexplained` 는 **당일인데 설명되지 않는 봉**만
+    세므로 다시 소견으로 읽을 수 있다. 세션 날짜는
+    `session_scope.consumed_id_filter.session_day` 이고, null 이면(소비 id 가 한 날로
+    모이지 않는 경우) 어떤 봉도 `seed_day` 로 부르지 않는다.
   `live_comparison.divergent` 는 **실시간 런타임이 오프라인 리플레이와 다르게 결정한
   봉 수**다 — 0 이 아니면 그것이 소견이고, B3 는 그것을 거부가 아니라 보고로 낸다.
   `live_comparison.kind_only_matches` 는 **반만 잰** 봉이다: 실시간 쪽이 `PROPOSAL`

@@ -56,8 +56,10 @@
 # Then: render (the tenant tree declares journal.mode "external", so
 # --journal-path is required and the renderer writes no journal of its own) →
 # boot → stop at TENANT_STOP_AT → stop the producer → post-stop evidence counts.
-# A producer that stopped BEFORE the session did is reported as an ABORT (exit
-# 5) rather than killing the runtime mid-session (plan §3.5).
+# A producer that HALTED IN the session is reported as an ABORT (exit 5) rather
+# than killing the runtime mid-session (plan §3.5). A producer that ended WITH
+# the session — the normal full-day shape, since it stops one minute past the
+# last bar and the stop time is later — is not (step 12b).
 #
 # This script never deletes itself and touches no crontab.
 #
@@ -84,6 +86,41 @@ set -u
 # The debugging a reader wants is the log() stream: it carries paths, pids and
 # refusals, and never a value.
 set +x +v
+
+# --- -0.5. the modes everything this session creates is born with ----------
+#
+# 0600 files inside 0700 directories, for the whole process and every child.
+#
+# Why PROCESS-WIDE and not another `(umask 077; …)` subshell: the runtime and
+# the renderer pass no mode to their own `mkdir`/sqlite calls, so the modes are
+# whatever the inherited umask makes them. The first cut wrapped only the three
+# `mkdir`s here, which narrowed the DIRECTORIES and left every FILE inside them
+# at the caller's umask — measured on the 2026-10-15 LONG genesis session: the
+# four tenant stores (evidence/inbox/marketfeed/rcl sqlite) and the session
+# artifacts were 0644 inside 0700 dirs. Decision records carry the account
+# number in plaintext (runbook §7.2 좌표 규율), and a 0700 parent is traversal
+# protection, not file protection — it stops at the first `chmod` or copy.
+#
+# Same defect, same fix as the resident wrapper's (runbook §7.2-a, operator
+# approved 2026-10-04) — except for the resident wrapper's second half. It adds
+# a post-run `chmod` for a durable set an earlier session genesis'd; this
+# template deliberately does NOT, because that sweep cannot be made race-free
+# here. Step 12c records why, and the runbook carries the operator's one-time
+# manual command instead.
+#
+# So this script executes NO `chmod` and NO `chown`, anywhere (pinned by
+# `test_the_runner_runs_no_mode_repair_sweep_after_the_stop`). It has exactly
+# two mode mechanisms, and only the first writes anything:
+#   1. this `umask`, which decides the mode of everything the session CREATES;
+#   2. a READ-ONLY refusal in step 9 — a data parent that already existed and
+#      is not mode 700 ends the session instead of being altered.
+#
+# ⚠ The resident wrapper deliberately does NOT do this globally, because its
+# own `git worktree add` must leave the public 0755 checkout alone. That
+# exception does not apply here: this template creates no worktree — the
+# operator hands it one — and every path it does create (render output, data
+# parent and leaf, producer session dir, journal, log) carries coordinates.
+umask 077
 
 # --- 0. the shared guards --------------------------------------------------
 
@@ -245,6 +282,52 @@ A0[0-9][0-9][0-9][0-9]) : ;;
 esac
 DATA_LEAF=$TENANT_DATA_PARENT/$INSTRUMENT
 log "instrument=$INSTRUMENT · data leaf $DATA_LEAF"
+
+# --- 6b. the session paths must be what they say they are -----------------
+#
+# PR #904 review round 1 item B. Fail closed HERE, before a child exists and
+# therefore before a store does: a session path that is not the path it names
+# is a session whose EVIDENCE lands somewhere the operator did not choose, and
+# everything downstream — the guard's containment rule, the data leaf the
+# runbook pins, the modes `umask` gives what we create — is stated about the
+# path as written. By stop time that is unrecoverable: the stores have already
+# been written through the link.
+#
+# ⚠ This is a check on the paths, NOT a guarantee held across the session. An
+# ancestor swapped AFTER this point is not caught, which is exactly why step
+# 12c refuses to do a post-stop `chmod` sweep on the strength of it — see the
+# Codex MEDIUM recorded there.
+#
+# Three predicates per path, and the second is the one that catches an
+# ancestor: absolute; no component is a symlink; and the fully resolved path
+# equals the normalized path it was given. Only components that already EXIST
+# can be links, and `realpath` resolves what exists and leaves the rest, so a
+# leaf that does not exist yet is still checked against its real ancestors.
+PATH_GUARD=$(
+  "$PY" - "$TENANT_DATA_PARENT" "$DATA_LEAF" "$TENANT_PRODUCER_SESSION_DIR" \
+    "$TENANT_RENDER_OUT" <<'PY' 2>&1
+import os
+import sys
+from pathlib import Path
+
+bad = []
+for raw in sys.argv[1:]:
+    given = os.path.normpath(raw)
+    if not os.path.isabs(raw):
+        bad.append(f"{raw!r} is not absolute")
+        continue
+    for component in [Path(given), *Path(given).parents]:
+        if component.is_symlink():
+            bad.append(f"{raw!r}: component {str(component)!r} is a symlink")
+    resolved = os.path.realpath(raw)
+    if resolved != given:
+        bad.append(f"{raw!r} resolves to {resolved!r}")
+print("; ".join(dict.fromkeys(bad)))
+PY
+) || die "session path guard failed to run: $PATH_GUARD"
+[ -z "$PATH_GUARD" ] ||
+  die "a session path is not the path it names, so narrowing its modes at stop would land outside the session: $PATH_GUARD"
+log "session paths are literal (no symlinked component, resolve to themselves)"
 
 # --- 7. the stop path, armed BEFORE anything is launched ------------------
 #
@@ -503,7 +586,33 @@ if [ ! -d "$TENANT_DATA_PARENT" ]; then
   (umask 077; mkdir -p -- "$TENANT_DATA_PARENT") ||
     die "cannot create data parent $TENANT_DATA_PARENT"
 fi
-chmod 700 "$TENANT_DATA_PARENT" 2>/dev/null || true
+
+# The data parent's mode is READ, never written (Codex round 3, MEDIUM).
+#
+# This line used to be `chmod 700 "$TENANT_DATA_PARENT" 2>/dev/null || true`,
+# inherited from main. It was the same defect step 12c was deleted for, one
+# step earlier and louder: it runs AFTER step 6b, so a path swapped in between
+# gets the mode written to whatever the name now points at — and `2>/dev/null
+# || true` meant a failure to do so said NOTHING. It also made this script's
+# own claim ("umask is the only mode mechanism here") false.
+#
+# A parent THIS run created is already 0700, from the `(umask 077; mkdir -p)`
+# above. A parent that already existed is someone else's object, and the only
+# safe thing to do with someone else's object is look at it: if the mode is
+# not exactly 700 the session REFUSES and names the fix, rather than reaching
+# in. Fail closed — an over-wide durable parent is a coordinate leak waiting
+# to happen (runbook §7.2 좌표 규율), and the operator's one-time command is
+# in runbook §7.2-d 「모드」:
+#     chmod 700 ~/.local/state/tos/<the parent>
+# ⚠ Exactly "700", not "at least as narrow as": `2700` (setgid) and `0700`
+# with an ACL are not this mode, and a durable evidence parent carrying either
+# is a finding, not a rounding.
+PARENT_MODE=$(stat -c %a -- "$TENANT_DATA_PARENT") ||
+  die "cannot read the mode of data parent $TENANT_DATA_PARENT"
+[ "$PARENT_MODE" = "700" ] ||
+  die "data parent $TENANT_DATA_PARENT is mode $PARENT_MODE, not 700. This runner never changes the mode of an object it did not create (step 12c records why) — narrow it to 700 yourself and re-run (runbook §7.2-d 「모드」)"
+log "data parent mode $PARENT_MODE"
+
 (umask 077; mkdir -p -- "$DATA_LEAF") ||
   die "cannot create data leaf $DATA_LEAF"
 
@@ -623,6 +732,15 @@ log "=== END run rc=$run_rc"
 # a frozen one. The runtime keeps running to its own stop time — truncating a
 # durable set loses the very evidence the session exists to leave — so the
 # report is the EXIT CODE, not a kill.
+#
+# ⚠ "Already stopped" is NOT the same question as "halted mid-session", and the
+# first cut asked only the first one (measured 2026-10-15, the LONG genesis
+# session: exit 5 at 15:50:02 on a session that ran its whole day). The
+# producer ENDS BY DESIGN after the session's last bar — `run_session` walks
+# minute boundaries to `window.end_boundary(target)` (15:46 for a 15:45 close)
+# and returns, `main` returns 0 — and the runner's STOP is later than that by
+# however long the operator set it. So every full-day session had the producer
+# gone before the stop, and every full-day session exited 5.
 PRODUCER_SELF_STOPPED=0
 supervised_group_alive "$PRODUCER_PID" || PRODUCER_SELF_STOPPED=1
 stop_producer
@@ -636,6 +754,76 @@ if [ -f "$PRODUCER_SUMMARY" ]; then
 else
   log "WARN: no producer summary at $PRODUCER_SUMMARY"
 fi
+
+# --- 12b. did the producer END the session, or HALT in it? ----------------
+#
+# ONE clause, and it is the only signal that can answer the question. That is
+# the finding of PR #904's review round 1, which measured the first cut's
+# other two clauses and found neither could fail on a real input:
+#
+#   * The SUMMARY's existence and its `stage` cannot discriminate. `finish()`
+#     runs in `main`'s `finally`, and `main` returns 0 only after it, so an
+#     rc of 0 ALREADY implies a written `stage: "finish"` summary. (A producer
+#     SIGKILLed before the `finally` leaves no summary — and rc 137.)
+#   * `session_end_reached` could not discriminate either, and that one was
+#     measured red: it was the wall clock against `end_boundary` at finish
+#     time, and EVERY rc-0 path only returns after the loop has walked past
+#     that boundary, so it was always true. Two real producer inputs proved
+#     it — a feed dead all day (fetch_error 324, published 0, rc 0, flag TRUE)
+#     and a boot after the close (loop never ran, rc 0, flag TRUE). Both are
+#     now refusals in the producer itself, where the knowledge lives:
+#     `halt_policy.assert_worth_continuing` (the fetch give-up, config key
+#     `max_consecutive_fetch_error_minutes`) and
+#     `halt_policy.assert_the_session_can_still_happen` (the late boot).
+#
+# So the producer's EXIT CODE carries the whole verdict, and each side of it
+# has a concrete real input:
+#   rc 0   -> ENDED the session (the 2026-10-15 genesis shape)
+#   rc 1   -> HALTED: a §3.5 give-up (produce_error run, dead-feed minutes),
+#             a late boot, a seed/journal/lock refusal, or any traceback
+#   rc 137 -> HALTED: killed
+PRODUCER_ENDED_THE_SESSION=0
+if [ "$producer_rc" -eq 0 ]; then
+  PRODUCER_ENDED_THE_SESSION=1
+fi
+log "producer end: rc=$producer_rc (self-stopped=$PRODUCER_SELF_STOPPED, ended-the-session=$PRODUCER_ENDED_THE_SESSION)"
+
+# --- 12c. there is NO mode repair here, deliberately ----------------------
+#
+# ⛔ **Do not add one.** PR #904's Codex re-review (MEDIUM, at ccf1f0d0) found
+# that a post-stop `chmod` sweep cannot be made safe in this script, and the
+# disposition was to REFUSE the automatic repair rather than keep narrowing it.
+#
+# The first cut did `find -P "$DATA_LEAF" … -type f -links 1 -exec chmod 600`.
+# `-P` stops `find` following symlinks and `-links 1` skips hard-linked
+# inodes, which closes the shapes a test can construct up front — but both are
+# checks made BEFORE the `chmod` that acts on the result, and the gap between
+# them is the defect:
+#   * an ANCESTOR of the leaf swapped for a symlink after step 6b's check
+#     redirects the whole walk;
+#   * an entry replaced, or given a second name, between `find`'s test and
+#     `chmod`'s syscall is chmodded through the name `find` approved.
+# Neither is fixable with `find`; it would need an fd-based walk
+# (`openat`/`fchmodat` with `O_NOFOLLOW` at every level), which is not a thing
+# this shell template should be growing.
+#
+# So the only mechanism that WRITES a mode has no window at all: step -0.5's
+# process-wide `umask 077` means everything this session CREATES is born 0600
+# inside 0700 — the stores, the journal, the render output, the session log,
+# the producer's artifacts. There is nothing left to repair for a session that
+# starts here.
+#
+# ⚠ The same reasoning deleted a second, older `chmod` (Codex round 3): step 9
+# used to `chmod 700` the data PARENT, inherited from main and silenced with
+# `2>/dev/null || true`. An existing parent is now READ and the session
+# refuses a mode that is not 700, which is the same answer in the one place
+# this script still had to say something about an object it did not create.
+#
+# What that leaves uncovered, stated rather than silently dropped: a durable
+# leaf that an EARLIER, pre-umask session genesis'd keeps the modes it was
+# born with. That is one manual `chmod 600` by the operator, once per such
+# leaf, and the runbook (§7.2-d 「모드」) carries the command. It is not this
+# runner's job: a session cannot safely re-mode a tree it did not create.
 
 # --- 13. what the durable set holds now (runbook §4) -----------------------
 #
@@ -679,7 +867,7 @@ log "post-stop durable set $DATA_LEAF:"
 printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 
 # Exit code 5: the runtime finished the way it was asked to, and the producer
-# did not last the session (step 12).
+# HALTED IN the session (step 12b) rather than ending with it.
 #
 # "The way it was asked to" is 0 OR 143: a session that reaches TENANT_STOP_AT
 # is stopped by SIGTERM from this script's own stop path, so 143 is the
@@ -687,9 +875,22 @@ printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 # producer's silence has something to add to. Any OTHER code is a runtime
 # failure and keeps its own: it is the earlier and larger fact, and replacing
 # it with 5 would report a boot that died as a feed that stopped.
-case "$PRODUCER_SELF_STOPPED:$run_rc" in
-1:0 | 1:143)
-  log "ABORT: the producer stopped before the session did (producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
+#
+# ⚠ The middle field is the 2026-10-15 fix: a producer that is gone at the
+# stop AND ended the session is the NORMAL full-day shape, not an ABORT.
+#
+# ⛔ What this does NOT catch, written down rather than implied: a producer
+# still ALIVE at the stop. It gives SELF_STOPPED=0, our own stop path SIGTERMs
+# it, and no clause here fires — so a producer WEDGED but breathing (a hung
+# socket read with no timeout, a `sleep` that never returns) ends a session
+# that reports clean. The producer's own give-ups cannot see that either:
+# they are checked between boundaries, and a wedged producer never reaches the
+# next one. Closing it needs a liveness signal from the producer (a heartbeat
+# the runner reads, or a per-boundary watchdog), which this round does not
+# build.
+case "$PRODUCER_SELF_STOPPED:$PRODUCER_ENDED_THE_SESSION:$run_rc" in
+1:0:0 | 1:0:143)
+  log "ABORT: the producer halted in the session (producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
   exit 5
   ;;
 esac

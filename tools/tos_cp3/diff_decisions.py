@@ -1985,6 +1985,21 @@ def build_lineage(
 #: extractor wrote and never branches on one.
 REASON_UNEXPLAINED = "unexplained"
 
+#: The reason for a filtered-out bar from a day BEFORE the session's own. The
+#: offline trio spans the whole stitched frame — the seed days the producer
+#: walked back through to fill the strategy's windows — while the producer log
+#: disposes only the minutes of the target session, so every seed-day bar fell
+#: through to :data:`REASON_UNEXPLAINED`. Measured on the 2026-10-15 LONG
+#: genesis session: 1,233 of them (411 bars × the three seed days 10-12/13/14),
+#: against 79 bars the session itself explained. A finding that is four
+#: fifteenths real is not a finding anyone reads, which is the whole point of
+#: the bucket.
+#:
+#: Decided HERE and not by the extractor on purpose: the extractor sees the
+#: session's stores and the producer's log, neither of which knows the seed
+#: days exist. This module is the only one holding both sides.
+REASON_SEED_DAY = "seed_day"
+
 #: The live fields compared bar for bar. NOT ``rule_id`` (B1b resolves it from
 #: the emitted outcome's rationale, which the durable evidence record does not
 #: carry) and NOT ``as_of_ms`` (B1a's is the bar label, the live one is the
@@ -2055,6 +2070,44 @@ def load_consumed_ids(path: Path) -> ConsumedIdFilter:
     )
 
 
+#: The timeframe token and the date width inside a ``raw_event_id``
+#: (``<symbol>:1m:<YYYYmmddTHHMMSS±HHMM>``, from
+#: ``tools/tos_cp3/produce_fields.py::derive_raw_event_id``). The day is read
+#: as the literal ``YYYYmmdd`` token, which orders chronologically as a
+#: string — this module parses no timestamps and holds no timezone.
+_RAW_EVENT_ID_SEPARATOR = ":1m:"
+_RAW_EVENT_ID_DAY_WIDTH = 8
+
+
+def _day_of(raw_event_id: str) -> str | None:
+    """The ``YYYYmmdd`` token of one join key, or ``None`` if it has none."""
+    _, separator, stamp = raw_event_id.partition(_RAW_EVENT_ID_SEPARATOR)
+    if not separator or len(stamp) < _RAW_EVENT_ID_DAY_WIDTH:
+        return None
+    day = stamp[:_RAW_EVENT_ID_DAY_WIDTH]
+    return day if day.isdigit() else None
+
+
+def _session_day(consumed_ids: frozenset[str]) -> str | None:
+    """The one day the runtime consumed, or ``None`` if it is not one day.
+
+    ``None`` rather than a min or a guess: every bar the live runtime consumed
+    came out of one session's journal, so two days here means the filter is
+    not what this function thinks it is — and a seed-day verdict derived from
+    a wrong session day would mislabel real bars as scenery.
+    """
+    days = {_day_of(raw_event_id) for raw_event_id in consumed_ids}
+    return days.pop() if len(days) == 1 and None not in days else None
+
+
+def _default_reason(raw_event_id: str, session_day: str | None) -> str:
+    """The reason for a dropped bar the filter document does not name."""
+    day = _day_of(raw_event_id)
+    if session_day is not None and day is not None and day < session_day:
+        return REASON_SEED_DAY
+    return REASON_UNEXPLAINED
+
+
 def apply_consumed_filter(
     bars: list[JoinedBar], consumed: ConsumedIdFilter
 ) -> tuple[list[JoinedBar], dict[str, Any], dict[str, Any]]:
@@ -2080,8 +2133,11 @@ def apply_consumed_filter(
         )
     kept = [bar for bar in bars if bar.raw_event_id in consumed.raw_event_ids]
     dropped = [bar for bar in bars if bar.raw_event_id not in consumed.raw_event_ids]
+    session_day = _session_day(consumed.raw_event_ids)
     reason_counts: Counter[str] = Counter(
-        consumed.unpaired_reasons.get(bar.raw_event_id, REASON_UNEXPLAINED)
+        consumed.unpaired_reasons.get(
+            bar.raw_event_id, _default_reason(bar.raw_event_id, session_day)
+        )
         for bar in dropped
     )
     block = {
@@ -2091,6 +2147,10 @@ def apply_consumed_filter(
             "consumed_raw_event_ids": len(consumed.raw_event_ids),
             "compared_bars": len(kept),
             "offline_bars_not_consumed": len(dropped),
+            # null when the consumed ids do not agree on one day — then no bar
+            # can be called a seed-day bar, and REASON_SEED_DAY being 0 means
+            # "not asked".
+            "session_day": session_day,
         },
         "unpaired_offline_records_by_reason": dict(sorted(reason_counts.items())),
         "note": (
@@ -2099,9 +2159,12 @@ def apply_consumed_filter(
             "produce_error and omitted_unusable bars have no live counterpart "
             "BY CONSTRUCTION, so counting them as differences would report the "
             "producer's own bookkeeping as a decision disagreement). Each "
-            f"reason is the producer's own label; {REASON_UNEXPLAINED!r} is a "
-            "bar the filter document does not explain, which is a finding, not "
-            "a rounding"
+            f"reason is the producer's own label; {REASON_SEED_DAY!r} is a bar "
+            "from a day before the session's own (the stitched seed the "
+            f"offline trio spans and the live session never saw); "
+            f"{REASON_UNEXPLAINED!r} is a bar OF THIS SESSION's day that the "
+            "filter document does not explain, which is a finding, not a "
+            "rounding"
         ),
     }
     return (

@@ -64,8 +64,17 @@ Modules:
 * :mod:`~tools.tos_cp3.live_producer.sinks` — the atomically replaced
   observation journal (``flock``-held, monotone ``as_of_ms``) and the
   append-only Parquet part writer that is B3's offline input.
-* :mod:`~tools.tos_cp3.live_producer.producer` — the pure ``build_line`` plus
-  the thin outer loop (HTTP + file replacement) and the CLI.
+* :mod:`~tools.tos_cp3.live_producer.line` — the PURE half: a frozen frame in,
+  at most one journal row out, plus the ``source_id`` every row carries. No
+  clock, no socket, no file.
+* :mod:`~tools.tos_cp3.live_producer.halt_policy` — plan §3.5's give-ups in one
+  place: consecutive ``produce_error``s, consecutive minutes in which no poll
+  came back, and a boot already past the session close. Every input is passed
+  in, so each refusal is drivable from a test by its own concrete input.
+* :mod:`~tools.tos_cp3.live_producer.seed_lineage` — the ``seed`` log record,
+  including the ``session_window`` the §3.6 extractor reads the close out of.
+* :mod:`~tools.tos_cp3.live_producer.producer` — the thin outer loop
+  (HTTP + file replacement) and the CLI.
 
 Out of scope here (PR-3): the runner's boot order and EXIT cleanup, the
 runtime's credential isolation, the consumed-id / live-decision extractors, and

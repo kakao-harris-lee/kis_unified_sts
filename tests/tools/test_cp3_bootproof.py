@@ -1181,8 +1181,13 @@ _PRODUCER_SOURCE_IDS_ENV = "STUB_PRODUCER_SOURCE_IDS"
 _PRODUCER_INSTRUMENT_ENV = "STUB_PRODUCER_INSTRUMENT"
 #: "0" to write no journal at all, and exit — a producer that refused at boot.
 _PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
-#: "1" to exit right after writing — a producer that halted mid-session (five
-#: consecutive ``produce_error``s is the plan's own example).
+#: How the stub leaves, right after writing its journal and summary. A decimal
+#: string is that exit code: "1" is every real refusal
+#: (``LiveProducerRefused`` — the two §3.5 give-ups, the late boot, a seed or
+#: journal refusal) and "0" is a producer that ENDED with the session
+#: (``run_session`` walked past the last boundary and ``main`` returned 0).
+#: ``"killed"`` SIGKILLs itself, which is rc 137 and no clean teardown.
+#: Unset: stay alive until the runner stops it.
 _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
 #: The path the ``1+1`` mode watches before publishing its second row — the
 #: rendered tree's own file, so "after the render, before the boot" is a fact
@@ -1230,7 +1235,7 @@ def _runner_repo(
     # tests/tools/test_cp3_live_producer.py).
     (repo / "tools/tos_cp3/live_producer/__init__.py").write_text("", encoding="utf-8")
     (repo / "tools/tos_cp3/live_producer/producer.py").write_text(
-        "import json, os, sys, time\n"
+        "import json, os, signal, sys, time\n"
         "from pathlib import Path\n"
         "argv = sys.argv[1:]\n"
         "def opt(name):\n"
@@ -1288,11 +1293,18 @@ def _runner_repo(
         "    publish(2)\n"
         "else:\n"
         "    publish(max(len(ids), 1))\n"
+        # The real `finish()` runs in `main`'s `finally`, so EVERY end writes
+        # this — the halting ones too. That is why the runner's verdict cannot
+        # be read off the summary (step 12b).
         "(session / 'producer-summary.json').write_text(\n"
         "    json.dumps({'stage': 'finish', 'counters': {'published': 1}}) + '\\n')\n"
-        f"if os.environ.get({_PRODUCER_EXIT_ENV!r}) == '1':\n"
-        "    print('stub producer: halted after writing')\n"
-        "    raise SystemExit(1)\n"
+        f"leave_with = os.environ.get({_PRODUCER_EXIT_ENV!r})\n"
+        "if leave_with == 'killed':\n"
+        "    print('stub producer: killing itself after writing')\n"
+        "    os.kill(os.getpid(), signal.SIGKILL)\n"
+        "if leave_with is not None:\n"
+        "    print('stub producer: leaving with %s after writing' % leave_with)\n"
+        "    raise SystemExit(int(leave_with))\n"
         "while True:\n"
         "    time.sleep(0.2)\n",
         encoding="utf-8",
@@ -2030,13 +2042,25 @@ def test_the_boot_order_is_producer_then_first_row_then_guard_then_boot(
     assert not result.producer_outlived_the_runner
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "expected_rc"),
+    [
+        # Every real refusal: `LiveProducerRefused` -> `main` returns 1. That
+        # is the two §3.5 give-ups (a `produce_error` run and, since PR #904's
+        # review, a run of minutes in which NO poll came back), a boot already
+        # past the session close, and the seed/journal/lock refusals.
+        pytest.param("1", "1", id="refused-rc1"),
+        # Killed outright: no clean teardown, no summary, rc 137. Here so the
+        # clause cannot be narrowed from "non-zero" to "equals 1".
+        pytest.param("killed", "137", id="sigkilled-rc137"),
+    ],
+)
 def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
-    tmp_path: Path,
+    tmp_path: Path, exit_code: str, expected_rc: str
 ) -> None:
     """**Plan §3.5's last sentence: 「멈춘 생산자는 러너가 ABORT 로 보고한다」.**
 
-    The producer halts after writing (the plan's own example is five
-    consecutive ``produce_error``s). From that minute the journal stops
+    The producer halts after writing. From that minute the journal stops
     growing and every remaining pass reads a frozen one — a session that looks
     clean and measured nothing.
 
@@ -2044,6 +2068,14 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
     evidence the session exists to leave. The report is the exit code, and it
     is its own (5), because "the boot failed" and "the boot was fine and the
     feed behind it stopped" are different findings.
+
+    ⚠ The stub writes its ``stage: finish`` summary on BOTH shapes below,
+    because the real ``finish()`` runs in ``main``'s ``finally`` and so does
+    the same. That is the whole reason the runner's verdict is the exit code
+    and not anything in the summary (PR #904 review round 1 item A). The
+    companion is
+    :func:`test_a_producer_that_ends_with_the_session_is_not_an_abort`, the
+    input both of these must NOT also match.
     """
     repo = _runner_repo(tmp_path, bootable=True)
     result = _run_runner(
@@ -2051,7 +2083,7 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
         tmp_path,
         TENANT_STOP_AT="+15 seconds",
         **{
-            _PRODUCER_EXIT_ENV: "1",
+            _PRODUCER_EXIT_ENV: exit_code,
             _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
         },
     )
@@ -2059,9 +2091,352 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
     # the boot itself was fine and ran to its stop time — this is not a refusal
     assert "=== BOOT" in output
     assert "=== END run rc=143" in output  # SIGTERM from our own stop path
+    assert f"producer end: rc={expected_rc} (self-stopped=1" in output
     # ...and the session is still not reported as clean
     assert result.returncode == 5, output[-2000:]
-    assert "ABORT: the producer stopped before the session did" in output
+    assert "ABORT: the producer halted in the session" in output
+
+
+def test_nothing_the_session_creates_is_readable_by_another_user(
+    tmp_path: Path,
+) -> None:
+    """**0600 inside 0700, for every path this template brings into being.**
+
+    Measured on the 2026-10-15 LONG genesis session: the four tenant stores
+    and the session artifacts were ``0644`` inside ``0700`` directories. The
+    runtime and the renderer pass no mode to their own ``mkdir``/sqlite calls
+    (runbook §7.2-a 「왜 umask 인가」), so the modes are the inherited umask's —
+    and the template only wrapped its three ``mkdir``s, which narrowed the
+    directories and left every file inside them wide. Decision records carry
+    the account number in plaintext, and a 0700 parent is traversal
+    protection, not file protection.
+
+    The caller's umask is forced PERMISSIVE here (022, the host default the
+    09-27/28 corpus was born under was 002), so this fails the moment the
+    template's own ``umask 077`` is removed — the directories alone would
+    still pass, which is exactly the half-fix being closed.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    runner = repo / "tools/tos_cp3/runners/run_tenant_session.sh"
+    result = subprocess.run(
+        ["bash", "-c", 'umask 022; exec bash "$1"', "_", str(runner)],
+        capture_output=True,
+        text=True,
+        env=_runner_env(
+            tmp_path,
+            TENANT_STOP_AT="+10 seconds",
+            **{
+                _PRODUCER_EXIT_ENV: "0",
+                _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            },
+        ),
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    producer_session = tmp_path / "producer-session"
+    data_leaf = tmp_path / ".local/state/tos/scratch/bp/data" / _FRONT_MONTH
+    directories = [producer_session, data_leaf, tmp_path / "render-out"]
+    files = [
+        tmp_path / "session.log",  # the operator's own log
+        tmp_path / "journal.jsonl",  # the fifteen fields
+        producer_session / "boot-journal-snapshot.json",
+        producer_session / "first-row-wait.log",
+        producer_session / "producer-summary.json",
+        tmp_path / "render-out/critical_input_policy.yaml",
+    ]
+    modes = {
+        str(path): oct(path.stat().st_mode & 0o777)
+        for path in (*directories, *files)
+        if path.exists()
+    }
+    assert len(modes) == len(directories) + len(files), (modes, output[-2000:])
+    assert all(
+        mode == oct(0o700) for path, mode in modes.items() if Path(path).is_dir()
+    ), modes
+    assert all(
+        mode == oct(0o600) for path, mode in modes.items() if Path(path).is_file()
+    ), modes
+
+
+@pytest.mark.parametrize("which", ["TENANT_PRODUCER_SESSION_DIR", "TENANT_DATA_PARENT"])
+def test_red_a_session_path_that_is_a_symlink_is_refused(
+    tmp_path: Path, which: str
+) -> None:
+    """**PR #904 review round 1 item B — the repair must not reach outside.**
+
+    Step 12c narrows modes on the data leaf and the producer session dir, and
+    ``chmod`` FOLLOWS a symlink: the 0700 would land on whatever the link
+    points at. Refused at step 6b instead, before any child exists — by stop
+    time the stores have already been written through the link, so a late
+    refusal is worth much less than an early one.
+
+    Concrete input: the named path IS a symlink to a directory outside the
+    session. The refusal must fire for either of the two trees, so neither can
+    be dropped from the guard's argument list.
+    """
+    repo = _runner_repo(tmp_path)
+    outside = tmp_path / "somewhere-else"
+    outside.mkdir()
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    linked = scratch / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+
+    result = _run_runner(repo, tmp_path, **{which: str(linked)})
+
+    output = result.stdout + result.stderr
+    assert "is a symlink" in output, output[-2000:]
+    assert "a session path is not the path it names" in output
+    assert result.returncode == 3, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_a_session_path_under_a_symlinked_ancestor_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**The same hole one level up — the clause a leaf-only check would miss.**
+
+    Concrete input: the leaf itself does not exist yet (it never does at step
+    6b — the guard requires a fresh one), and an ANCESTOR of it is a symlink.
+    ``find`` would descend it and ``chmod`` would follow it, so the resolved
+    path, not just the final component, has to equal the path given.
+    """
+    repo = _runner_repo(tmp_path)
+    real = tmp_path / ".local/state/tos/scratch/bp/real"
+    real.mkdir(parents=True)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    (scratch / "via").symlink_to(real, target_is_directory=True)
+
+    result = _run_runner(
+        repo, tmp_path, TENANT_DATA_PARENT=str(scratch / "via" / "data")
+    )
+
+    output = result.stdout + result.stderr
+    assert "a session path is not the path it names" in output, output[-2000:]
+    assert result.returncode == 3, output[-2000:]
+
+
+def test_red_a_session_path_that_resolves_elsewhere_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Review round 2 LOW 2 — the clause no other input exercises.**
+
+    Step 6b has three predicates and the third (``realpath`` equals the
+    ``normpath`` it was given) had no test of its own: every input that
+    reached it was already refused by the symlink-component clause, so
+    mutating it to ``if False`` stayed green. That is the shape the guard
+    lesson calls a clause that admits what it names.
+
+    This input separates them. ``<scratch>/x/link/../data`` with
+    ``link -> <scratch>/elsewhere/sub``:
+
+    * ``normpath`` collapses the ``..`` textually, giving ``<scratch>/x/data``
+      — whose components are all real directories, so the symlink clause has
+      nothing to say;
+    * ``realpath`` resolves ``link`` FIRST and then applies the ``..``, giving
+      ``<scratch>/elsewhere/data`` — a different tree entirely.
+
+    So the path names one place and means another, and only the third clause
+    can see it. The assertion is on the wording too: it must be the "resolves
+    to" refusal and NOT the symlink one, or the test would pass for the wrong
+    reason.
+    """
+    repo = _runner_repo(tmp_path)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    (scratch / "x").mkdir(parents=True, exist_ok=True)
+    (scratch / "elsewhere/sub").mkdir(parents=True, exist_ok=True)
+    (scratch / "x/link").symlink_to(scratch / "elsewhere/sub", True)
+
+    result = _run_runner(
+        repo, tmp_path, TENANT_DATA_PARENT=str(scratch / "x/link/../data")
+    )
+
+    output = result.stdout + result.stderr
+    assert "a session path is not the path it names" in output, output[-2000:]
+    assert "resolves to" in output, output[-2000:]
+    assert "is a symlink" not in output, "the OTHER clause must not be what fired"
+    assert result.returncode == 3, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
+@pytest.mark.parametrize(
+    ("mode", "refused"),
+    [
+        pytest.param(0o755, True, id="0755-refused"),
+        pytest.param(0o750, True, id="0750-refused"),
+        pytest.param(0o700, False, id="0700-runs"),
+    ],
+)
+def test_red_a_pre_existing_data_parent_that_is_not_700_is_refused(
+    tmp_path: Path, mode: int, refused: bool
+) -> None:
+    """**Codex round 3 — read the mode, never write it.**
+
+    Step 9 used to ``chmod 700`` the data parent. That line came from main and
+    had the same defect step 12c was deleted for: it runs after step 6b, so a
+    path swapped in between took the write, and ``2>/dev/null || true`` meant
+    a failure said nothing at all.
+
+    A parent THIS run creates is already 0700 from its own
+    ``(umask 077; mkdir -p)``. A parent that already existed belongs to
+    someone else, so the session now READS its mode and refuses anything that
+    is not exactly 700 — naming the fix instead of reaching in.
+
+    Three modes, so the predicate is an equality and not "world-readable":
+    ``0750`` leaks nothing to the world and is still refused, because a
+    durable evidence parent is 700 or it is a finding.
+    """
+    repo = _runner_repo(tmp_path)
+    parent = tmp_path / ".local/state/tos/scratch/bp/preexisting"
+    parent.mkdir(parents=True)
+    parent.chmod(mode)
+    assert oct(parent.stat().st_mode & 0o777) == oct(mode), "the test's own premise"
+
+    result = _run_runner(repo, tmp_path, TENANT_DATA_PARENT=str(parent))
+
+    output = result.stdout + result.stderr
+    if refused:
+        assert f"is mode {mode & 0o777:o}, not 700" in output, output[-2000:]
+        assert "narrow it to 700 yourself" in output
+        assert result.returncode == 3, output[-2000:]
+        # ...and the refusal did NOT quietly fix it on the way out
+        assert oct(parent.stat().st_mode & 0o777) == oct(mode)
+        assert not (parent / _FRONT_MONTH).exists()
+    else:
+        assert "data parent mode 700" in output, output[-2000:]
+        # it got past step 9 and died at the non-bootable stub renderer
+        assert "render refused" in output, output[-2000:]
+        assert (parent / _FRONT_MONTH).is_dir()
+    assert not result.producer_outlived_the_runner
+
+
+def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:
+    """**Codex re-review MEDIUM at ``ccf1f0d0``: the repair is REFUSED.**
+
+    A post-stop ``chmod`` sweep cannot be made race-free in this script. ``-P``
+    and ``-links 1`` close the shapes a test can build up front, but they are
+    checks made before the ``chmod`` that acts on their result: an ancestor
+    swapped after step 6b redirects the walk, and an entry replaced or given a
+    second name between ``find``'s test and the syscall is chmodded through the
+    name ``find`` approved. The disposition was to drop the sweep, not to keep
+    narrowing it.
+
+    So this pins the ABSENCE, which is the only way an absence stays: a future
+    reader who re-adds a sweep makes this red.
+
+    ⚠ The assertion is over the WHOLE file, not just the stop path (Codex
+    round 3). The first cut of this test checked only from step 12b onward and
+    called step 9's ``chmod 700 "$TENANT_DATA_PARENT"`` out of scope as
+    inherited from main — but that line had the same path-swap race (it runs
+    after step 6b), failed silently behind ``2>/dev/null || true``, and made
+    the script's own "umask is the only mechanism" comment false. A scope that
+    excuses the one instance still present is not a gate.
+
+    Modes now come from exactly two mechanisms and only one of them writes:
+    the process-wide ``umask 077``
+    (:func:`test_nothing_the_session_creates_is_readable_by_another_user`
+    proves it covers everything the session creates), and a READ-ONLY refusal
+    on a pre-existing data parent
+    (:func:`test_red_a_pre_existing_data_parent_that_is_not_700_is_refused`).
+    """
+    text = _RUNNER.read_text("utf-8")
+    assert "repair_modes" not in text
+    # CODE only — the comments deliberately quote the commands this script
+    # refuses to run, and a check that cannot tell prose from an instruction
+    # would be satisfied by deleting the explanation.
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    for forbidden in ("chmod", "chown"):
+        assert forbidden not in code, f"{forbidden} in executable code:\n{code}"
+    # no `find` reachable from the stop path either — that was the sweep's own
+    # walk. Anchored on a variable that occurs once, not on `stop_producer`,
+    # whose first occurrence is its definition back in step 7.
+    after_stop = code[code.index("PRODUCER_ENDED_THE_SESSION=0") :]
+    assert "find " not in after_stop, after_stop[:1500]
+    # and both refusals are recorded, so neither is merely missing
+    assert "there is NO mode repair here, deliberately" in text
+    assert "is READ, never written" in text
+
+
+def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
+    """**Item B's last requirement: quoting survives the hardening.**
+
+    The step-6b guard takes the four session paths as arguments, and an
+    unquoted expansion would split each of these into two words — a refusal on
+    a path that is perfectly fine. The mode assertions below come from
+    ``umask 077`` plus the ``(umask 077; mkdir)`` subshells, not from any
+    repair step (there is none — see
+    :func:`test_the_runner_runs_no_mode_repair_sweep_after_the_stop`).
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+10 seconds",
+        TENANT_DATA_PARENT=str(scratch / "a data dir"),
+        TENANT_PRODUCER_SESSION_DIR=str(tmp_path / "a producer session"),
+        TENANT_RENDER_OUT=str(tmp_path / "a render out"),
+        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+    )
+    output = result.stdout + result.stderr
+    assert "session paths are literal" in output, output[-2000:]
+    assert "=== BOOT" in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    leaf = scratch / "a data dir" / _FRONT_MONTH
+    assert oct(leaf.stat().st_mode & 0o777) == oct(0o700)
+    assert oct((tmp_path / "a producer session").stat().st_mode & 0o777) == oct(0o700)
+    assert oct(
+        (tmp_path / "a producer session/producer-summary.json").stat().st_mode & 0o777
+    ) == oct(0o600)
+
+
+def test_a_producer_that_ends_with_the_session_is_not_an_abort(
+    tmp_path: Path,
+) -> None:
+    """**The 2026-10-15 false ABORT: every full-day session exited 5.**
+
+    The producer ends BY DESIGN once the session's last bar is published:
+    ``run_session`` walks boundaries to ``window.end_boundary(target)`` — one
+    minute past the 15:45 close — and returns, and ``main`` returns 0. The
+    runner's stop time is necessarily later than that (15:50 on the LONG
+    genesis session), so the producer is ALWAYS gone by the time step 12 looks.
+    Asking only "was it still alive?" therefore reported the clean shape as the
+    defect: measured 2026-10-15 15:50:02, ``producer rc=0, run rc=0`` → exit 5.
+
+    The stub here reproduces exactly that: it leaves with 0 well before
+    ``TENANT_STOP_AT``. Nothing about this session is unclean, so the runner
+    must hand back the runtime's own code.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _PRODUCER_EXIT_ENV: "0",
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output
+    assert "=== END producer rc=0" in output
+    # it WAS gone before the stop — the old condition's whole test — and that
+    # is now recorded without being a verdict
+    assert "producer end: rc=0 (self-stopped=1" in output
+    assert "ended-the-session=1" in output
+    assert "ABORT" not in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]  # the runtime's own code
 
 
 # ---------------------------------------------------------------------------

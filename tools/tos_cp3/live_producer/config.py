@@ -53,6 +53,7 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("min_bars_per_day", int),
     ("max_seed_calendar_days", int),
     ("max_consecutive_produce_errors", int),
+    ("max_consecutive_fetch_error_minutes", int),
 )
 
 #: Keys read as a list of ints rather than a scalar.
@@ -92,6 +93,25 @@ class LiveProducerConfig:
     min_bars_per_day: int
     max_seed_calendar_days: int
     max_consecutive_produce_errors: int
+    #: Plan §3.5's second give-up, added after PR #904 review round 1 measured
+    #: that the first one could not see a dead FEED at all:
+    #: ``consecutive_produce_errors`` counts only ``ProduceFieldsError``, so a
+    #: revoked token failed every poll of every minute and the session still
+    #: ended rc 0 (measured: ``fetch_error`` 324, ``published`` 0, rc 0).
+    #:
+    #: Counted in MINUTES — boundaries at which no poll succeeded — and not in
+    #: failed polls, for two reasons. A poll count is a function of
+    #: :attr:`repoll_pace_s`: halving the pace would halve the wall-clock time
+    #: to trip, with no operator intent anywhere. And "the feed gave us nothing
+    #: for N minutes" is the question an operator actually has.
+    #:
+    #: ⚠ It counts FETCH failures only, never "the poll worked and had no row
+    #: for that minute" (``no_raw_row_for_minute``). The genesis session is the
+    #: concrete input for that distinction: 12:39-13:08 was 30 consecutive
+    #: minutes of exactly that shape — a real lunch lull, ``fetch_error: 0``
+    #: all day — so a counter that folded the two would abort a clean session
+    #: every day the market goes quiet for half an hour.
+    max_consecutive_fetch_error_minutes: int
     #: Years the tenant calendar is declared to cover. Not inferred from its
     #: holiday dates (review L4) and cross-checked against the file at load.
     calendar_covered_years: tuple[int, ...]
@@ -185,6 +205,12 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
     if values["max_consecutive_produce_errors"] < 1:
         raise LiveProducerRefused(
             f"{path}: max_consecutive_produce_errors must be >= 1 (plan §3.5)"
+        )
+    if values["max_consecutive_fetch_error_minutes"] < 1:
+        raise LiveProducerRefused(
+            f"{path}: max_consecutive_fetch_error_minutes must be >= 1 — a 0 "
+            "would refuse on the first failed poll of the day, and a single "
+            "transport failure costs that poll, not the session (plan §3.5)"
         )
     if values["min_bars_per_day"] != DEFAULT_MIN_BARS_PER_DAY:
         raise LiveProducerRefused(

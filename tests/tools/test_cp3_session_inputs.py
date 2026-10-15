@@ -18,8 +18,10 @@ from __future__ import annotations
 import ast
 import json
 import sqlite3
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -597,6 +599,176 @@ def test_unpaired_bars_carry_the_producers_own_reason(
         "skipped_behind": 1,
     }
     assert document["counts"]["pre_boot_lines_at_boot"] == 1
+
+
+def _stamp(hhmmss: str) -> int:
+    """Epoch ms of a 2026-10-19 KST wall clock — what the journal stamps."""
+    return int(
+        datetime.strptime(f"20261019T{hhmmss}+0900", "%Y%m%dT%H%M%S%z").timestamp()
+        * 1000
+    )
+
+
+def _close_log(tmp_path: Path, *events: dict[str, Any], seeded: bool = True) -> Path:
+    producer_log = tmp_path / "producer-log.jsonl"
+    seed = [{"stage": "seed", "session_window": "08:45:00..15:45:00"}] if seeded else []
+    producer_log.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in [
+                *seed,
+                {"stage": "published", "raw_event_id": _event_id("0900")},
+                {"stage": "published", "raw_event_id": _event_id("0901")},
+                {"stage": "published", "raw_event_id": _event_id("0902")},
+                *events,
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return producer_log
+
+
+def test_a_line_stamped_at_or_after_the_close_is_not_counted_as_a_miss(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """**Plan §5 M5's second count, and the session's own last bar.**
+
+    The scheduler's FIRST clause is ``SKIPPED_SESSION_CLOSED``
+    (``tos_runtime.marketfeed.scheduler.decide_tick``), so a line that only
+    exists after the close can never be ticked. The session's closing bar is
+    always such a line: it completes only once the minute after it elapses
+    (``SessionWindow.end_boundary``), so the producer stamps it past the
+    close, every day. Counted as a miss it put a permanent 1 in a number plan
+    §5 M5 requires to be 0 — measured on the 2026-10-15 LONG genesis session.
+
+    Three bars, one per side of the boundary, so the predicate is a
+    measurement and not a label:
+
+    * 15:43, stamped 15:44:59 — BEFORE the close. A real miss, and it keeps
+      the defect name. This is the clause that stops the new reason from
+      swallowing the count it was carved out of.
+    * 15:44, stamped exactly 15:45:00 — the boundary itself is "closed".
+    * 15:45, stamped 15:46:02 — the shape the genesis session produced.
+
+    The close comes from the producer's own ``seed`` record, which takes it
+    from the tenant calendar the runtime also loads; 15:45 is never written
+    here (``live_producer/calendar.py``'s module docstring on why a literal
+    would be a second source of truth).
+    """
+    data_dir = _three_bar_session(tmp_path, hinge)
+    producer_log = _close_log(
+        tmp_path,
+        {
+            "stage": "published",
+            "raw_event_id": _event_id("1543"),
+            "as_of_ms": _stamp("154459"),
+        },
+        {
+            "stage": "published",
+            "raw_event_id": _event_id("1544"),
+            "as_of_ms": _stamp("154500"),
+        },
+        {
+            "stage": "published",
+            "raw_event_id": _event_id("1545"),
+            "as_of_ms": _stamp("154602"),
+        },
+    )
+    document = _document(tmp_path, data_dir, producer_log=producer_log)
+
+    assert document["unpaired_reasons"] == {
+        _event_id("1543"): si.REASON_UNCONSUMED_AFTER_BOOT,
+        _event_id("1544"): si.REASON_PUBLISHED_AFTER_CLOSE,
+        _event_id("1545"): si.REASON_PUBLISHED_AFTER_CLOSE,
+    }
+    assert document["unpaired_reason_counts"] == {
+        si.REASON_UNCONSUMED_AFTER_BOOT: 1,
+        si.REASON_PUBLISHED_AFTER_CLOSE: 2,
+    }
+    assert document["generated_from"]["producer_session_close"] == "15:45:00"
+
+
+@pytest.mark.serial
+def test_the_close_is_built_in_the_bars_own_offset_not_the_hosts_timezone(
+    tmp_path: Path, hinge: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**PR #904 review round 1 LOW 5 — pin the tz handling.**
+
+    ``_published_after_close`` builds the close instant with ``tzinfo`` taken
+    from the BAR's own join key (``+0900``). Dropping that argument leaves a
+    naive datetime whose ``.timestamp()`` is interpreted in the HOST's local
+    zone — which on this KST host is the same number, so the mutation would
+    stay green here and only break on a UTC runner.
+
+    So this test runs under ``TZ=UTC``. With the offset honoured the 15:45 bar
+    stamped at 15:46:02 KST is still past a 15:45:00+09:00 close; without it
+    the close would be read as 15:45 UTC, nine hours later, and the bar would
+    fall back to the defect name.
+    """
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    try:
+        data_dir = _three_bar_session(tmp_path, hinge)
+        producer_log = _close_log(
+            tmp_path,
+            {
+                "stage": "published",
+                "raw_event_id": _event_id("1545"),
+                # computed with an explicit +0900, so the INPUT does not depend
+                # on the host zone either
+                "as_of_ms": _stamp("154602"),
+            },
+        )
+        document = _document(tmp_path, data_dir, producer_log=producer_log)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+    assert document["unpaired_reasons"] == {
+        _event_id("1545"): si.REASON_PUBLISHED_AFTER_CLOSE
+    }
+
+
+@pytest.mark.parametrize(
+    ("seeded", "stamped"),
+    [
+        pytest.param(False, True, id="no-seed-record"),
+        pytest.param(True, False, id="no-stamp"),
+    ],
+)
+def test_red_a_close_that_cannot_be_decided_leaves_the_defect_name(
+    tmp_path: Path, hinge: dict[str, Any], seeded: bool, stamped: bool
+) -> None:
+    """**An unanswerable question is not a clean answer.**
+
+    Two ways the refinement can go blind — a producer log with no ``seed``
+    record (nothing says where the close is) and a ``published`` event with
+    no ``as_of_ms`` (nothing says when the line appeared) — and in both the
+    bar keeps :data:`REASON_UNCONSUMED_AFTER_BOOT`. The alternative is the
+    failure mode this whole reason exists to avoid in the other direction: a
+    real miss quietly excused as scenery.
+
+    ``producer_session_close`` is what makes a ZERO in the new reason
+    readable, so it is asserted too: without it "no bar was published after
+    the close" and "the question was never asked" are the same document.
+    """
+    data_dir = _three_bar_session(tmp_path, hinge)
+    event: dict[str, Any] = {
+        "stage": "published",
+        "raw_event_id": _event_id("1545"),
+    }
+    if stamped:
+        event["as_of_ms"] = _stamp("154602")
+    producer_log = _close_log(tmp_path, event, seeded=seeded)
+    document = _document(tmp_path, data_dir, producer_log=producer_log)
+
+    assert document["unpaired_reasons"] == {
+        _event_id("1545"): si.REASON_UNCONSUMED_AFTER_BOOT
+    }
+    assert document["generated_from"]["producer_session_close"] == (
+        "15:45:00" if seeded else None
+    )
 
 
 def test_red_a_boot_snapshot_without_the_pre_boot_list_is_refused(
