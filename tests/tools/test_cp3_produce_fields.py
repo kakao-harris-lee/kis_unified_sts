@@ -36,9 +36,11 @@ import json
 import math
 import warnings
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -821,7 +823,7 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
        appeared on other bars the composition would silently drift.
     """
     emit = frozenset(SESSIONS[-1:])
-    seen: list[tuple[datetime, dict]] = []
+    seen: list[tuple[datetime, Mapping[str, Any]]] = []
     closes = dict(zip(bars["timestamp"], bars["close"]))
 
     with warnings.catch_warnings():
@@ -895,12 +897,12 @@ def test_an_observer_cannot_write_into_the_setups_eval(
     emit = frozenset(SESSIONS[-1:])
     refused: list[type[BaseException]] = []
 
-    def write_through(stamp: datetime, ev) -> None:
-        ev["hi_vol"] = True
+    def write_through(stamp: datetime, ev: Mapping[str, Any]) -> None:
+        ev["hi_vol"] = True  # type: ignore[index]  # the write under test
 
-    def write_through_and_swallow(stamp: datetime, ev) -> None:
+    def write_through_and_swallow(stamp: datetime, ev: Mapping[str, Any]) -> None:
         try:
-            ev["hi_vol"] = True
+            ev["hi_vol"] = True  # type: ignore[index]
         except TypeError as exc:  # MappingProxyType refuses item assignment
             refused.append(type(exc))
 
