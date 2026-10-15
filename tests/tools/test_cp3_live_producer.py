@@ -38,6 +38,7 @@ from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import frame as frame_mod
 from tools.tos_cp3.live_producer import line as line_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
+from tools.tos_cp3.live_producer import real_quotes as real_quotes_mod
 from tools.tos_cp3.live_producer import sinks as sinks_mod
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
 from tools.tos_cp3.minute_probe import frame as bars_to_frame
@@ -1867,16 +1868,20 @@ def test_item5_the_token_cache_is_scoped_to_the_app_key(
         app_key = "app-key-under-test"
         app_secret = "app-secret-under-test"
 
+    # Patched on `real_quotes`, the module that now owns the only function in
+    # this package that resolves REAL credentials (PR #906 review round 1 —
+    # `producer.py` was at its 1,000-line cap). The function and this test's
+    # claim are unchanged; only the home is.
     monkeypatch.setattr(
-        producer_mod, "resolve_credentials", lambda *a, **k: FakeCreds()
+        real_quotes_mod, "resolve_credentials", lambda *a, **k: FakeCreds()
     )
     monkeypatch.setattr(
-        producer_mod,
+        real_quotes_mod,
         "Quotes",
         lambda *a, **k: captured.update(k) or SimpleNamespace(http=None),
     )
     config = config_mod.load_config(_write_config(tmp_path), repo_root=_REPO_ROOT)
-    producer_mod._real_quotes(config, producer_mod.EventLog(tmp_path / "log"))
+    real_quotes_mod.real_quotes(config, producer_mod.EventLog(tmp_path / "log"))
 
     fingerprint = secret_fingerprint(FakeCreds.app_key)
     assert captured["token_cache"] == config.token_cache_dir / fingerprint
