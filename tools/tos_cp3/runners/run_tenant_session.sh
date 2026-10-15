@@ -273,6 +273,46 @@ esac
 DATA_LEAF=$TENANT_DATA_PARENT/$INSTRUMENT
 log "instrument=$INSTRUMENT · data leaf $DATA_LEAF"
 
+# --- 6b. the session paths must be what they say they are -----------------
+#
+# PR #904 review round 1 item B. Fail closed HERE — before a child exists, let
+# alone a store — rather than at stop time: step 12c narrows modes on these
+# two trees, and `chmod` follows a symlink. A symlinked leaf (or a symlinked
+# ANCESTOR of it) therefore puts a 0700/0600 on something outside the session,
+# and the refusal is worth more early than the repair is worth late: by stop
+# time the stores have already been WRITTEN through that link.
+#
+# Three predicates per path, and the second is the one that catches an
+# ancestor: absolute; no component is a symlink; and the fully resolved path
+# equals the normalized path it was given. Only components that already EXIST
+# can be links, and `realpath` resolves what exists and leaves the rest, so a
+# leaf that does not exist yet is still checked against its real ancestors.
+PATH_GUARD=$(
+  "$PY" - "$TENANT_DATA_PARENT" "$DATA_LEAF" "$TENANT_PRODUCER_SESSION_DIR" \
+    "$TENANT_RENDER_OUT" <<'PY' 2>&1
+import os
+import sys
+from pathlib import Path
+
+bad = []
+for raw in sys.argv[1:]:
+    given = os.path.normpath(raw)
+    if not os.path.isabs(raw):
+        bad.append(f"{raw!r} is not absolute")
+        continue
+    for component in [Path(given), *Path(given).parents]:
+        if component.is_symlink():
+            bad.append(f"{raw!r}: component {str(component)!r} is a symlink")
+    resolved = os.path.realpath(raw)
+    if resolved != given:
+        bad.append(f"{raw!r} resolves to {resolved!r}")
+print("; ".join(dict.fromkeys(bad)))
+PY
+) || die "session path guard failed to run: $PATH_GUARD"
+[ -z "$PATH_GUARD" ] ||
+  die "a session path is not the path it names, so narrowing its modes at stop would land outside the session: $PATH_GUARD"
+log "session paths are literal (no symlinked component, resolve to themselves)"
+
 # --- 7. the stop path, armed BEFORE anything is launched ------------------
 #
 # ONE stop path, reached four ways: the deadline in step 12, a signal sent to
@@ -715,9 +755,30 @@ log "producer end: rc=$producer_rc (self-stopped=$PRODUCER_SELF_STOPPED, ended-t
 # a store directory that does not exist yet is the §4-A "empty store set"
 # accident. The runbook's own "⚠ 남은 경계 하나" is the files, not just the
 # directory, so both are narrowed here.
-chmod 700 "$DATA_LEAF" 2>/dev/null || true
-find "$DATA_LEAF" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
-chmod 700 "$TENANT_PRODUCER_SESSION_DIR" 2>/dev/null || true
+#
+# ⚠ Three ways a repair can reach OUTSIDE the session, all closed here (PR
+# #904 review round 1 item B). Step 6b already refuses a session path with a
+# symlinked component, so these are the second layer, not the only one:
+#   * a symlinked DIRECTORY — `chmod` follows it, so the mode lands on the
+#     target. Done through `find -P ... -type d` instead, which with -P does
+#     not follow and so does not match a symlink at all.
+#   * a symlinked ANCESTOR or entry — `find` without -P would descend it.
+#   * a HARD LINK — the inode's mode is shared with every other name for it,
+#     so narrowing a file inside the leaf narrows a name outside it too.
+#     `-links 1` skips those, and they are reported rather than dropped: a
+#     store with a second name is a finding about the session, not a chmod
+#     detail.
+repair_modes() {
+  # $1 the directory. Quoted throughout, so a path with spaces is one path.
+  find -P "$1" -maxdepth 0 -type d -exec chmod 700 {} + 2>/dev/null || true
+  find -P "$1" -maxdepth 1 -type f -links 1 -exec chmod 600 {} + 2>/dev/null || true
+  _shared=$(find -P "$1" -maxdepth 1 -type f -links +1 -printf '%p(%n) ' 2>/dev/null)
+  if [ -n "$_shared" ]; then
+    log "WARN: not narrowing hard-linked file(s) under $1 — the mode is shared with names outside it: $_shared"
+  fi
+}
+repair_modes "$DATA_LEAF"
+repair_modes "$TENANT_PRODUCER_SESSION_DIR"
 
 # --- 13. what the durable set holds now (runbook §4) -----------------------
 #

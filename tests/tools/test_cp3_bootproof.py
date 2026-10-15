@@ -1189,6 +1189,10 @@ _PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
 #: ``"killed"`` SIGKILLs itself, which is rc 137 and no clean teardown.
 #: Unset: stay alive until the runner stops it.
 _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
+#: Where the stub ``run`` hard-links one of its stores to. Names a path
+#: OUTSIDE the data leaf, so the mode of the inode inside the leaf is shared
+#: with a name the session does not own (PR #904 review round 1 item B).
+_RUN_HARDLINK_ENV = "STUB_RUN_HARDLINK_TO"
 #: The path the ``1+1`` mode watches before publishing its second row — the
 #: rendered tree's own file, so "after the render, before the boot" is a fact
 #: about the pipeline rather than a bet on how long a stub takes.
@@ -1359,6 +1363,13 @@ def _runner_repo(
             "from pathlib import Path\n"
             "def main(argv):\n"
             f"    envfile = os.environ.get({_RUN_ENVFILE_ENV!r})\n"
+            "    data_dir = Path(argv[argv.index('--data-dir') + 1])\n"
+            f"    hardlink = os.environ.get({_RUN_HARDLINK_ENV!r})\n"
+            "    if hardlink:\n"
+            "        # a store whose inode has a second name OUTSIDE the leaf\n"
+            "        store = data_dir / 'evidence.sqlite3'\n"
+            "        store.write_text('not really sqlite')\n"
+            "        os.link(store, hardlink)\n"
             "    if envfile:\n"
             "        Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
             f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
@@ -2160,6 +2171,137 @@ def test_nothing_the_session_creates_is_readable_by_another_user(
     assert all(
         mode == oct(0o600) for path, mode in modes.items() if Path(path).is_file()
     ), modes
+
+
+@pytest.mark.parametrize("which", ["TENANT_PRODUCER_SESSION_DIR", "TENANT_DATA_PARENT"])
+def test_red_a_session_path_that_is_a_symlink_is_refused(
+    tmp_path: Path, which: str
+) -> None:
+    """**PR #904 review round 1 item B — the repair must not reach outside.**
+
+    Step 12c narrows modes on the data leaf and the producer session dir, and
+    ``chmod`` FOLLOWS a symlink: the 0700 would land on whatever the link
+    points at. Refused at step 6b instead, before any child exists — by stop
+    time the stores have already been written through the link, so a late
+    refusal is worth much less than an early one.
+
+    Concrete input: the named path IS a symlink to a directory outside the
+    session. The refusal must fire for either of the two trees, so neither can
+    be dropped from the guard's argument list.
+    """
+    repo = _runner_repo(tmp_path)
+    outside = tmp_path / "somewhere-else"
+    outside.mkdir()
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    linked = scratch / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+
+    result = _run_runner(repo, tmp_path, **{which: str(linked)})
+
+    output = result.stdout + result.stderr
+    assert "is a symlink" in output, output[-2000:]
+    assert "a session path is not the path it names" in output
+    assert result.returncode == 3, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_a_session_path_under_a_symlinked_ancestor_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**The same hole one level up — the clause a leaf-only check would miss.**
+
+    Concrete input: the leaf itself does not exist yet (it never does at step
+    6b — the guard requires a fresh one), and an ANCESTOR of it is a symlink.
+    ``find`` would descend it and ``chmod`` would follow it, so the resolved
+    path, not just the final component, has to equal the path given.
+    """
+    repo = _runner_repo(tmp_path)
+    real = tmp_path / ".local/state/tos/scratch/bp/real"
+    real.mkdir(parents=True)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    (scratch / "via").symlink_to(real, target_is_directory=True)
+
+    result = _run_runner(
+        repo, tmp_path, TENANT_DATA_PARENT=str(scratch / "via" / "data")
+    )
+
+    output = result.stdout + result.stderr
+    assert "a session path is not the path it names" in output, output[-2000:]
+    assert result.returncode == 3, output[-2000:]
+
+
+def test_a_store_with_a_second_name_outside_the_leaf_is_not_narrowed(
+    tmp_path: Path,
+) -> None:
+    """**PR #904 review round 1 item B — a hard link shares its mode.**
+
+    A file's mode lives on the INODE, so narrowing a store inside the leaf
+    narrows every other name for it too. Concrete input: the ``run`` child
+    creates ``evidence.sqlite3`` in the leaf and hard-links it to a path
+    outside the session; the repair must leave that inode alone and SAY so,
+    because a store with a second name is a finding about the session rather
+    than a chmod detail.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    outside = tmp_path / "another-name.sqlite3"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+10 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_HARDLINK_ENV: str(outside),
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    leaf = tmp_path / ".local/state/tos/scratch/bp/data" / _FRONT_MONTH
+    store = leaf / "evidence.sqlite3"
+    assert store.stat().st_nlink == 2, "the test's own premise"
+    # left as the umask made it (0600), NOT re-chmodded through the inode
+    assert oct(store.stat().st_mode & 0o777) == oct(0o600)
+    assert outside.stat().st_ino == store.stat().st_ino
+    assert "not narrowing hard-linked file(s)" in output
+    assert "evidence.sqlite3(2)" in output
+    # the directory itself is still narrowed — the skip is per FILE
+    assert oct(leaf.stat().st_mode & 0o777) == oct(0o700)
+
+
+def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
+    """**Item B's last requirement: quoting survives the hardening.**
+
+    Both new blocks (the step-6b guard and step 12c's ``repair_modes``) take
+    paths as arguments, and an unquoted expansion would split these into two
+    words each — a refusal on a path that is perfectly fine, or worse a chmod
+    on half of it.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+10 seconds",
+        TENANT_DATA_PARENT=str(scratch / "a data dir"),
+        TENANT_PRODUCER_SESSION_DIR=str(tmp_path / "a producer session"),
+        TENANT_RENDER_OUT=str(tmp_path / "a render out"),
+        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+    )
+    output = result.stdout + result.stderr
+    assert "session paths are literal" in output, output[-2000:]
+    assert "=== BOOT" in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    leaf = scratch / "a data dir" / _FRONT_MONTH
+    assert oct(leaf.stat().st_mode & 0o777) == oct(0o700)
+    assert oct((tmp_path / "a producer session").stat().st_mode & 0o777) == oct(0o700)
+    assert oct(
+        (tmp_path / "a producer session/producer-summary.json").stat().st_mode & 0o777
+    ) == oct(0o600)
 
 
 def test_a_producer_that_ends_with_the_session_is_not_an_abort(
