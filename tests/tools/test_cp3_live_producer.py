@@ -1879,6 +1879,60 @@ def test_item5_consecutive_produce_errors_stop_the_producer(
 
 
 @pytest.mark.serial
+def test_the_finish_summary_says_whether_the_session_end_was_reached(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**``session_end_reached`` is what tells the two ``finish`` records apart.**
+
+    ``finish()`` runs in ``main``'s ``finally``, so the §3.5 give-up path
+    writes a ``stage: "finish"`` summary exactly like a full day does. The
+    runner has to report one as an ABORT and the other as the ordinary end of
+    a session (``run_tenant_session.sh`` step 12b), and before this field the
+    only thing separating them was the process exit code — which says nothing
+    about a path that returns 0 without reaching ``end_boundary``.
+
+    Both halves here, against the same market, so the field is a measurement
+    and not a constant.
+
+    ⚠ The field is guarded with ``hasattr(self, "window")`` at the call site
+    because "always runs" includes a ``finish()`` after a boot that REFUSED,
+    where no session window was ever resolved —
+    :func:`test_item5_red_a_reused_session_directory_refuses_to_start` is that
+    path's red proof and went red on the unguarded first cut
+    (``AttributeError: 'LiveProducer' object has no attribute 'window'``). A
+    producer that never got a window certainly did not reach a session end,
+    so ``False`` is the answer and not merely the safe one.
+    """
+    halted_root = tmp_path / "halted"
+    ended_root = tmp_path / "ended"
+    halted_root.mkdir()
+    ended_root.mkdir()
+    halted, _clock, _quotes = _build(
+        halted_root, market, max_consecutive_produce_errors=2
+    )
+    halted.boot()
+    from tools.tos_cp3.produce_fields import ProduceFieldsError
+
+    def always_fail(*_args, **_kwargs):
+        raise ProduceFieldsError("non-finite close in the replayed bar stream")
+
+    monkeypatch.setattr(producer_mod, "build_line", always_fail)
+    with pytest.raises(LiveProducerRefused, match="consecutive produce_error"):
+        halted.run_session()
+    halted_summary = halted.finish()
+    monkeypatch.undo()
+
+    ended, _ended_clock, _ended_quotes = _build(ended_root, market)
+    ended.boot()
+    ended.run_session()
+    ended_summary = ended.finish()
+
+    assert halted_summary["stage"] == ended_summary["stage"] == "finish"
+    assert halted_summary["session_end_reached"] is False
+    assert ended_summary["session_end_reached"] is True
+
+
+@pytest.mark.serial
 def test_item5_a_transport_failure_is_counted_and_the_minute_continues(
     tmp_path: Path, market: Market
 ) -> None:

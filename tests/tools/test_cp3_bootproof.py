@@ -1181,9 +1181,20 @@ _PRODUCER_SOURCE_IDS_ENV = "STUB_PRODUCER_SOURCE_IDS"
 _PRODUCER_INSTRUMENT_ENV = "STUB_PRODUCER_INSTRUMENT"
 #: "0" to write no journal at all, and exit — a producer that refused at boot.
 _PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
-#: "1" to exit right after writing — a producer that halted mid-session (five
-#: consecutive ``produce_error``s is the plan's own example).
+#: The exit code to leave with right after writing, as a decimal string. "1"
+#: is a producer that halted mid-session (five consecutive ``produce_error``s
+#: is the plan's own example, and the real one leaves with 1 through
+#: ``LiveProducerRefused``); "0" is a producer that ENDED with the session
+#: (``run_session`` walked past the last boundary and ``main`` returned 0).
+#: Unset: stay alive until the runner stops it.
 _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
+#: What the stub leaves in ``producer-summary.json``. ``session_end`` (the
+#: default) is the real end-of-day shape — ``stage: finish`` with
+#: ``session_end_reached`` true. ``mid_session`` is the same record with that
+#: marker false, which is what a producer that returned without reaching
+#: ``window.end_boundary`` writes. ``none`` writes no summary at all, the
+#: shape of a producer SIGKILLed before its ``finally`` could run.
+_PRODUCER_SUMMARY_ENV = "STUB_PRODUCER_SUMMARY"
 #: The path the ``1+1`` mode watches before publishing its second row — the
 #: rendered tree's own file, so "after the render, before the boot" is a fact
 #: about the pipeline rather than a bet on how long a stub takes.
@@ -1288,11 +1299,16 @@ def _runner_repo(
         "    publish(2)\n"
         "else:\n"
         "    publish(max(len(ids), 1))\n"
-        "(session / 'producer-summary.json').write_text(\n"
-        "    json.dumps({'stage': 'finish', 'counters': {'published': 1}}) + '\\n')\n"
-        f"if os.environ.get({_PRODUCER_EXIT_ENV!r}) == '1':\n"
-        "    print('stub producer: halted after writing')\n"
-        "    raise SystemExit(1)\n"
+        f"summary_mode = os.environ.get({_PRODUCER_SUMMARY_ENV!r}, 'session_end')\n"
+        "if summary_mode != 'none':\n"
+        "    (session / 'producer-summary.json').write_text(json.dumps({\n"
+        "        'stage': 'finish', 'counters': {'published': 1},\n"
+        "        'session_end_reached': summary_mode == 'session_end',\n"
+        "    }) + '\\n')\n"
+        f"leave_with = os.environ.get({_PRODUCER_EXIT_ENV!r})\n"
+        "if leave_with is not None:\n"
+        "    print('stub producer: leaving with %s after writing' % leave_with)\n"
+        "    raise SystemExit(int(leave_with))\n"
         "while True:\n"
         "    time.sleep(0.2)\n",
         encoding="utf-8",
@@ -2030,8 +2046,26 @@ def test_the_boot_order_is_producer_then_first_row_then_guard_then_boot(
     assert not result.producer_outlived_the_runner
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "summary_mode", "expected_end"),
+    [
+        # The plan §3.5 give-up path verbatim: `LiveProducerRefused` leaves
+        # with 1, and `finish()` still runs in its `finally`, so the summary
+        # is there and says `stage: finish`. The marker is given its STRONGEST
+        # value here on purpose — only the return code can tell this apart.
+        pytest.param("1", "session_end", "session_end", id="refused-rc1"),
+        # SIGKILLed mid-session: the `finally` never ran, so there is no
+        # summary at all.
+        pytest.param("0", "none", "no_readable_summary", id="no-summary"),
+        # Returned 0 without reaching `window.end_boundary` — a loop that
+        # never ran. The return code says nothing; the marker does.
+        pytest.param(
+            "0", "mid_session", "finish_before_session_end", id="finish-too-early"
+        ),
+    ],
+)
 def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
-    tmp_path: Path,
+    tmp_path: Path, exit_code: str, summary_mode: str, expected_end: str
 ) -> None:
     """**Plan §3.5's last sentence: 「멈춘 생산자는 러너가 ABORT 로 보고한다」.**
 
@@ -2044,6 +2078,13 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
     evidence the session exists to leave. The report is the exit code, and it
     is its own (5), because "the boot failed" and "the boot was fine and the
     feed behind it stopped" are different findings.
+
+    Three shapes, one per clause of step 12b, so no clause can be dropped
+    without a red: the ``rc`` half, the "a summary exists and parses" half and
+    the ``session_end_reached`` half each have a case the other two let pass.
+    The companion is
+    :func:`test_a_producer_that_ends_with_the_session_is_not_an_abort`, which
+    is the input every one of these three must NOT also match.
     """
     repo = _runner_repo(tmp_path, bootable=True)
     result = _run_runner(
@@ -2051,7 +2092,8 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
         tmp_path,
         TENANT_STOP_AT="+15 seconds",
         **{
-            _PRODUCER_EXIT_ENV: "1",
+            _PRODUCER_EXIT_ENV: exit_code,
+            _PRODUCER_SUMMARY_ENV: summary_mode,
             _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
         },
     )
@@ -2059,9 +2101,51 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
     # the boot itself was fine and ran to its stop time — this is not a refusal
     assert "=== BOOT" in output
     assert "=== END run rc=143" in output  # SIGTERM from our own stop path
+    assert f"producer end: {expected_end} (rc={exit_code}," in output
     # ...and the session is still not reported as clean
     assert result.returncode == 5, output[-2000:]
-    assert "ABORT: the producer stopped before the session did" in output
+    assert "ABORT: the producer halted in the session" in output
+
+
+def test_a_producer_that_ends_with_the_session_is_not_an_abort(
+    tmp_path: Path,
+) -> None:
+    """**The 2026-10-15 false ABORT: every full-day session exited 5.**
+
+    The producer ends BY DESIGN once the session's last bar is published:
+    ``run_session`` walks boundaries to ``window.end_boundary(target)`` — one
+    minute past the 15:45 close — and returns, and ``main`` returns 0. The
+    runner's stop time is necessarily later than that (15:50 on the LONG
+    genesis session), so the producer is ALWAYS gone by the time step 12 looks.
+    Asking only "was it still alive?" therefore reported the clean shape as the
+    defect: measured 2026-10-15 15:50:02, ``producer rc=0, run rc=0`` → exit 5.
+
+    The stub here reproduces exactly that: the summary says ``stage: finish``
+    with ``session_end_reached`` true, and the process leaves with 0 well
+    before ``TENANT_STOP_AT``. Nothing about this session is unclean, so the
+    runner must hand back the runtime's own code.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _PRODUCER_EXIT_ENV: "0",
+            _PRODUCER_SUMMARY_ENV: "session_end",
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output
+    assert "=== END producer rc=0" in output
+    # it WAS gone before the stop — the old condition's whole test — and that
+    # is now recorded without being a verdict
+    assert "self-stopped=1" in output
+    assert "producer end: session_end (rc=0," in output
+    assert "ended-the-session=1" in output
+    assert "ABORT" not in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]  # the runtime's own code
 
 
 # ---------------------------------------------------------------------------

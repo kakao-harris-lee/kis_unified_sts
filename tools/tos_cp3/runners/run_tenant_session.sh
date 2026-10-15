@@ -56,8 +56,10 @@
 # Then: render (the tenant tree declares journal.mode "external", so
 # --journal-path is required and the renderer writes no journal of its own) →
 # boot → stop at TENANT_STOP_AT → stop the producer → post-stop evidence counts.
-# A producer that stopped BEFORE the session did is reported as an ABORT (exit
-# 5) rather than killing the runtime mid-session (plan §3.5).
+# A producer that HALTED IN the session is reported as an ABORT (exit 5) rather
+# than killing the runtime mid-session (plan §3.5). A producer that ended WITH
+# the session — the normal full-day shape, since it stops one minute past the
+# last bar and the stop time is later — is not (step 12b).
 #
 # This script never deletes itself and touches no crontab.
 #
@@ -623,6 +625,15 @@ log "=== END run rc=$run_rc"
 # a frozen one. The runtime keeps running to its own stop time — truncating a
 # durable set loses the very evidence the session exists to leave — so the
 # report is the EXIT CODE, not a kill.
+#
+# ⚠ "Already stopped" is NOT the same question as "halted mid-session", and the
+# first cut asked only the first one (measured 2026-10-15, the LONG genesis
+# session: exit 5 at 15:50:02 on a session that ran its whole day). The
+# producer ENDS BY DESIGN after the session's last bar — `run_session` walks
+# minute boundaries to `window.end_boundary(target)` (15:46 for a 15:45 close)
+# and returns, `main` returns 0 — and the runner's STOP is later than that by
+# however long the operator set it. So every full-day session had the producer
+# gone before the stop, and every full-day session exited 5.
 PRODUCER_SELF_STOPPED=0
 supervised_group_alive "$PRODUCER_PID" || PRODUCER_SELF_STOPPED=1
 stop_producer
@@ -636,6 +647,53 @@ if [ -f "$PRODUCER_SUMMARY" ]; then
 else
   log "WARN: no producer summary at $PRODUCER_SUMMARY"
 fi
+
+# --- 12b. did the producer END the session, or HALT in it? ----------------
+#
+# The discriminating read, chosen after reading what each exit path actually
+# leaves behind (tools/tos_cp3/live_producer/producer.py):
+#
+#   * `finish()` runs in a `finally`, so BOTH ends write a `stage: "finish"`
+#     summary. The summary's EXISTENCE therefore discriminates nothing on its
+#     own — it only separates "wrote one" from "was SIGKILLed before it could".
+#   * `main` returns 0 only after `run_session()` returns, and 1 on
+#     `LiveProducerRefused` — which is the plan §3.5 give-up path verbatim
+#     (`max_consecutive_produce_errors`). So the RETURN CODE is the first half.
+#   * `finish()` stamps `session_end_reached` from the producer's own clock
+#     against the calendar window it seeded with. That is the positive marker
+#     for the second half: a 0 that did not reach the end (a loop that never
+#     ran because the boot was already past the close) is still not a session.
+#
+# Concrete failing input on each side, which is what the three clauses are for:
+#   rc 1 + a finish summary that claims the end  -> HALT (the §3.5 refusal)
+#   rc 0 + no summary at all                     -> HALT (killed before finish)
+#   rc 0 + a summary with session_end_reached 0  -> HALT (returned early)
+#   rc 0 + a summary with session_end_reached 1  -> ENDED (2026-10-15's shape)
+PRODUCER_END=$(
+  "$PY" - "$PRODUCER_SUMMARY" <<'PY' 2>/dev/null
+import json
+import sys
+from pathlib import Path
+
+try:
+    summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    print("no_readable_summary")
+    raise SystemExit(0)
+if not isinstance(summary, dict) or summary.get("stage") != "finish":
+    print("no_finish_record")
+elif summary.get("session_end_reached") is not True:
+    print("finish_before_session_end")
+else:
+    print("session_end")
+PY
+) || PRODUCER_END=""
+PRODUCER_END=${PRODUCER_END:-no_readable_summary}
+PRODUCER_ENDED_THE_SESSION=0
+if [ "$producer_rc" -eq 0 ] && [ "$PRODUCER_END" = "session_end" ]; then
+  PRODUCER_ENDED_THE_SESSION=1
+fi
+log "producer end: $PRODUCER_END (rc=$producer_rc, self-stopped=$PRODUCER_SELF_STOPPED, ended-the-session=$PRODUCER_ENDED_THE_SESSION)"
 
 # --- 13. what the durable set holds now (runbook §4) -----------------------
 #
@@ -679,7 +737,7 @@ log "post-stop durable set $DATA_LEAF:"
 printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 
 # Exit code 5: the runtime finished the way it was asked to, and the producer
-# did not last the session (step 12).
+# HALTED IN the session (step 12b) rather than ending with it.
 #
 # "The way it was asked to" is 0 OR 143: a session that reaches TENANT_STOP_AT
 # is stopped by SIGTERM from this script's own stop path, so 143 is the
@@ -687,9 +745,12 @@ printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 # producer's silence has something to add to. Any OTHER code is a runtime
 # failure and keeps its own: it is the earlier and larger fact, and replacing
 # it with 5 would report a boot that died as a feed that stopped.
-case "$PRODUCER_SELF_STOPPED:$run_rc" in
-1:0 | 1:143)
-  log "ABORT: the producer stopped before the session did (producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
+#
+# ⚠ The middle field is the 2026-10-15 fix: a producer that is gone at the
+# stop AND ended the session is the NORMAL full-day shape, not an ABORT.
+case "$PRODUCER_SELF_STOPPED:$PRODUCER_ENDED_THE_SESSION:$run_rc" in
+1:0:0 | 1:0:143)
+  log "ABORT: the producer halted in the session ($PRODUCER_END, producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
   exit 5
   ;;
 esac

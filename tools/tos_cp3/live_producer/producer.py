@@ -865,6 +865,7 @@ class LiveProducer:
             "instrument": self.instrument,
             "date": str(self.target),
             "source_id": SOURCE_ID,
+            "session_end_reached": hasattr(self, "window") and self._session_ended(),
             "frozen_bars_today": len(self.frozen),
             "counters": self.counters.as_dict(),
             "market_sha256": digest,
