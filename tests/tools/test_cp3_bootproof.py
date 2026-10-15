@@ -2107,6 +2107,71 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
     assert "ABORT: the producer halted in the session" in output
 
 
+def test_nothing_the_session_creates_is_readable_by_another_user(
+    tmp_path: Path,
+) -> None:
+    """**0600 inside 0700, for every path this template brings into being.**
+
+    Measured on the 2026-10-15 LONG genesis session: the four tenant stores
+    and the session artifacts were ``0644`` inside ``0700`` directories. The
+    runtime and the renderer pass no mode to their own ``mkdir``/sqlite calls
+    (runbook §7.2-a 「왜 umask 인가」), so the modes are the inherited umask's —
+    and the template only wrapped its three ``mkdir``s, which narrowed the
+    directories and left every file inside them wide. Decision records carry
+    the account number in plaintext, and a 0700 parent is traversal
+    protection, not file protection.
+
+    The caller's umask is forced PERMISSIVE here (022, the host default the
+    09-27/28 corpus was born under was 002), so this fails the moment the
+    template's own ``umask 077`` is removed — the directories alone would
+    still pass, which is exactly the half-fix being closed.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    runner = repo / "tools/tos_cp3/runners/run_tenant_session.sh"
+    result = subprocess.run(
+        ["bash", "-c", 'umask 022; exec bash "$1"', "_", str(runner)],
+        capture_output=True,
+        text=True,
+        env=_runner_env(
+            tmp_path,
+            TENANT_STOP_AT="+10 seconds",
+            **{
+                _PRODUCER_EXIT_ENV: "0",
+                _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            },
+        ),
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    producer_session = tmp_path / "producer-session"
+    data_leaf = tmp_path / ".local/state/tos/scratch/bp/data" / _FRONT_MONTH
+    directories = [producer_session, data_leaf, tmp_path / "render-out"]
+    files = [
+        tmp_path / "session.log",  # the operator's own log
+        tmp_path / "journal.jsonl",  # the fifteen fields
+        producer_session / "boot-journal-snapshot.json",
+        producer_session / "first-row-wait.log",
+        producer_session / "producer-summary.json",
+        tmp_path / "render-out/critical_input_policy.yaml",
+    ]
+    modes = {
+        str(path): oct(path.stat().st_mode & 0o777)
+        for path in (*directories, *files)
+        if path.exists()
+    }
+    assert len(modes) == len(directories) + len(files), (modes, output[-2000:])
+    assert all(
+        mode == oct(0o700) for path, mode in modes.items() if Path(path).is_dir()
+    ), modes
+    assert all(
+        mode == oct(0o600) for path, mode in modes.items() if Path(path).is_file()
+    ), modes
+
+
 def test_a_producer_that_ends_with_the_session_is_not_an_abort(
     tmp_path: Path,
 ) -> None:

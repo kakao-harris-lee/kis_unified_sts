@@ -87,6 +87,31 @@ set -u
 # refusals, and never a value.
 set +x +v
 
+# --- -0.5. the modes everything this session creates is born with ----------
+#
+# 0600 files inside 0700 directories, for the whole process and every child.
+#
+# Why PROCESS-WIDE and not another `(umask 077; …)` subshell: the runtime and
+# the renderer pass no mode to their own `mkdir`/sqlite calls, so the modes are
+# whatever the inherited umask makes them. The first cut wrapped only the three
+# `mkdir`s here, which narrowed the DIRECTORIES and left every FILE inside them
+# at the caller's umask — measured on the 2026-10-15 LONG genesis session: the
+# four tenant stores (evidence/inbox/marketfeed/rcl sqlite) and the session
+# artifacts were 0644 inside 0700 dirs. Decision records carry the account
+# number in plaintext (runbook §7.2 좌표 규율), and a 0700 parent is traversal
+# protection, not file protection — it stops at the first `chmod` or copy.
+#
+# Same defect, same fix as the resident wrapper's (runbook §7.2-a, operator
+# approved 2026-10-04): `umask 077` up front, plus an idempotent `chmod` at the
+# end (step 12c) for a durable set that an earlier session genesis'd.
+#
+# ⚠ The resident wrapper deliberately does NOT do this globally, because its
+# own `git worktree add` must leave the public 0755 checkout alone. That
+# exception does not apply here: this template creates no worktree — the
+# operator hands it one — and every path it does create (render output, data
+# parent and leaf, producer session dir, journal, log) carries coordinates.
+umask 077
+
 # --- 0. the shared guards --------------------------------------------------
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
@@ -694,6 +719,19 @@ if [ "$producer_rc" -eq 0 ] && [ "$PRODUCER_END" = "session_end" ]; then
   PRODUCER_ENDED_THE_SESSION=1
 fi
 log "producer end: $PRODUCER_END (rc=$producer_rc, self-stopped=$PRODUCER_SELF_STOPPED, ended-the-session=$PRODUCER_ENDED_THE_SESSION)"
+
+# --- 12c. the modes the tenant stores and artifacts must carry -------------
+#
+# Belt to step -0.5's braces, and for the same reason the resident wrapper
+# needs both (runbook §7.2-a 2): `umask` only governs what THIS session
+# creates, and a designated leaf genesis'd by an earlier, pre-umask session
+# keeps the modes it was born with. Idempotent, and never a `mkdir` — creating
+# a store directory that does not exist yet is the §4-A "empty store set"
+# accident. The runbook's own "⚠ 남은 경계 하나" is the files, not just the
+# directory, so both are narrowed here.
+chmod 700 "$DATA_LEAF" 2>/dev/null || true
+find "$DATA_LEAF" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
+chmod 700 "$TENANT_PRODUCER_SESSION_DIR" 2>/dev/null || true
 
 # --- 13. what the durable set holds now (runbook §4) -----------------------
 #
