@@ -188,7 +188,26 @@ FIRST_LINE_TIMEOUT_S=600
 # this session, which is the conservative direction (band UNKNOWN -> the kernel
 # sends nothing) and NOT a reason to abort — the price collection and the B3
 # cross-check are still worth having.
-BAND_LINE_EXTRA_WAIT_S=90
+#
+# ⚠ **The allowance is measured from the band's EARLIEST POSSIBLE moment, not
+# from now** (PR #906 review round 1, MEDIUM-2). Step 8b returns on ANY
+# approved row, and `_boot_today` publishes the newest already-complete bar —
+# which, on a boot before the open against a response carrying today-stamped
+# pre-open rows, is a PRE-OPEN row. The reviewer's measured scenario: boot
+# 08:30 -> 8b returns 08:30 -> an allowance anchored at `now` expires 08:31:30
+# -> BAND ABSENT -> the runtime boots -> the real band line lands at 08:46,
+# too late to be read, and the whole day is UNKNOWN for no reason. So step 8c
+# anchors on `max(now, open + one boundary)`, the first instant a band line
+# can exist at all (§3.1: the GET happens at the first boundary after the
+# open), and adds the allowance to THAT. Capped by the session's own stop
+# second so it can never outlive the window the operator set.
+#
+# Overridable by env for the tests, which need a short allowance to prove the
+# anchoring in seconds rather than in minutes. Deliberately NOT in the
+# `TENANT_*` namespace: that namespace is pinned to carry no defaults
+# (`test_runner_template_carries_no_instance_defaults`), and this is a derived
+# bound like FIRST_LINE_TIMEOUT_S, not an instance path.
+BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-90}
 
 # A typo ceiling on the session window, not a tuning knob: TENANT_STOP_AT is a
 # wall-clock time, and "2027" instead of "2026" is a session that never ends.
@@ -624,7 +643,8 @@ BAND_PRESENT=0
 
 band_line_wait() {
   "$PY" - "$BAND_JOURNAL" "$TENANT_PRODUCER_CONFIG" "$INSTRUMENT" \
-    "$BAND_LINE_EXTRA_WAIT_S" "$PRODUCER_PID" "$REPO" >"$BAND_WAIT_LOG" 2>&1 <<'PY' &
+    "$BAND_LINE_EXTRA_WAIT_S" "$PRODUCER_PID" "$REPO" "$STOP_S" \
+    >"$BAND_WAIT_LOG" 2>&1 <<'PY' &
 import os
 import sys
 import time
@@ -638,14 +658,20 @@ from tools.tos_cp3.live_producer.band_line import (
     session_open_ms,
 )
 
-band, config, instrument, timeout_s, producer_pid, repo = (
+band, config, instrument, allowance_s, producer_pid, repo, stop_s = (
     Path(sys.argv[1]),
     Path(sys.argv[2]),
     sys.argv[3],
     float(sys.argv[4]),
     int(sys.argv[5]),
     Path(sys.argv[6]),
+    int(sys.argv[7]),
 )
+
+#: One minute-bar boundary. The band GET happens at the first boundary AFTER
+#: the open (§3.1), so `open + this` is the earliest instant a band line can
+#: exist — whatever time step 8b happened to return at.
+BOUNDARY_S = 60.0
 
 
 def alive(pid: int) -> bool:
@@ -665,7 +691,22 @@ def alive(pid: int) -> bool:
 # reads no calendar of its own (plan §3.5).
 day = datetime.now(ZoneInfo("Asia/Seoul")).date()
 open_ms, trading_date = session_open_ms(config, repo_root=repo, day=day)
-deadline = time.monotonic() + timeout_s
+
+# The allowance runs from the band's earliest possible moment, not from now
+# (MEDIUM-2). `open_ms` is already computed above, so this costs nothing.
+now_ms = time.time() * 1000.0
+earliest_band_ms = open_ms + BOUNDARY_S * 1000.0
+wait_s = max(0.0, (earliest_band_ms - now_ms) / 1000.0) + allowance_s
+# ...but never past the session's own stop second. Waiting beyond it would
+# hold a boot for a window that has already closed.
+remaining_s = max(0.0, stop_s - now_ms / 1000.0)
+if wait_s > remaining_s:
+    wait_s = remaining_s
+print(
+    f"band wait: allowance={allowance_s:.0f}s anchored at open+{BOUNDARY_S:.0f}s "
+    f"-> waiting up to {wait_s:.0f}s (stop leaves {remaining_s:.0f}s)"
+)
+deadline = time.monotonic() + wait_s
 why = "no band line has been written yet"
 while True:
     line = read_last_band_line(band)
@@ -687,9 +728,7 @@ while True:
             f"usable band line — {why}"
         )
     if time.monotonic() >= deadline:
-        raise SystemExit(
-            f"no usable band line in {band} within {timeout_s:.0f}s — {why}"
-        )
+        raise SystemExit(f"no usable band line in {band} within {wait_s:.0f}s — {why}")
     time.sleep(1.0)
 PY
   WAIT_PID=$!

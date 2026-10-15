@@ -23,6 +23,7 @@ override.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
 import os
 import re
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import time
 import types
+import zoneinfo
 from pathlib import Path
 from typing import Any
 
@@ -1200,6 +1202,15 @@ _PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
 #: ``other-instrument`` / ``pre-open`` each break exactly ONE of the three
 #: clauses the runner checks, leaving the other two valid.
 _PRODUCER_BAND_ENV = "STUB_PRODUCER_BAND"
+#: The open the STUB uses for its own stamp and for the ``after-open`` wait,
+#: as ``HH:MM`` (default 08:45). Separate from the CALENDAR's start on purpose:
+#: a test that sets the two DIFFERENTLY is how "the runner's open comes from
+#: the calendar, not from a literal" becomes a behavioural assertion rather
+#: than a grep (review round 1 LOW-2).
+_PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
+#: ``HH:MM`` the stub CALENDAR declares as the session start (default 08:45).
+#: Read by ``_runner_env`` when it writes that calendar.
+_STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
 
 #: What the runner logs when the band line is there, and when it is not. The
 #: second string is the plan's own wording (§3.1) and the thing an operator
@@ -1299,9 +1310,17 @@ def _runner_repo(
         "    import datetime, zoneinfo\n"
         "    kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
         "    today = datetime.datetime.now(kst).date()\n"
+        f"    _open = os.environ.get({_PRODUCER_BAND_OPEN_ENV!r}, '08:45')\n"
+        "    _oh, _om = (int(part) for part in _open.split(':'))\n"
         "    opened = datetime.datetime.combine(\n"
-        "        today, datetime.time(8, 45), tzinfo=kst)\n"
+        "        today, datetime.time(_oh, _om), tzinfo=kst)\n"
         "    open_ms = int(opened.timestamp() * 1000)\n"
+        # `after-open` writes NOTHING until the open has passed, which is the
+        # real shape of the band GET (first boundary after the open) and the
+        # input the step-8c anchoring fix exists for.
+        "    if band_mode == 'after-open':\n"
+        "        while datetime.datetime.now(kst) < opened:\n"
+        "            time.sleep(0.2)\n"
         "    band_date = today.strftime('%Y%m%d')\n"
         "    band_instrument = instrument\n"
         # Derived from the open, never from `now`: a line stamped `now` would
@@ -1314,6 +1333,9 @@ def _runner_repo(
         "        band_instrument = 'A05610'\n"
         "    elif band_mode == 'pre-open':\n"
         "        band_as_of = open_ms - 1\n"
+        "    elif band_mode == 'at-0900':\n"
+        "        band_as_of = int(datetime.datetime.combine(\n"
+        "            today, datetime.time(9, 0), tzinfo=kst).timestamp() * 1000)\n"
         "    (session / 'band.jsonl').write_text(json.dumps({\n"
         "        'kind': 'cp3-band/1',\n"
         f"        'source_id': {_APPROVED_SOURCE_ID!r},\n"
@@ -1483,6 +1505,7 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     # tenant's shape, and the test for the real tree's open lives in
     # ``tests/tools/test_cp3_live_producer.py``.
     calendar = tmp_path / "producer-calendar.yaml"
+    calendar_start = overrides.get(_STUB_CALENDAR_START_ENV, "08:45")
     calendar.write_text(
         "calendar_version: stub-for-the-runner-tests\n"
         "tz_id: Asia/Seoul\n"
@@ -1490,7 +1513,7 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "sessions:\n"
         "  krx-index-futures:\n"
         "    - phase: CONTINUOUS\n"
-        "      start: '08:45'\n"
+        f"      start: '{calendar_start}'\n"
         "      end: '15:45'\n",
         encoding="utf-8",
     )
@@ -1849,6 +1872,122 @@ def test_red_the_runner_rejects_a_band_line_clause_by_clause(
     assert "render refused" in output
 
 
+def test_red_the_band_wait_is_anchored_on_the_open_not_on_the_first_row(
+    tmp_path: Path,
+) -> None:
+    """**Review round 1 MEDIUM-2.** The allowance starts at open + one boundary.
+
+    The measured defect: step 8b returns on ANY approved row, and
+    ``_boot_today`` publishes the newest already-complete bar — so a boot
+    before the open against a response carrying today-stamped pre-open rows
+    makes 8b return BEFORE the open. An allowance counted from that instant
+    expires long before the band GET (first boundary after the open) has
+    happened, and the session boots ``BAND ABSENT`` for a band that was about
+    to arrive. The whole day is then UNKNOWN for no reason.
+
+    The input here is that exact shape, with the clock doing the work rather
+    than a mock: the stub calendar's open is set to a near-future minute
+    boundary, the stub publishes its price row at once (so 8b returns
+    pre-open) and writes the band line only once the open has passed.
+
+    ⚠ **The first cut of this test was NOT a proof** — the round-2 mutation
+    run found it green with the anchor reverted. It set the open ~10 s out and
+    asserted only the outcome, but the runner spends real time before step 8c
+    (the checkout guards, the front-month lookup, the module-provenance check,
+    the producer launch, the first-row wait), so the open had usually passed
+    already and BOTH anchorings saw the line at once. The repair is two-fold:
+    enough runway that 8c really starts pre-open, and an assertion on the
+    DEADLINE the script computes — which the reverted anchor cannot satisfy no
+    matter how the timing falls, because it can only ever be the bare
+    allowance.
+    """
+    allowance = 5
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    # 45 s of runway, so step 8c reaches its wait while the open is still
+    # ahead even on a slow host.
+    opens_at = (now + datetime.timedelta(seconds=45)).replace(second=0, microsecond=0)
+    if (opens_at - now).total_seconds() < 40:
+        opens_at += datetime.timedelta(minutes=1)
+    open_hhmm = opens_at.strftime("%H:%M")
+
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: open_hhmm,
+            _PRODUCER_BAND_OPEN_ENV: open_hhmm,
+            _PRODUCER_BAND_ENV: "after-open",
+            "CP3_BAND_LINE_EXTRA_WAIT_S": str(allowance),
+        },
+    )
+    output = result.stdout + result.stderr
+
+    # (1) The computed bound, which is the clause itself. Anchored at `now`
+    # this can only be `allowance`; anchored at open + one boundary it is at
+    # least a minute more. Asserted on the script's own number, so the
+    # discrimination does not depend on how the wall clock fell.
+    assert f"allowance={allowance}s anchored at open+60s" in output
+    waiting = re.search(r"waiting up to (\d+)s", output)
+    assert waiting is not None, output[-3000:]
+    assert int(waiting.group(1)) >= allowance + 30, (
+        "step 8c did not anchor on the open — it waited only the bare "
+        f"allowance ({waiting.group(1)}s). If the open had already passed "
+        "this test cannot discriminate; raise the runway."
+    )
+    # (2) And the outcome that bound exists for: the line arrives after the
+    # open and the session boots WITH a band instead of declaring it absent.
+    assert _BAND_PRESENT_LINE in output, output[-3000:]
+    assert _BAND_ABSENT_LINE not in output
+    assert "render refused" in output
+
+
+@pytest.mark.parametrize(
+    "band_mode,expected_present",
+    [
+        # stamped 08:46:01 (the stub's own default open) — BEFORE the 08:50 the
+        # CALENDAR declares, so the runner must reject it
+        ("ok", False),
+        # stamped 09:00 — after it, so the runner must accept it
+        ("at-0900", True),
+    ],
+)
+def test_red_the_runners_open_really_comes_from_the_calendar(
+    tmp_path: Path, band_mode: str, expected_present: bool
+) -> None:
+    """**Review round 1 LOW-2.** Behavioural, not a grep for the absence of 08:45.
+
+    The stub CALENDAR opens at 08:50 while the stub PRODUCER still stamps from
+    08:45, so the two disagree — and the runner's verdict has to follow the
+    calendar. A line at 08:46 is pre-open under this calendar and must be
+    rejected; one at 09:00 must be accepted. The same 08:46 line is ACCEPTED by
+    :func:`test_runner_waits_for_the_band_line_and_says_it_saw_one`, whose
+    calendar opens at 08:45 — so the pair isolates the calendar as the source.
+
+    Hardcoding the open back to 08:45 in step 8c turns the first case green,
+    which is the mutation.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: "08:50",
+            _PRODUCER_BAND_ENV: band_mode,
+            # The stub leaves right after writing, so a rejected line ends the
+            # wait at once instead of running out an allowance.
+            _PRODUCER_EXIT_ENV: "0",
+        },
+    )
+    output = result.stdout + result.stderr
+    if expected_present:
+        assert _BAND_PRESENT_LINE in output
+        assert _BAND_ABSENT_LINE not in output
+    else:
+        assert _BAND_ABSENT_LINE in output
+        assert _BAND_PRESENT_LINE not in output
+        assert "before the open" in output
+    assert "render refused" in output
+
+
 def test_runner_band_wait_is_the_shipped_predicate_after_the_first_row(
     tmp_path: Path,
 ) -> None:
@@ -1856,7 +1995,19 @@ def test_runner_band_wait_is_the_shipped_predicate_after_the_first_row(
     after the first price row and before the guard — and it is bounded by its
     own small extra allowance rather than sharing the first row's 600 s."""
     text = _RUNNER.read_text("utf-8")
-    assert "BAND_LINE_EXTRA_WAIT_S=90" in text
+    # 90 s by default, overridable for the tests that need to prove the
+    # ANCHORING in seconds (review round 1 MEDIUM-2) — and deliberately NOT in
+    # the `TENANT_*` namespace, which
+    # `test_runner_template_carries_no_instance_defaults` pins to carry no
+    # defaults at all.
+    assert "BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-90}" in text
+    assert "TENANT_BAND" not in text
+    # The allowance is measured from the band's earliest possible instant, not
+    # from whenever the first price row happened to land.
+    assert "BOUNDARY_S = 60.0" in text
+    assert "earliest_band_ms = open_ms + BOUNDARY_S * 1000.0" in text
+    # ...and never past the session's own stop second.
+    assert "remaining_s = max(0.0, stop_s - now_ms / 1000.0)" in text
     # The predicate is imported, not re-written here.
     assert "from tools.tos_cp3.live_producer.band_line import" in text
     for name in ("read_last_band_line", "reject_reason", "session_open_ms"):
