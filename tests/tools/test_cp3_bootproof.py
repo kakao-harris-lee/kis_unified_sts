@@ -1189,10 +1189,6 @@ _PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
 #: ``"killed"`` SIGKILLs itself, which is rc 137 and no clean teardown.
 #: Unset: stay alive until the runner stops it.
 _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
-#: Where the stub ``run`` hard-links one of its stores to. Names a path
-#: OUTSIDE the data leaf, so the mode of the inode inside the leaf is shared
-#: with a name the session does not own (PR #904 review round 1 item B).
-_RUN_HARDLINK_ENV = "STUB_RUN_HARDLINK_TO"
 #: The path the ``1+1`` mode watches before publishing its second row — the
 #: rendered tree's own file, so "after the render, before the boot" is a fact
 #: about the pipeline rather than a bet on how long a stub takes.
@@ -1363,13 +1359,6 @@ def _runner_repo(
             "from pathlib import Path\n"
             "def main(argv):\n"
             f"    envfile = os.environ.get({_RUN_ENVFILE_ENV!r})\n"
-            "    data_dir = Path(argv[argv.index('--data-dir') + 1])\n"
-            f"    hardlink = os.environ.get({_RUN_HARDLINK_ENV!r})\n"
-            "    if hardlink:\n"
-            "        # a store whose inode has a second name OUTSIDE the leaf\n"
-            "        store = data_dir / 'evidence.sqlite3'\n"
-            "        store.write_text('not really sqlite')\n"
-            "        os.link(store, hardlink)\n"
             "    if envfile:\n"
             "        Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
             f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
@@ -2231,52 +2220,54 @@ def test_red_a_session_path_under_a_symlinked_ancestor_is_refused(
     assert result.returncode == 3, output[-2000:]
 
 
-def test_a_store_with_a_second_name_outside_the_leaf_is_not_narrowed(
-    tmp_path: Path,
-) -> None:
-    """**PR #904 review round 1 item B — a hard link shares its mode.**
+def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:
+    """**Codex re-review MEDIUM at ``ccf1f0d0``: the repair is REFUSED.**
 
-    A file's mode lives on the INODE, so narrowing a store inside the leaf
-    narrows every other name for it too. Concrete input: the ``run`` child
-    creates ``evidence.sqlite3`` in the leaf and hard-links it to a path
-    outside the session; the repair must leave that inode alone and SAY so,
-    because a store with a second name is a finding about the session rather
-    than a chmod detail.
+    A post-stop ``chmod`` sweep cannot be made race-free in this script. ``-P``
+    and ``-links 1`` close the shapes a test can build up front, but they are
+    checks made before the ``chmod`` that acts on their result: an ancestor
+    swapped after step 6b redirects the walk, and an entry replaced or given a
+    second name between ``find``'s test and the syscall is chmodded through the
+    name ``find`` approved. The disposition was to drop the sweep, not to keep
+    narrowing it.
+
+    So this pins the ABSENCE, which is the only way an absence stays: a future
+    reader who re-adds a sweep makes this red. Modes now come from one
+    mechanism with no window — the process-wide ``umask 077``
+    (:func:`test_nothing_the_session_creates_is_readable_by_another_user` is
+    what proves it covers everything this session creates).
     """
-    repo = _runner_repo(tmp_path, bootable=True)
-    outside = tmp_path / "another-name.sqlite3"
-    result = _run_runner(
-        repo,
-        tmp_path,
-        TENANT_STOP_AT="+10 seconds",
-        **{
-            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
-            _RUN_HARDLINK_ENV: str(outside),
-        },
+    text = _RUNNER.read_text("utf-8")
+    assert "repair_modes" not in text
+    # CODE only — step 12c's comment quotes the command it refuses to run, and
+    # a check that cannot tell prose from an instruction would be satisfied by
+    # deleting the explanation.
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
     )
-    output = result.stdout + result.stderr
-    assert "=== BOOT" in output, output[-2000:]
-    _producer_outlived_the_runner(tmp_path)
-
-    leaf = tmp_path / ".local/state/tos/scratch/bp/data" / _FRONT_MONTH
-    store = leaf / "evidence.sqlite3"
-    assert store.stat().st_nlink == 2, "the test's own premise"
-    # left as the umask made it (0600), NOT re-chmodded through the inode
-    assert oct(store.stat().st_mode & 0o777) == oct(0o600)
-    assert outside.stat().st_ino == store.stat().st_ino
-    assert "not narrowing hard-linked file(s)" in output
-    assert "evidence.sqlite3(2)" in output
-    # the directory itself is still narrowed — the skip is per FILE
-    assert oct(leaf.stat().st_mode & 0o777) == oct(0o700)
+    # From step 12b to the end — the window the sweep lived in. Anchored on a
+    # variable that occurs once, not on `stop_producer`, whose first occurrence
+    # is its definition back in step 7. The `chmod` beside step 9's data-parent
+    # `mkdir` is BEFORE this window and predates this PR.
+    after_stop = code[code.index("PRODUCER_ENDED_THE_SESSION=0") :]
+    assert "chmod" not in after_stop, after_stop[:1500]
+    assert "find " not in after_stop, after_stop[:1500]
+    # and the refusal is recorded where the sweep used to be, so it is not
+    # merely missing
+    assert "there is NO mode repair here, deliberately" in text
 
 
 def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
     """**Item B's last requirement: quoting survives the hardening.**
 
-    Both new blocks (the step-6b guard and step 12c's ``repair_modes``) take
-    paths as arguments, and an unquoted expansion would split these into two
-    words each — a refusal on a path that is perfectly fine, or worse a chmod
-    on half of it.
+    The step-6b guard takes the four session paths as arguments, and an
+    unquoted expansion would split each of these into two words — a refusal on
+    a path that is perfectly fine. The mode assertions below come from
+    ``umask 077`` plus the ``(umask 077; mkdir)`` subshells, not from any
+    repair step (there is none — see
+    :func:`test_the_runner_runs_no_mode_repair_sweep_after_the_stop`).
     """
     repo = _runner_repo(tmp_path, bootable=True)
     scratch = tmp_path / ".local/state/tos/scratch/bp"

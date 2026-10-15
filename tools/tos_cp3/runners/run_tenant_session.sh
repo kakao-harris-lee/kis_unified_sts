@@ -102,8 +102,12 @@ set +x +v
 # protection, not file protection — it stops at the first `chmod` or copy.
 #
 # Same defect, same fix as the resident wrapper's (runbook §7.2-a, operator
-# approved 2026-10-04): `umask 077` up front, plus an idempotent `chmod` at the
-# end (step 12c) for a durable set that an earlier session genesis'd.
+# approved 2026-10-04) — except for the resident wrapper's second half. It adds
+# a post-run `chmod` for a durable set an earlier session genesis'd; this
+# template deliberately does NOT, because that sweep cannot be made race-free
+# here. Step 12c records why, and the runbook carries the operator's one-time
+# manual command instead. So `umask` is the ONLY mechanism here, and it is
+# enough for everything this session creates.
 #
 # ⚠ The resident wrapper deliberately does NOT do this globally, because its
 # own `git worktree add` must leave the public 0755 checkout alone. That
@@ -275,12 +279,18 @@ log "instrument=$INSTRUMENT · data leaf $DATA_LEAF"
 
 # --- 6b. the session paths must be what they say they are -----------------
 #
-# PR #904 review round 1 item B. Fail closed HERE — before a child exists, let
-# alone a store — rather than at stop time: step 12c narrows modes on these
-# two trees, and `chmod` follows a symlink. A symlinked leaf (or a symlinked
-# ANCESTOR of it) therefore puts a 0700/0600 on something outside the session,
-# and the refusal is worth more early than the repair is worth late: by stop
-# time the stores have already been WRITTEN through that link.
+# PR #904 review round 1 item B. Fail closed HERE, before a child exists and
+# therefore before a store does: a session path that is not the path it names
+# is a session whose EVIDENCE lands somewhere the operator did not choose, and
+# everything downstream — the guard's containment rule, the data leaf the
+# runbook pins, the modes `umask` gives what we create — is stated about the
+# path as written. By stop time that is unrecoverable: the stores have already
+# been written through the link.
+#
+# ⚠ This is a check on the paths, NOT a guarantee held across the session. An
+# ancestor swapped AFTER this point is not caught, which is exactly why step
+# 12c refuses to do a post-stop `chmod` sweep on the strength of it — see the
+# Codex MEDIUM recorded there.
 #
 # Three predicates per path, and the second is the one that catches an
 # ancestor: absolute; no component is a symlink; and the fully resolved path
@@ -746,39 +756,36 @@ if [ "$producer_rc" -eq 0 ]; then
 fi
 log "producer end: rc=$producer_rc (self-stopped=$PRODUCER_SELF_STOPPED, ended-the-session=$PRODUCER_ENDED_THE_SESSION)"
 
-# --- 12c. the modes the tenant stores and artifacts must carry -------------
+# --- 12c. there is NO mode repair here, deliberately ----------------------
 #
-# Belt to step -0.5's braces, and for the same reason the resident wrapper
-# needs both (runbook §7.2-a 2): `umask` only governs what THIS session
-# creates, and a designated leaf genesis'd by an earlier, pre-umask session
-# keeps the modes it was born with. Idempotent, and never a `mkdir` — creating
-# a store directory that does not exist yet is the §4-A "empty store set"
-# accident. The runbook's own "⚠ 남은 경계 하나" is the files, not just the
-# directory, so both are narrowed here.
+# ⛔ **Do not add one.** PR #904's Codex re-review (MEDIUM, at ccf1f0d0) found
+# that a post-stop `chmod` sweep cannot be made safe in this script, and the
+# disposition was to REFUSE the automatic repair rather than keep narrowing it.
 #
-# ⚠ Three ways a repair can reach OUTSIDE the session, all closed here (PR
-# #904 review round 1 item B). Step 6b already refuses a session path with a
-# symlinked component, so these are the second layer, not the only one:
-#   * a symlinked DIRECTORY — `chmod` follows it, so the mode lands on the
-#     target. Done through `find -P ... -type d` instead, which with -P does
-#     not follow and so does not match a symlink at all.
-#   * a symlinked ANCESTOR or entry — `find` without -P would descend it.
-#   * a HARD LINK — the inode's mode is shared with every other name for it,
-#     so narrowing a file inside the leaf narrows a name outside it too.
-#     `-links 1` skips those, and they are reported rather than dropped: a
-#     store with a second name is a finding about the session, not a chmod
-#     detail.
-repair_modes() {
-  # $1 the directory. Quoted throughout, so a path with spaces is one path.
-  find -P "$1" -maxdepth 0 -type d -exec chmod 700 {} + 2>/dev/null || true
-  find -P "$1" -maxdepth 1 -type f -links 1 -exec chmod 600 {} + 2>/dev/null || true
-  _shared=$(find -P "$1" -maxdepth 1 -type f -links +1 -printf '%p(%n) ' 2>/dev/null)
-  if [ -n "$_shared" ]; then
-    log "WARN: not narrowing hard-linked file(s) under $1 — the mode is shared with names outside it: $_shared"
-  fi
-}
-repair_modes "$DATA_LEAF"
-repair_modes "$TENANT_PRODUCER_SESSION_DIR"
+# The first cut did `find -P "$DATA_LEAF" … -type f -links 1 -exec chmod 600`.
+# `-P` stops `find` following symlinks and `-links 1` skips hard-linked
+# inodes, which closes the shapes a test can construct up front — but both are
+# checks made BEFORE the `chmod` that acts on the result, and the gap between
+# them is the defect:
+#   * an ANCESTOR of the leaf swapped for a symlink after step 6b's check
+#     redirects the whole walk;
+#   * an entry replaced, or given a second name, between `find`'s test and
+#     `chmod`'s syscall is chmodded through the name `find` approved.
+# Neither is fixable with `find`; it would need an fd-based walk
+# (`openat`/`fchmodat` with `O_NOFOLLOW` at every level), which is not a thing
+# this shell template should be growing.
+#
+# So the modes come from ONE mechanism, which has no window at all: step
+# -0.5's process-wide `umask 077` means everything this session CREATES is
+# born 0600 inside 0700 — the stores, the journal, the render output, the
+# session log, the producer's artifacts. There is nothing left to repair for a
+# session that starts here.
+#
+# What that leaves uncovered, stated rather than silently dropped: a durable
+# leaf that an EARLIER, pre-umask session genesis'd keeps the modes it was
+# born with. That is one manual `chmod 600` by the operator, once per such
+# leaf, and the runbook (§7.2-d 「모드」) carries the command. It is not this
+# runner's job: a session cannot safely re-mode a tree it did not create.
 
 # --- 13. what the durable set holds now (runbook §4) -----------------------
 #
