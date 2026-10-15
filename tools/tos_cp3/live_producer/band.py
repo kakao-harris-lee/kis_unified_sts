@@ -183,7 +183,11 @@ class BandCapture:
         # is final. `after_price_line` is called once per published price line,
         # so "the next one" is the next boundary.
         if self.lines == 0 and not self.retried:
-            self.retried = True
+            # NOT marked spent here (review round 2 item D). `_room` may refuse
+            # every attempt of this window, and a window that made no attempt
+            # has used nothing: marking it here let one boundary with no room
+            # swallow the single extra window and ask the broker nothing at
+            # all. `_window` sets the flag when an attempt actually starts.
             return TRIGGER_RETRY
         if self.reread_minutes is None or self.last_window_at is None:
             return None
@@ -226,6 +230,10 @@ class BandCapture:
         made = 0
         self.windows += 1
         while self._room(deadline):
+            if trigger == TRIGGER_RETRY and not made:
+                # The extra window is spent by its first ATTEMPT, not by being
+                # scheduled (review round 2 item D).
+                self.retried = True
             self.attempts += 1
             made += 1
             attempt = self.attempts
@@ -288,17 +296,25 @@ class BandCapture:
     def attempt_budget(self) -> float:
         """Seconds one attempt may cost: the pace sleep plus the transport cap.
 
-        ⚠ **What this does NOT bound, stated rather than implied** (review
-        round 1 LOW-1). ``Quotes.band`` pins httpx's four phase timeouts so
-        they SUM to ``request_timeout_s``, which is what makes the transport
-        half of this number true by construction instead of by hope. The OAuth
-        token call is outside it: ``KISAuthManager`` uses ``requests`` and is
-        bounded by that manager, not by this budget, and it only runs when the
+        The transport half is enforced by a **wall clock**, not by httpx's
+        phase timeouts: ``Quotes.band`` streams the response and closes it the
+        moment ``request_timeout_s`` is gone.
+
+        ⚠ The first version of this docstring said the phase timeouts made the
+        total "true by construction" because they sum to ``request_timeout_s``.
+        That was wrong, and Codex caught it (review round 2 item A): httpx's
+        ``read`` timeout bounds the wait for ONE chunk, so a response that
+        trickles chunks inside each read timeout has no total bound at all.
+        The phases remain as inactivity guards; the total is the deadline.
+
+        ⚠ **What this still does NOT bound, stated rather than implied.** The
+        OAuth token call runs through ``KISAuthManager`` on ``requests`` and is
+        bounded by that manager, not by this budget; it only runs when the
         cached token is cold or expired. So an attempt CAN overrun this number
-        by a token fetch. What the bound still guarantees is the thing that
-        matters: after an overrunning attempt, the next one is refused rather
-        than compounding — :func:`test_red_an_attempt_that_overruns_its_budget_
-        does_not_get_a_second` is that proof.
+        by a token fetch. What the bound guarantees is the thing that matters:
+        after an overrunning attempt, the next one is refused rather than
+        compounding — :func:`test_red_an_attempt_that_overruns_its_budget_does_
+        not_get_a_second` is that proof.
         """
         return self.pace_s + self.request_timeout_s
 

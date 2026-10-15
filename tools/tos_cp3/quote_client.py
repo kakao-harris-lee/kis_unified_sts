@@ -21,6 +21,7 @@ Firewall: legacy side (``tools/``). No ``tos`` / ``tos_runtime`` import.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -74,6 +75,16 @@ ALLOWLIST = (
 #: (runbook §7.2-d) and :mod:`~tools.tos_cp3.live_producer.band` agree on the
 #: string without either of them spelling it twice.
 BAND_FETCH_STAGE = "band_fetch"
+
+
+class BandBudgetExceeded(RuntimeError):
+    """The band response did not finish inside its total wall-clock budget.
+
+    A ``RuntimeError`` so the band's caller folds it to ``band_fetch_failed``
+    like any other broker-answer failure — a slow broker is not a defect in
+    this repo, unlike a ``SafetyViolation``. Raised only by :meth:`Quotes.band`
+    and only while consuming the stream (review round 2 item A).
+    """
 
 
 @dataclass(frozen=True)
@@ -259,22 +270,32 @@ class Quotes:
         transport error and a refusal all leave the same one line naming the
         method, the TR and the path.
 
+        **The TOTAL time is bounded by a wall clock, not by the phase timeouts**
+        (review round 2 item A, Codex MEDIUM). The first cut set httpx's four
+        phase timeouts to ``request_timeout_s / 4`` and claimed the total was
+        then "true by construction". It is not: httpx's ``read`` timeout is the
+        maximum wait for ONE chunk, so a response that trickles chunks — each
+        inside its own read timeout — holds this synchronous call open for as
+        long as it keeps trickling, with no total anywhere. So the response is
+        STREAMED and consumed against a monotonic deadline, and the stream is
+        closed the moment the budget is gone. The phase timeouts stay, in their
+        only honest role: inactivity guards, which is what they always were.
+
         Raises:
-            RuntimeError: on any transport/OAuth/JSON failure or ``rt_cd != 0``.
-                The caller writes no band line and logs ``band_fetch_failed``.
+            RuntimeError: on any transport/OAuth/JSON failure, ``rt_cd != 0``,
+                or the total budget being exceeded. The caller writes no band
+                line and logs ``band_fetch_failed``.
         """
         url = REAL_BASE_URL + BAND_PATH
         assert_read_only_call("GET", url, BAND_TR, ALLOWLIST)
         params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": symbol}
-        # The four phase timeouts SUM to `request_timeout_s` (review round 1
-        # LOW-1). `httpx`'s `timeout=` applies PER PHASE, so the bare number
-        # this client passes elsewhere allows up to 4x it in the worst case —
-        # and the band caller's own bound
-        # (`band.BandCapture.attempt_budget`) assumes one attempt costs at
-        # most pace + that number. Splitting it makes the assumption true by
-        # construction rather than by hope. The OAuth token call is outside
-        # httpx and stays outside this cap; `attempt_budget` says so.
-        phase = max(0.001, float(self.cfg["request_timeout_s"]) / 4.0)
+        # Per-phase INACTIVITY guards, not a total (see the docstring). No
+        # clamp: a `max(0.001, ...)` floor RAISES the phases for a budget under
+        # 4 ms and so loosens what it looks like it tightens. The minimum lives
+        # where a reviewer can see it instead — `config.py` refuses a
+        # `request_timeout_s` below `MIN_REQUEST_TIMEOUT_S`.
+        budget_s = float(self.cfg["request_timeout_s"])
+        phase = budget_s / 4.0
         timeout = httpx.Timeout(connect=phase, read=phase, write=phase, pool=phase)
         time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
         record: dict[str, Any] = {
@@ -284,6 +305,7 @@ class Quotes:
             "tr_id": BAND_TR,
             "path": BAND_PATH,
             "params": params,
+            "total_budget_s": budget_s,
         }
         try:
             # OAuth may raise ValueError or requests errors; both are failures
@@ -298,15 +320,39 @@ class Quotes:
             }
             self.last = time.monotonic()
             self.calls += 1
-            response = self.http.get(
-                url, headers=headers, params=params, timeout=timeout
-            )
-            raw = response.content
+            deadline = time.monotonic() + budget_s
+            received = bytearray()
+            with self.http.stream(
+                "GET", url, headers=headers, params=params, timeout=timeout
+            ) as response:
+                record["http_status"] = response.status_code
+                for chunk in response.iter_bytes():
+                    received.extend(chunk)
+                    if time.monotonic() >= deadline:
+                        # Raising inside the `with` is what closes the stream:
+                        # `Client.stream`'s context manager closes the response
+                        # on exit, so the connection the next attempt needs is
+                        # released.
+                        #
+                        # ⚠ An explicit `response.close()` stood here and was
+                        # deleted: the round-3 mutation run showed removing it
+                        # changed nothing any test could see, because the
+                        # context manager already guarantees it. A line that
+                        # looks load-bearing and is not is worse than no line.
+                        raise BandBudgetExceeded(
+                            f"band response exceeded its {budget_s}s total "
+                            f"budget after {len(received)} byte(s)"
+                        )
+            # EXACTLY the bytes received, hashed before anything parses them.
+            raw = bytes(received)
             digest = hashlib.sha256(raw).hexdigest()
-            record["http_status"] = response.status_code
             record["raw_payload_digest"] = digest
             record["raw_payload_bytes"] = len(raw)
-            payload = response.json()
+            # `json.loads` on those same bytes, not `response.json()`: a
+            # streamed response has no buffered `.content` to re-read, and
+            # parsing anything other than the hashed bytes would mean the
+            # digest no longer names what was parsed.
+            payload = json.loads(raw.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("band response is not a mapping")
             record["rt_cd"] = payload.get("rt_cd")
@@ -321,7 +367,17 @@ class Quotes:
             response.raise_for_status()
             if str(payload.get("rt_cd")) != "0":
                 raise ValueError("band response carries rt_cd != 0")
-        except (httpx.HTTPError, requests.RequestException, ValueError) as exc:
+        except BandBudgetExceeded as exc:
+            # Named apart from the transport errors because an operator asks a
+            # different question about it: the broker answered, slowly.
+            record["error"] = "band_total_budget_exceeded"
+            raise RuntimeError(record["error"]) from exc
+        except (
+            httpx.HTTPError,
+            requests.RequestException,
+            ValueError,
+            UnicodeDecodeError,
+        ) as exc:
             record["error"] = "band_auth_http_or_json_error"
             raise RuntimeError(record["error"]) from exc
         finally:
