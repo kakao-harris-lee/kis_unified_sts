@@ -91,7 +91,7 @@ def assert_worth_continuing(
 def assert_the_session_can_still_happen(
     *, first_boundary: datetime, window: SessionWindow, target: date
 ) -> None:
-    """Refuse a boot whose session loop could not run even once.
+    """Refuse a session whose loop could not run even once.
 
     PR #904 review round 1 item A.2. ``run_session`` walks
     ``while boundary <= end``, so when the first boundary is already past
@@ -100,10 +100,19 @@ def assert_the_session_can_still_happen(
     clean. The condition is that loop's own zero-iteration condition, taken
     from it rather than re-derived from a clock comparison that could drift.
 
-    ⚠ Asked by the PRODUCER, before its seed walk, and not by the runner. Two
-    reasons, the first load-bearing: the runner never loads a calendar — it
-    has only ``TENANT_STOP_AT`` — so a runner-side check would need its own
-    copy of the session window, which is exactly the second source of truth
+    ⚠ Called TWICE, and neither call is redundant (review round 2 LOW 3):
+    once in ``boot()``, before the seed walk, and once at the top of
+    ``run_session`` on the boundary that loop will actually use. The walk
+    between them is tens of paginated GETs and can carry the clock past the
+    close on its own — measured: a boot at 09:18:30 against a 09:21 end, a
+    seed that advanced the clock to 09:23, and a loop that ran ZERO
+    iterations and returned 0. The first call saves a walk the session cannot
+    use; the second is the one that actually guarantees a boundary exists.
+
+    ⚠ Asked by the PRODUCER and not by the runner. Two reasons, the first
+    load-bearing: the runner never loads a calendar — it has only
+    ``TENANT_STOP_AT`` — so a runner-side check would need its own copy of the
+    session window, which is exactly the second source of truth
     ``calendar.py``'s module docstring refuses ("a hardcoded 15:45 would be a
     second source of truth that drifts the first time the exchange moves the
     close"). Second: the seed walk is tens of paginated GETs, and a session

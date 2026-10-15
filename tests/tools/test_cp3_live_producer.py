@@ -2007,6 +2007,47 @@ def test_red_a_boot_after_the_session_close_is_refused(
 
 
 @pytest.mark.serial
+def test_red_a_seed_walk_that_crosses_the_close_refuses_before_the_loop(
+    tmp_path: Path, market: Market
+) -> None:
+    """**Review round 2 LOW 3 — the boot-time check alone is not enough.**
+
+    The reviewer's probe E: boot INSIDE the session, let the seed walk spend
+    real time, and the loop has nothing left to do. ``boot()``'s check passes
+    (at 09:18:30 the first boundary is 09:20, inside a 09:21 end), the walk
+    carries the clock past the close, and before this fix ``run_session``
+    walked ``while boundary <= end`` **zero times** and returned 0 — a
+    session that published nothing, reported as clean, which is exactly the
+    shape A.2 exists to refuse.
+
+    So the check is asked again at the top of ``run_session``, on the
+    boundary that loop will actually use. Both halves are asserted here: the
+    boot does NOT refuse, and the loop does.
+    """
+    producer, clock, quotes = _build(tmp_path, market)
+    clock.moment = clock.moment.replace(hour=9, minute=18, second=30)
+    real_history = quotes.history
+
+    def costly_history(*args: Any, **kwargs: Any):
+        rows = real_history(*args, **kwargs)
+        clock.sleep(90)  # each walked day costs wall-clock time
+        return rows
+
+    quotes.history = costly_history
+
+    producer.boot()  # the boot-time check passes: 09:20 <= 09:21
+    # read off the producer's own window, never a literal close
+    end = producer.window.end_boundary(TARGET)
+    assert clock.now().replace(tzinfo=None) > end, "the walk must cross the close"
+
+    with pytest.raises(LiveProducerRefused, match="already past the session end"):
+        producer.run_session()
+    # every line this session wrote came from the BOOT catch-up; the loop
+    # contributed none, which is the "measured nothing" shape being refused
+    assert producer.counters.published == producer.counters.pre_boot_lines
+
+
+@pytest.mark.serial
 def test_a_boot_inside_the_session_is_not_refused(
     tmp_path: Path, market: Market
 ) -> None:

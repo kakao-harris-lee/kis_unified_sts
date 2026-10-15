@@ -2220,6 +2220,49 @@ def test_red_a_session_path_under_a_symlinked_ancestor_is_refused(
     assert result.returncode == 3, output[-2000:]
 
 
+def test_red_a_session_path_that_resolves_elsewhere_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Review round 2 LOW 2 — the clause no other input exercises.**
+
+    Step 6b has three predicates and the third (``realpath`` equals the
+    ``normpath`` it was given) had no test of its own: every input that
+    reached it was already refused by the symlink-component clause, so
+    mutating it to ``if False`` stayed green. That is the shape the guard
+    lesson calls a clause that admits what it names.
+
+    This input separates them. ``<scratch>/x/link/../data`` with
+    ``link -> <scratch>/elsewhere/sub``:
+
+    * ``normpath`` collapses the ``..`` textually, giving ``<scratch>/x/data``
+      — whose components are all real directories, so the symlink clause has
+      nothing to say;
+    * ``realpath`` resolves ``link`` FIRST and then applies the ``..``, giving
+      ``<scratch>/elsewhere/data`` — a different tree entirely.
+
+    So the path names one place and means another, and only the third clause
+    can see it. The assertion is on the wording too: it must be the "resolves
+    to" refusal and NOT the symlink one, or the test would pass for the wrong
+    reason.
+    """
+    repo = _runner_repo(tmp_path)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    (scratch / "x").mkdir(parents=True, exist_ok=True)
+    (scratch / "elsewhere/sub").mkdir(parents=True, exist_ok=True)
+    (scratch / "x/link").symlink_to(scratch / "elsewhere/sub", True)
+
+    result = _run_runner(
+        repo, tmp_path, TENANT_DATA_PARENT=str(scratch / "x/link/../data")
+    )
+
+    output = result.stdout + result.stderr
+    assert "a session path is not the path it names" in output, output[-2000:]
+    assert "resolves to" in output, output[-2000:]
+    assert "is a symlink" not in output, "the OTHER clause must not be what fired"
+    assert result.returncode == 3, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
 def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:
     """**Codex re-review MEDIUM at ``ccf1f0d0``: the repair is REFUSED.**
 

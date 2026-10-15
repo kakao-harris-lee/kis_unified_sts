@@ -381,8 +381,21 @@ class LiveProducer:
         a bar this producer cannot BUILD, the second is a feed that is not
         answering at all (PR #904 review round 1 item A.1 — the first one
         counts only ``ProduceFieldsError`` and so could not see a dead feed).
+
+        ⚠ The late-boot refusal is asked AGAIN here, on the boundary this loop
+        will actually use (review round 2 LOW 3). ``boot()`` asks it too, but
+        on an earlier clock reading — and the seed walk between the two is
+        tens of paginated GETs, so it can carry the clock past the close by
+        itself. Measured by the reviewer: a boot at 09:18:30 against a 09:21
+        end, a seed that advanced the clock to 09:23, and a loop that then ran
+        ZERO iterations and returned 0. Both calls are kept and neither is
+        redundant: ``boot()``'s saves the seed walk a session cannot use, and
+        this one is the one that actually guarantees the loop runs.
         """
         boundary = self._first_boundary()
+        assert_the_session_can_still_happen(
+            first_boundary=boundary, window=self.window, target=self.target
+        )
         end = self.window.end_boundary(self.target)
         while boundary <= end:
             self._handle_boundary(boundary)
