@@ -175,3 +175,74 @@ async def test_retry_once_no_retry_when_auth_manager_cannot_invalidate():
 
     assert result == "expired"
     assert attempts == [0]
+
+
+def test_red_a_cache_write_in_progress_never_exposes_a_partial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader mid-write sees the OLD cache, never a prefix of the new one.
+
+    CP-3 (band plan v3, 2026-10-16) runs two processes against ONE fingerprinted
+    token cache file: the minute producer and the short-lived band probe. Before
+    this, ``_save_token_cache_secure`` opened the destination with ``O_TRUNC``
+    and wrote in place — "atomic" was true of create+permission only, not of the
+    contents — so a concurrent reader could ``json.load`` a truncated file. The
+    damage is not a crash: ``_load_from_cache`` swallows ``JSONDecodeError`` and
+    returns False, so the process quietly re-issues a token, and KIS rate-limits
+    token issuance.
+
+    The observation is taken deterministically rather than by racing threads:
+    the write is split in half, and in between we read the destination exactly
+    the way ``_load_from_cache`` does. Under the temp-file + ``os.replace``
+    implementation the destination is still the previous file in full. Put the
+    ``O_TRUNC`` write back and this read returns half a JSON document, which is
+    the mutation.
+    """
+    from shared.kis import auth as auth_module
+    from shared.kis.auth import TokenCache, _save_token_cache_secure
+
+    cache_path = tmp_path / "token_cache.json"
+    previous = TokenCache(
+        app_key="old_key",
+        token="OLD_TOKEN_" + "x" * 400,
+        expires_at=1.0,
+        issued_at="2026-10-15T08:45:00",
+    )
+    _save_token_cache_secure(previous, cache_path)
+    bytes_before = cache_path.read_bytes()
+
+    real_dumps = json.dumps
+    seen: list[bytes | None] = []
+
+    def halved_dump(obj: object, fp: object, **kwargs: object) -> None:
+        text = real_dumps(obj, **kwargs)  # type: ignore[arg-type]
+        middle = len(text) // 2
+        assert middle > 0
+        fp.write(text[:middle])  # type: ignore[attr-defined]
+        fp.flush()  # type: ignore[attr-defined]
+        seen.append(cache_path.read_bytes() if cache_path.exists() else None)
+        fp.write(text[middle:])  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(auth_module.json, "dump", halved_dump)
+    updated = TokenCache(
+        app_key="new_key",
+        token="NEW_TOKEN_" + "y" * 400,
+        expires_at=2.0,
+        issued_at="2026-10-16T08:45:00",
+    )
+    _save_token_cache_secure(updated, cache_path)
+    monkeypatch.undo()
+
+    assert len(seen) == 1, "the write was not intercepted"
+    assert seen[0] == bytes_before, "a reader saw neither the old nor the new file"
+    # ...and that is the read `_load_from_cache` performs, so spell it out.
+    mid_write = TokenCache.from_dict(json.loads(seen[0].decode("utf-8")))
+    assert mid_write.app_key == "old_key"
+    assert mid_write.token == previous.token
+
+    # The replacement landed, kept 0o600, and left no temp file behind.
+    after = TokenCache.from_dict(json.loads(cache_path.read_text(encoding="utf-8")))
+    assert after.app_key == "new_key"
+    assert after.token == updated.token
+    assert stat.S_IMODE(os.stat(cache_path).st_mode) == 0o600
+    assert sorted(p.name for p in tmp_path.iterdir()) == [cache_path.name]

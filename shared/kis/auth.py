@@ -12,6 +12,7 @@ quant_moment_sts와 kospi_mini_sts의 인증 로직을 통합.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -216,11 +217,22 @@ class CircuitOpenError(Exception):
 
 
 def _save_token_cache_secure(cache: TokenCache, cache_path: Path) -> None:
-    """토큰 캐시를 안전한 권한으로 atomic하게 저장
+    """토큰 캐시를 안전한 권한으로, **내용까지** atomic하게 저장
 
     SECURITY: 파일을 default 권한으로 생성한 후 chmod하면
     그 사이 world-readable 상태로 노출되는 race condition 발생.
     os.open()으로 파일 생성과 동시에 0o600 권한 설정.
+
+    ⚠ **2026-10-16 정정 (CP-3 band 프로세스 분리, PR #906 리뷰 4 라운드).**
+    초판은 docstring 이 「atomic하게 저장」이라고 적었지만 실제로는
+    `O_TRUNC` 로 **대상 파일을 비우고** 그 자리에 쓰는 방식이었다. 즉 「생성+권한」만
+    atomic 했고 **내용은 아니었다** — 쓰는 중에 읽는 쪽은 잘린 파일이나 빈 파일을
+    본다. 한 프로세스만 쓰던 동안에는 드러나지 않았으나, CP-3 는 이제 생산자와
+    band 프로브 **두 프로세스**가 같은 지문 캐시 파일을 공유한다.
+    그래서 같은 디렉터리의 임시 파일에 0o600 으로 쓰고 `os.replace` 로 **갈아끼운다**:
+    읽는 쪽은 이전 내용이나 새 내용 중 하나를 보고, 중간 상태는 존재하지 않는다.
+    (부분 읽기의 실제 피해는 `_load_from_cache` 의 `json.load` 실패 → 캐시 무시 →
+    **불필요한 토큰 재발급**이고, KIS 는 토큰 발급에 레이트 리밋이 있다.)
 
     Args:
         cache: 저장할 토큰 캐시
@@ -230,24 +242,29 @@ def _save_token_cache_secure(cache: TokenCache, cache_path: Path) -> None:
         OSError: 파일 생성/쓰기 실패
     """
     cache_path = Path(cache_path)
+    # 같은 디렉터리에 둔다 — `os.replace` 는 같은 파일시스템 안에서만 atomic 하다.
+    tmp_path = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
 
     # os.open으로 atomic하게 파일 생성 및 권한 설정
-    # O_CREAT: 파일이 없으면 생성
-    # O_WRONLY: 쓰기 전용
-    # O_TRUNC: 기존 파일 내용 삭제
+    # O_CREAT|O_EXCL: 임시 이름은 이 프로세스가 새로 만든다
     # 0o600: owner read/write only (rw-------)
-    fd = os.open(str(cache_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-
+    fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         # file descriptor를 파일 객체로 변환
         with os.fdopen(fd, "w") as f:
             json.dump(cache.to_dict(), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        # 여기서부터 대상 파일은 「이전 내용」 또는 「새 내용」뿐이다.
+        os.replace(tmp_path, cache_path)
     except Exception:
         # 예외 발생 시 file descriptor leak 방지
         try:
             os.close(fd)
         except OSError:
             pass  # 이미 닫혀있을 수 있음
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
         raise
 
 
