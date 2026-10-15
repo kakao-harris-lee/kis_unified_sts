@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import json
 import sqlite3
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -686,6 +687,47 @@ def test_a_line_stamped_at_or_after_the_close_is_not_counted_as_a_miss(
         si.REASON_PUBLISHED_AFTER_CLOSE: 2,
     }
     assert document["generated_from"]["producer_session_close"] == "15:45:00"
+
+
+@pytest.mark.serial
+def test_the_close_is_built_in_the_bars_own_offset_not_the_hosts_timezone(
+    tmp_path: Path, hinge: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**PR #904 review round 1 LOW 5 — pin the tz handling.**
+
+    ``_published_after_close`` builds the close instant with ``tzinfo`` taken
+    from the BAR's own join key (``+0900``). Dropping that argument leaves a
+    naive datetime whose ``.timestamp()`` is interpreted in the HOST's local
+    zone — which on this KST host is the same number, so the mutation would
+    stay green here and only break on a UTC runner.
+
+    So this test runs under ``TZ=UTC``. With the offset honoured the 15:45 bar
+    stamped at 15:46:02 KST is still past a 15:45:00+09:00 close; without it
+    the close would be read as 15:45 UTC, nine hours later, and the bar would
+    fall back to the defect name.
+    """
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    try:
+        data_dir = _three_bar_session(tmp_path, hinge)
+        producer_log = _close_log(
+            tmp_path,
+            {
+                "stage": "published",
+                "raw_event_id": _event_id("1545"),
+                # computed with an explicit +0900, so the INPUT does not depend
+                # on the host zone either
+                "as_of_ms": _stamp("154602"),
+            },
+        )
+        document = _document(tmp_path, data_dir, producer_log=producer_log)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+    assert document["unpaired_reasons"] == {
+        _event_id("1545"): si.REASON_PUBLISHED_AFTER_CLOSE
+    }
 
 
 @pytest.mark.parametrize(

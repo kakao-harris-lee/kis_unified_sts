@@ -742,8 +742,22 @@ class ProducerLogFacts:
 
 
 #: The producer's ``seed`` log stage and the key on it that carries the
-#: session window, as ``live_producer/producer.py::_seed_lineage`` writes them:
+#: session window, as ``live_producer/seed_lineage.py`` writes them:
 #: ``"<start>..<end>"`` of ``datetime.time.isoformat()``.
+#:
+#: ⚠ **The assumption this rests on, written down (PR #904 review round 1 LOW
+#: 4).** That window is ONE phase of one session id — the producer is
+#: configured with exactly one (``calendar_session_id`` plus
+#: ``calendar_session_phase``, today ``krx-index-futures`` / ``CONTINUOUS``)
+#: and logs that phase's end. The runtime reads the same calendar file, but
+#: nothing here checks that it reads the same PHASE. If the runtime's session
+#: context were ever open past the producer's phase end — a tenant tree that
+#: adds an evening phase, or a runtime configured for a different session id —
+#: then a bar published after the producer's close could still have been
+#: ticked, and calling it :data:`REASON_PUBLISHED_AFTER_CLOSE` would EXCUSE a
+#: real miss. The excuse is therefore only as narrow as "one phase, the same
+#: one on both sides". If a second phase is ever configured, this reason has
+#: to read the runtime's own session facts instead of the producer's log.
 PRODUCER_SEED_STAGE = "seed"
 PRODUCER_SESSION_WINDOW_KEY = "session_window"
 
