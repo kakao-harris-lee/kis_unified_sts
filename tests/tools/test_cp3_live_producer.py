@@ -2250,9 +2250,13 @@ class _Response:
 class _Http:
     def __init__(self, response: Any) -> None:
         self.response, self.seen = response, []
+        self.timeouts: list[Any] = []
 
-    def get(self, url: str, headers: Any = None, params: Any = None) -> Any:
+    def get(
+        self, url: str, headers: Any = None, params: Any = None, timeout: Any = None
+    ) -> Any:
         self.seen.append((url, headers, params))
+        self.timeouts.append(timeout)
         return self.response
 
 
@@ -2671,6 +2675,278 @@ def test_band_a_window_with_no_room_makes_no_attempt_at_all(
     clock.moment = clock.moment.replace(minute=47, second=2)
     producer.band.after_price_line()
     assert quotes.band_calls == 1
+
+
+# -- review round 1 MEDIUM-1: the gate's refusal must PROPAGATE -------------
+
+
+def _safety_violation() -> Any:
+    from tools.broker_probes.common import SafetyViolation
+
+    return SafetyViolation
+
+
+def test_a_safety_violation_is_a_runtime_error_which_is_why_order_matters() -> None:
+    """The fact the first cut missed, asserted so it cannot be missed again.
+
+    ``SafetyViolation`` -> ``ProbeError`` -> ``RuntimeError``, so
+    ``except RuntimeError`` catches the allowlist gate's refusal. Every
+    handler in this package that catches ``RuntimeError`` around a transport
+    call therefore needs a ``SafetyViolation`` clause ABOVE it, and this is the
+    reason stated as a test rather than as a comment.
+    """
+    assert issubclass(_safety_violation(), RuntimeError)
+    assert "Never caught" in (_safety_violation().__doc__ or "")
+
+
+@pytest.mark.serial
+def test_red_a_gate_refusal_in_the_band_propagates_and_ends_the_producer_nonzero(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**MEDIUM-1.** A refused band call must not read as a feed failure.
+
+    The reviewer's measured input: a transport whose ``band`` always raises
+    ``SafetyViolation``. Before the fix that produced 24 ``band_fetch_failed``
+    events saying "gate refused" and the producer still returned **0** — the
+    one place "zero real futures orders" is enforced had become a log line on
+    a session that reported success. Deleting the ``except SafetyViolation:
+    raise`` clause makes this test green again, which is the mutation.
+    """
+    violation = _safety_violation()
+    config = config_mod.load_config(_write_config(tmp_path), repo_root=_REPO_ROOT)
+    clock = FakeClock(datetime(TARGET.year, TARGET.month, TARGET.day, 8, 44, 30))
+    quotes = FakeQuotes(market, clock)
+
+    def refuse(_symbol: str) -> Any:
+        raise violation("real-token call is not on the read-only allowlist")
+
+    monkeypatch.setattr(quotes, "band", refuse)
+    producer = producer_mod.LiveProducer(
+        config=config,
+        instrument=INSTRUMENT,
+        target=TARGET,
+        session_dir=tmp_path / "session",
+        journal_path=tmp_path / "session" / "journal.jsonl",
+        clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
+        quotes_factory=lambda _config, _log: quotes,
+    )
+    producer.boot()
+    with pytest.raises(violation):
+        producer.run_session()
+    producer.finish()
+
+    # No line, nothing counted as a band failure, and nothing counted as a
+    # FEED failure either: the session stopped instead of carrying on.
+    assert not producer.band_journal_path.exists()
+    assert _stage(producer, band_mod.STAGE_BAND_FETCH_FAILED) == []
+    assert producer.counters.fetch_error == 0
+
+
+def test_red_a_gate_refusal_on_the_price_poll_propagates_too(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**MEDIUM-1, the pre-existing half.** Same hole on the PRICE path.
+
+    ``_handle_boundary``'s ``except RuntimeError`` around ``_poll`` swallowed a
+    ``SafetyViolation`` from ``page()`` into ``fetch_error`` and polled on —
+    so an off-allowlist price call was a counted transport blip. The fix is
+    the same clause in the same order, and removing it turns this green.
+    """
+    violation = _safety_violation()
+    producer, _clock, quotes = _build(tmp_path, market)
+    producer.boot()
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise violation("real-token call is not on the read-only allowlist")
+
+    monkeypatch.setattr(quotes, "page", refuse)
+    with pytest.raises(violation):
+        producer.run_session()
+    assert producer.counters.fetch_error == 0
+    assert _stage(producer, "fetch_error") == []
+
+
+def test_the_cli_cannot_fold_a_gate_refusal_into_its_refusal_path() -> None:
+    """rc != 0 is what the runner reads (exit 5) — the last link in that chain.
+
+    The two tests above measure that the refusal propagates out of
+    ``run_session``. ``main`` wraps that call in exactly one handler,
+    ``except LiveProducerRefused``, so the remaining question is whether that
+    handler can catch a ``SafetyViolation`` and turn it into the ordinary
+    rc-1-with-a-message path. It cannot: the two types are unrelated, so the
+    exception leaves ``main`` uncaught and the process exits non-zero with a
+    traceback — while ``finish()`` still runs in the ``finally``.
+
+    ⚠ Asserted on the type lattice rather than by driving ``main --confirm``:
+    that path calls ``read_query_credentials``, and
+    ``shared.config.dotenv_guard.read_explicit_dotenv`` deliberately does
+    NOTHING in hermetic mode, so the CLI refuses for a missing key long before
+    a transport exists. Defeating that guard to reach the factory would be a
+    worse test than this one.
+    """
+    assert not issubclass(_safety_violation(), LiveProducerRefused)
+    assert not issubclass(LiveProducerRefused, _safety_violation())
+
+
+# -- review round 1 LOW-1: what one attempt may cost ------------------------
+
+
+def test_red_the_attempt_budget_charges_the_pace_sleep(
+    tmp_path: Path, market: Market
+) -> None:
+    """**LOW-1.** ``_room`` must charge ``pace_s``, not only the timeout.
+
+    ``Quotes.band`` sleeps up to ``pace_s`` before its request to stay inside
+    the 5 rps limit, so an attempt costs pace + transport. The red input is a
+    deadline in the gap between the two numbers: with the pace charged there
+    is no room, without it there is — and an attempt started there ends after
+    the bound.
+    """
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.boot()
+    band = producer.band
+    assert band.pace_s > 0
+    assert band.attempt_budget() == band.pace_s + band.request_timeout_s
+
+    now = band.now()
+    just_the_timeout = now + timedelta(seconds=band.request_timeout_s + 0.1)
+    assert not band._room(just_the_timeout)
+    with_the_pace = now + timedelta(seconds=band.attempt_budget() + 0.1)
+    assert band._room(with_the_pace)
+
+
+def test_the_band_get_pins_httpx_phases_to_sum_to_the_timeout() -> None:
+    """**LOW-1.** ``timeout=`` is PER PHASE, so the bare number allows 4x it.
+
+    The budget ``_room`` assumes is only true if one GET cannot exceed
+    ``request_timeout_s``, so the band call passes an ``httpx.Timeout`` whose
+    four phases sum to it. Asserted on the object the transport actually
+    handed httpx.
+    """
+    raw = json.dumps(_band_payload()).encode("utf-8")
+    http = _Http(_Response(raw))
+    quotes = _bare_quotes(_Recorder(), http)
+    quotes.band(INSTRUMENT)
+    (timeout,) = http.timeouts
+    budget = quotes.cfg["request_timeout_s"]
+    assert timeout is not None
+    phases = (timeout.connect, timeout.read, timeout.write, timeout.pool)
+    assert all(phase is not None for phase in phases)
+    assert sum(phases) == pytest.approx(budget)
+
+
+@pytest.mark.serial
+def test_red_an_attempt_that_overruns_its_budget_does_not_get_a_second(
+    tmp_path: Path, market: Market
+) -> None:
+    """**LOW-1's honest claim.** An overrun cannot be aborted; it can be bounded.
+
+    A single attempt that costs MORE than the whole budget (the shape a
+    per-phase timeout or an OAuth re-POST can produce) is spent — nothing can
+    recall it. What the bound still guarantees is that it does not compound:
+    the next attempt is refused, the window ends, and the next price poll
+    still starts on time.
+    """
+    where = tmp_path / "overrun"
+    where.mkdir(parents=True, exist_ok=True)
+    producer, _clock, quotes = _build(where, market)
+    producer.boot()
+    cost = producer.config.request_timeout_s * 2
+    quotes.band_cost_s = cost
+    quotes.band_fail_next = 9999
+    producer.run_session()
+    producer.finish()
+
+    delta = producer.band.attempt_budget()
+    assert cost > delta, "the fake must cost MORE than the budget, or nothing is shown"
+    assert quotes.band_started, "no attempt ran; the window bound is untested"
+
+    # Every attempt STARTED inside its window's bound — that is what `_room`
+    # can promise. The gap LOW-1 names, made visible: the last one ENDED past
+    # it, because an in-flight call cannot be recalled.
+    starts = [stamp.replace(tzinfo=None) for stamp in quotes.band_started]
+    first_deadline = datetime(TARGET.year, TARGET.month, TARGET.day, 8, 47) - timedelta(
+        seconds=producer.config.first_poll_delay_s
+    )
+    in_first_window = [start for start in starts if start < first_deadline]
+    assert in_first_window, "the first window made no attempt"
+    assert max(in_first_window) + timedelta(seconds=cost) > first_deadline
+
+    # And it did not compound: the window is finite and the day still spends
+    # only the two windows LOW-3 allows.
+    assert len(starts) <= 8, starts
+    assert producer.band.retried is True
+    # the price side is untouched by any of it
+    assert producer.counters.fetch_error == 0
+    assert producer.counters.published > 1
+
+
+# -- review round 1 LOW-3: exactly one extra window -------------------------
+
+
+@pytest.mark.serial
+def test_red_a_first_window_that_fails_everything_gets_one_more_window(
+    tmp_path: Path, market: Market
+) -> None:
+    """**LOW-3.** One bad minute must not cost the whole day's band.
+
+    The first window's attempts all fail; the next boundary gets ONE more
+    window, and that one succeeds and writes the line. Without the retry the
+    day has no band at all — which is the red: the journal does not exist.
+    """
+    producer, _clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    # "Every attempt of the FIRST window fails" expressed as the condition it
+    # really is, not as a count: a count would depend on how many attempts the
+    # window's own bound happens to fit, which is a different clause's job.
+    real_band = quotes.band
+
+    def fail_until_the_extra_window(symbol: str) -> Any:
+        if not producer.band.retried:
+            quotes.band_calls += 1
+            raise RuntimeError("band_auth_http_or_json_error")
+        return real_band(symbol)
+
+    quotes.band = fail_until_the_extra_window
+    producer.run_session()
+    summary = producer.finish()
+
+    (line,) = _journal_rows(producer.band_journal_path)
+    assert line["instrument"] == INSTRUMENT
+    assert summary["band"]["failures"] > 0
+    assert summary["band"]["lines"] == 1
+    assert summary["band"]["retry_window_used"] is True
+    triggers = [entry["trigger"] for entry in _stage(producer, "band_published")]
+    assert triggers == [band_mod.TRIGGER_RETRY]
+
+
+@pytest.mark.serial
+def test_red_the_extra_window_is_exactly_one(tmp_path: Path, market: Market) -> None:
+    """The other half of LOW-3: bounded at one, so a dead band is not a loop.
+
+    Every attempt of every window fails all session. The day must spend TWO
+    windows and stop — not one per boundary for the rest of the day, which
+    would hand the band the minute-bar polling's rate-limit budget.
+    """
+    producer, _clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    quotes.band_fail_next = 9999
+    producer.run_session()
+    summary = producer.finish()
+
+    assert not producer.band_journal_path.exists()
+    triggers = {
+        entry["trigger"] for entry in _stage(producer, band_mod.STAGE_BAND_FETCH_FAILED)
+    }
+    assert triggers == {band_mod.TRIGGER_FIRST, band_mod.TRIGGER_RETRY}
+    # EXACTLY two windows — the count, not the trigger set, is what separates
+    # "one extra" from "one per boundary": an unbounded retry keeps the same
+    # two trigger names while spending a window every minute of the session.
+    assert summary["band"]["windows"] == 2
+    assert summary["band"]["retry_window_used"] is True
+    # and the price side never noticed
+    assert producer.counters.fetch_error == 0
+    assert summary["counters"]["published"] > 1
 
 
 # -- the re-read: measurement only ------------------------------------------

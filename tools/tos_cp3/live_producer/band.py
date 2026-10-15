@@ -40,6 +40,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from tools.broker_probes.common import SafetyViolation
 from tools.tos_cp3.live_producer.band_line import (
     BAND_JOURNAL_NAME,
     BAND_KEY_ORDER,
@@ -62,6 +63,9 @@ STAGE_BAND_CLOCK_REGRESSION = "band_clock_regression"
 
 #: Why this window ran.
 TRIGGER_FIRST = "first_boundary_after_open"
+#: The ONE extra window a day gets when the first one produced no line
+#: (review round 1 LOW-3). Bounded at one by :attr:`BandCapture.retried`.
+TRIGGER_RETRY = "retry_after_a_failed_window"
 TRIGGER_REREAD = "reread"
 
 
@@ -102,6 +106,9 @@ class BandCapture:
     session_start: datetime
     reread_minutes: int | None
     request_timeout_s: float
+    #: The pace sleep ``Quotes.band`` takes before its request (5 rps limit).
+    #: Charged in :meth:`attempt_budget` — review round 1 LOW-1.
+    pace_s: float
     retry_pause_s: float
     #: δ, and "the next whole minute at least one bar past the open" — the two
     #: halves of :meth:`_deadline`. Taken as a callable and a number rather
@@ -115,8 +122,14 @@ class BandCapture:
     #: different ids knows two processes wrote them.
     continuity_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     attempted: bool = False
+    #: Whether the one extra window (LOW-3) has been spent. Set, never cleared.
+    retried: bool = False
     last_window_at: datetime | None = None
     attempts: int = 0
+    #: Windows ENTERED. A day spends at most two (§3.1's one, plus LOW-3's one
+    #: extra when the first produced nothing) plus any configured re-reads, so
+    #: this is what tells "bounded at one extra" from "one per boundary".
+    windows: int = 0
     lines: int = 0
     failures: int = 0
 
@@ -162,6 +175,16 @@ class BandCapture:
             return None
         if not self.attempted:
             return TRIGGER_FIRST
+        # ONE extra window, and only when the first one got nothing (review
+        # round 1 LOW-3). Without it a single bad minute — a 429 burst, one
+        # expired token — costs the WHOLE day's band, because the first window
+        # is the only one §3.1 allows. With it the day still has at most two
+        # windows: this flag is set here and never cleared, so a second failure
+        # is final. `after_price_line` is called once per published price line,
+        # so "the next one" is the next boundary.
+        if self.lines == 0 and not self.retried:
+            self.retried = True
+            return TRIGGER_RETRY
         if self.reread_minutes is None or self.last_window_at is None:
             return None
         if now - self.last_window_at < timedelta(minutes=self.reread_minutes):
@@ -178,16 +201,30 @@ class BandCapture:
         read". A window that made at least one attempt is the one read §3.1
         allows, whatever its outcome.
 
-        ⛔ ``SafetyViolation`` from the transport's allowlist gate is
-        deliberately NOT caught here. The two band failures §3.1 names —
+        ⛔ ``SafetyViolation`` is re-raised by the clause ABOVE the
+        ``RuntimeError`` one, and the order is the whole point.
+
+        **The first cut of this docstring was false** (PR #906 review round 1,
+        MEDIUM-1). It claimed the gate's refusal propagated while the code
+        caught it: ``SafetyViolation`` is a subclass of ``ProbeError``, which
+        is a subclass of ``RuntimeError``
+        (``tools/broker_probes/common.py``) — so ``except (RuntimeError,
+        BandLineError)`` swallowed it, and the reviewer measured the result:
+        a transport whose every call the gate refused produced 24
+        ``band_fetch_failed`` events reading "gate refused" and the producer
+        still ended **rc 0**. The class's own docstring says "Never caught".
+
+        Why it must propagate: the two band failures §3.1 names —
         transport/``rt_cd``, and an absent field — are conditions of the
-        broker's answer; a gate refusal means the code and the allowlist
-        disagree about what this process may call, which is a defect in THIS
-        repo. Folding it into ``band_fetch_failed`` would turn the one place
-        "zero real futures orders" is enforced into a soft warning. It
-        propagates, the producer ends rc 1, and the runner reports exit 5.
+        BROKER's answer. A gate refusal is not; it means the code and the
+        allowlist disagree about what this process may call, which is a defect
+        in THIS repo and the one place "zero real futures orders" is enforced.
+        Folded into ``band_fetch_failed`` it is a log line nobody reads on a
+        session that reports success. Propagated, the producer ends rc 1 and
+        the runner reports exit 5.
         """
         made = 0
+        self.windows += 1
         while self._room(deadline):
             self.attempts += 1
             made += 1
@@ -195,6 +232,9 @@ class BandCapture:
             try:
                 read = self.quotes.band(self.instrument)
                 values = band_values_from_payload(read.payload)
+            except SafetyViolation:
+                # BEFORE the RuntimeError clause, because it IS a RuntimeError.
+                raise
             except (RuntimeError, BandLineError) as exc:
                 self.failures += 1
                 self.attempted = True
@@ -232,13 +272,35 @@ class BandCapture:
     def _room(self, deadline: datetime) -> bool:
         """Can a whole attempt finish before *deadline*?
 
-        The worst case of one attempt is its transport timeout, so the question
-        is ``now + request_timeout_s <= deadline`` and not ``now < deadline``.
-        Asking the weaker question is how a band attempt started at
-        ``deadline - 0.1 s`` spends ten seconds and pushes the next minute's
-        first poll past its own ``+δ``.
+        The question is ``now + attempt_budget <= deadline``, not
+        ``now < deadline``: asking the weaker one is how an attempt started at
+        ``deadline - 0.1 s`` spends its whole timeout and pushes the next
+        minute's first poll past its own ``+δ``.
+
+        :meth:`attempt_budget` is what one attempt can cost, and it charges
+        the PACE sleep as well as the transport timeout (review round 1
+        LOW-1): ``Quotes.band`` sleeps up to ``pace_s`` before the request to
+        stay inside the 5 rps limit, and a budget that ignored it was short by
+        that much on every attempt.
         """
-        return self.now() + timedelta(seconds=self.request_timeout_s) <= deadline
+        return self.now() + timedelta(seconds=self.attempt_budget()) <= deadline
+
+    def attempt_budget(self) -> float:
+        """Seconds one attempt may cost: the pace sleep plus the transport cap.
+
+        ⚠ **What this does NOT bound, stated rather than implied** (review
+        round 1 LOW-1). ``Quotes.band`` pins httpx's four phase timeouts so
+        they SUM to ``request_timeout_s``, which is what makes the transport
+        half of this number true by construction instead of by hope. The OAuth
+        token call is outside it: ``KISAuthManager`` uses ``requests`` and is
+        bounded by that manager, not by this budget, and it only runs when the
+        cached token is cold or expired. So an attempt CAN overrun this number
+        by a token fetch. What the bound still guarantees is the thing that
+        matters: after an overrunning attempt, the next one is refused rather
+        than compounding — :func:`test_red_an_attempt_that_overruns_its_budget_
+        does_not_get_a_second` is that proof.
+        """
+        return self.pace_s + self.request_timeout_s
 
     # -- the line --------------------------------------------------------
 
@@ -297,10 +359,13 @@ class BandCapture:
         return {
             "journal": str(self.journal.path),
             "attempts": self.attempts,
+            "windows": self.windows,
             "lines": self.lines,
             "failures": self.failures,
             "producer_continuity_id": self.continuity_id,
             "reread_minutes": self.reread_minutes,
+            "retry_window_used": self.retried,
+            "attempt_budget_s": self.attempt_budget(),
         }
 
 
@@ -314,6 +379,7 @@ def build_capture(
     session_start: datetime,
     reread_minutes: int | None,
     request_timeout_s: float,
+    pace_s: float,
     retry_pause_s: float,
     first_poll_delay_s: float,
     next_boundary: Callable[[], datetime],
@@ -338,6 +404,7 @@ def build_capture(
         session_start=session_start,
         reread_minutes=reread_minutes,
         request_timeout_s=request_timeout_s,
+        pace_s=pace_s,
         retry_pause_s=retry_pause_s,
         first_poll_delay_s=first_poll_delay_s,
         next_boundary=next_boundary,

@@ -266,6 +266,16 @@ class Quotes:
         url = REAL_BASE_URL + BAND_PATH
         assert_read_only_call("GET", url, BAND_TR, ALLOWLIST)
         params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": symbol}
+        # The four phase timeouts SUM to `request_timeout_s` (review round 1
+        # LOW-1). `httpx`'s `timeout=` applies PER PHASE, so the bare number
+        # this client passes elsewhere allows up to 4x it in the worst case —
+        # and the band caller's own bound
+        # (`band.BandCapture.attempt_budget`) assumes one attempt costs at
+        # most pace + that number. Splitting it makes the assumption true by
+        # construction rather than by hope. The OAuth token call is outside
+        # httpx and stays outside this cap; `attempt_budget` says so.
+        phase = max(0.001, float(self.cfg["request_timeout_s"]) / 4.0)
+        timeout = httpx.Timeout(connect=phase, read=phase, write=phase, pool=phase)
         time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
         record: dict[str, Any] = {
             "stage": BAND_FETCH_STAGE,
@@ -288,7 +298,9 @@ class Quotes:
             }
             self.last = time.monotonic()
             self.calls += 1
-            response = self.http.get(url, headers=headers, params=params)
+            response = self.http.get(
+                url, headers=headers, params=params, timeout=timeout
+            )
             raw = response.content
             digest = hashlib.sha256(raw).hexdigest()
             record["http_status"] = response.status_code
