@@ -1665,18 +1665,14 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
 
   ```bash
   # TR 과 메서드의 분포. 기대: 두 TR 뿐 · method 는 GET 뿐.
-  python3 - "$SESSION/producer/producer-log.jsonl" <<'PY'
-  import json, sys
-  trs, methods = set(), set()
-  for line in open(sys.argv[1], encoding="utf-8"):
-      row = json.loads(line)
-      if row.get("tr_id"):
-          trs.add(row["tr_id"])
-      if row.get("method"):
-          methods.add(row["method"])
-  print("tr_ids:", sorted(trs), "methods:", sorted(methods))
-  print("OK" if trs <= {"FHKIF03020200", "FHMIF10000000"} and methods <= {"GET"} else "FINDING")
-  PY
+  # 한 줄 꼴로 둔다 — 들여쓴 heredoc 은 종료 표지를 못 만나 붙여 쓰면 멈춘다.
+  python3 -c 'import json,sys; \
+   rows=[json.loads(l) for l in open(sys.argv[1],encoding="utf-8") if l.strip()]; \
+   trs={r["tr_id"] for r in rows if r.get("tr_id")}; \
+   mth={r["method"] for r in rows if r.get("method")}; \
+   print("tr_ids:",sorted(trs),"methods:",sorted(mth)); \
+   print("OK" if trs<={"FHKIF03020200","FHMIF10000000"} and mth<={"GET"} else "FINDING")' \
+    "$SESSION/producer/producer-log.jsonl"
   ```
 
   ⚠ 이 확인이 유효한 이유는 **band GET 이 시도마다 자기 `tr_id` 를 적기 때문**이다
