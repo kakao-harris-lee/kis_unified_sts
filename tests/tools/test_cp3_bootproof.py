@@ -43,6 +43,7 @@ from tools.tos_cp3.bootproof_guard import (
     BootProofGuardRefused,
     require_scratch_rule,
 )
+from tools.tos_cp3.live_producer import band_line
 from tools.tos_cp3.produce_fields import FIELD_ORDER
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1193,6 +1194,18 @@ _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
 #: rendered tree's own file, so "after the render, before the boot" is a fact
 #: about the pipeline rather than a bet on how long a stub takes.
 _PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
+#: Which ``band.jsonl`` the stub producer writes (band plan §3.1 · §5 PR-A):
+#: ``ok`` (default) is a line for today, this instrument, stamped just after
+#: the open; ``none`` writes no band file at all; ``stale`` /
+#: ``other-instrument`` / ``pre-open`` each break exactly ONE of the three
+#: clauses the runner checks, leaving the other two valid.
+_PRODUCER_BAND_ENV = "STUB_PRODUCER_BAND"
+
+#: What the runner logs when the band line is there, and when it is not. The
+#: second string is the plan's own wording (§3.1) and the thing an operator
+#: greps a session log for.
+_BAND_PRESENT_LINE = "band line present before the boot"
+_BAND_ABSENT_LINE = "BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)"
 
 #: What the producer's own ``source_id`` looks like, as the allowlist approves
 #: it (``tools/tos_cp3/bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES``).
@@ -1278,6 +1291,42 @@ def _runner_repo(
         "        'as_of_ms': 1791601200000 + index,\n"
         "        'fields': {'close_x100': 57950},\n"
         "    }) + '\\n' for index in range(count)))\n"
+        # The band journal (band plan §3.2). Written BEFORE the price rows so
+        # the runner's two waits are exercised in their real order even when
+        # the stub leaves immediately afterwards.
+        f"band_mode = os.environ.get({_PRODUCER_BAND_ENV!r}, 'ok')\n"
+        "if band_mode != 'none':\n"
+        "    import datetime, zoneinfo\n"
+        "    kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
+        "    today = datetime.datetime.now(kst).date()\n"
+        "    opened = datetime.datetime.combine(\n"
+        "        today, datetime.time(8, 45), tzinfo=kst)\n"
+        "    open_ms = int(opened.timestamp() * 1000)\n"
+        "    band_date = today.strftime('%Y%m%d')\n"
+        "    band_instrument = instrument\n"
+        # Derived from the open, never from `now`: a line stamped `now` would
+        # be a PRE-OPEN line whenever the suite runs before 08:45 KST, which
+        # is a test that passes or fails by the hour.
+        "    band_as_of = open_ms + 1000\n"
+        "    if band_mode == 'stale':\n"
+        "        band_date = (today - datetime.timedelta(days=1)).strftime('%Y%m%d')\n"
+        "    elif band_mode == 'other-instrument':\n"
+        "        band_instrument = 'A05610'\n"
+        "    elif band_mode == 'pre-open':\n"
+        "        band_as_of = open_ms - 1\n"
+        "    (session / 'band.jsonl').write_text(json.dumps({\n"
+        "        'kind': 'cp3-band/1',\n"
+        f"        'source_id': {_APPROVED_SOURCE_ID!r},\n"
+        "        'instrument': band_instrument,\n"
+        "        'trading_date': band_date,\n"
+        "        'tr_id': 'FHMIF10000000',\n"
+        "        'upper': '1162.72',\n"
+        "        'lower': '990.48',\n"
+        "        'basis': '1076.60',\n"
+        "        'raw_payload_digest': 'f' * 64,\n"
+        "        'producer_continuity_id': 'c' * 32,\n"
+        "        'as_of_ms': band_as_of,\n"
+        "    }) + '\\n')\n"
         "if mode == 'never':\n"
         "    pass  # alive, publishing nothing — the wait runs its bound\n"
         "elif mode == '1+1':\n"
@@ -1315,6 +1364,15 @@ def _runner_repo(
     shutil.copy2(
         _REPO_ROOT / "tools/tos_cp3/bootproof_guard.py",
         repo / "tools/tos_cp3/bootproof_guard.py",
+    )
+    # The band-line predicate the runner's step 8c imports. Copied like the
+    # guard, and for the same reason: the runner must drive the SHIPPED rule,
+    # not a second copy written into this file. It is importable here because
+    # it depends on nothing but the standard library and ``yaml`` — which is
+    # why the predicate lives apart from ``live_producer/band.py``.
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/live_producer/band_line.py",
+        repo / "tools/tos_cp3/live_producer/band_line.py",
     )
     (repo / "tools/tos_cp3/__init__.py").write_text("", encoding="utf-8")
     if policy is not None:
@@ -1418,8 +1476,32 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         f"KIS_FUTURES_APP_SECRET={_PRODUCER_FAKE_SECRET}\n",
         encoding="utf-8",
     )
+    # The session OPEN the band check compares against comes from the
+    # producer's OWN settings — its ``calendar_yaml`` plus the session id and
+    # phase (band plan §3.1; ③ plan §3.5 forbids the runner carrying its own
+    # copy of the window). So the stub config names a stub calendar with the
+    # tenant's shape, and the test for the real tree's open lives in
+    # ``tests/tools/test_cp3_live_producer.py``.
+    calendar = tmp_path / "producer-calendar.yaml"
+    calendar.write_text(
+        "calendar_version: stub-for-the-runner-tests\n"
+        "tz_id: Asia/Seoul\n"
+        "holidays:\n  - '2026-01-01'\n"
+        "sessions:\n"
+        "  krx-index-futures:\n"
+        "    - phase: CONTINUOUS\n"
+        "      start: '08:45'\n"
+        "      end: '15:45'\n",
+        encoding="utf-8",
+    )
     producer_config = tmp_path / "cp3-live-producer.yaml"
-    producer_config.write_text(f"env_file: {real_env}\n", encoding="utf-8")
+    producer_config.write_text(
+        f"env_file: {real_env}\n"
+        f"calendar_yaml: {calendar}\n"
+        "calendar_session_id: krx-index-futures\n"
+        "calendar_session_phase: CONTINUOUS\n",
+        encoding="utf-8",
+    )
 
     env = {
         "PATH": os.environ["PATH"],
@@ -1678,6 +1760,152 @@ def test_an_approved_producer_row_opens_the_designated_tenant_set(
     # as far as the non-bootable fixture goes: the stub renderer refuses
     assert "render refused" in output
     assert not result.producer_outlived_the_runner
+
+
+# ---------------------------------------------------------------------------
+# The band line the runner waits for (band plan 2026-10-15 §3.1 · §5 PR-A)
+# ---------------------------------------------------------------------------
+
+
+def test_runner_waits_for_the_band_line_and_says_it_saw_one(tmp_path: Path) -> None:
+    """The happy path: a line for today, this contract, stamped past the open.
+
+    As far as the non-bootable fixture goes — the stub renderer refuses — which
+    is also the evidence that the wait RETURNED rather than held the session.
+    """
+    result = _run_runner(_runner_repo(tmp_path), tmp_path)
+    output = result.stdout + result.stderr
+    assert _BAND_PRESENT_LINE in output
+    assert _BAND_ABSENT_LINE not in output
+    assert "band line ok · trading_date=" in output
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_the_runner_writes_band_absent_and_keeps_going(tmp_path: Path) -> None:
+    """No band line: the session says so LOUDLY and continues (§3.1).
+
+    Absence is the conservative direction — the runtime folds a missing band to
+    UNKNOWN and sends nothing — and the price collection plus the B3
+    cross-check are still worth the session. So this is a loud log line and NOT
+    an abort, and the session is recorded as a failure of §4 acceptance 1 by
+    that line.
+
+    The stub leaves right after writing its price row, which is also the
+    shortcut the wait takes: a producer that is gone can never write the band
+    line, so there is nothing left to wait for.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_PRODUCER_BAND_ENV: "none", _PRODUCER_EXIT_ENV: "0"},
+    )
+    output = result.stdout + result.stderr
+    assert _BAND_ABSENT_LINE in output
+    assert _BAND_PRESENT_LINE not in output
+    assert "holds no usable band line" in output
+    # It kept going: the render is the next step and it is the thing that
+    # refused, not the band wait.
+    assert "render refused" in output
+
+
+@pytest.mark.parametrize(
+    "band_mode,fragment",
+    [
+        ("stale", "trading_date"),
+        ("other-instrument", "instrument"),
+        ("pre-open", "before the open"),
+    ],
+)
+def test_red_the_runner_rejects_a_band_line_clause_by_clause(
+    tmp_path: Path, band_mode: str, fragment: str
+) -> None:
+    """**A LINE, not the file** (v2 re-review LOW), one clause at a time.
+
+    Each mode breaks exactly ONE clause and leaves the other two valid, so a
+    deleted clause shows up here as a session that accepted the line. The
+    file EXISTS in all three cases — which is precisely why "the file is
+    there" is not the check:
+
+    * ``stale`` — yesterday's line in a reused session directory. The
+      producer's own ``refuse_if_journal_exists`` is the structural half; this
+      is the layer that survives its regression.
+    * ``other-instrument`` — the roll-day shape. P-VL measured ``A05610``
+      987.46/1159.18 against ``A05611`` 990.48/1162.72 on 2026-10-08, so the
+      wrong contract's band looks ADMISSIBLE rather than obviously wrong.
+    * ``pre-open`` — a response taken before the open, the hour band plan
+      §4.4a's residual risk is largest.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_PRODUCER_BAND_ENV: band_mode, _PRODUCER_EXIT_ENV: "0"},
+    )
+    output = result.stdout + result.stderr
+    assert _BAND_ABSENT_LINE in output
+    assert _BAND_PRESENT_LINE not in output
+    assert "the last line is not usable" in output
+    assert fragment in output
+    assert "render refused" in output
+
+
+def test_runner_band_wait_is_the_shipped_predicate_after_the_first_row(
+    tmp_path: Path,
+) -> None:
+    """Source level: the band check reads a LINE, with the shipped predicate,
+    after the first price row and before the guard — and it is bounded by its
+    own small extra allowance rather than sharing the first row's 600 s."""
+    text = _RUNNER.read_text("utf-8")
+    assert "BAND_LINE_EXTRA_WAIT_S=90" in text
+    # The predicate is imported, not re-written here.
+    assert "from tools.tos_cp3.live_producer.band_line import" in text
+    for name in ("read_last_band_line", "reject_reason", "session_open_ms"):
+        assert name in text, name
+    # The band journal is the session directory's own file, by the one name
+    # band_line.py publishes.
+    assert "BAND_JOURNAL=$TENANT_PRODUCER_SESSION_DIR/band.jsonl" in text
+    assert band_line.BAND_JOURNAL_NAME == "band.jsonl"
+    # Order: producer -> first row -> band line -> guard -> render -> boot.
+    order = [
+        "PRODUCER_PID=$!",
+        'first_row_wait "$FIRST_LINE_TIMEOUT_S"',
+        "band_line_wait\n",
+        "GUARD_OUT=",
+        "RENDER_LOG=",
+        "RUN_PID=$!",
+    ]
+    positions = [text.index(marker) for marker in order]
+    assert positions == sorted(positions), list(zip(order, positions))
+    # No literal open time: the window comes from the producer's own calendar.
+    assert "08:45" not in text
+
+
+def test_runner_band_wait_still_runs_no_mode_repair(tmp_path: Path) -> None:
+    """PR-A touched neither the credential separation nor the xtrace defence.
+
+    Stated as a property rather than trusted: the whole-file rules that PR
+    #904 paid for are re-asserted next to the new step, so a future edit here
+    cannot quietly grow a ``chmod`` or a trace.
+    """
+    text = _RUNNER.read_text("utf-8")
+    assert "set +x +v" in text
+    assert '[ -z "${!_real_key+x}" ]' in text
+    assert "umask 077" in text
+    # CODE only, the same way
+    # :func:`test_the_runner_runs_no_mode_repair_sweep_after_the_stop` reads
+    # it: the comments deliberately quote the commands this script refuses to
+    # run, so a check that cannot tell prose from an instruction would be
+    # satisfied by deleting the explanation.
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    for forbidden in ("chmod", "chown"):
+        assert forbidden not in code, forbidden
+    # The band step reads the band journal and never writes to it.
+    assert '$BAND_JOURNAL"' in code or '"$BAND_JOURNAL"' in code
+    assert ">$BAND_JOURNAL" not in code and '>"$BAND_JOURNAL"' not in code
 
 
 def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:

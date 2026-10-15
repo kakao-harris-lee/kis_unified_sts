@@ -1316,7 +1316,7 @@ TENANT_ENVIRONMENT_LABEL=paper \
 바뀌었다 — 계획 `docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md` §3.4·§3.5·§3.6.
 **실제 genesis 세션은 이 절차로 돈다.** §7.2-c 는 이력으로 남긴다.
 
-**무엇이 바뀌었나 — 네 가지.**
+**무엇이 바뀌었나 — 다섯 가지**(5 번은 band 계획 PR-A, 2026-10-15)**.**
 
 1. **저널은 운영자가 만들지 않는다. 생산자가 만든다.** 러너는 ① 생산자 기동(시드)
    → ② 첫 **실제** `tos-cp3-live/…` 줄이 생길 때까지 대기(상한 `FIRST_LINE_TIMEOUT_S`
@@ -1348,8 +1348,14 @@ TENANT_ENVIRONMENT_LABEL=paper \
    러너는 그래서 자기 환경에 둘 중 하나라도 있으면 **기동을 거부한다**. 생산자에게
    키를 주려고 `export KIS_FUTURES_APP_KEY=…` 하지 말 것 — 생산자는 파일에서 읽는다.
    ⛔ GET 전용이다. 생산자의 import 그래프에 `shared.execution` 주문 경로도
-   `probes_real_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문 TR 은 0 건이어야
-   하고, 그 0 은 세션 뒤 요청 로그로 확인한다.
+   `probes_real_order` 도 `probes_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문
+   TR 은 0 건이어야 하고, 그 0 은 세션 뒤 요청 로그로 확인한다 — 기대 TR 집합은
+   **조회 둘**(`FHKIF03020200` 분봉 · `FHMIF10000000` band)이다(아래 「세션 뒤」).
+5. **band 를 생산자가 읽는다**(band 계획 2026-10-15, PR-A). 실전 시세 키로
+   `FHMIF10000000` 을 **개장 뒤 첫 경계에서 한 번** GET-only 로 읽어 생산자 세션 dir 의
+   `band.jsonl` 에 한 줄을 쓰고, 러너는 런타임 부팅 **전에 그 줄**(오늘 · 이 월물 ·
+   개장 이후)을 확인한다. 없으면 `BAND ABSENT` 를 크게 적고 **계속 간다**. 자세한
+   것은 아래 「세션 뒤 — band」.
    ⛔ **`bash -x` 로 돌리지 않는다 — 돌려도 추적은 나오지 않는다**(Codex 리뷰 HIGH,
    2026-10-14). 템플릿은 첫 줄에서 `set +x +v` 를 하고, 그 뒤 자격증명 가드는 값이 아니라
    **이름**을 본다(`${!name+x}`). 추적을 켠 셸에서 호출해도(`SHELLOPTS=xtrace` 포함) 값이
@@ -1652,8 +1658,71 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
   옆 봉으로 밀었다).
   `counts.ticks_without_a_decision` 이 0 이 아니면 큐에만 들어가고 안 돈 틱이 있었다는
   뜻이다(거부가 아니라 보고 — 돌아간 결정들은 그대로 키로 귀속된다).
-- **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 는 조회
-  `FHKIF03020200` 뿐이어야 한다.
+- **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 집합이
+  **조회 TR 둘의 부분집합**이어야 하고(`FHKIF03020200` 분봉 · `FHMIF10000000` band —
+  band 계획 2026-10-15 §3.5) **메서드가 전부 GET** 이어야 한다. 그 둘 밖의 TR 이 하나라도
+  있으면 그것이 소견이다.
+
+  ```bash
+  # TR 과 메서드의 분포. 기대: 두 TR 뿐 · method 는 GET 뿐.
+  python3 - "$SESSION/producer/producer-log.jsonl" <<'PY'
+  import json, sys
+  trs, methods = set(), set()
+  for line in open(sys.argv[1], encoding="utf-8"):
+      row = json.loads(line)
+      if row.get("tr_id"):
+          trs.add(row["tr_id"])
+      if row.get("method"):
+          methods.add(row["method"])
+  print("tr_ids:", sorted(trs), "methods:", sorted(methods))
+  print("OK" if trs <= {"FHKIF03020200", "FHMIF10000000"} and methods <= {"GET"} else "FINDING")
+  PY
+  ```
+
+  ⚠ 이 확인이 유효한 이유는 **band GET 이 시도마다 자기 `tr_id` 를 적기 때문**이다
+  (band 계획 §3.1 리뷰 LOW-2). 분봉 경로의 `page()` 는 모듈 상수 `TR` 을 적으므로, band
+  호출이 그 경로로 로그됐다면 이 검사는 **그 호출을 보지 못한 채** 통과한다.
+
+**세션 뒤 — band (band 계획 2026-10-15 §3.1·§3.2·§4 수용 1).**
+
+band 원천은 이 세션의 **생산자**다. 실전 시세 키로 `FHMIF10000000` 을 **개장 뒤 첫
+경계에서 한 번** GET-only 로 읽어 `<TENANT_PRODUCER_SESSION_DIR>/band.jsonl` 에 한 줄을
+쓴다(세 필드 `futs_mxpr`·`futs_llam`·`futs_sdpr` 를 **문자열 그대로** + 원 응답 바이트의
+sha256). 런타임은 계속 **소켓 0 · 자격증명 0** 이다.
+
+- 러너는 **첫 가격 줄 뒤** 작은 추가 허용(`BAND_LINE_EXTRA_WAIT_S` = 90 s, 러너 상단에
+  도출 근거와 함께 있다) 안에서 **줄 하나**를 기다린다 — 파일 존재가 아니라 **줄**이다:
+  `trading_date` == 오늘(KST) · `instrument` == 그 세션의 월물 · `as_of_ms` ≥ 개장.
+  개장 시각은 러너가 따로 들고 있지 않고 **생산자 config 의 달력**에서 온다.
+- 줄이 없거나 위 셋 중 하나라도 어긋나면 러너는 **멈추지 않고** 크게 적는다:
+
+  ```text
+  ⛔⛔ BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)
+  ```
+
+  그 세션은 §4 수용 1 **실패로 기록**되지만 부팅은 그대로 간다 — 가격 수집과 B3 대조는
+  그래도 가치가 있고, band 부재는 **보수 방향**이다(런타임에서 `UNKNOWN` → 송신 0).
+- band GET 실패(전송 오류 · `rt_cd ≠ 0` · 필드 부재)는 줄을 **쓰지 않고**
+  `producer-log.jsonl` 에 `band_fetch_failed` 를 남긴다. ⚠ 그 실패는
+  `max_consecutive_fetch_error_minutes`(분봉 폴링의 포기 조건)에 **넣지 않는다** —
+  넣으면 가격 피드가 멀쩡한 세션이 band 하나로 하루를 잃는다.
+- ⛔ `TENANT_PRODUCER_SESSION_DIR` 에 `band.jsonl` 이 이미 있으면 **생산자가 기동을
+  거부한다**(계획 §3.2) — 모든 쓰기가 파일을 통째로 교체하므로, 롤 날 세션 dir 재사용은
+  어제·다른 월물의 band 를 그날 내내 믿게 만든다. 세션 dir 은 **매번 새로**.
+- 재조회(`band_reread_minutes`, 기본 `null`)는 **측정 전용**이다 — 런타임은 band 를
+  `boot`·`phase_change` 에서만 읽고 tenant 달력은 한 phase 뿐이라, 장중에 붙은 줄은
+  15:45 전에 판정에 닿지 않는다(계획 §3.1 리뷰 HIGH-2).
+- 확인:
+
+  ```bash
+  cat "$SESSION/producer/band.jsonl"                 # 줄 하나(재조회를 켰으면 여럿)
+  grep -c 'BAND ABSENT' "$SESSION/session.log"       # 0 이어야 한다
+  grep 'band_published\|band_fetch_failed' "$SESSION/producer/producer-log.jsonl"
+  ```
+
+  ⚠ 런타임이 그 줄을 **읽는** 쪽(`band_source.kind: "producer_journal"`)은 PR-B 다.
+  PR-A 만 머지된 상태에서는 줄이 **쓰이기만** 하고 tenant 정책의 `band_source` 는 여전히
+  null 이다 — 그래서 PR-A 뒤 첫 세션의 `VENUE_BAND_OBSERVED` 행은 아직 없다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 

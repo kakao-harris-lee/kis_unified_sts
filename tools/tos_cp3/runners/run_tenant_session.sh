@@ -169,6 +169,27 @@ PRODUCER_SIGKILL_AFTER_S=10
 # boot onto a journal it is still hoping for.
 FIRST_LINE_TIMEOUT_S=600
 
+# The band line's own SMALL extra allowance, measured from the moment the first
+# price row exists (band plan 2026-10-15 §5 PR-A, v2 re-review LOW). It is on
+# top of FIRST_LINE_TIMEOUT_S, not inside it: the first price row can arrive at
+# the very end of those 600 s, and the band GET only happens AFTER it — so an
+# allowance shared with the first row would leave the band no time at all on
+# exactly the slow day it matters.
+#
+# Derived from the producer's own two bounds, not picked:
+#   the band read happens on the first price line and, if that line's own
+#   window has no room left, at the next boundary — so at most ONE boundary
+#   away (60 s);
+#   one attempt is bounded by `request_timeout_s` (10 s,
+#   config/tos_probes/cp3-live-producer.yaml) and the retry loop refuses an
+#   attempt that cannot finish before `next boundary - first_poll_delay_s`;
+#   plus 20 s of slack for the seam between the two.
+# = 90 s. A hang ceiling, not a tuning knob: past it the band is ABSENT for
+# this session, which is the conservative direction (band UNKNOWN -> the kernel
+# sends nothing) and NOT a reason to abort — the price collection and the B3
+# cross-check are still worth having.
+BAND_LINE_EXTRA_WAIT_S=90
+
 # A typo ceiling on the session window, not a tuning knob: TENANT_STOP_AT is a
 # wall-clock time, and "2027" instead of "2026" is a session that never ends.
 # One trading day is the widest a one-off boot proof can honestly need.
@@ -364,12 +385,15 @@ stop_producer() {
   stop_supervised "$PRODUCER_PID" "$PRODUCER_SIGKILL_AFTER_S" producer
 }
 
-# The first-row waiter (step 8b). It is not under `timeout` — it has its own
+# Whichever waiter is running — the first-row one (step 8b) or the band-line
+# one (step 8c). They never overlap: 8c starts after 8b has returned and
+# cleared the pid, so ONE handle covers both and there is no second stop path
+# to keep in step with this one. Neither is under `timeout` — each has its own
 # deadline — so `stop_supervised`'s group signal finds no group of its own and
-# falls back to the pid, which is the right target. Five seconds is ample: it
-# sleeps in one-second steps and holds nothing open.
+# falls back to the pid, which is the right target. Five seconds is ample: both
+# sleep in one-second steps and hold nothing open.
 stop_wait() {
-  stop_supervised "$WAIT_PID" 5 "first-row wait"
+  stop_supervised "$WAIT_PID" 5 "row/band wait"
 }
 
 # The runtime first, the producer second: the producer is the one writing the
@@ -566,6 +590,126 @@ PY
 }
 
 first_row_wait "$FIRST_LINE_TIMEOUT_S" "first-row wait"
+
+# --- 8c. the BAND line (band plan 2026-10-15 §3.1 · §5 PR-A) ---------------
+#
+# The band's source is this session's producer: one REAL GET-only read of
+# `FHMIF10000000`, at the first boundary after the open, right after the day's
+# first price row. The runtime holds no credential and opens no socket, so if
+# the band is not in `band.jsonl` before the boot, this session has no band at
+# all — the kernel folds that to UNKNOWN and sends nothing.
+#
+# ⚠ **A LINE, not the file** (v2 re-review LOW). Checking existence alone lets
+# a stale file pass the instant the producer's own `refuse_if_journal_exists`
+# regresses, which is the regression this check exists to survive. The
+# predicate is the one the acceptance criterion states: `trading_date` is
+# today, `instrument` is this session's contract, and `as_of_ms` is at or after
+# the open. It lives in tools/tos_cp3/live_producer/band_line.py, so the
+# producer and this check cannot disagree about it, and the session OPEN comes
+# from the producer config's own calendar — not from a literal here (③ plan
+# §3.5: the runner must not become a second source of truth for the window).
+#
+# ⚠ **Absence does NOT abort** (§3.1). The session continues and says so
+# loudly: price collection and the B3 cross-check are still worth having, and
+# band absence is the conservative direction. That session is recorded as a
+# FAILURE of band plan §4 acceptance 1 — by this log line, which is the
+# evidence for it.
+#
+# In the background with `wait`, for the same reason as 8b: bash runs a trap
+# only BETWEEN commands, so a foreground `$(…)` would defer a TERM for the
+# whole allowance.
+BAND_JOURNAL=$TENANT_PRODUCER_SESSION_DIR/band.jsonl
+BAND_WAIT_LOG=$TENANT_PRODUCER_SESSION_DIR/band-line-wait.log
+BAND_PRESENT=0
+
+band_line_wait() {
+  "$PY" - "$BAND_JOURNAL" "$TENANT_PRODUCER_CONFIG" "$INSTRUMENT" \
+    "$BAND_LINE_EXTRA_WAIT_S" "$PRODUCER_PID" "$REPO" >"$BAND_WAIT_LOG" 2>&1 <<'PY' &
+import os
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from tools.tos_cp3.live_producer.band_line import (
+    read_last_band_line,
+    reject_reason,
+    session_open_ms,
+)
+
+band, config, instrument, timeout_s, producer_pid, repo = (
+    Path(sys.argv[1]),
+    Path(sys.argv[2]),
+    sys.argv[3],
+    float(sys.argv[4]),
+    int(sys.argv[5]),
+    Path(sys.argv[6]),
+)
+
+
+def alive(pid: int) -> bool:
+    """Is the supervising `timeout` still there? (same question as step 8b)
+
+    A producer that has exited can never write the band line, so waiting out
+    the allowance would only delay the BAND ABSENT the session already has.
+    """
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+# TODAY in KST, and the open from the producer's own settings — the runner
+# reads no calendar of its own (plan §3.5).
+day = datetime.now(ZoneInfo("Asia/Seoul")).date()
+open_ms, trading_date = session_open_ms(config, repo_root=repo, day=day)
+deadline = time.monotonic() + timeout_s
+why = "no band line has been written yet"
+while True:
+    line = read_last_band_line(band)
+    if line is not None:
+        reason = reject_reason(
+            line, instrument=instrument, trading_date=trading_date, open_ms=open_ms
+        )
+        if reason is None:
+            print(
+                f"band line ok · trading_date={trading_date} "
+                f"instrument={instrument} as_of_ms={line['as_of_ms']} "
+                f"(open {open_ms}) digest={line['raw_payload_digest']}"
+            )
+            break
+        why = f"the last line is not usable: {reason}"
+    if not alive(producer_pid):
+        raise SystemExit(
+            f"the producer (pid {producer_pid}) is gone and {band} holds no "
+            f"usable band line — {why}"
+        )
+    if time.monotonic() >= deadline:
+        raise SystemExit(
+            f"no usable band line in {band} within {timeout_s:.0f}s — {why}"
+        )
+    time.sleep(1.0)
+PY
+  WAIT_PID=$!
+  log "band-line wait: pid=$WAIT_PID (bound ${BAND_LINE_EXTRA_WAIT_S}s, log $BAND_WAIT_LOG)"
+  if wait "$WAIT_PID"; then
+    BAND_PRESENT=1
+  fi
+  WAIT_PID=""
+  while IFS= read -r line; do log "  $line"; done <"$BAND_WAIT_LOG"
+  if [ "$BAND_PRESENT" -eq 1 ]; then
+    log "band line present before the boot (band plan §4 수용 1)"
+  else
+    log "⛔⛔ BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)"
+    log "⛔⛔ BAND ABSENT — band plan §4 수용 1 fails for this session; the"
+    log "⛔⛔ BAND ABSENT — runtime boots anyway (price collection + B3 still"
+    log "⛔⛔ BAND ABSENT — stand) and every venue decision is UNKNOWN."
+  fi
+}
+
+band_line_wait
 
 # --- 9. the data-dir refusal (plan §2.5, as corrected by review) -----------
 #
