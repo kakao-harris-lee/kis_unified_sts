@@ -652,18 +652,27 @@ first_row_wait "$FIRST_LINE_TIMEOUT_S" "first-row wait"
 #
 # ⚠ **Not before `open + one boundary`.** The band GET belongs at the first
 # boundary after the open (§3.1): earlier is when the broker is most likely to
-# hand out yesterday's band, and the runtime uses this line all day. Step 8b
-# can return well before the open — it returns on ANY approved row, and a
-# pre-open response carrying today-stamped rows produces one — so the wait
-# below is what keeps the launch honest. Capped by STOP_S: never past the
-# window the operator set.
+# hand out yesterday's band, and the runtime uses this line all day.
+#
+# Why the wait is HERE rather than inherited from step 8b: 8b's predicate is
+# "an approved producer row exists", which says nothing about the open. What
+# would keep it after the open is the producer's own publication floor
+# (`first_boundary = max(open + 60s, now)` in producer.py) — a property of a
+# DIFFERENT program, and the band's one chance at a correct read is not
+# something to hang on a line in another file that no test here pins. So this
+# template computes the launch time itself, from the producer config's
+# calendar. Capped by STOP_S: never past the window the operator set.
 #
 # Exit codes are the whole interface to that program:
 #   0 -> a line was written
-#   2 -> a refusal before any GET (existing journal, pre-open, config)
+#   2 -> a refusal before any GET: existing journal, pre-open, config or
+#        credential refusal (every `LiveProducerRefused`)
 #   3 -> a soft failure: the GET ran, no usable line
-#   1 -> the allowlist gate refused, or an unexpected exception. A DEFECT in
-#        this repo, so it is a hard ABORT before the runtime boots.
+#   1 -> the allowlist gate refused, or an unexpected exception — including a
+#        failed CALENDAR read, which cannot be a "refusal" here because the
+#        launch-time computation below already read that same calendar
+#        successfully. A DEFECT in this repo, so it is a hard ABORT before the
+#        runtime boots.
 BAND_JOURNAL=$TENANT_PRODUCER_SESSION_DIR/band.jsonl
 BAND_WAIT_LOG=$TENANT_PRODUCER_SESSION_DIR/band-line-wait.log
 BAND_PRESENT=0
