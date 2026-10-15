@@ -40,6 +40,7 @@ from tools.broker_probes.common import (  # noqa: E402
     resolve_credentials,
     secret_fingerprint,
 )
+from tools.tos_cp3.live_producer import band as band_mod  # noqa: E402
 from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
     RuntimeCalendar,
     SessionWindow,
@@ -137,6 +138,9 @@ class LiveProducer:
     manifest: StitchManifest = field(init=False)
     quotes: Any = field(init=False)
     journal: ObservationJournal = field(init=False)
+    #: The band capture. ``None`` until :meth:`boot` wires it — ``finish()``
+    #: runs after a boot refusal too.
+    band: Any = field(init=False, default=None)
     log: EventLog = field(init=False)
     lock: Any = field(init=False, default=None)
     #: ``"<contract>:<day>" -> sha256`` of the raw response the day was parsed
@@ -188,6 +192,10 @@ class LiveProducer:
             self.market_root, asset_class=ASSET_CLASS, symbol=self.instrument
         )
         refuse_if_journal_exists(self.journal_path)
+        # And the BAND journal, same refusal, same reason (band plan §3.2,
+        # review MEDIUM-1): a session dir reused across a roll keeps the
+        # previous contract's band line, which is this path's one fail-open.
+        refuse_if_journal_exists(self.band_journal_path)
 
         self.calendar = load_runtime_calendar(
             self.config.calendar_yaml,
@@ -216,6 +224,22 @@ class LiveProducer:
             self.journal_path, clock=lambda: int(self.clock.now().timestamp() * 1000)
         )
         self.quotes = self.quotes_factory(self.config, self.log)
+        self.band = band_mod.build_capture(
+            quotes=self.quotes,
+            log=self.log,
+            session_dir=self.session_dir,
+            instrument=self.instrument,
+            target=self.target,
+            session_start=self._session_start(),
+            reread_minutes=self.config.band_reread_minutes,
+            request_timeout_s=self.config.request_timeout_s,
+            retry_pause_s=self.config.retry_pause_s,
+            first_poll_delay_s=self.config.first_poll_delay_s,
+            next_boundary=self._first_boundary,
+            clock_ms=lambda: int(self.clock.now().timestamp() * 1000),
+            now=self._now_naive,
+            sleep=self.clock.sleep,
+        )
 
         self.assembler = StitchedSeed(
             instrument=self.instrument,
@@ -298,6 +322,11 @@ class LiveProducer:
     @property
     def market_root(self) -> Path:
         return self.session_dir / "market"
+
+    @property
+    def band_journal_path(self) -> Path:
+        """The band journal — a DEPLOYMENT path from the session dir (§3.2)."""
+        return band_mod.band_journal_path(self.session_dir)
 
     def _assert_one_anchor(self) -> None:
         """One anchor for the whole frame, or refuse.
@@ -790,6 +819,10 @@ class LiveProducer:
                 "stamp_to_replace_s": result.stamp_to_replace_s,
             }
         )
+        # At most one band read, on the day's FIRST price line (band plan
+        # §3.1). Every rule about it — never pre-open, never past the next
+        # boundary minus δ — lives in :mod:`…live_producer.band`.
+        self.band.after_price_line()
 
     # -- clock helpers ---------------------------------------------------
 
@@ -831,6 +864,8 @@ class LiveProducer:
             "source_id": SOURCE_ID,
             "frozen_bars_today": len(self.frozen),
             "counters": self.counters.as_dict(),
+            # Counted apart: a band failure is not a feed failure (§3.1).
+            "band": self.band.report() if self.band is not None else None,
             "market_sha256": digest,
             # What B1a and B2 must be given to reproduce this session's frame.
             "stitch_manifest_sha256": manifest.sha256 if manifest else None,

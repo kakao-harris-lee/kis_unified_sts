@@ -20,7 +20,9 @@ Firewall: legacy side (``tools/``). No ``tos`` / ``tos_runtime`` import.
 
 from __future__ import annotations
 
+import hashlib
 import time
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -67,6 +69,24 @@ ALLOWLIST = (
     ReadOnlyCall(TR, QUOTE_PATH, "CP3 minute quotation"),
     ReadOnlyCall(BAND_TR, BAND_PATH, "CP3 venue band (상한가·하한가·기준가)"),
 )
+
+#: The log stage one band attempt writes. Named so the post-session check
+#: (runbook §7.2-d) and :mod:`~tools.tos_cp3.live_producer.band` agree on the
+#: string without either of them spelling it twice.
+BAND_FETCH_STAGE = "band_fetch"
+
+
+@dataclass(frozen=True)
+class BandRead:
+    """One band response: the parsed body and the digest of its RAW bytes."""
+
+    payload: dict[str, Any]
+    #: sha256 of ``response.content``, taken BEFORE ``.json()`` (band plan
+    #: §3.1). The band line binds the runtime's evidence row to the bytes the
+    #: broker actually sent, and a digest of a re-serialised parse would be a
+    #: digest of this process's json writer instead.
+    raw_payload_digest: str
+
 
 #: ``FID_HOUR_CLS_CODE`` default. Mirrors
 #: ``shared/collector/historical/backfill.py::fetch_minute_async``'s own
@@ -215,6 +235,86 @@ class Quotes:
                 )
             time.sleep(self.cfg["retry_pause_s"])
         raise RuntimeError(error)
+
+    def band(self, symbol: str) -> BandRead:
+        """ONE paced, allowlisted GET of the venue band. No retry loop here.
+
+        Three ways this differs from :meth:`page`, each one a requirement of
+        the band plan §3.1:
+
+        * **the raw bytes are hashed before ``.json()``.** The band line binds
+          ``raw_payload_digest`` to what the broker actually sent; ``page()``
+          does not keep the bytes at all.
+        * **the attempt logs its OWN ``tr_id``.** ``page()`` writes the module
+          constant :data:`TR`, so a band call recorded through it would be
+          invisible to the post-session check "every TR in
+          ``producer-log.jsonl`` is one of the two, all GET" (§3.5, review
+          LOW-2) — the check would pass while never having seen this call.
+        * **one attempt, no retry.** The band's retry budget is TIME (every
+          attempt must end before the next boundary minus δ, so the price poll
+          is not pushed), not a count, so the loop lives in
+          :mod:`~tools.tos_cp3.live_producer.band` where the clock is injected.
+
+        The attempt record is written in a ``finally``, so a token failure, a
+        transport error and a refusal all leave the same one line naming the
+        method, the TR and the path.
+
+        Raises:
+            RuntimeError: on any transport/OAuth/JSON failure or ``rt_cd != 0``.
+                The caller writes no band line and logs ``band_fetch_failed``.
+        """
+        url = REAL_BASE_URL + BAND_PATH
+        assert_read_only_call("GET", url, BAND_TR, ALLOWLIST)
+        params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": symbol}
+        time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
+        record: dict[str, Any] = {
+            "stage": BAND_FETCH_STAGE,
+            "started_kst": datetime.now(KST),
+            "method": "GET",
+            "tr_id": BAND_TR,
+            "path": BAND_PATH,
+            "params": params,
+        }
+        try:
+            # OAuth may raise ValueError or requests errors; both are failures
+            # of this attempt and neither is ever persisted as text.
+            token = self.auth.get_token()
+            headers = {
+                "authorization": "Bearer " + token,
+                "appkey": self.creds.app_key,
+                "appsecret": self.creds.app_secret,
+                "tr_id": BAND_TR,
+                "content-type": "application/json",
+            }
+            self.last = time.monotonic()
+            self.calls += 1
+            response = self.http.get(url, headers=headers, params=params)
+            raw = response.content
+            digest = hashlib.sha256(raw).hexdigest()
+            record["http_status"] = response.status_code
+            record["raw_payload_digest"] = digest
+            record["raw_payload_bytes"] = len(raw)
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("band response is not a mapping")
+            record["rt_cd"] = payload.get("rt_cd")
+            # Message CLASS only, like page(): msg1 is human text.
+            record["msg_cd"] = payload.get("msg_cd")
+            if is_token_expired_error(payload):
+                # This manager owns only the app-key scoped private cache. The
+                # next attempt of the bounded loop re-issues.
+                self.auth.invalidate()
+            # KIS can report expiry with a non-2xx status, so the check above
+            # comes first — same ordering reason as page().
+            response.raise_for_status()
+            if str(payload.get("rt_cd")) != "0":
+                raise ValueError("band response carries rt_cd != 0")
+        except (httpx.HTTPError, requests.RequestException, ValueError) as exc:
+            record["error"] = "band_auth_http_or_json_error"
+            raise RuntimeError(record["error"]) from exc
+        finally:
+            self.recorder.event(record)
+        return BandRead(payload=payload, raw_payload_digest=digest)
 
     def history(self, symbol: str, day: date) -> list[dict]:
         result, seen, cursor = [], set(), ""

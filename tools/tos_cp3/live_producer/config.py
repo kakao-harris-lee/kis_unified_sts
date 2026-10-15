@@ -59,6 +59,14 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
 #: Keys read as a list of ints rather than a scalar.
 _REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
 
+#: Keys that may be an int or ``null``, and whose default is ``null``. The
+#: no-default rule above is about values that CHANGE what the producer does;
+#: ``band_reread_minutes`` null is "do the one read §3.1 allows and nothing
+#: more", which is the whole behaviour of every session before this key
+#: existed. Still refused if present and not a positive int: a 0 would be a
+#: re-read every boundary, which is a rate-limit question nobody answered.
+_OPTIONAL_POSITIVE_INTS: tuple[str, ...] = ("band_reread_minutes",)
+
 
 @dataclass(frozen=True)
 class LiveProducerConfig:
@@ -115,6 +123,15 @@ class LiveProducerConfig:
     #: Years the tenant calendar is declared to cover. Not inferred from its
     #: holiday dates (review L4) and cross-checked against the file at load.
     calendar_covered_years: tuple[int, ...]
+    #: Band re-read cadence in minutes, or ``None`` for "read once". ⚠
+    #: **MEASUREMENT ONLY** (band plan §3.1, review HIGH-2): the runtime reads
+    #: the band at ``boot`` and ``phase_change`` only, and the tenant calendar
+    #: declares a single ``CONTINUOUS 08:45-15:45`` phase, so a line appended
+    #: intraday cannot reach a decision before the close. Its only use is
+    #: leaving evidence of an intraday widening in ``band.jsonl``. Reflecting
+    #: an intraday widening in a DECISION needs a new runtime read trigger plus
+    #: its own red proof, and that is outside the band plan (§L L4).
+    band_reread_minutes: int | None
     #: The two parser env values the producer PINS (plan §3.3 L9). Bar size and
     #: the drop rule must not change quietly with the environment.
     parser_env: tuple[tuple[str, str], ...]
@@ -138,6 +155,30 @@ def _resolve(repo_root: Path, value: str) -> Path:
     return candidate if candidate.is_absolute() else repo_root / candidate
 
 
+def _optional_positive_ints(path: Path, data: Mapping[str, Any]) -> dict[str, Any]:
+    """Read every :data:`_OPTIONAL_POSITIVE_INTS` key: a positive int, or None.
+
+    Absent and explicit ``null`` mean the same thing — the documented default.
+    A present value that is not a positive int is a REFUSAL rather than a
+    coerced one: ``band_reread_minutes: 0`` reads as "re-read every boundary",
+    which is a rate-limit decision nobody made, and ``true`` is an int in
+    Python and would mean "every minute".
+    """
+    resolved: dict[str, Any] = {}
+    for name in _OPTIONAL_POSITIVE_INTS:
+        entry = data.get(name)
+        if entry is None:
+            resolved[name] = None
+            continue
+        if isinstance(entry, bool) or not isinstance(entry, int) or entry < 1:
+            raise LiveProducerRefused(
+                f"{path}: {name}={entry!r} must be a positive integer or null "
+                "(null = read once, band plan §3.1)"
+            )
+        resolved[name] = entry
+    return resolved
+
+
 def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
     """Read and validate the producer's YAML, or refuse."""
     raw_bytes = path.read_bytes()
@@ -145,7 +186,8 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
     if not isinstance(data, dict):
         raise LiveProducerRefused(f"{path}: not a YAML mapping")
 
-    known = {name for name, _ in _REQUIRED} | set(_REQUIRED_INT_LISTS) | {"parser_env"}
+    known = {name for name, _ in _REQUIRED} | set(_REQUIRED_INT_LISTS)
+    known |= set(_OPTIONAL_POSITIVE_INTS) | {"parser_env"}
     unknown = sorted(set(data) - known)
     if unknown:
         raise LiveProducerRefused(
@@ -179,6 +221,7 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
                 f"{path}: {name}={entries!r} is not a list of ints"
             ) from exc
 
+    values.update(_optional_positive_ints(path, data))
     parser_env = data.get("parser_env")
     if not isinstance(parser_env, dict) or not parser_env:
         raise LiveProducerRefused(f"{path}: parser_env must be a non-empty mapping")

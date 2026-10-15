@@ -14,6 +14,7 @@ companion ``test_red_*`` next to it.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import sys
@@ -29,6 +30,9 @@ import pytest
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
+from tools.tos_cp3 import quote_client
+from tools.tos_cp3.live_producer import band as band_mod
+from tools.tos_cp3.live_producer import band_line as band_line_mod
 from tools.tos_cp3.live_producer import calendar as calendar_mod
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import frame as frame_mod
@@ -248,6 +252,35 @@ class FakeClock:
         self.moment += timedelta(seconds=max(0.0, seconds))
 
 
+#: The band response the fake serves. The three values are P-VL's 2026-10-08
+#: MOCK measurement of ``A05611`` (upper 1162.72 / lower 990.48 — the pair that
+#: landed on the MINI 0.02 tick grid) with a basis between them. Strings,
+#: because the broker sends strings and the producer copies them verbatim.
+BAND_UPPER, BAND_LOWER, BAND_BASIS = "1162.72", "990.48", "1076.60"
+
+
+def _band_payload(
+    *, upper: str = BAND_UPPER, lower: str = BAND_LOWER, basis: str = BAND_BASIS
+) -> dict:
+    """A ``FHMIF10000000`` body, shaped like the one the broker sends.
+
+    ``output1`` is the member, measured twice: the official wrapper returns
+    ``output1``/``output2``/``output3`` for this TR and P-VL reads its five L1
+    price fields out of ``output1``.
+    """
+    return {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "output1": {
+            "futs_prpr": "1076.60",
+            "futs_prdy_clpr": "1076.60",
+            "futs_sdpr": basis,
+            "futs_mxpr": upper,
+            "futs_llam": lower,
+        },
+    }
+
+
 class FakeQuotes:
     """The fixture server. GET-only by construction: it has no other method."""
 
@@ -261,6 +294,21 @@ class FakeQuotes:
         #: ``minute -> seconds past its own boundary before the row appears``.
         #: Anything over G makes that boundary miss its bar (review M1).
         self.hold_until: dict[datetime, float] = {}
+        # -- band (band plan §3.1). Deliberately on their OWN counters and
+        # their own failure switch: a band read must not consume the price
+        # path's `fail_next`, spend its pace or move `calls`, or every
+        # pre-existing timing assertion in this file would be measuring the
+        # band instead of what it was written for.
+        self.band_calls = 0
+        self.band_fail_next = 0
+        #: Seconds of fake clock one band attempt costs. 0 by default, so the
+        #: band is invisible to every test that is not about it.
+        self.band_cost_s = 0.0
+        self.band_payload: dict | None = None
+        #: The clock at each band attempt, and at each price page — the two
+        #: sequences the "band does not push the next poll" proof compares.
+        self.band_started: list[datetime] = []
+        self.poll_started: list[datetime] = []
 
     def _arrival(self, minute: datetime) -> datetime:
         return minute + timedelta(seconds=self.hold_until.get(minute, ARRIVAL_LAG_S))
@@ -290,8 +338,25 @@ class FakeQuotes:
             raise RuntimeError("auth_http_or_json_error")
 
     def page(self, symbol: str, day: date, cursor: str = "") -> list[dict]:
+        self.poll_started.append(self.clock.now())
         self._receive()
         return self._visible(day)[-self.page_size :]
+
+    def band(self, symbol: str) -> quote_client.BandRead:
+        """One band attempt. Same contract as ``Quotes.band``: raise or return."""
+        self.band_calls += 1
+        self.band_started.append(self.clock.now())
+        self.clock.sleep(self.band_cost_s)
+        if self.band_fail_next:
+            self.band_fail_next -= 1
+            raise RuntimeError("band_auth_http_or_json_error")
+        payload = (
+            self.band_payload if self.band_payload is not None else _band_payload()
+        )
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return quote_client.BandRead(
+            payload=payload, raw_payload_digest=hashlib.sha256(raw).hexdigest()
+        )
 
     def history(self, symbol: str, day: date) -> list[dict]:
         self.history_calls += 1
@@ -1305,6 +1370,15 @@ ORDER_EMITTING_MODULES = (
     "shared.execution.pseudo_oco",
     "shared.execution.mock_mirror",
     "tools.broker_probes.probes_real_order",
+    # Band plan §L L5 (review SUGGESTION), decided in PR-A: pinned. It emits
+    # MOCK orders, which is not the real-money path `probes_real_order` is, but
+    # it is still an order path and the producer must not reach it. Measured
+    # free: the closure reaches `tools.broker_probes` (the package `__init__`,
+    # which imports nothing) and `tools.broker_probes.common` only, so this
+    # entry costs nothing today and turns a future `from .probes_order import
+    # DEFAULT_PACE_S` convenience red — which is exactly the edge
+    # `probes_balance`/`probes_ca` each declined by hand, in prose, twice.
+    "tools.broker_probes.probes_order",
     "tos",
     "tos_runtime",
 )
@@ -2123,6 +2197,704 @@ def test_item5_the_dry_run_touches_nothing(
     assert printed["method"] == "GET"
     assert printed["source_id"] == line_mod.SOURCE_ID
     assert not (tmp_path / "session").exists()
+
+
+# ===========================================================================
+# PR-A — the venue band (band plan 2026-10-15 §3.1-§3.2, §5 1)
+#
+# Hermetic like everything above: the band transport is the same fixture
+# server, and the two transport-level tests build a ``Quotes`` with
+# ``object.__new__`` so no auth manager, no credential and no socket exist at
+# all. No KIS call is made anywhere in this file.
+# ===========================================================================
+
+
+def _log_events(producer: Any) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in (producer.session_dir / "producer-log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+
+
+def _stage(producer: Any, stage: str) -> list[dict]:
+    return [event for event in _log_events(producer) if event.get("stage") == stage]
+
+
+class _NoSocket:
+    """An httpx stand-in whose use is the failure. Counts, never raises first."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def get(self, *_args: Any, **_kwargs: Any) -> Any:
+        self.calls += 1
+        raise AssertionError("a socket was opened for a call the gate must refuse")
+
+
+class _Response:
+    """Just enough of ``httpx.Response``: raw bytes, a parse and a status."""
+
+    def __init__(self, content: bytes, status: int = 200) -> None:
+        self.content, self.status_code = content, status
+
+    def json(self) -> Any:
+        return json.loads(self.content.decode("utf-8"))
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _Http:
+    def __init__(self, response: Any) -> None:
+        self.response, self.seen = response, []
+
+    def get(self, url: str, headers: Any = None, params: Any = None) -> Any:
+        self.seen.append((url, headers, params))
+        return self.response
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def event(self, value: dict) -> None:
+        self.events.append(dict(value))
+
+
+def _bare_quotes(recorder: Any, http: Any) -> Any:
+    """A ``Quotes`` with no auth manager and no credential behind it.
+
+    ``object.__new__`` on purpose: ``__init__`` builds a ``KISAuthManager``,
+    and nothing in this file may read a secret or resolve a token.
+    """
+    quotes = object.__new__(quote_client.Quotes)
+    quotes.cfg = {
+        "pace_s": 0.0,
+        "request_timeout_s": 1.0,
+        "attempts": 1,
+        "retry_pause_s": 0.0,
+        "max_pages": 1,
+    }
+    quotes.last = 0.0
+    quotes.calls = 0
+    quotes.recorder = recorder
+    quotes.http = http
+    quotes.creds = SimpleNamespace(app_key="key", app_secret="secret")
+    quotes.auth = SimpleNamespace(get_token=lambda: "token", invalidate=lambda: None)
+    return quotes
+
+
+def test_band_the_allowlist_is_two_paired_get_entries() -> None:
+    """One pair added, nothing else changed, and the PAIRING is what matters."""
+    assert len(quote_client.ALLOWLIST) == 2
+    assert {entry.tr_id for entry in quote_client.ALLOWLIST} == {
+        quote_client.TR,
+        quote_client.BAND_TR,
+    }
+    by_tr = {entry.tr_id: entry.path for entry in quote_client.ALLOWLIST}
+    assert by_tr[quote_client.BAND_TR] == quote_client.BAND_PATH
+    assert by_tr[quote_client.TR] == quote_client.QUOTE_PATH
+    # The two paths are DIFFERENT endpoints: a reader who assumes the band
+    # rides the minute path would be wrong, and so would a swapped pair.
+    assert quote_client.BAND_PATH != quote_client.QUOTE_PATH
+    source = (_REPO_ROOT / "tools/tos_cp3/quote_client.py").read_text("utf-8")
+    assert ".post(" not in source and '"POST"' not in source
+
+
+def test_band_tr_and_path_are_pvls_pair_defined_locally() -> None:
+    """Same two literals as P-VL measured, and P-VL is NOT imported (§3.1).
+
+    P-VL is sealed to the MOCK host (``assert_mock_host``); importing its
+    constants would pull that seal into a REAL-token transport. So the pair is
+    local and this test is the thing that keeps the two copies equal.
+    """
+    from tools.broker_probes import probes_venue_limits as pvl
+
+    assert quote_client.BAND_TR == pvl._PRICE_TR
+    assert quote_client.BAND_PATH == pvl._PRICE_PATH
+    closure = _import_closure("tools.tos_cp3.quote_client")
+    assert "tools.broker_probes.probes_venue_limits" not in closure
+
+
+@pytest.mark.parametrize(
+    "method,path,tr",
+    [
+        # the band pair, as a POST
+        ("POST", quote_client.BAND_PATH, quote_client.BAND_TR),
+        # the band TR aimed at an ORDER path
+        ("GET", "/uapi/domestic-futureoption/v1/trading/order", quote_client.BAND_TR),
+        # an order TR aimed at the band path
+        ("GET", quote_client.BAND_PATH, "TTTO1101U"),
+        # both allowlisted, but CROSSED: the minute TR on the band's path
+        ("GET", quote_client.BAND_PATH, quote_client.TR),
+        # ...and the band TR on the minute path
+        ("GET", quote_client.QUOTE_PATH, quote_client.BAND_TR),
+    ],
+)
+def test_band_an_off_allowlist_call_is_refused(method: str, path: str, tr: str) -> None:
+    from tools.broker_probes.common import SafetyViolation, assert_read_only_call
+
+    with pytest.raises(SafetyViolation):
+        assert_read_only_call(
+            method, quote_client.REAL_BASE_URL + path, tr, quote_client.ALLOWLIST
+        )
+
+
+def test_red_a_refused_band_call_opens_no_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate runs BEFORE the transport, not around its result.
+
+    The concrete input: an allowlist that does not carry the band pair — which
+    is the state of this file before PR-A, and the state it would return to if
+    the entry were removed. Moving ``assert_read_only_call`` below the
+    ``http.get`` leaves ``_NoSocket.calls == 1`` and this test red.
+    """
+    http = _NoSocket()
+    quotes = _bare_quotes(_Recorder(), http)
+    monkeypatch.setattr(quote_client, "ALLOWLIST", (quote_client.ALLOWLIST[0],))
+    from tools.broker_probes.common import SafetyViolation
+
+    with pytest.raises(SafetyViolation):
+        quotes.band(INSTRUMENT)
+    assert http.calls == 0
+
+
+def test_band_logs_its_own_tr_id_and_hashes_the_raw_bytes() -> None:
+    """Review LOW-2: a band attempt that logged ``TR`` would be INVISIBLE.
+
+    The post-session check is "every TR in ``producer-log.jsonl`` is one of the
+    two, all GET" (§3.5). A band call recorded under the minute TR passes that
+    check while never having been seen by it — so the attempt record carries
+    this call's own ``tr_id``, and the two must differ.
+    """
+    # Deliberately not minified: a digest of ``json.dumps(parsed)`` would not
+    # equal a digest of THESE bytes, which is what makes the assertion below
+    # able to tell the two apart.
+    raw = json.dumps(_band_payload(), indent=2).encode("utf-8")
+    recorder = _Recorder()
+    http = _Http(_Response(raw))
+    read = _bare_quotes(recorder, http).band(INSTRUMENT)
+
+    assert read.raw_payload_digest == hashlib.sha256(raw).hexdigest()
+    reserialised = json.dumps(read.payload, separators=(",", ":")).encode("utf-8")
+    assert read.raw_payload_digest != hashlib.sha256(reserialised).hexdigest()
+
+    (event,) = recorder.events
+    assert event["stage"] == quote_client.BAND_FETCH_STAGE
+    assert event["method"] == "GET"
+    assert event["tr_id"] == quote_client.BAND_TR != quote_client.TR
+    assert event["path"] == quote_client.BAND_PATH
+    assert event["raw_payload_digest"] == read.raw_payload_digest
+    assert event["rt_cd"] == "0"
+    # The request really carried that TR as well, not only the log line.
+    _url, headers, params = http.seen[0]
+    assert headers["tr_id"] == quote_client.BAND_TR
+    assert params == {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": INSTRUMENT}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"rt_cd": "1", "msg_cd": "EGW00123", "output1": {}},
+        {"rt_cd": "0", "output1": {"futs_mxpr": "1162.72"}},  # two fields missing
+        {"rt_cd": "0"},  # no output1 at all
+    ],
+)
+def test_band_a_refusal_or_a_short_body_is_a_failure_that_still_logs(
+    payload: dict,
+) -> None:
+    """``rt_cd != 0`` and an absent field are both band FAILURES (§3.1).
+
+    Shaped as two halves because they fail in two places: the transport raises
+    on ``rt_cd``, and ``band_values_from_payload`` raises on the fields. Either
+    way the attempt is logged with its own TR and no value is substituted.
+    """
+    recorder = _Recorder()
+    raw = json.dumps(payload).encode("utf-8")
+    quotes = _bare_quotes(recorder, _Http(_Response(raw)))
+    try:
+        read = quotes.band(INSTRUMENT)
+    except RuntimeError:
+        pass
+    else:
+        with pytest.raises(band_line_mod.BandLineError):
+            band_line_mod.band_values_from_payload(read.payload)
+    (event,) = recorder.events
+    assert event["tr_id"] == quote_client.BAND_TR
+    assert event["path"] == quote_client.BAND_PATH
+
+
+def test_red_the_band_is_never_read_before_the_open(
+    tmp_path: Path, market: Market
+) -> None:
+    """⛔ No GET before the open, with the input that would make one.
+
+    The concrete input: a clock before 08:45 and a price line already written —
+    the shape of a boot before the open whose first response carries
+    today-stamped pre-open rows, where ``_boot_today`` publishes the newest
+    already-complete bar and would carry the band read with it. Pre-open is
+    exactly where band plan §4.4a's residual risk (the broker hands out
+    yesterday's band) is largest, and the band is used ALL DAY.
+
+    Deleting the ``now < session_start`` clause in ``band._trigger`` makes the
+    first assertion below find a band call.
+    """
+    producer, clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    assert quotes.band_calls == 0
+
+    clock.moment = clock.moment.replace(hour=8, minute=40, second=0)
+    producer.band.after_price_line()
+    assert quotes.band_calls == 0
+    assert not producer.band_journal_path.exists()
+    (skipped,) = _stage(producer, band_mod.STAGE_BAND_BEFORE_OPEN)
+    assert skipped["session_start"].endswith("08:45:00")
+
+    # One second past the first boundary after the open: now it reads, once.
+    clock.moment = clock.moment.replace(hour=8, minute=46, second=2)
+    producer.band.after_price_line()
+    assert quotes.band_calls == 1
+    producer.band.after_price_line()
+    assert quotes.band_calls == 1, "the band is read ONCE (§3.1), not per line"
+
+
+@pytest.mark.serial
+def test_band_writes_one_line_in_the_plans_schema(
+    tmp_path: Path, market: Market
+) -> None:
+    """§3.2's line, key for key, with the three values copied as strings."""
+    producer, _clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    producer.run_session()
+    summary = producer.finish()
+
+    (line,) = _journal_rows(producer.band_journal_path)
+    assert list(line) == list(band_line_mod.BAND_KEY_ORDER)
+    assert line["kind"] == "cp3-band/1"
+    assert line["source_id"] == line_mod.SOURCE_ID
+    assert line["instrument"] == INSTRUMENT
+    assert line["trading_date"] == TARGET.strftime("%Y%m%d")
+    assert line["tr_id"] == quote_client.BAND_TR
+    # Strings, exactly as they arrived: no scale conversion, no grid check, no
+    # ordering check here — those stay in the runtime's one validation set
+    # (band plan §4.2).
+    assert (line["upper"], line["lower"], line["basis"]) == (
+        BAND_UPPER,
+        BAND_LOWER,
+        BAND_BASIS,
+    )
+    assert all(isinstance(line[key], str) for key in ("upper", "lower", "basis"))
+
+    (published,) = _stage(producer, band_mod.STAGE_BAND_PUBLISHED)
+    assert published["raw_payload_digest"] == line["raw_payload_digest"]
+    assert line["producer_continuity_id"] == summary["band"]["producer_continuity_id"]
+    assert summary["band"]["lines"] == 1 and summary["band"]["failures"] == 0
+
+    # At or after the open, and from the FIRST boundary after it.
+    opened = datetime(
+        TARGET.year, TARGET.month, TARGET.day, 8, 45, tzinfo=producer_mod.KST
+    )
+    assert line["as_of_ms"] >= int(opened.timestamp() * 1000)
+    assert quotes.band_calls == 1
+    assert quotes.band_started[0].replace(tzinfo=None) < datetime(
+        TARGET.year, TARGET.month, TARGET.day, 8, 47
+    )
+    # No temp file is left beside it: the band journal is the price journal's
+    # writer, so it is replaced whole, atomically (§3.2).
+    assert not list(producer.session_dir.glob(".band.jsonl.*"))
+
+
+@pytest.mark.serial
+def test_red_a_failed_band_get_writes_no_line_and_is_not_a_feed_failure(
+    tmp_path: Path, market: Market
+) -> None:
+    """Band failure: no line, ``band_fetch_failed``, and the price feed is fine.
+
+    Two clauses in one input, because one input is what they share (§3.1):
+    the band GET fails all session and (a) no band line exists — nothing is
+    substituted — and (b) the failure is NOT counted toward
+    ``max_consecutive_fetch_error_minutes``, which is the minute-bar polling
+    give-up. Counting it there would stop a producer whose price feed is
+    perfect, and that give-up ends the whole market day.
+    """
+    producer, _clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    quotes.band_fail_next = 999
+    producer.run_session()
+    summary = producer.finish()
+
+    assert not producer.band_journal_path.exists()
+    assert quotes.band_calls >= 1
+    failures = _stage(producer, band_mod.STAGE_BAND_FETCH_FAILED)
+    assert failures and all(
+        entry["tr_id"] == quote_client.BAND_TR for entry in failures
+    )
+    assert all(entry["counts_toward_fetch_give_up"] is False for entry in failures)
+
+    assert producer.counters.fetch_error == 0
+    assert producer.consecutive_fetch_error_minutes == 0
+    assert summary["band"]["lines"] == 0 and summary["band"]["failures"] >= 1
+    assert summary["counters"]["published"] > 1
+
+
+def test_red_a_leftover_band_journal_refuses_boot(
+    tmp_path: Path, market: Market
+) -> None:
+    """A session directory is used once — the band file too (§3.2, MEDIUM-1).
+
+    The concrete input: a roll day where the runner reuses the session
+    directory. ``refuse_if_partitions_exist`` does not see it (a band line is
+    not a partition) and the runner only ``mkdir -p``s, so without this
+    refusal yesterday's band — or another contract's — is the band this
+    session believes all day. That is the one fail-open on this path.
+    """
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.band_journal_path.write_text(
+        json.dumps({"kind": "cp3-band/1", "instrument": "A05610"}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(LiveProducerRefused) as refusal:
+        producer.boot()
+    assert band_line_mod.BAND_JOURNAL_NAME in str(refusal.value)
+
+
+class _NoBand:
+    """A band capture that does nothing — the "without the band" baseline."""
+
+    def after_price_line(self) -> None:
+        return None
+
+    def report(self) -> None:
+        return None
+
+
+def _run_session(
+    where: Path, market: Market, *, band_cost_s: float = 0.0, **overrides: Any
+) -> Any:
+    where.mkdir(parents=True, exist_ok=True)
+    producer, _clock, quotes = _build(where, market, **overrides)
+    quotes.band_cost_s = band_cost_s
+    producer.boot()
+    producer.run_session()
+    producer.finish()
+    return producer, quotes
+
+
+@pytest.mark.serial
+def test_red_the_price_journal_is_byte_identical_with_and_without_the_band(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three sessions, one price journal: the band changes no price byte.
+
+    The third session's band costs five seconds of clock per attempt, so this
+    is not the vacuous "nothing moved" version of the claim — the band really
+    spends time inside the minute and the price lines are still identical,
+    because every wait in the loop is to an ABSOLUTE instant.
+    """
+    with monkeypatch.context() as patched:
+        patched.setattr(band_mod, "build_capture", lambda **_kw: _NoBand())
+        without, _none = _run_session(tmp_path / "without", market)
+    assert not without.band_journal_path.exists()
+
+    quick, quick_quotes = _run_session(tmp_path / "quick", market)
+    slow, slow_quotes = _run_session(tmp_path / "slow", market, band_cost_s=5.0)
+
+    reference = without.journal_path.read_bytes()
+    assert quick.journal_path.read_bytes() == reference
+    assert slow.journal_path.read_bytes() == reference
+    assert quick_quotes.band_calls == 1 and slow_quotes.band_calls == 1
+    assert quick.band_journal_path.is_file() and slow.band_journal_path.is_file()
+    # and the band line itself is not identical — the stamp moved with the cost
+    assert _journal_rows(quick.band_journal_path)[0]["as_of_ms"] < (
+        _journal_rows(slow.band_journal_path)[0]["as_of_ms"]
+    )
+
+
+@pytest.mark.serial
+def test_red_the_band_does_not_push_the_next_price_poll(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The next poll's START time is the same with and without the band.
+
+    "The price journal bytes are identical" cannot see this: it compares
+    CONTENT, and the content of a line published late is the same line. So
+    this compares the clock at every price GET.
+
+    The adversarial input is the worst honest one: a band that fails and whose
+    every attempt spends the whole ``request_timeout_s``, so the retry loop
+    walks right up to the bound. ``band._room`` refuses an attempt that cannot
+    FINISH before ``next boundary - δ``; weakening it to "start before the
+    bound" lets the last attempt end past the next boundary's ``+δ``, and the
+    next poll then starts late. With ``δ`` 1.8 s and a 10 s timeout that is a
+    0.2 s shift — invisible to every other assertion in this file.
+    """
+    with monkeypatch.context() as patched:
+        patched.setattr(band_mod, "build_capture", lambda **_kw: _NoBand())
+        _baseline, baseline_quotes = _run_session(tmp_path / "baseline", market)
+
+    where = tmp_path / "slow-failing"
+    where.mkdir(parents=True, exist_ok=True)
+    producer, _clock, quotes = _build(where, market)
+    producer.boot()
+    quotes.band_cost_s = producer.config.request_timeout_s
+    quotes.band_fail_next = 999
+    producer.run_session()
+    producer.finish()
+
+    assert quotes.band_calls > 1, "the retry loop never ran; the bound is untested"
+    assert quotes.poll_started == baseline_quotes.poll_started
+    assert not producer.band_journal_path.exists()
+
+
+@pytest.mark.serial
+def test_band_a_window_with_no_room_makes_no_attempt_at_all(
+    tmp_path: Path, market: Market
+) -> None:
+    """The bound's other half: no room, no GET — and the band is not 'read'.
+
+    A window that made no attempt leaves the capture unattempted, so the next
+    price line tries again. Otherwise one unlucky minute would cost the whole
+    day's band.
+    """
+    producer, clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    clock.moment = clock.moment.replace(hour=8, minute=46, second=59)
+    producer.band.after_price_line()
+    assert quotes.band_calls == 0
+    (no_room,) = _stage(producer, band_mod.STAGE_BAND_NO_ROOM)
+    assert no_room["request_timeout_s"] == producer.config.request_timeout_s
+
+    clock.moment = clock.moment.replace(minute=47, second=2)
+    producer.band.after_price_line()
+    assert quotes.band_calls == 1
+
+
+# -- the re-read: measurement only ------------------------------------------
+
+
+def test_band_reread_is_null_in_the_shipped_config_and_says_why() -> None:
+    """Default null, and the YAML states it is measurement-only (§3.1)."""
+    path = _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml"
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    assert data["band_reread_minutes"] is None
+    assert "측정 전용" in text
+    assert "band_reread_minutes" in text
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "5", 1.5])
+def test_red_a_band_reread_that_is_not_a_positive_int_is_refused(
+    tmp_path: Path, bad: Any
+) -> None:
+    with pytest.raises(LiveProducerRefused, match="band_reread_minutes"):
+        config_mod.load_config(
+            _write_config(tmp_path, band_reread_minutes=bad), repo_root=_REPO_ROOT
+        )
+
+
+def test_band_reread_absent_means_null(tmp_path: Path) -> None:
+    """Absent and explicit null are the same answer — and a TYPO is not.
+
+    The module's no-default rule is about values that change what the producer
+    does; null here is the behaviour of every session before the key existed.
+    An unknown key is still a refusal, so a misspelling cannot read as null.
+    """
+    data = yaml.safe_load(_write_config(tmp_path).read_text(encoding="utf-8"))
+    del data["band_reread_minutes"]
+    path = tmp_path / "no-band-key.yaml"
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    assert (
+        config_mod.load_config(path, repo_root=_REPO_ROOT).band_reread_minutes is None
+    )
+
+    data["band_reead_minutes"] = 5
+    typo = tmp_path / "typo.yaml"
+    typo.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(LiveProducerRefused, match="unknown key"):
+        config_mod.load_config(typo, repo_root=_REPO_ROOT)
+
+
+@pytest.mark.serial
+def test_band_a_configured_reread_appends_lines_from_the_same_boot(
+    tmp_path: Path, market: Market
+) -> None:
+    """A re-read APPENDS; it never replaces, and it carries the same boot id."""
+    producer, _clock, quotes = _build(tmp_path, market, band_reread_minutes=5)
+    producer.boot()
+    producer.run_session()
+    producer.finish()
+
+    rows = _journal_rows(producer.band_journal_path)
+    assert len(rows) > 1
+    assert quotes.band_calls == len(rows)
+    assert len({row["producer_continuity_id"] for row in rows}) == 1
+    stamps = [row["as_of_ms"] for row in rows]
+    assert stamps == sorted(stamps) and len(set(stamps)) == len(stamps)
+    triggers = [entry["trigger"] for entry in _stage(producer, "band_published")]
+    assert triggers[0] == band_mod.TRIGGER_FIRST
+    assert set(triggers[1:]) == {band_mod.TRIGGER_REREAD}
+
+
+# -- the journal the band reuses --------------------------------------------
+
+
+def test_band_journal_keeps_the_price_journals_three_guarantees(
+    tmp_path: Path,
+) -> None:
+    """Key order from the ARGUMENT, the stamp owned here, non-advancing refused."""
+    path = tmp_path / band_line_mod.BAND_JOURNAL_NAME
+    stamps = iter([1792286460000, 1792286460000, 1792286461000])
+    journal = sinks_mod.ObservationJournal(
+        path, clock=lambda: next(stamps), key_order=band_line_mod.BAND_KEY_ORDER
+    )
+    row = {
+        "kind": band_line_mod.BAND_LINE_KIND,
+        "source_id": line_mod.SOURCE_ID,
+        "instrument": INSTRUMENT,
+        "trading_date": "20261019",
+        "tr_id": quote_client.BAND_TR,
+        "upper": BAND_UPPER,
+        "lower": BAND_LOWER,
+        "basis": BAND_BASIS,
+        "raw_payload_digest": "f" * 64,
+        "producer_continuity_id": "c" * 32,
+    }
+    assert journal.append(dict(row)).written
+    assert list(_journal_rows(path)[0]) == list(band_line_mod.BAND_KEY_ORDER)
+    refused = journal.append(dict(row))
+    assert not refused.written and refused.reason == "clock_regression"
+    assert len(_journal_rows(path)) == 1
+    assert journal.append(dict(row)).written
+    assert len(_journal_rows(path)) == 2
+    with pytest.raises(LiveProducerRefused, match="as_of_ms"):
+        sinks_mod.ObservationJournal(path, key_order=("kind", "upper")).append({})
+
+
+def test_red_a_band_row_missing_a_key_is_refused(tmp_path: Path) -> None:
+    journal = sinks_mod.ObservationJournal(
+        tmp_path / "band.jsonl",
+        clock=lambda: 1,
+        key_order=band_line_mod.BAND_KEY_ORDER,
+    )
+    with pytest.raises(LiveProducerRefused, match="missing"):
+        journal.append({"kind": band_line_mod.BAND_LINE_KIND})
+
+
+# -- the read side the runner uses ------------------------------------------
+
+
+def _good_line(**overrides: Any) -> dict:
+    line = {
+        "kind": band_line_mod.BAND_LINE_KIND,
+        "source_id": line_mod.SOURCE_ID,
+        "instrument": INSTRUMENT,
+        "trading_date": "20261019",
+        "tr_id": quote_client.BAND_TR,
+        "upper": BAND_UPPER,
+        "lower": BAND_LOWER,
+        "basis": BAND_BASIS,
+        "raw_payload_digest": "f" * 64,
+        "producer_continuity_id": "c" * 32,
+        "as_of_ms": 1792286460000,
+    }
+    line.update(overrides)
+    return line
+
+
+_OPEN_MS = 1792286460000 - 1000
+
+
+@pytest.mark.parametrize(
+    "overrides,fragment",
+    [
+        ({"trading_date": "20261016"}, "trading_date"),
+        ({"instrument": "A05610"}, "instrument"),
+        ({"as_of_ms": _OPEN_MS - 1}, "before the open"),
+        ({"kind": "cp3-band/2"}, "kind"),
+        ({"as_of_ms": "1792286460000"}, "not an integer"),
+    ],
+)
+def test_red_the_read_side_rejects_a_band_line_clause_by_clause(
+    overrides: dict, fragment: str
+) -> None:
+    """Each clause the runner checks, with the input that makes it fire.
+
+    The instrument clause's values are the measured ones: P-VL 2026-10-08 read
+    ``A05610`` 987.46/1159.18 and ``A05611`` 990.48/1162.72, so a roll-day
+    mix-up is ADMISSIBLE-looking rather than obviously wrong. Removing any one
+    clause leaves its row here green and the session believing that line.
+    """
+    reason = band_line_mod.reject_reason(
+        _good_line(**overrides),
+        instrument=INSTRUMENT,
+        trading_date="20261019",
+        open_ms=_OPEN_MS,
+    )
+    assert reason is not None and fragment in reason
+
+
+def test_the_read_side_accepts_the_line_the_producer_writes(
+    tmp_path: Path, market: Market
+) -> None:
+    """The positive half, against a line this producer actually wrote."""
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.boot()
+    producer.run_session()
+    producer.finish()
+    line = band_line_mod.read_last_band_line(producer.band_journal_path)
+    open_ms, trading_date = band_line_mod.session_open_ms(
+        producer.config.path, repo_root=_REPO_ROOT, day=TARGET
+    )
+    assert (
+        band_line_mod.reject_reason(
+            line,
+            instrument=INSTRUMENT,
+            trading_date=trading_date,
+            open_ms=open_ms,
+        )
+        is None
+    )
+
+
+def test_the_read_side_never_falls_back_to_an_earlier_line(tmp_path: Path) -> None:
+    """The LAST line only (§3.3, LOW-1), and a broken tail is ``None``."""
+    path = tmp_path / "band.jsonl"
+    path.write_text(
+        json.dumps(_good_line()) + "\n" + json.dumps(_good_line(upper="9999")) + "\n",
+        encoding="utf-8",
+    )
+    assert band_line_mod.read_last_band_line(path)["upper"] == "9999"
+    path.write_text(json.dumps(_good_line()) + "\n{not json", encoding="utf-8")
+    assert band_line_mod.read_last_band_line(path) is None
+    assert band_line_mod.read_last_band_line(tmp_path / "absent.jsonl") is None
+
+
+def test_the_open_the_read_side_uses_is_the_tenant_calendars_own() -> None:
+    """One source of truth for the session window, two readers of it.
+
+    ③ plan §3.5 forbids the runner growing its own copy of the session window.
+    ``session_open_ms`` reads the producer config's own ``calendar_yaml`` /
+    session id / phase with ``yaml.safe_load`` (it is imported by a bash
+    heredoc and by a throwaway checkout, so it cannot pull in
+    ``produce_fields``); this pins its answer against the loader the producer
+    itself uses.
+    """
+    shipped = _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml"
+    config = config_mod.load_config(shipped, repo_root=_REPO_ROOT)
+    window = calendar_mod.load_runtime_calendar(
+        config.calendar_yaml, covered_years=config.calendar_covered_years
+    ).window(config.calendar_session_id, config.calendar_session_phase)
+    expected = datetime.combine(TARGET, window.start, tzinfo=band_line_mod.KST)
+
+    open_ms, trading_date = band_line_mod.session_open_ms(
+        shipped, repo_root=_REPO_ROOT, day=TARGET
+    )
+    assert open_ms == int(expected.timestamp() * 1000)
+    assert trading_date == TARGET.strftime("%Y%m%d")
 
 
 # ===========================================================================

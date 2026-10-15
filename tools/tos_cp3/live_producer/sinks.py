@@ -110,8 +110,9 @@ def refuse_if_journal_exists(path: Path) -> None:
         )
 
 
-#: Wire key order of a journal line. Fixed so the file is byte-stable and so a
-#: reader can diff it against B1a's own ``FieldRecord.to_payload`` order;
+#: Wire key order of a PRICE journal line, and the default of
+#: :attr:`ObservationJournal.key_order`. Fixed so the file is byte-stable and
+#: so a reader can diff it against B1a's own ``FieldRecord.to_payload`` order;
 #: ``as_of_ms`` sits where B1a puts it even though this writer supplies it.
 JOURNAL_KEY_ORDER = (
     "raw_event_id",
@@ -157,8 +158,24 @@ class ObservationJournal:
     path: Path
     #: Injected so a test can pin the stamp. Epoch milliseconds.
     clock: Callable[[], int] = _wall_clock_ms
+    #: The line's wire key order — an ARGUMENT since the band journal
+    #: (band plan §3.2, review LOW-1). The band is a separate file with a
+    #: different shape but exactly these semantics (whole-file atomic replace,
+    #: the journal owns the stamp, a non-advancing stamp is refused), so it
+    #: reuses this class instead of growing a second writer whose atomicity
+    #: would need its own proof. ``as_of_ms`` must appear in it, or the stamp
+    #: this object exists to own would be dropped on the way to the file.
+    key_order: tuple[str, ...] = JOURNAL_KEY_ORDER
     lines: list[str] = field(default_factory=list)
     last_as_of_ms: int | None = None
+
+    def __post_init__(self) -> None:
+        if "as_of_ms" not in self.key_order:
+            raise LiveProducerRefused(
+                f"key_order {self.key_order} has no 'as_of_ms'; this journal "
+                "owns the stamp, so a key order without it would write lines "
+                "no reader can order or consume"
+            )
 
     def append(self, row: dict[str, Any]) -> AppendOutcome:
         """Stamp *row*, add one line, and replace the file whole.
@@ -180,7 +197,7 @@ class ObservationJournal:
                 "the caller supplied as_of_ms; the journal owns the stamp so it "
                 "can be taken immediately before the replace (plan §2 1-2)"
             )
-        missing = [key for key in JOURNAL_KEY_ORDER if key != "as_of_ms"]
+        missing = [key for key in self.key_order if key != "as_of_ms"]
         absent = [key for key in missing if key not in row]
         if absent:
             raise LiveProducerRefused(f"journal row is missing {absent}")
@@ -195,7 +212,7 @@ class ObservationJournal:
             )
         began = time.perf_counter()
         stamped = {**row, "as_of_ms": as_of_ms}
-        ordered = {key: stamped[key] for key in JOURNAL_KEY_ORDER}
+        ordered = {key: stamped[key] for key in self.key_order}
         self.lines.append(json.dumps(ordered, separators=(",", ":"), ensure_ascii=True))
         tmp = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
         tmp.write_text("".join(f"{line}\n" for line in self.lines), encoding="utf-8")
