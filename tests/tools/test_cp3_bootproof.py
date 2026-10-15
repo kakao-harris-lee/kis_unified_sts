@@ -1546,6 +1546,19 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "TENANT_PRODUCER_CONFIG": str(producer_config),
         "TENANT_PRODUCER_SESSION_DIR": str(tmp_path / "producer-session"),
         _PRODUCER_PIDFILE_ENV: str(tmp_path / "producer.pid"),
+        # Step 8c's allowance, short for every test (the shipped default is 90
+        # and `test_runner_band_wait_is_the_shipped_predicate_after_the_first_row`
+        # pins that). Overridden per test where the value is the point.
+        #
+        # ⚠ **This does not shorten the ANCHOR** (review round 1 MEDIUM-2). The
+        # deadline is `max(now, open + one boundary) + allowance` capped by the
+        # stop second, so a test whose band line is REJECTED while the producer
+        # stays ALIVE still waits until the stub calendar's open — which, at
+        # most hours of the day, is the stop cap and therefore longer than
+        # `_run_runner`'s 180 s. Such a test must let the stub producer exit
+        # (`_PRODUCER_EXIT_ENV: "0"`), which ends the wait at once because a
+        # producer that is gone can never write the line.
+        "CP3_BAND_LINE_EXTRA_WAIT_S": "5",
     }
     for name, value in overrides.items():
         if value == "":
@@ -2062,11 +2075,21 @@ def test_runner_band_wait_still_runs_no_mode_repair(tmp_path: Path) -> None:
 def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:
     """The contract month is derived ONCE and given to the leaf, the render and
     the producer (runbook §7.3 5-a). A journal written for last month's code is
-    not an error downstream — it is zero observations."""
+    not an error downstream — it is zero observations.
+
+    ⚠ The stub producer leaves after writing, which is new (review round 1
+    MEDIUM-2). Its BAND line carries the same wrong instrument, so step 8c
+    rejects it — and since that step now anchors its allowance on the session
+    open rather than on "now", a live producer would hold the wait until that
+    instant (capped by the stop second) and blow this test's 180 s subprocess
+    timeout. Measured: it did. Letting the stub exit ends the wait at once and
+    leaves the refusal this test is actually about — the GUARD's, at step 9 —
+    exactly where it was.
+    """
     result = _run_runner(
         _runner_repo(tmp_path),
         tmp_path,
-        **{_PRODUCER_INSTRUMENT_ENV: "A05612"},
+        **{_PRODUCER_INSTRUMENT_ENV: "A05612", _PRODUCER_EXIT_ENV: "0"},
     )
     assert result.returncode != 0
     assert "A05612" in result.stdout + result.stderr
