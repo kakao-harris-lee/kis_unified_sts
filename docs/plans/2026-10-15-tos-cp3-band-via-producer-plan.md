@@ -4,6 +4,9 @@
   `docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md`(이하 「③ 계획」) §3.4(자격증명 분리)·§3.5·§5.
 - **운영자 결정 2026-10-15 (대화)**: band 켜기 경로 = **(c) ③ 생산자 경유** — 생산자가 실전 키 GET-only 로
   `FHMIF10000000` 을 읽어 저널로 넘기고, 런타임은 키를 들지 않는다. 같은 날 앞선 결정: 「먼저 수정(#904), 그다음 band」.
+- **v2 (같은 날, 리뷰 PR #905 처분 — 13건 전건 수용, 기각 0)**: HIGH-1 band GET 을 개장 뒤 첫 경계로 + 러너 band 줄 대기 ·
+  HIGH-2 재조회는 측정 전용 · HIGH-3 출처 접두는 렌더된 목록의 설정 일관성 규칙(C1, 가드 아님) · MEDIUM-1 줄 날짜를
+  그대로 + 생산자 `refuse_if_journal_exists` + reader 단위 레드 · MEDIUM-2 digest 세 파일 · LOW 1~4.
 - **범위 밖**: 커널(`tos/src/tos/`) 변경 · 실주문(비협상 규칙 — 실전 선물 주문 경로 영구 차단) · 상주 `paper`·SHORT
   트리의 band(둘 다 null 유지, band 계획 §5) · band 계획 (ii) 규정 계산 대조.
 
@@ -19,7 +22,7 @@ band 계획 §9 3(「tenant 정책에 `band_source` 를 채우고 활성화 갱�
 | # | 사실 | 자리 |
 |---|---|---|
 | B1 | band reader 팩토리는 host seal 의 MOCK/REAL `rest_base` 를 **활성 주문 scope 의 INSTANCE** 에서 읽는다. LONG·SHORT·paper 세 트리의 활성 scope 는 전부 `SYNTHETIC_FUTURES_ORDER`(INSTANCE 없음, 설계상) → `band_source` non-null 이면 **부팅 거부**(`MarketFeedConfigError: intake_kind: kis_quote requires the active broker scope's own INSTANCE binding`) | `tos/runtime/src/tos_runtime/compose/_venue_wiring.py` `build_kis_band_reader_factory._factory` → `compose/_marketfeed_wiring.py::resolve_kis_instance_rest_bases` · `config/tos_runtime/cp3-setup-d-long/broker_scopes.yaml` 의 `active_scope` |
-| B2 | 토큰은 custody `kis_mock.app_key/app_secret` 에서 온다. tenant 세션의 custody(`paper-custody`)에는 `read.principal`·`evidence.key`·`replay.params` 셋뿐이고, 러너는 `--env-file` 을 **렌더러에만** 준다 — 런타임은 자격증명을 들지 않는 것이 ③ 계획 §3.4 의 설계다. 덧붙여 `custody.load()` 의 `CustodyError` 는 `KisBandSourceReader.read()` 가 잡는 예외 셋 밖이라 band `None` 으로 접히지 않고 `snapshot()`/`decide()` 로 새어 나간다(band 계획 §4.6 「모든 실패 = band None」과 어긋남 — §6 L1) | `compose/_kis_credential_wiring.py` · `tos_runtime/venue/band_source.py::KisBandSourceReader.read` · `tools/tos_cp3/runners/run_tenant_session.sh` |
+| B2 | 토큰은 custody `kis_mock.app_key/app_secret` 에서 온다. tenant 세션의 custody(`paper-custody`)에는 `read.principal`·`evidence.key`·`replay.params` 셋뿐이고, 러너는 `--env-file` 을 **렌더러에만** 준다 — 런타임은 자격증명을 들지 않는 것이 ③ 계획 §3.4 의 설계다. 덧붙여 `custody.load()` 의 `CustodyError` 는 `KisBandSourceReader.read()` 가 잡는 예외 셋 밖이라 band `None` 으로 접히지 않고 `snapshot()`/`decide()` 로 새어 나간다(band 계획 §4.6 「모든 실패 = band None」과 어긋남 — §L L1) | `compose/_kis_credential_wiring.py` · `tos_runtime/venue/band_source.py::KisBandSourceReader.read` · `tools/tos_cp3/runners/run_tenant_session.sh` |
 | B3 | MOCK_VTS INSTANCE 에 묶인 유일한 scope 는 `MOCK_STOCK_ORDER`(`endpoint_class: BROKER_ORDER`, `asset_scope: STOCK`)이고, 그 활성화는 `broker_scopes.yaml` 머리말이 **별도 승인**으로 묶어 두었다(운영자 결정 2026-09-23) | `config/tos_runtime/cp3-setup-d-long/broker_scopes.yaml` 머리말 |
 
 band 계획 §4.2 의 전제(「기존 `kis_quote` host seal 과 토큰 수명 관리를 **재사용**」)가 그 둘이 **활성 주문 scope 에
@@ -47,14 +50,32 @@ band 계획 §7 은 (i-b)를 「③ 이 아직 설계 전이라 그 계약에 ba
   `tools/broker_probes/probes_venue_limits.py`), 시장 구분 `F`, 종목 = 생산자 설정의 `instrument`(가격 GET 과 **같은
   하나의 출처**). REAL 호스트 · 실전 **시세** 키(`.env.real`) — 가격 GET 과 같은 자격증명 경로, 새 키 없음.
 - `tools/tos_cp3/quote_client.py::ALLOWLIST` 에 이 한 쌍(TR, 경로)을 더한다. 메서드는 GET 그대로 —
-  `assert_read_only_call` 이 소켓 전에 거부하는 구조는 바뀌지 않는다. ③ 계획 M3 의 도달 모듈 핀(`shared.execution` 의
-  주문 모듈 금지)도 그대로.
-- 시점: **부팅 시 한 번**(시드 뒤 · 첫 줄 대기 전 — 러너가 런타임을 띄우기 **전에** band 줄이 존재하도록) + 설정 키
-  `band_reread_minutes`(정수 또는 null) 주기의 재조회. 기본은 **null**(부팅 1회) — band 계획 §2 단조성(같은 거래일 안에서는
-  확대만)으로 부팅 1회가 보수 방향으로 안전하다. 재조회는 2·3단계 확대를 반영하고 싶을 때 운영자가 켠다.
+  `assert_read_only_call` 이 소켓 전에 거부하는 구조는 바뀌지 않는다. ③ 계획 §5 5번(§3.3)의 도달 모듈 핀
+  (`test_item5_*` — `shared.execution` 의 주문 모듈 금지)도 그대로. TR·경로 상수는 `quote_client` 에 **지역 정의**한다 —
+  P-VL 모듈은 MOCK 호스트로 봉인돼 있어 import 하지 않는다.
+- 이 `ALLOWLIST` 는 「실전 선물 주문 0」 규칙이 **코드로 집행되는 자리**다. 그래서 PR-A 의 그 diff 는 자격증명 코드를
+  건드리지 않아도 Codex 범위 리뷰 대상 후보로 올리고, 범위·비용 승인은 PR-A 시점에 운영자에게 묻는다(§5).
+- 시점: **개장 뒤 첫 경계에서 한 번** — 생산자가 그날 첫 가격 줄을 append 한 **직후**(이르면 08:46). 부팅 직후(시드 뒤)가
+  **아니다**(리뷰 HIGH-1): 생산자는 개장 전에 뜨도록 만들어져 있고(`producer.py` 의 `first_boundary = max(open + 1분, now)`)
+  러너의 첫 줄 대기는 600 s 라, 부팅 직후 GET 은 보통 08:3x~08:45 의 **개장 전** 응답이다. 그리고 런타임은 그 band 를
+  하루 종일 쓴다(§3.3 — tenant 캘린더는 `CONTINUOUS 08:45–15:45` 한 phase 라 장중 재읽기 계기가 없다). 개장 전 응답은
+  band 계획 §4.4a 잔여 위험(「브로커가 전일 band 를 내준다」)이 가장 커지는 시각이다. 개장 뒤 첫 경계면 그날 기준가가
+  이미 서 있다 — 여전히 측정되지 않은 전제지만 가장 불리한 시각은 피한다.
+- 늦은 기동(09:00 뒤)은 문제가 아니다 — §2 단조성으로 그 시각의 band 는 그때까지 가장 넓은 **현재** band 다.
+- 러너: 첫 줄 대기가 **band 줄도** 함께 기다린다(같은 상한 안에서). 상한 안에 band 줄이 없으면 러너는 멈추지 않고
+  `BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)` 을 크게 적고 진행한다 — 가격 수집·B3 대조는 그래도 가치가 있고,
+  band 부재는 보수 방향이다. 이 세션은 §4 수용 1번에서 실패로 기록된다. 「런타임 부팅 전에 band 줄이 있다」는 생산자
+  순서가 아니라 **러너 단계가 확인**한다.
+- 재조회(설정 키 `band_reread_minutes`, 정수 또는 null, 기본 **null**)는 **측정 전용**이다(리뷰 HIGH-2). 런타임은
+  `read_on` 의 `boot`·`phase_change` 에서만 읽고 장중 phase 변화가 없으므로, 장중에 붙은 재조회 줄은 15:45 전에 판정에
+  **닿지 않는다**. 재조회의 쓸모는 `band.jsonl` 에 장중 확대의 증거를 남기는 것뿐이다. 장중 확대를 판정에 반영하려면
+  런타임 읽기 계기를 더해야 하고(서비스 변경 + 자기 레드 증명), 이 문서 범위 밖이다(§L L4).
   ⚠ 2026-10-15 은 장중 30분 연속거래 공백(12:39~13:08 원시 행 0, 재개 뒤에도 미충전)과 장중 −10% 하락이 있었다 —
-  서킷브레이커 1단계(20분 정지 + 10분 단일가)와 길이가 맞지만 **확인되지 않았다**. 확대가 실제로 있었는지는 첫 켜기
-  세션의 재조회 증거가 답한다.
+  서킷브레이커 1단계(20분 정지 + 10분 단일가)와 길이가 맞지만 **확인되지 않았다**. 확대가 실제로 있었는지는 재조회를 켠
+  세션의 증거가 답한다.
+- 로그: band GET 은 시도마다 `producer-log.jsonl` 에 메서드·`tr_id`·경로를 남긴다(리뷰 LOW-2 — 지금 `page()` 는 모듈 상수
+  `TR` 을 적으므로, 새 메서드가 제 `tr_id` 를 적지 않으면 §3.5 의 TR 부분집합 확인이 이 호출을 **보지 못한 채** 통과한다).
+  원 바이트 digest 는 `.json()` 전에 `response.content` 에서 잡는다(`page()` 는 지금 원 바이트를 들고 있지 않다).
 - 변환·검증은 생산자가 하지 **않는다** — 원 응답의 `output` 에서 세 필드(`futs_mxpr`·`futs_llam`·`futs_sdpr`)를 **문자열
   그대로** 옮기고, 원 응답 바이트의 SHA-256 을 함께 적는다. 척도 변환·격자·순서 검증은 런타임의 기존 검증 셋이 한다
   (band 계획 §4.2 — 한 곳에서만).
@@ -77,34 +98,57 @@ band 계획 §7 은 (i-b)를 「③ 이 아직 설계 전이라 그 계약에 ba
 
 - `trading_date` = 생산자의 KST 캘린더 거래일(생산자가 이미 쓰는 tenant `calendar.yaml`) — band 계획 §4.2 와 같이 **로컬
   도장**이고 응답 필드가 아니다.
-- `as_of_ms` 는 가격 저널과 같은 규칙(PR #898 리뷰 B1 처분 — append 직전 도장).
-- append-only · 줄마다 한 번에 쓴다(가격 저널과 같은 원자적 append 경로 재사용). 재조회 줄은 뒤에 붙는다.
+- `as_of_ms` 는 가격 저널과 같은 규칙(PR #898 리뷰 B1 처분 — append 직전 도장, 단조 증가).
+- 쓰기: `ObservationJournal`(`tools/tos_cp3/live_producer/sinks.py` — 임시 파일 + `os.replace` 통째 교체 · 도장 소유 ·
+  비전진 도장 거부)의 의미를 그대로 쓰되, 그 클래스는 가격 `JOURNAL_KEY_ORDER` 를 강제하므로 **키 순서를 인자로
+  일반화**한다(리뷰 LOW-1). 재조회 줄은 뒤에 붙는다.
+- ⛔ **같은 세션 dir 의 `band.jsonl` 이 이미 있으면 생산자는 부팅을 거부한다**(`refuse_if_journal_exists` — 리뷰
+  MEDIUM-1). 지금 생산자는 같은 종목의 세션 dir 재사용을 `refuse_if_partitions_exist` 로 막지만 **다른 종목**(롤 날
+  재사용)은 막지 않고, 러너는 세션 dir 에 `mkdir -p` 만 한다. 낡은 band 줄을 구조적으로 막는 것은 이 거부이고, §3.4 G2 의
+  읽기 측 비교는 그 뒤의 겹이다.
 - 파일 경로는 정책이 아니라 **배포 값**이다 — 러너 env(`TENANT_PRODUCER_SESSION_DIR`)에서 오고 렌더가 런타임 설정에
-  채운다(§3.3).
+  채운다. 렌더 슬롯 이름은 **`band_journal_path`**(가격 저널의 기존 `marketfeed.yaml::journal_path` 와 겹치지 않게 —
+  리뷰 LOW-4), 렌더러의 닫힌 값 출처 집합(`scripts/tos/render_paper_config.py::_VALUE_SOURCES`)에 새 항목 + 새 러너 인자.
 
 ### 3.3 런타임 쪽 — 새 `band_source.kind: "producer_journal"`
 
-- `BandReader = Callable[[], BandObservation | None]` 은 그대로다. 새 kind 의 reader 는 band 저널의 **마지막 유효 줄**을
+- `BandReader = Callable[[], BandObservation | None]` 은 그대로다. 새 kind 의 reader 는 band 저널의 **마지막 줄 하나**를
   읽어 기존 `BandObservation` 을 만든다 — 서비스(`VenueConstraintService`)·스냅샷 결속·증거 kind(`VENUE_BAND_OBSERVED`)·
   재발행 규칙은 **무변경**.
+- 마지막 줄이 무효면 **앞 줄로 물러나지 않는다** — band `None` + `reason`(리뷰 LOW-1). 물러나면 「지금 유효한 band」가
+  아니라 「한때 유효했던 band」를 믿게 된다. 파일 부재 · 파싱 불가 · I/O 오류도 전부 band `None` + `reason`(band 계획 §4.6).
 - `raw_payload_digest` = 줄의 값(생산자가 본 원 바이트의 digest — §2 의 「주장」을 그대로 결속하고 증거 행에
   `raw_payload_digest_source: "producer"` 로 출처를 적는다). `source_continuity_id` = 줄의 `producer_continuity_id`.
+- `BandObservation.trading_date` = **줄의 `trading_date`**(생산자 도장)이다 — 런타임의 `trading_date_now()` 로 다시 찍지
+  **않는다**(리뷰 MEDIUM-1). 다시 찍으면 서비스의 거래일 결속(`service.py::_enforce_trading_date_bond`)이 낡은 줄에 대해
+  영원히 발화하지 못한다. `as_of_ms` = 읽기 직전의 런타임 단조 시계(`kis_quote_get` 과 같은 규칙), 줄의 `as_of_ms` 는 증거에
+  `producer_as_of_ms` 로 남긴다.
 - 기존 kind `kis_quote_get` 과 그 팩토리는 남긴다(이 문서는 지우지 않는다 — 주문 scope 와 분리된 MOCK 시세 경로가 생기면
   그때 쓸 수 있다). 로더는 kind 마다 필수 키를 따로 요구한다: `timeout_ms`·`kis_quote.yaml`·host seal 은
-  `kis_quote_get` 만, `journal_path` 는 `producer_journal` 만. 2026-10-15 켜기 시도가 실측한 「`kis_quote.yaml` 의 이 경로에서 읽히지 않는
+  `kis_quote_get` 만, `band_journal_path` 와 `approved_source_prefixes`(§3.4 C1) 는 `producer_journal` 만. 2026-10-15 켜기 시도가 실측한 「`kis_quote.yaml` 의 이 경로에서 읽히지 않는
   필수 네 값」(`tr_id`·`field_mapping`·`source_id`·`request_timeout_s`)은 새 kind 에서 요구하지 않는다.
-- 읽기 시점: 기존 `read_on`(`boot`·`phase_change`) 그대로. 파일만 읽으므로 rate limit·토큰 문제 없음.
+- 읽기 시점: 기존 `read_on`(`boot`·`phase_change`) 그대로. 파일만 읽으므로 rate limit·토큰 문제 없음. ⚠ 즉 판정에 쓰이는
+  band 는 **런타임 부팅 시 읽은 한 줄**이다(§3.1 러너 대기가 그 줄의 존재를 보장한다).
 
 ### 3.4 가드 — 각각 실패하는 구체적 입력
 
-band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나를 **강화**하고 하나를 **더한다**.
+band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나(G3)를 **강화**한다. 출처 접두 검사는 가드가 아니라 **설정 일관성 규칙**
+(C1)으로 둔다 — 구체적 fail-open 입력을 쓸 수 없기 때문이다(아래).
 
 | 가드 | 실패 입력 | 처분 |
 |---|---|---|
 | G1 검증 셋(척도 정수 · `0<min<max` · tick 격자) | 줄의 `upper: "1162.73"`(0.02 격자 밖) | 기존 그대로 — 변환이 런타임에 있으므로 재사용 |
-| G2 거래일 결속 | D 일 줄을 들고 D+1 에 같은 phase 로 첫 `snapshot()` | 기존 그대로 + **읽기 측 비교 추가**: 줄의 `trading_date` ≠ 런타임 `trading_date_now()` 이면 그 줄은 무효(이전 세션의 `band.jsonl` 이 남은 경우). 레드: 비교 삭제 → D 줄로 ADMISSIBLE |
-| G3 계약 결속 | `A05610` 정책 + `A05611` 줄 | **강화** — 원 (i)에서는 응답에 계약 식별자가 없어 로더 규칙뿐이었지만, 이제 줄이 `instrument` 를 **들고 온다** → 읽기 측 비교가 **진짜 가드**가 된다(줄 `instrument` ≠ 정책 `scope.instruments` 유일 원소 → 무효). 레드: 비교 삭제 → 다른 계약 band 로 ADMISSIBLE (값: 10-08 P-VL 실측 `A05610` 987.46/1159.18 · `A05611` 990.48/1162.72) |
-| G4 출처 allowlist (신규) | `source_id` 가 승인 접두가 아닌 줄(손으로 쓴 줄 · 합성 하네스 줄) | `bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES` 와 **같은 목록**(두 번째 목록 금지) — 접두 밖이면 무효. 레드: 검사 삭제 → 합성 줄의 band 로 ADMISSIBLE |
+| G2 거래일 결속 | ① 구조: 이전 세션의 `band.jsonl` 이 남은 세션 dir 로 생산자 부팅 · ② 읽기: D 일 줄이 D+1 런타임에 읽힘 | ① 생산자 `refuse_if_journal_exists`(§3.2) — 레드: 거부 삭제 → 낡은 줄이 남은 채 부팅. ② 겹: reader 의 읽기 측 비교(줄 `trading_date` ≠ 런타임 `trading_date_now()` → 무효) + 서비스의 기존 결속(§3.3 — 줄 날짜를 그대로 싣기 때문에 발화 가능). ⚠ 가려진 절 주의(리뷰 MEDIUM-1): 서비스 결속은 `snapshot()` 첫머리에서 돌므로, 읽기 측 비교를 지워도 **두 번째** 스냅샷부터는 서비스가 떨어뜨린다 — 그래서 읽기 측 비교의 레드 증명은 **reader 단위 테스트**(reader 가 `None` 을 돌려야 함)와 **읽은 직후 첫 스냅샷**의 판정으로 한다. 두 번 부르는 통합 테스트는 이 절을 판별하지 못한다 |
+| G3 계약 결속 | 롤 날 다른 종목 세션 dir 재사용 · 남의 파일 — `A05610` 정책 + `A05611` 줄 | **강화** — 원 (i)에서는 로더 규칙뿐이었지만 이제 줄이 `instrument` 를 들고 와 **읽기 측 비교**가 생긴다(줄 `instrument` ≠ 정책 `scope.instruments` 유일 원소 → 무효). ⚠ 그 `instrument` 는 **브로커 응답의 메아리가 아니라** 생산자의 요청 인자다(응답 본문에는 여전히 계약 식별자가 없다 — 리뷰 LOW-3). 그래서 이 가드는 「생산자의 요청 ↔ 런타임 정책」 결속이지 「브로커가 이 계약의 band 라고 말했다」가 아니다. 레드: 비교 삭제 → 다른 계약 band 로 ADMISSIBLE (값: 10-08 P-VL 실측 `A05610` 987.46/1159.18 · `A05611` 990.48/1162.72) — 테스트는 `instrument` **만** 바꾸고 날짜·출처는 유효하게 둔다 |
+
+**C1 출처 접두 — 설정 일관성 규칙(가드 아님, 리뷰 HIGH-3).** 줄의 `source_id` 가 승인된 실제 생산자 접두가 아니면 무효.
+가드 수에 넣지 않는 이유: 오늘 `band.jsonl` 을 쓰는 도구는 생산자 하나뿐이고, 손으로 쓴 줄은 접두를 그대로 베낄 수 있으므로
+이 검사가 막는 **구체적 fail-open 입력을 쓸 수 없다**. 남기는 이유는 band 계획 §4.4b 의 transport 종목 규칙과 같다 —
+어긋난 줄은 그 자체로 운영 오류의 신호다. 목록의 출처: 런타임(`tos/runtime/**`)은 방화벽 R1(`tools/tos_firewall_check.py`
+— stdlib·`tos_runtime.*` 만)이라 `tools.tos_cp3.bootproof_guard` 를 import 할 수 **없다**. 그래서 렌더러(`tos/` 밖, 이미 이
+파일을 렌더한다)가 `bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES` 를 렌더된 `band_source.approved_source_prefixes` 에
+**값으로 써 넣고**, 「렌더 결과 == 그 상수」를 테스트로 고정한다 — 목록은 여전히 하나다. 레드: 접두 검사 삭제 → 승인 밖
+`source_id`(날짜·종목은 유효) 줄이 band 로 쓰임. 이 줄을 실제로 쓰는 도구가 생기면(예: 합성 band 하네스) 그때 가드로 올린다.
 
 모든 무효 = band `None` + `VENUE_BAND_OBSERVED.reason` → 커널 `UNKNOWN` → 송신 0. 새 fail-open 경로는 여전히 「틀린 band 를
 믿는 것」 하나이고, 남는 잔여 위험은 band 계획 §4.4a 의 「낡은 **응답**」(08:45 직후 브로커가 전일 band 를 내주는 경우) —
@@ -115,6 +159,7 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나를 **강화**하�
 
 - 런타임 프로세스: 소켓 0 · KIS 자격증명 0 · `--env-file` 없음(③ 계획 §3.4 · #901 Codex 승인 경계).
 - 생산자 프로세스: 새 GET 하나가 **같은** 실전 시세 키 경로를 쓴다. 키를 읽는 코드·로깅·xtrace 차단은 바뀌지 않는다.
+- 이 확인은 band GET 이 시도마다 제 `tr_id` 를 로그에 남길 때만 유효하다(§3.1 로그 항목).
 - 세션 뒤 확인 「실전 주문 TR 0」은 「`producer-log.jsonl` 의 TR ⊆ {`FHKIF03020200`, `FHMIF10000000`} · 메서드 전부 GET」
   으로 바뀐다(런북 §7.2-d).
 
@@ -124,10 +169,13 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나를 **강화**하�
   (생산자 `PRICE_SCALE = 100`, `tools/tos_cp3/produce_fields.py`).
 - 활성화: VCP `canonical_digest` 는 `_runtime` 을 덮지 않으므로 **불변**(2026-10-15 실측: band 선언 유무와 무관하게
   `ef6646e8…`). tenant `safety_activation.yaml::members` 는 null — 갱신 대상 없음. 단 런타임 소스(`tos/runtime/src`)가
-  바뀌므로 **같은 PR 에서 `config/tos_runtime/paper/release.yaml::expected_code_digest` 재도출**(band 계획 §9 2 와 같은 의무
-  — 재도출하지 않으면 상주 세션이 다음 08:45 에 ABORT).
+  바뀌므로 **같은 PR 에서 `expected_code_digest` 를 세 파일 모두 재도출** — `config/tos_runtime/paper/release.yaml` ·
+  `config/tos_runtime/cp3-setup-d-long/release.yaml` · `config/tos_runtime/cp3-setup-d-short/release.yaml`(리뷰 MEDIUM-2;
+  셋은 바이트 사본이고 `tos/runtime/tests/compose/test_tenant_tree_copies.py` 가 동일성을 강제한다). 빠뜨리면 상주 세션은
+  다음 08:45 에, tenant 는 첫 부팅에 ABORT 한다(band 계획 §9 2 와 같은 의무).
 - 첫 켜기 세션 수용(③ 계획 §5 에 더한다):
-  1. `band.jsonl` 에 그날 줄이 있고, 런타임 `VENUE_BAND_OBSERVED` 행의 `raw_payload_digest` 가 그 줄과 같다.
+  1. `band.jsonl` 에 그날 첫 줄이 **개장 뒤**(`as_of_ms` ≥ 개장 시각) 있고, 런타임 부팅 전에 러너가 그 줄을 봤고(세션
+     로그), 런타임 `VENUE_BAND_OBSERVED` 행의 `raw_payload_digest` 가 그 줄과 같다.
   2. **그날 소비된 모든 가격이 band 안**이다(`price_min ≤ close_x100 ≤ price_max`) — 아니면 band 원천이나 척도가 틀린
      것이고 그 세션의 ADMISSIBLE/INADMISSIBLE 판정을 믿지 않는다.
   3. `VENUE_SNAPSHOT_ISSUED` 행에 `band_digest` 가 있고 `absent_fields` 에서 세 필드가 빠졌다.
@@ -136,15 +184,18 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나를 **강화**하�
 
 ## 5. PR 분할 · 순서
 
-1. **PR-A 생산자**: `quote_client.ALLOWLIST` 한 쌍 · band GET(부팅 + 선택 재조회) · `band.jsonl` 쓰기 · 생산자 YAML 키
-   (`band_reread_minutes`, 기본 null) · `band_fetch_failed` 로그 · 러너/런북 TR 집합. 레드 증명: allowlist 밖 TR 은 소켓 전
-   거부 · 실패 시 줄 없음 · 가격 저널 무영향(같은 입력에서 가격 저널 바이트 동일). 생산자의 자격증명 경로를 건드리지
-   않으면 Claude 레인, 건드리면 Codex(③ PR-3 범위 승인).
-2. **PR-B 런타임 + 켜기**: `producer_journal` kind · 로더 kind 별 필수 키 · G2 읽기 측 · G3 읽기 측 · G4 · §1 B2 의
+1. **PR-A 생산자 + 러너**: `quote_client.ALLOWLIST` 한 쌍(지역 상수) · 개장 뒤 첫 경계의 band GET + 측정 전용 재조회
+   (`band_reread_minutes`, 기본 null) · 시도마다 `tr_id` 로그 · 원 바이트 digest · `band.jsonl` 쓰기(키 순서를 일반화한
+   저널) · `refuse_if_journal_exists(band.jsonl)` · `band_fetch_failed` 로그 · 러너의 band 줄 대기와 `BAND ABSENT` 기록 ·
+   런북 TR 집합. 레드 증명: allowlist 밖 TR 은 소켓 전 거부 · 실패 시 줄 없음 · 개장 전에는 GET 하지 않음 · 남은
+   `band.jsonl` 로 부팅 거부 · band GET 이 로그에 제 `tr_id` 를 남김 · 가격 저널 무영향(같은 입력에서 가격 저널 바이트
+   동일). 리뷰: Claude 레인 + `ALLOWLIST` diff 는 Codex 범위 리뷰 후보(§3.1 — 운영자 승인 시).
+2. **PR-B 런타임 + 켜기**: `producer_journal` kind(마지막 줄 하나 · 물러나지 않음 · 줄 날짜를 그대로) · 로더 kind 별 필수
+   키 · G2 읽기 측(reader 단위 레드) · G3 읽기 측 · C1(렌더된 접두 목록 + 「렌더 == 상수」 테스트) · §1 B2 의
    `CustodyError` 누출(kind `kis_quote_get` 경로 — 예외를 band `None` 으로 접고 레드 증명; 켜지 않은 경로지만 band 계획
-   §4.6 과 어긋난 채 두지 않는다) · tenant LONG 정책 `band_source` 채움 + 렌더 슬롯(`instrument`·`journal_path`) ·
-   `expected_code_digest` 재도출 · 테스트(`TestShippedTreesDeclareNoBandSource` 를 LONG/그 외로 분리). 커널 무변경이므로
-   `tos-gate` 커널 digest 는 그대로여야 한다.
+   §4.6 과 어긋난 채 두지 않는다) · tenant LONG 정책 `band_source` 채움 + 렌더 슬롯(`instrument`·`band_journal_path`) ·
+   `expected_code_digest` **세 파일** 재도출 · 테스트(`TestShippedTreesDeclareNoBandSource` 를 LONG/그 외로 분리,
+   `test_tenant_tree_copies.py` 의 알려진 차이 집합 갱신). 커널 무변경이므로 `tos-gate` 커널 digest 는 그대로여야 한다.
 3. **첫 켜기 세션** → §4 수용 → 증거 PR.
 
 ## 6. 기각한 대안
@@ -160,5 +211,8 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나를 **강화**하�
 
 - L1: §1 B2 의 `CustodyError` 누출은 PR-B 에서 고친다(§5 2).
 - L2: 원 (i) 경로(`kis_quote_get`)가 쓸모 있으려면 「주문 scope 와 분리된 시세 scope」가 필요하다 — 별도 설계 후보.
+- L4: 장중 band 재읽기 계기(재조회 줄을 판정에 반영) — 서비스 변경 + 레드 증명이 필요한 별도 결정(§3.1).
+- L5: `tools.broker_probes.probes_order`(모의 주문 가능)가 생산자 도달 모듈 핀의 `ORDER_EMITTING_MODULES` 에 없다 — PR-A
+  에서 더할지 별도 검토(리뷰 SUGGESTION).
 - L3: band 계획 §6 (B) 의 GOV-001 후보(원천 선언의 커널 covered 승격 · band 관측을 정식 `CriticalInputSnapshot` 으로)는
   그대로 유효하다.
