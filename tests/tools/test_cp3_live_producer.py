@@ -2837,6 +2837,7 @@ def test_red_the_read_side_rejects_a_band_line_clause_by_clause(
     assert reason is not None and fragment in reason
 
 
+@pytest.mark.serial
 def test_the_read_side_accepts_the_line_the_producer_writes(
     tmp_path: Path, market: Market
 ) -> None:
