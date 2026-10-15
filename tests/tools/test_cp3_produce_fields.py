@@ -797,22 +797,32 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
 ) -> None:
     """The read-only hook S1b's ``_atr_window`` measurement reads the setup through.
 
-    Three claims, each with its own way of being wrong:
+    Four claims, each with its own way of being wrong:
 
     1. The records are byte-identical with and without it — an observer that
-       consumed the replay, or was called before ``check()`` advanced the
-       setup, would move them.
-    2. It is called once per replayed bar, emitted or not. The window the
+       consumed the replay would move them. Byte-identity alone does NOT catch
+       an observer moved BEFORE ``check()``: a non-mutating one called there
+       sees the previous bar's ``last_eval`` under the current bar's stamp and
+       leaves every record untouched. Claim 2 is what catches that.
+    2. The eval handed under a stamp is THAT bar's eval, not a neighbour's.
+       ``minutes_since_open`` is on every eval (``check()`` writes it before
+       its first early return), and it must be the stamp's own offset from the
+       resolved open anchor; on the bars that reached the price reads,
+       ``ev["close"]`` must be the frame's close at that same stamp. Shift the
+       hook one bar either way and both go wrong — on the very first bar
+       ``last_eval`` is still the constructor's empty dict.
+    3. It is called once per replayed bar, emitted or not. The window the
        percentile is taken over is filled mostly by bars that are NOT emitted
        (a stitched previous month), so an observer that only saw emitted bars
        would measure the wrong window and say nothing about it.
-    3. ``vol_ref`` is present on exactly the bars that advanced the causal ATR
+    4. ``vol_ref`` is present on exactly the bars that advanced the causal ATR
        window — in-entry-window bars with usable inputs. ``stitch_measure``
        counts the window's composition off that correspondence; if the key
        appeared on other bars the composition would silently drift.
     """
     emit = frozenset(SESSIONS[-1:])
     seen: list[tuple[datetime, dict]] = []
+    closes = dict(zip(bars["timestamp"], bars["close"]))
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -836,11 +846,21 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
     assert len(seen) == plain.bars_replayed > len(plain.records)
     assert {stamp.date() for stamp, _ in seen} > set(emit), "only emitted bars observed"
 
+    # Claim 2: the stamp and the eval are the same bar's.
+    for stamp, ev in seen:
+        open_at = stamp.replace(
+            hour=anchor.hour, minute=anchor.minute, second=0, microsecond=0
+        )
+        assert (
+            ev.get("minutes_since_open") == (stamp - open_at).total_seconds() / 60
+        ), f"{stamp}: this eval was computed on a different bar"
+
     advanced = [(stamp, ev) for stamp, ev in seen if "vol_ref" in ev]
     assert advanced, "no bar advanced the causal ATR window"
     for stamp, ev in advanced:
         assert ev["entry_window"] is True, stamp
-        assert ev["atr_14"] > 0 and ev["close"] > 0, stamp
+        assert ev["atr_14"] > 0, stamp
+        assert ev["close"] == closes[stamp.replace(tzinfo=None)], stamp
     for stamp, ev in seen:
         if "vol_ref" in ev:
             continue
