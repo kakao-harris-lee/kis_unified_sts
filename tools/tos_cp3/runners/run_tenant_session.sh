@@ -169,45 +169,60 @@ PRODUCER_SIGKILL_AFTER_S=10
 # boot onto a journal it is still hoping for.
 FIRST_LINE_TIMEOUT_S=600
 
-# The band line's own SMALL extra allowance, measured from the moment the first
-# price row exists (band plan 2026-10-15 §5 PR-A, v2 re-review LOW). It is on
-# top of FIRST_LINE_TIMEOUT_S, not inside it: the first price row can arrive at
-# the very end of those 600 s, and the band GET only happens AFTER it — so an
-# allowance shared with the first row would leave the band no time at all on
-# exactly the slow day it matters.
+# ⚠ **The band GET is its OWN PROCESS, and this runner owns its clock**
+# (band plan v3, 2026-10-16 operator decision). Four review rounds established
+# that the producer could not bound its own HTTP call honestly — phase timeouts
+# bound one chunk, an `iter_bytes()` deadline sees only decoded content, and a
+# worker thread leaves the caller blocking in `close()`, hashes outside the
+# budget and strands the token lock. A process under `timeout` has none of
+# those holes: SIGKILL does not negotiate. So:
 #
-# Derived from the producer's own two bounds, not picked:
-#   the band read happens on the first price line and, if that line's own
-#   window has no room left, at the next boundary — so at most ONE boundary
-#   away (60 s);
-#   one attempt is bounded by `request_timeout_s` (10 s,
-#   config/tos_probes/cp3-live-producer.yaml) and the retry loop refuses an
-#   attempt that cannot finish before `next boundary - first_poll_delay_s`;
-#   plus 20 s of slack for the seam between the two.
-# = 90 s. A hang ceiling, not a tuning knob: past it the band is ABSENT for
-# this session, which is the conservative direction (band UNKNOWN -> the kernel
-# sends nothing) and NOT a reason to abort — the price collection and the B3
-# cross-check are still worth having.
+#   open + one boundary  ->  launch the band process (its own process group)
+#   it exits without a line  ->  exactly ONE retry at the next boundary
+#   then  ->  wait for the LINE, then BAND ABSENT or boot
 #
-# ⚠ **The allowance is measured from the band's EARLIEST POSSIBLE moment, not
-# from now** (PR #906 review round 1, MEDIUM-2). Step 8b returns on ANY
-# approved row, and `_boot_today` publishes the newest already-complete bar —
-# which, on a boot before the open against a response carrying today-stamped
-# pre-open rows, is a PRE-OPEN row. The reviewer's measured scenario: boot
-# 08:30 -> 8b returns 08:30 -> an allowance anchored at `now` expires 08:31:30
-# -> BAND ABSENT -> the runtime boots -> the real band line lands at 08:46,
-# too late to be read, and the whole day is UNKNOWN for no reason. So step 8c
-# anchors on `max(now, open + one boundary)`, the first instant a band line
-# can exist at all (§3.1: the GET happens at the first boundary after the
-# open), and adds the allowance to THAT. Capped by the session's own stop
-# second so it can never outlive the window the operator set.
-#
-# Overridable by env for the tests, which need a short allowance to prove the
-# anchoring in seconds rather than in minutes. Deliberately NOT in the
-# `TENANT_*` namespace: that namespace is pinned to carry no defaults
-# (`test_runner_template_carries_no_instance_defaults`), and this is a derived
-# bound like FIRST_LINE_TIMEOUT_S, not an instance path.
-BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-90}
+# How long one band process may live. Derived, not picked: one attempt is
+# bounded by `request_timeout_s` (10 s, config/tos_probes/cp3-live-producer.yaml)
+# for the GET, plus up to `pace_s` (1.1 s) of pacing, plus an OAuth token POST
+# when the producer's cached token is cold, plus interpreter start and the
+# config/calendar read. 30 s covers all of that with room and is still far
+# inside one 60 s boundary, so a hung process cannot eat the retry's slot.
+BAND_PROCESS_TIMEOUT_S=${CP3_BAND_PROCESS_TIMEOUT_S:-30}
+
+# A ceiling on the "wait until open + one boundary" sleep. Empty in production,
+# where the real ceiling is STOP_S: a boot at 08:00 legitimately waits ~46 min,
+# and shortening that is how the band gets read pre-open. Set to 0 by the
+# runner tests, which cannot sit out a real market morning — they prove the
+# anchoring by reading the COMPUTED wait this step logs, not by living through
+# it. Deliberately outside the `TENANT_*` namespace, which
+# `test_runner_template_carries_no_instance_defaults` pins to carry no
+# defaults.
+BAND_LAUNCH_MAX_WAIT_S=${CP3_BAND_LAUNCH_MAX_WAIT_S:-}
+
+# The gap before the ONE retry: one minute-bar boundary. Not a tuning knob and
+# not shortened for the tests, which sit through it — the whole point of
+# waiting is that the cures for the soft failures this retries (a rate-limit
+# burst, one expired token, a single 500) arrive with the next minute, so a
+# retry fired immediately would spend the day's second and last attempt on the
+# same bad minute.
+BAND_RETRY_BOUNDARY_S=60
+
+# The band process gets SIGKILL this long after SIGTERM. Five seconds: it has
+# one in-flight request and one small file to finish, unlike the runtime's
+# durable set (SIGKILL_AFTER_S 120).
+BAND_PROCESS_KILL_AFTER_S=5
+
+# How long step 8c waits for the LINE. Short on purpose, and the reason is the
+# process split: by the time this wait starts, BOTH attempts have already been
+# `wait`ed on and exited, so a usable line is either on disk already or is
+# never coming. The allowance covers only the seam — a writer SIGKILLed just as
+# it replaced the file, or a line whose three clauses this step re-reads — and
+# 20 s is far more than a local atomic replace needs while staying well inside
+# one boundary. It is NOT where a slow broker is absorbed: that budget is
+# BAND_PROCESS_TIMEOUT_S plus the one retry, above. Past it the band is ABSENT
+# for this session, which is the conservative direction (UNKNOWN -> the kernel
+# sends nothing) and NOT a reason to abort.
+BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-20}
 
 # A typo ceiling on the session window, not a tuning knob: TENANT_STOP_AT is a
 # wall-clock time, and "2027" instead of "2026" is a session that never ends.
@@ -395,6 +410,7 @@ log "session paths are literal (no symlinked component, resolve to themselves)"
 RUN_PID=""
 PRODUCER_PID=""
 WAIT_PID=""
+BAND_PID=""
 
 stop_run() {
   stop_supervised "$RUN_PID" "$SIGKILL_AFTER_S" run
@@ -415,6 +431,14 @@ stop_wait() {
   stop_supervised "$WAIT_PID" 5 "row/band wait"
 }
 
+# The band process (step 8c). Its own `timeout` already bounds it, so this is
+# the signal path only: a TERM to the runner must not leave a band process
+# holding a REAL quotation connection. Five seconds, the same grace its own
+# supervisor allows.
+stop_band() {
+  stop_supervised "$BAND_PID" "$BAND_PROCESS_KILL_AFTER_S" "band process"
+}
+
 # The runtime first, the producer second: the producer is the one writing the
 # journal the runtime reads, and stopping it first would make the runtime's
 # last passes look like a feed that went silent. The waiter last — it is the
@@ -422,6 +446,7 @@ stop_wait() {
 on_exit() {
   stop_run
   stop_producer
+  stop_band
   stop_wait
 }
 
@@ -431,6 +456,7 @@ on_signal() {
   log "=== SIGNAL $1 received by the runner — forwarding to the children"
   stop_run
   stop_producer
+  stop_band
   stop_wait
   exit "$2"
 }
@@ -610,23 +636,135 @@ PY
 
 first_row_wait "$FIRST_LINE_TIMEOUT_S" "first-row wait"
 
-# --- 8c. the BAND line (band plan 2026-10-15 §3.1 · §5 PR-A) ---------------
+# --- 8c. the BAND process, then the BAND line (band plan v3) ---------------
 #
-# The band's source is this session's producer: one REAL GET-only read of
-# `FHMIF10000000`, at the first boundary after the open, right after the day's
-# first price row. The runtime holds no credential and opens no socket, so if
-# the band is not in `band.jsonl` before the boot, this session has no band at
-# all — the kernel folds that to UNKNOWN and sends nothing.
+# The band's source is a separate short-lived process: one REAL GET-only read
+# of `FHMIF10000000`, written as one line into `band.jsonl`. The runtime holds
+# no credential and opens no socket, so if that line is not there before the
+# boot this session has no band at all — the kernel folds that to UNKNOWN and
+# sends nothing.
 #
+# ⚠ **Credential separation is unchanged** (③ plan §3.4). The band process
+# reads the two real futures QUERY keys ITSELF, from the `env_file` its own
+# config names — exactly as the producer does. This template still never reads,
+# passes or prints them, and step 3b still refuses to start if they are in this
+# shell.
+#
+# ⚠ **Not before `open + one boundary`.** The band GET belongs at the first
+# boundary after the open (§3.1): earlier is when the broker is most likely to
+# hand out yesterday's band, and the runtime uses this line all day. Step 8b
+# can return well before the open — it returns on ANY approved row, and a
+# pre-open response carrying today-stamped rows produces one — so the wait
+# below is what keeps the launch honest. Capped by STOP_S: never past the
+# window the operator set.
+#
+# Exit codes are the whole interface to that program:
+#   0 -> a line was written
+#   2 -> a refusal before any GET (existing journal, pre-open, config)
+#   3 -> a soft failure: the GET ran, no usable line
+#   1 -> the allowlist gate refused, or an unexpected exception. A DEFECT in
+#        this repo, so it is a hard ABORT before the runtime boots.
+BAND_JOURNAL=$TENANT_PRODUCER_SESSION_DIR/band.jsonl
+BAND_WAIT_LOG=$TENANT_PRODUCER_SESSION_DIR/band-line-wait.log
+BAND_PRESENT=0
+BAND_PROCESS_RUNS=0
+
+# Sleep until `open + one boundary`, capped by the session stop. The open comes
+# from the producer config's own calendar — this template reads no calendar of
+# its own (③ plan §3.5).
+band_sleep_until_first_boundary() {
+  _until=$("$PY" - "$TENANT_PRODUCER_CONFIG" "$REPO" "$STOP_S" <<'PY'
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from tools.tos_cp3.live_producer.band_line import session_open_ms
+
+config, repo, stop_s = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+day = datetime.now(ZoneInfo("Asia/Seoul")).date()
+open_ms, _trading_date = session_open_ms(config, repo_root=repo, day=day)
+# One minute-bar boundary past the open: the first instant the band GET is
+# allowed to happen at all.
+target_s = open_ms / 1000.0 + 60.0
+now_s = time.time()
+wait_s = max(0.0, target_s - now_s)
+remaining_s = max(0.0, stop_s - now_s)
+print(f"{min(wait_s, remaining_s):.0f}")
+PY
+  ) || die "cannot compute the band launch time from $TENANT_PRODUCER_CONFIG"
+  log "band launch: computed ${_until}s until open + one boundary"
+  if [ -n "$BAND_LAUNCH_MAX_WAIT_S" ] && [ "$_until" -gt "$BAND_LAUNCH_MAX_WAIT_S" ]; then
+    log "band launch: capped to ${BAND_LAUNCH_MAX_WAIT_S}s (CP3_BAND_LAUNCH_MAX_WAIT_S)"
+    _until=$BAND_LAUNCH_MAX_WAIT_S
+  fi
+  if [ "$_until" -gt 0 ]; then
+    sleep "$_until" &
+    WAIT_PID=$!
+    wait "$WAIT_PID" || true
+    WAIT_PID=""
+  fi
+}
+
+# One band process, in its OWN process group under `timeout`. Returns its rc.
+band_process_run() {
+  BAND_PROCESS_RUNS=$((BAND_PROCESS_RUNS + 1))
+  log "=== BAND PROCESS #$BAND_PROCESS_RUNS instrument=$INSTRUMENT ceiling ${BAND_PROCESS_TIMEOUT_S}s"
+  PYTHONPATH="$REPO" \
+    setsid timeout --kill-after="${BAND_PROCESS_KILL_AFTER_S}s" \
+    "${BAND_PROCESS_TIMEOUT_S}s" \
+    "$PY" -m tools.tos_cp3.live_producer.band_probe \
+    --config "$TENANT_PRODUCER_CONFIG" \
+    --instrument "$INSTRUMENT" \
+    --session-dir "$TENANT_PRODUCER_SESSION_DIR" \
+    --confirm >>"$TENANT_LOG" 2>&1 &
+  BAND_PID=$!
+  wait "$BAND_PID"
+  _band_rc=$?
+  BAND_PID=""
+  log "band process #$BAND_PROCESS_RUNS rc=$_band_rc"
+  return "$_band_rc"
+}
+
+band_sleep_until_first_boundary
+if band_process_run; then
+  log "band process wrote a line"
+else
+  _rc=$?
+  if [ "$_rc" -eq 1 ]; then
+    # A gate refusal or an unexpected exception: a defect here, not a slow
+    # broker. ABORT before the runtime boots — the opposite disposition to
+    # BAND ABSENT, and the reason the probe keeps those codes apart.
+    die "band process exited rc 1 (allowlist gate refusal or unexpected error) — see $TENANT_LOG"
+  fi
+  # Exactly ONE retry, at the next boundary. One bad minute (a 429 burst, one
+  # expired token) must not cost the day's band; an unbounded retry would hand
+  # the band the minute-bar polling's rate-limit budget.
+  log "band process rc=$_rc — one retry at the next boundary"
+  sleep "$BAND_RETRY_BOUNDARY_S" &
+  WAIT_PID=$!
+  wait "$WAIT_PID" || true
+  WAIT_PID=""
+  if band_process_run; then
+    log "band process wrote a line on the retry"
+  else
+    _rc=$?
+    if [ "$_rc" -eq 1 ]; then
+      die "band process exited rc 1 on the retry (gate refusal) — see $TENANT_LOG"
+    fi
+    log "band process rc=$_rc on the retry — no further attempts"
+  fi
+fi
+
 # ⚠ **A LINE, not the file** (v2 re-review LOW). Checking existence alone lets
-# a stale file pass the instant the producer's own `refuse_if_journal_exists`
+# a stale file pass the instant the probe's own `refuse_if_journal_exists`
 # regresses, which is the regression this check exists to survive. The
 # predicate is the one the acceptance criterion states: `trading_date` is
 # today, `instrument` is this session's contract, and `as_of_ms` is at or after
-# the open. It lives in tools/tos_cp3/live_producer/band_line.py, so the
-# producer and this check cannot disagree about it, and the session OPEN comes
-# from the producer config's own calendar — not from a literal here (③ plan
-# §3.5: the runner must not become a second source of truth for the window).
+# the open. It lives in tools/tos_cp3/live_producer/band_line.py, so the writer
+# and this check cannot disagree about it, and the session OPEN comes from the
+# producer config's own calendar — not from a literal here.
 #
 # ⚠ **Absence does NOT abort** (§3.1). The session continues and says so
 # loudly: price collection and the B3 cross-check are still worth having, and
@@ -635,17 +773,11 @@ first_row_wait "$FIRST_LINE_TIMEOUT_S" "first-row wait"
 # evidence for it.
 #
 # In the background with `wait`, for the same reason as 8b: bash runs a trap
-# only BETWEEN commands, so a foreground `$(…)` would defer a TERM for the
-# whole allowance.
-BAND_JOURNAL=$TENANT_PRODUCER_SESSION_DIR/band.jsonl
-BAND_WAIT_LOG=$TENANT_PRODUCER_SESSION_DIR/band-line-wait.log
-BAND_PRESENT=0
-
+# only BETWEEN commands, so a foreground `$(…)` would defer a TERM.
 band_line_wait() {
   "$PY" - "$BAND_JOURNAL" "$TENANT_PRODUCER_CONFIG" "$INSTRUMENT" \
-    "$BAND_LINE_EXTRA_WAIT_S" "$PRODUCER_PID" "$REPO" "$STOP_S" \
+    "$BAND_LINE_EXTRA_WAIT_S" "$REPO" "$STOP_S" \
     >"$BAND_WAIT_LOG" 2>&1 <<'PY' &
-import os
 import sys
 import time
 from datetime import datetime
@@ -658,56 +790,29 @@ from tools.tos_cp3.live_producer.band_line import (
     session_open_ms,
 )
 
-band, config, instrument, allowance_s, producer_pid, repo, stop_s = (
+band, config, instrument, allowance_s, repo, stop_s = (
     Path(sys.argv[1]),
     Path(sys.argv[2]),
     sys.argv[3],
     float(sys.argv[4]),
-    int(sys.argv[5]),
-    Path(sys.argv[6]),
-    int(sys.argv[7]),
+    Path(sys.argv[5]),
+    int(sys.argv[6]),
 )
-
-#: One minute-bar boundary. The band GET happens at the first boundary AFTER
-#: the open (§3.1), so `open + this` is the earliest instant a band line can
-#: exist — whatever time step 8b happened to return at.
-BOUNDARY_S = 60.0
-
-
-def alive(pid: int) -> bool:
-    """Is the supervising `timeout` still there? (same question as step 8b)
-
-    A producer that has exited can never write the band line, so waiting out
-    the allowance would only delay the BAND ABSENT the session already has.
-    """
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
 
 # TODAY in KST, and the open from the producer's own settings — the runner
 # reads no calendar of its own (plan §3.5).
 day = datetime.now(ZoneInfo("Asia/Seoul")).date()
 open_ms, trading_date = session_open_ms(config, repo_root=repo, day=day)
-
-# The allowance runs from the band's earliest possible moment, not from now
-# (MEDIUM-2). `open_ms` is already computed above, so this costs nothing.
-now_ms = time.time() * 1000.0
-earliest_band_ms = open_ms + BOUNDARY_S * 1000.0
-wait_s = max(0.0, (earliest_band_ms - now_ms) / 1000.0) + allowance_s
-# ...but never past the session's own stop second. Waiting beyond it would
-# hold a boot for a window that has already closed.
-remaining_s = max(0.0, stop_s - now_ms / 1000.0)
-if wait_s > remaining_s:
-    wait_s = remaining_s
+now_s = time.time()
+remaining_s = max(0.0, stop_s - now_s)
+wait_s = min(allowance_s, remaining_s)
 print(
-    f"band wait: allowance={allowance_s:.0f}s anchored at open+{BOUNDARY_S:.0f}s "
-    f"-> waiting up to {wait_s:.0f}s (stop leaves {remaining_s:.0f}s)"
+    f"band wait: allowance={allowance_s:.0f}s (the band processes have already "
+    f"had their turns) -> waiting up to {wait_s:.0f}s "
+    f"(stop leaves {remaining_s:.0f}s)"
 )
 deadline = time.monotonic() + wait_s
-why = "no band line has been written yet"
+why = "no band line has been written"
 while True:
     line = read_last_band_line(band)
     if line is not None:
@@ -722,11 +827,6 @@ while True:
             )
             break
         why = f"the last line is not usable: {reason}"
-    if not alive(producer_pid):
-        raise SystemExit(
-            f"the producer (pid {producer_pid}) is gone and {band} holds no "
-            f"usable band line — {why}"
-        )
     if time.monotonic() >= deadline:
         raise SystemExit(f"no usable band line in {band} within {wait_s:.0f}s — {why}")
     time.sleep(1.0)

@@ -22,7 +22,6 @@ a futures TR response.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -37,7 +36,6 @@ from shared.collector.historical.ohlcv_parser import parse_ohlcv
 from tools.tos_cp3 import diff_decisions as dd
 from tools.tos_cp3 import emit_legacy_decisions as b2
 from tools.tos_cp3 import produce_fields as b1a
-from tools.tos_cp3 import quote_client
 from tools.tos_cp3 import stitch as stitch_mod
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
@@ -706,14 +704,18 @@ ARRIVAL_LAG_S = 1.1
 
 
 class FakeQuotes:
-    """GET-only by construction: it has no other method."""
+    """GET-only by construction: it has no other method.
+
+    No ``band`` method either, since band plan v3 (2026-10-16) moved that GET
+    into its own process: a fake that still offered one would let a producer
+    that called the band pass this suite.
+    """
 
     def __init__(self, market: dict[tuple[str, date], list[dict]], clock: FakeClock):
         self.market, self.clock = market, clock
         self.http = None
         self.last_received_kst = clock.now()
         self.calls: list[tuple[str, date]] = []
-        self.band_calls = 0
 
     def _visible(self, symbol: str, day: date) -> list[dict]:
         rows = self.market.get((symbol, day), [])
@@ -738,33 +740,6 @@ class FakeQuotes:
 
     def page(self, symbol: str, day: date, cursor: str = "") -> list[dict]:
         return self.history(symbol, day)
-
-    def band(self, symbol: str) -> Any:
-        """The band read (band plan 2026-10-15 §3.1), which this suite ignores.
-
-        The producer reads the venue band once, on the day's first price line,
-        through this same transport. These tests are about the STITCHED seed,
-        so the band is incidental — but it is not optional: leaving the method
-        off made every test here error with ``'FakeQuotes' object has no
-        attribute 'band'``, which is the fake drifting from the contract rather
-        than a finding about stitching. Counted so a test could assert on it.
-        """
-        self.band_calls += 1
-        self.clock.sleep(0.01)
-        payload = {
-            "rt_cd": "0",
-            "output1": {
-                "futs_sdpr": "1076.60",
-                "futs_mxpr": "1162.72",
-                "futs_llam": "990.48",
-            },
-        }
-        return quote_client.BandRead(
-            payload=payload,
-            raw_payload_digest=hashlib.sha256(
-                json.dumps(payload, separators=(",", ":")).encode("utf-8")
-            ).hexdigest(),
-        )
 
 
 def _write_calendar(tmp_path: Path, *, session_end: str = "09:20") -> Path:

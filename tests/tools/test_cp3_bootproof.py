@@ -45,7 +45,6 @@ from tools.tos_cp3.bootproof_guard import (
     BootProofGuardRefused,
     require_scratch_rule,
 )
-from tools.tos_cp3.live_producer import band_line
 from tools.tos_cp3.produce_fields import FIELD_ORDER
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1196,7 +1195,15 @@ _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
 #: rendered tree's own file, so "after the render, before the boot" is a fact
 #: about the pipeline rather than a bet on how long a stub takes.
 _PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
-#: Which ``band.jsonl`` the stub producer writes (band plan §3.1 · §5 PR-A):
+#: What the stub BAND PROBE does, one entry per invocation, comma separated
+#: (band plan v3): ``ok`` writes a line and exits 0, ``soft`` exits 3 with no
+#: line, ``gate`` exits 1 (an allowlist refusal — a defect here), ``hang``
+#: sleeps past its ``timeout`` so the supervisor has to kill it. The runs are
+#: counted in a file beside the session so a second invocation gets the second
+#: entry; a plan shorter than the number of invocations repeats its last entry.
+_BAND_PLAN_ENV = "STUB_BAND_PLAN"
+
+#: Which ``band.jsonl`` the stub band probe writes (band plan §3.1 · §5 PR-A):
 #: ``ok`` (default) is a line for today, this instrument, stamped just after
 #: the open; ``none`` writes no band file at all; ``stale`` /
 #: ``other-instrument`` / ``pre-open`` each break exactly ONE of the three
@@ -1307,68 +1314,6 @@ def _runner_repo(
         "        'as_of_ms': 1791601200000 + index,\n"
         "        'fields': {'close_x100': 57950},\n"
         "    }) + '\\n' for index in range(count)))\n"
-        # The band journal (band plan §3.2). Written inline BEFORE the price
-        # rows by default, so the runner's two waits are exercised in their
-        # real order even when the stub leaves immediately afterwards — or, with
-        # `_PRODUCER_BAND_DELAY_ENV`, from a BACKGROUND thread after a pause, so
-        # the band line lands AFTER 8b has already returned on the first price
-        # row. That second ordering is the one step 8c exists for, and the only
-        # one in which "a price row published during the band wait" is a thing
-        # that can happen.
-        f"band_mode = os.environ.get({_PRODUCER_BAND_ENV!r}, 'ok')\n"
-        f"band_delay = float(os.environ.get({_PRODUCER_BAND_DELAY_ENV!r}, '0') or 0)\n"
-        "def write_band():\n"
-        "    import datetime, zoneinfo\n"
-        "    kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
-        "    today = datetime.datetime.now(kst).date()\n"
-        f"    _open = os.environ.get({_PRODUCER_BAND_OPEN_ENV!r}, '08:45')\n"
-        "    _oh, _om = (int(part) for part in _open.split(':'))\n"
-        "    opened = datetime.datetime.combine(\n"
-        "        today, datetime.time(_oh, _om), tzinfo=kst)\n"
-        "    open_ms = int(opened.timestamp() * 1000)\n"
-        # `after-open` writes NOTHING until the open has passed, which is the
-        # real shape of the band GET (first boundary after the open) and the
-        # input the step-8c anchoring fix exists for.
-        "    if band_mode == 'after-open':\n"
-        "        while datetime.datetime.now(kst) < opened:\n"
-        "            time.sleep(0.2)\n"
-        "    band_date = today.strftime('%Y%m%d')\n"
-        "    band_instrument = instrument\n"
-        # Derived from the open, never from `now`: a line stamped `now` would
-        # be a PRE-OPEN line whenever the suite runs before 08:45 KST, which
-        # is a test that passes or fails by the hour.
-        "    band_as_of = open_ms + 1000\n"
-        "    if band_mode == 'stale':\n"
-        "        band_date = (today - datetime.timedelta(days=1)).strftime('%Y%m%d')\n"
-        "    elif band_mode == 'other-instrument':\n"
-        "        band_instrument = 'A05610'\n"
-        "    elif band_mode == 'pre-open':\n"
-        "        band_as_of = open_ms - 1\n"
-        "    elif band_mode == 'at-0900':\n"
-        "        band_as_of = int(datetime.datetime.combine(\n"
-        "            today, datetime.time(9, 0), tzinfo=kst).timestamp() * 1000)\n"
-        "    (session / 'band.jsonl').write_text(json.dumps({\n"
-        "        'kind': 'cp3-band/1',\n"
-        f"        'source_id': {_APPROVED_SOURCE_ID!r},\n"
-        "        'instrument': band_instrument,\n"
-        "        'trading_date': band_date,\n"
-        "        'tr_id': 'FHMIF10000000',\n"
-        "        'upper': '1162.72',\n"
-        "        'lower': '990.48',\n"
-        "        'basis': '1076.60',\n"
-        "        'raw_payload_digest': 'f' * 64,\n"
-        "        'producer_continuity_id': 'c' * 32,\n"
-        "        'as_of_ms': band_as_of,\n"
-        "    }) + '\\n')\n"
-        "if band_mode != 'none':\n"
-        "    if band_delay:\n"
-        "        import threading\n"
-        "        def _later():\n"
-        "            time.sleep(band_delay)\n"
-        "            write_band()\n"
-        "        threading.Thread(target=_later, daemon=True).start()\n"
-        "    else:\n"
-        "        write_band()\n"
         "if mode == 'never':\n"
         "    pass  # alive, publishing nothing — the wait runs its bound\n"
         "elif mode == '1+1':\n"
@@ -1411,10 +1356,79 @@ def _runner_repo(
     # guard, and for the same reason: the runner must drive the SHIPPED rule,
     # not a second copy written into this file. It is importable here because
     # it depends on nothing but the standard library and ``yaml`` — which is
-    # why the predicate lives apart from ``live_producer/band.py``.
+    # why the predicate lives apart from the band PROBE, whose transport pulls
+    # in the whole offline stack.
     shutil.copy2(
         _REPO_ROOT / "tools/tos_cp3/live_producer/band_line.py",
         repo / "tools/tos_cp3/live_producer/band_line.py",
+    )
+
+    # The stub BAND PROBE (band plan v3). It stands in for
+    # tools/tos_cp3/live_producer/band_probe.py: one invocation, one verdict
+    # from `_BAND_PLAN_ENV`, then exit. The real probe's own refusals and exit
+    # codes are exercised in tests/tools/test_cp3_live_producer.py; what the
+    # runner depends on is only the exit code and whether a line appeared.
+    (repo / "tools/tos_cp3/live_producer/band_probe.py").write_text(
+        "import datetime, json, os, sys, time, zoneinfo\n"
+        "from pathlib import Path\n"
+        "argv = sys.argv[1:]\n"
+        "def opt(name):\n"
+        "    return argv[argv.index(name) + 1]\n"
+        "session = Path(opt('--session-dir'))\n"
+        "session.mkdir(parents=True, exist_ok=True)\n"
+        "instrument = opt('--instrument')\n"
+        f"plan = os.environ.get({_BAND_PLAN_ENV!r}, 'ok').split(',')\n"
+        "counter = session / '.stub-band-runs'\n"
+        "runs = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(runs + 1))\n"
+        "what = plan[min(runs, len(plan) - 1)]\n"
+        "(session / 'band-log.jsonl').open('a').write(json.dumps({\n"
+        "    'stage': 'band_fetch', 'method': 'GET',\n"
+        "    'tr_id': 'FHMIF10000000',\n"
+        "    'path': '/uapi/domestic-futureoption/v1/quotations/inquire-price',\n"
+        "    'run': runs + 1, 'plan': what}) + '\\n')\n"
+        "if what == 'hang':\n"
+        "    time.sleep(600)\n"
+        "if what == 'gate':\n"
+        "    print('SafetyViolation: not on the read-only allowlist',"
+        " file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        "if what == 'soft':\n"
+        "    raise SystemExit(3)\n"
+        "kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
+        "today = datetime.datetime.now(kst).date()\n"
+        f"_open = os.environ.get({_PRODUCER_BAND_OPEN_ENV!r}, '08:45')\n"
+        "_oh, _om = (int(part) for part in _open.split(':'))\n"
+        "opened = datetime.datetime.combine(\n"
+        "    today, datetime.time(_oh, _om), tzinfo=kst)\n"
+        "open_ms = int(opened.timestamp() * 1000)\n"
+        "band_date = today.strftime('%Y%m%d')\n"
+        "band_instrument = instrument\n"
+        "band_as_of = open_ms + 1000\n"
+        f"mode = os.environ.get({_PRODUCER_BAND_ENV!r}, 'ok')\n"
+        "if mode == 'stale':\n"
+        "    band_date = (today - datetime.timedelta(days=1)).strftime('%Y%m%d')\n"
+        "elif mode == 'other-instrument':\n"
+        "    band_instrument = 'A05610'\n"
+        "elif mode == 'pre-open':\n"
+        "    band_as_of = open_ms - 1\n"
+        "elif mode == 'at-0900':\n"
+        "    band_as_of = int(datetime.datetime.combine(\n"
+        "        today, datetime.time(9, 0), tzinfo=kst).timestamp() * 1000)\n"
+        "(session / 'band.jsonl').write_text(json.dumps({\n"
+        "    'kind': 'cp3-band/1',\n"
+        f"    'source_id': {_APPROVED_SOURCE_ID!r},\n"
+        "    'instrument': band_instrument,\n"
+        "    'trading_date': band_date,\n"
+        "    'tr_id': 'FHMIF10000000',\n"
+        "    'upper': '1162.72',\n"
+        "    'lower': '990.48',\n"
+        "    'basis': '1076.60',\n"
+        "    'raw_payload_digest': 'f' * 64,\n"
+        "    'producer_continuity_id': 'c' * 32,\n"
+        "    'as_of_ms': band_as_of,\n"
+        "}) + '\\n')\n",
+        encoding="utf-8",
     )
     (repo / "tools/tos_cp3/__init__.py").write_text("", encoding="utf-8")
     if policy is not None:
@@ -1579,6 +1593,15 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         # (`_PRODUCER_EXIT_ENV: "0"`), which ends the wait at once because a
         # producer that is gone can never write the line.
         "CP3_BAND_LINE_EXTRA_WAIT_S": "5",
+        # The runner tests cannot sit out a real market morning, so the
+        # "wait until open + one boundary" sleep is capped to 0 here. The
+        # anchoring itself is proved by reading the COMPUTED wait the step
+        # logs (`test_red_the_band_process_is_not_launched_before_the_open`),
+        # which is clock-independent.
+        "CP3_BAND_LAUNCH_MAX_WAIT_S": "0",
+        # ...and a band process that hangs must be killed quickly enough for a
+        # 180 s subprocess timeout to see the retry as well.
+        "CP3_BAND_PROCESS_TIMEOUT_S": "4",
     }
     for name, value in overrides.items():
         if value == "":
@@ -1838,33 +1861,6 @@ def test_runner_waits_for_the_band_line_and_says_it_saw_one(tmp_path: Path) -> N
     assert not result.producer_outlived_the_runner
 
 
-def test_red_the_runner_writes_band_absent_and_keeps_going(tmp_path: Path) -> None:
-    """No band line: the session says so LOUDLY and continues (§3.1).
-
-    Absence is the conservative direction — the runtime folds a missing band to
-    UNKNOWN and sends nothing — and the price collection plus the B3
-    cross-check are still worth the session. So this is a loud log line and NOT
-    an abort, and the session is recorded as a failure of §4 acceptance 1 by
-    that line.
-
-    The stub leaves right after writing its price row, which is also the
-    shortcut the wait takes: a producer that is gone can never write the band
-    line, so there is nothing left to wait for.
-    """
-    result = _run_runner(
-        _runner_repo(tmp_path),
-        tmp_path,
-        **{_PRODUCER_BAND_ENV: "none", _PRODUCER_EXIT_ENV: "0"},
-    )
-    output = result.stdout + result.stderr
-    assert _BAND_ABSENT_LINE in output
-    assert _BAND_PRESENT_LINE not in output
-    assert "holds no usable band line" in output
-    # It kept going: the render is the next step and it is the thing that
-    # refused, not the band wait.
-    assert "render refused" in output
-
-
 @pytest.mark.parametrize(
     "band_mode,fragment",
     [
@@ -1902,75 +1898,6 @@ def test_red_the_runner_rejects_a_band_line_clause_by_clause(
     assert _BAND_PRESENT_LINE not in output
     assert "the last line is not usable" in output
     assert fragment in output
-    assert "render refused" in output
-
-
-def test_red_the_band_wait_is_anchored_on_the_open_not_on_the_first_row(
-    tmp_path: Path,
-) -> None:
-    """**Review round 1 MEDIUM-2.** The allowance starts at open + one boundary.
-
-    The measured defect: step 8b returns on ANY approved row, and
-    ``_boot_today`` publishes the newest already-complete bar — so a boot
-    before the open against a response carrying today-stamped pre-open rows
-    makes 8b return BEFORE the open. An allowance counted from that instant
-    expires long before the band GET (first boundary after the open) has
-    happened, and the session boots ``BAND ABSENT`` for a band that was about
-    to arrive. The whole day is then UNKNOWN for no reason.
-
-    The input here is that exact shape, with the clock doing the work rather
-    than a mock: the stub calendar's open is set to a near-future minute
-    boundary, the stub publishes its price row at once (so 8b returns
-    pre-open) and writes the band line only once the open has passed.
-
-    ⚠ **The first cut of this test was NOT a proof** — the round-2 mutation
-    run found it green with the anchor reverted. It set the open ~10 s out and
-    asserted only the outcome, but the runner spends real time before step 8c
-    (the checkout guards, the front-month lookup, the module-provenance check,
-    the producer launch, the first-row wait), so the open had usually passed
-    already and BOTH anchorings saw the line at once. The repair is two-fold:
-    enough runway that 8c really starts pre-open, and an assertion on the
-    DEADLINE the script computes — which the reverted anchor cannot satisfy no
-    matter how the timing falls, because it can only ever be the bare
-    allowance.
-    """
-    allowance = 5
-    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
-    # 45 s of runway, so step 8c reaches its wait while the open is still
-    # ahead even on a slow host.
-    opens_at = (now + datetime.timedelta(seconds=45)).replace(second=0, microsecond=0)
-    if (opens_at - now).total_seconds() < 40:
-        opens_at += datetime.timedelta(minutes=1)
-    open_hhmm = opens_at.strftime("%H:%M")
-
-    result = _run_runner(
-        _runner_repo(tmp_path),
-        tmp_path,
-        **{
-            _STUB_CALENDAR_START_ENV: open_hhmm,
-            _PRODUCER_BAND_OPEN_ENV: open_hhmm,
-            _PRODUCER_BAND_ENV: "after-open",
-            "CP3_BAND_LINE_EXTRA_WAIT_S": str(allowance),
-        },
-    )
-    output = result.stdout + result.stderr
-
-    # (1) The computed bound, which is the clause itself. Anchored at `now`
-    # this can only be `allowance`; anchored at open + one boundary it is at
-    # least a minute more. Asserted on the script's own number, so the
-    # discrimination does not depend on how the wall clock fell.
-    assert f"allowance={allowance}s anchored at open+60s" in output
-    waiting = re.search(r"waiting up to (\d+)s", output)
-    assert waiting is not None, output[-3000:]
-    assert int(waiting.group(1)) >= allowance + 30, (
-        "step 8c did not anchor on the open — it waited only the bare "
-        f"allowance ({waiting.group(1)}s). If the open had already passed "
-        "this test cannot discriminate; raise the runway."
-    )
-    # (2) And the outcome that bound exists for: the line arrives after the
-    # open and the session boots WITH a band instead of declaring it absent.
-    assert _BAND_PRESENT_LINE in output, output[-3000:]
-    assert _BAND_ABSENT_LINE not in output
     assert "render refused" in output
 
 
@@ -2021,123 +1948,6 @@ def test_red_the_runners_open_really_comes_from_the_calendar(
     assert "render refused" in output
 
 
-def test_red_a_price_row_published_during_the_band_wait_is_still_pre_boot(
-    tmp_path: Path,
-) -> None:
-    """**Review round 2 item B.** The boot snapshot has to cover the 8c wait.
-
-    The reviewer's concern: step 8c can now wait from a pre-open first row
-    until ``open + 60 s + allowance``, and a price line published DURING that
-    wait (the 08:45 bar, stamped 08:46:02) would be missing from
-    ``pre_boot_raw_event_ids`` — so the runtime boots, finds it already stale,
-    and M5 reports a false consumption failure.
-
-    The premise about the shipped script is not quite right — the snapshot is
-    written TWICE, and the second call (step 11, "boot-moment snapshot") runs
-    after 8c, the guard, the render and the label check, immediately before the
-    boot. It was added by #892's review for exactly this reason, one wait
-    earlier. But that was only ever argued in prose, so here is the proof: the
-    stub publishes a SECOND price row during the band wait, and that row must
-    be in the snapshot the runtime boots against.
-
-    Deleting the step-11 call — i.e. going back to the 8b-only snapshot the
-    finding describes — makes this red.
-    """
-    repo = _runner_repo(tmp_path, bootable=True)
-    watch = tmp_path / "producer-session" / "band.jsonl"
-    env = _runner_env(
-        tmp_path,
-        **{
-            # The ordering this test needs, and the one the first cut got
-            # wrong: the stub used to write `band.jsonl` BEFORE its first price
-            # row, so both rows existed before step 8b even looked and the
-            # snapshot's timing could not matter. The round-3 mutation run
-            # caught that (the 8b-only snapshot stayed green). Now the band
-            # line is written from a background thread after 4 s, so:
-            # row 1 -> 8b returns -> band line -> 8c returns, with row 2
-            # published the moment the band line appears.
-            _PRODUCER_BAND_DELAY_ENV: "4",
-            _PRODUCER_ROWS_ENV: "1+1",
-            _PRODUCER_SECOND_ROW_WHEN_ENV: str(watch),
-        },
-    )
-    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
-    env["TENANT_STOP_AT"] = "+1 minutes"
-    try:
-        result = subprocess.run(
-            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(tmp_path),
-            timeout=150,
-        )
-    finally:
-        pidfile = tmp_path / "run.pid"
-        if pidfile.is_file():
-            with contextlib.suppress(OSError, ValueError):
-                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
-    output = result.stdout + result.stderr
-    assert _BAND_PRESENT_LINE in output, output[-3000:]
-
-    snapshot = json.loads(
-        (tmp_path / "producer-session" / "boot-journal-snapshot.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    ids = snapshot["pre_boot_raw_event_ids"]
-    assert snapshot["consumed_stale_at_boot"] == len(ids)
-    # BOTH rows: the one 8b returned on, and the one published when the band
-    # line landed — after the 8b snapshot, before the boot. One id here means
-    # the snapshot was taken too early and the runtime will meet that row as
-    # an already-stale line M5 counts as a consumption failure.
-    assert len(ids) == 2, snapshot
-    assert len(set(ids)) == 2
-
-
-def test_runner_band_wait_is_the_shipped_predicate_after_the_first_row(
-    tmp_path: Path,
-) -> None:
-    """Source level: the band check reads a LINE, with the shipped predicate,
-    after the first price row and before the guard — and it is bounded by its
-    own small extra allowance rather than sharing the first row's 600 s."""
-    text = _RUNNER.read_text("utf-8")
-    # 90 s by default, overridable for the tests that need to prove the
-    # ANCHORING in seconds (review round 1 MEDIUM-2) — and deliberately NOT in
-    # the `TENANT_*` namespace, which
-    # `test_runner_template_carries_no_instance_defaults` pins to carry no
-    # defaults at all.
-    assert "BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-90}" in text
-    assert "TENANT_BAND" not in text
-    # The allowance is measured from the band's earliest possible instant, not
-    # from whenever the first price row happened to land.
-    assert "BOUNDARY_S = 60.0" in text
-    assert "earliest_band_ms = open_ms + BOUNDARY_S * 1000.0" in text
-    # ...and never past the session's own stop second.
-    assert "remaining_s = max(0.0, stop_s - now_ms / 1000.0)" in text
-    # The predicate is imported, not re-written here.
-    assert "from tools.tos_cp3.live_producer.band_line import" in text
-    for name in ("read_last_band_line", "reject_reason", "session_open_ms"):
-        assert name in text, name
-    # The band journal is the session directory's own file, by the one name
-    # band_line.py publishes.
-    assert "BAND_JOURNAL=$TENANT_PRODUCER_SESSION_DIR/band.jsonl" in text
-    assert band_line.BAND_JOURNAL_NAME == "band.jsonl"
-    # Order: producer -> first row -> band line -> guard -> render -> boot.
-    order = [
-        "PRODUCER_PID=$!",
-        'first_row_wait "$FIRST_LINE_TIMEOUT_S"',
-        "band_line_wait\n",
-        "GUARD_OUT=",
-        "RENDER_LOG=",
-        "RUN_PID=$!",
-    ]
-    positions = [text.index(marker) for marker in order]
-    assert positions == sorted(positions), list(zip(order, positions))
-    # No literal open time: the window comes from the producer's own calendar.
-    assert "08:45" not in text
-
-
 def test_runner_band_wait_still_runs_no_mode_repair(tmp_path: Path) -> None:
     """PR-A touched neither the credential separation nor the xtrace defence.
 
@@ -2164,6 +1974,137 @@ def test_runner_band_wait_still_runs_no_mode_repair(tmp_path: Path) -> None:
     # The band step reads the band journal and never writes to it.
     assert '$BAND_JOURNAL"' in code or '"$BAND_JOURNAL"' in code
     assert ">$BAND_JOURNAL" not in code and '>"$BAND_JOURNAL"' not in code
+
+
+def test_runner_launches_the_band_process_and_sees_its_line(tmp_path: Path) -> None:
+    """The v3 happy path: the band PROCESS writes the line, the runner sees it.
+
+    The stub producer no longer writes ``band.jsonl`` at all — that is the
+    probe's file now, and this test would fail if the runner still expected the
+    producer to produce it.
+    """
+    result = _run_runner(_runner_repo(tmp_path), tmp_path)
+    output = result.stdout + result.stderr
+    assert "=== BAND PROCESS #1" in output
+    assert "band process #1 rc=0" in output
+    assert _BAND_PRESENT_LINE in output
+    assert _BAND_ABSENT_LINE not in output
+    assert "band line ok · trading_date=" in output
+    # exactly one invocation on the happy path
+    assert "=== BAND PROCESS #2" not in output
+    assert (tmp_path / "producer-session" / "band.jsonl").is_file()
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_a_hanging_band_process_is_killed_and_the_session_continues(
+    tmp_path: Path,
+) -> None:
+    """A band process that hangs must not hold the session (band plan v3).
+
+    This is the whole reason the GET moved out of the producer: the bound is a
+    supervisor, not a promise the program makes about itself. The stub sleeps
+    far past its ``timeout``, so ``timeout`` has to kill it — and the runner
+    then takes its ONE retry, which succeeds, and boots with a band.
+
+    Removing the ``timeout`` wrapper makes this hang until the subprocess
+    timeout instead, which is the mutation.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{_BAND_PLAN_ENV: "hang,ok"}
+    )
+    output = result.stdout + result.stderr
+    # killed, not waited out: `timeout` reports 124 (or 137 after --kill-after)
+    assert "band process #1 rc=124" in output or "band process #1 rc=137" in output
+    assert "one retry at the next boundary" in output
+    assert "band process #2 rc=0" in output
+    assert _BAND_PRESENT_LINE in output
+    assert "render refused" in output
+
+
+def test_red_the_band_retry_runs_exactly_once(tmp_path: Path) -> None:
+    """One extra attempt, never two (band plan v3).
+
+    A soft failure every time: the runner must try twice and stop, then say
+    BAND ABSENT. An unbounded retry would hand the band the minute-bar
+    polling's rate-limit budget for the rest of the day.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{_BAND_PLAN_ENV: "soft,soft,soft"}
+    )
+    output = result.stdout + result.stderr
+    assert "=== BAND PROCESS #1" in output
+    assert "=== BAND PROCESS #2" in output
+    assert "=== BAND PROCESS #3" not in output
+    assert "no further attempts" in output
+    assert _BAND_ABSENT_LINE in output
+    # and it still went on to the next step rather than aborting
+    assert "render refused" in output
+
+
+def test_red_a_band_process_rc_1_aborts_before_the_boot(tmp_path: Path) -> None:
+    """rc 1 is a defect HERE, so the session must not boot (band plan v3).
+
+    The probe reserves rc 1 for an allowlist gate refusal or an unexpected
+    exception, and keeps soft failures at rc 3 precisely so this disposition is
+    possible: BAND ABSENT carries on, a gate refusal does not. Treating rc 1
+    like rc 3 turns "zero real futures orders" into a quiet log line.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path, **{_BAND_PLAN_ENV: "gate"})
+    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
+    env["TENANT_STOP_AT"] = "+1 minutes"
+    try:
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=120,
+        )
+    finally:
+        pidfile = tmp_path / "run.pid"
+        if pidfile.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "band process exited rc 1" in output
+    # the boot never started, and there was no retry either: rc 1 is terminal
+    assert not (tmp_path / "run.pid").exists()
+    assert "=== BAND PROCESS #2" not in output
+    assert _BAND_ABSENT_LINE not in output
+
+
+def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) -> None:
+    """⛔ Not before ``open + one boundary`` (band plan §3.1).
+
+    Step 8b returns on ANY approved row and can therefore return well before
+    the open, so the launch time is the runner's to enforce. Asserted on the
+    wait this step COMPUTES — with the calendar opening at 23:30 the computed
+    wait is a large positive number, and with the anchor removed it would be 0.
+    Reading the computed value rather than living through it keeps the test
+    clock-independent (the sleep itself is capped to 0 in these tests).
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_CALENDAR_START_ENV: "23:30", _PRODUCER_BAND_OPEN_ENV: "23:30"},
+    )
+    output = result.stdout + result.stderr
+    computed = re.search(
+        r"band launch: computed (\d+)s until open \+ one boundary", output
+    )
+    assert computed is not None, output[-3000:]
+    # 23:31 is ahead of almost every hour of the day; the one hour it is not,
+    # the number is still the honest distance to tomorrow's... no: the open is
+    # combined with TODAY, so after 23:31 the distance is 0. Skip the assertion
+    # in that window rather than assert something false.
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    if (now.hour, now.minute) < (23, 31):
+        assert int(computed.group(1)) > 0, output[-2000:]
+    assert "band launch: capped to 0s" in output
 
 
 def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:

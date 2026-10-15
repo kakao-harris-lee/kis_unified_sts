@@ -20,10 +20,8 @@ Firewall: legacy side (``tools/``). No ``tos`` / ``tos_runtime`` import.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-import threading
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -74,9 +72,21 @@ ALLOWLIST = (
 )
 
 #: The log stage one band attempt writes. Named so the post-session check
-#: (runbook §7.2-d) and :mod:`~tools.tos_cp3.live_producer.band` agree on the
-#: string without either of them spelling it twice.
+#: (runbook §7.2-d) and :mod:`~tools.tos_cp3.live_producer.band_probe` agree on
+#: the string without either of them spelling it twice.
 BAND_FETCH_STAGE = "band_fetch"
+
+
+class BandResponseTooLarge(RuntimeError):
+    """The band response grew past ``band_max_response_bytes`` while streaming.
+
+    A ``RuntimeError``, so the caller folds it to a soft failure like any other
+    broker-answer problem: no band line, and the session carries on. It exists
+    because the time bound now lives in the band PROCESS's own ``timeout``,
+    and a size cap is the part this layer can still enforce by itself — a
+    48 MiB body hashed and parsed inside a 0.2 s budget was Codex's round-4
+    F2 measurement.
+    """
 
 
 def _band_payload_or_none(raw: bytes) -> dict | None:
@@ -103,37 +113,6 @@ class BandRead:
     #: broker actually sent, and a digest of a re-serialised parse would be a
     #: digest of this process's json writer instead.
     raw_payload_digest: str
-
-
-@dataclass
-class _BandAttempt:
-    """What the WORKER thread produces. It mutates no shared state at all.
-
-    Everything the caller needs comes back in here, so a worker that finishes
-    after the caller gave up has written nothing anybody reads (review round 3
-    item: "the caller discards any late result").
-    """
-
-    raw: bytes | None = None
-    status: int | None = None
-    token_expired: bool = False
-    error: str | None = None
-
-
-def _new_band_client(timeout: httpx.Timeout) -> httpx.Client:
-    """A FRESH client per band attempt, and that is the design, not an oversight.
-
-    Three reasons, in order of how badly each would bite:
-
-    * the caller aborts a stuck attempt by CLOSING this client from its own
-      thread, which is what makes the worker's blocked socket read fail. A
-      client shared with the minute path would mean a band timeout breaks
-      price polling — the one thing that must never happen for the band's sake.
-    * "use a fresh client for the next attempt after a forced close" is then
-      true by construction: there is no closed client to reuse.
-    * the band is read once or twice a day, so connection reuse buys nothing.
-    """
-    return httpx.Client(timeout=timeout, follow_redirects=False)
 
 
 #: ``FID_HOUR_CLS_CODE`` default. Mirrors
@@ -200,11 +179,6 @@ class Quotes:
         )
         self.last = 0.0
         self.calls = 0
-        #: How :meth:`band` gets its own client. A seam, because the tests
-        #: need to hand the attempt an ``httpx.MockTransport`` that trickles
-        #: headers and compressed fragments — the two reads that happen
-        #: OUTSIDE ``iter_bytes()`` and that the previous bound missed.
-        self.band_client_factory: Any = _new_band_client
 
     def page(self, symbol: str, day: date, cursor: str = "") -> list[dict]:
         url = REAL_BASE_URL + QUOTE_PATH
@@ -289,71 +263,8 @@ class Quotes:
             time.sleep(self.cfg["retry_pause_s"])
         raise RuntimeError(error)
 
-    def _band_attempt(
-        self,
-        params: dict,
-        timeout: httpx.Timeout,
-        holder: dict,
-        abort: threading.Event,
-    ) -> _BandAttempt:
-        """Runs ON THE WORKER THREAD. Returns everything; mutates nothing shared.
-
-        The token acquire is INSIDE this thread deliberately. It is a network
-        call (``KISAuthManager`` over ``requests``) whose timeout this module
-        does not control, so acquiring it on the caller's thread first would
-        leave exactly the unbounded wait the worker exists to bound.
-
-        ⚠ The one shared thing it can touch is the token CACHE, through
-        ``get_token()`` writing a fresh token to disk. That is idempotent, it is
-        what any later attempt would do anyway, and it cannot write a band line
-        or change this object's state. Everything else — the counters, the pace
-        stamp, the request record, the expiry invalidation — belongs to the
-        caller and is done there.
-        """
-        out = _BandAttempt()
-        url = REAL_BASE_URL + BAND_PATH
-        client = None
-        try:
-            token = self.auth.get_token()
-            headers = {
-                "authorization": "Bearer " + token,
-                "appkey": self.creds.app_key,
-                "appsecret": self.creds.app_secret,
-                "tr_id": BAND_TR,
-                "content-type": "application/json",
-                # No compression. Defence in depth, NOT the bound: a gzip body
-                # that decodes to nothing yet is read without `iter_bytes()`
-                # ever yielding, which is one of the two reads the old in-loop
-                # deadline could not see (the other is the headers). The bound
-                # is the caller's thread join; this only removes a way for a
-                # server to spend time invisibly.
-                "accept-encoding": "identity",
-            }
-            client = self.band_client_factory(timeout)
-            holder["client"] = client
-            if abort.is_set():
-                # The caller gave up before this thread got going. Nothing has
-                # been sent yet, so leave without opening a socket.
-                out.error = "band_total_budget_exceeded"
-                return out
-            received = bytearray()
-            with client.stream("GET", url, headers=headers, params=params) as response:
-                out.status = response.status_code
-                for chunk in response.iter_bytes():
-                    received.extend(chunk)
-            out.raw = bytes(received)
-        except (httpx.HTTPError, requests.RequestException, ValueError, OSError):
-            # Includes the error a closed client raises on the blocked read,
-            # which is how the caller's abort reaches this thread.
-            out.error = "band_auth_http_or_json_error"
-        finally:
-            if client is not None:
-                with contextlib.suppress(Exception):
-                    client.close()
-        return out
-
     def band(self, symbol: str) -> BandRead:
-        """ONE paced, allowlisted GET of the venue band. No retry loop here.
+        """ONE paced, allowlisted, synchronous GET of the venue band.
 
         Three ways this differs from :meth:`page`, each one a requirement of
         the band plan §3.1:
@@ -363,63 +274,51 @@ class Quotes:
           sent; ``page()`` does not keep the bytes at all.
         * **the attempt logs its OWN ``tr_id``.** ``page()`` writes the module
           constant :data:`TR`, so a band call recorded through it would be
-          invisible to the post-session check "every TR in
-          ``producer-log.jsonl`` is one of the two, all GET" (§3.5, review
-          LOW-2) — the check would pass while never having seen this call.
-        * **one attempt, no retry.** The band's retry budget is TIME (every
-          attempt must end before the next boundary minus δ, so the price poll
-          is not pushed), not a count, so the loop lives in
-          :mod:`~tools.tos_cp3.live_producer.band` where the clock is injected.
+          invisible to the post-session check "every TR in the request logs is
+          one of the two, all GET" (§3.5, review LOW-2).
+        * **one attempt, no retry.** Scheduling and retry are the RUNNER's, not
+          this module's.
 
-        **What the bound guarantees, exactly** (review round 3, Codex MEDIUM).
-        THE CALLER returns within ``pace_s + request_timeout_s``, whatever
-        httpx is doing, because the whole attempt runs on a worker thread and
-        this method waits with ``join(budget)``. Two earlier attempts at this
-        were both wrong, and both are worth naming because the second looked
-        like a fix:
+        **Where the total-time bound lives: not here** (band plan v3,
+        2026-10-16 operator decision). Three rounds of review established that
+        this process cannot bound its own HTTP call honestly:
 
         1. four phase timeouts summing to the budget — httpx's ``read`` bounds
            ONE chunk, so a trickle has no total;
-        2. a deadline checked inside the ``iter_bytes()`` loop — that loop sees
-           only DECODED content, so header reception (entirely before the first
-           yield) and compressed bytes that decode to nothing are both read
-           without the check ever running. Codex measured 1.6 s against a 1 s
-           budget with a gzip stream yielding every 100 ms.
+        2. a deadline inside the ``iter_bytes()`` loop — that loop sees only
+           DECODED content, so header reception and compressed bytes that
+           decode to nothing are read without the check running;
+        3. a worker thread with ``join(budget)`` — the caller then blocks in
+           ``client.close()``, hashing and parsing still run outside the
+           budget, and an abandoned worker holds
+           ``KISAuthManager.get_token()``'s lock so the next ``page()`` waits
+           on it.
 
-        On timeout this method closes the attempt's client from this thread so
-        the worker's blocked socket read fails, then raises **immediately**. It
-        does NOT join the worker.
-
-        ⚠ **The worker may outlive this call**, stated rather than implied:
-        closing the client makes its read fail fast but not instantly, and a
-        worker aborted before it even built its client notices only at
-        ``abort``. A lingering worker cannot write a band line, cannot touch
-        this object's state, and its result is discarded — the caller has
-        already raised and never reads it. The thread is a daemon, so it cannot
-        hold up process exit either.
+        So the band GET now runs in its own short-lived PROCESS
+        (:mod:`tools.tos_cp3.live_producer.band_probe`) under the runner's
+        ``timeout``, which is a bound no in-process trick can match: SIGKILL
+        does not negotiate. What stays here is what this layer can honestly
+        promise — per-phase INACTIVITY guards, and a **streamed size cap** so
+        a body cannot grow unboundedly before anyone looks at it.
 
         Raises:
             RuntimeError: on any transport/OAuth/JSON failure, ``rt_cd != 0``,
-                or the total budget being exceeded. The caller writes no band
-                line and logs ``band_fetch_failed``.
+                or a response past ``band_max_response_bytes``. The caller
+                writes no band line.
         """
-        # ⛔ ON THE CALLER THREAD, BEFORE ANY NETWORK ACTIVITY EXISTS. The gate
-        # is where "zero real futures orders" is enforced, so it runs before a
-        # worker is submitted, never inside one.
+        # ⛔ BEFORE ANY NETWORK ACTIVITY. The gate is where "zero real futures
+        # orders" is enforced, so nothing — not even a DNS lookup — precedes it.
         url = REAL_BASE_URL + BAND_PATH
         assert_read_only_call("GET", url, BAND_TR, ALLOWLIST)
         params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": symbol}
-        # Per-phase INACTIVITY guards, not a total. No clamp: a
-        # `max(0.001, ...)` floor RAISES the phases for a budget under 4 ms and
-        # so loosens what it looks like it tightens. The minimum lives where a
-        # reviewer can see it — `config.py` refuses a `request_timeout_s` below
-        # `MIN_REQUEST_TIMEOUT_S`.
+        # Per-phase INACTIVITY guards. No clamp: a `max(0.001, ...)` floor
+        # RAISES the phases for a tiny budget and so loosens what it looks like
+        # it tightens. The floor is `config.MIN_REQUEST_TIMEOUT_S`, refused at
+        # load time where a reviewer can see it.
         budget_s = float(self.cfg["request_timeout_s"])
         phase = budget_s / 4.0
         timeout = httpx.Timeout(connect=phase, read=phase, write=phase, pool=phase)
-        # The pace sleep stays on THIS thread: it is a deterministic sleep, not
-        # a socket read, and `band.attempt_budget()` charges it on top of the
-        # budget — so the caller's whole cost is pace + budget, as declared.
+        cap = int(self.cfg["max_response_bytes"])
         time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
         record: dict[str, Any] = {
             "stage": BAND_FETCH_STAGE,
@@ -428,71 +327,68 @@ class Quotes:
             "tr_id": BAND_TR,
             "path": BAND_PATH,
             "params": params,
-            "total_budget_s": budget_s,
+            "max_response_bytes": cap,
         }
-        self.last = time.monotonic()
-        self.calls += 1
-        holder: dict[str, Any] = {}
-        abort = threading.Event()
-        box: list[_BandAttempt] = []
-
-        def run() -> None:
-            # A worker that dies must SAY so. Without this the caller sees an
-            # empty box and cannot tell a crash from a budget timeout, and it
-            # would report the wrong one — the exact conflation this project
-            # keeps paying for elsewhere.
-            try:
-                box.append(self._band_attempt(params, timeout, holder, abort))
-            except BaseException:  # noqa: BLE001 - reported, never swallowed
-                box.append(_BandAttempt(error="band_worker_crashed"))
-
-        worker = threading.Thread(target=run, name="cp3-band-attempt", daemon=True)
         try:
-            worker.start()
-            worker.join(budget_s)
-            if worker.is_alive():
-                abort.set()
-                client = holder.get("client")
-                if client is not None:
-                    # From THIS thread, so the worker's blocked read errors out.
-                    with contextlib.suppress(Exception):
-                        client.close()
-                record["error"] = "band_total_budget_exceeded"
-                raise RuntimeError(record["error"])
-            if not box:
-                # The thread ended without even reporting a crash. Nothing
-                # known about the call, so it is named as its own thing rather
-                # than borrowed from the timeout.
-                record["error"] = "band_worker_vanished"
-                raise RuntimeError(record["error"])
-            outcome = box[0]
-            record["http_status"] = outcome.status
-            if outcome.error is not None or outcome.raw is None:
-                record["error"] = outcome.error or "band_auth_http_or_json_error"
-                raise RuntimeError(record["error"])
-            raw = outcome.raw
+            # OAuth may raise ValueError or requests errors; both are failures
+            # of this attempt and neither is ever persisted as text.
+            token = self.auth.get_token()
+            headers = {
+                "authorization": "Bearer " + token,
+                "appkey": self.creds.app_key,
+                "appsecret": self.creds.app_secret,
+                "tr_id": BAND_TR,
+                "content-type": "application/json",
+                # No compression: a gzip body that decodes to nothing yet is
+                # bytes read for no visible progress, and the size cap below
+                # should count what the wire carried.
+                "accept-encoding": "identity",
+            }
+            self.last = time.monotonic()
+            self.calls += 1
+            received = bytearray()
+            with self.http.stream(
+                "GET", url, headers=headers, params=params, timeout=timeout
+            ) as response:
+                record["http_status"] = response.status_code
+                for chunk in response.iter_bytes():
+                    received.extend(chunk)
+                    if len(received) > cap:
+                        # Stop reading rather than hashing an unbounded body.
+                        # The `with` closes the stream on the way out.
+                        raise BandResponseTooLarge(
+                            f"band response exceeded {cap} bytes"
+                        )
+            # EXACTLY the bytes received, hashed before anything parses them.
+            raw = bytes(received)
             digest = hashlib.sha256(raw).hexdigest()
             record["raw_payload_digest"] = digest
             record["raw_payload_bytes"] = len(raw)
             payload = _band_payload_or_none(raw)
             if is_token_expired_error(payload or {}):
-                # The caller owns every mutation of shared state, this one
-                # included: the worker only reports the bytes it saw.
+                # This manager owns only the app-key scoped private cache.
                 self.auth.invalidate()
             # Expiry is handled BEFORE the status check, because KIS can report
             # it with a non-2xx status — same ordering reason as page().
-            if outcome.status is None or not 200 <= outcome.status < 300:
-                record["error"] = "band_auth_http_or_json_error"
-                raise RuntimeError(record["error"])
+            response.raise_for_status()
             if payload is None:
-                record["error"] = "band_auth_http_or_json_error"
-                raise RuntimeError(record["error"])
+                raise ValueError("band response is not a JSON mapping")
             record["rt_cd"] = payload.get("rt_cd")
             # Message CLASS only, like page(): msg1 is human text.
             record["msg_cd"] = payload.get("msg_cd")
             if str(payload.get("rt_cd")) != "0":
-                record["error"] = "band_auth_http_or_json_error"
-                raise RuntimeError(record["error"])
+                raise ValueError("band response carries rt_cd != 0")
+        except BandResponseTooLarge as exc:
+            record["error"] = "band_response_too_large"
+            raise RuntimeError(record["error"]) from exc
+        except (
+            httpx.HTTPError,
+            requests.RequestException,
+            ValueError,
+            UnicodeDecodeError,
+        ) as exc:
+            record["error"] = "band_auth_http_or_json_error"
+            raise RuntimeError(record["error"]) from exc
         finally:
             self.recorder.event(record)
         return BandRead(payload=payload, raw_payload_digest=digest)
