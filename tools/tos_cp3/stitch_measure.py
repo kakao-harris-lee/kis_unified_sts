@@ -49,7 +49,7 @@ import argparse
 import hashlib
 import json
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -167,7 +167,7 @@ class Inputs:
         self,
         frame_bars: Sequence[tuple],
         emit_days: Iterable[date],
-        observer: Any | None = None,
+        observer: Callable[[datetime, Mapping[str, Any]], None] | None = None,
     ) -> ProducedBars:
         ordered = sorted(self.gate(frame_bars), key=lambda bar: bar[1])
         if not ordered:
@@ -390,7 +390,7 @@ def observe_vol_window(
     windows: dict[date, list[tuple[datetime, date, float]]] = {}
     refs: dict[datetime, Any] = {}
 
-    def observe(stamp: datetime, ev: Any) -> None:
+    def observe(stamp: datetime, ev: Mapping[str, Any]) -> None:
         if "vol_ref" not in ev:
             return
         naive = stamp.replace(tzinfo=None)

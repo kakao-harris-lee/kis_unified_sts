@@ -872,6 +872,68 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
     assert None in references and any(r is not None for r in references)
 
 
+def test_an_observer_cannot_write_into_the_setups_eval(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """ "Read-only hook" holds by construction, not by the caller's good manners.
+
+    The hook is handed a :class:`~types.MappingProxyType` over the setup's live
+    ``last_eval``, and ``produce_bars`` reads ``hi_vol`` / ``stall_ok`` /
+    ``reversal_ok`` / ``entry_window`` back out of that same dict AFTER calling
+    the hook. So an observer writing one of those keys is not a hypothetical
+    leak — it is a direct edit of the next line of the record. Two claims:
+
+    1. The write raises instead of landing.
+    2. An observer that attempts the write and swallows the error leaves the
+       records byte-identical to the unobserved run. Non-vacuous: the key
+       chosen is ``hi_vol``, and the assertion below pins that the unobserved
+       run publishes ``hi_vol=false`` on at least one record, so the write it
+       could not make would have flipped something.
+    """
+    emit = frozenset(SESSIONS[-1:])
+    refused: list[type[BaseException]] = []
+
+    def write_through(stamp: datetime, ev) -> None:
+        ev["hi_vol"] = True
+
+    def write_through_and_swallow(stamp: datetime, ev) -> None:
+        try:
+            ev["hi_vol"] = True
+        except TypeError as exc:  # MappingProxyType refuses item assignment
+            refused.append(type(exc))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kwargs = {
+            "symbol": SYMBOL,
+            "strategy": strategy,
+            "contract_spec": _contract_spec(),
+            "anchor": anchor,
+            "emit_days": emit,
+        }
+        plain = produce_fields.produce_bars(bars.reset_index(drop=True), **kwargs)
+        with pytest.raises(TypeError):
+            produce_fields.produce_bars(
+                bars.reset_index(drop=True), **kwargs, observer=write_through
+            )
+        tolerated = produce_fields.produce_bars(
+            bars.reset_index(drop=True),
+            **kwargs,
+            observer=write_through_and_swallow,
+        )
+
+    assert refused, "the swallowing observer never reached its write"
+    assert produce_fields.render_jsonl(
+        tolerated.records
+    ) == produce_fields.render_jsonl(plain.records)
+    assert any(not record.fields["hi_vol"] for record in plain.records), (
+        "every record already carries hi_vol=true, so the refused write "
+        "would have changed nothing and claim 2 is vacuous"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Determinism, lineage and the density gate
 # ---------------------------------------------------------------------------

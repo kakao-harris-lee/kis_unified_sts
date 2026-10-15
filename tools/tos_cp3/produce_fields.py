@@ -121,6 +121,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -979,7 +980,9 @@ def produce_bars(
             window (``tools/tos_cp3/stitch_measure.py`` S1b, plan §3.2a's
             「``_atr_window`` 내용과 백분위 기준값」) cannot read it from the
             records. It observes the setup's own trace — nothing here is
-            recomputed — and takes no part in the decision: the returned
+            recomputed — and takes no part in the decision: it is handed a
+            :class:`~types.MappingProxyType` over ``last_eval``, so a write
+            raises instead of leaking into the next bar, and the returned
             records are identical with and without it
             (``tests/tools/test_cp3_produce_fields.py``).
     """
@@ -1009,7 +1012,11 @@ def produce_bars(
         setup.check(ctx)
         ev = setup.last_eval
         if observer is not None:
-            observer(ctx.now, ev)
+            # Read-only by construction, not by convention: the proxy raises on
+            # any write, so "it takes no part in the decision" is enforced here
+            # rather than only asserted in a test. The default path keeps the
+            # `is not None` guard, so it allocates no proxy at all.
+            observer(ctx.now, MappingProxyType(ev))
         bars_replayed += 1
 
         now: datetime = ctx.now
