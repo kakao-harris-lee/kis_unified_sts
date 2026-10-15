@@ -32,14 +32,21 @@ see a truncated JSON document, whose cost is a needless re-issue.
 
 ===  ==========================================================================
 0    a band line was written
-2    a REFUSAL before any GET: an existing ``band.jsonl``, a pre-open call, a
-     config/calendar problem. No line, nothing attempted.
+2    a REFUSAL before any GET, i.e. every ``LiveProducerRefused``: an existing
+     ``band.jsonl``, a pre-open call, a config or credential refusal. No line,
+     nothing attempted.
 3    a SOFT failure: the GET ran and did not produce a usable line (transport,
      ``rt_cd != 0``, an absent field, a response past the size cap). No line.
 1    the allowlist gate refused the call, or any other unexpected exception:
      traceback, and the runner treats it as a hard ABORT. This is the one code
      that means "a defect in this repo", not "the broker said no".
 ===  ==========================================================================
+
+A failed CALENDAR read (``BandLineError`` out of
+:func:`~tools.tos_cp3.live_producer.band_line.session_open_ms`) is deliberately
+in the rc 1 group rather than rc 2: the runner computed the launch time with
+that same function minutes earlier and aborted if it could not, so a failure
+here means the config or calendar changed underneath a running session.
 
 Firewall: legacy side (``tools/``). No ``tos`` / ``tos_runtime`` import.
 """
