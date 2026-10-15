@@ -44,7 +44,29 @@ KST = ZoneInfo("Asia/Seoul")
 #: source is the real-key REST minute GET ``FHKIF03020200``.
 QUOTE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
 TR = "FHKIF03020200"
-ALLOWLIST = (ReadOnlyCall(TR, QUOTE_PATH, "CP3 minute quotation"),)
+
+#: The venue BAND read (band-via-producer plan 2026-10-15 §3.1). Operator
+#: decision the same day: the band's source moves from a runtime MOCK GET to
+#: THIS producer's REAL GET-only read, so band and price come from one domain
+#: and the runtime keeps holding no credential at all.
+#:
+#: **Defined locally, on purpose** (§3.1). ``tools/broker_probes/
+#: probes_venue_limits.py`` (P-VL) carries the same two literals, and importing
+#: them from there would pull a module sealed to the MOCK host
+#: (``assert_mock_host``) into a REAL-token transport. Two literals in two
+#: modules is the lesser defect; the pair is pinned against P-VL's by a test.
+BAND_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
+BAND_TR = "FHMIF10000000"
+
+#: The GET-only three-way gate (method + TR id + URL path).
+#: :func:`~tools.broker_probes.common.assert_read_only_call` refuses anything
+#: outside it BEFORE a socket is opened, so this tuple is where "zero real
+#: futures orders" is enforced in code rather than promised in prose. Both
+#: entries are GET, and this module has no POST code path at all.
+ALLOWLIST = (
+    ReadOnlyCall(TR, QUOTE_PATH, "CP3 minute quotation"),
+    ReadOnlyCall(BAND_TR, BAND_PATH, "CP3 venue band (상한가·하한가·기준가)"),
+)
 
 #: ``FID_HOUR_CLS_CODE`` default. Mirrors
 #: ``shared/collector/historical/backfill.py::fetch_minute_async``'s own
