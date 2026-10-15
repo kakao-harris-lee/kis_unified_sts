@@ -1203,11 +1203,15 @@ _PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
 #: entry; a plan shorter than the number of invocations repeats its last entry.
 _BAND_PLAN_ENV = "STUB_BAND_PLAN"
 
-#: Which ``band.jsonl`` the stub band probe writes (band plan §3.1 · §5 PR-A):
-#: ``ok`` (default) is a line for today, this instrument, stamped just after
-#: the open; ``none`` writes no band file at all; ``stale`` /
-#: ``other-instrument`` / ``pre-open`` each break exactly ONE of the three
-#: clauses the runner checks, leaving the other two valid.
+#: WHAT the stub band probe writes when it writes a line at all (the previous
+#: knob decides WHETHER it does): ``ok`` (default) is a line for today, this
+#: instrument, stamped just after the open; ``stale`` / ``other-instrument`` /
+#: ``pre-open`` each break exactly ONE of the three clauses step 8c checks,
+#: leaving the other two valid; ``at-0900`` is a valid line stamped at 09:00,
+#: for the no-mode-repair test. The name still says PRODUCER because that is
+#: where this file's band line came from before plan v3 moved the GET into its
+#: own process; the tests that set it are unchanged by the move, which is the
+#: point — the read side's predicate did not change, only the writer did.
 _PRODUCER_BAND_ENV = "STUB_PRODUCER_BAND"
 #: The open the STUB uses for its own stamp and for the ``after-open`` wait,
 #: as ``HH:MM`` (default 08:45). Separate from the CALENDAR's start on purpose:
@@ -1218,11 +1222,6 @@ _PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
 #: ``HH:MM`` the stub CALENDAR declares as the session start (default 08:45).
 #: Read by ``_runner_env`` when it writes that calendar.
 _STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
-#: Seconds the stub waits — in a BACKGROUND thread, so the price rows are not
-#: delayed with it — before writing ``band.jsonl``. Unset: written inline,
-#: before the first price row. With it, the ordering is the one step 8c exists
-#: for: first price row -> 8b returns -> band line later -> 8c returns.
-_PRODUCER_BAND_DELAY_ENV = "STUB_PRODUCER_BAND_DELAY_S"
 
 #: What the runner logs when the band line is there, and when it is not. The
 #: second string is the plan's own wording (§3.1) and the thing an operator
@@ -2080,12 +2079,22 @@ def test_red_a_band_process_rc_1_aborts_before_the_boot(tmp_path: Path) -> None:
 def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) -> None:
     """⛔ Not before ``open + one boundary`` (band plan §3.1).
 
-    Step 8b returns on ANY approved row and can therefore return well before
-    the open, so the launch time is the runner's to enforce. Asserted on the
-    wait this step COMPUTES — with the calendar opening at 23:30 the computed
-    wait is a large positive number, and with the anchor removed it would be 0.
-    Reading the computed value rather than living through it keeps the test
-    clock-independent (the sleep itself is capped to 0 in these tests).
+    Step 8b's predicate is "an approved producer row exists", which says
+    nothing about the open, so the launch time is the runner's own to enforce
+    rather than something inherited from the previous step.
+
+    Asserted on the wait the step COMPUTES, not by living through it: the
+    calendar opens at 23:30, so the honest distance to ``open + 60s`` is a
+    large positive number for almost the whole day, and dropping the anchor
+    makes it 0. Two assertions, because the first is clock-dependent in one
+    minute of the day:
+
+    * the computed number is positive — skipped between 23:31 and midnight
+      KST, where the anchored instant has already passed TODAY and 0 is the
+      honest answer. Asserting it there would assert something false.
+    * the "capped to 0s" line appears at all — the cap only logs when the
+      computed wait EXCEEDS the ceiling (0 here), so with the anchor gone
+      there is no such line at any hour. This is the half that always holds.
     """
     result = _run_runner(
         _runner_repo(tmp_path),
@@ -2097,10 +2106,6 @@ def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) ->
         r"band launch: computed (\d+)s until open \+ one boundary", output
     )
     assert computed is not None, output[-3000:]
-    # 23:31 is ahead of almost every hour of the day; the one hour it is not,
-    # the number is still the honest distance to tomorrow's... no: the open is
-    # combined with TODAY, so after 23:31 the distance is 0. Skip the assertion
-    # in that window rather than assert something false.
     now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
     if (now.hour, now.minute) < (23, 31):
         assert int(computed.group(1)) > 0, output[-2000:]
@@ -2112,14 +2117,14 @@ def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> 
     the producer (runbook §7.3 5-a). A journal written for last month's code is
     not an error downstream — it is zero observations.
 
-    ⚠ The stub producer leaves after writing, which is new (review round 1
-    MEDIUM-2). Its BAND line carries the same wrong instrument, so step 8c
-    rejects it — and since that step now anchors its allowance on the session
-    open rather than on "now", a live producer would hold the wait until that
-    instant (capped by the stop second) and blow this test's 180 s subprocess
-    timeout. Measured: it did. Letting the stub exit ends the wait at once and
-    leaves the refusal this test is actually about — the GUARD's, at step 9 —
-    exactly where it was.
+    ⚠ The stub producer leaves after writing (``_PRODUCER_EXIT_ENV``), which
+    came in with review round 1 MEDIUM-2 and still matters: a stub that stays
+    alive makes the session sit out the band steps' real waits and blow this
+    test's 180 s subprocess timeout. Measured: it did. The band line itself is
+    not this test's subject — the band probe is a separate process now (plan
+    v3) and the runner hands it the SESSION's instrument, so it writes a
+    perfectly good line. The refusal under test is the GUARD's, at step 9,
+    against the journal's wrong contract month.
     """
     result = _run_runner(
         _runner_repo(tmp_path),

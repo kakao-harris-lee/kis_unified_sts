@@ -2835,7 +2835,7 @@ def test_red_a_request_timeout_below_the_floor_is_refused(tmp_path: Path) -> Non
 # -- the band PROBE: the separate process that writes the line (v3) ---------
 
 
-def _probe_quotes(market: Market, *, fail: bool = False, body: bytes | None = None):
+def _probe_quotes(*, fail: bool = False, body: bytes | None = None):
     """A ``Quotes`` stand-in for the probe: one ``band()``, no socket."""
 
     class _ProbeQuotes:
@@ -2859,8 +2859,6 @@ def _probe_quotes(market: Market, *, fail: bool = False, body: bytes | None = No
 def _run_band_probe(
     config_path: Path,
     session: Path,
-    market: Market,
-    tmp_path: Path,
     *,
     fail: bool = False,
     at_hour: int = 9,
@@ -2874,7 +2872,7 @@ def _run_band_probe(
         instrument=INSTRUMENT,
         session_dir=session,
         target=TARGET,
-        quotes_factory=lambda _config, _log: _probe_quotes(market, fail=fail),
+        quotes_factory=lambda _config, _log: _probe_quotes(fail=fail),
         now=lambda: moment,
     )
 
@@ -2885,7 +2883,7 @@ def test_the_band_probe_writes_one_line_in_the_plans_schema(
     """§3.2's line, written by the PROCESS that now owns the band GET (v3)."""
     config_path = _write_config(tmp_path)
     session = tmp_path / "probe"
-    assert _run_band_probe(config_path, session, market, tmp_path) == band_probe.RC_OK
+    assert _run_band_probe(config_path, session) == band_probe.RC_OK
 
     (line,) = _journal_rows(band_probe.band_journal_path(session))
     assert list(line) == list(band_line_mod.BAND_KEY_ORDER)
@@ -2921,7 +2919,7 @@ def test_red_the_band_probe_refuses_before_the_open(
     config_path = _write_config(tmp_path)
     session = tmp_path / "probe"
     with pytest.raises(LiveProducerRefused, match="before the session open"):
-        _run_band_probe(config_path, session, market, tmp_path, at_hour=8)
+        _run_band_probe(config_path, session, at_hour=8)
     assert not band_probe.band_journal_path(session).exists()
 
 
@@ -2943,7 +2941,7 @@ def test_red_the_band_probe_refuses_a_leftover_journal(
         encoding="utf-8",
     )
     with pytest.raises(LiveProducerRefused, match="band.jsonl"):
-        _run_band_probe(config_path, session, market, tmp_path)
+        _run_band_probe(config_path, session)
 
 
 def test_red_a_soft_band_failure_writes_no_line_and_exits_distinctly(
@@ -2958,7 +2956,7 @@ def test_red_a_soft_band_failure_writes_no_line_and_exits_distinctly(
     """
     config_path = _write_config(tmp_path)
     session = tmp_path / "probe"
-    rc = _run_band_probe(config_path, session, market, tmp_path, fail=True)
+    rc = _run_band_probe(config_path, session, fail=True)
     assert rc == band_probe.RC_SOFT_FAILURE
     assert rc not in (band_probe.RC_OK, 1)
     assert not band_probe.band_journal_path(session).exists()
@@ -3169,7 +3167,7 @@ def test_the_read_side_accepts_the_line_the_band_probe_writes(
     """
     config_path = _write_config(tmp_path)
     session = tmp_path / "probe-session"
-    assert _run_band_probe(config_path, session, market, tmp_path) == band_probe.RC_OK
+    assert _run_band_probe(config_path, session) == band_probe.RC_OK
     line = band_line_mod.read_last_band_line(band_probe.band_journal_path(session))
     open_ms, trading_date = band_line_mod.session_open_ms(
         config_path, repo_root=_REPO_ROOT, day=TARGET
