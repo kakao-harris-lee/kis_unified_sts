@@ -53,6 +53,6 @@
   "not_measured": [
     "any roll other than 2026-10",
     "whether the single 2026-10-12 hi_vol difference changes a trade",
-    "S1a on 2026-10-13 and 2026-10-14 (structurally zero there — plan §3.2a)"
+    "S1a on 2026-10-13 and 2026-10-14: path (a) is structurally zero on their 09:00-09:14 bars because no previous-month bar remains in _close_window or prev_close there, so the c perturbation has nothing to move (README §4; the plan's §3.2a S1a point is 10-12)"
   ]
 }
