@@ -271,7 +271,7 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
 | 대안 | 이유 |
 |---|---|
 | (ii) 규정 계산만 | 2·3단계 확대를 못 본다. 10-08 운영자 선택이 (i) 먼저. (ii) 는 §4.5 의 `symmetric_about_basis` 와 그 행의 `basis`/band 로 대조 자리만 둔다 |
-| (i-b) GET 을 외부 생산자(③)가 하고 band 를 journal 행으로 전달 | 런타임은 소켓 없이 유지되지만, 런타임이 원 응답을 보지 못해 §9 의 raw payload digest·연속성을 **생산자의 주장**으로만 받는다. ③ 이 아직 설계 전이라 그 계약에 band 를 얹는 것은 순서가 뒤집힌다. ③ 설계 때 다시 볼 후보로 남긴다 |
+| (i-b) GET 을 외부 생산자(③)가 하고 band 를 journal 행으로 전달 — ⚠ **2026-10-15 재검토로 채택(변형 (i-b′))**: `docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md` §2 | 런타임은 소켓 없이 유지되지만, 런타임이 원 응답을 보지 못해 §9 의 raw payload digest·연속성을 **생산자의 주장**으로만 받는다. ③ 이 아직 설계 전이라 그 계약에 band 를 얹는 것은 순서가 뒤집힌다. ③ 설계 때 다시 볼 후보로 남긴다 |
 | `VenueConstraintSnapshot` 에 band 필드 추가 | 커널 레코드 변경(GOV-001). 기존 세 필드로 결속이 된다(§4.3) |
 | 정책 리터럴 band 를 매일 재렌더 | 일별 값이라 정책 generation 이 매일 바뀌고 활성화 갱신이 매일 필요. 장중 확대도 못 본다 |
 | 장중 주기적 재조회 | §2 단조성으로 부팅 1회가 보수 방향으로 안전하다. 확대를 반영하려면 그때 설정 키로 추가(이번엔 `read_on` 두 토큰만) |
@@ -321,7 +321,7 @@ fail-open 경로는 「틀린 band 를 믿는 것」뿐이다. 그 경로를 막
    `expected_code_digest` 재도출**(`config/tos_runtime/paper/release.yaml` — 재도출하지 않으면 상주 세션이 다음 08:45 에
    ABORT 한다; 주석만 바꾼 PR 도 예외 없음). 상주 paper 의 `band_source` 는 null 이라 행동 변화 0 을 §8 1 이 증명한다.
    커널 무변경이므로 `tos-gate` 의 커널 digest 는 그대로여야 한다.
-3. **켜기**: CP-3 §5 3 ③ 이 tenant 에 실제 가격을 흘린 뒤, tenant 정책에 `band_source` 를 채우고 활성화 갱신 → 첫 세션의
+3. ⚠ **2026-10-15: 아래 문장 그대로는 실행 불가로 실측됐다** — host seal·토큰이 활성 주문 scope(SYNTHETIC)에 묶여 부팅 거부. 켜기 경로는 `docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`(운영자 결정 (c), ③ 생산자 경유)로 대체한다. 원문: **켜기**: CP-3 §5 3 ③ 이 tenant 에 실제 가격을 흘린 뒤, tenant 정책에 `band_source` 를 채우고 활성화 갱신 → 첫 세션의
    `VENUE_BAND_OBSERVED` 행을 10-08 설계 §5 L2 의 ① 샘플 판정에 쓴다.
 4. (ii) 대조: 3 이후 증거 행(`symmetric_about_basis` + `basis`/`price_min`/`price_max`)이 며칠 모이면 별도 판단 — 1단계 판정 자체는 승인된 비율 `r` 이 생긴 뒤 오프라인에서(§4.5 ⚠).
 
