@@ -76,9 +76,17 @@ band 계획 §7 은 (i-b)를 「③ 이 아직 설계 전이라 그 계약에 ba
 - 로그: band GET 은 시도마다 `producer-log.jsonl` 에 메서드·`tr_id`·경로를 남긴다(리뷰 LOW-2 — 지금 `page()` 는 모듈 상수
   `TR` 을 적으므로, 새 메서드가 제 `tr_id` 를 적지 않으면 §3.5 의 TR 부분집합 확인이 이 호출을 **보지 못한 채** 통과한다).
   원 바이트 digest 는 `.json()` 전에 `response.content` 에서 잡는다(`page()` 는 지금 원 바이트를 들고 있지 않다).
-- 변환·검증은 생산자가 하지 **않는다** — 원 응답의 `output` 에서 세 필드(`futs_mxpr`·`futs_llam`·`futs_sdpr`)를 **문자열
+- 변환·검증은 생산자가 하지 **않는다** — 원 응답의 `output1` 에서 세 필드(`futs_mxpr`·`futs_llam`·`futs_sdpr`)를 **문자열
   그대로** 옮기고, 원 응답 바이트의 SHA-256 을 함께 적는다. 척도 변환·격자·순서 검증은 런타임의 기존 검증 셋이 한다
   (band 계획 §4.2 — 한 곳에서만).
+  ⚠ **정정(PR #906 리뷰 1 라운드)**: 초판은 이 자리를 「`output`」으로 적었다. 실제 멤버는 **`output1`** 이다 —
+  공식 래퍼가 이 TR 에 `output1`/`output2`/`output3` 을 돌려주고
+  (`examples_llm/domestic_futureoption/inquire_price/inquire_price.py`), P-VL 이 2026-10-08 **MOCK** 실측에서 다섯
+  L1 가격 필드를 `output1` 에서 읽었다(`tools/broker_probes/probes_venue_limits.py`). REAL 면은 아직 이 경로로
+  읽어 본 적이 없으므로 **같은 래퍼 문서에서 추론**한 것이다(래퍼의 `env_dv` 표가 실전·모의 모두 `FHMIF10000000`
+  하나를 주고, 응답 모양을 구분하지 않는다) — 첫 켜기 세션이 그 추론의 실측이다. `output` 을 읽으면 아무것도 맞지
+  않아 band 가 **아무 사유도 남기지 않고 영구 부재**가 되므로, 구현은 `output1` 하나만 읽고 부재를 실패로 적는다
+  (`band_line.BAND_PAYLOAD_MEMBER`).
 - 실패(전송 오류 · `rt_cd ≠ 0` · 필드 부재): band 줄을 **쓰지 않고** `producer-log.jsonl` 에 `band_fetch_failed` 를 남긴다.
   생산자는 계속 돈다 — band 부재는 런타임에서 `UNKNOWN` → 송신 0 으로 접히는 보수 방향이고, 가격 저널을 멈출 이유가
   아니다. 이 실패는 #904 의 `max_consecutive_fetch_error_minutes` 계수에 **넣지 않는다**(그 계수는 분봉 폴링의 것이다).
