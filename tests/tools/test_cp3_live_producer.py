@@ -32,6 +32,7 @@ from shared.collector.historical.ohlcv_parser import parse_ohlcv
 from tools.tos_cp3.live_producer import calendar as calendar_mod
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import frame as frame_mod
+from tools.tos_cp3.live_producer import line as line_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
 from tools.tos_cp3.live_producer import sinks as sinks_mod
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
@@ -500,7 +501,7 @@ def _row(raw_event_id: str = "A05611:1m:20261019T090000+0900") -> dict:
     """A journal row as ``build_line`` returns it — with NO ``as_of_ms``."""
     return {
         "raw_event_id": raw_event_id,
-        "source_id": producer_mod.SOURCE_ID,
+        "source_id": line_mod.SOURCE_ID,
         "instrument": INSTRUMENT,
         "received_ms": 1_792_286_460_001,
         "fields": dict.fromkeys(FIELD_ORDER, 1),
@@ -571,7 +572,9 @@ def test_item2_red_the_stamp_is_taken_after_produce_bars_not_before(
     clock.moment = datetime(
         TARGET.year, TARGET.month, TARGET.day, 9, 10, 5, tzinfo=producer_mod.KST
     )
-    real_produce_bars = producer_mod.produce_bars
+    # patched on `line`, which is where `build_line` reads it from since the
+    # pure half moved there (PR #904 review round 1 item A.5)
+    real_produce_bars = line_mod.produce_bars
     compute_cost_s = 5.0
 
     def slow_produce_bars(*args, **kwargs):
@@ -579,7 +582,7 @@ def test_item2_red_the_stamp_is_taken_after_produce_bars_not_before(
         clock.sleep(compute_cost_s)  # the compute takes real time
         return result
 
-    monkeypatch.setattr(producer_mod, "produce_bars", slow_produce_bars)
+    monkeypatch.setattr(line_mod, "produce_bars", slow_produce_bars)
     before = clock.now()
     producer.boot()
     producer.finish()
@@ -991,7 +994,7 @@ def test_red_i2_an_omitted_catch_up_does_not_count_as_published(
 
     def omit_the_catch_up(frame: Any, **kwargs: Any) -> Any:
         if kwargs["bar_minute"] == catch_up:
-            return producer_mod.LineOutcome(
+            return line_mod.LineOutcome(
                 reason="omitted_unusable", raw_event_id=_event_id(catch_up)
             )
         return real_build_line(frame, **kwargs)
@@ -1851,10 +1854,8 @@ def test_item5_the_allowlist_approves_this_producers_prefix() -> None:
     """
     from tools.tos_cp3 import bootproof_guard
 
-    assert producer_mod.SOURCE_PREFIX in (
-        bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES
-    )
-    assert producer_mod.SOURCE_ID.startswith(producer_mod.SOURCE_PREFIX + "/")
+    assert line_mod.SOURCE_PREFIX in (bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES)
+    assert line_mod.SOURCE_ID.startswith(line_mod.SOURCE_PREFIX + "/")
 
 
 @pytest.mark.serial
@@ -1878,58 +1879,149 @@ def test_item5_consecutive_produce_errors_stop_the_producer(
     producer.finish()
 
 
+def _dead_feed(producer: Any) -> None:
+    """Every call to the transport raises, the way a revoked token does."""
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("EGW00123 token expired")
+
+    producer.quotes.page = boom
+    producer.quotes.history = boom
+
+
 @pytest.mark.serial
-def test_the_finish_summary_says_whether_the_session_end_was_reached(
-    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+def test_red_a_feed_that_answers_nothing_all_day_stops_the_producer(
+    tmp_path: Path, market: Market
 ) -> None:
-    """**``session_end_reached`` is what tells the two ``finish`` records apart.**
+    """**PR #904 review round 1 item A.1 — the give-up a dead FEED trips.**
 
-    ``finish()`` runs in ``main``'s ``finally``, so the §3.5 give-up path
-    writes a ``stage: "finish"`` summary exactly like a full day does. The
-    runner has to report one as an ABORT and the other as the ordinary end of
-    a session (``run_tenant_session.sh`` step 12b), and before this field the
-    only thing separating them was the process exit code — which says nothing
-    about a path that returns 0 without reaching ``end_boundary``.
+    The reviewer's own probe, now a refusal. Before this,
+    ``consecutive_produce_errors`` counted only ``ProduceFieldsError``, so a
+    revoked token failed every poll of every minute and the session still
+    returned 0 — measured: ``fetch_error`` 324, ``published`` 0, rc 0, and
+    therefore no ABORT from the runner either.
 
-    Both halves here, against the same market, so the field is a measurement
-    and not a constant.
-
-    ⚠ The field is guarded with ``hasattr(self, "window")`` at the call site
-    because "always runs" includes a ``finish()`` after a boot that REFUSED,
-    where no session window was ever resolved —
-    :func:`test_item5_red_a_reused_session_directory_refuses_to_start` is that
-    path's red proof and went red on the unguarded first cut
-    (``AttributeError: 'LiveProducer' object has no attribute 'window'``). A
-    producer that never got a window certainly did not reach a session end,
-    so ``False`` is the answer and not merely the safe one.
+    The counter is in MINUTES, so the refusal lands at the configured bound
+    and not somewhere a change to ``repoll_pace_s`` could move: asserted on
+    the count in the message, not merely on the exception type.
     """
-    halted_root = tmp_path / "halted"
-    ended_root = tmp_path / "ended"
-    halted_root.mkdir()
-    ended_root.mkdir()
-    halted, _clock, _quotes = _build(
-        halted_root, market, max_consecutive_produce_errors=2
+    producer, _clock, _quotes = _build(
+        tmp_path, market, max_consecutive_fetch_error_minutes=3
     )
-    halted.boot()
-    from tools.tos_cp3.produce_fields import ProduceFieldsError
+    producer.boot()
+    _dead_feed(producer)
 
-    def always_fail(*_args, **_kwargs):
-        raise ProduceFieldsError("non-finite close in the replayed bar stream")
+    with pytest.raises(LiveProducerRefused, match="3 consecutive minute") as excinfo:
+        producer.run_session()
+    assert "NO poll succeeded" in str(excinfo.value)
+    assert producer.counters.published == 0
+    assert producer.counters.fetch_error > 0
+    # and the refusal still writes a summary — `finish()` always runs
+    assert producer.finish()["stage"] == "finish"
 
-    monkeypatch.setattr(producer_mod, "build_line", always_fail)
-    with pytest.raises(LiveProducerRefused, match="consecutive produce_error"):
-        halted.run_session()
-    halted_summary = halted.finish()
-    monkeypatch.undo()
 
-    ended, _ended_clock, _ended_quotes = _build(ended_root, market)
-    ended.boot()
-    ended.run_session()
-    ended_summary = ended.finish()
+@pytest.mark.serial
+def test_red_a_feed_that_dies_mid_session_stops_the_producer(
+    tmp_path: Path, market: Market
+) -> None:
+    """**The reviewer's second variant: the token dies at 10:00, not at open.**
 
-    assert halted_summary["stage"] == ended_summary["stage"] == "finish"
-    assert halted_summary["session_end_reached"] is False
-    assert ended_summary["session_end_reached"] is True
+    The run must be CONSECUTIVE — a session that published all morning and
+    then went silent is as unclean as one that never published, and the
+    counter has to reset on success or it would never reach its bound on a
+    day with one failed poll an hour.
+    """
+    producer, clock, _quotes = _build(
+        tmp_path, market, max_consecutive_fetch_error_minutes=3
+    )
+    producer.boot()
+    real_poll = producer._poll
+    # inside the fixture's short CONTINUOUS window (08:45..09:20), the way
+    # 10:00 is inside the production one
+    killed_at = datetime(TARGET.year, TARGET.month, TARGET.day, 9, 0)
+
+    def poll_until_ten():
+        if clock.now().replace(tzinfo=None) >= killed_at:
+            raise RuntimeError("EGW00123 token expired")
+        return real_poll()
+
+    producer._poll = poll_until_ten
+    with pytest.raises(LiveProducerRefused, match="3 consecutive minute"):
+        producer.run_session()
+    # it did its job until the feed died, which is why the run must be
+    # consecutive rather than cumulative
+    assert producer.counters.published > 0
+
+
+@pytest.mark.serial
+def test_a_long_run_of_minutes_with_no_rows_does_not_stop_the_producer(
+    tmp_path: Path, market: Market
+) -> None:
+    """**The input the fetch give-up must NOT trip on — and the reason it exists.**
+
+    The genesis session's 12:39-13:08 was 30 CONSECUTIVE minutes of
+    ``no_raw_row_for_minute``: the polls all worked and the market simply did
+    not trade. ``fetch_error`` was 0 for the whole day. A counter that folded
+    "no row this minute" into "the feed is not answering" would abort a clean
+    session every lunch lull and every closing call auction, so the bound here
+    is set BELOW the number of such minutes this market has and the session
+    must still run to its end.
+    """
+    quiet = Market(sessions=market.sessions, target_bars=market.target_bars[:10])
+    producer, _clock, _quotes = _build(
+        tmp_path, quiet, max_consecutive_fetch_error_minutes=2
+    )
+    producer.boot()
+    producer.run_session()  # no refusal
+    summary = producer.finish()
+
+    assert summary["counters"]["no_raw_row_for_minute"] > 2, summary["counters"]
+    assert summary["counters"]["fetch_error"] == 0
+    assert producer.consecutive_fetch_error_minutes == 0
+
+
+@pytest.mark.serial
+def test_red_a_boot_after_the_session_close_is_refused(
+    tmp_path: Path, market: Market
+) -> None:
+    """**PR #904 review round 1 item A.2 — the other always-true path.**
+
+    The reviewer's probe: with the wall clock past the close, ``run_session``
+    walks ``while boundary <= end`` zero times and the producer returns 0
+    having published nothing. A session that measured nothing is not a clean
+    session, so the boot refuses — and it refuses BEFORE the seed walk, which
+    is tens of paginated GETs.
+
+    The refusal is the producer's and not the runner's because the runner
+    never loads a calendar: it holds only ``TENANT_STOP_AT``, so a
+    runner-side check would need a second copy of the session window, which
+    is what ``calendar.py``'s module docstring refuses.
+    """
+    producer, clock, quotes = _build(tmp_path, market)
+    clock.moment = clock.moment.replace(hour=16, minute=30)
+
+    with pytest.raises(LiveProducerRefused, match="already past the session end"):
+        producer.boot()
+    # before the seed walk: nothing was fetched
+    assert quotes.history_calls == 0
+
+
+@pytest.mark.serial
+def test_a_boot_inside_the_session_is_not_refused(
+    tmp_path: Path, market: Market
+) -> None:
+    """The other side of the late-boot refusal, so it is not a constant.
+
+    One minute before the close is still a session: one boundary remains, so
+    one bar can still be published and the producer must not refuse. (The
+    fixture's CONTINUOUS window is 08:45..09:20 so the loop stays fast; the
+    production one is 08:45..15:45 and the shape is the same.)
+    """
+    producer, clock, _quotes = _build(tmp_path, market)
+    clock.moment = clock.moment.replace(hour=9, minute=19)  # close is 09:20
+
+    producer.boot()  # no refusal
+    assert producer.window.end_boundary(TARGET) >= producer._first_boundary()
 
 
 @pytest.mark.serial
@@ -1988,7 +2080,7 @@ def test_item5_the_dry_run_touches_nothing(
     assert printed["mode"] == "DRY_RUN"
     assert printed["orders"] == 0
     assert printed["method"] == "GET"
-    assert printed["source_id"] == producer_mod.SOURCE_ID
+    assert printed["source_id"] == line_mod.SOURCE_ID
     assert not (tmp_path / "session").exists()
 
 
@@ -2064,7 +2156,7 @@ def test_item6_the_fixture_carries_the_journals_required_shape() -> None:
     row = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     assert set(JOURNAL_REQUIRED_KEYS) <= row.keys()
     assert tuple(row["fields"]) == FIELD_ORDER
-    assert row["source_id"] == producer_mod.SOURCE_ID
+    assert row["source_id"] == line_mod.SOURCE_ID
     assert isinstance(row["as_of_ms"], int) and isinstance(row["received_ms"], int)
     assert all(
         isinstance(value, (bool, int, float, str)) for value in row["fields"].values()

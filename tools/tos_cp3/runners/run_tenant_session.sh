@@ -675,50 +675,36 @@ fi
 
 # --- 12b. did the producer END the session, or HALT in it? ----------------
 #
-# The discriminating read, chosen after reading what each exit path actually
-# leaves behind (tools/tos_cp3/live_producer/producer.py):
+# ONE clause, and it is the only signal that can answer the question. That is
+# the finding of PR #904's review round 1, which measured the first cut's
+# other two clauses and found neither could fail on a real input:
 #
-#   * `finish()` runs in a `finally`, so BOTH ends write a `stage: "finish"`
-#     summary. The summary's EXISTENCE therefore discriminates nothing on its
-#     own — it only separates "wrote one" from "was SIGKILLed before it could".
-#   * `main` returns 0 only after `run_session()` returns, and 1 on
-#     `LiveProducerRefused` — which is the plan §3.5 give-up path verbatim
-#     (`max_consecutive_produce_errors`). So the RETURN CODE is the first half.
-#   * `finish()` stamps `session_end_reached` from the producer's own clock
-#     against the calendar window it seeded with. That is the positive marker
-#     for the second half: a 0 that did not reach the end (a loop that never
-#     ran because the boot was already past the close) is still not a session.
+#   * The SUMMARY's existence and its `stage` cannot discriminate. `finish()`
+#     runs in `main`'s `finally`, and `main` returns 0 only after it, so an
+#     rc of 0 ALREADY implies a written `stage: "finish"` summary. (A producer
+#     SIGKILLed before the `finally` leaves no summary — and rc 137.)
+#   * `session_end_reached` could not discriminate either, and that one was
+#     measured red: it was the wall clock against `end_boundary` at finish
+#     time, and EVERY rc-0 path only returns after the loop has walked past
+#     that boundary, so it was always true. Two real producer inputs proved
+#     it — a feed dead all day (fetch_error 324, published 0, rc 0, flag TRUE)
+#     and a boot after the close (loop never ran, rc 0, flag TRUE). Both are
+#     now refusals in the producer itself, where the knowledge lives:
+#     `halt_policy.assert_worth_continuing` (the fetch give-up, config key
+#     `max_consecutive_fetch_error_minutes`) and
+#     `halt_policy.assert_the_session_can_still_happen` (the late boot).
 #
-# Concrete failing input on each side, which is what the three clauses are for:
-#   rc 1 + a finish summary that claims the end  -> HALT (the §3.5 refusal)
-#   rc 0 + no summary at all                     -> HALT (killed before finish)
-#   rc 0 + a summary with session_end_reached 0  -> HALT (returned early)
-#   rc 0 + a summary with session_end_reached 1  -> ENDED (2026-10-15's shape)
-PRODUCER_END=$(
-  "$PY" - "$PRODUCER_SUMMARY" <<'PY' 2>/dev/null
-import json
-import sys
-from pathlib import Path
-
-try:
-    summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-except (OSError, ValueError):
-    print("no_readable_summary")
-    raise SystemExit(0)
-if not isinstance(summary, dict) or summary.get("stage") != "finish":
-    print("no_finish_record")
-elif summary.get("session_end_reached") is not True:
-    print("finish_before_session_end")
-else:
-    print("session_end")
-PY
-) || PRODUCER_END=""
-PRODUCER_END=${PRODUCER_END:-no_readable_summary}
+# So the producer's EXIT CODE carries the whole verdict, and each side of it
+# has a concrete real input:
+#   rc 0   -> ENDED the session (the 2026-10-15 genesis shape)
+#   rc 1   -> HALTED: a §3.5 give-up (produce_error run, dead-feed minutes),
+#             a late boot, a seed/journal/lock refusal, or any traceback
+#   rc 137 -> HALTED: killed
 PRODUCER_ENDED_THE_SESSION=0
-if [ "$producer_rc" -eq 0 ] && [ "$PRODUCER_END" = "session_end" ]; then
+if [ "$producer_rc" -eq 0 ]; then
   PRODUCER_ENDED_THE_SESSION=1
 fi
-log "producer end: $PRODUCER_END (rc=$producer_rc, self-stopped=$PRODUCER_SELF_STOPPED, ended-the-session=$PRODUCER_ENDED_THE_SESSION)"
+log "producer end: rc=$producer_rc (self-stopped=$PRODUCER_SELF_STOPPED, ended-the-session=$PRODUCER_ENDED_THE_SESSION)"
 
 # --- 12c. the modes the tenant stores and artifacts must carry -------------
 #
@@ -786,9 +772,19 @@ printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 #
 # ⚠ The middle field is the 2026-10-15 fix: a producer that is gone at the
 # stop AND ended the session is the NORMAL full-day shape, not an ABORT.
+#
+# ⛔ What this does NOT catch, written down rather than implied: a producer
+# still ALIVE at the stop. It gives SELF_STOPPED=0, our own stop path SIGTERMs
+# it, and no clause here fires — so a producer WEDGED but breathing (a hung
+# socket read with no timeout, a `sleep` that never returns) ends a session
+# that reports clean. The producer's own give-ups cannot see that either:
+# they are checked between boundaries, and a wedged producer never reaches the
+# next one. Closing it needs a liveness signal from the producer (a heartbeat
+# the runner reads, or a per-boundary watchdog), which this round does not
+# build.
 case "$PRODUCER_SELF_STOPPED:$PRODUCER_ENDED_THE_SESSION:$run_rc" in
 1:0:0 | 1:0:143)
-  log "ABORT: the producer halted in the session ($PRODUCER_END, producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
+  log "ABORT: the producer halted in the session (producer rc=$producer_rc, run rc=$run_rc) — every pass after that read a journal that was no longer growing, so this session is not a clean one"
   exit 5
   ;;
 esac
