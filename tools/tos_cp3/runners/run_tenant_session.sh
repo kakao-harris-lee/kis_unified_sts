@@ -106,8 +106,14 @@ set +x +v
 # a post-run `chmod` for a durable set an earlier session genesis'd; this
 # template deliberately does NOT, because that sweep cannot be made race-free
 # here. Step 12c records why, and the runbook carries the operator's one-time
-# manual command instead. So `umask` is the ONLY mechanism here, and it is
-# enough for everything this session creates.
+# manual command instead.
+#
+# So this script executes NO `chmod` and NO `chown`, anywhere (pinned by
+# `test_the_runner_runs_no_mode_repair_sweep_after_the_stop`). It has exactly
+# two mode mechanisms, and only the first writes anything:
+#   1. this `umask`, which decides the mode of everything the session CREATES;
+#   2. a READ-ONLY refusal in step 9 — a data parent that already existed and
+#      is not mode 700 ends the session instead of being altered.
 #
 # ⚠ The resident wrapper deliberately does NOT do this globally, because its
 # own `git worktree add` must leave the public 0755 checkout alone. That
@@ -580,7 +586,33 @@ if [ ! -d "$TENANT_DATA_PARENT" ]; then
   (umask 077; mkdir -p -- "$TENANT_DATA_PARENT") ||
     die "cannot create data parent $TENANT_DATA_PARENT"
 fi
-chmod 700 "$TENANT_DATA_PARENT" 2>/dev/null || true
+
+# The data parent's mode is READ, never written (Codex round 3, MEDIUM).
+#
+# This line used to be `chmod 700 "$TENANT_DATA_PARENT" 2>/dev/null || true`,
+# inherited from main. It was the same defect step 12c was deleted for, one
+# step earlier and louder: it runs AFTER step 6b, so a path swapped in between
+# gets the mode written to whatever the name now points at — and `2>/dev/null
+# || true` meant a failure to do so said NOTHING. It also made this script's
+# own claim ("umask is the only mode mechanism here") false.
+#
+# A parent THIS run created is already 0700, from the `(umask 077; mkdir -p)`
+# above. A parent that already existed is someone else's object, and the only
+# safe thing to do with someone else's object is look at it: if the mode is
+# not exactly 700 the session REFUSES and names the fix, rather than reaching
+# in. Fail closed — an over-wide durable parent is a coordinate leak waiting
+# to happen (runbook §7.2 좌표 규율), and the operator's one-time command is
+# in runbook §7.2-d 「모드」:
+#     chmod 700 ~/.local/state/tos/<the parent>
+# ⚠ Exactly "700", not "at least as narrow as": `2700` (setgid) and `0700`
+# with an ACL are not this mode, and a durable evidence parent carrying either
+# is a finding, not a rounding.
+PARENT_MODE=$(stat -c %a -- "$TENANT_DATA_PARENT") ||
+  die "cannot read the mode of data parent $TENANT_DATA_PARENT"
+[ "$PARENT_MODE" = "700" ] ||
+  die "data parent $TENANT_DATA_PARENT is mode $PARENT_MODE, not 700. This runner never changes the mode of an object it did not create (step 12c records why) — narrow it to 700 yourself and re-run (runbook §7.2-d 「모드」)"
+log "data parent mode $PARENT_MODE"
+
 (umask 077; mkdir -p -- "$DATA_LEAF") ||
   die "cannot create data leaf $DATA_LEAF"
 
@@ -775,11 +807,17 @@ log "producer end: rc=$producer_rc (self-stopped=$PRODUCER_SELF_STOPPED, ended-t
 # (`openat`/`fchmodat` with `O_NOFOLLOW` at every level), which is not a thing
 # this shell template should be growing.
 #
-# So the modes come from ONE mechanism, which has no window at all: step
-# -0.5's process-wide `umask 077` means everything this session CREATES is
-# born 0600 inside 0700 — the stores, the journal, the render output, the
-# session log, the producer's artifacts. There is nothing left to repair for a
-# session that starts here.
+# So the only mechanism that WRITES a mode has no window at all: step -0.5's
+# process-wide `umask 077` means everything this session CREATES is born 0600
+# inside 0700 — the stores, the journal, the render output, the session log,
+# the producer's artifacts. There is nothing left to repair for a session that
+# starts here.
+#
+# ⚠ The same reasoning deleted a second, older `chmod` (Codex round 3): step 9
+# used to `chmod 700` the data PARENT, inherited from main and silenced with
+# `2>/dev/null || true`. An existing parent is now READ and the session
+# refuses a mode that is not 700, which is the same answer in the one place
+# this script still had to say something about an object it did not create.
 #
 # What that leaves uncovered, stated rather than silently dropped: a durable
 # leaf that an EARLIER, pre-umask session genesis'd keeps the modes it was

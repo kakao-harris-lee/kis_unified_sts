@@ -1450,9 +1450,12 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
     계수가 필요하다.
 
     ```bash
+    # tz 를 명시한다 — naive fromtimestamp 는 호스트 로컬 존을 쓰므로 이 호스트에서만
+    # «우연히» 맞는다(CLAUDE.md: 비교·표시 전부 KST).
     tail -1 "$SESSION/journal.jsonl" | python3 -c \
-      'import json,sys,datetime; r=json.load(sys.stdin); \
-       print(r["raw_event_id"], datetime.datetime.fromtimestamp(r["as_of_ms"]/1000))'
+      'import json,sys,datetime,zoneinfo; r=json.load(sys.stdin); \
+       print(r["raw_event_id"], datetime.datetime.fromtimestamp(
+           r["as_of_ms"]/1000, tz=zoneinfo.ZoneInfo("Asia/Seoul")))'
     ```
 - **모드** — 러너는 맨 앞에서 `umask 077` 을 건다(프로세스 전체 · 모든 자식). 그래서 **이
   세션이 만드는 것은 전부 0700 디렉터리 · 0600 파일**이다 — 렌더 산출물 · data parent/잎과

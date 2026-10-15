@@ -2263,6 +2263,57 @@ def test_red_a_session_path_that_resolves_elsewhere_is_refused(
     assert not result.producer_outlived_the_runner
 
 
+@pytest.mark.parametrize(
+    ("mode", "refused"),
+    [
+        pytest.param(0o755, True, id="0755-refused"),
+        pytest.param(0o750, True, id="0750-refused"),
+        pytest.param(0o700, False, id="0700-runs"),
+    ],
+)
+def test_red_a_pre_existing_data_parent_that_is_not_700_is_refused(
+    tmp_path: Path, mode: int, refused: bool
+) -> None:
+    """**Codex round 3 — read the mode, never write it.**
+
+    Step 9 used to ``chmod 700`` the data parent. That line came from main and
+    had the same defect step 12c was deleted for: it runs after step 6b, so a
+    path swapped in between took the write, and ``2>/dev/null || true`` meant
+    a failure said nothing at all.
+
+    A parent THIS run creates is already 0700 from its own
+    ``(umask 077; mkdir -p)``. A parent that already existed belongs to
+    someone else, so the session now READS its mode and refuses anything that
+    is not exactly 700 — naming the fix instead of reaching in.
+
+    Three modes, so the predicate is an equality and not "world-readable":
+    ``0750`` leaks nothing to the world and is still refused, because a
+    durable evidence parent is 700 or it is a finding.
+    """
+    repo = _runner_repo(tmp_path)
+    parent = tmp_path / ".local/state/tos/scratch/bp/preexisting"
+    parent.mkdir(parents=True)
+    parent.chmod(mode)
+    assert oct(parent.stat().st_mode & 0o777) == oct(mode), "the test's own premise"
+
+    result = _run_runner(repo, tmp_path, TENANT_DATA_PARENT=str(parent))
+
+    output = result.stdout + result.stderr
+    if refused:
+        assert f"is mode {mode & 0o777:o}, not 700" in output, output[-2000:]
+        assert "narrow it to 700 yourself" in output
+        assert result.returncode == 3, output[-2000:]
+        # ...and the refusal did NOT quietly fix it on the way out
+        assert oct(parent.stat().st_mode & 0o777) == oct(mode)
+        assert not (parent / _FRONT_MONTH).exists()
+    else:
+        assert "data parent mode 700" in output, output[-2000:]
+        # it got past step 9 and died at the non-bootable stub renderer
+        assert "render refused" in output, output[-2000:]
+        assert (parent / _FRONT_MONTH).is_dir()
+    assert not result.producer_outlived_the_runner
+
+
 def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:
     """**Codex re-review MEDIUM at ``ccf1f0d0``: the repair is REFUSED.**
 
@@ -2275,31 +2326,43 @@ def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> 
     narrowing it.
 
     So this pins the ABSENCE, which is the only way an absence stays: a future
-    reader who re-adds a sweep makes this red. Modes now come from one
-    mechanism with no window — the process-wide ``umask 077``
-    (:func:`test_nothing_the_session_creates_is_readable_by_another_user` is
-    what proves it covers everything this session creates).
+    reader who re-adds a sweep makes this red.
+
+    ⚠ The assertion is over the WHOLE file, not just the stop path (Codex
+    round 3). The first cut of this test checked only from step 12b onward and
+    called step 9's ``chmod 700 "$TENANT_DATA_PARENT"`` out of scope as
+    inherited from main — but that line had the same path-swap race (it runs
+    after step 6b), failed silently behind ``2>/dev/null || true``, and made
+    the script's own "umask is the only mechanism" comment false. A scope that
+    excuses the one instance still present is not a gate.
+
+    Modes now come from exactly two mechanisms and only one of them writes:
+    the process-wide ``umask 077``
+    (:func:`test_nothing_the_session_creates_is_readable_by_another_user`
+    proves it covers everything the session creates), and a READ-ONLY refusal
+    on a pre-existing data parent
+    (:func:`test_red_a_pre_existing_data_parent_that_is_not_700_is_refused`).
     """
     text = _RUNNER.read_text("utf-8")
     assert "repair_modes" not in text
-    # CODE only — step 12c's comment quotes the command it refuses to run, and
-    # a check that cannot tell prose from an instruction would be satisfied by
-    # deleting the explanation.
+    # CODE only — the comments deliberately quote the commands this script
+    # refuses to run, and a check that cannot tell prose from an instruction
+    # would be satisfied by deleting the explanation.
     code = "\n".join(
         line
         for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
-    # From step 12b to the end — the window the sweep lived in. Anchored on a
-    # variable that occurs once, not on `stop_producer`, whose first occurrence
-    # is its definition back in step 7. The `chmod` beside step 9's data-parent
-    # `mkdir` is BEFORE this window and predates this PR.
+    for forbidden in ("chmod", "chown"):
+        assert forbidden not in code, f"{forbidden} in executable code:\n{code}"
+    # no `find` reachable from the stop path either — that was the sweep's own
+    # walk. Anchored on a variable that occurs once, not on `stop_producer`,
+    # whose first occurrence is its definition back in step 7.
     after_stop = code[code.index("PRODUCER_ENDED_THE_SESSION=0") :]
-    assert "chmod" not in after_stop, after_stop[:1500]
     assert "find " not in after_stop, after_stop[:1500]
-    # and the refusal is recorded where the sweep used to be, so it is not
-    # merely missing
+    # and both refusals are recorded, so neither is merely missing
     assert "there is NO mode repair here, deliberately" in text
+    assert "is READ, never written" in text
 
 
 def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
