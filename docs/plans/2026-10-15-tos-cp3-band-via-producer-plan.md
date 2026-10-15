@@ -196,6 +196,14 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나(G3)를 **강화**�
    §4.6 과 어긋난 채 두지 않는다) · tenant LONG 정책 `band_source` 채움 + 렌더 슬롯(`instrument`·`band_journal_path`) ·
    `expected_code_digest` **세 파일** 재도출 · 테스트(`TestShippedTreesDeclareNoBandSource` 를 LONG/그 외로 분리,
    `test_tenant_tree_copies.py` 의 알려진 차이 집합 갱신). 커널 무변경이므로 `tos-gate` 커널 digest 는 그대로여야 한다.
+   PR-A 가 함께 지킬 것(v2 재리뷰 LOW 셋):
+   - 러너의 band 줄 확인은 **파일이 아니라 줄**을 본다 — 줄 `trading_date` == 오늘 · `instrument` == `$INSTRUMENT` ·
+     `as_of_ms` ≥ 개장(수용 1번과 같은 조건). 파일 존재만 보면 생산자 거부가 퇴행했을 때 낡은 파일이 즉시 통과한다.
+   - band GET 이 **다음 분 가격 폴링을 밀지 않는다** — band 시도(재시도 포함)는 다음 경계 − `first_poll_delay_s` 전에
+     끝나도록 상한을 두고, 다음 폴링 시작 시각이 band 유무와 무관함을 테스트로 고정한다(「가격 저널 바이트 동일」은 내용만
+     보고 시각을 보지 않는다).
+   - band 줄 대기는 첫 가격 줄 뒤 **별도의 작은 추가 허용**(설정 값)을 갖는다 — 첫 줄이 600 s 상한 끝에 오면 band GET 에
+     남는 시간이 거의 없기 때문이다. 넘기면 `BAND ABSENT`(보수 방향).
 3. **첫 켜기 세션** → §4 수용 → 증거 PR.
 
 ## 6. 기각한 대안
@@ -211,8 +219,8 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나(G3)를 **강화**�
 
 - L1: §1 B2 의 `CustodyError` 누출은 PR-B 에서 고친다(§5 2).
 - L2: 원 (i) 경로(`kis_quote_get`)가 쓸모 있으려면 「주문 scope 와 분리된 시세 scope」가 필요하다 — 별도 설계 후보.
+- L3: band 계획 §6 (B) 의 GOV-001 후보(원천 선언의 커널 covered 승격 · band 관측을 정식 `CriticalInputSnapshot` 으로)는
+  그대로 유효하다.
 - L4: 장중 band 재읽기 계기(재조회 줄을 판정에 반영) — 서비스 변경 + 레드 증명이 필요한 별도 결정(§3.1).
 - L5: `tools.broker_probes.probes_order`(모의 주문 가능)가 생산자 도달 모듈 핀의 `ORDER_EMITTING_MODULES` 에 없다 — PR-A
   에서 더할지 별도 검토(리뷰 SUGGESTION).
-- L3: band 계획 §6 (B) 의 GOV-001 후보(원천 선언의 커널 covered 승격 · band 관측을 정식 `CriticalInputSnapshot` 으로)는
-  그대로 유효하다.
