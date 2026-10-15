@@ -233,10 +233,17 @@ class BarSpec:
     stall_ok: bool = False
     reversal_ok: bool = False
     z_x1000: int = -100
+    #: The session day, as the join key spells it. Last, and defaulted, so
+    #: every existing construction is unchanged — a bar on another day is what
+    #: the stitched SEED the offline trio spans looks like.
+    day: str = "20251208"
 
     @property
     def raw_event_id(self) -> str:
-        return f"{SYMBOL}:1m:20251208T{9 + self.minute // 60:02d}{self.minute % 60:02d}00+0900"
+        return (
+            f"{SYMBOL}:1m:{self.day}"
+            f"T{9 + self.minute // 60:02d}{self.minute % 60:02d}00+0900"
+        )
 
     @property
     def as_of_ms(self) -> int:
@@ -2917,6 +2924,88 @@ def test_an_unpaired_bar_the_filter_cannot_explain_is_counted_not_dropped(
     assert result.summary["session_scope"]["unpaired_offline_records_by_reason"] == {
         dd.REASON_UNEXPLAINED: 2
     }
+
+
+def test_offline_bars_from_before_the_session_day_are_counted_as_seed_days(
+    tmp_path: Path,
+) -> None:
+    """**``unexplained`` is a finding, so the seed days must leave it.**
+
+    The offline trio spans the whole STITCHED frame — the days the producer
+    walked back through to fill the strategy's windows — while the producer
+    log disposes only the target session's own minutes. So every seed-day bar
+    fell through to ``unexplained``: measured on the 2026-10-15 LONG genesis
+    session, 1,233 of them (411 bars × three seed days) against 79 the
+    session itself explained.
+
+    Three halves, because a reason that swallows everything is no better than
+    the bucket it drained. The two bars from the prior day become
+    ``seed_day``; a bar of THIS session's day that the filter does not name
+    stays ``unexplained``; and so does a bar dated AFTER the session, which is
+    not scenery at all but a frame that reaches past the day it claims to
+    describe. That last one is why the predicate is "precedes" and not
+    "differs" — the two are the same on every real input and only one of them
+    is right.
+    """
+    session_bars = list(COVERAGE_BARS[:4])
+    seed_bars = [
+        BarSpec(minute=200, day="20251205"),
+        BarSpec(minute=201, day="20251205"),
+    ]
+    later = BarSpec(minute=202, day="20251209")
+    trio = write_trio(tmp_path / "in", [*seed_bars, *session_bars, later])
+    filter_path = _consumed_ids_doc(
+        tmp_path / "session" / "consumed-ids.json",
+        session_bars[:2],
+        reasons={session_bars[2].raw_event_id: "skipped_behind"},
+    )
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=filter_path,
+    )
+
+    scope = result.summary["session_scope"]
+    assert scope["consumed_id_filter"]["session_day"] == "20251208"
+    assert scope["unpaired_offline_records_by_reason"] == {
+        dd.REASON_SEED_DAY: 2,
+        dd.REASON_UNEXPLAINED: 2,  # the same-day one AND the later-day one
+        "skipped_behind": 1,
+    }
+
+
+def test_red_a_filter_that_spans_two_days_names_no_seed_day(tmp_path: Path) -> None:
+    """**Guard: an unanswerable session day is not a licence to relabel.**
+
+    Concrete input: a filter whose consumed ids are not all from one day — a
+    document that is not the single live session this function assumes. There
+    is then no day to call "before", so the prior-day bars keep
+    ``unexplained`` rather than being quietly reclassified as scenery, and
+    ``session_day`` is null so a zero in ``seed_day`` reads as "not asked".
+    """
+    session_bars = list(COVERAGE_BARS[:3])
+    seed_bars = [
+        BarSpec(minute=200, day="20251205"),
+        BarSpec(minute=201, day="20251205"),
+    ]
+    trio = write_trio(tmp_path / "in", [*seed_bars, *session_bars])
+    filter_path = _consumed_ids_doc(
+        tmp_path / "session" / "consumed-ids.json",
+        [session_bars[0], seed_bars[1]],
+    )
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=filter_path,
+    )
+
+    scope = result.summary["session_scope"]
+    assert scope["consumed_id_filter"]["session_day"] is None
+    assert scope["unpaired_offline_records_by_reason"] == {dd.REASON_UNEXPLAINED: 3}
 
 
 def test_live_decisions_that_match_the_offline_replay_are_reported_as_such(
