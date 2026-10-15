@@ -1211,6 +1211,11 @@ _PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
 #: ``HH:MM`` the stub CALENDAR declares as the session start (default 08:45).
 #: Read by ``_runner_env`` when it writes that calendar.
 _STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
+#: Seconds the stub waits — in a BACKGROUND thread, so the price rows are not
+#: delayed with it — before writing ``band.jsonl``. Unset: written inline,
+#: before the first price row. With it, the ordering is the one step 8c exists
+#: for: first price row -> 8b returns -> band line later -> 8c returns.
+_PRODUCER_BAND_DELAY_ENV = "STUB_PRODUCER_BAND_DELAY_S"
 
 #: What the runner logs when the band line is there, and when it is not. The
 #: second string is the plan's own wording (§3.1) and the thing an operator
@@ -1302,11 +1307,17 @@ def _runner_repo(
         "        'as_of_ms': 1791601200000 + index,\n"
         "        'fields': {'close_x100': 57950},\n"
         "    }) + '\\n' for index in range(count)))\n"
-        # The band journal (band plan §3.2). Written BEFORE the price rows so
-        # the runner's two waits are exercised in their real order even when
-        # the stub leaves immediately afterwards.
+        # The band journal (band plan §3.2). Written inline BEFORE the price
+        # rows by default, so the runner's two waits are exercised in their
+        # real order even when the stub leaves immediately afterwards — or, with
+        # `_PRODUCER_BAND_DELAY_ENV`, from a BACKGROUND thread after a pause, so
+        # the band line lands AFTER 8b has already returned on the first price
+        # row. That second ordering is the one step 8c exists for, and the only
+        # one in which "a price row published during the band wait" is a thing
+        # that can happen.
         f"band_mode = os.environ.get({_PRODUCER_BAND_ENV!r}, 'ok')\n"
-        "if band_mode != 'none':\n"
+        f"band_delay = float(os.environ.get({_PRODUCER_BAND_DELAY_ENV!r}, '0') or 0)\n"
+        "def write_band():\n"
         "    import datetime, zoneinfo\n"
         "    kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
         "    today = datetime.datetime.now(kst).date()\n"
@@ -1349,6 +1360,15 @@ def _runner_repo(
         "        'producer_continuity_id': 'c' * 32,\n"
         "        'as_of_ms': band_as_of,\n"
         "    }) + '\\n')\n"
+        "if band_mode != 'none':\n"
+        "    if band_delay:\n"
+        "        import threading\n"
+        "        def _later():\n"
+        "            time.sleep(band_delay)\n"
+        "            write_band()\n"
+        "        threading.Thread(target=_later, daemon=True).start()\n"
+        "    else:\n"
+        "        write_band()\n"
         "if mode == 'never':\n"
         "    pass  # alive, publishing nothing — the wait runs its bound\n"
         "elif mode == '1+1':\n"
@@ -1999,6 +2019,80 @@ def test_red_the_runners_open_really_comes_from_the_calendar(
         assert _BAND_PRESENT_LINE not in output
         assert "before the open" in output
     assert "render refused" in output
+
+
+def test_red_a_price_row_published_during_the_band_wait_is_still_pre_boot(
+    tmp_path: Path,
+) -> None:
+    """**Review round 2 item B.** The boot snapshot has to cover the 8c wait.
+
+    The reviewer's concern: step 8c can now wait from a pre-open first row
+    until ``open + 60 s + allowance``, and a price line published DURING that
+    wait (the 08:45 bar, stamped 08:46:02) would be missing from
+    ``pre_boot_raw_event_ids`` — so the runtime boots, finds it already stale,
+    and M5 reports a false consumption failure.
+
+    The premise about the shipped script is not quite right — the snapshot is
+    written TWICE, and the second call (step 11, "boot-moment snapshot") runs
+    after 8c, the guard, the render and the label check, immediately before the
+    boot. It was added by #892's review for exactly this reason, one wait
+    earlier. But that was only ever argued in prose, so here is the proof: the
+    stub publishes a SECOND price row during the band wait, and that row must
+    be in the snapshot the runtime boots against.
+
+    Deleting the step-11 call — i.e. going back to the 8b-only snapshot the
+    finding describes — makes this red.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    watch = tmp_path / "producer-session" / "band.jsonl"
+    env = _runner_env(
+        tmp_path,
+        **{
+            # The ordering this test needs, and the one the first cut got
+            # wrong: the stub used to write `band.jsonl` BEFORE its first price
+            # row, so both rows existed before step 8b even looked and the
+            # snapshot's timing could not matter. The round-3 mutation run
+            # caught that (the 8b-only snapshot stayed green). Now the band
+            # line is written from a background thread after 4 s, so:
+            # row 1 -> 8b returns -> band line -> 8c returns, with row 2
+            # published the moment the band line appears.
+            _PRODUCER_BAND_DELAY_ENV: "4",
+            _PRODUCER_ROWS_ENV: "1+1",
+            _PRODUCER_SECOND_ROW_WHEN_ENV: str(watch),
+        },
+    )
+    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
+    env["TENANT_STOP_AT"] = "+1 minutes"
+    try:
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=150,
+        )
+    finally:
+        pidfile = tmp_path / "run.pid"
+        if pidfile.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    output = result.stdout + result.stderr
+    assert _BAND_PRESENT_LINE in output, output[-3000:]
+
+    snapshot = json.loads(
+        (tmp_path / "producer-session" / "boot-journal-snapshot.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    ids = snapshot["pre_boot_raw_event_ids"]
+    assert snapshot["consumed_stale_at_boot"] == len(ids)
+    # BOTH rows: the one 8b returned on, and the one published when the band
+    # line landed — after the 8b snapshot, before the boot. One id here means
+    # the snapshot was taken too early and the runtime will meet that row as
+    # an already-stale line M5 counts as a consumption failure.
+    assert len(ids) == 2, snapshot
+    assert len(set(ids)) == 2
 
 
 def test_runner_band_wait_is_the_shipped_predicate_after_the_first_row(

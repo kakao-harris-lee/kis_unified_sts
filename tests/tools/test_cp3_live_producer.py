@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import partial
@@ -2240,10 +2241,36 @@ class _NoSocket:
 
 
 class _Response:
-    """Just enough of ``httpx.Response``: raw bytes, a parse and a status."""
+    """Just enough of a STREAMED ``httpx.Response``.
 
-    def __init__(self, content: bytes, status: int = 200) -> None:
+    ``iter_bytes`` serves the content in chunks, optionally sleeping between
+    them — which is how the "trickle inside every read timeout" shape Codex
+    found (review round 2 item A) is reproduced without a socket. ``closed``
+    records that the caller shut the stream down, because closing it is part
+    of the fix: an abandoned stream holds a connection the next attempt needs.
+    """
+
+    def __init__(
+        self,
+        content: bytes,
+        status: int = 200,
+        *,
+        chunks: int = 1,
+        chunk_pause_s: float = 0.0,
+    ) -> None:
         self.content, self.status_code = content, status
+        self.chunk_pause_s = chunk_pause_s
+        size = max(1, -(-len(content) // chunks))
+        self._chunks = [content[at : at + size] for at in range(0, len(content), size)]
+        self.served = bytearray()
+        self.closed = False
+
+    def iter_bytes(self) -> Any:
+        for chunk in self._chunks:
+            if self.chunk_pause_s:
+                time.sleep(self.chunk_pause_s)
+            self.served.extend(chunk)
+            yield chunk
 
     def json(self) -> Any:
         return json.loads(self.content.decode("utf-8"))
@@ -2251,18 +2278,37 @@ class _Response:
     def raise_for_status(self) -> None:
         return None
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class _Http:
     def __init__(self, response: Any) -> None:
         self.response, self.seen = response, []
         self.timeouts: list[Any] = []
 
-    def get(
-        self, url: str, headers: Any = None, params: Any = None, timeout: Any = None
+    def stream(
+        self,
+        method: str,
+        url: str,
+        headers: Any = None,
+        params: Any = None,
+        timeout: Any = None,
     ) -> Any:
         self.seen.append((url, headers, params))
         self.timeouts.append(timeout)
-        return self.response
+        response = self.response
+
+        class _Ctx:
+            def __enter__(self) -> Any:
+                return response
+
+            def __exit__(self, *_exc: Any) -> bool:
+                response.close()
+                return False
+
+        assert method == "GET"
+        return _Ctx()
 
 
 class _Recorder:
@@ -2771,6 +2817,72 @@ def test_red_a_gate_refusal_on_the_price_poll_propagates_too(
     assert _stage(producer, "fetch_error") == []
 
 
+#: Every type that would swallow a ``SafetyViolation`` if ``main`` caught it:
+#: the class itself and each of its supertypes. A bare ``except`` counts too.
+_SWALLOWS_A_GATE_REFUSAL = frozenset(
+    {"SafetyViolation", "ProbeError", "RuntimeError", "Exception", "BaseException"}
+)
+
+
+def _handler_types(source: str, function: str) -> list[str | None]:
+    """The exception names each ``except`` of *function* catches.
+
+    ``None`` stands for a bare ``except``. Names are taken as written —
+    ``X``, ``mod.X`` -> ``X`` — and tuples are flattened, so
+    ``except (A, B):`` contributes both.
+    """
+    tree = ast.parse(source)
+    target = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == function
+    )
+    caught: list[str | None] = []
+    for handler in (n for n in ast.walk(target) if isinstance(n, ast.ExceptHandler)):
+        kinds = handler.type
+        if kinds is None:
+            caught.append(None)
+            continue
+        for node in kinds.elts if isinstance(kinds, ast.Tuple) else [kinds]:
+            if isinstance(node, ast.Name):
+                caught.append(node.id)
+            elif isinstance(node, ast.Attribute):
+                caught.append(node.attr)
+            else:  # pragma: no cover - no other shape exists in this file
+                caught.append(ast.dump(node))
+    return caught
+
+
+def test_red_main_catches_nothing_that_would_swallow_a_gate_refusal() -> None:
+    """**Review round 2 item C.** The structural half of MEDIUM-1's rc claim.
+
+    A ``SafetyViolation`` must leave ``main`` uncaught, so the process exits
+    non-zero and the runner reports exit 5. The type-lattice assertion below
+    says the handler ``main`` HAS cannot catch it; this says no handler it
+    might GROW can either — including the shapes that are easy to add without
+    thinking, ``except RuntimeError`` and a bare ``except``.
+    """
+    source = (_REPO_ROOT / "tools/tos_cp3/live_producer/producer.py").read_text(
+        encoding="utf-8"
+    )
+    caught = _handler_types(source, "main")
+    assert caught, "main has no except handler at all; this test lost its subject"
+    offending = [
+        name for name in caught if name is None or name in _SWALLOWS_A_GATE_REFUSAL
+    ]
+    assert not offending, offending
+    # ...and the walker really resolves what it is given: the same check over a
+    # copy of `main` that grew `except RuntimeError:` must find it. Without
+    # this, a walker that silently returned nothing would pass above.
+    planted = source.replace(
+        "    except LiveProducerRefused as exc:",
+        "    except RuntimeError:\n        raise\n    except LiveProducerRefused as exc:",
+        1,
+    )
+    assert planted != source
+    assert "RuntimeError" in _handler_types(planted, "main")
+
+
 def test_the_cli_cannot_fold_a_gate_refusal_into_its_refusal_path() -> None:
     """rc != 0 is what the runner reads (exit 5) — the last link in that chain.
 
@@ -2820,13 +2932,14 @@ def test_red_the_attempt_budget_charges_the_pace_sleep(
     assert band._room(with_the_pace)
 
 
-def test_the_band_get_pins_httpx_phases_to_sum_to_the_timeout() -> None:
-    """**LOW-1.** ``timeout=`` is PER PHASE, so the bare number allows 4x it.
+def test_the_band_get_keeps_the_phase_timeouts_as_inactivity_guards() -> None:
+    """The phase limits are still passed — as inactivity guards, nothing more.
 
-    The budget ``_room`` assumes is only true if one GET cannot exceed
-    ``request_timeout_s``, so the band call passes an ``httpx.Timeout`` whose
-    four phases sum to it. Asserted on the object the transport actually
-    handed httpx.
+    ⚠ This test used to be named "...pins httpx phases to SUM to the timeout"
+    and was read as proof of a total bound. It is not, and Codex said so
+    (review round 2 item A): httpx's ``read`` timeout bounds ONE chunk's wait.
+    What the phases buy is that a connection which goes silent dies; the TOTAL
+    is :func:`test_red_a_trickling_response_is_cut_off_at_the_total_budget`.
     """
     raw = json.dumps(_band_payload()).encode("utf-8")
     http = _Http(_Response(raw))
@@ -2837,7 +2950,106 @@ def test_the_band_get_pins_httpx_phases_to_sum_to_the_timeout() -> None:
     assert timeout is not None
     phases = (timeout.connect, timeout.read, timeout.write, timeout.pool)
     assert all(phase is not None for phase in phases)
-    assert sum(phases) == pytest.approx(budget)
+    assert all(phase == pytest.approx(budget / 4.0) for phase in phases)
+
+    # ...and NO clamp lifts them. The input that shows it: a budget under 4 ms,
+    # where `max(0.001, budget/4)` RAISES each phase above a quarter — a floor
+    # that loosens the bound it looks like it tightens. A 1 s budget cannot see
+    # this (0.25 either way), which is why the first version of this assertion
+    # survived the clamp's mutation. Production cannot reach such a budget —
+    # `config.MIN_REQUEST_TIMEOUT_S` refuses it — but the transport must not
+    # loosen on its own either.
+    tiny = 0.002
+    http_tiny = _Http(_Response(raw))
+    quotes_tiny = _bare_quotes(_Recorder(), http_tiny)
+    quotes_tiny.cfg["request_timeout_s"] = tiny
+    quotes_tiny.band(INSTRUMENT)
+    (timeout_tiny,) = http_tiny.timeouts
+    assert timeout_tiny.read == pytest.approx(tiny / 4.0)
+    assert timeout_tiny.read < 0.001
+
+
+def test_red_a_trickling_response_is_cut_off_at_the_total_budget() -> None:
+    """**Review round 2 item A, Codex MEDIUM.** The input the phases cannot stop.
+
+    A response that trickles chunks, each arriving well inside its own read
+    timeout, keeps a synchronous httpx call open for as long as it keeps
+    trickling — the per-phase limits never fire and there is no total. So the
+    band GET streams the body against a monotonic deadline and closes the
+    stream when the budget is gone.
+
+    The fake serves 40 chunks, pausing a fifth of a phase guard between them
+    (so the guards provably could not fire) against a 0.1 s budget. Deleting
+    the deadline check makes the call consume every chunk and succeed, which is
+    this test red.
+    """
+    raw = json.dumps(_band_payload()).encode("utf-8")
+    budget = 0.1
+    phase = budget / 4.0
+    pause = phase / 5.0
+    response = _Response(raw, chunks=40, chunk_pause_s=pause)
+    http = _Http(response)
+    recorder = _Recorder()
+    quotes = _bare_quotes(recorder, http)
+    quotes.cfg["request_timeout_s"] = budget
+
+    began = time.monotonic()
+    with pytest.raises(RuntimeError, match="band_total_budget_exceeded"):
+        quotes.band(INSTRUMENT)
+    elapsed = time.monotonic() - began
+
+    # No single chunk was late enough for an inactivity guard to fire...
+    assert pause < phase
+    # ...and the call still ended, near the budget rather than at 40 * pause.
+    assert elapsed < 40 * pause
+    # The stream was CLOSED, not merely abandoned — by `Client.stream`'s
+    # context manager on the way out, which is the only mechanism here (an
+    # explicit `close()` before the raise was deleted: the round-3 mutation run
+    # showed no test could tell whether it was there).
+    assert response.closed is True
+    # Part of the body arrived and the rest never did.
+    assert 0 < len(response.served) < len(raw)
+    (event,) = recorder.events
+    assert event["error"] == "band_total_budget_exceeded"
+    assert event["total_budget_s"] == budget
+    assert event["tr_id"] == quote_client.BAND_TR
+
+
+def test_the_band_digest_is_exactly_the_bytes_received_in_chunks() -> None:
+    """Streaming must not change WHAT is hashed (review round 2 item A).
+
+    The digest binds the runtime's evidence row to what the broker sent, so a
+    chunked read has to hash the concatenation of the chunks — not a
+    re-serialised parse, and not a buffered ``.content`` the stream no longer
+    has.
+    """
+    raw = json.dumps(_band_payload(), indent=2).encode("utf-8")
+    response = _Response(raw, chunks=7)
+    quotes = _bare_quotes(_Recorder(), _Http(response))
+    read = quotes.band(INSTRUMENT)
+    assert bytes(response.served) == raw
+    assert read.raw_payload_digest == hashlib.sha256(raw).hexdigest()
+    reserialised = json.dumps(read.payload, separators=(",", ":")).encode("utf-8")
+    assert read.raw_payload_digest != hashlib.sha256(reserialised).hexdigest()
+
+
+def test_red_a_request_timeout_below_the_floor_is_refused(tmp_path: Path) -> None:
+    """The clamp's replacement (review round 2 item A).
+
+    ``quote_client.band`` used to clamp each phase to ``max(0.001, budget/4)``,
+    which for a budget under 4 ms RAISED the phases above the budget — a floor
+    that loosens. The clamp is gone and the floor is a config refusal, where it
+    is visible and has a reason next to it.
+    """
+    assert config_mod.MIN_REQUEST_TIMEOUT_S == 1.0
+    with pytest.raises(LiveProducerRefused, match="request_timeout_s"):
+        config_mod.load_config(
+            _write_config(tmp_path, request_timeout_s=0.002), repo_root=_REPO_ROOT
+        )
+    shipped = config_mod.load_config(
+        _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
+    )
+    assert shipped.request_timeout_s >= config_mod.MIN_REQUEST_TIMEOUT_S
 
 
 @pytest.mark.serial
@@ -2923,6 +3135,47 @@ def test_red_a_first_window_that_fails_everything_gets_one_more_window(
     assert summary["band"]["retry_window_used"] is True
     triggers = [entry["trigger"] for entry in _stage(producer, "band_published")]
     assert triggers == [band_mod.TRIGGER_RETRY]
+
+
+def test_red_a_retry_window_with_no_room_does_not_spend_the_extra_window(
+    tmp_path: Path, market: Market
+) -> None:
+    """**Review round 2 item D.** The extra window is spent by an ATTEMPT.
+
+    ``_trigger`` used to set ``retried`` when it SCHEDULED the retry, so a
+    boundary that turned out to have no room — the clock already inside
+    ``next boundary - δ - attempt_budget`` — consumed the single extra window
+    and asked the broker nothing at all. The day then had one usable window
+    where it should have had two.
+
+    Setting the flag in ``_trigger`` again makes the last assertion red.
+    """
+    producer, clock, quotes = _build(tmp_path, market)
+    producer.boot()
+    band = producer.band
+
+    # A first window that fails everything, so a retry is due.
+    quotes.band_fail_next = 9999
+    clock.moment = clock.moment.replace(hour=8, minute=46, second=2)
+    band.after_price_line()
+    assert band.attempted is True and band.lines == 0
+    assert band.retried is False, "the first window is not the extra one"
+    spent_by_the_first = quotes.band_calls
+    assert spent_by_the_first > 0
+
+    # Now a boundary with no room: the retry is DUE but cannot attempt.
+    clock.moment = clock.moment.replace(minute=46, second=59)
+    band.after_price_line()
+    assert quotes.band_calls == spent_by_the_first, "it attempted with no room"
+    assert band.retried is False, "a window with no attempt spent the extra one"
+
+    # ...and the next boundary, which has room, gets the real extra window.
+    clock.moment = clock.moment.replace(minute=47, second=2)
+    quotes.band_fail_next = 0
+    band.after_price_line()
+    assert quotes.band_calls > spent_by_the_first
+    assert band.retried is True
+    assert band.lines == 1
 
 
 @pytest.mark.serial
