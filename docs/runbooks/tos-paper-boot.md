@@ -1870,28 +1870,36 @@ sqlite3 -json "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
   판정을 믿지 않는다. 비교는 `price_min ≤ close_x100 ≤ price_max` 이고, 소비된 봉은
   위 「세션 뒤 — §3.6 대조」의 `consumed-ids.json` 이 이미 들고 있다.
 
+  ⛔ **가격은 `consumed-ids.json` 에서 나오지 않는다**(2026-10-16 실측): 그 파일은
+  `raw_event_ids` 와 계수만 싣고 **값은 싣지 않는다**(`session_inputs.py` 의 payload —
+  `counts`·`raw_event_ids`·`unpaired_reason*`·`consumed_field_states`·
+  `consumed_value_view`). 그래서 소비된 **id** 와 B1a `fields.jsonl` 의 **값**을 조인한다.
+  값을 들고 있는 유일한 산출물이 B1a 이고, 그것은 §3.6 대조가 이미 만든다.
+
   ```bash
-  # 기대: outside 0. band 가 없으면 band=None 으로 "SKIPPED (no band)".
+  # 기대: outside 0. band 행이 없으면 "SKIPPED (no band)" — 그 세션은 수용 1 실패다.
   python3 -c 'import json,sqlite3,sys; \
-   consumed=json.load(open(sys.argv[1],encoding="utf-8")); \
+   ids=set(json.load(open(sys.argv[1],encoding="utf-8"))["raw_event_ids"]); \
    db=sqlite3.connect("file:"+sys.argv[2]+"?mode=ro",uri=True); \
    obs=[json.loads(r[0])["payload"] for r in db.execute( \
      "SELECT payload_json FROM entries WHERE kind=? ORDER BY seq",("VENUE_BAND_OBSERVED",))]; \
    obs=[r for r in obs if r.get("outcome")=="OBSERVED"]; \
-   print("SKIPPED (no band)") if not obs else None; \
-   sys.exit(0) if not obs else None; \
+   print("SKIPPED (no band)") or sys.exit(0) if not obs else None; \
    lo,hi=obs[0]["price_min"],obs[0]["price_max"]; \
-   vals=[int(v) for v in consumed.get("consumed_close_x100",[])]; \
-   outside=[v for v in vals if not (lo<=v<=hi)]; \
-   print("band:",lo,hi,"prices:",len(vals),"outside:",len(outside),outside[:10]); \
+   rows=[json.loads(l) for l in open(sys.argv[3],encoding="utf-8") if l.strip()]; \
+   vals=[(r["raw_event_id"],r["close_x100"]) for r in rows \
+         if r.get("raw_event_id") in ids and r.get("close_x100") is not None]; \
+   outside=[v for v in vals if not (lo<=int(v[1])<=hi)]; \
+   print("band:",lo,hi,"joined:",len(vals),"of",len(ids),"consumed ids"); \
+   print("outside:",len(outside),outside[:10]); \
    print("OK" if vals and not outside else "FINDING")' \
-    "$SESSION/b3/consumed-ids.json" "$SESSION/data/$INSTRUMENT/evidence.sqlite3"
+    "$SESSION/b3/consumed-ids.json" "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
+    "$SESSION/b1a/fields.jsonl"
   ```
 
-  ⚠ `consumed-ids.json` 이 아직 `consumed_close_x100` 을 싣지 않으면 그 수는 **0 건**으로
-  나온다 — 「밖이 없다」가 아니라 「묻지 못했다」다. 그때는 B1a `fields.jsonl` 의 그날
-  `close_x100` 분포를 같은 두 경계와 대조하고, 그 사실을 증거 PR 에 적는다. (계수를
-  추출기에 넣는 것은 별도 변경이고, 넣기 전까지 이 줄이 그 공백의 기록이다.)
+  ⚠ **`joined` 가 소비 id 수보다 작으면 그것도 소견이다** — 「밖이 없다」가 아니라
+  「전부 묻지 못했다」이므로 두 수를 **함께** 출력한다. 추출기에 값 계수를 넣는 것은 별도
+  변경이고, 넣기 전까지 이 조인이 수용 2 를 재는 자리다.
 
 - **기준가 대 전일 종가**(band 계획 §4.4a 잔여 위험의 **측정**). REAL 원천이 된 덕분에
   이제 오프라인 대조가 가능하다: 행의 `basis`(=`futs_sdpr` × 100)를 생산자 동결 프레임의

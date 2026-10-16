@@ -1012,7 +1012,7 @@ log "data parent mode $PARENT_MODE"
 # (step 8c), and it need not exist — a session where the probe never wrote is
 # `BAND ABSENT`, which the runtime folds to UNKNOWN.
 BAND_RENDER_ARGS=()
-if grep -q 'value: "band_journal_path"' "$TREE_DIR/RENDER.yaml"; then
+if grep -q 'value: "band_journal_path"' "$TREE_DIR/RENDER.yaml" 2>/dev/null; then
   BAND_RENDER_ARGS=(--band-journal-path "$BAND_JOURNAL")
   log "render: $TENANT_TREE declares a band_journal_path slot -> $BAND_JOURNAL"
 else
