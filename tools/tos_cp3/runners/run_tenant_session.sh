@@ -207,6 +207,14 @@ BAND_LAUNCH_MAX_WAIT_S=${CP3_BAND_LAUNCH_MAX_WAIT_S:-}
 # same bad minute.
 BAND_RETRY_BOUNDARY_S=60
 
+# `band_process_run`'s own return value for "the session stop leaves no room
+# to start this attempt" — distinct from every code the attempt itself can
+# produce, so the caller never mistakes it for a slow broker and never
+# retries it. `timeout` uses 124/125/126/127 and otherwise passes the child's
+# code through, and the probe's own codes are 0-4; 200 collides with none of
+# them (review round 6, Codex MEDIUM).
+BAND_RC_NO_TIME=200
+
 # The band process gets SIGKILL this long after SIGTERM. Five seconds: it has
 # one in-flight request and one small file to finish, unlike the runtime's
 # durable set (SIGKILL_AFTER_S 120).
@@ -716,13 +724,45 @@ PY
   fi
 }
 
-# One band process, in its OWN process group under `timeout`. Returns its rc.
+# Seconds left before the session stop, floored at 0. The stop is the whole
+# session's authority: nothing this template starts may outlive it, least of
+# all a process holding REAL quotation credentials.
+band_seconds_left() {
+  _left=$((STOP_S - $(date +%s)))
+  [ "$_left" -gt 0 ] || _left=0
+  printf '%s' "$_left"
+}
+
+# One band process, in its OWN process group under `timeout`. Returns its rc,
+# or BAND_RC_NO_TIME when the session stop leaves no room to run it at all.
+#
+# ⚠ **The stop is checked HERE, per attempt** (review round 6, Codex MEDIUM).
+# Capping the open-anchored sleep was not enough: the sleep returns when the
+# stop arrives, and the attempt then ran anyway — Codex reproduced a band
+# process starting with `STOP_S=0`, i.e. a real-key OAuth + GET after the
+# session had ended. A failure also queued a 60 s wait and a retry, both past
+# the stop. So every attempt asks for the remaining time first, and both the
+# ceiling and the retry wait are capped by it.
 band_process_run() {
+  _left=$(band_seconds_left)
+  # The SIGKILL grace is wall time this attempt can consume, so it has to fit
+  # inside the remaining window too — a ceiling of 1s with a 5s grace is a
+  # 6s attempt.
+  if [ "$_left" -le "$BAND_PROCESS_KILL_AFTER_S" ]; then
+    log "band: ${_left}s left before the session stop — NO attempt started (an attempt needs more than the ${BAND_PROCESS_KILL_AFTER_S}s kill grace)"
+    return "$BAND_RC_NO_TIME"
+  fi
+  _ceiling=$BAND_PROCESS_TIMEOUT_S
+  _budget=$((_left - BAND_PROCESS_KILL_AFTER_S))
+  if [ "$_ceiling" -gt "$_budget" ]; then
+    log "band: ceiling ${_ceiling}s capped to ${_budget}s by the session stop (${_left}s left)"
+    _ceiling=$_budget
+  fi
   BAND_PROCESS_RUNS=$((BAND_PROCESS_RUNS + 1))
-  log "=== BAND PROCESS #$BAND_PROCESS_RUNS instrument=$INSTRUMENT ceiling ${BAND_PROCESS_TIMEOUT_S}s"
+  log "=== BAND PROCESS #$BAND_PROCESS_RUNS instrument=$INSTRUMENT ceiling ${_ceiling}s"
   PYTHONPATH="$REPO" \
     setsid timeout --kill-after="${BAND_PROCESS_KILL_AFTER_S}s" \
-    "${BAND_PROCESS_TIMEOUT_S}s" \
+    "${_ceiling}s" \
     "$PY" -m tools.tos_cp3.live_producer.band_probe \
     --config "$TENANT_PRODUCER_CONFIG" \
     --instrument "$INSTRUMENT" \
@@ -747,22 +787,41 @@ else
     # BAND ABSENT, and the reason the probe keeps those codes apart.
     die "band process exited rc 1 (allowlist gate refusal or unexpected error) — see $TENANT_LOG"
   fi
-  # Exactly ONE retry, at the next boundary. One bad minute (a 429 burst, one
-  # expired token) must not cost the day's band; an unbounded retry would hand
-  # the band the minute-bar polling's rate-limit budget.
-  log "band process rc=$_rc — one retry at the next boundary"
-  sleep "$BAND_RETRY_BOUNDARY_S" &
-  WAIT_PID=$!
-  wait "$WAIT_PID" || true
-  WAIT_PID=""
-  if band_process_run; then
-    log "band process wrote a line on the retry"
+  if [ "$_rc" -eq "$BAND_RC_NO_TIME" ]; then
+    # The stop arrived before anything could be attempted. Not an abort: band
+    # absence is the conservative direction, and a session whose window has
+    # closed has nothing left to do here.
+    log "band: the session stop left no room for a first attempt — band is ABSENT for this session"
   else
-    _rc=$?
-    if [ "$_rc" -eq 1 ]; then
-      die "band process exited rc 1 on the retry (gate refusal) — see $TENANT_LOG"
+    # Exactly ONE retry, at the next boundary. One bad minute (a 429 burst, one
+    # expired token) must not cost the day's band; an unbounded retry would hand
+    # the band the minute-bar polling's rate-limit budget.
+    _wait=$BAND_RETRY_BOUNDARY_S
+    _left=$(band_seconds_left)
+    if [ "$_wait" -gt "$_left" ]; then
+      log "band retry: wait ${_wait}s capped to ${_left}s by the session stop"
+      _wait=$_left
     fi
-    log "band process rc=$_rc on the retry — no further attempts"
+    log "band process rc=$_rc — one retry at the next boundary (in ${_wait}s)"
+    if [ "$_wait" -gt 0 ]; then
+      sleep "$_wait" &
+      WAIT_PID=$!
+      wait "$WAIT_PID" || true
+      WAIT_PID=""
+    fi
+    if band_process_run; then
+      log "band process wrote a line on the retry"
+    else
+      _rc=$?
+      if [ "$_rc" -eq 1 ]; then
+        die "band process exited rc 1 on the retry (gate refusal) — see $TENANT_LOG"
+      fi
+      if [ "$_rc" -eq "$BAND_RC_NO_TIME" ]; then
+        log "band: the session stop left no room for the retry — band is ABSENT for this session"
+      else
+        log "band process rc=$_rc on the retry — no further attempts"
+      fi
+    fi
   fi
 fi
 

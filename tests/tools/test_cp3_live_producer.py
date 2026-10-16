@@ -3217,17 +3217,30 @@ def test_red_a_config_refusal_leaves_no_band_log_and_the_runbook_says_so(
     broken.write_text("env_file: /dev/null\n", encoding="utf-8")
     session = tmp_path / "probe"
 
-    rc = band_probe.main(
-        [
-            "--config",
-            str(broken),
-            "--instrument",
-            INSTRUMENT,
-            "--session-dir",
-            str(session),
-            "--confirm",
-        ]
-    )
+    # ⚠ `main` sets `os.umask(0o077)` and does not restore it — it is a
+    # process whose next statement is `SystemExit`. Called IN-PROCESS by a
+    # test, that mask would outlive this test and be inherited by every later
+    # test in this xdist worker (review round 6, LOW-3). Read-and-restore.
+    previous_umask = os.umask(0o077)
+    try:
+        rc = band_probe.main(
+            [
+                "--config",
+                str(broken),
+                "--instrument",
+                INSTRUMENT,
+                "--session-dir",
+                str(session),
+                "--confirm",
+            ]
+        )
+    finally:
+        os.umask(previous_umask)
+    # ...and prove the restore happened, so deleting the `finally` is red here
+    # rather than in whichever later test inherits the mask.
+    current_umask = os.umask(0o022)
+    os.umask(current_umask)
+    assert current_umask == previous_umask, oct(current_umask)
 
     assert rc == band_probe.RC_REFUSED
     assert not (session / band_probe.BAND_LOG_NAME).exists()

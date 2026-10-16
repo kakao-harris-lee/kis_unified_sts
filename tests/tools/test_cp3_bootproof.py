@@ -2076,6 +2076,14 @@ def test_red_a_band_process_rc_1_aborts_before_the_boot(tmp_path: Path) -> None:
     assert _BAND_ABSENT_LINE not in output
 
 
+#: Slack the derived open must leave before midnight. 120 s, because the
+#: runner needs time to REACH step 8c — about 5 s here and up to ~45 s on a
+#: loaded host — and the lower bound on the computed wait already allows the
+#: same 120 s. It was 5 s (review round 6, LOW-2), which left a window where
+#: the step could be reached after the anchored instant had already passed.
+_BAND_LAUNCH_MIN_SLACK_S = 120
+
+
 def _a_future_open(now: datetime.datetime) -> tuple[str, float]:
     """``(HH:MM for the stub calendar, seconds until ``open + one boundary``)``.
 
@@ -2084,14 +2092,23 @@ def _a_future_open(now: datetime.datetime) -> tuple[str, float]:
     ``band_line.session_open_ms``, so a literal time of day is a literal bet
     on what time the test runs (review round 5). 23:59's anchored instant is
     exactly midnight, which keeps the distance positive right up to it.
+
+    ⚠ The distance is measured the way the RUNNER measures it (review round 6,
+    LOW-1): the HH:MM string recombined with **today**, plus one boundary. The
+    first cut measured from this function's own ``opens_at``, which can be
+    TOMORROW — so dropping the midnight branch left the test agreeing with the
+    bug instead of with the runner, and the reviewer's mutation stayed green.
+    Returning what ``session_open_ms`` would compute is what makes that
+    mutation visible at all.
     """
     opens_at = now + datetime.timedelta(hours=1)
     if opens_at.date() != now.date():
         opens_at = now.replace(hour=23, minute=59, second=0, microsecond=0)
-    anchored_in_s = (
-        opens_at + datetime.timedelta(seconds=60)
-    ).timestamp() - now.timestamp()
-    return opens_at.strftime("%H:%M"), anchored_in_s
+    start = opens_at.strftime("%H:%M")
+    anchored = datetime.datetime.combine(
+        now.date(), datetime.time.fromisoformat(start), tzinfo=now.tzinfo
+    ) + datetime.timedelta(seconds=60)
+    return start, anchored.timestamp() - now.timestamp()
 
 
 def test_the_future_open_helper_has_no_blind_window_but_the_last_seconds() -> None:
@@ -2101,8 +2118,16 @@ def test_the_future_open_helper_has_no_blind_window_but_the_last_seconds() -> No
     a day, so asserting the replacement only at the moment the suite happens
     to run would repeat the mistake in a smaller window. This walks every
     minute of a day in KST — plus the last minute second by second — and
-    requires the anchored instant to stay ahead of ``now`` except in the final
-    five seconds, which is the window the caller skips and names.
+    requires the anchored instant to stay ahead of ``now`` except inside the
+    final :data:`_BAND_LAUNCH_MIN_SLACK_S`, which is the window the caller
+    skips and names.
+
+    The expectation is recomputed HERE from the returned string with the
+    runner's own semantics (combine with that day's date, add one boundary),
+    rather than taken from the helper's arithmetic — a test that reuses the
+    code's own intermediate value agrees with the code even when both are
+    wrong, which is exactly how the first cut survived its mutation (review
+    round 6, LOW-1).
     """
     kst = zoneinfo.ZoneInfo("Asia/Seoul")
     day = datetime.date(2026, 10, 16)
@@ -2118,11 +2143,142 @@ def test_the_future_open_helper_has_no_blind_window_but_the_last_seconds() -> No
     for moment in moments:
         start, anchored_in_s = _a_future_open(moment)
         assert re.fullmatch(r"\d{2}:\d{2}", start), (moment, start)
+        as_the_runner_reads_it = (
+            datetime.datetime.combine(
+                moment.date(), datetime.time.fromisoformat(start), tzinfo=kst
+            )
+            + datetime.timedelta(seconds=60)
+        ).timestamp() - moment.timestamp()
+        assert abs(as_the_runner_reads_it - anchored_in_s) < 1, (
+            moment.isoformat(),
+            anchored_in_s,
+            as_the_runner_reads_it,
+        )
         seconds_left = 86400 - (moment.hour * 3600 + moment.minute * 60 + moment.second)
-        if seconds_left > 5:
-            assert anchored_in_s > 0, (moment.isoformat(), anchored_in_s)
+        if seconds_left > _BAND_LAUNCH_MIN_SLACK_S:
+            assert as_the_runner_reads_it > 0, (moment.isoformat(), anchored_in_s)
         # ...and it never points FURTHER than the hour it promises.
         assert anchored_in_s <= 3660, (moment.isoformat(), anchored_in_s)
+
+
+#: What the runner logs when the session stop leaves no room for an attempt,
+#: and when it shortens one. Both are the evidence for review round 6's
+#: MEDIUM — a band process must not start, or outlive, the session's end.
+_BAND_NO_TIME_LINE = "left before the session stop — NO attempt started"
+_BAND_CEILING_CAPPED = "capped to"
+
+
+def _band_runs_recorded(tmp_path: Path) -> int:
+    """How many times the stub band probe actually started.
+
+    Read from the counter file the stub keeps beside the session dir rather
+    than from the log: "the runner did not print a launch line" and "no
+    process ran" are different claims, and this one is about the process.
+    """
+    counter = tmp_path / "producer-session" / ".stub-band-runs"
+    return int(counter.read_text().strip()) if counter.is_file() else 0
+
+
+def test_red_no_band_attempt_starts_after_the_stop_passes_in_the_open_wait(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 6, MEDIUM.** The stop ends the band, mid-wait.
+
+    Capping the open-anchored sleep by ``STOP_S`` was not enough: the sleep
+    RETURNS when the stop arrives, and the attempt then ran unconditionally —
+    Codex reproduced a band process starting with ``STOP_S=0``, which is a
+    real-key OAuth + GET after the session has ended.
+
+    Here the open is two hours out and the stop is fifteen seconds out, so the
+    (capped) wait consumes the whole session. No process may start, and the
+    disposition is BAND ABSENT — the window closed, which is not a defect.
+    """
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    start, _anchor = _a_future_open(now)
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: start,
+            _PRODUCER_BAND_OPEN_ENV: start,
+            # let the open wait actually happen, bounded by the stop
+            "CP3_BAND_LAUNCH_MAX_WAIT_S": "120",
+            "TENANT_STOP_AT": "+15 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    assert "=== BAND PROCESS" not in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 0
+    assert _BAND_NO_TIME_LINE in output
+    assert "no room for a first attempt" in output
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_stop_shortens_a_band_attempt_and_cancels_the_retry(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 6, MEDIUM.** The attempt's ceiling fits in the window.
+
+    A hanging probe with a 30 s ceiling and a stop 25 s out: the ceiling has
+    to be cut to the remaining time minus the SIGKILL grace, because that
+    grace is wall time too. Afterwards nothing is left, so the retry does not
+    happen either — exactly one process, and it ended before the stop.
+
+    Red two ways: without the cap the logged ceiling is the full 30 s (the
+    assertion compares it against the window), and without the per-attempt
+    check the retry starts a second process after the stop.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _BAND_PLAN_ENV: "hang",
+            "CP3_BAND_PROCESS_TIMEOUT_S": "30",
+            "TENANT_STOP_AT": "+25 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    ceilings = re.findall(r"=== BAND PROCESS #\d+ .* ceiling (\d+)s", output)
+    assert len(ceilings) == 1, (ceilings, output[-3000:])
+    # The ceiling was cut: 30s would not fit a 25s window, and the 5s kill
+    # grace has to fit too.
+    assert int(ceilings[0]) < 30, ceilings
+    assert int(ceilings[0]) <= 25 - 5, ceilings
+    assert f"{_BAND_CEILING_CAPPED} {ceilings[0]}s by the session stop" in output
+    assert _band_runs_recorded(tmp_path) == 1
+    assert "=== BAND PROCESS #2" not in output
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_retry_wait_is_capped_by_the_stop(tmp_path: Path) -> None:
+    """⛔ **Codex round 6, MEDIUM.** A 60 s retry wait inside a 20 s session.
+
+    The retry belongs at the next boundary, but the boundary can be past the
+    end of the session: an uncapped wait sleeps 60 s inside a 20 s window, so
+    the runner sits idle past its own stop before deciding there is no time.
+    The wait is therefore capped by the remaining seconds, and the elapsed
+    wall time is what proves it — both the capped and the uncapped version end
+    with no second attempt, so the end state cannot tell them apart.
+    """
+    started = time.monotonic()
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_BAND_PLAN_ENV: "soft", "TENANT_STOP_AT": "+20 seconds"},
+    )
+    elapsed = time.monotonic() - started
+    output = result.stdout + result.stderr
+
+    assert "band retry: wait 60s capped to" in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 1
+    assert "=== BAND PROCESS #2" not in output
+    assert "no room for the retry" in output
+    assert _BAND_ABSENT_LINE in output
+    # 60s of sleeping cannot hide inside this: the window is 20s and the
+    # runner's remaining steps are sub-second with the stub.
+    assert elapsed < 45, f"{elapsed:.1f}s elapsed — the retry wait was not capped"
 
 
 def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) -> None:
@@ -2146,18 +2302,20 @@ def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) ->
 
     So the open is ``now + 1h``, and within an hour of midnight it is
     ``23:59`` — whose anchored instant lands exactly at midnight, so the
-    distance stays positive for every instant of the day but the last few
-    seconds, which is the one case this skips and names. The session stop is
+    distance stays positive for every instant of the day but the last
+    :data:`_BAND_LAUNCH_MIN_SLACK_S`, which is the one case this skips and
+    names. The session stop is
     pushed out to three hours for the same reason the open moved: the computed
     wait is ``min(anchor, stop - now)``, so with the default ten-minute stop
     the number this asserts on would be the STOP's, not the calendar's.
     """
     now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
     start, anchored_in_s = _a_future_open(now)
-    if anchored_in_s < 5:
+    if anchored_in_s < _BAND_LAUNCH_MIN_SLACK_S:
         pytest.skip(
-            "within 5s of midnight KST there is no future open left today; "
-            f"the anchored instant is {anchored_in_s:.1f}s away"
+            f"within {_BAND_LAUNCH_MIN_SLACK_S}s of midnight KST no future open "
+            "is left with room for the runner to reach step 8c; the anchored "
+            f"instant is {anchored_in_s:.1f}s away"
         )
 
     result = _run_runner(
