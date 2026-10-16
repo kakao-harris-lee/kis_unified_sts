@@ -20,8 +20,14 @@ from pathlib import Path
 
 import pytest
 from tos_runtime.venue import VenuePolicyConfigError, load_venue_constraint_policy
+from tos_runtime.venue.band_journal import ProducerJournalBandSource
 
-from ._documents import SCHEME, band_source_runtime_extra, venue_policy_yaml
+from ._documents import (
+    SCHEME,
+    band_source_runtime_extra,
+    producer_journal_band_source_runtime_extra,
+    venue_policy_yaml,
+)
 
 #: The band source's own instrument, equal to the fixture policy's ``scope.instruments`` sole
 #: element — a LOADABLE declaration, which every mutation below departs from in one leaf.
@@ -373,3 +379,192 @@ class TestDeclaredVocabulary:
             _load(_write(tmp_path, runtime_extra='band_source: "FHMIF10000000"\n'))
 
         assert "_runtime.band_source must be a mapping or null" in str(excinfo.value)
+
+
+class TestPerKindRequiredKeys:
+    """2026-10-15 plan §3.3 — "로더는 kind 마다 필수 키를 따로 요구한다".
+
+    The ``kis_quote_get`` half is already covered clause by clause above
+    (:class:`TestTimeoutMs`, :class:`TestDeclaredVocabulary`, :class:`TestTransportConsistency`).
+    This class is the ``producer_journal`` half plus the rule that keeps the two from blurring:
+    a leaf belonging to the OTHER kind is REFUSED, not ignored.
+
+    **Why refused and not ignored.** A declared value that nothing reads is indistinguishable,
+    to the next person, from a value the code forgot to use — which is exactly what the four
+    unread ``kis_quote.yaml`` values turned out to be when the 2026-10-15 enabling attempt
+    measured them (plan §3.3). ``timeout_ms: 5000`` under ``producer_journal`` reads as "the
+    band read times out after five seconds"; that path opens a file and has no timeout at all.
+    """
+
+    def test_the_producer_journal_baseline_loads(self, tmp_path: Path) -> None:
+        """The baseline every mutation below departs from in ONE leaf. Without it a refusal
+        test proves only "this document does not load"."""
+        loaded = _load(
+            _write(
+                tmp_path,
+                runtime_extra=producer_journal_band_source_runtime_extra(
+                    instrument=_INSTRUMENT
+                ),
+            ),
+            # Deliberately absent: this kind needs no transport document (see below).
+            transport_instrument=None,
+        )
+
+        assert isinstance(loaded.band_source, ProducerJournalBandSource)
+        assert loaded.band_source.band_journal_path == "/nonexistent/band.jsonl"
+        assert loaded.band_source.approved_source_prefixes == ("tos-cp3-live",)
+        assert loaded.price_scale == 100
+        assert loaded.band_source_digest is not None
+
+    def test_a_producer_journal_source_needs_no_kis_quote_document(
+        self, tmp_path: Path
+    ) -> None:
+        """Plan §3.3. The ``kis_quote_get`` kind refuses without one (that rule has its own
+        test above), and NO tree ships a ``kis_quote.yaml``
+        (``tests/compose/test_venue_band_source_wiring.py``), so requiring it here would refuse
+        the very deployment this path exists to enable.
+        """
+        loaded = _load(
+            _write(
+                tmp_path,
+                runtime_extra=producer_journal_band_source_runtime_extra(
+                    instrument=_INSTRUMENT
+                ),
+            ),
+            transport_instrument=None,
+        )
+
+        assert loaded.band_source is not None
+
+    @pytest.mark.parametrize("leaf", ["band_journal_path", "approved_source_prefixes"])
+    def test_a_missing_producer_journal_leaf_refuses(
+        self, tmp_path: Path, leaf: str
+    ) -> None:
+        """Each of the two keys this kind actually READS, removed one at a time."""
+        block = producer_journal_band_source_runtime_extra(instrument=_INSTRUMENT)
+        mutated = "\n".join(
+            line
+            for line in block.splitlines()
+            if not line.strip().startswith(f"{leaf}:")
+        )
+
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(_write(tmp_path, runtime_extra=mutated + "\n"), None)
+
+        assert leaf in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "leaf_yaml",
+        [
+            "  timeout_ms: 5000\n",
+            '  tr_id: "FHMIF10000000"\n',
+            '  upper_field: "futs_mxpr"\n',
+            '  lower_field: "futs_llam"\n',
+            '  basis_field: "futs_sdpr"\n',
+        ],
+    )
+    def test_a_kis_quote_get_leaf_under_producer_journal_refuses(
+        self, tmp_path: Path, leaf_yaml: str
+    ) -> None:
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(
+                _write(
+                    tmp_path,
+                    runtime_extra=producer_journal_band_source_runtime_extra(
+                        instrument=_INSTRUMENT, extra_leaves=leaf_yaml
+                    ),
+                ),
+                None,
+            )
+
+        assert "belong(s) to another kind" in str(excinfo.value)
+
+    def test_a_producer_journal_leaf_under_kis_quote_get_refuses(
+        self, tmp_path: Path
+    ) -> None:
+        """The mirror direction — otherwise the rule would be "producer_journal is strict and
+        kis_quote_get is not", which is a rule about one kind, not about the split."""
+        block = band_source_runtime_extra(instrument=_INSTRUMENT)
+        mutated = block.replace(
+            '  bound: "trading_date_kst"',
+            '  band_journal_path: "/x/band.jsonl"\n  bound: "trading_date_kst"',
+        )
+
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(_write(tmp_path, runtime_extra=mutated))
+
+        assert "band_journal_path" in str(excinfo.value)
+
+    @pytest.mark.parametrize("value", ["[]", '[""]'])
+    def test_an_empty_approved_prefix_list_or_entry_refuses(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        """``[]`` approves no writer, so the band would be permanently absent for a reason no
+        operator would look for; ``[""]`` approves EVERY writer, because every string starts
+        with the empty one. ``tools/tos_cp3/bootproof_guard.py`` refuses both on its own list
+        for the same two reasons."""
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(
+                _write(
+                    tmp_path,
+                    runtime_extra=producer_journal_band_source_runtime_extra(
+                        instrument=_INSTRUMENT, approved_source_prefixes=value
+                    ),
+                ),
+                None,
+            )
+
+        assert "approved_source_prefixes" in str(excinfo.value)
+
+    def test_the_contract_bond_still_holds_for_this_kind(self, tmp_path: Path) -> None:
+        """Band plan 2026-10-08 §4.4b is kind-independent: the source's instrument must be
+        ``scope.instruments``' sole element whatever the source is. The READ-side half (the
+        line's own ``instrument``) is in ``test_band_journal.py``; together they are plan
+        §3.4's "강화".
+        """
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(
+                _write(
+                    tmp_path,
+                    runtime_extra=producer_journal_band_source_runtime_extra(
+                        instrument="A05611"
+                    ),
+                ),
+                None,
+            )
+
+        assert "scope.instruments" in str(excinfo.value)
+
+    def test_the_price_scale_bond_still_holds_for_this_kind(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(
+                _write(
+                    tmp_path,
+                    runtime_extra=producer_journal_band_source_runtime_extra(
+                        instrument=_INSTRUMENT, band_price_scale="1"
+                    ),
+                ),
+                None,
+            )
+
+        assert "price_scale" in str(excinfo.value)
+
+    def test_the_two_literal_bounds_rule_still_holds_for_this_kind(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(
+                _write(
+                    tmp_path,
+                    runtime_extra=producer_journal_band_source_runtime_extra(
+                        instrument=_INSTRUMENT
+                    ),
+                    price_min="100",
+                    price_max="500",
+                ),
+                None,
+            )
+
+        assert "two sources for one bound" in str(excinfo.value)

@@ -277,6 +277,47 @@ def band_source_runtime_extra(
     return f"price_scale: {price_scale}\n{block}"
 
 
+def producer_journal_band_source_runtime_extra(
+    *,
+    instrument: str = "K200F",
+    band_journal_path: str = "/nonexistent/band.jsonl",
+    price_scale: str | None = "100",
+    band_price_scale: str = "100",
+    kind: str = '"producer_journal"',
+    approved_source_prefixes: str = '["tos-cp3-live"]',
+    bound: str = '"trading_date_kst"',
+    read_on: str = '["boot", "phase_change"]',
+    failure: str = '"unknown"',
+    extra_leaves: str = "",
+) -> str:
+    """A ``_runtime`` tail declaring the ``producer_journal`` band source
+    (``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3's key set), for
+    :func:`venue_policy_yaml`'s ``runtime_extra``.
+
+    Same conventions as :func:`band_source_runtime_extra`: every leaf is an independently
+    overridable RAW YAML fragment so a loader-refusal test can mutate exactly one of them, and
+    ``price_scale=None`` omits the ``_runtime.price_scale`` key entirely. ``extra_leaves`` is
+    appended INSIDE the block (already indented by the caller) — that is how a test declares a
+    leaf belonging to the OTHER kind.
+    """
+    block = textwrap.dedent(f"""\
+        band_source:
+          kind: {kind}
+          instrument: "{instrument}"
+          price_scale: {band_price_scale}
+          bound: {bound}
+          read_on: {read_on}
+          failure: {failure}
+          band_journal_path: "{band_journal_path}"
+          approved_source_prefixes: {approved_source_prefixes}
+        """)
+    if extra_leaves:
+        block = f"{block}{extra_leaves}"
+    if price_scale is None:
+        return block
+    return f"price_scale: {price_scale}\n{block}"
+
+
 def ocp_yaml(
     *,
     policy_id: str = FIXTURE_OCP_POLICY_ID,

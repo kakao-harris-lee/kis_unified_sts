@@ -58,10 +58,22 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _CONFIG_ROOT = _REPO_ROOT / "config" / "tos_runtime"
 
-#: Every tree this PR ships. Plan §5: all three keep the band source off — the resident one
-#: forever-until-adopted (its observations are synthetic), the tenant ones until CP-3 §5 3 ③
-#: produces real prices.
+#: Every tree this repo ships.
 _SHIPPED_TREES = ("paper", "cp3-setup-d-long", "cp3-setup-d-short")
+
+#: The trees that keep the band source OFF. Band plan §5: the resident one
+#: forever-until-adopted (its observations are synthetic, so a band would make every attempt
+#: INADMISSIBLE) and the SHORT tenant one until the operator turns it on.
+#:
+#: ⚠ **This set used to be all three.** 2026-10-16 (CP-3 band 원천 경로 변경 PR-B,
+#: ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §4) turned the LONG tenant tree
+#: on with ``kind: "producer_journal"``, so the "no shipped tree declares one" claim below
+#: splits in two rather than being deleted: the OFF trees still have to be measured OFF, and
+#: that is what keeps the resident 08:45 session's behaviour unchanged.
+_TREES_WITH_NO_BAND_SOURCE = ("paper", "cp3-setup-d-short")
+
+#: The one tree that declares a source, and the kind it declares.
+_TREE_WITH_A_BAND_SOURCE = "cp3-setup-d-long"
 
 #: The exact payload key SETS of the two rows this wave touches, as they are written for a
 #: tree that declares no band source. A set, not an order: the evidence store canonicalizes a
@@ -153,19 +165,31 @@ def _sync_venue_activation_digest(config_dir: Path) -> None:
     _rewrite_activation(config_dir, members)
 
 
-class TestShippedTreesDeclareNoBandSource:
-    """Plan §5 / §8 1 — the state this PR ships, read off the real files."""
-
-    @pytest.mark.parametrize("tree", _SHIPPED_TREES)
-    def test_the_runtime_block_carries_neither_key(self, tree: str) -> None:
-        raw = yaml.safe_load(
-            (_CONFIG_ROOT / tree / "venue_constraint_policy.yaml").read_text(
-                encoding="utf-8"
-            )
+def _tree_runtime_block(tree: str) -> dict[str, Any]:
+    raw = yaml.safe_load(
+        (_CONFIG_ROOT / tree / "venue_constraint_policy.yaml").read_text(
+            encoding="utf-8"
         )
+    )
+    assert isinstance(raw["_runtime"], dict)
+    return raw["_runtime"]
 
-        assert "band_source" not in raw["_runtime"]
-        assert "price_scale" not in raw["_runtime"]
+
+class TestShippedTreesDeclareNoBandSource:
+    """Band plan §5 / §8 1 — the trees that keep the source OFF, read off the real files.
+
+    Split from the LONG tree's own class (:class:`TestTheLongTenantTreeDeclaresTheProducer
+    Journal`) on 2026-10-16 rather than relaxed: "every tree is off" stopped being true, and
+    the half that is still true is the half that keeps the resident 08:45 session's behaviour
+    byte-identical.
+    """
+
+    @pytest.mark.parametrize("tree", _TREES_WITH_NO_BAND_SOURCE)
+    def test_the_runtime_block_carries_neither_key(self, tree: str) -> None:
+        runtime = _tree_runtime_block(tree)
+
+        assert "band_source" not in runtime
+        assert "price_scale" not in runtime
 
     def test_the_real_resident_policy_loads_with_no_band_source_and_no_price_scale(
         self, tmp_path: Path
@@ -202,8 +226,93 @@ class TestShippedTreesDeclareNoBandSource:
     def test_no_tree_carries_a_kis_quote_document_today(self, tree: str) -> None:
         """Reading an ABSENT transport document answers ``None`` rather than raising — which
         is the only reason the unconditional ``read_declared_instrument`` call in
-        ``build_venue_service`` is safe for every shipped tree."""
+        ``build_venue_service`` is safe for every shipped tree.
+
+        ⚠ Still EVERY tree, the LONG one included: ``producer_journal`` reaches no broker, so
+        it needs no host seal and no transport document (2026-10-15 plan §3.3). That is also
+        why the loader applies the two ``kis_quote`` rules to ``kis_quote_get`` only — this
+        assertion is what makes "we could not have required one" a measurement.
+        """
         assert read_declared_instrument(_CONFIG_ROOT / tree / "kis_quote.yaml") is None
+
+
+class TestTheLongTenantTreeDeclaresTheProducerJournal:
+    """2026-10-15 plan §4 "켜는 배포: LONG tenant 만" — the one tree that is ON, read off the
+    real file and loaded through the real loader."""
+
+    def test_the_runtime_block_declares_the_producer_journal_kind(self) -> None:
+        runtime = _tree_runtime_block(_TREE_WITH_A_BAND_SOURCE)
+
+        assert runtime["price_scale"] == 100
+        band_source = runtime["band_source"]
+        assert band_source["kind"] == "producer_journal"
+        assert band_source["price_scale"] == 100
+        assert band_source["bound"] == "trading_date_kst"
+        assert band_source["read_on"] == ["boot", "phase_change"]
+        assert band_source["failure"] == "unknown"
+        # The three render slots are still named-TBD in the COMMITTED tree — the coordinates
+        # are filled by `scripts/tos/render_paper_config.py`, never committed here
+        # (`config/tos_runtime/README.md`).
+        assert band_source["instrument"] == "TBD"
+        assert band_source["band_journal_path"] == "TBD"
+        assert band_source["approved_source_prefixes"] == ["TBD"]
+
+    def test_it_declares_no_leaf_of_the_other_kind(self) -> None:
+        """The loader refuses one (``_refuse_keys_of_the_other_kind``); this says the shipped
+        document does not need that refusal to be correct."""
+        band_source = _tree_runtime_block(_TREE_WITH_A_BAND_SOURCE)["band_source"]
+
+        assert set(band_source) == {
+            "kind",
+            "instrument",
+            "price_scale",
+            "bound",
+            "read_on",
+            "failure",
+            "band_journal_path",
+            "approved_source_prefixes",
+        }
+
+    def test_the_committed_tree_loads_once_its_coordinates_are_filled(
+        self, tmp_path: Path
+    ) -> None:
+        """The REAL file, coordinate slots filled the way the renderer fills them, through the
+        REAL loader with NO ``band_transport_instrument`` supplied — the default, and what a
+        ``producer_journal`` deployment actually has (there is no ``kis_quote.yaml``).
+
+        This is the assertion that would have caught the 2026-10-15 enabling attempt's first
+        failure (plan §1 B1/B2): a document that declares a source the deployment cannot read
+        refuses at BOOT, and the only way to know is to load it.
+        """
+        text = (
+            _CONFIG_ROOT / _TREE_WITH_A_BAND_SOURCE / "venue_constraint_policy.yaml"
+        ).read_text(encoding="utf-8")
+        raw = yaml.safe_load(text)
+        raw["scope"]["environments"] = [_VENUE_POLICY_ENVIRONMENT]
+        raw["scope"]["accounts"] = [_VENUE_POLICY_ACCOUNT]
+        raw["scope"]["instruments"] = [_VENUE_POLICY_INSTRUMENT]
+        raw["_runtime"]["band_source"]["instrument"] = _VENUE_POLICY_INSTRUMENT
+        raw["_runtime"]["band_source"]["band_journal_path"] = str(
+            tmp_path / "producer" / "band.jsonl"
+        )
+        raw["_runtime"]["band_source"]["approved_source_prefixes"] = ["tos-cp3-live"]
+        path = tmp_path / "venue_constraint_policy.yaml"
+        path.write_text(
+            yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+
+        loaded = load_venue_constraint_policy(path, scheme=_SCHEME)
+
+        assert loaded.band_source is not None
+        assert loaded.band_source.kind == "producer_journal"
+        assert loaded.price_scale == 100
+        assert loaded.band_source_digest is not None
+        # The band fills these, so the policy must NOT carry literals (band plan §4.1).
+        assert loaded.policy.shape_constraints.price_min is None
+        assert loaded.policy.shape_constraints.price_max is None
+        # And the tick correction the band depends on is in place: the measured 0.02-grid
+        # band would be refused by a tree still carrying 5.
+        assert loaded.policy.shape_constraints.tick_size == 2
 
 
 class TestTodaysRowsAreUnchanged:
