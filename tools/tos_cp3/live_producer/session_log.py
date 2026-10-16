@@ -36,10 +36,17 @@ class EventLog:
     header, a token or ``msg1`` — ``Quotes.page`` does not pass them.
     """
 
-    def __init__(self, output: Path):
+    def __init__(self, output: Path, name: str = "producer-log.jsonl"):
+        """*name* is the log's basename.
+
+        The default is the producer's own. The band probe (band plan v3) passes
+        ``band-log.jsonl``: it is a SEPARATE process appending independently, and
+        two processes appending to one file can interleave a partial line. The
+        post-session TR check reads both files (runbook §7.2-d).
+        """
         output.mkdir(parents=True, exist_ok=True)
         self.output = output
-        self.path = output / "producer-log.jsonl"
+        self.path = output / name
 
     def event(self, value: dict[str, Any]) -> None:
         payload = dict(value)

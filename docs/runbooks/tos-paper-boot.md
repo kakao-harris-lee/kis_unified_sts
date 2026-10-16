@@ -1316,7 +1316,7 @@ TENANT_ENVIRONMENT_LABEL=paper \
 바뀌었다 — 계획 `docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md` §3.4·§3.5·§3.6.
 **실제 genesis 세션은 이 절차로 돈다.** §7.2-c 는 이력으로 남긴다.
 
-**무엇이 바뀌었나 — 네 가지.**
+**무엇이 바뀌었나 — 다섯 가지**(5 번은 band 계획 PR-A, 2026-10-15)**.**
 
 1. **저널은 운영자가 만들지 않는다. 생산자가 만든다.** 러너는 ① 생산자 기동(시드)
    → ② 첫 **실제** `tos-cp3-live/…` 줄이 생길 때까지 대기(상한 `FIRST_LINE_TIMEOUT_S`
@@ -1337,19 +1337,34 @@ TENANT_ENVIRONMENT_LABEL=paper \
    SIGKILL 되면 trap 은 돌지 않는다). 종료 신호는 **프로세스 그룹**으로 간다 —
    손에 든 pid 는 `timeout` 의 것이고, `timeout` 에만 KILL 을 보내면 실제 작업
    프로세스가 감독자보다 오래 산다(#892 재리뷰 L2).
-4. **자격증명 분리(계획 §3.4).** 환경은 셋이고 실전 키를 가질 수 있는 것은 하나뿐이다:
+4. **자격증명 분리(계획 §3.4).** 환경은 **넷**이고(band 계획 v3 가 band 프로세스를
+   더했다) 실전 키를 가질 수 있는 것은 **조회 둘**뿐이다:
    - 러너 — 모의 전용. `TENANT_ENV_FILE` 은 basename 이 `.env.mock` 이어야 한다.
    - 생산자 — 선물 **조회** 키 두 개(`KIS_FUTURES_APP_KEY`/`SECRET`)를 **자기가**
      읽는다. 어디서? 자기 config(`TENANT_PRODUCER_CONFIG`)의 `env_file:` 이 가리키는
      파일(`/home/deploy/project/kis_unified_sts/.env.real`). 러너는 그 값을 읽지도
      전달하지도 로그하지도 않는다. 토큰 캐시 경로도 앱 키의 **지문**만 쓴다.
+   - band 프로브 — **생산자와 똑같은 방식**으로 같은 두 키를 **자기가** 읽는다. 러너는
+     config 경로와 월물·세션 dir 만 넘기므로, 프로세스가 하나 늘었어도 러너 환경에
+     실전 키가 들어가는 일은 없다. 토큰 캐시도 같은 지문 경로를 **공유**한다(정상
+     경로에서는 생산자가 받아 둔 유효 토큰 재사용 → 발급 0 회).
    - 런타임 — 모의 전용이고, 실전 자격증명을 절대 들면 안 되는 **그** 프로세스.
    자식은 환경을 물려받으므로, 셸에 그 두 키가 export 돼 있으면 **런타임에도** 들어간다.
    러너는 그래서 자기 환경에 둘 중 하나라도 있으면 **기동을 거부한다**. 생산자에게
    키를 주려고 `export KIS_FUTURES_APP_KEY=…` 하지 말 것 — 생산자는 파일에서 읽는다.
    ⛔ GET 전용이다. 생산자의 import 그래프에 `shared.execution` 주문 경로도
-   `probes_real_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문 TR 은 0 건이어야
-   하고, 그 0 은 세션 뒤 요청 로그로 확인한다.
+   `probes_real_order` 도 `probes_order` 도 없고, 테스트가 그것을 고정한다. 실전 주문
+   TR 은 0 건이어야 하고, 그 0 은 세션 뒤 요청 로그로 확인한다 — 기대 TR 집합은
+   **조회 둘**(`FHKIF03020200` 분봉 · `FHMIF10000000` band)이다(아래 「세션 뒤」).
+5. **band 를 별도 단명 프로세스가 읽는다**(band 계획 v3, 2026-10-16 운영자 결정 —
+   PR-A 의 원 설계는 생산자 안이었고 그것이 왜 틀렸는지는 계획 §3.1 의 v3 블록).
+   러너가 **개장 + 한 경계**에 `python -m tools.tos_cp3.live_producer.band_probe` 를
+   `timeout --kill-after=5s $BAND_PROCESS_TIMEOUT_S` 아래 띄우고, 그 프로세스가 실전
+   시세 키로 `FHMIF10000000` 을 한 번 GET-only 로 읽어 생산자 세션 dir 의
+   `band.jsonl` 에 한 줄을 쓰고 **끝난다**. 실패하면 **다음 경계에 한 번만** 더 띄운다.
+   러너는 런타임 부팅 **전에 그 줄**(오늘 · 이 월물 · 개장 이후)을 확인하고, 없으면
+   `BAND ABSENT` 를 크게 적고 **계속 간다**. ⛔ 단 band 프로세스의 **rc 1**(게이트 거부)
+   은 부팅 전 ABORT 다. 자세한 것은 아래 「세션 뒤 — band」.
    ⛔ **`bash -x` 로 돌리지 않는다 — 돌려도 추적은 나오지 않는다**(Codex 리뷰 HIGH,
    2026-10-14). 템플릿은 첫 줄에서 `set +x +v` 를 하고, 그 뒤 자격증명 가드는 값이 아니라
    **이름**을 본다(`${!name+x}`). 추적을 켠 셸에서 호출해도(`SHELLOPTS=xtrace` 포함) 값이
@@ -1652,8 +1667,130 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
   옆 봉으로 밀었다).
   `counts.ticks_without_a_decision` 이 0 이 아니면 큐에만 들어가고 안 돈 틱이 있었다는
   뜻이다(거부가 아니라 보고 — 돌아간 결정들은 그대로 키로 귀속된다).
-- **실전 주문 TR 0 건** — 생산자 요청 로그(`producer-log.jsonl`)의 TR id 는 조회
-  `FHKIF03020200` 뿐이어야 한다.
+- **실전 주문 TR 0 건** — 요청 로그 **둘 다**의 TR id 집합이 **조회 TR 둘의
+  부분집합**이어야 하고(`FHKIF03020200` 분봉 · `FHMIF10000000` band) **메서드가 전부
+  GET** 이어야 한다. 로그가 둘인 이유는 band 가 **별도 프로세스**이기 때문이다
+  (band 계획 v3, 2026-10-16): 생산자는 `producer-log.jsonl`, band 프로브는
+  `band-log.jsonl` 에 적는다. ⚠ **한쪽만 보면 band 호출을 아예 보지 못한다** — 그
+  둘을 한 파일에 몰면 두 프로세스의 append 가 섞여 깨진 줄이 생기므로 파일을 가른
+  것이고, 그 대가가 「검사가 두 파일을 읽어야 한다」다.
+
+  ```bash
+  # TR 과 메서드의 분포. 기대: 두 TR 뿐 · method 는 GET 뿐. 두 로그를 함께 넘긴다.
+  # 한 줄 꼴로 둔다 — 들여쓴 heredoc 은 종료 표지를 못 만나 붙여 쓰면 멈춘다.
+  python3 -c 'import json,sys; \
+   rows=[json.loads(l) for f in sys.argv[1:] for l in open(f,encoding="utf-8") if l.strip()]; \
+   trs={r["tr_id"] for r in rows if r.get("tr_id")}; \
+   mth={r["method"] for r in rows if r.get("method")}; \
+   print("files:",len(sys.argv)-1,"tr_ids:",sorted(trs),"methods:",sorted(mth)); \
+   print("OK" if trs<={"FHKIF03020200","FHMIF10000000"} and mth<={"GET"} else "FINDING")' \
+    "$SESSION/producer/producer-log.jsonl" "$SESSION/producer/band-log.jsonl"
+  ```
+  ⚠ 두 파일 중 하나가 **없으면** 그것도 소견이다. 단 `band-log.jsonl` 부재의 원인은
+  **둘**이다: ① band 프로세스가 한 번도 뜨지 않았다 ② 떴지만 **GET 전에 거부**했다
+  (rc 2 — `config` 에서 거부되면 로그를 열기 전에 끝난다, `refused at config`). 그
+  둘은 러너 로그가 가른다 — `=== BAND PROCESS` 줄이 **없으면** ①, 있고 `rc=2` 와
+  `band_probe: REFUSED —` 가 있으면 ②다. 「로그가 없으니 안 떴다」로 단정하지 말 것.
+  `producer-log.jsonl` 이 없으면 세션이 시작되지도 않았다.
+
+  ⚠ 이 확인이 유효한 이유는 **band GET 이 시도마다 자기 `tr_id` 를 적기 때문**이다
+  (band 계획 §3.1 리뷰 LOW-2). 분봉 경로의 `page()` 는 모듈 상수 `TR` 을 적으므로, band
+  호출이 그 경로로 로그됐다면 이 검사는 **그 호출을 보지 못한 채** 통과한다.
+
+**세션 뒤 — band (band 계획 §3.1·§3.2·§4 수용 1 · v3 2026-10-16).**
+
+band 원천은 **별도 단명 프로세스**다(band 계획 v3, 2026-10-16 운영자 결정):
+`python -m tools.tos_cp3.live_producer.band_probe`. 실전 시세 키로 `FHMIF10000000` 을
+한 번 GET-only 로 읽어 `<TENANT_PRODUCER_SESSION_DIR>/band.jsonl` 에 한 줄을 쓰고
+(세 필드 `futs_mxpr`·`futs_llam`·`futs_sdpr` 를 **문자열 그대로** + 원 응답 바이트의
+sha256) 끝난다. 런타임은 계속 **소켓 0 · 자격증명 0** 이다.
+
+**왜 프로세스인가.** 네 번의 리뷰가 「생산자가 자기 HTTP 호출의 총 시간을 정직하게
+묶을 수 없다」를 세 번 다른 방식으로 확인했다(phase 타임아웃은 청크 하나 ·
+`iter_bytes()` 마감은 디코드된 바이트만 · 워커 스레드는 `close()` 에서 막히고 토큰
+락을 쥔다). 상한은 이제 **감독 프로세스**가 쥔다 —
+`timeout --kill-after=5s $BAND_PROCESS_TIMEOUT_S`. SIGKILL 은 협상하지 않는다.
+
+**자격증명 분리는 그대로다**(③ 계획 §3.4). band 프로브는 실전 조회 키 두 개를
+**자기가** 읽는다 — 자기 config 의 `env_file` 에서, 생산자와 똑같이. 러너 환경과
+런타임 환경에는 실전 키가 들어가지 않고, 러너의 3b 가드도 그대로다.
+
+**토큰 캐시는 생산자와 공유한다**(지문 경로 하나). 정상 경로에서 프로브는 생산자가
+이미 받아 둔 **유효한 캐시 토큰을 재사용**하므로 발급 호출이 없다 — KIS 는 토큰
+발급에 레이트 리밋이 있어서 이것이 중요하다. 두 프로세스가 같은 파일을 쓰므로
+`shared/kis/auth.py::_save_token_cache_secure` 를 **임시 파일 + `os.replace`** 로
+고쳤다(2026-10-16): 그 전에는 `O_TRUNC` 로 대상 파일을 비우고 썼으므로 읽는 쪽이
+잘린 파일을 볼 수 있었고, 그 피해는 「캐시 무시 → 불필요한 재발급」이다.
+
+**종료 코드**(러너가 읽는 유일한 인터페이스):
+`0` 줄을 썼다 · `2` GET 전에 거부(기존 `band.jsonl` · 개장 전 · config/자격증명) ·
+`3` 소프트 실패(GET 은 했고 쓸 줄이 없다) · `4` **드라이런**(`--confirm` 없음 — 아무것도
+시도하지 않았다; 0 과 가른 이유는 0 이 「이제 줄이 있다」는 신호이기 때문이고, 러너는
+항상 `--confirm` 을 주므로 이 코드를 보지 않는다) · **`1` 게이트 거부 또는 예상 밖
+예외(달력 읽기 실패 포함) — 이 저장소의 결함이므로 러너가 부팅 전에 ABORT 한다.**
+
+- 러너는 band 프로세스들이 끝난 뒤 **줄 하나**를 기다린다 — 파일 존재가 아니라
+  **줄**이다: `trading_date` == 오늘(KST) · `instrument` == 그 세션의 월물 ·
+  `as_of_ms` ≥ 개장. 세 조건 전부 필요하다: 파일만 보면 롤 날 어제 줄을, 날짜만 보면
+  옆 월물 줄을, 그 둘만 보면 개장 전 기준가 줄을 믿는다. 개장 시각은 러너가 따로
+  들고 있지 않고 **생산자 config 의 달력**에서 온다.
+- 줄이 없거나 위 셋 중 하나라도 어긋나면 러너는 **멈추지 않고** 크게 적는다:
+
+  ```text
+  ⛔⛔ BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)
+  ```
+
+  그 세션은 §4 수용 1 **실패로 기록**되지만 부팅은 그대로 간다 — 가격 수집과 B3 대조는
+  그래도 가치가 있고, band 부재는 **보수 방향**이다(런타임에서 `UNKNOWN` → 송신 0).
+- band GET 실패(전송 오류 · `rt_cd ≠ 0` · 필드 부재 · **압축 응답** · 크기 상한
+  초과)는 줄을 **쓰지 않고** `band-log.jsonl` 에 사유를 남기고 **rc 3** 으로 끝난다.
+  한 줄에 **두 층**이 적힌다: 호출 레코드의 `error` 가 사유 셋을 가르고
+  (`band_auth_http_or_json_error` · `band_response_encoded` ·
+  `band_response_too_large`), 프로브가 그 위에 `stage: band_fetch_failed` 와
+  예외 문자열(`why`)을 남긴다. 사유를 보려면 `error` 를 볼 것 — `band_fetch_failed`
+  는 「실패했다」까지만 말한다.
+  ⚠ `band_response_encoded` 가 보이면 **서버가 압축을 시작했다**는 뜻이다 — 그때
+  band 는 그 세션 내내 부재가 된다(요청은 `accept-encoding: identity` 인데 서버가
+  압축하면, 푸는 것은 메모리 상한이 없는 일이라 거부한다 — 리뷰 5 라운드 Codex A:
+  16,328 바이트가 16 MiB 첫 청크로 풀렸다). 처분은 운영자 결정 사항이고, 코드가
+  조용히 풀어 주지 않는 것이 요점이다. ⚠ 그 실패는
+  `max_consecutive_fetch_error_minutes`(분봉 폴링의 포기 조건)에 **넣지 않는다** —
+  넣으면 가격 피드가 멀쩡한 세션이 band 하나로 하루를 잃는다.
+- ⛔ `TENANT_PRODUCER_SESSION_DIR` 에 `band.jsonl` 이 이미 있으면 **band 프로브가 기동을
+  거부한다**(계획 §3.2) — 모든 쓰기가 파일을 통째로 교체하므로, 롤 날 세션 dir 재사용은
+  어제·다른 월물의 band 를 그날 내내 믿게 만든다. 세션 dir 은 **매번 새로**.
+- 기동은 **`개장 + 한 경계`** 부터다(러너가 그때까지 잠든다, STOP_S 로 cap). 8b 는
+  **승인된 아무 줄**에나 돌아오고 개장 전 줄로도 돌아올 수 있으므로, 그 대기가
+  「개장 전에 읽지 않는다」를 집행하는 자리다. 세션 로그의
+  `band launch: computed …s until open + one boundary` 줄이 그 계산을 적는다.
+- 프로세스는 **한 번 + 실패 시 다음 경계에 한 번**, 정확히 둘이다. 두 번째도 실패하면
+  그날 band 는 없다(`BAND ABSENT`). 러너 로그의 `=== BAND PROCESS #1/#2` 와
+  `band process #N rc=…` 로 확인한다. rc 124/137 은 `timeout` 이 죽인 것이다.
+- ⛔ **세션 stop 을 넘지 않는다.** 시도마다 **기동 직전에** 남은 시간을 다시 재고
+  (`STOP_S − now − 1 − 마진 5 s`), 그 값이 SIGKILL 유예 이하면 **아예 띄우지 않는다**
+  (`NO attempt started` → `BAND ABSENT`). 천장도 그 값으로 깎이므로
+  `=== BAND PROCESS` 줄의 `ceiling + grace` 는 항상 `stop_in − margin` 이하다 —
+  그 네 수가 한 줄에 같이 찍히는 이유가 이것이고, 그 부등식이 깨져 있으면 소견이다.
+  ⚠ **남는 위험은 숨기지 않는다**: 그 마지막 계산과 실제 spawn 사이에 호스트가
+  마진(5 s)보다 오래 멈추면 셸 스크립트로는 막을 방법이 없다. 그것까지 묶으려면
+  시계를 쥔 쪽이 마감을 소유해야 하고(감독 프로세스가 `timeout` 을 계산), 그것은
+  이 변경의 범위가 아니다(리뷰 7 라운드 Codex, 실측 0.68 s 초과).
+- 재조회는 **PR-A 범위에서 빠졌다**(v3, 계획 §L L6). 기본값이 null 이었으므로 거동
+  변화는 없다. 다시 필요해지면 프로브를 여러 번 띄우는 쪽이 자연스럽다.
+- 줄 대기(`BAND_LINE_EXTRA_WAIT_S`, 기본 20 s)는 **프로세스들이 이미 제 차례를 쓴
+  뒤**의 여유다 — 두 프로세스 타임아웃과 그 사이 경계는 위에서 이미 흘렀다. 실제
+  상한은 세션 로그의 `band wait: allowance=…s … waiting up to …s` 줄에 찍힌다.
+- 확인:
+
+  ```bash
+  cat "$SESSION/producer/band.jsonl"                 # 줄 하나
+  grep -c 'BAND ABSENT' "$SESSION/session.log"       # 0 이어야 한다
+  grep 'band_published\|band_fetch_failed' "$SESSION/producer/band-log.jsonl"
+  ```
+
+  ⚠ 런타임이 그 줄을 **읽는** 쪽(`band_source.kind: "producer_journal"`)은 PR-B 다.
+  PR-A 만 머지된 상태에서는 줄이 **쓰이기만** 하고 tenant 정책의 `band_source` 는 여전히
+  null 이다 — 그래서 PR-A 뒤 첫 세션의 `VENUE_BAND_OBSERVED` 행은 아직 없다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 

@@ -704,7 +704,12 @@ ARRIVAL_LAG_S = 1.1
 
 
 class FakeQuotes:
-    """GET-only by construction: it has no other method."""
+    """GET-only by construction: it has no other method.
+
+    No ``band`` method either, since band plan v3 (2026-10-16) moved that GET
+    into its own process: a fake that still offered one would let a producer
+    that called the band pass this suite.
+    """
 
     def __init__(self, market: dict[tuple[str, date], list[dict]], clock: FakeClock):
         self.market, self.clock = market, clock

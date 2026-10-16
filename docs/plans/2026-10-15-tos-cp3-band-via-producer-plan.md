@@ -7,6 +7,11 @@
 - **v2 (같은 날, 리뷰 PR #905 처분 — 13건 전건 수용, 기각 0)**: HIGH-1 band GET 을 개장 뒤 첫 경계로 + 러너 band 줄 대기 ·
   HIGH-2 재조회는 측정 전용 · HIGH-3 출처 접두는 렌더된 목록의 설정 일관성 규칙(C1, 가드 아님) · MEDIUM-1 줄 날짜를
   그대로 + 생산자 `refuse_if_journal_exists` + reader 단위 레드 · MEDIUM-2 digest 세 파일 · LOW 1~4.
+- **v3 (2026-10-16, 운영자 결정)**: band GET 을 **별도 단명 프로세스**로 분리한다
+  (`python -m tools.tos_cp3.live_producer.band_probe`). 생산자의 분봉 루프에는 band 코드가
+  없고, 시각·재시도·총 시간 상한은 **러너**가 소유한다. 아래 §3.1 의 「생산자가 band 를
+  읽는다」 서술과 §5 1 의 PR-A 범위는 그 범위에서 **대체됐다**(아래 각 절의 ⛔ v3 블록 참조).
+  남긴 이유: 그 텍스트가 왜 틀렸는지가 이 결정의 근거다. 지우면 다음 사람이 같은 길을 간다.
 - **범위 밖**: 커널(`tos/src/tos/`) 변경 · 실주문(비협상 규칙 — 실전 선물 주문 경로 영구 차단) · 상주 `paper`·SHORT
   트리의 band(둘 다 null 유지, band 계획 §5) · band 계획 (ii) 규정 계산 대조.
 
@@ -55,6 +60,36 @@ band 계획 §7 은 (i-b)를 「③ 이 아직 설계 전이라 그 계약에 ba
   P-VL 모듈은 MOCK 호스트로 봉인돼 있어 import 하지 않는다.
 - 이 `ALLOWLIST` 는 「실전 선물 주문 0」 규칙이 **코드로 집행되는 자리**다. 그래서 PR-A 의 그 diff 는 자격증명 코드를
   건드리지 않아도 Codex 범위 리뷰 대상 후보로 올리고, 범위·비용 승인은 PR-A 시점에 운영자에게 묻는다(§5).
+
+⛔ **v3 (2026-10-16, 운영자 결정) — 이 절의 「생산자가 읽는다」는 대체됐다.**
+band GET 은 **별도 단명 프로세스**가 한다(`tools/tos_cp3/live_producer/band_probe.py`).
+이유: 네 번의 독립 리뷰가 「이 프로세스가 자기 HTTP 호출의 총 시간을 정직하게 묶을 수
+없다」를 세 번 다른 방식으로 확인했다 —
+① phase 타임아웃은 **청크 하나**의 상한이다(합쳐서 총량이 되지 않는다) ·
+② `iter_bytes()` 안의 마감은 **디코드된** 바이트만 보므로 헤더 수신과 압축-무출력
+구간을 못 본다(Codex 실측: 1 s 예산에 1.6 s) ·
+③ 워커 스레드는 호출자가 `client.close()` 에서 막히고, 해시·파싱이 예산 밖이며,
+버려진 워커가 `KISAuthManager.get_token()` 락을 쥐어 다음 `page()` 를 0.8 s 세운다
+(Codex 4 라운드 F1·F2·F3). **SIGKILL 은 협상하지 않는다** — 그래서 상한을 프로세스
+경계에 둔다.
+아래 시점·상한·재시도 서술은 **의도는 그대로**이고 **집행 주체만** 바뀌었다:
+「개장 뒤 첫 경계」는 러너가 `open + 한 경계`까지 잠들어 집행하고(STOP_S 로 cap),
+재시도 1 회는 러너가 다음 경계에 한 번만 띄우며, 총 시간은
+`timeout --kill-after=5s $BAND_PROCESS_TIMEOUT_S` 가 묶는다. 생산자 쪽에 남는 band
+설정은 **크기 상한**(`band_max_response_bytes`) 하나다 — 시간이 아니라 크기는 이
+계층이 스스로 집행할 수 있고, 48 MiB 본문이 0.2 s 예산 안에서 해시·파싱된 것이 그
+필요의 실측이다(F2). ⚠ 그 크기 상한은 **규칙 둘**이다(리뷰 5 라운드 Codex A):
+`accept-encoding: identity` 는 **요청**일 뿐이고 `iter_bytes()` 는 yield 전에
+**압축을 푼다** — Codex 가 16,328 바이트를 16 MiB 첫 청크로 실측했다. 그래서
+비-identity `Content-Encoding` 은 본문을 읽기 **전에** 거부하고, `iter_raw` 로 받으며,
+상한은 청크를 **복사하기 전에** 센다. 프로세스 타임아웃은 시간을 묶고, 메모리에는
+그런 감독자가 없다.
+한 가지는 의도까지 바뀌었다: **요청 로그가 둘로 갈린다.** band 시도는
+`band-log.jsonl`(프로브의 세션 dir), 분봉은 `producer-log.jsonl` 이다 — 두 프로세스가
+한 파일에 append 하면 줄이 섞여 깨지므로. 따라서 §3.5 의 「TR 부분집합」 확인은
+**두 파일을 함께** 읽어야 하고, 아래 로그 서술의 파일 이름은 그만큼 대체됐다
+(런북 §7.2-d 가 그 명령을 들고 있다).
+
 - 시점: **개장 뒤 첫 경계에서 한 번** — 생산자가 그날 첫 가격 줄을 append 한 **직후**(이르면 08:46). 부팅 직후(시드 뒤)가
   **아니다**(리뷰 HIGH-1): 생산자는 개장 전에 뜨도록 만들어져 있고(`producer.py` 의 `first_boundary = max(open + 1분, now)`)
   러너의 첫 줄 대기는 600 s 라, 부팅 직후 GET 은 보통 08:3x~08:45 의 **개장 전** 응답이다. 그리고 런타임은 그 band 를
@@ -76,9 +111,17 @@ band 계획 §7 은 (i-b)를 「③ 이 아직 설계 전이라 그 계약에 ba
 - 로그: band GET 은 시도마다 `producer-log.jsonl` 에 메서드·`tr_id`·경로를 남긴다(리뷰 LOW-2 — 지금 `page()` 는 모듈 상수
   `TR` 을 적으므로, 새 메서드가 제 `tr_id` 를 적지 않으면 §3.5 의 TR 부분집합 확인이 이 호출을 **보지 못한 채** 통과한다).
   원 바이트 digest 는 `.json()` 전에 `response.content` 에서 잡는다(`page()` 는 지금 원 바이트를 들고 있지 않다).
-- 변환·검증은 생산자가 하지 **않는다** — 원 응답의 `output` 에서 세 필드(`futs_mxpr`·`futs_llam`·`futs_sdpr`)를 **문자열
+- 변환·검증은 생산자가 하지 **않는다** — 원 응답의 `output1` 에서 세 필드(`futs_mxpr`·`futs_llam`·`futs_sdpr`)를 **문자열
   그대로** 옮기고, 원 응답 바이트의 SHA-256 을 함께 적는다. 척도 변환·격자·순서 검증은 런타임의 기존 검증 셋이 한다
   (band 계획 §4.2 — 한 곳에서만).
+  ⚠ **정정(PR #906 리뷰 1 라운드)**: 초판은 이 자리를 「`output`」으로 적었다. 실제 멤버는 **`output1`** 이다 —
+  공식 래퍼가 이 TR 에 `output1`/`output2`/`output3` 을 돌려주고
+  (`examples_llm/domestic_futureoption/inquire_price/inquire_price.py`), P-VL 이 2026-10-08 **MOCK** 실측에서 다섯
+  L1 가격 필드를 `output1` 에서 읽었다(`tools/broker_probes/probes_venue_limits.py`). REAL 면은 아직 이 경로로
+  읽어 본 적이 없으므로 **같은 래퍼 문서에서 추론**한 것이다(래퍼의 `env_dv` 표가 실전·모의 모두 `FHMIF10000000`
+  하나를 주고, 응답 모양을 구분하지 않는다) — 첫 켜기 세션이 그 추론의 실측이다. `output` 을 읽으면 아무것도 맞지
+  않아 band 가 **아무 사유도 남기지 않고 영구 부재**가 되므로, 구현은 `output1` 하나만 읽고 부재를 실패로 적는다
+  (`band_line.BAND_PAYLOAD_MEMBER`).
 - 실패(전송 오류 · `rt_cd ≠ 0` · 필드 부재): band 줄을 **쓰지 않고** `producer-log.jsonl` 에 `band_fetch_failed` 를 남긴다.
   생산자는 계속 돈다 — band 부재는 런타임에서 `UNKNOWN` → 송신 0 으로 접히는 보수 방향이고, 가격 저널을 멈출 이유가
   아니다. 이 실패는 #904 의 `max_consecutive_fetch_error_minutes` 계수에 **넣지 않는다**(그 계수는 분봉 폴링의 것이다).
@@ -184,7 +227,20 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나(G3)를 **강화**�
 
 ## 5. PR 분할 · 순서
 
-1. **PR-A 생산자 + 러너**: `quote_client.ALLOWLIST` 한 쌍(지역 상수) · 개장 뒤 첫 경계의 band GET + 측정 전용 재조회
+1. ⛔ **v3 (2026-10-16) — PR-A 의 범위가 바뀌었다.** 아래 원 항목은 band GET 을 생산자
+   안에 두는 전제로 쓰였고, 그 전제가 §3.1 의 v3 블록에서 대체됐다. 실제로 PR-A 가
+   내보내는 것: `quote_client.ALLOWLIST` 한 쌍(지역 상수, 변경 없음) · **band 프로브
+   프로세스**(`band_probe.py`: 한 번의 GET · `band.jsonl` 한 줄 · `band-log.jsonl` ·
+   종료코드 0/2/3/4/1) · 생산자 분봉 루프에서 band 코드 **전부 제거**(남는 변경은
+   **둘**이다: `SafetyViolation` 재발생 한 군데와, 리뷰 1 라운드에서 옮긴
+   `_real_quotes` → `live_producer/real_quotes.py` — band 프로브가 그것을 import 하고
+   실전 자격증명 해석이 한 모듈에 모인다. 그 둘을 빼면 분봉 루프 함수들은
+   `origin/main` 과 바이트 동일이고, 그것을 AST 대조로 확인했다) ·
+   러너의 `open + 한 경계` 대기와 프로세스 기동·재시도 1 회·rc 1 하드 ABORT ·
+   `band.jsonl` 줄 대기와 `BAND ABSENT` · 스트림 크기 상한 · 런북 TR 집합(**두 로그**).
+   재조회(`band_reread_minutes`)는 PR-A 에서 **빠졌다**(§L L6).
+
+1. ~~**PR-A 생산자 + 러너**~~ (v3 로 대체 — 위 항목): `quote_client.ALLOWLIST` 한 쌍(지역 상수) · 개장 뒤 첫 경계의 band GET + 측정 전용 재조회
    (`band_reread_minutes`, 기본 null) · 시도마다 `tr_id` 로그 · 원 바이트 digest · `band.jsonl` 쓰기(키 순서를 일반화한
    저널) · `refuse_if_journal_exists(band.jsonl)` · `band_fetch_failed` 로그 · 러너의 band 줄 대기와 `BAND ABSENT` 기록 ·
    런북 TR 집합. 레드 증명: allowlist 밖 TR 은 소켓 전 거부 · 실패 시 줄 없음 · 개장 전에는 GET 하지 않음 · 남은
@@ -224,3 +280,9 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나(G3)를 **강화**�
 - L4: 장중 band 재읽기 계기(재조회 줄을 판정에 반영) — 서비스 변경 + 레드 증명이 필요한 별도 결정(§3.1).
 - L5: `tools.broker_probes.probes_order`(모의 주문 가능)가 생산자 도달 모듈 핀의 `ORDER_EMITTING_MODULES` 에 없다 — PR-A
   에서 더할지 별도 검토(리뷰 SUGGESTION).
+- L6: **band 재조회**(`band_reread_minutes`)는 v3 에서 PR-A 범위에서 빠졌다. 기본값이
+  null 이었으므로 거동 변화는 없다. 다시 필요해지면 band 프로브를 **여러 번 띄우는**
+  쪽이 자연스럽다(러너의 일정 문제이고, 프로세스 하나는 한 번의 GET 이라는 계약은
+  그대로 둔다). ⚠ 재조회가 측정 전용이라는 §3.1 의 판단과, 「가격 줄이 있을 때만 돌아서
+  정지 구간의 확대는 못 잡는다」는 한계는 그대로 유효하다 — 프로브를 쓰면 후자는
+  해소된다(가격 줄과 무관하게 띄울 수 있으므로).

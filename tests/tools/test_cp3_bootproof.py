@@ -23,6 +23,7 @@ override.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
 import os
 import re
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import time
 import types
+import zoneinfo
 from pathlib import Path
 from typing import Any
 
@@ -1193,6 +1195,39 @@ _PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
 #: rendered tree's own file, so "after the render, before the boot" is a fact
 #: about the pipeline rather than a bet on how long a stub takes.
 _PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
+#: What the stub BAND PROBE does, one entry per invocation, comma separated
+#: (band plan v3): ``ok`` writes a line and exits 0, ``soft`` exits 3 with no
+#: line, ``gate`` exits 1 (an allowlist refusal — a defect here), ``hang``
+#: sleeps past its ``timeout`` so the supervisor has to kill it. The runs are
+#: counted in a file beside the session so a second invocation gets the second
+#: entry; a plan shorter than the number of invocations repeats its last entry.
+_BAND_PLAN_ENV = "STUB_BAND_PLAN"
+
+#: WHAT the stub band probe writes when it writes a line at all (the previous
+#: knob decides WHETHER it does): ``ok`` (default) is a line for today, this
+#: instrument, stamped just after the open; ``stale`` / ``other-instrument`` /
+#: ``pre-open`` each break exactly ONE of the three clauses step 8c checks,
+#: leaving the other two valid; ``at-0900`` is a valid line stamped at 09:00,
+#: for the no-mode-repair test. The name still says PRODUCER because that is
+#: where this file's band line came from before plan v3 moved the GET into its
+#: own process; the tests that set it are unchanged by the move, which is the
+#: point — the read side's predicate did not change, only the writer did.
+_PRODUCER_BAND_ENV = "STUB_PRODUCER_BAND"
+#: The open the STUB uses for its own stamp and for the ``after-open`` wait,
+#: as ``HH:MM`` (default 08:45). Separate from the CALENDAR's start on purpose:
+#: a test that sets the two DIFFERENTLY is how "the runner's open comes from
+#: the calendar, not from a literal" becomes a behavioural assertion rather
+#: than a grep (review round 1 LOW-2).
+_PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
+#: ``HH:MM`` the stub CALENDAR declares as the session start (default 08:45).
+#: Read by ``_runner_env`` when it writes that calendar.
+_STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
+
+#: What the runner logs when the band line is there, and when it is not. The
+#: second string is the plan's own wording (§3.1) and the thing an operator
+#: greps a session log for.
+_BAND_PRESENT_LINE = "band line present before the boot"
+_BAND_ABSENT_LINE = "BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)"
 
 #: What the producer's own ``source_id`` looks like, as the allowlist approves
 #: it (``tools/tos_cp3/bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES``).
@@ -1316,6 +1351,84 @@ def _runner_repo(
         _REPO_ROOT / "tools/tos_cp3/bootproof_guard.py",
         repo / "tools/tos_cp3/bootproof_guard.py",
     )
+    # The band-line predicate the runner's step 8c imports. Copied like the
+    # guard, and for the same reason: the runner must drive the SHIPPED rule,
+    # not a second copy written into this file. It is importable here because
+    # it depends on nothing but the standard library and ``yaml`` — which is
+    # why the predicate lives apart from the band PROBE, whose transport pulls
+    # in the whole offline stack.
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/live_producer/band_line.py",
+        repo / "tools/tos_cp3/live_producer/band_line.py",
+    )
+
+    # The stub BAND PROBE (band plan v3). It stands in for
+    # tools/tos_cp3/live_producer/band_probe.py: one invocation, one verdict
+    # from `_BAND_PLAN_ENV`, then exit. The real probe's own refusals and exit
+    # codes are exercised in tests/tools/test_cp3_live_producer.py; what the
+    # runner depends on is only the exit code and whether a line appeared.
+    (repo / "tools/tos_cp3/live_producer/band_probe.py").write_text(
+        "import datetime, json, os, sys, time, zoneinfo\n"
+        "from pathlib import Path\n"
+        "argv = sys.argv[1:]\n"
+        "def opt(name):\n"
+        "    return argv[argv.index(name) + 1]\n"
+        "session = Path(opt('--session-dir'))\n"
+        "session.mkdir(parents=True, exist_ok=True)\n"
+        "instrument = opt('--instrument')\n"
+        f"plan = os.environ.get({_BAND_PLAN_ENV!r}, 'ok').split(',')\n"
+        "counter = session / '.stub-band-runs'\n"
+        "runs = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(runs + 1))\n"
+        "what = plan[min(runs, len(plan) - 1)]\n"
+        "(session / 'band-log.jsonl').open('a').write(json.dumps({\n"
+        "    'stage': 'band_fetch', 'method': 'GET',\n"
+        "    'tr_id': 'FHMIF10000000',\n"
+        "    'path': '/uapi/domestic-futureoption/v1/quotations/inquire-price',\n"
+        "    'run': runs + 1, 'plan': what}) + '\\n')\n"
+        "if what == 'hang':\n"
+        "    time.sleep(600)\n"
+        "if what == 'gate':\n"
+        "    print('SafetyViolation: not on the read-only allowlist',"
+        " file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        "if what == 'soft':\n"
+        "    raise SystemExit(3)\n"
+        "kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
+        "today = datetime.datetime.now(kst).date()\n"
+        f"_open = os.environ.get({_PRODUCER_BAND_OPEN_ENV!r}, '08:45')\n"
+        "_oh, _om = (int(part) for part in _open.split(':'))\n"
+        "opened = datetime.datetime.combine(\n"
+        "    today, datetime.time(_oh, _om), tzinfo=kst)\n"
+        "open_ms = int(opened.timestamp() * 1000)\n"
+        "band_date = today.strftime('%Y%m%d')\n"
+        "band_instrument = instrument\n"
+        "band_as_of = open_ms + 1000\n"
+        f"mode = os.environ.get({_PRODUCER_BAND_ENV!r}, 'ok')\n"
+        "if mode == 'stale':\n"
+        "    band_date = (today - datetime.timedelta(days=1)).strftime('%Y%m%d')\n"
+        "elif mode == 'other-instrument':\n"
+        "    band_instrument = 'A05610'\n"
+        "elif mode == 'pre-open':\n"
+        "    band_as_of = open_ms - 1\n"
+        "elif mode == 'at-0900':\n"
+        "    band_as_of = int(datetime.datetime.combine(\n"
+        "        today, datetime.time(9, 0), tzinfo=kst).timestamp() * 1000)\n"
+        "(session / 'band.jsonl').write_text(json.dumps({\n"
+        "    'kind': 'cp3-band/1',\n"
+        f"    'source_id': {_APPROVED_SOURCE_ID!r},\n"
+        "    'instrument': band_instrument,\n"
+        "    'trading_date': band_date,\n"
+        "    'tr_id': 'FHMIF10000000',\n"
+        "    'upper': '1162.72',\n"
+        "    'lower': '990.48',\n"
+        "    'basis': '1076.60',\n"
+        "    'raw_payload_digest': 'f' * 64,\n"
+        "    'producer_continuity_id': 'c' * 32,\n"
+        "    'as_of_ms': band_as_of,\n"
+        "}) + '\\n')\n",
+        encoding="utf-8",
+    )
     (repo / "tools/tos_cp3/__init__.py").write_text("", encoding="utf-8")
     if policy is not None:
         guard = repo / "tools/tos_cp3/bootproof_guard.py"
@@ -1418,8 +1531,33 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         f"KIS_FUTURES_APP_SECRET={_PRODUCER_FAKE_SECRET}\n",
         encoding="utf-8",
     )
+    # The session OPEN the band check compares against comes from the
+    # producer's OWN settings — its ``calendar_yaml`` plus the session id and
+    # phase (band plan §3.1; ③ plan §3.5 forbids the runner carrying its own
+    # copy of the window). So the stub config names a stub calendar with the
+    # tenant's shape, and the test for the real tree's open lives in
+    # ``tests/tools/test_cp3_live_producer.py``.
+    calendar = tmp_path / "producer-calendar.yaml"
+    calendar_start = overrides.get(_STUB_CALENDAR_START_ENV, "08:45")
+    calendar.write_text(
+        "calendar_version: stub-for-the-runner-tests\n"
+        "tz_id: Asia/Seoul\n"
+        "holidays:\n  - '2026-01-01'\n"
+        "sessions:\n"
+        "  krx-index-futures:\n"
+        "    - phase: CONTINUOUS\n"
+        f"      start: '{calendar_start}'\n"
+        "      end: '15:45'\n",
+        encoding="utf-8",
+    )
     producer_config = tmp_path / "cp3-live-producer.yaml"
-    producer_config.write_text(f"env_file: {real_env}\n", encoding="utf-8")
+    producer_config.write_text(
+        f"env_file: {real_env}\n"
+        f"calendar_yaml: {calendar}\n"
+        "calendar_session_id: krx-index-futures\n"
+        "calendar_session_phase: CONTINUOUS\n",
+        encoding="utf-8",
+    )
 
     env = {
         "PATH": os.environ["PATH"],
@@ -1441,6 +1579,28 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "TENANT_PRODUCER_CONFIG": str(producer_config),
         "TENANT_PRODUCER_SESSION_DIR": str(tmp_path / "producer-session"),
         _PRODUCER_PIDFILE_ENV: str(tmp_path / "producer.pid"),
+        # Step 8c's allowance, short for every test (the shipped default is 90
+        # and `test_runner_band_wait_is_the_shipped_predicate_after_the_first_row`
+        # pins that). Overridden per test where the value is the point.
+        #
+        # ⚠ **This does not shorten the ANCHOR** (review round 1 MEDIUM-2). The
+        # deadline is `max(now, open + one boundary) + allowance` capped by the
+        # stop second, so a test whose band line is REJECTED while the producer
+        # stays ALIVE still waits until the stub calendar's open — which, at
+        # most hours of the day, is the stop cap and therefore longer than
+        # `_run_runner`'s 180 s. Such a test must let the stub producer exit
+        # (`_PRODUCER_EXIT_ENV: "0"`), which ends the wait at once because a
+        # producer that is gone can never write the line.
+        "CP3_BAND_LINE_EXTRA_WAIT_S": "5",
+        # The runner tests cannot sit out a real market morning, so the
+        # "wait until open + one boundary" sleep is capped to 0 here. The
+        # anchoring itself is proved by reading the COMPUTED wait the step
+        # logs (`test_red_the_band_process_is_not_launched_before_the_open`),
+        # which is clock-independent.
+        "CP3_BAND_LAUNCH_MAX_WAIT_S": "0",
+        # ...and a band process that hangs must be killed quickly enough for a
+        # 180 s subprocess timeout to see the retry as well.
+        "CP3_BAND_PROCESS_TIMEOUT_S": "4",
     }
     for name, value in overrides.items():
         if value == "":
@@ -1680,14 +1840,618 @@ def test_an_approved_producer_row_opens_the_designated_tenant_set(
     assert not result.producer_outlived_the_runner
 
 
-def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:
-    """The contract month is derived ONCE and given to the leaf, the render and
-    the producer (runbook §7.3 5-a). A journal written for last month's code is
-    not an error downstream — it is zero observations."""
+# ---------------------------------------------------------------------------
+# The band line the runner waits for (band plan 2026-10-15 §3.1 · §5 PR-A)
+# ---------------------------------------------------------------------------
+
+
+def test_runner_waits_for_the_band_line_and_says_it_saw_one(tmp_path: Path) -> None:
+    """The happy path: a line for today, this contract, stamped past the open.
+
+    As far as the non-bootable fixture goes — the stub renderer refuses — which
+    is also the evidence that the wait RETURNED rather than held the session.
+    """
+    result = _run_runner(_runner_repo(tmp_path), tmp_path)
+    output = result.stdout + result.stderr
+    assert _BAND_PRESENT_LINE in output
+    assert _BAND_ABSENT_LINE not in output
+    assert "band line ok · trading_date=" in output
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+@pytest.mark.parametrize(
+    "band_mode,fragment",
+    [
+        ("stale", "trading_date"),
+        ("other-instrument", "instrument"),
+        ("pre-open", "before the open"),
+    ],
+)
+def test_red_the_runner_rejects_a_band_line_clause_by_clause(
+    tmp_path: Path, band_mode: str, fragment: str
+) -> None:
+    """**A LINE, not the file** (v2 re-review LOW), one clause at a time.
+
+    Each mode breaks exactly ONE clause and leaves the other two valid, so a
+    deleted clause shows up here as a session that accepted the line. The
+    file EXISTS in all three cases — which is precisely why "the file is
+    there" is not the check:
+
+    * ``stale`` — yesterday's line in a reused session directory. The
+      producer's own ``refuse_if_journal_exists`` is the structural half; this
+      is the layer that survives its regression.
+    * ``other-instrument`` — the roll-day shape. P-VL measured ``A05610``
+      987.46/1159.18 against ``A05611`` 990.48/1162.72 on 2026-10-08, so the
+      wrong contract's band looks ADMISSIBLE rather than obviously wrong.
+    * ``pre-open`` — a response taken before the open, the hour band plan
+      §4.4a's residual risk is largest.
+    """
     result = _run_runner(
         _runner_repo(tmp_path),
         tmp_path,
-        **{_PRODUCER_INSTRUMENT_ENV: "A05612"},
+        **{_PRODUCER_BAND_ENV: band_mode, _PRODUCER_EXIT_ENV: "0"},
+    )
+    output = result.stdout + result.stderr
+    assert _BAND_ABSENT_LINE in output
+    assert _BAND_PRESENT_LINE not in output
+    assert "the last line is not usable" in output
+    assert fragment in output
+    assert "render refused" in output
+
+
+@pytest.mark.parametrize(
+    "band_mode,expected_present",
+    [
+        # stamped 08:46:01 (the stub's own default open) — BEFORE the 08:50 the
+        # CALENDAR declares, so the runner must reject it
+        ("ok", False),
+        # stamped 09:00 — after it, so the runner must accept it
+        ("at-0900", True),
+    ],
+)
+def test_red_the_runners_open_really_comes_from_the_calendar(
+    tmp_path: Path, band_mode: str, expected_present: bool
+) -> None:
+    """**Review round 1 LOW-2.** Behavioural, not a grep for the absence of 08:45.
+
+    The stub CALENDAR opens at 08:50 while the stub PRODUCER still stamps from
+    08:45, so the two disagree — and the runner's verdict has to follow the
+    calendar. A line at 08:46 is pre-open under this calendar and must be
+    rejected; one at 09:00 must be accepted. The same 08:46 line is ACCEPTED by
+    :func:`test_runner_waits_for_the_band_line_and_says_it_saw_one`, whose
+    calendar opens at 08:45 — so the pair isolates the calendar as the source.
+
+    Hardcoding the open back to 08:45 in step 8c turns the first case green,
+    which is the mutation.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: "08:50",
+            _PRODUCER_BAND_ENV: band_mode,
+            # The stub leaves right after writing, so a rejected line ends the
+            # wait at once instead of running out an allowance.
+            _PRODUCER_EXIT_ENV: "0",
+        },
+    )
+    output = result.stdout + result.stderr
+    if expected_present:
+        assert _BAND_PRESENT_LINE in output
+        assert _BAND_ABSENT_LINE not in output
+    else:
+        assert _BAND_ABSENT_LINE in output
+        assert _BAND_PRESENT_LINE not in output
+        assert "before the open" in output
+    assert "render refused" in output
+
+
+def test_runner_band_wait_still_runs_no_mode_repair(tmp_path: Path) -> None:
+    """PR-A touched neither the credential separation nor the xtrace defence.
+
+    Stated as a property rather than trusted: the whole-file rules that PR
+    #904 paid for are re-asserted next to the new step, so a future edit here
+    cannot quietly grow a ``chmod`` or a trace.
+    """
+    text = _RUNNER.read_text("utf-8")
+    assert "set +x +v" in text
+    assert '[ -z "${!_real_key+x}" ]' in text
+    assert "umask 077" in text
+    # CODE only, the same way
+    # :func:`test_the_runner_runs_no_mode_repair_sweep_after_the_stop` reads
+    # it: the comments deliberately quote the commands this script refuses to
+    # run, so a check that cannot tell prose from an instruction would be
+    # satisfied by deleting the explanation.
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    for forbidden in ("chmod", "chown"):
+        assert forbidden not in code, forbidden
+    # The band step reads the band journal and never writes to it.
+    assert '$BAND_JOURNAL"' in code or '"$BAND_JOURNAL"' in code
+    assert ">$BAND_JOURNAL" not in code and '>"$BAND_JOURNAL"' not in code
+
+
+def test_runner_launches_the_band_process_and_sees_its_line(tmp_path: Path) -> None:
+    """The v3 happy path: the band PROCESS writes the line, the runner sees it.
+
+    The stub producer no longer writes ``band.jsonl`` at all — that is the
+    probe's file now, and this test would fail if the runner still expected the
+    producer to produce it.
+    """
+    result = _run_runner(_runner_repo(tmp_path), tmp_path)
+    output = result.stdout + result.stderr
+    assert "=== BAND PROCESS #1" in output
+    assert "band process #1 rc=0" in output
+    assert _BAND_PRESENT_LINE in output
+    assert _BAND_ABSENT_LINE not in output
+    assert "band line ok · trading_date=" in output
+    # exactly one invocation on the happy path
+    assert "=== BAND PROCESS #2" not in output
+    assert (tmp_path / "producer-session" / "band.jsonl").is_file()
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_a_hanging_band_process_is_killed_and_the_session_continues(
+    tmp_path: Path,
+) -> None:
+    """A band process that hangs must not hold the session (band plan v3).
+
+    This is the whole reason the GET moved out of the producer: the bound is a
+    supervisor, not a promise the program makes about itself. The stub sleeps
+    far past its ``timeout``, so ``timeout`` has to kill it — and the runner
+    then takes its ONE retry, which succeeds, and boots with a band.
+
+    Removing the ``timeout`` wrapper makes this hang until the subprocess
+    timeout instead, which is the mutation.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{_BAND_PLAN_ENV: "hang,ok"}
+    )
+    output = result.stdout + result.stderr
+    # killed, not waited out: `timeout` reports 124 (or 137 after --kill-after)
+    assert "band process #1 rc=124" in output or "band process #1 rc=137" in output
+    assert "one retry at the next boundary" in output
+    assert "band process #2 rc=0" in output
+    assert _BAND_PRESENT_LINE in output
+    assert "render refused" in output
+
+
+def test_red_the_band_retry_runs_exactly_once(tmp_path: Path) -> None:
+    """One extra attempt, never two (band plan v3).
+
+    A soft failure every time: the runner must try twice and stop, then say
+    BAND ABSENT. An unbounded retry would hand the band the minute-bar
+    polling's rate-limit budget for the rest of the day.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{_BAND_PLAN_ENV: "soft,soft,soft"}
+    )
+    output = result.stdout + result.stderr
+    assert "=== BAND PROCESS #1" in output
+    assert "=== BAND PROCESS #2" in output
+    assert "=== BAND PROCESS #3" not in output
+    assert "no further attempts" in output
+    assert _BAND_ABSENT_LINE in output
+    # and it still went on to the next step rather than aborting
+    assert "render refused" in output
+
+
+def test_red_a_band_process_rc_1_aborts_before_the_boot(tmp_path: Path) -> None:
+    """rc 1 is a defect HERE, so the session must not boot (band plan v3).
+
+    The probe reserves rc 1 for an allowlist gate refusal or an unexpected
+    exception, and keeps soft failures at rc 3 precisely so this disposition is
+    possible: BAND ABSENT carries on, a gate refusal does not. Treating rc 1
+    like rc 3 turns "zero real futures orders" into a quiet log line.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path, **{_BAND_PLAN_ENV: "gate"})
+    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
+    env["TENANT_STOP_AT"] = "+1 minutes"
+    try:
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=120,
+        )
+    finally:
+        pidfile = tmp_path / "run.pid"
+        if pidfile.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "band process exited rc 1" in output
+    # the boot never started, and there was no retry either: rc 1 is terminal
+    assert not (tmp_path / "run.pid").exists()
+    assert "=== BAND PROCESS #2" not in output
+    assert _BAND_ABSENT_LINE not in output
+
+
+#: Slack the derived open must leave before midnight. 120 s, because the
+#: runner needs time to REACH step 8c — about 5 s here and up to ~45 s on a
+#: loaded host — and the lower bound on the computed wait already allows the
+#: same 120 s. It was 5 s (review round 6, LOW-2), which left a window where
+#: the step could be reached after the anchored instant had already passed.
+_BAND_LAUNCH_MIN_SLACK_S = 120
+
+
+def _a_future_open(now: datetime.datetime) -> tuple[str, float]:
+    """``(HH:MM for the stub calendar, seconds until ``open + one boundary``)``.
+
+    An hour ahead, or 23:59 when an hour ahead would land tomorrow — the
+    session open is always combined with TODAY's date by
+    ``band_line.session_open_ms``, so a literal time of day is a literal bet
+    on what time the test runs (review round 5). 23:59's anchored instant is
+    exactly midnight, which keeps the distance positive right up to it.
+
+    ⚠ The distance is measured the way the RUNNER measures it (review round 6,
+    LOW-1): the HH:MM string recombined with **today**, plus one boundary. The
+    first cut measured from this function's own ``opens_at``, which can be
+    TOMORROW — so dropping the midnight branch left the test agreeing with the
+    bug instead of with the runner, and the reviewer's mutation stayed green.
+    Returning what ``session_open_ms`` would compute is what makes that
+    mutation visible at all.
+    """
+    opens_at = now + datetime.timedelta(hours=1)
+    if opens_at.date() != now.date():
+        opens_at = now.replace(hour=23, minute=59, second=0, microsecond=0)
+    start = opens_at.strftime("%H:%M")
+    anchored = datetime.datetime.combine(
+        now.date(), datetime.time.fromisoformat(start), tzinfo=now.tzinfo
+    ) + datetime.timedelta(seconds=60)
+    return start, anchored.timestamp() - now.timestamp()
+
+
+def test_the_future_open_helper_has_no_blind_window_but_the_last_seconds() -> None:
+    """⛔ The de-fragilising itself, proved over a whole simulated day.
+
+    The defect this replaces (a literal ``23:30``) was invisible for 23 hours
+    a day, so asserting the replacement only at the moment the suite happens
+    to run would repeat the mistake in a smaller window. This walks every
+    minute of a day in KST — plus the last minute second by second — and
+    requires the anchored instant to stay ahead of ``now`` except inside the
+    final :data:`_BAND_LAUNCH_MIN_SLACK_S`, which is the window the caller
+    skips and names.
+
+    The expectation is recomputed HERE from the returned string with the
+    runner's own semantics (combine with that day's date, add one boundary),
+    rather than taken from the helper's arithmetic — a test that reuses the
+    code's own intermediate value agrees with the code even when both are
+    wrong, which is exactly how the first cut survived its mutation (review
+    round 6, LOW-1).
+    """
+    kst = zoneinfo.ZoneInfo("Asia/Seoul")
+    day = datetime.date(2026, 10, 16)
+    moments = [
+        datetime.datetime.combine(day, datetime.time(hour, minute), tzinfo=kst)
+        for hour in range(24)
+        for minute in range(60)
+    ]
+    moments += [
+        datetime.datetime.combine(day, datetime.time(23, 59, second), tzinfo=kst)
+        for second in range(60)
+    ]
+    for moment in moments:
+        start, anchored_in_s = _a_future_open(moment)
+        assert re.fullmatch(r"\d{2}:\d{2}", start), (moment, start)
+        as_the_runner_reads_it = (
+            datetime.datetime.combine(
+                moment.date(), datetime.time.fromisoformat(start), tzinfo=kst
+            )
+            + datetime.timedelta(seconds=60)
+        ).timestamp() - moment.timestamp()
+        assert abs(as_the_runner_reads_it - anchored_in_s) < 1, (
+            moment.isoformat(),
+            anchored_in_s,
+            as_the_runner_reads_it,
+        )
+        seconds_left = 86400 - (moment.hour * 3600 + moment.minute * 60 + moment.second)
+        if seconds_left > _BAND_LAUNCH_MIN_SLACK_S:
+            assert as_the_runner_reads_it > 0, (moment.isoformat(), anchored_in_s)
+        # ...and it never points FURTHER than the hour it promises.
+        assert anchored_in_s <= 3660, (moment.isoformat(), anchored_in_s)
+
+
+#: What the runner logs when the session stop leaves no room for an attempt,
+#: and when it shortens one. Both are the evidence for review round 6's
+#: MEDIUM — a band process must not start, or outlive, the session's end.
+_BAND_NO_TIME_LINE = "left before the session stop — NO attempt started"
+_BAND_CEILING_CAPPED = "capped to"
+
+
+def _band_runs_recorded(tmp_path: Path) -> int:
+    """How many times the stub band probe actually started.
+
+    Read from the counter file the stub keeps beside the session dir rather
+    than from the log: "the runner did not print a launch line" and "no
+    process ran" are different claims, and this one is about the process.
+    """
+    counter = tmp_path / "producer-session" / ".stub-band-runs"
+    return int(counter.read_text().strip()) if counter.is_file() else 0
+
+
+def test_red_no_band_attempt_starts_after_the_stop_passes_in_the_open_wait(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 6, MEDIUM.** The stop ends the band, mid-wait.
+
+    Capping the open-anchored sleep by ``STOP_S`` was not enough: the sleep
+    RETURNS when the stop arrives, and the attempt then ran unconditionally —
+    Codex reproduced a band process starting with ``STOP_S=0``, which is a
+    real-key OAuth + GET after the session has ended.
+
+    Here the open is an hour out and the stop is fifteen seconds out, so the
+    (capped) wait consumes the whole session. No process may start, and the
+    disposition is BAND ABSENT — the window closed, which is not a defect.
+
+    Skipped in the same last-minutes window as its sibling and for the same
+    reason: with no future open left today the open wait is 0 and the test
+    would be measuring nothing (review round 7, nit).
+    """
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    start, anchored_in_s = _a_future_open(now)
+    if anchored_in_s < _BAND_LAUNCH_MIN_SLACK_S:
+        pytest.skip(
+            f"within {_BAND_LAUNCH_MIN_SLACK_S}s of midnight KST there is no "
+            f"future open to wait for; the anchored instant is "
+            f"{anchored_in_s:.1f}s away"
+        )
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: start,
+            _PRODUCER_BAND_OPEN_ENV: start,
+            # let the open wait actually happen, bounded by the stop
+            "CP3_BAND_LAUNCH_MAX_WAIT_S": "120",
+            "TENANT_STOP_AT": "+15 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    assert "=== BAND PROCESS" not in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 0
+    assert _BAND_NO_TIME_LINE in output
+    assert "no room for a first attempt" in output
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_a_stop_inside_the_margin_skips_the_attempt(tmp_path: Path) -> None:
+    """⛔ **Codex round 7, MEDIUM.** Time left is not the same as time enough.
+
+    The refusal threshold is arithmetic, not "has the stop passed":
+    ``STOP_S - now - 1 - BAND_STOP_MARGIN_S <= BAND_PROCESS_KILL_AFTER_S``,
+    i.e. a raw distance of **11 s or less** with the shipped 5 s margin and
+    5 s grace. A stop eleven seconds out therefore cannot be attempted at any
+    arrival time — the runner reaches this step with 11 s at the very most —
+    while several of those seconds are still on the clock. Set
+    ``BAND_STOP_MARGIN_S`` to 0 and the threshold drops to 6 s, so the same
+    session starts a process (mutation M24). Codex measured what that costs:
+    a child outliving ``STOP_S`` by 0.68 s, and a launch 0.78 s PAST it after
+    a logging stall.
+
+    ⚠ The first cut used twelve seconds and was GREEN standalone, RED in the
+    full suite: at 12 s the arithmetic permits a 1 s attempt, and whether the
+    runner arrived with 12 or with 6 depended on how loaded the host was. The
+    bound has to hold for EVERY arrival time, not for the one the author
+    happened to measure — the same lesson as review round 5's literal
+    ``23:30``, one round later.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{"TENANT_STOP_AT": "+11 seconds"}
+    )
+    output = result.stdout + result.stderr
+
+    assert "=== BAND PROCESS" not in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 0
+    refusal = re.search(r"band: (\d+)s left before the session stop", output)
+    assert refusal is not None, output[-3000:]
+    left = int(refusal.group(1))
+    # The refusal is the arithmetic one, not "the stop already passed": the
+    # distance is inside the threshold the margin and the grace define.
+    assert 0 <= left <= 11, refusal.group(0)
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_logged_ceiling_and_grace_end_before_the_stop_margin(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 7, MEDIUM.** The four numbers on one line must add up.
+
+    The launch banner prints the ceiling, the kill grace, the margin and the
+    distance to the stop — all read at the same instant, on purpose, so the
+    inequality can be checked without a second clock:
+
+        ceiling + grace <= stop_in - margin
+
+    A hang makes the attempt use its whole ceiling, so this is not a claim
+    about intent: the process really is killed that long before the stop.
+    Dropping the margin (or the `- 1`) turns the inequality into an equality
+    and the assertion red.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _BAND_PLAN_ENV: "hang",
+            "CP3_BAND_PROCESS_TIMEOUT_S": "30",
+            "TENANT_STOP_AT": "+25 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    banner = re.search(
+        r"=== BAND PROCESS #1 .* ceiling (\d+)s grace (\d+)s margin (\d+)s "
+        r"stop_in (\d+)s",
+        output,
+    )
+    assert banner is not None, output[-3000:]
+    ceiling, grace, margin, stop_in = (int(value) for value in banner.groups())
+    assert margin > 0, "the margin is what this test is about"
+    assert ceiling + grace <= stop_in - margin, (
+        ceiling,
+        grace,
+        margin,
+        stop_in,
+        output[-2000:],
+    )
+    # the attempt really ran to its (shortened) ceiling and was killed there
+    assert re.search(r"band process #1 rc=(124|137)", output), output[-2000:]
+
+
+def test_red_the_stop_shortens_a_band_attempt_and_cancels_the_retry(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 6, MEDIUM.** The attempt's ceiling fits in the window.
+
+    A hanging probe with a 30 s ceiling and a stop 25 s out: the ceiling has
+    to be cut to the remaining time minus the SIGKILL grace, because that
+    grace is wall time too. Afterwards nothing is left, so the retry does not
+    happen either — exactly one process, and it ended before the stop.
+
+    Red two ways: without the cap the logged ceiling is the full 30 s (the
+    assertion compares it against the window), and without the per-attempt
+    check the retry starts a second process after the stop.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _BAND_PLAN_ENV: "hang",
+            "CP3_BAND_PROCESS_TIMEOUT_S": "30",
+            "TENANT_STOP_AT": "+25 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    ceilings = re.findall(r"=== BAND PROCESS #\d+ .* ceiling (\d+)s", output)
+    assert len(ceilings) == 1, (ceilings, output[-3000:])
+    # The ceiling was cut: 30s would not fit a 25s window, and the 5s kill
+    # grace has to fit too.
+    assert int(ceilings[0]) < 30, ceilings
+    assert int(ceilings[0]) <= 25 - 5, ceilings
+    assert f"{_BAND_CEILING_CAPPED} {ceilings[0]}s by the session stop" in output
+    assert _band_runs_recorded(tmp_path) == 1
+    assert "=== BAND PROCESS #2" not in output
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_retry_wait_is_capped_by_the_stop(tmp_path: Path) -> None:
+    """⛔ **Codex round 6, MEDIUM.** A 60 s retry wait inside a 20 s session.
+
+    The retry belongs at the next boundary, but the boundary can be past the
+    end of the session: an uncapped wait sleeps 60 s inside a 20 s window, so
+    the runner sits idle past its own stop before deciding there is no time.
+    The wait is therefore capped by the remaining seconds, and the elapsed
+    wall time is what proves it — both the capped and the uncapped version end
+    with no second attempt, so the end state cannot tell them apart.
+    """
+    started = time.monotonic()
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_BAND_PLAN_ENV: "soft", "TENANT_STOP_AT": "+20 seconds"},
+    )
+    elapsed = time.monotonic() - started
+    output = result.stdout + result.stderr
+
+    assert "band retry: wait 60s capped to" in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 1
+    assert "=== BAND PROCESS #2" not in output
+    assert "no room for the retry" in output
+    assert _BAND_ABSENT_LINE in output
+    # 60s of sleeping cannot hide inside this: the window is 20s and the
+    # runner's remaining steps are sub-second with the stub.
+    assert elapsed < 45, f"{elapsed:.1f}s elapsed — the retry wait was not capped"
+
+
+def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) -> None:
+    """⛔ Not before ``open + one boundary`` (band plan §3.1).
+
+    Step 8b's predicate is "an approved producer row exists", which says
+    nothing about the open, so the launch time is the runner's own to enforce
+    rather than something inherited from the previous step.
+
+    Asserted on the wait the step COMPUTES, not by living through it (the
+    sleep is capped to 0 in these tests), and the stub calendar's open is
+    DERIVED FROM NOW rather than written as a literal.
+
+    ⚠ The first cut wrote ``23:30`` and asserted the "capped" line
+    unconditionally. That line is only logged when the computed wait EXCEEDS
+    the ceiling, so from 23:31 to midnight KST — when ``open + 60s`` has
+    already passed and 0 is the honest answer — CI went red for 29 minutes
+    every night (review round 5, Claude lane MEDIUM; the reviewer reproduced
+    it). A clock-dependent literal cannot be fixed by widening the guard
+    around it; the input has to stop depending on the clock.
+
+    So the open is ``now + 1h``, and within an hour of midnight it is
+    ``23:59`` — whose anchored instant lands exactly at midnight, so the
+    distance stays positive for every instant of the day but the last
+    :data:`_BAND_LAUNCH_MIN_SLACK_S`, which is the one case this skips and
+    names. The session stop is
+    pushed out to three hours for the same reason the open moved: the computed
+    wait is ``min(anchor, stop - now)``, so with the default ten-minute stop
+    the number this asserts on would be the STOP's, not the calendar's.
+    """
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    start, anchored_in_s = _a_future_open(now)
+    if anchored_in_s < _BAND_LAUNCH_MIN_SLACK_S:
+        pytest.skip(
+            f"within {_BAND_LAUNCH_MIN_SLACK_S}s of midnight KST no future open "
+            "is left with room for the runner to reach step 8c; the anchored "
+            f"instant is {anchored_in_s:.1f}s away"
+        )
+
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: start,
+            _PRODUCER_BAND_OPEN_ENV: start,
+            "TENANT_STOP_AT": "+3 hours",
+        },
+    )
+    output = result.stdout + result.stderr
+    computed = re.search(
+        r"band launch: computed (\d+)s until open \+ one boundary", output
+    )
+    assert computed is not None, output[-3000:]
+    waited = int(computed.group(1))
+    # Positive is the half the mutation kills; the upper and lower bounds pin
+    # it to the calendar's own open rather than to any positive number (the
+    # runner spends a few seconds reaching this step, hence the slack).
+    assert 0 < waited <= anchored_in_s, (waited, anchored_in_s, output[-2000:])
+    assert waited >= max(1, anchored_in_s - 120), (waited, anchored_in_s)
+    assert "band launch: capped to 0s" in output
+
+
+def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:
+    """The contract month is derived ONCE and given to the leaf, the render and
+    the producer (runbook §7.3 5-a). A journal written for last month's code is
+    not an error downstream — it is zero observations.
+
+    ⚠ The stub producer leaves after writing (``_PRODUCER_EXIT_ENV``), which
+    came in with review round 1 MEDIUM-2 and still matters: a stub that stays
+    alive makes the session sit out the band steps' real waits and blow this
+    test's 180 s subprocess timeout. Measured: it did. The band line itself is
+    not this test's subject — the band probe is a separate process now (plan
+    v3) and the runner hands it the SESSION's instrument, so it writes a
+    perfectly good line. The refusal under test is the GUARD's, at step 9,
+    against the journal's wrong contract month.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_PRODUCER_INSTRUMENT_ENV: "A05612", _PRODUCER_EXIT_ENV: "0"},
     )
     assert result.returncode != 0
     assert "A05612" in result.stdout + result.stderr

@@ -36,10 +36,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from shared.config.dotenv_guard import read_explicit_dotenv  # noqa: E402
-from tools.broker_probes.common import (  # noqa: E402
-    resolve_credentials,
-    secret_fingerprint,
-)
+from tools.broker_probes.common import SafetyViolation  # noqa: E402
 from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
     RuntimeCalendar,
     SessionWindow,
@@ -69,6 +66,7 @@ from tools.tos_cp3.live_producer.line import (  # noqa: E402
     SOURCE_ID,
     build_line,
 )
+from tools.tos_cp3.live_producer.real_quotes import real_quotes  # noqa: E402
 from tools.tos_cp3.live_producer.seed_lineage import seed_lineage  # noqa: E402
 from tools.tos_cp3.live_producer.session_log import (  # noqa: E402
     STAGE_ALREADY_FROZEN,
@@ -95,7 +93,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     resolve_contract_spec,
     resolve_open_anchor,
 )
-from tools.tos_cp3.quote_client import KST, QUOTE_PATH, TR, Quotes  # noqa: E402
+from tools.tos_cp3.quote_client import KST, QUOTE_PATH, TR  # noqa: E402
 from tools.tos_cp3.stitch import (  # noqa: E402
     STITCH_FILENAME,
     StitchManifest,
@@ -447,6 +445,20 @@ class LiveProducer:
         while True:
             try:
                 step, received_ms = self._poll()
+            except SafetyViolation:
+                # BEFORE the RuntimeError clause, because `SafetyViolation` IS
+                # a RuntimeError (`ProbeError` -> `RuntimeError`). Without this
+                # the allowlist gate refusing a PRICE call was counted as a
+                # transport error and the session carried on — a pre-existing
+                # hole of the same shape as the band path's was (PR #906
+                # review round 1, MEDIUM-1): `SafetyViolation` subclasses
+                # `ProbeError` subclasses `RuntimeError`, so the clause below
+                # swallowed the allowlist gate's refusal and counted it as a
+                # transport blip. `band_probe` carries the same clause for the
+                # same reason. THIS is the one band-era change the minute loop
+                # keeps; everything else about the band left this module when
+                # the GET became its own process (band plan v3).
+                raise
             except RuntimeError as exc:
                 self.counters.fetch_error += 1
                 self.log.event(
@@ -853,25 +865,6 @@ class LiveProducer:
         return summary
 
 
-def _real_quotes(config: LiveProducerConfig, log: EventLog) -> Quotes:
-    """The real transport. Only reached with ``--confirm``.
-
-    The cache path carries the app-key FINGERPRINT (review L2). Dropping that
-    segment is what PR-1's own derivation exists to prevent: the stock
-    ``KISToken`` cache keys on the domain alone, so two different app keys
-    would share one token file and a reissue for one would hand the other a
-    token its key never minted. ``secret_fingerprint`` is irreversible, so the
-    path names the key without carrying it.
-    """
-    creds = resolve_credentials("futures", is_real=True)
-    return Quotes(
-        creds,
-        log,
-        config.transport,
-        token_cache=config.token_cache_dir / secret_fingerprint(creds.app_key),
-    )
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tools/tos_cp3/live_producer",
@@ -938,7 +931,7 @@ def main(argv: list[str] | None = None) -> int:
         session_dir=args.session_dir,
         journal_path=args.journal,
         clock=Clock(now=lambda: datetime.now(KST), sleep=_sleep),
-        quotes_factory=_real_quotes,
+        quotes_factory=real_quotes,
     )
     try:
         assert_env_pins(config, os.environ)

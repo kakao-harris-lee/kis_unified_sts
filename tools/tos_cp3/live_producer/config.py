@@ -54,10 +54,24 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("max_seed_calendar_days", int),
     ("max_consecutive_produce_errors", int),
     ("max_consecutive_fetch_error_minutes", int),
+    ("band_max_response_bytes", int),
 )
 
 #: Keys read as a list of ints rather than a scalar.
 _REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
+
+#: The floor on ``request_timeout_s``. One second, because that is already
+#: below any real KIS round trip (PR-1 measured the minute GET in the hundreds
+#: of ms at best) and the band GET divides this number by four for its
+#: per-phase inactivity guards. Checked here rather than clamped at the call
+#: site: a clamp that raises a too-small value loosens the bound (review round
+#: 2 item A).
+MIN_REQUEST_TIMEOUT_S = 1.0
+
+#: Floor on ``band_max_response_bytes``. 1 KiB: a real ``FHMIF10000000`` body
+#: is a few hundred bytes, so anything under this refuses the normal response
+#: and turns the cap into a permanent band outage.
+MIN_BAND_RESPONSE_BYTES = 1024
 
 
 @dataclass(frozen=True)
@@ -115,6 +129,13 @@ class LiveProducerConfig:
     #: Years the tenant calendar is declared to cover. Not inferred from its
     #: holiday dates (review L4) and cross-checked against the file at load.
     calendar_covered_years: tuple[int, ...]
+    #: Hard cap on the band response the producer-side transport will read
+    #: before giving up (band plan v3, 2026-10-16). Codex's round-4 F2
+    #: measurement is the reason: a 48 MiB body was hashed and parsed inside a
+    #: 0.2 s budget, so the TIME bound alone never saw it. The band GET streams
+    #: and stops at this many bytes. A real ``FHMIF10000000`` body is a few
+    #: hundred bytes, so this is an "obviously wrong" line, not a tuning knob.
+    band_max_response_bytes: int
     #: The two parser env values the producer PINS (plan §3.3 L9). Bar size and
     #: the drop rule must not change quietly with the environment.
     parser_env: tuple[tuple[str, str], ...]
@@ -129,6 +150,7 @@ class LiveProducerConfig:
             "request_timeout_s": self.request_timeout_s,
             "max_pages": self.max_pages,
             "hour_cls_code": dict(self.parser_env)["KIS_FUTURES_HOUR_CLS_CODE"],
+            "max_response_bytes": self.band_max_response_bytes,
         }
 
 
@@ -136,6 +158,72 @@ def _resolve(repo_root: Path, value: str) -> Path:
     """Repo-relative paths resolve against the checkout; absolute ones stand."""
     candidate = Path(value).expanduser()
     return candidate if candidate.is_absolute() else repo_root / candidate
+
+
+def _assert_coherent(path: Path, values: dict[str, Any]) -> None:
+    """Every refusal that reads MORE THAN ONE value, or a value against a
+    constant this repo owns elsewhere.
+
+    Split out of :func:`load_config` when the ``request_timeout_s`` floor
+    took that function past ``config/tos_size_budget.yaml``'s 100-line
+    function cap (PR #906 review round 2). The seam is one the function
+    already had: everything above it reads and types ONE key at a time,
+    and everything here is a relationship between keys.
+    """
+    if values["missing_no_successor_timeout_s"] <= values["first_poll_delay_s"]:
+        raise LiveProducerRefused(
+            f"{path}: G={values['missing_no_successor_timeout_s']} must exceed "
+            f"δ={values['first_poll_delay_s']}; otherwise the re-poll window is "
+            "empty and δ becomes a single blocking wait, which the PR-1 evidence "
+            "§1.4 explicitly refuses (δ 를 단독 대기 시간으로 쓰면 안 된다)"
+        )
+    if values["missing_no_successor_timeout_s"] >= 60:
+        raise LiveProducerRefused(
+            f"{path}: G={values['missing_no_successor_timeout_s']} would overlap "
+            "the next minute boundary (evidence §1.4 upper constraint)"
+        )
+    if values["request_timeout_s"] < MIN_REQUEST_TIMEOUT_S:
+        raise LiveProducerRefused(
+            f"{path}: request_timeout_s={values['request_timeout_s']} is below "
+            f"{MIN_REQUEST_TIMEOUT_S}s. The band GET divides it by four for "
+            "httpx's per-phase inactivity guards, and the minute path hands it "
+            "to the client whole; a sub-second budget makes both meaningless "
+            "against a real REST round trip. This refusal replaces the "
+            "`max(0.001, ...)` clamp that used to sit in `quote_client.band` — "
+            "a floor there RAISED the phase limits for a tiny budget and so "
+            "loosened the bound it looked like it tightened (review round 2 "
+            "item A, Codex MEDIUM)"
+        )
+    if values["band_max_response_bytes"] < MIN_BAND_RESPONSE_BYTES:
+        raise LiveProducerRefused(
+            f"{path}: band_max_response_bytes={values['band_max_response_bytes']} "
+            f"is below {MIN_BAND_RESPONSE_BYTES}. A real FHMIF10000000 body is a "
+            "few hundred bytes, so a cap under that would refuse every real "
+            "response and make the band permanently absent — a cap that denies "
+            "the normal case is not a safety bound"
+        )
+    if values["max_consecutive_produce_errors"] < 1:
+        raise LiveProducerRefused(
+            f"{path}: max_consecutive_produce_errors must be >= 1 (plan §3.5)"
+        )
+    if values["max_consecutive_fetch_error_minutes"] < 1:
+        raise LiveProducerRefused(
+            f"{path}: max_consecutive_fetch_error_minutes must be >= 1 — a 0 "
+            "would refuse on the first failed poll of the day, and a single "
+            "transport failure costs that poll, not the session (plan §3.5)"
+        )
+    if values["min_bars_per_day"] != DEFAULT_MIN_BARS_PER_DAY:
+        raise LiveProducerRefused(
+            f"{path}: min_bars_per_day={values['min_bars_per_day']} but B1a's "
+            f"DEFAULT_MIN_BARS_PER_DAY is {DEFAULT_MIN_BARS_PER_DAY}. Plan §3.2 "
+            "requires 「밀도 게이트를 B1a 와 같게」 — the gate decides which days "
+            "enter the frame, so a producer running a different one would seed "
+            "from a different set of sessions than the offline run it is "
+            "compared against, and the B3 join would diverge for a reason that "
+            "looks like a field defect. The key stays in config (CLAUDE.md: "
+            "thresholds belong in YAML) but B1a's constant is the only source "
+            "of truth for its value (review M4)"
+        )
 
 
 def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
@@ -190,41 +278,7 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
                 "makes bar size and the volume drop rule config, not ambient env"
             )
 
-    if values["missing_no_successor_timeout_s"] <= values["first_poll_delay_s"]:
-        raise LiveProducerRefused(
-            f"{path}: G={values['missing_no_successor_timeout_s']} must exceed "
-            f"δ={values['first_poll_delay_s']}; otherwise the re-poll window is "
-            "empty and δ becomes a single blocking wait, which the PR-1 evidence "
-            "§1.4 explicitly refuses (δ 를 단독 대기 시간으로 쓰면 안 된다)"
-        )
-    if values["missing_no_successor_timeout_s"] >= 60:
-        raise LiveProducerRefused(
-            f"{path}: G={values['missing_no_successor_timeout_s']} would overlap "
-            "the next minute boundary (evidence §1.4 upper constraint)"
-        )
-    if values["max_consecutive_produce_errors"] < 1:
-        raise LiveProducerRefused(
-            f"{path}: max_consecutive_produce_errors must be >= 1 (plan §3.5)"
-        )
-    if values["max_consecutive_fetch_error_minutes"] < 1:
-        raise LiveProducerRefused(
-            f"{path}: max_consecutive_fetch_error_minutes must be >= 1 — a 0 "
-            "would refuse on the first failed poll of the day, and a single "
-            "transport failure costs that poll, not the session (plan §3.5)"
-        )
-    if values["min_bars_per_day"] != DEFAULT_MIN_BARS_PER_DAY:
-        raise LiveProducerRefused(
-            f"{path}: min_bars_per_day={values['min_bars_per_day']} but B1a's "
-            f"DEFAULT_MIN_BARS_PER_DAY is {DEFAULT_MIN_BARS_PER_DAY}. Plan §3.2 "
-            "requires 「밀도 게이트를 B1a 와 같게」 — the gate decides which days "
-            "enter the frame, so a producer running a different one would seed "
-            "from a different set of sessions than the offline run it is "
-            "compared against, and the B3 join would diverge for a reason that "
-            "looks like a field defect. The key stays in config (CLAUDE.md: "
-            "thresholds belong in YAML) but B1a's constant is the only source "
-            "of truth for its value (review M4)"
-        )
-
+    _assert_coherent(path, values)
     return LiveProducerConfig(
         path=path,
         sha256=hashlib.sha256(raw_bytes).hexdigest(),
