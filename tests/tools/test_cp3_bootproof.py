@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import datetime
 import json
+import math
 import os
 import re
 import shutil
@@ -2429,7 +2430,25 @@ def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) ->
     # Positive is the half the mutation kills; the upper and lower bounds pin
     # it to the calendar's own open rather than to any positive number (the
     # runner spends a few seconds reaching this step, hence the slack).
-    assert 0 < waited <= anchored_in_s, (waited, anchored_in_s, output[-2000:])
+    #
+    # ⚠ The upper bound is the reporter's own INTEGER GRID, not the raw float
+    # (2026-10-16). The runner prints `min(wait_s, remaining_s):.0f` — Python's
+    # round-to-NEAREST, not a floor — while `anchored_in_s` here is the
+    # unrounded distance measured before the runner even started. So whenever
+    # `anchored_in_s` has a fractional part above .5 and the runner reaches
+    # step 8c in less than `frac - 0.5` seconds, the printed integer is one
+    # ABOVE the float and `waited <= anchored_in_s` fails on a correct runner.
+    # MEASURED by sweeping every 50ms of a minute against a range of startup
+    # costs: 40% of instants fail at 0.05s startup, 30% at 0.2s, 0% at >= 0.5s
+    # — which is why this passes on a loaded laptop and fails on CI. Comparing
+    # against `math.ceil` is 0% across that whole sweep. The LOWER bound below
+    # is untouched, so "pinned to the calendar's own open" still has its force:
+    # a 120s window around a ~3600s value does not care about one second.
+    assert 0 < waited <= math.ceil(anchored_in_s), (
+        waited,
+        anchored_in_s,
+        output[-2000:],
+    )
     assert waited >= max(1, anchored_in_s - 120), (waited, anchored_in_s)
     assert "band launch: capped to 0s" in output
 
