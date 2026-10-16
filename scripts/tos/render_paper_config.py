@@ -90,6 +90,9 @@ if str(_REPO_ROOT) not in sys.path:  # direct-script invocation
 
 from shared.instruments.futures import get_front_month_code  # noqa: E402
 from tools.broker_probes.common import account_fingerprint  # noqa: E402
+from tools.tos_cp3.bootproof_guard import (  # noqa: E402
+    APPROVED_REAL_PRODUCER_PREFIXES,
+)
 
 __all__ = [
     "COORDINATE_RULE_KEYS",
@@ -419,11 +422,30 @@ _VALUE_SOURCES: frozenset[str] = frozenset(
         "instrument",
         "revision",
         "journal_path",
+        "band_journal_path",
+        "approved_source_prefixes",
         "direction_action_class",
         "direction_side",
         "direction",
     }
 )
+
+#: The ONE value source whose value is a CODE CONSTANT rather than a coordinate the operator
+#: or the runner supplies (CP-3 band 원천 경로 변경,
+#: ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.4 C1).
+#:
+#: The runtime may not import ``tools`` (firewall R1), so the approved-producer allowlist
+#: cannot live in both places. It lives in ``tools.tos_cp3.bootproof_guard``, this renderer —
+#: which is outside ``tos/`` and already renders the file — writes it in as a value, and
+#: ``tests/unit/scripts/test_render_tenant_trees.py`` pins "render output == that constant".
+#: So the list is still ONE list.
+#:
+#: Joined with ``", "`` because the slot template is ``["{value}"]``: a two-entry list renders
+#: as ``["a", "b"]``. The template shape rules ①–④ already forbid a literal riding along, so
+#: this is the whole of the quoting discipline.
+_CONSTANT_VALUE_SOURCES: dict[str, str] = {
+    "approved_source_prefixes": '", "'.join(APPROVED_REAL_PRODUCER_PREFIXES),
+}
 
 #: The subset of :data:`_VALUE_SOURCES` whose value is a function of DIRECTION. In
 #: ``declared`` mode these slots are VERIFY-ONLY (design §2.3): the renderer builds the line
@@ -750,6 +772,7 @@ def _slot_rules(
     revision: str,
     direction: str,
     journal_path: Path,
+    band_journal_path: Path | None,
 ) -> tuple[Rule, ...]:
     """Turn the manifest's slots into the :class:`Rule` tuple :func:`_apply_rules` executes.
 
@@ -777,9 +800,23 @@ def _slot_rules(
         "direction_action_class": tokens["action_class"],
         "direction_side": tokens["side"],
         "direction": direction,
+        **_CONSTANT_VALUE_SOURCES,
     }
+    if band_journal_path is not None:
+        values["band_journal_path"] = str(band_journal_path)
     rules: list[Rule] = []
     for slot in manifest.slots:
+        if slot.value not in values:
+            # Only reachable for a slot whose value source needs an argument this call did
+            # not get — today that is `band_journal_path` alone. Named here rather than left
+            # as a `KeyError`: a tenant render that quietly dropped the band journal would
+            # leave `"TBD"` in the policy, and the runtime's named-TBD scan would refuse the
+            # boot with no hint about which flag was missing.
+            raise RenderError(
+                f"slot {slot.rule_key}: this tree declares the value source "
+                f"{slot.value!r} but this render was given no value for it — "
+                f"--{slot.value.replace('_', '-')} is required for {manifest.tree_id}"
+            )
         line = slot.replacement.replace(_PLACEHOLDER, values[slot.value])
         if (
             manifest.direction_mode == "declared"
@@ -1429,6 +1466,7 @@ def render(
     direction: str = "LONG",
     now_ms: int | None = None,
     journal_path: Path | None = None,
+    band_journal_path: Path | None = None,
 ) -> RenderResult:
     """Byte-copy ``source`` to ``out`` and fill exactly the slots ``source``'s manifest declares.
 
@@ -1453,6 +1491,14 @@ def render(
         journal_path: REQUIRED in ``external`` journal mode (the ③ producer's output, which
             must already exist); REFUSED in ``synthetic_bootproof`` mode, where the renderer
             writes the journal itself.
+        band_journal_path: The ③ band probe's ``band.jsonl``, REQUIRED by a tree whose
+            manifest declares a ``band_journal_path`` slot (today: ``cp3-setup-d-long``
+            only — CP-3 band 원천 경로 변경 plan §3.2) and refused by one that does not.
+            ⚠ Unlike ``journal_path`` the file need NOT exist yet: the runner launches the
+            band probe at ``open + one boundary``, which can be after the render, and a
+            render that demanded the file would move that deadline earlier for no gain. An
+            absent journal is band ``None`` at read time, which is the conservative
+            direction (plan §3.3).
 
     Raises:
         RenderError: any refusal — a bad direction, a manifest that refuses to load, a
@@ -1498,6 +1544,30 @@ def render(
             "'synthetic_bootproof', so the renderer writes the journal itself — passing one "
             "would be a second source"
         )
+    declares_band = any(slot.value == "band_journal_path" for slot in manifest.slots)
+    if band_journal_path is None and declares_band:
+        raise RenderError(
+            f"band journal path required: {source.name} declares a band_journal_path slot "
+            "(_runtime.band_source.kind 'producer_journal'), so the band journal the ③ probe "
+            "writes must be named — --band-journal-path is mandatory for this tree"
+        )
+    if band_journal_path is not None:
+        if not declares_band:
+            raise RenderError(
+                f"band journal path refused: {source.name} declares no band_journal_path "
+                "slot — its venue policy carries no _runtime.band_source, so there is "
+                "nowhere for this path to land and a silent no-op would read, to the "
+                "operator who passed it, as a band that was wired"
+            )
+        band_journal_path = band_journal_path.expanduser()
+        band_journal_path = (
+            band_journal_path
+            if band_journal_path.is_absolute()
+            else Path.cwd() / band_journal_path
+        )
+        # NOT `.resolve()` and NOT an existence check (docstring): the probe has not run yet
+        # when the runner renders, so the file is normally absent here and resolving would
+        # follow a symlink the session has not created either.
     out = out.expanduser()
     out = (out if out.is_absolute() else Path.cwd() / out).resolve()
     _refuse_output_inside_repo(out, source)
@@ -1561,6 +1631,7 @@ def render(
             revision=revision,
             direction=direction,
             journal_path=effective_journal_path,
+            band_journal_path=band_journal_path,
         )
         # ---- the first account byte reaches the disk here ----
         _apply_rules(staging, rules)
@@ -1777,6 +1848,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--band-journal-path",
+        type=Path,
+        default=None,
+        help=(
+            "the band journal the ③ probe writes (<producer session dir>/band.jsonl). "
+            "REQUIRED when --source's venue policy declares _runtime.band_source with "
+            "kind 'producer_journal'; REFUSED otherwise. The file need not exist yet — the "
+            "probe runs at open + one boundary, after this render"
+        ),
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help=(
@@ -1821,6 +1903,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             revision=revision,
             direction=args.direction,
             journal_path=args.journal_path,
+            band_journal_path=args.band_journal_path,
         )
     except RenderError as exc:
         print(f"render_paper_config: refused — {exc}", file=sys.stderr)

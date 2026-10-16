@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import pytest
+from tos_runtime.custody.ports import CustodyError, CustodyScopeNotProvisioned
 from tos_runtime.transport.kis_mock.client import (
     KisMockConnectionError,
     KisMockTimeoutError,
@@ -34,8 +35,8 @@ from tos_runtime.transport.kis_mock.token import TokenResponseError, TokenStale
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 from tos_runtime.venue.band_source import (
     VENUE_BAND_OBSERVED_KIND,
-    BandSourceConfig,
     KisBandSourceReader,
+    KisQuoteGetBandSource,
     build_band_client,
 )
 
@@ -70,7 +71,7 @@ def _transport_config(**overrides: Any) -> KisQuoteTransportConfig:
     return KisQuoteTransportConfig(**base)
 
 
-def _band_source(**overrides: Any) -> BandSourceConfig:
+def _band_source(**overrides: Any) -> KisQuoteGetBandSource:
     base: dict[str, Any] = {
         "kind": "kis_quote_get",
         "tr_id": "FHMIF10000000",
@@ -85,7 +86,7 @@ def _band_source(**overrides: Any) -> BandSourceConfig:
         "failure": "unknown",
     }
     base.update(overrides)
-    return BandSourceConfig(**base)
+    return KisQuoteGetBandSource(**base)
 
 
 def _ok_body(
@@ -148,10 +149,21 @@ class _FakeSession:
     double. ``tokens`` is consumed one per read, so a test can hand the reader a REISSUED token
     and watch the continuity id advance. An ``Exception`` in the list is RAISED instead of
     returned — that is how the stale-token path is reached, hence the union element type rather
-    than ``Any`` (which would also let the ``str`` return slip through unchecked)."""
+    than ``Any`` (which would also let the ``str`` return slip through unchecked).
 
-    def __init__(self, tokens: list[str | Exception] | None = None) -> None:
+    ``credentials_error`` is raised from :meth:`app_credentials` instead of yielding — the real
+    session loads the app key/secret out of custody there, so this is how the 2026-10-15 plan
+    §1 B2 leak is reached.
+    """
+
+    def __init__(
+        self,
+        tokens: list[str | Exception] | None = None,
+        *,
+        credentials_error: Exception | None = None,
+    ) -> None:
         self._tokens: list[str | Exception] = list(tokens or ["token-a"])
+        self._credentials_error = credentials_error
 
     def ensure_token_string(self) -> str:
         value = self._tokens.pop(0) if len(self._tokens) > 1 else self._tokens[0]
@@ -161,6 +173,8 @@ class _FakeSession:
 
     @contextmanager
     def app_credentials(self) -> Iterator[_FakeCredentials]:
+        if self._credentials_error is not None:
+            raise self._credentials_error
         yield _FakeCredentials()
 
 
@@ -191,14 +205,16 @@ def _reader(
     responses: list[Any],
     *,
     tick_size: int | None = 2,
-    band_source: BandSourceConfig | None = None,
+    band_source: KisQuoteGetBandSource | None = None,
     trading_date: Any = _TRADING_DATE,
     tokens: list[str | Exception] | None = None,
     sink: _Sink | None = None,
+    credentials_error: Exception | None = None,
 ) -> tuple[KisBandSourceReader, _Sink, _FakeClient]:
     evidence = sink if sink is not None else _Sink()
     client = _FakeClient(responses)
     dates = trading_date if isinstance(trading_date, list) else [trading_date]
+    session = _FakeSession(tokens, credentials_error=credentials_error)
     reader = KisBandSourceReader(
         band_source=band_source if band_source is not None else _band_source(),
         transport_config=_transport_config(),
@@ -207,7 +223,7 @@ def _reader(
         # real I/O. ``monotonic`` needs none: ``MonotonicSource`` is a Protocol and
         # ``_FakeMonotonic`` satisfies it structurally, which mypy checks here.
         client=client,  # type: ignore[arg-type]
-        credential_session=_FakeSession(tokens),  # type: ignore[arg-type]
+        credential_session=session,  # type: ignore[arg-type]
         monotonic=_FakeMonotonic(),
         evidence_sink=evidence,
         trading_date_reader=lambda: dates.pop(0) if len(dates) > 1 else dates[0],
@@ -412,6 +428,51 @@ class TestTimeoutMs:
         row = sink.only()
         assert row["reason"] == "token_transport_error"
         assert "token endpoint" in row["detail"]
+
+
+class TestCustodyFailuresFoldToBandNone:
+    """2026-10-15 plan §1 B2 / §L L1 — the leak this PR closes.
+
+    ``KisCredentialSession.app_credentials`` loads the app key/secret through
+    ``custody.load()``, and :class:`~tos_runtime.custody.ports.CustodyError` was OUTSIDE the
+    exception set :meth:`KisBandSourceReader.read` caught. It therefore escaped through
+    ``snapshot()``/``decide()`` rather than folding to band ``None`` — contradicting band plan
+    2026-10-08 §4.6's "모든 실패는 band None → 커널 UNKNOWN → 송신 0", which is the whole
+    reason the worst case of that wave is "exactly today's behaviour".
+
+    **Reachable, not hypothetical**: the tenant session's custody (``paper-custody``) carries
+    ``read.principal``/``evidence.key``/``replay.params`` and NEITHER ``kis_mock.app_key`` nor
+    ``kis_mock.app_secret``, so a ``kis_quote_get`` boot there raises
+    :class:`~tos_runtime.custody.ports.CustodyScopeNotProvisioned` on the first read (plan §1
+    B2, measured 2026-10-15).
+
+    **Red proof**: delete either ``except CustodyError`` clause and the matching test below
+    ERRORS with the exception escaping ``read()`` instead of returning ``None``.
+    """
+
+    def test_an_unprovisioned_custody_scope_is_a_named_refusal(self) -> None:
+        reader, sink, _ = _reader(
+            [_ok_body()],
+            credentials_error=CustodyScopeNotProvisioned("kis_mock.app_key"),
+        )
+
+        assert reader.read() is None
+        row = sink.only()
+        assert row["reason"] == "custody_error"
+        assert "kis_mock.app_key" in row["detail"]
+
+    def test_a_custody_failure_on_the_TOKEN_step_is_also_folded(self) -> None:
+        """``KisTokenLifecycle._issue_token`` loads the SAME two scopes, so the leak has a
+        twin one step earlier. It gets its own reason token because it is a different call
+        site — the same discipline ``token_transport_error`` already follows."""
+        reader, sink, _ = _reader(
+            [_ok_body()], tokens=[CustodyError("manifest unreadable")]
+        )
+
+        assert reader.read() is None
+        row = sink.only()
+        assert row["reason"] == "token_custody_error"
+        assert "manifest unreadable" in row["detail"]
 
 
 class TestSourceContinuity:

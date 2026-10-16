@@ -90,7 +90,10 @@ _DIFFERS_SHORT_ONLY: dict[str, str] = {
 _DIFFERS_FROM_RESIDENT: dict[str, str] = {
     "venue_constraint_policy.yaml": (
         "max_quantity null -> 10000 (decision 9 (a), 2026-10-08) + tick_size 5 -> 2 "
-        "(mini regulation 시행세칙 제4조의9 제2호, 2026-10-09) + tenant policy_id"
+        "(mini regulation 시행세칙 제4조의9 제2호, 2026-10-09) + tenant policy_id. LONG only, "
+        "2026-10-16: _runtime.price_scale 100 + _runtime.band_source (kind producer_journal) "
+        "-- the band 원천 경로 변경 plan's §4 'LONG tenant 만' switch-on; the resident tree's "
+        "observations are synthetic, so a band there would make every attempt INADMISSIBLE"
     ),
     "critical_input_policy.yaml": (
         "not a copy at all -- the resident file declares the boot-proof fixture's THREE fields, "

@@ -1059,6 +1059,11 @@ def test_manifest_rules_equal_the_legacy_hardcoded_table(direction: str) -> None
         revision=_FAKE_REVISION,
         direction=direction,
         journal_path=journal_path,
+        # The resident tree declares no band source (band plan §5), so its manifest has no
+        # ``band_journal_path`` slot and the argument is ``None`` — which is what keeps this
+        # transition pin a statement about the RESIDENT render after the CP-3 band switch-on
+        # (2026-10-16) rather than a statement that changed with it.
+        band_journal_path=None,
     )
     assert from_manifest == legacy
 

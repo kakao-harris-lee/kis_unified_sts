@@ -1316,7 +1316,7 @@ TENANT_ENVIRONMENT_LABEL=paper \
 바뀌었다 — 계획 `docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md` §3.4·§3.5·§3.6.
 **실제 genesis 세션은 이 절차로 돈다.** §7.2-c 는 이력으로 남긴다.
 
-**무엇이 바뀌었나 — 다섯 가지**(5 번은 band 계획 PR-A, 2026-10-15)**.**
+**무엇이 바뀌었나 — 여섯 가지**(5 번은 band 계획 PR-A, 2026-10-15 · 6 번은 PR-B, 2026-10-16)**.**
 
 1. **저널은 운영자가 만들지 않는다. 생산자가 만든다.** 러너는 ① 생산자 기동(시드)
    → ② 첫 **실제** `tos-cp3-live/…` 줄이 생길 때까지 대기(상한 `FIRST_LINE_TIMEOUT_S`
@@ -1370,6 +1370,24 @@ TENANT_ENVIRONMENT_LABEL=paper \
    **이름**을 본다(`${!name+x}`). 추적을 켠 셸에서 호출해도(`SHELLOPTS=xtrace` 포함) 값이
    로그에 찍히지 않는다는 뜻이고, 거꾸로 디버깅용 추적은 얻을 수 없다는 뜻이기도 하다 —
    읽을 것은 `TENANT_LOG` 다(경로·pid·거부 사유가 다 있고 값은 없다).
+6. **런타임이 그 줄을 읽는다 — LONG 트리만**(band 계획 PR-B, 2026-10-16 · 계획 §3.3·§4).
+   `config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml` 의
+   `_runtime.band_source.kind` 가 `"producer_journal"` 이고, 런타임은 부팅 때
+   `band.jsonl` 의 **마지막 줄 하나**를 읽어 유효 shape 제약의 `price_min`/`price_max`
+   를 채운다. 소켓 0 · 자격증명 0 은 그대로다 — 파일 하나를 열 뿐이다.
+   - 러너가 **매니페스트를 보고** `--band-journal-path` 를 넘긴다. 상주 `paper` 와 SHORT
+     트리는 슬롯이 없어 그 인자를 받지 **않는다**(주면 렌더가 거부한다). 세션 로그의
+     `render: <tree> declares a band_journal_path slot -> …` 줄이 어느 쪽인지 적는다.
+   - 읽기 실패는 전부 **band None + 사유**다(파일 부재 · 파싱 불가 · 어제 날짜 · 다른
+     월물 · 승인 밖 `source_id` · 격자/척도/순서) → 커널 `UNKNOWN` → **송신 0**. 즉
+     최악이 「오늘과 같은 상태」이고, 사유는 `VENUE_BAND_OBSERVED` 행에 남는다
+     (아래 「세션 뒤 — band 를 런타임이 실제로 썼는가」).
+   - ⛔ **앞 줄로 물러나지 않는다.** 마지막 줄이 무효면 그 전 줄이 유효해도 band 는
+     없다 — 「한때 유효했던 band」를 믿지 않기 위해서다.
+   - ⚠ `_runtime` 은 VCP `canonical_digest` 가 덮지 않으므로 **활성화 기록은 그대로**다
+     (실측 2026-10-16: 렌더된 LONG 정책에서 band 블록을 떼고 다시 로드해도 digest 가
+     `ec0ea97d…` 로 같다). 바뀌는 것은 `release.yaml::expected_code_digest` 뿐이고,
+     그것은 PR-B 가 세 파일 모두에서 재도출했다(`fb4ac519…` → `2aa597aa…`).
 
 **⚠ 운영자 단계 — 같은 월물로 두 번째 세션을 돌리면 durable set 을 이어 쓴다.**
 가드(#892)의 **승인된 생산자** 분기에는 「data dir 이 비어 있어야 한다」가 없다 — 비어 있는
@@ -1788,9 +1806,118 @@ sha256) 끝난다. 런타임은 계속 **소켓 0 · 자격증명 0** 이다.
   grep 'band_published\|band_fetch_failed' "$SESSION/producer/band-log.jsonl"
   ```
 
-  ⚠ 런타임이 그 줄을 **읽는** 쪽(`band_source.kind: "producer_journal"`)은 PR-B 다.
-  PR-A 만 머지된 상태에서는 줄이 **쓰이기만** 하고 tenant 정책의 `band_source` 는 여전히
-  null 이다 — 그래서 PR-A 뒤 첫 세션의 `VENUE_BAND_OBSERVED` 행은 아직 없다.
+**세션 뒤 — band 를 런타임이 실제로 썼는가 (band 계획 §3.3·§4 수용 · PR-B, 2026-10-16).**
+
+PR-B 부터 **LONG tenant 트리만** `band_source.kind: "producer_journal"` 을 선언한다
+(상주 `paper` 와 SHORT 는 null — band 계획 §5). 그 트리의 세션에서는 위의 「줄이 쓰였나」
+확인에 더해 **런타임이 그 줄을 읽었는지**를 증거로 확인한다. 상주·SHORT 세션에는
+`VENUE_BAND_OBSERVED` 행이 **아예 없는 것이 정상**이다.
+
+- ⛔ **`BAND ABSENT` 가 찍힌 세션은 여기까지다** — 그 세션의 band 는 UNKNOWN 이고 아래
+  네 확인은 전부 「행 0건」으로 끝난다. 그것 자체가 §4 수용 1 **실패**의 기록이고,
+  판정(ADMISSIBLE/INADMISSIBLE)은 믿지 않는다.
+
+```bash
+# ① 런타임이 band 를 관측했는가 — 성공이면 outcome=OBSERVED 한 행.
+#    실패면 같은 kind 에 outcome=REFUSED 와 **reason** 이 있다(journal_absent ·
+#    trading_date_mismatch · instrument_mismatch · source_id_unapproved ·
+#    off_tick_grid · non_integral_scale · band_not_ordered · line_key_set …).
+sqlite3 -json "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
+  "SELECT json_extract(payload_json,'\$.payload') FROM entries
+     WHERE kind='VENUE_BAND_OBSERVED' ORDER BY seq" | python3 -m json.tool | head -40
+```
+
+- **digest 가 그 줄의 것과 같은가**(§4 수용 1). 행의 `raw_payload_digest` 는 **생산자가
+  본 원 바이트**의 sha256 이고 런타임은 그것을 그대로 싣는다 — 그래서 같아야 하고, 행의
+  `raw_payload_digest_source: "producer"` 가 출처를 적는다. 런타임은 그 바이트를 보지
+  못했으므로 이 확인은 **두 기록의 일치**이지 디지스트 재계산이 아니다.
+
+  ```bash
+  # 기대: EQUAL
+  python3 -c 'import json,sqlite3,sys; \
+   line=json.loads(open(sys.argv[1],encoding="utf-8").read().strip().split("\n")[-1]); \
+   db=sqlite3.connect("file:"+sys.argv[2]+"?mode=ro",uri=True); \
+   rows=[json.loads(r[0])["payload"] for r in db.execute( \
+     "SELECT payload_json FROM entries WHERE kind=? ORDER BY seq",("VENUE_BAND_OBSERVED",))]; \
+   obs=[r for r in rows if r.get("outcome")=="OBSERVED"]; \
+   print("rows:",len(rows),"observed:",len(obs)); \
+   print("EQUAL" if obs and obs[0]["raw_payload_digest"]==line["raw_payload_digest"] \
+         and obs[0]["raw_payload_digest_source"]=="producer" else "FINDING"); \
+   print("line as_of_ms:",line["as_of_ms"],"evidence producer_as_of_ms:", \
+         obs[0]["producer_as_of_ms"] if obs else None)' \
+    "$SESSION/producer/band.jsonl" "$SESSION/data/$INSTRUMENT/evidence.sqlite3"
+  ```
+
+  ⚠ 행의 `as_of_ms` 가 아니라 `producer_as_of_ms` 와 비교한다. 관측의 `as_of_ms` 는
+  **런타임의 단조 시계**(읽기 직전)이고 줄의 것은 생산자의 벽시계라, 두 수는 비교
+  대상이 아니다(계획 §3.3).
+
+- **스냅샷에 band 가 실렸는가**(§4 수용 3). `VENUE_SNAPSHOT_ISSUED` 행에 `band_digest`
+  가 있고 `absent_fields` 에서 세 필드(`critical_input_snapshot_digest` ·
+  `source_continuity_id` · `max_age`)가 **빠져** 있어야 한다. band 가 없는 세션에서는
+  그 셋이 그대로 `absent_fields` 에 남는다 — 그것이 두 상태를 가르는 자리다.
+
+  ```bash
+  sqlite3 -json "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
+    "SELECT json_extract(payload_json,'\$.payload.constraint_generation') AS gen,
+            json_extract(payload_json,'\$.payload.band_digest')           AS band_digest,
+            json_extract(payload_json,'\$.payload.absent_fields')         AS absent
+       FROM entries WHERE kind='VENUE_SNAPSHOT_ISSUED' ORDER BY seq"
+  ```
+
+- ⭐ **그날 소비된 모든 가격이 band 안인가**(§4 수용 2 — 이 세션의 **가장 중요한** 확인).
+  하나라도 밖이면 **band 원천이나 척도가 틀린 것**이고, 그 세션의 ADMISSIBLE/INADMISSIBLE
+  판정을 믿지 않는다. 비교는 `price_min ≤ close_x100 ≤ price_max` 이고, 소비된 봉은
+  위 「세션 뒤 — §3.6 대조」의 `consumed-ids.json` 이 이미 들고 있다.
+
+  ⛔ **가격은 `consumed-ids.json` 에서 나오지 않는다**(2026-10-16 실측): 그 파일은
+  `raw_event_ids` 와 계수만 싣고 **값은 싣지 않는다**(`session_inputs.py` 의 payload —
+  `counts`·`raw_event_ids`·`unpaired_reason*`·`consumed_field_states`·
+  `consumed_value_view`). 그래서 소비된 **id** 와 B1a `fields.jsonl` 의 **값**을 조인한다.
+  값을 들고 있는 유일한 산출물이 B1a 이고, 그것은 §3.6 대조가 이미 만든다.
+
+  ```bash
+  # 기대: outside 0. band 행이 없으면 "SKIPPED (no band)" — 그 세션은 수용 1 실패다.
+  python3 -c 'import json,sqlite3,sys; \
+   ids=set(json.load(open(sys.argv[1],encoding="utf-8"))["raw_event_ids"]); \
+   db=sqlite3.connect("file:"+sys.argv[2]+"?mode=ro",uri=True); \
+   obs=[json.loads(r[0])["payload"] for r in db.execute( \
+     "SELECT payload_json FROM entries WHERE kind=? ORDER BY seq",("VENUE_BAND_OBSERVED",))]; \
+   obs=[r for r in obs if r.get("outcome")=="OBSERVED"]; \
+   print("SKIPPED (no band)") or sys.exit(0) if not obs else None; \
+   lo,hi=obs[0]["price_min"],obs[0]["price_max"]; \
+   rows=[json.loads(l) for l in open(sys.argv[3],encoding="utf-8") if l.strip()]; \
+   vals=[(r["raw_event_id"],r["close_x100"]) for r in rows \
+         if r.get("raw_event_id") in ids and r.get("close_x100") is not None]; \
+   outside=[v for v in vals if not (lo<=int(v[1])<=hi)]; \
+   print("band:",lo,hi,"joined:",len(vals),"of",len(ids),"consumed ids"); \
+   print("outside:",len(outside),outside[:10]); \
+   print("OK" if vals and not outside else "FINDING")' \
+    "$SESSION/b3/consumed-ids.json" "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
+    "$SESSION/b1a/fields.jsonl"
+  ```
+
+  ⚠ **`joined` 가 소비 id 수보다 작으면 그것도 소견이다** — 「밖이 없다」가 아니라
+  「전부 묻지 못했다」이므로 두 수를 **함께** 출력한다. 추출기에 값 계수를 넣는 것은 별도
+  변경이고, 넣기 전까지 이 조인이 수용 2 를 재는 자리다.
+
+  ✅ **이 명령은 돌려 봤다**(2026-10-16, 세 산출물의 실제 모양을 흉내 낸 입력 셋):
+  전부 안 → `outside: 0 … OK` · 하나 밖 → `outside: 1 [('b', 120000)] … FINDING`(어느
+  id 인지까지) · band 행 없음 → `SKIPPED (no band)`. **가운데 경우가 FINDING 을 내는
+  것까지** 확인했다 — 파싱만 되고 판별하지 않는 명령을 런북에 남기지 않기 위해서다.
+
+- **기준가 대 전일 종가**(band 계획 §4.4a 잔여 위험의 **측정**). REAL 원천이 된 덕분에
+  이제 오프라인 대조가 가능하다: 행의 `basis`(=`futs_sdpr` × 100)를 생산자 동결 프레임의
+  **전일 종가**와 맞춰 보고, `symmetric_about_basis` 와 함께 증거 PR 에 적는다. 어긋나면
+  「브로커가 전일 band 를 내줬다」의 첫 실측이다. ⚠ `symmetric_about_basis` 는 1단계
+  **필요조건**이지 1단계 판별이 아니다 — 2·3단계도 기준가 대칭이다.
+
+- 실패한 세션의 사유 읽는 법: `outcome: "REFUSED"` 행의 `reason` 이 어느 절이
+  떨어뜨렸는지 **하나**를 지목한다. `journal_absent`/`journal_empty` 는 프로브가 쓰지
+  못한 것(위 「세션 뒤 — band」로 간다) · `trading_date_mismatch`/`instrument_mismatch`
+  는 세션 dir 재사용(롤 날) · `source_id_unapproved` 는 승인 밖 writer ·
+  `off_tick_grid`/`non_integral_scale`/`band_not_ordered` 는 값 자체 ·
+  `line_key_set`/`line_kind_unknown` 은 줄 모양이다.
 
 ### 7.3 래퍼의 `start` 가 하는 일 (순서가 전부다)
 

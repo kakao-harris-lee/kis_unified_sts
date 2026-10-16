@@ -36,6 +36,10 @@ from tos.venue import (
     OrderShapeFields,
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.venue.band_journal import (
+    ProducerJournalBandReader,
+    ProducerJournalBandSource,
+)
 from tos_runtime.venue.band_source import BandObservation
 from tos_runtime.venue.config import load_venue_constraint_policy
 from tos_runtime.venue.service import (
@@ -45,10 +49,14 @@ from tos_runtime.venue.service import (
 )
 
 from ._documents import (
+    PVL_A05610_BASIS,
+    PVL_A05610_LOWER,
+    PVL_A05610_UPPER,
     PVL_A05611_LOWER,
     PVL_A05611_UPPER,
     SCHEME,
     band_source_runtime_extra,
+    producer_journal_band_source_runtime_extra,
     venue_policy_yaml,
     write_fixture_venue_policy,
 )
@@ -65,6 +73,18 @@ class _FakeReader:
 
     def __call__(self) -> Any:
         return self.value
+
+
+class _Monotonic:
+    """Satisfies ``MonotonicSource`` structurally (it is a Protocol), for the one test class
+    that wires a REAL ``ProducerJournalBandReader``."""
+
+    def __init__(self) -> None:
+        self._now = 1_000
+
+    def now_ms(self) -> int:
+        self._now += 1
+        return self._now
 
 
 class _Reads:
@@ -604,3 +624,117 @@ class TestBandChangeIsANewGeneration:
 
         assert second.constraint_generation == first.constraint_generation + 1
         assert second.source_continuity_id == "boot-1:1"
+
+
+class TestProducerJournalG2ReadSide:
+    """2026-10-15 plan §3.4 G2 ② — the SERVICE half of the read-side trading-date clause.
+
+    ⚠ **This is the "가려진 절" the plan warns about, and the reason the assertion is on the
+    FIRST snapshot.** ``snapshot()`` evaluates its own trading-date bond
+    (:meth:`~tos_runtime.venue.service.VenueConstraintService._enforce_trading_date_bond`)
+    before anything else, so by the SECOND call a stale band is dropped whether or not the
+    reader rejected it. On the first call the held band is still ``None`` when that bond runs,
+    the boot read happens after it, and whatever the reader returns goes straight into the
+    snapshot — so the first snapshot is the only place where deleting the reader's own
+    comparison changes an answer.
+
+    **Measured red proof** (2026-10-16): with ``band_journal.ProducerJournalBandReader``'s
+    ``trading_date`` comparison deleted,
+    :meth:`test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless` FAILS —
+    the first snapshot binds the D-1 line's digest — while the same assertions taken on a
+    SECOND ``snapshot()`` call stay green, which is the plan's point.
+
+    A REAL :class:`~tos_runtime.venue.band_journal.ProducerJournalBandReader` is wired here,
+    not a double: a double would make this an assertion about the test's own ``if``.
+    """
+
+    def _service(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        *,
+        line_trading_date: str,
+    ) -> VenueConstraintService:
+        journal = tmp_path / "band.jsonl"
+        journal.write_text(
+            json.dumps(
+                {
+                    "kind": "cp3-band/1",
+                    "source_id": "tos-cp3-live/0.1.0",
+                    "instrument": _INSTRUMENT,
+                    "trading_date": line_trading_date,
+                    "tr_id": "FHMIF10000000",
+                    "upper": PVL_A05610_UPPER,
+                    "lower": PVL_A05610_LOWER,
+                    "basis": PVL_A05610_BASIS,
+                    "raw_payload_digest": "d" * 64,
+                    "producer_continuity_id": "band-probe/1",
+                    "as_of_ms": 1_760_577_960_000,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        path = write_fixture_venue_policy(
+            tmp_path,
+            venue_policy_yaml(
+                price_min="null",
+                price_max="null",
+                tick_size="2",
+                min_quantity="1",
+                max_quantity="10",
+                runtime_extra=producer_journal_band_source_runtime_extra(
+                    instrument=_INSTRUMENT, band_journal_path=str(journal)
+                ),
+            ),
+        )
+        loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+        assert isinstance(loaded.band_source, ProducerJournalBandSource)
+        reader = ProducerJournalBandReader(
+            band_source=loaded.band_source,
+            monotonic=_Monotonic(),
+            evidence_sink=lambda _kind, _fields: None,
+            trading_date_reader=lambda: _TRADING_DATE,
+            tick_size=loaded.policy.shape_constraints.tick_size,
+        )
+        return VenueConstraintService(
+            loaded_policy=loaded,
+            scheme=SCHEME,
+            session_phase_reader=_FakeReader("REGULAR"),
+            tick_generation_reader=_FakeReader(1),
+            evidence_store=evidence_store,
+            environment_label="test-env",
+            route_fields=InstrumentRouteFields(),
+            broker_capability_profile_version=None,
+            broker_capability_profile_digest=None,
+            activated_member_digest="fixture-activation-digest",
+            band_reader=reader.read,
+            trading_date_reader=_FakeReader(_TRADING_DATE),
+        )
+
+    def test_todays_line_reaches_the_first_snapshot(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """The baseline, without which the refusal below proves only "returns nothing"."""
+        service = self._service(
+            tmp_path, evidence_store, line_trading_date=_TRADING_DATE
+        )
+
+        snapshot = service.snapshot()
+
+        assert snapshot.critical_input_snapshot_digest is not None
+        assert snapshot.max_age == f"trading_date_kst:{_TRADING_DATE}"
+        assert service.shape_constraints.price_max == _UPPER
+
+    def test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """Only the LINE's ``trading_date`` differs from the baseline above."""
+        service = self._service(tmp_path, evidence_store, line_trading_date="20261007")
+
+        snapshot = service.snapshot()
+
+        assert snapshot.critical_input_snapshot_digest is None
+        assert snapshot.source_continuity_id is None
+        assert snapshot.max_age is None
+        assert service.shape_constraints.price_max is None
