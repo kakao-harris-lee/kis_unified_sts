@@ -41,6 +41,8 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 import render_paper_config as rpc  # noqa: E402
 
+from tools.tos_cp3 import bootproof_guard  # noqa: E402
+
 _CONFIG_ROOT = _REPO_ROOT / "config" / "tos_runtime"
 
 #: A fake account, never a real one. Ten digits, the length the guard requires.
@@ -62,6 +64,18 @@ _TREE_IDS = tuple(_TENANT_TREES)
 #: (which pins the four slots that carry them) instead of silently following it.
 _DIRECTION_SOURCES = frozenset(
     {"direction", "direction_action_class", "direction_side"}
+)
+
+#: The trees whose venue policy declares ``_runtime.band_source`` (CP-3 band 원천 경로 변경,
+#: ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §4 "켜는 배포: LONG tenant 만";
+#: band plan 2026-10-08 §5 keeps the resident tree and SHORT null).
+_TREES_WITH_A_BAND_SOURCE = frozenset({"cp3-setup-d-long"})
+
+#: The dotted keys of the three LONG-only slots, in manifest order.
+_BAND_SLOT_KEYS = (
+    "_runtime.band_source.instrument",
+    "_runtime.band_source.band_journal_path",
+    "_runtime.band_source.approved_source_prefixes",
 )
 
 
@@ -88,10 +102,36 @@ def _expected_slots(tree: str) -> tuple[tuple[str, str, str, str], ...]:
     literal; only the two tokens are substituted, and
     :func:`test_the_two_trees_expected_slots_differ_in_exactly_the_direction_and_strategy_rows`
     pins which rows those are.
+
+    **The three band-source rows are LONG-only** (CP-3 band 원천 경로 변경,
+    ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.2 / band plan §5): the
+    SHORT tenant tree and the resident tree keep ``_runtime.band_source`` null, so their
+    policies have no such leaves to fill. :func:`test_only_the_long_tree_declares_band_slots`
+    is what keeps that asymmetry a stated fact rather than an accident of this literal.
     """
     direction, strategy = _TENANT_TREES[tree]
     action_class = {"LONG": "NEW_LONG", "SHORT": "NEW_SHORT"}[direction]
     side = {"LONG": "BUY", "SHORT": "SELL"}[direction]
+    band_slots: tuple[tuple[str, str, str, str], ...] = (
+        (
+            "venue_constraint_policy.yaml",
+            "venue_constraint_policy.yaml::_runtime.band_source.instrument",
+            '    instrument: "TBD"',
+            '    instrument: "{value}"',
+        ),
+        (
+            "venue_constraint_policy.yaml",
+            "venue_constraint_policy.yaml::_runtime.band_source.band_journal_path",
+            '    band_journal_path: "TBD"',
+            '    band_journal_path: "{value}"',
+        ),
+        (
+            "venue_constraint_policy.yaml",
+            "venue_constraint_policy.yaml::_runtime.band_source.approved_source_prefixes",
+            '    approved_source_prefixes: ["TBD"]',
+            '    approved_source_prefixes: ["{value}"]',
+        ),
+    )
     return (
         (
             "venue_constraint_policy.yaml",
@@ -105,6 +145,7 @@ def _expected_slots(tree: str) -> tuple[tuple[str, str, str, str], ...]:
             '  instruments: ["TBD"]',
             '  instruments: ["{value}"]',
         ),
+        *(band_slots if tree == "cp3-setup-d-long" else ()),
         (
             "order_construction_policy.yaml",
             "order_construction_policy.yaml::scope.accounts",
@@ -287,8 +328,23 @@ def _journal(tmp_path: Path) -> Path:
     return path
 
 
+def _band_journal(tmp_path: Path) -> Path:
+    """A stand-in for the ③ band probe's ``band.jsonl``.
+
+    Deliberately NOT created on disk: the probe runs at ``open + one boundary``, which is
+    after the render, so the renderer must accept a path that does not exist yet (plan §3.2).
+    A fixture that created the file would hide a renderer that had grown an existence check.
+    """
+    return tmp_path / "producer" / "band.jsonl"
+
+
 def _render(
-    source: Path, out: Path, *, direction: str, journal_path: Path
+    source: Path,
+    out: Path,
+    *,
+    direction: str,
+    journal_path: Path,
+    band_journal_path: Path | None = None,
 ) -> rpc.RenderResult:
     return rpc.render(
         source,
@@ -298,7 +354,13 @@ def _render(
         revision=_FAKE_REVISION,
         direction=direction,
         journal_path=journal_path,
+        band_journal_path=band_journal_path,
     )
+
+
+def _band_journal_for(tree: str, tmp_path: Path) -> Path | None:
+    """The band journal argument this tree's manifest requires, or ``None``."""
+    return _band_journal(tmp_path) if tree in _TREES_WITH_A_BAND_SOURCE else None
 
 
 def _designated_paths() -> tuple[Path, ...]:
@@ -337,7 +399,13 @@ def rendered(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     out_dirs: dict[str, Any] = {"designated_before": before}
     for tree, (direction, _strategy) in _TENANT_TREES.items():
         out = base / f"out-{tree}"
-        _render(_tree(tree), out, direction=direction, journal_path=journal)
+        _render(
+            _tree(tree),
+            out,
+            direction=direction,
+            journal_path=journal,
+            band_journal_path=_band_journal_for(tree, base),
+        )
         out_dirs[tree] = out
     return out_dirs
 
@@ -372,8 +440,17 @@ def test_the_two_trees_expected_slots_differ_in_exactly_the_direction_and_strate
 ):
     """:func:`_expected_slots` substitutes two tokens into one literal shape; this says which
     rows those tokens reach, so "the two trees' slot tables are the same table" is checkable
-    rather than assumed. Four direction rows + three strategy-file rows = seven."""
-    long_slots = _expected_slots("cp3-setup-d-long")
+    rather than assumed. Four direction rows + three strategy-file rows = seven.
+
+    The LONG tree's three band-source rows are set aside first — they are not a per-tree
+    SPELLING of a shared row, they are rows the SHORT tree does not have at all, and
+    :func:`test_only_the_long_tree_declares_band_slots` is where that is pinned.
+    """
+    long_slots = tuple(
+        row
+        for row in _expected_slots("cp3-setup-d-long")
+        if "band_source" not in row[1]
+    )
     short_slots = _expected_slots("cp3-setup-d-short")
     assert len(long_slots) == len(short_slots) == 20
     differing = {
@@ -514,8 +591,25 @@ def test_red_proof_the_other_trees_manifest_is_refused(
     for slot in manifest["slots"]:
         if slot["file"] == other_strategy:
             slot["file"] = own_strategy
+    # Same reason as the strategy-file adaptation above, for the same kind of difference: the
+    # LONG manifest's three band-source slots anchor on lines a tree with no band source does
+    # not have, so leaving them in makes the render refuse at
+    # `_runtime.band_source.instrument` — "matched 0 times", the right words for the WRONG
+    # slot, which MASKS the direction clause this test is about. Measured 2026-10-16.
+    if tree not in _TREES_WITH_A_BAND_SOURCE:
+        manifest["slots"] = [
+            slot for slot in manifest["slots"] if "band_source" not in slot["key"]
+        ]
     mutated = _copy_tree(tree, tmp_path / tree)
     _write_manifest(mutated, manifest)
+    # Follow the MUTATED manifest, not either tree: the renderer requires the flag exactly
+    # when a `band_journal_path` slot is present and refuses it otherwise, and that refusal
+    # would be yet another clause masking the one under test.
+    band_arg = (
+        _band_journal(tmp_path)
+        if any("band_source" in slot["key"] for slot in manifest["slots"])
+        else None
+    )
 
     loaded = rpc.load_manifest(mutated)  # 1
     assert loaded.direction_value == other_direction
@@ -527,6 +621,7 @@ def test_red_proof_the_other_trees_manifest_is_refused(
         revision=_FAKE_REVISION,
         direction=other_direction,
         journal_path=_journal(tmp_path),
+        band_journal_path=band_arg,
     )
 
     first_direction_slot = next(
@@ -538,6 +633,7 @@ def test_red_proof_the_other_trees_manifest_is_refused(
             tmp_path / "out",
             direction=other_direction,
             journal_path=_journal(tmp_path),
+            band_journal_path=band_arg,
         )
     message = str(excinfo.value)
     assert "matched 0 times" in message, message
@@ -586,6 +682,7 @@ def test_red_proof_a_tree_whose_construction_carries_the_other_direction_is_refu
             tmp_path / "out",
             direction=direction,
             journal_path=_journal(tmp_path),
+            band_journal_path=_band_journal_for(tree, tmp_path),
         )
     message = str(excinfo.value)
     assert "matched 0 times" in message, message
@@ -692,7 +789,11 @@ def test_red_proof_a_literal_account_in_r2_survives_render_and_loader_and_only_t
 
     out = tmp_path / "out"
     _render(
-        mutated, out, direction=_TENANT_TREES[tree][0], journal_path=_journal(tmp_path)
+        mutated,
+        out,
+        direction=_TENANT_TREES[tree][0],
+        journal_path=_journal(tmp_path),
+        band_journal_path=_band_journal_for(tree, tmp_path),
     )  # 1
 
     document = yaml.safe_load((out / strategy).read_text(encoding="utf-8"))
@@ -725,7 +826,11 @@ def test_red_proof_reverting_an_alias_to_tbd_renders_but_the_loader_refuses(
 
     out = tmp_path / "out"
     _render(
-        mutated, out, direction=_TENANT_TREES[tree][0], journal_path=_journal(tmp_path)
+        mutated,
+        out,
+        direction=_TENANT_TREES[tree][0],
+        journal_path=_journal(tmp_path),
+        band_journal_path=_band_journal_for(tree, tmp_path),
     )
     assert (out / strategy).is_file()
 
@@ -983,3 +1088,176 @@ def test_this_suite_creates_no_designated_tenant_directory(
         assert not any(
             path == out or path in out.parents for path in _designated_paths()
         ), out
+
+
+# ---------------------------------------------------------------------------
+# The band source — CP-3 band 원천 경로 변경 §3.2 / §3.4 C1
+# ---------------------------------------------------------------------------
+
+
+def _rendered_band_source(rendered: dict[str, Any], tree: str) -> dict[str, Any]:
+    document = yaml.safe_load(
+        (rendered[tree] / "venue_constraint_policy.yaml").read_text(encoding="utf-8")
+    )
+    band_source = document["_runtime"]["band_source"]
+    assert isinstance(band_source, dict)
+    return band_source
+
+
+def test_only_the_long_tree_declares_band_slots() -> None:
+    """Plan §4 "켜는 배포: LONG tenant 만" / band plan §5, read off the expected-slot tables.
+
+    Stated as its own assertion rather than left implicit in
+    :func:`test_the_two_trees_expected_slots_differ_in_exactly_the_direction_and_strategy_rows`,
+    which sets these rows aside: a fact that is only ever subtracted is never checked.
+    """
+    long_band = [
+        key.split("::", 1)[1]
+        for _file, key, _anchor, _replacement in _expected_slots("cp3-setup-d-long")
+        if "band_source" in key
+    ]
+    short_band = [
+        key
+        for _file, key, _anchor, _replacement in _expected_slots("cp3-setup-d-short")
+        if "band_source" in key
+    ]
+
+    assert tuple(long_band) == _BAND_SLOT_KEYS
+    assert short_band == []
+    assert _TREES_WITH_A_BAND_SOURCE == {"cp3-setup-d-long"}
+
+
+@pytest.mark.parametrize("tree", _TREE_IDS)
+def test_the_committed_tree_matches_its_declared_band_posture(tree: str) -> None:
+    """The MANIFEST and the POLICY must agree about whether this tree has a band source.
+
+    Two documents, one fact. A tree whose policy declared ``_runtime.band_source`` while its
+    manifest had no slots for it would ship ``"TBD"`` into the rendered policy and the
+    runtime's named-TBD scan would refuse the boot; the mirror (slots with no block) refuses
+    at "slot target missing". Both are late and neither says "these two files disagree".
+    """
+    document = yaml.safe_load(
+        (_tree(tree) / "venue_constraint_policy.yaml").read_text(encoding="utf-8")
+    )
+    declares = document["_runtime"].get("band_source") is not None
+    manifest = rpc.load_manifest(_tree(tree))
+    has_slots = any("band_source" in slot.key for slot in manifest.slots)
+
+    assert declares == has_slots == (tree in _TREES_WITH_A_BAND_SOURCE)
+    # `_runtime.price_scale` travels with the block: the loader requires it only when a source
+    # is declared (band plan §4.1's 재리뷰 MEDIUM — requiring it always would ABORT the
+    # resident 08:45 session).
+    assert ("price_scale" in document["_runtime"]) == declares
+
+
+def test_the_rendered_long_policy_carries_the_band_source(
+    rendered: dict[str, Any],
+) -> None:
+    """Plan §3.2/§3.3 — the three slots land, and the rest of the block is the committed one."""
+    band_source = _rendered_band_source(rendered, "cp3-setup-d-long")
+
+    assert band_source["kind"] == "producer_journal"
+    assert band_source["instrument"] == _FAKE_INSTRUMENT
+    assert band_source["price_scale"] == 100
+    assert band_source["bound"] == "trading_date_kst"
+    assert band_source["read_on"] == ["boot", "phase_change"]
+    assert band_source["failure"] == "unknown"
+    assert band_source["band_journal_path"].endswith("/producer/band.jsonl")
+    assert "TBD" not in _leaf_values(band_source)
+
+
+def test_the_rendered_approved_prefixes_equal_the_guards_own_constant(
+    rendered: dict[str, Any],
+) -> None:
+    """**Plan §3.4 C1's "렌더 결과 == 그 상수" pin.**
+
+    The runtime may not import ``tools`` (firewall R1), so the approved-producer allowlist
+    cannot live in both places. It lives in ``bootproof_guard``; the renderer copies it in.
+    This assertion is the whole of what keeps the copy from drifting — without it the rendered
+    policy would be a SECOND list, and the day an operator approved a new producer only one of
+    the two would learn about it.
+    """
+    band_source = _rendered_band_source(rendered, "cp3-setup-d-long")
+
+    assert band_source["approved_source_prefixes"] == list(
+        bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES
+    )
+
+
+def test_red_proof_an_unapproved_source_id_is_what_the_rendered_list_rejects(
+    rendered: dict[str, Any],
+) -> None:
+    """The C1 rule stated as the line it refuses, varying ONLY ``source_id``.
+
+    The runtime's own read-side clause is unit-tested in
+    ``tos/runtime/tests/venue/test_band_journal.py::TestC1SourcePrefix``; what this adds is
+    that the list the RENDERED policy hands that clause really does separate the two — so the
+    two halves cannot pass while pointing at different lists. Spelled with
+    ``bootproof_guard``'s own matcher, because the delimiter rule is the part a reimplementation
+    gets wrong.
+    """
+    prefixes = _rendered_band_source(rendered, "cp3-setup-d-long")[
+        "approved_source_prefixes"
+    ]
+
+    approved = "tos-cp3-live/0.1.0"
+    unapproved = "tos-paper-bootproof-render/0.1.0"
+
+    assert any(bootproof_guard._matches_prefix(approved, prefix) for prefix in prefixes)
+    assert not any(
+        bootproof_guard._matches_prefix(unapproved, prefix) for prefix in prefixes
+    )
+
+
+def test_a_long_render_without_a_band_journal_path_is_refused(tmp_path: Path) -> None:
+    """Fail-closed, like ``--journal-path`` (design §2.4). Rendering the LONG tree without one
+    would leave ``band_journal_path: "TBD"`` in the policy — the runtime refuses that at boot,
+    but hours later and with no mention of the missing flag."""
+    with pytest.raises(rpc.RenderError) as excinfo:
+        _render(
+            _tree("cp3-setup-d-long"),
+            tmp_path / "out",
+            direction="LONG",
+            journal_path=_journal(tmp_path),
+        )
+
+    assert "--band-journal-path" in str(excinfo.value)
+
+
+def test_a_short_render_WITH_a_band_journal_path_is_refused(tmp_path: Path) -> None:
+    """The mirror. The SHORT tree has no band slot, so the path would land nowhere — and a
+    silent no-op reads, to the operator who passed it, as a band that was wired."""
+    with pytest.raises(rpc.RenderError) as excinfo:
+        _render(
+            _tree("cp3-setup-d-short"),
+            tmp_path / "out",
+            direction="SHORT",
+            journal_path=_journal(tmp_path),
+            band_journal_path=_band_journal(tmp_path),
+        )
+
+    assert "declares no band_journal_path slot" in str(excinfo.value)
+
+
+def test_the_band_journal_need_not_exist_at_render_time(tmp_path: Path) -> None:
+    """Plan §3.2/§3.3 — the probe runs at ``open + one boundary``, AFTER the render.
+
+    ``--journal-path`` requires an existing file (the price journal's first line is what the
+    runner waited for); this one must not, or the band read's deadline would move earlier for
+    no gain. An absent journal is band ``None`` at read time, the conservative direction.
+    """
+    absent = _band_journal(tmp_path)
+    assert not absent.exists()
+
+    result = _render(
+        _tree("cp3-setup-d-long"),
+        tmp_path / "out",
+        direction="LONG",
+        journal_path=_journal(tmp_path),
+        band_journal_path=absent,
+    )
+
+    document = yaml.safe_load(
+        (result.out / "venue_constraint_policy.yaml").read_text(encoding="utf-8")
+    )
+    assert document["_runtime"]["band_source"]["band_journal_path"] == str(absent)

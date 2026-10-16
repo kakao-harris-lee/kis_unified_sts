@@ -1002,6 +1002,22 @@ log "data parent mode $PARENT_MODE"
 # --direction is COMPARED with the tree's own value, never substituted) and
 # journal.mode "external" (so --journal-path is required and the renderer writes
 # no journal of its own) — plan §2.3 / §2.4.
+#
+# `--band-journal-path` (band plan PR-B, docs/plans/2026-10-15-tos-cp3-band-via-
+# producer-plan.md §3.2) is REQUIRED by a tree whose venue policy declares
+# `_runtime.band_source` and REFUSED by one that does not. The runner asks the
+# MANIFEST which it is rather than carrying "LONG has a band" as a literal: the
+# day the operator turns the SHORT tree on, that is a config edit and this line
+# must not have to change with it. The path is the band probe's own output
+# (step 8c), and it need not exist — a session where the probe never wrote is
+# `BAND ABSENT`, which the runtime folds to UNKNOWN.
+BAND_RENDER_ARGS=()
+if grep -q 'value: "band_journal_path"' "$TREE_DIR/RENDER.yaml"; then
+  BAND_RENDER_ARGS=(--band-journal-path "$BAND_JOURNAL")
+  log "render: $TENANT_TREE declares a band_journal_path slot -> $BAND_JOURNAL"
+else
+  log "render: $TENANT_TREE declares no band source (band stays off for this tree)"
+fi
 log "=== RENDER tree=$TENANT_TREE direction=$TENANT_DIRECTION out=$TENANT_RENDER_OUT"
 RENDER_LOG=$("$PY" scripts/tos/render_paper_config.py \
   --source "$TREE_DIR" \
@@ -1009,6 +1025,7 @@ RENDER_LOG=$("$PY" scripts/tos/render_paper_config.py \
   --env-file "$TENANT_ENV_FILE" \
   --instrument "$INSTRUMENT" \
   --direction "$TENANT_DIRECTION" \
+  "${BAND_RENDER_ARGS[@]}" \
   --journal-path "$TENANT_JOURNAL" 2>&1)
 render_rc=$?
 printf '%s\n' "$RENDER_LOG" >>"$TENANT_LOG"

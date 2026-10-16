@@ -234,3 +234,51 @@ _runtime:
   instrument_class: "krx-index-futures"
   quantity_unit: "CONTRACTS"
   currency: "KRW"
+  # ×100 정수 가격 척도. 헤더 주석이 아니라 **기계가 읽는 키**인 이유는 band 계획
+  # `docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md` §4.1 의 「가격 척도의 비교
+  # 대상」이다 — band 원천의 `price_scale` 과 ③ 생산자 계약의 가격 척도가 **둘 다 이 키와
+  # 같아야** 부팅한다. 생산자 쪽 값: `tools/tos_cp3/produce_fields.py::PRICE_SCALE = 100`.
+  # ⚠ 이 키는 `band_source` 가 non-null 인 배포에서만 요구된다(같은 절의 재리뷰 MEDIUM) —
+  # 상주 `paper` 와 SHORT 트리는 band 가 null 이므로 이 키가 없다.
+  price_scale: 100
+  # band 원천 — CP-3 band 원천 경로 변경 계획
+  # `docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md` §3.3 (운영자 결정 2026-10-15:
+  # 켜기 경로 = ③ 생산자 경유). band 계획 §5 대로 **LONG tenant 트리에서만** 켠다 —
+  # 상주 `paper`(관측이 합성값이라 켜면 전부 INADMISSIBLE)와 SHORT 는 null 이다.
+  #
+  # ⚠ `kind: kis_quote_get`(런타임이 직접 GET)은 이 트리에서 **쓸 수 없다**(계획 §1 실측):
+  # band reader 팩토리가 host seal 을 **활성 주문 scope 의 INSTANCE** 에서 읽는데 이 트리의
+  # 활성 scope 는 `SYNTHETIC_FUTURES_ORDER` 로 INSTANCE 가 없고(B1), 토큰은 이 세션이
+  # 제공하지 않는 custody scope 에서 와야 한다(B2). `producer_journal` 은 파일 하나를
+  # 열므로 런타임은 **소켓 0 · 자격증명 0** 을 유지한다(③ 계획 §3.4).
+  #
+  # APPROVAL PROVENANCE:
+  #   * `price_scale: 100` — 위 `_runtime.price_scale` 과 같은 출처(생산자 `PRICE_SCALE`).
+  #     로더가 두 값의 불일치를 거부한다.
+  #   * `bound`/`read_on`/`failure` — 런타임이 구현한 어휘 전체이고 다른 값은 로더가
+  #     거부한다(band 계획 §4.1). `read_on` 둘은 부팅과 phase 변화이며, 이 트리의 캘린더는
+  #     `CONTINUOUS 08:45–15:45` 한 phase 라 **실질적으로 부팅 1회**다(계획 §3.3 ⚠).
+  #   * `instrument` — 렌더 슬롯. 러너가 한 번 계산한 월물이 construction·marketfeed·
+  #     strategy 와 **같은 값**으로 들어온다. 로더가 `scope.instruments` 유일 원소와
+  #     대조한다(band 계획 §4.4b).
+  #   * `band_journal_path` — 렌더 슬롯. 정책이 아니라 **배포 값**이다(계획 §3.2):
+  #     러너 env `TENANT_PRODUCER_SESSION_DIR` 아래의 `band.jsonl` 이고, 그 basename 은
+  #     `tools/tos_cp3/live_producer/band_line.py::BAND_JOURNAL_NAME` 이 소유한다.
+  #     이름이 `journal_path` 가 **아닌** 이유는 `marketfeed.yaml::journal_path`(가격
+  #     저널)와 겹치지 않게 하기 위함이다(계획 §3.2 리뷰 LOW-4).
+  #   * `approved_source_prefixes` — 렌더 슬롯이고 **값의 출처는 코드 상수**
+  #     `tools/tos_cp3/bootproof_guard.py::APPROVED_REAL_PRODUCER_PREFIXES` 다. 런타임은
+  #     방화벽 R1 때문에 `tools` 를 import 할 수 없으므로 렌더러가 그 상수를 값으로 써
+  #     넣고, 「렌더 결과 == 그 상수」를 테스트가 고정한다(계획 §3.4 C1). 목록은 여전히
+  #     하나다. ⚠ C1 은 **가드가 아니라 설정 일관성 규칙**이다 — 오늘 이 파일을 쓰는 도구는
+  #     하나뿐이고 손으로 쓴 줄은 접두를 베낄 수 있어 막는 구체적 fail-open 입력을 쓸 수
+  #     없다. 어긋난 줄이 운영 오류의 신호라서 거부할 뿐이다.
+  band_source:
+    kind: "producer_journal"
+    instrument: "TBD"
+    price_scale: 100
+    bound: "trading_date_kst"
+    read_on: ["boot", "phase_change"]
+    failure: "unknown"
+    band_journal_path: "TBD"
+    approved_source_prefixes: ["TBD"]
