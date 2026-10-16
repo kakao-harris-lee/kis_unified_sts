@@ -17,12 +17,17 @@ split):
   admissibility attempt), with every ``result`` coming exclusively from the
   kernel's own ``tos.egressgw.construction.fold_venue_admissibility``.
 * :mod:`tos_runtime.venue.band_source` — the CP-3 band 원천 웨이브 addition
-  (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.2): reads the
-  broker price band the active policy's own ``_runtime.band_source`` declares,
-  through the ``kis_quote`` transport's EXISTING host seal and token
-  lifecycle. No admissibility judgement either — it produces a validated
-  observation or ``None``, and the service folds it into the effective shape
-  constraints.
+  (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.2): the
+  shared band record/validation set, plus the ``kis_quote_get`` kind, which
+  reads the broker price band through the ``kis_quote`` transport's EXISTING
+  host seal and token lifecycle. No admissibility judgement either — it
+  produces a validated observation or ``None``, and the service folds it into
+  the effective shape constraints.
+* :mod:`tos_runtime.venue.band_journal` — the ``producer_journal`` kind
+  (``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3): the same
+  observation, read from the LAST line of the ③ producer's band journal
+  instead of from a GET this process makes. The CP-3 LONG tenant tree enables
+  this kind; the runtime keeps 소켓 0 · 자격증명 0.
 
 Referenced design: ADR-002-019 §5/§8/§14, ADR-002-020 §5.2/§9.
 
@@ -43,12 +48,20 @@ from tos_runtime.venue.activation import (
     load_activation_members,
     require_member_activated,
 )
+from tos_runtime.venue.band_journal import (
+    BAND_JOURNAL_LINE_KEYS,
+    BAND_JOURNAL_LINE_KIND,
+    BAND_SOURCE_KIND_PRODUCER_JOURNAL,
+    ProducerJournalBandReader,
+    ProducerJournalBandSource,
+)
 from tos_runtime.venue.band_source import (
     VENUE_BAND_OBSERVED_KIND,
     BandObservation,
     BandReader,
     BandSourceConfig,
     KisBandSourceReader,
+    KisQuoteGetBandSource,
     band_source_digest,
     build_band_client,
 )
@@ -78,8 +91,15 @@ __all__ = [
     "BandReader",
     "BandSourceConfig",
     "KisBandSourceReader",
+    "KisQuoteGetBandSource",
     "band_source_digest",
     "build_band_client",
+    # band_journal
+    "BAND_JOURNAL_LINE_KEYS",
+    "BAND_JOURNAL_LINE_KIND",
+    "BAND_SOURCE_KIND_PRODUCER_JOURNAL",
+    "ProducerJournalBandReader",
+    "ProducerJournalBandSource",
     # config
     "VENUE_POLICY_CONFIG_NAME",
     "ORDER_CONSTRUCTION_POLICY_CONFIG_NAME",

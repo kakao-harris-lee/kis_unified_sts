@@ -303,7 +303,9 @@ class TestDeclaredVocabulary:
                 )
             )
 
-        assert "is not 'kis_quote_get'" in str(excinfo.value)
+        assert "is not one of ['kis_quote_get', 'producer_journal']" in str(
+            excinfo.value
+        )
 
     @pytest.mark.parametrize(
         "value", ['"VTTO1001U"', '"FHMIF1000000"', '"fhmif10000000"']

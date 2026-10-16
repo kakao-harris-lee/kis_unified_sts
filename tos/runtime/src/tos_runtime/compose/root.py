@@ -101,7 +101,7 @@ from tos_runtime.compose._types import (
     RiskStateConfigError,
 )
 from tos_runtime.compose._venue_wiring import (
-    build_kis_band_reader_factory,
+    build_band_reader_factory,
     build_venue_service,
 )
 from tos_runtime.compose._wiring import (
@@ -307,10 +307,12 @@ def compose_paper_runtime(
         egress_coordinates=boot.egress_coordinates,
         transport_kind=transport_kind,
         calendar_config=calendar_config,
-        # Built unconditionally, CALLED only when the policy declares a band source (plan §5:
-        # no shipped tree does today, so this factory is never invoked on any real boot path
-        # in this wave — building it costs nothing and keeps the enabling step a config edit).
-        band_reader_factory=build_kis_band_reader_factory(
+        # Built unconditionally, CALLED only when the policy declares a band source, and then
+        # dispatched on its `kind` (2026-10-15 plan §3.3). The resident `paper` tree and the
+        # SHORT tenant tree declare none (band plan §5); the LONG tenant tree declares
+        # `producer_journal`, whose per-kind factory needs neither the host seal nor the
+        # credential cell — so building both here still costs nothing on any boot path.
+        band_reader_factory=build_band_reader_factory(
             config_dir=config_dir,
             broker_scopes=boot.broker_scopes,
             monotonic=boot.infra.monotonic_source,

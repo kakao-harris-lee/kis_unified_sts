@@ -34,8 +34,8 @@ from tos_runtime.transport.kis_mock.token import TokenResponseError, TokenStale
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 from tos_runtime.venue.band_source import (
     VENUE_BAND_OBSERVED_KIND,
-    BandSourceConfig,
     KisBandSourceReader,
+    KisQuoteGetBandSource,
     build_band_client,
 )
 
@@ -70,7 +70,7 @@ def _transport_config(**overrides: Any) -> KisQuoteTransportConfig:
     return KisQuoteTransportConfig(**base)
 
 
-def _band_source(**overrides: Any) -> BandSourceConfig:
+def _band_source(**overrides: Any) -> KisQuoteGetBandSource:
     base: dict[str, Any] = {
         "kind": "kis_quote_get",
         "tr_id": "FHMIF10000000",
@@ -85,7 +85,7 @@ def _band_source(**overrides: Any) -> BandSourceConfig:
         "failure": "unknown",
     }
     base.update(overrides)
-    return BandSourceConfig(**base)
+    return KisQuoteGetBandSource(**base)
 
 
 def _ok_body(
@@ -191,7 +191,7 @@ def _reader(
     responses: list[Any],
     *,
     tick_size: int | None = 2,
-    band_source: BandSourceConfig | None = None,
+    band_source: KisQuoteGetBandSource | None = None,
     trading_date: Any = _TRADING_DATE,
     tokens: list[str | Exception] | None = None,
     sink: _Sink | None = None,
