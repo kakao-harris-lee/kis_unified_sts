@@ -771,7 +771,7 @@
 #     4. `bb8b310a`… 뒤 — 88725780… → **fb4ac519…**  (재리뷰 LOW 둘 · origin/main 머지 뒤)
 #
 #   ⚠ **재도출 (CP-3 band 생산자 경유 PR-B, 2026-10-16)**: `fb4ac519…` →
-#   **`2aa597aa…`**. 브랜치 feat/cp3-band-runtime-on · 계획
+#   **`bb1e9c93…`**. 브랜치 feat/cp3-band-runtime-on · 계획
 #   `docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md` §4. 런타임 소스 여섯이
 #   바뀌었다 — `venue/band_journal.py`(신규, `producer_journal` 리더) ·
 #   `venue/band_source.py`(kind 별 config 분리 · G1 검증 셋을 `validate_band_values`
@@ -784,7 +784,7 @@
 #   배포(LONG tenant 트리)만 쓴다. (2) `KisBandSourceReader.read()` 가 `CustodyError` 를
 #   잡아 band `None` + 사유로 접는다(전에는 `snapshot()`/`decide()` 로 새어 나갔다 —
 #   계획 §1 B2 / §L L1). 끈 배포(상주 `paper` · SHORT)의 증거 행은 바이트 동일하다.
-#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 2aa597aa…).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 bb1e9c93…).
 #   이전 값 fb4ac519d55df1062b10653b01fcceeb56cb044090b7a4b25ae90421c945187d 는
 #   PR #890 재리뷰 측정치. `expected_dependency_set_digest` 는 이번에도 불변 —
 #   같은 배포 호스트 루트 `.venv`(python 3.12.12 / sqlite 3.45.1) 출력이 커밋된 값과
@@ -812,7 +812,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "2aa597aa9a5773a2533a1b991cd3f340a9d9e70759919e2aba168e3748038b7e"
+expected_code_digest: "bb1e9c935f935f6f701791c6552b37ec1bd58bf75a874e5a227a50327c75fa2b"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

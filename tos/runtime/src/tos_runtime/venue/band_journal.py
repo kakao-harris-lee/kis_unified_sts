@@ -235,65 +235,72 @@ class ProducerJournalBandReader:
 
     # -- validation ----------------------------------------------------------
 
-    def _validate(
-        self, line: dict[str, Any], *, trading_date: str, as_of_ms: int
-    ) -> BandObservation | None:
-        """The read-side clauses, then band plan §4.2's shared validation set.
+    def _line_refusal(
+        self, line: dict[str, Any], *, trading_date: str
+    ) -> BandRefusal | None:
+        """The READ-SIDE clauses: why this line is not a usable band here, or ``None``.
 
         Order is deliberate: SHAPE first (``kind``, key set), then the three bonds that are
-        about THIS session (contract, trading date, writer), then the numeric set. A refusal
-        past the shape clauses names a line that is well-formed and merely unusable.
+        about THIS session (contract, trading date, writer), then the one type check the
+        evidence row depends on. A refusal past the shape clauses names a line that is
+        well-formed and merely unusable here.
+
+        Split from :meth:`_validate` at that seam — read-side clauses here, the shared numeric
+        set and the record there — rather than registered as a size-budget exception:
+        ``config/tos_size_budget.yaml``'s own header calls registration "면허가 아니라
+        가시성", which is the right stance for inherited code and the wrong one for code
+        written this week.
         """
         kind = line.get("kind")
         if kind != BAND_JOURNAL_LINE_KIND:
-            self._refuse("line_kind_unknown", detail=f"kind={kind!r}")
-            return None
+            return BandRefusal("line_kind_unknown", f"kind={kind!r}")
         if set(line) != BAND_JOURNAL_LINE_KEYS:
             missing = sorted(BAND_JOURNAL_LINE_KEYS - set(line))
             extra = sorted(set(line) - BAND_JOURNAL_LINE_KEYS)
-            self._refuse("line_key_set", detail=f"missing={missing} unexpected={extra}")
-            return None
+            return BandRefusal("line_key_set", f"missing={missing} unexpected={extra}")
         # G3 (plan §3.4) — the line's contract against the policy's. The loader already bound
         # `band_source.instrument` to `scope.instruments`' sole element, so this is the LINE
         # against the whole configuration, not one config key against another.
         if line["instrument"] != self._band_source.instrument:
-            self._refuse(
+            return BandRefusal(
                 "instrument_mismatch",
-                detail=(
-                    f"line={line['instrument']!r} "
-                    f"policy={self._band_source.instrument!r}"
-                ),
+                f"line={line['instrument']!r} "
+                f"policy={self._band_source.instrument!r}",
             )
-            return None
         # G2 read side (plan §3.4) — the line's own stamp against this runtime's trading date.
         if line["trading_date"] != trading_date:
-            self._refuse(
+            return BandRefusal(
                 "trading_date_mismatch",
-                detail=f"line={line['trading_date']!r} now={trading_date!r}",
+                f"line={line['trading_date']!r} now={trading_date!r}",
             )
-            return None
         # C1 (plan §3.4) — a config-consistency rule, not a guard.
         source_id = line["source_id"]
         if not isinstance(source_id, str) or not any(
             _matches_prefix(source_id, prefix)
             for prefix in self._band_source.approved_source_prefixes
         ):
-            self._refuse(
+            return BandRefusal(
                 "source_id_unapproved",
-                detail=(
-                    f"source_id={source_id!r} approved="
-                    f"{list(self._band_source.approved_source_prefixes)!r}"
-                ),
+                f"source_id={source_id!r} approved="
+                f"{list(self._band_source.approved_source_prefixes)!r}",
             )
-            return None
         producer_as_of_ms = line["as_of_ms"]
         if isinstance(producer_as_of_ms, bool) or not isinstance(
             producer_as_of_ms, int
         ):
-            self._refuse(
-                "producer_as_of_ms_not_an_int", detail=f"{producer_as_of_ms!r}"
-            )
+            return BandRefusal("producer_as_of_ms_not_an_int", f"{producer_as_of_ms!r}")
+        return None
+
+    def _validate(
+        self, line: dict[str, Any], *, trading_date: str, as_of_ms: int
+    ) -> BandObservation | None:
+        """:meth:`_line_refusal`'s clauses, then band plan §4.2's shared validation set."""
+        refusal = self._line_refusal(line, trading_date=trading_date)
+        if refusal is not None:
+            self._refuse(refusal.reason, detail=refusal.detail)
             return None
+        source_id = line["source_id"]
+        producer_as_of_ms = line["as_of_ms"]
         outcome = validate_band_values(
             lower_raw=line["lower"],
             upper_raw=line["upper"],
@@ -310,9 +317,24 @@ class ProducerJournalBandReader:
             instrument=self._band_source.instrument,
             price_min=outcome.price_min,
             price_max=outcome.price_max,
-            # The LINE's stamp, carried through unchanged (plan §3.3, review MEDIUM-1):
-            # re-stamping it with `trading_date_now()` would make the service's own
-            # trading-date bond unable to ever fire on a stale line.
+            # The LINE's stamp, carried through unchanged (plan §3.3, review MEDIUM-1).
+            #
+            # ⚠ **Past the G2 clause above these two values are EQUAL**, so no test can tell
+            # this expression from `trading_date=trading_date` while that clause stands —
+            # measured 2026-10-16, the single mutation is GREEN. It is kept because it is the
+            # INPUT to a second layer, and the layering is measured as a compound:
+            #
+            #   read-side clause + line's stamp  -> refused at the first snapshot
+            #   read-side clause GONE, line's stamp -> accepted, then DROPPED by
+            #       `service.py::_enforce_trading_date_bond` on the next snapshot
+            #   read-side clause GONE and re-stamped -> accepted and NEVER dropped; the
+            #       D-1 band stays in force all session (effective price_max 115918)
+            #
+            # The bond's own red proof is `tests/venue/test_service_band.py::
+            # TestTradingDateBond`. Saying only "re-stamping would make the bond unable to
+            # fire" — as plan §3.3 does — overstates it: the bond still catches a band held
+            # ACROSS a trading date either way. What re-stamping destroys is the bond's
+            # ability to catch a stale LINE read within one session.
             trading_date=line["trading_date"],
             # The PRODUCER's digest, of the bytes IT received. The evidence row says so.
             raw_payload_digest=line["raw_payload_digest"],

@@ -1124,7 +1124,7 @@ def test_only_the_long_tree_declares_band_slots() -> None:
 
     assert tuple(long_band) == _BAND_SLOT_KEYS
     assert short_band == []
-    assert _TREES_WITH_A_BAND_SOURCE == {"cp3-setup-d-long"}
+    assert sorted(_TREES_WITH_A_BAND_SOURCE) == ["cp3-setup-d-long"]
 
 
 @pytest.mark.parametrize("tree", _TREE_IDS)

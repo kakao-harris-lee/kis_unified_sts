@@ -214,6 +214,7 @@ def _reader(
     evidence = sink if sink is not None else _Sink()
     client = _FakeClient(responses)
     dates = trading_date if isinstance(trading_date, list) else [trading_date]
+    session = _FakeSession(tokens, credentials_error=credentials_error)
     reader = KisBandSourceReader(
         band_source=band_source if band_source is not None else _band_source(),
         transport_config=_transport_config(),
@@ -222,9 +223,7 @@ def _reader(
         # real I/O. ``monotonic`` needs none: ``MonotonicSource`` is a Protocol and
         # ``_FakeMonotonic`` satisfies it structurally, which mypy checks here.
         client=client,  # type: ignore[arg-type]
-        credential_session=_FakeSession(  # type: ignore[arg-type]
-            tokens, credentials_error=credentials_error
-        ),
+        credential_session=session,  # type: ignore[arg-type]
         monotonic=_FakeMonotonic(),
         evidence_sink=evidence,
         trading_date_reader=lambda: dates.pop(0) if len(dates) > 1 else dates[0],

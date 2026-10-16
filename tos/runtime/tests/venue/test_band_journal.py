@@ -191,11 +191,27 @@ class TestTheMeasuredLineIsAccepted:
     def test_the_trading_date_is_the_lines_own_stamp(self, tmp_path: Path) -> None:
         """Plan §3.3 / review MEDIUM-1 — NOT re-stamped with ``trading_date_now()``.
 
-        The runtime's own reading is passed in as ``trading_date`` here and the line says
-        something the comparison still accepts (they are equal — that is the G2 clause's job).
-        What this pins is WHICH of the two lands on the observation: re-stamping would make the
-        service's trading-date bond unable to ever fire on a stale line, because the stamp it
-        compares would be derived from the clock it compares against.
+        ⚠ **This assertion does not discriminate, and says so rather than pretending.** Past
+        the G2 clause the line's stamp and the runtime's reading are EQUAL, so
+        ``trading_date=trading_date`` passes it too — measured 2026-10-16: that single
+        mutation is GREEN across the whole suite. Writing it as if it were a red proof would
+        be the "guard that admits what it names" shape this repo keeps rediscovering.
+
+        What the expression actually is: the INPUT to a SECOND layer, whose own red proof is
+        :class:`~tests.venue.test_service_band.TestTradingDateBond`. The layering is measured
+        as a compound (2026-10-16), against one input — a D-1 line read by a D runtime, the
+        clock staying at D:
+
+        ====================================  ==========================================
+        world                                 result
+        ====================================  ==========================================
+        shipped                               refused at the first snapshot
+        read-side clause deleted              accepted, then DROPPED by the service bond
+        read-side clause deleted + restamped  accepted and NEVER dropped — the D-1 band
+                                              stays in force all session (price_max 115918)
+        ====================================  ==========================================
+
+        So this test pins the VALUE, and the table above is why the value matters.
         """
         line = _writer_line()
         reader, _ = _reader(_write(tmp_path, line))
