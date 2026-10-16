@@ -1686,8 +1686,11 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
    print("OK" if trs<={"FHKIF03020200","FHMIF10000000"} and mth<={"GET"} else "FINDING")' \
     "$SESSION/producer/producer-log.jsonl" "$SESSION/producer/band-log.jsonl"
   ```
-  ⚠ 두 파일 중 하나가 **없으면** 그것도 소견이다 — `band-log.jsonl` 이 없으면 band
-  프로세스가 한 번도 뜨지 않았다는 뜻이고(러너 로그의 `=== BAND PROCESS` 줄로 확인),
+  ⚠ 두 파일 중 하나가 **없으면** 그것도 소견이다. 단 `band-log.jsonl` 부재의 원인은
+  **둘**이다: ① band 프로세스가 한 번도 뜨지 않았다 ② 떴지만 **GET 전에 거부**했다
+  (rc 2 — `config` 에서 거부되면 로그를 열기 전에 끝난다, `refused at config`). 그
+  둘은 러너 로그가 가른다 — `=== BAND PROCESS` 줄이 **없으면** ①, 있고 `rc=2` 와
+  `band_probe: REFUSED —` 가 있으면 ②다. 「로그가 없으니 안 떴다」로 단정하지 말 것.
   `producer-log.jsonl` 이 없으면 세션이 시작되지도 않았다.
 
   ⚠ 이 확인이 유효한 이유는 **band GET 이 시도마다 자기 `tr_id` 를 적기 때문**이다
@@ -1720,9 +1723,11 @@ sha256) 끝난다. 런타임은 계속 **소켓 0 · 자격증명 0** 이다.
 잘린 파일을 볼 수 있었고, 그 피해는 「캐시 무시 → 불필요한 재발급」이다.
 
 **종료 코드**(러너가 읽는 유일한 인터페이스):
-`0` 줄을 썼다 · `2` GET 전에 거부(기존 `band.jsonl` · 개장 전 · config) ·
-`3` 소프트 실패(GET 은 했고 쓸 줄이 없다) · **`1` 게이트 거부 또는 예상 밖 예외 —
-이 저장소의 결함이므로 러너가 부팅 전에 ABORT 한다.**
+`0` 줄을 썼다 · `2` GET 전에 거부(기존 `band.jsonl` · 개장 전 · config/자격증명) ·
+`3` 소프트 실패(GET 은 했고 쓸 줄이 없다) · `4` **드라이런**(`--confirm` 없음 — 아무것도
+시도하지 않았다; 0 과 가른 이유는 0 이 「이제 줄이 있다」는 신호이기 때문이고, 러너는
+항상 `--confirm` 을 주므로 이 코드를 보지 않는다) · **`1` 게이트 거부 또는 예상 밖
+예외(달력 읽기 실패 포함) — 이 저장소의 결함이므로 러너가 부팅 전에 ABORT 한다.**
 
 - 러너는 band 프로세스들이 끝난 뒤 **줄 하나**를 기다린다 — 파일 존재가 아니라
   **줄**이다: `trading_date` == 오늘(KST) · `instrument` == 그 세션의 월물 ·
@@ -1737,8 +1742,18 @@ sha256) 끝난다. 런타임은 계속 **소켓 0 · 자격증명 0** 이다.
 
   그 세션은 §4 수용 1 **실패로 기록**되지만 부팅은 그대로 간다 — 가격 수집과 B3 대조는
   그래도 가치가 있고, band 부재는 **보수 방향**이다(런타임에서 `UNKNOWN` → 송신 0).
-- band GET 실패(전송 오류 · `rt_cd ≠ 0` · 필드 부재)는 줄을 **쓰지 않고**
-  `band-log.jsonl` 에 `band_fetch_failed` 를 남기고 **rc 3** 으로 끝난다. ⚠ 그 실패는
+- band GET 실패(전송 오류 · `rt_cd ≠ 0` · 필드 부재 · **압축 응답** · 크기 상한
+  초과)는 줄을 **쓰지 않고** `band-log.jsonl` 에 사유를 남기고 **rc 3** 으로 끝난다.
+  한 줄에 **두 층**이 적힌다: 호출 레코드의 `error` 가 사유 셋을 가르고
+  (`band_auth_http_or_json_error` · `band_response_encoded` ·
+  `band_response_too_large`), 프로브가 그 위에 `stage: band_fetch_failed` 와
+  예외 문자열(`why`)을 남긴다. 사유를 보려면 `error` 를 볼 것 — `band_fetch_failed`
+  는 「실패했다」까지만 말한다.
+  ⚠ `band_response_encoded` 가 보이면 **서버가 압축을 시작했다**는 뜻이다 — 그때
+  band 는 그 세션 내내 부재가 된다(요청은 `accept-encoding: identity` 인데 서버가
+  압축하면, 푸는 것은 메모리 상한이 없는 일이라 거부한다 — 리뷰 5 라운드 Codex A:
+  16,328 바이트가 16 MiB 첫 청크로 풀렸다). 처분은 운영자 결정 사항이고, 코드가
+  조용히 풀어 주지 않는 것이 요점이다. ⚠ 그 실패는
   `max_consecutive_fetch_error_minutes`(분봉 폴링의 포기 조건)에 **넣지 않는다** —
   넣으면 가격 피드가 멀쩡한 세션이 band 하나로 하루를 잃는다.
 - ⛔ `TENANT_PRODUCER_SESSION_DIR` 에 `band.jsonl` 이 이미 있으면 **band 프로브가 기동을

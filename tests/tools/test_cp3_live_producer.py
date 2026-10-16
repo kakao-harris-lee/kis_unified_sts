@@ -14,12 +14,14 @@ companion ``test_red_*`` next to it.
 from __future__ import annotations
 
 import ast
+import gzip
 import hashlib
 import json
 import os
 import sys
 import tempfile
 import time
+import tracemalloc
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import partial
@@ -27,6 +29,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 import yaml
 
@@ -2298,11 +2301,18 @@ class _NoSocket:
 class _Response:
     """Just enough of a STREAMED ``httpx.Response``.
 
-    ``iter_bytes`` serves the content in chunks, optionally sleeping between
+    ``iter_raw`` serves the content in chunks, optionally sleeping between
     them — which is how the "trickle inside every read timeout" shape Codex
     found (review round 2 item A) is reproduced without a socket. ``closed``
     records that the caller shut the stream down, because closing it is part
     of the fix: an abandoned stream holds a connection the next attempt needs.
+
+    ``iter_bytes`` deliberately FAILS here (review round 5, Codex MEDIUM A).
+    The real one decompresses before it yields, which is how a 16 KiB response
+    became a 16 MiB chunk ahead of any size check; a fake that served decoded
+    bytes just as happily would let that regression back in quietly. The real
+    proof lives in the ``httpx.MockTransport`` tests below — this is the
+    tripwire for the hermetic ones.
     """
 
     def __init__(
@@ -2312,6 +2322,7 @@ class _Response:
         *,
         chunks: int = 1,
         chunk_pause_s: float = 0.0,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.content, self.status_code = content, status
         self.chunk_pause_s = chunk_pause_s
@@ -2319,13 +2330,21 @@ class _Response:
         self._chunks = [content[at : at + size] for at in range(0, len(content), size)]
         self.served = bytearray()
         self.closed = False
+        self.headers = headers or {}
 
-    def iter_bytes(self) -> Any:
+    def iter_raw(self) -> Any:
         for chunk in self._chunks:
             if self.chunk_pause_s:
                 time.sleep(self.chunk_pause_s)
             self.served.extend(chunk)
             yield chunk
+
+    def iter_bytes(self) -> Any:
+        raise AssertionError(
+            "the band GET must stream iter_raw: iter_bytes decompresses before "
+            "it yields, so the size cap would be checked against a buffer that "
+            "already exists (review round 5, Codex MEDIUM A)"
+        )
 
     def json(self) -> Any:
         return json.loads(self.content.decode("utf-8"))
@@ -2785,6 +2804,147 @@ def test_red_a_response_past_the_size_cap_is_refused_mid_stream() -> None:
     assert "raw_payload_digest" not in event
 
 
+def _streaming_quotes(chunks: list[bytes], headers: dict[str, str], cap: int) -> Any:
+    """A ``Quotes`` on a REAL ``httpx.Client`` over ``MockTransport``.
+
+    The hand-rolled ``_Response`` above cannot prove anything about
+    decompression — httpx is the thing that decompresses. So the two tests
+    below drive the shipped client: ``content=iter(chunks)`` is what makes the
+    response a true stream (a ``bytes`` body is already consumed and
+    ``iter_raw`` refuses it), and ``headers`` is the server's claim about the
+    encoding, which is the only signal available before the body is touched.
+
+    No socket: ``MockTransport`` answers in-process. No credential: the auth
+    manager is a stub, as everywhere else in this file.
+    """
+
+    def handler(request: Any) -> Any:
+        return httpx.Response(200, content=iter(chunks), headers=headers)
+
+    quotes = _bare_quotes(
+        _Recorder(), httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    quotes.cfg["max_response_bytes"] = cap
+    return quotes
+
+
+def _peak_mib(call: Any) -> tuple[Any, float]:
+    """Run *call* and return ``(raised exception, peak MiB allocated)``."""
+    tracemalloc.start()
+    try:
+        try:
+            call()
+            raised: Any = None
+        except BaseException as exc:  # noqa: BLE001 - the test inspects it
+            raised = exc
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    return raised, peak / 1024 / 1024
+
+
+def test_red_a_compressed_band_response_is_refused_before_decompression() -> None:
+    """⛔ **Codex round 5, MEDIUM A.** A decompression bomb, refused unread.
+
+    ``accept-encoding: identity`` is a REQUEST. A server that compresses
+    anyway hands httpx a body that ``iter_bytes()`` DECOMPRESSES before it
+    yields, so a size cap checked inside that loop is checked against a buffer
+    that already exists: Codex turned 16,328 wire bytes into a 16 MiB first
+    chunk, and a bigger ratio exhausts memory. The band process's ``timeout``
+    bounds TIME; nothing bounds memory.
+
+    So the refusal is on the header, before the body is touched, and this test
+    measures that it really was not touched: the input decompresses to 16 MiB
+    and the peak allocation during the call stays near zero. Measured on this
+    interpreter: 45.39 MiB when decoded through ``iter_bytes``, 0.03 MiB when
+    refused here — three orders of magnitude, so the 1 MiB bound below is not
+    a knife-edge.
+
+    Red two ways: drop the header check and the raw bytes parse as garbage
+    (``band_auth_http_or_json_error``, not this reason); drop it and switch
+    back to ``iter_bytes`` and the error becomes ``band_response_too_large``
+    with the allocation to match.
+    """
+    payload = gzip.compress(b"\0" * (16 * 1024 * 1024))
+    assert len(payload) < 64 * 1024, "the wire body must be SMALL: that is the bomb"
+    quotes = _streaming_quotes(
+        [payload],
+        {"content-encoding": "gzip", "content-type": "application/json"},
+        65536,
+    )
+
+    raised, peak = _peak_mib(lambda: quotes.band(INSTRUMENT))
+
+    assert isinstance(raised, RuntimeError), raised
+    assert "band_response_encoded" in str(raised)
+    assert peak < 1.0, f"{peak:.2f} MiB allocated: the body was decompressed"
+    (event,) = quotes.recorder.events
+    assert event["error"] == "band_response_encoded"
+    assert event["content_encoding"] == "gzip"
+    # Nothing was hashed or measured, because nothing was read.
+    assert "raw_payload_digest" not in event
+    assert "raw_payload_bytes" not in event
+
+
+def test_red_a_chunk_that_would_cross_the_cap_is_never_appended() -> None:
+    """⛔ **Codex round 5, MEDIUM A.** The cap is checked BEFORE the copy.
+
+    ``received.extend(chunk)`` and then a length check means the buffer has
+    already grown by a chunk whose size the SERVER chose — the cap bounds what
+    is kept, not what is allocated. One 8 MiB chunk against a 1 KiB cap
+    measures the difference: 8.01 MiB allocated when the copy happens first,
+    0.03 MiB when the check does.
+
+    The mutation is the one-line reordering, and it is caught by the
+    allocation, not by the error — both orderings raise
+    ``band_response_too_large``.
+    """
+    quotes = _streaming_quotes(
+        [b"x" * (8 * 1024 * 1024)], {"content-type": "application/json"}, 1024
+    )
+
+    raised, peak = _peak_mib(lambda: quotes.band(INSTRUMENT))
+
+    assert isinstance(raised, RuntimeError), raised
+    assert "band_response_too_large" in str(raised)
+    assert peak < 1.0, f"{peak:.2f} MiB allocated: the crossing chunk was copied"
+    (event,) = quotes.recorder.events
+    assert event["error"] == "band_response_too_large"
+    assert event["max_response_bytes"] == 1024
+    assert "raw_payload_digest" not in event
+
+
+def test_an_identity_band_response_still_hashes_exactly_what_arrived() -> None:
+    """The positive case through the SAME real client, in several chunks.
+
+    Two rules were added to the body path (refuse non-identity, check the cap
+    before the copy); this is the test that they did not break the only case
+    that matters. The digest is taken over the concatenation of the chunks as
+    they arrived, which is what the band line binds the runtime's evidence to.
+    """
+    raw = json.dumps(_band_payload()).encode("utf-8")
+    quotes = _streaming_quotes(
+        [raw[:7], raw[7:20], raw[20:]],
+        {"content-type": "application/json"},
+        65536,
+    )
+
+    read = quotes.band(INSTRUMENT)
+
+    assert read.raw_payload_digest == hashlib.sha256(raw).hexdigest()
+    assert read.payload == _band_payload()
+    (event,) = quotes.recorder.events
+    assert event["raw_payload_bytes"] == len(raw)
+    assert "error" not in event
+    # identity is the absent header too, not only the literal value
+    quotes = _streaming_quotes(
+        [raw],
+        {"content-encoding": "identity", "content-type": "application/json"},
+        65536,
+    )
+    assert quotes.band(INSTRUMENT).raw_payload_digest == hashlib.sha256(raw).hexdigest()
+
+
 def test_red_a_size_cap_below_a_real_body_is_refused_at_load(tmp_path: Path) -> None:
     """The cap must not be set so low that it refuses the normal response.
 
@@ -3005,7 +3165,12 @@ def test_red_a_gate_refusal_in_the_probe_is_not_a_soft_failure(
 def test_the_probe_dry_run_touches_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """No ``--confirm``, no transport — the same discipline as the producer."""
+    """No ``--confirm``, no transport — the same discipline as the producer.
+
+    The code is ``RC_DRY_RUN``, not 0 (review round 5, LOW D): 0 is the
+    runner's signal for "a band line exists now", and a caller who forgot
+    ``--confirm`` must not be told that.
+    """
     config = _write_config(tmp_path)
     session = tmp_path / "probe"
     assert (
@@ -3021,8 +3186,9 @@ def test_the_probe_dry_run_touches_nothing(
                 TARGET.isoformat(),
             ]
         )
-        == band_probe.RC_OK
+        == band_probe.RC_DRY_RUN
     )
+    assert band_probe.RC_DRY_RUN != band_probe.RC_OK
     printed = json.loads(capsys.readouterr().out)
     assert printed["mode"] == "DRY_RUN"
     assert printed["orders"] == 0
@@ -3034,13 +3200,55 @@ def test_the_probe_dry_run_touches_nothing(
 # -- the price loop no longer knows about the band at all (v3 item 3) --------
 
 
+def test_red_a_config_refusal_leaves_no_band_log_and_the_runbook_says_so(
+    tmp_path: Path,
+) -> None:
+    """⛔ rc 2 can happen BEFORE the log exists, and §7.2-d must not misread it.
+
+    ``load_config`` refuses before ``run()`` opens ``band-log.jsonl``, so a
+    refused session leaves that file absent — the same observation the runbook
+    uses to conclude "the band process never launched" (review round 5,
+    LOW D). Either the code creates the log first or the runbook names both
+    causes; this PR does the latter, and this test is what keeps the sentence
+    true. The runner's own log tells them apart (``rc=2`` plus the REFUSED
+    line versus no ``=== BAND PROCESS`` line at all).
+    """
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("env_file: /dev/null\n", encoding="utf-8")
+    session = tmp_path / "probe"
+
+    rc = band_probe.main(
+        [
+            "--config",
+            str(broken),
+            "--instrument",
+            INSTRUMENT,
+            "--session-dir",
+            str(session),
+            "--confirm",
+        ]
+    )
+
+    assert rc == band_probe.RC_REFUSED
+    assert not (session / band_probe.BAND_LOG_NAME).exists()
+    # ...and the runbook's own sentence covers that cause, not just "never
+    # launched". Lifted from the file so the two cannot drift apart.
+    runbook = (_REPO_ROOT / "docs/runbooks/tos-paper-boot.md").read_text("utf-8")
+    assert "refused at config" in runbook or "config 에서 거부" in runbook
+
+
 def test_red_the_price_loop_contains_no_band_code() -> None:
     """The producer must not import, hold or call the band path (v3 item 3).
 
-    Asserted three ways, because one is not enough: the import CLOSURE (a lazy
-    import inside a function would not show in a module attribute check), the
-    module SOURCE (no `band` identifier, so no held reference or call), and the
-    minute loop's own text against ``origin/main``.
+    Asserted two ways, because one is not enough: the import CLOSURE (a lazy
+    import inside a function would not show in a module attribute check) and
+    the module SOURCE (no band identifier, so no held reference and no call).
+
+    ⚠ This docstring used to claim a third check, "the minute loop's own text
+    against ``origin/main``" — which the body never did and could not: CI
+    checks out one commit and has no ``origin/main`` to diff against (review
+    round 5, LOW C). That comparison was run by hand during the move and its
+    result belongs in the commit message, not in a claim here.
     """
     closure = _import_closure("tools.tos_cp3.live_producer.producer")
     assert "tools.tos_cp3.live_producer.band" not in closure

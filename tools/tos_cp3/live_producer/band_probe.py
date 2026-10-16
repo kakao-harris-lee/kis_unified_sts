@@ -32,6 +32,10 @@ see a truncated JSON document, whose cost is a needless re-issue.
 
 ===  ==========================================================================
 0    a band line was written
+4    a DRY RUN: no ``--confirm``, so nothing was attempted and nothing written.
+     Its own code because 0 means "there is a line now", and a caller that
+     forgot ``--confirm`` would otherwise be told it succeeded. The runner
+     always passes ``--confirm``, so it never sees this.
 2    a REFUSAL before any GET, i.e. every ``LiveProducerRefused``: an existing
      ``band.jsonl``, a pre-open call, a config or credential refusal. No line,
      nothing attempted.
@@ -98,6 +102,7 @@ BAND_LOG_NAME = "band-log.jsonl"
 RC_OK = 0
 RC_REFUSED = 2
 RC_SOFT_FAILURE = 3
+RC_DRY_RUN = 4
 
 
 def band_journal_path(session_dir: Path) -> Path:
@@ -288,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
         )
-        return RC_OK
+        return RC_DRY_RUN
 
     os.umask(0o077)
     try:
@@ -308,6 +313,11 @@ def main(argv: list[str] | None = None) -> int:
             target=target,
         )
     except LiveProducerRefused as exc:
+        # ⚠ A refusal from `load_config` happens BEFORE `run()` opens the
+        # event log, so an rc 2 session can leave no `band-log.jsonl` at all.
+        # The evidence is this line in the runner's own log, and runbook
+        # §7.2-d says so where it reads that file — "no band log" means
+        # "never launched OR refused before the GET", not "never launched".
         print(f"band_probe: REFUSED — {exc}", file=sys.stderr)
         return RC_REFUSED
 

@@ -78,7 +78,12 @@ band GET 은 **별도 단명 프로세스**가 한다(`tools/tos_cp3/live_produc
 `timeout --kill-after=5s $BAND_PROCESS_TIMEOUT_S` 가 묶는다. 생산자 쪽에 남는 band
 설정은 **크기 상한**(`band_max_response_bytes`) 하나다 — 시간이 아니라 크기는 이
 계층이 스스로 집행할 수 있고, 48 MiB 본문이 0.2 s 예산 안에서 해시·파싱된 것이 그
-필요의 실측이다(F2).
+필요의 실측이다(F2). ⚠ 그 크기 상한은 **규칙 둘**이다(리뷰 5 라운드 Codex A):
+`accept-encoding: identity` 는 **요청**일 뿐이고 `iter_bytes()` 는 yield 전에
+**압축을 푼다** — Codex 가 16,328 바이트를 16 MiB 첫 청크로 실측했다. 그래서
+비-identity `Content-Encoding` 은 본문을 읽기 **전에** 거부하고, `iter_raw` 로 받으며,
+상한은 청크를 **복사하기 전에** 센다. 프로세스 타임아웃은 시간을 묶고, 메모리에는
+그런 감독자가 없다.
 한 가지는 의도까지 바뀌었다: **요청 로그가 둘로 갈린다.** band 시도는
 `band-log.jsonl`(프로브의 세션 dir), 분봉은 `producer-log.jsonl` 이다 — 두 프로세스가
 한 파일에 append 하면 줄이 섞여 깨지므로. 따라서 §3.5 의 「TR 부분집합」 확인은
@@ -226,8 +231,11 @@ band 계획 §4.6 의 셋을 유지하고, (i-b′)가 하나(G3)를 **강화**�
    안에 두는 전제로 쓰였고, 그 전제가 §3.1 의 v3 블록에서 대체됐다. 실제로 PR-A 가
    내보내는 것: `quote_client.ALLOWLIST` 한 쌍(지역 상수, 변경 없음) · **band 프로브
    프로세스**(`band_probe.py`: 한 번의 GET · `band.jsonl` 한 줄 · `band-log.jsonl` ·
-   종료코드 0/2/3/1) · 생산자 분봉 루프에서 band 코드 **전부 제거**(남는 변경은
-   `SafetyViolation` 재발생 한 군데뿐이고 그 밖은 `origin/main` 과 바이트 동일) ·
+   종료코드 0/2/3/4/1) · 생산자 분봉 루프에서 band 코드 **전부 제거**(남는 변경은
+   **둘**이다: `SafetyViolation` 재발생 한 군데와, 리뷰 1 라운드에서 옮긴
+   `_real_quotes` → `live_producer/real_quotes.py` — band 프로브가 그것을 import 하고
+   실전 자격증명 해석이 한 모듈에 모인다. 그 둘을 빼면 분봉 루프 함수들은
+   `origin/main` 과 바이트 동일이고, 그것을 AST 대조로 확인했다) ·
    러너의 `open + 한 경계` 대기와 프로세스 기동·재시도 1 회·rc 1 하드 ABORT ·
    `band.jsonl` 줄 대기와 `BAND ABSENT` · 스트림 크기 상한 · 런북 TR 집합(**두 로그**).
    재조회(`band_reread_minutes`)는 PR-A 에서 **빠졌다**(§L L6).

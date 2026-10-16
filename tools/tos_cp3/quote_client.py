@@ -77,6 +77,17 @@ ALLOWLIST = (
 BAND_FETCH_STAGE = "band_fetch"
 
 
+class BandResponseEncoded(RuntimeError):
+    """The band response arrived with a ``Content-Encoding`` other than identity.
+
+    A ``RuntimeError``, so the caller folds it to a soft failure: no band line,
+    the session carries on. It exists because ``accept-encoding: identity`` is
+    a REQUEST — httpx decompresses whatever the server actually sent, inside
+    ``iter_bytes()``, before any size check of ours can run. Refusing on the
+    header is the only point at which the decompression has not happened yet.
+    """
+
+
 class BandResponseTooLarge(RuntimeError):
     """The band response grew past ``band_max_response_bytes`` while streaming.
 
@@ -298,13 +309,24 @@ class Quotes:
         (:mod:`tools.tos_cp3.live_producer.band_probe`) under the runner's
         ``timeout``, which is a bound no in-process trick can match: SIGKILL
         does not negotiate. What stays here is what this layer can honestly
-        promise — per-phase INACTIVITY guards, and a **streamed size cap** so
-        a body cannot grow unboundedly before anyone looks at it.
+        promise — per-phase INACTIVITY guards, and a bound on the body's SIZE.
+
+        **The size bound is two rules, not one** (review round 5, Codex
+        MEDIUM A). ``accept-encoding: identity`` asks for no compression and
+        the cap counts bytes, but neither statement survives a server that
+        compresses anyway: ``iter_bytes()`` decompresses before it yields, so
+        the first chunk can be orders of magnitude larger than the response —
+        16,328 wire bytes measured as a 16 MiB chunk. A process timeout bounds
+        time, not memory. So the body is refused outright when its
+        ``Content-Encoding`` is anything but identity, it is streamed with
+        ``iter_raw`` (undecoded), and the cap is checked BEFORE each chunk is
+        copied into the buffer.
 
         Raises:
             RuntimeError: on any transport/OAuth/JSON failure, ``rt_cd != 0``,
-                or a response past ``band_max_response_bytes``. The caller
-                writes no band line.
+                a compressed response, or a response past
+                ``band_max_response_bytes``. The caller writes no band line,
+                and the record's ``error`` tells those four apart.
         """
         # ⛔ BEFORE ANY NETWORK ACTIVITY. The gate is where "zero real futures
         # orders" is enforced, so nothing — not even a DNS lookup — precedes it.
@@ -351,14 +373,36 @@ class Quotes:
                 "GET", url, headers=headers, params=params, timeout=timeout
             ) as response:
                 record["http_status"] = response.status_code
-                for chunk in response.iter_bytes():
-                    received.extend(chunk)
-                    if len(received) > cap:
+                # ⛔ BEFORE a single body byte is consumed: a COMPRESSED
+                # response is refused, never decoded. `accept-encoding:
+                # identity` above is a request, not a guarantee — a server
+                # that compresses anyway hands httpx a body that
+                # `iter_bytes()` DECOMPRESSES before yielding, so the cap
+                # below would be checked against a buffer that already
+                # exists. Codex measured 16,328 wire bytes becoming a 16 MiB
+                # first chunk (review round 5, MEDIUM A). The time bound is a
+                # supervising process; memory has no such supervisor, so the
+                # only safe move is not to decode at all.
+                encoding = (response.headers.get("content-encoding") or "").strip()
+                if encoding and encoding.lower() != "identity":
+                    record["content_encoding"] = encoding
+                    raise BandResponseEncoded(
+                        f"band response carries content-encoding {encoding!r}"
+                    )
+                # `iter_raw`, not `iter_bytes`: the bytes as the wire carried
+                # them. That is what the cap counts and what the digest names.
+                for chunk in response.iter_raw():
+                    # Checked BEFORE the copy, so the crossing chunk is never
+                    # appended. Extending first and checking after means the
+                    # buffer has already grown by a chunk whose size the
+                    # server chose.
+                    if len(received) + len(chunk) > cap:
                         # Stop reading rather than hashing an unbounded body.
                         # The `with` closes the stream on the way out.
                         raise BandResponseTooLarge(
                             f"band response exceeded {cap} bytes"
                         )
+                    received.extend(chunk)
             # EXACTLY the bytes received, hashed before anything parses them.
             raw = bytes(received)
             digest = hashlib.sha256(raw).hexdigest()
@@ -380,6 +424,12 @@ class Quotes:
                 raise ValueError("band response carries rt_cd != 0")
         except BandResponseTooLarge as exc:
             record["error"] = "band_response_too_large"
+            raise RuntimeError(record["error"]) from exc
+        except BandResponseEncoded as exc:
+            # A DISTINCT reason: "the server compressed it" is a different
+            # operator question from "the body was too big", and folding the
+            # two would hide a server that started compressing.
+            record["error"] = "band_response_encoded"
             raise RuntimeError(record["error"]) from exc
         except (
             httpx.HTTPError,

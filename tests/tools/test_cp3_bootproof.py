@@ -2076,6 +2076,55 @@ def test_red_a_band_process_rc_1_aborts_before_the_boot(tmp_path: Path) -> None:
     assert _BAND_ABSENT_LINE not in output
 
 
+def _a_future_open(now: datetime.datetime) -> tuple[str, float]:
+    """``(HH:MM for the stub calendar, seconds until ``open + one boundary``)``.
+
+    An hour ahead, or 23:59 when an hour ahead would land tomorrow — the
+    session open is always combined with TODAY's date by
+    ``band_line.session_open_ms``, so a literal time of day is a literal bet
+    on what time the test runs (review round 5). 23:59's anchored instant is
+    exactly midnight, which keeps the distance positive right up to it.
+    """
+    opens_at = now + datetime.timedelta(hours=1)
+    if opens_at.date() != now.date():
+        opens_at = now.replace(hour=23, minute=59, second=0, microsecond=0)
+    anchored_in_s = (
+        opens_at + datetime.timedelta(seconds=60)
+    ).timestamp() - now.timestamp()
+    return opens_at.strftime("%H:%M"), anchored_in_s
+
+
+def test_the_future_open_helper_has_no_blind_window_but_the_last_seconds() -> None:
+    """⛔ The de-fragilising itself, proved over a whole simulated day.
+
+    The defect this replaces (a literal ``23:30``) was invisible for 23 hours
+    a day, so asserting the replacement only at the moment the suite happens
+    to run would repeat the mistake in a smaller window. This walks every
+    minute of a day in KST — plus the last minute second by second — and
+    requires the anchored instant to stay ahead of ``now`` except in the final
+    five seconds, which is the window the caller skips and names.
+    """
+    kst = zoneinfo.ZoneInfo("Asia/Seoul")
+    day = datetime.date(2026, 10, 16)
+    moments = [
+        datetime.datetime.combine(day, datetime.time(hour, minute), tzinfo=kst)
+        for hour in range(24)
+        for minute in range(60)
+    ]
+    moments += [
+        datetime.datetime.combine(day, datetime.time(23, 59, second), tzinfo=kst)
+        for second in range(60)
+    ]
+    for moment in moments:
+        start, anchored_in_s = _a_future_open(moment)
+        assert re.fullmatch(r"\d{2}:\d{2}", start), (moment, start)
+        seconds_left = 86400 - (moment.hour * 3600 + moment.minute * 60 + moment.second)
+        if seconds_left > 5:
+            assert anchored_in_s > 0, (moment.isoformat(), anchored_in_s)
+        # ...and it never points FURTHER than the hour it promises.
+        assert anchored_in_s <= 3660, (moment.isoformat(), anchored_in_s)
+
+
 def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) -> None:
     """⛔ Not before ``open + one boundary`` (band plan §3.1).
 
@@ -2083,32 +2132,54 @@ def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) ->
     nothing about the open, so the launch time is the runner's own to enforce
     rather than something inherited from the previous step.
 
-    Asserted on the wait the step COMPUTES, not by living through it: the
-    calendar opens at 23:30, so the honest distance to ``open + 60s`` is a
-    large positive number for almost the whole day, and dropping the anchor
-    makes it 0. Two assertions, because the first is clock-dependent in one
-    minute of the day:
+    Asserted on the wait the step COMPUTES, not by living through it (the
+    sleep is capped to 0 in these tests), and the stub calendar's open is
+    DERIVED FROM NOW rather than written as a literal.
 
-    * the computed number is positive — skipped between 23:31 and midnight
-      KST, where the anchored instant has already passed TODAY and 0 is the
-      honest answer. Asserting it there would assert something false.
-    * the "capped to 0s" line appears at all — the cap only logs when the
-      computed wait EXCEEDS the ceiling (0 here), so with the anchor gone
-      there is no such line at any hour. This is the half that always holds.
+    ⚠ The first cut wrote ``23:30`` and asserted the "capped" line
+    unconditionally. That line is only logged when the computed wait EXCEEDS
+    the ceiling, so from 23:31 to midnight KST — when ``open + 60s`` has
+    already passed and 0 is the honest answer — CI went red for 29 minutes
+    every night (review round 5, Claude lane MEDIUM; the reviewer reproduced
+    it). A clock-dependent literal cannot be fixed by widening the guard
+    around it; the input has to stop depending on the clock.
+
+    So the open is ``now + 1h``, and within an hour of midnight it is
+    ``23:59`` — whose anchored instant lands exactly at midnight, so the
+    distance stays positive for every instant of the day but the last few
+    seconds, which is the one case this skips and names. The session stop is
+    pushed out to three hours for the same reason the open moved: the computed
+    wait is ``min(anchor, stop - now)``, so with the default ten-minute stop
+    the number this asserts on would be the STOP's, not the calendar's.
     """
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    start, anchored_in_s = _a_future_open(now)
+    if anchored_in_s < 5:
+        pytest.skip(
+            "within 5s of midnight KST there is no future open left today; "
+            f"the anchored instant is {anchored_in_s:.1f}s away"
+        )
+
     result = _run_runner(
         _runner_repo(tmp_path),
         tmp_path,
-        **{_STUB_CALENDAR_START_ENV: "23:30", _PRODUCER_BAND_OPEN_ENV: "23:30"},
+        **{
+            _STUB_CALENDAR_START_ENV: start,
+            _PRODUCER_BAND_OPEN_ENV: start,
+            "TENANT_STOP_AT": "+3 hours",
+        },
     )
     output = result.stdout + result.stderr
     computed = re.search(
         r"band launch: computed (\d+)s until open \+ one boundary", output
     )
     assert computed is not None, output[-3000:]
-    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
-    if (now.hour, now.minute) < (23, 31):
-        assert int(computed.group(1)) > 0, output[-2000:]
+    waited = int(computed.group(1))
+    # Positive is the half the mutation kills; the upper and lower bounds pin
+    # it to the calendar's own open rather than to any positive number (the
+    # runner spends a few seconds reaching this step, hence the slack).
+    assert 0 < waited <= anchored_in_s, (waited, anchored_in_s, output[-2000:])
+    assert waited >= max(1, anchored_in_s - 120), (waited, anchored_in_s)
     assert "band launch: capped to 0s" in output
 
 
