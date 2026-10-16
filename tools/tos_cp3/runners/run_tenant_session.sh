@@ -215,6 +215,19 @@ BAND_RETRY_BOUNDARY_S=60
 # them (review round 6, Codex MEDIUM).
 BAND_RC_NO_TIME=200
 
+# How far before STOP_S a band attempt must already be finished, kill grace
+# included. Five seconds, and it is not a comfort number: it covers (a) the
+# whole-second truncation of `date +%s`, which is already handled by a
+# separate `- 1`, and (b) the latency between computing the budget and the
+# kernel starting `timeout` — two `log` calls here, but on a loaded host a
+# shell statement is not instantaneous (Codex measured a 6.1s logging stall
+# in exactly this gap, review round 7). Five seconds is small against the
+# 30s ceiling and a whole minute-bar boundary, and large against any stall
+# this script has been observed to suffer. It is a floor on honesty, not a
+# tuning knob: raising it shortens the band's window, lowering it lets an
+# attempt outlive the session.
+BAND_STOP_MARGIN_S=5
+
 # The band process gets SIGKILL this long after SIGTERM. Five seconds: it has
 # one in-flight request and one small file to finish, unlike the runtime's
 # durable set (SIGKILL_AFTER_S 120).
@@ -744,22 +757,38 @@ band_seconds_left() {
 # the stop. So every attempt asks for the remaining time first, and both the
 # ceiling and the retry wait are capped by it.
 band_process_run() {
-  _left=$(band_seconds_left)
+  # ⛔ The budget is computed HERE, as late as this script can compute it, and
+  # conservatively (review round 7, Codex MEDIUM). Two reasons it cannot be
+  # the number from a moment ago:
+  #   * `date +%s` is whole seconds, so a reading of N can be anywhere in
+  #     [N, N+1) — hence the `- 1`;
+  #   * `timeout` counts from the SPAWN, not from the check, so every
+  #     statement in between is budget that was already spent. Codex measured
+  #     a TERM-resistant child outliving STOP_S by 0.68s, and a 6.1s logging
+  #     stall putting the launch 0.78s PAST it.
+  # `BAND_STOP_MARGIN_S` covers both, and the only statements between this
+  # computation and the spawn are the two `log` calls below.
+  #
+  # ⚠ Residual, stated plainly: a host stall longer than the margin between
+  # that last log line and the spawn cannot be ruled out from a shell script.
+  # Bounding THAT needs the supervisor to own the deadline (a `timeout`
+  # computed by the thing that also holds the clock), which is a bigger change
+  # than this one and not what the operator asked for.
+  _remaining=$((STOP_S - $(date +%s) - 1 - BAND_STOP_MARGIN_S))
   # The SIGKILL grace is wall time this attempt can consume, so it has to fit
-  # inside the remaining window too — a ceiling of 1s with a 5s grace is a
-  # 6s attempt.
-  if [ "$_left" -le "$BAND_PROCESS_KILL_AFTER_S" ]; then
-    log "band: ${_left}s left before the session stop — NO attempt started (an attempt needs more than the ${BAND_PROCESS_KILL_AFTER_S}s kill grace)"
+  # inside the window too — a ceiling of 1s with a 5s grace is a 6s attempt.
+  if [ "$_remaining" -le "$BAND_PROCESS_KILL_AFTER_S" ]; then
+    log "band: $((STOP_S - $(date +%s)))s left before the session stop — NO attempt started (needs more than the ${BAND_PROCESS_KILL_AFTER_S}s kill grace plus the ${BAND_STOP_MARGIN_S}s margin)"
     return "$BAND_RC_NO_TIME"
   fi
   _ceiling=$BAND_PROCESS_TIMEOUT_S
-  _budget=$((_left - BAND_PROCESS_KILL_AFTER_S))
+  _budget=$((_remaining - BAND_PROCESS_KILL_AFTER_S))
   if [ "$_ceiling" -gt "$_budget" ]; then
-    log "band: ceiling ${_ceiling}s capped to ${_budget}s by the session stop (${_left}s left)"
+    log "band: ceiling ${_ceiling}s capped to ${_budget}s by the session stop (${_remaining}s usable after the ${BAND_STOP_MARGIN_S}s margin)"
     _ceiling=$_budget
   fi
   BAND_PROCESS_RUNS=$((BAND_PROCESS_RUNS + 1))
-  log "=== BAND PROCESS #$BAND_PROCESS_RUNS instrument=$INSTRUMENT ceiling ${_ceiling}s"
+  log "=== BAND PROCESS #$BAND_PROCESS_RUNS instrument=$INSTRUMENT ceiling ${_ceiling}s grace ${BAND_PROCESS_KILL_AFTER_S}s margin ${BAND_STOP_MARGIN_S}s stop_in $((STOP_S - $(date +%s)))s"
   PYTHONPATH="$REPO" \
     setsid timeout --kill-after="${BAND_PROCESS_KILL_AFTER_S}s" \
     "${_ceiling}s" \

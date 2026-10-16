@@ -2189,12 +2189,22 @@ def test_red_no_band_attempt_starts_after_the_stop_passes_in_the_open_wait(
     Codex reproduced a band process starting with ``STOP_S=0``, which is a
     real-key OAuth + GET after the session has ended.
 
-    Here the open is two hours out and the stop is fifteen seconds out, so the
+    Here the open is an hour out and the stop is fifteen seconds out, so the
     (capped) wait consumes the whole session. No process may start, and the
     disposition is BAND ABSENT — the window closed, which is not a defect.
+
+    Skipped in the same last-minutes window as its sibling and for the same
+    reason: with no future open left today the open wait is 0 and the test
+    would be measuring nothing (review round 7, nit).
     """
     now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
-    start, _anchor = _a_future_open(now)
+    start, anchored_in_s = _a_future_open(now)
+    if anchored_in_s < _BAND_LAUNCH_MIN_SLACK_S:
+        pytest.skip(
+            f"within {_BAND_LAUNCH_MIN_SLACK_S}s of midnight KST there is no "
+            f"future open to wait for; the anchored instant is "
+            f"{anchored_in_s:.1f}s away"
+        )
     result = _run_runner(
         _runner_repo(tmp_path),
         tmp_path,
@@ -2213,6 +2223,89 @@ def test_red_no_band_attempt_starts_after_the_stop_passes_in_the_open_wait(
     assert _BAND_NO_TIME_LINE in output
     assert "no room for a first attempt" in output
     assert _BAND_ABSENT_LINE in output
+
+
+def test_red_a_stop_inside_the_margin_skips_the_attempt(tmp_path: Path) -> None:
+    """⛔ **Codex round 7, MEDIUM.** Time left is not the same as time enough.
+
+    The refusal threshold is arithmetic, not "has the stop passed":
+    ``STOP_S - now - 1 - BAND_STOP_MARGIN_S <= BAND_PROCESS_KILL_AFTER_S``,
+    i.e. a raw distance of **11 s or less** with the shipped 5 s margin and
+    5 s grace. A stop eleven seconds out therefore cannot be attempted at any
+    arrival time — the runner reaches this step with 11 s at the very most —
+    while several of those seconds are still on the clock. Set
+    ``BAND_STOP_MARGIN_S`` to 0 and the threshold drops to 6 s, so the same
+    session starts a process (mutation M24). Codex measured what that costs:
+    a child outliving ``STOP_S`` by 0.68 s, and a launch 0.78 s PAST it after
+    a logging stall.
+
+    ⚠ The first cut used twelve seconds and was GREEN standalone, RED in the
+    full suite: at 12 s the arithmetic permits a 1 s attempt, and whether the
+    runner arrived with 12 or with 6 depended on how loaded the host was. The
+    bound has to hold for EVERY arrival time, not for the one the author
+    happened to measure — the same lesson as review round 5's literal
+    ``23:30``, one round later.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{"TENANT_STOP_AT": "+11 seconds"}
+    )
+    output = result.stdout + result.stderr
+
+    assert "=== BAND PROCESS" not in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 0
+    refusal = re.search(r"band: (\d+)s left before the session stop", output)
+    assert refusal is not None, output[-3000:]
+    left = int(refusal.group(1))
+    # The refusal is the arithmetic one, not "the stop already passed": the
+    # distance is inside the threshold the margin and the grace define.
+    assert 0 <= left <= 11, refusal.group(0)
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_logged_ceiling_and_grace_end_before_the_stop_margin(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 7, MEDIUM.** The four numbers on one line must add up.
+
+    The launch banner prints the ceiling, the kill grace, the margin and the
+    distance to the stop — all read at the same instant, on purpose, so the
+    inequality can be checked without a second clock:
+
+        ceiling + grace <= stop_in - margin
+
+    A hang makes the attempt use its whole ceiling, so this is not a claim
+    about intent: the process really is killed that long before the stop.
+    Dropping the margin (or the `- 1`) turns the inequality into an equality
+    and the assertion red.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _BAND_PLAN_ENV: "hang",
+            "CP3_BAND_PROCESS_TIMEOUT_S": "30",
+            "TENANT_STOP_AT": "+25 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    banner = re.search(
+        r"=== BAND PROCESS #1 .* ceiling (\d+)s grace (\d+)s margin (\d+)s "
+        r"stop_in (\d+)s",
+        output,
+    )
+    assert banner is not None, output[-3000:]
+    ceiling, grace, margin, stop_in = (int(value) for value in banner.groups())
+    assert margin > 0, "the margin is what this test is about"
+    assert ceiling + grace <= stop_in - margin, (
+        ceiling,
+        grace,
+        margin,
+        stop_in,
+        output[-2000:],
+    )
+    # the attempt really ran to its (shortened) ceiling and was killed there
+    assert re.search(r"band process #1 rc=(124|137)", output), output[-2000:]
 
 
 def test_red_the_stop_shortens_a_band_attempt_and_cancels_the_retry(
