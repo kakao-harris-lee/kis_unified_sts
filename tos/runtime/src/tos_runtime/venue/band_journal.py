@@ -34,10 +34,16 @@ snapshot and no decision at all (PR #907 review MEDIUM-1).
 **The line's own schema is defined HERE, deliberately duplicated** (plan §3.3). The runtime may
 not import ``tools`` — firewall R1 (``tools/tos_firewall_check.py``: stdlib + ``tos_runtime.*``
 only) — so the key set and the ``kind`` token cannot be imported from the writer's
-``tools.tos_cp3.live_producer.band_line``. The duplication is bounded by a test that pins
-key-set equality against a fixture copied byte-for-byte out of the writer's own output
-(``tos/runtime/tests/venue/test_band_journal.py``), which is what makes "the same shape" a
-measured claim rather than two files that happen to agree today.
+``tools.tos_cp3.live_producer.band_line``. The duplication is bounded by a pin with TWO halves
+over one fixture copied byte-for-byte out of the writer's own output
+(``tos/runtime/tests/venue/fixtures/band_probe_line.jsonl``): this side's constant against the
+fixture (``tos/runtime/tests/venue/test_band_journal.py``), and the WRITER's current output
+against the same fixture (``tests/tools/test_cp3_live_producer.py::
+test_the_band_probes_output_still_has_the_runtime_fixtures_shape``, which lives on the side of
+the firewall that may import ``tools``). ⚠ Only the first half existed until PR #907's review
+MEDIUM-3, and one constant compared against a STATIC file measures nothing about the other
+definition: a key added to ``BAND_KEY_ORDER`` left every test green while the first real
+session refused every line with ``line_key_set``.
 
 **Three read-side clauses, each with its own concrete failing input** (plan §3.4):
 

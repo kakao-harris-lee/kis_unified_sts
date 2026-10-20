@@ -12,10 +12,17 @@ satisfies.
 ``band_line.BAND_KEY_ORDER`` exactly as ``band_probe._publish`` does, over a
 ``FHMIF10000000``-shaped body carrying the 2026-10-08 P-VL ``A05611`` measurement
 (990.48/1162.72, basis 1076.60). The runtime may not import ``tools`` (firewall R1), so
-:meth:`TestTheLineSchemaMatchesTheWriter` compares this package's own
-:data:`~tos_runtime.venue.band_journal.BAND_JOURNAL_LINE_KEYS` against that file's keys — which
-is what makes "the two definitions are the same shape" a MEASUREMENT rather than two files that
-happen to agree today.
+:class:`TestTheLineSchemaMatchesTheWriter` compares this package's own
+:data:`~tos_runtime.venue.band_journal.BAND_JOURNAL_LINE_KEYS` against that file's keys.
+
+⚠ **That is only HALF of the pin, and on its own it measures nothing about the writer** (PR
+#907 review MEDIUM-3). The fixture is a static file: if ``band_line.BAND_KEY_ORDER`` grows a
+key, nothing here notices, and the first real session refuses every line with ``line_key_set``.
+The other half — the WRITER's current output against this same fixture — is
+``tests/tools/test_cp3_live_producer.py::
+test_the_band_probes_output_still_has_the_runtime_fixtures_shape``, which lives on the side of
+the firewall that may import ``tools`` and reads this fixture as a plain file. "The two
+definitions are the same shape" is a measurement only with both.
 
 Hermetic (``tos/runtime/tests/conftest.py`` D1.4): no socket is ever opened — this reader has
 none to open, which is the point of the path (plan §3.5). Every file it reads is under
@@ -184,10 +191,14 @@ def _reader(
 class TestTheLineSchemaMatchesTheWriter:
     """Plan §3.3 — the runtime cannot import ``tools``, so the line's shape is defined twice.
 
-    These two assertions are what keeps the second definition honest. Delete them and a key
-    added to ``band_line.BAND_KEY_ORDER`` lands in a file this reader then rejects with
-    ``line_key_set`` — a band permanently absent for a reason that reads like a corrupted
-    journal.
+    These two assertions hold the RUNTIME's definition to the fixture. Delete them and a key
+    dropped from :data:`BAND_JOURNAL_LINE_KEYS` stops being noticed.
+
+    ⚠ They say nothing about the writer: the fixture is a static file, so a key added to
+    ``band_line.BAND_KEY_ORDER`` leaves them green and lands in a file this reader then
+    rejects with ``line_key_set`` — a band permanently absent for a reason that reads like a
+    corrupted journal. The writer's half of the pin is on the ``tools`` side of the firewall
+    (module docstring).
     """
 
     def test_the_key_set_equals_the_writers_own_output(self) -> None:

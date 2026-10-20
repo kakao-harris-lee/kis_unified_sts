@@ -3066,6 +3066,76 @@ def test_the_band_probe_writes_one_line_in_the_plans_schema(
     assert not (session / "producer-log.jsonl").exists()
 
 
+#: The RUNTIME's copy of the band line's shape, as a plain file.
+#: ``tos/runtime/tests/venue/test_band_journal.py`` pins
+#: ``tos_runtime.venue.band_journal.BAND_JOURNAL_LINE_KEYS`` against this fixture;
+#: the test below pins the WRITER against the same file. Read as text, never
+#: imported: the firewall is two-way and ``tools/`` may not import ``tos``
+#: (``tools/tos_firewall_check.py`` TOS-FW-R).
+_RUNTIME_BAND_FIXTURE = (
+    _REPO_ROOT
+    / "tos"
+    / "runtime"
+    / "tests"
+    / "venue"
+    / "fixtures"
+    / "band_probe_line.jsonl"
+)
+
+
+def test_the_band_probes_output_still_has_the_runtime_fixtures_shape(
+    tmp_path: Path, market: Market
+) -> None:
+    """**PR #907 review MEDIUM-3 — the half of the schema pin that was missing.**
+
+    The runtime defines this line's key set a SECOND time, because the firewall
+    forbids it from importing ``band_line``. Both halves of that duplication
+    have to be measured, and only one was: the runtime's test compares its own
+    constant against ``band_probe_line.jsonl``, a STATIC file, so adding a key
+    to ``BAND_KEY_ORDER`` left every test in the repo green while the first real
+    session would refuse every line with ``line_key_set`` — a band permanently
+    absent for a reason that reads like a corrupted journal.
+
+    **Measured** (2026-10-20) against the mutation that models a real added
+    field — ``"foo"`` appended to ``band_line.BAND_KEY_ORDER`` AND written into
+    ``band_probe._publish``'s row, so the writer emits it:
+
+    * ``tos/runtime/tests/venue`` — **307 passed**. The runtime's own schema
+      test compares its constant with the static fixture, and neither moved.
+    * ``test_the_band_probe_writes_one_line_in_the_plans_schema`` — **passed**.
+      It compares the written line against ``BAND_KEY_ORDER``, which is the
+      thing that changed, so it agrees with the mutation by construction.
+    * this test — **failed**: ``Left contains one more item: 'foo'``.
+
+    (``test_band_journal_keeps_the_price_journals_three_guarantees`` also fails
+    under that mutation, but only because it hand-writes a band row that the
+    author of a real new field would update in the same commit. It is not a pin
+    on the fixture; this is.)
+
+    The line is produced by driving ``band_probe.run``, not by restating
+    ``BAND_KEY_ORDER``: the key order constant is only the writer's intent, and
+    what the runtime reads is the file.
+    """
+    config_path = _write_config(tmp_path)
+    session = tmp_path / "schema-pin"
+    assert _run_band_probe(config_path, session) == band_probe.RC_OK
+    (written,) = _journal_rows(band_probe.band_journal_path(session))
+
+    fixture_lines = [
+        line
+        for line in _RUNTIME_BAND_FIXTURE.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(fixture_lines) == 1, fixture_lines
+    fixture = json.loads(fixture_lines[0])
+
+    # ORDERED, not just the set: the runtime's reader compares a set, but the
+    # fixture's own docstring calls it the writer's output byte-for-byte, and a
+    # reordered writer makes that claim false while the reader stays happy.
+    assert list(written) == list(fixture)
+    assert written["kind"] == fixture["kind"]
+
+
 def test_red_the_band_probe_refuses_before_the_open(
     tmp_path: Path, market: Market
 ) -> None:
