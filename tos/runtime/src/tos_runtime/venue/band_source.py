@@ -4,10 +4,16 @@
 **What this module is.** One GET against the KIS 모의투자 quotations TR the active venue
 policy's own ``_runtime.band_source`` block declares (``FHMIF10000000``'s ``futs_mxpr``/
 ``futs_llam``), validated into a :class:`BandObservation` the venue service folds into the
-EFFECTIVE shape constraints' ``price_min``/``price_max``. Every failure — transport, broker
-rejection, scaling, ordering, tick grid, trading-date stamp — returns ``None`` plus an evidence
-row, never a partially trusted band (plan §4.6: "모든 실패는 band None → 커널 UNKNOWN → 송신
-0", so the worst case of this wave is exactly today's behaviour).
+EFFECTIVE shape constraints' ``price_min``/``price_max``. Every failure — transport, custody,
+broker rejection, scaling, ordering, tick grid, trading-date stamp — returns ``None`` plus an
+evidence row, never a partially trusted band (plan §4.6: "모든 실패는 band None → 커널 UNKNOWN
+→ 송신 0", so the worst case of this wave is exactly today's behaviour).
+
+**The band kinds are one per module.** This one owns ``kis_quote_get``;
+:mod:`tos_runtime.venue.band_journal` owns ``producer_journal``, the kind the CP-3 tenant trees
+actually enable (``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3). The two
+share :class:`BandObservation`, :data:`BandReader`, :data:`VENUE_BAND_OBSERVED_KIND` and
+:func:`band_source_digest`, which live here; nothing here imports the journal module.
 
 **Reused, never re-built (plan §4.2).** The host seal and the token lifecycle are the
 ``kis_quote`` transport's own: this module takes an already-loaded, already-host-sealed
@@ -69,10 +75,11 @@ import hashlib
 import json
 import secrets
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass, fields
+from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any
 
+from tos_runtime.custody.ports import CustodyError
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import (
     KisMockClientError,
@@ -93,12 +100,16 @@ __all__ = [
     "BAND_SOURCE_KIND_KIS_QUOTE_GET",
     "BAND_SOURCE_READ_ON_TOKENS",
     "VENUE_BAND_OBSERVED_KIND",
+    "BandBounds",
     "BandObservation",
     "BandReader",
+    "BandRefusal",
     "BandSourceConfig",
     "KisBandSourceReader",
+    "KisQuoteGetBandSource",
     "band_source_digest",
     "build_band_client",
+    "validate_band_values",
 ]
 
 #: Evidence kind string (runtime vocabulary — never a kernel ``EvidenceKind`` member, the same
@@ -126,40 +137,64 @@ BAND_SOURCE_READ_ON_TOKENS: frozenset[str] = frozenset({"boot", "phase_change"})
 
 @dataclass(frozen=True)
 class BandSourceConfig:
-    """The venue policy's own ``_runtime.band_source`` block, parsed and fail-closed-validated
-    by :func:`~tos_runtime.venue.config.load_venue_constraint_policy` (plan §4.1).
+    """What EVERY ``_runtime.band_source`` kind declares, parsed and fail-closed-validated by
+    :func:`~tos_runtime.venue.config.load_venue_constraint_policy` (plan §4.1).
+
+    **Why a base class rather than one flat record with optional leaves** (CP-3 band 원천 경로
+    변경 plan ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3: "로더는 kind
+    마다 필수 키를 따로 요구한다"). The 2026-10-15 enabling attempt measured what a flat record
+    costs: ``kis_quote.yaml`` carried four values (``tr_id``/``field_mapping``/``source_id``/
+    ``request_timeout_s``) that NOTHING on the band path read, and a reader could not tell a
+    declared-but-unread value from a value it had forgotten to use. A per-kind record makes
+    "this key is required" and "this key is read" the same statement, checked by the type.
 
     Attributes:
-        kind: :data:`BAND_SOURCE_KIND_KIS_QUOTE_GET`.
-        tr_id: The KIS quotations TR id to GET (``FHMIF10000000``).
-        instrument: The ``FID_INPUT_ISCD`` this GET asks for — the SINGLE source of the
-            requested contract (plan §4.1 "GET 의 종목은 한 출처에서만 온다"). The loader binds
-            it to the policy's own ``scope.instruments`` sole element (§4.4b).
-        upper_field: The response ``output`` key carrying the upper limit (``futs_mxpr``).
-        lower_field: The response ``output`` key carrying the lower limit (``futs_llam``).
-        basis_field: The response ``output`` key carrying the reference price (``futs_sdpr``) —
-            recorded as evidence and used for
-            :attr:`BandObservation.symmetric_about_basis` only, NEVER for admissibility.
+        kind: :data:`BAND_SOURCE_KIND_KIS_QUOTE_GET` or
+            :data:`~tos_runtime.venue.band_journal.BAND_SOURCE_KIND_PRODUCER_JOURNAL`.
+        instrument: The contract this band is for — the SINGLE source of the requested contract
+            (plan §4.1 "GET 의 종목은 한 출처에서만 온다"). The loader binds it to the policy's
+            own ``scope.instruments`` sole element (§4.4b).
         price_scale: The exact integer multiplier from the broker's quoted index points to the
             kernel's opaque scaled ints. Must equal ``_runtime.price_scale`` (plan §4.1's price
             scale paragraph — the loader refuses a mismatch).
-        timeout_ms: The band GET's own per-request stall budget (module docstring).
         bound: :data:`BAND_SOURCE_BOUND_TRADING_DATE_KST`.
         read_on: A subset of :data:`BAND_SOURCE_READ_ON_TOKENS`.
         failure: :data:`BAND_SOURCE_FAILURE_UNKNOWN`.
     """
 
     kind: str
-    tr_id: str
     instrument: str
-    upper_field: str
-    lower_field: str
-    basis_field: str
     price_scale: int
-    timeout_ms: int
     bound: str
     read_on: tuple[str, ...]
     failure: str
+
+
+@dataclass(frozen=True)
+class KisQuoteGetBandSource(BandSourceConfig):
+    """``kind: "kis_quote_get"`` — the runtime does the GET itself (plan §4.1's YAML block).
+
+    ⚠ **No shipped tree declares this kind** (2026-10-15 plan §1): the band reader factory
+    reads the host seal off the ACTIVE order scope's INSTANCE binding, and all three trees'
+    active scope is ``SYNTHETIC_FUTURES_ORDER``, which has none. The kind is kept rather than
+    deleted because a MOCK quotation scope separated from the order scope would make it usable
+    again (2026-10-15 plan §L L2).
+
+    Attributes:
+        tr_id: The KIS quotations TR id to GET (``FHMIF10000000``).
+        upper_field: The response ``output`` key carrying the upper limit (``futs_mxpr``).
+        lower_field: The response ``output`` key carrying the lower limit (``futs_llam``).
+        basis_field: The response ``output`` key carrying the reference price (``futs_sdpr``) —
+            recorded as evidence and used for
+            :attr:`BandObservation.symmetric_about_basis` only, NEVER for admissibility.
+        timeout_ms: The band GET's own per-request stall budget (module docstring).
+    """
+
+    tr_id: str
+    upper_field: str
+    lower_field: str
+    basis_field: str
+    timeout_ms: int
 
 
 @dataclass(frozen=True)
@@ -173,14 +208,20 @@ class BandObservation:
         price_min: The lower limit, scaled to the kernel's opaque int by an EXACT
             :class:`~decimal.Decimal` multiply.
         price_max: The upper limit, same scaling.
-        trading_date: The LOCAL ``YYYYMMDD`` KST stamp taken at the GET instant (module
-            docstring) — never a response field, never ``None`` on a successful observation.
+        trading_date: A ``YYYYMMDD`` KST stamp, never a broker response field and never
+            ``None`` on a successful observation. WHOSE stamp depends on the kind: this
+            module's reader takes the runtime's own at the GET instant (module docstring);
+            :mod:`tos_runtime.venue.band_journal` carries the LINE's stamp through unchanged,
+            because re-stamping it would make the service's trading-date bond unable to fire
+            on a stale line (2026-10-15 plan §3.3, review MEDIUM-1).
         raw_payload_digest: SHA-256 over the response body's RAW bytes, exactly as received —
-            the runtime's own direct binding to what the broker sent (plan §6 (A): this is the
-            reason the GET lives in the runtime at all). Deliberately not a digest of the
-            PARSED ``output`` block: any re-serialization is a digest of this runtime's
-            rendering, not of the broker's bytes, and an earlier cut that stringified the
-            parsed values made ``"1159.18"`` and ``1159.18`` collide.
+            a direct binding to what the broker sent (plan §6 (A): this is the reason the GET
+            lives in the runtime at all). Deliberately not a digest of the PARSED ``output``
+            block: any re-serialization is a digest of this runtime's rendering, not of the
+            broker's bytes, and an earlier cut that stringified the parsed values made
+            ``"1159.18"`` and ``1159.18`` collide. On the ``producer_journal`` kind the digest
+            is the PRODUCER's — of the bytes IT saw — and the evidence row says so with
+            ``raw_payload_digest_source``.
         source_continuity_id: Module docstring's "source continuity".
         as_of_ms: The monotonic reading taken immediately before the request went out.
         basis: The scaled reference price, or ``None`` when the basis field was absent or did
@@ -226,6 +267,94 @@ class BandObservation:
 BandReader = Callable[[], BandObservation | None]
 
 
+@dataclass(frozen=True)
+class BandBounds:
+    """The scaled, ordered, on-grid band :func:`validate_band_values` produced."""
+
+    price_min: int
+    price_max: int
+    basis: int | None
+    symmetric_about_basis: bool | None
+
+
+@dataclass(frozen=True)
+class BandRefusal:
+    """Which clause of :func:`validate_band_values` rejected the values, and with what."""
+
+    reason: str
+    detail: str
+
+
+def validate_band_values(
+    *,
+    lower_raw: Any,
+    upper_raw: Any,
+    basis_raw: Any,
+    price_scale: int,
+    tick_size: int | None,
+    lower_label: str,
+    upper_label: str,
+) -> BandBounds | BandRefusal:
+    """Plan §4.2's validation set, in order — the ONE place it exists.
+
+    Both band kinds run this identical set over values that arrived as strings: the
+    ``kis_quote_get`` reader over a broker ``output`` block, the
+    :mod:`tos_runtime.venue.band_journal` reader over a producer line's three copied strings.
+    Keeping it in one function is 2026-10-15 plan §6's rejected alternative read forwards —
+    "생산자가 척도 변환·검증까지 → 검증이 두 곳에 생긴다" — and the same reasoning rejects a
+    second copy inside the runtime.
+
+    The clauses, each with the concrete input that fires it:
+
+    * ``non_integral_scale`` — a value that is absent, unparseable, non-finite, out of the
+      decimal context's exponent range (``"1e999999999"``), or whose ``× price_scale`` is not
+      a whole number. Never rounded (plan §4.2: "반올림 금지").
+    * ``band_not_ordered`` — ``0 < min < max`` violated.
+    * ``tick_size_absent`` — the active policy sources no tick; an ungridded band cannot be
+      validated and the kernel would answer ``UNKNOWN`` on the tick predicate anyway.
+    * ``off_tick_grid`` — a bound off the policy's grid. A tree still carrying ``tick_size: 5``
+      is caught HERE, which is why the tick correction is a precondition of enabling.
+
+    Args:
+        lower_raw: The lower limit, as it arrived (a string on both paths).
+        upper_raw: The upper limit, as it arrived.
+        basis_raw: The reference price — EVIDENCE only, so a basis that does not scale exactly
+            yields ``basis=None`` rather than a refusal.
+        price_scale: The exact integer multiplier to the kernel's opaque ints.
+        tick_size: The ACTIVE policy's ``shape_constraints.tick_size``.
+        lower_label: What to call ``lower_raw`` in a refusal detail (the response key, or the
+            band line's key) — the reader's own vocabulary, so a row names a leaf its operator
+            can find.
+        upper_label: Same, for ``upper_raw``.
+    """
+    lower = _scaled(lower_raw, price_scale)
+    upper = _scaled(upper_raw, price_scale)
+    if lower is None or upper is None:
+        return BandRefusal(
+            "non_integral_scale",
+            f"{lower_label}={lower_raw!r} {upper_label}={upper_raw!r} "
+            f"scale={price_scale}",
+        )
+    if not 0 < lower < upper:
+        return BandRefusal("band_not_ordered", f"min={lower} max={upper}")
+    if tick_size is None or tick_size <= 0:
+        return BandRefusal("tick_size_absent", f"tick_size={tick_size!r}")
+    off_grid = [value for value in (lower, upper) if value % tick_size != 0]
+    if off_grid:
+        return BandRefusal(
+            "off_tick_grid", f"tick_size={tick_size} off_grid={off_grid}"
+        )
+    basis = _scaled(basis_raw, price_scale)
+    return BandBounds(
+        price_min=lower,
+        price_max=upper,
+        basis=basis,
+        symmetric_about_basis=(
+            None if basis is None else (upper - basis) == (basis - lower)
+        ),
+    )
+
+
 def _canonical_digest(payload: Mapping[str, Any]) -> str:
     """SHA-256 over a key-sorted, separator-pinned JSON serialization — the same
     order-independence discipline :meth:`~tos_runtime.transport.kis_quote.adapter
@@ -243,26 +372,27 @@ def band_source_digest(config: BandSourceConfig) -> str:
     Activation compares the kernel ``canonical_digest``, which covers ``_model_view`` only, so a
     ``_runtime`` block is outside it. The operator's 2026-10-08 disposition on §6 (B) was
     "증거 digest + GOV-001 후보 등재만" — this function is the evidence half.
+
+    Folded from the record's OWN dataclass fields rather than a hand-written key list, so a
+    per-kind subclass (:class:`KisQuoteGetBandSource`,
+    :class:`~tos_runtime.venue.band_journal.ProducerJournalBandSource`) cannot grow a leaf the
+    evidence digest silently stops covering. ``read_on`` is sorted for declaration-order
+    independence; every other tuple is listed in its declared order, because for
+    ``approved_source_prefixes`` the order IS the document's.
     """
-    return _canonical_digest(
-        {
-            "kind": config.kind,
-            "tr_id": config.tr_id,
-            "instrument": config.instrument,
-            "upper_field": config.upper_field,
-            "lower_field": config.lower_field,
-            "basis_field": config.basis_field,
-            "price_scale": config.price_scale,
-            "timeout_ms": config.timeout_ms,
-            "bound": config.bound,
-            "read_on": sorted(config.read_on),
-            "failure": config.failure,
-        }
-    )
+    payload: dict[str, Any] = {}
+    for field in fields(config):
+        value = getattr(config, field.name)
+        if field.name == "read_on":
+            value = sorted(value)
+        elif isinstance(value, tuple):
+            value = list(value)
+        payload[field.name] = value
+    return _canonical_digest(payload)
 
 
 def build_band_client(
-    transport_config: KisQuoteTransportConfig, band_source: BandSourceConfig
+    transport_config: KisQuoteTransportConfig, band_source: KisQuoteGetBandSource
 ) -> KisMockHttpClient:
     """The one sanctioned way to build the band GET's client (mirrors
     :func:`~tos_runtime.transport.kis_quote.adapter.build_quote_client`'s own "one sanctioned
@@ -288,7 +418,7 @@ class KisBandSourceReader:
     def __init__(
         self,
         *,
-        band_source: BandSourceConfig,
+        band_source: KisQuoteGetBandSource,
         transport_config: KisQuoteTransportConfig,
         client: KisMockHttpClient,
         credential_session: KisCredentialSession,
@@ -344,7 +474,8 @@ class KisBandSourceReader:
         if trading_date is None:
             self._refuse("trading_date_unavailable")
             return None
-        # The token step has THREE distinct failure modes, not one (independent review M1):
+        # The token step has FOUR distinct failure modes, not one (independent review M1; the
+        # fourth is the 2026-10-15 plan §1 B2 custody leak, below):
         # the held token is stale and the cooldown has not elapsed (`TokenStale`), the token
         # endpoint answered with an unusable body (`TokenResponseError`), or the token request
         # never completed (`KisMockClientError` — `KisTokenLifecycle._issue_token` calls the
@@ -362,11 +493,28 @@ class KisBandSourceReader:
         except KisMockClientError as exc:
             self._refuse("token_transport_error", detail=str(exc))
             return None
+        # Issuing a token loads the SAME app key/secret out of custody
+        # (`KisTokenLifecycle._issue_token`), so the §1 B2 leak below has a twin on this step.
+        except CustodyError as exc:
+            self._refuse("token_custody_error", detail=str(exc))
+            return None
         continuity_id = self._continuity_for(access_token)
         try:
             response = self._fetch(access_token)
         except KisMockClientError as exc:
             self._refuse("transport_error", detail=str(exc))
+            return None
+        # The app key/secret come out of custody INSIDE `_fetch` (the narrowest possible `with`
+        # block, wrapped around the one GET), and `custody.load()` raises
+        # `CustodyError` — a manifest that does not parse, a scope this deployment never
+        # provisioned (`CustodyScopeNotProvisioned`), a refused load. That exception was
+        # outside the set this method caught, so it escaped through `snapshot()`/`decide()`
+        # instead of folding to band `None`, contradicting band plan §4.6's "모든 실패는 band
+        # None → 커널 UNKNOWN → 송신 0" (2026-10-15 plan §1 B2 / §L L1 — measured on the
+        # tenant trees, whose `paper-custody` carries three scopes and neither
+        # `kis_mock.app_key` nor `kis_mock.app_secret`).
+        except CustodyError as exc:
+            self._refuse("custody_error", detail=str(exc))
             return None
         output = self._parse_output(response)
         if output is None:
@@ -439,46 +587,28 @@ class KisBandSourceReader:
         """Plan §4.2's validation set, in order. A refusal here has already passed ``rt_cd``,
         so the band exists and is merely unusable — each reason names which clause rejected it.
         """
-        scale = self._band_source.price_scale
-        lower = _scaled(output.get(self._band_source.lower_field), scale)
-        upper = _scaled(output.get(self._band_source.upper_field), scale)
-        if lower is None or upper is None:
-            self._refuse(
-                "non_integral_scale",
-                detail=(
-                    f"{self._band_source.lower_field}="
-                    f"{output.get(self._band_source.lower_field)!r} "
-                    f"{self._band_source.upper_field}="
-                    f"{output.get(self._band_source.upper_field)!r} scale={scale}"
-                ),
-            )
+        outcome = validate_band_values(
+            lower_raw=output.get(self._band_source.lower_field),
+            upper_raw=output.get(self._band_source.upper_field),
+            basis_raw=output.get(self._band_source.basis_field),
+            price_scale=self._band_source.price_scale,
+            tick_size=self._tick_size,
+            lower_label=self._band_source.lower_field,
+            upper_label=self._band_source.upper_field,
+        )
+        if isinstance(outcome, BandRefusal):
+            self._refuse(outcome.reason, detail=outcome.detail)
             return None
-        if not 0 < lower < upper:
-            self._refuse("band_not_ordered", detail=f"min={lower} max={upper}")
-            return None
-        if self._tick_size is None or self._tick_size <= 0:
-            self._refuse("tick_size_absent", detail=f"tick_size={self._tick_size!r}")
-            return None
-        off_grid = [value for value in (lower, upper) if value % self._tick_size != 0]
-        if off_grid:
-            self._refuse(
-                "off_tick_grid",
-                detail=f"tick_size={self._tick_size} off_grid={off_grid}",
-            )
-            return None
-        basis = _scaled(output.get(self._band_source.basis_field), scale)
         observation = BandObservation(
             instrument=self._band_source.instrument,
-            price_min=lower,
-            price_max=upper,
+            price_min=outcome.price_min,
+            price_max=outcome.price_max,
             trading_date=trading_date,
             raw_payload_digest=hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
             source_continuity_id=continuity_id,
             as_of_ms=as_of_ms,
-            basis=basis,
-            symmetric_about_basis=(
-                None if basis is None else (upper - basis) == (basis - lower)
-            ),
+            basis=outcome.basis,
+            symmetric_about_basis=outcome.symmetric_about_basis,
         )
         self._record_observed(observation)
         self._last_observation = observation
@@ -537,8 +667,9 @@ def _scaled(raw: Any, scale: int) -> int | None:
     """``raw × scale`` as an EXACT integer, or ``None``.
 
     Never rounds (plan §4.2: "반올림 금지 — 커널 §12 'silent rounding' 원칙과 같은 이유"). A
-    value that is absent, unparseable as a decimal, or whose scaled form is not a whole number
-    is ``None`` — the caller turns that into a named refusal, never into a nearby integer.
+    value that is absent, unparseable as a decimal, out of the decimal context's exponent
+    range, or whose scaled form is not a whole number is ``None`` — the caller turns that into
+    a named refusal, never into a nearby integer and never into an exception.
     """
     if raw is None or isinstance(raw, bool):
         return None
@@ -552,7 +683,18 @@ def _scaled(raw: Any, scale: int) -> int | None:
     # unusable value.
     if not parsed.is_finite():
         return None
-    value = parsed * scale
+    try:
+        value = parsed * scale
+    except DecimalException:
+        # ⚠ The MULTIPLY, not the construction (PR #907 review MEDIUM-1). `"1e999999999"`
+        # builds a `Decimal` fine — the `try` above sees nothing — and `is_finite()` is
+        # `True`; it is only the `× scale` that pushes the exponent past the context's `Emax`
+        # and signals `decimal.Overflow`, one of the three signals the default context TRAPS.
+        # So it RAISED, out of `validate_band_values` and out of the band reader's `read()`
+        # entirely. Caught at the arithmetic that signals it rather than anywhere wider: the
+        # clause's claim is "this value does not scale to an exact integer", and which signal
+        # said so is not information the caller's refusal carries.
+        return None
     if value != value.to_integral_value():
         return None
     return int(value)

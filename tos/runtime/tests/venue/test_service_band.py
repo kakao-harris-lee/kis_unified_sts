@@ -29,6 +29,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from tos.venue import (
     ActionClass,
     InstrumentRouteFields,
@@ -36,6 +37,10 @@ from tos.venue import (
     OrderShapeFields,
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.venue.band_journal import (
+    ProducerJournalBandReader,
+    ProducerJournalBandSource,
+)
 from tos_runtime.venue.band_source import BandObservation
 from tos_runtime.venue.config import load_venue_constraint_policy
 from tos_runtime.venue.service import (
@@ -45,10 +50,14 @@ from tos_runtime.venue.service import (
 )
 
 from ._documents import (
+    PVL_A05610_BASIS,
+    PVL_A05610_LOWER,
+    PVL_A05610_UPPER,
     PVL_A05611_LOWER,
     PVL_A05611_UPPER,
     SCHEME,
     band_source_runtime_extra,
+    producer_journal_band_source_runtime_extra,
     venue_policy_yaml,
     write_fixture_venue_policy,
 )
@@ -65,6 +74,18 @@ class _FakeReader:
 
     def __call__(self) -> Any:
         return self.value
+
+
+class _Monotonic:
+    """Satisfies ``MonotonicSource`` structurally (it is a Protocol), for the one test class
+    that wires a REAL ``ProducerJournalBandReader``."""
+
+    def __init__(self) -> None:
+        self._now = 1_000
+
+    def now_ms(self) -> int:
+        self._now += 1
+        return self._now
 
 
 class _Reads:
@@ -604,3 +625,265 @@ class TestBandChangeIsANewGeneration:
 
         assert second.constraint_generation == first.constraint_generation + 1
         assert second.source_continuity_id == "boot-1:1"
+
+
+def _producer_journal_line(
+    *, trading_date: str = _TRADING_DATE, **overrides: Any
+) -> dict[str, Any]:
+    """One ``cp3-band/1`` line carrying the measured ``A05610`` band."""
+    line: dict[str, Any] = {
+        "kind": "cp3-band/1",
+        "source_id": "tos-cp3-live/0.1.0",
+        "instrument": _INSTRUMENT,
+        "trading_date": trading_date,
+        "tr_id": "FHMIF10000000",
+        "upper": PVL_A05610_UPPER,
+        "lower": PVL_A05610_LOWER,
+        "basis": PVL_A05610_BASIS,
+        "raw_payload_digest": "d" * 64,
+        "producer_continuity_id": "band-probe/1",
+        "as_of_ms": 1_760_577_960_000,
+    }
+    line.update(overrides)
+    return line
+
+
+def _producer_journal_service(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    *,
+    journal_bytes: bytes,
+) -> VenueConstraintService:
+    """A service whose band comes from a REAL :class:`ProducerJournalBandReader` over a
+    journal whose exact BYTES the caller chose — bytes, because one input below is not text.
+
+    A real reader, not a double: a double would make every assertion here one about the
+    test's own ``if``.
+    """
+    journal = tmp_path / "band.jsonl"
+    journal.write_bytes(journal_bytes)
+    path = write_fixture_venue_policy(
+        tmp_path,
+        venue_policy_yaml(
+            price_min="null",
+            price_max="null",
+            tick_size="2",
+            min_quantity="1",
+            max_quantity="10",
+            runtime_extra=producer_journal_band_source_runtime_extra(
+                instrument=_INSTRUMENT, band_journal_path=str(journal)
+            ),
+        ),
+    )
+    loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+    assert isinstance(loaded.band_source, ProducerJournalBandSource)
+    reader = ProducerJournalBandReader(
+        band_source=loaded.band_source,
+        monotonic=_Monotonic(),
+        evidence_sink=lambda _kind, _fields: None,
+        trading_date_reader=lambda: _TRADING_DATE,
+        tick_size=loaded.policy.shape_constraints.tick_size,
+    )
+    return VenueConstraintService(
+        loaded_policy=loaded,
+        scheme=SCHEME,
+        session_phase_reader=_FakeReader("REGULAR"),
+        tick_generation_reader=_FakeReader(1),
+        evidence_store=evidence_store,
+        environment_label="test-env",
+        route_fields=InstrumentRouteFields(),
+        broker_capability_profile_version=None,
+        broker_capability_profile_digest=None,
+        activated_member_digest="fixture-activation-digest",
+        band_reader=reader.read,
+        trading_date_reader=_FakeReader(_TRADING_DATE),
+    )
+
+
+class TestProducerJournalG2ReadSide:
+    """2026-10-15 plan §3.4 G2 ② — the SERVICE half of the read-side trading-date clause.
+
+    ⚠ **This is the "가려진 절" the plan warns about, and the reason the assertion is on the
+    FIRST snapshot.** ``snapshot()`` evaluates its own trading-date bond
+    (:meth:`~tos_runtime.venue.service.VenueConstraintService._enforce_trading_date_bond`)
+    before anything else, so by the SECOND call a stale band is dropped whether or not the
+    reader rejected it. On the first call the held band is still ``None`` when that bond runs,
+    the boot read happens after it, and whatever the reader returns goes straight into the
+    snapshot — so the first snapshot is the only place where deleting the reader's own
+    comparison changes an answer.
+
+    **Measured red proof** (2026-10-16): with ``band_journal.ProducerJournalBandReader``'s
+    ``trading_date`` comparison deleted,
+    :meth:`test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless` FAILS —
+    the first snapshot binds the D-1 line's digest — while the same assertions taken on a
+    SECOND ``snapshot()`` call stay green, which is the plan's point.
+
+    A REAL :class:`~tos_runtime.venue.band_journal.ProducerJournalBandReader` is wired here,
+    not a double: a double would make this an assertion about the test's own ``if``.
+    """
+
+    def _service(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        *,
+        line_trading_date: str,
+    ) -> VenueConstraintService:
+        return _producer_journal_service(
+            tmp_path,
+            evidence_store,
+            journal_bytes=json.dumps(
+                _producer_journal_line(trading_date=line_trading_date)
+            ).encode("utf-8")
+            + b"\n",
+        )
+
+    def test_todays_line_reaches_the_first_snapshot(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """The baseline, without which the refusal below proves only "returns nothing"."""
+        service = self._service(
+            tmp_path, evidence_store, line_trading_date=_TRADING_DATE
+        )
+
+        snapshot = service.snapshot()
+
+        assert snapshot.critical_input_snapshot_digest is not None
+        assert snapshot.max_age == f"trading_date_kst:{_TRADING_DATE}"
+        assert service.shape_constraints.price_max == _UPPER
+
+    def test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """Only the LINE's ``trading_date`` differs from the baseline above."""
+        service = self._service(tmp_path, evidence_store, line_trading_date="20261007")
+
+        snapshot = service.snapshot()
+
+        assert snapshot.critical_input_snapshot_digest is None
+        assert snapshot.source_continuity_id is None
+        assert snapshot.max_age is None
+        assert service.shape_constraints.price_max is None
+
+
+class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
+    """PR #907 review MEDIUM-1 / Codex medium — the SERVICE half of the three inputs that
+    left ``ProducerJournalBandReader.read()`` as an EXCEPTION.
+
+    Why this class exists beside the reader's own tests: ``VenueConstraintService._read_band``
+    calls the reader with **no ``try``**, so anything the reader raises propagates out of
+    ``snapshot()`` — and ``decide()`` calls ``snapshot()`` first, so the runtime's whole
+    admissibility path dies on a corrupt tail instead of answering ``UNKNOWN``. Band plan
+    2026-10-08 §4.6 is explicit that every band failure is band ``None`` ⇒ kernel ``UNKNOWN``
+    ⇒ 송신 0; an exception is neither.
+
+    Each input differs from :meth:`test_todays_line_is_the_baseline` in exactly one respect:
+    the BYTES of the last line.
+    """
+
+    def _service(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, *, tail: bytes
+    ) -> VenueConstraintService:
+        return _producer_journal_service(
+            tmp_path, evidence_store, journal_bytes=tail + b"\n"
+        )
+
+    def test_todays_line_is_the_baseline(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """Without this, "the band is absent" below would also be what a broken fixture
+        produces."""
+        service = self._service(
+            tmp_path,
+            evidence_store,
+            tail=json.dumps(_producer_journal_line()).encode("utf-8"),
+        )
+
+        assert service.snapshot().critical_input_snapshot_digest is not None
+        assert service.shape_constraints.price_max == _UPPER
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param(b"\xff\xfe", id="not_utf8"),
+            pytest.param(b"[" * 100_000 + b"]" * 100_000, id="deeply_nested"),
+            pytest.param(
+                json.dumps(_producer_journal_line(upper="1e999999999")).encode("utf-8"),
+                id="overflowing_bound",
+            ),
+        ],
+    )
+    def test_an_unusable_last_line_leaves_the_first_snapshot_bandless(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, tail: bytes
+    ) -> None:
+        """``snapshot()`` RETURNS — it does not raise — and the band is absent."""
+        service = self._service(tmp_path, evidence_store, tail=tail)
+
+        snapshot = service.snapshot()
+
+        assert snapshot.critical_input_snapshot_digest is None
+        assert snapshot.source_continuity_id is None
+        assert snapshot.max_age is None
+        assert service.shape_constraints.price_max is None
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param(b"\xff\xfe", id="not_utf8"),
+            pytest.param(b"[" * 100_000 + b"]" * 100_000, id="deeply_nested"),
+            pytest.param(
+                json.dumps(_producer_journal_line(upper="1e999999999")).encode("utf-8"),
+                id="overflowing_bound",
+            ),
+        ],
+    )
+    def test_decide_answers_unknown_rather_than_dying(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, tail: bytes
+    ) -> None:
+        """The verdict the kernel owes on an absent bound (``predicates.py``'s required-bound
+        check): ``UNKNOWN``, which is 송신 0 — never an exception out of ``decide()``."""
+        service = self._service(tmp_path, evidence_store, tail=tail)
+
+        verdict = service.decide(
+            action_class=ActionClass.NEW_LONG,
+            shape=_shape(100_000),
+            candidate_command=None,
+        )
+
+        assert verdict.result is OrderAdmissibilityResult.UNKNOWN
+
+
+class TestProducerJournalNullProvenance:
+    """PR #907 review MEDIUM-2 — "a band in force whose provenance reads exactly like no
+    band at all", stated as the snapshot it produces.
+
+    The reader's own clause tests are
+    :class:`~tests.venue.test_band_journal.TestTheProvenanceValues`. This is why they matter:
+    ``{"raw_payload_digest": null, "producer_continuity_id": null}`` passes the key-set
+    equality rule, so before the value clauses the service issued a snapshot with the band's
+    two BOUNDS in force and both provenance fields ``None`` — indistinguishable, in every row
+    that reports them, from the bandless snapshot the class above measures.
+    """
+
+    def test_a_line_with_null_provenance_leaves_the_first_snapshot_bandless(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        service = _producer_journal_service(
+            tmp_path,
+            evidence_store,
+            journal_bytes=json.dumps(
+                _producer_journal_line(
+                    raw_payload_digest=None, producer_continuity_id=None
+                )
+            ).encode("utf-8")
+            + b"\n",
+        )
+
+        snapshot = service.snapshot()
+
+        # The fail-open: BEFORE the value clauses the two bounds below were _LOWER/_UPPER
+        # while the two fields above were `None` — a band judging prices with no provenance.
+        assert service.shape_constraints.price_min is None
+        assert service.shape_constraints.price_max is None
+        assert snapshot.critical_input_snapshot_digest is None
+        assert snapshot.source_continuity_id is None

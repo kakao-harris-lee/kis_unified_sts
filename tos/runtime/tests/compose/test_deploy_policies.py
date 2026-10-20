@@ -367,6 +367,13 @@ _OCP_ADMITTED_QUANTITY_BASIS = "RISK"
 #: a second committed copy, and ``scope.action_classes`` still authorizes both.
 _OCP_DIRECTION = "LONG"
 
+#: A stand-in for ``_runtime.band_source.band_journal_path``, which is a DEPLOYMENT value
+#: (the runner's ``$TENANT_PRODUCER_SESSION_DIR/band.jsonl``) and therefore has no committed
+#: form to assert. :func:`_filled` only needs the loader to accept it: the path is never
+#: opened at load time, and the reader's own absent-file behaviour (band ``None`` + a reason)
+#: is unit-tested in ``tests/venue/test_band_journal.py``.
+_BAND_JOURNAL_PATH_STAND_IN = "/nonexistent/producer-session/band.jsonl"
+
 
 def _filled(
     path: Path,
@@ -405,6 +412,25 @@ def _filled(
     raw["scope"]["environments"] = [environment]
     raw["scope"]["accounts"] = [account]
     raw["scope"]["instruments"] = [instrument]
+    band_source = raw.get("_runtime", {}).get("band_source")
+    if band_source is not None:
+        # The LONG tenant tree's three band-source render slots (CP-3 band 원천 경로 변경,
+        # ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.2/§3.4 C1). Filled
+        # here for the same reason the scope coordinates are: the renderer fills them
+        # off-repo, so a loader test that did not would be testing a document no deployment
+        # ever has.
+        #
+        # ⚠ The prefix list is a LITERAL here and is NOT a second source of truth. Its one
+        # home is ``tools.tos_cp3.bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES``, which
+        # this package may not import (firewall R1), and "the render output equals that
+        # constant" is pinned on the legacy side, in
+        # ``tests/unit/scripts/test_render_tenant_trees.py``.
+        assert band_source["instrument"] == "TBD"
+        assert band_source["band_journal_path"] == "TBD"
+        assert band_source["approved_source_prefixes"] == ["TBD"]
+        band_source["instrument"] = instrument
+        band_source["band_journal_path"] = _BAND_JOURNAL_PATH_STAND_IN
+        band_source["approved_source_prefixes"] = ["tos-cp3-live"]
     construction = raw.get("_runtime", {}).get("construction")
     if construction is not None:
         assert construction["sizing"]["admitted_quantity_bases"] == [

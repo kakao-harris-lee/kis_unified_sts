@@ -739,11 +739,16 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 441
+  measured: 443
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-16 CP-3 band 생산자 경유(PR-B) 재등재 441→443(+2)**:
+    `band_reader_factory=build_kis_band_reader_factory(...)` 를 kind 로 갈라 주는
+    `build_band_reader_factory(...)` 로 바꾸고, 그 이유(상주 paper·SHORT 는 선언 없음 ·
+    LONG 은 `producer_journal` 이고 그 kind 의 팩토리는 host seal 도 자격 셀도 쓰지
+    않는다)를 적은 주석이 3→5 줄이 됐다. 호출 시퀀스·kwargs 수는 무변경.
     **2026-10-09 CP-3 band 원천 웨이브(PR-2) 재등재 421→441(+20)**: `build_venue_service`
     호출 앞에 `trading_date_reader` 지역 람다(주석 3줄) + `credential_sessions_cell`
     1줄(주석 2줄)을 두고, 그 호출에 `band_reader_factory=build_kis_band_reader_factory(...)`

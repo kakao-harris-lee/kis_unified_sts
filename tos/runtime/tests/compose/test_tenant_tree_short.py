@@ -135,7 +135,19 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str]] = {
     "order_construction_policy.yaml": frozenset(
         {"policy_id", "_runtime.construction.axes"}
     ),
-    "venue_constraint_policy.yaml": frozenset({"policy_id"}),
+    "venue_constraint_policy.yaml": frozenset(
+        {
+            "policy_id",
+            # LONG-only since 2026-10-16 (CP-3 band 원천 경로 변경,
+            # docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md §4): the band switch-on
+            # is per DEPLOYMENT, not per direction, and the operator turned on LONG alone.
+            # Whole-subtree prefixes, so a later leaf added to or removed from the block does
+            # not have to be listed here -- `_differing_paths` folds onto the prefix.
+            "_runtime.band_source",
+            # Travels with the block: the loader requires it only when a source is declared.
+            "_runtime.price_scale",
+        }
+    ),
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
     "strategy_bindings.yaml": frozenset({"strategies"}),
     "RENDER.yaml": frozenset({"tree_id", "direction.value", "slots"}),
@@ -149,6 +161,9 @@ _FOLDED_PREFIXES: frozenset[tuple[str, str]] = frozenset(
         ("order_construction_policy.yaml", "_runtime.construction.axes"),
         ("strategy_bindings.yaml", "strategies"),
         ("RENDER.yaml", "slots"),
+        # 2026-10-16: LONG-only, so the fold here is over a subtree that exists on ONE side.
+        # Narrowing test: :func:`test_the_band_source_block_is_long_only_and_fully_pinned`.
+        ("venue_constraint_policy.yaml", "_runtime.band_source"),
     }
 )
 
@@ -366,6 +381,38 @@ def test_prose_files_differ_and_each_describes_its_own_tree(rel: str) -> None:
     assert "LEGACY_ONLY_ENTRY" not in long_text
 
 
+def test_the_band_source_block_is_long_only_and_fully_pinned() -> None:
+    """The narrowing test for the ``_runtime.band_source`` fold (2026-10-16, CP-3 band 원천
+    경로 변경 §4 "켜는 배포: LONG tenant 만").
+
+    This fold is different in kind from the other three: the subtree exists on ONE side, so
+    "compare the subtree minus the direction-bearing part" has nothing to compare against.
+    What keeps it from exempting its leaves is therefore an exhaustive pin on the LONG side
+    plus the SHORT side's absence — delete a leaf from the block and this goes red, which is
+    exactly what the fold would otherwise have allowed.
+
+    ⚠ The band switch-on is per DEPLOYMENT, not per direction. The day the operator turns the
+    SHORT tree on, this test is the one that has to be rewritten — deliberately, because that
+    is a decision and not a refactor.
+    """
+    long_runtime = _mapping(_LONG_DIR, "venue_constraint_policy.yaml")["_runtime"]
+    short_runtime = _mapping(_SHORT_DIR, "venue_constraint_policy.yaml")["_runtime"]
+
+    assert "band_source" not in short_runtime
+    assert "price_scale" not in short_runtime
+    assert long_runtime["price_scale"] == 100
+    assert long_runtime["band_source"] == {
+        "kind": "producer_journal",
+        "instrument": "TBD",
+        "price_scale": 100,
+        "bound": "trading_date_kst",
+        "read_on": ["boot", "phase_change"],
+        "failure": "unknown",
+        "band_journal_path": "TBD",
+        "approved_source_prefixes": ["TBD"],
+    }
+
+
 def test_every_folded_prefix_has_a_narrowing_test() -> None:
     """``_FOLDED_PREFIXES`` must be exactly the declared paths that are not leaf scalars.
 
@@ -478,10 +525,27 @@ def test_the_render_manifest_slot_list_differs_only_in_the_direction_bearing_row
     The per-tree slot tuples themselves are pinned as literals in
     ``tests/unit/scripts/test_render_tenant_trees.py``; this test is the LONG-vs-SHORT half,
     which that file cannot make (it pins each tree against its own literal, so two trees could
-    drift apart in lockstep with two edited literals)."""
-    long_slots = _mapping(_LONG_DIR, "RENDER.yaml")["slots"]
+    drift apart in lockstep with two edited literals).
+
+    ⚠ **The LONG tree's three band-source rows are set aside first** (2026-10-16, CP-3 band
+    원천 경로 변경 §4): they are not a per-direction SPELLING of a shared row — the SHORT tree's
+    policy has no such leaves to fill — so normalising them against nothing would be comparing
+    a table to a shorter one. They are pinned on their own, both here (the count, and that
+    only LONG has them) and in ``tests/unit/scripts/test_render_tenant_trees.py``.
+    """
+    long_slots_all = _mapping(_LONG_DIR, "RENDER.yaml")["slots"]
     short_slots = _mapping(_SHORT_DIR, "RENDER.yaml")["slots"]
 
+    long_band = [row for row in long_slots_all if "band_source" in row["key"]]
+    short_band = [row for row in short_slots if "band_source" in row["key"]]
+    assert [row["key"] for row in long_band] == [
+        "_runtime.band_source.instrument",
+        "_runtime.band_source.band_journal_path",
+        "_runtime.band_source.approved_source_prefixes",
+    ]
+    assert short_band == []
+
+    long_slots = [row for row in long_slots_all if "band_source" not in row["key"]]
     assert len(long_slots) == len(short_slots) == 20
     # Same keys on every row -- a tenant manifest cannot grow a field the other lacks.
     for row in (*long_slots, *short_slots):

@@ -118,8 +118,11 @@ from tos_runtime.venue import (
     BandReader,
     BandSourceConfig,
     KisBandSourceReader,
+    KisQuoteGetBandSource,
     LoadedOrderConstructionPolicy,
     LoadedVenuePolicy,
+    ProducerJournalBandReader,
+    ProducerJournalBandSource,
     VenueConstraintService,
     build_band_client,
     load_activation_members,
@@ -135,7 +138,9 @@ __all__ = [
     "VenueBandSourceUnwired",
     "VenuePolicyScopeMismatch",
     "VenueServiceStage",
+    "build_band_reader_factory",
     "build_kis_band_reader_factory",
+    "build_producer_journal_band_reader_factory",
     "build_venue_service",
 ]
 
@@ -389,6 +394,9 @@ def build_kis_band_reader_factory(
     """
 
     def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+        # `build_band_reader_factory` dispatches on `kind` before reaching this, and the
+        # loader admits no third kind — so this is a type narrowing, not a branch.
+        assert isinstance(band_source, KisQuoteGetBandSource)
         mock_rest_base, real_rest_base = resolve_kis_instance_rest_bases(broker_scopes)
         transport_config = load_kis_quote_transport_config(
             config_dir / KIS_QUOTE_TRANSPORT_CONFIG_NAME,
@@ -433,6 +441,82 @@ def build_kis_band_reader_factory(
             return reader.read()
 
         return _read
+
+    return _factory
+
+
+def build_producer_journal_band_reader_factory(
+    *,
+    monotonic: MonotonicSource,
+    evidence_sink: EvidenceRecorder,
+    trading_date_reader: Callable[[], str | None],
+) -> BandReaderFactory:
+    """The production :data:`BandReaderFactory` for ``kind: "producer_journal"`` (CP-3 band
+    원천 경로 변경, ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3).
+
+    **Notice what it does NOT take**: no ``config_dir``, no ``broker_scopes``, no credential
+    cell. This kind opens one file whose path the policy itself carries, so there is no host
+    seal to resolve, no token lifecycle to share, and nothing for
+    :class:`VenueBandSourceUnwired` to be late for. That absence is the whole point of the
+    path (plan §3.5 — the runtime keeps 소켓 0 · 자격증명 0), and it is why the factory for
+    this kind can be handed out unconditionally at compose time.
+
+    The file is NOT opened here. A missing or unusable journal is band ``None`` plus a reason
+    at READ time (plan §3.3), not a boot refusal: the runner may still be waiting for the band
+    probe's line when the runtime boots, and a boot that refused over an absent band would
+    lose the whole session's price collection for a fact whose absence is already conservative.
+    """
+
+    def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+        assert isinstance(band_source, ProducerJournalBandSource)
+        reader = ProducerJournalBandReader(
+            band_source=band_source,
+            monotonic=monotonic,
+            evidence_sink=evidence_sink,
+            trading_date_reader=trading_date_reader,
+            tick_size=tick_size,
+        )
+        return reader.read
+
+    return _factory
+
+
+def build_band_reader_factory(
+    *,
+    config_dir: Path,
+    broker_scopes: BrokerScopesConfig,
+    monotonic: MonotonicSource,
+    evidence_sink: EvidenceRecorder,
+    credential_sessions_cell: KisCredentialSessionsCell,
+    trading_date_reader: Callable[[], str | None],
+) -> BandReaderFactory:
+    """The one :data:`BandReaderFactory` the compose root passes in — it dispatches on the
+    declared ``band_source.kind``.
+
+    Both per-kind factories are constructed eagerly and neither touches I/O until it is
+    CALLED, which happens only for the kind the policy actually declares. So a
+    ``producer_journal`` deployment never resolves a host seal (it has no INSTANCE binding to
+    resolve — 2026-10-15 plan §1 B1) and a ``kis_quote_get`` one never looks for a band
+    journal.
+    """
+    kis_factory = build_kis_band_reader_factory(
+        config_dir=config_dir,
+        broker_scopes=broker_scopes,
+        monotonic=monotonic,
+        evidence_sink=evidence_sink,
+        credential_sessions_cell=credential_sessions_cell,
+        trading_date_reader=trading_date_reader,
+    )
+    journal_factory = build_producer_journal_band_reader_factory(
+        monotonic=monotonic,
+        evidence_sink=evidence_sink,
+        trading_date_reader=trading_date_reader,
+    )
+
+    def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+        if isinstance(band_source, ProducerJournalBandSource):
+            return journal_factory(band_source, tick_size)
+        return kis_factory(band_source, tick_size)
 
     return _factory
 

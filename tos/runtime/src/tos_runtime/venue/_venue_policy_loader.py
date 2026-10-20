@@ -54,12 +54,17 @@ from tos_runtime.venue._policy_primitives import (
     require_str_list,
     require_template_shape,
 )
+from tos_runtime.venue.band_journal import (
+    BAND_SOURCE_KIND_PRODUCER_JOURNAL,
+    ProducerJournalBandSource,
+)
 from tos_runtime.venue.band_source import (
     BAND_SOURCE_BOUND_TRADING_DATE_KST,
     BAND_SOURCE_FAILURE_UNKNOWN,
     BAND_SOURCE_KIND_KIS_QUOTE_GET,
     BAND_SOURCE_READ_ON_TOKENS,
     BandSourceConfig,
+    KisQuoteGetBandSource,
     band_source_digest,
 )
 
@@ -293,6 +298,53 @@ def _require_positive_int_key(
     return value
 
 
+#: The leaves each ``band_source.kind`` requires BEYOND the common six
+#: (``kind``/``instrument``/``price_scale``/``bound``/``read_on``/``failure``).
+#:
+#: Per-kind rather than one union (2026-10-15 plan §3.3 "로더는 kind 마다 필수 키를 따로
+#: 요구한다"). The 2026-10-15 enabling attempt measured the cost of the union spelling: four
+#: ``kis_quote.yaml`` values (``tr_id``/``field_mapping``/``source_id``/``request_timeout_s``)
+#: were REQUIRED of a document on a path that read none of them.
+_BAND_SOURCE_KIND_KEYS: dict[str, frozenset[str]] = {
+    BAND_SOURCE_KIND_KIS_QUOTE_GET: frozenset(
+        {"tr_id", "upper_field", "lower_field", "basis_field", "timeout_ms"}
+    ),
+    BAND_SOURCE_KIND_PRODUCER_JOURNAL: frozenset(
+        {"band_journal_path", "approved_source_prefixes"}
+    ),
+}
+
+_BAND_SOURCE_KINDS: frozenset[str] = frozenset(_BAND_SOURCE_KIND_KEYS)
+
+
+def _refuse_keys_of_the_other_kind(
+    block: dict[str, Any], kind: str, path: Path, ctx: str
+) -> None:
+    """Refuse a leaf that belongs to a DIFFERENT ``band_source.kind``.
+
+    Not tidiness. A ``producer_journal`` block carrying ``timeout_ms: 5000`` reads as "the band
+    read times out after five seconds" and nothing on that path has a timeout at all — it opens
+    a file. The same block carrying ``upper_field: "futs_mxpr"`` reads as "the runtime takes the
+    upper limit out of that response key" when the key it actually reads is the band line's
+    ``upper``. A value that is declared and unread is indistinguishable, to the next reader,
+    from one the code forgot to use (2026-10-15 plan §3.3 — that is exactly what the four
+    unread ``kis_quote.yaml`` values were).
+    """
+    foreign = sorted(
+        set(block)
+        & frozenset().union(
+            *(keys for other, keys in _BAND_SOURCE_KIND_KEYS.items() if other != kind)
+        )
+        - _BAND_SOURCE_KIND_KEYS[kind]
+    )
+    if foreign:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.kind is {kind!r} but the block declares {foreign!r}, which "
+            f"belong(s) to another kind and is read by nothing on this path — "
+            f"{kind!r} reads {sorted(_BAND_SOURCE_KIND_KEYS[kind])!r}"
+        )
+
+
 def _parse_band_source(
     runtime_raw: dict[str, Any], path: Path
 ) -> BandSourceConfig | None:
@@ -313,18 +365,11 @@ def _parse_band_source(
         )
     ctx = "_runtime.band_source"
     kind = require_filled_str(block, "kind", path, ctx)
-    if kind != BAND_SOURCE_KIND_KIS_QUOTE_GET:
+    if kind not in _BAND_SOURCE_KINDS:
         raise VenuePolicyConfigError(
-            f"{path}: {ctx}.kind {kind!r} is not {BAND_SOURCE_KIND_KIS_QUOTE_GET!r} — the "
+            f"{path}: {ctx}.kind {kind!r} is not one of {sorted(_BAND_SOURCE_KINDS)!r} — the "
             "runtime has no reader for any other kind, and a declared-but-unreadable source "
             "would boot as 'band always None', indistinguishable from a broker outage"
-        )
-    tr_id = require_filled_str(block, "tr_id", path, ctx)
-    if not _QUOTE_TR_ID_PATTERN.match(tr_id):
-        raise VenuePolicyConfigError(
-            f"{path}: {ctx}.tr_id {tr_id!r} does not match the measured KIS quotations TR id "
-            "shape ('FH' + 3 letters + 8 digits — tos_runtime.transport.kis_quote.config's own "
-            "module docstring records the measurement and its citations)"
         )
     bound = require_filled_str(block, "bound", path, ctx)
     if bound != BAND_SOURCE_BOUND_TRADING_DATE_KST:
@@ -350,18 +395,51 @@ def _parse_band_source(
             f"{sorted(BAND_SOURCE_READ_ON_TOKENS)!r} — a token outside that set names a read "
             "instant nothing implements (plan §4.3)"
         )
-    return BandSourceConfig(
-        kind=kind,
-        tr_id=tr_id,
-        instrument=require_filled_str(block, "instrument", path, ctx),
-        upper_field=require_filled_str(block, "upper_field", path, ctx),
-        lower_field=require_filled_str(block, "lower_field", path, ctx),
-        basis_field=require_filled_str(block, "basis_field", path, ctx),
-        price_scale=_require_positive_int_key(block, "price_scale", path, ctx),
-        timeout_ms=_require_positive_int_key(block, "timeout_ms", path, ctx),
-        bound=bound,
-        read_on=read_on,
-        failure=failure,
+    common: dict[str, Any] = {
+        "kind": kind,
+        "instrument": require_filled_str(block, "instrument", path, ctx),
+        "price_scale": _require_positive_int_key(block, "price_scale", path, ctx),
+        "bound": bound,
+        "read_on": read_on,
+        "failure": failure,
+    }
+    _refuse_keys_of_the_other_kind(block, kind, path, ctx)
+    if kind == BAND_SOURCE_KIND_KIS_QUOTE_GET:
+        tr_id = require_filled_str(block, "tr_id", path, ctx)
+        if not _QUOTE_TR_ID_PATTERN.match(tr_id):
+            raise VenuePolicyConfigError(
+                f"{path}: {ctx}.tr_id {tr_id!r} does not match the measured KIS quotations TR "
+                "id shape ('FH' + 3 letters + 8 digits — "
+                "tos_runtime.transport.kis_quote.config's own module docstring records the "
+                "measurement and its citations)"
+            )
+        return KisQuoteGetBandSource(
+            tr_id=tr_id,
+            upper_field=require_filled_str(block, "upper_field", path, ctx),
+            lower_field=require_filled_str(block, "lower_field", path, ctx),
+            basis_field=require_filled_str(block, "basis_field", path, ctx),
+            timeout_ms=_require_positive_int_key(block, "timeout_ms", path, ctx),
+            **common,
+        )
+    prefixes = tuple(
+        require_str_list(
+            require_list(block, "approved_source_prefixes", path, ctx),
+            path,
+            f"{ctx}.approved_source_prefixes",
+        )
+    )
+    if not prefixes or any(not prefix.strip() for prefix in prefixes):
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.approved_source_prefixes {list(prefixes)!r} must be a non-empty "
+            "list of non-empty strings — an empty list approves no writer (so the band is "
+            "permanently absent) and an empty ENTRY approves every one of them (2026-10-15 "
+            "plan §3.4 C1; the same rule tools/tos_cp3/bootproof_guard.py applies to its own "
+            "list)"
+        )
+    return ProducerJournalBandSource(
+        band_journal_path=require_filled_str(block, "band_journal_path", path, ctx),
+        approved_source_prefixes=prefixes,
+        **common,
     )
 
 
@@ -374,8 +452,15 @@ def _cross_check_band_source(
     transport_instrument_reader: Callable[[], str | None] | None,
     path: Path,
 ) -> int | None:
-    """The four cross-document rules a DECLARED band source must satisfy, and the
+    """The cross-document rules a DECLARED band source must satisfy, and the
     ``_runtime.price_scale`` it returns (plan §4.1's refusal list).
+
+    Three of them hold for EVERY kind (no ``price_min``/``price_max`` literals beside a
+    source; ``band_source.instrument`` == ``scope.instruments``' sole element;
+    ``_runtime.price_scale`` present and equal to the source's). The last two — a
+    ``kis_quote`` transport document exists, and its ``instrument`` agrees — are about the
+    document the band GET travels through, so they apply to ``kis_quote_get`` ONLY
+    (2026-10-15 plan §3.3).
 
     ``band_source is None`` — the shipped state of every tree today (plan §5) — returns
     ``None`` immediately: ``_runtime.price_scale`` is NOT required of a tree that declares no
@@ -429,6 +514,13 @@ def _cross_check_band_source(
             f"_runtime.band_source.price_scale {band_source.price_scale!r} — the band and the "
             "order price would be compared in different units (plan §4.1 가격 척도)"
         )
+    if band_source.kind != BAND_SOURCE_KIND_KIS_QUOTE_GET:
+        # Only the ``kis_quote_get`` kind reaches the broker, and only it therefore needs that
+        # document's host seal and paths (2026-10-15 plan §3.3). A ``producer_journal``
+        # deployment opens one file; requiring a transport document beside it would refuse the
+        # very trees this path exists to enable — none of them carries a ``kis_quote.yaml``
+        # (``test_venue_band_source_wiring.py::…test_no_tree_carries_a_kis_quote_document_today``).
+        return price_scale
     transport_instrument = (
         None if transport_instrument_reader is None else transport_instrument_reader()
     )
