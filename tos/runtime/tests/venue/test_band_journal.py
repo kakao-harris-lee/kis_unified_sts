@@ -480,6 +480,67 @@ class TestTheLineShape:
         assert sink.only()["reason"] == "producer_as_of_ms_not_an_int"
 
 
+class TestTheProvenanceValues:
+    """PR #907 review MEDIUM-2 — a PRESENT key is not a USABLE value.
+
+    The key-set clause above makes every provenance key present; this is what makes it carry
+    something. The gap it closes is the one the key set's own docstring used to claim it had
+    already closed: ``{"raw_payload_digest": null, "producer_continuity_id": null}`` satisfies
+    ``set(line) == BAND_JOURNAL_LINE_KEYS``, so before this clause the line was OBSERVED and
+    the service issued a snapshot whose ``price_min``/``price_max`` were IN FORCE while its
+    ``critical_input_snapshot_digest`` and ``source_continuity_id`` read exactly like "no band
+    at all" — the very state :data:`BAND_JOURNAL_LINE_KEYS`' equality rule exists to prevent.
+    """
+
+    @pytest.mark.parametrize(
+        "digest",
+        [
+            pytest.param(None, id="null"),
+            pytest.param("", id="empty"),
+            pytest.param(
+                "1C5B08AA0B75883E77D0DDBBE56989BC58A41FD52B1701286B40B101C73E4AA1",
+                id="uppercase",
+            ),
+            pytest.param("1c5b08aa", id="too_short"),
+            pytest.param("z" * 64, id="not_hex"),
+            pytest.param(1234, id="not_a_string"),
+        ],
+    )
+    def test_a_raw_payload_digest_that_is_not_sha256_hex_is_refused(
+        self, tmp_path: Path, digest: Any
+    ) -> None:
+        """The field is this band's ``critical_input_snapshot_digest`` stand-in, so "it is a
+        SHA-256 of something" is the whole of what it claims. 64 LOWERCASE hex, because the
+        writer's own ``hashlib.sha256(...).hexdigest()`` emits exactly that and a second
+        spelling of one digest is a second digest to every comparison downstream.
+        """
+        reader, sink = _reader(_write(tmp_path, _line(raw_payload_digest=digest)))
+
+        assert reader.read() is None
+        assert sink.only()["reason"] == "raw_payload_digest_not_a_sha256_hex"
+
+    @pytest.mark.parametrize(
+        "continuity",
+        [
+            pytest.param(None, id="null"),
+            pytest.param("", id="empty"),
+            pytest.param(31337, id="not_a_string"),
+        ],
+    )
+    def test_a_blank_producer_continuity_id_is_refused(
+        self, tmp_path: Path, continuity: Any
+    ) -> None:
+        """``source_continuity_id`` is ``None`` on a snapshot that has no band, so a band
+        carrying ``None`` there is indistinguishable from no band in every row that reports
+        it — including the runbook §7.2-d acceptance that compares the two."""
+        reader, sink = _reader(
+            _write(tmp_path, _line(producer_continuity_id=continuity))
+        )
+
+        assert reader.read() is None
+        assert sink.only()["reason"] == "producer_continuity_id_not_a_nonempty_string"
+
+
 # ---------------------------------------------------------------------------
 # G2 / G3 / C1 — the read-side clauses, each varying exactly one leaf
 # ---------------------------------------------------------------------------

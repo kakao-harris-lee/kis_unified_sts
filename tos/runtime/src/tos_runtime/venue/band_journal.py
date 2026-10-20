@@ -67,6 +67,7 @@ no ``shared.*``, no ``tools.*``, no ``os.environ``.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,8 +106,15 @@ BAND_JOURNAL_LINE_KIND = "cp3-band/1"
 #: ⚠ **Equality, not containment.** A line that claims ``cp3-band/1`` while missing
 #: ``raw_payload_digest`` would otherwise bind ``None`` into the snapshot's
 #: ``critical_input_snapshot_digest`` stand-in — a band in force whose provenance field reads
-#: exactly like "no band at all". Requiring the whole set is what makes every field below a
-#: present value rather than a ``.get()`` that might be ``None``.
+#: exactly like "no band at all". Requiring the whole set is what lets every read below be
+#: ``line[key]`` rather than a ``.get()``.
+#:
+#: ⚠ **And that is ALL it does** (PR #907 review MEDIUM-2). A present key may still hold
+#: ``null``, which satisfies this set exactly — an earlier version of this comment claimed the
+#: set made "every field below a present VALUE", and the measured consequence of believing it
+#: was a band whose two bounds judged prices while both provenance fields were ``None``. What
+#: makes the values usable is :meth:`ProducerJournalBandReader._line_refusal`'s own clauses,
+#: one per field, each with its own red test.
 BAND_JOURNAL_LINE_KEYS: frozenset[str] = frozenset(
     {
         "kind",
@@ -122,6 +130,10 @@ BAND_JOURNAL_LINE_KEYS: frozenset[str] = frozenset(
         "as_of_ms",
     }
 )
+
+#: What a ``raw_payload_digest`` must look like: the exact output shape of the writer's
+#: ``hashlib.sha256(...).hexdigest()`` (``tools/tos_cp3/quote_client.py``).
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -259,9 +271,10 @@ class ProducerJournalBandReader:
         """The READ-SIDE clauses: why this line is not a usable band here, or ``None``.
 
         Order is deliberate: SHAPE first (``kind``, key set), then the three bonds that are
-        about THIS session (contract, trading date, writer), then the one type check the
-        evidence row depends on. A refusal past the shape clauses names a line that is
-        well-formed and merely unusable here.
+        about THIS session (contract, trading date, writer), then the VALUE checks on the
+        three fields the observation and its evidence row carry through unchanged — the
+        producer's stamp and its two provenance identifiers. A refusal past the shape clauses
+        names a line that is well-formed and merely unusable here.
 
         Split from :meth:`_validate` at that seam — read-side clauses here, the shared numeric
         set and the record there — rather than registered as a size-budget exception:
@@ -307,6 +320,23 @@ class ProducerJournalBandReader:
             producer_as_of_ms, int
         ):
             return BandRefusal("producer_as_of_ms_not_an_int", f"{producer_as_of_ms!r}")
+        # The two PROVENANCE values (PR #907 review MEDIUM-2). The key-set clause above makes
+        # these keys PRESENT; it says nothing about what they hold, and `null` satisfies it.
+        # A band observed from such a line is in force — `price_min`/`price_max` judge every
+        # price — while its `critical_input_snapshot_digest` stand-in and its continuity id
+        # read exactly like "no band at all", which is the state that clause's own comment
+        # claims it prevents.
+        digest = line["raw_payload_digest"]
+        if not isinstance(digest, str) or _SHA256_HEX.fullmatch(digest) is None:
+            # 64 LOWERCASE hex, which is what the writer's own `hashlib.sha256().hexdigest()`
+            # emits: a second spelling of one digest is a second digest to every comparison
+            # downstream, so the shape is pinned rather than merely "a non-empty string".
+            return BandRefusal("raw_payload_digest_not_a_sha256_hex", f"{digest!r}")
+        continuity = line["producer_continuity_id"]
+        if not isinstance(continuity, str) or not continuity:
+            return BandRefusal(
+                "producer_continuity_id_not_a_nonempty_string", f"{continuity!r}"
+            )
         return None
 
     def _validate(

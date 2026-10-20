@@ -851,3 +851,39 @@ class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
         )
 
         assert verdict.result is OrderAdmissibilityResult.UNKNOWN
+
+
+class TestProducerJournalNullProvenance:
+    """PR #907 review MEDIUM-2 — "a band in force whose provenance reads exactly like no
+    band at all", stated as the snapshot it produces.
+
+    The reader's own clause tests are
+    :class:`~tests.venue.test_band_journal.TestTheProvenanceValues`. This is why they matter:
+    ``{"raw_payload_digest": null, "producer_continuity_id": null}`` passes the key-set
+    equality rule, so before the value clauses the service issued a snapshot with the band's
+    two BOUNDS in force and both provenance fields ``None`` — indistinguishable, in every row
+    that reports them, from the bandless snapshot the class above measures.
+    """
+
+    def test_a_line_with_null_provenance_leaves_the_first_snapshot_bandless(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        service = _producer_journal_service(
+            tmp_path,
+            evidence_store,
+            journal_bytes=json.dumps(
+                _producer_journal_line(
+                    raw_payload_digest=None, producer_continuity_id=None
+                )
+            ).encode("utf-8")
+            + b"\n",
+        )
+
+        snapshot = service.snapshot()
+
+        # The fail-open: BEFORE the value clauses the two bounds below were _LOWER/_UPPER
+        # while the two fields above were `None` — a band judging prices with no provenance.
+        assert service.shape_constraints.price_min is None
+        assert service.shape_constraints.price_max is None
+        assert snapshot.critical_input_snapshot_digest is None
+        assert snapshot.source_continuity_id is None
