@@ -24,9 +24,12 @@ changing the order scope (rejected alternative (a)).
 **THE LAST LINE ONLY, and never a fallback** (plan §3.3, review LOW-1). An unusable last line is
 band ``None`` plus a reason — never "try the line before it". Falling back believes "a band that
 was once valid" instead of "the band that is valid now", and on a reused session directory the
-line before it is yesterday's. Absence, an unparseable tail and an I/O error are all ``None``
-plus a reason too (band plan 2026-10-08 §4.6: every failure is band ``None`` ⇒ kernel
-``UNKNOWN`` ⇒ 송신 0).
+line before it is yesterday's. Absence, an unparseable tail, a non-UTF-8 byte, a tail too deeply
+nested for ``json.loads``, a bound that will not scale and an I/O error are all ``None`` plus a
+reason too (band plan 2026-10-08 §4.6: every failure is band ``None`` ⇒ kernel ``UNKNOWN`` ⇒
+송신 0). ⚠ "Failure" means EVERY failure: ``VenueConstraintService._read_band`` calls this
+reader with no ``try``, so anything that merely RAISES here is not band ``None`` — it is no
+snapshot and no decision at all (PR #907 review MEDIUM-1).
 
 **The line's own schema is defined HERE, deliberately duplicated** (plan §3.3). The runtime may
 not import ``tools`` — firewall R1 (``tools/tos_firewall_check.py``: stdlib + ``tos_runtime.*``
@@ -216,6 +219,13 @@ class ProducerJournalBandReader:
         except FileNotFoundError:
             self._refuse("journal_absent", detail=str(path))
             return None
+        except UnicodeDecodeError as exc:
+            # ⚠ A `ValueError`, NOT an `OSError` (PR #907 review MEDIUM-1): a byte like
+            # `0xff` anywhere in the file makes `read_text` raise, and without this clause the
+            # error leaves `read()` and surfaces inside `snapshot()`/`decide()` — which is
+            # not band `None`, it is no answer at all.
+            self._refuse("journal_not_utf8", detail=f"{path}: {exc}")
+            return None
         except OSError as exc:
             self._refuse("journal_io_error", detail=f"{path}: {exc}")
             return None
@@ -227,6 +237,14 @@ class ProducerJournalBandReader:
             parsed = json.loads(lines[-1])
         except ValueError as exc:
             self._refuse("line_unparseable", detail=str(exc))
+            return None
+        except RecursionError:
+            # ⚠ NOT a `ValueError` (PR #907 review MEDIUM-1): `json.loads` recurses once per
+            # nesting level, so a tail of 100k open brackets exhausts the stack and the clause
+            # above never sees it. Its own reason rather than `line_unparseable`, because the
+            # operator's next move differs: a truncated line means the writer was interrupted,
+            # this one means the file holds something the writer never wrote.
+            self._refuse("line_too_deeply_nested", detail=f"{path}: json nesting")
             return None
         if not isinstance(parsed, dict):
             self._refuse("line_not_a_mapping", detail=type(parsed).__name__)

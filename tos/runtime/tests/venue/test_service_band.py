@@ -29,6 +29,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from tos.venue import (
     ActionClass,
     InstrumentRouteFields,
@@ -626,6 +627,79 @@ class TestBandChangeIsANewGeneration:
         assert second.source_continuity_id == "boot-1:1"
 
 
+def _producer_journal_line(
+    *, trading_date: str = _TRADING_DATE, **overrides: Any
+) -> dict[str, Any]:
+    """One ``cp3-band/1`` line carrying the measured ``A05610`` band."""
+    line: dict[str, Any] = {
+        "kind": "cp3-band/1",
+        "source_id": "tos-cp3-live/0.1.0",
+        "instrument": _INSTRUMENT,
+        "trading_date": trading_date,
+        "tr_id": "FHMIF10000000",
+        "upper": PVL_A05610_UPPER,
+        "lower": PVL_A05610_LOWER,
+        "basis": PVL_A05610_BASIS,
+        "raw_payload_digest": "d" * 64,
+        "producer_continuity_id": "band-probe/1",
+        "as_of_ms": 1_760_577_960_000,
+    }
+    line.update(overrides)
+    return line
+
+
+def _producer_journal_service(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    *,
+    journal_bytes: bytes,
+) -> VenueConstraintService:
+    """A service whose band comes from a REAL :class:`ProducerJournalBandReader` over a
+    journal whose exact BYTES the caller chose — bytes, because one input below is not text.
+
+    A real reader, not a double: a double would make every assertion here one about the
+    test's own ``if``.
+    """
+    journal = tmp_path / "band.jsonl"
+    journal.write_bytes(journal_bytes)
+    path = write_fixture_venue_policy(
+        tmp_path,
+        venue_policy_yaml(
+            price_min="null",
+            price_max="null",
+            tick_size="2",
+            min_quantity="1",
+            max_quantity="10",
+            runtime_extra=producer_journal_band_source_runtime_extra(
+                instrument=_INSTRUMENT, band_journal_path=str(journal)
+            ),
+        ),
+    )
+    loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+    assert isinstance(loaded.band_source, ProducerJournalBandSource)
+    reader = ProducerJournalBandReader(
+        band_source=loaded.band_source,
+        monotonic=_Monotonic(),
+        evidence_sink=lambda _kind, _fields: None,
+        trading_date_reader=lambda: _TRADING_DATE,
+        tick_size=loaded.policy.shape_constraints.tick_size,
+    )
+    return VenueConstraintService(
+        loaded_policy=loaded,
+        scheme=SCHEME,
+        session_phase_reader=_FakeReader("REGULAR"),
+        tick_generation_reader=_FakeReader(1),
+        evidence_store=evidence_store,
+        environment_label="test-env",
+        route_fields=InstrumentRouteFields(),
+        broker_capability_profile_version=None,
+        broker_capability_profile_digest=None,
+        activated_member_digest="fixture-activation-digest",
+        band_reader=reader.read,
+        trading_date_reader=_FakeReader(_TRADING_DATE),
+    )
+
+
 class TestProducerJournalG2ReadSide:
     """2026-10-15 plan §3.4 G2 ② — the SERVICE half of the read-side trading-date clause.
 
@@ -655,61 +729,13 @@ class TestProducerJournalG2ReadSide:
         *,
         line_trading_date: str,
     ) -> VenueConstraintService:
-        journal = tmp_path / "band.jsonl"
-        journal.write_text(
-            json.dumps(
-                {
-                    "kind": "cp3-band/1",
-                    "source_id": "tos-cp3-live/0.1.0",
-                    "instrument": _INSTRUMENT,
-                    "trading_date": line_trading_date,
-                    "tr_id": "FHMIF10000000",
-                    "upper": PVL_A05610_UPPER,
-                    "lower": PVL_A05610_LOWER,
-                    "basis": PVL_A05610_BASIS,
-                    "raw_payload_digest": "d" * 64,
-                    "producer_continuity_id": "band-probe/1",
-                    "as_of_ms": 1_760_577_960_000,
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        path = write_fixture_venue_policy(
+        return _producer_journal_service(
             tmp_path,
-            venue_policy_yaml(
-                price_min="null",
-                price_max="null",
-                tick_size="2",
-                min_quantity="1",
-                max_quantity="10",
-                runtime_extra=producer_journal_band_source_runtime_extra(
-                    instrument=_INSTRUMENT, band_journal_path=str(journal)
-                ),
-            ),
-        )
-        loaded = load_venue_constraint_policy(path, scheme=SCHEME)
-        assert isinstance(loaded.band_source, ProducerJournalBandSource)
-        reader = ProducerJournalBandReader(
-            band_source=loaded.band_source,
-            monotonic=_Monotonic(),
-            evidence_sink=lambda _kind, _fields: None,
-            trading_date_reader=lambda: _TRADING_DATE,
-            tick_size=loaded.policy.shape_constraints.tick_size,
-        )
-        return VenueConstraintService(
-            loaded_policy=loaded,
-            scheme=SCHEME,
-            session_phase_reader=_FakeReader("REGULAR"),
-            tick_generation_reader=_FakeReader(1),
-            evidence_store=evidence_store,
-            environment_label="test-env",
-            route_fields=InstrumentRouteFields(),
-            broker_capability_profile_version=None,
-            broker_capability_profile_digest=None,
-            activated_member_digest="fixture-activation-digest",
-            band_reader=reader.read,
-            trading_date_reader=_FakeReader(_TRADING_DATE),
+            evidence_store,
+            journal_bytes=json.dumps(
+                _producer_journal_line(trading_date=line_trading_date)
+            ).encode("utf-8")
+            + b"\n",
         )
 
     def test_todays_line_reaches_the_first_snapshot(
@@ -738,3 +764,90 @@ class TestProducerJournalG2ReadSide:
         assert snapshot.source_continuity_id is None
         assert snapshot.max_age is None
         assert service.shape_constraints.price_max is None
+
+
+class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
+    """PR #907 review MEDIUM-1 / Codex medium — the SERVICE half of the three inputs that
+    left ``ProducerJournalBandReader.read()`` as an EXCEPTION.
+
+    Why this class exists beside the reader's own tests: ``VenueConstraintService._read_band``
+    calls the reader with **no ``try``**, so anything the reader raises propagates out of
+    ``snapshot()`` — and ``decide()`` calls ``snapshot()`` first, so the runtime's whole
+    admissibility path dies on a corrupt tail instead of answering ``UNKNOWN``. Band plan
+    2026-10-08 §4.6 is explicit that every band failure is band ``None`` ⇒ kernel ``UNKNOWN``
+    ⇒ 송신 0; an exception is neither.
+
+    Each input differs from :meth:`test_todays_line_is_the_baseline` in exactly one respect:
+    the BYTES of the last line.
+    """
+
+    def _service(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, *, tail: bytes
+    ) -> VenueConstraintService:
+        return _producer_journal_service(
+            tmp_path, evidence_store, journal_bytes=tail + b"\n"
+        )
+
+    def test_todays_line_is_the_baseline(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """Without this, "the band is absent" below would also be what a broken fixture
+        produces."""
+        service = self._service(
+            tmp_path,
+            evidence_store,
+            tail=json.dumps(_producer_journal_line()).encode("utf-8"),
+        )
+
+        assert service.snapshot().critical_input_snapshot_digest is not None
+        assert service.shape_constraints.price_max == _UPPER
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param(b"\xff\xfe", id="not_utf8"),
+            pytest.param(b"[" * 100_000 + b"]" * 100_000, id="deeply_nested"),
+            pytest.param(
+                json.dumps(_producer_journal_line(upper="1e999999999")).encode("utf-8"),
+                id="overflowing_bound",
+            ),
+        ],
+    )
+    def test_an_unusable_last_line_leaves_the_first_snapshot_bandless(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, tail: bytes
+    ) -> None:
+        """``snapshot()`` RETURNS — it does not raise — and the band is absent."""
+        service = self._service(tmp_path, evidence_store, tail=tail)
+
+        snapshot = service.snapshot()
+
+        assert snapshot.critical_input_snapshot_digest is None
+        assert snapshot.source_continuity_id is None
+        assert snapshot.max_age is None
+        assert service.shape_constraints.price_max is None
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param(b"\xff\xfe", id="not_utf8"),
+            pytest.param(b"[" * 100_000 + b"]" * 100_000, id="deeply_nested"),
+            pytest.param(
+                json.dumps(_producer_journal_line(upper="1e999999999")).encode("utf-8"),
+                id="overflowing_bound",
+            ),
+        ],
+    )
+    def test_decide_answers_unknown_rather_than_dying(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, tail: bytes
+    ) -> None:
+        """The verdict the kernel owes on an absent bound (``predicates.py``'s required-bound
+        check): ``UNKNOWN``, which is 송신 0 — never an exception out of ``decide()``."""
+        service = self._service(tmp_path, evidence_store, tail=tail)
+
+        verdict = service.decide(
+            action_class=ActionClass.NEW_LONG,
+            shape=_shape(100_000),
+            candidate_command=None,
+        )
+
+        assert verdict.result is OrderAdmissibilityResult.UNKNOWN

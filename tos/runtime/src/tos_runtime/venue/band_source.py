@@ -76,7 +76,7 @@ import json
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any
 
 from tos_runtime.custody.ports import CustodyError
@@ -306,8 +306,9 @@ def validate_band_values(
 
     The clauses, each with the concrete input that fires it:
 
-    * ``non_integral_scale`` — a value that is absent, unparseable, non-finite, or whose
-      ``× price_scale`` is not a whole number. Never rounded (plan §4.2: "반올림 금지").
+    * ``non_integral_scale`` — a value that is absent, unparseable, non-finite, out of the
+      decimal context's exponent range (``"1e999999999"``), or whose ``× price_scale`` is not
+      a whole number. Never rounded (plan §4.2: "반올림 금지").
     * ``band_not_ordered`` — ``0 < min < max`` violated.
     * ``tick_size_absent`` — the active policy sources no tick; an ungridded band cannot be
       validated and the kernel would answer ``UNKNOWN`` on the tick predicate anyway.
@@ -666,8 +667,9 @@ def _scaled(raw: Any, scale: int) -> int | None:
     """``raw × scale`` as an EXACT integer, or ``None``.
 
     Never rounds (plan §4.2: "반올림 금지 — 커널 §12 'silent rounding' 원칙과 같은 이유"). A
-    value that is absent, unparseable as a decimal, or whose scaled form is not a whole number
-    is ``None`` — the caller turns that into a named refusal, never into a nearby integer.
+    value that is absent, unparseable as a decimal, out of the decimal context's exponent
+    range, or whose scaled form is not a whole number is ``None`` — the caller turns that into
+    a named refusal, never into a nearby integer and never into an exception.
     """
     if raw is None or isinstance(raw, bool):
         return None
@@ -681,7 +683,18 @@ def _scaled(raw: Any, scale: int) -> int | None:
     # unusable value.
     if not parsed.is_finite():
         return None
-    value = parsed * scale
+    try:
+        value = parsed * scale
+    except DecimalException:
+        # ⚠ The MULTIPLY, not the construction (PR #907 review MEDIUM-1). `"1e999999999"`
+        # builds a `Decimal` fine — the `try` above sees nothing — and `is_finite()` is
+        # `True`; it is only the `× scale` that pushes the exponent past the context's `Emax`
+        # and signals `decimal.Overflow`, one of the three signals the default context TRAPS.
+        # So it RAISED, out of `validate_band_values` and out of the band reader's `read()`
+        # entirely. Caught at the arithmetic that signals it rather than anywhere wider: the
+        # clause's claim is "this value does not scale to an exact integer", and which signal
+        # said so is not information the caller's refusal carries.
+        return None
     if value != value.to_integral_value():
         return None
     return int(value)

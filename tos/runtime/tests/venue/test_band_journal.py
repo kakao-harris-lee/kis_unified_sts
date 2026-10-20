@@ -124,6 +124,37 @@ def _write(tmp_path: Path, *lines: Any, name: str = "band.jsonl") -> Path:
     return path
 
 
+#: Every way the LAST line of a journal can be unusable, and the reason the reader must name.
+#: Three of the four left ``read()`` as an exception before PR #907's review MEDIUM-1, each on
+#: its own boundary: the decode, ``json.loads``, and the scale multiply.
+_BAD_TAIL_REASONS: dict[str, str] = {
+    "unparseable": "line_unparseable",
+    "not_utf8": "journal_not_utf8",
+    "deeply_nested": "line_too_deeply_nested",
+    "overflowing_bound": "non_integral_scale",
+}
+
+
+def _bad_tail(key: str) -> bytes:
+    """The raw BYTES of one unusable last line — bytes, because one of them is not text."""
+    if key == "unparseable":
+        return b"{not json"
+    if key == "not_utf8":
+        # A UTF-16 BOM in a file declared UTF-8: `read_text` raises `UnicodeDecodeError`,
+        # which is a `ValueError` and so is caught by NEITHER `except OSError` clause.
+        return b"\xff\xfe"
+    if key == "deeply_nested":
+        # `json.loads` recurses once per nesting level, so a tail like this raises
+        # `RecursionError` — not a `ValueError`, so the parse clause does not see it.
+        return (b"[" * 100_000) + (b"]" * 100_000)
+    if key == "overflowing_bound":
+        # A well-formed line whose `upper` scales out of `decimal`'s exponent range:
+        # `Decimal("1e999999999")` CONSTRUCTS (the guarded step) and is finite, and the
+        # `× price_scale` that follows raises `decimal.Overflow`.
+        return json.dumps(_line(upper="1e999999999")).encode("utf-8")
+    raise AssertionError(key)
+
+
 def _reader(
     path: Path,
     *,
@@ -289,21 +320,30 @@ class TestTheLastLineOnly:
         assert observation is not None
         assert (observation.price_min, observation.price_max) == (95000, 120000)
 
+    @pytest.mark.parametrize("tail", sorted(_BAD_TAIL_REASONS))
     def test_an_invalid_last_line_does_NOT_fall_back_to_the_valid_one_before_it(
-        self, tmp_path: Path
+        self, tmp_path: Path, tail: str
     ) -> None:
         """**The red proof for "never a fallback."** The first line is the accepted baseline,
         so a reader that fell back would return a band and this test would see one. It must see
         ``None``: falling back believes "a band that was once valid" instead of "the band that
         is valid now", and on a reused session directory the line before is yesterday's.
+
+        Parametrized over every way a tail can be unusable (:data:`_BAD_TAIL_REASONS`),
+        because "no fallback" has to hold on the path each of them takes out of the reader —
+        and three of the four take a DIFFERENT path from ``line_unparseable`` (PR #907 review
+        MEDIUM-1).
         """
-        path = _write(tmp_path, _writer_line(), "{not json")
+        path = tmp_path / "band.jsonl"
+        path.write_bytes(
+            json.dumps(_writer_line()).encode("utf-8") + b"\n" + _bad_tail(tail) + b"\n"
+        )
 
         reader, sink = _reader(path)
         observation = reader.read()
 
         assert observation is None
-        assert sink.only()["reason"] == "line_unparseable"
+        assert sink.only()["reason"] == _BAD_TAIL_REASONS[tail]
 
     def test_a_trailing_blank_line_is_not_the_last_line(self, tmp_path: Path) -> None:
         """``ObservationJournal`` terminates every row with ``\\n``, so the raw tail of a
@@ -342,6 +382,40 @@ class TestTheFileItself:
 
         assert reader.read() is None
         assert sink.only()["reason"] == "journal_io_error"
+
+    def test_a_non_utf8_journal_is_a_named_refusal_not_an_escape(
+        self, tmp_path: Path
+    ) -> None:
+        """PR #907 review MEDIUM-1 — a byte no UTF-8 decoder accepts.
+
+        ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError``, which is a
+        ``ValueError``: neither ``except FileNotFoundError`` nor ``except OSError`` sees it, so
+        without its own clause it leaves ``read()`` and surfaces inside
+        ``snapshot()``/``decide()`` — the exact shape the ``journal_io_error`` test above
+        closes for the OTHER family of file failures.
+        """
+        path = tmp_path / "band.jsonl"
+        path.write_bytes(_bad_tail("not_utf8") + b"\n")
+
+        reader, sink = _reader(path)
+
+        assert reader.read() is None
+        assert sink.only()["reason"] == "journal_not_utf8"
+
+    def test_a_deeply_nested_tail_is_a_named_refusal_not_an_escape(
+        self, tmp_path: Path
+    ) -> None:
+        """PR #907 review MEDIUM-1 — ``json.loads`` recurses per nesting level, so a tail of
+        100k open brackets raises ``RecursionError``. That is not a ``ValueError``, so the
+        ``line_unparseable`` clause does not catch it and the error leaves ``read()``.
+        """
+        path = tmp_path / "band.jsonl"
+        path.write_bytes(_bad_tail("deeply_nested") + b"\n")
+
+        reader, sink = _reader(path)
+
+        assert reader.read() is None
+        assert sink.only()["reason"] == "line_too_deeply_nested"
 
     def test_a_json_scalar_tail_is_a_named_refusal(self, tmp_path: Path) -> None:
         """Valid JSON that is not an object — ``json.loads`` succeeds, so the parse check
@@ -538,6 +612,24 @@ class TestG1ValidationSetIsReused:
     ) -> None:
         """Three decimals under ``price_scale: 100``. Never rounded."""
         reader, sink = _reader(_write(tmp_path, _line(upper="1162.725")))
+
+        assert reader.read() is None
+        assert sink.only()["reason"] == "non_integral_scale"
+
+    def test_a_bound_whose_scaled_form_overflows_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """PR #907 review MEDIUM-1 — ``"1e999999999"``.
+
+        The non-finite clause does not cover it: ``Decimal`` CONSTRUCTS this value (the one
+        step inside the ``try``) and ``is_finite()`` is ``True``. The ``× price_scale`` that
+        follows pushes the exponent past the context's ``Emax`` and raises
+        ``decimal.Overflow``, which left ``read()`` entirely.
+        """
+        path = tmp_path / "band.jsonl"
+        path.write_bytes(_bad_tail("overflowing_bound") + b"\n")
+
+        reader, sink = _reader(path)
 
         assert reader.read() is None
         assert sink.only()["reason"] == "non_integral_scale"
