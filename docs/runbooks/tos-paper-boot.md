@@ -1887,8 +1887,9 @@ sqlite3 -json "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
    print("SKIPPED (no band)") or sys.exit(0) if not obs else None; \
    lo,hi=obs[0]["price_min"],obs[0]["price_max"]; \
    rows=[json.loads(l) for l in open(sys.argv[3],encoding="utf-8") if l.strip()]; \
-   vals=[(r["raw_event_id"],r["close_x100"]) for r in rows \
-         if r.get("raw_event_id") in ids and r.get("close_x100") is not None]; \
+   closes={r["raw_event_id"]:(r.get("fields") or {}).get("close_x100") \
+           for r in rows if r.get("raw_event_id") in ids}; \
+   vals=[(i,c) for i,c in closes.items() if c is not None]; \
    outside=[v for v in vals if not (lo<=int(v[1])<=hi)]; \
    print("band:",lo,hi,"joined:",len(vals),"of",len(ids),"consumed ids"); \
    print("outside:",len(outside),outside[:10]); \
@@ -1901,10 +1902,36 @@ sqlite3 -json "$SESSION/data/$INSTRUMENT/evidence.sqlite3" \
   「전부 묻지 못했다」이므로 두 수를 **함께** 출력한다. 추출기에 값 계수를 넣는 것은 별도
   변경이고, 넣기 전까지 이 조인이 수용 2 를 재는 자리다.
 
-  ✅ **이 명령은 돌려 봤다**(2026-10-16, 세 산출물의 실제 모양을 흉내 낸 입력 셋):
-  전부 안 → `outside: 0 … OK` · 하나 밖 → `outside: 1 [('b', 120000)] … FINDING`(어느
-  id 인지까지) · band 행 없음 → `SKIPPED (no band)`. **가운데 경우가 FINDING 을 내는
-  것까지** 확인했다 — 파싱만 되고 판별하지 않는 명령을 런북에 남기지 않기 위해서다.
+  ⚠ **`close_x100` 은 최상위가 아니라 `fields` 밑에 있다.** B1a 줄의 최상위 키는 다섯
+  뿐이고(`raw_event_id`·`source_id`·`instrument`·`as_of_ms`·`fields` —
+  `tools/tos_cp3/produce_fields.py`), 봉 값은 전부 `fields` 안이다. 그래서 위 조인은
+  `(r.get("fields") or {}).get("close_x100")` 으로 읽는다.
+
+  ✅ **이 명령은 돌려 봤다 — 진짜 B1a 산출물에 대고**(2026-10-20,
+  `~/.local/state/tos/measure/cp3-short-parity-run1/b1a/fields.jsonl` 의 앞 200줄과 그
+  `raw_event_id` 들을 소비 id 로, band 는 손으로 만든 `VENUE_BAND_OBSERVED` 행):
+
+  ```text
+  # band 가 전부를 담을 때 (57790–58540 = 그 200봉 종가의 실제 min/max)
+  band: 57790 58540 joined: 200 of 200 consumed ids
+  outside: 0 []
+  OK
+
+  # band 가 일부를 잘라낼 때 (57790–58165)
+  band: 57790 58165 joined: 200 of 200 consumed ids
+  outside: 93 [('101S6000:1m:20251208T084500+0900', 58345), …]
+  FINDING
+
+  # band 행이 없을 때
+  SKIPPED (no band)
+  ```
+
+  ⛔ **2026-10-16 의 「돌려 봤다」는 거짓이었다**(PR #907 리뷰 HIGH-1). 그때의 입력은
+  세 산출물의 모양을 **흉내 낸** 것이었고 B1a 의 중첩을 틀리게 흉내 냈다 —
+  최상위 `close_x100` 을 읽는 그 명령을 위 진짜 파일에 돌리면 band 가 전부를 담아도
+  `joined: 0 of 200 … FINDING` 이다(2026-10-20 재측정). 즉 **수용 2 는 통과할 수 없는
+  확인이었다**. 시끄럽게 틀리므로 거짓 OK 는 아니었지만, 좋은 세션을 증명하지 못한다.
+  교훈은 명령 쪽이 아니라 증거 쪽이다 — **흉내 낸 입력으로 「돌려 봤다」를 적지 말 것.**
 
 - **기준가 대 전일 종가**(band 계획 §4.4a 잔여 위험의 **측정**). REAL 원천이 된 덕분에
   이제 오프라인 대조가 가능하다: 행의 `basis`(=`futs_sdpr` × 100)를 생산자 동결 프레임의
