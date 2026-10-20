@@ -790,6 +790,23 @@
 #   같은 배포 호스트 루트 `.venv`(python 3.12.12 / sqlite 3.45.1) 출력이 커밋된 값과
 #   바이트 동일했다.
 #
+#   ⚠ **재도출 (PR #907 리뷰 처분, 2026-10-20)**: `bb1e9c93…` →
+#   **`b06d01f9…`**. 같은 브랜치 feat/cp3-band-runtime-on. 런타임 소스 둘이 바뀜었다 —
+#   `venue/band_journal.py` · `venue/band_source.py`. **동작 변경이 둘 있다.**
+#   (1) MEDIUM-1 — 못 쓰는 마지막 줄 셋(비-UTF-8 바이트 · `json.loads` 가 감당 못 하는
+#   중첩 · `× price_scale` 이 `decimal.Overflow` 를 내는 값)이 `read()` 밖으로 **던지던**
+#   것을 각자의 경계에서 band `None` + 이름 있는 사유로 접는다. `_read_band` 는 try 없이
+#   리더를 부르므로 전에는 스냅샷도 판정도 없었다. (2) MEDIUM-2 — `raw_payload_digest`
+#   (64자 소문자 hex) · `producer_continuity_id`(비지 않은 문자열)의 **값** 절. 전에는
+#   둘 다 `null` 인 줄이 OBSERVED 였고, band 가 가격을 판정하는 중에 출처 두 칸이
+#   「band 없음」과 똑같이 읽혔다. 둘 다 레드 증명이 리더 쌓과 서비스 층 양쪽에 있다.
+#   **`tos/src`(커널)는 여전히 한 바이트도 바뀜지 않았다**
+#   (`git diff 65cb38c2..HEAD -- tos/src` 가 비어 있다).
+#   `print-digests` 와 `observe_source_tree_digest()` 두 경로가 일치했다(둘 다 b06d01f9…).
+#   이전 값 bb1e9c935f935f6f701791c6552b37ec1bd58bf75a874e5a227a50327c75fa2b 는 PR-B
+#   측정치. `expected_dependency_set_digest` 는 이번에도 불변 — 같은 배포 호스트 루트
+#   `.venv`(python 3.12.12 / sqlite 3.45.1) 출력이 커밋된 값과 바이트 동일했다.
+#
 #   ⚠ 이 파일은 CP-3 tenant 트리 둘(`cp3-setup-d-long`/`cp3-setup-d-short`)에 **바이트
 #   사본**으로 들어간다 — 세 곳을 함께 갱신했다(`tos/runtime/tests/compose/
 #   test_tenant_tree_copies.py` 가 강제한다). 값 핀도 함께:
@@ -812,7 +829,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "bb1e9c935f935f6f701791c6552b37ec1bd58bf75a874e5a227a50327c75fa2b"
+expected_code_digest: "b06d01f9cee56d11eb9e310b82e32244695bd62e8211a9a3491a23fcd4cca1b6"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
