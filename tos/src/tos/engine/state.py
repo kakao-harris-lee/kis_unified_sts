@@ -63,7 +63,12 @@ from tos.engine.records import (
     InstrumentKey,
     ProvisionalReservation,
 )
-from tos.engine.vocabulary import EgressKnowledge, EgressResultKind, ResultDisposition
+from tos.engine.vocabulary import (
+    TERMINAL_RESULT_KINDS,
+    EgressKnowledge,
+    EgressResultKind,
+    ResultDisposition,
+)
 from tos.rcl import CapacityState
 
 __all__ = [
@@ -211,19 +216,15 @@ QUARANTINE_RESOLUTION_EDGES: dict[EgressResultKind, CapacityState] = {
 #: The four "settled to positive evidence" knowledge states that make a reservation eligible for
 #: release via a finality-proof token (kernel round #3 §2 decision 5) — exactly the terminal
 #: ``EgressResultKind`` vocabulary the plan names (``FULL_FILL``/``CANCEL_ACK``/``EXPIRED``/
-#: ``REJECT``, mapped here via :data:`_RESULT_TRANSITIONS`'s knowledge axis).
+#: ``REJECT``, i.e. :data:`~tos.engine.vocabulary.TERMINAL_RESULT_KINDS`, mapped here via
+#: :data:`_RESULT_TRANSITIONS`'s knowledge axis — derived, so the two cannot drift).
 #: ``PARTIALLY_FILLED`` is deliberately **absent**: a partial fill may still receive more fills,
 #: so it is not yet terminal. ``UNKNOWN`` is absent too — an unresolved quarantine carries no
 #: positive evidence to release from (ADR-002-002 §18.6 "escaping quarantine requires evidence,
 #: never assertion" — the same rule :data:`QUARANTINE_RESOLUTION_EDGES` already enforces for the
 #: ordinary rank-advance path).
 _RELEASABLE_KNOWLEDGE: frozenset[EgressKnowledge] = frozenset(
-    {
-        EgressKnowledge.FILLED,
-        EgressKnowledge.REJECTED,
-        EgressKnowledge.CANCEL_ACKNOWLEDGED,
-        EgressKnowledge.EXPIRED,
-    }
+    _RESULT_TRANSITIONS[kind][0] for kind in TERMINAL_RESULT_KINDS
 )
 
 
