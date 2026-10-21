@@ -44,7 +44,7 @@
 
 명령: `PATH=<scratch bin>:$PATH U17_PYBIN=.venv/bin/python bash tools/u17-verify.sh .` · 전부 GET ·
 `http=` 줄 23건 = `http=200` 22건 + `http=404` 1건(`:25` `U17-A1 …/branches/main/protection` — classic 보호
-부재라 예상된 응답, `:66` `classic=False`) · 그 밖에 `--slurp` 호출 1건(`:202`, `status=200`) · 열거 완전성
+부재라 예상된 응답, `:66` `classic=False`) · 그 밖에 `--slurp` 호출 9건, 전부 `status=200`(`:33, 47, 129, 144, 155, 166, 179, 190, 202` — 2026-10-22 재측정 레인이 다시 세어 정정; 초판의 「1건」은 마지막 1건을 계수로 오기한 것) · 열거 완전성
 전 엔드포인트 `RESULT=PAGES_OK`.
 
 - 첫 호출 `U17-A00 apps/github-actions utc=2026-10-21T13:39:48Z http=200 x-github-request-id=C2AC:9B3FA:2114D0:372AEC:6AD8C0A1` (`:18`)
