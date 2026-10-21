@@ -1,0 +1,18 @@
+TOS Phase-0 lane A re-review #8 (incremental). Authoritative repo rules: first read the repo-root CLAUDE.md (fall back to AGENTS.md) and tos/CLAUDE.md, and obey their non-negotiable rules (import firewall, kernel boundary, no-fake-completion, tos work set).
+
+Prior review (lane A #7): the file .omc/review/20261021-224521/verdict.md (single file, read-only reference, not evidence). Its finding, quoted verbatim:
+"[high] Preserve outstanding exposure after consumed nonterminal results (tos/src/tos/position/predicates.py:131-140) — Membership in consumed_by_attempt counts only the filled quantity and skips all outstanding-exposure buckets. However, engine/core.py emits EGRESS_RESULT_CONSUMED for applied ACK, TIMEOUT, UNKNOWN and PARTIAL_FILL results too. Reproduced with a sealed 10-unit BUY: worst-credible usage becomes zero after a consumed zero-fill result, or 7 after a partial fill with 3 remaining. This understates the risk observation and contradicts DR-0003 §2.2's requirement to retain unresolved exposure. The Decimal-only mapping cannot distinguish terminal results from outstanding orders. Recommendation: Carry result state and remaining quantity into classification. Retain unresolved quantities in the appropriate unknown or in-flight buckets until terminality is established. Add regressions for ACK, TIMEOUT, UNKNOWN and partial fills in both directions."
+
+Your task: judge whether PR #910 (head 9c6e15e6, branch fix/tos-position-nonterminal-exposure, diff c5550229..HEAD) resolves that finding. Answer the resolution question first: resolved / partially resolved / unresolved / resolved-by-avoidance (tests weakened, conditions relaxed, comment-only). Then look for new defects introduced by the fix.
+
+Specifically check:
+1. Nonterminal results (ACK/TIMEOUT/UNKNOWN/PARTIAL) can no longer erase outstanding exposure, in both BUY and SELL (long/short symmetry).
+2. The in-flight (not unknown) bucket choice does not understate the ARE decision sum (the risk-engine decision aggregation).
+3. Latest-result-per-attempt selection is deterministic (ties, ordering, replay).
+4. Unknown result kinds fail closed (not silently treated as terminal or zero-exposure).
+5. Long/short symmetry of the classifier and of the runtime riskstate/position.py logic.
+6. Kernel purity and import firewall: tos/src must not import operational modules; tos/runtime must not be pulled into tos/src.
+7. TERMINAL_RESULT_KINDS (kernel) vs _RELEASABLE_KNOWLEDGE (runtime) cannot drift; check whether any test or a single source-of-truth enforces equality.
+8. Digest re-derivation consistency: config/tos_runtime/*/release.yaml values and the expected digest pins in tos/runtime/tests/compose/test_deploy_approved_values.py match what the code actually produces; any edit that changed the digest without re-deriving is a finding.
+
+Scope for findings: tos/src/, tos/tests/, tos-spec/, .github/, config/tos_completion.yaml, tools/tos_completion_status.py, tools/tos_contract_check.py, tools/tos_contract_index.py, tools/tos_entry_harness.sh, tools/u17-verify.sh, tools/tos_firewall_check.py, tools/tos_spec_status.py, tools/tos_size_budget.py, tools/tos_named_tbd_guard.py, tos/pyproject.toml, tos/uv.lock, .importlinter, tos/runtime/src/tos_runtime/riskstate/position.py, tos/runtime/tests/riskstate/, config/tos_runtime/*/release.yaml, tos/runtime/tests/compose/test_deploy_approved_values.py. Everything else is out of scope. Do not review or edit files; this is read-only judgment.

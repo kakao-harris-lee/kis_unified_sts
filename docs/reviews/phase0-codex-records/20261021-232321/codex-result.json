@@ -1,0 +1,74 @@
+{
+  "job": {
+    "createdAt": "2026-10-21T14:23:42.516Z",
+    "updatedAt": "2026-10-21T14:25:52.463Z",
+    "id": "review-mvi7d3uc-0lohyi",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/tmp/claude-1000/-home-deploy-project-kis-unified-sts/fe7d5b0a-f6a6-4a0b-befb-8690d2d4df34/scratchpad/laneA8/wt",
+    "jobClass": "review",
+    "summary": "Resolved. PR #910 preserves nonterminal exposure symmetrically without understating the ARE decision sum. Latest-result selection is sequence-ordered, unknown kinds remain nonterminal, and terminality shares one source of truth. No material regression found. All 50 kernel position tests, 192 in-memory reader cases, and the firewall check passed. Re-derived code digest matches all three release files and the test pin. File-backed runtime tests were not run under the read-only sandbox.",
+    "write": false,
+    "sessionId": "fe7d5b0a-f6a6-4a0b-befb-8690d2d4df34",
+    "status": "completed",
+    "startedAt": "2026-10-21T14:23:42.528Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/home/deploy/.claude/plugins/data/codex-openai-codex/state/wt-ccdc8c92b103ad1c/jobs/review-mvi7d3uc-0lohyi.log",
+    "threadId": "01a15ed8-bbe5-70e3-803d-2da5725b81ed",
+    "turnId": "01a15ed8-bca5-7980-9432-5e729d5fd7f5",
+    "completedAt": "2026-10-21T14:25:52.448Z"
+  },
+  "storedJob": {
+    "id": "review-mvi7d3uc-0lohyi",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/tmp/claude-1000/-home-deploy-project-kis-unified-sts/fe7d5b0a-f6a6-4a0b-befb-8690d2d4df34/scratchpad/laneA8/wt",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against c555022922f2ad9efb09e90f734bdfd18884efb0",
+    "write": false,
+    "createdAt": "2026-10-21T14:23:42.516Z",
+    "sessionId": "fe7d5b0a-f6a6-4a0b-befb-8690d2d4df34",
+    "status": "completed",
+    "startedAt": "2026-10-21T14:23:42.528Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/home/deploy/.claude/plugins/data/codex-openai-codex/state/wt-ccdc8c92b103ad1c/jobs/review-mvi7d3uc-0lohyi.log",
+    "threadId": "01a15ed8-bbe5-70e3-803d-2da5725b81ed",
+    "turnId": "01a15ed8-bca5-7980-9432-5e729d5fd7f5",
+    "completedAt": "2026-10-21T14:25:52.448Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against c555022922f2ad9efb09e90f734bdfd18884efb0",
+        "baseRef": "c555022922f2ad9efb09e90f734bdfd18884efb0",
+        "explicit": true
+      },
+      "threadId": "01a15ed8-bbe5-70e3-803d-2da5725b81ed",
+      "context": {
+        "repoRoot": "/tmp/claude-1000/-home-deploy-project-kis-unified-sts/fe7d5b0a-f6a6-4a0b-befb-8690d2d4df34/scratchpad/laneA8/wt",
+        "branch": "HEAD",
+        "summary": "Reviewing branch HEAD against c555022922f2ad9efb09e90f734bdfd18884efb0 from merge-base c555022922f2ad9efb09e90f734bdfd18884efb0."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\n  \"verdict\": \"approve\",\n  \"summary\": \"Resolved. PR #910 preserves nonterminal exposure symmetrically without understating the ARE decision sum. Latest-result selection is sequence-ordered, unknown kinds remain nonterminal, and terminality shares one source of truth. No material regression found. All 50 kernel position tests, 192 in-memory reader cases, and the firewall check passed. Re-derived code digest matches all three release files and the test pin. File-backed runtime tests were not run under the read-only sandbox.\",\n  \"findings\": [],\n  \"next_steps\": []\n}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "Resolved. PR #910 preserves nonterminal exposure symmetrically without understating the ARE decision sum. Latest-result selection is sequence-ordered, unknown kinds remain nonterminal, and terminality shares one source of truth. No material regression found. All 50 kernel position tests, 192 in-memory reader cases, and the firewall check passed. Re-derived code digest matches all three release files and the test pin. File-backed runtime tests were not run under the read-only sandbox.",
+        "findings": [],
+        "next_steps": []
+      },
+      "rawOutput": "{\n  \"verdict\": \"approve\",\n  \"summary\": \"Resolved. PR #910 preserves nonterminal exposure symmetrically without understating the ARE decision sum. Latest-result selection is sequence-ordered, unknown kinds remain nonterminal, and terminality shares one source of truth. No material regression found. All 50 kernel position tests, 192 in-memory reader cases, and the firewall check passed. Re-derived code digest matches all three release files and the test pin. File-backed runtime tests were not run under the read-only sandbox.\",\n  \"findings\": [],\n  \"next_steps\": []\n}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against c555022922f2ad9efb09e90f734bdfd18884efb0\nVerdict: approve\n\nResolved. PR #910 preserves nonterminal exposure symmetrically without understating the ARE decision sum. Latest-result selection is sequence-ordered, unknown kinds remain nonterminal, and terminality shares one source of truth. No material regression found. All 50 kernel position tests, 192 in-memory reader cases, and the firewall check passed. Re-derived code digest matches all three release files and the test pin. File-backed runtime tests were not run under the read-only sandbox.\n\nNo material findings.\n"
+  }
+}

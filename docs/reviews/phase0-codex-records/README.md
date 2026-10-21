@@ -72,6 +72,8 @@ currency 태그 계수 3→4 오류 → C2″ 정정) → #9(**approve · findin
 | `20260905-143827` | B 재심 #8 (57차+58차) | review-mtnydobs-g6hrlt | needs-attention 1 | 3e8931e8 | 「OQ-11 기록 태그 계수 3→4」 · 〃 |
 | `20260905-144700` | **B 재심 #9 (57차+58차)** | review-mtnyojac-nhulgc | **approve · findings 0** | 38bfb1fd | 57차+58차 approve · UNCHK-027 종결 · 정본 verdict 는 계약 스탬프 dir |
 | `20260905-214532` | **B 재심 #10 (결속 head 갱신)** | review-mtodn6sx-1fg1eh | **approve · findings 0** | 97596460 | 계약·digest 불변 · main dc900970(PR #462) 머지 head 를 새 RH 로 — PR #644 merge ref 의 R-7 `--full-history` 머지 커밋 나열(main 이 RH 조상 아님) 해소 · 정본 verdict 는 계약 스탬프 dir |
+| `20261021-224521` | **A 재심 #7 (c5550229 이후 증분 · 커널 표면 한정)** | review-mvi5zwoy-rq2g4h | **needs-attention 1 (high)** | b15069fd | 범위 = 운영자 승인(2026-10-21) 커널 경로만, focus text 로 한정(diff 도구 필터 아님) · HIGH `tos/src/tos/position/predicates.py:131-140` 비종결 결과 뒤 미결 노출 소실 · `verdict.md`·`job.txt` 만 — companion 잡 상태가 제거된 리뷰 워크트리에 있어 `codex-result.json` 회수 불가, `focus.txt`·`revision.txt` 미작성(evidence/ 비어 있음) → 범위 서술·`reviewed_scope_digest` 계산 방식은 보존 아티팩트로 재확인 불가 |
+| `20261021-232321` | **A 재심 #8 (PR #910 head · 커널 표면 + 런타임 리더)** | review-mvi7d3uc-0lohyi | **approve · findings 0** | 9c6e15e6 | #7 high 해소 판정(「Resolved. PR #910 preserves nonterminal exposure symmetrically …」) · 범위 = 운영자 승인(2026-10-21) 커널 경로 + `tos_runtime/riskstate/position.py`·그 테스트·digest 파일 · Codex 샌드박스 read-only 라 파일 기반 런타임 테스트는 미실행(판정문 명시) · `verdict.md`·`focus.txt`·`revision.txt`·`codex-result.json`·`job.txt`·`codex-wait.out`·`codex-wait.err` 보존 · 원본의 0바이트 `codex-result.err` 와 빈 `evidence/` 는 미복사 · **결속 head 는 PR #910 head 이지 머지 커밋이 아니다** |
 
 ## 파일 구성(스탬프마다)
 
