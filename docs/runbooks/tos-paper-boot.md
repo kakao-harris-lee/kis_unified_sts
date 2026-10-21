@@ -1387,9 +1387,9 @@ TENANT_ENVIRONMENT_LABEL=paper \
    - ⚠ `_runtime` 은 VCP `canonical_digest` 가 덮지 않으므로 **활성화 기록은 그대로**다
      (실측 2026-10-16: 렌더된 LONG 정책에서 band 블록을 떼고 다시 로드해도 digest 가
      `ec0ea97d…` 로 같다). 바뀌는 것은 `release.yaml::expected_code_digest` 뿐이고,
-     그것은 이 브랜치가 세 파일 모두에서 재도출한다. **현재 값은 `b06d01f9…`**
-     (`fb4ac519…` → `2aa597aa…` → `bb1e9c93…` → `b06d01f9…`; 마지막 둘은 읽기 측 절
-     분리와 PR #907 리뷰 처분이다). ⛔ 이 줄은 **값을 다시 적는 자리가 아니다** —
+     그것은 이 브랜치가 세 파일 모두에서 재도출한다. **현재 값은 `ba1de6b2…`**
+     (`fb4ac519…` → `2aa597aa…` → `bb1e9c93…` → `b06d01f9…` → `ba1de6b2…`; 뒤의 셋은 읽기
+     측 절 분리, PR #907 리뷰 처분, 위치 관측의 비종결 결과 수정(lane A 재리뷰 #7)이다). ⛔ 이 줄은 **값을 다시 적는 자리가 아니다** —
      기준은 `config/tos_runtime/*/release.yaml` 이고, 둘이 어긋나면 **그 파일이 맞다.**
 
 **⚠ 운영자 단계 — 같은 월물로 두 번째 세션을 돌리면 durable set 을 이어 쓴다.**
