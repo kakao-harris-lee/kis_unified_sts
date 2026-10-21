@@ -18,12 +18,12 @@
 | 항 | 값 | 09-04 대비 | 출처 |
 | --- | --- | --- | --- |
 | 측정 대상 head | `b15069fd1737962d92766e73648b0c2128957d32` = `origin/main` (PR #907 머지 커밋, `mergedAt=2026-10-20T14:41:35Z`) | 09-04 는 브랜치 head `d07646c2`(PR 미개설) | `$S/binding.log`, `$S/ci.log` |
-| 측정 방식 | origin/main 분리 워크트리 · 추적 파일 변경 0 · 측정 뒤 워크트리 제거 | 동일 | — |
+| 측정 방식 | origin/main 분리 워크트리 · 추적 파일 변경 0 · 측정 뒤 워크트리 제거 | 다름 — 09-04 는 로컬 브랜치 head 를 쟀다(09-04 기록 `:18`) | — |
 | 계약 blob | `6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5` | **변경** (`899689fc…` → 에라타 57차 `5dfcb236` · 58차 `1db8f9b8`, 2026-09-05) | `$S/binding.log` |
 | 상위 계획 blob | `ec3464c068dff2030e0764f3b05c985a821730f5` | 동일 | `$S/binding.log` |
 | `bound_set_digest` 재계산 | `045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429` == `OQ-11-DISPOSITION.md` 값 == `20260905-214532/verdict.md:11` | **변경** (`4e6c975f…`) | `$S/binding.log` |
 | U-15 R-7 currency `git rev-list --full-history 97596460..HEAD -- <두 bound path>` | `0` (`97596460` 은 HEAD 의 조상) | 동일 결과(0) | `$S/binding.log` |
-| 참고: `1db8f9b8..HEAD --full-history` | `2` — `97596460`·`b3f1d2d5` 둘 다 머지 커밋, 두 bound path blob 은 양 부모에서 불변 | — | `$S/binding.log` |
+| 참고: `1db8f9b8..HEAD --full-history` | `2` — `97596460`·`b3f1d2d5` 둘 다 머지 커밋. 머지 결과의 계약 blob 은 브랜치 쪽 부모(`f24deb84`·`7c5a9202`, `6f94dfbb`)와 같고, main 쪽 부모 `dc900970` 은 에라타 이전 blob `899689fc` 를 가진다 — main 부모와 TREESAME 이 아니라서 `--full-history` 가 두 머지를 나열한다(`20260905-214532/verdict.md:31-33` 이 적은 기제). 개발계획 blob `ec3464c0` 은 양 부모 동일 | — | `$S/s26-count.log:53-54`(계수만) · `git rev-parse <부모>:<경로>` 직접 조회 |
 | `tools/tos_entry_harness.sh` sha256 | `059e13f22397d53c53211895cc321fef81ab7925135b196e27315e813d723177` == `.github/workflows/tos-gate.yml:17` 핀 | 동일 | `$S/binding.log` |
 | `tools/u17-verify.sh` sha256 | `0b68ef856836380817dac179aee07e09276dbd9cb66feea9817c669bcdf9814e` | 동일 | `$S/binding.log` |
 | `D0A-PREVENTION-CONTROL.md` `operator_countersign` | `"chihun,lee 2026-08-28T05:23:48Z"` | 동일 (이 기록은 갱신하지 않는다) | `$S/binding.log` |
@@ -42,13 +42,17 @@
 
 ## §1 U-17 live 실측
 
-명령: `PATH=<scratch bin>:$PATH U17_PYBIN=.venv/bin/python bash tools/u17-verify.sh .` · API 22건 전부
-http=200 · 열거 완전성 전 엔드포인트 `RESULT=PAGES_OK`.
+명령: `PATH=<scratch bin>:$PATH U17_PYBIN=.venv/bin/python bash tools/u17-verify.sh .` · 전부 GET ·
+`http=` 줄 23건 = `http=200` 22건 + `http=404` 1건(`:25` `U17-A1 …/branches/main/protection` — classic 보호
+부재라 예상된 응답, `:66` `classic=False`) · 그 밖에 `--slurp` 호출 1건(`:202`, `status=200`) · 열거 완전성
+전 엔드포인트 `RESULT=PAGES_OK`.
 
 - 첫 호출 `U17-A00 apps/github-actions utc=2026-10-21T13:39:48Z http=200 x-github-request-id=C2AC:9B3FA:2114D0:372AEC:6AD8C0A1` (`:18`)
-- 마지막 호출 `U17-BETA …/commits/21c47e42…/check-runs utc=2026-10-21T13:40:04Z http=200 x-github-request-id=C2A1:268CD3:2170E4:379559:6AD8C0B2` (`:200`)
+- 마지막 `x-github-request-id` 를 남긴 호출 `U17-BETA …/commits/21c47e42…/check-runs utc=2026-10-21T13:40:04Z http=200 x-github-request-id=C2A1:268CD3:2170E4:379559:6AD8C0B2` (`:200`)
+- 마지막 호출 `U17-B2s --slurp …/commits/21c47e42…/check-runs utc=2026-10-21T13:40:05Z status=200` (`:202`)
 
 ```text
+225: U17-fire PREVENTION_UNVERIFIED_REVISION: (b)② d=28475ca1ca82fe99054a2cc04cf1b58e4550097a head=21c47e42ff1487282ce2f9da0df11756ff146a3a 4단계 ∀-success 위배 — [(0, 100181808552, 'failure')] (∃-증인 금지 · 케이스 ③ «정본 fail + decoy success» 포함)
 226: U17-α t_land = min{merged_at(착지 PR) : d∈D} = 2026-09-02T08:57:41Z  (서버 부여 값만 · 커밋 author/committer date 불신)
 227: U17-α ruleset 21886181: ruleset 21886181 updated_at=2026-09-06T15:21:13.608000+00:00 > t_land=2026-09-02T08:57:41+00:00 — 착지 후 «설정 변경»(off→on 토글도 updated_at 단조 증가) · benign/malign 구별 불가
 228: U17-fire PREVENTION_CONTINUITY_UNVERIFIABLE: (α) ruleset 21886181 updated_at=2026-09-06T15:21:13.608000+00:00 > t_land=2026-09-02T08:57:41+00:00 — 착지 후 «설정 변경»(off→on 토글도 updated_at 단조 증가) · benign/malign 구별 불가 — 운영자 재심사 경로(영구 차단 아님)
@@ -58,7 +62,8 @@ http=200 · 열거 완전성 전 엔드포인트 `RESULT=PAGES_OK`.
 ```
 
 09-04 와 같은 값: `u17_live_state=PREVENTION_ACTIVE`(`:65`) · workflow_id `343700405`(`:23`) · 적용 룰셋
-`[21886181]`(`:64`) · α(`:199`)·β(`:210`) 축 통과 · `t_land` · (b)② 삼중값. (b)② 삼중값은
+`[21886181]`(`:64`) · `U17-ALFA5` α 포함 축(`:199`)·`U17-BETA1` β 축(`:210`) 통과 · `t_land` · (b)② 삼중값.
+(`U17-ALFA5` 는 아래에서 발화하는 `U17-α` 연속성 검사와 **다른 검사**다.) (b)② 삼중값은
 `U17-B2-DEVIATION-ACCEPTANCE.md` 의 `scope:` 와 **일치한다**.
 
 **09-04 와 다른 것 — 발화 1건 → 2건.** 룰셋 `21886181` 의 `updated_at` 이
@@ -150,8 +155,13 @@ black 수치는 버전이 내려간 상태(26.5.1 → 26.1.0)의 값이라 09-04
     뒤라 레인 A 증분 범위 안이다. Codex 재현(10단위 BUY → 0 / 7)은 이 기록이 독립 재현하지 않았다.
   - Codex 부기: 「completion verification stopped with rc=2 because temporary storage was unavailable」 —
     Codex 샌드박스 사정이다. 같은 head 의 `--check` 는 §2 가 rc 0 으로 잰다.
-  - `codex-result.json` 은 보존되지 않았다 — companion 잡 상태가 제거된 리뷰 워크트리에 있어
-    `result` 회수가 「No job found」 였다. 보존본은 `verdict.md`(Codex stdout 축자)·`job.txt` 다.
+  - `codex-result.json` 과 디스패치 focus text(`focus.txt`)·결속 포착(`revision.txt`)은 보존되지
+    않았다 — companion 잡 상태가 제거된 리뷰 워크트리에 있어 `result` 회수가 「No job found」 였고,
+    `.omc/review/20261021-224521/evidence/` 는 비어 있다. 보존본은 `verdict.md`(Codex stdout 축자)·
+    `job.txt` 뿐이라, 위 범위 서술과 `reviewed_scope_digest` 의 계산 방식은 보존 아티팩트로 재확인할 수 없다.
+  - 손실 맵을 만드는 것은 런타임 리더 하나다 — `1e84ac14` 는 순수 술어만 커널로 옮겼고 증거 읽기는
+    런타임에 남았다. 그래서 수정은 커널만으로 끝나지 않고 런타임 리더가 결과 종류·`remaining_quantity` 를
+    넘겨야 하는데, `tos/runtime` 은 이번 재심 범위 밖이다.
 
 ## §6 S-26(계약 자신의 종결 자격) 실측 — 종결 주장이 아니다
 
@@ -160,7 +170,8 @@ black 수치는 버전이 내려간 상태(26.5.1 → 26.1.0)의 값이라 09-04
 ⑤ `:4152` · ⑥ `:4153-4204` · ⑧ `:4205` (⑦ 은 없다).
 
 - ① 마지막 계약 편집 `1db8f9b8` 이후 bound path 내용 변경 0 (§0).
-- ② 그 편집 이후 material 0 독립 재심 = `20260905-144700`(#9, `review-mtnyojac-nhulgc`) ·
+- ② 그 편집 이후 첫 재심은 `20260905-143827`(#8, needs-attention 1, head `3e8931e8`, blob `6f94dfbb`)이다
+  (`$S/s26-count.log:23-31`). 그 뒤 material 0 독립 재심 = `20260905-144700`(#9, `review-mtnyojac-nhulgc`) ·
   `20260905-214532`(#10, `review-mtodn6sx-1fg1eh`) 두 건, 서로 다른 잡, 같은 contract blob `6f94dfbb`.
   #10 은 자기 문언으로 「**계약 내용 재심 아님 — 결속 head 갱신.**」(`20260905-214532/verdict.md:23`)이다.
   ② 를 2/2 로 읽을지 1/2 로 읽을지는 판정 사항이며 이 기록은 정하지 않는다.

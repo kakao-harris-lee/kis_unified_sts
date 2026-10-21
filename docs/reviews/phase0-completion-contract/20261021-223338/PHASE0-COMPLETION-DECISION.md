@@ -20,7 +20,7 @@ lane_a_record: docs/reviews/phase0-codex-records/20261021-224521/verdict.md
 prior_decision: docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md
 drafted_on: 2026-10-21
 authority: 운영자 (this repository's corpus owner)
-operator_countersign: ""   # 계약 :8637 형식 "<운영자 식별> <ISO-8601 UTC>" — 아래 «서명 전 열린 항목» 처분 뒤에만 기입
+operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n 'operator_countersign: "<' 로 재확인) "<운영자 식별> <ISO-8601 UTC>" — 아래 «서명 전 열린 항목» 처분 뒤에만 기입
 ```
 
 ---
@@ -36,7 +36,7 @@ operator_countersign: ""   # 계약 :8637 형식 "<운영자 식별> <ISO-8601 U
 | `D0-1` · `A-1` · `A-2` · `A-3` · `D-1` | 전부 `MET` | §2 (`:139-143`) |
 | `D0-5` | `MET` — 7/7 판정, resolver·marketfeed 가 `VALUED+UNBOUND` → `VALUED` 로 바뀜 | §2 (`:144`, `completion-check.log:32,37`) |
 | `RES-1` | `MET` — `STATE-EV-004` 가 U-13-e 근거로 FWD-a 에서 제외 | §2 (`:146`) |
-| `U-17` | 기계 상태 `PREVENTION_UNVERIFIED_REVISION` — **MET 아님**. 발화 2건: (b)② 삼중값(직전 수용 범위와 일치) + **α 연속성 `PREVENTION_CONTINUITY_UNVERIFIABLE`(수용 범위 밖, 신규)** | §1 (`u17-live2.log:227-231`) |
+| `U-17` | 기계 상태 `PREVENTION_UNVERIFIED_REVISION` — **MET 아님**. 발화 2건: (b)② 삼중값(직전 수용 범위와 일치) + **α 연속성 `PREVENTION_CONTINUITY_UNVERIFIABLE`(수용 범위 밖, 신규)** | §1 (`u17-live2.log:225-231`) |
 | §11 추가 — `tos/tests` 전량 green | 9,616 · rc 0 | §3 |
 | §11 추가 — ruff 0 · black/mypy 기준선 무증가 | ruff 0 · black 0(26.1.0) · mypy 0 | §3 |
 | §11 추가 — `tos_spec_status.py --check` | PASS | §3 |
@@ -56,8 +56,11 @@ operator_countersign: ""   # 계약 :8637 형식 "<운영자 식별> <ISO-8601 U
 - 처분 경로: 커널 분류기 수정 PR(결과 종류와 `remaining_quantity` 를 분류에 넣고, 종결 전까지 남은
   수량을 미결·in-flight 에 유지, ACK·TIMEOUT·UNKNOWN·부분 체결 양방향 회귀 테스트) → 레인 A 재심 #8
   `approve` → 이 초안의 `judged_head`·측정 기록 갱신.
-- 같은 리더 로직이 `tos/runtime/src/tos_runtime/riskstate/position.py:283-288` 에도 있다(이식 원본).
-  런타임 쪽 수정 범위는 그 PR 이 정한다.
+- 손실 맵(`consumed_by_attempt`, 체결 수량만)을 만드는 것은 런타임 리더
+  `tos/runtime/src/tos_runtime/riskstate/position.py:280-289` 하나다 — `1e84ac14` 는 순수 술어만 커널로
+  옮겼고 증거 읽기는 런타임에 남았다. 그래서 수정은 커널 술어와 런타임 리더 **둘 다**를 바꾼다.
+- `tos/runtime` 은 레인 A 재심 #7 범위 밖이었다. 런타임 쪽 변경이 레인 A 를 거치지 않고 착지하지 않도록,
+  **재심 #8 의 범위는 커널 경로 + 이 리더(`tos_runtime/riskstate/position.py`)와 그 테스트를 포함**한다.
 - 이 경로는 리스크 한도 계산이라 CLAUDE.md 의 «되돌리기 어려운 경로» 에 들어간다 — 수정 PR 의 Codex
   리뷰는 운영자의 범위·비용 승인 대상이다.
 
