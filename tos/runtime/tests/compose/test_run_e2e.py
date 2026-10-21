@@ -389,6 +389,7 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
     data_dir: Path,
     custody_root: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Enters at the REAL argv path (``cli.main(["run", ...])``, exactly what a real launcher
     invokes) against a REAL ``compose_paper_runtime`` and a REAL tick source configured on disk
@@ -435,10 +436,19 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
     independent connection to the same on-disk sqlite file is exactly the durability guarantee
     ``run`` is supposed to provide)."""
     config_dir = config_dir_with_risk_state
+    # The ONE test in this file that reaches `compose_paper_runtime` through the real argv
+    # path, so the ONE that cannot pass `wall_clock=` and reads the real OS clock instead:
+    # the tick scheduler skips every pass while `session_context.is_open` is false, and the
+    # shared fixture calendar used to report closed for the last minute of each KST day
+    # (`fx.LAST_MINUTE_OF_DAY_UNIX_MS`'s own docstring — tos-firewall CI run 38755871346).
+    # Pin that exact instant so the test states it on every run instead of once a day; the
+    # journal observation below is stamped on the SAME shifted timeline, since the snapshot
+    # freshness gate compares `now_ms - as_of_ms` against the policy's own bound.
+    now_ms = fx.pin_system_clock(monkeypatch, fx.LAST_MINUTE_OF_DAY_UNIX_MS)
     fx.write_band_strategy_file(config_dir)
     _write_construction_yaml(config_dir)
     journal_path = tmp_path / "journal.jsonl"
-    as_of_ms = _as_of_ms()
+    as_of_ms = now_ms() - 100
     _write_journal(
         journal_path,
         [_observation_line(raw_event_id="raw-cli-main-argv", as_of_ms=as_of_ms)],

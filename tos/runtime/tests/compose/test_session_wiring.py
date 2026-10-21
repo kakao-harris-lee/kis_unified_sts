@@ -13,14 +13,18 @@ suite's own ``conftest.py``/``_fixtures.py`` create with 0600 + uid.
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
+import zoneinfo
 from pathlib import Path
 
 import pytest
 import yaml
+from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.model import WallClockReading
 from tos_runtime.calendar.owner import SessionCalendarMismatch
+from tos_runtime.calendar.phase import session_phase_at
 from tos_runtime.calendar.ports import AbsentWallClockReference, FixedWallClockReference
 from tos_runtime.compose._session_wiring import RetiredConfigPresent
 from tos_runtime.compose._transport_wiring import TransportKind
@@ -403,7 +407,11 @@ def test_venue_phase_is_re_read_per_attempt_not_captured_at_construction(
 
 
 def test_production_default_wall_clock_boots_with_real_session_facts(
-    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Calls ``compose_paper_runtime`` directly (bypassing this suite's own
     ``_compose()`` helper, which always injects a ``FixedWallClockReference``
@@ -415,7 +423,16 @@ def test_production_default_wall_clock_boots_with_real_session_facts(
     boot-time evaluate() x2 (``_wiring.py``'s ``_build_custody_evidence_time``)
     BEFORE ``build_session_facts_owner`` is ever called -- so a real
     wall-clock reading is available from the very first read, never through
-    the pre-G-1 ``AbsentWallClockReference`` default."""
+    the pre-G-1 ``AbsentWallClockReference`` default.
+
+    The OS clock underneath that production default is PINNED
+    (:func:`~._fixtures.pin_system_clock`, which shifts
+    ``LocalSystemClockReader`` and leaves every other wire in place) to
+    :data:`~._fixtures.LAST_MINUTE_OF_DAY_UNIX_MS` -- 23:59:30 KST, the worst
+    instant of the day and the one ``tos-firewall`` CI run 38755871346 was
+    inside when this test went red. Without the pin this assertion was a
+    statement about the HOST CLOCK, not about the wiring."""
+    fx.pin_system_clock(monkeypatch, fx.LAST_MINUTE_OF_DAY_UNIX_MS)
     fx.write_band_strategy_file(config_dir)
     runtime = compose_paper_runtime(
         config_dir,
@@ -431,8 +448,10 @@ def test_production_default_wall_clock_boots_with_real_session_facts(
     _reach_trusted(runtime)
 
     # A real reading reached the owner: step 3's phase read is not None (the
-    # shared conftest.py calendar is open 24/7, so ANY real wall-clock value
-    # resolves to a real phase, never the "no reading" None case).
+    # shared conftest.py calendar admits every instant of the day -- see
+    # test_shared_compose_calendar_admits_every_instant_of_the_day below --
+    # so the pinned wall-clock value resolves to a real phase, never the "no
+    # reading" None case).
     assert runtime.session_facts is not None
     assert runtime.session_facts.phase_for_step3(fx.INSTRUMENT_CLASS) == "CONTINUOUS"
     assert _kind_count(runtime, "SESSION_FACTS_SOURCE_ABSENT") == 0
@@ -443,15 +462,25 @@ def test_production_default_wall_clock_boots_with_real_session_facts(
 
 
 def test_production_default_dates_egress_results_through_a_fresh_trusted_reference(
-    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Plan 2026-09-26 egress trading date, review finding 1: the session phase may keep reading
     the boot-time trusted snapshot, but the trading date must read a reference that also bounds
     its AGE — otherwise a process running past midnight would stamp every ACK with the boot day.
     Pinned by wiring (the reference type and its bound come from ``time.yaml``) and by value (right
-    after boot the snapshot is fresh, so a date is produced)."""
+    after boot the snapshot is fresh, so a date is produced).
+
+    The OS clock is pinned the same way, and to the same instant, as
+    :func:`test_production_default_wall_clock_boots_with_real_session_facts` — so the produced
+    date is now an EXACT value rather than "a digit string, or ``None`` if the host clock happens
+    to be in the window the fixture calendar used to leave closed"."""
     from tos_runtime.calendar.ports import FreshTrustedWallClockReference
 
+    fx.pin_system_clock(monkeypatch, fx.LAST_MINUTE_OF_DAY_UNIX_MS)
     fx.write_band_strategy_file(config_dir)
     runtime = compose_paper_runtime(
         config_dir,
@@ -471,8 +500,67 @@ def test_production_default_dates_egress_results_through_a_fresh_trusted_referen
         reference._max_age_ms == 60_000
     )  # conftest time.yaml MAX_time_conservative_freshness_age_ms
     date = runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS)
-    assert date is None or (
-        len(date) == 8 and date.isdigit()
-    )  # None only in the 23:59 gap
+    # The pinned instant's own KST date (fx.LAST_MINUTE_OF_DAY_UNIX_MS = Monday
+    # 2026-09-14 23:59:30 Asia/Seoul) — the window it falls in does not cross midnight,
+    # so `trading_date_at` reports the occurrence's start date rather than `None`.
+    assert date == "20260914"
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+# ============================================================================
+# (10) The shared conftest.py calendar itself: "permissive (one full-day
+#      CONTINUOUS window ...)" has to be TRUE, not just claimed. Every test
+#      that boots the production-default wall clock rests on it.
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    "local_time",
+    [
+        datetime.time(0, 0, 0, 0),
+        datetime.time(10, 0, 0, 0),
+        # The last instant the OLD window still admitted (it ended at "23:59",
+        # which `_active_window_at` matches END-EXCLUSIVE) — the control: it was
+        # green before this fix too, and the three below were not.
+        datetime.time(23, 58, 59, 999_000),
+        datetime.time(23, 59, 0, 0),  # the first instant the old window refused
+        datetime.time(23, 59, 30, 0),  # fx.LAST_MINUTE_OF_DAY_UNIX_MS's time of day
+        # The LAST instant of a KST day a composed runtime can ever observe:
+        # `tos_runtime.calendar.phase._to_local` builds the local time from an
+        # integer unix MILLISECOND, so nothing finer than .999000 exists here.
+        datetime.time(23, 59, 59, 999_000),
+    ],
+)
+def test_shared_compose_calendar_admits_every_instant_of_the_day(
+    config_dir: Path, local_time: datetime.time
+) -> None:
+    """``conftest.py``'s ``calendar.yaml`` is deliberately permissive so that every
+    compose e2e test's happy path reaches an ADMISSIBLE step 3 whatever instant it
+    observes — and two tests above read the real OS clock against it. That promise was
+    false for one minute a day: the window ended at ``"23:59"``, which
+    :func:`tos_runtime.calendar.phase._active_window_at` matches end-exclusively, so
+    23:59:00.000–23:59:59.999 KST resolved to ``closed_phase``. ``tos-firewall`` CI run
+    38755871346 ran through that minute and two compose e2e tests went red
+    (``test_production_default_wall_clock_boots_with_real_session_facts`` here, and
+    ``test_run_e2e.py::test_cli_main_run_argv_path_composes_and_actually_ticks`` — the
+    tick scheduler skips every pass while ``session_context.is_open`` is false).
+
+    This is the whole claim, stated at the instants that can falsify it. A full day
+    cannot be written as ``end: "24:00"`` — ``_parse_time_field`` parses with
+    ``datetime.time.fromisoformat``, which refuses it (``hour must be in 0..23``,
+    measured) — and a ``crosses_midnight`` pair is rejected for a different reason:
+    ``trading_date_at`` returns ``None`` for a crossing window BY DESIGN, which would
+    make the egress trading date appear and disappear with the time of day. So the
+    fixture carries the maximal end the loader admits, and this test is what holds it
+    there."""
+    calendar = load_calendar_config(config_dir / "calendar.yaml")
+    instant_local = datetime.datetime.combine(
+        datetime.date(2026, 9, 14),  # a Monday, and not a holiday in this fixture
+        local_time,
+        tzinfo=zoneinfo.ZoneInfo(calendar.tz_id),
+    )
+    fact = session_phase_at(
+        int(instant_local.timestamp() * 1000), fx.INSTRUMENT_CLASS, calendar
+    )
+    assert (fact.phase, fact.is_open) == (fx.SESSION_PHASE, True)

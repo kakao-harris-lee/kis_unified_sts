@@ -33,6 +33,7 @@ from decimal import Decimal
 from tos.canonical import FrozenModel
 
 __all__ = [
+    "ConsumedResult",
     "PositionObservation",
     "SealedSend",
 ]
@@ -62,3 +63,21 @@ class SealedSend(FrozenModel):
     attempt_id: str
     side: str | None = None
     quantity: Decimal | None = None
+
+
+class ConsumedResult(FrozenModel):
+    """The LATEST applied (``EGRESS_RESULT_CONSUMED``) result for one attempt — the per-attempt
+    fact :func:`~tos.position.predicates.classify_sealed_sends` needs to tell a terminal result
+    from one that leaves the order outstanding (Phase-0 lane A re-review #7).
+
+    ``result_kind`` is the row's ``egress_result_kind`` as a bare token (the terminal tokens are
+    injected by the caller, mirroring :class:`SealedSend`'s side tokens — this package imports no
+    sibling ``tos.*`` vocabulary); ``None`` or an unrecognized token is NOT terminal
+    (fail-closed). ``filled_quantity`` / ``remaining_quantity`` are the reservation's stored
+    magnitudes the kernel writes on that row (``tos.engine.core`` ``EGRESS_RESULT_CONSUMED``
+    branch: cumulative ``filled`` and the unfilled ``remaining`` after the latest fill-bearing
+    result; both ``None`` until the first fill)."""
+
+    result_kind: str | None = None
+    filled_quantity: Decimal | None = None
+    remaining_quantity: Decimal | None = None
