@@ -23,10 +23,14 @@ bar-replay driver is part of this composition.
 from __future__ import annotations
 
 import stat
+import time
+from collections.abc import Callable
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import TypedDict, Unpack
 
+import pytest
 import yaml
 from tos.are import ProjectedCell
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -68,6 +72,7 @@ from tos.rcl import CapacityComponent, CapacityVector
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 from tos.venue import ActionClass, OrderShapeFields
 from tos_runtime.compose.root import ConstructionConfig
+from tos_runtime.time.sources import LocalSystemClockReader, ReferenceObservation
 from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
 
 from ..venue._documents import ocp_yaml
@@ -92,6 +97,69 @@ INSTRUMENT_CLASS = "krx-index-futures"
 #: wants a deterministic, non-``None`` wall-clock reading shares ONE fixed
 #: instant rather than each hand-rolling its own arbitrary timestamp).
 DEFAULT_WALL_CLOCK_UNIX_MS = 1_789_347_600_000
+#: The SAME Monday at 23:59:30 Asia/Seoul — the last minute of a KST day, the same
+#: minute-of-day ``tos-firewall`` CI run 38755871346 was inside (2026-10-15 15:00 UTC =
+#: 2026-10-16 00:00 KST) when two compose e2e tests went red on wall time alone.
+#:
+#: ``conftest.py``'s shared ``calendar.yaml`` declares ONE window per day and
+#: :func:`tos_runtime.calendar.phase._active_window_at` matches it END-EXCLUSIVE
+#: (``start_dt <= instant_local < end_dt``), so while that window ended at ``"23:59"`` the
+#: minute 23:59:00.000–23:59:59.999 KST was ``closed_phase``, not ``CONTINUOUS`` — step 3
+#: folded INADMISSIBLE and :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once`
+#: skipped every pass (``scheduler.py``: ``if session_context is None or not
+#: session_context.is_open``). Every test that boots the PRODUCTION-DEFAULT wall clock
+#: (``wall_clock`` omitted, so the composed runtime reads the real OS clock) pins THIS
+#: instant with :func:`pin_system_clock` rather than inheriting whatever the host clock
+#: says: the worst instant of the day, on every run, instead of a suite that turns red for
+#: one minute a day.
+#:
+#: :func:`pin_system_clock` shifts rather than freezes, so a long test walks forward from
+#: here and may cross midnight 30s in. That is deliberate and safe in BOTH directions:
+#: ``conftest.py``'s window now admits every instant of the day and every day of the week,
+#: so neither side of the boundary is a different verdict.
+LAST_MINUTE_OF_DAY_UNIX_MS = 1_789_397_970_000
+
+
+def pin_system_clock(
+    monkeypatch: pytest.MonkeyPatch, target_unix_ms: int
+) -> Callable[[], int]:
+    """Shift the ONE OS wall clock a composed runtime reads onto ``target_unix_ms``.
+
+    :class:`~tos_runtime.time.sources.LocalSystemClockReader` is the single reference
+    ``compose_paper_runtime`` wires into
+    :class:`~tos_runtime.time.service.TrustworthyTimeService`
+    (``compose/_wiring.py::_build_custody_evidence_time``), and that service is what the
+    production-default
+    :class:`~tos_runtime.calendar.ports.TrustedWallClockReference` reads. Patching this
+    one ``read`` therefore covers the whole wall-clock surface while leaving the
+    production wiring exactly as it is — unlike passing ``wall_clock=``, which replaces
+    the very reference a production-default test exists to exercise.
+
+    The clock is SHIFTED, never frozen: every pacing/freshness bound this suite exercises
+    is a DIFFERENCE between two readings (``decide_tick``'s ``SKIPPED_INTERVAL``,
+    ``marketfeed.snapshot._derive_field_state``'s ``now_ms - as_of_ms``), and a frozen
+    clock would silently change what those bounds mean. Only the reading's VALUE moves;
+    ``reachable``/``healthy``/``quality``/``common_mode_group`` still come from the real
+    reader, so the time service's own health judgement is untouched.
+
+    Returns:
+        ``now_ms()`` — the shifted clock, for a caller that has to build its own
+        ``as_of_ms`` on the same timeline as the runtime it is about to boot.
+    """
+    real_read = LocalSystemClockReader.read
+    offset_ms = target_unix_ms - int(time.time() * 1000)
+
+    def _shifted_read(self: LocalSystemClockReader) -> ReferenceObservation:
+        observed = real_read(self)
+        if observed.wall_clock_unix_ms is None:
+            return observed
+        return replace(
+            observed, wall_clock_unix_ms=observed.wall_clock_unix_ms + offset_ms
+        )
+
+    monkeypatch.setattr(LocalSystemClockReader, "read", _shifted_read)
+    return lambda: int(time.time() * 1000) + offset_ms
+
 
 LOWER_BAND = 4_500_000
 UPPER_BAND = 4_520_000
