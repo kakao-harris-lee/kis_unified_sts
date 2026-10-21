@@ -22,9 +22,10 @@ from tos.position.predicates import (
     sign_of,
     worst_credible_directional_usage,
 )
-from tos.position.records import PositionObservation, SealedSend
+from tos.position.records import ConsumedResult, PositionObservation, SealedSend
 
 __all__ = [
+    "ConsumedResult",
     "PositionObservation",
     "SealedSend",
     "worst_credible_directional_usage",

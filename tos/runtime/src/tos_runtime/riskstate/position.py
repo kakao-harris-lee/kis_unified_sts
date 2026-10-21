@@ -23,8 +23,8 @@ runtime's own durable evidence into a directional-usage observation:
   pattern), never the in-memory registry (which pops on first read and is wired only for the
   ``kis-mock`` transport kind).
 * **Consumed egress result** — the durable ``EGRESS_RESULT_CONSUMED`` (applied) /
-  ``RESULT_UNMATCHED`` (recorded but not applied) rows carry ``filled_quantity`` per
-  ``attempt_id``. **Deviation, reported:** :class:`~tos_runtime.recon.evidence_reader
+  ``RESULT_UNMATCHED`` (recorded but not applied) rows carry ``egress_result_kind``,
+  ``filled_quantity`` and ``remaining_quantity`` per ``attempt_id``. **Deviation, reported:** :class:`~tos_runtime.recon.evidence_reader
   .SqliteEvidenceReceiptReader` was the survey's pointer for this read, but its
   ``EgressReceiptObservation`` return type folds BOTH durable kinds into one stream with no
   field naming which SQL ``kind`` a row came from (measured against
@@ -40,13 +40,21 @@ has no terminal result counted in full, in the direction that makes usage larges
 ======================================================  =================================
 Evidence state for one ``attempt_id``                    Classification
 ======================================================  =================================
-``SEND_SEALED`` + ``EGRESS_RESULT_CONSUMED`` present      CONFIRMED: ``filled_quantity``
-                                                           (``0`` if the row carries none —
-                                                           a positively recorded zero-fill
-                                                           outcome, e.g. a plain ACK/CANCEL/
-                                                           REJECT, is a resolved fact, not an
-                                                           unknown) signed by
-                                                           ``send_seal.outbound_side``.
+``SEND_SEALED`` + latest ``EGRESS_RESULT_CONSUMED``       CONFIRMED: ``filled_quantity``
+(highest ``seq``) whose ``egress_result_kind`` is in      (``0`` if the row carries none)
+``tos.engine.TERMINAL_RESULT_KINDS`` (``FULL_FILL`` /     signed by
+``REJECT`` / ``CANCEL_ACK`` / ``EXPIRED``)                ``send_seal.outbound_side``;
+                                                           nothing outstanding.
+``SEND_SEALED`` + latest ``EGRESS_RESULT_CONSUMED``       CONFIRMED ``filled_quantity`` as
+whose kind is NOT terminal (``ACK`` / ``PARTIAL_FILL``    above, PLUS IN-FLIGHT: the
+/ ``TIMEOUT`` / ``UNKNOWN``, or missing/unrecognized)     unfilled ``max(remaining_quantity,
+                                                           outbound_quantity - filled, 0)``
+                                                           signed by ``outbound_side`` — the
+                                                           kernel records CONSUMED for every
+                                                           APPLIED result, so a consumed
+                                                           ACK resolves nothing (lane A
+                                                           re-review #7; bucket rationale in
+                                                           :mod:`tos.position.predicates`).
 ``SEND_SEALED`` + ``RESULT_UNMATCHED`` present (no        UNKNOWN: the FULL sealed
 ``EGRESS_RESULT_CONSUMED`` for the same attempt)          ``send_seal.outbound_quantity``,
                                                            signed by ``outbound_side`` — a
@@ -108,7 +116,9 @@ import sqlite3
 from collections.abc import Mapping
 from decimal import Decimal
 
+from tos.engine import TERMINAL_RESULT_KINDS
 from tos.position import (
+    ConsumedResult,
     PositionObservation,
     classify_sealed_sends,
     conservative_current_usage,
@@ -132,6 +142,12 @@ __all__ = [
 
 #: The gateway evidence kind carrying the whole pre-``SEND_STARTED`` seal (module docstring).
 _SEND_SEALED_KIND = "SEND_SEALED"
+
+#: The kernel's terminal result vocabulary as the bare tokens ``egress_result_kind`` carries in
+#: the durable payload (``model_dump(mode="json")``) — derived, never a second literal copy.
+_TERMINAL_RESULT_TOKENS: frozenset[str] = frozenset(
+    kind.value for kind in TERMINAL_RESULT_KINDS
+)
 
 
 def _read_kind_payloads(
@@ -260,7 +276,7 @@ class EvidencePositionReader:
 
     def _read_terminal_results(
         self,
-    ) -> tuple[dict[str, Decimal], set[str], list[str]]:
+    ) -> tuple[dict[str, ConsumedResult], set[str], list[str]]:
         """Read the two terminal-result evidence kinds within scope (module docstring's
         "deviation, reported" note on why this reads them directly rather than reusing
         :class:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader`'s
@@ -277,15 +293,20 @@ class EvidencePositionReader:
             for payload in _read_kind_payloads(self._store, "RESULT_UNMATCHED")
             if _in_scope(payload, account=self._account, instrument=self._instrument)
         ]
-        consumed_by_attempt: dict[str, Decimal] = {}
+        consumed_by_attempt: dict[str, ConsumedResult] = {}
         unmatched_attempts: set[str] = set()
+        # ``consumed_payloads`` is in commit (``seq ASC``) order, so the last assignment per
+        # attempt is its LATEST applied result — the one whose kind decides terminality and
+        # whose stored (cumulative) magnitudes govern (module docstring's table).
         for payload in consumed_payloads:
             attempt_id = payload.get("attempt_id")
             if not isinstance(attempt_id, str):
                 continue
-            quantity = _to_decimal(payload.get("filled_quantity"))
-            consumed_by_attempt[attempt_id] = (
-                quantity if quantity is not None else Decimal(0)
+            raw_kind = payload.get("egress_result_kind")
+            consumed_by_attempt[attempt_id] = ConsumedResult(
+                result_kind=raw_kind if isinstance(raw_kind, str) else None,
+                filled_quantity=_to_decimal(payload.get("filled_quantity")),
+                remaining_quantity=_to_decimal(payload.get("remaining_quantity")),
             )
         for payload in unmatched_payloads:
             attempt_id = payload.get("attempt_id")
@@ -324,6 +345,7 @@ class EvidencePositionReader:
             unmatched_attempts=unmatched_attempts,
             buy_side_token=self._buy_side_token,
             sell_side_token=self._sell_side_token,
+            terminal_result_kinds=_TERMINAL_RESULT_TOKENS,
         )
         sources: list[str] = []
         if sealed:
