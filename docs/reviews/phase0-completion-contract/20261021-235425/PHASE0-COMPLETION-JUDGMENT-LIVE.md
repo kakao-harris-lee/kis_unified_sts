@@ -60,14 +60,15 @@
 - `--write` 뒤 `git status --short` 빈 출력 (`:53-54`) — 커밋된 `tos-spec/src/TOS-COMPLETION-STATUS.md` 가 현행
 - 상태 라인 4종 `NOT_REQUIRED` · `ENTRY_OK` · `ENTRY_PROVENANCE_CLEAR` · `NO_ROWS_CLEAR` (`:8-11`), 완료 관측 전 항목(`:14-37`)
   3차와 문자 단위 동일
-- §11 개관(`tos-spec/src/TOS-COMPLETION-STATUS.md:116-146`)은 3차와 byte 동일(sha256 `36e1bba68d9cbb501033741711d5b2dd91e3294a8ff651c8c6796c5c43f38b01`):
+- `tos-spec/src/TOS-COMPLETION-STATUS.md` 는 파일 전체가 3차와 byte 동일(파일 전체 sha256
+  `36e1bba68d9cbb501033741711d5b2dd91e3294a8ff651c8c6796c5c43f38b01`). §11 개관(`:116-146`):
   K-*·U-*·D0-1·A-1~3·D-1·D0-5 전부 `MET`, `U-17` 은 live 평가 필요(§1), `RES-1` `MET`
 
 ## §3 §11 «추가» 표 실측
 
 | 항목 | 기준 | 실측 | 3차 대비 | 출처 |
 | --- | --- | --- | --- | --- |
-| `tos/tests` 전량 green | 계약 8,742 | dots=9,657 · nondot=0 · rc 0 · collect 합 9,657 | **+41** — `tos/tests/position/test_position_predicates.py` 9 → 50 (b15069fd..371051f4 의 `tos/tests` 변경은 이 파일 하나) | `$S/tos-tests.log:2`, `$S/collect.log:2-4` |
+| `tos/tests` 전량 green | 계약 8,742 | dots=9,657 · nondot=0 · rc 0 · collect 합 9,657 | **+41** — `tos/tests/position/test_position_predicates.py` 9 → 50 (b15069fd..371051f4 의 `tos/tests` 변경은 이 파일 하나) | `$S/tos-tests.raw`(진행 줄 135개 · dots 9,657 · non-dot 0) · `$S/tos-tests.log:2`(`rc=0`) · `$S/collect.log:2-4` |
 | `ruff check tos/src tos/tests tests/tos_l3 tools` | 0 | `All checks passed!` rc 0 (ruff 0.15.4) | 동일 | `$S/ruff.log:2-4` |
 | `black --check` 같은 경로 | 70 무증가 | 0 · `918 files would be left unchanged.` (black 26.1.0) | 동일 | `$S/black.log:2-6` |
 | `mypy tos/src/tos` | 8 무증가 | error 0 · rc 0 (mypy 2.3.1) | 동일 | `$S/mypy.log:2-4` |
@@ -92,10 +93,13 @@
 - 범위: 운영자 승인(2026-10-21) 커널 경로 + `tos/runtime/src/tos_runtime/riskstate/position.py` · `tos/runtime/tests/riskstate/` ·
   digest 파일(focus text 지시). 판정문은 Codex 샌드박스가 read-only 라 파일 기반 런타임 테스트를 돌리지 못했다고 적는다 —
   그 테스트는 §4 의 PR CI(`tos-firewall`)가 같은 트리에서 통과했다.
-- **결속 간극 0**: `git diff --stat 9c6e15e6 371051f4` 출력 없음 · `git diff --numstat 9c6e15e6 371051f4 | wc -l` = 0 ·
-  `git log --oneline 9c6e15e6..371051f4` = 머지 커밋 1개뿐 (`$S/laneA.log:21-27`). 재심 #8 의 approve 는 이 head 의 트리에 결속된다.
+- **결속 간극 0**: 재심 범위 경로 한정 `git diff --stat 9c6e15e6 371051f4 -- <범위>` 출력 없음(`$S/laneA.log:21`) ·
+  전체 `git diff --numstat 9c6e15e6 371051f4 | wc -l` = 0(`:23-24`) · `git log --oneline 9c6e15e6..371051f4` = 머지 커밋
+  1개뿐(`:25-27`). 리뷰 레인이 따로 확인: 두 커밋의 트리 id 가 같고(`aa2c0b53…`) `9c6e15e6` 는 `371051f4` 의 두 번째 부모다.
+  재심 #8 의 approve 는 이 head 의 트리에 결속된다.
 - 3차 기록 §5 의 재심 #7 high finding(`tos/src/tos/position/predicates.py:131-140`)은 PR #910 이 고쳤고 재심 #8 이 「Resolved.」로 판정했다.
-- 보존: `focus.txt` · `revision.txt` · `codex-result.json` · `job.txt` · `codex-wait.out` 보존. `evidence/` 는 비어 있고,
+- 보존: `verdict.md` · `focus.txt` · `revision.txt` · `codex-result.json` · `job.txt` · `codex-wait.out` · `codex-wait.err`
+  7개를 byte 동일 사본으로 보존(`cmp`). 원본의 `codex-result.err`(0바이트)와 빈 `evidence/` 는 복사하지 않았다.
   `reviewed_scope_digest` 의 계산 방식은 보존 아티팩트로 재확인되지 않는다.
 
 ## §6 S-26 — 3차와 동일, 종결 주장 아님
