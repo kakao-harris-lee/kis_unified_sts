@@ -205,10 +205,11 @@ def config_dir(tmp_path: Path) -> Path:
     # file is deliberately NOT written here any more (a leftover file refuses boot --
     # RetiredConfigPresent, tests/compose/test_session_wiring.py). This fixture's
     # calendar is deliberately permissive (one full-day CONTINUOUS window, every
-    # weekday, no holidays) so every OTHER compose e2e test's happy path keeps
+    # day of the week, no holidays) so every OTHER compose e2e test's happy path keeps
     # reaching an ADMISSIBLE step 3 / SATISFIED item 12 (for the non-broker-reaching
     # SYNTHETIC_FUTURES_ORDER scope this suite activates below) regardless of which
-    # instant the test's own wall-clock fixture injects; tests/compose/
+    # instant the test's own wall-clock fixture injects -- see the window's own `end`
+    # comment below for what "full-day" costs to actually mean; tests/compose/
     # test_session_wiring.py exercises the interesting negative paths (holiday,
     # after-hours, absent wall clock, calendar-version mismatch) with their OWN,
     # narrower calendar configs.
@@ -223,7 +224,35 @@ def config_dir(tmp_path: Path) -> Path:
                     {
                         "phase": "CONTINUOUS",
                         "start": "00:00",
-                        "end": "23:59",
+                        # END-EXCLUSIVE: tos_runtime.calendar.phase._active_window_at
+                        # matches `start_dt <= instant_local < end_dt`, and an instant is
+                        # always built from an integer unix MILLISECOND (`_to_local`), so
+                        # this value admits every instant of the day a composed runtime can
+                        # observe (the largest is 23:59:59.999000 local).
+                        #
+                        # It used to read "23:59", which left 23:59:00.000-23:59:59.999 KST
+                        # CLOSED while this comment claimed a full-day window -- a suite that
+                        # was green except for one minute a day. tos-firewall CI run
+                        # 38755871346 ran through that minute and two compose e2e tests that
+                        # boot the PRODUCTION-DEFAULT wall clock went red:
+                        # test_session_wiring.py::test_production_default_wall_clock_boots_
+                        # with_real_session_facts (step 3 folded CLOSED) and test_run_e2e.py::
+                        # test_cli_main_run_argv_path_composes_and_actually_ticks (the tick
+                        # scheduler skips every pass while `session_context.is_open` is false).
+                        # Both now PIN that instant (_fixtures.LAST_MINUTE_OF_DAY_UNIX_MS), and
+                        # test_session_wiring.py::test_shared_compose_calendar_admits_every_
+                        # instant_of_the_day states this window's claim at the instants that
+                        # can falsify it.
+                        #
+                        # Not "24:00": `_parse_time_field` parses with
+                        # `datetime.time.fromisoformat`, which refuses it ("hour must be in
+                        # 0..23", measured), and a non-crossing window additionally requires
+                        # end > start. Not a `crosses_midnight` pair either: `trading_date_at`
+                        # returns None for a crossing window BY DESIGN (plan 2026-09-26 egress
+                        # trading date §2 decision 3), which would make the egress trading date
+                        # present or absent depending on the time of day -- trading one
+                        # wall-time dependence for another.
+                        "end": "23:59:59.999999",
                         "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
                         "crosses_midnight": False,
                     }
