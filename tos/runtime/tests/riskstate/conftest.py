@@ -115,6 +115,8 @@ def seed_egress_result(
     instrument: str,
     filled_quantity: str | None,
     result_disposition: str | None = None,
+    egress_result_kind: str | None = None,
+    remaining_quantity: str | None = None,
 ) -> None:
     """Append one ``EGRESS_RESULT_CONSUMED``/``RESULT_UNMATCHED`` row with the SAME field
     names ``tos.engine.records.EngineEvidenceRecord.model_dump(mode="json")`` produces for the
@@ -137,13 +139,21 @@ def seed_egress_result(
             (e.g. ``"DUPLICATE"``) — only meaningful for ``kind="RESULT_UNMATCHED"``
             (``core.py:713``); ``None`` when the caller does not need it (every pre-existing
             call site).
+        egress_result_kind: The row's ``egress_result_kind`` (a ``tos.engine.EgressResultKind``
+            value). ``None`` keeps the pre-existing default (``"FULL_FILL"`` when a fill
+            quantity is given, otherwise ``"ACK"``).
+        remaining_quantity: The row's ``remaining_quantity`` — on ``EGRESS_RESULT_CONSUMED``
+            the kernel writes the reservation's stored remainder after the latest
+            fill-bearing result (``core.py`` ``EGRESS_RESULT_CONSUMED`` branch).
     """
+    if egress_result_kind is None:
+        egress_result_kind = "FULL_FILL" if filled_quantity is not None else "ACK"
     payload = {
         "attempt_id": attempt_id,
         "instrument_key": {"account": account, "instrument": instrument},
-        "egress_result_kind": "FULL_FILL" if filled_quantity is not None else "ACK",
+        "egress_result_kind": egress_result_kind,
         "filled_quantity": filled_quantity,
-        "remaining_quantity": None,
+        "remaining_quantity": remaining_quantity,
         "result_disposition": result_disposition,
     }
     store.append(payload, kind=kind, record_class=kind)

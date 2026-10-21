@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -228,8 +229,10 @@ def test_consumed_row_governs_over_a_prior_unmatched_row(
 def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """A plain ACK/CANCEL/REJECT (no fill quantity) is a POSITIVELY resolved fact — not an
-    unknown — per the module docstring's classification table."""
+    """A TERMINAL zero-fill result (here ``REJECT``; ``tos.engine.TERMINAL_RESULT_KINDS``) is a
+    POSITIVELY resolved fact — not an unknown, not in flight — per the module docstring's
+    classification table. (A bare ``ACK`` is NOT terminal: see
+    ``test_consumed_nonterminal_zero_fill_retains_full_sealed_quantity``.)"""
     seed_send_sealed(
         evidence_store,
         attempt_id="a1",
@@ -246,6 +249,7 @@ def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         filled_quantity=None,
+        egress_result_kind="REJECT",
     )
     reader = EvidencePositionReader(
         evidence_store,
@@ -258,6 +262,212 @@ def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
     assert obs.confirmed_net == Decimal(0)
     assert obs.unknown_buy == Decimal(0)
     assert obs.in_flight_buy == Decimal(0)
+
+
+# ===========================================================================
+# Lane A re-review #7 (high) — consumed NON-terminal results keep outstanding exposure
+# ===========================================================================
+
+_SIDE_SIGNS = (("BUY", 1), ("SELL", -1))
+
+
+def _reader(store: SqliteEvidenceStore) -> EvidencePositionReader:
+    return EvidencePositionReader(
+        store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        buy_side_token="BUY",
+        sell_side_token="SELL",
+    )
+
+
+def _seal_ten(store: SqliteEvidenceStore, side: str) -> None:
+    seed_send_sealed(
+        store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+
+
+def _consume(
+    store: SqliteEvidenceStore,
+    *,
+    kind: str,
+    filled: str | None,
+    remaining: str | None,
+) -> None:
+    seed_egress_result(
+        store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=filled,
+        egress_result_kind=kind,
+        remaining_quantity=remaining,
+    )
+
+
+def _in_flight_toward(obs: PositionObservation, sign: int) -> Decimal:
+    return obs.in_flight_buy if sign > 0 else obs.in_flight_sell
+
+
+def _in_flight_against(obs: PositionObservation, sign: int) -> Decimal:
+    return obs.in_flight_sell if sign > 0 else obs.in_flight_buy
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDE_SIGNS)
+@pytest.mark.parametrize("kind", ["ACK", "TIMEOUT", "UNKNOWN"])
+def test_consumed_nonterminal_zero_fill_retains_full_sealed_quantity(
+    evidence_store: SqliteEvidenceStore, kind: str, side: str, sign: int
+) -> None:
+    """``core.py`` emits ``EGRESS_RESULT_CONSUMED`` for every APPLIED result, including the
+    non-terminal ``ACK`` / ``TIMEOUT`` / ``UNKNOWN``. A sealed 10-lot whose only consumed
+    result is one of those has resolved NOTHING — the full 10 stays outstanding (in flight,
+    the bucket it held before any result arrived), never 0."""
+    _seal_ten(evidence_store, side)
+    _consume(evidence_store, kind=kind, filled=None, remaining=None)
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(0)
+    assert _in_flight_toward(obs, sign) == Decimal(10)
+    assert _in_flight_against(obs, sign) == Decimal(0)
+    assert obs.unknown_buy == Decimal(0) and obs.unknown_sell == Decimal(0)
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+    assert in_flight_overlap_effect(obs) == Decimal(10)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDE_SIGNS)
+def test_consumed_partial_fill_confirms_filled_and_retains_remainder(
+    evidence_store: SqliteEvidenceStore, side: str, sign: int
+) -> None:
+    """PARTIAL_FILL 7 filled / 3 remaining: confirmed 7 signed by side, 3 still outstanding —
+    worst-credible usage is 10, not 7."""
+    _seal_ten(evidence_store, side)
+    _consume(evidence_store, kind="PARTIAL_FILL", filled="7", remaining="3")
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(7 * sign)
+    assert _in_flight_toward(obs, sign) == Decimal(3)
+    assert _in_flight_against(obs, sign) == Decimal(0)
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+    assert conservative_current_usage(obs) == Decimal(7)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDE_SIGNS)
+def test_consumed_terminal_full_fill_leaves_nothing_outstanding(
+    evidence_store: SqliteEvidenceStore, side: str, sign: int
+) -> None:
+    _seal_ten(evidence_store, side)
+    _consume(evidence_store, kind="FULL_FILL", filled="10", remaining="0")
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(10 * sign)
+    assert in_flight_overlap_effect(obs) == Decimal(0)
+    assert obs.unknown_buy == Decimal(0) and obs.unknown_sell == Decimal(0)
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDE_SIGNS)
+@pytest.mark.parametrize("kind", ["REJECT", "CANCEL_ACK", "EXPIRED"])
+def test_consumed_terminal_after_partial_confirms_only_the_filled_part(
+    evidence_store: SqliteEvidenceStore, kind: str, side: str, sign: int
+) -> None:
+    """A terminal REJECT / CANCEL_ACK / EXPIRED after a 7/3 partial: the kernel's stored
+    reservation still carries ``filled=7, remaining=3`` on the terminal row, but the attempt now
+    HAS a terminal result (DR-0003 §2.2) — confirmed 7, nothing outstanding."""
+    _seal_ten(evidence_store, side)
+    _consume(evidence_store, kind="PARTIAL_FILL", filled="7", remaining="3")
+    _consume(evidence_store, kind=kind, filled="7", remaining="3")
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(7 * sign)
+    assert in_flight_overlap_effect(obs) == Decimal(0)
+    assert obs.unknown_buy == Decimal(0) and obs.unknown_sell == Decimal(0)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDE_SIGNS)
+def test_result_sequence_resolves_by_the_latest_consumed_row(
+    evidence_store: SqliteEvidenceStore, side: str, sign: int
+) -> None:
+    """ACK -> PARTIAL(4/6) -> FULL_FILL(10/0), in commit (``seq``) order: each prefix is
+    classified by its own latest row, and the full sequence resolves to confirmed 10."""
+    _seal_ten(evidence_store, side)
+    _consume(evidence_store, kind="ACK", filled=None, remaining=None)
+    obs = _reader(evidence_store).observe()
+    assert (obs.confirmed_net, _in_flight_toward(obs, sign)) == (
+        Decimal(0),
+        Decimal(10),
+    )
+    _consume(evidence_store, kind="PARTIAL_FILL", filled="4", remaining="6")
+    obs = _reader(evidence_store).observe()
+    assert (obs.confirmed_net, _in_flight_toward(obs, sign)) == (
+        Decimal(4 * sign),
+        Decimal(6),
+    )
+    _consume(evidence_store, kind="FULL_FILL", filled="10", remaining="0")
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(10 * sign)
+    assert in_flight_overlap_effect(obs) == Decimal(0)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDE_SIGNS)
+def test_nonterminal_result_after_terminal_reopens_the_remainder(
+    evidence_store: SqliteEvidenceStore, side: str, sign: int
+) -> None:
+    """The latest row governs in BOTH directions: an applied ``ACK`` after a ``REJECT`` (a
+    contradictory sequence the kernel's rank machinery still applies, since ``ACK`` moves no
+    capacity) leaves the latest result non-terminal, so the unfilled 10 is outstanding again —
+    fail-closed, never "some earlier row was terminal"."""
+    _seal_ten(evidence_store, side)
+    _consume(evidence_store, kind="REJECT", filled=None, remaining=None)
+    _consume(evidence_store, kind="ACK", filled=None, remaining=None)
+    obs = _reader(evidence_store).observe()
+    assert _in_flight_toward(obs, sign) == Decimal(10)
+
+
+@pytest.mark.parametrize("kind", [None, 7, "", "FILLED_MAYBE"])
+def test_unrecognized_result_kind_is_not_terminal(
+    evidence_store: SqliteEvidenceStore, kind: object
+) -> None:
+    """A missing / non-string / unrecognized ``egress_result_kind`` proves no terminality
+    (fail-closed) — the full sealed 10 stays outstanding."""
+    _seal_ten(evidence_store, "BUY")
+    evidence_store.append(
+        {
+            "attempt_id": "a1",
+            "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
+            "egress_result_kind": kind,
+            "filled_quantity": None,
+            "remaining_quantity": None,
+        },
+        kind="EGRESS_RESULT_CONSUMED",
+        record_class="EGRESS_RESULT_CONSUMED",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.in_flight_buy == Decimal(10)
+
+
+@pytest.mark.parametrize("kind", ["ACK", "PARTIAL_FILL"])
+def test_unrecognized_side_on_nonterminal_consumed_result_is_both_directions(
+    evidence_store: SqliteEvidenceStore, kind: str
+) -> None:
+    """Unrecognized side token + non-terminal consumed result: the filled part fails closed to
+    UNKNOWN in both directions, the outstanding remainder to IN-FLIGHT in both directions.
+    """
+    _seal_ten(evidence_store, "SIDEWAYS")
+    filled, remaining = ("7", "3") if kind == "PARTIAL_FILL" else (None, None)
+    _consume(evidence_store, kind=kind, filled=filled, remaining=remaining)
+    obs = _reader(evidence_store).observe()
+    expected_filled = Decimal(7) if kind == "PARTIAL_FILL" else Decimal(0)
+    expected_outstanding = Decimal(10) - expected_filled
+    assert obs.confirmed_net == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (expected_filled, expected_filled)
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (
+        expected_outstanding,
+        expected_outstanding,
+    )
+    assert worst_credible_directional_usage(obs) == Decimal(10)
 
 
 def test_out_of_scope_attempt_is_excluded(evidence_store: SqliteEvidenceStore) -> None:

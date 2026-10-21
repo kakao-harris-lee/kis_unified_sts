@@ -146,6 +146,23 @@ FILL_RESULT_KINDS: frozenset[EgressResultKind] = frozenset(
     {EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL}
 )
 
+#: The result kinds that settle an attempt to positive evidence — the terminal vocabulary
+#: kernel round #3 §2 decision 5 names (``FULL_FILL`` / ``REJECT`` / ``CANCEL_ACK`` /
+#: ``EXPIRED``). ``ACK`` and ``PARTIAL_FILL`` leave the order live; ``UNKNOWN`` / ``TIMEOUT``
+#: carry no positive evidence at all (ADR-002-002 §18.6). Single source for both
+#: :data:`tos.engine.state._RELEASABLE_KNOWLEDGE` (derived from it, finality-proof release
+#: eligibility) and the runtime position fold's terminality test (DR-0003 §2.2 "sealed but has
+#: no terminal result"). Terminal here means "no further fill is expected", not "released":
+#: release stays the RCL's, gated on Final Quantity Proof (CPL-4 "cancel is not release").
+TERMINAL_RESULT_KINDS: frozenset[EgressResultKind] = frozenset(
+    {
+        EgressResultKind.FULL_FILL,
+        EgressResultKind.REJECT,
+        EgressResultKind.CANCEL_ACK,
+        EgressResultKind.EXPIRED,
+    }
+)
+
 
 class EgressKnowledge(StrEnum):
     """Knowledge about the fate of a handed-off attempt — ``UNKNOWN`` is an explicit member.

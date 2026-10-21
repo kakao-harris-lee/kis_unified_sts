@@ -1,7 +1,8 @@
 """tos.position pure predicates (kernel round #4 K-2).
 
-Ported verbatim (same arithmetic, same fail-closed shape) from
-``tos_runtime.riskstate.position`` (DR-0003 §2.2). Every function here is pure — no I/O, no
+Ported (same fail-closed shape) from ``tos_runtime.riskstate.position`` (DR-0003 §2.2); the
+consumed-result row was since corrected to tell terminal from non-terminal results (lane A
+re-review #7, see "why IN-FLIGHT" below). Every function here is pure — no I/O, no
 clock, no broker query, exactly the pure half of the runtime module's original mixed
 pure-logic/impure-I/O module (the impure half — reading the durable evidence store, JSON
 decoding, scope filtering — stays in ``tos_runtime.riskstate.position.EvidencePositionReader``,
@@ -14,9 +15,17 @@ has no terminal result counted in full, in the direction that makes usage larges
 ======================================================  =================================
 Evidence state for one ``attempt_id``                    Classification
 ======================================================  =================================
-``SEND_SEALED`` + ``EGRESS_RESULT_CONSUMED`` present      CONFIRMED: ``filled_quantity``
-                                                           (``0`` if the row carries none)
-                                                           signed by ``send.side``.
+``SEND_SEALED`` + latest ``EGRESS_RESULT_CONSUMED``       CONFIRMED: ``filled_quantity``
+whose ``result_kind`` is TERMINAL (one of the injected    (``0`` if the row carries none)
+``terminal_result_kinds`` — the runtime injects           signed by ``send.side``; nothing
+``tos.engine.TERMINAL_RESULT_KINDS``: ``FULL_FILL`` /     outstanding.
+``REJECT`` / ``CANCEL_ACK`` / ``EXPIRED``)
+``SEND_SEALED`` + latest ``EGRESS_RESULT_CONSUMED``       CONFIRMED: ``filled_quantity``
+whose ``result_kind`` is NOT terminal (``ACK`` /          signed by ``send.side``, PLUS
+``PARTIAL_FILL`` / ``TIMEOUT`` / ``UNKNOWN``, or a        IN-FLIGHT: the outstanding
+missing / unrecognized token — fail-closed)               quantity ``max(remaining_quantity,
+                                                           send.quantity - filled_quantity,
+                                                           0)`` signed by ``send.side``.
 ``SEND_SEALED`` + ``RESULT_UNMATCHED`` present (no        UNKNOWN: the FULL sealed
 ``EGRESS_RESULT_CONSUMED`` for the same attempt)          ``send.quantity``, signed by
                                                            ``send.side`` — a
@@ -28,8 +37,27 @@ Evidence state for one ``attempt_id``                    Classification
 A ``side`` that matches NEITHER of the two injected        UNKNOWN in BOTH directions
 side tokens                                                 (fail-closed — an unrecognized
                                                              side token proves no direction
-                                                             at all, never defaults to one).
+                                                             at all, never defaults to one);
+                                                             a non-terminal remainder goes to
+                                                             IN-FLIGHT in both directions.
 ======================================================  =================================
+
+**Why a non-terminal remainder is IN-FLIGHT, not UNKNOWN (Phase-0 lane A re-review #7).**
+``tos.engine.core`` records ``EGRESS_RESULT_CONSUMED`` for EVERY applied result, including the
+non-terminal ``ACK`` / ``PARTIAL_FILL`` / ``TIMEOUT`` / ``UNKNOWN``, so "consumed" never implied
+"resolved" — reading it as resolved dropped the unfilled quantity entirely (a sealed 10-lot
+read 0 after an ACK, 7 after a 7/3 partial). DR-0003 §2.2 counts "every attempt that was sealed
+but has no terminal result" in full; an attempt whose latest result is non-terminal is exactly
+that, so its unfilled part keeps the classification it had BEFORE any result arrived — the
+sealed-no-receipt IN-FLIGHT row. That bucket is also the one that cannot understate the risk
+decision: ARE grants iff ``requested_increment <= headroom``, i.e. ``conservative_current_usage
++ command + required_concurrent_overlap_effect <= limit``; moving a quantity ``q`` from UNKNOWN
+to IN-FLIGHT lowers ``conservative_current_usage`` by at most ``q`` (triangle inequality) and
+raises the never-netted overlap by exactly ``q``, so the decision sum never falls — whereas
+UNKNOWN nets against an opposite confirmed position (prior +10, an unknown 10-lot sell: sum 10
+instead of the in-flight 20) and would let a ``TIMEOUT`` shrink the sum below the no-result
+state. The remainder is the larger of the recorded ``remaining_quantity`` and ``send.quantity -
+filled_quantity`` so an absent or under-reported remainder never shrinks it.
 
 If BOTH a ``RESULT_UNMATCHED`` and an ``EGRESS_RESULT_CONSUMED`` fact exist for the same
 attempt, the caller is expected to have already resolved that supersession (the runtime reader
@@ -47,7 +75,7 @@ from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from decimal import Decimal
 
-from tos.position.records import PositionObservation, SealedSend
+from tos.position.records import ConsumedResult, PositionObservation, SealedSend
 
 __all__ = [
     "worst_credible_directional_usage",
@@ -104,19 +132,45 @@ def sign_of(
     return None
 
 
+def _outstanding_after(
+    consumed: ConsumedResult,
+    sealed_quantity: Decimal,
+    *,
+    terminal_result_kinds: AbstractSet[str],
+) -> Decimal:
+    """The still-outstanding quantity of an attempt whose latest applied result is
+    ``consumed`` (module docstring's "why IN-FLIGHT" note): ``0`` for a terminal result kind;
+    otherwise the larger of the recorded remainder and ``sealed - filled`` (never negative). A
+    missing or unrecognized ``result_kind`` is not terminal (fail-closed)."""
+    if (
+        consumed.result_kind is not None
+        and consumed.result_kind in terminal_result_kinds
+    ):
+        return Decimal(0)
+    filled = consumed.filled_quantity or Decimal(0)
+    remaining = consumed.remaining_quantity or Decimal(0)
+    return max(remaining, sealed_quantity - filled, Decimal(0))
+
+
 def classify_sealed_sends(
     sealed: tuple[SealedSend, ...],
     *,
-    consumed_by_attempt: Mapping[str, Decimal],
+    consumed_by_attempt: Mapping[str, ConsumedResult],
     unmatched_attempts: AbstractSet[str],
     buy_side_token: str,
     sell_side_token: str,
+    terminal_result_kinds: AbstractSet[str],
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
     """The module docstring's classification table, applied to every sealed send. Returns
     ``(confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell,
     attempts_seen)`` — the exact six-tuple :class:`~tos.position.records.PositionObservation`'s
     matching fields are built from (the caller attaches ``scope_key`` / ``sources``, which this
-    pure function has no way to know)."""
+    pure function has no way to know).
+
+    ``consumed_by_attempt`` maps each attempt to its LATEST applied result (the caller picks
+    it — the runtime reader takes the highest evidence ``seq``); ``terminal_result_kinds`` is the
+    injected terminal token set (the runtime passes ``tos.engine.TERMINAL_RESULT_KINDS``'s
+    values), REQUIRED with no default for the same reason the side tokens are."""
     confirmed_net = Decimal(0)
     unknown_buy = Decimal(0)
     unknown_sell = Decimal(0)
@@ -128,17 +182,28 @@ def classify_sealed_sends(
         sign = sign_of(
             send.side, buy_side_token=buy_side_token, sell_side_token=sell_side_token
         )
-        if send.attempt_id in consumed_by_attempt:
-            filled = consumed_by_attempt[send.attempt_id]
+        quantity = send.quantity if send.quantity is not None else Decimal(0)
+        consumed = consumed_by_attempt.get(send.attempt_id)
+        if consumed is not None:
+            filled = consumed.filled_quantity or Decimal(0)
+            outstanding = _outstanding_after(
+                consumed, quantity, terminal_result_kinds=terminal_result_kinds
+            )
             if sign is None:
                 # Unrecognized side on a CONFIRMED fill: fail-closed to UNKNOWN in both
-                # directions rather than silently dropping the confirmed magnitude.
+                # directions rather than silently dropping the confirmed magnitude; the
+                # outstanding remainder stays IN-FLIGHT in both directions.
                 unknown_buy += filled
                 unknown_sell += filled
+                in_flight_buy += outstanding
+                in_flight_sell += outstanding
                 continue
             confirmed_net += sign * filled
+            if sign > 0:
+                in_flight_buy += outstanding
+            else:
+                in_flight_sell += outstanding
             continue
-        quantity = send.quantity if send.quantity is not None else Decimal(0)
         if send.attempt_id in unmatched_attempts:
             if sign is None:
                 unknown_buy += quantity
