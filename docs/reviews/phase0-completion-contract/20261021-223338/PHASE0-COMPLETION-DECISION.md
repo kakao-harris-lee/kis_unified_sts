@@ -92,9 +92,13 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
   (관리자 역할) 에 `bypass_mode: always` 가 걸려 있었다. `mergedAt` 이 초 단위라 머지 요청이 우회 창 안에서
   일어났는지 이 이력만으로는 정하지 않는다 — 다만 계약이 이름 붙인 «off → merge → on» 형상
   (계약 `:8732-8733`, T-84 ⑪) 과 같은 모양이다.
-- 계약 (α) 술어는 이 창을 잡지 않는다 — 제거 버전 `48411683` 의 `updated_at`(`08:57:40.797Z`) ≤ `t_land`
-  (`08:57:41Z`) 라 연속성 성립으로 평가된다(09-04 기록이 통과로 잰 그 값). 밀리초 `updated_at` 을 초 단위
-  `merged_at` 과 비교하는 경계라, `t_land` 의 같은 초 안에서 끝난 창은 «착지 전» 으로 읽힌다.
+- 계약 (α) 술어는 이 창을 잡지 않는다 — 실행기가 읽는 것은 룰셋 리소스의 `updated_at` 이고, 09-04 기록은 그 값을
+  `updated_at=2026-09-02T08:57:40.403000+00:00 ≤ t_land` 로 통과로 쟀다
+  (`docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-JUDGMENT-LIVE.md:55`). 밀리초
+  `updated_at` 을 초 단위 `merged_at`(`08:57:41Z`) 과 비교하는 경계라, `t_land` 의 같은 초 안에서 끝난 창은 «착지 전» 으로 읽힌다.
+- 주: 리소스 `updated_at` 과 위 표의 이력 버전 `updated_at` 은 **서로 다른 값**이다 — 이 버전은 `.403Z`(리소스) 대
+  `.797Z`(이력), 현행 버전은 `15:21:13.608Z`(리소스, `u17-live.log:241`) 대 `.825`(이력)로 0.2~0.4초 차이가 난다.
+  어느 쪽도 다른 쪽을 대신하지 않는다.
 - **이 우회 창은 지금까지의 기록에 없다**: `docs/reviews/**`·`tos-spec/**` 에서 `48411657`·`bypass_mode`·
   `RepositoryRole` 검색 0건(`git grep`, origin/main). (b)② 수용 기록(`U17-B2-DEVIATION-ACCEPTANCE.md`, 2026-09-02)
   과 그 근거 기록도 #638 이 어떻게 머지됐는지 적지 않는다. 그 수용이 이 사실을 알고 내려졌는지는 운영자만
