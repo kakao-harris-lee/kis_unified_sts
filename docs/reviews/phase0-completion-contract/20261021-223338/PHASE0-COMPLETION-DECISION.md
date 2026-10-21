@@ -20,7 +20,7 @@ lane_a_record: docs/reviews/phase0-codex-records/20261021-224521/verdict.md
 prior_decision: docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md
 drafted_on: 2026-10-21
 authority: 운영자 (this repository's corpus owner)
-operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n 'operator_countersign: "<' 로 재확인) "<운영자 식별> <ISO-8601 UTC>" — 아래 «서명 전 열린 항목» 처분 뒤에만 기입
+operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^operator_countersign: "<' 로 재확인 — 1건) "<운영자 식별> <ISO-8601 UTC>" — 아래 «서명 전 열린 항목» 처분 뒤에만 기입
 ```
 
 ---
