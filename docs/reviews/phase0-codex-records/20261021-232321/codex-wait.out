@@ -1,0 +1,9 @@
+# Codex Adversarial Review
+
+Target: branch diff against c555022922f2ad9efb09e90f734bdfd18884efb0
+Verdict: approve
+
+Resolved. PR #910 preserves nonterminal exposure symmetrically without understating the ARE decision sum. Latest-result selection is sequence-ordered, unknown kinds remain nonterminal, and terminality shares one source of truth. No material regression found. All 50 kernel position tests, 192 in-memory reader cases, and the firewall check passed. Re-derived code digest matches all three release files and the test pin. File-backed runtime tests were not run under the read-only sandbox.
+
+No material findings.
+RC=0

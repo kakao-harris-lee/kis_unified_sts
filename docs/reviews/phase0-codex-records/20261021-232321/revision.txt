@@ -1,0 +1,7 @@
+reviewed_at_head: 9c6e15e66bd5b8233a08f53188c557ba5fdc3f88
+reviewed_scope_digest: 0d17df2e7cd374b7bfe933abd6aa26cf08752888d07d633747cc3c7de2b53bc5
+base: c555022922f2ad9efb09e90f734bdfd18884efb0
+scope: branch (--scope branch --base c555022922f2ad9efb09e90f734bdfd18884efb0), worktree detached at /tmp/claude-1000/-home-deploy-project-kis-unified-sts/fe7d5b0a-f6a6-4a0b-befb-8690d2d4df34/scratchpad/laneA8/wt
+pr: #910 (fix/tos-position-nonterminal-exposure)
+command: node <companion> adversarial-review --wait --base c555022922f2ad9efb09e90f734bdfd18884efb0 --scope branch "<focus.txt contents>"
+captured: before dispatch

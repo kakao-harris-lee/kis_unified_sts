@@ -63,6 +63,12 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
   **재심 #8 의 범위는 커널 경로 + 이 리더(`tos_runtime/riskstate/position.py`)와 그 테스트를 포함**한다.
 - 이 경로는 리스크 한도 계산이라 CLAUDE.md 의 «되돌리기 어려운 경로» 에 들어간다 — 수정 PR 의 Codex
   리뷰는 운영자의 범위·비용 승인 대상이다.
+- **진행 (2026-10-21)**: 수정 PR #910(head `9c6e15e6`, `expected_code_digest` `b06d01f9…` → `ba1de6b2…`) ·
+  운영자 승인 아래 레인 A 재심 #8 `approve · findings 0`
+  (`docs/reviews/phase0-codex-records/20261021-232321/verdict.md`, `reviewed_at_head: 9c6e15e6…`).
+  **이 항목은 아직 닫히지 않았다** — #910 이 착지한 head 로 `judged_head` 를 옮기고 측정 기록을 다시 잰 뒤에
+  닫힌다. 재심 #8 의 approve 는 PR head 에 결속되므로, 머지 커밋이 그 트리와 다르면(머지 시점 main 진행)
+  재심 결속을 다시 확인해야 한다.
 
 ### 2. U-17 α 연속성 발화 (운영자 처분 필요)
 
