@@ -36,6 +36,57 @@ are documented in [`performance_slas.md`](performance_slas.md#the-ci-performance
 Validated: full suite at `-n auto` (16 workers, the worst-case contention,
 ≥ CI's 2–4) — parallel pass 0 failures, serial pass 0 failures.
 
+## Update 2026-10-22 — the two-pass split reached `tos-firewall`, and both workflows were sharded
+
+Measured before the change (green runs 39619902863 / 39732037775):
+
+| workflow / job | wall | the steps that were 85% of it |
+| --- | --- | --- |
+| `Tests` / `test` | 973s | `Run tests` 874s = parallel pass 667s + serial pass 204s |
+| `tos-firewall` / `tos-firewall` | 742s | governance batteries 202s, `tos/runtime/tests` 187s, Layer 4 mutation battery 131s, `tos/tests` 114s |
+
+Three things changed, and only the first is new behaviour for any test:
+
+1. **`tos-firewall` ran one unfiltered pass and so ignored the `serial`
+   marker.** `tests/tools/test_tos_evidence_scan_measure.py::test_a_stop_signal_
+   during_the_end_of_run_bookkeeping_is_deferred_not_lost` has carried
+   `@pytest.mark.serial` all along, but the step that runs it — the tos
+   governance batteries — ran `pytest <paths> -q` with no `-m` filter, so the
+   marker did nothing there. Under `-n 4` the test fails: it blocks SIGTERM
+   with `signal.pthread_sigmask` and then sends itself one, expecting it to
+   stay pending until the bookkeeping finishes — but `pthread_sigmask` blocks
+   the **calling thread only**, and an xdist worker is multi-threaded (execnet
+   runs a receiver thread), so the signal lands on the other thread and the
+   measure tool's handler raises `MeasureSignalled` out of the middle of
+   `Path.write_text`. The step is now the same parallel+serial two-pass this
+   document describes for `test.yml`.
+
+2. **The other tos suites are hermetic and went straight to `-n auto`.**
+   `tos/tests` has no `.env`, network or Redis; `tos/runtime/tests` is loopback
+   + `tmp_path` only with autouse network/write guards. Neither has any
+   `serial`-marked test (the marker is not even registered in their
+   `[tool.pytest.ini_options]`, so `--strict-markers` would reject one). xdist
+   workers talk to the controller over execnet **pipes**, not sockets, so the
+   runtime suite's socket guard never sees them. Measured locally at `-n 4`
+   (16-core host, pinned to 4 to mimic the runner): `tos/tests` 119.8s → 48.4s,
+   `tos/runtime/tests` 338.3s → 93.7s, identical pass counts.
+   `tos/runtime/cp3/tests` is left serial — it measures 3s, below xdist's own
+   spin-up.
+
+3. **Both workflows went from one long job to several parallel ones, keeping
+   their check NAME.** `tos-firewall` is now `tos-firewall-gates` +
+   `tos-firewall-tests` + `tos-firewall-static`, and `test` is now
+   `test (shard a)` + `test (shard b)` + `test-serial`. In each workflow a
+   final aggregator job carries the original name, `needs:` all the others and
+   fails unless every one of them reports `success` (`skipped` and `cancelled`
+   included) — so a required-check setting that names `tos-firewall` or `test`
+   still means "all of it passed". The shard boundary is one list read twice
+   (`SHARD_A_PATHS` as targets for shard a, as `--ignore` for shard b), so a
+   new test directory lands in shard b rather than nowhere, and a renamed one
+   makes shard a exit 4 by name.
+
+Nothing was removed from either suite, and no test's own code changed.
+
 ## Update 2026-10-02 — the session is hermetic by construction (#698)
 
 A pytest process must never reach a real `.env`, a real broker credential or a
