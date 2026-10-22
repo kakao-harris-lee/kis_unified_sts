@@ -79,6 +79,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tos.venue import PriceBandTick
+
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.token import EvidenceRecorder
 from tos_runtime.venue.band_source import (
@@ -189,6 +191,7 @@ class ProducerJournalBandReader:
         evidence_sink: EvidenceRecorder,
         trading_date_reader: Callable[[], str | None],
         tick_size: int | None,
+        price_band_ticks: tuple[PriceBandTick, ...] | None = None,
     ) -> None:
         """Wire this reader's dependencies (all injected — no ambient state).
 
@@ -210,6 +213,7 @@ class ProducerJournalBandReader:
         self._evidence = evidence_sink
         self._trading_date_reader = trading_date_reader
         self._tick_size = tick_size
+        self._price_band_ticks = price_band_ticks
         #: The previous SUCCESSFUL observation, for the same-trading-date narrowing flag
         #: (band plan 2026-10-08 §4.5 / §8 8).
         self._last_observation: BandObservation | None = None
@@ -361,6 +365,7 @@ class ProducerJournalBandReader:
             basis_raw=line["basis"],
             price_scale=self._band_source.price_scale,
             tick_size=self._tick_size,
+            price_band_ticks=self._price_band_ticks,
             lower_label="lower",
             upper_label="upper",
         )

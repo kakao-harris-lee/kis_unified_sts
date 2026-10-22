@@ -7,7 +7,7 @@ Two things are pinned here:
    leaf paths declared below — so a later edit to LONG that is not carried over (or a stray
    edit here) is a named failure, not a silent fork.
 2. **It boots and fails closed.** With the tree's own calendar and filled policies, the compose
-   root binds the stock venue policy (tick 500원 = 50000 at ×100, 1 share, ``krx-stock``
+   root binds the stock venue policy (KRX tick ladder at ×100, 1 share, ``krx-stock``
    CONTINUOUS 09:00-15:30) and an attempt during the stock session sends nothing: the band is
    unsourced, so the venue step cannot admit (``VENUE_CONSTRAINT_POLICY`` header).
 """
@@ -21,6 +21,8 @@ import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
+from tos.venue import OrderAdmissibilityResult, OrderShapeFields
+from tos.venue.predicates import order_shape_admissible
 from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.venue import (
@@ -85,6 +87,7 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "price_band_tick_and_lot_rules",
             "residual_risks",
             "_model_view.shape_constraints.tick_size",
+            "_model_view.shape_constraints.price_band_ticks",
             "_model_view.shape_constraints.max_quantity",
             "_runtime.instrument_class",
             "_runtime.quantity_unit",
@@ -155,7 +158,7 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     vcp = yaml.safe_load((_STOCK / "venue_constraint_policy.yaml").read_text("utf-8"))
     shape = vcp["_model_view"]["shape_constraints"]
     assert (shape["tick_size"], shape["lot_size"], shape["max_quantity"]) == (
-        50000,
+        None,
         1,
         1,
     )
@@ -183,6 +186,75 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     assert (_STOCK / "strategies/setup_d_long.strategy.yaml").read_bytes() == (
         _LONG / "strategies/setup_d_long.strategy.yaml"
     ).read_bytes()
+
+
+def _stock_policy(tmp_path: Path) -> Any:
+    raw = _filled(
+        _STOCK / "venue_constraint_policy.yaml",
+        environment=_VENUE_POLICY_ENVIRONMENT,
+        account=_VENUE_POLICY_ACCOUNT,
+        instrument=_VENUE_POLICY_INSTRUMENT,
+    )
+    path = tmp_path / "venue_constraint_policy.yaml"
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return load_venue_constraint_policy(path, scheme=_SCHEME)
+
+
+@pytest.mark.parametrize(
+    ("won", "expected"),
+    [
+        # 199,900원 — the 100원 rung. The old flat 500원 tick refused this legal price.
+        ("199900", OrderAdmissibilityResult.ADMISSIBLE),
+        ("199950", OrderAdmissibilityResult.INADMISSIBLE),
+        ("270000", OrderAdmissibilityResult.ADMISSIBLE),  # 005930's own rung, 500원
+        ("270100", OrderAdmissibilityResult.INADMISSIBLE),
+        # Exact rung edges (#929 review LOW): each first price of a rung sits on the new,
+        # coarser tick; the next price up is off it.
+        ("1999", OrderAdmissibilityResult.ADMISSIBLE),  # top of the 1원 rung
+        ("2001", OrderAdmissibilityResult.INADMISSIBLE),  # 5원 rung starts at 2,000
+        ("200000", OrderAdmissibilityResult.ADMISSIBLE),  # 500원 rung's first price
+        ("200100", OrderAdmissibilityResult.INADMISSIBLE),
+        ("500000", OrderAdmissibilityResult.ADMISSIBLE),  # 1,000원 rung's first price
+        ("500500", OrderAdmissibilityResult.INADMISSIBLE),
+        ("1001000", OrderAdmissibilityResult.ADMISSIBLE),  # 1,000원 rung
+        ("1000500", OrderAdmissibilityResult.INADMISSIBLE),
+        (
+            "10000000",
+            OrderAdmissibilityResult.UNKNOWN,
+        ),  # above the table — never widened
+    ],
+)
+def test_the_stock_tree_tick_ladder_resolves_each_rung(
+    tmp_path: Path, won: str, expected: OrderAdmissibilityResult
+) -> None:
+    """The REAL stock file's ``price_band_ticks`` (×100), through the kernel predicate. The
+    band is unsourced on this tree, so it is filled here: the TICK is what is under test.
+    """
+    loaded = _stock_policy(tmp_path)
+    assert loaded.policy.shape_constraints.tick_size is None
+    constraints = loaded.policy.shape_constraints.model_copy(
+        update={"price_min": 0, "price_max": 10**12}
+    )
+    shape = OrderShapeFields(
+        price=int(won) * loaded.price_scale,
+        quantity=1,
+        order_type="LIMIT",
+        tif="DAY",
+        side="BUY",
+        position_effect="OPEN",
+        silently_rounded=False,
+    )
+    assert order_shape_admissible(shape, constraints) is expected
+
+
+def test_the_stock_tree_tick_ladder_is_contiguous_from_one_won(tmp_path: Path) -> None:
+    """No gap between rungs: every ×100 integer from 1원 to the top row's bound has a row."""
+    rows = _stock_policy(tmp_path).policy.shape_constraints.price_band_ticks
+    assert rows is not None and rows[0].band_min == 100
+    for below, above in zip(rows, rows[1:]):
+        assert above.band_min == below.band_max + 1
 
 
 def test_the_stock_tree_states_the_price_scale_a_kis_mock_boot_checks(
@@ -286,7 +358,10 @@ def test_the_stock_tree_boots_and_a_session_attempt_sends_nothing(
 
     bound = _rows(runtime, "VENUE_POLICY_BOUND")
     assert [row["canonical_digest"] for row in bound] == [venue_digest]
-    assert runtime.venue.shape_constraints.tick_size == 50000
+    # The booted service carries the ladder, not a flat tick (the table is the one source).
+    assert runtime.venue.shape_constraints.tick_size is None
+    ticks = runtime.venue.shape_constraints.price_band_ticks
+    assert ticks is not None and len(ticks) == 7
     assert runtime.venue.quantity_constraint.max_quantity == 1
     assert runtime.session_facts.phase_for_step3("krx-stock") == "CONTINUOUS"
 
