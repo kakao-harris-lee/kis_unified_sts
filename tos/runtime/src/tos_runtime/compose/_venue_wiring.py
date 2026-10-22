@@ -424,23 +424,9 @@ def build_kis_band_reader_factory(
     :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessionConflict`
     (two consumers of one app key disagreeing about token endpoint or cooldown) out of boot
     and into the first decision — contradicting this very docstring.
-
-    ⚠ **:class:`VenueBandSourceUnwired` is reachable, and its one reaching input is named**
-    (rescope plan M1, ``docs/plans/2026-10-22-tos-rescope-plan.md``). The ``"boot"`` read
-    instant is now the END OF ``VenueConstraintService.__init__``, which
-    :func:`build_venue_service` runs BEFORE ``_finalize`` fills the cell — so a deployment
-    declaring ``kind: kis_quote_get`` together with ``read_on`` containing ``"boot"`` refuses
-    the BOOT here, every time, rather than booting with a band it cannot read. This docstring
-    used to say the exception "cannot fire on the real compose path"; that sentence was true
-    only while the read was lazy, and leaving it would make this the exact guard-that-admits-
-    what-it-names shape repeated eleven times in this repo's history. **No loader rule forbids
-    that combination** (independent review LOW-4 — an earlier wording here said the kind "is
-    restricted to ``read_on: ["phase_change"]``", which reads as a validated constraint): it
-    loads, and then this exception refuses the boot, fail-closed. Usable today therefore means
-    ``read_on: ["phase_change"]``, and no shipped tree declares this kind at all
-    (``band_source.py``'s own ⚠). ``producer_journal`` — the kind the CP-3 tenant trees DO
-    declare — opens a file, needs neither registry nor seal, and reads at the boot instant
-    without any of this.
+    ⚠ Since rescope plan M1 made the boot read ``VenueConstraintService.__init__``,
+    :class:`VenueBandSourceUnwired` IS reachable — no loader rule forbids its reaching input
+    (review LOW-4); the raise below names it. No shipped tree declares that kind.
     """
 
     def _factory(
@@ -491,11 +477,9 @@ def build_kis_band_reader_factory(
                 raise VenueBandSourceUnwired(
                     "band source read attempted before this boot's KIS credential registry "
                     "existed — the band reader must never build a private session "
-                    "(C-2 decision (C): one app key, one token lifecycle). The reaching "
-                    'input is `kind: kis_quote_get` with "boot" in `read_on`: the boot '
-                    "instant is VenueConstraintService.__init__, which runs before "
-                    '_finalize fills the registry. Declare `read_on: ["phase_change"]` '
-                    "for this kind, or use `kind: producer_journal`, which needs no registry"
+                    "(C-2 decision (C): one app key, one token lifecycle). Reaching input: "
+                    '`kind: kis_quote_get` with "boot" in `read_on` — that instant is '
+                    "__init__, before _finalize fills it. Use phase_change, or producer_journal"
                 )
             return reader.read()
 
