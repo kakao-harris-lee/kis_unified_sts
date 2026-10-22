@@ -48,7 +48,9 @@ see a truncated JSON document, whose cost is a needless re-issue.
      ``band.jsonl``, a pre-open call, a config or credential refusal. No line,
      nothing attempted.
 3    a SOFT failure: the GET ran and did not produce a usable line (transport,
-     ``rt_cd != 0``, an absent field, a response past the size cap). No line.
+     ``rt_cd != 0``, an absent field, a response past the size cap, or — stock —
+     the broker's ``aspr_unit`` disagreeing with the tree's tick ladder, logged
+     as ``band_tick_mismatch``). No line.
 1    the allowlist gate refused the call, or any other unexpected exception:
      traceback, and the runner treats it as a hard ABORT. This is the one code
      that means "a defect in this repo", not "the broker said no".
@@ -83,7 +85,10 @@ from tools.tos_cp3.live_producer.band_line import (  # noqa: E402
     BAND_KEY_ORDER,
     BAND_LINE_KIND,
     BandLineError,
+    TickLadderMismatch,
     band_values_from_payload,
+    check_broker_tick,
+    load_tick_ladder,
     session_open_ms,
 )
 from tools.tos_cp3.live_producer.config import (  # noqa: E402
@@ -221,6 +226,14 @@ def run(
     """
     clock = now if now is not None else (lambda: datetime.now(KST))
     config = load_config(config_path, repo_root=REPO_ROOT)
+    ladder = None
+    if config.venue_policy_yaml is not None:
+        # Read BEFORE any GET: an unreadable ladder is a config refusal (rc 2), not
+        # something to discover after spending a broker call (#929 review MEDIUM).
+        try:
+            ladder = load_tick_ladder(config.venue_policy_yaml)
+        except BandLineError as exc:
+            raise LiveProducerRefused(str(exc)) from exc
     log = EventLog(session_dir, name=BAND_LOG_NAME)
     journal_path = band_journal_path(session_dir)
 
@@ -250,6 +263,15 @@ def run(
         try:
             read = quotes.band(instrument)
             values = band_values_from_payload(read.payload, config.market)
+            if ladder is not None:
+                # The broker's 호가단위 for the quoted price must be the ladder's
+                # tick for it — else the venue gate's grid is wrong, and the band is
+                # what would let that gate admit. No line on a mismatch (UNKNOWN).
+                compared = check_broker_tick(read.payload, ladder)
+                log.event({"stage": "band_tick_checked", **compared})
+        except TickLadderMismatch as exc:
+            log.event({"stage": "band_tick_mismatch", "why": str(exc)})
+            return RC_SOFT_FAILURE
         except SafetyViolation:
             # BEFORE the RuntimeError clause, because it IS a RuntimeError.
             #

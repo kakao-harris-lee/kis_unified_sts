@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,102 @@ BAND_PAYLOADS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
 
 class BandLineError(RuntimeError):
     """A band payload or band line that cannot be used. Never routed around."""
+
+
+class TickLadderMismatch(BandLineError):
+    """The broker's ``aspr_unit`` disagrees with the tree's tick ladder (#929 review).
+
+    A :class:`BandLineError`, so no band line is written and the runtime stays at
+    UNKNOWN for the session (송신 0): if the ladder is wrong, the venue gate would
+    admit or refuse prices on the wrong grid, and the band is what lets it admit.
+    """
+
+
+@dataclass(frozen=True)
+class TickLadder:
+    """The tree's ``price_band_ticks`` rows at its own ``_runtime.price_scale``."""
+
+    price_scale: int
+    #: ``(band_min, band_max, tick)`` — inclusive, at ``price_scale``.
+    rows: tuple[tuple[int, int, int], ...]
+
+    def tick_for(self, scaled_price: int) -> int | None:
+        """The tick of the row covering ``scaled_price``, or ``None``."""
+        for band_min, band_max, tick in self.rows:
+            if band_min <= scaled_price <= band_max:
+                return tick
+        return None
+
+
+def load_tick_ladder(venue_policy_yaml: Path) -> TickLadder:
+    """Read the ladder the runtime enforces, or raise :class:`BandLineError`.
+
+    Shape only — the runtime's own loader is the authority on the full document
+    and refuses a malformed table at boot. This reads the same two keys so the
+    probe compares against exactly what the venue gate uses.
+    """
+    try:
+        raw = yaml.safe_load(venue_policy_yaml.read_text(encoding="utf-8"))
+        scale = raw["_runtime"]["price_scale"]
+        table = raw["_model_view"]["shape_constraints"]["price_band_ticks"]
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as exc:
+        raise BandLineError(
+            f"{venue_policy_yaml}: no _runtime.price_scale / price_band_ticks ({exc!r})"
+        ) from exc
+    rows: list[tuple[int, int, int]] = []
+    for row in table if isinstance(table, list) else []:
+        values = (
+            [row.get("band_min"), row.get("band_max"), row.get("tick")]
+            if isinstance(row, dict)
+            else []
+        )
+        if len(values) != 3 or any(
+            not isinstance(v, int) or isinstance(v, bool) for v in values
+        ):
+            raise BandLineError(f"{venue_policy_yaml}: malformed ladder row {row!r}")
+        rows.append((values[0], values[1], values[2]))
+    if not rows or not isinstance(scale, int) or isinstance(scale, bool) or scale < 1:
+        raise BandLineError(
+            f"{venue_policy_yaml}: price_scale={scale!r} / {len(rows)} ladder rows"
+        )
+    return TickLadder(price_scale=scale, rows=tuple(rows))
+
+
+#: The stock quote fields the comparison reads (FHKST01010100 ``output``):
+#: ``stck_prpr`` 주식 현재가, ``aspr_unit`` 호가단위 — KIS open-trading-api
+#: ``examples_llm/domestic_stock/inquire_price`` (``chk_inquire_price.COLUMN_MAPPING``).
+STOCK_TICK_FIELDS = ("stck_prpr", "aspr_unit")
+
+
+def check_broker_tick(payload: Mapping[str, Any], ladder: TickLadder) -> dict[str, int]:
+    """The broker's ``aspr_unit`` for the quoted price against the ladder's tick.
+
+    Returns the compared values (for the log) when they agree.
+
+    Raises:
+        BandLineError: a field is absent, empty or not a positive whole number.
+        TickLadderMismatch: no ladder row covers the quoted price, or the row's
+            tick is not ``aspr_unit`` at the ladder's scale.
+    """
+    member = payload.get("output")
+    if not isinstance(member, Mapping):
+        raise BandLineError("stock band response has no output mapping")
+    parsed: dict[str, int] = {}
+    for name in STOCK_TICK_FIELDS:
+        text = str(member.get(name) or "").strip()
+        if not text.isdigit() or int(text) <= 0:
+            raise BandLineError(f"stock band response {name}={member.get(name)!r}")
+        parsed[name] = int(text)
+    scaled_price = parsed["stck_prpr"] * ladder.price_scale
+    broker_tick = parsed["aspr_unit"] * ladder.price_scale
+    ladder_tick = ladder.tick_for(scaled_price)
+    if ladder_tick != broker_tick:
+        raise TickLadderMismatch(
+            f"aspr_unit {parsed['aspr_unit']} at stck_prpr {parsed['stck_prpr']} "
+            f"(= tick {broker_tick} at scale {ladder.price_scale}) != ladder tick "
+            f"{ladder_tick} — the venue gate's grid disagrees with the broker"
+        )
+    return {**parsed, "ladder_tick": ladder_tick}
 
 
 def trading_date_text(day: date) -> str:

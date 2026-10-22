@@ -273,6 +273,133 @@ def test_the_band_probe_writes_a_stock_band_line(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# aspr_unit vs the tree's tick ladder (#929 review MEDIUM)
+# ---------------------------------------------------------------------------
+
+
+def _probe(tmp_path: Path, output: dict, config_path: Path = STOCK_CONFIG) -> tuple:
+    """Run the probe on the recorded band with ``output`` overriding fields.
+
+    Returns ``(rc, band lines, band-log stages)``."""
+    payload = json.loads(RECORDED_BAND.read_text(encoding="utf-8"))
+    payload["output"].update(output)
+
+    class FakeBandQuotes:
+        http = None
+
+        def band(self, symbol: str) -> quote_client.BandRead:
+            return quote_client.BandRead(payload=payload, raw_payload_digest="d" * 64)
+
+    session = tmp_path / "session"
+    rc = band_probe.run(
+        config_path=config_path,
+        instrument=SYMBOL,
+        session_dir=session,
+        target=TARGET,
+        quotes_factory=lambda *_: FakeBandQuotes(),
+        now=lambda: datetime(2026, 10, 19, 9, 1, tzinfo=producer_mod.KST),
+    )
+    journal = band_probe.band_journal_path(session)
+    lines = journal.read_text("utf-8").splitlines() if journal.exists() else []
+    log = session / band_probe.BAND_LOG_NAME
+    events = [json.loads(t) for t in log.read_text("utf-8").splitlines() if t.strip()]
+    return rc, [line for line in lines if line.strip()], events
+
+
+def test_a_matching_aspr_unit_is_checked_and_the_line_is_written(
+    tmp_path: Path,
+) -> None:
+    """The recorded shape: 271,500원 on the 500원 rung, ``aspr_unit`` 500."""
+    rc, lines, events = _probe(tmp_path, {})
+    assert rc == band_probe.RC_OK and len(lines) == 1
+    (checked,) = [e for e in events if e["stage"] == "band_tick_checked"]
+    assert (checked["stck_prpr"], checked["aspr_unit"], checked["ladder_tick"]) == (
+        271500,
+        500,
+        50000,
+    )
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        # The broker says 100원 at 271,500원; the ladder says 500원.
+        {"aspr_unit": "100"},
+        # 199,900원 is on the 100원 rung; a broker answering 500 disagrees.
+        {"stck_prpr": "199900", "aspr_unit": "500"},
+        # Above the ladder's top row (10,000,000원): no rung, never widened.
+        {"stck_prpr": "12000000", "aspr_unit": "1000"},
+    ],
+)
+def test_an_aspr_unit_the_ladder_disagrees_with_writes_no_line(
+    tmp_path: Path, output: dict
+) -> None:
+    rc, lines, events = _probe(tmp_path, output)
+    assert rc == band_probe.RC_SOFT_FAILURE
+    assert lines == []
+    assert [e["stage"] for e in events][-1] == "band_tick_mismatch"
+
+
+def test_an_aspr_unit_that_agrees_on_a_lower_rung_passes(tmp_path: Path) -> None:
+    rc, lines, _ = _probe(tmp_path, {"stck_prpr": "199900", "aspr_unit": "100"})
+    assert rc == band_probe.RC_OK and len(lines) == 1
+
+
+@pytest.mark.parametrize(
+    "output",
+    [{"aspr_unit": ""}, {"aspr_unit": None}, {"stck_prpr": "0"}, {"aspr_unit": "5.0"}],
+)
+def test_an_absent_or_malformed_tick_field_writes_no_line(
+    tmp_path: Path, output: dict
+) -> None:
+    rc, lines, events = _probe(tmp_path, output)
+    assert rc == band_probe.RC_SOFT_FAILURE and lines == []
+    assert events[-1]["stage"] == "band_fetch_failed"
+
+
+def test_an_unreadable_ladder_refuses_before_any_get(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path, _stock_data(venue_policy_yaml=str(tmp_path / "missing.yaml"))
+    )
+    with pytest.raises(LiveProducerRefused, match="price_band_ticks"):
+        band_probe.run(
+            config_path=config,
+            instrument=SYMBOL,
+            session_dir=tmp_path / "session",
+            target=TARGET,
+            quotes_factory=lambda *_: pytest.fail("no transport may be built"),
+            now=lambda: datetime(2026, 10, 19, 9, 1, tzinfo=producer_mod.KST),
+        )
+
+
+def test_a_stock_config_must_name_the_venue_policy(tmp_path: Path) -> None:
+    data = _stock_data()
+    del data["venue_policy_yaml"]
+    with pytest.raises(LiveProducerRefused, match="venue_policy_yaml must name"):
+        config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
+
+
+def test_a_futures_config_may_not_name_a_venue_policy(tmp_path: Path) -> None:
+    data = yaml.safe_load(FUTURES_CONFIG.read_text(encoding="utf-8"))
+    data["venue_policy_yaml"] = "x.yaml"
+    with pytest.raises(LiveProducerRefused, match="must be absent"):
+        config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
+
+
+def test_the_probe_reads_the_ladder_the_runtime_enforces() -> None:
+    """Same file, same rows: the shipped stock config points at the stock tree."""
+    config = config_mod.load_config(STOCK_CONFIG, repo_root=_REPO_ROOT)
+    assert config.venue_policy_yaml == (
+        _REPO_ROOT
+        / "config/tos_runtime/cp3-setup-d-stock-005930/venue_constraint_policy.yaml"
+    )
+    ladder = band_line_mod.load_tick_ladder(config.venue_policy_yaml)
+    assert ladder.price_scale == 100
+    assert ladder.tick_for(27_000_000) == 50_000
+    assert ladder.tick_for(19_990_000) == 10_000
+
+
+# ---------------------------------------------------------------------------
 # the recorded-shape response through the real client
 # ---------------------------------------------------------------------------
 
