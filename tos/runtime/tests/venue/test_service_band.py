@@ -966,8 +966,11 @@ class TestTheBandIsReadAtBoot:
     acceptance was neither passed nor failed but unmeasurable. The whole point of reading at
     construction is that this day leaves a row.
 
-    Each test below is red against the pre-M1 placement for a different reason, and the four
-    together are the operator's four cases:
+    The first three below are red against the pre-M1 placement, each for a different reason;
+    the fourth is a GREEN-both-ways regression guard, not a placement pin (independent review
+    LOW-1 measured it — an earlier version of this docstring claimed all four were red, which
+    would have let the no-source case be deleted as redundant). The four together are the
+    operator's four cases:
 
     * a valid journal → exactly one ``OBSERVED`` row **without any snapshot**
       (pre-M1: zero rows — the lazy read never happened);

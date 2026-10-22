@@ -149,8 +149,9 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
 
 **세션 뒤 — band 가 쓰였는가.** 판정 기준과 설계는 이력 §7.2-d. ⚠ 2026-10-22 재범위 M1
 부터 런타임은 **부팅 때** band 를 읽으므로, band 를 선언한 트리(LONG tenant)는 제안이
-하나도 없어도 `VENUE_BAND_OBSERVED` 가 **세션당 정확히 1 행**(OBSERVED 또는 사유 있는
-REFUSED)이다 — 0 행이면 소견이다(이력 §7.2-d ①).
+하나도 없어도 `VENUE_BAND_OBSERVED` 가 **최소 1 행**(OBSERVED 또는 사유 있는 REFUSED)
+이다 — **0 행이 소견**이다(이력 §7.2-d ①). 1 행보다 많은 것은 소견이 아니다:
+`read_on` 에 `"phase_change"` 가 있으면 세션 구간이 바뀔 때마다 한 행이 더 붙는다.
 
 - 확인:
 
