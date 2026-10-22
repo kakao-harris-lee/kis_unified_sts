@@ -192,7 +192,10 @@ import firewall or authorize trading.
   if `--check` reports stale, regenerate it rather than trusting it.
   The contract body is frozen and blob-bound (`bound_set_digest`) — never edit
   it as a side effect of other work; any byte change resets the S-26 closure
-  counter and blocks D0-A entry.
+  counter and blocks D0-A entry. Since the 2026-10-22 rescope
+  (`docs/plans/2026-10-22-tos-rescope-plan.md`) the contract is a historical
+  record: S-26 closure and the per-row Evidence programme are no longer pursued,
+  and TOS completion is the plan's `TOS_PAPER_READY` (§2).
 
 ## Development Commands
 
@@ -246,6 +249,34 @@ plan review) in an independent model lane.
 **Adjudication override:** A Codex verdict never overrides the Non-Negotiable Rules
 above. Reject any finding that would violate them and record the reason.
 
+**Review policy (operator directive 2026-10-22, `docs/plans/2026-10-22-tos-rescope-plan.md` §5).**
+Review effort follows risk, rounds are capped, and judging machinery may not outgrow
+the thing it judges. These rules govern every PR in this repo, TOS included.
+
+- **R1 — review by risk grade.** State the grade and a one-line reason in the PR body.
+  - **A**: live/broker order sending, credentials and auth, risk limits, data purge,
+    DB migrations. One independent Claude-side review, plus Codex when the operator
+    approves scope and cost (the Codex scope rule above is unchanged).
+  - **B**: all other code, and any document that records facts an operator decision
+    rests on (permissions, branch protection, order paths). One Claude-side review.
+  - **C**: other docs, measurement records, evidence PRs. No review lane — the author
+    checks each cited value against its source, then merges once CI is green.
+- **R2 — two rounds at most.** Findings left after round 2 become issues and the PR
+  merges. A LOW is fixed and merged without another review round.
+- **R3 — what blocks.** Only a HIGH or worse that names a concrete failing input
+  ("this input → this wrong result") blocks a merge. Wording, citation line numbers,
+  and phrasing precision never block.
+- **R4 — plan size.** A new plan document is at most 300 lines; past that, split the
+  scope. Plans are not sent to a review lane — the operator reads and approves them.
+- **R5 — cost of a new guard.** A new checker, control group, or register needs one
+  real incident it would have stopped, written next to it. A hypothetical attack path
+  alone does not justify one.
+- **R6 — no meta-judgment.** Do not build judging machinery about judging machinery
+  ("completion conditions for the completion conditions"). Completion is a few
+  measurable sentences, as in the rescope plan §2.
+- **R7 — light measurement records.** A session or measurement record is one table:
+  command, resulting numbers, log path. Citing log line numbers is not required.
+
 **Model lanes (cost discipline):** orchestration and `deep-reasoner` run on Opus;
 every implementation, test, debugging, and frontend agent runs on Sonnet 5, and so
 do the audit lenses except `architecture-auditor` and `security-auditor`, which
@@ -270,6 +301,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-08-25 | Cost rebalance — pinned `model:` per agent (Sonnet 5 for execution/audit lenses, Opus only for `architecture-auditor`, `security-auditor`, and the fallback review lane), removed the global `sonnet -> Opus` env remap, made Codex adjudication explicitly operator-triggered | `agents/`, `~/.claude/fable/`, harness docs | Every subagent was silently running on Opus; review ran more often than it was asked for |
 | 2026-09-04 | **Codex review excludes code** — `codex-gate` / `codex-reviewer` return `SCOPE_EXCLUDED` for code diffs; code review is the Claude-side fallback lane; Codex plan critique stays available on explicit operator request · **plans/specs/roadmaps authored solo by the session model (Opus 5 [1m] / Fable 5.1 [1m])**, no planner/deep-reasoner pipeline | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | Operator directive — paid external calls too frequent, spec authoring too slow |
 | 2026-09-11 | **Codex code scope reopened, bounded** — hard-to-reverse paths (live order paths, money movement, risk limits, auth/credentials, DB migrations, data purge) may go to `codex-gate` / `codex-reviewer` once the operator approves scope and cost; every other code diff stays with the Claude-side lane. Supersedes the 2026-09-04 blanket exclusion | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | A week with zero cross-model review of code left Claude approving its own code; cost is bounded by scope, not by prohibition |
+| 2026-10-22 | **Review policy R1–R7** — review by risk grade (A/B/C, docs and evidence PRs need no review lane), at most two rounds, only a HIGH with a concrete failing input blocks, plans ≤300 lines, a new guard needs a real incident, no meta-judgment, one-table measurement records · Phase-0 contract becomes a historical record (TOS rescope) | CLAUDE.md | Three months of TOS work moved zero Evidence rows; the Phase-0 contract grew to 10,723 lines over 81 reviews and one docs PR took four rounds — the review process, not the code, was the bottleneck |
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
 
 ## Documentation Map
