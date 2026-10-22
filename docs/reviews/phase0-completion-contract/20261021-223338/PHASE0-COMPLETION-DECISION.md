@@ -1,7 +1,12 @@
-# Phase 0 완료 판정 — 결정 기록 (재기록 초안 · 운영자 countersign 대기 · 2026-10-21 작성 · 10-22 갱신)
+# Phase 0 완료 판정 — 결정 기록 (운영자 countersign 기입 · 2026-10-22)
 
-> **Document class**: 완료 판단 **결정 기록 초안**. 서명 전에는 아무 효력이 없다. 이 기록이 담으려는
-> 것은 «계약 §11 종료 조건이 판정 대상 head `371051f4` 에서 충족됐다» 는 운영자 판단 하나다.
+> **Document class**: 완료 판단 **결정 기록**(운영자 서명). 이 기록이 담는 것은
+> «계약 §11 종료 조건이 판정 대상 head `371051f4` 에서 충족됐다» 는 운영자 판단 하나다.
+> 서명 지시 원문: 「Phase 0 서명은 chihun,lee 지금 시각으로 넣어」(2026-10-22). 서명 시점 결속 확인:
+> `371051f4..cb4d0c64` 의 관리 경로(`tos/`·`tools/`·`tos-spec/`·`.github/`·`config/tos_completion.yaml`) 변경은
+> 이 판단이 근거로 삼는 U-17 처분 기록(`U17-ALPHA-RELEASE-AND-BYPASS-ACCEPTANCE.md`) 추가 1건뿐이고, `cb4d0c64` 에서
+> `tools/tos_completion_status.py --check` 는 `RESULT: GREEN (violations=0)` · `d0a_entry_state=ENTRY_OK`.
+> 초안 단계(`decision: PENDING_OPERATOR_COUNTERSIGN`)의 문면은 이 커밋의 부모에 이력으로 남는다.
 > 기계 상태·계약·상위 계획·`tos-spec/`·`tools/` 는 이 기록으로 바뀌지 않으며, G1~G3 를 부여하지
 > 않고 `restricted_live`/`production` `NOT_AUTHORIZED` 는 불변이다.
 >
@@ -15,7 +20,7 @@
 > 를 다시 재어 판정 대상을 옮겼다(`20261021-235425/PHASE0-COMPLETION-JUDGMENT-LIVE.md`).
 
 ```yaml
-decision: PENDING_OPERATOR_COUNTERSIGN
+decision: PHASE0_SECTION11_COMPLETE_ACCEPTED_AT_JUDGMENT
 judged_head: 371051f478583f5bab0d5bed2f02df2facdde22f
 contract_blob: 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5
 bound_set_digest: 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429
@@ -25,8 +30,9 @@ superseded_measurement_record: docs/reviews/phase0-completion-contract/20261021-
 lane_a_record: docs/reviews/phase0-codex-records/20261021-232321/verdict.md   # 재심 #8 · approve
 prior_decision: docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md
 drafted_on: 2026-10-21
+decided_on: 2026-10-22
 authority: 운영자 (this repository's corpus owner)
-operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^operator_countersign: "<' 로 재확인 — 1건) "<운영자 식별> <ISO-8601 UTC>" — 아래 «서명 전 열린 항목» 처분 뒤에만 기입
+operator_countersign: "chihun,lee 2026-10-22T06:35:14Z"   # 계약 :8738 형식(blob 6f94dfbb) · 09-04 결정과 같은 식별자 표기
 ```
 
 ---
