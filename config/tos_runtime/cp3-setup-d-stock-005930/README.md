@@ -13,7 +13,7 @@ README 가 정본이다. 여기에는 **다른 것만** 적는다.
 | --- | --- | --- |
 | `RENDER.yaml` | `tree_id` · `account.env_key: KIS_STOCK_ACCOUNT_NO` · band 슬롯 3개 없음 | 계좌 좌표는 **주식** 모의 계좌. band 원천 없음 |
 | `construction.yaml` · `marketfeed.yaml` | `instrument_class: krx-stock` · `unit: SHARES` | 이 트리 `calendar.yaml` 의 `krx-stock` 세션(CONTINUOUS 09:00-15:30)을 쓴다 |
-| `venue_constraint_policy.yaml` | tick 50000(=500원) · `max_quantity` 1 · `KRX_STOCK` · `SHARES` · band 없음 | 파일 헤더 참조(출처·등급·실패 방향) |
+| `venue_constraint_policy.yaml` | 호가단위 `price_band_ticks` 사다리(`tick_size` null) · `max_quantity` 1 · `KRX_STOCK` · `SHARES` · band 없음 | 파일 헤더 참조(출처·등급·실패 방향) |
 | `order_construction_policy.yaml` · `aggregate_risk_policy.yaml` · `safety_envelope.yaml` · `safety_profile.yaml` | 수량 단위 `SHARES` | 주식 |
 | `action_flow_policy.yaml` · `aggregate_risk_policy.yaml` · `order_construction_policy.yaml` · `critical_input_policy.yaml` | `policy_id` | 내용이 달라졌으니 id 도 다르다(LONG VCP 헤더의 규칙) |
 
