@@ -1,7 +1,12 @@
-# Phase 0 완료 판정 — 결정 기록 (재기록 초안 · 운영자 countersign 대기 · 2026-10-21 작성 · 10-22 갱신)
+# Phase 0 완료 판정 — 결정 기록 (운영자 countersign 기입 · 2026-10-22)
 
-> **Document class**: 완료 판단 **결정 기록 초안**. 서명 전에는 아무 효력이 없다. 이 기록이 담으려는
-> 것은 «계약 §11 종료 조건이 판정 대상 head `371051f4` 에서 충족됐다» 는 운영자 판단 하나다.
+> **Document class**: 완료 판단 **결정 기록**(운영자 서명). 이 기록이 담는 것은
+> «계약 §11 종료 조건이 판정 대상 head `371051f4` 에서 충족됐다» 는 운영자 판단 하나다.
+> 서명 지시 원문: 「Phase 0 서명은 chihun,lee 지금 시각으로 넣어」(2026-10-22). 서명 시점 결속 확인:
+> `371051f4..cb4d0c64` 의 관리 경로(`tos/`·`tools/`·`tos-spec/`·`.github/`·`config/tos_completion.yaml`) 변경은
+> 이 판단이 근거로 삼는 U-17 처분 기록(`U17-ALPHA-RELEASE-AND-BYPASS-ACCEPTANCE.md`) 추가 1건뿐이고, `cb4d0c64` 에서
+> `tools/tos_completion_status.py --check` 는 `RESULT: GREEN (violations=0)` · `d0a_entry_state=ENTRY_OK`.
+> 초안 단계(`decision: PENDING_OPERATOR_COUNTERSIGN`)의 문면은 이 커밋의 부모에 이력으로 남는다.
 > 기계 상태·계약·상위 계획·`tos-spec/`·`tools/` 는 이 기록으로 바뀌지 않으며, G1~G3 를 부여하지
 > 않고 `restricted_live`/`production` `NOT_AUTHORIZED` 는 불변이다.
 >
@@ -15,7 +20,7 @@
 > 를 다시 재어 판정 대상을 옮겼다(`20261021-235425/PHASE0-COMPLETION-JUDGMENT-LIVE.md`).
 
 ```yaml
-decision: PENDING_OPERATOR_COUNTERSIGN
+decision: PHASE0_SECTION11_COMPLETE_ACCEPTED_AT_JUDGMENT
 judged_head: 371051f478583f5bab0d5bed2f02df2facdde22f
 contract_blob: 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5
 bound_set_digest: 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429
@@ -25,8 +30,9 @@ superseded_measurement_record: docs/reviews/phase0-completion-contract/20261021-
 lane_a_record: docs/reviews/phase0-codex-records/20261021-232321/verdict.md   # 재심 #8 · approve
 prior_decision: docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md
 drafted_on: 2026-10-21
+decided_on: 2026-10-22
 authority: 운영자 (this repository's corpus owner)
-operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^operator_countersign: "<' 로 재확인 — 1건) "<운영자 식별> <ISO-8601 UTC>" — 아래 «서명 전 열린 항목» 처분 뒤에만 기입
+operator_countersign: "chihun,lee 2026-10-22T06:35:14Z"   # 계약 :8738 형식(blob 6f94dfbb) · 09-04 결정과 같은 식별자 표기
 ```
 
 ---
@@ -42,7 +48,7 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
 | `D0-1` · `A-1` · `A-2` · `A-3` · `D-1` | 전부 `MET` | §2 (`:139-143`) |
 | `D0-5` | `MET` — 7/7 판정, resolver·marketfeed `VALUED` | §2 (`:144`, `completion-check.log:14-37`) |
 | `RES-1` | `MET` — `STATE-EV-004` 가 U-13-e 근거로 FWD-a 에서 제외 | §2 (`:146`) |
-| `U-17` | 기계 상태 `PREVENTION_UNVERIFIED_REVISION` — **MET 아님**. 발화 2건: (b)② 삼중값(직전 수용 범위와 일치) + **α 연속성 `PREVENTION_CONTINUITY_UNVERIFIABLE`(수용 범위 밖)** | §1 (`u17-live.log:239-245`) |
+| `U-17` | 기계 상태 `PREVENTION_UNVERIFIED_REVISION` — **MET 아님**. 발화 2건: (b)② 삼중값(직전 수용 범위와 일치) + **α 연속성 `PREVENTION_CONTINUITY_UNVERIFIABLE`** — 2026-10-22 운영자 처분으로 해제(`U17-ALPHA-RELEASE-AND-BYPASS-ACCEPTANCE.md`, 열린 항목 2) | §1 (`u17-live.log:239-245`) |
 | §11 추가 — `tos/tests` 전량 green | 9,657 · rc 0 | §3 |
 | §11 추가 — ruff 0 · black/mypy 기준선 무증가 | ruff 0 · black 0(26.1.0) · mypy 0 | §3 |
 | §11 추가 — `tos_spec_status.py --check` | PASS | §3 |
@@ -65,7 +71,12 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
 - 이 PR 범위 밖으로 남긴 같은 클래스의 잔여는 이슈 #911(`RESULT_UNMATCHED` 버킷)·#912(종결 뒤 늦은 체결)로
   분리했다. 둘 다 레인 A 재심 #8 이 판정한 대상이 아니다.
 
-### 2. U-17 α 연속성 발화 (운영자 처분 필요 — 서명을 막는다)
+### 2. U-17 α 연속성 발화 — **닫힘 (2026-10-22, 운영자 처분)**
+
+운영자 지시 「U-17 α 해제하고 우회 창은 수용해」 — 처분 기록
+`tos-spec/src/part-1-foundation/decisions/U17-ALPHA-RELEASE-AND-BYPASS-ACCEPTANCE.md`
+(α 해제는 룰셋 버전 `48823346` 한정 · 우회 창 수용은 `48411657`→`48411683` 한정). 기계 상태는 바뀌지 않는다.
+아래는 처분 판단에 쓰인 관측으로, 기록으로 남긴다.
 
 계약은 이 발화를 «차단이되 운영자 재심사 경로»로 정한다 — 「정당한 정책 강화는 운영자가 감사 로그로 확인해
 해제(재심사)한다」(계약 `:8721-8725`). `U17-B2-DEVIATION-ACCEPTANCE.md` 의 수용은 (b)② 삼중값에 **한정**
@@ -106,8 +117,8 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
 - 한계: 계약 문언의 «감사 로그»(org/enterprise 소관)가 아니라 룰셋 버전 이력이다. 룰셋 설정을 바꾸지 않는
   우회(이미 있던 `bypass_actors`·admin override)는 이 이력에 보이지 않는다 — 계약 (β)·`UNCHK-008` 의 기존 경계다.
   위 우회 창은 룰셋을 **바꾼** 경우라 이력에 보인다.
-- 처분 선택지(운영자): (a) 위 관측을 근거로 재심사 기록을 남겨 α 를 해제 · (b) 해제하지 않음(이 초안은 서명
-  불가로 남는다). 우회 창이 (b)② 수용의 전제를 바꾸는지도 운영자 판단이다. 이 초안은 어느 쪽도 선언하지 않는다.
+- 처분 선택지(운영자): (a) 위 관측을 근거로 재심사 기록을 남겨 α 를 해제 · (b) 해제하지 않음.
+  **선택됨: (a) — 그리고 우회 창은 (b)② 수용을 바꾸지 않는 것으로 수용**(2026-10-22, 위 처분 기록).
 
 ### 3. S-26 (별개 축 — 서명을 막지 않는다)
 
@@ -121,7 +132,9 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
 1. **U-17 (b)② 편차** — 직전 결정과 같은 수용(`U17-B2-DEVIATION-ACCEPTANCE.md`, 2026-09-02)이
    그대로 적용된다. 측정 기록 §1 이 같은 삼중값(`28475ca1…` / `21c47e42…` / `100181808552`)을
    재확인했다. 기계 상태는 수용으로 바뀌지 않는다.
-2. **S-26 미충족** — 위 3.
+2. **U-17 α 연속성 해제 · 09-02 우회 창 수용** — `U17-ALPHA-RELEASE-AND-BYPASS-ACCEPTANCE.md`(2026-10-22).
+   기계 상태는 바뀌지 않는다.
+3. **S-26 미충족** — 위 3. 2026-10-22 범위 축소 계획(`docs/plans/2026-10-22-tos-rescope-plan.md`)으로 더 추구하지 않는다.
 
 ## 측정 환경 부기
 
