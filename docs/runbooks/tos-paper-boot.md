@@ -147,7 +147,10 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   `band_probe: REFUSED —` 가 있으면 ②다. 「로그가 없으니 안 떴다」로 단정하지 말 것.
   `producer-log.jsonl` 이 없으면 세션이 시작되지도 않았다.
 
-**세션 뒤 — band 가 쓰였는가.** 판정 기준과 설계는 이력 §7.2-d.
+**세션 뒤 — band 가 쓰였는가.** 판정 기준과 설계는 이력 §7.2-d. ⚠ 2026-10-22 재범위 M1
+부터 런타임은 **부팅 때** band 를 읽으므로, band 를 선언한 트리(LONG tenant)는 제안이
+하나도 없어도 `VENUE_BAND_OBSERVED` 가 **세션당 정확히 1 행**(OBSERVED 또는 사유 있는
+REFUSED)이다 — 0 행이면 소견이다(이력 §7.2-d ①).
 
 - 확인:
 
