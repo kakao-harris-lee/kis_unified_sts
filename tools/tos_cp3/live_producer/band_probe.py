@@ -91,7 +91,7 @@ from tools.tos_cp3.live_producer.sinks import (  # noqa: E402
     ObservationJournal,
     refuse_if_journal_exists,
 )
-from tools.tos_cp3.quote_client import BAND_PATH, BAND_TR, KST  # noqa: E402
+from tools.tos_cp3.quote_client import BAND_ROUTES, KST  # noqa: E402
 
 #: The band request log, beside the producer's own. A SEPARATE file because the
 #: two processes write independently and an interleaved append is a corrupt
@@ -147,6 +147,7 @@ def _publish(
     trading_date: str,
     read: Any,
     values: dict[str, str],
+    market: str,
 ) -> int:
     """Write the one band line, log it, and return the exit code.
 
@@ -169,7 +170,7 @@ def _publish(
         "source_id": SOURCE_ID,
         "instrument": instrument,
         "trading_date": trading_date,
-        "tr_id": BAND_TR,
+        "tr_id": BAND_ROUTES[market][0],
         "raw_payload_digest": read.raw_payload_digest,
         # One process, one line, so continuity is this run's own identity.
         "producer_continuity_id": f"band-probe/{os.getpid()}",
@@ -182,8 +183,8 @@ def _publish(
     log.event(
         {
             "stage": "band_published",
-            "tr_id": BAND_TR,
-            "path": BAND_PATH,
+            "tr_id": BAND_ROUTES[market][0],
+            "path": BAND_ROUTES[market][1],
             "instrument": instrument,
             "trading_date": row["trading_date"],
             "as_of_ms": outcome.as_of_ms,
@@ -212,14 +213,6 @@ def run(
     """
     clock = now if now is not None else (lambda: datetime.now(KST))
     config = load_config(config_path, repo_root=REPO_ROOT)
-    if config.market != "futures":
-        # `FHMIF10000000` is the FUTURES price TR (`FID_COND_MRKT_DIV_CODE=F`).
-        # Asked for a stock symbol it would answer about nothing this session
-        # trades, and a band line built from that answer would be wrong.
-        raise LiveProducerRefused(
-            f"{config_path}: market={config.market!r} — the band probe reads the "
-            "futures band TR only"
-        )
     log = EventLog(session_dir, name=BAND_LOG_NAME)
     journal_path = band_journal_path(session_dir)
 
@@ -248,7 +241,7 @@ def run(
     try:
         try:
             read = quotes.band(instrument)
-            values = band_values_from_payload(read.payload)
+            values = band_values_from_payload(read.payload, config.market)
         except SafetyViolation:
             # BEFORE the RuntimeError clause, because it IS a RuntimeError.
             #
@@ -275,6 +268,7 @@ def run(
             trading_date=trading_date,
             read=read,
             values=values,
+            market=config.market,
         )
     finally:
         http = getattr(quotes, "http", None)
@@ -287,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     target = args.date or datetime.now(KST).date()
     if not args.confirm:
+        market = load_config(args.config, repo_root=REPO_ROOT).market
         print(
             json.dumps(
                 {
@@ -294,8 +289,9 @@ def main(argv: list[str] | None = None) -> int:
                     "date": str(target),
                     "instrument": args.instrument,
                     "method": "GET",
-                    "tr_id": BAND_TR,
-                    "path": BAND_PATH,
+                    "market": market,
+                    "tr_id": BAND_ROUTES[market][0],
+                    "path": BAND_ROUTES[market][1],
                     "journal": str(band_journal_path(args.session_dir)),
                     "orders": 0,
                 }

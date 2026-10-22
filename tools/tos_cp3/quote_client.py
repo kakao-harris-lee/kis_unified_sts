@@ -83,6 +83,19 @@ QUOTE_ROUTES: dict[str, tuple[str, str, str]] = {
     "stock": (STOCK_TR, STOCK_QUOTE_PATH, "J"),
 }
 
+#: The STOCK venue band read (rescope M2). ``FHKST01010100`` 주식현재가 시세 carries
+#: ``stck_mxpr`` (상한가) · ``stck_llam`` (하한가) · ``stck_sdpr`` (기준가) in its
+#: ``output`` object — KIS open-trading-api
+#: ``examples_llm/domestic_stock/inquire_price`` (column map of ``chk_inquire_price``).
+STOCK_BAND_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
+STOCK_BAND_TR = "FHKST01010100"
+
+#: ``market`` -> (band TR, path, ``FID_COND_MRKT_DIV_CODE``).
+BAND_ROUTES: dict[str, tuple[str, str, str]] = {
+    "futures": (BAND_TR, BAND_PATH, "F"),
+    "stock": (STOCK_BAND_TR, STOCK_BAND_PATH, "J"),
+}
+
 #: The GET-only three-way gate (method + TR id + URL path).
 #: :func:`~tools.broker_probes.common.assert_read_only_call` refuses anything
 #: outside it BEFORE a socket is opened, so this tuple is where "zero real
@@ -92,7 +105,22 @@ ALLOWLIST = (
     ReadOnlyCall(TR, QUOTE_PATH, "CP3 minute quotation"),
     ReadOnlyCall(STOCK_TR, STOCK_QUOTE_PATH, "CP3 stock minute quotation"),
     ReadOnlyCall(BAND_TR, BAND_PATH, "CP3 venue band (상한가·하한가·기준가)"),
+    ReadOnlyCall(
+        STOCK_BAND_TR, STOCK_BAND_PATH, "CP3 stock venue band (상한가·하한가·기준가)"
+    ),
 )
+
+
+def market_allowlist(market: str) -> tuple[ReadOnlyCall, ...]:
+    """The :data:`ALLOWLIST` entries of ONE market — the gate each call is checked against.
+
+    A stock-configured process can then not reach a futures TR even through a code path
+    that picked the wrong route, and vice versa (PR #922 review LOW-4). Unknown market ->
+    ``KeyError`` before any socket.
+    """
+    allowed = {QUOTE_ROUTES[market][0], BAND_ROUTES[market][0]}
+    return tuple(entry for entry in ALLOWLIST if entry.tr_id in allowed)
+
 
 #: The log stage one band attempt writes. Named so the post-session check
 #: (runbook §7.2-d) and :mod:`~tools.tos_cp3.live_producer.band_probe` agree on
@@ -218,7 +246,7 @@ class Quotes:
         market = self.cfg.get("market", "futures")
         tr_id, path, division = QUOTE_ROUTES[market]
         url = REAL_BASE_URL + path
-        assert_read_only_call("GET", url, tr_id, ALLOWLIST)
+        assert_read_only_call("GET", url, tr_id, market_allowlist(market))
         params = {
             "FID_COND_MRKT_DIV_CODE": division,
             "FID_INPUT_ISCD": symbol,
@@ -358,9 +386,11 @@ class Quotes:
         """
         # ⛔ BEFORE ANY NETWORK ACTIVITY. The gate is where "zero real futures
         # orders" is enforced, so nothing — not even a DNS lookup — precedes it.
-        url = REAL_BASE_URL + BAND_PATH
-        assert_read_only_call("GET", url, BAND_TR, ALLOWLIST)
-        params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": symbol}
+        market = self.cfg.get("market", "futures")
+        band_tr, band_path, division = BAND_ROUTES[market]
+        url = REAL_BASE_URL + band_path
+        assert_read_only_call("GET", url, band_tr, market_allowlist(market))
+        params = {"FID_COND_MRKT_DIV_CODE": division, "FID_INPUT_ISCD": symbol}
         # Per-phase INACTIVITY guards. No clamp: a `max(0.001, ...)` floor
         # RAISES the phases for a tiny budget and so loosens what it looks like
         # it tightens. The floor is `config.MIN_REQUEST_TIMEOUT_S`, refused at
@@ -374,8 +404,8 @@ class Quotes:
             "stage": BAND_FETCH_STAGE,
             "started_kst": datetime.now(KST),
             "method": "GET",
-            "tr_id": BAND_TR,
-            "path": BAND_PATH,
+            "tr_id": band_tr,
+            "path": band_path,
             "params": params,
             "max_response_bytes": cap,
         }
@@ -387,7 +417,7 @@ class Quotes:
                 "authorization": "Bearer " + token,
                 "appkey": self.creds.app_key,
                 "appsecret": self.creds.app_secret,
-                "tr_id": BAND_TR,
+                "tr_id": band_tr,
                 "content-type": "application/json",
                 # No compression: a gzip body that decodes to nothing yet is
                 # bytes read for no visible progress, and the size cap below

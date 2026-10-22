@@ -18,6 +18,7 @@ or an in-process fake, and the clock is fake.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -30,7 +31,13 @@ import pytest
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
+from tools.broker_probes.common import (
+    REAL_BASE_URL,
+    SafetyViolation,
+    assert_read_only_call,
+)
 from tools.tos_cp3 import quote_client
+from tools.tos_cp3.live_producer import band_line as band_line_mod
 from tools.tos_cp3.live_producer import band_probe
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import frame as frame_mod
@@ -177,16 +184,92 @@ def test_real_quotes_resolves_the_stock_credentials(monkeypatch) -> None:
     assert seen == [("stock", True)]
 
 
-def test_the_band_probe_refuses_a_stock_config(tmp_path: Path) -> None:
-    """``FHMIF10000000`` is the futures band TR; a stock session has no use for it."""
-    with pytest.raises(LiveProducerRefused, match="futures band TR only"):
-        band_probe.run(
-            config_path=STOCK_CONFIG,
-            instrument=SYMBOL,
-            session_dir=tmp_path / "session",
-            target=TARGET,
-            quotes_factory=lambda *_: pytest.fail("no transport may be built"),
+RECORDED_BAND = (
+    Path(__file__).parent / "fixtures/cp3_stock_005930_fhkst01010100_band.json"
+)
+
+
+def test_the_market_allowlist_keeps_each_market_to_its_own_trs() -> None:
+    """PR #922 review LOW-4: a stock process cannot pass the gate with a futures TR."""
+    stock = {entry.tr_id for entry in quote_client.market_allowlist("stock")}
+    futures = {entry.tr_id for entry in quote_client.market_allowlist("futures")}
+    assert stock == {"FHKST03010230", "FHKST01010100"}
+    assert futures == {"FHKIF03020200", "FHMIF10000000"}
+    with pytest.raises(SafetyViolation):
+        assert_read_only_call(
+            "GET",
+            REAL_BASE_URL + quote_client.BAND_PATH,
+            quote_client.BAND_TR,
+            quote_client.market_allowlist("stock"),
         )
+
+
+def test_a_stock_band_read_requests_the_stock_tr_and_yields_the_three_values() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=RECORDED_BAND.read_bytes())
+
+    quotes = _stock_quotes(handler)
+    read = quotes.band(SYMBOL)
+    (request,) = requests
+    assert request.method == "GET"
+    assert request.url.path == quote_client.STOCK_BAND_PATH
+    assert request.headers["tr_id"] == quote_client.STOCK_BAND_TR == "FHKST01010100"
+    assert dict(request.url.params) == {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": SYMBOL,
+    }
+    assert (
+        read.raw_payload_digest
+        == hashlib.sha256(RECORDED_BAND.read_bytes()).hexdigest()
+    )
+    assert band_line_mod.band_values_from_payload(read.payload, "stock") == {
+        "upper": "351000",
+        "lower": "189000",
+        "basis": "270000",
+    }
+    # The futures shape cannot read it — the member and the field names differ.
+    with pytest.raises(band_line_mod.BandLineError):
+        band_line_mod.band_values_from_payload(read.payload)
+
+
+def test_the_band_probe_writes_a_stock_band_line(tmp_path: Path) -> None:
+    payload = json.loads(RECORDED_BAND.read_text(encoding="utf-8"))
+
+    class FakeBandQuotes:
+        http = None
+
+        def band(self, symbol: str) -> quote_client.BandRead:
+            assert symbol == SYMBOL
+            return quote_client.BandRead(payload=payload, raw_payload_digest="d" * 64)
+
+    session = tmp_path / "session"
+    rc = band_probe.run(
+        config_path=STOCK_CONFIG,
+        instrument=SYMBOL,
+        session_dir=session,
+        target=TARGET,
+        quotes_factory=lambda *_: FakeBandQuotes(),
+        now=lambda: datetime(2026, 10, 19, 9, 1, tzinfo=producer_mod.KST),
+    )
+    assert rc == band_probe.RC_OK
+    (line,) = [
+        json.loads(text)
+        for text in band_probe.band_journal_path(session)
+        .read_text("utf-8")
+        .splitlines()
+        if text.strip()
+    ]
+    assert line["tr_id"] == "FHKST01010100"
+    assert (line["upper"], line["lower"], line["basis"]) == (
+        "351000",
+        "189000",
+        "270000",
+    )
+    assert line["instrument"] == SYMBOL
+    assert line["trading_date"] == "20261019"
 
 
 # ---------------------------------------------------------------------------

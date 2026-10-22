@@ -85,6 +85,17 @@ BAND_PAYLOAD_FIELDS: tuple[tuple[str, str], ...] = (
 #: is permanently absent for a reason no log names.
 BAND_PAYLOAD_MEMBER = "output1"
 
+#: ``market`` -> (response member, ((source field, band key), ...)). The futures row is the
+#: two constants above; the stock row is ``FHKST01010100``'s ``output`` object
+#: (``tools.tos_cp3.quote_client.STOCK_BAND_TR``).
+BAND_PAYLOADS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
+    "futures": (BAND_PAYLOAD_MEMBER, BAND_PAYLOAD_FIELDS),
+    "stock": (
+        "output",
+        (("stck_mxpr", "upper"), ("stck_llam", "lower"), ("stck_sdpr", "basis")),
+    ),
+}
+
 
 class BandLineError(RuntimeError):
     """A band payload or band line that cannot be used. Never routed around."""
@@ -100,7 +111,9 @@ def trading_date_text(day: date) -> str:
     return day.strftime("%Y%m%d")
 
 
-def band_values_from_payload(payload: Mapping[str, Any]) -> dict[str, str]:
+def band_values_from_payload(
+    payload: Mapping[str, Any], market: str = "futures"
+) -> dict[str, str]:
     """The three band fields, as strings, or raise.
 
     Raises:
@@ -110,15 +123,16 @@ def band_values_from_payload(payload: Mapping[str, Any]) -> dict[str, str]:
             Substituting a default here is the one fail-open this whole path
             is arranged to avoid — a wrong band believed.
     """
-    member = payload.get(BAND_PAYLOAD_MEMBER)
+    member_name, fields = BAND_PAYLOADS[market]
+    member = payload.get(member_name)
     if not isinstance(member, Mapping):
         raise BandLineError(
-            f"band response has no {BAND_PAYLOAD_MEMBER} mapping "
+            f"band response has no {member_name} mapping "
             f"(got {type(member).__name__})"
         )
     values: dict[str, str] = {}
     missing: list[str] = []
-    for source, key in BAND_PAYLOAD_FIELDS:
+    for source, key in fields:
         raw = member.get(source)
         text = "" if raw is None else str(raw).strip()
         if not text:
