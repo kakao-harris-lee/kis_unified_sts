@@ -24,6 +24,12 @@ scope:
     added_in: 48411657                              # 2026-09-02T17:57:36.774+09:00 · bypass_actors=[{actor_id:5, RepositoryRole, always}]
     removed_in: 48411683                            # 2026-09-02T17:57:40.797+09:00 · bypass_actors=[]
     landing_pr: 638                                 # mergedAt 2026-09-02T08:57:41Z · merge f49c3728
+  alpha_release_addendum:                           # 2026-10-22 같은 날 추가 — 운영자가 직접 지시한 변경
+    ruleset_id: 21886181
+    history_version: 54250296                       # updated_at(이력) 2026-10-22T15:12:56.064+09:00
+    resource_updated_at: "2026-10-22T15:12:55.740+09:00"
+    change: 'required_status_checks.strict_required_status_checks_policy true → false — 그 외 상태 동일'
+    instruction_verbatim: "룰셋 strict 해제하고 digest 단일화 진행해"
 machine_state_after_this_record: PREVENTION_UNVERIFIED_REVISION   # 불변 — 아래 «효력»
 ```
 
@@ -41,13 +47,20 @@ machine_state_after_this_record: PREVENTION_UNVERIFIED_REVISION   # 불변 — �
    - 머지 요청이 우회 창 안에서 일어났는지는 이력(초 단위 `mergedAt`)만으로 정해지지 않으며, 이 기록도 정하지 않는다.
    - 이 사실은 2026-10-21 재판정 리뷰에서 처음 드러났다 — 그 전 기록에는 없었다.
 
+3. **α 해제 추가 — 버전 `54250296`.** 같은 날 운영자 지시(「룰셋 strict 해제하고 digest 단일화 진행해」)로
+   오케스트레이터가 룰셋의 «최신 브랜치 필수»(`strict_required_status_checks_policy`)를 끄는 PUT 을 했다
+   (리소스 `updated_at` `2026-10-22T15:12:55.740+09:00`). PUT 전후 `.rules` 비교에서 바뀐 값은 그 하나뿐이고, 필수 체크(`tos-gate`·`ruff`)·
+   PR 필수·강제 푸시/삭제 금지·`bypass_actors: []`·`enforcement: active` 는 그대로다. 운영자가 직접 지시한 변경이므로
+   그 버전으로 인한 α 발화도 해제한다. 이 변경은 보호를 약하게 한다(필수 체크는 그대로이나, main 최신 대비 재검증을
+   요구하지 않는다) — 운영자는 CI 재실행 지연을 줄이려고 그것을 택했다(`docs/plans/2026-10-22-tos-rescope-plan.md`).
+
 ## 효력 (정직하게)
 
 1. **기계 상태는 바뀌지 않는다.** `bash tools/u17-verify.sh` 는 이 기록 뒤에도 α 발화를 내고
    `prevention_control_state=PREVENTION_UNVERIFIED_REVISION` 을 방출한다. 룰셋의 서버 타임스탬프는 소급되지 않는다.
 2. **소비처는 «완료 판단»(사람)뿐이다.** 완료 판단자는 live 평가 결과와 이 기록, `U17-B2-DEVIATION-ACCEPTANCE.md`
    를 함께 읽는다.
-3. **범위 한정.** 해제는 버전 `48823346` 에만, 수용은 위 우회 창(`48411657`→`48411683`)에만 적용된다. 룰셋이 다시
+3. **범위 한정.** 해제는 버전 `48823346`·`54250296` 에만, 수용은 위 우회 창(`48411657`→`48411683`)에만 적용된다. 룰셋이 다시
    바뀌면 α 는 다시 발화하고, 그때 운영자 결정이 별도로 필요하다.
 4. **계약 개정도 countersign 도 아니다.** `D0A-PREVENTION-CONTROL.md` 의 `operator_countersign` 은 불변이다.
 
