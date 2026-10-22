@@ -30,6 +30,7 @@ from tos.venue import (
     ConstraintClass,
     ConstraintDependencyClosure,
     DependencyEdge,
+    PriceBandTick,
     VenueConstraintPolicy,
     VenueShapeConstraints,
 )
@@ -609,6 +610,54 @@ def _parse_numeric_bounds(
     return bounds, tuple(null_bounds)
 
 
+def _parse_price_band_ticks(
+    sc_raw: dict[str, Any], path: Path
+) -> tuple[PriceBandTick, ...] | None:
+    """``_model_view.shape_constraints.price_band_ticks`` — the kernel's per-price-band tick
+    table (``tos.venue.records.PriceBandTick``; kernel round #4 K-1), or ``None``.
+
+    OPTIONAL key: absent or ``null`` keeps the flat ``tick_size`` exactly as before, so every
+    tree that does not declare a table loads (and digests) unchanged. A KRX stock tick is a
+    price ladder (500원 between 200,000 and 500,000원, 100원 below — the flat field can carry
+    only one rung), which is the input this exists for: with a flat 500 a 199,900원 limit is
+    INADMISSIBLE although it is a legal price.
+
+    Refused, each by its own input: an empty list (it would resolve no price — declare null
+    instead), a row that is not a mapping of exactly ``band_min``/``band_max``/``tick`` ints, a
+    non-positive tick, ``band_min > band_max``, and rows that are not ascending and disjoint
+    (an overlap would make the tick for a price depend on row order).
+    """
+    raw = sc_raw.get("price_band_ticks")
+    if raw is None:
+        return None
+    ctx = f"{path}: _model_view.shape_constraints.price_band_ticks"
+    if not isinstance(raw, list) or not raw:
+        raise VenuePolicyConfigError(
+            f"{ctx} must be a non-empty list of rows, or null for no table"
+        )
+    rows: list[PriceBandTick] = []
+    for index, row in enumerate(raw):
+        if not isinstance(row, dict) or set(row) != {"band_min", "band_max", "tick"}:
+            raise VenuePolicyConfigError(
+                f"{ctx}[{index}] must be a mapping of exactly band_min/band_max/tick"
+            )
+        values = [row["band_min"], row["band_max"], row["tick"]]
+        if any(not isinstance(v, int) or isinstance(v, bool) for v in values):
+            raise VenuePolicyConfigError(f"{ctx}[{index}] values must be ints")
+        band_min, band_max, tick = values
+        if tick <= 0:
+            raise VenuePolicyConfigError(f"{ctx}[{index}].tick must be positive")
+        if band_min > band_max:
+            raise VenuePolicyConfigError(f"{ctx}[{index}] band_min > band_max")
+        if rows and band_min <= rows[-1].band_max:
+            raise VenuePolicyConfigError(
+                f"{ctx}[{index}] overlaps or precedes row {index - 1} — rows must be "
+                "ascending and disjoint"
+            )
+        rows.append(PriceBandTick(band_min=band_min, band_max=band_max, tick=tick))
+    return tuple(rows)
+
+
 def _parse_shape_constraints(
     raw: dict[str, Any], path: Path
 ) -> tuple[VenueShapeConstraints, tuple[str, ...]]:
@@ -624,6 +673,7 @@ def _parse_shape_constraints(
         price_min=bounds["price_min"],
         price_max=bounds["price_max"],
         tick_size=bounds["tick_size"],
+        price_band_ticks=_parse_price_band_ticks(sc_raw, path),
         lot_size=bounds["lot_size"],
         min_quantity=bounds["min_quantity"],
         max_quantity=bounds["max_quantity"],
