@@ -74,12 +74,82 @@ on:
     - cron: '0 0 * * 1'
 
 jobs:
-  test:
+  # ===========================================================================
+  # The suite, split three ways across runners (2026-10-22).
+  #
+  # Measured on run 39619902863 (push to main, green): the old single `test`
+  # job took 973s, 874s of which was ONE step running two pytest passes back to
+  # back — the parallel pass 667s (≈80s of per-worker collection over 11,540
+  # tests, then ≈588s of execution on 4 workers) and the serial pass 204s. The
+  # two passes have no data dependency: the second one re-collects the same
+  # tree and runs a disjoint set of tests (`-m serial` vs `-m "not serial"`).
+  #
+  # So: the parallel pass is sharded across two runners, and the serial pass is
+  # a third job beside them. The partition is exact, by construction, in both
+  # directions, which matters more here than the balance:
+  #   * marker axis — `-m "not serial"` ∪ `-m serial` is every collected test,
+  #     with no third bucket to forget.
+  #   * path axis   — shard `a` runs exactly `SHARD_A_PATHS`; shard `b` runs
+  #     `tests/` with each of those SAME paths passed as `--ignore`. One list,
+  #     read twice, so the two halves cannot drift apart as directories are
+  #     added: a new test directory is in neither list, therefore in shard b.
+  #     A directory that is renamed or deleted makes shard `a` exit 4 with
+  #     "file or directory not found" — loud, not silent.
+  # The balance is by measured time, not file count, and is the only part of
+  # this that is a judgement call; re-tune SHARD_A_PATHS from a run's job
+  # durations if the two halves drift apart.
+  # ===========================================================================
+  test-shard:
+    name: test (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     # Hard backstop: a hung test (e.g. a blocking Redis read on an empty stream
     # under xdist) must not stall the job for the 6h default. With the per-test
     # --timeout below this should rarely be hit, but it guarantees fail-fast.
-    timeout-minutes: 25
+    # 25 -> 20: each shard now carries about half the old job's work.
+    timeout-minutes: 20
+
+    strategy:
+      # One shard failing must not cancel the other: a red CI that shows only
+      # half the failures costs a whole extra round trip to see the rest.
+      fail-fast: false
+      matrix:
+        shard: [a, b]
+
+    env:
+      # THE shard boundary. Shard a runs these paths; shard b runs `tests/`
+      # with each of them --ignore'd.
+      #
+      # Balanced on MEASURED TIME, from a local `--durations=0` profile of this
+      # exact parallel pass (11,416 passed, 1,075s of summed call+setup+teardown
+      # across 34,378 phase records). Balancing on test count would have been
+      # worthless here, and that is the whole reason this is one line and not a
+      # tidy half-the-alphabet split:
+      #
+      #   tests/tools            1,561 tests    637.9s   59.3% of the time
+      #   tests/unit             9,569 tests    366.0s   34.0%
+      #   tests/integration        187 tests     71.0s    6.6%
+      #   everything else           ~30 tests      0.2s    0.0%
+      #
+      # i.e. 14% of the tests are 59% of the time, and the 83% of tests under
+      # tests/unit are 34% of it.
+      #
+      # One FILE, tests/tools/test_cp3_bootproof.py, is 558.3s of that 637.9s,
+      # and one test inside it (`test_red_a_sigkilled_runner_still_leaves_the_
+      # child_a_deadline`) is 136.1s on its own — these are deadline/retry
+      # tests that wait on the wall clock rather than burn CPU. So `tests/tools`
+      # alone is one half of the work (637.9s) and everything else is the other
+      # (437.2s) — the closest two-way cut any whole-directory split can make.
+      #
+      # Checked, not assumed, that the cut is a partition: collecting shard a,
+      # shard b and the unsharded command gave 1,561 + 9,917 = 11,478 tests in
+      # 25 + 711 = 736 files, with 0 files in both, 0 files in neither, and 0
+      # per-file count mismatches.
+      #
+      # Re-tune from the two shards' job durations if they drift apart; the
+      # correctness of the split does not depend on this list being right, only
+      # its usefulness does.
+      SHARD_A_PATHS: >-
+        tests/tools
 
     services:
       redis:
@@ -93,7 +163,8 @@ jobs:
           --health-retries 5
 
     steps:
-      - name: Checkout code
+      - &checkout
+        name: Checkout code
         uses: actions/checkout@v4
         with:
           # Full history — tests/tools/test_u17_verify.py::* and other
@@ -102,38 +173,39 @@ jobs:
           # provenance) fail-closed to PROVENANCE_UNVERIFIABLE under the
           # default `fetch-depth: 1` shallow clone — see the identical
           # rationale + real-CI-observed failure at
-          # .github/workflows/tos-firewall.yml:28-40 (PR #637/#638).
+          # .github/workflows/tos-firewall.yml (PR #637/#638).
           fetch-depth: 0
 
-      - name: Set up Python
+      - &setup-python
+        name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          # pip's HTTP/wheel cache, keyed by setup-python on the hash of the
+          # dependency files it finds (pyproject.toml). Verified hitting on
+          # run 39619902863: "Cache hit occurred on the primary key
+          # setup-python-Linux-x64-24.04-Ubuntu-python-3.11.17-pip-15b9a55…".
           cache: 'pip'
 
-      - name: Install dependencies
+      - &install
+        name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install prometheus-client
 
-      - name: Run tests
-        # Two passes:
-        #  1. Parallel (pytest-xdist `-n auto`) over everything NOT marked
-        #     `serial` — the bulk of the suite, ~3-4x faster than serial.
-        #  2. Serial over `serial`-marked tests (timing- or shared-external-
-        #     state-sensitive: real Redis DB 1 keys, uncontended wall-clock
-        #     assertions — see the `serial` marker in pyproject.toml). Running
-        #     them with no concurrent workers removes the cross-worker races.
-        # `&&` fails the step if the parallel pass fails; coverage from the
-        # parallel pass is appended to by the serial pass before reporting.
+      - name: Run tests (parallel pass — shard ${{ matrix.shard }})
+        # Pass 1 of 2 for the suite as a whole: everything NOT marked `serial`,
+        # under pytest-xdist `-n auto`. Pass 2 is the `test-serial` job below,
+        # which now runs AT THE SAME TIME as these two instead of after them.
+        #
         # tests/performance/ is excluded here; the dedicated `performance` job
         # below runs it with its own Redis isolation and regression baseline.
         #
         # tests/tools/test_tos_*.py, tests/tools/test_u17_verify.py, and
         # tests/tos_l3/ are also excluded — they moved to the
-        # tos-firewall.yml `tos-firewall` job (no runtime stack needed, no
-        # path gating there) so this path-gated, runtime-heavy job doesn't
+        # tos-firewall.yml `tos-firewall-tests` job (no runtime stack needed,
+        # no path gating there) so this path-gated, runtime-heavy job doesn't
         # also run them. The `--ignore` flags below are what keep them out,
         # and they are load-bearing, not belt-and-braces: the `on.paths`
         # filter at the top of this file excludes tos with `!tos/**` but
@@ -144,23 +216,38 @@ jobs:
         # --timeout=180 --timeout-method=thread: if any single test exceeds 180s
         # (no legit test runs that long), pytest-timeout dumps all thread stacks
         # and fails — NAMING the hung test instead of stalling the job. `thread`
-        # is the xdist-safe method (works inside parallel workers).
+        # is the xdist-safe method (works inside parallel workers). NOTE the
+        # headroom here is thinner than it looks: the slowest single test in
+        # this pass, tests/tools/test_cp3_bootproof.py::test_red_a_sigkilled_
+        # runner_still_leaves_the_child_a_deadline, measures 136s.
+        #
+        # `--cov-report=term-missing` is gone (it was on the old single job):
+        # a per-shard terminal report lists everything the OTHER shard covers
+        # as missing, which is worse than no report. The xml goes to Codecov,
+        # which merges the three partial reports into the real one.
         run: |
-          pytest tests/ --ignore=tests/performance \
+          set -euo pipefail
+          if [ "${{ matrix.shard }}" = "a" ]; then
+            TARGETS="$SHARD_A_PATHS"
+            SHARD_IGNORES=""
+          else
+            TARGETS="tests/"
+            SHARD_IGNORES=""
+            for p in $SHARD_A_PATHS; do
+              SHARD_IGNORES="$SHARD_IGNORES --ignore=$p"
+            done
+          fi
+          echo "shard ${{ matrix.shard }} targets: $TARGETS"
+          echo "shard ${{ matrix.shard }} ignores: $SHARD_IGNORES"
+          # shellcheck disable=SC2086  # word splitting is the point here
+          pytest $TARGETS $SHARD_IGNORES \
+            --ignore=tests/performance \
             --ignore-glob='tests/tools/test_tos_*.py' \
             --ignore=tests/tools/test_u17_verify.py \
             --ignore=tests/tos_l3 \
             -n auto -m "not serial" \
             --timeout=180 --timeout-method=thread \
-            -q --cov=shared --cov=services --cov-report= && \
-          pytest tests/ --ignore=tests/performance \
-            --ignore-glob='tests/tools/test_tos_*.py' \
-            --ignore=tests/tools/test_u17_verify.py \
-            --ignore=tests/tos_l3 \
-            -m serial \
-            --timeout=180 --timeout-method=thread \
-            -q --cov=shared --cov=services --cov-append \
-            --cov-report=xml --cov-report=term-missing
+            -q --cov=shared --cov=services --cov-report=xml
         env:
           REDIS_URL: redis://localhost:6379/1
           ENVIRONMENT: test
@@ -170,8 +257,96 @@ jobs:
         with:
           file: coverage.xml
           flags: unittests
-          name: codecov-umbrella
+          # Distinct per upload so Codecov merges the three partial reports
+          # (two shards + the serial job) for one commit instead of treating a
+          # later one as a replacement.
+          name: codecov-shard-${{ matrix.shard }}
           fail_ci_if_error: false
+
+  # ===========================================================================
+  # Pass 2: the `serial`-marked tests, with no concurrent worker to race them.
+  # Was the second half of the old `test` job's one step (204s of its 874s).
+  # ===========================================================================
+  test-serial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - *checkout
+      - *setup-python
+      - *install
+
+      - name: Run tests (serial pass)
+        # `serial`-marked tests are timing- or shared-external-state-sensitive
+        # (real Redis DB 1 keys, uncontended wall-clock assertions — see the
+        # `serial` marker in pyproject.toml). Running them with no concurrent
+        # workers removes the cross-worker races; running them in their OWN JOB
+        # additionally gives them a Redis service container that no parallel
+        # pass has been writing to, which is strictly more isolation than the
+        # old same-job second pass had.
+        #
+        # The whole tree is the target (no shard paths): the marker is the
+        # partition here, and restricting the paths as well would make a
+        # newly-marked serial test outside the listed directories silently
+        # stop running.
+        #
+        # The ignores mirror the parallel pass exactly, for the same reasons.
+        run: |
+          pytest tests/ \
+            --ignore=tests/performance \
+            --ignore-glob='tests/tools/test_tos_*.py' \
+            --ignore=tests/tools/test_u17_verify.py \
+            --ignore=tests/tos_l3 \
+            -m serial \
+            --timeout=180 --timeout-method=thread \
+            -q --cov=shared --cov=services --cov-report=xml
+        env:
+          REDIS_URL: redis://localhost:6379/1
+          ENVIRONMENT: test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          flags: unittests
+          name: codecov-serial
+          fail_ci_if_error: false
+
+  # ===========================================================================
+  # The check context that means "the suite passed". Same role (and the same
+  # fail-closed shape) as the `tos-firewall` aggregator: splitting the work
+  # across runners must not split the NAME that says the work passed.
+  # ===========================================================================
+  test:
+    runs-on: ubuntu-latest
+    needs: [test-shard, test-serial]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Every test job must have succeeded
+        run: |
+          set -euo pipefail
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "dependency results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a test job did not succeed ($results)"
+              exit 1
+            fi
+          done
+          echo "all test jobs succeeded"
 
   lint:
     runs-on: ubuntu-latest
@@ -185,6 +360,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      # No `cache: 'pip'` here on purpose: this job installs exactly one wheel
+      # (black) and the install step measures 2s, less than the cache restore
+      # it would add. Every job below that installs the dependency tree does
+      # have it.
       - name: Install linters
         run: |
           pip install black
@@ -406,4 +585,3 @@ jobs:
             tests/performance/current.json
             tests/performance/rounds/
           retention-days: 30
-
