@@ -20,6 +20,11 @@ tenant-only; `paper/`'s `strategies/bootproof_band.strategy.yaml` is absent
 there. (Measured by git blob OID against `origin/main:config/tos_runtime/paper`,
 not by comparing working trees — both sides of that claim have to be about
 committed content.) Nothing in it has booted yet.
+`cp3-setup-d-stock-005930/` is the **stock** tenant (rescope M2, operator decision
+2026-10-22: 005930 · Setup D LONG as-is · 1 share · 09:00-15:30): a derivation of
+`cp3-setup-d-long/`, still `SYNTHETIC_FUTURES_ORDER`, with no band source. Read its
+`README.md`; `tos/runtime/tests/compose/test_tenant_tree_stock.py` pins every
+difference from the LONG tree by file and key path.
 Adding a tenant tree changes NO digest the resident session re-derives —
 `release.yaml::expected_code_digest` folds `*.py` bytes under the two installed
 package roots only, and each policy's `canonical_digest` is computed from its
