@@ -37,10 +37,12 @@
 #   * lot_size / min_quantity 1 = 1주(주식 매매수량단위 1주).
 #   * price_min / price_max: null — 주식 가격제한폭은 **일별 동적 값**(기준가 ±30 %)이라
 #     정적 리터럴로 쓸 수 없다. 이 트리에는 **band 원천이 없다**: LONG 트리의 band 원천은
-#     선물 band TR(FHMIF10000000) 생산자 경유이고, 그 프로브는 주식 설정을 거부한다
-#     (tools/tos_cp3/live_producer/band_probe.py). 그래서 **오늘 이 트리의 모든 시도는
-#     step 3 UNKNOWN 으로 끝난다**(송신 0) — LONG 트리 band 이전과 같은 정직 상태.
-#     주식 band 원천(주식현재가 GET 의 상한가·하한가)은 M2 의 남은 일이다.
+#     선물 band TR(FHMIF10000000) 생산자 경유다. band 프로브는 이제 주식 설정이면 주식현재가
+#     GET(FHKST01010100 의 stck_mxpr/stck_llam/stck_sdpr)으로 band 줄을 쓸 수 있지만
+#     (tools/tos_cp3/live_producer/band_probe.py), 이 트리는 아직 `_runtime.band_source` 를
+#     선언하지 않는다. 그래서 **오늘 이 트리의 모든 시도는 step 3 UNKNOWN 으로 끝난다**
+#     (송신 0) — LONG 트리 band 이전과 같은 정직 상태. 이 트리에 band 원천을 켜는 것은
+#     M2 의 남은 일이다.
 #   * admitting session phase = 이 트리 calendar.yaml 의 `krx-stock` `CONTINUOUS`.
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"):

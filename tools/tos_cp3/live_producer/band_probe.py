@@ -1,8 +1,16 @@
 """The band GET, as its own short-lived process (band plan v3, 2026-10-16).
 
-One GET of ``FHMIF10000000``, one line into ``band.jsonl``, exit. Nothing else:
-no loop, no clock to watch, no state to keep. The runner launches it under
-``timeout`` after the open and reads its exit code.
+One GET of the config's market band TR, one line into ``band.jsonl``, exit.
+Nothing else: no loop, no clock to watch, no state to keep. The runner launches
+it under ``timeout`` after the open and reads its exit code.
+
+**Which TR** follows ``market`` in the config
+(:data:`~tools.tos_cp3.quote_client.BAND_ROUTES`): ``futures`` → ``FHMIF10000000``
+(``output1``), ``stock`` → ``FHKST01010100`` 주식현재가 시세 (``output``:
+``stck_mxpr`` 상한가 · ``stck_llam`` 하한가 · ``stck_sdpr`` 기준가). Each process
+is gated against ITS market's allowlist only
+(:func:`~tools.tos_cp3.quote_client.market_allowlist`, PR #922 review LOW-4), so
+a stock process cannot pass the gate with a futures TR or the reverse.
 
 **Why a process.** Three review rounds established that a Python process cannot
 honestly bound its own synchronous HTTP call: httpx's ``read`` timeout bounds
@@ -14,7 +22,7 @@ the next price poll waits on it. A process under ``timeout`` has none of those
 holes, because SIGKILL does not negotiate.
 
 **Credential separation is unchanged** (③ plan §3.4). This process reads the
-two real futures QUERY keys ITSELF, from the ``env_file`` its own config names
+two real QUERY keys of its market ITSELF, from the ``env_file`` its own config names
 — exactly as the producer does. The runner's environment and the runtime's
 still hold no real key, and the runner's own guard still refuses to start if
 they do.
