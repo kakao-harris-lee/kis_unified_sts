@@ -129,6 +129,16 @@ jobs:
       - name: Layer 2 — import-linter (transitive forbidden-package defense)
         run: lint-imports
 
+      # release.yaml's expected_code_digest vs the measured source tree
+      # (tools/tos_redigest.py's own docstring has the why). Placed BEFORE the
+      # test batteries so a PR that changed tos/src or tos/runtime/src without
+      # re-deriving the pin fails in seconds with the fix command in the
+      # message, rather than after the ~6.5-minute batteries below. The tool
+      # shells out to the runtime's own `print-digests` — it never
+      # reimplements the digest, and tools/ may not import tos (firewall).
+      - name: expected_code_digest is current (tos_redigest --check)
+        run: python tools/tos_redigest.py --check
+
       - name: tos hermetic package tests
         run: pytest tos/tests
 
