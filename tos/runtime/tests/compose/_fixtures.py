@@ -699,6 +699,9 @@ def write_kis_mock_transport_config(
                     "SLL_TYPE": "",
                     "CNDT_PRIC": "",
                 },
+                # The compose fixtures price at the ×100 scale CP-3 trees use (PRICE 4200 =
+                # 42원), so ORD_UNPR is 42 — test_kis_mock_e2e_honesty pins it.
+                "price_scale": 100,
                 "min_send_interval_ms": min_send_interval_ms,
                 "token_reissue_min_interval_s": 60,
                 "request_timeout_s": 5.0,

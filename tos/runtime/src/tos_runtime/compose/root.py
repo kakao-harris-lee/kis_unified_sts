@@ -406,6 +406,7 @@ def compose_paper_runtime(
         KisWireCodecDigest(
             field_map=boot.transport_config.field_map,
             static_body_fields=boot.transport_config.static_body_fields,
+            price_scale=boot.transport_config.price_scale,
         )
         if boot.transport_config is not None
         else None

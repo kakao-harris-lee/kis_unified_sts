@@ -62,7 +62,7 @@ def test_encode_produces_deterministic_sorted_no_whitespace_json() -> None:
         price=Decimal("70000"),
     )
     body = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     expected = json.dumps(
         {
@@ -88,10 +88,10 @@ def test_encode_produces_deterministic_sorted_no_whitespace_json() -> None:
 def test_encode_is_a_pure_function_of_its_inputs() -> None:
     seal = build_seal(field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS)
     first = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     second = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     assert first == second
 
@@ -108,7 +108,7 @@ def test_account_is_read_from_the_sealed_account_coordinate() -> None:
         field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS, account="acct-from-seal"
     )
     body = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     decoded = json.loads(body)
     assert decoded["CANO"] == "acct-from-seal" == seal.account
@@ -129,7 +129,7 @@ def test_account_is_the_seal_field_never_instrument_key_account() -> None:
     assert seal.account == "seal-account-value"
     assert seal.instrument_key.account == "different-instrument-key-account-value"
     body = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     decoded = json.loads(body)
     assert decoded["CANO"] == "seal-account-value"
@@ -144,7 +144,10 @@ def test_missing_a_required_field_refuses() -> None:
     del incomplete_static["CNDT_PRIC"]
     with pytest.raises(KisOrderWireCodecError, match="missing"):
         KisOrderWireCodec.encode(
-            seal, field_map=FIELD_MAP, static_body_fields=incomplete_static
+            seal,
+            field_map=FIELD_MAP,
+            price_scale=1,
+            static_body_fields=incomplete_static,
         )
 
 
@@ -154,7 +157,7 @@ def test_an_unexpected_extra_field_refuses() -> None:
     extra_static["EXTRA_FIELD"] = "x"
     with pytest.raises(KisOrderWireCodecError, match="unexpected"):
         KisOrderWireCodec.encode(
-            seal, field_map=FIELD_MAP, static_body_fields=extra_static
+            seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=extra_static
         )
 
 
@@ -163,7 +166,10 @@ def test_an_unrecognized_dynamic_source_refuses() -> None:
     bad_field_map = {"side": "SLL_BUY_DVSN_CD"}
     with pytest.raises(KisOrderWireCodecError, match="unrecognized"):
         KisOrderWireCodec.encode(
-            seal, field_map=bad_field_map, static_body_fields=STATIC_FIELDS
+            seal,
+            field_map=bad_field_map,
+            price_scale=1,
+            static_body_fields=STATIC_FIELDS,
         )
 
 
@@ -180,7 +186,7 @@ def test_encode_delegates_to_encode_fields_with_the_seals_own_four_values() -> N
         price=Decimal("70000"),
     )
     via_encode = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     via_encode_fields = KisOrderWireCodec.encode_fields(
         account=seal.account,
@@ -188,6 +194,7 @@ def test_encode_delegates_to_encode_fields_with_the_seals_own_four_values() -> N
         quantity=seal.outbound_quantity,
         price=seal.outbound_price,
         field_map=FIELD_MAP,
+        price_scale=1,
         static_body_fields=STATIC_FIELDS,
     )
     assert via_encode == via_encode_fields
@@ -200,12 +207,68 @@ def test_quantity_and_price_are_plain_decimal_strings_never_scientific_notation(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
         quantity=Decimal("100"),
-        price=Decimal("0.0001"),
+        # A Decimal in exponent form (the shape the sealed payload carries, e.g. 4.499E+6):
+        # the scaled quotient must still go out as plain digits.
+        price=Decimal("1.5E+7"),
     )
     body = KisOrderWireCodec.encode(
-        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        seal, field_map=FIELD_MAP, price_scale=100, static_body_fields=STATIC_FIELDS
     )
     decoded = json.loads(body)
     assert decoded["ORD_QTY"] == "100"
-    assert decoded["ORD_UNPR"] == "0.0001"
+    assert decoded["ORD_UNPR"] == "150000"
     assert "E" not in decoded["ORD_UNPR"] and "e" not in decoded["ORD_UNPR"]
+
+
+# ---------------------------------------------------------------------------
+# price_scale — the 100× defect (rescope M2, 2026-10-22)
+# ---------------------------------------------------------------------------
+
+
+def test_a_x100_sealed_price_goes_out_as_whole_krw() -> None:
+    """The defect this pins: every CP-3 tree prices off ``close_x100``, so a 270,000원 close
+    is sealed as ``27000000``. Before ``price_scale`` the codec sent that integer verbatim as
+    ``ORD_UNPR`` — a limit price 100× the market. Concrete failing input on the old codec:
+    this seal → ``"ORD_UNPR":"27000000"``."""
+    seal = build_seal(
+        field_map=FIELD_MAP,
+        static_body_fields=STATIC_FIELDS,
+        instrument="005930",
+        quantity=Decimal("1"),
+        price=Decimal("27000000"),
+    )
+    body = json.loads(
+        KisOrderWireCodec.encode(
+            seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS, price_scale=100
+        )
+    )
+    assert body["ORD_UNPR"] == "270000"
+    assert body["ORD_QTY"] == "1"
+
+
+@pytest.mark.parametrize("price", ["27000050", "27000000.5"])
+def test_a_price_that_is_not_whole_krw_is_refused_not_rounded(price: str) -> None:
+    with pytest.raises(KisOrderWireCodecError, match="not a whole-KRW"):
+        KisOrderWireCodec.encode_fields(
+            account="12345678",
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal(price),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=100,
+        )
+
+
+@pytest.mark.parametrize("scale", [0, -100, True, 1.5, "100"])
+def test_price_scale_must_be_a_positive_int(scale: object) -> None:
+    with pytest.raises(KisOrderWireCodecError, match="positive int"):
+        KisOrderWireCodec.encode_fields(
+            account="12345678",
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal("27000000"),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=scale,  # type: ignore[arg-type]
+        )

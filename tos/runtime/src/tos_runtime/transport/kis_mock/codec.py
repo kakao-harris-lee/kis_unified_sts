@@ -48,6 +48,12 @@ byte):**
      plain, non-scientific decimal strings via ``format(Decimal(value), "f")`` (KIS's own
      ``order_cash`` docstring: "ORD_QTY(주문수량), ORD_UNPR(주문단가) 등을 String으로 전달해야
      함").
+   * **The price is UN-SCALED first** (rescope M2, 2026-10-22). The sealed price is the tick's
+     ``price_field_key`` value read verbatim (``tos.egressgw.construction`` ``_price_for``),
+     and every CP-3 tree prices off ``close_x100`` — an integer at ``price_scale`` 100. KIS's
+     ``ORD_UNPR`` is KRW. Sent as-is, a 270,000원 close would go out as ``27000000``. So
+     ``ORD_UNPR = outbound_price / price_scale``, and a quotient that is not a whole number is
+     refused (a stock order price is whole KRW; rounding it would send a price nobody sealed).
    * **Five static fields** (``static_body_fields``, a per-deployment config constant, copied
      verbatim): ``ACNT_PRDT_CD``, ``ORD_DVSN``, ``EXCG_ID_DVSN_CD``, ``SLL_TYPE``, ``CNDT_PRIC``
      — none of these varies per attempt, so none has (or needs) a sealed source.
@@ -121,6 +127,31 @@ def _decimal_to_kis_string(value: CanonicalDecimal) -> str:
     return format(Decimal(value), "f")
 
 
+def _price_to_kis_string(price: CanonicalDecimal, price_scale: int) -> str:
+    """``price / price_scale`` as a whole-KRW string, or refuse.
+
+    Raises:
+        KisOrderWireCodecError: ``price_scale`` is not a positive int, or the quotient has a
+            fractional part (e.g. ``27000050`` at scale 100 is 270,000.5원 — not a price KIS
+            can carry, and rounding would send an unsealed price).
+    """
+    if (
+        isinstance(price_scale, bool)
+        or not isinstance(price_scale, int)
+        or price_scale < 1
+    ):
+        raise KisOrderWireCodecError(
+            f"KisOrderWireCodec: price_scale must be a positive int, got {price_scale!r}"
+        )
+    quotient = Decimal(price) / Decimal(price_scale)
+    if quotient != quotient.to_integral_value():
+        raise KisOrderWireCodecError(
+            f"KisOrderWireCodec: price {price} at scale {price_scale} is {quotient} — not a "
+            "whole-KRW ORD_UNPR; refusing rather than rounding"
+        )
+    return format(quotient.to_integral_value(), "f")
+
+
 def _account_coordinate(seal: SendSeal) -> str:
     """The sealed outbound ``account`` coordinate (review F2) — :attr:`SendSeal.account`, the
     same value :meth:`SendSeal._outbound_coordinates_match_sealed_fields` already validates
@@ -145,6 +176,7 @@ class KisOrderWireCodec:
         price: CanonicalDecimal,
         field_map: Mapping[str, str],
         static_body_fields: Mapping[str, str],
+        price_scale: int,
     ) -> bytes:
         """Serialize the four dynamic VALUES + static config into the KIS ``order_cash`` wire
         body (the FROZEN recipe, module docstring) — the value-level half :meth:`encode`
@@ -168,19 +200,22 @@ class KisOrderWireCodec:
             field_map: Kernel-side source name -> KIS wire field name (closed vocabulary:
                 :data:`DYNAMIC_FIELD_SOURCES`).
             static_body_fields: KIS wire field name -> per-deployment literal constant.
+            price_scale: The integer scale ``price`` is expressed in (100 for ``close_x100``);
+                ``ORD_UNPR`` is ``price / price_scale`` (module docstring).
 
         Returns:
             The deterministic, canonical body bytes (recipe step 3 above).
 
         Raises:
-            KisOrderWireCodecError: ``field_map`` names an unrecognized source, or the combined
-                field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly.
+            KisOrderWireCodecError: ``field_map`` names an unrecognized source, the combined
+                field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly, or the
+                price is not whole KRW at ``price_scale``.
         """
         dynamic_sources: dict[str, str] = {
             "account": account,
             "instrument": instrument,
             "quantity": _decimal_to_kis_string(quantity),
-            "price": _decimal_to_kis_string(price),
+            "price": _price_to_kis_string(price, price_scale),
         }
         fields: dict[str, str] = {}
         for source_name, wire_name in field_map.items():
@@ -212,6 +247,7 @@ class KisOrderWireCodec:
         *,
         field_map: Mapping[str, str],
         static_body_fields: Mapping[str, str],
+        price_scale: int,
     ) -> bytes:
         """Serialize the sealed outbound + static config into the KIS ``order_cash`` wire body.
 
@@ -239,6 +275,7 @@ class KisOrderWireCodec:
             price=seal.outbound_price,
             field_map=field_map,
             static_body_fields=static_body_fields,
+            price_scale=price_scale,
         )
 
     @staticmethod
