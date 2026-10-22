@@ -13,14 +13,28 @@ the band source on against a REAL ``rest_base`` refuses AT BOOT, through that do
 loader, with no band-source-specific host check anywhere.
 
 **No GET ever happens here.** The autouse hermetic guard (``tos/runtime/tests/conftest.py``
-D1.4) refuses any non-loopback socket, so the "a declared source does not read at boot"
-assertion below is enforced by the harness and not just asserted: a boot that DID reach for the
-band would fail loudly rather than quietly pass.
+D1.4) refuses any non-loopback socket, so the "a ``kis_quote_get`` source does not read at
+boot" assertion below is enforced by the harness and not just asserted: a boot that DID reach
+for the band would fail loudly rather than quietly pass.
+
+**Rescope plan M1 (2026-10-22) moved the ``"boot"`` read instant to the end of
+``VenueConstraintService.__init__``** so a band-declaring tenant lands a
+``VENUE_BAND_OBSERVED`` row per boot whether or not any proposal ever reaches the venue stage
+(the measured 2026-10-22 session reached it zero times —
+``docs/broker-profiles/evidence/2026-10-22-cp3-band-first-session/README.md`` §2). Two
+consequences live in this file: :class:`TestTheProducerJournalKindReadsAtBoot` is the new
+acceptance on the kind the tenant trees declare — it opens a file, so it reads at boot through
+the real wiring and still touches no socket — and the ``kis_quote_get`` kind, whose reader is
+late-bound to the KIS credential cell ``_finalize`` fills AFTER the venue service is built,
+now refuses the boot outright if it declares ``"boot"``
+(:meth:`TestADeclaredSourceAtBoot.test_a_kis_source_that_declares_boot_refuses_the_boot`).
+Every ``kis_quote_get`` fixture below therefore pins ``read_on: ["phase_change"]``.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +43,7 @@ import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose._venue_wiring import VenueBandSourceUnwired
 from tos_runtime.transport.kis_mock.credential_session import (
     KisCredentialSessionConflict,
 )
@@ -38,7 +53,11 @@ from tos_runtime.transport.kis_quote.config import (
 )
 from tos_runtime.venue import VenuePolicyConfigError, load_venue_constraint_policy
 
-from ..venue._documents import band_source_runtime_extra, venue_policy_yaml
+from ..venue._documents import (
+    band_source_runtime_extra,
+    producer_journal_band_source_runtime_extra,
+    venue_policy_yaml,
+)
 from . import _fixtures as fx
 from .conftest import (
     _VENUE_POLICY_ACCOUNT,
@@ -144,6 +163,42 @@ def _declare_band_source(
     # the fixture's reason instead of the boot's.
     if sync_activation:
         _sync_venue_activation_digest(config_dir)
+
+
+def _declare_producer_journal_band_source(
+    config_dir: Path, *, band_journal_path: Path
+) -> None:
+    """The LONG tenant tree's own ``kind`` (``producer_journal``), declared on the compose
+    fixture's venue policy and activation-synced — the sibling of :func:`_declare_band_source`
+    for the only kind a shipped tree carries."""
+    (config_dir / "venue_constraint_policy.yaml").write_text(
+        venue_policy_yaml(
+            environment=_VENUE_POLICY_ENVIRONMENT,
+            account=_VENUE_POLICY_ACCOUNT,
+            instrument=_VENUE_POLICY_INSTRUMENT,
+            instrument_class=_VENUE_POLICY_INSTRUMENT_CLASS,
+            admitting_phases=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
+            price_min="null",
+            price_max="null",
+            tick_size="2",
+            runtime_extra=producer_journal_band_source_runtime_extra(
+                instrument=_VENUE_POLICY_INSTRUMENT,
+                band_journal_path=str(band_journal_path),
+            ),
+        ),
+        encoding="utf-8",
+    )
+    # No `band_transport_instrument_reader`: this kind's cross-checks never consult the
+    # `kis_quote` document (`_cross_check_band_source` — the last two rules are
+    # `kis_quote_get`-only), so the plain loader is the right one here.
+    loaded = load_venue_constraint_policy(
+        config_dir / "venue_constraint_policy.yaml", scheme=_SCHEME
+    )
+    members = _real_members(config_dir)
+    for member in members:
+        if member["kind"] == "VENUE_CONSTRAINT_POLICY":
+            member["digest"] = loaded.policy.canonical_digest
+    _rewrite_activation(config_dir, members)
 
 
 def _sync_venue_activation_digest(config_dir: Path) -> None:
@@ -451,17 +506,25 @@ class TestADeclaredSourceAtBoot:
         fx.write_kis_mock_transport_config(config_dir)
         _build_custody(custody_root)
 
-    def test_a_declared_source_boots_and_reads_nothing_at_boot(
+    def test_a_phase_change_only_kis_source_boots_and_reads_nothing_at_boot(
         self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
     ) -> None:
-        """Plan §6 (A): the band GET is the paper runtime's FIRST external call. Boot itself
-        must still make none — and the autouse network guard would raise if it did, so this
-        assertion is harness-enforced rather than merely stated."""
+        """Plan §6 (A): the band GET is the paper runtime's FIRST external call. A
+        ``kis_quote_get`` deployment that does NOT declare the ``"boot"`` instant still makes
+        none at boot — and the autouse network guard would raise if it did, so this assertion
+        is harness-enforced rather than merely stated.
+
+        ⚠ ``read_on`` is pinned to ``["phase_change"]`` here, which is no longer the default:
+        since the rescope plan's M1 the ``"boot"`` instant is
+        ``VenueConstraintService.__init__``, and for THIS kind that is before the credential
+        registry exists — see
+        :meth:`test_a_kis_source_that_declares_boot_refuses_the_boot`.
+        """
         self._kis_mock_boot(config_dir, custody_root)
         _write_kis_quote_transport_config(
             config_dir, instrument=_VENUE_POLICY_INSTRUMENT
         )
-        _declare_band_source(config_dir)
+        _declare_band_source(config_dir, read_on='["phase_change"]')
 
         runtime = _compose(
             tmp_path,
@@ -530,7 +593,9 @@ class TestADeclaredSourceAtBoot:
         _write_kis_quote_transport_config(
             config_dir, instrument=_VENUE_POLICY_INSTRUMENT
         )
-        _declare_band_source(config_dir)
+        # `["phase_change"]` for the same reason as the test above: this kind cannot be read
+        # at the boot instant on this compose path.
+        _declare_band_source(config_dir, read_on='["phase_change"]')
 
         runtime = _compose(
             tmp_path,
@@ -570,7 +635,10 @@ class TestADeclaredSourceAtBoot:
             instrument=_VENUE_POLICY_INSTRUMENT,
             token_reissue_min_interval_s=61,
         )
-        _declare_band_source(config_dir)
+        # `["phase_change"]`: with `"boot"` declared this kind refuses EARLIER, over the
+        # registry not existing yet, and the conflict below would never be reached — the test
+        # would pass for the wrong refusal.
+        _declare_band_source(config_dir, read_on='["phase_change"]')
 
         with pytest.raises(KisCredentialSessionConflict):
             _compose(
@@ -580,6 +648,37 @@ class TestADeclaredSourceAtBoot:
                 custody_root,
                 transport_kind=TransportKind.KIS_MOCK,
             )
+
+    def test_a_kis_source_that_declares_boot_refuses_the_boot(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """Rescope plan M1 — the one input that reaches :class:`VenueBandSourceUnwired`.
+
+        The ``"boot"`` read instant is ``VenueConstraintService.__init__``, which
+        :func:`~tos_runtime.compose._venue_wiring.build_venue_service` runs before
+        ``_finalize`` fills the KIS credential cell. For ``kind: kis_quote_get`` that is too
+        early by construction, so the deployment refuses LOUDLY at boot instead of running
+        with a band source it can never read at the instant it declared. The sibling kind
+        ``producer_journal`` — the only one any shipped tree declares — has no such
+        dependency; :class:`TestTheProducerJournalKindReadsAtBoot` is its counterpart.
+        """
+        self._kis_mock_boot(config_dir, custody_root)
+        _write_kis_quote_transport_config(
+            config_dir, instrument=_VENUE_POLICY_INSTRUMENT
+        )
+        _declare_band_source(config_dir, read_on='["boot", "phase_change"]')
+
+        with pytest.raises(VenueBandSourceUnwired) as excinfo:
+            _compose(
+                tmp_path,
+                config_dir,
+                data_dir,
+                custody_root,
+                transport_kind=TransportKind.KIS_MOCK,
+            )
+
+        assert "kis_quote_get" in str(excinfo.value)
+        assert "producer_journal" in str(excinfo.value)
 
     def test_a_null_band_source_boots_beside_a_still_TBD_transport_document(
         self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
@@ -632,3 +731,173 @@ class TestADeclaredSourceAtBoot:
             )
 
         assert "no kis_quote transport document" in str(excinfo.value)
+
+
+class TestTheProducerJournalKindReadsAtBoot:
+    """Rescope plan M1 (``docs/plans/2026-10-22-tos-rescope-plan.md``) — the band is
+    OBSERVABLE at boot on the kind the CP-3 tenant trees actually declare.
+
+    **The measured input** (``docs/broker-profiles/evidence/
+    2026-10-22-cp3-band-first-session/README.md`` §2): on the first enabled session every
+    proposal was denied at ``CANDIDATE_COMMAND_CONSTRUCTION``, which is upstream of every
+    caller of ``snapshot()``, so the band was never read and acceptance 1c/2/3 were recorded
+    NOT EXERCISED. This class is that day with the M1 change: a full compose boot, **no
+    attempt driven at all**, and the row is there.
+
+    The companion unit tests (``tests/venue/test_service_band.py::TestTheBandIsReadAtBoot``)
+    pin the per-outcome shape; what only a compose boot can show is that the real wiring
+    reaches the reader before anything calls ``snapshot()``.
+    """
+
+    #: The KST trading date the compose fixture's FIXED wall clock
+    #: (``_fixtures.DEFAULT_WALL_CLOCK_UNIX_MS``) lands on — derived from that constant, never
+    #: typed as a literal, so moving the fixture clock moves this with it.
+    _TRADING_DATE = datetime.fromtimestamp(
+        fx.DEFAULT_WALL_CLOCK_UNIX_MS / 1000, tz=timezone(timedelta(hours=9))
+    ).strftime("%Y%m%d")
+
+    def _band_line(self, **overrides: Any) -> dict[str, Any]:
+        """One ``cp3-band/1`` line carrying the P-VL ``A05610`` measurement (987.46/1159.18
+        about 1073.32), which sits on the policy's ``tick_size: 2`` grid at
+        ``price_scale: 100`` — the same numbers ``tests/venue/test_band_journal.py``
+        validates."""
+        line: dict[str, Any] = {
+            "kind": "cp3-band/1",
+            "source_id": "tos-cp3-live/0.1.0",
+            "instrument": _VENUE_POLICY_INSTRUMENT,
+            "trading_date": self._TRADING_DATE,
+            "tr_id": "FHMIF10000000",
+            "upper": "1159.18",
+            "lower": "987.46",
+            "basis": "1073.32",
+            "raw_payload_digest": "a" * 64,
+            "producer_continuity_id": "band-probe/1",
+            "as_of_ms": 1_760_577_960_000,
+        }
+        line.update(overrides)
+        return line
+
+    def _boot(
+        self,
+        tmp_path: Path,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        *,
+        journal_bytes: bytes | None,
+    ) -> Any:
+        journal = tmp_path / "band.jsonl"
+        if journal_bytes is not None:
+            journal.write_bytes(journal_bytes)
+        _declare_producer_journal_band_source(config_dir, band_journal_path=journal)
+        return _compose(tmp_path, config_dir, data_dir, custody_root)
+
+    def test_a_usable_journal_lands_one_observed_row_with_no_attempt_driven(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        line = self._band_line()
+        runtime = self._boot(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            journal_bytes=json.dumps(line).encode("utf-8") + b"\n",
+        )
+        try:
+            (row,) = _payloads(runtime, "VENUE_BAND_OBSERVED")
+
+            assert row["outcome"] == "OBSERVED"
+            assert row["raw_payload_digest"] == line["raw_payload_digest"]
+            assert (row["price_min"], row["price_max"]) == (98_746, 115_918)
+            assert row["raw_payload_digest_source"] == "producer"
+            # The whole point: nothing called `snapshot()`, so pre-M1 this list was empty and
+            # the band was unmeasurable.
+            assert _payloads(runtime, "VENUE_SNAPSHOT_ISSUED") == []
+            assert runtime.venue.shape_constraints.price_max == 115_918
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()
+
+    def test_an_absent_journal_lands_one_refused_row_naming_the_reason(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """The other half of the operator's acceptance: ``REFUSED`` with a reason, not
+        silence. A boot that cannot read the band still BOOTS — the runner may still be
+        waiting for the probe's first line, and a band-less runtime is the conservative state
+        (band plan §4.6: band ``None`` ⇒ kernel ``UNKNOWN`` ⇒ 송신 0)."""
+        runtime = self._boot(
+            tmp_path, config_dir, data_dir, custody_root, journal_bytes=None
+        )
+        try:
+            (row,) = _payloads(runtime, "VENUE_BAND_OBSERVED")
+
+            assert row["outcome"] == "REFUSED"
+            assert row["reason"] == "journal_absent"
+            assert runtime.venue.shape_constraints.price_max is None
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()
+
+    def test_the_2026_10_22_shape_reproduced_an_upstream_halt_still_leaves_the_row(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """**The measured day, reproduced.** Driving a real event against this policy halts
+        at ``CANDIDATE_COMMAND_CONSTRUCTION`` with ``STAGE_DENIED`` — the same halt step and
+        reason all 25 proposals took on 2026-10-22 (evidence README §2) — so ``snapshot()``
+        is never called and ``VENUE_SNAPSHOT_ISSUED`` stays empty. That is the day that
+        produced zero band rows. It now produces exactly one.
+
+        The halt is asserted, not merely allowed: if this fixture ever started reaching step
+        3, this test would stop reproducing the shape it is named after and would have to be
+        rewritten rather than silently measuring something else.
+        """
+        runtime = self._boot(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            journal_bytes=json.dumps(self._band_line()).encode("utf-8") + b"\n",
+        )
+        try:
+            assert len(_payloads(runtime, "VENUE_BAND_OBSERVED")) == 1
+            _reach_trusted(runtime)
+            runtime.run_once((fx.crossing_event(),))
+
+            (consumed,) = _payloads(runtime, "EVENT_CONSUMED")
+            assert consumed["halt_reason"] == "STAGE_DENIED"
+            assert (
+                consumed["flow_fingerprint"]["halt_step"]
+                == "CANDIDATE_COMMAND_CONSTRUCTION"
+            )
+            assert _payloads(runtime, "VENUE_SNAPSHOT_ISSUED") == []
+            assert len(_payloads(runtime, "VENUE_BAND_OBSERVED")) == 1
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()
+
+    def test_the_first_snapshot_adds_no_second_row_for_the_boot_instant(
+        self, tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """One instant, one row, on the REAL composed service. ``snapshot()`` is called
+        directly because the fixture's own attempts halt upstream of it (the test above) —
+        the object is the production one either way."""
+        runtime = self._boot(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            journal_bytes=json.dumps(self._band_line()).encode("utf-8") + b"\n",
+        )
+        try:
+            assert len(_payloads(runtime, "VENUE_BAND_OBSERVED")) == 1
+
+            snapshot = runtime.venue.snapshot()
+
+            assert len(_payloads(runtime, "VENUE_BAND_OBSERVED")) == 1
+            assert (
+                snapshot.critical_input_snapshot_digest
+                == _payloads(runtime, "VENUE_BAND_OBSERVED")[0]["band_digest"]
+            )
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()

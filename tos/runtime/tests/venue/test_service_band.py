@@ -96,6 +96,29 @@ class _Reads:
         self.count = 0
 
 
+class _Sink:
+    """The ``EvidenceRecorder`` a REAL band reader writes its ``VENUE_BAND_OBSERVED`` rows
+    through (re-declared here rather than imported from ``test_band_journal``: cross-suite
+    imports are forbidden by this suite's own convention, ``conftest.py``).
+
+    It exists because the rescope-plan M1 boot read made the ROW the observable: the venue
+    service's own evidence store never carries ``VENUE_BAND_OBSERVED`` (the reader owns that
+    kind), so a test that only looks at the store cannot see a boot read at all.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, kind: str, fields: Any) -> None:
+        self.rows.append((kind, dict(fields)))
+
+    def only(self) -> dict[str, Any]:
+        assert len(self.rows) == 1, self.rows
+        kind, fields = self.rows[0]
+        assert kind == "VENUE_BAND_OBSERVED"
+        return fields
+
+
 def _band(
     *,
     price_min: int = _LOWER,
@@ -495,6 +518,9 @@ class TestReadOnIsHonoured:
             tmp_path, evidence_store, bands=[_band()], read_on='["boot"]'
         )
 
+        # The "boot" instant is CONSTRUCTION since the rescope plan's M1, so the count is
+        # already 1 here — and the first snapshot must not make it 2.
+        assert reads.count == 1
         service.snapshot()
         assert reads.count == 1
 
@@ -513,6 +539,9 @@ class TestReadOnIsHonoured:
         service, phase, generation, _date, _loaded, reads = _build(
             tmp_path, evidence_store, bands=[_band()], read_on='["phase_change"]'
         )
+        assert (
+            reads.count == 0
+        )  # construction is the "boot" instant, and it is not declared
 
         service.snapshot()
 
@@ -536,8 +565,10 @@ class TestReadOnIsHonoured:
         service, phase, generation, _date, _loaded, reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
+        assert reads.count == 1  # "boot" = construction
 
         service.snapshot()
+        assert reads.count == 1  # the first snapshot is not a second "boot"
         phase.value = "CLOSED"
         generation.value = 2
         service.snapshot()
@@ -653,12 +684,17 @@ def _producer_journal_service(
     evidence_store: SqliteEvidenceStore,
     *,
     journal_bytes: bytes,
+    band_sink: _Sink | None = None,
 ) -> VenueConstraintService:
     """A service whose band comes from a REAL :class:`ProducerJournalBandReader` over a
     journal whose exact BYTES the caller chose — bytes, because one input below is not text.
 
     A real reader, not a double: a double would make every assertion here one about the
     test's own ``if``.
+
+    ``band_sink`` captures the reader's own ``VENUE_BAND_OBSERVED`` rows. Passing one is what
+    lets a test assert WHICH layer refused a line: the reader names a reason in a row, the
+    service's trading-date bond drops a band silently.
     """
     journal = tmp_path / "band.jsonl"
     journal.write_bytes(journal_bytes)
@@ -680,7 +716,7 @@ def _producer_journal_service(
     reader = ProducerJournalBandReader(
         band_source=loaded.band_source,
         monotonic=_Monotonic(),
-        evidence_sink=lambda _kind, _fields: None,
+        evidence_sink=band_sink if band_sink is not None else _Sink(),
         trading_date_reader=lambda: _TRADING_DATE,
         tick_size=loaded.policy.shape_constraints.tick_size,
     )
@@ -703,20 +739,23 @@ def _producer_journal_service(
 class TestProducerJournalG2ReadSide:
     """2026-10-15 plan §3.4 G2 ② — the SERVICE half of the read-side trading-date clause.
 
-    ⚠ **This is the "가려진 절" the plan warns about, and the reason the assertion is on the
-    FIRST snapshot.** ``snapshot()`` evaluates its own trading-date bond
-    (:meth:`~tos_runtime.venue.service.VenueConstraintService._enforce_trading_date_bond`)
-    before anything else, so by the SECOND call a stale band is dropped whether or not the
-    reader rejected it. On the first call the held band is still ``None`` when that bond runs,
-    the boot read happens after it, and whatever the reader returns goes straight into the
-    snapshot — so the first snapshot is the only place where deleting the reader's own
-    comparison changes an answer.
+    ⚠ **The "가려진 절" moved, and this class had to move with it.** Until the rescope plan's
+    M1 the boot read happened INSIDE the first ``snapshot()`` call, after that call's own
+    trading-date bond had already run against a still-``None`` band — so the first snapshot
+    was the one place where deleting the reader's ``trading_date`` comparison changed an
+    answer, and the assertion lived there (measured red proof, 2026-10-16). With the read now
+    at CONSTRUCTION, the band is already held when
+    :meth:`~tos_runtime.venue.service.VenueConstraintService._enforce_trading_date_bond` runs
+    on the first call, so that bond drops a D-1 band whether or not the reader rejected it:
+    **the snapshot assertions below no longer discriminate the reader's clause at all.**
 
-    **Measured red proof** (2026-10-16): with ``band_journal.ProducerJournalBandReader``'s
-    ``trading_date`` comparison deleted,
-    :meth:`test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless` FAILS —
-    the first snapshot binds the D-1 line's digest — while the same assertions taken on a
-    SECOND ``snapshot()`` call stay green, which is the plan's point.
+    What discriminates it is the ``VENUE_BAND_OBSERVED`` row. The reader REFUSES with a named
+    reason; the service's bond drops a band silently, writing nothing. So
+    :meth:`test_a_line_from_another_trading_date_is_refused_by_the_reader_not_the_bond` is the
+    clause-level test (#838's "the disposition is a unit test that hits only that clause"),
+    and the snapshot assertions stay as the compound — the two layers together leave no band
+    in force. The reader's own standalone proof is
+    ``tests/venue/test_band_journal.py::TestG2TradingDateReadSide``.
 
     A REAL :class:`~tos_runtime.venue.band_journal.ProducerJournalBandReader` is wired here,
     not a double: a double would make this an assertion about the test's own ``if``.
@@ -728,6 +767,7 @@ class TestProducerJournalG2ReadSide:
         evidence_store: SqliteEvidenceStore,
         *,
         line_trading_date: str,
+        band_sink: _Sink | None = None,
     ) -> VenueConstraintService:
         return _producer_journal_service(
             tmp_path,
@@ -736,6 +776,7 @@ class TestProducerJournalG2ReadSide:
                 _producer_journal_line(trading_date=line_trading_date)
             ).encode("utf-8")
             + b"\n",
+            band_sink=band_sink,
         )
 
     def test_todays_line_reaches_the_first_snapshot(
@@ -752,10 +793,34 @@ class TestProducerJournalG2ReadSide:
         assert snapshot.max_age == f"trading_date_kst:{_TRADING_DATE}"
         assert service.shape_constraints.price_max == _UPPER
 
+    def test_a_line_from_another_trading_date_is_refused_by_the_reader_not_the_bond(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """The clause-level assertion (class docstring): WHICH layer rejected the line.
+
+        Deleting ``ProducerJournalBandReader``'s own ``trading_date`` comparison turns this
+        row into an ``OBSERVED`` one — the service's bond would still drop the band a moment
+        later, leaving every snapshot assertion green, but it writes no row and so cannot
+        produce this one.
+        """
+        sink = _Sink()
+        self._service(
+            tmp_path, evidence_store, line_trading_date="20261007", band_sink=sink
+        )
+
+        row = sink.only()
+
+        assert row["outcome"] == "REFUSED"
+        assert row["reason"] == "trading_date_mismatch"
+        assert "20261007" in row["detail"]
+
     def test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Only the LINE's ``trading_date`` differs from the baseline above."""
+        """The COMPOUND (class docstring): whichever layer caught it, no band is in force.
+
+        Only the LINE's ``trading_date`` differs from the baseline above.
+        """
         service = self._service(tmp_path, evidence_store, line_trading_date="20261007")
 
         snapshot = service.snapshot()
@@ -887,3 +952,174 @@ class TestProducerJournalNullProvenance:
         assert service.shape_constraints.price_max is None
         assert snapshot.critical_input_snapshot_digest is None
         assert snapshot.source_continuity_id is None
+
+
+class TestTheBandIsReadAtBoot:
+    """Rescope plan M1 (``docs/plans/2026-10-22-tos-rescope-plan.md`` §3) — the band is
+    OBSERVABLE at boot, with no proposal and no snapshot.
+
+    **The measured input this exists for** (``docs/broker-profiles/evidence/
+    2026-10-22-cp3-band-first-session/README.md`` §2): on the first enabled session all 25
+    proposals were denied at ``CANDIDATE_COMMAND_CONSTRUCTION``, which is UPSTREAM of every
+    caller of ``snapshot()``. The band source was bound, the journal line was there and would
+    have passed every clause — and ``VENUE_BAND_OBSERVED`` rows that day were **0**, so band
+    acceptance was neither passed nor failed but unmeasurable. The whole point of reading at
+    construction is that this day leaves a row.
+
+    Each test below is red against the pre-M1 placement for a different reason, and the four
+    together are the operator's four cases:
+
+    * a valid journal → exactly one ``OBSERVED`` row **without any snapshot**
+      (pre-M1: zero rows — the lazy read never happened);
+    * an unusable/absent line → exactly one ``REFUSED`` row naming the reason (same);
+    * the first snapshot after boot adds NO second row (red if the ``"boot"`` read is left in
+      ``snapshot()`` as well as added to ``__init__`` — one instant, two rows);
+    * a tree that declares no band source reads nothing, ever (the resident ``paper`` and
+      SHORT trees, whose ``band_source`` is null — plan §5).
+    """
+
+    def _sink_and_service(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore, *, tail: bytes
+    ) -> tuple[_Sink, VenueConstraintService]:
+        sink = _Sink()
+        service = _producer_journal_service(
+            tmp_path, evidence_store, journal_bytes=tail, band_sink=sink
+        )
+        return sink, service
+
+    def test_a_valid_journal_lands_one_observed_row_with_no_snapshot_at_all(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        line = _producer_journal_line()
+        sink, service = self._sink_and_service(
+            tmp_path, evidence_store, tail=json.dumps(line).encode("utf-8") + b"\n"
+        )
+
+        # No `snapshot()`, no `decide()` — the 2026-10-22 shape exactly.
+        row = sink.only()
+
+        assert row["outcome"] == "OBSERVED"
+        assert row["raw_payload_digest"] == line["raw_payload_digest"]
+        assert (row["price_min"], row["price_max"]) == (_LOWER, _UPPER)
+        assert row["trading_date"] == _TRADING_DATE
+        # And the band read at boot is already the EFFECTIVE constraint set, before anything
+        # asks for a snapshot.
+        assert service.shape_constraints.price_max == _UPPER
+        assert _rows(evidence_store, VENUE_SNAPSHOT_ISSUED_KIND) == []
+
+    @pytest.mark.parametrize(
+        ("tail", "reason"),
+        [
+            pytest.param(b"", "journal_empty", id="empty_journal"),
+            pytest.param(b"{not json\n", "line_unparseable", id="malformed_line"),
+            pytest.param(
+                json.dumps(_producer_journal_line(upper="not-a-number")).encode("utf-8")
+                + b"\n",
+                "non_integral_scale",
+                id="unscalable_bound",
+            ),
+        ],
+    )
+    def test_an_unusable_line_lands_one_refused_row_naming_the_reason(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        tail: bytes,
+        reason: str,
+    ) -> None:
+        sink, service = self._sink_and_service(tmp_path, evidence_store, tail=tail)
+
+        row = sink.only()
+
+        assert row["outcome"] == "REFUSED"
+        assert row["reason"] == reason
+        assert service.shape_constraints.price_max is None
+
+    def test_an_absent_journal_lands_one_refused_row_too(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """Separate from the parametrization above because the journal file must NOT be
+        written at all — ``_producer_journal_service`` always writes one."""
+        sink = _Sink()
+        path = write_fixture_venue_policy(
+            tmp_path,
+            venue_policy_yaml(
+                price_min="null",
+                price_max="null",
+                tick_size="2",
+                min_quantity="1",
+                max_quantity="10",
+                runtime_extra=producer_journal_band_source_runtime_extra(
+                    instrument=_INSTRUMENT,
+                    band_journal_path=str(tmp_path / "never-written.jsonl"),
+                ),
+            ),
+        )
+        loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+        assert isinstance(loaded.band_source, ProducerJournalBandSource)
+        reader = ProducerJournalBandReader(
+            band_source=loaded.band_source,
+            monotonic=_Monotonic(),
+            evidence_sink=sink,
+            trading_date_reader=lambda: _TRADING_DATE,
+            tick_size=loaded.policy.shape_constraints.tick_size,
+        )
+
+        VenueConstraintService(
+            loaded_policy=loaded,
+            scheme=SCHEME,
+            session_phase_reader=_FakeReader("REGULAR"),
+            tick_generation_reader=_FakeReader(1),
+            evidence_store=evidence_store,
+            environment_label="test-env",
+            route_fields=InstrumentRouteFields(),
+            broker_capability_profile_version=None,
+            broker_capability_profile_digest=None,
+            activated_member_digest="fixture-activation-digest",
+            band_reader=reader.read,
+            trading_date_reader=_FakeReader(_TRADING_DATE),
+        )
+
+        row = sink.only()
+
+        assert row["outcome"] == "REFUSED"
+        assert row["reason"] == "journal_absent"
+
+    def test_the_first_snapshot_does_not_add_a_second_row_for_the_same_instant(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """One instant, one row. The boot read is ``__init__``'s; the first snapshot must not
+        repeat it (``service.snapshot``'s ``last_snapshot is not None`` clause)."""
+        sink, service = self._sink_and_service(
+            tmp_path,
+            evidence_store,
+            tail=json.dumps(_producer_journal_line()).encode("utf-8") + b"\n",
+        )
+        assert len(sink.rows) == 1
+
+        snapshot = service.snapshot()
+
+        assert len(sink.rows) == 1
+        # The row that is already there is the one the snapshot binds — not a second read.
+        assert snapshot.critical_input_snapshot_digest is not None
+        assert sink.only()["band_digest"] == snapshot.critical_input_snapshot_digest
+
+    def test_a_tree_that_declares_no_band_source_never_reads(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """The resident ``paper`` tree and the SHORT tenant tree (band ``null``, plan §5): no
+        new row, no read, at boot or ever. A reader IS handed in, so what keeps it unused is
+        the policy declaration alone — the same gate plan §4.5's review L2 asks for.
+        """
+        service, phase, generation, _date, _loaded, reads = _build(
+            tmp_path, evidence_store, declare_band_source=False, bands=[_band()]
+        )
+        assert reads.count == 0
+
+        service.snapshot()
+        phase.value = "CLOSED"
+        generation.value = 2
+        service.snapshot()
+
+        assert reads.count == 0
+        assert service.shape_constraints.price_max == 500  # the policy's own literal
