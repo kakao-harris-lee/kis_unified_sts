@@ -1280,7 +1280,7 @@ def test_appends_still_work_and_stay_chained_after_the_index_lands(
 
 # -- HIGH-1 (review 2026-09-30): the documented rollback must be reversible ---------------------
 #
-# The runbook (docs/runbooks/tos-paper-boot.md §4-A) tells an operator how to roll v2 back. Both
+# The runbook (docs/runbooks/tos-paper-boot-history.md §4-A) tells an operator how to roll v2 back. Both
 # tests below were RED before the `apply_migrations` fix: (1) the ledger's surviving v2 row made
 # a re-`migrate` abort with `IntegrityError UNIQUE constraint failed: schema_ledger.version`,
 # stranding the file at v1 with no index — refused by v2 code and unreachable by `migrate`;
