@@ -148,7 +148,7 @@ that omits an envelope-declared dimension, and `:274-277` refuses an empty
 envelope outright — so the previous "both empty" state could not pass either).
 
 **What still blocks a `run` boot (measured 2026-09-24, named in
-`docs/runbooks/tos-paper-boot.md` §5):** a canonical digest is **not
+`docs/runbooks/tos-paper-boot-history.md` §5):** a canonical digest is **not
 reproducible across processes** whenever a covered field is a set —
 `covered_content()`'s `model_dump(mode="json", …)` emits set-iteration order and
 the canonicalizer treats a sequence as order-significant. Measured over the

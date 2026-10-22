@@ -110,7 +110,7 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
   이 매니페스트 `direction.value` 와 **같지 않으면 거부**한다.
 - ⚠ **그것만으로는 방향 검사가 사라진다(리뷰 H1).** 오늘 LONG 렌더의 방향 규칙은 줄을 **자기 자신으로** 바꾸는데, 앵커가
   정확히 1회 맞아야 하므로 LONG 이 아닌 트리는 렌더를 거부한다(`render_paper_config.py:244-247` docstring). 활성화는 방향을
-  결속하지 않고(`:632-638`), 런북 §⑤(`docs/runbooks/tos-paper-boot.md:794-801`)는 방향 일관성을 「렌더가 네 자리를 함께
+  결속하지 않고(`:632-638`), 런북 §5 ⑤(`docs/runbooks/tos-paper-boot-history.md`)는 방향 일관성을 「렌더가 네 자리를 함께
   바꾼다」와 paper 트리 전용 핀에 기댄다. 매니페스트끼리만 비교하면 이 검사가 **없어진다**. 구체적 실패 입력:
   `cp3-setup-d-short` 트리에 LONG 의 `RENDER.yaml`(`value: "LONG"`)을 복사했거나 `construction.yaml` 이 아직
   `NEW_LONG`/`BUY` 인 상태로 `--direction LONG` 렌더 → 렌더 성공 · 다섯 digest 동일 · 활성화 통과 · 아무것도 거부하지 않음.
@@ -124,7 +124,7 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
   만들 수 없고, 그래서 SHORT 트리를 따로 커밋했다(kickoff §5 3). 치환과 커밋이 둘 다 있으면 두 원천이 된다.
 - 활성화가 방향을 결속하지 않는 문제(§1 끝 행)는 그대로 남는다. tenant 는 트리 자체가 방향별이고 **data dir 도
   방향별**(지정은 tenant 완성 PR)이라 섞일 경로가 상주보다 좁다. `RENDERED.json` 에 `tree_id` 를 더한다(`direction` 은 이미
-  있다 — 런북 `tos-paper-boot.md:196`).
+  있다 — 런북 `tos-paper-boot-history.md` §4-A).
 
 ### 2.4 저널 — 합성과 외부 원천의 분리
 
@@ -157,7 +157,7 @@ tenant 전략 파일에서 첫 규칙의 좌표 줄만 앵커를 달고 나머�
   결과 · 표현 정정 PR #892 재리뷰 LOW).** 쓰기 시각에 찍어도 **쓰기와 첫 평가 사이에 가드 · 렌더(다섯 digest 도출 +
   스테이징 스왑) · 부팅 · 리플레이**가 들어가므로 간격은 **초 단위**이고 800 ms 를 넘지 않을 길이 없다. 그러면
   `_derive_field_state` 가 `(UNKNOWN, "stale")` 를 돌려준다 — 상주 렌더의 부팅 증명
-  관측이 `_JOURNAL_AGE_MS` 1000 > 800 때문에 **언제나** STALE 인 것과 같은 모양이다(런북 `tos-paper-boot.md`
+  관측이 `_JOURNAL_AGE_MS` 1000 > 800 때문에 **언제나** STALE 인 것과 같은 모양이다(런북 `tos-paper-boot-history.md` §5 ④
   §「렌더가 만든 부팅 증명 관측은 부팅 시점에 이미 STALE 이다」). 그러므로 이 도구가 증명하는 것은 **배선**(렌더 → 활성화
   → 로더 → 15 필드 **선언** → 결정 경로)이지 **필드 소비**가 아니다. 소비까지 보려면 부팅 **뒤에** 행을 덧붙이거나(원자적
   전체 파일 교체 — `marketfeed/journal.py`) ③ 을 기다린다. PR-C 는 어느 쪽을 택했는지 실측과 함께 적는다.

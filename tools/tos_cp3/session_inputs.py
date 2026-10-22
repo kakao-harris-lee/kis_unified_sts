@@ -156,7 +156,7 @@ INBOX_FILE_NAME = "inbox.sqlite3"
 #: own value into ``PRAGMA user_version``. Pinned rather than read-and-
 #: accepted: a bumped version means the tables changed shape, and reading a new
 #: shape with these queries would answer a question about a store that no
-#: longer exists (the migration note is runbook ``tos-paper-boot.md`` §4-A).
+#: longer exists (the migration note is runbook ``tos-paper-boot-history.md`` §4-A).
 PINNED_MARKETFEED_SCHEMA_VERSION = 1
 PINNED_EVIDENCE_SCHEMA_VERSION = 2
 PINNED_INBOX_SCHEMA_VERSION = 1
@@ -404,7 +404,7 @@ def _connect_ro(path: Path, *, label: str, pinned_version: int) -> sqlite3.Conne
     if not path.is_file():
         raise SessionInputsError(
             f"{label} store not found: {path}. A session that never ticked "
-            "writes no marketfeed store at all (runbook tos-paper-boot.md §4), "
+            "writes no marketfeed store at all (runbook tos-paper-boot-history.md §4), "
             "which is a different fact from an empty one"
         )
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

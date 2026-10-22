@@ -29,7 +29,7 @@ tree_id: "paper"
 
 direction:
   # "substitute" = today's resident behaviour: `--direction` rewrites the four
-  # direction-bound slots together (runbook tos-paper-boot.md §7.10 3). A tenant tree is
+  # direction-bound slots together (runbook tos-paper-boot-history.md §7.10 3). A tenant tree is
   # committed per direction and uses "declared" instead (plan §2.3) — which this tree
   # must not, because its LONG/SHORT variants exist only as a render flag.
   mode: "substitute"
