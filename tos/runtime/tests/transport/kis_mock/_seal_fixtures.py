@@ -150,7 +150,10 @@ def build_seal(
         )
         codec_digest = KisOrderWireCodec.digest(
             KisOrderWireCodec.encode(
-                provisional, field_map=field_map, static_body_fields=static_body_fields
+                provisional,
+                field_map=field_map,
+                price_scale=1,
+                static_body_fields=static_body_fields,
             )
         )
         if request_bytes_digest is None:

@@ -54,7 +54,7 @@ def _run_to_send_boundary(
     ``test_send_seal.py::_run_to_send_boundary`` uses to reach a real send hand-off."""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     runtime.context_resolver.request_bytes_digest_source = KisWireCodecDigest(
-        field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+        field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     _reach_trusted(runtime)
     event = fx.crossing_event()
@@ -92,6 +92,7 @@ def test_kis_wire_codec_digest_binds_the_seals_own_request_bytes_digest(
         quantity=Decimal(str(seal["outbound_quantity"])),
         price=Decimal(str(seal["outbound_price"])),
         field_map=FIELD_MAP,
+        price_scale=1,
         static_body_fields=STATIC_FIELDS,
     )
     recomputed_digest = KisOrderWireCodec.digest(body)
@@ -160,6 +161,7 @@ def test_capsule_stand_in_digest_does_not_satisfy_the_codec_comparison(
         quantity=Decimal(str(seal["outbound_quantity"])),
         price=Decimal(str(seal["outbound_price"])),
         field_map=FIELD_MAP,
+        price_scale=1,
         static_body_fields=STATIC_FIELDS,
     )
     recomputed_digest = KisOrderWireCodec.digest(body)

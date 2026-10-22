@@ -18,8 +18,40 @@
 # root package for the transitive contracts in .importlinter, and so its own
 # hermetic test suite is importable) and running that suite as its own step.
 #
-# NOTE: marking this job a *required* check is a GitHub branch-protection
-# setting and is NOT configured here — see the handoff report.
+# ---------------------------------------------------------------------------
+# 2026-10-22 — ONE job became FOUR, and the `tos-firewall` check name survived
+# ---------------------------------------------------------------------------
+# Measured on the last three green runs (39732037775 / 39629209685 /
+# 39731584866): the single job took 742-756s wall, and four steps were 85% of
+# it — governance batteries 202s, tos-runtime tests 187s, Layer 4 mutation
+# battery 131s, tos kernel tests 114s. Every one of them ran AFTER the others
+# finished, for no reason other than sharing a job: no step here consumes an
+# artifact a previous step produced. They are now three jobs that run at the
+# same time:
+#
+#   tos-firewall-gates   the enforcement layers + the contract/spec/size
+#                        checkers + the Layer 4 mutation battery
+#   tos-firewall-tests   the four pytest suites (now under pytest-xdist)
+#   tos-firewall-static  Black + the five mypy invocations
+#
+# THE CHECK NAME IS NOT SPLIT. The previous version of this header argued that
+# the Layer 4 gate must be a *step* rather than a job, because a new job adds a
+# new branch-protection check NAME and leaves the old one meaning less than it
+# says — the exact "guard that admits what it names" shape this repo keeps
+# getting bitten by. That argument is still right, so the fourth job below is
+# `tos-firewall`: an aggregator that needs all three and fails unless every one
+# of them reports `success`. The context `tos-firewall` therefore still means
+# "every tos firewall, test, and static check passed", and whether it is marked
+# required stays a repository-ruleset setting, unchanged by this file. The
+# aggregator fails closed: `skipped` and `cancelled` are not `success`.
+#
+# The three jobs each pay the ~25s checkout+install again. That is runner time,
+# not wall time, and it is the price of the ~9 minutes this removes from every
+# PR's critical path.
+#
+# NOTE: marking the `tos-firewall` job a *required* check is a GitHub
+# repository-ruleset setting and is NOT configured here — see the handoff
+# report.
 name: tos-firewall
 
 on:
@@ -28,17 +60,24 @@ on:
   pull_request:
 
 jobs:
-  tos-firewall:
+  # ===========================================================================
+  # Enforcement layers + governance checkers. Longest step is the Layer 4
+  # mutation battery (131s measured), which sets this job's floor.
+  # ===========================================================================
+  tos-firewall-gates:
     runs-on: ubuntu-latest
-    # 10 → 30: the tos governance test batteries (last step) took ~6.5 min
-    # locally (subprocess-heavy git-repo fixtures in test_u17_verify.py and
-    # tests/tos_l3); with the firewall + checker steps that already ran here
-    # the old 10-minute backstop would name the batteries as "hung" on a slow
-    # hosted runner. Still a hard fail-fast, just sized to the job's new content.
-    timeout-minutes: 30
+    # Was 30 for the whole monolith. Each split job gets a backstop sized to
+    # its own content with the same generous multiple of the measured time
+    # (~190s here), so a hang still fails fast and NAMES the slow job.
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout code
+      # The three setup steps are anchored here and aliased by the other two
+      # jobs below (YAML anchors, the same mechanism test.yml already uses for
+      # its `paths` list). One definition, three jobs — an install that drifts
+      # between jobs is a silent "works in one gate, not the other".
+      - &checkout
+        name: Checkout code
         uses: actions/checkout@v4
         with:
           # **전체 이력이 필요하다** — 아래 Layer 4 검사기의 `C2UP`(측정 출처 검증)은
@@ -52,15 +91,25 @@ jobs:
           # 로컬은 전체 이력을 갖고 있어 영원히 green 이었고, 게이트가 CI 에서 처음
           # 실행된 PR #637 에서야 관측됐다 — `tos-gate.yml` 은 같은 이유로 이미
           # `fetch-depth: 0` 이다.
+          #
+          # The tests job needs it too (tests/tools ancestry-derivation checkers
+          # fail-closed to PROVENANCE_UNVERIFIABLE on a shallow clone), and the
+          # static job costs ~1s extra for it — so all three share this anchor
+          # rather than each deciding for itself.
           fetch-depth: 0
 
-      - name: Set up Python
+      - &setup-python
+        name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          # Keyed by the resolved interpreter + the dependency files
+          # setup-python hashes (pyproject.toml here). Measured effect on the
+          # install step: 23-24s with the cache warm.
           cache: 'pip'
 
-      - name: Install minimal dependencies
+      - &install
+        name: Install minimal dependencies
         # Deliberately minimal — the heavy runtime stack (talib/mlflow/...) is
         # NOT needed:
         #   * tos + its 4 pinned third parties + pytest/hypothesis, via the
@@ -102,6 +151,108 @@ jobs:
           # Black/mypy — Phase 1 작업 7 (계획 §2 표 7행). 로컬 .venv 와 정확히
           # 같은 버전으로 핀 — CI 만 다른 버전에서 다른 판정을 내는 것을 막는다.
           pip install "black==26.5.1" "mypy==2.3.1"
+          # pytest-xdist — the TEST RUNNER's process pool, used by the
+          # `tos-firewall-tests` job's `-n auto`. Pinned to the local .venv's
+          # version (3.8.0, the one the pre-merge flake runs were measured on),
+          # same discipline as black/mypy one line above.
+          #
+          # This is NOT a §3.2 third-party allowlist entry and must not be
+          # added to tos/pyproject.toml: the allowlist governs what the `tos`
+          # and `tos_runtime` PACKAGES may import, and nothing under tos/
+          # imports xdist — it is a pytest plugin the runner loads, exactly
+          # like import-linter/black/mypy above are repo tools rather than
+          # kernel dependencies. It also does not move the kernel's pinned
+          # `pytest==9.0.2`: xdist 3.8.0 requires pytest>=7, which 9.0.2
+          # already satisfies.
+          pip install "pytest-xdist==3.8.0"
+
+      - name: Layer 1 — custom AST firewall (default-deny)
+        run: python tools/tos_firewall_check.py
+
+      - name: Layer 2 — import-linter (transitive forbidden-package defense)
+        run: lint-imports
+
+      # release.yaml's expected_code_digest vs the measured source tree
+      # (tools/tos_redigest.py's own docstring has the why). From PR #919,
+      # which added it to the single job between Layer 2 and the test
+      # batteries; it lands here, in the checker job, because that is what it
+      # is — it re-derives a pin and compares, it runs no tests.
+      #
+      # #919's reason for the position was "fails in seconds rather than after
+      # the ~6.5-minute batteries below". That reason is now structural rather
+      # than positional: the batteries are a SEPARATE JOB that runs beside this
+      # one, so this check reports in seconds no matter what they are doing.
+      # The tool shells out to the runtime's own `print-digests` — it never
+      # reimplements the digest, and tools/ may not import tos (firewall).
+      - name: expected_code_digest is current (tos_redigest --check)
+        run: python tools/tos_redigest.py --check
+
+      - name: tos size budget
+        # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
+        run: python tools/tos_size_budget.py --check
+
+      # tos-spec/book.toml is a byte-empty file (0 bytes) — mdbook defaults apply
+      # and the build was verified locally to succeed with them (homebrew mdbook
+      # v0.5.4, same tag as pinned below): rc=0, two "unclosed HTML tag" warnings
+      # + one "search index is very large" warning, none of which fail the build.
+      # rust-lang/mdbook publishes no separate .sha256 asset for this release, so
+      # the digest below is a locally-computed pin against the official GitHub
+      # release tarball (same pattern as the yq pin in the tests job — download
+      # once, verify forever), not an independently-published checksum.
+      - name: Pin mdBook v0.5.4 (tos-spec build)
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/mdbook.tar.gz \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
+          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/mdbook.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/mdbook /usr/local/bin/mdbook
+          mdbook --version
+
+      - name: mdBook build (tos-spec)
+        run: mdbook build tos-spec --dest-dir /tmp/tos-spec-book
+
+      # §12.2 (완료 계약 F-9): 코퍼스 무결성 검사기와 완료 계약 검사기를 CI 에
+      # 편입한다 — Phase 1 로 미루면 Phase 0 산출물이 회귀 방어 없이 병합된다.
+      # 두 검사기의 git-이력 파생(U-12 트리거·U-15 조상성·U-16 진 조상)은 얕은
+      # 클론에서 전부 PROVENANCE_UNVERIFIABLE 로 떨어지므로 위 checkout 의
+      # `fetch-depth: 0` 이 전제다 (§12.2 체크아웃 깊이 행).
+      - name: tos-spec corpus integrity (tos_spec_status --check)
+        run: python tools/tos_spec_status.py --check
+
+      - name: phase0 completion contract checks (tos_completion_status --check)
+        run: python tools/tos_completion_status.py --check
+
+      # Layer 4 — Phase 0 완료 계약의 «자기참조 stale» 게이트.
+      #
+      # 이 잡은 경로 게이팅 없이 모든 PR·main push 에서 돌므로(위 헤더 주석)
+      # 계약 문서만 고치는 PR 도 반드시 통과한다.  별도 «체크 이름» 이 생기지
+      # 않는다는 원래의 규율은 맨 아래 `tos-firewall` 집계 잡이 그대로 지킨다.
+      #
+      # 근거: 레인 B 재심 R-F3/R-F4 — 「규칙 신설 = 전수 적용까지가 한 단위」가
+      # 이 아크에서 다섯 번 깨졌고, 그때마다 문서 내 «수동 census» 였다.
+      # 산문 선언은 소비자가 없으면 산문이다(K-10).
+      - name: Layer 4 — phase0 contract self-reference gate
+        run: python tools/tos_contract_check.py
+
+      # 검사기 자신이 «죽은 검사»가 아님을 매 실행 증명한다.  9차의
+      # 「(4) 열거 7==7」 불변식이 세 자리 중 둘만 보고 green 을 낸 것이
+      # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
+      # 131s 측정 — 이 잡에서 가장 긴 스텝이고 이 잡의 바닥이다.
+      - name: Layer 4 self-test — mutation battery (dead-check 0)
+        run: python tools/tos_contract_check.py --self-test
+
+  # ===========================================================================
+  # Every pytest suite this workflow owns, all four under pytest-xdist.
+  # ===========================================================================
+  tos-firewall-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - *checkout
+      - *setup-python
+      - *install
 
       - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
         # tools/wfcanon-v222.py [M-4] pins the judgment parser to
@@ -115,6 +266,9 @@ jobs:
         # /usr/local/bin would be shadowed). Condensed from the identical
         # rationale in .github/workflows/test.yml (source of this step, now
         # moved here with tests/tools/test_u17_verify.py — see below).
+        #
+        # It lives in THIS job and not the gates job because only the
+        # governance batteries below drive u17-verify.sh.
         run: |
           set -euo pipefail
           curl -sL -o /tmp/yq_linux_amd64 \
@@ -123,24 +277,19 @@ jobs:
           sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
           yq --version
 
-      - name: Layer 1 — custom AST firewall (default-deny)
-        run: python tools/tos_firewall_check.py
-
-      - name: Layer 2 — import-linter (transitive forbidden-package defense)
-        run: lint-imports
-
-      # release.yaml's expected_code_digest vs the measured source tree
-      # (tools/tos_redigest.py's own docstring has the why). Placed BEFORE the
-      # test batteries so a PR that changed tos/src or tos/runtime/src without
-      # re-deriving the pin fails in seconds with the fix command in the
-      # message, rather than after the ~6.5-minute batteries below. The tool
-      # shells out to the runtime's own `print-digests` — it never
-      # reimplements the digest, and tools/ may not import tos (firewall).
-      - name: expected_code_digest is current (tos_redigest --check)
-        run: python tools/tos_redigest.py --check
-
+      # `-n auto` = one worker per runner CPU (4 on this hosted image).
+      # Measured locally against this commit's tree (16-core host, `-n 4` to
+      # mimic the runner, .venv pytest 9.0.2 / pytest-xdist 3.8.0):
+      #   tos/tests          119.8s serial -> 48.4s   (9657 tests, 0 failures)
+      #   tos/runtime/tests  338.3s serial -> 93.7s   (3697 passed both ways)
+      # The suites are hermetic by construction (tos/tests: no .env, no
+      # network, no Redis; tos/runtime/tests: loopback + tmp_path only, with
+      # autouse network/write guards in its conftest), so the usual
+      # cross-worker hazard — external shared state — does not exist here.
+      # xdist workers talk to the controller over execnet PIPES, not sockets,
+      # so the runtime suite's autouse socket guard does not see them.
       - name: tos hermetic package tests
-        run: pytest tos/tests
+        run: pytest tos/tests -n auto
 
       # design #40 D1.3 item 5 (ratified by the operator 2026-09-08) — the runtime shell's own hermetic
       # suite (D1.4: zero external network/ambient env/writes outside
@@ -148,7 +297,7 @@ jobs:
       # Isolated rootdir via tos/runtime/pyproject.toml's own
       # [tool.pytest.ini_options], same pattern as the kernel step above.
       - name: tos-runtime hermetic package tests
-        run: pytest tos/runtime/tests
+        run: pytest tos/runtime/tests -n auto
 
       # CP-3 B1b (docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §3 B1b).
       # `tos/runtime/cp3/` is a sibling of `tos/runtime/src`, deliberately
@@ -156,25 +305,83 @@ jobs:
       # `*.py` under the two installed package roots (`tos/src/tos` and
       # `tos/runtime/src/tos_runtime`), so a file added under either would ABORT
       # the resident paper session every morning. Being outside those roots also
-      # means FOUR gates would not have covered it — the three steps below
-      # (pytest / Black / mypy) and the size budget, whose own `scope` list in
+      # means FOUR gates would not have covered it — the three checks (pytest /
+      # Black / mypy) and the size budget, whose own `scope` list in
       # `config/tos_size_budget.yaml` is path-based for the same reason. The
-      # first three name the directory explicitly below; the fourth gained
-      # `tos/runtime/cp3` in that config (2026-10-08 review: the earlier version
-      # of this comment named three holes and omitted the size budget, and
-      # `tos_size_budget --check PASS` was being cited for a tree the checker
-      # never looked at). Same "unformatted-by-nobody" shape the Black step's own
-      # scope note describes.
+      # first three name the directory explicitly (here, and in the static job
+      # below); the fourth gained `tos/runtime/cp3` in that config (2026-10-08
+      # review: the earlier version of this comment named three holes and
+      # omitted the size budget, and `tos_size_budget --check PASS` was being
+      # cited for a tree the checker never looked at). Same
+      # "unformatted-by-nobody" shape the Black step's own scope note describes.
+      #
+      # No `-n auto` here on purpose: this suite measures 3s, which is less than
+      # xdist's own worker spin-up, so parallelising it would make it slower.
       - name: tos-cp3 hermetic tests
         run: pytest tos/runtime/cp3/tests
 
-      # Phase 1 작업 7 (계획 §2 표 7행) — 같은 잡의 스텝으로 추가한다(필수 체크
-      # 이름을 늘리지 않는다는 위 헤더 규율). 두 스텝의 실행 위치가 다르다 —
+      # tos governance test batteries — these test the checker scripts run as
+      # steps in the `tos-firewall-gates` job (tools/tos_completion_status.py,
+      # tools/tos_contract_check.py, tools/tos_spec_status.py,
+      # tools/tos_firewall_check.py) plus tools/u17-verify.sh (needs the yq pin
+      # above) and the EV-L3 crash/restart battery under tests/tos_l3/. They
+      # need no runtime stack (imports are stdlib + pytest + pyyaml only —
+      # already installed above) and no Redis, so they live here rather than in
+      # the legacy `test` job in .github/workflows/test.yml, which is now
+      # path-gated away from tos/doc changes and would otherwise be the only
+      # thing gating a tos-only PR.
+      #
+      # TWO PASSES, the repo convention (docs/CI_PARALLEL_NOTES.md): parallel
+      # over everything NOT marked `serial`, then a second, unparallelised pass
+      # over the `serial`-marked ones. This is not belt-and-braces. Measured on
+      # this tree at `-n 4`: the single unfiltered pass that used to run here
+      # goes RED on
+      #   tests/tools/test_tos_evidence_scan_measure.py::
+      #     test_a_stop_signal_during_the_end_of_run_bookkeeping_is_deferred_not_lost
+      # which sends itself a SIGTERM after blocking it with
+      # `signal.pthread_sigmask` and asserts the signal stays pending until the
+      # bookkeeping finishes. `pthread_sigmask` blocks the CALLING THREAD only,
+      # and an xdist worker is a multi-threaded process (execnet's receiver
+      # thread), so the signal is delivered to the other thread and the
+      # measure tool's own handler raises `MeasureSignalled` mid-`Path.write_text`.
+      # The test was ALREADY marked `@pytest.mark.serial` (the repo-root
+      # `serial` marker, registered in pyproject.toml) — this step simply never
+      # honoured the marker, because it ran one unfiltered pass. It is the only
+      # `serial`-marked test in this workflow's whole corpus today.
+      #
+      # If that ever becomes zero, the second pass exits 5 ("no tests ran") and
+      # this step goes red. Delete the pass then; do not relax it to `|| true`,
+      # which would also swallow a real serial-pass failure.
+      - name: tos governance test batteries (parallel + serial 2-pass)
+        # `set -e` (not `&&`) chains the two passes, so a comment can sit
+        # between them without breaking a line continuation.
+        run: |
+          set -euo pipefail
+          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
+            tests/tos_l3 -q -p no:cacheprovider -n auto -m "not serial"
+          # Second pass: the `serial` marker. Exactly one test carries it today,
+          # so this pass exits 5 (red) if it ever disappears — see step header.
+          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
+            tests/tos_l3 -q -p no:cacheprovider -m serial
+
+  # ===========================================================================
+  # Formatting and typing. Nothing here reads anything the other jobs write.
+  # ===========================================================================
+  tos-firewall-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - *checkout
+      - *setup-python
+      - *install
+
+      # Phase 1 작업 7 (계획 §2 표 7행). 두 스텝의 실행 위치가 다르다 —
       # (독립 리뷰 Low-4, 2026-09-07: 이전 주석은 «둘 다 `cd tos`」로 실행한다고 잘못
       # 적었으나 실제로는 mypy만 그렇다):
       #   * Black 은 **저장소 루트**에서 실행하며, 루트 `pyproject.toml` 의
       #     `[tool.black]` 설정을 읽는다(로컬 §1 기준선 측정 명령과 동일한 호출).
-      #     대상은 `tos/src tos/tests` 에 더해 **정확히** 이 잡이 소유하는 저장소
+      #     대상은 `tos/src tos/tests` 에 더해 **정확히** 이 워크플로가 소유하는 저장소
       #     레벨 파일 둘 — `tools/tos_size_budget.py`·
       #     `tests/tools/test_tos_size_budget.py` — 만 명시로 얹는다(독립 리뷰
       #     Low-4 후속, 2026-09-07: 이 둘은 이전엔 이 스텝의 게이트 밖이었다).
@@ -501,71 +708,34 @@ jobs:
           mypy tos/runtime/cp3 --ignore-missing-imports
           --disable-error-code=no-untyped-def
 
-      - name: tos size budget
-        # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
-        run: python tools/tos_size_budget.py --check
+  # ===========================================================================
+  # The check context the rest of the repo (and any future ruleset entry) names.
+  # It owns no checks of its own; it exists so that splitting the work across
+  # three runners did not split the NAME that says the work passed.
+  # ===========================================================================
+  tos-firewall:
+    runs-on: ubuntu-latest
+    needs: [tos-firewall-gates, tos-firewall-tests, tos-firewall-static]
+    # `always()` so this job still runs — and still FAILS — when a dependency
+    # failed or was cancelled. Without it the aggregator would be `skipped`,
+    # and a skipped required check is treated as passing by some settings.
+    if: always()
+    timeout-minutes: 5
 
-      # tos-spec/book.toml is a byte-empty file (0 bytes) — mdbook defaults apply
-      # and the build was verified locally to succeed with them (homebrew mdbook
-      # v0.5.4, same tag as pinned below): rc=0, two "unclosed HTML tag" warnings
-      # + one "search index is very large" warning, none of which fail the build.
-      # rust-lang/mdbook publishes no separate .sha256 asset for this release, so
-      # the digest below is a locally-computed pin against the official GitHub
-      # release tarball (same pattern as the yq pin above — download once, verify
-      # forever), not an independently-published checksum.
-      - name: Pin mdBook v0.5.4 (tos-spec build)
+    steps:
+      - name: Every tos-firewall job must have succeeded
+        # Fail-closed on anything that is not literally `success`: `failure`,
+        # `cancelled` and `skipped` all land here. `join(needs.*.result, ' ')`
+        # expands to one space-separated word per dependency, in the order
+        # declared above.
         run: |
           set -euo pipefail
-          curl -sSL -o /tmp/mdbook.tar.gz \
-            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
-          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/mdbook.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/mdbook /usr/local/bin/mdbook
-          mdbook --version
-
-      - name: mdBook build (tos-spec)
-        run: mdbook build tos-spec --dest-dir /tmp/tos-spec-book
-
-      # §12.2 (완료 계약 F-9): 코퍼스 무결성 검사기와 완료 계약 검사기를 CI 에
-      # 편입한다 — Phase 1 로 미루면 Phase 0 산출물이 회귀 방어 없이 병합된다.
-      # 두 검사기의 git-이력 파생(U-12 트리거·U-15 조상성·U-16 진 조상)은 얕은
-      # 클론에서 전부 PROVENANCE_UNVERIFIABLE 로 떨어지므로 위 checkout 의
-      # `fetch-depth: 0` 이 전제다 (§12.2 체크아웃 깊이 행).
-      - name: tos-spec corpus integrity (tos_spec_status --check)
-        run: python tools/tos_spec_status.py --check
-
-      - name: phase0 completion contract checks (tos_completion_status --check)
-        run: python tools/tos_completion_status.py --check
-
-      # Layer 4 — Phase 0 완료 계약의 «자기참조 stale» 게이트.
-      #
-      # 별도 잡·별도 워크플로가 아니라 이 잡의 «스텝»이다: 별도 잡이면 브랜치
-      # 보호의 필수 체크 «이름»이 하나 늘고, 이 아크의 통증이 바로 그 설정
-      # 표면이다.  이 워크플로는 이미 경로 게이팅 없이 모든 PR·main push 에서
-      # 돌므로(위 헤더 주석) 계약 문서만 고치는 PR 도 반드시 통과한다.
-      #
-      # 근거: 레인 B 재심 R-F3/R-F4 — 「규칙 신설 = 전수 적용까지가 한 단위」가
-      # 이 아크에서 다섯 번 깨졌고, 그때마다 문서 내 «수동 census» 였다.
-      # 산문 선언은 소비자가 없으면 산문이다(K-10).
-      - name: Layer 4 — phase0 contract self-reference gate
-        run: python tools/tos_contract_check.py
-
-      # 검사기 자신이 «죽은 검사»가 아님을 매 실행 증명한다.  9차의
-      # 「(4) 열거 7==7」 불변식이 세 자리 중 둘만 보고 green 을 낸 것이
-      # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
-      - name: Layer 4 self-test — mutation battery (dead-check 0)
-        run: python tools/tos_contract_check.py --self-test
-
-      # tos governance test batteries — these test the checker scripts run as
-      # steps above (tools/tos_completion_status.py, tools/tos_contract_check.py,
-      # tools/tos_spec_status.py, tools/tos_firewall_check.py) plus
-      # tools/u17-verify.sh (needs the yq pin above) and the EV-L3 crash/restart
-      # battery under tests/tos_l3/. They need no runtime stack (imports are
-      # stdlib + pytest + pyyaml only — already installed above) and no Redis,
-      # so they live here rather than in the legacy `test` job in
-      # .github/workflows/test.yml, which is now path-gated away from tos/doc
-      # changes and would otherwise be the only thing gating a tos-only PR.
-      - name: tos governance test batteries
-        run: |
-          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
-            tests/tos_l3 -q -p no:cacheprovider
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "dependency results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a tos-firewall job did not succeed ($results)"
+              exit 1
+            fi
+          done
+          echo "all tos-firewall jobs succeeded"

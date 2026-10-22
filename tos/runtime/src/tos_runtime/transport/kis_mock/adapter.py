@@ -305,6 +305,7 @@ class KisMockTransport:
             seal,
             field_map=self._config.field_map,
             static_body_fields=self._config.static_body_fields,
+            price_scale=self._config.price_scale,
         )
         computed_digest = KisOrderWireCodec.digest(body_bytes)
 
