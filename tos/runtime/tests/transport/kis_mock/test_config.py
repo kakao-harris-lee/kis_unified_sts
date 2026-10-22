@@ -40,6 +40,7 @@ def _valid_raw() -> dict[str, Any]:
             "price": "ORD_UNPR",
         },
         "static_body_fields": dict(STATIC_BODY_FIELDS),
+        "price_scale": 100,
         "min_send_interval_ms": 1100,
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 5.0,
@@ -101,6 +102,7 @@ def test_not_a_mapping_refuses(tmp_path: Path) -> None:
         "tr_id_sell",
         "field_map",
         "static_body_fields",
+        "price_scale",
         "min_send_interval_ms",
         "token_reissue_min_interval_s",
         "request_timeout_s",
@@ -130,6 +132,7 @@ def test_a_null_named_tbd_field_refuses(tmp_path: Path, field: str) -> None:
         "allow_plaintext_for_tests",
         "field_map",
         "static_body_fields",
+        "price_scale",
     ],
 )
 def test_an_absent_field_refuses(tmp_path: Path, field: str) -> None:
@@ -463,3 +466,17 @@ def test_the_example_config_file_matches_this_loaders_shape() -> None:
             instance_mock_rest_base=MOCK_REST_BASE,
             instance_real_rest_base=REAL_REST_BASE,
         )
+
+
+@pytest.mark.parametrize("scale", [0, -1])
+def test_a_non_positive_price_scale_refuses(tmp_path: Path, scale: int) -> None:
+    raw = _valid_raw()
+    raw["price_scale"] = scale
+    with pytest.raises(
+        KisMockTransportConfigError, match="price_scale must be positive"
+    ):
+        _load(_write(tmp_path, raw))
+
+
+def test_price_scale_is_loaded(tmp_path: Path) -> None:
+    assert _load(_write(tmp_path, _valid_raw())).price_scale == 100

@@ -227,6 +227,7 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("static_body_fields", "EXCG_ID_DVSN_CD"),
         ("static_body_fields", "SLL_TYPE"),
         ("static_body_fields", "CNDT_PRIC"),
+        ("price_scale",),
         ("min_send_interval_ms",),
         ("token_reissue_min_interval_s",),
         ("request_timeout_s",),

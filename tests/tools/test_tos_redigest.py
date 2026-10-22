@@ -1,17 +1,15 @@
 """Focused tests for the ``expected_code_digest`` re-derivation tool.
 
-One test per property the tool is relied on for: ``--check`` is RED when any one tree's
-pin is stale and GREEN when they all match; ``--write`` rewrites the pin in every tree's
-file and changes NOTHING else; an unreadable pin is an error, not a pass (a checker that
-cannot measure must not report success -- the "empty equals empty is not a match" lesson
-from the resident session's own digest guard); and **the set of trees the tool writes is
-the set of trees on disk** (:class:`TestTheTreeSetIsNotGuessed`), which is the half that
-was missing when PR #926 added a fourth deploy tree the tool did not know about.
+One test per property the tool is relied on for: ``--check`` is RED when any of the
+three pins is stale and GREEN when they all match; ``--write`` rewrites the pin in all
+three files and changes NOTHING else; an unreadable pin is an error, not a pass (a
+checker that cannot measure must not report success -- the "empty equals empty is not a
+match" lesson from the resident session's own digest guard).
 
-The fixtures are copies of the REAL deploy files, so "only the pin line changed" is
-asserted about the file an operator actually deploys. The measurement is stubbed in the
-file-level tests (the tool's subprocess call into the runtime CLI is covered on its own
-by the last test, which proves the real path produces a real digest).
+The three fixtures are copies of the REAL deploy files, so "only the pin line changed"
+is asserted about the file an operator actually deploys. The measurement is stubbed in
+the file-level tests (the tool's subprocess call into the runtime CLI is covered on its
+own by the last test, which proves the real path produces a real digest).
 """
 
 from __future__ import annotations
@@ -79,7 +77,7 @@ def test_check_is_red_when_any_one_pin_is_stale(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Parametrized over every tree: the tenant copies have never booted, so a
+    """Parametrized over all three files: the tenant copies have never booted, so a
     stale pin there has no other lane in which it could surface before the boot that
     fails."""
     for name in tr.RELEASE_FILES:
@@ -94,65 +92,7 @@ def test_check_is_red_when_any_one_pin_is_stale(
     assert "tools/tos_redigest.py --write" in err
 
 
-class TestTheTreeSetIsNotGuessed:
-    """⛔ The failure this class exists for: a deploy tree the tool does not write.
-
-    ``RELEASE_FILES`` was three hardcoded paths with nothing comparing them to
-    ``config/tos_runtime/``. PR #926 added ``cp3-setup-d-stock-005930`` -- a fourth tree
-    whose ``release.yaml`` is a copy of the LONG one -- and the next runtime-source
-    change re-derived three pins while that tree kept the value it was copied with. A
-    pinned-but-stale tree does not fail CI and does not fail ``--check``; it fails at
-    ``ReleaseAdmissionRefused`` on the tree's first boot, which is the #814 failure the
-    tool's own docstring says it exists to prevent.
-    """
-
-    def test_every_tree_on_disk_is_one_the_tool_writes(self) -> None:
-        """Run against the REAL repo, so adding a tree without declaring it is red HERE
-        rather than at that tree's first boot."""
-        assert sorted(tr.discover_release_files(_REPO_ROOT)) == sorted(
-            _REPO_ROOT / name for name in tr.RELEASE_FILES
-        )
-        assert sorted(_REPO_ROOT.glob(tr.RELEASE_FILE_GLOB)) == sorted(
-            _REPO_ROOT / name for name in tr.RELEASE_FILES
-        )
-
-    def test_an_undeclared_tree_on_disk_is_refused_by_name(
-        self,
-        fake_repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """The #926 shape reproduced: a new tree appears, carrying a pin of its own."""
-        new_tree = fake_repo / "config" / "tos_runtime" / "cp3-setup-d-new"
-        new_tree.mkdir(parents=True)
-        shutil.copyfile(_REPO_ROOT / tr.RELEASE_FILES[0], new_tree / "release.yaml")
-        tr.write_pin(new_tree / "release.yaml", _STALE)
-        _stub_measurement(monkeypatch, _MEASURED)
-
-        assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
-        err = capsys.readouterr().err
-        assert "cp3-setup-d-new/release.yaml" in err
-        assert "RELEASE_FILES" in err
-        # Refused, not quietly rewritten: --write must not touch a tree it cannot name.
-        assert tr.main(["--write", "--repo-root", str(fake_repo)]) == 2
-        assert tr.read_pin(new_tree / "release.yaml") == _STALE
-
-    def test_a_declared_tree_absent_from_the_checkout_is_refused(
-        self,
-        fake_repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """The other direction -- a renamed or removed tree -- is also exit 2, so the
-        list cannot rot into paths that no longer exist."""
-        (fake_repo / tr.RELEASE_FILES[-1]).unlink()
-        _stub_measurement(monkeypatch, _MEASURED)
-
-        assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
-        assert tr.RELEASE_FILES[-1] in capsys.readouterr().err
-
-
-def test_write_changes_the_pin_line_in_all_trees_and_nothing_else(
+def test_write_changes_the_pin_line_in_all_three_files_and_nothing_else(
     fake_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     before = {
@@ -283,3 +223,65 @@ def test_source_roots_that_cannot_serve_the_packages_are_an_error(
 
     assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
     assert "tos_redigest: ERROR" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Discovery — a tree added after the tool was written is not silently skipped
+# ---------------------------------------------------------------------------
+
+
+def _add_tree(repo: Path, name: str, digest: str) -> Path:
+    path = repo / "config" / "tos_runtime" / name / "release.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(repo / tr.RELEASE_FILES[0], path)
+    tr.write_pin(path, digest)
+    return path
+
+
+def test_check_is_red_when_a_tree_outside_the_known_three_is_stale(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The incident: the stock tree (#926) kept the old digest while a hand-kept list of
+    three reported every pin current."""
+    for name in tr.RELEASE_FILES:
+        tr.write_pin(fake_repo / name, _MEASURED)
+    _add_tree(fake_repo, "cp3-setup-d-stock-005930", _STALE)
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 1
+    assert "cp3-setup-d-stock-005930" in capsys.readouterr().err
+
+
+def test_write_rewrites_a_discovered_tree_too(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    added = _add_tree(fake_repo, "cp3-setup-d-stock-005930", _STALE)
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--write", "--repo-root", str(fake_repo)]) == 0
+    assert tr.read_pin(added) == _MEASURED
+
+
+def test_zero_release_files_is_an_error_not_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_measurement(monkeypatch, _MEASURED)
+    assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
+
+
+def test_a_missing_required_tree_is_an_error(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (fake_repo / tr.RELEASE_FILES[1]).unlink()
+    _stub_measurement(monkeypatch, _MEASURED)
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
+
+
+def test_a_discovered_release_file_without_a_pin_is_an_error(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = fake_repo / "config" / "tos_runtime" / "new-tree" / "release.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("admission_result: ADMIT\n", encoding="utf-8")
+    _stub_measurement(monkeypatch, _MEASURED)
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2

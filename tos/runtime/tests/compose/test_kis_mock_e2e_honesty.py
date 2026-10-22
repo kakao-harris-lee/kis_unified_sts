@@ -305,7 +305,9 @@ def _independent_wire_digest(
         "CANO": account,
         "PDNO": instrument,
         "ORD_QTY": format(Decimal(quantity), "f"),
-        "ORD_UNPR": format(Decimal(price), "f"),
+        # ×100 sealed price -> whole KRW: fx.write_kis_mock_transport_config's
+        # `price_scale: 100`, divided here by hand rather than through the codec.
+        "ORD_UNPR": format(Decimal(price) / Decimal(100), "f"),
         "ACNT_PRDT_CD": "01",
         "ORD_DVSN": "00",
         "EXCG_ID_DVSN_CD": "KRX",
@@ -343,6 +345,12 @@ def _assert_byte_seal_identity_and_result_ordering(
         price=seal_payload["outbound_price"],
     )
     assert received_digest == independent_digest
+    # The 100× defect, pinned on the bytes the fake server received: the sealed price is the
+    # ×100 integer and the wire carries whole KRW — exactly one hundredth of it, never equal.
+    wire = json.loads(order_request.body)
+    sealed = Decimal(seal_payload["outbound_price"])
+    assert Decimal(wire["ORD_UNPR"]) * 100 == sealed
+    assert Decimal(wire["ORD_UNPR"]) != sealed
 
     assert _evidence_kind_count(runtime, "EGRESS_RESULT_RECORDED") == 1
     network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")

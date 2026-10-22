@@ -307,6 +307,7 @@ def compose_paper_runtime(
         egress_coordinates=boot.egress_coordinates,
         transport_kind=transport_kind,
         calendar_config=calendar_config,
+        transport_config=boot.transport_config,
         # Built unconditionally, CALLED only when the policy declares a band source, and then
         # dispatched on its `kind` (2026-10-15 plan §3.3). The resident `paper` tree and the
         # SHORT tenant tree declare none (band plan §5); the LONG tenant tree declares
@@ -406,6 +407,7 @@ def compose_paper_runtime(
         KisWireCodecDigest(
             field_map=boot.transport_config.field_map,
             static_body_fields=boot.transport_config.static_body_fields,
+            price_scale=boot.transport_config.price_scale,
         )
         if boot.transport_config is not None
         else None

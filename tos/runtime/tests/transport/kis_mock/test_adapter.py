@@ -65,6 +65,7 @@ class _KisMockConfigKwargs(TypedDict):
     tr_id_sell: str
     field_map: Mapping[str, str]
     static_body_fields: Mapping[str, str]
+    price_scale: int
     min_send_interval_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
@@ -83,6 +84,7 @@ class _KisMockConfigKwargsPartial(TypedDict, total=False):
     tr_id_sell: str
     field_map: Mapping[str, str]
     static_body_fields: Mapping[str, str]
+    price_scale: int
     min_send_interval_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
@@ -100,6 +102,7 @@ def _config(
         "tr_id_buy": "VTTC0012U",
         "tr_id_sell": "VTTC0011U",
         "field_map": FIELD_MAP,
+        "price_scale": 1,
         "static_body_fields": STATIC_BODY_FIELDS,
         "min_send_interval_ms": 1000,
         "token_reissue_min_interval_s": 60,

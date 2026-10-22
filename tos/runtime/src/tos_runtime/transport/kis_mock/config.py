@@ -169,6 +169,11 @@ class KisMockTransportConfig:
     tr_id_sell: str
     field_map: Mapping[str, str]
     static_body_fields: Mapping[str, str]
+    #: The integer scale the sealed price is expressed in (100 for every CP-3 tree, which
+    #: prices off ``close_x100``). ``ORD_UNPR`` is ``price / price_scale`` — see
+    #: :mod:`tos_runtime.transport.kis_mock.codec`. Required, no default: an unscaled send of a
+    #: ×100 price is a 100× order price.
+    price_scale: int
     min_send_interval_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
@@ -491,6 +496,7 @@ def load_kis_mock_transport_config(
         path,
     )
 
+    price_scale = _require_positive_int(raw, "price_scale", path)
     min_send_interval_ms = _require_positive_int(raw, "min_send_interval_ms", path)
     token_reissue_min_interval_s = _require_positive_int(
         raw, "token_reissue_min_interval_s", path
@@ -506,6 +512,7 @@ def load_kis_mock_transport_config(
         tr_id_sell=tr_id_sell,
         field_map=field_map,
         static_body_fields=static_body_fields,
+        price_scale=price_scale,
         min_send_interval_ms=min_send_interval_ms,
         token_reissue_min_interval_s=token_reissue_min_interval_s,
         request_timeout_s=request_timeout_s,

@@ -76,6 +76,9 @@ static_body_fields:
   EXCG_ID_DVSN_CD: null
   SLL_TYPE: null
   CNDT_PRIC: null
+# The integer scale the sealed order price is in — 100 when construction prices off
+# `close_x100`. ORD_UNPR = price / price_scale (whole KRW, else refused).
+price_scale: null
 min_send_interval_ms: null
 token_reissue_min_interval_s: null
 request_timeout_s: null

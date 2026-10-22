@@ -52,7 +52,9 @@ def test_kis_wire_codec_digest_matches_a_direct_codec_computation() -> None:
     """Pins that :class:`KisWireCodecDigest` computes EXACTLY what a caller would get calling
     ``KisOrderWireCodec.encode_fields``/``.digest`` directly over the same four values — the
     seam adds no divergence."""
-    source = KisWireCodecDigest(field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS)
+    source = KisWireCodecDigest(
+        field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
+    )
     account = "12345678"
     instrument = "005930"
     quantity = Decimal("10")
@@ -68,6 +70,7 @@ def test_kis_wire_codec_digest_matches_a_direct_codec_computation() -> None:
             quantity=quantity,
             price=price,
             field_map=FIELD_MAP,
+            price_scale=1,
             static_body_fields=STATIC_FIELDS,
         )
     )
@@ -77,7 +80,9 @@ def test_kis_wire_codec_digest_matches_a_direct_codec_computation() -> None:
 def test_kis_wire_codec_digest_is_sensitive_to_every_one_of_its_four_inputs() -> None:
     """A mutation to ANY one of the four values must change the digest — proves the seam
     actually threads all four through, not a subset."""
-    source = KisWireCodecDigest(field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS)
+    source = KisWireCodecDigest(
+        field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
+    )
     base = source(
         account="acct-1",
         instrument="005930",
@@ -112,6 +117,8 @@ def test_kis_wire_codec_digest_is_sensitive_to_every_one_of_its_four_inputs() ->
 
 def test_kis_wire_codec_digest_is_a_request_bytes_digest_source() -> None:
     assert isinstance(
-        KisWireCodecDigest(field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS),
+        KisWireCodecDigest(
+            field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
+        ),
         RequestBytesDigestSource,
     )
