@@ -739,11 +739,15 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 444
+  measured: 445
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-22 PR #927 리뷰 M1 재등재 444→445(+1)**: `build_venue_service(...)` 에
+    `transport_config=boot.transport_config` 1줄. kis-mock 부팅이 코덱의 `price_scale` 을
+    트리의 `_runtime.price_scale` 과 대조하려면(`_cross_check_price_scale`) 그 값이 venue
+    배선까지 와야 한다. 대조 자체는 `_venue_wiring` 에 있다. 호출 시퀀스 무변경.
     **2026-10-22 kis_mock codec price_scale(rescope M2) 재등재 443→444(+1)**:
     `KisWireCodecDigest(...)` 에 `price_scale=boot.transport_config.price_scale` 1줄.
     어댑터와 digest 원천이 **같은 설정값**으로 가격을 원 단위로 내리지 않으면 두 digest 가
