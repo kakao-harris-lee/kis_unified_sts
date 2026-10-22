@@ -125,6 +125,64 @@ def test_the_cli_refuses_a_stock_tree_without_an_explicit_instrument(
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.parametrize(
+    "instrument",
+    [
+        "A05612",  # a mini KOSPI200 futures code — the concrete wrong input
+        "05930",  # five digits
+        "0059300",  # seven digits: a prefix match would accept it
+        "005930 ",  # trailing space
+    ],
+)
+def test_a_stock_tree_refuses_an_instrument_that_is_not_a_stock_code(
+    tmp_path: Path, instrument: str
+) -> None:
+    """#926 review LOW: the stock manifest's ``instrument.pattern`` is matched in FULL, and a
+    refusal writes nothing."""
+    out = tmp_path / "out"
+    with pytest.raises(rpc.RenderError, match="instrument coordinate refused"):
+        rpc.render(
+            _STOCK,
+            out,
+            account=_FAKE_ACCOUNT,
+            instrument=instrument,
+            revision="0" * 40,
+            direction="LONG",
+            journal_path=_journal(tmp_path),
+        )
+    assert not out.exists()
+
+
+def test_the_stock_manifest_declares_the_six_digit_shape() -> None:
+    assert rpc.load_manifest(_STOCK).instrument_pattern == "[0-9]{6}"
+    # The futures trees declare none: their code is checked elsewhere (front month).
+    assert rpc.load_manifest(_LONG).instrument_pattern is None
+
+
+@pytest.mark.parametrize(
+    ("block", "why"),
+    [
+        ("instrument: '[0-9]{6}'\n", "must be a mapping"),
+        ("instrument:\n  pattern: ''\n", "must be a mapping"),
+        ("instrument:\n  pattern: '[0-9'\n", "does not compile"),
+    ],
+)
+def test_a_malformed_instrument_block_is_refused(
+    tmp_path: Path, block: str, why: str
+) -> None:
+    import shutil
+
+    tree = tmp_path / "tree"
+    shutil.copytree(_STOCK, tree)
+    manifest = tree / rpc.RENDER_MANIFEST_NAME
+    text = manifest.read_text(encoding="utf-8")
+    start = text.index("instrument:\n  pattern:")
+    end = text.index("\n", text.index("pattern:", start)) + 1
+    manifest.write_text(text[:start] + block + text[end:], encoding="utf-8")
+    with pytest.raises(rpc.RenderError, match=why):
+        rpc.load_manifest(tree)
+
+
 def test_the_stock_render_activates_five_policy_kinds(rendered: Path) -> None:
     payload = json.loads((rendered / rpc.RENDERED_NAME).read_text(encoding="utf-8"))
     assert {entry["kind"] for entry in payload["policy_digests"]} == {

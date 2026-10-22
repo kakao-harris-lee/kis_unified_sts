@@ -317,11 +317,28 @@ TREE_DIR=$REPO/config/tos_runtime/$TENANT_TREE
 # PRESENCE, not non-emptiness: an exported-but-empty `KIS_FUTURES_APP_KEY` is
 # an operator who believes they are handing a credential to something. The
 # honest answer is the same refusal, not a quiet pass.
-for _real_key in KIS_FUTURES_APP_KEY KIS_FUTURES_APP_SECRET; do
+#
+# WHICH keys (PR #922 review LOW-3): the first cut named the futures pair only,
+# so a STOCK tenant's shell could carry KIS_STOCK_APP_KEY/SECRET into the
+# runtime unseen. The pair now follows the producer config's own `market:`, and
+# every OTHER known market's pair is refused too — the runtime must hold no
+# real key of any market, not just of the one this session trades. The table
+# below is pinned against `tools.tos_cp3.live_producer.config.MARKETS[*]
+# .credential_keys` by tests/tools/test_cp3_bootproof.py, so it cannot drift
+# from the producer's own idea of which file keys it reads.
+_REAL_KEYS_FUTURES="KIS_FUTURES_APP_KEY KIS_FUTURES_APP_SECRET"
+_REAL_KEYS_STOCK="KIS_STOCK_APP_KEY KIS_STOCK_APP_SECRET"
+_MARKET=$(sed -n 's/^market:[[:space:]]*["'"'"']\{0,1\}\([a-z]*\)["'"'"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1/p' \
+  "$TENANT_PRODUCER_CONFIG" | head -n 1)
+case "$_MARKET" in
+  futures | stock) ;;
+  *) die "TENANT_PRODUCER_CONFIG declares market='$_MARKET' — expected futures or stock; the real-key guard cannot tell which credentials this session's producer reads" ;;
+esac
+for _real_key in $_REAL_KEYS_FUTURES $_REAL_KEYS_STOCK; do
   [ -z "${!_real_key+x}" ] ||
     die "$_real_key is set in this shell. The producer reads the real query keys itself, from the env_file its own config names; the runner and the runtime must not carry them, because every child inherits this environment (plan §3.4)"
 done
-log "credential separation ok: no real futures query key in this environment"
+log "credential separation ok: market=$_MARKET, no real query key of any market in this environment"
 
 # --- 4. the stop time ------------------------------------------------------
 #

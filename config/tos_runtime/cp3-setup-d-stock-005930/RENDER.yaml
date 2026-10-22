@@ -64,6 +64,11 @@ journal:
 # 주식 주문 좌표로 쓰면 다른 계좌로 보낸다 — 렌더러가 이 키를 닫힌 집합에서만 받는다.
 account:
   env_key: "KIS_STOCK_ACCOUNT_NO"
+# `--instrument` shape (#926 review LOW): a KRX stock code is six digits (005930). Without
+# this the renderer wrote any string — a futures code such as A05612 included — into the
+# five instrument slots below, and the tree booted on an instrument it does not trade.
+instrument:
+  pattern: "[0-9]{6}"
 
 slots:
   - file: "venue_constraint_policy.yaml"

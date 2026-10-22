@@ -55,6 +55,8 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
         {
             "tree_id",
             "account.env_key",
+            # the stock code shape --instrument must match (#926 review LOW)
+            "instrument",
             # the three LONG-only band slots are gone, so the slot list shifts
             "slots",
         }

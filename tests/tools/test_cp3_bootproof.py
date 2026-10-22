@@ -1223,6 +1223,9 @@ _PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
 #: ``HH:MM`` the stub CALENDAR declares as the session start (default 08:45).
 #: Read by ``_runner_env`` when it writes that calendar.
 _STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
+#: The stub producer config's ``market:`` value; ``"<absent>"`` drops the line (PR #922
+#: review LOW-3 — the runner's real-key guard reads it).
+_STUB_MARKET_ENV = "STUB_PRODUCER_MARKET"
 
 #: What the runner logs when the band line is there, and when it is not. The
 #: second string is the plan's own wording (§3.1) and the thing an operator
@@ -1552,8 +1555,10 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         encoding="utf-8",
     )
     producer_config = tmp_path / "cp3-live-producer.yaml"
+    market = overrides.get(_STUB_MARKET_ENV, "futures")
     producer_config.write_text(
-        f"env_file: {real_env}\n"
+        ("" if market == "<absent>" else f"market: {market}\n")
+        + f"env_file: {real_env}\n"
         f"calendar_yaml: {calendar}\n"
         "calendar_session_id: krx-index-futures\n"
         "calendar_session_phase: CONTINUOUS\n",
@@ -2737,6 +2742,62 @@ def test_red_the_same_refusal_for_the_secret(tmp_path: Path) -> None:
     assert "not-a-real-secret" not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("market", "variable"),
+    [
+        # The LOW-3 input: a STOCK tenant whose operator exported the stock pair.
+        ("stock", "KIS_STOCK_APP_KEY"),
+        ("stock", "KIS_STOCK_APP_SECRET"),
+        # A stock session must not carry the futures pair into the runtime either,
+        # and the reverse — no real key of ANY market reaches the runtime.
+        ("stock", "KIS_FUTURES_APP_KEY"),
+        ("futures", "KIS_STOCK_APP_KEY"),
+    ],
+)
+def test_red_low3_the_real_key_guard_follows_the_market(
+    tmp_path: Path, market: str, variable: str
+) -> None:
+    """**PR #922 review LOW-3.** The first cut named ``KIS_FUTURES_APP_KEY``/``SECRET``
+    only, so a stock tenant's exported ``KIS_STOCK_APP_KEY`` passed the guard and
+    reached the runtime. Red before this change for every stock-key row."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_MARKET_ENV: market, variable: "not-a-real-value-91c2"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert f"{variable} is set in this shell" in output
+    assert "not-a-real-value-91c2" not in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+@pytest.mark.parametrize("market", ["<absent>", "bond"])
+def test_red_low3_an_unknown_or_absent_market_is_refused(
+    tmp_path: Path, market: str
+) -> None:
+    """Fail closed: a config whose market the guard cannot read names no key pair."""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **{_STUB_MARKET_ENV: market})
+    assert result.returncode != 0
+    assert "the real-key guard cannot tell" in result.stdout + result.stderr
+    assert not (tmp_path / "producer.pid").exists()
+
+
+def test_the_runner_key_table_is_the_producers_own_credential_keys() -> None:
+    """The shell table may not drift from ``config.MARKETS[*].credential_keys`` — the
+    keys the producer itself reads from its env_file (LOW-3)."""
+    from tools.tos_cp3.live_producer.config import MARKETS
+
+    text = _RUNNER.read_text("utf-8")
+    table = {
+        match.group(1).lower(): tuple(match.group(2).split())
+        for match in re.finditer(r'^_REAL_KEYS_([A-Z]+)="([^"]*)"$', text, re.M)
+    }
+    assert table == {
+        market: profile.credential_keys for market, profile in MARKETS.items()
+    }
+
+
 def test_a_die_after_the_producer_starts_does_not_leave_it_running(
     tmp_path: Path,
 ) -> None:
@@ -3460,6 +3521,8 @@ def _run_runner_traced(repo: Path, tmp_path: Path, **overrides: str) -> Any:
     [
         ("KIS_FUTURES_APP_KEY", _PRODUCER_FAKE_KEY),
         ("KIS_FUTURES_APP_SECRET", _PRODUCER_FAKE_SECRET),
+        ("KIS_STOCK_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_STOCK_APP_SECRET", _PRODUCER_FAKE_SECRET),
     ],
 )
 def test_red_codex_high_no_credential_value_survives_bash_x(
