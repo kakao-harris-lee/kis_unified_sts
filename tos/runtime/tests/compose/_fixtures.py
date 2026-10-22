@@ -699,6 +699,9 @@ def write_kis_mock_transport_config(
                     "SLL_TYPE": "",
                     "CNDT_PRIC": "",
                 },
+                # The compose fixtures price at the ×100 scale CP-3 trees use (PRICE 4200 =
+                # 42원), so ORD_UNPR is 42 — test_kis_mock_e2e_honesty pins it.
+                "price_scale": 100,
                 "min_send_interval_ms": min_send_interval_ms,
                 "token_reissue_min_interval_s": 60,
                 "request_timeout_s": 5.0,
@@ -727,6 +730,15 @@ def write_kis_mock_transport_config(
                 wire_codec=effective_wire_codec,
             ),
             encoding="utf-8",
+        )
+    vcp_path = config_dir / "venue_constraint_policy.yaml"
+    if vcp_path.is_file():
+        # A kis-mock boot cross-checks the transport's `price_scale` against the tree's
+        # `_runtime.price_scale` (PR #927 review M1) — state the same 100 here.
+        vcp = yaml.safe_load(vcp_path.read_text(encoding="utf-8"))
+        vcp["_runtime"].setdefault("price_scale", 100)
+        vcp_path.write_text(
+            yaml.safe_dump(vcp, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
     return path
 

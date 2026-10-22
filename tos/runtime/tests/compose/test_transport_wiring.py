@@ -36,6 +36,7 @@ from tos_runtime.compose._transport_wiring import (
     refuse_transport_scope_mismatch,
     resolve_transport_boot,
 )
+from tos_runtime.compose._venue_wiring import VenuePolicyScopeMismatch
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.ports import CredentialHandle
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -881,3 +882,74 @@ def test_the_planted_violation_scan_actually_catches_something() -> None:
     planted = 'REST_BASE = "https://openapivts.koreainvestment.com:29443"\n'
     code_only = _code_only(planted)
     assert "koreainvestment" in code_only
+
+
+# ---------------------------------------------------------------------------
+# price_scale — ONE scale for the wire price (PR #927 review M1)
+# ---------------------------------------------------------------------------
+
+
+def _set_scales(config_dir: Path, *, transport: int, policy: int | None) -> None:
+    transport_path = config_dir / "kis_mock_transport.yaml"
+    raw = yaml.safe_load(transport_path.read_text(encoding="utf-8"))
+    raw["price_scale"] = transport
+    transport_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    vcp_path = config_dir / "venue_constraint_policy.yaml"
+    vcp = yaml.safe_load(vcp_path.read_text(encoding="utf-8"))
+    if policy is None:
+        vcp["_runtime"].pop("price_scale", None)
+    else:
+        vcp["_runtime"]["price_scale"] = policy
+    vcp_path.write_text(
+        yaml.safe_dump(vcp, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    ("transport", "policy"),
+    [
+        # The review's failing input: 27000000 / 1000 = 27000 sent for a 270,000원 close.
+        (1000, 100),
+        # No policy scale at all — nothing to check the transport against.
+        (100, None),
+    ],
+)
+def test_a_kis_mock_boot_refuses_a_price_scale_the_tree_does_not_state(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    transport: int,
+    policy: int | None,
+) -> None:
+    _activate_mock_stock_order(config_dir)
+    fx.write_kis_mock_transport_config(config_dir)
+    _set_scales(config_dir, transport=transport, policy=policy)
+    _build_custody(custody_root)
+    with pytest.raises(VenuePolicyScopeMismatch, match="price_scale"):
+        _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
+
+
+def test_a_kis_mock_boot_with_equal_scales_boots(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    _activate_mock_stock_order(config_dir)
+    fx.write_kis_mock_transport_config(config_dir)
+    _set_scales(config_dir, transport=100, policy=100)
+    _build_custody(custody_root)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        transport_kind=TransportKind.KIS_MOCK,
+    )
+    assert runtime.context_resolver.request_bytes_digest_source.price_scale == 100
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()

@@ -14,7 +14,9 @@
 #     * `_runtime.instrument_class` krx-index-futures → krx-stock (이 트리 calendar.yaml 의
 #       `krx-stock` 세션 = CONTINUOUS 09:00-15:30)
 #     * `_runtime.quantity_unit` CONTRACTS → SHARES
-#     * `_runtime.price_scale` · `_runtime.band_source` 삭제 — band 원천 없음(아래)
+#     * `_runtime.band_source` 삭제 — band 원천 없음(아래). `_runtime.price_scale: 100` 은
+#       **남긴다**(PR #927 리뷰 M1): kis-mock 부팅이 `kis_mock_transport.yaml::price_scale`
+#       을 이 값과 대조하고, 없거나 다르면 부팅을 거부한다(ORD_UNPR = 가격 / price_scale).
 #     * `policy_id` 를 이 트리 전용으로 바꿨다(내용이 다르면 id 도 다르다 — LONG 헤더의 규칙).
 #
 # APPROVAL PROVENANCE:
@@ -152,3 +154,8 @@ _runtime:
   instrument_class: "krx-stock"
   quantity_unit: "SHARES"
   currency: "KRW"
+  # ×100 정수 가격 척도(`close_x100`; 270,000원 = 27000000). band 원천이 없으니 band 대조
+  # 용도가 아니다 — kis-mock 부팅에서 `kis_mock_transport.yaml::price_scale` 과 같아야
+  # 부팅한다(`tos_runtime.compose._venue_wiring._cross_check_price_scale`, PR #927 리뷰 M1).
+  # 주문 단가 ORD_UNPR 은 가격을 **이 하나의 척도**로 나눈 값이다.
+  price_scale: 100

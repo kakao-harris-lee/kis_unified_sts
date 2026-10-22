@@ -51,6 +51,7 @@ def _config(**overrides: object) -> KisMockTransportConfig:
             "quantity": "ORD_QTY",
             "price": "ORD_UNPR",
         },
+        "price_scale": 1,
         "static_body_fields": {
             "ACNT_PRDT_CD": "01",
             "ORD_DVSN": "00",

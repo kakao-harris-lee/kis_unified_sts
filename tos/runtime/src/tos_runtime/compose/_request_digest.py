@@ -135,6 +135,9 @@ class KisWireCodecDigest:
 
     field_map: Mapping[str, str]
     static_body_fields: Mapping[str, str]
+    #: The same ``price_scale`` the adapter encodes with — one config value
+    #: (``kis_mock_transport.yaml``), or the two digests disagree and every send is refused.
+    price_scale: int
 
     def __call__(
         self,
@@ -151,6 +154,7 @@ class KisWireCodecDigest:
             price=price,
             field_map=self.field_map,
             static_body_fields=self.static_body_fields,
+            price_scale=self.price_scale,
         )
         return KisOrderWireCodec.digest(body)
 

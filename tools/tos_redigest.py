@@ -8,13 +8,14 @@ stale and the resident paper session ABORTs at the next 08:45 and the CP-3 tenan
 ABORT on their first boot, both with ``ReleaseAdmissionRefused``. That has happened
 (PR #814 changed runtime source without re-deriving and left ``main`` stale).
 
-The pin lives in three byte-identical files
+The pin lives in every tree's ``release.yaml`` — DISCOVERED, not listed (below) — at
+least the three byte-identical files
 (``config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short}/release.yaml``; the
 copies are enforced by ``tos/runtime/tests/compose/test_tenant_tree_copies.py``). This
 tool is the only place that writes them::
 
     python tools/tos_redigest.py --check    # exit 1 if any pin is stale
-    python tools/tos_redigest.py --write    # rewrite the pin line in all three
+    python tools/tos_redigest.py --write    # rewrite the pin line in every tree
 
 ``--check`` runs as a CI step (``.github/workflows/tos-firewall.yml``) so a forgotten
 re-derivation fails fast with the fix command in the message, and the equivalent
@@ -53,7 +54,12 @@ from pathlib import Path
 #: Repo root, derived from this file's location (``tools/`` is a top-level directory).
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: The three byte-identical release files carrying the pin, repo-root-relative.
+#: Where tree release files live: ``config/tos_runtime/<tree>/release.yaml``.
+RELEASE_GLOB = "config/tos_runtime/*/release.yaml"
+
+#: Trees that MUST be among the discovered ones — the resident tree and the first two
+#: tenants. Discovery is what the tool writes to; this list only makes a vanished tree an
+#: error instead of one fewer file quietly checked.
 RELEASE_FILES: tuple[str, ...] = (
     "config/tos_runtime/paper/release.yaml",
     "config/tos_runtime/cp3-setup-d-long/release.yaml",
@@ -215,7 +221,25 @@ def write_pin(path: Path, digest: str) -> bool:
 
 
 def _pin_paths(repo_root: Path) -> list[Path]:
-    return [repo_root / name for name in RELEASE_FILES]
+    """Every ``config/tos_runtime/*/release.yaml`` — the stock tree (#926) is the incident.
+
+    A hand-kept list of three silently skipped the fourth tree: its pin was left at the old
+    digest while ``--check`` reported "all 3 pins match". Discovery closes that; every
+    discovered file must then carry exactly one pin (:func:`read_pin`), so a tree whose
+    release.yaml lost its pin is an error, never skipped.
+
+    Raises:
+        RedigestError: no release file at all, or one of :data:`RELEASE_FILES` is missing.
+    """
+    found = sorted(repo_root.glob(RELEASE_GLOB))
+    if not found:
+        raise RedigestError(
+            f"no {RELEASE_GLOB} under {repo_root} — refusing to report on zero pins"
+        )
+    missing = [name for name in RELEASE_FILES if repo_root / name not in found]
+    if missing:
+        raise RedigestError(f"required release file(s) missing: {missing}")
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,12 +254,12 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument(
         "--check",
         action="store_true",
-        help="exit 1 (and print measured vs pinned) if any of the three pins is stale",
+        help="exit 1 (and print measured vs pinned) if any discovered pin is stale",
     )
     mode.add_argument(
         "--write",
         action="store_true",
-        help="rewrite the pin line in all three release.yaml files in place",
+        help="rewrite the pin line in every discovered release.yaml in place",
     )
     parser.add_argument(
         "--repo-root",
@@ -283,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  measured (tos/src + tos/runtime/src): {measured}", file=sys.stderr)
     for path, pinned in stale.items():
         print(f"  pinned in {path.relative_to(repo_root)}: {pinned}", file=sys.stderr)
-    print(f"  fix: {_FIX_COMMAND}  (then commit the three files)", file=sys.stderr)
+    print(f"  fix: {_FIX_COMMAND}  (then commit the rewritten files)", file=sys.stderr)
     return 1
 
 

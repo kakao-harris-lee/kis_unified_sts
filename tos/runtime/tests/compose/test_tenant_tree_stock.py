@@ -88,7 +88,6 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "_model_view.shape_constraints.max_quantity",
             "_runtime.instrument_class",
             "_runtime.quantity_unit",
-            "_runtime.price_scale",
             "_runtime.band_source",
         }
     ),
@@ -164,6 +163,9 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
         "instrument_class": "krx-stock",
         "quantity_unit": "SHARES",
         "currency": "KRW",
+        # Kept from LONG (PR #927 review M1): a kis-mock boot refuses unless the transport's
+        # `price_scale` equals this one.
+        "price_scale": 100,
     }
     calendar = yaml.safe_load((_STOCK / "calendar.yaml").read_text("utf-8"))
     continuous = [
@@ -181,6 +183,25 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     assert (_STOCK / "strategies/setup_d_long.strategy.yaml").read_bytes() == (
         _LONG / "strategies/setup_d_long.strategy.yaml"
     ).read_bytes()
+
+
+def test_the_stock_tree_states_the_price_scale_a_kis_mock_boot_checks(
+    tmp_path: Path,
+) -> None:
+    """PR #927 review M1: ``ORD_UNPR = price / price_scale`` must divide by the scale the
+    sealed price is in. The loaded policy — what ``_cross_check_price_scale`` reads — says
+    100 (×100, ``close_x100``)."""
+    raw = _filled(
+        _STOCK / "venue_constraint_policy.yaml",
+        environment=_VENUE_POLICY_ENVIRONMENT,
+        account=_VENUE_POLICY_ACCOUNT,
+        instrument=_VENUE_POLICY_INSTRUMENT,
+    )
+    path = tmp_path / "venue_constraint_policy.yaml"
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    assert load_venue_constraint_policy(path, scheme=_SCHEME).price_scale == 100
 
 
 # ---------------------------------------------------------------------------
