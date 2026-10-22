@@ -113,7 +113,15 @@ jobs:
       # half the failures costs a whole extra round trip to see the rest.
       fail-fast: false
       matrix:
-        shard: [a, b]
+        include:
+          # `dist` is per shard and is NOT a style choice — see the measurement
+          # in the step below. Shard a is long-tailed and wants work stealing;
+          # shard b is ~9,900 mostly-sub-second tests, the shape where the
+          # stealing round-trips can cost more than the idling they remove.
+          - shard: a
+            dist: worksteal
+          - shard: b
+            dist: load
 
     env:
       # THE shard boundary. Shard a runs these paths; shard b runs `tests/`
@@ -225,6 +233,22 @@ jobs:
         # a per-shard terminal report lists everything the OTHER shard covers
         # as missing, which is worse than no report. The xml goes to Codecov,
         # which merges the three partial reports into the real one.
+        #
+        # --dist (matrix.dist): xdist's default `load` hands each worker a chunk
+        # of the queue up front, so the worker that draws a 136s sleeper finishes
+        # long after the other three have gone idle. That is not a work problem,
+        # it is a scheduling tail, and it is measurable: on this tree, at -n 4,
+        #
+        #   tests/tools, --dist load        425s   (re-measured 426s — stable)
+        #   tests/tools, --dist worksteal   239s   (-44%)
+        #   bootproof alone                 168s   } 226s if the two halves
+        #   tests/tools minus bootproof      58s   } could overlap perfectly
+        #
+        # i.e. `load` was spending 200s idling and `worksteal` recovers nearly
+        # all of it. Shard b keeps `load` on purpose: the one A/B that pointed
+        # the other way was a ~990-test battery of mostly short tests where
+        # worksteal measured SLOWER, and shard b is that shape at ten times the
+        # size. Flag applied where it was measured, not everywhere.
         run: |
           set -euo pipefail
           if [ "${{ matrix.shard }}" = "a" ]; then
@@ -245,7 +269,7 @@ jobs:
             --ignore-glob='tests/tools/test_tos_*.py' \
             --ignore=tests/tools/test_u17_verify.py \
             --ignore=tests/tos_l3 \
-            -n auto -m "not serial" \
+            -n auto --dist ${{ matrix.dist }} -m "not serial" \
             --timeout=180 --timeout-method=thread \
             -q --cov=shared --cov=services --cov-report=xml
         env:

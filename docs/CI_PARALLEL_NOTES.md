@@ -85,7 +85,51 @@ Three things changed, and only the first is new behaviour for any test:
    new test directory lands in shard b rather than nowhere, and a renamed one
    makes shard a exit 4 by name.
 
-Nothing was removed from either suite, and no test's own code changed.
+Nothing was removed from either suite.
+
+### `--dist load` was idling half of shard a away
+
+Worth recording separately, because "add more workers / add more shards" was the
+wrong answer and the numbers said so. At `-n 4` on one host:
+
+| | wall |
+| --- | ---: |
+| `tests/tools`, `--dist load` | 425s (re-measured 426s) |
+| `tests/tools`, `--dist worksteal` | **239s** |
+| `tests/tools/test_cp3_bootproof.py` alone | 168s |
+| `tests/tools` minus that one file | 58s |
+
+The two halves add to 226s but together took 425s. That super-additivity is the
+whole finding: xdist's default `load` hands each worker a chunk of the queue up
+front, so whichever worker draws the 136s sleeper in `test_cp3_bootproof.py`
+finishes long after the other three go idle. `worksteal` lets the idle ones take
+queued tests back, and recovers nearly all 200s of it.
+
+The flag is on shard a only. The one A/B that pointed the other way — a ~990-test
+governance battery of mostly short tests, where worksteal measured *slower* — is
+the same shape as shard b at a tenth the size, so shard b keeps `load`. (That
+counter-sample was taken while the host was at load average 14.6/16, so it is
+weak evidence; it is enough to not spray the flag, not enough to act on further.)
+
+### The one test that changed
+
+`tests/tools/test_tos_evidence_scan_measure.py::test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill`
+gained a `_await_exec()` wait, and it is the only test body this work touched.
+
+`subprocess.Popen` returns once the fork is under way, not once the exec has
+landed, and in between `/proc/<pid>/cmdline` is **empty**. `read_lock()` reads
+exactly that file and treats an empty or non-matching one as "owner gone", so
+spawning a child, writing a lock naming it, and asserting the lock is live is a
+race against the exec. Reproduced standalone, 300 spawns with the same interposed
+JSON write: `read_lock` said "owner gone" **3.7%** of the time with the host idle
+and **6.3%** with every core busy. The serial battery had been carrying that ~4%
+all along; `-n auto` on a 4-vCPU runner simply pushed it over the line often
+enough to be seen.
+
+This is the reason it was fixed rather than marked `serial`: the marker would
+have halved the rate and left the test asserting a reason that was not the real
+one. Sibling tests that spawn a child and immediately read `/proc/<pid>/status`
+PPid are **not** in this class — that field is populated at fork.
 
 ## Update 2026-10-02 — the session is hermetic by construction (#698)
 
