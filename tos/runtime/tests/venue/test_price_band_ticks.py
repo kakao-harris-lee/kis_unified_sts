@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from tos.venue import OrderAdmissibilityResult, OrderShapeFields, PriceBandTick
 from tos.venue.predicates import order_shape_admissible
+from tos_runtime.venue.band_source import BandRefusal, validate_band_values
 from tos_runtime.venue.config import (
     VenuePolicyConfigError,
     load_venue_constraint_policy,
@@ -158,3 +159,55 @@ def test_the_flat_tick_refuses_a_legal_price_below_the_rung(tmp_path: Path) -> N
 def test_each_malformed_table_is_refused(tmp_path: Path, table: str, why: str) -> None:
     with pytest.raises(VenuePolicyConfigError, match=why):
         _load(tmp_path, _with_table(table))
+
+
+# ---------------------------------------------------------------------------
+# The band validator uses the same table (a band can straddle a rung)
+# ---------------------------------------------------------------------------
+
+_ROWS = (
+    PriceBandTick(band_min=5_000_000, band_max=19_999_999, tick=10_000),
+    PriceBandTick(band_min=20_000_000, band_max=49_999_999, tick=50_000),
+)
+
+
+def _validate(lower: str, upper: str, **kwargs):
+    return validate_band_values(
+        lower_raw=lower,
+        upper_raw=upper,
+        basis_raw="270000",
+        price_scale=100,
+        lower_label="lower",
+        upper_label="upper",
+        **kwargs,
+    )
+
+
+def test_a_band_straddling_a_rung_is_valid_against_the_table() -> None:
+    """189,100원 (100원 rung) / 351,000원 (500원 rung): legal limits around 270,000원."""
+    outcome = _validate("189100", "351000", tick_size=50_000, price_band_ticks=_ROWS)
+    assert not isinstance(outcome, BandRefusal), outcome
+    assert (outcome.price_min, outcome.price_max) == (18_910_000, 35_100_000)
+
+
+def test_the_same_band_is_refused_by_the_flat_tick() -> None:
+    """Why the band reader needs the table too: flat 500원 refuses the 189,100원 lower limit."""
+    outcome = _validate("189100", "351000", tick_size=50_000)
+    assert isinstance(outcome, BandRefusal)
+    assert outcome.reason == "off_tick_grid"
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "reason"),
+    [
+        ("189100", "351100", "off_tick_grid"),  # 351,100원 is off the 500원 rung
+        ("189150", "351000", "off_tick_grid"),  # 189,150원 is off the 100원 rung
+        ("189100", "600000", "tick_unresolved"),  # no row covers 600,000원
+    ],
+)
+def test_a_bound_off_its_own_rung_is_refused(
+    lower: str, upper: str, reason: str
+) -> None:
+    outcome = _validate(lower, upper, tick_size=50_000, price_band_ticks=_ROWS)
+    assert isinstance(outcome, BandRefusal)
+    assert outcome.reason == reason

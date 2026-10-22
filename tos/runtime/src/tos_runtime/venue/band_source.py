@@ -79,6 +79,8 @@ from dataclasses import dataclass, fields
 from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any
 
+from tos.venue import PriceBandTick
+
 from tos_runtime.custody.ports import CustodyError
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import (
@@ -285,6 +287,16 @@ class BandRefusal:
     detail: str
 
 
+def _rung_tick(price: int, table: tuple[PriceBandTick, ...]) -> int | None:
+    """The tick of the row whose inclusive band covers ``price`` — the same absolute lookup
+    as the kernel's ``tos.venue.predicates._resolved_tick`` (private there, so restated).
+    """
+    for row in table:
+        if row.band_min <= price <= row.band_max:
+            return row.tick
+    return None
+
+
 def validate_band_values(
     *,
     lower_raw: Any,
@@ -294,6 +306,7 @@ def validate_band_values(
     tick_size: int | None,
     lower_label: str,
     upper_label: str,
+    price_band_ticks: tuple[PriceBandTick, ...] | None = None,
 ) -> BandBounds | BandRefusal:
     """Plan §4.2's validation set, in order — the ONE place it exists.
 
@@ -322,6 +335,12 @@ def validate_band_values(
             yields ``basis=None`` rather than a refusal.
         price_scale: The exact integer multiplier to the kernel's opaque ints.
         tick_size: The ACTIVE policy's ``shape_constraints.tick_size``.
+        price_band_ticks: The ACTIVE policy's per-price-band tick table, or ``None``. When
+            declared, each bound must sit on the tick of ITS OWN rung — a KRX stock band
+            (기준가 ±30 %) can straddle a rung, e.g. 189,000원/351,000원 around 270,000원 —
+            and a bound no row covers is ``tick_unresolved`` (the kernel's own
+            ``_resolved_tick`` rule: a declared table is never widened, never falls back to
+            the flat tick).
         lower_label: What to call ``lower_raw`` in a refusal detail (the response key, or the
             band line's key) — the reader's own vocabulary, so a row names a leaf its operator
             can find.
@@ -337,13 +356,24 @@ def validate_band_values(
         )
     if not 0 < lower < upper:
         return BandRefusal("band_not_ordered", f"min={lower} max={upper}")
-    if tick_size is None or tick_size <= 0:
-        return BandRefusal("tick_size_absent", f"tick_size={tick_size!r}")
-    off_grid = [value for value in (lower, upper) if value % tick_size != 0]
-    if off_grid:
-        return BandRefusal(
-            "off_tick_grid", f"tick_size={tick_size} off_grid={off_grid}"
-        )
+    if price_band_ticks:
+        ticks = {value: _rung_tick(value, price_band_ticks) for value in (lower, upper)}
+        unresolved = [value for value, tick in ticks.items() if tick is None]
+        if unresolved:
+            return BandRefusal("tick_unresolved", f"no rung covers {unresolved}")
+        off_grid = [
+            value for value, tick in ticks.items() if tick is not None and value % tick
+        ]
+        if off_grid:
+            return BandRefusal("off_tick_grid", f"price_band_ticks off_grid={off_grid}")
+    else:
+        if tick_size is None or tick_size <= 0:
+            return BandRefusal("tick_size_absent", f"tick_size={tick_size!r}")
+        off_grid = [value for value in (lower, upper) if value % tick_size != 0]
+        if off_grid:
+            return BandRefusal(
+                "off_tick_grid", f"tick_size={tick_size} off_grid={off_grid}"
+            )
     basis = _scaled(basis_raw, price_scale)
     return BandBounds(
         price_min=lower,
@@ -426,6 +456,7 @@ class KisBandSourceReader:
         evidence_sink: EvidenceRecorder,
         trading_date_reader: Callable[[], str | None],
         tick_size: int | None,
+        price_band_ticks: tuple[PriceBandTick, ...] | None = None,
     ) -> None:
         """Wire this reader's dependencies (all injected — no ambient state).
 
@@ -454,6 +485,7 @@ class KisBandSourceReader:
         self._evidence = evidence_sink
         self._trading_date_reader = trading_date_reader
         self._tick_size = tick_size
+        self._price_band_ticks = price_band_ticks
         #: Minted once per reader — a restart is a new continuity by construction (module
         #: docstring). ``secrets.token_hex`` rather than a counter: two processes booting in the
         #: same millisecond must not claim the same continuity.
@@ -593,6 +625,7 @@ class KisBandSourceReader:
             basis_raw=output.get(self._band_source.basis_field),
             price_scale=self._band_source.price_scale,
             tick_size=self._tick_size,
+            price_band_ticks=self._price_band_ticks,
             lower_label=self._band_source.lower_field,
             upper_label=self._band_source.upper_field,
         )

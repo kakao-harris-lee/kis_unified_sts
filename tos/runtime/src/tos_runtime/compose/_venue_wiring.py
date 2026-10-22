@@ -80,6 +80,7 @@ from tos.venue import (
     InstrumentRouteFields,
     OrderAdmissibilityDecision,
     OrderShapeFields,
+    PriceBandTick,
     VenueConstraintPolicy,
     VenueConstraintSnapshot,
     VenueShapeConstraints,
@@ -148,7 +149,9 @@ __all__ = [
 #: declares a ``_runtime.band_source`` — to obtain the service's band reader. Takes the
 #: declared source and the policy's own ``tick_size`` (the grid the reader validates both
 #: bounds against, plan §4.2).
-BandReaderFactory = Callable[[BandSourceConfig, int | None], BandReader]
+BandReaderFactory = Callable[
+    [BandSourceConfig, int | None, tuple[PriceBandTick, ...] | None], BandReader
+]
 
 #: Duplicated from ``tos_runtime.compose._safety_wiring``'s own private
 #: ``_SAFETY_ACTIVATION_CONFIG_NAME`` (module-private there, not exported) — the SAME
@@ -393,7 +396,11 @@ def build_kis_band_reader_factory(
     somehow precedes the cell being filled; on the real compose path it cannot fire.
     """
 
-    def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+    def _factory(
+        band_source: BandSourceConfig,
+        tick_size: int | None,
+        price_band_ticks: tuple[PriceBandTick, ...] | None,
+    ) -> BandReader:
         # `build_band_reader_factory` dispatches on `kind` before reaching this, and the
         # loader admits no third kind — so this is a type narrowing, not a branch.
         assert isinstance(band_source, KisQuoteGetBandSource)
@@ -424,6 +431,7 @@ def build_kis_band_reader_factory(
                 evidence_sink=evidence_sink,
                 trading_date_reader=trading_date_reader,
                 tick_size=tick_size,
+                price_band_ticks=price_band_ticks,
             )
 
         # Runs inside `_finalize` (or immediately, if the cell is already filled), so a
@@ -467,7 +475,11 @@ def build_producer_journal_band_reader_factory(
     lose the whole session's price collection for a fact whose absence is already conservative.
     """
 
-    def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+    def _factory(
+        band_source: BandSourceConfig,
+        tick_size: int | None,
+        price_band_ticks: tuple[PriceBandTick, ...] | None,
+    ) -> BandReader:
         assert isinstance(band_source, ProducerJournalBandSource)
         reader = ProducerJournalBandReader(
             band_source=band_source,
@@ -475,6 +487,7 @@ def build_producer_journal_band_reader_factory(
             evidence_sink=evidence_sink,
             trading_date_reader=trading_date_reader,
             tick_size=tick_size,
+            price_band_ticks=price_band_ticks,
         )
         return reader.read
 
@@ -513,10 +526,14 @@ def build_band_reader_factory(
         trading_date_reader=trading_date_reader,
     )
 
-    def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:
+    def _factory(
+        band_source: BandSourceConfig,
+        tick_size: int | None,
+        price_band_ticks: tuple[PriceBandTick, ...] | None,
+    ) -> BandReader:
         if isinstance(band_source, ProducerJournalBandSource):
-            return journal_factory(band_source, tick_size)
-        return kis_factory(band_source, tick_size)
+            return journal_factory(band_source, tick_size, price_band_ticks)
+        return kis_factory(band_source, tick_size, price_band_ticks)
 
     return _factory
 
@@ -593,6 +610,7 @@ def build_venue_service(
         band_reader = band_reader_factory(
             loaded_policy.band_source,
             loaded_policy.policy.shape_constraints.tick_size,
+            loaded_policy.policy.shape_constraints.price_band_ticks,
         )
     service = VenueConstraintService(
         loaded_policy=loaded_policy,
