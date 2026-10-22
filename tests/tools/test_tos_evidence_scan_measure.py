@@ -2394,6 +2394,49 @@ def test_f8_a_swapless_host_runs_end_to_end_with_one_flag(tmp_path: Path) -> Non
     assert any("derived" in w for w in payload["warnings"])
 
 
+def _await_exec(pid: int, argv0: str, *, timeout_s: float = 10.0) -> None:
+    """Block until ``/proc/<pid>/cmdline`` shows the image ``pid`` exec'd.
+
+    ``subprocess.Popen`` returns once the fork is under way, NOT once the exec has
+    landed, and in between ``/proc/<pid>/cmdline`` is **empty**. :func:`driver.read_lock`
+    reads exactly that file and reports an unreadable or non-matching one as "owner gone"
+    — so a test that spawns a process, writes a lock naming it, and asserts the lock is
+    live is racing the exec, and loses whenever the exec has not landed yet.
+
+    That race is not a parallelism bug and predates any ``-n auto``: reproduced standalone
+    on this repo's host (16 cores) by spawning the same child, writing the same JSON and
+    reading the same file, 300 times — ``read_lock`` saw "owner gone" 3.7% of the time
+    with the host idle and 6.3% with every core busy. Running the battery under xdist put
+    it over the line often enough to go red on a hosted 4-vCPU runner (tos-firewall job
+    119690898248), which is how it was found; the serial battery had been carrying the
+    same ~4% all along.
+
+    Waiting here rather than marking the test ``serial``: the marker would have halved the
+    failure rate and left the test lying about why it was serial. Nothing about what the
+    test asserts changes — it still requires a live lock to read as live and a dead one to
+    read as stale.
+
+    ``/proc/<pid>/status`` PPid, which the ancestry helpers in this module use, IS
+    populated at fork, so the sibling tests that spawn a child and immediately ask
+    ``_is_descendant_of`` are not in this class and are left alone.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            cmdline = (
+                Path(f"/proc/{pid}/cmdline")
+                .read_bytes()
+                .replace(b"\0", b" ")
+                .decode("utf-8", "replace")
+            )
+        except OSError:
+            cmdline = ""
+        if argv0 in cmdline:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"pid {pid} never exec'd {argv0!r} within {timeout_s}s")
+
+
 def test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill(
     tmp_path: Path,
 ) -> None:
@@ -2405,6 +2448,9 @@ def test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill(
 
     live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
     try:
+        # The child must really be `sys.executable` before the lock can name it as a
+        # live owner — see _await_exec for the window this closes.
+        _await_exec(live.pid, sys.executable)
         (out_dir / driver.LOCK_NAME).write_text(
             json.dumps({"pid": live.pid, "argv0": sys.executable, "run_id": "other"})
         )
