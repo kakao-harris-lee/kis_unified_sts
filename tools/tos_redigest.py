@@ -137,7 +137,7 @@ def read_pin(path: Path) -> str:
     if len(matches) != 1:
         raise RedigestError(
             f'{path}: expected exactly one `expected_code_digest: "<64-char lowercase '
-            f'hex>`" line, found {len(matches)}'
+            f'hex>"` line, found {len(matches)}'
         )
     return matches[0][1]
 
@@ -156,7 +156,7 @@ def write_pin(path: Path, digest: str) -> bool:
     if count != 1:
         raise RedigestError(
             f'{path}: expected exactly one `expected_code_digest: "<64-char lowercase '
-            f'hex>`" line to rewrite, found {count}'
+            f'hex>"` line to rewrite, found {count}'
         )
     if new_text == text:
         return False
