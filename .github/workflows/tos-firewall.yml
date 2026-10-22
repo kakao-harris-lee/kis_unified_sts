@@ -172,6 +172,21 @@ jobs:
       - name: Layer 2 — import-linter (transitive forbidden-package defense)
         run: lint-imports
 
+      # release.yaml's expected_code_digest vs the measured source tree
+      # (tools/tos_redigest.py's own docstring has the why). From PR #919,
+      # which added it to the single job between Layer 2 and the test
+      # batteries; it lands here, in the checker job, because that is what it
+      # is — it re-derives a pin and compares, it runs no tests.
+      #
+      # #919's reason for the position was "fails in seconds rather than after
+      # the ~6.5-minute batteries below". That reason is now structural rather
+      # than positional: the batteries are a SEPARATE JOB that runs beside this
+      # one, so this check reports in seconds no matter what they are doing.
+      # The tool shells out to the runtime's own `print-digests` — it never
+      # reimplements the digest, and tools/ may not import tos (firewall).
+      - name: expected_code_digest is current (tos_redigest --check)
+        run: python tools/tos_redigest.py --check
+
       - name: tos size budget
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
         run: python tools/tos_size_budget.py --check

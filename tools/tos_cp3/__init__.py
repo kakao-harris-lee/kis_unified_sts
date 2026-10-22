@@ -74,7 +74,7 @@ Contents:
 Plans: ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 (구축물 B1a,
 B2, B3) and §5 steps 1-2; ``docs/plans/2026-10-09-tos-cp3-tenant-render-and-
 boot-path-plan.md`` §2.5-§2.6 (the boot-proof pair). Procedure: runbook
-``docs/runbooks/tos-paper-boot.md`` §7.2-c.
+``docs/runbooks/tos-paper-boot-history.md`` §7.2-c.
 """
 
 from __future__ import annotations

@@ -4022,7 +4022,7 @@ mypy 0 · 문서 게이트 다섯 전부 PASS/GREEN. **tos 소스 무변경 → 
 `~/.config/kis-probes/crontab.bak.20261003T161332`). 남은 것은 genesis 하나였고 **2026-10-06 08:45 에
 끝났다**(첫 실전 백업은 같은 날 18:00 verdict — 런북 §4-5-1·§4-5-4).
 **→ 개정(PR #859, 2026-10-04)**: 운영자 결정 「계약월마다 durable set 하나」
-(`docs/runbooks/tos-paper-boot.md` §7.10 7 (c) — 같은 data dir 위의 종목 롤은 부팅 리플레이를
+(`docs/runbooks/tos-paper-boot-history.md` §7.10 7 (c) — 같은 data dir 위의 종목 롤은 부팅 리플레이를
 영구 발산시킨다, 실측)로 대상 `~/.local/state/tos/paper-data` 는 **부모**가 되고 야간 래퍼가
 밑의 계약월 잎(`<종목>`)을 **순회**한다 — 잎마다 보관소 `paper-cold/<잎>/…` 와 파생 설정,
 한 통에 잎마다 한 줄, 종료코드는 가장 나쁜 잎. 래퍼 sha·증명 아티팩트는 런북 §4-5-1·§4-5-4

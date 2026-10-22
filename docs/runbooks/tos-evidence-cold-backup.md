@@ -4,8 +4,8 @@
 - 계획: `docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md` §2 A3 ·
   운영자 처분 §6.1-1(2026-09-29 「트랙 A = A1 · A2 · A3 모두 착수」) · 착지 §7.1.18.
 - 진입점: `tos_runtime` compose CLI 의 `cold-backup` 하위 명령.
-- 관련 런북: `docs/runbooks/tos-paper-boot.md` §4-B(수동 1회성 `backup-set --archive-dir`) ·
-  §4-A(증거 스키마 v1 → v2 마이그레이션).
+- 관련 런북: `docs/runbooks/tos-paper-boot.md`(운영) · `docs/runbooks/tos-paper-boot-history.md` §4-B(수동 1회성
+  `backup-set --archive-dir`) · 같은 파일 §4-A(증거 스키마 v1 → v2 마이그레이션).
 
 ## 0. 무엇이고 무엇이 아닌가
 
@@ -19,7 +19,7 @@
 - **「압축했지만 검증 안 된」 상태는 만들어지지 않는다.** 모든 아카이브는 쓴 직후 되읽어
   압축 해제 → 매니페스트 동일성 → 파일별 digest 대조 → 증거 체인 `verify_or_raise` 까지
   통과해야 최종 이름을 얻는다. 실패하면 `.partial` 을 지우고 종료코드 1 로 끝난다.
-- **`backup-set` 은 그대로다.** 대화형 1회성 백업은 종전과 동일하게 쓴다(`tos-paper-boot.md`
+- **`backup-set` 은 그대로다.** 대화형 1회성 백업은 종전과 동일하게 쓴다(`tos-paper-boot-history.md`
   §4-B). `cold-backup` 은 그 위에 **설정 기반 좌표 + 자동 세대 + 용량 바닥 + 보고서**를
   얹어 **무인 실행(cron)** 이 가능하게 만든 문이다.
 
@@ -29,7 +29,7 @@
    **기계적으로 탐지하지 못한다**(그 함수의 문서화된 전제). cron 으로 돌린다면 그 시각에
    `run` 이 떠 있지 않다는 것을 운영자가 보장해야 한다(§5).
 2. **커스터디 루트.** 아카이브의 증거 체인 재검증이 서명 키를 읽는다. 준비는
-   `tos-paper-boot.md` §1 과 동일하다.
+   `tos-paper-boot-history.md` §1 과 동일하다.
 3. **설정 파일 하나**(§2).
 4. **분리 워크트리와 래퍼**(§4-2 · §4-3). 손으로 한 번 돌릴 때도 필요하다 — 이 명령은
    공용 체크아웃에서 돌리지 않는다(§4-1). 번호가 뒤에 있을 뿐 §3 보다 **먼저** 만든다.
@@ -267,7 +267,7 @@ CRON_TZ=Asia/Seoul
 | **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
 | **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
 | 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 **`e7579803548b9dcb21dfb813650e51c995a0f25531e1e05add718a98f26d4916`** — **잎 순회 + `umask 077` 판**(2026-10-06 21:16:01 KST 설치, mtime · 이전 판 `c38078fc…` 백업 `.bak.c38078fcbbe7`). 10-04 잎 순회 판(`c38078fc…`, 운영자 결정 「계약월마다 durable set 하나」 · `tos-paper-boot.md` §7.10 7 (c))과의 차이는 **`set -u` 다음의 `umask 077` 한 줄과 헤더 주석**뿐이다(`cold-a3/leaf-selftest-20261006/wrapper.diff.c38078fc-to-e7579803`): 첫 실전 실행(10-06 18:00)의 산출물이 cron 의 umask 를 물려받아 아카이브·리포트·매니페스트 664 · 세대 디렉터리 775 · 비압축 sqlite 사본 644 였기 때문이다(A3-F3 · 아래 §4-5-4). 그 전 판 `6b6f5766…`(PR #855 — `classify()` 에 `migrate refused` 가지)은 `.bak.6b6f5766a6f0` 로 옆에 있다. ✅ **`classify()` 는 이 이동에 포함되지 않았다** — `fc0cd225…`·`6b6f5766…`·`c38078fc…`·**`e7579803…`** 네 판에서 함수를 떼어 낸 추출물이 **sha256 까지 같다**(`7c306195…` — 추출물과 해시는 `~/.local/state/tos/measure/cold-a3/classify-extract-20261006.txt`, 2026-10-06 실측; 10-04 의 같은 이름 파일에는 `e7579803` 이 없다). `d7e52b2f…`(#855 이전)만 다르고 그 차이는 #855 가 더한 두 줄이다. 그러므로 §4-5-4 의 분류 증명은 이 판에도 그대로 유효하다 |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 **`e7579803548b9dcb21dfb813650e51c995a0f25531e1e05add718a98f26d4916`** — **잎 순회 + `umask 077` 판**(2026-10-06 21:16:01 KST 설치, mtime · 이전 판 `c38078fc…` 백업 `.bak.c38078fcbbe7`). 10-04 잎 순회 판(`c38078fc…`, 운영자 결정 「계약월마다 durable set 하나」 · `tos-paper-boot-history.md` §7.10 7 (c))과의 차이는 **`set -u` 다음의 `umask 077` 한 줄과 헤더 주석**뿐이다(`cold-a3/leaf-selftest-20261006/wrapper.diff.c38078fc-to-e7579803`): 첫 실전 실행(10-06 18:00)의 산출물이 cron 의 umask 를 물려받아 아카이브·리포트·매니페스트 664 · 세대 디렉터리 775 · 비압축 sqlite 사본 644 였기 때문이다(A3-F3 · 아래 §4-5-4). 그 전 판 `6b6f5766…`(PR #855 — `classify()` 에 `migrate refused` 가지)은 `.bak.6b6f5766a6f0` 로 옆에 있다. ✅ **`classify()` 는 이 이동에 포함되지 않았다** — `fc0cd225…`·`6b6f5766…`·`c38078fc…`·**`e7579803…`** 네 판에서 함수를 떼어 낸 추출물이 **sha256 까지 같다**(`7c306195…` — 추출물과 해시는 `~/.local/state/tos/measure/cold-a3/classify-extract-20261006.txt`, 2026-10-06 실측; 10-04 의 같은 이름 파일에는 `e7579803` 이 없다). `d7e52b2f…`(#855 이전)만 다르고 그 차이는 #855 가 더한 두 줄이다. 그러므로 §4-5-4 의 분류 증명은 이 판에도 그대로 유효하다 |
 | **cron 등재** | 운영자 crontab (`crontab -l` 220-222행) | — | **설치됨 2026-10-03 16:13 KST**(운영자). 줄 그대로: `0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly`, 바로 위에 `CRON_TZ=Asia/Seoul` 과 머리 주석 한 줄(§4-5-3 에 셋 다 그대로). 설치 **직전** 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`(15401 B, mtime 16:13:32) — 그 파일과 현재 crontab 의 차이는 **이 세 줄뿐**이다(실측 `diff`). 첫 발화 2026-10-05(월) 18:00 KST |
 | 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | **일곱 블록** — `--selftest` 다섯(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33 — PR #855 의 네 판 · 10-04 19:20:06 — 잎 순회 판 `c38078fc…`; 전부 PRE-GENESIS rc 0) + **cron 발화 둘**(10-05 18:00 PRE-GENESIS rc 0 · 10-06 18:00 `A05610` gen1 verdict rc 0, 둘 다 `c38078fc…`). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍힌다. ⚠ 현재 판 `e7579803…` 의 블록은 **아직 없다** — 그 판의 증명은 스크래치 `COLD_LOG` 로 돌렸고(§4-5-4 끝), 호스트 로그의 첫 `e7579803…` 블록은 **10-07 18:00** 이다. 래퍼가 소유한다 |
 | cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | `664` | **매 실행 줄이 쌓인다** — 래퍼의 `log()` 가 로그 파일과 stdout 양쪽에 쓰고 cron 줄이 stdout 을 여기로 보내므로, 래퍼 로그와 같은 줄(머리 sha256 · 결말 · 끝 줄)이 날마다 붙는다(실측 10-05 3줄 · 10-06 10줄). ⚠ 모드 **664**(실측) — cron 의 셸이 `>>` 로 래퍼보다 **먼저** 여는 파일이라 래퍼의 `umask 077` 이 닿지 않는 유일한 산출물이다. 그룹 쓰기 가능이지만 래퍼 줄(경로·수·sha)만 담기고 좌표는 없다. ⚠ 이 행의 1차 판 「비어 있는 것이 정상」은 **틀렸다** — 첫 발화 전(10-03) 의 부재를 일반화한 것이다. 비어 있거나 어제 날짜에서 멈춰 있으면 **cron 이 뜨지 않은 것**이고, rc 2 ABORT 의 stderr 한 줄이 남는 유일한 자리도 여기다(§4-5-4 결말표) |
@@ -342,12 +342,12 @@ xz_preset          : 6 (파일에 없음 -> DEFAULT_XZ_PRESET)
 ```
 
 **(2) 대상 = `~/.local/state/tos/paper-data` 밑의 계약월 잎들(`<종목>`) — 상주 paper 런타임.**
-(2026-10-04 개정: 운영자 결정 「계약월마다 durable set 하나」 — `tos-paper-boot.md` §7.10 7 (c).
+(2026-10-04 개정: 운영자 결정 「계약월마다 durable set 하나」 — `tos-paper-boot-history.md` §7.10 7 (c).
 10-03 결정의 「대상 = `paper-data`」는 그대로이고, 그 디렉터리가 **부모**가 되어 래퍼가 잎을
 순회한다는 것이 더해졌다, §4-5-4.)
 
 부모는 **첫 기동 때 세션 래퍼가** `umask 077` 로 만들고(없을 때만), 첫 잎(`A05610`)은 **그 세션의
-genesis 가 만든다**(2026-10-06 화 예정, `ops-paper` 레인 · `tos-paper-boot.md` §7.3 5-a · §7.6).
+genesis 가 만든다**(2026-10-06 화 예정, `ops-paper` 레인 · `tos-paper-boot-history.md` §7.3 5-a · `tos-paper-boot.md` §7.6).
 상주 운영 절차는 `docs/runbooks/tos-paper-boot.md` **§7** 에 있다(#854, 2026-10-03 머지 —
 그전까지 열린 PR 이라 파일만 가리키고 있었다). 그 절의 §4-A 머리 경고가 같은 날짜를 반대
 방향에서 적는다: 10-06 **이후**로는 「상주 data dir 이 없다」가 더 이상 참이 아니지만,
@@ -389,7 +389,7 @@ fuser -v ~/.local/state/tos/paper-data/*/*.sqlite3   # 비어 있어야 한다 (
 cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 — run the operator `migrate` CLI (tos_runtime.operations.schema_migrations.apply_migrations) before booting; boot never auto-applies a migration
 ```
 
-그 경우에는 `docs/runbooks/tos-paper-boot.md` 의 `migrate` 절차를 **그 corpus 에** 먼저
+그 경우에는 `docs/runbooks/tos-paper-boot-history.md` §4-A 의 `migrate` 절차를 **그 corpus 에** 먼저
 돌려야 한다.
 
 ✅ **① 접두는 고쳤다 — PR #855 (계획 §7.1.28).** 실측 당시의 줄은
@@ -503,7 +503,7 @@ CRON_TZ=Asia/Seoul
   손대지 않아서**, 첫 실전 실행(10-06 18:00)의 산출물이 cron 의 umask 를 물려받았다 —
   아카이브·리포트·매니페스트 **664**, 세대 디렉터리 `backups/gen1/` **775**, 그 안의 비압축 sqlite
   사본 넷 **644**(실측 `cold-a3/mode-fix-20261006.txt` 「before」). 아카이브와 비압축 세대에는 계좌
-  좌표가 든 증거 DB 가 그대로 들어 있으므로 `tos-paper-boot.md` §7.2 좌표 규율의 600/700 이어야
+  좌표가 든 증거 DB 가 그대로 들어 있으므로 `tos-paper-boot-history.md` §7.2 좌표 규율의 600/700 이어야
   한다. 그래서 (1) 래퍼가 `set -u` 바로 뒤에 `umask 077` 을 두어 자식 CLI 까지 물려받게 했고,
   (2) gen1 산출물은 손으로 600/700 으로 돌렸다(같은 파일 「after-3」 전수 목록 — 파일 7 · 디렉터리 1).
   ⚠ **umask 가 닿지 않는 자리가 둘이다.** ① `backup_archive.py:331` 의 `extractall(verify_dir,
@@ -639,7 +639,7 @@ rc 0 · 텔레그램 `[SELFTEST]` 한 줄이었다(로그 머리 `sha256=6b6f576
 (기록한 sha 와 돌린 sha 가 같아야 하므로 — §4-5-5 의 그 규율 — 설치본 `c38078fc…` 으로):
 
 - **스크래치 좌표**(호스트 `paper-cold`·`paper-ops` 는 매 실행 전후 동일함을 목록 대조로
-  확인): 실제 genesis 스토어를 담은 잎 둘(`A05610`·`A05611`, `tos-paper-boot.md` §7.9-leaf 의
+  확인): 실제 genesis 스토어를 담은 잎 둘(`A05610`·`A05611`, `tos-paper-boot-history.md` §7.9-leaf 의
   드라이런 산출물 사본) + 잎이 아닌 항목 셋(파일 · 다른 이름 디렉터리 · 숨은 디렉터리)에
   세 번 연속 실행 → 잎마다 gen1 → gen2 → gen3, 매번 ⚠ 잎 밖 항목 3개 줄, 머리줄
   `OK 2 · REFUSED 0 · FAILED 0 · UNCLASSIFIED 0`, rc 0 · 잎 셋 중 **마지막**이 거부(빈 잎 →
@@ -744,7 +744,7 @@ sqlite3 "file:$CORPUS/$f.sqlite3?mode=ro" ".backup '$COPY/$f.sqlite3'"
   `241d79d5…`(evidence) · `21b3d222…`(rcl) · `36ea8ae7…`(inbox) · `4efbae27…`(marketfeed).
 - **⚠ 「한 바이트도 안 건드렸다」는 아니다. `-shm` 은 새로 쓰였다.** 이 관용구는
   `mode=ro` 이고 `immutable=1` 이 아니며, 읽기 전용 연결도 WAL 인덱스를 쓰기로 열기
-  때문에 `-shm` 이 갱신된다 — `docs/runbooks/tos-paper-boot.md` §4-A-1 이 #843 F2 로
+  때문에 `-shm` 이 갱신된다 — `docs/runbooks/tos-paper-boot-history.md` §4-A-1 이 #843 F2 로
   실측해 둔 그대로다. 이 작업 뒤 네 `-shm` 의 mtime 은 **2026-10-03 14:46:57-58**
   (evidence `57.960` · rcl `58.028` · inbox `58.036` · marketfeed `58.064`)이고 크기는
   32768 B 그대로다(로그 182-185행).
@@ -913,7 +913,7 @@ done
 | `cold-backup: archive refused — …` | 압축본이 되읽히지 않았다 **또는 검증 디렉터리가 이미 있다** | 아래 |
 | `cold-backup: integrity refused — …` | ⛔ **아카이브의 증거 체인이 재검증되지 않았다** | **재실행이 답이 아니다** — 아래 「압축본을 신뢰하지 않는다」 |
 | `cold-backup: custody refused — …` | 커스터디 키를 읽을 수 없거나 세대가 이어지지 않는다 | 경로·소유자·0600 모드·`evidence.key.<generation>` 존재 확인(§1). **스냅숏 전에** 잡힌다 |
-| `cold-backup: migrate refused — … is BEHIND …` | ⛔ **대상이 이 코드보다 옛 스키마다** | **재실행이 답이 아니다** — 재실행은 on-disk `PRAGMA user_version` 을 바꾸지 못한다. `docs/runbooks/tos-paper-boot.md` §4-A 의 `migrate` 를 **그 `--data-dir` 에** 돌린 뒤 다시 돈다. 이 방향은 **메시지가 조치를 그대로 말한다**. 비압축 스냅숏·매니페스트·`gen{N}.verify` 는 **남고**, 거부가 반복되면 밤마다 한 세대씩 쌓인다(위 ⚠) |
+| `cold-backup: migrate refused — … is BEHIND …` | ⛔ **대상이 이 코드보다 옛 스키마다** | **재실행이 답이 아니다** — 재실행은 on-disk `PRAGMA user_version` 을 바꾸지 못한다. `docs/runbooks/tos-paper-boot-history.md` §4-A 의 `migrate` 를 **그 `--data-dir` 에** 돌린 뒤 다시 돈다. 이 방향은 **메시지가 조치를 그대로 말한다**. 비압축 스냅숏·매니페스트·`gen{N}.verify` 는 **남고**, 거부가 반복되면 밤마다 한 세대씩 쌓인다(위 ⚠) |
 | `cold-backup: schema refused — … is AHEAD …` | ⛔ **대상이 이 코드보다 새 스키마다** — 그 파일을 쓴 쪽이 더 새 코드다 | **`migrate` 는 답이 아니다 — 그쪽도 거부한다**(`operations/schema_migrations.py` 의 AHEAD 가드가 아무것도 쓰기 전에 끊는다). 둘 중 하나다: (a) 그 저장소를 쓴 **코드 버전으로 되돌려** 돌린다, (b) 이 레인을 **멈춘다**(cron 줄을 빼는 것은 운영자). ⚠ 이 방향은 **메시지가 조치를 말하지 않는다** — 접두가 BEHIND 와 갈라져 있는 이유가 그것이다. 산출물은 위 행과 같다 |
 | `cold-backup: snapshot failed — OperationalError: database is locked` | **런타임이 아직 떠 있다** — §1 전제 1 위반 | 런타임을 멈추고 다시 돌린다. cron 시각을 당겼는지 본다 |
 | `cold-backup: snapshot failed — OSError: … No space left …` | 복사 도중 디스크가 찼다 | §6. 남은 `gen{N}/` 는 **지우지 않는다** — 다음 실행은 그 번호를 건너뛴다 |

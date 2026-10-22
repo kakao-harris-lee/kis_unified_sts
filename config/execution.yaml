@@ -295,6 +295,22 @@ futures_contract_spec:
     commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
     symbol_prefix: "101,A01"             # KIS prefixes: 101=연결선물(backtest), A01=live 근월물(F200)
 
+# 주식 종목 스펙 — CP-3 실시간 필드 생산자 전용(M2 주식 MOCK 한 줄, 2026-10-22).
+# 읽는 곳: tools/tos_cp3/live_producer (config/tos_probes/cp3-live-producer-stock-005930.yaml
+# 의 contract_spec_block). 레거시 런타임은 이 블록을 읽지 않는다.
+# 필드 이름은 ContractSpec 그대로다(선물 단위 이름): 주식에서 "point" = 원.
+stock_contract_spec:
+  krx_stock_005930:
+    multiplier_krw_per_point: 1          # 1주 = 가격(원) × 1
+    # KRX 주식 호가단위는 **가격대별 사다리**(1~1,000원)이고 이 스펙 한 칸으로는
+    # 표현할 수 없다. 여기 값은 그 사다리의 공통 약수인 1원 — 생산자가 가격을
+    # 정수(×100)로 싣는 것이 손실 없는지 확인(_assert_scale_covers_tick)하는 데만
+    # 쓰인다. 주문 가격의 호가단위 검증은 tenant 트리의 venue 제약이 맡는다.
+    tick_size_points: 1
+    tick_value_krw: 1
+    commission_rate: 0.00015             # 0.015% per side (KIS 주식 온라인 위탁 기준, 필드 산출에는 쓰이지 않음)
+    symbol_prefix: "005930"              # 종목코드 정확 일치(6자리)
+
 # Phase 4 — passive maker + force-close timings (spec §3.2 / §4.3).
 # Loaded by services.order_router._build_and_run via Phase4ExecutionConfig.
 phase4_execution:

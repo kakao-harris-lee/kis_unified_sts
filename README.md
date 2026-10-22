@@ -209,7 +209,8 @@ docs/                architecture, plans, runbooks, operations docs
 |---|---|
 | [tos-rcl-schema-migration.md](docs/runbooks/tos-rcl-schema-migration.md) | RCL sqlite schema v1→v2 migration ordering, backup-before-migrate, rollback scope |
 | [tos-kis-mock-transport.md](docs/runbooks/tos-kis-mock-transport.md) | `--transport kis-mock` wiring, custody, and non-live admission |
-| [tos-paper-boot.md](docs/runbooks/tos-paper-boot.md) | TOS paper 첫 부팅 — 좌표 렌더(저장소 밖) → `run` → 정지 → 확인. LONG/SHORT 둘 다. ⛔ **아직 끝까지 가지 못한다** — §5 가 실측 차단 3건을 이름으로 적는다 |
+| [tos-paper-boot.md](docs/runbooks/tos-paper-boot.md) | TOS paper **운영** 런북 — 상주 세션(start/stop·cron) · CP-3 tenant 세션(genesis·band·롤) · 콜드 백업 시간 관계 · 아침 결말 표 · digest 재도출 |
+| [tos-paper-boot-history.md](docs/runbooks/tos-paper-boot-history.md) | 위 런북의 **이력** — 1회성 부팅 절차(§1–§6) · `migrate` v1→v2(§4-A) · 2026-09-24 실측 차단(§5) · 드라이런(§7.9) · 닫힌/열린 질문(§7.10). 절 번호는 운영 런북과 같다 |
 | [tos-evidence-cold-backup.md](docs/runbooks/tos-evidence-cold-backup.md) | TOS 증거 콜드 백업 — 설정 기반 `cold-backup` 하위 명령(자동 세대 · xz · 되읽기 검증 · JSON 보고서 · 용량 바닥) · KST cron 한 줄 · 거부 대응표. **아무것도 지우지 않고 보존 손잡이도 없다**(파기는 트랙 B) |
 | [u17-prevention-control.md](docs/runbooks/u17-prevention-control.md) | U-17 예방 통제 — 아티팩트 countersign · main 착지 · 룰셋 필수 체크. **D0-A 착수 차단의 실제 해제 조건** |
 | [tos-paper-projection-connection.md](docs/runbooks/tos-paper-projection-connection.md) | CP-1 operator projection 출력 연결 — host wrapper/driver 좌표, 전용 0700 디렉터리, 읽기 전용 **디렉터리** mount(파일 단독 bind 금지), scratch 격리, 복구 절차 |

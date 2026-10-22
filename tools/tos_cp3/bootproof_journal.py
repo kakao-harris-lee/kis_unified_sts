@@ -22,7 +22,7 @@ write and the boot's first marketfeed pass, ``_derive_field_state`` returns
 ``(UNKNOWN, "stale")`` for all fifteen, the kernel's UNKNOWN floor drops the
 keys, R1's AND is false and the session ends at NO_ACTION. That is the same
 shape the resident render's own boot-proof observation has had all along
-(runbook ``tos-paper-boot.md``: "렌더가 만든 부팅 증명 관측은 부팅 시점에 이미
+(runbook ``tos-paper-boot-history.md`` §5 ④: "렌더가 만든 부팅 증명 관측은 부팅 시점에 이미
 STALE 이다"). Plan §2.5 was downgraded by PR #887 for exactly this reason, so
 say it plainly: this tool proves **wiring**, not **field consumption**. Which
 way an actual run goes is recorded in the runbook when it is run.

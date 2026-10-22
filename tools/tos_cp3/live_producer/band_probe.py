@@ -212,6 +212,14 @@ def run(
     """
     clock = now if now is not None else (lambda: datetime.now(KST))
     config = load_config(config_path, repo_root=REPO_ROOT)
+    if config.market != "futures":
+        # `FHMIF10000000` is the FUTURES price TR (`FID_COND_MRKT_DIV_CODE=F`).
+        # Asked for a stock symbol it would answer about nothing this session
+        # trades, and a band line built from that answer would be wrong.
+        raise LiveProducerRefused(
+            f"{config_path}: market={config.market!r} — the band probe reads the "
+            "futures band TR only"
+        )
     log = EventLog(session_dir, name=BAND_LOG_NAME)
     journal_path = band_journal_path(session_dir)
 
