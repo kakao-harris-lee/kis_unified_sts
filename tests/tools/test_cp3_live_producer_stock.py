@@ -209,7 +209,7 @@ def test_a_stock_band_read_requests_the_stock_tr_and_yields_the_three_values() -
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, content=RECORDED_BAND.read_bytes())
+        return httpx.Response(200, content=iter([RECORDED_BAND.read_bytes()]))
 
     quotes = _stock_quotes(handler)
     read = quotes.band(SYMBOL)
