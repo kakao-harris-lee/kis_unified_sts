@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,10 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("execution_yaml", str),
     ("calendar_session_id", str),
     ("calendar_session_phase", str),
-    ("front_month_product", str),
+    ("market", str),
+    ("open_anchor", str),
+    ("contract_spec_block", str),
+    ("quote_initial_cursor", str),
     ("first_poll_delay_s", float),
     ("missing_no_successor_timeout_s", float),
     ("repoll_pace_s", float),
@@ -59,6 +63,49 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
 
 #: Keys read as a list of ints rather than a scalar.
 _REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
+
+#: Keys that must be PRESENT but whose value may be ``null``. Present-and-null
+#: is a statement ("this market has no front month"); an absent key is not.
+_REQUIRED_NULLABLE_STR: tuple[str, ...] = ("front_month_product",)
+
+
+@dataclass(frozen=True)
+class MarketProfile:
+    """What the ``market`` key selects — protocol facts, not thresholds.
+
+    The quotation TR / path / market-division code for each market live in
+    :mod:`tools.tos_cp3.quote_client` next to the allowlist that gates them;
+    this table holds only what the CONFIG layer must check or hand on.
+    """
+
+    #: The Parquet ``<root>/<asset_class>/minute/`` segment, and the
+    #: ``tools.broker_probes.common.resolve_credentials`` asset name.
+    asset_class: str
+    #: The two REAL query secrets this market reads from ``env_file``.
+    credential_keys: tuple[str, str]
+    #: ``parser_env`` pins this market must carry.
+    required_pins: tuple[str, ...]
+    #: Whether the instrument rolls (a futures front month) — decides whether
+    #: ``front_month_product`` must be set or must be ``null``.
+    rolls: bool
+
+
+#: The two markets this producer serves. A stock symbol does not roll, reads
+#: the STOCK query keys and has no futures hour-class parameter to pin.
+MARKETS: dict[str, MarketProfile] = {
+    "futures": MarketProfile(
+        asset_class="futures",
+        credential_keys=("KIS_FUTURES_APP_KEY", "KIS_FUTURES_APP_SECRET"),
+        required_pins=("KIS_FUTURES_HOUR_CLS_CODE", "KIS_MINUTE_BAR_MIN_VOLUME"),
+        rolls=True,
+    ),
+    "stock": MarketProfile(
+        asset_class="stock",
+        credential_keys=("KIS_STOCK_APP_KEY", "KIS_STOCK_APP_SECRET"),
+        required_pins=("KIS_MINUTE_BAR_MIN_VOLUME",),
+        rolls=False,
+    ),
+}
 
 #: The floor on ``request_timeout_s``. One second, because that is already
 #: below any real KIS round trip (PR-1 measured the minute GET in the hundreds
@@ -87,13 +134,28 @@ class LiveProducerConfig:
     execution_yaml: Path
     calendar_session_id: str
     calendar_session_phase: str
+    #: ``futures`` or ``stock`` — selects the quotation TR, the credential pair,
+    #: the Parquet asset class and whether the instrument rolls (:data:`MARKETS`).
+    market: str
+    #: ``auto`` (the futures era rule of ``produce_fields.resolve_open_anchor``)
+    #: or ``HH:MM``. A stock session opens at 09:00 and has no era cutover, so
+    #: the stock config names its open; boot asserts it equals the calendar's
+    #: session start.
+    open_anchor: str
+    #: The top-level block of ``execution_yaml`` the contract spec is read from
+    #: (``futures_contract_spec`` / ``stock_contract_spec``).
+    contract_spec_block: str
+    #: ``FID_INPUT_HOUR_1`` of the first page of a day. Futures sends ``""``
+    #: (latest); the stock TR requires a time, so the stock config names the
+    #: session close.
+    quote_initial_cursor: str
     #: The ``product`` argument of
     #: ``shared.instruments.futures.get_front_month_code``. It names each seed
     #: day's contract in the cross-contract seed (plan §3.2a) and is checked
     #: against ``--instrument`` at startup, so it is a setting rather than a
     #: literal: a producer pointed at the standard contract while the runner
     #: trades mini would otherwise splice against the wrong month.
-    front_month_product: str
+    front_month_product: str | None
     #: δ — the first poll happens at ``bar boundary + first_poll_delay_s``.
     first_poll_delay_s: float
     #: G — re-poll until ``boundary + G`` before calling the minute late.
@@ -141,23 +203,76 @@ class LiveProducerConfig:
     parser_env: tuple[tuple[str, str], ...]
 
     @property
+    def profile(self) -> MarketProfile:
+        return MARKETS[self.market]
+
+    @property
+    def asset_class(self) -> str:
+        return self.profile.asset_class
+
+    @property
     def transport(self) -> dict[str, Any]:
         """The ``cfg`` mapping :class:`tools.tos_cp3.quote_client.Quotes` reads."""
-        return {
+        cfg: dict[str, Any] = {
+            "market": self.market,
+            "initial_cursor": self.quote_initial_cursor,
             "attempts": self.attempts,
             "pace_s": self.pace_s,
             "retry_pause_s": self.retry_pause_s,
             "request_timeout_s": self.request_timeout_s,
             "max_pages": self.max_pages,
-            "hour_cls_code": dict(self.parser_env)["KIS_FUTURES_HOUR_CLS_CODE"],
             "max_response_bytes": self.band_max_response_bytes,
         }
+        pins = dict(self.parser_env)
+        if "KIS_FUTURES_HOUR_CLS_CODE" in pins:
+            cfg["hour_cls_code"] = pins["KIS_FUTURES_HOUR_CLS_CODE"]
+        return cfg
 
 
 def _resolve(repo_root: Path, value: str) -> Path:
     """Repo-relative paths resolve against the checkout; absolute ones stand."""
     candidate = Path(value).expanduser()
     return candidate if candidate.is_absolute() else repo_root / candidate
+
+
+def _assert_market(path: Path, values: dict[str, Any]) -> None:
+    """The ``market`` key and the keys whose meaning depends on it.
+
+    Each refusal names an input that would otherwise run WRONG rather than
+    fail: a stock config with a ``front_month_product`` would have the seed
+    walk rename every past day's contract; a futures config without one has
+    no rule for naming the month at all.
+    """
+    market = values["market"]
+    if market not in MARKETS:
+        raise LiveProducerRefused(
+            f"{path}: market={market!r} is not one of {sorted(MARKETS)}"
+        )
+    product = values["front_month_product"]
+    if MARKETS[market].rolls and not product:
+        raise LiveProducerRefused(
+            f"{path}: market={market!r} rolls, so front_month_product must name "
+            "the product get_front_month_code is asked for"
+        )
+    if not MARKETS[market].rolls and product is not None:
+        raise LiveProducerRefused(
+            f"{path}: market={market!r} does not roll; front_month_product must "
+            f"be null, not {product!r} — the seed walk would request every "
+            "past day on a futures month instead of the symbol"
+        )
+    anchor = values["open_anchor"]
+    if anchor != "auto":
+        try:
+            datetime.strptime(anchor, "%H:%M")
+        except ValueError as exc:
+            raise LiveProducerRefused(
+                f"{path}: open_anchor={anchor!r} is neither 'auto' nor HH:MM"
+            ) from exc
+    elif market != "futures":
+        raise LiveProducerRefused(
+            f"{path}: open_anchor 'auto' is the FUTURES era rule (08:45 after "
+            f"2026-06-28); market={market!r} must name its open as HH:MM"
+        )
 
 
 def _assert_coherent(path: Path, values: dict[str, Any]) -> None:
@@ -233,7 +348,12 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
     if not isinstance(data, dict):
         raise LiveProducerRefused(f"{path}: not a YAML mapping")
 
-    known = {name for name, _ in _REQUIRED} | set(_REQUIRED_INT_LISTS) | {"parser_env"}
+    known = (
+        {name for name, _ in _REQUIRED}
+        | set(_REQUIRED_INT_LISTS)
+        | set(_REQUIRED_NULLABLE_STR)
+        | {"parser_env"}
+    )
     unknown = sorted(set(data) - known)
     if unknown:
         raise LiveProducerRefused(
@@ -242,7 +362,9 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
         )
     missing = sorted(
         name
-        for name in [n for n, _ in _REQUIRED] + list(_REQUIRED_INT_LISTS)
+        for name in [n for n, _ in _REQUIRED]
+        + list(_REQUIRED_INT_LISTS)
+        + list(_REQUIRED_NULLABLE_STR)
         if name not in data
     )
     if missing:
@@ -267,11 +389,15 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
                 f"{path}: {name}={entries!r} is not a list of ints"
             ) from exc
 
+    for name in _REQUIRED_NULLABLE_STR:
+        values[name] = None if data[name] is None else str(data[name])
+
     parser_env = data.get("parser_env")
     if not isinstance(parser_env, dict) or not parser_env:
         raise LiveProducerRefused(f"{path}: parser_env must be a non-empty mapping")
     pins = tuple(sorted((str(k), str(v)) for k, v in parser_env.items()))
-    for required_pin in ("KIS_FUTURES_HOUR_CLS_CODE", "KIS_MINUTE_BAR_MIN_VOLUME"):
+    _assert_market(path, values)
+    for required_pin in MARKETS[values["market"]].required_pins:
         if required_pin not in dict(pins):
             raise LiveProducerRefused(
                 f"{path}: parser_env must pin {required_pin} — plan §3.3 L9 "
@@ -319,15 +445,17 @@ def read_query_credentials(
     reader: Any,
     environ: MutableMapping[str, str],
 ) -> tuple[str, ...]:
-    """Pull ONLY the two futures query secrets from the explicitly named file.
+    """Pull ONLY the market's two query secrets from the explicitly named file.
 
+    Futures reads ``KIS_FUTURES_APP_KEY/SECRET``, stock reads
+    ``KIS_STOCK_APP_KEY/SECRET`` (:data:`MARKETS`) — never both.
     Plan §3.4: nothing else from ``.env.real`` crosses into this process, and
     the runner/runtime environments never receive these two at all (PR-3 pins
     that). ``reader`` is
     :func:`shared.config.dotenv_guard.read_explicit_dotenv`, which refuses a
     relative path and does nothing at all in hermetic mode.
     """
-    keys = ("KIS_FUTURES_APP_KEY", "KIS_FUTURES_APP_SECRET")
+    keys = config.profile.credential_keys
     values: Mapping[str, str] = reader(config.env_file, keys=keys)
     for key in keys:
         value = values.get(key)

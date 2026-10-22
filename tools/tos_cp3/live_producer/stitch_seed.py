@@ -86,7 +86,11 @@ class StitchedSeed:
 
     instrument: str
     target: date
-    product: str
+    #: ``None`` for an instrument that does not roll (a stock symbol): every
+    #: day is then requested on *instrument* itself, no junction can arise and
+    #: the manifest carries one segment — the same zero-junction manifest a
+    #: futures session without a splice writes.
+    product: str | None
     fetch_day: FetchDay
 
     junction: StitchJunction | None = field(default=None, init=False)
@@ -111,6 +115,8 @@ class StitchedSeed:
             )
 
     def contract_for(self, day: date) -> str:
+        if self.product is None:
+            return self.instrument
         return get_front_month_code(product=self.product, target_date=day)
 
     # -- the SeedAssembler interface -------------------------------------

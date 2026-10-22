@@ -1,0 +1,24 @@
+{
+  "_note": "Shape-faithful FHKST03010230 (주식일별분봉조회) response for 005930. NOT a live capture: tests may not make network calls and none was made to build it. Field names and nesting follow KIS open-trading-api examples_llm/domestic_stock/inquire_time_dailychartprice (output1 object + output2 rows newest-first, stck_bsop_date/stck_cntg_hour/stck_oprc/stck_hgpr/stck_lwpr/stck_prpr/cntg_vol/acml_tr_pbmn). The last row belongs to the previous business day, the shape FID_PW_DATA_INCU_YN=Y returns near the open.",
+  "rt_cd": "0",
+  "msg_cd": "MCA00000",
+  "msg1": "정상처리 되었습니다.",
+  "output1": {
+    "prdy_vrss": "300",
+    "prdy_vrss_sign": "2",
+    "prdy_ctrt": "0.49",
+    "stck_prdy_clpr": "61000",
+    "acml_vol": "1532001",
+    "acml_tr_pbmn": "93640000000",
+    "hts_kor_isnm": "삼성전자",
+    "stck_prpr": "61300"
+  },
+  "output2": [
+    {"stck_bsop_date": "20261021", "stck_cntg_hour": "090500", "stck_prpr": "61300", "stck_oprc": "61200", "stck_hgpr": "61400", "stck_lwpr": "61200", "cntg_vol": "182311", "acml_tr_pbmn": "11173000000"},
+    {"stck_bsop_date": "20261021", "stck_cntg_hour": "090400", "stck_prpr": "61200", "stck_oprc": "61100", "stck_hgpr": "61300", "stck_lwpr": "61100", "cntg_vol": "201554", "acml_tr_pbmn": "12334000000"},
+    {"stck_bsop_date": "20261021", "stck_cntg_hour": "090300", "stck_prpr": "61100", "stck_oprc": "61200", "stck_hgpr": "61200", "stck_lwpr": "61000", "cntg_vol": "240101", "acml_tr_pbmn": "14669000000"},
+    {"stck_bsop_date": "20261021", "stck_cntg_hour": "090200", "stck_prpr": "61200", "stck_oprc": "61300", "stck_hgpr": "61400", "stck_lwpr": "61100", "cntg_vol": "310877", "acml_tr_pbmn": "19034000000"},
+    {"stck_bsop_date": "20261021", "stck_cntg_hour": "090100", "stck_prpr": "61300", "stck_oprc": "61000", "stck_hgpr": "61500", "stck_lwpr": "61000", "cntg_vol": "597158", "acml_tr_pbmn": "36561000000"},
+    {"stck_bsop_date": "20261020", "stck_cntg_hour": "153000", "stck_prpr": "61000", "stck_oprc": "61000", "stck_hgpr": "61000", "stck_lwpr": "61000", "cntg_vol": "1203332", "acml_tr_pbmn": "73403000000"}
+  ]
+}
