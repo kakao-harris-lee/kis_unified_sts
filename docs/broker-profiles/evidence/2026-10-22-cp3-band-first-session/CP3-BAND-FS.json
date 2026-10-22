@@ -1,0 +1,215 @@
+{
+  "kind": "cp3-band-first-session/1",
+  "note": "Derived summary for the first band-on CP-3 LONG tenant session. No account identifiers, credentials or raw journals are carried here; every number is recomputed from the session artifacts named in generated_from.",
+  "session": {
+    "date": "2026-10-22",
+    "tenant_tree": "cp3-setup-d-long",
+    "direction": "LONG",
+    "instrument": "A05611",
+    "environment_label": "paper",
+    "repo_commit": "b15069fd1737962d92766e73648b0c2128957d32",
+    "runtime_code_digest": "b06d01f9cee56d11eb9e310b82e32244695bd62e8211a9a3491a23fcd4cca1b6",
+    "session_dir": "~/.local/state/tos/cp3-sessions/long-20261022",
+    "durable_leaf": "~/.local/state/tos/cp3-setup-d-long-data/A05611",
+    "worktree": "~/.local/state/tos/measure/wt-cp3-band-20261022",
+    "boot_kst": "2026-10-22 08:46:18",
+    "stop_kst": "2026-10-22 15:50:00",
+    "run_rc": 0,
+    "producer_rc": 0,
+    "last_journal_raw_event_id": "A05611:1m:20261022T154500+0900",
+    "last_journal_published_kst": "2026-10-22T15:46:02.434000+09:00"
+  },
+  "acceptance_1_band_line": {
+    "band_jsonl_lines": 1,
+    "band_as_of_ms": 1792626370996,
+    "band_as_of_kst": "2026-10-22T08:46:10.996000+09:00",
+    "session_open_ms": 1792626300000,
+    "session_open_kst": "2026-10-22T08:45:00+09:00",
+    "line_is_after_open": true,
+    "line_trading_date": "20261022",
+    "line_instrument": "A05611",
+    "line_seen_before_boot": true,
+    "band_absent_log_lines": 0,
+    "raw_payload_digest": "0074508b7337391eec82d1af21a0ab23ac64850839d7551ca25aebe568ee6d3d",
+    "band_log_stages": [
+      "band_fetch",
+      "band_published"
+    ],
+    "band_log_http_status": 200,
+    "band_log_rt_cd": "0",
+    "band_log_digest_equals_line": true,
+    "band_source_bound_at_boot": true,
+    "band_source_digest": "ad65b40bdf5b74fdb5955e0492193357a12b6f52aff5aadd0cbd2632c312ccd6",
+    "venue_band_observed_rows_this_session": 0,
+    "venue_band_observed_rows_store_total": 0,
+    "digest_equality_verdict": "NOT_EXERCISED"
+  },
+  "acceptance_2_prices_inside_band": {
+    "runbook_join_result": "SKIPPED (no band)",
+    "runtime_verdict": "NOT_EXERCISED",
+    "derived_band_lower_x100": 82022,
+    "derived_band_upper_x100": 96286,
+    "derived_band_source": "producer band.jsonl line (there is no runtime band row to read)",
+    "consumed_ids_this_session": 409,
+    "joined": 409,
+    "consumed_close_x100_min": 85124,
+    "consumed_close_x100_max": 89374,
+    "outside": 0,
+    "derived_verdict": "DERIVED-OK"
+  },
+  "acceptance_3_snapshot_carries_band": {
+    "venue_snapshot_issued_rows_this_session": 0,
+    "venue_snapshot_issued_rows_store_total": 1,
+    "store_row_seq": 938,
+    "store_row_belongs_to_boot": "2026-10-15",
+    "store_row_band_digest": null,
+    "store_row_absent_fields": [
+      "critical_input_snapshot_digest",
+      "source_continuity_id",
+      "max_age"
+    ],
+    "verdict": "NOT_EXERCISED"
+  },
+  "why_not_exercised": {
+    "flow_halted_this_session": 25,
+    "flow_halted_all_stage_denied_at_candidate_command_construction": 25,
+    "flow_halted_quantity_basis": "ZERO_POSITION",
+    "flow_halted_quantity_basis_distinct": 1,
+    "flow_step_admitted_this_session": 0,
+    "order_admissibility_decisions_this_session": 0,
+    "proposals_this_session": 25,
+    "genesis_20261015_proposals": 25,
+    "genesis_20261015_flow_step_admitted": 6,
+    "genesis_20261015_order_admissibility_decisions": 6,
+    "genesis_20261015_venue_snapshot_issued": 1,
+    "same_strategy_version_both_sessions": true,
+    "same_order_construction_policy_digest": true,
+    "band_read_site": "tos/runtime/src/tos_runtime/venue/service.py — VenueConstraintService.snapshot() calls _read_band('boot') on the FIRST snapshot; snapshot() is reached only from the venue stage and the non-trade admissibility provider, both downstream of candidate command construction",
+    "b3_legacy_only_entries_today": 3,
+    "b3_legacy_only_entries_attribution": "legacy_short_entry",
+    "interpretation_not_measurement": "the day's Setup D entry fires were SHORT, which a LONG tenant cannot take, so all 25 live proposals were exits (FLAT / ZERO_POSITION) and none cleared candidate command construction"
+  },
+  "m5": {
+    "criterion": "m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown == 0",
+    "store_wide_value": 2,
+    "this_session_value": 1,
+    "this_session_raw_event_ids": [
+      "A05611:1m:20261022T151200+0900"
+    ],
+    "this_session_pre_boot_raw_event_ids": [
+      "A05611:1m:20261022T084500+0900"
+    ],
+    "published_not_consumed": 0,
+    "unpaired_reason_counts": {
+      "late_completed": 1,
+      "no_raw_row_for_minute": 10,
+      "published_after_session_close": 1
+    },
+    "other_field_evaluation_states": {},
+    "observation_field_states_not_valid": {},
+    "live_withhold_reason_for_the_two_no_outcome_bars": "TIME_NOT_ADMITTED",
+    "verdict": "FAIL"
+  },
+  "m6": {
+    "criterion": "max_stamp_to_replace_s < 0.300",
+    "max_stamp_to_replace_s": 0.003937260014936328,
+    "verdict": "PASS"
+  },
+  "b3": {
+    "unresolved_count": 0,
+    "compared_bars": 409,
+    "identical": 382,
+    "kind_only_matches": 0,
+    "divergent": 27,
+    "divergence_shape_flat_vs_proposal": 25,
+    "divergence_shape_no_action_vs_no_outcome": 2,
+    "buckets": {
+      "AGREE_NO_ACTION": 381,
+      "LEGACY_ONLY_ENTRY": 3,
+      "TOS_EXIT_ON_LEGACY_AFTER_CUTOFF": 19,
+      "TOS_EXIT_ON_LEGACY_BEFORE_WINDOW": 1,
+      "TOS_EXIT_ON_LEGACY_NOT_EXTREME": 4,
+      "TOS_EXIT_ON_LEGACY_VOL_BELOW_GATE": 1
+    },
+    "session_day": "20261022",
+    "unpaired_offline_records_by_reason": {
+      "late_completed": 1,
+      "published_after_session_close": 1,
+      "seed_day": 1233
+    },
+    "ticks_without_a_decision": 0,
+    "attributed_by_capsule_id": 709,
+    "attributed_by_evidence_seq_range": 3,
+    "scoping_adaptation": "diff_decisions refuses the store-wide inputs (exit 2) because the designated durable set now holds TWO sessions (2026-10-15 genesis + 2026-10-22) while the frozen frame spans 2026-10-16..2026-10-22; consumed-ids.json and live.jsonl were filtered to 2026-10-22 raw_event_ids before the run",
+    "scoping_dropped_ids": 303,
+    "verdict": "PASS"
+  },
+  "real_order_tr_check": {
+    "log_files": 2,
+    "rows": 977,
+    "tr_ids": [
+      "FHKIF03020200",
+      "FHMIF10000000"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "real_orders": 0,
+    "verdict": "PASS"
+  },
+  "basis_vs_previous_close": {
+    "band_basis_x100": 89154,
+    "previous_session_day": "2026-10-21",
+    "previous_session_last_bar": "A05611:1m:20261021T154500+0900",
+    "previous_session_close_x100": 89154,
+    "difference_x100": 0,
+    "upper_minus_basis_x100": 7132,
+    "basis_minus_lower_x100": 7132,
+    "symmetric_about_basis": true,
+    "half_width_over_basis_pct": 7.9996,
+    "tick_size": 2,
+    "lower_on_tick_grid": true,
+    "upper_on_tick_grid": true,
+    "reading_not_measurement": "futs_sdpr equals the previous session's own close in the producer's frozen frame, so the broker did not hand back a stale trading date's basis"
+  },
+  "producer": {
+    "published": 410,
+    "frozen_bars_today": 411,
+    "fetch_error": 0,
+    "produce_error": 0,
+    "no_raw_row_for_minute": 10,
+    "late_completed": 1,
+    "missing_no_successor": 1,
+    "consumed_stale_at_boot": 1,
+    "stitch_days": 5,
+    "stitch_first_day": "2026-10-16"
+  },
+  "store_accumulation": {
+    "note": "the designated durable set is cumulative: every boot row appears once per session, which is why 2026-10-22's post-stop print shows 2 of each. It is not two boots in one day.",
+    "time_service_startup_rows_total": 2,
+    "boot_wall_clock_ms": [
+      1792026172127,
+      1792626380445
+    ],
+    "boot_wall_clock_kst": [
+      "2026-10-15T10:02:52.127000+09:00",
+      "2026-10-22T08:46:20.445000+09:00"
+    ],
+    "entries_total": 113576,
+    "entries_this_session": 62491,
+    "event_consumed_this_session": 409,
+    "event_consumed_store_total": 712
+  },
+  "generated_from": {
+    "band_jsonl": "/home/deploy/.local/state/tos/cp3-sessions/long-20261022/producer/band.jsonl",
+    "band_log_jsonl": "/home/deploy/.local/state/tos/cp3-sessions/long-20261022/producer/band-log.jsonl",
+    "producer_log_jsonl": "/home/deploy/.local/state/tos/cp3-sessions/long-20261022/producer/producer-log.jsonl",
+    "producer_summary_json": "/home/deploy/.local/state/tos/cp3-sessions/long-20261022/producer/producer-summary.json",
+    "session_log": "/home/deploy/.local/state/tos/cp3-sessions/long-20261022/session.log",
+    "evidence_sqlite3": "/home/deploy/.local/state/tos/cp3-setup-d-long-data/A05611/evidence.sqlite3",
+    "consumed_ids_json": "1834c0edc3ee20e286d019acff0c070783f32fb68474ea914d714b5187e2065c",
+    "b1a_fields_jsonl_sha256": "f91699374ec92d5f941d16fed748ad7c50b8cfbdb1ee4c3cf574512f14d202e2",
+    "b1b_trace_digest": "b5d0a9e8528dd88e4c46f3a1c343d4620fea4de62aca173ba42f686492758e35",
+    "method": "offline recomputation over the session's own artifacts; stores opened read-only (mode=ro)"
+  }
+}

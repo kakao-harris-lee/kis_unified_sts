@@ -21,7 +21,7 @@ token_cache_dir: /home/deploy/.cache/tos-cp3-live-producer-stock/token
 # --- 입력 파일 ---
 # 규칙은 선물 Setup D YAML 을 **그대로** 쓴다(운영자 결정: 규칙 재사용).
 strategy_yaml: config/strategies/futures/setup_d_vwap_reversion.yaml
-calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+calendar_yaml: config/tos_runtime/cp3-setup-d-stock-005930/calendar.yaml
 execution_yaml: config/execution.yaml
 # tenant 달력의 주식 정규장(CONTINUOUS 09:00~15:30).
 calendar_session_id: krx-stock
