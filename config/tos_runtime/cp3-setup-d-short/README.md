@@ -81,7 +81,7 @@ LONG 트리와 **바이트 동일한 23 개** 가운데 **22 개가 상주 `conf
 
 ### 3.1 방향이 사는 자리 넷 — 런북 §7.10 3 의 체크리스트
 
-런북 `docs/runbooks/tos-paper-boot.md` §7.10 3 은 「대칭이 깨지는 계기는 날짜가 아니라
+런북 `docs/runbooks/tos-paper-boot-history.md` §7.10 3 은 「대칭이 깨지는 계기는 날짜가 아니라
 **코드 변경**」이라며 방향이 사는 자리를 **셋**으로 열거한다
 (`construction.yaml::action_class`/`outbound_side` · OCP 의 DIRECTION 축 · 전략 파일의
 `direction`). 이 트리는 거기에 **넷째**를 더한다 — `marketfeed.yaml::direction`(발행되는

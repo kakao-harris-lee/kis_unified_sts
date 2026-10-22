@@ -50,18 +50,22 @@ class ContractSpecRegistry:
     specs: dict[str, ContractSpec] = field(default_factory=dict)
 
     @classmethod
-    def from_yaml(cls, path: str) -> ContractSpecRegistry:
+    def from_yaml(
+        cls, path: str, *, block: str = "futures_contract_spec"
+    ) -> ContractSpecRegistry:
         """Build a registry from a ``futures_contract_spec`` YAML block.
 
         Args:
             path: Path to a YAML file containing a top-level
                 ``futures_contract_spec`` mapping.
+            block: The top-level key to read. ``stock_contract_spec`` holds
+                the per-symbol stock specs the CP-3 live producer reads.
 
         Returns:
             A registry populated from the file (empty if the block is absent).
         """
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        raw = data.get("futures_contract_spec", {})
+        raw = data.get(block, {})
         return cls(
             specs={
                 name: ContractSpec(name=name, **fields) for name, fields in raw.items()

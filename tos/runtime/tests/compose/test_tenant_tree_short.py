@@ -4,7 +4,7 @@ with the LONG one.
 CP-3 kickoff ``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §4 decision 4 settled that
 LONG and SHORT are **two separate deployments**, each with its own config tree and data dir --
 not one tree plus a render flag, the way the RESIDENT boot-proof deployment does it. Decision 3
-is the other half: direction never shares a data dir (runbook ``docs/runbooks/tos-paper-boot.md``
+is the other half: direction never shares a data dir (runbook ``docs/runbooks/tos-paper-boot-history.md``
 §7.10 3, and §5 ⑤ -- an activation record does not bind direction, so a mixed corpus cannot be
 split apart afterwards).
 

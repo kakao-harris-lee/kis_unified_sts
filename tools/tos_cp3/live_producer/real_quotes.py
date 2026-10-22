@@ -30,7 +30,7 @@ def real_quotes(config: LiveProducerConfig, log: EventLog) -> Quotes:
     token its key never minted. ``secret_fingerprint`` is irreversible, so the
     path names the key without carrying it.
     """
-    creds = resolve_credentials("futures", is_real=True)
+    creds = resolve_credentials(config.asset_class, is_real=True)
     return Quotes(
         creds,
         log,

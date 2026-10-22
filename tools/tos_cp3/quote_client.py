@@ -1,4 +1,4 @@
-"""CP-3 real-key minute quotation transport — GET-only, one allowlisted TR.
+"""CP-3 real-key minute quotation transport — GET-only, allowlisted TRs only.
 
 Extracted from ``tools/tos_cp3/minute_probe.py`` (PR-1, #894) so PR-2's live
 field producer reuses the measured client instead of growing a second one. The
@@ -61,6 +61,28 @@ TR = "FHKIF03020200"
 BAND_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 BAND_TR = "FHMIF10000000"
 
+#: The STOCK one-minute quotation (M2 rescope, 2026-10-22: a stock MOCK order
+#: needs the same fifteen fields for one symbol). ``FHKST03010230``
+#: 주식일별분봉조회 is chosen over ``FHKST03010200`` 주식당일분봉조회 because it
+#: has the futures TR's shape: it takes a DATE and a time cursor
+#: (``FID_INPUT_DATE_1`` / ``FID_INPUT_HOUR_1``) and returns up to 120 rows per
+#: call, so ONE TR serves both the seed walk over past days and the intraday
+#: polls, exactly as ``FHKIF03020200`` does for futures. ``…0200`` has no date
+#: input and returns 30 rows of today only. Source: KIS open-trading-api
+#: ``examples_llm/domestic_stock/inquire_time_dailychartprice`` (output2 rows:
+#: ``stck_bsop_date`` · ``stck_cntg_hour`` · ``stck_oprc/hgpr/lwpr/prpr`` ·
+#: ``cntg_vol``), and the same TR this repo's stock backfill already calls
+#: (``shared/collector/historical/stock.py::_request_stock_minute_page``).
+STOCK_QUOTE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+STOCK_TR = "FHKST03010230"
+
+#: ``market`` -> (TR, path, ``FID_COND_MRKT_DIV_CODE``). The producer config's
+#: ``market`` key selects the row; both rows are GET and both are allowlisted.
+QUOTE_ROUTES: dict[str, tuple[str, str, str]] = {
+    "futures": (TR, QUOTE_PATH, "F"),
+    "stock": (STOCK_TR, STOCK_QUOTE_PATH, "J"),
+}
+
 #: The GET-only three-way gate (method + TR id + URL path).
 #: :func:`~tools.broker_probes.common.assert_read_only_call` refuses anything
 #: outside it BEFORE a socket is opened, so this tuple is where "zero real
@@ -68,6 +90,7 @@ BAND_TR = "FHMIF10000000"
 #: entries are GET, and this module has no POST code path at all.
 ALLOWLIST = (
     ReadOnlyCall(TR, QUOTE_PATH, "CP3 minute quotation"),
+    ReadOnlyCall(STOCK_TR, STOCK_QUOTE_PATH, "CP3 stock minute quotation"),
     ReadOnlyCall(BAND_TR, BAND_PATH, "CP3 venue band (상한가·하한가·기준가)"),
 )
 
@@ -192,19 +215,24 @@ class Quotes:
         self.calls = 0
 
     def page(self, symbol: str, day: date, cursor: str = "") -> list[dict]:
-        url = REAL_BASE_URL + QUOTE_PATH
-        assert_read_only_call("GET", url, TR, ALLOWLIST)
+        market = self.cfg.get("market", "futures")
+        tr_id, path, division = QUOTE_ROUTES[market]
+        url = REAL_BASE_URL + path
+        assert_read_only_call("GET", url, tr_id, ALLOWLIST)
         params = {
-            "FID_COND_MRKT_DIV_CODE": "F",
+            "FID_COND_MRKT_DIV_CODE": division,
             "FID_INPUT_ISCD": symbol,
-            "FID_HOUR_CLS_CODE": str(
-                self.cfg.get("hour_cls_code", DEFAULT_HOUR_CLS_CODE)
-            ),
             "FID_PW_DATA_INCU_YN": "Y",
             "FID_FAKE_TICK_INCU_YN": "N",
             "FID_INPUT_DATE_1": day.strftime("%Y%m%d"),
-            "FID_INPUT_HOUR_1": cursor,
+            # The stock TR refuses an empty time, so the config names the first
+            # page's cursor (the session close) rather than a literal here.
+            "FID_INPUT_HOUR_1": cursor or str(self.cfg.get("initial_cursor", "")),
         }
+        if market == "futures":
+            params["FID_HOUR_CLS_CODE"] = str(
+                self.cfg.get("hour_cls_code", DEFAULT_HOUR_CLS_CODE)
+            )
         refreshed = False
         for attempt in range(self.cfg["attempts"]):
             time.sleep(max(0, self.cfg["pace_s"] - (time.monotonic() - self.last)))
@@ -217,7 +245,7 @@ class Quotes:
                     "authorization": "Bearer " + token,
                     "appkey": self.creds.app_key,
                     "appsecret": self.creds.app_secret,
-                    "tr_id": TR,
+                    "tr_id": tr_id,
                     "content-type": "application/json",
                 }
                 started = datetime.now(KST)
@@ -236,8 +264,8 @@ class Quotes:
                         "started_kst": started,
                         "received_kst": self.last_received_kst,
                         "method": "GET",
-                        "tr_id": TR,
-                        "path": QUOTE_PATH,
+                        "tr_id": tr_id,
+                        "path": path,
                         "params": params,
                         "attempt": attempt + 1,
                         "rt_cd": payload.get("rt_cd"),

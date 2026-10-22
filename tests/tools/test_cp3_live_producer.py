@@ -2425,16 +2425,18 @@ def _bare_quotes(recorder: Any, http: Any) -> Any:
     return quotes
 
 
-def test_band_the_allowlist_is_two_paired_get_entries() -> None:
-    """One pair added, nothing else changed, and the PAIRING is what matters."""
-    assert len(quote_client.ALLOWLIST) == 2
+def test_band_the_allowlist_is_three_paired_get_entries() -> None:
+    """Futures minute + band, and the stock minute TR (M2), each PAIRED to its path."""
+    assert len(quote_client.ALLOWLIST) == 3
     assert {entry.tr_id for entry in quote_client.ALLOWLIST} == {
         quote_client.TR,
         quote_client.BAND_TR,
+        quote_client.STOCK_TR,
     }
     by_tr = {entry.tr_id: entry.path for entry in quote_client.ALLOWLIST}
     assert by_tr[quote_client.BAND_TR] == quote_client.BAND_PATH
     assert by_tr[quote_client.TR] == quote_client.QUOTE_PATH
+    assert by_tr[quote_client.STOCK_TR] == quote_client.STOCK_QUOTE_PATH
     # The two paths are DIFFERENT endpoints: a reader who assumes the band
     # rides the minute path would be wrong, and so would a swapped pair.
     assert quote_client.BAND_PATH != quote_client.QUOTE_PATH

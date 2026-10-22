@@ -58,7 +58,7 @@ FRONT_MONTH = "A05610"
 #: firewall denies ``shared.instruments``. The mapping is pinned OUTSIDE the firewall — the
 #: code strings by ``shared/instruments/futures.py::get_front_month_code``, and the 2026-10
 #: boundary those strings turn on by the real-calendar tests named in
-#: ``docs/runbooks/tos-paper-boot.md`` §7.10 7 「재도출」:
+#: ``docs/runbooks/tos-paper-boot-history.md`` §7.10 7 「재도출」:
 #: ``test_deploy_config.py::test_real_calendar_mini_october_expiry_day_before_and_after_close``
 #: (2026-10-08 expiry) and ``::test_real_calendar_day_after_mini_october_expiry_rolls_to_november``
 #: (the next day rolls to November). This suite needs neither fact: it uses the two values only

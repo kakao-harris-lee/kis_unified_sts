@@ -1098,21 +1098,21 @@ def test_a_session_holding_only_the_PREVIOUS_months_partitions_is_refused(
     market_root = tmp_path / "market"
     sinks_mod.append_bar_part(
         market_root,
-        asset_class=producer_mod.ASSET_CLASS,
+        asset_class="futures",
         symbol=OLD,
         bars=_flat_session(OLD, SPLICE, 400.00, 0.75)[:5],
     )
-    traded = market_root / producer_mod.ASSET_CLASS / "minute" / f"code={NEW}"
+    traded = market_root / "futures" / "minute" / f"code={NEW}"
     assert not traded.exists(), "the fixture must hold no partition for the traded code"
 
     with pytest.raises(LiveProducerRefused, match="already holds"):
         sinks_mod.refuse_if_partitions_exist(
-            market_root, asset_class=producer_mod.ASSET_CLASS, symbol=NEW
+            market_root, asset_class="futures", symbol=NEW
         )
     # An empty tree is still accepted — the refusal is about THIS directory's
     # emptiness, not about sibling months being present anywhere.
     sinks_mod.refuse_if_partitions_exist(
-        tmp_path / "fresh", asset_class=producer_mod.ASSET_CLASS, symbol=NEW
+        tmp_path / "fresh", asset_class="futures", symbol=NEW
     )
 
 

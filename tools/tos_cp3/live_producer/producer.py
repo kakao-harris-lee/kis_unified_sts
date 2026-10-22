@@ -93,16 +93,13 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     resolve_contract_spec,
     resolve_open_anchor,
 )
-from tools.tos_cp3.quote_client import KST, QUOTE_PATH, TR  # noqa: E402
+from tools.tos_cp3.quote_client import KST, QUOTE_ROUTES  # noqa: E402
 from tools.tos_cp3.stitch import (  # noqa: E402
     STITCH_FILENAME,
     StitchManifest,
     rows_digest,
     write_manifest,
 )
-
-#: The asset class segment of the Parquet layout B1a reads back.
-ASSET_CLASS = "futures"
 
 
 @dataclass
@@ -183,7 +180,9 @@ class LiveProducer:
         """
         self.lock = acquire_session_lock(self.market_root)
         refuse_if_partitions_exist(
-            self.market_root, asset_class=ASSET_CLASS, symbol=self.instrument
+            self.market_root,
+            asset_class=self.config.asset_class,
+            symbol=self.instrument,
         )
         refuse_if_journal_exists(self.journal_path)
 
@@ -205,9 +204,20 @@ class LiveProducer:
         )
         self.strategy = load_strategy_inputs(self.config.strategy_yaml)
         self.anchor = resolve_open_anchor(
-            cli_value="auto", first_session=self.target, last_session=self.target
+            cli_value=self.config.open_anchor,
+            first_session=self.target,
+            last_session=self.target,
         )
-        registry = ContractSpecRegistry.from_yaml(str(self.config.execution_yaml))
+        if self.config.open_anchor != "auto" and self.anchor.kst != (
+            self.window.start.strftime("%H:%M")
+        ):
+            raise LiveProducerRefused(
+                f"open_anchor {self.anchor.kst} != the calendar's "
+                f"{self.config.calendar_session_id} start {self.window.start}"
+            )
+        registry = ContractSpecRegistry.from_yaml(
+            str(self.config.execution_yaml), block=self.config.contract_spec_block
+        )
         self.contract_spec = resolve_contract_spec(self.instrument, registry)
 
         self.journal = ObservationJournal(
@@ -267,14 +277,14 @@ class LiveProducer:
         for entry in self.seed.kept:
             append_bar_part(
                 self.market_root,
-                asset_class=ASSET_CLASS,
+                asset_class=self.config.asset_class,
                 symbol=entry.contract,
                 bars=entry.bars,
             )
         if self.assembler.junction_new_bars:
             append_bar_part(
                 self.market_root,
-                asset_class=ASSET_CLASS,
+                asset_class=self.config.asset_class,
                 symbol=self.instrument,
                 bars=self.assembler.junction_new_bars,
             )
@@ -307,7 +317,7 @@ class LiveProducer:
         cutover.
         """
         over_window = resolve_open_anchor(
-            cli_value="auto",
+            cli_value=self.config.open_anchor,
             first_session=min(self.seed.days_used),
             last_session=self.target,
         )
@@ -668,7 +678,7 @@ class LiveProducer:
         self.frozen.extend(step.newly_frozen)
         append_bar_part(
             self.market_root,
-            asset_class=ASSET_CLASS,
+            asset_class=self.config.asset_class,
             symbol=self.instrument,
             bars=step.newly_frozen,
         )
@@ -908,8 +918,9 @@ def main(argv: list[str] | None = None) -> int:
                     "date": str(target),
                     "instrument": args.instrument,
                     "method": "GET",
-                    "tr_id": TR,
-                    "path": QUOTE_PATH,
+                    "market": config.market,
+                    "tr_id": QUOTE_ROUTES[config.market][0],
+                    "path": QUOTE_ROUTES[config.market][1],
                     "source_id": SOURCE_ID,
                     "journal": str(args.journal),
                     "session_dir": str(args.session_dir),
