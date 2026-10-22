@@ -1,0 +1,65 @@
+# CP-3 ③ 실시간 필드 생산자 — 주식 005930(삼성전자) 설정 (rescope M2, 2026-10-22)
+#
+# 계획: docs/plans/2026-10-22-tos-rescope-plan.md §3 M2 — 운영자 결정 2026-10-22:
+#   종목 005930 · 규칙 Setup D VWAP 되돌림 LONG 그대로 · 수량 1주 고정 · 주식 정규장
+#   09:00~15:30 KST.
+# 선물 설정(cp3-live-producer.yaml)과 **같은 로더**(tools/tos_cp3/live_producer/config.py)가
+# 읽는다. 키 이름·의미·근거는 그 파일의 주석이 정본이고, 여기는 **주식이라 다른 값만**
+# 설명한다. 오타 난 키·빠진 키는 기동 거부다.
+#
+# ⛔ GET 전용. 주문 경로 없음. 실전 키는 시세 조회(주식일별분봉조회 FHKST03010230)에만 쓴다.
+
+# --- 자격증명과 토큰 ---
+# market: stock 이면 env_file 에서 KIS_STOCK_APP_KEY / KIS_STOCK_APP_SECRET 두 개만 읽는다
+# (선물 키는 읽지 않는다 — config.py MARKETS). 주식 시세는 실전 키 필수
+# (모의 키 = HTTP 500 / 0 틱, 메모리 stock-needs-real-kis-key).
+env_file: /home/deploy/project/kis_unified_sts/.env.real
+# 선물 생산자와 **다른** 토큰 캐시 — 앱 키가 다르므로 공유하지 않는다(경로에 앱 키
+# 지문이 붙지만 디렉터리도 나눠 둔다).
+token_cache_dir: /home/deploy/.cache/tos-cp3-live-producer-stock/token
+
+# --- 입력 파일 ---
+# 규칙은 선물 Setup D YAML 을 **그대로** 쓴다(운영자 결정: 규칙 재사용).
+strategy_yaml: config/strategies/futures/setup_d_vwap_reversion.yaml
+calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+execution_yaml: config/execution.yaml
+# tenant 달력의 주식 정규장(CONTINUOUS 09:00~15:30).
+calendar_session_id: krx-stock
+calendar_session_phase: CONTINUOUS
+market: stock
+# 주식은 롤이 없다 — null 이어야 한다(값이 있으면 기동 거부).
+front_month_product: null
+# 주식 개장. 선물의 `auto`(2026-06-28 시대 규칙)는 주식에 맞지 않는다. 기동 시
+# 달력 세션 시작(09:00)과 같은지 단언한다. 출처: config/market_schedule.yaml::stock.regular.open.
+open_anchor: "09:00"
+# config/execution.yaml::stock_contract_spec.krx_stock_005930
+contract_spec_block: stock_contract_spec
+# 주식 TR 은 FID_INPUT_HOUR_1 빈 값을 받지 않는다 — 하루 첫 페이지는 세션 종료 시각부터
+# 거꾸로 읽는다(레거시 백필 shared/collector/historical/stock.py 와 같은 방식).
+# ⚠ 장중에 종료 시각을 커서로 주었을 때 «지금까지의 봉»이 오는지는 **아직 실측되지
+#   않았다** — 첫 세션 전에 GET 한 번으로 확인할 것(PR 본문 참조).
+quote_initial_cursor: "153000"
+calendar_covered_years: [2026]
+
+# --- δ / G · 전송 · 시드 · 정지 조건 — 선물 설정과 같은 값 ---
+# 근거는 선물 측정(PR-1 증거)이다. 주식 분봉 도착 지연은 측정되지 않았으므로 같은 값에서
+# 시작하고, 첫 세션 로그(missing_no_successor · late_completed)로 다시 본다.
+first_poll_delay_s: 1.8
+missing_no_successor_timeout_s: 10.0
+repoll_pace_s: 1.1
+request_timeout_s: 10
+attempts: 3
+retry_pause_s: 2.0
+pace_s: 1.1
+max_pages: 20
+# B1a 의 DEFAULT_MIN_BARS_PER_DAY 와 같아야 한다(로더가 단언). 주식 정규장은 390 분
+# (15:20~15:30 은 종가 단일가)이라 005930 은 통과한다.
+min_bars_per_day: 330
+max_seed_calendar_days: 90
+# band 프로세스는 선물 전용이다(band_probe 가 market != futures 를 거부) — 이 값은
+# 로더 요구라 남지만 주식 세션에서는 쓰이지 않는다.
+band_max_response_bytes: 65536
+parser_env:
+  KIS_MINUTE_BAR_MIN_VOLUME: '10'
+max_consecutive_produce_errors: 5
+max_consecutive_fetch_error_minutes: 10

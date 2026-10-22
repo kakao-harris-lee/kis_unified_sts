@@ -28,6 +28,18 @@ execution_yaml: config/execution.yaml
 # 아니라 이 달력에서 온다.
 calendar_session_id: krx-index-futures
 calendar_session_phase: CONTINUOUS
+# 시장 종류(M2 주식 일반화, 2026-10-22). `futures` 는 조회 TR FHKIF03020200 ·
+# 선물 조회 키 두 개 · Parquet `futures/` · 월물 롤을 고른다(live_producer/config.py
+# MARKETS). 주식 설정은 cp3-live-producer-stock-005930.yaml.
+market: futures
+# 개장 앵커. `auto` = produce_fields.resolve_open_anchor 의 선물 시대 규칙
+# (2026-06-28 이후 08:45, config/market_schedule.yaml::futures.regular.open).
+open_anchor: auto
+# execution_yaml 에서 계약 스펙을 읽을 최상위 블록.
+contract_spec_block: futures_contract_spec
+# 하루 첫 페이지의 FID_INPUT_HOUR_1. 선물 TR 은 빈 값(=최신)을 받는다 — PR-1 프로브와
+# 같은 값이다.
+quote_initial_cursor: ""
 # 월물 교차 시드(§3.2a)에서 **그날의 front month** 를 정하는
 # shared/instruments/futures.py::get_front_month_code 의 product 인자.
 # 오늘의 종목을 정하는 바로 그 함수이고, 기동 시 --instrument 와 일치하는지
