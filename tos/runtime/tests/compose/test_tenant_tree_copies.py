@@ -148,6 +148,15 @@ _RESIDENT_ONLY: dict[str, str] = {
     ),
 }
 
+#: The stock tree ``cp3-setup-d-stock-005930`` is deliberately NOT listed here (#928 review
+#: MEDIUM-2). It is guarded against LONG, not against the resident tree:
+#: ``test_tenant_tree_stock.py::test_every_file_is_a_byte_copy_or_differs_only_where_declared``
+#: requires every stock file to be a byte copy of LONG's or to differ only at the leaf paths
+#: its ``_DIFFERS_FROM_LONG`` declares (``engine.yaml`` and ``release.yaml`` declare none, so
+#: they must be byte copies; ``marketfeed.yaml`` may differ only in ``instrument_class`` /
+#: ``unit``). This file then pins LONG to the resident tree, so stock → LONG → resident is
+#: covered end to end. Red-before (2026-10-23): a stray key appended to the stock
+#: ``engine.yaml`` / ``marketfeed.yaml`` / ``release.yaml`` each fails that stock test.
 _TENANT_TREES = tuple(_TENANT_STRATEGY)
 
 #: The one file whose staleness is a BOOT ABORT rather than a stale comment, called out on its
