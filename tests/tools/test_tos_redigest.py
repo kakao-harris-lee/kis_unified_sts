@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -153,3 +154,72 @@ def test_measurement_runs_the_runtime_cli_and_returns_a_real_digest() -> None:
     calls), never from a reimplementation of the digest scheme."""
     measured = tr.measure_code_digest(_REPO_ROOT)
     assert re.fullmatch(r"[0-9a-f]{64}", measured)
+
+
+def test_measurement_output_without_a_digest_line_is_an_error(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``print-digests`` exiting 0 is not the same as ``print-digests`` answering.
+
+    If the CLI's output ever stops carrying the key -- renamed, reformatted, or
+    swallowed -- the measured value would be the empty string, and comparing it against
+    a pin read by the same kind of regex is how "empty equals empty" passes for nothing.
+    The regex demands 64 lowercase hex characters, so there is no empty measurement to
+    compare; the absence is an error.
+    """
+    (fake_repo / "tos" / "src").mkdir(parents=True)
+    (fake_repo / "tos" / "runtime" / "src").mkdir(parents=True)
+    monkeypatch.setattr(
+        tr.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="python_version: 3.12.12\n", stderr=""
+        ),
+    )
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
+    err = capsys.readouterr().err
+    assert "ERROR" in err and "refusing to compare nothing" in err
+
+
+def test_a_repo_root_without_the_source_roots_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """⛔ The failure this guard exists for: measuring one tree, pinning another.
+
+    ``--repo-root`` only steers where the two packages are imported FROM. Point it at a
+    directory that is not a checkout and the import would fall through to an installed
+    (editable) ``tos``/``tos_runtime`` -- a different tree -- and ``--write`` would put
+    that tree's digest into this one's ``release.yaml``, honest-looking and wrong. So a
+    missing source root is refused before anything is measured.
+    """
+    assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "missing source root(s)" in err
+    assert str(tmp_path / "tos" / "src") in err
+
+
+def test_source_roots_that_cannot_serve_the_packages_are_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same failure one step in: the roots EXIST but hold no packages.
+
+    Which branch answers depends on the environment, and both are exit 2:
+
+    * nothing installed (a plain dev checkout) -- the import fails and the subprocess
+      exits non-zero;
+    * ``tos``/``tos_runtime`` installed editable (this repo's CI installs both) -- the
+      editable finder in ``sys.meta_path`` answers the import AHEAD of ``sys.path``, and
+      the program's own ``commonpath`` check refuses because the module resolved outside
+      the root it was told to measure.
+
+    The second branch is the one that cannot be arranged hermetically (it needs an
+    installed copy of another checkout), so this test is where CI exercises it. Asserting
+    only "exit 2 with a message" is deliberate: pinning either wording would make the
+    test pass in one environment and fail in the other.
+    """
+    (tmp_path / "tos" / "src").mkdir(parents=True)
+    (tmp_path / "tos" / "runtime" / "src").mkdir(parents=True)
+
+    assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
+    assert "tos_redigest: ERROR" in capsys.readouterr().err

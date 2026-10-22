@@ -1023,6 +1023,12 @@ def test_release_code_digest_pin_equals_the_measured_source_tree() -> None:
     not a literal. ``tools/tos_redigest.py --check`` is the same comparison outside
     pytest (and ``--write`` is how the pin is updated, in all three byte-identical
     copies at once).
+
+    Scope: this reads the RESIDENT copy only (``_DEPLOY_DIR`` is
+    ``config/tos_runtime/paper/``). The two CP-3 tenant copies are covered by
+    ``test_tenant_tree_copies.py``, which requires them byte-identical to this one — so
+    a pin that is right here is right there, and a tenant copy that drifted is red
+    there rather than silently unchecked.
     """
     assert _mapping("release.yaml")["expected_code_digest"] == EXPECTED_CODE_DIGEST, (
         "release.yaml's expected_code_digest is stale for this source tree — "

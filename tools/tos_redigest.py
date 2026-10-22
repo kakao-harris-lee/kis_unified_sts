@@ -24,8 +24,11 @@ assertion runs inside the runtime suite
 **The measurement is never reimplemented here.** It comes from the runtime's own
 ``print-digests`` CLI — the same ``observe_source_tree_digest()`` the boot-time
 admission check calls. The import firewall forbids ``tools/`` importing ``tos`` or
-``tos_runtime``, so the CLI runs as a subprocess with ``PYTHONPATH`` pointed at the two
-source roots, exactly like ``~/.config/kis-probes/tos-paper-session.sh`` does.
+``tos_runtime``, so the CLI runs as a subprocess pointed at this tree's two source
+roots, the way ``~/.config/kis-probes/tos-paper-session.sh`` does — except that it is
+pinned to those roots rather than merely preferring them, because an installed copy of
+a different checkout answering the import would produce an honest-looking digest of the
+wrong tree (see :data:`_PRINT_DIGESTS_PROGRAM`).
 
 **Only ``expected_code_digest``.** The sibling ``expected_dependency_set_digest`` is a
 property of the *deploy host's* interpreter and installed distribution set, not of the
@@ -42,7 +45,6 @@ wrapper's own digest guard.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -73,11 +75,43 @@ _MEASURED_LINE = re.compile(
     rf"^expected_code_digest:[ \t]*({_HEX64})[ \t]*$", re.MULTILINE
 )
 
-_PRINT_DIGESTS_SNIPPET = (
-    "import sys;"
-    "from tos_runtime.compose.cli import main;"
-    'sys.exit(main(["print-digests"]))'
-)
+#: The program the measurement subprocess runs, with the two source roots as argv.
+#:
+#: Run under ``-I`` (isolated): ``PYTHONPATH`` and the user site directory are ignored,
+#: so nothing the caller's environment happens to carry can steer the import. The two
+#: roots are then put on ``sys.path`` explicitly.
+#:
+#: That alone is not enough. An editable install registers a finder in ``sys.meta_path``
+#: (CI installs both distributions editable), and ``sys.meta_path`` is consulted BEFORE
+#: ``sys.path`` — so an installed copy of a DIFFERENT checkout could answer the import
+#: and the tool would measure that tree while writing this one's pin. So the program
+#: checks where each module actually came from and refuses if it is not under the root
+#: it was asked to measure. The digest is only honest if it is a digest OF THE TREE THE
+#: PIN IS BEING WRITTEN INTO.
+_PRINT_DIGESTS_PROGRAM = """\
+import os
+import sys
+
+kernel_root, runtime_root = sys.argv[1], sys.argv[2]
+sys.path[:0] = [kernel_root, runtime_root]
+
+import tos
+import tos_runtime
+
+for module, root in ((tos, kernel_root), (tos_runtime, runtime_root)):
+    resolved = os.path.realpath(module.__file__)
+    expected = os.path.realpath(root)
+    if os.path.commonpath([resolved, expected]) != expected:
+        sys.exit(
+            "refused: %s resolved to %s, outside the requested source root %s — an "
+            "installed copy of another checkout would have been measured"
+            % (module.__name__, resolved, expected)
+        )
+
+from tos_runtime.compose.cli import main
+
+sys.exit(main(["print-digests"]))
+"""
 
 _FIX_COMMAND = "python tools/tos_redigest.py --write"
 
@@ -92,23 +126,39 @@ def measure_code_digest(
     """Run the runtime's own ``print-digests`` and return its ``expected_code_digest``.
 
     Args:
-        repo_root: Tree to measure; its ``tos/src`` and ``tos/runtime/src`` go on
-            ``PYTHONPATH`` so the measurement is of THIS checkout, not of whatever is
-            installed in site-packages.
+        repo_root: Tree to measure. Its ``tos/src`` and ``tos/runtime/src`` are the ONLY
+            places the two packages may be imported from — see
+            :data:`_PRINT_DIGESTS_PROGRAM` for how that is enforced.
         python_executable: Interpreter to run it with (default: the current one).
 
     Raises:
-        RedigestError: The CLI failed, or printed no 64-char lowercase hex digest.
+        RedigestError: Either source root is missing, the CLI failed, a package
+            resolved outside ``repo_root``, or no 64-char lowercase hex digest was
+            printed.
     """
-    env = dict(os.environ)
-    roots = [str(repo_root / "tos" / "src"), str(repo_root / "tos" / "runtime" / "src")]
-    if env.get("PYTHONPATH"):
-        roots.append(env["PYTHONPATH"])
-    env["PYTHONPATH"] = os.pathsep.join(roots)
+    kernel_root = repo_root / "tos" / "src"
+    runtime_root = repo_root / "tos" / "runtime" / "src"
+    missing = [root for root in (kernel_root, runtime_root) if not root.is_dir()]
+    if missing:
+        # Without this, a --repo-root that is not a checkout of this repo would let the
+        # import fall through to an INSTALLED tos/tos_runtime, and --write would put a
+        # digest measured from some other tree into this tree's pin.
+        raise RedigestError(
+            "not a checkout of this repo — missing source root(s): "
+            + ", ".join(str(root) for root in missing)
+            + " (--repo-root must point at a tree containing tos/src and "
+            "tos/runtime/src)"
+        )
     proc = subprocess.run(
-        [python_executable or sys.executable, "-c", _PRINT_DIGESTS_SNIPPET],
+        [
+            python_executable or sys.executable,
+            "-I",
+            "-c",
+            _PRINT_DIGESTS_PROGRAM,
+            str(kernel_root),
+            str(runtime_root),
+        ],
         cwd=repo_root,
-        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -199,7 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         measured = measure_code_digest(repo_root)
         pins = {path: read_pin(path) for path in _pin_paths(repo_root)}
-    except RedigestError as error:
+    except (RedigestError, OSError) as error:
+        # OSError too: an unreadable/absent release.yaml must exit 2 ("cannot tell"),
+        # not fall through to an uncaught traceback whose exit 1 reads as "stale pin".
         print(f"tos_redigest: ERROR — {error}", file=sys.stderr)
         return 2
 
