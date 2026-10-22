@@ -2397,11 +2397,20 @@ def test_f8_a_swapless_host_runs_end_to_end_with_one_flag(tmp_path: Path) -> Non
 def _await_exec(pid: int, argv0: str, *, timeout_s: float = 10.0) -> None:
     """Block until ``/proc/<pid>/cmdline`` shows the image ``pid`` exec'd.
 
-    ``subprocess.Popen`` returns once the fork is under way, NOT once the exec has
-    landed, and in between ``/proc/<pid>/cmdline`` is **empty**. :func:`driver.read_lock`
-    reads exactly that file and reports an unreadable or non-matching one as "owner gone"
-    — so a test that spawns a process, writes a lock naming it, and asserts the lock is
-    live is racing the exec, and loses whenever the exec has not landed yet.
+    ``subprocess.Popen`` returns when the child's close-on-exec error pipe reaches EOF —
+    that is, once ``execve`` has got far enough to close it. The child is therefore
+    already *inside* exec, not still forked; but the kernel has not yet published
+    ``mm->arg_start``/``arg_end`` for the new image, so ``/proc/<pid>/cmdline`` reads back
+    **empty** for a moment longer. :func:`driver.read_lock` reads exactly that file and
+    reports an unreadable or non-matching one as "owner gone" — so a test that spawns a
+    process, writes a lock naming it, and asserts the lock is live is racing that
+    publication, and loses whenever it reads first.
+
+    Which window it is was measured, not assumed: spawning ``/bin/sleep`` (an argv0 that
+    differs from the parent's) 400 times and reading the file immediately gave 154 fully
+    exec'd, 246 empty, and **0** showing the parent's own cmdline. A pre-exec fork would
+    have shown the parent's command line, because the child shares its mm until exec
+    replaces it; it never appeared.
 
     That race is not a parallelism bug and predates any ``-n auto``: reproduced standalone
     on this repo's host (16 cores) by spawning the same child, writing the same JSON and
@@ -2448,8 +2457,8 @@ def test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill(
 
     live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
     try:
-        # The child must really be `sys.executable` before the lock can name it as a
-        # live owner — see _await_exec for the window this closes.
+        # The child's new argv must be published in /proc before the lock can name it as
+        # a live owner — see _await_exec for the window this closes.
         _await_exec(live.pid, sys.executable)
         (out_dir / driver.LOCK_NAME).write_text(
             json.dumps({"pid": live.pid, "argv0": sys.executable, "run_id": "other"})

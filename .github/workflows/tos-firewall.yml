@@ -353,9 +353,14 @@ jobs:
       # this step goes red. Delete the pass then; do not relax it to `|| true`,
       # which would also swallow a real serial-pass failure.
       - name: tos governance test batteries (parallel + serial 2-pass)
+        # `set -e` (not `&&`) chains the two passes, so a comment can sit
+        # between them without breaking a line continuation.
         run: |
+          set -euo pipefail
           pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
-            tests/tos_l3 -q -p no:cacheprovider -n auto -m "not serial" && \
+            tests/tos_l3 -q -p no:cacheprovider -n auto -m "not serial"
+          # Second pass: the `serial` marker. Exactly one test carries it today,
+          # so this pass exits 5 (red) if it ever disappears — see step header.
           pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
             tests/tos_l3 -q -p no:cacheprovider -m serial
 

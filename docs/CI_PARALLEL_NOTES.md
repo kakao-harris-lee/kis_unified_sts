@@ -116,15 +116,25 @@ weak evidence; it is enough to not spray the flag, not enough to act on further.
 `tests/tools/test_tos_evidence_scan_measure.py::test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill`
 gained a `_await_exec()` wait, and it is the only test body this work touched.
 
-`subprocess.Popen` returns once the fork is under way, not once the exec has
-landed, and in between `/proc/<pid>/cmdline` is **empty**. `read_lock()` reads
-exactly that file and treats an empty or non-matching one as "owner gone", so
-spawning a child, writing a lock naming it, and asserting the lock is live is a
-race against the exec. Reproduced standalone, 300 spawns with the same interposed
-JSON write: `read_lock` said "owner gone" **3.7%** of the time with the host idle
-and **6.3%** with every core busy. The serial battery had been carrying that ~4%
-all along; `-n auto` on a 4-vCPU runner simply pushed it over the line often
-enough to be seen.
+`subprocess.Popen` returns when the child's close-on-exec error pipe reaches EOF,
+i.e. once `execve` has got far enough to close it — the child is already *inside*
+exec. But the kernel has not yet published `mm->arg_start`/`arg_end` for the new
+image, so `/proc/<pid>/cmdline` reads back **empty** for a moment longer.
+`read_lock()` reads exactly that file and treats an empty or non-matching one as
+"owner gone", so spawning a child, writing a lock naming it, and asserting the
+lock is live races that publication.
+
+Which window it is was measured rather than assumed: spawning `/bin/sleep` (an
+argv0 that differs from the parent's) 400 times and reading the file immediately
+gave 154 fully exec'd, 246 empty, and **0** showing the parent's own cmdline. A
+pre-exec fork would have shown the parent's command line — the child shares its
+mm until exec replaces it — and it never appeared.
+
+The cost, reproduced standalone over 300 spawns with the same interposed JSON
+write: `read_lock` said "owner gone" **3.7%** of the time with the host idle and
+**6.3%** with every core busy. The serial battery had been carrying that ~4% all
+along; `-n auto` on a 4-vCPU runner simply pushed it over the line often enough
+to be seen.
 
 This is the reason it was fixed rather than marked `serial`: the marker would
 have halved the rate and left the test asserting a reason that was not the real
