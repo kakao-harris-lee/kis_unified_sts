@@ -8,7 +8,7 @@ of the resident tree plus a short, declared list of differences -- and that copi
 re-derives that pin, but it re-derives it in the file the resident session reads: the resident
 tree's. The tenant copies would silently keep the OLD digest, and the first tenant boot would
 ABORT on a mismatch nothing had flagged -- the resident session re-derives and compares daily
-(runbook ``docs/runbooks/tos-paper-boot.md`` §5 ①), the tenant trees have never booted, so there
+(runbook ``docs/runbooks/tos-paper-boot-history.md`` §5 ①), the tenant trees have never booted, so there
 was no lane in which the staleness could surface before the boot that fails.
 
 Before this file, nothing checked it. ``test_tenant_tree_short.py`` compares the two TENANT

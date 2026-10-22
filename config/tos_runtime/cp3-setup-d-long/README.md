@@ -14,7 +14,7 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 - **아니다**: 상주 paper 배포가 아니다. 상주 트리 `config/tos_runtime/paper/` 와 그
   data dir(`~/.local/state/tos/paper-data/<월물>`)은 이 PR 이 **건드리지 않았다**
   (결정 3 「상주 잎·상주 설정 불변」 — 상주 콘텐츠를 바꾸면 전략 키 변화로 부팅 리플레이가
-  held 가 된다, 런북 `docs/runbooks/tos-paper-boot.md` §7.10 6).
+  held 가 된다, 런북 `docs/runbooks/tos-paper-boot-history.md` §7.10 6).
 - **SHORT 는 여기 없다 — 자기 트리에 있다: `config/tos_runtime/cp3-setup-d-short/`**
   (착지 2026-10-09). DSL 에 `abs()` 가 없어 진입 비교가 한 변뿐이므로 SHORT 는
   `z_x1000 >= +1800` 을 쓰는 **자기 파일·자기 트리**를 갖는다(결정 4; kickoff §5 3 마지막 줄).
