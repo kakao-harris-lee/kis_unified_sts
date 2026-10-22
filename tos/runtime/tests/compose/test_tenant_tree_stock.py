@@ -231,7 +231,9 @@ def _install_stock_tree(config_dir: Path) -> str:
             )
         ],
     )
-    return venue.policy.canonical_digest
+    digest = venue.policy.canonical_digest
+    assert digest is not None, "the loaded stock VCP carries no canonical_digest"
+    return digest
 
 
 def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
