@@ -1112,7 +1112,8 @@ tenant 부팅은 별도 호출 경로가 필요하고 그것은 ④ 의 일이�
 SHORT 22). 그 중 하나를 바꾸는 PR 은 **같은 PR 에서** 두 트리의 사본을 함께 갱신해야 한다.
 
 ⚠ 그 사본 집합에 **`release.yaml` 이 들어 있고 그 파일이 `expected_code_digest` 를 싣는다.**
-런타임 코드를 바꾸는 PR 은 그 핀을 상주 트리에서만 재도출한다 — 상주 세션은 매일 재도출해
+`python tools/tos_redigest.py --write` 는 **세 사본을 한 번에** 쓰므로 아래 함정에 빠지지
+않는다(2026-10-22). 손으로 고치면 그 핀을 상주 트리에서만 재도출하게 된다 — 상주 세션은 매일 재도출해
 대조하므로 거기서는 드러나지만(§5 ①), **tenant 트리는 부팅한 적이 없어 낡은 핀이 드러날
 레인이 없다.** 첫 tenant 부팅이 digest 불일치로 **ABORT** 한다. 이것은 §7.10 6 이 적는
 「어제의 증거를 오늘의 코드로 재해석할 수 없게 만드는 변경」의 사본 판이다.
@@ -1350,10 +1351,15 @@ TENANT_ENVIRONMENT_LABEL=paper \
    - ⚠ `_runtime` 은 VCP `canonical_digest` 가 덮지 않으므로 **활성화 기록은 그대로**다
      (실측 2026-10-16: 렌더된 LONG 정책에서 band 블록을 떼고 다시 로드해도 digest 가
      `ec0ea97d…` 로 같다). 바뀌는 것은 `release.yaml::expected_code_digest` 뿐이고,
-     그것은 이 브랜치가 세 파일 모두에서 재도출한다. **현재 값은 `ba1de6b2…`**
-     (`fb4ac519…` → `2aa597aa…` → `bb1e9c93…` → `b06d01f9…` → `ba1de6b2…`; 뒤의 셋은 읽기
-     측 절 분리, PR #907 리뷰 처분, 위치 관측의 비종결 결과 수정(lane A 재리뷰 #7)이다). ⛔ 이 줄은 **값을 다시 적는 자리가 아니다** —
-     기준은 `config/tos_runtime/*/release.yaml` 이고, 둘이 어긋나면 **그 파일이 맞다.**
+     그것은 재도출해야 한다. **재도출은 한 명령이다 (2026-10-22):**
+     `python tools/tos_redigest.py --write` 가 세 사본의 핀 줄을 함께 다시 쓰고,
+     `--check` 는 낡았으면 exit 1 로 멈춘다(`tos-firewall` CI 스텝 · 런타임 수트의
+     `test_release_code_digest_pin_equals_the_measured_source_tree` 가 같은 대조다.
+     운영 절차는 `tos-paper-boot.md` 「digest 재도출」).
+     ⛔ **여기에 값과 이력을 더 적지 않는다 — 기록은 git 이력이다.** 기준은
+     `config/tos_runtime/*/release.yaml` 이고, 어딘가와 어긋나면 **그 파일이 맞다.**
+     아래 이력 줄은 2026-10-22 이전의 기록으로 남긴다(더 잇지 않는다):
+     `fb4ac519…` → `2aa597aa…` → `bb1e9c93…` → `b06d01f9…` → `ba1de6b2…`.
 
 **⚠ 운영자 단계 — 같은 월물로 두 번째 세션을 돌리면 durable set 을 이어 쓴다.**
 가드(#892)의 **승인된 생산자** 분기에는 「data dir 이 비어 있어야 한다」가 없다 — 비어 있는
