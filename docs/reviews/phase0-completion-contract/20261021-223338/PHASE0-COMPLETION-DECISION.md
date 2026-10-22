@@ -42,7 +42,7 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
 | `D0-1` · `A-1` · `A-2` · `A-3` · `D-1` | 전부 `MET` | §2 (`:139-143`) |
 | `D0-5` | `MET` — 7/7 판정, resolver·marketfeed `VALUED` | §2 (`:144`, `completion-check.log:14-37`) |
 | `RES-1` | `MET` — `STATE-EV-004` 가 U-13-e 근거로 FWD-a 에서 제외 | §2 (`:146`) |
-| `U-17` | 기계 상태 `PREVENTION_UNVERIFIED_REVISION` — **MET 아님**. 발화 2건: (b)② 삼중값(직전 수용 범위와 일치) + **α 연속성 `PREVENTION_CONTINUITY_UNVERIFIABLE`(수용 범위 밖)** | §1 (`u17-live.log:239-245`) |
+| `U-17` | 기계 상태 `PREVENTION_UNVERIFIED_REVISION` — **MET 아님**. 발화 2건: (b)② 삼중값(직전 수용 범위와 일치) + **α 연속성 `PREVENTION_CONTINUITY_UNVERIFIABLE`** — 2026-10-22 운영자 처분으로 해제(`U17-ALPHA-RELEASE-AND-BYPASS-ACCEPTANCE.md`, 열린 항목 2) | §1 (`u17-live.log:239-245`) |
 | §11 추가 — `tos/tests` 전량 green | 9,657 · rc 0 | §3 |
 | §11 추가 — ruff 0 · black/mypy 기준선 무증가 | ruff 0 · black 0(26.1.0) · mypy 0 | §3 |
 | §11 추가 — `tos_spec_status.py --check` | PASS | §3 |
@@ -111,8 +111,8 @@ operator_countersign: ""   # 계약 :8738 형식(blob 6f94dfbb · grep -n '^oper
 - 한계: 계약 문언의 «감사 로그»(org/enterprise 소관)가 아니라 룰셋 버전 이력이다. 룰셋 설정을 바꾸지 않는
   우회(이미 있던 `bypass_actors`·admin override)는 이 이력에 보이지 않는다 — 계약 (β)·`UNCHK-008` 의 기존 경계다.
   위 우회 창은 룰셋을 **바꾼** 경우라 이력에 보인다.
-- 처분 선택지(운영자): (a) 위 관측을 근거로 재심사 기록을 남겨 α 를 해제 · (b) 해제하지 않음(이 초안은 서명
-  불가로 남는다). 우회 창이 (b)② 수용의 전제를 바꾸는지도 운영자 판단이다. 이 초안은 어느 쪽도 선언하지 않는다.
+- 처분 선택지(운영자): (a) 위 관측을 근거로 재심사 기록을 남겨 α 를 해제 · (b) 해제하지 않음.
+  **선택됨: (a) — 그리고 우회 창은 (b)② 수용을 바꾸지 않는 것으로 수용**(2026-10-22, 위 처분 기록).
 
 ### 3. S-26 (별개 축 — 서명을 막지 않는다)
 
