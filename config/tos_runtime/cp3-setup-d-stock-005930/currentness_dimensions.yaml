@@ -1,0 +1,71 @@
+# =============================================================================
+# currentness_dimensions.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# =============================================================================
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §4.3
+#
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+#
+# 원본 템플릿: tos/runtime/config/currentness_dimensions.example.yaml
+# 로더: tos_runtime.compose._pending_dimensions.load_pending_currentness_dimensions
+#       (compose/_pending_dimensions.py:198)
+# 호출부: compose/_currentness_wiring.py:274 (무조건)
+# =============================================================================
+#
+# **블록은 정확히 `PENDING_DIMENSION_KEYS` 만이어야 한다.** 원래 17개였고 Phase 5
+# W3-a1/a2/b/W3.1/W3.2 가 14개에 실제 dimension-owner reader 를 붙였다. 남은 3개가
+# 아래다. 리더가 붙은 키를 여기 남겨두면 로더가 **stale** 로 거부한다
+# (`_READER_OWNED_DIMENSION_KEYS`, compose/_pending_dimensions.py:238-246).
+#
+# **값의 성격 — 제안표 §4.1 `risk_attestations.yaml` 행과 같은 부류다.**
+# 이것은 측정이 아니라 **운영자 확약**이고, 런타임이 스스로 각 차원에
+# `owner_identity = "operator-attestation-pending-phase-5"` 를 찍어
+# 「진짜 런타임 오너가 낸 판정이 아님」을 구조적으로 드러낸다
+# (compose/_pending_dimensions.py:155). `positively_established: true` 의 근거는
+# 「코드가 성립을 보장한다」가 아니라 「이 배포는 SYNTHETIC 합성 경로라 위반
+# 경로가 없다고 판단한다」이다 — 제안표 §4.3 의 「실제로 성립하므로 true」
+# 부류를 그 범위에서만 적용한다. MOCK/실 브로커 경로를 켜면 다시 받아야 한다.
+#
+# `bound_generation` = 1 (제안표 §4.3: `*_generation` 계열은 전부 첫 세대).
+#
+# `bound_digest` = 제안표 §4.3 식별자 규칙 `tos-paper-<무엇>-g<세대>` — 불투명
+# 운영자 승인 토큰이지 계산된 digest 가 아니다(이 경로에는 계산 원천이 없다).
+# ⚠ **§0.2 와의 관계 (review-794 LOW-2)**: §0.2 가 「채우지 않는다」고 못박은 것은
+# **정책 문서의 `canonical_digest` 계열**이고(그 검사기가 `"TBD"` 를 항상 통과시키며
+# 엄격 동등은 `safety_activation::members[].digest` 에서만 요구되기 때문), 이 세
+# 필드는 그 부류가 **아니다** — 로더가 `null` 을 named-TBD 로 거부하므로 「비워 둔다」가
+# 선택지가 아니고, 계산할 원천도 없다. 이름을 주는 것 외의 선택지가 없는 자리다.
+# 이 배포 18종에 `canonical_digest` 실값은 0건이다.
+#
+# `restrictive_floor` = 0 — 이 프로파일은 차원별 추가 하한을 선언하지 않는다
+# (「선언된 하한 없음」이 사실이고, 0 이 그 사실의 표기다). 제안표에 행이 없다.
+# =============================================================================
+
+# Phase 5 (진짜 decision-context 오너)가 이 확약을 대체한다.
+CONTEXT:
+  bound_generation: 1
+  bound_digest: "tos-paper-context-bound-g1"
+  restrictive_floor: 0
+  positively_established: true
+
+# Phase 5 (진짜 critical-input snapshot 오너)가 이 확약을 대체한다.
+CRITICAL_INPUT:
+  bound_generation: 1
+  bound_digest: "tos-paper-critical-input-bound-g1"
+  restrictive_floor: 0
+  positively_established: true
+
+# Phase 5 (진짜 egress-identity 오너)가 이 확약을 대체한다. W3.1 독립 검토
+# MEDIUM-4(2026-09-11): 커널 술어 3개 중 1개(credential_route_authority_disjoint)
+# 만으로 리더를 붙였다가 **과대 주장**으로 되돌렸고, W3.2 재조사에서도 나머지
+# 둘(stale_principal_structurally_rejected / egress_generation_monotonic)에
+# 프로덕션 `ActiveEgressPrincipalSet` 생산자가 0건이라 여전히 pending 이다.
+EGRESS_IDENTITY:
+  bound_generation: 1
+  bound_digest: "tos-paper-egress-identity-bound-g1"
+  restrictive_floor: 0
+  positively_established: true

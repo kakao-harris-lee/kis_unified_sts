@@ -1,0 +1,49 @@
+# =============================================================================
+# risk.yaml — paper: Adverse Scenario Set coordinates + Action Amplification Envelope
+# =============================================================================
+# Loaded by tos_runtime.risk.aggregate.load_adverse_scenario_set /
+# load_required_scenario_kinds and tos_runtime.compose._currentness_wiring
+# (_load_action_flow_envelope). Shape = tos/runtime/config/risk.example.yaml.
+#
+# APPROVAL PROVENANCE (config/tos_runtime/README.md rule):
+#   docs/plans/2026-09-12-tos-operator-value-proposals.md §3 (rows :44-51),
+#   adopted by the operator on 2026-09-16 via
+#   docs/plans/2026-09-16-tos-risk-state-service-plan.md §6 ② (「1. 채택」).
+#   * max_amplification_per_cause 3 — grade A (VER-002:1028 APPROVED, «3~5 중
+#     보수 하단»).
+#   * max_in_flight 1 — grade C, consistent with max_unresolved_send_per_scope=1.
+#   * max_fan_out/max_depth/max_attempts/max_mutations 4/3/2/3 — grade C
+#     (single-instrument paper flow depth tick→proposal→approval→send = 3, +1).
+#   * max_queries/max_queue_depth 8/8 — grade C. NOTE: the observed query count
+#     is structurally 0 today (no transport exposes a query path; pinned by
+#     tos/runtime/tests/riskstate/test_structural_pins.py); 8 is the ceiling.
+#   * max_elapsed_monotonic 30000 ms — grade C (5 × MAX_send_result_wait_ms 6000).
+#   * max_duplicate_redelivery_expansion / max_failover_reconnect_replay_expansion
+#     1/1 — grade C. HONEST LIMIT: the runtime has NO durable per-root-cause
+#     observation for these two axes yet (riskstate/flow_observation.py), so
+#     tos.afg.amplification_bounded stays False and step 7 (ACTION_FLOW_DECISION)
+#     is UNKNOWN until the inbox-schema counter wave lands (plan §7).
+#   * covered_scenario_kinds == required_scenario_kinds ==
+#     [ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ] — the ONE kind the risk state
+#     service produces a ProjectedCell for; any other kind listed as required
+#     would be honestly, permanently UNKNOWN.
+#   * evidence_package_ref null — no evidence package exists for this set yet.
+# =============================================================================
+
+scenario_set_id: "paper-adverse-set-1"
+scenario_set_generation: 1
+policy_binding_id: "paper-risk-policy-1"
+covered_scenario_kinds: ["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]
+required_scenario_kinds: ["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]
+evidence_package_ref: null
+max_fan_out: 4
+max_depth: 3
+max_attempts: 2
+max_mutations: 3
+max_queries: 8
+max_queue_depth: 8
+max_in_flight: 1
+max_elapsed_monotonic: 30000
+max_duplicate_redelivery_expansion: 1
+max_failover_reconnect_replay_expansion: 1
+max_amplification_per_cause: 3

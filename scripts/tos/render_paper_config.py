@@ -129,6 +129,12 @@ ENV_FILE_NAME = ".env.mock"
 #: touched (design §2 step 2).
 ACCOUNT_ENV_KEY = "KIS_FUTURES_ACCOUNT_NO"
 
+#: The CLOSED set of account keys a manifest may name in ``account.env_key`` (rescope M2,
+#: 2026-10-22). A stock tenant tree's order coordinate is the STOCK mock account; reading the
+#: futures key for it would seal a different account into every stock policy. Absent
+#: ``account`` means :data:`ACCOUNT_ENV_KEY`, so the three futures-era trees are unchanged.
+ACCOUNT_ENV_KEYS: frozenset[str] = frozenset({ACCOUNT_ENV_KEY, "KIS_STOCK_ACCOUNT_NO"})
+
 #: Total digits a KIS account number carries once the hyphen is stripped
 #: (``shared/kis/client.py`` ``_normalize_account``: "Normalize account number to digits-only
 #: 10-char format"; ``tools/broker_probes/common.py`` ``ProbeCredentials.cano``/``.acnt_prdt_cd``
@@ -505,6 +511,8 @@ class RenderManifest:
     direction_value: str | None
     journal_mode: str
     slots: tuple[Slot, ...]
+    #: The ``.env.mock`` key the account coordinate is read from (:data:`ACCOUNT_ENV_KEYS`).
+    account_env_key: str = ACCOUNT_ENV_KEY
 
 
 def _generated_names(journal_mode: str) -> frozenset[str]:
@@ -705,6 +713,16 @@ def load_manifest(tree: Path) -> RenderManifest:
             f"{list(_JOURNAL_MODES)!r}"
         )
 
+    account_raw = raw.get("account", {"env_key": ACCOUNT_ENV_KEY})
+    account_env_key = (
+        account_raw.get("env_key") if isinstance(account_raw, dict) else None
+    )
+    if account_env_key not in ACCOUNT_ENV_KEYS:
+        raise RenderError(
+            f"{path}: account.env_key refused: {account_env_key!r} — expected one of "
+            f"{sorted(ACCOUNT_ENV_KEYS)!r}"
+        )
+
     slots_raw = raw.get("slots")
     if not isinstance(slots_raw, list) or not slots_raw:
         raise RenderError(f"{path}: slots must be a non-empty list")
@@ -761,6 +779,7 @@ def load_manifest(tree: Path) -> RenderManifest:
         direction_value=direction_value if direction_mode == "declared" else None,
         journal_mode=journal_mode,
         slots=tuple(slots),
+        account_env_key=account_env_key,
     )
 
 
@@ -853,8 +872,8 @@ def _members_rule(members_block: str) -> Rule:
 # ---------------------------------------------------------------------------
 
 
-def parse_account_from_env_file(env_path: Path) -> str:
-    """Return ``KIS_FUTURES_ACCOUNT_NO``'s raw value from ``env_path``.
+def parse_account_from_env_file(env_path: Path, *, key: str = ACCOUNT_ENV_KEY) -> str:
+    """Return *key*'s raw value from ``env_path`` (default ``KIS_FUTURES_ACCOUNT_NO``).
 
     Parses the file directly — ``os.environ`` is never read or written (design §2 step 2), so
     a stray ambient variable can neither supply nor override this coordinate. Only the one key
@@ -876,8 +895,8 @@ def parse_account_from_env_file(env_path: Path) -> str:
             continue
         if stripped.startswith("export "):
             stripped = stripped[len("export ") :].lstrip()
-        key, _, raw = stripped.partition("=")
-        if key.strip() != ACCOUNT_ENV_KEY:
+        name, _, raw = stripped.partition("=")
+        if name.strip() != key:
             continue
         value = raw.strip()
         # Inline comments (review-797 LOW-4). Without this, a trailing `# opened 2026`
@@ -896,17 +915,17 @@ def parse_account_from_env_file(env_path: Path) -> str:
                 value = value[1:closing]
             else:
                 raise RenderError(
-                    f"{env_path}: {ACCOUNT_ENV_KEY} has an unterminated {quote} quote"
+                    f"{env_path}: {key} has an unterminated {quote} quote"
                 )
         else:
             value = value.split("#", 1)[0].strip()
         if not value:
             raise RenderError(
-                f"{env_path}: {ACCOUNT_ENV_KEY} is present but empty — the deployment "
+                f"{env_path}: {key} is present but empty — the deployment "
                 "coordinate cannot be rendered"
             )
         return value
-    raise RenderError(f"{env_path}: {ACCOUNT_ENV_KEY} is not set")
+    raise RenderError(f"{env_path}: {key} is not set")
 
 
 def normalize_account(raw: str) -> str:
@@ -1892,7 +1911,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
-        account = normalize_account(parse_account_from_env_file(env_file))
+        account_key = load_manifest(Path(args.source)).account_env_key
+        account = normalize_account(
+            parse_account_from_env_file(env_file, key=account_key)
+        )
+        if args.instrument is None and account_key != ACCOUNT_ENV_KEY:
+            # The default is the FUTURES front month — never a stock symbol.
+            raise RenderError(
+                f"{args.source}: a tree whose account is {account_key} must be given "
+                "--instrument; the default is the mini futures front month"
+            )
         instrument = args.instrument or get_front_month_code(product="mini")
         revision = _git_revision(Path(args.source).resolve())
         result = render(
