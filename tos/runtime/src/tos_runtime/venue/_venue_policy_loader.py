@@ -629,7 +629,7 @@ def _parse_price_band_ticks(
 
     Refused, each by its own input: an empty list (it would resolve no price — declare null
     instead), a row that is not a mapping of exactly ``band_min``/``band_max``/``tick`` ints, a
-    non-positive tick, ``band_min > band_max``, and rows that are not ascending and disjoint
+    non-positive tick or ``band_min``, ``band_min > band_max``, and rows that are not ascending and disjoint
     (an overlap would make the tick for a price depend on row order).
     """
     raw = sc_raw.get("price_band_ticks")
@@ -652,6 +652,10 @@ def _parse_price_band_ticks(
         band_min, band_max, tick = values
         if tick <= 0:
             raise VenuePolicyConfigError(f"{ctx}[{index}].tick must be positive")
+        if band_min <= 0:
+            # Every price is positive, so a row reaching 0 or below covers no price — it can
+            # only be a typo (a dropped digit) or a scale error.
+            raise VenuePolicyConfigError(f"{ctx}[{index}].band_min must be positive")
         if band_min > band_max:
             raise VenuePolicyConfigError(f"{ctx}[{index}] band_min > band_max")
         if rows and band_min <= rows[-1].band_max:

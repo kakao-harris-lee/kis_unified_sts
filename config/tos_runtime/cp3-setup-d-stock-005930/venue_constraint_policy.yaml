@@ -25,9 +25,14 @@
 #     공통: 2,000원 미만 1 · 5,000 미만 5 · 20,000 미만 10 · 50,000 미만 50 · 200,000 미만 100 ·
 #     500,000 미만 500 · 그 이상 1,000원. 표의 각 행은 그 칸을 ×100 정수로 옮긴 것이다
 #     (`band_min`/`band_max` 는 포함 경계, 예: 200,000~499,999.99원 → 20000000~49999999, 틱 50000).
-#     등급 **C** — 조문 번호는 인용하지 않았다(확인 안 됨). 운영자 확인 대상. 브로커 쪽 대조
-#     원천은 주식현재가 GET(FHKST01010100) 응답의 `aspr_unit`(그 시점 칸의 호가단위)이지만
-#     아직 배선되지 않았다.
+#     공개 대조 원천: 한화투자증권 호가가격단위 안내
+#     https://www.hanwhawm.com/main/center/info/CS181_3p.cmd — #929 리뷰어가 이 표와
+#     1,002,782개 가격에서 대조해 불일치 0건을 확인했다.
+#     등급 **C** — 거래소 규정 조문 번호는 인용하지 않았다(확인 안 됨). 운영자 확인 대상.
+#     ⚠ **남은 잔여 위험**: 브로커가 보고하는 `aspr_unit`(주식현재가 GET FHKST01010100 응답의
+#       그 시점 칸 호가단위)과는 **아직 대조하지 않았다**. 이 대조는 PR-2 의 band 판독기
+#       (`tools/tos_cp3`, FHKST01010100)가 닫는다. 커널 `PriceBandTick` 주석은 행이 브로커
+#       측정값이라고 적지만, 이 표의 행은 규정에서 왔다 — 그 차이가 이 잔여 위험이다.
 #     * 커널은 표가 있으면 표만 읽는다(`tos.venue.predicates._resolved_tick`) — 그래서
 #       `tick_size` 는 **null** 이다(둘 다 쓰면 로더가 거부한다: 한 사실에 두 원천).
 #     * 맨 위 행은 10,000,000원(1000000000 −1)에서 닫는다. KRX 에 가격 상한은 없지만 표는
@@ -114,7 +119,7 @@ conservative_failure_responses:
 protective_only_restrictions: []
 residual_risks:
   - "price band unsourced: admissibility is UNKNOWN for every attempt until a stock band source exists (intended fail-closed)"
-  - "tick ladder is grade C (조문 번호 미확인) and not yet cross-checked against the broker's aspr_unit"
+  - "tick ladder is grade C (조문 번호 미확인); matched hanwhawm CS181_3p over 1,002,782 prices (0 mismatches); not yet cross-checked against broker aspr_unit — closed by the PR-2 band reader comparison"
   - "this deployment transmits nothing (SYNTHETIC_FUTURES_ORDER scope — MOCK_STOCK_ORDER activation is a separate approval)"
 authority:
   grants_approval: false

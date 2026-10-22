@@ -210,6 +210,14 @@ def _stock_policy(tmp_path: Path) -> Any:
         ("199950", OrderAdmissibilityResult.INADMISSIBLE),
         ("270000", OrderAdmissibilityResult.ADMISSIBLE),  # 005930's own rung, 500원
         ("270100", OrderAdmissibilityResult.INADMISSIBLE),
+        # Exact rung edges (#929 review LOW): each first price of a rung sits on the new,
+        # coarser tick; the next price up is off it.
+        ("1999", OrderAdmissibilityResult.ADMISSIBLE),  # top of the 1원 rung
+        ("2001", OrderAdmissibilityResult.INADMISSIBLE),  # 5원 rung starts at 2,000
+        ("200000", OrderAdmissibilityResult.ADMISSIBLE),  # 500원 rung's first price
+        ("200100", OrderAdmissibilityResult.INADMISSIBLE),
+        ("500000", OrderAdmissibilityResult.ADMISSIBLE),  # 1,000원 rung's first price
+        ("500500", OrderAdmissibilityResult.INADMISSIBLE),
         ("1001000", OrderAdmissibilityResult.ADMISSIBLE),  # 1,000원 rung
         ("1000500", OrderAdmissibilityResult.INADMISSIBLE),
         (

@@ -164,6 +164,15 @@ def test_the_flat_tick_refuses_a_legal_price_below_the_rung(tmp_path: Path) -> N
             "band_min > band_max",
         ),
         (
+            "    price_band_ticks:\n" "      - {band_min: 0, band_max: 2, tick: 1}\n",
+            "band_min must be positive",
+        ),
+        (
+            "    price_band_ticks:\n"
+            "      - {band_min: -100, band_max: 2, tick: 1}\n",
+            "band_min must be positive",
+        ),
+        (
             "    price_band_ticks:\n"
             "      - {band_min: 1, band_max: 10, tick: 1}\n"
             "      - {band_min: 10, band_max: 20, tick: 5}\n",
