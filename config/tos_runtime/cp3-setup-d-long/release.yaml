@@ -826,8 +826,8 @@
 #
 #   ⚠ 이 파일은 CP-3 tenant 트리 둘(`cp3-setup-d-long`/`cp3-setup-d-short`)에 **바이트
 #   사본**으로 들어간다 — 세 곳을 함께 갱신했다(`tos/runtime/tests/compose/
-#   test_tenant_tree_copies.py` 가 강제한다). 값 핀도 함께:
-#   `test_deploy_approved_values.py::_VALUE_PINS`.
+#   test_tenant_tree_copies.py` 가 강제한다). 세 곳을 함께 쓰는 것은 이제
+#   `python tools/tos_redigest.py --write` 가 한다(아래 「갱신 규율」).
 #
 # **두 값의 유효 범위가 서로 다르다 — 갱신 규율도 다르다.**
 #   * `expected_code_digest` 는 설치된 `tos`/`tos_runtime` **패키지 트리의
@@ -835,9 +835,15 @@
 #     roots = `default_package_roots()` = 두 패키지 디렉터리; 테스트 트리·YAML 은
 #     포함되지 않는다). 따라서 체크아웃 위치와 무관하고 **커밋 내용에만** 묶인다 —
 #     `tos/src/**.py` 또는 `tos/runtime/src/**.py` 가 한 바이트라도 바뀌면 갱신해야 한다.
-#     ⚠ 갱신은 **두 곳을 함께**: 이 파일의 값과
-#     `tos/runtime/tests/compose/test_deploy_approved_values.py::_VALUE_PINS` 의 같은 키.
-#     (값 핀은 부팅 실패 여부와 무관하게 커밋된 두 문자열만 비교한다.)
+#     ⚠ **갱신은 한 명령이다 (2026-10-22):**
+#
+#         python tools/tos_redigest.py --write    # 세 사본의 핀 줄만 다시 쓴다
+#         python tools/tos_redigest.py --check    # 낡았으면 exit 1 (CI 스텝 · tos-firewall)
+#
+#     손으로 적는 자리는 **이 키 하나**다. `_VALUE_PINS` 의 사본은 치웠다 —
+#     `test_deploy_approved_values.py::test_release_code_digest_pin_equals_the_measured_source_tree`
+#     가 이 파일을 **측정값**과 대조한다(커밋된 두 문자열끼리가 아니다).
+#     이 주석 블록에 갱신 이력을 더 적지 않는다 — 기록은 git 이력이다.
 #   * `expected_dependency_set_digest` 는 **이 프로세스가 실제로 실행된
 #     인터프리터의 설치 분포 집합** + python/sqlite 좌표다. 위 값은 저장소 루트
 #     `.venv`(레거시 스택 포함, python 3.12.12 / sqlite 3.45.1)에서 측정됐다.
@@ -846,7 +852,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "78263b8d71194a5f2a6de071e6d8f289d67ca0410fa57cb3f701ac236be891f2"
+expected_code_digest: "393819727a5b2ec5a6431aa7f1d9f3d1ae9f56460b7a5703cbcb6d4ba6f95908"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).

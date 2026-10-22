@@ -131,8 +131,8 @@ def _price_to_kis_string(price: CanonicalDecimal, price_scale: int) -> str:
     """``price / price_scale`` as a whole-KRW string, or refuse.
 
     Raises:
-        KisOrderWireCodecError: ``price_scale`` is not a positive int, or the quotient has a
-            fractional part (e.g. ``27000050`` at scale 100 is 270,000.5원 — not a price KIS
+        KisOrderWireCodecError: ``price_scale`` is not a positive int, ``price`` is not
+            finite, or the quotient has a fractional part (e.g. ``27000050`` at scale 100 is 270,000.5원 — not a price KIS
             can carry, and rounding would send an unsealed price).
     """
     if (
@@ -143,13 +143,22 @@ def _price_to_kis_string(price: CanonicalDecimal, price_scale: int) -> str:
         raise KisOrderWireCodecError(
             f"KisOrderWireCodec: price_scale must be a positive int, got {price_scale!r}"
         )
-    quotient = Decimal(price) / Decimal(price_scale)
-    if quotient != quotient.to_integral_value():
+    # Exact integer arithmetic, not Decimal division: the default context carries 28
+    # significant digits, so a wider quotient was rounded BEFORE the whole-KRW check saw it
+    # (PR #927 review L1). ``as_integer_ratio`` is exact for every finite Decimal.
+    exact = Decimal(price)
+    if not exact.is_finite():
         raise KisOrderWireCodecError(
-            f"KisOrderWireCodec: price {price} at scale {price_scale} is {quotient} — not a "
-            "whole-KRW ORD_UNPR; refusing rather than rounding"
+            f"KisOrderWireCodec: price {price} is not a finite number"
         )
-    return format(quotient.to_integral_value(), "f")
+    numerator, denominator = exact.as_integer_ratio()
+    krw, remainder = divmod(numerator, denominator * price_scale)
+    if remainder:
+        raise KisOrderWireCodecError(
+            f"KisOrderWireCodec: price {price} at scale {price_scale} is "
+            f"{exact / price_scale} — not a whole-KRW ORD_UNPR; refusing rather than rounding"
+        )
+    return str(krw)
 
 
 def _account_coordinate(seal: SendSeal) -> str:
@@ -265,8 +274,10 @@ class KisOrderWireCodec:
             The deterministic, canonical body bytes (recipe step 3 above).
 
         Raises:
-            KisOrderWireCodecError: ``field_map`` names an unrecognized source, or the combined
-                field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly.
+            KisOrderWireCodecError: ``field_map`` names an unrecognized source, the combined
+                field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly, or
+                ``seal.outbound_price`` is not whole KRW at ``price_scale`` (refused, never
+                rounded — :meth:`encode_fields`).
         """
         return KisOrderWireCodec.encode_fields(
             account=_account_coordinate(seal),

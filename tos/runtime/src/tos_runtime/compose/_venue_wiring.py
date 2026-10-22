@@ -106,6 +106,7 @@ from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 from tos_runtime.transport.kis_mock.token import EvidenceRecorder
 from tos_runtime.transport.kis_quote.config import (
@@ -272,6 +273,37 @@ def _cross_check_wire_codec(
             f"does not exactly declare kind={_KIS_ORDER_CASH_WIRE_CODEC_KIND!r} and "
             f"wire_fields={sorted(KIS_ORDER_CASH_WIRE_FIELDS)!r} — required for the active "
             "'kis-mock' transport"
+        )
+
+
+def _cross_check_price_scale(
+    loaded_policy: LoadedVenuePolicy,
+    *,
+    transport_kind: TransportKind,
+    transport_config: KisMockTransportConfig | None,
+) -> None:
+    """A kis-mock boot sends ``ORD_UNPR = price / price_scale`` — ONE scale, the tree's.
+
+    The codec's ``kis_mock_transport.yaml::price_scale`` is a deployment value; the scale the
+    sealed price is actually IN is the tree's (``venue_constraint_policy.yaml``
+    ``_runtime.price_scale`` — the ×100 of ``close_x100``). Two independent numbers are how a
+    1000 beside ×100 prices sends 27,000원 for a 270,000원 close with no refusal (PR #927
+    review M1). So a kis-mock boot requires the policy to state its scale and the transport
+    to carry the same one; a synthetic boot sends no wire price and is not checked.
+    """
+    if transport_kind is TransportKind.SYNTHETIC:
+        return
+    transport_price_scale = (
+        None if transport_config is None else transport_config.price_scale
+    )
+    if loaded_policy.price_scale is None or (
+        loaded_policy.price_scale != transport_price_scale
+    ):
+        raise VenuePolicyScopeMismatch(
+            f"venue policy _runtime.price_scale {loaded_policy.price_scale!r} != "
+            f"kis_mock_transport.yaml price_scale {transport_price_scale!r} — the wire "
+            "price would be divided by a scale the sealed price is not in (an absent policy "
+            "scale is refused too: there is nothing to check the transport against)"
         )
 
 
@@ -553,6 +585,7 @@ def build_venue_service(
     calendar_config: CalendarConfig,
     band_reader_factory: BandReaderFactory | None = None,
     trading_date_reader: Callable[[], str | None] | None = None,
+    transport_config: KisMockTransportConfig | None,
 ) -> tuple[VenueConstraintService, LoadedOrderConstructionPolicy]:
     """Load, activate, cross-check, and construct the governed venue-constraint service
     (module docstring).
@@ -563,8 +596,9 @@ def build_venue_service(
             explicit ``members:`` list.
         tos_runtime.venue.PolicyNotActivated: either policy has no exactly-one, positively
             resolved+immutable activation member.
-        VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, or the
-            Order Construction Policy's wire-codec declaration, disagree with this compose
+        VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, the
+            Order Construction Policy's wire-codec declaration, or the transport's
+            ``price_scale`` (:func:`_cross_check_price_scale`) disagree with this compose
             root's own configured facts.
         VenueBandSourceUnwired: the policy declares a ``_runtime.band_source`` and
             ``band_reader_factory`` is ``None``.
@@ -576,6 +610,11 @@ def build_venue_service(
         environment_label=environment_label,
         calendar_config=calendar_config,
         transport_kind=transport_kind,
+    )
+    _cross_check_price_scale(
+        loaded_policy,
+        transport_kind=transport_kind,
+        transport_config=transport_config,
     )
     # Re-narrowed at this function boundary (the assert inside _load_and_activate_policies
     # does not carry across a function return) — both members matched a non-None digest.

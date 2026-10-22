@@ -122,6 +122,7 @@ from tos_runtime.venue.activation import (
 )
 
 from ._loader_probe import format_table, refusing_labels, run_probes
+from .conftest import EXPECTED_CODE_DIGEST
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -202,7 +203,13 @@ _VALUE_PINS: dict[str, Any] = {
     "authority.yaml::containment_bound_ms": 1000,
     "authority.yaml::trading_approval_policy_generation": 1,
     # --- release.yaml ----------------------------------------------------
-    "release.yaml::expected_code_digest": "78263b8d71194a5f2a6de071e6d8f289d67ca0410fa57cb3f701ac236be891f2",
+    # ``expected_code_digest`` is NOT here: it is derived, not approved, and a literal
+    # copy of it in this file was a second place to forget. See
+    # ``test_release_code_digest_pin_equals_the_measured_source_tree`` below and
+    # ``_UNPINNED_BY_DESIGN``. ``expected_dependency_set_digest`` stays a literal:
+    # unlike its sibling it is a property of the DEPLOY HOST's interpreter and
+    # installed distribution set, not of the commit, so this process cannot measure
+    # the approved value -- measuring it here would be red on every other machine.
     "release.yaml::expected_dependency_set_digest": "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b",
     "release.yaml::admission_result": "ADMIT",
     "release.yaml::restriction_state_resolved": True,
@@ -423,6 +430,11 @@ _VALUE_PINS: dict[str, Any] = {
 #: too, not only a changed value. ``active_scope`` is the one line that legitimately differs,
 #: and it IS value-pinned above.
 _UNPINNED_BY_DESIGN: dict[str, str] = {
+    "release.yaml::expected_code_digest": (
+        "운영자 승인값이 아니라 **측정값**이다 — 값 핀 대신 "
+        "test_release_code_digest_pin_equals_the_measured_source_tree 가 "
+        "측정 자체와 대조한다(핀을 손으로 적는 자리를 하나 없앤다)"
+    ),
     "broker_scopes.yaml::instance_path": (
         "example 축자 복사 — byte-identity 핀이 값 핀보다 강하게 덮는다"
     ),
@@ -994,6 +1006,34 @@ def test_broker_scopes_body_is_the_shipped_example_plus_one_line() -> None:
     example_line, deploy_line = differing[0]
     assert example_line == "active_scope: null"
     assert deploy_line.startswith("active_scope: SYNTHETIC_FUTURES_ORDER")
+
+
+def test_release_code_digest_pin_equals_the_measured_source_tree() -> None:
+    """The pin against the MEASUREMENT, not against a second copy of the hex.
+
+    ``expected_code_digest`` folds the ``*.py`` bytes of the two installed package roots
+    (``tos/src/tos`` + ``tos/runtime/src/tos_runtime``), so any PR that touches either
+    must re-derive it or the resident paper session ABORTs at the next 08:45 and the
+    tenant trees ABORT on their first boot (``ReleaseAdmissionRefused``). PR #814 did
+    exactly that and left ``main`` stale.
+
+    :data:`~conftest.EXPECTED_CODE_DIGEST` is
+    :func:`tos_runtime.operations.dependency_admission.observe_source_tree_digest`
+    itself -- the same function boot-time admission calls -- so this is the measurement,
+    not a literal. ``tools/tos_redigest.py --check`` is the same comparison outside
+    pytest (and ``--write`` is how the pin is updated, in all three byte-identical
+    copies at once).
+
+    Scope: this reads the RESIDENT copy only (``_DEPLOY_DIR`` is
+    ``config/tos_runtime/paper/``). The two CP-3 tenant copies are covered by
+    ``test_tenant_tree_copies.py``, which requires them byte-identical to this one — so
+    a pin that is right here is right there, and a tenant copy that drifted is red
+    there rather than silently unchecked.
+    """
+    assert _mapping("release.yaml")["expected_code_digest"] == EXPECTED_CODE_DIGEST, (
+        "release.yaml's expected_code_digest is stale for this source tree — "
+        "run `python tools/tos_redigest.py --write` and commit the three files"
+    )
 
 
 def test_release_admission_is_admit_paired_with_no_restriction() -> None:

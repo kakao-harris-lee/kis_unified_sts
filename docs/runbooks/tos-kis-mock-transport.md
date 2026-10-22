@@ -98,6 +98,7 @@ named-TBD `null` 상태로 유지된다 — 로더가 부팅을 거부하는 것
 | `field_map.instrument` → `PDNO` | 상품번호(종목코드) | `order_cash.py:123`(`"PDNO": pdno`) |
 | `field_map.quantity` → `ORD_QTY` | 주문수량(문자열) | `order_cash.py:125` · docstring "String으로 전달해야 함" |
 | `field_map.price` → `ORD_UNPR` | 주문단가(문자열) | `order_cash.py:126` |
+| `price_scale` | **`100`**(트리의 `venue_constraint_policy.yaml::_runtime.price_scale` 과 **같은 값** — 다르거나 트리에 없으면 kis-mock 부팅 거부) | 모든 CP-3 트리는 `close_x100`(×100 정수) 가격으로 주문을 봉인한다 — 270,000원 종가 = `27000000`. 코덱은 `ORD_UNPR = 가격 / price_scale` 을 보내고, 몫이 정수(원 단위)가 아니면 반올림하지 않고 거부한다(`transport/kis_mock/codec.py::_price_to_kis_string`). 기본값 없음(누락 = 로더 거부). 트리 값과의 대조는 `compose/_venue_wiring.py::_cross_check_price_scale`(PR #927 리뷰 M1: 1000 을 쓰면 27,000원이 거부 없이 나가던 구멍) |
 | `static_body_fields.ACNT_PRDT_CD` | 계좌상품코드(2자리, 배포별 상수) | N-17 메모 body 9필드 나열 — 값은 계좌 개설 시 부여, **운영자 승인 대기** |
 | `static_body_fields.ORD_DVSN` | 지정가 `"00"` 제안 | `inquire_psbl_order` docstring "`ORD_DVSN`:00(지정가)" — 시장가 `"01"`은 별도 승인 필요 |
 | `static_body_fields.EXCG_ID_DVSN_CD` | `"KRX"` 제안 | `order_cash.py` docstring "[필수] 거래소ID구분코드 (ex. KRX)" — NXT/SOR 라우팅은 후속 |

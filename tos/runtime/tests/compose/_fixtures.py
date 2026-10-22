@@ -731,6 +731,15 @@ def write_kis_mock_transport_config(
             ),
             encoding="utf-8",
         )
+    vcp_path = config_dir / "venue_constraint_policy.yaml"
+    if vcp_path.is_file():
+        # A kis-mock boot cross-checks the transport's `price_scale` against the tree's
+        # `_runtime.price_scale` (PR #927 review M1) — state the same 100 here.
+        vcp = yaml.safe_load(vcp_path.read_text(encoding="utf-8"))
+        vcp["_runtime"].setdefault("price_scale", 100)
+        vcp_path.write_text(
+            yaml.safe_dump(vcp, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
     return path
 
 

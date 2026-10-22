@@ -293,8 +293,16 @@ sqlite3 "file:$DATA/evidence.sqlite3?mode=ro&immutable=1" \
 
 ### digest 재도출 (런타임 코드를 바꾼 PR)
 
-`tos/src` · `tos/runtime/src` 를 바꾼 PR 은 **같은 PR 에서** 워크트리의 `print-digests`
-서브커맨드를 **한 번** 돌려 나온 `expected_code_digest` · `expected_dependency_set_digest`
-두 값을 세 트리(`config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short}/release.yaml`)
-에 그대로 전사한다. 상주 래퍼가 매일 아침 같은 비교를 하고(이력 §7.3 5) 어긋나면 부팅 전에
-ABORT 하지만, **tenant 트리는 부팅 레인이 없어** 낡은 핀이 첫 부팅에서 터진다.
+`tos/src` · `tos/runtime/src` 를 바꾼 PR 은 **같은 PR 에서** 한 명령을 돌린다 — 세 트리
+(`config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short}/release.yaml`)의
+`expected_code_digest` 를 함께 다시 쓴다. 이력은 git 이 기록한다(여기에 값을 적지 않는다).
+
+```bash
+python tools/tos_redigest.py --write    # 재도출 (세 사본)
+python tools/tos_redigest.py --check    # 낡았으면 exit 1 — tos-firewall CI 가 같은 걸 돌린다
+```
+
+빠뜨려도 CI 가 잡지만, 그 전에 머지되면: 상주 래퍼가 매일 아침 같은 비교를 하고(이력 §7.3 5)
+어긋나면 부팅 전에 ABORT 하며, **tenant 트리는 부팅 레인이 없어** 낡은 핀이 첫 부팅에서 터진다.
+(`expected_dependency_set_digest` 는 배포 호스트의 성질이라 이 명령의 범위가 아니다 —
+호스트를 바꿨을 때만 `print-digests` 로 직접 전사한다.)

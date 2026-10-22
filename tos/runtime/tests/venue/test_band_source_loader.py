@@ -130,6 +130,25 @@ class TestEveryRuleIsReachedAlone:
 
         assert loaded.band_source is None
 
+    def test_a_price_scale_without_a_band_source_is_returned(
+        self, tmp_path: Path
+    ) -> None:
+        """PR #927 review M1: a kis-mock boot cross-checks its codec's ``price_scale`` against
+        this value, so a tree with no band source (the stock tree) still states it — and the
+        loader must hand it over rather than drop it."""
+        loaded = _load(_write(tmp_path, runtime_extra="price_scale: 100\n"))
+
+        assert loaded.band_source is None
+        assert loaded.price_scale == 100
+
+    @pytest.mark.parametrize("value", ["0", "-100", '"100"', "1.5", "true"])
+    def test_a_malformed_price_scale_without_a_band_source_refuses(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        with pytest.raises(VenuePolicyConfigError) as excinfo:
+            _load(_write(tmp_path, runtime_extra=f"price_scale: {value}\n"))
+        assert "_runtime.price_scale must be a positive int" in str(excinfo.value)
+
 
 class TestLazyTransportRead:
     """Independent review L1 — the ``kis_quote`` thunk is called ONLY for a policy that

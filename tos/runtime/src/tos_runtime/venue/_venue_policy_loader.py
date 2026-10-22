@@ -200,11 +200,12 @@ class LoadedVenuePolicy:
     scope and its derived quantity constraint (plan §4.1).
 
     ``band_source``/``band_source_digest``/``price_scale`` are the CP-3 band 원천 웨이브
-    additions (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.1). All three are
-    ``None`` when the document declares no ``_runtime.band_source`` — which is every tree
-    shipped today (plan §5: the resident ``paper`` tree and both CP-3 tenant trees keep it
-    ``null``/absent until CP-3 §5 3 ③ produces real prices), so every rule the block carries is
-    inert for them.
+    additions (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.1). The first two
+    are ``None`` when the document declares no ``_runtime.band_source``. ``price_scale`` is then
+    optional rather than absent: ``None`` if the key is missing, else the validated value — a
+    kis-mock boot cross-checks its codec's scale against it (PR #927 review M1;
+    ``compose._venue_wiring._cross_check_price_scale``), so the stock tree states it with no
+    band source.
     """
 
     policy: VenueConstraintPolicy
@@ -463,9 +464,8 @@ def _cross_check_band_source(
     document the band GET travels through, so they apply to ``kis_quote_get`` ONLY
     (2026-10-15 plan §3.3).
 
-    ``band_source is None`` — the shipped state of every tree today (plan §5) — returns
-    ``None`` immediately: ``_runtime.price_scale`` is NOT required of a tree that declares no
-    source (plan §4.1's 재리뷰 MEDIUM; requiring it unconditionally would ABORT the resident
+    ``band_source is None`` skips every rule: ``_runtime.price_scale`` is NOT required of a
+    tree that declares no source (only validated if present) (plan §4.1's 재리뷰 MEDIUM; requiring it unconditionally would ABORT the resident
     paper session at the first 08:45 after this merge).
 
     ``transport_instrument_reader`` yields the ``kis_quote`` document's own ``instrument``, or
@@ -482,13 +482,17 @@ def _cross_check_band_source(
     document nothing in its configuration consults.
 
     Returns:
-        The policy's own ``_runtime.price_scale``, or ``None`` when no source is declared.
+        The policy's ``_runtime.price_scale`` — with no source, optional (``None`` if absent)
+        but still validated (``compose._venue_wiring._cross_check_price_scale``).
 
     Raises:
         VenuePolicyConfigError: Any rule below. Each names the offending key.
     """
     if band_source is None:
-        return None
+        # Optional here, validated when present (kis-mock boot cross-check, PR #927 M1).
+        if "price_scale" not in runtime_raw:
+            return None
+        return _require_positive_int_key(runtime_raw, "price_scale", path, "_runtime")
     if (
         shape_constraints.price_min is not None
         or shape_constraints.price_max is not None
