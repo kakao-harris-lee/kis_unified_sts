@@ -30,11 +30,12 @@ _TABLE = """    price_band_ticks:
 """
 
 
-def _with_table(table: str) -> str:
+def _with_table(table: str, *, flat_tick: str = "null") -> str:
+    """The fixture policy with ``table`` declared; a table requires ``tick_size: null``."""
     text = venue_policy_yaml()
     anchor = "    tick_size: 5\n"
     assert text.count(anchor) == 1
-    return text.replace(anchor, anchor + table)
+    return text.replace(anchor, f"    tick_size: {flat_tick}\n" + table)
 
 
 def _load(tmp_path: Path, text: str):
@@ -59,7 +60,9 @@ def _shape(price: int) -> OrderShapeFields:
 def test_no_table_keeps_the_flat_tick_and_the_digest(tmp_path: Path) -> None:
     """Absent and ``null`` are the same document: every existing tree loads unchanged."""
     absent = _load(tmp_path / "a", venue_policy_yaml())
-    null = _load(tmp_path / "b", _with_table("    price_band_ticks: null\n"))
+    null = _load(
+        tmp_path / "b", _with_table("    price_band_ticks: null\n", flat_tick="5")
+    )
     assert absent.policy.shape_constraints.price_band_ticks is None
     assert null.policy.shape_constraints.price_band_ticks is None
     assert absent.policy.canonical_digest == null.policy.canonical_digest
@@ -73,6 +76,23 @@ def test_a_declared_table_is_loaded_and_bound_into_the_digest(tmp_path: Path) ->
         PriceBandTick(band_min=20_000_000, band_max=49_999_999, tick=50_000),
     )
     assert table.policy.canonical_digest != flat.policy.canonical_digest
+
+
+def test_a_table_beside_a_flat_tick_literal_is_refused(tmp_path: Path) -> None:
+    """Failing input: the stock tree's old ``tick_size: 50000`` left beside the table. The
+    kernel would never read the 500원 an operator sees there — two sources for one fact.
+    """
+    with pytest.raises(VenuePolicyConfigError, match="tick_size must be null"):
+        _load(tmp_path, _with_table(_TABLE, flat_tick="50000"))
+
+
+def test_a_table_makes_the_null_flat_tick_not_an_unknown_bound(tmp_path: Path) -> None:
+    """``null_shape_bounds`` (evidenced on VENUE_POLICY_BOUND) names bounds whose source is
+    absent; with a table the tick's source is the table, so ``tick_size`` is not listed.
+    """
+    loaded = _load(tmp_path, _with_table(_TABLE))
+    assert "tick_size" not in loaded.null_shape_bounds
+    assert "max_quantity" in loaded.null_shape_bounds
 
 
 def _banded(loaded):

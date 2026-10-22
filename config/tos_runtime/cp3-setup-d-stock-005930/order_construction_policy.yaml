@@ -107,7 +107,7 @@ account_instrument_contract_and_route_rules:
 direction_side_and_position_effect_rules:
   - "long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE"
 unit_multiplier_currency_and_numeric_rules:
-  - "quantity unit SHARES (1주 고정 — 운영자 결정 2026-10-22); price at ×100 integer KRW scale (tick 50000 = 500원, venue_constraint_policy.yaml 의 호가단위 행); currency KRW"
+  - "quantity unit SHARES (1주 고정 — 운영자 결정 2026-10-22); price at ×100 integer KRW scale (호가단위 = venue_constraint_policy.yaml 의 price_band_ticks 사다리); currency KRW"
 price_tick_lot_quantity_and_rounding_rules:
   - "no silent rounding — construction denies an off-grid shape rather than rounding it"
 order_type_time_in_force_expiration_and_mode_rules:

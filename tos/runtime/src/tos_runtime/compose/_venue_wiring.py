@@ -596,10 +596,9 @@ def build_venue_service(
             explicit ``members:`` list.
         tos_runtime.venue.PolicyNotActivated: either policy has no exactly-one, positively
             resolved+immutable activation member.
-        VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, the
-            Order Construction Policy's wire-codec declaration, or the transport's
-            ``price_scale`` (:func:`_cross_check_price_scale`) disagree with this compose
-            root's own configured facts.
+        VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, the OCP's
+            wire-codec declaration, or the transport's ``price_scale``
+            (:func:`_cross_check_price_scale`) disagree with this root's configured facts.
         VenueBandSourceUnwired: the policy declares a ``_runtime.band_source`` and
             ``band_reader_factory`` is ``None``.
     """

@@ -621,7 +621,8 @@ def _parse_price_band_ticks(
     table (``tos.venue.records.PriceBandTick``; kernel round #4 K-1), or ``None``.
 
     OPTIONAL key: absent or ``null`` keeps the flat ``tick_size`` exactly as before, so every
-    tree that does not declare a table loads (and digests) unchanged. A KRX stock tick is a
+    tree that does not declare a table loads (and digests) unchanged. A declared table requires
+    ``tick_size: null`` (:func:`_parse_shape_constraints`). A KRX stock tick is a
     price ladder (500원 between 200,000 and 500,000원, 100원 below — the flat field can carry
     only one rung), which is the input this exists for: with a flat 500 a 199,900원 limit is
     INADMISSIBLE although it is a legal price.
@@ -667,6 +668,18 @@ def _parse_shape_constraints(
 ) -> tuple[VenueShapeConstraints, tuple[str, ...]]:
     sc_raw = require_mapping_key(raw, "shape_constraints", path)
     bounds, null_bounds = _parse_numeric_bounds(sc_raw, path)
+    price_band_ticks = _parse_price_band_ticks(sc_raw, path)
+    if price_band_ticks is not None:
+        # One source per fact: with a table the kernel never reads the flat tick
+        # (``tos.venue.predicates._resolved_tick``), so a literal beside it would be a number
+        # an operator reads and nothing enforces. A null flat tick is then not "unknown".
+        if bounds["tick_size"] is not None:
+            raise VenuePolicyConfigError(
+                f"{path}: _model_view.shape_constraints.price_band_ticks is declared AND "
+                f"tick_size carries a literal ({bounds['tick_size']!r}) — the table governs "
+                "every price, so tick_size must be null"
+            )
+        null_bounds = tuple(name for name in null_bounds if name != "tick_size")
     allowed_sets: dict[str, frozenset[str]] = {}
     for key in _SHAPE_ALLOWED_SET_KEYS:
         entries = require_list(sc_raw, key, path, "_model_view.shape_constraints")
@@ -677,7 +690,7 @@ def _parse_shape_constraints(
         price_min=bounds["price_min"],
         price_max=bounds["price_max"],
         tick_size=bounds["tick_size"],
-        price_band_ticks=_parse_price_band_ticks(sc_raw, path),
+        price_band_ticks=price_band_ticks,
         lot_size=bounds["lot_size"],
         min_quantity=bounds["min_quantity"],
         max_quantity=bounds["max_quantity"],
