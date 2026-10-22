@@ -430,11 +430,14 @@ def build_kis_band_reader_factory(
     the BOOT here, every time, rather than booting with a band it cannot read. This docstring
     used to say the exception "cannot fire on the real compose path"; that sentence was true
     only while the read was lazy, and leaving it would make this the exact guard-that-admits-
-    what-it-names shape repeated eleven times in this repo's history. The kind no shipped tree
-    declares (``band_source.py``'s own ⚠) is therefore restricted to
-    ``read_on: ["phase_change"]`` until the cell is filled before the venue service is built;
-    ``producer_journal`` — the kind the CP-3 tenant trees DO declare — opens a file, needs
-    neither registry nor seal, and reads at the boot instant without any of this.
+    what-it-names shape repeated eleven times in this repo's history. **No loader rule forbids
+    that combination** (independent review LOW-4 — an earlier wording here said the kind "is
+    restricted to ``read_on: ["phase_change"]``", which reads as a validated constraint): it
+    loads, and then this exception refuses the boot, fail-closed. Usable today therefore means
+    ``read_on: ["phase_change"]``, and no shipped tree declares this kind at all
+    (``band_source.py``'s own ⚠). ``producer_journal`` — the kind the CP-3 tenant trees DO
+    declare — opens a file, needs neither registry nor seal, and reads at the boot instant
+    without any of this.
     """
 
     def _factory(band_source: BandSourceConfig, tick_size: int | None) -> BandReader:

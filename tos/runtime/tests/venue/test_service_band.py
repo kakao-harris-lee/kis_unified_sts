@@ -1107,6 +1107,106 @@ class TestTheBandIsReadAtBoot:
         assert snapshot.critical_input_snapshot_digest is not None
         assert sink.only()["band_digest"] == snapshot.critical_input_snapshot_digest
 
+    def test_a_clock_stale_boot_is_refused_and_then_retried_at_the_first_snapshot(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """⛔ The regression this wave could have shipped (independent review MEDIUM-1).
+
+        The input is the PRODUCTION clock path, reproduced at the seam the service actually
+        has: ``trading_date_reader`` answering ``None`` once and then a date. On the real
+        compose path that reader is ``FreshTrustedWallClockReference(time_service,
+        max_age_ms=1000)`` (``_session_wiring.py:203-210``), which goes absent once the last
+        evaluated snapshot is older than the bound — and compose evaluates the time service
+        twice at ``_wiring.py:388-389`` and then builds everything else, so a boot whose
+        remaining wiring takes over a second arrives here stale.
+
+        Before the owed-read flag this left the band unread for the whole session when every
+        proposal sat in one session phase: the boot read refused, and nothing read again.
+        """
+        journal = tmp_path / "band.jsonl"
+        journal.write_bytes(
+            json.dumps(_producer_journal_line()).encode("utf-8") + b"\n"
+        )
+        path = write_fixture_venue_policy(
+            tmp_path,
+            venue_policy_yaml(
+                price_min="null",
+                price_max="null",
+                tick_size="2",
+                min_quantity="1",
+                max_quantity="10",
+                runtime_extra=producer_journal_band_source_runtime_extra(
+                    instrument=_INSTRUMENT, band_journal_path=str(journal)
+                ),
+            ),
+        )
+        loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+        sink = _Sink()
+        # `None` for the boot read, the real date from the first snapshot on — a clock that
+        # was stale when the venue service was built and fresh by the runner's first cycle.
+        dates: list[str | None] = [None]
+        reader = ProducerJournalBandReader(
+            band_source=loaded.band_source,
+            monotonic=_Monotonic(),
+            evidence_sink=sink,
+            trading_date_reader=lambda: dates.pop(0) if dates else _TRADING_DATE,
+            tick_size=loaded.policy.shape_constraints.tick_size,
+        )
+        service = VenueConstraintService(
+            loaded_policy=loaded,
+            scheme=SCHEME,
+            session_phase_reader=_FakeReader("REGULAR"),
+            tick_generation_reader=_FakeReader(1),
+            evidence_store=evidence_store,
+            environment_label="test-env",
+            route_fields=InstrumentRouteFields(),
+            broker_capability_profile_version=None,
+            broker_capability_profile_digest=None,
+            activated_member_digest="fixture-activation-digest",
+            band_reader=reader.read,
+            trading_date_reader=_FakeReader(_TRADING_DATE),
+        )
+
+        # The boot read names the clock, and holds NO band — fail-closed.
+        # `_Sink.rows` holds `(kind, fields)`; `only()` is unusable here because this
+        # test is about there being TWO rows.
+        assert [(k, f["outcome"], f.get("reason")) for k, f in sink.rows] == [
+            ("VENUE_BAND_OBSERVED", "REFUSED", "trading_date_unavailable")
+        ]
+        assert service.shape_constraints.price_max is None
+
+        snapshot = service.snapshot()
+
+        # The owed read ran once, and the band is in force from the first snapshot on.
+        assert [f["outcome"] for _, f in sink.rows] == ["REFUSED", "OBSERVED"]
+        assert service.shape_constraints.price_max == _UPPER
+        assert snapshot.critical_input_snapshot_digest is not None
+        # At most one OBSERVED row per boot (module docstring) — and no third read, ever.
+        service.snapshot()
+        assert [f["outcome"] for _, f in sink.rows] == ["REFUSED", "OBSERVED"]
+
+    def test_a_boot_that_already_holds_a_band_is_not_owed_a_retry(
+        self, tmp_path: Path, evidence_store: SqliteEvidenceStore
+    ) -> None:
+        """The flag's other half: the retry is reached ONLY when the boot read came back
+        empty, so the healthy boot's row count is exactly what it was before MEDIUM-1 — one.
+
+        Distinct from :meth:`test_the_first_snapshot_does_not_add_a_second_row_for_the_same_instant`,
+        which pins the ``last_snapshot is not None`` clause: this one pins the ``and
+        self._band is None`` term, and goes green if the retry is made unconditional.
+        """
+        sink, service = self._sink_and_service(
+            tmp_path,
+            evidence_store,
+            tail=json.dumps(_producer_journal_line()).encode("utf-8") + b"\n",
+        )
+        assert sink.only()["outcome"] == "OBSERVED"
+
+        service.snapshot()
+        service.snapshot()
+
+        assert len(sink.rows) == 1
+
     def test_a_tree_that_declares_no_band_source_never_reads(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:

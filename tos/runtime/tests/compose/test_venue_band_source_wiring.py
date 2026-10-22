@@ -44,6 +44,7 @@ from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._venue_wiring import VenueBandSourceUnwired
+from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.transport.kis_mock.credential_session import (
     KisCredentialSessionConflict,
 )
@@ -66,7 +67,12 @@ from .conftest import (
     _VENUE_POLICY_INSTRUMENT,
     _VENUE_POLICY_INSTRUMENT_CLASS,
 )
-from .test_compose_root import _compose, _reach_trusted
+from .test_compose_root import (
+    _action_flow_inputs,
+    _aggregate_inputs,
+    _compose,
+    _reach_trusted,
+)
 from .test_marketfeed_intake_kind_wiring import _write_kis_quote_transport_config
 from .test_transport_wiring import _activate_mock_stock_order, _build_custody
 from .test_venue_wiring import _real_members, _rewrite_activation
@@ -898,6 +904,117 @@ class TestTheProducerJournalKindReadsAtBoot:
                 snapshot.critical_input_snapshot_digest
                 == _payloads(runtime, "VENUE_BAND_OBSERVED")[0]["band_digest"]
             )
+        finally:
+            runtime.rcl_log.close()
+            runtime.evidence_store.close()
+
+
+class TestTheBootReadOnTheProductionClockPath:
+    """The boot read against the clock reference PRODUCTION wires, not the suite's fixed one.
+
+    ⚠ **Why this class exists** (independent review MEDIUM-1). Moving the ``"boot"`` read into
+    ``VenueConstraintService.__init__`` put it outside the runner's per-cycle
+    ``time_service.evaluate()``, and the first thing
+    :meth:`~tos_runtime.venue.band_journal.ProducerJournalBandReader.read` does is ask
+    ``trading_date_reader()`` — which on the real compose path is
+    ``FreshTrustedWallClockReference(time_service, max_age_ms=1000)``
+    (``_session_wiring.py:203-210``, from the shipped
+    ``MAX_time_conservative_freshness_age_ms``), a reference that goes honestly absent once
+    the last evaluated snapshot is older than that bound. Every other test in this file
+    reaches compose through ``_compose``, which always passes ``wall_clock=``, and that
+    REPLACES the reference this class is about (``test_compose_root._compose``'s own
+    docstring says so). So the band boot read had no coverage on the production reference at
+    all; the sibling that does cover it for the egress trading date is
+    ``test_session_wiring.py::test_production_default_dates_egress_results_through_a_fresh_trusted_reference``.
+
+    The OS clock underneath is PINNED with :func:`~._fixtures.pin_system_clock`, which shifts
+    ``LocalSystemClockReader`` and leaves every other wire in place — so the assertion is
+    about the wiring and not about the host clock (the same reasoning
+    ``test_session_wiring.py`` records for its own pin).
+
+    **The stale branch is pinned at unit level, deliberately**
+    (``tests/venue/test_service_band.py::TestTheBandIsReadAtBoot
+    ::test_a_clock_stale_boot_is_refused_and_then_retried_at_the_first_snapshot``). Staleness
+    here is driven by ``TrustworthyTimeService.wall_clock_now_if_fresh``'s own
+    ``self._monotonic.now_ms() - issued`` (``time/service.py:759``), so reproducing it through
+    compose would mean injecting a monotonic source that jumps between compose's two boot
+    ``evaluate()`` calls and the venue build — a test bound to compose's internal call
+    ORDERING, which would go green on a reordering that still broke the band. The seam the
+    behaviour actually lives at is ``trading_date_reader`` answering ``None``, and that is
+    what the unit test drives.
+    """
+
+    def _boot_on_the_production_clock(
+        self,
+        tmp_path: Path,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        *,
+        trading_date: str,
+    ) -> Any:
+        journal = tmp_path / "band.jsonl"
+        # Same line builder the fixed-clock class uses, so the two differ ONLY in which
+        # wall-clock reference compose wired.
+        line = TestTheProducerJournalKindReadsAtBoot()._band_line(
+            trading_date=trading_date
+        )
+        journal.write_bytes(json.dumps(line).encode("utf-8") + b"\n")
+        _declare_producer_journal_band_source(config_dir, band_journal_path=journal)
+        fx.write_band_strategy_file(config_dir)
+        return compose_paper_runtime(
+            config_dir,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=_aggregate_inputs,
+            action_flow_inputs_provider=_action_flow_inputs,
+            transport_kind=TransportKind.SYNTHETIC,
+            # wall_clock intentionally omitted — the production default, which is the whole
+            # point of this class. `_compose` would override it.
+        )
+
+    def test_the_boot_read_reaches_the_production_fresh_trusted_reference(
+        self,
+        tmp_path: Path,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A fresh production clock dates the boot read, so the band is in force before
+        anything calls ``snapshot()`` — the M1 property, on the real reference.
+
+        The journal line's ``trading_date`` is DERIVED from the pinned instant rather than
+        typed, so this asserts "the date the production reference produced is the date the
+        reader compared against", which is the actual wiring claim. A literal would make a
+        pin-value change look like a band defect.
+        """
+        pinned = fx.LAST_MINUTE_OF_DAY_UNIX_MS
+        fx.pin_system_clock(monkeypatch, pinned)
+        trading_date = datetime.fromtimestamp(
+            pinned / 1000, tz=timezone(timedelta(hours=9))
+        ).strftime("%Y%m%d")
+
+        runtime = self._boot_on_the_production_clock(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            trading_date=trading_date,
+        )
+        try:
+            _reach_trusted(runtime)
+            (row,) = _payloads(runtime, "VENUE_BAND_OBSERVED")
+
+            # Not REFUSED/trading_date_unavailable: the fresh-trusted reference answered.
+            assert row["outcome"] == "OBSERVED"
+            assert row["trading_date"] == trading_date
+            assert (row["price_min"], row["price_max"]) == (98_746, 115_918)
+            # And it happened at BOOT, with no snapshot issued.
+            assert _payloads(runtime, "VENUE_SNAPSHOT_ISSUED") == []
+            assert runtime.venue.shape_constraints.price_max == 115_918
         finally:
             runtime.rcl_log.close()
             runtime.evidence_store.close()
