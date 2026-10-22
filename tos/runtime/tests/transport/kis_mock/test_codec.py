@@ -272,3 +272,38 @@ def test_price_scale_must_be_a_positive_int(scale: object) -> None:
             static_body_fields=STATIC_FIELDS,
             price_scale=scale,  # type: ignore[arg-type]
         )
+
+
+# The default decimal context carries 28 significant digits — a quotient wider than that was
+# ROUNDED before the whole-KRW check ever saw it (PR #927 review L1). Both failing inputs below
+# are 31-digit prices at scale 100: the first passed the check and went out as 10**28 (its
+# exact quotient ends in .5); the second went out as 10**28, losing its last 1원.
+_WIDE = 10**30
+
+
+def test_a_price_wider_than_the_decimal_context_is_not_rounded_into_whole_krw() -> None:
+    with pytest.raises(KisOrderWireCodecError, match="not a whole-KRW"):
+        KisOrderWireCodec.encode_fields(
+            account="12345678",
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal(_WIDE + 50),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=100,
+        )
+
+
+def test_a_price_wider_than_the_decimal_context_goes_out_exact() -> None:
+    body = json.loads(
+        KisOrderWireCodec.encode_fields(
+            account="12345678",
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal(_WIDE + 100),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=100,
+        )
+    )
+    assert body["ORD_UNPR"] == str(10**28 + 1)
