@@ -33,4 +33,8 @@ quote_market_div_code: "J"
 # resolution, so they share one refresh; a later attempt older than this refreshes first. 30 s
 # is far inside a 1-minute-bar strategy's decision cadence and keeps the mock host at two GETs
 # per attempt at most — it is a freshness bound, not a polling interval (nothing polls).
+# ⚠ A FAILED observation is held for the same window (#932 review LOW 4): after a failed read
+# (account rt_cd != 0, a halted instrument, a token or transport error) the facts stay
+# not-current — every send refused — until 30 s have passed and the next attempt re-reads.
+# Fail closed by design; a recovered broker is noticed at most 30 s late.
 max_age_ms: 30000

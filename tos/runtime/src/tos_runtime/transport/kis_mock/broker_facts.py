@@ -39,14 +39,11 @@ from urllib.parse import urlencode
 import yaml
 
 from tos_runtime._named_tbd import reject_named_tbd
-from tos_runtime.custody.ports import CustodyError
 from tos_runtime.time.sources import MonotonicSource
-from tos_runtime.transport.kis_mock.client import KisMockClientError, RawResponse
+from tos_runtime.transport.kis_mock.client import RawResponse
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
-    TokenResponseError,
-    TokenStale,
 )
 
 __all__ = [
@@ -73,6 +70,17 @@ _KEYS = (
     "quote_market_div_code",
     "max_age_ms",
 )
+
+
+#: The longest server-supplied value an evidence reason quotes (#932 review LOW 5): enough for
+#: any real ``rt_cd`` / flag, short enough that a hostile or broken body cannot bloat a row.
+_REASON_VALUE_CAP = 32
+
+
+def _capped(value: object) -> str:
+    """``repr(value)``, cut to :data:`_REASON_VALUE_CAP` characters."""
+    text = repr(value)
+    return text if len(text) <= _REASON_VALUE_CAP else text[:_REASON_VALUE_CAP] + "…"
 
 
 class BrokerFactsConfigError(Exception):
@@ -242,13 +250,13 @@ class KisMockBrokerFacts:
             tradable, quote_reason = self._read_tradability(token)
             if reason == "ok":
                 reason = quote_reason
-        except (
-            TokenStale,
-            TokenResponseError,
-            KisMockClientError,
-            CustodyError,
-        ) as exc:
-            reason = f"{type(exc).__name__}"
+        except Exception as exc:  # noqa: BLE001 - fail closed, never crash the resolver
+            # ANY failure — the four named ones (stale/invalid token, transport, custody) or
+            # one nobody listed (#932 review LOW 3) — is "no facts": both reset, even when the
+            # first GET had already succeeded, and the type name is the evidence reason. A
+            # raise here would escape through the send-boundary resolver instead.
+            account_ok, tradable = False, None
+            reason = type(exc).__name__
         observation = BrokerFactsObservation(
             as_of_ms=as_of_ms, account_ok=account_ok, tradable=tradable, reason=reason
         )
@@ -296,7 +304,7 @@ class KisMockBrokerFacts:
         if not isinstance(body, dict):
             return False, "balance_malformed"
         if body.get("rt_cd") != "0":
-            return False, f"balance_rt_cd={body.get('rt_cd')!r}"
+            return False, f"balance_rt_cd={_capped(body.get('rt_cd'))}"
         return True, "ok"
 
     def _read_tradability(self, token: str) -> tuple[bool | None, str]:
@@ -317,4 +325,4 @@ class KisMockBrokerFacts:
             return True, "ok"
         if flag == "Y":
             return False, "temp_stop_yn=Y"
-        return None, f"temp_stop_yn={flag!r}"
+        return None, f"temp_stop_yn={_capped(flag)}"

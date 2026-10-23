@@ -179,6 +179,35 @@ def test_a_stale_token_is_no_facts_at_all() -> None:
     assert sink.rows[0][1]["reason"] == "TokenStale"
 
 
+def test_an_unexpected_exception_is_no_facts_and_never_escapes() -> None:
+    """#932 review LOW 3: an exception nobody listed (here from the token step) used to escape
+    through the send-boundary resolver. Now: not current, the type name as the reason.
+    """
+    facts, _, sink = _facts(_Client(), session=_Session(RuntimeError("surprise")))
+    assert facts.account_facts_current() is False
+    assert facts.generation_current() is False
+    assert sink.rows[0][1]["reason"] == "RuntimeError"
+
+
+def test_a_failure_after_the_account_read_resets_the_account_fact_too() -> None:
+    """The first GET succeeded, the second raised: both facts are dropped, not half kept."""
+    client = _Client(VTTC8434R=[_OK_BALANCE], FHKST01010100=[ValueError("bad body")])
+    facts, _, sink = _facts(client)
+    assert facts.account_facts_current() is False
+    assert facts.tradability_facts_current() is None
+    assert sink.rows[0][1]["reason"] == "ValueError"
+
+
+def test_a_server_supplied_value_in_the_reason_is_capped() -> None:
+    """#932 review LOW 5: a hostile or broken rt_cd cannot bloat the evidence row."""
+    client = _Client(VTTC8434R=[{"rt_cd": "9" * 5000}], FHKST01010100=[_quote("N")])
+    facts, _, sink = _facts(client)
+    facts.refresh()
+    reason = sink.rows[0][1]["reason"]
+    assert reason.startswith("balance_rt_cd='999")
+    assert len(reason) < 64
+
+
 def test_an_account_that_is_not_ten_digits_is_refused_without_a_balance_get() -> None:
     client = _Client(FHKST01010100=[_quote("N")])
     facts, _, _ = _facts(client, account="1234")

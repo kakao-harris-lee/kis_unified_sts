@@ -15,6 +15,7 @@ import pytest
 from tos.brokercap import (
     AssetScope,
     AuthorizationClass,
+    BrokerCapabilityProfile,
     BrokerEnvironment,
     CapabilityTuple,
     EconomicEffect,
@@ -23,6 +24,21 @@ from tos.brokercap import (
 from tos.egressgw import SendBoundaryContext
 from tos.egressgw.gateway import _check_allowance
 from tos.egressgw.vocabulary import BrokerApplicability, VerifyOutcome
+
+from ..brokercap._brokercap_strategies import issue_profile, profile_key
+
+#: The binding tables a scope carries: BROKER_SIMULATION -> the simulation profile environment.
+_ENV_BINDING = (
+    (BrokerEnvironment.BROKER_SIMULATION, "SIM"),
+    (BrokerEnvironment.BROKER_PRODUCTION, "PROD"),
+)
+_ASSET_BINDING = ((AssetScope.STOCK, "EQ"),)
+_SIM_PROFILE = issue_profile(
+    profile_key=profile_key(environment="SIM", instrument_class="EQ")
+)
+_PROD_PROFILE = issue_profile(
+    profile_key=profile_key(environment="PROD", instrument_class="EQ")
+)
 
 _MOCK_SEND = CapabilityTuple(
     environment=BrokerEnvironment.BROKER_SIMULATION,
@@ -37,12 +53,18 @@ def _judge(
     tuples: tuple[CapabilityTuple, ...],
     *,
     applicability: BrokerApplicability = BrokerApplicability.BROKER_RESOURCE_CONSUMING,
+    profile: BrokerCapabilityProfile | None = _SIM_PROFILE,
+    env_binding: tuple[Any, ...] = _ENV_BINDING,
+    asset_binding: tuple[Any, ...] = _ASSET_BINDING,
     **flags: Any,
 ) -> VerifyOutcome:
+    # Any profile here has no VERIFIED dimension for an unset required set: the normal path
+    # is PROHIBITED -> DENIED, so SATISFIED can only come from the mock-class skip.
     context = SendBoundaryContext(
         capability_tuples=tuples,
-        # No profile at all: the normal path is PROHIBITED -> DENIED.
-        broker_capability_profile=None,
+        broker_capability_profile=profile,
+        capability_environment_binding=env_binding,
+        capability_asset_binding=asset_binding,
         account_instrument_action_allowed=flags.get("allowed", True),
         max_quantity_within_allowance=flags.get("max_qty", True),
     )
@@ -80,6 +102,26 @@ def test_a_real_money_or_unknown_tuple_takes_the_profile_check(
 ) -> None:
     assert _judge((mutated,)) is VerifyOutcome.DENIED
     assert _judge((_MOCK_SEND, mutated)) is VerifyOutcome.DENIED
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # #932 review MEDIUM: mock tuples beside a PRODUCTION profile — the skip used to
+        # trust the tuples alone; they do not bind to this profile's key.
+        {"profile": _PROD_PROFILE},
+        {"profile": None},
+        # the binding tables are what tie tuples to the profile; without them nothing binds
+        {"env_binding": ()},
+        {"asset_binding": ()},
+        # a table that maps simulation onto production is honest about it: no bind to SIM
+        {"env_binding": ((BrokerEnvironment.BROKER_SIMULATION, "PROD"),)},
+    ],
+)
+def test_mock_tuples_that_do_not_bind_to_the_profile_take_the_profile_check(
+    overrides: dict[str, Any],
+) -> None:
+    assert _judge((_MOCK_SEND,), **overrides) is VerifyOutcome.DENIED
 
 
 @pytest.mark.parametrize(
