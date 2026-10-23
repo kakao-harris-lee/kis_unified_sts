@@ -110,11 +110,12 @@ def _wrap_transport(runtime: Any, root: Path, park_at: str | None) -> None:
     The gateway holds the same transport object, so an instance attribute reaches every send.
     """
     ledger = root / VENUE_LEDGER_NAME
-    transport = runtime.transport
-    if type(transport) is not SyntheticPaperTransport:
+    if type(runtime.transport) is not SyntheticPaperTransport:
         raise SystemExit(
-            f"drill refuses a non-synthetic transport: {type(transport)!r}"
+            f"drill refuses a non-synthetic transport: {type(runtime.transport)!r}"
         )
+    # `Any`, not the narrowed class: the instance attribute below shadows the method.
+    transport: Any = runtime.transport
     real_send_once = transport.send_once
 
     def send_once(attempt: Any, **kwargs: Any) -> Any:
