@@ -48,6 +48,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.operations.backup_set import _ComposedForDrill, _RecoveryVerdictLike
+from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 
 # ===========================================================================
@@ -133,6 +134,7 @@ class _FrozenComposedForDrill:
     inbox: SqliteEventInbox
     emergency_log: EmergencyAppendLog
     recovery: _RecoveryVerdictLike | None
+    rcl_log: SqliteCommitLog
 
 
 def _frozen_composed_for_drill(x: _FrozenComposedForDrill) -> _ComposedForDrill:
