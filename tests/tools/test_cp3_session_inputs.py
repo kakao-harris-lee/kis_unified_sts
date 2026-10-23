@@ -2029,3 +2029,78 @@ def test_the_m5_criterion_records_the_budget_and_the_non_stale_rule(
     assert "MARKETFEED_FIELD_REFUSED" in criterion
     # the definition string itself still names what the number IS, unchanged
     assert "stale, or evaluation clock unknown" in definition
+
+
+def test_a_session_that_died_before_consuming_refuses_the_previous_days_numbers(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review MEDIUM-1.** Newest-consumed-day alone answers the WRONG session.
+
+    The leaf holds 10-19 snapshots; today's 10-20 session dies before consuming a single bar,
+    and its boot snapshot lists a 10-20 pre-boot id. Newest-day would answer ``20261019`` —
+    so yesterday's stale count is reported as today's, and yesterday's pre-boot ids (absent
+    from today's boot snapshot) read as post-boot refusals. Nothing else catches it: the
+    snapshot list is non-empty, so no emptiness guard fires.
+
+    The two inputs are not from the same session, so no number is salvageable: refuse.
+    """
+    bars = _bars(hinge, 2, states=["fresh", "stale_by_age"])
+    data_dir = _session(tmp_path, hinge, bars)
+
+    with pytest.raises(si.SessionInputsError) as excinfo:
+        _document(
+            tmp_path, data_dir, pre_boot=[f"{INSTRUMENT}:1m:20261020T084500+0900"]
+        )
+
+    message = str(excinfo.value)
+    assert "20261020" in message and "20261019" in message
+    assert "died before consuming" in message
+
+
+def test_the_boot_snapshot_decides_the_session_day_when_both_agree(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """The other side of MEDIUM-1: agreement is silent, and the pre-boot id is still excluded
+    from the post-boot denominator exactly as before."""
+    bars = _bars(hinge, 3)
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir, pre_boot=[bars[0].raw_event_id])[
+        "consumed_field_states"
+    ]
+
+    assert states["session_day"] == "20261019"
+    assert states["counts"]["pre_boot_consumed_ids"] == 1
+    assert states["counts"]["post_boot_consumed_ids"] == 2
+
+
+def test_an_unreadable_raw_event_id_is_refused_not_silently_dropped(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review MEDIUM-2.** An id with no ``:1m:`` stamp has no day, so a day filter drops
+    it from EVERY count and the totals shrink with nothing saying so — the same silently-wrong
+    -count class the scoping was added to fix. The id names a bar the runtime consumed, so
+    there is no honest "skip"."""
+    bars = _bars(hinge, 2)
+    malformed = replace(bars[1], raw_event_id=f"{INSTRUMENT}:20261019T151300+0900")
+    data_dir = _session(tmp_path, hinge, [bars[0], malformed])
+
+    with pytest.raises(si.SessionInputsError) as excinfo:
+        _document(tmp_path, data_dir)
+
+    assert malformed.raw_event_id in str(excinfo.value)
+    assert "cannot be scoped to a session" in str(excinfo.value)
+
+
+def test_the_session_day_is_taken_in_kst_not_in_the_ids_own_offset(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review LOW-3.** The stamp carries its OWN offset. ``20261019T233000+0000`` is
+    2026-10-20 08:30 in Seoul, so its session day is the 20th; reading the date off the stamp
+    as written would file it under the 19th and scope the session to the wrong day.
+
+    Today every id is written ``+0900`` by one producer — a fact about that producer, not a
+    property of the grammar this function parses.
+    """
+    assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T233000+0000") == "20261020"
+    assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T151200+0900") == "20261019"
+    assert si.session_day_of(f"{INSTRUMENT}:20261019T151200+0900") is None

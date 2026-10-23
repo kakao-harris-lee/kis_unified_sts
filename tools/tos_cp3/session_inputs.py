@@ -104,6 +104,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 #: Repo root of the checkout this file belongs to, at the FRONT of
 #: ``sys.path`` for the same reason B1a/B2/B3 do it: an editable install of
@@ -841,6 +842,10 @@ def read_boot_snapshot(path: Path) -> frozenset[str]:
 _RAW_EVENT_ID_SEPARATOR = ":1m:"
 _RAW_EVENT_ID_STAMP_FORMAT = "%Y%m%dT%H%M%S%z"
 
+#: Session logic in this repo is KST-native (root CLAUDE.md). A bar id carries its own
+#: offset, so its date is only a SESSION day after conversion — see :func:`session_day_of`.
+_KST = ZoneInfo("Asia/Seoul")
+
 
 def _published_after_close(
     raw_event_id: str, as_of_ms: int | None, session_close: _dt.time | None
@@ -905,23 +910,48 @@ def unpaired_reasons(
 
 
 def session_day_of(raw_event_id: str) -> str | None:
-    """The ``YYYYMMDD`` a bar id belongs to, or ``None`` when the id is not of that shape.
+    """The **KST** ``YYYYMMDD`` a bar id belongs to, or ``None`` when the id is malformed.
 
     ``A05611:1m:20261022T151200+0900`` -> ``"20261022"``. Reuses
     :data:`_RAW_EVENT_ID_SEPARATOR`/:data:`_RAW_EVENT_ID_STAMP_FORMAT` so this and
     :func:`_published_after_close` cannot drift into two id grammars.
+
+    ⚠ **Converted to KST before the date is taken** (independent review LOW-3; repo rule:
+    session logic is KST-native). The stamp carries its OWN offset, and taking the date off
+    the stamp as written would make ``...T151300+0000`` read as the 22nd when in Seoul it is
+    the 23rd — a silently wrong session day, which is the whole class of bug this function
+    was added to fix. Today every id is written ``+0900`` by one producer; that is a fact
+    about the current producer, not a property of the grammar.
+
+    Returns:
+        The KST date, or ``None`` when the id has no ``:1m:`` stamp or it does not parse.
+        Callers must treat ``None`` as an error, not as "skip" — see
+        :func:`_scope_to_session_day`.
     """
     try:
         stamp = raw_event_id.split(_RAW_EVENT_ID_SEPARATOR, 1)[1]
-        return _dt.datetime.strptime(stamp, _RAW_EVENT_ID_STAMP_FORMAT).strftime(
-            "%Y%m%d"
-        )
+        parsed = _dt.datetime.strptime(stamp, _RAW_EVENT_ID_STAMP_FORMAT)
     except (IndexError, ValueError):
         return None
+    return parsed.astimezone(_KST).strftime("%Y%m%d")
 
 
-def derive_session_day(snapshots: Sequence[Snapshot]) -> str | None:
-    """The session day these snapshots were measured for: the NEWEST day present.
+def derive_session_day(
+    snapshots: Sequence[Snapshot], pre_boot: frozenset[str] = frozenset()
+) -> str | None:
+    """The session day these snapshots were measured for.
+
+    **The boot snapshot decides when it says anything** (independent review MEDIUM-1), and the
+    newest consumed day is only the fallback. Failing case for newest-day-alone: the leaf
+    holds 10-22 snapshots, today's 10-23 session dies before consuming a single bar, and the
+    boot snapshot lists 10-23 pre-boot ids. Newest-day answers ``20261022`` — so 10-22's stale
+    count is reported as today's, and 10-22's own pre-boot ids (absent from today's boot
+    snapshot) are counted as post-boot refusals. Nothing else catches it: the snapshot list is
+    non-empty so an emptiness guard never fires, and ``--producer-log`` is optional.
+
+    A disagreement between the two is therefore an ERROR rather than a precedence rule: it
+    means this document is being built from a boot snapshot and a store that are not from the
+    same session, and no number below it would mean what it says.
 
     ⛔ **Why this exists** (2026-10-22 evidence README §4). ``read_snapshots`` reads the whole
     ``snapshots`` table, and its docstring's "every issued snapshot of the session" was true
@@ -937,16 +967,46 @@ def derive_session_day(snapshots: Sequence[Snapshot]) -> str | None:
     A reader who needs to see the assumption gets ``session_day`` and ``days_present`` in the
     document rather than having to know this rule.
 
+    Args:
+        snapshots: The store's snapshots, already read.
+        pre_boot: The boot snapshot's ``pre_boot_raw_event_ids``. Empty is legitimate (a
+            producer journal with nothing in it at boot), and then the fallback applies.
+
     Returns:
-        The ``YYYYMMDD``, or ``None`` when no snapshot carries a parseable id (then nothing is
-        scoped and every count stays store-wide, reported as such).
+        The KST ``YYYYMMDD``, or ``None`` when neither side names a day (an empty store and an
+        empty boot snapshot — then nothing is scoped and every count is store-wide, reported
+        as such).
+
+    Raises:
+        SessionInputsError: The boot snapshot's pre-boot ids span more than one day, or name a
+            day the store's newest consumed bar disagrees with.
     """
-    days = {
+    consumed_days = {
         day
         for day in (session_day_of(snapshot.raw_event_id) for snapshot in snapshots)
         if day is not None
     }
-    return max(days) if days else None
+    newest_consumed = max(consumed_days) if consumed_days else None
+    boot_days = {
+        day for day in (session_day_of(bar) for bar in pre_boot) if day is not None
+    }
+    if not boot_days:
+        return newest_consumed
+    if len(boot_days) > 1:
+        raise SessionInputsError(
+            "the boot snapshot's pre_boot_raw_event_ids span more than one KST day "
+            f"({sorted(boot_days)}) — one boot cannot belong to two sessions, so the "
+            "snapshot and the store are not from the same run"
+        )
+    session_day = boot_days.pop()
+    if newest_consumed is not None and newest_consumed != session_day:
+        raise SessionInputsError(
+            f"the boot snapshot is for KST day {session_day} but the newest consumed bar in "
+            f"the store is from {newest_consumed} — the two are not from the same session "
+            "(a session that died before consuming anything reads the PREVIOUS session's "
+            "numbers as its own). Point --boot-snapshot at this store's own session."
+        )
+    return session_day
 
 
 def consumed_field_states(
@@ -1040,7 +1100,24 @@ def consumed_field_states(
     # session's pre-boot line — absent from today's boot snapshot — reads as post-boot and
     # inflates M5's number, which is exactly what happened on 2026-10-22 (2 store-wide, 1 for
     # the session). `days_present` keeps the accumulation visible rather than hidden by the fix.
-    session_day = derive_session_day(snapshots)
+    session_day = derive_session_day(snapshots, pre_boot)
+    # ⛔ FAIL CLOSED on an id this grammar cannot read (independent review MEDIUM-2). Such an
+    # id has no day, so a day filter drops it from EVERY count below — the number would be
+    # smaller and nothing would say so, which is the same silently-wrong-count class the
+    # scoping itself was added to fix. There is no "skip" that is honest here: the id names a
+    # bar the runtime consumed.
+    unparseable = sorted(
+        snapshot.raw_event_id
+        for snapshot in snapshots
+        if session_day_of(snapshot.raw_event_id) is None
+    )
+    if unparseable:
+        raise SessionInputsError(
+            f"{len(unparseable)} consumed raw_event_id(s) carry no readable "
+            f"'{_RAW_EVENT_ID_SEPARATOR}<stamp>' day and so cannot be scoped to a session: "
+            f"{unparseable[:5]}{' …' if len(unparseable) > 5 else ''}. Refusing to report "
+            "counts that would silently omit them."
+        )
     days_present = sorted(
         {
             day
