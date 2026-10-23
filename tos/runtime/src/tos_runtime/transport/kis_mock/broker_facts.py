@@ -40,6 +40,7 @@ import yaml
 
 from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.account import KisAccountError, split_kis_account
 from tos_runtime.transport.kis_mock.client import RawResponse
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
 from tos_runtime.transport.kis_mock.token import (
@@ -70,17 +71,6 @@ _KEYS = (
     "quote_market_div_code",
     "max_age_ms",
 )
-
-
-#: The longest server-supplied value an evidence reason quotes (#932 review LOW 5): enough for
-#: any real ``rt_cd`` / flag, short enough that a hostile or broken body cannot bloat a row.
-_REASON_VALUE_CAP = 32
-
-
-def _capped(value: object) -> str:
-    """``repr(value)``, cut to :data:`_REASON_VALUE_CAP` characters."""
-    text = repr(value)
-    return text if len(text) <= _REASON_VALUE_CAP else text[:_REASON_VALUE_CAP] + "…"
 
 
 class BrokerFactsConfigError(Exception):
@@ -235,10 +225,17 @@ class KisMockBrokerFacts:
 
     def _current(self) -> BrokerFactsObservation | None:
         observation = self._observation
-        now = self._monotonic.now_ms()
-        if observation is None or now - observation.as_of_ms > self._config.max_age_ms:
+        if observation is None or self._expired(observation):
             observation = self.refresh()
+            # #932 Codex r1 MEDIUM: the timestamp is taken BEFORE the two GETs (conservative),
+            # so slow GETs can age a fresh observation past the bound by the time it returns.
+            # Re-check: an observation already older than max_age_ms is not handed out.
+            if self._expired(observation):
+                return None
         return observation
+
+    def _expired(self, observation: BrokerFactsObservation) -> bool:
+        return self._monotonic.now_ms() - observation.as_of_ms > self._config.max_age_ms
 
     def refresh(self) -> BrokerFactsObservation:
         """Two GETs now; replaces the held observation and writes one evidence row."""
@@ -288,23 +285,28 @@ class KisMockBrokerFacts:
         return response.json
 
     def _read_account(self, token: str) -> tuple[bool, str]:
-        digits = self._account.replace("-", "")
-        if len(digits) != 10 or not digits.isdigit():
-            return False, "account_not_ten_digits"
+        # The SAME parser the order codec uses (#932 Codex r1 HIGH), so the account this read
+        # verifies is the account the order is sent for.
+        try:
+            account = split_kis_account(self._account)
+        except KisAccountError:
+            return False, "account_not_kis_8_2"
         body = self._get(
             token,
             self._config.balance_tr_id,
             self._config.balance_path,
             {
-                "CANO": digits[:8],
-                "ACNT_PRDT_CD": digits[8:],
+                "CANO": account.cano,
+                "ACNT_PRDT_CD": account.acnt_prdt_cd,
                 **dict(self._config.balance_params),
             },
         )
         if not isinstance(body, dict):
             return False, "balance_malformed"
         if body.get("rt_cd") != "0":
-            return False, f"balance_rt_cd={_capped(body.get('rt_cd'))}"
+            # A fixed category, never the server's value (#932 Codex r1 MEDIUM — a malformed
+            # rt_cd can carry anything, a header echo included, into the evidence row).
+            return False, "balance_rt_cd_not_ok"
         return True, "ok"
 
     def _read_tradability(self, token: str) -> tuple[bool | None, str]:
@@ -325,4 +327,4 @@ class KisMockBrokerFacts:
             return True, "ok"
         if flag == "Y":
             return False, "temp_stop_yn=Y"
-        return None, f"temp_stop_yn={_capped(flag)}"
+        return None, "temp_stop_yn_unrecognized"

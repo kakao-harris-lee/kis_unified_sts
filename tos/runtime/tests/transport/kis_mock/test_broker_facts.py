@@ -31,11 +31,13 @@ def _quote(flag: object) -> dict[str, Any]:
 
 
 class _Client:
-    """Answers by TR id from a scripted queue; records every GET."""
+    """Answers by TR id from a scripted queue; records every GET. ``on_call`` runs per GET
+    (a test advances its clock there to model a slow round trip)."""
 
-    def __init__(self, **by_tr: list[object]) -> None:
+    def __init__(self, on_call: Any = None, **by_tr: list[object]) -> None:
         self._by_tr = {k: list(v) for k, v in by_tr.items()}
         self.calls: list[dict[str, Any]] = []
+        self.on_call = on_call
 
     def get_quote(
         self,
@@ -48,6 +50,8 @@ class _Client:
         path: str,
     ) -> RawResponse:
         self.calls.append({"tr_id": tr_id, "query": parse_qs(query), "path": path})
+        if self.on_call is not None:
+            self.on_call()
         nxt = self._by_tr[tr_id].pop(0)
         if isinstance(nxt, Exception):
             raise nxt
@@ -198,14 +202,73 @@ def test_a_failure_after_the_account_read_resets_the_account_fact_too() -> None:
     assert sink.rows[0][1]["reason"] == "ValueError"
 
 
-def test_a_server_supplied_value_in_the_reason_is_capped() -> None:
-    """#932 review LOW 5: a hostile or broken rt_cd cannot bloat the evidence row."""
-    client = _Client(VTTC8434R=[{"rt_cd": "9" * 5000}], FHKST01010100=[_quote("N")])
+_CANARY = "Bearer canary-0f3a91 CANO=88888888"
+
+
+@pytest.mark.parametrize(
+    ("balance", "quote", "reason"),
+    [
+        # a malformed rt_cd carrying a header echo
+        (
+            {"rt_cd": {"authorization": _CANARY, "CANO": "88888888"}},
+            _quote("N"),
+            "balance_rt_cd_not_ok",
+        ),
+        ({"rt_cd": _CANARY * 100}, _quote("N"), "balance_rt_cd_not_ok"),
+        # the temp_stop_yn fallback path
+        (_OK_BALANCE, _quote(_CANARY), "temp_stop_yn_unrecognized"),
+        (_OK_BALANCE, _quote({"authorization": _CANARY}), "temp_stop_yn_unrecognized"),
+    ],
+)
+def test_no_response_value_reaches_the_evidence_reason(
+    balance: object, quote: object, reason: str
+) -> None:
+    """#932 Codex r1 MEDIUM: reasons are fixed categories. Before, ``rt_cd`` and
+    ``temp_stop_yn`` were interpolated (``repr``) into the BROKER_FACTS_OBSERVED reason, so a
+    malformed body could carry a token or the account straight into evidence."""
+    client = _Client(VTTC8434R=[balance], FHKST01010100=[quote])
     facts, _, sink = _facts(client)
     facts.refresh()
-    reason = sink.rows[0][1]["reason"]
-    assert reason.startswith("balance_rt_cd='999")
-    assert len(reason) < 64
+    row = json.dumps(sink.rows)
+    assert sink.rows[0][1]["reason"] == reason
+    assert "canary-0f3a91" not in row
+    assert "authorization" not in row
+
+
+def test_reads_that_together_outlast_max_age_are_not_handed_out() -> None:
+    """#932 Codex r1 MEDIUM: max_age_ms 30000, each GET 16000 ms. The observation is stamped
+    BEFORE the GETs (conservative), so it is 32000 ms old when refresh returns — it used to be
+    returned as current. Now it is unavailable."""
+    client = _Client(VTTC8434R=[_OK_BALANCE], FHKST01010100=[_quote("N")])
+    facts, clock, _ = _facts(client)
+
+    def _slow() -> None:
+        clock.now += 16_000
+
+    client.on_call = _slow
+    # Both GETs succeeded, yet the 32 000 ms-old observation is not handed out.
+    assert facts.account_facts_current() is None
+    assert [c["tr_id"] for c in client.calls] == ["VTTC8434R", "FHKST01010100"]
+
+
+def test_reads_that_finish_inside_max_age_are_current() -> None:
+    client = _Client(VTTC8434R=[_OK_BALANCE], FHKST01010100=[_quote("N")])
+    facts, clock, _ = _facts(client)
+
+    def _slow() -> None:
+        clock.now += 15_000  # 30000 ms total: exactly the bound, still current
+
+    client.on_call = _slow
+    assert facts.account_facts_current() is True
+
+
+def test_the_balance_read_uses_the_same_account_split_as_the_order() -> None:
+    """#932 Codex r1 HIGH: one parser for both — an undashed 10-digit account splits the same."""
+    client = _Client(VTTC8434R=[_OK_BALANCE], FHKST01010100=[_quote("N")])
+    facts, _, _ = _facts(client, account="8888888801")
+    assert facts.account_facts_current() is True
+    assert client.calls[0]["query"]["CANO"] == ["88888888"]
+    assert client.calls[0]["query"]["ACNT_PRDT_CD"] == ["01"]
 
 
 def test_an_account_that_is_not_ten_digits_is_refused_without_a_balance_get() -> None:
