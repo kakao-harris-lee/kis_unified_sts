@@ -84,6 +84,7 @@ __all__ = [
     "FILL_OBSERVER_CONFIG_NAME",
     "FILL_OBSERVER_ACK_UNTRACKABLE_KIND",
     "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND",
+    "FILL_OBSERVER_FINALITY_STUCK_KIND",
     "FILL_OBSERVER_OVERDUE_KIND",
     "FILL_OBSERVER_READ_FAILED_KIND",
     "FILL_OBSERVER_UNATTRIBUTED_KIND",
@@ -103,6 +104,21 @@ FILL_OBSERVER_READ_FAILED_KIND = "FILL_OBSERVER_READ_FAILED"
 FILL_OBSERVER_OVERDUE_KIND = "FILL_OBSERVER_OVERDUE"
 FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"
 FILL_OBSERVER_ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"
+FILL_OBSERVER_FINALITY_STUCK_KIND = "FILL_OBSERVER_FINALITY_STUCK"
+
+#: Release hold reasons a finality re-run cannot change (PR-3b r2 claim 1): the re-run stops and
+#: one ``FILL_OBSERVER_FINALITY_STUCK`` row names the reason. Every other hold — reconciliation
+#: unavailable or not corroborated, an RCL CAS/state refusal — is retried until it commits.
+_PERMANENT_HOLD_REASONS = frozenset(
+    {
+        "NO_WITNESS",
+        "PROOF_NOT_RELOADED",
+        "NON_EXECUTION_PROOF_UNPRODUCIBLE",
+        "PROOF_NOT_TRANSFERABLE",
+        "PROOF_NOT_CURRENT",
+        "NO_RESERVATION",
+    }
+)
 
 _RESULT_KINDS = ("EGRESS_RESULT_CONSUMED", "RESULT_UNMATCHED")
 _TERMINAL_KINDS = frozenset(
@@ -240,6 +256,8 @@ class _Tracked:
     terminal: bool = False
     #: The RCL holds this attempt's release command (capacity side done).
     released: bool = False
+    #: A finality re-run hit a permanent hold; recorded once, never re-run again.
+    stuck: bool = False
     #: Terminal only by an observation the engine could not take (no reservation held) — never
     #: re-projected: there is no engine receipt to project finality from.
     held_absent: bool = False
@@ -452,7 +470,12 @@ class KisMockFillObserver:
         now = self.monotonic.now_ms()
         done = []
         for attempt in tracked.values():
-            if not attempt.terminal or attempt.released or attempt.held_absent:
+            if (
+                not attempt.terminal
+                or attempt.released
+                or attempt.held_absent
+                or attempt.stuck
+            ):
                 continue
             last = self._last_reproject_ms.get(attempt.attempt_id)
             if last is not None and now - last < self.config.finality_retry_interval_ms:
@@ -461,8 +484,30 @@ class KisMockFillObserver:
             payload = self._payload(
                 attempt, attempt.last_kind, attempt.last_filled, attempt.last_remaining
             )
-            done.append((attempt.attempt_id, self.reproject(payload)))
+            released = self.reproject(payload)
+            done.append((attempt.attempt_id, released))
+            if not released:
+                self._stop_if_permanent(attempt)
         return tuple(done)
+
+    def _stop_if_permanent(self, attempt: _Tracked) -> None:
+        """r2 claim 1: never re-run forever on a hold no re-run can change."""
+        row = self.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'CAPACITY_RELEASE_HELD' "
+            "AND payload_json LIKE ? ORDER BY seq DESC LIMIT 1",
+            (f'%"{attempt.attempt_id}"%',),
+        ).fetchone()
+        reason = None if row is None else json.loads(row[0])["payload"].get("reason")
+        if reason in _PERMANENT_HOLD_REASONS:
+            self._record(
+                FILL_OBSERVER_FINALITY_STUCK_KIND,
+                {
+                    "attempt_id": attempt.attempt_id,
+                    "broker_execution_id": attempt.odno,
+                    "hold_reason": reason,
+                },
+            )
+            attempt.stuck = True
 
     # -- durable picture -------------------------------------------------------------------
 
@@ -518,7 +563,15 @@ class KisMockFillObserver:
             if attempt_id in tracked:
                 tracked[attempt_id].sealed_quantity = quantity
         self._apply_absent_rows(tracked)
+        stuck = {
+            str(json.loads(row[0]).get("payload", {}).get("attempt_id"))
+            for row in self.evidence_store.connection.execute(
+                "SELECT payload_json FROM entries WHERE kind = ?",
+                (FILL_OBSERVER_FINALITY_STUCK_KIND,),
+            )
+        }
         for attempt in tracked.values():
+            attempt.stuck = attempt.attempt_id in stuck
             if attempt.terminal:
                 attempt.released = self.release_committed(attempt.attempt_id)
         return tracked

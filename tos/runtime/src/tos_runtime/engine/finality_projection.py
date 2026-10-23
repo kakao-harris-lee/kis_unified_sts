@@ -29,6 +29,7 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.eng
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from tos.engine import EventResult
@@ -38,7 +39,10 @@ from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.posttrade.finality import FinalityProducerPort
+from tos_runtime.posttrade.finality import (
+    FinalityProducerPort,
+    ReleaseFinalityProducer,
+)
 from tos_runtime.rcl.finality_witness import finality_witness_for
 
 if TYPE_CHECKING:
@@ -59,6 +63,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ECONOMIC_OBLIGATION_KIND",
+    "ENGINE_PROJECTION_RELEASED_KIND",
     "ENGINE_PROJECTION_RELEASE_SKIPPED_KIND",
     "FINALITY_REPROJECTED_KIND",
     "POSTTRADE_FINALITY_PROOF_KIND",
@@ -83,6 +88,9 @@ POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 #: state locally). Never a kernel ``EvidenceKind`` member (mirrors this module's own
 #: ``ECONOMIC_OBLIGATION_KIND``/``POSTTRADE_FINALITY_PROOF_KIND`` precedent).
 ENGINE_PROJECTION_RELEASE_SKIPPED_KIND = "ENGINE_PROJECTION_RELEASE_SKIPPED"
+#: Recorded when the kernel projection DID release (PR-3b r2 claim 2) — the durable fact the boot
+#: replay re-applies, at the same point in the event order, so replay equals live.
+ENGINE_PROJECTION_RELEASED_KIND = "ENGINE_PROJECTION_RELEASED"
 #: Recorded by :func:`project_recovered_finality` (PR-3b) for every pass it makes, with why.
 FINALITY_REPROJECTED_KIND = "FINALITY_REPROJECTED"
 #: The kinds :func:`project_recovered_finality` ever hands the release consumer.
@@ -218,6 +226,19 @@ def _project_release(
             resolution_generation=outcome.resolution_generation,
         )
         released_locally = ledger.release(ref)
+        if released_locally:
+            # PR-3b r2 claim 2: the boot replay re-applies this exact release at this exact point
+            # (engine/replay.py) so the replayed projection equals the live one.
+            evidence_store.append(
+                {
+                    "attempt_id": ref.attempt_id,
+                    "proof_digest": ref.proof_digest,
+                    "evidence_seq": ref.evidence_seq,
+                    "resolution_generation": ref.resolution_generation,
+                },
+                kind=ENGINE_PROJECTION_RELEASED_KIND,
+                record_class=ENGINE_PROJECTION_RELEASED_KIND,
+            )
     if not released_locally:
         evidence_store.append(
             {"attempt_id": outcome.attempt_id, "rcl_released": outcome.released},
@@ -237,8 +258,6 @@ def _record_fill_proof(
     """The durable witness row, plus the obligation/proof evidence when the producer issued one
     (shared by :func:`project_finality` and :func:`project_recovered_finality`)."""
     produced = finality_producer.produce(payload)
-    witness = finality_witness_for(None if produced is None else produced.proof)
-    inbox.record_finality_witness(payload.attempt_id, witness)
     if produced is not None:
         evidence_store.append(
             produced.record.model_dump(mode="json"),
@@ -250,6 +269,10 @@ def _record_fill_proof(
             kind=POSTTRADE_FINALITY_PROOF_KIND,
             record_class=POSTTRADE_FINALITY_PROOF_KIND,
         )
+    # Witness LAST (PR-3b r2 claim 1): a "True" witness row only ever follows a durable proof, so
+    # an interruption between the writes leaves "no witness", never "witness without proof".
+    witness = finality_witness_for(None if produced is None else produced.proof)
+    inbox.record_finality_witness(payload.attempt_id, witness)
 
 
 def project_recovered_finality(
@@ -257,7 +280,7 @@ def project_recovered_finality(
     *,
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
-    finality_producer: FinalityProducerPort,
+    finality_producer: ReleaseFinalityProducer,
     release_consumer: FinalityConsumerPort,
     ledger: ProvisionalReservationLedger,
     reason: str,
@@ -288,16 +311,19 @@ def project_recovered_finality(
     """
     if payload.kind not in _RECOVERABLE_KINDS:
         return None
-    if (
-        payload.kind is EgressResultKind.FULL_FILL
-        and inbox.finality_witness(payload.attempt_id) is not True
-    ):
-        _record_fill_proof(
-            payload,
-            inbox=inbox,
-            evidence_store=evidence_store,
-            finality_producer=finality_producer,
-        )
+    if payload.kind is EgressResultKind.FULL_FILL:
+        # r2 claim 1: decide by the proof ROWS, not the witness flag — an interrupted write can
+        # leave either one without the other. Rows present: only the witness may be missing.
+        if _fill_proof_durable(evidence_store, finality_producer, payload.attempt_id):
+            if inbox.finality_witness(payload.attempt_id) is not True:
+                inbox.record_finality_witness(payload.attempt_id, True)
+        else:
+            _record_fill_proof(
+                payload,
+                inbox=inbox,
+                evidence_store=evidence_store,
+                finality_producer=finality_producer,
+            )
     released = _project_release(
         payload,
         evidence_store=evidence_store,
@@ -316,3 +342,26 @@ def project_recovered_finality(
         record_class=FINALITY_REPROJECTED_KIND,
     )
     return released
+
+
+def _fill_proof_durable(
+    evidence_store: SqliteEvidenceStore,
+    producer: ReleaseFinalityProducer,
+    attempt_id: str,
+) -> bool:
+    """Both the obligation and the proof row of ``attempt_id``'s fill are durable (the release
+    consumer re-loads exactly these two by these idempotency keys)."""
+    wanted = {
+        ECONOMIC_OBLIGATION_KIND: f"{producer.full_fill_obligation_prefix}:{attempt_id}",
+        POSTTRADE_FINALITY_PROOF_KIND: f"{producer.full_fill_proof_prefix}:{attempt_id}",
+    }
+    for kind, key in wanted.items():
+        rows = evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ?", (kind,)
+        ).fetchall()
+        if not any(
+            json.loads(row[0]).get("payload", {}).get("idempotency_key") == key
+            for row in rows
+        ):
+            return False
+    return True

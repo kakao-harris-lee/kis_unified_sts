@@ -52,7 +52,8 @@ from tos_runtime.rcl.finality_witness import release_reservation
 from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
-from tos_runtime.recon.ports import WitnessScope
+from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
+from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.service import (
     ReconciliationClass,
     ReconciliationReport,
@@ -500,11 +501,12 @@ class FinalityReleaseConsumer:
             account=self.account,
             instrument_keys=(instrument_key,),
             attempt_ids=(attempt_id,),
-            # PR-3b: a broker result from an earlier trading day is reconciled under its own
-            # order date, not only today's (a date-scoped witness reads both).
-            order_dates=(
-                () if payload.trading_date is None else (payload.trading_date,)
-            ),
+            # PR-3b r2 claim 3: the report folds EVERY receipt in this scope (the service never
+            # narrows to one attempt), so every trading date those receipts carry is inquired —
+            # an earlier day's attempt is then matched under its own date instead of reading as
+            # a stale reservation that blocks today's release. VTTC0081R serves three months; an
+            # older date makes the read unavailable, a hold with that reason, never a skip.
+            order_dates=self._scope_receipt_dates(payload),
         )
         freshness = _build_freshness_marker(self.time_service)
         try:
@@ -519,6 +521,23 @@ class FinalityReleaseConsumer:
             for classification in report.classifications
         )
         return report, bool(report.permits_capacity_release and matched)
+
+    def _scope_receipt_dates(self, payload: EgressResultPayload) -> tuple[str, ...]:
+        """Every trading date the scope's recorded receipts carry, plus ``payload``'s own."""
+        scope = WitnessScope(
+            account=self.account,
+            instrument_keys=(
+                InstrumentKey(account=self.account, instrument=self.instrument),
+            ),
+        )
+        try:
+            receipts = SqliteEvidenceReceiptReader(self.evidence_store).receipts(scope)
+        except WitnessUnavailable:
+            receipts = ()
+        dates = {r.trading_date for r in receipts if r.trading_date is not None}
+        if payload.trading_date is not None:
+            dates.add(payload.trading_date)
+        return tuple(sorted(dates))
 
     # -- gate 4 (non-transferable/current, from independent inputs — H1 fix) + release --
 
