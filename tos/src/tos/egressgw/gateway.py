@@ -91,6 +91,7 @@ from tos.brokercap import (
     UncertainSendVerdict,
     capability_admissible,
     environment_binding_ok,
+    mock_order_without_position_or_cash,
     same_order_retry_allowed,
     uncertain_send_policy,
 )
@@ -577,7 +578,13 @@ def _check_allowance(
     * anything else must clear brokercap :func:`~tos.brokercap.capability_admissible`, which for a
       profile carrying zero ``VERIFIED`` dimensions is structurally ``PROHIBITED``
       (design #34 §1.1-3). The gateway therefore admits **no** live send, by construction rather
-      than by policy.
+      than by policy;
+    * except a scope whose every capability tuple is a ``BROKER_SIMULATION`` mock order or read
+      with no position/cash effect (:func:`~tos.brokercap.mock_order_without_position_or_cash`,
+      operator decision 2026-10-23, PR-3 option (a)): it skips the profile check. The rule
+      reads the context's own kernel-typed tuples, so a ``REAL_ORDER``, ``BROKER_PRODUCTION``
+      or ``POSITION_OR_CASH`` tuple can never take this path. The allowance flags below still
+      gate it.
 
     The allowance flags are injected facts, never derived here: the caller (compose) is
     responsible for deriving them from the active Broker Scope and its bound Broker Capability
@@ -588,28 +595,33 @@ def _check_allowance(
     del attempt
     item = SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY
     if applicability is not BrokerApplicability.NON_BROKER_SYNTHETIC:
-        admissibility = capability_admissible(
-            context.broker_capability_profile,
-            None if context.action_class is None else context.action_class.value,
-            context.required_capability_set,
-            version_current=context.broker_profile_version_current,
-        )
-        if admissibility is not Admissibility.ADMISSIBLE:
-            return _verdict(
-                item,
-                (
-                    VerifyOutcome.UNKNOWN
-                    if admissibility is Admissibility.REDUCED
-                    else VerifyOutcome.DENIED
-                ),
-                reason=(
-                    f"brokercap capability_admissible is {admissibility.value} for this "
-                    "broker-resource-consuming send — a profile with no VERIFIED dimension "
-                    "cannot authorize any action class (ADR-002-004 §1:32; design #34 §1.1-3)"
-                ),
-                native=admissibility,
-                native_value=admissibility.value,
+        # Operator decision 2026-10-23 (PR-3 option (a), "K"): a scope whose every tuple is a
+        # BROKER_SIMULATION mock order or read with no position/cash effect skips the profile
+        # check below — judged from the context's own kernel-typed tuples, never a flag. The
+        # runtime's allowance flag is still required (checked after this block).
+        if not mock_order_without_position_or_cash(context.capability_tuples):
+            admissibility = capability_admissible(
+                context.broker_capability_profile,
+                None if context.action_class is None else context.action_class.value,
+                context.required_capability_set,
+                version_current=context.broker_profile_version_current,
             )
+            if admissibility is not Admissibility.ADMISSIBLE:
+                return _verdict(
+                    item,
+                    (
+                        VerifyOutcome.UNKNOWN
+                        if admissibility is Admissibility.REDUCED
+                        else VerifyOutcome.DENIED
+                    ),
+                    reason=(
+                        f"brokercap capability_admissible is {admissibility.value} for this "
+                        "broker-resource-consuming send — a profile with no VERIFIED dimension "
+                        "cannot authorize any action class (ADR-002-004 §1:32; design #34 §1.1-3)"
+                    ),
+                    native=admissibility,
+                    native_value=admissibility.value,
+                )
     elif not environment_binding_ok(
         context.evidence_environment,
         context.scope_environment,

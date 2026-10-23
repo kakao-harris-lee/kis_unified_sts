@@ -35,17 +35,21 @@
 # 아니라 부팅에서 막힌다.
 # =============================================================================
 
-# SYNTHETIC 전송의 엔드포인트 — 브로커에 닿지 않는다.
+# ⚠ 주식 테넌트 트리: 운영자 결정 2026-10-23 (PR-3a, option (a) "K" — MOCK_STOCK_ORDER 활성은
+# 주식 트리에서만). 엔드포인트 = MOCK 주문의 실제 송신 지점 = INSTANCE MOCK_VTS 문서의
+# rest_base(docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml `_kis.endpoints.rest_base`)
+# + order-cash 경로. item 5(live_scope_valid)가 이 값을 kis_mock_transport.yaml 의
+# endpoint_rest_base + order_path 와 바이트 대조한다 — 다르면 송신이 거부된다.
 endpoint:
-  value: "synthetic://paper/order"
+  value: "https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/order-cash"
 action:
   value: "NEW_ORDER"
 method:
   value: "SUBMIT"
 route_identity:
-  value: "synthetic-route"
-# 자격증명/브로커 세션 세대: SYNTHETIC 경로에는 실 자격증명도 브로커 세션도
-# 없다 — 0 이 그 사실의 표기다(이전 리터럴 그대로).
+  value: "kis-mock-vts-order-cash"
+# 자격증명/브로커 세션 세대: 이 세대 카운터는 아직 KIS 토큰 수명주기에 묶이지 않았다 —
+# 0 은 「세대를 세는 원천 없음」의 표기다(상주 트리와 같은 값; 묶는 것은 후속 작업).
 credential_generation:
   value: 0
 broker_session_generation:

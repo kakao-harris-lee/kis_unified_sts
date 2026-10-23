@@ -1529,10 +1529,27 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
 
 적어 둘 것(계획 §5):
 
-- **M5** — 「STALE 로 소비된 줄」과 「소비되지 않은 줄」 둘 다 0 인가. **부팅 전 줄은
+- **M5** — 「STALE 로 소비된 줄」과 「소비되지 않은 줄」. **부팅 전 줄은
   두 계수에서 뺀다**(구조상 소비되지 않는다) — 그 수는 러너 로그의
   `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있고, 그 스냅샷은 **부팅 직전에**
   다시 찍힌다(가드·렌더 동안 발행된 봉도 부팅 전 줄이다).
+  - ⚠ **판정은 2026-10-23 부터 「둘 다 0」이 아니다**(운영자 지시 · 2026-10-22 실측):
+    ① 수는 `session_day` **한 세션 날짜로 한정**해 읽고(지정 잎은 세션을 누적한다 — §4;
+    문서의 **모든** 계수가 그 한 범위다 — `counts.snapshots` · `consumed_raw_event_ids` ·
+    `raw_event_ids` 포함. 잎 전체 수는 `*_all_days` 로 따로 실린다. 그래서 이 문서는
+    `diff_decisions.py` 에 **손으로 거르지 않고** 그대로 넣을 수 있다),
+    ② stale 거절은 `post_boot_consumed_ids` 의 **0.5% 이하**면 통과(10-22 실측 1/409 =
+    0.244%, 원인은 호스트 스케줄러 지터이지 늦은 생산자가 아니다 — 그 봉의 `as_of` 는
+    분 마감 +2258 ms 로 세션 p50 2221 과 같고, 읽은 패스가 408 ms 루프에서 1280 ms 늦어
+    922 ms 대 `max_age_ms` 800 이 됐다), ③ **stale 이 아닌 사유의 거절은 1건이라도
+    소견**이다. `max_age_ms` 는 800 그대로다(운영자 결정 2026-10-09). ③ 을 가를 수 있는
+    것은 런타임의 `MARKETFEED_FIELD_REFUSED` 행뿐이다 — M5 수 자체는
+    「stale 이거나 시계 불명」의 상한이다.
+  - ⛔ **스토어에서 stale 을 가리려 할 때 쓰면 안 되는 두 필드.** `validity.result` 는
+    저장된 스냅샷 **전부**가 `INVALID` 이고(10-22 실측 712/712), `observations[0]
+    .field_state` 는 stale 한 봉에서도 `VALID`/`ADMITTED` 다(레코드 적격성만 본다 —
+    `_derive_observation_state`). 유일한 신호는 `field_evaluations[*].state == "UNKNOWN"`,
+    그리고 이제 사유와 실측 age 를 실은 `MARKETFEED_FIELD_REFUSED` 행이다.
   - ⛔ **지속 레코드에 `STALE` 은 찍히지 않는다.** 발행기
     (`tos_runtime/marketfeed/snapshot.py::_derive_field_state`)는 `now_ms - as_of_ms
     > max_age_ms` 인 필드를 `FieldState.UNKNOWN` 으로 적고, 사유 문자열 `"stale"` 은
@@ -1732,8 +1749,15 @@ PR-B 부터 **LONG tenant 트리만** `band_source.kind: "producer_journal"` 을
 `VENUE_BAND_OBSERVED` 행이 **아예 없는 것이 정상**이다.
 
 - ⛔ **`BAND ABSENT` 가 찍힌 세션은 여기까지다** — 그 세션의 band 는 UNKNOWN 이고 아래
-  네 확인은 전부 「행 0건」으로 끝난다. 그것 자체가 §4 수용 1 **실패**의 기록이고,
+  ②~④ 는 전부 「행 0건」으로 끝난다. 그것 자체가 §4 수용 1 **실패**의 기록이고,
   판정(ADMISSIBLE/INADMISSIBLE)은 믿지 않는다.
+- ⚠ **2026-10-22 재범위 계획 M1 부터 ① 은 그 세션에서도 행 1건이다** — 읽기 시점이
+  첫 스냅샷에서 **부팅(서비스 생성)** 으로 옮겨졌으므로, band 를 선언한 트리는 제안이
+  하나도 venue 단계에 닿지 않아도 `outcome=REFUSED` + `reason=journal_absent` 한 행을
+  남긴다. 그래서 **band 선언 트리의 ① 이 0 행이면 그 자체가 소견**이다(부팅하지
+  않았거나 트리가 band 를 선언하지 않은 것). 2026-10-22 첫 세션이 ①=0 행으로 끝나
+  수용 1c·2·3 을 「미집행」으로 적어야 했던 것이 이 변경의 이유다
+  (`docs/broker-profiles/evidence/2026-10-22-cp3-band-first-session/README.md` §2).
 
 ```bash
 # ① 런타임이 band 를 관측했는가 — 성공이면 outcome=OBSERVED 한 행.

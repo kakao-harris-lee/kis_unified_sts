@@ -76,6 +76,7 @@ from tos.engine import (
 from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
+from tos_runtime.compose._broker_facts_wiring import build_broker_facts
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
 from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
@@ -295,6 +296,18 @@ def compose_paper_runtime(
     # Filled by `_finalize` the instant this boot's KIS credential registry exists — strictly
     # before the boot replay that can first trigger a band read (`KisCredentialSessionsCell`).
     credential_sessions_cell = KisCredentialSessionsCell()
+    # PR-3a option (a) "K": item 12's broker-side facts for a mock-class kis-mock boot (two
+    # GETs on the order transport's own mock host); every other boot keeps its readers.
+    broker_facts = build_broker_facts(
+        config_dir=config_dir,
+        broker_scopes=boot.broker_scopes,
+        transport_config=boot.transport_config,
+        credential_sessions_cell=credential_sessions_cell,
+        monotonic=boot.infra.monotonic_source,
+        evidence_sink=evidence_recorder(boot.infra.evidence_store, boot.identity),
+        account=construction.account,
+        instrument=construction.instrument,
+    )
     venue_service, loaded_ocp = build_venue_service(
         config_dir=config_dir,
         scheme=_SCHEME,
@@ -413,6 +426,7 @@ def compose_paper_runtime(
         else None
     )
     context_resolver = _build_context_resolver(
+        transport_config=boot.transport_config,
         construction_stages=construction_stages,
         realized=realized,
         flow_governor=boot.risk.flow_governor,
@@ -422,12 +436,17 @@ def compose_paper_runtime(
         session_facts_current_reader=lambda: session_facts_owner.session_facts_current(
             construction.instrument_class,
         ),
-        tradability_facts_current_reader=lambda: session_facts_owner.tradability_facts_current(
-            broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
+        tradability_facts_current_reader=broker_facts.tradability(
+            lambda: session_facts_owner.tradability_facts_current(
+                broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
+            )
         ),
-        account_facts_current_reader=lambda: session_facts_owner.account_facts_current(
-            broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
+        account_facts_current_reader=broker_facts.account(
+            lambda: session_facts_owner.account_facts_current(
+                broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
+            )
         ),
+        mock_generation_reader=broker_facts.generation,
         observed_session_phase_reader=session_phase_reader,
         egress_coordinates=boot.egress_coordinates,
         broker_scopes=boot.broker_scopes,

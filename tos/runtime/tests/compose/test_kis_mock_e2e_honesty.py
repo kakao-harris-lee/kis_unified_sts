@@ -1,41 +1,30 @@
-"""KIS MOCK transport e2e honesty + counterfactual (TOS KIS MOCK transport plan T3,
-``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md`` §4 row T3, §0 "핵심 귀결", §9 T2
-landing note 잔여 ①).
+"""KIS MOCK transport e2e — the option (a) "K" send path, with NO verify item patched (PR-3a).
 
-**What this file proves, and what it does not.** With ``MOCK_STOCK_ORDER`` active
-(``profile_evidence_ok: true``) and ``kis-mock`` wired, the Coordinator's own non-live
-admission (T2 lane B) genuinely ADMITS the send — no ``LIVE_SCOPE_NOT_AUTHORIZED`` halt is ever
-recorded. The kernel gateway's own 17-item verify list still denies it honestly, today, at THREE
-independent gates, not the two the plan's §0 headline names:
+Operator decision 2026-10-23: for a scope whose every capability tuple is a mock order or read
+with no position/cash effect, item 6 skips the Broker Capability Profile check (kernel
+``mock_order_without_position_or_cash``), item 12 takes the account / tradability /
+broker-constraint-generation facts from two GET-only mock reads (``broker_facts.yaml``:
+``VTTC8434R`` balance, ``FHKST01010100`` ``temp_stop_yn``), and item 5 is derived for real
+(``tos_runtime.brokercap.live_scope``). This file used to prove the opposite — that items 5/6/12
+blocked every MOCK send and could only be reached by monkeypatching them. Those lifts are gone:
+every test below runs the real gateway.
 
-1. item 5 (``VALID_LIVE_SCOPE`` / ``live_scope_valid``) of the six DEFERRED_ITEMS — the ONE
-   still genuinely UNKNOWN after Phase 5 W3-b landed real owners for the other five
-   (items 4/7/8/9/10 — the Safety Authority epoch service + the four safety-mesh services,
-   SAFETY_ENVELOPE_PROFILE/DEVIATION/INCIDENT/MONITORING);
-2. item 6 (``ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY``) — brokercap
-   ``capability_admissible`` is structurally ``PROHIBITED`` for a Broker Capability Profile
-   INSTANCE with no approved ``minimum_live_gate_satisfied``/``VERIFIED`` dimension (P0-2);
-3. item 12 (``VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION``) — empirically confirmed
-   here as an ADDITIONAL, independent P0-2 blocker the plan's §0/§9 prose does not name: its own
-   recorded reason is the SAME "the versioned Profile is P0-2-blocked" fact item 6 cites
-   (``tos_runtime.brokercap.derive.derive_item6_item12``'s ``broker_constraint_generation_current``
-   — gated on the SAME INSTANCE document's ``degraded_since_authorization`` being non-``None``,
-   which the shipped example config leaves honestly ``null``). This is not a second, unrelated
-   gate: it is the SAME P0-2 "approved Broker Capability Profile INSTANCE" fact items 6 and 12
-   both read, so the counterfactual below lifts both through the ONE seam that derives them,
-   :func:`~tos_runtime.brokercap.derive_item6_item12` — never a fourth, invented shortcut.
+What it pins:
 
-The counterfactual tests below therefore apply exactly two *conceptual* lifts (deferred Phase 5
-mesh; P0-2 broker-capability-profile facts) even though the P0-2 lift touches three verify
-items (6, 12) plus the ``capability_admissible`` call — see :func:`_lift_p02_capability_profile`'s
-own docstring. Team-lead brief §0 note "잔여 ①" (forcing ``deferred_item_verdict`` alone does not
-reach the transport because item 6 blocks independently) is confirmed and extended here: item 12
-blocks independently too.
+* **Reaches the transport.** With the deployment sealed to the mock host (egress endpoint =
+  transport ``endpoint_rest_base + order_path``) and both GETs answering, all 17 verify items
+  are SATISFIED; dry_run stops at the adapter with byte-seal identity, live gets one POST and
+  an ``ACK``.
+* **Still refuses when a fact is not there.** Egress endpoint not the mock host's -> item 5
+  DENIED; halted instrument or a failed account read -> item 12 not SATISFIED; zero order POSTs
+  in each.
+* **REAL never boots on this transport** — REAL_ORDER / REAL_READ active with kis-mock is a boot
+  refusal (the MOCK -> REAL fallback and the read-only-principal -> order-endpoint mutations).
 
 Hermetic (D1.4): the fake KIS server binds ``127.0.0.1`` only; ``scheme: http`` is admitted only
-via ``allow_plaintext_for_tests: true`` (test-only escape hatch, config.py's own docstring); no
-``os.environ``, ``subprocess``, or ``importlib.import_module`` anywhere in this module (the
-firewall scans tests too).
+via ``allow_plaintext_for_tests: true``. The one monkeypatch of production code left is the
+INSTANCE document's ``rest_base`` -> the fake server's address (``_patch_instance_documents_to_host``)
+— infrastructure, not a verify item — plus read-only spies.
 """
 
 from __future__ import annotations
@@ -47,19 +36,21 @@ from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import pytest
 import yaml
-from tos.brokercap import Admissibility
-from tos.egressgw import gateway as gateway_module
-from tos.egressgw.vocabulary import DEFERRED_ITEMS, VerifyOutcome, verify_item_number
 from tos.rcl import CapacityState
 from tos_runtime.brokercap.instance import load_instance_documents
-from tos_runtime.calendar.owner import SessionFactsOwner
-from tos_runtime.compose import context as context_module
-from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.brokercap.scopes import BrokerScopeConfigError
+from tos_runtime.compose._transport_wiring import TransportKind, TransportWiringError
 from tos_runtime.transport.kis_mock.adapter import KisMockTransport
+from tos_runtime.transport.kis_mock.broker_facts import (
+    BROKER_FACTS_CONFIG_NAME,
+    load_broker_facts_config,
+)
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfigError
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from ..transport.kis_mock.test_adapter import (
@@ -73,27 +64,12 @@ from .test_transport_wiring import _activate_mock_stock_order
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 _ENVIRONMENT_LABEL = "non-live-test"
-
-#: The 6 deferred verify-item numbers this suite pins (plan §4 T3: "list the 6 item numbers").
-_EXPECTED_DEFERRED_ITEM_NUMBERS = frozenset(
-    verify_item_number(item) for item in DEFERRED_ITEMS
-)
-
-#: Phase 5 W3 landed real safety-mesh services (SAFETY_ENVELOPE_PROFILE/DEVIATION/
-#: INCIDENT/MONITORING) + the Safety Authority epoch supply — 5 of the 6 DEFERRED_ITEMS are
-#: genuinely SATISFIED in production now, not merely simulated (``_lift_phase5_deferred_mesh``
-#: below still exists for tests that need ALL SIX lifted, e.g. counterfactual A/B). Only item 5
-#: (``VALID_LIVE_SCOPE`` / ``live_scope_valid``) stays UNKNOWN — plan §2 decision 4's own
-#: operator confirmation ③ (a): committed until a live-authorization runtime exists (Phase 6+).
-_EXPECTED_UNSUPPLIED_DEFERRED_ITEM_NUMBERS = frozenset({5})
-
-#: A distinctive token that must NEVER appear in any recorded evidence payload — stands in for
-#: every credential/token secret this suite's custody/fake-server fixtures mint.
 _ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 _TOKEN_PATH = "/oauth2/tokenP"
 _APP_KEY_SECRET_BYTES = b"test-secret-kis_mock.app_key"
 _APP_SECRET_SECRET_BYTES = b"test-secret-kis_mock.app_secret"
 _FAKE_BEARER_TOKEN = "t3-fake-bearer-token-never-in-evidence"
+_ODNO = "PR3A-ODNO-1"
 
 
 # ===========================================================================
@@ -102,10 +78,8 @@ _FAKE_BEARER_TOKEN = "t3-fake-bearer-token-never-in-evidence"
 
 
 def _activate_and_admit(config_dir: Path, custody_root: Path) -> None:
-    """The T2-proven shape every scenario in this file starts from: MOCK_STOCK_ORDER active
-    (``profile_evidence_ok: true``, via :func:`~.test_transport_wiring._activate_mock_stock_order`
-    — reused, never duplicated) + the Coordinator's own non-live admission posture granted.
-    """
+    """MOCK_STOCK_ORDER active (``profile_evidence_ok: true``) + the Coordinator's own non-live
+    admission granted — the stock tree's PR-3a posture, on the fixture tree."""
     _activate_mock_stock_order(config_dir)
     fx.provision_kis_mock_custody(custody_root)
     (config_dir / "coordinator_preconditions.yaml").write_text(
@@ -120,11 +94,93 @@ def _activate_and_admit(config_dir: Path, custody_root: Path) -> None:
     )
 
 
+def _seal_egress_to(config_dir: Path, rest_base: str) -> None:
+    """The egress endpoint the deployment is sealed to: the mock host's order URL (item 5)."""
+    path = config_dir / "egress_coordinates.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["endpoint"]["value"] = rest_base + _ORDER_PATH
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+
+def _broker_fact_paths(config_dir: Path) -> tuple[str, str]:
+    """The two GET paths (query included) the broker-facts source builds for the fixture
+    account/instrument — derived from the SAME shipped config, never retyped."""
+    config = load_broker_facts_config(config_dir / BROKER_FACTS_CONFIG_NAME)
+    digits = fx.ACCOUNT.replace("-", "")
+    balance = (
+        config.balance_path
+        + "?"
+        + urlencode(
+            {
+                "CANO": digits[:8],
+                "ACNT_PRDT_CD": digits[8:],
+                **dict(config.balance_params),
+            }
+        )
+    )
+    quote = (
+        config.quote_path
+        + "?"
+        + urlencode(
+            {
+                "FID_COND_MRKT_DIV_CODE": config.quote_market_div_code,
+                "FID_INPUT_ISCD": fx.INSTRUMENT,
+            }
+        )
+    )
+    return balance, quote
+
+
+def _sealed_mock_deployment(
+    config_dir: Path,
+    custody_root: Path,
+    server: FakeKisServer,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mode: str = "live",
+    temp_stop_yn: str = "N",
+    balance_rt_cd: str = "0",
+    seal_egress: bool = True,
+) -> None:
+    """A complete MOCK deployment against the fake server: token, order, and both GETs."""
+    server.set_response(
+        _TOKEN_PATH,
+        status=200,
+        body={"access_token": _FAKE_BEARER_TOKEN, "expires_in": 86400},
+    )
+    server.set_response(
+        _ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "msg_cd": "APBK0013",
+            "msg1": "정상처리",
+            "output": {"ODNO": _ODNO},
+        },
+    )
+    _patch_instance_documents_to_host(monkeypatch, mock_rest_base=server.rest_base)
+    _activate_and_admit(config_dir, custody_root)
+    fx.write_kis_mock_transport_config(
+        config_dir,
+        mode=mode,
+        endpoint_rest_base=server.rest_base,
+        allow_plaintext_for_tests=True,
+    )
+    if seal_egress:
+        _seal_egress_to(config_dir, server.rest_base)
+    balance, quote = _broker_fact_paths(config_dir)
+    server.set_response(
+        balance, status=200, body={"rt_cd": balance_rt_cd, "msg1": "-", "output1": []}
+    )
+    server.set_response(
+        quote,
+        status=200,
+        body={"rt_cd": "0", "output": {"temp_stop_yn": temp_stop_yn}},
+    )
+
+
 def _drive_crossing_tick(runtime, custody_root: Path):
-    """Drive :func:`~._fixtures.crossing_event` through the SAME two-``run_once`` shape every
-    landed compose e2e test in this suite uses (proposal -> write approval -> re-drive to the
-    gateway) — returns the second call's ``EventResult`` (the one that reaches the gateway).
-    """
+    """proposal -> write approval -> re-drive to the gateway; returns the second result."""
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
@@ -141,99 +197,20 @@ def _drive_crossing_tick(runtime, custody_root: Path):
     return results2[0]
 
 
-def _lift_phase5_deferred_mesh(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force every :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS` verdict to ``SATISFIED`` —
-    the narrowest seam naming "Phase 5 W3 closed": :func:`tos.egressgw.gateway
-    .deferred_item_verdict` is the ONE function :func:`~tos.egressgw.gateway.verify_send_boundary`
-    dispatches every deferred item through (module-global lookup at call time, so patching the
-    module attribute takes effect), reusing the gateway's own ``_verdict`` builder rather than
-    hand-constructing a :class:`~tos.egressgw.records.VerifyItemVerdict`.
-
-    Kernel round #2 §2 decisions 1/2 moved this function to :mod:`tos.egressgw.mesh`, dropped
-    its leading underscore, and added a third ``context`` parameter (the six injected mesh
-    flags) — ``gateway.py`` still imports it by name into its own module namespace
-    (``from tos.egressgw.mesh import deferred_item_verdict``), so patching
-    ``gateway_module.deferred_item_verdict`` still takes effect at
-    ``verify_send_boundary``'s call site, unchanged.
-    """
-
-    def _satisfied(item: Any, applicability: Any, context: Any) -> Any:
-        del applicability, context
-        return gateway_module._verdict(
-            item,
-            VerifyOutcome.SATISFIED,
-            reason="T3 counterfactual: Phase 5 W3 safety-governance mesh simulated closed",
-        )
-
-    monkeypatch.setattr(gateway_module, "deferred_item_verdict", _satisfied)
-
-
-def _lift_p02_capability_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Lift the P0-2 "approved Broker Capability Profile INSTANCE" facts items 6 and 12 both
-    read (module docstring) — the narrowest two seams:
-
-    * :func:`tos.brokercap.capability_admissible`, as bound into
-      :mod:`tos.egressgw.gateway`'s own namespace (``_check_allowance`` calls it as a bare
-      global, so patching the module attribute takes effect) — forced ``ADMISSIBLE``.
-    * :func:`tos_runtime.brokercap.derive_item6_item12`, as bound into
-      :mod:`tos_runtime.compose.context`'s own namespace (``_item6_item12_fields`` calls it the
-      same way) — wrapped so the REAL derivation still runs (nothing else about the scope is
-      faked), but ``account_instrument_action_allowed`` (item 6's own positivity gate, checked
-      AFTER ``capability_admissible`` returns admissible — patching ``capability_admissible``
-      alone is not sufficient, confirmed empirically) and ``broker_constraint_generation_current``
-      (item 12) are both forced ``True``.
-    """
-
-    def _always_admissible(*_args: Any, **_kwargs: Any) -> Admissibility:
-        return Admissibility.ADMISSIBLE
-
-    monkeypatch.setattr(gateway_module, "capability_admissible", _always_admissible)
-    real_derive = context_module.derive_item6_item12
-
-    def _lifted_derive(scope: Any, config: Any, instance: Any) -> Any:
-        fields = real_derive(scope, config, instance)
-        return dataclasses.replace(
-            fields,
-            account_instrument_action_allowed=True,
-            broker_constraint_generation_current=True,
-        )
-
-    monkeypatch.setattr(context_module, "derive_item6_item12", _lifted_derive)
-
-
-def _lift_venue_session_account_facts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force item 12's OTHER half — the kernel composite over
-    :meth:`~tos_runtime.calendar.owner.SessionFactsOwner.session_facts_current` /
-    ``tradability_facts_current`` / ``account_facts_current`` (kernel round #3 §2
-    decision 4, superseding TOS Phase 5 W5 plan §2 decision 3's single
-    pre-composed method) — to ``True`` by forcing all three sub-facts ``True``.
-    This scope (MOCK_STOCK_ORDER) is broker-reaching, so the real owner
-    honestly returns ``None`` for tradability/account (no tradability/
-    account-halt source exists yet for a broker scope) — a SEPARATE,
-    independent reason item 12 stays UNKNOWN from P0-2's
-    ``broker_constraint_generation_current`` gate (module docstring; see
-    :func:`test_honest_deny_full_evidence_level`'s pin distinguishing the two).
-    The counterfactual/mutation-b tests below need BOTH halves lifted to reach
-    a genuine SATISFIED send.
-    """
-
-    def _always_true_session(  # noqa: ARG001 - fixed monkeypatch signature
-        self, instrument_class: str
-    ) -> bool:
-        return True
-
-    def _always_true_flag(  # noqa: ARG001 - fixed monkeypatch signature
-        self, *, broker_reaching: bool
-    ) -> bool:
-        return True
-
-    monkeypatch.setattr(
-        SessionFactsOwner, "session_facts_current", _always_true_session
+def _boot(tmp_path, config_dir, data_dir, custody_root):
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        transport_kind=TransportKind.KIS_MOCK,
     )
-    monkeypatch.setattr(
-        SessionFactsOwner, "tradability_facts_current", _always_true_flag
-    )
-    monkeypatch.setattr(SessionFactsOwner, "account_facts_current", _always_true_flag)
+    _reach_trusted(runtime)
+    return runtime
+
+
+def _outcomes(runtime) -> dict[str, str]:
+    return {v["item"]: v["outcome"] for v in _verify_item_payloads(runtime)}
 
 
 def _verify_item_payloads(runtime) -> list[dict[str, Any]]:
@@ -435,225 +412,11 @@ def server() -> Iterator[FakeKisServer]:
 
 
 # ===========================================================================
-# 1. Honest deny (full, evidence-level) — no counterfactual lift
+# 1. Reaches the transport — no verify item patched
 # ===========================================================================
 
 
-def test_honest_deny_full_evidence_level(
-    config_dir: Path,
-    data_dir: Path,
-    custody_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """MOCK_STOCK_ORDER active + kis-mock (dry_run) + Coordinator non-live admission granted:
-    the Coordinator admits (no ``LIVE_SCOPE_NOT_AUTHORIZED``), the gateway denies honestly at
-    the SEND_BOUNDARY_VERIFICATION step, and the transport is never called."""
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(config_dir)
-    send_once_calls = _spy_send_once(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    result = _drive_crossing_tick(runtime, custody_root)
-    assert result.flow is not None
-    assert result.flow.handed_off is True  # steps 1-14 admitted
-    assert result.flow.handoff is not None
-    assert (
-        result.flow.handoff.accepted_for_transmission is not True
-    )  # gateway itself denied
-
-    # No LIVE_SCOPE_NOT_AUTHORIZED halt — the Coordinator's own gate ADMITTED this send
-    # (T2 lane B's own non-live admission), never the thing that is being tested here.
-    live_scope_halts = runtime.evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE payload_json LIKE '%LIVE_SCOPE_NOT_AUTHORIZED%'"
-    ).fetchone()[0]
-    assert live_scope_halts == 0
-
-    verdicts = _verify_item_payloads(runtime)
-    assert len(verdicts) == 17
-    assert verdicts[0]["applicability"] == "BROKER_RESOURCE_CONSUMING"
-
-    unknown_items = {v["item"] for v in verdicts if v["outcome"] == "UNKNOWN"}
-    deferred_names = {item.value for item in DEFERRED_ITEMS}
-    # Phase 5 W3-b landed real owners for 5 of the 6 DEFERRED_ITEMS (module docstring's
-    # own updated count) — only VALID_LIVE_SCOPE (item 5) is still genuinely UNKNOWN
-    # (this composition supplies no live-authorization runtime yet). item 12
-    # (VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION) is the ONE additional,
-    # non-deferred item that is ALSO UNKNOWN today (module docstring's "three gates, not
-    # two") — pinned as an exact set so a genuinely NEW, unrelated UNKNOWN item, or an
-    # accidentally-fabricated positive on item 5, would both be caught.
-    assert unknown_items == {
-        "VALID_LIVE_SCOPE",
-        "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION",
-    }
-    # TOS Phase 5 W5 (plan §2 decision 3): item 12's kernel gate (gateway.py's
-    # _check_venue_generations) checks venue_session_account_facts_current BEFORE
-    # broker_constraint_generation_current -- whichever is non-positive FIRST decides the
-    # reason text. This scope (MOCK_STOCK_ORDER) is broker-reaching, so the real
-    # SessionFactsOwner honestly returns None for venue_session_account_facts_current (no
-    # tradability/account-halt source exists for a broker scope yet) -- a DIFFERENT,
-    # independent reason from item 12's OTHER half (broker_constraint_generation_current,
-    # blocked by the P0-2 unapproved-INSTANCE gap). Pinning the reason text distinguishes
-    # the two: mutation M2 (forcing venue_session_account_facts_current to True for a
-    # broker-reaching scope) would flip this reason to the SECOND branch's text instead,
-    # making this assertion go red.
-    (item12_verdict,) = (
-        v
-        for v in verdicts
-        if v["item"] == "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
-    )
-    assert "venue / session" in item12_verdict["detail"]
-    assert "broker-constraint generation" not in item12_verdict["detail"]
-
-    observed_unsupplied_deferred_numbers = {
-        verify_item_number(item)
-        for item in DEFERRED_ITEMS
-        if item.value in unknown_items
-    }
-    assert (
-        observed_unsupplied_deferred_numbers
-        == _EXPECTED_UNSUPPLIED_DEFERRED_ITEM_NUMBERS
-    )
-    assert sorted(_EXPECTED_DEFERRED_ITEM_NUMBERS) == [4, 5, 7, 8, 9, 10]
-
-    # The 5 now-supplied deferred items are SATISFIED, never merely absent-from-unknown by
-    # accident — each traced to its own real Phase 5 W3 owner (module docstring).
-    satisfied_deferred = {
-        v["item"]
-        for v in verdicts
-        if v["item"] in deferred_names and v["item"] not in unknown_items
-    }
-    assert satisfied_deferred == {
-        "CURRENT_SAFETY_AUTHORITY_EPOCH",
-        "HARD_SAFETY_ENVELOPE_VERSIONS",
-        "SAFETY_DEVIATION",
-        "SAFETY_INCIDENT",
-        "SAFETY_MONITORING",
-    }
-    for v in verdicts:
-        if v["item"] in satisfied_deferred:
-            assert v["outcome"] == "SATISFIED"
-
-    # item 6's own verdict: DENIED (not UNKNOWN — capability_admissible is PROHIBITED, not
-    # REDUCED), reason names PROHIBITED explicitly (gateway.py _check_allowance).
-    (item6_verdict,) = (
-        v
-        for v in verdicts
-        if v["item"] == "ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY"
-    )
-    assert item6_verdict["outcome"] == "DENIED"
-    assert "PROHIBITED" in item6_verdict["detail"]
-
-    # The gateway itself refused (SEND_REFUSED) — never the transport, never SEND_SEALED at
-    # all (the halt is BEFORE seal construction, gateway.py's own __call__ order).
-    assert _evidence_kind_count(runtime, "SEND_REFUSED") == 1
-    assert _evidence_kind_count(runtime, "SEND_SEALED") == 0
-    assert _evidence_kind_like_count(runtime, "TRANSPORT_%") == 0
-    assert send_once_calls == []
-
-    # Zero seals left in the SealRegistry — trivially true here (nothing was ever captured,
-    # since SEND_SEALED is never recorded), asserted directly against the live instance T2's
-    # own compose wiring constructs.
-    assert runtime.transport._seal_lookup._seals == {}  # noqa: SLF001
-
-    runtime.rcl_log.close()
-    runtime.evidence_store.close()
-
-
-# ===========================================================================
-# 2. Counterfactual A — "Phase 5 + P0-2 closed" (dry_run)
-# ===========================================================================
-
-
-def test_counterfactual_a_phase5_and_p02_closed_dry_run(
-    config_dir: Path,
-    data_dir: Path,
-    custody_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Lift BOTH blockers (deferred mesh + P0-2 capability-profile facts) and re-drive the SAME
-    crossing tick: the gateway now reaches step 18, ``SEND_SEALED`` is recorded before
-    ``NETWORK_CALL_ENTERED``, the adapter runs in dry_run (``TRANSPORT_DRY_RUN`` — byte-seal
-    identity holds), the result is ``UNKNOWN`` re-injected as ``EGRESS_RESULT`` with the
-    reservation quarantined, and zero sockets are opened."""
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(config_dir)  # mode: dry_run (default)
-    _lift_phase5_deferred_mesh(monkeypatch)
-    _lift_p02_capability_profile(monkeypatch)
-    _lift_venue_session_account_facts(monkeypatch)
-    do_request_calls = _spy_do_request(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    result = _drive_crossing_tick(runtime, custody_root)
-    assert result.flow is not None and result.flow.handoff is not None
-    assert result.flow.handoff.accepted_for_transmission is True
-
-    send_sealed_order = _evidence_row_order(runtime, "SEND_SEALED")
-    network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")
-    assert send_sealed_order is not None
-    assert network_call_entered_order is not None
-    assert send_sealed_order < network_call_entered_order
-
-    (dry_run_row,) = runtime.evidence_store.connection.execute(
-        "SELECT payload_json FROM entries WHERE kind = 'TRANSPORT_DRY_RUN'"
-    ).fetchall()
-    dry_run_payload = json.loads(dry_run_row[0])["payload"]
-
-    (seal_row,) = runtime.evidence_store.connection.execute(
-        "SELECT payload_json FROM entries WHERE kind = 'SEND_SEALED'"
-    ).fetchall()
-    seal_payload = json.loads(seal_row[0])["payload"]["send_seal"]
-
-    independent_digest = _independent_wire_digest(
-        account=seal_payload["account"],
-        instrument=seal_payload["instrument_key"]["instrument"],
-        quantity=seal_payload["outbound_quantity"],
-        price=seal_payload["outbound_price"],
-    )
-
-    # Byte-seal identity (plan §5): the dry-run evidence's own digest, the seal's own
-    # request_bytes_digest, and a hand-built, genuinely independent oracle (reviewer
-    # disposition MEDIUM-2 — never calls KisOrderWireCodec) all agree.
-    assert (
-        dry_run_payload["request_bytes_digest"] == seal_payload["request_bytes_digest"]
-    )
-    assert dry_run_payload["request_bytes_digest"] == independent_digest
-
-    reservation = runtime.core.ledger.outstanding(fx.instrument_key())
-    assert reservation is not None
-    assert reservation.capacity_state is CapacityState.QUARANTINED_UNKNOWN
-
-    assert (
-        do_request_calls == []
-    )  # zero sockets opened — dry_run never reaches the client
-
-    runtime.rcl_log.close()
-    runtime.evidence_store.close()
-
-
-# ===========================================================================
-# 3. Counterfactual B — live against the hermetic fake KIS server
-# ===========================================================================
-
-
-def test_counterfactual_b_live_against_hermetic_fake_kis_server(
+def test_dry_run_reaches_the_adapter_with_every_verify_item_satisfied(
     config_dir: Path,
     data_dir: Path,
     custody_root: Path,
@@ -661,80 +424,194 @@ def test_counterfactual_b_live_against_hermetic_fake_kis_server(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """Same two lifts + ``mode: live`` (loader reached with ``codec_bound=True`` through the
-    real compose root) + ``allow_plaintext_for_tests: true`` + the hermetic fake KIS server
-    answering token + order with ``rt_cd == "0"`` and an ``ODNO``: exactly one order POST, its
-    body bytes' sha256 equals the seal's ``request_bytes_digest``, ``ACK`` with
-    ``broker_execution_id == ODNO`` observed exactly once, and no secret bytes anywhere in
-    evidence."""
-    server.set_response(
-        _TOKEN_PATH,
-        status=200,
-        body={"access_token": _FAKE_BEARER_TOKEN, "expires_in": 86400},
+    """``mode: dry_run``: all 17 items SATISFIED with no lift; ``SEND_SEALED`` before
+    ``NETWORK_CALL_ENTERED``; the dry-run digest equals the seal's and an independent oracle's;
+    the reservation is quarantined UNKNOWN; and the order endpoint receives nothing (the two
+    broker-fact GETs are the only requests)."""
+    _sealed_mock_deployment(
+        config_dir, custody_root, server, monkeypatch, mode="dry_run"
     )
-    server.set_response(
-        _ORDER_PATH,
-        status=200,
-        body={
-            "rt_cd": "0",
-            "msg_cd": "APBK0013",
-            "msg1": "정상처리",
-            "output": {"ODNO": "T3-ODNO-1"},
-        },
-    )
-    _patch_instance_documents_to_host(monkeypatch, mock_rest_base=server.rest_base)
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(
-        config_dir,
-        mode="live",
-        endpoint_rest_base=server.rest_base,
-        allow_plaintext_for_tests=True,
-    )
-    _lift_phase5_deferred_mesh(monkeypatch)
-    _lift_p02_capability_profile(monkeypatch)
-    _lift_venue_session_account_facts(monkeypatch)
-    send_once_calls = _spy_send_once(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
 
     result = _drive_crossing_tick(runtime, custody_root)
     assert result.flow is not None and result.flow.handoff is not None
     assert result.flow.handoff.accepted_for_transmission is True
 
-    order_requests = server.requests_for(_ORDER_PATH)
-    assert len(order_requests) == 1
-    (order_request,) = order_requests
+    outcomes = _outcomes(runtime)
+    assert len(outcomes) == 17
+    assert set(outcomes.values()) == {"SATISFIED"}, outcomes
 
+    sealed = _evidence_row_order(runtime, "SEND_SEALED")
+    entered = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")
+    assert sealed is not None and entered is not None and sealed < entered
+
+    (dry_run_row,) = runtime.evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'TRANSPORT_DRY_RUN'"
+    ).fetchall()
+    dry_run_payload = json.loads(dry_run_row[0])["payload"]
     (seal_row,) = runtime.evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = 'SEND_SEALED'"
     ).fetchall()
     seal_payload = json.loads(seal_row[0])["payload"]["send_seal"]
+    assert (
+        dry_run_payload["request_bytes_digest"] == seal_payload["request_bytes_digest"]
+    )
+    assert dry_run_payload["request_bytes_digest"] == _independent_wire_digest(
+        account=seal_payload["account"],
+        instrument=seal_payload["instrument_key"]["instrument"],
+        quantity=seal_payload["outbound_quantity"],
+        price=seal_payload["outbound_price"],
+    )
 
+    reservation = runtime.core.ledger.outstanding(fx.instrument_key())
+    assert reservation is not None
+    assert reservation.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+
+    assert server.requests_for(_ORDER_PATH) == []
+    assert {r.method for r in server.all_requests} == {
+        "GET",
+        "POST",
+    }  # token POST + GETs
+    assert _evidence_kind_count(runtime, "BROKER_FACTS_OBSERVED") >= 1
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_live_order_reaches_ack_against_the_fake_server(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """``mode: live``: exactly one order POST whose body sha256 is the seal's
+    ``request_bytes_digest``, an ``ACK`` carrying the broker's ``ODNO``, and no secret bytes in
+    evidence — the real gateway, nothing lifted."""
+    _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch)
+    send_once_calls = _spy_send_once(monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+
+    result = _drive_crossing_tick(runtime, custody_root)
+    assert result.flow is not None and result.flow.handoff is not None
+    assert result.flow.handoff.accepted_for_transmission is True
+    assert set(_outcomes(runtime).values()) == {"SATISFIED"}
+
+    (order_request,) = server.requests_for(_ORDER_PATH)
+    (seal_row,) = runtime.evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'SEND_SEALED'"
+    ).fetchall()
+    seal_payload = json.loads(seal_row[0])["payload"]["send_seal"]
     _assert_byte_seal_identity_and_result_ordering(runtime, order_request, seal_payload)
 
-    assert len(send_once_calls) == 1
     (result_payload,) = send_once_calls
     assert result_payload.kind.value == "ACK"
-    assert result_payload.broker_execution_id == "T3-ODNO-1"
+    assert result_payload.broker_execution_id == _ODNO
 
     evidence_text = _all_evidence_text(runtime)
     assert _APP_KEY_SECRET_BYTES.decode() not in evidence_text
     assert _APP_SECRET_SECRET_BYTES.decode() not in evidence_text
     assert _FAKE_BEARER_TOKEN not in evidence_text
+    assert fx.ACCOUNT.replace("-", "")[:8] not in json.dumps(
+        [
+            json.loads(row[0])
+            for row in runtime.evidence_store.connection.execute(
+                "SELECT payload_json FROM entries WHERE kind = 'BROKER_FACTS_OBSERVED'"
+            )
+        ]
+    )
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
 
 
 # ===========================================================================
-# 4. Mutations pinned as tests (plan §4 T3 row)
+# 2. Still refuses when a fact is not there — real gates, zero order POSTs
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    ("setup", "item", "outcomes"),
+    [
+        # egress still sealed to the synthetic endpoint, not the mock host's order URL
+        ({"seal_egress": False}, "VALID_LIVE_SCOPE", {"DENIED"}),
+        # the mock host answers the instrument is halted
+        (
+            {"temp_stop_yn": "Y"},
+            "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION",
+            {"DENIED", "UNKNOWN"},
+        ),
+        # the account read fails
+        (
+            {"balance_rt_cd": "1"},
+            "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION",
+            {"DENIED", "UNKNOWN"},
+        ),
+    ],
+)
+def test_a_missing_fact_refuses_the_send_with_zero_order_posts(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+    setup: dict[str, Any],
+    item: str,
+    outcomes: set[str],
+) -> None:
+    _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch, **setup)
+    send_once_calls = _spy_send_once(monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+
+    result = _drive_crossing_tick(runtime, custody_root)
+    assert result.flow is not None and result.flow.handoff is not None
+    assert result.flow.handoff.accepted_for_transmission is not True
+
+    observed = _outcomes(runtime)
+    assert observed[item] in outcomes
+    # item 6 is about the scope's tuples, not the account or the endpoint
+    assert observed["ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY"] == "SATISFIED"
+    assert send_once_calls == []
+    assert server.requests_for(_ORDER_PATH) == []
+    assert _evidence_kind_count(runtime, "SEND_SEALED") == 0
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+# ===========================================================================
+# 3. REAL never boots on the kis-mock transport
+# ===========================================================================
+
+
+@pytest.mark.parametrize("active_scope", ["REAL_ORDER", "REAL_READ"])
+def test_a_real_scope_with_the_kis_mock_transport_refuses_to_boot(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    active_scope: str,
+) -> None:
+    """MOCK -> REAL fallback (``REAL_ORDER``) and a read-only principal reaching the order
+    endpoint (``REAL_READ``): neither composes with the kis-mock order transport."""
+    _activate_and_admit(config_dir, custody_root)
+    path = config_dir / "broker_scopes.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["active_scope"] = active_scope
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    fx.write_kis_mock_transport_config(config_dir)
+    # Whichever check meets it first refuses: the scope/transport pairing, or the kis-mock
+    # host seal (a REAL_READ scope binds the REAL_PROD document, whose host is not MOCK).
+    with pytest.raises(
+        (BrokerScopeConfigError, TransportWiringError, KisMockTransportConfigError)
+    ):
+        _boot(tmp_path, config_dir, data_dir, custody_root)
+
+
+# ===========================================================================
+# 4. Mutations pinned as tests
 # ===========================================================================
 
 
@@ -775,43 +652,22 @@ def test_mutation_a_retry_loop_would_be_caught_by_the_existing_negative_grep() -
     assert _retry_primitive_offenders_excluding_pacing(real_source, adapter_path) == []
 
 
-def test_mutation_b_a_digest_mismatch_is_refused_before_any_network_call(
+def test_mutation_b_a_digest_mismatch_is_refused_before_any_order_post(
     config_dir: Path,
     data_dir: Path,
     custody_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
 ) -> None:
-    """(b) Corrupt the seal the adapter reads (the narrowest seam that stands in for "the
-    adapter's digest comparison was removed": a mismatched ``request_bytes_digest`` sails
-    through ``send_once`` unchallenged) and confirm the REAL, unmutated
-    :meth:`~tos_runtime.transport.kis_mock.adapter.KisMockTransport._prepare_send` catches it —
-    ``TRANSPORT_BINDING_MISMATCH`` evidence, ``SendRefused`` (the gateway's own
-    ``TRANSPORT_RAISED``), and zero POSTs. If that digest-comparison ``if`` in ``adapter.py``
-    were ever deleted, THIS test's ``do_request_calls == []`` / ``accepted_for_transmission is
-    not True`` assertions would go red — the corrupted seal would instead sail through to a
-    live POST carrying a body that does not match what was sealed.
-    """
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(config_dir)
-    _lift_phase5_deferred_mesh(monkeypatch)
-    _lift_p02_capability_profile(monkeypatch)
-    _lift_venue_session_account_facts(monkeypatch)
-    do_request_calls = _spy_do_request(monkeypatch)
+    """(b) Corrupt the seal the adapter reads (the narrowest seam standing in for "the adapter's
+    digest comparison was removed") and confirm the REAL ``_prepare_send`` catches it —
+    ``TRANSPORT_BINDING_MISMATCH``, ``SendRefused`` (``TRANSPORT_RAISED``), zero order POSTs.
+    Live mode and every verify item real, so the only thing standing between the corrupted
+    seal and a POST is that comparison."""
+    _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
 
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    # Wrap the SealRegistry AFTER compose so the gateway still captures+wires normally, but the
-    # adapter's own SealLookup port resolves a digest-corrupted copy — a mismatched
-    # request_bytes_digest is exactly "the sealed request bytes were not what was actually
-    # built", the one fact decision 3's digest check exists to catch.
     real_seal_lookup = runtime.transport._seal_lookup  # noqa: SLF001
 
     def _corrupting_lookup(attempt_id: str) -> Any:
@@ -831,210 +687,15 @@ def test_mutation_b_a_digest_mismatch_is_refused_before_any_network_call(
     (mismatch_row,) = runtime.evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = 'TRANSPORT_BINDING_MISMATCH'"
     ).fetchall()
-    mismatch_payload = json.loads(mismatch_row[0])["payload"]
-    assert mismatch_payload["sealed_request_bytes_digest"] == (
+    assert json.loads(mismatch_row[0])["payload"]["sealed_request_bytes_digest"] == (
         "t3-mutation-pin-deliberately-mismatched"
     )
-
     (send_refused_row,) = runtime.evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = 'SEND_REFUSED' "
         "AND payload_json LIKE '%TRANSPORT_RAISED%'"
     ).fetchall()
     assert send_refused_row is not None
-    assert do_request_calls == []
-
-    runtime.rcl_log.close()
-    runtime.evidence_store.close()
-
-
-def test_mutation_c_lifting_only_the_deferred_gate_still_denies(
-    config_dir: Path,
-    data_dir: Path,
-    custody_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """(c) Lift ONLY the deferred Phase 5 mesh (item 6/12's own P0-2 facts untouched) — pins T2
-    §9 잔여 ①: still denied, transport still 0."""
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(config_dir)
-    _lift_phase5_deferred_mesh(monkeypatch)
-    send_once_calls = _spy_send_once(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    result = _drive_crossing_tick(runtime, custody_root)
-    assert result.flow is not None and result.flow.handoff is not None
-    assert result.flow.handoff.accepted_for_transmission is not True
-    assert send_once_calls == []
-    assert _evidence_kind_count(runtime, "SEND_SEALED") == 0
-
-    verdicts = _verify_item_payloads(runtime)
-    (item6_verdict,) = (
-        v
-        for v in verdicts
-        if v["item"] == "ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY"
-    )
-    assert item6_verdict["outcome"] == "DENIED"
-
-    runtime.rcl_log.close()
-    runtime.evidence_store.close()
-
-
-def test_mutation_d_lifting_only_p02_capability_profile_still_denies(
-    config_dir: Path,
-    data_dir: Path,
-    custody_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """(d) Lift ONLY item 6/12's P0-2 capability-profile facts (the deferred mesh untouched) —
-    the mirror of (c): still denied, transport still 0."""
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(config_dir)
-    _lift_p02_capability_profile(monkeypatch)
-    send_once_calls = _spy_send_once(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    result = _drive_crossing_tick(runtime, custody_root)
-    assert result.flow is not None and result.flow.handoff is not None
-    assert result.flow.handoff.accepted_for_transmission is not True
-    assert send_once_calls == []
-    assert _evidence_kind_count(runtime, "SEND_SEALED") == 0
-
-    verdicts = _verify_item_payloads(runtime)
-    unknown_items = {v["item"] for v in verdicts if v["outcome"] == "UNKNOWN"}
-    # This lift never touched the deferred mesh — 5 of 6 DEFERRED_ITEMS are genuinely
-    # SATISFIED by their real Phase 5 W3 owners regardless (module docstring); only item 5
-    # (VALID_LIVE_SCOPE) is still honestly UNKNOWN, which alone still denies the send.
-    assert "VALID_LIVE_SCOPE" in unknown_items
-
-    runtime.rcl_log.close()
-    runtime.evidence_store.close()
-
-
-def test_mutation_e_lifting_only_venue_session_account_facts_switches_the_item12_reason(
-    config_dir: Path,
-    data_dir: Path,
-    custody_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """(e) TOS Phase 5 W5 — the mirror of mutation (d): lift ONLY the venue-half
-    sub-facts (the P0-2 capability-profile facts untouched). Item 12's outcome
-    SWITCHES from UNKNOWN to the OTHER branch's own outcome — DENIED, not
-    UNKNOWN (kernel round #3 §11 결정 5: ``broker_constraint_generation_current``
-    is a strict ``bool`` here, and the DRAFT/unapproved-INSTANCE P0-2 gap makes
-    it honestly ``False``, which now denies explicitly rather than folding into
-    ``UNKNOWN``) — and the reason text names the broker-constraint half,
-    proving the two reasons are genuinely independent and distinguishable, not
-    one fact silently masking the other."""
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(config_dir)
-    _lift_venue_session_account_facts(monkeypatch)
-    send_once_calls = _spy_send_once(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    result = _drive_crossing_tick(runtime, custody_root)
-    assert result.flow is not None and result.flow.handoff is not None
-    assert result.flow.handoff.accepted_for_transmission is not True
-    assert send_once_calls == []
-
-    verdicts = _verify_item_payloads(runtime)
-    (item12_verdict,) = (
-        v
-        for v in verdicts
-        if v["item"] == "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
-    )
-    assert item12_verdict["outcome"] == "DENIED"
-    assert "broker-constraint generation" in item12_verdict["detail"]
-    assert "venue / session" not in item12_verdict["detail"]
-
-    runtime.rcl_log.close()
-    runtime.evidence_store.close()
-
-
-# ===========================================================================
-# 5. Honesty guard — no monkeypatch, live mode, a REACHABLE server: still 0 POSTs
-# ===========================================================================
-
-
-def test_honesty_guard_no_monkeypatch_live_mode_against_reachable_server_still_zero_posts(
-    config_dir: Path,
-    data_dir: Path,
-    custody_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    server: FakeKisServer,
-) -> None:
-    """With NO monkeypatch at all — the real gates hold even when ``mode: live`` is configured
-    and a server IS listening and ready to answer: the deferred mesh + P0-2 facts deny before
-    the transport is ever constructed a network call for, so the reachable server receives
-    nothing."""
-    server.set_response(
-        _TOKEN_PATH,
-        status=200,
-        body={"access_token": _FAKE_BEARER_TOKEN, "expires_in": 86400},
-    )
-    server.set_response(
-        _ORDER_PATH,
-        status=200,
-        body={
-            "rt_cd": "0",
-            "msg_cd": "APBK0013",
-            "msg1": "정상처리",
-            "output": {"ODNO": "X"},
-        },
-    )
-    _patch_instance_documents_to_host(monkeypatch, mock_rest_base=server.rest_base)
-    _activate_and_admit(config_dir, custody_root)
-    fx.write_kis_mock_transport_config(
-        config_dir,
-        mode="live",
-        endpoint_rest_base=server.rest_base,
-        allow_plaintext_for_tests=True,
-    )
-    send_once_calls = _spy_send_once(monkeypatch)
-
-    runtime = _compose(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        transport_kind=TransportKind.KIS_MOCK,
-    )
-    _reach_trusted(runtime)
-
-    result = _drive_crossing_tick(runtime, custody_root)
-    assert result.flow is not None and result.flow.handoff is not None
-    assert result.flow.handoff.accepted_for_transmission is not True
-
-    assert server.all_requests == []
-    assert send_once_calls == []
-    assert _evidence_kind_like_count(runtime, "TRANSPORT_%") == 0
+    assert server.requests_for(_ORDER_PATH) == []
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()

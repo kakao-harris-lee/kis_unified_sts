@@ -183,7 +183,9 @@ def check_broker_tick(payload: Mapping[str, Any], ladder: TickLadder) -> dict[st
     parsed: dict[str, int] = {}
     for name in STOCK_TICK_FIELDS:
         text = str(member.get(name) or "").strip()
-        if not text.isdigit() or int(text) <= 0:
+        # ASCII only (#930 review LOW): str.isdigit() is True for "²" and full-width
+        # "２", and int() then raises ValueError — a traceback (rc 1) instead of a refusal.
+        if not (text.isascii() and text.isdigit()) or int(text) <= 0:
             raise BandLineError(f"stock band response {name}={member.get(name)!r}")
         parsed[name] = int(text)
     scaled_price = parsed["stck_prpr"] * ladder.price_scale

@@ -14,9 +14,8 @@
 #     * `_runtime.instrument_class` krx-index-futures → krx-stock (이 트리 calendar.yaml 의
 #       `krx-stock` 세션 = CONTINUOUS 09:00-15:30)
 #     * `_runtime.quantity_unit` CONTRACTS → SHARES
-#     * `_runtime.band_source` 삭제 — band 원천 없음(아래). `_runtime.price_scale: 100` 은
-#       **남긴다**(PR #927 리뷰 M1): kis-mock 부팅이 `kis_mock_transport.yaml::price_scale`
-#       을 이 값과 대조하고, 없거나 다르면 부팅을 거부한다(ORD_UNPR = 가격 / price_scale).
+#     * `_runtime.band_source` — LONG 과 같은 `producer_journal` 블록(PR-3a, 아래). 주식 band 줄은
+#       band 프로브가 주식현재가 GET(FHKST01010100)으로 쓴다(PR #930).
 #     * `policy_id` 를 이 트리 전용으로 바꿨다(내용이 다르면 id 도 다르다 — LONG 헤더의 규칙).
 #
 # APPROVAL PROVENANCE:
@@ -35,8 +34,8 @@
 #       측정값이라고 적지만, 이 표의 행은 규정에서 왔다 — 그 차이가 이 잔여 위험이다.
 #     * 커널은 표가 있으면 표만 읽는다(`tos.venue.predicates._resolved_tick`) — 그래서
 #       `tick_size` 는 **null** 이다(둘 다 쓰면 로더가 거부한다: 한 사실에 두 원천).
-#     * 맨 위 행은 10,000,000원(1000000000 −1)에서 닫는다. KRX 에 가격 상한은 없지만 표는
-#       유한한 정수를 요구한다. 그 위 가격은 어느 행도 덮지 않아 **UNKNOWN**(송신 0)이다 —
+#     * 맨 위 행은 9,999,999.99원(band_max 999999999, ×100 포함 경계)에서 닫는다. KRX 에 가격
+#       상한은 없지만 표는 유한한 정수를 요구한다. 그 위 가격은 어느 행도 덮지 않아 **UNKNOWN**(송신 0)이다 —
 #       넓히지 않는다(커널 규칙). 005930 종가는 268,500~276,000원(2026-10-01~08).
 #     * 종전(#926) 판은 이 자리에 평평한 `tick_size: 50000`(500원 한 칸)을 썼다. 그 판에서는
 #       199,900원(100원 칸의 정상 호가)이 INADMISSIBLE 로 막혔다 — 이 표가 고친 입력이다.
@@ -44,13 +43,10 @@
 #     이 배포의 상한이다(더 좁은 쪽). OCP sizing 의 max 1 과 같다.
 #   * lot_size / min_quantity 1 = 1주(주식 매매수량단위 1주).
 #   * price_min / price_max: null — 주식 가격제한폭은 **일별 동적 값**(기준가 ±30 %)이라
-#     정적 리터럴로 쓸 수 없다. 이 트리에는 **band 원천이 없다**: LONG 트리의 band 원천은
-#     선물 band TR(FHMIF10000000) 생산자 경유다. band 프로브는 이제 주식 설정이면 주식현재가
-#     GET(FHKST01010100 의 stck_mxpr/stck_llam/stck_sdpr)으로 band 줄을 쓸 수 있지만
-#     (tools/tos_cp3/live_producer/band_probe.py), 이 트리는 아직 `_runtime.band_source` 를
-#     선언하지 않는다. 그래서 **오늘 이 트리의 모든 시도는 step 3 UNKNOWN 으로 끝난다**
-#     (송신 0) — LONG 트리 band 이전과 같은 정직 상태. 이 트리에 band 원천을 켜는 것은
-#     M2 의 남은 일이다.
+#     정적 리터럴로 쓸 수 없다. 그래서 둘 다 null 이고 `_runtime.band_source`(producer_journal,
+#     PR-3a)가 세션마다 채운다: band 프로브가 주식현재가 GET(FHKST01010100 의 stck_mxpr /
+#     stck_llam / stck_sdpr, PR #930)으로 쓴 줄 하나. 줄이 없으면(프로브 실패 · 브로커
+#     aspr_unit 이 호가 사다리와 다름) 그 세션의 모든 시도는 step 3 UNKNOWN 으로 끝난다(송신 0).
 #   * admitting session phase = 이 트리 calendar.yaml 의 `krx-stock` `CONTINUOUS`.
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"):
@@ -88,7 +84,7 @@ approved_sources:
   - "tick: KRX 주식 호가가격단위 사다리(2023-01-25 시행, 유가증권·코스닥 공통) 전 칸 → _model_view.shape_constraints.price_band_ticks (×100 정수), grade C, 조문 번호 미확인 — 헤더 참조"
   - "lot: 주식 매매수량단위 1주"
   - "max quantity: 운영자 결정 2026-10-22 — 수량 1주 고정 (배포 상한, venue 상한 아님)"
-  - "price band: NO SOURCE — 일별 동적 값(기준가 ±30%) → null; 이 트리에 band 원천 없음"
+  - "price band: producer_journal — band 프로브의 주식현재가 GET(FHKST01010100) stck_mxpr/stck_llam/stck_sdpr (PR #930), 브로커 aspr_unit 이 호가 사다리와 다르면 줄 없음"
 source_continuity_rules:
   - "no source-continuity identity exists in the runtime yet → snapshot.source_continuity_id is None (evidenced as absent)"
 session_phase_state_machines:
@@ -98,10 +94,10 @@ halt_suspension_and_tradability_rules:
 instrument_and_contract_rules:
   - "one symbol (005930) per policy generation; no contract month"
 price_band_tick_and_lot_rules:
-  - "tick: price_band_ticks 표가 가격마다 칸을 고른다 (1원~10,000,000원); tick_size null; 표 밖 가격은 UNKNOWN (헤더)"
+  - "tick: price_band_ticks 표가 가격마다 칸을 고른다 (1원~9,999,999.99원); tick_size null; 표 밖 가격은 UNKNOWN (헤더)"
   - "lot 1; min_quantity 1 (1주)"
   - "max_quantity 1 (운영자 결정 2026-10-22)"
-  - "band null (일별 동적 값 — 정적 리터럴 금지, 원천 없음)"
+  - "band: 일별 동적 값(기준가 ±30%) — 정적 리터럴 금지, _runtime.band_source(producer_journal)가 채운다"
 quantity_notional_and_rounding_rules:
   - "no permissive rounding — a silently rounded shape is INADMISSIBLE (kernel order_shape_admissible)"
 order_type_time_in_force_and_routing_rules:
@@ -120,9 +116,9 @@ conservative_failure_responses:
   - "any null bound → UNKNOWN; unenumerated action → INADMISSIBLE; token outside the calendar → boot refusal"
 protective_only_restrictions: []
 residual_risks:
-  - "price band unsourced: admissibility is UNKNOWN for every attempt until a stock band source exists (intended fail-closed)"
+  - "price band read once per session at boot (single CONTINUOUS phase); no band line (probe failure, aspr_unit mismatch) -> UNKNOWN for the session (intended fail-closed)"
   - "tick ladder is grade C (조문 번호 미확인); matched hanwhawm CS181_3p over 1,002,782 prices (0 mismatches); not yet cross-checked against broker aspr_unit — closed by the PR-2 band reader comparison"
-  - "this deployment transmits nothing (SYNTHETIC_FUTURES_ORDER scope — MOCK_STOCK_ORDER activation is a separate approval)"
+  - "MOCK_STOCK_ORDER is active (운영자 결정 2026-10-23, PR-3a): a fully admitted attempt is sent to the KIS 모의투자 order endpoint — no REAL order path exists for this scope"
 authority:
   grants_approval: false
   creates_capacity: false
@@ -173,8 +169,27 @@ _runtime:
   instrument_class: "krx-stock"
   quantity_unit: "SHARES"
   currency: "KRW"
-  # ×100 정수 가격 척도(`close_x100`; 270,000원 = 27000000). band 원천이 없으니 band 대조
-  # 용도가 아니다 — kis-mock 부팅에서 `kis_mock_transport.yaml::price_scale` 과 같아야
+  # ×100 정수 가격 척도(`close_x100`; 270,000원 = 27000000). 아래 band 원천의 `price_scale` 과
+  # 같아야 하고(로더 대조), kis-mock 부팅에서 `kis_mock_transport.yaml::price_scale` 과도 같아야
   # 부팅한다(`tos_runtime.compose._venue_wiring._cross_check_price_scale`, PR #927 리뷰 M1).
   # 주문 단가 ORD_UNPR 은 가격을 **이 하나의 척도**로 나눈 값이다.
   price_scale: 100
+  # band 원천 — PR-3a(운영자 결정 2026-10-23). LONG 트리와 같은 `producer_journal` 경로다:
+  # 러너가 띄우는 band 프로브(tools/tos_cp3/live_producer/band_probe.py)가 주식 설정이면
+  # 주식현재가 GET(FHKST01010100, PR #930)의 stck_mxpr 상한가 · stck_llam 하한가 ·
+  # stck_sdpr 기준가로 band 줄 하나를 쓰고, 런타임은 그 파일 하나만 연다(소켓 0). 프로브는
+  # 브로커 aspr_unit 이 위 호가 사다리와 다르면 줄을 쓰지 않는다 → band 없음 → UNKNOWN.
+  #   * `price_scale: 100` — 위 `_runtime.price_scale` 과 같은 출처.
+  #   * `bound`/`read_on`/`failure` — LONG 과 같은 값(런타임 어휘 전체, 로더가 다른 값 거부).
+  #     이 트리의 캘린더는 `krx-stock` `CONTINUOUS 09:00–15:30` 한 phase 라 실질적으로 부팅 1회.
+  #   * `instrument` / `band_journal_path` / `approved_source_prefixes` — RENDER.yaml 슬롯
+  #     (LONG 과 같은 세 슬롯; 값의 출처는 LONG 헤더의 같은 항목).
+  band_source:
+    kind: "producer_journal"
+    instrument: "TBD"
+    price_scale: 100
+    bound: "trading_date_kst"
+    read_on: ["boot", "phase_change"]
+    failure: "unknown"
+    band_journal_path: "TBD"
+    approved_source_prefixes: ["TBD"]

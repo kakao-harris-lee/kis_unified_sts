@@ -106,6 +106,7 @@ from tos.brokercap.routing import (
     ProvenanceClass,
     credential_principal_separation_ok,
     endpoint_binding_from_profile_ok,
+    mock_order_without_position_or_cash,
     provenance_admits_claim,
     routing_admissibility,
 )
@@ -173,6 +174,7 @@ __all__ = [
     "ProvenanceClass",
     "credential_principal_separation_ok",
     "endpoint_binding_from_profile_ok",
+    "mock_order_without_position_or_cash",
     "provenance_admits_claim",
     "routing_admissibility",
     # predicates

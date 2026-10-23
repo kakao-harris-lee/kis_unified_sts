@@ -20,7 +20,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1969,3 +1969,168 @@ def test_hinge_the_committed_snapshots_are_the_issuers_four_outcomes(
     assert evaluations("absent_field")["session"] == si.UNKNOWN_FIELD_STATE
     assert not si._projectable(tokens("unprojectable")["close"])
     assert evaluations("unprojectable")["close"] == si.UNKNOWN_FIELD_STATE
+
+
+# ===========================================================================
+# M5 scoping — the durable leaf accumulates sessions (2026-10-22 README §4)
+# ===========================================================================
+
+
+def test_m5_counts_only_this_session_day_not_the_whole_accumulated_leaf(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **The measured miscount.** A tenant session writes into a NAMED DURABLE LEAF that is
+    never cleared, so ``snapshots`` holds every session the leaf ever ran — on 2026-10-22 the
+    10-15 genesis session was still in there. The boot snapshot only lists TODAY's pre-boot
+    ids, so the OLDER session's pre-boot line had nothing marking it pre-boot and was counted
+    as a post-boot refusal: M5 read **2 store-wide against 1 for the session**, and the real
+    measurement had to filter by day by hand to say which was which.
+
+    Here: three bars of the session day and one ``stale_by_age`` bar from an earlier day. The
+    older day's bar must not be counted, and the document must SAY what it scoped to — a fix
+    that silently drops rows would be the same class of problem as the bug.
+
+    Red before the scoping: ``m5...`` is 2 and ``session_day`` does not exist.
+    """
+    bars = _bars(hinge, 4, states=["fresh", "fresh", "fresh", "stale_by_age"])
+    older = replace(bars[3], raw_event_id=f"{INSTRUMENT}:1m:20261015T090000+0900")
+    data_dir = _session(tmp_path, hinge, [*bars[:3], older])
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
+
+    assert states["session_day"] == "20261019"
+    assert states["days_present"] == ["20261015", "20261019"]
+    # The older day's refusal is out of scope; this session refused nothing.
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
+    )
+    assert (
+        states["post_boot_raw_event_ids_with_a_present_value_refused_as_unknown"] == []
+    )
+    # Scoped denominators, with the accumulation still visible beside them.
+    assert states["counts"]["consumed_ids"] == 3
+    assert states["counts"]["consumed_ids_all_days"] == 4
+    assert states["counts"]["post_boot_consumed_ids"] == 3
+
+
+def test_the_m5_criterion_records_the_budget_and_the_non_stale_rule(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """The 2026-10-23 criterion lives next to the number it judges, with the measurement it
+    came from — so nobody has to re-derive why it is 0.5% and not 0, or why ``max_age_ms``
+    stays at 800."""
+    bars = _bars(hinge, 2)
+    data_dir = _session(tmp_path, hinge, bars)
+    definition = _document(tmp_path, data_dir)["consumed_field_states"]["definition"]
+    criterion = si.consumed_field_states.__doc__ or ""
+
+    assert "0.5%" in criterion and "0.244%" in criterion
+    assert "max_age_ms`` STAYS at 800" in criterion
+    assert "other than staleness is a finding at any" in criterion
+    assert "MARKETFEED_FIELD_REFUSED" in criterion
+    # the definition string itself still names what the number IS, unchanged
+    assert "stale, or evaluation clock unknown" in definition
+
+
+def test_a_session_that_died_before_consuming_refuses_the_previous_days_numbers(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review MEDIUM-1.** Newest-consumed-day alone answers the WRONG session.
+
+    The leaf holds 10-19 snapshots; today's 10-20 session dies before consuming a single bar,
+    and its boot snapshot lists a 10-20 pre-boot id. Newest-day would answer ``20261019`` —
+    so yesterday's stale count is reported as today's, and yesterday's pre-boot ids (absent
+    from today's boot snapshot) read as post-boot refusals. Nothing else catches it: the
+    snapshot list is non-empty, so no emptiness guard fires.
+
+    The two inputs are not from the same session, so no number is salvageable: refuse.
+    """
+    bars = _bars(hinge, 2, states=["fresh", "stale_by_age"])
+    data_dir = _session(tmp_path, hinge, bars)
+
+    with pytest.raises(si.SessionInputsError) as excinfo:
+        _document(
+            tmp_path, data_dir, pre_boot=[f"{INSTRUMENT}:1m:20261020T084500+0900"]
+        )
+
+    message = str(excinfo.value)
+    assert "20261020" in message and "20261019" in message
+    assert "died before consuming" in message
+
+
+def test_the_boot_snapshot_decides_the_session_day_when_both_agree(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """The other side of MEDIUM-1: agreement is silent, and the pre-boot id is still excluded
+    from the post-boot denominator exactly as before."""
+    bars = _bars(hinge, 3)
+    data_dir = _session(tmp_path, hinge, bars)
+    states = _document(tmp_path, data_dir, pre_boot=[bars[0].raw_event_id])[
+        "consumed_field_states"
+    ]
+
+    assert states["session_day"] == "20261019"
+    assert states["counts"]["pre_boot_consumed_ids"] == 1
+    assert states["counts"]["post_boot_consumed_ids"] == 2
+
+
+def test_an_unreadable_raw_event_id_is_refused_not_silently_dropped(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review MEDIUM-2.** An id with no ``:1m:`` stamp has no day, so a day filter drops
+    it from EVERY count and the totals shrink with nothing saying so — the same silently-wrong
+    -count class the scoping was added to fix. The id names a bar the runtime consumed, so
+    there is no honest "skip"."""
+    bars = _bars(hinge, 2)
+    malformed = replace(bars[1], raw_event_id=f"{INSTRUMENT}:20261019T151300+0900")
+    data_dir = _session(tmp_path, hinge, [bars[0], malformed])
+
+    with pytest.raises(si.SessionInputsError) as excinfo:
+        _document(tmp_path, data_dir)
+
+    assert malformed.raw_event_id in str(excinfo.value)
+    assert "cannot be scoped to a session" in str(excinfo.value)
+
+
+def test_the_session_day_is_taken_in_kst_not_in_the_ids_own_offset(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review LOW-3.** The stamp carries its OWN offset. ``20261019T233000+0000`` is
+    2026-10-20 08:30 in Seoul, so its session day is the 20th; reading the date off the stamp
+    as written would file it under the 19th and scope the session to the wrong day.
+
+    Today every id is written ``+0900`` by one producer — a fact about that producer, not a
+    property of the grammar this function parses.
+    """
+    assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T233000+0000") == "20261020"
+    assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T151200+0900") == "20261019"
+    assert si.session_day_of(f"{INSTRUMENT}:20261019T151200+0900") is None
+
+
+def test_every_count_in_the_document_is_this_sessions_not_the_whole_leaf(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review LOW-4.** The scope is applied ONCE, to the whole document.
+
+    An earlier cut scoped only ``consumed_field_states``, leaving ``counts.snapshots``,
+    ``counts.consumed_raw_event_ids``, ``raw_event_ids`` and the consumed set behind
+    ``unpaired_reasons`` store-wide — a document whose M5 block said "this session" while the
+    counts above it said "this leaf, all time". Two scopes in one document is worse than one
+    wrong scope: every reader has to know which number is which.
+
+    Three bars of the session day, one from an earlier one. Red before: ``snapshots`` and
+    ``consumed_raw_event_ids`` read 4 and ``raw_event_ids`` carries the older day's id.
+    """
+    bars = _bars(hinge, 4)
+    older = replace(bars[3], raw_event_id=f"{INSTRUMENT}:1m:20261015T090000+0900")
+    data_dir = _session(tmp_path, hinge, [*bars[:3], older])
+
+    document = _document(tmp_path, data_dir)
+
+    assert document["session_day"] == "20261019"
+    assert document["days_present"] == ["20261015", "20261019"]
+    assert document["counts"]["snapshots"] == 3
+    assert document["counts"]["consumed_raw_event_ids"] == 3
+    # the leaf's own total stays visible beside the scoped numbers
+    assert document["counts"]["snapshots_all_days"] == 4
+    assert older.raw_event_id not in document["raw_event_ids"]
+    assert len(document["raw_event_ids"]) == 3

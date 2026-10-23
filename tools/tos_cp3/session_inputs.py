@@ -104,6 +104,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 #: Repo root of the checkout this file belongs to, at the FRONT of
 #: ``sys.path`` for the same reason B1a/B2/B3 do it: an editable install of
@@ -841,6 +842,10 @@ def read_boot_snapshot(path: Path) -> frozenset[str]:
 _RAW_EVENT_ID_SEPARATOR = ":1m:"
 _RAW_EVENT_ID_STAMP_FORMAT = "%Y%m%dT%H%M%S%z"
 
+#: Session logic in this repo is KST-native (root CLAUDE.md). A bar id carries its own
+#: offset, so its date is only a SESSION day after conversion — see :func:`session_day_of`.
+_KST = ZoneInfo("Asia/Seoul")
+
 
 def _published_after_close(
     raw_event_id: str, as_of_ms: int | None, session_close: _dt.time | None
@@ -904,8 +909,180 @@ def unpaired_reasons(
     return reasons
 
 
+def session_day_of(raw_event_id: str) -> str | None:
+    """The **KST** ``YYYYMMDD`` a bar id belongs to, or ``None`` when the id is malformed.
+
+    ``A05611:1m:20261022T151200+0900`` -> ``"20261022"``. Reuses
+    :data:`_RAW_EVENT_ID_SEPARATOR`/:data:`_RAW_EVENT_ID_STAMP_FORMAT` so this and
+    :func:`_published_after_close` cannot drift into two id grammars.
+
+    ⚠ **Converted to KST before the date is taken** (independent review LOW-3; repo rule:
+    session logic is KST-native). The stamp carries its OWN offset, and taking the date off
+    the stamp as written would make ``...T151300+0000`` read as the 22nd when in Seoul it is
+    the 23rd — a silently wrong session day, which is the whole class of bug this function
+    was added to fix. Today every id is written ``+0900`` by one producer; that is a fact
+    about the current producer, not a property of the grammar.
+
+    Returns:
+        The KST date, or ``None`` when the id has no ``:1m:`` stamp or it does not parse.
+        Callers must treat ``None`` as an error, not as "skip" — see
+        :func:`_scope_to_session_day`.
+    """
+    try:
+        stamp = raw_event_id.split(_RAW_EVENT_ID_SEPARATOR, 1)[1]
+        parsed = _dt.datetime.strptime(stamp, _RAW_EVENT_ID_STAMP_FORMAT)
+    except (IndexError, ValueError):
+        return None
+    return parsed.astimezone(_KST).strftime("%Y%m%d")
+
+
+def derive_session_day(
+    snapshots: Sequence[Snapshot], pre_boot: frozenset[str] = frozenset()
+) -> str | None:
+    """The session day these snapshots were measured for.
+
+    **The boot snapshot decides when it says anything** (independent review MEDIUM-1), and the
+    newest consumed day is only the fallback. Failing case for newest-day-alone: the leaf
+    holds 10-22 snapshots, today's 10-23 session dies before consuming a single bar, and the
+    boot snapshot lists 10-23 pre-boot ids. Newest-day answers ``20261022`` — so 10-22's stale
+    count is reported as today's, and 10-22's own pre-boot ids (absent from today's boot
+    snapshot) are counted as post-boot refusals. Nothing else catches it: the snapshot list is
+    non-empty so an emptiness guard never fires, and ``--producer-log`` is optional.
+
+    A disagreement between the two is therefore an ERROR rather than a precedence rule: it
+    means this document is being built from a boot snapshot and a store that are not from the
+    same session, and no number below it would mean what it says.
+
+    ⛔ **Why this exists** (2026-10-22 evidence README §4). ``read_snapshots`` reads the whole
+    ``snapshots`` table, and its docstring's "every issued snapshot of the session" was true
+    only while each session had its own data dir. A tenant session writes into a NAMED DURABLE
+    LEAF that is never cleared, so the table accumulates: on 2026-10-22 it held the 10-15
+    genesis session too. The consequence was a silent miscount — the boot snapshot only lists
+    TODAY's pre-boot ids, so the 10-15 session's pre-boot line was counted as post-boot and
+    M5's number read 2 store-wide against 1 for the session. The measurement had to filter by
+    day BY HAND to get the real number.
+
+    Newest-day rather than an operator flag: the session being measured is the one that just
+    ran, the ids already carry their day, and a flag is one more thing to get wrong at 08:45.
+    A reader who needs to see the assumption gets ``session_day`` and ``days_present`` in the
+    document rather than having to know this rule.
+
+    Args:
+        snapshots: The store's snapshots, already read.
+        pre_boot: The boot snapshot's ``pre_boot_raw_event_ids``. Empty is legitimate (a
+            producer journal with nothing in it at boot), and then the fallback applies.
+
+    Returns:
+        The KST ``YYYYMMDD``, or ``None`` when neither side names a day (an empty store and an
+        empty boot snapshot — then nothing is scoped and every count is store-wide, reported
+        as such).
+
+    Raises:
+        SessionInputsError: The boot snapshot's pre-boot ids span more than one day, or name a
+            day the store's newest consumed bar disagrees with.
+    """
+    consumed_days = {
+        day
+        for day in (session_day_of(snapshot.raw_event_id) for snapshot in snapshots)
+        if day is not None
+    }
+    newest_consumed = max(consumed_days) if consumed_days else None
+    boot_days = {
+        day for day in (session_day_of(bar) for bar in pre_boot) if day is not None
+    }
+    if not boot_days:
+        return newest_consumed
+    if len(boot_days) > 1:
+        raise SessionInputsError(
+            "the boot snapshot's pre_boot_raw_event_ids span more than one KST day "
+            f"({sorted(boot_days)}) — one boot cannot belong to two sessions, so the "
+            "snapshot and the store are not from the same run"
+        )
+    session_day = boot_days.pop()
+    if newest_consumed is not None and newest_consumed != session_day:
+        raise SessionInputsError(
+            f"the boot snapshot is for KST day {session_day} but the newest consumed bar in "
+            f"the store is from {newest_consumed} — the two are not from the same session "
+            "(a session that died before consuming anything reads the PREVIOUS session's "
+            "numbers as its own). Point --boot-snapshot at this store's own session."
+        )
+    return session_day
+
+
+@dataclass(frozen=True)
+class SessionScope:
+    """One session's slice of an accumulating durable leaf (:func:`scope_to_session_day`)."""
+
+    #: The KST ``YYYYMMDD`` every count in the document is about, or ``None`` when neither the
+    #: store nor the boot snapshot names a day (nothing is scoped; the counts are store-wide).
+    session_day: str | None
+    #: Every day the STORE holds, so the accumulation stays visible beside the scoped numbers.
+    days_present: tuple[str, ...]
+    #: How many snapshots the store holds in all, before scoping.
+    all_days_total: int
+
+
+def scope_to_session_day(
+    snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
+) -> tuple[list[Snapshot], SessionScope]:
+    """Cut ``snapshots`` down to the one session this document is about.
+
+    ⛔ **Applied ONCE, to everything** (independent review LOW-4). An earlier cut scoped only
+    :func:`consumed_field_states`, which left ``counts.snapshots``,
+    ``counts.consumed_raw_event_ids``, ``raw_event_ids`` and the consumed set behind
+    :func:`unpaired_reasons` store-wide — a document whose M5 block said "this session" while
+    the counts above it said "this leaf, all time". Two scopes in one document is worse than
+    one wrong scope: every reader has to know which number is which.
+
+    Scoping here also makes the document usable downstream without hand-filtering.
+    ``diff_decisions.py`` REFUSES a store-wide id set ("The runtime consumed bars this offline
+    trio does not cover") because the frozen frames cover one session — which is exactly why
+    the 2026-10-22 B3 run had to filter ``consumed-ids.json`` by day by hand (evidence README
+    §4).
+
+    Raises:
+        SessionInputsError: An id carries no readable day (MEDIUM-2 — it would vanish from
+            every count below with nothing saying so), or :func:`derive_session_day` refuses.
+    """
+    unparseable = sorted(
+        snapshot.raw_event_id
+        for snapshot in snapshots
+        if session_day_of(snapshot.raw_event_id) is None
+    )
+    if unparseable:
+        raise SessionInputsError(
+            f"{len(unparseable)} consumed raw_event_id(s) carry no readable "
+            f"'{_RAW_EVENT_ID_SEPARATOR}<stamp>' day and so cannot be scoped to a session: "
+            f"{unparseable[:5]}{' …' if len(unparseable) > 5 else ''}. Refusing to report "
+            "counts that would silently omit them."
+        )
+    session_day = derive_session_day(snapshots, pre_boot)
+    days_present = tuple(
+        sorted(
+            {
+                day
+                for day in (session_day_of(s.raw_event_id) for s in snapshots)
+                if day is not None
+            }
+        )
+    )
+    scoped = [
+        snapshot
+        for snapshot in snapshots
+        if session_day is None or session_day_of(snapshot.raw_event_id) == session_day
+    ]
+    return scoped, SessionScope(
+        session_day=session_day,
+        days_present=days_present,
+        all_days_total=len(snapshots),
+    )
+
+
 def consumed_field_states(
-    *, snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
+    *,
+    snapshots: Sequence[Snapshot],
+    pre_boot: frozenset[str],
+    scope: SessionScope,
 ) -> dict[str, Any]:
     """M5's first count: lines the issuer HELD a value for and refused anyway.
 
@@ -951,11 +1128,34 @@ def consumed_field_states(
     trustworthy clock EVERY declared field reads UNKNOWN, so any present,
     projectable field in the same snapshot is counted.
 
-    **Expectation at genesis** (plan §5 M5 with (3) live, M6 < 300 ms against
-    this tenant's ``max_age_ms`` of 800): post-boot lines are expected to
-    arrive fresh and be consumed with values admitted, so this number is
-    expected to be 0 and a non-zero value is the finding. The pre-boot key is
-    where a non-zero count is unremarkable.
+    **The criterion, as of 2026-10-23** (operator directive; measured on the
+    2026-10-22 session). It is no longer "0, and anything else is a finding":
+
+    1. **Scoped to one session day** (:func:`derive_session_day`). The durable
+       leaf accumulates sessions and the boot snapshot only lists TODAY's
+       pre-boot ids, so a store-wide count reads an older session's pre-boot
+       line as post-boot. 2026-10-22 measured 2 store-wide against 1 for the
+       session; only the second number means anything.
+    2. **A stale-refusal budget of <= 0.5% of ``post_boot_consumed_ids``.**
+       2026-10-22 measured 1 of 409 = 0.244%, caused by host scheduling
+       jitter, not by a late producer: the bar's own ``as_of`` was +2258 ms
+       after its minute close against a session p50 of 2221, while the
+       scheduler pass that read it ran 1280 ms into a 408 ms loop, so the line
+       was 922 ms old against ``max_age_ms`` 800. ``max_age_ms`` STAYS at 800
+       (operator decision 2026-10-09: 1000 kernel budget minus 200 delay) —
+       widening it to absorb host jitter would widen the window in which a
+       decision runs on an old price. A budget of 0.1% was considered and
+       rejected: the only session measured would have failed it.
+    3. **Any refusal for a reason other than staleness is a finding at any
+       count**, including one. The budget is for jitter, and nothing else.
+       That clause is checkable only because the runtime now records the
+       reason: ``MARKETFEED_FIELD_REFUSED``
+       (``tos_runtime.marketfeed.scheduler.TickScheduler._record_field_refusals``)
+       carries ``refused_by_reason`` plus both sides of the age comparison.
+       This function's own number cannot make the distinction — it is an
+       upper bound over "stale OR clock unknown" by construction.
+
+    The pre-boot key is where a non-zero count is unremarkable.
     """
     post_boot_refused: list[str] = []
     pre_boot_refused: list[str] = []
@@ -967,7 +1167,13 @@ def consumed_field_states(
     by_state: dict[str, dict[str, int]] = {}
     observation_by_state: dict[str, dict[str, int]] = {}
     without_evaluations = 0
-    for snapshot in snapshots:
+    # ⛔ SCOPE (2026-10-22 README §4, :func:`derive_session_day`): the durable leaf accumulates
+    # sessions, so every count below is over THIS session's day only. Without it an older
+    # session's pre-boot line — absent from today's boot snapshot — reads as post-boot and
+    # inflates M5's number, which is exactly what happened on 2026-10-22 (2 store-wide, 1 for
+    # the session). `days_present` keeps the accumulation visible rather than hidden by the fix.
+    in_session = list(snapshots)
+    for snapshot in in_session:
         where = "pre_boot" if snapshot.raw_event_id in pre_boot else "post_boot"
         if not snapshot.field_evaluations:
             without_evaluations += 1
@@ -1019,15 +1225,18 @@ def consumed_field_states(
             "tos_runtime.marketfeed.snapshot._derive_field_state writes "
             "UNKNOWN and keeps the reason in memory only"
         ),
+        "session_day": scope.session_day,
+        "days_present": list(scope.days_present),
         "counts": {
-            "consumed_ids": len(snapshots),
+            "consumed_ids": len(in_session),
+            "consumed_ids_all_days": scope.all_days_total,
             "pre_boot_consumed_ids": sum(
-                1 for snapshot in snapshots if snapshot.raw_event_id in pre_boot
+                1 for snapshot in in_session if snapshot.raw_event_id in pre_boot
             ),
             # the denominator of the number above it, so "1 refused" is read
             # against how many post-boot lines the session consumed at all
             "post_boot_consumed_ids": sum(
-                1 for snapshot in snapshots if snapshot.raw_event_id not in pre_boot
+                1 for snapshot in in_session if snapshot.raw_event_id not in pre_boot
             ),
             "consumed_ids_without_field_evaluations": without_evaluations,
         },
@@ -1149,6 +1358,16 @@ def build_consumed_ids_document(
             "consumed nothing, so an id filter built from it would silently "
             "empty every comparison"
         )
+    pre_boot = read_boot_snapshot(boot_snapshot)
+    # ⛔ ONE scope for the whole document (review LOW-4) — see :func:`scope_to_session_day`.
+    # Everything below this line is about the session, never about the accumulated leaf.
+    snapshots, scope = scope_to_session_day(snapshots, pre_boot)
+    if not snapshots:
+        raise SessionInputsError(
+            f"the store holds {scope.all_days_total} snapshot(s) but none for KST day "
+            f"{scope.session_day} (days present: {list(scope.days_present)}) — the boot "
+            "snapshot and this store are not from the same session"
+        )
     instrument = _assert_one_instrument(snapshots)
     consumed = frozenset(snapshot.raw_event_id for snapshot in snapshots)
     facts = (
@@ -1159,7 +1378,6 @@ def build_consumed_ids_document(
         )
     )
     dispositions = facts.dispositions
-    pre_boot = read_boot_snapshot(boot_snapshot)
     reasons = unpaired_reasons(
         consumed=consumed,
         dispositions=dispositions,
@@ -1188,8 +1406,13 @@ def build_consumed_ids_document(
                 facts.session_close.isoformat() if facts.session_close else None
             ),
         },
+        "session_day": scope.session_day,
+        "days_present": list(scope.days_present),
         "counts": {
             "snapshots": len(snapshots),
+            # Every count in this document is this SESSION's (review LOW-4). The leaf's own
+            # total sits beside it so the accumulation is visible rather than hidden.
+            "snapshots_all_days": scope.all_days_total,
             "consumed_raw_event_ids": len(consumed),
             "producer_disposed_bars": len(dispositions),
             "unpaired": len(reasons),
@@ -1199,7 +1422,7 @@ def build_consumed_ids_document(
         "unpaired_reasons": dict(sorted(reasons.items())),
         "unpaired_reason_counts": dict(sorted(reason_counts.items())),
         "consumed_field_states": consumed_field_states(
-            snapshots=snapshots, pre_boot=pre_boot
+            snapshots=snapshots, pre_boot=pre_boot, scope=scope
         ),
         "consumed_value_view": consumed_value_view_counts(
             data_dir=data_dir,

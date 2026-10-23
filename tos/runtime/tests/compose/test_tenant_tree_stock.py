@@ -57,10 +57,12 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "account.env_key",
             # the stock code shape --instrument must match (#926 review LOW)
             "instrument",
-            # the three LONG-only band slots are gone, so the slot list shifts
-            "slots",
         }
     ),
+    # PR-3a (운영자 결정 2026-10-23): this tree, and only this tree, is the MOCK order tree.
+    "broker_scopes.yaml": frozenset({"active_scope", "scopes.2.profile_evidence_ok"}),
+    "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
+    "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
     "aggregate_risk_policy.yaml": frozenset(
@@ -93,7 +95,6 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "_model_view.shape_constraints.max_quantity",
             "_runtime.instrument_class",
             "_runtime.quantity_unit",
-            "_runtime.band_source",
         }
     ),
 }
@@ -131,8 +132,12 @@ def _covered(path: str, allowed: frozenset[str]) -> bool:
     return any(path == a or path.startswith(a + ".") for a in allowed)
 
 
+#: Files only the stock tree carries (PR-3a): item 12's GET-only mock-account facts.
+_STOCK_ONLY = {"broker_facts.yaml"}
+
+
 def test_the_stock_tree_has_exactly_the_long_trees_files() -> None:
-    assert _files(_STOCK) == _files(_LONG)
+    assert _files(_STOCK) == _files(_LONG) | _STOCK_ONLY
 
 
 @pytest.mark.parametrize("name", sorted(_files(_LONG)))
@@ -156,7 +161,7 @@ def test_every_file_is_a_byte_copy_or_differs_only_where_declared(name: str) -> 
 
 
 def test_the_stock_tree_carries_the_operator_decisions() -> None:
-    """005930 · Setup D LONG as-is · 1 share · krx-stock 09:00-15:30 · still SYNTHETIC."""
+    """005930 · Setup D LONG as-is · 1 share · krx-stock 09:00-15:30 · MOCK order (PR-3a)."""
     vcp = yaml.safe_load((_STOCK / "venue_constraint_policy.yaml").read_text("utf-8"))
     shape = vcp["_model_view"]["shape_constraints"]
     assert (shape["tick_size"], shape["lot_size"], shape["max_quantity"]) == (
@@ -171,6 +176,10 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
         # Kept from LONG (PR #927 review M1): a kis-mock boot refuses unless the transport's
         # `price_scale` equals this one.
         "price_scale": 100,
+        # PR-3a: the LONG tree's producer_journal band block, fed by the stock band probe.
+        "band_source": yaml.safe_load(
+            (_LONG / "venue_constraint_policy.yaml").read_text("utf-8")
+        )["_runtime"]["band_source"],
     }
     calendar = yaml.safe_load((_STOCK / "calendar.yaml").read_text("utf-8"))
     continuous = [
@@ -181,7 +190,23 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     sizing = ocp["_runtime"]["construction"]["sizing"]
     assert (sizing["max_quantity"], sizing["min_quantity"]) == (1, 1)
     scopes = yaml.safe_load((_STOCK / "broker_scopes.yaml").read_text("utf-8"))
-    assert scopes["active_scope"] == "SYNTHETIC_FUTURES_ORDER"
+    assert scopes["active_scope"] == "MOCK_STOCK_ORDER"
+    (mock,) = [s for s in scopes["scopes"] if s["name"] == "MOCK_STOCK_ORDER"]
+    assert mock["profile_evidence_ok"] is True
+    pre = yaml.safe_load((_STOCK / "coordinator_preconditions.yaml").read_text("utf-8"))
+    assert pre == {
+        "live_authorization_state": "NOT_AUTHORIZED",
+        "nonlive_broker_consuming": {"admitted": True},
+    }
+    # the LONG/SHORT trees stay synthetic and unadmitted
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short"):
+        other = _REPO_ROOT / "config" / "tos_runtime" / tree
+        assert (
+            yaml.safe_load((other / "broker_scopes.yaml").read_text("utf-8"))[
+                "active_scope"
+            ]
+            == "SYNTHETIC_FUTURES_ORDER"
+        )
     render = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
     assert render["account"] == {"env_key": "KIS_STOCK_ACCOUNT_NO"}
     assert render["direction"] == {"mode": "declared", "value": "LONG"}
@@ -400,3 +425,42 @@ def test_at_0850_the_futures_session_is_open_but_the_stock_one_is_not(
     assert runtime.session_facts.phase_for_step3("krx-stock") != "CONTINUOUS"
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+# ---------------------------------------------------------------------------
+# PR-3a: the committed MOCK posture is self-consistent
+# ---------------------------------------------------------------------------
+
+
+def test_the_stock_trees_mock_scope_egress_and_broker_facts_agree() -> None:
+    """The three facts item 5 / item 6 / item 12 read off this tree, pinned against their own
+    sources: the active scope is the kernel's mock class; the sealed egress endpoint is the
+    MOCK_VTS INSTANCE host's order-cash URL (the runbook's ``order_path`` proposal); and the
+    GET-only broker-facts config loads."""
+    from tos.brokercap import mock_order_without_position_or_cash
+    from tos_runtime.brokercap import load_broker_scopes
+    from tos_runtime.brokercap.instance import load_instance_documents
+    from tos_runtime.transport.kis_mock.broker_facts import load_broker_facts_config
+
+    scopes = load_broker_scopes(
+        _STOCK / "broker_scopes.yaml", environment_label="paper"
+    )
+    assert scopes.active_scope.name == "MOCK_STOCK_ORDER"
+    assert mock_order_without_position_or_cash(scopes.active_scope.capability_tuples)
+
+    assert scopes.instance_path is not None
+    (mock_doc,) = [
+        d
+        for d in load_instance_documents(scopes.instance_path)
+        if d.environment == "MOCK_VTS"
+    ]
+    egress = yaml.safe_load((_STOCK / "egress_coordinates.yaml").read_text("utf-8"))
+    assert egress["endpoint"]["value"] == (
+        f"{mock_doc.rest_base}/uapi/domestic-stock/v1/trading/order-cash"
+    )
+    assert (
+        "openapivts" in egress["endpoint"]["value"]
+    )  # the 모의 host, never the real one
+
+    facts = load_broker_facts_config(_STOCK / "broker_facts.yaml")
+    assert facts.balance_tr_id.startswith("V")
