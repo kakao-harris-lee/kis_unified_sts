@@ -162,7 +162,7 @@ from tos_runtime.marketfeed.ports import (
     TickOutcome,
     anchor_observation,
 )
-from tos_runtime.marketfeed.snapshot import SnapshotIssuer
+from tos_runtime.marketfeed.snapshot import IssuedSnapshot, SnapshotIssuer
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
 from tos_runtime.time.service import TrustworthyTimeService
 
@@ -269,6 +269,11 @@ class TickResult:
 #: The evidence kind for a tick queued while the recovery barrier holds (module docstring —
 #: mirrors ``ComposedRuntime._NONTRADE_QUEUED_UNTIL_RECOVERY_KIND``'s own naming convention).
 _MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND = "MARKETFEED_QUEUED_UNTIL_RECOVERY"
+
+#: The evidence kind for a tick whose issued snapshot refused at least one policy-declared
+#: field — :meth:`TickScheduler._record_field_refusals`'s own docstring has the measurement
+#: this exists for.
+_MARKETFEED_FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 
 
 def _require_single_instrument(instruments: Sequence[str]) -> str:
@@ -498,6 +503,7 @@ class TickScheduler:
 
         issued = self._snapshot_issuer.issue(observation, now_ms=now_ms)
         self._store.put(issued.snapshot, issued.preimages)
+        self._record_field_refusals(issued, observation, now_ms=now_ms)
         capsule = self._capsule_issuer.issue(issued.snapshot)
         payload = self._resolver(capsule, instrument_key=self._instrument_key)
         event = EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=payload)
@@ -520,6 +526,74 @@ class TickScheduler:
             outcome=TickOutcome.TICKED,
             queued_until_recovery=queued_until_recovery,
             value_view=payload.value_view,
+        )
+
+    def _record_field_refusals(
+        self,
+        issued: IssuedSnapshot,
+        observation: RawObservation,
+        *,
+        now_ms: int | None,
+    ) -> None:
+        """Record WHY an issued snapshot refused fields, when it refused any.
+
+        ⛔ **The measurement this exists for.** On 2026-10-22 one consumed bar
+        (``A05611:1m:20261022T151200+0900``) was refused ``TIME_NOT_ADMITTED``/
+        ``DECISION_WITHHELD``, and answering "stale, or was the evaluation clock unknown?"
+        took a full read-only dive through the durable store, because the number that
+        decided it was nowhere: :func:`~tos_runtime.marketfeed.snapshot._derive_field_state`
+        computes the reason and the snapshot keeps only ``FieldState.UNKNOWN``, with
+        ``field_evaluations[*].freshness.source_age`` written ``null``.
+        ``tools/tos_cp3/session_inputs.py`` already says so in its own docstring ("the
+        persisted FieldState is never STALE ... keeps the reason in memory only") and spends
+        a whole derived upper bound working around it. :class:`FieldEvaluationReport` was
+        built for "a future evidence row" (its own docstring); this is that row.
+
+        The answer that day was 922 ms against a ``max_age_ms`` of 800 — a scheduler pass
+        that ran 1280 ms in a 408 ms loop, not a late producer. Both numbers are on this row
+        now, so the same question is one query.
+
+        **Diagnostics only.** Nothing reads this row to decide anything: the refusal already
+        happened inside the issuer, and the conservative path (UNKNOWN values ⇒ no
+        transmission) is unchanged whether or not this row is written. It is written AFTER
+        ``store.put`` so a snapshot is never durable-but-unexplained in the other order.
+
+        Args:
+            issued: The snapshot just issued, carrying its per-field reports.
+            observation: The observation it was issued from — its ``as_of_ms`` is the left
+                side of the age comparison.
+            now_ms: The wall-clock reading this pass evaluated against, or ``None`` when the
+                clock could not be established (then every field reads ``now_ms_unknown``
+                and ``age_ms`` is honestly absent rather than invented).
+        """
+        refused = [
+            report for report in issued.field_reports if report.reason is not None
+        ]
+        if not refused:
+            return
+        by_reason: dict[str, list[str]] = {}
+        for report in refused:
+            by_reason.setdefault(report.reason or "", []).append(report.field_key)
+        stale_bounds = sorted(
+            {report.max_age_ms for report in refused if report.reason == "stale"}
+        )
+        self._evidence_store.append(
+            {
+                "instrument": self._instrument,
+                "raw_event_id": observation.raw_event_id,
+                "as_of_ms": observation.as_of_ms,
+                "evaluated_at_ms": now_ms,
+                # The comparison itself, both sides. `None` only when `now_ms` was.
+                "age_ms": None if now_ms is None else now_ms - observation.as_of_ms,
+                "stale_max_age_ms": stale_bounds,
+                "fields_declared": len(issued.field_reports),
+                "fields_refused": len(refused),
+                "refused_by_reason": {
+                    reason: sorted(keys) for reason, keys in sorted(by_reason.items())
+                },
+            },
+            kind=_MARKETFEED_FIELD_REFUSED_KIND,
+            record_class=_MARKETFEED_FIELD_REFUSED_KIND,
         )
 
     def run_forever(

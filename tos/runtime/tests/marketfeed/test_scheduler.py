@@ -30,11 +30,19 @@ from tos_runtime.marketfeed.scheduler import (
     TickScheduler,
     decide_tick,
 )
+from tos_runtime.marketfeed.snapshot import SnapshotIssuer
 from tos_runtime.marketfeed.store import SqliteSnapshotStore
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
 from tos_runtime.time.config import TrustworthyTimeConfig
 
-from ._fixtures import CLOSE_BAR_ONE, INSTRUMENT, SCHEME, loaded_policy
+from ._fixtures import (
+    BAR_ONE_AS_OF,
+    CLOSE_BAR_ONE,
+    INSTRUMENT,
+    SCHEME,
+    loaded_policy,
+    observation,
+)
 
 _OPEN_SESSION = SessionContext(phase="CONTINUOUS", is_open=True)
 _CLOSED_SESSION = SessionContext(phase="CLOSED", is_open=False)
@@ -529,6 +537,27 @@ class _StampedSinceLastEvaluationIntake:
         return (_read_order_observation(f"appended-{self._seq}", as_of_ms),)
 
 
+#: How far behind the pass's own reading :class:`_StaleIntake` stamps its line — past the
+#: fixture policy's ``max_age_ms: 5000``, so the refusal is unambiguously on AGE.
+_STALE_BY_MS = 10_000
+
+
+class _StaleIntake:
+    """An intake whose line is already older than the policy's freshness bound when the pass
+    reads it — the 2026-10-22 shape (a healthy producer, a scheduler pass that ran late).
+    """
+
+    def __init__(self, time_service: _AdvancingTimeService) -> None:
+        self._time_service = time_service
+
+    def poll(
+        self, *, instrument: str, after_as_of_ms: int | None
+    ) -> tuple[RawObservation, ...]:
+        del instrument, after_as_of_ms
+        as_of_ms = self._time_service.wall_clock_now() - _STALE_BY_MS
+        return (_read_order_observation("stale-1", as_of_ms),)
+
+
 class _FixedObservationIntake:
     """One unchanging observation, filtered the way
     :class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` filters — so "the next
@@ -596,6 +625,7 @@ def _read_order_scheduler(
     driver: _CapturingDriver,
     before_decide: Callable[[], bool] | None = None,
     session_owner: object | None = None,
+    evidence_store: Any = None,
 ) -> TickScheduler:
     """A :class:`TickScheduler` whose snapshot store, policy, issuers, time projection and kernel
     resolver are all REAL — only the time service, the session owner, the intake and the driver
@@ -632,7 +662,7 @@ def _read_order_scheduler(
         session_owner=session_owner,  # type: ignore[arg-type]
         driver=driver,  # type: ignore[arg-type]
         inbox=MagicMock(),
-        evidence_store=MagicMock(),
+        evidence_store=(evidence_store if evidence_store is not None else MagicMock()),
         poll_interval_ms=400,  # config/tos_runtime/paper/marketfeed.yaml
         before_decide=(
             before_decide if before_decide is not None else evaluate_then_admit
@@ -1038,3 +1068,151 @@ def test_a_raw_observation_is_never_re_anchored(tmp_path: Path) -> None:
     store.put.assert_called_once()
     issued = store.put.call_args.args[0]
     assert issued.observations[0].time.source_event_time == 1_790_000_000_000
+
+
+class TestTheFieldRefusalRow:
+    """``MARKETFEED_FIELD_REFUSED`` — why an issued snapshot refused fields, in the store.
+
+    ⛔ **The measurement this exists for** (``docs/broker-profiles/evidence/
+    2026-10-22-cp3-band-first-session/README.md`` §7). One consumed bar that day was refused
+    ``TIME_NOT_ADMITTED``, and deciding between "stale" and "the evaluation clock could not be
+    established" took a full read-only dive through the durable store — because
+    ``_derive_field_state`` computes the reason and then drops it: the snapshot persists only
+    ``FieldState.UNKNOWN``, with ``field_evaluations[*].freshness.source_age`` written
+    ``null``. ``tools/tos_cp3/session_inputs.py`` says so in its own docstring and carries a
+    whole derived upper bound to work around it.
+
+    The row carries BOTH SIDES of the comparison that decided it — the 2026-10-22 answer was
+    922 ms against a ``max_age_ms`` of 800 — so the same question is one query.
+    """
+
+    def _scheduler_with_capture(
+        self, tmp_path: Path
+    ) -> tuple[TickScheduler, list[tuple[dict[str, Any], str]]]:
+        rows: list[tuple[dict[str, Any], str]] = []
+        evidence = MagicMock()
+        evidence.append.side_effect = lambda payload, **kw: rows.append(
+            (payload, kw["kind"])
+        )
+        scheduler = TickScheduler(
+            instruments=(INSTRUMENT,),
+            instrument_class="krx-index-futures",
+            account="acct-field-refusal",
+            direction="LONG",
+            quantity_basis="RISK",
+            unit="contract",
+            policy=loaded_policy(tmp_path),
+            scheme=SCHEME,
+            intake=MagicMock(),
+            store=MagicMock(),
+            time_projection=MagicMock(),
+            time_service=MagicMock(),
+            session_owner=MagicMock(),
+            driver=None,
+            inbox=MagicMock(),
+            evidence_store=evidence,
+            poll_interval_ms=400,
+        )
+        return scheduler, rows
+
+    def _issue(self, tmp_path: Path, *, now_ms: int | None):
+        """A REAL :class:`~tos_runtime.marketfeed.snapshot.SnapshotIssuer` run — the reason
+        strings and the bound must come from the production deriver, not from this test.
+        """
+        obs = observation()
+        issued = SnapshotIssuer(
+            policy=loaded_policy(tmp_path), scheme=SCHEME, account="acct-field-refusal"
+        ).issue(obs, now_ms=now_ms)
+        return obs, issued
+
+    def test_a_stale_bar_records_both_sides_of_the_comparison(
+        self, tmp_path: Path
+    ) -> None:
+        """The 2026-10-22 shape: a usable value refused on AGE. The fixture policy's bound is
+        5000 ms and this reading is 10000 ms late, so the row must say 10000 against 5000 —
+        the two numbers the real investigation had to reconstruct from outside the store.
+        """
+        scheduler, rows = self._scheduler_with_capture(tmp_path)
+        stale_now_ms = BAR_ONE_AS_OF + 10_000
+        obs, issued = self._issue(tmp_path, now_ms=stale_now_ms)
+
+        scheduler._record_field_refusals(issued, obs, now_ms=stale_now_ms)
+
+        payload, kind = rows[0]
+        assert len(rows) == 1
+        assert kind == "MARKETFEED_FIELD_REFUSED"
+        assert payload["raw_event_id"] == obs.raw_event_id
+        assert payload["as_of_ms"] == BAR_ONE_AS_OF
+        assert payload["evaluated_at_ms"] == stale_now_ms
+        assert payload["age_ms"] == 10_000
+        assert payload["stale_max_age_ms"] == [5_000]
+        assert payload["refused_by_reason"] == {"stale": ["close", "session"]}
+        assert (payload["fields_declared"], payload["fields_refused"]) == (2, 2)
+
+    def test_a_fresh_bar_records_nothing(self, tmp_path: Path) -> None:
+        """Diagnostics, not a log: the row exists only where there is something to explain.
+        A per-tick row would bury the refusals among ~400 passes a session."""
+        scheduler, rows = self._scheduler_with_capture(tmp_path)
+        obs, issued = self._issue(tmp_path, now_ms=BAR_ONE_AS_OF + 10)
+
+        scheduler._record_field_refusals(issued, obs, now_ms=BAR_ONE_AS_OF + 10)
+
+        assert rows == []
+
+    def test_an_unestablished_clock_is_named_and_the_age_stays_absent(
+        self, tmp_path: Path
+    ) -> None:
+        """The OTHER branch the 2026-10-22 investigation could not rule out from the store.
+        It must read as its own reason, and ``age_ms`` must be ``None`` — there was no
+        reading to subtract, and inventing one is how an unknown becomes a number nobody
+        questions."""
+        scheduler, rows = self._scheduler_with_capture(tmp_path)
+        obs, issued = self._issue(tmp_path, now_ms=None)
+
+        scheduler._record_field_refusals(issued, obs, now_ms=None)
+
+        payload, _kind = rows[0]
+        assert payload["refused_by_reason"] == {"now_ms_unknown": ["close", "session"]}
+        assert payload["age_ms"] is None
+        assert payload["evaluated_at_ms"] is None
+        assert payload["stale_max_age_ms"] == []
+
+    def test_the_row_is_written_on_the_real_tick_path(self, tmp_path: Path) -> None:
+        """Wiring, not just a callable method: a REAL ``tick_once`` over a REAL store, policy,
+        issuer and resolver, with only the clock/intake/driver doubled — the same harness the
+        #809 read-order tests use. Delete the call in ``tick_once`` and this goes red while the
+        unit tests above stay green, which is the regression worth a separate test.
+
+        The line is stamped ``_STALE_BY_MS`` behind the pass's own reading, past the fixture
+        policy's ``max_age_ms: 5000``, so the issuer refuses both declared fields on AGE.
+        """
+        rows: list[tuple[dict[str, Any], str]] = []
+        evidence = MagicMock()
+        evidence.append.side_effect = lambda payload, **kw: rows.append(
+            (payload, kw["kind"])
+        )
+        time_service = _AdvancingTimeService(
+            start_ms=_START_READING_MS, step_ms=_EVALUATION_STEP_MS
+        )
+        scheduler = _read_order_scheduler(
+            tmp_path,
+            time_service=time_service,
+            intake=_StaleIntake(time_service),
+            store=SqliteSnapshotStore(tmp_path / "marketfeed.sqlite3"),
+            driver=_CapturingDriver(),
+            evidence_store=evidence,
+        )
+
+        result = scheduler.tick_once()
+
+        assert result.outcome is TickOutcome.TICKED
+        refusals = [
+            payload for payload, kind in rows if kind == "MARKETFEED_FIELD_REFUSED"
+        ]
+        assert len(refusals) == 1
+        assert refusals[0]["refused_by_reason"] == {"stale": ["close", "session"]}
+        # `_STALE_BY_MS` behind the reading the INTAKE saw, plus this pass's own evaluation
+        # step: `before_decide` evaluates between the poll and `now_ms` (the #809 read order
+        # above), so the age the issuer measured is the later reading minus the stamp.
+        assert refusals[0]["age_ms"] == _STALE_BY_MS + _EVALUATION_STEP_MS
+        assert refusals[0]["stale_max_age_ms"] == [5_000]
