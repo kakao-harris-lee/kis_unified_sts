@@ -20,6 +20,31 @@ directly, or :meth:`TickScheduler.tick_once` (which performs the I/O and then ca
 ``time.sleep`` precedent already shipped at ``transport/kis_mock/adapter.py:480`` (module
 docstring's own firewall note).
 
+**The post-pass hook: injected work that is not part of producing a tick** (PR-3b follow-up,
+rescope plan ``docs/plans/2026-10-22-tos-rescope-plan.md`` §3 M2). :meth:`TickScheduler
+.run_forever` calls the constructor-injected ``after_pass`` hook once per pass, AFTER
+:meth:`tick_once` returns and BEFORE ``sleep``. Compose passes
+``_broker_posttrade_wiring.fill_observer_pass``, which polls a stock MOCK boot's post-ACK fill
+observer (:mod:`tos_runtime.posttrade.fill_observer`) — until this hook existed nothing called
+``poll_if_due()`` in a running session, so a real fill was never observed. Three properties,
+each deliberate:
+
+* **In the loop, not inside** :meth:`tick_once`. The hook's work is not part of producing a
+  tick, and it must run on EVERY pass — including the ones :meth:`tick_once` returns early
+  from. ``SKIPPED_SESSION_CLOSED`` is the one that matters: an order ACKed just before the
+  close still has a fill to observe and capacity to release, and a hook reached only on the
+  ``TICKED`` path would stop reading the broker exactly when the answer arrives.
+* **After the pass, never before it.** The decision path owns this pass's latency budget —
+  the same reasoning (and the same independent-review finding, LOW-5) that put
+  :meth:`TickScheduler._record_field_refusals` after the decision rather than between
+  ``store.put`` and it.
+* **A raise propagates**, exactly like every other evidence failure in this module
+  (:meth:`TickScheduler._record_field_refusals`'s own docstring). The hook's own non-fatal
+  conditions stay its own business — the fill observer records a failed broker read as an
+  evidence row and returns normally — so what reaches this loop is a failure of the durable
+  bookkeeping itself, and a runtime that kept ticking past that would keep taking risk it can
+  no longer account for.
+
 **Read order: the intake FIRST, the wall-clock reading SECOND** (plan
 ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1, operator disposition §6.1;
 issue #809). :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` returns the
@@ -367,6 +392,7 @@ class TickScheduler:
         evidence_store: SqliteEvidenceStore,
         poll_interval_ms: int,
         before_decide: Callable[[], bool] | None = None,
+        after_pass: Callable[[], None] | None = None,
     ) -> None:
         """Wire the scheduler (every arg's own docstring lives on the field it fills below —
         ``instruments``/``instrument_class``/``account``/``direction``/``quantity_basis``/
@@ -385,10 +411,17 @@ class TickScheduler:
         the time service to the caller. :meth:`tick_once` still evaluates nothing itself — it only
         calls this hook.
 
+        ``after_pass`` runs once per :meth:`run_forever` pass, after :meth:`tick_once` returns
+        and before ``sleep`` — whatever that pass's outcome was, and never from
+        :meth:`tick_once` itself (module docstring's own post-pass-hook paragraph). Compose
+        passes ``_broker_posttrade_wiring.fill_observer_pass``; ``None`` leaves the loop with
+        nothing to run after a pass, which is every boot that is not a stock MOCK order tree.
+
         Raises:
             MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
         """
         self._before_decide = before_decide
+        self._after_pass = after_pass
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -627,12 +660,19 @@ class TickScheduler:
             stop: Injected stop predicate, checked before every pass — a test supplies one that
                 flips ``True`` after N calls so this loop terminates.
 
-        This loop calls nothing but :meth:`tick_once` and ``sleep``: the constructor's
-        ``before_decide`` hook now runs INSIDE the pass, between the intake read and the decision
-        (module docstring's own read-order paragraph; plan 2026-09-27 §2.1, issue #809), so a
-        pass whose time evaluation failed is a :class:`TickResult` with
+        This loop calls :meth:`tick_once`, the constructor's ``after_pass`` hook, and ``sleep``
+        — nothing else. The ``before_decide`` hook now runs INSIDE the pass, between the intake
+        read and the decision (module docstring's own read-order paragraph; plan 2026-09-27
+        §2.1, issue #809), so a pass whose time evaluation failed is a :class:`TickResult` with
         ``SKIPPED_TIME_NOT_EVALUATED``, not a pass this loop skipped.
+
+        ``after_pass`` runs once per pass, after the tick's own decision work and before the
+        sleep, on EVERY outcome — the post-pass-hook paragraph in the module docstring has the
+        three reasons (why here and not in :meth:`tick_once`, why after and not before, and why
+        a raise from it propagates out of this loop rather than being swallowed).
         """
         while not stop():
             self.tick_once()
+            if self._after_pass is not None:
+                self._after_pass()
             sleep(self._poll_interval_ms / 1000)

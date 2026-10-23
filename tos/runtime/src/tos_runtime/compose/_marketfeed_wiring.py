@@ -661,6 +661,28 @@ def _build_intake(
     )
 
 
+def _build_time_projection(
+    config: MarketFeedConfig,
+    time_config: TrustworthyTimeConfig,
+    time_service: TrustworthyTimeService,
+    session_owner: SessionFactsOwner,
+) -> RuntimeTimeProjection:
+    """The lane-C time projection the scheduler resolves through — split out of
+    :func:`build_tick_scheduler` purely for that function's own size budget
+    (``tools/tos_size_budget.py``, function ceiling 100 lines); no behavioural difference from
+    constructing it inline, and the same "split purely for size budget" discipline
+    :mod:`tos_runtime.compose._run_dispatch` already documents for itself.
+    """
+    return RuntimeTimeProjection(
+        config=time_config,
+        time_service=time_service,
+        session_owner=session_owner,
+        instrument_class=config.instrument_class,
+        snapshot_age_bound=config.snapshot_age_bound,
+        interval_width=config.interval_width,
+    )
+
+
 def build_tick_scheduler(
     *,
     config_dir: Path,
@@ -677,6 +699,7 @@ def build_tick_scheduler(
     broker_scopes: BrokerScopesConfig,
     runtime_identity: RuntimeIdentity,
     credential_sessions: KisCredentialSessions | None,
+    after_pass: Callable[[], None] | None = None,
 ) -> TickScheduler | None:
     """Build the tick scheduler, or ``None`` when this wave is not configured (module docstring).
 
@@ -698,6 +721,7 @@ def build_tick_scheduler(
         evidence_store: This process's shared evidence store.
         custody, monotonic, broker_scopes, runtime_identity, credential_sessions: Used ONLY
             when ``intake_kind: kis_quote`` — see :func:`_build_intake` for what each one feeds.
+        after_pass: Forwarded to ``TickScheduler.run_forever``'s post-pass hook; ``None`` = none.
 
     Returns:
         The built scheduler, or ``None`` when ``marketfeed.yaml`` is absent (an operator who has
@@ -732,13 +756,8 @@ def build_tick_scheduler(
         runtime_identity=runtime_identity,
         credential_sessions=credential_sessions,
     )
-    time_projection = RuntimeTimeProjection(
-        config=time_config,
-        time_service=time_service,
-        session_owner=session_owner,
-        instrument_class=config.instrument_class,
-        snapshot_age_bound=config.snapshot_age_bound,
-        interval_width=config.interval_width,
+    time_projection = _build_time_projection(
+        config, time_config, time_service, session_owner
     )
     return TickScheduler(
         instruments=config.instruments,
@@ -759,4 +778,5 @@ def build_tick_scheduler(
         evidence_store=evidence_store,
         poll_interval_ms=config.poll_interval_ms,
         before_decide=_time_pacer_pass(config, time_service, session_owner, monotonic),
+        after_pass=after_pass,
     )

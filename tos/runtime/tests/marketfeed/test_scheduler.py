@@ -237,6 +237,7 @@ def _build_scheduler(
     *,
     poll_interval_ms: int,
     before_decide: Callable[[], bool] | None = None,
+    after_pass: Callable[[], None] | None = None,
     intake: Any = None,
     store: Any = None,
     time_service: Any = None,
@@ -280,6 +281,7 @@ def _build_scheduler(
         evidence_store=MagicMock(),
         poll_interval_ms=poll_interval_ms,
         before_decide=before_decide,
+        after_pass=after_pass,
     )
 
 
@@ -356,6 +358,127 @@ def test_run_forever_calls_nothing_but_tick_once_and_sleep(tmp_path: Path) -> No
     assert tick_calls == 3
     assert hook_calls == 0  # the loop itself never calls it — tick_once does
     assert sleep_calls == [0.75, 0.75, 0.75]
+
+
+# ----------------------------------------------------------------------------
+# run_forever — the `after_pass` hook (PR-3b follow-up; module docstring's own
+# post-pass-hook paragraph). Compose wires the stock MOCK fill observer's `poll_if_due()`
+# into it; these tests pin the LOOP's side of that contract with a plain counting double.
+# ----------------------------------------------------------------------------
+
+
+def test_run_forever_runs_the_after_pass_hook_once_per_pass_after_the_tick(
+    tmp_path: Path,
+) -> None:
+    """Order within a pass: ``tick_once`` -> ``after_pass`` -> ``sleep``, once each.
+
+    Mutations, each separately red: drop the call -> no ``"after"`` at all; call it before
+    ``tick_once`` -> the first two entries swap (the decision path must not pay for post-trade
+    work); call it after ``sleep`` -> the last two swap.
+    """
+    order: list[str] = []
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=750, after_pass=lambda: order.append("after")
+    )
+
+    def fake_tick_once() -> TickResult:
+        order.append("tick")
+        return TickResult(outcome=TickOutcome.TICKED)
+
+    scheduler.tick_once = fake_tick_once  # type: ignore[method-assign]
+    scheduler.run_forever(
+        sleep=lambda seconds: order.append(f"sleep:{seconds}"), stop=_stop_after(2)
+    )
+
+    assert order == ["tick", "after", "sleep:0.75"] * 2
+
+
+def test_run_forever_runs_the_after_pass_hook_on_a_pass_that_produced_no_tick(
+    tmp_path: Path,
+) -> None:
+    """A shut market is exactly when this must still run: ``tick_once`` returns
+    ``SKIPPED_SESSION_CLOSED`` before it reaches any decision work, and an order ACKed just
+    before the close still has a fill to observe and capacity to release (module docstring).
+
+    Mutation: gate the hook on ``result.outcome is TickOutcome.TICKED`` -> ``hook_calls == 0``
+    -> red.
+    """
+    hook_calls = 0
+
+    def after_pass() -> None:
+        nonlocal hook_calls
+        hook_calls += 1
+
+    scheduler = _build_scheduler(tmp_path, poll_interval_ms=400, after_pass=after_pass)
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.SKIPPED_SESSION_CLOSED
+    )
+
+    scheduler.run_forever(sleep=lambda _seconds: None, stop=_stop_after(3))
+
+    assert hook_calls == 3
+
+
+def test_a_raising_after_pass_hook_propagates_and_stops_the_loop(
+    tmp_path: Path,
+) -> None:
+    """The same answer this module already gives for an unwritable evidence store
+    (``_record_field_refusals``: "A failed append propagates"): the loop does not continue past
+    durable bookkeeping it could not do. The hook's own non-fatal conditions never reach here —
+    the fill observer records a failed broker read and returns normally.
+
+    Mutation: wrap the call in ``try/except Exception: pass`` -> no ``RuntimeError`` escapes and
+    the loop runs all three passes -> red on both assertions.
+    """
+    ticks = 0
+
+    def fake_tick_once() -> TickResult:
+        nonlocal ticks
+        ticks += 1
+        return TickResult(outcome=TickOutcome.TICKED)
+
+    def after_pass() -> None:
+        raise RuntimeError("evidence store is unwritable")
+
+    sleep_calls: list[float] = []
+    scheduler = _build_scheduler(tmp_path, poll_interval_ms=400, after_pass=after_pass)
+    scheduler.tick_once = fake_tick_once  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="unwritable"):
+        scheduler.run_forever(sleep=sleep_calls.append, stop=_stop_after(3))
+
+    assert ticks == 1  # the loop stopped on the first pass
+    assert sleep_calls == []  # and never reached that pass's own sleep
+
+
+def test_tick_once_itself_never_runs_the_after_pass_hook(tmp_path: Path) -> None:
+    """The hook belongs to the LOOP, not to a pass: a caller driving ``tick_once`` directly
+    (every test in this module, ``tests/compose/test_marketfeed_wiring.py``, a diagnostic) gets
+    exactly the tick it asked for and no post-trade broker read.
+
+    Mutation: move the call into ``tick_once`` -> ``hook_calls == 1`` -> red.
+    """
+    hook_calls = 0
+
+    def after_pass() -> None:
+        nonlocal hook_calls
+        hook_calls += 1
+
+    intake = MagicMock()
+    intake.poll.return_value = (_observation(),)
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=lambda: False,
+        after_pass=after_pass,
+        intake=intake,
+        store=store,
+    )
+
+    assert scheduler.tick_once().outcome is TickOutcome.SKIPPED_TIME_NOT_EVALUATED
+    assert hook_calls == 0
 
 
 # ----------------------------------------------------------------------------

@@ -73,6 +73,7 @@ __all__ = [
     "DeferredKisWitness",
     "attach_fill_observer",
     "build_broker_posttrade",
+    "fill_observer_pass",
 ]
 
 
@@ -261,3 +262,36 @@ def attach_fill_observer(
         instrument=instrument_key.instrument,
     )
     return runtime
+
+
+def fill_observer_pass(runtime: ComposedRuntime) -> Callable[[], None]:
+    """The session loop's post-pass work: poll this boot's fill observer, if it has one.
+
+    :func:`attach_fill_observer` builds the observer; nothing CALLED it until this hook existed
+    — :attr:`~tos_runtime.compose._types.ComposedRuntime.fill_observer`'s own docstring said "a
+    runner calls its ``poll_if_due()``" and no runner did, so in a live MOCK session an ACKed
+    order's fill was never observed and its capacity never released. The one session loop this
+    runtime has is :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.run_forever` (the
+    ``run`` subcommand drives it and nothing else does), so this is the callable its
+    ``after_pass`` hook runs — see that method's own docstring for why the call sits in the loop,
+    after the pass, and lets a raise through.
+
+    **Cadence belongs to the observer, not to this hook.** It calls ``poll_if_due()`` every pass
+    and :meth:`~tos_runtime.posttrade.fill_observer.KisMockFillObserver.poll_if_due` decides
+    whether to read the broker, from ``fill_observer.yaml``'s own ``poll_interval_ms``. A second
+    interval here would be the same policy kept in two places.
+
+    **The attribute is read per call, never captured.** ``fill_observer`` is ``None`` on every
+    boot that is not a stock MOCK order tree AND on a stock MOCK boot whose recovery barrier
+    held — and compose attaches it before it builds the scheduler, so a captured value would
+    also silently freeze the wiring order into this hook's behaviour. Reading it per call keeps
+    "no observer ⇒ nothing to poll" true whenever it is true.
+    """
+
+    def _pass() -> None:
+        observer = runtime.fill_observer
+        if observer is None:
+            return
+        observer.poll_if_due()
+
+    return _pass
