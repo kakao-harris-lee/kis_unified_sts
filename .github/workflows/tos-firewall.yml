@@ -743,14 +743,17 @@ jobs:
       # ways while writing this step; the CI shape is the first one.
       #
       # SCOPE, stated so the remainder is named rather than silently excluded:
-      # this covers `tools/tos_*.py` + `tools/tos_cp3/` (39 of the 67 files
-      # under `tools/`). The other 28 are NOT covered and carry 141 errors /
-      # 13 files under these same flags — `tools/spikes/phase0_contract/` (91,
-      # throwaway Phase-0 prototypes), `tools/broker_probes/` (20, the
-      # real-broker probe harness) and three loose scripts
-      # (`wfcanon-v222.py` 12, `ladder-v222e5.py` 12, `pagelimb-v222e5.py` 6).
-      # Widening to all of `tools/` is a follow-up, and the broker-probe part
-      # of it touches real-order paths.
+      # this covers `tools/tos_*.py` + `tools/tos_cp3/`, which is a GLOB, not a
+      # list — a tool added under either path joins the gate automatically
+      # (`tos_recovery_drill.py` and `tos_cp3/status_board.py`, both landed
+      # while this PR was open, were picked up and are clean).
+      # The rest of `tools/` is NOT covered: at 06051fc3 that is 28 of the 69
+      # files, carrying 141 errors / 13 files under these same flags —
+      # `tools/spikes/phase0_contract/` (91, throwaway Phase-0 prototypes),
+      # `tools/broker_probes/` (20, the real-broker probe harness) and three
+      # loose scripts (`wfcanon-v222.py` 12, `ladder-v222e5.py` 12,
+      # `pagelimb-v222e5.py` 6). Widening to all of `tools/` is a follow-up,
+      # and the broker-probe part of it touches real-order paths.
       - name: mypy (tos tooling)
         run: >-
           mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports
