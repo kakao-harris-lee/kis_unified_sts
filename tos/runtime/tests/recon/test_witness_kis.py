@@ -422,12 +422,26 @@ def test_futures_asset_is_refused_at_construction(server: FakeKisGetServer) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_non_10_digit_account_raises_witness_unavailable(
-    server: FakeKisGetServer,
+@pytest.mark.parametrize(
+    "account",
+    [
+        "not-an-account",
+        "123456789",
+        "1234-567801",
+        "12345678-0-1",
+        "１２３４５６７８０１",
+    ],
+)
+def test_a_non_8_2_account_raises_witness_unavailable(
+    server: FakeKisGetServer, account: str
 ) -> None:
+    """The witness splits the account with the order codec's own parser
+    (``transport/kis_mock/account.py``, #932) — a shape the order path refuses is refused here
+    too, so a fill read can never target a different account than the order did."""
     witness = _witness(server)
-    with pytest.raises(WitnessUnavailable, match="10-digit"):
-        witness.observe(WitnessScope(account="not-an-account"))
+    with pytest.raises(WitnessUnavailable, match="8-2"):
+        witness.observe(WitnessScope(account=account))
+    assert server.all_requests == []  # refused before any GET
 
 
 # ---------------------------------------------------------------------------

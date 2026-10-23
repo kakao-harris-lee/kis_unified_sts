@@ -60,7 +60,9 @@ above; it holds no reference to any evidence store at all.
 Firewall (RUNTIME scope R1): stdlib (``dataclasses``, ``datetime``, ``decimal``, ``re``,
 ``typing``, ``zoneinfo``) + this package's own sibling modules
 (:mod:`~tos_runtime.recon.ports`, :mod:`~tos_runtime.recon.witness_kis_config`,
-:mod:`~tos_runtime.recon.witness_kis_client`) — no ``os.environ``, no ``shared.*``, no
+:mod:`~tos_runtime.recon.witness_kis_client`) plus the stdlib-only KIS account parser
+:mod:`tos_runtime.transport.kis_mock.account` (PR-3b — one 8-2 parser for order and fill reads) —
+no ``os.environ``, no ``shared.*``, no
 evidence-store import, no direct ``tos.*`` import at all (this module only ever sees
 ``InstrumentKey``/``WitnessScope`` etc. through :mod:`tos_runtime.recon.ports`'s own
 re-exports, so it opens no new commons edge beyond the one that module already has).
@@ -90,6 +92,7 @@ from tos_runtime.recon.witness_kis_client import (
     RawGetResponse,
 )
 from tos_runtime.recon.witness_kis_config import KisWitnessConfig, refuse_futures_asset
+from tos_runtime.transport.kis_mock.account import KisAccountError, split_kis_account
 
 __all__ = [
     "KisOrderRow",
@@ -488,14 +491,16 @@ class KisStockBrokerWitness:
         translation to a KIS account number belongs at that wiring layer, not invented
         here as a guess.
         """
-        digits = "".join(ch for ch in account if ch.isdigit())
-        if len(digits) != 10:
+        # PR-3b (#932 dde3fbce): the SAME parser the order codec and the balance facts use, so a
+        # fill read targets exactly the account the order went to — never a looser reading.
+        try:
+            parsed = split_kis_account(account)
+        except KisAccountError as exc:
             raise WitnessUnavailable(
-                "KisStockBrokerWitness: scope.account must be a 10-digit KIS account "
-                f"number (CANO + product code) — got {len(digits)} digit(s). This "
+                f"KisStockBrokerWitness: scope.account is not a KIS 8-2 account ({exc}) — this "
                 "witness cannot answer for a non-KIS-shaped account identifier."
-            )
-        return digits[:8], digits[8:10]
+            ) from None
+        return parsed.cano, parsed.acnt_prdt_cd
 
     # -- HTTP --------------------------------------------------------------------------
 
