@@ -119,7 +119,7 @@ def test_sell_side_fill_is_negative_net(evidence_store: SqliteEvidenceStore) -> 
     assert worst_credible_directional_usage(obs) == Decimal(5)
 
 
-def test_unmatched_result_is_unknown_in_full_sealed_quantity(
+def test_unmatched_result_is_in_flight_in_full_sealed_quantity(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
     seed_send_sealed(
@@ -148,11 +148,10 @@ def test_unmatched_result_is_unknown_in_full_sealed_quantity(
     )
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(0)
-    assert obs.unknown_buy == Decimal(4)
+    assert obs.unknown_buy == Decimal(0)
     assert obs.unknown_sell == Decimal(0)
-    assert obs.in_flight_buy == Decimal(0)
+    assert obs.in_flight_buy == Decimal(4)
     assert "evidence:RESULT_UNMATCHED" in obs.sources
-    # GRANT->DENY boundary: the full unconfirmed quantity counts toward worst-credible usage.
     assert worst_credible_directional_usage(obs) == Decimal(4)
 
 
@@ -712,3 +711,69 @@ def test_long_short_mirror_symmetry_property(
     assert worst_credible_directional_usage(obs) == worst_credible_directional_usage(
         mirrored
     )
+
+
+def _reader(store: SqliteEvidenceStore) -> EvidencePositionReader:
+    return EvidencePositionReader(
+        store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        buy_side_token="BUY",
+        sell_side_token="SELL",
+    )
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize(
+    "consumed_kind,consumed_fill,confirmed,outstanding",
+    [
+        ("CANCEL_ACK", None, 0, 10),
+        ("CANCEL_ACK", "4", 4, 6),
+    ],
+)
+def test_unmatched_result_after_terminal_consumed_reopens_the_attempt(
+    evidence_store: SqliteEvidenceStore,
+    side: str,
+    consumed_kind: str,
+    consumed_fill: str | None,
+    confirmed: int,
+    outstanding: int,
+) -> None:
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=consumed_fill,
+        egress_result_kind=consumed_kind,
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity="10",
+        egress_result_kind="FULL_FILL",
+    )
+    obs = _reader(evidence_store).observe()
+    sign = 1 if side == "BUY" else -1
+    assert obs.confirmed_net == sign * confirmed
+    toward, against = (
+        (obs.in_flight_buy, obs.in_flight_sell)
+        if side == "BUY"
+        else (obs.in_flight_sell, obs.in_flight_buy)
+    )
+    assert toward == Decimal(outstanding)
+    assert against == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))

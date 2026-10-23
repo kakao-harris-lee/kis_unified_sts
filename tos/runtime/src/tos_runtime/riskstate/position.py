@@ -55,12 +55,17 @@ whose kind is NOT terminal (``ACK`` / ``PARTIAL_FILL``    above, PLUS IN-FLIGHT:
                                                            ACK resolves nothing (lane A
                                                            re-review #7; bucket rationale in
                                                            :mod:`tos.position.predicates`).
-``SEND_SEALED`` + ``RESULT_UNMATCHED`` present (no        UNKNOWN: the FULL sealed
-``EGRESS_RESULT_CONSUMED`` for the same attempt)          ``send_seal.outbound_quantity``,
+``SEND_SEALED`` + ``RESULT_UNMATCHED`` not superseded     IN-FLIGHT: the FULL sealed
+by a LATER ``EGRESS_RESULT_CONSUMED``                     ``send_seal.outbound_quantity``,
                                                            signed by ``outbound_side`` — a
                                                            recorded-but-not-applied result
                                                            proves nothing was safely
                                                            resolved (plan §2.2 line 58).
+``SEND_SEALED`` + ``RESULT_UNMATCHED`` with a higher      As the non-terminal CONSUMED row,
+``seq`` than the latest ``EGRESS_RESULT_CONSUMED``        whatever that result's kind: the
+                                                           consumed fill stays CONFIRMED, the
+                                                           unfilled remainder returns to
+                                                           IN-FLIGHT.
 ``SEND_SEALED`` with NEITHER receipt kind present         IN-FLIGHT: the full sealed
                                                            quantity, signed by
                                                            ``outbound_side`` — genuinely
@@ -68,12 +73,21 @@ whose kind is NOT terminal (``ACK`` / ``PARTIAL_FILL``    above, PLUS IN-FLIGHT:
 An ``outbound_side`` that matches NEITHER of the two       UNKNOWN in BOTH directions
 injected side tokens                                       (fail-closed — an unrecognized
                                                              side token proves no direction
-                                                             at all, never defaults to one).
+                                                             at all, never defaults to one);
+                                                             IN-FLIGHT quantities go to
+                                                             IN-FLIGHT in both directions.
 ======================================================  =================================
 
-If BOTH a ``RESULT_UNMATCHED`` and an ``EGRESS_RESULT_CONSUMED`` row exist for the same
-attempt (a re-injected result superseding an earlier unmatched one), the ``CONSUMED`` row
-governs — it is the durably APPLIED fact.
+**Why UNMATCHED is IN-FLIGHT.** UNKNOWN nets against an opposite confirmed position and
+IN-FLIGHT never does (rationale and the ARE decision-sum argument in
+:mod:`tos.position.predicates`), so moving an unmatched attempt to IN-FLIGHT can only raise the
+decision sum — it equals the state before the result was recorded.
+
+**Supersession is by evidence ``seq``.** An unmatched row BEFORE a consumed row (a re-injected
+result superseding it) is dropped — the ``CONSUMED`` row is the durably APPLIED fact. An
+unmatched row AFTER the latest consumed row is a result that was never applied (e.g. a fill
+crossing a ``CANCEL_ACK``, whose quantity ``tos.engine.core`` records only on
+``RESULT_UNMATCHED``), so it reopens the attempt even when the consumed kind is terminal.
 
 **Side stays a policy/config-carried token — never a runtime-authored literal (deviation from
 the plan §4.1 constructor signature, reported; long/short symmetry, CLAUDE.md "Futures must
@@ -150,29 +164,36 @@ _TERMINAL_RESULT_TOKENS: frozenset[str] = frozenset(
 )
 
 
-def _read_kind_payloads(
+def _read_kind_payloads_with_seq(
     store: SqliteEvidenceStore, kind: str
-) -> list[dict[str, object]]:
-    """Read every matching entry's scrubbed payload, in commit (``seq``) order — the exact
+) -> list[tuple[int, dict[str, object]]]:
+    """Read every matching entry's ``(seq, scrubbed payload)``, in commit (``seq``) order — the exact
     by-kind raw-SQL idiom :mod:`tos_runtime.recon.witness_synthetic` /
     :mod:`tos_runtime.recon.evidence_reader` / :mod:`tos_runtime.safety.ack` already use over
     this same store (module docstring)."""
     try:
         cursor = store.connection.execute(
-            "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC", (kind,)
+            "SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
+            (kind,),
         )
         rows = cursor.fetchall()
     except sqlite3.Error as exc:
         raise WitnessUnavailable(
             f"EvidencePositionReader: evidence store query failed for kind={kind!r}: {exc}"
         ) from exc
-    payloads: list[dict[str, object]] = []
-    for (payload_json,) in rows:
+    payloads: list[tuple[int, dict[str, object]]] = []
+    for seq, payload_json in rows:
         decoded = json.loads(payload_json)
         payload = decoded.get("payload", decoded)
         if isinstance(payload, dict):
-            payloads.append(payload)
+            payloads.append((seq, payload))
     return payloads
+
+
+def _read_kind_payloads(
+    store: SqliteEvidenceStore, kind: str
+) -> list[dict[str, object]]:
+    return [payload for _, payload in _read_kind_payloads_with_seq(store, kind)]
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -284,33 +305,41 @@ class EvidencePositionReader:
         sources)`` — split out of :meth:`observe` purely for that method's own 100-line size
         budget; no behavioural difference from having this inline."""
         consumed_payloads = [
-            payload
-            for payload in _read_kind_payloads(self._store, "EGRESS_RESULT_CONSUMED")
+            (seq, payload)
+            for seq, payload in _read_kind_payloads_with_seq(
+                self._store, "EGRESS_RESULT_CONSUMED"
+            )
             if _in_scope(payload, account=self._account, instrument=self._instrument)
         ]
         unmatched_payloads = [
-            payload
-            for payload in _read_kind_payloads(self._store, "RESULT_UNMATCHED")
+            (seq, payload)
+            for seq, payload in _read_kind_payloads_with_seq(
+                self._store, "RESULT_UNMATCHED"
+            )
             if _in_scope(payload, account=self._account, instrument=self._instrument)
         ]
         consumed_by_attempt: dict[str, ConsumedResult] = {}
+        latest_consumed_seq: dict[str, int] = {}
         unmatched_attempts: set[str] = set()
         # ``consumed_payloads`` is in commit (``seq ASC``) order, so the last assignment per
         # attempt is its LATEST applied result — the one whose kind decides terminality and
         # whose stored (cumulative) magnitudes govern (module docstring's table).
-        for payload in consumed_payloads:
+        for seq, payload in consumed_payloads:
             attempt_id = payload.get("attempt_id")
             if not isinstance(attempt_id, str):
                 continue
+            latest_consumed_seq[attempt_id] = seq
             raw_kind = payload.get("egress_result_kind")
             consumed_by_attempt[attempt_id] = ConsumedResult(
                 result_kind=raw_kind if isinstance(raw_kind, str) else None,
                 filled_quantity=_to_decimal(payload.get("filled_quantity")),
                 remaining_quantity=_to_decimal(payload.get("remaining_quantity")),
             )
-        for payload in unmatched_payloads:
+        for seq, payload in unmatched_payloads:
             attempt_id = payload.get("attempt_id")
-            if isinstance(attempt_id, str) and attempt_id not in consumed_by_attempt:
+            if isinstance(attempt_id, str) and seq > latest_consumed_seq.get(
+                attempt_id, -1
+            ):
                 unmatched_attempts.add(attempt_id)
         sources: list[str] = []
         if consumed_payloads:

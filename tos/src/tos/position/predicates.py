@@ -26,11 +26,16 @@ whose ``result_kind`` is NOT terminal (``ACK`` /          signed by ``send.side`
 missing / unrecognized token — fail-closed)               quantity ``max(remaining_quantity,
                                                            send.quantity - filled_quantity,
                                                            0)`` signed by ``send.side``.
-``SEND_SEALED`` + ``RESULT_UNMATCHED`` present (no        UNKNOWN: the FULL sealed
-``EGRESS_RESULT_CONSUMED`` for the same attempt)          ``send.quantity``, signed by
+``SEND_SEALED`` + ``RESULT_UNMATCHED`` not superseded     IN-FLIGHT: the FULL sealed
+by a LATER ``EGRESS_RESULT_CONSUMED``                     ``send.quantity``, signed by
                                                            ``send.side`` — a
                                                            recorded-but-not-applied result
                                                            proves nothing was safely resolved.
+``SEND_SEALED`` + ``RESULT_UNMATCHED`` recorded AFTER     As the non-terminal CONSUMED row,
+the latest ``EGRESS_RESULT_CONSUMED``                     whatever that result's kind: the
+                                                           consumed ``filled_quantity`` stays
+                                                           CONFIRMED, the unfilled remainder
+                                                           returns to IN-FLIGHT.
 ``SEND_SEALED`` with NEITHER receipt kind present         IN-FLIGHT: the full sealed
                                                            quantity, signed by ``send.side`` —
                                                            genuinely still outstanding.
@@ -38,8 +43,10 @@ A ``side`` that matches NEITHER of the two injected        UNKNOWN in BOTH direc
 side tokens                                                 (fail-closed — an unrecognized
                                                              side token proves no direction
                                                              at all, never defaults to one);
-                                                             a non-terminal remainder goes to
-                                                             IN-FLIGHT in both directions.
+                                                             any IN-FLIGHT quantity (non-
+                                                             terminal remainder, unmatched or
+                                                             unresulted) goes to IN-FLIGHT in
+                                                             both directions.
 ======================================================  =================================
 
 **Why a non-terminal remainder is IN-FLIGHT, not UNKNOWN (Phase-0 lane A re-review #7).**
@@ -59,11 +66,20 @@ instead of the in-flight 20) and would let a ``TIMEOUT`` shrink the sum below th
 state. The remainder is the larger of the recorded ``remaining_quantity`` and ``send.quantity -
 filled_quantity`` so an absent or under-reported remainder never shrinks it.
 
-If BOTH a ``RESULT_UNMATCHED`` and an ``EGRESS_RESULT_CONSUMED`` fact exist for the same
-attempt, the caller is expected to have already resolved that supersession (the runtime reader
-builds ``consumed_by_attempt`` / ``unmatched_attempts`` so a CONSUMED attempt never also
-appears in ``unmatched_attempts`` — the durably APPLIED fact governs); this module trusts that
-input shape and does not re-derive it.
+**Why an unmatched result is IN-FLIGHT too.** The same decision-sum argument applies: UNKNOWN
+nets against an opposite confirmed position, IN-FLIGHT never does, so an unmatched 10-lot sell
+over a confirmed +10 would read 10 as UNKNOWN but 20 as IN-FLIGHT — and 20 is what the attempt
+read before the unmatched result was recorded. Moving the quantity to IN-FLIGHT can only raise
+the sum, so recording a result never makes the position look safer than recording none.
+
+**Supersession.** ``unmatched_attempts`` holds the attempts whose ``RESULT_UNMATCHED`` was NOT
+superseded by a later ``EGRESS_RESULT_CONSUMED`` (the caller compares evidence ``seq`` — this
+module trusts that input shape), so it may overlap ``consumed_by_attempt``. An unmatched result
+recorded AFTER the latest consumed one is a result that was never applied (e.g. a
+cancel-crossing fill arriving after a ``CANCEL_ACK``), so the attempt is not resolved even if
+the consumed kind is terminal: its outstanding quantity is computed as for a non-terminal
+result. An unmatched result recorded BEFORE a consumed one is superseded — the durably APPLIED
+fact governs.
 
 Pure module: stdlib (``decimal``, ``collections.abc``) + ``tos.position.records`` only; no
 ``shared.*``, no sibling ``tos.*`` (mirrors every other kernel package's §0.3 discipline).
@@ -137,13 +153,16 @@ def _outstanding_after(
     sealed_quantity: Decimal,
     *,
     terminal_result_kinds: AbstractSet[str],
+    reopened: bool,
 ) -> Decimal:
     """The still-outstanding quantity of an attempt whose latest applied result is
     ``consumed`` (module docstring's "why IN-FLIGHT" note): ``0`` for a terminal result kind;
     otherwise the larger of the recorded remainder and ``sealed - filled`` (never negative). A
-    missing or unrecognized ``result_kind`` is not terminal (fail-closed)."""
+    missing or unrecognized ``result_kind`` is not terminal (fail-closed), and neither is any
+    result that a later unmatched result ``reopened``."""
     if (
-        consumed.result_kind is not None
+        not reopened
+        and consumed.result_kind is not None
         and consumed.result_kind in terminal_result_kinds
     ):
         return Decimal(0)
@@ -187,7 +206,10 @@ def classify_sealed_sends(
         if consumed is not None:
             filled = consumed.filled_quantity or Decimal(0)
             outstanding = _outstanding_after(
-                consumed, quantity, terminal_result_kinds=terminal_result_kinds
+                consumed,
+                quantity,
+                terminal_result_kinds=terminal_result_kinds,
+                reopened=send.attempt_id in unmatched_attempts,
             )
             if sign is None:
                 # Unrecognized side on a CONFIRMED fill: fail-closed to UNKNOWN in both
@@ -206,13 +228,13 @@ def classify_sealed_sends(
             continue
         if send.attempt_id in unmatched_attempts:
             if sign is None:
-                unknown_buy += quantity
-                unknown_sell += quantity
+                in_flight_buy += quantity
+                in_flight_sell += quantity
                 continue
             if sign > 0:
-                unknown_buy += quantity
+                in_flight_buy += quantity
             else:
-                unknown_sell += quantity
+                in_flight_sell += quantity
             continue
         # Sealed, no terminal result at all: genuinely in-flight.
         if sign is None:
