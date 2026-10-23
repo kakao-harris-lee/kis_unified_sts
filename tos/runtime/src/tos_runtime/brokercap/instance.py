@@ -77,6 +77,12 @@ from tos.brokercap.vocabulary import (
 )
 from tos.canonical import ArtifactStatus
 
+from tos_runtime.transport.endpoint import (
+    EndpointOrigin,
+    EndpointOriginError,
+    endpoint_origin,
+)
+
 __all__ = [
     "REAL_ENVIRONMENT",
     "BrokerInstanceConfigError",
@@ -592,28 +598,50 @@ def _raw_class(raw: object) -> object:
 
 @dataclass(frozen=True)
 class _HostIndex:
-    """The two host facts every class claim is checked against, read off the RAW documents
-    (so a single-document load sees them without building the others)."""
+    """The host facts every class claim is checked against, read off the RAW documents (so a
+    single-document load sees them without building the others), as normalized origins
+    (:func:`~tos_runtime.transport.endpoint.endpoint_origin` — the same normalizer the
+    MOCK-only transport seals compare with; #932 final review MEDIUM)."""
 
-    #: The REAL document's ``rest_base`` — ``None`` when there is not exactly one REAL
-    #: document with a known host (then no simulation claim can be proven).
-    real_rest_base: str | None
-    #: Every host a document declaring ``BROKER_SIMULATION`` sits on.
-    simulation_hosts: frozenset[str]
+    #: The REAL document's origin — ``None`` when there is not exactly one REAL document
+    #: with a known, normalizable host (then no simulation claim can be proven).
+    real_origin: EndpointOrigin | None
+    #: Every origin a document declaring ``BROKER_SIMULATION`` sits on.
+    simulation_origins: frozenset[EndpointOrigin]
+    #: Whether some ``BROKER_SIMULATION`` document's host could not be normalized (then no
+    #: production claim can be proven distinct from it).
+    simulation_unparseable: bool
+
+
+def _origin_or_none(rest_base: str | None) -> EndpointOrigin | None:
+    if rest_base is None:
+        return None
+    try:
+        return endpoint_origin(rest_base)
+    except EndpointOriginError:
+        return None
 
 
 def _host_index(raw_docs: list[Any]) -> _HostIndex:
     real = [
         d for d in raw_docs if _raw_identity(d).get("environment") == REAL_ENVIRONMENT
     ]
-    real_rest_base = _read_rest_base(_raw_identity(real[0])) if len(real) == 1 else None
-    simulation_hosts = {
-        host
+    real_origin = (
+        _origin_or_none(_read_rest_base(_raw_identity(real[0])))
+        if len(real) == 1
+        else None
+    )
+    simulation_hosts = [
+        _read_rest_base(_raw_identity(d))
         for d in raw_docs
         if _raw_class(d) == BrokerEnvironment.BROKER_SIMULATION.value
-        and (host := _read_rest_base(_raw_identity(d))) is not None
-    }
-    return _HostIndex(real_rest_base, frozenset(simulation_hosts))
+    ]
+    origins = [_origin_or_none(h) for h in simulation_hosts if h is not None]
+    return _HostIndex(
+        real_origin,
+        frozenset(o for o in origins if o is not None),
+        any(o is None for o in origins),
+    )
 
 
 def _bind_environment_class(
@@ -625,7 +653,7 @@ def _bind_environment_class(
     loaded, and item 6 relaxed for it).
 
     * ``BROKER_SIMULATION`` — bound only for a document that is NOT the REAL document and
-      whose own ``rest_base`` is known and is NOT the REAL host. Flipping REAL_PROD's class
+      whose own ``rest_base`` is known and does NOT normalize to the REAL hostname (any port). Flipping REAL_PROD's class
       alone therefore refuses; flipping its host too makes it a mock-host profile, which the
       relaxation may treat as one. A file with no unique REAL host loads the claim unbound.
     * ``BROKER_PRODUCTION`` — accepted only for a known host that no simulation document sits
@@ -645,21 +673,34 @@ def _bind_environment_class(
             f"{context}: environment_class {declared.value} declared without a known "
             "_kis.endpoints.rest_base — the class cannot be tied to a host"
         )
+    try:
+        origin = endpoint_origin(host)
+    except EndpointOriginError as exc:
+        raise BrokerInstanceConfigError(
+            f"{context}: environment_class {declared.value} declared on a rest_base that "
+            f"cannot be normalized — the class cannot be tied to a host: {exc}"
+        ) from exc
     if declared is BrokerEnvironment.BROKER_SIMULATION:
-        if document.environment == REAL_ENVIRONMENT or host == hosts.real_rest_base:
+        if document.environment == REAL_ENVIRONMENT or (
+            hosts.real_origin is not None and origin.host == hosts.real_origin.host
+        ):
             raise BrokerInstanceConfigError(
-                f"{context}: BROKER_SIMULATION declared on the REAL host / document — "
-                "a production profile cannot be relabelled simulation"
+                f"{context}: BROKER_SIMULATION declared on the REAL host / document "
+                f"({host!r} resolves to {origin}) — a production profile cannot be "
+                "relabelled simulation"
             )
-        if hosts.real_rest_base is None:
+        if hosts.real_origin is None:
             # No REAL host to exclude: the claim is unprovable, so it stays unbound (stripped
             # before the kernel — the ordinary item-6 check, fail-closed). The transport seal
             # refuses such a file outright, so it never reaches a broker either way.
             return document
     elif declared is BrokerEnvironment.BROKER_PRODUCTION:
-        if host in hosts.simulation_hosts:
+        if hosts.simulation_unparseable or origin.host in {
+            o.host for o in hosts.simulation_origins
+        }:
             raise BrokerInstanceConfigError(
-                f"{context}: BROKER_PRODUCTION declared on a host a simulation document uses"
+                f"{context}: BROKER_PRODUCTION declared on a host a simulation document uses "
+                "(or one no simulation host can be proven distinct from)"
             )
     else:
         raise BrokerInstanceConfigError(
