@@ -35,8 +35,8 @@
 #       측정값이라고 적지만, 이 표의 행은 규정에서 왔다 — 그 차이가 이 잔여 위험이다.
 #     * 커널은 표가 있으면 표만 읽는다(`tos.venue.predicates._resolved_tick`) — 그래서
 #       `tick_size` 는 **null** 이다(둘 다 쓰면 로더가 거부한다: 한 사실에 두 원천).
-#     * 맨 위 행은 10,000,000원(1000000000 −1)에서 닫는다. KRX 에 가격 상한은 없지만 표는
-#       유한한 정수를 요구한다. 그 위 가격은 어느 행도 덮지 않아 **UNKNOWN**(송신 0)이다 —
+#     * 맨 위 행은 9,999,999.99원(band_max 999999999, ×100 포함 경계)에서 닫는다. KRX 에 가격
+#       상한은 없지만 표는 유한한 정수를 요구한다. 그 위 가격은 어느 행도 덮지 않아 **UNKNOWN**(송신 0)이다 —
 #       넓히지 않는다(커널 규칙). 005930 종가는 268,500~276,000원(2026-10-01~08).
 #     * 종전(#926) 판은 이 자리에 평평한 `tick_size: 50000`(500원 한 칸)을 썼다. 그 판에서는
 #       199,900원(100원 칸의 정상 호가)이 INADMISSIBLE 로 막혔다 — 이 표가 고친 입력이다.
@@ -98,7 +98,7 @@ halt_suspension_and_tradability_rules:
 instrument_and_contract_rules:
   - "one symbol (005930) per policy generation; no contract month"
 price_band_tick_and_lot_rules:
-  - "tick: price_band_ticks 표가 가격마다 칸을 고른다 (1원~10,000,000원); tick_size null; 표 밖 가격은 UNKNOWN (헤더)"
+  - "tick: price_band_ticks 표가 가격마다 칸을 고른다 (1원~9,999,999.99원); tick_size null; 표 밖 가격은 UNKNOWN (헤더)"
   - "lot 1; min_quantity 1 (1주)"
   - "max_quantity 1 (운영자 결정 2026-10-22)"
   - "band null (일별 동적 값 — 정적 리터럴 금지, 원천 없음)"
