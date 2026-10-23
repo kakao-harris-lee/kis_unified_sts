@@ -347,7 +347,17 @@ def test_an_aspr_unit_that_agrees_on_a_lower_rung_passes(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "output",
-    [{"aspr_unit": ""}, {"aspr_unit": None}, {"stck_prpr": "0"}, {"aspr_unit": "5.0"}],
+    [
+        {"aspr_unit": ""},
+        {"aspr_unit": None},
+        {"stck_prpr": "0"},
+        {"aspr_unit": "5.0"},
+        # #930 review LOW: non-ASCII digits pass str.isdigit() and then raise in int() —
+        # a traceback (rc 1) before the fix, a refusal (rc 3, no line) after it.
+        {"stck_prpr": "2²"},
+        {"stck_prpr": "２７１５００"},  # full-width digits
+        {"aspr_unit": "５００"},
+    ],
 )
 def test_an_absent_or_malformed_tick_field_writes_no_line(
     tmp_path: Path, output: dict
