@@ -141,17 +141,21 @@ def _reboot(
     python: str, root: Path, index: int, timeout: float, log: Path
 ) -> dict[str, Any]:
     result_path = root.parent / f"{root.name}.reboot{index}.json"
-    with log.open("ab") as err:
-        completed = subprocess.run(
-            [python, "-m", CHILD_MODULE, "reboot", str(root), str(result_path)],
-            cwd=RUNTIME_DIR,
-            env=_child_env(),
-            stdin=subprocess.DEVNULL,
-            stdout=err,
-            stderr=err,
-            timeout=timeout,
-            check=False,
-        )
+    try:
+        with log.open("ab") as err:
+            completed = subprocess.run(
+                [python, "-m", CHILD_MODULE, "reboot", str(root), str(result_path)],
+                cwd=RUNTIME_DIR,
+                env=_child_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=err,
+                stderr=err,
+                timeout=timeout,
+                check=False,
+            )
+    except subprocess.TimeoutExpired:
+        # run() already killed the child; report it as a failed reboot so the table still prints.
+        return {"error": f"reboot {index} timed out after {timeout}s; see {log}"}
     if completed.returncode != 0 or not result_path.exists():
         return {"error": f"reboot {index} exited {completed.returncode}; see {log}"}
     report: dict[str, Any] = json.loads(result_path.read_text("utf-8"))

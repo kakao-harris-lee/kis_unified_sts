@@ -715,7 +715,9 @@ jobs:
   # transport and installs the runtime suite's loopback-only socket guard.
   # Its own job (not a step in tos-firewall-tests) so the check name
   # `tos-recovery-drill` can be added to the ruleset on its own. Measured
-  # locally: 9 drills in 80s.
+  # locally: 9 drills in 80s (each child 2-3s). `--timeout 30` per child: at
+  # the script's 120s default, a hang would run into this job's timeout
+  # before the table and FAIL lines print.
   # ===========================================================================
   tos-recovery-drill:
     runs-on: ubuntu-latest
@@ -727,7 +729,7 @@ jobs:
       - *install
 
       - name: kill -9 recovery drill (3 points x 3 rounds, synthetic)
-        run: python tools/tos_recovery_drill.py --rounds 3 --workdir "$RUNNER_TEMP/recovery-drill"
+        run: python tools/tos_recovery_drill.py --rounds 3 --timeout 30 --workdir "$RUNNER_TEMP/recovery-drill"
 
   # ===========================================================================
   # The check context the rest of the repo (and any future ruleset entry) names.
