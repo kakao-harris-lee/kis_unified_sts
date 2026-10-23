@@ -72,6 +72,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "CAPACITY_RELEASE_HELD_KIND",
+    "release_command_id",
     "CAPACITY_RELEASE_INTENT_KIND",
     "RELEASE_PROOF_OVERDUE_KIND",
     "FinalityConsumerPort",
@@ -118,6 +119,12 @@ _NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
         EgressResultKind.REJECT,
     }
 )
+
+
+def release_command_id(attempt_id: str) -> str:
+    """The RCL idempotency key of ``attempt_id``'s release transition — the ONE spelling, so the
+    fill observer (PR-3b) can ask the RCL whether that release actually committed."""
+    return f"release-{attempt_id}"
 
 
 class ReleaseHoldReason(StrEnum):
@@ -397,7 +404,7 @@ class FinalityReleaseConsumer:
             return self._hold(
                 payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED
             )
-        report, corroborated = self._reconcile(payload.attempt_id)
+        report, corroborated = self._reconcile(payload)
         if report is None:
             return self._hold(
                 payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
@@ -423,7 +430,7 @@ class FinalityReleaseConsumer:
     def _consume_non_execution(
         self, payload: EgressResultPayload, *, reservation_id: str
     ) -> ReleaseOutcome:
-        report, corroborated = self._reconcile(payload.attempt_id)
+        report, corroborated = self._reconcile(payload)
         if report is None:
             return self._hold(
                 payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
@@ -477,7 +484,9 @@ class FinalityReleaseConsumer:
 
     # -- gate 3 (reconciliation) --------------------------------------------------------
 
-    def _reconcile(self, attempt_id: str) -> tuple[ReconciliationReport | None, bool]:
+    def _reconcile(
+        self, payload: EgressResultPayload
+    ) -> tuple[ReconciliationReport | None, bool]:
         """Gate 3 (module docstring): a fresh :class:`~tos_runtime.recon.service
         .ReconciliationReport` plus whether it positively corroborates ``attempt_id``.
 
@@ -485,11 +494,17 @@ class FinalityReleaseConsumer:
             ``(report, corroborated)`` — ``report`` is ``None`` only when ``.reconcile()``
             itself raised (fail-closed, never propagated out of this consumer).
         """
+        attempt_id = payload.attempt_id
         instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
         scope = WitnessScope(
             account=self.account,
             instrument_keys=(instrument_key,),
             attempt_ids=(attempt_id,),
+            # PR-3b: a broker result from an earlier trading day is reconciled under its own
+            # order date, not only today's (a date-scoped witness reads both).
+            order_dates=(
+                () if payload.trading_date is None else (payload.trading_date,)
+            ),
         )
         freshness = _build_freshness_marker(self.time_service)
         try:
@@ -651,7 +666,7 @@ class FinalityReleaseConsumer:
             receipt = release_reservation(
                 self.rcl_log,
                 transition,
-                command_id=f"release-{payload.attempt_id}",
+                command_id=release_command_id(payload.attempt_id),
                 command_digest=command_digest,
                 expected_seq=expected_seq,
                 proof=proof,

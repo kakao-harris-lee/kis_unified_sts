@@ -31,7 +31,6 @@ import pytest
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 from tos.rcl import CapacityState, CommandType
 from tos_runtime.compose._broker_posttrade_wiring import DeferredKisWitness
-from tos_runtime.engine.finality_projection import project_recovered_finality
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
 from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVER_CONFIG_NAME,
@@ -422,13 +421,20 @@ def test_odd_rows_become_unknown_never_a_fill(
 # ===========================================================================
 
 
-def test_restart_between_ack_and_fill_releases_exactly_once_via_kis_witness(
+def test_restart_between_ack_and_fill_holds_and_keeps_every_later_boot_sound(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
+    """The engine does not rebuild its reservation projection on boot (driver.py, "J3"). A fill
+    fed to it after a restart would be refused as an orphan by the live engine and re-derived as
+    applied by the NEXT boot's replay — which then refuses to boot. So the observer feeds
+    nothing: it records what the broker showed, the reservation stays held, and every later
+    boot is sound. Capacity is never released twice because it is not released at all.
+    """
     runtime, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     attempt_id = _ack(runtime)["attempt_id"]
+    rcl_before = _rcl_state(runtime)
     _close(runtime)  # the process dies after the ACK was consumed; the fill comes later
 
     runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
@@ -436,7 +442,7 @@ def test_restart_between_ack_and_fill_releases_exactly_once_via_kis_witness(
     assert runtime2.core.ledger.outstanding(fx.instrument_key()) is None  # not rebuilt
     observer = runtime2.fill_observer
     assert observer is not None
-    orders_path = _script_broker(
+    _script_broker(
         server,
         config_dir,
         date,
@@ -444,61 +450,35 @@ def test_restart_between_ack_and_fill_releases_exactly_once_via_kis_witness(
     )
 
     report = observer.poll_once()
-    assert report.emitted == (
-        (
-            attempt_id,
-            EgressResultKind.FULL_FILL,
-            ResultDisposition.ORPHAN_NO_RESERVATION,
-        ),
+    assert report.emitted == ()
+    assert report.held == ((attempt_id, EgressResultKind.FULL_FILL),)
+    (absent,) = _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT")
+    assert (absent["attempt_id"], absent["kind"], absent["broker_execution_id"]) == (
+        attempt_id,
+        "FULL_FILL",
+        _ODNO,
     )
-    (recovered,) = _rows(runtime2, "FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION")
-    assert recovered["rcl_released"] is True
-    assert _rcl_state(runtime2) is CapacityState.POSITION_CONSUMED
-    assert _rcl_releases(runtime2) == 1
-    (proof,) = _rows(runtime2, "POSTTRADE_FINALITY_PROOF")
-    assert proof["idempotency_key"] == f"broker-fqp-proof:{attempt_id}"
-    assert server.requests_for(orders_path)  # reconciled against the broker read
+    # Nothing reached the engine, nothing was proven or released.
+    assert [r["egress_result_kind"] for r in _rows(runtime2, "RESULT_UNMATCHED")] == []
+    assert _rows(runtime2, "POSTTRADE_FINALITY_PROOF") == []
+    assert _rcl_releases(runtime2) == 0
+    assert _rcl_state(runtime2) is rcl_before
 
-    # No double release: the observer stops, and a forced second pass is refused by the RCL.
+    # A terminal observation stops the polling; no second record.
+    before = len(server.all_requests)
     assert observer.poll_once().polled is False
-    (orphan,) = [
-        r
-        for r in _rows(runtime2, "RESULT_UNMATCHED")
-        if r["egress_result_kind"] == "FULL_FILL"
-    ]
-    from tos.engine.records import EgressResultPayload, InstrumentKey
-
-    payload = EgressResultPayload(
-        instrument_key=InstrumentKey(**orphan["instrument_key"]),
-        attempt_id=attempt_id,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=qty,
-        remaining_quantity=Decimal(0),
-        broker_execution_id=_ODNO,
-        trading_date=date,
-    )
-    consumer = (
-        runtime2.driver._release_consumer
-    )  # noqa: SLF001 - the bound consumer itself
-    again = project_recovered_finality(
-        payload,
-        inbox=runtime2.inbox,
-        evidence_store=runtime2.evidence_store,
-        finality_producer=BrokerFinalityProducer(
-            config=consumer.finality_producer.config, scheme=consumer.scheme
-        ),
-        release_consumer=consumer,
-    )
-    assert again is False
-    assert _rcl_releases(runtime2) == 1
-    assert [h["reason"] for h in _rows(runtime2, "CAPACITY_RELEASE_HELD")] == [
-        "RCL_TRANSITION_REFUSED"
-    ]
-    assert _rcl_state(runtime2) is CapacityState.POSITION_CONSUMED
-    assert (
-        len(server.requests_for(_ORDER_PATH)) == 1
-    )  # nothing re-sent across the restart
+    assert len(server.all_requests) == before
+    assert len(_rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT")) == 1
     _close(runtime2)
+
+    # The next boot's replay is sound, and the hold is still a hold.
+    runtime3 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert runtime3.recovery is not None and runtime3.recovery.ready is True
+    assert runtime3.fill_observer is not None
+    assert runtime3.fill_observer.poll_once().polled is False
+    assert _rcl_releases(runtime3) == 0
+    assert len(server.requests_for(_ORDER_PATH)) == 1  # nothing re-sent across restarts
+    _close(runtime3)
 
 
 # ===========================================================================

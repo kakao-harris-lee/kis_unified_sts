@@ -27,3 +27,9 @@ poll_interval_ms: 3000
 # (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not
 # filled by then is worth an operator look.
 overdue_after_ms: 600000
+# A terminal result is recorded but its release has not committed (the process died before
+# finality ran, or reconciliation / the RCL CAS held it): finality is re-run from the recorded
+# result at most this often, until the RCL holds the release. 60 s: each re-run is one witness
+# read (two GETs) plus evidence rows, and a hold that persists is usually an operator matter
+# (e.g. an unattributed order in the same symbol).
+finality_retry_interval_ms: 60000

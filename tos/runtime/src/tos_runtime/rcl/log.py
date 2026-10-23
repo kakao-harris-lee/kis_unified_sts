@@ -459,6 +459,13 @@ class SqliteCommitLog:
             ),
         )
 
+    def command_committed(self, command_id: str) -> bool:
+        """Whether an entry with ``command_id`` is committed (PR-3b: the fill observer asks
+        whether an attempt's release transition actually landed, not whether one was intended).
+        """
+        row_exists, _digest = existing_command_row(self._conn, command_id)
+        return row_exists
+
     def reservation_rows(
         self,
     ) -> Iterator[tuple[str, CapacityState, int, ReservationScope]]:

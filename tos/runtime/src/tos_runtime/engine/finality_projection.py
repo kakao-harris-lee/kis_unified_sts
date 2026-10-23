@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ECONOMIC_OBLIGATION_KIND",
     "ENGINE_PROJECTION_RELEASE_SKIPPED_KIND",
-    "FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND",
+    "FINALITY_REPROJECTED_KIND",
     "POSTTRADE_FINALITY_PROOF_KIND",
     "project_finality",
     "project_recovered_finality",
@@ -83,10 +83,8 @@ POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 #: state locally). Never a kernel ``EvidenceKind`` member (mirrors this module's own
 #: ``ECONOMIC_OBLIGATION_KIND``/``POSTTRADE_FINALITY_PROOF_KIND`` precedent).
 ENGINE_PROJECTION_RELEASE_SKIPPED_KIND = "ENGINE_PROJECTION_RELEASE_SKIPPED"
-#: Recorded by :func:`project_recovered_finality` (PR-3b) for every broker result it handles.
-FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND = (
-    "FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION"
-)
+#: Recorded by :func:`project_recovered_finality` (PR-3b) for every pass it makes, with why.
+FINALITY_REPROJECTED_KIND = "FINALITY_REPROJECTED"
 #: The kinds :func:`project_recovered_finality` ever hands the release consumer.
 _RECOVERABLE_KINDS = frozenset(
     {
@@ -172,7 +170,7 @@ def _project_release(
     evidence_store: SqliteEvidenceStore,
     release_consumer: FinalityConsumerPort | None,
     ledger: ProvisionalReservationLedger,
-) -> None:
+) -> bool:
     """The release-trigger call site (TOS Phase 5 W2-R; kernel round #3 §2 decision 5 W2-K),
     factored out of :func:`project_finality` (size-budget discipline).
 
@@ -204,7 +202,7 @@ def _project_release(
         ledger: The engine core's own :class:`~tos.engine.state.ProvisionalReservationLedger`.
     """
     if release_consumer is None:
-        return
+        return False
     outcome = release_consumer.consume(payload)
     released_locally = False
     if (
@@ -226,6 +224,7 @@ def _project_release(
             kind=ENGINE_PROJECTION_RELEASE_SKIPPED_KIND,
             record_class=ENGINE_PROJECTION_RELEASE_SKIPPED_KIND,
         )
+    return outcome.released
 
 
 def _record_fill_proof(
@@ -260,22 +259,28 @@ def project_recovered_finality(
     evidence_store: SqliteEvidenceStore,
     finality_producer: FinalityProducerPort,
     release_consumer: FinalityConsumerPort,
+    ledger: ProvisionalReservationLedger,
+    reason: str,
 ) -> bool | None:
-    """Finality for a broker result the engine refused as ``ORPHAN_NO_RESERVATION`` (PR-3b).
+    """Re-run finality for a terminal result the engine recorded whose release has not committed
+    (PR-3b review HIGH 1): the process died after the engine consumed the result but before
+    :func:`project_finality` ran, or reconciliation / the RCL CAS held the release last time. The
+    fill observer calls this from its retry loop. The engine is never re-fed the result: finality
+    is projected from the already-recorded one, so the inbox — and every later boot's replay —
+    is untouched.
 
-    **Why this exists.** The kernel's reservation projection is in memory and is not rebuilt on
-    boot, so after a restart between an ``ACK`` and its fill, the fill the post-ACK observer
-    (:mod:`tos_runtime.posttrade.fill_observer`) reads off the broker reaches an engine with no
-    reservation for it: the engine records ``RESULT_UNMATCHED`` and :func:`project_finality`
-    (which runs only on ``APPLIED``) never sees it. The RCL reservation — the durable one — is
-    still open. This function gives that result the same proof + release path, minus the kernel
-    projection release (there is no kernel reservation to release).
+    * The ``FULL_FILL`` proof is written only if this attempt has no finality witness yet, so a
+      retry never mints a second proof row.
+    * Release goes through :func:`_project_release` — the release consumer's every gate
+      (witness, re-loaded proof, reconciliation against the boot's broker witness, the RCL's own
+      state/CAS check) and, when the RCL commits, the kernel projection's own ``release`` too
+      (a no-op, recorded as skipped, when the engine holds no such reservation).
 
-    **No double release.** Nothing here transitions the RCL by itself: the release consumer still
-    requires the witness row, the re-loaded proof, reconciliation ``MATCHED`` against the boot's
-    broker witness (the real KIS one for a stock MOCK boot), and the RCL's own state/sequence
-    check — a reservation already ``POSITION_CONSUMED`` is refused by the RCL, so a second call
-    holds instead of releasing.
+    **No double release.** A reservation already ``POSITION_CONSUMED``/``RELEASED`` is refused by
+    the RCL; the observer stops retrying once the release command is committed.
+
+    Args:
+        reason: Why this pass runs (today always ``release_not_committed``) — recorded.
 
     Returns:
         Whether the RCL transition committed, or ``None`` when ``payload.kind`` has no release
@@ -283,22 +288,31 @@ def project_recovered_finality(
     """
     if payload.kind not in _RECOVERABLE_KINDS:
         return None
-    if payload.kind is EgressResultKind.FULL_FILL:
+    if (
+        payload.kind is EgressResultKind.FULL_FILL
+        and inbox.finality_witness(payload.attempt_id) is not True
+    ):
         _record_fill_proof(
             payload,
             inbox=inbox,
             evidence_store=evidence_store,
             finality_producer=finality_producer,
         )
-    outcome = release_consumer.consume(payload)
+    released = _project_release(
+        payload,
+        evidence_store=evidence_store,
+        release_consumer=release_consumer,
+        ledger=ledger,
+    )
     evidence_store.append(
         {
             "attempt_id": payload.attempt_id,
             "egress_result_kind": payload.kind.value,
             "broker_execution_id": payload.broker_execution_id,
-            "rcl_released": outcome.released,
+            "reason": reason,
+            "rcl_released": released,
         },
-        kind=FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND,
-        record_class=FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND,
+        kind=FINALITY_REPROJECTED_KIND,
+        record_class=FINALITY_REPROJECTED_KIND,
     )
-    return outcome.released
+    return released

@@ -83,6 +83,9 @@ class WitnessScope:
     instrument_keys: tuple[InstrumentKey, ...] = ()
     attempt_ids: tuple[str, ...] = ()
     as_of_generation: int | None = None
+    #: Order dates (``YYYYMMDD``) a date-scoped witness must also inquire besides today — the
+    #: recorded trading date of an ACK from an earlier day (PR-3b). Empty: today only.
+    order_dates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

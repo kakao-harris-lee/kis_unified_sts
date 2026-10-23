@@ -289,24 +289,28 @@ def test_orders_are_parsed_with_attempt_id_always_none_for_orphan_detection(
             "rt_cd": "0",
             "output1": [
                 {
+                    "pdno": "005930",
                     "odno": "0000004470",
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
                     "cncl_yn": "N",
                 },
                 {
+                    "pdno": "005930",
                     "odno": "0000004471",
                     "tot_ccld_qty": "0",
                     "rmn_qty": "5",
                     "cncl_yn": "N",
                 },
                 {
+                    "pdno": "005930",
                     "odno": "0000004472",
                     "tot_ccld_qty": "2",
                     "rmn_qty": "3",
                     "cncl_yn": "N",
                 },
                 {
+                    "pdno": "005930",
                     "odno": "0000004473",
                     "tot_ccld_qty": "0",
                     "rmn_qty": "0",
@@ -351,6 +355,7 @@ def test_each_order_carries_the_brokers_own_order_date(
             "rt_cd": "0",
             "output1": [
                 {
+                    "pdno": "005930",
                     "odno": odno,
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
@@ -535,3 +540,26 @@ def test_module_reads_no_ambient_environment() -> None:
     assert "import os" not in source
     assert "os.environ" not in source.replace("``os.environ``", "")
     assert "os.getenv" not in source.replace("``os.getenv``", "")
+
+
+@pytest.mark.parametrize("pdno", [None, "000660"])
+def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailable(
+    server: FakeKisGetServer, pdno: str | None
+) -> None:
+    """PR-3b review HIGH 2: ODNO-only joining would let a row for another symbol (or naming
+    none) corroborate this instrument's fill. The witness keeps the conflict — the whole read is
+    unavailable — instead of filtering the row out."""
+    from tos.engine.records import InstrumentKey
+
+    row = {"odno": "0000004470", "tot_ccld_qty": "1", "rmn_qty": "0", "cncl_yn": "N"}
+    if pdno is not None:
+        row["pdno"] = pdno
+    server.queue_response(BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []})
+    server.queue_response(ORDER_PATH, status=200, body={"rt_cd": "0", "output1": [row]})
+    with pytest.raises(WitnessUnavailable, match="names instrument"):
+        _witness(server).observe(
+            WitnessScope(
+                account=ACCOUNT,
+                instrument_keys=(InstrumentKey(account=ACCOUNT, instrument="005930"),),
+            )
+        )

@@ -291,6 +291,24 @@ class _WalkOutcome:
     output2_first: dict[str, Any] | None
 
 
+def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
+    """A row must name the instrument it was asked for (PR-3b review HIGH 2). The witness
+    carries no instrument on :class:`~tos_runtime.recon.ports.WitnessOrder`, so a row for another
+    symbol — or one naming none — would otherwise be joined by ODNO alone and corroborate a fill
+    it says nothing about. Never filtered out: the whole read is unavailable, so the conflict
+    surfaces as "not corroborated" instead of disappearing.
+
+    Raises:
+        WitnessUnavailable: ``row.pdno`` is absent, or differs from ``queried`` (when one was).
+    """
+    if row.pdno is None or (queried and row.pdno != queried):
+        raise WitnessUnavailable(
+            f"KisStockBrokerWitness: order row {row.odno!r} names instrument {row.pdno!r}, "
+            f"queried {queried or '(any)'!r} — a row that does not name the queried instrument "
+            "cannot corroborate anything"
+        )
+
+
 @dataclass(frozen=True)
 class KisOrderRow:
     """One 주식일별주문체결조회 (``VTTC0081R``) ``output1`` row, typed — the ONE parse of that row
@@ -383,7 +401,12 @@ class KisStockBrokerWitness:
             cano, acnt_prdt_cd = self._split_account(scope.account)
             positions, cash = self._read_balance(cano, acnt_prdt_cd, scope)
             today = self._date_source.today()
-            rows = self._read_order_rows(cano, acnt_prdt_cd, scope, today)
+            # Today, plus any older date the caller names (PR-3b: an ACK from a previous trading
+            # day is still reconcilable — its order lives under its own 주문일자).
+            dates = (today, *sorted(set(scope.order_dates) - {today}))
+            rows: tuple[KisOrderRow, ...] = ()
+            for date in dates:
+                rows += self._read_order_rows(cano, acnt_prdt_cd, scope, date)
         except WitnessUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - the port's own two-outcome contract
@@ -409,17 +432,25 @@ class KisStockBrokerWitness:
             # docstring) — unlike witness_synthetic.py, there is nothing here to be
             # non-independent OF.
             independent_of_evidence_store=True,
-            # The order inquiry below asks for exactly this one date (INQR_STRT_DT ==
-            # INQR_END_DT == today), so every returned order belongs to it.
-            order_inquiry_date=today,
+            # One inquiry per date (INQR_STRT_DT == INQR_END_DT); a single-date snapshot records
+            # it, a multi-date one records None (the field's own contract).
+            order_inquiry_date=today if len(dates) == 1 else None,
         )
 
-    def order_rows(self, scope: WitnessScope) -> tuple[str, tuple[KisOrderRow, ...]]:
-        """Today's 주식일별주문체결조회 rows only — no balance read (the post-ACK fill observer's
+    def order_rows(
+        self, scope: WitnessScope, *, inquiry_date: str | None = None
+    ) -> tuple[str, tuple[KisOrderRow, ...]]:
+        """One date's 주식일별주문체결조회 rows — no balance read (the post-ACK fill observer's
         GET: one TR, ``VTTC0081R``, not two).
 
+        Args:
+            scope: Account and instrument to inquire.
+            inquiry_date: ``YYYYMMDD`` to inquire; ``None`` is today (trusted date source). An
+                ACK from an earlier trading day is read under its own date — VTTC0081R serves the
+                last three months (open-trading-api ``inquire_daily_ccld``, ``pd_dv=inner``).
+
         Returns:
-            ``(today, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==
+            ``(date, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==
             INQR_END_DT``) and every row the completed continuation walk returned, never filtered
             by attempt or order number (the caller attributes; an unattributable row is its
             finding, not something to drop here).
@@ -430,8 +461,8 @@ class KisStockBrokerWitness:
         """
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
-            today = self._date_source.today()
-            return today, self._read_order_rows(cano, acnt_prdt_cd, scope, today)
+            date = inquiry_date or self._date_source.today()
+            return date, self._read_order_rows(cano, acnt_prdt_cd, scope, date)
         except WitnessUnavailable:
             raise
         except (
@@ -697,7 +728,9 @@ class KisStockBrokerWitness:
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
-                    orders.append(KisOrderRow.from_wire(row))
+                    parsed = KisOrderRow.from_wire(row)
+                    _refuse_instrument_conflict(parsed, queried=symbol)
+                    orders.append(parsed)
         return tuple(orders)
 
     @staticmethod

@@ -55,7 +55,10 @@ from tos_runtime.posttrade.fill_observer import (
     load_fill_observer_config,
 )
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
-from tos_runtime.posttrade.release_consumer import FinalityConsumerPort
+from tos_runtime.posttrade.release_consumer import (
+    FinalityConsumerPort,
+    release_command_id,
+)
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow, KisStockBrokerWitness
 from tos_runtime.recon.witness_kis_client import build_witness_client
@@ -107,8 +110,10 @@ class DeferredKisWitness:
     def observe(self, scope: WitnessScope) -> WitnessSnapshot:
         return self._ready().observe(scope)
 
-    def order_rows(self, scope: WitnessScope) -> tuple[str, tuple[KisOrderRow, ...]]:
-        return self._ready().order_rows(scope)
+    def order_rows(
+        self, scope: WitnessScope, *, inquiry_date: str | None = None
+    ) -> tuple[str, tuple[KisOrderRow, ...]]:
+        return self._ready().order_rows(scope, inquiry_date=inquiry_date)
 
 
 @dataclass
@@ -207,19 +212,29 @@ def attach_fill_observer(
     producer = posttrade.finality_producer
     consumer = posttrade.release_consumer
 
+    def _reproject(payload: EgressResultPayload, *, reason: str) -> bool | None:
+        return project_recovered_finality(
+            payload,
+            inbox=runtime.inbox,
+            evidence_store=runtime.evidence_store,
+            finality_producer=producer,
+            release_consumer=consumer,
+            ledger=runtime.core.ledger,
+            reason=reason,
+        )
+
     def _sink(payload: EgressResultPayload) -> ResultDisposition | None:
+        # Only reached when the engine holds the attempt (the observer checks first): an
+        # orphan fed after a restart would make the NEXT boot's replay diverge
+        # (fill_observer module docstring).
         result = driver.enqueue_and_run(
             EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
         )
-        if result.result_disposition is ResultDisposition.ORPHAN_NO_RESERVATION:
-            project_recovered_finality(
-                payload,
-                inbox=runtime.inbox,
-                evidence_store=runtime.evidence_store,
-                finality_producer=producer,
-                release_consumer=consumer,
-            )
         return result.result_disposition
+
+    def _engine_holds(attempt_id: str) -> bool:
+        held = runtime.core.ledger.outstanding(runtime.context_resolver.instrument_key)
+        return held is not None and held.attempt_id == attempt_id
 
     instrument_key = runtime.context_resolver.instrument_key
     runtime.fill_observer = KisMockFillObserver(
@@ -227,6 +242,11 @@ def attach_fill_observer(
         orders=posttrade.witness,
         evidence_store=runtime.evidence_store,
         result_sink=_sink,
+        reproject=lambda payload: _reproject(payload, reason="release_not_committed"),
+        release_committed=lambda attempt_id: runtime.rcl_log.command_committed(
+            release_command_id(attempt_id)
+        ),
+        engine_holds=_engine_holds,
         monotonic=monotonic,
         account=instrument_key.account,
         instrument=instrument_key.instrument,
