@@ -404,11 +404,35 @@ jobs:
       # matches as "new" is the same shape of slip this step's other note exists to
       # correct; an independent review caught it by diffing the two file SETS with
       # `git ls-files` instead of trusting either total.)
+      #
+      # Scope note 2 (PR #937 follow-up). `tests/tools/test_tos_*.py` +
+      # `tests/tools/test_u17_verify.py` became the whole directory. The two
+      # patterns named 15 of the 43 `.py` files there; the other 28 — 14
+      # `test_broker_probes_*`, 13 `test_cp3_*` and `test_bcp_digest.py` —
+      # were formatted-by-nobody, and #937 found one of them
+      # (`test_broker_probes_balance.py`) genuinely unformatted on main
+      # while every check stayed green. It was the ONLY one: with it fixed,
+      # `black --check tests/tools` reports 43 files unchanged, so this
+      # widening carries no reformatting and cannot hide a silent reformat.
+      # Measured as a SET diff with `git ls-files`, not by counting glob
+      # matches, for the reason the note above gives — 28 new, 15 already
+      # named, 43 total.
+      #
+      # The directory, not a glob: a new test file under `tests/tools/` joins
+      # this gate the moment it is added, which is the hole the first note
+      # describes. `tests/tools/fixtures/` holds no `.py` at all, so nothing
+      # black would rewrite is used as a verbatim test input.
+      #
+      # Only the BLOCKING Black runs here. The advisory one in
+      # `.github/workflows/test.yml` (`black --check --diff .`, whole repo,
+      # `continue-on-error: true`) is deliberately left alone: the ~300-file
+      # formatting debt it reports is tracked separately, and that is why
+      # `test_broker_probes_balance.py` could sit unformatted on main.
       - name: Black (tos)
         run: >-
           black --check tos/src tos/tests tos/runtime/src tos/runtime/tests
           tos/runtime/cp3
-          tools/tos_*.py tests/tools/test_tos_*.py tests/tools/test_u17_verify.py
+          tools/tos_*.py tests/tools
 
       - name: mypy (tos kernel)
         run: cd tos && mypy src --ignore-missing-imports
