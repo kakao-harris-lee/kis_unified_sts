@@ -24,10 +24,14 @@
 #   3. the direction is LONG or SHORT, and the env file is named `.env.mock`
 #      (mirrors scripts/tos/render_paper_config.py's own ENV_FILE_NAME guard —
 #      a tenant session is mock-only and never reaches a real-money account).
-#   3b. the two REAL futures query keys are NOT in this shell's environment
-#      (plan §3.4). The producer reads them itself from the file its own config
-#      names; every child inherits this environment, so a shell that exported
-#      them would hand the real keys to the RUNTIME too.
+#   3b. no REAL query key of ANY market (futures or stock) is in this shell's
+#      environment (plan §3.4; PR #922 review LOW-3 — the market comes from the
+#      producer config's own `market:`). The producer reads them itself from the
+#      file its own config names; every child inherits this environment, so a
+#      shell that exported them would hand the real keys to the RUNTIME too.
+#   3c. transport and instrument follow the market: futures -> synthetic + the
+#      derived front month; stock (the MOCK order tree, PR-3a) -> kis-mock + the
+#      named TENANT_INSTRUMENT + the deploy-time TENANT_KIS_MOCK_TRANSPORT_CONFIG.
 #   4. the stop time parses, is in the future, and is within MAX_SESSION_S.
 #   5. TENANT_PYTHON runs, and the tools.tos_cp3 it loads is THIS checkout's,
 #      reporting the POLICY_VERSION this template was written for.
@@ -340,6 +344,43 @@ for _real_key in $_REAL_KEYS_FUTURES $_REAL_KEYS_STOCK; do
 done
 log "credential separation ok: market=$_MARKET, no real query key of any market in this environment"
 
+# --- 3c. transport and instrument follow the market (PR-3c) ----------------
+#
+# The stock tenant tree is the MOCK order tree (PR-3a, operator decision
+# 2026-10-23): its active scope is MOCK_STOCK_ORDER, which the runtime refuses
+# to compose with anything but `--transport kis-mock`. The futures tenant trees
+# stay SYNTHETIC. So the market the producer reads decides both, and each one
+# refuses the other market's settings rather than ignoring them — an ignored
+# setting is one the operator believes is in effect and is not.
+#
+#   futures — instrument DERIVED (step 6, the mini front month); synthetic.
+#   stock   — instrument NAMED by TENANT_INSTRUMENT (six digits; the renderer
+#             checks the tree's own instrument.pattern too); kis-mock, with the
+#             deploy-time kis_mock_transport.yaml TENANT_KIS_MOCK_TRANSPORT_CONFIG
+#             names installed into the render output after the render (step 10).
+#             Its credentials come from custody (kis_mock.app_key/app_secret
+#             under TENANT_CUSTODY_ROOT), never from this environment.
+case "$_MARKET" in
+futures)
+  TRANSPORT=synthetic
+  for _stock_only in TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG; do
+    [ -z "${!_stock_only+x}" ] ||
+      die "$_stock_only is set for a futures session — the futures instrument is derived (step 6) and a futures tenant sends nothing, so nothing would read it"
+  done
+  ;;
+stock)
+  TRANSPORT=kis-mock
+  require_env TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG
+  case "$TENANT_INSTRUMENT" in
+  [0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+  *) die "TENANT_INSTRUMENT='$TENANT_INSTRUMENT' is not a six-digit stock code" ;;
+  esac
+  [ -f "$TENANT_KIS_MOCK_TRANSPORT_CONFIG" ] ||
+    die "TENANT_KIS_MOCK_TRANSPORT_CONFIG names no file: $TENANT_KIS_MOCK_TRANSPORT_CONFIG"
+  ;;
+esac
+log "transport=$TRANSPORT (market=$_MARKET)"
+
 # --- 4. the stop time ------------------------------------------------------
 #
 # In KST, never in whatever offset the operator typed (CLAUDE.md: convert to KST
@@ -367,13 +408,18 @@ guard_python_module "$PY" TENANT_PYTHON tools.tos_cp3.bootproof_guard \
 # contract month, the leaf is that code, and the render gets the SAME value —
 # and since PR-3 so does the producer (plan §3.5: "instrument 은 인자로만 받는다").
 # Two places computing it separately disagree on a roll day and nobody finds out.
-INSTRUMENT=$(PYTHONPATH="$REPO" "$PY" -c \
-  'from shared.instruments.futures import get_front_month_code; print(get_front_month_code(product="mini"))' 2>&1) ||
-  die "front-month lookup failed in $REPO: $INSTRUMENT"
-case "$INSTRUMENT" in
-A0[0-9][0-9][0-9][0-9]) : ;;
-*) die "instrument '$INSTRUMENT' does not look like a mini front-month code (^A0[0-9]{4}\$)" ;;
-esac
+if [ "$_MARKET" = stock ]; then
+  # Named, not derived (step 3c): a stock symbol does not roll.
+  INSTRUMENT=$TENANT_INSTRUMENT
+else
+  INSTRUMENT=$(PYTHONPATH="$REPO" "$PY" -c \
+    'from shared.instruments.futures import get_front_month_code; print(get_front_month_code(product="mini"))' 2>&1) ||
+    die "front-month lookup failed in $REPO: $INSTRUMENT"
+  case "$INSTRUMENT" in
+  A0[0-9][0-9][0-9][0-9]) : ;;
+  *) die "instrument '$INSTRUMENT' does not look like a mini front-month code (^A0[0-9]{4}\$)" ;;
+  esac
+fi
 DATA_LEAF=$TENANT_DATA_PARENT/$INSTRUMENT
 log "instrument=$INSTRUMENT · data leaf $DATA_LEAF"
 
@@ -1050,6 +1096,15 @@ printf '%s\n' "$RENDER_LOG" >>"$TENANT_LOG"
 [ "$render_rc" -eq 0 ] ||
   die "render refused (rc=$render_rc): $(printf '%s' "$RENDER_LOG" | tail -1 | cut -c1-200)"
 log "render ok -> $TENANT_RENDER_OUT"
+if [ "$TRANSPORT" = kis-mock ]; then
+  # The deploy-time transport document (host seal, TR ids, price_scale) is not a
+  # tree file, so the renderer never writes it; the runtime reads it from the
+  # config dir. Copied, 0600, after the render so a re-render cannot drop it.
+  install -m 0600 "$TENANT_KIS_MOCK_TRANSPORT_CONFIG" \
+    "$TENANT_RENDER_OUT/kis_mock_transport.yaml" ||
+    die "cannot install the kis-mock transport config into $TENANT_RENDER_OUT"
+  log "kis-mock transport config installed -> $TENANT_RENDER_OUT/kis_mock_transport.yaml"
+fi
 
 # --- 10b. the boot label must be the tree's own environment ----------------
 #
@@ -1106,6 +1161,7 @@ PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src" \
   --config-dir "$TENANT_RENDER_OUT" \
   --data-dir "$DATA_LEAF" \
   --custody-root "$TENANT_CUSTODY_ROOT" \
+  --transport "$TRANSPORT" \
   --environment-label "$TENANT_ENVIRONMENT_LABEL" >>"$TENANT_LOG" 2>&1 &
 RUN_PID=$!
 log "run pid=$RUN_PID (supervised by timeout, ceiling ${CHILD_CEILING_S}s)"
