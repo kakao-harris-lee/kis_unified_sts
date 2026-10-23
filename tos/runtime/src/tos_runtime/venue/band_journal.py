@@ -49,9 +49,13 @@ session refused every line with ``line_key_set``.
 
 * **G2 (trading date)** — a D-dated line read by a D+1 runtime. Structural half: the probe
   refuses to boot into a session directory that already holds a ``band.jsonl``. This is the
-  read-side layer. ⚠ Its red proof is a READER unit test plus the FIRST snapshot after the read:
-  the service's own trading-date bond runs at the head of ``snapshot()``, so a two-snapshot test
-  cannot discriminate this clause from that one (plan §3.4's 가려진 절 note).
+  read-side layer. ⚠ Its red proof is the READER's own ``VENUE_BAND_OBSERVED`` row
+  (``REFUSED`` / ``trading_date_mismatch``), because the service's trading-date bond drops a
+  stale band SILENTLY — no snapshot assertion can tell the two layers apart (plan §3.4's
+  가려진 절 note). Until the rescope plan's M1 the first snapshot could: the boot read then
+  happened inside ``snapshot()``, after that call's bond had already run against a still-
+  ``None`` band. With the read at construction the band is held before the bond runs, so the
+  row is now the only discriminator.
 * **G3 (contract)** — a roll-day session directory reused across contracts, so an ``A05610``
   line sits under an ``A05611`` policy. Measured values make it SILENT rather than loud: both
   bands pass every §4.2 clause (``A05610`` 987.46/1159.18, ``A05611`` 990.48/1162.72, P-VL
@@ -383,11 +387,17 @@ class ProducerJournalBandReader:
             # measured 2026-10-16, the single mutation is GREEN. It is kept because it is the
             # INPUT to a second layer, and the layering is measured as a compound:
             #
-            #   read-side clause + line's stamp  -> refused at the first snapshot
-            #   read-side clause GONE, line's stamp -> accepted, then DROPPED by
-            #       `service.py::_enforce_trading_date_bond` on the next snapshot
-            #   read-side clause GONE and re-stamped -> accepted and NEVER dropped; the
+            #   read-side clause + line's stamp  -> REFUSED at the boot read, with a
+            #       `trading_date_mismatch` row; no band is ever held
+            #   read-side clause GONE, line's stamp -> OBSERVED at the boot read, then
+            #       DROPPED by `service.py::_enforce_trading_date_bond` at the first snapshot
+            #   read-side clause GONE and re-stamped -> OBSERVED and NEVER dropped; the
             #       D-1 band stays in force all session (effective price_max 115918)
+            #
+            # ⚠ Rows 1 and 2 differed at the first SNAPSHOT until the rescope plan's M1 moved
+            # the boot read into `VenueConstraintService.__init__`; now the band is already
+            # held when that bond runs, so both rows are bandless by the first snapshot and
+            # only the evidence row tells them apart.
             #
             # The bond's own red proof is `tests/venue/test_service_band.py::
             # TestTradingDateBond`. Saying only "re-stamping would make the bond unable to
