@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from tos.engine import EngineCore, NullEvidenceSink
+from tos.engine.vocabulary import EgressResultKind
 from tos_runtime.compose._preconditions import _ReplayPreconditions
 from tos_runtime.engine.replay import replay_engine
 from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
@@ -202,6 +204,7 @@ def _replayed_core(
         _build,
         scheme=SCHEME,
         window_events=window_events,
+        rcl_committed=runtime.rcl_log.committed_command,
     )
     assert verdict.ok is expect_ok, verdict
     return built[0]
@@ -345,7 +348,13 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
 
 
 @pytest.mark.parametrize(
-    "case", ["unfilled_cancel", "cancel_after_partial", "separate_cancel_row"]
+    "case",
+    [
+        "unfilled_cancel",
+        "cancel_after_partial",
+        "separate_cancel_row",
+        "derived_only_cancel",
+    ],
 )
 def test_a_cancel_is_one_durable_hold_no_retry_no_release(
     case, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
@@ -364,6 +373,17 @@ def test_a_cancel_is_one_durable_hold_no_retry_no_release(
             _row(
                 date=date, ord_qty=qty, filled=Decimal(1), remaining=zero, cancelled="Y"
             )
+        ],
+        "derived_only_cancel": [  # Codex r3 MEDIUM (1): no row under our own ODNO
+            _row(
+                odno="0000004471",
+                orgn_odno=_ODNO,
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+            ),
         ],
         "separate_cancel_row": [
             _row(date=date, ord_qty=qty, filled=zero, remaining=qty),
@@ -461,4 +481,153 @@ def test_an_uncorroborated_release_row_is_a_replay_divergence(
     ]
     assert [h["attempt_id"] for h in halts] == [attempt_id]
     assert halts[0]["reason"]
+    _close(runtime)
+
+
+def test_a_cancel_after_an_earlier_unknown_is_still_one_hold(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Codex r3 MEDIUM (2): the attempt is already UNKNOWN (an inconsistent row was fed), then
+    its valid ``cncl_yn=Y`` row with a partial fill shows — a hold, not a silent no-op.
+    """
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    one, zero = Decimal(1), Decimal(0)
+    _script_broker(
+        server,
+        config_dir,
+        date,
+        [_row(date=date, ord_qty=qty, filled=one, remaining=zero)],
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+    assert [k for _a, k, _d in observer.poll_once().emitted] == [
+        EgressResultKind.UNKNOWN
+    ]
+
+    orders = _script_broker(
+        server,
+        config_dir,
+        date,
+        [_row(date=date, ord_qty=qty, filled=one, remaining=zero, cancelled="Y")],
+    )
+    report = observer.poll_once()
+    assert report.emitted == () and len(report.held) == 1
+    (hold,) = _rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED")
+    assert (hold["attempt_id"], hold["reason"]) == (attempt_id, "cancelled_after_fill")
+    reads = len(server.requests_for(orders))
+    assert observer.poll_once().polled is False
+    assert len(server.requests_for(orders)) == reads
+    _close(runtime)
+    runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert runtime2.fill_observer is not None
+    assert runtime2.fill_observer.poll_once().polled is False
+    assert len(_rows(runtime2, "FILL_OBSERVER_CANCEL_UNSUPPORTED")) == 1
+    _close(runtime2)
+
+
+# ===========================================================================
+# Codex r3 HIGH: replay reads the RCL's COMMITTED release, not pre-commit evidence
+# ===========================================================================
+
+
+class _CommitFails(sqlite3.OperationalError):
+    """The RCL's COMMIT fails after its transition evidence row was already written."""
+
+
+def _fail_next_commits(runtime, times: int) -> list[int]:
+    """Make the RCL's next ``times`` commits fail at ``before_commit`` — the transition evidence
+    row is already appended (inside the transaction, before COMMIT) and the entry rolls back.
+    """
+    left = [times]
+
+    def _hook(stage: str) -> None:
+        if stage == "before_commit" and left[0] > 0:
+            left[0] -= 1
+            raise _CommitFails("injected: COMMIT failed")
+
+    runtime.rcl_log._crash_hook = _hook  # noqa: SLF001 - the log's own injection seam
+    return left
+
+
+def test_a_rolled_back_release_then_a_committed_retry_replays_as_one_release(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        finality_retry_interval_ms=1,
+    )
+    _script_broker(server, config_dir, date, [_full(date, qty)])
+    observer = runtime.fill_observer
+    assert observer is not None
+    left = _fail_next_commits(runtime, 1)
+    observer.poll_once()  # FULL_FILL -> intent I1 -> transition evidence T1 -> COMMIT fails
+    assert left == [0]
+    assert _rcl_releases(runtime) == 0
+    (held,) = _rows(runtime, "CAPACITY_RELEASE_HELD")
+    assert held["reason"] == "RCL_TRANSITION_REFUSED"
+
+    assert observer.poll_once().reprojected == (
+        (attempt_id, True),
+    )  # I2 -> T2 -> COMMIT
+    assert _rcl_releases(runtime) == 1
+    transitions = [
+        r
+        for r in _rows(runtime, "RCL_RESERVATION_TRANSITION")
+        if r.get("command_id") == f"release-{attempt_id}"
+    ]
+    assert len(transitions) == 2  # T1 (rolled back) and T2 (committed)
+    assert len(_rows(runtime, "CAPACITY_RELEASE_INTENT")) == 2
+
+    key = fx.instrument_key()
+    assert _replayed_core(runtime).ledger.admits_new_exposure(key) is True
+    _close(runtime)
+    runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert runtime2.recovery is not None and runtime2.recovery.ready is True
+    _close(runtime2)
+
+
+def test_a_release_row_over_an_uncommitted_transition_is_a_divergence(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    _script_broker(server, config_dir, date, [_full(date, qty)])
+    observer = runtime.fill_observer
+    assert observer is not None
+    _fail_next_commits(runtime, 1)
+    observer.poll_once()  # I1 -> T1 -> COMMIT fails; nothing committed
+    assert _rcl_releases(runtime) == 0
+    (intent,) = _rows(runtime, "CAPACITY_RELEASE_INTENT")
+    seq = runtime.evidence_store.connection.execute(
+        "SELECT seq FROM entries WHERE kind = 'CAPACITY_RELEASE_INTENT'"
+    ).fetchone()[0]
+    # A release row whose every evidence pointer is genuine — except that the RCL never
+    # committed the transition it rests on.
+    runtime.evidence_store.append(
+        {
+            "attempt_id": attempt_id,
+            "proof_digest": intent["proof_id"],
+            "evidence_seq": seq,
+            "resolution_generation": intent["resolution_generation"],
+        },
+        kind="ENGINE_PROJECTION_RELEASED",
+        record_class="ENGINE_PROJECTION_RELEASED",
+    )
+    key = fx.instrument_key()
+    replayed = _replayed_core(runtime, expect_ok=False)
+    assert replayed.ledger.admits_new_exposure(key) is False  # never applied
+    (halt,) = [
+        r
+        for r in _rows(runtime, "REPLAY_DIVERGED")
+        if r.get("replay_result_state") == "ENGINE_RELEASE_NOT_REPRODUCED"
+    ]
+    assert "no committed release" in halt["reason"]
     _close(runtime)

@@ -760,14 +760,19 @@ class KisMockFillObserver:
         ]
         if not mine and not derived:
             return None, "not_visible"
+        cancel_reason = self._cancel_reason(mine, derived)
+        if cancel_reason is not None:
+            # Codex r3 MEDIUM: an attributed cancel is decided FIRST — before the ambiguity
+            # check and before the UNKNOWN de-duplication, either of which used to swallow it
+            # (a derived-only cancel read as "ambiguous"; a cancel after an earlier UNKNOWN
+            # produced no payload at all, so no hold was ever recorded).
+            return self._cancel_marker(attempt), cancel_reason
         if len(mine) != 1:
             return self._unknown(attempt, "ambiguous_rows")
         if mine[0].pdno != self.instrument:
             # Review HIGH 2: the ODNO and date say "ours", the instrument does not — a row for
             # another symbol (or naming none) never proves this attempt's fill.
             return self._unknown(attempt, "instrument_mismatch")
-        if derived:
-            return self._unknown(attempt, "derived_order_row")
         if (
             attempt.sealed_quantity is None
             or mine[0].ord_qty != attempt.sealed_quantity
@@ -789,6 +794,28 @@ class KisMockFillObserver:
         ):
             return None, "already_reported"
         return self._payload(attempt, kind, filled, remaining), reason
+
+    def _cancel_reason(
+        self, mine: list[KisOrderRow], derived: list[KisOrderRow]
+    ) -> str | None:
+        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None``. Only rows
+        naming this attempt's instrument count — a row for another symbol is never a cancel of
+        this order (it stays the instrument-mismatch path)."""
+        ours = [r for r in mine if r.pdno == self.instrument]
+        cancelled = [r for r in ours if r.cancelled]
+        if any(r.pdno == self.instrument for r in derived):
+            return "derived_order_row"
+        if not cancelled:
+            return None
+        filled = [r.tot_ccld_qty for r in cancelled]
+        if all(q is not None and q == 0 for q in filled):
+            return "cancelled_unfilled"
+        return "cancelled_after_fill"
+
+    def _cancel_marker(self, attempt: _Tracked) -> EgressResultPayload:
+        """A ``CANCEL_ACK``-shaped marker the emit step routes to the cancel hold — it is never
+        fed to the engine."""
+        return self._payload(attempt, EgressResultKind.CANCEL_ACK, None, None)
 
     def _unknown(
         self, attempt: _Tracked, reason: str

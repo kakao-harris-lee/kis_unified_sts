@@ -20,6 +20,7 @@ from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._risk_attestations import RiskAttestations
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import ReplayableCore, ReplayVerdict, replay_engine
+from tos_runtime.engine.replay_releases import RclCommitted
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
@@ -107,6 +108,7 @@ def verify_engine_replay_or_halt(
     *,
     scheme: CanonicalizationScheme,
     window_events: int,
+    rcl_committed: RclCommitted | None = None,
 ) -> ReplayVerdict:
     """Independently re-derive the last ``window_events`` admitted events (TOS Phase 3 Wave 1
     Lane A-R, plan §1.1) and refuse to hand back a runtime if any diverges from its recorded
@@ -140,6 +142,7 @@ def verify_engine_replay_or_halt(
         build_core,
         scheme=scheme,
         window_events=window_events,
+        rcl_committed=rcl_committed,
     )
     if verdict.has_unverifiable_receipts:
         unverifiable_event_ids = [

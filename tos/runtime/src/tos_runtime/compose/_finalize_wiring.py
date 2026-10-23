@@ -61,6 +61,7 @@ from tos_runtime.compose.context import ComposeContextResolver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import ReplayVerdict
 from tos_runtime.posttrade.config import load_finality_config
+from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 
@@ -98,6 +99,7 @@ def _verify_boot_replay(
     wired_resolved_registry: StrategyRegistry,
     stages: dict,
     engine_configuration: EngineConfiguration,
+    rcl_log: SqliteCommitLog,
 ) -> ReplayVerdict:
     """Independent boot-time re-derivation over whatever this inbox has already durably admitted
     (design plan §1.1 "부팅 시 verify_rcl_log_or_halt 뒤에 실행"). Split out of :func:`_finalize`
@@ -123,6 +125,9 @@ def _verify_boot_replay(
         configuration=engine_configuration,
         scheme=_SCHEME,
         window_events=engine_driver_config.replay_window_events,
+        # PR-3b Codex r3: recorded engine-projection releases are checked against the RCL's
+        # own committed state, never against pre-COMMIT evidence alone.
+        rcl_committed=rcl_log.committed_command,
     )
 
 
@@ -226,6 +231,7 @@ def _finalize(
         wired_resolved_registry=wired.resolved_registry,
         stages=stages,
         engine_configuration=engine_configuration,
+        rcl_log=rcl.rcl_log,
     )
 
     return ComposedRuntime(

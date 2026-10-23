@@ -82,6 +82,7 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import OrthostateProjector
 from tos_runtime.engine.replay import ReplayVerdict
+from tos_runtime.engine.replay_releases import RclCommitted
 from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
 from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
 from tos_runtime.evidence.emergency import EmergencyAppendLog
@@ -298,6 +299,7 @@ def verify_replay_or_halt(
     configuration: EngineConfiguration,
     scheme: CanonicalizationScheme,
     window_events: int,
+    rcl_committed: RclCommitted | None = None,
 ) -> ReplayVerdict:
     """Build the side-effect-free replay core factory and run the boot-time replay check.
 
@@ -357,6 +359,7 @@ def verify_replay_or_halt(
         _replay_core_factory,
         scheme=scheme,
         window_events=window_events,
+        rcl_committed=rcl_committed,
     )
     # Independent-review finding F5 (2026-09-10): verify_engine_replay_or_halt records evidence
     # ONLY on divergence (REPLAY_DIVERGED, inside replay_engine) or unverifiable receipts

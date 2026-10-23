@@ -39,7 +39,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
     NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
 )
-from tos_runtime.engine.replay_releases import EngineReleases
+from tos_runtime.engine.replay_releases import EngineReleases, RclCommitted
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
@@ -391,7 +391,9 @@ def _compare_one_event(
 
 
 def _load_releases(
-    evidence_store: SqliteEvidenceStore, emergency_log: EmergencyAppendLog
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    rcl_committed: RclCommitted | None,
 ) -> EngineReleases:
     """The live engine's recorded projection releases, each corroboration failure or replay
     refusal recorded as a ``REPLAY_DIVERGED`` halt (:mod:`tos_runtime.engine.replay_releases`).
@@ -406,7 +408,9 @@ def _load_releases(
             record_class=_REPLAY_DIVERGED_RECORD_CLASS,
         )
 
-    return EngineReleases.load(evidence_store, on_divergence=_halt)
+    return EngineReleases.load(
+        evidence_store, rcl_committed=rcl_committed, on_divergence=_halt
+    )
 
 
 def replay_engine(
@@ -417,6 +421,7 @@ def replay_engine(
     *,
     scheme: CanonicalizationScheme,
     window_events: int | None,
+    rcl_committed: RclCommitted | None = None,
 ) -> ReplayVerdict:
     """Independently re-derive the inbox's admitted events and compare outcomes.
 
@@ -440,6 +445,9 @@ def replay_engine(
             explicit ``None`` should make, not a ``0``. ⚠ See the module docstring's own
             "``window_events`` path-dependency caveat" for why ``None`` is the only generally
             correct choice for a ledger-carrying stream.
+        rcl_committed: The RCL's committed-command lookup (``SqliteCommitLog.committed_command``)
+            — the authority every recorded engine-projection release is checked against
+            (:mod:`tos_runtime.engine.replay_releases`). ``None``: no release row is applied.
 
     Returns:
         The :class:`ReplayVerdict`.
@@ -454,7 +462,7 @@ def replay_engine(
         )
 
     recorded = _recorded_receipts(evidence_store)
-    releases = _load_releases(evidence_store, emergency_log)
+    releases = _load_releases(evidence_store, emergency_log, rcl_committed)
     admitted = list(inbox.replay())
     if window_events is not None:
         admitted = admitted[-window_events:]
