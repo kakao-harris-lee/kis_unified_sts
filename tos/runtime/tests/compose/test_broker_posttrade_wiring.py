@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -163,8 +164,8 @@ def _finality_config() -> FinalityConfig:
     )
 
 
-def _full_fill(**overrides) -> EgressResultPayload:
-    fields = {
+def _full_fill(**overrides: object) -> EgressResultPayload:
+    fields: dict[str, Any] = {
         "instrument_key": InstrumentKey(account="1234567801", instrument="005930"),
         "attempt_id": "attempt-x",
         "kind": EgressResultKind.FULL_FILL,
@@ -184,7 +185,7 @@ def test_broker_producer_labels_its_proof_and_never_says_synthetic() -> None:
     assert produced is not None
     assert produced.record.obligation_type == "BROKER_ORDER_FQP"
     assert produced.proof.idempotency_key == "broker-fqp-proof:attempt-x"
-    assert "synthetic" not in produced.proof.proof_id.lower()
+    assert (produced.proof.proof_id or "").startswith("broker-fqp-proof")
 
 
 @pytest.mark.parametrize(

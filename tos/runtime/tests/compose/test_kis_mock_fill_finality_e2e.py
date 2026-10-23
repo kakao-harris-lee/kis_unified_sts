@@ -183,6 +183,7 @@ def _script_broker(server, config_dir, date: str, rows: list[dict[str, str]]) ->
 
 def _rcl_state(runtime) -> CapacityState:
     ((_rid, state, _seq, _scope),) = runtime.rcl_log.reservation_rows()
+    assert isinstance(state, CapacityState)
     return state
 
 

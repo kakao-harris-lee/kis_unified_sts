@@ -49,6 +49,7 @@ import yaml
 from tos.engine.records import EgressResultPayload, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 
+from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
@@ -145,6 +146,12 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
+    for key in _WITNESS_KEYS:
+        # The witness config loader re-checks every one of these; refusing the placeholder here
+        # names THIS file in the error rather than the witness's.
+        reject_named_tbd(
+            raw[key], field=key, context=str(path), error_cls=FillObserverConfigError
+        )
     return FillObserverConfig(
         witness_fields={key: raw[key] for key in _WITNESS_KEYS},
         poll_interval_ms=_positive_int(raw, "poll_interval_ms", path),
