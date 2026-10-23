@@ -37,12 +37,26 @@ exit "${CP3_TEST_STUB_RC:-0}"
 
 _FAKE_CRONTAB = """#!/bin/bash
 # Test stub: `crontab -l` prints $FAKE_CRONTAB_FILE, `crontab FILE` replaces it.
+# FAKE_CRONTAB_LIST_ERR makes -l fail with that stderr; every write is counted.
 if [ "${1:-}" = "-l" ]; then
+  if [ -n "${FAKE_CRONTAB_LIST_ERR:-}" ]; then echo "$FAKE_CRONTAB_LIST_ERR" >&2; exit 1; fi
   [ -f "$FAKE_CRONTAB_FILE" ] || { echo "no crontab for test" >&2; exit 1; }
   cat "$FAKE_CRONTAB_FILE"
 else
+  echo "$1" >>"$FAKE_CRONTAB_FILE.writes"
   cp "$1" "$FAKE_CRONTAB_FILE"
 fi
+"""
+
+_FAKE_INSTALL = """#!/bin/bash
+# Test stub: fail when FAKE_INSTALL_FAIL is set, otherwise the real install(1).
+[ -n "${FAKE_INSTALL_FAIL:-}" ] && { echo "install: simulated failure" >&2; exit 1; }
+exec /usr/bin/install "$@"
+"""
+
+_NO_YAML_PYTHON = """#!/bin/bash
+echo "ModuleNotFoundError: No module named 'yaml'" >&2
+exit 1
 """
 
 _OTHER_LINES = """SHELL=/bin/bash
@@ -114,6 +128,7 @@ class Env:
         self.locks = tmp / "locks"
         bindir = tmp / "bin"
         _write(bindir / "crontab", _FAKE_CRONTAB, 0o755)
+        _write(bindir / "install", _FAKE_INSTALL, 0o755)
         self.crontab = tmp / "crontab.txt"
         self.base_env = {
             "PATH": f"{bindir}:{os.environ['PATH']}",
@@ -328,7 +343,7 @@ def test_missing_data_parent_is_refused_with_an_alert(env: Env) -> None:
 def test_a_held_lock_is_a_failure_not_a_second_session(env: Env) -> None:
     _data_parents(env)
     env.locks.mkdir()
-    with open(env.locks / "cp3-long-tenant-daily.lock", "w") as fh:
+    with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 75
@@ -374,3 +389,123 @@ def test_preflight_reports_the_roll_and_writes_nothing(env: Env) -> None:
         p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
     )
     assert after == before
+
+
+# ------------------------------------------------- review #933 regressions
+
+
+def _assert_alerted_failure(r: subprocess.CompletedProcess[str], rc: int = 2) -> None:
+    assert r.returncode == rc, r.stdout + r.stderr
+    assert "SKIP" not in r.stdout
+    assert "일일 세션 실패" in r.stdout and "notify-body" in r.stdout
+
+
+def test_b1_a_python_that_cannot_import_yaml_is_a_failure_not_a_skip(env: Env) -> None:
+    _data_parents(env)
+    py = env.main / ".venv/bin/python"
+    py.unlink()
+    _write(py, _NO_YAML_PYTHON, 0o755)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    _assert_alerted_failure(r)
+    assert "holiday check failed (rc=1)" in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (
+        env.state / f"measure/wt-cp3-long-{_OPEN_DAY.replace('-', '')}"
+    ).exists()
+    pre = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert pre.returncode == 2 and "market=" not in pre.stdout
+
+
+def test_b1_an_impossible_date_is_a_failure_not_a_skip(env: Env) -> None:
+    _data_parents(env)
+    _assert_alerted_failure(env.daily("SHORT", CP3_DAILY_TODAY="2026-02-30"))
+    assert env.daily("SHORT", "--preflight", "2026-02-30").returncode == 2
+
+
+def test_n3_a_calendar_without_this_years_holidays_is_refused(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY="2027-01-04")
+    _assert_alerted_failure(r)
+    assert "lists no holiday in 2027" in r.stdout
+    pre = env.daily("LONG", "--preflight", "2027-01-04")
+    assert pre.returncode == 2 and "no holiday in 2027" in pre.stdout
+
+
+def test_n1_a_non_kst_host_zone_is_refused_at_run_time(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY, TZ="UTC")
+    _assert_alerted_failure(r)
+    assert "not +0900" in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_n4_the_hand_lines_outer_lock_does_not_block_the_new_wrapper(env: Env) -> None:
+    # 10-22 hand lines hold `cp3-long-tenant-daily.lock` around the call.
+    _data_parents(env)
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+
+
+def test_n4_a_failed_wrapper_install_rolls_the_crontab_back(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES + _LEGACY_LINES, encoding="utf-8")
+    env.dest_dir.mkdir(parents=True)
+    old = env.dest_dir / "run-cp3-tenant-daily.sh"
+    old.write_text("#!/bin/bash\necho hand-made\n", encoding="utf-8")
+    r = env.install("--apply", FAKE_INSTALL_FAIL="1")
+    assert r.returncode == 2
+    assert "rolled back crontab" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES + _LEGACY_LINES
+    assert old.read_text(encoding="utf-8") == "#!/bin/bash\necho hand-made\n"
+
+
+def test_n5_missing_credentials_are_logged_as_a_failed_notify(env: Env) -> None:
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOTIFY="1")
+    assert r.returncode == 2
+    assert (
+        "telegram notify FAILED: TELEGRAM_BRIEFING_BOT_TOKEN and TELEGRAM_BRIEFING_CHAT_ID missing"
+        in r.stdout
+    )
+
+
+def test_n5_curl_treats_http_errors_as_failure() -> None:
+    text = (_REPO_ROOT / _WRAPPER_REL).read_text(encoding="utf-8")
+    assert "curl --fail " in text
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_n6_a_crontab_read_error_aborts_instead_of_wiping(
+    env: Env, apply: bool
+) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    args = ("--apply",) if apply else ()
+    r = env.install(
+        *args, FAKE_CRONTAB_LIST_ERR="crontab: cannot open spool: Permission denied"
+    )
+    assert r.returncode == 2
+    assert "crontab -l failed" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+    assert not Path(f"{env.crontab}.writes").exists()
+
+
+def test_n6_no_crontab_at_all_is_an_empty_crontab(env: Env) -> None:
+    r = env.install("--apply")
+    assert r.returncode == 0, r.stderr
+    assert "# BEGIN CP3_TENANT_DAILY" in env.crontab.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_n6_a_begin_without_end_aborts(env: Env, apply: bool) -> None:
+    broken = (
+        _OTHER_LINES
+        + "# BEGIN CP3_TENANT_DAILY (half-edited)\nCRON_TZ=Asia/Seoul\n0 3 * * 0 /x/keep-me.sh\n"
+    )
+    env.crontab.write_text(broken, encoding="utf-8")
+    args = ("--apply",) if apply else ()
+    r = env.install(*args)
+    assert r.returncode == 2
+    assert "without a matching" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == broken
+    assert not Path(f"{env.crontab}.writes").exists()

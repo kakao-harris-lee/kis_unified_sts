@@ -15,7 +15,7 @@
 # already paid for that once (tools/broker_probes/runners/README.md).
 #
 # What one call does (run mode):
-#   1. flock on $LOCK_DIR/cp3-<dir>-tenant-daily.lock, non-blocking. Busy means
+#   1. flock on $LOCK_DIR/cp3-<dir>-tenant-daily.wrapper.lock, non-blocking. Busy means
 #      the previous call is still running — that is a failure, and it alerts.
 #   2. one session per day: an existing session dir is a refusal (alerts).
 #   3. the durable-set parent must already exist (alerts) — its first genesis is
@@ -93,13 +93,13 @@ notify() {
   tok=$(grep -E '^(export )?TELEGRAM_BRIEFING_BOT_TOKEN=' "$MAIN/.env" 2>/dev/null | tail -1 | sed -E 's/^(export )?[A-Z_]+=//; s/^"//; s/"$//')
   chat=$(grep -E '^(export )?TELEGRAM_BRIEFING_CHAT_ID=' "$MAIN/.env" 2>/dev/null | tail -1 | sed -E 's/^(export )?[A-Z_]+=//; s/^"//; s/"$//')
   if [ -z "$tok" ] || [ -z "$chat" ]; then
-    log "notify skipped: briefing credentials not found in $MAIN/.env"
+    log "telegram notify FAILED: $([ -z "$tok" ] && echo TELEGRAM_BRIEFING_BOT_TOKEN)$([ -z "$tok" ] && [ -z "$chat" ] && echo ' and ')$([ -z "$chat" ] && echo TELEGRAM_BRIEFING_CHAT_ID) missing in $MAIN/.env — nothing was sent"
     log "notify-body: $1"
     return 0
   fi
   # Body before sending, so the log says WHAT was delivered (resident wrapper, review H1).
   log "notify-body(sending): $1"
-  if curl -sS -m 20 -X POST "https://api.telegram.org/bot${tok}/sendMessage" \
+  if curl --fail -sS -m 20 -X POST "https://api.telegram.org/bot${tok}/sendMessage" \
     --data-urlencode "chat_id=${chat}" --data-urlencode "text=$1" >/dev/null 2>&1; then
     log "telegram notified"
   else
@@ -116,7 +116,12 @@ cron 로그 $STATE/cp3-$lc-tenant-daily.cron.log"
   exit "$1"
 }
 
-# market_open CALENDAR_FILE DATE — exit 0 open, 1 closed, 2 unreadable calendar.
+# market_open CALENDAR_FILE DATE — exit 0 open, 10 closed, 11 the calendar has no
+# holiday for DATE's year (a stale calendar would call every holiday open). Every
+# other code — a traceback (exit 1: bad date, missing yaml), an unreadable file —
+# is an error, never a skip: only 10 may become a silent SKIP.
+MARKET_CLOSED=10
+CALENDAR_STALE=11
 market_open() {
   "$PY" - "$1" "$2" "$EXTRA_CLOSED" <<'PY'
 import datetime, sys
@@ -128,8 +133,11 @@ try:
 except Exception as exc:  # noqa: BLE001 — any unreadable calendar is a refusal
     print(f"calendar unreadable: {path}: {exc}", file=sys.stderr)
     sys.exit(2)
-d = datetime.date.fromisoformat(today)
-sys.exit(1 if d.weekday() >= 5 or today in holidays or today in extra else 0)
+d = datetime.date.fromisoformat(today)  # 2026-02-30 raises -> exit 1 -> error
+if not any(h.startswith(f"{d.year}-") for h in holidays):
+    print(f"calendar {path} lists no holiday in {d.year}", file=sys.stderr)
+    sys.exit(11)
+sys.exit(10 if d.weekday() >= 5 or today in holidays or today in extra else 0)
 PY
 }
 
@@ -145,10 +153,12 @@ if [ "$MODE" = preflight ]; then
   git -C "$MAIN" show "origin/main:$CAL_REL" >"$cal" 2>/dev/null || {
     log "PREFLIGHT $CAL_REL missing at origin/main $ref"; exit 2; }
   market_open "$cal" "$TODAY"
-  case $? in
+  mrc=$?
+  case $mrc in
   0) open=OPEN ;;
-  1) open=CLOSED ;;
-  *) log "PREFLIGHT calendar unreadable"; exit 2 ;;
+  "$MARKET_CLOSED") open=CLOSED ;;
+  "$CALENDAR_STALE") log "PREFLIGHT calendar has no holiday in ${TODAY:0:4} — a run would refuse"; exit 2 ;;
+  *) log "PREFLIGHT calendar check failed (rc=$mrc)"; exit 2 ;;
   esac
   inst=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$MAIN "$PY" -c 'import datetime, sys
 from shared.instruments.futures import get_front_month_code
@@ -164,8 +174,14 @@ print(get_front_month_code(product="mini", target_date=datetime.date.fromisoform
 fi
 
 # ---------------------------------------------------------------------- run --
+# The host cron (Ubuntu 3.0pl1) ignores CRON_TZ: the schedule is KST only because
+# the host zone is. If that ever changes, the 08:38 line fires at the wrong hour.
+[ "$(date +%z)" = "+0900" ] || fail 2 "host zone is $(date +%z), not +0900 — cron times are not KST (CRON_TZ is ignored by this cron)"
+
 mkdir -p "$LOCK_DIR" 2>/dev/null
-LOCK=$LOCK_DIR/cp3-$lc-tenant-daily.lock
+# `.wrapper.lock`, not the `.lock` the 2026-10-22 hand-installed lines take with an
+# OUTER flock: an outer and an inner flock on one path would refuse every call.
+LOCK=$LOCK_DIR/cp3-$lc-tenant-daily.wrapper.lock
 exec 9>"$LOCK" || fail 2 "cannot open lock $LOCK"
 flock -n 9 || fail 75 "lock busy ($LOCK) — 앞선 $DIR 호출이 아직 돈다. 오늘 세션은 시작하지 않았다"
 
@@ -191,14 +207,22 @@ git -C "$MAIN" worktree add -q --detach "$WT" origin/main || fail 1 "worktree ad
 log "worktree $WT @ $(git -C "$WT" rev-parse --short=12 HEAD) (detached origin/main)"
 
 market_open "$WT/$CAL_REL" "$TODAY"
-case $? in
+mrc=$?
+case $mrc in
 0) ;;
-1)
+"$MARKET_CLOSED")
   log "market closed on $TODAY (weekend/holiday per $TREE calendar or extra '$EXTRA_CLOSED') — SKIP"
   git -C "$MAIN" worktree remove "$WT" && log "removed $WT"
   exit 0
   ;;
-*) fail 2 "calendar unreadable: $WT/$CAL_REL" ;;
+"$CALENDAR_STALE")
+  git -C "$MAIN" worktree remove "$WT" 2>/dev/null
+  fail 2 "$CAL_REL lists no holiday in ${TODAY:0:4} — calendar not updated for this year; refusing rather than treating holidays as open"
+  ;;
+*)
+  git -C "$MAIN" worktree remove "$WT" 2>/dev/null
+  fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run"
+  ;;
 esac
 
 mkdir -p "$SESSION"

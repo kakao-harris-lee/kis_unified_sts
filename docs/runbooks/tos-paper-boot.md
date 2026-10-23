@@ -175,7 +175,7 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
 | cron stdout | `~/.local/state/tos/cp3-{long,short}-tenant-daily.cron.log` (⚠ 로테이션 없음) |
 | 세션 아티팩트 | `~/.local/state/tos/cp3-sessions/{long,short}-<YYYYMMDD>/` (`runner.out` · `session.log` · `producer/` · `config/`) |
 | 그날의 워크트리 | `~/.local/state/tos/measure/wt-cp3-{long,short}-<YYYYMMDD>` — 다음 거래일 호출이 지운다 |
-| 잠금 | `/tmp/cp3-{long,short}-tenant-daily.lock` — 래퍼 **안에서** `flock -n` |
+| 잠금 | `/tmp/cp3-{long,short}-tenant-daily.wrapper.lock` — 래퍼 **안에서** `flock -n`. 10-22 손 설치 줄이 바깥 flock 으로 잡던 `….lock` 과 **다른 경로**다 — 같은 경로면 바깥·안쪽 잠금이 서로 막아 매일 거부된다 |
 
 **설치 (PR 머지 뒤, 운영자).** 먼저 dry-run 으로 diff 를 보고, 같은 명령에 `--apply` 를 붙인다.
 
@@ -187,7 +187,12 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 
 - `--apply` 는 셋을 거부한다: 설치기 자신이 `origin/main` 판과 바이트가 다를 때 · 호스트 zone 이
   `+0900` 이 아닐 때(Ubuntu cron 3.0pl1 은 **`CRON_TZ` 를 구현하지 않는다** — 블록의 `CRON_TZ`
-  줄은 관례로 두지만 KST 보장은 호스트 zone 이다) · `~/.local/state/tos` 가 없을 때.
+  줄은 관례로 두지만 KST 보장은 호스트 zone 이다. 래퍼도 매 호출 같은 검사를 하고 실패면 알린다) ·
+  `~/.local/state/tos` 가 없을 때.
+- dry-run 도 `--apply` 도 둘을 거부한다: `crontab -l` 이 「`no crontab for`」 아닌 이유로 실패할 때
+  (빈 crontab 으로 읽으면 상주·콜드 백업 줄이 통째로 지워진다) · `BEGIN` 표지에 짝 `END` 가 없을 때.
+- 순서는 **crontab 먼저, 래퍼 다음**이고, 래퍼 단계가 실패하면 crontab 을 백업으로 되돌리고 래퍼도
+  `.bak` 에서 복원한다 — 실패한 설치는 둘 다 원래대로 남는다.
 - 블록 밖의 `# cp3-{long,short}-tenant-daily` 꼬리표 줄(10-22 손 설치분)은 지운다 — 한 방향이 두
   번 걸리지 않게. 그 위의 꼬리표 없는 `CRON_TZ=Asia/Seoul` 한 줄은 남는다(무해). 나머지 줄은
   바이트 그대로다. 제거는 `--remove`(dry-run) → `--remove --apply`.
@@ -207,12 +212,14 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 | 정상 (러너 0 · 143) | `일일 세션 종료 … — 정상` 한 줄 | 러너 rc |
 | 러너 실패 (3 · 4 · 5 · 129/130 · 그 밖) | `일일 세션 실패 … rc=N` + 뜻 한 줄 | 러너 rc |
 | 잠금 점유 (앞선 호출이 아직 돈다) | 실패 한 줄 | 75 |
-| 세션 디렉터리 이미 있음 · 부모 없음 · 달력 못 읽음 | 실패 한 줄 | 2 |
+| 세션 디렉터리 이미 있음 · 부모 없음 · 호스트 zone ≠ +0900 | 실패 한 줄 | 2 |
+| 휴장 판정 자체가 실패(달력 못 읽음 · 날짜 오류 · `yaml` import 실패 등) | 실패 한 줄 — **SKIP 으로 읽지 않는다**(판정 스크립트의 «휴장» 은 종료코드 10 하나뿐) | 2 |
+| 달력에 그 해 휴장일이 하나도 없다(달력이 해를 넘기지 못함) | 실패 한 줄 | 2 |
 | fetch · 워크트리 실패 | 실패 한 줄 | 1 |
 | 휴장 · 주말 · 연말 | **없음** — cron 로그 `SKIP` 한 줄 | 0 |
 
 그래서 **거래일 09:00 까지 방향마다 줄이 하나도 없으면** 그 자체가 소견이다 — cron 이 돌지
-않았거나(`cron.log` 에 그날 줄 없음) 텔레그램 전송이 실패했다(`telegram notify FAILED`). 정상
+않았거나(`cron.log` 에 그날 줄 없음) 텔레그램 전송이 실패했다(`telegram notify FAILED` — HTTP 4xx·5xx 도 실패로 센다(`curl --fail`), 자격증명이 없으면 무엇이 없는지 그 줄에 적힌다). 정상
 줄은 15:50 정지 뒤에 오므로, 낮 동안의 확인은 `cp3-sessions/<dir>-<날짜>/session.log` 를 본다.
 
 **11-11(수) 롤 dry-run — 11-12 첫 실롤 전날.** mini 11월물(`A05611`) 만기는 11-12(목)이고

@@ -62,13 +62,20 @@ REF=$(git -C "$REPO" rev-parse --short=12 origin/main)
 SRC=$(mktemp) || exit 2
 CUR=$(mktemp) || exit 2
 NEW=$(mktemp) || exit 2
-trap 'rm -f "$SRC" "$CUR" "$NEW"' EXIT
+ERR=$(mktemp) || exit 2
+trap 'rm -f "$SRC" "$CUR" "$NEW" "$ERR"' EXIT
 git -C "$REPO" show "origin/main:$SRC_REL" >"$SRC" 2>/dev/null ||
   die "$SRC_REL is not on origin/main ($REF) — merge the PR first"
 SRC_SHA=$(sha256sum "$SRC" | cut -c1-64)
 
-# Current crontab. "no crontab for <user>" is an empty crontab, not an error.
-crontab -l >"$CUR" 2>/dev/null || : >"$CUR"
+# Current crontab. Only "no crontab for <user>" means empty. Any other failure is
+# an ABORT: treating it as empty would make --apply replace the live crontab
+# (resident paper, cold backups, ~200 lines) with our block alone.
+if ! crontab -l >"$CUR" 2>"$ERR"; then
+  grep -q '^no crontab for ' "$ERR" ||
+    die "crontab -l failed: $(head -c 300 "$ERR") — refusing (would otherwise wipe the crontab)"
+  : >"$CUR"
+fi
 
 line() { # line DIR lc AT
   printf '%s * * 1-5 /bin/bash %s %s >> %s/cp3-%s-tenant-daily.cron.log 2>&1 # cp3-%s-tenant-daily\n' \
@@ -76,13 +83,16 @@ line() { # line DIR lc AT
 }
 
 # Everything except our block and the hand-installed tagged lines.
+# A BEGIN with no END would drop every line after it, so that is an ABORT (rc 3).
 awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
-  index($0, b) == 1 { skip = 1; next }
+  index($0, b) == 1 { if (skip) bad = 1; skip = 1; next }
   skip && index($0, e) == 1 { skip = 0; next }
   skip { next }
   /# cp3-(long|short)-tenant-daily[[:space:]]*$/ { next }
   { print }
-' "$CUR" >"$NEW"
+  END { exit (skip || bad) ? 3 : 0 }
+' "$CUR" >"$NEW" ||
+  die "the current crontab has a '$BEGIN_MARK' without a matching '$END_MARK' (or a nested one) — fix it by hand; refusing"
 
 if [ "$REMOVE" = 0 ]; then
   {
@@ -124,22 +134,43 @@ mkdir -p "$DEST_DIR"
 cp -p "$CUR" "$DEST_DIR/crontab.bak.$stamp" || die "crontab backup failed"
 echo "backed up crontab -> $DEST_DIR/crontab.bak.$stamp"
 
-if [ "$REMOVE" = 0 ]; then
-  [ -d "$STATE" ] || die "state dir $STATE missing — the cron log would have nowhere to go"
-  if ! { [ -f "$DEST" ] && cmp -s "$SRC" "$DEST"; }; then
-    if [ -f "$DEST" ]; then
-      old=$(sha256sum "$DEST" | cut -c1-12)
-      cp -p "$DEST" "$DEST.bak.$old" || die "wrapper backup failed"
-      echo "backed up wrapper -> $DEST.bak.$old"
-    fi
-    install -m 700 "$SRC" "$DEST" || die "wrapper copy failed"
-    echo "installed wrapper -> $DEST"
-  fi
-fi
+[ "$REMOVE" = 1 ] || [ -d "$STATE" ] || die "state dir $STATE missing — the cron log would have nowhere to go"
 
+# Crontab FIRST, wrapper second, crontab rolled back if the wrapper step fails.
+# The 2026-10-22 hand lines call the same $DEST under an outer flock; the new
+# wrapper locks a different path (`.wrapper.lock`), so even a half-done install
+# (new wrapper under old lines) cannot self-refuse — but a failed install leaves
+# the crontab and the wrapper as they were.
+CRON_CHANGED=0
 if cmp -s "$CUR" "$NEW"; then
   echo "crontab unchanged"
 else
-  crontab "$NEW" || die "crontab write failed (backup $DEST_DIR/crontab.bak.$stamp)"
+  crontab "$NEW" || die "crontab write failed — nothing changed (backup $DEST_DIR/crontab.bak.$stamp)"
+  CRON_CHANGED=1
   echo "crontab written"
+fi
+
+old=
+rollback() {
+  if [ -n "$old" ] && [ -f "$DEST.bak.$old" ]; then
+    cp -p "$DEST.bak.$old" "$DEST" && echo "restored wrapper from $DEST.bak.$old" >&2
+  fi
+  if [ "$CRON_CHANGED" = 1 ]; then
+    if crontab "$DEST_DIR/crontab.bak.$stamp"; then
+      echo "rolled back crontab from $DEST_DIR/crontab.bak.$stamp" >&2
+    else
+      echo "ROLLBACK FAILED — restore by hand: crontab $DEST_DIR/crontab.bak.$stamp" >&2
+    fi
+  fi
+  die "$1"
+}
+
+if [ "$REMOVE" = 0 ] && ! { [ -f "$DEST" ] && cmp -s "$SRC" "$DEST"; }; then
+  if [ -f "$DEST" ]; then
+    old=$(sha256sum "$DEST" | cut -c1-12)
+    cp -p "$DEST" "$DEST.bak.$old" || rollback "wrapper backup failed"
+    echo "backed up wrapper -> $DEST.bak.$old"
+  fi
+  install -m 700 "$SRC" "$DEST" || rollback "wrapper copy failed"
+  echo "installed wrapper -> $DEST"
 fi
