@@ -713,16 +713,6 @@ def test_long_short_mirror_symmetry_property(
     )
 
 
-def _reader(store: SqliteEvidenceStore) -> EvidencePositionReader:
-    return EvidencePositionReader(
-        store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
-
-
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
 @pytest.mark.parametrize(
     "consumed_kind,consumed_fill,confirmed,outstanding",
