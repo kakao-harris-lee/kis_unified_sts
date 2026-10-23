@@ -55,8 +55,10 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
         {
             "tree_id",
             "account.env_key",
-            # the stock code shape --instrument must match (#926 review LOW)
+            # the one stock code --instrument must match (#926 LOW, #936 MEDIUM)
             "instrument",
+            # the producer market feeding the tree (#936 review LOW-1)
+            "market",
         }
     ),
     # PR-3a (운영자 결정 2026-10-23): this tree, and only this tree, is the MOCK order tree.

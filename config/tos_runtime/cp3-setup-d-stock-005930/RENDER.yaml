@@ -47,6 +47,9 @@
 # slot be re-aimed at another leaf of the same file while keeping its key.
 
 tree_id: "cp3-setup-d-stock-005930"
+# The producer market feeding this tree — the tenant runner refuses a producer config whose
+# own `market:` differs, before the producer starts (#936 review LOW-1).
+market: "stock"
 
 direction:
   # "declared" — this tree is committed for ONE direction (plan §2.3). The renderer
@@ -64,11 +67,13 @@ journal:
 # 주식 주문 좌표로 쓰면 다른 계좌로 보낸다 — 렌더러가 이 키를 닫힌 집합에서만 받는다.
 account:
   env_key: "KIS_STOCK_ACCOUNT_NO"
-# `--instrument` shape (#926 review LOW): a KRX stock code is six digits (005930). Without
-# this the renderer wrote any string — a futures code such as A05612 included — into the
-# five instrument slots below, and the tree booted on an instrument it does not trade.
+# `--instrument` (#926 review LOW, narrowed by #936 review MEDIUM): this tree is SINGLE-symbol
+# — venue_constraint_policy.yaml "one symbol (005930) per policy generation", operator
+# decision 2026-10-22 — so the pattern is the symbol itself, not "any six digits". A new
+# symbol is a new tree generation. Without it the renderer wrote any string (a futures code,
+# or another stock such as 000660) into the instrument slots below.
 instrument:
-  pattern: "[0-9]{6}"
+  pattern: "005930"
 
 slots:
   - file: "venue_constraint_policy.yaml"

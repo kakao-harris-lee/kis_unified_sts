@@ -141,3 +141,7 @@ config/strategies/built/*.yaml
 tests/performance/rounds/
 tests/performance/current.json
 tests/performance/baselines.candidate.json
+
+# Filled copies of the tenant session env templates (tools/tos_cp3/runners/*.env.example)
+# carry operator host paths and must never be committed (#936 review LOW-2).
+tools/tos_cp3/runners/*.env

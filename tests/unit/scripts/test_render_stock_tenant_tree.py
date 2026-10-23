@@ -134,6 +134,7 @@ def test_the_cli_refuses_a_stock_tree_without_an_explicit_instrument(
         "A05612",  # a mini KOSPI200 futures code — the concrete wrong input
         "05930",  # five digits
         "0059300",  # seven digits: a prefix match would accept it
+        "000660",  # another six-digit stock: this tree is single-symbol (#936 review MEDIUM)
         "005930 ",  # trailing space
     ],
 )
@@ -156,10 +157,27 @@ def test_a_stock_tree_refuses_an_instrument_that_is_not_a_stock_code(
     assert not out.exists()
 
 
-def test_the_stock_manifest_declares_the_six_digit_shape() -> None:
-    assert rpc.load_manifest(_STOCK).instrument_pattern == "[0-9]{6}"
+def test_the_stock_manifest_declares_its_one_symbol_and_market() -> None:
+    """#936 review MEDIUM: the stock tree is single-symbol — the pattern is 005930 itself."""
+    assert rpc.load_manifest(_STOCK).instrument_pattern == "005930"
+    assert rpc.load_manifest(_STOCK).market == "stock"
+    assert rpc.load_manifest(_LONG).market == "futures"
     # The futures trees declare none: their code is checked elsewhere (front month).
     assert rpc.load_manifest(_LONG).instrument_pattern is None
+
+
+def test_an_unknown_market_is_refused(tmp_path: Path) -> None:
+    import shutil
+
+    tree = tmp_path / "tree"
+    shutil.copytree(_STOCK, tree)
+    manifest = tree / rpc.RENDER_MANIFEST_NAME
+    text = manifest.read_text(encoding="utf-8").replace(
+        'market: "stock"', 'market: "bond"'
+    )
+    manifest.write_text(text, encoding="utf-8")
+    with pytest.raises(rpc.RenderError, match="market refused"):
+        rpc.load_manifest(tree)
 
 
 @pytest.mark.parametrize(

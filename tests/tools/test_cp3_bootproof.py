@@ -1229,6 +1229,8 @@ _STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
 #: The stub producer config's ``market:`` value; ``"<absent>"`` drops the line (PR #922
 #: review LOW-3 — the runner's real-key guard reads it).
 _STUB_MARKET_ENV = "STUB_PRODUCER_MARKET"
+#: The stock tenant tree, as the stub repo carries it.
+_STOCK_TREE = "cp3-setup-d-stock-005930"
 
 #: What the runner logs when the band line is there, and when it is not. The
 #: second string is the plan's own wording (§3.1) and the thing an operator
@@ -1269,6 +1271,17 @@ def _runner_repo(
     (repo / "shared" / "instruments").mkdir(parents=True)
     (repo / "config" / "tos_runtime" / "cp3-setup-d-long").mkdir(parents=True)
     (repo / "scripts" / "tos").mkdir(parents=True)
+    # Each stub tree's manifest carries the two fields step 5b reads (PR-3c / #936 review):
+    # the producer market feeding it, and (stock) its one symbol.
+    (repo / "config/tos_runtime/cp3-setup-d-long/RENDER.yaml").write_text(
+        'tree_id: "cp3-setup-d-long"\nmarket: "futures"\n', encoding="utf-8"
+    )
+    (repo / "config/tos_runtime" / _STOCK_TREE).mkdir(parents=True)
+    (repo / "config/tos_runtime" / _STOCK_TREE / "RENDER.yaml").write_text(
+        f'tree_id: "{_STOCK_TREE}"\nmarket: "stock"\n'
+        'instrument:\n  pattern: "005930"\n',
+        encoding="utf-8",
+    )
 
     # The stub ③. It stands in for tools/tos_cp3/live_producer/producer.py: it
     # writes the journal rows its environment asks for and then runs until it is
@@ -2782,10 +2795,50 @@ def test_red_low3_the_real_key_guard_follows_the_market(
 def test_red_low3_an_unknown_or_absent_market_is_refused(
     tmp_path: Path, market: str
 ) -> None:
-    """Fail closed: a config whose market the guard cannot read names no key pair."""
+    """Fail closed: a config whose market step 5b cannot read is refused before the
+    producer starts."""
     result = _run_runner(_runner_repo(tmp_path), tmp_path, **{_STUB_MARKET_ENV: market})
     assert result.returncode != 0
-    assert "the real-key guard cannot tell" in result.stdout + result.stderr
+    assert "TENANT_PRODUCER_CONFIG declares market=" in result.stdout + result.stderr
+    assert not (tmp_path / "producer.pid").exists()
+
+
+@pytest.mark.parametrize(
+    ("tree", "market"),
+    [("cp3-setup-d-long", "stock"), (_STOCK_TREE, "futures")],
+)
+def test_red_936_low1_a_tree_and_producer_market_mismatch_refuses_before_the_producer(
+    tmp_path: Path, tree: str, market: str
+) -> None:
+    """#936 review LOW-1: a futures tree with the stock producer config (or the reverse) used
+    to start the producer's real-quote GETs before anything noticed. Refused at step 5b now,
+    from the tree's own RENDER.yaml ``market:``."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{"TENANT_TREE": tree, _STUB_MARKET_ENV: market},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "refused before the producer starts" in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+def test_red_936_low3_a_duplicate_market_key_reads_as_the_loader_reads_it(
+    tmp_path: Path,
+) -> None:
+    """#936 review LOW-3: ``market: futures`` then ``market: stock``. The producer's loader
+    (yaml.safe_load) keeps the LAST key; the first cut's ``sed`` took the first and would have
+    run this futures tree. Step 5b reads it as the loader does, so the mismatch is refused.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_MARKET_ENV: "futures\nmarket: stock"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "reads market='stock'" in output
     assert not (tmp_path / "producer.pid").exists()
 
 
@@ -2813,6 +2866,7 @@ def _stock_overrides(tmp_path: Path, **extra: str) -> dict[str, str]:
     transport = tmp_path / "kis_mock_transport.yaml"
     transport.write_text("# stub — the stub run never reads it\n", encoding="utf-8")
     return {
+        "TENANT_TREE": _STOCK_TREE,
         _STUB_MARKET_ENV: "stock",
         "TENANT_INSTRUMENT": "005930",
         "TENANT_KIS_MOCK_TRANSPORT_CONFIG": str(transport),
@@ -2849,7 +2903,7 @@ def test_a_stock_session_boots_kis_mock_with_the_transport_config_installed(
     assert installed.is_file()
     assert stat.S_IMODE(installed.stat().st_mode) == 0o600
     assert "instrument=005930" in output
-    assert "transport=kis-mock (market=stock)" in output
+    assert "market=stock (tree and producer agree) · transport=kis-mock" in output
 
 
 def test_a_futures_session_still_boots_synthetic(tmp_path: Path) -> None:
@@ -2884,23 +2938,43 @@ def test_a_futures_session_still_boots_synthetic(tmp_path: Path) -> None:
         ),
         # a stock session missing or misnaming them
         (
-            {_STUB_MARKET_ENV: "stock", "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x"},
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
             "required env TENANT_INSTRUMENT is unset",
         ),
         (
-            {_STUB_MARKET_ENV: "stock", "TENANT_INSTRUMENT": "005930"},
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+            },
             "required env TENANT_KIS_MOCK_TRANSPORT_CONFIG is unset",
         ),
         (
             {
+                "TENANT_TREE": _STOCK_TREE,
                 _STUB_MARKET_ENV: "stock",
                 "TENANT_INSTRUMENT": "A05612",
                 "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
             },
-            "is not a six-digit stock code",
+            "does not fully match",
+        ),
+        # #936 review MEDIUM: another six-digit stock — the tree is single-symbol
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "000660",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
+            "does not fully match",
         ),
         (
             {
+                "TENANT_TREE": _STOCK_TREE,
                 _STUB_MARKET_ENV: "stock",
                 "TENANT_INSTRUMENT": "005930",
                 "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/nonexistent/kis_mock_transport.yaml",

@@ -501,6 +501,11 @@ class Slot:
         return f"{self.file}::{self.key}"
 
 
+#: The producer markets a tree manifest may declare (``RENDER.yaml`` ``market:``) — the
+#: closed set the producer's own config accepts (tools/tos_cp3/live_producer/config.py MARKETS).
+_MARKETS = ("futures", "stock")
+
+
 @dataclass(frozen=True)
 class RenderManifest:
     """``<tree>/RENDER.yaml``, validated."""
@@ -517,6 +522,10 @@ class RenderManifest:
     #: ``None`` when the manifest declares none (#926 review LOW: a stock tree took any
     #: string, e.g. a futures code, and rendered it into five policy files).
     instrument_pattern: str | None = None
+    #: ``market`` — which producer market this tree is fed by (``futures``/``stock``), or
+    #: ``None`` when undeclared. The tenant runner compares it with the producer config's
+    #: own ``market:`` before starting anything (#936 review LOW-1).
+    market: str | None = None
 
 
 def _generated_names(journal_mode: str) -> frozenset[str]:
@@ -727,6 +736,12 @@ def load_manifest(tree: Path) -> RenderManifest:
             f"{sorted(ACCOUNT_ENV_KEYS)!r}"
         )
 
+    market = raw.get("market")
+    if market is not None and market not in _MARKETS:
+        raise RenderError(
+            f"{path}: market refused: {market!r} — expected one of {list(_MARKETS)!r}"
+        )
+
     instrument_raw = raw.get("instrument")
     instrument_pattern: str | None = None
     if instrument_raw is not None:
@@ -803,6 +818,7 @@ def load_manifest(tree: Path) -> RenderManifest:
         slots=tuple(slots),
         account_env_key=account_env_key,
         instrument_pattern=instrument_pattern,
+        market=market,
     )
 
 

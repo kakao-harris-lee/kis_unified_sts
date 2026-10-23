@@ -25,16 +25,18 @@
 #      (mirrors scripts/tos/render_paper_config.py's own ENV_FILE_NAME guard —
 #      a tenant session is mock-only and never reaches a real-money account).
 #   3b. no REAL query key of ANY market (futures or stock) is in this shell's
-#      environment (plan §3.4; PR #922 review LOW-3 — the market comes from the
-#      producer config's own `market:`). The producer reads them itself from the
-#      file its own config names; every child inherits this environment, so a
-#      shell that exported them would hand the real keys to the RUNTIME too.
-#   3c. transport and instrument follow the market: futures -> synthetic + the
-#      derived front month; stock (the MOCK order tree, PR-3a) -> kis-mock + the
-#      named TENANT_INSTRUMENT + the deploy-time TENANT_KIS_MOCK_TRANSPORT_CONFIG.
+#      environment (plan §3.4; PR #922 review LOW-3). The producer reads them
+#      itself from the file its own config names; every child inherits this
+#      environment, so a shell that exported them would hand the real keys to
+#      the RUNTIME too.
 #   4. the stop time parses, is in the future, and is within MAX_SESSION_S.
 #   5. TENANT_PYTHON runs, and the tools.tos_cp3 it loads is THIS checkout's,
 #      reporting the POLICY_VERSION this template was written for.
+#   5b. the producer config's market equals the tree's own RENDER.yaml market,
+#      and transport and instrument follow it: futures -> synthetic + the
+#      derived front month; stock (the MOCK order tree, PR-3a) -> kis-mock + the
+#      named TENANT_INSTRUMENT (matching the tree's instrument.pattern) + the
+#      deploy-time TENANT_KIS_MOCK_TRANSPORT_CONFIG. Before the producer starts.
 #   6. the contract month is derived ONCE and given to the data-dir leaf, the
 #      render (--instrument) and the producer, exactly as the resident wrapper
 #      does it (runbook §7.3 5-a) — two places computing it separately disagree
@@ -324,62 +326,19 @@ TREE_DIR=$REPO/config/tos_runtime/$TENANT_TREE
 #
 # WHICH keys (PR #922 review LOW-3): the first cut named the futures pair only,
 # so a STOCK tenant's shell could carry KIS_STOCK_APP_KEY/SECRET into the
-# runtime unseen. The pair now follows the producer config's own `market:`, and
-# every OTHER known market's pair is refused too — the runtime must hold no
-# real key of any market, not just of the one this session trades. The table
-# below is pinned against `tools.tos_cp3.live_producer.config.MARKETS[*]
+# runtime unseen. Every known market's pair is refused now — the runtime must
+# hold no real key of ANY market, not just of the one this session trades — so
+# this step needs no market at all and runs before any child process exists.
+# The table is pinned against `tools.tos_cp3.live_producer.config.MARKETS[*]
 # .credential_keys` by tests/tools/test_cp3_bootproof.py, so it cannot drift
 # from the producer's own idea of which file keys it reads.
 _REAL_KEYS_FUTURES="KIS_FUTURES_APP_KEY KIS_FUTURES_APP_SECRET"
 _REAL_KEYS_STOCK="KIS_STOCK_APP_KEY KIS_STOCK_APP_SECRET"
-_MARKET=$(sed -n 's/^market:[[:space:]]*["'"'"']\{0,1\}\([a-z]*\)["'"'"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1/p' \
-  "$TENANT_PRODUCER_CONFIG" | head -n 1)
-case "$_MARKET" in
-  futures | stock) ;;
-  *) die "TENANT_PRODUCER_CONFIG declares market='$_MARKET' — expected futures or stock; the real-key guard cannot tell which credentials this session's producer reads" ;;
-esac
 for _real_key in $_REAL_KEYS_FUTURES $_REAL_KEYS_STOCK; do
   [ -z "${!_real_key+x}" ] ||
     die "$_real_key is set in this shell. The producer reads the real query keys itself, from the env_file its own config names; the runner and the runtime must not carry them, because every child inherits this environment (plan §3.4)"
 done
-log "credential separation ok: market=$_MARKET, no real query key of any market in this environment"
-
-# --- 3c. transport and instrument follow the market (PR-3c) ----------------
-#
-# The stock tenant tree is the MOCK order tree (PR-3a, operator decision
-# 2026-10-23): its active scope is MOCK_STOCK_ORDER, which the runtime refuses
-# to compose with anything but `--transport kis-mock`. The futures tenant trees
-# stay SYNTHETIC. So the market the producer reads decides both, and each one
-# refuses the other market's settings rather than ignoring them — an ignored
-# setting is one the operator believes is in effect and is not.
-#
-#   futures — instrument DERIVED (step 6, the mini front month); synthetic.
-#   stock   — instrument NAMED by TENANT_INSTRUMENT (six digits; the renderer
-#             checks the tree's own instrument.pattern too); kis-mock, with the
-#             deploy-time kis_mock_transport.yaml TENANT_KIS_MOCK_TRANSPORT_CONFIG
-#             names installed into the render output after the render (step 10).
-#             Its credentials come from custody (kis_mock.app_key/app_secret
-#             under TENANT_CUSTODY_ROOT), never from this environment.
-case "$_MARKET" in
-futures)
-  TRANSPORT=synthetic
-  for _stock_only in TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG; do
-    [ -z "${!_stock_only+x}" ] ||
-      die "$_stock_only is set for a futures session — the futures instrument is derived (step 6) and a futures tenant sends nothing, so nothing would read it"
-  done
-  ;;
-stock)
-  TRANSPORT=kis-mock
-  require_env TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG
-  case "$TENANT_INSTRUMENT" in
-  [0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
-  *) die "TENANT_INSTRUMENT='$TENANT_INSTRUMENT' is not a six-digit stock code" ;;
-  esac
-  [ -f "$TENANT_KIS_MOCK_TRANSPORT_CONFIG" ] ||
-    die "TENANT_KIS_MOCK_TRANSPORT_CONFIG names no file: $TENANT_KIS_MOCK_TRANSPORT_CONFIG"
-  ;;
-esac
-log "transport=$TRANSPORT (market=$_MARKET)"
+log "credential separation ok: no real query key of any market in this environment"
 
 # --- 4. the stop time ------------------------------------------------------
 #
@@ -401,6 +360,94 @@ RUN_S=$((STOP_S - NOW_S))
 PY=$TENANT_PYTHON
 guard_python_module "$PY" TENANT_PYTHON tools.tos_cp3.bootproof_guard \
   "$EXPECT_POLICY_VERSION"
+
+# --- 5b. the market: producer and tree must agree (PR-3c) ------------------
+#
+# Read with the SAME parser the producer's loader uses (yaml.safe_load —
+# tools/tos_cp3/live_producer/config.py::load_config), so a config carrying a
+# duplicate `market:` key resolves here exactly as it does there (the last one
+# wins; #936 review LOW-3 — a first-match `sed` and the loader disagreed). Not
+# load_config itself: that validates every producer setting, which is the
+# producer's own job at step 8, and refusing on, say, a calendar here would
+# report a market fault for a calendar one.
+#
+# The TREE's market is the tree's own manifest field (RENDER.yaml `market:`),
+# never a list of tree names here (#936 review LOW-1): a futures tree paired with
+# the stock producer config — or the reverse — is refused HERE, before step 8
+# starts the producer's real-quote GETs, not later by the runtime.
+#
+# The stock instrument is matched against the tree's own `instrument.pattern`
+# (#936 review MEDIUM — the same field the renderer enforces): the stock tree is
+# single-symbol, so a different six-digit code is refused before anything runs.
+# TENANT_INSTRUMENT may be unset (futures); an empty argument then, without the
+# default-expansion form this template's no-instance-defaults rule forbids.
+_INSTRUMENT_ARG=
+[ -z "${TENANT_INSTRUMENT+x}" ] || _INSTRUMENT_ARG=$TENANT_INSTRUMENT
+MARKETS_OUT=$("$PY" - "$TENANT_PRODUCER_CONFIG" "$TREE_DIR/RENDER.yaml" \
+  "$_INSTRUMENT_ARG" <<'PY' 2>&1
+import re
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    producer = yaml.safe_load(handle)
+with open(sys.argv[2], encoding="utf-8") as handle:
+    tree = yaml.safe_load(handle)
+producer = producer if isinstance(producer, dict) else {}
+tree = tree if isinstance(tree, dict) else {}
+block = tree.get("instrument")
+pattern = block.get("pattern") if isinstance(block, dict) else None
+instrument = sys.argv[3]
+if not instrument:
+    match = "none"
+elif not isinstance(pattern, str):
+    match = "nopattern"
+else:
+    match = "match" if re.fullmatch(pattern, instrument) else "nomatch"
+print(producer.get("market"), tree.get("market"), match)
+PY
+) || die "cannot read the market from $TENANT_PRODUCER_CONFIG / $TREE_DIR/RENDER.yaml: $(printf '%s' "$MARKETS_OUT" | tail -1)"
+read -r _MARKET TREE_MARKET INSTRUMENT_MATCH <<<"$MARKETS_OUT"
+case "$_MARKET" in
+futures | stock) ;;
+*) die "TENANT_PRODUCER_CONFIG declares market='$_MARKET' — expected futures or stock" ;;
+esac
+[ "$TREE_MARKET" = "$_MARKET" ] ||
+  die "TENANT_TREE='$TENANT_TREE' is a '$TREE_MARKET' tree (RENDER.yaml market) but TENANT_PRODUCER_CONFIG reads market='$_MARKET' — refused before the producer starts"
+
+# Transport and instrument follow the market. The stock tenant tree is the MOCK
+# order tree (PR-3a, operator decision 2026-10-23): its active scope is
+# MOCK_STOCK_ORDER, which the runtime refuses to compose with anything but
+# `--transport kis-mock`. The futures tenant trees stay SYNTHETIC. Each market
+# refuses the other market's settings rather than ignoring them — an ignored
+# setting is one the operator believes is in effect and is not.
+#
+#   futures — instrument DERIVED (step 6, the mini front month); synthetic.
+#   stock   — instrument NAMED by TENANT_INSTRUMENT, matching the tree's own
+#             instrument.pattern; kis-mock, with the deploy-time
+#             kis_mock_transport.yaml TENANT_KIS_MOCK_TRANSPORT_CONFIG names
+#             installed into the render output after the render (step 10).
+#             Its credentials come from custody (kis_mock.app_key/app_secret
+#             under TENANT_CUSTODY_ROOT), never from this environment.
+case "$_MARKET" in
+futures)
+  TRANSPORT=synthetic
+  for _stock_only in TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG; do
+    [ -z "${!_stock_only+x}" ] ||
+      die "$_stock_only is set for a futures session — the futures instrument is derived (step 6) and a futures tenant sends nothing, so nothing would read it"
+  done
+  ;;
+stock)
+  TRANSPORT=kis-mock
+  require_env TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG
+  [ "$INSTRUMENT_MATCH" = match ] ||
+    die "TENANT_INSTRUMENT='$TENANT_INSTRUMENT' does not fully match $TENANT_TREE/RENDER.yaml instrument.pattern ($INSTRUMENT_MATCH) — this tree is single-symbol; a new symbol is a new tree generation"
+  [ -f "$TENANT_KIS_MOCK_TRANSPORT_CONFIG" ] ||
+    die "TENANT_KIS_MOCK_TRANSPORT_CONFIG names no file: $TENANT_KIS_MOCK_TRANSPORT_CONFIG"
+  ;;
+esac
+log "market=$_MARKET (tree and producer agree) · transport=$TRANSPORT"
 
 # --- 6. the contract month — computed ONCE, given to all three -------------
 #
