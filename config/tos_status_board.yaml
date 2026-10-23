@@ -11,6 +11,11 @@ tenant_sessions_subdir: cp3-sessions # tools/tos_cp3/runners/run_tenant_session.
 tenant_cron_log_glob: "cp3-*-tenant-daily.cron.log" # 크론 래퍼 로그(세션 디렉터리가 생기기 전의 실패가 여기 남는다)
 paper_sessions_subdir: paper-sessions # 상주 paper 세션 산출물(YYYY-MM-DD-HHMMSS-<DIR>)
 paper_ops_subdir: paper-ops # paper-session.pid · paper-session.driver.pid
+# pid 파일의 pid 가 그 프로세스인지 — /proc/<pid>/cmdline 에 이 문자열이 있어야 살아 있다고 본다
+# (pid 재사용 방지). 런타임은 `python -c '…from tos_runtime.compose.cli import main…'`,
+# 드라이버는 `~/.config/kis-probes/tos_paper_session.py` 로 뜬다.
+paper_runtime_cmdline_needle: tos_runtime
+paper_driver_cmdline_needle: tos_paper_session
 
 # stale 거절 허용치 — #931 운영자 지시(2026-10-23). 판정하는 수는 M5 ①:
 #   m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown / post_boot_consumed_ids

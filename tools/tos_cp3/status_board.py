@@ -97,6 +97,8 @@ class BoardConfig:
     tenant_cron_log_glob: str = "cp3-*-tenant-daily.cron.log"
     paper_sessions_subdir: str = "paper-sessions"
     paper_ops_subdir: str = "paper-ops"
+    paper_runtime_cmdline_needle: str = "tos_runtime"
+    paper_driver_cmdline_needle: str = "tos_paper_session"
     stale_refusal_ratio_max: float = 0.005
     latency_percentiles: tuple[int, ...] = (50, 90)
     history_days: int = 10
@@ -115,6 +117,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
         "tenant_cron_log_glob",
         "paper_sessions_subdir",
         "paper_ops_subdir",
+        "paper_runtime_cmdline_needle",
+        "paper_driver_cmdline_needle",
         "stale_refusal_ratio_max",
         "latency_percentiles",
         "history_days",
@@ -128,6 +132,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
         tenant_cron_log_glob=str(raw["tenant_cron_log_glob"]),
         paper_sessions_subdir=str(raw["paper_sessions_subdir"]),
         paper_ops_subdir=str(raw["paper_ops_subdir"]),
+        paper_runtime_cmdline_needle=str(raw["paper_runtime_cmdline_needle"]),
+        paper_driver_cmdline_needle=str(raw["paper_driver_cmdline_needle"]),
         stale_refusal_ratio_max=float(raw["stale_refusal_ratio_max"]),
         latency_percentiles=tuple(int(p) for p in raw["latency_percentiles"]),
         history_days=int(raw["history_days"]),
@@ -910,9 +916,11 @@ def paper_facts(
         "session": None,
         "live_check": proc_root is not None,
         "runtime_alive": proc_root is not None
-        and pid_alive(runtime_pid, "tos_runtime", proc_root=proc_root),
+        and pid_alive(
+            runtime_pid, cfg.paper_runtime_cmdline_needle, proc_root=proc_root
+        ),
         "driver_alive": proc_root is not None
-        and pid_alive(driver_pid, "tos_paper_session", proc_root=proc_root),
+        and pid_alive(driver_pid, cfg.paper_driver_cmdline_needle, proc_root=proc_root),
         "issues": [],
     }
     if not candidates:

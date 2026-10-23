@@ -125,6 +125,19 @@ def test_committed_config_loads_with_the_operator_threshold():
     assert cfg.stale_refusal_ratio_max == 0.005  # #931 운영자 지시
     assert cfg.latency_percentiles == (50, 90)
     assert cfg.tenant_sessions_subdir == "cp3-sessions"
+    assert (cfg.paper_runtime_cmdline_needle, cfg.paper_driver_cmdline_needle) == (
+        "tos_runtime",
+        "tos_paper_session",
+    )
+
+
+def test_paper_liveness_needles_come_from_config(
+    tmp_path: Path, state: Path, cfg: sb.BoardConfig
+):
+    proc = _fake_proc(tmp_path, state)
+    other = replace(cfg, paper_runtime_cmdline_needle="not-in-any-cmdline")
+    paper = _board(other, D1023, today=D1023, proc=proc)["paper"]
+    assert paper["runtime_alive"] is False and paper["driver_alive"] is True
 
 
 def test_config_missing_key_is_refused(tmp_path: Path):
