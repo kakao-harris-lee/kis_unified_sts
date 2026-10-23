@@ -20,7 +20,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1969,3 +1969,63 @@ def test_hinge_the_committed_snapshots_are_the_issuers_four_outcomes(
     assert evaluations("absent_field")["session"] == si.UNKNOWN_FIELD_STATE
     assert not si._projectable(tokens("unprojectable")["close"])
     assert evaluations("unprojectable")["close"] == si.UNKNOWN_FIELD_STATE
+
+
+# ===========================================================================
+# M5 scoping — the durable leaf accumulates sessions (2026-10-22 README §4)
+# ===========================================================================
+
+
+def test_m5_counts_only_this_session_day_not_the_whole_accumulated_leaf(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **The measured miscount.** A tenant session writes into a NAMED DURABLE LEAF that is
+    never cleared, so ``snapshots`` holds every session the leaf ever ran — on 2026-10-22 the
+    10-15 genesis session was still in there. The boot snapshot only lists TODAY's pre-boot
+    ids, so the OLDER session's pre-boot line had nothing marking it pre-boot and was counted
+    as a post-boot refusal: M5 read **2 store-wide against 1 for the session**, and the real
+    measurement had to filter by day by hand to say which was which.
+
+    Here: three bars of the session day and one ``stale_by_age`` bar from an earlier day. The
+    older day's bar must not be counted, and the document must SAY what it scoped to — a fix
+    that silently drops rows would be the same class of problem as the bug.
+
+    Red before the scoping: ``m5...`` is 2 and ``session_day`` does not exist.
+    """
+    bars = _bars(hinge, 4, states=["fresh", "fresh", "fresh", "stale_by_age"])
+    older = replace(bars[3], raw_event_id=f"{INSTRUMENT}:1m:20261015T090000+0900")
+    data_dir = _session(tmp_path, hinge, [*bars[:3], older])
+    states = _document(tmp_path, data_dir)["consumed_field_states"]
+
+    assert states["session_day"] == "20261019"
+    assert states["days_present"] == ["20261015", "20261019"]
+    # The older day's refusal is out of scope; this session refused nothing.
+    assert (
+        states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
+    )
+    assert (
+        states["post_boot_raw_event_ids_with_a_present_value_refused_as_unknown"] == []
+    )
+    # Scoped denominators, with the accumulation still visible beside them.
+    assert states["counts"]["consumed_ids"] == 3
+    assert states["counts"]["consumed_ids_all_days"] == 4
+    assert states["counts"]["post_boot_consumed_ids"] == 3
+
+
+def test_the_m5_criterion_records_the_budget_and_the_non_stale_rule(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """The 2026-10-23 criterion lives next to the number it judges, with the measurement it
+    came from — so nobody has to re-derive why it is 0.5% and not 0, or why ``max_age_ms``
+    stays at 800."""
+    bars = _bars(hinge, 2)
+    data_dir = _session(tmp_path, hinge, bars)
+    definition = _document(tmp_path, data_dir)["consumed_field_states"]["definition"]
+    criterion = si.consumed_field_states.__doc__ or ""
+
+    assert "0.5%" in criterion and "0.244%" in criterion
+    assert "max_age_ms`` STAYS at 800" in criterion
+    assert "other than staleness is a finding at any" in criterion
+    assert "MARKETFEED_FIELD_REFUSED" in criterion
+    # the definition string itself still names what the number IS, unchanged
+    assert "stale, or evaluation clock unknown" in definition
