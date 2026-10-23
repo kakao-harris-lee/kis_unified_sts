@@ -1534,7 +1534,10 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
   `consumed_stale_at_boot` 와 boot-journal-snapshot 에 있고, 그 스냅샷은 **부팅 직전에**
   다시 찍힌다(가드·렌더 동안 발행된 봉도 부팅 전 줄이다).
   - ⚠ **판정은 2026-10-23 부터 「둘 다 0」이 아니다**(운영자 지시 · 2026-10-22 실측):
-    ① 수는 `session_day` **한 세션 날짜로 한정**해 읽고(지정 잎은 세션을 누적한다 — §4),
+    ① 수는 `session_day` **한 세션 날짜로 한정**해 읽고(지정 잎은 세션을 누적한다 — §4;
+    문서의 **모든** 계수가 그 한 범위다 — `counts.snapshots` · `consumed_raw_event_ids` ·
+    `raw_event_ids` 포함. 잎 전체 수는 `*_all_days` 로 따로 실린다. 그래서 이 문서는
+    `diff_decisions.py` 에 **손으로 거르지 않고** 그대로 넣을 수 있다),
     ② stale 거절은 `post_boot_consumed_ids` 의 **0.5% 이하**면 통과(10-22 실측 1/409 =
     0.244%, 원인은 호스트 스케줄러 지터이지 늦은 생산자가 아니다 — 그 봉의 `as_of` 는
     분 마감 +2258 ms 로 세션 p50 2221 과 같고, 읽은 패스가 408 ms 루프에서 1280 ms 늦어

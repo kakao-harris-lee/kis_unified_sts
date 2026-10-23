@@ -1009,8 +1009,80 @@ def derive_session_day(
     return session_day
 
 
+@dataclass(frozen=True)
+class SessionScope:
+    """One session's slice of an accumulating durable leaf (:func:`scope_to_session_day`)."""
+
+    #: The KST ``YYYYMMDD`` every count in the document is about, or ``None`` when neither the
+    #: store nor the boot snapshot names a day (nothing is scoped; the counts are store-wide).
+    session_day: str | None
+    #: Every day the STORE holds, so the accumulation stays visible beside the scoped numbers.
+    days_present: tuple[str, ...]
+    #: How many snapshots the store holds in all, before scoping.
+    all_days_total: int
+
+
+def scope_to_session_day(
+    snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
+) -> tuple[list[Snapshot], SessionScope]:
+    """Cut ``snapshots`` down to the one session this document is about.
+
+    ⛔ **Applied ONCE, to everything** (independent review LOW-4). An earlier cut scoped only
+    :func:`consumed_field_states`, which left ``counts.snapshots``,
+    ``counts.consumed_raw_event_ids``, ``raw_event_ids`` and the consumed set behind
+    :func:`unpaired_reasons` store-wide — a document whose M5 block said "this session" while
+    the counts above it said "this leaf, all time". Two scopes in one document is worse than
+    one wrong scope: every reader has to know which number is which.
+
+    Scoping here also makes the document usable downstream without hand-filtering.
+    ``diff_decisions.py`` REFUSES a store-wide id set ("The runtime consumed bars this offline
+    trio does not cover") because the frozen frames cover one session — which is exactly why
+    the 2026-10-22 B3 run had to filter ``consumed-ids.json`` by day by hand (evidence README
+    §4).
+
+    Raises:
+        SessionInputsError: An id carries no readable day (MEDIUM-2 — it would vanish from
+            every count below with nothing saying so), or :func:`derive_session_day` refuses.
+    """
+    unparseable = sorted(
+        snapshot.raw_event_id
+        for snapshot in snapshots
+        if session_day_of(snapshot.raw_event_id) is None
+    )
+    if unparseable:
+        raise SessionInputsError(
+            f"{len(unparseable)} consumed raw_event_id(s) carry no readable "
+            f"'{_RAW_EVENT_ID_SEPARATOR}<stamp>' day and so cannot be scoped to a session: "
+            f"{unparseable[:5]}{' …' if len(unparseable) > 5 else ''}. Refusing to report "
+            "counts that would silently omit them."
+        )
+    session_day = derive_session_day(snapshots, pre_boot)
+    days_present = tuple(
+        sorted(
+            {
+                day
+                for day in (session_day_of(s.raw_event_id) for s in snapshots)
+                if day is not None
+            }
+        )
+    )
+    scoped = [
+        snapshot
+        for snapshot in snapshots
+        if session_day is None or session_day_of(snapshot.raw_event_id) == session_day
+    ]
+    return scoped, SessionScope(
+        session_day=session_day,
+        days_present=days_present,
+        all_days_total=len(snapshots),
+    )
+
+
 def consumed_field_states(
-    *, snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
+    *,
+    snapshots: Sequence[Snapshot],
+    pre_boot: frozenset[str],
+    scope: SessionScope,
 ) -> dict[str, Any]:
     """M5's first count: lines the issuer HELD a value for and refused anyway.
 
@@ -1100,36 +1172,7 @@ def consumed_field_states(
     # session's pre-boot line — absent from today's boot snapshot — reads as post-boot and
     # inflates M5's number, which is exactly what happened on 2026-10-22 (2 store-wide, 1 for
     # the session). `days_present` keeps the accumulation visible rather than hidden by the fix.
-    session_day = derive_session_day(snapshots, pre_boot)
-    # ⛔ FAIL CLOSED on an id this grammar cannot read (independent review MEDIUM-2). Such an
-    # id has no day, so a day filter drops it from EVERY count below — the number would be
-    # smaller and nothing would say so, which is the same silently-wrong-count class the
-    # scoping itself was added to fix. There is no "skip" that is honest here: the id names a
-    # bar the runtime consumed.
-    unparseable = sorted(
-        snapshot.raw_event_id
-        for snapshot in snapshots
-        if session_day_of(snapshot.raw_event_id) is None
-    )
-    if unparseable:
-        raise SessionInputsError(
-            f"{len(unparseable)} consumed raw_event_id(s) carry no readable "
-            f"'{_RAW_EVENT_ID_SEPARATOR}<stamp>' day and so cannot be scoped to a session: "
-            f"{unparseable[:5]}{' …' if len(unparseable) > 5 else ''}. Refusing to report "
-            "counts that would silently omit them."
-        )
-    days_present = sorted(
-        {
-            day
-            for day in (session_day_of(s.raw_event_id) for s in snapshots)
-            if day is not None
-        }
-    )
-    in_session = [
-        snapshot
-        for snapshot in snapshots
-        if session_day is None or session_day_of(snapshot.raw_event_id) == session_day
-    ]
+    in_session = list(snapshots)
     for snapshot in in_session:
         where = "pre_boot" if snapshot.raw_event_id in pre_boot else "post_boot"
         if not snapshot.field_evaluations:
@@ -1182,11 +1225,11 @@ def consumed_field_states(
             "tos_runtime.marketfeed.snapshot._derive_field_state writes "
             "UNKNOWN and keeps the reason in memory only"
         ),
-        "session_day": session_day,
-        "days_present": days_present,
+        "session_day": scope.session_day,
+        "days_present": list(scope.days_present),
         "counts": {
             "consumed_ids": len(in_session),
-            "consumed_ids_all_days": len(snapshots),
+            "consumed_ids_all_days": scope.all_days_total,
             "pre_boot_consumed_ids": sum(
                 1 for snapshot in in_session if snapshot.raw_event_id in pre_boot
             ),
@@ -1315,6 +1358,16 @@ def build_consumed_ids_document(
             "consumed nothing, so an id filter built from it would silently "
             "empty every comparison"
         )
+    pre_boot = read_boot_snapshot(boot_snapshot)
+    # ⛔ ONE scope for the whole document (review LOW-4) — see :func:`scope_to_session_day`.
+    # Everything below this line is about the session, never about the accumulated leaf.
+    snapshots, scope = scope_to_session_day(snapshots, pre_boot)
+    if not snapshots:
+        raise SessionInputsError(
+            f"the store holds {scope.all_days_total} snapshot(s) but none for KST day "
+            f"{scope.session_day} (days present: {list(scope.days_present)}) — the boot "
+            "snapshot and this store are not from the same session"
+        )
     instrument = _assert_one_instrument(snapshots)
     consumed = frozenset(snapshot.raw_event_id for snapshot in snapshots)
     facts = (
@@ -1325,7 +1378,6 @@ def build_consumed_ids_document(
         )
     )
     dispositions = facts.dispositions
-    pre_boot = read_boot_snapshot(boot_snapshot)
     reasons = unpaired_reasons(
         consumed=consumed,
         dispositions=dispositions,
@@ -1354,8 +1406,13 @@ def build_consumed_ids_document(
                 facts.session_close.isoformat() if facts.session_close else None
             ),
         },
+        "session_day": scope.session_day,
+        "days_present": list(scope.days_present),
         "counts": {
             "snapshots": len(snapshots),
+            # Every count in this document is this SESSION's (review LOW-4). The leaf's own
+            # total sits beside it so the accumulation is visible rather than hidden.
+            "snapshots_all_days": scope.all_days_total,
             "consumed_raw_event_ids": len(consumed),
             "producer_disposed_bars": len(dispositions),
             "unpaired": len(reasons),
@@ -1365,7 +1422,7 @@ def build_consumed_ids_document(
         "unpaired_reasons": dict(sorted(reasons.items())),
         "unpaired_reason_counts": dict(sorted(reason_counts.items())),
         "consumed_field_states": consumed_field_states(
-            snapshots=snapshots, pre_boot=pre_boot
+            snapshots=snapshots, pre_boot=pre_boot, scope=scope
         ),
         "consumed_value_view": consumed_value_view_counts(
             data_dir=data_dir,

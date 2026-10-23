@@ -2104,3 +2104,33 @@ def test_the_session_day_is_taken_in_kst_not_in_the_ids_own_offset(
     assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T233000+0000") == "20261020"
     assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T151200+0900") == "20261019"
     assert si.session_day_of(f"{INSTRUMENT}:20261019T151200+0900") is None
+
+
+def test_every_count_in_the_document_is_this_sessions_not_the_whole_leaf(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **Review LOW-4.** The scope is applied ONCE, to the whole document.
+
+    An earlier cut scoped only ``consumed_field_states``, leaving ``counts.snapshots``,
+    ``counts.consumed_raw_event_ids``, ``raw_event_ids`` and the consumed set behind
+    ``unpaired_reasons`` store-wide — a document whose M5 block said "this session" while the
+    counts above it said "this leaf, all time". Two scopes in one document is worse than one
+    wrong scope: every reader has to know which number is which.
+
+    Three bars of the session day, one from an earlier one. Red before: ``snapshots`` and
+    ``consumed_raw_event_ids`` read 4 and ``raw_event_ids`` carries the older day's id.
+    """
+    bars = _bars(hinge, 4)
+    older = replace(bars[3], raw_event_id=f"{INSTRUMENT}:1m:20261015T090000+0900")
+    data_dir = _session(tmp_path, hinge, [*bars[:3], older])
+
+    document = _document(tmp_path, data_dir)
+
+    assert document["session_day"] == "20261019"
+    assert document["days_present"] == ["20261015", "20261019"]
+    assert document["counts"]["snapshots"] == 3
+    assert document["counts"]["consumed_raw_event_ids"] == 3
+    # the leaf's own total stays visible beside the scoped numbers
+    assert document["counts"]["snapshots_all_days"] == 4
+    assert older.raw_event_id not in document["raw_event_ids"]
+    assert len(document["raw_event_ids"]) == 3
