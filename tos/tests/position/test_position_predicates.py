@@ -108,7 +108,7 @@ def test_classify_confirmed_fill_signed_by_side() -> None:
     assert seen == 1
 
 
-def test_classify_unmatched_result_counts_full_sealed_quantity_as_unknown() -> None:
+def test_classify_unmatched_result_counts_full_sealed_quantity_as_in_flight() -> None:
     sealed = (SealedSend(attempt_id="a1", side=_SELL, quantity=Decimal(10)),)
     result = classify_sealed_sends(
         sealed,
@@ -122,9 +122,23 @@ def test_classify_unmatched_result_counts_full_sealed_quantity_as_unknown() -> N
         result
     )
     assert confirmed_net == Decimal(0)
-    assert unknown_sell == Decimal(10)
-    assert unknown_buy == Decimal(0)
-    assert (in_flight_buy, in_flight_sell) == (Decimal(0), Decimal(0))
+    assert (unknown_buy, unknown_sell) == (Decimal(0), Decimal(0))
+    assert in_flight_sell == Decimal(10)
+    assert in_flight_buy == Decimal(0)
+
+
+def test_classify_unmatched_result_with_unrecognized_side_is_in_flight_both_ways() -> (
+    None
+):
+    result = classify_sealed_sends(
+        (SealedSend(attempt_id="a1", side="???", quantity=Decimal(10)),),
+        consumed_by_attempt={},
+        unmatched_attempts=frozenset({"a1"}),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    assert result[1:5] == (Decimal(0), Decimal(0), Decimal(10), Decimal(10))
 
 
 def test_classify_no_terminal_result_is_in_flight() -> None:
@@ -376,3 +390,93 @@ def test_zero_fill_nonterminal_result_never_lowers_the_decision_sum(
     no_result = decision_sum({"prior": prior})
     with_result = decision_sum({"prior": prior, "a1": ConsumedResult(result_kind=kind)})
     assert with_result == no_result
+
+
+@pytest.mark.parametrize("side", [_BUY, _SELL])
+@pytest.mark.parametrize("prior_net", [-10, 0, 10])
+def test_unmatched_result_never_lowers_the_decision_sum(
+    side: str, prior_net: int
+) -> None:
+    prior_side = _BUY if prior_net >= 0 else _SELL
+    sealed = (
+        SealedSend(
+            attempt_id="prior", side=prior_side, quantity=Decimal(abs(prior_net))
+        ),
+        SealedSend(attempt_id="a1", side=side, quantity=Decimal(10)),
+    )
+    prior = ConsumedResult(
+        result_kind="FULL_FILL",
+        filled_quantity=Decimal(abs(prior_net)),
+        remaining_quantity=Decimal(0),
+    )
+
+    def decision_sum(unmatched: frozenset[str]) -> Decimal:
+        obs = _as_obs(
+            classify_sealed_sends(
+                sealed,
+                consumed_by_attempt={"prior": prior},
+                unmatched_attempts=unmatched,
+                buy_side_token=_BUY,
+                sell_side_token=_SELL,
+                terminal_result_kinds=_TERMINAL,
+            )
+        )
+        return conservative_current_usage(obs) + in_flight_overlap_effect(obs)
+
+    assert decision_sum(frozenset({"a1"})) >= decision_sum(frozenset())
+
+
+@pytest.mark.parametrize("side,sign", _SIDES)
+@pytest.mark.parametrize(
+    "consumed,outstanding,confirmed",
+    [
+        (
+            ConsumedResult(
+                result_kind="CANCEL_ACK",
+                filled_quantity=Decimal(0),
+                remaining_quantity=Decimal(0),
+            ),
+            10,
+            0,
+        ),
+        (
+            ConsumedResult(
+                result_kind="CANCEL_ACK",
+                filled_quantity=Decimal(4),
+                remaining_quantity=Decimal(0),
+            ),
+            6,
+            4,
+        ),
+        (
+            ConsumedResult(
+                result_kind="FULL_FILL",
+                filled_quantity=Decimal(10),
+                remaining_quantity=Decimal(0),
+            ),
+            0,
+            10,
+        ),
+    ],
+)
+def test_unmatched_result_after_terminal_consumed_reopens_the_unfilled_remainder(
+    side: str,
+    sign: int,
+    consumed: ConsumedResult,
+    outstanding: int,
+    confirmed: int,
+) -> None:
+    obs = _as_obs(
+        classify_sealed_sends(
+            (SealedSend(attempt_id="a1", side=side, quantity=Decimal(10)),),
+            consumed_by_attempt={"a1": consumed},
+            unmatched_attempts=frozenset({"a1"}),
+            buy_side_token=_BUY,
+            sell_side_token=_SELL,
+            terminal_result_kinds=_TERMINAL,
+        )
+    )
+    assert obs.confirmed_net == sign * confirmed
+    assert _toward(obs, sign) == Decimal(outstanding)
+    assert _against(obs, sign) == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))

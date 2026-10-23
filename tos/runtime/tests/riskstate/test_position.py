@@ -119,7 +119,7 @@ def test_sell_side_fill_is_negative_net(evidence_store: SqliteEvidenceStore) -> 
     assert worst_credible_directional_usage(obs) == Decimal(5)
 
 
-def test_unmatched_result_is_unknown_in_full_sealed_quantity(
+def test_unmatched_result_is_in_flight_in_full_sealed_quantity(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
     seed_send_sealed(
@@ -148,11 +148,10 @@ def test_unmatched_result_is_unknown_in_full_sealed_quantity(
     )
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(0)
-    assert obs.unknown_buy == Decimal(4)
+    assert obs.unknown_buy == Decimal(0)
     assert obs.unknown_sell == Decimal(0)
-    assert obs.in_flight_buy == Decimal(0)
+    assert obs.in_flight_buy == Decimal(4)
     assert "evidence:RESULT_UNMATCHED" in obs.sources
-    # GRANT->DENY boundary: the full unconfirmed quantity counts toward worst-credible usage.
     assert worst_credible_directional_usage(obs) == Decimal(4)
 
 
@@ -712,3 +711,234 @@ def test_long_short_mirror_symmetry_property(
     assert worst_credible_directional_usage(obs) == worst_credible_directional_usage(
         mirrored
     )
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize(
+    "consumed_kind,consumed_fill,confirmed,outstanding",
+    [
+        ("CANCEL_ACK", None, 0, 10),
+        ("CANCEL_ACK", "4", 4, 6),
+    ],
+)
+def test_unmatched_result_after_terminal_consumed_reopens_the_attempt(
+    evidence_store: SqliteEvidenceStore,
+    side: str,
+    consumed_kind: str,
+    consumed_fill: str | None,
+    confirmed: int,
+    outstanding: int,
+) -> None:
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=consumed_fill,
+        egress_result_kind=consumed_kind,
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity="10",
+        egress_result_kind="FULL_FILL",
+    )
+    obs = _reader(evidence_store).observe()
+    sign = 1 if side == "BUY" else -1
+    assert obs.confirmed_net == sign * confirmed
+    toward, against = (
+        (obs.in_flight_buy, obs.in_flight_sell)
+        if side == "BUY"
+        else (obs.in_flight_sell, obs.in_flight_buy)
+    )
+    assert toward == Decimal(outstanding)
+    assert against == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize("consumed_kind", ["REJECT", "CANCEL_ACK"])
+def test_duplicate_unmatched_after_terminal_consumed_does_not_reopen(
+    evidence_store: SqliteEvidenceStore, side: str, consumed_kind: str
+) -> None:
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind=consumed_kind,
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind=consumed_kind,
+        result_disposition="DUPLICATE",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(0)
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (Decimal(0), Decimal(0))
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_unmatched_before_terminal_consumed_is_superseded(
+    evidence_store: SqliteEvidenceStore, side: str
+) -> None:
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind="ACK",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind="CANCEL_ACK",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(0)
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (Decimal(0), Decimal(0))
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+def _seed_attempt(store: SqliteEvidenceStore, side: str) -> None:
+    seed_send_sealed(
+        store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+
+
+def _seed_result(
+    store: SqliteEvidenceStore,
+    kind: str,
+    result_kind: str,
+    filled: str | None,
+    disposition: str | None = None,
+    remaining: str | None = None,
+) -> None:
+    seed_egress_result(
+        store,
+        kind=kind,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=filled,
+        egress_result_kind=result_kind,
+        result_disposition=disposition,
+        remaining_quantity=remaining,
+    )
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_later_non_fill_consumed_does_not_erase_an_unresolved_late_fill(
+    evidence_store: SqliteEvidenceStore, side: str
+) -> None:
+    _seed_attempt(evidence_store, side)
+    _seed_result(evidence_store, "EGRESS_RESULT_CONSUMED", "CANCEL_ACK", None)
+    _seed_result(
+        evidence_store,
+        "RESULT_UNMATCHED",
+        "FULL_FILL",
+        "10",
+        disposition="NON_MONOTONIC_PROJECTION",
+    )
+    _seed_result(evidence_store, "EGRESS_RESULT_CONSUMED", "EXPIRED", None)
+    obs = _reader(evidence_store).observe()
+    toward, against = (
+        (obs.in_flight_buy, obs.in_flight_sell)
+        if side == "BUY"
+        else (obs.in_flight_sell, obs.in_flight_buy)
+    )
+    assert obs.confirmed_net == Decimal(0)
+    assert toward == Decimal(10)
+    assert against == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize(
+    "consumed_kind,consumed_filled,remaining,outstanding",
+    [("PARTIAL_FILL", "4", "6", 6), ("FULL_FILL", "10", "0", 0)],
+)
+def test_later_consumed_covering_the_unmatched_fill_supersedes_it(
+    evidence_store: SqliteEvidenceStore,
+    side: str,
+    consumed_kind: str,
+    consumed_filled: str,
+    remaining: str,
+    outstanding: int,
+) -> None:
+    _seed_attempt(evidence_store, side)
+    _seed_result(
+        evidence_store,
+        "RESULT_UNMATCHED",
+        "PARTIAL_FILL",
+        "4",
+        disposition="ORPHAN_NO_RESERVATION",
+    )
+    _seed_result(
+        evidence_store,
+        "EGRESS_RESULT_CONSUMED",
+        consumed_kind,
+        consumed_filled,
+        remaining=remaining,
+    )
+    obs = _reader(evidence_store).observe()
+    sign = 1 if side == "BUY" else -1
+    toward, against = (
+        (obs.in_flight_buy, obs.in_flight_sell)
+        if side == "BUY"
+        else (obs.in_flight_sell, obs.in_flight_buy)
+    )
+    assert obs.confirmed_net == sign * Decimal(consumed_filled)
+    assert toward == Decimal(outstanding)
+    assert against == Decimal(0)
