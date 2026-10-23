@@ -40,7 +40,11 @@ from typing import ClassVar
 
 from pydantic import model_validator
 
-from tos.brokercap import BrokerCapabilityProfile, RequiredCapabilitySet
+from tos.brokercap import (
+    BrokerCapabilityProfile,
+    CapabilityTuple,
+    RequiredCapabilitySet,
+)
 from tos.cur import EgressCurrentnessProof, ProofResult
 from tos.egress import (
     ClaimObservation,
@@ -763,6 +767,11 @@ class SendBoundaryContext(FrozenModel):
     #: brokercap ``capability_admissible`` version currency (§6.1); ``None`` / ``False`` ⇒
     #: PROHIBITED — a stale profile version can never be fallback'd out of.
     broker_profile_version_current: bool | None = None
+    #: The active scope's capability tuples (operator decision 2026-10-23, PR-3 option (a)).
+    #: Item 6 skips the profile check only when
+    #: :func:`~tos.brokercap.mock_order_without_position_or_cash` admits them — judged here,
+    #: from kernel enums, never from a caller-supplied flag. ``()`` admits nothing.
+    capability_tuples: tuple[CapabilityTuple, ...] = ()
     #: brokercap ``same_order_retry_allowed`` witness — positively proven deterministic
     #: idempotency for this exact request identity and retry window. ``None`` ⇒ no blind retry.
     idempotency_proven: bool | None = None
@@ -881,6 +890,7 @@ def send_boundary_context(
     broker_capability_profile: BrokerCapabilityProfile | None = None,
     required_capability_set: RequiredCapabilitySet | None = None,
     broker_profile_version_current: bool | None = None,
+    capability_tuples: tuple[CapabilityTuple, ...] = (),
     idempotency_proven: bool | None = None,
     account_instrument_action_allowed: bool | None = None,
     max_quantity_within_allowance: bool | None = None,
@@ -974,6 +984,8 @@ def send_boundary_context(
         broker_capability_profile: The Broker Capability Profile (items 6 / 12).
         required_capability_set: The required capability set (items 6 / 12).
         broker_profile_version_current: Profile version currency (items 6 / 12).
+        capability_tuples: The active scope's capability tuples — item 6's option (a) class
+            test (:func:`~tos.brokercap.mock_order_without_position_or_cash`).
         idempotency_proven: The positive same-order-retry witness (items 6 / 12).
         account_instrument_action_allowed: ⚠ provisional allowance stand-in (item 6).
         max_quantity_within_allowance: ⚠ provisional allowance stand-in (item 6).
@@ -1030,6 +1042,7 @@ def send_boundary_context(
         broker_capability_profile=broker_capability_profile,
         required_capability_set=required_capability_set,
         broker_profile_version_current=broker_profile_version_current,
+        capability_tuples=capability_tuples,
         idempotency_proven=idempotency_proven,
         account_instrument_action_allowed=account_instrument_action_allowed,
         max_quantity_within_allowance=max_quantity_within_allowance,

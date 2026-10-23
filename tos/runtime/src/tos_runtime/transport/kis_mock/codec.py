@@ -42,7 +42,10 @@ byte):**
    * **Four dynamic fields** (``field_map``, keyed by kernel-side source name): ``account``
      (:attr:`tos.egressgw.SendSeal.account` — the sealed **outbound coordinate**, review F2; NOT
      ``instrument_key.account``, a different, dispatch-key-only fact, and NOT a custody-loaded
-     value), ``instrument`` (:attr:`~tos.egressgw.SendSeal.instrument_key`
+     value — the whole ``8-2`` number; the wire ``CANO`` is its first 8 digits and the static
+     ``ACNT_PRDT_CD`` must equal its last 2, both by
+     :func:`~tos_runtime.transport.kis_mock.account.split_kis_account`, #932 Codex r1 HIGH),
+     ``instrument`` (:attr:`~tos.egressgw.SendSeal.instrument_key`
      ``.instrument``), ``quantity`` (:attr:`~tos.egressgw.SendSeal.outbound_quantity`), ``price``
      (:attr:`~tos.egressgw.SendSeal.outbound_price`). The two numeric values are formatted as
      plain, non-scientific decimal strings via ``format(Decimal(value), "f")`` (KIS's own
@@ -87,6 +90,8 @@ from decimal import Decimal
 
 from tos.canonical import CanonicalDecimal
 from tos.egressgw import SendSeal
+
+from tos_runtime.transport.kis_mock.account import KisAccountError, split_kis_account
 
 __all__ = [
     "KIS_ORDER_CASH_WIRE_FIELDS",
@@ -161,6 +166,10 @@ def _price_to_kis_string(price: CanonicalDecimal, price_scale: int) -> str:
     return str(krw)
 
 
+#: The wire field carrying the account's 2-digit product code (KIS order_cash body).
+_ACCOUNT_PRODUCT_FIELD = "ACNT_PRDT_CD"
+
+
 def _account_coordinate(seal: SendSeal) -> str:
     """The sealed outbound ``account`` coordinate (review F2) — :attr:`SendSeal.account`, the
     same value :meth:`SendSeal._outbound_coordinates_match_sealed_fields` already validates
@@ -220,8 +229,15 @@ class KisOrderWireCodec:
                 field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly, or the
                 price is not whole KRW at ``price_scale``.
         """
+        # #932 Codex r1 HIGH: the sealed account is the whole 8-2 number; the wire carries its
+        # two halves — CANO (8) here, ACNT_PRDT_CD (2) checked against the static field below.
+        # The SAME parser the balance read uses (transport/kis_mock/account.py).
+        try:
+            kis_account = split_kis_account(account)
+        except KisAccountError as exc:
+            raise KisOrderWireCodecError(f"KisOrderWireCodec: {exc}") from exc
         dynamic_sources: dict[str, str] = {
-            "account": account,
+            "account": kis_account.cano,
             "instrument": instrument,
             "quantity": _decimal_to_kis_string(quantity),
             "price": _price_to_kis_string(price, price_scale),
@@ -244,6 +260,13 @@ class KisOrderWireCodec:
             raise KisOrderWireCodecError(
                 "KisOrderWireCodec.encode_fields: the encoded body does not cover exactly the "
                 f"nine KIS order_cash fields — missing={missing!r} unexpected={unexpected!r}"
+            )
+        if fields[_ACCOUNT_PRODUCT_FIELD] != kis_account.acnt_prdt_cd:
+            # Two sources for one fact (config ACNT_PRDT_CD, the account's own last two
+            # digits) must agree; refusing beats sending a CANO under another product code.
+            raise KisOrderWireCodecError(
+                "KisOrderWireCodec: static ACNT_PRDT_CD does not match the sealed account's "
+                "product code (its last two digits)"
             )
 
         return json.dumps(

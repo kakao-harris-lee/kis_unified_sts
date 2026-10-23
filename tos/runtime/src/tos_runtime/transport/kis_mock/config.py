@@ -14,7 +14,10 @@ real ``rest_base`` strings as caller-supplied facts (``instance_mock_rest_base``
 firewalled distribution). A config whose ``endpoint_rest_base`` differs from the MOCK document,
 or matches the REAL_PROD document, refuses to load — a config value cannot re-point this
 transport at a live host, no matter what an operator (or an attacker with write access to the
-config file) sets it to.
+config file) sets it to. The REAL-host exclusion compares normalized hosts
+(:func:`tos_runtime.transport.endpoint.real_host_problem`, #932 final review MEDIUM): the REAL
+hostname in any spelling — case, trailing ``/``, implicit port, trailing-dot FQDN — is refused,
+both as the config value and as the MOCK document's own fact.
 
 **``V``-prefix + shape rule (decision 5, review disposition F7).** KIS's own TR-id convention
 prefixes every 모의(paper) order TR with ``V`` (``VTTC0011U``/``VTTC0012U``, N-17 memo) and every
@@ -79,6 +82,8 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
+
+from tos_runtime.transport.endpoint import real_host_problem
 
 __all__ = [
     "DYNAMIC_FIELD_SOURCES",
@@ -341,24 +346,15 @@ def _validate_endpoint(
             "a caller that cannot state the REAL_PROD host cannot honestly prove this config "
             "excludes it (review F3)"
         )
-    if instance_mock_rest_base == instance_real_rest_base:
-        raise KisMockTransportConfigError(
-            f"instance_mock_rest_base and instance_real_rest_base must differ (both were "
-            f"{instance_mock_rest_base!r}) — a caller that cannot distinguish the two instance "
-            "facts cannot honestly exclude the real host (review F3)"
-        )
-    # The REAL-match check runs BEFORE the mock-match check (review F3 fix): with
-    # instance_mock_rest_base != instance_real_rest_base already established above, checking
-    # "does not match mock" first would make this branch unreachable whenever endpoint DOES
-    # match mock (the only way to reach a later check in this function at all) — an endpoint
-    # cannot equal both when the two instance facts differ, so ordering real-match first is
-    # what keeps this branch reachable in the first place.
-    if endpoint_rest_base == instance_real_rest_base:
-        raise KisMockTransportConfigError(
-            f"{path}: endpoint_rest_base={endpoint_rest_base!r} equals the INSTANCE REAL_PROD "
-            "document's own rest_base — this MOCK-only transport refuses to boot against a "
-            "real host under any config value (decision 5)"
-        )
+    # Normalized REAL-host exclusion (#932 final review MEDIUM): a REAL host spelled
+    # differently (trailing "/", case, implicit port, trailing-dot FQDN) is still the REAL host.
+    problem = real_host_problem(
+        endpoint_rest_base,
+        instance_mock_rest_base=instance_mock_rest_base,
+        instance_real_rest_base=instance_real_rest_base,
+    )
+    if problem is not None:
+        raise KisMockTransportConfigError(f"{path}: {problem}")
     if endpoint_rest_base != instance_mock_rest_base:
         raise KisMockTransportConfigError(
             f"{path}: endpoint_rest_base={endpoint_rest_base!r} does not byte-exact match the "

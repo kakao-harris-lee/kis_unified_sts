@@ -828,6 +828,7 @@ def _build_context_resolver(
     session_facts_current_reader: Callable[[], bool | None],
     tradability_facts_current_reader: Callable[[], bool | None],
     account_facts_current_reader: Callable[[], bool | None],
+    mock_generation_reader: Callable[[], bool | None],
     observed_session_phase_reader: Callable[[], str | None],
     egress_coordinates: EgressCoordinatesConfig,
     broker_scopes: BrokerScopesConfig,
@@ -839,6 +840,7 @@ def _build_context_resolver(
     safety_mesh: _SafetyMesh,
     projection: SqliteReservationProjectionReader,
     evidence_store: SqliteEvidenceStore,
+    transport_config: KisMockTransportConfig | None,
     request_bytes_digest_source: RequestBytesDigestSource | None = None,
 ) -> ComposeContextResolver:
     """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1 (3)) — transport
@@ -885,6 +887,7 @@ def _build_context_resolver(
         session_facts_current_reader=session_facts_current_reader,
         tradability_facts_current_reader=tradability_facts_current_reader,
         account_facts_current_reader=account_facts_current_reader,
+        mock_generation_reader=mock_generation_reader,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         authority_epoch_service=authority_epoch_service,
@@ -909,6 +912,11 @@ def _build_context_resolver(
             broker_session_generation=egress_coordinates.broker_session_generation,
             egress_generation=egress_coordinates.egress_generation,
             active_principal=egress_coordinates.active_principal,
+        ),
+        transport_endpoint=(
+            None
+            if transport_config is None
+            else transport_config.endpoint_rest_base + transport_config.order_path
         ),
         # STAND-IN by default; T2 lane A: a caller may inject a real codec digest instead.
         request_bytes_digest_source=(

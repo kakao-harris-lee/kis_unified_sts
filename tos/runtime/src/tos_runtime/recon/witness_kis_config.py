@@ -9,7 +9,8 @@ Mirrors :mod:`tos_runtime.transport.kis_mock.config`'s own fail-closed / host-se
 **Host seal (mirrors ``kis_mock/config.py:303-354``).** ``endpoint_rest_base`` must
 byte-exact match the caller-supplied ``instance_mock_rest_base`` fact and must NOT equal
 ``instance_real_rest_base`` — exactly the same two-sided check ``kis_mock/config.py``
-performs for the order transport. A config value cannot re-point this witness at a live
+performs for the order transport, the REAL side on normalized hosts
+(:func:`tos_runtime.transport.endpoint.real_host_problem`). A config value cannot re-point this witness at a live
 host, no matter what an operator (or an attacker with write access to the config file)
 sets it to.
 
@@ -54,6 +55,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
+
+from tos_runtime.transport.endpoint import real_host_problem
 
 __all__ = [
     "KisWitnessConfig",
@@ -222,18 +225,15 @@ def _validate_endpoint(
             "excluded — a caller that cannot state the REAL_PROD host cannot honestly "
             "prove this config excludes it"
         )
-    if instance_mock_rest_base == instance_real_rest_base:
-        raise KisWitnessConfigError(
-            f"instance_mock_rest_base and instance_real_rest_base must differ (both were "
-            f"{instance_mock_rest_base!r}) — a caller that cannot distinguish the two "
-            "instance facts cannot honestly exclude the real host"
-        )
-    if endpoint_rest_base == instance_real_rest_base:
-        raise KisWitnessConfigError(
-            f"{path}: endpoint_rest_base={endpoint_rest_base!r} equals the INSTANCE "
-            "REAL_PROD document's own rest_base — this 모의투자-only witness refuses to "
-            "boot against a real host under any config value"
-        )
+    # Normalized REAL-host exclusion (#932 final review MEDIUM): a REAL host spelled
+    # differently (trailing "/", case, implicit port, trailing-dot FQDN) is still the REAL host.
+    problem = real_host_problem(
+        endpoint_rest_base,
+        instance_mock_rest_base=instance_mock_rest_base,
+        instance_real_rest_base=instance_real_rest_base,
+    )
+    if problem is not None:
+        raise KisWitnessConfigError(f"{path}: {problem}")
     if endpoint_rest_base != instance_mock_rest_base:
         raise KisWitnessConfigError(
             f"{path}: endpoint_rest_base={endpoint_rest_base!r} does not byte-exact match "

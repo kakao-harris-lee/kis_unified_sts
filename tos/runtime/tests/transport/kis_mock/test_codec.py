@@ -56,7 +56,7 @@ def test_encode_produces_deterministic_sorted_no_whitespace_json() -> None:
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
-        account="12345678",
+        account="12345678-01",
         instrument="005930",
         quantity=Decimal("10"),
         price=Decimal("70000"),
@@ -105,13 +105,15 @@ def test_account_is_read_from_the_sealed_account_coordinate() -> None:
     """(F2) The 'account' dynamic source is ``seal.account`` — the sealed outbound
     coordinate — never a custody-loaded value and never ``instrument_key.account``."""
     seal = build_seal(
-        field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS, account="acct-from-seal"
+        field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS, account="33333333-01"
     )
     body = KisOrderWireCodec.encode(
         seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     decoded = json.loads(body)
-    assert decoded["CANO"] == "acct-from-seal" == seal.account
+    # CANO is the sealed account's first 8 digits (#932 Codex r1 HIGH); the seal keeps it whole.
+    assert seal.account == "33333333-01"
+    assert decoded["CANO"] == "33333333"
 
 
 def test_account_is_the_seal_field_never_instrument_key_account() -> None:
@@ -123,17 +125,17 @@ def test_account_is_the_seal_field_never_instrument_key_account() -> None:
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
-        account="seal-account-value",
-        instrument_key_account="different-instrument-key-account-value",
+        account="44444444-01",
+        instrument_key_account="55555555-01",
     )
-    assert seal.account == "seal-account-value"
-    assert seal.instrument_key.account == "different-instrument-key-account-value"
+    assert seal.account == "44444444-01"
+    assert seal.instrument_key.account == "55555555-01"
     body = KisOrderWireCodec.encode(
         seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     decoded = json.loads(body)
-    assert decoded["CANO"] == "seal-account-value"
-    assert decoded["CANO"] != "different-instrument-key-account-value"
+    assert decoded["CANO"] == "44444444"
+    assert decoded["CANO"] != "55555555"
 
 
 def test_missing_a_required_field_refuses() -> None:
@@ -180,7 +182,7 @@ def test_encode_delegates_to_encode_fields_with_the_seals_own_four_values() -> N
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
-        account="12345678",
+        account="12345678-01",
         instrument="005930",
         quantity=Decimal("10"),
         price=Decimal("70000"),
@@ -250,7 +252,7 @@ def test_a_x100_sealed_price_goes_out_as_whole_krw() -> None:
 def test_a_price_that_is_not_whole_krw_is_refused_not_rounded(price: str) -> None:
     with pytest.raises(KisOrderWireCodecError, match="not a whole-KRW"):
         KisOrderWireCodec.encode_fields(
-            account="12345678",
+            account="12345678-01",
             instrument="005930",
             quantity=Decimal("1"),
             price=Decimal(price),
@@ -264,7 +266,7 @@ def test_a_price_that_is_not_whole_krw_is_refused_not_rounded(price: str) -> Non
 def test_price_scale_must_be_a_positive_int(scale: object) -> None:
     with pytest.raises(KisOrderWireCodecError, match="positive int"):
         KisOrderWireCodec.encode_fields(
-            account="12345678",
+            account="12345678-01",
             instrument="005930",
             quantity=Decimal("1"),
             price=Decimal("27000000"),
@@ -284,7 +286,7 @@ _WIDE = 10**30
 def test_a_price_wider_than_the_decimal_context_is_not_rounded_into_whole_krw() -> None:
     with pytest.raises(KisOrderWireCodecError, match="not a whole-KRW"):
         KisOrderWireCodec.encode_fields(
-            account="12345678",
+            account="12345678-01",
             instrument="005930",
             quantity=Decimal("1"),
             price=Decimal(_WIDE + 50),
@@ -297,7 +299,7 @@ def test_a_price_wider_than_the_decimal_context_is_not_rounded_into_whole_krw() 
 def test_a_price_wider_than_the_decimal_context_goes_out_exact() -> None:
     body = json.loads(
         KisOrderWireCodec.encode_fields(
-            account="12345678",
+            account="12345678-01",
             instrument="005930",
             quantity=Decimal("1"),
             price=Decimal(_WIDE + 100),
@@ -307,3 +309,67 @@ def test_a_price_wider_than_the_decimal_context_goes_out_exact() -> None:
         )
     )
     assert body["ORD_UNPR"] == str(10**28 + 1)
+
+
+# ---------------------------------------------------------------------------
+# The account: one 8-2 number sealed, two KIS fields on the wire (#932 Codex r1 HIGH)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("account", ["88888888-01", "8888888801"])
+def test_the_sealed_8_2_account_goes_out_as_cano_8_and_the_matching_product_code(
+    account: str,
+) -> None:
+    """KIS official example (order_cash): ``"CANO": "12345678", "ACNT_PRDT_CD": "01"``. Before
+    this fix the codec sent the whole sealed string as CANO (``"88888888-01"``) — VTS rejects
+    that, and the e2e's fake server and oracle both repeated it."""
+    body = json.loads(
+        KisOrderWireCodec.encode_fields(
+            account=account,
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal("27000000"),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=100,
+        )
+    )
+    assert body["CANO"] == "88888888"
+    assert body["ACNT_PRDT_CD"] == "01"
+
+
+@pytest.mark.parametrize(
+    "account",
+    [
+        "88888888",  # no product code: nothing to check ACNT_PRDT_CD against
+        "888888888-1",  # hyphen in the wrong place
+        "88888888-01-",  # two hyphens
+        "８８８８８８８８０１",  # full-width digits
+        "acct-compose",
+    ],
+)
+def test_an_account_that_is_not_kis_8_2_is_refused(account: str) -> None:
+    with pytest.raises(KisOrderWireCodecError, match="8-2|10 ASCII"):
+        KisOrderWireCodec.encode_fields(
+            account=account,
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal("27000000"),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=100,
+        )
+
+
+def test_a_product_code_that_disagrees_with_the_static_field_is_refused() -> None:
+    """Config ACNT_PRDT_CD "01" beside an account ending in "02": two sources for one fact."""
+    with pytest.raises(KisOrderWireCodecError, match="ACNT_PRDT_CD does not match"):
+        KisOrderWireCodec.encode_fields(
+            account="88888888-02",
+            instrument="005930",
+            quantity=Decimal("1"),
+            price=Decimal("27000000"),
+            field_map=FIELD_MAP,
+            static_body_fields=STATIC_FIELDS,
+            price_scale=100,
+        )

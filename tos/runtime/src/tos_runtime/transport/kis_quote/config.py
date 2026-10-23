@@ -15,15 +15,12 @@ environment separation *per TR family*, not *per domain* — "모의 앱키로 �
 구성은 조용히 동작한다" ("a config reading REAL-domain quotes with a MOCK app key works silently").
 A config value alone cannot be trusted to keep this transport pointed at MOCK.
 
-**The actual defense is the ALLOWLIST check, not the explicit REAL-match check (independent
-review LOW, 2026-09-17).** :func:`_validate_endpoint`'s LAST comparison —
-``endpoint_rest_base != instance_mock_rest_base`` — is what refuses ANY non-MOCK value, a REAL
-endpoint included: deleting the earlier, explicit ``endpoint_rest_base == instance_real_rest_base``
-branch entirely still refuses a REAL endpoint, because it is not MOCK either, and the allowlist
-check catches it regardless. That explicit REAL-match branch is kept ONLY for a clearer, more
-specific error message when a config names the REAL host BY NAME (it says "equals REAL_PROD's own
-rest_base", not the generic "does not match MOCK_VTS") — it is redundant for the refusal itself,
-never the sole thing standing between this transport and a real host.
+**Two checks, both needed.** :func:`_validate_endpoint` refuses an endpoint that is not
+byte-exact the MOCK fact (the allowlist) AND, before that, any endpoint or MOCK fact naming the
+REAL hostname after normalization (:func:`tos_runtime.transport.endpoint.real_host_problem`).
+The allowlist alone is not enough: when the MOCK fact itself is a REAL spelling (``…:9443/``,
+``OpenAPI.…``, implicit port, trailing dot) a byte-exact echo of it passed (#932 final review
+MEDIUM, superseding the 2026-09-17 note that the REAL check was redundant).
 
 **Quote TR id shape (measured, NOT the order transport's ``V``-prefix rule).** Four independently
 observed KIS quotations TR ids —
@@ -70,6 +67,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
+
+from tos_runtime.transport.endpoint import real_host_problem
 
 __all__ = [
     "KisQuoteTransportConfig",
@@ -258,9 +257,9 @@ def _validate_endpoint(
     allow_plaintext_for_tests: bool,
     path: Path,
 ) -> None:
-    """Same host-seal shape as ``kis_mock.config._validate_endpoint`` (module docstring) —
-    duplicated, not imported, so this loader stays free of a sibling-package import for a check
-    this small; the two must be kept in sync by hand if the seal's shape ever changes.
+    """Same host-seal shape as ``kis_mock.config._validate_endpoint`` (module docstring). The
+    REAL-host exclusion is the shared normalized one
+    (:func:`tos_runtime.transport.endpoint.real_host_problem`); the rest mirrors by hand.
     """
     if (
         instance_real_rest_base is None
@@ -270,18 +269,15 @@ def _validate_endpoint(
             "a caller that cannot state the REAL_PROD host cannot honestly prove this config "
             "excludes it"
         )
-    if instance_mock_rest_base == instance_real_rest_base:
-        raise KisQuoteTransportConfigError(
-            f"instance_mock_rest_base and instance_real_rest_base must differ (both were "
-            f"{instance_mock_rest_base!r}) — a caller that cannot distinguish the two instance "
-            "facts cannot honestly exclude the real host"
-        )
-    if endpoint_rest_base == instance_real_rest_base:
-        raise KisQuoteTransportConfigError(
-            f"{path}: endpoint_rest_base={endpoint_rest_base!r} equals the INSTANCE REAL_PROD "
-            "document's own rest_base — this MOCK-only transport refuses to boot against a "
-            "real host under any config value"
-        )
+    # Normalized REAL-host exclusion (#932 final review MEDIUM): a REAL host spelled
+    # differently (trailing "/", case, implicit port, trailing-dot FQDN) is still the REAL host.
+    problem = real_host_problem(
+        endpoint_rest_base,
+        instance_mock_rest_base=instance_mock_rest_base,
+        instance_real_rest_base=instance_real_rest_base,
+    )
+    if problem is not None:
+        raise KisQuoteTransportConfigError(f"{path}: {problem}")
     if endpoint_rest_base != instance_mock_rest_base:
         raise KisQuoteTransportConfigError(
             f"{path}: endpoint_rest_base={endpoint_rest_base!r} does not byte-exact match the "

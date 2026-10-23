@@ -75,7 +75,7 @@ from pydantic import model_validator
 
 from tos.brokercap._base import ArtifactIntegrityError, FrozenModel
 from tos.brokercap.records import BrokerEvidenceRef, ProfileKey
-from tos.brokercap.vocabulary import Admissibility
+from tos.brokercap.vocabulary import Admissibility, BrokerEnvironment
 
 __all__ = [
     "AssetScope",
@@ -90,6 +90,7 @@ __all__ = [
     "ProvenanceClass",
     "credential_principal_separation_ok",
     "endpoint_binding_from_profile_ok",
+    "mock_order_without_position_or_cash",
     "provenance_admits_claim",
     "routing_admissibility",
 ]
@@ -100,22 +101,9 @@ __all__ = [
 # ===========================================================================
 
 
-class BrokerEnvironment(StrEnum):
-    """The broker-environment axis (plan §5.1; broker-agnostic — slice plan §3 decision 2).
-
-    ``SYNTHETIC`` (non-authoritative simulated/backtest data or fills — no broker involved
-    at all), ``BROKER_SIMULATION`` (a broker's own mock/paper endpoint), ``BROKER_PRODUCTION``
-    (a broker's real endpoint — reachable for reads; permanently unreachable for a
-    FUTURES order-mutating operation, see :class:`CapabilityTuple`). Naming deliberately
-    avoids any concrete broker token (project memory ``tos-spec-broker-agnostic``); a
-    concrete broker's endpoint identity is carried by
-    :class:`~tos.brokercap.records.ProfileKey.broker_id` / ``.environment``, consumed only
-    through the injected bindings of :func:`endpoint_binding_from_profile_ok`.
-    """
-
-    SYNTHETIC = "SYNTHETIC"
-    BROKER_SIMULATION = "BROKER_SIMULATION"
-    BROKER_PRODUCTION = "BROKER_PRODUCTION"
+# ``BrokerEnvironment`` lives in :mod:`tos.brokercap.vocabulary` (re-exported here, the SAME
+# object) so :mod:`tos.brokercap.records` can type a profile's own ``environment_class`` with
+# it without an import cycle (records -> routing would close one; #932 Codex r2).
 
 
 class OperationClass(StrEnum):
@@ -384,6 +372,60 @@ _REDUCED_WHITELIST: frozenset[CapabilityTuple] = frozenset(
     )
     for operation in _MOCK_STOCK_ORDER_OPERATIONS
 )
+
+
+#: The authorization classes a MOCK-only scope may carry (PR-3 option (a)): a mock order,
+#: or a read that authorizes nothing. ``REAL_ORDER`` and ``SYNTHETIC_ORDER`` are absent.
+_MOCK_SCOPE_AUTHORIZATIONS: frozenset[AuthorizationClass] = frozenset(
+    {AuthorizationClass.MOCK_ORDER, AuthorizationClass.NON_AUTHORIZING_READ}
+)
+#: The economic effects that move no position and no cash (PR-3 option (a)). An allow-list,
+#: not "anything but POSITION_OR_CASH": an unknown or absent effect is not in it.
+_NO_POSITION_OR_CASH_EFFECTS: frozenset[EconomicEffect] = frozenset(
+    {EconomicEffect.NONE, EconomicEffect.BROKER_RESOURCE_ONLY}
+)
+
+
+def mock_order_without_position_or_cash(
+    capability_tuples: tuple[CapabilityTuple, ...],
+) -> bool:
+    """Whether a scope's tuples are a MOCK order class that moves no position or cash.
+
+    Operator decision 2026-10-23 (PR-3 option (a), "K"): the egress gateway's item 6 skips the
+    Broker Capability Profile check, and the runtime sources item 12's broker-constraint
+    generation from a GET-only mock-account read instead of a profile approval act, ONLY for a
+    send whose scope this predicate admits. ``True`` iff the tuple set is non-empty and EVERY
+    tuple is
+
+    * ``BROKER_SIMULATION`` environment (never ``BROKER_PRODUCTION``, never ``SYNTHETIC``),
+    * ``MOCK_ORDER`` or ``NON_AUTHORIZING_READ`` authorization (never ``REAL_ORDER``), and
+    * ``NONE`` or ``BROKER_RESOURCE_ONLY`` economic effect (never ``POSITION_OR_CASH``).
+
+    It reads the kernel's own closed enums and nothing else — no profile field, no string, no
+    injected flag — so no configuration can extend it to a real-money scope. Every check is an
+    identity / membership test against an allow-list, so a bypass-constructed tuple
+    (``model_construct``) carrying ``None`` or an unexpected value on any axis fails closed,
+    and so does an object that is not a :class:`CapabilityTuple` at all.
+
+    Args:
+        capability_tuples: The active scope's capability tuples (``()`` => ``False``).
+
+    Returns:
+        Whether the relaxation's tuple class holds for every tuple.
+    """
+    if not capability_tuples:
+        return False
+    return all(
+        isinstance(t, CapabilityTuple)
+        and t.environment is BrokerEnvironment.BROKER_SIMULATION
+        # The isinstance halves are load-bearing: a StrEnum member compares EQUAL to its
+        # plain string, so a bypass-constructed "NONE" would pass a bare membership test.
+        and isinstance(t.authorization_class, AuthorizationClass)
+        and t.authorization_class in _MOCK_SCOPE_AUTHORIZATIONS
+        and isinstance(t.economic_effect, EconomicEffect)
+        and t.economic_effect in _NO_POSITION_OR_CASH_EFFECTS
+        for t in capability_tuples
+    )
 
 
 def routing_admissibility(
