@@ -1,0 +1,115 @@
+{
+ "started_kst": "2026-10-22T08:45:08.745627+09:00",
+ "worktree_commit": "0cc899617f5b9044a2a8d816931e539295dfe63d",
+ "direction": "LONG",
+ "label": "paper",
+ "data_dir": "{STATE_DIR}/paper-data/A05611",
+ "append_every_s": 5.0,
+ "max_minutes": 434.0,
+ "genesis": false,
+ "baseline_evidence_seq": 479138,
+ "baseline_snapshots": 35180,
+ "data_dir_bytes_before": 1250041856,
+ "render_rc": 0,
+ "instrument": "A05611",
+ "activation_check": "ACTIVATED 5 (re-derived in a fresh process)",
+ "source_revision": "0cc899617f5b9044a2a8d816931e539295dfe63d",
+ "rendered_at_kst": "2026-10-22T08:45:09.074231+09:00",
+ "boot_seconds": 50.4,
+ "boot_proof": {
+  "ACTION_FLOW_POLICY_BOUND": 1,
+  "AGGREGATE_RISK_POLICY_BOUND": 1,
+  "AUTHORITY_EPOCH_TRANSITION": 1,
+  "ORDER_CONSTRUCTION_POLICY_BOUND": 1,
+  "VENUE_POLICY_BOUND": 1
+ },
+ "boot_proof_ok": true,
+ "evidence_schema": {
+  "user_version": 2,
+  "schema_ledger": [
+   "2|CREATED"
+  ],
+  "objects": [
+   "index|entries_kind_seq",
+   "table|entries",
+   "table|outbox",
+   "table|schema_ledger",
+   "trigger|entries_no_delete",
+   "trigger|entries_no_update",
+   "trigger|schema_ledger_no_delete",
+   "trigger|schema_ledger_no_update"
+  ],
+  "matches_expected_v2": true
+ },
+ "ended_kst": "2026-10-22T15:45:03.562424+09:00",
+ "stop_reason": "signal",
+ "exited_before_stop": false,
+ "exit_code": 0,
+ "observations_appended": 5022,
+ "append_errors": 0,
+ "append_errors_sample": [],
+ "snapshots_delta": 5016,
+ "evidence_by_kind_delta": {
+  "TIME_HEALTH_SNAPSHOT": 43418,
+  "EVENT_CONSUMED": 5016,
+  "EVENT_HANDLING_STARTED": 5016,
+  "DECISION_OUTCOME_EMITTED": 5013,
+  "FLOW_HALTED": 2507,
+  "DECISION_WITHHELD": 3,
+  "SESSION_FACTS_OBSERVED": 2,
+  "ACTION_FLOW_POLICY_BOUND": 1,
+  "AGGREGATE_RISK_POLICY_BOUND": 1,
+  "AUTHORITY_EPOCH_TRANSITION": 1,
+  "EGRESS_IDENTITY_OBSERVATION": 1,
+  "OPERATOR_ATTESTED_INPUTS": 1,
+  "OPERATOR_PROJECTION_ENABLED": 1,
+  "ORDER_CONSTRUCTION_POLICY_BOUND": 1,
+  "RCL_APPEND": 1,
+  "RECOVERY_BARRIER": 1,
+  "REPLAY_VERDICT_IDENTICAL": 1,
+  "SESSION_CALENDAR_BOUND": 1,
+  "STM_ALERT": 1,
+  "TIME_SERVICE_STARTUP": 1,
+  "TIME_WALL_CLOCK_EXPOSED": 1,
+  "VENUE_POLICY_BOUND": 1
+ },
+ "evidence_rows_delta": 60990,
+ "decision_breakdown_delta": {
+  "withheld": {
+   "TIME_NOT_ADMITTED | freshness verdict is STALE, not FRESH (ADR-002-008 §9)": 3
+  },
+  "outcomes": {
+   "NoActionOutcome": 2506,
+   "Proposal": 2507
+  },
+  "flow_halted": {
+   "STAGE_DENIED | the venue / broker quantity constraint is incomplete": 2507
+  }
+ },
+ "events_consumed": 5016,
+ "stale_withheld": 3,
+ "stale_ratio": 0.0006,
+ "data_dir_bytes": 1413615616,
+ "evidence_schema_after": {
+  "user_version": 2,
+  "schema_ledger": [
+   "2|CREATED"
+  ],
+  "objects": [
+   "index|entries_kind_seq",
+   "table|entries",
+   "table|outbox",
+   "table|schema_ledger",
+   "trigger|entries_no_delete",
+   "trigger|entries_no_update",
+   "trigger|schema_ledger_no_delete",
+   "trigger|schema_ledger_no_update"
+  ],
+  "matches_expected_v2": true
+ },
+ "run_log_tail": [
+  "run: stopped (signal received)."
+ ],
+ "verdict": "ok",
+ "data_dir_growth_bytes": 163573760
+}

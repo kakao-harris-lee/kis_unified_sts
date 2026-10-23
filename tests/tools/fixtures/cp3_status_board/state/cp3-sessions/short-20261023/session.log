@@ -1,0 +1,41 @@
+2026-10-23 08:40:04 checkout ok: repo={STATE_DIR}/measure/wt-cp3-short-20261023 repo_commit=6dc35f7b7fe8959c3a3ea146c51d9363b31c5a6f
+2026-10-23 08:40:04 credential separation ok: no real futures query key in this environment
+2026-10-23 08:40:04 probe module resolves inside the checkout: {STATE_DIR}/measure/wt-cp3-short-20261023/tools/tos_cp3/bootproof_guard.py
+2026-10-23 08:40:04 probe policy version cp3-tenant-bootproof/2 matches this runner
+2026-10-23 08:40:04 instrument=A05611 · data leaf {STATE_DIR}/cp3-setup-d-short-data/A05611
+2026-10-23 08:40:04 session paths are literal (no symlinked component, resolve to themselves)
+2026-10-23 08:40:04 === PRODUCER instrument=A05611 config={STATE_DIR}/measure/wt-cp3-short-20261023/config/tos_probes/cp3-live-producer.yaml session-dir={STATE_DIR}/cp3-sessions/short-20261023/producer journal={STATE_DIR}/cp3-sessions/short-20261023/journal.jsonl ceiling 25806s
+2026-10-23 08:40:04 producer pid=2838136 (supervised by timeout, ceiling 25806s)
+2026-10-23 08:40:04 first-row wait: pid=2838140 (bound 600s, log {STATE_DIR}/cp3-sessions/short-20261023/producer/first-row-wait.log)
+2026-10-23 08:46:02   first real row seen · consumed_stale_at_boot=1 · last=A05611:1m:20261023T084500+0900 · snapshot {STATE_DIR}/cp3-sessions/short-20261023/producer/boot-journal-snapshot.json
+2026-10-23 08:46:06 band launch: computed 0s until open + one boundary
+2026-10-23 08:46:06 === BAND PROCESS #1 instrument=A05611 ceiling 30s grace 5s margin 5s stop_in 25434s
+2026-10-23 08:46:10 band process #1 rc=0
+2026-10-23 08:46:10 band process wrote a line
+2026-10-23 08:46:10 band-line wait: pid=2862895 (bound 20s, log {STATE_DIR}/cp3-sessions/short-20261023/producer/band-line-wait.log)
+2026-10-23 08:46:15   band wait: allowance=20s (the band processes have already had their turns) -> waiting up to 20s (stop leaves 25425s)
+2026-10-23 08:46:15   band line ok · trading_date=20261023 instrument=A05611 as_of_ms=1792712770208 (open 1792712700000) digest=0da1b26b359268f17ec7a49f05f76b3da96eacf3e21fc8bb3f52ff0da20eda33
+2026-10-23 08:46:15 band line present before the boot (band plan §4 수용 1)
+2026-10-23 08:46:15 bootproof_guard: ok — journal {STATE_DIR}/cp3-sessions/short-20261023/journal.jsonl took the APPROVED REAL PRODUCER (every row's source_id is allowlisted) branch; data dir {STATE_DIR}/cp3-setup-d-short-data/A05611 accepted for instrument A05611
+2026-10-23 08:46:15 data parent mode 700
+2026-10-23 08:46:15 render: cp3-setup-d-short declares no band source (band stays off for this tree)
+2026-10-23 08:46:15 === RENDER tree=cp3-setup-d-short direction=SHORT out={STATE_DIR}/cp3-sessions/short-20261023/config
+rendered: {STATE_DIR}/cp3-sessions/short-20261023/config
+  tree_id:         cp3-setup-d-short
+  source_revision: 6dc35f7b7fe8959c3a3ea146c51d9363b31c5a6f
+  direction:       SHORT
+  instrument:      A05611
+  account:         <withheld> fingerprint=46c39c54d3bb
+  journal:         {STATE_DIR}/cp3-sessions/short-20261023/journal.jsonl (external)
+  activation:      ACTIVATED 5 (re-derived in a fresh process)
+  digest:          VENUE_CONSTRAINT_POLICY vcp-paper-cp3-setup-d-short-krx-index-futures 1 2284291e6350effc4f1d624ab17943d34fcc7c8c3c02e4c4216d868a470498e2
+  digest:          ORDER_CONSTRUCTION_POLICY ocp-paper-cp3-setup-d-short-krx-index-futures 3 c90444b90034fbc1b8b66ac1e8899a62c4d673cb0b81602e2b74af71cb70f313
+  digest:          AGGREGATE_RISK_POLICY arp-paper-krx-index-futures 1 9025232059c863915d873c63fcf3307fcdf3357ca9662f73e25d129698d4ff09
+  digest:          ACTION_FLOW_POLICY afp-paper-krx-index-futures 1 9fac88fcc0862315d0a6703c50d096ab173e17b81b03fef30d4e25ed9d836319
+  digest:          CRITICAL_INPUT_POLICY tos-paper-cp3-setup-d-short-critical-input-g1 1 60ed46abb97f6cfbc5e7154b6cb68717e99936b92d88bd2509e8fe7cd7a12ffe
+2026-10-23 08:46:18 render ok -> {STATE_DIR}/cp3-sessions/short-20261023/config
+2026-10-23 08:46:18 environment label paper matches the rendered tree
+2026-10-23 08:46:18 boot-moment snapshot: pid=2863508 (bound 1s, log {STATE_DIR}/cp3-sessions/short-20261023/producer/first-row-wait.log)
+2026-10-23 08:46:18   first real row seen · consumed_stale_at_boot=1 · last=A05611:1m:20261023T084500+0900 · snapshot {STATE_DIR}/cp3-sessions/short-20261023/producer/boot-journal-snapshot.json
+2026-10-23 08:46:18 === BOOT label=paper custody={STATE_DIR}/paper-custody stop in 25796s (15:50) · child ceiling 25916s
+2026-10-23 08:46:18 run pid=2863512 (supervised by timeout, ceiling 25916s)
