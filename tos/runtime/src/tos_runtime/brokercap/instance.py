@@ -70,6 +70,7 @@ from tos.brokercap.routing import CapabilityProvenance, ProvenanceClass
 from tos.brokercap.vocabulary import (
     AssuranceLevel,
     AssuranceSource,
+    BrokerEnvironment,
     CapabilityDimension,
     CapabilityStatus,
     ProhibitedProof,
@@ -469,6 +470,31 @@ def _build_fqp_rules(
     return tuple(rules)
 
 
+def _build_environment_class(
+    profile_identity: dict[str, Any], *, context: str
+) -> BrokerEnvironment | None:
+    """``profile_identity.environment_class`` as the kernel enum, or ``None`` when absent.
+
+    #932 Codex r2: the ONE place a profile's environment class enters the runtime — read off
+    the INSTANCE document itself (not the scope table, not a send-time context). An unknown
+    value is a boot refusal, never a guess; absent is ``None``, which the egress gateway never
+    reads as simulation.
+
+    Raises:
+        BrokerInstanceConfigError: the value is not a :class:`BrokerEnvironment` member name.
+    """
+    raw = profile_identity.get("environment_class")
+    if raw is None:
+        return None
+    try:
+        return BrokerEnvironment(raw)
+    except ValueError as exc:
+        raise BrokerInstanceConfigError(
+            f"{context}: profile_identity.environment_class {raw!r} is not one of "
+            f"{[member.value for member in BrokerEnvironment]}"
+        ) from exc
+
+
 def _build_instance_document(
     raw: dict[str, Any], *, path: Path, index: int
 ) -> InstanceDocument:
@@ -490,18 +516,27 @@ def _build_instance_document(
     ) = _build_declarations(raw, captured_at=captured_at, context=context)
     fqp_rules = _build_fqp_rules(raw, context=context)
 
-    profile = BrokerCapabilityProfile(
-        status=ArtifactStatus.DRAFT,
-        canonical_digest=None,
-        canonicalization_version=None,
-        profile_id=artifact_id,
-        profile_key=profile_key,
-        profile_version=profile_version,
-        declarations=declarations,
-        conformance_class=None,
-        live_scope=live_scope,
-        final_quantity_proof_rules=fqp_rules,
-    )
+    environment_class = _build_environment_class(profile_identity, context=context)
+    try:
+        profile = BrokerCapabilityProfile(
+            status=ArtifactStatus.DRAFT,
+            canonical_digest=None,
+            canonicalization_version=None,
+            profile_id=artifact_id,
+            profile_key=profile_key,
+            profile_version=profile_version,
+            declarations=declarations,
+            conformance_class=None,
+            live_scope=live_scope,
+            final_quantity_proof_rules=fqp_rules,
+            environment_class=environment_class,
+        )
+    except (
+        Exception
+    ) as exc:  # pydantic ValidationError — e.g. simulation with a live scope
+        raise BrokerInstanceConfigError(
+            f"{context}: profile did not validate: {exc}"
+        ) from exc
 
     approvers_raw = profile_identity.get("approvers") or []
     return InstanceDocument(

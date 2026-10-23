@@ -147,6 +147,23 @@ def test_config_missing_key_is_refused(tmp_path: Path):
         sb.load_config(path)
 
 
+@pytest.mark.parametrize(
+    "key", ["paper_runtime_cmdline_needle", "paper_driver_cmdline_needle"]
+)
+@pytest.mark.parametrize("value", ['""', "'  '", "null"])
+def test_config_blank_cmdline_needle_is_refused(tmp_path: Path, key: str, value: str):
+    # 빈 needle 은 아무 프로세스나 «살아 있음» 으로 본다 — 로드에서 거부한다(#941).
+    committed = sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    lines = [
+        f"{key}: {value}" if line.startswith(f"{key}:") else line
+        for line in committed.splitlines()
+    ]
+    path = tmp_path / "c.yaml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="빈 값은 허용하지 않는다"):
+        sb.load_config(path)
+
+
 # --- pure helpers -------------------------------------------------------------
 
 
