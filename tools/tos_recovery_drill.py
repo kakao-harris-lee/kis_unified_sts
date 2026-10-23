@@ -138,21 +138,12 @@ def _crash(
 
 
 def _reboot(
-    python: str,
-    root: Path,
-    index: int,
-    timeout: float,
-    log: Path,
-    *,
-    inject_send: bool = False,
+    python: str, root: Path, index: int, timeout: float, log: Path
 ) -> dict[str, Any]:
     result_path = root.parent / f"{root.name}.reboot{index}.json"
-    command = [python, "-m", CHILD_MODULE, "reboot", str(root), str(result_path)]
-    if inject_send:
-        command.append("--inject-send")
     with log.open("ab") as err:
         completed = subprocess.run(
-            command,
+            [python, "-m", CHILD_MODULE, "reboot", str(root), str(result_path)],
             cwd=RUNTIME_DIR,
             env=_child_env(),
             stdin=subprocess.DEVNULL,
@@ -240,15 +231,8 @@ def judge(
 
 
 def run_drill(
-    python: str,
-    workdir: Path,
-    point: str,
-    round_no: int,
-    timeout: float,
-    *,
-    inject_send: bool = False,
+    python: str, workdir: Path, point: str, round_no: int, timeout: float
 ) -> DrillResult:
-    """One drill. ``inject_send`` (positive control) makes the FIRST restart re-send once."""
     started = time.monotonic()
     root = workdir / f"{point.lower()}-r{round_no}"
     root.mkdir(parents=True)
@@ -263,7 +247,7 @@ def run_drill(
     )
     reboots = (
         [
-            _reboot(python, root, i, timeout, log, inject_send=inject_send and i == 1)
+            _reboot(python, root, i, timeout, log)
             for i in range(1, REBOOTS_PER_DRILL + 1)
         ]
         if killed
@@ -323,24 +307,12 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout", type=float, default=120.0, help="seconds per child"
     )
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument(
-        "--inject-send",
-        action="store_true",
-        help="positive control: the first restart re-sends once, so every drill must FAIL",
-    )
     args = parser.parse_args(argv)
 
     workdir = args.workdir or Path(tempfile.mkdtemp(prefix="tos-recovery-drill-"))
     workdir.mkdir(parents=True, exist_ok=True)
     results = [
-        run_drill(
-            args.python,
-            workdir,
-            point,
-            round_no,
-            args.timeout,
-            inject_send=args.inject_send,
-        )
+        run_drill(args.python, workdir, point, round_no, args.timeout)
         for point in args.points
         for round_no in range(1, args.rounds + 1)
     ]

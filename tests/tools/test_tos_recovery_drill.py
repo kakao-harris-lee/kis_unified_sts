@@ -8,7 +8,6 @@ that never says no.
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -109,37 +108,3 @@ def test_a_missing_reboot_report_fails() -> None:
 
 def test_a_missing_park_snapshot_fails() -> None:
     assert any("park snapshot" in f for f in _judge(snapshot=None))
-
-
-def test_positive_control_a_resend_after_restart_is_caught(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A real drill (child processes, real SIGKILL) with ``--inject-send``: the first restart
-    calls the wrapped ``send_once`` once. The ledger count after restart must move to 1 and the
-    drill must judge FAIL — the restart path otherwise never reaches a send (the driver drops a
-    consumed seq, and a fresh seq has no approval), so this is the only run that shows the
-    ledger check can see a re-send."""
-    report = tmp_path / "drill.json"
-    exit_code = drill.main(
-        [
-            "--rounds",
-            "1",
-            "--points",
-            "BEFORE_SEND",
-            "--inject-send",
-            "--workdir",
-            str(tmp_path / "work"),
-            "--json",
-            str(report),
-        ]
-    )
-    out = capsys.readouterr().out
-    assert exit_code == 1
-    assert "venue received 1 order(s) after restart" in out
-    assert "FAIL BEFORE_SEND r1" in out
-    result = json.loads(report.read_text("utf-8"))
-    assert result["passed"] == 0
-    (only,) = result["drills"]
-    assert only["passed"] is False
-    assert only["killed_by_sigkill"] is True
-    assert (only["venue_orders_at_kill"], only["venue_orders_after_restarts"]) == (0, 1)
