@@ -68,6 +68,12 @@ _REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
 #: is a statement ("this market has no front month"); an absent key is not.
 _REQUIRED_NULLABLE_STR: tuple[str, ...] = ("front_month_product",)
 
+#: Present for exactly the markets whose :attr:`MarketProfile.tick_ladder` is True,
+#: absent for the rest (#929 review MEDIUM). The stock band probe compares the
+#: broker's ``aspr_unit`` with the tick this file's ``price_band_ticks`` gives the
+#: quoted price; futures has a flat tick and no such field to compare.
+_MARKET_PATH_KEY = "venue_policy_yaml"
+
 
 @dataclass(frozen=True)
 class MarketProfile:
@@ -88,6 +94,10 @@ class MarketProfile:
     #: Whether the instrument rolls (a futures front month) — decides whether
     #: ``front_month_product`` must be set or must be ``null``.
     rolls: bool
+    #: Whether the venue tick is a per-price ladder the band probe must check
+    #: against the broker's ``aspr_unit`` — decides whether ``venue_policy_yaml``
+    #: must be present.
+    tick_ladder: bool = False
 
 
 #: The two markets this producer serves. A stock symbol does not roll, reads
@@ -104,6 +114,7 @@ MARKETS: dict[str, MarketProfile] = {
         credential_keys=("KIS_STOCK_APP_KEY", "KIS_STOCK_APP_SECRET"),
         required_pins=("KIS_MINUTE_BAR_MIN_VOLUME",),
         rolls=False,
+        tick_ladder=True,
     ),
 }
 
@@ -198,6 +209,10 @@ class LiveProducerConfig:
     #: and stops at this many bytes. A real ``FHMIF10000000`` body is a few
     #: hundred bytes, so this is an "obviously wrong" line, not a tuning knob.
     band_max_response_bytes: int
+    #: The tenant tree's ``venue_constraint_policy.yaml`` — its
+    #: ``price_band_ticks`` ladder and ``_runtime.price_scale`` — for markets whose
+    #: tick is a ladder (``stock``); ``None`` for the rest (:data:`_MARKET_PATH_KEY`).
+    venue_policy_yaml: Path | None
     #: The two parser env values the producer PINS (plan §3.3 L9). Bar size and
     #: the drop rule must not change quietly with the environment.
     parser_env: tuple[tuple[str, str], ...]
@@ -352,7 +367,7 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
         {name for name, _ in _REQUIRED}
         | set(_REQUIRED_INT_LISTS)
         | set(_REQUIRED_NULLABLE_STR)
-        | {"parser_env"}
+        | {"parser_env", _MARKET_PATH_KEY}
     )
     unknown = sorted(set(data) - known)
     if unknown:
@@ -405,6 +420,19 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
             )
 
     _assert_coherent(path, values)
+    ladder = MARKETS[values["market"]].tick_ladder
+    venue_raw = data.get(_MARKET_PATH_KEY)
+    if ladder and not isinstance(venue_raw, str):
+        raise LiveProducerRefused(
+            f"{path}: market={values['market']!r} has a per-price tick ladder, so "
+            f"{_MARKET_PATH_KEY} must name the tree's venue_constraint_policy.yaml — "
+            "the band probe checks the broker's aspr_unit against it"
+        )
+    if not ladder and _MARKET_PATH_KEY in data:
+        raise LiveProducerRefused(
+            f"{path}: market={values['market']!r} has a flat tick; "
+            f"{_MARKET_PATH_KEY} must be absent (nothing reads it)"
+        )
     return LiveProducerConfig(
         path=path,
         sha256=hashlib.sha256(raw_bytes).hexdigest(),
@@ -414,6 +442,9 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
         calendar_yaml=_resolve(repo_root, values.pop("calendar_yaml")),
         execution_yaml=_resolve(repo_root, values.pop("execution_yaml")),
         parser_env=pins,
+        venue_policy_yaml=(
+            _resolve(repo_root, venue_raw) if isinstance(venue_raw, str) else None
+        ),
         **values,
     )
 
