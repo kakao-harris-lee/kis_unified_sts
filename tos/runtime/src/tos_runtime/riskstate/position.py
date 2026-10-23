@@ -87,10 +87,10 @@ decision sum — it equals the state before the result was recorded.
 result superseding it) is dropped — the ``CONSUMED`` row is the durably APPLIED fact. An
 unmatched row AFTER the latest consumed row is a result that was never applied (e.g. a fill
 crossing a ``CANCEL_ACK``, whose quantity ``tos.engine.core`` records only on
-``RESULT_UNMATCHED``), so it reopens the attempt even when the consumed kind is terminal. A ``DUPLICATE``
-disposition is the exact already-applied result resent (``tos.engine.vocabulary
-.ResultDisposition``), not a new fact, so it never reopens; every other non-applied
-disposition can carry a real late fill and does.
+``RESULT_UNMATCHED``), so it reopens the attempt even when the consumed kind is terminal. A
+``DUPLICATE`` disposition is the exact already-applied result resent
+(``tos.engine.vocabulary.ResultDisposition``), not a new fact, so it never reopens; every other
+non-applied disposition can carry a real late fill and does.
 
 **Side stays a policy/config-carried token — never a runtime-authored literal (deviation from
 the plan §4.1 constructor signature, reported; long/short symmetry, CLAUDE.md "Futures must
