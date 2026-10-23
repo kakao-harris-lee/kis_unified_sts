@@ -1,0 +1,98 @@
+2026-10-22 08:38:03 checkout ok: repo={STATE_DIR}/measure/wt-cp3-band-20261022 repo_commit=b15069fd1737962d92766e73648b0c2128957d32
+2026-10-22 08:38:03 credential separation ok: no real futures query key in this environment
+2026-10-22 08:38:03 probe module resolves inside the checkout: {STATE_DIR}/measure/wt-cp3-band-20261022/tools/tos_cp3/bootproof_guard.py
+2026-10-22 08:38:03 probe policy version cp3-tenant-bootproof/2 matches this runner
+2026-10-22 08:38:03 instrument=A05611 · data leaf {STATE_DIR}/cp3-setup-d-long-data/A05611
+2026-10-22 08:38:03 session paths are literal (no symlinked component, resolve to themselves)
+2026-10-22 08:38:03 === PRODUCER instrument=A05611 config={STATE_DIR}/measure/wt-cp3-band-20261022/config/tos_probes/cp3-live-producer.yaml session-dir={STATE_DIR}/cp3-sessions/long-20261022/producer journal={STATE_DIR}/cp3-sessions/long-20261022/journal.jsonl ceiling 25927s
+2026-10-22 08:38:03 producer pid=2625675 (supervised by timeout, ceiling 25927s)
+2026-10-22 08:38:03 first-row wait: pid=2625679 (bound 600s, log {STATE_DIR}/cp3-sessions/long-20261022/producer/first-row-wait.log)
+2026-10-22 08:46:02   first real row seen · consumed_stale_at_boot=1 · last=A05611:1m:20261022T084500+0900 · snapshot {STATE_DIR}/cp3-sessions/long-20261022/producer/boot-journal-snapshot.json
+2026-10-22 08:46:07 band launch: computed 0s until open + one boundary
+2026-10-22 08:46:07 === BAND PROCESS #1 instrument=A05611 ceiling 30s grace 5s margin 5s stop_in 25433s
+2026-10-22 08:46:11 band process #1 rc=0
+2026-10-22 08:46:11 band process wrote a line
+2026-10-22 08:46:11 band-line wait: pid=2639683 (bound 20s, log {STATE_DIR}/cp3-sessions/long-20261022/producer/band-line-wait.log)
+2026-10-22 08:46:15   band wait: allowance=20s (the band processes have already had their turns) -> waiting up to 20s (stop leaves 25425s)
+2026-10-22 08:46:15   band line ok · trading_date=20261022 instrument=A05611 as_of_ms=1792626370996 (open 1792626300000) digest=0074508b7337391eec82d1af21a0ab23ac64850839d7551ca25aebe568ee6d3d
+2026-10-22 08:46:15 band line present before the boot (band plan §4 수용 1)
+2026-10-22 08:46:15 bootproof_guard: ok — journal {STATE_DIR}/cp3-sessions/long-20261022/journal.jsonl took the APPROVED REAL PRODUCER (every row's source_id is allowlisted) branch; data dir {STATE_DIR}/cp3-setup-d-long-data/A05611 accepted for instrument A05611
+2026-10-22 08:46:15 data parent mode 700
+2026-10-22 08:46:15 render: cp3-setup-d-long declares a band_journal_path slot -> {STATE_DIR}/cp3-sessions/long-20261022/producer/band.jsonl
+2026-10-22 08:46:15 === RENDER tree=cp3-setup-d-long direction=LONG out={STATE_DIR}/cp3-sessions/long-20261022/config
+rendered: {STATE_DIR}/cp3-sessions/long-20261022/config
+  tree_id:         cp3-setup-d-long
+  source_revision: b15069fd1737962d92766e73648b0c2128957d32
+  direction:       LONG
+  instrument:      A05611
+  account:         <withheld> fingerprint=46c39c54d3bb
+  journal:         {STATE_DIR}/cp3-sessions/long-20261022/journal.jsonl (external)
+  activation:      ACTIVATED 5 (re-derived in a fresh process)
+  digest:          VENUE_CONSTRAINT_POLICY vcp-paper-cp3-setup-d-long-krx-index-futures 1 2284291e6350effc4f1d624ab17943d34fcc7c8c3c02e4c4216d868a470498e2
+  digest:          ORDER_CONSTRUCTION_POLICY ocp-paper-krx-index-futures 3 c90444b90034fbc1b8b66ac1e8899a62c4d673cb0b81602e2b74af71cb70f313
+  digest:          AGGREGATE_RISK_POLICY arp-paper-krx-index-futures 1 9025232059c863915d873c63fcf3307fcdf3357ca9662f73e25d129698d4ff09
+  digest:          ACTION_FLOW_POLICY afp-paper-krx-index-futures 1 9fac88fcc0862315d0a6703c50d096ab173e17b81b03fef30d4e25ed9d836319
+  digest:          CRITICAL_INPUT_POLICY tos-paper-cp3-setup-d-long-critical-input-g1 1 f3b0a74d626c7211bbbb1c632b3d7d8f9f4f032d5d4b9803c2ced59015b18abf
+2026-10-22 08:46:18 render ok -> {STATE_DIR}/cp3-sessions/long-20261022/config
+2026-10-22 08:46:18 environment label paper matches the rendered tree
+2026-10-22 08:46:18 boot-moment snapshot: pid=2639916 (bound 1s, log {STATE_DIR}/cp3-sessions/long-20261022/producer/first-row-wait.log)
+2026-10-22 08:46:18   first real row seen · consumed_stale_at_boot=1 · last=A05611:1m:20261022T084500+0900 · snapshot {STATE_DIR}/cp3-sessions/long-20261022/producer/boot-journal-snapshot.json
+2026-10-22 08:46:18 === BOOT label=paper custody={STATE_DIR}/paper-custody stop in 25917s (15:50) · child ceiling 26037s
+2026-10-22 08:46:18 run pid=2639920 (supervised by timeout, ceiling 26037s)
+2026-10-22 15:50:00 === STOP SIGTERM -> run pid 2639920 (process group)
+run: stopped (signal received).
+2026-10-22 15:50:01 === END run rc=0
+2026-10-22 15:50:01 === END producer rc=0
+2026-10-22 15:50:01 producer summary {STATE_DIR}/cp3-sessions/long-20261022/producer/producer-summary.json:
+2026-10-22 15:50:01   {
+2026-10-22 15:50:01     "counters": {
+2026-10-22 15:50:01       "already_published": 0,
+2026-10-22 15:50:01       "clock_regression": 0,
+2026-10-22 15:50:01       "fetch_error": 0,
+2026-10-22 15:50:01       "late_completed": 1,
+2026-10-22 15:50:01       "max_stamp_to_replace_s": 0.003937260014936328,
+2026-10-22 15:50:01       "missing_no_successor": 1,
+2026-10-22 15:50:01       "no_raw_row_for_minute": 10,
+2026-10-22 15:50:01       "omitted_unusable": 0,
+2026-10-22 15:50:01       "pre_boot_lines": 0,
+2026-10-22 15:50:01       "produce_error": 0,
+2026-10-22 15:50:01       "published": 410,
+2026-10-22 15:50:01       "skipped_behind": 0
+2026-10-22 15:50:01     },
+2026-10-22 15:50:01     "date": "2026-10-22",
+2026-10-22 15:50:01     "frozen_bars_today": 411,
+2026-10-22 15:50:01     "instrument": "A05611",
+2026-10-22 15:50:01     "market_sha256": {
+2026-10-22 15:50:02     },
+2026-10-22 15:50:02     "source_id": "tos-cp3-live/0.1.0",
+2026-10-22 15:50:02     "stage": "finish",
+2026-10-22 15:50:02     "stitch_manifest_sha256": "0af90201006d2bc93712a910bf7e684eb7a644a315023a23b36b15998cbc0b02"
+2026-10-22 15:50:02   }
+2026-10-22 15:50:02 producer end: rc=0 (self-stopped=1, ended-the-session=1)
+2026-10-22 15:50:02 post-stop durable set {STATE_DIR}/cp3-setup-d-long-data/A05611:
+2026-10-22 15:50:02   snapshots: [(712,)]
+2026-10-22 15:50:02   entries: [(113576,)]
+2026-10-22 15:50:02     TIME_HEALTH_SNAPSHOT: 111345
+2026-10-22 15:50:02     EVENT_CONSUMED: 712
+2026-10-22 15:50:02     EVENT_HANDLING_STARTED: 712
+2026-10-22 15:50:02     DECISION_OUTCOME_EMITTED: 709
+2026-10-22 15:50:02     FLOW_HALTED: 50
+2026-10-22 15:50:02     FLOW_STEP_ADMITTED: 6
+2026-10-22 15:50:02     ORDER_ADMISSIBILITY_DECISION_ISSUED: 6
+2026-10-22 15:50:02     SESSION_FACTS_OBSERVED: 4
+2026-10-22 15:50:02     DECISION_WITHHELD: 3
+2026-10-22 15:50:02     ACTION_FLOW_POLICY_BOUND: 2
+2026-10-22 15:50:02     AGGREGATE_RISK_POLICY_BOUND: 2
+2026-10-22 15:50:02     AUTHORITY_EPOCH_TRANSITION: 2
+2026-10-22 15:50:02     EGRESS_IDENTITY_OBSERVATION: 2
+2026-10-22 15:50:02     OPERATOR_ATTESTED_INPUTS: 2
+2026-10-22 15:50:02     ORDER_CONSTRUCTION_POLICY_BOUND: 2
+2026-10-22 15:50:02     RCL_APPEND: 2
+2026-10-22 15:50:02     RECOVERY_BARRIER: 2
+2026-10-22 15:50:02     REPLAY_VERDICT_IDENTICAL: 2
+2026-10-22 15:50:02     SESSION_CALENDAR_BOUND: 2
+2026-10-22 15:50:02     STM_ALERT: 2
+2026-10-22 15:50:02     TIME_SERVICE_STARTUP: 2
+2026-10-22 15:50:02     TIME_WALL_CLOCK_EXPOSED: 2
+2026-10-22 15:50:02     VENUE_POLICY_BOUND: 2
+2026-10-22 15:50:02     VENUE_SNAPSHOT_ISSUED: 1
