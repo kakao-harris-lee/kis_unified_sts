@@ -130,6 +130,8 @@ class BrokerPosttrade:
     observer_config: FillObserverConfig | None = None
     finality_producer: SyntheticFinalityProducer | BrokerFinalityProducer | None = None
     release_consumer: FinalityConsumerPort | None = None
+    #: The runtime's trusted trading-date reader (the one ACKs are stamped with).
+    trading_date_now: Callable[[], str | None] = lambda: None
 
 
 def build_broker_posttrade(
@@ -184,7 +186,10 @@ def build_broker_posttrade(
 
     credential_sessions_cell.on_ready(_build)
     return BrokerPosttrade(
-        enabled=True, witness=witness, observer_config=observer_config
+        enabled=True,
+        witness=witness,
+        observer_config=observer_config,
+        trading_date_now=trading_date_now,
     )
 
 
@@ -233,6 +238,9 @@ def attach_fill_observer(
         return result.result_disposition
 
     def _engine_holds(attempt_id: str) -> bool:
+        # The engine does not rebuild its reservation projection on boot (issue #944, "J3"):
+        # after a restart it holds no pre-restart attempt, and feeding it one would make the next
+        # boot's replay diverge — so the observer holds instead of feeding (fill_observer).
         held = runtime.core.ledger.outstanding(runtime.context_resolver.instrument_key)
         return held is not None and held.attempt_id == attempt_id
 
@@ -247,6 +255,7 @@ def attach_fill_observer(
             release_command_id(attempt_id)
         ),
         engine_holds=_engine_holds,
+        today=posttrade.trading_date_now,
         monotonic=monotonic,
         account=instrument_key.account,
         instrument=instrument_key.instrument,

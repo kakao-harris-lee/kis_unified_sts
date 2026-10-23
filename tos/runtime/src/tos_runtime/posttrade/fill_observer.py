@@ -28,7 +28,7 @@ the inbox — re-derives it as applied and refuses the boot (``EngineReplayDiver
 engine does not hold this attempt's reservation, nothing is enqueued: one
 ``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT`` row records what the broker showed, the reservation
 stays held (fail closed — no release, so no double release), and a terminal observation stops
-the polling. Releasing it is the ledger-rebuild work, not this module's.
+the polling. Releasing it is the ledger-rebuild work (issue #944), not this module's.
 
 **Each ACK is read under its own trading date (review MEDIUM).** VTTC0081R takes the date, so an
 ACK from an earlier day — the runtime was down across the KST date boundary — is still read, and
@@ -82,6 +82,7 @@ from tos_runtime.time.sources import MonotonicSource
 __all__ = [
     "FILL_OBSERVED_KIND",
     "FILL_OBSERVER_CONFIG_NAME",
+    "FILL_OBSERVER_ACK_UNTRACKABLE_KIND",
     "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND",
     "FILL_OBSERVER_OVERDUE_KIND",
     "FILL_OBSERVER_READ_FAILED_KIND",
@@ -101,6 +102,7 @@ FILL_OBSERVER_UNATTRIBUTED_KIND = "FILL_OBSERVER_UNATTRIBUTED_ORDER"
 FILL_OBSERVER_READ_FAILED_KIND = "FILL_OBSERVER_READ_FAILED"
 FILL_OBSERVER_OVERDUE_KIND = "FILL_OBSERVER_OVERDUE"
 FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"
+FILL_OBSERVER_ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"
 
 _RESULT_KINDS = ("EGRESS_RESULT_CONSUMED", "RESULT_UNMATCHED")
 _TERMINAL_KINDS = frozenset(
@@ -219,6 +221,8 @@ Reprojector = Callable[[EgressResultPayload], "bool | None"]
 ReleaseCommitted = Callable[[str], bool]
 #: Whether the live engine holds ``attempt_id``'s reservation (module docstring).
 EngineHolds = Callable[[str], bool]
+#: Today's trusted KST trading date (``YYYYMMDD``), or ``None`` when untrusted.
+TradingDate = Callable[[], "str | None"]
 
 
 @dataclass
@@ -282,11 +286,13 @@ class KisMockFillObserver:
     reproject: Reprojector
     release_committed: ReleaseCommitted
     engine_holds: EngineHolds
+    today: TradingDate
     monotonic: MonotonicSource
     account: str
     instrument: str
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
+    _untrackable_recorded: set[str] = field(default_factory=set, init=False)
     _first_pending_ms: dict[str, int] = field(default_factory=dict, init=False)
     _overdue_recorded: set[str] = field(default_factory=set, init=False)
     _last_read_failed: bool = field(default=False, init=False)
@@ -308,7 +314,9 @@ class KisMockFillObserver:
         No GET at all when no ACKed attempt is outstanding on the broker side."""
         tracked = self._tracked_attempts()
         reprojected = self._reproject_unreleased(tracked)
-        pending = [t for t in tracked.values() if not t.terminal]
+        pending = [
+            t for t in tracked.values() if not t.terminal and not self._given_up(t)
+        ]
         if not pending:
             return FillPollReport(polled=False, reprojected=reprojected)
         self._last_poll_ms = self.monotonic.now_ms()
@@ -334,6 +342,18 @@ class KisMockFillObserver:
             reprojected=reprojected,
             held=tuple(held),
         )
+
+    def _given_up(self, attempt: _Tracked) -> bool:
+        """An ACK from an EARLIER trading day that is already overdue is no longer polled (Claude
+        review LOW 2): a KRX day order cannot still be working, so whatever its row says will not
+        change by polling. The durable ``FILL_OBSERVER_OVERDUE`` row is the explicit condition left
+        for the operator; today's attempts keep being polled however long they wait."""
+        today = self.today()
+        if today is None or attempt.trading_date >= today:
+            return False
+        if attempt.attempt_id not in self._overdue_recorded:
+            self._overdue_recorded |= self._recorded_overdue()
+        return attempt.attempt_id in self._overdue_recorded
 
     def _read(
         self, date: str, attempts: list[_Tracked]
@@ -474,6 +494,7 @@ class KisMockFillObserver:
                     and kind is EgressResultKind.ACK
                     and isinstance(row.get("broker_execution_id"), str)
                     and isinstance(row.get("trading_date"), str)
+                    and self._trackable(attempt_id, row["broker_execution_id"])
                 ):
                     tracked[attempt_id] = _Tracked(
                         attempt_id=attempt_id,
@@ -501,6 +522,26 @@ class KisMockFillObserver:
             if attempt.terminal:
                 attempt.released = self.release_committed(attempt.attempt_id)
         return tracked
+
+    def _trackable(self, attempt_id: str, odno: str) -> bool:
+        """An ACK whose ODNO has no usable digits (``odno_key`` is ``None`` — e.g. all zeros)
+        would match every row that also has none (Claude review LOW 3). It is never tracked;
+        one ``FILL_OBSERVER_ACK_UNTRACKABLE`` row says so, so the reservation's hold is visible.
+        """
+        if odno_key(odno) is not None:
+            return True
+        if attempt_id not in self._untrackable_recorded:
+            already = self.evidence_store.connection.execute(
+                "SELECT COUNT(*) FROM entries WHERE kind = ? AND payload_json LIKE ?",
+                (FILL_OBSERVER_ACK_UNTRACKABLE_KIND, f'%"{attempt_id}"%'),
+            ).fetchone()[0]
+            if not already:
+                self._record(
+                    FILL_OBSERVER_ACK_UNTRACKABLE_KIND,
+                    {"attempt_id": attempt_id, "broker_execution_id": odno},
+                )
+            self._untrackable_recorded.add(attempt_id)
+        return False
 
     def _apply_absent_rows(self, tracked: dict[str, _Tracked]) -> None:
         rows = self.evidence_store.connection.execute(

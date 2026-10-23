@@ -36,6 +36,7 @@ from . import _fixtures as fx
 from .test_compose_root import _compose, _reach_trusted
 from .test_kis_mock_e2e_honesty import _boot, _drive_crossing_tick
 from .test_kis_mock_fill_finality_e2e import (
+    _ORDER_PATH,
     _ack,
     _close,
     _deploy,
@@ -287,22 +288,9 @@ def _next_day(date: str) -> str:
     return (datetime.strptime(date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
 
 
-def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
-    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
-) -> None:
-    runtime, attempt_id, ack_date, qty = _acked(
-        tmp_path,
-        config_dir,
-        data_dir,
-        custody_root,
-        server,
-        monkeypatch,
-        overdue_after_ms=1,
-    )
-    _close(runtime)
-
-    # Reboot one KST day later; the fill happened while the runtime was down.
-    runtime2 = _compose(
+def _boot_next_day(tmp_path, config_dir, data_dir, custody_root):
+    """Reboot one KST day later (the fill, if any, happened while the runtime was down)."""
+    runtime = _compose(
         tmp_path,
         config_dir,
         data_dir,
@@ -310,26 +298,31 @@ def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
         transport_kind=TransportKind.KIS_MOCK,
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS + _DAY_MS),
     )
-    _reach_trusted(runtime2)
-    today = _next_day(ack_date)
-    _script_broker(server, config_dir, today, [])  # today's inquiry: nothing
+    _reach_trusted(runtime)
+    return runtime
+
+
+def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    runtime, attempt_id, ack_date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    _close(runtime)
+    runtime2 = _boot_next_day(tmp_path, config_dir, data_dir, custody_root)
     observer = runtime2.fill_observer
     assert observer is not None
+    _script_broker(server, config_dir, _next_day(ack_date), [])  # today: nothing
 
-    # The ACK's own date cannot be read yet: a recorded failure, then an overdue row —
-    # never a silent skip.
+    # The ACK's own date cannot be read yet: a recorded failure under that date, not a skip.
     _balance, ack_orders = _witness_paths(config_dir, ack_date)
     server.set_response(ack_orders, status=500, body=None)
     assert observer.poll_once().read_failed is True
-    observer.poll_once()
     (failed,) = _rows(runtime2, "FILL_OBSERVER_READ_FAILED")
     assert failed["inquiry_date"] == ack_date
-    (overdue,) = _rows(runtime2, "FILL_OBSERVER_OVERDUE")
-    assert (overdue["attempt_id"], overdue["trading_date"]) == (attempt_id, ack_date)
 
-    # The previous day's order is readable: it is read under its own date. The engine does
-    # not hold the pre-restart reservation (no ledger rebuild yet), so the fill is recorded —
-    # under that date — and held, never fed and never dropped.
+    # Readable now: read under its own date. The engine holds no pre-restart reservation
+    # (issue #944), so the fill is recorded — under that date — and held, never fed or dropped.
     server.set_response(
         ack_orders,
         status=200,
@@ -347,5 +340,67 @@ def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
     (absent,) = _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT")
     assert (absent["attempt_id"], absent["trading_date"]) == (attempt_id, ack_date)
     assert _rcl_releases(runtime2) == 0
-    assert len(_rows(runtime2, "FILL_OBSERVER_OVERDUE")) == 1  # once, durably
+    assert observer.poll_once().polled is False  # terminal observation: no more polling
     _close(runtime2)
+
+
+def test_a_prior_day_ack_is_not_polled_forever(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Claude review LOW 2: a previous day's ACK whose row never resolves (here: still shown
+    as working) goes overdue once, durably, and is then no longer polled."""
+    runtime, attempt_id, ack_date, qty = _acked(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        overdue_after_ms=1,
+    )
+    _close(runtime)
+    runtime2 = _boot_next_day(tmp_path, config_dir, data_dir, custody_root)
+    observer = runtime2.fill_observer
+    assert observer is not None
+    working = _row(date=ack_date, ord_qty=qty, filled=Decimal(0), remaining=qty)
+    _script_broker(server, config_dir, ack_date, [working])
+
+    assert observer.poll_once().polled is True  # the wait clock starts
+    observer.poll_once()  # past overdue_after_ms
+    (overdue,) = _rows(runtime2, "FILL_OBSERVER_OVERDUE")
+    assert (overdue["attempt_id"], overdue["trading_date"]) == (attempt_id, ack_date)
+
+    before = len(server.all_requests)
+    assert observer.poll_once().polled is False
+    assert observer.poll_once().polled is False
+    assert len(server.all_requests) == before
+    assert len(_rows(runtime2, "FILL_OBSERVER_OVERDUE")) == 1
+    _close(runtime2)
+
+
+def test_an_ack_whose_odno_has_no_usable_digits_is_never_tracked(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Claude review LOW 3: an all-zero ODNO canonicalizes to nothing and would match every row
+    that also names nothing. It is refused, visibly, and nothing is read or fed for it.
+    """
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    server.set_response(
+        _ORDER_PATH,
+        status=200,
+        body={"rt_cd": "0", "msg_cd": "APBK0013", "output": {"ODNO": "0000000000"}},
+    )
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    result = _drive_crossing_tick(runtime, custody_root)
+    assert result.flow is not None and result.flow.handed_off is True
+    assert _ack(runtime)["broker_execution_id"] == "0000000000"
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    before = len(server.all_requests)
+    assert observer.poll_once().polled is False
+    assert observer.poll_once().polled is False
+    assert len(server.all_requests) == before
+    (untrackable,) = _rows(runtime, "FILL_OBSERVER_ACK_UNTRACKABLE")
+    assert untrackable["broker_execution_id"] == "0000000000"
+    _close(runtime)
