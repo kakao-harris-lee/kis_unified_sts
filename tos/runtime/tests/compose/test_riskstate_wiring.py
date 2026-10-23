@@ -141,7 +141,7 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-_ACCOUNT = "acct-compose"
+_ACCOUNT = "88888888-01"
 _INSTRUMENT = "ES"
 _ARE_DIM_ID = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
 _AFG_DIM_ID = "afg.ORDER"

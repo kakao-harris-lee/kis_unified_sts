@@ -109,7 +109,7 @@ from tos.canonical import CanonicalizationScheme
 from tos.workload import RuntimeIdentity
 
 from tos_runtime._named_tbd import reject_named_tbd
-from tos_runtime.brokercap.instance import load_instance_documents
+from tos_runtime.brokercap.instance import REAL_ENVIRONMENT, load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.compose._kis_credential_wiring import kis_mock_credential_session
@@ -161,10 +161,11 @@ KIS_QUOTE_TRANSPORT_CONFIG_NAME = "kis_quote.yaml"
 #: refusal at load (module docstring's "never defaults" note).
 _VALID_INTAKE_KINDS = ("journal", "kis_quote")
 
-#: Mirrors ``tos_runtime.compose._transport_wiring``'s own ``_REAL_ENVIRONMENT`` literal
-#: (duplicated, not imported — module docstring's "no dependency on the order transport wiring"
-#: note; both name the SAME Broker Capability Profile INSTANCE environment label).
-_REAL_ENVIRONMENT = "REAL_PROD"
+#: The REAL INSTANCE environment label — :data:`tos_runtime.brokercap.instance.REAL_ENVIRONMENT`,
+#: the one definition the order transport wiring also imports (#932 Codex r3: the loader's
+#: class-to-host binding reads the same label). Still no dependency on the order transport
+#: wiring itself (module docstring) — both depend on brokercap.
+_REAL_ENVIRONMENT = REAL_ENVIRONMENT
 
 #: The scalar-string fields required regardless of ``intake_kind`` (``journal_path`` is NOT
 #: here — module docstring: it is required/forbidden depending on ``intake_kind``, validated

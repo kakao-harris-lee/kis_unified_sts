@@ -32,5 +32,7 @@ live_authorization_state: "NOT_AUTHORIZED"
 # **이 자세는 아예 평가되지 않는다**(게이트 ②가 먼저 통과시킨다 —
 # compose/_preconditions.py 모듈 독스트링). `true` 로 둘 이유가 없고 `false` 가
 # **더 좁은** 태세다. MOCK 전송을 켤 때 별도 승인으로 바꾼다.
+# ⚠ 주식 테넌트 트리: 운영자 결정 2026-10-23 (PR-3a, option (a) "K" — MOCK_STOCK_ORDER 활성은 주식 트리에서만). 비라이브(MOCK) 브로커 소비 송신을 허용한다 —
+# live_authorization_state 는 위의 NOT_AUTHORIZED 그대로이고, 이 값은 실거래를 열지 않는다.
 nonlive_broker_consuming:
-  admitted: false
+  admitted: true

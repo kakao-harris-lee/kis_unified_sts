@@ -76,6 +76,29 @@ slots:
     anchor: '  instruments: ["TBD"]'
     replacement: '  instruments: ["{value}"]'
     value: "instrument"
+  # The three band-source slots — the LONG tree's, unchanged (PR-3a, 운영자 결정 2026-10-23):
+  # this tree's `_runtime.band_source` is the same `producer_journal` block, fed by the band
+  # probe's stock GET (FHKST01010100, PR #930). Same slots, same value sources.
+  - file: "venue_constraint_policy.yaml"
+    key: "_runtime.band_source.instrument"
+    anchor: '    instrument: "TBD"'
+    replacement: '    instrument: "{value}"'
+    value: "instrument"
+  # a DEPLOYMENT value, from the runner's $TENANT_PRODUCER_SESSION_DIR/band.jsonl
+  - file: "venue_constraint_policy.yaml"
+    key: "_runtime.band_source.band_journal_path"
+    anchor: '    band_journal_path: "TBD"'
+    replacement: '    band_journal_path: "{value}"'
+    value: "band_journal_path"
+  # a CODE CONSTANT, not an operator coordinate: the renderer copies
+  # tools/tos_cp3/bootproof_guard.py::APPROVED_REAL_PRODUCER_PREFIXES in, because the runtime
+  # may not import `tools` (firewall R1) and the list must stay ONE list (plan §3.4 C1).
+  # `tests/unit/scripts/test_render_tenant_trees.py` pins "render output == that constant".
+  - file: "venue_constraint_policy.yaml"
+    key: "_runtime.band_source.approved_source_prefixes"
+    anchor: '    approved_source_prefixes: ["TBD"]'
+    replacement: '    approved_source_prefixes: ["{value}"]'
+    value: "approved_source_prefixes"
   - file: "order_construction_policy.yaml"
     key: "scope.accounts"
     anchor: '  accounts: ["TBD"]'

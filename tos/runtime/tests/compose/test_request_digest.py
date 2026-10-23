@@ -33,13 +33,16 @@ def test_capsule_stand_in_digest_ignores_its_arguments_and_returns_the_constant(
 ):
     source = CapsuleStandInDigest(digest="stand-in-digest-value")
     first = source(
-        account="acct-1",
+        account="11111111-01",
         instrument="005930",
         quantity=Decimal("10"),
         price=Decimal("100"),
     )
     second = source(
-        account="acct-2", instrument="000660", quantity=Decimal("5"), price=Decimal("1")
+        account="22222222-01",
+        instrument="000660",
+        quantity=Decimal("5"),
+        price=Decimal("1"),
     )
     assert first == "stand-in-digest-value" == second
 
@@ -55,7 +58,7 @@ def test_kis_wire_codec_digest_matches_a_direct_codec_computation() -> None:
     source = KisWireCodecDigest(
         field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
-    account = "12345678"
+    account = "12345678-01"
     instrument = "005930"
     quantity = Decimal("10")
     price = Decimal("70000")
@@ -84,31 +87,31 @@ def test_kis_wire_codec_digest_is_sensitive_to_every_one_of_its_four_inputs() ->
         field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     base = source(
-        account="acct-1",
+        account="11111111-01",
         instrument="005930",
         quantity=Decimal("10"),
         price=Decimal("70000"),
     )
     assert base != source(
-        account="acct-2",
+        account="22222222-01",
         instrument="005930",
         quantity=Decimal("10"),
         price=Decimal("70000"),
     )
     assert base != source(
-        account="acct-1",
+        account="11111111-01",
         instrument="000660",
         quantity=Decimal("10"),
         price=Decimal("70000"),
     )
     assert base != source(
-        account="acct-1",
+        account="11111111-01",
         instrument="005930",
         quantity=Decimal("11"),
         price=Decimal("70000"),
     )
     assert base != source(
-        account="acct-1",
+        account="11111111-01",
         instrument="005930",
         quantity=Decimal("10"),
         price=Decimal("70001"),

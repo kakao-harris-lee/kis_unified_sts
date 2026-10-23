@@ -52,7 +52,7 @@ Pure-ish module: ``pyyaml`` (an existing kernel/runtime dependency) + stdlib
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -70,13 +70,21 @@ from tos.brokercap.routing import CapabilityProvenance, ProvenanceClass
 from tos.brokercap.vocabulary import (
     AssuranceLevel,
     AssuranceSource,
+    BrokerEnvironment,
     CapabilityDimension,
     CapabilityStatus,
     ProhibitedProof,
 )
 from tos.canonical import ArtifactStatus
 
+from tos_runtime.transport.endpoint import (
+    EndpointOrigin,
+    EndpointOriginError,
+    endpoint_origin,
+)
+
 __all__ = [
+    "REAL_ENVIRONMENT",
     "BrokerInstanceConfigError",
     "InstanceDocument",
     "instance_version_current",
@@ -84,6 +92,13 @@ __all__ = [
     "load_instance_documents",
     "select_document",
 ]
+
+
+#: The ``profile_identity.environment`` of the REAL (production) document — the host the
+#: kis-mock transport seal EXCLUDES (``compose._transport_wiring.load_transport_config``) and
+#: the host no simulation-class document may sit on (:func:`_bind_environment_class`). The ONE
+#: definition; the transport and market-feed wiring import it (#932 Codex r3).
+REAL_ENVIRONMENT = "REAL_PROD"
 
 
 class BrokerInstanceConfigError(Exception):
@@ -134,6 +149,23 @@ class InstanceDocument:
     verified_dimensions: frozenset[CapabilityDimension]
     provenance: tuple[CapabilityProvenance, ...]
     unmapped_sources: tuple[str, ...]
+    #: The ``(environment, rest_base, environment_class)`` THIS module's loader checked
+    #: against each other (:func:`_bind_environment_class`, #932 Codex r3); ``None`` when it
+    #: did not. An ``InstanceDocument`` built any other way carries ``None``.
+    environment_class_binding: tuple[str | None, str, BrokerEnvironment] | None = None
+
+    @property
+    def environment_class_host_bound(self) -> bool:
+        """Whether the profile's ``environment_class`` is the one the loader tied to THIS
+        document's own environment and host. A copy whose environment, host or class was
+        changed afterwards (``dataclasses.replace``) is no longer bound, so
+        :func:`~tos_runtime.brokercap.derive.derive_item6_item12` never hands the kernel an
+        un-host-checked class claim — the option (a) relaxation applies only to a
+        host-checked profile."""
+        return self.environment_class_binding is not None and (
+            self.environment_class_binding
+            == (self.environment, self.rest_base, self.profile.environment_class)
+        )
 
 
 # ===========================================================================
@@ -469,6 +501,33 @@ def _build_fqp_rules(
     return tuple(rules)
 
 
+def _build_environment_class(
+    profile_identity: dict[str, Any], *, context: str
+) -> BrokerEnvironment | None:
+    """``profile_identity._model_view.environment_class`` as the kernel enum, or ``None``.
+
+    #932 Codex r2: the ONE place a profile's environment class enters the runtime — read off
+    the INSTANCE document's own ``_model_view`` (the repo's home for kernel-typed values; not
+    a ProfileKey coordinate, not the scope table, not a send-time context). An unknown value
+    is a boot refusal, never a guess; absent is ``None``, which the egress gateway never
+    reads as simulation.
+
+    Raises:
+        BrokerInstanceConfigError: the value is not a :class:`BrokerEnvironment` member name.
+    """
+    model_view = profile_identity.get("_model_view")
+    raw = model_view.get("environment_class") if isinstance(model_view, dict) else None
+    if raw is None:
+        return None
+    try:
+        return BrokerEnvironment(raw)
+    except ValueError as exc:
+        raise BrokerInstanceConfigError(
+            f"{context}: profile_identity.environment_class {raw!r} is not one of "
+            f"{[member.value for member in BrokerEnvironment]}"
+        ) from exc
+
+
 def _build_instance_document(
     raw: dict[str, Any], *, path: Path, index: int
 ) -> InstanceDocument:
@@ -490,18 +549,27 @@ def _build_instance_document(
     ) = _build_declarations(raw, captured_at=captured_at, context=context)
     fqp_rules = _build_fqp_rules(raw, context=context)
 
-    profile = BrokerCapabilityProfile(
-        status=ArtifactStatus.DRAFT,
-        canonical_digest=None,
-        canonicalization_version=None,
-        profile_id=artifact_id,
-        profile_key=profile_key,
-        profile_version=profile_version,
-        declarations=declarations,
-        conformance_class=None,
-        live_scope=live_scope,
-        final_quantity_proof_rules=fqp_rules,
-    )
+    environment_class = _build_environment_class(profile_identity, context=context)
+    try:
+        profile = BrokerCapabilityProfile(
+            status=ArtifactStatus.DRAFT,
+            canonical_digest=None,
+            canonicalization_version=None,
+            profile_id=artifact_id,
+            profile_key=profile_key,
+            profile_version=profile_version,
+            declarations=declarations,
+            conformance_class=None,
+            live_scope=live_scope,
+            final_quantity_proof_rules=fqp_rules,
+            environment_class=environment_class,
+        )
+    except (
+        Exception
+    ) as exc:  # pydantic ValidationError — e.g. simulation with a live scope
+        raise BrokerInstanceConfigError(
+            f"{context}: profile did not validate: {exc}"
+        ) from exc
 
     approvers_raw = profile_identity.get("approvers") or []
     return InstanceDocument(
@@ -515,6 +583,132 @@ def _build_instance_document(
         verified_dimensions=verified_dimensions,
         provenance=provenance,
         unmapped_sources=unmapped_sources,
+    )
+
+
+def _raw_identity(raw: object) -> dict[str, Any]:
+    identity = raw.get("profile_identity") if isinstance(raw, dict) else None
+    return identity if isinstance(identity, dict) else {}
+
+
+def _raw_class(raw: object) -> object:
+    model_view = _raw_identity(raw).get("_model_view")
+    return model_view.get("environment_class") if isinstance(model_view, dict) else None
+
+
+@dataclass(frozen=True)
+class _HostIndex:
+    """The host facts every class claim is checked against, read off the RAW documents (so a
+    single-document load sees them without building the others), as normalized origins
+    (:func:`~tos_runtime.transport.endpoint.endpoint_origin` — the same normalizer the
+    MOCK-only transport seals compare with; #932 final review MEDIUM)."""
+
+    #: The REAL document's origin — ``None`` when there is not exactly one REAL document
+    #: with a known, normalizable host (then no simulation claim can be proven).
+    real_origin: EndpointOrigin | None
+    #: Every origin a document declaring ``BROKER_SIMULATION`` sits on.
+    simulation_origins: frozenset[EndpointOrigin]
+    #: Whether some ``BROKER_SIMULATION`` document's host could not be normalized (then no
+    #: production claim can be proven distinct from it).
+    simulation_unparseable: bool
+
+
+def _origin_or_none(rest_base: str | None) -> EndpointOrigin | None:
+    if rest_base is None:
+        return None
+    try:
+        return endpoint_origin(rest_base)
+    except EndpointOriginError:
+        return None
+
+
+def _host_index(raw_docs: list[Any]) -> _HostIndex:
+    real = [
+        d for d in raw_docs if _raw_identity(d).get("environment") == REAL_ENVIRONMENT
+    ]
+    real_origin = (
+        _origin_or_none(_read_rest_base(_raw_identity(real[0])))
+        if len(real) == 1
+        else None
+    )
+    simulation_hosts = [
+        _read_rest_base(_raw_identity(d))
+        for d in raw_docs
+        if _raw_class(d) == BrokerEnvironment.BROKER_SIMULATION.value
+    ]
+    origins = [_origin_or_none(h) for h in simulation_hosts if h is not None]
+    return _HostIndex(
+        real_origin,
+        frozenset(o for o in origins if o is not None),
+        any(o is None for o in origins),
+    )
+
+
+def _bind_environment_class(
+    document: InstanceDocument, hosts: _HostIndex, *, context: str
+) -> InstanceDocument:
+    """Tie the profile's declared class to its own host — the SAME host facts the kis-mock
+    transport seal reads (the REAL document's ``rest_base`` is what it excludes) (#932 Codex
+    r3: the class alone was a flippable label — REAL_PROD relabelled ``BROKER_SIMULATION``
+    loaded, and item 6 relaxed for it).
+
+    * ``BROKER_SIMULATION`` — bound only for a document that is NOT the REAL document and
+      whose own ``rest_base`` is known and does NOT normalize to the REAL hostname (any port). Flipping REAL_PROD's class
+      alone therefore refuses; flipping its host too makes it a mock-host profile, which the
+      relaxation may treat as one. A file with no unique REAL host loads the claim unbound.
+    * ``BROKER_PRODUCTION`` — accepted only for a known host that no simulation document sits
+      on.
+    * Any other class (``SYNTHETIC``) — refused: an INSTANCE document describes a broker.
+    * Undeclared — loads, unbound (never read as simulation).
+
+    Raises:
+        BrokerInstanceConfigError: a declared class its host does not support.
+    """
+    declared = document.profile.environment_class
+    if declared is None:
+        return document
+    host = document.rest_base
+    if host is None:
+        raise BrokerInstanceConfigError(
+            f"{context}: environment_class {declared.value} declared without a known "
+            "_kis.endpoints.rest_base — the class cannot be tied to a host"
+        )
+    try:
+        origin = endpoint_origin(host)
+    except EndpointOriginError as exc:
+        raise BrokerInstanceConfigError(
+            f"{context}: environment_class {declared.value} declared on a rest_base that "
+            f"cannot be normalized — the class cannot be tied to a host: {exc}"
+        ) from exc
+    if declared is BrokerEnvironment.BROKER_SIMULATION:
+        if document.environment == REAL_ENVIRONMENT or (
+            hosts.real_origin is not None and origin.host == hosts.real_origin.host
+        ):
+            raise BrokerInstanceConfigError(
+                f"{context}: BROKER_SIMULATION declared on the REAL host / document "
+                f"({host!r} resolves to {origin}) — a production profile cannot be "
+                "relabelled simulation"
+            )
+        if hosts.real_origin is None:
+            # No REAL host to exclude: the claim is unprovable, so it stays unbound (stripped
+            # before the kernel — the ordinary item-6 check, fail-closed). The transport seal
+            # refuses such a file outright, so it never reaches a broker either way.
+            return document
+    elif declared is BrokerEnvironment.BROKER_PRODUCTION:
+        if hosts.simulation_unparseable or origin.host in {
+            o.host for o in hosts.simulation_origins
+        }:
+            raise BrokerInstanceConfigError(
+                f"{context}: BROKER_PRODUCTION declared on a host a simulation document uses "
+                "(or one no simulation host can be proven distinct from)"
+            )
+    else:
+        raise BrokerInstanceConfigError(
+            f"{context}: environment_class {declared.value} is not a broker environment "
+            "(BROKER_SIMULATION or BROKER_PRODUCTION)"
+        )
+    return replace(
+        document, environment_class_binding=(document.environment, host, declared)
     )
 
 
@@ -560,12 +754,16 @@ def load_instance_documents(path: Path) -> tuple[InstanceDocument, ...]:
         ) from exc
 
     documents: list[InstanceDocument] = []
+    hosts = _host_index(raw_docs)
     for index, raw in enumerate(raw_docs):
         if not isinstance(raw, dict):
             raise BrokerInstanceConfigError(
                 f"{path}[doc {index}]: top-level YAML document must be a mapping"
             )
-        documents.append(_build_instance_document(raw, path=path, index=index))
+        document = _build_instance_document(raw, path=path, index=index)
+        documents.append(
+            _bind_environment_class(document, hosts, context=f"{path}[doc {index}]")
+        )
     return tuple(documents)
 
 
@@ -626,7 +824,10 @@ def load_instance_document(path: Path, *, environment: str) -> InstanceDocument:
             f"profile_identity.environment={environment!r}, found {len(matches)}"
         )
     index, raw = matches[0]
-    return _build_instance_document(raw, path=path, index=index)
+    document = _build_instance_document(raw, path=path, index=index)
+    return _bind_environment_class(
+        document, _host_index(raw_docs), context=f"{path}[doc {index}]"
+    )
 
 
 def select_document(

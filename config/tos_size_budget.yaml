@@ -59,11 +59,14 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1764
+  measured: 1802
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 재등재 1806→1802(-4)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 1776→1806(+30)**: `_mock_class_bound_to_profile` 신설(도크스트링 + endpoint_binding_from_profile_ok 대조) — mock 튜플이 첨부 프로필 키에 묶일 때만 건너뛴다 + import 1줄 + 주석 정정.
+    **2026-10-23 PR-3a option (a) "K" 재등재 1764→1776(+12)**: `_check_allowance` 의 option (a) 분기(mock 클래스면 프로필 검사 생략) 주석 4줄 + 블록 들여쓰기 + 도크스트링 항목 6줄 + import 1줄.
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 재등재(독립 리뷰 M2) — measured 1712→1792, 등재 이후 커밋들에서 실측이
     드리프트되어 있었음(원인 미상; class-(f) measured-drift 검사기 신설로 앞으로는
@@ -241,11 +244,14 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 235
+  measured: 239
   owner: tos-kernel
   decomposition_order: 15
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 재등재 245→239(-6)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 239→245(+6)**: `capability_environment_binding` · `capability_asset_binding` 매개변수 2줄 + 전달 2줄 + Args 2줄.
+    **2026-10-23 PR-3a option (a) "K" 재등재 235→239(+4)**: `capability_tuples` 매개변수 1줄 + 전달 1줄 + Args 2줄.
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 14→15(measured 불변, __call__ 재정렬로 인한 이동).
     2026-09-11 kernel round #2 K-2(§2 결정 2) — measured 211→236(+25). 신규
@@ -345,11 +351,12 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1138
+  measured: 1146
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 PR-3a option (a) "K" 재등재 1138→1146(+8)**: `_build_context_resolver` 에 `transport_config`·`mock_generation_reader` 매개변수와 `transport_endpoint`·`mock_generation_reader` 전달(item 5 엔드포인트, item 12 mock 세대).
     **2026-09-23 mypy 3단계 3-e 재등재 1134→1138(+4)**: §1.3 rule 3 포트 도입 —
     `_time_permits_new_risk`/`_decision_provider` 의 `time_service` 파라미터를
     concrete `TrustworthyTimeService` 에서 새 Protocol 포트 `TimeSnapshotReader`
@@ -705,11 +712,14 @@ exceptions:
     직전(래치는 이 이벤트의 EVENT_CONSUMED 영수증이 이미 커밋된 뒤에만 그 seq 를
     참조해야 하므로), measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1070
+  measured: 1083
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 재등재 1098→1083(-15)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 1083→1098(+15)**: 같은 두 필드(주석 5줄) + import 2줄 + 팩토리 매개변수 · 전달 · Args.
+    **2026-10-23 PR-3a option (a) "K" 재등재 1070→1083(+13)**: `SendBoundaryContext.capability_tuples` 필드(주석 4줄) + import 확장 + 팩토리 매개변수·전달·Args.
     신규 등재(TOS Phase 3 wave 3 KW3-GW, 2026-09-09) — 뮤테이션 매트릭스 레인
     발견(F-K, ``ffaafcb4``): step 15-19 순서가 증거로 감사되지 않았다.
     ``GatewayEvidenceRecord`` 에 ``step: CommitmentStep | None = None`` 필드,
@@ -739,11 +749,12 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 445
+  measured: 463
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 PR-3a option (a) "K" 재등재 445→463(+18)**: `build_broker_facts(...)` 호출(주석 2줄 + kwargs 8개) + item 12 리더 두 개를 `broker_facts.tradability/account(...)` 로 감싼 줄 + `mock_generation_reader=` + `_build_context_resolver(transport_config=...)`. 호출 시퀀스 무변경.
     **2026-10-22 PR #927 리뷰 M1 재등재 444→445(+1)**: `build_venue_service(...)` 에
     `transport_config=boot.transport_config` 1줄. kis-mock 부팅이 코덱의 `price_scale` 을
     트리의 `_runtime.price_scale` 과 대조하려면(`_cross_check_price_scale`) 그 값이 venue
@@ -934,11 +945,12 @@ exceptions:
 # only rejects a DUPLICATE decomposition_order, never a gap — module docstring's
 # own enforced failure classes (a)-(f) do not include "must be contiguous").
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py::_build_context_resolver
-  measured: 107
+  measured: 115
   owner: tos-runtime
   decomposition_order: 40
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 PR-3a option (a) "K" 재등재 107→115(+8)**: 같은 PR-3a 매개변수 2개와 전달 3줄(transport_endpoint 괄호식 포함).
     **2026-09-15 TOS venue constraint service wave 재등재 110→107(-3, 레인 b,
     계획 §2 결정 5/9)**: `ComposeContextResolver(...)` 호출부의
     `venue_snapshot=construction.venue_snapshot,`/`venue_policy=construction.venue_policy,`/
