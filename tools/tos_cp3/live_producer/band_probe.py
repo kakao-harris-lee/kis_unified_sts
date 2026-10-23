@@ -1,8 +1,16 @@
 """The band GET, as its own short-lived process (band plan v3, 2026-10-16).
 
-One GET of ``FHMIF10000000``, one line into ``band.jsonl``, exit. Nothing else:
-no loop, no clock to watch, no state to keep. The runner launches it under
-``timeout`` after the open and reads its exit code.
+One GET of the config's market band TR, one line into ``band.jsonl``, exit.
+Nothing else: no loop, no clock to watch, no state to keep. The runner launches
+it under ``timeout`` after the open and reads its exit code.
+
+**Which TR** follows ``market`` in the config
+(:data:`~tools.tos_cp3.quote_client.BAND_ROUTES`): ``futures`` → ``FHMIF10000000``
+(``output1``), ``stock`` → ``FHKST01010100`` 주식현재가 시세 (``output``:
+``stck_mxpr`` 상한가 · ``stck_llam`` 하한가 · ``stck_sdpr`` 기준가). Each process
+is gated against ITS market's allowlist only
+(:func:`~tools.tos_cp3.quote_client.market_allowlist`, PR #922 review LOW-4), so
+a stock process cannot pass the gate with a futures TR or the reverse.
 
 **Why a process.** Three review rounds established that a Python process cannot
 honestly bound its own synchronous HTTP call: httpx's ``read`` timeout bounds
@@ -14,7 +22,7 @@ the next price poll waits on it. A process under ``timeout`` has none of those
 holes, because SIGKILL does not negotiate.
 
 **Credential separation is unchanged** (③ plan §3.4). This process reads the
-two real futures QUERY keys ITSELF, from the ``env_file`` its own config names
+two real QUERY keys of its market ITSELF, from the ``env_file`` its own config names
 — exactly as the producer does. The runner's environment and the runtime's
 still hold no real key, and the runner's own guard still refuses to start if
 they do.
@@ -40,7 +48,9 @@ see a truncated JSON document, whose cost is a needless re-issue.
      ``band.jsonl``, a pre-open call, a config or credential refusal. No line,
      nothing attempted.
 3    a SOFT failure: the GET ran and did not produce a usable line (transport,
-     ``rt_cd != 0``, an absent field, a response past the size cap). No line.
+     ``rt_cd != 0``, an absent field, a response past the size cap, or — stock —
+     the broker's ``aspr_unit`` disagreeing with the tree's tick ladder, logged
+     as ``band_tick_mismatch``). No line.
 1    the allowlist gate refused the call, or any other unexpected exception:
      traceback, and the runner treats it as a hard ABORT. This is the one code
      that means "a defect in this repo", not "the broker said no".
@@ -76,7 +86,10 @@ from tools.tos_cp3.live_producer.band_line import (  # noqa: E402
     BAND_KEY_ORDER,
     BAND_LINE_KIND,
     BandLineError,
+    TickLadderMismatch,
     band_values_from_payload,
+    check_broker_tick,
+    load_tick_ladder,
     session_open_ms,
 )
 from tools.tos_cp3.live_producer.config import (  # noqa: E402
@@ -92,7 +105,7 @@ from tools.tos_cp3.live_producer.sinks import (  # noqa: E402
     ObservationJournal,
     refuse_if_journal_exists,
 )
-from tools.tos_cp3.quote_client import BAND_PATH, BAND_TR, KST  # noqa: E402
+from tools.tos_cp3.quote_client import BAND_ROUTES, KST  # noqa: E402
 
 #: The band request log, beside the producer's own. A SEPARATE file because the
 #: two processes write independently and an interleaved append is a corrupt
@@ -148,6 +161,7 @@ def _publish(
     trading_date: str,
     read: Any,
     values: dict[str, str],
+    market: str,
 ) -> int:
     """Write the one band line, log it, and return the exit code.
 
@@ -170,7 +184,7 @@ def _publish(
         "source_id": SOURCE_ID,
         "instrument": instrument,
         "trading_date": trading_date,
-        "tr_id": BAND_TR,
+        "tr_id": BAND_ROUTES[market][0],
         "raw_payload_digest": read.raw_payload_digest,
         # One process, one line, so continuity is this run's own identity.
         "producer_continuity_id": f"band-probe/{os.getpid()}",
@@ -183,8 +197,8 @@ def _publish(
     log.event(
         {
             "stage": "band_published",
-            "tr_id": BAND_TR,
-            "path": BAND_PATH,
+            "tr_id": BAND_ROUTES[market][0],
+            "path": BAND_ROUTES[market][1],
             "instrument": instrument,
             "trading_date": row["trading_date"],
             "as_of_ms": outcome.as_of_ms,
@@ -213,14 +227,14 @@ def run(
     """
     clock = now if now is not None else (lambda: datetime.now(KST))
     config = load_config(config_path, repo_root=REPO_ROOT)
-    if config.market != "futures":
-        # `FHMIF10000000` is the FUTURES price TR (`FID_COND_MRKT_DIV_CODE=F`).
-        # Asked for a stock symbol it would answer about nothing this session
-        # trades, and a band line built from that answer would be wrong.
-        raise LiveProducerRefused(
-            f"{config_path}: market={config.market!r} — the band probe reads the "
-            "futures band TR only"
-        )
+    ladder = None
+    if config.venue_policy_yaml is not None:
+        # Read BEFORE any GET: an unreadable ladder is a config refusal (rc 2), not
+        # something to discover after spending a broker call (#929 review MEDIUM).
+        try:
+            ladder = load_tick_ladder(config.venue_policy_yaml)
+        except BandLineError as exc:
+            raise LiveProducerRefused(str(exc)) from exc
     log = EventLog(session_dir, name=BAND_LOG_NAME)
     journal_path = band_journal_path(session_dir)
 
@@ -249,7 +263,16 @@ def run(
     try:
         try:
             read = quotes.band(instrument)
-            values = band_values_from_payload(read.payload)
+            values = band_values_from_payload(read.payload, config.market)
+            if ladder is not None:
+                # The broker's 호가단위 for the quoted price must be the ladder's
+                # tick for it — else the venue gate's grid is wrong, and the band is
+                # what would let that gate admit. No line on a mismatch (UNKNOWN).
+                compared = check_broker_tick(read.payload, ladder)
+                log.event({"stage": "band_tick_checked", **compared})
+        except TickLadderMismatch as exc:
+            log.event({"stage": "band_tick_mismatch", "why": str(exc)})
+            return RC_SOFT_FAILURE
         except SafetyViolation:
             # BEFORE the RuntimeError clause, because it IS a RuntimeError.
             #
@@ -276,6 +299,7 @@ def run(
             trading_date=trading_date,
             read=read,
             values=values,
+            market=config.market,
         )
     finally:
         http = getattr(quotes, "http", None)
@@ -288,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     target = args.date or datetime.now(KST).date()
     if not args.confirm:
+        market = load_config(args.config, repo_root=REPO_ROOT).market
         print(
             json.dumps(
                 {
@@ -295,8 +320,9 @@ def main(argv: list[str] | None = None) -> int:
                     "date": str(target),
                     "instrument": args.instrument,
                     "method": "GET",
-                    "tr_id": BAND_TR,
-                    "path": BAND_PATH,
+                    "market": market,
+                    "tr_id": BAND_ROUTES[market][0],
+                    "path": BAND_ROUTES[market][1],
                     "journal": str(band_journal_path(args.session_dir)),
                     "orders": 0,
                 }

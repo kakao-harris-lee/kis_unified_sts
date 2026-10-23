@@ -18,6 +18,7 @@ or an in-process fake, and the clock is fake.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -30,7 +31,13 @@ import pytest
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
+from tools.broker_probes.common import (
+    REAL_BASE_URL,
+    SafetyViolation,
+    assert_read_only_call,
+)
 from tools.tos_cp3 import quote_client
+from tools.tos_cp3.live_producer import band_line as band_line_mod
 from tools.tos_cp3.live_producer import band_probe
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import frame as frame_mod
@@ -177,16 +184,229 @@ def test_real_quotes_resolves_the_stock_credentials(monkeypatch) -> None:
     assert seen == [("stock", True)]
 
 
-def test_the_band_probe_refuses_a_stock_config(tmp_path: Path) -> None:
-    """``FHMIF10000000`` is the futures band TR; a stock session has no use for it."""
-    with pytest.raises(LiveProducerRefused, match="futures band TR only"):
+RECORDED_BAND = (
+    Path(__file__).parent / "fixtures/cp3_stock_005930_fhkst01010100_band.json"
+)
+
+
+def test_the_market_allowlist_keeps_each_market_to_its_own_trs() -> None:
+    """PR #922 review LOW-4: a stock process cannot pass the gate with a futures TR."""
+    stock = {entry.tr_id for entry in quote_client.market_allowlist("stock")}
+    futures = {entry.tr_id for entry in quote_client.market_allowlist("futures")}
+    assert stock == {"FHKST03010230", "FHKST01010100"}
+    assert futures == {"FHKIF03020200", "FHMIF10000000"}
+    with pytest.raises(SafetyViolation):
+        assert_read_only_call(
+            "GET",
+            REAL_BASE_URL + quote_client.BAND_PATH,
+            quote_client.BAND_TR,
+            quote_client.market_allowlist("stock"),
+        )
+
+
+def test_a_stock_band_read_requests_the_stock_tr_and_yields_the_three_values() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=iter([RECORDED_BAND.read_bytes()]))
+
+    quotes = _stock_quotes(handler)
+    read = quotes.band(SYMBOL)
+    (request,) = requests
+    assert request.method == "GET"
+    assert request.url.path == quote_client.STOCK_BAND_PATH
+    assert request.headers["tr_id"] == quote_client.STOCK_BAND_TR == "FHKST01010100"
+    assert dict(request.url.params) == {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": SYMBOL,
+    }
+    assert (
+        read.raw_payload_digest
+        == hashlib.sha256(RECORDED_BAND.read_bytes()).hexdigest()
+    )
+    assert band_line_mod.band_values_from_payload(read.payload, "stock") == {
+        "upper": "351000",
+        "lower": "189000",
+        "basis": "270000",
+    }
+    # The futures shape cannot read it — the member and the field names differ.
+    with pytest.raises(band_line_mod.BandLineError):
+        band_line_mod.band_values_from_payload(read.payload)
+
+
+def test_the_band_probe_writes_a_stock_band_line(tmp_path: Path) -> None:
+    payload = json.loads(RECORDED_BAND.read_text(encoding="utf-8"))
+
+    class FakeBandQuotes:
+        http = None
+
+        def band(self, symbol: str) -> quote_client.BandRead:
+            assert symbol == SYMBOL
+            return quote_client.BandRead(payload=payload, raw_payload_digest="d" * 64)
+
+    session = tmp_path / "session"
+    rc = band_probe.run(
+        config_path=STOCK_CONFIG,
+        instrument=SYMBOL,
+        session_dir=session,
+        target=TARGET,
+        quotes_factory=lambda *_: FakeBandQuotes(),
+        now=lambda: datetime(2026, 10, 19, 9, 1, tzinfo=producer_mod.KST),
+    )
+    assert rc == band_probe.RC_OK
+    (line,) = [
+        json.loads(text)
+        for text in band_probe.band_journal_path(session)
+        .read_text("utf-8")
+        .splitlines()
+        if text.strip()
+    ]
+    assert line["tr_id"] == "FHKST01010100"
+    assert (line["upper"], line["lower"], line["basis"]) == (
+        "351000",
+        "189000",
+        "270000",
+    )
+    assert line["instrument"] == SYMBOL
+    assert line["trading_date"] == "20261019"
+
+
+# ---------------------------------------------------------------------------
+# aspr_unit vs the tree's tick ladder (#929 review MEDIUM)
+# ---------------------------------------------------------------------------
+
+
+def _probe(tmp_path: Path, output: dict, config_path: Path = STOCK_CONFIG) -> tuple:
+    """Run the probe on the recorded band with ``output`` overriding fields.
+
+    Returns ``(rc, band lines, band-log stages)``."""
+    payload = json.loads(RECORDED_BAND.read_text(encoding="utf-8"))
+    payload["output"].update(output)
+
+    class FakeBandQuotes:
+        http = None
+
+        def band(self, symbol: str) -> quote_client.BandRead:
+            return quote_client.BandRead(payload=payload, raw_payload_digest="d" * 64)
+
+    session = tmp_path / "session"
+    rc = band_probe.run(
+        config_path=config_path,
+        instrument=SYMBOL,
+        session_dir=session,
+        target=TARGET,
+        quotes_factory=lambda *_: FakeBandQuotes(),
+        now=lambda: datetime(2026, 10, 19, 9, 1, tzinfo=producer_mod.KST),
+    )
+    journal = band_probe.band_journal_path(session)
+    lines = journal.read_text("utf-8").splitlines() if journal.exists() else []
+    log = session / band_probe.BAND_LOG_NAME
+    events = [json.loads(t) for t in log.read_text("utf-8").splitlines() if t.strip()]
+    return rc, [line for line in lines if line.strip()], events
+
+
+def test_a_matching_aspr_unit_is_checked_and_the_line_is_written(
+    tmp_path: Path,
+) -> None:
+    """The recorded shape: 271,500원 on the 500원 rung, ``aspr_unit`` 500."""
+    rc, lines, events = _probe(tmp_path, {})
+    assert rc == band_probe.RC_OK and len(lines) == 1
+    (checked,) = [e for e in events if e["stage"] == "band_tick_checked"]
+    assert (checked["stck_prpr"], checked["aspr_unit"], checked["ladder_tick"]) == (
+        271500,
+        500,
+        50000,
+    )
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        # The broker says 100원 at 271,500원; the ladder says 500원.
+        {"aspr_unit": "100"},
+        # 199,900원 is on the 100원 rung; a broker answering 500 disagrees.
+        {"stck_prpr": "199900", "aspr_unit": "500"},
+        # Above the ladder's top row (10,000,000원): no rung, never widened.
+        {"stck_prpr": "12000000", "aspr_unit": "1000"},
+    ],
+)
+def test_an_aspr_unit_the_ladder_disagrees_with_writes_no_line(
+    tmp_path: Path, output: dict
+) -> None:
+    rc, lines, events = _probe(tmp_path, output)
+    assert rc == band_probe.RC_SOFT_FAILURE
+    assert lines == []
+    assert [e["stage"] for e in events][-1] == "band_tick_mismatch"
+
+
+def test_an_aspr_unit_that_agrees_on_a_lower_rung_passes(tmp_path: Path) -> None:
+    rc, lines, _ = _probe(tmp_path, {"stck_prpr": "199900", "aspr_unit": "100"})
+    assert rc == band_probe.RC_OK and len(lines) == 1
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        {"aspr_unit": ""},
+        {"aspr_unit": None},
+        {"stck_prpr": "0"},
+        {"aspr_unit": "5.0"},
+        # #930 review LOW: non-ASCII digits pass str.isdigit() and then raise in int() —
+        # a traceback (rc 1) before the fix, a refusal (rc 3, no line) after it.
+        {"stck_prpr": "2²"},
+        {"stck_prpr": "２７１５００"},  # full-width digits
+        {"aspr_unit": "５００"},
+    ],
+)
+def test_an_absent_or_malformed_tick_field_writes_no_line(
+    tmp_path: Path, output: dict
+) -> None:
+    rc, lines, events = _probe(tmp_path, output)
+    assert rc == band_probe.RC_SOFT_FAILURE and lines == []
+    assert events[-1]["stage"] == "band_fetch_failed"
+
+
+def test_an_unreadable_ladder_refuses_before_any_get(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path, _stock_data(venue_policy_yaml=str(tmp_path / "missing.yaml"))
+    )
+    with pytest.raises(LiveProducerRefused, match="price_band_ticks"):
         band_probe.run(
-            config_path=STOCK_CONFIG,
+            config_path=config,
             instrument=SYMBOL,
             session_dir=tmp_path / "session",
             target=TARGET,
             quotes_factory=lambda *_: pytest.fail("no transport may be built"),
+            now=lambda: datetime(2026, 10, 19, 9, 1, tzinfo=producer_mod.KST),
         )
+
+
+def test_a_stock_config_must_name_the_venue_policy(tmp_path: Path) -> None:
+    data = _stock_data()
+    del data["venue_policy_yaml"]
+    with pytest.raises(LiveProducerRefused, match="venue_policy_yaml must name"):
+        config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
+
+
+def test_a_futures_config_may_not_name_a_venue_policy(tmp_path: Path) -> None:
+    data = yaml.safe_load(FUTURES_CONFIG.read_text(encoding="utf-8"))
+    data["venue_policy_yaml"] = "x.yaml"
+    with pytest.raises(LiveProducerRefused, match="must be absent"):
+        config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
+
+
+def test_the_probe_reads_the_ladder_the_runtime_enforces() -> None:
+    """Same file, same rows: the shipped stock config points at the stock tree."""
+    config = config_mod.load_config(STOCK_CONFIG, repo_root=_REPO_ROOT)
+    assert config.venue_policy_yaml == (
+        _REPO_ROOT
+        / "config/tos_runtime/cp3-setup-d-stock-005930/venue_constraint_policy.yaml"
+    )
+    ladder = band_line_mod.load_tick_ladder(config.venue_policy_yaml)
+    assert ladder.price_scale == 100
+    assert ladder.tick_for(27_000_000) == 50_000
+    assert ladder.tick_for(19_990_000) == 10_000
 
 
 # ---------------------------------------------------------------------------
