@@ -98,7 +98,11 @@ instance_path: ../../../docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft
 # this file in sets it to `SYNTHETIC_FUTURES_ORDER` — the only scope this
 # Phase's paper runtime actually activates. An active_scope that resolves to
 # a PROHIBITED scope is a boot refusal (never "start reduced").
-active_scope: SYNTHETIC_FUTURES_ORDER   # ⚠ 제안표 §4.1 — 파일 헤더의 ⚠ 블록 참조 (example 대비 이 한 줄만 바뀌었다)
+# ⚠ 주식 테넌트 트리는 MOCK 주문 검증 트리다 — 운영자 결정 2026-10-23 (PR-3a, option (a) "K" — MOCK_STOCK_ORDER 활성은 주식 트리에서만).
+#   MOCK_STOCK_ORDER 는 BROKER_SIMULATION × MOCK_ORDER × BROKER_RESOURCE_ONLY × STOCK 두 튜플
+#   (kernel §5.2 row 3)이고 REAL 로 넘어가는 경로가 없다. LONG/SHORT/상주 paper 트리는
+#   SYNTHETIC_FUTURES_ORDER 그대로다. coordinator_preconditions.yaml 의 admitted 와 한 묶음.
+active_scope: MOCK_STOCK_ORDER
 
 # environment_binding / asset_binding are the injected string-correspondence
 # tables tos.brokercap.routing.endpoint_binding_from_profile_ok compares a
@@ -277,7 +281,8 @@ scopes:
     principal: "kis-mock-order-{environment_label}"
     endpoint_class: BROKER_ORDER
     allowed_methods: ["SUBMIT", "CANCEL_REPLACE"]
-    profile_evidence_ok: null
+    # 운영자 결정 2026-10-23 (PR-3a, option (a) "K" — MOCK_STOCK_ORDER 활성은 주식 트리에서만). REDUCED 로 가는 유일한 입력(kernel routing_admissibility).
+    profile_evidence_ok: true
     # This deployment's own mock-order principal — inside its own workload
     # boundary (finding F1; see the top-of-file comment).
     inside_boundary: true

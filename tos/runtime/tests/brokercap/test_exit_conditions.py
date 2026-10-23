@@ -600,8 +600,11 @@ class TestMutationEvidenceMC:
             _instance_path(config), environment="MOCK_VTS"
         )
 
+        # Item 12, not item 6: since option (a) "K" (operator decision 2026-10-23) the REDUCED
+        # mock scope passes item 6, but with no fresh mock-account read (``None`` here) its
+        # broker-constraint generation is honestly NOT current.
         shipped = derive_item6_item12(scope, config, instance)
-        assert shipped.account_instrument_action_allowed is False  # honest, PROHIBITED
+        assert shipped.broker_constraint_generation_current is False  # honest
 
         def _stub_always_true(*_args: object, **_kwargs: object) -> Item6Item12Fields:
             return Item6Item12Fields(
@@ -615,10 +618,10 @@ class TestMutationEvidenceMC:
 
         monkeypatch.setattr(derive_module, "derive_item6_item12", _stub_always_true)
         mutated = derive_module.derive_item6_item12(scope, config, instance)
-        assert mutated.account_instrument_action_allowed is True  # the mutation, red
+        assert mutated.broker_constraint_generation_current is True  # the mutation, red
 
         with pytest.raises(AssertionError):
-            assert mutated.account_instrument_action_allowed is False
+            assert mutated.broker_constraint_generation_current is False
 
 
 # ===========================================================================

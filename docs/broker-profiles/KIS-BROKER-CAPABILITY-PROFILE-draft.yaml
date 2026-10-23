@@ -404,6 +404,12 @@ profile_identity:
     order_type: LIMIT                    # 좁은 좌표 우선 — MARKET 은 별도 profile 필요
     session_type: REGULAR_DAY_ONLY
     credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+    # BrokerCapabilityProfile.environment_class (ProfileKey 10좌표 밖의 프로필 필드) — #932 Codex r2.
+    # 브로커 무관 환경 등급(커널 BrokerEnvironment): 이 INSTANCE 는 브로커 자신의 모의 엔드포인트다.
+    # 커널 egress item 6 의 option (a) 완화가 읽는 유일한 분류 사실이다 — 송신 컨텍스트는 프로필을
+    # 분류할 수 없다. BROKER_SIMULATION 은 live_scope 가 NON_LIVE 이고 라이브 action class 가 없을
+    # 때만 구성된다(BrokerCapabilityProfile 검증기).
+    environment_class: BROKER_SIMULATION
 
   _kis:
     endpoints:
@@ -3722,6 +3728,9 @@ profile_identity:
     order_type: null                     # order_types: [] 값 없음 — 허구 생성 금지
     session_type: UNKNOWN
     credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+    # BrokerCapabilityProfile.environment_class — #932 Codex r2. 실전 엔드포인트: option (a) 완화는
+    # 이 등급에 결코 적용되지 않는다.
+    environment_class: BROKER_PRODUCTION
 
   _kis:
     endpoints:

@@ -1923,7 +1923,7 @@ class TestCapacityObligationRecording:
         import json
 
         payload = json.loads(row[0])["payload"]
-        assert payload["reservation_id"] == "resv-acct-compose-ES"
+        assert payload["reservation_id"] == "resv-88888888-01-ES"
         assert payload["reservation_state"] == "COMMITTED_UNBOUND"
         assert payload["verdict"] is True
 

@@ -578,7 +578,7 @@ def test_account_field_is_sourced_from_the_seal_never_custody(
     import json as _json
 
     body = _json.loads(request.body)
-    assert body["CANO"] == seal.account
+    assert f"{body['CANO']}-{body['ACNT_PRDT_CD']}" == seal.account
     # Only app_key/app_secret are ever loaded (once for token issuance, once for the order
     # call itself — review F5's narrow with-block discipline reloads fresh each network call)
     # — never anything account-shaped.
@@ -596,8 +596,8 @@ def test_account_field_follows_seal_account_when_instrument_key_account_diverges
     attempt = _attempt("m8-diverge")
     seal = build_seal(
         attempt_id=attempt.attempt_id,
-        account="seal-account-value",
-        instrument_key_account="different-instrument-key-account-value",
+        account="44444444-01",
+        instrument_key_account="55555555-01",
     )
     server.set_response(
         TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
@@ -611,8 +611,9 @@ def test_account_field_follows_seal_account_when_instrument_key_account_diverges
     import json as _json
 
     body = _json.loads(request.body)
-    assert body["CANO"] == "seal-account-value" == seal.account
-    assert body["CANO"] != seal.instrument_key.account
+    assert seal.account == "44444444-01"
+    assert body["CANO"] == "44444444"
+    assert body["CANO"] != seal.instrument_key.account[:8]
 
 
 def test_a_different_custody_bound_value_never_leaks_into_the_body(

@@ -59,6 +59,9 @@ def rendered(tmp_path_factory: pytest.TempPathFactory) -> Path:
         revision="0" * 40,
         direction="LONG",
         journal_path=_journal(base),
+        # PR-3a: the stock tree declares the LONG tree's producer_journal band source, so the
+        # band journal the probe writes is a mandatory render input here too.
+        band_journal_path=base / "band.jsonl",
     )
     return out
 
@@ -154,7 +157,11 @@ def test_every_instrument_slot_carries_the_symbol(rendered: Path) -> None:
         (rendered / "venue_constraint_policy.yaml").read_text(encoding="utf-8")
     )
     assert vcp["scope"]["instruments"] == [_SYMBOL]
-    assert vcp["_runtime"].get("band_source") is None
+    # PR-3a: the band source carries the symbol and the rendered band journal path.
+    band = vcp["_runtime"]["band_source"]
+    assert band["instrument"] == _SYMBOL
+    assert band["kind"] == "producer_journal"
+    assert band["band_journal_path"].endswith("band.jsonl")
 
 
 def test_the_rendered_stock_strategy_loads_through_the_production_loader(

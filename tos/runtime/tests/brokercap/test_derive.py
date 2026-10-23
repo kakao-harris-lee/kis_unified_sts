@@ -202,13 +202,15 @@ def test_mock_stock_order_item6_false_when_evidence_not_positive(
     assert fields.broker_profile_version_current is False
 
 
-def test_mock_stock_order_item6_false_when_evidence_positive_but_reduced_scope(
+def test_mock_stock_order_item6_true_for_the_reduced_mock_class(
     tmp_path: Path,
 ) -> None:
-    """``profile_evidence_ok: true`` makes the SCOPE's own admissibility
-    REDUCED (not ADMISSIBLE) — item 6's ``admissibility is ADMISSIBLE`` gate
-    is therefore still False for a REDUCED scope, by design (plan §2
-    decision 4 names ``ADMISSIBLE`` specifically, never ``REDUCED``)."""
+    """``profile_evidence_ok: true`` makes the SCOPE's own admissibility REDUCED (not
+    ADMISSIBLE). Until option (a) that failed item 6 (plan §2 decision 4 named ``ADMISSIBLE``
+    only); the operator decision of 2026-10-23 ("K") admits REDUCED for exactly the mock
+    class this scope's tuples are. A REDUCED scope OUTSIDE the class still fails —
+    ``test_derive_mock_class.py::test_each_mutation_toward_real_money_is_refused_on_both_items``.
+    """
     config = _load_config(
         tmp_path, active_scope="SYNTHETIC_FUTURES_ORDER", mock_evidence_ok=True
     )
@@ -217,7 +219,7 @@ def test_mock_stock_order_item6_false_when_evidence_positive_but_reduced_scope(
 
     instance = load_instance_document(_instance_path(config), environment="MOCK_VTS")
     fields = derive_item6_item12(scope, config, instance)
-    assert fields.account_instrument_action_allowed is False
+    assert fields.account_instrument_action_allowed is True
 
 
 def test_derive_item6_item12_threads_scopes_own_degraded_flag(

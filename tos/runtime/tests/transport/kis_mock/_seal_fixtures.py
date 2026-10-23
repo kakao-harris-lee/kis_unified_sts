@@ -30,7 +30,7 @@ from tos.engine import InstrumentKey
 from tos.ordering import OrderingEvent
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 
-ACCOUNT = "kis-mock-account-value"
+ACCOUNT = "11111111-01"
 INSTRUMENT = "005930"
 ENDPOINT = "https://openapivts.koreainvestment.com:29443"
 ENVIRONMENT = "non-live-test"
