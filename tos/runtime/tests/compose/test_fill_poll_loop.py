@@ -40,6 +40,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from tos.engine.vocabulary import EgressResultKind
 from tos.rcl import CapacityState
 from tos_runtime.compose._broker_posttrade_wiring import (
     DeferredKisWitness,
@@ -105,7 +106,12 @@ def _as_of_ms() -> int:
 
 
 def _write_marketfeed_config(
-    config_dir: Path, *, journal_path: Path, direction: str = "LONG"
+    config_dir: Path,
+    *,
+    journal_path: Path,
+    direction: str = "LONG",
+    allowance_ms: int = _JOURNAL_PASS_ALLOWANCE_MS,
+    poll_interval_ms: int = _FAST_POLL_INTERVAL_MS,
 ) -> None:
     """``test_run_e2e.py``'s fast marketfeed config, with ``direction`` open to a caller (§3
     drives LONG and SHORT) — the journal intake, this suite's one instrument, a 20 ms interval.
@@ -121,8 +127,8 @@ def _write_marketfeed_config(
                 "unit": "contract",
                 "intake_kind": "journal",
                 "journal_path": str(journal_path),
-                "poll_interval_ms": _FAST_POLL_INTERVAL_MS,
-                "journal_pass_allowance_ms": _JOURNAL_PASS_ALLOWANCE_MS,
+                "poll_interval_ms": poll_interval_ms,
+                "journal_pass_allowance_ms": allowance_ms,
                 "time_evaluate_closed_interval_ms": 60_000,
                 "snapshot_age_bound": 20,
                 "interval_width": 10,
@@ -134,7 +140,12 @@ def _write_marketfeed_config(
 
 
 def _wire_tick_source(
-    config_dir: Path, tmp_path: Path, *, direction: str = "LONG"
+    config_dir: Path,
+    tmp_path: Path,
+    *,
+    direction: str = "LONG",
+    allowance_ms: int = _JOURNAL_PASS_ALLOWANCE_MS,
+    poll_interval_ms: int = _FAST_POLL_INTERVAL_MS,
 ) -> int:
     """Put a journal-backed tick source under ``config_dir`` and return its observation's
     ``as_of_ms`` (the value the durable store must hold once the loop has really ticked).
@@ -152,12 +163,20 @@ def _wire_tick_source(
         ],
     )
     _write_critical_input_policy(config_dir)
-    _write_marketfeed_config(config_dir, journal_path=journal_path, direction=direction)
+    _write_marketfeed_config(
+        config_dir,
+        journal_path=journal_path,
+        direction=direction,
+        allowance_ms=allowance_ms,
+        poll_interval_ms=poll_interval_ms,
+    )
     return as_of_ms
 
 
-def _retune_observer_poll_interval(config_dir: Path, poll_interval_ms: int) -> None:
-    """Rewrite the deployed ``fill_observer.yaml``'s ``poll_interval_ms`` (every other key kept).
+def _retune_observer_poll_interval(
+    config_dir: Path, poll_interval_ms: int, *, poll_deadline_ms: int | None = None
+) -> None:
+    """Rewrite the deployed ``fill_observer.yaml``'s cadence keys (every other key kept).
 
     The shipped tenant value is 3000 ms — one 모의 call per rate-limit budget — so a hermetic
     loop of a few 30 ms passes sees exactly one broker read, which cannot tell "the loop keeps
@@ -168,6 +187,8 @@ def _retune_observer_poll_interval(config_dir: Path, poll_interval_ms: int) -> N
     path = config_dir / FILL_OBSERVER_CONFIG_NAME
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     raw["poll_interval_ms"] = poll_interval_ms
+    if poll_deadline_ms is not None:
+        raw["poll_deadline_ms"] = poll_deadline_ms
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
 
@@ -502,8 +523,14 @@ def test_a_pass_inside_its_allowance_leaves_no_overrun_row(
     observer ticks well inside the allowance and writes nothing.
 
     Mutation: record unconditionally -> a row per pass -> red.
+
+    The allowance here is deliberately enormous (30 s, still inside the conftest freshness
+    budget this config is checked against): a real composed pass issues a snapshot, resolves
+    through the kernel and drives the engine, so pinning "no row" against the production-shaped
+    100 ms would be a bet on how loaded the host is. The arithmetic of the boundary itself is
+    pinned deterministically in ``tests/marketfeed/test_scheduler.py``.
     """
-    _wire_tick_source(config_dir, tmp_path)
+    _wire_tick_source(config_dir, tmp_path, allowance_ms=30_000)
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     _reach_trusted(runtime)
     assert runtime.marketfeed is not None
@@ -511,4 +538,189 @@ def test_a_pass_inside_its_allowance_leaves_no_overrun_row(
     runtime.marketfeed.run_forever(sleep=_real_short_sleep, stop=_stop_after(3))
 
     assert _rows(runtime, "MARKETFEED_PASS_OVERRUN") == []
+    _close(runtime)
+
+
+def _append_prior_day_ack(
+    runtime: ComposedRuntime, *, attempt_id: str, odno: str, date: str
+) -> None:
+    """A SECOND tracked ACK, under an earlier trading date, written straight to the evidence
+    store.
+
+    The observer's read phase only has more than one date when the runtime was down across a
+    KST date boundary (``_due``'s own prior-day branch), which a hermetic test cannot reach any
+    other way — nothing here can move the trusted trading date backwards. The payload is the
+    shape ``_tracked_attempts`` reads: instrument key, attempt id, kind, ODNO, date.
+    """
+    runtime.evidence_store.append(
+        {
+            "attempt_id": attempt_id,
+            "instrument_key": {"account": fx.ACCOUNT, "instrument": fx.INSTRUMENT},
+            "egress_result_kind": "ACK",
+            "broker_execution_id": odno,
+            "trading_date": date,
+        },
+        kind="EGRESS_RESULT_CONSUMED",
+        record_class="EGRESS_RESULT_CONSUMED",
+    )
+
+
+class _ReaderThatTakesItsTime:
+    """The observer's ``orders`` port, delegating to the real witness and then burning
+    ``sleep_s`` of real time — "this read took that long in total", which is what a deadline is
+    about. The sleep is AFTER the delegation on purpose: the first read must succeed and be
+    slow, so the deadline falls between the two reads rather than before the first.
+    """
+
+    def __init__(self, inner: Any, sleep_s: float) -> None:
+        self.inner = inner
+        self.sleep_s = sleep_s
+        self.dates: list[str | None] = []
+
+    def order_rows(
+        self, scope, *, inquiry_date=None, deadline_expired=None
+    ):  # noqa: ANN001
+        self.dates.append(inquiry_date)
+        result = self.inner.order_rows(
+            scope, inquiry_date=inquiry_date, deadline_expired=deadline_expired
+        )
+        time.sleep(self.sleep_s)
+        return result
+
+
+def test_the_poll_deadline_stops_the_next_read_and_attributes_nothing(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#949 review HIGH (2). Two dates are due; the first read eats the whole poll deadline, so
+    the second never starts: it is ``WitnessUnavailable`` — recorded once, nothing attributed —
+    even though the broker's rows for it would have been a FULL_FILL. Then the next due poll
+    reads both and the fill lands.
+
+    This is the property that makes the deadline safe to have: it can only ever produce an
+    absence. A deadline that returned "these are all the rows I got" would release capacity
+    against a partial list.
+
+    Mutations: have ``_read`` swallow the deadline instead of recording it -> no READ_FAILED row
+    -> red; let the cut read return its partial rows -> the FULL_FILL lands in the first poll
+    -> red on the no-attribution assertions.
+    """
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    # A deadline short enough that one slow read exhausts it.
+    _retune_observer_poll_interval(config_dir, 1, poll_deadline_ms=50)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert _drive_crossing_tick(runtime, custody_root).flow is not None
+    today = _ack(runtime)["trading_date"]
+    assert today is not None
+    qty = _sealed_quantity(runtime)
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    # An unresolved ACK from an earlier day — read FIRST (`sorted(dates)`), and it is the one
+    # that gets to spend the deadline.
+    # Strictly before this suite's fixed wall clock (``fx.DEFAULT_WALL_CLOCK_UNIX_MS``
+    # is 2026-09-14), so it really is a prior trading day and sorts first.
+    prior = "20260901"
+    _append_prior_day_ack(
+        runtime, attempt_id="attempt-prior-day", odno="0000009998", date=prior
+    )
+    _script_broker(server, config_dir, prior, [])
+    orders_today = _script_broker(
+        server,
+        config_dir,
+        today,
+        [_row(date=today, ord_qty=qty, filled=qty, remaining=Decimal(0))],
+    )
+    reader = _ReaderThatTakesItsTime(observer.orders, sleep_s=0.2)
+    observer.orders = reader
+
+    report = observer.poll_once()
+
+    # Both dates were attempted; only the first reached the broker.
+    assert reader.dates == [prior, today]
+    assert server.requests_for(orders_today) == []
+    assert report.read_failed is True
+    assert report.emitted == ()
+    (failure,) = _rows(runtime, "FILL_OBSERVER_READ_FAILED")
+    assert failure["inquiry_date"] == today
+    assert "deadline" in failure["reason"]
+    # Nothing was attributed from the read that did not happen.
+    assert _rows(runtime, "FILL_OBSERVED") == []
+    assert [
+        r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
+    ] == [
+        "ACK",
+        "ACK",
+    ]  # ours, plus the prior-day row this test appended
+    assert _rcl_releases(runtime) == 0
+
+    # The next due poll (no longer slow) reads both dates and the fill lands.
+    reader.sleep_s = 0.0
+    report = observer.poll_once()
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.FULL_FILL]
+    # At least the fill read itself; the release path's reconciliation reads this TR too.
+    assert len(server.requests_for(orders_today)) >= 1
+    (observed,) = _rows(runtime, "FILL_OBSERVED")
+    assert observed["broker_execution_id"] == _ODNO
+    assert "FULL_FILL" in [
+        r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
+    ]
+    # Capacity is NOT released here, on purpose: this test planted a second ACK the broker has
+    # no row for, which reconciliation sees as an orphan on the same scope — #939's own
+    # unattributed-ODNO test pins that conservative hold. What this test is about is that the
+    # fill was attributed only once the read actually happened.
+    assert _rcl_releases(runtime) == 0
+    _close(runtime)
+
+
+def test_the_loop_period_does_not_grow_by_the_hooks_broker_read(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#949 review HIGH, the fix: a 300 ms broker read inside the hook must not push the next
+    intake read 300 ms later — that is what ages a bar into ``STALE``. The loop sleeps the
+    interval MINUS the pass, so the PERIOD stays the configured 500 ms: the pass that polled
+    asks for a visibly shorter sleep, and no pass ever asks for more than the interval.
+
+    A deliberately visible interval (500 ms, not this file's 20 ms default) so the compensated
+    sleep and the uncompensated one cannot be confused. The observer's own 3 s cadence means
+    only the first pass polls; the rest are the baseline.
+
+    Mutation: sleep the plain interval -> every entry is 0.5 and the ``shortened`` list is empty
+    -> red (and the real loop would then run a 800 ms period against a 500 ms config).
+    """
+    _wire_tick_source(config_dir, tmp_path, poll_interval_ms=500)
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert _drive_crossing_tick(runtime, custody_root).flow is not None
+    date = _ack(runtime)["trading_date"]
+    assert date is not None and runtime.marketfeed is not None
+    _script_slow_order_inquiry(server, config_dir, date, delay_s=0.3)
+
+    sleeps: list[float] = []
+
+    def _recording_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        # Sleep a token amount, not the compensated interval: this test is about the number
+        # the loop ASKS for (its period), not about spending three real half-seconds.
+        time.sleep(_REAL_SLEEP_SECONDS)
+
+    runtime.marketfeed.run_forever(sleep=_recording_sleep, stop=_stop_after(3))
+
+    assert len(sleeps) == 3
+    # Never longer than the configured interval — compensation only ever subtracts.
+    assert max(sleeps) <= 0.5
+    # The polling pass paid ~300 ms of broker read out of its own sleep.
+    shortened = [seconds for seconds in sleeps if seconds <= 0.25]
+    baseline = [seconds for seconds in sleeps if seconds >= 0.4]
+    assert len(shortened) == 1, sleeps
+    assert len(baseline) == 2, sleeps
     _close(runtime)

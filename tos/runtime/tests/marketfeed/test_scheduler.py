@@ -551,6 +551,75 @@ def test_a_pass_that_outruns_its_budget_records_both_halves(tmp_path: Path) -> N
     }
 
 
+def test_the_sleep_is_shortened_by_what_the_pass_already_spent(tmp_path: Path) -> None:
+    """#949 review HIGH, the fix itself: bar ages are measured against the tick-to-tick PERIOD,
+    so the loop sleeps ``poll_interval_ms`` minus the pass's own elapsed time. A 210 ms pass on
+    a 400 ms interval sleeps 190 ms, and the period stays 400 ms — the hook costs the feed
+    nothing.
+
+    Mutation: sleep the plain interval -> ``[0.4]`` -> red (and that is precisely the defect:
+    the period would be 610 ms against a config that asked for 400).
+    """
+    monotonic = _SteppingMonotonic([10, 200, 0])  # tick 10 ms, hook 200 ms
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        # Generous allowance: this test is about the sleep, not about the overrun row.
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=1_000),
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    sleeps: list[float] = []
+    scheduler.run_forever(sleep=sleeps.append, stop=_stop_after(1))
+
+    assert sleeps == [0.19]
+
+
+def test_a_pass_that_outran_the_whole_interval_sleeps_zero_not_negative(
+    tmp_path: Path,
+) -> None:
+    """Clamped, never carried forward: the next pass starts at once (the overrun is already
+    recorded), and no caller is ever handed a negative sleep.
+
+    Mutation: drop the ``max(0.0, ...)`` -> ``[-0.2]`` -> red, and ``time.sleep`` would raise
+    in production.
+    """
+    monotonic = _SteppingMonotonic([500, 100, 0])  # a 600 ms pass on a 400 ms interval
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=1_000),
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    sleeps: list[float] = []
+    scheduler.run_forever(sleep=sleeps.append, stop=_stop_after(1))
+
+    assert sleeps == [0.0]
+
+
+def test_without_a_pass_budget_the_sleep_is_the_plain_interval(tmp_path: Path) -> None:
+    """No clock, no compensation — the pre-#949 loop, unchanged (and what a ``kis_quote``
+    intake, which declares no allowance, still gets)."""
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=750, after_pass=lambda: None
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    sleeps: list[float] = []
+    scheduler.run_forever(sleep=sleeps.append, stop=_stop_after(2))
+
+    assert sleeps == [0.75, 0.75]
+
+
 def test_a_pass_inside_its_budget_records_nothing(tmp_path: Path) -> None:
     """A healthy session must not pay an evidence append per pass.
 

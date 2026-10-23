@@ -33,6 +33,18 @@ poll_interval_ms: 3000
 # value x max_pages. It bounds every GET this witness makes — the observer's order inquiry and
 # the release/recovery reconciliation's balance read alike.
 witness_request_timeout_s: 2.0
+# The WHOLE poll's bound, in ms, across every trading date and every continuation page it
+# reads (#949 review HIGH). Once it is past, no further read starts and no further page is
+# fetched: that read is WitnessUnavailable — recorded, fail-closed, retried at the next due
+# poll — and never a partial row list. 1500: three measured single-page reads' worth of
+# headroom (~0.2 s each) against a 400 ms loop interval, so a healthy poll never approaches it
+# while a sick one cannot spend 2 s x max_pages 10 x dates inside one pass. A poll therefore
+# costs at most this deadline plus the one request already in flight
+# (witness_request_timeout_s), i.e. ~3.5 s worst case, at most once per poll_interval_ms.
+# ⚠ It does not interrupt a request in flight — that is the timeout's job. Removing the wait
+# from the session-loop thread altogether is issue #950 (thread-safety of the shared KIS
+# credential session and the single-thread sqlite evidence store).
+poll_deadline_ms: 1500
 # An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
 # (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not
 # filled by then is worth an operator look.

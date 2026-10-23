@@ -71,7 +71,7 @@ re-exports, so it opens no new commons edge beyond the one that module already h
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -441,7 +441,11 @@ class KisStockBrokerWitness:
         )
 
     def order_rows(
-        self, scope: WitnessScope, *, inquiry_date: str | None = None
+        self,
+        scope: WitnessScope,
+        *,
+        inquiry_date: str | None = None,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[str, tuple[KisOrderRow, ...]]:
         """One date's 주식일별주문체결조회 rows — no balance read (the post-ACK fill observer's
         GET: one TR, ``VTTC0081R``, not two).
@@ -451,6 +455,13 @@ class KisStockBrokerWitness:
             inquiry_date: ``YYYYMMDD`` to inquire; ``None`` is today (trusted date source). An
                 ACK from an earlier trading day is read under its own date — VTTC0081R serves the
                 last three months (open-trading-api ``inquire_daily_ccld``, ``pd_dv=inner``).
+            deadline_expired: Asked before every page (:meth:`_walk_continuation`) — the
+                caller's own bound on how long this read may take in total. A walk it stops is
+                ``WitnessUnavailable`` with no rows, never a partial list. ``None`` = unbounded
+                by anything but ``max_pages`` and the per-GET timeout. :meth:`observe` takes no
+                such bound: it is read inside an engine turn whose answer decides a release,
+                not from a loop that is waited on (#949 review HIGH; the thread-safety work
+                that would remove the wait entirely is issue #950).
 
         Returns:
             ``(date, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==
@@ -465,7 +476,9 @@ class KisStockBrokerWitness:
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
             date = inquiry_date or self._date_source.today()
-            return date, self._read_order_rows(cano, acnt_prdt_cd, scope, date)
+            return date, self._read_order_rows(
+                cano, acnt_prdt_cd, scope, date, deadline_expired=deadline_expired
+            )
         except WitnessUnavailable:
             raise
         except (
@@ -547,6 +560,7 @@ class KisStockBrokerWitness:
         path: str,
         tr_id: str,
         build_params: Any,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> _WalkOutcome:
         """Walk ``CTX_AREA_FK100``/``NK100`` to completion, or raise.
 
@@ -554,16 +568,29 @@ class KisStockBrokerWitness:
         caller supplies every field except the two continuation keys, which this method
         owns exclusively.
 
+        ``deadline_expired`` (optional) is asked BEFORE every page, including the first: a
+        caller that is waited on — the fill observer's poll, inside the session loop's
+        tick-to-tick window (#949 review HIGH) — bounds the whole walk that way. It owns the
+        clock; this class has none. ``True`` stops the walk and raises, exactly like our own
+        ``max_pages`` cap: what was read so far is NEVER returned (see below), so a deadline
+        can only produce "unavailable", never "these are all the rows".
+
         Never returns a partial result: any of a broker rejection, a "more follows"
-        signal with no usable cursor, a non-advancing cursor, or exhausting
-        ``config.max_pages`` while the broker still signals more, raises
-        :class:`~tos_runtime.recon.ports.WitnessUnavailable` instead of returning what
+        signal with no usable cursor, a non-advancing cursor, exhausting
+        ``config.max_pages`` while the broker still signals more, or the caller's deadline,
+        raises :class:`~tos_runtime.recon.ports.WitnessUnavailable` instead of returning what
         was read so far (module docstring's central reason this class exists).
         """
         pages: list[list[dict[str, Any]]] = []
         output2_first: dict[str, Any] | None = None
         fk = nk = ""
         for index in range(self._config.max_pages):
+            if deadline_expired is not None and deadline_expired():
+                raise WitnessUnavailable(
+                    f"KisStockBrokerWitness: {tr_id} walk stopped by the caller's deadline "
+                    f"before page {index} — refusing to return a partial order/holdings "
+                    "list (the same answer our own max_pages cap gives)"
+                )
             tr_cont = "" if index == 0 else _TR_CONT_REQUEST_NEXT
             response = self._get_page(
                 path=path, tr_id=tr_id, params=build_params(fk, nk), tr_cont=tr_cont
@@ -684,7 +711,13 @@ class KisStockBrokerWitness:
     # -- orders --------------------------------------------------------------------------
 
     def _read_order_rows(
-        self, cano: str, acnt_prdt_cd: str, scope: WitnessScope, today: str
+        self,
+        cano: str,
+        acnt_prdt_cd: str,
+        scope: WitnessScope,
+        today: str,
+        *,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[KisOrderRow, ...]:
         """주식일별주문체결조회 — mirrors ``tools/broker_probes/probes_order.py``'s own
         ``stock_daily_ccld`` params exactly (module docstring).
@@ -728,6 +761,7 @@ class KisStockBrokerWitness:
                 path=self._config.order_inquiry_path,
                 tr_id=self._config.order_inquiry_tr_id,
                 build_params=build_params,
+                deadline_expired=deadline_expired,
             )
             for rows in outcome.pages:
                 for row in rows:

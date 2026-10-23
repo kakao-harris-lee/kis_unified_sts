@@ -250,7 +250,11 @@ class _RowsWithoutWitnessCheck:
 
     rows: tuple[KisOrderRow, ...]
 
-    def order_rows(self, _scope, *, inquiry_date=None):  # noqa: ANN001
+    def order_rows(
+        self, _scope, *, inquiry_date=None, deadline_expired=None
+    ):  # noqa: ANN001, ARG002
+        # `deadline_expired` is the observer's poll deadline (#949 review HIGH); a reader that
+        # does no paging has nothing to cut, so it is accepted and ignored.
         return inquiry_date, self.rows
 
 

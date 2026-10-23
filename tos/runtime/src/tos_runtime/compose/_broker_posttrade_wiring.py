@@ -115,9 +115,15 @@ class DeferredKisWitness:
         return self._ready().observe(scope)
 
     def order_rows(
-        self, scope: WitnessScope, *, inquiry_date: str | None = None
+        self,
+        scope: WitnessScope,
+        *,
+        inquiry_date: str | None = None,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[str, tuple[KisOrderRow, ...]]:
-        return self._ready().order_rows(scope, inquiry_date=inquiry_date)
+        return self._ready().order_rows(
+            scope, inquiry_date=inquiry_date, deadline_expired=deadline_expired
+        )
 
 
 @dataclass

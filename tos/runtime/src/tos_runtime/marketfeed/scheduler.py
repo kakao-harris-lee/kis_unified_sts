@@ -42,16 +42,27 @@ each deliberate:
   and the boot guard ``_marketfeed_wiring._load_config_within_freshness_budget`` reserves
   exactly ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's
   ``max_age_ms`` for that — so a hook that takes longer than its share pushes bars toward
-  ``STALE``, which (issue #807) are consumed and never retried. The hook's own cost is
-  therefore bounded by its config (the fill observer's GETs take
-  ``fill_observer.yaml::witness_request_timeout_s``, its own number, not the 10 s order
-  path's) and :meth:`TickScheduler._record_pass_overrun` records every pass that outran the
-  allowance, so a ``STALE`` field caused by this hook is distinguishable from a late
-  producer. ⚠ **Residual, stated rather than implied:** a GET that actually runs to its
-  timeout still stretches that one pass, and bars arriving inside it read ``STALE``. Removing
-  that outright means moving the broker read off this thread, which the shared KIS credential
-  session (one token lifecycle per app key, C-2) and the single-thread sqlite evidence store
-  do not currently allow — see the PR body of #949.
+  ``STALE``, which (issue #807) are consumed and never retried. Three things hold the line,
+  none of them ordering:
+
+  1. **The sleep is compensated** (:meth:`TickScheduler._pass_sleep_seconds`): the loop sleeps
+     ``poll_interval_ms`` MINUS what the pass already spent, so the tick-to-tick PERIOD — the
+     thing a bar's age is actually measured against — stays what the config asked for. A hook
+     that finishes inside the interval costs the feed nothing at all.
+  2. **The hook's own work is bounded by its own config**, not by the order path's: the fill
+     observer's GETs take ``fill_observer.yaml::witness_request_timeout_s`` (2 s, not the
+     order path's 10 s) and the whole poll takes ``poll_deadline_ms`` (1.5 s), after which it
+     starts no further read and fetches no further page — an absence, never a partial list.
+  3. **Every pass is measured** (:meth:`TickScheduler._record_pass_overrun`), so a ``STALE``
+     field caused by this hook is distinguishable from a late producer.
+
+  ⚠ **Residual, stated rather than implied:** a request already in flight cannot be
+  interrupted, so one poll can still stretch its pass by up to the deadline plus one timeout
+  (~3.5 s), at most once per the observer's own 3 s cadence, and bars arriving inside that
+  window read ``STALE``. Removing the wait outright means moving the broker read off this
+  thread, which the shared KIS credential session (one token lifecycle per app key, C-2) and
+  the single-thread sqlite evidence store do not currently allow: measured, and tracked as
+  issue #950, which owns this residual.
 * **A raise propagates**, exactly like every other evidence failure in this module
   (:meth:`TickScheduler._record_field_refusals`'s own docstring). The hook's own non-fatal
   conditions stay its own business — the fill observer records a failed broker read as an
@@ -718,6 +729,11 @@ class TickScheduler:
         sleep, on EVERY outcome — the post-pass-hook paragraph in the module docstring has the
         three reasons (why here and not in :meth:`tick_once`, why after and not before, and why
         a raise from it propagates out of this loop rather than being swallowed).
+
+        ``sleep`` is called with the interval MINUS this pass's own elapsed time whenever a
+        :class:`PassBudget` is wired (:meth:`_pass_sleep_seconds`), so the loop's PERIOD —
+        what bar ages are measured against — does not grow by whatever the tick and the hook
+        spent. Without a budget it is the plain configured interval, as before.
         """
         budget = self._pass_budget
         while not stop():
@@ -726,11 +742,37 @@ class TickScheduler:
             ticked_ms = None if budget is None else budget.monotonic.now_ms()
             if self._after_pass is not None:
                 self._after_pass()
-            self._record_pass_overrun(started_ms, ticked_ms)
-            sleep(self._poll_interval_ms / 1000)
+            done_ms = None if budget is None else budget.monotonic.now_ms()
+            self._record_pass_overrun(started_ms, ticked_ms, done_ms)
+            sleep(self._pass_sleep_seconds(started_ms, done_ms))
+
+    def _pass_sleep_seconds(self, started_ms: int | None, done_ms: int | None) -> float:
+        """How long to sleep after a pass: the configured interval MINUS what the pass itself
+        already spent, never negative.
+
+        ⛔ **Why the subtraction** (#949 review HIGH). What a bar's age is measured against is
+        the gap between two intake reads, not the sleep: an uncompensated loop makes that gap
+        ``poll_interval_ms + this pass's own work``, so every millisecond the post-pass hook
+        spends reading the broker is a millisecond of freshness taken from the next bar — and
+        past the field policy's ``max_age_ms`` the bar is read ``STALE``, consumed, and never
+        retried (issue #807). Subtracting keeps the PERIOD at the interval the config asked
+        for, so a hook that finishes inside the interval costs the feed exactly nothing.
+
+        Clamped at zero rather than carried forward: a pass that outran the whole interval
+        starts the next one immediately, and :meth:`_record_pass_overrun` has already recorded
+        it. Catching up by sleeping negative time is not a thing, and skipping a pass to catch
+        up would drop an intake read, which is the opposite of what this protects.
+
+        With no :class:`PassBudget` there is no clock to measure with, so the sleep is the
+        plain configured interval — exactly the pre-#949 behaviour.
+        """
+        if started_ms is None or done_ms is None:
+            return self._poll_interval_ms / 1000
+        remaining_ms = self._poll_interval_ms - (done_ms - started_ms)
+        return max(0.0, remaining_ms / 1000)
 
     def _record_pass_overrun(
-        self, started_ms: int | None, ticked_ms: int | None
+        self, started_ms: int | None, ticked_ms: int | None, done_ms: int | None
     ) -> None:
         """Record a pass whose own work outran ``pass_budget_ms`` — and nothing otherwise.
 
@@ -758,12 +800,14 @@ class TickScheduler:
                 no :class:`PassBudget` was injected (then nothing is measured or recorded).
             ticked_ms: The reading taken after :meth:`tick_once` returned — the split between
                 the tick's own cost and the hook's.
+            done_ms: The reading taken after the hook returned. The SAME reading
+                :meth:`_pass_sleep_seconds` compensates with, so the row and the sleep can
+                never disagree about how long this pass took.
         """
         budget = self._pass_budget
-        if budget is None or started_ms is None or ticked_ms is None:
+        if budget is None or started_ms is None or ticked_ms is None or done_ms is None:
             return
-        now_ms = budget.monotonic.now_ms()
-        pass_ms = now_ms - started_ms
+        pass_ms = done_ms - started_ms
         if pass_ms <= budget.allowance_ms:
             return
         self._evidence_store.append(
@@ -772,7 +816,7 @@ class TickScheduler:
                 "budget_ms": budget.allowance_ms,
                 "pass_ms": pass_ms,
                 "tick_ms": ticked_ms - started_ms,
-                "after_pass_ms": now_ms - ticked_ms,
+                "after_pass_ms": done_ms - ticked_ms,
                 "poll_interval_ms": self._poll_interval_ms,
             },
             kind=_MARKETFEED_PASS_OVERRUN_KIND,

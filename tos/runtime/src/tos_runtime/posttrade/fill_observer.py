@@ -169,6 +169,13 @@ class FillObserverConfig:
         prior_day_poll_interval_ms: Minimum spacing between two reads of an unresolved ACK from
             an EARLIER trading day (Codex r2 MEDIUM): it is re-read under its own date until a
             terminal broker result shows — slower than today's cadence, never abandoned.
+        poll_deadline_ms: The whole poll's bound, across every date and page it reads (#949
+            review HIGH). Once it is past, the observer starts no further read and the witness
+            fetches no further page: the read in question is ``WitnessUnavailable`` — recorded,
+            fail-closed, retried at the next due poll — never a partial row list. Worst case
+            for one poll is therefore this deadline plus the one request already in flight
+            (bounded by ``witness_request_timeout_s``), instead of that timeout times every
+            page times every date.
         witness_request_timeout_s: Per-GET timeout for the witness this config seals — the
             observer's own bound, deliberately NOT the order path's
             ``kis_mock_transport.yaml::request_timeout_s`` (10 s). #949 review HIGH: the
@@ -184,6 +191,7 @@ class FillObserverConfig:
     overdue_after_ms: int
     finality_retry_interval_ms: int
     prior_day_poll_interval_ms: int
+    poll_deadline_ms: int
     witness_request_timeout_s: float
 
 
@@ -249,6 +257,7 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         prior_day_poll_interval_ms=_positive_int(
             raw, "prior_day_poll_interval_ms", path
         ),
+        poll_deadline_ms=_positive_int(raw, "poll_deadline_ms", path),
         witness_request_timeout_s=_positive_number(
             raw, "witness_request_timeout_s", path
         ),
@@ -271,7 +280,11 @@ class OrderRowsReader(Protocol):
     """:meth:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness.order_rows`."""
 
     def order_rows(
-        self, scope: WitnessScope, *, inquiry_date: str | None = None
+        self,
+        scope: WitnessScope,
+        *,
+        inquiry_date: str | None = None,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[str, tuple[KisOrderRow, ...]]: ...
 
 
@@ -376,20 +389,32 @@ class KisMockFillObserver:
 
     def poll_once(self) -> FillPollReport:
         """One pass: re-run unfinished finality, then read the broker for attempts still open.
-        No GET at all when no ACKed attempt is outstanding on the broker side."""
+        No GET at all when no ACKed attempt is outstanding on the broker side.
+
+        **The whole read phase is bounded by ``poll_deadline_ms``** (#949 review HIGH). The
+        deadline is taken once, here, and asked before every date (below) and before every page
+        (the witness's own walk): once it is past, nothing further is read and whatever was not
+        read is ``WitnessUnavailable`` — recorded once, fail-closed, retried at the next due
+        poll. It can never turn into a partial row list, because the only thing it produces is
+        an absence. What it cannot do is interrupt a request already in flight; that one is
+        bounded by ``witness_request_timeout_s``, so one poll costs at most the deadline plus
+        one timeout. (This caller is waited on: the session loop runs it between two intake
+        reads. Moving it off that thread entirely is issue #950.)
+        """
         tracked = self._tracked_attempts()
         reprojected = self._reproject_unreleased(tracked)
         pending = [t for t in tracked.values() if not t.terminal and self._due(t)]
         if not pending:
             return FillPollReport(polled=False, reprojected=reprojected)
         self._last_poll_ms = self.monotonic.now_ms()
+        deadline_expired = self._deadline(self._last_poll_ms)
         emitted: list[tuple[str, EgressResultKind, ResultDisposition | None]] = []
         held: list[tuple[str, EgressResultKind]] = []
         unattributed: list[str] = []
         read_failed = False
         for date in sorted({t.trading_date for t in pending}):
             on_date = [t for t in pending if t.trading_date == date]
-            rows = self._read(date, on_date)
+            rows = self._read(date, on_date, deadline_expired=deadline_expired)
             if rows is None:
                 read_failed = True
                 continue
@@ -421,11 +446,29 @@ class KisMockFillObserver:
         self._last_prior_day_read_ms[attempt.attempt_id] = now
         return True
 
+    def _deadline(self, started_ms: int) -> Callable[[], bool]:
+        """ "Is this poll's ``poll_deadline_ms`` past?" — one predicate, shared by the date loop
+        and (through the witness) by every page of every walk, so the whole poll answers to one
+        deadline rather than one per read."""
+        expires_at_ms = started_ms + self.config.poll_deadline_ms
+        return lambda: self.monotonic.now_ms() >= expires_at_ms
+
     def _read(
-        self, date: str, attempts: list[_Tracked]
+        self,
+        date: str,
+        attempts: list[_Tracked],
+        *,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[KisOrderRow, ...] | None:
         """One date's rows, or ``None`` after recording the failure (and still running the
-        overdue check — a read that keeps failing must surface, never go quiet)."""
+        overdue check — a read that keeps failing must surface, never go quiet).
+
+        A ``deadline_expired`` that already answers ``True`` makes this an unavailable read
+        with no request sent at all: the predicate is handed to the witness, whose walk asks it
+        before its first page too (:meth:`~tos_runtime.recon.witness_kis
+        .KisStockBrokerWitness._walk_continuation`), so the deadline needs no second
+        implementation here.
+        """
         scope = WitnessScope(
             account=self.account,
             instrument_keys=(
@@ -435,7 +478,9 @@ class KisMockFillObserver:
             order_dates=(date,),
         )
         try:
-            _date, rows = self.orders.order_rows(scope, inquiry_date=date)
+            _date, rows = self.orders.order_rows(
+                scope, inquiry_date=date, deadline_expired=deadline_expired
+            )
         except WitnessUnavailable as exc:
             if not self._last_read_failed:
                 self._record(
