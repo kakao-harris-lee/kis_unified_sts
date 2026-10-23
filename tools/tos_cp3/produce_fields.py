@@ -224,10 +224,28 @@ class ProduceFieldsError(RuntimeError):
 def _asset_class(raw: object) -> AssetClass:
     """Narrow the YAML's ``asset_class`` to the two values the store accepts.
 
-    Any other value is already fatal today — it becomes a partition directory
-    that does not exist, and the load raises ``ProduceFieldsError`` a few frames
-    later with "no ... minute bars". This raises the same error at the point
-    that can say which value was wrong.
+    **This refuses earlier than the old code did, and for more callers.** State
+    it plainly rather than claim the change is free:
+
+    * For the three sites that actually hand ``strategy.asset_class`` to the
+      store (:func:`main`'s loads, lines ~2056/2063/2075), any other value was
+      already fatal: it became a partition directory that does not exist and the
+      load raised ``ProduceFieldsError`` a few frames later with
+      "no ... minute bars". For these the only change is *where* the same error
+      is raised and that it can now name the offending value.
+    * For every other caller of :func:`load_strategy_inputs` it is a NEW
+      refusal. ``live_producer/producer.py`` loads bars from its own
+      ``self.config.asset_class``, ``minute_probe.py`` hardcodes ``"futures"``,
+      and ``stitch_measure.py`` loads no bars through this value at all; two
+      more sites (``produce_fields`` line ~1728 and
+      ``emit_legacy_decisions`` line ~1763) only copy it into output metadata,
+      where a wrong value was previously written out verbatim. A strategy YAML
+      carrying e.g. ``asset_class: Futures`` used to start those tools and now
+      stops them at load.
+
+    No YAML in this repo carries such a value, so nothing in tree changes
+    behaviour; the refusal is for a config that would otherwise mislabel an
+    artifact or silently pick the wrong partition root.
     """
     value = str(raw or "futures")
     if value == "stock":

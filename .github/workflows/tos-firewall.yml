@@ -732,6 +732,18 @@ jobs:
       # the tree say `tools.tos_x`, and the run ABORTS on "Source file found
       # twice under different module names" after checking nothing.
       #
+      # What this step's mypy can SEE is the minimal install above — for
+      # `tools/` that is `-e . --no-deps` plus pyyaml and mypy itself. pandas
+      # and the yaml stubs are NOT installed, so those types resolve to `Any`
+      # here while a full local `.venv` resolves them for real. The trap that
+      # follows from it: a `# type: ignore[...]` that local stubs make
+      # NECESSARY is dead weight in CI and fails this step as `unused-ignore`
+      # (`warn_unused_ignores = true` in the root pyproject). Write such a
+      # suppression so both environments accept it, the way
+      # `tools/tos_contract_check.py:480` does —
+      # `# type: ignore[assignment, unused-ignore]`, naming `unused-ignore`
+      # alongside the real code — rather than tuning it to one environment.
+      #
       # Reproducing this locally: run it from a checkout whose venv was
       # `pip install -e .`-ed FROM THAT SAME checkout (what the install step
       # above does here). The editable install drops that path into a `.pth`,
