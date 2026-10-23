@@ -222,6 +222,10 @@ def test_the_shipped_config_names_the_official_trs() -> None:
         ({"balance_params": {"CANO": "1"}}, "CANO/ACNT_PRDT_CD"),
         ({"balance_params": {"X": 1}}, "strings to strings"),
         ({"extra": 1}, "exactly the keys"),
+        # named-TBD placeholders are refused, not sent to the broker as a TR id / path / param
+        ({"quote_tr_id": "TBD"}, "placeholder"),
+        ({"balance_path": "TBD"}, "placeholder"),
+        ({"balance_params": {"INQR_DVSN": "TBD"}}, "placeholder"),
     ],
 )
 def test_each_malformed_config_is_refused(
