@@ -21,13 +21,12 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from tos.canonical import CanonicalizationScheme
 from tos.engine import EngineEvent, EventKind, EventResult
 from tos.engine.records import event_identity
 from tos.engine.sink import replay_result_for
-from tos.engine.state import FinalityProofRef
 from tos.engine.vocabulary import HaltReason
 from tos.evidence import ReplayResultState
 
@@ -40,6 +39,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
     NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
 )
+from tos_runtime.engine.replay_releases import EngineReleases
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
@@ -66,9 +66,6 @@ class ReplayableCore(Protocol):
 _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
 _REPLAY_DIVERGED_KIND = "REPLAY_DIVERGED"
 _REPLAY_DIVERGED_RECORD_CLASS = "REPLAY_DIVERGED"
-#: ``tos_runtime.engine.finality_projection.ENGINE_PROJECTION_RELEASED_KIND``, cited not imported
-#: (this module's own evidence-kind-literal convention).
-_ENGINE_PROJECTION_RELEASED_KIND = "ENGINE_PROJECTION_RELEASED"
 
 #: Halt reasons for which ``EventResult.pipeline`` is STRUCTURALLY ``None`` in EVERY run — never
 #: merely an artifact of what happened to occur this particular time — so ``outcome_digest`` is
@@ -393,92 +390,23 @@ def _compare_one_event(
     )
 
 
-class _EngineReleases:
-    """The live engine's projection releases, as durably recorded (``ENGINE_PROJECTION_RELEASED``,
-    :mod:`tos_runtime.engine.finality_projection`) — PR-3b r2 claim 2.
-
-    A release is not an inbox event: it happens after an event's ``EVENT_CONSUMED`` receipt (the
-    driver's finality hook) or between two events (the fill observer's finality re-run). Replay
-    re-applies each one before the first event whose ``EVENT_CONSUMED`` row is newer than the
-    release row — exactly where the live engine had it — so the replayed projection (and every
-    later step-8 ``admits_new_exposure`` answer) equals the live one. A release the replayed
-    projection refuses is a divergence, recorded like any other.
+def _load_releases(
+    evidence_store: SqliteEvidenceStore, emergency_log: EmergencyAppendLog
+) -> EngineReleases:
+    """The live engine's recorded projection releases, each corroboration failure or replay
+    refusal recorded as a ``REPLAY_DIVERGED`` halt (:mod:`tos_runtime.engine.replay_releases`).
     """
 
-    def __init__(
-        self,
-        rows: list[tuple[int, FinalityProofRef]],
-        consumed_seq: dict[str, int],
-        evidence_store: SqliteEvidenceStore,
-        emergency_log: EmergencyAppendLog,
-    ) -> None:
-        self._pending = rows
-        self._consumed_seq = consumed_seq
-        self._evidence_store = evidence_store
-        self._emergency_log = emergency_log
-        #: Attempts whose results this replay actually re-handled.
-        self._seen_attempts: set[str] = set()
+    def _halt(payload: dict[str, Any]) -> None:
+        record_halt(
+            evidence_store,
+            emergency_log,
+            payload=payload,
+            kind=_REPLAY_DIVERGED_KIND,
+            record_class=_REPLAY_DIVERGED_RECORD_CLASS,
+        )
 
-    @classmethod
-    def load(
-        cls, evidence_store: SqliteEvidenceStore, emergency_log: EmergencyAppendLog
-    ) -> _EngineReleases:
-        conn = evidence_store.connection
-        rows = []
-        for seq, payload_json in conn.execute(
-            "SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
-            (_ENGINE_PROJECTION_RELEASED_KIND,),
-        ):
-            payload = json.loads(payload_json).get("payload", {})
-            rows.append((seq, FinalityProofRef.model_validate(payload)))
-        consumed: dict[str, int] = {}
-        if rows:
-            for seq, payload_json in conn.execute(
-                "SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
-                (_EVENT_CONSUMED_KIND,),
-            ):
-                event_id = json.loads(payload_json).get("payload", {}).get("event_id")
-                if isinstance(event_id, str):
-                    consumed.setdefault(event_id, seq)
-        return cls(rows, consumed, evidence_store, emergency_log)
-
-    def before(
-        self, event: EngineEvent | None, event_id: str | None, core: object
-    ) -> list[str]:
-        """Apply every pending release recorded before ``event_id``'s receipt (``None``: every
-        release still pending — the ones after the last event, so the replayed projection ENDS
-        where the live one is), then note ``event``'s attempt as replayed. A release for an attempt
-        this replay never re-handled (outside a window) is skipped. Returns the divergence ids of
-        any release the replayed projection refused."""
-        bound = self._consumed_seq.get(event_id) if event_id is not None else None
-        ledger = getattr(core, "ledger", None)
-        diverged: list[str] = []
-        while self._pending and (
-            event_id is None or (bound is not None and self._pending[0][0] < bound)
-        ):
-            _seq, ref = self._pending.pop(0)
-            if ref.attempt_id not in self._seen_attempts:
-                # Outside a windowed replay's history (the module docstring's window caveat):
-                # the replayed projection never held this reservation — nothing to reproduce,
-                # not a divergence.
-                continue
-            if ledger is None or not ledger.release(ref):
-                marker = f"engine-release:{ref.attempt_id}"
-                record_halt(
-                    self._evidence_store,
-                    self._emergency_log,
-                    payload={
-                        "event_id": marker,
-                        "replay_result_state": "ENGINE_RELEASE_NOT_REPRODUCED",
-                        "attempt_id": ref.attempt_id,
-                    },
-                    kind=_REPLAY_DIVERGED_KIND,
-                    record_class=_REPLAY_DIVERGED_RECORD_CLASS,
-                )
-                diverged.append(marker)
-        if event is not None and event.egress_result is not None:
-            self._seen_attempts.add(event.egress_result.attempt_id)
-        return diverged
+    return EngineReleases.load(evidence_store, on_divergence=_halt)
 
 
 def replay_engine(
@@ -526,7 +454,7 @@ def replay_engine(
         )
 
     recorded = _recorded_receipts(evidence_store)
-    releases = _EngineReleases.load(evidence_store, emergency_log)
+    releases = _load_releases(evidence_store, emergency_log)
     admitted = list(inbox.replay())
     if window_events is not None:
         admitted = admitted[-window_events:]

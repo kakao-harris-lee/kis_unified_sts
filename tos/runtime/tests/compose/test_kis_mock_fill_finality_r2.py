@@ -31,6 +31,7 @@ from . import _fixtures as fx
 from ._fixtures import SCHEME
 from .test_kis_mock_e2e_honesty import _boot
 from .test_kis_mock_fill_finality_e2e import (
+    _ODNO,
     _close,
     _rcl_releases,
     _row,
@@ -164,7 +165,7 @@ def test_a_hold_no_rerun_can_change_ends_in_one_stuck_row(
 
 
 def _replayed_core(
-    runtime, *, window_events: int | None = None
+    runtime, *, window_events: int | None = None, expect_ok: bool = True
 ) -> EventCorrelatingCore:
     """A boot-replay core over ``runtime``'s durable stores — the same recipe
     ``_engine_wiring.verify_replay_or_halt`` (and ``recovery/test_drill.py``) uses."""
@@ -202,7 +203,7 @@ def _replayed_core(
         scheme=SCHEME,
         window_events=window_events,
     )
-    assert verdict.ok, verdict
+    assert verdict.ok is expect_ok, verdict
     return built[0]
 
 
@@ -335,4 +336,129 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
     assert held["reason"] == "NOT_CORROBORATED"
     assert "broker witness unavailable" in (held["detail"] or "")
     assert _rcl_releases(runtime) == 0
+    _close(runtime)
+
+
+# ===========================================================================
+# Codex r2 verdict — HIGH 1: a cancel is held, never released (scope narrowed)
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "case", ["unfilled_cancel", "cancel_after_partial", "separate_cancel_row"]
+)
+def test_a_cancel_is_one_durable_hold_no_retry_no_release(
+    case, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """``unfilled_cancel`` is the review's input: same ODNO/date/symbol, ``cncl_yn=Y``,
+    ``ord_qty`` = sealed, ``tot_ccld_qty=0``, ``rmn_qty=0``."""
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    zero = Decimal(0)
+    rows = {
+        "unfilled_cancel": [
+            _row(date=date, ord_qty=qty, filled=zero, remaining=zero, cancelled="Y")
+        ],
+        "cancel_after_partial": [
+            _row(
+                date=date, ord_qty=qty, filled=Decimal(1), remaining=zero, cancelled="Y"
+            )
+        ],
+        "separate_cancel_row": [
+            _row(date=date, ord_qty=qty, filled=zero, remaining=qty),
+            _row(
+                odno="0000004471",
+                orgn_odno=_ODNO,
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+            ),
+        ],
+    }[case]
+    orders = _script_broker(server, config_dir, date, rows)
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    report = observer.poll_once()
+    assert report.emitted == ()
+    assert len(report.held) == 1
+    (hold,) = _rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED")
+    assert hold["attempt_id"] == attempt_id and hold["observed_rows"]
+    # Nothing reached the engine, nothing proven or released, the reservation is kept.
+    assert [
+        r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
+    ] == ["ACK"]
+    assert _rows(runtime, "POSTTRADE_FINALITY_PROOF") == []
+    assert _rcl_releases(runtime) == 0
+    # No retry loop: no further read, no second hold, no finality re-run.
+    reads = len(server.requests_for(orders))
+    later = observer.poll_once()
+    assert later.polled is False and later.reprojected == ()
+    assert len(server.requests_for(orders)) == reads
+    assert len(_rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED")) == 1
+    _close(runtime)
+
+    runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert runtime2.recovery is not None and runtime2.recovery.ready is True
+    assert runtime2.fill_observer is not None
+    assert runtime2.fill_observer.poll_once().polled is False
+    assert _rcl_releases(runtime2) == 0
+    _close(runtime2)
+
+
+# ===========================================================================
+# Codex r2 verdict — HIGH 2: a release row replay cannot corroborate is a divergence
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "forged",
+    [
+        # the review's input
+        {
+            "proof_digest": "nonexistent-proof",
+            "evidence_seq": 999999,
+            "resolution_generation": -9,
+        },
+        # well-formed, pointing at evidence that is not the claimed chain
+        {
+            "proof_digest": "nonexistent-proof",
+            "evidence_seq": 1,
+            "resolution_generation": 0,
+        },
+    ],
+)
+def test_an_uncorroborated_release_row_is_a_replay_divergence(
+    forged, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    _script_broker(server, config_dir, date, [_full(date, qty)])
+    balance, _orders = _witness_paths(config_dir, date)
+    server.set_response(balance, status=500, body=None)  # release held, not committed
+    observer = runtime.fill_observer
+    assert observer is not None
+    observer.poll_once()
+    assert _rcl_releases(runtime) == 0
+    key = fx.instrument_key()
+    assert runtime.core.ledger.admits_new_exposure(key) is False
+
+    runtime.evidence_store.append(
+        {"attempt_id": attempt_id, **forged},
+        kind="ENGINE_PROJECTION_RELEASED",
+        record_class="ENGINE_PROJECTION_RELEASED",
+    )
+    replayed = _replayed_core(runtime, expect_ok=False)
+    assert replayed.ledger.admits_new_exposure(key) is False  # never applied
+    halts = [
+        r
+        for r in _rows(runtime, "REPLAY_DIVERGED")
+        if r.get("replay_result_state") == "ENGINE_RELEASE_NOT_REPRODUCED"
+    ]
+    assert [h["attempt_id"] for h in halts] == [attempt_id]
+    assert halts[0]["reason"]
     _close(runtime)

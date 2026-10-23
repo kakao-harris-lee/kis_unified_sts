@@ -33,3 +33,7 @@ overdue_after_ms: 600000
 # read (two GETs) plus evidence rows, and a hold that persists is usually an operator matter
 # (e.g. an unattributed order in the same symbol).
 finality_retry_interval_ms: 60000
+# An unresolved ACK from an EARLIER trading day (the runtime was down across the KST date
+# boundary, or the read failed at the time) is re-read under its own date at this cadence until a
+# terminal broker result shows — slower than today's poll_interval_ms, never abandoned. 10 minutes.
+prior_day_poll_interval_ms: 600000

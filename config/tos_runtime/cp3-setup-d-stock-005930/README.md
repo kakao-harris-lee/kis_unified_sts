@@ -48,6 +48,11 @@ README 가 정본이다. 여기에는 **다른 것만** 적는다.
 - **ACK 뒤 재기동 사이의 체결은 해제하지 않는다.** 엔진의 예약 투영은 부팅 때 재구성되지 않아서(J3),
   그 결과를 엔진에 넣으면 다음 부팅 replay 가 갈라진다. 관찰자는 `FILL_OBSERVER_ENGINE_RESERVATION_ABSENT`
   를 기록하고 예약을 그대로 둔다(운영자 확인 대상). 미결 ACK 는 자기 거래일로 조회한다.
+- **취소는 해제하지 않는다(issue #948).** 원주문 행의 `cncl_yn=Y` 든, `orgn_odno` 가 우리 주문을 가리키는 별도
+  행이든 `FILL_OBSERVER_CANCEL_UNSUPPORTED` 1회 기록 · 예약 유지 · 재시도 없음. 모의 취소 프로브로 행 모양을
+  잰 뒤에 만든다.
+- 전일 미결 ACK 는 자기 거래일로 `prior_day_poll_interval_ms`(10분)마다 다시 읽는다 — overdue 는 경고일 뿐
+  끝이 아니다.
 - 관찰자 호출 주기(`poll_if_due()`)는 러너가 정한다(PR-3c). 이 PR 은 부르지 않는다.
 - LONG 과 바이트 동일한 파일 몇 개(`construction.yaml` · `finality.yaml` · `monitor_coverage.yaml`)의
   주석은 `SYNTHETIC_FUTURES_ORDER` 를 말한다 — 바이트 동일 고정 때문에 그대로 두었다. 이 트리에서는

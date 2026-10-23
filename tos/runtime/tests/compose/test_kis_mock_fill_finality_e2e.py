@@ -359,9 +359,7 @@ def test_unknown_odno_is_flagged_and_blocks_release(
         "ordered_quantity_mismatch",
         "quantity_inconsistent",
         "rejected_quantity",
-        "cancelled_after_fill",
         "ambiguous_rows",
-        "derived_order_row",
     ],
 )
 def test_odd_rows_become_unknown_never_a_fill(
@@ -381,23 +379,9 @@ def test_odd_rows_become_unknown_never_a_fill(
         "rejected_quantity": [
             _row(date=date, ord_qty=qty, filled=zero, remaining=qty, rjct="1")
         ],
-        "cancelled_after_fill": [
-            _row(date=date, ord_qty=qty, filled=one, remaining=qty - 1, cancelled="Y")
-        ],
         "ambiguous_rows": [
             _row(date=date, ord_qty=qty, filled=qty, remaining=zero),
             _row(date=date, ord_qty=qty, filled=qty, remaining=zero),
-        ],
-        "derived_order_row": [
-            _row(date=date, ord_qty=qty, filled=zero, remaining=qty),
-            _row(
-                odno="0000004471",
-                orgn_odno=_ODNO,
-                date=date,
-                ord_qty=qty,
-                filled=zero,
-                remaining=qty,
-            ),
         ],
     }[odd]
     _script_broker(server, config_dir, date, rows)

@@ -306,7 +306,13 @@ def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
     runtime, attempt_id, ack_date, qty = _acked(
-        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        prior_day_poll_interval_ms=1,
     )
     _close(runtime)
     runtime2 = _boot_next_day(tmp_path, config_dir, data_dir, custody_root)
@@ -344,11 +350,12 @@ def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
     _close(runtime2)
 
 
-def test_a_prior_day_ack_is_not_polled_forever(
+def test_a_prior_day_ack_is_read_at_the_slower_cadence_not_abandoned(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """Claude review LOW 2: a previous day's ACK whose row never resolves (here: still shown
-    as working) goes overdue once, durably, and is then no longer polled."""
+    """Codex r2 MEDIUM (replaces the r1 "stop after overdue" rule): a previous day's ACK whose
+    row never resolves is re-read under its own date at ``prior_day_poll_interval_ms`` — the
+    overdue row is a warning, not an end."""
     runtime, attempt_id, ack_date, qty = _acked(
         tmp_path,
         config_dir,
@@ -357,25 +364,68 @@ def test_a_prior_day_ack_is_not_polled_forever(
         server,
         monkeypatch,
         overdue_after_ms=1,
+        prior_day_poll_interval_ms=3_600_000,
     )
     _close(runtime)
     runtime2 = _boot_next_day(tmp_path, config_dir, data_dir, custody_root)
     observer = runtime2.fill_observer
     assert observer is not None
     working = _row(date=ack_date, ord_qty=qty, filled=Decimal(0), remaining=qty)
-    _script_broker(server, config_dir, ack_date, [working])
+    ack_orders = _script_broker(server, config_dir, ack_date, [working])
 
-    assert observer.poll_once().polled is True  # the wait clock starts
-    observer.poll_once()  # past overdue_after_ms
-    (overdue,) = _rows(runtime2, "FILL_OBSERVER_OVERDUE")
-    assert (overdue["attempt_id"], overdue["trading_date"]) == (attempt_id, ack_date)
-
-    before = len(server.all_requests)
+    assert observer.poll_once().polled is True
+    reads = len(server.requests_for(ack_orders))
+    # Inside the slower cadence: no further read of the earlier date.
     assert observer.poll_once().polled is False
-    assert observer.poll_once().polled is False
-    assert len(server.all_requests) == before
-    assert len(_rows(runtime2, "FILL_OBSERVER_OVERDUE")) == 1
+    assert len(server.requests_for(ack_orders)) == reads
+    # Past it: read again — never abandoned.
+    observer._last_prior_day_read_ms.clear()  # noqa: SLF001 - advance the cadence clock
+    assert observer.poll_once().polled is True
+    assert len(server.requests_for(ack_orders)) == reads + 1
     _close(runtime2)
+
+
+def test_overdue_then_date_change_then_the_read_recovers_and_the_fill_is_observed(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Codex r2 MEDIUM input: OVERDUE on day D, the fill happens during a GET outage, the date
+    rolls to D+1 (same process — the engine still holds the reservation), the GET recovers:
+    the fill is read under D and released once."""
+    runtime, attempt_id, ack_date, qty = _acked(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        overdue_after_ms=1,
+        prior_day_poll_interval_ms=1,
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+    _balance, ack_orders = _witness_paths(config_dir, ack_date)
+    server.set_response(ack_orders, status=500, body=None)  # outage
+    observer.poll_once()
+    observer.poll_once()
+    (overdue,) = _rows(runtime, "FILL_OBSERVER_OVERDUE")
+    assert overdue["attempt_id"] == attempt_id
+
+    observer.today = lambda: _next_day(ack_date)  # the KST date rolls over
+    assert observer.poll_once().read_failed is True  # still read under D, still failing
+
+    _script_broker(
+        server,
+        config_dir,
+        ack_date,
+        [_row(date=ack_date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
+    )
+    observer._last_prior_day_read_ms.clear()  # noqa: SLF001 - advance the cadence clock
+    report = observer.poll_once()
+    assert [(k, d) for _a, k, d in report.emitted] == [
+        (EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
+    ]
+    assert _rcl_releases(runtime) == 1
+    _close(runtime)
 
 
 def test_an_ack_whose_odno_has_no_usable_digits_is_never_tracked(

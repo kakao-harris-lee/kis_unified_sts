@@ -46,11 +46,16 @@ and the release reconciliation then sees it as an orphan broker order, which blo
 **Fail closed.** A row that does not name this attempt's instrument (``pdno``; review HIGH 2 — the
 witness refuses such a read outright as well), a row whose ``ord_qty`` is not the attempt's sealed quantity
 (``SEND_SEALED``), whose quantities do not parse or do not add up (``tot_ccld_qty + rmn_qty !=
-ord_qty``), a rejected quantity, a cancel after a fill, two rows for one ODNO, a
-cancel/modify row pointing at the order (``orgn_odno``), or a filled quantity smaller than one
+ord_qty``), a rejected quantity, two rows for one ODNO, or a filled quantity smaller than one
 already reported → ``UNKNOWN`` (the engine quarantines). Never a guessed fill. No row for the ODNO
 yet is not evidence of anything: nothing is emitted, and after ``overdue_after_ms`` one
-``FILL_OBSERVER_OVERDUE`` row is recorded.
+``FILL_OBSERVER_OVERDUE`` row is recorded — a warning; reading continues.
+
+**Cancels are held, not released (Codex r2 HIGH 1, scope narrowed by the operator).** Any cancel
+— ``cncl_yn=Y`` on the order's row, or a separate row whose ``orgn_odno`` is the order — gets one
+durable ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` row with the observed rows; nothing is fed to the
+engine or released, and polling stops. The cancel → non-execution proof → release path waits for a
+모의 cancel probe to measure the real row shape.
 
 GET only, mock host only: the reads go through
 :meth:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness.order_rows`, whose host and TR id are
@@ -81,6 +86,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "FILL_OBSERVED_KIND",
+    "FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND",
     "FILL_OBSERVER_CONFIG_NAME",
     "FILL_OBSERVER_ACK_UNTRACKABLE_KIND",
     "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND",
@@ -105,6 +111,17 @@ FILL_OBSERVER_OVERDUE_KIND = "FILL_OBSERVER_OVERDUE"
 FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"
 FILL_OBSERVER_ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"
 FILL_OBSERVER_FINALITY_STUCK_KIND = "FILL_OBSERVER_FINALITY_STUCK"
+FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"
+
+#: Classifier reasons that are a cancel (Codex r2 HIGH 1, operator-narrowed scope): an unfilled
+#: cancel, a cancel after a partial fill, and a separate row whose ``orgn_odno`` points at the
+#: order (how a KIS cancel/modify most likely arrives — unmeasured on 모의). The cancel →
+#: non-execution proof → release path is NOT built in PR-3b: such an attempt gets one durable
+#: ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` hold with the observed rows — nothing is fed to the engine,
+#: nothing released, no retry — until a 모의 cancel probe measures the real row shape (issue #948).
+_CANCEL_REASONS = frozenset(
+    {"cancelled_unfilled", "cancelled_after_fill", "derived_order_row"}
+)
 
 #: Release hold reasons a finality re-run cannot change (PR-3b r2 claim 1): the re-run stops and
 #: one ``FILL_OBSERVER_FINALITY_STUCK`` row names the reason. Every other hold — reconciliation
@@ -149,12 +166,16 @@ class FillObserverConfig:
             ``FILL_OBSERVER_OVERDUE`` row is recorded (record only — nothing is guessed).
         finality_retry_interval_ms: Minimum spacing between two finality re-runs for one
             attempt whose terminal result is recorded but whose release has not committed.
+        prior_day_poll_interval_ms: Minimum spacing between two reads of an unresolved ACK from
+            an EARLIER trading day (Codex r2 MEDIUM): it is re-read under its own date until a
+            terminal broker result shows — slower than today's cadence, never abandoned.
     """
 
     witness_fields: dict[str, Any]
     poll_interval_ms: int
     overdue_after_ms: int
     finality_retry_interval_ms: int
+    prior_day_poll_interval_ms: int
 
 
 _WITNESS_KEYS = (
@@ -205,6 +226,9 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         overdue_after_ms=_positive_int(raw, "overdue_after_ms", path),
         finality_retry_interval_ms=_positive_int(
             raw, "finality_retry_interval_ms", path
+        ),
+        prior_day_poll_interval_ms=_positive_int(
+            raw, "prior_day_poll_interval_ms", path
         ),
     )
 
@@ -258,9 +282,9 @@ class _Tracked:
     released: bool = False
     #: A finality re-run hit a permanent hold; recorded once, never re-run again.
     stuck: bool = False
-    #: Terminal only by an observation the engine could not take (no reservation held) — never
-    #: re-projected: there is no engine receipt to project finality from.
-    held_absent: bool = False
+    #: Terminal by a HOLD, not by an engine receipt — the engine held no reservation for it, or
+    #: the broker showed a cancel — so never re-projected (there is no receipt to project from).
+    held_terminal: bool = False
     #: ``(kind, filled, remaining)`` already recorded as ``ENGINE_RESERVATION_ABSENT``.
     absent_signatures: set[tuple[str, str | None, str | None]] = field(
         default_factory=set
@@ -311,6 +335,7 @@ class KisMockFillObserver:
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
     _untrackable_recorded: set[str] = field(default_factory=set, init=False)
+    _last_prior_day_read_ms: dict[str, int] = field(default_factory=dict, init=False)
     _first_pending_ms: dict[str, int] = field(default_factory=dict, init=False)
     _overdue_recorded: set[str] = field(default_factory=set, init=False)
     _last_read_failed: bool = field(default=False, init=False)
@@ -332,9 +357,7 @@ class KisMockFillObserver:
         No GET at all when no ACKed attempt is outstanding on the broker side."""
         tracked = self._tracked_attempts()
         reprojected = self._reproject_unreleased(tracked)
-        pending = [
-            t for t in tracked.values() if not t.terminal and not self._given_up(t)
-        ]
+        pending = [t for t in tracked.values() if not t.terminal and self._due(t)]
         if not pending:
             return FillPollReport(polled=False, reprojected=reprojected)
         self._last_poll_ms = self.monotonic.now_ms()
@@ -361,17 +384,20 @@ class KisMockFillObserver:
             held=tuple(held),
         )
 
-    def _given_up(self, attempt: _Tracked) -> bool:
-        """An ACK from an EARLIER trading day that is already overdue is no longer polled (Claude
-        review LOW 2): a KRX day order cannot still be working, so whatever its row says will not
-        change by polling. The durable ``FILL_OBSERVER_OVERDUE`` row is the explicit condition left
-        for the operator; today's attempts keep being polled however long they wait."""
+    def _due(self, attempt: _Tracked) -> bool:
+        """Today's ACKs are read every poll. An unresolved ACK from an EARLIER trading day is
+        re-read under its own date at ``prior_day_poll_interval_ms`` (Codex r2 MEDIUM): an
+        overdue row is a warning, not an end — the attempt is only done on a terminal broker
+        result (or a recorded hold)."""
         today = self.today()
         if today is None or attempt.trading_date >= today:
+            return True
+        now = self.monotonic.now_ms()
+        last = self._last_prior_day_read_ms.get(attempt.attempt_id)
+        if last is not None and now - last < self.config.prior_day_poll_interval_ms:
             return False
-        if attempt.attempt_id not in self._overdue_recorded:
-            self._overdue_recorded |= self._recorded_overdue()
-        return attempt.attempt_id in self._overdue_recorded
+        self._last_prior_day_read_ms[attempt.attempt_id] = now
+        return True
 
     def _read(
         self, date: str, attempts: list[_Tracked]
@@ -412,6 +438,10 @@ class KisMockFillObserver:
             if payload is None:
                 self._check_overdue(attempt)
                 continue
+            if reason in _CANCEL_REASONS:
+                self._hold_cancel(attempt, rows, reason)
+                held.append((attempt.attempt_id, payload.kind))
+                continue
             if not self.engine_holds(attempt.attempt_id):
                 self._hold_absent(attempt, payload, reason)
                 held.append((attempt.attempt_id, payload.kind))
@@ -434,6 +464,40 @@ class KisMockFillObserver:
             disposition = self.result_sink(payload)
             emitted.append((attempt.attempt_id, payload.kind, disposition))
         return emitted
+
+    def _hold_cancel(
+        self, attempt: _Tracked, rows: tuple[KisOrderRow, ...], reason: str
+    ) -> None:
+        """One durable ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` hold with what the broker showed
+        (the ``_CANCEL_REASONS`` note): the reservation stays held, polling stops."""
+        key = odno_key(attempt.odno)
+        observed = [
+            {
+                "odno": r.odno,
+                "orgn_odno": r.orgn_odno,
+                "ord_dt": r.ord_dt,
+                "ord_qty": _text(r.ord_qty),
+                "tot_ccld_qty": _text(r.tot_ccld_qty),
+                "rmn_qty": _text(r.rmn_qty),
+                "rjct_qty": _text(r.rjct_qty),
+                "cancelled": r.cancelled,
+            }
+            for r in rows
+            if r.ord_dt == attempt.trading_date
+            and key in (odno_key(r.odno), odno_key(r.orgn_odno))
+        ]
+        self._record(
+            FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND,
+            {
+                "attempt_id": attempt.attempt_id,
+                "broker_execution_id": attempt.odno,
+                "trading_date": attempt.trading_date,
+                "reason": reason,
+                "observed_rows": observed,
+            },
+        )
+        attempt.terminal = True
+        attempt.held_terminal = True
 
     def _hold_absent(
         self, attempt: _Tracked, payload: EgressResultPayload, reason: str
@@ -473,7 +537,7 @@ class KisMockFillObserver:
             if (
                 not attempt.terminal
                 or attempt.released
-                or attempt.held_absent
+                or attempt.held_terminal
                 or attempt.stuck
             ):
                 continue
@@ -617,7 +681,17 @@ class KisMockFillObserver:
                 attempt.terminal
             ):
                 attempt.terminal = True
-                attempt.held_absent = True
+                attempt.held_terminal = True
+        for (payload_json,) in self.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ?",
+            (FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND,),
+        ):
+            attempt = tracked.get(
+                str(json.loads(payload_json).get("payload", {}).get("attempt_id"))
+            )
+            if attempt is not None and not attempt.released:
+                attempt.terminal = True
+                attempt.held_terminal = True
 
     def _sealed_quantities(self) -> dict[str, Decimal | None]:
         rows = self.evidence_store.connection.execute(
