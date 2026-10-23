@@ -152,8 +152,23 @@ def _is_mock_class(scope: BrokerScope, instance: InstanceDocument | None) -> boo
     return (
         mock_order_without_position_or_cash(scope.capability_tuples)
         and instance is not None
+        and instance.environment_class_host_bound
         and instance.profile.environment_class is BrokerEnvironment.BROKER_SIMULATION
     )
+
+
+def _kernel_profile(instance: InstanceDocument) -> BrokerCapabilityProfile | None:
+    """The profile handed to the kernel gateway — none at all when it carries an
+    ``environment_class`` the loader did not tie to the document's host (#932 Codex r3).
+
+    The kernel cannot tell where a profile was built; the runtime therefore never hands it an
+    un-host-checked class claim. Without a profile ``capability_admissible`` is PROHIBITED, so
+    a production profile labelled simulation outside the loader is DENIED at item 6 instead
+    of taking the option (a) skip."""
+    profile = instance.profile
+    if profile.environment_class is None or instance.environment_class_host_bound:
+        return profile
+    return None
 
 
 def derive_item6_item12(
@@ -241,7 +256,7 @@ def derive_item6_item12(
         )
 
     broker_capability_profile = (
-        instance.profile if broker_reaching and instance is not None else None
+        _kernel_profile(instance) if broker_reaching and instance is not None else None
     )
     broker_profile_version_current = version_current if broker_reaching else None
 
