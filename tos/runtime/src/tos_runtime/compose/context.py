@@ -786,6 +786,17 @@ class ComposeContextResolver:
             **self.safety_mesh_deferred_fields(),
         }
 
+    def _capability_scope_fields(self) -> dict[str, Any]:
+        """The active scope's tuples plus the binding tables that tie them to the attached
+        profile's key — the kernel judges item 6's option (a) skip from all three (#932
+        review MEDIUM: tuples alone are not bound to the attempt's own profile)."""
+        scope = self.broker_scopes.active_scope
+        return {
+            "capability_tuples": scope.capability_tuples,
+            "capability_environment_binding": tuple(scope.environment_binding.items()),
+            "capability_asset_binding": tuple(scope.asset_binding.items()),
+        }
+
     def _item6_item12_fields(self) -> Item6Item12Fields:
         """Items 6/12's derived fields (TOS Phase 4 plan §2 decision 4) —
         the ONE call site :meth:`_egress_gate_stand_in_fields` and
@@ -877,7 +888,7 @@ class ComposeContextResolver:
             broker_capability_profile=item6item12.broker_capability_profile,
             required_capability_set=item6item12.required_capability_set,
             broker_profile_version_current=(item6item12.broker_profile_version_current),
-            capability_tuples=self.broker_scopes.active_scope.capability_tuples,
+            **self._capability_scope_fields(),
             idempotency_proven=None,
             # Items 6/12/16 stand-ins: real runtime owners now (item 12 --
             # tos_runtime.calendar.owner.SessionFactsOwner, TOS Phase 5 W5;

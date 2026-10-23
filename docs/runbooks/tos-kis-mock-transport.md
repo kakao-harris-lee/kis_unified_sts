@@ -94,12 +94,12 @@ named-TBD `null` 상태로 유지된다 — 로더가 부팅을 거부하는 것
 | `token_path` | `/oauth2/tokenP` | 공식 SDK `open-trading-api/examples_llm/auth/auth_token/auth_token.py:28`(`API_URL`) |
 | `tr_id_buy` (모의) | `VTTC0012U` | `order_cash.py:103-118`(`env_dv=="demo"` 분기: `ord_dv=="buy"` → `VTTC0012U`) · N-17 메모("주식 주문 TR이 `TTTC0011U`(매도)/`TTTC0012U`(매수)/`TTTC0013U`(정정취소) 및 모의 `VTTC0011U`/`VTTC0012U`/`VTTC0013U`로 확인됨") |
 | `tr_id_sell` (모의) | `VTTC0011U` | `order_cash.py:103-118`(`ord_dv=="sell"` → `VTTC0011U`) |
-| `field_map.account` → `CANO` | 종합계좌번호(seal 소싱, §3) | `order_cash.py:121`(`"CANO": cano`) |
+| `field_map.account` → `CANO` | 종합계좌번호 **8자리** — 봉인된 계좌(`8-2`, 예 `88888888-01`)의 앞 8자리(seal 소싱, §3). 코덱과 잔고 조회가 같은 파서(`transport/kis_mock/account.py::split_kis_account`)로 나눈다(#932 Codex r1 HIGH) | `order_cash.py:121`(`"CANO": cano`) · 공식 예제 docstring `(EX. "CANO" : "12345678", "ACNT_PRDT_CD": "01",...)` |
 | `field_map.instrument` → `PDNO` | 상품번호(종목코드) | `order_cash.py:123`(`"PDNO": pdno`) |
 | `field_map.quantity` → `ORD_QTY` | 주문수량(문자열) | `order_cash.py:125` · docstring "String으로 전달해야 함" |
 | `field_map.price` → `ORD_UNPR` | 주문단가(문자열) | `order_cash.py:126` |
 | `price_scale` | **`100`**(트리의 `venue_constraint_policy.yaml::_runtime.price_scale` 과 **같은 값** — 다르거나 트리에 없으면 kis-mock 부팅 거부) | 모든 CP-3 트리는 `close_x100`(×100 정수) 가격으로 주문을 봉인한다 — 270,000원 종가 = `27000000`. 코덱은 `ORD_UNPR = 가격 / price_scale` 을 보내고, 몫이 정수(원 단위)가 아니면 반올림하지 않고 거부한다(`transport/kis_mock/codec.py::_price_to_kis_string`). 기본값 없음(누락 = 로더 거부). 트리 값과의 대조는 `compose/_venue_wiring.py::_cross_check_price_scale`(PR #927 리뷰 M1: 1000 을 쓰면 27,000원이 거부 없이 나가던 구멍) |
-| `static_body_fields.ACNT_PRDT_CD` | 계좌상품코드(2자리, 배포별 상수) | N-17 메모 body 9필드 나열 — 값은 계좌 개설 시 부여, **운영자 승인 대기** |
+| `static_body_fields.ACNT_PRDT_CD` | 계좌상품코드(2자리, 배포별 상수) — **봉인된 계좌의 뒤 2자리와 같아야 한다**(다르면 코덱이 송신 거부) | N-17 메모 body 9필드 나열 — 값은 계좌 개설 시 부여, **운영자 승인 대기** |
 | `static_body_fields.ORD_DVSN` | 지정가 `"00"` 제안 | `inquire_psbl_order` docstring "`ORD_DVSN`:00(지정가)" — 시장가 `"01"`은 별도 승인 필요 |
 | `static_body_fields.EXCG_ID_DVSN_CD` | `"KRX"` 제안 | `order_cash.py` docstring "[필수] 거래소ID구분코드 (ex. KRX)" — NXT/SOR 라우팅은 후속 |
 | `static_body_fields.SLL_TYPE` | `""` 제안(매수 시 미사용) | `order_cash.py:34` 기본값 `sll_type: str = ""` |

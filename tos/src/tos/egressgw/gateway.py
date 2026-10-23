@@ -90,6 +90,7 @@ from tos.brokercap import (
     Admissibility,
     UncertainSendVerdict,
     capability_admissible,
+    endpoint_binding_from_profile_ok,
     environment_binding_ok,
     mock_order_without_position_or_cash,
     same_order_retry_allowed,
@@ -563,6 +564,34 @@ def _check_commitment_epoch(
     )
 
 
+def _mock_class_bound_to_profile(context: SendBoundaryContext) -> bool:
+    """Option (a)'s profile-check skip, bound to the attempt's own profile (#932 MEDIUM).
+
+    The tuple class alone is a caller-supplied fact; beside a production profile it would
+    skip the very check that profile needs. So every tuple must also BIND — through the
+    context's own binding tables, by :func:`~tos.brokercap.endpoint_binding_from_profile_ok` —
+    to the attached profile's key. A ``BROKER_SIMULATION`` tuple maps to the simulation
+    profile environment, so a production profile does not bind and takes the normal check.
+    No profile, or empty tables, binds nothing (fail closed).
+    """
+    profile = context.broker_capability_profile
+    if profile is None or not mock_order_without_position_or_cash(
+        context.capability_tuples
+    ):
+        return False
+    environment_binding = dict(context.capability_environment_binding)
+    asset_binding = dict(context.capability_asset_binding)
+    return all(
+        endpoint_binding_from_profile_ok(
+            capability_tuple,
+            profile.profile_key,
+            environment_binding=environment_binding,
+            asset_binding=asset_binding,
+        )
+        for capability_tuple in context.capability_tuples
+    )
+
+
 def _check_allowance(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -583,8 +612,9 @@ def _check_allowance(
       with no position/cash effect (:func:`~tos.brokercap.mock_order_without_position_or_cash`,
       operator decision 2026-10-23, PR-3 option (a)): it skips the profile check. The rule
       reads the context's own kernel-typed tuples, so a ``REAL_ORDER``, ``BROKER_PRODUCTION``
-      or ``POSITION_OR_CASH`` tuple can never take this path. The allowance flags below still
-      gate it.
+      or ``POSITION_OR_CASH`` tuple can never take this path, and neither can mock tuples
+      beside a profile they do not bind to (:func:`_mock_class_bound_to_profile`). The
+      allowance flags below still gate it.
 
     The allowance flags are injected facts, never derived here: the caller (compose) is
     responsible for deriving them from the active Broker Scope and its bound Broker Capability
@@ -596,10 +626,10 @@ def _check_allowance(
     item = SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY
     if applicability is not BrokerApplicability.NON_BROKER_SYNTHETIC:
         # Operator decision 2026-10-23 (PR-3 option (a), "K"): a scope whose every tuple is a
-        # BROKER_SIMULATION mock order or read with no position/cash effect skips the profile
-        # check below — judged from the context's own kernel-typed tuples, never a flag. The
-        # runtime's allowance flag is still required (checked after this block).
-        if not mock_order_without_position_or_cash(context.capability_tuples):
+        # BROKER_SIMULATION mock order or read with no position/cash effect AND binds to the
+        # attached profile's own key skips the profile check below — judged from kernel-typed
+        # tuples, never a flag. The allowance flags are still required (after this block).
+        if not _mock_class_bound_to_profile(context):
             admissibility = capability_admissible(
                 context.broker_capability_profile,
                 None if context.action_class is None else context.action_class.value,

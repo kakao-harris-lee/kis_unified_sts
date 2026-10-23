@@ -158,6 +158,9 @@ def _sealed_mock_deployment(
             "output": {"ODNO": _ODNO},
         },
     )
+    # The fake rejects any CANO / ACNT_PRDT_CD that is not this 8-2 split of the sealed
+    # account, on the order POST and the balance GET alike (#932 Codex r1 HIGH).
+    server.require_account(fx.ACCOUNT[:8], fx.ACCOUNT[-2:])
     _patch_instance_documents_to_host(monkeypatch, mock_rest_base=server.rest_base)
     _activate_and_admit(config_dir, custody_root)
     fx.write_kis_mock_transport_config(
@@ -278,14 +281,19 @@ def _independent_wire_digest(
     suggested fix) rather than read back off the loaded ``KisMockTransportConfig`` object — this
     suite's one config fixture is the sole source of truth for them.
     """
+    # KIS order_cash body (official example: "CANO": "12345678", "ACNT_PRDT_CD": "01"): the
+    # sealed 8-2 account split by hand here — NOT through split_kis_account — so a codec that
+    # sent the whole sealed string as CANO (#932 Codex r1 HIGH) disagrees with this oracle.
+    cano, acnt_prdt_cd = account[:8], account[-2:]
+    assert account == f"{cano}-{acnt_prdt_cd}", account
     fields = {
-        "CANO": account,
+        "CANO": cano,
         "PDNO": instrument,
         "ORD_QTY": format(Decimal(quantity), "f"),
         # ×100 sealed price -> whole KRW: fx.write_kis_mock_transport_config's
         # `price_scale: 100`, divided here by hand rather than through the codec.
         "ORD_UNPR": format(Decimal(price) / Decimal(100), "f"),
-        "ACNT_PRDT_CD": "01",
+        "ACNT_PRDT_CD": acnt_prdt_cd,
         "ORD_DVSN": "00",
         "EXCG_ID_DVSN_CD": "KRX",
         "SLL_TYPE": "",
@@ -328,6 +336,11 @@ def _assert_byte_seal_identity_and_result_ordering(
     sealed = Decimal(seal_payload["outbound_price"])
     assert Decimal(wire["ORD_UNPR"]) * 100 == sealed
     assert Decimal(wire["ORD_UNPR"]) != sealed
+    # #932 Codex r1 HIGH, on the same bytes: CANO is the sealed account's first 8 digits and
+    # ACNT_PRDT_CD its last 2 — never the whole sealed string in CANO — while the seal itself
+    # keeps the whole account (it covers both halves).
+    assert seal_payload["account"] == f"{wire['CANO']}-{wire['ACNT_PRDT_CD']}"
+    assert len(wire["CANO"]) == 8 and len(wire["ACNT_PRDT_CD"]) == 2
 
     assert _evidence_kind_count(runtime, "EGRESS_RESULT_RECORDED") == 1
     network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")

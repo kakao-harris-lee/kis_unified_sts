@@ -59,11 +59,12 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1776
+  measured: 1806
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 1776→1806(+30)**: `_mock_class_bound_to_profile` 신설(도크스트링 + endpoint_binding_from_profile_ok 대조) — mock 튜플이 첨부 프로필 키에 묶일 때만 건너뛴다 + import 1줄 + 주석 정정.
     **2026-10-23 PR-3a option (a) "K" 재등재 1764→1776(+12)**: `_check_allowance` 의 option (a) 분기(mock 클래스면 프로필 검사 생략) 주석 4줄 + 블록 들여쓰기 + 도크스트링 항목 6줄 + import 1줄.
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 재등재(독립 리뷰 M2) — measured 1712→1792, 등재 이후 커밋들에서 실측이
@@ -242,11 +243,12 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 239
+  measured: 245
   owner: tos-kernel
   decomposition_order: 15
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 239→245(+6)**: `capability_environment_binding` · `capability_asset_binding` 매개변수 2줄 + 전달 2줄 + Args 2줄.
     **2026-10-23 PR-3a option (a) "K" 재등재 235→239(+4)**: `capability_tuples` 매개변수 1줄 + 전달 1줄 + Args 2줄.
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 14→15(measured 불변, __call__ 재정렬로 인한 이동).
@@ -708,11 +710,12 @@ exceptions:
     직전(래치는 이 이벤트의 EVENT_CONSUMED 영수증이 이미 커밋된 뒤에만 그 seq 를
     참조해야 하므로), measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1083
+  measured: 1098
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 1083→1098(+15)**: 같은 두 필드(주석 5줄) + import 2줄 + 팩토리 매개변수 · 전달 · Args.
     **2026-10-23 PR-3a option (a) "K" 재등재 1070→1083(+13)**: `SendBoundaryContext.capability_tuples` 필드(주석 4줄) + import 확장 + 팩토리 매개변수·전달·Args.
     신규 등재(TOS Phase 3 wave 3 KW3-GW, 2026-09-09) — 뮤테이션 매트릭스 레인
     발견(F-K, ``ffaafcb4``): step 15-19 순서가 증거로 감사되지 않았다.

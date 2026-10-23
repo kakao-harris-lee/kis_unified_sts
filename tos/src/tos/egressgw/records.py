@@ -41,7 +41,9 @@ from typing import ClassVar
 from pydantic import model_validator
 
 from tos.brokercap import (
+    AssetScope,
     BrokerCapabilityProfile,
+    BrokerEnvironment,
     CapabilityTuple,
     RequiredCapabilitySet,
 )
@@ -772,6 +774,13 @@ class SendBoundaryContext(FrozenModel):
     #: :func:`~tos.brokercap.mock_order_without_position_or_cash` admits them — judged here,
     #: from kernel enums, never from a caller-supplied flag. ``()`` admits nothing.
     capability_tuples: tuple[CapabilityTuple, ...] = ()
+    #: The scope's environment / asset binding tables (``BrokerEnvironment`` -> profile-key
+    #: ``environment``; ``AssetScope`` -> ``instrument_class``). The mock-class skip holds only
+    #: when every tuple BINDS, through these, to :attr:`broker_capability_profile`'s own key —
+    #: so mock tuples beside a production profile are refused (#932 review MEDIUM). ``()``
+    #: binds nothing.
+    capability_environment_binding: tuple[tuple[BrokerEnvironment, str], ...] = ()
+    capability_asset_binding: tuple[tuple[AssetScope, str], ...] = ()
     #: brokercap ``same_order_retry_allowed`` witness — positively proven deterministic
     #: idempotency for this exact request identity and retry window. ``None`` ⇒ no blind retry.
     idempotency_proven: bool | None = None
@@ -891,6 +900,8 @@ def send_boundary_context(
     required_capability_set: RequiredCapabilitySet | None = None,
     broker_profile_version_current: bool | None = None,
     capability_tuples: tuple[CapabilityTuple, ...] = (),
+    capability_environment_binding: tuple[tuple[BrokerEnvironment, str], ...] = (),
+    capability_asset_binding: tuple[tuple[AssetScope, str], ...] = (),
     idempotency_proven: bool | None = None,
     account_instrument_action_allowed: bool | None = None,
     max_quantity_within_allowance: bool | None = None,
@@ -986,6 +997,8 @@ def send_boundary_context(
         broker_profile_version_current: Profile version currency (items 6 / 12).
         capability_tuples: The active scope's capability tuples — item 6's option (a) class
             test (:func:`~tos.brokercap.mock_order_without_position_or_cash`).
+        capability_environment_binding: The scope's environment binding table (item 6).
+        capability_asset_binding: The scope's asset binding table (item 6).
         idempotency_proven: The positive same-order-retry witness (items 6 / 12).
         account_instrument_action_allowed: ⚠ provisional allowance stand-in (item 6).
         max_quantity_within_allowance: ⚠ provisional allowance stand-in (item 6).
@@ -1043,6 +1056,8 @@ def send_boundary_context(
         required_capability_set=required_capability_set,
         broker_profile_version_current=broker_profile_version_current,
         capability_tuples=capability_tuples,
+        capability_environment_binding=capability_environment_binding,
+        capability_asset_binding=capability_asset_binding,
         idempotency_proven=idempotency_proven,
         account_instrument_action_allowed=account_instrument_action_allowed,
         max_quantity_within_allowance=max_quantity_within_allowance,
