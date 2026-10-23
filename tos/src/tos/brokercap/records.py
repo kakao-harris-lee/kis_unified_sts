@@ -29,10 +29,17 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from tos.brokercap._base import FrozenModel, IndependentIdArtifact
+from pydantic import model_validator
+
+from tos.brokercap._base import (
+    ArtifactIntegrityError,
+    FrozenModel,
+    IndependentIdArtifact,
+)
 from tos.brokercap.vocabulary import (
     AssuranceLevel,
     AssuranceSource,
+    BrokerEnvironment,
     CapabilityDimension,
     CapabilityStatus,
     ConformanceClass,
@@ -301,6 +308,10 @@ class UncertainSendVerdict(FrozenModel):
 # Digest-bound append-only Broker Capability Profile
 # ===========================================================================
 
+#: ``LiveScope.mode`` of a scope that authorizes no live trading (the value the profile
+#: INSTANCE documents carry — ``live_scope._model_view.mode``).
+_NON_LIVE_MODE = "NON_LIVE"
+
 
 class BrokerCapabilityProfile(IndependentIdArtifact):
     """An append-only, version-immutable Broker Capability Profile (ADR-002-004 §7; §21).
@@ -344,6 +355,7 @@ class BrokerCapabilityProfile(IndependentIdArtifact):
             "live_scope",
             "final_quantity_proof_rules",
             "evidence_package_ref",
+            "environment_class",
         }
     )
 
@@ -358,9 +370,36 @@ class BrokerCapabilityProfile(IndependentIdArtifact):
     live_scope: LiveScope | None = None
     final_quantity_proof_rules: tuple[FinalQuantityProofRule, ...] = ()
     evidence_package_ref: str | None = None
+    #: The broker-agnostic environment class THIS profile instance describes (#932 Codex r2):
+    #: ``BROKER_SIMULATION`` for a broker's own mock/paper endpoint, ``BROKER_PRODUCTION`` for
+    #: its real one. Digest-covered, so an issued profile commits to it; declared by the
+    #: profile INSTANCE document itself, never by a send-time context. ``None`` = undeclared,
+    #: which no environment-class rule ever reads as simulation. A ``BROKER_SIMULATION``
+    #: profile must also declare a non-live scope (:meth:`_simulation_is_non_live`).
+    environment_class: BrokerEnvironment | None = None
 
     # ---- ledger-placement (self-excluded from the digest, §2.3/§3.2) ----------
     profile_order: int | None = None
+
+    @model_validator(mode="after")
+    def _simulation_is_non_live(self) -> BrokerCapabilityProfile:
+        """A profile claiming the simulation class may not also describe live trading.
+
+        The class is the one fact the egress gateway's option (a) item-6 relaxation reads
+        (``tos.egressgw.gateway``), so a profile carrying it must be internally consistent
+        with "no real money": its live scope present, ``mode`` exactly ``NON_LIVE`` and no
+        live action class. A production profile relabelled simulation but still declaring
+        live action classes cannot be constructed.
+        """
+        if self.environment_class is not BrokerEnvironment.BROKER_SIMULATION:
+            return self
+        scope = self.live_scope
+        if scope is None or scope.mode != _NON_LIVE_MODE or scope.action_classes:
+            raise ArtifactIntegrityError(
+                "BrokerCapabilityProfile: environment_class BROKER_SIMULATION requires a "
+                f"live_scope with mode {_NON_LIVE_MODE!r} and no live action classes"
+            )
+        return self
 
     def declaration_for(
         self, dimension: CapabilityDimension

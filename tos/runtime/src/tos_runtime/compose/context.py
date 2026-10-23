@@ -787,15 +787,10 @@ class ComposeContextResolver:
         }
 
     def _capability_scope_fields(self) -> dict[str, Any]:
-        """The active scope's tuples plus the binding tables that tie them to the attached
-        profile's key — the kernel judges item 6's option (a) skip from all three (#932
-        review MEDIUM: tuples alone are not bound to the attempt's own profile)."""
-        scope = self.broker_scopes.active_scope
-        return {
-            "capability_tuples": scope.capability_tuples,
-            "capability_environment_binding": tuple(scope.environment_binding.items()),
-            "capability_asset_binding": tuple(scope.asset_binding.items()),
-        }
+        """The active scope's tuples — the kernel judges item 6's option (a) skip from them
+        AND the attached profile's own ``environment_class`` (#932 Codex r2: nothing in the
+        context may classify a profile, so no binding table travels with the send)."""
+        return {"capability_tuples": self.broker_scopes.active_scope.capability_tuples}
 
     def _item6_item12_fields(self) -> Item6Item12Fields:
         """Items 6/12's derived fields (TOS Phase 4 plan §2 decision 4) —

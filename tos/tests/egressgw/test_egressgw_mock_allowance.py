@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from tos.brokercap import (
     AssetScope,
     AuthorizationClass,
@@ -25,20 +26,32 @@ from tos.egressgw import SendBoundaryContext
 from tos.egressgw.gateway import _check_allowance
 from tos.egressgw.vocabulary import BrokerApplicability, VerifyOutcome
 
-from ..brokercap._brokercap_strategies import issue_profile, profile_key
+from ..brokercap._brokercap_strategies import issue_profile, live_scope, profile_key
 
-#: The binding tables a scope carries: BROKER_SIMULATION -> the simulation profile environment.
-_ENV_BINDING = (
-    (BrokerEnvironment.BROKER_SIMULATION, "SIM"),
-    (BrokerEnvironment.BROKER_PRODUCTION, "PROD"),
-)
-_ASSET_BINDING = ((AssetScope.STOCK, "EQ"),)
+#: A simulation-class profile (its own environment_class, a non-live scope) and a production
+#: one. The profile key strings are opaque: nothing reads them to classify the profile.
+_NON_LIVE = live_scope(mode="NON_LIVE", action_classes=())
 _SIM_PROFILE = issue_profile(
-    profile_key=profile_key(environment="SIM", instrument_class="EQ")
+    profile_key=profile_key(environment="SIM", instrument_class="EQ"),
+    live_scope=_NON_LIVE,
+    environment_class=BrokerEnvironment.BROKER_SIMULATION,
 )
 _PROD_PROFILE = issue_profile(
-    profile_key=profile_key(environment="PROD", instrument_class="EQ")
+    profile_key=profile_key(environment="PROD", instrument_class="EQ"),
+    live_scope=_NON_LIVE,
+    environment_class=BrokerEnvironment.BROKER_PRODUCTION,
 )
+#: A production profile whose KEY strings say "SIM" — the key is never the classifier.
+_PROD_PROFILE_NAMED_SIM = issue_profile(
+    profile_key=profile_key(environment="SIM", instrument_class="EQ"),
+    live_scope=_NON_LIVE,
+    environment_class=BrokerEnvironment.BROKER_PRODUCTION,
+)
+_UNDECLARED_PROFILE = issue_profile(
+    profile_key=profile_key(environment="SIM", instrument_class="EQ"),
+    live_scope=_NON_LIVE,
+)
+
 
 _MOCK_SEND = CapabilityTuple(
     environment=BrokerEnvironment.BROKER_SIMULATION,
@@ -54,8 +67,6 @@ def _judge(
     *,
     applicability: BrokerApplicability = BrokerApplicability.BROKER_RESOURCE_CONSUMING,
     profile: BrokerCapabilityProfile | None = _SIM_PROFILE,
-    env_binding: tuple[Any, ...] = _ENV_BINDING,
-    asset_binding: tuple[Any, ...] = _ASSET_BINDING,
     **flags: Any,
 ) -> VerifyOutcome:
     # Any profile here has no VERIFIED dimension for an unset required set: the normal path
@@ -63,8 +74,6 @@ def _judge(
     context = SendBoundaryContext(
         capability_tuples=tuples,
         broker_capability_profile=profile,
-        capability_environment_binding=env_binding,
-        capability_asset_binding=asset_binding,
         account_instrument_action_allowed=flags.get("allowed", True),
         max_quantity_within_allowance=flags.get("max_qty", True),
     )
@@ -105,23 +114,45 @@ def test_a_real_money_or_unknown_tuple_takes_the_profile_check(
 
 
 @pytest.mark.parametrize(
-    "overrides",
+    "profile",
     [
-        # #932 review MEDIUM: mock tuples beside a PRODUCTION profile — the skip used to
-        # trust the tuples alone; they do not bind to this profile's key.
-        {"profile": _PROD_PROFILE},
-        {"profile": None},
-        # the binding tables are what tie tuples to the profile; without them nothing binds
-        {"env_binding": ()},
-        {"asset_binding": ()},
-        # a table that maps simulation onto production is honest about it: no bind to SIM
-        {"env_binding": ((BrokerEnvironment.BROKER_SIMULATION, "PROD"),)},
+        # #932 Codex r2: a production profile beside mock tuples — DENIED however it is named
+        _PROD_PROFILE,
+        _PROD_PROFILE_NAMED_SIM,
+        # an undeclared class is never read as simulation; no profile, nothing to read
+        _UNDECLARED_PROFILE,
+        None,
     ],
 )
-def test_mock_tuples_that_do_not_bind_to_the_profile_take_the_profile_check(
-    overrides: dict[str, Any],
+def test_mock_tuples_beside_a_non_simulation_profile_take_the_profile_check(
+    profile: BrokerCapabilityProfile | None,
 ) -> None:
-    assert _judge((_MOCK_SEND,), **overrides) is VerifyOutcome.DENIED
+    assert _judge((_MOCK_SEND,), profile=profile) is VerifyOutcome.DENIED
+
+
+def test_no_send_time_context_field_can_classify_a_profile() -> None:
+    """#932 Codex r2: the round-1 binding tables are gone — a context that tries to carry one
+    (the bypass ``BROKER_SIMULATION -> "PROD"``) does not even construct."""
+    with pytest.raises(ValidationError):
+        SendBoundaryContext(
+            capability_tuples=(_MOCK_SEND,),
+            broker_capability_profile=_PROD_PROFILE,
+            capability_environment_binding=(  # type: ignore[call-arg]
+                (BrokerEnvironment.BROKER_SIMULATION, "PROD"),
+            ),
+        )
+
+
+def test_a_simulation_read_tuple_beside_the_mock_send_still_skips() -> None:
+    """A scope may also carry a non-authorizing read at the same simulation environment."""
+    read = _MOCK_SEND.model_copy(
+        update={
+            "operation_class": OperationClass.ACCOUNT_READ,
+            "economic_effect": EconomicEffect.NONE,
+            "authorization_class": AuthorizationClass.NON_AUTHORIZING_READ,
+        }
+    )
+    assert _judge((_MOCK_SEND, read)) is VerifyOutcome.SATISFIED
 
 
 @pytest.mark.parametrize(

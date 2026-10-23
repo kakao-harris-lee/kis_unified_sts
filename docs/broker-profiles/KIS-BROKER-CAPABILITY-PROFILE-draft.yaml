@@ -370,6 +370,11 @@ profile_identity:
   api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
   api_version: UNKNOWN                   # 공식 원전에 버전 식별자 부재(미확인).
   environment: MOCK_VTS
+  # 브로커 무관 환경 등급(커널 BrokerEnvironment) — 이 INSTANCE 가 브로커 자신의 모의 엔드포인트를
+  # 기술한다는 선언. 커널 egress item 6 의 option (a) 완화가 읽는 유일한 사실이다(#932 Codex r2:
+  # 송신 컨텍스트가 프로필을 분류하면 안 된다). BROKER_SIMULATION 은 live_scope 가 NON_LIVE 이고
+  # 라이브 action class 가 없을 때만 구성된다(BrokerCapabilityProfile 검증기).
+  environment_class: BROKER_SIMULATION
   account_type: 모의투자_위탁            # KIS_ACCOUNT_NO (config/execution.yaml:6)
   market: KRX_DOMESTIC
   instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
@@ -3686,6 +3691,8 @@ profile_identity:
   api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
   api_version: UNKNOWN
   environment: REAL_PROD
+  # 브로커 무관 환경 등급 — 실전 엔드포인트. option (a) 완화는 이 등급에 결코 적용되지 않는다.
+  environment_class: BROKER_PRODUCTION
   account_type: 실전_위탁
   market: KRX_DOMESTIC
   instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
