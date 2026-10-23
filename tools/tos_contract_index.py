@@ -39,12 +39,20 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 # tools/ 는 패키지가 아니다(그리고 만들지 않는다 — tos_contract_check.py 의 기존
 # 배치를 존중한다).  스크립트 자신의 디렉터리를 sys.path 맨 앞에 두어, 어느
 # 작업 디렉터리에서 호출되든 형제 모듈을 임포트할 수 있게 한다.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tos_contract_check as tcc  # noqa: E402  (재사용 — ContractDoc·헤딩 정규식)
+#
+# 타입 검사기만 패키지 경로로 같은 모듈을 본다 — `TYPE_CHECKING` 분기는 런타임에
+# 실행되지 않으므로 임포트 경로는 종래와 **글자 그대로 같고**, 그 대신 게이트가
+# `tcc.*` 26곳을 `Any` 로 넘기지 않고 실제 타입으로 검사한다.
+if TYPE_CHECKING:
+    from tools import tos_contract_check as tcc
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import tos_contract_check as tcc  # noqa: E402  (재사용 — ContractDoc·헤딩 정규식)
 
 # ============================================================================
 # 조율 상수 (매직넘버 금지 — 임계값은 전부 여기 선언)

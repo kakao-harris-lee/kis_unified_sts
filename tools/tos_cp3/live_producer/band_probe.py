@@ -71,6 +71,7 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -214,7 +215,7 @@ def run(
     session_dir: Path,
     target: date,
     quotes_factory: object = real_quotes,
-    now: object = None,
+    now: Callable[[], datetime] | None = None,
 ) -> int:
     """One attempt. Returns the exit code; raises only on a gate refusal.
 

@@ -404,11 +404,35 @@ jobs:
       # matches as "new" is the same shape of slip this step's other note exists to
       # correct; an independent review caught it by diffing the two file SETS with
       # `git ls-files` instead of trusting either total.)
+      #
+      # Scope note 2 (PR #937 follow-up). `tests/tools/test_tos_*.py` +
+      # `tests/tools/test_u17_verify.py` became the whole directory. The two
+      # patterns named 15 of the 43 `.py` files there; the other 28 — 14
+      # `test_broker_probes_*`, 13 `test_cp3_*` and `test_bcp_digest.py` —
+      # were formatted-by-nobody, and #937 found one of them
+      # (`test_broker_probes_balance.py`) genuinely unformatted on main
+      # while every check stayed green. It was the ONLY one: with it fixed,
+      # `black --check tests/tools` reports 43 files unchanged, so this
+      # widening carries no reformatting and cannot hide a silent reformat.
+      # Measured as a SET diff with `git ls-files`, not by counting glob
+      # matches, for the reason the note above gives — 28 new, 15 already
+      # named, 43 total.
+      #
+      # The directory, not a glob: a new test file under `tests/tools/` joins
+      # this gate the moment it is added, which is the hole the first note
+      # describes. `tests/tools/fixtures/` holds no `.py` at all, so nothing
+      # black would rewrite is used as a verbatim test input.
+      #
+      # Only the BLOCKING Black runs here. The advisory one in
+      # `.github/workflows/test.yml` (`black --check --diff .`, whole repo,
+      # `continue-on-error: true`) is deliberately left alone: the ~300-file
+      # formatting debt it reports is tracked separately, and that is why
+      # `test_broker_probes_balance.py` could sit unformatted on main.
       - name: Black (tos)
         run: >-
           black --check tos/src tos/tests tos/runtime/src tos/runtime/tests
           tos/runtime/cp3
-          tools/tos_*.py tests/tools/test_tos_*.py tests/tools/test_u17_verify.py
+          tools/tos_*.py tests/tools
 
       - name: mypy (tos kernel)
         run: cd tos && mypy src --ignore-missing-imports
@@ -707,6 +731,69 @@ jobs:
         run: >-
           mypy tos/runtime/cp3 --ignore-missing-imports
           --disable-error-code=no-untyped-def
+
+      # The tos GOVERNANCE TOOLING under `tools/` — the checkers this very job
+      # runs as steps (`tos_firewall_check` / `tos_contract_check` /
+      # `tos_completion_status` / `tos_spec_status` / `tos_redigest` /
+      # `tos_size_budget`) plus the CP-3 producer package `tools/tos_cp3/`.
+      # Until now NOTHING type-checked them: the five steps above cover
+      # `tos/**` only, and `type-check` in `.github/workflows/test.yml` runs
+      # `mypy shared/ ... || true` — a different path, and advisory. A type
+      # defect in a gate's own source reached main silently, which is the same
+      # "checked-by-nobody" shape the Black step's scope note describes.
+      #
+      # Same flags as the two SOURCE steps above, deliberately: `tools/` is
+      # source, not a test tree, so `no-untyped-def` stays ENABLED here rather
+      # than deferred the way the three test/cp3 steps defer it. Measured on
+      # c2f6ee15 before the fixes in this PR: 39 errors / 13 files with these
+      # flags (30 / 12 with `no-untyped-def` disabled). All 39 are fixed in the
+      # same PR — no baseline file, no `|| true`.
+      #
+      # `--explicit-package-bases` is required, not cosmetic. `tools/` has no
+      # `__init__.py` (deliberately — see the comment at the top of
+      # `tools/tos_contract_index.py`), so without it mypy maps
+      # `tools/tos_x.py` to the module `tos_x` while the sibling imports inside
+      # the tree say `tools.tos_x`, and the run ABORTS on "Source file found
+      # twice under different module names" after checking nothing.
+      #
+      # What this step's mypy can SEE is the minimal install above — for
+      # `tools/` that is `-e . --no-deps` plus pyyaml and mypy itself. pandas
+      # and the yaml stubs are NOT installed, so those types resolve to `Any`
+      # here while a full local `.venv` resolves them for real. The trap that
+      # follows from it: a `# type: ignore[...]` that local stubs make
+      # NECESSARY is dead weight in CI and fails this step as `unused-ignore`
+      # (`warn_unused_ignores = true` in the root pyproject). Write such a
+      # suppression so both environments accept it, the way
+      # `tools/tos_contract_check.py:480` does —
+      # `# type: ignore[assignment, unused-ignore]`, naming `unused-ignore`
+      # alongside the real code — rather than tuning it to one environment.
+      #
+      # Reproducing this locally: run it from a checkout whose venv was
+      # `pip install -e .`-ed FROM THAT SAME checkout (what the install step
+      # above does here). The editable install drops that path into a `.pth`,
+      # which mypy then treats as a site-packages root — so `shared.*`, which
+      # several of these tools import, resolves as an installed LIBRARY: its
+      # types are read but its own errors are not reported. From a tree whose
+      # venv points somewhere else, the same command resolves `shared/` as
+      # source and reports its ~600 pre-existing errors on top. Measured both
+      # ways while writing this step; the CI shape is the first one.
+      #
+      # SCOPE, stated so the remainder is named rather than silently excluded:
+      # this covers `tools/tos_*.py` + `tools/tos_cp3/`, which is a GLOB, not a
+      # list — a tool added under either path joins the gate automatically
+      # (`tos_recovery_drill.py` and `tos_cp3/status_board.py`, both landed
+      # while this PR was open, were picked up and are clean).
+      # The rest of `tools/` is NOT covered: at 06051fc3 that is 28 of the 69
+      # files, carrying 141 errors / 13 files under these same flags —
+      # `tools/spikes/phase0_contract/` (91, throwaway Phase-0 prototypes),
+      # `tools/broker_probes/` (20, the real-broker probe harness) and three
+      # loose scripts (`wfcanon-v222.py` 12, `ladder-v222e5.py` 12,
+      # `pagelimb-v222e5.py` 6). Widening to all of `tools/` is a follow-up,
+      # and the broker-probe part of it touches real-order paths.
+      - name: mypy (tos tooling)
+        run: >-
+          mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports
+          --explicit-package-bases
 
   # ===========================================================================
   # TOS rescope M3 (docs/plans/2026-10-22-tos-rescope-plan.md §2 sentence 3):

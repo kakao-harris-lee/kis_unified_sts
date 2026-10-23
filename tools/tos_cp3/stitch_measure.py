@@ -216,7 +216,9 @@ def measure_s1a(
         ),
         [target],
     )
-    base = {
+    # `perturbed`/`flips` 가 다루는 것과 같은 형상으로 적는다 — 둘을 같은 타입으로
+    # 두어야 `gates(base[s]) != gates(other[s])` 가 한 가지 값만 비교한다.
+    base: dict[datetime, dict[str, Any]] = {
         record.bar_kst.replace(tzinfo=None): record.fields
         for record in baseline.records
     }
