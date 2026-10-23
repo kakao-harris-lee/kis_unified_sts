@@ -161,6 +161,85 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   grep 'band_published\|band_fetch_failed' "$SESSION/producer/band-log.jsonl"
   ```
 
+#### 7.2-e CP-3 tenant 세션 — 매 거래일 무인 cron (재범위 M1 · 운영자 2026-10-22)
+
+§7.2-d 를 거래일마다 LONG·SHORT 한 번씩 무인으로 돌린다. 2026-10-22 에 손으로 넣은 두 줄
+(비커밋 `~/.config/kis-probes/run-cp3-tenant-daily.sh`)을 저장소가 소유하는 형태로 바꾼 것이다.
+
+| 무엇 | 어디 |
+| --- | --- |
+| 래퍼 원본(추적) | `tools/tos_cp3/runners/cp3_tenant_daily.sh` |
+| 래퍼 설치본 | `~/.config/kis-probes/run-cp3-tenant-daily.sh` (mode 700 · 설치기가 **`origin/main` 에서** 복사) |
+| 설치기 | `tools/tos_cp3/runners/install_tenant_cron.sh` — **기본 dry-run** · `--apply` · `--remove` · 멱등 |
+| cron 블록 | `# BEGIN CP3_TENANT_DAILY` … `# END CP3_TENANT_DAILY` — LONG `38 8 * * 1-5` · SHORT `40 8 * * 1-5` |
+| cron stdout | `~/.local/state/tos/cp3-{long,short}-tenant-daily.cron.log` (⚠ 로테이션 없음) |
+| 세션 아티팩트 | `~/.local/state/tos/cp3-sessions/{long,short}-<YYYYMMDD>/` (`runner.out` · `session.log` · `producer/` · `config/`) |
+| 그날의 워크트리 | `~/.local/state/tos/measure/wt-cp3-{long,short}-<YYYYMMDD>` — 다음 거래일 호출이 지운다 |
+| 잠금 | `/tmp/cp3-{long,short}-tenant-daily.wrapper.lock` — 래퍼 **안에서** `flock -n`. 10-22 손 설치 줄이 바깥 flock 으로 잡던 `….lock` 과 **다른 경로**다 — 같은 경로면 바깥·안쪽 잠금이 서로 막아 매일 거부된다 |
+
+**설치 (PR 머지 뒤, 운영자).** 먼저 dry-run 으로 diff 를 보고, 같은 명령에 `--apply` 를 붙인다.
+
+```bash
+cd /home/deploy/project/kis_unified_sts && git fetch -q origin && git merge --ff-only -q origin/main \
+  && tools/tos_cp3/runners/install_tenant_cron.sh            # dry-run: diff 와 복사 계획만
+tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.bak.<ts> · 래퍼 .bak.<sha12>) 뒤 기록
+```
+
+- `--apply` 는 셋을 거부한다: 설치기 자신이 `origin/main` 판과 바이트가 다를 때 · 호스트 zone 이
+  `+0900` 이 아닐 때(Ubuntu cron 3.0pl1 은 **`CRON_TZ` 를 구현하지 않는다** — 블록의 `CRON_TZ`
+  줄은 관례로 두지만 KST 보장은 호스트 zone 이다. 래퍼도 매 호출 같은 검사를 하고 실패면 알린다) ·
+  `~/.local/state/tos` 가 없을 때.
+- dry-run 도 `--apply` 도 둘을 거부한다: `crontab -l` 이 「`no crontab for`」 아닌 이유로 실패할 때
+  (빈 crontab 으로 읽으면 상주·콜드 백업 줄이 통째로 지워진다) · `BEGIN` 표지에 짝 `END` 가 없을 때.
+- 순서는 **crontab 먼저, 래퍼 다음**이고, 래퍼 단계가 실패하면 crontab 을 백업으로 되돌리고 래퍼도
+  `.bak` 에서 복원한다 — 실패한 설치는 둘 다 원래대로 남는다.
+- 블록 밖의 `# cp3-{long,short}-tenant-daily` 꼬리표 줄(10-22 손 설치분)은 지운다 — 한 방향이 두
+  번 걸리지 않게. 그 위의 꼬리표 없는 `CRON_TZ=Asia/Seoul` 한 줄은 남는다(무해). 나머지 줄은
+  바이트 그대로다. 제거는 `--remove`(dry-run) → `--remove --apply`.
+- 시각이 08:45 가 아니라 08:38/08:40 인 이유: 생산자가 CONTINUOUS 08:45 전에 떠 있어야 하고,
+  두 생산자가 REAL 조회 키를 함께 쓰는데 KIS 토큰 발급이 분당 1 회다.
+
+**한 호출이 하는 일.** 잠금 → 같은 날 세션 디렉터리가 있으면 거부 → durable set 부모
+(§7.2-b)가 없으면 거부(첫 genesis 는 운영자 몫) → 그 방향의 어제 워크트리 제거(`--force` 없이)
+→ fetch → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ 달력에
+아직 없는 KRX 연말 `2026-12-31`, `CP3_DAILY_EXTRA_CLOSED`) → `run_tenant_session.sh`(정지 15:50).
+
+**텔레그램 (briefing 채널 · 자격증명은 상주 래퍼와 같은 `$MAIN/.env` 두 줄).** 본문은 rc ·
+방향 · 날짜 · 경로뿐이다 — `runner.out` 은 옮기지 않는다(좌표 규율).
+
+| 결말 | 텔레그램 | 래퍼 rc |
+| --- | --- | --- |
+| 정상 (러너 0 · 143) | `일일 세션 종료 … — 정상` 한 줄 | 러너 rc |
+| 러너 실패 (3 · 4 · 5 · 129/130 · 그 밖) | `일일 세션 실패 … rc=N` + 뜻 한 줄 | 러너 rc |
+| 잠금 점유 (앞선 호출이 아직 돈다) | 실패 한 줄 | 75 |
+| 세션 디렉터리 이미 있음 · 부모 없음 · 호스트 zone ≠ +0900 | 실패 한 줄 | 2 |
+| 휴장 판정 자체가 실패(달력 못 읽음 · 날짜 오류 · `yaml` import 실패 등) | 실패 한 줄 — **SKIP 으로 읽지 않는다**(판정 스크립트의 «휴장» 은 종료코드 10 하나뿐) | 2 |
+| 달력에 그 해 휴장일이 하나도 없다(달력이 해를 넘기지 못함) | 실패 한 줄 | 2 |
+| fetch · 워크트리 실패 | 실패 한 줄 | 1 |
+| 휴장 · 주말 · 연말 | **없음** — cron 로그 `SKIP` 한 줄 | 0 |
+
+그래서 **거래일 09:00 까지 방향마다 줄이 하나도 없으면** 그 자체가 소견이다 — cron 이 돌지
+않았거나(`cron.log` 에 그날 줄 없음) 텔레그램 전송이 실패했다(`telegram notify FAILED` — HTTP 4xx·5xx 도 실패로 센다(`curl --fail`), 자격증명이 없으면 무엇이 없는지 그 줄에 적힌다). 정상
+줄은 15:50 정지 뒤에 오므로, 낮 동안의 확인은 `cp3-sessions/<dir>-<날짜>/session.log` 를 본다.
+
+**11-11(수) 롤 dry-run — 11-12 첫 실롤 전날.** mini 11월물(`A05611`) 만기는 11-12(목)이고
+`get_front_month_code` 는 만기 **당일까지** 11월물을 준다 — 그래서 12월물 잎(`A05612`)의 첫
+세션(= genesis)은 **11-13(금)** 이다. 11-11 장 마감 뒤 방향마다 읽기 전용 preflight 를 돌린다
+(잠금·fetch·워크트리·텔레그램 없음, 쓰는 것 없음 — 먼저 `git -C $MAIN fetch -q origin`):
+
+```bash
+for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
+  ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight $d; done; done
+```
+
+기대: 11-12 는 `market=OPEN instrument=A05611 … present (continues)`, 11-13 은
+`instrument=A05612 … absent (first session genesis)`, 넷 다 `session dir … free` 와 `worktree … free`.
+다르면(예: 11-13 잎이 이미 있다 · `MISSING` 부모) 11-12 전에 운영자가 판단한다. cron 쪽에는 롤
+손잡이가 없다 — 러너가 그날 월물을 한 번 계산해 잎·렌더·생산자에 같이 준다(§7.2-d 러너 6단계).
+교차 시드(#900)가 실제로 접합했는지는 11-13 세션 뒤 `producer/market/stitch.json` 으로 본다(매
+세션 쓰인다). 11-13 저녁에는
+`cold-backup-cp3-{long,short}.log` 에 새 잎이 함께 올라갔는지 본다(§7.7 — 래퍼는 `A0####` 잎을 순회).
+
 ### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
 
 설치된 줄은 이것이다(설치된 블록 그대로 — 주석 머리 한 줄 포함):

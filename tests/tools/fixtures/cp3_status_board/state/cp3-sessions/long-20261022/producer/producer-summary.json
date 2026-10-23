@@ -1,0 +1,22 @@
+{
+ "counters": {
+  "already_published": 0,
+  "clock_regression": 0,
+  "fetch_error": 0,
+  "late_completed": 1,
+  "max_stamp_to_replace_s": 0.003937260014936328,
+  "missing_no_successor": 1,
+  "no_raw_row_for_minute": 10,
+  "omitted_unusable": 0,
+  "pre_boot_lines": 0,
+  "produce_error": 0,
+  "published": 410,
+  "skipped_behind": 0
+ },
+ "date": "2026-10-22",
+ "frozen_bars_today": 411,
+ "instrument": "A05611",
+ "source_id": "tos-cp3-live/0.1.0",
+ "stage": "finish",
+ "stitch_manifest_sha256": "0af90201006d2bc93712a910bf7e684eb7a644a315023a23b36b15998cbc0b02"
+}
