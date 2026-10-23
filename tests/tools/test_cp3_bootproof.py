@@ -30,6 +30,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -1167,6 +1168,8 @@ _RUN_PIDFILE_ENV = "STUB_RUN_PIDFILE"
 #: separation claim (plan §3.4) is about what the RUNTIME holds, so it is
 #: measured there rather than inferred from what the runner was given.
 _RUN_ENVFILE_ENV = "STUB_RUN_ENVFILE"
+#: Where the stub ``run`` writes its own argv (PR-3c: ``--transport`` follows the market).
+_RUN_ARGVFILE_ENV = "STUB_RUN_ARGVFILE"
 #: Read by the stub renderer to decide the rendered tree's `environment`.
 _TREE_ENV = "STUB_TREE_ENVIRONMENT"
 #: Written by the stub producer so a test can find it and prove it was stopped.
@@ -1223,6 +1226,11 @@ _PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
 #: ``HH:MM`` the stub CALENDAR declares as the session start (default 08:45).
 #: Read by ``_runner_env`` when it writes that calendar.
 _STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
+#: The stub producer config's ``market:`` value; ``"<absent>"`` drops the line (PR #922
+#: review LOW-3 — the runner's real-key guard reads it).
+_STUB_MARKET_ENV = "STUB_PRODUCER_MARKET"
+#: The stock tenant tree, as the stub repo carries it.
+_STOCK_TREE = "cp3-setup-d-stock-005930"
 
 #: What the runner logs when the band line is there, and when it is not. The
 #: second string is the plan's own wording (§3.1) and the thing an operator
@@ -1263,6 +1271,17 @@ def _runner_repo(
     (repo / "shared" / "instruments").mkdir(parents=True)
     (repo / "config" / "tos_runtime" / "cp3-setup-d-long").mkdir(parents=True)
     (repo / "scripts" / "tos").mkdir(parents=True)
+    # Each stub tree's manifest carries the two fields step 5b reads (PR-3c / #936 review):
+    # the producer market feeding it, and (stock) its one symbol.
+    (repo / "config/tos_runtime/cp3-setup-d-long/RENDER.yaml").write_text(
+        'tree_id: "cp3-setup-d-long"\nmarket: "futures"\n', encoding="utf-8"
+    )
+    (repo / "config/tos_runtime" / _STOCK_TREE).mkdir(parents=True)
+    (repo / "config/tos_runtime" / _STOCK_TREE / "RENDER.yaml").write_text(
+        f'tree_id: "{_STOCK_TREE}"\nmarket: "stock"\n'
+        'instrument:\n  pattern: "005930"\n',
+        encoding="utf-8",
+    )
 
     # The stub ③. It stands in for tools/tos_cp3/live_producer/producer.py: it
     # writes the journal rows its environment asks for and then runs until it is
@@ -1475,6 +1494,9 @@ def _runner_repo(
             f"    envfile = os.environ.get({_RUN_ENVFILE_ENV!r})\n"
             "    if envfile:\n"
             "        Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
+            f"    argvfile = os.environ.get({_RUN_ARGVFILE_ENV!r})\n"
+            "    if argvfile:\n"
+            "        Path(argvfile).write_text(json.dumps(list(argv)))\n"
             f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
             "    while True:\n"
             "        time.sleep(0.2)\n",
@@ -1552,8 +1574,10 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         encoding="utf-8",
     )
     producer_config = tmp_path / "cp3-live-producer.yaml"
+    market = overrides.get(_STUB_MARKET_ENV, "futures")
     producer_config.write_text(
-        f"env_file: {real_env}\n"
+        ("" if market == "<absent>" else f"market: {market}\n")
+        + f"env_file: {real_env}\n"
         f"calendar_yaml: {calendar}\n"
         "calendar_session_id: krx-index-futures\n"
         "calendar_session_phase: CONTINUOUS\n",
@@ -2737,6 +2761,280 @@ def test_red_the_same_refusal_for_the_secret(tmp_path: Path) -> None:
     assert "not-a-real-secret" not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("market", "variable"),
+    [
+        # The LOW-3 input: a STOCK tenant whose operator exported the stock pair.
+        ("stock", "KIS_STOCK_APP_KEY"),
+        ("stock", "KIS_STOCK_APP_SECRET"),
+        # A stock session must not carry the futures pair into the runtime either,
+        # and the reverse — no real key of ANY market reaches the runtime.
+        ("stock", "KIS_FUTURES_APP_KEY"),
+        ("futures", "KIS_STOCK_APP_KEY"),
+    ],
+)
+def test_red_low3_the_real_key_guard_follows_the_market(
+    tmp_path: Path, market: str, variable: str
+) -> None:
+    """**PR #922 review LOW-3.** The first cut named ``KIS_FUTURES_APP_KEY``/``SECRET``
+    only, so a stock tenant's exported ``KIS_STOCK_APP_KEY`` passed the guard and
+    reached the runtime. Red before this change for every stock-key row."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_MARKET_ENV: market, variable: "not-a-real-value-91c2"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert f"{variable} is set in this shell" in output
+    assert "not-a-real-value-91c2" not in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+@pytest.mark.parametrize("market", ["<absent>", "bond"])
+def test_red_low3_an_unknown_or_absent_market_is_refused(
+    tmp_path: Path, market: str
+) -> None:
+    """Fail closed: a config whose market step 5b cannot read is refused before the
+    producer starts."""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **{_STUB_MARKET_ENV: market})
+    assert result.returncode != 0
+    assert "TENANT_PRODUCER_CONFIG declares market=" in result.stdout + result.stderr
+    assert not (tmp_path / "producer.pid").exists()
+
+
+@pytest.mark.parametrize(
+    ("tree", "market"),
+    [("cp3-setup-d-long", "stock"), (_STOCK_TREE, "futures")],
+)
+def test_red_936_low1_a_tree_and_producer_market_mismatch_refuses_before_the_producer(
+    tmp_path: Path, tree: str, market: str
+) -> None:
+    """#936 review LOW-1: a futures tree with the stock producer config (or the reverse) used
+    to start the producer's real-quote GETs before anything noticed. Refused at step 5b now,
+    from the tree's own RENDER.yaml ``market:``."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{"TENANT_TREE": tree, _STUB_MARKET_ENV: market},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "refused before the producer starts" in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+def test_red_936_low3_a_duplicate_market_key_reads_as_the_loader_reads_it(
+    tmp_path: Path,
+) -> None:
+    """#936 review LOW-3: ``market: futures`` then ``market: stock``. The producer's loader
+    (yaml.safe_load) keeps the LAST key; the first cut's ``sed`` took the first and would have
+    run this futures tree. Step 5b reads it as the loader does, so the mismatch is refused.
+    """
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_MARKET_ENV: "futures\nmarket: stock"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "reads market='stock'" in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+def test_the_runner_key_table_is_the_producers_own_credential_keys() -> None:
+    """The shell table may not drift from ``config.MARKETS[*].credential_keys`` — the
+    keys the producer itself reads from its env_file (LOW-3)."""
+    from tools.tos_cp3.live_producer.config import MARKETS
+
+    text = _RUNNER.read_text("utf-8")
+    table = {
+        match.group(1).lower(): tuple(match.group(2).split())
+        for match in re.finditer(r'^_REAL_KEYS_([A-Z]+)="([^"]*)"$', text, re.M)
+    }
+    assert table == {
+        market: profile.credential_keys for market, profile in MARKETS.items()
+    }
+
+
+# ---------------------------------------------------------------------------
+# PR-3c: transport and instrument follow the market
+# ---------------------------------------------------------------------------
+
+
+def _stock_overrides(tmp_path: Path, **extra: str) -> dict[str, str]:
+    transport = tmp_path / "kis_mock_transport.yaml"
+    transport.write_text("# stub — the stub run never reads it\n", encoding="utf-8")
+    return {
+        "TENANT_TREE": _STOCK_TREE,
+        _STUB_MARKET_ENV: "stock",
+        "TENANT_INSTRUMENT": "005930",
+        "TENANT_KIS_MOCK_TRANSPORT_CONFIG": str(transport),
+        **extra,
+    }
+
+
+def test_a_stock_session_boots_kis_mock_with_the_transport_config_installed(
+    tmp_path: Path,
+) -> None:
+    """The stock tree is the MOCK order tree (PR-3a): ``run`` gets ``--transport kis-mock``,
+    the deploy-time transport document lands in the render output 0600, and the producer and
+    renderer are given the NAMED stock code, not a derived futures month."""
+    repo = _runner_repo(tmp_path, bootable=True)
+    argvfile = tmp_path / "run-argv.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        **_stock_overrides(
+            tmp_path,
+            TENANT_STOP_AT="+15 seconds",
+            **{
+                _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+                _RUN_ARGVFILE_ENV: str(argvfile),
+            },
+        ),
+    )
+    output = result.stdout + result.stderr
+    # 143 = the run stopped by the runner's own SIGTERM at TENANT_STOP_AT — the ordinary end
+    assert result.returncode in (0, 143), output
+    argv = json.loads(argvfile.read_text("utf-8"))
+    assert argv[argv.index("--transport") + 1] == "kis-mock"
+    installed = tmp_path / "render-out" / "kis_mock_transport.yaml"
+    assert installed.is_file()
+    assert stat.S_IMODE(installed.stat().st_mode) == 0o600
+    assert "instrument=005930" in output
+    assert "market=stock (tree and producer agree) · transport=kis-mock" in output
+
+
+def test_a_futures_session_still_boots_synthetic(tmp_path: Path) -> None:
+    repo = _runner_repo(tmp_path, bootable=True)
+    argvfile = tmp_path / "run-argv.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_ARGVFILE_ENV: str(argvfile),
+        },
+    )
+    assert result.returncode in (0, 143), result.stdout + result.stderr
+    argv = json.loads(argvfile.read_text("utf-8"))
+    assert argv[argv.index("--transport") + 1] == "synthetic"
+    assert not (tmp_path / "render-out" / "kis_mock_transport.yaml").exists()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "why"),
+    [
+        # a futures session given stock-only settings
+        (
+            {"TENANT_INSTRUMENT": "005930"},
+            "TENANT_INSTRUMENT is set for a futures session",
+        ),
+        (
+            {"TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/nonexistent"},
+            "TENANT_KIS_MOCK_TRANSPORT_CONFIG is set for a futures session",
+        ),
+        # a stock session missing or misnaming them
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
+            "required env TENANT_INSTRUMENT is unset",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+            },
+            "required env TENANT_KIS_MOCK_TRANSPORT_CONFIG is unset",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "A05612",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
+            "does not fully match",
+        ),
+        # #936 review MEDIUM: another six-digit stock — the tree is single-symbol
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "000660",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
+            "does not fully match",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/nonexistent/kis_mock_transport.yaml",
+            },
+            "TENANT_KIS_MOCK_TRANSPORT_CONFIG names no file",
+        ),
+    ],
+)
+def test_red_the_market_settings_refuse_before_anything_is_launched(
+    tmp_path: Path, overrides: dict[str, str], why: str
+) -> None:
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **overrides)
+    assert result.returncode != 0
+    assert why in result.stdout + result.stderr
+    assert not (tmp_path / "producer.pid").exists()
+
+
+_ENV_TEMPLATE = _REPO_ROOT / "tools/tos_cp3/runners/stock-mock-session.env.example"
+#: The literal values the template may carry: the session's own definition, never a secret.
+_TEMPLATE_LITERALS = {
+    "TENANT_TREE": "cp3-setup-d-stock-005930",
+    "TENANT_DIRECTION": "LONG",
+    "TENANT_INSTRUMENT": "005930",
+    "TENANT_ENVIRONMENT_LABEL": "paper",
+}
+
+
+def _template_values() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in _ENV_TEMPLATE.read_text("utf-8").splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+def test_the_stock_env_template_names_every_value_the_runner_requires() -> None:
+    text = _RUNNER.read_text("utf-8")
+    block = text[text.index("require_env \\\n") : text.index("ensure_log_file")]
+    required = set(re.findall(r"TENANT_[A-Z_]+", block)) | {
+        "TENANT_INSTRUMENT",
+        "TENANT_KIS_MOCK_TRANSPORT_CONFIG",
+    }
+    assert set(_template_values()) == required
+
+
+def test_the_stock_env_template_carries_no_secret_and_no_host_path() -> None:
+    """Every value is a ``${VAR}`` reference (optionally with a relative suffix) or one of the
+    four identifiers that define the session — so no key, secret, account number or host path
+    can be committed through it."""
+    for key, value in _template_values().items():
+        if key in _TEMPLATE_LITERALS:
+            assert value == _TEMPLATE_LITERALS[key], key
+            continue
+        assert re.fullmatch(r"\$\{[A-Z_]+\}(/[A-Za-z0-9_./-]+)?", value), (key, value)
+    text = _ENV_TEMPLATE.read_text("utf-8")
+    for forbidden in ("APP_KEY=", "APP_SECRET=", "ACCOUNT_NO=", "/home/"):
+        assert forbidden not in text
+
+
 def test_a_die_after_the_producer_starts_does_not_leave_it_running(
     tmp_path: Path,
 ) -> None:
@@ -3460,6 +3758,8 @@ def _run_runner_traced(repo: Path, tmp_path: Path, **overrides: str) -> Any:
     [
         ("KIS_FUTURES_APP_KEY", _PRODUCER_FAKE_KEY),
         ("KIS_FUTURES_APP_SECRET", _PRODUCER_FAKE_SECRET),
+        ("KIS_STOCK_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_STOCK_APP_SECRET", _PRODUCER_FAKE_SECRET),
     ],
 )
 def test_red_codex_high_no_credential_value_survives_bash_x(
