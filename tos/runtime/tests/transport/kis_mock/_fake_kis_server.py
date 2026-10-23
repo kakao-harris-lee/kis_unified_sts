@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 __all__ = ["FakeKisServer", "RecordedRequest"]
 
@@ -57,6 +58,10 @@ class FakeKisServer:
     """
 
     def __init__(self) -> None:
+        #: When set (:meth:`require_account`), a request whose ``CANO``/``ACNT_PRDT_CD`` are
+        #: not exactly these is REJECTED the way KIS rejects it (``rt_cd`` "1") — so a test
+        #: cannot ACK an order or a balance read carrying a malformed account.
+        self._account: tuple[str, str] | None = None
         self._requests: list[RecordedRequest] = []
         self._routes: dict[str, _Route] = {}
         self._lock = threading.Lock()
@@ -104,6 +109,32 @@ class FakeKisServer:
             reset=reset,
             on_request=on_request,
         )
+
+    def require_account(self, cano: str, acnt_prdt_cd: str) -> None:
+        """Reject any order POST body or GET query whose account fields are not exactly
+        ``cano`` (8 digits) / ``acnt_prdt_cd`` (2 digits) — #932 Codex r1 HIGH: the fake used
+        to ACK whatever CANO it was sent, so a whole ``8-2`` string in CANO passed the e2e.
+        """
+        assert len(cano) == 8 and cano.isdigit(), cano
+        assert len(acnt_prdt_cd) == 2 and acnt_prdt_cd.isdigit(), acnt_prdt_cd
+        self._account = (cano, acnt_prdt_cd)
+
+    def _account_rejected(self, path: str, raw_body: bytes) -> bool:
+        if self._account is None:
+            return False
+        fields: dict[str, Any] = {}
+        query = parse_qs(urlsplit(path).query)
+        fields.update({k: v[0] for k, v in query.items() if v})
+        if raw_body:
+            try:
+                body = json.loads(raw_body)
+            except ValueError:
+                body = None
+            if isinstance(body, dict):
+                fields.update(body)
+        if "CANO" not in fields and "ACNT_PRDT_CD" not in fields:
+            return False
+        return (fields.get("CANO"), fields.get("ACNT_PRDT_CD")) != self._account
 
     def requests_for(self, path: str) -> list[RecordedRequest]:
         with self._lock:
@@ -159,6 +190,15 @@ class FakeKisServer:
                             headers={k.lower(): v for k, v in self.headers.items()},
                             body=raw_body,
                         )
+                    )
+                if server._account_rejected(path, raw_body):
+                    route = _Route(
+                        status=200,
+                        body={
+                            "rt_cd": "1",
+                            "msg_cd": "FAKE_INVALID_ACCOUNT",
+                            "msg1": "CANO/ACNT_PRDT_CD do not name the expected 8-2 account",
+                        },
                     )
                 if route is None:
                     self.send_response(404)
