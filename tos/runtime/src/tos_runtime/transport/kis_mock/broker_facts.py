@@ -38,6 +38,7 @@ from urllib.parse import urlencode
 
 import yaml
 
+from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.custody.ports import CustodyError
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockClientError, RawResponse
@@ -113,6 +114,9 @@ def load_broker_facts_config(path: Path) -> BrokerFactsConfig:
     for key, value in strings.items():
         if not isinstance(value, str) or not value:
             raise BrokerFactsConfigError(f"{path}: {key} must be a non-empty string")
+        reject_named_tbd(
+            value, field=key, context=str(path), error_cls=BrokerFactsConfigError
+        )
     if not strings["balance_tr_id"].startswith("V"):
         raise BrokerFactsConfigError(
             f"{path}: balance_tr_id {strings['balance_tr_id']!r} is not a 모의 (V-prefixed) "
@@ -127,6 +131,13 @@ def load_broker_facts_config(path: Path) -> BrokerFactsConfig:
     ):
         raise BrokerFactsConfigError(
             f"{path}: balance_params must map strings to strings"
+        )
+    for key, value in params.items():
+        reject_named_tbd(
+            value,
+            field=f"balance_params.{key}",
+            context=str(path),
+            error_cls=BrokerFactsConfigError,
         )
     if {"CANO", "ACNT_PRDT_CD"} & set(params):
         raise BrokerFactsConfigError(
