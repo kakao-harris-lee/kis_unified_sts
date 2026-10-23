@@ -9,10 +9,13 @@ Two modes, each a separate OS process against the SAME drill root:
     drives one crossing event to the transport, and parks at ``<point>``: it prints
     ``AT <point>`` on stdout and blocks on stdin until the parent sends ``SIGKILL``.
 
-``reboot <root> <result.json>``
+``reboot <root> <result.json> [--inject-send]``
     Composes the runtime again from the same ``<root>`` (a real restart: new process, files
     only), tries to drive the same event and a fresh one, and writes what it saw to
-    ``<result.json>``.
+    ``<result.json>``. ``--inject-send`` is the drill's positive control and nothing else: after
+    the refusals it calls the wrapped ``send_once`` exactly once, re-sending the crashed attempt
+    (or a fixed one when the venue never saw it), so the drill can show its venue-ledger check
+    goes red on a real re-send.
 
 The three points are the order path's three crash windows:
 
@@ -188,7 +191,31 @@ def crash(root: Path, point: str) -> int:
     return 3
 
 
-def reboot(root: Path, result_path: Path) -> int:
+#: Used by ``--inject-send`` when the venue never received the crashed attempt (BEFORE_SEND).
+_INJECTED_ATTEMPT_ID = "attempt-positive-control"
+
+
+def _inject_one_send(runtime: Any, root: Path) -> None:
+    """Positive control only: one call through the wrapped (ledger-writing) ``send_once``."""
+    from tos.engine.records import AttemptRequest
+
+    ledger = root / VENUE_LEDGER_NAME
+    lines = ledger.read_text("utf-8").splitlines() if ledger.exists() else []
+    attempt_id = json.loads(lines[0])["attempt_id"] if lines else _INJECTED_ATTEMPT_ID
+    attempt = AttemptRequest(
+        attempt_id=attempt_id,
+        conformance_proof_digest="positive-control",
+        action_flow_permit_identity="positive-control",
+        reference_coordinate_digest="positive-control",
+    )
+    runtime.transport.send_once(
+        attempt,
+        instrument_key=runtime.context_resolver.instrument_key,
+        coordinates=(),
+    )
+
+
+def reboot(root: Path, result_path: Path, *, inject_send: bool = False) -> int:
     from tos_runtime.compose._types import RecoveryBarrierHeld
 
     _install_network_guard()
@@ -213,6 +240,8 @@ def reboot(root: Path, result_path: Path) -> int:
             refused.append(True)
         else:
             refused.append(False)
+    if inject_send:
+        _inject_one_send(runtime, root)
     result = {
         "ready": None if recovery is None else recovery.ready,
         "readiness_verdict": (
@@ -243,9 +272,13 @@ def reboot(root: Path, result_path: Path) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[0] == "crash":
         return crash(Path(argv[1]), argv[2])
-    if len(argv) == 3 and argv[0] == "reboot":
-        return reboot(Path(argv[1]), Path(argv[2]))
-    raise SystemExit("usage: crash <root> <point> | reboot <root> <result.json>")
+    if len(argv) in (3, 4) and argv[0] == "reboot":
+        if len(argv) == 4 and argv[3] != "--inject-send":
+            raise SystemExit(f"unknown reboot option {argv[3]!r}")
+        return reboot(Path(argv[1]), Path(argv[2]), inject_send=len(argv) == 4)
+    raise SystemExit(
+        "usage: crash <root> <point> | reboot <root> <result.json> [--inject-send]"
+    )
 
 
 if __name__ == "__main__":
