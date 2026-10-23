@@ -25,6 +25,7 @@ from tos_runtime.marketfeed.ports import (
 )
 from tos_runtime.marketfeed.scheduler import (
     MultiInstrumentRefused,
+    PassBudget,
     TickDecision,
     TickResult,
     TickScheduler,
@@ -238,6 +239,8 @@ def _build_scheduler(
     poll_interval_ms: int,
     before_decide: Callable[[], bool] | None = None,
     after_pass: Callable[[], None] | None = None,
+    pass_budget: PassBudget | None = None,
+    evidence_store: Any = None,
     intake: Any = None,
     store: Any = None,
     time_service: Any = None,
@@ -278,10 +281,11 @@ def _build_scheduler(
         session_owner=session_owner if session_owner is not None else MagicMock(),
         driver=None,
         inbox=MagicMock(),
-        evidence_store=MagicMock(),
+        evidence_store=(evidence_store if evidence_store is not None else MagicMock()),
         poll_interval_ms=poll_interval_ms,
         before_decide=before_decide,
         after_pass=after_pass,
+        pass_budget=pass_budget,
     )
 
 
@@ -479,6 +483,117 @@ def test_tick_once_itself_never_runs_the_after_pass_hook(tmp_path: Path) -> None
 
     assert scheduler.tick_once().outcome is TickOutcome.SKIPPED_TIME_NOT_EVALUATED
     assert hook_calls == 0
+
+
+# ----------------------------------------------------------------------------
+# run_forever — the pass budget (#949 review HIGH item (b)): a pass whose own work outruns
+# `journal_pass_allowance_ms` leaves one MARKETFEED_PASS_OVERRUN row, and a pass inside it
+# leaves nothing. `tests/compose/test_fill_poll_loop.py` §4 drives the same row through a real
+# composed loop with a genuinely slow broker read; these pin the mechanism.
+# ----------------------------------------------------------------------------
+
+
+class _SteppingMonotonic:
+    """A monotonic source that advances by a scripted amount per reading — ``run_forever``
+    takes three per pass (before the tick, after the tick, after the hook)."""
+
+    def __init__(self, steps: list[int]) -> None:
+        self._steps = steps
+        self.value = 0
+        self.reads = 0
+
+    def now_ms(self) -> int:
+        reading = self.value
+        self.reads += 1
+        self.value += self._steps[min(self.reads - 1, len(self._steps) - 1)]
+        return reading
+
+
+def _overrun_rows(evidence_store: Any) -> list[dict[str, Any]]:
+    return [
+        call.args[0]
+        for call in evidence_store.append.call_args_list
+        if call.kwargs.get("kind") == "MARKETFEED_PASS_OVERRUN"
+    ]
+
+
+def test_a_pass_that_outruns_its_budget_records_both_halves(tmp_path: Path) -> None:
+    """The row names the tick's share and the hook's share separately, against the budget they
+    were measured with — the question it exists to answer is "stale, or a slow pass, and which
+    half?" (``_record_pass_overrun``'s own docstring).
+
+    Mutation: record only the total -> the ``tick_ms``/``after_pass_ms`` assertions go red; drop
+    the row -> all of them do.
+    """
+    monotonic = _SteppingMonotonic([10, 200, 0])  # tick 10 ms, hook 200 ms
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=100),
+        evidence_store=evidence_store,
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(1))
+
+    (row,) = _overrun_rows(evidence_store)
+    assert row == {
+        "instrument": INSTRUMENT,
+        "budget_ms": 100,
+        "pass_ms": 210,
+        "tick_ms": 10,
+        "after_pass_ms": 200,
+        "poll_interval_ms": 400,
+    }
+
+
+def test_a_pass_inside_its_budget_records_nothing(tmp_path: Path) -> None:
+    """A healthy session must not pay an evidence append per pass.
+
+    Mutation: drop the ``pass_ms <= allowance_ms`` guard -> a row per pass -> red.
+    """
+    monotonic = _SteppingMonotonic([5, 5, 0])
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=100),
+        evidence_store=evidence_store,
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(3))
+
+    assert _overrun_rows(evidence_store) == []
+
+
+def test_without_a_pass_budget_the_loop_reads_no_clock_and_records_nothing(
+    tmp_path: Path,
+) -> None:
+    """``pass_budget=None`` is the pre-#949 scheduler, unchanged: no measurement, no row — and
+    a ``kis_quote`` intake (which declares no allowance) is exactly that case.
+
+    Mutation: make the measurement unconditional -> an ``AttributeError`` on the absent budget
+    -> red.
+    """
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=400, evidence_store=evidence_store
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(2))
+
+    assert _overrun_rows(evidence_store) == []
+    evidence_store.append.assert_not_called()
 
 
 # ----------------------------------------------------------------------------

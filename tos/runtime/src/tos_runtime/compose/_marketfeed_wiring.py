@@ -72,6 +72,17 @@ loader enforces**: nothing here refuses a shorter ``poll_interval_ms`` on this i
 broker throttles instead. Paper pins ``intake_kind: journal``, so nothing is deployed on that
 path either way.
 
+**The pass budget is also MEASURED, not only checked at boot** (#949 review HIGH item (b)).
+The guard above reserves ``journal_pass_allowance_ms`` of the freshness budget for the
+runtime's own per-pass work; :func:`build_tick_scheduler` hands that same number, and the
+monotonic source, to :class:`~tos_runtime.marketfeed.scheduler.TickScheduler`, which records one
+``MARKETFEED_PASS_OVERRUN`` row for a pass (tick + post-pass hook) that exceeds it — and nothing
+for a pass inside it. Without that row a slow pass and a late producer look identical from the
+durable store: both show up only as a ``STALE`` field. The post-pass hook is what makes this
+worth measuring rather than assuming — it reads the broker. ``kis_quote`` leaves
+``journal_pass_allowance_ms`` absent by design (the paragraph above), so that intake gets no
+budget here and stays measured by its own per-request anchor.
+
 Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
 ``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
 resolves for the order transport — resolved independently here (module-local
@@ -123,7 +134,7 @@ from tos_runtime.marketfeed.policy import (
     load_critical_input_policy,
 )
 from tos_runtime.marketfeed.ports import ObservationIntake
-from tos_runtime.marketfeed.scheduler import TickScheduler
+from tos_runtime.marketfeed.scheduler import PassBudget, TickScheduler
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, SqliteSnapshotStore
 from tos_runtime.marketfeed.time_pacer import TimeEvaluationPacer
 from tos_runtime.marketfeed.time_projection import (
@@ -661,6 +672,26 @@ def _build_intake(
     )
 
 
+def _pass_budget(
+    config: MarketFeedConfig, monotonic: MonotonicSource
+) -> PassBudget | None:
+    """This config's per-pass measurement, or ``None`` when it declares no allowance.
+
+    ``journal_pass_allowance_ms`` is required for ``intake_kind: journal`` and must be absent
+    for ``kis_quote`` (module docstring), so "no allowance" is a real, configured state and not
+    a missing value: that intake measures its own round trip per request instead. The budget
+    the scheduler measures against is therefore the SAME number
+    :func:`_load_config_within_freshness_budget` refuses a config for exceeding — read once,
+    never a second copy (the module docstring's own "the check and the thing checked must read
+    one value" discipline).
+    """
+    if config.journal_pass_allowance_ms is None:
+        return None
+    return PassBudget(
+        monotonic=monotonic, allowance_ms=config.journal_pass_allowance_ms
+    )
+
+
 def _build_time_projection(
     config: MarketFeedConfig,
     time_config: TrustworthyTimeConfig,
@@ -719,9 +750,11 @@ def build_tick_scheduler(
             (module docstring on why this must be called after the barrier runs).
         inbox: This process's shared durable event inbox.
         evidence_store: This process's shared evidence store.
-        custody, monotonic, broker_scopes, runtime_identity, credential_sessions: Used ONLY
-            when ``intake_kind: kis_quote`` — see :func:`_build_intake` for what each one feeds.
-        after_pass: Forwarded to ``TickScheduler.run_forever``'s post-pass hook; ``None`` = none.
+        custody, broker_scopes, runtime_identity, credential_sessions: Used ONLY when
+            ``intake_kind: kis_quote`` — see :func:`_build_intake` for what each one feeds.
+        monotonic: Paces the time hook, the ``kis_quote`` intake, and :func:`_pass_budget`.
+        after_pass: Forwarded to ``TickScheduler.run_forever``'s post-pass hook (module
+            docstring's own pass-budget paragraph); ``None`` = no post-pass work.
 
     Returns:
         The built scheduler, or ``None`` when ``marketfeed.yaml`` is absent (an operator who has
@@ -779,4 +812,5 @@ def build_tick_scheduler(
         poll_interval_ms=config.poll_interval_ms,
         before_decide=_time_pacer_pass(config, time_service, session_owner, monotonic),
         after_pass=after_pass,
+        pass_budget=_pass_budget(config, monotonic),
     )

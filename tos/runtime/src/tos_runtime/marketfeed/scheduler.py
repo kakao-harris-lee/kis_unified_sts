@@ -34,10 +34,24 @@ each deliberate:
   from. ``SKIPPED_SESSION_CLOSED`` is the one that matters: an order ACKed just before the
   close still has a fill to observe and capacity to release, and a hook reached only on the
   ``TICKED`` path would stop reading the broker exactly when the answer arrives.
-* **After the pass, never before it.** The decision path owns this pass's latency budget —
-  the same reasoning (and the same independent-review finding, LOW-5) that put
-  :meth:`TickScheduler._record_field_refusals` after the decision rather than between
-  ``store.put`` and it.
+* **After the pass, never before it — and the whole pass is MEASURED** (#949 review HIGH).
+  Ordering it after the decision is the same reasoning (and the same independent-review
+  finding, LOW-5) that put :meth:`TickScheduler._record_field_refusals` after the decision
+  rather than between ``store.put`` and it. But ordering alone does not bound anything: a
+  bar's age when the next pass reads it is the collector's delay plus this loop's own period,
+  and the boot guard ``_marketfeed_wiring._load_config_within_freshness_budget`` reserves
+  exactly ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's
+  ``max_age_ms`` for that — so a hook that takes longer than its share pushes bars toward
+  ``STALE``, which (issue #807) are consumed and never retried. The hook's own cost is
+  therefore bounded by its config (the fill observer's GETs take
+  ``fill_observer.yaml::witness_request_timeout_s``, its own number, not the 10 s order
+  path's) and :meth:`TickScheduler._record_pass_overrun` records every pass that outran the
+  allowance, so a ``STALE`` field caused by this hook is distinguishable from a late
+  producer. ⚠ **Residual, stated rather than implied:** a GET that actually runs to its
+  timeout still stretches that one pass, and bars arriving inside it read ``STALE``. Removing
+  that outright means moving the broker read off this thread, which the shared KIS credential
+  session (one token lifecycle per app key, C-2) and the single-thread sqlite evidence store
+  do not currently allow — see the PR body of #949.
 * **A raise propagates**, exactly like every other evidence failure in this module
   (:meth:`TickScheduler._record_field_refusals`'s own docstring). The hook's own non-fatal
   conditions stay its own business — the fill observer records a failed broker read as an
@@ -190,14 +204,37 @@ from tos_runtime.marketfeed.ports import (
 from tos_runtime.marketfeed.snapshot import IssuedSnapshot, SnapshotIssuer
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "MultiInstrumentRefused",
+    "PassBudget",
     "TickDecision",
     "TickResult",
     "TickScheduler",
     "decide_tick",
 ]
+
+
+@dataclass(frozen=True)
+class PassBudget:
+    """What one :meth:`TickScheduler.run_forever` pass is allowed to cost, and the clock that
+    measures it (#949 review HIGH item (b); :meth:`TickScheduler._record_pass_overrun`).
+
+    One object rather than two optional constructor arguments: a budget without a clock cannot
+    be measured and a clock without a budget has nothing to judge, so both-or-neither is the
+    shape, enforced here instead of by matching ``None`` checks at the use site.
+
+    Attributes:
+        monotonic: The injected monotonic source — a DURATION measurement, never a time fact,
+            so it is unrelated to the one wall-clock reading a pass takes (module docstring).
+        allowance_ms: ``marketfeed.yaml::journal_pass_allowance_ms`` — the runtime's own share
+            of the freshness budget ``_marketfeed_wiring._load_config_within_freshness_budget``
+            already refuses a config for exceeding. The same number, read once.
+    """
+
+    monotonic: MonotonicSource
+    allowance_ms: int
 
 
 class MultiInstrumentRefused(RuntimeError):
@@ -300,6 +337,11 @@ _MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND = "MARKETFEED_QUEUED_UNTIL_RECOVERY"
 #: this exists for.
 _MARKETFEED_FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 
+#: The evidence kind for a :meth:`TickScheduler.run_forever` pass whose own work (the tick plus
+#: the post-pass hook) ran longer than the configured pass budget —
+#: :meth:`TickScheduler._record_pass_overrun`'s own docstring has the reasoning.
+_MARKETFEED_PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
+
 
 def _require_single_instrument(instruments: Sequence[str]) -> str:
     """The one instrument ``instruments`` must name (module docstring; :class:`TickScheduler`'s
@@ -393,6 +435,7 @@ class TickScheduler:
         poll_interval_ms: int,
         before_decide: Callable[[], bool] | None = None,
         after_pass: Callable[[], None] | None = None,
+        pass_budget: PassBudget | None = None,
     ) -> None:
         """Wire the scheduler (every arg's own docstring lives on the field it fills below —
         ``instruments``/``instrument_class``/``account``/``direction``/``quantity_basis``/
@@ -417,11 +460,16 @@ class TickScheduler:
         passes ``_broker_posttrade_wiring.fill_observer_pass``; ``None`` leaves the loop with
         nothing to run after a pass, which is every boot that is not a stock MOCK order tree.
 
+        ``pass_budget`` is what makes a pass's own duration MEASURED rather than assumed
+        (:class:`PassBudget`, :meth:`_record_pass_overrun`). ``None`` — the default — leaves a
+        scheduler that behaves exactly as it did before and records no overrun row.
+
         Raises:
             MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
         """
         self._before_decide = before_decide
         self._after_pass = after_pass
+        self._pass_budget = pass_budget
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -671,8 +719,62 @@ class TickScheduler:
         three reasons (why here and not in :meth:`tick_once`, why after and not before, and why
         a raise from it propagates out of this loop rather than being swallowed).
         """
+        budget = self._pass_budget
         while not stop():
+            started_ms = None if budget is None else budget.monotonic.now_ms()
             self.tick_once()
+            ticked_ms = None if budget is None else budget.monotonic.now_ms()
             if self._after_pass is not None:
                 self._after_pass()
+            self._record_pass_overrun(started_ms, ticked_ms)
             sleep(self._poll_interval_ms / 1000)
+
+    def _record_pass_overrun(
+        self, started_ms: int | None, ticked_ms: int | None
+    ) -> None:
+        """Record a pass whose own work outran ``pass_budget_ms`` — and nothing otherwise.
+
+        ⛔ **Why this row exists** (#949 review HIGH, item (b)). A bar's age when the next pass
+        reads it is the collector's delay plus the loop's own period, and the boot guard
+        ``_marketfeed_wiring._load_config_within_freshness_budget`` budgets exactly
+        ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's ``max_age_ms``
+        for that. Before this row, a pass could spend arbitrarily longer than its allowance —
+        the post-pass hook's broker read is the reason it now can — and the only visible
+        consequence was a ``STALE`` field, which looks exactly like a late producer. The
+        2026-10-22 refusal cost a read-only dive through the durable store to answer "stale, or
+        a slow pass?" (:meth:`_record_field_refusals`'s own measurement note). This row answers
+        it directly: both halves of the pass, and the budget they were measured against.
+
+        **Diagnostics only, and only on an overrun.** Nothing reads this row to decide
+        anything, and a pass inside its budget writes nothing at all — this must not add a
+        write to every pass of a healthy session.
+
+        **Written before the sleep, after the hook.** A pass that has already overrun is not
+        the place to defer the evidence that says so; and like every other append in this
+        module, a failure to write it propagates (:meth:`_record_field_refusals`).
+
+        Args:
+            started_ms: The monotonic reading taken before :meth:`tick_once`, or ``None`` when
+                no :class:`PassBudget` was injected (then nothing is measured or recorded).
+            ticked_ms: The reading taken after :meth:`tick_once` returned — the split between
+                the tick's own cost and the hook's.
+        """
+        budget = self._pass_budget
+        if budget is None or started_ms is None or ticked_ms is None:
+            return
+        now_ms = budget.monotonic.now_ms()
+        pass_ms = now_ms - started_ms
+        if pass_ms <= budget.allowance_ms:
+            return
+        self._evidence_store.append(
+            {
+                "instrument": self._instrument,
+                "budget_ms": budget.allowance_ms,
+                "pass_ms": pass_ms,
+                "tick_ms": ticked_ms - started_ms,
+                "after_pass_ms": now_ms - ticked_ms,
+                "poll_interval_ms": self._poll_interval_ms,
+            },
+            kind=_MARKETFEED_PASS_OVERRUN_KIND,
+            record_class=_MARKETFEED_PASS_OVERRUN_KIND,
+        )

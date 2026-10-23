@@ -11,7 +11,13 @@ released. This file covers the caller:
 * §2 the e2e: a real :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.run_forever` session
   loop over a stock MOCK boot against the fake KIS server observes ACK -> FULL_FILL -> broker
   finality proof -> exactly one RCL release, with **no** ``poll_*`` call anywhere in the test;
-* §3 the paper / CP-3 LONG and SHORT loop is unchanged: no observer, so the pass polls nothing.
+* §3 the paper / CP-3 LONG and SHORT loop is unchanged: no observer, so the pass polls nothing;
+* §4 the #949 review's HIGH, the half of it this lane could close: the hook runs inside the
+  loop's tick-to-tick freshness window, so its GETs carry the observer's OWN timeout (not the
+  order path's 10 s) and every pass that outruns ``journal_pass_allowance_ms`` leaves one
+  ``MARKETFEED_PASS_OVERRUN`` row — a ``STALE`` field caused by this hook is no longer
+  indistinguishable from a late producer. The residual (a GET that runs to its timeout still
+  stretches that pass) is in the scheduler's own module docstring and in #949's PR body.
 
 The e2e's journaled observation is deliberately NON-crossing (``close`` between the bands, so the
 band-reversion strategy proposes nothing): the loop's real passes must not send a second order,
@@ -35,9 +41,15 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 from tos.rcl import CapacityState
-from tos_runtime.compose._broker_posttrade_wiring import fill_observer_pass
+from tos_runtime.compose._broker_posttrade_wiring import (
+    DeferredKisWitness,
+    fill_observer_pass,
+)
 from tos_runtime.compose._types import ComposedRuntime
-from tos_runtime.posttrade.fill_observer import FILL_OBSERVER_CONFIG_NAME
+from tos_runtime.posttrade.fill_observer import (
+    FILL_OBSERVER_CONFIG_NAME,
+    load_fill_observer_config,
+)
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
@@ -55,6 +67,7 @@ from .test_kis_mock_fill_finality_e2e import (
     _rows,
     _script_broker,
     _sealed_quantity,
+    _witness_paths,
 )
 from .test_marketfeed_wiring import (
     _observation_line,
@@ -72,6 +85,9 @@ _NON_CROSSING_CLOSE = (fx.LOWER_BAND + fx.UPPER_BAND) // 2
 #: small — sleep between them.
 _FAST_POLL_INTERVAL_MS = 20
 _REAL_SLEEP_SECONDS = 0.03
+#: The runtime's own share of the freshness budget, as this suite's marketfeed config declares
+#: it — the number ``TickScheduler`` measures each pass against (§4).
+_JOURNAL_PASS_ALLOWANCE_MS = 100
 
 
 @pytest.fixture()
@@ -106,7 +122,7 @@ def _write_marketfeed_config(
                 "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _FAST_POLL_INTERVAL_MS,
-                "journal_pass_allowance_ms": 100,
+                "journal_pass_allowance_ms": _JOURNAL_PASS_ALLOWANCE_MS,
                 "time_evaluate_closed_interval_ms": 60_000,
                 "snapshot_age_bound": 20,
                 "interval_width": 10,
@@ -153,6 +169,27 @@ def _retune_observer_poll_interval(config_dir: Path, poll_interval_ms: int) -> N
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     raw["poll_interval_ms"] = poll_interval_ms
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+
+def _script_slow_order_inquiry(
+    server: FakeKisServer, config_dir: Path, date: str, *, delay_s: float
+) -> str:
+    """``_script_broker`` with a REAL delay on the order inquiry — the fake server's own
+    ``delay_s`` route option, so the slowness is a genuine wall-clock wait on the GET the hook
+    makes, not a patched clock."""
+    balance, orders = _witness_paths(config_dir, date)
+    server.set_response(
+        balance,
+        status=200,
+        body={"rt_cd": "0", "output1": [], "output2": [{"dnca_tot_amt": "1000000"}]},
+    )
+    server.set_response(
+        orders,
+        status=200,
+        body={"rt_cd": "0", "output1": [], "output2": {}},
+        delay_s=delay_s,
+    )
+    return orders
 
 
 def _real_short_sleep(_seconds: float) -> None:
@@ -372,4 +409,106 @@ def test_the_paper_and_futures_loop_has_no_observer_and_polls_nothing(
     assert runtime.marketfeed._store.latest_as_of(instrument=fx.INSTRUMENT) == as_of_ms
     assert [kind for kind in _evidence_kinds(runtime) if kind.startswith("FILL")] == []
     assert _rows(runtime, "POSTTRADE_FINALITY_PROOF") == []
+    _close(runtime)
+
+
+# ===========================================================================
+# 4. the hook sits in the freshness window: its own timeout, and a measured pass
+# ===========================================================================
+
+
+def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#949 review HIGH (a). The witness the hook reads through is sealed with
+    ``fill_observer.yaml::witness_request_timeout_s``, deliberately not the order transport's
+    ``request_timeout_s`` — the observer's read happens inside the loop's tick-to-tick window
+    and the order POST does not.
+
+    Mutation: wire ``transport_config.request_timeout_s`` back in -> the sealed value becomes
+    the fixture's 5.0 -> red on both assertions.
+    """
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    observer = runtime.fill_observer
+    assert observer is not None
+    expected = load_fill_observer_config(
+        config_dir / FILL_OBSERVER_CONFIG_NAME
+    ).witness_request_timeout_s
+    witness = observer.orders
+    assert isinstance(witness, DeferredKisWitness) and witness.inner is not None
+    sealed = witness.inner._config.request_timeout_s  # noqa: SLF001
+    assert sealed == expected
+    # The fixture's transport says 5.0 (``_fixtures.write_kis_mock_transport_config``): the
+    # point of the change is that these two numbers are no longer the same one.
+    assert (
+        sealed
+        != yaml.safe_load(
+            (config_dir / "kis_mock_transport.yaml").read_text(encoding="utf-8")
+        )["request_timeout_s"]
+    )
+    _close(runtime)
+
+
+def test_a_pass_that_outruns_its_allowance_leaves_one_overrun_row(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#949 review HIGH (b), end to end through a real composed loop: the fake server holds the
+    order inquiry for longer than ``journal_pass_allowance_ms``, so the pass that polls it
+    overruns, and the durable store says so — with the hook's share split out from the tick's.
+
+    Without this row the only trace of a slow hook is a ``STALE`` field, which looks exactly
+    like a late producer (``scheduler.py``'s own post-pass-hook paragraph).
+
+    Mutation: drop the ``pass_budget`` wiring in ``build_tick_scheduler`` -> no row -> red.
+    """
+    _wire_tick_source(config_dir, tmp_path)
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert _drive_crossing_tick(runtime, custody_root).flow is not None
+    date = _ack(runtime)["trading_date"]
+    assert date is not None and runtime.marketfeed is not None
+    # A broker read slower than the allowance this suite's marketfeed config declares.
+    _script_slow_order_inquiry(server, config_dir, date, delay_s=0.3)
+
+    runtime.marketfeed.run_forever(sleep=_real_short_sleep, stop=_stop_after(2))
+
+    overruns = _rows(runtime, "MARKETFEED_PASS_OVERRUN")
+    assert len(overruns) >= 1
+    row = overruns[0]
+    assert row["budget_ms"] == _JOURNAL_PASS_ALLOWANCE_MS
+    assert row["pass_ms"] > row["budget_ms"]
+    # The hook's share, not the tick's, is what blew the budget — that is the whole point of
+    # recording both halves.
+    assert row["after_pass_ms"] >= 300
+    assert row["instrument"] == fx.INSTRUMENT
+    _close(runtime)
+
+
+def test_a_pass_inside_its_allowance_leaves_no_overrun_row(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """The row must not appear on a healthy session's every pass: a synthetic boot with no
+    observer ticks well inside the allowance and writes nothing.
+
+    Mutation: record unconditionally -> a row per pass -> red.
+    """
+    _wire_tick_source(config_dir, tmp_path)
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    _reach_trusted(runtime)
+    assert runtime.marketfeed is not None
+
+    runtime.marketfeed.run_forever(sleep=_real_short_sleep, stop=_stop_after(3))
+
+    assert _rows(runtime, "MARKETFEED_PASS_OVERRUN") == []
     _close(runtime)

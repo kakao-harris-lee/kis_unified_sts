@@ -124,9 +124,15 @@ def test_the_committed_fill_observer_config_loads() -> None:
     config = load_fill_observer_config(_STOCK / "fill_observer.yaml")
     assert config.witness_fields["order_inquiry_tr_id"] == "VTTC0081R"
     assert config.poll_interval_ms > 0 and config.overdue_after_ms > 0
+    # #949 review HIGH (a): the observer's GETs are bounded by ITS OWN timeout, and that bound
+    # has to be well under the order path's (kis_mock_transport.yaml's 10 s) — the observer is
+    # read from inside the session loop's tick-to-tick window and the order path is not.
+    assert 0 < config.witness_request_timeout_s <= 3.0
 
 
-@pytest.mark.parametrize("key", ["poll_interval_ms", "overdue_after_ms"])
+@pytest.mark.parametrize(
+    "key", ["poll_interval_ms", "overdue_after_ms", "witness_request_timeout_s"]
+)
 @pytest.mark.parametrize("value", [0, -1, None, True])
 def test_a_non_positive_bound_refuses(tmp_path, key, value) -> None:
     raw = yaml.safe_load((_STOCK / "fill_observer.yaml").read_text("utf-8"))

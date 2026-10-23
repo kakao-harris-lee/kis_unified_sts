@@ -169,6 +169,14 @@ class FillObserverConfig:
         prior_day_poll_interval_ms: Minimum spacing between two reads of an unresolved ACK from
             an EARLIER trading day (Codex r2 MEDIUM): it is re-read under its own date until a
             terminal broker result shows — slower than today's cadence, never abandoned.
+        witness_request_timeout_s: Per-GET timeout for the witness this config seals — the
+            observer's own bound, deliberately NOT the order path's
+            ``kis_mock_transport.yaml::request_timeout_s`` (10 s). #949 review HIGH: the
+            observer's read happens inside the session loop's tick-to-tick window, so its worst
+            case has to be a number this file states, not one inherited from a path whose
+            latency nobody is waiting on. It bounds every GET this witness makes — the
+            observer's order inquiry AND the release/recovery reconciliation's balance read,
+            which run on the same witness.
     """
 
     witness_fields: dict[str, Any]
@@ -176,6 +184,7 @@ class FillObserverConfig:
     overdue_after_ms: int
     finality_retry_interval_ms: int
     prior_day_poll_interval_ms: int
+    witness_request_timeout_s: float
 
 
 _WITNESS_KEYS = (
@@ -185,6 +194,16 @@ _WITNESS_KEYS = (
     "order_inquiry_tr_id",
     "max_pages",
 )
+
+
+def _positive_number(raw: dict[str, Any], key: str, path: Path) -> float:
+    """A positive int or float (a timeout in seconds is not naturally an int)."""
+    value = raw.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise FillObserverConfigError(
+            f"{path}: {key!r} must be a positive number, got {value!r}"
+        )
+    return float(value)
 
 
 def _positive_int(raw: dict[str, Any], key: str, path: Path) -> int:
@@ -229,6 +248,9 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         ),
         prior_day_poll_interval_ms=_positive_int(
             raw, "prior_day_poll_interval_ms", path
+        ),
+        witness_request_timeout_s=_positive_number(
+            raw, "witness_request_timeout_s", path
         ),
     )
 

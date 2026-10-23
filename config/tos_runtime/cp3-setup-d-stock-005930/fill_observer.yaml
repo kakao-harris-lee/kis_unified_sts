@@ -4,9 +4,9 @@
 # Read by tos_runtime.compose._broker_posttrade_wiring (PR-3b). Only a stock MOCK order boot
 # (kis-mock transport + MOCK_STOCK_ORDER) reads it; a stock MOCK boot without it refuses to boot.
 # No host here: the witness is sealed to kis_mock_transport.yaml::endpoint_rest_base (already
-# proven equal to the INSTANCE MOCK_VTS rest_base and different from REAL_PROD), and its request
-# timeout is that file's request_timeout_s. TR ids must be mock ('V'-prefixed) — the witness
-# config loader refuses anything else.
+# proven equal to the INSTANCE MOCK_VTS rest_base and different from REAL_PROD). Its request
+# timeout is NOT that file's: it is witness_request_timeout_s below (#949 review HIGH). TR ids
+# must be mock ('V'-prefixed) — the witness config loader refuses anything else.
 #
 # 주식일별주문체결조회 — open-trading-api examples_llm/domestic_stock/inquire_daily_ccld
 # (demo/inner → VTTC0081R; 모의 15 rows per call, continuation via tr_cont M/F + CTX_AREA_*100).
@@ -23,6 +23,16 @@ max_pages: 10
 # also serves the order POST, the band probe and item 12's two GETs; 3 s keeps the observer to
 # one call in that budget.
 poll_interval_ms: 3000
+# Per-GET timeout for THIS witness, in seconds — the observer's own bound, not the order path's
+# kis_mock_transport.yaml::request_timeout_s (10 s). #949 review HIGH: the observer's read runs
+# inside the session loop's tick-to-tick window (marketfeed.yaml poll_interval_ms 400 +
+# journal_pass_allowance_ms 100 of an 800 ms field bound), so its worst case must be a number
+# stated here rather than inherited from a path nobody is waiting on. 2 s: a 모의 single-page
+# VTTC0081R measured ~0.2 s (P-11 2026-08-05), so 2 s is ten times the measured call and still
+# bounds one page at a quarter of the order path's value. Worst case per inquiry date is this
+# value x max_pages. It bounds every GET this witness makes — the observer's order inquiry and
+# the release/recovery reconciliation's balance read alike.
+witness_request_timeout_s: 2.0
 # An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
 # (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not
 # filled by then is worth an operator look.

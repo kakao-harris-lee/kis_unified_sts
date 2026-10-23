@@ -19,7 +19,10 @@ witness and producer and gets no observer.
 **Host seal.** The witness is GET-only and is sealed to the order transport's own mock host
 (``kis_mock_transport.yaml::endpoint_rest_base``, already proven equal to the INSTANCE mock
 document and different from the REAL one): ``fill_observer.yaml`` carries TR ids and paths, never
-a host. Its TR ids go through the witness config's ``V``-prefix check.
+a host. Its TR ids go through the witness config's ``V``-prefix check. **The per-GET timeout is
+the one value NOT inherited from the order transport** (#949 review HIGH): it comes from
+``fill_observer.yaml::witness_request_timeout_s``, because this witness is read from inside the
+session loop's tick-to-tick window and that bound belongs beside the cadence it pairs with.
 
 **Credentials.** The witness asks the boot's one ``kis_mock.*`` credential session (C-2 decision
 (C)) per GET; until the session registry is dispatched the witness answers
@@ -161,7 +164,11 @@ def build_broker_posttrade(
         {
             **observer_config.witness_fields,
             "endpoint_rest_base": transport_config.endpoint_rest_base,
-            "request_timeout_s": transport_config.request_timeout_s,
+            # The OBSERVER's own timeout, not the order path's (#949 review HIGH) — this
+            # witness is read from inside the session loop's tick-to-tick window, so the
+            # bound belongs in `fill_observer.yaml` next to the cadence it pairs with. The
+            # host still comes from the order transport (the seal); only the timeout is ours.
+            "request_timeout_s": observer_config.witness_request_timeout_s,
             "allow_plaintext_for_tests": transport_config.allow_plaintext_for_tests,
         },
         path=path,
