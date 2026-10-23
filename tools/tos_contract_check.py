@@ -474,7 +474,10 @@ from pathlib import Path
 try:  # pragma: no cover - 배포 환경 결손 경로
     import yaml
 except ImportError as _exc:  # pragma: no cover
-    yaml = None  # type: ignore[assignment]
+    # `unused-ignore` 를 함께 적는다 — `types-PyYAML` 이 있는 환경에서는
+    # `assignment` 억제가 **필요하고**, 없는 환경(CI 최소 설치)에서는 `yaml` 이
+    # `Any` 라 억제가 **남는다**.  두 환경에서 같은 판정이 나오게 한다.
+    yaml = None  # type: ignore[assignment, unused-ignore]
     YAML_IMPORT_ERROR: str | None = str(_exc)
 else:
     YAML_IMPORT_ERROR = None
@@ -1794,7 +1797,10 @@ def read_baseline_source(
                 f"'{BASELINE_KIND_KEY}': '{BASELINE_KIND_COMMIT}' 로 승격하라"
             )
         try:
-            return (repo_root / record.path).read_text(encoding="utf-8")
+            # `BaselineRecord` 는 무타입 namedtuple 이라 `record.path` 가 `Any` 다 —
+            # 반환값에 타입을 적어 선언한 `str` 을 실제로 지킨다.
+            text: str = (repo_root / record.path).read_text(encoding="utf-8")
+            return text
         except OSError as exc:
             raise ContractParseError(
                 f"워킹트리 파일을 읽지 못했다 ({record.path}): {exc}"
@@ -3220,6 +3226,7 @@ def check_rule(
                 doc, str(universe_q["block_anchor"])
             )
 
+        found: tuple[list[RuleConsumer], int] | None
         if consumers_name == "structural_term_guard_expressions":
             found = derive_consumers_cap_guards(
                 doc, str(consumers_q["block_anchor"]), fixture_rows
@@ -6961,8 +6968,10 @@ def _evaluate_mutation(
         # 문서를 하나도 바꾸지 못했다 = 치환 대상 0회.  전량 치환형 대조군(`replace`)
         # 은 «정확히 1회» 를 요구하지 않으므로 사전 점검에 적을 수 없고, 그 부재가
         # 여기서 드러난다 — 사건은 같으므로 부류도 같다(앵커 불일치).
-        exc = AnchorMismatch(f"<{mut.name} 의 치환 대상>", 0)
-        return Outcome(BUCKET_ANCHOR, "ANCHOR", _anchor_detail(exc), exc)
+        # 위 `except ... as exc` 의 이름은 블록을 벗어나며 파이썬이 지운다 —
+        # 같은 이름을 다시 쓰지 않고 별도 이름으로 둔다(동작 동일).
+        no_target = AnchorMismatch(f"<{mut.name} 의 치환 대상>", 0)
+        return Outcome(BUCKET_ANCHOR, "ANCHOR", _anchor_detail(no_target), no_target)
 
     ref_counts, ref_sites = _reference_index(
         text,

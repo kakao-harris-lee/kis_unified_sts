@@ -144,6 +144,7 @@ import re
 import subprocess
 import sys
 from collections import namedtuple
+from collections.abc import Iterator
 from pathlib import Path
 
 # ============================================================================
@@ -491,7 +492,7 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
     return violations
 
 
-def _iter_py_files(root: Path):
+def _iter_py_files(root: Path) -> Iterator[Path]:
     for p in sorted(root.rglob("*.py")):
         rel_parts = p.relative_to(root).parts
         if rel_parts and rel_parts[0] == ".venv":
@@ -512,7 +513,7 @@ def _iter_py_files(root: Path):
 _UNSET = object()
 
 
-def _run_git(args: list[str], repo_root: Path) -> subprocess.CompletedProcess:
+def _run_git(args: list[str], repo_root: Path) -> subprocess.CompletedProcess[bytes]:
     """Run git with byte output so non-UTF-8 filenames survive os.fsdecode.
 
     LC_ALL=C keeps error messages stable for callers that match git diagnostics.
@@ -615,7 +616,7 @@ def _walk_repo_py(
     *,
     symlinks_out: list[Path] | None = None,
     toplevel: Path | None = _UNSET,  # type: ignore[assignment]
-):
+) -> Iterator[Path]:
     """Yield every ``.py`` reachable outside the pruned roots.
 
     ``symlinks_out``, if given, is a side-channel: every ``dirnames``/
