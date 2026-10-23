@@ -473,17 +473,19 @@ def _build_fqp_rules(
 def _build_environment_class(
     profile_identity: dict[str, Any], *, context: str
 ) -> BrokerEnvironment | None:
-    """``profile_identity.environment_class`` as the kernel enum, or ``None`` when absent.
+    """``profile_identity._model_view.environment_class`` as the kernel enum, or ``None``.
 
     #932 Codex r2: the ONE place a profile's environment class enters the runtime — read off
-    the INSTANCE document itself (not the scope table, not a send-time context). An unknown
-    value is a boot refusal, never a guess; absent is ``None``, which the egress gateway never
+    the INSTANCE document's own ``_model_view`` (the repo's home for kernel-typed values; not
+    a ProfileKey coordinate, not the scope table, not a send-time context). An unknown value
+    is a boot refusal, never a guess; absent is ``None``, which the egress gateway never
     reads as simulation.
 
     Raises:
         BrokerInstanceConfigError: the value is not a :class:`BrokerEnvironment` member name.
     """
-    raw = profile_identity.get("environment_class")
+    model_view = profile_identity.get("_model_view")
+    raw = model_view.get("environment_class") if isinstance(model_view, dict) else None
     if raw is None:
         return None
     try:
