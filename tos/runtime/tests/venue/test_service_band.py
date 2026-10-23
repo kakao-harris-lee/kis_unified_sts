@@ -1141,6 +1141,10 @@ class TestTheBandIsReadAtBoot:
             ),
         )
         loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+        assert isinstance(loaded.band_source, ProducerJournalBandSource), (
+            "the fixture policy above declares `kind: producer_journal`, so the loader must "
+            f"have produced that source — got {type(loaded.band_source).__name__}"
+        )
         sink = _Sink()
         # `None` for the boot read, the real date from the first snapshot on — a clock that
         # was stale when the venue service was built and fresh by the runner's first cycle.
