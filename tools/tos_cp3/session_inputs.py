@@ -1351,7 +1351,9 @@ def build_consumed_ids_document(
             "number the criterion is read off. 'No pre-boot lines' is an "
             "empty pre_boot_raw_event_ids list, not a missing file"
         )
-    snapshots = read_snapshots(data_dir)
+    # `Sequence` 로 적는다 — `read_snapshots` 는 튜플을, 아래
+    # `scope_to_session_day` 는 리스트를 돌려주고 둘 다 같은 이름에 담긴다.
+    snapshots: Sequence[Snapshot] = read_snapshots(data_dir)
     if not snapshots:
         raise SessionInputsError(
             f"{data_dir / MARKETFEED_FILE_NAME} holds no snapshots — the runtime "

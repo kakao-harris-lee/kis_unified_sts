@@ -607,9 +607,7 @@ def test_more_code_with_no_cursor_is_an_error_not_end_of_set(
     assert run.measurements["truncation_risk"]["holdings_total"] is None
 
 
-def test_static_keys_without_end_code_stay_an_error(
-    stock_env: None, wire: Any
-) -> None:
+def test_static_keys_without_end_code_stay_an_error(stock_env: None, wire: Any) -> None:
     """A frozen cursor while tr_cont still claims more follows is a genuine
     anomaly — the loop-risk classification must survive the tr_cont fix."""
     wire(
