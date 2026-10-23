@@ -1,0 +1,39 @@
+# =============================================================================
+# Post-ACK fill observer + stock broker witness — CP-3 stock tenant / KIS 모의투자 (VTS), GET only
+# =============================================================================
+# Read by tos_runtime.compose._broker_posttrade_wiring (PR-3b). Only a stock MOCK order boot
+# (kis-mock transport + MOCK_STOCK_ORDER) reads it; a stock MOCK boot without it refuses to boot.
+# No host here: the witness is sealed to kis_mock_transport.yaml::endpoint_rest_base (already
+# proven equal to the INSTANCE MOCK_VTS rest_base and different from REAL_PROD), and its request
+# timeout is that file's request_timeout_s. TR ids must be mock ('V'-prefixed) — the witness
+# config loader refuses anything else.
+#
+# 주식일별주문체결조회 — open-trading-api examples_llm/domestic_stock/inquire_daily_ccld
+# (demo/inner → VTTC0081R; 모의 15 rows per call, continuation via tr_cont M/F + CTX_AREA_*100).
+# 주식잔고조회 — VTTC8434R (the witness's position/cash read; used by release/recovery
+# reconciliation, never by the observer's own poll).
+order_inquiry_tr_id: "VTTC0081R"
+order_inquiry_path: "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+balance_tr_id: "VTTC8434R"
+balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+# Our cap on the continuation walk (15 rows/page on 모의 → 150 orders/day for one symbol). A walk
+# that hits it while the broker still says "more" is WitnessUnavailable, never a partial list.
+max_pages: 10
+# Minimum spacing between two VTTC0081R polls. 모의 is rate-limited per app key and the same key
+# also serves the order POST, the band probe and item 12's two GETs; 3 s keeps the observer to
+# one call in that budget.
+poll_interval_ms: 3000
+# An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
+# (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not
+# filled by then is worth an operator look.
+overdue_after_ms: 600000
+# A terminal result is recorded but its release has not committed (the process died before
+# finality ran, or reconciliation / the RCL CAS held it): finality is re-run from the recorded
+# result at most this often, until the RCL holds the release. 60 s: each re-run is one witness
+# read (two GETs) plus evidence rows, and a hold that persists is usually an operator matter
+# (e.g. an unattributed order in the same symbol).
+finality_retry_interval_ms: 60000
+# An unresolved ACK from an EARLIER trading day (the runtime was down across the KST date
+# boundary, or the read failed at the time) is re-read under its own date at this cadence until a
+# terminal broker result shows — slower than today's poll_interval_ms, never abandoned. 10 minutes.
+prior_day_poll_interval_ms: 600000

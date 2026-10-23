@@ -735,6 +735,15 @@ class _RecoveryVerdictLike(Protocol):
     def readiness_verdict(self) -> ReadinessVerdict: ...
 
 
+class _CommittedCommandReader(Protocol):
+    """The one RCL read :func:`restore_drill` needs (PR-3b — ``SqliteCommitLog
+    .committed_command``): the committed ``(seq, command_digest)`` of a command, or ``None``.
+    The boot replay checks every recorded engine-projection release against it; a drill that
+    withheld it would report a good stock-MOCK backup as diverged."""
+
+    def committed_command(self, command_id: str) -> tuple[int, str | None] | None: ...
+
+
 class _ComposedForDrill(Protocol):
     """The exact surface :func:`restore_drill` uses off whatever ``compose`` returns — verified
     directly against ``tos_runtime.compose._types.ComposedRuntime``'s own real attributes, never
@@ -754,6 +763,9 @@ class _ComposedForDrill(Protocol):
 
     @property
     def emergency_log(self) -> EmergencyAppendLog: ...
+
+    @property
+    def rcl_log(self) -> _CommittedCommandReader: ...
 
     @property
     def recovery(self) -> _RecoveryVerdictLike | None: ...
@@ -882,6 +894,9 @@ def restore_drill(
         build_core,
         scheme=scheme,
         window_events=window_events,
+        # The restored RCL's own committed state — the authority recorded engine-projection
+        # releases are checked against (PR-3b final review LOW; tos_runtime.engine.replay_releases).
+        rcl_committed=runtime.rcl_log.committed_command,
     )
     result, mismatched, readiness_at_drill = _evaluate_restore_drill(
         runtime, restored.manifest, verdict

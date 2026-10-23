@@ -112,7 +112,7 @@ from tos_runtime.engine.orthostate_projection import (
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.nontrade.latch import LatchOutcome
-from tos_runtime.posttrade.finality import SyntheticFinalityProducer
+from tos_runtime.posttrade.finality import FinalityProducerPort
 from tos_runtime.time.sources import MonotonicSource
 
 if TYPE_CHECKING:
@@ -249,7 +249,7 @@ class EngineDriver:
         monotonic_source: MonotonicSource,
         max_send_result_wait_ms: int,
         orthostate_projector: OrthostateProjector,
-        finality_producer: SyntheticFinalityProducer,
+        finality_producer: FinalityProducerPort,
         recovery_composite_writer: Callable[[str, CompositeState], None] | None = None,
     ) -> None:
         """Wire the driver.
@@ -276,9 +276,9 @@ class EngineDriver:
                 ADR-002-005 orthostate dimensions (plan §2.2) — REQUIRED (no default): an omitted
                 projector is a silent absence, not a valid "off" mode
                 (:mod:`tos_runtime.engine.orthostate_projection`).
-            finality_producer: Produces a SYNTHETIC post-trade finality proof for a ``FULL_FILL``
-                (plan §2.2) — REQUIRED, for the same reason as ``orthostate_projector``
-                (:mod:`tos_runtime.posttrade.finality`).
+            finality_producer: The ``FULL_FILL`` proof producer — SYNTHETIC, or broker-sourced on
+                a stock MOCK boot (PR-3b) — REQUIRED, same reason as ``orthostate_projector``
+                (:mod:`tos_runtime.posttrade.finality`, :mod:`~tos_runtime.posttrade.broker_finality`).
             recovery_composite_writer: TOS Phase 5 W1 GAP 2 — durably persists the composite state
                 :attr:`_orthostate_projector` derives, keyed by the event's own id
                 (:mod:`tos_runtime.recovery.composite_state_writer`). Optional, defaulting to

@@ -642,6 +642,8 @@ _STOCK_TREE_BROKER_FACTS = (
     Path(__file__).resolve().parents[4]
     / "config/tos_runtime/cp3-setup-d-stock-005930/broker_facts.yaml"
 )
+#: ...and its ``fill_observer.yaml`` (PR-3b), copied the same way for the same reason.
+_STOCK_TREE_FILL_OBSERVER = _STOCK_TREE_BROKER_FACTS.with_name("fill_observer.yaml")
 
 
 def write_kis_mock_transport_config(
@@ -743,6 +745,7 @@ def write_kis_mock_transport_config(
     # A mock-class kis-mock boot reads item 12's GET-only broker facts (PR-3a option (a)) —
     # the stock tree's own committed file, one source, never a second fixture copy.
     shutil.copyfile(_STOCK_TREE_BROKER_FACTS, config_dir / "broker_facts.yaml")
+    shutil.copyfile(_STOCK_TREE_FILL_OBSERVER, config_dir / "fill_observer.yaml")
     vcp_path = config_dir / "venue_constraint_policy.yaml"
     if vcp_path.is_file():
         # A kis-mock boot cross-checks the transport's `price_scale` against the tree's

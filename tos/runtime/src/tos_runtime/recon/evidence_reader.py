@@ -70,8 +70,13 @@ _FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 #: uses to derive a proof's own ``idempotency_key`` (``tos_runtime/posttrade/finality.py``,
 #: verbatim ``f"synthetic-fqp-proof:{payload.attempt_id}"``) — cited, not re-derived, so a drift
 #: there is a visible grep target, not a hidden assumption (module docstring's "disclosed
-#: coupling").
-_FINALITY_PROOF_IDEMPOTENCY_PREFIX = "synthetic-fqp-proof:"
+#: coupling"). PR-3b adds the broker-sourced producer's own ``FULL_FILL`` prefix
+#: (:data:`~tos_runtime.posttrade.broker_finality.BROKER_FULL_FILL_PROOF_ID_PREFIX`) — a fill proof
+#: either producer wrote is a Final Quantity Proof token; neither non-execution prefix is.
+_FINALITY_PROOF_IDEMPOTENCY_PREFIXES: tuple[str, ...] = (
+    "synthetic-fqp-proof:",
+    "broker-fqp-proof:",
+)
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -171,10 +176,11 @@ class SqliteEvidenceReceiptReader:
         attempts: set[str] = set()
         for row in self._read_kind(frozenset({_FINALITY_PROOF_KIND})):
             key = row.get("idempotency_key")
-            if isinstance(key, str) and key.startswith(
-                _FINALITY_PROOF_IDEMPOTENCY_PREFIX
-            ):
-                attempts.add(key[len(_FINALITY_PROOF_IDEMPOTENCY_PREFIX) :])
+            if not isinstance(key, str):
+                continue
+            for prefix in _FINALITY_PROOF_IDEMPOTENCY_PREFIXES:
+                if key.startswith(prefix):
+                    attempts.add(key[len(prefix) :])
         return frozenset(attempts)
 
     def receipts(self, scope: WitnessScope) -> tuple[EgressReceiptObservation, ...]:

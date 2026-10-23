@@ -60,7 +60,9 @@ above; it holds no reference to any evidence store at all.
 Firewall (RUNTIME scope R1): stdlib (``dataclasses``, ``datetime``, ``decimal``, ``re``,
 ``typing``, ``zoneinfo``) + this package's own sibling modules
 (:mod:`~tos_runtime.recon.ports`, :mod:`~tos_runtime.recon.witness_kis_config`,
-:mod:`~tos_runtime.recon.witness_kis_client`) — no ``os.environ``, no ``shared.*``, no
+:mod:`~tos_runtime.recon.witness_kis_client`) plus the stdlib-only KIS account parser
+:mod:`tos_runtime.transport.kis_mock.account` (PR-3b — one 8-2 parser for order and fill reads) —
+no ``os.environ``, no ``shared.*``, no
 evidence-store import, no direct ``tos.*`` import at all (this module only ever sees
 ``InstrumentKey``/``WitnessScope`` etc. through :mod:`tos_runtime.recon.ports`'s own
 re-exports, so it opens no new commons edge beyond the one that module already has).
@@ -90,8 +92,10 @@ from tos_runtime.recon.witness_kis_client import (
     RawGetResponse,
 )
 from tos_runtime.recon.witness_kis_config import KisWitnessConfig, refuse_futures_asset
+from tos_runtime.transport.kis_mock.account import KisAccountError, split_kis_account
 
 __all__ = [
+    "KisOrderRow",
     "KisStockBrokerWitness",
     "KisWitnessCredentialSession",
     "KisWitnessRequestCredentials",
@@ -290,6 +294,66 @@ class _WalkOutcome:
     output2_first: dict[str, Any] | None
 
 
+def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
+    """A row must name the instrument it was asked for (PR-3b review HIGH 2). The witness
+    carries no instrument on :class:`~tos_runtime.recon.ports.WitnessOrder`, so a row for another
+    symbol — or one naming none — would otherwise be joined by ODNO alone and corroborate a fill
+    it says nothing about. Never filtered out: the whole read is unavailable, so the conflict
+    surfaces as "not corroborated" instead of disappearing.
+
+    Raises:
+        WitnessUnavailable: ``row.pdno`` is absent, or differs from ``queried`` (when one was).
+    """
+    if row.pdno is None or (queried and row.pdno != queried):
+        raise WitnessUnavailable(
+            f"KisStockBrokerWitness: order row {row.odno!r} names instrument {row.pdno!r}, "
+            f"queried {queried or '(any)'!r} — a row that does not name the queried instrument "
+            "cannot corroborate anything"
+        )
+
+
+@dataclass(frozen=True)
+class KisOrderRow:
+    """One 주식일별주문체결조회 (``VTTC0081R``) ``output1`` row, typed — the ONE parse of that row
+    this runtime has. :meth:`KisStockBrokerWitness.observe` folds it into a
+    :class:`~tos_runtime.recon.ports.WitnessOrder`; the post-ACK fill observer
+    (:mod:`tos_runtime.posttrade.fill_observer`) reads the extra fields it needs to fail closed
+    (``ord_qty``, ``rjct_qty``, ``orgn_odno``). Field names are KIS's own (official
+    ``COLUMN_MAPPING``, open-trading-api ``inquire_daily_ccld``); a magnitude that does not parse
+    is ``None``, never a fabricated zero.
+    """
+
+    odno: str | None
+    orgn_odno: str | None
+    ord_dt: str | None
+    pdno: str | None
+    ord_qty: Decimal | None
+    tot_ccld_qty: Decimal | None
+    rmn_qty: Decimal | None
+    rjct_qty: Decimal | None
+    cancelled: bool
+
+    @classmethod
+    def from_wire(cls, row: Mapping[str, Any]) -> KisOrderRow:
+        def _text(name: str) -> str | None:
+            value = str(row.get(name) or "").strip()
+            return value or None
+
+        ord_dt = str(row.get("ord_dt") or "").strip()
+        return cls(
+            odno=_text("odno"),
+            orgn_odno=_text("orgn_odno"),
+            # KIS 주문일자 — anything but YYYYMMDD digits is no date at all.
+            ord_dt=ord_dt if _YYYYMMDD.fullmatch(ord_dt) is not None else None,
+            pdno=_text("pdno"),
+            ord_qty=_decimal_or_none(row.get("ord_qty")),
+            tot_ccld_qty=_decimal_or_none(row.get("tot_ccld_qty")),
+            rmn_qty=_decimal_or_none(row.get("rmn_qty")),
+            rjct_qty=_decimal_or_none(row.get("rjct_qty")),
+            cancelled=str(row.get("cncl_yn") or "").strip() == _CANCELLED,
+        )
+
+
 class KisStockBrokerWitness:
     """A :class:`~tos_runtime.recon.ports.BrokerWitness` over the real KIS 모의투자 stock
     balance + execution-inquiry TRs (module docstring)."""
@@ -340,7 +404,12 @@ class KisStockBrokerWitness:
             cano, acnt_prdt_cd = self._split_account(scope.account)
             positions, cash = self._read_balance(cano, acnt_prdt_cd, scope)
             today = self._date_source.today()
-            orders = self._read_orders(cano, acnt_prdt_cd, scope, today)
+            # Today, plus any older date the caller names (PR-3b: an ACK from a previous trading
+            # day is still reconcilable — its order lives under its own 주문일자).
+            dates = (today, *sorted(set(scope.order_dates) - {today}))
+            rows: tuple[KisOrderRow, ...] = ()
+            for date in dates:
+                rows += self._read_order_rows(cano, acnt_prdt_cd, scope, date)
         except WitnessUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - the port's own two-outcome contract
@@ -358,7 +427,7 @@ class KisStockBrokerWitness:
 
         return WitnessSnapshot(
             observed_at_generation=scope.as_of_generation,
-            orders=orders,
+            orders=tuple(self._order_from_row(row) for row in rows),
             positions=positions,
             cash=cash,
             provenance="kis-mock-stock",
@@ -366,10 +435,45 @@ class KisStockBrokerWitness:
             # docstring) — unlike witness_synthetic.py, there is nothing here to be
             # non-independent OF.
             independent_of_evidence_store=True,
-            # The order inquiry below asks for exactly this one date (INQR_STRT_DT ==
-            # INQR_END_DT == today), so every returned order belongs to it.
-            order_inquiry_date=today,
+            # One inquiry per date (INQR_STRT_DT == INQR_END_DT); a single-date snapshot records
+            # it, a multi-date one records None (the field's own contract).
+            order_inquiry_date=today if len(dates) == 1 else None,
         )
+
+    def order_rows(
+        self, scope: WitnessScope, *, inquiry_date: str | None = None
+    ) -> tuple[str, tuple[KisOrderRow, ...]]:
+        """One date's 주식일별주문체결조회 rows — no balance read (the post-ACK fill observer's
+        GET: one TR, ``VTTC0081R``, not two).
+
+        Args:
+            scope: Account and instrument to inquire.
+            inquiry_date: ``YYYYMMDD`` to inquire; ``None`` is today (trusted date source). An
+                ACK from an earlier trading day is read under its own date — VTTC0081R serves the
+                last three months (open-trading-api ``inquire_daily_ccld``, ``pd_dv=inner``).
+
+        Returns:
+            ``(date, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==
+            INQR_END_DT``) and every row the completed continuation walk returned, never filtered
+            by attempt or order number (the caller attributes; an unattributable row is its
+            finding, not something to drop here).
+
+        Raises:
+            WitnessUnavailable: Exactly as :meth:`observe` — a malformed account, a credential
+                failure, a rejected or incomplete walk.
+        """
+        try:
+            cano, acnt_prdt_cd = self._split_account(scope.account)
+            date = inquiry_date or self._date_source.today()
+            return date, self._read_order_rows(cano, acnt_prdt_cd, scope, date)
+        except WitnessUnavailable:
+            raise
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - same two-outcome contract as observe()
+            raise WitnessUnavailable(
+                f"KisStockBrokerWitness.order_rows: could not complete — {type(exc).__name__}"
+            ) from exc
 
     # -- account -----------------------------------------------------------------------
 
@@ -387,14 +491,16 @@ class KisStockBrokerWitness:
         translation to a KIS account number belongs at that wiring layer, not invented
         here as a guess.
         """
-        digits = "".join(ch for ch in account if ch.isdigit())
-        if len(digits) != 10:
+        # PR-3b (#932 dde3fbce): the SAME parser the order codec and the balance facts use, so a
+        # fill read targets exactly the account the order went to — never a looser reading.
+        try:
+            parsed = split_kis_account(account)
+        except KisAccountError as exc:
             raise WitnessUnavailable(
-                "KisStockBrokerWitness: scope.account must be a 10-digit KIS account "
-                f"number (CANO + product code) — got {len(digits)} digit(s). This "
+                f"KisStockBrokerWitness: scope.account is not a KIS 8-2 account ({exc}) — this "
                 "witness cannot answer for a non-KIS-shaped account identifier."
-            )
-        return digits[:8], digits[8:10]
+            ) from None
+        return parsed.cano, parsed.acnt_prdt_cd
 
     # -- HTTP --------------------------------------------------------------------------
 
@@ -577,9 +683,9 @@ class KisStockBrokerWitness:
 
     # -- orders --------------------------------------------------------------------------
 
-    def _read_orders(
+    def _read_order_rows(
         self, cano: str, acnt_prdt_cd: str, scope: WitnessScope, today: str
-    ) -> tuple[WitnessOrder, ...]:
+    ) -> tuple[KisOrderRow, ...]:
         """주식일별주문체결조회 — mirrors ``tools/broker_probes/probes_order.py``'s own
         ``stock_daily_ccld`` params exactly (module docstring).
 
@@ -594,7 +700,7 @@ class KisStockBrokerWitness:
         """
         symbols = [key.instrument for key in scope.instrument_keys] or [""]
 
-        orders: list[WitnessOrder] = []
+        orders: list[KisOrderRow] = []
         for symbol in symbols:
 
             def build_params(
@@ -627,18 +733,17 @@ class KisStockBrokerWitness:
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
-                    orders.append(self._order_from_row(row))
+                    parsed = KisOrderRow.from_wire(row)
+                    _refuse_instrument_conflict(parsed, queried=symbol)
+                    orders.append(parsed)
         return tuple(orders)
 
     @staticmethod
-    def _order_from_row(row: Mapping[str, Any]) -> WitnessOrder:
-        cancelled = str(row.get("cncl_yn") or "").strip() == _CANCELLED
-        filled_qty = _decimal_or_none(row.get("tot_ccld_qty"))
-        remaining_qty = _decimal_or_none(row.get("rmn_qty"))
-        odno = row.get("odno")
-        ord_dt = str(row.get("ord_dt") or "").strip()
+    def _order_from_row(row: KisOrderRow) -> WitnessOrder:
+        filled_qty = row.tot_ccld_qty
+        remaining_qty = row.rmn_qty
 
-        if cancelled:
+        if row.cancelled:
             state = WitnessOrderState.CANCELLED
         elif filled_qty is not None and filled_qty > 0:
             state = (
@@ -655,11 +760,11 @@ class KisStockBrokerWitness:
             # The broker's own row carries no attempt-id concept at all (method
             # docstring) — always None, never guessed from ODNO.
             attempt_id=None,
-            broker_execution_id=str(odno).strip() if odno else None,
+            broker_execution_id=row.odno,
             quantity=filled_qty,
             remaining=remaining_qty,
             state=state,
             # KIS 주문일자 — the broker's own date for this ODNO (plan 2026-09-26 egress trading
-            # date §2 decision 4). Anything but YYYYMMDD digits is no date at all.
-            order_date=ord_dt if _YYYYMMDD.fullmatch(ord_dt) is not None else None,
+            # date §2 decision 4).
+            order_date=row.ord_dt,
         )

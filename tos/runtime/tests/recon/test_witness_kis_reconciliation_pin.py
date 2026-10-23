@@ -246,6 +246,7 @@ def _reconcile_same_order(
             "rt_cd": "0",
             "output1": [
                 {
+                    "pdno": "005930",
                     "odno": "0000004470",  # matches the evidence receipt's broker_execution_id
                     "ord_dt": TODAY,  # the broker's own order date (KIS 주문일자)
                     "tot_ccld_qty": "1",
@@ -338,6 +339,7 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
             "rt_cd": "0",
             "output1": [
                 {
+                    "pdno": "005930",
                     "odno": "0000004470",
                     "ord_dt": TODAY,
                     "tot_ccld_qty": "1",

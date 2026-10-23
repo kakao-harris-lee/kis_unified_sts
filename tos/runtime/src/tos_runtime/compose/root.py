@@ -77,6 +77,10 @@ from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
 from tos_runtime.compose._broker_facts_wiring import build_broker_facts
+from tos_runtime.compose._broker_posttrade_wiring import (
+    attach_fill_observer,
+    build_broker_posttrade,
+)
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
 from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
@@ -307,6 +311,14 @@ def compose_paper_runtime(
         evidence_sink=evidence_recorder(boot.infra.evidence_store, boot.identity),
         account=construction.account,
         instrument=construction.instrument,
+    )
+    # PR-3b: a stock MOCK boot reconciles fills against the KIS witness (release + recovery).
+    posttrade = build_broker_posttrade(
+        config_dir=config_dir,
+        broker_scopes=boot.broker_scopes,
+        transport_config=boot.transport_config,
+        credential_sessions_cell=credential_sessions_cell,
+        trading_date_now=trading_date_reader,
     )
     venue_service, loaded_ocp = build_venue_service(
         config_dir=config_dir,
@@ -574,6 +586,7 @@ def compose_paper_runtime(
         scheme=_SCHEME,
         monotonic_source=boot.infra.monotonic_source,
         post_trade_dimension_state=boot.risk.post_trade_dimension_state,
+        posttrade=posttrade,
     )
     composed = apply_recovery_barrier(
         composed,
@@ -581,6 +594,10 @@ def compose_paper_runtime(
         data_dir=data_dir,
         custody_root=custody_root,
         scheme=_SCHEME,
+        witness=posttrade.witness,
+    )
+    composed = attach_fill_observer(
+        composed, posttrade, monotonic=boot.infra.monotonic_source
     )
     # Late-bind the RECOVERY dimension reader's cell now the barrier has actually run
     # (Phase 5 W3-b, plan §2 decision 3) — strictly before this function ever hands

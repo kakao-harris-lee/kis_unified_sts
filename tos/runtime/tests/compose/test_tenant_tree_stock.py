@@ -134,8 +134,9 @@ def _covered(path: str, allowed: frozenset[str]) -> bool:
     return any(path == a or path.startswith(a + ".") for a in allowed)
 
 
-#: Files only the stock tree carries (PR-3a): item 12's GET-only mock-account facts.
-_STOCK_ONLY = {"broker_facts.yaml"}
+#: Files only the stock tree carries: item 12's GET-only mock-account facts (PR-3a) and the
+#: post-ACK fill observer / stock broker witness config (PR-3b).
+_STOCK_ONLY = {"broker_facts.yaml", "fill_observer.yaml"}
 
 
 def test_the_stock_tree_has_exactly_the_long_trees_files() -> None:
