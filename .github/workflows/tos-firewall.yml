@@ -708,6 +708,44 @@ jobs:
           mypy tos/runtime/cp3 --ignore-missing-imports
           --disable-error-code=no-untyped-def
 
+      # The tos GOVERNANCE TOOLING under `tools/` — the checkers this very job
+      # runs as steps (`tos_firewall_check` / `tos_contract_check` /
+      # `tos_completion_status` / `tos_spec_status` / `tos_redigest` /
+      # `tos_size_budget`) plus the CP-3 producer package `tools/tos_cp3/`.
+      # Until now NOTHING type-checked them: the five steps above cover
+      # `tos/**` only, and `type-check` in `.github/workflows/test.yml` runs
+      # `mypy shared/ ... || true` — a different path, and advisory. A type
+      # defect in a gate's own source reached main silently, which is the same
+      # "checked-by-nobody" shape the Black step's scope note describes.
+      #
+      # Same flags as the two SOURCE steps above, deliberately: `tools/` is
+      # source, not a test tree, so `no-untyped-def` stays ENABLED here rather
+      # than deferred the way the three test/cp3 steps defer it. Measured on
+      # c2f6ee15 before the fixes in this PR: 39 errors / 13 files with these
+      # flags (30 / 12 with `no-untyped-def` disabled). All 39 are fixed in the
+      # same PR — no baseline file, no `|| true`.
+      #
+      # `--explicit-package-bases` is required, not cosmetic. `tools/` has no
+      # `__init__.py` (deliberately — see the comment at the top of
+      # `tools/tos_contract_index.py`), so without it mypy maps
+      # `tools/tos_x.py` to the module `tos_x` while the sibling imports inside
+      # the tree say `tools.tos_x`, and the run ABORTS on "Source file found
+      # twice under different module names" after checking nothing.
+      #
+      # SCOPE, stated so the remainder is named rather than silently excluded:
+      # this covers `tools/tos_*.py` + `tools/tos_cp3/` (39 of the 67 files
+      # under `tools/`). The other 28 are NOT covered and carry 141 errors /
+      # 13 files under these same flags — `tools/spikes/phase0_contract/` (91,
+      # throwaway Phase-0 prototypes), `tools/broker_probes/` (20, the
+      # real-broker probe harness) and three loose scripts
+      # (`wfcanon-v222.py` 12, `ladder-v222e5.py` 12, `pagelimb-v222e5.py` 6).
+      # Widening to all of `tools/` is a follow-up, and the broker-probe part
+      # of it touches real-order paths.
+      - name: mypy (tos tooling)
+        run: >-
+          mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports
+          --explicit-package-bases
+
   # ===========================================================================
   # The check context the rest of the repo (and any future ruleset entry) names.
   # It owns no checks of its own; it exists so that splitting the work across
