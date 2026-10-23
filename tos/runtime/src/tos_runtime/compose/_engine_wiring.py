@@ -62,6 +62,10 @@ from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.instance import InstanceDocument
 from tos_runtime.brokercap.scopes import BrokerScope
 from tos_runtime.compose._boot_integrity import verify_engine_replay_or_halt
+from tos_runtime.compose._posttrade_source import (
+    broker_posttrade_enabled,
+    finality_producer_for,
+)
 from tos_runtime.compose._preconditions import (
     RuntimeCoordinatorPreconditions,
     _ReplayPreconditions,
@@ -87,7 +91,6 @@ from tos_runtime.evidence.sinks import (
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.config import FinalityConfig
-from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
@@ -201,6 +204,7 @@ def build_engine_driver(
     max_send_result_wait_ms: int,
     finality_config: FinalityConfig,
     authority_epoch_current: Callable[[], bool | None],
+    broker_sourced: bool = False,
 ) -> tuple[SqliteEventInbox, EngineDriver]:
     """Construct the durable inbox and the engine driver, bound to ``gateway``.
 
@@ -223,14 +227,9 @@ def build_engine_driver(
         max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
             timed out (independent review finding #14 — always a concrete positive int; compose
             already supplies one via ``TrustworthyTimeConfig``, itself non-optional).
-        finality_config: The caller-resolved (``_wiring.py``'s ``_finalize``, loaded from
-            ``config_dir``'s ``finality.yaml`` — the ``engine_driver.yaml``/
-            ``coordinator_preconditions.yaml`` precedent this module's own docstring item 3
-            already names) SYNTHETIC post-trade finality policy
-            (:mod:`tos_runtime.posttrade.config`). Feeds the
-            :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer` this driver is
-            wired with (team-lead CR-4 dispatch, plan §2.2) — REQUIRED, no default, so an
-            unfilled config value refuses boot rather than silently omitting finality projection.
+        finality_config: ``finality.yaml`` as ``_finalize`` loaded it
+            (:mod:`tos_runtime.posttrade.config`) — feeds this driver's finality producer
+            (team-lead CR-4, plan §2.2). REQUIRED: an unfilled value refuses boot.
         authority_epoch_current: The SAME Safety-Authority-epoch check
             :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions` performs
             for the kernel's own Coordinator gate (``preconditions.authority_epoch_current``,
@@ -249,6 +248,8 @@ def build_engine_driver(
             failover after this runtime booted). A caller reading this docstring should take
             "CPL-6 side condition is ``True``" to mean "this runtime's own bound epoch has not
             been superseded", not merely "the log is up".
+        broker_sourced: PR-3b — the producer is the broker one (stock MOCK boot), not
+            SYNTHETIC (:func:`~tos_runtime.compose._posttrade_source.finality_producer_for`).
 
     Returns:
         ``(inbox, driver)`` — the driver is already bound to ``gateway``.
@@ -260,7 +261,7 @@ def build_engine_driver(
         emergency_log=emergency_log,
         authority_epoch_current=authority_epoch_current,
     )
-    finality_producer = SyntheticFinalityProducer(config=finality_config, scheme=scheme)
+    finality_producer = finality_producer_for(broker_sourced, finality_config, scheme)
     # TOS Phase 5 W1 GAP 2: the real staterestore composite-state writer -- the ONE concrete
     # implementation this compose root wires (tests construct EngineDriver without one, which
     # degrades to the documented pre-GAP-2 no-op; see EngineDriver's own constructor docstring).
@@ -610,6 +611,7 @@ def wire_engine_and_driver(
         max_send_result_wait_ms=max_send_result_wait_ms,
         finality_config=finality_config,
         authority_epoch_current=preconditions.authority_epoch_current,
+        broker_sourced=broker_posttrade_enabled(active_scope, transport_config),
     )
     return WiredEngine(
         gateway=gateway,

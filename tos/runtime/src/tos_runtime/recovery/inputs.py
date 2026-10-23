@@ -52,6 +52,7 @@ from tos_runtime.custody.file_custody import MANIFEST_FILENAME, CustodyManifest
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.recon.ports import BrokerWitness
 from tos_runtime.recovery.legacy_receipts import (
     LegacyReceiptFacts,
     legacy_receipts_in_window,
@@ -276,6 +277,7 @@ def assemble_recovery_inputs(
     time_service: FreshnessTimeReader,
     account: str,
     instrument: str,
+    witness: BrokerWitness | None = None,
 ) -> RecoveryInputs:
     """Assemble :class:`RecoveryInputs` purely from durable sources (module docstring).
 
@@ -295,10 +297,8 @@ def assemble_recovery_inputs(
         time_service: This runtime's own :class:`~tos_runtime.time.service
             .TrustworthyTimeService` (forwarded to :mod:`tos_runtime.recovery.reconciliation`
             for the freshness marker).
-        account: The single scope account this compose root's ``context_resolver`` is bound to
-            (forwarded to reconciliation).
-        instrument: The single scope instrument this compose root's ``context_resolver`` is
-            bound to (forwarded to reconciliation).
+        account, instrument, witness: The compose root's single ``context_resolver`` scope and
+            its broker witness (``None`` = synthetic, PR-3b), forwarded to reconciliation.
 
     Returns:
         The fully assembled :class:`RecoveryInputs`.
@@ -340,6 +340,7 @@ def assemble_recovery_inputs(
         time_service=time_service,
         account=account,
         instrument=instrument,
+        witness=witness,
     )
 
     return RecoveryInputs(

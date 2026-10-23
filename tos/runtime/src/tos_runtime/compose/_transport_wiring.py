@@ -90,6 +90,7 @@ __all__ = [
     "TransportWiringError",
     "build_transport",
     "evidence_recorder",
+    "instance_rest_bases",
     "load_transport_config",
     "refuse_custody_principal_mismatch",
     "refuse_transport_scope_mismatch",
@@ -186,6 +187,23 @@ def load_transport_config(
     """
     if kind is TransportKind.SYNTHETIC:
         return None
+    mock_rest_base, real_rest_base = instance_rest_bases(broker_scopes)
+    return load_kis_mock_transport_config(
+        config_dir / KIS_MOCK_TRANSPORT_CONFIG_NAME,
+        instance_mock_rest_base=mock_rest_base,
+        instance_real_rest_base=real_rest_base,
+        codec_bound=True,
+    )
+
+
+def instance_rest_bases(broker_scopes: BrokerScopesConfig) -> tuple[str, str]:
+    """The two host-seal facts ``(mock rest_base, REAL rest_base)`` from the INSTANCE documents
+    (:func:`load_transport_config`'s docstring) — the one place they are resolved, so the order
+    transport and the stock fill witness are sealed by the same two values.
+
+    Raises:
+        TransportWiringError: See :func:`load_transport_config`.
+    """
     scope = broker_scopes.active_scope
     if scope.instance is None or broker_scopes.instance_path is None:
         raise TransportWiringError(
@@ -208,12 +226,7 @@ def load_transport_config(
             f"{_REAL_ENVIRONMENT!r} with a known rest_base at {broker_scopes.instance_path} "
             "— the REAL host cannot be excluded without it; refusing to boot"
         )
-    return load_kis_mock_transport_config(
-        config_dir / KIS_MOCK_TRANSPORT_CONFIG_NAME,
-        instance_mock_rest_base=mock_document.rest_base,
-        instance_real_rest_base=real_document.rest_base,
-        codec_bound=True,
-    )
+    return mock_document.rest_base, real_document.rest_base
 
 
 # ===========================================================================

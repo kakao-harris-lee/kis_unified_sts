@@ -38,10 +38,11 @@ from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
 
+from tos_runtime.compose._broker_posttrade_wiring import BrokerPosttrade
 from tos_runtime.compose._dimension_readers import _PostTradeDimensionState
+from tos_runtime.compose._posttrade_source import finality_producer_for
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.posttrade.config import load_finality_config
-from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 
@@ -66,6 +67,7 @@ def apply_release_wiring(
     scheme: CanonicalizationScheme,
     monotonic_source: MonotonicSource,
     post_trade_dimension_state: _PostTradeDimensionState,
+    posttrade: BrokerPosttrade | None = None,
 ) -> ComposedRuntime:
     """Build the TOS Phase 5 W2-R :class:`~tos_runtime.posttrade.release_consumer
     .FinalityReleaseConsumer` and attach it to ``runtime.driver``.
@@ -92,6 +94,11 @@ def apply_release_wiring(
             :class:`~tos_runtime.compose._dimension_readers._PostTradeDimensionState`) —
             filled in with the built consumer below, or left ``None`` (module docstring's
             "consumer not wired" case) when ``runtime.driver`` is already ``None``.
+        posttrade: PR-3b — this boot's broker post-trade parts
+            (:mod:`tos_runtime.compose._broker_posttrade_wiring`). When enabled (stock MOCK boot),
+            the consumer reconciles against the KIS witness and re-loads broker proofs; the built
+            producer and consumer are recorded on it for the fill observer. ``None`` or disabled
+            keeps the synthetic witness and producer.
 
     Returns:
         ``runtime`` itself. A no-op (returns ``runtime`` unchanged) when ``runtime.driver`` is
@@ -102,12 +109,15 @@ def apply_release_wiring(
         return runtime
     finality_config = load_finality_config(config_dir / FINALITY_CONFIG_NAME)
     instrument_key = runtime.context_resolver.instrument_key
+    broker = posttrade is not None and posttrade.enabled
     recon_service = _build_reconciliation_service(
         runtime.rcl_log,
         runtime.evidence_store,
         account=instrument_key.account,
         instrument=instrument_key.instrument,
+        witness=posttrade.witness if posttrade is not None else None,
     )
+    finality_producer = finality_producer_for(broker, finality_config, scheme)
     consumer = FinalityReleaseConsumer(
         rcl_log=runtime.rcl_log,
         projection=SqliteReservationProjectionReader(runtime.rcl_log),
@@ -115,9 +125,7 @@ def apply_release_wiring(
         inbox=runtime.inbox,
         recon_service=recon_service,
         time_service=runtime.time_service,
-        finality_producer=SyntheticFinalityProducer(
-            config=finality_config, scheme=scheme
-        ),
+        finality_producer=finality_producer,
         scheme=scheme,
         monotonic_source=monotonic_source,
         account=instrument_key.account,
@@ -126,4 +134,7 @@ def apply_release_wiring(
     )
     runtime.driver.bind_release_consumer(consumer)
     post_trade_dimension_state.consumer = consumer
+    if posttrade is not None:
+        posttrade.finality_producer = finality_producer
+        posttrade.release_consumer = consumer
     return runtime

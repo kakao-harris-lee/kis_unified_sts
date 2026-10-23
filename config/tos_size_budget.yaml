@@ -604,11 +604,12 @@ exceptions:
     `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) + 도크스트링
     설명 확장(+2줄).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 155
+  measured: 156
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 PR-3b 재등재 155→156(+1)**: `build_engine_driver(...)` 에 `broker_sourced=broker_posttrade_enabled(active_scope, transport_config)` 1줄 — 주식 MOCK 부팅은 브로커 체결 증명 생산자를 쓴다. 판단 자체는 `_posttrade_source.py`.
     팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — CPL-6 이
     라이브 authority-epoch 재확인을 요구함을 실측(compose e2e 뮤테이션
     프로브로 적발: side condition 미배선 시 모든 진짜 hand-off 가
@@ -743,11 +744,12 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 463
+  measured: 476
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 PR-3b 재등재 463→476(+13)**: `build_broker_posttrade(...)` 호출(주석 1줄 + kwargs 5개) + `apply_release_wiring(posttrade=)`·`apply_recovery_barrier(witness=)` 각 1줄 + barrier 직후 `attach_fill_observer(...)` 3줄. 주식 MOCK 부팅만 KIS witness·체결 관찰자를 쓴다 — 결선 순서(release 전 witness, barrier 후 관찰자)는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-23 PR-3a option (a) "K" 재등재 445→463(+18)**: `build_broker_facts(...)` 호출(주석 2줄 + kwargs 8개) + item 12 리더 두 개를 `broker_facts.tradability/account(...)` 로 감싼 줄 + `mock_generation_reader=` + `_build_context_resolver(transport_config=...)`. 호출 시퀀스 무변경.
     **2026-10-22 PR #927 리뷰 M1 재등재 444→445(+1)**: `build_venue_service(...)` 에
     `transport_config=boot.transport_config` 1줄. kis-mock 부팅이 코덱의 `price_scale` 을

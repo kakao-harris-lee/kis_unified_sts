@@ -121,7 +121,7 @@ from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
-from tos_runtime.recon.ports import WitnessScope
+from tos_runtime.recon.ports import BrokerWitness, WitnessScope
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
 from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 from tos_runtime.recovery.possibly_live import PossiblyLiveAttempt
@@ -259,15 +259,23 @@ def _build_reconciliation_service(
     *,
     account: str,
     instrument: str,
+    witness: BrokerWitness | None = None,
 ) -> ReconciliationService:
     """Assemble a real :class:`~tos_runtime.recon.service.ReconciliationService`, including the
     ``reservation_id_for_attempt`` bridge (module docstring's "second identity gap") — every
     attempt id maps onto the SAME constant scope reservation id, because this compose root wires
-    exactly one ``InstrumentKey`` for its whole process lifetime."""
+    exactly one ``InstrumentKey`` for its whole process lifetime.
+
+    ``witness`` is the boot's broker witness: ``None`` keeps
+    :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness` (paper, LONG, SHORT); a
+    stock MOCK boot passes the real :class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness`
+    (PR-3b, :mod:`tos_runtime.compose._broker_posttrade_wiring`)."""
     return ReconciliationService(
         rcl_reader=SqliteReservationProjectionReader(rcl_log),
         evidence_reader=SqliteEvidenceReceiptReader(evidence_store),
-        witness=SyntheticLedgerWitness(evidence_store),
+        witness=(
+            SyntheticLedgerWitness(evidence_store) if witness is None else witness
+        ),
         reservation_id_for_attempt=lambda _attempt_id: scope_reservation_id(
             account, instrument
         ),
@@ -326,6 +334,7 @@ def reconcile_possibly_live_attempts(
     time_service: FreshnessTimeReader,
     account: str,
     instrument: str,
+    witness: BrokerWitness | None = None,
 ) -> dict[str, ReconciliationOutcome]:
     """Reconcile every possibly-live attempt via :class:`~tos_runtime.recon.service
     .ReconciliationService` (module docstring). ``attempts`` empty => ``{}`` (nothing to
@@ -344,6 +353,8 @@ def reconcile_possibly_live_attempts(
         account: The single scope account this compose root's ``context_resolver`` is bound to.
         instrument: The single scope instrument this compose root's ``context_resolver`` is
             bound to.
+        witness: The boot's broker witness (:func:`_build_reconciliation_service`); ``None`` is
+            the synthetic ledger witness.
 
     Returns:
         ``{event_id: ReconciliationOutcome}`` for every attempt in ``attempts``.
@@ -354,7 +365,11 @@ def reconcile_possibly_live_attempts(
 
     try:
         service = _build_reconciliation_service(
-            rcl_log, evidence_store, account=account, instrument=instrument
+            rcl_log,
+            evidence_store,
+            account=account,
+            instrument=instrument,
+            witness=witness,
         )
     except (
         Exception

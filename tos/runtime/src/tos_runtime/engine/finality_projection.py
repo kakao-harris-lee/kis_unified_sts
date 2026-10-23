@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 from tos.engine import EventResult
 from tos.engine.records import EgressResultPayload, EngineEvent
 from tos.engine.state import FinalityProofRef, ProvisionalReservationLedger
-from tos.engine.vocabulary import EventKind, ResultDisposition
+from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -60,8 +60,10 @@ if TYPE_CHECKING:
 __all__ = [
     "ECONOMIC_OBLIGATION_KIND",
     "ENGINE_PROJECTION_RELEASE_SKIPPED_KIND",
+    "FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND",
     "POSTTRADE_FINALITY_PROOF_KIND",
     "project_finality",
+    "project_recovered_finality",
 ]
 
 #: Evidence kinds this hook appends when :class:`~tos_runtime.posttrade.finality
@@ -81,6 +83,19 @@ POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 #: state locally). Never a kernel ``EvidenceKind`` member (mirrors this module's own
 #: ``ECONOMIC_OBLIGATION_KIND``/``POSTTRADE_FINALITY_PROOF_KIND`` precedent).
 ENGINE_PROJECTION_RELEASE_SKIPPED_KIND = "ENGINE_PROJECTION_RELEASE_SKIPPED"
+#: Recorded by :func:`project_recovered_finality` (PR-3b) for every broker result it handles.
+FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND = (
+    "FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION"
+)
+#: The kinds :func:`project_recovered_finality` ever hands the release consumer.
+_RECOVERABLE_KINDS = frozenset(
+    {
+        EgressResultKind.FULL_FILL,
+        EgressResultKind.CANCEL_ACK,
+        EgressResultKind.EXPIRED,
+        EgressResultKind.REJECT,
+    }
+)
 
 
 def project_finality(
@@ -137,21 +152,12 @@ def project_finality(
     payload = event.egress_result
     assert payload is not None  # guaranteed by EngineEvent validation for EGRESS_RESULT
 
-    produced = finality_producer.produce(payload)
-    witness = finality_witness_for(None if produced is None else produced.proof)
-    inbox.record_finality_witness(payload.attempt_id, witness)
-    if produced is not None:
-        evidence_store.append(
-            produced.record.model_dump(mode="json"),
-            kind=ECONOMIC_OBLIGATION_KIND,
-            record_class=ECONOMIC_OBLIGATION_KIND,
-        )
-        evidence_store.append(
-            produced.proof.model_dump(mode="json"),
-            kind=POSTTRADE_FINALITY_PROOF_KIND,
-            record_class=POSTTRADE_FINALITY_PROOF_KIND,
-        )
-
+    _record_fill_proof(
+        payload,
+        inbox=inbox,
+        evidence_store=evidence_store,
+        finality_producer=finality_producer,
+    )
     _project_release(
         payload,
         evidence_store=evidence_store,
@@ -220,3 +226,79 @@ def _project_release(
             kind=ENGINE_PROJECTION_RELEASE_SKIPPED_KIND,
             record_class=ENGINE_PROJECTION_RELEASE_SKIPPED_KIND,
         )
+
+
+def _record_fill_proof(
+    payload: EgressResultPayload,
+    *,
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    finality_producer: FinalityProducerPort,
+) -> None:
+    """The durable witness row, plus the obligation/proof evidence when the producer issued one
+    (shared by :func:`project_finality` and :func:`project_recovered_finality`)."""
+    produced = finality_producer.produce(payload)
+    witness = finality_witness_for(None if produced is None else produced.proof)
+    inbox.record_finality_witness(payload.attempt_id, witness)
+    if produced is not None:
+        evidence_store.append(
+            produced.record.model_dump(mode="json"),
+            kind=ECONOMIC_OBLIGATION_KIND,
+            record_class=ECONOMIC_OBLIGATION_KIND,
+        )
+        evidence_store.append(
+            produced.proof.model_dump(mode="json"),
+            kind=POSTTRADE_FINALITY_PROOF_KIND,
+            record_class=POSTTRADE_FINALITY_PROOF_KIND,
+        )
+
+
+def project_recovered_finality(
+    payload: EgressResultPayload,
+    *,
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    finality_producer: FinalityProducerPort,
+    release_consumer: FinalityConsumerPort,
+) -> bool | None:
+    """Finality for a broker result the engine refused as ``ORPHAN_NO_RESERVATION`` (PR-3b).
+
+    **Why this exists.** The kernel's reservation projection is in memory and is not rebuilt on
+    boot, so after a restart between an ``ACK`` and its fill, the fill the post-ACK observer
+    (:mod:`tos_runtime.posttrade.fill_observer`) reads off the broker reaches an engine with no
+    reservation for it: the engine records ``RESULT_UNMATCHED`` and :func:`project_finality`
+    (which runs only on ``APPLIED``) never sees it. The RCL reservation — the durable one — is
+    still open. This function gives that result the same proof + release path, minus the kernel
+    projection release (there is no kernel reservation to release).
+
+    **No double release.** Nothing here transitions the RCL by itself: the release consumer still
+    requires the witness row, the re-loaded proof, reconciliation ``MATCHED`` against the boot's
+    broker witness (the real KIS one for a stock MOCK boot), and the RCL's own state/sequence
+    check — a reservation already ``POSITION_CONSUMED`` is refused by the RCL, so a second call
+    holds instead of releasing.
+
+    Returns:
+        Whether the RCL transition committed, or ``None`` when ``payload.kind`` has no release
+        destination (``ACK``/``PARTIAL_FILL``/``UNKNOWN``/``TIMEOUT``) and nothing was done.
+    """
+    if payload.kind not in _RECOVERABLE_KINDS:
+        return None
+    if payload.kind is EgressResultKind.FULL_FILL:
+        _record_fill_proof(
+            payload,
+            inbox=inbox,
+            evidence_store=evidence_store,
+            finality_producer=finality_producer,
+        )
+    outcome = release_consumer.consume(payload)
+    evidence_store.append(
+        {
+            "attempt_id": payload.attempt_id,
+            "egress_result_kind": payload.kind.value,
+            "broker_execution_id": payload.broker_execution_id,
+            "rcl_released": outcome.released,
+        },
+        kind=FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND,
+        record_class=FINALITY_RECOVERED_WITHOUT_ENGINE_RESERVATION_KIND,
+    )
+    return outcome.released

@@ -59,6 +59,7 @@ __all__ = [
     "KisWitnessConfig",
     "KisWitnessConfigError",
     "FuturesAssetRefused",
+    "kis_witness_config_from_mapping",
     "load_kis_witness_config",
     "refuse_futures_asset",
 ]
@@ -301,8 +302,35 @@ def load_kis_witness_config(
     Raises:
         KisWitnessConfigError: Any fail-closed check fails — see the module docstring.
     """
-    raw = _read_yaml_mapping(path)
+    return kis_witness_config_from_mapping(
+        _read_yaml_mapping(path),
+        path=path,
+        instance_mock_rest_base=instance_mock_rest_base,
+        instance_real_rest_base=instance_real_rest_base,
+    )
 
+
+def kis_witness_config_from_mapping(
+    raw: dict[str, Any],
+    *,
+    path: Path,
+    instance_mock_rest_base: str,
+    instance_real_rest_base: str,
+) -> KisWitnessConfig:
+    """:func:`load_kis_witness_config`'s validation over an already-read mapping — every check
+    identical (host seal, TR-id shape, positive bounds). The stock fill wiring
+    (:mod:`tos_runtime.compose._broker_posttrade_wiring`) uses it to seal the witness to the SAME
+    host the order transport was sealed to, rather than a second host value in a second file.
+
+    Args:
+        raw: The config mapping.
+        path: Named in every refusal message (the file the mapping came from).
+        instance_mock_rest_base: See :func:`load_kis_witness_config`.
+        instance_real_rest_base: See :func:`load_kis_witness_config`.
+
+    Raises:
+        KisWitnessConfigError: Any fail-closed check fails — see the module docstring.
+    """
     allow_plaintext_for_tests = _require_bool(raw, "allow_plaintext_for_tests", path)
     endpoint_rest_base = _require_str(raw, "endpoint_rest_base", path)
     _validate_endpoint(
