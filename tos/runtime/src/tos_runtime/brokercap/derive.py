@@ -34,6 +34,13 @@ fed honestly from the bound INSTANCE document via
 :func:`~tos_runtime.brokercap.instance.instance_version_current` (``instance
 is None`` ⇒ ``False``, never assumed current).
 
+**Option (a) "K" (operator decision 2026-10-23).** A scope whose every tuple
+:func:`~tos.brokercap.mock_order_without_position_or_cash` admits (a
+``BROKER_SIMULATION`` mock order or read with no position/cash effect) passes item 6
+at ``REDUCED`` too, and takes item 12 from the caller-injected GET-only
+mock-account freshness instead of the profile approval act the mock profile does
+not have. Every other scope is judged exactly as above.
+
 Pure module: no I/O, no clock, no ambient environment — every input is
 injected.
 """
@@ -47,7 +54,10 @@ from tos.brokercap import (
     BrokerCapabilityProfile,
     RequiredCapabilitySet,
 )
-from tos.brokercap.routing import endpoint_binding_from_profile_ok
+from tos.brokercap.routing import (
+    endpoint_binding_from_profile_ok,
+    mock_order_without_position_or_cash,
+)
 
 from tos_runtime.brokercap.instance import (
     InstanceDocument,
@@ -136,6 +146,8 @@ def derive_item6_item12(
     scope: BrokerScope,
     config: BrokerScopesConfig,
     instance: InstanceDocument | None,
+    *,
+    mock_generation_current: bool | None = None,
 ) -> Item6Item12Fields:
     """Derive items 6/12's fields for ``scope`` (plan §2 decision 4 exactly).
 
@@ -152,11 +164,24 @@ def derive_item6_item12(
             ``instance`` block, or one whose document could not be loaded
             upstream — either way, fails item 12 closed for a broker-reaching
             scope, never assumed current).
+        mock_generation_current: The GET-only mock-account source's freshness
+            (:meth:`~tos_runtime.transport.kis_mock.broker_facts.KisMockBrokerFacts
+            .generation_current`). Read ONLY for a scope whose tuples
+            :func:`~tos.brokercap.mock_order_without_position_or_cash` admits (operator
+            decision 2026-10-23, option (a) "K"); ignored for every other scope, so it can
+            never stand in for a real-money scope's profile approval.
 
     Returns:
         The derived fields, all structural — never a caller-supplied claim.
     """
-    item6_allowed = scope.admissibility is Admissibility.ADMISSIBLE and all(
+    # Option (a) "K" (operator decision 2026-10-23): REDUCED passes only for the mock class,
+    # judged from the scope's own kernel-typed tuples — never its name, a config value or an
+    # env var. A REAL scope can never be admitted REDUCED here.
+    mock_class = mock_order_without_position_or_cash(scope.capability_tuples)
+    admissible = scope.admissibility is Admissibility.ADMISSIBLE or (
+        scope.admissibility is Admissibility.REDUCED and mock_class
+    )
+    item6_allowed = admissible and all(
         endpoint_binding_from_profile_ok(
             t,
             scope.profile_key,
@@ -189,12 +214,18 @@ def derive_item6_item12(
                 instance, degraded_since_authorization=degraded_since_authorization
             )
         )
-        item12_current = version_current is True
+        item12_current = (
+            mock_generation_current is True if mock_class else version_current is True
+        )
         reason = (
             f"scope {scope.name!r}: item 6 = admissibility({scope.admissibility.value}) "
             f"+ endpoint binding -> {item6_allowed}; item 12 = "
-            f"profile_version_current(instance={'present' if instance is not None else 'None'}) "
-            f"-> {item12_current}"
+            + (
+                f"mock-account GET freshness -> {item12_current}"
+                if mock_class
+                else f"profile_version_current(instance="
+                f"{'present' if instance is not None else 'None'}) -> {item12_current}"
+            )
         )
 
     broker_capability_profile = (

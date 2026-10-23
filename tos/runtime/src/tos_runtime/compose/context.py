@@ -116,6 +116,7 @@ from tos_runtime.brokercap import (
     Item6Item12Fields,
     derive_item6_item12,
 )
+from tos_runtime.brokercap.live_scope import live_scope_valid
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     stamp_pending_dimensions,
@@ -375,6 +376,10 @@ class ComposeContextResolver:
     session_facts_current_reader: Callable[[], bool | None]
     tradability_facts_current_reader: Callable[[], bool | None]
     account_facts_current_reader: Callable[[], bool | None]
+    #: Item 12's ``broker_constraint_generation_current`` source for the option (a) mock class
+    #: (``_broker_facts_wiring.BrokerFactsWiring.generation``) — ``None`` outside it, where
+    #: :func:`~tos_runtime.brokercap.derive_item6_item12` ignores it anyway.
+    mock_generation_reader: Callable[[], bool | None]
     #: The runtime-configured Broker Scope table (TOS Phase 4 plan §2
     #: decision 4) — feeds :func:`~tos_runtime.brokercap.derive_item6_item12`
     #: for items 6/12, replacing two of the former egress attestations.
@@ -389,6 +394,10 @@ class ComposeContextResolver:
     principal: str
     credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...]
     authorized_coordinates: EgressCoordinateSet
+    #: The broker transport's own endpoint (kis-mock: ``endpoint_rest_base + order_path``),
+    #: or ``None`` when no broker transport is wired — item 5 compares the sealed
+    #: ``authorized_coordinates.endpoint`` against it (:mod:`tos_runtime.brokercap.live_scope`).
+    transport_endpoint: str | None
     #: Computes the ONE per-attempt request-bytes digest shared by
     #: ``EgressRequestRecord.request_bytes_digest`` and
     #: ``SendBoundaryContext.capsule_egress_request_digest`` (T2 lane A — see
@@ -755,14 +764,24 @@ class ComposeContextResolver:
         safety-mesh services' own ``clear().clear`` (:mod:`tos_runtime.compose
         ._safety_wiring`'s own ``build_safety_mesh``), evaluated fresh on every call.
 
-        Item 5 (``live_scope_valid``) is deliberately ABSENT (never a key in the
-        returned dict, so ``send_boundary_context`` leaves it at its own ``None``
-        default) — it stays UNKNOWN per plan §2 decision 4's operator confirmation ③
-        (a), Phase 5's own committed posture until a live authorization runtime exists.
+        Item 5 (``live_scope_valid``) is derived per attempt by
+        :func:`~tos_runtime.brokercap.live_scope.live_scope_valid` (PR-3 option (a),
+        operator decision 2026-10-22): ``None`` for a non-broker-reaching scope (the
+        synthetic paper posture, unchanged), else whether the active scope still resolves
+        and its principal / endpoint / environment are the sealed ones.
         """
         return {
             "safety_authority_epoch_current": self.authority_epoch_service.epoch_current(
                 self._bound_authority_epoch
+            ),
+            "live_scope_valid": live_scope_valid(
+                self.broker_scopes,
+                self.instance_document,
+                sealed=self.authorized_coordinates,
+                gateway_principal=self.principal,
+                inventory=self.credential_route_inventory,
+                transport_endpoint=self.transport_endpoint,
+                environment_label=self.environment_label,
             ),
             **self.safety_mesh_deferred_fields(),
         }
@@ -773,7 +792,10 @@ class ComposeContextResolver:
         :meth:`__call__` both read from, so the two consumers can never
         drift from each other's view of the same active scope."""
         return derive_item6_item12(
-            self.broker_scopes.active_scope, self.broker_scopes, self.instance_document
+            self.broker_scopes.active_scope,
+            self.broker_scopes,
+            self.instance_document,
+            mock_generation_current=self.mock_generation_reader(),
         )
 
     def __call__(self, attempt: AttemptRequest) -> SendBoundaryContext | None:
@@ -849,14 +871,13 @@ class ComposeContextResolver:
             order_shape=self.venue_stage.resolved_shape,
             venue_shape_constraints=self.venue_stage.shape_constraints,
             commitment_epoch_current=item3.commitment_epoch_current,
-            # Items 6/12 (TOS Phase 4 plan §2 decision 4): the three
-            # broker-reaching-admissibility fields the kernel gateway's own
-            # capability_admissible(...) call consumes — derived from the
-            # SAME active-scope/INSTANCE judgement as the two stand-in
-            # fields below (_item6_item12_fields, one call site).
+            # Items 6/12 (TOS Phase 4 plan §2 decision 4): the fields the gateway's own
+            # capability_admissible(...) consumes, from the SAME judgement as the stand-in
+            # fields below; capability_tuples = option (a) "K"'s kernel-judged mock class.
             broker_capability_profile=item6item12.broker_capability_profile,
             required_capability_set=item6item12.required_capability_set,
             broker_profile_version_current=(item6item12.broker_profile_version_current),
+            capability_tuples=self.broker_scopes.active_scope.capability_tuples,
             idempotency_proven=None,
             # Items 6/12/16 stand-ins: real runtime owners now (item 12 --
             # tos_runtime.calendar.owner.SessionFactsOwner, TOS Phase 5 W5;

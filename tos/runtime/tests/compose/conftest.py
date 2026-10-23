@@ -42,7 +42,7 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 #: exact match, and the admitting-phase tokens must be ones ``calendar.yaml`` actually declares
 #: for that instrument class.
 _VENUE_POLICY_ENVIRONMENT = "non-live-test"
-_VENUE_POLICY_ACCOUNT = "acct-compose"
+_VENUE_POLICY_ACCOUNT = "88888888-01"
 _VENUE_POLICY_INSTRUMENT = "ES"
 _VENUE_POLICY_INSTRUMENT_CLASS = "krx-index-futures"
 #: The ONE session-phase token this fixture's ``calendar.yaml`` (below) declares for

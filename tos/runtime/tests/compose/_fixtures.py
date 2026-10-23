@@ -22,6 +22,7 @@ bar-replay driver is part of this composition.
 
 from __future__ import annotations
 
+import shutil
 import stat
 import time
 from collections.abc import Callable
@@ -79,7 +80,7 @@ from ..venue._documents import ocp_yaml
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-ACCOUNT = "acct-compose"
+ACCOUNT = "88888888-01"
 INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 SIDE = "BUY"
@@ -635,6 +636,14 @@ class _Unset:
 _UNSET = _Unset()
 
 
+#: The stock tree's committed ``broker_facts.yaml`` (PR-3a) — what every kis-mock fixture boot
+#: copies, so the fixture cannot drift from the shipped protocol values.
+_STOCK_TREE_BROKER_FACTS = (
+    Path(__file__).resolve().parents[4]
+    / "config/tos_runtime/cp3-setup-d-stock-005930/broker_facts.yaml"
+)
+
+
 def write_kis_mock_transport_config(
     config_dir: Path,
     *,
@@ -731,6 +740,9 @@ def write_kis_mock_transport_config(
             ),
             encoding="utf-8",
         )
+    # A mock-class kis-mock boot reads item 12's GET-only broker facts (PR-3a option (a)) —
+    # the stock tree's own committed file, one source, never a second fixture copy.
+    shutil.copyfile(_STOCK_TREE_BROKER_FACTS, config_dir / "broker_facts.yaml")
     vcp_path = config_dir / "venue_constraint_policy.yaml"
     if vcp_path.is_file():
         # A kis-mock boot cross-checks the transport's `price_scale` against the tree's
