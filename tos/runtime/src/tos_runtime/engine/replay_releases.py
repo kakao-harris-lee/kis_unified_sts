@@ -15,9 +15,15 @@ durable chain it claims must exist, for the same attempt, in this order:
    idempotency key names the attempt;
 2. the ``CAPACITY_RELEASE_INTENT`` row at exactly the row's ``evidence_seq``, after the proof,
    naming the same attempt, proof and ``resolution_generation``;
-3. the RCL's own ``RCL_RESERVATION_TRANSITION`` evidence for the attempt's release command
-   (``release-<attempt_id>``, kind ``ReleaseReservation``), after the intent;
-4. the release row itself, after the RCL transition.
+3. the RCL's own COMMITTED entry for the attempt's release command (``release-<attempt_id>``),
+   read from the RCL log itself (``SqliteCommitLog.committed_command``) — never from evidence
+   alone: the RCL writes its ``RCL_RESERVATION_TRANSITION`` evidence row inside the transaction
+   BEFORE ``COMMIT``, so a rolled-back attempt leaves an evidence row behind (Codex r3 HIGH). The
+   transition evidence that belongs to the commit is the LAST ``ReleaseReservation`` row for that
+   command whose ``seq`` and ``command_digest`` equal the committed entry's; it must follow the
+   intent, and no later release intent for the attempt may sit between them (a retry after a
+   rollback writes a fresh intent — the release row must name that one);
+4. the release row itself, after that transition evidence.
 
 Anything missing, mismatched or out of order is a divergence — as is a corroborated release the
 replayed projection refuses. A corroborated release for an attempt this replay never re-handled
@@ -39,7 +45,10 @@ from tos.engine.state import FinalityProofRef
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
-__all__ = ["EngineReleases"]
+__all__ = ["EngineReleases", "RclCommitted"]
+
+#: ``SqliteCommitLog.committed_command``: ``command_id`` -> committed ``(seq, command_digest)``.
+RclCommitted = Callable[[str], "tuple[int, str | None] | None"]
 
 _RELEASED_KIND = "ENGINE_PROJECTION_RELEASED"
 _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
@@ -70,7 +79,11 @@ class _Index:
         conn = evidence_store.connection
         self.proofs: dict[str, tuple[int, dict[str, Any]]] = {}
         self.intents: dict[int, dict[str, Any]] = {}
-        self.rcl_releases: dict[str, int] = {}
+        #: ``command_id`` -> every ``ReleaseReservation`` transition evidence row, in order:
+        #: ``(evidence_seq, rcl_seq, command_digest)``.
+        self.rcl_rows: dict[str, list[tuple[int, Any, Any]]] = {}
+        #: ``attempt_id`` -> every release-intent evidence seq, in order.
+        self.intents_by_attempt: dict[str, list[int]] = {}
         for seq, kind, payload_json in conn.execute(
             "SELECT seq, kind, payload_json FROM entries WHERE kind IN (?, ?, ?) "
             "ORDER BY seq ASC",
@@ -81,12 +94,19 @@ class _Index:
                 self.proofs.setdefault(payload["proof_id"], (seq, payload))
             elif kind == _INTENT_KIND:
                 self.intents[seq] = payload
+                self.intents_by_attempt.setdefault(
+                    str(payload.get("attempt_id")), []
+                ).append(seq)
             elif kind == _RCL_KIND and payload.get("kind") == _RCL_RELEASE_COMMAND_KIND:
                 command_id = payload.get("command_id")
                 if isinstance(command_id, str):
-                    self.rcl_releases.setdefault(command_id, seq)
+                    self.rcl_rows.setdefault(command_id, []).append(
+                        (seq, payload.get("seq"), payload.get("command_digest"))
+                    )
 
-    def refusal(self, seq: int, ref: FinalityProofRef) -> str | None:
+    def refusal(
+        self, seq: int, ref: FinalityProofRef, committed: tuple[int, Any] | None
+    ) -> str | None:
         """Why the release row at ``seq`` is NOT corroborated, or ``None`` (module docstring)."""
         proof = self.proofs.get(ref.proof_digest)
         if proof is None:
@@ -107,11 +127,26 @@ class _Index:
             return "the release-intent row disagrees with the release row"
         if not proof_seq < ref.evidence_seq:
             return "the release intent precedes its proof"
-        rcl_seq = self.rcl_releases.get(_release_command_id(ref.attempt_id))
-        if rcl_seq is None:
-            return "no committed RCL release transition for this attempt"
-        if not ref.evidence_seq < rcl_seq < seq:
-            return "the RCL release is out of order with its intent or this row"
+        if committed is None:
+            return "the RCL holds no committed release for this attempt"
+        committed_seq, committed_digest = committed
+        matching = [
+            evidence_seq
+            for evidence_seq, rcl_seq, digest in self.rcl_rows.get(
+                _release_command_id(ref.attempt_id), []
+            )
+            if rcl_seq == committed_seq and digest == committed_digest
+        ]
+        if not matching:
+            return "no transition evidence matches the committed RCL release"
+        transition_seq = matching[-1]
+        if not ref.evidence_seq < transition_seq < seq:
+            return "the committed release is out of order with its intent or this row"
+        if any(
+            ref.evidence_seq < later < transition_seq
+            for later in self.intents_by_attempt.get(ref.attempt_id, [])
+        ):
+            return "a later release intent precedes the committed transition"
         return None
 
 
@@ -134,12 +169,16 @@ class EngineReleases:
         cls,
         evidence_store: SqliteEvidenceStore,
         *,
+        rcl_committed: RclCommitted | None,
         on_divergence: Callable[[dict[str, Any]], None],
     ) -> EngineReleases:
         """Read every release row and check each against the durable chain.
 
         Args:
             evidence_store: The store the live run recorded into.
+            rcl_committed: ``SqliteCommitLog.committed_command`` — the RCL's authoritative
+                committed state. ``None`` (a caller with no RCL) leaves every release row
+                uncorroborated: a release replay cannot check is never applied.
             on_divergence: Records one divergence (the caller's ``REPLAY_DIVERGED`` halt).
         """
         conn = evidence_store.connection
@@ -159,7 +198,17 @@ class EngineReleases:
                 except ValueError:
                     rows.append(_Row(seq, None, "malformed release row", attempt_id))
                     continue
-                rows.append(_Row(seq, ref, index.refusal(seq, ref), attempt_id))
+                committed = (
+                    None
+                    if rcl_committed is None
+                    else rcl_committed(_release_command_id(ref.attempt_id))
+                )
+                refusal = (
+                    "no RCL committed state was given to replay"
+                    if rcl_committed is None
+                    else index.refusal(seq, ref, committed)
+                )
+                rows.append(_Row(seq, ref, refusal, attempt_id))
             for seq, payload_json in conn.execute(
                 "SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
                 (_EVENT_CONSUMED_KIND,),

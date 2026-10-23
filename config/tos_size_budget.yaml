@@ -986,11 +986,12 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 123
+  measured: 124
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-23 PR-3b Codex r3 재등재 123→124(+1)**: `_verify_boot_replay(...)` 호출에 `rcl_log=rcl.rcl_log` 1줄 — 부팅 replay 가 기록된 엔진 투영 해제를 증거가 아니라 RCL 자신의 커밋 상태(`committed_command`)로 확인한다.
     **2026-10-09 PR #890 재리뷰 LOW-2 재등재 116→123(+7)**: 셀의 「채우기」와
     「소비자 시작」을 **분리**했다 — `fill` 은 `wire_engine_and_driver` **앞**(레지스트리
     공개), `start_consumers()` 는 **뒤**(부팅 리플레이 앞). `session_for` 는 **첫 호출자의
