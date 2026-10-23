@@ -1009,7 +1009,14 @@ def emit_decisions(
                 "artifact disagree with both the harness and B1a"
             )
 
-        signal = setup.check(ctx)
+        # `MarketContext` 는 frozen dataclass 라 읽기 전용이고,
+        # `FuturesMarketView` 프로토콜은 같은 13개 멤버를 **쓰기 가능**으로 선언한다.
+        # 런타임은 덕 타이핑이라 아무 문제가 없고, 이 간극은 이 도구가 만든 것이
+        # 아니라 `shared/backtest/decision_harness.py:262` 에도 그대로 있는
+        # 기존 결손이다.  프로토콜을 읽기 전용으로 고치는 것은 선물 결정 경로를
+        # 건드리므로 별도 PR 로 분리한다 — 그때 이 억제는 `warn_unused_ignores`
+        # 가 죽은 주석으로 잡아 스스로 사라진다.
+        signal = setup.check(ctx)  # type: ignore[arg-type]
         bars_replayed += 1
         outcome = classify_outcome(
             fired=signal is not None, reject_reason=setup.last_reject_reason
@@ -1556,7 +1563,9 @@ def _field_lineage(records: list[DecisionRecord]) -> dict[str, dict[str, Any]]:
     """
     spec: dict[str, dict[str, Any]] = {}
     for key, published, projection in EVAL_PROJECTION:
-        entry = dict(PROJECTION_ENCODING[projection])
+        # `PROJECTION_ENCODING` 은 `dict[str, str]` 이지만 여기 얹는 값은
+        # 리스트·딕트도 있다 — 담는 그릇의 타입을 그대로 적는다.
+        entry: dict[str, Any] = dict(PROJECTION_ENCODING[projection])
         entry["wire_path"] = f"decision.{EVAL_WIRE_PREFIX}{published}"
         entry["unit"] = EVAL_UNITS[key]
         entry["parents"] = [f"last_eval:{key}"]

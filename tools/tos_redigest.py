@@ -189,7 +189,11 @@ def read_pin(path: Path) -> str:
     Raises:
         RedigestError: The file has no such line, or more than one.
     """
-    matches = _PIN_LINE.findall(path.read_text(encoding="utf-8"))
+    # `findall` is typed `list[Any]`; the pattern's three groups are all strings,
+    # so naming that here keeps the return genuinely `str` instead of `Any`.
+    matches: list[tuple[str, str, str]] = _PIN_LINE.findall(
+        path.read_text(encoding="utf-8")
+    )
     if len(matches) != 1:
         raise RedigestError(
             f'{path}: expected exactly one `expected_code_digest: "<64-char lowercase '

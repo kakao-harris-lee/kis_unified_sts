@@ -1,0 +1,44 @@
+{
+ "summary_schema_version": 2,
+ "window_identity": {
+  "symbol": "A05611",
+  "market_open_kst": "08:45",
+  "market_open_source": "config",
+  "min_bars_per_day": 330,
+  "window_start": "2026-10-08",
+  "window_end": "2026-10-15",
+  "stitch_manifest_sha256": "9f04a3e9bca44d01bfbfbede70a3df5cf35305dfc514b2ec511f2d7476ec664b"
+ },
+ "live_comparison": {
+  "compared_bars": 303,
+  "identical": 277,
+  "divergent": 26,
+  "divergences": [
+   {
+    "raw_event_id": "A05611:1m:20261015T100100+0900",
+    "offline": {
+     "outcome_kind": "NO_ACTION",
+     "capacity_denied": false
+    },
+    "live": {
+     "outcome_kind": "NO_OUTCOME",
+     "capacity_denied": false
+    }
+   },
+   {
+    "raw_event_id": "A05611:1m:20261015T100800+0900",
+    "offline": {
+     "outcome_kind": "ACTION",
+     "capacity_denied": true
+    },
+    "live": {
+     "outcome_kind": "PROPOSAL",
+     "capacity_denied": false
+    }
+   }
+  ]
+ },
+ "unresolved": {
+  "count": 0
+ }
+}

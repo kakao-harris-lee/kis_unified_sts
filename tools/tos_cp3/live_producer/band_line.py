@@ -127,6 +127,16 @@ class TickLadder:
         return None
 
 
+def _ladder_cell(row: object, key: str) -> int | None:
+    """One ladder cell as a non-bool ``int``, or ``None`` when it is not one."""
+    if not isinstance(row, dict):
+        return None
+    value = row.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def load_tick_ladder(venue_policy_yaml: Path) -> TickLadder:
     """Read the ladder the runtime enforces, or raise :class:`BandLineError`.
 
@@ -144,16 +154,15 @@ def load_tick_ladder(venue_policy_yaml: Path) -> TickLadder:
         ) from exc
     rows: list[tuple[int, int, int]] = []
     for row in table if isinstance(table, list) else []:
-        values = (
-            [row.get("band_min"), row.get("band_max"), row.get("tick")]
-            if isinstance(row, dict)
-            else []
-        )
-        if len(values) != 3 or any(
-            not isinstance(v, int) or isinstance(v, bool) for v in values
-        ):
+        # 셀마다 좁힌다 — 종래처럼 `any(... isinstance ...)` 로 한꺼번에 보면
+        # 제너레이터 안의 검사라 바깥 이름이 좁혀지지 않는다. 거부하는 입력은
+        # 같다: dict 가 아닌 행 · 키 누락 · int 가 아닌 값 · bool.
+        band_min = _ladder_cell(row, "band_min")
+        band_max = _ladder_cell(row, "band_max")
+        tick = _ladder_cell(row, "tick")
+        if band_min is None or band_max is None or tick is None:
             raise BandLineError(f"{venue_policy_yaml}: malformed ladder row {row!r}")
-        rows.append((values[0], values[1], values[2]))
+        rows.append((band_min, band_max, tick))
     if not rows or not isinstance(scale, int) or isinstance(scale, bool) or scale < 1:
         raise BandLineError(
             f"{venue_policy_yaml}: price_scale={scale!r} / {len(rows)} ladder rows"

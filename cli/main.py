@@ -23,6 +23,7 @@ from cli.commands import stock_backfill as stock_backfill_commands
 from cli.commands import trading_control as trading_control_commands
 from cli.commands.data import data_cmd
 from cli.commands.portfolio import portfolio_cmd
+from cli.commands.tos_status import tos_cmd
 
 _require_parquet_sink = backfill_commands._require_parquet_sink
 backfill = backfill_commands.backfill
@@ -84,6 +85,7 @@ def cli(verbose: bool):
         collect     데이터 수집 명령
         trade       트레이딩 제어 명령
         health      시스템 헬스 체크
+        tos         TOS 한 장 상태판 (읽기 전용)
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -1011,6 +1013,7 @@ cli.add_command(data_cmd)
 
 
 cli.add_command(portfolio_cmd)
+cli.add_command(tos_cmd)
 
 
 # =============================================================================
