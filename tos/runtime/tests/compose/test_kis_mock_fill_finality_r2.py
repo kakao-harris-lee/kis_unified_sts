@@ -631,3 +631,106 @@ def test_a_release_row_over_an_uncommitted_transition_is_a_divergence(
     ]
     assert "no committed release" in halt["reason"]
     _close(runtime)
+
+
+# ===========================================================================
+# Final review LOW: the restore drill checks releases against the restored RCL too
+# ===========================================================================
+
+
+class _RclStateWithheld:
+    """A composed runtime whose RCL committed state is withheld from the drill's replay."""
+
+    class _NoCommits:
+        def committed_command(self, command_id: str) -> None:
+            del command_id
+
+    def __init__(self, runtime) -> None:
+        self._runtime = runtime
+        self.rcl_log = self._NoCommits()
+
+    def __getattr__(self, name: str):
+        return getattr(self._runtime, name)
+
+
+@pytest.mark.parametrize("rcl_state", ["given", "withheld"])
+def test_the_restore_drill_reads_the_restored_rcl_for_a_recorded_release(
+    rcl_state, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    from tos_runtime.operations.backup_set import (
+        DurableSetPaths,
+        backup_set,
+        restore_drill,
+        restore_set,
+    )
+
+    runtime, _attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    _script_broker(server, config_dir, date, [_full(date, qty)])
+    observer = runtime.fill_observer
+    assert observer is not None
+    observer.poll_once()
+    assert _rcl_releases(runtime) == 1
+    assert _rows(runtime, "ENGINE_PROJECTION_RELEASED")
+    assert runtime.recovery is not None
+    readiness = runtime.recovery.readiness_verdict.value
+    key_provider = runtime.key_provider
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+    runtime.inbox.close()
+    backup_set(
+        DurableSetPaths.from_data_dir(data_dir),
+        tmp_path / "backups",
+        generation=1,
+        readiness_verdict_at_backup=readiness,
+    )
+    restored = restore_set(
+        tmp_path / "backups" / "gen1.set.manifest.json",
+        tmp_path / "restored",
+        key_provider=key_provider,
+    )
+
+    box: dict[str, object] = {}
+
+    def _compose(restored_dir, environment_label):
+        del environment_label
+        composed = _boot(tmp_path, config_dir, restored_dir, custody_root)
+        box["runtime"] = composed
+        return composed if rcl_state == "given" else _RclStateWithheld(composed)
+
+    verdict = restore_drill(
+        restored,
+        compose=_compose,
+        build_core=lambda: _replay_build_core(box["runtime"]),
+        scheme=SCHEME,
+        environment_label="non-live-test",
+    )
+    if rcl_state == "given":
+        assert verdict.result == "PASSED", verdict
+    else:
+        assert verdict.result == "FAILED"  # a release it cannot check is never trusted
+    composed = box["runtime"]
+    composed.rcl_log.close()  # type: ignore[attr-defined]
+    composed.evidence_store.close()  # type: ignore[attr-defined]
+
+
+def _replay_build_core(runtime) -> EventCorrelatingCore:
+    evidence_store = runtime.evidence_store
+    recorded_stage = RecordedStage(evidence_store)
+    core = EngineCore(
+        registry=runtime.registry,
+        stages=dict.fromkeys(
+            runtime.core._stages.keys(), recorded_stage
+        ),  # noqa: SLF001
+        configuration=runtime.core._configuration,  # noqa: SLF001
+        preconditions=_ReplayPreconditions(),
+        transmit=(
+            RecordedTransmit(evidence_store)
+            if any_recorded_hand_off(evidence_store)
+            else None
+        ),
+        sink=NullEvidenceSink(),
+        scheme=SCHEME,
+    )
+    return EventCorrelatingCore(core=core, recorded_stage=recorded_stage, scheme=SCHEME)
