@@ -477,10 +477,12 @@ class Quotes:
             rows = self.page(symbol, day, cursor)
             result.extend(select_day(rows, day))
             stamps = [raw_stamp(r, day) for r in rows]
-            stamps = [s for s in stamps if s is not None]
-            if not stamps:
+            # 같은 이름에 다시 담으면 `datetime | None` 그대로라 `min` 이 받지
+            # 못한다 — 거른 결과를 별도 이름에 둔다(동작 동일).
+            dated = [s for s in stamps if s is not None]
+            if not dated:
                 return result
-            next_cursor = min(stamps).strftime("%H%M%S")
+            next_cursor = min(dated).strftime("%H%M%S")
             if next_cursor in seen:
                 return result
             seen.add(next_cursor)

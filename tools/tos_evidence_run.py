@@ -302,12 +302,17 @@ def _assigned_value(tree: ast.AST, name: str) -> ast.expr | None:
     """The value expression assigned to a module-level ``name``, or ``None``."""
     for node in ast.walk(tree):
         targets: list[ast.expr] = []
+        # 값은 `isinstance` 분기 «안에서» 집어둔다 — 분기 밖에서 `node.value` 를
+        # 읽으면 좁혀진 타입이 풀려 `ast.AST` 로 돌아간다(동작은 동일).
+        value: ast.expr | None = None
         if isinstance(node, ast.Assign):
             targets = list(node.targets)
+            value = node.value
         elif isinstance(node, ast.AnnAssign):
             targets = [node.target]
+            value = node.value
         if any(isinstance(t, ast.Name) and t.id == name for t in targets):
-            return node.value
+            return value
     return None
 
 
@@ -317,12 +322,16 @@ def _class_attr_value(tree: ast.AST, class_name: str, attr: str) -> ast.expr | N
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for stmt in node.body:
                 targets: list[ast.expr] = []
+                # `_assigned_value` 와 같은 이유로 분기 안에서 집는다.
+                value: ast.expr | None = None
                 if isinstance(stmt, ast.Assign):
                     targets = list(stmt.targets)
+                    value = stmt.value
                 elif isinstance(stmt, ast.AnnAssign):
                     targets = [stmt.target]
+                    value = stmt.value
                 if any(isinstance(t, ast.Name) and t.id == attr for t in targets):
-                    return stmt.value
+                    return value
     return None
 
 
@@ -2348,9 +2357,12 @@ def parse_junit(path: Path) -> dict:
 
 
 def dump_yaml(data: dict) -> str:
-    return yaml.safe_dump(
+    # 주석은 타입용이다 — `types-PyYAML` 이 없는 환경(CI 최소 설치)에서
+    # `safe_dump` 은 `Any` 라, 선언한 `str` 을 지키려면 여기서 한 번 적어야 한다.
+    text: str = yaml.safe_dump(
         data, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100
     )
+    return text
 
 
 def write_exclusive(path: Path, text: str) -> None:

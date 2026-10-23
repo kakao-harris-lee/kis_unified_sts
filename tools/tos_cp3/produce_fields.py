@@ -149,7 +149,10 @@ from shared.instruments.contract_spec import (  # noqa: E402
     ContractSpecRegistry,
     resolve_contract_spec,
 )
-from shared.storage.market_data_store import ParquetMarketDataStore  # noqa: E402
+from shared.storage.market_data_store import (  # noqa: E402
+    AssetClass,
+    ParquetMarketDataStore,
+)
 from shared.strategy.exit.setup_target_exit import (  # noqa: E402
     SetupTargetExitConfig,
 )
@@ -216,6 +219,24 @@ DEFAULT_MIN_BARS_PER_DAY = 330
 
 class ProduceFieldsError(RuntimeError):
     """Raised when inputs cannot be turned into a trustworthy field stream."""
+
+
+def _asset_class(raw: object) -> AssetClass:
+    """Narrow the YAML's ``asset_class`` to the two values the store accepts.
+
+    Any other value is already fatal today — it becomes a partition directory
+    that does not exist, and the load raises ``ProduceFieldsError`` a few frames
+    later with "no ... minute bars". This raises the same error at the point
+    that can say which value was wrong.
+    """
+    value = str(raw or "futures")
+    if value == "stock":
+        return "stock"
+    if value == "futures":
+        return "futures"
+    raise ProduceFieldsError(
+        f"strategy.asset_class must be 'stock' or 'futures', got {value!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +335,7 @@ class StrategyInputs:
 
     path: Path
     sha256: str
-    asset_class: str
+    asset_class: AssetClass
     entry_params: dict[str, Any]
     exit_params: dict[str, Any]
     entry_config: SetupDConfig
@@ -405,7 +426,7 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
     return StrategyInputs(
         path=path,
         sha256=hashlib.sha256(raw_bytes).hexdigest(),
-        asset_class=str(strategy.get("asset_class") or "futures"),
+        asset_class=_asset_class(strategy.get("asset_class")),
         entry_params=entry_params,
         exit_params=exit_params,
         entry_config=config,
@@ -545,7 +566,7 @@ def _apply_density_gate(df: Any, *, min_bars_per_day: int, loaded: int) -> Any:
 def load_bars(
     data_root: Path,
     *,
-    asset_class: str,
+    asset_class: AssetClass,
     symbol: str,
     start: date,
     end: date,
@@ -606,7 +627,7 @@ class StitchedInputs:
 
 
 def _segment_day_bars(
-    data_root: Path, *, asset_class: str, contract: str, day: date
+    data_root: Path, *, asset_class: AssetClass, contract: str, day: date
 ) -> Any:
     """One ``(contract, day)`` partition, as the project's own store reads it."""
     store = ParquetMarketDataStore(root=data_root, asset_class=asset_class)
@@ -620,7 +641,7 @@ def _segment_day_bars(
 
 
 def _day_partition_files(
-    data_root: Path, *, asset_class: str, contract: str, day: date
+    data_root: Path, *, asset_class: AssetClass, contract: str, day: date
 ) -> list[InputFile]:
     return discover_input_files(
         data_root, asset_class=asset_class, symbol=contract, start=day, end=day
@@ -630,7 +651,7 @@ def _day_partition_files(
 def load_stitched_bars(
     data_root: Path,
     *,
-    asset_class: str,
+    asset_class: AssetClass,
     manifest: StitchManifest,
     min_bars_per_day: int,
 ) -> tuple[Any, int, list[InputFile], StitchedInputs]:
@@ -702,7 +723,7 @@ def load_stitched_bars(
 
 
 def _recompute_junctions(
-    data_root: Path, *, asset_class: str, manifest: StitchManifest
+    data_root: Path, *, asset_class: AssetClass, manifest: StitchManifest
 ) -> tuple[list[StitchJunction], list[InputFile], int]:
     """Re-derive every junction from the stored UNADJUSTED bars."""
     recomputed: list[StitchJunction] = []
@@ -1009,7 +1030,10 @@ def produce_bars(
     bars_replayed = 0
     non_target = 0
     for ctx in replay.iter_contexts():
-        setup.check(ctx)
+        # `arg-type` 억제 사유는 `emit_legacy_decisions.py` 의 같은 호출에 적었다 —
+        # frozen `MarketContext` 대 쓰기 가능 멤버를 선언한 `FuturesMarketView`
+        # 프로토콜의 기존 간극(`shared/backtest/decision_harness.py:262`).
+        setup.check(ctx)  # type: ignore[arg-type]
         ev = setup.last_eval
         if observer is not None:
             # Read-only by construction, not by convention: the proxy raises on
@@ -1179,7 +1203,7 @@ def _observed_range(records: list[FieldRecord], key: str) -> dict[str, Any]:
         return {"true": true_count, "false": len(values) - true_count}
     if isinstance(values[0], str):
         return {"distinct": len({str(value) for value in values})}
-    numbers = [int(value) for value in values]  # type: ignore[arg-type]
+    numbers = [int(value) for value in values]
     return {"min": min(numbers), "max": max(numbers)}
 
 
@@ -1851,7 +1875,8 @@ def measure_moving_vs_frozen_exit(
     contexts: list[Any] = []
     entries: list[tuple[int, str, float]] = []  # (index, direction, take_profit)
     for ctx in replay.iter_contexts():
-        signal = setup.check(ctx)
+        # 같은 프로토콜 간극 — 위 호출의 주석 참조.
+        signal = setup.check(ctx)  # type: ignore[arg-type]
         contexts.append(ctx)
         if signal is not None:
             entries.append((len(contexts) - 1, signal.direction, signal.take_profit))

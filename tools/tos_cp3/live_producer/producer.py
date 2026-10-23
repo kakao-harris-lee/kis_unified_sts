@@ -259,7 +259,7 @@ class LiveProducer:
         themselves are far too large to commit (PR-1's single session was
         14 MB), so the digest travels instead of the bytes.
         """
-        rows = self.quotes.history(contract, day)
+        rows: list[dict] = self.quotes.history(contract, day)
         self.raw_digests[f"{contract}:{day.isoformat()}"] = rows_digest(rows)
         return rows
 

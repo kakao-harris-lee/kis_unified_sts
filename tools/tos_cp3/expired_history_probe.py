@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -258,7 +259,7 @@ def spread_window(
     }
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--confirm", action="store_true")
