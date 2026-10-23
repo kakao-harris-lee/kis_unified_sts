@@ -126,6 +126,14 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
     missing = [key for key in required if key not in raw]
     if missing:
         raise ValueError(f"{path}: 키가 없다 {missing}")
+    # 빈 needle 은 모든 cmdline 에 들어 있어 pid 재사용 방지를 끈다(#941).
+    blank = [
+        key
+        for key in ("paper_runtime_cmdline_needle", "paper_driver_cmdline_needle")
+        if not str(raw[key] or "").strip()
+    ]
+    if blank:
+        raise ValueError(f"{path}: 빈 값은 허용하지 않는다 {blank}")
     return BoardConfig(
         state_dir=expand_path(str(raw["state_dir"])),
         tenant_sessions_subdir=str(raw["tenant_sessions_subdir"]),
