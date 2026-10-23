@@ -1216,3 +1216,66 @@ class TestTheFieldRefusalRow:
         # above), so the age the issuer measured is the later reading minus the stamp.
         assert refusals[0]["age_ms"] == _STALE_BY_MS + _EVALUATION_STEP_MS
         assert refusals[0]["stale_max_age_ms"] == [5_000]
+
+    def test_the_row_is_appended_after_the_decision_not_before_it(
+        self, tmp_path: Path
+    ) -> None:
+        """⛔ **Review LOW-5.** The append is a ``BEGIN IMMEDIATE``/``COMMIT``, and this row is
+        diagnostics. Between ``store.put`` and ``enqueue_and_run`` it would make every refused
+        tick pay that write BEFORE its decision — and the ticks that refuse are, by the
+        2026-10-22 finding, the ones already running late.
+
+        Order is MEASURED, not assumed: the driver and the evidence store record when each was
+        reached. Put the call back above the capsule and this goes red.
+        """
+        order: list[str] = []
+        evidence = MagicMock()
+        evidence.append.side_effect = lambda *_a, **_kw: order.append("evidence")
+        driver = _CapturingDriver()
+        real_enqueue = driver.enqueue_and_run
+
+        def spy_enqueue(event: Any) -> None:
+            order.append("decision")
+            real_enqueue(event)
+
+        driver.enqueue_and_run = spy_enqueue  # type: ignore[method-assign]
+        time_service = _AdvancingTimeService(
+            start_ms=_START_READING_MS, step_ms=_EVALUATION_STEP_MS
+        )
+        scheduler = _read_order_scheduler(
+            tmp_path,
+            time_service=time_service,
+            intake=_StaleIntake(time_service),
+            store=SqliteSnapshotStore(tmp_path / "marketfeed.sqlite3"),
+            driver=driver,
+            evidence_store=evidence,
+        )
+
+        assert scheduler.tick_once().outcome is TickOutcome.TICKED
+
+        assert order == ["decision", "evidence"]
+
+    def test_an_unwritable_evidence_store_stops_the_pass(self, tmp_path: Path) -> None:
+        """A failed append PROPAGATES, like every other evidence row in this module.
+
+        Deliberate, and worth pinning because "diagnostics" could be read as "best effort":
+        evidence that cannot be written is not a condition to continue past. A runtime that
+        kept ticking against an unwritable store would produce decisions nobody can later
+        account for — the opposite of what this row is for.
+        """
+        evidence = MagicMock()
+        evidence.append.side_effect = RuntimeError("evidence store is unwritable")
+        time_service = _AdvancingTimeService(
+            start_ms=_START_READING_MS, step_ms=_EVALUATION_STEP_MS
+        )
+        scheduler = _read_order_scheduler(
+            tmp_path,
+            time_service=time_service,
+            intake=_StaleIntake(time_service),
+            store=SqliteSnapshotStore(tmp_path / "marketfeed.sqlite3"),
+            driver=_CapturingDriver(),
+            evidence_store=evidence,
+        )
+
+        with pytest.raises(RuntimeError, match="unwritable"):
+            scheduler.tick_once()

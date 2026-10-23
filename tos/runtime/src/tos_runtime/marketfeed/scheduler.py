@@ -503,7 +503,6 @@ class TickScheduler:
 
         issued = self._snapshot_issuer.issue(observation, now_ms=now_ms)
         self._store.put(issued.snapshot, issued.preimages)
-        self._record_field_refusals(issued, observation, now_ms=now_ms)
         capsule = self._capsule_issuer.issue(issued.snapshot)
         payload = self._resolver(capsule, instrument_key=self._instrument_key)
         event = EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=payload)
@@ -521,6 +520,13 @@ class TickScheduler:
                 kind=_MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND,
                 record_class=_MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND,
             )
+        # AFTER the decision, not between `store.put` and it (independent review LOW-5). The
+        # append is a BEGIN IMMEDIATE/COMMIT, and this row is DIAGNOSTICS — putting it on the
+        # path to `enqueue_and_run` would make every refused tick pay that write before its
+        # decision. On a tick whose fields were refused for being LATE, that is the one place
+        # a diagnostic must not cost time. Still after `store.put`, so the snapshot it
+        # explains is durable first.
+        self._record_field_refusals(issued, observation, now_ms=now_ms)
         self._last_tick_wall_clock_ms = now_ms
         return TickResult(
             outcome=TickOutcome.TICKED,
@@ -555,8 +561,19 @@ class TickScheduler:
 
         **Diagnostics only.** Nothing reads this row to decide anything: the refusal already
         happened inside the issuer, and the conservative path (UNKNOWN values ⇒ no
-        transmission) is unchanged whether or not this row is written. It is written AFTER
-        ``store.put`` so a snapshot is never durable-but-unexplained in the other order.
+        transmission) is unchanged whether or not this row is written.
+
+        **Called after the decision** (independent review LOW-5), and after ``store.put`` so
+        the snapshot it explains is durable first. An append is a ``BEGIN IMMEDIATE``/
+        ``COMMIT``; between the put and the decision it would make every refused tick pay that
+        write BEFORE deciding, and on a tick whose fields were refused for being LATE that is
+        the one place a diagnostic must not cost time.
+
+        **A failed append propagates** — deliberately, and the same way every other evidence
+        row in this module behaves. Evidence that cannot be written is not a condition to
+        continue past: a runtime that kept ticking with an unwritable store would produce
+        decisions no one can later account for. Pinned by
+        ``test_scheduler.py::TestTheFieldRefusalRow::test_an_unwritable_evidence_store_stops_the_pass``.
 
         Args:
             issued: The snapshot just issued, carrying its per-field reports.
