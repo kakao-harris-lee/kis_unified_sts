@@ -108,3 +108,60 @@ def test_each_mutation_toward_real_money_is_refused_on_both_items(
     assert fields.account_instrument_action_allowed is False
     # item 12 ignores the mock source and reads the profile (no approvers -> False)
     assert fields.broker_constraint_generation_current is False
+
+
+# ---------------------------------------------------------------------------
+# The profile's own environment class (#932 Codex r2)
+# ---------------------------------------------------------------------------
+
+
+def test_the_draft_instance_documents_declare_their_environment_class() -> None:
+    from tos_runtime.brokercap.instance import load_instance_documents
+
+    classes = {
+        d.environment: d.profile.environment_class
+        for d in load_instance_documents(_DRAFT)
+    }
+    assert classes == {
+        "MOCK_VTS": BrokerEnvironment.BROKER_SIMULATION,
+        "REAL_PROD": BrokerEnvironment.BROKER_PRODUCTION,
+    }
+
+
+@pytest.mark.parametrize(
+    "environment_class",
+    [BrokerEnvironment.BROKER_PRODUCTION, BrokerEnvironment.SYNTHETIC, None],
+)
+def test_a_mock_scope_bound_to_a_non_simulation_profile_is_refused_on_both_items(
+    tmp_path: Path, environment_class: BrokerEnvironment | None
+) -> None:
+    """The mock tuples alone no longer make the class: the bound profile must say simulation."""
+    config = _mock_scopes(tmp_path)
+    instance = load_active_instance_document(config)
+    assert instance is not None
+    relabelled = dataclasses.replace(
+        instance,
+        profile=instance.profile.model_copy(
+            update={"environment_class": environment_class}
+        ),
+    )
+    fields = derive_item6_item12(
+        config.active_scope, config, relabelled, mock_generation_current=True
+    )
+    assert fields.account_instrument_action_allowed is False
+    assert fields.broker_constraint_generation_current is False
+
+
+def test_an_unknown_environment_class_refuses_to_load(tmp_path: Path) -> None:
+    from tos_runtime.brokercap.instance import (
+        BrokerInstanceConfigError,
+        load_instance_documents,
+    )
+
+    text = _DRAFT.read_text(encoding="utf-8").replace(
+        "environment_class: BROKER_SIMULATION", "environment_class: SIMULATION_ISH", 1
+    )
+    path = tmp_path / "profile.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(BrokerInstanceConfigError, match="environment_class"):
+        load_instance_documents(path)

@@ -75,7 +75,7 @@ from pydantic import model_validator
 
 from tos.brokercap._base import ArtifactIntegrityError, FrozenModel
 from tos.brokercap.records import BrokerEvidenceRef, ProfileKey
-from tos.brokercap.vocabulary import Admissibility
+from tos.brokercap.vocabulary import Admissibility, BrokerEnvironment
 
 __all__ = [
     "AssetScope",
@@ -101,22 +101,9 @@ __all__ = [
 # ===========================================================================
 
 
-class BrokerEnvironment(StrEnum):
-    """The broker-environment axis (plan §5.1; broker-agnostic — slice plan §3 decision 2).
-
-    ``SYNTHETIC`` (non-authoritative simulated/backtest data or fills — no broker involved
-    at all), ``BROKER_SIMULATION`` (a broker's own mock/paper endpoint), ``BROKER_PRODUCTION``
-    (a broker's real endpoint — reachable for reads; permanently unreachable for a
-    FUTURES order-mutating operation, see :class:`CapabilityTuple`). Naming deliberately
-    avoids any concrete broker token (project memory ``tos-spec-broker-agnostic``); a
-    concrete broker's endpoint identity is carried by
-    :class:`~tos.brokercap.records.ProfileKey.broker_id` / ``.environment``, consumed only
-    through the injected bindings of :func:`endpoint_binding_from_profile_ok`.
-    """
-
-    SYNTHETIC = "SYNTHETIC"
-    BROKER_SIMULATION = "BROKER_SIMULATION"
-    BROKER_PRODUCTION = "BROKER_PRODUCTION"
+# ``BrokerEnvironment`` lives in :mod:`tos.brokercap.vocabulary` (re-exported here, the SAME
+# object) so :mod:`tos.brokercap.records` can type a profile's own ``environment_class`` with
+# it without an import cycle (records -> routing would close one; #932 Codex r2).
 
 
 class OperationClass(StrEnum):

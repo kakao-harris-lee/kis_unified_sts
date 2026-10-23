@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from tos.brokercap import (
     Admissibility,
     BrokerCapabilityProfile,
+    BrokerEnvironment,
     RequiredCapabilitySet,
 )
 from tos.brokercap.routing import (
@@ -142,6 +143,19 @@ def load_active_instance_document(
     )
 
 
+def _is_mock_class(scope: BrokerScope, instance: InstanceDocument | None) -> bool:
+    """Option (a) "K" (operator decision 2026-10-23): the scope's own kernel-typed tuples are
+    the mock class AND the bound INSTANCE profile's own ``environment_class`` is
+    ``BROKER_SIMULATION`` — the same two facts the kernel gateway's item-6 skip reads (#932
+    Codex r2), so the runtime flag and the kernel never disagree about which profile is a
+    simulation one. Never the scope's name, a config value or an env var."""
+    return (
+        mock_order_without_position_or_cash(scope.capability_tuples)
+        and instance is not None
+        and instance.profile.environment_class is BrokerEnvironment.BROKER_SIMULATION
+    )
+
+
 def derive_item6_item12(
     scope: BrokerScope,
     config: BrokerScopesConfig,
@@ -174,10 +188,8 @@ def derive_item6_item12(
     Returns:
         The derived fields, all structural — never a caller-supplied claim.
     """
-    # Option (a) "K" (operator decision 2026-10-23): REDUCED passes only for the mock class,
-    # judged from the scope's own kernel-typed tuples — never its name, a config value or an
-    # env var. A REAL scope can never be admitted REDUCED here.
-    mock_class = mock_order_without_position_or_cash(scope.capability_tuples)
+    # Option (a) "K": REDUCED passes only for the mock class (:func:`_is_mock_class`).
+    mock_class = _is_mock_class(scope, instance)
     admissible = scope.admissibility is Admissibility.ADMISSIBLE or (
         scope.admissibility is Admissibility.REDUCED and mock_class
     )
