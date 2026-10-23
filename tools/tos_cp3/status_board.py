@@ -70,6 +70,11 @@ FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 #: 그 밖의 사유는 1건이라도 막힘(#931).
 STALE_FIELD_REASON = "stale"
 BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
+#: 부팅마다 한 번 쓰이는 행 — 누적 잎을 «부팅 구간» seq 범위로 나누는 경계다.
+#: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
+BOOT_KIND = "TIME_SERVICE_STARTUP"
+#: diff_decisions.py 가 쓰는 summary 모양 — 다른 값이면 키를 믿지 않고 막힘으로 보고한다.
+B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2})
 
 _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
@@ -361,6 +366,8 @@ class LeafFacts:
     snapshots: tuple[si.Snapshot, ...] | None = None
     extra_rows: list[tuple[int, str, dict[str, Any]]] = field(default_factory=list)
     code_digest_by_seq: dict[int, str | None] = field(default_factory=dict)
+    #: 부팅 행(:data:`BOOT_KIND`)의 seq, 오름차순.
+    boot_seqs: list[int] = field(default_factory=list)
     error: str | None = None
 
 
@@ -388,6 +395,12 @@ def read_leaf(data_dir: Path) -> LeafFacts:
                         si._evidence_record(payload_json, seq=int(seq), kind=str(kind)),
                     )
                 )
+            facts.boot_seqs = [
+                int(seq)
+                for (seq,) in conn.execute(
+                    "SELECT seq FROM entries WHERE kind = ? ORDER BY seq", (BOOT_KIND,)
+                )
+            ]
             seqs = sorted({int(r["evidence_seq"]) for r in facts.records})
             for chunk_start in range(0, len(seqs), 500):
                 chunk = seqs[chunk_start : chunk_start + 500]
@@ -418,7 +431,46 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     """한 세션 날짜(KST ``YYYYMMDD``)로 자른 런타임 사실."""
     if leaf.error is not None or leaf.records is None or leaf.snapshots is None:
         return {"error": leaf.error or "store not read"}
-    ticks = [r for r in leaf.records if si.session_day_of(r["raw_event_id"]) == day]
+    # 날짜 한정은 session_inputs.scope_to_session_day 에 맡긴다 — 날짜를 읽을 수 없는 id 와
+    # 부팅 스냅샷·저장소의 날짜 불일치를 거부하는 것이 그 함수다. 다만 그 함수는 «넘겨받은
+    # 스냅샷 중 가장 새 날짜» 를 세션으로 보므로, 지난 날짜를 볼 때는 그 날 이후 스냅샷을 빼고
+    # 넘긴다(날짜를 읽을 수 없는 id 는 빼지 않는다 — 그래야 거부된다).
+    passed = [
+        snap
+        for snap in leaf.snapshots
+        if (d := si.session_day_of(snap.raw_event_id)) is None or d <= day
+    ]
+    has_day = any(si.session_day_of(snap.raw_event_id) == day for snap in passed)
+    has_unreadable = any(
+        si.session_day_of(snap.raw_event_id) is None for snap in passed
+    )
+    if has_day or has_unreadable:
+        try:
+            day_snaps, scope = si.scope_to_session_day(passed, pre_boot)
+        except si.SessionInputsError as exc:
+            return {"error": f"세션 범위 거부 — {exc}"}
+        if scope.session_day != day:
+            return {
+                "error": f"세션 범위 거부 — 저장소가 말하는 세션 날짜 {scope.session_day} ≠ {day}"
+            }
+    else:
+        # 아직 한 봉도 소비하지 않은 세션(부팅 직후) — 거부가 아니라 «틱 0» 이다.
+        day_snaps = []
+        scope = si.SessionScope(
+            session_day=day,
+            days_present=tuple(
+                sorted(
+                    {
+                        d
+                        for d in (si.session_day_of(x.raw_event_id) for x in passed)
+                        if d
+                    }
+                )
+            ),
+            all_days_total=len(leaf.snapshots),
+        )
+    day_ids = {snap.snapshot_id for snap in day_snaps}
+    ticks = [r for r in leaf.records if r["snapshot_id"] in day_ids]
     post_boot = [r for r in ticks if r["raw_event_id"] not in pre_boot]
     outcomes = Counter(r["outcome_kind"] for r in ticks)
     withheld = Counter(
@@ -441,24 +493,8 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         if r["pipeline_halt_reason"] != STALE_HALT_REASON
     ]
 
-    day_snaps = [s for s in leaf.snapshots if si.session_day_of(s.raw_event_id) == day]
-    days_present = tuple(
-        sorted(
-            {
-                d
-                for d in (si.session_day_of(s.raw_event_id) for s in leaf.snapshots)
-                if d
-            }
-        )
-    )
     m5_block = si.consumed_field_states(
-        snapshots=day_snaps,
-        pre_boot=pre_boot,
-        scope=si.SessionScope(
-            session_day=day,
-            days_present=days_present,
-            all_days_total=len(leaf.snapshots),
-        ),
+        snapshots=day_snaps, pre_boot=pre_boot, scope=scope
     )
 
     refused_rows = [
@@ -478,21 +514,30 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         for reason in (p.get("refused_by_reason") or {})
         if reason != STALE_FIELD_REASON
     ]
-    band_rows = [
-        {
-            key: p.get(key)
-            for key in (
-                "outcome",
-                "trading_date",
-                "basis",
-                "price_min",
-                "price_max",
-                "narrowed_intraday",
-            )
-        }
-        for _seq, kind, p in leaf.extra_rows
-        if kind == BAND_OBSERVED_KIND and str(p.get("trading_date")) == day
-    ]
+    seq_range = session_seq_range(leaf, ticks)
+    band_rows: list[dict[str, Any]] | None
+    if seq_range is None:
+        band_rows = None  # 틱이 없어 이 세션의 부팅 구간을 정할 수 없다
+    else:
+        lo, hi = seq_range
+        band_rows = [
+            {
+                key: p.get(key)
+                for key in (
+                    "outcome",
+                    "reason",
+                    "detail",
+                    "trading_date",
+                    "basis",
+                    "price_min",
+                    "price_max",
+                    "narrowed_intraday",
+                )
+            }
+            | {"seq": seq}
+            for seq, kind, p in leaf.extra_rows
+            if kind == BAND_OBSERVED_KIND and lo <= seq and (hi is None or seq < hi)
+        ]
     code_digests = sorted(
         {
             d
@@ -527,8 +572,34 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "field_refused_max_age_ms": max(ages) if ages else None,
         "field_refused_non_stale": non_stale_refused,
         "band_observed": band_rows,
+        "seq_range": list(seq_range) if seq_range else None,
         "code_digests": code_digests,
     }
+
+
+def session_seq_range(
+    leaf: LeafFacts, ticks: Sequence[Mapping[str, Any]]
+) -> tuple[int, int | None] | None:
+    """이 세션의 부팅 구간 ``[boot, 다음 boot)`` evidence seq 범위.
+
+    세션의 첫 틱보다 앞선 마지막 부팅 행이 시작이다. 틱이 없으면 잎의 마지막 부팅 구간에
+    어느 날의 틱도 없을 때만 그 구간을 쓴다(부팅 직후 아직 틱이 없는 세션). 그 밖에는 ``None``
+    — 추측해서 다른 세션의 행을 붙이지 않는다.
+    """
+    if not leaf.boot_seqs:
+        return None
+    if ticks:
+        first = min(int(r["evidence_seq"]) for r in ticks)
+        starts = [b for b in leaf.boot_seqs if b <= first]
+        if not starts:
+            return None
+        start = starts[-1]
+    else:
+        start = leaf.boot_seqs[-1]
+        if any(int(r["evidence_seq"]) > start for r in leaf.records or ()):
+            return None
+    later = [b for b in leaf.boot_seqs if b > start]
+    return start, (later[0] if later else None)
 
 
 # ---------------------------------------------------------------------------
@@ -537,16 +608,38 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
 
 
 def b3_facts(session_dir: Path) -> dict[str, Any] | None:
-    summary = _read_json(session_dir / "b3" / "report" / "summary.json")
-    if not isinstance(summary, dict):
+    """B3 summary 요약. 파일이 없으면 ``None``, 모양이 다르면 ``{"error": …}``."""
+    path = session_dir / "b3" / "report" / "summary.json"
+    if not path.exists():
         return None
-    live = summary.get("live_comparison") or {}
-    window = summary.get("window_identity") or {}
+    summary = _read_json(path)
+    if not isinstance(summary, dict):
+        return {"error": f"{path.name} 이 JSON 객체가 아니다"}
+    version = summary.get("summary_schema_version")
+    if version not in B3_SUMMARY_SCHEMA_VERSIONS:
+        return {
+            "error": f"summary_schema_version={version!r} — 이 상태판은"
+            f" {sorted(B3_SUMMARY_SCHEMA_VERSIONS)} 모양만 읽는다"
+        }
+    unresolved = summary.get("unresolved")
+    live = summary.get("live_comparison")
+    window = summary.get("window_identity")
+    count = unresolved.get("count") if isinstance(unresolved, dict) else None
+    if not isinstance(count, int) or isinstance(count, bool):
+        return {"error": f"unresolved.count 가 정수가 아니다: {unresolved!r}"}
+    if not isinstance(live, dict) or not all(
+        isinstance(live.get(k), int)
+        for k in ("compared_bars", "identical", "divergent")
+    ):
+        return {
+            "error": "live_comparison 의 compared_bars/identical/divergent 가 정수가 아니다"
+        }
+    window = window if isinstance(window, dict) else {}
     return {
-        "unresolved": (summary.get("unresolved") or {}).get("count"),
-        "compared_bars": live.get("compared_bars"),
-        "identical": live.get("identical"),
-        "divergent": live.get("divergent"),
+        "unresolved": count,
+        "compared_bars": live["compared_bars"],
+        "identical": live["identical"],
+        "divergent": live["divergent"],
         "window": f"{window.get('window_start')}..{window.get('window_end')}",
     }
 
@@ -570,6 +663,7 @@ class TenantSession:
     producer: dict[str, Any]
     store: dict[str, Any] | None
     b3: dict[str, Any] | None
+    boot_snapshot_error: str | None = None
     issues: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -608,15 +702,22 @@ def read_tenant_session(
     status = _session_status(runner, run_alive, producer_alive)
 
     store: dict[str, Any] | None = None
-    if with_store and runner.data_leaf and runner.boot_at:
+    boot_snapshot_error: str | None = None
+    if with_store and runner.boot_at and not runner.data_leaf:
+        # 부팅은 했는데 잎 경로를 모른다 — «부팅 전» 이 아니라 «상태 모름» 이다.
+        store = {
+            "error": "session.log 에 'instrument=… · data leaf …' 줄이 없어 저장소를 열 수 없다"
+        }
+    elif with_store and runner.data_leaf and runner.boot_at:
         leaf = leaves.get(runner.data_leaf)
         if leaf is None:
             leaf = leaves[runner.data_leaf] = read_leaf(Path(runner.data_leaf))
         boot_snapshot = path / "producer" / "boot-journal-snapshot.json"
         try:
             pre_boot = si.read_boot_snapshot(boot_snapshot)
-        except (OSError, si.SessionInputsError, json.JSONDecodeError):
+        except (OSError, si.SessionInputsError, json.JSONDecodeError) as exc:
             pre_boot = frozenset()
+            boot_snapshot_error = f"{type(exc).__name__}: {exc}"
         store = store_facts(leaf, m.group("day"), pre_boot)
 
     session = TenantSession(
@@ -632,6 +733,7 @@ def read_tenant_session(
         producer=producer_facts(path, cfg.latency_percentiles),
         store=store,
         b3=b3_facts(path),
+        boot_snapshot_error=boot_snapshot_error,
     )
     session.issues = tenant_issues(session, cfg)
     return session
@@ -663,11 +765,31 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
     for key in ("fetch_error", "produce_error"):
         if counters.get(key):
             issues.append((WARN, f"생산자 {key}={counters[key]}"))
+    if s.boot_snapshot_error is not None:
+        issues.append(
+            (
+                WARN,
+                "부팅 스냅샷을 읽지 못해 pre-boot 봉을 빼지 않고 셌다 — "
+                f"{s.boot_snapshot_error}",
+            )
+        )
+    if r.boot_at and s.expected_code_digest is None:
+        issues.append(
+            (
+                WARN,
+                "release.yaml 의 expected_code_digest 를 찾지 못해 code_digest 를 대조하지 않았다",
+            )
+        )
     st = s.store
     if st is not None:
         if "error" in st:
-            issues.append((BLOCK, f"런타임 저장소 읽기 거부 — {st['error']}"))
+            issues.append((BLOCK, f"런타임 저장소 상태 모름 — {st['error']}"))
         else:
+            if st["ticks"] == 0:
+                if s.status in ("RUNNING", "PRE-BOOT"):
+                    issues.append((WARN, "부팅했지만 아직 소비한 틱이 없다"))
+                else:
+                    issues.append((BLOCK, "부팅한 세션이 틱을 하나도 소비하지 않았다"))
             for line in st["other_withheld_post_boot"]:
                 issues.append((BLOCK, f"stale 이 아닌 보류: {line}"))
             for line in st["field_refused_non_stale"]:
@@ -685,10 +807,40 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                         f" > {cfg.stale_refusal_ratio_max:.1%}{suffix}",
                     )
                 )
-            if st["ticks"] and r.band_declared and not st["band_observed"]:
-                issues.append(
-                    (WARN, "band 를 선언한 트리인데 그날 VENUE_BAND_OBSERVED 행 없음")
-                )
+            bands = st["band_observed"]
+            if bands is None:
+                if r.band_declared:
+                    issues.append(
+                        (
+                            WARN,
+                            "부팅 구간을 정할 수 없어 VENUE_BAND_OBSERVED 를 보지 못했다",
+                        )
+                    )
+            else:
+                for b in bands:
+                    if b["outcome"] != "OBSERVED":
+                        issues.append(
+                            (
+                                BLOCK,
+                                f"VENUE_BAND_OBSERVED {b['outcome']} seq {b['seq']}"
+                                f" reason={b['reason']} detail={b['detail']}",
+                            )
+                        )
+                    elif str(b["trading_date"]) != s.day:
+                        issues.append(
+                            (
+                                WARN,
+                                f"VENUE_BAND_OBSERVED trading_date {b['trading_date']}"
+                                f" ≠ 세션 날짜 {s.day} (seq {b['seq']})",
+                            )
+                        )
+                if r.band_declared and not bands:
+                    issues.append(
+                        (
+                            WARN,
+                            "band 를 선언한 트리인데 이 부팅 구간에 VENUE_BAND_OBSERVED 행 없음",
+                        )
+                    )
             if (
                 s.expected_code_digest
                 and st["code_digests"]
@@ -702,8 +854,21 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                     )
                 )
     if s.b3 is not None:
-        if s.b3.get("unresolved"):
-            issues.append((BLOCK, f"B3 unresolved={s.b3['unresolved']}"))
+        if "error" in s.b3:
+            issues.append((BLOCK, f"B3 summary 를 읽을 수 없다 — {s.b3['error']}"))
+        else:
+            if s.b3["unresolved"]:
+                issues.append((BLOCK, f"B3 unresolved={s.b3['unresolved']}"))
+            # §2-1 판정은 unresolved(설명 안 된 차이) 다. live divergent 는 귀속 규칙으로
+            # 설명된 차이를 포함하므로 막힘이 아니라 확인으로 올린다 — 숫자를 숨기지 않기 위해.
+            if s.b3["divergent"]:
+                issues.append(
+                    (
+                        WARN,
+                        f"B3 live divergent {s.b3['divergent']}/{s.b3['compared_bars']}"
+                        " — 귀속은 B3 리포트에서 확인",
+                    )
+                )
     elif s.status in ("ENDED", "ABORT", "FAILED"):
         issues.append(
             (WARN, "B3 결과 없음(세션 디렉터리에 b3/report/summary.json 이 없다)")
@@ -862,9 +1027,11 @@ def build_board(
         }
         - {day_key},
     )
-    history_days = [d for d in history_days if d < day_key][
-        -max(cfg.history_days - 1, 0) :
-    ]
+    # 이력은 그 날짜를 포함해 history_days 개 날짜다. 앞선 날짜는 history_days - 1 개 —
+    # 0 이면 [-0:] 가 전부를 남기므로 따로 비운다.
+    earlier = [d for d in history_days if d < day_key]
+    keep = cfg.history_days - 1
+    history_days = earlier[-keep:] if keep > 0 else []
     history = [
         read_tenant_session(p, leaves=leaves, cfg=cfg, proc_root=None)
         for p in dirs
@@ -936,7 +1103,7 @@ def _history_row(s: TenantSession) -> dict[str, Any]:
         "ticks": st.get("ticks"),
         "stale": st.get("m5_present_value_refused_as_unknown"),
         "other_withheld": len(st.get("other_withheld_post_boot") or []),
-        "band": len(st.get("band_observed") or []),
+        "band": None if st.get("band_observed") is None else len(st["band_observed"]),
         "b3_unresolved": (s.b3 or {}).get("unresolved"),
         "store_error": st.get("error"),
         "blocks": sum(1 for lv, _ in s.issues if lv == BLOCK),
@@ -995,7 +1162,7 @@ def render_text(board: Mapping[str, Any]) -> str:
             f" · code_digest {code}{match}"
         )
         if "error" in st:
-            add(f"    저장소: 읽기 거부 — {st['error']}")
+            add(f"    저장소: 상태 모름 — {st['error']}")
         elif st:
             add(
                 f"    틱 {st['ticks']} (post-boot {st['post_boot_ticks']}) · 결정 {_fmt_counts(st['outcomes'])}"
@@ -1017,12 +1184,20 @@ def render_text(board: Mapping[str, Any]) -> str:
                 f"    MARKETFEED_FIELD_REFUSED {st['field_refused_rows']}행"
                 f" ({_fmt_counts(st['field_refused_by_reason'])}{'' if age is None else f' · 최대 age {age}ms'})"
             )
-            if st["band_observed"]:
+            if st["band_observed"] is None:
+                add("    VENUE_BAND_OBSERVED: 부팅 구간을 정할 수 없어 보지 못함")
+            elif st["band_observed"]:
                 for b in st["band_observed"]:
-                    add(
-                        f"    VENUE_BAND_OBSERVED {b['outcome']} {b['trading_date']} basis {b['basis']}"
-                        f" [{b['price_min']}, {b['price_max']}] narrowed={b['narrowed_intraday']}"
-                    )
+                    if b["outcome"] == "OBSERVED":
+                        add(
+                            f"    VENUE_BAND_OBSERVED OBSERVED {b['trading_date']} basis {b['basis']}"
+                            f" [{b['price_min']}, {b['price_max']}] narrowed={b['narrowed_intraday']}"
+                        )
+                    else:
+                        add(
+                            f"    VENUE_BAND_OBSERVED {b['outcome']} reason={b['reason']}"
+                            f" detail={b['detail']} (seq {b['seq']})"
+                        )
             elif s["band_declared"] is False:
                 add("    VENUE_BAND_OBSERVED 0행 (이 트리는 band 를 끔)")
             else:
@@ -1049,6 +1224,8 @@ def render_text(board: Mapping[str, Any]) -> str:
         b3 = s["b3"]
         if b3 is None:
             add("    B3 대조: 결과 없음(세션 디렉터리 b3/report/summary.json)")
+        elif "error" in b3:
+            add(f"    B3 대조: summary 를 읽을 수 없음 — {b3['error']}")
         else:
             add(
                 f"    B3 대조: unresolved {b3['unresolved']} · divergent {b3['divergent']}/{b3['compared_bars']}"
@@ -1087,10 +1264,10 @@ def render_text(board: Mapping[str, Any]) -> str:
         add("■ 최근 세션(날짜별)")
         add("  날짜      세션      상태        rc   틱   stale 기타 band B3unres 막힘")
         for h in board["history"]:
-            err = " 저장소거부" if h["store_error"] else ""
+            err = " 저장소모름" if h["store_error"] else ""
             add(
                 f"  {h['day']}  {h['label']:<8}  {h['status']:<10}  {str(h['run_rc']):>3}"
-                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {h['band']:>3}"
+                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}"
                 f"  {str(h['b3_unresolved']):>6}  {h['blocks']:>3}{err}"
             )
         add("")

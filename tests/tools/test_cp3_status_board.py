@@ -395,10 +395,10 @@ def test_a_store_of_another_shape_is_reported_not_crashed(
     board = _board(cfg, D1022)
     assert "error" in _session(board, "long-20261022")["store"]
     assert any(
-        "런타임 저장소 읽기 거부" in b and "user_version=99" in b
+        "런타임 저장소 상태 모름" in b and "user_version=99" in b
         for b in _issues(board, sb.BLOCK)
     )
-    assert "저장소: 읽기 거부" in sb.render_text(board)
+    assert "저장소: 상태 모름" in sb.render_text(board)
 
 
 def test_no_tenant_session_on_the_day_is_flagged(cfg: sb.BoardConfig):
@@ -465,3 +465,167 @@ def test_sts_tos_status_exit_code_and_json(state: Path):
     doc = json.loads(as_json.output)
     assert doc["date"] == "2026-10-15"
     assert doc["tenant_sessions"][0]["b3"]["divergent"] == 26
+
+
+# --- review-935 regressions ------------------------------------------------------
+
+
+def _append_band_refused(state: Path, reason: str) -> int:
+    """런타임 ``band_journal._refuse`` 의 행 모양 그대로 — trading_date 가 없다."""
+    db = state / LEAVES["long-A05611"] / "evidence.sqlite3"
+    conn = sqlite3.connect(db)
+    seq = conn.execute("SELECT max(seq) FROM entries").fetchone()[0] + 1
+    payload = {
+        "outcome": "REFUSED",
+        "instrument": "A05611",
+        "reason": reason,
+        "detail": "x",
+    }
+    conn.execute(
+        "INSERT INTO entries (seq, segment_id, kind, record_class, runtime_identity_json,"
+        " payload_json, entry_digest, chain_digest, key_generation, appended_at_monotonic_ns)"
+        " VALUES (?, NULL, ?, ?, NULL, ?, 'x', 'x', 0, 0)",
+        (
+            seq,
+            sb.BAND_OBSERVED_KIND,
+            sb.BAND_OBSERVED_KIND,
+            json.dumps({"masked_keys": [], "payload": payload}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return seq
+
+
+def test_b1_band_refused_later_in_the_session_blocks(
+    tmp_path: Path, state: Path, cfg: sb.BoardConfig
+):
+    seq = _append_band_refused(state, "journal_empty")
+    proc = _fake_proc(tmp_path, state)
+    board = _board(cfg, D1023, today=D1023, proc=proc)
+    bands = _session(board, "long-20261023")["store"]["band_observed"]
+    assert [(b["outcome"], b["reason"]) for b in bands] == [
+        ("OBSERVED", None),
+        ("REFUSED", "journal_empty"),
+    ]
+    assert (
+        f"long-20261023: VENUE_BAND_OBSERVED REFUSED seq {seq} reason=journal_empty detail=x"
+        in _issues(board, sb.BLOCK)
+    )
+    assert "VENUE_BAND_OBSERVED REFUSED reason=journal_empty" in sb.render_text(board)
+    # 같은 잎의 지난 부팅 구간(10-22)에는 붙지 않는다
+    assert _session(_board(cfg, D1022), "long-20261022")["store"]["band_observed"] == []
+
+
+def test_b1_band_row_missing_from_the_boot_segment_warns(
+    tmp_path: Path, state: Path, cfg: sb.BoardConfig
+):
+    conn = sqlite3.connect(state / LEAVES["long-A05611"] / "evidence.sqlite3")
+    # 녹화 저장소는 런타임의 append-only 트리거를 그대로 갖고 있다 — tmp 사본에서만 걷어 낸다
+    for (name,) in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+    ).fetchall():
+        conn.execute(f'DROP TRIGGER "{name}"')
+    conn.execute("DELETE FROM entries WHERE kind = ?", (sb.BAND_OBSERVED_KIND,))
+    conn.commit()
+    conn.close()
+    board = _board(cfg, D1023, today=D1023, proc=_fake_proc(tmp_path, state))
+    assert "long-20261023: band 를 선언한 트리인데 이 부팅 구간에 VENUE_BAND_OBSERVED 행 없음" in _issues(
+        board, sb.WARN
+    )
+
+
+def test_b2_booted_session_without_a_data_leaf_line_is_unknown_not_pre_boot(
+    state: Path, cfg: sb.BoardConfig
+):
+    log = state / "cp3-sessions/long-20261022/session.log"
+    log.write_text(
+        "\n".join(
+            ln for ln in log.read_text().splitlines() if " · data leaf " not in ln
+        )
+        + "\n"
+    )
+    board = _board(cfg, D1022)
+    blocks = _issues(board, sb.BLOCK)
+    assert any(
+        b.startswith("long-20261022: 런타임 저장소 상태 모름 — session.log 에")
+        for b in blocks
+    )
+    text = sb.render_text(board)
+    assert "부팅 전이라 읽지 않음" not in text
+    assert "저장소: 상태 모름" in text
+
+
+def test_n1_missing_boot_snapshot_is_raised(state: Path, cfg: sb.BoardConfig):
+    (state / "cp3-sessions/long-20261022/producer/boot-journal-snapshot.json").unlink()
+    warns = _issues(_board(cfg, D1022), sb.WARN)
+    assert any(
+        "부팅 스냅샷을 읽지 못해 pre-boot 봉을 빼지 않고 셌다" in w for w in warns
+    )
+
+
+def test_n2_an_unreadable_bar_id_is_refused_not_dropped(
+    state: Path, cfg: sb.BoardConfig
+):
+    conn = sqlite3.connect(state / LEAVES["long-A05611"] / "marketfeed.sqlite3")
+    snap = conn.execute(
+        "SELECT snapshot_id FROM preimages WHERE raw_event_id LIKE '%20261022T1512%'"
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE preimages SET raw_event_id = 'A05611:1m:garbage' WHERE snapshot_id = ?",
+        (snap,),
+    )
+    conn.commit()
+    conn.close()
+    blocks = _issues(_board(cfg, D1022), sb.BLOCK)
+    assert any("세션 범위 거부" in b and "A05611:1m:garbage" in b for b in blocks)
+
+
+def test_n3_missing_expected_code_digest_after_boot_warns(
+    state: Path, cfg: sb.BoardConfig
+):
+    (state / "cp3-sessions/long-20261022/config/release.yaml").unlink()
+    assert (
+        "long-20261022: release.yaml 의 expected_code_digest 를 찾지 못해 code_digest 를"
+        " 대조하지 않았다" in _issues(_board(cfg, D1022), sb.WARN)
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate, needle",
+    [
+        (lambda d: d.update(unresolved=3), "unresolved.count 가 정수가 아니다"),
+        (lambda d: d.update(summary_schema_version=3), "summary_schema_version=3"),
+        (lambda d: d["live_comparison"].pop("divergent"), "live_comparison"),
+    ],
+)
+def test_n4_b3_summary_of_another_shape_blocks_without_crashing(
+    state: Path, cfg: sb.BoardConfig, mutate, needle
+):
+    path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
+    data = json.loads(path.read_text())
+    mutate(data)
+    path.write_text(json.dumps(data))
+    board = _board(cfg, D1015)
+    assert any(
+        "B3 summary 를 읽을 수 없다" in b and needle in b
+        for b in _issues(board, sb.BLOCK)
+    )
+    assert "B3 대조: summary 를 읽을 수 없음" in sb.render_text(board)
+
+
+def test_n4_b3_live_divergence_is_raised_as_a_warning(cfg: sb.BoardConfig):
+    assert (
+        "long-20261015: B3 live divergent 26/303 — 귀속은 B3 리포트에서 확인"
+        in _issues(_board(cfg, D1015), sb.WARN)
+    )
+
+
+def test_n5_history_days_one_is_only_the_day(cfg: sb.BoardConfig):
+    board = _board(replace(cfg, history_days=1), D1023)
+    assert [(h["day"], h["label"]) for h in board["history"]] == [
+        ("20261023", "long"),
+        ("20261023", "short"),
+    ]
+    two = _board(replace(cfg, history_days=2), D1023)
+    assert [h["day"] for h in two["history"]] == ["20261022", "20261023", "20261023"]

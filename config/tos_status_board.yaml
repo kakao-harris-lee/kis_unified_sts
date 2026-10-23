@@ -12,8 +12,12 @@ tenant_cron_log_glob: "cp3-*-tenant-daily.cron.log" # 크론 래퍼 로그(세�
 paper_sessions_subdir: paper-sessions # 상주 paper 세션 산출물(YYYY-MM-DD-HHMMSS-<DIR>)
 paper_ops_subdir: paper-ops # paper-session.pid · paper-session.driver.pid
 
-# stale 거절 허용치 — #931 운영자 지시(2026-10-23): TIME_NOT_ADMITTED 거절 ≤ 0.5% of
-# post-boot 소비 봉. 넘으면 «막힘». stale 이 아닌 사유의 거절은 1건이라도 «막힘».
+# stale 거절 허용치 — #931 운영자 지시(2026-10-23). 판정하는 수는 M5 ①:
+#   m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown / post_boot_consumed_ids
+#   (session_inputs.consumed_field_states 정의 그대로 — 값을 쥐고도 UNKNOWN 으로 거절된
+#   post-boot 소비 봉). 이 비율이 값을 넘으면 종료된 세션은 «막힘», 진행 중 세션은 «확인».
+# 이 값과 별개로, stale 이 아닌 사유는 1건이라도 «막힘»이다 — TIME_NOT_ADMITTED 가 아닌
+# 보류 사유와, MARKETFEED_FIELD_REFUSED 의 stale 이 아닌 거절 사유.
 stale_refusal_ratio_max: 0.005
 
 # 생산자 지연(as_of − 분 마감) 백분위. nearest-rank.
