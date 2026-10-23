@@ -47,6 +47,9 @@
 # slot be re-aimed at another leaf of the same file while keeping its key.
 
 tree_id: "cp3-setup-d-short"
+# The producer market feeding this tree — the tenant runner refuses a producer config whose
+# own `market:` differs, before the producer starts (#936 review LOW-1).
+market: "futures"
 
 direction:
   # "declared" — this tree is committed for ONE direction (plan §2.3). The renderer
