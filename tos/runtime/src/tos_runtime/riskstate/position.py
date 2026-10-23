@@ -83,9 +83,11 @@ IN-FLIGHT never does (rationale and the ARE decision-sum argument in
 :mod:`tos.position.predicates`), so moving an unmatched attempt to IN-FLIGHT can only raise the
 decision sum — it equals the state before the result was recorded.
 
-**Supersession is by evidence ``seq``.** An unmatched row BEFORE a consumed row (a re-injected
-result superseding it) is dropped — the ``CONSUMED`` row is the durably APPLIED fact. An
-unmatched row AFTER the latest consumed row is a result that was never applied (e.g. a fill
+**Supersession is by evidence ``seq`` AND cumulative fill.** An unmatched row BEFORE the latest
+consumed row is dropped only when that row's cumulative ``filled_quantity`` (which ``CONSUMED``
+rows carry from the reservation) already covers the unmatched row's own fill — a later non-fill
+result (``EXPIRED`` after a refused fill) does not account for it. An unmatched row AFTER the
+latest consumed row is a result that was never applied (e.g. a fill
 crossing a ``CANCEL_ACK``, whose quantity ``tos.engine.core`` records only on
 ``RESULT_UNMATCHED``), so it reopens the attempt even when the consumed kind is terminal. A
 ``DUPLICATE`` disposition is the exact already-applied result resent
@@ -342,8 +344,14 @@ class EvidencePositionReader:
             if payload.get("result_disposition") == "DUPLICATE":
                 continue
             attempt_id = payload.get("attempt_id")
-            if isinstance(attempt_id, str) and seq > latest_consumed_seq.get(
-                attempt_id, -1
+            if not isinstance(attempt_id, str):
+                continue
+            latest = consumed_by_attempt.get(attempt_id)
+            if (
+                latest is None
+                or seq > latest_consumed_seq[attempt_id]
+                or (_to_decimal(payload.get("filled_quantity")) or Decimal(0))
+                > (latest.filled_quantity or Decimal(0))
             ):
                 unmatched_attempts.add(attempt_id)
         sources: list[str] = []

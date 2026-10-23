@@ -82,7 +82,8 @@ cancel-crossing fill arriving after a ``CANCEL_ACK``), so the attempt is not res
 the consumed kind is terminal: its outstanding quantity is computed as for a non-terminal
 result. An unmatched result's own ``filled_quantity`` is never promoted to CONFIRMED (only
 applied results are); the unconfirmed remainder stays visible as IN-FLIGHT. An unmatched result
-recorded BEFORE a consumed one is superseded — the durably APPLIED fact governs.
+recorded BEFORE the latest consumed one is superseded only if that consumed result's cumulative
+``filled_quantity`` already covers the unmatched fill — a later non-fill result does not.
 
 Pure module: stdlib (``decimal``, ``collections.abc``) + ``tos.position.records`` only; no
 ``shared.*``, no sibling ``tos.*`` (mirrors every other kernel package's §0.3 discipline).
