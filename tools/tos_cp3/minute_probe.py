@@ -15,8 +15,10 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -32,6 +34,8 @@ from tools.broker_probes.common import (
 from tools.tos_cp3.produce_fields import (
     DEFAULT_MIN_BARS_PER_DAY,
     ContractSpecRegistry,
+    OpenAnchor,
+    StrategyInputs,
     load_strategy_inputs,
     produce_bars,
     resolve_contract_spec,
@@ -77,7 +81,12 @@ def parser_comparison(rows: list[dict], day: date, symbol: str) -> dict:
     full = parse_ohlcv(symbol, day.strftime("%Y%m%d"), {"output2": rows})
     groups: dict[datetime, list] = {}
     for row in rows:
-        stamp = raw_stamp(row, day).replace(second=0, microsecond=0)
+        raw = raw_stamp(row, day)
+        # `select_day` 가 바로 위에서 «날짜가 파싱되는 행»만 남겼으므로 여기서
+        # `None` 은 나올 수 없다.  단언은 그 불변을 타입 검사기에 알리는 것이고,
+        # 깨지면 지금과 마찬가지로 그 자리에서 멈춘다.
+        assert raw is not None
+        stamp = raw.replace(second=0, microsecond=0)
         groups.setdefault(stamp, []).append(row)
     incremental = []
     for group in groups.values():
@@ -94,7 +103,9 @@ def parser_comparison(rows: list[dict], day: date, symbol: str) -> dict:
     }
 
 
-def seed_capacity(df: pd.DataFrame, strategy, anchor) -> int:
+def seed_capacity(
+    df: pd.DataFrame, strategy: StrategyInputs, anchor: OpenAnchor
+) -> int:
     """First session cannot advance check's window without a previous close."""
     if df.empty:
         return 0
@@ -119,14 +130,14 @@ class Recorder:
         output.mkdir(parents=True, mode=0o700, exist_ok=False)
         self.output = output
 
-    def save(self, name: str, value) -> None:
+    def save(self, name: str, value: Any) -> None:
         tmp = self.output / (name + ".tmp")
         tmp.write_text(
             json.dumps(value, ensure_ascii=False, default=str, indent=2) + "\n"
         )
         tmp.replace(self.output / name)
 
-    def event(self, value) -> None:
+    def event(self, value: Any) -> None:
         with (self.output / "requests.jsonl").open("a") as f:
             f.write(json.dumps(value, ensure_ascii=False, default=str) + "\n")
 
@@ -143,7 +154,7 @@ class Recorder:
 
 def seed_and_compare(
     quotes: Quotes, cfg: dict, target: date, symbol: str, rec: Recorder
-):
+) -> tuple[pd.DataFrame, StrategyInputs, OpenAnchor]:
     strategy = load_strategy_inputs(ROOT / cfg["strategy_yaml"])
     calendar = yaml.safe_load((ROOT / cfg["calendar_yaml"]).read_text())
     holidays = {date.fromisoformat(str(d)) for d in calendar["holidays"]}
@@ -212,7 +223,13 @@ def seed_and_compare(
     raise RuntimeError("seed window not filled within configured horizon")
 
 
-def benchmark(df, symbol, strategy, anchor, cfg) -> dict:
+def benchmark(
+    df: pd.DataFrame,
+    symbol: str,
+    strategy: StrategyInputs,
+    anchor: OpenAnchor,
+    cfg: dict,
+) -> dict:
     registry = ContractSpecRegistry.from_yaml(str(ROOT / "config/execution.yaml"))
     contract = resolve_contract_spec(symbol, registry)
     elapsed, count = [], 0
@@ -231,7 +248,9 @@ def benchmark(df, symbol, strategy, anchor, cfg) -> dict:
     }
 
 
-def sample(quotes, cfg, target, symbol, rec):
+def sample(
+    quotes: Quotes, cfg: dict, target: date, symbol: str, rec: Recorder
+) -> tuple[list[dict], list[dict]]:
     start = datetime.fromisoformat(f"{target}T{cfg['sample_start']}").replace(
         tzinfo=KST
     )
@@ -294,7 +313,7 @@ def sample(quotes, cfg, target, symbol, rec):
     return latest_rows, observations
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--confirm", action="store_true")
