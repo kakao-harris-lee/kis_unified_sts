@@ -229,7 +229,10 @@ def test_stale_ratio_over_the_limit_blocks_an_ended_session(cfg: sb.BoardConfig)
     blocks = _issues(board, sb.BLOCK)
     assert blocks == ["long-20261022: stale 거절(M5 ①) 1/5 = 20.000% > 0.5%"]
     warns = _issues(board, sb.WARN)
-    assert "long-20261022: B3 대조 미실행(b3/report/summary.json 없음)" in warns
+    assert (
+        "long-20261022: B3 결과 없음(세션 디렉터리에 b3/report/summary.json 이 없다)"
+        in warns
+    )
     assert any("VENUE_BAND_OBSERVED 행 없음" in w for w in warns)
 
 
@@ -434,7 +437,7 @@ def test_text_rendering_carries_every_section(
         "VENUE_BAND_OBSERVED OBSERVED 20261023",
         "VENUE_BAND_OBSERVED 0행 (이 트리는 band 를 끔)",
         "지연(as_of−분마감) p50",
-        "B3 대조: 미실행",
+        "B3 대조: 결과 없음",
         "■ 상주 paper",
         "■ 최근 세션(날짜별)",
         "■ 막힌 것 / 확인할 것",

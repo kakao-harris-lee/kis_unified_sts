@@ -705,7 +705,9 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
         if s.b3.get("unresolved"):
             issues.append((BLOCK, f"B3 unresolved={s.b3['unresolved']}"))
     elif s.status in ("ENDED", "ABORT", "FAILED"):
-        issues.append((WARN, "B3 대조 미실행(b3/report/summary.json 없음)"))
+        issues.append(
+            (WARN, "B3 결과 없음(세션 디렉터리에 b3/report/summary.json 이 없다)")
+        )
     return issues
 
 
@@ -1046,7 +1048,7 @@ def render_text(board: Mapping[str, Any]) -> str:
         add(f"    생산자 카운터: {counters}")
         b3 = s["b3"]
         if b3 is None:
-            add("    B3 대조: 미실행")
+            add("    B3 대조: 결과 없음(세션 디렉터리 b3/report/summary.json)")
         else:
             add(
                 f"    B3 대조: unresolved {b3['unresolved']} · divergent {b3['divergent']}/{b3['compared_bars']}"
