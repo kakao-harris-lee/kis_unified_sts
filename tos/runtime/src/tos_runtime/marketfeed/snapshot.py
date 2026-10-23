@@ -126,6 +126,11 @@ class FieldEvaluationReport:
     #: ``None`` iff ``state is FieldState.VALID``; otherwise one of ``"absent_from_payload"``,
     #: ``"now_ms_unknown"``, ``"stale"``, ``"unprojectable"``.
     reason: str | None
+    #: This field's own ``max_age_ms`` — the bound :func:`_derive_field_state` compared
+    #: ``now_ms - as_of_ms`` against. Carried so the evidence row can print the comparison that
+    #: decided the refusal instead of making a reader re-look-up the policy: the 2026-10-22
+    #: measurement needed "922 against 800" and the store held neither number.
+    max_age_ms: int
 
 
 @dataclass(frozen=True)
@@ -246,7 +251,12 @@ class SnapshotIssuer:
                 FieldEvaluation(field_ref=field_key, state=state, blocking=True)
             )
             field_reports.append(
-                FieldEvaluationReport(field_key=field_key, state=state, reason=reason)
+                FieldEvaluationReport(
+                    field_key=field_key,
+                    state=state,
+                    reason=reason,
+                    max_age_ms=spec.max_age_ms,
+                )
             )
         record_field_state, admission_result = _derive_observation_state(observation)
         mapping_slots = _mapping_slot_values(self._policy, payload)
