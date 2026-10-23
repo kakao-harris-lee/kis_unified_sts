@@ -777,3 +777,79 @@ def test_unmatched_result_after_terminal_consumed_reopens_the_attempt(
     assert toward == Decimal(outstanding)
     assert against == Decimal(0)
     assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize("consumed_kind", ["REJECT", "CANCEL_ACK"])
+def test_duplicate_unmatched_after_terminal_consumed_does_not_reopen(
+    evidence_store: SqliteEvidenceStore, side: str, consumed_kind: str
+) -> None:
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind=consumed_kind,
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind=consumed_kind,
+        result_disposition="DUPLICATE",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(0)
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (Decimal(0), Decimal(0))
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_unmatched_before_terminal_consumed_is_superseded(
+    evidence_store: SqliteEvidenceStore, side: str
+) -> None:
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity="10",
+        event_id="ev-1",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind="ACK",
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        egress_result_kind="CANCEL_ACK",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(0)
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (Decimal(0), Decimal(0))
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))

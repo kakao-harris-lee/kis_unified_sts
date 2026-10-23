@@ -70,7 +70,9 @@ filled_quantity`` so an absent or under-reported remainder never shrinks it.
 nets against an opposite confirmed position, IN-FLIGHT never does, so an unmatched 10-lot sell
 over a confirmed +10 would read 10 as UNKNOWN but 20 as IN-FLIGHT — and 20 is what the attempt
 read before the unmatched result was recorded. Moving the quantity to IN-FLIGHT can only raise
-the sum, so recording a result never makes the position look safer than recording none.
+the sum, so recording an unmatched result never makes the position look safer than recording
+none. (The guarantee is unmatched versus no result; a reopened attempt's CONFIRMED fill
+legitimately offsets — prior +10 and a 10-lot sell with 4 confirmed reads 12, not 20.)
 
 **Supersession.** ``unmatched_attempts`` holds the attempts whose ``RESULT_UNMATCHED`` was NOT
 superseded by a later ``EGRESS_RESULT_CONSUMED`` (the caller compares evidence ``seq`` — this
@@ -78,8 +80,9 @@ module trusts that input shape), so it may overlap ``consumed_by_attempt``. An u
 recorded AFTER the latest consumed one is a result that was never applied (e.g. a
 cancel-crossing fill arriving after a ``CANCEL_ACK``), so the attempt is not resolved even if
 the consumed kind is terminal: its outstanding quantity is computed as for a non-terminal
-result. An unmatched result recorded BEFORE a consumed one is superseded — the durably APPLIED
-fact governs.
+result. An unmatched result's own ``filled_quantity`` is never promoted to CONFIRMED (only
+applied results are); the unconfirmed remainder stays visible as IN-FLIGHT. An unmatched result
+recorded BEFORE a consumed one is superseded — the durably APPLIED fact governs.
 
 Pure module: stdlib (``decimal``, ``collections.abc``) + ``tos.position.records`` only; no
 ``shared.*``, no sibling ``tos.*`` (mirrors every other kernel package's §0.3 discipline).
@@ -226,17 +229,7 @@ def classify_sealed_sends(
             else:
                 in_flight_sell += outstanding
             continue
-        if send.attempt_id in unmatched_attempts:
-            if sign is None:
-                in_flight_buy += quantity
-                in_flight_sell += quantity
-                continue
-            if sign > 0:
-                in_flight_buy += quantity
-            else:
-                in_flight_sell += quantity
-            continue
-        # Sealed, no terminal result at all: genuinely in-flight.
+        # No applied result (sealed only, or only an unmatched one): in flight in full.
         if sign is None:
             in_flight_buy += quantity
             in_flight_sell += quantity
