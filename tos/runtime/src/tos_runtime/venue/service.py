@@ -50,9 +50,9 @@ statements govern it, and each one is a test in plan §8:
   on a reader being present, so a tree with no declaration (today: the
   resident ``paper`` tree and both CP-3 tenant trees, plan §5) emits exactly
   the rows it emitted yesterday.
-* **The declared read instants, and only those** — the first snapshot is
-  ``"boot"`` and every later phase change is ``"phase_change"``, and a read
-  happens only when ``band_source.read_on`` names that token. A policy
+* **The declared read instants, and only those** — ``"boot"`` is the END OF
+  CONSTRUCTION and every later session-phase change is ``"phase_change"``, and
+  a read happens only when ``band_source.read_on`` names that token. A policy
   declaring ``["boot"]`` therefore reads exactly once for the life of the
   process. (Independent review M2: ``read_on`` used to be validated by the
   loader and then ignored, so every declaration behaved like both tokens.)
@@ -60,6 +60,52 @@ statements govern it, and each one is a test in plan §8:
   (``config/tos_runtime/paper/marketfeed.yaml:101-103``, probe P-13), and plan
   §2 shows a same-day band can only WIDEN, so reading once at boot is the
   conservative direction, not a shortcut.
+
+  ⚠ **"boot" used to mean "the first snapshot", and that made the band
+  unobservable on a day with no proposal** (rescope plan M1,
+  ``docs/plans/2026-10-22-tos-rescope-plan.md`` §3; measured
+  ``docs/broker-profiles/evidence/2026-10-22-cp3-band-first-session/README.md``
+  §2). :meth:`snapshot` is reached only from the venue stage and the non-trade
+  admissibility provider, both DOWNSTREAM of candidate command construction —
+  so on 2026-10-22 all 25 proposals were denied at construction, no snapshot
+  was ever issued, and the first enabled session produced ``VENUE_BAND_OBSERVED``
+  rows: 0. Neither "the band was good" nor "the band was bad" was measurable.
+  The read now happens at construction, so every band-declaring tenant lands
+  at least one row — ``OBSERVED``, or ``REFUSED`` with its reason — per boot,
+  whatever the decision path does afterwards. The first snapshot is no longer
+  the ``"boot"`` instant, because one instant must not leave two rows — with
+  the one exception the next bullet is about.
+
+  ⚠ **The owed boot read** (independent review MEDIUM-1). Moving the read into
+  construction put it OUTSIDE the runner's per-cycle
+  ``time_service.evaluate()``, and
+  :meth:`~tos_runtime.venue.band_journal.ProducerJournalBandReader.read` asks
+  ``trading_date_reader()`` first, refusing ``trading_date_unavailable`` when it
+  answers ``None``. On the real compose path that reader is
+  ``FreshTrustedWallClockReference(time_service, max_age_ms=1000)``
+  (``_session_wiring.py:203-210``, from the shipped
+  ``MAX_time_conservative_freshness_age_ms``), which goes honestly absent once
+  the last evaluated snapshot is older than that bound — and compose evaluates
+  the time service exactly twice, at ``_wiring.py:388-389``, before building
+  everything else. So a boot whose remaining wiring takes over a second reaches
+  this constructor with a STALE clock and refuses the band; a session whose
+  proposals all sit in one session phase then never gets a ``"phase_change"``
+  and would never read again. Measured: that wiring gap is 80-89 ms on a quiet
+  host (fixture tree, three runs), but the same host's 2026-10-22 session
+  stalled 1280 ms inside a 408 ms loop, so "fast today" is not a bound.
+  :attr:`VenueConstraintService._boot_band_read_owed` therefore keeps the
+  instant owed until a read actually yields a band, and :meth:`snapshot` retries
+  it ONCE, at the first snapshot — where the clock is known fresh, because
+  snapshots are only reached from inside the runner's cycle and that cycle
+  evaluates the time service every pass (measured 2026-10-22: a
+  ``TIME_HEALTH_SNAPSHOT`` every ~408 ms, p90 411, inside the 1000 ms bound).
+  Fail-closed either way: until a band is read AND validated,
+  :attr:`~VenueConstraintService.shape_constraints` stays the policy's own
+  bounds, which for the band-declaring tenant are ``None`` — ``UNKNOWN``
+  prices, transmissions 0. The retry widens nothing; it only stops a recoverable
+  refusal from being permanent. So a healthy boot leaves one row and a
+  clock-stale boot leaves two, the first of them always ``REFUSED``: **at most
+  one ``OBSERVED`` row per boot.**
 * **The trading-date bond runs BEFORE the tick-generation cache early
   return** (plan §4.4a). Behind that early return the check would be skipped
   for as long as the tick generation did not move — which is exactly the
@@ -305,6 +351,12 @@ class VenueConstraintService:
             record_class=VENUE_POLICY_BOUND_KIND,
         )
 
+        # The ``"boot"`` read instant (module docstring's ⚠), deliberately the LAST statement
+        # of construction — AFTER the row above, so the journal in ``seq`` order binds the
+        # policy before the observation it admitted. A no-op unless the policy declared a
+        # source AND named the ``"boot"`` token.
+        self._read_band("boot")
+
     def _adopt_band_source(
         self,
         loaded_policy: LoadedVenuePolicy,
@@ -312,6 +364,9 @@ class VenueConstraintService:
         trading_date_reader: Callable[[], str | None] | None,
     ) -> None:
         """Set up this service's band state (module docstring's "the declared band source").
+
+        State only — no read. The ``"boot"`` read is the last statement of
+        :meth:`__init__`, which is where its own comment explains the ordering.
 
         Args:
             loaded_policy: Its ``band_source`` is the SINGLE source for "does this deployment
@@ -350,6 +405,10 @@ class VenueConstraintService:
         self._band_reader = band_reader
         self._trading_date_reader = trading_date_reader
         self._band: BandObservation | None = None
+        #: Whether the ``"boot"`` instant is still OWED — set by :meth:`_read_band` when the
+        #: boot read yielded no band, discharged by the first :meth:`snapshot`'s one retry
+        #: (module docstring's "the owed boot read" has the reaching input and the measurement).
+        self._boot_band_read_owed = False
 
     @property
     def shape_constraints(self) -> VenueShapeConstraints:
@@ -383,11 +442,25 @@ class VenueConstraintService:
             self.last_snapshot is None
             or self.last_snapshot.observed_session_phase != phase
         )
-        if phase_changed:
+        if phase_changed and self.last_snapshot is not None:
             # `band_source.read_on` is CONSULTED, not merely validated (independent review
-            # M2): the very first snapshot is the "boot" instant and every later phase change
-            # is a "phase_change" one, and a token the policy did not declare means no read.
-            self._read_band("boot" if self.last_snapshot is None else "phase_change")
+            # M2): every phase change past the first snapshot is a "phase_change" instant, and
+            # a token the policy did not declare means no read.
+            #
+            # `last_snapshot is not None` is what keeps the FIRST snapshot out: that instant
+            # is "boot", and `__init__` already read it (module docstring's ⚠). Without this
+            # clause a `["boot"]`-declaring tenant reads twice per boot and leaves two
+            # `VENUE_BAND_OBSERVED` rows for one instant.
+            self._read_band("phase_change")
+        elif self.last_snapshot is None and self._boot_band_read_owed:
+            # The owed boot read (module docstring's "the owed boot read"). Reached ONLY
+            # when the construction-time read came back empty, so a boot that already holds a
+            # band still reads exactly once — the row count for a healthy boot is unchanged.
+            self._read_band("boot")
+        if self.last_snapshot is None:
+            # Owed at most until here, whether or not the retry above ran or helped: a second
+            # retry would be a read per snapshot, which is what `read_on` exists to forbid.
+            self._boot_band_read_owed = False
         if not band_transition and not phase_changed:
             # Same phase, new tick generation, band unchanged — no material change, no
             # re-issue. `last_snapshot` is non-None here (phase_changed is True when it is).
@@ -398,6 +471,15 @@ class VenueConstraintService:
 
     def _enforce_trading_date_bond(self) -> bool:
         """Drop a held band whose trading date is not the current one (plan §4.4a).
+
+        Since the ``"boot"`` read moved into :meth:`__init__` (module docstring's ⚠) this bond
+        can fire on the FIRST :meth:`snapshot` call too — the band read at construction is
+        already held when it runs. That is one more place a stale band is caught, and one
+        place fewer where a READER's own trading-date clause is the only thing standing
+        between a D-1 line and a D decision: the reader's clause is now discriminated by the
+        ``REFUSED``/``trading_date_mismatch`` row it writes, not by the first snapshot
+        (``tests/venue/test_band_journal.py::TestG2TradingDateReadSide`` and
+        ``tests/venue/test_service_band.py::TestProducerJournalG2ReadSide``).
 
         Returns:
             ``True`` only when this call actually dropped a band — a state TRANSITION (plan
@@ -420,7 +502,9 @@ class VenueConstraintService:
 
         **Returns nothing on purpose** (independent review M3). An earlier cut returned "did
         the band change" and folded that into the re-issue condition — and the fold decided
-        NOTHING: a read only ever happens when the phase changed, and a phase change already
+        NOTHING: a read only ever happens at construction, at the first snapshot's one owed
+        retry (before any snapshot exists, so that snapshot issues regardless), or on a phase
+        change, and a phase change already
         forces a re-issue, so mutating the comparison to "always changed" AND deleting the fold
         outright both left every test green (measured). Dead logic that looks like a guard is
         exactly what #838 is about, so it is gone rather than left in place. The one same-phase
@@ -430,6 +514,11 @@ class VenueConstraintService:
         if self._band_reader is None or instant not in self._band_read_on:
             return
         self._set_band(self._band_reader())
+        if instant == "boot":
+            # Owed until a read actually YIELDS a band, not merely until one was attempted:
+            # a `trading_date_unavailable` refusal is about this process's clock, not about
+            # the line (module docstring's "the owed boot read").
+            self._boot_band_read_owed = self._band is None
 
     def _set_band(self, band: BandObservation | None) -> None:
         self._band = band

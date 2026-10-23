@@ -1732,8 +1732,15 @@ PR-B 부터 **LONG tenant 트리만** `band_source.kind: "producer_journal"` 을
 `VENUE_BAND_OBSERVED` 행이 **아예 없는 것이 정상**이다.
 
 - ⛔ **`BAND ABSENT` 가 찍힌 세션은 여기까지다** — 그 세션의 band 는 UNKNOWN 이고 아래
-  네 확인은 전부 「행 0건」으로 끝난다. 그것 자체가 §4 수용 1 **실패**의 기록이고,
+  ②~④ 는 전부 「행 0건」으로 끝난다. 그것 자체가 §4 수용 1 **실패**의 기록이고,
   판정(ADMISSIBLE/INADMISSIBLE)은 믿지 않는다.
+- ⚠ **2026-10-22 재범위 계획 M1 부터 ① 은 그 세션에서도 행 1건이다** — 읽기 시점이
+  첫 스냅샷에서 **부팅(서비스 생성)** 으로 옮겨졌으므로, band 를 선언한 트리는 제안이
+  하나도 venue 단계에 닿지 않아도 `outcome=REFUSED` + `reason=journal_absent` 한 행을
+  남긴다. 그래서 **band 선언 트리의 ① 이 0 행이면 그 자체가 소견**이다(부팅하지
+  않았거나 트리가 band 를 선언하지 않은 것). 2026-10-22 첫 세션이 ①=0 행으로 끝나
+  수용 1c·2·3 을 「미집행」으로 적어야 했던 것이 이 변경의 이유다
+  (`docs/broker-profiles/evidence/2026-10-22-cp3-band-first-session/README.md` §2).
 
 ```bash
 # ① 런타임이 band 를 관측했는가 — 성공이면 outcome=OBSERVED 한 행.
