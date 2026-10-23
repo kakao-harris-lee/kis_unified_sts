@@ -732,6 +732,16 @@ jobs:
       # the tree say `tools.tos_x`, and the run ABORTS on "Source file found
       # twice under different module names" after checking nothing.
       #
+      # Reproducing this locally: run it from a checkout whose venv was
+      # `pip install -e .`-ed FROM THAT SAME checkout (what the install step
+      # above does here). The editable install drops that path into a `.pth`,
+      # which mypy then treats as a site-packages root — so `shared.*`, which
+      # several of these tools import, resolves as an installed LIBRARY: its
+      # types are read but its own errors are not reported. From a tree whose
+      # venv points somewhere else, the same command resolves `shared/` as
+      # source and reports its ~600 pre-existing errors on top. Measured both
+      # ways while writing this step; the CI shape is the first one.
+      #
       # SCOPE, stated so the remainder is named rather than silently excluded:
       # this covers `tools/tos_*.py` + `tools/tos_cp3/` (39 of the 67 files
       # under `tools/`). The other 28 are NOT covered and carry 141 errors /
