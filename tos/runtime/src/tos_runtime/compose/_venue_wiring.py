@@ -424,8 +424,9 @@ def build_kis_band_reader_factory(
     :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessionConflict`
     (two consumers of one app key disagreeing about token endpoint or cooldown) out of boot
     and into the first decision — contradicting this very docstring.
-    :class:`VenueBandSourceUnwired` remains only as the fail-closed answer for a read that
-    somehow precedes the cell being filled; on the real compose path it cannot fire.
+    ⚠ Since rescope plan M1 made the boot read ``VenueConstraintService.__init__``,
+    :class:`VenueBandSourceUnwired` IS reachable — no loader rule forbids its reaching input
+    (review LOW-4); the raise below names it. No shipped tree declares that kind.
     """
 
     def _factory(
@@ -476,7 +477,9 @@ def build_kis_band_reader_factory(
                 raise VenueBandSourceUnwired(
                     "band source read attempted before this boot's KIS credential registry "
                     "existed — the band reader must never build a private session "
-                    "(C-2 decision (C): one app key, one token lifecycle)"
+                    "(C-2 decision (C): one app key, one token lifecycle). Reaching input: "
+                    '`kind: kis_quote_get` with "boot" in `read_on` — that instant is '
+                    "__init__, before _finalize fills it. Use phase_change, or producer_journal"
                 )
             return reader.read()
 

@@ -247,11 +247,17 @@ class TestTheMeasuredLineIsAccepted:
         ====================================  ==========================================
         world                                 result
         ====================================  ==========================================
-        shipped                               refused at the first snapshot
-        read-side clause deleted              accepted, then DROPPED by the service bond
-        read-side clause deleted + restamped  accepted and NEVER dropped — the D-1 band
+        shipped                               REFUSED at the boot read
+                                              (``trading_date_mismatch`` row)
+        read-side clause deleted              OBSERVED, then DROPPED by the service bond
+                                              at the first snapshot
+        read-side clause deleted + restamped  OBSERVED and NEVER dropped — the D-1 band
                                               stays in force all session (price_max 115918)
         ====================================  ==========================================
+
+        ⚠ Rows 1 and 2 used to differ at the first SNAPSHOT; since the rescope plan's M1 the
+        boot read happens in ``VenueConstraintService.__init__``, so the service bond already
+        has a band to drop on the first call and only the evidence row separates them.
 
         So this test pins the VALUE, and the table above is why the value matters.
         """
@@ -560,11 +566,13 @@ class TestTheProvenanceValues:
 class TestG2TradingDateReadSide:
     """Plan §3.4 G2 ② — a D-dated line read by a D+1 runtime.
 
-    ⚠ **The red proof is HERE and in the first snapshot, deliberately not in a two-snapshot
-    integration test** (plan §3.4's 가려진 절 note). ``VenueConstraintService.snapshot`` runs
-    its own trading-date bond at the head of every call, so deleting this clause still leaves
-    the SECOND snapshot dropping the band — a two-call test cannot tell the two layers apart.
-    The service-level half is
+    ⚠ **The red proof is the ROW, not any snapshot** (plan §3.4's 가려진 절 note).
+    ``VenueConstraintService.snapshot`` runs its own trading-date bond at the head of every
+    call and drops a stale band SILENTLY, so deleting this clause leaves every snapshot
+    assertion green — while this reader's own ``REFUSED`` / ``trading_date_mismatch`` row is
+    something that bond cannot produce. (Until the rescope plan's M1 the FIRST snapshot could
+    also tell them apart, because the boot read then happened inside ``snapshot()`` after
+    that call's bond had already run; it no longer can.) The service-level half is
     ``tests/venue/test_service_band.py::TestProducerJournalG2ReadSide``.
     """
 
