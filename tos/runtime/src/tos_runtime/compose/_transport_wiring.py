@@ -61,7 +61,11 @@ from tos.egressgw import SendSeal
 from tos.egressgw.records import GatewayEvidenceRecord
 from tos.workload import RuntimeIdentity
 
-from tos_runtime.brokercap.instance import InstanceDocument, load_instance_documents
+from tos_runtime.brokercap.instance import (
+    REAL_ENVIRONMENT,
+    InstanceDocument,
+    load_instance_documents,
+)
 from tos_runtime.brokercap.scopes import BrokerScope, BrokerScopesConfig
 from tos_runtime.brokercap.scopes import transport_nature as scope_transport_nature
 from tos_runtime.compose._kis_credential_wiring import (
@@ -115,7 +119,8 @@ _KIS_MOCK_CUSTODY_SCOPES = (_KIS_MOCK_APP_KEY_SCOPE, _KIS_MOCK_APP_SECRET_SCOPE)
 #: The Broker Capability Profile INSTANCE document environment name every KIS MOCK boot's host
 #: seal excludes (plan §2 decision 5) — the same literal ``environment_binding.BROKER_PRODUCTION``
 #: maps to everywhere else in this codebase (``broker_scopes.example.yaml``).
-_REAL_ENVIRONMENT = "REAL_PROD"
+#: :data:`tos_runtime.brokercap.instance.REAL_ENVIRONMENT` — the one definition (#932 Codex r3).
+_REAL_ENVIRONMENT = REAL_ENVIRONMENT
 
 
 class TransportKind(StrEnum):
