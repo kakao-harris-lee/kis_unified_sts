@@ -44,11 +44,23 @@ from tos_runtime.brokercap import (
     load_active_instance_document,
     load_broker_scopes,
 )
-from tos_runtime.compose._construction_config import load_construction_config
+from tos_runtime.compose._construction_config import (
+    CONSTRUCTION_CONFIG_NAME,
+    load_construction_config,
+)
 from tos_runtime.compose._envelope_wiring import resolve_construction_direction
+from tos_runtime.compose._wiring import (
+    _AUTHORITY_CONFIG_NAME,
+    _BROKER_SCOPES_CONFIG_NAME,
+    _RELEASE_CONFIG_NAME,
+)
 from tos_runtime.release.config import load_release_config
 from tos_runtime.strategy.loader import load_strategies
+from tos_runtime.strategy.resolve import STRATEGIES_DIRNAME
 from tos_runtime.venue import load_order_construction_policy
+from tos_runtime.venue._order_construction_policy_loader import (
+    ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
+)
 
 __all__ = [
     "COMMAND",
@@ -84,7 +96,7 @@ class StandingApprovalArgs:
 
 def _strategy(config_dir: Path) -> Any:
     loaded = load_strategies(
-        config_dir / "strategies", parse=parse_strategy, admit=strategy_admissible
+        config_dir / STRATEGIES_DIRNAME, parse=parse_strategy, admit=strategy_admissible
     )
     if len(loaded.strategies) != 1:
         raise StandingApprovalRefused(
@@ -113,9 +125,9 @@ def _actions(
     config_dir: Path, strategy: Any, wanted: tuple[str, ...], max_uses: int
 ) -> tuple[str, list[dict[str, Any]]]:
     """``(instrument, actions)`` derived from construction.yaml, the OCP and the strategy."""
-    construction = load_construction_config(config_dir / "construction.yaml")
+    construction = load_construction_config(config_dir / CONSTRUCTION_CONFIG_NAME)
     ocp = load_order_construction_policy(
-        config_dir / "order_construction_policy.yaml",
+        config_dir / ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
         scheme=get_scheme(EV_L1_PROVISIONAL_VERSION),
     )
     rules = ocp.construction_rules
@@ -173,7 +185,8 @@ def derive_standing_document(args: StandingApprovalArgs) -> dict[str, Any]:
     """
     config_dir = args.config_dir
     scopes = load_broker_scopes(
-        config_dir / "broker_scopes.yaml", environment_label=args.environment_label
+        config_dir / _BROKER_SCOPES_CONFIG_NAME,
+        environment_label=args.environment_label,
     )
     instance = load_active_instance_document(scopes)
     if not is_mock_order_class(scopes.active_scope, instance):
@@ -187,8 +200,8 @@ def derive_standing_document(args: StandingApprovalArgs) -> dict[str, Any]:
     instrument, actions = _actions(
         config_dir, strategy, args.actions, args.max_uses_per_action
     )
-    release = load_release_config(config_dir / "release.yaml")
-    authority = load_authority_config(config_dir / "authority.yaml")
+    release = load_release_config(config_dir / _RELEASE_CONFIG_NAME)
+    authority = load_authority_config(config_dir / _AUTHORITY_CONFIG_NAME)
     document = {
         "schema": STANDING_APPROVAL_SCHEMA,
         "environment_label": args.environment_label,
