@@ -310,5 +310,7 @@ def dispatch_write_standing_approval(args: StandingApprovalArgs) -> int:
     if "exit" in args.actions:
         # Step 2 builds every command with the boot action class (NEW_LONG), so a CLOSE
         # proposal's command never carries the exit side and this row never matches.
-        print(f"{COMMAND}: exit row cannot match until #960")
+        print(
+            f"{COMMAND}: exit row cannot match until #960 (CLOSE commands are built as BUY)"
+        )
     return 0
