@@ -80,6 +80,7 @@ from tos_runtime.compose._broker_facts_wiring import build_broker_facts
 from tos_runtime.compose._broker_posttrade_wiring import (
     attach_fill_observer,
     build_broker_posttrade,
+    fill_observer_pass,
 )
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
@@ -624,6 +625,9 @@ def compose_paper_runtime(
         credential_sessions=composed.kis_credential_sessions,
         broker_scopes=boot.broker_scopes,
         runtime_identity=boot.identity,
+        # PR-3b follow-up — the session loop's one post-pass caller: it polls
+        # `composed.fill_observer` (stock MOCK boots only), read per call, not captured here.
+        after_pass=fill_observer_pass(composed),
     )
     # TOS Phase 5 W4 (plan §2 decision 11) — operations facts + (optional) operator
     # projection, wired last: every durable fact this reads (evidence/RCL/inbox,

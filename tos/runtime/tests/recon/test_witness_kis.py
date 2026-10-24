@@ -577,3 +577,75 @@ def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailab
                 instrument_keys=(InstrumentKey(account=ACCOUNT, instrument="005930"),),
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# The caller's deadline (#949 review HIGH): it stops the WALK, and what was read so far is
+# never returned. The fill observer owns the clock — this class has none.
+# ---------------------------------------------------------------------------
+
+
+def test_a_callers_deadline_stops_the_walk_and_returns_no_partial_list(
+    server: FakeKisGetServer,
+) -> None:
+    """Page 0 arrives with rows and ``tr_cont=M`` (more follows); the deadline then expires, so
+    page 1 is never requested and the read is unavailable — exactly the answer our own
+    ``max_pages`` cap gives, for the same reason (``_walk_continuation``'s own contract).
+
+    Mutations: return ``_WalkOutcome(pages=tuple(pages), ...)`` on the deadline instead of
+    raising -> the row from page 0 comes back as if it were the whole list -> the
+    ``WitnessUnavailable`` assertion goes red; drop the check entirely -> page 1 IS requested
+    -> the request-count assertion goes red.
+    """
+    server.queue_response(
+        ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "output1": [
+                {
+                    "pdno": "005930",
+                    "odno": "0000004470",
+                    "tot_ccld_qty": "1",
+                    "rmn_qty": "0",
+                    "cncl_yn": "N",
+                }
+            ],
+            "ctx_area_fk100": "cursor-0",
+            "ctx_area_nk100": "cursor-0",
+        },
+        headers={"tr_cont": "M"},
+    )
+    pages_seen = {"count": 0}
+
+    def deadline_expired() -> bool:
+        # Fresh for the first page, past for every page after it.
+        expired = pages_seen["count"] > 0
+        pages_seen["count"] += 1
+        return expired
+
+    with pytest.raises(WitnessUnavailable, match="deadline"):
+        _witness(server).order_rows(
+            WitnessScope(account=ACCOUNT),
+            inquiry_date="20261023",
+            deadline_expired=deadline_expired,
+        )
+    assert len(server.requests_for(ORDER_PATH)) == 1
+
+
+def test_a_deadline_already_past_sends_no_request_at_all(
+    server: FakeKisGetServer,
+) -> None:
+    """The predicate is asked BEFORE the first page too, so the observer's date loop needs no
+    deadline logic of its own: handing the predicate down is enough to make a read that starts
+    too late cost nothing.
+
+    Mutation: ask it only from the second page on -> one GET is sent -> red.
+    """
+    with pytest.raises(WitnessUnavailable, match="deadline"):
+        _witness(server).order_rows(
+            WitnessScope(account=ACCOUNT),
+            inquiry_date="20261023",
+            deadline_expired=lambda: True,
+        )
+    assert server.all_requests == []

@@ -19,7 +19,10 @@ witness and producer and gets no observer.
 **Host seal.** The witness is GET-only and is sealed to the order transport's own mock host
 (``kis_mock_transport.yaml::endpoint_rest_base``, already proven equal to the INSTANCE mock
 document and different from the REAL one): ``fill_observer.yaml`` carries TR ids and paths, never
-a host. Its TR ids go through the witness config's ``V``-prefix check.
+a host. Its TR ids go through the witness config's ``V``-prefix check. **The per-GET timeout is
+the one value NOT inherited from the order transport** (#949 review HIGH): it comes from
+``fill_observer.yaml::witness_request_timeout_s``, because this witness is read from inside the
+session loop's tick-to-tick window and that bound belongs beside the cadence it pairs with.
 
 **Credentials.** The witness asks the boot's one ``kis_mock.*`` credential session (C-2 decision
 (C)) per GET; until the session registry is dispatched the witness answers
@@ -73,6 +76,7 @@ __all__ = [
     "DeferredKisWitness",
     "attach_fill_observer",
     "build_broker_posttrade",
+    "fill_observer_pass",
 ]
 
 
@@ -111,9 +115,15 @@ class DeferredKisWitness:
         return self._ready().observe(scope)
 
     def order_rows(
-        self, scope: WitnessScope, *, inquiry_date: str | None = None
+        self,
+        scope: WitnessScope,
+        *,
+        inquiry_date: str | None = None,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[str, tuple[KisOrderRow, ...]]:
-        return self._ready().order_rows(scope, inquiry_date=inquiry_date)
+        return self._ready().order_rows(
+            scope, inquiry_date=inquiry_date, deadline_expired=deadline_expired
+        )
 
 
 @dataclass
@@ -160,7 +170,11 @@ def build_broker_posttrade(
         {
             **observer_config.witness_fields,
             "endpoint_rest_base": transport_config.endpoint_rest_base,
-            "request_timeout_s": transport_config.request_timeout_s,
+            # The OBSERVER's own timeout, not the order path's (#949 review HIGH) — this
+            # witness is read from inside the session loop's tick-to-tick window, so the
+            # bound belongs in `fill_observer.yaml` next to the cadence it pairs with. The
+            # host still comes from the order transport (the seal); only the timeout is ours.
+            "request_timeout_s": observer_config.witness_request_timeout_s,
             "allow_plaintext_for_tests": transport_config.allow_plaintext_for_tests,
         },
         path=path,
@@ -261,3 +275,36 @@ def attach_fill_observer(
         instrument=instrument_key.instrument,
     )
     return runtime
+
+
+def fill_observer_pass(runtime: ComposedRuntime) -> Callable[[], None]:
+    """The session loop's post-pass work: poll this boot's fill observer, if it has one.
+
+    :func:`attach_fill_observer` builds the observer; nothing CALLED it until this hook existed
+    — :attr:`~tos_runtime.compose._types.ComposedRuntime.fill_observer`'s own docstring said "a
+    runner calls its ``poll_if_due()``" and no runner did, so in a live MOCK session an ACKed
+    order's fill was never observed and its capacity never released. The one session loop this
+    runtime has is :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.run_forever` (the
+    ``run`` subcommand drives it and nothing else does), so this is the callable its
+    ``after_pass`` hook runs — see that method's own docstring for why the call sits in the loop,
+    after the pass, and lets a raise through.
+
+    **Cadence belongs to the observer, not to this hook.** It calls ``poll_if_due()`` every pass
+    and :meth:`~tos_runtime.posttrade.fill_observer.KisMockFillObserver.poll_if_due` decides
+    whether to read the broker, from ``fill_observer.yaml``'s own ``poll_interval_ms``. A second
+    interval here would be the same policy kept in two places.
+
+    **The attribute is read per call, never captured.** ``fill_observer`` is ``None`` on every
+    boot that is not a stock MOCK order tree AND on a stock MOCK boot whose recovery barrier
+    held — and compose attaches it before it builds the scheduler, so a captured value would
+    also silently freeze the wiring order into this hook's behaviour. Reading it per call keeps
+    "no observer ⇒ nothing to poll" true whenever it is true.
+    """
+
+    def _pass() -> None:
+        observer = runtime.fill_observer
+        if observer is None:
+            return
+        observer.poll_if_due()
+
+    return _pass

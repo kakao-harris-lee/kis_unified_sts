@@ -4,9 +4,9 @@
 # Read by tos_runtime.compose._broker_posttrade_wiring (PR-3b). Only a stock MOCK order boot
 # (kis-mock transport + MOCK_STOCK_ORDER) reads it; a stock MOCK boot without it refuses to boot.
 # No host here: the witness is sealed to kis_mock_transport.yaml::endpoint_rest_base (already
-# proven equal to the INSTANCE MOCK_VTS rest_base and different from REAL_PROD), and its request
-# timeout is that file's request_timeout_s. TR ids must be mock ('V'-prefixed) — the witness
-# config loader refuses anything else.
+# proven equal to the INSTANCE MOCK_VTS rest_base and different from REAL_PROD). Its request
+# timeout is NOT that file's: it is witness_request_timeout_s below (#949 review HIGH). TR ids
+# must be mock ('V'-prefixed) — the witness config loader refuses anything else.
 #
 # 주식일별주문체결조회 — open-trading-api examples_llm/domestic_stock/inquire_daily_ccld
 # (demo/inner → VTTC0081R; 모의 15 rows per call, continuation via tr_cont M/F + CTX_AREA_*100).
@@ -23,6 +23,35 @@ max_pages: 10
 # also serves the order POST, the band probe and item 12's two GETs; 3 s keeps the observer to
 # one call in that budget.
 poll_interval_ms: 3000
+# Per-GET timeout for THIS witness, in seconds — the observer's own bound, not the order path's
+# kis_mock_transport.yaml::request_timeout_s (10 s). #949 review HIGH: the observer's read runs
+# inside the session loop's tick-to-tick window (marketfeed.yaml poll_interval_ms 400 +
+# journal_pass_allowance_ms 100 of an 800 ms field bound), so its worst case must be a number
+# stated here rather than inherited from a path nobody is waiting on. 2 s: a 모의 single-page
+# VTTC0081R measured ~0.2 s (P-11 2026-08-05), so 2 s is ten times the measured call and still
+# bounds one page at a quarter of the order path's value. Worst case per inquiry date is this
+# value x max_pages. It bounds every GET this witness makes — the observer's order inquiry and
+# the release/recovery reconciliation's balance read alike.
+witness_request_timeout_s: 2.0
+# The WHOLE poll's bound, in ms, across every trading date and every continuation page it
+# reads (#949 review HIGH). Once it is past, no further read starts and no further page is
+# fetched: that read is WitnessUnavailable — recorded, fail-closed, retried at the next due
+# poll — and never a partial row list. 1500: three measured single-page reads' worth of
+# headroom (~0.2 s each) against a 400 ms loop interval, so a healthy poll never approaches it
+# while a sick one cannot spend 2 s x max_pages 10 x dates inside one pass. A poll therefore
+# costs at most this deadline plus the one request already in flight
+# (witness_request_timeout_s), i.e. ~3.5 s worst case, at most once per poll_interval_ms.
+# ⚠ It does not interrupt a request in flight — that is the timeout's job. Removing the wait
+# from the session-loop thread altogether is issue #950 (thread-safety of the shared KIS
+# credential session and the single-thread sqlite evidence store).
+# ⚠ What this value trades away (#949 r2 MEDIUM-2): a broker that WORKS but is slow enough that
+# the walk cannot finish inside the deadline — say three or more pages at ~0.8 s each — is cut
+# off on every poll and its fill is never observed, visible as repeated
+# FILL_OBSERVER_READ_FAILED rows and then one FILL_OBSERVER_OVERDUE after overdue_after_ms
+# (10 min). That is the intended fail-closed direction (a held reservation, never a guessed
+# fill), but it IS an operator matter: raise this value for a slow venue rather than wait for
+# the overdue row to explain itself.
+poll_deadline_ms: 1500
 # An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
 # (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not
 # filled by then is worth an operator look.

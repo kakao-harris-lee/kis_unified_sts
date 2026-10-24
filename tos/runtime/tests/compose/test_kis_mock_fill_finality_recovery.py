@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -250,7 +250,18 @@ class _RowsWithoutWitnessCheck:
 
     rows: tuple[KisOrderRow, ...]
 
-    def order_rows(self, _scope, *, inquiry_date=None):  # noqa: ANN001
+    def order_rows(
+        self,
+        _scope: WitnessScope,
+        *,
+        inquiry_date: str | None = None,
+        deadline_expired: Callable[[], bool] | None = None,
+    ) -> tuple[str | None, tuple[KisOrderRow, ...]]:
+        # `deadline_expired` is the observer's poll deadline (#949 review HIGH). This double
+        # has no pages to stop, so it honours it the one way it can — the same answer the real
+        # witness gives before its first page: unavailable, never a row list.
+        if deadline_expired is not None and deadline_expired():
+            raise WitnessUnavailable("deadline")
         return inquiry_date, self.rows
 
 

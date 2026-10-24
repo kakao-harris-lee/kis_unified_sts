@@ -20,6 +20,78 @@ directly, or :meth:`TickScheduler.tick_once` (which performs the I/O and then ca
 ``time.sleep`` precedent already shipped at ``transport/kis_mock/adapter.py:480`` (module
 docstring's own firewall note).
 
+**The post-pass hook: injected work that is not part of producing a tick** (PR-3b follow-up,
+rescope plan ``docs/plans/2026-10-22-tos-rescope-plan.md`` §3 M2). :meth:`TickScheduler
+.run_forever` calls the constructor-injected ``after_pass`` hook once per pass, AFTER
+:meth:`tick_once` returns and BEFORE ``sleep``. Compose passes
+``_broker_posttrade_wiring.fill_observer_pass``, which polls a stock MOCK boot's post-ACK fill
+observer (:mod:`tos_runtime.posttrade.fill_observer`) — until this hook existed nothing called
+``poll_if_due()`` in a running session, so a real fill was never observed. Three properties,
+each deliberate:
+
+* **In the loop, not inside** :meth:`tick_once`. The hook's work is not part of producing a
+  tick, and it must run on EVERY pass — including the ones :meth:`tick_once` returns early
+  from. ``SKIPPED_SESSION_CLOSED`` is the one that matters: an order ACKed just before the
+  close still has a fill to observe and capacity to release, and a hook reached only on the
+  ``TICKED`` path would stop reading the broker exactly when the answer arrives.
+* **After the pass, never before it — and the whole pass is MEASURED** (#949 review HIGH).
+  Ordering it after the decision is the same reasoning (and the same independent-review
+  finding, LOW-5) that put :meth:`TickScheduler._record_field_refusals` after the decision
+  rather than between ``store.put`` and it. But ordering alone does not bound anything: a
+  bar's age when the next pass reads it is the collector's delay plus this loop's own period,
+  and the boot guard ``_marketfeed_wiring._load_config_within_freshness_budget`` reserves
+  exactly ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's
+  ``max_age_ms`` for that — so a hook that takes longer than its share pushes bars toward
+  ``STALE``, which (issue #807) are consumed and never retried. Three things hold the line,
+  none of them ordering:
+
+  1. **The sleep is compensated** (:meth:`TickScheduler._pass_sleep_seconds`): the loop sleeps
+     ``poll_interval_ms`` MINUS what the pass already spent, so the tick-to-tick PERIOD — the
+     thing a bar's age is actually measured against — stays what the config asked for. A hook
+     that finishes inside the interval costs the feed nothing at all.
+  2. **The hook's own work is bounded by its own config**, not by the order path's: the fill
+     observer's GETs take ``fill_observer.yaml::witness_request_timeout_s`` (2 s, not the
+     order path's 10 s) and the whole poll takes ``poll_deadline_ms`` (1.5 s), after which it
+     starts no further read and fetches no further page — an absence, never a partial list.
+  3. **Every pass is measured** (:meth:`TickScheduler._record_pass_overrun`), so a ``STALE``
+     field caused by this hook is distinguishable from a late producer.
+
+  ⚠ **Residual, stated rather than implied** (#949 r2 MEDIUM-1 corrected the arithmetic
+  below). Two terms, both on this thread, both recorded by the overrun row, both owned by
+  issue #950:
+
+  - **The observer's own poll**: a request already in flight cannot be interrupted, so a poll
+    can stretch its pass by up to ``poll_deadline_ms`` plus one ``witness_request_timeout_s``
+    (1.5 + 2 = ~3.5 s), at most once per the observer's own ``poll_interval_ms`` (3 s).
+  - **The release path, which the deadline does NOT bound**: a terminal fill goes
+    ``_sink`` -> :meth:`~tos_runtime.engine.driver.EngineDriver.enqueue_and_run` -> finality ->
+    the release consumer's reconciliation -> ``witness.observe``, which runs its own
+    continuation walks (balance, plus the orders of each date in scope) with no deadline —
+    worst case ``witness_request_timeout_s`` x ``max_pages`` x (1 + dates), i.e. tens of
+    seconds against a sick broker, ~700 ms against a healthy one. It happens on the pass where
+    a fill is applied (once per attempt) and again per ``finality_retry_interval_ms`` (60 s)
+    while a release is stuck. A deadline there would make a slow-but-working broker HOLD
+    capacity instead of releasing it, which is a release-semantics change this lane did not
+    take (#949 r2 MEDIUM-1 left it optional, #950 owns it).
+
+  Removing the wait outright means moving these reads off this thread, which the shared KIS
+  credential session (one token lifecycle per app key, C-2) and the single-thread sqlite
+  evidence store do not currently allow: measured, and tracked as issue #950.
+
+**Every journal-intake tree gets the compensation and the overrun row, not only the stock
+one** (#949 r2 LOW-1). ``journal_pass_allowance_ms`` is required for ``intake_kind: journal``,
+so paper and the CP-3 LONG/SHORT trees are measured and compensated too, from their next boot
+— their pass period becomes the configured ``poll_interval_ms`` instead of
+``poll_interval_ms + tick``. Those trees have no post-pass hook at all (no fill observer), so
+the change is a few milliseconds of period and strictly better for freshness; it is still a
+timing change in a running futures session and is called out in #949's own PR body.
+* **A raise propagates**, exactly like every other evidence failure in this module
+  (:meth:`TickScheduler._record_field_refusals`'s own docstring). The hook's own non-fatal
+  conditions stay its own business — the fill observer records a failed broker read as an
+  evidence row and returns normally — so what reaches this loop is a failure of the durable
+  bookkeeping itself, and a runtime that kept ticking past that would keep taking risk it can
+  no longer account for.
+
 **Read order: the intake FIRST, the wall-clock reading SECOND** (plan
 ``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1, operator disposition §6.1;
 issue #809). :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` returns the
@@ -165,14 +237,37 @@ from tos_runtime.marketfeed.ports import (
 from tos_runtime.marketfeed.snapshot import IssuedSnapshot, SnapshotIssuer
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "MultiInstrumentRefused",
+    "PassBudget",
     "TickDecision",
     "TickResult",
     "TickScheduler",
     "decide_tick",
 ]
+
+
+@dataclass(frozen=True)
+class PassBudget:
+    """What one :meth:`TickScheduler.run_forever` pass is allowed to cost, and the clock that
+    measures it (#949 review HIGH item (b); :meth:`TickScheduler._record_pass_overrun`).
+
+    One object rather than two optional constructor arguments: a budget without a clock cannot
+    be measured and a clock without a budget has nothing to judge, so both-or-neither is the
+    shape, enforced here instead of by matching ``None`` checks at the use site.
+
+    Attributes:
+        monotonic: The injected monotonic source — a DURATION measurement, never a time fact,
+            so it is unrelated to the one wall-clock reading a pass takes (module docstring).
+        allowance_ms: ``marketfeed.yaml::journal_pass_allowance_ms`` — the runtime's own share
+            of the freshness budget ``_marketfeed_wiring._load_config_within_freshness_budget``
+            already refuses a config for exceeding. The same number, read once.
+    """
+
+    monotonic: MonotonicSource
+    allowance_ms: int
 
 
 class MultiInstrumentRefused(RuntimeError):
@@ -275,6 +370,11 @@ _MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND = "MARKETFEED_QUEUED_UNTIL_RECOVERY"
 #: this exists for.
 _MARKETFEED_FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 
+#: The evidence kind for a :meth:`TickScheduler.run_forever` pass whose own work (the tick plus
+#: the post-pass hook) ran longer than the configured pass budget —
+#: :meth:`TickScheduler._record_pass_overrun`'s own docstring has the reasoning.
+_MARKETFEED_PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
+
 
 def _require_single_instrument(instruments: Sequence[str]) -> str:
     """The one instrument ``instruments`` must name (module docstring; :class:`TickScheduler`'s
@@ -367,6 +467,8 @@ class TickScheduler:
         evidence_store: SqliteEvidenceStore,
         poll_interval_ms: int,
         before_decide: Callable[[], bool] | None = None,
+        after_pass: Callable[[], None] | None = None,
+        pass_budget: PassBudget | None = None,
     ) -> None:
         """Wire the scheduler (every arg's own docstring lives on the field it fills below —
         ``instruments``/``instrument_class``/``account``/``direction``/``quantity_basis``/
@@ -385,10 +487,22 @@ class TickScheduler:
         the time service to the caller. :meth:`tick_once` still evaluates nothing itself — it only
         calls this hook.
 
+        ``after_pass`` runs once per :meth:`run_forever` pass, after :meth:`tick_once` returns
+        and before ``sleep`` — whatever that pass's outcome was, and never from
+        :meth:`tick_once` itself (module docstring's own post-pass-hook paragraph). Compose
+        passes ``_broker_posttrade_wiring.fill_observer_pass``; ``None`` leaves the loop with
+        nothing to run after a pass, which is every boot that is not a stock MOCK order tree.
+
+        ``pass_budget`` is what makes a pass's own duration MEASURED rather than assumed
+        (:class:`PassBudget`, :meth:`_record_pass_overrun`). ``None`` — the default — leaves a
+        scheduler that behaves exactly as it did before and records no overrun row.
+
         Raises:
             MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
         """
         self._before_decide = before_decide
+        self._after_pass = after_pass
+        self._pass_budget = pass_budget
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -627,12 +741,122 @@ class TickScheduler:
             stop: Injected stop predicate, checked before every pass — a test supplies one that
                 flips ``True`` after N calls so this loop terminates.
 
-        This loop calls nothing but :meth:`tick_once` and ``sleep``: the constructor's
-        ``before_decide`` hook now runs INSIDE the pass, between the intake read and the decision
-        (module docstring's own read-order paragraph; plan 2026-09-27 §2.1, issue #809), so a
-        pass whose time evaluation failed is a :class:`TickResult` with
+        This loop calls :meth:`tick_once`, the constructor's ``after_pass`` hook, and ``sleep``
+        — nothing else. The ``before_decide`` hook now runs INSIDE the pass, between the intake
+        read and the decision (module docstring's own read-order paragraph; plan 2026-09-27
+        §2.1, issue #809), so a pass whose time evaluation failed is a :class:`TickResult` with
         ``SKIPPED_TIME_NOT_EVALUATED``, not a pass this loop skipped.
+
+        ``after_pass`` runs once per pass, after the tick's own decision work and before the
+        sleep, on EVERY outcome — the post-pass-hook paragraph in the module docstring has the
+        three reasons (why here and not in :meth:`tick_once`, why after and not before, and why
+        a raise from it propagates out of this loop rather than being swallowed).
+
+        ``sleep`` is called with the interval MINUS this pass's own elapsed time whenever a
+        :class:`PassBudget` is wired (:meth:`_pass_sleep_seconds`), so the loop's PERIOD —
+        what bar ages are measured against — does not grow by whatever the tick and the hook
+        spent. Without a budget it is the plain configured interval, as before.
         """
+        budget = self._pass_budget
         while not stop():
+            started_ms = None if budget is None else budget.monotonic.now_ms()
             self.tick_once()
-            sleep(self._poll_interval_ms / 1000)
+            ticked_ms = None if budget is None else budget.monotonic.now_ms()
+            if self._after_pass is not None:
+                self._after_pass()
+            done_ms = None if budget is None else budget.monotonic.now_ms()
+            self._record_pass_overrun(started_ms, ticked_ms, done_ms)
+            sleep(self._pass_sleep_seconds(started_ms, done_ms))
+
+    def _pass_sleep_seconds(self, started_ms: int | None, done_ms: int | None) -> float:
+        """How long to sleep after a pass: the configured interval MINUS what the pass itself
+        already spent, never negative.
+
+        ⛔ **Why the subtraction** (#949 review HIGH). What a bar's age is measured against is
+        the gap between two intake reads, not the sleep: an uncompensated loop makes that gap
+        ``poll_interval_ms + this pass's own work``, so every millisecond the post-pass hook
+        spends reading the broker is a millisecond of freshness taken from the next bar — and
+        past the field policy's ``max_age_ms`` the bar is read ``STALE``, consumed, and never
+        retried (issue #807). Subtracting keeps the PERIOD at the interval the config asked
+        for, so a hook that finishes inside the interval costs the feed exactly nothing.
+
+        Clamped at zero rather than carried forward: a pass that outran the whole interval
+        starts the next one immediately, and :meth:`_record_pass_overrun` has already recorded
+        it. Catching up by sleeping negative time is not a thing, and skipping a pass to catch
+        up would drop an intake read, which is the opposite of what this protects.
+
+        With no :class:`PassBudget` there is no clock to measure with, so the sleep is the
+        plain configured interval — exactly the pre-#949 behaviour.
+        """
+        if started_ms is None or done_ms is None:
+            return self._poll_interval_ms / 1000
+        remaining_ms = self._poll_interval_ms - (done_ms - started_ms)
+        return max(0.0, remaining_ms / 1000)
+
+    def _record_pass_overrun(
+        self, started_ms: int | None, ticked_ms: int | None, done_ms: int | None
+    ) -> None:
+        """Record a pass that ran longer than the whole window the freshness guard reserves —
+        and nothing otherwise.
+
+        ⛔ **Why this row exists** (#949 review HIGH, item (b)). A bar's age when the next pass
+        reads it is the collector's delay plus the loop's own period, and the boot guard
+        ``_marketfeed_wiring._load_config_within_freshness_budget`` budgets exactly
+        ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's ``max_age_ms``
+        for that. Before this row, a pass could spend arbitrarily longer than that — the
+        post-pass hook's broker read is the reason it now can — and the only visible
+        consequence was a ``STALE`` field, which looks exactly like a late producer. The
+        2026-10-22 refusal cost a read-only dive through the durable store to answer "stale, or
+        a slow pass?" (:meth:`_record_field_refusals`'s own measurement note). This row answers
+        it directly: both halves of the pass, and the window they were measured against.
+
+        **The threshold is the whole reserved window, not the allowance alone** (#949 r2
+        MEDIUM-3). ``journal_pass_allowance_ms`` on its own was the right comparison for an
+        UNCOMPENSATED loop, where the period was ``interval + pass`` and every millisecond of
+        pass came straight off the next bar's freshness. With :meth:`_pass_sleep_seconds`
+        subtracting the pass from the sleep, the period stays at ``poll_interval_ms`` until the
+        pass exceeds it — so a 210 ms pass on a 400 ms interval costs the feed nothing and is
+        not worth a row. What the reserved window says is: ages up to
+        ``poll_interval_ms + journal_pass_allowance_ms`` were PAID FOR at boot. A pass longer
+        than that is the first point where a bar can age past ``max_age_ms`` even with
+        compensation, and that is exactly when this row is worth writing.
+
+        **Diagnostics only, and only on an overrun.** Nothing reads this row to decide
+        anything, and a pass inside the window writes nothing at all — this must not add a
+        write to every pass of a healthy session.
+
+        **Written before the sleep, after the hook.** A pass that has already overrun is not
+        the place to defer the evidence that says so; and like every other append in this
+        module, a failure to write it propagates (:meth:`_record_field_refusals`).
+
+        Args:
+            started_ms: The monotonic reading taken before :meth:`tick_once`, or ``None`` when
+                no :class:`PassBudget` was injected (then nothing is measured or recorded).
+            ticked_ms: The reading taken after :meth:`tick_once` returned — the split between
+                the tick's own cost and the hook's.
+            done_ms: The reading taken after the hook returned. The SAME reading
+                :meth:`_pass_sleep_seconds` compensates with, so the row and the sleep can
+                never disagree about how long this pass took.
+        """
+        budget = self._pass_budget
+        if budget is None or started_ms is None or ticked_ms is None or done_ms is None:
+            return
+        pass_ms = done_ms - started_ms
+        # The reserved window, both halves of it — the SAME sum the boot guard checks against
+        # the freshness budget, never a second notion of "too long".
+        budget_ms = self._poll_interval_ms + budget.allowance_ms
+        if pass_ms <= budget_ms:
+            return
+        self._evidence_store.append(
+            {
+                "instrument": self._instrument,
+                "budget_ms": budget_ms,
+                "pass_ms": pass_ms,
+                "tick_ms": ticked_ms - started_ms,
+                "after_pass_ms": done_ms - ticked_ms,
+                "poll_interval_ms": self._poll_interval_ms,
+                "pass_allowance_ms": budget.allowance_ms,
+            },
+            kind=_MARKETFEED_PASS_OVERRUN_KIND,
+            record_class=_MARKETFEED_PASS_OVERRUN_KIND,
+        )

@@ -370,7 +370,12 @@ class ComposedRuntime:
     kis_credential_sessions: KisCredentialSessions | None = None
     #: PR-3b — the post-ACK fill observer of a stock MOCK boot
     #: (:mod:`tos_runtime.posttrade.fill_observer`); ``None`` on every other boot, and when the
-    #: recovery barrier held. A runner calls its ``poll_if_due()``; nothing here schedules it.
+    #: recovery barrier held. The session loop polls it once per pass through
+    #: :attr:`marketfeed`'s ``after_pass`` hook
+    #: (:func:`~tos_runtime.compose._broker_posttrade_wiring.fill_observer_pass`, wired in
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`); a caller that drives neither
+    #: :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.run_forever` nor its own poll
+    #: observes no fills.
     fill_observer: KisMockFillObserver | None = None
     #: PR-3b — provenance of the broker witness release and recovery reconcile against:
     #: ``"kis-mock-stock"`` on a stock MOCK boot, ``"synthetic-ledger"`` otherwise.
