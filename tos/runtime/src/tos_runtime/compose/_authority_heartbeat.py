@@ -11,7 +11,8 @@ fail-open). Every real signal arrives minutes after boot, so every send was refu
 
 **What this does.** Re-verifies the witness once per scheduler pass, as the first step of the
 pass's post-pass hook (:func:`with_authority_heartbeat` — before the fill observer, so an
-observer failure cannot skip it), i.e. right after that pass's time evaluation and decision. Each call is the method's own full online check (time ``TRUSTED``, a fresh
+observer failure cannot skip it), i.e. right after that pass's time evaluation and decision.
+Each call is the method's own full online check (time ``TRUSTED``, a fresh
 ``read_linearizable`` on the RCL, age within the bound); a call within the bound ratchets the
 baseline forward, exactly as a send-boundary call would. It never establishes what boot did not
 — the baseline only moves on a call that is itself within the bound of the last good one — and
@@ -23,6 +24,12 @@ closed, now by intent rather than by accident).
 held across a closed period expires at the open whatever this does. Operator decision
 2026-10-24 (option (A)): the stock tree's ``authority.yaml::containment_bound_ms`` is 90000 (the
 closed cadence + one pass); paper / LONG / SHORT stay at 1000 until their step-4 path exists.
+
+**Every tree gets the heartbeat** (it is wired in the compose root, not per tree). So at 1000:
+a paper / LONG / SHORT boot INSIDE an open session (400 ms passes) now keeps the witness for as
+long as every pass gap stays under the bound — before this module it was lost about 1 s after
+boot; a boot BEFORE the open (their cron: 08:38 / 08:40) still loses it at the open, exactly as
+before. Both are within the witness's own semantics; ``test_authority_heartbeat.py`` pins both.
 
 **Cost.** One ``current_snapshot()`` read plus one SQLite ``read_linearizable`` per pass —
 measured on a composed stock render: median 0.048 ms, p99 0.125 ms, max 0.28 ms (2000 calls)
@@ -81,16 +88,16 @@ class AuthorityWitnessHeartbeat:
         """
         self._epoch_service = epoch_service
         self._evidence = evidence
-        # Boot already established the witness (compose's own epoch transition reads it), so
-        # the first absent heartbeat is a loss, not a "never had it".
-        self._present = True
+        # Seeded by the FIRST heartbeat's own reading, never assumed: a loss row is written only
+        # for a witness this heartbeat actually saw held (#957 review LOW-2).
+        self._present: bool | None = None
 
     def __call__(self) -> bool:
         """One heartbeat. Returns the witness's ``present`` — informational only: nothing in
         the pass branches on it; the send boundary reads the witness itself."""
         witness = self._epoch_service.witness()
         present = witness.present is True
-        if self._present and not present:
+        if self._present is True and not present:
             self._evidence.append(
                 {
                     "witness_source": witness.witness_source,

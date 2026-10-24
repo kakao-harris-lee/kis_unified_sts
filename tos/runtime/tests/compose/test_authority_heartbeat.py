@@ -260,6 +260,81 @@ def test_other_trees_a_pre_open_boot_still_loses_authority_at_the_open(
     _close(runtime)
 
 
+def test_long_a_mid_session_boot_now_keeps_authority_at_1000(
+    tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+) -> None:
+    """The one behaviour change for the 1000 trees (#957 review LOW-1): booted INSIDE an open
+    session, 400 ms passes keep every gap under 1000, so the witness holds — before the
+    heartbeat it was lost ~1 s after boot. Production boots LONG/SHORT pre-open (cron 08:38 /
+    08:40), where the previous test shows nothing changed."""
+    runtime, clock = _boot(
+        "cp3-setup-d-long",
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+    )
+    _passes(
+        runtime,
+        clock,
+        total_ms=5 * _MINUTE_MS,
+        gap_ms=_PASS_MS,
+        heartbeat=_heartbeat(runtime),
+    )
+
+    _drive_crossing_tick(runtime, custody_root)
+    outcomes = _outcomes(runtime)
+    assert set(outcomes.values()) == {"SATISFIED"}, outcomes
+    assert _evidence_kind_count(runtime, AUTHORITY_WITNESS_LOST_KIND) == 0
+    _close(runtime)
+
+
+class _ScriptedWitness:
+    def __init__(self, readings: list[bool]) -> None:
+        self._readings = list(readings)
+
+    def witness(self) -> CurrentnessWitness:
+        present = self._readings.pop(0)
+        return CurrentnessWitness(
+            present=present, within_containment_bound=present, witness_source="test"
+        )
+
+
+class _Rows:
+    def __init__(self) -> None:
+        self.kinds: list[str] = []
+        self.payloads: list[dict] = []
+
+    def append(self, payload, *, kind: str, record_class: str) -> None:
+        assert record_class == kind
+        self.kinds.append(kind)
+        self.payloads.append(dict(payload))
+
+
+def test_no_loss_row_for_a_witness_the_heartbeat_never_saw_held() -> None:
+    """#957 review LOW-2: the held state is seeded by the first reading, not assumed. Absent
+    from the first heartbeat on -> no row; held then absent -> exactly one row per loss.
+    """
+    never = _Rows()
+    heartbeat = AuthorityWitnessHeartbeat(_ScriptedWitness([False, False]), never)
+    assert heartbeat() is False and heartbeat() is False
+    assert never.kinds == []
+
+    rows = _Rows()
+    heartbeat = AuthorityWitnessHeartbeat(
+        _ScriptedWitness([True, False, False, True, False]), rows
+    )
+    for _ in range(5):
+        heartbeat()
+    assert rows.kinds == [AUTHORITY_WITNESS_LOST_KIND] * 2
+    assert rows.payloads[0] == {
+        "witness_source": "test",
+        "within_containment_bound": False,
+    }
+
+
 # ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
