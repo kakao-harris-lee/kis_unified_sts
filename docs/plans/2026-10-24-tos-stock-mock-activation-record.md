@@ -5,7 +5,7 @@ B4(2026-10-24 오프라인 드라이런): 두 목록이 비어 SPG `activation_a
 
 ## ⚠ 이 기록의 무게
 
-런타임은 두 목록이 **비어 있지 않은지만** 본다(`tos_runtime/safety/profile.py` `_activation_inputs`: `staging_complete = bool(approval_ids)`, `attestation_complete = bool(compatibility_attestation_refs)`). id 를 기록으로 풀거나, 유효기간·서명을 검증하는 코드는 없다. ADR-002-014 §13 의 3단계(기한 있는 독립 승인)·7단계(인증된 적합성 확약)·8단계(Safety Commit Log 커밋)는 이 저장소에 구현돼 있지 않다 — 활성화는 「문서 + digest 일치」 수준이다(2026-09-15 venue plan §1 공시). **따라서 이 기록의 무결성은 이 PR 의 리뷰에만 기댄다.**
+런타임은 두 목록이 **비어 있지 않은지만** 본다(`tos_runtime/safety/profile.py` `_activation_inputs`: `staging_complete = bool(approval_ids)`, `attestation_complete = bool(compatibility_attestation_refs)`). id 를 기록으로 풀거나, 유효기간·서명을 검증하는 코드는 없다. ADR-002-014 §13 의 3단계(기한 있는 독립 승인)·7단계(인증된 적합성 확약)·8단계(Safety Commit Log 커밋)는 이 저장소에 구현돼 있지 않다 — 활성화는 「문서 + digest 일치」 수준이다(2026-09-15 venue plan §1 공시) — 단 digest 로 대조되는 것은 렌더가 세션마다 채우는 `members:`(정책 다섯)뿐이고, envelope · profile 은 id·세대로만 묶인다(`safety_activation.yaml` 의 `envelope_digest` · `profile_digest` · `bundle_digest` 는 null). ADR-002-014 §13 은 「No delivery acknowledgement, configuration-management success, repository merge, signer approval, deployment completion, cache refresh, or health check substitutes for the committed Activation Record」라고 적는다 — 이 기록은 그 Activation Record 가 아니라 문서 수준의 대체물이다. **따라서 이 기록의 무결성은 이 PR 의 리뷰에만 기댄다.**
 
 ## §1 승인 — `op-approval-20261024-stock-005930-activation-g1`
 
