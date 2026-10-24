@@ -248,8 +248,8 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 ✅ B3 OCP `_runtime.wire_codec: null` → 부팅 거부 — **해소**(#956: OCP 세대 4 · `kis-order-cash-v1`) ·
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0** — 처분(운영자 10-24): **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
 ✅ B4 `safety_activation.yaml` 의 빈 `approval_ids`·`compatibility_attestation_refs` → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` — **해소**(#959 · 운영자 승인 2026-10-24 · main `077666c6`) ·
-B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분(운영자 2026-10-24): 패스마다 heartbeat + **주식 트리만** `containment_bound_ms: 90000`(paper·LONG·SHORT 는 1000) · PR #957(heartbeat + 90000 둘 다).
-⛔ **게이트**: #955(B1) · #957(B5) **둘 다** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
+✅ B5 `containment_bound_ms: 1000` 이면 09:00 개장 때 권한 증인이 죽어 송신마다 `SEND_REFUSED`(`CURRENTNESS`) — **해소**(#957 · main `2c5797f7`: 패스마다 heartbeat + 주식 트리만 90000 ms, 운영자 10-24).
+⛔ **게이트**: #955(B1)가 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
 
 **1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 계좌는 `.env.mock` 의 `KIS_STOCK_ACCOUNT_NO`(10자리 8-2).
 ```bash
