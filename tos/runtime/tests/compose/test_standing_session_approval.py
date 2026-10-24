@@ -25,7 +25,7 @@ import os
 from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -516,15 +516,24 @@ def test_no_non_mock_scope_or_profile_is_ever_approved(
 
     _write(custody_root, _document(config_dir))
     reads: list[str] = []
+
+    def _date() -> str | None:
+        reads.append("date")
+        return None
+
+    def _construction() -> None:
+        reads.append("construction")
+
     source = StandingApprovalSource(
         custody_root,
         environment_label=_ENV,
         code_digest=observe_runtime_artifact().source_tree_digest,
         uid=os.getuid(),
         mock_class=lambda: is_mock_order_class(scope, instance),
-        trading_date_reader=lambda: reads.append("date") or None,
-        construction_reader=lambda: reads.append("construction"),
-        rcl_log=None,  # never reached: the gate closes first
+        trading_date_reader=_date,
+        construction_reader=_construction,
+        # never reached: the MOCK gate closes before the log is read
+        rcl_log=cast(SqliteCommitLog, object()),
         writer_epoch=0,
         evidence=None,
     )

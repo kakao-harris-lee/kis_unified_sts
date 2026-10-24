@@ -231,13 +231,17 @@ def write_standing_document(
         raise StandingApprovalRefused(
             f"{path} already exists — pass --replace to overwrite"
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp = path.with_suffix(".yaml.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(yaml.safe_dump(document, sort_keys=False, allow_unicode=True))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    tmp.unlink(missing_ok=True)  # a stale tmp from an interrupted write; never followed
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(yaml.safe_dump(document, sort_keys=False, allow_unicode=True))
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return path
 
 

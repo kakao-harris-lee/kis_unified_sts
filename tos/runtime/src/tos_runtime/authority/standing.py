@@ -61,6 +61,7 @@ from tos.iap import ApprovalResult, IndependentApprovalDecision
 from tos.ioc.vocabulary import ConformanceAxis
 from tos.rcl import CommandType
 
+from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.authority.iap import LoadedApproval, _consumption_command_id
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -153,8 +154,11 @@ def standing_approval_digest(raw: Mapping[str, Any]) -> str:
 
 def _require_str(raw: Mapping[str, Any], key: str, path: Path) -> str:
     value = raw.get(key)
-    if not isinstance(value, str) or not value or value == "TBD":
+    if not isinstance(value, str) or not value:
         raise StandingApprovalError(f"{path}: {key!r} must be a non-empty string")
+    reject_named_tbd(
+        value, field=key, context=str(path), error_cls=StandingApprovalError
+    )
     return value
 
 
@@ -211,6 +215,12 @@ def parse_standing_approval(raw: Any, path: Path) -> StandingApproval:
         raise StandingApprovalError(
             f"{path}: 'trading_approval_policy_digest' must be a string or null"
         )
+    reject_named_tbd(
+        policy_digest,
+        field="trading_approval_policy_digest",
+        context=str(path),
+        error_cls=StandingApprovalError,
+    )
     return StandingApproval(
         digest=standing_approval_digest(raw),
         environment_label=_require_str(raw, "environment_label", path),
