@@ -11,6 +11,7 @@ tenant_sessions_subdir: cp3-sessions # tools/tos_cp3/runners/run_tenant_session.
 tenant_cron_log_glob: "cp3-*-tenant-daily.cron.log" # 크론 래퍼 로그(세션 디렉터리가 생기기 전의 실패가 여기 남는다)
 paper_sessions_subdir: paper-sessions # 상주 paper 세션 산출물(YYYY-MM-DD-HHMMSS-<DIR>)
 paper_ops_subdir: paper-ops # paper-session.pid · paper-session.driver.pid
+paper_data_subdir: paper-data # 상주 paper 데이터 잎 부모(<종목> 잎) — report.json 이 아직 없을 때 bootproof 종목으로 잎을 찾는다
 # pid 파일의 pid 가 그 프로세스인지 — /proc/<pid>/cmdline 에 이 문자열이 있어야 살아 있다고 본다
 # (pid 재사용 방지). 런타임은 `python -c '…from tos_runtime.compose.cli import main…'`,
 # 드라이버는 `~/.config/kis-probes/tos_paper_session.py` 로 뜬다.
