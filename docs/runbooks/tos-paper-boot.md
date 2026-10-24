@@ -202,7 +202,7 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 **한 호출이 하는 일.** 잠금 → 같은 날 세션 디렉터리가 있으면 거부 → durable set 부모
 (§7.2-b)가 없으면 거부(첫 genesis 는 운영자 몫) → 그 방향의 어제 워크트리 제거(`--force` 없이)
 → fetch → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ 달력에
-아직 없는 KRX 연말 `2026-12-31`, `CP3_DAILY_EXTRA_CLOSED`) → `run_tenant_session.sh`(정지 15:50).
+아직 없는 KRX 연말 `2026-12-31`, `CP3_DAILY_EXTRA_CLOSED`) → `run_tenant_session.sh`(정지 = 그날 종료 + 5분, 평일 15:50 · 개장 지연일은 §7.2-f).
 
 **텔레그램 (briefing 채널 · 자격증명은 상주 래퍼와 같은 `$MAIN/.env` 두 줄).** 본문은 rc ·
 방향 · 날짜 · 경로뿐이다 — `runner.out` 은 옮기지 않는다(좌표 규율).
@@ -239,6 +239,37 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 교차 시드(#900)가 실제로 접합했는지는 11-13 세션 뒤 `producer/market/stitch.json` 으로 본다(매
 세션 쓰인다). 11-13 저녁에는
 `cold-backup-cp3-{long,short}.log` 에 새 잎이 함께 올라갔는지 본다(§7.7 — 래퍼는 `A0####` 잎을 순회).
+
+#### 7.2-f 개장 지연일(날짜별 세션 예외) — 수능일 등 (#924)
+
+KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선물 각각 지연, 시장마다 다르게) 그 날짜를
+**캘린더 한 곳**에 적는다 — `config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short,cp3-setup-d-stock-005930}/calendar.yaml`
+의 `session_overrides` (네 파일은 바이트 동일 유지 · 형식은 파일 안 주석). 이 한 항목을 런타임 세션
+게이트(`tos_runtime.calendar`)·생산자 첫 봉/종료 커서·주식 첫 페이지 커서(`quote_initial_cursor: session_end`)·
+러너 첫 줄 대기(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)이
+모두 읽는다. 다른 곳에 시각을 다시 적지 않는다.
+
+**2026-11-19(2027학년도 수능) — 아직 비어 있다.** 2026-10-24 기준 KRX 공지가 없다(작년 공지 10-30).
+공지가 나오면: ① 공지 URL·시각으로 네 파일에 같은 항목 추가 ② `calendar_version` 과 각 트리
+`time.yaml::trading_calendar_version` 을 같은 커밋에서 올린다 ③ PR. 선례(2025-11-13): 주식
+10:00–16:30, KOSPI200·미니 선물 개장·종료 각 +1h — **선례는 참고일 뿐, 공지 확인 전 입력 금지.**
+
+**머지 뒤, 11-19 전 dry-run (읽기 전용, 운영자):**
+
+```bash
+git -C $MAIN fetch -q origin
+for dir in LONG SHORT; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight 2026-11-19; done
+# 기대: "PREFLIGHT session krx-index-futures CONTINUOUS 2026-11-19 <공지 개장>-<공지 종료> OVERRIDE · stop_at=<종료+5분>"
+#        (18일 등 평일은 "08:45-15:45 regular · stop_at=15:50")
+# 주식(수동 세션)의 정지 시각은 같은 리더로 구한다 — TOS_STOCK_STOP_AT 에 그대로 넣는다:
+.venv/bin/python -P -m tools.tos_cp3.session_day stop-at \
+  --producer-config config/tos_probes/cp3-live-producer-stock-005930.yaml \
+  --repo-root . --date 2026-11-19 --after-close-min 5
+```
+
+래퍼는 cron 이 설치한 사본이므로 이 PR 머지 뒤 `install_tenant_cron.sh --apply` 로 사본을 한 번
+갱신해야 새 정지 시각 도출을 쓴다(그 전 사본은 `15:50` 고정). 상주 paper 세션 래퍼(`~/.config/kis-probes/tos-paper-session.sh`)
+는 이 저장소 밖이라 이 PR 이 건드리지 않는다 — 그날 정지 시각을 운영자가 확인한다.
 
 ### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
 

@@ -55,6 +55,27 @@ sessions:
   krx-index-futures:
     - {phase: CONTINUOUS,  start: "08:45", end: "15:45", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}
     # 야간 18:00→05:00 은 실선물 전용(MOCK 에 야간 TR 없음 · U-4) — 실선물 영구 부재이므로 창을 두지 않는다
+# 날짜별 세션 예외(#924) — KRX 가 특정일의 개장·종료를 옮길 때(수능일 등). 그날 그 클래스의
+# 정규 창을 통째로 대신한다(이름 없는 클래스는 정규 창 그대로). 런타임(tos_runtime.calendar)과
+# 생산자·러너·cron 래퍼(tools/tos_cp3/session_day.py)가 모두 이 한 곳을 읽는다 — 다른 곳에
+# 시각을 다시 적지 않는다. 휴장은 여기가 아니라 holidays 에. days 는 쓰지 않는다(날짜가 곧 요일).
+# 항목을 넣으면 캘린더 내용이 바뀌므로 calendar_version 을 올리고 time.yaml 의
+# trading_calendar_version 을 같은 커밋에서 같이 올린다(상단 「버전 개정」 규칙).
+#
+# ⏳ 2026-11-19(2027학년도 수능): KRX 공지가 나오면(~10-30 예상) 공지 URL 을 reason 에 적어 추가.
+#    선례(2025-11-13 공지): 주식 10:00–16:30, KOSPI200·미니 선물 개장·종료 각 +1h. 공지 확인 전 추측 입력 금지.
+#    형식:
+#    "2026-11-19":
+#      reason: "KRX 공지 <URL> — 2027학년도 수능"
+#      sessions:
+#        krx-stock:
+#          - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
+#        krx-index-futures:
+#          - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
+#    (정규 창에 PRE_OPEN/AFTER_HOURS 가 있는 클래스는 그날 그 창들도 공지대로 함께 적는다 —
+#     예외 목록이 정규 목록을 통째로 대신한다.)
+#    추가 후 운영자 확인: docs/runbooks/tos-paper-boot.md §7.2-f
+session_overrides: {}
 futures_expiry:
   # months = 매월(mini 월물 · 운영자 2026-09-24 개정 — 상단 주석) · 둘째 목요일
   krx-index-futures: {weekday: THU, ordinal: 2, months: [1,2,3,4,5,6,7,8,9,10,11,12], expired_phase: EXPIRED}
