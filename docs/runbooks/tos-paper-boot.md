@@ -243,15 +243,14 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 #### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · 손으로 한 번 · cron 없음
 
 005930 · 1주 · Setup D LONG · 09:00–15:30 · **모의 계좌만**. 수용(rescope §3 M2) = 체결 1건 이상 + 사슬 연결.
-⛔ 막힘 다섯(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다. B2·B3 고침 = PR #956.
-B2 렌더본 `broker_scopes.yaml::instance_path`(`../../../docs/…`)가 렌더 디렉터리 기준이라 **부팅 거부** ·
-B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mock **부팅 거부** ·
+⛔ 막힘 다섯(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다.
+✅ B2 렌더본 `instance_path` 가 렌더 디렉터리 기준이라 부팅 거부 — **해소**(#956, main `b09cec34`: 렌더러가 `--source` 기준 절대 경로로 쓴다) ·
+✅ B3 OCP `_runtime.wire_codec: null` → 부팅 거부 — **해소**(#956: OCP 세대 4 · `kis-order-cash-v1`) ·
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
    운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
-B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** — 처분: **운영자 승인 대기**(lane-bootfix 의 활성 기록 초안 · 가짜 id 금지) ·
+B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** — 처분: 운영자 승인됨(2026-10-24) · 활성 기록 PR 은 lane-bootfix 작성 중(가짜 id 금지) ·
 B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분(운영자 2026-10-24): 패스마다 heartbeat + **주식 트리만** `containment_bound_ms: 90000`(paper·LONG·SHORT 는 1000) · PR #957(heartbeat + 90000 둘 다).
-⛔ **게이트**: #955 · #956 · B4·B5 고침이 **모두** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
-B2 **비상용 우회**(bootfix PR 의 B2 부분만 빠졌을 때만): 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
+⛔ **게이트**: #955(B1) · #957(B5) · B4 활성 기록 PR 이 **모두** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
 
 **1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 계좌는 `.env.mock` 의 `KIS_STOCK_ACCOUNT_NO`(10자리 8-2).
 ```bash
@@ -274,7 +273,6 @@ for k in KEY SECRET; do grep "^KIS_STOCK_APP_$k=" $MAIN/.env.mock | cut -d= -f2-
 D=$(TZ=Asia/Seoul date +%Y%m%d); git -C $MAIN fetch -q origin; WT=$ST/measure/wt-cp3-stock-$D; git -C $MAIN worktree add -q --detach $WT origin/main
 export TOS_REPO=$WT TOS_PYTHON=$MAIN/.venv/bin/python TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-$D TOS_STOCK_DATA_PARENT=$ST/cp3-setup-d-stock-005930-data \
   TOS_STOCK_ENV_MOCK=$MAIN/.env.mock TOS_STOCK_CUSTODY_ROOT=$ST/cp3-setup-d-stock-custody TOS_STOCK_KIS_MOCK_TRANSPORT_CONFIG=$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml TOS_STOCK_STOP_AT=15:40
-install -D -m 644 $WT/docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml $ST/docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml  # B2 비상용 — bootfix 가 B2 를 고쳤으면 이 줄을 건너뛴다
 mkdir -m 700 $TOS_STOCK_SESSION_ROOT && cd $WT && set -a && . tools/tos_cp3/runners/stock-mock-session.env.example && set +a
 nohup bash tools/tos_cp3/runners/run_tenant_session.sh >$TOS_STOCK_SESSION_ROOT/runner.out 2>&1 & echo $! >$TOS_STOCK_SESSION_ROOT/runner.pid
 ```
