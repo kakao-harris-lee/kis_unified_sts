@@ -203,3 +203,23 @@ def test_shipped_tenant_calendars_load_with_no_dated_overrides() -> None:
 def test_malformed_overrides_refuse(tmp_path, text: str, match: str) -> None:
     with pytest.raises(CalendarConfigError, match=match):
         load_calendar_config(_write(tmp_path, text))
+
+
+_WIN = '[{phase: CONTINUOUS, start: "%s", end: "%s", crosses_midnight: false}]'
+
+
+@pytest.mark.parametrize("second_key", ["2026-12-03", '"2026-12-03"'])
+def test_a_repeated_override_date_is_refused(tmp_path, second_key: str) -> None:
+    """Review #963 MEDIUM: ``"2026-12-03"`` and unquoted ``2026-12-03`` survive YAML
+    loading as two keys (str and date); an identical key twice is collapsed by the
+    loader. Either way the two readers could pick different entries — refuse."""
+    text = (
+        "session_overrides:\n"
+        '  "2026-12-03":\n    reason: a\n    sessions:\n      krx-stock: '
+        + _WIN % ("10:00", "16:30")
+        + f"\n  {second_key}:\n    reason: b\n    sessions:\n      krx-stock: "
+        + _WIN % ("10:45", "17:15")
+        + "\n"
+    )
+    with pytest.raises(CalendarConfigError, match="repeats date"):
+        load_calendar_config(_write(tmp_path, text))

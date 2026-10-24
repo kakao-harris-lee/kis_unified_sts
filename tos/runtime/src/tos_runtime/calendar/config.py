@@ -464,6 +464,31 @@ def _parse_holidays(raw: Any, path: Path) -> frozenset[datetime.date]:
     return frozenset(dates)
 
 
+def _repeated_override_dates(text: str) -> list[str]:
+    """Dates repeated as ``session_overrides`` keys, read from the YAML node tree.
+
+    The loaded mapping cannot show an IDENTICAL key twice (the loader keeps the last),
+    so this looks one level below it. The legacy-side reader runs the same check
+    (``tools.tos_cp3.session_day.repeated_override_dates``; the firewall keeps the
+    two apart) so both refuse the same file (review #963 MEDIUM)."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        return []
+    for key_node, value_node in root.value:
+        if getattr(key_node, "value", None) == "session_overrides" and isinstance(
+            value_node, yaml.MappingNode
+        ):
+            seen: set[str] = set()
+            repeated: list[str] = []
+            for date_node, _ in value_node.value:
+                key = str(date_node.value).strip()
+                if key in seen:
+                    repeated.append(key)
+                seen.add(key)
+            return repeated
+    return []
+
+
 def _parse_override_windows(
     raw_windows: list[Any],
     cls_ctx: str,
@@ -546,6 +571,11 @@ def _parse_session_overrides(
                 raise CalendarConfigError(
                     f"{path}: {ctx} key is not a valid 'YYYY-MM-DD' date"
                 ) from exc
+        if day in overrides:
+            raise CalendarConfigError(
+                f"{path}: {ctx} repeats date {day} — one entry per date "
+                "(review #963: a quoted and an unquoted key both survive loading)"
+            )
         if day in holidays:
             raise CalendarConfigError(
                 f"{path}: {ctx} is also listed in 'holidays' — a closed day "
@@ -645,6 +675,11 @@ def load_calendar_config(path: Path) -> CalendarConfig:
     _check_expiry_rules_have_regular_windows(sessions, futures_expiry, path)
     # Optional (issue #924): calendars written before dated exceptions existed
     # have no such key, and its absence means exactly "no dated exceptions".
+    repeated = _repeated_override_dates(text)
+    if repeated:
+        raise CalendarConfigError(
+            f"{path}: 'session_overrides' repeats date(s) {repeated} — one entry per date"
+        )
     session_overrides = _parse_session_overrides(
         raw.get("session_overrides", {}),
         path,

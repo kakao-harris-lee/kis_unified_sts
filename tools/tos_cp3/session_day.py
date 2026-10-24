@@ -60,6 +60,110 @@ def parse_hhmm(value: Any, *, where: str) -> time:
         raise SessionDayError(f"{where}={value!r} is not HH:MM") from exc
 
 
+def repeated_override_dates(text: str) -> list[str]:
+    """Dates that appear more than once as ``session_overrides`` keys in calendar *text*.
+
+    Read from the YAML node tree, not the loaded mapping: an identical key twice is
+    collapsed by the loader (last one wins), and ``"2026-12-03"`` next to unquoted
+    ``2026-12-03`` survives loading as two keys (a str and a ``date``). Either way two
+    readers that pick differently would disagree on the same file (review #963 MEDIUM).
+    """
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        return []
+    for key_node, value_node in root.value:
+        if getattr(key_node, "value", None) == OVERRIDES_KEY and isinstance(
+            value_node, yaml.MappingNode
+        ):
+            seen: set[str] = set()
+            repeated: list[str] = []
+            for date_node, _ in value_node.value:
+                key = str(date_node.value).strip()
+                if key in seen:
+                    repeated.append(key)
+                seen.add(key)
+            return repeated
+    return []
+
+
+def validate_overrides(calendar: Mapping[str, Any], *, text: str) -> None:
+    """Refuse the override shapes the runtime loader refuses
+    (``tos_runtime.calendar.config._parse_session_overrides``), so the two readers
+    accept the same files: repeated date · bad date · date also a holiday · missing
+    ``reason`` · no ``sessions`` · class the regular ``sessions`` lack · empty list ·
+    a ``days`` field · a midnight-crossing window · a phase the class's regular
+    windows never produce · a bad HH:MM.
+
+    NOT re-checked here: overlapping override windows. The runtime refuses those at
+    boot, and this side only ever asks for the ONE window of one phase, which it
+    already requires to be unique (:func:`phase_window`).
+    """
+    repeated = repeated_override_dates(text)
+    if repeated:
+        raise SessionDayError(f"{OVERRIDES_KEY} repeats date(s) {repeated}")
+    raw = calendar.get(OVERRIDES_KEY, {})
+    if raw is None or not isinstance(raw, Mapping):
+        raise SessionDayError(
+            f"{OVERRIDES_KEY} must be a mapping (an empty one means 'no dated exceptions')"
+        )
+    regular = calendar.get("sessions")
+    regular = regular if isinstance(regular, Mapping) else {}
+    holidays = {str(h) for h in (calendar.get("holidays") or [])}
+    days: set[date] = set()
+    for key, override in raw.items():
+        try:
+            day = key if isinstance(key, date) else date.fromisoformat(str(key))
+        except ValueError as exc:
+            raise SessionDayError(
+                f"{OVERRIDES_KEY}[{key}] is not a YYYY-MM-DD date"
+            ) from exc
+        if day in days:
+            raise SessionDayError(f"{OVERRIDES_KEY} repeats date {day}")
+        days.add(day)
+        where = f"{OVERRIDES_KEY}[{day}]"
+        if day.isoformat() in holidays:
+            raise SessionDayError(f"{where} is also a holiday")
+        if not isinstance(override, Mapping):
+            raise SessionDayError(f"{where} must be a mapping")
+        reason = override.get("reason")
+        if not isinstance(reason, str) or not reason or reason == "TBD":
+            raise SessionDayError(f"{where} needs a non-empty 'reason'")
+        sessions = override.get("sessions")
+        if not isinstance(sessions, Mapping) or not sessions:
+            raise SessionDayError(f"{where} 'sessions' must be a non-empty mapping")
+        for session_id, entries in sessions.items():
+            cls_where = f"{where}.sessions.{session_id}"
+            if session_id not in regular:
+                raise SessionDayError(
+                    f"{cls_where} names a class the regular 'sessions' do not declare"
+                )
+            if not isinstance(entries, list) or not entries:
+                raise SessionDayError(f"{cls_where} must be a non-empty list")
+            phases = {
+                str(e.get("phase"))
+                for e in regular[session_id]
+                if isinstance(e, Mapping)
+            }
+            for i, entry in enumerate(entries):
+                if not isinstance(entry, Mapping):
+                    raise SessionDayError(f"{cls_where}[{i}] is not a mapping")
+                if "days" in entry:
+                    raise SessionDayError(f"{cls_where}[{i}] carries 'days'")
+                if entry.get("crosses_midnight") is not False:
+                    raise SessionDayError(
+                        f"{cls_where}[{i}] must say crosses_midnight: false"
+                    )
+                if str(entry.get("phase")) not in phases:
+                    raise SessionDayError(
+                        f"{cls_where}[{i}] phase {entry.get('phase')!r} is not one of "
+                        f"the regular {sorted(phases)}"
+                    )
+                start = parse_hhmm(entry.get("start"), where=f"{cls_where}[{i}].start")
+                end = parse_hhmm(entry.get("end"), where=f"{cls_where}[{i}].end")
+                if not end > start:
+                    raise SessionDayError(f"{cls_where}[{i}] end is not after start")
+
+
 def _override_entries(
     calendar: Mapping[str, Any], session_id: str, day: date
 ) -> list[Any] | None:
@@ -189,9 +293,14 @@ def load_producer_session(
     if calendar_path is None:
         candidate = Path(calendar_value).expanduser()
         calendar_path = candidate if candidate.is_absolute() else repo_root / candidate
-    calendar = yaml.safe_load(calendar_path.read_text(encoding="utf-8"))
+    text = calendar_path.read_text(encoding="utf-8")
+    calendar = yaml.safe_load(text)
     if not isinstance(calendar, Mapping):
         raise SessionDayError(f"{calendar_path}: not a YAML mapping")
+    try:
+        validate_overrides(calendar, text=text)
+    except SessionDayError as exc:
+        raise SessionDayError(f"{calendar_path}: {exc}") from exc
     return ProducerSession(
         calendar_path=calendar_path,
         calendar=calendar,

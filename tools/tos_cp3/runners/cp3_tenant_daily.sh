@@ -178,13 +178,19 @@ if [ "$MODE" = preflight ]; then
   *) log "PREFLIGHT calendar check failed (rc=$mrc)"; exit 2 ;;
   esac
   pcfg=$(mktemp) || exit 2
-  trap 'rm -f "$cal" "$pcfg"' EXIT
+  # The reader comes from origin/main too, like the two files it reads — never
+  # from $MAIN's working tree, whatever branch that is on (#963 review LOW-2).
+  rdr=$(mktemp -d) || exit 2
+  trap 'rm -f "$cal" "$pcfg"; rm -rf "$rdr"' EXIT
   git -C "$MAIN" show "origin/main:$PRODUCER_REL" >"$pcfg" 2>/dev/null || {
     log "PREFLIGHT $PRODUCER_REL missing at origin/main $ref"; exit 2; }
+  mkdir -p "$rdr/tools/tos_cp3"
+  git -C "$MAIN" show "origin/main:tools/tos_cp3/session_day.py" >"$rdr/tools/tos_cp3/session_day.py" 2>/dev/null || {
+    log "PREFLIGHT tools/tos_cp3/session_day.py missing at origin/main $ref"; exit 2; }
   if [ "$open" = OPEN ]; then
-    win=$(session_day show "$MAIN" "$pcfg" "$cal" 2>&1) || {
+    win=$(session_day show "$rdr" "$pcfg" "$cal" 2>&1) || {
       log "PREFLIGHT session window unreadable: $win"; exit 2; }
-    stop=${STOP_AT:-$(session_day stop-at "$MAIN" "$pcfg" "$cal" 2>&1)} || {
+    stop=${STOP_AT:-$(session_day stop-at "$rdr" "$pcfg" "$cal" 2>&1)} || {
       log "PREFLIGHT stop time unreadable: $stop"; exit 2; }
     log "PREFLIGHT session $win · stop_at=$stop$([ -n "$STOP_AT" ] && echo ' (CP3_DAILY_STOP_AT)')"
   fi

@@ -34,7 +34,7 @@ from pathlib import Path
 import yaml
 
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
-from tools.tos_cp3.session_day import OVERRIDES_KEY, SessionDayError, windows_on
+from tools.tos_cp3.session_day import SessionDayError, validate_overrides, windows_on
 
 
 @dataclass(frozen=True)
@@ -187,7 +187,8 @@ def load_runtime_calendar(
             state its own range, so the declaration and the file are checked
             against each other instead of one being trusted (review L4).
     """
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise LiveProducerRefused(f"{path}: not a YAML mapping")
 
@@ -216,29 +217,10 @@ def load_runtime_calendar(
             for entry in entries
         )
 
-    overrides = data.get(OVERRIDES_KEY, {})
-    if not isinstance(overrides, dict):
-        raise LiveProducerRefused(
-            f"{path}: {OVERRIDES_KEY!r} must be a mapping ({{}} = no dated exceptions)"
-        )
-    for raw_day in overrides:
-        # Every dated window must parse NOW, not on the day it applies.
-        try:
-            override_day = (
-                raw_day
-                if isinstance(raw_day, date)
-                else date.fromisoformat(str(raw_day))
-            )
-            for session_id in sessions:
-                windows_on(data, session_id, override_day)
-        except (SessionDayError, ValueError) as exc:
-            raise LiveProducerRefused(
-                f"{path}: {OVERRIDES_KEY}[{raw_day}]: {exc}"
-            ) from exc
-        if override_day in holidays:
-            raise LiveProducerRefused(
-                f"{path}: {OVERRIDES_KEY}[{raw_day}] is also a holiday"
-            )
+    try:
+        validate_overrides(data, text=text)
+    except SessionDayError as exc:
+        raise LiveProducerRefused(f"{path}: {exc}") from exc
 
     version = data.get("calendar_version")
     tz_id = data.get("tz_id")

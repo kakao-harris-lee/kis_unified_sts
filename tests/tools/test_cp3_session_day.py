@@ -176,3 +176,79 @@ def test_cli_prints_one_value(tmp_path: Path) -> None:
     )
     bad = run("stop-at", "--date", "2026-12-03")
     assert bad.returncode == 2 and "after-close-min" in bad.stderr
+
+
+def _raw_calendar(tmp_path: Path, overrides_yaml: str) -> Path:
+    base = _SHIPPED.read_text(encoding="utf-8").replace("session_overrides: {}\n", "")
+    path = tmp_path / "calendar.yaml"
+    path.write_text(base + overrides_yaml, encoding="utf-8")
+    return path
+
+
+_WIN = '[{phase: CONTINUOUS, start: "%s", end: "%s", crosses_midnight: false}]'
+
+
+@pytest.mark.parametrize("second_key", ["2026-12-03", '"2026-12-03"'])
+def test_a_repeated_override_date_is_refused_by_both_tools_loaders(
+    tmp_path: Path, second_key: str
+) -> None:
+    """Review #963 MEDIUM, the exact input: a quoted and an unquoted (or a repeated)
+    key for one date. The runtime refuses it too (test_session_overrides.py)."""
+    calendar = _raw_calendar(
+        tmp_path,
+        "session_overrides:\n"
+        '  "2026-12-03":\n    reason: a\n    sessions:\n      krx-index-futures: '
+        + _WIN % ("09:45", "16:45")
+        + f"\n  {second_key}:\n    reason: b\n    sessions:\n      krx-index-futures: "
+        + _WIN % ("10:45", "17:45")
+        + "\n",
+    )
+    with pytest.raises(LiveProducerRefused, match="repeats date"):
+        load_runtime_calendar(calendar, covered_years=[2026])
+    with pytest.raises(session_day.SessionDayError, match="repeats date"):
+        session_day.load_producer_session(
+            _producer_config(tmp_path, calendar), repo_root=_REPO_ROOT
+        )
+
+
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        (
+            "    sessions:\n      krx-index-futures: " + _WIN % ("09:45", "16:45"),
+            "reason",
+        ),
+        (
+            "    reason: x\n    sessions:\n      krx-bond: "
+            + _WIN % ("09:45", "16:45"),
+            "do not declare",
+        ),
+        (
+            "    reason: x\n    sessions:\n      krx-index-futures: "
+            '[{phase: AUCTION, start: "09:45", end: "16:45", crosses_midnight: false}]',
+            "not one of",
+        ),
+        (
+            "    reason: x\n    sessions:\n      krx-index-futures: "
+            '[{phase: CONTINUOUS, start: "09:45", end: "16:45", days: [THU], crosses_midnight: false}]',
+            "days",
+        ),
+        (
+            "    reason: x\n    sessions:\n      krx-index-futures: "
+            '[{phase: CONTINUOUS, start: "18:00", end: "05:00", crosses_midnight: true}]',
+            "crosses_midnight",
+        ),
+    ],
+)
+def test_tools_refuses_what_the_runtime_refuses(
+    tmp_path: Path, body: str, match: str
+) -> None:
+    calendar = _raw_calendar(
+        tmp_path, '"session_overrides":\n  "2026-12-03":\n' + body + "\n"
+    )
+    with pytest.raises(session_day.SessionDayError, match=match):
+        session_day.load_producer_session(
+            _producer_config(tmp_path, calendar), repo_root=_REPO_ROOT
+        )
+    with pytest.raises(LiveProducerRefused, match=match):
+        load_runtime_calendar(calendar, covered_years=[2026])
