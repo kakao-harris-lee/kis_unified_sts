@@ -85,6 +85,8 @@ _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<hms>\d{6})-(?P<direction>[A-Z]+)$"
 )
+#: 상주 paper 드라이버가 런타임 부팅을 확인했을 때 bootproof.txt 첫 줄에 쓰는 문구.
+BOOTPROOF_OK = "boot proof: OK"
 #: 상주 paper 드라이버의 bootproof.txt — 첫 줄 끝 « · <종목>», 셋째 줄 «baseline_seq=<n>».
 _BOOTPROOF_INSTRUMENT_RE = re.compile(r"· (?P<instrument>[A-Z0-9]+)$")
 _BOOTPROOF_BASELINE_RE = re.compile(r"baseline_seq=(?P<seq>-?\d+)")
@@ -996,6 +998,10 @@ def paper_pass_overrun(
     report.json 의 ``data_dir``, 진행 중(report 없음)이면 bootproof 의 종목으로
     ``<state_dir>/<paper_data_subdir>/<종목>`` (래퍼가 잎을 고르는 규칙).
     """
+    # 부팅 증명이 OK 가 아니면 이 세션의 부팅 행이 없을 수 있다 — 그때 «기준 뒤 두 번째 부팅»
+    # 은 다음 세션의 끝이라, 다음 세션의 행을 이 날짜에 붙이게 된다(#951 리뷰 LOW-1). 보지 않는다.
+    if not bootproof or BOOTPROOF_OK not in bootproof[0]:
+        return None
     report = report if isinstance(report, Mapping) else {}
     baseline = report.get("baseline_evidence_seq")
     if not isinstance(baseline, int) and len(bootproof) > 2:
@@ -1104,7 +1110,7 @@ def paper_facts(
         )
     else:
         facts["issues"].extend(_overrun_issues(facts["pass_overrun"]))
-    if not facts["bootproof"] or "boot proof: OK" not in facts["bootproof"]:
+    if not facts["bootproof"] or BOOTPROOF_OK not in facts["bootproof"]:
         facts["issues"].append(
             (BLOCK, f"boot proof 가 OK 가 아니다: {facts['bootproof']!r}")
         )

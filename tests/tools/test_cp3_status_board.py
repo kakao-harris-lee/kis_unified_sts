@@ -837,3 +837,50 @@ def test_paper_without_a_leaf_is_unknown_not_zero(state: Path, cfg: sb.BoardConf
 
 def test_paper_empty_leaf_is_zero(cfg: sb.BoardConfig):
     assert _board(cfg, D1023)["paper"]["pass_overrun"] == {"rows": 0, "worst": None}
+
+
+def test_paper_without_a_boot_proof_is_not_given_the_next_sessions_rows(
+    state: Path, cfg: sb.BoardConfig
+):
+    # #951 리뷰 LOW-1 의 입력: 10-22 런타임이 자기 TIME_SERVICE_STARTUP 을 쓰지 못했고(boot proof
+    # MISSING), 10-23 세션이 같은 잎에서 부팅했다. 고치기 전에는 «기준 뒤 두 번째 부팅»(600000)
+    # 이 상한이 되어 10-23 의 행(540200)이 10-22 에 붙었다.
+    proof = state / "paper-sessions" / "2026-10-22-084508-LONG" / "bootproof.txt"
+    lines = proof.read_text(encoding="utf-8").splitlines()
+    lines[0] = "boot proof: MISSING · genesis=False · rev 0cc899617f5b · A05611"
+    proof.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _insert(
+        state / PAPER_LEAF / "evidence.sqlite3",
+        [
+            (540130, sb.BOOT_KIND, {"x": 1}),
+            (540200, sb.PASS_OVERRUN_KIND, _overrun_payload(530, 10)),
+            (600000, sb.BOOT_KIND, {"x": 1}),
+        ],
+    )
+    board = _board(cfg, D1022)
+    assert board["paper"]["pass_overrun"] is None
+    assert (
+        f"    {sb.PASS_OVERRUN_KIND}: 잎·기준 seq 를 몰라 보지 못함"
+        in sb.render_text(board)
+    )
+    assert _board(cfg, D1023)["paper"]["pass_overrun"]["rows"] == 1
+
+
+def test_tenant_overrun_without_a_boot_segment_is_unseen_not_zero(
+    state: Path, cfg: sb.BoardConfig
+):
+    # short 잎의 유일한 부팅 행(seq 0)을 없애면 이 세션의 부팅 구간을 정할 수 없다.
+    conn = sqlite3.connect(state / LEAVES["short-A05611"] / "evidence.sqlite3")
+    conn.execute("DROP TRIGGER entries_no_delete")
+    conn.execute("DELETE FROM entries WHERE kind = ?", (sb.BOOT_KIND,))
+    conn.commit()
+    conn.close()
+    _append_overrun(state, "short-A05611", 17000, 700)
+    board = _board(cfg, D1023)
+    assert _session(board, "short-20261023")["store"]["pass_overrun"] is None
+    assert (
+        f"    {sb.PASS_OVERRUN_KIND}: 부팅 구간을 정할 수 없어 보지 못함"
+        in sb.render_text(board)
+    )
+    history = {(h["day"], h["label"]): h["overrun"] for h in board["history"]}
+    assert history[("20261023", "short")] is None
