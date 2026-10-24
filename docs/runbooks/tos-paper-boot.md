@@ -249,7 +249,7 @@ B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mo
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
    운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
 B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** — 처분: **운영자 승인 대기**(lane-bootfix 의 활성 기록 초안 · 가짜 id 금지) ·
-B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분(운영자 2026-10-24): 패스마다 heartbeat + **주식 트리만** `containment_bound_ms: 90000`(paper·LONG·SHORT 는 1000) · `fix/tos-authority-witness-heartbeat`.
+B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분(운영자 2026-10-24): 패스마다 heartbeat + **주식 트리만** `containment_bound_ms: 90000`(paper·LONG·SHORT 는 1000) · PR #957(heartbeat — 90000 값이 같이 들어갔는지 머지 전 확인).
 ⛔ **게이트**: #955 · #956 · B4·B5 고침이 **모두** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
 B2 **비상용 우회**(bootfix PR 의 B2 부분만 빠졌을 때만): 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
 
@@ -284,12 +284,12 @@ cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -m tos_runti
 ```
 **볼 것.** `session.log`: `credential separation ok` → `transport=kis-mock` → `first real row seen`(≈09:01 — `quote_initial_cursor: "153000"`(#922 미실측)이 장중 봉을 준다는 첫 증거. 600 s 안에 없으면 러너가 ABORT 하고 그날은 실측 결과로 남긴다) → `band line ok`(없으면 `BAND ABSENT` = 송신 0) → `=== BOOT`. `sts tos status` 는 `cp3-sessions/stock-<날짜>` 를 읽는다.
 ```bash
-L=$ST/cp3-setup-d-stock-005930-data/005930; sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,COUNT(*) FROM entries WHERE kind IN ('BROKER_FACTS_OBSERVED','APPROVAL_STANDING_BOUND','APPROVAL_STANDING_CONSUMED','APPROVAL_STANDING_NOT_COVERED','APPROVAL_STANDING_REFUSED','SEND_SEALED','TRANSPORT_SEND','TRANSPORT_DRY_RUN','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED','MARKETFEED_PASS_OVERRUN') OR kind LIKE 'FILL_OBSERVER_%' GROUP BY 1"
+L=$ST/cp3-setup-d-stock-005930-data/005930; sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,COUNT(*) FROM entries WHERE kind IN ('BROKER_FACTS_OBSERVED','APPROVAL_STANDING_BOUND','APPROVAL_STANDING_CONSUMED','APPROVAL_STANDING_NOT_COVERED','APPROVAL_STANDING_REFUSED','SEND_SEALED','TRANSPORT_SEND','TRANSPORT_DRY_RUN','AUTHORITY_WITNESS_LOST','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED','MARKETFEED_PASS_OVERRUN') OR kind LIKE 'FILL_OBSERVER_%' GROUP BY 1"
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.step'),COUNT(*) FROM entries WHERE kind='FLOW_HALTED' GROUP BY 1"   # 어디서 멎나 — INDEPENDENT_APPROVAL 이면 승인 없음
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD','SEND_REFUSED') GROUP BY 1,2"   # B4: LIVE_SCOPE_NOT_AUTHORIZED · mesh activation_atomic(FLOW_HALTED 없음) · B5: SEND_REFUSED
 ```
 **정지 · 킬스위치.** 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
-러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-$D/render"`. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
+러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(새 세션 디렉터리)뿐. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
 
 **장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
 ```bash
