@@ -96,7 +96,9 @@ def test_writes_the_artifact_for_the_mock_stock_tree(tmp_path: Path, capsys) -> 
     assert (exit_.position_effect, exit_.direction) == ("CLOSE", "SHORT")
     assert exit_.side != entry.side
     assert [a.max_uses for a in approval.actions] == [1, 1]
-    assert approval.digest in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert approval.digest in out
+    assert "exit row cannot match until #960" in out
 
 
 @pytest.mark.parametrize("tree", ["cp3-setup-d-long", "cp3-setup-d-short"])
