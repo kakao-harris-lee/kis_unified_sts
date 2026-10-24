@@ -240,6 +240,54 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 세션 쓰인다). 11-13 저녁에는
 `cold-backup-cp3-{long,short}.log` 에 새 잎이 함께 올라갔는지 본다(§7.7 — 래퍼는 `A0####` 잎을 순회).
 
+#### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · 손으로 한 번 · cron 없음
+
+005930 · 1주 · Setup D LONG · 09:00–15:30 · **모의 계좌만**. 수용(rescope §3 M2) = 체결 1건 이상 + 사슬 연결.
+⛔ 막힘 셋(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다.
+B2 렌더본 `broker_scopes.yaml::instance_path`(`../../../docs/…`)가 렌더 디렉터리 기준이라 **부팅 거부** ·
+B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mock **부팅 거부** ·
+B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
+B2 만은 코드 없이 우회된다: 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
+
+**1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 계좌는 `.env.mock` 의 `KIS_STOCK_ACCOUNT_NO`(10자리 8-2).
+```bash
+C=$ST/cp3-setup-d-stock-custody; install -d -m 700 $ST/cp3-setup-d-stock-005930-data $ST/cp3-setup-d-stock-ops $C $C/approvals
+for f in read.principal evidence.key evidence.key.1 replay.params; do head -c 32 /dev/urandom >$C/$f; done
+for k in KEY SECRET; do grep "^KIS_STOCK_APP_$k=" $MAIN/.env.mock | cut -d= -f2- | sed 's/^"//;s/"$//' | tr -d '\n' >$C/kis_mock.app_$(echo $k | tr A-Z a-z); done
+{ echo "environment_label: paper"; echo "scopes:"; for s in read.principal:read-principal-v1 evidence.key:evidence-key-v1 replay.params:replay-params-v1 kis_mock.app_key:kis-mock-order-paper kis_mock.app_secret:kis-mock-order-paper; do
+  echo "  ${s%%:*}: {file: ${s%%:*}, principal: ${s##*:}, expected_sha256: null}"; done; } >$C/custody.manifest.yaml; chmod 600 $C/*.*
+```
+- `kis-mock-order-paper` = 트리 `MOCK_STOCK_ORDER.principal` 의 `{environment_label}` 치환값(custody 는 치환하지 않는다 — `tos-kis-mock-transport.md` §5).
+- `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
+  · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
+  · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
+- **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
+
+**08:55 시작(창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s).** LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
+```bash
+D=$(TZ=Asia/Seoul date +%Y%m%d); git -C $MAIN fetch -q origin; WT=$ST/measure/wt-cp3-stock-$D; git -C $MAIN worktree add -q --detach $WT origin/main
+export TOS_REPO=$WT TOS_PYTHON=$MAIN/.venv/bin/python TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-$D TOS_STOCK_DATA_PARENT=$ST/cp3-setup-d-stock-005930-data \
+  TOS_STOCK_ENV_MOCK=$MAIN/.env.mock TOS_STOCK_CUSTODY_ROOT=$ST/cp3-setup-d-stock-custody TOS_STOCK_KIS_MOCK_TRANSPORT_CONFIG=$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml TOS_STOCK_STOP_AT=15:40
+install -D -m 644 $WT/docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml $ST/docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml  # B2 우회 — B2 가 고쳐지면 지운다
+mkdir -m 700 $TOS_STOCK_SESSION_ROOT && cd $WT && set -a && . tools/tos_cp3/runners/stock-mock-session.env.example && set +a
+nohup bash tools/tos_cp3/runners/run_tenant_session.sh >$TOS_STOCK_SESSION_ROOT/runner.out 2>&1 & echo $! >$TOS_STOCK_SESSION_ROOT/runner.pid
+```
+**볼 것.** `session.log`: `credential separation ok` → `transport=kis-mock` → `first real row seen`(≈09:01 — `quote_initial_cursor: "153000"`(#922 미실측)이 장중 봉을 준다는 첫 증거. 600 s 안에 없으면 러너가 ABORT 하고 그날은 실측 결과로 남긴다) → `band line ok`(없으면 `BAND ABSENT` = 송신 0) → `=== BOOT`. `sts tos status` 는 `cp3-sessions/stock-<날짜>` 를 읽는다.
+```bash
+L=$ST/cp3-setup-d-stock-005930-data/005930; sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,COUNT(*) FROM entries WHERE kind IN ('BROKER_FACTS_OBSERVED','SEND_SEALED','TRANSPORT_SEND','TRANSPORT_DRY_RUN','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED','MARKETFEED_PASS_OVERRUN') OR kind LIKE 'FILL_OBSERVER_%' GROUP BY 1"
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.step'),COUNT(*) FROM entries WHERE kind='FLOW_HALTED' GROUP BY 1"   # 어디서 멎나 — INDEPENDENT_APPROVAL 이면 B1
+```
+**정지 · 킬스위치.** 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
+러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-$D/render"`. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
+
+**장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`ConsumeApprovalDecision`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
+```bash
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT COALESCE(json_extract(payload_json,'\$.payload.attempt_id'),replace(json_extract(payload_json,'\$.payload.idempotency_key'),'broker-fqp-proof:','')) a,kind,COUNT(*),group_concat(DISTINCT json_extract(payload_json,'\$.payload.egress_result_kind')) FROM entries WHERE kind IN ('VERIFY_ITEM','SEND_SEALED','TRANSPORT_SEND','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED') GROUP BY a,kind ORDER BY a,MIN(seq)"
+sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,48) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
+```
+- **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
+- **되돌림.** 세션을 시작하지 않으면 끝이다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신을 영구히 막으려면 `$C/kis_mock.app_*` 를 지운다(부팅이 거부된다). 잎은 append-only 증거라 지우지 않는다.
+
 ### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
 
 설치된 줄은 이것이다(설치된 블록 그대로 — 주석 머리 한 줄 포함):
