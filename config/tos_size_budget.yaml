@@ -351,11 +351,12 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1146
+  measured: 1165
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-24 standing session approval 재등재 1146→1165(+19)**: `_build_step4_recorder`·`_build_realized_stages` 에 `standing` 매개변수, per-proposal 공급자 뒤에 standing 공급자를 잇는 분기, CONSUMED 증거용 래퍼 — 판정 로직은 신설 `tos_runtime/authority/standing.py` 로 분리.
     **2026-10-23 PR-3a option (a) "K" 재등재 1138→1146(+8)**: `_build_context_resolver` 에 `transport_config`·`mock_generation_reader` 매개변수와 `transport_endpoint`·`mock_generation_reader` 전달(item 5 엔드포인트, item 12 mock 세대).
     **2026-09-23 mypy 3단계 3-e 재등재 1134→1138(+4)**: §1.3 rule 3 포트 도입 —
     `_time_permits_new_risk`/`_decision_provider` 의 `time_service` 파라미터를
@@ -750,11 +751,12 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 479
+  measured: 487
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-24 standing session approval 재등재 479→487(+8)**: `_build_realized_stages(standing=build_standing_approval(...))` 호출 인자 — 조립은 신설 `compose/_standing_wiring.py`.
     **2026-10-23 PR-3b 후속(세션 루프 체결 폴링) 재등재 476→479(+3)**: `build_tick_scheduler(...)` 에 `after_pass=fill_observer_pass(composed)` 1줄 + 그 줄이 여기 있는 이유 주석 2줄. PR-3b 는 관찰자를 붙였지만 아무도 부르지 않았다 — 세션 루프(`TickScheduler.run_forever`)가 매 패스 `fill_observer.poll_if_due()` 를 부르는 유일한 호출부이고, 그 결선은 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-23 PR-3b 재등재 463→476(+13)**: `build_broker_posttrade(...)` 호출(주석 1줄 + kwargs 5개) + `apply_release_wiring(posttrade=)`·`apply_recovery_barrier(witness=)` 각 1줄 + barrier 직후 `attach_fill_observer(...)` 3줄. 주식 MOCK 부팅만 KIS witness·체결 관찰자를 쓴다 — 결선 순서(release 전 witness, barrier 후 관찰자)는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-23 PR-3a option (a) "K" 재등재 445→463(+18)**: `build_broker_facts(...)` 호출(주석 2줄 + kwargs 8개) + item 12 리더 두 개를 `broker_facts.tradability/account(...)` 로 감싼 줄 + `mock_generation_reader=` + `_build_context_resolver(transport_config=...)`. 호출 시퀀스 무변경.

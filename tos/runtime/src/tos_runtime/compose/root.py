@@ -100,6 +100,7 @@ from tos_runtime.compose._session_wiring import (
     build_nontrade_processor,
     build_session_facts_owner,
 )
+from tos_runtime.compose._standing_wiring import build_standing_approval
 from tos_runtime.compose._transport_wiring import TransportKind, evidence_recorder
 from tos_runtime.compose._types import (
     ComposedRuntime,
@@ -416,6 +417,14 @@ def compose_paper_runtime(
         custody_root=custody_root,
         environment_label=environment_label,
         uid=uid,
+        standing=build_standing_approval(
+            boot,
+            construction_stages.construction_stage,
+            trading_date_reader=trading_date_reader,
+            custody_root=custody_root,
+            environment_label=environment_label,
+            uid=uid,
+        ),
     )
     # Late-bind the ACTION_FLOW / TRADING_APPROVAL dimension readers' cells now steps
     # 9/4's VerdictRecorders exist (Phase 5 W3-b, plan §2 decision 3).

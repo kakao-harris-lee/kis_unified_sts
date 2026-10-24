@@ -42,6 +42,11 @@ from tos_runtime.authority.iap import (
     load_operator_approval_with_receipt,
 )
 from tos_runtime.authority.stages import IndependentApprovalStage
+from tos_runtime.authority.standing import (
+    StandingApprovalSource,
+    StandingRecordingStage,
+    chain_decision_providers,
+)
 from tos_runtime.brokercap import (
     BrokerScopesConfig,
     InstanceDocument,
@@ -607,8 +612,11 @@ def _build_step4_recorder(
     environment_label: str,
     uid: int,
     infra: _Infra,
+    standing: StandingApprovalSource | None = None,
 ) -> VerdictRecorder:
-    """Step 4 (``IndependentApprovalStage``), wrapped for verdict recording."""
+    """Step 4 (``IndependentApprovalStage``), wrapped for verdict recording. ``standing``
+    (MOCK stock only — ``tos_runtime.authority.standing``) is consulted only when no
+    per-proposal approval file resolved a decision."""
 
     def _consuming_command_identity(request: StageRequest, decision: object) -> str:
         # ⚠ structural (구조 파생 > 자기신고): reads step 2's own already-built
@@ -650,28 +658,32 @@ def _build_step4_recorder(
             return False
         return None
 
-    return VerdictRecorder(
-        IndependentApprovalStage(
-            intent_registry,
-            decision_provider=_decision_provider(
-                custody_root,
-                environment_label,
-                uid,
-                infra.time_service,
-                infra.time_config,
-                infra.evidence_store,
-            ),
-            command_identity_provider=_consuming_command_identity,
-            command_digest_provider=_consuming_command_digest,
-            # decision_current_provider omitted (team-lead follow-up guidance,
-            # 2026-09-08): IndependentApprovalStage's own default now calls
-            # registry.decision_current(decision) — lane P's real derivation
-            # (policy-generation equality + log-derived supersession, see
-            # tos_runtime.authority.iap's "Decision currency has no kernel
-            # predicate" section). Compose need not re-wrap it in a lambda.
-            envelope_equivalent_provider=_envelope_equivalent_provider,
-        )
+    decision_provider = _decision_provider(
+        custody_root,
+        environment_label,
+        uid,
+        infra.time_service,
+        infra.time_config,
+        infra.evidence_store,
     )
+    if standing is not None:
+        decision_provider = chain_decision_providers(decision_provider, standing)
+    stage = IndependentApprovalStage(
+        intent_registry,
+        decision_provider=decision_provider,
+        command_identity_provider=_consuming_command_identity,
+        command_digest_provider=_consuming_command_digest,
+        # decision_current_provider omitted (team-lead follow-up guidance,
+        # 2026-09-08): IndependentApprovalStage's own default now calls
+        # registry.decision_current(decision) — lane P's real derivation
+        # (policy-generation equality + log-derived supersession, see
+        # tos_runtime.authority.iap's "Decision currency has no kernel
+        # predicate" section). Compose need not re-wrap it in a lambda.
+        envelope_equivalent_provider=_envelope_equivalent_provider,
+    )
+    if standing is None:
+        return VerdictRecorder(stage)
+    return VerdictRecorder(StandingRecordingStage(stage, standing))
 
 
 def _build_realized_stages(
@@ -690,6 +702,7 @@ def _build_realized_stages(
     custody_root: Path,
     environment_label: str,
     uid: int,
+    standing: StandingApprovalSource | None = None,
 ) -> _RealizedStages:
     """Steps 4, 6-10, 13, 14 — the real runtime Stages (never stand-ins)."""
     rcl_log, writer_epoch = rcl.rcl_log, rcl.writer_epoch
@@ -699,7 +712,13 @@ def _build_realized_stages(
     construction_stage = construction_stages.construction_stage
     proof_stage = construction_stages.proof_stage
     step4_recorder = _build_step4_recorder(
-        intent_registry, construction_stage, custody_root, environment_label, uid, infra
+        intent_registry,
+        construction_stage,
+        custody_root,
+        environment_label,
+        uid,
+        infra,
+        standing,
     )
     time_gate = _time_permits_new_risk(infra.time_service)
     generation_provider = _rcl_tip_generation_provider(rcl_log, writer_epoch)
