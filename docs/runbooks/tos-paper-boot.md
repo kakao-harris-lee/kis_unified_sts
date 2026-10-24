@@ -288,7 +288,7 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payl
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD','SEND_REFUSED') GROUP BY 1,2"   # B4: LIVE_SCOPE_NOT_AUTHORIZED · mesh activation_atomic(FLOW_HALTED 없음) · B5: SEND_REFUSED
 ```
 **정지 · 킬스위치.** 새 셸이면 먼저 `ST=~/.local/state/tos D=<YYYYMMDD> RUN=<n>; TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-r$RUN-$D`. 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
-러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-r$RUN-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(시작 블록을 `RUN=2` 로)뿐. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
+러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-r$RUN-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(시작 블록을 `RUN=2` 로)뿐. ⛔ **이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.**
 
 **장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
 ```bash
