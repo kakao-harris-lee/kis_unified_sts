@@ -900,6 +900,8 @@ ZERO_AUTHORITY = {
     "witness_lost": 0,
     "witness_lost_mid_session": 0,
     "witness_lost_mid_session_seqs": [],
+    "witness_lost_before_first_tick": 0,
+    "witness_lost_before_first_tick_seqs": [],
     "standing": {"bound": 0, "consumed": 0, "refused": 0, "not_covered": 0},
     "standing_consumed_by_action": {},
     "standing_refused_by_reason": {},
@@ -974,6 +976,8 @@ def test_authority_rows_are_counted_per_tree_and_mid_session_loss_blocks(
         "witness_lost": 1,
         "witness_lost_mid_session": 1,  # 120016 > 첫 틱 113595
         "witness_lost_mid_session_seqs": [120016],
+        "witness_lost_before_first_tick": 0,
+        "witness_lost_before_first_tick_seqs": [],
         "standing": {"bound": 1, "consumed": 3, "refused": 1, "not_covered": 1},
         "standing_consumed_by_action": {"ENTER": 2, "EXIT": 1},
         "standing_refused_by_reason": {"digest_changed_since_bound": 1},
@@ -990,7 +994,7 @@ def test_authority_rows_are_counted_per_tree_and_mid_session_loss_blocks(
         "long-20261023: APPROVAL_STANDING_NOT_COVERED 1행 (uses_exhausted:ENTER 1)",
     ]
     tail = (
-        "; 첫 틱 뒤·송신 봉인 뒤, 또는 첫 틱을 정할 수 없음)"
+        "; 첫 틱 뒤 또는 송신 봉인 뒤)"
         " — 이후 송신은 재부팅 전까지 거절된다(fail-closed)"
     )
     assert [i for i in _issues(board, sb.BLOCK) if "AUTHORITY" in i] == [
@@ -1129,26 +1133,54 @@ def test_a_loss_after_a_send_sealed_blocks_even_before_the_first_tick(
     )
 
 
-def test_a_loss_without_tick_information_blocks(state: Path, cfg: sb.BoardConfig):
-    # paper 10-23: 부팅 뒤 상실, EVENT_HANDLING_STARTED 없음 → 첫 틱을 정할 수 없다 → 장중.
+def test_a_loss_before_any_tick_warns_but_does_not_block(state: Path):
+    # (d) #962 r2 LOW: paper 10-23, 부팅 뒤 상실, 아직 틱(EVENT_HANDLING_STARTED) 없음,
+    # 송신 봉인 없음 → 확인(막힘 아님, exit 1 아님).
     _insert(
         state / PAPER_LEAF / "evidence.sqlite3",
         [(540130, sb.BOOT_KIND, {"x": 1}), (540140, *_lost())],
     )
+    cfg = replace(sb.load_config(), state_dir=state)
     board = _board(cfg, D1023)
-    assert board["paper"]["authority"]["witness_lost_mid_session_seqs"] == [540140]
-    assert any(
-        i.startswith(f"paper: {sb.AUTHORITY_WITNESS_LOST_KIND} 장중 1행")
-        for i in _issues(board, sb.BLOCK)
+    auth = board["paper"]["authority"]
+    assert (
+        auth["witness_lost_mid_session"],
+        auth["witness_lost_before_first_tick_seqs"],
+    ) == (0, [540140])
+    assert not [
+        i for i in _issues(board, sb.BLOCK) if sb.AUTHORITY_WITNESS_LOST_KIND in i
+    ]
+    assert (
+        f"paper: {sb.AUTHORITY_WITNESS_LOST_KIND} 첫 틱 전 상실 1행 (seq 540140)"
+        in "\n".join(_issues(board, sb.WARN))
     )
     assert (
-        sb.authority_summary(
-            [(5, sb.AUTHORITY_WITNESS_LOST_KIND, {})],
-            first_tick_seq=None,
-            first_send_seq=None,
-        )["witness_lost_mid_session"]
-        == 1
+        f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 1행 (장중 0 · 첫 틱 전 1)"
+        in sb.render_text(board)
     )
+    no_tick = sb.authority_summary(
+        [(5, sb.AUTHORITY_WITNESS_LOST_KIND, {})],
+        first_tick_seq=None,
+        first_send_seq=None,
+    )
+    assert (
+        no_tick["witness_lost_mid_session"],
+        no_tick["witness_lost_before_first_tick"],
+    ) == (0, 1)
+    assert [lv for lv, _ in sb._authority_issues(no_tick)] == [sb.WARN]
+
+
+def test_a_loss_after_a_send_sealed_blocks_even_with_no_tick_yet():
+    auth = sb.authority_summary(
+        [(10, sb.AUTHORITY_WITNESS_LOST_KIND, {})],
+        first_tick_seq=None,
+        first_send_seq=7,
+    )
+    assert (
+        auth["witness_lost_mid_session"],
+        auth["witness_lost_before_first_tick"],
+    ) == (1, 0)
+    assert [lv for lv, _ in sb._authority_issues(auth)] == [sb.BLOCK]
 
 
 def test_paper_pre_open_loss_before_its_first_handled_tick_is_quiet(

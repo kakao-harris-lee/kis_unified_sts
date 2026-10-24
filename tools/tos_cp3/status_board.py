@@ -481,11 +481,13 @@ def authority_summary(
     **증인 상실은 위치로 나눈다(#962 리뷰 MEDIUM).** 장 전에 부팅한 트리는 개장 때 설계상
     증인을 잃는다(``_authority_heartbeat`` docstring) — 그 행은 세션의 첫 틱보다, 그리고 어떤
     ``SEND_SEALED`` 보다 앞선다. 그 밖의 상실(첫 틱 뒤, 송신 봉인 뒤)은 장중 상실이라 이후
-    송신이 재부팅 전까지 거절된다. 트리 이름으로 가르지 않는다. 첫 틱을 정할 수 없으면
-    (``first_tick_seq is None``) 장중으로 본다 — 보이는 쪽으로 실패한다.
+    송신이 재부팅 전까지 거절된다(막힘). 트리 이름으로 가르지 않는다. 아직 틱이 없는 세션
+    (``first_tick_seq is None``)에서 송신 봉인보다 앞선 상실은 «첫 틱 전» 으로 따로 센다(확인,
+    #962 r2 LOW) — 장 전 부팅이면 설계상이지만, 첫 봉이 지나도 남아 있으면 볼 일이다.
     """
     lost = 0
     mid_session: list[int] = []
+    no_tick_yet: list[int] = []
     counts = dict.fromkeys(STANDING_APPROVAL_KINDS, 0)
     by: dict[str, Counter[str]] = {
         "consumed": Counter(),
@@ -496,13 +498,14 @@ def authority_summary(
     for seq, kind, p in rows:
         if kind == AUTHORITY_WITNESS_LOST_KIND:
             lost += 1
-            pre_open = (
-                first_tick_seq is not None
-                and seq < first_tick_seq
-                and (first_send_seq is None or seq < first_send_seq)
-            )
-            if not pre_open:
+            before_send = first_send_seq is None or seq < first_send_seq
+            if not before_send or (
+                first_tick_seq is not None and seq >= first_tick_seq
+            ):
                 mid_session.append(seq)
+            elif first_tick_seq is None:
+                no_tick_yet.append(seq)
+            # 그 밖(첫 틱 전·송신 봉인 전)은 장 전 설계상 상실 — 수만 보인다.
         elif kind in names:
             key = names[kind]
             counts[key] += 1
@@ -513,6 +516,8 @@ def authority_summary(
         "witness_lost": lost,
         "witness_lost_mid_session": len(mid_session),
         "witness_lost_mid_session_seqs": mid_session,
+        "witness_lost_before_first_tick": len(no_tick_yet),
+        "witness_lost_before_first_tick_seqs": no_tick_yet,
         "standing": counts,
         "standing_consumed_by_action": dict(sorted(by["consumed"].items())),
         "standing_refused_by_reason": dict(sorted(by["refused"].items())),
@@ -933,8 +938,18 @@ def _authority_issues(auth: Mapping[str, Any] | None) -> list[tuple[str, str]]:
             (
                 BLOCK,
                 f"{AUTHORITY_WITNESS_LOST_KIND} 장중 {auth['witness_lost_mid_session']}행"
-                f" (seq {seqs}; 첫 틱 뒤·송신 봉인 뒤, 또는 첫 틱을 정할 수 없음)"
+                f" (seq {seqs}; 첫 틱 뒤 또는 송신 봉인 뒤)"
                 " — 이후 송신은 재부팅 전까지 거절된다(fail-closed)",
+            )
+        )
+    if auth["witness_lost_before_first_tick"]:
+        seqs = ",".join(str(x) for x in auth["witness_lost_before_first_tick_seqs"])
+        issues.append(
+            (
+                WARN,
+                f"{AUTHORITY_WITNESS_LOST_KIND} 첫 틱 전 상실"
+                f" {auth['witness_lost_before_first_tick']}행 (seq {seqs})"
+                " — 장 전 부팅이면 설계상, 첫 봉 뒤에도 남아 있으면 확인 필요",
             )
         )
     for key, reasons in (
@@ -971,7 +986,13 @@ def _fmt_authority(auth: Mapping[str, Any] | None) -> str:
         parts.append(f"{label} {st[key]}{extra}")
     return (
         f"{AUTHORITY_WITNESS_LOST_KIND} {auth['witness_lost']}행"
-        f" (장중 {auth['witness_lost_mid_session']})"
+        f" (장중 {auth['witness_lost_mid_session']}"
+        + (
+            f" · 첫 틱 전 {auth['witness_lost_before_first_tick']}"
+            if auth["witness_lost_before_first_tick"]
+            else ""
+        )
+        + ")"
         f" · standing 승인 {' · '.join(parts)}"
     )
 
