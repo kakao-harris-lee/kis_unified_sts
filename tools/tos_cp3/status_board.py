@@ -9,10 +9,11 @@
   ``expected_code_digest``.
 * 그 세션 날짜로 한정한 틱 수, 결정 종류, 보류(DECISION_WITHHELD 등) 사유와 흐름 정지 사유
   분포, M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
-  행, ``VENUE_BAND_OBSERVED`` 행.
+  행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
 * B3 대조 요약(``<session>/b3/report/summary.json`` 이 있으면) — unresolved · divergent.
 * 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
-* 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태.
+* 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태와 그 세션의
+  ``MARKETFEED_PASS_OVERRUN`` 행.
 
 **읽기 전용.** sqlite 는 :func:`tools.tos_cp3.session_inputs._connect_ro`
 (``file:…?mode=ro`` + ``PRAGMA user_version`` 핀)로만 연다. 파일은 읽기만 하고, 프로세스
@@ -70,6 +71,10 @@ FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 #: 그 밖의 사유는 1건이라도 막힘(#931).
 STALE_FIELD_REASON = "stale"
 BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
+#: 런타임 ``marketfeed.scheduler._MARKETFEED_PASS_OVERRUN_KIND`` 의 거울(#949) — 한 pass(틱 +
+#: post-pass hook)가 ``poll_interval_ms + journal_pass_allowance_ms`` 창을 넘을 때만 쓰이는
+#: 진단 행. 날짜도 벽시계도 싣지 않으므로 band 행처럼 부팅 구간 seq 범위로만 세션에 묶인다.
+PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
 #: 부팅마다 한 번 쓰이는 행 — 누적 잎을 «부팅 구간» seq 범위로 나누는 경계다.
 #: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
 BOOT_KIND = "TIME_SERVICE_STARTUP"
@@ -80,6 +85,9 @@ _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<hms>\d{6})-(?P<direction>[A-Z]+)$"
 )
+#: 상주 paper 드라이버의 bootproof.txt — 첫 줄 끝 « · <종목>», 셋째 줄 «baseline_seq=<n>».
+_BOOTPROOF_INSTRUMENT_RE = re.compile(r"· (?P<instrument>[A-Z0-9]+)$")
+_BOOTPROOF_BASELINE_RE = re.compile(r"baseline_seq=(?P<seq>-?\d+)")
 _LOG_LINE_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<msg>.*)$")
 
 
@@ -97,6 +105,7 @@ class BoardConfig:
     tenant_cron_log_glob: str = "cp3-*-tenant-daily.cron.log"
     paper_sessions_subdir: str = "paper-sessions"
     paper_ops_subdir: str = "paper-ops"
+    paper_data_subdir: str = "paper-data"
     paper_runtime_cmdline_needle: str = "tos_runtime"
     paper_driver_cmdline_needle: str = "tos_paper_session"
     stale_refusal_ratio_max: float = 0.005
@@ -117,6 +126,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
         "tenant_cron_log_glob",
         "paper_sessions_subdir",
         "paper_ops_subdir",
+        "paper_data_subdir",
         "paper_runtime_cmdline_needle",
         "paper_driver_cmdline_needle",
         "stale_refusal_ratio_max",
@@ -140,6 +150,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
         tenant_cron_log_glob=str(raw["tenant_cron_log_glob"]),
         paper_sessions_subdir=str(raw["paper_sessions_subdir"]),
         paper_ops_subdir=str(raw["paper_ops_subdir"]),
+        paper_data_subdir=str(raw["paper_data_subdir"]),
         paper_runtime_cmdline_needle=str(raw["paper_runtime_cmdline_needle"]),
         paper_driver_cmdline_needle=str(raw["paper_driver_cmdline_needle"]),
         stale_refusal_ratio_max=float(raw["stale_refusal_ratio_max"]),
@@ -385,6 +396,49 @@ class LeafFacts:
     error: str | None = None
 
 
+def _kind_rows(
+    conn: Any, kinds: Sequence[str], *, after_seq: int = -1
+) -> list[tuple[int, str, dict[str, Any]]]:
+    """``(seq, kind, record)`` — 그 종류의 evidence 행, seq 오름차순(``(kind, seq)`` 인덱스)."""
+    marks = ",".join("?" * len(kinds))
+    return [
+        (
+            int(seq),
+            str(kind),
+            si._evidence_record(payload_json, seq=int(seq), kind=str(kind)),
+        )
+        for seq, kind, payload_json in conn.execute(
+            f"SELECT seq, kind, payload_json FROM entries WHERE kind IN ({marks})"
+            " AND seq > ? ORDER BY seq",
+            (*kinds, after_seq),
+        )
+    ]
+
+
+def pass_overrun_summary(
+    rows: Iterable[tuple[int, Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(``pass_ms`` 최대) 한 행.
+
+    필드 이름은 런타임 ``TickScheduler._record_pass_overrun`` 이 쓰는 그대로다.
+    ``pass_ms`` 가 정수가 아닌 행도 세지만 «최악» 후보에서는 뺀다.
+    """
+    rows = list(rows)
+    timed = [
+        (seq, p)
+        for seq, p in rows
+        if isinstance(p.get("pass_ms"), int) and not isinstance(p.get("pass_ms"), bool)
+    ]
+    worst = None
+    if timed:
+        seq, p = max(timed, key=lambda sp: sp[1]["pass_ms"])
+        worst = {"seq": seq} | {
+            key: p.get(key)
+            for key in ("pass_ms", "budget_ms", "tick_ms", "after_pass_ms")
+        }
+    return {"rows": len(rows), "worst": worst}
+
+
 def read_leaf(data_dir: Path) -> LeafFacts:
     """``session_inputs`` 의 리더로 잎을 읽는다. 거부는 문자열로 돌려준다(상태판은 죽지 않는다)."""
     facts = LeafFacts()
@@ -397,18 +451,9 @@ def read_leaf(data_dir: Path) -> LeafFacts:
             pinned_version=si.PINNED_EVIDENCE_SCHEMA_VERSION,
         )
         try:
-            for seq, kind, payload_json in conn.execute(
-                "SELECT seq, kind, payload_json FROM entries WHERE kind IN (?, ?) "
-                "ORDER BY seq",
-                (FIELD_REFUSED_KIND, BAND_OBSERVED_KIND),
-            ):
-                facts.extra_rows.append(
-                    (
-                        int(seq),
-                        str(kind),
-                        si._evidence_record(payload_json, seq=int(seq), kind=str(kind)),
-                    )
-                )
+            facts.extra_rows = _kind_rows(
+                conn, (FIELD_REFUSED_KIND, BAND_OBSERVED_KIND, PASS_OVERRUN_KIND)
+            )
             facts.boot_seqs = [
                 int(seq)
                 for (seq,) in conn.execute(
@@ -530,10 +575,17 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     ]
     seq_range = session_seq_range(leaf, ticks)
     band_rows: list[dict[str, Any]] | None
+    pass_overrun: dict[str, Any] | None
     if seq_range is None:
         band_rows = None  # 틱이 없어 이 세션의 부팅 구간을 정할 수 없다
+        pass_overrun = None
     else:
         lo, hi = seq_range
+        pass_overrun = pass_overrun_summary(
+            (seq, p)
+            for seq, kind, p in leaf.extra_rows
+            if kind == PASS_OVERRUN_KIND and lo <= seq and (hi is None or seq < hi)
+        )
         band_rows = [
             {
                 key: p.get(key)
@@ -586,6 +638,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "field_refused_max_age_ms": max(ages) if ages else None,
         "field_refused_non_stale": non_stale_refused,
         "band_observed": band_rows,
+        "pass_overrun": pass_overrun,
         "seq_range": list(seq_range) if seq_range else None,
         "code_digests": code_digests,
     }
@@ -753,6 +806,36 @@ def read_tenant_session(
     return session
 
 
+def _overrun_issues(overrun: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """진단 행이라 막힘이 아니라 확인이다 — 런타임은 이 행으로 아무것도 결정하지 않는다(#949)."""
+    if not overrun or not overrun.get("rows"):
+        return []
+    return [
+        (
+            WARN,
+            f"{PASS_OVERRUN_KIND} {overrun['rows']}행 — {_fmt_overrun_worst(overrun)}",
+        )
+    ]
+
+
+def _fmt_overrun_worst(overrun: Mapping[str, Any]) -> str:
+    w = overrun.get("worst")
+    if not w:
+        return "pass_ms 없음"
+    return (
+        f"최악 pass {w['pass_ms']}ms > 창 {w['budget_ms']}ms"
+        f" (tick {w['tick_ms']}ms + post-pass {w['after_pass_ms']}ms, seq {w['seq']})"
+    )
+
+
+def _fmt_overrun(overrun: Mapping[str, Any] | None) -> str:
+    if overrun is None:
+        return f"{PASS_OVERRUN_KIND}: 부팅 구간을 정할 수 없어 보지 못함"
+    if not overrun["rows"]:
+        return f"{PASS_OVERRUN_KIND} 0행"
+    return f"{PASS_OVERRUN_KIND} {overrun['rows']}행 · {_fmt_overrun_worst(overrun)}"
+
+
 def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
     r = s.runner
@@ -855,6 +938,7 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                             "band 를 선언한 트리인데 이 부팅 구간에 VENUE_BAND_OBSERVED 행 없음",
                         )
                     )
+            issues.extend(_overrun_issues(st["pass_overrun"]))
             if (
                 s.expected_code_digest
                 and st["code_digests"]
@@ -900,6 +984,53 @@ def _read_pid(path: Path) -> int | None:
         return int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
+
+
+def paper_pass_overrun(
+    cfg: BoardConfig, bootproof: Sequence[str], report: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """상주 paper 세션의 ``MARKETFEED_PASS_OVERRUN`` 요약. 잎이나 기준 seq 를 모르면 ``None``.
+
+    범위는 드라이버가 부팅 전에 잡은 ``baseline_evidence_seq``(= 그때의 ``MAX(seq)``) 다음부터,
+    이 세션 부팅 행 다음의 부팅 행 전까지다 — 다음 날 세션의 행을 붙이지 않는다. 잎은
+    report.json 의 ``data_dir``, 진행 중(report 없음)이면 bootproof 의 종목으로
+    ``<state_dir>/<paper_data_subdir>/<종목>`` (래퍼가 잎을 고르는 규칙).
+    """
+    report = report if isinstance(report, Mapping) else {}
+    baseline = report.get("baseline_evidence_seq")
+    if not isinstance(baseline, int) and len(bootproof) > 2:
+        m = _BOOTPROOF_BASELINE_RE.search(bootproof[2])
+        baseline = int(m.group("seq")) if m else None
+    data_dir = report.get("data_dir")
+    if not data_dir and bootproof:
+        m = _BOOTPROOF_INSTRUMENT_RE.search(bootproof[0].strip())
+        if m:
+            data_dir = str(
+                cfg.state_dir / cfg.paper_data_subdir / m.group("instrument")
+            )
+    if not isinstance(baseline, int) or not data_dir:
+        return None
+    try:
+        conn = si._connect_ro(
+            Path(data_dir) / si.EVIDENCE_FILE_NAME,
+            label="evidence",
+            pinned_version=si.PINNED_EVIDENCE_SCHEMA_VERSION,
+        )
+        try:
+            rows = _kind_rows(conn, (BOOT_KIND, PASS_OVERRUN_KIND), after_seq=baseline)
+        finally:
+            conn.close()
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 — sqlite3.Error 등, 상태판은 사유를 보여 준다
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    boots = [seq for seq, kind, _ in rows if kind == BOOT_KIND]
+    hi = boots[1] if len(boots) > 1 else None
+    return pass_overrun_summary(
+        (seq, p)
+        for seq, kind, p in rows
+        if kind == PASS_OVERRUN_KIND and (hi is None or seq < hi)
+    )
 
 
 def paper_facts(
@@ -963,6 +1094,16 @@ def paper_facts(
         facts["report"]["flow_halted"] = breakdown.get("flow_halted")
     else:
         facts["report"] = None
+    facts["pass_overrun"] = paper_pass_overrun(cfg, bootproof, report)
+    if facts["pass_overrun"] is not None and "error" in facts["pass_overrun"]:
+        facts["issues"].append(
+            (
+                WARN,
+                f"{PASS_OVERRUN_KIND} 를 읽지 못했다 — {facts['pass_overrun']['error']}",
+            )
+        )
+    else:
+        facts["issues"].extend(_overrun_issues(facts["pass_overrun"]))
     if not facts["bootproof"] or "boot proof: OK" not in facts["bootproof"]:
         facts["issues"].append(
             (BLOCK, f"boot proof 가 OK 가 아니다: {facts['bootproof']!r}")
@@ -1120,6 +1261,7 @@ def _history_row(s: TenantSession) -> dict[str, Any]:
         "stale": st.get("m5_present_value_refused_as_unknown"),
         "other_withheld": len(st.get("other_withheld_post_boot") or []),
         "band": None if st.get("band_observed") is None else len(st["band_observed"]),
+        "overrun": (st.get("pass_overrun") or {}).get("rows"),
         "b3_unresolved": (s.b3 or {}).get("unresolved"),
         "store_error": st.get("error"),
         "blocks": sum(1 for lv, _ in s.issues if lv == BLOCK),
@@ -1218,6 +1360,7 @@ def render_text(board: Mapping[str, Any]) -> str:
                 add("    VENUE_BAND_OBSERVED 0행 (이 트리는 band 를 끔)")
             else:
                 add("    VENUE_BAND_OBSERVED 0행")
+            add(f"    {_fmt_overrun(st['pass_overrun'])}")
         else:
             add("    저장소: 부팅 전이라 읽지 않음")
         band = "있음 " + _short(s["band_digest"]) if s["band_line_ok"] else "없음"
@@ -1275,15 +1418,24 @@ def render_text(board: Mapping[str, Any]) -> str:
             add(f"    흐름 정지 {_fmt_counts(rep.get('flow_halted'))}")
         else:
             add("    report.json 아직 없음(세션 진행 중이면 정상)")
+        po = paper.get("pass_overrun")
+        if po is None:
+            add(f"    {PASS_OVERRUN_KIND}: 잎·기준 seq 를 몰라 보지 못함")
+        elif "error" in po:
+            add(f"    {PASS_OVERRUN_KIND}: 읽지 못함 — {po['error']}")
+        else:
+            add(f"    {_fmt_overrun(po)}")
     add("")
     if board["history"]:
         add("■ 최근 세션(날짜별)")
-        add("  날짜      세션      상태        rc   틱   stale 기타 band B3unres 막힘")
+        add(
+            "  날짜      세션      상태        rc   틱   stale 기타 band 초과 B3unres 막힘"
+        )
         for h in board["history"]:
             err = " 저장소모름" if h["store_error"] else ""
             add(
                 f"  {h['day']}  {h['label']:<8}  {h['status']:<10}  {str(h['run_rc']):>3}"
-                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}"
+                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}"
                 f"  {str(h['b3_unresolved']):>6}  {h['blocks']:>3}{err}"
             )
         add("")
