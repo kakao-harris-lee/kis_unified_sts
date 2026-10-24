@@ -247,6 +247,8 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 B2 렌더본 `broker_scopes.yaml::instance_path`(`../../../docs/…`)가 렌더 디렉터리 기준이라 **부팅 거부** ·
 B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mock **부팅 거부** ·
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
+   운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — `feature/tos-standing-session-approval`.
+⛔ **게이트**: 그 PR 과 B3 고침이 개장 전에 main 에 없으면 세션은 하루 미룬다(B2 는 아래 우회로 간다).
 B2 만은 코드 없이 우회된다: 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
 
 **1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 계좌는 `.env.mock` 의 `KIS_STOCK_ACCOUNT_NO`(10자리 8-2).
@@ -261,6 +263,7 @@ for k in KEY SECRET; do grep "^KIS_STOCK_APP_$k=" $MAIN/.env.mock | cut -d= -f2-
 - `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
   · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
   · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
+- **상시 승인 작성(그날 장전, 운영자)** — 위 PR 이 정하는 파일·CLI 로 그 거래일 것을 쓴다. 승인 없이 시작하면 신호가 와도 4단계에서 멎는다(송신 0).
 - **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
 
 **08:55 시작(창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s).** LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
